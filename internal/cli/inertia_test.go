@@ -12,6 +12,7 @@ import (
 var inertiaStarters = []struct{ name, entry string }{
 	{"react", "resources/js/app.tsx"},
 	{"vue", "resources/js/app.ts"},
+	{"svelte", "resources/js/app.ts"},
 }
 
 // TestNewInertiaProjectEndToEnd creates an Inertia project per framework,
