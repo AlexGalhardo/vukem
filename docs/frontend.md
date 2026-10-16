@@ -142,4 +142,15 @@ return inertia.Render(c, "Posts/Index", inertia.Props{
 | SSR | `Config.SSR = &inertia.SSRConfig{HotURL: vite.HotURL, Bundle: "bootstrap/ssr/ssr.js"}`: POST to the Node SSR server (`/render`, default `127.0.0.1:13714`, 3s timeout); **falls back to client-side rendering** on any failure (reported to `OnFailure`, default a warning log); dev uses the Vite plugin endpoint (`{hot}/__inertia_ssr`); `Except` path prefixes and `inertia.DisableSSR(ctx)` per request; `vukem ssr:start` runs `node bootstrap/ssr/ssr.js` and restarts it when it crashes, `vukem ssr:check` probes `/health` |
 | Testing | `res.AssertInertia(t, "Posts/Index").HasProp("posts", 3).MissingProp("stats")` |
 
-Typed routes for the frontend (Wayfinder/Tuyau-style): `vukem codegen:routes` boots the app in warmup mode (no connections) and emits `resources/js/routes.ts` with typed `route('posts.show', { id })` (BETA).
+Typed routes for the frontend (Wayfinder/Tuyau-style): `vukem codegen:routes` builds the app in warmup mode and writes `resources/js/routes.ts` (`-o file` elsewhere, `-o -` to stdout). Warmup (`vukem.KindWarmup`) loads config and runs providers' `Register` and the route definitions, but never `Boot` or `Shutdown`, so no database or other connection is opened; register routes in `Register`/`WithRoutes`, not in `Boot`, and do not filter out `KindWarmup` in a provider that registers routes. The file holds only named routes, sorted by name:
+
+```ts
+import { route, routes, type RouteName } from "./routes";
+
+route("posts.show", { id: 7 });                     // "/posts/7"
+route("files.show", { path: "a b/c" }, { page: 2 }); // "/files/a%20b/c?page=2"
+route("home");                                      // routes without params take no object
+routes["posts.store"].method;                       // "POST"
+```
+
+Params are required and typed per route (`string | number`), encoded with `encodeURIComponent` (each segment of a `{name...}` wildcard, keeping `/`); the optional second object becomes the query string (`null`/`undefined` values skipped). Regenerate after changing routes and commit the file.

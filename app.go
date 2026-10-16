@@ -38,6 +38,10 @@ const (
 	KindWeb     Kind = "web"
 	KindConsole Kind = "console"
 	KindTest    Kind = "test"
+	// KindWarmup builds the app (config, Register, routes) but never runs
+	// providers' Boot or Shutdown, so no connection is opened. Commands that
+	// only read the route table (codegen:routes) run in it.
+	KindWarmup Kind = "warmup"
 )
 
 // Config is the core application configuration, loaded from the environment.
@@ -613,7 +617,7 @@ func (a *App) Shutdown(ctx context.Context) error {
 
 	for _, p := range slices.Backward(a.providers) {
 		s, ok := p.(Shutdowner)
-		if !ok || !runsIn(p, a.Kind) {
+		if !ok || !runsIn(p, a.Kind) || a.Kind == KindWarmup {
 			continue
 		}
 

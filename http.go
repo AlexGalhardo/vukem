@@ -269,7 +269,10 @@ func RunMain(ctx context.Context, args []string, getenv func(string) (string, bo
 	}
 
 	base := []Option{WithEnv(osDirFS("."), getenv)}
-	if cmd != "serve" {
+	switch {
+	case isWarmupCommand(cmd):
+		base = append(base, WithKind(KindWarmup))
+	case cmd != "serve":
 		base = append(base, WithKind(KindConsole))
 	}
 

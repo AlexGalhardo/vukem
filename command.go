@@ -104,14 +104,20 @@ func runCommand(ctx context.Context, app *App, name string, args []string) error
 		return errUsage
 	}
 
-	if err := app.Boot(ctx); err != nil {
-		return err
+	if app.Kind != KindWarmup {
+		if err := app.Boot(ctx); err != nil {
+			return err
+		}
 	}
 
 	runErr := cmd.Run(ctx, app, fset.Args())
 
 	return errors.Join(runErr, app.Shutdown(context.WithoutCancel(ctx)))
 }
+
+// isWarmupCommand reports whether a command runs in [KindWarmup]: it needs
+// only the registered routes, never live connections.
+func isWarmupCommand(name string) bool { return name == "codegen:routes" }
 
 func printCommands(app *App) {
 	tw := tabwriter.NewWriter(app.stdout, 0, 4, 2, ' ', 0)
@@ -152,7 +158,14 @@ func (c CommandFunc) Run(ctx context.Context, app *App, args []string) error {
 
 func builtinCommands() []Command {
 	return slices.Concat(
-		[]Command{routeListCommand(), aboutCommand(), openAPIExportCommand(), codegenTypesCommand(), boostMCPCommand()},
+		[]Command{
+			routeListCommand(),
+			aboutCommand(),
+			openAPIExportCommand(),
+			codegenTypesCommand(),
+			codegenRoutesCommand(),
+			boostMCPCommand(),
+		},
 		migrateCommands(),
 		seedCommands(),
 		queueCommands(),
