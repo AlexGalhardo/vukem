@@ -39,7 +39,7 @@ vukem/                            module github.com/AlexGalhardo/vukem
 ├── inertia/                      Inertia.js v3 adapter: page object, version check, redirects, shared props
 ├── sse/                          server-sent events: streams, heartbeat, hub (memory or Redis)
 ├── crypt/                        AES-256-GCM encryption, key rotation, encrypted cookies
-├── i18n/                                                                      (planned, BETA)
+├── i18n/                         JSON catalogs, CLDR plurals, locale middleware, translated validation
 ├── testing/                      fluent HTTP test client, DB helpers, fakes
 ├── cmd/vukem/                 global CLI
 ├── internal/

@@ -14,7 +14,7 @@ Mail, cache, storage, events, queue, scheduler, encryption, rate limiting, i18n,
 | Scheduler | BETA | in-process cron | — | clock |
 | Encryption | BETA (planned) | AES-256-GCM with key rotation | — | — |
 | Rate limiting | ALPHA / BETA | memory (GCRA) | redis | clock |
-| i18n | BETA (planned) | JSON files, CLDR plural rules subset | — | — |
+| i18n | BETA | JSON files, CLDR plural rules subset | — | `i18n.New` + `Add` |
 | SSE | BETA (planned) | in-process hub | redis pub/sub | — |
 
 ## Logging & observability
@@ -256,4 +256,38 @@ cart, err := app.Crypt.Cookie(r, "cart") // http.ErrNoCookie or crypt.ErrInvalid
 
 ## i18n
 
-`t(ctx, "posts.created", "title", p.Title)`, pluralisation, locale from `Accept-Language`/session/route, JSON files in `resources/lang/<locale>.json`, validation messages translated.
+Package `i18n`, stdlib only. One JSON catalog per locale in `resources/lang/<locale>.json` (`en.json`, `pt-BR.json`; `pt_BR.json` is accepted). Keys are nested objects or dotted names; values are strings with `{name}` placeholders, or plural objects.
+
+```json
+{
+  "welcome": "Hello, {name}!",
+  "posts": {
+    "created": "Post created.",
+    "count": { "zero": "No posts", "one": "{count} post", "other": "{count} posts" }
+  }
+}
+```
+
+```go
+app, err := vukem.New(
+	vukem.WithTranslations(os.DirFS("resources/lang")), // App.I18n; APP_LOCALE is the default (en)
+	vukem.WithViews(resources.Views()),
+	vukem.WithRoutes(routes), // routes call vukem.DefaultMiddleware
+)
+
+c.Flash("status", i18n.T(c.Context(), "posts.created"))   // handlers
+b.T("pt-BR", "posts.count", "count", 3)                   // a Bundle directly
+```
+
+```html
+<html lang="{{locale}}">
+<p>{{t "welcome" "name" .User.Name}} · {{t "posts.count" "count" (len .Posts)}}</p>
+```
+
+- **Fallback chain:** the locale, its shorter forms, then the default (`pt-BR` → `pt` → `en`). A missing key returns the key and calls `Options.OnMissing` when set; translating never panics.
+- **Plurals:** an object whose keys are CLDR categories (`zero`, `one`, `two`, `few`, `many`, `other`; `other` required) is a plural message, chosen by the numeric `count` argument. Rules cover en, de, nl, sv, da, nb, fi, et, it, ca, es, el, hu, tr, bg, pt, pt-PT, fr, ru, uk, be, pl, cs, sk, ar, he, and ja, zh, ko, th, vi, id, ms (only `other`); other languages use the English rule. An explicit `zero` form wins for 0 in every language. `i18n.PluralCategory(locale, n)` exposes the rules.
+- **Arguments:** key/value pairs (`"name", "Ana"`) or one `map[string]any`; unknown placeholders stay as written. Output is plain text, so `html/template` escapes it.
+- **Locale resolution:** `i18n.Middleware(bundle, i18n.MiddlewareConfig{})` checks, in order, `?lang=`, the `lang` cookie, the session value `locale` (when the session middleware runs first), `Accept-Language` (RFC 9110 q-values, at most 16 entries) and the default. Candidates must be valid tags matching an available catalog (`Bundle.Match`: exact, shorter form, then same language); invalid input is ignored. It stores the bundle and locale in the context (`i18n.Locale`, `i18n.WithLocale`, `i18n.BundleFrom`), sets `Content-Language` and adds `Vary: Accept-Language` when the header was consulted. Rename or disable (`"-"`) sources with `Query`, `Cookie`, `SessionKey`. Apps persist a choice by setting the cookie or session value themselves.
+- **App wiring:** `WithTranslations` loads the bundle at boot (bad JSON or file names fail `New`), gives views the `t` and `locale` functions (`view.Config.I18n`) and makes `DefaultMiddleware` install the middleware after sessions.
+- **Validation:** the middleware also translates `web.Parse`/`Bind` messages from `validation.*` keys ([validation.md](validation.md#translated-messages)).
+- Starters do not ship catalogs yet; add `resources/lang/en.json` and pass `WithTranslations`.

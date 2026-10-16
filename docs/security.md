@@ -97,6 +97,7 @@ What Vukem does **by default** to protect applications, mapped to the [OWASP Top
 | Mail headers built with `net/mail` (no header injection); file names sanitised | A |
 | No shell execution in the framework; `os/exec` usage in CLI generators never passes user input through a shell | P |
 | Validator rejects invalid UTF-8 and control characters in string fields by default | P |
+| Locale input (query, cookie, session, `Accept-Language`) is used only when it is a well-formed tag (`language[-Script][-REGION]`) of an available catalog; anything else falls back, so raw input never reaches headers, lookups or file paths (`TestSecurity_A05_LocaleInputRejected`) | B |
 
 ### A06:2025 — Insecure Design
 
