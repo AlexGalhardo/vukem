@@ -26,6 +26,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/AlexGalhardo/vukem/vite"
 	"github.com/AlexGalhardo/vukem/web"
 )
 
@@ -46,6 +47,9 @@ type Config struct {
 	URLs web.URLGenerator
 	// AssetPrefix is prepended by "asset" (default "/").
 	AssetPrefix string
+	// Vite backs the "vite" and "viteReactRefresh" functions; "asset"
+	// resolves files Vite processed through it first.
+	Vite *vite.Vite
 }
 
 // Engine renders views; it implements web.Renderer.

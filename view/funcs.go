@@ -26,7 +26,27 @@ func (e *Engine) funcs(ctx context.Context) template.FuncMap {
 			return e.cfg.URLs.URL(name, params...)
 		},
 		"asset": func(p string) string {
+			if e.cfg.Vite != nil {
+				if u, ok := e.cfg.Vite.Asset(p); ok {
+					return u
+				}
+			}
+
 			return strings.TrimSuffix(e.cfg.AssetPrefix, "/") + "/" + strings.TrimPrefix(p, "/")
+		},
+		"vite": func(entries ...string) (template.HTML, error) {
+			if e.cfg.Vite == nil {
+				return "", errors.New("view: vite needs Config.Vite")
+			}
+
+			return e.cfg.Vite.Tags(middleware.CSPNonce(ctx), entries...)
+		},
+		"viteReactRefresh": func() template.HTML {
+			if e.cfg.Vite == nil {
+				return ""
+			}
+
+			return e.cfg.Vite.ReactRefresh(middleware.CSPNonce(ctx))
 		},
 		"csrfToken": func() string { return csrf.Token(ctx) },
 		"csrfField": func() template.HTML {

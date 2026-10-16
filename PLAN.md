@@ -18,7 +18,7 @@ Task IDs: `<phase>.<group>.<task>` (e.g. `P.3.2`). Reference them in commit bodi
 | Field | Value |
 | --- | --- |
 | Current phase | **ALPHA** |
-| Next task | `B.3.1` (Vite & Inertia) |
+| Next task | `B.3.2` (Vite & Inertia) |
 | Last release | `v0.17.0` (B.2 Redis and Mongo drivers) |
 | Updated | 2026-10-16 |
 
@@ -481,7 +481,7 @@ Applies to **every** task:
 
 ### B.3 Vite & Inertia
 
-- [ ] **B.3.1** `vite` package: hot file, manifest (recursive imports, CSS, dedupe), `asset`, React Refresh, CSP nonce, SRI.
+- [x] **B.3.1** `vite` package: hot file, manifest (recursive imports, CSS, dedupe), `asset`, React Refresh, CSP nonce, SRI.
   → verify: golden tests for dev/prod tag output.
 - [ ] **B.3.2** `inertia` core: page object, root template script, version check (409), 302→303, shared props, validation errors, redirects (`Location`, fragment).
   → verify: protocol tests per header/status.

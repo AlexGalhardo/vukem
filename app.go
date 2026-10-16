@@ -25,6 +25,7 @@ import (
 	"github.com/AlexGalhardo/vukem/schema"
 	"github.com/AlexGalhardo/vukem/session"
 	"github.com/AlexGalhardo/vukem/view"
+	"github.com/AlexGalhardo/vukem/vite"
 )
 
 // Kind is the runtime in which the application is running. Providers can be
@@ -146,6 +147,7 @@ type options struct {
 	runners       []namedRunner
 	routes        []func(r *router.Router, app *App) error
 	views         fs.FS
+	vite          fs.FS
 	now           func() time.Time
 	migrations    []schema.Migration
 	seeders       []Seeder
@@ -173,6 +175,13 @@ func WithRoutes(fn func(r *router.Router, app *App) error) Option {
 // or an embed.FS). Views reload on every request outside production.
 func WithViews(fsys fs.FS) Option {
 	return func(o *options) error { o.views = fsys; return nil }
+}
+
+// WithVite enables the "vite" and "viteReactRefresh" view functions over the
+// public directory fsys (os.DirFS("public") or an embed.FS). The dev server
+// "hot" file is honoured only outside production.
+func WithVite(fsys fs.FS) Option {
+	return func(o *options) error { o.vite = fsys; return nil }
 }
 
 // WithClock sets the clock used by sessions and other time-based features
@@ -349,7 +358,15 @@ func New(opts ...Option) (*App, error) {
 	}
 
 	if o.views != nil {
-		engine, err := view.New(view.Config{FS: o.views, Reload: !cfg.IsProduction(), URLs: app.Router})
+		vcfg := view.Config{FS: o.views, Reload: !cfg.IsProduction(), URLs: app.Router}
+
+		if o.vite != nil {
+			if vcfg.Vite, err = vite.New(vite.Config{FS: o.vite, Dev: !cfg.IsProduction()}); err != nil {
+				return nil, err
+			}
+		}
+
+		engine, err := view.New(vcfg)
 		if err != nil {
 			return nil, err
 		}

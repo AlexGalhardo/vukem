@@ -263,6 +263,17 @@ func TestWithViews(t *testing.T) {
 		t.Fatal("broken views accepted at boot")
 	}
 
+	public := fstest.MapFS{"build/.vite/manifest.json": {Data: []byte(`{"app.ts": {"file": "assets/app-1.js"}}`)}}
+	app = newTestApp(t, WithViews(fstest.MapFS{"v.html": {Data: []byte(`{{vite "app.ts"}}`)}}), WithVite(public),
+		WithRoutes(func(r *router.Router, _ *App) error {
+			r.Get("/", func(c *web.Ctx) error { return c.Render("v", nil) })
+			return nil
+		}))
+
+	if got := doReq(t, app, "/").Body.String(); !strings.Contains(got, `src="/build/assets/app-1.js"`) {
+		t.Fatalf("vite render = %q", got)
+	}
+
 	failing := WithRoutes(func(*router.Router, *App) error { return errors.New("no db") })
 	if _, err := New(WithSource(testSource(nil)), WithLogger(discardLogger()), failing); err == nil ||
 		!strings.Contains(err.Error(), "routes: no db") {

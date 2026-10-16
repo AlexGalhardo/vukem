@@ -24,7 +24,7 @@ type View interface {
 - Directory layout: `layouts/`, `partials/` and `components/` are shared; every other file is a page named by its path without extension (`posts/index`).
 - Layouts: a page defines blocks (`{{define "content"}}…{{end}}`) and renders inside `layouts/app.html`. Its first line can pick another layout, `{{/* layout: admin */}}`, or none, `{{/* layout: none */}}`. Each page gets its own template set, so block names never collide.
 - **Fragments:** `c.Render("posts/index", data, web.Block("post-list"))` renders the whole page for normal requests and only the `post-list` block for htmx partial requests; `c.Fragment(name, block, data)` always renders the block.
-- Funcs: `route`, `asset`, `csrfField`, `csrfToken`, `cspNonce`, `old`, `error`, `errors`, `flash`, `json` (safe in `<script>`), `dict` (data for partials), `htmxScript`, `can` (authorization). Request-scoped funcs read the session and CSP nonce from the request context. Planned: `vite`, `t` (BETA).
+- Funcs: `route`, `asset`, `csrfField`, `csrfToken`, `cspNonce`, `old`, `error`, `errors`, `flash`, `json` (safe in `<script>`), `dict` (data for partials), `htmxScript`, `can` (authorization), `vite`, `viteReactRefresh` (see [Vite](#vite)). Request-scoped funcs read the session and CSP nonce from the request context. Planned: `t` (BETA).
 
 ### templ (supported, not bundled)
 
@@ -96,12 +96,13 @@ Invalid input from a classic form post → the validation hook flashes the error
 
 Optional for the HTMX starter (Tailwind, bundling), required for Inertia.
 
+- `vukem.WithVite(os.DirFS("public"))` (or an `embed.FS`) enables the `vite` package (`vite.New(vite.Config{FS, Dev})`) behind the view funcs. `Dev` is on outside production.
 - A tiny Vite plugin shipped with the starter (`resources/vite/vukem.js`) writes `public/hot` with the dev server URL on start and deletes it on exit.
-- `{{ vite "resources/js/app.ts" }}`:
-  - `public/hot` present → `<script type="module" src="{hot}/@vite/client">` + entry (+ React Refresh preamble via `{{ viteReactRefresh }}`).
-  - otherwise → reads `public/build/.vite/manifest.json` and emits `<script type="module">`, `<link rel="stylesheet">` and `<link rel="modulepreload">` for the entry and its recursive imports (deduplicated across entries).
-- `{{ asset "img/logo.png" }}` resolves through the manifest when present.
-- CSP nonce and SRI (`integrity`) attributes supported.
+- `{{ vite "resources/css/app.css" "resources/js/app.ts" }}`:
+  - `public/hot` present and `Dev` on → `<script type="module" src="{hot}/@vite/client">` + each entry (CSS entries as `<link rel="stylesheet">`); `{{ viteReactRefresh }}` emits the React Refresh preamble (empty otherwise). The hot file must hold an `http(s)` URL; it is ignored in production.
+  - otherwise → reads `public/build/.vite/manifest.json` (cached in production, re-read in development) and emits `<link rel="modulepreload">` for recursive static imports, `<link rel="stylesheet">` for entry and import CSS, then `<script type="module">`, each file once across entries.
+- `{{ asset "resources/img/logo.png" }}` resolves through the dev server or the manifest when Vite knows the file, else falls back to the public path.
+- Every tag carries the request's CSP nonce; manifest `integrity` values (e.g. from `vite-plugin-manifest-sri`) become SRI attributes.
 - `/build/*` served with immutable cache headers.
 - `vukem serve` starts the Go app with reload and, if `vite.config.*` exists, `npm run dev` alongside.
 

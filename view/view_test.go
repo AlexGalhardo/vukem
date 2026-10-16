@@ -12,6 +12,7 @@ import (
 	"testing/fstest"
 
 	"github.com/AlexGalhardo/vukem/middleware"
+	"github.com/AlexGalhardo/vukem/vite"
 	"github.com/AlexGalhardo/vukem/web"
 )
 
@@ -155,6 +156,41 @@ func TestRequestHelpers(t *testing.T) {
 	got = render(t.Context(), t, newEngine(t, views, false), "helpers", nil)
 	if !strings.HasPrefix(got, "/posts/7|/css/app.css||||0||") {
 		t.Fatalf("no-session output = %s", got)
+	}
+}
+
+func TestViteFuncs(t *testing.T) {
+	t.Parallel()
+
+	fsys := fstest.MapFS{
+		"page.html": {Data: []byte(`{{/* layout: none */}}{{viteReactRefresh}}{{vite "resources/js/app.ts"}}|` +
+			`{{asset "resources/img/logo.png"}}|{{asset "js/htmx.min.js"}}`)},
+	}
+	public := fstest.MapFS{"build/.vite/manifest.json": {Data: []byte(`{
+		"resources/js/app.ts": {"file": "assets/app-1.js", "isEntry": true},
+		"resources/img/logo.png": {"file": "assets/logo-2.png"}}`)}}
+
+	v, err := vite.New(vite.Config{FS: public})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	e, err := New(Config{FS: fsys, Vite: v})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := render(t.Context(), t, e, "page", nil)
+	want := `<script type="module" src="/build/assets/app-1.js"></script>` + "\n" +
+		`|/build/assets/logo-2.png|/js/htmx.min.js`
+
+	if got != want {
+		t.Errorf("page = %q, want %q", got, want)
+	}
+
+	var b bytes.Buffer
+	if err := newEngine(t, fsys, false).Render(t.Context(), &b, "page", nil); err == nil {
+		t.Error("vite without Config.Vite rendered, want error")
 	}
 }
 
