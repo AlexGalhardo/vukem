@@ -601,7 +601,8 @@ func TestRecoverDebugPageShowsPanicSite(t *testing.T) {
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, r)
 
-	if rec.Code != http.StatusInternalServerError || !strings.Contains(rec.Body.String(), "middleware.panickingHandler") {
+	if rec.Code != http.StatusInternalServerError ||
+		!strings.Contains(rec.Body.String(), "middleware.panickingHandler") {
 		t.Errorf("debug page for a panic = %d, want the panicking function in:\n%.2000s", rec.Code, rec.Body.String())
 	}
 }

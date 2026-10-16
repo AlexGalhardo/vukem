@@ -506,7 +506,7 @@ Applies to **every** task:
   → verify: tests.
 - [x] **B.4.3** SSE (`c.SSE`, hub, heartbeat, shutdown).
   → verify: `synctest` tests.
-- [ ] **B.4.4** Maintenance mode (`down --secret`, `up`), `install:api` (token guard + API routes + problem+json).
+- [x] **B.4.4** Maintenance mode (`down --secret`, `up`), `install:api` (token guard + API routes + problem+json).
   → verify: tests.
 - [ ] **B.4.5** Optional OpenTelemetry module (`drivers/otel` or `contrib/otel`).
   → verify: span emitted per request in test exporter.

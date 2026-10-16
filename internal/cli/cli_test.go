@@ -731,3 +731,35 @@ func (s *syncWriter) Write(p []byte) (int, error) {
 
 	return s.w.Write(p)
 }
+
+func TestDownUp(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	file := filepath.Join(dir, "storage", "framework", "down")
+
+	code, out, errOut := vukem(t, dir, "down", "--with-secret", "--retry", "30s")
+	if code != 0 || !strings.Contains(out, "Bypass: open /") {
+		t.Fatalf("down = %d %q %q", code, out, errOut)
+	}
+
+	b, err := os.ReadFile(file)
+	if err != nil || !strings.Contains(string(b), `"retry_after":30`) || !strings.Contains(string(b), "secret_hash") {
+		t.Fatalf("down file = %s, %v", b, err)
+	}
+
+	secret := strings.Fields(strings.SplitAfter(out, "open /")[1])[0]
+	if strings.Contains(string(b), secret) {
+		t.Error("down file stores the secret in clear")
+	}
+
+	for range 2 { // idempotent
+		if code, out, _ := vukem(t, dir, "up"); code != 0 || !strings.Contains(out, "live") {
+			t.Fatalf("up = %d %q", code, out)
+		}
+	}
+
+	if _, err := os.Stat(file); !os.IsNotExist(err) {
+		t.Errorf("down file still there: %v", err)
+	}
+}

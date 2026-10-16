@@ -15,6 +15,9 @@ Usage:
   boost:install           Add agent guidelines, skills and the vukem-boost MCP server
  key
   key:generate            Write a new APP_KEY to .env
+ 
+  down                    Put the app in maintenance mode (503; --secret or --with-secret to bypass)
+  up                      Bring the app out of maintenance mode
  make
   make:controller <Name>  Create a controller
   make:model <Name>       Create a model (with -m, -f, -c)

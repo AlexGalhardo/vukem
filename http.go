@@ -115,6 +115,7 @@ func APIMiddleware(app *App, r *router.Router) error {
 	r.UseServer(
 		middleware.Recover(),
 		middleware.RequestID(),
+		middleware.Maintenance(maintenanceConfig(app)),
 		middleware.Logger(app.Log),
 		middleware.SecureHeaders(middleware.SecureHeadersConfig{}),
 	)
@@ -175,6 +176,14 @@ func (a *App) Sessions() (*session.Manager, error) {
 // provider's Register, before Sessions is first used).
 func (a *App) SetSessionStore(store session.Store) { a.sessStore = store }
 
+// maintenanceConfig signs bypass cookies with a key derived from APP_KEY.
+func maintenanceConfig(app *App) middleware.MaintenanceConfig {
+	return middleware.MaintenanceConfig{
+		Key:    app.Key.Derive("maintenance", 32),
+		Secure: app.Config.IsProduction() || strings.HasPrefix(app.Config.URL, "https://"),
+	}
+}
+
 // secureHeadersConfig allows the Vite dev server in the CSP while it runs
 // (app.Vite only reports it outside production).
 func secureHeadersConfig(app *App) middleware.SecureHeadersConfig {
@@ -196,6 +205,7 @@ func DefaultMiddleware(app *App, r *router.Router) error {
 	r.UseServer(
 		middleware.Recover(),
 		middleware.RequestID(),
+		middleware.Maintenance(maintenanceConfig(app)),
 		middleware.Logger(app.Log),
 		middleware.SecureHeaders(secureHeadersConfig(app)),
 		middleware.MethodOverride(),

@@ -45,6 +45,7 @@ Exit codes: `0` success, `1` failure, `2` usage error.
 | `vukem key:generate [--show]` | Write `APP_KEY` to `.env` |
 | `vukem ssr:start [-bundle] [-runtime]`, `vukem ssr:check [-url]` | App commands: supervise the Inertia SSR server (restart on crash) and probe its `/health` |
 | `vukem install:inertia --force [--react\|--vue\|--svelte] [--no-install]` | Turn the HTMX starter into an Inertia app (replaces its pages, controllers and tests; `--force` required) and run `npm install` |
+| `vukem down [--secret s \| --with-secret] [--retry 60s]`, `vukem up` | Maintenance mode: `storage/framework/down` makes `middleware.Maintenance` (in both default stacks) answer 503 with `Retry-After` (the `errors/503` view or problem+json); `/up` stays served. Visiting `/<secret>` sets a signed bypass cookie; the secret is stored hashed. An unreadable state file keeps the app down |
 | `vukem boost:install` | Agent setup (Laravel Boost-style): guidelines block in `AGENTS.md` (re-runnable, text outside the markers is kept), `@AGENTS.md` in `CLAUDE.md`, skills in `.claude/skills/vukem-*`, and the `vukem-boost` MCP server in `.mcp.json`, `.cursor/mcp.json`, `.vscode/mcp.json` |
 | `vukem version` | Print the CLI version |
 | `vukem build` | `vite build` (if present) then `go build -trimpath -ldflags "-s -w"` with embedded assets |
