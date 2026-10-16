@@ -239,7 +239,7 @@ app.Test(t).PostJSON("/api/v1/products", map[string]any{}).
 	AssertJSONValidationErrors("name", "price")
 ```
 
-`AssertMatchesOpenAPI()` (BETA) validates the response against the generated document.
+`AssertMatchesOpenAPI()` validates the response against the generated document: it finds the operation for the request path, then checks the body against the schema of the response status (or the default problem response). It supports the JSON Schema subset the generator emits (types, `$ref`, `anyOf`/`allOf`, `required`, lengths, ranges, `pattern`, `enum`, `date-time`). `doc.ValidateResponse(method, path, status, body)` does the same outside tests. OpenAPI cannot express a multi-segment `{path...}` wildcard, so it is documented as one segment.
 
 ## Beyond REST
 

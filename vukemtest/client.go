@@ -376,6 +376,24 @@ func (r *Response) JSONPath(path string) (any, bool) {
 	return cur, true
 }
 
+// AssertMatchesOpenAPI checks the response against the app's OpenAPI
+// document (App.OpenAPI): the operation for the request, the schema of the
+// response status (or the default problem response).
+func (r *Response) AssertMatchesOpenAPI() *Response {
+	r.t.Helper()
+
+	doc, err := r.client.app.OpenAPI()
+	if err != nil {
+		r.fail("OpenAPI document: %v", err)
+	}
+
+	if err := doc.ValidateResponse(r.req.Method, r.req.URL.Path, r.rec.Code, r.rec.Body.Bytes()); err != nil {
+		r.fail("response does not match the OpenAPI document: %v", err)
+	}
+
+	return r
+}
+
 // AssertJSONPath asserts the value at path equals want (compared by its
 // JSON encoding, so 3 matches json.Number("3")).
 func (r *Response) AssertJSONPath(path string, want any) *Response {

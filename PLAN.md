@@ -18,7 +18,7 @@ Task IDs: `<phase>.<group>.<task>` (e.g. `P.3.2`). Reference them in commit bodi
 | Field | Value |
 | --- | --- |
 | Current phase | **ALPHA** |
-| Next task | `B.0.3` (`AssertMatchesOpenAPI`) |
+| Next task | `B.0.5` (`z` JSON Schema export and `codegen:types`) |
 | Last release | `v0.14.0` (A.7.2 example blog, auth.Optional) |
 | Updated | 2026-10-16 |
 
@@ -452,7 +452,7 @@ Applies to **every** task:
   → verify: tests for binding, validation and response encoding.
 - [x] **B.0.2** OpenAPI 3.1 generator (schemas from `json`/`validate` tags, problem catalogue, security schemes), `/openapi.json`, `vukem openapi:export`.
   → verify: generated document validates against the OpenAPI 3.1 JSON Schema; golden test.
-- [ ] **B.0.3** `AssertMatchesOpenAPI()` test helper.
+- [x] **B.0.3** `AssertMatchesOpenAPI()` test helper.
   → verify: a mismatching response fails the assertion.
 - [ ] **B.0.5** `z` exports: `JSONSchema()` and `vukem codegen:types` (TypeScript types + optional Zod schemas).
   → verify: golden JSON Schema/TS output; `tsc --noEmit` passes on generated types.

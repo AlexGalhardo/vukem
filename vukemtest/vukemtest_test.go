@@ -13,6 +13,7 @@ import (
 	"time"
 
 	vukem "github.com/AlexGalhardo/vukem"
+	"github.com/AlexGalhardo/vukem/api"
 	"github.com/AlexGalhardo/vukem/errs"
 	"github.com/AlexGalhardo/vukem/orm"
 	"github.com/AlexGalhardo/vukem/router"
@@ -141,21 +142,21 @@ func TestEndToEnd(t *testing.T) {
 		AssertSessionHasErrors("body").
 		AssertSessionMissing("success")
 
-	api := app.Client(t).AcceptJSON()
-	api.PostJSON("/notes", map[string]any{"body": "From the API"}).
+	jc := app.Client(t).AcceptJSON()
+	jc.PostJSON("/notes", map[string]any{"body": "From the API"}).
 		AssertCreated().
 		AssertHeader("Location", "/notes/2").
 		AssertJSONPath("body", "From the API").
 		AssertJSONPath("id", 2).
 		AssertHXTrigger("note-created")
 
-	api.PostJSON("/notes", map[string]any{"body": ""}).AssertJSONValidationErrors("body")
-	api.GetJSON("/notes/99").AssertProblem(http.StatusNotFound)
-	api.GetJSON("/notes/abc").AssertNotFound()
-	api.GetJSON("/secret").AssertForbidden()
-	api.Get("/teapot").AssertStatus(418)
-	api.Delete("/notes").AssertNoContent()
-	api.GetJSON("/notes/1").AssertJSONPath("body", "Buy milk").AssertJSONCount("", 4)
+	jc.PostJSON("/notes", map[string]any{"body": ""}).AssertJSONValidationErrors("body")
+	jc.GetJSON("/notes/99").AssertProblem(http.StatusNotFound)
+	jc.GetJSON("/notes/abc").AssertNotFound()
+	jc.GetJSON("/secret").AssertForbidden()
+	jc.Get("/teapot").AssertStatus(418)
+	jc.Delete("/notes").AssertNoContent()
+	jc.GetJSON("/notes/1").AssertJSONPath("body", "Buy milk").AssertJSONCount("", 4)
 }
 
 func TestRefreshDatabaseAndClock(t *testing.T) {
@@ -295,4 +296,33 @@ func TestAssertionsReportFailures(t *testing.T) {
 	if v, ok := app.Client(t).GetJSON("/notes/99").JSONPath(""); !ok || v == nil {
 		t.Fatal("JSONPath root")
 	}
+}
+
+type codeOut struct {
+	Code string `json:"code" validate:"max=3"`
+}
+
+func TestAssertMatchesOpenAPI(t *testing.T) {
+	t.Parallel()
+
+	app := vukemtest.New(t, func(opts ...vukem.Option) (*vukem.App, error) {
+		return vukem.New(append(opts, vukem.WithRoutes(func(r *router.Router, _ *vukem.App) error {
+			api.Register(r, "GET /api/codes/{code}", api.Op{},
+				func(_ *web.Ctx, in struct {
+					Code string `json:"code"`
+				},
+				) (codeOut, error) {
+					return codeOut{Code: in.Code}, nil
+				})
+
+			return nil
+		}))...)
+	})
+
+	app.Client(t).GetJSON("/api/codes/abc").AssertOK().AssertMatchesOpenAPI()
+
+	expectFailure(t, "$.code: length 6, want at most 3", func(tb *fakeTB) {
+		app.Client(tb).GetJSON("/api/codes/abcdef").AssertMatchesOpenAPI()
+	})
+	expectFailure(t, "no operation", func(tb *fakeTB) { app.Client(tb).GetJSON("/nowhere").AssertMatchesOpenAPI() })
 }
