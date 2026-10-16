@@ -28,6 +28,7 @@ formatters:
     generated: lax
     paths:
       - site/
+      - testdata/ # golden files must stay byte-for-byte
 
 linters:
   default: standard

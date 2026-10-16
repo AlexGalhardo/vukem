@@ -2,7 +2,6 @@ package bootstrap
 
 import (
 	"example.com/blog/app/commands"
-
 	lumek "github.com/AlexGalhardo/golang-framework"
 )
 

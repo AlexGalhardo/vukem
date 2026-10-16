@@ -3,9 +3,9 @@ package tests
 import (
 	"testing"
 
-	"example.com/blog/bootstrap"
-
 	"github.com/AlexGalhardo/golang-framework/lumektest"
+
+	"example.com/blog/bootstrap"
 )
 
 func TestPost(t *testing.T) {
