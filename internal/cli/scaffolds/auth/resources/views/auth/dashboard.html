@@ -1,0 +1,9 @@
+{{define "title"}}Dashboard{{end}}
+{{define "content"}}
+<h1>Hello, {{.Name}}</h1>
+{{if .EmailVerified}}<p>Your email is verified.</p>{{else}}<p><a href="{{route "verification.notice"}}">Verify your email</a></p>{{end}}
+<form method="post" action="{{route "logout"}}">
+	{{csrfField}}
+	<button type="submit">Log out</button>
+</form>
+{{end}}

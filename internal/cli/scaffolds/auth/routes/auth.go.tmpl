@@ -1,0 +1,47 @@
+package routes
+
+import (
+	"time"
+
+	"github.com/AlexGalhardo/vukem"
+	"github.com/AlexGalhardo/vukem/auth"
+	"github.com/AlexGalhardo/vukem/ratelimit"
+	"github.com/AlexGalhardo/vukem/router"
+
+	"{{.Module}}/app/accounts"
+	"{{.Module}}/app/controllers/account"
+)
+
+// Auth registers login, registration, password reset and email
+// verification routes (vukem install:auth).
+func Auth(r *router.Router, app *vukem.App) error {
+	acc, err := accounts.New(app)
+	if err != nil {
+		return err
+	}
+
+	h := account.New(acc)
+	guest := auth.Guest(acc.Web)
+	required := auth.Required(acc.Web)
+	throttle := ratelimit.Middleware(ratelimit.NewMemory(5, time.Minute), account.LoginThrottleKey)
+	mails := ratelimit.Middleware(ratelimit.NewMemory(3, time.Minute), ratelimit.ByIP)
+
+	r.Get("/login", h.ShowLogin).Name("login").Use(guest)
+	r.Post("/login", h.Login).Use(guest, throttle)
+	r.Get("/register", h.ShowRegister).Name("register").Use(guest)
+	r.Post("/register", h.Register).Use(guest)
+	r.Post("/logout", h.Logout).Name("logout").Use(required)
+
+	r.Get("/forgot-password", h.ShowForgot).Name("password.request").Use(guest)
+	r.Post("/forgot-password", h.SendResetLink).Name("password.email").Use(guest, mails)
+	r.Get("/reset-password/{token}", h.ShowReset).Name("password.reset").Use(guest)
+	r.Post("/reset-password", h.Reset).Name("password.update").Use(guest)
+
+	r.Get("/email/verify", h.Notice).Name("verification.notice").Use(required)
+	r.Get("/email/verify/{id}", h.Verify).Name("verification.verify").Use(required, acc.Signer.Middleware())
+	r.Post("/email/verification-notification", h.Resend).Name("verification.send").Use(required, mails)
+
+	r.Get("/dashboard", h.Dashboard).Name("dashboard").Use(required)
+
+	return nil
+}

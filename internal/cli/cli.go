@@ -52,6 +52,7 @@ func commands() []command {
 		{"serve", "", "Run the app and restart it when Go files change", serveCmd},
 		{"build", "", "Build assets (Vite) and a production binary in bin/", buildCmd},
 		{"version", "", "Print the vukem version", nil},
+		{"install:auth", "", "Add login, registration, password reset and email verification", installAuth},
 		{"key:generate", "", "Write a new APP_KEY to .env", keyGenerate},
 		{"make:controller", "<Name>", "Create a controller", makeController},
 		{"make:model", "<Name>", "Create a model (with -m, -f, -c)", makeModel},

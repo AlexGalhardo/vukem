@@ -13,13 +13,18 @@ import (
 
 // New builds the application; cmd/app and the tests call it.
 func New(opts ...vukem.Option) (*vukem.App, error) {
-	app, err := vukem.New(append([]vukem.Option{
+	base := []vukem.Option{
 		vukem.WithProviders(Providers()...),
 		vukem.WithMigrations(migrations.All()),
 		vukem.WithSeeders(seeders.All()...),
 		vukem.WithViews(resources.Views()),
-		vukem.WithRoutes(routes.Web),
-	}, opts...)...)
+	}
+
+	for _, fn := range routes.All() {
+		base = append(base, vukem.WithRoutes(fn))
+	}
+
+	app, err := vukem.New(append(base, opts...)...)
 	if err != nil {
 		return nil, err
 	}

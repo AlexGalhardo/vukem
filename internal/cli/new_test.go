@@ -41,6 +41,29 @@ func TestSecurity_A02_StarterViewsRespectCSP(t *testing.T) {
 
 	forbidden := regexp.MustCompile(`(?i)<script|\son[a-z]+\s*=|\sstyle\s*=|hx-on|javascript:`)
 
+	check := func(fsys fs.FS) fs.WalkDirFunc {
+		return func(p string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() || strings.Contains(p, "/views/mail/") { // emails are not served pages
+				return err
+			}
+
+			b, err := fs.ReadFile(fsys, p)
+			if err != nil {
+				return err
+			}
+
+			if m := forbidden.FindString(string(b)); m != "" {
+				t.Errorf("%s contains %q", p, m)
+			}
+
+			return nil
+		}
+	}
+
+	if err := fs.WalkDir(scaffoldFS, "scaffolds", check(scaffoldFS)); err != nil {
+		t.Fatal(err)
+	}
+
 	err := fs.WalkDir(starterFS, "starter/resources/views", func(p string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return err
@@ -153,6 +176,27 @@ func TestNewProjectEndToEnd(t *testing.T) {
 
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("starter tests: %v\n%s", err, out)
+	}
+
+	if code, out, errOut := vukem(
+		t,
+		project,
+		"install:auth",
+	); code != 0 ||
+		!strings.Contains(out, "updated routes/registry.go") {
+		t.Fatalf("vukem install:auth = %d\n%s%s", code, out, errOut)
+	}
+
+	if code, _, errOut := vukem(t, project, "install:auth"); code != 1 || !strings.Contains(errOut, "already exist") {
+		t.Fatalf("second install:auth = %d %s", code, errOut)
+	}
+
+	cmd = exec.CommandContext(t.Context(), "go", "test", "./...")
+	cmd.Dir = project
+	cmd.Env = append(os.Environ(), "GOWORK=off")
+
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("tests after install:auth: %v\n%s", err, out)
 	}
 
 	if code, out, errOut := vukem(t, project, "build"); code != 0 {

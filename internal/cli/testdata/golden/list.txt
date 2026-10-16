@@ -7,6 +7,8 @@ Usage:
   serve                   Run the app and restart it when Go files change
   build                   Build assets (Vite) and a production binary in bin/
   version                 Print the vukem version
+ install
+  install:auth            Add login, registration, password reset and email verification
  key
   key:generate            Write a new APP_KEY to .env
  make

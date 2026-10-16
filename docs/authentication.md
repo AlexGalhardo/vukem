@@ -95,19 +95,29 @@ user, err := auth.User[models.User](c, "web") // in handlers behind Required
 
 ## `install:auth` scaffold
 
-`vukem install:auth` generates **user-owned code** (Fortify-style), not a hidden package:
+`vukem install:auth` copies **user-owned code** into the project (Fortify-style), registers its migrations and routes, and runs `go mod tidy`:
 
 ```text
-app/controllers/auth/{login,register,logout,password_reset,email_verification}.go
-app/actions/auth/{create_user,reset_password,password_rules}.go   # edit freely
-app/models/user.go
-database/migrations/*_create_users_table.go, *_create_password_resets_table.go, *_create_access_tokens_table.go
-resources/views/auth/*.html                                       # HTMX forms
-routes/auth.go                                                    # login, register, forgot-password…
-tests/auth_test.go
+app/models/user.go                         User (AuthID, AuthPassword, EmailVerified)
+app/accounts/{accounts,users,passwords}.go guards, registration, verification, password resets
+app/controllers/account/*.go               login, register, logout, forgot/reset password, verification, dashboard
+app/requests/auth.go                       z schemas (password ≥ 12 characters, confirmation)
+app/mail/auth.go                           VerifyEmail and ResetPassword mailables
+database/migrations/*_create_users_table.go, *_create_auth_tables.go (remember, access and reset tokens)
+resources/views/auth/*.html, resources/views/mail/{verify_email,reset_password}.html
+routes/auth.go                             appended to routes.All()
+tests/auth_test.go                         the whole flow, run by go test
 ```
 
-Flows included: register, login (rate-limited 5/min per email+IP), logout, forgot/reset password (signed, expiring, single-use token), email verification (signed URL), password confirmation for sensitive routes, and social login with `--social` ([see below](#social-login-social)). 2FA (TOTP) is post-1.0.
+| Flow | Behaviour |
+| --- | --- |
+| Register | unique email (`orm.Unique`, case-insensitive), argon2id hash, login, verification email |
+| Login | `Attempt` with remember-me, intended URL, **5 attempts per minute per email + IP** (`ratelimit`), same error for unknown users |
+| Email verification | signed link (`signed` package, HMAC + 1 hour expiry), must match the logged-in user; resend limited to 3 per minute |
+| Forgot / reset password | same answer for unknown emails; random token stored as SHA-256, 1 hour, single use; reset logs out remembered sessions |
+| Logout | session invalidated, remember-me token deleted |
+
+Existing projects created before `routes.All()` get the exact lines to add printed instead. `--force` overwrites existing files. Planned with `--social`: the social account routes, `social_accounts` migration and linking action (A.3.10).
 
 ## Social login (`social`)
 

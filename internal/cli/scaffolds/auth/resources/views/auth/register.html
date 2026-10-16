@@ -1,0 +1,25 @@
+{{define "title"}}Create an account{{end}}
+{{define "content"}}
+<h1>Create an account</h1>
+<form method="post" action="{{route "register"}}">
+	{{csrfField}}
+	<label>Name
+		<input name="name" value="{{old "name"}}" required autocomplete="name">
+	</label>
+	{{with error "name"}}<p class="error">{{.}}</p>{{end}}
+	<label>Email
+		<input type="email" name="email" value="{{old "email"}}" required autocomplete="email">
+	</label>
+	{{with error "email"}}<p class="error">{{.}}</p>{{end}}
+	<label>Password (at least 12 characters)
+		<input type="password" name="password" required minlength="12" autocomplete="new-password">
+	</label>
+	{{with error "password"}}<p class="error">{{.}}</p>{{end}}
+	<label>Confirm password
+		<input type="password" name="password_confirmation" required autocomplete="new-password">
+	</label>
+	{{with error "password_confirmation"}}<p class="error">{{.}}</p>{{end}}
+	<button type="submit">Create account</button>
+</form>
+<p><a href="{{route "login"}}">Already registered?</a></p>
+{{end}}

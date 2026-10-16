@@ -18,8 +18,8 @@ Task IDs: `<phase>.<group>.<task>` (e.g. `P.3.2`). Reference them in commit bodi
 | Field | Value |
 | --- | --- |
 | Current phase | **ALPHA** |
-| Next task | `A.3.6` (install:auth), then A.3.10, A.0.6, A.6 |
-| Last release | `v0.7.0` (A.5 mail: SMTP, Resend, previews) |
+| Next task | `A.3.10` (install:auth --social), then A.0.6, A.6 |
+| Last release | `v0.8.0` (A.3.6 install:auth, signed URLs) |
 | Updated | 2026-10-16 |
 
 ## Design references
@@ -358,7 +358,7 @@ Applies to **every** task:
   → verify: tests.
 - [x] **A.3.5** Middleware `Required`, `Guest`, `Verified`, `Ability`.
   → verify: tests.
-- [ ] **A.3.6** `install:auth` scaffold (controllers, actions, views, migrations, routes, tests) incl. password reset + email verification.
+- [x] **A.3.6** `install:auth` scaffold (controllers, actions, views, migrations, routes, tests) incl. password reset + email verification.
   → verify: e2e: generated tests pass in a new app.
 - [x] **A.3.7** `ActingAs` in test client.
   → verify: tests.
