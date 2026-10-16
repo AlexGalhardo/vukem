@@ -69,7 +69,16 @@ user, err := auth.User[models.User](c, "web") // in handlers behind Required
 
 - Opaque tokens `<id>.<secret>` (`crypto/rand.Text()`); `access_tokens` stores `SHA-256(secret)`, name, abilities (JSON), `last_used_at` (updated at most once a minute) and optional expiry (`TestSecurity_A04_TokensStoredHashed`).
 - `tokens.Create(ctx, user.AuthID(), "cli", []string{"posts:read"}, 30*24*time.Hour)` returns the plain token once; `Revoke(ctx, id)`, `RevokeAll(ctx, userID)`; `auth.CurrentToken(c, "api")`, `auth.TokenCan(c, "api", "posts:read")`; `"*"` grants every ability.
-- Hashes are compared with `subtle.ConstantTimeCompare`; rejected tokens emit `token.rejected`. A JWT guard arrives in BETA (B.8.1).
+- Hashes are compared with `subtle.ConstantTimeCompare`; rejected tokens emit `token.rejected`.
+
+### JWT guard (`auth/jwt`)
+
+Standard library only. `jwt.Sign(key, jwt.Claims{Subject, Issuer, Audience, ExpiresAt, NotBefore, IssuedAt, ID, Extra})` with `jwt.HS256(kid, secret)` (≥ 32 bytes), `jwt.RS256(kid, rsaKey)` (≥ 2048 bits), `jwt.ES256(kid, p256Key)` or `jwt.EdDSA(kid, ed25519Key)`.
+
+- `jwt.NewVerifier(keys, jwt.VerifyOptions{Issuer, Audience, Algorithms, Leeway, AllowMissingExpiry})`: the header `alg` must be allowed **and** equal the algorithm of the key picked by `kid`, so HMAC-with-a-public-key confusion and `none` are impossible (`TestSecurity_A04_JWTAlgorithmConfusion`); `exp` is required by default, `nbf`/`iat` checked with 30s leeway, `iss`/`aud` exact; duplicate JSON members and tokens over 8 KiB are rejected. Every failure wraps `jwt.ErrInvalid`.
+- Key sets: `jwt.StaticKeys(current, previous...)` for rotation; `&jwt.RemoteJWKS{URL: issuer + "/.well-known/jwks.json"}` caches an identity provider's keys, refetches on an unknown `kid` at most once a minute and refreshes hourly; `jwt.PublicJWKS(keys...)` builds your own JWKS document (HMAC keys are never published).
+- `jwt.NewGuard[User]("api", verifier, provider)` implements `auth.Checker` (`auth.Required(guard)`); `jwt.ClaimsFrom(c, "api")` exposes the claims; rejected tokens emit `jwt.rejected`.
+- Refresh tokens: `jwt.NewRefreshTokens(db)` with `jwt.RefreshTokensMigration(id)` stores only `SHA-256` of opaque tokens; `Issue(ctx, userID)` starts a family, `Rotate(ctx, token)` consumes it and returns the user and a new token, atomically (one winner among concurrent rotations, `TestSecurity_A07_RefreshConcurrentRotationSingleWinner`); presenting a consumed token returns `jwt.ErrRefreshReused` and revokes the whole family. `Revoke(ctx, token)` (logout) and `RevokeUser(ctx, id)` (password change).
 
 ### Middleware
 

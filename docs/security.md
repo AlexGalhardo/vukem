@@ -44,6 +44,7 @@ What Vukem does **by default** to protect applications, mapped to the [OWASP Top
 | The CSP allows the Vite dev server origin only while its hot file exists outside production; the origin must be a bare `http(s)://host:port` so it cannot inject directives | B |
 | Server-sent event fields (`id`, `event`, `data`) cannot carry CR/LF into new fields (`TestSecurity_A05_SSEFieldInjection`) | B |
 | Maintenance mode stores only the SHA-256 of the bypass secret; the bypass cookie is an HMAC (key derived from `APP_KEY`) bound to that secret, `HttpOnly`, `SameSite=Lax`, `Secure` in production; an unreadable state file keeps the app down (`TestSecurity_A01_MaintenanceBypassNeedsSecret`) | B |
+| JWTs: algorithm pinned per key (no `none`, no HMAC/public-key confusion), `exp` required, weak keys refused (`TestSecurity_A04_JWTAlgorithmConfusion`); refresh tokens stored hashed, single use, reuse revokes the family (`TestSecurity_A07_RefreshConcurrentRotationSingleWinner`) | B |
 | The Vite `hot` file is ignored in production (`TestSecurity_A02_ViteHotFileIgnoredInProduction`) and must hold an `http(s)` URL (`TestSecurity_A05_ViteRejectsUnsafeHotURL`) | B |
 | Debug error page only in development; production errors never include stack traces, SQL or config (`TestSecurity_A02_DebugPageOffInProduction`); the debug page redacts credentials and escapes error text and source (`TestSecurity_A09_DebugPageRedactsSecrets`) | P / B |
 | `vukem about` prints effective security settings (secrets redacted) to review deployments | P |

@@ -136,6 +136,10 @@ func cached[U any](c *web.Ctx, guard string) (U, bool) {
 	return u, ok
 }
 
+// SetUser records u as the user guard authenticated for this request, for
+// guards implemented outside this package (auth/jwt).
+func SetUser(c *web.Ctx, guard string, u any) { cache(c, guard, u) }
+
 // UserFrom returns the user authenticated by guard from a request context
 // (authz gates, view functions).
 func UserFrom[U any](ctx context.Context, guard string) (U, error) {

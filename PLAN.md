@@ -535,7 +535,7 @@ Applies to **every** task:
 
 ### B.8 Auth & integrations
 
-- [ ] **B.8.1** JWT guard (`auth/jwt`, stdlib): HS256/RS256/ES256/EdDSA, `alg` allowlist, `kid` + JWKS rotation, claim checks, refresh-token rotation with reuse detection.
+- [x] **B.8.1** JWT guard (`auth/jwt`, stdlib): HS256/RS256/ES256/EdDSA, `alg` allowlist, `kid` + JWKS rotation, claim checks, refresh-token rotation with reuse detection.
   → verify: RFC 7515/7519 test vectors; `none`/alg-confusion/expired/wrong-aud tokens rejected (`TestSecurity_A07_JWT*`).
 - [ ] **B.8.2** TOTP 2FA (`auth/totp`, RFC 6238): enrolment (otpauth URI + QR), hashed recovery codes, per-step replay protection, throttling, `install:auth --2fa`.
   → verify: RFC 6238 vectors; replayed code rejected; generated app tests pass.
