@@ -19,7 +19,7 @@ Loaded by a small stdlib-only parser in `config/`. Precedence, highest first:
 4. `.env.<APP_ENV>`
 5. `.env`
 
-Supported syntax: `KEY=value`, `export KEY=value`, single/double quotes, `\n` escapes inside double quotes, `#` comments, `${OTHER}` interpolation, and the `file:` prefix (`DB_PASSWORD=file:/run/secrets/db`) to read a value from a file (Docker/Kubernetes secrets).
+Supported syntax: `KEY=value`, `export KEY=value`, single/double quotes, `\n` escapes inside double quotes, `#` comments, `${OTHER}` interpolation, and the `@file:` prefix (`DB_PASSWORD=@file:/run/secrets/db`) to read a value from a file (Docker/Kubernetes secrets). The `@` keeps SQLite DSNs such as `file:storage/app.db` untouched.
 
 `.env` and `.env.*.local` are git-ignored; `.env.example` is committed and kept in sync by generators that add variables.
 

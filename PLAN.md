@@ -17,7 +17,7 @@ Task IDs: `<phase>.<group>.<task>` (e.g. `P.3.2`). Reference them in commit bodi
 | Field | Value |
 | --- | --- |
 | Current phase | **Prototype** |
-| Next task | `P.0.9` (CI green on first push), then `P.1.1` |
+| Next task | `P.2.1` (P.0.9 waits for GitHub billing; CI runs locally via `task ci:full`) |
 | Last release | `v0.0.1` (foundation, 2026-10-16) |
 | Updated | 2026-10-16 |
 
@@ -96,15 +96,15 @@ Applies to **every** task:
 
 ### P.1 Config & environment — needs: P.0
 
-- [ ] **P.1.1** `.env` parser (quotes, escapes, comments, `export`, `${VAR}` interpolation, `file:` prefix).
+- [x] **P.1.1** `.env` parser (quotes, escapes, comments, `export`, `${VAR}` interpolation, `file:` prefix).
   → verify: table tests + `FuzzParse` runs 30s without crash.
-- [ ] **P.1.2** Source precedence (`getenv` > `.env.<env>.local` > `.env.local` > `.env.<env>` > `.env`; `.env.local` skipped in test).
+- [x] **P.1.2** Source precedence (`getenv` > `.env.<env>.local` > `.env.local` > `.env.<env>` > `.env`; `.env.local` skipped in test).
   → verify: tests with a fake FS and fake `getenv`.
-- [ ] **P.1.3** `config.Load[T]`: `env`/`default` tags, supported types, aggregated errors.
+- [x] **P.1.3** `config.Load[T]`: `env`/`default` tags, supported types, aggregated errors.
   → verify: tests for every supported type and an error list with ≥ 2 failures.
-- [ ] **P.1.4** `config.Secret` (redaction in `String`, `slog`, JSON, `%v`).
+- [x] **P.1.4** `config.Secret` (redaction in `String`, `slog`, JSON, `%v`).
   → verify: tests asserting `[redacted]` in each path.
-- [ ] **P.1.5** `APP_KEY` decoding + HKDF sub-key derivation helper.
+- [x] **P.1.5** `APP_KEY` decoding + HKDF sub-key derivation helper.
   → verify: deterministic test vectors; boot fails without key.
 
 ### P.2 App & lifecycle — needs: P.1
