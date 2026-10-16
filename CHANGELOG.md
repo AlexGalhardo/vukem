@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-10-16
+
+### Added
+
+- **social:** Add Apple, LinkedIn and X sign-in
+- **stripe:** Add the Stripe API client and webhook module
+- **s3:** Add the S3 storage driver module
+- **database:** Add the mysql dialect and a url-to-dsn driver hook
+- **schema:** Generate mysql ddl and drop tables on mysql
+- **orm:** Support the mysql dialect in inserts and queries
+- **queue:** Run the database queue on mysql
+- **cache:** Run the database cache store on mysql
+- **session:** Add a mysql option to the sql session store
+- **boost:** Read the database schema on mysql
+- **mysql:** Add the drivers/mysql module for mysql 8 and mariadb 11
+- **openapi:** Generate typed TypeScript and Go API clients
+- **cli:** Add the codegen:client app command
+- **web:** Add context session helpers and Partial for components
+- **vite:** Carry the Vite instance in the request context
+- **cli:** Add the templ starter
+- **database:** Add a query observer hook
+- **queue:** Add a job observer hook
+- **events:** Add a dispatch observer hook
+- **devtools:** Add the /_vukem development dashboard
+- **broadcast:** Add channel broadcasting with an SSE transport
+- **websocket:** Serve the broadcast protocol over WebSockets
+- **web:** Let a route body limit replace the router default
+- **BREAKING:** **middleware:** Read _method from the query for multipart forms
+- **z:** Add z.File for uploaded files
+- **cli:** Add an upload demo with progress to the HTMX starter
+- **cli:** Add install:auth --2fa for TOTP two-factor authentication
+
+### Fixed
+
+- **cli:** Drop the html/template upload demo from the templ starter
+
+### Security
+
+- **websocket:** Add the WebSocket driver module
+- **upload:** Add streaming, resumable and direct uploads
+
 ## [0.18.0] - 2026-10-16
 
 ### Added
@@ -262,7 +303,8 @@ Project foundation. No framework code yet; see [PLAN.md](PLAN.md) for the roadma
 - README, MIT license, CONTRIBUTING, SECURITY and CODE_OF_CONDUCT.
 - Agent configuration: `AGENTS.md`, `CLAUDE.md`, path-scoped `.claude/rules/`, Go skills and project settings.
 
-[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.18.0...HEAD
+[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.19.0...HEAD
+[0.19.0]: https://github.com/AlexGalhardo/vukem/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/AlexGalhardo/vukem/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/AlexGalhardo/vukem/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/AlexGalhardo/vukem/compare/v0.15.0...v0.16.0
