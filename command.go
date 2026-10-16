@@ -17,6 +17,8 @@ import (
 	"strings"
 	"syscall"
 	"text/tabwriter"
+
+	"github.com/AlexGalhardo/vukem/openapi"
 )
 
 // Command is an application command compiled into the app binary
@@ -150,7 +152,7 @@ func (c CommandFunc) Run(ctx context.Context, app *App, args []string) error {
 
 func builtinCommands() []Command {
 	return slices.Concat(
-		[]Command{routeListCommand(), aboutCommand(), openAPIExportCommand()},
+		[]Command{routeListCommand(), aboutCommand(), openAPIExportCommand(), codegenTypesCommand()},
 		migrateCommands(),
 		seedCommands(),
 	)
@@ -202,6 +204,39 @@ func openAPIExportCommand() Command {
 			enc.SetIndent("", "  ")
 
 			return enc.Encode(doc)
+		},
+	}
+}
+
+func codegenTypesCommand() Command {
+	var zod *bool
+
+	var out *string
+
+	return CommandFunc{
+		CommandName: "codegen:types",
+		Desc:        "Generate TypeScript types (and Zod schemas with -zod) from the OpenAPI document",
+		DefineFlags: func(fs *flag.FlagSet) {
+			zod = fs.Bool("zod", false, "also emit Zod schemas")
+			out = fs.String("o", "", "write to this file instead of stdout")
+		},
+		Fn: func(_ context.Context, app *App, _ []string) error {
+			doc, err := app.OpenAPI()
+			if err != nil {
+				return err
+			}
+
+			ts, err := openapi.TypeScript(doc, *zod)
+			if err != nil {
+				return err
+			}
+
+			if *out == "" {
+				_, err = io.WriteString(app.stdout, ts)
+				return err
+			}
+
+			return os.WriteFile(*out, []byte(ts), 0o600)
 		},
 	}
 }

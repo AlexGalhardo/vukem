@@ -82,3 +82,27 @@ func TestSecurity_A02_OpenAPIOffInProduction(t *testing.T) {
 		t.Fatalf("opted-in /openapi.json = %d, want 200", rec.Code)
 	}
 }
+
+func TestCodegenTypesCommand(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+
+	build := func(opts ...Option) (*App, error) {
+		return New(append(opts, WithLogger(discardLogger()), WithStdout(&out), WithRoutes(openAPIRoutes))...)
+	}
+
+	if err := RunMain(
+		t.Context(),
+		[]string{"app", "codegen:types", "-zod"},
+		testSource(nil).Lookup,
+		build,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	if s := out.String(); !strings.Contains(s, "export type PingResponse = PingOut;") ||
+		!strings.Contains(s, "PingOutSchema") {
+		t.Fatalf("codegen:types = %q", s)
+	}
+}

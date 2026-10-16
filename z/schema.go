@@ -51,6 +51,7 @@ type opts[T any] struct {
 	transforms []func(T) T
 	messages   map[string]string
 	desc       string
+	kw         map[string]any // JSON Schema keywords recorded by builders
 }
 
 func (o opts[T]) clone() opts[T] {
@@ -60,6 +61,8 @@ func (o opts[T]) clone() opts[T] {
 	if o.messages != nil {
 		o.messages = maps.Clone(o.messages)
 	}
+
+	o.kw = maps.Clone(o.kw)
 
 	return o
 }

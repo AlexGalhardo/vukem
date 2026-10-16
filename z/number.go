@@ -191,7 +191,7 @@ func parseNumberText[N Number](text string) (N, bool) {
 
 // Min requires v >= n.
 func (s NumberSchema[N]) Min(n N) NumberSchema[N] {
-	return s.with(func(o *opts[N], c *pctx, path string, v N) {
+	return s.kw("minimum", n).with(func(o *opts[N], c *pctx, path string, v N) {
 		if v < n {
 			o.issue(c, path, CodeTooSmall, "too_small.number", map[string]any{"min": n})
 		}
@@ -200,7 +200,7 @@ func (s NumberSchema[N]) Min(n N) NumberSchema[N] {
 
 // Max requires v <= n.
 func (s NumberSchema[N]) Max(n N) NumberSchema[N] {
-	return s.with(func(o *opts[N], c *pctx, path string, v N) {
+	return s.kw("maximum", n).with(func(o *opts[N], c *pctx, path string, v N) {
 		if v > n {
 			o.issue(c, path, CodeTooBig, "too_big.number", map[string]any{"max": n})
 		}
@@ -209,7 +209,7 @@ func (s NumberSchema[N]) Max(n N) NumberSchema[N] {
 
 // Positive requires v > 0.
 func (s NumberSchema[N]) Positive() NumberSchema[N] {
-	return s.with(func(o *opts[N], c *pctx, path string, v N) {
+	return s.kw("exclusiveMinimum", 0).with(func(o *opts[N], c *pctx, path string, v N) {
 		if v <= 0 {
 			o.issue(c, path, CodeTooSmall, "too_small.number", map[string]any{"min": "greater than 0"})
 		}
@@ -221,7 +221,7 @@ func (s NumberSchema[N]) NonNegative() NumberSchema[N] { return s.Min(0) }
 
 // MultipleOf requires v to be a multiple of m.
 func (s NumberSchema[N]) MultipleOf(m N) NumberSchema[N] {
-	return s.with(func(o *opts[N], c *pctx, path string, v N) {
+	return s.kw("multipleOf", m).with(func(o *opts[N], c *pctx, path string, v N) {
 		if m != 0 && math.Remainder(float64(v), float64(m)) != 0 {
 			o.issue(c, path, CodeNotMultiple, CodeNotMultiple, map[string]any{"multiple": m})
 		}
@@ -283,3 +283,10 @@ func (s NumberSchema[N]) Parse(in any) (N, error) { return parseRoot[N](s, in) }
 
 // Check implements Schema.
 func (s NumberSchema[N]) Check(v N) error { return checkValue(s, v) }
+
+func (s NumberSchema[N]) kw(k string, v any) NumberSchema[N] {
+	s.o = s.o.clone()
+	s.o.setKW(k, v)
+
+	return s
+}

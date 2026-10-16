@@ -18,7 +18,7 @@ Task IDs: `<phase>.<group>.<task>` (e.g. `P.3.2`). Reference them in commit bodi
 | Field | Value |
 | --- | --- |
 | Current phase | **ALPHA** |
-| Next task | `B.0.5` (`z` JSON Schema export and `codegen:types`) |
+| Next task | `B.0.4` (`Idempotency-Key` middleware) |
 | Last release | `v0.14.0` (A.7.2 example blog, auth.Optional) |
 | Updated | 2026-10-16 |
 
@@ -454,7 +454,7 @@ Applies to **every** task:
   → verify: generated document validates against the OpenAPI 3.1 JSON Schema; golden test.
 - [x] **B.0.3** `AssertMatchesOpenAPI()` test helper.
   → verify: a mismatching response fails the assertion.
-- [ ] **B.0.5** `z` exports: `JSONSchema()` and `vukem codegen:types` (TypeScript types + optional Zod schemas).
+- [x] **B.0.5** `z` exports: `JSONSchema()` and `vukem codegen:types` (TypeScript types + optional Zod schemas).
   → verify: golden JSON Schema/TS output; `tsc --noEmit` passes on generated types.
 - [ ] **B.0.4** `Idempotency-Key` middleware (database/Redis store).
   → verify: a duplicate POST returns the stored response.

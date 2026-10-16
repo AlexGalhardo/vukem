@@ -101,7 +101,7 @@ func (s StringSchema) ToUpper() StringSchema { return s.with(strings.ToUpper, ni
 
 // Min requires at least n characters (runes).
 func (s StringSchema) Min(n int) StringSchema {
-	return s.with(nil, func(o *opts[string], c *pctx, path, v string) {
+	return s.kw("minLength", n).with(nil, func(o *opts[string], c *pctx, path, v string) {
 		if utf8.RuneCountInString(v) < n {
 			o.issue(c, path, CodeTooSmall, "too_small.string", map[string]any{"min": n})
 		}
@@ -110,7 +110,7 @@ func (s StringSchema) Min(n int) StringSchema {
 
 // Max allows at most n characters (runes).
 func (s StringSchema) Max(n int) StringSchema {
-	return s.with(nil, func(o *opts[string], c *pctx, path, v string) {
+	return s.kw("maxLength", n).with(nil, func(o *opts[string], c *pctx, path, v string) {
 		if utf8.RuneCountInString(v) > n {
 			o.issue(c, path, CodeTooBig, "too_big.string", map[string]any{"max": n})
 		}
@@ -119,7 +119,7 @@ func (s StringSchema) Max(n int) StringSchema {
 
 // Len requires exactly n characters (runes).
 func (s StringSchema) Len(n int) StringSchema {
-	return s.with(nil, func(o *opts[string], c *pctx, path, v string) {
+	return s.kw("minLength", n).kw("maxLength", n).with(nil, func(o *opts[string], c *pctx, path, v string) {
 		if l := utf8.RuneCountInString(v); l != n {
 			code := CodeTooSmall
 			if l > n {
@@ -144,7 +144,7 @@ func (s StringSchema) format(key string, valid func(string) bool, params map[str
 
 // Email requires an email address (addr-spec, no display name).
 func (s StringSchema) Email() StringSchema {
-	return s.format("string.email", func(v string) bool {
+	return s.kw("format", "email").format("string.email", func(v string) bool {
 		a, err := mail.ParseAddress(v)
 		return err == nil && a.Address == v && a.Name == "" && strings.Contains(v[strings.LastIndexByte(v, '@'):], ".")
 	}, nil)
@@ -152,7 +152,7 @@ func (s StringSchema) Email() StringSchema {
 
 // URL requires an absolute http or https URL.
 func (s StringSchema) URL() StringSchema {
-	return s.format("string.url", func(v string) bool {
+	return s.kw("format", "uri").format("string.url", func(v string) bool {
 		u, err := url.Parse(v)
 		return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
 	}, nil)
@@ -162,55 +162,64 @@ var (
 	uuidRe     = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 	ulidRe     = regexp.MustCompile(`^[0-7][0-9A-HJKMNP-TV-Za-hjkmnp-tv-z]{25}$`)
 	numericRe  = regexp.MustCompile(`^-?\d+(\.\d+)?$`)
-	alphaRe    = regexp.MustCompile(`^\pL+$`)
-	alphanumRe = regexp.MustCompile(`^[\pL\pN]+$`)
+	alphaRe    = regexp.MustCompile(`^\p{L}+$`)
+	alphanumRe = regexp.MustCompile(`^[\p{L}\p{N}]+$`)
 )
 
 // UUID requires a UUID in canonical form.
-func (s StringSchema) UUID() StringSchema { return s.format("string.uuid", uuidRe.MatchString, nil) }
+func (s StringSchema) UUID() StringSchema {
+	return s.kw("format", "uuid").format("string.uuid", uuidRe.MatchString, nil)
+}
 
 // ULID requires a ULID.
-func (s StringSchema) ULID() StringSchema { return s.format("string.ulid", ulidRe.MatchString, nil) }
+func (s StringSchema) ULID() StringSchema {
+	return s.kw("pattern", ulidRe.String()).format("string.ulid", ulidRe.MatchString, nil)
+}
 
 // Alpha requires letters only.
-func (s StringSchema) Alpha() StringSchema { return s.format("string.alpha", alphaRe.MatchString, nil) }
+func (s StringSchema) Alpha() StringSchema {
+	return s.kw("pattern", alphaRe.String()).format("string.alpha", alphaRe.MatchString, nil)
+}
 
 // Alphanum requires letters and digits only.
 func (s StringSchema) Alphanum() StringSchema {
-	return s.format("string.alphanum", alphanumRe.MatchString, nil)
+	return s.kw("pattern", alphanumRe.String()).format("string.alphanum", alphanumRe.MatchString, nil)
 }
 
 // Numeric requires a decimal number written as a string.
 func (s StringSchema) Numeric() StringSchema {
-	return s.format("string.numeric", numericRe.MatchString, nil)
+	return s.kw("pattern", numericRe.String()).format("string.numeric", numericRe.MatchString, nil)
 }
 
 // Regex requires a match of re.
 func (s StringSchema) Regex(re *regexp.Regexp) StringSchema {
-	return s.format("string.regex", re.MatchString, nil)
+	return s.kw("pattern", re.String()).format("string.regex", re.MatchString, nil)
 }
 
 // StartsWith requires prefix.
 func (s StringSchema) StartsWith(prefix string) StringSchema {
-	return s.format("string.starts_with", func(v string) bool { return strings.HasPrefix(v, prefix) },
-		map[string]any{"prefix": prefix})
+	return s.kw("pattern", "^"+regexp.QuoteMeta(prefix)).
+		format("string.starts_with", func(v string) bool { return strings.HasPrefix(v, prefix) },
+			map[string]any{"prefix": prefix})
 }
 
 // EndsWith requires suffix.
 func (s StringSchema) EndsWith(suffix string) StringSchema {
-	return s.format("string.ends_with", func(v string) bool { return strings.HasSuffix(v, suffix) },
-		map[string]any{"suffix": suffix})
+	return s.kw("pattern", regexp.QuoteMeta(suffix)+"$").
+		format("string.ends_with", func(v string) bool { return strings.HasSuffix(v, suffix) },
+			map[string]any{"suffix": suffix})
 }
 
 // Includes requires substring.
 func (s StringSchema) Includes(substring string) StringSchema {
-	return s.format("string.includes", func(v string) bool { return strings.Contains(v, substring) },
-		map[string]any{"substring": substring})
+	return s.kw("pattern", regexp.QuoteMeta(substring)).
+		format("string.includes", func(v string) bool { return strings.Contains(v, substring) },
+			map[string]any{"substring": substring})
 }
 
 // OneOf requires one of values (see also Enum).
 func (s StringSchema) OneOf(values ...string) StringSchema {
-	return s.with(nil, func(o *opts[string], c *pctx, path, v string) {
+	return s.kw("enum", values).with(nil, func(o *opts[string], c *pctx, path, v string) {
 		if !slices.Contains(values, v) {
 			o.issue(c, path, CodeInvalidEnum, CodeInvalidEnum, map[string]any{"options": values})
 		}
@@ -264,5 +273,12 @@ func (s StringSchema) Message(code, message string) StringSchema {
 func (s StringSchema) Describe(text string) StringSchema {
 	s.o = s.o.clone()
 	s.o.desc = text
+	return s
+}
+
+func (s StringSchema) kw(k string, v any) StringSchema {
+	s.o = s.o.clone()
+	s.o.setKW(k, v)
+
 	return s
 }

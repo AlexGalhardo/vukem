@@ -1,0 +1,138 @@
+{
+  "explicit": {
+    "properties": {
+      "address": {
+        "additionalProperties": false,
+        "properties": {
+          "city": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "zip": {
+            "maxLength": 5,
+            "minLength": 5,
+            "pattern": "^-?\\d+(\\.\\d+)?$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "city",
+          "zip"
+        ],
+        "type": "object"
+      },
+      "age": {
+        "maximum": 130,
+        "minimum": 18,
+        "type": "integer"
+      },
+      "agree": {
+        "type": "boolean"
+      },
+      "email": {
+        "format": "email",
+        "type": "string"
+      },
+      "meta": {
+        "additionalProperties": {
+          "pattern": "^x-",
+          "type": "string"
+        },
+        "maxProperties": 10,
+        "type": "object"
+      },
+      "name": {
+        "description": "Full name",
+        "maxLength": 50,
+        "minLength": 2,
+        "type": "string"
+      },
+      "nick": {
+        "format": "uuid",
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "role": {
+        "enum": [
+          "admin",
+          "user",
+          null
+        ],
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "score": {
+        "default": 1,
+        "exclusiveMinimum": 0,
+        "multipleOf": 0.5,
+        "type": "number"
+      },
+      "tags": {
+        "items": {
+          "pattern": "^[a-z]+$",
+          "type": "string"
+        },
+        "maxItems": 5,
+        "type": "array",
+        "uniqueItems": true
+      }
+    },
+    "required": [
+      "address",
+      "agree",
+      "email",
+      "name"
+    ],
+    "type": "object"
+  },
+  "tags": {
+    "properties": {
+      "code": {
+        "maxLength": 3,
+        "minLength": 3,
+        "pattern": "^\\p{L}+$",
+        "type": "string"
+      },
+      "items": {
+        "items": {
+          "maxLength": 5,
+          "type": "string"
+        },
+        "maxItems": 3,
+        "type": "array"
+      },
+      "kind": {
+        "enum": [
+          "a",
+          "b"
+        ],
+        "type": "string"
+      },
+      "price": {
+        "maximum": 100,
+        "minimum": 0,
+        "type": "number"
+      },
+      "qty": {
+        "exclusiveMinimum": 0,
+        "type": "integer"
+      },
+      "site": {
+        "format": "uri",
+        "type": "string"
+      }
+    },
+    "required": [
+      "code"
+    ],
+    "type": "object"
+  },
+  "time": {
+    "format": "date-time",
+    "type": "string"
+  }
+}

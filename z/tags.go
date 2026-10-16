@@ -352,6 +352,7 @@ func numberFromRules(t reflect.Type, rs ruleSet, optional bool) (AnySchema, erro
 	var bounds []func(float64) error
 
 	positive := false
+	kw := map[string]any{}
 
 	for _, r := range rs.rules {
 		name, arg, _ := strings.Cut(r, "=")
@@ -364,6 +365,7 @@ func numberFromRules(t reflect.Type, rs ruleSet, optional bool) (AnySchema, erro
 			}
 
 			isMin := name == "min"
+			kw[map[bool]string{true: "minimum", false: "maximum"}[isMin]] = n
 			bounds = append(bounds, func(v float64) error {
 				if isMin && v < n || !isMin && v > n {
 					return boundError{min: isMin, n: n}
@@ -373,12 +375,13 @@ func numberFromRules(t reflect.Type, rs ruleSet, optional bool) (AnySchema, erro
 			})
 		case "positive":
 			positive = true
+			kw["exclusiveMinimum"] = 0
 		default:
 			return nil, fmt.Errorf("unknown rule %q for a number", r)
 		}
 	}
 
-	return numberAny{t: t, bounds: bounds, positive: positive, opt: optional}, nil
+	return numberAny{t: t, bounds: bounds, positive: positive, opt: optional, kw: kw}, nil
 }
 
 type boundError struct {
@@ -394,6 +397,7 @@ type numberAny struct {
 	bounds   []func(float64) error
 	positive bool
 	opt      bool
+	kw       map[string]any
 }
 
 func (n numberAny) GoType() reflect.Type { return n.t }

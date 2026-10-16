@@ -46,6 +46,8 @@ Exit codes: `0` success, `1` failure, `2` usage error.
 | `vukem build` | `vite build` (if present) then `go build -trimpath -ldflags "-s -w"` with embedded assets |
 | app: `migrate`, `migrate:rollback`, `migrate:reset`, `migrate:fresh`, `migrate:status` | Migrations |
 | app: `route:list [--json]` | Route table |
+| app: `openapi:export` | Print the OpenAPI 3.1 document of the routes ([api.md](api.md#openapi)) |
+| app: `codegen:types [-zod] [-o file]` | TypeScript types for every schema and operation (`<Op>Body`, `<Op>Query`, `<Op>Response`), plus Zod schemas with `-zod` |
 | app: `about` | Versions, environment, drivers, config summary (secrets redacted) |
 
 ### ALPHA
@@ -54,7 +56,7 @@ Shipped: `new --api`, `install:api`, `make:resource`, `make:factory`, `make:seed
 
 ### BETA
 
-`make:job`, `install:inertia`, `openapi:export`, `codegen:routes`, `ssr:start`, app: `queue:work`, `queue:retry`, `queue:failed`, `schedule:run`, `schedule:work`, `schedule:list`, `down`/`up` (maintenance mode).
+`make:job`, `install:inertia`, `codegen:routes`, `ssr:start`, app: `queue:work`, `queue:retry`, `queue:failed`, `schedule:run`, `schedule:work`, `schedule:list`, `down`/`up` (maintenance mode).
 
 ## Generators and stubs
 

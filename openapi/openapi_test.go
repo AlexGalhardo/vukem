@@ -146,3 +146,35 @@ func TestGenerateDefaultsAndFilters(t *testing.T) {
 		t.Error("wildcard path param not converted")
 	}
 }
+
+func TestTypeScriptGolden(t *testing.T) {
+	t.Parallel()
+
+	doc := openapi.Generate(routes(), openapi.Info{PathPrefix: "/api"})
+
+	for _, tc := range []struct {
+		file string
+		zod  bool
+	}{{"shop.types.ts", false}, {"shop.zod.ts", true}} {
+		got, err := openapi.TypeScript(doc, tc.zod)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		golden := filepath.Join("testdata", tc.file)
+		if *update {
+			if err := os.WriteFile(golden, []byte(got), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		want, err := os.ReadFile(golden)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if diff := cmp.Diff(string(bytes.ReplaceAll(want, []byte("\r\n"), []byte("\n"))), got); diff != "" {
+			t.Errorf("%s (-want +got):\n%s", tc.file, diff)
+		}
+	}
+}
