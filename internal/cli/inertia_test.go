@@ -11,6 +11,7 @@ import (
 // inertiaFrameworks under test; each needs a scaffolds/inertia-<name>.
 var inertiaStarters = []struct{ name, entry string }{
 	{"react", "resources/js/app.tsx"},
+	{"vue", "resources/js/app.ts"},
 }
 
 // TestNewInertiaProjectEndToEnd creates an Inertia project per framework,
