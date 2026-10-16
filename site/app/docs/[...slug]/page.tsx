@@ -36,7 +36,8 @@ export default async function DocPage({ params }: Props) {
   const { prev, next } = getNeighbours(doc);
 
   return (
-    <div className="flex gap-12">
+    // justify-between pins the TOC to the container's right edge, aligned with the header actions.
+    <div className="flex justify-between gap-12">
       <main id="content" className="min-w-0 flex-1 py-10 lg:pl-8 xl:max-w-3xl">
         <header className="mb-10">
           <p className="mb-2 text-sm font-medium text-accent">{doc.category}</p>
