@@ -247,16 +247,24 @@ if err := orm.Validate(c.Context(), db,
 
 Empty values are skipped (`required` belongs to the schema). Columns are validated against the model, so input never chooses a column.
 
-## MongoDB (BETA)
+## MongoDB
 
-Separate API, not the SQL builder:
+`go get github.com/AlexGalhardo/vukem/drivers/mongo` (official driver v2). A separate, typed API, not the SQL builder:
 
 ```go
-users := mongo.Collection[models.User](app.Mongo, "users")
-u, err := users.FindOne(ctx, bson.D{{"email", e}})
-for u, err := range users.Find(ctx, bson.D{{"active", true}}) { ... }
+m, err := mongo.Open(ctx, os.Getenv("MONGO_URL")) // mongodb://localhost:27017/app (database from the path)
+app.AddHealthCheck("mongo", m.Ping)                // reported by /up?checks=1
+
+users := mongo.Collection[models.User](m, "users")
+u, err := users.FindOne(ctx, bson.D{{Key: "email", Value: e}}) // mongo.ErrNotFound when missing
+for u, err := range users.Find(ctx, bson.D{{Key: "active", Value: true}}, options.Find().SetLimit(50)) { ... }
+id, err := users.Insert(ctx, u)
+matched, modified, err := users.UpdateOne(ctx, filter, bson.D{{Key: "$set", Value: bson.D{{Key: "name", Value: n}}}})
+totals, err := mongo.Aggregate[Total](ctx, users, pipeline)
 ```
 
-## Redis (BETA)
+Also `All`, `Count`, `InsertMany`, `UpdateMany`, `ReplaceOne`, `DeleteOne`, `DeleteMany` and `Raw()` for indexes and change streams. **Never pass decoded request JSON as a filter**: operators such as `$where` or `$ne` would come from the client; build filters from validated fields.
 
-`drivers/redis` provides a connection manager and stores for cache, session, queue, rate limiting and locks. Works with Valkey.
+## Redis
+
+`drivers/redis` provides cache, session and queue stores, a shared rate limiter, locks and pub/sub; it works with Redis 7+ and Valkey 8+. See [subsystems.md](subsystems.md#redis).

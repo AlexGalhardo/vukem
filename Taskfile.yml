@@ -4,7 +4,7 @@ version: "3"
 
 vars:
   # Every Go module in the repository (drivers are added as they land).
-  MODULES: ". drivers/postgres drivers/redis"
+  MODULES: ". drivers/postgres drivers/redis drivers/mongo"
 
 tasks:
   default:

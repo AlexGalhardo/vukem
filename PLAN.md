@@ -18,7 +18,7 @@ Task IDs: `<phase>.<group>.<task>` (e.g. `P.3.2`). Reference them in commit bodi
 | Field | Value |
 | --- | --- |
 | Current phase | **ALPHA** |
-| Next task | `B.2.2` (Mongo driver module) |
+| Next task | `B.3.1` (Vite & Inertia) |
 | Last release | `v0.16.0` (B.1 queue and scheduler) |
 | Updated | 2026-10-16 |
 
@@ -476,7 +476,7 @@ Applies to **every** task:
 
 - [x] **B.2.1** `drivers/redis`: connection, cache store, session store, queue driver, rate limiter store, locks, SSE pub/sub.
   → verify: conformance suites against `redis:7` (and Valkey).
-- [ ] **B.2.2** `drivers/mongo`: connection manager, `Collection[T]` (find/iterate/insert/update/delete/aggregate), health check.
+- [x] **B.2.2** `drivers/mongo`: connection manager, `Collection[T]` (find/iterate/insert/update/delete/aggregate), health check.
   → verify: integration tests against `mongo:8`.
 
 ### B.3 Vite & Inertia
