@@ -50,8 +50,10 @@ func installAuth(set *flag.FlagSet) func(context.Context, *Env, []string) error 
 		// With --social on a project that already has install:auth, add only
 		// the social part.
 		if len(providers) == 0 || *force || !exists(env, filepath.Join("routes", "auth.go")) {
-			if err := installScaffold(env, "auth-web", data, *force); err != nil {
-				return err
+			for _, name := range authScaffolds(env) {
+				if err := installScaffold(env, name, data, *force); err != nil {
+					return err
+				}
 			}
 
 			regs = append(regs, registration{"routes/registry.go", "All", "Auth"})

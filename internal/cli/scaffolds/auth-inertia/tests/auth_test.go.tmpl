@@ -1,0 +1,144 @@
+package tests
+
+import (
+	"net/url"
+	"regexp"
+	"strings"
+	"testing"
+
+	"github.com/AlexGalhardo/vukem/vukemtest"
+
+	"{{.Module}}/bootstrap"
+)
+
+var linkRe = regexp.MustCompile(`https?://[^\s)"]+`)
+
+// link extracts the first URL from the last mail sent to email.
+func link(t *testing.T, app *vukemtest.App, email string) string {
+	t.Helper()
+
+	sent := app.Mails().SentTo(email)
+	if len(sent) == 0 {
+		t.Fatalf("no mail sent to %s", email)
+	}
+
+	u := linkRe.FindString(sent[len(sent)-1].Text)
+	if u == "" {
+		t.Fatalf("no link in mail: %q", sent[len(sent)-1].Text)
+	}
+
+	parsed, err := url.Parse(u)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return parsed.RequestURI()
+}
+
+func register(t *testing.T, c *vukemtest.Client, email string) {
+	t.Helper()
+
+	c.PostJSON("/register", map[string]any{
+		"name": "Ana Silva", "email": email,
+		"password": "correct horse battery", "password_confirmation": "correct horse battery",
+	}).AssertRedirect("/email/verify")
+}
+
+func TestRegisterAndVerifyEmail(t *testing.T) {
+	t.Parallel()
+
+	app := vukemtest.New(t, bootstrap.New)
+	c := app.Client(t).Inertia("")
+
+	c.Get("/dashboard").AssertRedirect("/login")
+	c.Get("/login").AssertInertia("Auth/Login").PropEquals("auth.user", nil)
+
+	register(t, c, "ana@example.com")
+	vukemtest.AssertDatabaseHas(t, app, "users", map[string]any{"email": "ana@example.com", "email_verified_at": nil})
+
+	c.Get("/email/verify").AssertOK().AssertInertia("Auth/VerifyEmail").PropEquals("auth.user.email", "ana@example.com")
+
+	verify := link(t, app, "ana@example.com")
+	app.Client(t).Get(verify).AssertRedirect("/login") // the link needs the account's session
+	c.Get(verify + "x").AssertForbidden()              // tampered signature
+	c.Get(verify).AssertRedirect("/dashboard")
+	c.Get("/dashboard").AssertOK().
+		AssertInertia("Dashboard").
+		PropEquals("auth.user.name", "Ana Silva").
+		HasProp("auth.user.email_verified_at")
+
+	// Duplicate emails are rejected.
+	other := app.Client(t).Inertia("").WithHeader("Referer", "/register")
+	other.PostJSON("/register", map[string]any{
+		"name": "Other", "email": "ANA@example.com",
+		"password": "another long password", "password_confirmation": "another long password",
+	}).AssertRedirect("/register")
+	other.Get("/register").AssertInertia("Auth/Register").HasProp("errors.email")
+}
+
+func TestLoginLogoutAndThrottle(t *testing.T) {
+	t.Parallel()
+
+	app := vukemtest.New(t, bootstrap.New)
+	register(t, app.Client(t).Inertia(""), "bob@example.com")
+
+	c := app.Client(t).Inertia("").WithHeader("Referer", "/login")
+	c.PostJSON("/login", map[string]any{"email": "bob@example.com", "password": "wrong"}).AssertRedirect("/login")
+	c.Get("/login").AssertInertia("Auth/Login").HasProp("errors.email")
+
+	c.PostJSON("/login", map[string]any{"email": "bob@example.com", "password": "correct horse battery"}).
+		AssertRedirect("/dashboard")
+	c.Get("/login").AssertRedirect("/")
+	c.PostJSON("/logout", nil).AssertRedirect("/")
+	c.Get("/").AssertInertia("Home").PropEquals("auth.user", nil)
+	c.Get("/dashboard").AssertRedirect("/login")
+
+	attacker := app.Client(t).Inertia("")
+	for range 4 {
+		attacker.PostJSON("/login", map[string]any{"email": "bob@example.com", "password": "guess"})
+	}
+
+	attacker.PostJSON("/login", map[string]any{"email": "bob@example.com", "password": "guess"}).AssertStatus(429)
+}
+
+func TestPasswordReset(t *testing.T) {
+	t.Parallel()
+
+	app := vukemtest.New(t, bootstrap.New)
+	register(t, app.Client(t).Inertia(""), "cid@example.com")
+
+	c := app.Client(t).Inertia("")
+
+	// Unknown emails get the same answer and no mail.
+	c.PostJSON("/forgot-password", map[string]any{"email": "nobody@example.com"}).AssertRedirect("/forgot-password")
+
+	if len(app.Mails().SentTo("nobody@example.com")) != 0 {
+		t.Fatal("mail sent to an unknown address")
+	}
+
+	c.PostJSON("/forgot-password", map[string]any{"email": "cid@example.com"}).AssertRedirect("/forgot-password")
+	c.Get("/forgot-password").AssertInertia("Auth/ForgotPassword")
+
+	reset := link(t, app, "cid@example.com")
+	if !strings.HasPrefix(reset, "/reset-password/") {
+		t.Fatalf("reset link = %s", reset)
+	}
+
+	u, _ := url.Parse(reset)
+	token := strings.TrimPrefix(u.Path, "/reset-password/")
+
+	c.Get(reset).AssertOK().AssertInertia("Auth/ResetPassword").PropEquals("token", token)
+
+	form := map[string]any{
+		"token": token, "email": "cid@example.com",
+		"password": "a brand new password", "password_confirmation": "a brand new password",
+	}
+
+	c.PostJSON("/reset-password", form).AssertRedirect("/login")
+
+	// Single use.
+	c.WithHeader("Referer", reset).PostJSON("/reset-password", form).AssertRedirect(reset)
+
+	c.PostJSON("/login", map[string]any{"email": "cid@example.com", "password": "a brand new password"}).
+		AssertRedirect("/dashboard")
+}

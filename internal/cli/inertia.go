@@ -62,6 +62,34 @@ func installInertia(set *flag.FlagSet) func(context.Context, *Env, []string) err
 	}
 }
 
+// inertiaFramework reports the Inertia client adapter of the project in
+// env ("react", "vue", "svelte"), or "" for an HTMX project.
+func inertiaFramework(env *Env) string {
+	pkg, err := os.ReadFile(env.path("package.json"))
+	if err != nil {
+		return ""
+	}
+
+	for fw, adapter := range map[string]string{
+		"react": "@inertiajs/react", "vue": "@inertiajs/vue3", "svelte": "@inertiajs/svelte",
+	} {
+		if bytes.Contains(pkg, []byte(`"`+adapter+`"`)) {
+			return fw
+		}
+	}
+
+	return ""
+}
+
+// authScaffolds are the install:auth pages for the project's frontend.
+func authScaffolds(env *Env) []string {
+	if fw := inertiaFramework(env); fw != "" {
+		return []string{"auth-inertia", "auth-inertia-" + fw}
+	}
+
+	return []string{"auth-web"}
+}
+
 func countTrue(bs ...bool) int {
 	n := 0
 

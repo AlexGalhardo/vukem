@@ -3,9 +3,12 @@ import type { ReactNode } from "react";
 
 import type { SharedProps } from "../types";
 
+const link = "text-indigo-600 hover:underline dark:text-indigo-400";
+
 export default function AppLayout({ children }: { children: ReactNode }) {
   const page = usePage<SharedProps>();
-  const success = page.flash?.success;
+  const { auth } = page.props;
+  const message = page.flash?.success ?? page.flash?.status;
 
   return (
     <>
@@ -13,16 +16,35 @@ export default function AppLayout({ children }: { children: ReactNode }) {
         <Link href="/" className="font-bold">
           {page.props.appName}
         </Link>
-        <nav>
-          <Link href="/posts" className="text-indigo-600 hover:underline dark:text-indigo-400">
+        <nav className="flex items-center gap-4">
+          <Link href="/posts" className={link}>
             Posts
           </Link>
+          {auth?.user ? (
+            <>
+              <Link href="/dashboard" className={link}>
+                {auth.user.name}
+              </Link>
+              <Link href="/logout" method="post" as="button" className={link}>
+                Log out
+              </Link>
+            </>
+          ) : auth ? (
+            <>
+              <Link href="/login" className={link}>
+                Log in
+              </Link>
+              <Link href="/register" className={link}>
+                Register
+              </Link>
+            </>
+          ) : null}
         </nav>
       </header>
       <main className="mx-auto max-w-2xl p-4">
-        {typeof success === "string" && (
+        {typeof message === "string" && (
           <p role="status" className="mb-4 rounded-md bg-indigo-50 px-4 py-3 text-indigo-900 dark:bg-indigo-950 dark:text-indigo-100">
-            {success}
+            {message}
           </p>
         )}
         {children}

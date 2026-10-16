@@ -73,6 +73,16 @@ func TestNewInertiaProjectEndToEnd(t *testing.T) {
 
 			run("go", "test", "./...")
 
+			if code, out, errOut := vukem(t, project, "install:auth"); code != 0 {
+				t.Fatalf("install:auth = %d\n%s%s", code, out, errOut)
+			}
+
+			if _, err := os.Stat(filepath.Join(project, "resources", "views", "auth")); err == nil {
+				t.Error("install:auth on an Inertia app wrote HTMX auth views")
+			}
+
+			run("go", "test", "./...")
+
 			if _, err := exec.LookPath(npm()); err != nil {
 				t.Log("npm not found: skipping npm install, type check and vite build")
 				return

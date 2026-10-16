@@ -1,0 +1,74 @@
+package routes
+
+import (
+	"context"
+	"net/http"
+	"time"
+
+	"github.com/AlexGalhardo/vukem"
+	"github.com/AlexGalhardo/vukem/auth"
+	"github.com/AlexGalhardo/vukem/inertia"
+	"github.com/AlexGalhardo/vukem/ratelimit"
+	"github.com/AlexGalhardo/vukem/router"
+	"github.com/AlexGalhardo/vukem/web"
+
+	"{{.Module}}/app/accounts"
+	"{{.Module}}/app/controllers/account"
+)
+
+// Auth registers login, registration, password reset and email
+// verification routes (vukem install:auth).
+func Auth(r *router.Router, app *vukem.App) error {
+	acc, err := accounts.New(app)
+	if err != nil {
+		return err
+	}
+
+	h := account.New(acc)
+	guest := auth.Guest(acc.Web)
+	required := auth.Required(acc.Web)
+	throttle := ratelimit.Middleware(ratelimit.NewMemory(5, time.Minute), account.LoginThrottleKey)
+	mails := ratelimit.Middleware(ratelimit.NewMemory(3, time.Minute), ratelimit.ByIP)
+
+	r.Use(shareAuth(acc))
+
+	r.Get("/login", h.ShowLogin).Name("login").Use(guest)
+	r.Post("/login", h.Login).Use(guest, throttle)
+	r.Get("/register", h.ShowRegister).Name("register").Use(guest)
+	r.Post("/register", h.Register).Use(guest)
+	r.Post("/logout", h.Logout).Name("logout").Use(required)
+
+	r.Get("/forgot-password", h.ShowForgot).Name("password.request").Use(guest)
+	r.Post("/forgot-password", h.SendResetLink).Name("password.email").Use(guest, mails)
+	r.Get("/reset-password/{token}", h.ShowReset).Name("password.reset").Use(guest)
+	r.Post("/reset-password", h.Reset).Name("password.update").Use(guest)
+
+	r.Get("/email/verify", h.Notice).Name("verification.notice").Use(required)
+	r.Get("/email/verify/{id}", h.Verify).Name("verification.verify").Use(required, acc.Signer.Middleware())
+	r.Post("/email/verification-notification", h.Resend).Name("verification.send").Use(required, mails)
+
+	r.Get("/dashboard", h.Dashboard).Name("dashboard").Use(required)
+
+	return nil
+}
+
+// shareAuth shares the signed-in user (or null) with every page as
+// auth.user; it is loaded only when a page is rendered.
+func shareAuth(acc *accounts.Accounts) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			c := web.NewCtx(w, r, web.ServicesFrom(r.Context()))
+
+			inertia.Share(r.Context(), "auth", func(context.Context) (any, error) {
+				u, err := acc.Web.User(c)
+				if err != nil {
+					return map[string]any{"user": nil}, nil //nolint:nilerr // signed out
+				}
+
+				return map[string]any{"user": u}, nil
+			})
+
+			next.ServeHTTP(w, r)
+		})
+	}
+}
