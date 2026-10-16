@@ -437,3 +437,11 @@ func TestSecurity_A04_TokensStoredHashed(t *testing.T) {
 		t.Fatalf("secrets stored in clear: %q %q", tokenHash, rememberHash)
 	}
 }
+
+func TestUserFromContext(t *testing.T) {
+	t.Parallel()
+
+	if _, err := auth.UserFrom[User](t.Context(), "web"); err == nil {
+		t.Fatal("user found in an empty context")
+	}
+}

@@ -63,6 +63,7 @@ func commands() []command {
 		{"make:resource", "<Name>", "Create an API resource (JSON transformer) for a model", makeResource},
 		{"make:factory", "<Name>", "Create a model factory (fake data for tests and seeders)", makeFactory},
 		{"make:seeder", "<Name>", "Create a seeder and register it", makeSeeder},
+		{"make:policy", "<Name>", "Create an authorization policy and register it", makePolicy},
 		{"make:test", "<Name>", "Create a test using the fluent client", makeTest},
 	}
 }

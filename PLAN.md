@@ -18,8 +18,8 @@ Task IDs: `<phase>.<group>.<task>` (e.g. `P.3.2`). Reference them in commit bodi
 | Field | Value |
 | --- | --- |
 | Current phase | **ALPHA** |
-| Next task | `A.4.1` (A.0.6, A.3.6 and A.3.10 after A.5 mail) |
-| Last release | `v0.5.0` (A.3 guards, tokens, hashing, social login) |
+| Next task | `A.5.1` (then A.0.6, A.3.6, A.3.10) |
+| Last release | `v0.6.0` (A.4 gates and policies) |
 | Updated | 2026-10-16 |
 
 ## Design references
@@ -371,13 +371,13 @@ Applies to **every** task:
 
 ### A.4 Authorization — needs: A.3
 
-- [ ] **A.4.1** Gates (`Define`, `Allows`, `Authorize`, `Before`).
+- [x] **A.4.1** Gates (`Define`, `Allows`, `Authorize`, `Before`).
   → verify: tests.
-- [ ] **A.4.2** `Policy[T]` registry by type, ability resolution at registration, `DenyAsNotFound`.
+- [x] **A.4.2** `Policy[T]` registry by type, ability resolution at registration, `DenyAsNotFound`.
   → verify: tests.
-- [ ] **A.4.3** `c.Authorize`, template `can`, `make:policy`.
+- [x] **A.4.3** `c.Authorize`, template `can`, `make:policy`.
   → verify: tests + generator e2e.
-- [ ] **A.4.4** Fail-closed authorization (unregistered policy/ability denies) + `authz.denied` security event.
+- [x] **A.4.4** Fail-closed authorization (unregistered policy/ability denies) + `authz.denied` security event.
   → verify: `TestSecurity_A01_UnregisteredPolicyDenies`.
 
 ### A.5 Mail — needs: P.8

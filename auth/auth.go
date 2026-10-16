@@ -136,6 +136,18 @@ func cached[U any](c *web.Ctx, guard string) (U, bool) {
 	return u, ok
 }
 
+// UserFrom returns the user authenticated by guard from a request context
+// (authz gates, view functions).
+func UserFrom[U any](ctx context.Context, guard string) (U, error) {
+	if u, ok := ctx.Value(userKey{guard}).(U); ok {
+		return u, nil
+	}
+
+	var zero U
+
+	return zero, ErrUnauthenticated
+}
+
 // User returns the user authenticated by guard for this request (after
 // Required or a guard's Check ran).
 func User[U Authenticatable](c *web.Ctx, guard string) (U, error) {

@@ -49,6 +49,9 @@ type Services struct {
 	// CheckResponses makes JSONWith validate outgoing data against its
 	// schema (enabled outside production by the app).
 	CheckResponses bool
+	// Authorizer backs Ctx.Authorize and the "can" template function
+	// (an authz.Gate). Without one, every authorization check denies.
+	Authorizer Authorizer
 }
 
 // Ctx is the per-request context. It must not be used after the handler

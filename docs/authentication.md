@@ -156,36 +156,57 @@ Planned: `vukem install:auth --social github,google` (routes, `social_accounts` 
 
 ## Authorization
 
+Package `authz`, generic over your user type. Decisions **fail closed**: an ability or policy that was never registered denies (403) and the cause is logged (`TestSecurity_A01_UnregisteredPolicyDenies`).
+
 ### Gates
 
 ```go
-app.Gate.Define("edit-settings", func(ctx context.Context, u *models.User) bool {
-	return u.Role == "admin"
+gate := authz.New(func(ctx context.Context) (*models.User, error) {
+	return auth.UserFrom[*models.User](ctx, "web") // who is asking
 })
-if err := c.Authorize("edit-settings", nil); err != nil { return err } // 403
+
+gate.Define("edit-settings", func(ctx context.Context, u *models.User) bool { return u.Role == "admin" })
+gate.DefineResult("see-billing", func(ctx context.Context, u *models.User) authz.Result { return authz.DenyAsNotFound() })
+
+r.Services().Authorizer = gate // enables c.Authorize and {{can}}
+
+if err := c.Authorize("edit-settings", nil); err != nil {
+	return err // 401 without a user, 403 denied, 404 for DenyAsNotFound
+}
 ```
 
 ### Policies
 
 ```go
+// app/policies/post_policy.go — vukem make:policy Post
 type PostPolicy struct{}
 
 func (PostPolicy) Update(ctx context.Context, u *models.User, p *models.Post) authz.Result {
-	if u.ID == p.UserID { return authz.Allow() }
+	if u.ID == p.UserID {
+		return authz.Allow()
+	}
+
 	return authz.DenyAsNotFound() // 404 instead of 403
 }
 
-// bootstrap/policies.go (edited by make:policy)
-authz.Register[*models.Post](app.Gate, PostPolicy{})
+func (PostPolicy) Create(ctx context.Context, u *models.User) bool { return u.Verified() } // type-level ability
 
-// in a handler
+// app/policies/registry.go (make:policy appends here)
+func All() []authz.Policy { return []authz.Policy{authz.For[*models.Post](PostPolicy{})} }
+
+if err := gate.Register(policies.All()...); err != nil { // at boot: signatures are checked here
+	return err
+}
+
 if err := c.Authorize("update", post); err != nil { return err }
+if err := c.Authorize("create", (*models.Post)(nil)); err != nil { return err }
 ```
 
-- Policies are looked up by the subject's Go type (a `map[reflect.Type]` built at boot — no naming-convention discovery).
-- Policy methods are resolved once at registration by the ability name (`"update"` → `Update`); unknown abilities fail at boot when referenced through `authz.Ability[*Post]("update")`, or at first call otherwise.
-- `Before(ctx, user, ability) *authz.Result` hook for super-admins.
-- Templates: `{{ if can "update" .Post }}…{{ end }}`.
+- Policies are found by the subject's Go type; ability names map to methods (`"update"` → `Update`). Methods return `authz.Result` (`Allow`, `Deny(msg)`, `DenyAsNotFound`) or `bool`; other methods on the policy are ignored.
+- `gate.Before(func(ctx, u, ability) *authz.Result)` decides first (super-admins).
+- `gate.Allows(ctx, u, ability, subject)` for code outside requests.
+- Denials through `c.Authorize` emit the `authz.denied` security event. Without an `Authorizer` every check denies.
+- Templates: `{{if can "update" .Post}}…{{end}}`, `{{if can "edit-settings"}}…{{end}}`.
 
 ## Rate limiting
 

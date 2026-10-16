@@ -330,6 +330,25 @@ func makeSeeder(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 	}
 }
 
+func makePolicy(set *flag.FlagSet) func(context.Context, *Env, []string) error {
+	run := simple(set, "policy name", "policy.go.tmpl", "app/policies/%s_policy.go", "Policy")
+
+	return func(ctx context.Context, env *Env, args []string) error {
+		if err := run(ctx, env, args); err != nil {
+			return err
+		}
+
+		d, err := newStubData(env, className(args[0], "Policy"))
+		if err != nil {
+			return err
+		}
+
+		return register(env, "app/policies/registry.go", "All",
+			"authz.For[*models."+d.Name+"]("+d.Name+"Policy{})",
+			"github.com/AlexGalhardo/vukem/authz", d.Module+"/app/models")
+	}
+}
+
 func makeTest(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 	return simple(set, "test name", "test.go.tmpl", "tests/%s_test.go", "Test")
 }

@@ -63,6 +63,19 @@ func (e *Engine) funcs(ctx context.Context) template.FuncMap {
 			return template.JS(b), err //nolint:gosec // json.Marshal output is safe JS
 		},
 		"dict": dict,
+		"can": func(ability string, subject ...any) bool {
+			a := web.ServicesFrom(ctx).Authorizer
+			if a == nil {
+				return false
+			}
+
+			var s any
+			if len(subject) > 0 {
+				s = subject[0]
+			}
+
+			return a.Authorize(ctx, ability, s) == nil
+		},
 		"htmxScript": func(src string) template.HTML {
 			nonce := middleware.CSPNonce(ctx)
 

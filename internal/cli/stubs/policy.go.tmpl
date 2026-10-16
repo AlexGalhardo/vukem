@@ -1,0 +1,33 @@
+package policies
+
+import (
+	"context"
+
+	"github.com/AlexGalhardo/vukem/authz"
+
+	"{{.Module}}/app/models"
+)
+
+// {{.Name}}Policy decides what users may do with models.{{.Name}}. Ability
+// names map to methods: c.Authorize("update", {{.Camel}}) calls Update.
+type {{.Name}}Policy struct{}
+
+// View allows reading a {{.Snake}}.
+func ({{.Name}}Policy) View(ctx context.Context, u *models.User, m *models.{{.Name}}) bool {
+	return true
+}
+
+// Create allows creating {{.Plural}}: c.Authorize("create", (*models.{{.Name}})(nil)).
+func ({{.Name}}Policy) Create(ctx context.Context, u *models.User) bool {
+	return true
+}
+
+// Update allows changing a {{.Snake}}.
+func ({{.Name}}Policy) Update(ctx context.Context, u *models.User, m *models.{{.Name}}) authz.Result {
+	return authz.Deny()
+}
+
+// Delete allows deleting a {{.Snake}}.
+func ({{.Name}}Policy) Delete(ctx context.Context, u *models.User, m *models.{{.Name}}) authz.Result {
+	return authz.Deny()
+}
