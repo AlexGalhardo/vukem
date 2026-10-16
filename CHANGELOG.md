@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-10-16
+
+### Added
+
+- **queue:** Add typed jobs, workers and the sync and memory drivers
+- **queue:** Add the database driver, DispatchTx and failed-job commands
+- **queue:** Add make:job, queue.Fake, queued mail and queued listeners
+- **schedule:** Add the scheduler with cron expressions and overlap locks
+
 ## [0.15.0] - 2026-10-16
 
 ### Added
@@ -203,7 +212,8 @@ Project foundation. No framework code yet; see [PLAN.md](PLAN.md) for the roadma
 - README, MIT license, CONTRIBUTING, SECURITY and CODE_OF_CONDUCT.
 - Agent configuration: `AGENTS.md`, `CLAUDE.md`, path-scoped `.claude/rules/`, Go skills and project settings.
 
-[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.15.0...HEAD
+[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.16.0...HEAD
+[0.16.0]: https://github.com/AlexGalhardo/vukem/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/AlexGalhardo/vukem/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/AlexGalhardo/vukem/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/AlexGalhardo/vukem/compare/v0.12.0...v0.13.0
