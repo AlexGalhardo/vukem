@@ -28,6 +28,7 @@ What Vukem does **by default** to protect applications, mapped to the [OWASP Top
 | Signed URLs (HMAC, expiry) for temporary downloads and email verification | A |
 | **SSRF:** `httpclient.Safe()` dialer rejects loopback, private, link-local and metadata (`169.254.169.254`) addresses after DNS resolution, limits redirects and re-checks each hop; used by framework features that fetch user-supplied URLs | A |
 | Idempotency keys are scoped to the caller, so a reused key never replays another user's response (`TestSecurity_A01_IdempotencyScopedToCaller`); a store outage refuses the request instead of risking a duplicate (`TestSecurity_A04_IdempotencyFailsClosed`) | B |
+| `drivers/s3` presigned GET/PUT URLs sign the validated key and expire after 1 s to 7 days; anything outside that range is refused (`TestSecurity_A01_S3PresignExpiryBounded`) | B |
 
 **App responsibility:** call `Authorize` in every handler that touches owned data; scope queries by tenant/user.
 
@@ -85,6 +86,7 @@ What Vukem does **by default** to protect applications, mapped to the [OWASP Top
 | `orm.Encrypted[T]` column type for sensitive fields: table and column authenticated, never stored in plaintext, fails closed without an encrypter (`TestSecurity_A04_EncryptedColumnStoresNoPlaintext`, `TestSecurity_A04_EncryptedColumnFailsClosed`) | B |
 | TLS: Go's secure defaults (TLS 1.2+, hybrid post-quantum key exchange in Go 1.26+); no option to disable verification without `InsecureSkipVerify` naming | P |
 | `config.Secret` redacts secrets in logs, JSON and `%v` | P |
+| `drivers/s3` refuses a plain `http://` endpoint unless `S3_INSECURE_HTTP=true` (local MinIO only) (`TestSecurity_A04_S3RequiresTLS`) | B |
 
 ### A05:2025 — Injection
 
@@ -146,6 +148,7 @@ What Vukem does **by default** to protect applications, mapped to the [OWASP Top
 | Structured `slog` request logs with request id, user id (when authenticated), route name, status, duration | P |
 | Security events logged at `WARN` with a stable `event` attribute: `auth.login_failed`, `auth.locked`, `authz.denied`, `csrf.rejected`, `ratelimit.exceeded`, `token.revoked`, `session.invalid` | P / A |
 | Secrets, passwords, tokens and `Authorization`/`Cookie` headers redacted from logs | P |
+| `drivers/s3` keeps the secret key and session token in `config.Secret`; formatting a config or disk and S3 errors never include them or a request signature (`TestSecurity_A09_S3NeverLeaksCredentials`) | B |
 | Log injection prevented: `slog` attribute encoding (no raw string concatenation) | P |
 | `events.Listen[security.Event]` hook to forward security events to alerting (email, Slack, SIEM) | A |
 | OpenTelemetry tracing module correlates logs and traces | B |

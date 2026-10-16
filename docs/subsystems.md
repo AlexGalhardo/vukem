@@ -8,7 +8,7 @@ Mail, cache, storage, events, queue, scheduler, encryption, rate limiting, i18n,
 | Health | Prototype | `/up` + per-service checks | — | — |
 | Mail | ALPHA | SMTP (`net/smtp`), **Resend** (HTTP API), log, array | — | ✅ |
 | Cache | ALPHA | memory (LRU + TTL), database | redis | ✅ |
-| Storage | ALPHA | local (`os.Root`), memory | s3 (post-1.0) | ✅ |
+| Storage | ALPHA / BETA | local (`os.Root`), memory | s3 (AWS, MinIO, R2…) | ✅ |
 | Events | ALPHA | in-process sync/async | — | ✅ |
 | Queue | BETA | sync, memory, database (SQLite/Postgres, `FOR UPDATE SKIP LOCKED` on PG) | redis | ✅ (`queue.Fake`) |
 | Scheduler | BETA | in-process cron | — | clock |
@@ -127,10 +127,41 @@ r.Handle("/files/", http.StripPrefix("/files", storage.Handler(private, signer))
 link, err := storage.TemporaryURL(signer, "/files", "invoices/42.pdf", 15*time.Minute)
 ```
 
-- `storage.Disk`: `Put` (atomic rename on local disks), `Open`, `Exists`, `Delete`, `List`, `URL`; helpers `storage.Get` and `storage.PutBytes`. Disks: `NewLocal` and `NewMemory` (tests); S3 in BETA (`drivers/s3`). `storage/storagetest` holds the conformance and traversal suites (`TestSecurity_A01_StorageTraversal`).
+- `storage.Disk`: `Put` (atomic rename on local disks), `Open`, `Exists`, `Delete`, `List`, `URL`; helpers `storage.Get` and `storage.PutBytes`. Disks: `NewLocal` and `NewMemory` (tests); S3 in `drivers/s3` ([S3](#s3)). `storage/storagetest` holds the conformance and traversal suites (`TestSecurity_A01_StorageTraversal`).
 - `PutUploaded` never uses the client's file name: random name, extension from the type detected in the content (`http.DetectContentType`), size checked from the header and again while copying, 422 for disallowed types or sizes.
 - `Handler` never serves dotfiles or directories, sends `X-Content-Type-Options: nosniff`, and with a `signed.Signer` only answers signed, unexpired URLs.
 - Decision: instead of `storage:link` (a symlink, which needs extra privileges on Windows), public files are served by `storage.Handler` from the disk itself.
+
+### S3
+
+`go get github.com/AlexGalhardo/vukem/drivers/s3`: a `storage.Disk` on Amazon S3 or any S3-compatible service (MinIO, Cloudflare R2, DigitalOcean Spaces, Backblaze B2). No AWS SDK: requests are signed by a stdlib Signature Version 4 implementation verified against the AWS test suite.
+
+```go
+cfg, err := config.Load[s3.Config](app.Config.Source)
+disk, err := s3.New(cfg) // validates config, no I/O
+
+err = disk.Put(ctx, "videos/intro.mp4", file)            // one PUT up to S3_PART_SIZE, multipart above
+info, err := disk.Stat(ctx, "videos/intro.mp4")          // HEAD: Size, ETag, ContentType, LastModified
+up, err := disk.PresignPut("uploads/avatar.png", 5*time.Minute) // browser uploads straight to the bucket
+link, err := disk.PresignGet("invoices/42.pdf", time.Hour)
+```
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `S3_BUCKET` | — | bucket name (DNS-compatible: 3–63 of `a-z 0-9 . -`) |
+| `S3_REGION` | `us-east-1` | signing region (`auto` for R2) |
+| `S3_ENDPOINT` | `https://s3.<region>.amazonaws.com` | bare origin of an S3-compatible service |
+| `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | — | required; `S3_SESSION_TOKEN` for temporary credentials |
+| `S3_USE_PATH_STYLE` | `false` | `endpoint/bucket/key` instead of `bucket.endpoint/key` (MinIO) |
+| `S3_INSECURE_HTTP` | `false` | allow an `http://` endpoint (local development only) |
+| `S3_PART_SIZE` | 8 MiB | multipart part size, 5 MiB to 5 GiB |
+| `S3_PUBLIC_URL` | — | prefix for `disk.URL` (CDN or public bucket); empty = private |
+
+- `Put` buffers at most one part: small bodies go in one signed `PUT`, larger ones become a multipart upload that is aborted on any failure (part error, reader error, cancelled context, a `200` that carries an `<Error>`), so no orphaned parts are billed. Content type comes from the extension, else from the first bytes.
+- `Open` streams the object; `List` uses ListObjectsV2 and follows continuation tokens; folder placeholder keys (ending in `/`) are skipped. Missing objects match `fs.ErrNotExist`; other failures are `*s3.Error` (`StatusCode`, `Code`, `Message`, `RequestID`).
+- Keys go through `storage.Clean`: no empty key, no leading `/` (so `/a` and `a` cannot name different objects), no `..`, backslash or `:`.
+- Presigned URLs sign only the `host` header and expire after 1 s to 7 days (the SigV4 maximum). Credentials are `config.Secret`; errors and `%+v` never show them.
+- Integration tests run against MinIO (`task services:up`, port 59000); the driver passes `storagetest.Run` and `storagetest.RunTraversal`.
 
 ## Events
 

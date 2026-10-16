@@ -177,6 +177,41 @@ jobs:
           REDIS_URL: redis://localhost:56379/0
         run: go test -tags=integration -count=1 ./...
 
+  s3:
+    name: S3 driver (MinIO)
+    runs-on: ubuntu-latest
+    env:
+      # Same pinned image as compose.yaml; service containers cannot pass
+      # MinIO's "server /data" command, so it is started with docker run.
+      MINIO_IMAGE: pgsty/minio:RELEASE.2026-08-04T00-00-00Z
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: "**/go.sum"
+      - name: Start MinIO
+        run: |
+          docker run -d --name minio -p 59000:9000             -e MINIO_ROOT_USER=vukem -e MINIO_ROOT_PASSWORD=vukem-secret             "$MINIO_IMAGE" server /data
+          for i in $(seq 1 30); do
+            curl -fs http://localhost:59000/minio/health/live && exit 0
+            sleep 2
+          done
+          docker logs minio
+          exit 1
+      - name: Unit tests (module alone)
+        working-directory: drivers/s3
+        env:
+          GOWORK: "off"
+        run: go test -count=1 ./...
+      - name: Conformance suite (workspace, current core)
+        working-directory: drivers/s3
+        env:
+          S3_ENDPOINT: http://localhost:59000
+          S3_ACCESS_KEY_ID: vukem
+          S3_SECRET_ACCESS_KEY: vukem-secret
+        run: go test -tags=integration -count=1 ./...
+
   postgres:
     name: Postgres driver (integration)
     runs-on: ubuntu-latest

@@ -8,5 +8,6 @@ use (
 	./drivers/mongo
 	./drivers/redis
 	./drivers/otel
+	./drivers/s3
 	./contrib/stripe
 )

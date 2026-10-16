@@ -1,6 +1,6 @@
 // Package storage reads and writes files on disks: the local filesystem
 // (through os.Root, so paths can never escape the disk) and memory (tests);
-// S3-compatible storage arrives in BETA (drivers/s3).
+// S3-compatible storage lives in the drivers/s3 module.
 //
 //	disk, err := storage.NewLocal("storage/app/public", "/storage")
 //	path, err := storage.PutUploaded(ctx, disk, fileHeader, "avatars", storage.Images(2<<20))
