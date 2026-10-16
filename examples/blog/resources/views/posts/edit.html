@@ -1,0 +1,10 @@
+{{define "title"}}Edit post{{end}}
+{{define "content"}}
+<h1>Edit post</h1>
+<form method="post" action="{{route "posts.update" "post" .ID}}">
+	{{csrfField}}
+	<input type="hidden" name="_method" value="PUT">
+	{{template "partials/post-fields" dict "Title" (or (old "title") .Title) "Body" (or (old "body") .Body)}}
+	<button type="submit">Save</button>
+</form>
+{{end}}

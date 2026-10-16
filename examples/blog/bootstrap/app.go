@@ -1,0 +1,38 @@
+// Package bootstrap wires the application together. There is no hidden
+// registration: everything the app uses is listed here.
+package bootstrap
+
+import (
+	vukem "github.com/AlexGalhardo/vukem"
+	"github.com/AlexGalhardo/vukem/drivers/postgres"
+	"github.com/AlexGalhardo/vukem/examples/blog/app/listeners"
+	"github.com/AlexGalhardo/vukem/examples/blog/database/migrations"
+	"github.com/AlexGalhardo/vukem/examples/blog/database/seeders"
+	"github.com/AlexGalhardo/vukem/examples/blog/resources"
+	"github.com/AlexGalhardo/vukem/examples/blog/routes"
+)
+
+// New builds the application; cmd/app and the tests call it.
+func New(opts ...vukem.Option) (*vukem.App, error) {
+	base := []vukem.Option{
+		vukem.WithDatabaseDrivers(postgres.Driver()), // DATABASE_URL=postgres://... also works
+		vukem.WithProviders(Providers()...),
+		vukem.WithMigrations(migrations.All()),
+		vukem.WithSeeders(seeders.All()...),
+		vukem.WithListeners(listeners.All()...),
+		vukem.WithViews(resources.Views()),
+	}
+
+	for _, fn := range routes.All() {
+		base = append(base, vukem.WithRoutes(fn))
+	}
+
+	app, err := vukem.New(append(base, opts...)...)
+	if err != nil {
+		return nil, err
+	}
+
+	app.AddCommand(Commands()...)
+
+	return app, nil
+}

@@ -1,0 +1,25 @@
+{{define "title"}}{{.Title}}{{end}}
+{{define "content"}}
+<article>
+	<h1>{{.Title}}</h1>
+	{{with .User.Get}}<p class="empty">by {{.Name}}</p>{{end}}
+	<p>{{.Body}}</p>
+</article>
+<p>
+	{{if can "update" .}}<a href="{{route "posts.edit" "post" .ID}}">Edit</a> · {{end}}
+	<a href="{{route "posts.index"}}">All posts</a>
+</p>
+
+<h2>Comments</h2>
+<ul class="list">
+	{{range .Comments.Get}}<li>{{.Body}}</li>{{else}}<li class="empty">No comments yet.</li>{{end}}
+</ul>
+<form method="post" action="{{route "posts.comments.store" "post" .ID}}">
+	{{csrfField}}
+	<label>Comment
+		<textarea name="body" rows="3" required></textarea>
+	</label>
+	{{with error "body"}}<p class="error">{{.}}</p>{{end}}
+	<button type="submit">Comment</button>
+</form>
+{{end}}

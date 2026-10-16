@@ -1,0 +1,18 @@
+{{define "title"}}Log in{{end}}
+{{define "content"}}
+<h1>Log in</h1>
+{{with flash "status"}}<p class="flash" role="status">{{.}}</p>{{end}}
+<form method="post" action="{{route "login"}}">
+	{{csrfField}}
+	<label>Email
+		<input type="email" name="email" value="{{old "email"}}" required autocomplete="username">
+	</label>
+	{{with error "email"}}<p class="error">{{.}}</p>{{end}}
+	<label>Password
+		<input type="password" name="password" required autocomplete="current-password">
+	</label>
+	<label><input type="checkbox" name="remember" value="true"> Remember me</label>
+	<button type="submit">Log in</button>
+</form>
+<p><a href="{{route "password.request"}}">Forgot your password?</a> · <a href="{{route "register"}}">Create an account</a></p>
+{{end}}

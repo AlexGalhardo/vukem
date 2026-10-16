@@ -1,0 +1,25 @@
+{{define "title"}}Posts{{end}}
+{{define "content"}}
+<div class="toolbar">
+	<h1>Posts</h1>
+	<a class="button" href="{{route "posts.create"}}">New post</a>
+</div>
+
+<input type="search" name="q" value="{{.Search}}" placeholder="Search posts" aria-label="Search posts"
+	hx-get="{{route "posts.index"}}" hx-trigger="input changed delay:300ms, search" hx-target="#post-list">
+
+{{block "post-list" .}}
+<ul id="post-list" class="list">
+	{{range .Posts}}
+	<li>
+		<a href="{{route "posts.show" "post" .ID}}">{{.Title}}</a>
+		{{with .User.Get}}<span class="empty">{{.Name}}</span>{{end}}
+		{{if can "delete" .}}<button type="button" class="link danger" hx-delete="{{route "posts.destroy" "post" .ID}}"
+			hx-target="closest li" hx-swap="outerHTML" hx-confirm="Delete this post?">Delete</button>{{end}}
+	</li>
+	{{else}}
+	<li class="empty">No posts yet.</li>
+	{{end}}
+</ul>
+{{end}}
+{{end}}

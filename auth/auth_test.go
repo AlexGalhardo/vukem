@@ -125,6 +125,13 @@ func newApp(t *testing.T, hasher hash.Hasher) *testApp {
 
 					return c.String(200, "hello "+u.Email)
 				}).Use(auth.Required(ta.web))
+				r.Get("/whoami", func(c *web.Ctx) error {
+					if u, err := auth.User[User](c, "web"); err == nil {
+						return c.String(200, u.Email)
+					}
+
+					return c.String(200, "guest")
+				}).Use(auth.Optional(ta.web))
 				r.Get("/verified", func(c *web.Ctx) error { return c.String(200, "ok") }).
 					Use(auth.Required(ta.web), auth.Verified(ta.web))
 
@@ -369,6 +376,8 @@ func TestActingAsAndVerified(t *testing.T) {
 	unverified := ta.user(t, "u@example.com", "pw", false)
 
 	ta.Client(t).ActingAs("web", verified).Get("/verified").AssertOK()
+	ta.Client(t).ActingAs("web", verified).Get("/whoami").AssertOK().AssertSee("v@example.com")
+	ta.Client(t).Get("/whoami").AssertOK().AssertSee("guest")
 	ta.Client(t).ActingAs("web", unverified).Get("/verified").AssertForbidden()
 	ta.Client(t).ActingAs("web", verified).Get("/dashboard").AssertSee("hello v@example.com")
 

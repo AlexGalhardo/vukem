@@ -1,0 +1,10 @@
+{{define "title"}}Verify your email{{end}}
+{{define "content"}}
+<h1>Verify your email</h1>
+{{with flash "status"}}<p class="flash" role="status">{{.}}</p>{{end}}
+<p>We sent a link to {{.Email}}. Open it to verify your address.</p>
+<form method="post" action="{{route "verification.send"}}">
+	{{csrfField}}
+	<button type="submit">Send the link again</button>
+</form>
+{{end}}

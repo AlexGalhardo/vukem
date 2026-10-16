@@ -18,8 +18,8 @@ Task IDs: `<phase>.<group>.<task>` (e.g. `P.3.2`). Reference them in commit bodi
 | Field | Value |
 | --- | --- |
 | Current phase | **ALPHA** |
-| Next task | `A.7.0` (docs site for ALPHA), `A.7.2` (examples/blog) |
-| Last release | `v0.13.0` (A.6b security building blocks) |
+| Next task | `A.7.0` (docs site for ALPHA), then BETA `B.0.1` |
+| Last release | `v0.14.0` (A.7.2 example blog, auth.Optional) |
 | Updated | 2026-10-16 |
 
 ## Design references
@@ -425,9 +425,9 @@ Applies to **every** task:
 - [ ] **A.7.0** Documentation site updated with every ALPHA feature (API starter, auth, social login, relations, Postgres, mail, cache, storage, events) and redeployed.
   → verify: `task site:build` green; pages live on vukem.vercel.app.
 
-- [ ] **A.7.1** Each ALPHA group shipped as a minor (`v0.2.0`, `v0.3.0`…) with changelog.
+- [x] **A.7.1** Each ALPHA group shipped as a minor (`v0.2.0`, `v0.3.0`…) with changelog.
   → verify: tags exist; `CHANGELOG.md` sections per release.
-- [ ] **A.7.2** Example app `examples/blog` using auth + policies + relations on Postgres and SQLite.
+- [x] **A.7.2** Example app `examples/blog` using auth + policies + relations on Postgres and SQLite.
   → verify: CI runs its tests on both.
 
 ### ALPHA exit criteria

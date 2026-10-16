@@ -54,6 +54,24 @@ func Required(guards ...Checker) func(http.Handler) http.Handler {
 
 func hasSession(c *web.Ctx) bool { return c.Session() != nil }
 
+// Optional authenticates the request when a guard can (so handlers,
+// policies and templates see the user) and never blocks it.
+func Optional(guards ...Checker) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			c := ctxOf(w, r)
+
+			for _, g := range guards {
+				if g.Check(c) {
+					break
+				}
+			}
+
+			next.ServeHTTP(w, c.Request())
+		})
+	}
+}
+
 // Guest sends authenticated users to the route named "home" (or "/"); use
 // it on login and register pages.
 func Guest(guards ...Checker) func(http.Handler) http.Handler {
