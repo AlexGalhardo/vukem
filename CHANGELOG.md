@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-16
+
+### Added
+
+- **auth:** Add hashers, session and token guards, and auth middleware
+- **social:** Add OAuth2/OIDC social login with PKCE
+
 ## [0.4.0] - 2026-10-16
 
 ### Added
@@ -127,7 +134,8 @@ Project foundation. No framework code yet; see [PLAN.md](PLAN.md) for the roadma
 - README, MIT license, CONTRIBUTING, SECURITY and CODE_OF_CONDUCT.
 - Agent configuration: `AGENTS.md`, `CLAUDE.md`, path-scoped `.claude/rules/`, Go skills and project settings.
 
-[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/AlexGalhardo/vukem/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/AlexGalhardo/vukem/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/AlexGalhardo/vukem/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/AlexGalhardo/vukem/compare/v0.1.1...v0.2.0
