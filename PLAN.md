@@ -18,7 +18,7 @@ Task IDs: `<phase>.<group>.<task>` (e.g. `P.3.2`). Reference them in commit bodi
 | Field | Value |
 | --- | --- |
 | Current phase | **ALPHA** |
-| Next task | `B.3.6` (Vite & Inertia) |
+| Next task | `B.6.1` (Realtime & GraphQL) |
 | Last release | `v0.17.0` (B.2 Redis and Mongo drivers) |
 | Updated | 2026-10-16 |
 
@@ -491,7 +491,7 @@ Applies to **every** task:
   → verify: tests.
 - [x] **B.3.5** SSR client with timeout + CSR fallback + health + dev endpoint discovery; `ssr:start`.
   → verify: fallback test with a failing fake SSR server.
-- [ ] **B.3.6** Inertia starters for React, Vue and Svelte (`vukem new --inertia=react|vue|svelte`, `install:inertia`): Vite, TS, Tailwind v4, pages, layouts, auth pages + `AssertInertia`.
+- [x] **B.3.6** Inertia starters for React, Vue and Svelte (`vukem new --inertia=react|vue|svelte`, `install:inertia`): Vite, TS, Tailwind v4, pages, layouts, auth pages + `AssertInertia`.
   → verify: e2e: a new Inertia app per framework builds and its tests pass.
 - [x] **B.3.7** `codegen:routes` → typed `routes.ts` (warmup boot mode).
   → verify: golden TS output; `tsc --noEmit` passes in starter.
