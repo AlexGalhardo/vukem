@@ -88,9 +88,11 @@ Covers `HX-Trigger`, `HX-Location` (string or object), `HX-Redirect`, `HX-Refres
 
 Invalid input from a classic form post → the validation hook flashes the errors and old input and redirects back (`303`); the form reads them with `{{error "title"}}` and `{{old "title"}}`. htmx requests get a **422** HTML fragment listing the errors, which htmx 4 swaps into the target. JSON requests get a `422` problem+json.
 
-### SSE (BETA)
+### SSE
 
-`c.SSE(func(s *sse.Stream) error { return s.Send("message", html) })` — `text/event-stream`, flushing via `http.ResponseController`, heartbeat, stops on client disconnect or server shutdown. Pairs with htmx `hx-sse`.
+`c.SSE(func(s *sse.Stream) error { return s.Send("message", html) })` (or `sse.Serve(w, r, fn)` in plain handlers) streams `text/event-stream`: every event is flushed through `http.ResponseController`, the server's `WriteTimeout` is lifted for the stream, a `: ping` comment goes out every 15s (`sse.Heartbeat(d)`), and `Stream.Context()` ends on client disconnect, when `fn` returns, or when the app shuts down (the HTTP server signals open streams so shutdown never waits on them). `s.SendJSON`, `s.SendEvent(sse.Event{ID, Event, Data, Retry})` and `s.LastEventID()` cover reconnects; field values lose CR/LF so input cannot forge fields.
+
+`sse.NewHub(broker)` fans events out by topic: `hub.Publish(ctx, "posts", ev)` and `hub.Stream(s, "posts")`. With a nil broker it works within one process; pass the `drivers/redis` client to reach every instance. Slow subscribers that fall 64 events behind are dropped (the browser reconnects). Pairs with htmx `hx-sse`.
 
 ## Vite
 

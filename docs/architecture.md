@@ -37,7 +37,8 @@ vukem/                            module github.com/AlexGalhardo/vukem
 ├── queue/ schedule/ ratelimit/   typed jobs (sync/memory/database drivers), cron scheduler, GCRA limiter
 ├── vite/                         Vite tags: hot file (dev), manifest, CSP nonce, SRI
 ├── inertia/                      Inertia.js v3 adapter: page object, version check, redirects, shared props
-├── i18n/ sse/ crypt/                                                          (planned, BETA)
+├── sse/                          server-sent events: streams, heartbeat, hub (memory or Redis)
+├── i18n/ crypt/                                                               (planned, BETA)
 ├── testing/                      fluent HTTP test client, DB helpers, fakes
 ├── cmd/vukem/                 global CLI
 ├── internal/

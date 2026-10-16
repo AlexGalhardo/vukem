@@ -504,7 +504,7 @@ Applies to **every** task:
   → verify: rotation tests.
 - [ ] **B.4.2** i18n (JSON catalogs, plurals, locale resolution, translated validation messages, `t` func).
   → verify: tests.
-- [ ] **B.4.3** SSE (`c.SSE`, hub, heartbeat, shutdown).
+- [x] **B.4.3** SSE (`c.SSE`, hub, heartbeat, shutdown).
   → verify: `synctest` tests.
 - [ ] **B.4.4** Maintenance mode (`down --secret`, `up`), `install:api` (token guard + API routes + problem+json).
   → verify: tests.

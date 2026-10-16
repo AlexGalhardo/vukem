@@ -5,7 +5,10 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"sync"
 	"time"
+
+	"github.com/AlexGalhardo/vukem/sse"
 )
 
 // Runner is a long-running component (HTTP server, queue worker, scheduler).
@@ -78,7 +81,12 @@ func (s *HTTPServer) Run(ctx context.Context) error {
 
 	// In-flight handlers observe the base context; it is not cancelled on
 	// shutdown so requests can finish, but carries the app's values.
-	base := context.WithoutCancel(ctx)
+	// Server-sent event streams end when shutdown starts, so Shutdown does
+	// not wait on connections that never finish by themselves.
+	stopping := make(chan struct{})
+	s.Server.RegisterOnShutdown(sync.OnceFunc(func() { close(stopping) }))
+
+	base := sse.WithShutdown(context.WithoutCancel(ctx), stopping)
 	s.Server.BaseContext = func(net.Listener) context.Context { return base }
 
 	if s.Ready != nil {

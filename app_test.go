@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/AlexGalhardo/vukem/config"
+	"github.com/AlexGalhardo/vukem/sse"
 )
 
 var testKey = config.GenerateKey()
@@ -323,6 +324,52 @@ func TestHTTPServerGracefulShutdown(t *testing.T) {
 	}
 	if err := <-errc; err != nil {
 		t.Fatalf("Run() = %v", err)
+	}
+}
+
+func TestHTTPServerShutdownEndsSSEStreams(t *testing.T) {
+	t.Parallel()
+
+	streaming := make(chan struct{})
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = sse.Serve(w, r, func(s *sse.Stream) error {
+			close(streaming)
+			<-s.Context().Done()
+
+			return nil
+		})
+	})
+
+	srv := NewHTTPServer("127.0.0.1:0", h)
+	srv.ShutdownTimeout = 30 * time.Second
+	ready := make(chan string, 1)
+	srv.Ready = ready
+
+	ctx, cancel := context.WithCancel(t.Context())
+	errc := make(chan error, 1)
+	go func() { errc <- srv.Run(ctx) }()
+
+	addr := <-ready
+
+	go func() {
+		req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+addr+"/", http.NoBody)
+		if res, err := http.DefaultClient.Do(req); err == nil {
+			_, _ = io.Copy(io.Discard, res.Body)
+			_ = res.Body.Close()
+		}
+	}()
+
+	<-streaming
+
+	start := time.Now()
+	cancel()
+
+	if err := <-errc; err != nil {
+		t.Fatalf("Run() = %v", err)
+	}
+
+	if d := time.Since(start); d > 10*time.Second {
+		t.Errorf("shutdown took %v with an open stream", d)
 	}
 }
 

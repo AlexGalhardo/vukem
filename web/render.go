@@ -9,6 +9,7 @@ import (
 
 	"github.com/AlexGalhardo/vukem/errs"
 	"github.com/AlexGalhardo/vukem/htmx"
+	"github.com/AlexGalhardo/vukem/sse"
 )
 
 // Renderer renders named views. The view package implements it; ctx gives
@@ -99,6 +100,13 @@ func (c *Ctx) View(v View, opts ...RenderOption) error {
 	}
 
 	return c.Blob(o.status, "text/html; charset=utf-8", buf.Bytes())
+}
+
+// SSE streams server-sent events to the client with fn (see package sse):
+//
+//	return c.SSE(func(s *sse.Stream) error { return hub.Stream(s, "posts") })
+func (c *Ctx) SSE(fn func(*sse.Stream) error, opts ...sse.Option) error {
+	return sse.Serve(c.w, c.r, fn, opts...)
 }
 
 // HTMX returns the htmx response-header builder for this request.
