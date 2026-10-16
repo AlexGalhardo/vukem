@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/AlexGalhardo/vukem/errs"
@@ -23,7 +24,7 @@ func Parse[T any](c *Ctx, schema z.Schema[T]) (T, error) {
 		return zero, err
 	}
 
-	return parseWith(schema, input)
+	return parseWith(c.Context(), schema, input)
 }
 
 // Bind parses the request input into T using the schema derived from T's
@@ -32,7 +33,7 @@ func Bind[T any](c *Ctx) (T, error) { return Parse(c, z.For[T]()) }
 
 // ParseQuery parses only the query string.
 func ParseQuery[T any](c *Ctx, schema z.Schema[T]) (T, error) {
-	return parseWith(schema, c.QueryInput())
+	return parseWith(c.Context(), schema, c.QueryInput())
 }
 
 // ParseParams parses the named path parameters ({id}, {slug}...).
@@ -44,7 +45,7 @@ func ParseParams[T any](c *Ctx, schema z.Schema[T], names ...string) (T, error) 
 		}
 	}
 
-	v, err := parseWith(schema, input)
+	v, err := parseWith(c.Context(), schema, input)
 
 	// Malformed path parameters name no resource.
 	if _, invalid := err.(*errs.ValidationError); invalid { //nolint:errorlint // returned unwrapped by parseWith
@@ -55,18 +56,23 @@ func ParseParams[T any](c *Ctx, schema z.Schema[T], names ...string) (T, error) 
 }
 
 // ParseInput validates an already assembled input map (validation errors
-// become a 422 ValidationError).
+// become a 422 ValidationError). Messages stay in English: it has no
+// request context to localize them (see WithIssueLocalizer).
 func ParseInput[T any](schema z.Schema[T], input map[string]any) (T, error) {
-	return parseWith(schema, input)
+	return parseWith(context.Background(), schema, input)
 }
 
-func parseWith[T any](schema z.Schema[T], input any) (T, error) {
+func parseWith[T any](ctx context.Context, schema z.Schema[T], input any) (T, error) {
 	v, err := schema.Parse(input)
 	if err == nil {
 		return v, nil
 	}
 
 	if is, ok := z.AsIssues(err); ok {
+		if localize := IssueLocalizer(ctx); localize != nil {
+			is = localize(is)
+		}
+
 		return v, &errs.ValidationError{Fields: is.Fields()}
 	}
 
