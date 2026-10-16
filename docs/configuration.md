@@ -55,7 +55,8 @@ func (s Secret) MarshalJSON() ([]byte, error) // "\"[redacted]\""
 
 - Required. `vukem key:generate` writes a 32-byte random key (`crypto/rand`), base64-encoded, to `.env`.
 - Sub-keys for cookies, sessions and encryption are derived with `crypto/hkdf` using distinct `info` labels, so the raw key is never used directly.
-- BETA adds `APP_PREVIOUS_KEYS` for rotation (first key encrypts, others only decrypt).
+- `APP_PREVIOUS_KEYS` (optional) lists former `APP_KEY` values, comma-separated, in the same `base64:` format. `app.Crypt` encrypts with `APP_KEY` and still decrypts values sealed with any previous key, so encrypted cookies and `orm.Encrypted` columns survive a rotation. A malformed entry is a boot error.
+- To rotate: move the current `APP_KEY` to `APP_PREVIOUS_KEYS`, run `vukem key:generate --force`, re-save rows with encrypted columns (each save re-encrypts with the new key), then drop the old key. Sessions and signed URLs use only the current key, so they are invalidated.
 
 ## Secure defaults
 

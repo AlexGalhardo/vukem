@@ -15,6 +15,7 @@ import (
 
 	"github.com/AlexGalhardo/vukem/cache"
 	"github.com/AlexGalhardo/vukem/config"
+	"github.com/AlexGalhardo/vukem/crypt"
 	"github.com/AlexGalhardo/vukem/database"
 	"github.com/AlexGalhardo/vukem/events"
 	"github.com/AlexGalhardo/vukem/inertia"
@@ -46,15 +47,18 @@ const (
 
 // Config is the core application configuration, loaded from the environment.
 type Config struct {
-	Name            string        `env:"APP_NAME"         default:"Vukem"`
-	Env             config.Env    `env:"APP_ENV"          default:"development"`
-	Debug           bool          `env:"APP_DEBUG"`
-	URL             string        `env:"APP_URL"          default:"http://localhost:3000"`
-	Key             config.Secret `env:"APP_KEY"`
-	Host            string        `env:"HOST"             default:"localhost"`
-	Port            int           `env:"PORT"             default:"3000"`
-	ShutdownTimeout time.Duration `env:"SHUTDOWN_TIMEOUT" default:"15s"`
-	LogLevel        string        `env:"LOG_LEVEL"        default:"info"`
+	Name  string        `env:"APP_NAME"  default:"Vukem"`
+	Env   config.Env    `env:"APP_ENV"   default:"development"`
+	Debug bool          `env:"APP_DEBUG"`
+	URL   string        `env:"APP_URL"   default:"http://localhost:3000"`
+	Key   config.Secret `env:"APP_KEY"`
+	// PreviousKeys are former APP_KEY values (comma-separated, same format)
+	// that still decrypt app.Crypt tokens after a key rotation.
+	PreviousKeys    config.Secret `env:"APP_PREVIOUS_KEYS"`
+	Host            string        `env:"HOST"              default:"localhost"`
+	Port            int           `env:"PORT"              default:"3000"`
+	ShutdownTimeout time.Duration `env:"SHUTDOWN_TIMEOUT"  default:"15s"`
+	LogLevel        string        `env:"LOG_LEVEL"         default:"info"`
 	LogFormat       string        `env:"LOG_FORMAT"`
 	// APIVersion is info.version of the OpenAPI document.
 	APIVersion string `env:"API_VERSION" default:"1.0.0"`
@@ -77,6 +81,9 @@ type App struct {
 	Source *config.Source
 	// Key is the decoded APP_KEY; derive purpose-specific keys from it.
 	Key config.Key
+	// Crypt encrypts with a key derived from APP_KEY and still decrypts
+	// values sealed with APP_PREVIOUS_KEYS. DB() hands it to orm.Encrypted.
+	Crypt *crypt.Encrypter
 	// Log is the application logger.
 	Log *slog.Logger
 	// Kind is the runtime kind (web, console, test).
@@ -308,6 +315,11 @@ func New(opts ...Option) (*App, error) {
 		return nil, err
 	}
 
+	enc, err := newCrypt(key, cfg.PreviousKeys)
+	if err != nil {
+		return nil, err
+	}
+
 	logger := o.logger
 	if logger == nil {
 		out := o.logOut
@@ -346,6 +358,7 @@ func New(opts ...Option) (*App, error) {
 		Config:    cfg,
 		Source:    src,
 		Key:       key,
+		Crypt:     enc,
 		Log:       logger,
 		Kind:      o.kind,
 		providers: o.providers,
@@ -460,6 +473,28 @@ func checkConfig(cfg *Config) (config.Key, error) {
 	}
 
 	return key, errors.Join(errs...)
+}
+
+// newCrypt builds app.Crypt: the "crypt" key derived from APP_KEY encrypts,
+// keys derived from APP_PREVIOUS_KEYS only decrypt. A malformed previous key
+// is a boot error.
+func newCrypt(key config.Key, previous config.Secret) (*crypt.Encrypter, error) {
+	var old [][]byte
+
+	for i, s := range strings.Split(previous.Reveal(), ",") {
+		if s = strings.TrimSpace(s); s == "" {
+			continue
+		}
+
+		k, err := config.ParseKey(config.NewSecret(s))
+		if err != nil {
+			return nil, fmt.Errorf("vukem: APP_PREVIOUS_KEYS entry %d: %w", i+1, err)
+		}
+
+		old = append(old, k.Derive("crypt", crypt.KeySize))
+	}
+
+	return crypt.New(key.Derive("crypt", crypt.KeySize), old...)
 }
 
 func newLogger(cfg *Config, out io.Writer) *slog.Logger {

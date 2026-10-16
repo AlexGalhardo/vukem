@@ -38,7 +38,8 @@ vukem/                            module github.com/AlexGalhardo/vukem
 ├── vite/                         Vite tags: hot file (dev), manifest, CSP nonce, SRI
 ├── inertia/                      Inertia.js v3 adapter: page object, version check, redirects, shared props
 ├── sse/                          server-sent events: streams, heartbeat, hub (memory or Redis)
-├── i18n/ crypt/                                                               (planned, BETA)
+├── crypt/                        AES-256-GCM encryption, key rotation, encrypted cookies
+├── i18n/                                                                      (planned, BETA)
 ├── testing/                      fluent HTTP test client, DB helpers, fakes
 ├── cmd/vukem/                 global CLI
 ├── internal/
