@@ -239,4 +239,5 @@ app.Test(t).PostJSON("/api/v1/products", map[string]any{}).
 ## Beyond REST
 
 - **SSE** for server push (BETA) — [frontend.md](frontend.md#sse-beta).
-- **GraphQL / gRPC**: not built in. Any `http.Handler` (gqlgen, connect-go, grpc-gateway) mounts on the router and shares middleware, auth and the app container.
+- **GraphQL** (`contrib/graphql`, BETA B.6.3) and **gRPC** (`contrib/grpc` on connect-go, BETA B.11). Meanwhile any `http.Handler` (gqlgen, connect-go, grpc-gateway) mounts on the router and shares middleware, auth and the app container.
+- **API reference UI**: Scalar renders the OpenAPI document at `/docs` (BETA B.0.6).

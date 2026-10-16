@@ -458,6 +458,8 @@ Applies to **every** task:
   → verify: golden JSON Schema/TS output; `tsc --noEmit` passes on generated types.
 - [ ] **B.0.4** `Idempotency-Key` middleware (database/Redis store).
   → verify: a duplicate POST returns the stored response.
+- [ ] **B.0.6** API reference UI with **Scalar** (scalar.com): `api.Docs(spec)` serves the Scalar API Reference for the generated OpenAPI 3.1 document at `/docs` (configurable path, theme, auth presets), assets vendored with a pinned SHA-256 (no CDN by default), CSP nonce, off in production unless enabled; `vukem openapi:serve` for previews.
+  → verify: golden HTML; the page loads with the default CSP; disabled in production by default (`TestSecurity_A02_APIDocsOffInProduction`).
 
 ### B.1 Queue & scheduler
 
@@ -560,6 +562,13 @@ Applies to **every** task:
 - [ ] **B.10.4** File uploads, beyond `storage.PutUploaded` (ALPHA): streaming multipart parsing without buffering whole files, per-route size/type limits, chunked/resumable uploads (tus 1.0 core), direct-to-S3 presigned uploads, `z` file rules (`z.File().MaxSize().Types()`), an htmx upload component with progress, optional scan hook (ClamAV) before files become visible.
   → verify: large-file upload test with bounded memory; resumed upload completes after interruption; spoofed type and oversize rejected (`TestSecurity_A05_UploadValidation`).
 
+### B.11 gRPC
+
+- [ ] **B.11.1** `contrib/grpc` module on **connect-go** (net/http native: gRPC, gRPC-Web and Connect protocols on the same router, HTTP/2 via `h2c` in development): `vukem.MountRPC(r, path, handler)`, interceptors bridging auth guards, `z` validation, problem details → gRPC status codes, request id and logging.
+  → verify: unary and server-streaming tests with gRPC and Connect clients against the app router; unauthenticated calls get `Unauthenticated`.
+- [ ] **B.11.2** Codegen and tooling: `vukem make:proto`, `buf.gen.yaml` template, `vukem codegen:rpc` (protoc-gen-go + protoc-gen-connect-go via `go tool`), gRPC health checking and server reflection (dev only), `vukemtest` RPC client helpers.
+  → verify: generated service compiles and its tests pass in a new app.
+
 ### B.5 Stabilisation
 
 - [ ] **B.5.1** Public API review: every exported identifier justified; remove/rename before freeze; `//go:fix inline` for renamed APIs.
@@ -573,7 +582,7 @@ Applies to **every** task:
 - [ ] **B.5.4** Docs completeness: every package has overview + examples; guides for each starter.
   → verify: checklist.
 
-- [ ] **B.5.6** Documentation site updated with every BETA feature (OpenAPI, queue, scheduler, Inertia, Vite, Redis, Mongo, i18n, SSE, encryption, GraphQL, WebSockets/broadcasting, admin, dev dashboard, JWT, 2FA, S3, MySQL, new starters, client generation, Stripe, file uploads) and redeployed.
+- [ ] **B.5.6** Documentation site updated with every BETA feature (OpenAPI, queue, scheduler, Inertia, Vite, Redis, Mongo, i18n, SSE, encryption, GraphQL, WebSockets/broadcasting, admin, dev dashboard, JWT, 2FA, S3, MySQL, new starters, client generation, Stripe, file uploads, Scalar API docs, gRPC) and redeployed.
   → verify: `task site:build` green; pages live on vukem.vercel.app.
 
 ### BETA exit criteria
