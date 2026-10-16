@@ -1,0 +1,27 @@
+# Binaries and build output
+/bin/
+/dist/
+*.exe
+*.test
+*.out
+coverage.*
+
+# Environment
+.env
+.env.*.local
+.env.local
+
+# Editors and OS
+.idea/
+.vscode/*
+!.vscode/extensions.json
+.DS_Store
+Thumbs.db
+
+# Tooling
+lefthook-local.yml
+node_modules/
+go.work.sum
+
+# Claude Code local settings
+.claude/settings.local.json

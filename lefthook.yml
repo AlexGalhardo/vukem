@@ -1,0 +1,39 @@
+# yaml-language-server: $schema=https://json.schemastore.org/lefthook.json
+# Git hooks. Install with: task hooks
+output:
+  - summary
+  - failure
+
+pre-commit:
+  parallel: true
+  jobs:
+    - name: go fmt
+      glob: "*.go"
+      run: golangci-lint fmt {staged_files}
+      stage_fixed: true
+    - name: go lint
+      glob: "*.go"
+      run: golangci-lint run --new-from-rev=HEAD ./...
+    - name: go mod tidy
+      glob: "{go.mod,go.sum}"
+      run: go mod tidy -diff
+    - name: markdownlint
+      glob: "*.md"
+      exclude:
+        - ".claude/skills/**"
+      run: npx --yes markdownlint-cli2 {staged_files}
+
+commit-msg:
+  jobs:
+    - name: conventional commit
+      run: go run ./internal/tools/commitlint {1}
+
+pre-push:
+  parallel: true
+  jobs:
+    - name: go test
+      run: go test -count=1 ./...
+    - name: go vet
+      run: go vet ./...
+    - name: govulncheck
+      run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...

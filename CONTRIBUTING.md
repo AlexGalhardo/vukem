@@ -1,0 +1,54 @@
+# Contributing to Lumek
+
+Thanks for helping. This guide covers setup, workflow and the rules every change follows.
+
+## Setup
+
+1. Install the tools listed in [docs/tooling.md](docs/tooling.md#required-tools) (Go ≥ 1.27, golangci-lint v2, Task, lefthook, Node.js for markdownlint). On Windows everything installs with `winget`.
+2. Clone and install the git hooks:
+
+   ```sh
+   git clone https://github.com/AlexGalhardo/golang-framework.git
+   cd golang-framework
+   task setup
+   ```
+
+3. Check everything works: `task ci`.
+
+## Workflow
+
+1. Pick a task from [PLAN.md](PLAN.md) (or open an issue first for anything not in the plan).
+2. Branch from `main`: `feat/<short-name>`, `fix/<short-name>`, `docs/<short-name>`.
+3. Write the test first, then the code. Keep changes small and focused.
+4. Run `task ci` before pushing (the `pre-push` hook runs tests, vet and govulncheck).
+5. Open a pull request. The **PR title** must be a Conventional Commit; it becomes the squash-merge commit message.
+
+## Commit messages
+
+[Conventional Commits 1.0](https://www.conventionalcommits.org/en/v1.0.0/), enforced by the `commit-msg` hook and CI:
+
+```text
+feat(router): add named route groups
+fix(session)!: regenerate id on login
+
+BREAKING CHANGE: Session.Login now returns an error.
+```
+
+Types: `feat`, `fix`, `perf`, `refactor`, `docs`, `test`, `build`, `ci`, `chore`, `style`, `revert`. Scope is the package or area (`router`, `orm`, `cli`, `postgres`…). Full rules: [docs/tooling.md](docs/tooling.md#conventional-commits).
+
+## Code rules
+
+- Format and lint: `task fmt`, `task lint`. Do not add `//nolint` without a specific linter and a reason.
+- Standard library first. A new dependency needs a design note (see [docs/architecture.md](docs/architecture.md#dependency-policy)).
+- No package-level mutable state, no `init()` registration, `context.Context` as the first parameter for I/O.
+- Core packages never import `drivers/*`.
+- Tests use the standard library and `go-cmp`; no testify in core. See [docs/testing.md](docs/testing.md).
+- Every exported identifier has a doc comment; new public APIs include an `Example`.
+
+## Changelog and releases
+
+Do not edit `CHANGELOG.md` by hand: it is generated from commit messages by git-cliff at release time ([Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/)). Versioning follows [SemVer](https://semver.org); see [docs/tooling.md](docs/tooling.md#versioning).
+
+## Code of conduct
+
+This project follows the [Contributor Covenant](CODE_OF_CONDUCT.md).

@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(go build *)",
+      "Bash(go test *)",
+      "Bash(go vet *)",
+      "Bash(go fix *)",
+      "Bash(go mod *)",
+      "Bash(go run *)",
+      "Bash(go version)",
+      "Bash(go env *)",
+      "Bash(go list *)",
+      "Bash(go doc *)",
+      "Bash(go tool *)",
+      "Bash(golangci-lint *)",
+      "Bash(task *)",
+      "Bash(lefthook *)",
+      "Bash(git-cliff *)",
+      "Bash(git cliff *)",
+      "Bash(npx --yes markdownlint-cli2 *)",
+      "Bash(npx markdownlint-cli2 *)",
+      "Bash(git status *)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git show *)",
+      "Bash(git branch *)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node -e \"let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{const f=(JSON.parse(d).tool_input||{}).file_path||'';if(f.endsWith('.go'))require('child_process').spawnSync('golangci-lint',['fmt',f],{stdio:'inherit'})})\"",
+            "timeout": 60,
+            "statusMessage": "Formatting Go file"
+          }
+        ]
+      }
+    ]
+  }
+}

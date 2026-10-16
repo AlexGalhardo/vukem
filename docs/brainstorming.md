@@ -1,0 +1,125 @@
+# Brainstorming
+
+Decision log from the design interview (grilling sessions, 2026-10-16). Each entry records the **decision**, the **alternatives considered**, and the **rationale**. Research backing these choices lives in [golang-web-search.md](golang-web-search.md).
+
+Status legend: ✅ decided · ⏳ open
+
+## Identity
+
+| # | Topic | Decision | Status |
+| --- | --- | --- | --- |
+| I1 | Name | **Lumek** — coined, unique word (soft "lumen" feel); also the CLI command (`lumek new blog`) | ✅ |
+| I2 | Module path | `github.com/AlexGalhardo/golang-framework` (repo name kept); root package name `lumek` | ✅ |
+| I3 | License | MIT © 2026 Alex Galhardo | ✅ |
+| I4 | Language | Code, comments, commits, docs, README: **English**. Discussion with maintainer may be Portuguese | ✅ |
+| I5 | Positioning | *Laravel/AdonisJS productivity assembled from idiomatic, `net/http`-native, separately usable packages — no globals, no reflection DI, codegen instead of magic* | ✅ |
+
+**Rejected names** (conflict check on pkg.go.dev, Homebrew, npm, GitHub): ipe, arara, caju, gale, kiln, tessera, anvil, rivet, loom, crucible, foundry, smithy, chisel, ember, blaze, alloy, forge. Clean-but-declined (maintainer wants a coined word, not an existing one): brasa, jabuti, tatu, ingot, quench, hearth, smelt. Coined finalists: zorvo, **lumek** (chosen), kovra, trovik, velkor. Note: the `github.com/lumek` handle is taken by an inactive user, so the repo stays at `AlexGalhardo/golang-framework`.
+
+## Platform
+
+| # | Topic | Decision | Alternatives | Rationale |
+| --- | --- | --- | --- | --- |
+| P1 | Go version | **1.27 minimum** (`go 1.27.0`) | 1.26 | Generic methods make the query builder ergonomic (`Query[T].Pluck[V]`); by 1.0, 1.28/1.29 will exist |
+| P2 | Repo layout | **Monorepo: core module + one module per heavy driver** (`drivers/postgres`, `drivers/redis`, `drivers/mongo`) | single module | `go get` of core never pulls pgx/redis/mongo; precedents: aws-sdk-go-v2, otel-go, gofiber/storage |
+| P3 | Versioning | **v0.x until 1.0**; BETA ships `v1.0.0-beta.N` → `-rc.N` → `v1.0.0`. Never move a tag; use `retract` | pre-releases from day one | Go modules: v0 has no compat promise; v2+ needs `/v2` path, so v1 must be durable |
+| P4 | Git flow | **Trunk-based + squash merge**; PR title = Conventional Commit; initial scaffolding committed straight to `main` | direct commits forever | Clean linear history feeds git-cliff |
+
+## Architecture
+
+| # | Topic | Decision | Alternatives | Rationale |
+| --- | --- | --- | --- | --- |
+| A1 | Router | **Thin layer over `http.ServeMux`**: groups, named routes, `Resource()`, `URLFor()`; handlers `func(c *Ctx) error`; middleware `func(http.Handler) http.Handler`; any `http.Handler` mountable | chi underneath; plain `http.HandlerFunc` | stdlib-first; whole ecosystem's middleware works; central error handling (Echo pattern) |
+| A2 | DI | **`App` struct with typed fields + providers** (`Register`/`Boot`/`Shutdown`) wired explicitly in `bootstrap/app.go` | generic container; uber/fx; samber/do | Idiomatic, no hidden deps, no facades/globals |
+| A3 | Controllers | **Structs with methods** (`func (p *PostController) Index(c *Ctx) error`); `r.Resource("posts", ctrl)` detects `Index/Create/Store/Show/Edit/Update/Destroy` via small interfaces | free functions | Laravel familiarity; interface detection is compile-safe, no reflection on signatures |
+| A4 | Errors | **Central handler + typed errors** (`HTTPError`, `ValidationError`, `ErrNotFound`) → HTML status pages, redirect+flash (web), 422 re-render (HTMX), `application/problem+json` RFC 9457 (API); debug page in dev | plain `{error}` JSON | One place maps errors to responses (like Laravel `withExceptions`) |
+| A5 | Config | **Typed structs per module**; own `.env` parser (no godotenv); precedence `.env.<env>.local` > `.env.local` > `.env.<env>` > `.env`; validated at boot; refuses to start without `APP_KEY`; `Secret` type logs `[redacted]` | caarlos0/env + godotenv | Removes stringly `config("a.b")`; AdonisJS-style boot validation |
+| A6 | App skeleton | Hybrid Laravel/Go layout (below) | `internal/`-only; literal Laravel copy | Familiar to Laravel/Adonis users, still short idiomatic package names |
+| A7 | CLI | **Global CLI** (`go install …/cmd/lumek@latest`) does `new`, `make:*`, `serve` (hot reload + optional Vite), `build`. App-bound commands (`migrate`, `db:seed`, `queue:work`, user commands) compile **into the app binary**; the global CLI delegates (`go run ./cmd/app <cmd>`). Generators register what they create by editing `bootstrap/*.go`. Parser: stdlib `flag` | Goravel-style `go run . artisan` only; cobra | Fast generators; no reflection discovery; zero deps |
+
+### Generated app skeleton
+
+```text
+blog/
+├── cmd/app/main.go        # run(ctx, args, getenv, stdout) error
+├── bootstrap/
+│   ├── app.go             # fluent builder
+│   ├── providers.go       # edited by make:provider
+│   └── commands.go        # edited by make:command
+├── config/                # typed structs per module
+├── app/
+│   ├── controllers/
+│   ├── models/
+│   ├── middleware/
+│   ├── requests/          # form requests (validation)
+│   └── policies/          # created on demand
+├── database/{migrations,factories,seeders}/
+├── routes/web.go
+├── resources/views/       # html/template
+├── public/                # htmx.min.js, css
+├── storage/
+├── tests/
+└── .env.example
+```
+
+## Data
+
+| # | Topic | Decision | Alternatives | Rationale |
+| --- | --- | --- | --- | --- |
+| D1 | ORM | **Own generic query builder over `database/sql`** with Postgres/SQLite dialects: `orm.Query[User](db).Where(...).Get(ctx)`, `Each()` → `iter.Seq2`; explicit relations (`With`) from ALPHA; sqlc interoperable (same `*sql.DB`) | wrap bun; wrap GORM; sqlc-only | stdlib-first; avoids GORM baggage; generics give typed results |
+| D2 | Migrations | **Fluent schema builder in Go** (`s.Create("users", func(t *schema.Table){ t.ID(); t.String("email").Unique(); t.Timestamps() })`) + `s.Raw(sql)`; own runner with batches table | goose SQL files; both | Laravel DX; no goose dependency |
+| D3 | SQLite | **`modernc.org/sqlite`** (pure Go, no cgo) default; WAL, `busy_timeout`, `foreign_keys` on; single-connection write pool; mattn swappable by driver name | mattn (cgo); ncruces (wasm) | Windows + static binaries; PocketBase precedent |
+| D4 | Postgres | `jackc/pgx/v5` via `stdlib` in `drivers/postgres` module | lib/pq | De-facto standard |
+| D5 | Mongo / Redis | Separate modules; Mongo gets its own `Collection[T]` API (not the SQL builder); Redis backs cache/session/queue/locks | force Mongo into ORM | Different data models |
+
+## HTTP features
+
+| # | Topic | Decision | Alternatives | Rationale |
+| --- | --- | --- | --- | --- |
+| H1 | Validation | **Own validator with struct tags** (`validate:"required,email,max=255"`), tags parsed & checked at boot; optional `Rules()`/`Authorize()` interfaces; generic `Bind[T](c)`; failures → 422 / redirect+flash | go-playground/validator; VineJS-style builder | No heavy dep; boot-time tag checking kills the "runtime string" problem |
+| H2 | Sessions | **Own implementation**: cookie store (AES-GCM, key via HKDF from `APP_KEY`), database, memory; Redis in driver module; flash + old input; `RenewToken` anti-fixation | alexedwards/scs | Integrates tightly with flash/validation/Inertia; small surface |
+| H3 | CSRF | `http.CrossOriginProtection` (Go 1.25) + `SameSite=Lax` cookies; HTMX token via `hx-headers:inherited` when needed | gorilla/csrf | stdlib; gorilla/csrf had a 2025 CVE |
+| H4 | Authentication | **Guard × UserProvider**; guards `session` and `access_token` (opaque, SHA-256 in DB, abilities); hasher argon2id (default) + bcrypt with `NeedsRehash`; `install:auth` generates login/register/reset/verify as user-owned code (Fortify-style actions) | JWT default for APIs | Opaque tokens are revocable and simple; JWT can be added later |
+| H6 | REST APIs | **First-class**: `lumek new <app> --api` JSON-only starter; `APIResource`, typed resource transformers, problem+json errors, allowlisted filter/sort/include/fields, offset + cursor pagination envelopes, token auth, CORS, rate limit, ETag/If-Match; OpenAPI 3.1 from typed handlers in BETA. See [api.md](api.md) | web-only with JSON helpers | Maintainer requirement (2026-10-16): APIs, mainly REST, are a primary use case |
+| H7 | Security | **Secure by default, fail closed, refuse to boot when misconfigured**; defaults mapped to OWASP Top 10:2025 with a `TestSecurity_*` test each. See [security.md](security.md) | opt-in hardening | Maintainer requirement (2026-10-16) |
+| H5 | Authorization | **Gates + generic `Policy[T]`** registered by type: `authz.Authorize(c, "update", post)`; `Before()` hook; deny as 403 or 404 | gates only | Laravel/Bouncer parity without reflection discovery |
+
+## Frontend
+
+| # | Topic | Decision | Alternatives | Rationale |
+| --- | --- | --- | --- | --- |
+| F1 | Templates | **`html/template` default** (layouts + fragment rendering for HTMX); templ supported through `View.Render(ctx, w) error` with zero core dependency | templ default; html/template only | stdlib-first, but no lock-out of templ users |
+| F2 | HTMX | **htmx 4 vendored + served via `embed`; no Node required** for the default starter; Vite optional (Tailwind/bundling) | Vite always | `lumek new app` runs without `npm install` |
+| F3 | HTMX helpers | Own v4-aware helpers: `IsHTMX`, `IsPartial` (`HX-Request-Type`), history-restore detection, auto fragment/layout rendering, response header builder, `<hx-partial>`, 422 flow, `Vary: HX-Request` | angelofallars/htmx-go (htmx 2 era) | Existing libs predate v4 |
+| F4 | Inertia | **Own v3 adapter in BETA, React starter only** (full protocol, CSR fallback on SSR failure, integrated with session/flash/validation/Vite); Vue/Svelte post-1.0 | ALPHA; React+Vue | Keeps prototype/alpha small |
+| F5 | Vite | Laravel "hot file" model; `{{ vite "…" }}` template func; manifest hash = Inertia version | olivere/vite | Go can't host Vite in-process |
+
+## Quality & tooling
+
+| # | Topic | Decision | Alternatives | Rationale |
+| --- | --- | --- | --- | --- |
+| Q1 | Test assertions | **stdlib + `go-cmp`** in framework tests; framework ships fluent HTTP test client and fakes | testify | Google Go Style; users don't need testify |
+| Q2 | Integration tests | `//go:build integration` + env URLs (`DATABASE_URL`, `REDIS_URL`, `MONGO_URL`); CI service containers; local docker compose | testcontainers-go | No extra dep |
+| Q3 | Lint/format | golangci-lint v2 (gofumpt + gci + golines @120, tab-len 4) | — | Community standard |
+| Q4 | Hooks | lefthook: pre-commit (fmt, lint, `go mod tidy -diff`, markdownlint), commit-msg (Conventional Commits), pre-push (test, vet, govulncheck) | pre-commit (Python), husky (Node) | Go binary, Windows-friendly |
+| Q5 | Commit lint | Own ~60-line validator in Go (`go run ./internal/tools/commitlint`) + PR-title check in CI | @commitlint/cli | No Node for commits |
+| Q6 | Task runner | Taskfile (go-task v3) | Makefile; mage | Identical behaviour on Windows |
+| Q7 | Changelog | git-cliff → Keep a Changelog **1.1.0** | release-please; KaC 2.0.0 | Exact KaC format |
+| Q8 | Release | GoReleaser v2 for CLI binaries (changelog from git-cliff) | — | Cross-compile, checksums, SBOM |
+| Q9 | Markdown | markdownlint-cli2 (MD010 ignores `go` fences; MD024 siblings-only; MD013 off) | rumdl | Requested; Node already present |
+| Q10 | CI | GitHub Actions: lint, test matrix (ubuntu/windows/macos × stable; oldstable once Go 1.28 ships), integration (PG/Redis/Mongo services), govulncheck, markdownlint, semantic PR title, CodeQL, Dependabot | — | — |
+| Q11 | Agent config | `AGENTS.md` canonical (≤50 lines, links to docs), `CLAUDE.md` imports it; `.claude/rules/*` path-scoped; `.claude/settings.json` with permission allowlist + PostToolUse format hook | rules only | Maintainer approved |
+
+## Phase scope
+
+| Phase | Version | Scope |
+| --- | --- | --- |
+| Prototype | v0.1.x | JSON binding/responses + problem+json, router, config/env, App+providers, CLI (`new`, `serve`, `make:controller/model/migration`), ORM core + migrations on SQLite, validation, sessions + flash, CSRF, `html/template` + HTMX helpers, error handler, test client, health `/up`, graceful shutdown |
+| ALPHA | v0.2–v0.x | API starter (`new --api`, `install:api`, resources, query conventions, pagination envelopes, CORS), full auth (session + token guards, `install:auth`), gates/policies, relations, factories/seeders, mail, cache, storage (`os.Root`), events, Postgres driver |
+| BETA | v1.0.0-beta.N → rc.N | OpenAPI 3.1 generation, idempotency keys, queue (sync/database/redis), scheduler, Inertia v3 + React starter, Vite, Redis and Mongo drivers, i18n, SSE, encryption with key rotation, rate limiting |
+| 1.0 Stable | v1.0.0 | API freeze, docs complete, stability policy, LTS line |
+| Post-1.0 | v1.x | WebSockets/broadcasting, embedded admin, dev dashboard, JWT guard, Vue/Svelte starters |
+
+## Open questions
+
+None — all branches of the design tree were resolved on 2026-10-16. New questions are appended here as they arise.

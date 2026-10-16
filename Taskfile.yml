@@ -1,0 +1,101 @@
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+# Single entry point for local development and CI. Run `task --list`.
+version: "3"
+
+vars:
+  # Every Go module in the repository (drivers are added as they land).
+  MODULES: "."
+
+tasks:
+  default:
+    cmds:
+      - task --list
+
+  setup:
+    desc: Install hooks and verify required tools
+    cmds:
+      - go version
+      - golangci-lint version
+      - lefthook version
+      - lefthook install
+
+  hooks:
+    desc: Install git hooks
+    cmds:
+      - lefthook install
+
+  fmt:
+    desc: Format Go code
+    cmds:
+      - for: { var: MODULES }
+        cmd: cd {{.ITEM}} && golangci-lint fmt ./...
+
+  lint:
+    desc: Lint Go code and Markdown
+    cmds:
+      - task: lint:go
+      - task: lint:md
+
+  lint:go:
+    desc: Run golangci-lint on every module
+    cmds:
+      - for: { var: MODULES }
+        cmd: cd {{.ITEM}} && golangci-lint run ./...
+
+  lint:md:
+    desc: Run markdownlint
+    cmds:
+      - npx --yes markdownlint-cli2 "**/*.md"
+
+  test:
+    desc: Run unit tests
+    cmds:
+      - for: { var: MODULES }
+        cmd: cd {{.ITEM}} && go test -count=1 ./...
+
+  test:race:
+    desc: Run unit tests with the race detector (needs cgo)
+    cmds:
+      - for: { var: MODULES }
+        cmd: cd {{.ITEM}} && go test -race -count=1 ./...
+
+  test:integration:
+    desc: Run integration tests (needs DATABASE_URL, REDIS_URL, MONGO_URL)
+    cmds:
+      - for: { var: MODULES }
+        cmd: cd {{.ITEM}} && go test -tags=integration -count=1 ./...
+
+  cover:
+    desc: Write coverage.out and print the total
+    cmds:
+      - go test -count=1 -coverprofile=coverage.out ./...
+      - go tool cover -func=coverage.out
+
+  vet:
+    desc: Run go vet and preview go fix modernizations
+    cmds:
+      - go vet ./...
+      - go fix -diff ./...
+
+  vuln:
+    desc: Scan for known vulnerabilities
+    cmds:
+      - go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+  tidy:
+    desc: Tidy every module
+    cmds:
+      - for: { var: MODULES }
+        cmd: cd {{.ITEM}} && go mod tidy
+
+  changelog:
+    desc: Regenerate CHANGELOG.md from Conventional Commits
+    cmds:
+      - git cliff --output CHANGELOG.md
+
+  ci:
+    desc: Everything CI runs
+    cmds:
+      - task: lint
+      - task: vet
+      - task: test
