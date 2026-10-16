@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-10-16
+
+### Added
+
+- **site:** Add the Vukem icon, align the header and open on the docs
+- **redis:** Add the Redis driver module
+- **mongo:** Add the MongoDB driver module
+
+### Security
+
+- **repo:** Rewrite the README after the Laravel layout
+
 ## [0.16.0] - 2026-10-16
 
 ### Added
@@ -212,7 +224,8 @@ Project foundation. No framework code yet; see [PLAN.md](PLAN.md) for the roadma
 - README, MIT license, CONTRIBUTING, SECURITY and CODE_OF_CONDUCT.
 - Agent configuration: `AGENTS.md`, `CLAUDE.md`, path-scoped `.claude/rules/`, Go skills and project settings.
 
-[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.16.0...HEAD
+[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.17.0...HEAD
+[0.17.0]: https://github.com/AlexGalhardo/vukem/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/AlexGalhardo/vukem/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/AlexGalhardo/vukem/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/AlexGalhardo/vukem/compare/v0.13.0...v0.14.0
