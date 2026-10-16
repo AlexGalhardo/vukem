@@ -515,7 +515,7 @@ Applies to **every** task:
 
 ### B.6 Realtime & GraphQL
 
-- [ ] **B.6.1** `drivers/websocket` module (coder/websocket): upgrade with origin check, ping/pong, read limits, graceful close on shutdown, `c.WebSocket(fn)`.
+- [x] **B.6.1** `drivers/websocket` module (coder/websocket): upgrade with origin check, ping/pong, read limits, graceful close on shutdown, `c.WebSocket(fn)`.
   → verify: tests with an in-process client; cross-origin upgrade rejected (`TestSecurity_A01_WebSocketOrigin`).
 - [ ] **B.6.2** `broadcast` package: channels, private and presence channels authorized through gates, memory fan-out, Redis fan-out (via `drivers/redis`), SSE fallback, `Broadcast(ctx, event)` from events/jobs.
   → verify: conformance suite (memory, Redis); unauthorized subscribe denied.
@@ -541,7 +541,7 @@ Applies to **every** task:
   → verify: RFC 6238 vectors; replayed code rejected; generated app tests pass.
 - [x] **B.8.3** Social providers Apple (ES256 client secret, `form_post`), LinkedIn (OIDC), X (OAuth 2.0 + PKCE) on the ALPHA `social` core.
   → verify: per-provider golden user mapping against fake servers.
-- [ ] **B.8.4** `drivers/s3` storage module (stdlib SigV4 client): put/get/delete/list/stat, multipart upload, presigned GET/PUT URLs.
+- [x] **B.8.4** `drivers/s3` storage module (stdlib SigV4 client): put/get/delete/list/stat, multipart upload, presigned GET/PUT URLs.
   → verify: storage conformance suite against MinIO; SigV4 test vectors.
 - [ ] **B.8.5** `drivers/mysql` module (MySQL 8 / MariaDB 11 dialect).
   → verify: ORM/schema conformance suite green against `mysql:8` and `mariadb:11`.
