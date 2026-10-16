@@ -502,7 +502,7 @@ Applies to **every** task:
 
 - [x] **B.4.1** Encryption with key rotation; encrypted cookies; `orm.Encrypted[T]`.
   → verify: rotation tests.
-- [ ] **B.4.2** i18n (JSON catalogs, plurals, locale resolution, translated validation messages, `t` func).
+- [x] **B.4.2** i18n (JSON catalogs, plurals, locale resolution, translated validation messages, `t` func).
   → verify: tests.
 - [x] **B.4.3** SSE (`c.SSE`, hub, heartbeat, shutdown).
   → verify: `synctest` tests.
