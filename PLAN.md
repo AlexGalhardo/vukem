@@ -283,9 +283,9 @@ Applies to **every** task:
 - [ ] **P.12.0** Documentation site (`site/`, Next.js 16 + Tailwind v4 + Base UI, Resend-like) deployed at lumek.vercel.app with pages for every Prototype feature.
   → verify: `task site:build` green; Ctrl+K search, theme toggle, copy + toast work; production URL serves the new pages.
 
-- [ ] **P.12.1** GoReleaser config + `release.yml`.
+- [x] **P.12.1** GoReleaser config + `release.yml`.
   → verify: `goreleaser release --snapshot --clean` builds all targets.
-- [ ] **P.12.2** README quick start validated by following it on a clean machine/container.
+- [x] **P.12.2** README quick start validated by following it on a clean machine/container.
   → verify: checklist in PR.
 - [ ] **P.12.3** Tag `v0.1.0`, warm proxy, verify `go install …/cmd/lumek@v0.1.0`.
   → verify: pkg.go.dev shows docs and MIT license.

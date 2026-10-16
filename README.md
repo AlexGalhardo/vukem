@@ -5,7 +5,7 @@
 Lumek is a web framework built on `net/http` and the standard library for **REST APIs and full-stack apps**: routing, validation, an ORM with migrations, authentication, JSON resources with problem+json errors, HTMX-first views and an optional Inertia + React frontend, all driven by one CLI.
 
 > [!WARNING]
-> Lumek is in the **prototype** phase. Nothing is released yet and APIs will change. Follow progress in [PLAN.md](PLAN.md).
+> Lumek is a **prototype** (`v0.1.x`): it works end to end, but APIs will change before 1.0. Follow progress in [PLAN.md](PLAN.md).
 
 ## Why Lumek
 
@@ -19,7 +19,7 @@ Lumek is a web framework built on `net/http` and the standard library for **REST
 
 ## A taste
 
-The API below is the design target ([docs/http.md](docs/http.md)), not released code yet.
+This is the example CRUD that `lumek new` generates ([docs/http.md](docs/http.md)).
 
 ```go
 func Web(r *router.Router, app *lumek.App) error {
@@ -34,30 +34,49 @@ func Web(r *router.Router, app *lumek.App) error {
 	return nil
 }
 
-func (p *PostController) Store(c *web.Ctx) error {
-	in, err := web.Bind[requests.StorePost](c) // validates, 422 on failure
+var PostSchema = z.Struct[Post](z.Shape{
+	"title": z.String().Trim().Min(3).Max(120),
+	"body":  z.String().Trim().Max(10_000),
+})
+
+func (pc *PostController) Store(c *web.Ctx) error {
+	in, err := web.Parse(c, requests.PostSchema) // invalid: errors flashed + redirect back (422 for JSON)
 	if err != nil {
 		return err
 	}
 
 	post := models.Post{Title: in.Title, Body: in.Body}
-	if err := orm.Create(c.Context(), p.db, &post); err != nil {
+	if err := orm.Create(c.Context(), pc.db, &post); err != nil {
 		return err
 	}
 
-	c.Flash("success", "Post created.")
-	return c.RedirectRoute("posts.show", "id", post.ID)
+	_ = c.Flash("success", "Post created.")
+
+	return c.RedirectRoute("posts.show", "post", post.ID)
+}
+
+func (pc *PostController) Index(c *web.Ctx) error {
+	posts, err := orm.QueryOf[models.Post](pc.db).Latest().Get(c.Context())
+	if err != nil {
+		return err
+	}
+
+	// Full page for browsers, only the "post-list" block for htmx requests.
+	return c.Render("posts/index", map[string]any{"Posts": posts}, web.Block("post-list"))
 }
 ```
 
-## Quick start (planned for v0.1.0)
+## Quick start
 
 ```sh
 go install github.com/AlexGalhardo/golang-framework/cmd/lumek@latest
 
-lumek new blog
+lumek new blog       # HTMX + SQLite starter with an example CRUD
 cd blog
-lumek serve          # http://localhost:3000
+lumek migrate
+lumek serve          # http://localhost:3000, rebuilds on Go changes
+go test ./...        # the starter ships with tests
+lumek build          # single production binary in bin/
 ```
 
 Requires Go 1.27 or newer. Works on **Windows 11/10**, Linux and macOS — no C compiler needed.
