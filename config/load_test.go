@@ -79,9 +79,13 @@ func TestLoadSourceTestEnvSkipsLocal(t *testing.T) {
 func TestLoadSourceDefaultsToDevelopmentAndMissingFiles(t *testing.T) {
 	t.Parallel()
 
-	src, err := LoadSource(fstest.MapFS{}, fakeEnv(nil), nil)
+	src, err := LoadSource(fstest.MapFS{}, fakeEnv(map[string]string{"ONLY_PROCESS": "1"}), nil)
 	if err != nil {
 		t.Fatal(err)
+	}
+
+	if got := src.Get("ONLY_PROCESS"); got != "1" {
+		t.Errorf("Get(ONLY_PROCESS) = %q, want process-only variable", got)
 	}
 
 	if src.Env() != Development {

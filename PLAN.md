@@ -17,7 +17,7 @@ Task IDs: `<phase>.<group>.<task>` (e.g. `P.3.2`). Reference them in commit bodi
 | Field | Value |
 | --- | --- |
 | Current phase | **Prototype** |
-| Next task | `P.2.1` (P.0.9 waits for GitHub billing; CI runs locally via `task ci:full`) |
+| Next task | `P.3.1` (P.2.5 after the router; P.0.9 waits for GitHub billing, CI runs locally via `task ci:full`) |
 | Last release | `v0.0.1` (foundation, 2026-10-16) |
 | Updated | 2026-10-16 |
 
@@ -110,13 +110,13 @@ Applies to **every** task:
 
 ### P.2 App & lifecycle — needs: P.1
 
-- [ ] **P.2.1** `App` struct, `New(opts...)`, functional options.
+- [x] **P.2.1** `App` struct, `New(opts...)`, functional options.
   → verify: unit tests for option application.
-- [ ] **P.2.2** Provider interfaces (`Register`, `Booter`, `Starter`, `Shutdowner`) + environment filtering.
+- [x] **P.2.2** Provider interfaces (`Register`, `Booter`, `Starter`, `Shutdowner`) + environment filtering.
   → verify: order test (register all → boot all → start; shutdown reverse).
-- [ ] **P.2.3** Runner orchestration with `errgroup` + `signal.NotifyContext`; graceful shutdown with timeout.
+- [x] **P.2.3** Runner orchestration with `errgroup` + `signal.NotifyContext`; graceful shutdown with timeout.
   → verify: `synctest` test: SIGINT triggers shutdown in reverse order within timeout.
-- [ ] **P.2.4** HTTP server runner with mandatory timeouts and `BaseContext`.
+- [x] **P.2.4** HTTP server runner with mandatory timeouts and `BaseContext`.
   → verify: test asserts non-zero timeouts; in-flight request completes during shutdown.
 - [ ] **P.2.5** `run(ctx, args, getenv, stdout)` pattern helper for `cmd/app`.
   → verify: end-to-end test boots app on random port and polls `/up`.

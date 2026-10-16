@@ -28,21 +28,33 @@ const filePrefix = "@file:"
 type Source struct {
 	values map[string]string
 	env    Env
+	getenv func(string) (string, bool)
 }
 
-// Lookup returns the value for key and whether it is set.
+// Lookup returns the value for key and whether it is set. The process
+// environment wins over .env files.
 func (s *Source) Lookup(key string) (string, bool) {
+	if s.getenv != nil {
+		if v, ok := s.getenv(key); ok {
+			return v, true
+		}
+	}
+
 	v, ok := s.values[key]
+
 	return v, ok
 }
 
 // Get returns the value for key or "" when unset.
-func (s *Source) Get(key string) string { return s.values[key] }
+func (s *Source) Get(key string) string {
+	v, _ := s.Lookup(key)
+	return v
+}
 
 // Env returns the resolved application environment.
 func (s *Source) Env() Env { return s.env }
 
-// Keys returns the sorted keys of every resolved value.
+// Keys returns the sorted keys of values defined in .env files or the map.
 func (s *Source) Keys() []string { return slices.Sorted(maps.Keys(s.values)) }
 
 // MapSource builds a Source from a map, typically in tests.
@@ -141,13 +153,7 @@ func LoadSource(
 		values[k] = v
 	}
 
-	if _, ok := values["APP_ENV"]; !ok {
-		if v, ok := getenv("APP_ENV"); ok {
-			values["APP_ENV"] = v
-		}
-	}
-
-	return &Source{values: values, env: env}, nil
+	return &Source{values: values, env: env, getenv: getenv}, nil
 }
 
 func readEnvFile(fsys fs.FS, name string) ([]Entry, error) {
