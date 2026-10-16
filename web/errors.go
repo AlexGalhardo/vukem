@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
-	"io"
 	"log/slog"
 	"net/http"
 
@@ -190,7 +189,7 @@ func (c *Ctx) renderErrorPage(status int, title, detail string, verr *errs.Valid
 		if v.Has(name) {
 			c.w.WriteHeader(status)
 
-			if err := v.Render(c.w, name, data); err != nil {
+			if err := v.Render(c.Context(), c.w, name, data); err != nil {
 				c.Log().ErrorContext(c.Context(), "render error page", "err", err)
 			}
 
@@ -200,12 +199,6 @@ func (c *Ctx) renderErrorPage(status int, title, detail string, verr *errs.Valid
 
 	c.w.WriteHeader(status)
 	_ = errorPage.Execute(c.w, data)
-}
-
-// Renderer renders named views. The view package implements it.
-type Renderer interface {
-	Render(w io.Writer, name string, data any) error
-	Has(name string) bool
 }
 
 type requestIDKey struct{}

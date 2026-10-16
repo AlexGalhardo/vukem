@@ -98,7 +98,7 @@ func newNonce() string {
 	b := make([]byte, 16)
 	_, _ = rand.Read(b) // never fails since Go 1.24
 
-	return base64.RawStdEncoding.EncodeToString(b)
+	return base64.RawURLEncoding.EncodeToString(b) // base64url: no characters that need HTML escaping
 }
 
 func orDefault(v, def string) string {

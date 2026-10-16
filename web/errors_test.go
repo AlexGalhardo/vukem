@@ -20,8 +20,13 @@ type fakeViews map[string]string
 
 func (f fakeViews) Has(name string) bool { _, ok := f[name]; return ok }
 
-func (f fakeViews) Render(w io.Writer, name string, data any) error {
+func (f fakeViews) Render(_ context.Context, w io.Writer, name string, data any) error {
 	_, err := fmt.Fprintf(w, f[name], data.(errorData).Status)
+	return err
+}
+
+func (f fakeViews) RenderBlock(_ context.Context, w io.Writer, name, block string, _ any) error {
+	_, err := fmt.Fprintf(w, "%s#%s", name, block)
 	return err
 }
 

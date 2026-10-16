@@ -18,6 +18,7 @@ import (
 	"github.com/AlexGalhardo/golang-framework/router"
 	"github.com/AlexGalhardo/golang-framework/schema"
 	"github.com/AlexGalhardo/golang-framework/session"
+	"github.com/AlexGalhardo/golang-framework/view"
 )
 
 // Kind is the runtime in which the application is running. Providers can be
@@ -64,6 +65,8 @@ type App struct {
 	Kind Kind
 	// Router holds the HTTP routes; /up is registered by default.
 	Router *router.Router
+	// Views renders templates when WithViews was given (nil otherwise).
+	Views *view.Engine
 
 	providers []Provider
 	runners   []namedRunner
@@ -104,6 +107,7 @@ type options struct {
 	providers  []Provider
 	runners    []namedRunner
 	routes     []func(r *router.Router, app *App)
+	views      fs.FS
 	migrations []schema.Migration
 	drivers    []database.Driver
 	stdout     io.Writer
@@ -115,6 +119,12 @@ type options struct {
 // registered, so handlers can use the services they added.
 func WithRoutes(fn func(r *router.Router, app *App)) Option {
 	return func(o *options) error { o.routes = append(o.routes, fn); return nil }
+}
+
+// WithViews renders html/template views from fsys (os.DirFS("resources/views")
+// or an embed.FS). Views reload on every request outside production.
+func WithViews(fsys fs.FS) Option {
+	return func(o *options) error { o.views = fsys; return nil }
 }
 
 // WithStdout sets where commands print (os.Stdout by default).
@@ -241,6 +251,16 @@ func New(opts ...Option) (*App, error) {
 		migrations: o.migrations,
 	}
 	app.Router = app.newRouter()
+
+	if o.views != nil {
+		engine, err := view.New(view.Config{FS: o.views, Reload: !cfg.IsProduction(), URLs: app.Router})
+		if err != nil {
+			return nil, err
+		}
+
+		app.Views = engine
+		app.Router.Services().Views = engine
+	}
 
 	for _, p := range app.providers {
 		if !runsIn(p, app.Kind) {

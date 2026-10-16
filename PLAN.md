@@ -18,8 +18,8 @@ Task IDs: `<phase>.<group>.<task>` (e.g. `P.3.2`). Reference them in commit bodi
 | Field | Value |
 | --- | --- |
 | Current phase | **Prototype** |
-| Next task | `P.8.1` (P.0.9 waits for GitHub billing) |
-| Last release | `v0.0.8` (P.7 database, ORM, migrations) |
+| Next task | `P.9.1` (P.0.9 waits for GitHub billing) |
+| Last release | `v0.0.9` (P.8 views and htmx) |
 | Updated | 2026-10-16 |
 
 ## Design references
@@ -222,17 +222,17 @@ Applies to **every** task:
 
 ### P.8 Views & HTMX — needs: P.3
 
-- [ ] **P.8.1** `view.Engine` over `html/template` with `fs.FS`, per-page sets, layouts, partials, dev reload.
+- [x] **P.8.1** `view.Engine` over `html/template` with `fs.FS`, per-page sets, layouts, partials, dev reload.
   → verify: golden render tests; reload test modifies a temp file.
-- [ ] **P.8.2** Fragment rendering (`Fragment`, `htmx.Block`).
+- [x] **P.8.2** Fragment rendering (`Fragment`, `htmx.Block`).
   → verify: tests full vs partial request.
-- [ ] **P.8.3** Template funcs (`route`, `asset`, `csrfField`, `old`, `error(s)`, `flash`, `json`, `dict`) + shared data.
+- [x] **P.8.3** Template funcs (`route`, `asset`, `csrfField`, `old`, `error(s)`, `flash`, `json`, `dict`) + shared data.
   → verify: tests each func.
-- [ ] **P.8.4** `View` interface for templ components (`c.View`).
+- [x] **P.8.4** `View` interface for templ components (`c.View`).
   → verify: test with a hand-written `View` implementation (no templ dependency).
-- [ ] **P.8.5** `htmx` request helpers (v4 headers) + response builder + `<hx-partial>`/OOB helpers + `Vary`.
+- [x] **P.8.5** `htmx` request helpers (v4 headers) + response builder + `<hx-partial>`/OOB helpers + `Vary`.
   → verify: header table tests; golden HTML for partials.
-- [ ] **P.8.6** Redirect behaviour (`HX-Location` for htmx, 303 otherwise).
+- [x] **P.8.6** Redirect behaviour (`HX-Location` for htmx, 303 otherwise).
   → verify: tests.
 
 ### P.9 Testing toolkit — needs: P.3, P.6, P.7

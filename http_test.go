@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/AlexGalhardo/golang-framework/router"
 	"github.com/AlexGalhardo/golang-framework/web"
@@ -228,5 +229,28 @@ func TestRunMainBuildError(t *testing.T) {
 		New)
 	if err == nil || !strings.Contains(err.Error(), "APP_KEY") {
 		t.Fatalf("RunMain() = %v, want APP_KEY error", err)
+	}
+}
+
+func TestWithViews(t *testing.T) {
+	t.Parallel()
+
+	fsys := fstest.MapFS{
+		"home.html":        {Data: []byte(`{{define "content"}}<a href="{{route "home"}}">home</a>{{end}}`)},
+		"layouts/app.html": {Data: []byte(`<main>{{block "content" .}}{{end}}</main>`)},
+	}
+
+	app := newTestApp(t, WithViews(fsys), WithRoutes(func(r *router.Router, _ *App) {
+		r.Get("/", func(c *web.Ctx) error { return c.Render("home", nil) }).Name("home")
+	}))
+
+	rec := doReq(t, app, "/")
+	if rec.Body.String() != `<main><a href="/">home</a></main>` || app.Views == nil {
+		t.Fatalf("render = %d %q", rec.Code, rec.Body.String())
+	}
+
+	if _, err := New(WithSource(testSource(nil)), WithLogger(discardLogger()),
+		WithViews(fstest.MapFS{"bad.html": {Data: []byte("{{ x")}})); err == nil {
+		t.Fatal("broken views accepted at boot")
 	}
 }
