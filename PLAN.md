@@ -18,8 +18,8 @@ Task IDs: `<phase>.<group>.<task>` (e.g. `P.3.2`). Reference them in commit bodi
 | Field | Value |
 | --- | --- |
 | Current phase | **ALPHA** |
-| Next task | `A.6c.1` (Telegram logging), then A.6b, A.7 |
-| Last release | `v0.11.0` (A.6 cache, storage, events) |
+| Next task | `A.6b.1` (SSRF-safe client), then A.7 |
+| Last release | `v0.12.0` (A.6c Telegram logging) |
 | Updated | 2026-10-16 |
 
 ## Design references
@@ -402,11 +402,11 @@ Applies to **every** task:
 
 ### A.6c Telegram logging
 
-- [ ] **A.6c.1** `logging/telegram` `slog.Handler`: HTML formatting (emoji per level, app, env, time, attrs, error chain/stack), escaping, 4096-char truncation, `MinLevel`, per-level chat routing, thread id, silent mode.
+- [x] **A.6c.1** `logging/telegram` `slog.Handler`: HTML formatting (emoji per level, app, env, time, attrs, error chain/stack), escaping, 4096-char truncation, `MinLevel`, per-level chat routing, thread id, silent mode.
   → verify: golden message tests; `<script>` in attributes is escaped.
-- [ ] **A.6c.2** Delivery: async bounded queue, timeout, single retry on 429 with capped `retry_after`, `OnError`, drain on shutdown, auto-disable without config.
+- [x] **A.6c.2** Delivery: async bounded queue, timeout, single retry on 429 with capped `retry_after`, `OnError`, drain on shutdown, auto-disable without config.
   → verify: tests with fake Telegram API incl. 429 and timeout; `synctest` for retry timing; app never blocks when Telegram is down.
-- [ ] **A.6c.3** `Contact(ctx, form)` and `Send(ctx, html)` helpers + config (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `TELEGRAM_MIN_LEVEL`) + docs page.
+- [x] **A.6c.3** `Contact(ctx, form)` and `Send(ctx, html)` helpers + config (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `TELEGRAM_MIN_LEVEL`) + docs page.
   → verify: tests; token redacted in `about`.
 
 ### A.6b Security features

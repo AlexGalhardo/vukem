@@ -200,6 +200,7 @@ func aboutCommand() Command {
 				{"Address", app.Addr()},
 				{"Go", runtime.Version()},
 				{"APP_KEY", app.Config.Key.String()},
+				{"Telegram", telegramStatus(app)},
 				{"Providers", strconv.Itoa(len(app.providers))},
 				{"Routes", strconv.Itoa(len(app.Router.Routes()))},
 			}
@@ -235,4 +236,12 @@ func stderr() io.Writer { return os.Stderr }
 
 func signalContext() (context.Context, context.CancelFunc) {
 	return signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+}
+
+func telegramStatus(app *App) string {
+	if app.Telegram == nil {
+		return "off"
+	}
+
+	return "on (token [redacted])"
 }

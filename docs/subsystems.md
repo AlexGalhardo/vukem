@@ -25,30 +25,38 @@ Mail, cache, storage, events, queue, scheduler, encryption, rate limiting, i18n,
 - OpenTelemetry: a `telemetry` provider (BETA) wraps the router with `otelhttp`-style spans **in a separate module** to keep OTel out of core.
 - `/up` returns 200 when the app booted; `/up?checks=1` runs registered health checks (DB ping, Redis ping) with timeouts.
 
-## Telegram logging (ALPHA)
+## Telegram logging
 
 A `slog.Handler` (package `logging/telegram`) that sends selected records to Telegram chats, ported from the maintainer's TypeScript [telegram-logger](https://github.com/AlexGalhardo/telegram-logger). Stdlib only (`net/http`).
 
+Apps turn it on with environment variables; the app logger then fans out to stderr and Telegram (`slog.NewMultiHandler`):
+
+```sh
+TELEGRAM_BOT_TOKEN=123456:ABC...   # config.Secret, never logged
+TELEGRAM_CHAT_ID=-1001234567890
+TELEGRAM_MIN_LEVEL=error           # debug, info, warn, error
+TELEGRAM_THREAD_ID=42              # optional forum topic
+```
+
 ```go
+app.Telegram.Contact(ctx, map[string]string{"name": in.Name, "message": in.Message}) // never filtered by level
+app.Telegram.Send(ctx, "<b>Deploy</b> finished")                                     // pre-formatted HTML
+
+// Standalone: per-level routing, silent mode, custom error handling.
 tg := telegram.NewHandler(telegram.Config{
-	BotToken: cfg.Telegram.BotToken, // TELEGRAM_BOT_TOKEN (config.Secret)
-	ChatID:   cfg.Telegram.ChatID,   // TELEGRAM_CHAT_ID (default chat)
-	ChatIDs:  map[slog.Level]string{slog.LevelError: "-100123"}, // optional per-level routing
-	MinLevel: slog.LevelError,
-	AppName:  app.Config.Name,
-	Env:      string(app.Config.Env),
+	BotToken: token, ChatID: "-100", ChatIDs: map[slog.Level]string{telegram.LevelFatal: "-200"},
+	MinLevel: slog.LevelWarn, AppName: "Shop", Env: "production", Silent: true, OnError: report,
 })
-app.Log = slog.New(slog.NewMultiHandler(app.Log.Handler(), tg)) // Go 1.26 fan-out
+defer tg.Close(ctx)
 ```
 
 | Feature | Detail |
 | --- | --- |
-| Levels | debug, info, warn, error (+ `success` and `fatal` helpers via custom levels); `MinLevel` filter |
-| Routing | per-level chat ids, forum topic (`MessageThreadID`), `DisableNotification` |
-| Format | Telegram HTML: emoji per level, app name, environment, timestamp, attributes, error chain and stack; all user content HTML-escaped; truncated to 4096 chars |
-| Reliability | asynchronous bounded queue (never blocks or fails the request), per-request timeout, one retry honouring `retry_after` on HTTP 429 (capped), `OnError` callback, drained on shutdown |
-| Extras | `telegram.Contact(ctx, form)` for contact-form notifications (never filtered by level); `Send(ctx, html)` for pre-formatted messages |
-| Security | token held as `config.Secret`, never logged; disabled automatically when token/chat are missing (boot warning, not error) |
+| Levels | debug, info, warn, error plus `telegram.LevelSuccess` and `telegram.LevelFatal`; `MinLevel` filter |
+| Routing | per-level chat ids, forum topic (`ThreadID`), `Silent` |
+| Format | Telegram HTML: emoji and level, app name, environment, UTC time, then the message and attributes (groups dotted, error chains as "caused by") in a `<pre>` block; all content escaped; truncated to 4096 characters without cutting tags or entities |
+| Reliability | bounded queue (`QueueSize`, drops and reports when full), per-request `Timeout`, one retry after HTTP 429 honouring `retry_after` capped by `MaxRetryAfter`, `OnError`, drained by `app.Shutdown` |
+| Security | token held as `config.Secret`; request errors are redacted (`TestSecurity_A09_TelegramTokenRedacted`); `vukem about` shows only on/off; disabled when token or chat is missing |
 
 ## Mail
 

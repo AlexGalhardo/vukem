@@ -17,6 +17,7 @@ import (
 	"github.com/AlexGalhardo/vukem/config"
 	"github.com/AlexGalhardo/vukem/database"
 	"github.com/AlexGalhardo/vukem/events"
+	"github.com/AlexGalhardo/vukem/logging/telegram"
 	"github.com/AlexGalhardo/vukem/mail"
 	"github.com/AlexGalhardo/vukem/router"
 	"github.com/AlexGalhardo/vukem/schema"
@@ -88,6 +89,10 @@ type App struct {
 	cacheOnce sync.Once
 	cache     *cache.Cache
 	cacheErr  error
+
+	// Telegram is the Telegram log handler when TELEGRAM_* is set (nil
+	// otherwise); use it for Contact and Send.
+	Telegram *telegram.Handler
 
 	// Events is the application event bus (WithListeners registers listeners).
 	Events *events.Bus
@@ -254,6 +259,15 @@ func New(opts ...Option) (*App, error) {
 		logger = newLogger(&cfg, out)
 	}
 
+	tg, err := telegramHandler(src, &cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	if tg != nil {
+		logger = slog.New(slog.NewMultiHandler(logger.Handler(), tg))
+	}
+
 	stdout := o.stdout
 	if stdout == nil {
 		stdout = os.Stdout
@@ -283,6 +297,11 @@ func New(opts ...Option) (*App, error) {
 		mail:       mailState{transport: o.mailTransport},
 	}
 	app.Router = app.newRouter()
+
+	if tg != nil {
+		app.Telegram = tg
+		app.OnShutdown(tg.Close)
+	}
 
 	app.Events = events.New(app.Log, 0)
 	app.Events.Register(o.listeners...)
