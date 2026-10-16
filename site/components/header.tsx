@@ -17,13 +17,16 @@ function GitHubIcon({ className }: { className?: string }) {
 export function Header() {
   return (
     <header className="sticky top-0 z-40 h-(--header-h) border-b border-border bg-bg/80 backdrop-blur-md supports-[backdrop-filter]:bg-bg/70">
-      <div className="mx-auto flex h-full max-w-[90rem] items-center gap-3 px-4 sm:px-6">
-        <MobileNav groups={getNavGroups()} />
-        <Logo />
-        <div className="flex flex-1 justify-end sm:ml-4 sm:justify-start lg:ml-[calc(16rem-7.5rem)]">
+      {/* Same container as app/docs/layout.tsx; the left column matches the sidebar width. */}
+      <div className="mx-auto flex h-full max-w-[90rem] items-center gap-3 px-4 sm:px-6 lg:grid lg:grid-cols-[16rem_1fr_16rem] lg:gap-0">
+        <div className="flex items-center gap-3">
+          <MobileNav groups={getNavGroups()} />
+          <Logo />
+        </div>
+        <div className="flex flex-1 justify-end sm:justify-center">
           <SearchDialog />
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center justify-end gap-2">
           <IconTooltip label="GitHub repository">
             <a
               href={site.repo}
