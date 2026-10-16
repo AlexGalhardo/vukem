@@ -1,0 +1,39 @@
+# GoReleaser builds the lumek CLI binaries for a tag and attaches them to
+# the GitHub release created by internal/tools/release (notes come from
+# CHANGELOG.md, so GoReleaser keeps them). See docs/tooling.md.
+version: 2
+
+project_name: lumek
+
+builds:
+  - id: lumek
+    main: ./cmd/lumek
+    binary: lumek
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags: ["-s -w"]
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - name_template: "lumek_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files: [LICENSE, README.md, CHANGELOG.md]
+
+checksum:
+  name_template: checksums.txt
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  disable: true
+
+release:
+  mode: keep-existing
+  prerelease: auto

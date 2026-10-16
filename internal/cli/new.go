@@ -180,10 +180,15 @@ func requireFramework(ctx context.Context, env *Env, local string) error {
 		return errors.Join(err, f.Close())
 	}
 
-	v := version(env)
-	if !strings.HasPrefix(v, "v") || strings.Contains(v, "-0.") { // devel or pseudo-version
-		v = "latest"
+	return tool(ctx, env, "go", "get", frameworkModule+"@"+releaseVersion(version(env)))
+}
+
+// releaseVersion returns v when it is a tagged release, "latest" for
+// development builds (devel, pseudo-versions, +dirty).
+func releaseVersion(v string) string {
+	if !strings.HasPrefix(v, "v") || strings.Contains(v, "-0.") || strings.Contains(v, "+") {
+		return "latest"
 	}
 
-	return tool(ctx, env, "go", "get", frameworkModule+"@"+v)
+	return v
 }

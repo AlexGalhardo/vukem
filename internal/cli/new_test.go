@@ -164,3 +164,16 @@ func TestNewProjectEndToEnd(t *testing.T) {
 		t.Fatalf("lumek route:list = %d\n%s%s", code, out, errOut)
 	}
 }
+
+func TestReleaseVersion(t *testing.T) {
+	t.Parallel()
+
+	for in, want := range map[string]string{
+		"v0.1.0": "v0.1.0", "v1.0.0-beta.2": "v1.0.0-beta.2", "devel": "latest",
+		"v0.0.12+dirty": "latest", "v0.1.1-0.20261016120000-abcdef123456": "latest",
+	} {
+		if got := releaseVersion(in); got != want {
+			t.Errorf("releaseVersion(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
