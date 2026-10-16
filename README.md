@@ -12,7 +12,7 @@
 
 ## Introduction
 
-Vukem is a web framework for Go with the productivity of Laravel and AdonisJS, built on `net/http` and the standard library. It gives you routing, validation, an ORM with migrations, authentication, queues, a scheduler, mail, OpenAPI documents and one CLI to generate and run it all, for **REST APIs and full-stack apps** alike.
+Vukem is a complete Model-View-Controller (MVC) web framework for Go built on `net/http` and the `standard library` to build APIs and FullStack Web Applications.
 
 ## Summary
 
@@ -24,8 +24,6 @@ Vukem is a web framework for Go with the productivity of Laravel and AdonisJS, b
 - **Background work**: typed queue jobs (sync, memory, database), queued mail and listeners, cron scheduler.
 - **Frontend**: HTMX-first server-rendered views, with Inertia + React on the way.
 - **More**: mail (SMTP, Resend), cache, storage, events, Telegram logging, SSRF-safe HTTP client, signed URLs and webhooks.
-
-Full documentation: **[vukem.vercel.app](https://vukem.vercel.app/docs/introduction)** · design docs in [docs/](docs/README.md).
 
 ## Why Vukem
 
