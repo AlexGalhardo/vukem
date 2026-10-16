@@ -1,4 +1,4 @@
-// Package database manages SQL connections for Lumek: dialects, SQLite
+// Package database manages SQL connections for Vukem: dialects, SQLite
 // defaults (WAL, busy timeout, foreign keys, a single-connection writer pool
 // beside a reader pool), PostgreSQL through driver modules, and
 // transactions that roll back on error or panic.

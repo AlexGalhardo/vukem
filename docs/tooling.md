@@ -25,7 +25,7 @@ gopls: enable `"formatting.gofumpt": true` so editor and CI agree.
 
 ## Formatting and linting
 
-- `golangci-lint fmt` — formatters: **gofumpt**, **gci** (std / third-party / `github.com/AlexGalhardo/golang-framework`), **golines** (120 cols, tab-len 4).
+- `golangci-lint fmt` — formatters: **gofumpt**, **gci** (std / third-party / `github.com/AlexGalhardo/vukem`), **golines** (120 cols, tab-len 4).
 - `golangci-lint run ./...` — `default: standard` plus correctness (errorlint, bodyclose, sqlclosecheck, rowserrcheck, contextcheck, noctx, nilerr, exhaustive, forcetypeassert, musttag), security (gosec), style (revive, gocritic, misspell, unconvert, unparam, usestdlibvars, intrange, perfsprint, nolintlint, godot, sloglint, modernize, copyloopvar), tests (usetesting, thelper, tparallel), and **depguard** (core must not import drivers or non-allowlisted modules).
 - `nolint` requires a specific linter and an explanation.
 - `go vet ./...` and `go fix -diff ./...` (modernizers) run in CI.
@@ -107,8 +107,8 @@ Spec: <https://www.conventionalcommits.org/en/v1.0.0/>. Enforced by the in-repo 
    - commits `chore(release): vX.Y.Z`, creates an annotated tag, pushes `main` and the tag;
    - publishes a GitHub release whose notes are that changelog section (`v0.x` and pre-releases are marked pre-release).
 3. Missed a group? Cut it retroactively: `go run ./internal/tools/release -no-commit -ref <commit> vX.Y.Z`, tag `<commit>`, commit the changelog, push, and create the GitHub release from the section.
-4. From `v0.1.0` on, release tags also get `lumek` CLI binaries (linux, macOS, Windows; amd64 and arm64) built by GoReleaser (`.goreleaser.yaml`), attached to the existing release without touching its notes. `release.yml` does it on tag push once Actions is available; until then run `task release:binaries` on the tagged commit (Docker; `SNAPSHOT=1` builds into `dist/` without publishing).
-5. Warm the proxy: `GOPROXY=https://proxy.golang.org go list -m github.com/AlexGalhardo/golang-framework@vX.Y.Z`.
+4. From `v0.1.0` on, release tags also get `vukem` CLI binaries (linux, macOS, Windows; amd64 and arm64) built by GoReleaser (`.goreleaser.yaml`), attached to the existing release without touching its notes. `release.yml` does it on tag push once Actions is available; until then run `task release:binaries` on the tagged commit (Docker; `SNAPSHOT=1` builds into `dist/` without publishing).
+5. Warm the proxy: `GOPROXY=https://proxy.golang.org go list -m github.com/AlexGalhardo/vukem@vX.Y.Z`.
 
 ## CI (GitHub Actions)
 

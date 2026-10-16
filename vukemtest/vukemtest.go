@@ -1,18 +1,18 @@
-// Package lumektest is Lumek's testing toolkit: boot an app for a test with
+// Package vukemtest is Vukem's testing toolkit: boot an app for a test with
 // an isolated in-memory database, send in-process HTTP requests with a
 // fluent client, and assert on responses, sessions and the database.
 //
 //	func TestCreatePost(t *testing.T) {
-//		app := lumektest.New(t, bootstrap.New)
+//		app := vukemtest.New(t, bootstrap.New)
 //
 //		app.Client(t).
 //			PostForm("/posts", url.Values{"title": {"Hello"}}).
 //			AssertRedirect("/posts").
 //			AssertSessionHas("success")
 //
-//		lumektest.AssertDatabaseHas(t, app, "posts", map[string]any{"title": "Hello"})
+//		vukemtest.AssertDatabaseHas(t, app, "posts", map[string]any{"title": "Hello"})
 //	}
-package lumektest
+package vukemtest
 
 import (
 	"context"
@@ -27,13 +27,13 @@ import (
 	"testing"
 	"time"
 
-	lumek "github.com/AlexGalhardo/golang-framework"
-	"github.com/AlexGalhardo/golang-framework/config"
+	vukem "github.com/AlexGalhardo/vukem"
+	"github.com/AlexGalhardo/vukem/config"
 )
 
 // App is an application booted for one test.
 type App struct {
-	*lumek.App
+	*vukem.App
 
 	t       testing.TB
 	handler http.Handler
@@ -47,8 +47,8 @@ type Options struct {
 	Clock func() time.Time
 	// SkipMigrations does not run registered migrations.
 	SkipMigrations bool
-	// AppOptions are extra lumek options passed to build.
-	AppOptions []lumek.Option
+	// AppOptions are extra vukem options passed to build.
+	AppOptions []vukem.Option
 }
 
 var nonWord = regexp.MustCompile(`\W+`)
@@ -57,7 +57,7 @@ var nonWord = regexp.MustCompile(`\W+`)
 // environment: APP_ENV=test, a random APP_KEY, a private in-memory SQLite
 // database, no HTTP listener. Registered migrations run, and the app shuts
 // down in t.Cleanup.
-func New(tb testing.TB, build lumek.BuildFunc, opts ...Options) *App {
+func New(tb testing.TB, build vukem.BuildFunc, opts ...Options) *App {
 	tb.Helper()
 
 	var o Options
@@ -76,43 +76,43 @@ func New(tb testing.TB, build lumek.BuildFunc, opts ...Options) *App {
 	}
 	maps.Copy(env, o.Env)
 
-	appOpts := []lumek.Option{
-		lumek.WithSource(config.MapSource(env)),
-		lumek.WithKind(lumek.KindTest),
-		lumek.WithoutHTTP(),
-		lumek.WithLogOutput(io.Discard),
-		lumek.WithStdout(io.Discard),
+	appOpts := []vukem.Option{
+		vukem.WithSource(config.MapSource(env)),
+		vukem.WithKind(vukem.KindTest),
+		vukem.WithoutHTTP(),
+		vukem.WithLogOutput(io.Discard),
+		vukem.WithStdout(io.Discard),
 	}
 
 	if o.Clock != nil {
-		appOpts = append(appOpts, lumek.WithClock(o.Clock))
+		appOpts = append(appOpts, vukem.WithClock(o.Clock))
 	}
 
 	app, err := build(append(appOpts, o.AppOptions...)...)
 	if err != nil {
-		tb.Fatalf("lumektest: build app: %v", err)
+		tb.Fatalf("vukemtest: build app: %v", err)
 	}
 
 	tb.Cleanup(func() { _ = app.Shutdown(context.Background()) })
 
 	if err := app.Boot(tb.Context()); err != nil {
-		tb.Fatalf("lumektest: boot: %v", err)
+		tb.Fatalf("vukemtest: boot: %v", err)
 	}
 
 	if !o.SkipMigrations {
 		m, err := app.Migrator()
 		if err != nil {
-			tb.Fatalf("lumektest: open database: %v", err)
+			tb.Fatalf("vukemtest: open database: %v", err)
 		}
 
 		if _, err := m.Up(tb.Context()); err != nil {
-			tb.Fatalf("lumektest: migrate: %v", err)
+			tb.Fatalf("vukemtest: migrate: %v", err)
 		}
 	}
 
 	h, err := app.Handler()
 	if err != nil {
-		tb.Fatalf("lumektest: routes: %v", err)
+		tb.Fatalf("vukemtest: routes: %v", err)
 	}
 
 	return &App{App: app, t: tb, handler: h}
@@ -127,11 +127,11 @@ func (a *App) RefreshDatabase(tb testing.TB) {
 
 	m, err := a.Migrator()
 	if err != nil {
-		tb.Fatalf("lumektest: %v", err)
+		tb.Fatalf("vukemtest: %v", err)
 	}
 
 	if _, err := m.Fresh(tb.Context()); err != nil {
-		tb.Fatalf("lumektest: refresh database: %v", err)
+		tb.Fatalf("vukemtest: refresh database: %v", err)
 	}
 }
 
@@ -173,7 +173,7 @@ func AssertDatabaseHas(tb testing.TB, app *App, table string, where map[string]a
 	tb.Helper()
 
 	if n := countRows(tb, app, table, where); n == 0 {
-		tb.Fatalf("lumektest: no row in %s matches %v", table, where)
+		tb.Fatalf("vukemtest: no row in %s matches %v", table, where)
 	}
 }
 
@@ -182,7 +182,7 @@ func AssertDatabaseMissing(tb testing.TB, app *App, table string, where map[stri
 	tb.Helper()
 
 	if n := countRows(tb, app, table, where); n != 0 {
-		tb.Fatalf("lumektest: %d row(s) in %s match %v, want none", n, table, where)
+		tb.Fatalf("vukemtest: %d row(s) in %s match %v, want none", n, table, where)
 	}
 }
 
@@ -191,7 +191,7 @@ func AssertDatabaseCount(tb testing.TB, app *App, table string, n int64) {
 	tb.Helper()
 
 	if got := countRows(tb, app, table, nil); got != n {
-		tb.Fatalf("lumektest: %s has %d rows, want %d", table, got, n)
+		tb.Fatalf("vukemtest: %s has %d rows, want %d", table, got, n)
 	}
 }
 
@@ -202,11 +202,11 @@ func countRows(tb testing.TB, app *App, table string, where map[string]any) int6
 
 	db, err := app.DB()
 	if err != nil {
-		tb.Fatalf("lumektest: %v", err)
+		tb.Fatalf("vukemtest: %v", err)
 	}
 
 	if !identRe.MatchString(table) {
-		tb.Fatalf("lumektest: invalid table %q", table)
+		tb.Fatalf("vukemtest: invalid table %q", table)
 	}
 
 	d := db.Dialect()
@@ -218,7 +218,7 @@ func countRows(tb testing.TB, app *App, table string, where map[string]any) int6
 
 	for _, col := range slices.Sorted(maps.Keys(where)) {
 		if !identRe.MatchString(col) {
-			tb.Fatalf("lumektest: invalid column %q", col)
+			tb.Fatalf("vukemtest: invalid column %q", col)
 		}
 
 		if where[col] == nil {
@@ -237,7 +237,7 @@ func countRows(tb testing.TB, app *App, table string, where map[string]any) int6
 
 	var count int64
 	if err := db.QueryRowContext(tb.Context(), q, args...).Scan(&count); err != nil {
-		tb.Fatalf("lumektest: count %s: %v", table, err)
+		tb.Fatalf("vukemtest: count %s: %v", table, err)
 	}
 
 	return count

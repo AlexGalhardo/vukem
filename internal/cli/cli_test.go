@@ -23,8 +23,8 @@ var update = flag.Bool("update", false, "rewrite golden files")
 
 var fixedNow = func() time.Time { return time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC) }
 
-// lumek runs the CLI in dir and returns exit code, stdout and stderr.
-func lumek(t *testing.T, dir string, args ...string) (int, string, string) {
+// vukem runs the CLI in dir and returns exit code, stdout and stderr.
+func vukem(t *testing.T, dir string, args ...string) (int, string, string) {
 	t.Helper()
 
 	var out, errOut bytes.Buffer
@@ -115,29 +115,29 @@ func read(t *testing.T, dir, rel string) string {
 func TestListHelpVersion(t *testing.T) {
 	t.Parallel()
 
-	code, out, _ := lumek(t, t.TempDir())
+	code, out, _ := vukem(t, t.TempDir())
 	if code != 0 {
-		t.Fatalf("lumek = %d", code)
+		t.Fatalf("vukem = %d", code)
 	}
 
 	golden(t, "list.txt", out)
 
-	if _, out2, _ := lumek(t, t.TempDir(), "list"); out2 != out {
+	if _, out2, _ := vukem(t, t.TempDir(), "list"); out2 != out {
 		t.Error("list differs from no-arg output")
 	}
 
-	_, out, _ = lumek(t, t.TempDir(), "help", "make:model")
+	_, out, _ = vukem(t, t.TempDir(), "help", "make:model")
 	golden(t, "help-make-model.txt", out)
 
-	if code, out, _ := lumek(t, t.TempDir(), "make:model", "-h"); code != 0 || !strings.Contains(out, "-m") {
+	if code, out, _ := vukem(t, t.TempDir(), "make:model", "-h"); code != 0 || !strings.Contains(out, "-m") {
 		t.Errorf("make:model -h = %d %q", code, out)
 	}
 
-	if _, out, _ := lumek(t, t.TempDir(), "help", "version"); !strings.Contains(out, "Usage: lumek version") {
+	if _, out, _ := vukem(t, t.TempDir(), "help", "version"); !strings.Contains(out, "Usage: vukem version") {
 		t.Errorf("help version = %q", out)
 	}
 
-	if _, out, _ := lumek(t, t.TempDir(), "--version"); out != "lumek v0.0.0-test\n" {
+	if _, out, _ := vukem(t, t.TempDir(), "--version"); out != "vukem v0.0.0-test\n" {
 		t.Errorf("version = %q", out)
 	}
 
@@ -160,13 +160,13 @@ func TestUsageErrors(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		code, _, errOut := lumek(t, t.TempDir(), tt.args...)
+		code, _, errOut := vukem(t, t.TempDir(), tt.args...)
 		if code != 2 || !strings.Contains(errOut, tt.want) {
-			t.Errorf("lumek %v = %d %q, want 2 and %q", tt.args, code, errOut, tt.want)
+			t.Errorf("vukem %v = %d %q, want 2 and %q", tt.args, code, errOut, tt.want)
 		}
 	}
 
-	if code, _, errOut := lumek(
+	if code, _, errOut := vukem(
 		t,
 		t.TempDir(),
 		"make:model",
@@ -177,7 +177,7 @@ func TestUsageErrors(t *testing.T) {
 	}
 
 	for _, cmd := range []string{"serve", "build"} {
-		if code, _, errOut := lumek(t, t.TempDir(), cmd); code != 1 || !strings.Contains(errOut, "no cmd/app") {
+		if code, _, errOut := vukem(t, t.TempDir(), cmd); code != 1 || !strings.Contains(errOut, "no cmd/app") {
 			t.Errorf("%s outside a project = %d %q", cmd, code, errOut)
 		}
 	}
@@ -239,8 +239,8 @@ func runGenerators(t *testing.T, dir string) {
 		{"make:test", "Post"},
 		{"make:resource", "PostResource"},
 	} {
-		if code, out, errOut := lumek(t, dir, args...); code != 0 {
-			t.Fatalf("lumek %v = %d\n%s%s", args, code, out, errOut)
+		if code, out, errOut := vukem(t, dir, args...); code != 0 {
+			t.Fatalf("vukem %v = %d\n%s%s", args, code, out, errOut)
 		}
 	}
 }
@@ -256,18 +256,18 @@ func TestGeneratorsGolden(t *testing.T) {
 	}
 
 	// Existing files are protected; --force overwrites.
-	code, _, errOut := lumek(t, dir, "make:model", "Post")
+	code, _, errOut := vukem(t, dir, "make:model", "Post")
 	if code != 1 || !strings.Contains(errOut, "already exists") {
 		t.Errorf("overwrite = %d %q", code, errOut)
 	}
 
-	if code, _, _ := lumek(t, dir, "make:model", "Post", "--force"); code != 0 {
+	if code, _, _ := vukem(t, dir, "make:model", "Post", "--force"); code != 0 {
 		t.Error("--force refused")
 	}
 
 	// Registration is idempotent.
 	before := read(t, dir, "bootstrap/providers.go")
-	if code, out, _ := lumek(
+	if code, out, _ := vukem(
 		t,
 		dir,
 		"make:provider",
@@ -299,12 +299,12 @@ func TestRegisterFallback(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	code, out, _ := lumek(t, dir, "make:command", "Ping")
+	code, out, _ := vukem(t, dir, "make:command", "Ping")
 	if code != 0 || !strings.Contains(out, "add this to Commands():\n\n\tcommands.Ping(),") {
 		t.Errorf("fallback = %d %q", code, out)
 	}
 
-	if code, out, _ := lumek(
+	if code, out, _ := vukem(
 		t,
 		dir,
 		"make:provider",
@@ -328,7 +328,7 @@ func TestLocalStubOverride(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if code, _, errOut := lumek(t, dir, "make:middleware", "Audit"); code != 0 {
+	if code, _, errOut := vukem(t, dir, "make:middleware", "Audit"); code != 0 {
 		t.Fatal(errOut)
 	}
 
@@ -351,8 +351,8 @@ func TestLocalStubOverride(t *testing.T) {
 	}
 
 	for _, args := range [][]string{{"make:request", "A"}, {"make:test", "A"}, {"make:model", "A", "-f"}} {
-		if code, _, errOut := lumek(t, dir, args...); code != 1 || !strings.Contains(errOut, "stub") {
-			t.Errorf("lumek %v with a broken stub = %d %q", args, code, errOut)
+		if code, _, errOut := vukem(t, dir, args...); code != 1 || !strings.Contains(errOut, "stub") {
+			t.Errorf("vukem %v with a broken stub = %d %q", args, code, errOut)
 		}
 	}
 }
@@ -363,7 +363,7 @@ func TestKeyGenerate(t *testing.T) {
 	dir := project(t)
 
 	// .env is created from .env.example.
-	if code, _, errOut := lumek(t, dir, "key:generate"); code != 0 {
+	if code, _, errOut := vukem(t, dir, "key:generate"); code != 0 {
 		t.Fatal(errOut)
 	}
 
@@ -373,21 +373,21 @@ func TestKeyGenerate(t *testing.T) {
 	}
 
 	// An existing key is protected.
-	if code, _, errOut := lumek(t, dir, "key:generate"); code != 1 || !strings.Contains(errOut, "--force") {
+	if code, _, errOut := vukem(t, dir, "key:generate"); code != 1 || !strings.Contains(errOut, "--force") {
 		t.Errorf("overwrite = %d %q", code, errOut)
 	}
 
-	if code, _, _ := lumek(t, dir, "key:generate", "--force"); code != 0 || read(t, dir, ".env") == env {
+	if code, _, _ := vukem(t, dir, "key:generate", "--force"); code != 0 || read(t, dir, ".env") == env {
 		t.Error("--force did not replace the key")
 	}
 
-	if code, out, _ := lumek(t, dir, "key:generate", "--show"); code != 0 || !strings.HasPrefix(out, "base64:") {
+	if code, out, _ := vukem(t, dir, "key:generate", "--show"); code != 0 || !strings.HasPrefix(out, "base64:") {
 		t.Errorf("--show = %q", out)
 	}
 
 	// No .env and no example: a new file; CRLF files keep working.
 	empty := t.TempDir()
-	if code, _, _ := lumek(
+	if code, _, _ := vukem(
 		t,
 		empty,
 		"key:generate",
@@ -401,7 +401,7 @@ func TestKeyGenerate(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if code, _, _ := lumek(t, crlf, "key:generate"); code != 0 {
+	if code, _, _ := vukem(t, crlf, "key:generate"); code != 0 {
 		t.Fatal("CRLF .env")
 	}
 
@@ -415,7 +415,7 @@ func TestKeyGenerate(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	lumek(t, noNewline, "key:generate")
+	vukem(t, noNewline, "key:generate")
 
 	if !strings.HasPrefix(read(t, noNewline, ".env"), "A=1\nAPP_KEY=") {
 		t.Error("append without trailing newline")
@@ -437,7 +437,7 @@ func TestSnapshot(t *testing.T) {
 	}
 
 	// Ignored directories and non-Go files do not count.
-	for _, p := range []string{"node_modules/x.go", ".lumek/y.go", "resources/views/home.html"} {
+	for _, p := range []string{"node_modules/x.go", ".vukem/y.go", "resources/views/home.html"} {
 		full := filepath.Join(dir, filepath.FromSlash(p))
 		_ = os.MkdirAll(filepath.Dir(full), 0o750)
 
@@ -561,7 +561,7 @@ func TestDelegationAndBuild(t *testing.T) {
 
 	dir := stdlibApp(t, echoApp)
 
-	code, out, errOut := lumek(t, dir, "migrate", "--force")
+	code, out, errOut := vukem(t, dir, "migrate", "--force")
 	if code != 0 || out != "app: migrate --force\n" {
 		t.Fatalf("delegate = %d %q %q", code, out, errOut)
 	}
@@ -574,7 +574,7 @@ func TestDelegationAndBuild(t *testing.T) {
 	}
 
 	// The cached binary is reused while sources are unchanged.
-	if code, _, _ := lumek(t, dir, "route:list"); code != 0 {
+	if code, _, _ := vukem(t, dir, "route:list"); code != 0 {
 		t.Fatal("second delegation")
 	}
 
@@ -583,7 +583,7 @@ func TestDelegationAndBuild(t *testing.T) {
 	}
 
 	// The app's exit code is passed through.
-	if code, _, _ := lumek(t, dir, "fail"); code != 3 {
+	if code, _, _ := vukem(t, dir, "fail"); code != 3 {
 		t.Errorf("exit code = %d, want 3", code)
 	}
 
@@ -596,17 +596,17 @@ func TestDelegationAndBuild(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if code, _, _ := lumek(t, dir, "migrate"); code != 1 {
+	if code, _, _ := vukem(t, dir, "migrate"); code != 1 {
 		t.Errorf("broken build = %d", code)
 	}
 
-	if code, _, _ := lumek(t, dir, "build"); code != 1 {
-		t.Errorf("broken lumek build = %d", code)
+	if code, _, _ := vukem(t, dir, "build"); code != 1 {
+		t.Errorf("broken vukem build = %d", code)
 	}
 
 	_ = os.Remove(filepath.Join(dir, "cmd", "app", "broken.go"))
 
-	code, out, errOut = lumek(t, dir, "build")
+	code, out, errOut = vukem(t, dir, "build")
 	if code != 0 || !strings.Contains(out, "built") {
 		t.Fatalf("build = %d %q %q", code, out, errOut)
 	}

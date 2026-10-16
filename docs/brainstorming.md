@@ -8,13 +8,13 @@ Status legend: ✅ decided · ⏳ open
 
 | # | Topic | Decision | Status |
 | --- | --- | --- | --- |
-| I1 | Name | **Lumek** — coined, unique word (soft "lumen" feel); also the CLI command (`lumek new blog`) | ✅ |
-| I2 | Module path | `github.com/AlexGalhardo/golang-framework` (repo name kept); root package name `lumek` | ✅ |
+| I1 | Name | **Vukem** — coined, unique word; also the CLI command (`vukem new blog`). Renamed from the working name "Lumek" by the maintainer on 2026-10-16 (v0.3.0) | ✅ |
+| I2 | Module path | `github.com/AlexGalhardo/vukem` (repository renamed from `golang-framework` and made public on 2026-10-16); root package name `vukem`. Tags before v0.3.0 declare the old path and are not installable from the new one | ✅ |
 | I3 | License | MIT © 2026 Alex Galhardo | ✅ |
 | I4 | Language | Code, comments, commits, docs, README: **English**. Discussion with maintainer may be Portuguese | ✅ |
 | I5 | Positioning | *Laravel/AdonisJS productivity assembled from idiomatic, `net/http`-native, separately usable packages — no globals, no reflection DI, codegen instead of magic* | ✅ |
 
-**Rejected names** (conflict check on pkg.go.dev, Homebrew, npm, GitHub): ipe, arara, caju, gale, kiln, tessera, anvil, rivet, loom, crucible, foundry, smithy, chisel, ember, blaze, alloy, forge. Clean-but-declined (maintainer wants a coined word, not an existing one): brasa, jabuti, tatu, ingot, quench, hearth, smelt. Coined finalists: zorvo, **lumek** (chosen), kovra, trovik, velkor. Note: the `github.com/lumek` handle is taken by an inactive user, so the repo stays at `AlexGalhardo/golang-framework`.
+**Rejected names** (conflict check on pkg.go.dev, Homebrew, npm, GitHub): ipe, arara, caju, gale, kiln, tessera, anvil, rivet, loom, crucible, foundry, smithy, chisel, ember, blaze, alloy, forge. Clean-but-declined (maintainer wants a coined word, not an existing one): brasa, jabuti, tatu, ingot, quench, hearth, smelt. Coined finalists: zorvo, lumek (first choice, used until v0.2.x), kovra, trovik, velkor; the maintainer later picked **Vukem**.
 
 ## Platform
 
@@ -36,7 +36,7 @@ Status legend: ✅ decided · ⏳ open
 | A4 | Errors | **Central handler + typed errors** (`HTTPError`, `ValidationError`, `ErrNotFound`) → HTML status pages, redirect+flash (web), 422 re-render (HTMX), `application/problem+json` RFC 9457 (API); debug page in dev | plain `{error}` JSON | One place maps errors to responses (like Laravel `withExceptions`) |
 | A5 | Config | **Typed structs per module**; own `.env` parser (no godotenv); precedence `.env.<env>.local` > `.env.local` > `.env.<env>` > `.env`; validated at boot; refuses to start without `APP_KEY`; `Secret` type logs `[redacted]` | caarlos0/env + godotenv | Removes stringly `config("a.b")`; AdonisJS-style boot validation |
 | A6 | App skeleton | Hybrid Laravel/Go layout (below) | `internal/`-only; literal Laravel copy | Familiar to Laravel/Adonis users, still short idiomatic package names |
-| A7 | CLI | **Global CLI** (`go install …/cmd/lumek@latest`) does `new`, `make:*`, `serve` (hot reload + optional Vite), `build`. App-bound commands (`migrate`, `db:seed`, `queue:work`, user commands) compile **into the app binary**; the global CLI delegates (`go run ./cmd/app <cmd>`). Generators register what they create by editing `bootstrap/*.go`. Parser: stdlib `flag` | Goravel-style `go run . artisan` only; cobra | Fast generators; no reflection discovery; zero deps |
+| A7 | CLI | **Global CLI** (`go install …/cmd/vukem@latest`) does `new`, `make:*`, `serve` (hot reload + optional Vite), `build`. App-bound commands (`migrate`, `db:seed`, `queue:work`, user commands) compile **into the app binary**; the global CLI delegates (`go run ./cmd/app <cmd>`). Generators register what they create by editing `bootstrap/*.go`. Parser: stdlib `flag` | Goravel-style `go run . artisan` only; cobra | Fast generators; no reflection discovery; zero deps |
 
 ### Generated app skeleton
 
@@ -81,7 +81,7 @@ blog/
 | H2 | Sessions | **Own implementation**: cookie store (AES-GCM, key via HKDF from `APP_KEY`), database, memory; Redis in driver module; flash + old input; `RenewToken` anti-fixation | alexedwards/scs | Integrates tightly with flash/validation/Inertia; small surface |
 | H3 | CSRF | `http.CrossOriginProtection` (Go 1.25) + `SameSite=Lax` cookies; HTMX token via `hx-headers:inherited` when needed | gorilla/csrf | stdlib; gorilla/csrf had a 2025 CVE |
 | H4 | Authentication | **Guard × UserProvider**; guards `session` and `access_token` (opaque, SHA-256 in DB, abilities); hasher argon2id (default) + bcrypt with `NeedsRehash`; `install:auth` generates login/register/reset/verify as user-owned code (Fortify-style actions) | JWT default for APIs | Opaque tokens are revocable and simple; JWT can be added later |
-| H6 | REST APIs | **First-class**: `lumek new <app> --api` JSON-only starter; `APIResource`, typed resource transformers, problem+json errors, allowlisted filter/sort/include/fields, offset + cursor pagination envelopes, token auth, CORS, rate limit, ETag/If-Match; OpenAPI 3.1 from typed handlers in BETA. See [api.md](api.md) | web-only with JSON helpers | Maintainer requirement (2026-10-16): APIs, mainly REST, are a primary use case |
+| H6 | REST APIs | **First-class**: `vukem new <app> --api` JSON-only starter; `APIResource`, typed resource transformers, problem+json errors, allowlisted filter/sort/include/fields, offset + cursor pagination envelopes, token auth, CORS, rate limit, ETag/If-Match; OpenAPI 3.1 from typed handlers in BETA. See [api.md](api.md) | web-only with JSON helpers | Maintainer requirement (2026-10-16): APIs, mainly REST, are a primary use case |
 | H7 | Security | **Secure by default, fail closed, refuse to boot when misconfigured**; defaults mapped to OWASP Top 10:2025 with a `TestSecurity_*` test each. See [security.md](security.md) | opt-in hardening | Maintainer requirement (2026-10-16) |
 | H8 | Social login | **Own `social` package, AdonisJS Ally-style**: OAuth2 code flow + PKCE, signed state/nonce cookie, OIDC ID-token verification, GitHub/Google/GitLab/Discord/Microsoft + generic OAuth2/OIDC; stdlib only. See [authentication.md](authentication.md#social-login-social-alpha) | `golang.org/x/oauth2` + goth; post-1.0 | Maintainer requirement (2026-10-16); moved from post-1.0 to ALPHA |
 | H9 | Mail providers | **Resend first-class** (HTTP driver, stdlib `net/http`) alongside SMTP, log, array | SMTP only | Maintainer requirement (2026-10-16) |
@@ -93,7 +93,7 @@ blog/
 | # | Topic | Decision | Alternatives | Rationale |
 | --- | --- | --- | --- | --- |
 | F1 | Templates | **`html/template` default** (layouts + fragment rendering for HTMX); templ supported through `View.Render(ctx, w) error` with zero core dependency | templ default; html/template only | stdlib-first, but no lock-out of templ users |
-| F2 | HTMX | **htmx 4 vendored + served via `embed`; no Node required** for the default starter; Vite optional (Tailwind/bundling) | Vite always | `lumek new app` runs without `npm install` |
+| F2 | HTMX | **htmx 4 vendored + served via `embed`; no Node required** for the default starter; Vite optional (Tailwind/bundling) | Vite always | `vukem new app` runs without `npm install` |
 | F3 | HTMX helpers | Own v4-aware helpers: `IsHTMX`, `IsPartial` (`HX-Request-Type`), history-restore detection, auto fragment/layout rendering, response header builder, `<hx-partial>`, 422 flow, `Vary: HX-Request` | angelofallars/htmx-go (htmx 2 era) | Existing libs predate v4 |
 | F4 | Inertia | **Own v3 adapter in BETA** (full protocol, CSR fallback on SSR failure, integrated with session/flash/validation/Vite); React starter first, Vue and Svelte starters later in BETA (B.9) | ALPHA; React only | Maintainer requirement (2026-10-16): Vue/Svelte moved from post-1.0 to BETA |
 | F5 | Vite | Laravel "hot file" model; `{{ vite "…" }}` template func; manifest hash = Inertia version | olivere/vite | Go can't host Vite in-process |
@@ -133,15 +133,15 @@ The maintainer moved the post-1.0 backlog into BETA. Choices that keep the core 
 | GraphQL | Own `graphql` module (`contrib/graphql`): schema-first SDL parser + executor (queries, mutations, variables, fragments, introspection), resolvers as typed Go funcs, dataloader-style batching over the ORM, depth/complexity limits, problem-style errors. No gqlgen/graphql-go dependency in core. |
 | WebSockets/broadcasting | `drivers/websocket` module wrapping `github.com/coder/websocket` (stdlib has no RFC 6455 server); core `broadcast` package with channels, private/presence authorization through gates, memory and Redis fan-out, SSE fallback. |
 | Admin panel | Embedded HTMX admin (`admin` package): resources declared in Go from ORM models (list, filter, sort, search, create/edit forms from `z` schemas, delete), protected by auth + policies, served under `/admin`, no Node. |
-| Dev dashboard | `devtools` package mounted at `/_lumek` only when `APP_ENV=development` (boot error otherwise): routes, last requests with timings, SQL queries (with N+1 detection), jobs, events, mail previews, slog records, traces; in-memory ring buffers. |
+| Dev dashboard | `devtools` package mounted at `/_vukem` only when `APP_ENV=development` (boot error otherwise): routes, last requests with timings, SQL queries (with N+1 detection), jobs, events, mail previews, slog records, traces; in-memory ring buffers. |
 | JWT guard | Stdlib JOSE subset in `auth/jwt`: HS256/RS256/ES256/EdDSA, `alg` allowlist (no `none`), `kid` + JWKS rotation, exp/nbf/iat/iss/aud checks, refresh tokens with rotation and reuse detection. |
 | TOTP 2FA | `auth/totp` (RFC 6238/4226, stdlib HMAC): enrolment QR (otpauth URI), recovery codes (hashed), replay protection per time step, rate limited; `install:auth --2fa`. |
 | Social providers | Apple (ES256 client secret JWT, form_post), LinkedIn (OIDC), X (OAuth 2.0 + PKCE) on top of the ALPHA `social` core. |
 | S3 storage | `drivers/s3` module with a stdlib SigV4 client (no AWS SDK): put/get/delete/list/stat, multipart upload, presigned URLs; tested against MinIO; works with R2/Spaces. |
 | MySQL | `drivers/mysql` module (`go-sql-driver/mysql`) with MySQL 8 / MariaDB 11 dialect; runs the shared ORM/schema conformance suite. |
 | Inertia Vue/Svelte | `install:inertia --vue` / `--svelte` starters with the same pages and tests as React. |
-| templ starter | `lumek new <name> --templ`: same app as the HTMX starter with templ components; templ is a dependency of the generated app only. |
-| Typed RPC client | `lumek codegen:client` emits a typed TypeScript (and Go) client from the typed handlers/OpenAPI document (B.0), with `z`-derived request/response types. |
+| templ starter | `vukem new <name> --templ`: same app as the HTMX starter with templ components; templ is a dependency of the generated app only. |
+| Typed RPC client | `vukem codegen:client` emits a typed TypeScript (and Go) client from the typed handlers/OpenAPI document (B.0), with `z`-derived request/response types. |
 
 ## Open questions
 

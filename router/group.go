@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/AlexGalhardo/golang-framework/web"
+	"github.com/AlexGalhardo/vukem/web"
 )
 
 // Group is a set of routes sharing a path prefix, a name prefix and

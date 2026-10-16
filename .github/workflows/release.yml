@@ -1,6 +1,6 @@
 name: release
 
-# Builds the lumek CLI binaries when a version tag is pushed. The release
+# Builds the vukem CLI binaries when a version tag is pushed. The release
 # notes are created from CHANGELOG.md by internal/tools/release; GoReleaser
 # only attaches the archives and checksums.
 on:

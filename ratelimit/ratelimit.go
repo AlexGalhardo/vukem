@@ -14,8 +14,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/AlexGalhardo/golang-framework/errs"
-	"github.com/AlexGalhardo/golang-framework/web"
+	"github.com/AlexGalhardo/vukem/errs"
+	"github.com/AlexGalhardo/vukem/web"
 )
 
 // Result is the outcome of one Allow call.

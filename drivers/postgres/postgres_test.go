@@ -3,7 +3,7 @@ package postgres
 import (
 	"testing"
 
-	"github.com/AlexGalhardo/golang-framework/database"
+	"github.com/AlexGalhardo/vukem/database"
 )
 
 func TestDriver(t *testing.T) {

@@ -1,4 +1,4 @@
-package lumek
+package vukem
 
 import (
 	"context"
@@ -20,7 +20,7 @@ import (
 )
 
 // Command is an application command compiled into the app binary
-// (migrate, queue:work, user commands). The global `lumek` CLI delegates
+// (migrate, queue:work, user commands). The global `vukem` CLI delegates
 // unknown commands to the app binary.
 type Command interface {
 	// Name is "namespace:action", e.g. "reports:send".

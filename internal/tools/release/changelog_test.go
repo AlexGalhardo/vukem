@@ -19,8 +19,8 @@ Intro.
 
 - Foundation.
 
-[Unreleased]: https://github.com/AlexGalhardo/golang-framework/compare/v0.0.1...HEAD
-[0.0.1]: https://github.com/AlexGalhardo/golang-framework/releases/tag/v0.0.1
+[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.0.1...HEAD
+[0.0.1]: https://github.com/AlexGalhardo/vukem/releases/tag/v0.0.1
 `
 
 func TestInsertRelease(t *testing.T) {
@@ -51,9 +51,9 @@ Intro.
 
 - Foundation.
 
-[Unreleased]: https://github.com/AlexGalhardo/golang-framework/compare/v0.0.2...HEAD
-[0.0.2]: https://github.com/AlexGalhardo/golang-framework/compare/v0.0.1...v0.0.2
-[0.0.1]: https://github.com/AlexGalhardo/golang-framework/releases/tag/v0.0.1
+[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.0.2...HEAD
+[0.0.2]: https://github.com/AlexGalhardo/vukem/compare/v0.0.1...v0.0.2
+[0.0.1]: https://github.com/AlexGalhardo/vukem/releases/tag/v0.0.1
 `
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Fatalf("insertRelease() mismatch (-want +got):\n%s", diff)
@@ -84,7 +84,7 @@ func TestInsertReleaseFirstAndErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(got, "[0.1.0]: https://github.com/AlexGalhardo/golang-framework/releases/tag/v0.1.0") ||
+	if !strings.Contains(got, "[0.1.0]: https://github.com/AlexGalhardo/vukem/releases/tag/v0.1.0") ||
 		!strings.Contains(got, "## [Unreleased]\n\n### Added\n\n- pending note\n\n## [0.1.0]") {
 		t.Fatalf("first release = %q", got)
 	}

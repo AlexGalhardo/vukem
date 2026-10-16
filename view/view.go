@@ -26,7 +26,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/AlexGalhardo/golang-framework/web"
+	"github.com/AlexGalhardo/vukem/web"
 )
 
 // Config configures an Engine.

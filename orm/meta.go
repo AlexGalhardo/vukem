@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/AlexGalhardo/golang-framework/internal/naming"
+	"github.com/AlexGalhardo/vukem/internal/naming"
 )
 
 // Model provides an auto-increment id and timestamps; embed it in models.

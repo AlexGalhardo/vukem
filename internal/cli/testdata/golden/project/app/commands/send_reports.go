@@ -4,15 +4,15 @@ import (
 	"context"
 	"fmt"
 
-	lumek "github.com/AlexGalhardo/golang-framework"
+	vukem "github.com/AlexGalhardo/vukem"
 )
 
-// SendReports is the "send-reports" command: lumek send-reports.
-func SendReports() lumek.Command {
-	return lumek.CommandFunc{
+// SendReports is the "send-reports" command: vukem send-reports.
+func SendReports() vukem.Command {
+	return vukem.CommandFunc{
 		CommandName: "send-reports",
 		Desc:        "Describe what send-reports does",
-		Fn: func(ctx context.Context, app *lumek.App, args []string) error {
+		Fn: func(ctx context.Context, app *vukem.App, args []string) error {
 			fmt.Println("send-reports ran with", args)
 			return nil
 		},

@@ -1,6 +1,6 @@
 # Binaries and build output
 /bin/
-.lumek/
+.vukem/
 /dist/
 *.exe
 *.test

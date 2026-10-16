@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AlexGalhardo/golang-framework/errs"
+	"github.com/AlexGalhardo/vukem/errs"
 )
 
 func TestETagOf(t *testing.T) {

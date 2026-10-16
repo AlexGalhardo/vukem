@@ -1,15 +1,15 @@
 ---
 title: Application lifecycle
-description: How a Lumek app boots, registers providers, starts runners and shuts down gracefully.
+description: How a Vukem app boots, registers providers, starts runners and shuts down gracefully.
 ---
 
-A Lumek application is a `*lumek.App`: configuration, logger, providers and long-running **runners** (the HTTP server, workers). The lifecycle is inspired by AdonisJS v7 and Goravel runners, written as plain Go with no globals and no reflection.
+A Vukem application is a `*vukem.App`: configuration, logger, providers and long-running **runners** (the HTTP server, workers). The lifecycle is inspired by AdonisJS v7 and Goravel runners, written as plain Go with no globals and no reflection.
 
 ## Overview
 
 <Steps>
 <Step title="Load config">
-`.env` files and the environment are merged, filled into `lumek.Config` and checked. Missing `APP_KEY`, debug in production or an invalid port abort boot.
+`.env` files and the environment are merged, filled into `vukem.Config` and checked. Missing `APP_KEY`, debug in production or an invalid port abort boot.
 </Step>
 <Step title="Register">
 Every provider's `Register` runs in declared order. Register binds services and must not perform I/O.
@@ -30,12 +30,12 @@ Runners stop and are awaited, then `OnShutdown` hooks and providers' `Shutdown` 
 Applications build the app in one function, `bootstrap.New`, used by `cmd/app` and by the tests:
 
 ```go title="bootstrap/app.go"
-func New(opts ...lumek.Option) (*lumek.App, error) {
-	app, err := lumek.New(append([]lumek.Option{
-		lumek.WithProviders(Providers()...),
-		lumek.WithMigrations(migrations.All()),
-		lumek.WithViews(resources.Views()),
-		lumek.WithRoutes(routes.Web),
+func New(opts ...vukem.Option) (*vukem.App, error) {
+	app, err := vukem.New(append([]vukem.Option{
+		vukem.WithProviders(Providers()...),
+		vukem.WithMigrations(migrations.All()),
+		vukem.WithViews(resources.Views()),
+		vukem.WithRoutes(routes.Web),
 	}, opts...)...)
 	if err != nil {
 		return nil, err
@@ -48,10 +48,10 @@ func New(opts ...lumek.Option) (*lumek.App, error) {
 ```
 
 ```go title="cmd/app/main.go"
-func main() { os.Exit(lumek.Main(bootstrap.New)) }
+func main() { os.Exit(vukem.Main(bootstrap.New)) }
 ```
 
-`lumek.Main(build)` loads `.env` and the process environment, wires `SIGINT`/`SIGTERM`, and runs `serve` (the default) or the command named by the first argument. It exits `2` on usage errors and `1` on failures. Its testable body is `lumek.RunMain(ctx, args, getenv, build, opts...)`.
+`vukem.Main(build)` loads `.env` and the process environment, wires `SIGINT`/`SIGTERM`, and runs `serve` (the default) or the command named by the first argument. It exits `2` on usage errors and `1` on failures. Its testable body is `vukem.RunMain(ctx, args, getenv, build, opts...)`.
 
 | Option | Purpose |
 | --- | --- |
@@ -60,11 +60,11 @@ func main() { os.Exit(lumek.Main(bootstrap.New)) }
 | `WithLogger(l)` / `WithLogOutput(w)` | Custom `*slog.Logger`, or where the default logger writes |
 | `WithKind(k)` | `KindWeb` (default), `KindConsole` or `KindTest` |
 | `WithProviders(p...)` | Providers, registered and booted in order |
-| `WithRoutes(fn)` | `func(r *router.Router, app *lumek.App) error`, called after providers registered; an error stops `New` |
+| `WithRoutes(fn)` | `func(r *router.Router, app *vukem.App) error`, called after providers registered; an error stops `New` |
 | `WithViews(fsys)` | Enable the [view engine](/docs/basics/views) over `fsys`; views reload per request outside production |
 | `WithMigrations(m)` | Migrations used by `migrate*` commands and `app.Migrator()` |
 | `WithDatabaseDrivers(d...)` | Extra database drivers (PostgreSQL module, ALPHA) |
-| `WithClock(now)` | Clock for sessions and other time-based features (`lumektest.FakeClock`) |
+| `WithClock(now)` | Clock for sessions and other time-based features (`vukemtest.FakeClock`) |
 | `WithRunner(name, r)` | A long-running component started by `Run` |
 | `WithoutHTTP()` | Do not start the HTTP server runner (tests, workers) |
 | `WithStdout(w)` | Where commands print |
@@ -73,22 +73,22 @@ The `App` exposes `Config`, `Source` (every configuration value), `Key` (decoded
 
 ## Commands
 
-App commands run inside the app binary (`lumek <command>` delegates to it). Built in: `migrate`, `migrate:rollback`, `migrate:reset`, `migrate:fresh`, `migrate:status`, `route:list`, `about`. Add your own:
+App commands run inside the app binary (`vukem <command>` delegates to it). Built in: `migrate`, `migrate:rollback`, `migrate:reset`, `migrate:fresh`, `migrate:status`, `route:list`, `about`. Add your own:
 
 ```go title="app/commands/send_reports.go"
-func SendReports() lumek.Command {
-	return lumek.CommandFunc{
+func SendReports() vukem.Command {
+	return vukem.CommandFunc{
 		CommandName: "reports:send",
 		Desc:        "Email the weekly reports",
 		DefineFlags: func(fs *flag.FlagSet) { /* fs.Bool(...) */ },
-		Fn: func(ctx context.Context, app *lumek.App, args []string) error {
+		Fn: func(ctx context.Context, app *vukem.App, args []string) error {
 			return nil
 		},
 	}
 }
 ```
 
-Register it in `bootstrap/commands.go` (`lumek make:command` does it for you). Commands run with `KindConsole`, so providers limited to `KindWeb` are skipped.
+Register it in `bootstrap/commands.go` (`vukem make:command` does it for you). Commands run with `KindConsole`, so providers limited to `KindWeb` are skipped.
 
 ## Providers
 
@@ -108,7 +108,7 @@ type DatabaseProvider struct {
 	DB *sql.DB
 }
 
-func (p *DatabaseProvider) Register(app *lumek.App) error {
+func (p *DatabaseProvider) Register(app *vukem.App) error {
 	db, err := sql.Open("sqlite", app.Source.Get("DATABASE_URL"))
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
@@ -117,21 +117,21 @@ func (p *DatabaseProvider) Register(app *lumek.App) error {
 	return nil
 }
 
-func (p *DatabaseProvider) Boot(ctx context.Context, app *lumek.App) error {
+func (p *DatabaseProvider) Boot(ctx context.Context, app *vukem.App) error {
 	return p.DB.PingContext(ctx) // I/O belongs in Boot
 }
 
-func (p *DatabaseProvider) Shutdown(ctx context.Context, app *lumek.App) error {
+func (p *DatabaseProvider) Shutdown(ctx context.Context, app *vukem.App) error {
 	return p.DB.Close()
 }
 
 // Kinds limits the provider to some runtimes; without it, it runs everywhere.
-func (p *DatabaseProvider) Kinds() []lumek.Kind {
-	return []lumek.Kind{lumek.KindWeb, lumek.KindConsole}
+func (p *DatabaseProvider) Kinds() []vukem.Kind {
+	return []vukem.Kind{vukem.KindWeb, vukem.KindConsole}
 }
 ```
 
-`lumek.ProviderFunc` adapts a plain function to a provider with only a Register phase.
+`vukem.ProviderFunc` adapts a plain function to a provider with only a Register phase.
 
 ## Runners
 
@@ -141,11 +141,11 @@ type Runner interface {
 }
 ```
 
-`lumek.RunnerFunc` adapts a function. Runners can be added with `WithRunner` or, from a provider, with `app.AddRunner(name, r)`. When one runner fails, the others are cancelled and the first error is returned from `Run`. A cancelled context is a clean exit (`nil`).
+`vukem.RunnerFunc` adapts a function. Runners can be added with `WithRunner` or, from a provider, with `app.AddRunner(name, r)`. When one runner fails, the others are cancelled and the first error is returned from `Run`. A cancelled context is a clean exit (`nil`).
 
 ### The HTTP server
 
-`lumek.NewHTTPServer(addr, handler)` returns a runner around `*http.Server` that is never configured with zero timeouts (Slowloris protection):
+`vukem.NewHTTPServer(addr, handler)` returns a runner around `*http.Server` that is never configured with zero timeouts (Slowloris protection):
 
 | Setting | Default |
 | --- | --- |

@@ -1,6 +1,6 @@
 # Security
 
-What Lumek does **by default** to protect applications, mapped to the [OWASP Top 10:2025](https://top10.owasp.org/2025/), and what remains the application's responsibility. Reporting vulnerabilities in Lumek itself: [SECURITY.md](../SECURITY.md).
+What Vukem does **by default** to protect applications, mapped to the [OWASP Top 10:2025](https://top10.owasp.org/2025/), and what remains the application's responsibility. Reporting vulnerabilities in Vukem itself: [SECURITY.md](../SECURITY.md).
 
 > This document is a design contract. Each default lands in the phase shown (**P** = Prototype, **A** = ALPHA, **B** = BETA) and is not "done" until a test asserts it (see [Verification](#verification)).
 
@@ -18,7 +18,7 @@ What Lumek does **by default** to protect applications, mapped to the [OWASP Top
 
 | Default | Phase |
 | --- | --- |
-| Routes are public unless wrapped in `auth.Required()`; `lumek route:list` shows the middleware of every route so unprotected routes are visible | P / A |
+| Routes are public unless wrapped in `auth.Required()`; `vukem route:list` shows the middleware of every route so unprotected routes are visible | P / A |
 | Policies resolved by Go type; **unregistered policy = deny** (fail closed), not allow | A |
 | `DenyAsNotFound()` to avoid leaking resource existence (IDOR enumeration) | A |
 | Query builder scopes (`Scope(ownedBy(user))`) and route-level `Authorize` make ownership checks one line | A |
@@ -39,7 +39,7 @@ What Lumek does **by default** to protect applications, mapped to the [OWASP Top
 | Security headers middleware on by default: `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `X-Frame-Options: DENY` + CSP `frame-ancestors 'none'`, `Cross-Origin-Opener-Policy: same-origin`, `Strict-Transport-Security` (HTTPS only, configurable) | P |
 | Content-Security-Policy builder with per-request nonces (`{{ cspNonce }}`), starter ships a strict policy; Vite tags get the nonce | P / B |
 | Debug error page only in development; production errors never include stack traces, SQL or config | P |
-| `lumek about` prints effective security settings (secrets redacted) to review deployments | P |
+| `vukem about` prints effective security settings (secrets redacted) to review deployments | P |
 | No default credentials, no sample admin user, `.env` git-ignored, `.env.example` without secrets | P |
 | Destructive commands (`migrate:fresh`, `db:wipe`) require `--force` in production | P |
 

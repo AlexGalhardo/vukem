@@ -1,4 +1,4 @@
-# Lumek — Plan
+# Vukem — Plan
 
 The single source of truth for **what to build next**. Every work session (human or agent) starts here.
 
@@ -19,7 +19,7 @@ Task IDs: `<phase>.<group>.<task>` (e.g. `P.3.2`). Reference them in commit bodi
 | --- | --- |
 | Current phase | **ALPHA** |
 | Next task | `A.2.1` (A.0.6 after A.3.4; blocked: P.0.9 waits for GitHub billing, P.12.3 needs a public repository) |
-| Last release | `v0.3.0` (A.1 Postgres driver) |
+| Last release | `v0.3.0` (A.1 Postgres driver; project renamed to Vukem, repository public) |
 | Updated | 2026-10-16 |
 
 ## Design references
@@ -41,7 +41,7 @@ Task IDs: `<phase>.<group>.<task>` (e.g. `P.3.2`). Reference them in commit bodi
 | Subsystems (mail, cache, queue…) | [docs/subsystems.md](docs/subsystems.md) |
 | Testing | [docs/testing.md](docs/testing.md) |
 | Tooling & releases | [docs/tooling.md](docs/tooling.md) |
-| Documentation website (`site/`, lumek.vercel.app) | [docs/site.md](docs/site.md) |
+| Documentation website (`site/`, vukem.vercel.app) | [docs/site.md](docs/site.md) |
 
 ## Definition of Done
 
@@ -61,7 +61,7 @@ Applies to **every** task:
 
 | Phase | Version | Goal | Exit criteria |
 | --- | --- | --- | --- |
-| **Prototype** | `v0.1.x` | Smallest end-to-end framework: `lumek new blog` → CRUD with HTMX on SQLite, plus JSON endpoints with problem+json errors, tested | [P exit](#prototype-exit-criteria) |
+| **Prototype** | `v0.1.x` | Smallest end-to-end framework: `vukem new blog` → CRUD with HTMX on SQLite, plus JSON endpoints with problem+json errors, tested | [P exit](#prototype-exit-criteria) |
 | **ALPHA** | `v0.2`–`v0.x` | REST API starter, auth, authorization, relations, Postgres, mail, cache, storage, events | [A exit](#alpha-exit-criteria) |
 | **BETA** | `v1.0.0-beta.N` → `rc.N` | OpenAPI, queue, scheduler, Inertia + React, Vite, Redis, Mongo, i18n, SSE, encryption | [B exit](#beta-exit-criteria) |
 | **1.0 Stable** | `v1.0.0` | API freeze, docs site, stability policy, LTS | [S exit](#10-stable-exit-criteria) |
@@ -74,7 +74,7 @@ Applies to **every** task:
 
 ### P.0 Repository foundation
 
-- [x] **P.0.1** Initialise module `github.com/AlexGalhardo/golang-framework` (`go 1.27.0`), root `doc.go` (`package lumek`).
+- [x] **P.0.1** Initialise module `github.com/AlexGalhardo/vukem` (`go 1.27.0`), root `doc.go` (`package vukem`).
   → verify: `go build ./...` succeeds.
 - [x] **P.0.2** Add `.editorconfig`, `.gitattributes`, `.gitignore`.
   → verify: `git ls-files --eol` shows `i/lf` for text files.
@@ -237,7 +237,7 @@ Applies to **every** task:
 
 ### P.9 Testing toolkit — needs: P.3, P.6, P.7
 
-- [x] **P.9.1** `lumektest.New(t, bootFn)` with test env, in-memory SQLite, migrations.
+- [x] **P.9.1** `vukemtest.New(t, bootFn)` with test env, in-memory SQLite, migrations.
   → verify: used by ≥ 3 framework tests.
 - [x] **P.9.2** Fluent client (requests, status/redirect/body/session/HTMX assertions) with rich failure output.
   → verify: self-tests using a fake `testing.TB` that records failures.
@@ -250,7 +250,7 @@ Applies to **every** task:
 
 ### P.10 CLI — needs: P.2
 
-- [x] **P.10.1** `cmd/lumek` skeleton: command registry, `flag`-based parsing, `list`, `version`, help, exit codes.
+- [x] **P.10.1** `cmd/vukem` skeleton: command registry, `flag`-based parsing, `list`, `version`, help, exit codes.
   → verify: golden help output.
 - [x] **P.10.2** Stub engine (`embed.FS`, local `stubs/` override, naming helpers, `go/format`).
   → verify: golden tests per stub.
@@ -261,7 +261,7 @@ Applies to **every** task:
 - [x] **P.10.5** `key:generate`.
   → verify: writes valid base64 32-byte key; refuses overwrite without `--force`.
 - [x] **P.10.6** Delegation to app binary (`go run ./cmd/app <cmd>`), with cached build.
-  → verify: `lumek migrate` in a temp project runs migrations.
+  → verify: `vukem migrate` in a temp project runs migrations.
 - [x] **P.10.7** App commands: `migrate*`, `route:list`, `about`, user `Command` interface.
   → verify: tests via `run(ctx, args, …)`.
 - [x] **P.10.8** `serve` with polling watcher, rebuild/restart, template reload, optional `npm run dev`.
@@ -269,31 +269,31 @@ Applies to **every** task:
 - [x] **P.10.9** `build` (optional `vite build`, `go build -trimpath`).
   → verify: e2e build produces runnable binary.
 
-### P.11 Starter & `lumek new` — needs: P.4–P.10
+### P.11 Starter & `vukem new` — needs: P.4–P.10
 
 - [x] **P.11.0** Vendored htmx with pinned version and SHA-256 checked by a test; strict CSP in starter layout.
   → verify: tampered file fails the test; starter pages render with no CSP violations (headless check in e2e).
 - [x] **P.11.1** HTMX + SQLite starter (skeleton per [brainstorming.md](docs/brainstorming.md#generated-app-skeleton)), vendored htmx 4.x, minimal CSS, welcome page, example `PostController` CRUD with validation + flash + partials, tests.
   → verify: starter's own tests pass.
-- [x] **P.11.2** `lumek new <name> [--module]`: copy starter, rewrite module path, `go mod tidy`, `key:generate`, `git init`.
-  → verify: e2e on ubuntu/windows/macos: `lumek new blog && cd blog && go test ./... && lumek build`.
+- [x] **P.11.2** `vukem new <name> [--module]`: copy starter, rewrite module path, `go mod tidy`, `key:generate`, `git init`.
+  → verify: e2e on ubuntu/windows/macos: `vukem new blog && cd blog && go test ./... && vukem build`.
 
 ### P.12 Release `v0.1.0` — needs: P.0–P.11
 
-- [x] **P.12.0** Documentation site (`site/`, Next.js 16 + Tailwind v4 + Base UI, Resend-like) deployed at lumek.vercel.app with pages for every Prototype feature.
+- [x] **P.12.0** Documentation site (`site/`, Next.js 16 + Tailwind v4 + Base UI, Resend-like) deployed at vukem.vercel.app with pages for every Prototype feature.
   → verify: `task site:build` green; Ctrl+K search, theme toggle, copy + toast work; production URL serves the new pages.
 
 - [x] **P.12.1** GoReleaser config + `release.yml`.
   → verify: `goreleaser release --snapshot --clean` builds all targets.
 - [x] **P.12.2** README quick start validated by following it on a clean machine/container.
   → verify: checklist in PR.
-- [ ] **P.12.3** Tag `v0.1.0`, warm proxy, verify `go install …/cmd/lumek@v0.1.0`. Tagged and released with binaries; **blocked**: the repository is private, so proxy.golang.org cannot fetch it.
+- [ ] **P.12.3** Tag `v0.1.0`, warm proxy, verify `go install …/cmd/vukem@v0.1.0`. Tagged and released with binaries; **blocked**: the repository is private, so proxy.golang.org cannot fetch it.
   → verify: pkg.go.dev shows docs and MIT license.
 
 ### Prototype exit criteria
 
-- [ ] `go install github.com/AlexGalhardo/golang-framework/cmd/lumek@latest` works on Windows, Linux, macOS.
-- [x] `lumek new blog` → `lumek serve` → CRUD with HTMX partials, validation errors (422), flash messages — **no Node required**.
+- [ ] `go install github.com/AlexGalhardo/vukem/cmd/vukem@latest` works on Windows, Linux, macOS.
+- [x] `vukem new blog` → `vukem serve` → CRUD with HTMX partials, validation errors (422), flash messages — **no Node required**.
 - [x] The starter's example controller also exposes JSON endpoints that return problem+json on errors, covered by API assertions.
 - [x] Core coverage ≥ 80% overall; router, validate, session, orm, schema, config ≥ 90%.
 - [ ] Zero third-party deps in core except `modernc.org/sqlite` and `golang.org/x/crypto`.
@@ -319,7 +319,7 @@ Applies to **every** task:
   → verify: preflight and 429 tests.
 - [x] **A.0.5** Unique-violation → 409 mapping per dialect; `Deprecation`/`Sunset` header helper.
   → verify: tests on SQLite and Postgres.
-- [ ] **A.0.6** `lumek new <name> --api` starter and `lumek install:api` (token issue/revoke endpoints, `routes/api.go`, tests). needs: A.3.4
+- [ ] **A.0.6** `vukem new <name> --api` starter and `vukem install:api` (token issue/revoke endpoints, `routes/api.go`, tests). needs: A.3.4
   → verify: e2e: generated API app tests pass on all OSes.
 
 ### A.1 Postgres driver module
@@ -423,7 +423,7 @@ Applies to **every** task:
 ### A.7 Release train
 
 - [ ] **A.7.0** Documentation site updated with every ALPHA feature (API starter, auth, social login, relations, Postgres, mail, cache, storage, events) and redeployed.
-  → verify: `task site:build` green; pages live on lumek.vercel.app.
+  → verify: `task site:build` green; pages live on vukem.vercel.app.
 
 - [ ] **A.7.1** Each ALPHA group shipped as a minor (`v0.2.0`, `v0.3.0`…) with changelog.
   → verify: tags exist; `CHANGELOG.md` sections per release.
@@ -432,8 +432,8 @@ Applies to **every** task:
 
 ### ALPHA exit criteria
 
-- [ ] `lumek install:auth` produces a working login/register/reset/verify flow with passing generated tests.
-- [ ] `lumek new shop --api` produces a token-authenticated JSON API with pagination, filtering, CORS, rate limiting and problem+json errors, with passing generated tests.
+- [ ] `vukem install:auth` produces a working login/register/reset/verify flow with passing generated tests.
+- [ ] `vukem new shop --api` produces a token-authenticated JSON API with pagination, filtering, CORS, rate limiting and problem+json errors, with passing generated tests.
 - [ ] ORM + schema conformance suite green on SQLite and Postgres.
 - [ ] Mail, cache, storage, events, rate limiting each have a fake and docs.
 - [ ] Core deps still within the allowlist; Postgres pulled only via `drivers/postgres`.
@@ -450,11 +450,11 @@ Applies to **every** task:
 
 - [ ] **B.0.1** Typed handlers `api.Register(g, pattern, op, func(c, In) (Out, error))`.
   → verify: tests for binding, validation and response encoding.
-- [ ] **B.0.2** OpenAPI 3.1 generator (schemas from `json`/`validate` tags, problem catalogue, security schemes), `/openapi.json`, `lumek openapi:export`.
+- [ ] **B.0.2** OpenAPI 3.1 generator (schemas from `json`/`validate` tags, problem catalogue, security schemes), `/openapi.json`, `vukem openapi:export`.
   → verify: generated document validates against the OpenAPI 3.1 JSON Schema; golden test.
 - [ ] **B.0.3** `AssertMatchesOpenAPI()` test helper.
   → verify: a mismatching response fails the assertion.
-- [ ] **B.0.5** `z` exports: `JSONSchema()` and `lumek codegen:types` (TypeScript types + optional Zod schemas).
+- [ ] **B.0.5** `z` exports: `JSONSchema()` and `vukem codegen:types` (TypeScript types + optional Zod schemas).
   → verify: golden JSON Schema/TS output; `tsc --noEmit` passes on generated types.
 - [ ] **B.0.4** `Idempotency-Key` middleware (database/Redis store).
   → verify: a duplicate POST returns the stored response.
@@ -524,7 +524,7 @@ Applies to **every** task:
   → verify: e2e CRUD through the admin in a test app; access without the `admin` ability denied (`TestSecurity_A01_AdminRequiresAbility`).
 - [ ] **B.7.2** `install:admin` scaffold and `make:admin-resource`.
   → verify: generated app tests pass.
-- [ ] **B.7.3** `devtools` dashboard at `/_lumek` (development only; boot error if enabled in production): routes, requests with timings, SQL queries with N+1 detection, jobs, events, mail previews, logs, traces (ring buffers).
+- [ ] **B.7.3** `devtools` dashboard at `/_vukem` (development only; boot error if enabled in production): routes, requests with timings, SQL queries with N+1 detection, jobs, events, mail previews, logs, traces (ring buffers).
   → verify: tests; enabling in production fails at boot (`TestSecurity_A02_DevtoolsNeverInProduction`).
 
 ### B.8 Auth & integrations
@@ -544,9 +544,9 @@ Applies to **every** task:
 
 - [ ] **B.9.1** Inertia Vue and Svelte starters (`install:inertia --vue|--svelte`) with the same pages and tests as React.
   → verify: e2e: each new Inertia app builds and its tests pass.
-- [ ] **B.9.2** templ-first starter (`lumek new <name> --templ`).
+- [ ] **B.9.2** templ-first starter (`vukem new <name> --templ`).
   → verify: e2e: generated app builds, `templ generate` is clean and tests pass.
-- [ ] **B.9.3** Typed RPC client generation (`lumek codegen:client`, TypeScript and Go) from typed handlers/OpenAPI with `z` types.
+- [ ] **B.9.3** Typed RPC client generation (`vukem codegen:client`, TypeScript and Go) from typed handlers/OpenAPI with `z` types.
   → verify: golden output; `tsc --noEmit` and `go vet` pass on generated clients; round-trip test against a running app.
 
 ### B.5 Stabilisation
@@ -563,7 +563,7 @@ Applies to **every** task:
   → verify: checklist.
 
 - [ ] **B.5.6** Documentation site updated with every BETA feature (OpenAPI, queue, scheduler, Inertia, Vite, Redis, Mongo, i18n, SSE, encryption, GraphQL, WebSockets/broadcasting, admin, dev dashboard, JWT, 2FA, S3, MySQL, new starters, client generation) and redeployed.
-  → verify: `task site:build` green; pages live on lumek.vercel.app.
+  → verify: `task site:build` green; pages live on vukem.vercel.app.
 
 ### BETA exit criteria
 

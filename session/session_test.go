@@ -16,8 +16,8 @@ import (
 
 	_ "modernc.org/sqlite" // SQLite driver for SQLStore tests
 
-	"github.com/AlexGalhardo/golang-framework/errs"
-	"github.com/AlexGalhardo/golang-framework/web"
+	"github.com/AlexGalhardo/vukem/errs"
+	"github.com/AlexGalhardo/vukem/web"
 )
 
 type clock struct {
@@ -349,12 +349,12 @@ func TestSecurity_A02_ConfigChecks(t *testing.T) {
 	}
 
 	m, err := New(Config{Secure: true, Production: true, CookieKey: testKey})
-	if err != nil || m.CookieName() != "__Host-lumek_session" {
+	if err != nil || m.CookieName() != "__Host-vukem_session" {
 		t.Fatalf("secure name = %q %v", m.CookieName(), err)
 	}
 
 	m, _ = New(Config{Secure: true, Domain: "example.com", CookieKey: testKey})
-	if m.CookieName() != "lumek_session" {
+	if m.CookieName() != "vukem_session" {
 		t.Fatal("__Host- prefix used with Domain")
 	}
 }

@@ -1,4 +1,4 @@
-package lumektest_test
+package vukemtest_test
 
 import (
 	"errors"
@@ -12,14 +12,14 @@ import (
 	"testing/fstest"
 	"time"
 
-	lumek "github.com/AlexGalhardo/golang-framework"
-	"github.com/AlexGalhardo/golang-framework/errs"
-	"github.com/AlexGalhardo/golang-framework/lumektest"
-	"github.com/AlexGalhardo/golang-framework/orm"
-	"github.com/AlexGalhardo/golang-framework/router"
-	"github.com/AlexGalhardo/golang-framework/schema"
-	"github.com/AlexGalhardo/golang-framework/web"
-	"github.com/AlexGalhardo/golang-framework/z"
+	vukem "github.com/AlexGalhardo/vukem"
+	"github.com/AlexGalhardo/vukem/errs"
+	"github.com/AlexGalhardo/vukem/orm"
+	"github.com/AlexGalhardo/vukem/router"
+	"github.com/AlexGalhardo/vukem/schema"
+	"github.com/AlexGalhardo/vukem/vukemtest"
+	"github.com/AlexGalhardo/vukem/web"
+	"github.com/AlexGalhardo/vukem/z"
 )
 
 type Note struct {
@@ -50,12 +50,12 @@ var views = fstest.MapFS{
 }
 
 // build is what an application's bootstrap.New looks like.
-func build(opts ...lumek.Option) (*lumek.App, error) {
-	return lumek.New(append(opts,
-		lumek.WithMigrations(migrations),
-		lumek.WithViews(views),
-		lumek.WithRoutes(func(r *router.Router, app *lumek.App) error {
-			if err := lumek.DefaultMiddleware(app, r); err != nil {
+func build(opts ...vukem.Option) (*vukem.App, error) {
+	return vukem.New(append(opts,
+		vukem.WithMigrations(migrations),
+		vukem.WithViews(views),
+		vukem.WithRoutes(func(r *router.Router, app *vukem.App) error {
+			if err := vukem.DefaultMiddleware(app, r); err != nil {
 				return err
 			}
 
@@ -120,16 +120,16 @@ func build(opts ...lumek.Option) (*lumek.App, error) {
 func TestEndToEnd(t *testing.T) {
 	t.Parallel()
 
-	app := lumektest.New(t, build)
+	app := vukemtest.New(t, build)
 	c := app.Client(t)
 
 	c.PostForm("/notes", url.Values{"body": {"  Buy milk  "}}).
 		AssertRedirectRoute("notes.index").
 		AssertSessionHas("success")
 
-	lumektest.AssertDatabaseHas(t, app, "notes", map[string]any{"body": "Buy milk"})
-	lumektest.AssertDatabaseCount(t, app, "notes", 1)
-	lumektest.AssertDatabaseMissing(t, app, "notes", map[string]any{"body": "nope"})
+	vukemtest.AssertDatabaseHas(t, app, "notes", map[string]any{"body": "Buy milk"})
+	vukemtest.AssertDatabaseCount(t, app, "notes", 1)
+	vukemtest.AssertDatabaseMissing(t, app, "notes", map[string]any{"body": "nope"})
 
 	c.Get("/notes").AssertOK().AssertSee("<li>Buy milk</li>").AssertSee("<html>").AssertDontSee("nope")
 	c.HTMX().Get("/notes").AssertOK().AssertFragment().AssertSee("<ul>")
@@ -161,8 +161,8 @@ func TestEndToEnd(t *testing.T) {
 func TestRefreshDatabaseAndClock(t *testing.T) {
 	t.Parallel()
 
-	clock := lumektest.NewFakeClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
-	app := lumektest.New(t, build, lumektest.Options{Clock: clock.Now, Env: map[string]string{"APP_NAME": "Notes"}})
+	clock := vukemtest.NewFakeClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	app := vukemtest.New(t, build, vukemtest.Options{Clock: clock.Now, Env: map[string]string{"APP_NAME": "Notes"}})
 
 	if app.Config.Name != "Notes" || !app.Now().Equal(clock.Now()) {
 		t.Fatalf("options not applied: %s %v", app.Config.Name, app.Now())
@@ -175,10 +175,10 @@ func TestRefreshDatabaseAndClock(t *testing.T) {
 	}
 
 	app.Client(t).PostForm("/notes", url.Values{"body": {"one"}})
-	lumektest.AssertDatabaseCount(t, app, "notes", 1)
+	vukemtest.AssertDatabaseCount(t, app, "notes", 1)
 
 	app.RefreshDatabase(t)
-	lumektest.AssertDatabaseCount(t, app, "notes", 0)
+	vukemtest.AssertDatabaseCount(t, app, "notes", 0)
 
 	if app.Handler() == nil {
 		t.Fatal("handler")
@@ -188,13 +188,13 @@ func TestRefreshDatabaseAndClock(t *testing.T) {
 func TestIsolatedDatabases(t *testing.T) {
 	t.Parallel()
 
-	a := lumektest.New(t, build)
-	b := lumektest.New(t, build)
+	a := vukemtest.New(t, build)
+	b := vukemtest.New(t, build)
 
 	a.Client(t).PostForm("/notes", url.Values{"body": {"only in a"}})
 
-	lumektest.AssertDatabaseCount(t, a, "notes", 1)
-	lumektest.AssertDatabaseCount(t, b, "notes", 0)
+	vukemtest.AssertDatabaseCount(t, a, "notes", 1)
+	vukemtest.AssertDatabaseCount(t, b, "notes", 0)
 }
 
 // fakeTB records Fatalf instead of failing the real test.
@@ -233,7 +233,7 @@ func expectFailure(t *testing.T, want string, fn func(tb *fakeTB)) {
 func TestAssertionsReportFailures(t *testing.T) {
 	t.Parallel()
 
-	app := lumektest.New(t, build)
+	app := vukemtest.New(t, build)
 
 	cases := map[string]func(tb *fakeTB){
 		"status = 404, want 200": func(tb *fakeTB) { app.Client(tb).Get("/missing").AssertOK() },
@@ -260,15 +260,15 @@ func TestAssertionsReportFailures(t *testing.T) {
 			app.Client(tb).PostForm("/notes", url.Values{"body": {"long enough"}}).AssertSessionMissing("success")
 		},
 		`no flashed validation error`: func(tb *fakeTB) { app.Client(tb).Get("/notes").AssertSessionHasErrors("body") },
-		"no row in notes":             func(tb *fakeTB) { lumektest.AssertDatabaseHas(tb, app, "notes", map[string]any{"body": "ghost"}) },
-		"want none":                   func(tb *fakeTB) { lumektest.AssertDatabaseMissing(tb, app, "migrations", nil) },
-		"want 9":                      func(tb *fakeTB) { lumektest.AssertDatabaseCount(tb, app, "notes", 9) },
-		"invalid table":               func(tb *fakeTB) { lumektest.AssertDatabaseCount(tb, app, "notes; --", 0) },
-		"invalid column":              func(tb *fakeTB) { lumektest.AssertDatabaseHas(tb, app, "notes", map[string]any{"a b": 1}) },
-		"count nope":                  func(tb *fakeTB) { lumektest.AssertDatabaseCount(tb, app, "nope", 0) },
+		"no row in notes":             func(tb *fakeTB) { vukemtest.AssertDatabaseHas(tb, app, "notes", map[string]any{"body": "ghost"}) },
+		"want none":                   func(tb *fakeTB) { vukemtest.AssertDatabaseMissing(tb, app, "migrations", nil) },
+		"want 9":                      func(tb *fakeTB) { vukemtest.AssertDatabaseCount(tb, app, "notes", 9) },
+		"invalid table":               func(tb *fakeTB) { vukemtest.AssertDatabaseCount(tb, app, "notes; --", 0) },
+		"invalid column":              func(tb *fakeTB) { vukemtest.AssertDatabaseHas(tb, app, "notes", map[string]any{"a b": 1}) },
+		"count nope":                  func(tb *fakeTB) { vukemtest.AssertDatabaseCount(tb, app, "nope", 0) },
 		"no route named":              func(tb *fakeTB) { app.Client(tb).Get("/notes").AssertRedirectRoute("ghost") },
 		"build app": func(tb *fakeTB) {
-			lumektest.New(tb, func(...lumek.Option) (*lumek.App, error) { return nil, errors.New("x") })
+			vukemtest.New(tb, func(...vukem.Option) (*vukem.App, error) { return nil, errors.New("x") })
 		},
 	}
 
@@ -281,11 +281,11 @@ func TestAssertionsReportFailures(t *testing.T) {
 
 	// Failure output includes the request, status and body.
 	expectFailure(t, "GET /missing → 404", func(tb *fakeTB) { app.Client(tb).Get("/missing").AssertOK() })
-	expectFailure(t, "lumektest: encode body", func(tb *fakeTB) { app.Client(tb).PostJSON("/notes", func() {}) })
+	expectFailure(t, "vukemtest: encode body", func(tb *fakeTB) { app.Client(tb).PostJSON("/notes", func() {}) })
 
 	// Null columns can be asserted.
-	lumektest.AssertDatabaseHas(t, app, "migrations", map[string]any{"id": "1_notes"})
-	lumektest.AssertDatabaseMissing(t, app, "notes", map[string]any{"body": nil, "id": 999})
+	vukemtest.AssertDatabaseHas(t, app, "migrations", map[string]any{"id": "1_notes"})
+	vukemtest.AssertDatabaseMissing(t, app, "notes", map[string]any{"body": nil, "id": 999})
 
 	r := app.Client(t).WithCookie("a", "b").WithToken("tok").PutJSON("/notes", map[string]any{})
 	if r.Status() != http.StatusMethodNotAllowed || r.Header("Allow") == "" || r.Body() == "" || r.Recorder() == nil {

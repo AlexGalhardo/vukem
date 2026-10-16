@@ -1,4 +1,4 @@
-package lumek
+package vukem
 
 import (
 	"bytes"
@@ -14,10 +14,10 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/AlexGalhardo/golang-framework/database"
-	"github.com/AlexGalhardo/golang-framework/router"
-	"github.com/AlexGalhardo/golang-framework/schema"
-	"github.com/AlexGalhardo/golang-framework/web"
+	"github.com/AlexGalhardo/vukem/database"
+	"github.com/AlexGalhardo/vukem/router"
+	"github.com/AlexGalhardo/vukem/schema"
+	"github.com/AlexGalhardo/vukem/web"
 )
 
 func newTestApp(t *testing.T, opts ...Option) *App {
@@ -87,7 +87,7 @@ func TestDefaultMiddlewareAndRoutes(t *testing.T) {
 	}))
 
 	rec := doReq(t, app, "/hello")
-	if rec.Body.String() != "hi Lumek" || rec.Header().Get("X-Request-ID") == "" ||
+	if rec.Body.String() != "hi Vukem" || rec.Header().Get("X-Request-ID") == "" ||
 		rec.Header().Get("X-Content-Type-Options") != "nosniff" {
 		t.Fatalf("/hello = %d %q %v", rec.Code, rec.Body.String(), rec.Header())
 	}

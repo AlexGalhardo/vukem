@@ -3,8 +3,8 @@ package web
 import (
 	"net/http"
 
-	"github.com/AlexGalhardo/golang-framework/errs"
-	"github.com/AlexGalhardo/golang-framework/z"
+	"github.com/AlexGalhardo/vukem/errs"
+	"github.com/AlexGalhardo/vukem/z"
 )
 
 // Parse reads the request input (JSON, form or multipart body merged over

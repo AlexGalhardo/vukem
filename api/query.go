@@ -7,9 +7,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/AlexGalhardo/golang-framework/errs"
-	"github.com/AlexGalhardo/golang-framework/orm"
-	"github.com/AlexGalhardo/golang-framework/web"
+	"github.com/AlexGalhardo/vukem/errs"
+	"github.com/AlexGalhardo/vukem/orm"
+	"github.com/AlexGalhardo/vukem/web"
 )
 
 // Option allowlists one query convention for an endpoint.

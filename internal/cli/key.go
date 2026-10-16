@@ -10,7 +10,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/AlexGalhardo/golang-framework/config"
+	"github.com/AlexGalhardo/vukem/config"
 )
 
 var appKeyLine = regexp.MustCompile(`(?m)^APP_KEY=(.*?)\r?$`)

@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/AlexGalhardo/golang-framework/errs"
+	"github.com/AlexGalhardo/vukem/errs"
 )
 
 func names(us []User) []string {

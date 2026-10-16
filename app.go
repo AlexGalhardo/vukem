@@ -1,4 +1,4 @@
-package lumek
+package vukem
 
 import (
 	"context"
@@ -13,12 +13,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/AlexGalhardo/golang-framework/config"
-	"github.com/AlexGalhardo/golang-framework/database"
-	"github.com/AlexGalhardo/golang-framework/router"
-	"github.com/AlexGalhardo/golang-framework/schema"
-	"github.com/AlexGalhardo/golang-framework/session"
-	"github.com/AlexGalhardo/golang-framework/view"
+	"github.com/AlexGalhardo/vukem/config"
+	"github.com/AlexGalhardo/vukem/database"
+	"github.com/AlexGalhardo/vukem/router"
+	"github.com/AlexGalhardo/vukem/schema"
+	"github.com/AlexGalhardo/vukem/session"
+	"github.com/AlexGalhardo/vukem/view"
 )
 
 // Kind is the runtime in which the application is running. Providers can be
@@ -34,7 +34,7 @@ const (
 
 // Config is the core application configuration, loaded from the environment.
 type Config struct {
-	Name            string        `env:"APP_NAME"         default:"Lumek"`
+	Name            string        `env:"APP_NAME"         default:"Vukem"`
 	Env             config.Env    `env:"APP_ENV"          default:"development"`
 	Debug           bool          `env:"APP_DEBUG"`
 	URL             string        `env:"APP_URL"          default:"http://localhost:3000"`
@@ -49,7 +49,7 @@ type Config struct {
 // IsProduction reports whether APP_ENV is production.
 func (c *Config) IsProduction() bool { return c.Env == config.Production }
 
-// App is a Lumek application: configuration, logger, providers and the
+// App is a Vukem application: configuration, logger, providers and the
 // long-running runners (HTTP server, workers). Services added by providers
 // live in typed fields of the structs that embed or reference the App.
 type App struct {
@@ -132,7 +132,7 @@ func WithViews(fsys fs.FS) Option {
 }
 
 // WithClock sets the clock used by sessions and other time-based features
-// (tests use lumektest.FakeClock).
+// (tests use vukemtest.FakeClock).
 func WithClock(now func() time.Time) Option {
 	return func(o *options) error { o.now = now; return nil }
 }
@@ -284,13 +284,13 @@ func New(opts ...Option) (*App, error) {
 		}
 
 		if err := p.Register(app); err != nil {
-			return nil, fmt.Errorf("lumek: register %T: %w", p, err)
+			return nil, fmt.Errorf("vukem: register %T: %w", p, err)
 		}
 	}
 
 	for _, fn := range o.routes {
 		if err := fn(app.Router, app); err != nil {
-			return nil, fmt.Errorf("lumek: routes: %w", err)
+			return nil, fmt.Errorf("vukem: routes: %w", err)
 		}
 	}
 
@@ -307,11 +307,11 @@ func checkConfig(cfg *Config) (config.Key, error) {
 	}
 
 	if cfg.IsProduction() && cfg.Debug {
-		errs = append(errs, errors.New("lumek: APP_DEBUG must be false when APP_ENV=production"))
+		errs = append(errs, errors.New("vukem: APP_DEBUG must be false when APP_ENV=production"))
 	}
 
 	if cfg.Port < 0 || cfg.Port > 65535 {
-		errs = append(errs, fmt.Errorf("lumek: PORT %d is out of range", cfg.Port))
+		errs = append(errs, fmt.Errorf("vukem: PORT %d is out of range", cfg.Port))
 	}
 
 	return key, errors.Join(errs...)
@@ -385,7 +385,7 @@ func (a *App) Boot(ctx context.Context) error {
 		}
 
 		if err := b.Boot(ctx, a); err != nil {
-			return fmt.Errorf("lumek: boot %T: %w", p, err)
+			return fmt.Errorf("vukem: boot %T: %w", p, err)
 		}
 	}
 
@@ -428,7 +428,7 @@ func (a *App) Run(ctx context.Context) error {
 			if err != nil && !errors.Is(err, context.Canceled) {
 				errMu.Lock()
 				if firstErr == nil {
-					firstErr = fmt.Errorf("lumek: runner %s: %w", r.name, err)
+					firstErr = fmt.Errorf("vukem: runner %s: %w", r.name, err)
 				}
 				errMu.Unlock()
 				cancel(err)
@@ -477,7 +477,7 @@ func (a *App) Shutdown(ctx context.Context) error {
 		}
 
 		if err := s.Shutdown(ctx, a); err != nil {
-			errs = append(errs, fmt.Errorf("lumek: shutdown %T: %w", p, err))
+			errs = append(errs, fmt.Errorf("vukem: shutdown %T: %w", p, err))
 		}
 	}
 

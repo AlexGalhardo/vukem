@@ -3,7 +3,7 @@ title: Single binary
 description: Build one static Go binary with embedded assets and run it behind a TLS-terminating proxy with graceful shutdown.
 ---
 
-A Lumek app compiles to a single executable. With `embed`, views and public assets ship inside it, so a deployment is one file plus its environment.
+A Vukem app compiles to a single executable. With `embed`, views and public assets ship inside it, so a deployment is one file plus its environment.
 
 ## Build
 
@@ -13,7 +13,7 @@ CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o bin/app ./cmd/app
 
 SQLite uses the pure-Go `modernc.org/sqlite` driver, so no cgo toolchain is needed and cross-compiling is a matter of `GOOS`/`GOARCH`.
 
-`lumek build` does this for you: it runs `npx vite build` when a `vite.config.*` exists, then `go build -trimpath -ldflags="-s -w" -o bin/app ./cmd/app` (`-o` changes the output). The starter embeds `resources/views` and `resources/public` with `//go:embed`, so the binary is self-contained.
+`vukem build` does this for you: it runs `npx vite build` when a `vite.config.*` exists, then `go build -trimpath -ldflags="-s -w" -o bin/app ./cmd/app` (`-o` changes the output). The starter embeds `resources/views` and `resources/public` with `//go:embed`, so the binary is self-contained.
 
 ## Embed public assets
 
@@ -54,7 +54,7 @@ On `SIGINT` or `SIGTERM` the HTTP server stops accepting connections, drains in-
 
 ## Behind a reverse proxy
 
-Terminate TLS at the proxy (Caddy, nginx, a load balancer) and tell Lumek which proxies to trust:
+Terminate TLS at the proxy (Caddy, nginx, a load balancer) and tell Vukem which proxies to trust:
 
 ```go
 _, proxy, _ := net.ParseCIDR("10.0.0.0/8")

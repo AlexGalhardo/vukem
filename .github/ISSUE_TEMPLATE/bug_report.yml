@@ -20,7 +20,7 @@ body:
   - type: input
     id: version
     attributes:
-      label: Lumek version
+      label: Vukem version
       placeholder: v0.1.0 or commit SHA
     validations:
       required: true

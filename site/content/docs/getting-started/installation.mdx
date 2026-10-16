@@ -1,6 +1,6 @@
 ---
 title: Installation
-description: Install the lumek CLI, create a project from the HTMX + SQLite starter and run it.
+description: Install the vukem CLI, create a project from the HTMX + SQLite starter and run it.
 ---
 
 ## Requirements
@@ -8,23 +8,23 @@ description: Install the lumek CLI, create a project from the HTMX + SQLite star
 | Tool | Version |
 | --- | --- |
 | Go | 1.27 or newer |
-| Git | Optional: `lumek new` runs `git init` when it is on `PATH` |
+| Git | Optional: `vukem new` runs `git init` when it is on `PATH` |
 | Node.js | Not required for the default HTMX starter. Only needed for Vite or Inertia (BETA). |
 
-Lumek runs on **Windows 11/10**, Linux and macOS. SQLite uses the pure-Go `modernc.org/sqlite` driver, so no C compiler is needed.
+Vukem runs on **Windows 11/10**, Linux and macOS. SQLite uses the pure-Go `modernc.org/sqlite` driver, so no C compiler is needed.
 
 <Callout type="warning">
-Lumek is pre-1.0: APIs can change between `v0.x` releases. Pin a version in `go.mod` and read the changelog before upgrading.
+Vukem is pre-1.0: APIs can change between `v0.x` releases. Pin a version in `go.mod` and read the changelog before upgrading.
 </Callout>
 
 ## Install the CLI
 
 ```bash
-go install github.com/AlexGalhardo/golang-framework/cmd/lumek@latest
-lumek version
+go install github.com/AlexGalhardo/vukem/cmd/vukem@latest
+vukem version
 ```
 
-`lumek` lands in `$(go env GOPATH)/bin` (`%USERPROFILE%\go\bin` on Windows); make sure that directory is on your `PATH`.
+`vukem` lands in `$(go env GOPATH)/bin` (`%USERPROFILE%\go\bin` on Windows); make sure that directory is on your `PATH`.
 
 ## Create a project
 
@@ -32,17 +32,17 @@ lumek version
 <Step title="Scaffold">
 
 ```bash
-lumek new blog --module example.com/blog
+vukem new blog --module example.com/blog
 ```
 
-This renders the embedded starter, requires the Lumek release that matches your CLI, runs `go mod tidy`, writes a fresh `APP_KEY` to `.env` (copied from `.env.example`) and runs `git init`.
+This renders the embedded starter, requires the Vukem release that matches your CLI, runs `go mod tidy`, writes a fresh `APP_KEY` to `.env` (copied from `.env.example`) and runs `git init`.
 
 </Step>
 <Step title="Migrate">
 
 ```bash
 cd blog
-lumek migrate
+vukem migrate
 ```
 
 Creates `storage/database.sqlite` and the `posts` table of the example CRUD.
@@ -51,10 +51,10 @@ Creates `storage/database.sqlite` and the `posts` table of the example CRUD.
 <Step title="Serve">
 
 ```bash
-lumek serve
+vukem serve
 ```
 
-Open `http://localhost:3000`. `lumek serve` rebuilds and restarts the app when a `.go` file changes; template edits show up on refresh without a restart.
+Open `http://localhost:3000`. `vukem serve` rebuilds and restarts the app when a `.go` file changes; template edits show up on refresh without a restart.
 
 </Step>
 <Step title="Test">
@@ -68,21 +68,21 @@ The starter ships with tests for the home page and the posts CRUD.
 </Step>
 </Steps>
 
-### `lumek new` flags
+### `vukem new` flags
 
 | Flag | Meaning |
 | --- | --- |
 | `--module <path>` | Go module path (default: the project name) |
-| `--framework <dir>` | Use a local checkout of Lumek through a `replace` directive instead of a release (for framework development) |
+| `--framework <dir>` | Use a local checkout of Vukem through a `replace` directive instead of a release (for framework development) |
 
-Flags may come before or after the name: `lumek new blog --module example.com/blog` works.
+Flags may come before or after the name: `vukem new blog --module example.com/blog` works.
 
 ## Without the CLI
 
-Lumek is an ordinary Go module. To add it to an existing module:
+Vukem is an ordinary Go module. To add it to an existing module:
 
 ```bash
-go get github.com/AlexGalhardo/golang-framework@latest
+go get github.com/AlexGalhardo/vukem@latest
 ```
 
 A minimal `cmd/app/main.go`:
@@ -94,29 +94,29 @@ import (
 	"net/http"
 	"os"
 
-	lumek "github.com/AlexGalhardo/golang-framework"
-	"github.com/AlexGalhardo/golang-framework/router"
-	"github.com/AlexGalhardo/golang-framework/web"
+	vukem "github.com/AlexGalhardo/vukem"
+	"github.com/AlexGalhardo/vukem/router"
+	"github.com/AlexGalhardo/vukem/web"
 )
 
-func build(opts ...lumek.Option) (*lumek.App, error) {
-	return lumek.New(append(opts, lumek.WithRoutes(func(r *router.Router, app *lumek.App) error {
+func build(opts ...vukem.Option) (*vukem.App, error) {
+	return vukem.New(append(opts, vukem.WithRoutes(func(r *router.Router, app *vukem.App) error {
 		r.Get("/", func(c *web.Ctx) error {
-			return c.String(http.StatusOK, "Hello from Lumek")
+			return c.String(http.StatusOK, "Hello from Vukem")
 		}).Name("home")
 
-		return lumek.DefaultMiddleware(app, r)
+		return vukem.DefaultMiddleware(app, r)
 	}))...)
 }
 
-func main() { os.Exit(lumek.Main(build)) }
+func main() { os.Exit(vukem.Main(build)) }
 ```
 
-`APP_KEY` is required: Lumek refuses to boot without a key of at least 32 bytes. Create `.env` with one:
+`APP_KEY` is required: Vukem refuses to boot without a key of at least 32 bytes. Create `.env` with one:
 
 ```bash
-lumek key:generate   # or: echo "APP_KEY=$(lumek key:generate --show)" > .env
+vukem key:generate   # or: echo "APP_KEY=$(vukem key:generate --show)" > .env
 go run ./cmd/app     # serves on localhost:3000
 ```
 
-`lumek.Main` loads `.env` and the environment, handles `SIGINT`/`SIGTERM`, and runs `serve` or any [app command](/docs/cli/overview#app-commands) given as the first argument.
+`vukem.Main` loads `.env` and the environment, handles `SIGINT`/`SIGTERM`, and runs `serve` or any [app command](/docs/cli/overview#app-commands) given as the first argument.

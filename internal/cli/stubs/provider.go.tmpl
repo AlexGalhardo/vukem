@@ -1,11 +1,11 @@
 package providers
 
-import lumek "github.com/AlexGalhardo/golang-framework"
+import vukem "github.com/AlexGalhardo/vukem"
 
 // {{.Name}}Provider registers {{.Snake}} services.
 type {{.Name}}Provider struct{}
 
-// Register implements lumek.Provider. Do not perform I/O here.
-func ({{.Name}}Provider) Register(app *lumek.App) error {
+// Register implements vukem.Provider. Do not perform I/O here.
+func ({{.Name}}Provider) Register(app *vukem.App) error {
 	return nil
 }

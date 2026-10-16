@@ -2,17 +2,17 @@
 package routes
 
 import (
-	lumek "github.com/AlexGalhardo/golang-framework"
-	"github.com/AlexGalhardo/golang-framework/middleware"
-	"github.com/AlexGalhardo/golang-framework/router"
+	vukem "github.com/AlexGalhardo/vukem"
+	"github.com/AlexGalhardo/vukem/middleware"
+	"github.com/AlexGalhardo/vukem/router"
 
 	"{{.Module}}/app/controllers"
 	"{{.Module}}/resources"
 )
 
-// Web registers the browser routes. lumek route:list shows them.
-func Web(r *router.Router, app *lumek.App) error {
-	if err := lumek.DefaultMiddleware(app, r); err != nil {
+// Web registers the browser routes. vukem route:list shows them.
+func Web(r *router.Router, app *vukem.App) error {
+	if err := vukem.DefaultMiddleware(app, r); err != nil {
 		return err
 	}
 

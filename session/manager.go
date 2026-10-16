@@ -10,13 +10,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AlexGalhardo/golang-framework/errs"
-	"github.com/AlexGalhardo/golang-framework/web"
+	"github.com/AlexGalhardo/vukem/errs"
+	"github.com/AlexGalhardo/vukem/web"
 )
 
 // Config configures a Manager. Zero values use secure defaults.
 type Config struct {
-	// CookieName defaults to "lumek_session"; with Secure, Path "/" and no
+	// CookieName defaults to "vukem_session"; with Secure, Path "/" and no
 	// Domain the "__Host-" prefix is added automatically.
 	CookieName string
 	// Path defaults to "/".
@@ -91,7 +91,7 @@ func New(cfg Config) (*Manager, error) {
 
 	name := cfg.CookieName
 	if name == "" {
-		name = "lumek_session"
+		name = "vukem_session"
 	}
 
 	if cfg.Secure && cfg.Path == "/" && cfg.Domain == "" && !strings.HasPrefix(name, "__Host-") {

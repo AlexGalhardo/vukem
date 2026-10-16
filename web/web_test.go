@@ -18,7 +18,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	"github.com/AlexGalhardo/golang-framework/errs"
+	"github.com/AlexGalhardo/vukem/errs"
 )
 
 func newCtx(t *testing.T, r *http.Request, s *Services) (*Ctx, *httptest.ResponseRecorder) {

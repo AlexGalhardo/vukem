@@ -32,7 +32,7 @@ if err != nil {
 r.Resource("posts", controllers.NewPostController(db))
 ```
 
-SQLite URLs: `file:storage/app.db`, `sqlite:storage/app.db` or `:memory:`. Other schemes need their driver, added with `lumek.WithDatabaseDrivers(...)`.
+SQLite URLs: `file:storage/app.db`, `sqlite:storage/app.db` or `:memory:`. Other schemes need their driver, added with `vukem.WithDatabaseDrivers(...)`.
 
 Outside an app, `database.Open(ctx, url, database.WithConfig(cfg))` returns the same `*database.DB`; `database.FromSQL(conn, dialect)` wraps an existing `*sql.DB`.
 
@@ -68,4 +68,4 @@ err := db.Tx(ctx, func(tx *database.Tx) error {
 ## Next
 
 - [ORM](/docs/database/orm): typed queries and models.
-- [Migrations](/docs/database/migrations): schema builder and `lumek migrate`.
+- [Migrations](/docs/database/migrations): schema builder and `vukem migrate`.

@@ -81,12 +81,12 @@ jobs:
       postgres:
         image: postgres:17
         env:
-          POSTGRES_USER: lumek
-          POSTGRES_PASSWORD: lumek
-          POSTGRES_DB: lumek_test
+          POSTGRES_USER: vukem
+          POSTGRES_PASSWORD: vukem
+          POSTGRES_DB: vukem_test
         ports: ["55432:5432"]
         options: >-
-          --health-cmd "pg_isready -U lumek" --health-interval 2s --health-retries 30
+          --health-cmd "pg_isready -U vukem" --health-interval 2s --health-retries 30
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6

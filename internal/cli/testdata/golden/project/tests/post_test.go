@@ -3,7 +3,7 @@ package tests
 import (
 	"testing"
 
-	"github.com/AlexGalhardo/golang-framework/lumektest"
+	"github.com/AlexGalhardo/vukem/vukemtest"
 
 	"example.com/blog/bootstrap"
 )
@@ -11,7 +11,7 @@ import (
 func TestPost(t *testing.T) {
 	t.Parallel()
 
-	app := lumektest.New(t, bootstrap.New)
+	app := vukemtest.New(t, bootstrap.New)
 
 	app.Client(t).Get("/up").AssertOK()
 }

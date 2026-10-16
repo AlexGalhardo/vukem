@@ -1,9 +1,9 @@
 package bootstrap
 
-import lumek "github.com/AlexGalhardo/golang-framework"
+import vukem "github.com/AlexGalhardo/vukem"
 
-func Providers() []lumek.Provider {
-	return []lumek.Provider{
+func Providers() []vukem.Provider {
+	return []vukem.Provider{
 		nil,
 	}
 }

@@ -3,7 +3,7 @@ title: Sessions
 description: Encrypted cookie, memory and database session stores with flash messages and old input.
 ---
 
-`lumek.DefaultMiddleware` installs the session middleware on the router stack; `app.Sessions()` builds the `*session.Manager` from `SESSION_*` variables.
+`vukem.DefaultMiddleware` installs the session middleware on the router stack; `app.Sessions()` builds the `*session.Manager` from `SESSION_*` variables.
 
 ## Configuration
 
@@ -12,7 +12,7 @@ description: Encrypted cookie, memory and database session stores with flash mes
 | `SESSION_DRIVER` | `cookie` | `cookie` (data encrypted in the cookie) or `memory` |
 | `SESSION_LIFETIME` | `24h` | Absolute lifetime |
 | `SESSION_IDLE_TIMEOUT` | `2h` | Expires after inactivity |
-| `SESSION_COOKIE` | `lumek_session` | Cookie name |
+| `SESSION_COOKIE` | `vukem_session` | Cookie name |
 | `SESSION_SECURE` | `auto` | `auto` = secure in production or when `APP_URL` is `https://` |
 
 ## Stores

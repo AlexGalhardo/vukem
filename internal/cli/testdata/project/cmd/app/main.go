@@ -5,7 +5,7 @@ import (
 
 	"example.com/blog/bootstrap"
 
-	lumek "github.com/AlexGalhardo/golang-framework"
+	vukem "github.com/AlexGalhardo/vukem"
 )
 
-func main() { os.Exit(lumek.Main(bootstrap.New)) }
+func main() { os.Exit(vukem.Main(bootstrap.New)) }

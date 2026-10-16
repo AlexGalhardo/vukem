@@ -19,7 +19,7 @@ import (
 	"testing/fstest"
 	"time"
 
-	"github.com/AlexGalhardo/golang-framework/web"
+	"github.com/AlexGalhardo/vukem/web"
 )
 
 func ok(w http.ResponseWriter, _ *http.Request) { fmt.Fprint(w, "ok") }
@@ -535,7 +535,7 @@ func TestSecurity_A09_LoggerNeverLogsCredentials(t *testing.T) {
 
 	r := get(t, "/private?token=abc")
 	r.Header.Set("Authorization", "Bearer s3cr3t")
-	r.AddCookie(&http.Cookie{Name: "lumek_session", Value: "c00kie"})
+	r.AddCookie(&http.Cookie{Name: "vukem_session", Value: "c00kie"})
 	do(t, h, r)
 
 	for _, leaked := range []string{"s3cr3t", "c00kie", "token=abc"} {

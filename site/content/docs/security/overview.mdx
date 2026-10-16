@@ -1,9 +1,9 @@
 ---
 title: Security overview
-description: What Lumek does by default to protect applications, mapped to the OWASP Top 10:2025, and what remains your responsibility.
+description: What Vukem does by default to protect applications, mapped to the OWASP Top 10:2025, and what remains your responsibility.
 ---
 
-Lumek's security defaults are a design contract. Each default lands in a phase (**P** = Prototype, **A** = ALPHA, **B** = BETA) and is not "done" until a test named `TestSecurity_<Category>_<Behaviour>` asserts it. Report vulnerabilities in Lumek itself through the repository's [security policy](https://github.com/AlexGalhardo/golang-framework/blob/main/SECURITY.md).
+Vukem's security defaults are a design contract. Each default lands in a phase (**P** = Prototype, **A** = ALPHA, **B** = BETA) and is not "done" until a test named `TestSecurity_<Category>_<Behaviour>` asserts it. Report vulnerabilities in Vukem itself through the repository's [security policy](https://github.com/AlexGalhardo/vukem/blob/main/SECURITY.md).
 
 ## Principles
 
@@ -54,7 +54,7 @@ Lumek's security defaults are a design contract. Each default lands in a phase (
 | Server timeouts always set | P |
 | Security headers on by default; strict CSP with nonces | P / B |
 | Debug details only in development | P |
-| `lumek about` prints effective security settings, secrets redacted | P |
+| `vukem about` prints effective security settings, secrets redacted | P |
 | Destructive commands require `--force` in production | P |
 
 ### A03 Software Supply Chain Failures

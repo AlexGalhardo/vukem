@@ -109,7 +109,7 @@ func TestNewUsage(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if code, _, errOut := lumek(
+	if code, _, errOut := vukem(
 		t,
 		dir,
 		"new",
@@ -119,7 +119,7 @@ func TestNewUsage(t *testing.T) {
 		t.Errorf("bad name = %d %q", code, errOut)
 	}
 
-	if code, _, errOut := lumek(t, dir, "new", "taken"); code != 1 || !strings.Contains(errOut, "already exists") {
+	if code, _, errOut := vukem(t, dir, "new", "taken"); code != 1 || !strings.Contains(errOut, "already exists") {
 		t.Errorf("existing dir = %d %q", code, errOut)
 	}
 }
@@ -137,9 +137,9 @@ func TestNewProjectEndToEnd(t *testing.T) {
 
 	dir := t.TempDir()
 
-	code, out, errOut := lumek(t, dir, "new", "blog", "--module", "example.com/blog", "--framework", repo)
+	code, out, errOut := vukem(t, dir, "new", "blog", "--module", "example.com/blog", "--framework", repo)
 	if code != 0 {
-		t.Fatalf("lumek new = %d\n%s%s", code, out, errOut)
+		t.Fatalf("vukem new = %d\n%s%s", code, out, errOut)
 	}
 
 	project := filepath.Join(dir, "blog")
@@ -155,13 +155,13 @@ func TestNewProjectEndToEnd(t *testing.T) {
 		t.Fatalf("starter tests: %v\n%s", err, out)
 	}
 
-	if code, out, errOut := lumek(t, project, "build"); code != 0 {
-		t.Fatalf("lumek build = %d\n%s%s", code, out, errOut)
+	if code, out, errOut := vukem(t, project, "build"); code != 0 {
+		t.Fatalf("vukem build = %d\n%s%s", code, out, errOut)
 	}
 
-	code, out, errOut = lumek(t, project, "route:list")
+	code, out, errOut = vukem(t, project, "route:list")
 	if code != 0 || !strings.Contains(out, "posts.index") {
-		t.Fatalf("lumek route:list = %d\n%s%s", code, out, errOut)
+		t.Fatalf("vukem route:list = %d\n%s%s", code, out, errOut)
 	}
 }
 

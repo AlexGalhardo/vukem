@@ -1,6 +1,6 @@
 // Package codemod edits Go source the way a developer would: it appends an
 // element to the slice literal returned by a known function and adds the
-// imports it needs. Registration in Lumek apps is plain code (no init(), no
+// imports it needs. Registration in Vukem apps is plain code (no init(), no
 // reflection), so generators use this to wire what they create.
 package codemod
 

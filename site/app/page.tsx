@@ -5,8 +5,8 @@ import { LogoMark } from "@/components/logo";
 import { getNavGroups } from "@/lib/content";
 import { site } from "@/lib/site";
 
-const SAMPLE = `func Web(r *router.Router, app *lumek.App) error {
-	if err := lumek.DefaultMiddleware(app, r); err != nil {
+const SAMPLE = `func Web(r *router.Router, app *vukem.App) error {
+	if err := vukem.DefaultMiddleware(app, r); err != nil {
 		return err
 	}
 

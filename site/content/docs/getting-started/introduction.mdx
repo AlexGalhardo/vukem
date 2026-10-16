@@ -1,15 +1,15 @@
 ---
 title: Introduction
-description: Lumek brings Laravel and AdonisJS productivity to idiomatic Go, built on net/http and the standard library.
+description: Vukem brings Laravel and AdonisJS productivity to idiomatic Go, built on net/http and the standard library.
 ---
 
-Lumek is a web framework for **REST APIs and full-stack apps**: routing, validation, an ORM with migrations, authentication, JSON resources with problem+json errors, HTMX-first views and an optional Inertia + React frontend, all driven by one CLI.
+Vukem is a web framework for **REST APIs and full-stack apps**: routing, validation, an ORM with migrations, authentication, JSON resources with problem+json errors, HTMX-first views and an optional Inertia + React frontend, all driven by one CLI.
 
 <Callout type="warning">
-Lumek is pre-1.0 and APIs will change between `v0.x` releases. Pages and callouts marked "Planned for ALPHA" or "Planned for BETA" describe the design target, not shipped code.
+Vukem is pre-1.0 and APIs will change between `v0.x` releases. Pages and callouts marked "Planned for ALPHA" or "Planned for BETA" describe the design target, not shipped code.
 </Callout>
 
-## Why Lumek
+## Why Vukem
 
 - **Standard library first.** Handlers and middleware are plain `net/http`. Any `http.Handler` works.
 - **No magic.** No globals, no `init()` registration, no reflection-based dependency injection. Generators write code you own.
@@ -25,7 +25,7 @@ A handler is a function that receives a `*web.Ctx` and returns an `error`. Retur
 ```go title="routes.go"
 func Routes(r *router.Router, posts *controllers.PostController) {
 	r.Get("/", func(c *web.Ctx) error {
-		return c.String(http.StatusOK, "Hello from Lumek")
+		return c.String(http.StatusOK, "Hello from Vukem")
 	}).Name("home")
 
 	r.Group("/admin", func(g *router.Group) {
@@ -60,8 +60,8 @@ func (p *PostController) Show(c *web.Ctx) error {
 | Validation with `z`, sessions with flash and old input, CSRF protection | Available |
 | SQLite, generic ORM, schema builder and migrations | Available |
 | `html/template` views with layouts and fragments, htmx 4 helpers | Available |
-| `lumektest` fluent test client and database assertions | Available |
-| `lumek` CLI: `new`, `serve`, `build`, `key:generate`, `make:*`, app commands | Available |
+| `vukemtest` fluent test client and database assertions | Available |
+| `vukem` CLI: `new`, `serve`, `build`, `key:generate`, `make:*`, app commands | Available |
 | Authentication, authorization, REST API starter, PostgreSQL, mail, cache, storage | Planned for ALPHA |
 | OpenAPI, queues, Inertia + React, Vite, Redis, MongoDB | Planned for BETA |
 
@@ -69,7 +69,7 @@ func (p *PostController) Show(c *web.Ctx) error {
 
 <CardGroup cols="2">
 <Card title="Installation" href="/docs/installation" icon="terminal">
-Install the CLI and create a project with `lumek new`.
+Install the CLI and create a project with `vukem new`.
 </Card>
 <Card title="Routing" href="/docs/basics/routing" icon="route">
 Verbs, groups, named routes and resource controllers.

@@ -1,12 +1,12 @@
-Lumek v0.0.0-test
+Vukem v0.0.0-test
 
 Usage:
-  lumek <command> [flags] [args]
+  vukem <command> [flags] [args]
 
   new <name>              Create a project from the HTMX + SQLite starter
   serve                   Run the app and restart it when Go files change
   build                   Build assets (Vite) and a production binary in bin/
-  version                 Print the lumek version
+  version                 Print the vukem version
  key
   key:generate            Write a new APP_KEY to .env
  make
@@ -20,4 +20,4 @@ Usage:
   make:resource <Name>    Create an API resource (JSON transformer) for a model
   make:test <Name>        Create a test using the fluent client
 
-Other commands (migrate, route:list, about, your own) run in the app: lumek <command>.
+Other commands (migrate, route:list, about, your own) run in the app: vukem <command>.

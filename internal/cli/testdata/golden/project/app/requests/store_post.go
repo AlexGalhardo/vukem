@@ -1,6 +1,6 @@
 package requests
 
-import "github.com/AlexGalhardo/golang-framework/z"
+import "github.com/AlexGalhardo/vukem/z"
 
 // StorePost is the validated input; declare fields with json/form and validate tags.
 type StorePost struct{}

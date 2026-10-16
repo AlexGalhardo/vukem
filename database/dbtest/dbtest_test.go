@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/AlexGalhardo/golang-framework/database"
+	"github.com/AlexGalhardo/vukem/database"
 )
 
 func TestSQLiteConformance(t *testing.T) {

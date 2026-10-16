@@ -1,6 +1,6 @@
 # Validation and typed data (`z`)
 
-`z` is Lumek's Zod-inspired schema library: build a schema once, then **parse untrusted input into a typed Go value** or **check outgoing data** against the same contract. Decision `H1` in [brainstorming.md](brainstorming.md).
+`z` is Vukem's Zod-inspired schema library: build a schema once, then **parse untrusted input into a typed Go value** or **check outgoing data** against the same contract. Decision `H1` in [brainstorming.md](brainstorming.md).
 
 ## Goals
 
@@ -148,7 +148,7 @@ Supported rules: `required`, `min=N`, `max=N`, `len=N`, `email`, `url`, `uuid`, 
 ## Exports (BETA)
 
 - `schema.JSONSchema()` → JSON Schema 2020-12 (used by the OpenAPI generator).
-- `lumek codegen:types` → `resources/js/types/*.ts` with TypeScript types (and optional Zod schemas) for every registered schema, so frontend and backend share one contract.
+- `vukem codegen:types` → `resources/js/types/*.ts` with TypeScript types (and optional Zod schemas) for every registered schema, so frontend and backend share one contract.
 
 ## Design notes
 

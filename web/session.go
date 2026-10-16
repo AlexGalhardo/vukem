@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/AlexGalhardo/golang-framework/errs"
+	"github.com/AlexGalhardo/vukem/errs"
 )
 
 // Session is the request session as seen by handlers. The session package

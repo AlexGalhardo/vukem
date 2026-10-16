@@ -11,12 +11,12 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/AlexGalhardo/golang-framework/middleware"
-	"github.com/AlexGalhardo/golang-framework/web"
+	"github.com/AlexGalhardo/vukem/middleware"
+	"github.com/AlexGalhardo/vukem/web"
 )
 
 var views = fstest.MapFS{
-	"layouts/app.html": {Data: []byte(`<html><title>{{block "title" .}}Lumek{{end}}</title>` +
+	"layouts/app.html": {Data: []byte(`<html><title>{{block "title" .}}Vukem{{end}}</title>` +
 		`<body>{{template "partials/nav" .}}{{block "content" .}}{{end}}</body></html>`)},
 	"layouts/admin.html":    {Data: []byte(`<admin>{{block "content" .}}{{end}}</admin>`)},
 	"partials/nav.html":     {Data: []byte(`<nav>{{.User}}</nav>`)},

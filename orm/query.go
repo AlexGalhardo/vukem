@@ -11,8 +11,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/AlexGalhardo/golang-framework/database"
-	"github.com/AlexGalhardo/golang-framework/errs"
+	"github.com/AlexGalhardo/vukem/database"
+	"github.com/AlexGalhardo/vukem/errs"
 )
 
 // ErrNotFound is returned when First/Find match no row. It matches

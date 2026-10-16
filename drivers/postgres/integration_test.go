@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AlexGalhardo/golang-framework/database"
-	"github.com/AlexGalhardo/golang-framework/database/dbtest"
-	"github.com/AlexGalhardo/golang-framework/session"
+	"github.com/AlexGalhardo/vukem/database"
+	"github.com/AlexGalhardo/vukem/database/dbtest"
+	"github.com/AlexGalhardo/vukem/session"
 )
 
 // open connects to POSTGRES_URL (task services:up starts one on :55432).
@@ -18,7 +18,7 @@ func open(t *testing.T) *database.DB {
 
 	url := os.Getenv("POSTGRES_URL")
 	if url == "" {
-		url = "postgres://lumek:lumek@localhost:55432/lumek_test?sslmode=disable"
+		url = "postgres://vukem:vukem@localhost:55432/vukem_test?sslmode=disable"
 	}
 
 	db, err := database.Open(t.Context(), url, database.WithDriver(Driver()))

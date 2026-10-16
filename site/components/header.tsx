@@ -29,7 +29,7 @@ export function Header() {
               href={site.repo}
               target="_blank"
               rel="noreferrer"
-              aria-label="Lumek on GitHub"
+              aria-label="Vukem on GitHub"
               className="inline-flex size-8 items-center justify-center rounded-lg text-muted transition-colors hover:bg-hover hover:text-fg"
             >
               <GitHubIcon className="size-4" />

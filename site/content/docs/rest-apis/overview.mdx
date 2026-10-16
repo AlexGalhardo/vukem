@@ -3,7 +3,7 @@ title: REST APIs
 description: Build JSON APIs with resource routes, problem+json errors, CORS and body limits, and the planned API starter.
 ---
 
-Lumek is equally a framework for **JSON/REST APIs** and for server-rendered apps. Several API building blocks already work; the API starter, token auth, pagination and OpenAPI are planned.
+Vukem is equally a framework for **JSON/REST APIs** and for server-rendered apps. Several API building blocks already work; the API starter, token auth, pagination and OpenAPI are planned.
 
 ## Available today
 
@@ -74,7 +74,7 @@ func (p *ProductController) Store(c *web.Ctx) error {
 ## API starter
 
 <Callout type="warning">
-Planned for ALPHA: `lumek new shop --api` (JSON-only skeleton, no views, sessions or CSRF) and `lumek install:api` (adds an API route group to a web app).
+Planned for ALPHA: `vukem new shop --api` (JSON-only skeleton, no views, sessions or CSRF) and `vukem install:api` (adds an API route group to a web app).
 </Callout>
 
 | Area | Web starter | API starter |
@@ -87,7 +87,7 @@ Planned for ALPHA: `lumek new shop --api` (JSON-only skeleton, no views, session
 ## Resources (transformers)
 
 <Callout type="warning">
-Planned for ALPHA: `lumek make:resource Product` generates plain functions that separate the wire format from models.
+Planned for ALPHA: `vukem make:resource Product` generates plain functions that separate the wire format from models.
 </Callout>
 
 ```go
@@ -122,7 +122,7 @@ Planned for ALPHA: opaque access tokens (hashed, with abilities and expiry) sent
 ## OpenAPI
 
 <Callout type="warning">
-Planned for BETA: typed handlers produce an OpenAPI 3.1 document without annotations; `GET /openapi.json` and `lumek openapi:export`.
+Planned for BETA: typed handlers produce an OpenAPI 3.1 document without annotations; `GET /openapi.json` and `vukem openapi:export`.
 </Callout>
 
 ## Beyond REST

@@ -79,7 +79,7 @@ r.Group("/dashboard", func(g *router.Group) {
 
 ## `install:auth`
 
-`lumek install:auth` generates user-owned code, not a hidden package: controllers for login, register, logout, password reset and email verification; editable actions such as password rules; the `User` model, migrations, HTMX views, routes and tests.
+`vukem install:auth` generates user-owned code, not a hidden package: controllers for login, register, logout, password reset and email verification; editable actions such as password rules; the `User` model, migrations, HTMX views, routes and tests.
 
 Flows: register, rate-limited login (5 per minute per email and IP), logout, signed single-use password reset, signed email verification and password confirmation for sensitive routes. TOTP 2FA and passkeys are post-1.0.
 

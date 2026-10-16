@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AlexGalhardo/golang-framework/database"
+	"github.com/AlexGalhardo/vukem/database"
 )
 
 // Model hooks: implement them on *T to run code around writes. Returning an

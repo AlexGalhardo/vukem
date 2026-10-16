@@ -71,7 +71,7 @@ type Guard[U Authenticatable] interface {
 
 ## `install:auth` scaffold
 
-`lumek install:auth` generates **user-owned code** (Fortify-style), not a hidden package:
+`vukem install:auth` generates **user-owned code** (Fortify-style), not a hidden package:
 
 ```text
 app/controllers/auth/{login,register,logout,password_reset,email_verification}.go
@@ -122,9 +122,9 @@ r.Get("/auth/{provider}/callback", func(c *web.Ctx) error {
 | Stateless mode | `Stateless()` for API/SPA flows that keep state client-side; `UserFromToken(ctx, accessToken)` |
 | Built-in providers | GitHub, Google (OIDC), GitLab, Discord, Microsoft (Entra ID, OIDC), plus `social.OAuth2(...)` and `social.OIDC(issuerURL, ...)` for any compliant provider |
 | Security | redirect URL fixed in config (never from the request), only verified emails are reported as `EmailVerified`, outbound calls through a client with timeouts, tokens never logged |
-| Testing | `lumektest.FakeSocial(t, app, social.User{...})` short-circuits redirect/callback |
+| Testing | `vukemtest.FakeSocial(t, app, social.User{...})` short-circuits redirect/callback |
 
-`lumek install:auth --social github,google` adds the routes, the `social_accounts` migration (provider, provider_id, user_id) and the account-linking action.
+`vukem install:auth --social github,google` adds the routes, the `social_accounts` migration (provider, provider_id, user_id) and the account-linking action.
 
 ## Authorization
 

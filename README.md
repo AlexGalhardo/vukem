@@ -1,28 +1,28 @@
-# Lumek
+# Vukem
 
 **Laravel and AdonisJS productivity, written in idiomatic Go.**
 
-Lumek is a web framework built on `net/http` and the standard library for **REST APIs and full-stack apps**: routing, validation, an ORM with migrations, authentication, JSON resources with problem+json errors, HTMX-first views and an optional Inertia + React frontend, all driven by one CLI.
+Vukem is a web framework built on `net/http` and the standard library for **REST APIs and full-stack apps**: routing, validation, an ORM with migrations, authentication, JSON resources with problem+json errors, HTMX-first views and an optional Inertia + React frontend, all driven by one CLI.
 
 > [!WARNING]
-> Lumek is a **prototype** (`v0.1.x`): it works end to end, but APIs will change before 1.0. Follow progress in [PLAN.md](PLAN.md).
+> Vukem is a **prototype** (`v0.1.x`): it works end to end, but APIs will change before 1.0. Follow progress in [PLAN.md](PLAN.md).
 
-## Why Lumek
+## Why Vukem
 
 - **Standard library first.** Handlers and middleware are plain `net/http`. Any `http.Handler` works.
 - **No magic.** No globals, no `init()` registration, no reflection-based dependency injection. Generators write code you own.
 - **Typed end to end.** Zod-style schemas (`z`) parse every input into Go types and check outgoing data; generic query builder, typed jobs and events, named routes checked at boot.
 - **Batteries included, opt-in.** SQLite out of the box; PostgreSQL, Redis and MongoDB as separate driver modules, so you only download what you use.
-- **APIs first-class.** `lumek new shop --api` gives a JSON-only app with token auth, pagination, CORS, rate limiting and RFC 9457 errors.
+- **APIs first-class.** `vukem new shop --api` gives a JSON-only app with token auth, pagination, CORS, rate limiting and RFC 9457 errors.
 - **Secure by default.** CSRF, security headers, argon2id, safe SQL building, fail-closed authorization, mapped to the [OWASP Top 10:2025](docs/security.md).
 - **No Node required** for the default HTMX starter.
 
 ## A taste
 
-This is the example CRUD that `lumek new` generates ([docs/http.md](docs/http.md)).
+This is the example CRUD that `vukem new` generates ([docs/http.md](docs/http.md)).
 
 ```go
-func Web(r *router.Router, app *lumek.App) error {
+func Web(r *router.Router, app *vukem.App) error {
 	db, err := app.DB()
 	if err != nil {
 		return err
@@ -69,14 +69,14 @@ func (pc *PostController) Index(c *web.Ctx) error {
 ## Quick start
 
 ```sh
-go install github.com/AlexGalhardo/golang-framework/cmd/lumek@latest
+go install github.com/AlexGalhardo/vukem/cmd/vukem@latest
 
-lumek new blog       # HTMX + SQLite starter with an example CRUD
+vukem new blog       # HTMX + SQLite starter with an example CRUD
 cd blog
-lumek migrate
-lumek serve          # http://localhost:3000, rebuilds on Go changes
+vukem migrate
+vukem serve          # http://localhost:3000, rebuilds on Go changes
 go test ./...        # the starter ships with tests
-lumek build          # single production binary in bin/
+vukem build          # single production binary in bin/
 ```
 
 Requires Go 1.27 or newer. Works on **Windows 11/10**, Linux and macOS — no C compiler needed.

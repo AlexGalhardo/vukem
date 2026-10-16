@@ -16,7 +16,7 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/AlexGalhardo/golang-framework/config"
+	"github.com/AlexGalhardo/vukem/config"
 )
 
 // starterFS is the HTMX + SQLite starter. Files ending in .tmpl are
@@ -34,7 +34,7 @@ const (
 	htmxPath    = "resources/public/js/htmx.min.js"
 )
 
-const frameworkModule = "github.com/AlexGalhardo/golang-framework"
+const frameworkModule = "github.com/AlexGalhardo/vukem"
 
 var projectName = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_.-]*$`)
 
@@ -45,7 +45,7 @@ type starterData struct {
 
 func newProject(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 	module := set.String("module", "", "Go module path (default: the project name)")
-	framework := set.String("framework", "", "path to a local Lumek checkout to use instead of a release")
+	framework := set.String("framework", "", "path to a local Vukem checkout to use instead of a release")
 
 	return func(ctx context.Context, env *Env, args []string) error {
 		name, err := oneArg(args, "project name")
@@ -95,7 +95,7 @@ func newProject(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 			}
 		}
 
-		fmt.Fprintf(env.Stdout, "\nCreated %s (htmx %s, SQLite). Next:\n\n  cd %s\n  lumek migrate\n  lumek serve\n\n",
+		fmt.Fprintf(env.Stdout, "\nCreated %s (htmx %s, SQLite). Next:\n\n  cd %s\n  vukem migrate\n  vukem serve\n\n",
 			name, htmxVersion, name)
 
 		return nil
@@ -159,7 +159,7 @@ func renderStarterFile(rel string, src []byte, data starterData) ([]byte, error)
 	return out, nil
 }
 
-// requireFramework points the new project at Lumek: a local checkout via a
+// requireFramework points the new project at Vukem: a local checkout via a
 // replace directive, or the release matching this CLI (latest for dev
 // builds).
 func requireFramework(ctx context.Context, env *Env, local string) error {

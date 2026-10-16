@@ -1,9 +1,9 @@
 ---
 title: Middleware
-description: Standard func(http.Handler) http.Handler middleware in three stacks, plus Lumek's built-in middleware.
+description: Standard func(http.Handler) http.Handler middleware in three stacks, plus Vukem's built-in middleware.
 ---
 
-Middleware has the standard signature, so any `net/http` middleware works with Lumek:
+Middleware has the standard signature, so any `net/http` middleware works with Vukem:
 
 ```go
 type Middleware = func(http.Handler) http.Handler
@@ -115,7 +115,7 @@ return c.HTML(http.StatusOK, `<script nonce="`+nonce+`">init()</script>`)
 
 ## Default stack
 
-`lumek.DefaultMiddleware(app, r)`, called by the starter's `routes.Web`, installs:
+`vukem.DefaultMiddleware(app, r)`, called by the starter's `routes.Web`, installs:
 
 | Stack | Middleware |
 | --- | --- |
@@ -125,7 +125,7 @@ return c.HTML(http.StatusOK, `<script nonce="`+nonce+`">init()</script>`)
 ## Generating middleware
 
 ```bash
-lumek make:middleware RequireAdmin   # app/middleware/require_admin.go
+vukem make:middleware RequireAdmin   # app/middleware/require_admin.go
 ```
 
 The generated `func RequireAdmin(next http.Handler) http.Handler` is plain Go: attach it with `r.Use`, `g.Use` or `route.Use`. There is no named-middleware registry.

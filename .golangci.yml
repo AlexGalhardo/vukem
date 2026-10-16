@@ -13,12 +13,12 @@ formatters:
     - golines
   settings:
     gofumpt:
-      module-path: github.com/AlexGalhardo/golang-framework
+      module-path: github.com/AlexGalhardo/vukem
     gci:
       sections:
         - standard
         - default
-        - prefix(github.com/AlexGalhardo/golang-framework)
+        - prefix(github.com/AlexGalhardo/vukem)
     golines:
       max-len: 120
       tab-len: 4
@@ -82,7 +82,7 @@ linters:
           files:
             - "!**/drivers/**"
           deny:
-            - pkg: github.com/AlexGalhardo/golang-framework/drivers
+            - pkg: github.com/AlexGalhardo/vukem/drivers
               desc: core must not import driver modules (docs/architecture.md#module-boundaries)
             - pkg: github.com/stretchr/testify
               desc: use the standard library and go-cmp (docs/testing.md)

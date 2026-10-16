@@ -14,7 +14,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/AlexGalhardo/golang-framework/errs"
+	"github.com/AlexGalhardo/vukem/errs"
 )
 
 // DefaultMaxBody is the request body limit applied by Input and BindJSON

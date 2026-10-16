@@ -1,4 +1,4 @@
-module github.com/AlexGalhardo/golang-framework
+module github.com/AlexGalhardo/vukem
 
 go 1.27.0
 

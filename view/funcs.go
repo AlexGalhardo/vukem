@@ -10,9 +10,9 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/AlexGalhardo/golang-framework/csrf"
-	"github.com/AlexGalhardo/golang-framework/middleware"
-	"github.com/AlexGalhardo/golang-framework/web"
+	"github.com/AlexGalhardo/vukem/csrf"
+	"github.com/AlexGalhardo/vukem/middleware"
+	"github.com/AlexGalhardo/vukem/web"
 )
 
 // funcs returns the template functions bound to the request in ctx.

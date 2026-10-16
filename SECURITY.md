@@ -1,6 +1,6 @@
 # Security policy
 
-This file covers reporting vulnerabilities in Lumek. The protections the framework applies to your application are documented in [docs/security.md](docs/security.md).
+This file covers reporting vulnerabilities in Vukem. The protections the framework applies to your application are documented in [docs/security.md](docs/security.md).
 
 ## Supported versions
 
@@ -9,13 +9,13 @@ This file covers reporting vulnerabilities in Lumek. The protections the framewo
 | Latest `v0.x` minor | ✅ |
 | Older `v0.x` | ❌ |
 
-Lumek is pre-1.0: only the latest minor release receives fixes. A long-term support policy will be published with v1.0.0.
+Vukem is pre-1.0: only the latest minor release receives fixes. A long-term support policy will be published with v1.0.0.
 
 ## Reporting a vulnerability
 
 **Do not open a public issue.**
 
-Report privately through GitHub: **Security → Report a vulnerability** on <https://github.com/AlexGalhardo/golang-framework/security/advisories/new>.
+Report privately through GitHub: **Security → Report a vulnerability** on <https://github.com/AlexGalhardo/vukem/security/advisories/new>.
 
 Please include:
 

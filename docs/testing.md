@@ -20,19 +20,19 @@ How the framework itself is tested, and the testing toolkit it ships to apps. De
 | Golden | `testdata/*.golden` | `go test ./... -update` | Generators, codemods, error pages, CLI output |
 | Fuzz | `Fuzz*` | `go test -fuzz=FuzzX ./router` | Router patterns, `.env` parser, validator tags, multipart |
 | Integration | `//go:build integration` | `task test:integration` | Needs `DATABASE_URL`, `REDIS_URL`, `MONGO_URL` |
-| End-to-end | `e2e/` | `task test:e2e` | `lumek new` → build → boot → HTTP checks, on all OSes |
+| End-to-end | `e2e/` | `task test:e2e` | `vukem new` → build → boot → HTTP checks, on all OSes |
 | Benchmarks | `Benchmark*` with `b.Loop()` | `task bench` | Router, query builder, render |
 
 Time-dependent code (sessions, rate limits, queues, scheduler) is tested with `testing/synctest` instead of sleeps.
 
-## Toolkit for apps (`testing/` package, imported as `lumektest`)
+## Toolkit for apps (`testing/` package, imported as `vukemtest`)
 
 ### HTTP client
 
 ```go
 func TestCreatePost(t *testing.T) {
-	app := lumektest.New(t, bootstrap.New)            // boots app with APP_ENV=test, in-memory SQLite, migrations run
-	user := lumektest.Create(t, app, factories.User)  // ALPHA
+	app := vukemtest.New(t, bootstrap.New)            // boots app with APP_ENV=test, in-memory SQLite, migrations run
+	user := vukemtest.Create(t, app, factories.User)  // ALPHA
 
 	app.Test(t).
 		ActingAs(user).
@@ -40,7 +40,7 @@ func TestCreatePost(t *testing.T) {
 		AssertRedirectRoute("posts.index").
 		AssertSessionHas("success")
 
-	lumektest.AssertDatabaseHas(t, app, "posts", map[string]any{"title": "Hello"})
+	vukemtest.AssertDatabaseHas(t, app, "posts", map[string]any{"title": "Hello"})
 }
 ```
 
@@ -59,8 +59,8 @@ Requests run in-process via `httptest` (no ports). Each assertion failure prints
 ### Database
 
 - Default test connection: SQLite in memory (one database per test via unique `file:<test>?mode=memory&cache=shared` name), migrations applied once per package and cloned, or a fresh migrate when cheaper.
-- `lumektest.RefreshDatabase(t, app)` wraps the test in a transaction rolled back in `t.Cleanup` (Postgres/SQLite).
-- Postgres integration: `CREATE DATABASE test_x TEMPLATE lumek_template` per package for speed.
+- `vukemtest.RefreshDatabase(t, app)` wraps the test in a transaction rolled back in `t.Cleanup` (Postgres/SQLite).
+- Postgres integration: `CREATE DATABASE test_x TEMPLATE vukem_template` per package for speed.
 - Assertions: `AssertDatabaseHas`, `AssertDatabaseMissing`, `AssertDatabaseCount`, `AssertSoftDeleted`.
 
 ### Fakes
@@ -68,10 +68,10 @@ Requests run in-process via `httptest` (no ports). Each assertion failure prints
 Fakes replace services **on the app instance** (no globals):
 
 ```go
-mail := lumektest.FakeMail(t, app)
-q := lumektest.FakeQueue(t, app)
-ev := lumektest.FakeEvents(t, app, events.UserRegistered{})
-clock := lumektest.FakeClock(t, app, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+mail := vukemtest.FakeMail(t, app)
+q := vukemtest.FakeQueue(t, app)
+ev := vukemtest.FakeEvents(t, app, events.UserRegistered{})
+clock := vukemtest.FakeClock(t, app, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 
 // ... exercise code ...
 

@@ -21,8 +21,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/AlexGalhardo/golang-framework/errs"
-	"github.com/AlexGalhardo/golang-framework/web"
+	"github.com/AlexGalhardo/vukem/errs"
+	"github.com/AlexGalhardo/vukem/web"
 )
 
 // Middleware wraps an http.Handler.

@@ -11,7 +11,7 @@ type PostController struct {
 	posts *store.Posts
 }
 
-func NewPost(app *lumek.App, posts *store.Posts) *PostController {
+func NewPost(app *vukem.App, posts *store.Posts) *PostController {
 	return &PostController{log: app.Log, posts: posts}
 }
 
@@ -90,9 +90,9 @@ func (p *PostController) Destroy(c *web.Ctx) error {
 ## Generator
 
 ```bash
-lumek make:controller Post             # struct, constructor and an Index action
-lumek make:controller Post --resource  # the seven resource actions
-lumek make:controller Photo --api      # the five JSON actions (no Create/Edit forms)
+vukem make:controller Post             # struct, constructor and an Index action
+vukem make:controller Post --resource  # the seven resource actions
+vukem make:controller Photo --api      # the five JSON actions (no Create/Edit forms)
 ```
 
 Files go to `app/controllers/<name>_controller.go`; a trailing `Controller` in the name is optional. See [CLI](/docs/cli/overview).

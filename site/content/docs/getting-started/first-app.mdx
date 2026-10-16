@@ -3,13 +3,13 @@ title: Your first app
 description: Tour the starter's example CRUD, then add a model, migration and controller of your own with the generators.
 ---
 
-`lumek new` gives you a working blog: a `PostController` with forms, validation, flash messages and htmx fragments on SQLite, covered by tests. This page walks through it and then adds a second resource.
+`vukem new` gives you a working blog: a `PostController` with forms, validation, flash messages and htmx fragments on SQLite, covered by tests. This page walks through it and then adds a second resource.
 
 ## The example CRUD
 
 ```go title="routes/web.go"
-func Web(r *router.Router, app *lumek.App) error {
-	if err := lumek.DefaultMiddleware(app, r); err != nil {
+func Web(r *router.Router, app *vukem.App) error {
+	if err := vukem.DefaultMiddleware(app, r); err != nil {
 		return err
 	}
 
@@ -80,7 +80,7 @@ return c.Render("posts/index", map[string]any{"Posts": posts, "Search": c.Query(
 <Step title="Generate a model, migration and controller">
 
 ```bash
-lumek make:model Comment -m -c
+vukem make:model Comment -m -c
 ```
 
 Creates `app/models/comment.go`, `database/migrations/<timestamp>_create_comments_table.go` (registered in `migrations.All()`) and a resource `app/controllers/comment_controller.go`.
@@ -98,7 +98,7 @@ return s.Create("comments", func(t *schema.Table) {
 ```
 
 ```bash
-lumek migrate
+vukem migrate
 ```
 
 </Step>
@@ -109,14 +109,14 @@ r.Resource("comments", controllers.NewCommentController())
 ```
 
 ```bash
-lumek route:list
+vukem route:list
 ```
 
 </Step>
 <Step title="Test it">
 
 ```bash
-lumek make:test Comment   # tests/comment_test.go using lumektest
+vukem make:test Comment   # tests/comment_test.go using vukemtest
 go test ./...
 ```
 

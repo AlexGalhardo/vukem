@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/AlexGalhardo/golang-framework/web"
+	"github.com/AlexGalhardo/vukem/web"
 )
 
 type fakeSession struct{ data map[string]any }
@@ -168,7 +168,7 @@ func TestTokenFallback(t *testing.T) {
 			r.Header.Set(HeaderName, header)
 		}
 		if cookie {
-			r.AddCookie(&http.Cookie{Name: "lumek_session", Value: "x"})
+			r.AddCookie(&http.Cookie{Name: "vukem_session", Value: "x"})
 		}
 
 		rec := httptest.NewRecorder()

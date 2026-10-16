@@ -1,4 +1,4 @@
-// Package web provides the request context (*Ctx) used by Lumek handlers:
+// Package web provides the request context (*Ctx) used by Vukem handlers:
 // request helpers, typed input, responses, and the central error handler.
 //
 // A handler has the signature func(*Ctx) error. Returning an error hands it
@@ -15,7 +15,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/AlexGalhardo/golang-framework/errs"
+	"github.com/AlexGalhardo/vukem/errs"
 )
 
 // HandlerFunc handles a request. Returned errors go to the error handler.

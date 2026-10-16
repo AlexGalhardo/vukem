@@ -3,12 +3,12 @@ services:
   postgres:
     image: postgres:17
     environment:
-      POSTGRES_USER: lumek
-      POSTGRES_PASSWORD: lumek
-      POSTGRES_DB: lumek_test
+      POSTGRES_USER: vukem
+      POSTGRES_PASSWORD: vukem
+      POSTGRES_DB: vukem_test
     ports: ["55432:5432"]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U lumek"]
+      test: ["CMD-SHELL", "pg_isready -U vukem"]
       interval: 2s
       retries: 30
   redis:

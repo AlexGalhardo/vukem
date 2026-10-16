@@ -1,4 +1,4 @@
-package lumek
+package vukem
 
 import (
 	"bytes"
@@ -15,7 +15,7 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/AlexGalhardo/golang-framework/config"
+	"github.com/AlexGalhardo/vukem/config"
 )
 
 var testKey = config.GenerateKey()

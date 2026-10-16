@@ -16,8 +16,8 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/AlexGalhardo/golang-framework/internal/codemod"
-	"github.com/AlexGalhardo/golang-framework/internal/naming"
+	"github.com/AlexGalhardo/vukem/internal/codemod"
+	"github.com/AlexGalhardo/vukem/internal/naming"
 )
 
 //go:embed stubs
@@ -64,7 +64,7 @@ var moduleLine = regexp.MustCompile(`(?m)^module\s+(\S+)`)
 func modulePath(env *Env) (string, error) {
 	b, err := os.ReadFile(env.path("go.mod"))
 	if err != nil {
-		return "", fmt.Errorf("no go.mod here: run lumek inside a project (%w)", err)
+		return "", fmt.Errorf("no go.mod here: run vukem inside a project (%w)", err)
 	}
 
 	m := moduleLine.FindSubmatch(b)

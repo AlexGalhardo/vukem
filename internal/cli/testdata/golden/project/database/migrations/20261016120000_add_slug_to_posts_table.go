@@ -1,6 +1,6 @@
 package migrations
 
-import "github.com/AlexGalhardo/golang-framework/schema"
+import "github.com/AlexGalhardo/vukem/schema"
 
 func m20261016120000AddSlugToPostsTable() schema.Migration {
 	return schema.Migration{

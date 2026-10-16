@@ -51,7 +51,7 @@ func serveCmd(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 
 	return func(ctx context.Context, env *Env, args []string) error {
 		if !exists(env, filepath.Join("cmd", "app")) {
-			return errors.New("no cmd/app in this directory: run lumek inside a Lumek project")
+			return errors.New("no cmd/app in this directory: run vukem inside a Vukem project")
 		}
 
 		if hasVite(env) && !*noVite {
@@ -93,7 +93,7 @@ func watch(ctx context.Context, env *Env, interval time.Duration, args []string)
 		// Build to a separate file: Windows cannot overwrite a running .exe.
 		if err := goBuild(ctx, env, next); err != nil {
 			if ctx.Err() == nil {
-				fmt.Fprintln(env.Stderr, "lumek serve: build failed, keeping the previous version:", err)
+				fmt.Fprintln(env.Stderr, "vukem serve: build failed, keeping the previous version:", err)
 			}
 
 			return
@@ -102,7 +102,7 @@ func watch(ctx context.Context, env *Env, interval time.Duration, args []string)
 		stop()
 
 		if err := os.Rename(next, bin); err != nil {
-			fmt.Fprintln(env.Stderr, "lumek serve:", err)
+			fmt.Fprintln(env.Stderr, "vukem serve:", err)
 			return
 		}
 
@@ -110,7 +110,7 @@ func watch(ctx context.Context, env *Env, interval time.Duration, args []string)
 		cmd.Dir, cmd.Stdout, cmd.Stderr = env.Dir, env.Stdout, env.Stderr
 
 		if err := cmd.Start(); err != nil {
-			fmt.Fprintln(env.Stderr, "lumek serve:", err)
+			fmt.Fprintln(env.Stderr, "vukem serve:", err)
 			return
 		}
 
@@ -134,13 +134,13 @@ func watch(ctx context.Context, env *Env, interval time.Duration, args []string)
 		case <-ticker.C:
 			snap, err := takeSnapshot(dir)
 			if err != nil {
-				fmt.Fprintln(env.Stderr, "lumek serve:", err)
+				fmt.Fprintln(env.Stderr, "vukem serve:", err)
 				continue
 			}
 
 			if last.changed(snap) {
 				last = snap
-				fmt.Fprintln(env.Stdout, "lumek serve: change detected, rebuilding")
+				fmt.Fprintln(env.Stdout, "vukem serve: change detected, rebuilding")
 				start()
 			}
 		}

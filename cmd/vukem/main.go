@@ -1,7 +1,7 @@
-// Command lumek is the Lumek CLI: generators, the dev server, builds and
+// Command vukem is the Vukem CLI: generators, the dev server, builds and
 // delegation of app commands to the project's binary.
 //
-//	go install github.com/AlexGalhardo/golang-framework/cmd/lumek@latest
+//	go install github.com/AlexGalhardo/vukem/cmd/vukem@latest
 package main
 
 import (
@@ -9,7 +9,7 @@ import (
 	"os"
 	"os/signal"
 
-	"github.com/AlexGalhardo/golang-framework/internal/cli"
+	"github.com/AlexGalhardo/vukem/internal/cli"
 )
 
 func main() {

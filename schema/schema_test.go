@@ -9,7 +9,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	"github.com/AlexGalhardo/golang-framework/database"
+	"github.com/AlexGalhardo/vukem/database"
 )
 
 func usersPosts(s *Schema) error {

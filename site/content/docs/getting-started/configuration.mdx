@@ -3,7 +3,7 @@ title: Configuration
 description: Typed configuration loaded from environment variables and .env files, with secrets that never reach logs.
 ---
 
-Lumek has no stringly lookups such as `config("app.name")`. Configuration is read once at boot into typed structs; invalid values abort boot with **all** problems listed, not only the first one.
+Vukem has no stringly lookups such as `config("app.name")`. Configuration is read once at boot into typed structs; invalid values abort boot with **all** problems listed, not only the first one.
 
 ## `.env` files
 
@@ -18,7 +18,7 @@ The `config` package ships a small, standard-library-only `.env` parser. Values 
 ```dotenv title=".env"
 APP_NAME=Blog
 APP_ENV=development
-# Written by lumek key:generate
+# Written by vukem key:generate
 APP_KEY=base64:your-32-byte-key-in-base64
 APP_URL=http://localhost:3000
 
@@ -65,11 +65,11 @@ Commit `.env.example` and git-ignore `.env` and `.env.*.local`. Never commit rea
 
 ## Core settings
 
-`lumek.New` loads the core `lumek.Config`:
+`vukem.New` loads the core `vukem.Config`:
 
 | Variable | Default | Notes |
 | --- | --- | --- |
-| `APP_NAME` | `Lumek` | |
+| `APP_NAME` | `Vukem` | |
 | `APP_ENV` | `development` | `development`, `production` or `test` |
 | `APP_DEBUG` | `false` | Must be `false` when `APP_ENV=production` (boot error otherwise) |
 | `APP_URL` | `http://localhost:3000` | Public origin of the app |
@@ -94,7 +94,7 @@ type Mail struct {
 	Cc       []string      `env:"MAIL_CC"` // comma-separated
 }
 
-func LoadMail(app *lumek.App) (Mail, error) {
+func LoadMail(app *vukem.App) (Mail, error) {
 	return config.Load[Mail](app.Source) // every conversion error, joined
 }
 ```
@@ -111,10 +111,10 @@ src := config.MapSource(map[string]string{
 	"APP_ENV": "test",
 })
 
-app, err := lumek.New(lumek.WithSource(src))
+app, err := vukem.New(vukem.WithSource(src))
 ```
 
-`lumek.WithEnv(fsys, getenv)` loads `.env` files from any `fs.FS` (for example `fstest.MapFS`) with a custom `getenv`.
+`vukem.WithEnv(fsys, getenv)` loads `.env` files from any `fs.FS` (for example `fstest.MapFS`) with a custom `getenv`.
 
 ## `Secret`
 
@@ -128,11 +128,11 @@ app.Log.Info("mail", "cfg", cfg) // password logged as [redacted]
 
 ## `APP_KEY`
 
-- Required. `lumek key:generate` writes one to `.env` (creating it from `.env.example` when missing); `--show` prints a key instead and `--force` replaces an existing one, which makes current sessions and encrypted data unreadable. In code, `config.GenerateKey()` returns 32 random bytes from `crypto/rand`, `base64:`-encoded.
+- Required. `vukem key:generate` writes one to `.env` (creating it from `.env.example` when missing); `--show` prints a key instead and `--force` replaces an existing one, which makes current sessions and encrypted data unreadable. In code, `config.GenerateKey()` returns 32 random bytes from `crypto/rand`, `base64:`-encoded.
 - The decoded key is available as `app.Key`. Never use it directly: derive a purpose-specific key with HKDF-SHA256 so cookies, sessions and encryption never share key material.
 
 ```go
-sessionKey := app.Key.Derive("session", 32) // HKDF info "lumek:session"
+sessionKey := app.Key.Derive("session", 32) // HKDF info "vukem:session"
 ```
 
 <Callout type="warning">

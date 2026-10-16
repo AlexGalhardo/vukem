@@ -3,13 +3,13 @@ title: Views
 description: Server-rendered HTML with html/template, layouts, partials, fragments for htmx, request-aware helpers and optional templ support.
 ---
 
-Views use Go's `html/template`, which escapes HTML, attributes, JavaScript and URLs by context. Enable the engine with `lumek.WithViews(fsys)`:
+Views use Go's `html/template`, which escapes HTML, attributes, JavaScript and URLs by context. Enable the engine with `vukem.WithViews(fsys)`:
 
 ```go title="bootstrap/app.go"
-lumek.WithViews(resources.Views()) // disk in development, embed.FS in the binary
+vukem.WithViews(resources.Views()) // disk in development, embed.FS in the binary
 ```
 
-Outside production every render re-parses the views, so edits show up on refresh. Syntax errors in any view fail `lumek.New` at boot.
+Outside production every render re-parses the views, so edits show up on refresh. Syntax errors in any view fail `vukem.New` at boot.
 
 ## Directory layout
 
@@ -30,7 +30,7 @@ resources/views/
 <!doctype html>
 <html lang="en">
 <head>
-	<title>{{block "title" .}}Lumek{{end}}</title>
+	<title>{{block "title" .}}Vukem{{end}}</title>
 	<link rel="stylesheet" href="{{asset "css/app.css"}}">
 	{{htmxScript (asset "js/htmx.min.js")}}
 </head>

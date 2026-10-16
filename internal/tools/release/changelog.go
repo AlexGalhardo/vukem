@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-const repoURL = "https://github.com/AlexGalhardo/golang-framework"
+const repoURL = "https://github.com/AlexGalhardo/vukem"
 
 var (
 	versionRe  = regexp.MustCompile(`^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-[0-9A-Za-z.-]+)?$`)

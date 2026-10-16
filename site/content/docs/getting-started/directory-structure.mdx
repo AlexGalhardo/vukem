@@ -1,20 +1,20 @@
 ---
 title: Directory structure
-description: The layout of an application created by lumek new, and how the framework module is organised.
+description: The layout of an application created by vukem new, and how the framework module is organised.
 ---
 
 ## An application
 
-`lumek new blog` generates:
+`vukem new blog` generates:
 
 ```text
 blog/
-├── cmd/app/main.go            func main() { os.Exit(lumek.Main(bootstrap.New)) }
+├── cmd/app/main.go            func main() { os.Exit(vukem.Main(bootstrap.New)) }
 ├── bootstrap/
 │   ├── app.go                 New(opts...): providers, migrations, views, routes
-│   ├── providers.go           func Providers() []lumek.Provider   (make:provider appends)
-│   └── commands.go            func Commands() []lumek.Command     (make:command appends)
-├── routes/web.go              func Web(r *router.Router, app *lumek.App) error
+│   ├── providers.go           func Providers() []vukem.Provider   (make:provider appends)
+│   └── commands.go            func Commands() []vukem.Command     (make:command appends)
+├── routes/web.go              func Web(r *router.Router, app *vukem.App) error
 ├── app/
 │   ├── controllers/           Home, PostController
 │   ├── models/                Post (orm.Model)
@@ -25,22 +25,22 @@ blog/
 │   ├── views/                 layouts/, partials/, posts/, home.html
 │   └── public/                css/app.css, js/htmx.min.js (htmx 4.0.0, vendored)
 ├── storage/                   SQLite database and local data (git-ignored)
-├── tests/                     home_test.go, posts_test.go (lumektest)
+├── tests/                     home_test.go, posts_test.go (vukemtest)
 ├── .env.example               copied to .env with a fresh APP_KEY
 └── go.mod
 ```
 
 Everything is wired in code you own: `bootstrap/app.go` lists the providers, migrations, views and routes. Generators edit `bootstrap/providers.go`, `bootstrap/commands.go` and `database/migrations/registry.go` with AST-based codemods; there is no `init()` registration and no reflection-based discovery. If you restructure those files, generators print the line to add by hand instead.
 
-`lumek` keeps its build cache in `.lumek/` and production builds in `bin/`; both are git-ignored.
+`vukem` keeps its build cache in `.vukem/` and production builds in `bin/`; both are git-ignored.
 
 ## The framework
 
-The module `github.com/AlexGalhardo/golang-framework` is split into small, single-purpose packages. The request context package is named `web` so it never shadows the conventional `ctx context.Context` variable.
+The module `github.com/AlexGalhardo/vukem` is split into small, single-purpose packages. The request context package is named `web` so it never shadows the conventional `ctx context.Context` variable.
 
 | Package | Purpose |
 | --- | --- |
-| `lumek` (root) | `App`, options, providers, runners, commands, `DefaultMiddleware`, `Main` |
+| `vukem` (root) | `App`, options, providers, runners, commands, `DefaultMiddleware`, `Main` |
 | `config` | `.env` loader, `Load[T]`, `Secret`, `APP_KEY` |
 | `router` | ServeMux wrapper: groups, names, resources, URL generation |
 | `web` | `*web.Ctx`: input, responses, redirects, rendering, error handler |
@@ -50,8 +50,8 @@ The module `github.com/AlexGalhardo/golang-framework` is split into small, singl
 | `session`, `csrf` | sessions with flash and old input; cross-origin protection |
 | `database`, `orm`, `schema` | SQLite connections, generic query builder, migrations |
 | `view`, `htmx` | `html/template` engine; htmx 4 request and response helpers |
-| `lumektest` | in-process test client and database assertions |
-| `cmd/lumek` | the CLI |
+| `vukemtest` | in-process test client and database assertions |
+| `cmd/vukem` | the CLI |
 
 | Planned | Phase |
 | --- | --- |

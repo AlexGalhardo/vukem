@@ -3,7 +3,7 @@
 package bootstrap
 
 import (
-	lumek "github.com/AlexGalhardo/golang-framework"
+	vukem "github.com/AlexGalhardo/vukem"
 
 	"{{.Module}}/database/migrations"
 	"{{.Module}}/resources"
@@ -11,12 +11,12 @@ import (
 )
 
 // New builds the application; cmd/app and the tests call it.
-func New(opts ...lumek.Option) (*lumek.App, error) {
-	app, err := lumek.New(append([]lumek.Option{
-		lumek.WithProviders(Providers()...),
-		lumek.WithMigrations(migrations.All()),
-		lumek.WithViews(resources.Views()),
-		lumek.WithRoutes(routes.Web),
+func New(opts ...vukem.Option) (*vukem.App, error) {
+	app, err := vukem.New(append([]vukem.Option{
+		vukem.WithProviders(Providers()...),
+		vukem.WithMigrations(migrations.All()),
+		vukem.WithViews(resources.Views()),
+		vukem.WithRoutes(routes.Web),
 	}, opts...)...)
 	if err != nil {
 		return nil, err

@@ -2,11 +2,11 @@ package bootstrap
 
 import (
 	"example.com/blog/app/providers"
-	lumek "github.com/AlexGalhardo/golang-framework"
+	vukem "github.com/AlexGalhardo/vukem"
 )
 
-func Providers() []lumek.Provider {
-	return []lumek.Provider{
+func Providers() []vukem.Provider {
+	return []vukem.Provider{
 		nil,
 		providers.Mail{},
 	}

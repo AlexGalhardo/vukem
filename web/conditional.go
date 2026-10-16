@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AlexGalhardo/golang-framework/errs"
+	"github.com/AlexGalhardo/vukem/errs"
 )
 
 // ETagOf returns a strong ETag ("\"...\"") for v: the SHA-256 of its JSON

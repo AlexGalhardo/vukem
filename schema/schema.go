@@ -15,7 +15,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/AlexGalhardo/golang-framework/database"
+	"github.com/AlexGalhardo/vukem/database"
 )
 
 var identRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)

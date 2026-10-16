@@ -1,4 +1,4 @@
-// Package cli implements the global `lumek` command: project scaffolding,
+// Package cli implements the global `vukem` command: project scaffolding,
 // generators, the dev server and delegation of app commands to the
 // project's own binary (cmd/app). It works on files and never imports user
 // code.
@@ -51,7 +51,7 @@ func commands() []command {
 		{"new", "<name>", "Create a project from the HTMX + SQLite starter", newProject},
 		{"serve", "", "Run the app and restart it when Go files change", serveCmd},
 		{"build", "", "Build assets (Vite) and a production binary in bin/", buildCmd},
-		{"version", "", "Print the lumek version", nil},
+		{"version", "", "Print the vukem version", nil},
 		{"key:generate", "", "Write a new APP_KEY to .env", keyGenerate},
 		{"make:controller", "<Name>", "Create a controller", makeController},
 		{"make:model", "<Name>", "Create a model (with -m, -f, -c)", makeModel},
@@ -83,7 +83,7 @@ func Run(ctx context.Context, args []string, env Env) int {
 		return 0
 	case errors.Is(err, ErrUsage):
 		fmt.Fprintln(env.Stderr, err)
-		fmt.Fprintln(env.Stderr, "Run 'lumek list' for the available commands.")
+		fmt.Fprintln(env.Stderr, "Run 'vukem list' for the available commands.")
 
 		return 2
 	default:
@@ -112,7 +112,7 @@ func run(ctx context.Context, args []string, env *Env) error {
 
 		return list(env)
 	case "version", "--version", "-v":
-		fmt.Fprintln(env.Stdout, "lumek", version(env))
+		fmt.Fprintln(env.Stdout, "vukem", version(env))
 		return nil
 	}
 
@@ -121,7 +121,7 @@ func run(ctx context.Context, args []string, env *Env) error {
 			continue
 		}
 
-		fs := flag.NewFlagSet("lumek "+name, flag.ContinueOnError)
+		fs := flag.NewFlagSet("vukem "+name, flag.ContinueOnError)
 		fs.SetOutput(env.Stdout)
 		fs.Usage = func() { printUsage(env, c, fs) }
 		runFn := c.flags(fs)
@@ -137,7 +137,7 @@ func run(ctx context.Context, args []string, env *Env) error {
 		return runFn(ctx, env, fs.Args())
 	}
 
-	// Not a lumek command: hand it to the project's app binary.
+	// Not a vukem command: hand it to the project's app binary.
 	return delegate(ctx, env, args)
 }
 
@@ -181,7 +181,7 @@ func isBool(f *flag.Flag) bool {
 }
 
 func list(env *Env) error {
-	fmt.Fprintf(env.Stdout, "Lumek %s\n\nUsage:\n  lumek <command> [flags] [args]\n\n", version(env))
+	fmt.Fprintf(env.Stdout, "Vukem %s\n\nUsage:\n  vukem <command> [flags] [args]\n\n", version(env))
 
 	width := 0
 	for _, c := range commands() {
@@ -204,7 +204,7 @@ func list(env *Env) error {
 		fmt.Fprintf(env.Stdout, "  %-*s  %s\n", width, strings.TrimSpace(c.name+" "+c.args), c.desc)
 	}
 
-	fmt.Fprint(env.Stdout, "\nOther commands (migrate, route:list, about, your own) run in the app: lumek <command>.\n")
+	fmt.Fprint(env.Stdout, "\nOther commands (migrate, route:list, about, your own) run in the app: vukem <command>.\n")
 
 	return nil
 }
@@ -216,11 +216,11 @@ func help(env *Env, name string) error {
 		}
 
 		if c.flags == nil {
-			fmt.Fprintf(env.Stdout, "Usage: lumek %s\n\n%s\n", c.name, c.desc)
+			fmt.Fprintf(env.Stdout, "Usage: vukem %s\n\n%s\n", c.name, c.desc)
 			return nil
 		}
 
-		fs := flag.NewFlagSet("lumek "+name, flag.ContinueOnError)
+		fs := flag.NewFlagSet("vukem "+name, flag.ContinueOnError)
 		fs.SetOutput(env.Stdout)
 		c.flags(fs)
 		printUsage(env, c, fs)
@@ -232,7 +232,7 @@ func help(env *Env, name string) error {
 }
 
 func printUsage(env *Env, c command, fs *flag.FlagSet) {
-	fmt.Fprintf(env.Stdout, "Usage: lumek %s\n\n%s\n", strings.TrimSpace(c.name+" [flags] "+c.args), c.desc)
+	fmt.Fprintf(env.Stdout, "Usage: vukem %s\n\n%s\n", strings.TrimSpace(c.name+" [flags] "+c.args), c.desc)
 
 	hasFlags := false
 

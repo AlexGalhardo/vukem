@@ -4,15 +4,15 @@ import (
 	"context"
 	"fmt"
 
-	lumek "github.com/AlexGalhardo/golang-framework"
+	vukem "github.com/AlexGalhardo/vukem"
 )
 
-// {{.Name}} is the "{{.Kebab}}" command: lumek {{.Kebab}}.
-func {{.Name}}() lumek.Command {
-	return lumek.CommandFunc{
+// {{.Name}} is the "{{.Kebab}}" command: vukem {{.Kebab}}.
+func {{.Name}}() vukem.Command {
+	return vukem.CommandFunc{
 		CommandName: "{{.Kebab}}",
 		Desc:        "Describe what {{.Kebab}} does",
-		Fn: func(ctx context.Context, app *lumek.App, args []string) error {
+		Fn: func(ctx context.Context, app *vukem.App, args []string) error {
 			fmt.Println("{{.Kebab}} ran with", args)
 			return nil
 		},

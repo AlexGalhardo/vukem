@@ -1,4 +1,4 @@
-// Package middleware provides Lumek's built-in net/http middleware. Every
+// Package middleware provides Vukem's built-in net/http middleware. Every
 // constructor returns a func(http.Handler) http.Handler, so they compose with
 // any other middleware. Errors are rendered through web.Fail, which uses the
 // router's error handler (problem+json, HTML or htmx fragments).
@@ -15,8 +15,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AlexGalhardo/golang-framework/errs"
-	"github.com/AlexGalhardo/golang-framework/web"
+	"github.com/AlexGalhardo/vukem/errs"
+	"github.com/AlexGalhardo/vukem/web"
 )
 
 // Middleware wraps an http.Handler.

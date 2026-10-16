@@ -3,7 +3,7 @@ package controllers
 import (
 	"net/http"
 
-	"github.com/AlexGalhardo/golang-framework/web"
+	"github.com/AlexGalhardo/vukem/web"
 )
 
 // HomeController handles home requests.

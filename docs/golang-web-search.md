@@ -1,6 +1,6 @@
 # Research: web frameworks and the Go ecosystem (Oct 2026)
 
-Consolidation of the research that underpins Lumek's design. Each section ends with a **→ Suggested decision** — what to copy, what to adapt, what to avoid. Sources inline.
+Consolidation of the research that underpins Vukem's design. Each section ends with a **→ Suggested decision** — what to copy, what to adapt, what to avoid. Sources inline.
 
 ## Contents
 
@@ -226,7 +226,7 @@ Sources: <https://go.dev/doc/go1.27>, <https://go.dev/doc/go1.26>, <https://go.d
 - Self-referential generic constraints: `type Model[M Model[M]] interface{...}`.
 - `errors.AsType[E](err)`.
 - `slog.NewMultiHandler`.
-- `go fix` rewritten (modernizers) + **`//go:fix inline`**: Lumek can mark deprecated APIs and the user's `go fix` migrates the calls automatically.
+- `go fix` rewritten (modernizers) + **`//go:fix inline`**: Vukem can mark deprecated APIs and the user's `go fix` migrates the calls automatically.
 - `signal.NotifyContext` cancels with a cause (signal name).
 - `T.ArtifactDir()`; Green Tea GC by default; cgo ~30% cheaper.
 
@@ -246,7 +246,7 @@ handler := cop.Handler(mux)
 
 ### Earlier baseline
 
-- **1.22:** `mux.HandleFunc("GET /posts/{id}", h)`, `r.PathValue("id")`, `{path...}`, `{$}`; conflicts panic at registration. **Missing:** groups, named routes, URL generation — Lumek adds a thin layer that compiles groups into ServeMux patterns and keeps a name→pattern table.
+- **1.22:** `mux.HandleFunc("GET /posts/{id}", h)`, `r.PathValue("id")`, `{path...}`, `{$}`; conflicts panic at registration. **Missing:** groups, named routes, URL generation — Vukem adds a thin layer that compiles groups into ServeMux patterns and keeps a name→pattern table.
 - **1.23:** iterators — `func (q *Query[T]) Each(ctx) iter.Seq2[T, error]`.
 - **1.24:** **`tool`** directive in `go.mod` (`go get -tool ...` → `go tool x`), `os.Root`, `T.Context()`, `B.Loop`, `crypto/rand.Text()`, `omitzero`, `http.Protocols`.
 - **1.21/1.20:** `slog`, `slices`, `maps`, `context.WithoutCancel` (post-response work), `errors.Join`, `http.ResponseController` (SSE).
@@ -459,8 +459,8 @@ Source: <https://inertiajs.com/docs/v3/core-concepts/the-protocol>.
 - **Core without heavy dependencies + separate modules per driver** in the same repo (precedents: aws-sdk-go-v2, opentelemetry-go, gofiber/storage; Goravel does it in separate repos).
 
 ```text
-golang-framework/         module github.com/AlexGalhardo/golang-framework   tags v0.x.y
-├── cmd/lumek/            CLI (go install .../cmd/lumek@latest)
+vukem/                    module github.com/AlexGalhardo/vukem   tags v0.x.y
+├── cmd/vukem/            CLI (go install .../cmd/vukem@latest)
 ├── drivers/postgres/     own module, tags drivers/postgres/v0.x.y
 ├── drivers/mongo/
 ├── drivers/redis/

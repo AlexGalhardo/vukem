@@ -28,12 +28,12 @@ footer = """
 {% for release in releases -%}
 {% if release.version -%}
 {% if release.previous.version -%}
-[{{ release.version | trim_start_matches(pat="v") }}]: https://github.com/AlexGalhardo/golang-framework/compare/{{ release.previous.version }}...{{ release.version }}
+[{{ release.version | trim_start_matches(pat="v") }}]: https://github.com/AlexGalhardo/vukem/compare/{{ release.previous.version }}...{{ release.version }}
 {% else -%}
-[{{ release.version | trim_start_matches(pat="v") }}]: https://github.com/AlexGalhardo/golang-framework/releases/tag/{{ release.version }}
+[{{ release.version | trim_start_matches(pat="v") }}]: https://github.com/AlexGalhardo/vukem/releases/tag/{{ release.version }}
 {% endif -%}
 {% else -%}
-[Unreleased]: https://github.com/AlexGalhardo/golang-framework/compare/{{ release.previous.version }}...HEAD
+[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/{{ release.previous.version }}...HEAD
 {% endif -%}
 {% endfor %}
 """

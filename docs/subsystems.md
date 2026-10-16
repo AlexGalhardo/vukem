@@ -20,7 +20,7 @@ Mail, cache, storage, events, queue, scheduler, encryption, rate limiting, i18n,
 ## Logging & observability
 
 - `app.Log` is a `*slog.Logger`; request logger adds `request_id`, method, route name, status, duration.
-- Context-aware: `lumek.Logger(ctx)` returns the request-scoped logger.
+- Context-aware: `vukem.Logger(ctx)` returns the request-scoped logger.
 - `Secret` values are redacted via `LogValuer`.
 - OpenTelemetry: a `telemetry` provider (BETA) wraps the router with `otelhttp`-style spans **in a separate module** to keep OTel out of core.
 - `/up` returns 200 when the app booted; `/up?checks=1` runs registered health checks (DB ping, Redis ping) with timeouts.

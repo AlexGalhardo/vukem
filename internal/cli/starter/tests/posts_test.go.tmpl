@@ -4,7 +4,7 @@ import (
 	"net/url"
 	"testing"
 
-	"github.com/AlexGalhardo/golang-framework/lumektest"
+	"github.com/AlexGalhardo/vukem/vukemtest"
 
 	"{{.Module}}/bootstrap"
 )
@@ -12,25 +12,25 @@ import (
 func TestPostsCRUD(t *testing.T) {
 	t.Parallel()
 
-	app := lumektest.New(t, bootstrap.New)
+	app := vukemtest.New(t, bootstrap.New)
 	c := app.Client(t)
 
-	c.PostForm("/posts", url.Values{"title": {"Hello Lumek"}, "body": {"First post."}}).
+	c.PostForm("/posts", url.Values{"title": {"Hello Vukem"}, "body": {"First post."}}).
 		AssertRedirect("/posts/1").
 		AssertSessionHas("success")
 
-	lumektest.AssertDatabaseHas(t, app, "posts", map[string]any{"title": "Hello Lumek"})
+	vukemtest.AssertDatabaseHas(t, app, "posts", map[string]any{"title": "Hello Vukem"})
 
-	c.Get("/posts/1").AssertOK().AssertSee("Hello Lumek").AssertSee("Post created.")
-	c.Get("/posts").AssertOK().AssertSee("Hello Lumek")
-	c.HTMX().Get("/posts?q=nothing").AssertOK().AssertFragment().AssertDontSee("Hello Lumek")
+	c.Get("/posts/1").AssertOK().AssertSee("Hello Vukem").AssertSee("Post created.")
+	c.Get("/posts").AssertOK().AssertSee("Hello Vukem")
+	c.HTMX().Get("/posts?q=nothing").AssertOK().AssertFragment().AssertDontSee("Hello Vukem")
 
 	app.Client(t).PostForm("/posts/1", url.Values{"_method": {"PUT"}, "title": {"Edited"}, "body": {""}}).
 		AssertRedirect("/posts/1")
-	lumektest.AssertDatabaseHas(t, app, "posts", map[string]any{"title": "Edited"})
+	vukemtest.AssertDatabaseHas(t, app, "posts", map[string]any{"title": "Edited"})
 
 	app.Client(t).HTMX().Delete("/posts/1").AssertOK()
-	lumektest.AssertDatabaseCount(t, app, "posts", 0)
+	vukemtest.AssertDatabaseCount(t, app, "posts", 0)
 
 	app.Client(t).Get("/posts/1").AssertNotFound()
 }
@@ -38,20 +38,20 @@ func TestPostsCRUD(t *testing.T) {
 func TestPostsValidation(t *testing.T) {
 	t.Parallel()
 
-	app := lumektest.New(t, bootstrap.New)
+	app := vukemtest.New(t, bootstrap.New)
 
 	app.Client(t).WithHeader("Referer", "/posts/create").
 		PostForm("/posts", url.Values{"title": {"x"}}).
 		AssertRedirect("/posts/create").
 		AssertSessionHasErrors("title")
 
-	lumektest.AssertDatabaseCount(t, app, "posts", 0)
+	vukemtest.AssertDatabaseCount(t, app, "posts", 0)
 }
 
 func TestPostsJSON(t *testing.T) {
 	t.Parallel()
 
-	app := lumektest.New(t, bootstrap.New)
+	app := vukemtest.New(t, bootstrap.New)
 	api := app.Client(t).AcceptJSON()
 
 	api.PostJSON("/posts", map[string]any{"title": "From the API", "body": "JSON"}).
@@ -67,5 +67,5 @@ func TestPostsJSON(t *testing.T) {
 	api.GetJSON("/posts/99").AssertProblem(404)
 
 	api.Delete("/posts/1").AssertNoContent()
-	lumektest.AssertDatabaseCount(t, app, "posts", 0)
+	vukemtest.AssertDatabaseCount(t, app, "posts", 0)
 }

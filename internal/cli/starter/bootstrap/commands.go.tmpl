@@ -1,8 +1,8 @@
 package bootstrap
 
-import lumek "github.com/AlexGalhardo/golang-framework"
+import vukem "github.com/AlexGalhardo/vukem"
 
-// Commands lists the application commands; lumek make:command appends here.
-func Commands() []lumek.Command {
-	return []lumek.Command{}
+// Commands lists the application commands; vukem make:command appends here.
+func Commands() []vukem.Command {
+	return []vukem.Command{}
 }

@@ -116,7 +116,7 @@ tasks:
       - go run ./internal/tools/release -push {{.CLI_ARGS}}
 
   release:binaries:
-    desc: "Build lumek binaries with GoReleaser in Docker; SNAPSHOT=1 builds without publishing (otherwise uploads to the release of the current tag)"
+    desc: "Build vukem binaries with GoReleaser in Docker; SNAPSHOT=1 builds without publishing (otherwise uploads to the release of the current tag)"
     cmds:
       - >-
         docker run --rm -v "{{.ROOT_DIR}}:/src" -w /src
@@ -127,7 +127,7 @@ tasks:
   test:linux:
     desc: Run unit tests with -race on Linux inside Docker (no local gcc needed)
     cmds:
-      - docker run --rm -e GOWORK=off -v "{{.ROOT_DIR}}:/src" -v lumek-gomod:/go/pkg/mod -w /src golang:1.27 go test -race -count=1 ./...
+      - docker run --rm -e GOWORK=off -v "{{.ROOT_DIR}}:/src" -v vukem-gomod:/go/pkg/mod -w /src golang:1.27 go test -race -count=1 ./...
 
   services:up:
     desc: Start Postgres, Redis and Mongo for integration tests (Docker)
@@ -149,7 +149,7 @@ tasks:
   ci:full:
     desc: Full pipeline run locally before every release (mirrors GitHub Actions)
     env:
-      DATABASE_URL: postgres://lumek:lumek@localhost:55432/lumek_test?sslmode=disable
+      DATABASE_URL: postgres://vukem:vukem@localhost:55432/vukem_test?sslmode=disable
       REDIS_URL: redis://localhost:56379/0
       MONGO_URL: mongodb://localhost:57017
     cmds:

@@ -1,15 +1,15 @@
 ---
 title: Migrations
-description: Versioned schema changes in Go with a portable schema builder, checksums, and lumek migrate commands.
+description: Versioned schema changes in Go with a portable schema builder, checksums, and vukem migrate commands.
 ---
 
-Migrations are plain Go values listed in one registry function. There is no `init()` registration: `lumek make:migration` writes the file and appends it to the list.
+Migrations are plain Go values listed in one registry function. There is no `init()` registration: `vukem make:migration` writes the file and appends it to the list.
 
 ## Creating a migration
 
 ```bash
-lumek make:migration create_comments_table
-lumek make:migration add_slug_to_posts_table
+vukem make:migration create_comments_table
+vukem make:migration add_slug_to_posts_table
 ```
 
 The stub depends on the name: `create_<table>_table` creates a table, `add_x_to_<table>_table` / `alter_<table>_table` alter one, anything else is blank.
@@ -42,7 +42,7 @@ func All() []schema.Migration {
 }
 ```
 
-`bootstrap.New` passes `migrations.All()` to `lumek.WithMigrations`.
+`bootstrap.New` passes `migrations.All()` to `vukem.WithMigrations`.
 
 ## Schema builder
 
@@ -55,21 +55,21 @@ Altering: `t.RenameColumn(from, to)`, `t.DropColumn(names...)`, `t.Index(cols...
 DDL is generated per dialect (SQLite and PostgreSQL). Table and column names are validated, never taken from user input.
 
 <Callout type="warning">
-SQLite cannot drop columns in every situation; Lumek does not rebuild tables for you yet.
+SQLite cannot drop columns in every situation; Vukem does not rebuild tables for you yet.
 </Callout>
 
 ## Running migrations
 
 | Command | Effect |
 | --- | --- |
-| `lumek migrate` | Run pending migrations in one batch |
-| `lumek migrate:rollback [--step N]` | Roll back the last batch, or the last N migrations |
-| `lumek migrate:reset` | Roll back everything |
-| `lumek migrate:fresh` | Drop all tables and re-run every migration |
-| `lumek migrate:status [--json]` | Which migrations ran, in which batch, and when |
+| `vukem migrate` | Run pending migrations in one batch |
+| `vukem migrate:rollback [--step N]` | Roll back the last batch, or the last N migrations |
+| `vukem migrate:reset` | Roll back everything |
+| `vukem migrate:fresh` | Drop all tables and re-run every migration |
+| `vukem migrate:status [--json]` | Which migrations ran, in which batch, and when |
 
 `migrate:reset` and `migrate:fresh` refuse to run with `APP_ENV=production` unless `--force` is given.
 
 Each applied migration stores a checksum of the SQL it produced. `migrate:status` flags migrations whose SQL **changed** after they ran and migrations recorded in the database but **missing** from code.
 
-In code, `app.Migrator()` returns a `*schema.Migrator` with `Up`, `Rollback`, `Reset`, `Fresh` and `Status`; `lumektest.New` uses it to migrate the test database.
+In code, `app.Migrator()` returns a `*schema.Migrator` with `Up`, `Rollback`, `Reset`, `Fresh` and `Status`; `vukemtest.New` uses it to migrate the test database.

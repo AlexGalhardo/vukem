@@ -1,4 +1,4 @@
-package lumek
+package vukem
 
 import (
 	"io/fs"

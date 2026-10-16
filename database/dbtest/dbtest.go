@@ -18,10 +18,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AlexGalhardo/golang-framework/database"
-	"github.com/AlexGalhardo/golang-framework/errs"
-	"github.com/AlexGalhardo/golang-framework/orm"
-	"github.com/AlexGalhardo/golang-framework/schema"
+	"github.com/AlexGalhardo/vukem/database"
+	"github.com/AlexGalhardo/vukem/errs"
+	"github.com/AlexGalhardo/vukem/orm"
+	"github.com/AlexGalhardo/vukem/schema"
 )
 
 // Meta is a JSON column payload.

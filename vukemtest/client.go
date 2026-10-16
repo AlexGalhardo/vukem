@@ -1,4 +1,4 @@
-package lumektest
+package vukemtest
 
 import (
 	"bytes"
@@ -90,7 +90,7 @@ func (c *Client) sendJSON(method, target string, v any) *Response {
 
 	b, err := json.Marshal(v)
 	if err != nil {
-		c.t.Fatalf("lumektest: encode body: %v", err)
+		c.t.Fatalf("vukemtest: encode body: %v", err)
 	}
 
 	if c.headers.Get("Accept") == "" {
@@ -262,7 +262,7 @@ func (r *Response) AssertRedirectRoute(name string, params ...any) *Response {
 
 	u, err := r.client.app.Router.URL(name, params...)
 	if err != nil {
-		r.t.Fatalf("lumektest: %v", err)
+		r.t.Fatalf("vukemtest: %v", err)
 	}
 
 	return r.AssertRedirect(u)
@@ -496,7 +496,7 @@ func (r *Response) Session() map[string]any {
 
 	m, err := r.client.app.Sessions()
 	if err != nil {
-		r.t.Fatalf("lumektest: %v", err)
+		r.t.Fatalf("vukemtest: %v", err)
 	}
 
 	cookies := make([]*http.Cookie, 0, len(r.client.cookies))

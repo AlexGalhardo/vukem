@@ -33,13 +33,13 @@ type Database struct {
 ### PostgreSQL
 
 ```sh
-go get github.com/AlexGalhardo/golang-framework/drivers/postgres
+go get github.com/AlexGalhardo/vukem/drivers/postgres
 ```
 
 ```go
 // bootstrap/app.go
-lumek.New(append([]lumek.Option{
-	lumek.WithDatabaseDrivers(postgres.Driver()), // postgres:// and postgresql:// URLs
+vukem.New(append([]vukem.Option{
+	vukem.WithDatabaseDrivers(postgres.Driver()), // postgres:// and postgresql:// URLs
 	// ...
 }, opts...)...)
 ```

@@ -20,7 +20,7 @@ type View interface {
 
 ### `html/template` engine (default)
 
-- `lumek.WithViews(fsys)` enables the `view` engine. The starter passes `resources.Views()`: files on disk during development, `embed.FS` in the binary. Views reload on every request outside production; syntax errors fail at boot.
+- `vukem.WithViews(fsys)` enables the `view` engine. The starter passes `resources.Views()`: files on disk during development, `embed.FS` in the binary. Views reload on every request outside production; syntax errors fail at boot.
 - Directory layout: `layouts/`, `partials/` and `components/` are shared; every other file is a page named by its path without extension (`posts/index`).
 - Layouts: a page defines blocks (`{{define "content"}}…{{end}}`) and renders inside `layouts/app.html`. Its first line can pick another layout, `{{/* layout: admin */}}`, or none, `{{/* layout: none */}}`. Each page gets its own template set, so block names never collide.
 - **Fragments:** `c.Render("posts/index", data, web.Block("post-list"))` renders the whole page for normal requests and only the `post-list` block for htmx partial requests; `c.Fragment(name, block, data)` always renders the block.
@@ -96,14 +96,14 @@ Invalid input from a classic form post → the validation hook flashes the error
 
 Optional for the HTMX starter (Tailwind, bundling), required for Inertia.
 
-- A tiny Vite plugin shipped with the starter (`resources/vite/lumek.js`) writes `public/hot` with the dev server URL on start and deletes it on exit.
+- A tiny Vite plugin shipped with the starter (`resources/vite/vukem.js`) writes `public/hot` with the dev server URL on start and deletes it on exit.
 - `{{ vite "resources/js/app.ts" }}`:
   - `public/hot` present → `<script type="module" src="{hot}/@vite/client">` + entry (+ React Refresh preamble via `{{ viteReactRefresh }}`).
   - otherwise → reads `public/build/.vite/manifest.json` and emits `<script type="module">`, `<link rel="stylesheet">` and `<link rel="modulepreload">` for the entry and its recursive imports (deduplicated across entries).
 - `{{ asset "img/logo.png" }}` resolves through the manifest when present.
 - CSP nonce and SRI (`integrity`) attributes supported.
 - `/build/*` served with immutable cache headers.
-- `lumek serve` starts the Go app with reload and, if `vite.config.*` exists, `npm run dev` alongside.
+- `vukem serve` starts the Go app with reload and, if `vite.config.*` exists, `npm run dev` alongside.
 
 ## Inertia v3 (BETA)
 
@@ -127,7 +127,7 @@ return inertia.Render(c, "Posts/Index", inertia.Props{
 | Shared data | `inertia.Share(key, fn)` globally or per request (middleware); auth user + flash by default |
 | Validation | errors flashed + `303` back; surfaced as `props.errors` |
 | Version | hash of the Vite manifest |
-| SSR | POST to the Node SSR server (`/render`) with timeout; **falls back to client-side rendering** on any failure; dev uses the Vite plugin endpoint; per-route disable; `lumek ssr:start` supervises `node bootstrap/ssr/ssr.js` |
+| SSR | POST to the Node SSR server (`/render`) with timeout; **falls back to client-side rendering** on any failure; dev uses the Vite plugin endpoint; per-route disable; `vukem ssr:start` supervises `node bootstrap/ssr/ssr.js` |
 | Testing | `res.AssertInertia(t, "Posts/Index").HasProp("posts", 3).MissingProp("stats")` |
 
-Typed routes for the frontend (Wayfinder/Tuyau-style): `lumek codegen:routes` boots the app in warmup mode (no connections) and emits `resources/js/routes.ts` with typed `route('posts.show', { id })` (BETA).
+Typed routes for the frontend (Wayfinder/Tuyau-style): `vukem codegen:routes` boots the app in warmup mode (no connections) and emits `resources/js/routes.ts` with typed `route('posts.show', { id })` (BETA).

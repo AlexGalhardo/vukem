@@ -1,4 +1,4 @@
-package lumek
+package vukem
 
 import (
 	"context"
@@ -11,13 +11,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/AlexGalhardo/golang-framework/config"
-	"github.com/AlexGalhardo/golang-framework/csrf"
-	"github.com/AlexGalhardo/golang-framework/database"
-	"github.com/AlexGalhardo/golang-framework/middleware"
-	"github.com/AlexGalhardo/golang-framework/router"
-	"github.com/AlexGalhardo/golang-framework/session"
-	"github.com/AlexGalhardo/golang-framework/web"
+	"github.com/AlexGalhardo/vukem/config"
+	"github.com/AlexGalhardo/vukem/csrf"
+	"github.com/AlexGalhardo/vukem/database"
+	"github.com/AlexGalhardo/vukem/middleware"
+	"github.com/AlexGalhardo/vukem/router"
+	"github.com/AlexGalhardo/vukem/session"
+	"github.com/AlexGalhardo/vukem/web"
 )
 
 // HealthCheck reports whether a dependency (database, cache...) is healthy.
@@ -101,7 +101,7 @@ type SessionConfig struct {
 	Driver      string        `env:"SESSION_DRIVER"       default:"cookie"`
 	Lifetime    time.Duration `env:"SESSION_LIFETIME"     default:"24h"`
 	IdleTimeout time.Duration `env:"SESSION_IDLE_TIMEOUT" default:"2h"`
-	CookieName  string        `env:"SESSION_COOKIE"       default:"lumek_session"`
+	CookieName  string        `env:"SESSION_COOKIE"       default:"vukem_session"`
 	// Secure defaults to true in production or when APP_URL is https.
 	Secure string `env:"SESSION_SECURE" default:"auto"`
 }
@@ -144,7 +144,7 @@ func (a *App) Sessions() (*session.Manager, error) {
 				return
 			}
 		default:
-			a.sessErr = fmt.Errorf("lumek: unknown SESSION_DRIVER %q", cfg.Driver)
+			a.sessErr = fmt.Errorf("vukem: unknown SESSION_DRIVER %q", cfg.Driver)
 			return
 		}
 
@@ -158,7 +158,7 @@ func (a *App) Sessions() (*session.Manager, error) {
 // provider's Register, before Sessions is first used).
 func (a *App) SetSessionStore(store session.Store) { a.sessStore = store }
 
-// DefaultMiddleware installs Lumek's recommended stacks on r:
+// DefaultMiddleware installs Vukem's recommended stacks on r:
 //   - server: Recover, RequestID, Logger, SecureHeaders, MethodOverride;
 //   - router: BodyLimit(10 MiB), sessions, CSRF (CrossOriginProtection,
 //     trusted origins from CSRF_TRUSTED_ORIGINS).
@@ -261,7 +261,7 @@ func RunMain(ctx context.Context, args []string, getenv func(string) (string, bo
 }
 
 // Main runs the application from os.Args and the process environment and
-// returns the exit code. Use it as: func main() { os.Exit(lumek.Main(bootstrap.New)) }.
+// returns the exit code. Use it as: func main() { os.Exit(vukem.Main(bootstrap.New)) }.
 func Main(build BuildFunc) int {
 	ctx, stop := signalContext()
 	defer stop()
@@ -304,7 +304,7 @@ func (a *App) databaseSessionStore() (session.Store, error) {
 	defer cancel()
 
 	if err := store.CreateTable(ctx); err != nil {
-		return nil, fmt.Errorf("lumek: create sessions table: %w", err)
+		return nil, fmt.Errorf("vukem: create sessions table: %w", err)
 	}
 
 	return store, nil

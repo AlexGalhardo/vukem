@@ -1,8 +1,8 @@
 package migrations
 
-import "github.com/AlexGalhardo/golang-framework/schema"
+import "github.com/AlexGalhardo/vukem/schema"
 
-// All lists the migrations in order; lumek make:migration appends here.
+// All lists the migrations in order; vukem make:migration appends here.
 func All() []schema.Migration {
 	return []schema.Migration{
 		m20261016120000CreatePostsTable(),

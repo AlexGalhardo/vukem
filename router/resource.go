@@ -5,7 +5,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/AlexGalhardo/golang-framework/web"
+	"github.com/AlexGalhardo/vukem/web"
 )
 
 // Resource controller actions. A controller implements any subset; only

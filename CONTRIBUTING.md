@@ -1,4 +1,4 @@
-# Contributing to Lumek
+# Contributing to Vukem
 
 Thanks for helping. This guide covers setup, workflow and the rules every change follows.
 
@@ -8,8 +8,8 @@ Thanks for helping. This guide covers setup, workflow and the rules every change
 2. Clone and install the git hooks:
 
    ```sh
-   git clone https://github.com/AlexGalhardo/golang-framework.git
-   cd golang-framework
+   git clone https://github.com/AlexGalhardo/vukem.git
+   cd vukem
    task setup
    ```
 

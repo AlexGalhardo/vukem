@@ -28,7 +28,7 @@ Supported syntax: `KEY=value`, `export KEY=value`, single/double quotes, `\n` es
 ```go
 // config/app.go (user app)
 type App struct {
-	Name  string         `env:"APP_NAME"  default:"Lumek"`
+	Name  string         `env:"APP_NAME"  default:"Vukem"`
 	Env   config.Env     `env:"APP_ENV"   default:"development"` // development | production | test
 	Debug bool           `env:"APP_DEBUG" default:"false"`
 	URL   string         `env:"APP_URL"   validate:"required,url"`
@@ -53,7 +53,7 @@ func (s Secret) MarshalJSON() ([]byte, error) // "\"[redacted]\""
 
 ## `APP_KEY`
 
-- Required. `lumek key:generate` writes a 32-byte random key (`crypto/rand`), base64-encoded, to `.env`.
+- Required. `vukem key:generate` writes a 32-byte random key (`crypto/rand`), base64-encoded, to `.env`.
 - Sub-keys for cookies, sessions and encryption are derived with `crypto/hkdf` using distinct `info` labels, so the raw key is never used directly.
 - BETA adds `APP_PREVIOUS_KEYS` for rotation (first key encrypts, others only decrypt).
 

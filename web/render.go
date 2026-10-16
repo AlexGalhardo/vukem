@@ -7,8 +7,8 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/AlexGalhardo/golang-framework/errs"
-	"github.com/AlexGalhardo/golang-framework/htmx"
+	"github.com/AlexGalhardo/vukem/errs"
+	"github.com/AlexGalhardo/vukem/htmx"
 )
 
 // Renderer renders named views. The view package implements it; ctx gives

@@ -1,15 +1,15 @@
 package bootstrap
 
 import (
-	lumek "github.com/AlexGalhardo/golang-framework"
+	vukem "github.com/AlexGalhardo/vukem"
 
 	"example.com/blog/app/providers"
 )
 
 // Providers lists the application providers, in registration order.
-// lumek make:provider appends to this list.
-func Providers() []lumek.Provider {
-	return []lumek.Provider{
+// vukem make:provider appends to this list.
+func Providers() []vukem.Provider {
+	return []vukem.Provider{
 		&providers.AppProvider{}, // core services
 		&providers.BillingProvider{},
 	}

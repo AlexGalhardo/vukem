@@ -8,7 +8,7 @@ A thin layer over `http.ServeMux` (Go 1.22+ patterns). The router collects route
 
 ```go
 // routes/web.go
-func Web(r *router.Router, app *lumek.App) {
+func Web(r *router.Router, app *vukem.App) {
 	home := controllers.NewHome(app)
 	posts := controllers.NewPost(app)
 
@@ -31,7 +31,7 @@ func Web(r *router.Router, app *lumek.App) {
 | URL generation | `r.URLFor("posts.show", "id", 42)` → `/posts/42`; missing/extra params return an error; templates: `{{ route "posts.show" "id" .ID }}` |
 | Groups | `Group(prefix, fn)` with `.Use(mw...)`, `.Name(prefix)`, nesting |
 | Resources | `Resource(name, ctrl)`, `APIResource(name, ctrl)` (no `create`/`edit`), `.Only(...)`, `.Except(...)` |
-| Listing | `lumek route:list` prints method, pattern, name, handler, middleware |
+| Listing | `vukem route:list` prints method, pattern, name, handler, middleware |
 
 Conflicting patterns panic at boot (ServeMux behaviour) and the router wraps the panic into an error naming both routes.
 
@@ -81,7 +81,7 @@ Signature: `func(http.Handler) http.Handler`. Three stacks:
 | Router | only when a route matches | `MethodOverride`, `Session`, `CSRF`, `Flash`, `Auth` init (ALPHA) |
 | Named | per route/group, may take options | `auth.Required(guards...)`, `auth.Guest()`, `ratelimit.Limit(name)`, `Timeout(d)`, `CORS(cfg)` |
 
-`lumek make:middleware` generates the function and registers it as named middleware in `bootstrap/middleware.go`.
+`vukem make:middleware` generates the function and registers it as named middleware in `bootstrap/middleware.go`.
 
 ## Validation
 

@@ -17,7 +17,7 @@ import (
 
 // cacheDir holds binaries built by delegation and serve; generated projects
 // ignore it in .gitignore.
-const cacheDir = ".lumek"
+const cacheDir = ".vukem"
 
 func exe(name string) string {
 	if runtime.GOOS == "windows" {
@@ -72,11 +72,11 @@ func walkSources(dir string, fn func(path string, info fs.FileInfo)) error {
 	})
 }
 
-// appBinary builds cmd/app into .lumek/ when the sources changed since the
+// appBinary builds cmd/app into .vukem/ when the sources changed since the
 // last build, and returns the binary path.
 func appBinary(ctx context.Context, env *Env) (string, error) {
 	if !exists(env, filepath.Join("cmd", "app")) {
-		return "", errors.New("no cmd/app in this directory: run lumek inside a Lumek project")
+		return "", errors.New("no cmd/app in this directory: run vukem inside a Vukem project")
 	}
 
 	bin := env.path(filepath.Join(cacheDir, "bin", exe("app")))
@@ -124,7 +124,7 @@ func (env *Env) dirOrDot() string {
 // the project's binary, rebuilding it only when sources changed.
 func delegate(ctx context.Context, env *Env, args []string) error {
 	if !exists(env, filepath.Join("cmd", "app")) {
-		return usagef("unknown command %q (app commands need a Lumek project with cmd/app)", args[0])
+		return usagef("unknown command %q (app commands need a Vukem project with cmd/app)", args[0])
 	}
 
 	bin, err := appBinary(ctx, env)
@@ -146,7 +146,7 @@ func buildCmd(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 
 	return func(ctx context.Context, env *Env, _ []string) error {
 		if !exists(env, filepath.Join("cmd", "app")) {
-			return errors.New("no cmd/app in this directory: run lumek inside a Lumek project")
+			return errors.New("no cmd/app in this directory: run vukem inside a Vukem project")
 		}
 
 		if hasVite(env) {

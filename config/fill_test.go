@@ -32,7 +32,7 @@ type nested struct {
 }
 
 type sample struct {
-	Name     string        `env:"APP_NAME"  default:"Lumek"`
+	Name     string        `env:"APP_NAME"  default:"Vukem"`
 	Debug    bool          `env:"APP_DEBUG"`
 	Port     int           `env:"PORT"      default:"3000"`
 	Workers  uint8         `env:"WORKERS"`
@@ -70,7 +70,7 @@ func TestFill(t *testing.T) {
 		t.Fatalf("Fill() error = %v", err)
 	}
 
-	if got.Name != "Lumek" || !got.Debug || got.Port != 8080 || got.Workers != 4 || got.Ratio != 0.5 {
+	if got.Name != "Vukem" || !got.Debug || got.Port != 8080 || got.Workers != 4 || got.Ratio != 0.5 {
 		t.Errorf("Fill() scalars = %+v", got)
 	}
 	if got.Timeout != 5*time.Second {

@@ -13,7 +13,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/AlexGalhardo/golang-framework/errs"
+	"github.com/AlexGalhardo/vukem/errs"
 )
 
 type fakeViews map[string]string

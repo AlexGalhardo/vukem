@@ -2,12 +2,12 @@ package bootstrap
 
 import (
 	"example.com/blog/app/commands"
-	lumek "github.com/AlexGalhardo/golang-framework"
+	vukem "github.com/AlexGalhardo/vukem"
 )
 
-// Commands lists the application commands; lumek make:command appends here.
-func Commands() []lumek.Command {
-	return []lumek.Command{
+// Commands lists the application commands; vukem make:command appends here.
+func Commands() []vukem.Command {
+	return []vukem.Command{
 		commands.SendReports(),
 	}
 }

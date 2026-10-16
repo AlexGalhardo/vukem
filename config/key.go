@@ -24,7 +24,7 @@ type Key struct {
 func ParseKey(s Secret) (Key, error) {
 	v := s.Reveal()
 	if v == "" {
-		return Key{}, errors.New("config: APP_KEY is not set (run `lumek key:generate`)")
+		return Key{}, errors.New("config: APP_KEY is not set (run `vukem key:generate`)")
 	}
 
 	b, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(v, "base64:"))
@@ -42,7 +42,7 @@ func ParseKey(s Secret) (Key, error) {
 // Derive returns an n-byte key for purpose using HKDF-SHA256, so cookies,
 // sessions and encryption never share key material.
 func (k Key) Derive(purpose string, n int) []byte {
-	out, err := hkdf.Key(sha256.New, k.bytes, nil, "lumek:"+purpose, n)
+	out, err := hkdf.Key(sha256.New, k.bytes, nil, "vukem:"+purpose, n)
 	if err != nil {
 		// Only possible when n exceeds 255*32 bytes: a programming error.
 		panic(fmt.Sprintf("config: derive %q: %v", purpose, err))

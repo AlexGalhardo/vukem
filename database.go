@@ -1,4 +1,4 @@
-package lumek
+package vukem
 
 import (
 	"context"
@@ -9,8 +9,8 @@ import (
 	"strconv"
 	"text/tabwriter"
 
-	"github.com/AlexGalhardo/golang-framework/database"
-	"github.com/AlexGalhardo/golang-framework/schema"
+	"github.com/AlexGalhardo/vukem/database"
+	"github.com/AlexGalhardo/vukem/schema"
 )
 
 // DatabaseConfig is loaded from DB_* variables.

@@ -3,26 +3,26 @@ title: Testing
 description: Boot the app per test with an isolated in-memory database, drive it with a fluent in-process client, and assert on responses, sessions and rows.
 ---
 
-The `lumektest` package boots your real application, `bootstrap.New`, in the test environment and sends requests in-process: no port, no network.
+The `vukemtest` package boots your real application, `bootstrap.New`, in the test environment and sends requests in-process: no port, no network.
 
 ```go title="tests/posts_test.go"
 func TestCreatePost(t *testing.T) {
 	t.Parallel()
 
-	app := lumektest.New(t, bootstrap.New)
+	app := vukemtest.New(t, bootstrap.New)
 
 	app.Client(t).
 		PostForm("/posts", url.Values{"title": {"Hello"}, "body": {"World"}}).
 		AssertRedirect("/posts/1").
 		AssertSessionHas("success")
 
-	lumektest.AssertDatabaseHas(t, app, "posts", map[string]any{"title": "Hello"})
+	vukemtest.AssertDatabaseHas(t, app, "posts", map[string]any{"title": "Hello"})
 }
 ```
 
-## `lumektest.New`
+## `vukemtest.New`
 
-`lumektest.New(t, build, opts...)`:
+`vukemtest.New(t, build, opts...)`:
 
 - sets `APP_ENV=test`, a random `APP_KEY` and cookie sessions;
 - points `DATABASE_URL` at a **private in-memory SQLite database** per test, so parallel tests never share rows;
@@ -30,19 +30,19 @@ func TestCreatePost(t *testing.T) {
 - boots providers, runs the registered migrations and shuts the app down in `t.Cleanup`.
 
 ```go
-clock := lumektest.NewFakeClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+clock := vukemtest.NewFakeClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 
-app := lumektest.New(t, bootstrap.New, lumektest.Options{
+app := vukemtest.New(t, bootstrap.New, vukemtest.Options{
 	Env:            map[string]string{"MAIL_FROM": "test@example.com"},
 	Clock:          clock.Now,          // app.Now() and sessions use the fake clock
 	SkipMigrations: false,
-	AppOptions:     []lumek.Option{},   // extra options passed to build
+	AppOptions:     []vukem.Option{},   // extra options passed to build
 })
 
 clock.Advance(3 * time.Hour) // e.g. expire the idle session timeout
 ```
 
-The returned `*lumektest.App` embeds `*lumek.App` (`app.DB()`, `app.Config`…) and adds `Client`, `Handler` and `RefreshDatabase(t)` (drop everything and migrate again).
+The returned `*vukemtest.App` embeds `*vukem.App` (`app.DB()`, `app.Config`…) and adds `Client`, `Handler` and `RefreshDatabase(t)` (drop everything and migrate again).
 
 ## The client
 
@@ -81,15 +81,15 @@ app.Client(t).HTMX().Get("/posts?q=go").AssertOK().AssertFragment()
 ## Database assertions
 
 ```go
-lumektest.AssertDatabaseHas(t, app, "posts", map[string]any{"title": "Hello", "deleted_at": nil}) // nil → IS NULL
-lumektest.AssertDatabaseMissing(t, app, "posts", map[string]any{"title": "Spam"})
-lumektest.AssertDatabaseCount(t, app, "posts", 1)
+vukemtest.AssertDatabaseHas(t, app, "posts", map[string]any{"title": "Hello", "deleted_at": nil}) // nil → IS NULL
+vukemtest.AssertDatabaseMissing(t, app, "posts", map[string]any{"title": "Spam"})
+vukemtest.AssertDatabaseCount(t, app, "posts", 1)
 ```
 
 ## Generating tests
 
 ```bash
-lumek make:test Comment   # tests/comment_test.go
+vukem make:test Comment   # tests/comment_test.go
 ```
 
 ## Plain `httptest`

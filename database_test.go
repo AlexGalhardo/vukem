@@ -1,4 +1,4 @@
-package lumek
+package vukem
 
 import (
 	"bytes"
@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/AlexGalhardo/golang-framework/schema"
+	"github.com/AlexGalhardo/vukem/schema"
 )
 
 var appMigrations = []schema.Migration{{

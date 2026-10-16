@@ -1,4 +1,4 @@
-Usage: lumek make:model [flags] <Name>
+Usage: vukem make:model [flags] <Name>
 
 Create a model (with -m, -f, -c)
 

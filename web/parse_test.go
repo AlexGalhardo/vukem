@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/AlexGalhardo/golang-framework/errs"
-	"github.com/AlexGalhardo/golang-framework/z"
+	"github.com/AlexGalhardo/vukem/errs"
+	"github.com/AlexGalhardo/vukem/z"
 )
 
 type storePost struct {

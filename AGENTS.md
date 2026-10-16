@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Lumek: a Laravel/AdonisJS-inspired, stdlib-first Go web framework. Module `github.com/AlexGalhardo/golang-framework`, package `lumek`, CLI `lumek`.
+Vukem: a Laravel/AdonisJS-inspired, stdlib-first Go web framework. Module `github.com/AlexGalhardo/vukem`, package `vukem`, CLI `vukem`.
 
 ## Start here
 
