@@ -530,7 +530,7 @@ Applies to **every** task:
   → verify: e2e CRUD through the admin in a test app; access without the `admin` ability denied (`TestSecurity_A01_AdminRequiresAbility`).
 - [ ] **B.7.2** `install:admin` scaffold and `make:admin-resource`.
   → verify: generated app tests pass.
-- [ ] **B.7.3** `devtools` dashboard at `/_vukem` (development only; boot error if enabled in production): routes, requests with timings, SQL queries with N+1 detection, jobs, events, mail previews, logs, traces (ring buffers).
+- [x] **B.7.3** `devtools` dashboard at `/_vukem` (development only; boot error if enabled in production): routes, requests with timings, SQL queries with N+1 detection, jobs, events, mail previews, logs, traces (ring buffers).
   → verify: tests; enabling in production fails at boot (`TestSecurity_A02_DevtoolsNeverInProduction`).
 
 ### B.8 Auth & integrations
