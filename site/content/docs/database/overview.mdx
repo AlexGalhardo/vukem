@@ -8,11 +8,11 @@ description: SQLite by default with safe pragmas and split reader/writer pools, 
 | Database | Package | Status |
 | --- | --- | --- |
 | SQLite (pure Go, no cgo) | core, `modernc.org/sqlite` | Available |
-| PostgreSQL | `drivers/postgres` (pgx) | Planned for ALPHA |
+| PostgreSQL | `drivers/postgres` (pgx) | Available |
 | Redis (cache, sessions, queues) | `drivers/redis` | Planned for BETA |
 | MongoDB | `drivers/mongo` | Planned for BETA |
 
-Drivers are separate Go modules, so importing the core never downloads a heavy driver. The query builder and migrations already speak both SQLite and PostgreSQL dialects.
+Drivers are separate Go modules, so importing the core never downloads a heavy driver. MySQL/MariaDB (`drivers/mysql`) is planned for BETA.
 
 ## Connecting
 
@@ -69,3 +69,30 @@ err := db.Tx(ctx, func(tx *database.Tx) error {
 
 - [ORM](/docs/database/orm): typed queries and models.
 - [Migrations](/docs/database/migrations): schema builder and `vukem migrate`.
+
+## PostgreSQL
+
+```bash
+go get github.com/AlexGalhardo/vukem/drivers/postgres
+```
+
+```go title="bootstrap/app.go"
+vukem.New(append([]vukem.Option{
+	vukem.WithDatabaseDrivers(postgres.Driver()), // postgres:// and postgresql:// URLs
+	// ...
+}, opts...)...)
+```
+
+```bash title=".env"
+DATABASE_URL=postgres://app:secret@localhost:5432/app?sslmode=disable
+```
+
+Models, queries, migrations, relations, the database cache store and `SESSION_DRIVER=database` work unchanged on SQLite and PostgreSQL.
+
+## Conformance suite
+
+`database/dbtest.Run(t, db)` is the suite every dialect passes: migrations, schema changes, ORM round trips (JSON, nullable, booleans, times), unique violations as 409, foreign keys, soft deletes, cursor pagination, relations and transactions (including rollback on panic). `drivers/postgres` runs it against `postgres:17` with `go test -tags=integration`.
+
+## Transactions and SQLite
+
+Inside `db.Tx`, pass `tx` to every query. SQLite has a single writer connection, so a write through `db` while the transaction holds it waits forever. `database.RunInTx(ctx, ex, fn)` joins the caller's transaction when `ex` is already a `*database.Tx`.

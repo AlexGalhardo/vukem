@@ -1,0 +1,38 @@
+---
+title: Telegram logging
+description: Send selected log records to Telegram chats with a non-blocking slog handler.
+---
+
+Set the variables and the app logger fans out to stderr and Telegram (`slog.NewMultiHandler`):
+
+```bash title=".env"
+TELEGRAM_BOT_TOKEN=123456:ABC...   # never logged
+TELEGRAM_CHAT_ID=-1001234567890
+TELEGRAM_MIN_LEVEL=error           # debug, info, warn, error
+TELEGRAM_THREAD_ID=42              # optional forum topic
+```
+
+```go
+app.Telegram.Contact(ctx, map[string]string{"name": in.Name, "message": in.Message}) // never filtered by level
+app.Telegram.Send(ctx, "<b>Deploy</b> finished")                                     // pre-formatted HTML
+```
+
+Use the handler directly for per-level chats or custom error handling:
+
+```go
+tg := telegram.NewHandler(telegram.Config{
+	BotToken: token, ChatID: "-100", ChatIDs: map[slog.Level]string{telegram.LevelFatal: "-200"},
+	MinLevel: slog.LevelWarn, AppName: "Shop", Env: "production", Silent: true, OnError: report,
+})
+defer tg.Close(ctx)
+log := slog.New(slog.NewMultiHandler(base, tg))
+```
+
+| Feature | Detail |
+| --- | --- |
+| Levels | debug, info, warn, error plus `telegram.LevelSuccess` and `telegram.LevelFatal` |
+| Format | Telegram HTML: level emoji, app, environment, UTC time, then message and attributes (groups dotted, error chains as "caused by") in a `<pre>` block; all content escaped; truncated to 4096 characters without cutting tags or entities |
+| Reliability | bounded queue (drops and reports when full), per-request timeout, one retry after HTTP 429 honouring `retry_after` (capped), `OnError`, drained by `app.Shutdown` |
+| Security | the token is a `config.Secret`, redacted from errors; `vukem about` shows only on/off; disabled when token or chat is missing |
+
+Ported from the maintainer's TypeScript [telegram-logger](https://github.com/AlexGalhardo/telegram-logger).

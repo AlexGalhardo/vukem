@@ -1,0 +1,63 @@
+---
+title: Authorization
+description: Gates and policies that fail closed, c.Authorize, the can template function and make:policy.
+---
+
+Package `authz` is generic over your user type. Decisions **fail closed**: an ability or policy that was never registered denies (403), and the cause is logged.
+
+## Gates
+
+```go
+gate := authz.New(func(ctx context.Context) (*models.User, error) {
+	return auth.UserFrom[*models.User](ctx, "web") // who is asking
+})
+
+gate.Define("edit-settings", func(ctx context.Context, u *models.User) bool { return u.Role == "admin" })
+gate.DefineResult("see-billing", func(ctx context.Context, u *models.User) authz.Result { return authz.DenyAsNotFound() })
+
+r.Services().Authorizer = gate // enables c.Authorize and {{can}}
+
+if err := c.Authorize("edit-settings", nil); err != nil {
+	return err // 401 without a user, 403 denied, 404 for DenyAsNotFound
+}
+```
+
+## Policies
+
+```go title="app/policies/post_policy.go"
+// vukem make:policy Post
+type PostPolicy struct{}
+
+func (PostPolicy) Update(ctx context.Context, u *models.User, p *models.Post) authz.Result {
+	if u.ID == p.UserID {
+		return authz.Allow()
+	}
+
+	return authz.DenyAsNotFound()
+}
+
+func (PostPolicy) Create(ctx context.Context, u *models.User) bool { return u.EmailVerified() } // type-level ability
+```
+
+```go
+// app/policies/registry.go (make:policy appends)
+func All() []authz.Policy { return []authz.Policy{authz.For[*models.Post](PostPolicy{})} }
+
+if err := gate.Register(policies.All()...); err != nil { // signatures are checked at boot
+	return err
+}
+
+if err := c.Authorize("update", post); err != nil { return err }
+if err := c.Authorize("create", (*models.Post)(nil)); err != nil { return err }
+```
+
+- Policies are found by the subject's Go type; ability names map to methods (`"update"` → `Update`) returning `authz.Result` (`Allow`, `Deny(msg)`, `DenyAsNotFound`) or `bool`.
+- `gate.Before(func(ctx, u, ability) *authz.Result)` decides first (super-admins). `gate.Allows(ctx, u, ability, subject)` works outside requests.
+- Denials through `c.Authorize` emit the `authz.denied` security event. Without an `Authorizer` every check denies.
+
+## Templates
+
+```html
+{{if can "update" .Post}}<a href="{{route "posts.edit" "post" .Post.ID}}">Edit</a>{{end}}
+{{if can "edit-settings"}}<a href="/settings">Settings</a>{{end}}
+```

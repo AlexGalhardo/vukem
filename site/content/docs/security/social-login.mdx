@@ -1,55 +1,66 @@
 ---
 title: Social login
-description: OAuth2 and OpenID Connect sign-in with GitHub, Google and others, with PKCE and signed state.
+description: Sign in with GitHub, Google, GitLab, Discord, Microsoft or any OAuth2/OIDC provider, with PKCE and verified ID tokens.
 ---
 
-<Callout type="warning">
-Planned for ALPHA. The `social` package is not implemented yet; this page documents the design target.
-</Callout>
+## With the scaffold
 
-Ally-style sign-in built on the standard library (no `x/oauth2`).
-
-```go title="bootstrap/social.go"
-app.Social = social.New(app.Key,
-	social.GitHub(cfg.GitHub, social.Scopes("read:user", "user:email")),
-	social.Google(cfg.Google), // OIDC: ID token verified (iss, aud, exp, nonce, JWKS signature)
-)
+```bash
+vukem install:auth --social github,google
 ```
 
-```go title="routes/auth.go"
+This adds `/auth/{provider}/redirect` and `/auth/{provider}/callback`, the `social_accounts` model and migration (unique provider + provider id), provider setup from `SOCIAL_<NAME>_CLIENT_ID` and `SOCIAL_<NAME>_CLIENT_SECRET` (also appended to `.env.example`), and account linking:
+
+- an existing link signs in;
+- an email the provider verified links to the existing account;
+- an **unverified** email matching an account is refused with 409, so a provider account cannot take over a password account;
+- otherwise a new user is created.
+
+It also works on projects that already ran `install:auth`.
+
+## The `social` package
+
+```go
+s := social.New(app.Key.Derive("social.state", 32),
+	social.GitHub(social.Config{ClientID: id, ClientSecret: secret, RedirectURL: "https://app.test/auth/github/callback"}),
+	social.Google(googleCfg),                  // OpenID Connect
+	social.Microsoft("common", microsoftCfg),  // OpenID Connect (Entra ID)
+	social.GitLab(gitlabCfg), social.Discord(discordCfg),
+	social.OIDC("okta", "https://example.okta.com", oktaCfg), // any OIDC issuer
+)
+
 r.Get("/auth/{provider}/redirect", func(c *web.Ctx) error {
-	return app.Social.Use(c.Param("provider")).Redirect(c) // 404 for unknown providers
+	return s.Redirect(c, c.Param("provider")) // 404 for unknown providers
 })
 
 r.Get("/auth/{provider}/callback", func(c *web.Ctx) error {
-	u, err := app.Social.Use(c.Param("provider")).User(c)
+	u, err := s.User(c, c.Param("provider"))
 	if err != nil {
-		return err // denied, state mismatch, expired code
+		return err // 400 bad or expired state, 403 cancelled, 502 provider failure
 	}
-
-	user, err := actions.FindOrCreateFromSocial(c.Context(), db, u)
-	if err != nil {
-		return err
-	}
-
-	return auth.Login(c, user)
+	// u.Provider, u.ID, u.Email, u.EmailVerified, u.Name, u.Nickname, u.AvatarURL, u.Token
+	return nil
 })
 ```
 
-Credentials come from the environment: `SOCIAL_GITHUB_CLIENT_ID`, `SOCIAL_GITHUB_CLIENT_SECRET`, `SOCIAL_GITHUB_REDIRECT_URL`.
-
-## Security
-
 | Feature | Detail |
 | --- | --- |
-| Flow | Authorization Code with **PKCE (S256)** for every provider |
-| CSRF and replay | Random `state` (and OIDC `nonce`) in a short-lived, signed, `HttpOnly` cookie; constant-time compare, single use |
-| Redirect URL | Fixed in config, never taken from the request |
-| Emails | Only verified emails are reported as `EmailVerified` |
-| Tokens | Never logged; outbound calls use a client with timeouts |
+| Flow | Authorization Code + PKCE (S256) for every provider; htmx requests get `HX-Redirect` |
+| State | state, PKCE verifier and nonce in a 10-minute, HMAC-signed, `HttpOnly`, `SameSite=Lax` cookie; compared in constant time; used states are remembered, so a replayed callback fails |
+| OIDC | discovery, JWKS cache (refreshed once for unknown key ids), RS256/ES256 only, checks of `iss`, `aud`/`azp`, `exp`/`iat` (1 minute leeway) and `nonce` |
+| Email trust | `EmailVerified` only when the provider vouches: GitHub primary verified address, GitLab `confirmed_at`, Discord `verified`, OIDC `email_verified` (Microsoft `xms_edov`) |
+| Stateless | `s.UserFromToken(ctx, "google", accessToken)` for API/SPA flows |
+| Options | `social.WithEndpoints` (GitHub Enterprise, self-hosted GitLab), `social.WithAuthParams`, `Config.Scopes`, `social.OAuth2(...)` for any OAuth2 server |
 
-## Providers
+## Testing
 
-GitHub, Google (OIDC), GitLab, Discord and Microsoft (Entra ID), plus `social.OAuth2(...)` and `social.OIDC(issuerURL, ...)` for any compliant provider. `Stateless()` supports API and SPA flows.
+```go
+user := social.User{ID: "gh-1", Email: "ana@example.com", EmailVerified: true, Name: "Ana"}
+app := vukemtest.New(t, bootstrap.New, vukemtest.Options{Env: vukemtest.FakeSocial(user)})
+```
 
-`vukem install:auth --social github,google` adds the routes, a `social_accounts` migration and the account-linking action.
+`social.Fake(name, callbackURL, user)` is a provider without network calls; `vukemtest.FakeSocial` enables it in scaffolded test apps only.
+
+<Callout type="info">
+Apple, LinkedIn and X providers are planned for BETA.
+</Callout>

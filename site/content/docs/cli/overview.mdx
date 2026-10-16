@@ -14,7 +14,9 @@ vukem list
 
 | Command | Description |
 | --- | --- |
-| `vukem new <name> [--module path] [--framework dir]` | Create a project from the HTMX + SQLite starter, run `go mod tidy`, write `APP_KEY`, `git init` ([Installation](/docs/installation)) |
+| `vukem new <name> [--api] [--module path] [--framework dir]` | Create a project from the HTMX + SQLite starter, or a JSON-only API with `--api`; run `go mod tidy`, write `APP_KEY`, `git init` ([Installation](/docs/installation)) |
+| `vukem install:auth [--social github,google]` | Add login, registration, email verification and password reset ([Authentication](/docs/security/authentication)), optionally social login |
+| `vukem install:api` | Add API tokens, `/api/v1`, CORS and rate limiting ([REST APIs](/docs/rest-apis/overview)) |
 | `vukem serve [--poll 500ms] [--no-vite]` | Build and run `cmd/app`; rebuild and restart when `.go`, `go.mod`, `go.sum` or `.env` change |
 | `vukem build [-o bin/app]` | `npx vite build` when a `vite.config.*` exists, then `go build -trimpath -ldflags="-s -w"` |
 | `vukem key:generate [--show] [--force]` | Write `APP_KEY` to `.env` (created from `.env.example` when missing) |
@@ -35,6 +37,13 @@ Flags may come before or after arguments: `vukem make:model Post -m -c` equals `
 | `make:command <Name>` | `app/commands/<name>.go`, appended to `bootstrap.Commands()` |
 | `make:provider <Name>` | `app/providers/<name>_provider.go`, appended to `bootstrap.Providers()` |
 | `make:test <Name>` | `tests/<name>_test.go` using `vukemtest` |
+| `make:resource <Name>` | `app/resources/<name>.go`: JSON transformer and `api.Map` list helper |
+| `make:factory <Name>` | `database/factories/<name>_factory.go` with `factory.New` |
+| `make:seeder <Name>` | `database/seeders/<name>_seeder.go`, appended to `seeders.All()` |
+| `make:policy <Name>` | `app/policies/<name>_policy.go`, appended to `policies.All()` |
+| `make:mail <Name>` | `app/mail/<name>.go` and `resources/views/mail/<name>.html` |
+| `make:event <Name>` | `app/events/<name>.go` |
+| `make:listener <Name> --event <Event> [--async]` | `app/listeners/<name>.go`, appended to `listeners.All()` |
 
 - Generated Go is `gofmt`ed. Existing files are never overwritten without `--force`.
 - Conventional suffixes are optional: `PostController`, `BillingProvider` and `SendReportsCommand` work as names.
@@ -42,7 +51,7 @@ Flags may come before or after arguments: `vukem make:model Post -m -c` equals `
 
 ### Custom stubs
 
-Stubs are `text/template` files embedded in the CLI. Put a file with the same name in your project's `stubs/` directory to override one (`controller.go.tmpl`, `model.go.tmpl`, `migration.go.tmpl`, `middleware.go.tmpl`, `request.go.tmpl`, `command.go.tmpl`, `provider.go.tmpl`, `factory.go.tmpl`, `test.go.tmpl`). Available data: `.Name` (Pascal), `.Snake`, `.Kebab`, `.Camel`, `.Plural`, `.Module`, and `.Table`, `.Timestamp`, `.ID`, `.Func`, `.Resource`, `.API` where relevant. Unknown keys are errors.
+Stubs are `text/template` files embedded in the CLI. Put a file with the same name in your project's `stubs/` directory to override one (`controller.go.tmpl`, `model.go.tmpl`, `migration.go.tmpl`, `middleware.go.tmpl`, `request.go.tmpl`, `command.go.tmpl`, `provider.go.tmpl`, `factory.go.tmpl`, `seeder.go.tmpl`, `resource.go.tmpl`, `policy.go.tmpl`, `mail.go.tmpl`, `mail.html.tmpl`, `event.go.tmpl`, `listener.go.tmpl`, `test.go.tmpl`). Available data: `.Name` (Pascal), `.Snake`, `.Kebab`, `.Camel`, `.Plural`, `.Module`, and `.Table`, `.Timestamp`, `.ID`, `.Func`, `.Resource`, `.API` where relevant. Unknown keys are errors.
 
 ## App commands
 
@@ -56,7 +65,7 @@ vukem about
 vukem reports:send --dry-run   # your own command
 ```
 
-`vukem` builds `cmd/app` into `.vukem/bin/app` and runs it with the same arguments. The binary is rebuilt only when a `.go`, `go.mod` or `go.sum` file is newer, so repeated commands start instantly. Built-in app commands: `migrate`, `migrate:rollback`, `migrate:reset`, `migrate:fresh`, `migrate:status`, `route:list`, `about`. Add your own with `vukem make:command` (see [Application lifecycle](/docs/architecture/lifecycle#commands)).
+`vukem` builds `cmd/app` into `.vukem/bin/app` and runs it with the same arguments. The binary is rebuilt only when a `.go`, `go.mod` or `go.sum` file is newer, so repeated commands start instantly. Built-in app commands: `migrate`, `migrate:rollback`, `migrate:reset`, `migrate:fresh`, `migrate:status`, `db:seed`, `db:wipe`, `route:list`, `about`. Destructive commands need `--force` in production. Add your own with `vukem make:command` (see [Application lifecycle](/docs/architecture/lifecycle#commands)).
 
 Running the binary directly works too: `go run ./cmd/app migrate`.
 
@@ -77,6 +86,6 @@ Running the binary directly works too: `go run ./cmd/app migrate`.
 
 A delegated app command's exit code is passed through unchanged.
 
-<Callout type="warning">
-Planned for ALPHA: `make:resource`, `make:policy`, `make:factory`, `make:seeder`, `make:mail`, `make:event`, `install:api`, `install:auth`, `stub:publish`, `db:seed`. Planned for BETA: `make:job`, `install:inertia`, `openapi:export`, queue and schedule commands.
+<Callout type="info">
+Planned for BETA: `stub:publish`, `make:job`, `make:proto`, `install:inertia`, `install:admin`, `install:billing`, `openapi:export`, `codegen:client`, queue and schedule commands.
 </Callout>

@@ -63,13 +63,16 @@ func main() { os.Exit(vukem.Main(bootstrap.New)) }
 | `WithRoutes(fn)` | `func(r *router.Router, app *vukem.App) error`, called after providers registered; an error stops `New` |
 | `WithViews(fsys)` | Enable the [view engine](/docs/basics/views) over `fsys`; views reload per request outside production |
 | `WithMigrations(m)` | Migrations used by `migrate*` commands and `app.Migrator()` |
-| `WithDatabaseDrivers(d...)` | Extra database drivers (PostgreSQL module, ALPHA) |
+| `WithDatabaseDrivers(d...)` | Extra database drivers (`postgres.Driver()`) |
+| `WithSeeders(s...)` | Seeders run by `db:seed` and `app.Seed` |
+| `WithListeners(r...)` | Event listeners registered on `app.Events` |
+| `WithMailTransport(t)` | Replace the transport chosen by `MAIL_MAILER` |
 | `WithClock(now)` | Clock for sessions and other time-based features (`vukemtest.FakeClock`) |
 | `WithRunner(name, r)` | A long-running component started by `Run` |
 | `WithoutHTTP()` | Do not start the HTTP server runner (tests, workers) |
 | `WithStdout(w)` | Where commands print |
 
-The `App` exposes `Config`, `Source` (every configuration value), `Key` (decoded `APP_KEY`), `Log`, `Kind`, `Router` and `Views`, plus `DB()`, `Migrator()`, `Sessions()`, `Handler()` and `Now()`.
+The `App` exposes `Config`, `Source` (every configuration value), `Key` (decoded `APP_KEY`), `Log`, `Kind`, `Router`, `Views`, `Events` and `Telegram`, plus `DB()`, `Migrator()`, `Sessions()`, `Mailer()`, `Cache()`, `Seed(ctx)`, `Handler()` and `Now()`.
 
 ## Commands
 

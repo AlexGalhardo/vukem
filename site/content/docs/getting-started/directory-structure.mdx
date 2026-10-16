@@ -53,8 +53,16 @@ The module `github.com/AlexGalhardo/vukem` is split into small, single-purpose p
 | `vukemtest` | in-process test client and database assertions |
 | `cmd/vukem` | the CLI |
 
+| More packages | Purpose |
+| --- | --- |
+| `api`, `ratelimit` | REST envelopes, query conventions, deprecation headers; GCRA rate limiting |
+| `auth`, `auth/hash`, `authz`, `social`, `signed` | guards and tokens, password hashing, gates and policies, social login, signed URLs |
+| `mail`, `cache`, `storage`, `events`, `logging/telegram` | mail transports, cache stores, disks, typed events, Telegram logging |
+| `factory`, `database/dbtest` | model factories, dialect conformance suite |
+| `httpclient`, `webhook`, `security` | SSRF-safe client, webhook signatures, security events |
+| `drivers/postgres` (separate module) | PostgreSQL driver |
+
 | Planned | Phase |
 | --- | --- |
-| `auth`, `authz`, `social`, `mail`, `cache`, `storage`, `event`, API starter | ALPHA |
-| `queue`, `schedule`, `inertia`, `vite`, `i18n`, `sse`, OpenAPI | BETA |
-| `drivers/postgres`, `drivers/redis`, `drivers/mongo` (separate modules) | ALPHA / BETA |
+| `queue`, `schedule`, `inertia`, `vite`, `i18n`, `sse`, OpenAPI + Scalar, `broadcast`, `admin`, `devtools` | BETA |
+| `drivers/redis`, `drivers/mongo`, `drivers/mysql`, `drivers/s3`, `contrib/graphql`, `contrib/grpc`, `contrib/stripe` (separate modules) | BETA |

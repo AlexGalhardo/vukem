@@ -77,5 +77,5 @@ services.TrustedProxies = []*net.IPNet{lb}
 | `c.IsHTMX()`, `c.IsPartial()`, `c.HTMX()` | [HTMX](/docs/frontend/htmx) |
 
 <Callout type="warning">
-Planned for ALPHA: `User()`, `Auth()` and `Authorize(ability, subject)`.
+`c.Authorize(ability, subject)` checks [authorization](/docs/security/authorization); `auth.User[U](c, guard)` returns the [authenticated user](/docs/security/authentication).
 </Callout>

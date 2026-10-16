@@ -109,5 +109,5 @@ func (p *Post) BeforeCreate(ctx context.Context) error {
 Timestamps use `orm.WithClock(ctx, now)` when present, so tests can fix the time.
 
 <Callout type="warning">
-Planned for ALPHA: relations (belongs-to, has-many, eager loading), factories and seeders.
+See [Relations](/docs/database/relations) for eager loading and [Factories and seeders](/docs/database/factories-seeders) for test data.
 </Callout>

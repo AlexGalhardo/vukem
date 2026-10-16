@@ -6,7 +6,7 @@ description: Vukem brings Laravel and AdonisJS productivity to idiomatic Go, bui
 Vukem is a web framework for **REST APIs and full-stack apps**: routing, validation, an ORM with migrations, authentication, JSON resources with problem+json errors, HTMX-first views and an optional Inertia + React frontend, all driven by one CLI.
 
 <Callout type="warning">
-Vukem is pre-1.0 and APIs will change between `v0.x` releases. Pages and callouts marked "Planned for ALPHA" or "Planned for BETA" describe the design target, not shipped code.
+Vukem is pre-1.0 and APIs will change between `v0.x` releases. Callouts marked "Planned for BETA" describe the design target, not shipped code.
 </Callout>
 
 ## Why Vukem
@@ -50,20 +50,20 @@ func (p *PostController) Show(c *web.Ctx) error {
 
 ## What works today
 
+The Prototype (`v0.1`) and ALPHA (`v0.2`–`v0.13`) phases are complete.
+
 | Area | Status |
 | --- | --- |
-| Configuration: `.env` loading, typed `config.Load`, `config.Secret`, `APP_KEY` key derivation | Available |
-| Application: providers, runners, commands, graceful shutdown, HTTP server with safe timeouts | Available |
-| Router: groups, named routes, URL generation, resources, three middleware stacks, 404/405 | Available |
-| `*web.Ctx`: input, responses, redirects, conditional requests, problem+json errors | Available |
-| Middleware: recover, request id, logger, timeout, body limit, method override, CORS, static, secure headers with CSP nonces, gzip, JSON-only | Available |
-| Validation with `z`, sessions with flash and old input, CSRF protection | Available |
-| SQLite, generic ORM, schema builder and migrations | Available |
-| `html/template` views with layouts and fragments, htmx 4 helpers | Available |
-| `vukemtest` fluent test client and database assertions | Available |
-| `vukem` CLI: `new`, `serve`, `build`, `key:generate`, `make:*`, app commands | Available |
-| Authentication, authorization, REST API starter, PostgreSQL, mail, cache, storage | Planned for ALPHA |
-| OpenAPI, queues, Inertia + React, Vite, Redis, MongoDB | Planned for BETA |
+| Configuration, application lifecycle, router, `*web.Ctx`, middleware, problem+json errors | Available |
+| Validation with `z`, sessions, CSRF, `html/template` views, htmx 4 helpers | Available |
+| SQLite and [PostgreSQL](/docs/database/overview#postgresql), generic ORM, [relations](/docs/database/relations), migrations, [factories and seeders](/docs/database/factories-seeders) | Available |
+| [REST toolkit](/docs/rest-apis/overview): `vukem new --api`, `install:api`, [pagination and query conventions](/docs/rest-apis/pagination), rate limiting, CORS | Available |
+| [Authentication](/docs/security/authentication) (session and token guards, `install:auth`), [social login](/docs/security/social-login), [authorization](/docs/security/authorization) | Available |
+| [Mail](/docs/digging-deeper/mail) (SMTP, Resend), [cache](/docs/digging-deeper/cache), [storage](/docs/digging-deeper/storage), [events](/docs/digging-deeper/events), [Telegram logging](/docs/digging-deeper/telegram-logging) | Available |
+| [Security building blocks](/docs/security/building-blocks): SSRF-safe client, signed URLs, webhook signatures, security events | Available |
+| `vukemtest` and the [`vukem` CLI](/docs/cli/overview) | Available |
+| OpenAPI 3.1 + Scalar docs, queues and scheduler, Inertia (React, Vue, Svelte) + Vite, Redis, MongoDB, MySQL, S3 | Planned for BETA |
+| GraphQL, WebSockets/broadcasting, gRPC (connect-go), admin panel, dev dashboard, JWT guard, TOTP 2FA, Stripe, resumable uploads, templ starter, typed RPC clients | Planned for BETA |
 
 ## Next steps
 

@@ -1,0 +1,71 @@
+---
+title: Pagination and query conventions
+description: Offset and cursor envelopes, and allowlisted filter, sort, fields and include parameters that answer 400 for anything unknown.
+---
+
+## Query conventions
+
+```go title="app/controllers/apiv1/products.go"
+func (p *Products) Index(c *web.Ctx) error {
+	req, err := api.Query(c, orm.QueryOf[models.Product](p.db),
+		api.Filters("category", "in_stock"),        // ?filter[category]=books,toys&filter[in_stock]=true
+		api.Sorts("name", "price", "-created_at"),  // ?sort=-price,name  (default: last listed)
+		api.Fields("id", "name", "price"),          // ?fields=id,name
+		api.Includes("reviews"),                    // ?include=reviews → req.Includes
+		api.PerPage(20, 100),                       // ?page=2&per_page=50 (capped at 100)
+	)
+	if err != nil {
+		return err // 400 problem+json
+	}
+
+	page, err := req.Paginate(c.Context())
+	if err != nil {
+		return err
+	}
+
+	return api.Page(c, page, resources.Product)
+}
+```
+
+- Every column is an **allowlist**. An unknown filter, sort, field or include answers 400 listing the allowed values; input never chooses a column freely.
+- Filter values are always bound parameters. Comma-separated values become `IN`; `true`/`false` become booleans.
+- `req.Includes` lists the requested relations; pass them to `Query.With` (see [relations](/docs/database/relations)).
+
+## Offset pages
+
+```json
+{
+  "data": [{ "id": 1, "name": "Keyboard" }],
+  "meta": { "page": 1, "per_page": 20, "total": 134, "last_page": 7 },
+  "links": { "self": "/api/v1/products?page=1", "next": "/api/v1/products?page=2", "prev": null }
+}
+```
+
+`api.Page(c, page, fn)` builds it from `orm.Page[T]` (`query.Paginate(ctx, page, perPage)`); `fn` is the resource transformer.
+
+## Cursor pages
+
+Keyset pagination needs no `COUNT` and stays stable while rows are inserted:
+
+```go
+page, err := req.Query.CursorPaginate(c.Context(), req.Cursor, req.PerPage, orm.Asc)
+if err != nil {
+	return err // a tampered cursor is a 400
+}
+
+return api.Cursor(c, page, resources.Product)
+```
+
+```json
+{
+  "data": [{ "id": 21, "name": "Mouse" }],
+  "meta": { "per_page": 20, "next_cursor": "MjE" },
+  "links": { "self": "/api/v1/products", "next": "/api/v1/products?cursor=MjE", "prev": null }
+}
+```
+
+The cursor orders by the primary key, so the query must not have its own `OrderBy`. `links.next` is `null` on the last page.
+
+## Plain collections
+
+`api.Collection(c, items, fn)` answers `{"data": [...]}` without meta or links. Single resources have no envelope.

@@ -1,0 +1,56 @@
+---
+title: Relations
+description: BelongsTo, HasOne, HasMany and ManyToMany fields, batched eager loading with With, pivot writes and strict mode.
+---
+
+```go title="app/models/post.go"
+type Post struct {
+	orm.Model
+
+	UserID   int64
+	User     orm.BelongsTo[User]   `json:"user,omitzero"`               // posts.user_id → users.id
+	Comments orm.HasMany[Comment]  `json:"comments,omitzero"`           // comments.post_id
+	Tags     orm.ManyToMany[Tag]   `json:"tags,omitzero"`               // pivot post_tag(post_id, tag_id)
+	Cover    orm.HasOne[Image]     `json:"cover,omitzero" orm:"fk:owner_id"`
+}
+```
+
+```go
+posts, err := orm.QueryOf[models.Post](db).With("User", "Comments", "Tags").Get(ctx)
+
+user, err := posts[0].User.Get() // *User, nil when the key points nowhere
+tags, err := posts[0].Tags.Get() // []Tag
+```
+
+## Conventions
+
+| Relation | Convention | Override (`orm` tag) |
+| --- | --- | --- |
+| `BelongsTo[T]` | column `<field>_id` on this model → `T`'s primary key | `fk:author_id` |
+| `HasOne[T]` / `HasMany[T]` | column `<model>_id` on `T` → this primary key | `fk:owner_id` |
+| `ManyToMany[T]` | pivot `<a>_<b>` (singular snake names, sorted), columns `<model>_id` and `<t>_id` | `pivot:taggings,fk:post_id,rk:tag_id` |
+
+## Eager loading
+
+- `With(...)` works for `Get`, `First`, `Find`, `Paginate` and `CursorPaginate` (not `Each`). Each relation costs one query batched with `IN` (chunks of 500); many-to-many costs two. N posts with two relations take 3 queries; the conformance suite asserts these counts on SQLite and PostgreSQL.
+- Soft-deleted related rows are not loaded. An unknown relation name is a query error.
+- Nested eager loading (`"Comments.User"`) is not supported yet.
+
+## Strict mode
+
+Relations are never loaded lazily, so there are no hidden N+1 queries:
+
+```go
+post, _ := orm.QueryOf[models.Post](db).Find(ctx, 1)
+_, err := post.User.Get() // orm.ErrNotLoaded
+```
+
+Relation fields are not columns. With `json:",omitzero"` they appear in JSON only when loaded.
+
+## Pivot writes
+
+```go
+err = orm.Attach(ctx, db, &post, "Tags", 1, 2) // skips ids already linked
+err = orm.Detach(ctx, db, &post, "Tags", 2)    // no ids: detach all
+err = orm.Sync(ctx, db, &post, "Tags", 1, 3)   // exact set, in a transaction
+```

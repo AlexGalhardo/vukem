@@ -1,88 +1,121 @@
 ---
 title: Authentication
-description: Session and access-token guards, argon2id hashing, auth middleware and the install:auth scaffold.
+description: Session and access-token guards, argon2id hashing, remember-me, auth middleware and the install:auth scaffold.
 ---
 
-<Callout type="warning">
-Planned for ALPHA (password hashing ships in the Prototype release). Nothing on this page is implemented yet.
-</Callout>
+## Quick start
+
+```bash
+vukem install:auth   # login, registration, email verification, password reset, tests
+vukem migrate
+```
+
+`install:auth` copies **code you own** into the project and registers its migrations and routes:
+
+```text
+app/models/user.go                          User (AuthID, AuthPassword, EmailVerified)
+app/accounts/{accounts,users,passwords}.go  guards, registration, verification, password resets
+app/controllers/account/*.go                login, register, logout, forgot/reset password, verification, dashboard
+app/requests/auth.go                        z schemas (password at least 12 characters, confirmation)
+app/mail/auth.go                            VerifyEmail and ResetPassword mailables
+database/migrations/*                       users, remember tokens, access tokens, password resets
+resources/views/auth/*.html, resources/views/mail/*.html
+routes/auth.go                              appended to routes.All()
+tests/auth_test.go                          the whole flow
+```
+
+| Flow | Behaviour |
+| --- | --- |
+| Register | unique email (case-insensitive), argon2id hash, login, verification email |
+| Login | remember-me, intended URL, **5 attempts per minute per email + IP**, the same error for unknown users |
+| Email verification | signed link (HMAC, 1 hour), must match the logged-in user; resend limited to 3 per minute |
+| Forgot / reset password | the same answer for unknown emails; random token stored as SHA-256, 1 hour, single use; reset logs out remembered sessions |
+| Logout | session invalidated, remember-me token deleted |
 
 ## Concepts
 
-| Concept | Responsibility |
-| --- | --- |
-| **Guard** | How a request is authenticated (session cookie, bearer token) |
-| **UserProvider** | Where users come from (database table via the ORM, or custom) |
-| **Hasher** | Password hashing and verification |
-| **Gate** | Named abilities (`edit-settings`) |
-| **Policy[T]** | Abilities scoped to a model type (`update` a `Post`) |
-
 ```go
 type Authenticatable interface {
-	AuthID() string
-	AuthPassword() string
+	AuthID() string       // primary key as a string
+	AuthPassword() string // stored hash
 }
 
-type Guard[U Authenticatable] interface {
-	User(c *web.Ctx) (U, error) // cached per request
-	Check(c *web.Ctx) bool
-	Login(c *web.Ctx, u U) error
-	Logout(c *web.Ctx) error
+type UserProvider[U Authenticatable] interface {
+	ByID(ctx context.Context, id string) (U, error)
+	ByCredentials(ctx context.Context, creds map[string]string) (U, error) // never checks the password
 }
 ```
 
-## Guards
+`auth.NewORMProvider[models.User](db)` looks users up by primary key and by every credential except `password`, and stores rehashed passwords.
 
-<Tabs>
-<Tab title="session (web)">
+## Session guard
 
-- `Attempt(c, creds)` fetches the user, verifies the hash, regenerates the session and stores the user id.
-- When the user does not exist the hasher still runs against a dummy hash, so timing does not reveal accounts.
-- Optional remember-me tokens, stored as SHA-256 and rotated on use.
-- Passwords are rehashed on login when parameters change.
+```go
+users := auth.NewORMProvider[models.User](db)
+webGuard := auth.NewSessionGuard("web", users, hash.Default(), auth.NewRememberStore(db))
 
-</Tab>
-<Tab title="access_token (API)">
+r.Post("/login", func(c *web.Ctx) error {
+	in, err := web.Parse(c, requests.LoginSchema)
+	if err != nil {
+		return err
+	}
 
-- Opaque `<id>.<secret>` tokens; only `SHA-256(secret)` is stored, with abilities, `last_used_at` and expiry.
-- `auth.Tokens.Create(ctx, user, "cli", []string{"posts:read"}, 30*24*time.Hour)` returns the plain token once.
-- Compared in constant time; revoked by deleting the row.
-- JWT is intentionally not the default; a JWT guard can be added later behind the same interface.
+	creds := map[string]string{"email": in.Email, "password": in.Password}
+	if _, err := webGuard.Attempt(c, creds, auth.Remember(in.Remember)); err != nil {
+		return err // 422 on "email": "These credentials do not match our records."
+	}
 
-</Tab>
-</Tabs>
+	return c.Redirect("/dashboard")
+})
+
+r.Get("/dashboard", dashboard).Use(auth.Required(webGuard))
+
+user, err := auth.User[models.User](c, "web") // in handlers behind Required
+```
+
+- `Attempt` checks the password in constant time; unknown users still cost a hash verification and get the same 422 error. Failures emit the `auth.login_failed` security event.
+- `Login` regenerates the session id (fixation) and stores the user id; `Logout` invalidates the session and deletes the remember-me token.
+- Remember-me cookies hold `<id>.<secret>`; only `SHA-256(secret)` is stored, and tokens rotate on every use.
+- Stale hashes (bcrypt, weaker argon2 parameters) are upgraded on login.
+- `Validate(c, creds)` checks credentials without logging in (token issuance).
+
+## Token guard
+
+```go
+tokens := auth.NewTokens(db)
+apiGuard := auth.NewTokenGuard("api", users, tokens)
+
+plain, tok, err := tokens.Create(ctx, user.AuthID(), "cli", []string{"posts:read"}, 30*24*time.Hour)
+err = tokens.Revoke(ctx, tok.ID)
+err = tokens.RevokeAll(ctx, user.AuthID())
+
+if auth.TokenCan(c, "api", "posts:read") { /* ... */ } // "*" grants everything
+```
+
+Opaque tokens `<id>.<secret>` from `crypto/rand`; only the SHA-256 of the secret is stored, compared in constant time; `last_used_at` is updated at most once a minute. A JWT guard is planned for BETA.
 
 ## Middleware
 
 | Middleware | Effect |
 | --- | --- |
-| `auth.Required(guards...)` | 401 (API) or redirect to the `login` route (web) |
-| `auth.Guest()` | Redirects authenticated users to `home` |
-| `auth.Verified()` | Requires a verified email |
-| `auth.Ability("posts:write")` | Token ability check |
-
-```go
-r.Group("/dashboard", func(g *router.Group) {
-	g.Use(auth.Required())
-	g.Get("", dashboard.Index).Name("dashboard")
-})
-```
+| `auth.Required(guards...)` | first guard that authenticates wins; JSON clients get 401 with `WWW-Authenticate: Bearer`, browsers a redirect to the route named `login` (intended URL kept) |
+| `auth.Optional(guards...)` | authenticates when possible, never blocks (pages that show more to members) |
+| `auth.Guest(guards...)` | sends logged-in users to the route named `home` |
+| `auth.Verified(guard)` | 403 unless the user's `EmailVerified()` is true |
+| `auth.Ability(guard, abilities...)` | 403 unless the token grants every ability |
 
 ## Hashing
 
-| Driver | Default parameters |
-| --- | --- |
-| **argon2id** (default) | m=64 MiB, t=1, p=4, 16-byte salt, 32-byte key, PHC string |
-| bcrypt | cost 12, 72-byte input limit enforced |
+| Driver | Defaults | Notes |
+| --- | --- | --- |
+| argon2id (default) | m=64 MiB, t=1, p=4, 16-byte salt, 32-byte key | PHC string `$argon2id$v=19$m=…,t=…,p=…$salt$hash` |
+| bcrypt | your cost (12 recommended) | inputs over 72 bytes are rejected, never truncated |
 
-`hash.Make`, `hash.Verify` (constant time) and `hash.NeedsRehash`, both drivers from `golang.org/x/crypto`.
+`hash.Default()`, `hash.Argon2id(params)`, `hash.Bcrypt(cost)`, `hash.Fake()` for tests. `hash.Verify` reads both formats.
 
-## `install:auth`
+## Testing
 
-`vukem install:auth` generates user-owned code, not a hidden package: controllers for login, register, logout, password reset and email verification; editable actions such as password rules; the `User` model, migrations, HTMX views, routes and tests.
-
-Flows: register, rate-limited login (5 per minute per email and IP), logout, signed single-use password reset, signed email verification and password confirmation for sensitive routes. TOTP 2FA and passkeys are post-1.0.
-
-## Authorization
-
-Gates and `Policy[T]` resolve by Go type; an unregistered policy denies (fail closed), and `DenyAsNotFound()` answers 404 to avoid leaking resource existence.
+```go
+app.Client(t).ActingAs("web", user).Get("/dashboard").AssertOK()
+app.Client(t).WithToken(plain).GetJSON("/api/v1/me").AssertOK()
+```

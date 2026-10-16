@@ -96,6 +96,18 @@ vukem make:test Comment   # tests/comment_test.go
 
 Handlers are `net/http` handlers, so `httptest` works too: `h, err := app.Handler()` then `h.ServeHTTP(rec, req)`. Time-dependent code without an app can use `testing/synctest`.
 
-<Callout type="warning">
-Planned for ALPHA: `ActingAs(user)`, model factories and seeders.
-</Callout>
+## Authentication, mail and data
+
+```go
+app.Client(t).ActingAs("web", user).Get("/dashboard").AssertOK()   // logged in on the session guard
+app.Client(t).WithToken(plain).GetJSON("/api/v1/me").AssertOK()   // bearer token
+
+app.Mails().SentTo("ana@example.com")  // MAIL_MAILER=array in tests
+
+posts, err := factories.Post.Count(3).Create(t.Context(), db)
+err = app.Seed(t.Context())
+```
+
+- `vukemtest.FakeSocial(user)` returns `Options.Env` entries that sign in through a fake provider in apps scaffolded with `install:auth --social`.
+- `vukemtest.App.CookieValue(name)` reads the client's cookie jar.
+- See [Factories and seeders](/docs/database/factories-seeders) and [Events](/docs/digging-deeper/events#testing) for `events.NewFake()`.

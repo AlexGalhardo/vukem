@@ -1,0 +1,42 @@
+---
+title: Storage
+description: Local and in-memory disks behind os.Root, a file handler, signed temporary URLs and safe uploads.
+---
+
+```go
+disk, err := storage.NewLocal("storage/app/public", "/storage") // os.Root: no "..", no escaping symlinks
+r.Handle("/storage/", http.StripPrefix("/storage", storage.Handler(disk, nil)))
+
+path, err := storage.PutUploaded(ctx, disk, fileHeader, "avatars", storage.Images(2<<20))
+url := disk.URL(path)
+```
+
+## Disks
+
+`storage.Disk` has `Put` (atomic rename on local disks), `Open`, `Exists`, `Delete`, `List` and `URL`; `storage.Get` and `storage.PutBytes` are helpers. `storage.NewMemory(baseURL)` serves tests. Custom disks pass `storage/storagetest` (conformance and traversal suites). S3 is planned for BETA.
+
+## Serving files
+
+`storage.Handler(disk, signer)` never serves dotfiles or directories and sends `X-Content-Type-Options: nosniff`. With a `signed.Signer` it answers only signed, unexpired URLs:
+
+```go
+private, _ := storage.NewLocal("storage/app/private", "")
+r.Handle("/files/", http.StripPrefix("/files", storage.Handler(private, signer)))
+
+link, err := storage.TemporaryURL(signer, "/files", "invoices/42.pdf", 15*time.Minute)
+```
+
+Public files are served by the handler instead of a `storage:link` symlink (which needs extra privileges on Windows).
+
+## Uploads
+
+`PutUploaded` never uses the client's file name: it stores a random name with an extension from the type detected in the content (`http.DetectContentType`), checks the size from the header and again while copying, and answers 422 for disallowed types or sizes.
+
+```go
+storage.Images(2 << 20)                                               // JPEG, PNG, GIF, WebP up to 2 MiB
+storage.UploadRules{MaxSize: 10 << 20, Types: []string{"application/pdf"}}
+```
+
+<Callout type="info">
+Streaming, resumable (tus) and direct-to-S3 uploads, `z` file rules and an htmx progress component are planned for BETA.
+</Callout>

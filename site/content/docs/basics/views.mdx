@@ -87,7 +87,7 @@ Rendering is buffered: a template error never leaves a half-written page, it goe
 Request-scoped functions read the session and nonce from the request context; without a session they return empty values. Add your own with `view.Config.Funcs` when building a `view.Engine` yourself.
 
 <Callout type="warning">
-Planned: `vite` (BETA), `can` and `auth` (ALPHA), `t` for translations (BETA).
+`can` checks [authorization](/docs/security/authorization#templates). Planned for BETA: `vite` and `t` (translations).
 </Callout>
 
 ## The engine directly

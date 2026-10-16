@@ -1,0 +1,40 @@
+---
+title: Events
+description: Typed events with synchronous and async listeners, registered explicitly and drained on shutdown.
+---
+
+```go title="app/events/order_shipped.go"
+// vukem make:event OrderShipped
+type OrderShipped struct{ OrderID int64 }
+```
+
+```go title="app/listeners/notify_customer.go"
+// vukem make:listener NotifyCustomer --event OrderShipped [--async]
+func NotifyCustomer(ctx context.Context, e events.OrderShipped) error { return nil }
+```
+
+```go title="app/listeners/registry.go"
+// make:listener appends; bootstrap passes vukem.WithListeners(listeners.All()...)
+func All() []events.Registration { return []events.Registration{events.OnAsync(NotifyCustomer)} }
+```
+
+```go
+err := app.Events.Dispatch(ctx, events.OrderShipped{OrderID: 42})
+```
+
+- `events.On(fn)` infers the event type from the function. Synchronous listeners run in registration order; the first error stops the chain and is returned to the caller.
+- `events.OnAsync(fn)` listeners run on a bounded pool with a context detached from the request, log errors and panics, and are drained by `app.Shutdown`.
+- `events.Listen(bus, fn)` and `events.ListenAsync(bus, fn)` register directly on a bus.
+- Every security event is also dispatched as a [`security.Event`](/docs/security/building-blocks#security-events).
+
+## Testing
+
+```go
+fake := events.NewFake()
+_ = fake.Dispatch(ctx, events.OrderShipped{OrderID: 1})
+shipped := events.Dispatched[events.OrderShipped](fake)
+```
+
+<Callout type="info">
+Queue-backed listeners are planned for BETA with the queue.
+</Callout>

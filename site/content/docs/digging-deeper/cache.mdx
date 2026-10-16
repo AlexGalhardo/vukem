@@ -1,0 +1,37 @@
+---
+title: Cache
+description: A typed cache over memory or database stores, with stampede-safe Remember, counters and locks.
+---
+
+```go
+c, err := app.Cache() // CACHE_STORE=memory (default) or database
+
+user, err := cache.Remember(ctx, c, "user:42", time.Hour, func(ctx context.Context) (models.User, error) {
+	return orm.QueryOf[models.User](db).Find(ctx, 42)
+})
+
+err = c.Put(ctx, "settings", settings, 10*time.Minute)
+v, ok, err := cache.Get[Settings](ctx, c, "settings")
+err = c.Forget(ctx, "settings")
+n, err := c.Increment(ctx, "visits", 1, 24*time.Hour)
+```
+
+- Values are JSON. `Remember` runs the function once for concurrent misses of a key in the process (singleflight) and never caches errors.
+- Locks: `lock := c.NewLock("reports:daily", time.Minute)`, then `TryAcquire`, `Block(ctx, wait, interval)` and `Release` (only the owner can release).
+
+## Stores
+
+| Store | Notes |
+| --- | --- |
+| `cache.NewMemory(maxEntries)` | LRU with TTLs, in process |
+| `cache.NewDatabase(db, table)` | SQLite and PostgreSQL upserts; `CreateTable`, `Prune` for expired rows |
+| Redis | planned for BETA (`drivers/redis`) |
+
+| Variable | Default |
+| --- | --- |
+| `CACHE_STORE` | `memory` |
+| `CACHE_PREFIX` | `vukem:` |
+| `CACHE_TABLE` | `cache` |
+| `CACHE_MAX_ENTRIES` | `10000` |
+
+Custom stores implement `cache.Store` and must pass `cache/cachetest.Run`.
