@@ -26,9 +26,10 @@ type View interface {
 }
 
 type renderOpts struct {
-	status int
-	block  string
-	force  bool
+	status  int
+	block   string
+	force   bool
+	partial View
 }
 
 // RenderOption configures Render.
@@ -42,6 +43,12 @@ func WithStatus(code int) RenderOption { return func(o *renderOpts) { o.status =
 //
 //	return c.Render("posts/index", data, web.Block("post-list"))
 func Block(name string) RenderOption { return func(o *renderOpts) { o.block = name } }
+
+// Partial is Block for View: c.View renders v instead of the page for htmx
+// partial requests (templ fragments):
+//
+//	return c.View(views.PostsIndex(posts), web.Partial(views.PostList(posts)))
+func Partial(v View) RenderOption { return func(o *renderOpts) { o.partial = v } }
 
 var errNoViews = errors.New("web: no view engine configured")
 
@@ -92,6 +99,14 @@ func (c *Ctx) View(v View, opts ...RenderOption) error {
 	o := renderOpts{status: http.StatusOK}
 	for _, opt := range opts {
 		opt(&o)
+	}
+
+	if o.partial != nil {
+		htmx.NewResponse(c.w) // Vary: HX-Request — fragment and page differ
+
+		if htmx.IsPartial(c.r) {
+			v = o.partial
+		}
 	}
 
 	var buf bytes.Buffer

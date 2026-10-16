@@ -99,3 +99,63 @@ func TestRenderWithoutViewsAndBrokenView(t *testing.T) {
 		t.Fatal("HTMX builder")
 	}
 }
+
+type textView string
+
+func (v textView) Render(_ context.Context, w io.Writer) error {
+	_, err := io.WriteString(w, string(v))
+	return err
+}
+
+func TestViewPartial(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct {
+		name, hxRequest, hxType, want string
+	}{
+		{name: "full page", want: "page"},
+		{name: "htmx partial", hxRequest: "true", want: "list"},
+		{name: "htmx full request", hxRequest: "true", hxType: "full", want: "page"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			r := httptest.NewRequestWithContext(t.Context(), "GET", "/", http.NoBody)
+			if tt.hxRequest != "" {
+				r.Header.Set("HX-Request", tt.hxRequest)
+			}
+
+			if tt.hxType != "" {
+				r.Header.Set("HX-Request-Type", tt.hxType)
+			}
+
+			c, w := newCtx(t, r, nil)
+			if err := c.View(textView("page"), Partial(textView("list"))); err != nil {
+				t.Fatal(err)
+			}
+
+			if w.Body.String() != tt.want || w.Header().Get("Vary") != "HX-Request" {
+				t.Errorf("body %q, Vary %q; want %q, HX-Request", w.Body.String(), w.Header().Get("Vary"), tt.want)
+			}
+		})
+	}
+}
+
+func TestSessionContextHelpers(t *testing.T) {
+	t.Parallel()
+
+	if FlashFrom(t.Context(), "a") != nil || OldInput(t.Context(), "a") != "" || ErrorsFrom(t.Context()) != nil {
+		t.Fatal("helpers without session")
+	}
+
+	ctx := WithSession(t.Context(), memSession{
+		"success":   "Saved.",
+		OldInputKey: map[string]any{"title": "T"},
+		ErrorsKey:   map[string]any{"title": []any{"too short"}},
+	})
+
+	if FlashFrom(ctx, "success") != "Saved." || OldInput(ctx, "title") != "T" ||
+		ErrorsFrom(ctx)["title"][0] != "too short" {
+		t.Fatal("helpers with session")
+	}
+}

@@ -75,18 +75,30 @@ func (c *Ctx) Flash(key string, value any) error {
 }
 
 // FlashValue returns a flashed value from the previous request, or nil.
-func (c *Ctx) FlashValue(key string) any {
-	if s := c.Session(); s != nil {
+func (c *Ctx) FlashValue(key string) any { return FlashFrom(c.Context(), key) }
+
+// Old returns the input submitted by the previous (failed) form post for
+// field, so forms can be re-filled. Nested fields use dots ("author.email").
+func (c *Ctx) Old(field string) string { return OldInput(c.Context(), field) }
+
+// Errors returns validation errors flashed by the previous request.
+func (c *Ctx) Errors() map[string][]string { return ErrorsFrom(c.Context()) }
+
+// FlashFrom returns the value flashed under key by the previous request, or
+// nil. It is Ctx.FlashValue for code that only has the request context,
+// such as templ components.
+func FlashFrom(ctx context.Context, key string) any {
+	if s := SessionFrom(ctx); s != nil {
 		return s.Get(key)
 	}
 
 	return nil
 }
 
-// Old returns the input submitted by the previous (failed) form post for
-// field, so forms can be re-filled. Nested fields use dots ("author.email").
-func (c *Ctx) Old(field string) string {
-	s := c.Session()
+// OldInput is Ctx.Old for code that only has the request context, such as
+// templ components.
+func OldInput(ctx context.Context, field string) string {
+	s := SessionFrom(ctx)
 	if s == nil {
 		return ""
 	}
@@ -120,9 +132,10 @@ func (c *Ctx) Old(field string) string {
 	}
 }
 
-// Errors returns validation errors flashed by the previous request.
-func (c *Ctx) Errors() map[string][]string {
-	s := c.Session()
+// ErrorsFrom is Ctx.Errors for code that only has the request context,
+// such as templ components.
+func ErrorsFrom(ctx context.Context) map[string][]string {
+	s := SessionFrom(ctx)
 	if s == nil {
 		return nil
 	}
