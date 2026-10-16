@@ -18,7 +18,7 @@ Task IDs: `<phase>.<group>.<task>` (e.g. `P.3.2`). Reference them in commit bodi
 | --- | --- |
 | Current phase | **Prototype** |
 | Next task | `P.0.9` (CI green on first push), then `P.1.1` |
-| Last release | — |
+| Last release | `v0.0.1` (foundation, 2026-10-16) |
 | Updated | 2026-10-16 |
 
 ## Design references
