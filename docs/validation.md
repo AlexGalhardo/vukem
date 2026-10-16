@@ -74,9 +74,9 @@ if errors.As(err, &issues) {
 | `z.Bool()` | `bool` | — |
 | `z.Time()` | `time.Time` | `After`, `Before`, `Layout(...)` (default RFC 3339) |
 | `z.Enum(vals...)` | `string` (or any `~string` via `z.EnumOf[T]`) | membership |
-| `z.Slice(elem)` | `[]E` | `Min`, `Max`, `Len`, `Unique` |
+| `z.Slice(elem)` | `[]E` (E = element schema type) | `Min`, `Max`, `Len`, `NonEmpty`, `Unique` |
 | `z.Map(key, val)` | `map[K]V` | `Min`, `Max` |
-| `z.Struct[T](z.Shape{...})` | `T` | field schemas; `Strict()` rejects unknown keys |
+| `z.Struct[T](z.Shape{...})` | `T` | field schemas mapped by `json`/`form`/`query` tag or field name; `Strict()` rejects unknown keys |
 | `z.Custom[T](fn)` | `T` | user parser |
 
 Modifiers on every schema:
@@ -104,7 +104,7 @@ Inputs arrive as JSON values (`string`, `float64`, `bool`, `[]any`, `map[string]
 | `Slice` | JSON array; repeated form keys (`tags=a&tags=b`) or `tags[]=` |
 | `Struct` | JSON object; bracketed form keys (`author[email]=…`) |
 
-`z.Strict()` mode on a schema disables string coercion (pure JSON APIs).
+`Check` (outgoing data) never coerces strings. Empty strings from forms count as absent for numbers, booleans, times and enums, so `Optional()`/`Default()` apply to empty inputs.
 
 ## Errors
 
@@ -128,7 +128,9 @@ type Login struct {
 var LoginSchema = z.FromTags[Login]() // panics at boot on unknown rules or type mismatch
 ```
 
-`web.Bind[T]` uses `z.For[T]()`: the schema registered with `z.Register[T](schema)`, or one derived from tags and cached.
+`web.Bind[T]` uses `z.For[T]()`: the tag-derived schema, built once per type and memoized (no mutable registry). For hand-written schemas call `web.Parse(c, schema)`.
+
+Supported rules: `required`, `min=N`, `max=N`, `len=N`, `email`, `url`, `uuid`, `ulid`, `alpha`, `alphanum`, `numeric`, `oneof=a b`, `regex=…` (last), `startswith=`, `endswith=`, `contains=`, `trim`, `lowercase`, `positive`, `unique`, `dive` (following rules apply to slice elements). `required` on a string means non-empty. Pointer fields are optional and nullable.
 
 ## Typed boundaries
 
@@ -136,10 +138,10 @@ var LoginSchema = z.FromTags[Login]() // panics at boot on unknown rules or type
 | --- | --- |
 | JSON / form body | `web.Parse(c, schema)`, `web.Bind[T](c)` |
 | Query string | `web.ParseQuery(c, schema)` |
-| Route params | `web.ParseParams(c, schema)` |
+| Route params | `web.ParseParams(c, schema, "id")` (invalid params → 404) |
 | Config / env | `config.Load[T]` + `z.For[T]().Check(cfg)` at boot |
 | Queue payloads | job schemas checked on dispatch and on execution (BETA) |
-| Outgoing JSON | `c.JSONWith(status, schema, v)`; in dev/test a schema mismatch is a 500 with the issue list |
+| Outgoing JSON | `web.JSONWith(c, status, schema, v)`; outside production a contract violation is logged and answered with 500 instead of sending bad data |
 | Inertia props | `inertia.Render` checks props against the page schema when registered (BETA) |
 | External HTTP | `z.ParseJSON(resp.Body, schema)` |
 

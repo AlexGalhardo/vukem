@@ -18,8 +18,8 @@ Task IDs: `<phase>.<group>.<task>` (e.g. `P.3.2`). Reference them in commit bodi
 | Field | Value |
 | --- | --- |
 | Current phase | **Prototype** |
-| Next task | `P.4.9` / `P.4.10`, then `P.5.1` (P.0.9 waits for GitHub billing; CI runs locally via `task ci:full`) |
-| Last release | `v0.0.1` (foundation, 2026-10-16) |
+| Next task | `P.6.1` (P.4.9/P.4.10 close with sessions; P.0.9 waits for GitHub billing) |
+| Last release | `v0.0.6` (P.5 typed schemas) |
 | Updated | 2026-10-16 |
 
 ## Design references
@@ -171,15 +171,15 @@ Applies to **every** task:
 
 ### P.5 Typed schemas `z` (validation) — needs: P.3
 
-- [ ] **P.5.1** Core: `Schema[T]` interface, `Issues`/`Issue` (path, code, message, params), immutable modifiers (`Optional`, `Nullable`, `Default`, `Refine`, `Transform`, `Message`, `Describe`).
+- [x] **P.5.1** Core: `Schema[T]` interface, `Issues`/`Issue` (path, code, message, params), immutable modifiers (`Optional`, `Nullable`, `Default`, `Refine`, `Transform`, `Message`, `Describe`).
   → verify: unit tests for each modifier; schemas safe for concurrent use (`-race`).
-- [ ] **P.5.2** Primitives: `String` (+ checks/transforms), integer family, `Float`, `Bool`, `Time`, `Enum`, with lossless coercion from strings.
+- [x] **P.5.2** Primitives: `String` (+ checks/transforms), integer family, `Float`, `Bool`, `Time`, `Enum`, with lossless coercion from strings.
   → verify: table tests per check (pass/fail/edge) and per coercion.
-- [ ] **P.5.3** Composites: `Slice`, `Map`, `Struct[T](Shape)` with field mapping by `json`/`form` tag, type compatibility checked at construction, `Strict()`, nested paths in issues.
+- [x] **P.5.3** Composites: `Slice`, `Map`, `Struct[T](Shape)` with field mapping by `json`/`form` tag, type compatibility checked at construction, `Strict()`, nested paths in issues.
   → verify: mismatched shape panics at construction; nested issue paths `a.b.2.c`.
-- [ ] **P.5.4** `FromTags[T]`, `Register[T]`/`For[T]` registry, `FieldError` helper, `ParseJSON(io.Reader, schema)`.
+- [x] **P.5.4** `FromTags[T]`, `Register[T]`/`For[T]` registry, `FieldError` helper, `ParseJSON(io.Reader, schema)`.
   → verify: tag schemas equal hand-written ones on a shared test corpus; `FuzzParse` on JSON input.
-- [ ] **P.5.5** Web integration: `web.Parse`, `web.Bind[T]`, `ParseQuery`, `ParseParams` (form arrays/brackets), `JSONWith` output checks; issues → `*errs.ValidationError` → 303+flash / 422 / problem+json.
+- [x] **P.5.5** Web integration: `web.Parse`, `web.Bind[T]`, `ParseQuery`, `ParseParams` (form arrays/brackets), `JSONWith` output checks; issues → `*errs.ValidationError` → 303+flash / 422 / problem+json.
   → verify: three end-to-end tests (form, HTMX, JSON) + output mismatch test.
 
 ### P.6 Sessions & CSRF — needs: P.1, P.3

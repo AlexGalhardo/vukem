@@ -108,6 +108,7 @@ func (a *App) newRouter() *router.Router {
 		Log:            a.Log,
 		Debug:          a.Config.Debug && !a.Config.IsProduction(),
 		ProblemBaseURL: a.Source.Get("APP_PROBLEM_BASE_URL"),
+		CheckResponses: !a.Config.IsProduction(),
 	}
 
 	r := router.New(services)

@@ -46,6 +46,9 @@ type Services struct {
 	// ProblemBaseURL prefixes RFC 9457 problem "type" URIs; empty means
 	// "about:blank".
 	ProblemBaseURL string
+	// CheckResponses makes JSONWith validate outgoing data against its
+	// schema (enabled outside production by the app).
+	CheckResponses bool
 }
 
 // Ctx is the per-request context. It must not be used after the handler
