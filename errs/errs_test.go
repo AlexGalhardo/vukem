@@ -92,3 +92,35 @@ type coded struct{}
 
 func (coded) Error() string   { return "teapot" }
 func (coded) HTTPStatus() int { return 418 }
+
+var errSentinel = New(500, "sentinel")
+
+func newHere() error { return New(500, "boom") }
+
+func TestStack(t *testing.T) {
+	t.Parallel()
+
+	st := Stack(newHere())
+	if len(st) == 0 || !strings.HasSuffix(st[0].Function, "errs.newHere") {
+		t.Fatalf("Stack(New) = %v, want newHere first", st)
+	}
+
+	if got := Stack(errSentinel); got != nil {
+		t.Errorf("Stack(sentinel) = %v, want nil (init stack)", got)
+	}
+
+	deep := WithStack(errors.New("db down"))
+	wrapped := Wrap(500, fmt.Errorf("load user: %w", deep))
+
+	if got := Stack(wrapped); len(got) == 0 || got[0].Line != Stack(deep)[0].Line {
+		t.Errorf("Stack(wrapped) = %v, want the deepest stack", got)
+	}
+
+	if Stack(errors.New("plain")) != nil || WithStack(nil) != nil {
+		t.Error("errors without stacks reported one")
+	}
+
+	if !errors.Is(wrapped, deep) || wrapped.Error() != "500 Internal Server Error: load user: db down" {
+		t.Errorf("wrapped = %v", wrapped)
+	}
+}

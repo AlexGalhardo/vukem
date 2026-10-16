@@ -81,6 +81,10 @@ func DefaultErrorHandler(c *Ctx, err error) {
 
 	logError(c, status, err)
 
+	if c.s.Debug && status >= 500 {
+		c.writeDebugReport(status, err)
+	}
+
 	if c.w.Written() {
 		return // headers already sent; nothing safe to do but log
 	}
@@ -122,6 +126,8 @@ func DefaultErrorHandler(c *Ctx, err error) {
 
 		_ = c.writeProblem(p)
 	case verr != nil && !c.IsHTMX() && c.validationHook(verr):
+	case c.s.Debug && status >= 500 && !c.IsHTMX():
+		c.renderDebugPage(status, err)
 	default:
 		c.renderErrorPage(status, title, detail, verr)
 	}

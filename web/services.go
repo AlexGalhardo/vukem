@@ -25,6 +25,20 @@ func ServicesFrom(ctx context.Context) *Services {
 	return &Services{}
 }
 
+type cspNonceKey struct{}
+
+// WithCSPNonce stores the request's Content-Security-Policy nonce in ctx
+// (middleware.SecureHeaders does this).
+func WithCSPNonce(ctx context.Context, nonce string) context.Context {
+	return context.WithValue(ctx, cspNonceKey{}, nonce)
+}
+
+// CSPNonce returns the request's CSP nonce, or "".
+func CSPNonce(ctx context.Context) string {
+	n, _ := ctx.Value(cspNonceKey{}).(string)
+	return n
+}
+
 // Fail renders err through the error handler. Middleware uses it to reject a
 // request (401, 413, 415, 429...) with the same format as handlers.
 func Fail(w http.ResponseWriter, r *http.Request, err error) {

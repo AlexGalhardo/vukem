@@ -22,16 +22,18 @@ type HTTPError struct {
 	Err error
 	// Headers are added to the response (e.g. Allow, Retry-After).
 	Headers http.Header
+
+	stack []uintptr
 }
 
 // New returns an *HTTPError with status and a client-safe message.
 func New(status int, message string) *HTTPError {
-	return &HTTPError{Status: status, Message: message}
+	return &HTTPError{Status: status, Message: message, stack: callers(1)}
 }
 
 // Wrap returns an *HTTPError with status whose internal cause is err.
 func Wrap(status int, err error) *HTTPError {
-	return &HTTPError{Status: status, Err: err}
+	return &HTTPError{Status: status, Err: err, stack: callers(1)}
 }
 
 // Error implements error.

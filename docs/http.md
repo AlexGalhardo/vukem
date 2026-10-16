@@ -138,6 +138,12 @@ type ValidationError struct { Fields map[string][]string }
 - Custom renderers per error type: `h.Render[*MyErr](func(c *Ctx, e *MyErr) error {...})`.
 - Panics are recovered by `middleware.Recover` and converted to 500.
 
+### Debug error page
+
+With `APP_DEBUG=true` outside production (`Services.Debug`), 5xx errors in a browser render a youch-style page (decision F7): the error message and root type, the `Unwrap` chain, the stack with source snippets (app frames open, framework and standard library frames collapsed), the request (method, URL, route, request id, headers with `Authorization`, `Cookie` and token headers redacted) and the Go version. The page carries the CSP nonce. JSON clients keep getting problem+json (with the error text as `detail`), htmx gets the fragment. In `vukem serve` the same report is printed in color on stderr (`Services.DebugOut`).
+
+Stacks come from `errs.New`, `errs.Wrap`, `errs.WithStack(err)` (for errors from other packages) and recovered panics; `errs.Stack(err)` returns the one closest to the origin. Capturing is cheap and happens only on error paths; sentinel errors declared as package variables carry no stack.
+
 ## Static files and uploads
 
 - `public/` served by `middleware.Static` with `http.FileServerFS` over an `os.Root`; hashed assets get `Cache-Control: public, max-age=31536000, immutable`.

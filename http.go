@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 	"net/http"
+	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -223,11 +224,16 @@ func DefaultMiddleware(app *App, r *router.Router) error {
 }
 
 func (a *App) newRouter() *router.Router {
+	debug := a.Config.Debug && !a.Config.IsProduction()
 	services := &web.Services{
 		Log:            a.Log,
-		Debug:          a.Config.Debug && !a.Config.IsProduction(),
+		Debug:          debug,
 		ProblemBaseURL: a.Source.Get("APP_PROBLEM_BASE_URL"),
 		CheckResponses: !a.Config.IsProduction(),
+	}
+
+	if debug && a.Kind == KindWeb {
+		services.DebugOut = os.Stderr
 	}
 
 	r := router.New(services)

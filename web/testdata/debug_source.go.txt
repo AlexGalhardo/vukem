@@ -1,0 +1,10 @@
+package controllers
+
+func Show(c *web.Ctx) error {
+	post, err := load(c)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(200, post) // <script>alert(1)</script>
+}

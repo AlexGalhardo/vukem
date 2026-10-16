@@ -510,7 +510,7 @@ Applies to **every** task:
   → verify: tests.
 - [ ] **B.4.5** Optional OpenTelemetry module (`drivers/otel` or `contrib/otel`).
   → verify: span emitted per request in test exporter.
-- [ ] **B.4.6** Youch-style debug error page (decision F7): error chain, stack frames with source snippets (panics + `errs` stacks captured outside production), request with redacted secrets, route info; ANSI terminal output.
+- [x] **B.4.6** Youch-style debug error page (decision F7): error chain, stack frames with source snippets (panics + `errs` stacks captured outside production), request with redacted secrets, route info; ANSI terminal output.
   → verify: golden HTML/ANSI tests; `TestSecurity_A02_DebugPageOffInProduction`, secrets redacted.
 
 ### B.6 Realtime & GraphQL

@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>500 Internal Server Error</title>
+<style nonce="n0nce">
+:root { color-scheme: light dark; --bg: #fff; --fg: #18181b; --muted: #71717a; --card: #f4f4f5; --line: #e4e4e7;
+  --accent: #dc2626; --hot: #fee2e2; }
+@media (prefers-color-scheme: dark) { :root { --bg: #09090b; --fg: #f4f4f5; --muted: #a1a1aa; --card: #18181b;
+  --line: #27272a; --hot: #450a0a; } }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.5 system-ui, sans-serif; }
+main { max-width: 64rem; margin: 0 auto; padding: 2rem 1rem; }
+.badge { display: inline-block; background: var(--accent); color: #fff; border-radius: .3rem; padding: .1rem .5rem; font-weight: 600; }
+h1 { font-size: 1.4rem; margin: .5rem 0; word-break: break-word; }
+.type { color: var(--muted); font-family: ui-monospace, monospace; }
+section { margin-top: 2rem; }
+h2 { font-size: 1rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+ol.chain { padding-left: 1.2rem; } ol.chain li { margin: .3rem 0; }
+code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+details { background: var(--card); border: 1px solid var(--line); border-radius: .5rem; margin: .5rem 0; }
+summary { cursor: pointer; padding: .6rem .8rem; }
+summary .file { color: var(--muted); }
+pre { margin: 0; padding: .5rem 0; overflow-x: auto; border-top: 1px solid var(--line); }
+pre span { display: block; padding: 0 .8rem; white-space: pre; }
+pre span.hot { background: var(--hot); }
+pre i { color: var(--muted); font-style: normal; display: inline-block; width: 3.5rem; user-select: none; }
+.kind { font-size: .75rem; color: var(--muted); margin-left: .4rem; }
+table { border-collapse: collapse; width: 100%; } td { border-top: 1px solid var(--line); padding: .3rem .5rem; vertical-align: top; word-break: break-all; }
+td:first-child { color: var(--muted); width: 14rem; }
+</style>
+</head>
+<body>
+<main>
+<span class="badge">500 Internal Server Error</span>
+<h1>500 Internal Server Error: load post 7: database is locked &lt;b&gt;</h1>
+<div class="type">*errors.errorString</div>
+
+<section>
+<h2>Error chain</h2>
+<ol class="chain"><li><code>*errs.HTTPError</code> 500 Internal Server Error: load post 7: database is locked &lt;b&gt;</li><li><code>*fmt.wrapError</code> load post 7: database is locked &lt;b&gt;</li><li><code>web.fixedStackError</code> database is locked &lt;b&gt;</li><li><code>*errors.errorString</code> database is locked &lt;b&gt;</li></ol>
+</section>
+
+<section>
+<h2>Stack</h2>
+<details open>
+<summary><code>example.com/blog/app/controllers.Show</code><span class="kind">app</span><br><span class="file">testdata/debug_source.go.txt:6</span></summary>
+<pre><span><i>1</i>package controllers</span><span><i>2</i></span><span><i>3</i>func Show(c *web.Ctx) error {</span><span><i>4</i>	post, err := load(c)</span><span><i>5</i>	if err != nil {</span><span class="hot"><i>6</i>		return err</span><span><i>7</i>	}</span><span><i>8</i></span><span><i>9</i>	return c.JSON(200, post) // &lt;script&gt;alert(1)&lt;/script&gt;</span><span><i>10</i>}</span><span><i>11</i></span></pre>
+</details>
+<details>
+<summary><code>github.com/AlexGalhardo/vukem/router.(*Router).serve</code><span class="kind">framework</span><br><span class="file">/vukem/router/router.go:210</span></summary>
+
+</details>
+<details>
+<summary><code>net/http.HandlerFunc.ServeHTTP</code><span class="kind">stdlib</span><br><span class="file">/go/src/net/http/server.go:2322</span></summary>
+
+</details>
+
+</section>
+
+<section>
+<h2>Request</h2>
+<table>
+<tr><td>Method</td><td>POST</td></tr>
+<tr><td>URL</td><td>/posts/7?draft=1</td></tr>
+<tr><td>Route</td><td>posts.update</td></tr>
+<tr><td>Request ID</td><td>req-1</td></tr>
+<tr><td>Accept</td><td>text/html</td></tr><tr><td>Authorization</td><td>[redacted]</td></tr><tr><td>Cookie</td><td>[redacted]</td></tr><tr><td>User-Agent</td><td>test</td></tr>
+</table>
+</section>
+
+<section>
+<h2>Application</h2>
+<table><tr><td>Go</td><td>GOVERSION</td></tr></table>
+<p class="type">Shown because APP_DEBUG=true outside production.</p>
+</section>
+</main>
+</body>
+</html>

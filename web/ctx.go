@@ -8,6 +8,7 @@ package web
 
 import (
 	"context"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -41,6 +42,9 @@ type Services struct {
 	Log    *slog.Logger
 	// Debug enables detailed error pages (never in production).
 	Debug bool
+	// DebugOut receives a colored report of every 5xx error when Debug is
+	// on (the app sets os.Stderr in development).
+	DebugOut io.Writer
 	// TrustedProxies lists CIDRs whose X-Forwarded-For is honoured by IP().
 	TrustedProxies []*net.IPNet
 	// ProblemBaseURL prefixes RFC 9457 problem "type" URIs; empty means

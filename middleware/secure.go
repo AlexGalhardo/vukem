@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/AlexGalhardo/vukem/web"
 )
 
 // SecureHeadersConfig configures SecureHeaders. Zero values use the secure
@@ -42,14 +44,9 @@ const DefaultCSP = "default-src 'self'; script-src 'self' 'nonce-{nonce}'; style
 	"img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; " +
 	"frame-ancestors 'none'; form-action 'self'"
 
-type nonceKey struct{}
-
 // CSPNonce returns the per-request CSP nonce, or "" when SecureHeaders did
 // not run. Templates expose it as {{ cspNonce }}.
-func CSPNonce(ctx context.Context) string {
-	n, _ := ctx.Value(nonceKey{}).(string)
-	return n
-}
+func CSPNonce(ctx context.Context) string { return web.CSPNonce(ctx) }
 
 // SecureHeaders sets security headers on every response (A02).
 func SecureHeaders(cfg SecureHeadersConfig) Middleware {
@@ -98,7 +95,7 @@ func SecureHeaders(cfg SecureHeadersConfig) Middleware {
 				}
 
 				h.Set("Content-Security-Policy", policy)
-				r = r.WithContext(context.WithValue(r.Context(), nonceKey{}, nonce))
+				r = r.WithContext(web.WithCSPNonce(r.Context(), nonce))
 			}
 
 			next.ServeHTTP(w, r)

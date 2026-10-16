@@ -586,3 +586,22 @@ func TestSecureHeadersDevServer(t *testing.T) {
 		t.Errorf("unsafe dev origin injected: %q", got)
 	}
 }
+
+func panickingHandler(http.ResponseWriter, *http.Request) { panic("boom") }
+
+func TestRecoverDebugPageShowsPanicSite(t *testing.T) {
+	t.Parallel()
+
+	s := &web.Services{Log: slog.New(slog.DiscardHandler), Debug: true}
+	h := Recover()(http.HandlerFunc(panickingHandler))
+
+	r := httptest.NewRequestWithContext(web.WithServices(t.Context(), s), http.MethodGet, "/", http.NoBody)
+	r.Header.Set("Accept", "text/html")
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, r)
+
+	if rec.Code != http.StatusInternalServerError || !strings.Contains(rec.Body.String(), "middleware.panickingHandler") {
+		t.Errorf("debug page for a panic = %d, want the panicking function in:\n%.2000s", rec.Code, rec.Body.String())
+	}
+}

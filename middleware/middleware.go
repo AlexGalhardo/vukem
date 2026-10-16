@@ -38,7 +38,9 @@ func Recover() Middleware {
 					panic(p)
 				}
 
-				err := fmt.Errorf("panic: %v", p)
+				// Skip this deferred func and runtime.gopanic: the stack starts at
+				// the panicking call.
+				err := errs.WithStackSkip(fmt.Errorf("panic: %v", p), 2)
 				log := web.ServicesFrom(r.Context()).Log
 				if log == nil {
 					log = slog.Default()

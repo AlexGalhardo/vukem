@@ -43,7 +43,7 @@ What Vukem does **by default** to protect applications, mapped to the [OWASP Top
 | The Inertia page object is embedded as JSON with `<`, `>`, `&` and `/` escaped, so prop data cannot close its `<script>` (`TestSecurity_A05_InertiaPageScriptCannotBreakOut`) | B |
 | The CSP allows the Vite dev server origin only while its hot file exists outside production; the origin must be a bare `http(s)://host:port` so it cannot inject directives | B |
 | The Vite `hot` file is ignored in production (`TestSecurity_A02_ViteHotFileIgnoredInProduction`) and must hold an `http(s)` URL (`TestSecurity_A05_ViteRejectsUnsafeHotURL`) | B |
-| Debug error page only in development; production errors never include stack traces, SQL or config | P |
+| Debug error page only in development; production errors never include stack traces, SQL or config (`TestSecurity_A02_DebugPageOffInProduction`); the debug page redacts credentials and escapes error text and source (`TestSecurity_A09_DebugPageRedactsSecrets`) | P / B |
 | `vukem about` prints effective security settings (secrets redacted) to review deployments | P |
 | No default credentials, no sample admin user, `.env` git-ignored, `.env.example` without secrets | P |
 | Destructive commands (`migrate:fresh`, `db:wipe`) require `--force` in production | P |
