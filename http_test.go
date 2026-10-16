@@ -9,11 +9,14 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"testing/fstest"
 
+	"github.com/AlexGalhardo/golang-framework/database"
 	"github.com/AlexGalhardo/golang-framework/router"
+	"github.com/AlexGalhardo/golang-framework/schema"
 	"github.com/AlexGalhardo/golang-framework/web"
 )
 
@@ -264,5 +267,43 @@ func TestWithViews(t *testing.T) {
 	if _, err := New(WithSource(testSource(nil)), WithLogger(discardLogger()), failing); err == nil ||
 		!strings.Contains(err.Error(), "routes: no db") {
 		t.Fatalf("routes error = %v", err)
+	}
+}
+
+func TestSessionDrivers(t *testing.T) {
+	t.Parallel()
+
+	dbURL := "file:" + filepath.ToSlash(filepath.Join(t.TempDir(), "s.db"))
+
+	for driver, wantErr := range map[string]bool{"cookie": false, "memory": false, "database": false, "redis": true} {
+		app, err := New(WithSource(testSource(map[string]string{"SESSION_DRIVER": driver, "DATABASE_URL": dbURL})),
+			WithLogger(discardLogger()))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		t.Cleanup(func() { _ = app.Shutdown(context.Background()) })
+
+		if _, err := app.Sessions(); (err != nil) != wantErr {
+			t.Errorf("SESSION_DRIVER=%s: err = %v", driver, err)
+		}
+	}
+
+	db, err := database.Open(t.Context(), dbURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	if has, err := schema.New(t.Context(), db).HasTable("sessions"); err != nil || !has {
+		t.Fatalf("sessions table: has=%v err=%v", has, err)
+	}
+
+	broken, _ := New(
+		WithSource(testSource(map[string]string{"SESSION_DRIVER": "database", "DATABASE_URL": "mysql://x"})),
+		WithLogger(discardLogger()),
+	)
+	if _, err := broken.Sessions(); err == nil {
+		t.Fatal("database driver without a usable database")
 	}
 }

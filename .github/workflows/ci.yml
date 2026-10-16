@@ -73,3 +73,31 @@ jobs:
         with:
           go-version-file: go.mod
       - run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+  postgres:
+    name: Postgres driver (integration)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: lumek
+          POSTGRES_PASSWORD: lumek
+          POSTGRES_DB: lumek_test
+        ports: ["55432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U lumek" --health-interval 2s --health-retries 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: "**/go.sum"
+      - name: Unit tests (module alone)
+        working-directory: drivers/postgres
+        env:
+          GOWORK: "off"
+        run: go test -count=1 ./...
+      - name: Conformance suite (workspace, current core)
+        working-directory: drivers/postgres
+        run: go test -tags=integration -count=1 ./...

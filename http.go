@@ -13,6 +13,7 @@ import (
 
 	"github.com/AlexGalhardo/golang-framework/config"
 	"github.com/AlexGalhardo/golang-framework/csrf"
+	"github.com/AlexGalhardo/golang-framework/database"
 	"github.com/AlexGalhardo/golang-framework/middleware"
 	"github.com/AlexGalhardo/golang-framework/router"
 	"github.com/AlexGalhardo/golang-framework/session"
@@ -137,6 +138,11 @@ func (a *App) Sessions() (*session.Manager, error) {
 			sc.Store = session.NewMemoryStore()
 		case cfg.Driver == "cookie":
 			sc.CookieKey = a.Key.Derive("session.cookie", 32)
+		case cfg.Driver == "database":
+			sc.Store, a.sessErr = a.databaseSessionStore()
+			if a.sessErr != nil {
+				return
+			}
 		default:
 			a.sessErr = fmt.Errorf("lumek: unknown SESSION_DRIVER %q", cfg.Driver)
 			return
@@ -271,6 +277,37 @@ func Main(build BuildFunc) int {
 	}
 
 	return 0
+}
+
+// databaseSessionStore stores sessions in the app database (SQLite or a
+// driver such as Postgres), creating the sessions table when missing.
+//
+// shortcut: expired rows are only pruned by SQLStore.Prune; schedule it
+// once the scheduler lands (BETA B.1.4).
+func (a *App) databaseSessionStore() (session.Store, error) {
+	db, err := a.DB()
+	if err != nil {
+		return nil, err
+	}
+
+	var opts []session.SQLOption
+	if db.Dialect() == database.Postgres {
+		opts = append(opts, session.WithDollarPlaceholders())
+	}
+
+	store, err := session.NewSQLStore(db.SQL(), opts...)
+	if err != nil {
+		return nil, err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := store.CreateTable(ctx); err != nil {
+		return nil, fmt.Errorf("lumek: create sessions table: %w", err)
+	}
+
+	return store, nil
 }
 
 func configLoad[T any](a *App) (T, error) { return config.Load[T](a.Source) }

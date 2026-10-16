@@ -18,8 +18,8 @@ Task IDs: `<phase>.<group>.<task>` (e.g. `P.3.2`). Reference them in commit bodi
 | Field | Value |
 | --- | --- |
 | Current phase | **ALPHA** |
-| Next task | `A.1.1` (A.0.6 after A.3.4; blocked: P.0.9 waits for GitHub billing, P.12.3 needs a public repository) |
-| Last release | `v0.2.0` (A.0 REST API toolkit) |
+| Next task | `A.2.1` (A.0.6 after A.3.4; blocked: P.0.9 waits for GitHub billing, P.12.3 needs a public repository) |
+| Last release | `v0.3.0` (A.1 Postgres driver) |
 | Updated | 2026-10-16 |
 
 ## Design references
@@ -324,11 +324,11 @@ Applies to **every** task:
 
 ### A.1 Postgres driver module
 
-- [ ] **A.1.1** `drivers/postgres` module (pgx stdlib), dialect, `go.work` wiring, separate CI job.
+- [x] **A.1.1** `drivers/postgres` module (pgx stdlib), dialect, `go.work` wiring, separate CI job.
   → verify: `GOWORK=off go test ./...` inside module; integration suite passes against `postgres:17`.
-- [ ] **A.1.2** Run the ORM/schema conformance suite against Postgres (shared suite with SQLite).
+- [x] **A.1.2** Run the ORM/schema conformance suite against Postgres (shared suite with SQLite).
   → verify: same suite green on both dialects.
-- [ ] **A.1.3** Database session store + migrations on Postgres.
+- [x] **A.1.3** Database session store + migrations on Postgres.
   → verify: store conformance suite.
 
 ### A.2 Relations, factories, seeders — needs: P.7

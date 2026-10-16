@@ -11,7 +11,7 @@ Connections, the generic query builder, models, relations, migrations, factories
 | Redis | `redis/go-redis/v9` | `drivers/redis` | BETA |
 | MongoDB | `go.mongodb.org/mongo-driver/v2` | `drivers/mongo` | BETA |
 
-MySQL is out of scope for 1.0; the dialect interface keeps the door open.
+MySQL/MariaDB arrive in BETA as `drivers/mysql` (B.8.5).
 
 ## Connections
 
@@ -29,6 +29,26 @@ type Database struct {
 - `database.Manager` holds named connections (`app.DB.Conn("analytics")`); the default one is `app.DB.Default()`.
 - Each connection is a `*database.DB` wrapping `*sql.DB` plus its `Dialect`; `db.SQL()` exposes the raw `*sql.DB` (sqlc, other libraries).
 - Postgres registers its dialect when the user imports `drivers/postgres` and passes `postgres.Driver()` to the database provider — explicit, no `init()`.
+
+### PostgreSQL
+
+```sh
+go get github.com/AlexGalhardo/golang-framework/drivers/postgres
+```
+
+```go
+// bootstrap/app.go
+lumek.New(append([]lumek.Option{
+	lumek.WithDatabaseDrivers(postgres.Driver()), // postgres:// and postgresql:// URLs
+	// ...
+}, opts...)...)
+```
+
+```sh
+DATABASE_URL=postgres://app:secret@localhost:5432/app?sslmode=disable
+```
+
+Everything above the driver is dialect-neutral: the same models, queries, migrations and `SESSION_DRIVER=database` work on SQLite and Postgres. `database/dbtest.Run(t, db)` is the conformance suite every dialect must pass (schema, migrations, ORM, transactions); `drivers/postgres` runs it against `postgres:17` with `task services:up` and `go test -tags=integration`.
 
 ### SQLite defaults
 
