@@ -150,6 +150,28 @@ jobs:
         working-directory: drivers/websocket
         run: go test -count=1 ./...
 
+  graphql:
+    name: GraphQL module
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: "**/go.sum"
+      - name: Unit tests (module alone)
+        working-directory: contrib/graphql
+        env:
+          GOWORK: "off"
+        run: go test -race -count=1 ./...
+      - name: Unit tests (workspace, current core)
+        working-directory: contrib/graphql
+        run: go test -count=1 ./...
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.14
+          working-directory: contrib/graphql
+
   stripe:
     name: Stripe module
     runs-on: ubuntu-latest

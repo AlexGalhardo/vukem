@@ -3,8 +3,8 @@
 version: "3"
 
 vars:
-  # Every Go module in the repository (drivers are added as they land).
-  MODULES: ". drivers/postgres drivers/mysql drivers/redis drivers/mongo drivers/otel drivers/s3 drivers/websocket contrib/stripe"
+  # Every Go module in the repository (drivers and contrib modules are added as they land).
+  MODULES: ". drivers/postgres drivers/mysql drivers/redis drivers/mongo drivers/otel drivers/s3 drivers/websocket contrib/stripe contrib/graphql"
 
 tasks:
   default:

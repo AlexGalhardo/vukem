@@ -12,4 +12,5 @@ use (
 	./drivers/s3
 	./drivers/websocket
 	./contrib/stripe
+	./contrib/graphql
 )
