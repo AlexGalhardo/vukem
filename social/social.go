@@ -169,7 +169,21 @@ func (s *Social) Redirect(c *web.Ctx, provider string) error {
 		return err
 	}
 
-	c.SetCookie(s.cookie(provider, s.seal(st), int(s.StateTTL.Seconds())))
+	// G124: HttpOnly, Secure and SameSite are set by cookie().
+	ttl := int(s.StateTTL.Seconds())
+	ck := s.cookie(provider, s.seal(st), ttl) //nolint:gosec // see above
+
+	if formPost(p) {
+		// The provider POSTs the callback from its own site, which a
+		// SameSite=Lax cookie would not reach; None requires Secure.
+		if s.InsecureCookies {
+			return errs.New(http.StatusInternalServerError, "Sign in with "+provider+" needs HTTPS.")
+		}
+
+		ck.SameSite = http.SameSiteNoneMode
+	}
+
+	c.SetCookie(ck)
 
 	if c.IsHTMX() {
 		c.SetHeader("HX-Redirect", target) // a full navigation, not an XHR
@@ -193,9 +207,15 @@ func (s *Social) User(c *web.Ctx, provider string) (User, error) {
 	raw := c.Cookie(cookieName(provider))
 	c.SetCookie(s.cookie(provider, "", -1)) // single use, whatever happens next
 
+	// response_mode=form_post providers (Apple) send the result in a POST body.
+	param := c.Query
+	if formPost(p) && c.Method() == http.MethodPost {
+		param = func(k string) string { return c.Request().PostFormValue(k) }
+	}
+
 	st, ok := s.open(raw)
 	if !ok || st.Provider != provider || s.now().Unix() > st.Expires ||
-		subtle.ConstantTimeCompare([]byte(st.State), []byte(c.Query("state"))) != 1 {
+		subtle.ConstantTimeCompare([]byte(st.State), []byte(param("state"))) != 1 {
 		web.SecurityEvent(c.Request(), "social.state_mismatch", "provider", provider)
 		return User{}, ErrState
 	}
@@ -205,7 +225,7 @@ func (s *Social) User(c *web.Ctx, provider string) (User, error) {
 		return User{}, ErrState
 	}
 
-	if e := c.Query("error"); e != "" {
+	if e := param("error"); e != "" {
 		if e == "access_denied" {
 			return User{}, ErrAccessDenied
 		}
@@ -213,7 +233,7 @@ func (s *Social) User(c *web.Ctx, provider string) (User, error) {
 		return User{}, errs.New(http.StatusBadRequest, "Sign-in failed: "+e+".")
 	}
 
-	code := c.Query("code")
+	code := param("code")
 	if code == "" {
 		return User{}, ErrState
 	}
@@ -230,7 +250,38 @@ func (s *Social) User(c *web.Ctx, provider string) (User, error) {
 
 	u.Provider, u.Token = provider, tok
 
+	if u.Name == "" {
+		u.Name = postedName(param("user"))
+	}
+
 	return u, nil
+}
+
+// formPost reports whether p answers with response_mode=form_post.
+func formPost(p Provider) bool {
+	fp, ok := p.(interface{ FormPost() bool })
+	return ok && fp.FormPost()
+}
+
+// postedName reads the name Apple posts once, on the first sign-in, as a
+// JSON "user" form field.
+func postedName(raw string) string {
+	if raw == "" {
+		return ""
+	}
+
+	var v struct {
+		Name struct {
+			First string `json:"firstName"`
+			Last  string `json:"lastName"`
+		} `json:"name"`
+	}
+
+	if json.Unmarshal([]byte(raw), &v) != nil {
+		return ""
+	}
+
+	return strings.TrimSpace(v.Name.First + " " + v.Name.Last)
 }
 
 // UserFromToken loads the user for an access token obtained elsewhere
@@ -351,15 +402,18 @@ type tokenResponse struct {
 // tokenURL. Client credentials go in the body, which every supported
 // provider accepts.
 func exchange(ctx context.Context, h *http.Client, tokenURL string, cfg Config, code, verifier string,
-	now time.Time,
+	now time.Time, basicAuth bool,
 ) (Token, error) {
 	form := url.Values{
 		"grant_type":    {"authorization_code"},
 		"code":          {code},
 		"redirect_uri":  {cfg.RedirectURL},
 		"client_id":     {cfg.ClientID},
-		"client_secret": {cfg.ClientSecret},
 		"code_verifier": {verifier},
+	}
+
+	if !basicAuth {
+		form.Set("client_secret", cfg.ClientSecret)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenURL, strings.NewReader(form.Encode()))
@@ -369,6 +423,10 @@ func exchange(ctx context.Context, h *http.Client, tokenURL string, cfg Config, 
 
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
+
+	if basicAuth {
+		req.SetBasicAuth(url.QueryEscape(cfg.ClientID), url.QueryEscape(cfg.ClientSecret))
+	}
 
 	var tr tokenResponse
 	if err := doJSON(h, req, &tr); err != nil {

@@ -28,6 +28,9 @@ type OAuth2Provider struct {
 	extra   url.Values
 	mapUser func(ctx context.Context, h *http.Client, ep Endpoints, tok Token) (User, error)
 	now     func() time.Time
+	// basicAuth sends the client credentials as HTTP Basic auth at the
+	// token endpoint (X requires it for confidential clients).
+	basicAuth bool
 }
 
 // Name implements Provider.
@@ -40,7 +43,7 @@ func (p *OAuth2Provider) AuthURL(_ context.Context, _ *http.Client, state, codeC
 
 // Exchange implements Provider.
 func (p *OAuth2Provider) Exchange(ctx context.Context, h *http.Client, code, verifier string) (Token, error) {
-	return exchange(ctx, h, p.ep.Token, p.cfg, code, verifier, p.now())
+	return exchange(ctx, h, p.ep.Token, p.cfg, code, verifier, p.now(), p.basicAuth)
 }
 
 // User implements Provider.

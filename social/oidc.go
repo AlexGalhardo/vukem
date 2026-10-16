@@ -32,6 +32,9 @@ type OIDCProvider struct {
 	now    func() time.Time
 	// emailVerified reads the provider's notion of a verified email.
 	emailVerified func(claims map[string]any) bool
+	// secret builds the client secret per exchange (Apple signs a JWT).
+	secret   func(now time.Time) (string, error)
+	formPost bool
 
 	mu   sync.Mutex
 	disc *discovery
@@ -118,8 +121,19 @@ func (p *OIDCProvider) Exchange(ctx context.Context, h *http.Client, code, verif
 		return Token{}, err
 	}
 
-	return exchange(ctx, h, d.Token, p.cfg, code, verifier, p.now())
+	cfg := p.cfg
+	if p.secret != nil {
+		if cfg.ClientSecret, err = p.secret(p.now()); err != nil {
+			return Token{}, err
+		}
+	}
+
+	return exchange(ctx, h, d.Token, cfg, code, verifier, p.now(), false)
 }
+
+// FormPost reports whether the provider answers with
+// response_mode=form_post (a cross-site POST to the callback).
+func (p *OIDCProvider) FormPost() bool { return p.formPost }
 
 // User implements Provider: claims come from the verified ID token, or
 // from the userinfo endpoint in stateless mode (no ID token).

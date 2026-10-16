@@ -539,7 +539,7 @@ Applies to **every** task:
   → verify: RFC 7515/7519 test vectors; `none`/alg-confusion/expired/wrong-aud tokens rejected (`TestSecurity_A07_JWT*`).
 - [ ] **B.8.2** TOTP 2FA (`auth/totp`, RFC 6238): enrolment (otpauth URI + QR), hashed recovery codes, per-step replay protection, throttling, `install:auth --2fa`.
   → verify: RFC 6238 vectors; replayed code rejected; generated app tests pass.
-- [ ] **B.8.3** Social providers Apple (ES256 client secret, `form_post`), LinkedIn (OIDC), X (OAuth 2.0 + PKCE) on the ALPHA `social` core.
+- [x] **B.8.3** Social providers Apple (ES256 client secret, `form_post`), LinkedIn (OIDC), X (OAuth 2.0 + PKCE) on the ALPHA `social` core.
   → verify: per-provider golden user mapping against fake servers.
 - [ ] **B.8.4** `drivers/s3` storage module (stdlib SigV4 client): put/get/delete/list/stat, multipart upload, presigned GET/PUT URLs.
   → verify: storage conformance suite against MinIO; SigV4 test vectors.

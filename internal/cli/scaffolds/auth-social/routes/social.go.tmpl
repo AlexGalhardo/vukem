@@ -22,7 +22,7 @@ func Social(r *router.Router, app *vukem.App) error {
 		return s.Redirect(c, c.Param("provider"))
 	}).Name("social.redirect").Use(auth.Guest(acc.Web))
 
-	r.Get("/auth/{provider}/callback", func(c *web.Ctx) error {
+	callback := func(c *web.Ctx) error {
 		su, err := s.User(c, c.Param("provider"))
 		if err != nil {
 			return err
@@ -38,7 +38,11 @@ func Social(r *router.Router, app *vukem.App) error {
 		}
 
 		return c.Redirect("/dashboard")
-	}).Name("social.callback")
+	}
+
+	r.Get("/auth/{provider}/callback", callback).Name("social.callback")
+	// Apple answers with response_mode=form_post.
+	r.Post("/auth/{provider}/callback", callback)
 
 	return nil
 }

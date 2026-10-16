@@ -25,7 +25,7 @@ import (
 //go:embed all:scaffolds
 var scaffoldFS embed.FS
 
-var socialProviders = []string{"github", "gitlab", "discord", "google", "microsoft"}
+var socialProviders = []string{"github", "gitlab", "discord", "google", "microsoft", "linkedin", "x", "apple"}
 
 func installAuth(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 	force := set.Bool("force", false, "overwrite existing files")
@@ -204,6 +204,14 @@ func socialEnv(providers []string) []string {
 
 	for _, p := range providers {
 		up := strings.ToUpper(p)
+		if p == "apple" {
+			// Apple signs a client secret with a .p8 key instead of sharing one.
+			keys = append(keys, "SOCIAL_APPLE_CLIENT_ID", "SOCIAL_APPLE_TEAM_ID", "SOCIAL_APPLE_KEY_ID",
+				"SOCIAL_APPLE_PRIVATE_KEY_PATH")
+
+			continue
+		}
+
 		keys = append(keys, "SOCIAL_"+up+"_CLIENT_ID", "SOCIAL_"+up+"_CLIENT_SECRET")
 	}
 

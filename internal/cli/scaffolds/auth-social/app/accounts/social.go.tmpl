@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
+	"os"
 	"strings"
 
 	"github.com/AlexGalhardo/vukem"
@@ -47,6 +48,28 @@ func NewSocial(app *vukem.App, names ...string) *social.Social {
 			s.Use(social.Google(cfg))
 		case "microsoft":
 			s.Use(social.Microsoft("common", cfg))
+		case "linkedin":
+			s.Use(social.LinkedIn(cfg))
+		case "x":
+			s.Use(social.X(cfg))
+		case "apple":
+			// The callback is a cross-site POST: serve HTTPS and add
+			// https://appleid.apple.com to CSRF_TRUSTED_ORIGINS.
+			key, err := os.ReadFile(app.Source.Get(env + "PRIVATE_KEY_PATH"))
+			if err != nil {
+				app.Log.Warn("social: apple key not readable; Sign in with Apple disabled", "err", err)
+				continue
+			}
+
+			p, err := social.Apple(social.AppleConfig{
+				Config: cfg, TeamID: app.Source.Get(env + "TEAM_ID"), KeyID: app.Source.Get(env + "KEY_ID"), PrivateKey: key,
+			})
+			if err != nil {
+				app.Log.Warn("social: Sign in with Apple disabled", "err", err)
+				continue
+			}
+
+			s.Use(p)
 		}
 	}
 

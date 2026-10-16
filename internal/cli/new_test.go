@@ -203,7 +203,7 @@ func TestNewProjectEndToEnd(t *testing.T) {
 		t.Fatalf("second install:auth = %d %s", code, errOut)
 	}
 
-	if code, out, errOut := vukem(t, project, "install:auth", "--social", "github,google"); code != 0 ||
+	if code, out, errOut := vukem(t, project, "install:auth", "--social", "github,google,apple,linkedin,x"); code != 0 ||
 		!strings.Contains(out, "created routes/social.go") || strings.Contains(out, "created routes/auth.go") {
 		t.Fatalf("install:auth --social = %d\n%s%s", code, out, errOut)
 	}

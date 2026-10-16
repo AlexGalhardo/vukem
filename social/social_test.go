@@ -46,6 +46,8 @@ type fakeServer struct {
 	kid        string         // override the key id
 	profile    map[string]any
 	emails     []map[string]any
+	// checkSecret validates the client secret (default: "secret").
+	checkSecret func(string) bool
 }
 
 func newFakeServer(t *testing.T) *fakeServer {
@@ -131,8 +133,18 @@ func (f *fakeServer) serve(w http.ResponseWriter, r *http.Request) {
 		delete(f.challenges, code) // codes are single use
 		f.mu.Unlock()
 
+		secret := r.PostForm.Get("client_secret")
+		if id, s, basic := r.BasicAuth(); basic && id == "client" {
+			secret = s
+		}
+
+		goodSecret := secret == "secret"
+		if f.checkSecret != nil {
+			goodSecret = f.checkSecret(secret)
+		}
+
 		sum := sha256.Sum256([]byte(r.PostForm.Get("code_verifier")))
-		if !ok || b64(sum[:]) != want || r.PostForm.Get("client_secret") != "secret" {
+		if !ok || b64(sum[:]) != want || !goodSecret {
 			w.WriteHeader(http.StatusBadRequest)
 			send(enc, map[string]any{"error": "invalid_grant"})
 
@@ -150,6 +162,8 @@ func (f *fakeServer) serve(w http.ResponseWriter, r *http.Request) {
 		}
 
 		send(enc, f.profile)
+	case "/api/users/me":
+		send(enc, map[string]any{"data": f.profile})
 	case "/api/user/emails":
 		send(enc, f.emails)
 	default:
