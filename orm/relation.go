@@ -417,7 +417,7 @@ func selectIn(
 		err := eachRow(ctx, ex, renumber(q, d), chunk, func(rows *sql.Rows) error {
 			if scan == nil {
 				var err error
-				if scan, err = rm.scanner(rows); err != nil {
+				if scan, err = rm.scanner(rows, encrypterOf(ex)); err != nil {
 					return err
 				}
 			}

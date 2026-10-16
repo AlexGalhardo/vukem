@@ -229,7 +229,30 @@ msgs, err := rc.Subscribe(ctx, "orders")          // pub/sub (SSE fan-out); rc.P
 
 ## Encryption
 
-`crypt.Encrypt/Decrypt` (AES-256-GCM, key from HKDF over `APP_KEY`), `APP_PREVIOUS_KEYS` for rotation, encrypted cookies, `orm.Encrypted[T]` column type.
+Package `crypt`, stdlib only. `app.Crypt` is built at boot from a key derived with HKDF from `APP_KEY` (`app.Key.Derive("crypt", 32)`), plus the keys derived from `APP_PREVIOUS_KEYS` ([configuration.md](configuration.md#app_key)).
+
+```go
+token := app.Crypt.EncryptString("4111 1111 1111 1111")
+plain, err := app.Crypt.DecryptString(token) // err is crypt.ErrInvalid on any failure
+
+// Additional data binds a token to its purpose; Open needs the same bytes.
+token = app.Crypt.Seal(payload, []byte("invoice:42"))
+payload, err = app.Crypt.Open(token, []byte("invoice:42"))
+
+if app.Crypt.NeedsRotation(token) { // sealed with a previous key
+	token, err = app.Crypt.Rotate(token, []byte("invoice:42"))
+}
+
+// Encrypted cookies: the name is the additional data.
+err = app.Crypt.SetCookie(w, r, http.Cookie{Name: "cart", Value: "3", Path: "/"})
+cart, err := app.Crypt.Cookie(r, "cart") // http.ErrNoCookie or crypt.ErrInvalid
+```
+
+- AES-256-GCM with a random 96-bit nonce per token (`cipher.NewGCMWithRandomNonce`); keys must be 32 bytes (`crypt.New(current, previous...)`).
+- Token: unpadded base64url of `version (1) | key id (4) | nonce (12) | ciphertext | tag (16)`. The key id (truncated SHA-256 of the key) selects the key; the header is authenticated with the additional data.
+- Every failure (malformed, tampered, unknown key, other additional data) returns `crypt.ErrInvalid`, without telling which.
+- `SetCookie` always sets `HttpOnly`, defaults `SameSite` to Lax, adds `Secure` when the request came over TLS (set `Secure` yourself behind a TLS-terminating proxy), refuses `SameSite=None` without `Secure` and values over 4 KB (`crypt.ErrCookieTooLarge`).
+- Database columns: [`orm.Encrypted[T]`](database.md#encrypted-columns).
 
 ## i18n
 

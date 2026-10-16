@@ -108,3 +108,22 @@ func TestDBHealthCheckAndBadURL(t *testing.T) {
 		t.Fatal("Migrator without DB")
 	}
 }
+
+func TestAppDBUsesCrypt(t *testing.T) {
+	t.Parallel()
+
+	app := newTestApp(
+		t,
+		WithSource(testSource(map[string]string{"DATABASE_URL": "file:" + filepath.Join(t.TempDir(), "c.db")})),
+	)
+	t.Cleanup(func() { _ = app.Shutdown(context.Background()) })
+
+	db, err := app.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if db.Encrypter() != app.Crypt {
+		t.Fatalf("DB().Encrypter() = %v, want app.Crypt", db.Encrypter())
+	}
+}

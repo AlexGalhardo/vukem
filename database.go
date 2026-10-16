@@ -33,8 +33,9 @@ func WithDatabaseDrivers(drivers ...database.Driver) Option {
 	return func(o *options) error { o.drivers = append(o.drivers, drivers...); return nil }
 }
 
-// DB opens the default database from DATABASE_URL on first use, adds a "db"
-// health check and closes it on shutdown.
+// DB opens the default database from DATABASE_URL on first use, with
+// app.Crypt as its encrypter (orm.Encrypted columns), adds a "db" health
+// check and closes it on shutdown.
 func (a *App) DB() (*database.DB, error) {
 	a.dbOnce.Do(func() {
 		cfg, err := configLoad[DatabaseConfig](a)
@@ -49,6 +50,8 @@ func (a *App) DB() (*database.DB, error) {
 		for _, d := range a.drivers {
 			opts = append(opts, database.WithDriver(d))
 		}
+
+		opts = append(opts, database.WithEncrypter(a.Crypt))
 
 		db, err := database.Open(context.Background(), cfg.URL, opts...)
 		if err != nil {

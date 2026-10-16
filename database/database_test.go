@@ -243,3 +243,41 @@ func TestManager(t *testing.T) {
 		t.Fatal("ping after close")
 	}
 }
+
+type fakeEncrypter struct{}
+
+func (fakeEncrypter) Seal(p, _ []byte) string { return string(p) }
+
+func (fakeEncrypter) Open(t string, _ []byte) ([]byte, error) { return []byte(t), nil }
+
+func TestEncrypterReachesDBAndTx(t *testing.T) {
+	t.Parallel()
+
+	plain := openTemp(t)
+	if plain.Encrypter() != nil {
+		t.Fatalf("Encrypter() = %v without WithEncrypter, want nil", plain.Encrypter())
+	}
+
+	enc := fakeEncrypter{}
+
+	db, err := Open(t.Context(), ":memory:", WithEncrypter(enc))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	if db.Encrypter() != enc {
+		t.Fatalf("DB.Encrypter() = %v, want the configured encrypter", db.Encrypter())
+	}
+
+	err = db.Tx(t.Context(), func(tx *Tx) error {
+		if tx.Encrypter() != enc {
+			t.Errorf("Tx.Encrypter() = %v, want the configured encrypter", tx.Encrypter())
+		}
+
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}

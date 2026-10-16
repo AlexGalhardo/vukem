@@ -92,6 +92,15 @@ type DB struct {
 	writer  *sql.DB
 	reader  *sql.DB
 	log     *slog.Logger
+	enc     Encrypter
+}
+
+// Encrypter seals and opens column values for orm.Encrypted;
+// *crypt.Encrypter implements it. ad (additional data) binds a value to
+// its table and column.
+type Encrypter interface {
+	Seal(plaintext, ad []byte) string
+	Open(token string, ad []byte) ([]byte, error)
 }
 
 // Open connects to url:
@@ -107,6 +116,17 @@ func Open(ctx context.Context, rawURL string, opts ...Option) (*DB, error) {
 		o.cfg.Log = slog.Default()
 	}
 
+	db, err := openURL(ctx, rawURL, o)
+	if err != nil {
+		return nil, err
+	}
+
+	db.enc = o.enc
+
+	return db, nil
+}
+
+func openURL(ctx context.Context, rawURL string, o openOptions) (*DB, error) {
 	if isSQLite(rawURL) {
 		return openSQLite(ctx, rawURL, o.cfg)
 	}
@@ -125,7 +145,13 @@ func Open(ctx context.Context, rawURL string, opts ...Option) (*DB, error) {
 type openOptions struct {
 	cfg     Config
 	drivers []Driver
+	enc     Encrypter
 }
+
+// WithEncrypter makes orm.Encrypted columns readable and writable through
+// this connection (apps pass app.Crypt). Without it, writing or reading an
+// Encrypted column fails.
+func WithEncrypter(e Encrypter) Option { return func(o *openOptions) { o.enc = e } }
 
 // Option configures Open.
 type Option func(*openOptions)
@@ -262,6 +288,9 @@ func FromSQL(conn *sql.DB, dialect Dialect) *DB {
 // Dialect implements Executor.
 func (db *DB) Dialect() Dialect { return db.dialect }
 
+// Encrypter returns the encrypter set with WithEncrypter, or nil.
+func (db *DB) Encrypter() Encrypter { return db.enc }
+
 // SQL returns the writer *sql.DB for libraries such as sqlc.
 func (db *DB) SQL() *sql.DB { return db.writer }
 
@@ -311,7 +340,11 @@ func (db *DB) Close() error {
 type Tx struct {
 	tx      *sql.Tx
 	dialect Dialect
+	enc     Encrypter
 }
+
+// Encrypter returns the encrypter of the DB that started the transaction.
+func (tx *Tx) Encrypter() Encrypter { return tx.enc }
 
 // Dialect implements Executor.
 func (tx *Tx) Dialect() Dialect { return tx.dialect }
@@ -343,7 +376,7 @@ func (db *DB) Tx(ctx context.Context, fn func(tx *Tx) error) (err error) {
 		return fmt.Errorf("database: begin: %w", err)
 	}
 
-	tx := &Tx{tx: sqlTx, dialect: db.dialect}
+	tx := &Tx{tx: sqlTx, dialect: db.dialect, enc: db.enc}
 
 	defer func() {
 		if p := recover(); p != nil {

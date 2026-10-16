@@ -90,9 +90,14 @@ func Create[T any](ctx context.Context, ex database.Executor, model *T) error {
 			continue
 		}
 
+		v, err := bindValue(ex, m.table, f.column, fv.Interface())
+		if err != nil {
+			return err
+		}
+
 		cols = append(cols, ex.Dialect().Quote(f.column))
 		marks = append(marks, "?")
-		args = append(args, fv.Interface())
+		args = append(args, v)
 	}
 
 	q := "INSERT INTO " + ex.Dialect().Quote(m.table) + " (" + strings.Join(cols, ", ") + ") VALUES (" +
@@ -134,8 +139,13 @@ func Update[T any](ctx context.Context, ex database.Executor, model *T) error {
 			continue
 		}
 
+		v, err := bindValue(ex, m.table, f.column, rv.FieldByIndex(f.index).Interface())
+		if err != nil {
+			return err
+		}
+
 		sets = append(sets, ex.Dialect().Quote(f.column)+" = ?")
-		args = append(args, rv.FieldByIndex(f.index).Interface())
+		args = append(args, v)
 	}
 
 	args = append(args, rv.FieldByIndex(m.byColumn[m.pk].index).Interface())
@@ -260,8 +270,13 @@ func (q Query[T]) Update(ctx context.Context, set Set) (int64, error) {
 	args := make([]any, 0, len(keys))
 
 	for i, k := range keys {
+		v, err := bindValue(q.ex, q.m.table, bareColumn(k), set[k])
+		if err != nil {
+			return 0, err
+		}
+
 		sets[i] = q.quote(k) + " = ?"
-		args = append(args, set[k])
+		args = append(args, v)
 	}
 
 	where, wargs := q.whereSQL()

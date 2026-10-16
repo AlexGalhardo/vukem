@@ -479,7 +479,7 @@ func (q Query[T]) Each(ctx context.Context) iter.Seq2[T, error] {
 		}
 		defer rows.Close()
 
-		scan, err := q.m.scanner(rows)
+		scan, err := q.m.scanner(rows, encrypterOf(q.ex))
 		if err != nil {
 			yield(zero, err)
 			return
@@ -575,7 +575,17 @@ func (q Query[T]) Pluck[V any](ctx context.Context, colName string) ([]V, error)
 
 	for rows.Next() {
 		var v V
-		if err := rows.Scan(&v); err != nil {
+
+		if o, ok := any(&v).(opener); ok {
+			var token sql.NullString
+			if err := rows.Scan(&token); err != nil {
+				return nil, fmt.Errorf("orm: pluck %s.%s: %w", q.m.table, col, err)
+			}
+
+			if err := openValue(encrypterOf(q.ex), o, token, q.m.table, bareColumn(col)); err != nil {
+				return nil, err
+			}
+		} else if err := rows.Scan(&v); err != nil {
 			return nil, fmt.Errorf("orm: pluck %s.%s: %w", q.m.table, col, err)
 		}
 
@@ -641,34 +651,52 @@ func (q Query[T]) Paginate(ctx context.Context, page, perPage int) (Page[T], err
 	return Page[T]{Items: items, Total: total, Page: page, PerPage: perPage, LastPage: max(last, 1)}, nil
 }
 
-// scanner maps result columns to struct fields once per query.
-func (m *meta) scanner(rows *sql.Rows) (func(*sql.Rows, reflect.Value) error, error) {
+// scanner maps result columns to struct fields once per query. Encrypted
+// columns are scanned as ciphertext and opened with enc.
+func (m *meta) scanner(rows *sql.Rows, enc database.Encrypter) (func(*sql.Rows, reflect.Value) error, error) {
 	cols, err := rows.Columns()
 	if err != nil {
 		return nil, err
 	}
 
 	idx := make([][]int, len(cols))
+	encrypted := make([]bool, len(cols))
+
 	for i, c := range cols {
 		if f, ok := m.byColumn[c]; ok {
 			idx[i] = f.index
+			encrypted[i] = reflect.PointerTo(f.typ).Implements(reflect.TypeFor[opener]())
 		}
 	}
 
 	return func(rows *sql.Rows, v reflect.Value) error {
 		dest := make([]any, len(cols))
+		tokens := make([]sql.NullString, len(cols))
 
 		for i, index := range idx {
-			if index == nil {
+			switch {
+			case index == nil:
 				dest[i] = new(any)
-				continue
+			case encrypted[i]:
+				dest[i] = &tokens[i]
+			default:
+				dest[i] = v.FieldByIndex(index).Addr().Interface()
 			}
-
-			dest[i] = v.FieldByIndex(index).Addr().Interface()
 		}
 
 		if err := rows.Scan(dest...); err != nil {
 			return fmt.Errorf("orm: scan %s: %w", m.table, err)
+		}
+
+		for i, index := range idx {
+			if !encrypted[i] {
+				continue
+			}
+
+			o, _ := reflect.TypeAssert[opener](v.FieldByIndex(index).Addr())
+			if err := openValue(enc, o, tokens[i], m.table, cols[i]); err != nil {
+				return err
+			}
 		}
 
 		return nil

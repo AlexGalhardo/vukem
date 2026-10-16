@@ -78,8 +78,10 @@ What Vukem does **by default** to protect applications, mapped to the [OWASP Top
 | Session cookies and encrypted cookies: AES-256-GCM, keys derived with HKDF from `APP_KEY` (distinct `info` per purpose) | P |
 | API tokens stored as SHA-256 hashes; plain token shown once | A |
 | Constant-time comparisons (`subtle.ConstantTimeCompare`, `hmac.Equal`) for tokens, signatures, CSRF tokens | P |
-| Key rotation via `APP_PREVIOUS_KEYS` (decrypt-only old keys) | B |
-| `orm.Encrypted[T]` column type for sensitive fields | B |
+| `app.Crypt` (`crypt` package): AES-256-GCM with random nonces, key derived with HKDF from `APP_KEY`; versioned tokens carry a key id; additional data binds a token to its purpose; tampering, unknown keys and wrong additional data all fail with `crypt.ErrInvalid` (`TestSecurity_A04_TamperingRejected`, `TestSecurity_A04_AssociatedDataMismatchRejected`, `TestSecurity_A04_AppCryptUsesDerivedKey`) | B |
+| Key rotation via `APP_PREVIOUS_KEYS` (decrypt-only old keys; a malformed one is a boot error) (`TestSecurity_A04_KeyRotation`, `TestSecurity_A04_AppCryptRotatesWithPreviousKeys`, `TestSecurity_A04_EncryptedColumnKeyRotation`) | B |
+| Encrypted cookies (`app.Crypt.SetCookie`/`Cookie`): cookie name authenticated, `HttpOnly`, `SameSite=Lax` and `Secure` over TLS by default (`TestSecurity_A04_EncryptedCookieDefaults`, `TestSecurity_A04_EncryptedCookieCannotMoveBetweenNames`) | B |
+| `orm.Encrypted[T]` column type for sensitive fields: table and column authenticated, never stored in plaintext, fails closed without an encrypter (`TestSecurity_A04_EncryptedColumnStoresNoPlaintext`, `TestSecurity_A04_EncryptedColumnFailsClosed`) | B |
 | TLS: Go's secure defaults (TLS 1.2+, hybrid post-quantum key exchange in Go 1.26+); no option to disable verification without `InsecureSkipVerify` naming | P |
 | `config.Secret` redacts secrets in logs, JSON and `%v` | P |
 
@@ -181,15 +183,16 @@ All configurable in `config/http.go`; API routes skip HTML-only headers.
 | Package | Use |
 | --- | --- |
 | `httpclient.Safe(opts)` | outbound requests to user-supplied URLs: only public addresses (checked on the resolved IP at connect time, so DNS rebinding and redirects to internal hosts fail), http(s) only, timeouts, redirect and body limits (`TestSecurity_A01_SSRF*`) |
+| `app.Crypt` / `crypt.New(key, previous...)` | encryption with key rotation, encrypted cookies, `orm.Encrypted[T]` ([subsystems.md](subsystems.md#encryption)) |
 | `signed.New(key)` | signed URLs with expiry, constant-time verification, 403 middleware (`TestSecurity_A01_SignedURLTampering`) |
 | `webhook.VerifyHMAC`, `webhook.Middleware` | incoming webhooks signed with HMAC-SHA256 (hex or base64, `sha256=` prefix), body size limit, 401 (`TestSecurity_A08_WebhookMiddleware`) |
 | `security.Event` | every `web.SecurityEvent` (login failures, `authz.denied`, CSRF, rate limits, bad signatures) is also dispatched on `app.Events` for alerting: `events.Listen(app.Events, func(ctx, e security.Event) error {...})` |
-| depguard `crypto-randomness` | `math/rand` is a lint error in `auth`, `session`, `csrf`, `signed`, `social`, `webhook` and `config` |
+| depguard `crypto-randomness` | `math/rand` is a lint error in `auth`, `session`, `csrf`, `signed`, `crypt`, `social`, `webhook` and `config` |
 
 ## Verification
 
 - Every default above has a test named `TestSecurity_<Category>_<Behaviour>` (e.g. `TestSecurity_A01_StaticRejectsTraversal`), so `go test -run TestSecurity ./...` is the security regression suite.
-- Fuzz targets for parsers that see untrusted input: router patterns, `.env`, validator tags, multipart, JSON binding, cookie decoding.
+- Fuzz targets for parsers that see untrusted input: router patterns, `.env`, validator tags, multipart, JSON binding, cookie decoding, `crypt` tokens (`FuzzDecrypt`).
 - CI: `gosec`, `govulncheck`, CodeQL, OpenSSF Scorecard.
 - BETA gate `B.5.2`: manual security review of CSRF, sessions, auth, uploads, SQL building and headers against this document.
 

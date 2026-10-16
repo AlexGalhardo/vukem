@@ -140,6 +140,28 @@ func (User) Table() string { return "users" } // optional; default snake_case pl
 - No Active Record: models never hold a DB handle; persistence functions take the executor (`db` or `tx`).
 - **Strict mode** (default in development/test): accessing a relation that was not eager-loaded returns `orm.ErrNotLoaded`.
 
+### Encrypted columns
+
+`orm.Encrypted[T]` stores `T` as JSON encrypted with the connection's encrypter: `app.DB()` passes `app.Crypt`; elsewhere use `database.Open(ctx, url, database.WithEncrypter(enc))`.
+
+```go
+type Patient struct {
+	orm.Model
+	Name      string
+	Diagnosis orm.Encrypted[string] `json:"-"` // TEXT column
+}
+
+p := Patient{Name: "Ada", Diagnosis: orm.Encrypted[string]{V: "flu"}}
+err := orm.Create(ctx, db, &p)           // stores ciphertext
+got, err := orm.QueryOf[Patient](db).Find(ctx, p.ID) // got.Diagnosis.V == "flu"
+```
+
+- Sealed on `Create`, `Update` and `Query.Update`; opened by queries, eager loads and `Pluck`. `"orm:<table>.<column>"` is the additional data, so a ciphertext copied to another column (or table) is rejected; renaming the table or column needs a re-encryption.
+- Fails closed: without an encrypter, writes and reads return `orm.ErrNoEncrypter` and nothing is stored. Passing an `Encrypted` value to `database/sql` directly (`Value`/`Scan`) is an error, so plaintext never reaches the database by accident.
+- Key rotation: values sealed with a key from `APP_PREVIOUS_KEYS` still decrypt; saving the model re-encrypts every encrypted column with the current key.
+- Not queryable: every encryption is randomized, so `Where("diagnosis", ...)` cannot match. NULL reads as the zero value.
+- JSON encoding uses the plain value (for API output); tag the field `json:"-"` to keep it out of responses.
+
 ## Relations
 
 ```go
