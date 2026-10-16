@@ -372,10 +372,15 @@ func (s *boostServer) databaseSchema(ctx context.Context, raw json.RawMessage) (
 	q := `SELECT table_name, column_name, data_type, is_nullable = 'YES', false
 		FROM information_schema.columns WHERE table_schema = current_schema()
 		ORDER BY table_name, ordinal_position`
-	if db.Dialect().Name() == "sqlite" {
+	switch db.Dialect().Name() {
+	case "sqlite":
 		q = `SELECT m.name, p.name, p.type, p."notnull" = 0, p.pk > 0
 			FROM sqlite_master m JOIN pragma_table_info(m.name) p
 			WHERE m.type = 'table' AND m.name NOT LIKE 'sqlite_%' ORDER BY m.name, p.cid`
+	case "mysql":
+		q = `SELECT table_name, column_name, column_type, is_nullable = 'YES', column_key = 'PRI'
+			FROM information_schema.columns WHERE table_schema = DATABASE()
+			ORDER BY table_name, ordinal_position`
 	}
 
 	rows, err := db.QueryContext(ctx, q)
