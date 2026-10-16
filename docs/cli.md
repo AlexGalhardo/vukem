@@ -50,7 +50,7 @@ Exit codes: `0` success, `1` failure, `2` usage error.
 
 ### ALPHA
 
-Shipped: `make:resource`, `make:factory`, `make:seeder`, `make:policy`, `make:mail`, `install:auth`, app: `db:seed`, `db:wipe` (both need `--force` in production). Planned: `install:api`, `make:event`, `make:listener`, `install:auth --social`, `stub:publish`, app: `db` (opens `sqlite3`/`psql` with the configured URL), `storage:link`.
+Shipped: `make:resource`, `make:factory`, `make:seeder`, `make:policy`, `make:mail`, `install:auth [--social github,google]`, app: `db:seed`, `db:wipe` (both need `--force` in production). Planned: `install:api`, `make:event`, `make:listener`, `stub:publish`, app: `db` (opens `sqlite3`/`psql` with the configured URL), `storage:link`.
 
 ### BETA
 

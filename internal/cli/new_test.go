@@ -191,6 +191,26 @@ func TestNewProjectEndToEnd(t *testing.T) {
 		t.Fatalf("second install:auth = %d %s", code, errOut)
 	}
 
+	if code, out, errOut := vukem(t, project, "install:auth", "--social", "github,google"); code != 0 ||
+		!strings.Contains(out, "created routes/social.go") || strings.Contains(out, "created routes/auth.go") {
+		t.Fatalf("install:auth --social = %d\n%s%s", code, out, errOut)
+	}
+
+	if env := read(t, project, ".env.example"); !strings.Contains(env, "SOCIAL_GOOGLE_CLIENT_SECRET=") {
+		t.Fatalf(".env.example = %q", env)
+	}
+
+	if code, _, errOut := vukem(
+		t,
+		project,
+		"install:auth",
+		"--social",
+		"myspace",
+	); code != 2 ||
+		!strings.Contains(errOut, "unknown social provider") {
+		t.Fatalf("unknown provider = %d %s", code, errOut)
+	}
+
 	cmd = exec.CommandContext(t.Context(), "go", "test", "./...")
 	cmd.Dir = project
 	cmd.Env = append(os.Environ(), "GOWORK=off")

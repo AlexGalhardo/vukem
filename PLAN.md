@@ -18,8 +18,8 @@ Task IDs: `<phase>.<group>.<task>` (e.g. `P.3.2`). Reference them in commit bodi
 | Field | Value |
 | --- | --- |
 | Current phase | **ALPHA** |
-| Next task | `A.3.10` (install:auth --social), then A.0.6, A.6 |
-| Last release | `v0.8.0` (A.3.6 install:auth, signed URLs) |
+| Next task | `A.0.6` (API starter, install:api), then A.6 |
+| Last release | `v0.9.0` (A.3.10 install:auth --social) |
 | Updated | 2026-10-16 |
 
 ## Design references
@@ -366,7 +366,7 @@ Applies to **every** task:
   → verify: end-to-end test against an in-process fake OAuth2 server; `TestSecurity_A07_SocialStateMismatch`, replayed state and PKCE downgrade rejected.
 - [x] **A.3.9** Providers: GitHub, GitLab, Discord, generic OAuth2; OIDC (Google, Microsoft, generic) with discovery, JWKS cache and ID-token checks (iss, aud, exp, nonce, RS256/ES256).
   → verify: per-provider user-mapping golden tests; forged/expired ID tokens rejected.
-- [ ] **A.3.10** `install:auth --social` scaffold (routes, `social_accounts` migration, linking action) and `FakeSocial` test helper.
+- [x] **A.3.10** `install:auth --social` scaffold (routes, `social_accounts` migration, linking action) and `FakeSocial` test helper.
   → verify: generated app tests pass.
 
 ### A.4 Authorization — needs: A.3

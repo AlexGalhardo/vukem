@@ -46,8 +46,9 @@ func (a *Accounts) SendVerification(ctx context.Context, u models.User) error {
 	return a.Mailer.Send(ctx, mail.VerifyEmail{User: u, Link: link})
 }
 
-// MarkVerified sets email_verified_at.
-func (a *Accounts) MarkVerified(ctx context.Context, u *models.User) error {
+// MarkVerified sets email_verified_at using ex (a.DB, or the transaction
+// in progress: SQLite has a single writer connection).
+func (a *Accounts) MarkVerified(ctx context.Context, ex database.Executor, u *models.User) error {
 	if u.EmailVerified() {
 		return nil
 	}
@@ -55,7 +56,7 @@ func (a *Accounts) MarkVerified(ctx context.Context, u *models.User) error {
 	u.EmailVerifiedAt = orm.NullTime{}
 	u.EmailVerifiedAt.V, u.EmailVerifiedAt.Valid = a.now().UTC(), true
 
-	_, err := orm.QueryOf[models.User](a.DB).Where("id", u.ID).Update(ctx, orm.Set{"email_verified_at": u.EmailVerifiedAt.V})
+	_, err := orm.QueryOf[models.User](ex).Where("id", u.ID).Update(ctx, orm.Set{"email_verified_at": u.EmailVerifiedAt.V})
 
 	return err
 }

@@ -1,0 +1,44 @@
+package routes
+
+import (
+	"github.com/AlexGalhardo/vukem"
+	"github.com/AlexGalhardo/vukem/auth"
+	"github.com/AlexGalhardo/vukem/router"
+	"github.com/AlexGalhardo/vukem/web"
+
+	"{{.Module}}/app/accounts"
+)
+
+// Social registers "sign in with" routes (vukem install:auth --social).
+func Social(r *router.Router, app *vukem.App) error {
+	acc, err := accounts.New(app)
+	if err != nil {
+		return err
+	}
+
+	s := accounts.NewSocial(app, {{.Providers}})
+
+	r.Get("/auth/{provider}/redirect", func(c *web.Ctx) error {
+		return s.Redirect(c, c.Param("provider"))
+	}).Name("social.redirect").Use(auth.Guest(acc.Web))
+
+	r.Get("/auth/{provider}/callback", func(c *web.Ctx) error {
+		su, err := s.User(c, c.Param("provider"))
+		if err != nil {
+			return err
+		}
+
+		u, err := acc.FindOrCreateFromSocial(c.Context(), su)
+		if err != nil {
+			return err
+		}
+
+		if err := acc.Web.Login(c, u); err != nil {
+			return err
+		}
+
+		return c.Redirect("/dashboard")
+	}).Name("social.callback")
+
+	return nil
+}

@@ -117,7 +117,9 @@ tests/auth_test.go                         the whole flow, run by go test
 | Forgot / reset password | same answer for unknown emails; random token stored as SHA-256, 1 hour, single use; reset logs out remembered sessions |
 | Logout | session invalidated, remember-me token deleted |
 
-Existing projects created before `routes.All()` get the exact lines to add printed instead. `--force` overwrites existing files. Planned with `--social`: the social account routes, `social_accounts` migration and linking action (A.3.10).
+Existing projects created before `routes.All()` get the exact lines to add printed instead. `--force` overwrites existing files.
+
+`vukem install:auth --social github,google` (also on a project that already ran `install:auth`) adds `routes/social.go` (`/auth/{provider}/redirect` and `/callback`), the `social_accounts` model and migration (unique provider + provider id), `accounts.NewSocial` (credentials from `SOCIAL_<NAME>_CLIENT_ID`/`_SECRET`, also appended to `.env.example`) and `FindOrCreateFromSocial`: an existing link signs in; a provider-verified email links to the existing account; an unverified email that matches an account is refused (409) so a provider account cannot take over a password account; otherwise a new user is created. Generated tests use `vukemtest.FakeSocial(social.User{...})`, which only works in test apps.
 
 ## Social login (`social`)
 
@@ -162,7 +164,7 @@ r.Get("/auth/{provider}/callback", func(c *web.Ctx) error {
 | Options | `social.WithEndpoints(...)` (GitHub Enterprise, self-hosted GitLab, tests), `social.WithAuthParams(...)`, `Config.Scopes`, `OIDC(...).AuthParams(...)`, `social.OAuth2(name, cfg, endpoints, scopes, mapUser)` |
 | Security | redirect URL fixed in config, provider calls through a client with a 10 s timeout and 1 MiB response limit, tokens never logged |
 
-Planned: `vukem install:auth --social github,google` (routes, `social_accounts` migration, linking action) and `vukemtest.FakeSocial` (A.3.10, after mail); Apple, LinkedIn and X providers in BETA (B.8.3).
+Apple, LinkedIn and X providers arrive in BETA (B.8.3). `social.Fake(name, callbackURL, user)` is a provider for tests.
 
 ## Authorization
 

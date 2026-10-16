@@ -673,3 +673,39 @@ func TestSmallHelpers(t *testing.T) {
 		t.Fatalf("github auth URL = %s", u)
 	}
 }
+
+func TestFakeProvider(t *testing.T) {
+	t.Parallel()
+
+	s := New(testKey)
+	s.Use(Fake("github", "/auth/github/callback", User{ID: "7", Email: "ana@x.io", EmailVerified: true}))
+
+	if names := s.Names(); len(names) != 1 || names[0] != "github" {
+		t.Fatalf("Names = %v", names)
+	}
+
+	rec := httptest.NewRecorder()
+	if err := s.Redirect(
+		web.NewCtx(rec, httptest.NewRequestWithContext(t.Context(), "GET", "/", http.NoBody), nil),
+		"github",
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	loc := rec.Header().Get("Location")
+	if !strings.HasPrefix(loc, "/auth/github/callback?code=fake-code&state=") {
+		t.Fatalf("Location = %s", loc)
+	}
+
+	cb := httptest.NewRequestWithContext(t.Context(), http.MethodGet, loc, http.NoBody)
+	cb.AddCookie(rec.Result().Cookies()[0])
+
+	u, err := s.User(web.NewCtx(httptest.NewRecorder(), cb, nil), "github")
+	if err != nil || u.ID != "7" || u.Provider != "github" || u.Token.Access != "fake-access-token" {
+		t.Fatalf("User = %+v %v", u, err)
+	}
+
+	if _, err := s.providers["github"].Exchange(t.Context(), nil, "other", ""); err == nil {
+		t.Fatal("unexpected code accepted")
+	}
+}

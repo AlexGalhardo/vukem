@@ -11,6 +11,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"text/template"
 	"time"
@@ -23,8 +25,11 @@ import (
 //go:embed all:scaffolds
 var scaffoldFS embed.FS
 
+var socialProviders = []string{"github", "gitlab", "discord", "google", "microsoft"}
+
 func installAuth(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 	force := set.Bool("force", false, "overwrite existing files")
+	socialList := set.String("social", "", "also add social login: "+strings.Join(socialProviders, ","))
 
 	return func(ctx context.Context, env *Env, _ []string) error {
 		mod, err := modulePath(env)
@@ -32,22 +37,73 @@ func installAuth(set *flag.FlagSet) func(context.Context, *Env, []string) error 
 			return err
 		}
 
+		var providers []string
+
+		for p := range strings.SplitSeq(*socialList, ",") {
+			if p = strings.TrimSpace(strings.ToLower(p)); p == "" {
+				continue
+			}
+
+			if !slices.Contains(socialProviders, p) {
+				return usagef("unknown social provider %q (one of %s)", p, strings.Join(socialProviders, ", "))
+			}
+
+			providers = append(providers, p)
+		}
+
 		now := env.Now().UTC()
 		data := map[string]string{
 			"Module": mod,
 			"TS1":    now.Format("20060102150405"),
 			"TS2":    now.Add(time.Second).Format("20060102150405"),
+			"TS3":    now.Add(2 * time.Second).Format("20060102150405"),
 		}
 
-		if err := installScaffold(env, "auth", data, *force); err != nil {
-			return err
+		var regs []registration
+
+		// With --social on a project that already has install:auth, add only
+		// the social part.
+		if len(providers) == 0 || *force || !exists(env, filepath.Join("app", "accounts", "accounts.go")) {
+			if err := installScaffold(env, "auth", data, *force); err != nil {
+				return err
+			}
+
+			regs = append(regs,
+				registration{"database/migrations/registry.go", "All", "m" + data["TS1"] + "CreateUsersTable()"},
+				registration{"database/migrations/registry.go", "All", "m" + data["TS2"] + "CreateAuthTables()"},
+				registration{"routes/registry.go", "All", "Auth"},
+			)
 		}
 
-		for _, reg := range []struct{ file, fn, expr string }{
-			{"database/migrations/registry.go", "All", "m" + data["TS1"] + "CreateUsersTable()"},
-			{"database/migrations/registry.go", "All", "m" + data["TS2"] + "CreateAuthTables()"},
-			{"routes/registry.go", "All", "Auth"},
-		} {
+		if len(providers) > 0 {
+			quoted := make([]string, len(providers))
+			for i, p := range providers {
+				quoted[i] = strconv.Quote(p)
+			}
+
+			data["Providers"] = strings.Join(quoted, ", ")
+			data["FirstProvider"] = providers[0]
+
+			if err := installScaffold(env, "auth-social", data, *force); err != nil {
+				return err
+			}
+
+			regs = append(
+				regs,
+				registration{
+					"database/migrations/registry.go",
+					"All",
+					"m" + data["TS3"] + "CreateSocialAccountsTable()",
+				},
+				registration{"routes/registry.go", "All", "Social"},
+			)
+
+			if err := appendEnvExample(env, providers); err != nil {
+				return err
+			}
+		}
+
+		for _, reg := range regs {
 			if err := register(env, reg.file, reg.fn, reg.expr); err != nil {
 				return err
 			}
@@ -65,6 +121,38 @@ func installAuth(set *flag.FlagSet) func(context.Context, *Env, []string) error 
 
 		return nil
 	}
+}
+
+type registration struct{ file, fn, expr string }
+
+// appendEnvExample documents the provider credentials in .env.example.
+func appendEnvExample(env *Env, providers []string) error {
+	p := env.path(".env.example")
+
+	b, err := os.ReadFile(p)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+
+	if err != nil {
+		return err
+	}
+
+	text := string(b)
+	if text != "" && !strings.HasSuffix(text, "\n") {
+		text += "\n"
+	}
+
+	for _, pr := range providers {
+		key := "SOCIAL_" + strings.ToUpper(pr) + "_CLIENT_ID"
+		if strings.Contains(text, key) {
+			continue
+		}
+
+		text += key + "=\nSOCIAL_" + strings.ToUpper(pr) + "_CLIENT_SECRET=\n"
+	}
+
+	return writeFile(p, []byte(text))
 }
 
 // installScaffold renders scaffolds/<name> into the project. It checks
@@ -85,7 +173,7 @@ func installScaffold(env *Env, name string, data map[string]string, force bool) 
 		}
 
 		rel := strings.TrimPrefix(p, root+"/")
-		rel = strings.NewReplacer("TS1", data["TS1"], "TS2", data["TS2"]).Replace(rel)
+		rel = strings.NewReplacer("TS1", data["TS1"], "TS2", data["TS2"], "TS3", data["TS3"]).Replace(rel)
 
 		content, err := scaffoldFS.ReadFile(p)
 		if err != nil {

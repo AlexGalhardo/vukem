@@ -33,7 +33,7 @@ func (h *Handlers) Verify(c *web.Ctx) error {
 		return errs.New(403, "This verification link belongs to another account.")
 	}
 
-	if err := h.a.MarkVerified(c.Context(), &u); err != nil {
+	if err := h.a.MarkVerified(c.Context(), h.a.DB, &u); err != nil {
 		return err
 	}
 

@@ -30,6 +30,7 @@ import (
 	vukem "github.com/AlexGalhardo/vukem"
 	"github.com/AlexGalhardo/vukem/config"
 	"github.com/AlexGalhardo/vukem/mail"
+	"github.com/AlexGalhardo/vukem/social"
 )
 
 // App is an application booted for one test.
@@ -136,6 +137,20 @@ func (a *App) Mails() *mail.Array {
 	}
 
 	return arr
+}
+
+// FakeSocial returns Options.Env entries that make apps scaffolded with
+// install:auth --social sign in u through a fake provider (test apps only).
+func FakeSocial(u social.User) map[string]string {
+	verified := "false"
+	if u.EmailVerified {
+		verified = "true"
+	}
+
+	return map[string]string{
+		"SOCIAL_FAKE_ID": u.ID, "SOCIAL_FAKE_EMAIL": u.Email, "SOCIAL_FAKE_NAME": u.Name,
+		"SOCIAL_FAKE_EMAIL_VERIFIED": verified,
+	}
 }
 
 // Handler returns the compiled HTTP handler.
