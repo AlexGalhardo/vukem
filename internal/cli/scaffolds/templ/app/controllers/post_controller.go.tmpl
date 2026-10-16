@@ -1,0 +1,153 @@
+package controllers
+
+import (
+	"net/http"
+	"strconv"
+
+	"github.com/AlexGalhardo/vukem/database"
+	"github.com/AlexGalhardo/vukem/orm"
+	"github.com/AlexGalhardo/vukem/web"
+
+	"{{.Module}}/app/models"
+	"{{.Module}}/app/requests"
+	"{{.Module}}/resources/views"
+)
+
+// PostController is the example CRUD: forms with validation, flash
+// messages, and htmx fragments for search and delete. The same actions
+// answer JSON (Accept: application/json), with problem+json errors.
+type PostController struct {
+	db *database.DB
+}
+
+// NewPostController returns a PostController using db.
+func NewPostController(db *database.DB) *PostController { return &PostController{db: db} }
+
+// Index lists posts. For htmx requests (the search box) only the
+// PostList fragment is rendered.
+func (pc *PostController) Index(c *web.Ctx) error {
+	q := orm.QueryOf[models.Post](pc.db).OrderBy("id", orm.Desc)
+	if search := c.Query("q"); search != "" {
+		q = q.Where("title", "LIKE", "%"+search+"%")
+	}
+
+	posts, err := q.Get(c.Context())
+	if err != nil {
+		return err
+	}
+
+	if c.WantsJSON() {
+		return c.JSON(http.StatusOK, map[string]any{"data": posts})
+	}
+
+	return c.View(views.PostsIndex(posts, c.Query("q")), web.Partial(views.PostList(posts)))
+}
+
+// Create shows the form for a new post.
+func (*PostController) Create(c *web.Ctx) error { return c.View(views.PostsCreate()) }
+
+// Store validates and saves a new post. Invalid input redirects back with
+// the errors and old input flashed to the session.
+func (pc *PostController) Store(c *web.Ctx) error {
+	in, err := web.Parse(c, requests.PostSchema)
+	if err != nil {
+		return err
+	}
+
+	post := models.Post{Title: in.Title, Body: in.Body}
+	if err := orm.Create(c.Context(), pc.db, &post); err != nil {
+		return err
+	}
+
+	if c.WantsJSON() {
+		return c.Created("/posts/"+strconv.FormatInt(post.ID, 10), post)
+	}
+
+	_ = c.Flash("success", "Post created.")
+
+	return c.RedirectRoute("posts.show", "post", post.ID)
+}
+
+// Show displays a post.
+func (pc *PostController) Show(c *web.Ctx) error {
+	post, err := pc.find(c)
+	if err != nil {
+		return err
+	}
+
+	if c.WantsJSON() {
+		return c.JSON(http.StatusOK, post)
+	}
+
+	return c.View(views.PostsShow(post))
+}
+
+// Edit shows the edit form.
+func (pc *PostController) Edit(c *web.Ctx) error {
+	post, err := pc.find(c)
+	if err != nil {
+		return err
+	}
+
+	return c.View(views.PostsEdit(post))
+}
+
+// Update validates and saves changes.
+func (pc *PostController) Update(c *web.Ctx) error {
+	post, err := pc.find(c)
+	if err != nil {
+		return err
+	}
+
+	in, err := web.Parse(c, requests.PostSchema)
+	if err != nil {
+		return err
+	}
+
+	post.Title, post.Body = in.Title, in.Body
+	if err := orm.Update(c.Context(), pc.db, &post); err != nil {
+		return err
+	}
+
+	if c.WantsJSON() {
+		return c.JSON(http.StatusOK, post)
+	}
+
+	_ = c.Flash("success", "Post updated.")
+
+	return c.RedirectRoute("posts.show", "post", post.ID)
+}
+
+// Destroy deletes a post. htmx removes the row in place (empty response);
+// a plain form submission goes back to the list.
+func (pc *PostController) Destroy(c *web.Ctx) error {
+	post, err := pc.find(c)
+	if err != nil {
+		return err
+	}
+
+	if err := orm.Delete(c.Context(), pc.db, &post); err != nil {
+		return err
+	}
+
+	switch {
+	case c.WantsJSON():
+		return c.NoContent()
+	case c.IsHTMX():
+		return c.String(http.StatusOK, "")
+	}
+
+	_ = c.Flash("success", "Post deleted.")
+
+	return c.RedirectRoute("posts.index")
+}
+
+// find loads the post in the URL or fails with 404.
+func (pc *PostController) find(c *web.Ctx) (models.Post, error) {
+	id, err := c.ParamInt("post")
+	if err != nil {
+		return models.Post{}, err
+	}
+
+	return orm.QueryOf[models.Post](pc.db).Find(c.Context(), id)
+}

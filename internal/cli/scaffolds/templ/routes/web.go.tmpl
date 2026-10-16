@@ -1,0 +1,31 @@
+// Package routes declares the HTTP routes.
+package routes
+
+import (
+	vukem "github.com/AlexGalhardo/vukem"
+	"github.com/AlexGalhardo/vukem/middleware"
+	"github.com/AlexGalhardo/vukem/router"
+
+	"{{.Module}}/app/controllers"
+	"{{.Module}}/resources"
+)
+
+// Web registers the browser routes. vukem route:list shows them.
+func Web(r *router.Router, app *vukem.App) error {
+	if err := vukem.DefaultMiddleware(app, r); err != nil {
+		return err
+	}
+
+	r.UseServer(middleware.StaticFS(resources.Public(), middleware.StaticConfig{Prefix: "/"}))
+	r.Use(app.Vite.Middleware()) // templ components render Vite tags from the request context
+
+	db, err := app.DB()
+	if err != nil {
+		return err
+	}
+
+	r.Get("/", controllers.Home).Name("home")
+	r.Resource("posts", controllers.NewPostController(db))
+
+	return nil
+}

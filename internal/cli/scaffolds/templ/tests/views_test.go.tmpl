@@ -1,0 +1,42 @@
+package tests
+
+import (
+	"net/url"
+	"regexp"
+	"testing"
+
+	"github.com/AlexGalhardo/vukem/csrf"
+	"github.com/AlexGalhardo/vukem/vukemtest"
+
+	"{{.Module}}/bootstrap"
+)
+
+// The templ components keep the html/template starter's guarantees: CSP
+// nonces on scripts, a CSRF field in forms, validation errors and old input.
+func TestViewsSecurityAndForms(t *testing.T) {
+	t.Parallel()
+
+	app := vukemtest.New(t, bootstrap.New)
+	c := app.Client(t)
+
+	home := c.Get("/").AssertOK()
+	nonce := regexp.MustCompile(`<script src="/js/htmx.min.js" defer nonce="([^"]+)"></script>`).
+		FindStringSubmatch(home.Body())
+
+	if nonce == nil {
+		t.Fatalf("GET / has no htmx script with a nonce:\n%s", home.Body())
+	}
+
+	home.AssertSee(`<meta property="csp-nonce" nonce="` + nonce[1] + `">`)
+
+	c.Get("/posts/create").AssertOK().AssertSee(`<input type="hidden" name="` + csrf.FieldName + `" value="`)
+
+	c.WithHeader("Referer", "/posts/create").
+		PostForm("/posts", url.Values{"title": {"x"}, "body": {"Keep me."}}).
+		AssertRedirect("/posts/create")
+
+	c.Get("/posts/create").AssertOK().
+		AssertSee(`aria-invalid="true"`).
+		AssertSee(`<p id="title-error" class="error">`).
+		AssertSee("Keep me.")
+}

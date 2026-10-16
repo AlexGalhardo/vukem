@@ -30,8 +30,8 @@ func exe(name string) string {
 // skipDirs are never watched or considered app sources.
 var skipDirs = []string{".git", cacheDir, "node_modules", "vendor", "storage", "bin", "dist", "public", "tmp"}
 
-// sourcesModTime returns the newest modification time of the Go sources
-// (and go.mod/go.sum) of the project.
+// sourcesModTime returns the newest modification time of the Go and templ
+// sources (and go.mod/go.sum) of the project.
 func sourcesModTime(dir string) (time.Time, error) {
 	var newest time.Time
 
@@ -59,7 +59,8 @@ func walkSources(dir string, fn func(path string, info fs.FileInfo)) error {
 		}
 
 		name := d.Name()
-		if strings.HasSuffix(name, ".go") || name == "go.mod" || name == "go.sum" {
+		if strings.HasSuffix(name, ".go") || strings.HasSuffix(name, ".templ") || name == "go.mod" ||
+			name == "go.sum" {
 			info, err := d.Info()
 			if err != nil {
 				return err
@@ -147,6 +148,12 @@ func buildCmd(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 	return func(ctx context.Context, env *Env, _ []string) error {
 		if !exists(env, filepath.Join("cmd", "app")) {
 			return errors.New("no cmd/app in this directory: run vukem inside a Vukem project")
+		}
+
+		if hasTempl(env) {
+			if err := templGenerate(ctx, env); err != nil {
+				return err
+			}
 		}
 
 		if hasVite(env) {

@@ -14,6 +14,7 @@ func TestChooseStack(t *testing.T) {
 		interactive bool
 		input       string
 		api         bool
+		templ       bool
 		inertia     string
 		want        stack
 		wantErr     string
@@ -28,12 +29,20 @@ func TestChooseStack(t *testing.T) {
 			want:    stack{kind: "inertia", framework: "svelte"},
 		},
 		{name: "bad inertia flag", inertia: "angular", wantErr: "react, vue or svelte"},
-		{name: "api and inertia", api: true, inertia: "react", wantErr: "not both"},
+		{name: "templ flag", templ: true, want: stack{kind: "templ"}},
+		{name: "api and inertia", api: true, inertia: "react", wantErr: "choose one"},
+		{name: "templ and inertia", templ: true, inertia: "vue", wantErr: "choose one"},
+		{name: "api and templ", api: true, templ: true, wantErr: "choose one"},
 		{name: "flags skip the prompt", interactive: true, api: true, want: stack{kind: "api"}},
 		{name: "prompt default", interactive: true, input: "\n", want: stack{kind: "htmx"}, wantPrompt: true},
-		{name: "prompt api", interactive: true, input: "3\n", want: stack{kind: "api"}, wantPrompt: true},
+		{name: "prompt api", interactive: true, input: "4\n", want: stack{kind: "api"}, wantPrompt: true},
+		{name: "prompt templ", interactive: true, input: "2\n", want: stack{kind: "templ"}, wantPrompt: true},
 		{
-			name: "prompt inertia default react", interactive: true, input: "2\r\n\r\n",
+			name: "prompt templ by name", interactive: true, input: "templ\n",
+			want: stack{kind: "templ"}, wantPrompt: true,
+		},
+		{
+			name: "prompt inertia default react", interactive: true, input: "3\r\n\r\n",
 			want: stack{kind: "inertia", framework: "react"}, wantPrompt: true,
 		},
 		{
@@ -64,7 +73,7 @@ func TestChooseStack(t *testing.T) {
 
 			env := &Env{Stdin: strings.NewReader(tt.input), Stdout: &out, Interactive: tt.interactive}
 
-			got, err := chooseStack(env, tt.api, tt.inertia)
+			got, err := chooseStack(env, tt.api, tt.templ, tt.inertia)
 			if tt.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 					t.Fatalf("chooseStack() error = %v, want %q", err, tt.wantErr)

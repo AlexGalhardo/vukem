@@ -32,8 +32,8 @@ Exit codes: `0` success, `1` failure, `2` usage error.
 
 | Command | Description |
 | --- | --- |
-| `vukem new <name> [--module path] [--api \| --inertia react\|vue\|svelte] [--no-install]` | Create a project from the embedded starter (HTMX + Tailwind + SQLite by default; JSON-only with `--api`), run `go mod tidy`, generate `APP_KEY`, `npm install` (frontend starters), `git init`. On a terminal without stack flags it asks for the stack (HTMX, Inertia → React/Vue/Svelte, API) |
-| `vukem serve` | Build + run `cmd/app`, restart on `.go` changes (own watcher using polling + `os.Stat`; no fsnotify dep), reload templates without restart; runs `npm run dev` when a Vite config exists |
+| `vukem new <name> [--module path] [--api \| --templ \| --inertia react\|vue\|svelte] [--no-install]` | Create a project from the embedded starter (HTMX + Tailwind + SQLite by default; templ components instead of `html/template` views with `--templ`; JSON-only with `--api`), run `go mod tidy`, generate `APP_KEY`, `npm install` (frontend starters), `git init`. `--templ` also pins templ as a `go tool` and generates the components ([templ starter](frontend.md#templ-starter)). On a terminal without stack flags it asks for the stack (HTMX, HTMX + templ, Inertia → React/Vue/Svelte, API) |
+| `vukem serve` | Build + run `cmd/app`, restart on `.go` and `.templ` changes (own watcher using polling + `os.Stat`; no fsnotify dep), reload templates without restart; runs `go tool templ generate` before each build when `.templ` files exist, and `npm run dev` when a Vite config exists |
 | `vukem make:controller <Name> [--resource] [--api]` | Controller struct + constructor; `--resource` adds the 7 actions |
 | `vukem make:model <Name> [-m] [-f] [-c]` | Model; `-m` migration, `-f` factory, `-c` controller |
 | `vukem make:migration <name>` | Timestamped migration; stub chosen by `create_`/`add_`/`alter_` prefix; appended to `migrations/registry.go` |
@@ -48,7 +48,7 @@ Exit codes: `0` success, `1` failure, `2` usage error.
 | `vukem down [--secret s \| --with-secret] [--retry 60s]`, `vukem up` | Maintenance mode: `storage/framework/down` makes `middleware.Maintenance` (in both default stacks) answer 503 with `Retry-After` (the `errors/503` view or problem+json); `/up` stays served. Visiting `/<secret>` sets a signed bypass cookie; the secret is stored hashed. An unreadable state file keeps the app down |
 | `vukem boost:install` | Agent setup (Laravel Boost-style): guidelines block in `AGENTS.md` (re-runnable, text outside the markers is kept), `@AGENTS.md` in `CLAUDE.md`, skills in `.claude/skills/vukem-*`, and the `vukem-boost` MCP server in `.mcp.json`, `.cursor/mcp.json`, `.vscode/mcp.json` |
 | `vukem version` | Print the CLI version |
-| `vukem build` | `vite build` (if present) then `go build -trimpath -ldflags "-s -w"` with embedded assets |
+| `vukem build` | `go tool templ generate` (when `.templ` files exist), `vite build` (if present), then `go build -trimpath -ldflags "-s -w"` with embedded assets |
 | app: `migrate`, `migrate:rollback`, `migrate:reset`, `migrate:fresh`, `migrate:status` | Migrations |
 | app: `route:list [--json]` | Route table |
 | app: `queue:work`, `queue:failed`, `queue:retry`, `queue:forget` | Queue workers and failed jobs ([subsystems.md](subsystems.md#queue)) |

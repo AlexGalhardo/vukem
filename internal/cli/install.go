@@ -32,6 +32,10 @@ func installAuth(set *flag.FlagSet) func(context.Context, *Env, []string) error 
 	socialList := set.String("social", "", "also add social login: "+strings.Join(socialProviders, ","))
 
 	return func(ctx context.Context, env *Env, _ []string) error {
+		if hasTempl(env) {
+			return usagef("install:auth writes html/template pages; templ projects are not supported yet")
+		}
+
 		providers, err := parseProviders(*socialList)
 		if err != nil {
 			return err

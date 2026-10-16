@@ -1,0 +1,33 @@
+package views
+
+// Layout is the page shell; pages render inside it: @Layout("Title") { … }.
+templ Layout(title string) {
+	<!DOCTYPE html>
+	<html lang="en">
+		<head>
+			<meta charset="utf-8"/>
+			<meta name="viewport" content="width=device-width, initial-scale=1"/>
+			<title>{ title }</title>
+			<meta property="csp-nonce" nonce={ cspNonce(ctx) }/>
+			@viteTags("resources/css/app.css", "resources/js/app.ts")
+			@script(asset(ctx, "js/htmx.min.js"))
+		</head>
+		<body>
+			<header>
+				<a href={ route(ctx, "home") } class="brand">Vukem</a>
+				<nav><a href={ route(ctx, "posts.index") }>Posts</a></nav>
+			</header>
+			<main>
+				if msg := flash(ctx, "success"); msg != "" {
+					<p class="flash" role="status">{ msg }</p>
+				}
+				{ children... }
+			</main>
+		</body>
+	</html>
+}
+
+// csrfField is the hidden CSRF token every form posts.
+templ csrfField() {
+	<input type="hidden" name={ csrfFieldName } value={ csrfToken(ctx) }/>
+}

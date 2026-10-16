@@ -11,7 +11,7 @@ import (
 
 // stack is the frontend a new project starts with.
 type stack struct {
-	kind      string // "htmx", "inertia" or "api"
+	kind      string // "htmx", "templ", "inertia" or "api"
 	framework string // Inertia only: "react", "vue" or "svelte"
 }
 
@@ -19,14 +19,16 @@ var inertiaFrameworks = []string{"react", "vue", "svelte"}
 
 // chooseStack resolves the stack from flags, or asks on an interactive
 // terminal; without a terminal it uses the HTMX default.
-func chooseStack(env *Env, api bool, inertia string) (stack, error) {
+func chooseStack(env *Env, api, templ bool, inertia string) (stack, error) {
 	inertia = strings.ToLower(strings.TrimSpace(inertia))
 
 	switch {
-	case api && inertia != "":
-		return stack{}, usagef("choose --api or --inertia, not both")
+	case countTrue(api, templ, inertia != "") > 1:
+		return stack{}, usagef("choose one of --api, --templ or --inertia")
 	case api:
 		return stack{kind: "api"}, nil
+	case templ:
+		return stack{kind: "templ"}, nil
 	case inertia != "":
 		if !slices.Contains(inertiaFrameworks, inertia) {
 			return stack{}, usagef("--inertia must be react, vue or svelte, not %q", inertia)
@@ -41,6 +43,7 @@ func chooseStack(env *Env, api bool, inertia string) (stack, error) {
 
 	kind := ask(env.Stdout, in, "Which stack?", []option{
 		{"htmx", "HTMX + Tailwind (server-rendered views)"},
+		{"templ", "HTMX + templ + Tailwind (type-checked components)"},
 		{"inertia", "Inertia + Tailwind (React, Vue or Svelte)"},
 		{"api", "JSON API (tokens, /api/v1)"},
 	})

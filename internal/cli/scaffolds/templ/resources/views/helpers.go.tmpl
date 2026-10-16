@@ -1,0 +1,109 @@
+// Package views holds the templ components. Edit the .templ files; vukem
+// serve and vukem build run "go tool templ generate", and the generated
+// *_templ.go files are committed so go build works without templ.
+package views
+
+import (
+	"context"
+	"errors"
+	"html"
+	"io"
+	"strings"
+
+	"github.com/a-h/templ"
+
+	"github.com/AlexGalhardo/vukem/csrf"
+	"github.com/AlexGalhardo/vukem/middleware"
+	"github.com/AlexGalhardo/vukem/vite"
+	"github.com/AlexGalhardo/vukem/web"
+)
+
+// route returns the URL of a named route ("posts.show", "post", 1).
+func route(ctx context.Context, name string, params ...any) (string, error) {
+	urls := web.ServicesFrom(ctx).URLs
+	if urls == nil {
+		return "", errors.New("views: no URL generator in the request context")
+	}
+
+	return urls.URL(name, params...)
+}
+
+// asset returns the URL of a public file, versioned by Vite when built.
+func asset(ctx context.Context, p string) string {
+	if v := vite.FromContext(ctx); v != nil {
+		if u, ok := v.Asset(p); ok {
+			return u
+		}
+	}
+
+	return "/" + strings.TrimPrefix(p, "/")
+}
+
+// viteTags loads Vite entries (dev server or build) with the CSP nonce.
+func viteTags(entries ...string) templ.Component {
+	return templ.ComponentFunc(func(ctx context.Context, w io.Writer) error {
+		v := vite.FromContext(ctx)
+		if v == nil {
+			return errors.New("views: no Vite in the request context (add app.Vite.Middleware())")
+		}
+
+		tags, err := v.Tags(middleware.CSPNonce(ctx), entries...)
+		if err != nil {
+			return err
+		}
+
+		_, err = io.WriteString(w, string(tags))
+
+		return err
+	})
+}
+
+// script loads a deferred external script with the CSP nonce; the default
+// CSP blocks inline scripts.
+func script(src string) templ.Component {
+	return templ.ComponentFunc(func(ctx context.Context, w io.Writer) error {
+		tag := `<script src="` + html.EscapeString(src) + `" defer`
+		if nonce := middleware.CSPNonce(ctx); nonce != "" {
+			tag += ` nonce="` + html.EscapeString(nonce) + `"`
+		}
+
+		_, err := io.WriteString(w, tag+"></script>")
+
+		return err
+	})
+}
+
+func cspNonce(ctx context.Context) string { return middleware.CSPNonce(ctx) }
+
+func csrfToken(ctx context.Context) string { return csrf.Token(ctx) }
+
+const csrfFieldName = csrf.FieldName
+
+// flash returns the message flashed under key by the previous request.
+func flash(ctx context.Context, key string) string {
+	if v := web.FlashFrom(ctx, key); v != nil {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+
+	return ""
+}
+
+// old returns the input of the previous failed form post, or fallback.
+func old(ctx context.Context, field, fallback string) string {
+	if v := web.OldInput(ctx, field); v != "" {
+		return v
+	}
+
+	return fallback
+}
+
+// fieldError returns the first validation error of field, or "".
+func fieldError(ctx context.Context, field string) string {
+	if msgs := web.ErrorsFrom(ctx)[field]; len(msgs) > 0 {
+		return msgs[0]
+	}
+
+	return ""
+}

@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -18,7 +19,13 @@ type snapshot map[string]time.Time
 func takeSnapshot(dir string) (snapshot, error) {
 	s := snapshot{}
 
-	err := walkSources(dir, func(p string, info fs.FileInfo) { s[p] = info.ModTime() })
+	err := walkSources(dir, func(p string, info fs.FileInfo) {
+		// Generated from the watched .templ files before each build; counting
+		// them would rebuild twice.
+		if !strings.HasSuffix(p, "_templ.go") {
+			s[p] = info.ModTime()
+		}
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -74,9 +81,10 @@ func serveCmd(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 	}
 }
 
-// watch builds and runs the app, rebuilding and restarting it when Go
-// sources change. Templates reload inside the app (no restart needed).
-// A failed build keeps the previous process running.
+// watch builds and runs the app, rebuilding and restarting it when Go or
+// templ sources change; templ components are generated before each build.
+// Templates reload inside the app (no restart needed). A failed build keeps
+// the previous process running.
 func watch(ctx context.Context, env *Env, interval time.Duration, args []string) error {
 	dir := env.dirOrDot()
 	binDir := env.path(filepath.Join(cacheDir, "serve"))
@@ -95,6 +103,16 @@ func watch(ctx context.Context, env *Env, interval time.Duration, args []string)
 	defer stop()
 
 	start := func() {
+		if hasTempl(env) {
+			if err := templGenerate(ctx, env); err != nil {
+				if ctx.Err() == nil {
+					fmt.Fprintln(env.Stderr, "vukem serve: templ generate failed, keeping the previous version:", err)
+				}
+
+				return
+			}
+		}
+
 		// Build to a separate file: Windows cannot overwrite a running .exe.
 		if err := goBuild(ctx, env, next); err != nil {
 			if ctx.Err() == nil {

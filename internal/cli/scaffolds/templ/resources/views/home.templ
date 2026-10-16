@@ -1,0 +1,12 @@
+package views
+
+// Home is the welcome page.
+templ Home() {
+	@Layout("Vukem") {
+		<section class="hero">
+			<h1>Welcome</h1>
+			<p>Your Vukem app is running. Edit <code>resources/views/home.templ</code> and refresh.</p>
+			<p><a class="button" href={ route(ctx, "posts.index") }>See the example CRUD</a></p>
+		</section>
+	}
+}

@@ -26,13 +26,33 @@ type View interface {
 - **Fragments:** `c.Render("posts/index", data, web.Block("post-list"))` renders the whole page for normal requests and only the `post-list` block for htmx partial requests; `c.Fragment(name, block, data)` always renders the block.
 - Funcs: `route`, `asset`, `csrfField`, `csrfToken`, `cspNonce`, `old`, `error`, `errors`, `flash`, `json` (safe in `<script>`), `dict` (data for partials), `htmxScript`, `can` (authorization), `vite`, `viteReactRefresh` (see [Vite](#vite)), `t` and `locale` (see [i18n](subsystems.md#i18n)). Request-scoped funcs read the session, CSP nonce and locale from the request context.
 
-### templ (supported, not bundled)
+### templ (optional)
 
 ```go
 return c.View(components.PostList(posts)) // templ.Component satisfies view.View
 ```
 
 No templ import in the core; templ users add the dependency and `go tool templ generate`.
+
+Context helpers for components (they only get the request `ctx`), all in the core and templ-free:
+
+| Helper | Meaning |
+| --- | --- |
+| `c.View(page, web.Partial(fragment))` | `web.Block` for components: render `fragment` for htmx partial requests, `page` otherwise; sets `Vary: HX-Request` |
+| `web.FlashFrom(ctx, key)`, `web.OldInput(ctx, field)`, `web.ErrorsFrom(ctx)` | `c.FlashValue`, `c.Old`, `c.Errors` from the context |
+| `csrf.Token(ctx)`, `csrf.FieldName`, `middleware.CSPNonce(ctx)` | CSRF field and CSP nonce |
+| `web.ServicesFrom(ctx).URLs.URL(name, params...)` | Named route URLs |
+| `vite.FromContext(ctx).Tags(nonce, entries...)` | Vite tags; `r.Use(app.Vite.Middleware())` puts `app.Vite` in the context |
+
+### templ starter
+
+`vukem new app --templ` is the HTMX starter with the same pages and tests (layout, home, posts CRUD with the htmx search fragment, flash messages, validation errors and old input, CSRF field, CSP nonces, Vite tags) written as templ components in `resources/views` (package `views`) instead of `html/template` views:
+
+- templ is pinned as a Go 1.24+ tool (`go get -tool github.com/a-h/templ/cmd/templ@v0.3.1070`, a `tool` line in `go.mod`); run it with `go tool templ generate`. The version lives in `internal/cli/templ.go`.
+- The generated `*_templ.go` files are committed, so `go build` and `go test` work without running templ; regenerating an untouched project produces no diff (the e2e test checks it).
+- `vukem serve` runs `go tool templ generate` before every build when the project has `.templ` files, and watches them; `vukem build` generates before `vite build`.
+- `resources/views/helpers.go` wraps the context helpers above (`route`, `asset`, `viteTags`, `script`, `flash`, `old`, `fieldError`, `csrfField`). Scripts go through `script`/`viteTags`, which add the nonce, so the components contain no `<script>` tags; `TestSecurity_A02_StarterViewsRespectCSP` checks `.templ` files like `.html` views.
+- `bootstrap/app.go` has no `vukem.WithViews`; `install:auth` still writes `html/template` pages and refuses templ projects for now.
 
 ## HTMX
 

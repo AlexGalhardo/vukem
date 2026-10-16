@@ -1,0 +1,29 @@
+// Package resources holds the public assets. They are embedded in the
+// binary; during development the files on disk are used instead. Views are
+// templ components in resources/views, compiled into the binary.
+package resources
+
+import (
+	"embed"
+	"io/fs"
+	"os"
+)
+
+// all: keeps build/.vite/manifest.json (a dot directory) in the binary.
+//
+//go:embed all:public
+var embedded embed.FS
+
+// Public returns the static assets served at /.
+func Public() fs.FS {
+	if info, err := os.Stat("resources/public"); err == nil && info.IsDir() {
+		return os.DirFS("resources/public")
+	}
+
+	sub, err := fs.Sub(embedded, "public")
+	if err != nil {
+		panic(err) // unreachable: the directory is embedded above
+	}
+
+	return sub
+}

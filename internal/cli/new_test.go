@@ -31,8 +31,8 @@ func TestVendoredHTMX(t *testing.T) {
 }
 
 // Under the default CSP (script-src 'self' 'nonce-…', no inline styles),
-// starter views must not use inline scripts, event handler attributes or
-// style attributes.
+// starter views (html/template and templ) must not use inline scripts,
+// event handler attributes or style attributes.
 //
 // shortcut: static check of the templates, not a headless browser; add a
 // browser check when the e2e suite gets one.
@@ -45,7 +45,9 @@ func TestSecurity_A02_StarterViewsRespectCSP(t *testing.T) {
 		return func(p string, d fs.DirEntry, err error) error {
 			// Emails are not served pages; JSX/Vue/Svelte event props are not
 			// inline HTML handlers.
-			if err != nil || d.IsDir() || strings.Contains(p, "/views/mail/") || !strings.HasSuffix(p, ".html") {
+			isView := strings.HasSuffix(p, ".html") || strings.HasSuffix(p, ".templ") ||
+				strings.HasSuffix(p, ".templ.tmpl")
+			if err != nil || d.IsDir() || strings.Contains(p, "/views/mail/") || !isView {
 				return err
 			}
 

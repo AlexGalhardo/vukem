@@ -1,0 +1,113 @@
+package views
+
+import "{{.Module}}/app/models"
+
+// PostsIndex lists posts with an htmx search box that swaps PostList.
+templ PostsIndex(posts []models.Post, search string) {
+	@Layout("Posts") {
+		<div class="toolbar">
+			<h1>Posts</h1>
+			<a class="button" href={ route(ctx, "posts.create") }>New post</a>
+		</div>
+		<input
+			type="search"
+			name="q"
+			value={ search }
+			placeholder="Search posts"
+			aria-label="Search posts"
+			hx-get={ route(ctx, "posts.index") }
+			hx-trigger="input changed delay:300ms, search"
+			hx-target="#post-list"
+		/>
+		@PostList(posts)
+	}
+}
+
+// PostList is the fragment htmx requests get (web.Partial).
+templ PostList(posts []models.Post) {
+	<ul id="post-list" class="list">
+		for _, post := range posts {
+			<li>
+				<a href={ route(ctx, "posts.show", "post", post.ID) }>{ post.Title }</a>
+				<button
+					type="button"
+					class="link danger"
+					hx-delete={ route(ctx, "posts.destroy", "post", post.ID) }
+					hx-target="closest li"
+					hx-swap="outerHTML"
+					hx-confirm="Delete this post?"
+				>Delete</button>
+			</li>
+		}
+		if len(posts) == 0 {
+			<li class="empty">No posts yet.</li>
+		}
+	</ul>
+}
+
+// PostsShow displays a post.
+templ PostsShow(post models.Post) {
+	@Layout(post.Title) {
+		<article>
+			<h1>{ post.Title }</h1>
+			<p>{ post.Body }</p>
+		</article>
+		<p>
+			<a href={ route(ctx, "posts.edit", "post", post.ID) }>Edit</a> ·
+			<a href={ route(ctx, "posts.index") }>All posts</a>
+		</p>
+	}
+}
+
+// PostsCreate is the form for a new post.
+templ PostsCreate() {
+	@Layout("New post") {
+		<h1>New post</h1>
+		<form method="post" action={ route(ctx, "posts.store") }>
+			@csrfField()
+			@postFields(old(ctx, "title", ""), old(ctx, "body", ""))
+			<button type="submit">Create</button>
+		</form>
+	}
+}
+
+// PostsEdit is the edit form, re-filled with the old input after a failed
+// submission.
+templ PostsEdit(post models.Post) {
+	@Layout("Edit post") {
+		<h1>Edit post</h1>
+		<form method="post" action={ route(ctx, "posts.update", "post", post.ID) }>
+			@csrfField()
+			<input type="hidden" name="_method" value="PUT"/>
+			@postFields(old(ctx, "title", post.Title), old(ctx, "body", post.Body))
+			<button type="submit">Save</button>
+		</form>
+	}
+}
+
+templ postFields(title, body string) {
+	<label>
+		Title
+		<input
+			name="title"
+			value={ title }
+			required
+			minlength="3"
+			maxlength="120"
+			if fieldError(ctx, "title") != "" {
+				aria-invalid="true"
+				aria-describedby="title-error"
+			}
+		/>
+	</label>
+	if msg := fieldError(ctx, "title"); msg != "" {
+		<p id="title-error" class="error">{ msg }</p>
+	}
+	<label>
+		Body
+		<textarea name="body" rows="6">{ body }</textarea>
+	</label>
+	if msg := fieldError(ctx, "body"); msg != "" {
+		<p class="error">{ msg }</p>
+	}
+}

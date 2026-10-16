@@ -48,6 +48,7 @@ func newProject(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 	framework := set.String("framework", "", "path to a local Vukem checkout to use instead of a release")
 	apiOnly := set.Bool("api", false, "JSON API starter: tokens, /api/v1, no views or sessions")
 	inertiaFW := set.String("inertia", "", "Inertia starter with react, vue or svelte")
+	templ := set.Bool("templ", false, "HTMX starter with templ components instead of html/template views")
 	noInstall := set.Bool("no-install", false, "skip npm install")
 
 	return func(ctx context.Context, env *Env, args []string) error {
@@ -65,7 +66,7 @@ func newProject(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 			return fmt.Errorf("%s already exists", name)
 		}
 
-		st, err := chooseStack(env, *apiOnly, *inertiaFW)
+		st, err := chooseStack(env, *apiOnly, *templ, *inertiaFW)
 		if err != nil {
 			return err
 		}
@@ -91,14 +92,30 @@ func newProject(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 			if err := applyInertia(&project, st.framework); err != nil {
 				return err
 			}
+		case "templ":
+			if err := applyTempl(&project); err != nil {
+				return err
+			}
 		}
 
 		if err := requireFramework(ctx, &project, *framework); err != nil {
 			return err
 		}
 
+		if st.kind == "templ" {
+			if err := addTempl(ctx, &project); err != nil {
+				return err
+			}
+		}
+
 		if err := tool(ctx, &project, "go", "mod", "tidy"); err != nil {
 			return err
+		}
+
+		if st.kind == "templ" {
+			if err := templGenerate(ctx, &project); err != nil {
+				return err
+			}
 		}
 
 		if err := writeAppKey(&project, config.GenerateKey(), false); err != nil {
@@ -125,6 +142,8 @@ func newProject(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 			desc = "JSON API, SQLite"
 		case "inertia":
 			desc = "Inertia + " + st.framework + ", Tailwind, SQLite"
+		case "templ":
+			desc = "htmx " + htmxVersion + ", templ, Tailwind, SQLite"
 		}
 
 		fmt.Fprintf(env.Stdout, "\nCreated %s (%s). Next:\n\n  cd %s\n  vukem migrate\n  vukem serve\n\n",
