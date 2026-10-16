@@ -93,10 +93,12 @@ blog/
 | # | Topic | Decision | Alternatives | Rationale |
 | --- | --- | --- | --- | --- |
 | F1 | Templates | **`html/template` default** (layouts + fragment rendering for HTMX); templ supported through `View.Render(ctx, w) error` with zero core dependency | templ default; html/template only | stdlib-first, but no lock-out of templ users |
-| F2 | HTMX | **htmx 4 vendored + served via `embed`; no Node required** for the default starter; Vite optional (Tailwind/bundling) | Vite always | `vukem new app` runs without `npm install` |
+| F2 | HTMX | htmx 4 vendored + served via `embed`. **Every starter ships Vite + Tailwind CSS v4 (`@tailwindcss/vite`) preconfigured**, so the HTMX starter needs Node too | No Node for HTMX (original decision); Tailwind standalone CLI; Tailwind opt-in flag | Maintainer requirement (2026-10-16): Tailwind ready out of the box with one tooling for HTMX and Inertia |
 | F3 | HTMX helpers | Own v4-aware helpers: `IsHTMX`, `IsPartial` (`HX-Request-Type`), history-restore detection, auto fragment/layout rendering, response header builder, `<hx-partial>`, 422 flow, `Vary: HX-Request` | angelofallars/htmx-go (htmx 2 era) | Existing libs predate v4 |
-| F4 | Inertia | **Own v3 adapter in BETA** (full protocol, CSR fallback on SSR failure, integrated with session/flash/validation/Vite); React starter first, Vue and Svelte starters later in BETA (B.9) | ALPHA; React only | Maintainer requirement (2026-10-16): Vue/Svelte moved from post-1.0 to BETA |
+| F4 | Inertia | **Own v3 adapter in BETA** (full protocol, CSR fallback on SSR failure, integrated with session/flash/validation/Vite); React, Vue and Svelte starters ship together in B.3.6 | ALPHA; React only; Vue/Svelte later (B.9) | Maintainer requirement (2026-10-16): pick the Inertia framework during `vukem new` |
 | F5 | Vite | Laravel "hot file" model; `{{ vite "…" }}` template func; manifest hash = Inertia version | olivere/vite | Go can't host Vite in-process |
+| F6 | Starter choice | `vukem new` asks for the stack on a TTY (HTMX, Inertia, API; with Inertia: React, Vue or Svelte) using stdlib prompts; flags (`--api`, `--inertia=react\|vue\|svelte`) skip the prompt; no TTY uses the HTMX default | Flags only | Maintainer choice (2026-10-16); no prompt dependency |
+| F7 | Debug error page | Own youch-style page (no dependency): error chain via `Unwrap`, stack frames with source snippets, request (secrets redacted), route and app info; ANSI variant for the terminal. Stacks come from recovered panics and from `errs` wrappers that call `runtime.Callers` only outside production | Stack only for panics; port of youch | Maintainer choice (2026-10-16): better debugging DX like AdonisJS |
 
 ## Quality & tooling
 

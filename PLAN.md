@@ -491,10 +491,12 @@ Applies to **every** task:
   → verify: tests.
 - [ ] **B.3.5** SSR client with timeout + CSR fallback + health + dev endpoint discovery; `ssr:start`.
   → verify: fallback test with a failing fake SSR server.
-- [ ] **B.3.6** `install:inertia` React starter (Vite, TS, pages, layouts, auth pages) + `AssertInertia`.
-  → verify: e2e: new Inertia app builds and its tests pass.
+- [ ] **B.3.6** Inertia starters for React, Vue and Svelte (`vukem new --inertia=react|vue|svelte`, `install:inertia`): Vite, TS, Tailwind v4, pages, layouts, auth pages + `AssertInertia`.
+  → verify: e2e: a new Inertia app per framework builds and its tests pass.
 - [ ] **B.3.7** `codegen:routes` → typed `routes.ts` (warmup boot mode).
   → verify: golden TS output; `tsc --noEmit` passes in starter.
+- [ ] **B.3.8** HTMX starter on Vite + Tailwind CSS v4 (`@tailwindcss/vite`, `resources/css/app.css`, `{{vite}}` in the layout, hot-file plugin); `vukem new` prompts for the stack on a TTY (HTMX, Inertia → React/Vue/Svelte, API), flags skip it.
+  → verify: e2e: `vukem new` HTMX app runs `npm run build` and its tests pass; prompt tests with a fake TTY.
 
 ### B.4 Remaining subsystems
 
@@ -508,6 +510,8 @@ Applies to **every** task:
   → verify: tests.
 - [ ] **B.4.5** Optional OpenTelemetry module (`drivers/otel` or `contrib/otel`).
   → verify: span emitted per request in test exporter.
+- [ ] **B.4.6** Youch-style debug error page (decision F7): error chain, stack frames with source snippets (panics + `errs` stacks captured outside production), request with redacted secrets, route info; ANSI terminal output.
+  → verify: golden HTML/ANSI tests; `TestSecurity_A02_DebugPageOffInProduction`, secrets redacted.
 
 ### B.6 Realtime & GraphQL
 
@@ -544,8 +548,7 @@ Applies to **every** task:
 
 ### B.9 More starters & client generation
 
-- [ ] **B.9.1** Inertia Vue and Svelte starters (`install:inertia --vue|--svelte`) with the same pages and tests as React.
-  → verify: e2e: each new Inertia app builds and its tests pass.
+- [x] **B.9.1** ~~Inertia Vue and Svelte starters~~ — moved into B.3.6 (decision F4, 2026-10-16).
 - [ ] **B.9.2** templ-first starter (`vukem new <name> --templ`).
   → verify: e2e: generated app builds, `templ generate` is clean and tests pass.
 - [ ] **B.9.3** Typed RPC client generation (`vukem codegen:client`, TypeScript and Go) from typed handlers/OpenAPI with `z` types.
