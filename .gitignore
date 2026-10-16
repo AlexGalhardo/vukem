@@ -31,3 +31,6 @@ go.work.sum
 site/.next/
 site/.vercel/
 site/out/
+
+# Agent worktrees
+/.claude/worktrees/
