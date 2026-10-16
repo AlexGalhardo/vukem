@@ -1,5 +1,5 @@
-github.com/AlexGalhardo/vukem v0.18.0 h1:dMDbhyhugz2zQXqkUUrHf5H06uDVqAXzCh7AQHqPPsw=
-github.com/AlexGalhardo/vukem v0.18.0/go.mod h1:DPUd9/y7AZ+ymiWZnrEbx3lcD82HyYeYD/8a3zfAACw=
+github.com/AlexGalhardo/vukem v0.19.0 h1:fMhaVh8vsxKKBqG2IxrIuIAM0Q1nNC0NOBNl0PUtq8c=
+github.com/AlexGalhardo/vukem v0.19.0/go.mod h1:DPUd9/y7AZ+ymiWZnrEbx3lcD82HyYeYD/8a3zfAACw=
 github.com/coder/websocket v1.8.15 h1:6B2JPeOGlpff2Uz6vOEH1Vzpi0iUz20A+lPVhPHtNUA=
 github.com/coder/websocket v1.8.15/go.mod h1:NX3SzP+inril6yawo5CQXx8+fk145lPDC6pumgx0mVg=
 github.com/dustin/go-humanize v1.0.1 h1:GzkhY7T5VNhEkwH0PVJgjz+fX1rhBrR7pRT3mDkpeCY=

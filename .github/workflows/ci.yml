@@ -261,11 +261,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache-dependency-path: "**/go.sum"
-      # shortcut: unit tests use the workspace because the driver needs
-      # database.MySQL and Driver.DSN from the unreleased core; add the
-      # GOWORK=off step once drivers/mysql requires that core release.
-      - name: Unit tests (workspace, current core)
+      - name: Unit tests (module alone)
         working-directory: drivers/mysql
+        env:
+          GOWORK: "off"
         run: go test -count=1 ./...
       - name: Conformance suites (workspace, current core)
         working-directory: drivers/mysql
