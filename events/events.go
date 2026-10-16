@@ -20,6 +20,7 @@ import (
 	"reflect"
 	"slices"
 	"sync"
+	"time"
 
 	"github.com/AlexGalhardo/vukem/queue"
 )
@@ -98,6 +99,7 @@ type Bus struct {
 	jobs      []queue.Registration
 	queue     func() (Enqueuer, error)
 	closed    bool
+	obs       Observer
 }
 
 // SetQueue sets how queued listeners reach the queue (called lazily on
@@ -167,12 +169,27 @@ func (b *Bus) Dispatch(ctx context.Context, event any) error {
 	ls := slices.Clone(b.listeners[reflect.TypeOf(event)])
 	closed := b.closed
 	getQueue := b.queue
+	obs := b.obs
 	b.mu.RUnlock()
 
 	if closed {
 		return ErrClosed
 	}
 
+	if obs == nil {
+		return b.run(ctx, ls, getQueue, event)
+	}
+
+	start := time.Now()
+	err := b.run(ctx, ls, getQueue, event)
+	obs.ObserveEvent(ctx, Event{
+		Type: fmt.Sprintf("%T", event), Listeners: len(ls), Duration: time.Since(start), Err: err,
+	})
+
+	return err
+}
+
+func (b *Bus) run(ctx context.Context, ls []listener, getQueue func() (Enqueuer, error), event any) error {
 	for _, l := range ls {
 		if l.async {
 			b.goAsync(ctx, l, event)
