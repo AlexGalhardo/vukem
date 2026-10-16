@@ -128,6 +128,7 @@ func (a *App) Sessions() (*session.Manager, error) {
 			Production:  a.Config.IsProduction(),
 			Log:         a.Log,
 			Store:       a.sessStore,
+			Now:         a.now,
 		}
 
 		switch {

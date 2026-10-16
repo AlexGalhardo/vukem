@@ -207,6 +207,20 @@ func (m *Manager) load(r *http.Request, s *Session) {
 	s.data = data
 }
 
+// Peek decodes the session carried by cookies, as the next request would
+// see it. Tests use it to assert on flash data and session values.
+func (m *Manager) Peek(ctx context.Context, cookies []*http.Cookie) map[string]any {
+	r, _ := http.NewRequestWithContext(ctx, http.MethodGet, "/", http.NoBody)
+	for _, c := range cookies {
+		r.AddCookie(c)
+	}
+
+	s := &Session{}
+	m.load(r, s)
+
+	return s.data
+}
+
 // touchEvery limits idle-timeout refresh writes to one per minute.
 const touchEvery = time.Minute
 

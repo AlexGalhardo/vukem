@@ -18,8 +18,8 @@ Task IDs: `<phase>.<group>.<task>` (e.g. `P.3.2`). Reference them in commit bodi
 | Field | Value |
 | --- | --- |
 | Current phase | **Prototype** |
-| Next task | `P.9.1` (P.0.9 waits for GitHub billing) |
-| Last release | `v0.0.9` (P.8 views and htmx) |
+| Next task | `P.10.1` (P.0.9 waits for GitHub billing) |
+| Last release | `v0.0.10` (P.9 testing toolkit) |
 | Updated | 2026-10-16 |
 
 ## Design references
@@ -237,15 +237,15 @@ Applies to **every** task:
 
 ### P.9 Testing toolkit — needs: P.3, P.6, P.7
 
-- [ ] **P.9.1** `lumektest.New(t, bootFn)` with test env, in-memory SQLite, migrations.
+- [x] **P.9.1** `lumektest.New(t, bootFn)` with test env, in-memory SQLite, migrations.
   → verify: used by ≥ 3 framework tests.
-- [ ] **P.9.2** Fluent client (requests, status/redirect/body/session/HTMX assertions) with rich failure output.
+- [x] **P.9.2** Fluent client (requests, status/redirect/body/session/HTMX assertions) with rich failure output.
   → verify: self-tests using a fake `testing.TB` that records failures.
-- [ ] **P.9.3** DB helpers (`RefreshDatabase`, `AssertDatabaseHas/Missing/Count`).
+- [x] **P.9.3** DB helpers (`RefreshDatabase`, `AssertDatabaseHas/Missing/Count`).
   → verify: tests.
-- [ ] **P.9.4** `FakeClock` (injectable `clock.Clock` used by sessions).
+- [x] **P.9.4** `FakeClock` (injectable `clock.Clock` used by sessions).
   → verify: session expiry test via fake clock.
-- [ ] **P.9.5** API assertions: `WithToken`, `GetJSON`, `PostJSON`, `AssertJSONPath`, `AssertJSONCount`, `AssertProblem`, `AssertJSONValidationErrors`.
+- [x] **P.9.5** API assertions: `WithToken`, `GetJSON`, `PostJSON`, `AssertJSONPath`, `AssertJSONCount`, `AssertProblem`, `AssertJSONValidationErrors`.
   → verify: self-tests with a fake `testing.TB`.
 
 ### P.10 CLI — needs: P.2

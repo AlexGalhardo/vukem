@@ -82,6 +82,8 @@ type App struct {
 	sessStore session.Store
 	sessErr   error
 
+	now func() time.Time
+
 	dbOnce     sync.Once
 	db         *database.DB
 	dbErr      error
@@ -108,6 +110,7 @@ type options struct {
 	runners    []namedRunner
 	routes     []func(r *router.Router, app *App)
 	views      fs.FS
+	now        func() time.Time
 	migrations []schema.Migration
 	drivers    []database.Driver
 	stdout     io.Writer
@@ -125,6 +128,12 @@ func WithRoutes(fn func(r *router.Router, app *App)) Option {
 // or an embed.FS). Views reload on every request outside production.
 func WithViews(fsys fs.FS) Option {
 	return func(o *options) error { o.views = fsys; return nil }
+}
+
+// WithClock sets the clock used by sessions and other time-based features
+// (tests use lumektest.FakeClock).
+func WithClock(now func() time.Time) Option {
+	return func(o *options) error { o.now = now; return nil }
 }
 
 // WithStdout sets where commands print (os.Stdout by default).
@@ -235,6 +244,11 @@ func New(opts ...Option) (*App, error) {
 		stdout = os.Stdout
 	}
 
+	now := o.now
+	if now == nil {
+		now = time.Now
+	}
+
 	app := &App{
 		Config:    cfg,
 		Source:    src,
@@ -247,6 +261,7 @@ func New(opts ...Option) (*App, error) {
 		ready:     o.ready,
 		noHTTP:    o.noHTTP,
 		drivers:   o.drivers,
+		now:       now,
 
 		migrations: o.migrations,
 	}
@@ -325,6 +340,9 @@ func newLogger(cfg *Config, out io.Writer) *slog.Logger {
 
 	return slog.New(slog.NewTextHandler(out, hopts))
 }
+
+// Now returns the current time from the app clock (see WithClock).
+func (a *App) Now() time.Time { return a.now() }
 
 // Addr returns the HTTP listen address from HOST and PORT.
 func (a *App) Addr() string { return fmt.Sprintf("%s:%d", a.Config.Host, a.Config.Port) }
