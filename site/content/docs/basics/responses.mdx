@@ -1,0 +1,75 @@
+---
+title: Responses
+description: Write text, HTML, JSON, files and redirects from handlers, with safe redirect helpers.
+---
+
+## Bodies
+
+```go
+c.String(http.StatusOK, "pong")
+c.HTML(http.StatusOK, "<h1>Trusted markup only</h1>")
+c.JSON(http.StatusOK, web.Map{"ok": true})
+c.Blob(http.StatusOK, "image/png", png)
+c.Stream(http.StatusOK, "text/csv", reader)
+c.NoContent() // 204
+```
+
+<Callout type="danger">
+`c.HTML` writes a trusted string as-is. Never pass user input: render views with `html/template` for contextual escaping.
+</Callout>
+
+Every body helper takes the status code, sets `Content-Type` and writes the body. Once the status line is sent it cannot change, which is why handlers should return errors instead of writing partial responses.
+
+## JSON helpers for APIs
+
+| Helper | Status | Notes |
+| --- | --- | --- |
+| `c.JSON(status, v)` | any | `encoding/json` |
+| `c.Created(location, v)` | 201 | Sets `Location` when non-empty |
+| `c.Accepted(v)` | 202 | Async work |
+| `c.NoContent()` | 204 | |
+| `c.Problem(status, title, detail)` | 4xx/5xx | `application/problem+json` (RFC 9457) |
+
+```go
+func (p *ProductController) Store(c *web.Ctx) error {
+	product := p.create(c)
+	return c.Created(c.MustURL("products.show", "product", product.ID), product)
+}
+```
+
+## Redirects
+
+```go
+return c.Redirect("/posts")                     // 302 for GET/HEAD, 303 after POST/PUT/…
+return c.RedirectStatus(http.StatusMovedPermanently, "/new")
+return c.RedirectRoute("posts.show", "post", 42)
+return c.Back("/")                              // same-origin Referer, else fallback
+```
+
+- After unsafe methods `Redirect` uses **303 See Other**, so the browser follows with `GET`.
+- htmx requests receive `HX-Location` (navigation without a full reload) instead of a 3xx.
+- `Back` ignores off-site referers (open-redirect protection). `web.SafeRedirect(r, target, fallback)` applies the same check to any user-supplied target, such as a `?next=` parameter.
+
+## Files
+
+```go
+assets := os.DirFS("storage/reports")
+
+return c.File(assets, "2026/q3.pdf")                       // Range and If-Modified-Since
+return c.Download(assets, "2026/q3.pdf", "Q3 report.pdf")  // Content-Disposition: attachment
+```
+
+Missing files and directories return 404. Open user-controlled paths through an `os.Root` (`root.FS()`) so `..` cannot escape the directory.
+
+## Headers and cookies
+
+```go
+c.SetHeader("Cache-Control", "no-store")
+c.SetCookie(&http.Cookie{Name: "theme", Value: "dark", Path: "/", HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode})
+```
+
+## Planned
+
+<Callout type="warning">
+Planned for the Prototype release: `c.Render` / `c.Fragment` for views and `c.JSONWith(status, schema, v)` to check outgoing JSON against a schema. `c.ETag` and caching helpers are planned for ALPHA.
+</Callout>

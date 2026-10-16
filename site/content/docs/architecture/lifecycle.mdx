@@ -1,0 +1,140 @@
+---
+title: Application lifecycle
+description: How a Lumek app boots, registers providers, starts runners and shuts down gracefully.
+---
+
+A Lumek application is a `*lumek.App`: configuration, logger, providers and long-running **runners** (the HTTP server, workers). The lifecycle is inspired by AdonisJS v7 and Goravel runners, written as plain Go with no globals and no reflection.
+
+## Overview
+
+<Steps>
+<Step title="Load config">
+`.env` files and the environment are merged, filled into `lumek.Config` and checked. Missing `APP_KEY`, debug in production or an invalid port abort boot.
+</Step>
+<Step title="Register">
+Every provider's `Register` runs in declared order. Register binds services and must not perform I/O.
+</Step>
+<Step title="Boot">
+Providers implementing `Booter` run `Boot(ctx, app)` in order. Boot may use services registered by other providers.
+</Step>
+<Step title="Run">
+Every runner starts in its own goroutine. `Run` blocks until the context is cancelled (for example by `SIGTERM`) or a runner fails.
+</Step>
+<Step title="Shutdown">
+Runners stop and are awaited, then `OnShutdown` hooks and providers' `Shutdown` run in **reverse** order, within `SHUTDOWN_TIMEOUT`.
+</Step>
+</Steps>
+
+## Creating the app
+
+```go
+app, err := lumek.New(
+	lumek.WithProviders(&DatabaseProvider{}, &MailProvider{}),
+	lumek.WithRunner("http", lumek.NewHTTPServer(addr, handler)),
+	lumek.WithKind(lumek.KindWeb),
+)
+```
+
+| Option | Purpose |
+| --- | --- |
+| `WithEnv(fsys, getenv)` | Load `.env` files from `fsys` and the environment from `getenv` (defaults: `os.DirFS(".")`, `os.LookupEnv`) |
+| `WithSource(src)` | Use an already resolved `*config.Source` (tests: `config.MapSource`) |
+| `WithLogger(l)` / `WithLogOutput(w)` | Custom `*slog.Logger`, or where the default logger writes |
+| `WithKind(k)` | `KindWeb` (default), `KindConsole` or `KindTest` |
+| `WithProviders(p...)` | Providers, registered and booted in order |
+| `WithRunner(name, r)` | A long-running component started by `Run` |
+
+The `App` exposes `Config`, `Source` (every configuration value), `Key` (decoded `APP_KEY`), `Log` and `Kind`.
+
+## Providers
+
+```go
+type Provider interface {
+	Register(app *App) error // bind services, no I/O
+}
+
+// Optional hooks, detected by interface assertion:
+type Booter interface     { Boot(ctx context.Context, app *App) error }
+type Shutdowner interface { Shutdown(ctx context.Context, app *App) error }
+type KindFilter interface { Kinds() []Kind }
+```
+
+```go title="providers/database.go"
+type DatabaseProvider struct {
+	DB *sql.DB
+}
+
+func (p *DatabaseProvider) Register(app *lumek.App) error {
+	db, err := sql.Open("sqlite", app.Source.Get("DATABASE_URL"))
+	if err != nil {
+		return fmt.Errorf("open database: %w", err)
+	}
+	p.DB = db
+	return nil
+}
+
+func (p *DatabaseProvider) Boot(ctx context.Context, app *lumek.App) error {
+	return p.DB.PingContext(ctx) // I/O belongs in Boot
+}
+
+func (p *DatabaseProvider) Shutdown(ctx context.Context, app *lumek.App) error {
+	return p.DB.Close()
+}
+
+// Kinds limits the provider to some runtimes; without it, it runs everywhere.
+func (p *DatabaseProvider) Kinds() []lumek.Kind {
+	return []lumek.Kind{lumek.KindWeb, lumek.KindConsole}
+}
+```
+
+`lumek.ProviderFunc` adapts a plain function to a provider with only a Register phase.
+
+## Runners
+
+```go
+type Runner interface {
+	Run(ctx context.Context) error // block until ctx is done, then release resources
+}
+```
+
+`lumek.RunnerFunc` adapts a function. Runners can be added with `WithRunner` or, from a provider, with `app.AddRunner(name, r)`. When one runner fails, the others are cancelled and the first error is returned from `Run`. A cancelled context is a clean exit (`nil`).
+
+### The HTTP server
+
+`lumek.NewHTTPServer(addr, handler)` returns a runner around `*http.Server` that is never configured with zero timeouts (Slowloris protection):
+
+| Setting | Default |
+| --- | --- |
+| `ReadHeaderTimeout` | 10s |
+| `ReadTimeout` | 30s |
+| `WriteTimeout` | 60s |
+| `IdleTimeout` | 120s |
+| `MaxHeaderBytes` | 1 MiB |
+| `ShutdownTimeout` | 15s drain of in-flight requests |
+
+In-flight handlers keep the app's context values but are not cancelled when shutdown starts, so they can finish. Set `Listener` to serve on an existing listener and `Ready` to receive the bound address (useful in tests with port `0`).
+
+## Shutdown
+
+```go
+app.OnShutdown(func(ctx context.Context) error {
+	return flushMetrics(ctx)
+})
+```
+
+Shutdown order: runners stop first, then `OnShutdown` hooks in reverse registration order, then providers' `Shutdown` in reverse provider order. All errors are joined. `Shutdown` is idempotent.
+
+## Request lifecycle
+
+```text
+net/http server
+  └─ server middleware            every request, even unmatched (recover, request id, logger, static…)
+      └─ ServeMux match
+          ├─ no match → 404 / 405 through the error handler
+          └─ router middleware    matched routes only
+              └─ group / route middleware
+                  └─ handler func(c *web.Ctx) error
+                      └─ error? → error handler → HTML | redirect + flash | fragment | problem+json
+```
+
+See [Middleware](/docs/basics/middleware) and [Error handling](/docs/basics/error-handling).

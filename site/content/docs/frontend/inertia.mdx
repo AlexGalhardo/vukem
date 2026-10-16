@@ -1,0 +1,46 @@
+---
+title: Inertia + React
+description: Build single-page React apps with server-side routing and controllers through Lumek's Inertia v3 adapter.
+---
+
+<Callout type="warning">
+Planned for BETA. The `inertia` and `vite` packages are not implemented yet; this page documents the design target.
+</Callout>
+
+Lumek ships its own Inertia v3 adapter. Before 1.0, the starter targets React.
+
+```go
+func (p *PostController) Index(c *web.Ctx) error {
+	posts, err := p.posts.All(c.Context())
+	if err != nil {
+		return err
+	}
+
+	return inertia.Render(c, "Posts/Index", inertia.Props{
+		"posts":   posts,
+		"filters": inertia.Optional(loadFilters),
+		"stats":   inertia.Defer(statsFn).Group("sidebar"),
+	})
+}
+```
+
+## Features
+
+| Area | Support |
+| --- | --- |
+| Requests | `X-Inertia`, asset version check (409), partial reloads, error bags, prefetch |
+| Props | `Optional`, `Always`, `Defer`, `Merge`, `DeepMerge`, `Once`, `Scroll` |
+| Redirects | 303 after `PUT`/`PATCH`/`DELETE`; `inertia.Location(url)` for external URLs |
+| Shared data | `inertia.Share(key, fn)` globally or per request; auth user and flash by default |
+| Validation | Errors flashed, `303` back, surfaced as `props.errors` |
+| SSR | Node SSR server with timeout; falls back to client-side rendering on any failure |
+| Typed routes | `lumek codegen:routes` emits `resources/js/routes.ts` |
+
+## Vite
+
+`{{ vite "resources/js/app.tsx" }}` emits the dev server scripts when `public/hot` exists, or reads the Vite manifest to emit hashed scripts, styles and `modulepreload` links, with CSP nonces. `/build/*` is served with immutable cache headers by `middleware.Static`.
+
+```bash
+lumek install:inertia
+lumek serve   # Go app with reload + npm run dev
+```

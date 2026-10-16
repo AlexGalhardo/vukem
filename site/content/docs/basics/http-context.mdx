@@ -1,0 +1,75 @@
+---
+title: HTTP context
+description: The *web.Ctx passed to every handler wraps the request and response with typed helpers.
+---
+
+Every handler receives a `*web.Ctx` and returns an `error`:
+
+```go
+type HandlerFunc func(c *Ctx) error
+```
+
+`*web.Ctx` wraps `http.ResponseWriter` and `*http.Request`. It is per request: it must not be used after the handler returns or from other goroutines.
+
+## Request
+
+| Method | Returns |
+| --- | --- |
+| `Request()`, `SetRequest(r)` | The underlying `*http.Request` |
+| `Context()` | The request `context.Context` |
+| `Method()`, `Path()` | Request method and path |
+| `Param(name)` | Path parameter (`{name}` in the pattern) |
+| `ParamInt(name)` | Path parameter as `int64`, or a 404 error when not numeric |
+| `Query(name)` | Query string value |
+| `QueryInt(name, def)` | Query value as `int`, or `def` when absent or invalid |
+| `QueryBool(name)` | `true` for `1`, `t`, `true`… |
+| `Header(name)`, `Cookie(name)` | Request header, cookie value (`""` when absent) |
+| `IP()` | Client IP; `X-Forwarded-For` honoured only from trusted proxies |
+| `IsJSON()` | The request body is JSON |
+| `WantsJSON()` | The client prefers a JSON response |
+| `IsHTMX()` | The request was made by htmx (`HX-Request: true`) |
+| `RouteName()` | Name of the matched route |
+
+## Response
+
+| Method | Purpose |
+| --- | --- |
+| `Writer()` | The `*web.ResponseWriter` (records status, size, whether it was written; supports `http.ResponseController`) |
+| `SetHeader(name, value)`, `SetCookie(ck)` | Response headers and cookies |
+| `Status(code)` | Sets the status; chainable |
+| `String`, `HTML`, `JSON`, `Blob`, `Stream` | Bodies, see [Responses](/docs/basics/responses) |
+| `Redirect`, `RedirectRoute`, `Back` | Redirects |
+| `Problem(status, title, detail)` | RFC 9457 problem details |
+
+## Services
+
+The router owns one `*web.Services` value shared by every `Ctx`:
+
+```go
+services := &web.Services{
+	Log:            app.Log,
+	Debug:          app.Config.Debug,          // detailed 5xx messages, never in production
+	TrustedProxies: proxies,                   // []*net.IPNet for IP()
+	ProblemBaseURL: "https://example.com/problems",
+	// Errors: custom web.ErrorHandler; Views: a web.Renderer; URLs: set by the router
+}
+
+r := router.New(services)
+```
+
+`c.Services()` returns them and `c.Log()` returns the request logger.
+
+## Trusted proxies
+
+`c.IP()` returns the direct peer address unless that peer is listed in `TrustedProxies`. Only then is `X-Forwarded-For` read, right to left, skipping trusted hops, so clients cannot spoof their address.
+
+```go
+_, lb, _ := net.ParseCIDR("10.0.0.0/8")
+services.TrustedProxies = []*net.IPNet{lb}
+```
+
+## Planned helpers
+
+<Callout type="warning">
+Planned for the Prototype release: `Session()`, `Flash(key, msg)`, `Old(field)`, `Errors()`, `Render(name, data)`, `Fragment(name, block, data)` and `HTMX()` helpers. `User()`, `Auth()` and `Authorize(ability, subject)` are planned for ALPHA.
+</Callout>

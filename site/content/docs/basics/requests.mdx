@@ -1,0 +1,71 @@
+---
+title: Requests and input
+description: Read JSON, forms, multipart uploads and query strings safely, with body limits applied by default.
+---
+
+## Generic input
+
+`c.Input()` merges the request body (JSON object, urlencoded or multipart form) over the query string into a `map[string]any`, ready for schema parsing:
+
+```go
+in, err := c.Input()
+if err != nil {
+	return err // 400 malformed JSON, 413 too large…
+}
+```
+
+- JSON keeps its types; numbers are `json.Number`.
+- Form values are strings; repeated keys and `tags[]` become lists.
+- Bracketed keys nest: `author[email]=a@b.c` becomes `{"author": {"email": "a@b.c"}}`, and `items[0][name]=x` becomes a list of objects.
+- Nesting deeper than 16 levels is ignored.
+
+`c.QueryInput()` does the same for the query string only, and `web.FormToMap(values)` converts any `url.Values`.
+
+## JSON bodies
+
+```go
+var in struct {
+	Title string `json:"title"`
+	Body  string `json:"body"`
+}
+if err := c.BindJSON(&in); err != nil {
+	return err
+}
+```
+
+`BindJSON` requires a JSON content type (415 otherwise), and rejects trailing data and bodies over the size limit. Malformed JSON returns a 400 that names the byte offset.
+
+## Forms and uploads
+
+```go
+title := c.FormValue("title") // form or query value
+
+file, header, err := c.FormFile("avatar")
+if err != nil {
+	return err // missing file → 422 with a field error
+}
+defer file.Close()
+```
+
+Multipart bodies keep up to 8 MiB in memory before spilling to disk.
+
+## Body size limits
+
+Every body read applies `web.DefaultMaxBody` (10 MiB) unless middleware set a smaller limit. Oversized bodies fail with **413**.
+
+```go
+r.Post("/upload", upload).Use(middleware.BodyLimit(50 << 20)) // per route
+r.Group("/api", func(g *router.Group) {
+	g.Use(middleware.BodyLimit(1 << 20))                      // per group
+})
+```
+
+## Typed binding
+
+<Callout type="warning">
+Planned for the Prototype release: `web.Bind[T](c)`, `web.Parse(c, schema)`, `web.ParseQuery` and `web.ParseParams` decode and validate input into Go types in one step, returning 422 on failure. See [Validation](/docs/basics/validation).
+</Callout>
+
+```go
+in, err := web.Bind[requests.StorePost](c) // typed requests.StorePost or 422
+```

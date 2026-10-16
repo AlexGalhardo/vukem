@@ -1,0 +1,79 @@
+---
+title: Introduction
+description: Lumek brings Laravel and AdonisJS productivity to idiomatic Go, built on net/http and the standard library.
+---
+
+Lumek is a web framework for **REST APIs and full-stack apps**: routing, validation, an ORM with migrations, authentication, JSON resources with problem+json errors, HTMX-first views and an optional Inertia + React frontend, all driven by one CLI.
+
+<Callout type="warning">
+Lumek is in its **Prototype** phase. Nothing is released yet and APIs will change. Pages marked "Planned for ALPHA" or "Planned for BETA" describe the design target, not shipped code.
+</Callout>
+
+## Why Lumek
+
+- **Standard library first.** Handlers and middleware are plain `net/http`. Any `http.Handler` works.
+- **No magic.** No globals, no `init()` registration, no reflection-based dependency injection. Generators write code you own.
+- **Typed end to end.** Typed configuration structs, named routes checked at boot, Zod-style schemas (`z`) that parse every input into Go types.
+- **Batteries included, opt-in.** SQLite out of the box; PostgreSQL, Redis and MongoDB as separate driver modules, so you only download what you use.
+- **APIs first-class.** RFC 9457 problem details, JSON-only route groups, CORS and body limits are built in.
+- **Secure by default.** Security headers with CSP nonces, deny-by-default CORS, path-traversal-safe static files and fail-closed boot checks, mapped to the [OWASP Top 10:2025](/docs/security/overview).
+
+## A taste
+
+A handler is a function that receives a `*web.Ctx` and returns an `error`. Returned errors go to a central handler that renders the right response for the client.
+
+```go title="routes.go"
+func Routes(r *router.Router, posts *controllers.PostController) {
+	r.Get("/", func(c *web.Ctx) error {
+		return c.String(http.StatusOK, "Hello from Lumek")
+	}).Name("home")
+
+	r.Group("/admin", func(g *router.Group) {
+		g.Resource("posts", posts) // posts.index, posts.store, posts.show…
+	}).Name("admin.")
+}
+
+func (p *PostController) Show(c *web.Ctx) error {
+	id, err := c.ParamInt("post") // non-numeric id → 404
+	if err != nil {
+		return err
+	}
+
+	post, ok := p.store.Find(id)
+	if !ok {
+		return errs.ErrNotFound // HTML page or problem+json, by content negotiation
+	}
+
+	return c.JSON(http.StatusOK, post)
+}
+```
+
+## What works today
+
+| Area | Status |
+| --- | --- |
+| Configuration: `.env` loading, typed `config.Load`, `config.Secret`, `APP_KEY` key derivation | Implemented |
+| Application: providers, runners, graceful shutdown, HTTP server with safe timeouts | Implemented |
+| Router: groups, named routes, URL generation, resources, three middleware stacks, 404/405 | Implemented |
+| `*web.Ctx`: input, responses, redirects, problem+json errors | Implemented |
+| Middleware: recover, request id, logger, timeout, body limit, method override, CORS, static, secure headers, gzip, JSON-only | Implemented |
+| Validation (`z`), sessions, CSRF, views, ORM and migrations, CLI | Planned for the Prototype release |
+| Authentication, authorization, REST API starter, mail, cache, storage | Planned for ALPHA |
+| OpenAPI, queues, Inertia + React, Vite, Redis, MongoDB | Planned for BETA |
+
+## Next steps
+
+<CardGroup cols="2">
+<Card title="Installation" href="/docs/installation" icon="terminal">
+Requirements and how to add Lumek to a Go module.
+</Card>
+<Card title="Routing" href="/docs/basics/routing" icon="route">
+Verbs, groups, named routes and resource controllers.
+</Card>
+<Card title="Application lifecycle" href="/docs/architecture/lifecycle" icon="layers">
+Providers, runners and graceful shutdown.
+</Card>
+<Card title="Security" href="/docs/security/overview" icon="shield">
+Secure defaults mapped to the OWASP Top 10:2025.
+</Card>
+</CardGroup>

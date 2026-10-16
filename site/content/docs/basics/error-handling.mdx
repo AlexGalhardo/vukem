@@ -1,0 +1,116 @@
+---
+title: Error handling
+description: Handlers return errors; one central handler negotiates HTML pages, htmx fragments or RFC 9457 problem details.
+---
+
+Handlers never write partial error responses. They return an `error`, and the error handler renders the right response for the client, logs it and keeps internals out of client output.
+
+```go
+func (p *PostController) Show(c *web.Ctx) error {
+	post, err := p.posts.Find(c.Context(), c.Param("post"))
+	if errors.Is(err, store.ErrMissing) {
+		return errs.ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("find post: %w", err) // 500, cause logged, never shown
+	}
+	return c.JSON(http.StatusOK, post)
+}
+```
+
+## The `errs` package
+
+### `HTTPError`
+
+```go
+type HTTPError struct {
+	Status  int         // HTTP status
+	Message string      // safe to show to clients; empty means the status text
+	Err     error       // internal cause: logged, never shown
+	Headers http.Header // added to the response (Allow, Retry-After…)
+}
+
+errs.New(http.StatusConflict, "That slug is taken.")
+errs.Wrap(http.StatusBadGateway, err)
+errs.ErrTooManyRequests.WithHeader("Retry-After", "30")
+```
+
+### Sentinel errors
+
+`ErrBadRequest` (400), `ErrUnauthorized` (401), `ErrForbidden` (403), `ErrNotFound` (404), `ErrMethodNotAllowed` (405), `ErrConflict` (409), `ErrPreconditionFailed` (412), `ErrRequestTooLarge` (413), `ErrUnsupportedMediaType` (415), `ErrUnprocessable` (422), `ErrTooManyRequests` (429), `ErrInternal` (500).
+
+`errors.Is` matches any `*HTTPError` with the same status, even when wrapped or re-created with a cause:
+
+```go
+errors.Is(errs.Wrap(404, sql.ErrNoRows), errs.ErrNotFound) // true
+```
+
+### `ValidationError`
+
+```go
+verr := errs.NewValidation().
+	Add("email", "The email is invalid.").
+	Add("password", "The password must be at least 12 characters.")
+
+verr.First("email") // "The email is invalid."
+verr.Empty()        // false
+return verr         // 422
+```
+
+### Status mapping
+
+`errs.Status(err)` returns the status of an `*HTTPError`, 422 for a `*ValidationError`, the status of any error implementing `errs.StatusCoder` (`HTTPStatus() int`), and 500 otherwise.
+
+## Content negotiation
+
+`web.DefaultErrorHandler` renders by client:
+
+| Client | Response |
+| --- | --- |
+| Wants JSON (`Accept` has JSON and not HTML, or a JSON body with no preference) | `application/problem+json`; 422 includes the `errors` map |
+| Classic form post with a validation error | Validation hook: flash errors and redirect back (installed by the session package) |
+| htmx (`HX-Request: true`) | HTML fragment with the status (htmx 4 swaps 4xx) |
+| Browser | HTML page: the view `errors/<status>` when a `Renderer` has it, else a built-in page |
+
+```json title="404 problem+json"
+{
+  "type": "about:blank",
+  "title": "Not Found",
+  "status": 404,
+  "instance": "/api/posts/99",
+  "request_id": "fJ3k…"
+}
+```
+
+`Services.ProblemBaseURL` prefixes the validation problem `type` URI (`<base>/validation`); otherwise it is `about:blank`.
+
+## What clients see
+
+- 4xx: the `HTTPError` message.
+- 5xx: only the status text, unless `Services.Debug` is set (never in production).
+- Every error is logged with method, path, status and request id: 5xx at `ERROR`, the rest at `DEBUG`.
+- If the response was already written, the error is only logged.
+
+## Custom handler
+
+```go
+services := &web.Services{
+	Errors: func(c *web.Ctx, err error) {
+		if errors.Is(err, billing.ErrPaymentRequired) {
+			_ = c.Problem(http.StatusPaymentRequired, "Payment required", "Upgrade your plan.")
+			return
+		}
+		web.DefaultErrorHandler(c, err)
+	},
+}
+```
+
+Middleware renders errors with the same handler through `web.Fail(w, r, err)`.
+
+## Panics
+
+`middleware.Recover()` converts panics to 500 responses through the error handler and logs the stack trace server-side only.
+
+<Callout type="warning">
+Planned: per-type renderers (`h.Render[*MyErr](...)`) and a development debug page in the Prototype release; `orm.ErrNoRows` mapped to 404 once the ORM ships.
+</Callout>

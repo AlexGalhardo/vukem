@@ -1,0 +1,106 @@
+---
+title: Security overview
+description: What Lumek does by default to protect applications, mapped to the OWASP Top 10:2025, and what remains your responsibility.
+---
+
+Lumek's security defaults are a design contract. Each default lands in a phase (**P** = Prototype, **A** = ALPHA, **B** = BETA) and is not "done" until a test named `TestSecurity_<Category>_<Behaviour>` asserts it. Report vulnerabilities in Lumek itself through the repository's [security policy](https://github.com/AlexGalhardo/golang-framework/blob/main/SECURITY.md).
+
+## Principles
+
+1. **Secure by default, explicit to loosen.** Unsafe behaviour needs an opt-out with a visible name (`InsecureSkipX`), never a missing opt-in.
+2. **Fail closed.** If a check cannot be performed (store down, key missing, policy not registered), the request is denied.
+3. **Refuse to boot when misconfigured.** Missing `APP_KEY`, debug in production, wildcard CORS with credentials: boot error, not a warning.
+4. **Standard library crypto only.** `crypto/*` and `golang.org/x/crypto`; no custom algorithms.
+5. **Small dependency surface** so supply-chain risk stays auditable.
+
+## Implemented today
+
+| Default | OWASP |
+| --- | --- |
+| Boot refuses a missing or short `APP_KEY`, `APP_DEBUG=true` in production and an invalid port | A02 |
+| `NewHTTPServer` always sets read, write, header and idle timeouts and `MaxHeaderBytes` | A02 |
+| `SecureHeaders`: CSP with per-request nonce, HSTS on HTTPS, `nosniff`, `X-Frame-Options: DENY`, COOP, Referrer and Permissions policies | A02 |
+| CORS deny by default; `"*"` with credentials refused at construction | A01 / A02 |
+| Static files through `os.Root`; dotfiles and directory listings never served | A01 |
+| `c.Back` and `web.SafeRedirect` ignore off-site targets (open redirect) | A01 |
+| `c.IP()` honours `X-Forwarded-For` only from trusted proxies | A01 |
+| `config.Secret` redacts secrets in `fmt`, JSON, text and `slog` | A04 |
+| `APP_KEY` sub-keys derived with HKDF-SHA256 per purpose | A04 |
+| Request bodies capped (10 MiB default, `BodyLimit` per route); JSON trailing data rejected | A06 |
+| Request ids validated (safe characters, max 128) before logging | A09 |
+| Structured `slog` request logs; `web.SecurityEvent` logs security events at `WARN` | A09 |
+| Central error handler; 5xx details never sent to clients unless debug | A10 |
+| `Recover` converts panics to 500 and logs stacks server-side only | A10 |
+
+## OWASP Top 10:2025 mapping
+
+### A01 Broken Access Control (includes SSRF)
+
+| Default | Phase |
+| --- | --- |
+| Routes are public unless wrapped in `auth.Required()`; `route:list` shows the middleware of every route | P / A |
+| Unregistered policy = deny; `DenyAsNotFound()` against IDOR enumeration | A |
+| Mass assignment impossible: models filled from explicit request structs | P |
+| CORS deny-by-default; `*` with credentials refused | P |
+| Static files and uploads through `os.Root`; dotfiles never served | P |
+| Signed URLs (HMAC, expiry) | A |
+| SSRF: `httpclient.Safe()` rejects loopback, private, link-local and metadata addresses after DNS resolution | A |
+
+### A02 Security Misconfiguration
+
+| Default | Phase |
+| --- | --- |
+| Boot refuses insecure configuration | P |
+| Server timeouts always set | P |
+| Security headers on by default; strict CSP with nonces | P / B |
+| Debug details only in development | P |
+| `lumek about` prints effective security settings, secrets redacted | P |
+| Destructive commands require `--force` in production | P |
+
+### A03 Software Supply Chain Failures
+
+Core depends only on the standard library and an allowlist; `go.sum` verification; `govulncheck` in CI, pre-push and weekly; Dependabot; releases with checksums and SBOM, signatures in BETA; `depguard` blocks non-allowlisted imports.
+
+### A04 Cryptographic Failures
+
+argon2id passwords (A); `crypto/rand` only; AES-256-GCM cookies with HKDF keys (P); hashed API tokens (A); constant-time comparisons; key rotation (B); `config.Secret` redaction (P).
+
+### A05 Injection
+
+Bound parameters only, identifiers validated against model metadata (P); allowlisted API query conventions (A); `html/template` auto-escaping (P); `encoding/json` escaping; no shell execution with user input; invalid UTF-8 and control characters rejected by the validator (P).
+
+### A06 Insecure Design
+
+Reviewed auth flows from `install:auth` / `install:api` (A); rate limits on login, reset and token issuance (A); body size limits on every route (P); transactions with rollback on error or panic (P).
+
+### A07 Authentication Failures
+
+Session id regenerated on login; cookies `HttpOnly`, `Secure`, `SameSite=Lax`, `__Host-`; idle and absolute timeouts (P); timing-safe credential checks, generic messages, throttling, token expiry and abilities (A).
+
+### A08 Software or Data Integrity Failures
+
+Signed and encrypted cookies (P); CSRF with `http.CrossOriginProtection` (P); signed URLs and webhook signature helper (A); queue payloads never deserialised by reflection (B); migrations tracked with checksums (P).
+
+### A09 Security Logging and Alerting Failures
+
+Structured request logs with request id (P); stable security events such as `auth.login_failed`, `csrf.rejected`, `ratelimit.exceeded` (P / A); secrets and `Authorization`/`Cookie` headers never logged (P); `slog` attribute encoding prevents log injection (P).
+
+### A10 Mishandling of Exceptional Conditions
+
+Central error handler (P); `Recover` middleware (P); fail closed on authorization, session and CSRF errors (P / A); RFC 9457 problems without internals (P); explicit 400/422 instead of silent zero values (P); timeouts and rate limits against resource exhaustion (P / A).
+
+## Your responsibility
+
+- Terminate TLS (or run behind a proxy that does), set `APP_URL` to the `https` origin and configure trusted proxies.
+- Authorize every handler that touches owned data and scope queries by tenant or user.
+- Keep running `govulncheck`, review dependency updates and protect CI secrets.
+- Ship logs to durable storage and alert on security events.
+
+<CardGroup cols="2">
+<Card title="Middleware" href="/docs/basics/middleware#secure-headers-and-csp-nonces" icon="shield">
+Secure headers, CORS and body limits.
+</Card>
+<Card title="Authentication" href="/docs/security/authentication" icon="lock">
+Guards, hashing and tokens (ALPHA).
+</Card>
+</CardGroup>

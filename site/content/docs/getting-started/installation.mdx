@@ -1,0 +1,141 @@
+---
+title: Installation
+description: Requirements, adding Lumek to a Go module and booting a minimal application.
+---
+
+## Requirements
+
+| Tool | Version |
+| --- | --- |
+| Go | 1.27 or newer |
+| Node.js | Not required for the default HTMX starter. Only needed for Vite or Inertia (BETA). |
+
+Lumek's core depends only on the standard library plus a short allowlist (`modernc.org/sqlite` and `golang.org/x/crypto` once the database and auth packages land). Heavy drivers such as PostgreSQL, Redis and MongoDB ship as separate modules.
+
+## Add Lumek to a module
+
+<Callout type="warning">
+No version has been tagged yet. Until `v0.1.0`, depend on the `main` branch and expect breaking changes.
+</Callout>
+
+<Steps>
+<Step title="Create a module">
+
+```bash
+mkdir hello && cd hello
+go mod init example.com/hello
+```
+
+</Step>
+<Step title="Require the framework">
+
+```bash
+go get github.com/AlexGalhardo/golang-framework@main
+```
+
+</Step>
+<Step title="Create an application key">
+
+`APP_KEY` is required: Lumek refuses to boot without a key of at least 32 bytes. Generate one with `config.GenerateKey` and store it in `.env`:
+
+```go title="cmd/keygen/main.go"
+package main
+
+import (
+	"fmt"
+
+	"github.com/AlexGalhardo/golang-framework/config"
+)
+
+func main() {
+	fmt.Println("APP_KEY=" + config.GenerateKey())
+}
+```
+
+```bash
+go run ./cmd/keygen > .env
+```
+
+</Step>
+<Step title="Boot the app">
+
+Write the `main.go` shown in the next section, then run it:
+
+```bash
+go run .
+# level=INFO msg=request method=GET path=/ status=200 …
+```
+
+</Step>
+</Steps>
+
+## A minimal application
+
+```go title="main.go"
+package main
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+
+	lumek "github.com/AlexGalhardo/golang-framework"
+	"github.com/AlexGalhardo/golang-framework/middleware"
+	"github.com/AlexGalhardo/golang-framework/router"
+	"github.com/AlexGalhardo/golang-framework/web"
+)
+
+func main() {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	if err := run(ctx); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}
+
+func run(ctx context.Context) error {
+	app, err := lumek.New() // reads .env files and the environment
+	if err != nil {
+		return err
+	}
+
+	r := router.New(&web.Services{Log: app.Log, Debug: app.Config.Debug})
+	r.UseServer(middleware.Recover(), middleware.RequestID(), middleware.Logger(app.Log))
+
+	r.Get("/", func(c *web.Ctx) error {
+		return c.String(http.StatusOK, "Hello from Lumek")
+	}).Name("home")
+
+	h, err := r.Handler() // compiles routes; reports conflicts and duplicate names
+	if err != nil {
+		return err
+	}
+
+	app.AddRunner("http", lumek.NewHTTPServer(app.Addr(), h))
+
+	return app.Run(ctx) // blocks until SIGINT/SIGTERM, then shuts down gracefully
+}
+```
+
+The server listens on `HOST:PORT` (`localhost:3000` by default). Open `http://localhost:3000`.
+
+## The `lumek` CLI
+
+<Callout type="warning">
+Planned for the Prototype release (`v0.1.0`). The commands below are the design target.
+</Callout>
+
+```bash
+go install github.com/AlexGalhardo/golang-framework/cmd/lumek@latest
+
+lumek new blog
+cd blog
+lumek serve          # http://localhost:3000, restarts on .go changes
+```
+
+`lumek new` creates a project from an embedded starter (HTMX + SQLite), runs `go mod tidy`, generates `APP_KEY` and initialises git. See [Your first app](/docs/first-app).

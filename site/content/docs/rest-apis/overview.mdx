@@ -1,0 +1,130 @@
+---
+title: REST APIs
+description: Build JSON APIs with resource routes, problem+json errors, CORS and body limits, and the planned API starter.
+---
+
+Lumek is equally a framework for **JSON/REST APIs** and for server-rendered apps. Several API building blocks already work; the API starter, token auth, pagination and OpenAPI are planned.
+
+## Available today
+
+| Concern | API |
+| --- | --- |
+| JSON-only groups | `middleware.JSONOnly()`: write requests must be JSON (415), errors as problem+json |
+| Resource routes | `APIResource(name, ctrl)`: index, store, show, update, destroy; nested with dots |
+| Responses | `c.JSON`, `c.Created(location, v)`, `c.Accepted`, `c.NoContent`, `c.Problem` |
+| Errors | RFC 9457 `application/problem+json` with `request_id` and validation `errors` |
+| Body limits | `middleware.BodyLimit(n)` → 413 |
+| CORS | `middleware.CORS(cfg)`, deny by default |
+| Compression | `middleware.Gzip()` |
+| Request ID | `X-Request-ID` propagated and returned |
+
+```go title="routes/api.go"
+cors, err := middleware.CORS(middleware.CORSConfig{AllowedOrigins: []string{"https://app.example.com"}})
+if err != nil {
+	return err
+}
+r.UseServer(cors)
+
+r.Group("/api/v1", func(g *router.Group) {
+	g.Use(middleware.JSONOnly(), middleware.BodyLimit(1<<20))
+
+	g.APIResource("products", products)               // /api/v1/products/{product}
+	g.APIResource("products.reviews", reviews)        // /api/v1/products/{product}/reviews/{review}
+}).Name("api.v1.")
+```
+
+```go title="app/controllers/product.go"
+func (p *ProductController) Store(c *web.Ctx) error {
+	var in StoreProduct
+	if err := c.BindJSON(&in); err != nil {
+		return err // 400 malformed, 413 too large, 415 not JSON
+	}
+
+	product, err := p.store.Create(c.Context(), in)
+	if err != nil {
+		return err
+	}
+
+	return c.Created(c.MustURL("api.v1.products.show", "product", product.ID), product)
+}
+```
+
+## Errors
+
+| Condition | Status |
+| --- | --- |
+| Malformed JSON | 400 |
+| Not found | 404 |
+| Method not allowed | 405 (`Allow` header) |
+| Body too large | 413 |
+| Unsupported media type | 415 |
+| Validation | 422 with `errors` |
+| Unhandled | 500 (no internals unless debug) |
+
+```json
+{
+  "type": "about:blank",
+  "title": "Unsupported Media Type",
+  "status": 415,
+  "instance": "/api/v1/products",
+  "request_id": "Zk9…"
+}
+```
+
+## API starter
+
+<Callout type="warning">
+Planned for ALPHA: `lumek new shop --api` (JSON-only skeleton, no views, sessions or CSRF) and `lumek install:api` (adds an API route group to a web app).
+</Callout>
+
+| Area | Web starter | API starter |
+| --- | --- | --- |
+| Routes | `routes/web.go` | `routes/api.go` (prefix `/api/v1`) |
+| Router middleware | session, CSRF, flash | request id, JSON body limit, CORS, rate limit |
+| Auth guard | `session` | `access_token` |
+| Errors | HTML / 422 fragment | `application/problem+json` |
+
+## Resources (transformers)
+
+<Callout type="warning">
+Planned for ALPHA: `lumek make:resource Product` generates plain functions that separate the wire format from models.
+</Callout>
+
+```go
+func Product(p models.Product) ProductJSON { … }
+func Products(ps []models.Product) []ProductJSON { return api.Map(ps, Product) }
+```
+
+## Query conventions and pagination
+
+<Callout type="warning">
+Planned for ALPHA. Filters, sorts, includes and fields are allowlists per endpoint; unknown values return 400.
+</Callout>
+
+```go
+q := api.Query[models.Product](c, orm.Query[models.Product](p.db),
+	api.Filters("category", "in_stock"), // ?filter[category]=books
+	api.Sorts("name", "price", "-created_at"),
+	api.Includes("reviews"),
+	api.PerPage(20, 100),
+)
+page, err := q.Paginate(c.Context())
+```
+
+Collections use a `data` / `meta` / `links` envelope; single resources have no envelope.
+
+## Tokens and rate limiting
+
+<Callout type="warning">
+Planned for ALPHA: opaque access tokens (hashed, with abilities and expiry) sent as `Authorization: Bearer`, `auth.Ability("products:write")`, and `ratelimit` with `RateLimit-*` and `Retry-After` headers.
+</Callout>
+
+## OpenAPI
+
+<Callout type="warning">
+Planned for BETA: typed handlers produce an OpenAPI 3.1 document without annotations; `GET /openapi.json` and `lumek openapi:export`.
+</Callout>
+
+## Beyond REST
+
+GraphQL and gRPC are not built in. Any `http.Handler` (gqlgen, connect-go, grpc-gateway) mounts with `r.Handle` and shares the middleware stacks.

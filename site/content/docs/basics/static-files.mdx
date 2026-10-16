@@ -1,0 +1,61 @@
+---
+title: Static files
+description: Serve public assets through os.Root with traversal protection and long-lived caching for fingerprinted files.
+---
+
+`middleware.Static` serves files from a directory when they exist and passes every other request on to the router.
+
+```go
+static, err := middleware.Static("public", middleware.StaticConfig{})
+if err != nil {
+	return err // directory missing
+}
+r.UseServer(static)
+```
+
+Register it as **server** middleware so files are served without a matching route.
+
+## Safety
+
+- Files are opened through an `os.Root`, so `..` segments and symlinks cannot escape the directory.
+- Dotfiles (`.env`, `.git/…`) and any path with a dot segment are never served.
+- Directory listings are never served.
+
+## Caching
+
+| Files | `Cache-Control` |
+| --- | --- |
+| Under `/build/` (default `ImmutablePrefixes`) or fingerprinted names such as `app-3f9a1c2b.js` | `public, max-age=31536000, immutable` |
+| Everything else | `public, max-age=0, must-revalidate` |
+
+`http.FileServerFS` handles `Range`, `If-Modified-Since` and content types.
+
+## Options
+
+```go
+middleware.StaticConfig{
+	Prefix:            "/assets",                // serve /assets/logo.svg from public/logo.svg
+	ImmutablePrefixes: []string{"/assets/build/"},
+}
+```
+
+## Embedded assets
+
+`middleware.StaticFS` serves any `fs.FS`, such as an `embed.FS`, to ship a single binary:
+
+```go
+//go:embed public
+var publicFS embed.FS
+
+sub, err := fs.Sub(publicFS, "public")
+if err != nil {
+	return err
+}
+r.UseServer(middleware.StaticFS(sub, middleware.StaticConfig{}))
+```
+
+## Uploads
+
+<Callout type="warning">
+Planned for ALPHA: the `storage` package stores uploads through `os.Root` with randomised file names by default.
+</Callout>

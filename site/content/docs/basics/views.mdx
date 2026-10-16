@@ -1,0 +1,55 @@
+---
+title: Views
+description: Server-rendered HTML with html/template, layouts, fragments for htmx, and optional templ support.
+---
+
+<Callout type="warning">
+Planned for the Prototype release. The `view` package is not implemented yet; this page documents the design target. The `web.Renderer` interface used by error pages already exists.
+</Callout>
+
+## The `html/template` engine
+
+Views live in `resources/views` and use Go's `html/template`, which escapes HTML, attributes, JavaScript and URLs by context.
+
+```go
+func (p *PostController) Index(c *web.Ctx) error {
+	posts, err := p.posts.All(c.Context())
+	if err != nil {
+		return err
+	}
+	return c.Render("posts/index", web.Map{"Posts": posts})
+}
+```
+
+```html title="resources/views/posts/index.html"
+{{ define "content" }}
+<h1>Posts</h1>
+<ul id="post-list">
+	{{ range .Posts }}
+	<li><a href="{{ route "posts.show" "post" .ID }}">{{ .Title }}</a></li>
+	{{ end }}
+</ul>
+<script nonce="{{ cspNonce }}" src="/build/app.js"></script>
+{{ end }}
+```
+
+Template functions: `route` (named URLs), `cspNonce` (per-request nonce from [secure headers](/docs/basics/middleware#secure-headers-and-csp-nonces)), `csrfField`, `old`, `errors`.
+
+## Fragments
+
+`c.Fragment(name, block, data)` renders a single `{{ block }}` of a view, so htmx requests receive only the part they swap. See [HTMX](/docs/frontend/htmx).
+
+## Error pages
+
+When a `web.Renderer` is configured, the error handler renders `errors/<status>` (for example `errors/404.html`) if it exists. `web.Renderer` is implemented today by any type with:
+
+```go
+type Renderer interface {
+	Render(w io.Writer, name string, data any) error
+	Has(name string) bool
+}
+```
+
+## templ
+
+[templ](https://templ.guide) components are supported (not bundled) through `c.View(v view.View)`.

@@ -1,0 +1,55 @@
+---
+title: Social login
+description: OAuth2 and OpenID Connect sign-in with GitHub, Google and others, with PKCE and signed state.
+---
+
+<Callout type="warning">
+Planned for ALPHA. The `social` package is not implemented yet; this page documents the design target.
+</Callout>
+
+Ally-style sign-in built on the standard library (no `x/oauth2`).
+
+```go title="bootstrap/social.go"
+app.Social = social.New(app.Key,
+	social.GitHub(cfg.GitHub, social.Scopes("read:user", "user:email")),
+	social.Google(cfg.Google), // OIDC: ID token verified (iss, aud, exp, nonce, JWKS signature)
+)
+```
+
+```go title="routes/auth.go"
+r.Get("/auth/{provider}/redirect", func(c *web.Ctx) error {
+	return app.Social.Use(c.Param("provider")).Redirect(c) // 404 for unknown providers
+})
+
+r.Get("/auth/{provider}/callback", func(c *web.Ctx) error {
+	u, err := app.Social.Use(c.Param("provider")).User(c)
+	if err != nil {
+		return err // denied, state mismatch, expired code
+	}
+
+	user, err := actions.FindOrCreateFromSocial(c.Context(), db, u)
+	if err != nil {
+		return err
+	}
+
+	return auth.Login(c, user)
+})
+```
+
+Credentials come from the environment: `SOCIAL_GITHUB_CLIENT_ID`, `SOCIAL_GITHUB_CLIENT_SECRET`, `SOCIAL_GITHUB_REDIRECT_URL`.
+
+## Security
+
+| Feature | Detail |
+| --- | --- |
+| Flow | Authorization Code with **PKCE (S256)** for every provider |
+| CSRF and replay | Random `state` (and OIDC `nonce`) in a short-lived, signed, `HttpOnly` cookie; constant-time compare, single use |
+| Redirect URL | Fixed in config, never taken from the request |
+| Emails | Only verified emails are reported as `EmailVerified` |
+| Tokens | Never logged; outbound calls use a client with timeouts |
+
+## Providers
+
+GitHub, Google (OIDC), GitLab, Discord and Microsoft (Entra ID), plus `social.OAuth2(...)` and `social.OIDC(issuerURL, ...)` for any compliant provider. `Stateless()` supports API and SPA flows.
+
+`lumek install:auth --social github,google` adds the routes, a `social_accounts` migration and the account-linking action.

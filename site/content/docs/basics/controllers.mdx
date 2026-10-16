@@ -1,0 +1,94 @@
+---
+title: Controllers
+description: Group related handlers in plain structs that receive their dependencies through constructors.
+---
+
+A controller is an ordinary struct whose methods are `web.HandlerFunc`s. There is no base class and no container: dependencies come in through the constructor.
+
+```go title="app/controllers/post.go"
+type PostController struct {
+	log   *slog.Logger
+	posts *store.Posts
+}
+
+func NewPost(app *lumek.App, posts *store.Posts) *PostController {
+	return &PostController{log: app.Log, posts: posts}
+}
+
+func (p *PostController) Index(c *web.Ctx) error {
+	return c.JSON(http.StatusOK, p.posts.All())
+}
+
+func (p *PostController) Show(c *web.Ctx) error {
+	id, err := c.ParamInt("post")
+	if err != nil {
+		return err
+	}
+
+	post, ok := p.posts.Find(id)
+	if !ok {
+		return errs.ErrNotFound
+	}
+
+	return c.JSON(http.StatusOK, post)
+}
+```
+
+## Registering methods
+
+Method values are handlers, so they register like any function:
+
+```go
+posts := controllers.NewPost(app, store)
+
+r.Get("/posts", posts.Index).Name("posts.index")
+r.Get("/posts/{post}", posts.Show).Name("posts.show")
+```
+
+## Resource controllers
+
+Implement any subset of `Index`, `Create`, `Store`, `Show`, `Edit`, `Update` and `Destroy`, then let the router wire the RESTful routes:
+
+```go
+r.Resource("posts", posts)        // HTML app: includes create and edit form routes
+r.APIResource("products", products) // JSON API: no create/edit
+```
+
+Only implemented methods are routed, detected through one-method interfaces (`router.Indexer`, `router.Storer`…). The full table is in [Routing](/docs/basics/routing#resource-controllers).
+
+<Tabs>
+<Tab title="Create">
+
+```go
+func (p *PostController) Create(c *web.Ctx) error {
+	return c.HTML(http.StatusOK, newPostForm) // GET /posts/create
+}
+```
+
+</Tab>
+<Tab title="Update">
+
+```go
+func (p *PostController) Update(c *web.Ctx) error {
+	// PUT and PATCH /posts/{post}; HTML forms use _method=PUT
+	return c.Redirect("/posts/" + c.Param("post"))
+}
+```
+
+</Tab>
+<Tab title="Destroy">
+
+```go
+func (p *PostController) Destroy(c *web.Ctx) error {
+	return c.NoContent() // DELETE /posts/{post}
+}
+```
+
+</Tab>
+</Tabs>
+
+## Generator
+
+<Callout type="warning">
+Planned for the Prototype release: `lumek make:controller Post --resource` generates the struct, constructor and the seven actions; `--api` omits the form actions.
+</Callout>

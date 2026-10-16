@@ -1,0 +1,36 @@
+---
+title: CSRF protection
+description: Cross-origin request forgery protection with Go's CrossOriginProtection and a token fallback.
+---
+
+<Callout type="warning">
+Planned for the Prototype release. CSRF middleware is not implemented yet; this page documents the design target.
+</Callout>
+
+## How it works
+
+- `http.CrossOriginProtection` (Go 1.25) runs on the router stack and rejects cross-origin unsafe requests (`POST`, `PUT`, `PATCH`, `DELETE`) using the `Sec-Fetch-Site` and `Origin` headers. No token is needed in modern browsers.
+- The session cookie uses `SameSite=Lax`.
+- Trusted origins and bypass patterns (webhooks) are declared in `config/http.go`; unsafe behaviour requires an explicitly named opt-out.
+- A token fallback (`{{ csrfField }}` in forms, the `X-CSRF-Token` header, `hx-headers` for htmx) remains available for non-browser clients and old browsers, enabled by config.
+- Rejections are logged as the `csrf.rejected` security event.
+
+```html title="resources/views/posts/create.html"
+<form method="post" action="{{ route "posts.store" }}">
+	{{ csrfField }}
+	<input name="title">
+	<button>Save</button>
+</form>
+```
+
+## Today
+
+Until the middleware ships, you can use the standard library directly:
+
+```go
+cop := http.NewCrossOriginProtection()
+if err := cop.AddTrustedOrigin("https://admin.example.com"); err != nil {
+	return err
+}
+r.Use(cop.Handler)
+```

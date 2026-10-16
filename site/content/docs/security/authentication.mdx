@@ -1,0 +1,88 @@
+---
+title: Authentication
+description: Session and access-token guards, argon2id hashing, auth middleware and the install:auth scaffold.
+---
+
+<Callout type="warning">
+Planned for ALPHA (password hashing ships in the Prototype release). Nothing on this page is implemented yet.
+</Callout>
+
+## Concepts
+
+| Concept | Responsibility |
+| --- | --- |
+| **Guard** | How a request is authenticated (session cookie, bearer token) |
+| **UserProvider** | Where users come from (database table via the ORM, or custom) |
+| **Hasher** | Password hashing and verification |
+| **Gate** | Named abilities (`edit-settings`) |
+| **Policy[T]** | Abilities scoped to a model type (`update` a `Post`) |
+
+```go
+type Authenticatable interface {
+	AuthID() string
+	AuthPassword() string
+}
+
+type Guard[U Authenticatable] interface {
+	User(c *web.Ctx) (U, error) // cached per request
+	Check(c *web.Ctx) bool
+	Login(c *web.Ctx, u U) error
+	Logout(c *web.Ctx) error
+}
+```
+
+## Guards
+
+<Tabs>
+<Tab title="session (web)">
+
+- `Attempt(c, creds)` fetches the user, verifies the hash, regenerates the session and stores the user id.
+- When the user does not exist the hasher still runs against a dummy hash, so timing does not reveal accounts.
+- Optional remember-me tokens, stored as SHA-256 and rotated on use.
+- Passwords are rehashed on login when parameters change.
+
+</Tab>
+<Tab title="access_token (API)">
+
+- Opaque `<id>.<secret>` tokens; only `SHA-256(secret)` is stored, with abilities, `last_used_at` and expiry.
+- `auth.Tokens.Create(ctx, user, "cli", []string{"posts:read"}, 30*24*time.Hour)` returns the plain token once.
+- Compared in constant time; revoked by deleting the row.
+- JWT is intentionally not the default; a JWT guard can be added later behind the same interface.
+
+</Tab>
+</Tabs>
+
+## Middleware
+
+| Middleware | Effect |
+| --- | --- |
+| `auth.Required(guards...)` | 401 (API) or redirect to the `login` route (web) |
+| `auth.Guest()` | Redirects authenticated users to `home` |
+| `auth.Verified()` | Requires a verified email |
+| `auth.Ability("posts:write")` | Token ability check |
+
+```go
+r.Group("/dashboard", func(g *router.Group) {
+	g.Use(auth.Required())
+	g.Get("", dashboard.Index).Name("dashboard")
+})
+```
+
+## Hashing
+
+| Driver | Default parameters |
+| --- | --- |
+| **argon2id** (default) | m=64 MiB, t=1, p=4, 16-byte salt, 32-byte key, PHC string |
+| bcrypt | cost 12, 72-byte input limit enforced |
+
+`hash.Make`, `hash.Verify` (constant time) and `hash.NeedsRehash`, both drivers from `golang.org/x/crypto`.
+
+## `install:auth`
+
+`lumek install:auth` generates user-owned code, not a hidden package: controllers for login, register, logout, password reset and email verification; editable actions such as password rules; the `User` model, migrations, HTMX views, routes and tests.
+
+Flows: register, rate-limited login (5 per minute per email and IP), logout, signed single-use password reset, signed email verification and password confirmation for sensitive routes. TOTP 2FA and passkeys are post-1.0.
+
+## Authorization
+
+Gates and `Policy[T]` resolve by Go type; an unregistered policy denies (fail closed), and `DenyAsNotFound()` answers 404 to avoid leaking resource existence.

@@ -1,0 +1,137 @@
+---
+title: Routing
+description: A thin layer over http.ServeMux with groups, named routes, URL generation and resource controllers.
+---
+
+The `router` package collects route definitions, compiles groups and prefixes into Go 1.22+ `http.ServeMux` patterns at boot, and keeps a name → route table for URL generation.
+
+## Basic routes
+
+```go
+r := router.New(nil) // or router.New(&web.Services{...})
+
+r.Get("/", home)                    // GET (also answers HEAD)
+r.Post("/posts", storePost)
+r.Put("/posts/{id}", updatePost)
+r.Patch("/posts/{id}", updatePost)
+r.Delete("/posts/{id}", deletePost)
+r.Options("/posts", options)
+r.Match([]string{"GET", "POST"}, "/search", search)
+r.Any("/webhook", webhook)          // every method
+
+h, err := r.Handler() // compile once at boot
+```
+
+Handlers have the signature `func(c *web.Ctx) error`. `r.Get("/", h)` matches only the root page (Laravel semantics): the router registers it as `/{$}`, since a bare `/` in ServeMux is a catch-all.
+
+## Route parameters
+
+Patterns use ServeMux syntax:
+
+| Pattern | Matches | Read with |
+| --- | --- | --- |
+| `/posts/{id}` | one segment | `c.Param("id")`, `c.ParamInt("id")` |
+| `/files/{path...}` | the rest of the path | `c.Param("path")` |
+| `/exact/{$}` | only `/exact/` | — |
+
+```go
+r.Get("/posts/{id}", func(c *web.Ctx) error {
+	id, err := c.ParamInt("id") // int64; a non-numeric id returns 404
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, web.Map{"id": id})
+})
+```
+
+## Named routes and URL generation
+
+```go
+r.Get("/posts/{id}", showPost).Name("posts.show")
+
+u, err := r.URL("posts.show", "id", 42) // "/posts/42"
+```
+
+Parameters are name/value pairs. A missing or unknown parameter is an error, and values are path-escaped (`{path...}` keeps its slashes). Inside handlers use `c.URL(...)`, `c.MustURL(...)` (returns `#` and logs on error) or `c.RedirectRoute(...)`.
+
+Duplicate names are reported by `r.Handler()` at boot, not at request time.
+
+## Groups
+
+Groups share a path prefix, a name prefix and middleware. They nest.
+
+```go
+r.Group("/admin", func(g *router.Group) {
+	g.Use(requireAdmin)
+
+	g.Get("/dashboard", dashboard).Name("dashboard") // admin.dashboard
+
+	g.Group("/reports", func(rg *router.Group) {
+		rg.Get("/{year}", report).Name("reports.show") // admin.reports.show
+	})
+}).Name("admin.")
+```
+
+Group middleware applies to every route of the group, including routes registered before the `Use` call and routes in nested groups. Route-level middleware is added with `.Use(...)` on the route:
+
+```go
+r.Post("/upload", upload).Use(middleware.BodyLimit(50 << 20))
+```
+
+## Mounting any `http.Handler`
+
+```go
+r.Handle("GET /metrics", promhttp.Handler())
+r.Handle("/legacy/", http.StripPrefix("/legacy", legacyMux)) // raw ServeMux semantics
+```
+
+Adapters convert between the two worlds: `router.Adapt(h, services)` turns a `web.HandlerFunc` into an `http.Handler`, and `router.Wrap(h)` turns an `http.Handler` into a `web.HandlerFunc`.
+
+## Resource controllers
+
+`Resource` registers only the actions a controller implements, detected through one-method interfaces:
+
+| Interface | Method | Route | Name |
+| --- | --- | --- | --- |
+| `router.Indexer` | `Index` | `GET /posts` | `posts.index` |
+| `router.Creator` | `Create` | `GET /posts/create` | `posts.create` |
+| `router.Storer` | `Store` | `POST /posts` | `posts.store` |
+| `router.Shower` | `Show` | `GET /posts/{post}` | `posts.show` |
+| `router.Editor` | `Edit` | `GET /posts/{post}/edit` | `posts.edit` |
+| `router.Updater` | `Update` | `PUT` and `PATCH /posts/{post}` | `posts.update` |
+| `router.Destroyer` | `Destroy` | `DELETE /posts/{post}` | `posts.destroy` |
+
+```go
+r.Resource("posts", posts)                    // all implemented actions
+r.APIResource("products", products)           // no create/edit form routes
+r.Resource("photos", photos).Only("index", "show")
+r.Resource("tags", tags).Except("destroy").Use(requireAdmin)
+r.Resource("posts.comments", comments)        // /posts/{post}/comments/{comment}
+```
+
+The member parameter is the singular of the segment (`posts` → `{post}`, `categories` → `{category}`). See [Controllers](/docs/basics/controllers).
+
+## 404 and 405
+
+Unmatched requests go through the error handler instead of ServeMux's plain text: `404 Not Found`, or `405 Method Not Allowed` with an `Allow` header listing the methods the path accepts. JSON clients receive `application/problem+json`.
+
+## Build errors
+
+`r.Handler()` compiles the routes once and returns an error for:
+
+- conflicting patterns (the message names both routes);
+- invalid patterns;
+- duplicate route names.
+
+Call it at boot so misconfiguration fails before the server listens. `Router.ServeHTTP` compiles lazily and panics on a build error.
+
+## Listing routes
+
+`r.Routes()` returns method, path, name and middleware for every route, in registration order. It powers the planned `route:list` command.
+
+```go
+for _, rt := range r.Routes() {
+	fmt.Println(rt.Method, rt.Path, rt.Name, rt.Middleware)
+}
+// GET /tags/{tag} tags.show [main.requireAdmin]
+```

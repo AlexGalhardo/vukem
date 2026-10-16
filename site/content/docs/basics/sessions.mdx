@@ -1,0 +1,39 @@
+---
+title: Sessions
+description: Encrypted cookie, memory and database session stores with flash messages and old input.
+---
+
+<Callout type="warning">
+Planned for the Prototype release. The `session` package is not implemented yet; this page documents the design target.
+</Callout>
+
+## Stores
+
+| Store | Package | Phase |
+| --- | --- | --- |
+| Cookie (AES-256-GCM, key derived with HKDF from `APP_KEY`, 4 KB limit) | core | Prototype |
+| Memory (tests and development) | core | Prototype |
+| Database (`sessions` table, SQLite or Postgres) | core | Prototype |
+| Redis | `drivers/redis` | BETA |
+
+## Usage
+
+```go
+func (a *AuthController) Login(c *web.Ctx) error {
+	// …verify credentials…
+	c.Session().Regenerate() // new id, keep data: prevents session fixation
+	c.Session().Put("user_id", user.ID)
+	c.Flash("success", "Welcome back!")
+	return c.RedirectRoute("dashboard")
+}
+```
+
+- `Get`, `Put`, `Forget`, `Pull` (get and remove).
+- `Flash(key, msg)` for the next request; `Reflash` keeps them one more request.
+- Old input after validation errors: `c.Old("title")` in forms.
+- `Regenerate()` on login and privilege change; `Invalidate()` on logout.
+- Idle and absolute timeouts; lazy loading (no store hit unless used); written only when dirty.
+
+## Cookie defaults
+
+`HttpOnly`, `Secure` (unless `APP_ENV=development`), `SameSite=Lax`, and the `__Host-` prefix over HTTPS.
