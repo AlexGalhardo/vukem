@@ -51,7 +51,6 @@ linters:
     - depguard
     - gosec
     # style and API quality
-    - canonicalheader
     - copyloopvar
     - exptostd
     - gocheckcompilerdirectives

@@ -1,0 +1,251 @@
+package web
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"io/fs"
+	"mime"
+	"net/http"
+	"net/url"
+	"path"
+	"strings"
+)
+
+var errNoURLs = errors.New("web: no URL generator configured")
+
+// ResponseWriter wraps http.ResponseWriter to record the status and whether
+// the response was written. It supports http.ResponseController.
+type ResponseWriter struct {
+	http.ResponseWriter
+
+	status  int
+	written bool
+	size    int64
+}
+
+// WriteHeader records and writes the status.
+func (w *ResponseWriter) WriteHeader(code int) {
+	if w.written {
+		return
+	}
+
+	w.status = code
+	w.written = true
+	w.ResponseWriter.WriteHeader(code)
+}
+
+// Write writes the body, sending a 200 status first when needed.
+func (w *ResponseWriter) Write(b []byte) (int, error) {
+	if !w.written {
+		w.WriteHeader(http.StatusOK)
+	}
+
+	n, err := w.ResponseWriter.Write(b)
+	w.size += int64(n)
+
+	return n, err
+}
+
+// Status returns the written status (0 when nothing was written).
+func (w *ResponseWriter) Status() int { return w.status }
+
+// Written reports whether the status line was sent.
+func (w *ResponseWriter) Written() bool { return w.written }
+
+// Size returns the number of body bytes written.
+func (w *ResponseWriter) Size() int64 { return w.size }
+
+// Unwrap supports http.ResponseController.
+func (w *ResponseWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
+// Status sets the status to send with the next body write. Chain it:
+// c.Status(201).JSON(v) is equivalent to c.JSON(201, v).
+func (c *Ctx) Status(code int) *Ctx {
+	c.w.WriteHeader(code)
+	return c
+}
+
+// String writes a text/plain response.
+func (c *Ctx) String(status int, s string) error {
+	c.w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	c.w.WriteHeader(status)
+	_, err := io.WriteString(c.w, s)
+
+	return err
+}
+
+// HTML writes a text/html response from a trusted string. Never pass user
+// input: use views (html/template) for escaping.
+func (c *Ctx) HTML(status int, html string) error {
+	c.w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	c.w.WriteHeader(status)
+	_, err := io.WriteString(c.w, html)
+
+	return err
+}
+
+// JSON writes v as JSON with status.
+func (c *Ctx) JSON(status int, v any) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return fmt.Errorf("web: encode json: %w", err)
+	}
+
+	c.w.Header().Set("Content-Type", "application/json")
+	c.w.WriteHeader(status)
+	_, err = c.w.Write(b)
+
+	return err
+}
+
+// Created writes v as JSON with 201 and a Location header.
+func (c *Ctx) Created(location string, v any) error {
+	if location != "" {
+		c.w.Header().Set("Location", location)
+	}
+
+	return c.JSON(http.StatusCreated, v)
+}
+
+// Accepted writes v as JSON with 202.
+func (c *Ctx) Accepted(v any) error { return c.JSON(http.StatusAccepted, v) }
+
+// NoContent writes 204.
+func (c *Ctx) NoContent() error {
+	c.w.WriteHeader(http.StatusNoContent)
+	return nil
+}
+
+// Blob writes raw bytes with a content type.
+func (c *Ctx) Blob(status int, contentType string, b []byte) error {
+	c.w.Header().Set("Content-Type", contentType)
+	c.w.WriteHeader(status)
+	_, err := c.w.Write(b)
+
+	return err
+}
+
+// Stream copies r to the response.
+func (c *Ctx) Stream(status int, contentType string, r io.Reader) error {
+	c.w.Header().Set("Content-Type", contentType)
+	c.w.WriteHeader(status)
+	_, err := io.Copy(c.w, r)
+
+	return err
+}
+
+// Redirect redirects to target. Unsafe methods get 303 See Other so the
+// browser follows with GET; GET/HEAD get 302 Found. Use RedirectStatus for
+// other codes. htmx requests receive HX-Location instead (navigation without
+// a full reload).
+func (c *Ctx) Redirect(target string) error {
+	status := http.StatusFound
+	if c.r.Method != http.MethodGet && c.r.Method != http.MethodHead {
+		status = http.StatusSeeOther
+	}
+
+	return c.RedirectStatus(status, target)
+}
+
+// RedirectStatus redirects with an explicit 3xx status.
+func (c *Ctx) RedirectStatus(status int, target string) error {
+	if c.IsHTMX() && c.r.Header.Get("HX-History-Restore-Request") != "true" {
+		c.w.Header().Set("HX-Location", target)
+		c.w.WriteHeader(http.StatusOK)
+
+		return nil
+	}
+
+	http.Redirect(c.w, c.r, target, status)
+
+	return nil
+}
+
+// RedirectRoute redirects to a named route.
+func (c *Ctx) RedirectRoute(name string, params ...any) error {
+	u, err := c.URL(name, params...)
+	if err != nil {
+		return err
+	}
+
+	return c.Redirect(u)
+}
+
+// Back redirects to the Referer when it is same-origin, else to fallback.
+// Off-site referers are ignored (open-redirect protection, A01).
+func (c *Ctx) Back(fallback string) error {
+	return c.Redirect(SafeRedirect(c.r, c.r.Referer(), fallback))
+}
+
+// SafeRedirect returns target when it is a relative path or has the same
+// host as r, and fallback otherwise.
+func SafeRedirect(r *http.Request, target, fallback string) string {
+	if target == "" {
+		return fallback
+	}
+
+	u, err := url.Parse(target)
+	if err != nil {
+		return fallback
+	}
+
+	if u.Scheme == "" && u.Host == "" && strings.HasPrefix(u.Path, "/") && !strings.HasPrefix(target, "//") &&
+		!strings.HasPrefix(target, `/\`) {
+		return target
+	}
+
+	if (u.Scheme == "http" || u.Scheme == "https") && u.Host == r.Host {
+		return u.RequestURI()
+	}
+
+	return fallback
+}
+
+// File serves name from fsys (with Range and If-Modified-Since support).
+func (c *Ctx) File(fsys fs.FS, name string) error {
+	f, err := fsys.Open(name)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return errNotFound()
+		}
+
+		return err
+	}
+	defer f.Close()
+
+	st, err := f.Stat()
+	if err != nil {
+		return err
+	}
+
+	if st.IsDir() {
+		return errNotFound()
+	}
+
+	rs, ok := f.(io.ReadSeeker)
+	if !ok {
+		b, err := io.ReadAll(f)
+		if err != nil {
+			return err
+		}
+
+		ct := mime.TypeByExtension(path.Ext(name))
+		if ct == "" {
+			ct = http.DetectContentType(b)
+		}
+
+		return c.Blob(http.StatusOK, ct, b)
+	}
+
+	http.ServeContent(c.w, c.r, st.Name(), st.ModTime(), rs)
+
+	return nil
+}
+
+// Download serves name from fsys as an attachment called filename.
+func (c *Ctx) Download(fsys fs.FS, name, filename string) error {
+	c.w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": filename}))
+	return c.File(fsys, name)
+}

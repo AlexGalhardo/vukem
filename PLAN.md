@@ -17,7 +17,7 @@ Task IDs: `<phase>.<group>.<task>` (e.g. `P.3.2`). Reference them in commit bodi
 | Field | Value |
 | --- | --- |
 | Current phase | **Prototype** |
-| Next task | `P.3.1` (P.2.5 after the router; P.0.9 waits for GitHub billing, CI runs locally via `task ci:full`) |
+| Next task | `P.3.8` / `P.4.2` (P.2.5 after middleware; P.0.9 waits for GitHub billing, CI runs locally via `task ci:full`) |
 | Last release | `v0.0.1` (foundation, 2026-10-16) |
 | Updated | 2026-10-16 |
 
@@ -123,30 +123,30 @@ Applies to **every** task:
 
 ### P.3 Router & ctx — needs: P.2
 
-- [ ] **P.3.1** Route registration over `http.ServeMux` (verbs, params, `{path...}`, `{$}`).
+- [x] **P.3.1** Route registration over `http.ServeMux` (verbs, params, `{path...}`, `{$}`).
   → verify: table tests per verb/pattern; `FuzzPattern`.
-- [ ] **P.3.2** Groups (prefix, nested, middleware, name prefix).
+- [x] **P.3.2** Groups (prefix, nested, middleware, name prefix).
   → verify: tests for nesting 3 levels.
-- [ ] **P.3.3** Named routes + `URLFor` (missing/extra params error) + conflict errors naming both routes.
+- [x] **P.3.3** Named routes + `URLFor` (missing/extra params error) + conflict errors naming both routes.
   → verify: tests including conflict case.
-- [ ] **P.3.4** `Resource` / `APIResource` with interface detection, `Only/Except`.
+- [x] **P.3.4** `Resource` / `APIResource` with interface detection, `Only/Except`.
   → verify: controller implementing 3 of 7 actions registers exactly 3 routes.
-- [ ] **P.3.5** `*Ctx`: request helpers, responses (`String`, `HTML`, `JSON`, `NoContent`, `Redirect`, `RedirectRoute`, `Back`, `File`, `Download`, `Stream`).
+- [x] **P.3.5** `*Ctx`: request helpers, responses (`String`, `HTML`, `JSON`, `NoContent`, `Redirect`, `RedirectRoute`, `Back`, `File`, `Download`, `Stream`).
   → verify: `httptest` tests for each response type (status, headers, body).
-- [ ] **P.3.6** `Bind[T]` for JSON, form, multipart, query (+ `MaxBytesReader`).
+- [x] **P.3.6** `Bind[T]` for JSON, form, multipart, query (+ `MaxBytesReader`).
   → verify: tests per content type; oversized body → 413.
-- [ ] **P.3.7** Adapters `Adapt`/`Wrap` between `HandlerFunc` and `http.Handler`.
+- [x] **P.3.7** Adapters `Adapt`/`Wrap` between `HandlerFunc` and `http.Handler`.
   → verify: chi-style third-party middleware works in a test.
 - [ ] **P.3.8** Three middleware stacks (server, router, named) + `MethodOverride`.
   → verify: unmatched route runs only server stack; `_method=DELETE` routed correctly.
-- [ ] **P.3.9** `route:list` data provider (`[]RouteInfo`).
+- [x] **P.3.9** `route:list` data provider (`[]RouteInfo`).
   → verify: golden test of the table output.
-- [ ] **P.3.10** Benchmarks for routing and ctx allocation.
+- [x] **P.3.10** Benchmarks for routing and ctx allocation.
   → verify: `task bench` runs; results recorded in PR description.
 
 ### P.4 Errors & built-in middleware — needs: P.3
 
-- [ ] **P.4.1** `errs` types (`HTTPError`, sentinels, `ValidationError`) + `errors.Is/AsType` support.
+- [x] **P.4.1** `errs` types (`HTTPError`, sentinels, `ValidationError`) + `errors.Is/AsType` support.
   → verify: unit tests.
 - [ ] **P.4.2** Central handler with content negotiation (HTML / problem+json RFC 9457 / HTMX).
   → verify: golden tests per format.
