@@ -78,6 +78,7 @@ if errors.As(err, &issues) {
 | `z.Map(key, val)` | `map[K]V` | `Min`, `Max` |
 | `z.Struct[T](z.Shape{...})` | `T` | field schemas mapped by `json`/`form`/`query` tag or field name; `Strict()` rejects unknown keys |
 | `z.Custom[T](fn)` | `T` | user parser |
+| `z.File()` | `*multipart.FileHeader` | `MaxSize(bytes)`, `Types(mime...)` (detected from the first 512 bytes of the content), `Extensions(...)` |
 
 Modifiers on every schema:
 
@@ -114,6 +115,8 @@ Inputs arrive as JSON values (`string`, `float64`, `bool`, `[]any`, `map[string]
 - `Code` — stable machine code: `required`, `invalid_type`, `too_small`, `too_big`, `invalid_string`, `invalid_enum`, `custom`
 - `Message` — human message (English by default; translated per request, see [Translated messages](#translated-messages))
 - `Params` — values used by the message (`{"min": 3}`)
+
+File rules report `too_big` (key `too_big.file`, params `max`, `max_kb`) and `invalid_file` (keys `file.type` with `types`, `file.extension` with `extensions`). Multipart forms put uploaded files in `c.Input()` (one `*multipart.FileHeader`, or a list for repeated or `name[]` fields), so `web.Parse` validates them with the other fields; `Check` runs the same rules on a header directly. For files too large to buffer, stream them with [`upload.Receive`](subsystems.md#uploads) instead.
 
 Issues are collected for the whole input (not first-error-only). The web error handler converts them into `*errs.ValidationError` → 422 / redirect + flash / problem+json ([http.md](http.md#errors)).
 

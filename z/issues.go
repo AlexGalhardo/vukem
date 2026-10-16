@@ -151,6 +151,9 @@ var defaultMessages = map[string]string{
 	"string.ends_with":   "The {field} field must end with {suffix}.",
 	"string.includes":    "The {field} field must contain {substring}.",
 	"string.utf8":        "The {field} field must be valid text.",
+	"too_big.file":       "The {field} field must not be greater than {max_kb} kilobytes.",
+	"file.type":          "The {field} field must be a file of type: {types}.",
+	"file.extension":     "The {field} field must have one of these extensions: {extensions}.",
 }
 
 // Localize returns a copy of is with each built-in message rebuilt from the
