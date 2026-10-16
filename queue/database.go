@@ -12,8 +12,9 @@ import (
 	"github.com/AlexGalhardo/vukem/database"
 )
 
-// Database stores jobs in SQL tables (SQLite or Postgres). Workers reserve
-// jobs atomically (Postgres uses FOR UPDATE SKIP LOCKED), so any number of
+// Database stores jobs in SQL tables (SQLite, Postgres or MySQL). Workers
+// reserve jobs atomically (Postgres and MySQL use FOR UPDATE SKIP LOCKED),
+// so any number of
 // worker processes can share the tables. A job whose worker died is
 // reserved again once its timeout plus a grace period has passed: delivery
 // is at least once, so handlers should be idempotent.
@@ -96,6 +97,10 @@ const jobColumns = `id, queue, kind, payload, attempts, max_retries, timeout_ms,
 // CreateTables creates the jobs and failed jobs tables if missing.
 func (d *Database) CreateTables(ctx context.Context) error {
 	dl := d.db.Dialect()
+	if dl.Name() == "mysql" {
+		return d.createMySQLTables(ctx, dl)
+	}
+
 	cols := `id TEXT PRIMARY KEY, queue TEXT NOT NULL, kind TEXT NOT NULL, payload TEXT NOT NULL,
 		attempts INTEGER NOT NULL DEFAULT 0, max_retries INTEGER NOT NULL DEFAULT 0,
 		timeout_ms BIGINT NOT NULL DEFAULT 0, available_at BIGINT NOT NULL, created_at BIGINT NOT NULL,
@@ -104,6 +109,28 @@ func (d *Database) CreateTables(ctx context.Context) error {
 	for _, stmt := range []string{
 		`CREATE TABLE IF NOT EXISTS {j} (` + cols + `, reserved_at BIGINT NOT NULL DEFAULT 0)`,
 		`CREATE INDEX IF NOT EXISTS ` + dl.Quote(d.jobs+"_queue_available") + ` ON {j} (queue, available_at)`,
+		`CREATE TABLE IF NOT EXISTS {f} (` + cols + `, failed_at BIGINT NOT NULL)`,
+	} {
+		if _, err := d.db.ExecContext(ctx, d.q(dl, stmt)); err != nil {
+			return fmt.Errorf("queue: create tables: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// createMySQLTables uses binary keys (exact, case-sensitive ids), keeps the
+// index inline (MySQL has no CREATE INDEX IF NOT EXISTS) and drops the
+// TEXT default MySQL 8 refuses; inserts always set last_error.
+func (d *Database) createMySQLTables(ctx context.Context, dl database.Dialect) error {
+	cols := `id VARBINARY(255) NOT NULL PRIMARY KEY, queue VARBINARY(255) NOT NULL, kind VARCHAR(255) NOT NULL,
+		payload LONGTEXT NOT NULL, attempts INT NOT NULL DEFAULT 0, max_retries INT NOT NULL DEFAULT 0,
+		timeout_ms BIGINT NOT NULL DEFAULT 0, available_at BIGINT NOT NULL, created_at BIGINT NOT NULL,
+		last_error LONGTEXT NOT NULL`
+
+	for _, stmt := range []string{
+		`CREATE TABLE IF NOT EXISTS {j} (` + cols + `, reserved_at BIGINT NOT NULL DEFAULT 0, INDEX ` +
+			dl.Quote(d.jobs+"_queue_available") + ` (queue, available_at))`,
 		`CREATE TABLE IF NOT EXISTS {f} (` + cols + `, failed_at BIGINT NOT NULL)`,
 	} {
 		if _, err := d.db.ExecContext(ctx, d.q(dl, stmt)); err != nil {
@@ -145,6 +172,10 @@ func (d *Database) PushTx(ctx context.Context, ex database.Executor, m *Message)
 // Pop implements Driver.
 func (d *Database) Pop(ctx context.Context, queues []string) (*Message, error) {
 	dl := d.db.Dialect()
+	if dl.Name() == "mysql" {
+		return d.popMySQL(ctx, dl, queues)
+	}
+
 	lock := ""
 
 	if dl.Name() == "postgres" {
@@ -161,6 +192,46 @@ func (d *Database) Pop(ctx context.Context, queues []string) (*Message, error) {
 
 	for _, name := range queues {
 		m, err := scanMessage(d.db.QueryRowContext(ctx, stmt, now, name, now, d.grace.Milliseconds(), now))
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+
+		if err != nil {
+			return nil, fmt.Errorf("queue: reserve: %w", err)
+		}
+
+		return m, nil
+	}
+
+	return nil, nil
+}
+
+// popMySQL reserves a job in a transaction: MySQL has no RETURNING and
+// cannot UPDATE a table it selects from in a subquery, so the row is
+// locked with SKIP LOCKED (MySQL 8, MariaDB 10.6+) and then updated.
+func (d *Database) popMySQL(ctx context.Context, dl database.Dialect, queues []string) (*Message, error) {
+	sel := d.q(dl, `SELECT `+jobColumns+` FROM {j} WHERE queue = ? AND available_at <= ?
+			AND (reserved_at = 0 OR reserved_at + timeout_ms + ? <= ?)
+		ORDER BY available_at, created_at, id LIMIT 1 FOR UPDATE SKIP LOCKED`)
+	upd := d.q(dl, `UPDATE {j} SET reserved_at = ? WHERE id = ?`)
+
+	now := ms(d.now())
+
+	for _, name := range queues {
+		var m *Message
+
+		err := d.db.Tx(ctx, func(tx *database.Tx) error {
+			var err error
+
+			m, err = scanMessage(tx.QueryRowContext(ctx, sel, name, now, d.grace.Milliseconds(), now))
+			if err != nil {
+				return err
+			}
+
+			_, err = tx.ExecContext(ctx, upd, now, m.ID)
+
+			return err
+		})
 		if errors.Is(err, sql.ErrNoRows) {
 			continue
 		}
