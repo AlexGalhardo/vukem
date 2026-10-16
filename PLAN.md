@@ -549,6 +549,17 @@ Applies to **every** task:
 - [ ] **B.9.3** Typed RPC client generation (`vukem codegen:client`, TypeScript and Go) from typed handlers/OpenAPI with `z` types.
   → verify: golden output; `tsc --noEmit` and `go vet` pass on generated clients; round-trip test against a running app.
 
+### B.10 Payments (Stripe) & file uploads
+
+- [ ] **B.10.1** `contrib/stripe` module with a stdlib HTTP client (no stripe-go): customers, Checkout Sessions, subscriptions, Billing Portal, payment intents, idempotency keys, typed errors, retries on 429/5xx, API version pinned.
+  → verify: tests against an in-process fake Stripe API; secret key never logged (`TestSecurity_A09_StripeKeyRedacted`).
+- [ ] **B.10.2** Stripe webhooks: `Stripe-Signature` verification (HMAC-SHA256, timestamp tolerance, multiple signatures), typed events dispatched to `events.Bus`, idempotent processing (event id store).
+  → verify: forged, replayed and stale webhooks rejected (`TestSecurity_A08_StripeWebhookSignature`); duplicate event processed once.
+- [ ] **B.10.3** `vukem install:billing` scaffold: `billable` columns on users, plans config, checkout/portal routes, subscription sync from webhooks, `Subscribed`/`OnPlan` middleware, tests with the fake API.
+  → verify: generated app tests pass.
+- [ ] **B.10.4** File uploads, beyond `storage.PutUploaded` (ALPHA): streaming multipart parsing without buffering whole files, per-route size/type limits, chunked/resumable uploads (tus 1.0 core), direct-to-S3 presigned uploads, `z` file rules (`z.File().MaxSize().Types()`), an htmx upload component with progress, optional scan hook (ClamAV) before files become visible.
+  → verify: large-file upload test with bounded memory; resumed upload completes after interruption; spoofed type and oversize rejected (`TestSecurity_A05_UploadValidation`).
+
 ### B.5 Stabilisation
 
 - [ ] **B.5.1** Public API review: every exported identifier justified; remove/rename before freeze; `//go:fix inline` for renamed APIs.
@@ -562,7 +573,7 @@ Applies to **every** task:
 - [ ] **B.5.4** Docs completeness: every package has overview + examples; guides for each starter.
   → verify: checklist.
 
-- [ ] **B.5.6** Documentation site updated with every BETA feature (OpenAPI, queue, scheduler, Inertia, Vite, Redis, Mongo, i18n, SSE, encryption, GraphQL, WebSockets/broadcasting, admin, dev dashboard, JWT, 2FA, S3, MySQL, new starters, client generation) and redeployed.
+- [ ] **B.5.6** Documentation site updated with every BETA feature (OpenAPI, queue, scheduler, Inertia, Vite, Redis, Mongo, i18n, SSE, encryption, GraphQL, WebSockets/broadcasting, admin, dev dashboard, JWT, 2FA, S3, MySQL, new starters, client generation, Stripe, file uploads) and redeployed.
   → verify: `task site:build` green; pages live on vukem.vercel.app.
 
 ### BETA exit criteria

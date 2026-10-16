@@ -120,7 +120,7 @@ blog/
 | --- | --- | --- |
 | Prototype | v0.1.x | JSON binding/responses + problem+json, router, config/env, App+providers, CLI (`new`, `serve`, `make:controller/model/migration`), ORM core + migrations on SQLite, validation, sessions + flash, CSRF, `html/template` + HTMX helpers, error handler, test client, health `/up`, graceful shutdown |
 | ALPHA | v0.2–v0.x | API starter (`new --api`, `install:api`, resources, query conventions, pagination envelopes, CORS), full auth (session + token guards, `install:auth`), gates/policies, relations, factories/seeders, mail, cache, storage (`os.Root`), events, Postgres driver |
-| BETA | v1.0.0-beta.N → rc.N | OpenAPI 3.1 generation, idempotency keys, queue (sync/database/redis), scheduler, Inertia v3 + React starter, Vite, Redis and Mongo drivers, i18n, SSE, encryption with key rotation, rate limiting; plus (maintainer requirement, 2026-10-16): GraphQL, WebSockets/broadcasting, embedded admin panel, local dev dashboard, JWT guard, TOTP 2FA, Apple/LinkedIn/X social providers, S3 storage driver, MySQL dialect, Vue/Svelte Inertia starters, templ-first starter, typed RPC client generation |
+| BETA | v1.0.0-beta.N → rc.N | OpenAPI 3.1 generation, idempotency keys, queue (sync/database/redis), scheduler, Inertia v3 + React starter, Vite, Redis and Mongo drivers, i18n, SSE, encryption with key rotation, rate limiting; plus (maintainer requirement, 2026-10-16): GraphQL, WebSockets/broadcasting, embedded admin panel, local dev dashboard, JWT guard, TOTP 2FA, Apple/LinkedIn/X social providers, S3 storage driver, MySQL dialect, Vue/Svelte Inertia starters, templ-first starter, typed RPC client generation, Stripe payments, advanced file uploads |
 | 1.0 Stable | v1.0.0 | API freeze, docs complete, stability policy, LTS line |
 | Post-1.0 | v1.x | Whatever the 1.0 users ask for; nothing scheduled |
 
@@ -142,6 +142,8 @@ The maintainer moved the post-1.0 backlog into BETA. Choices that keep the core 
 | Inertia Vue/Svelte | `install:inertia --vue` / `--svelte` starters with the same pages and tests as React. |
 | templ starter | `vukem new <name> --templ`: same app as the HTMX starter with templ components; templ is a dependency of the generated app only. |
 | Typed RPC client | `vukem codegen:client` emits a typed TypeScript (and Go) client from the typed handlers/OpenAPI document (B.0), with `z`-derived request/response types. |
+| Stripe (2026-10-16) | `contrib/stripe` module with an own stdlib client (stripe-go is large and versioned per API release): Checkout, Billing Portal, subscriptions, signed webhooks into `events.Bus`, `install:billing` scaffold, fake Stripe API for tests. |
+| File uploads (2026-10-16) | Builds on `storage`: streaming multipart, per-route limits, tus-style resumable uploads, presigned direct-to-S3, `z` file rules, htmx progress component, optional virus-scan hook. |
 
 ## Open questions
 
