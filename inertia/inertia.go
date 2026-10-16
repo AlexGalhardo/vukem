@@ -65,6 +65,9 @@ type Config struct {
 	Version func() string
 	// Shared props are added to every page; page props win on conflicts.
 	Shared Props
+	// EncryptHistory encrypts every page's history state on the client
+	// (needs a secure context); EncryptHistory(ctx, false) opts a page out.
+	EncryptHistory bool
 }
 
 // Inertia is the adapter; build it with New.
@@ -90,6 +93,7 @@ type Page struct {
 	RescuedProps     []string               `json:"rescuedProps,omitempty"`
 	SharedProps      []string               `json:"sharedProps,omitempty"`
 	OnceProps        map[string]onceMeta    `json:"onceProps,omitempty"`
+	Flash            map[string]any         `json:"flash,omitempty"`
 }
 
 // RootData is the data the root view receives on full page visits.
@@ -134,8 +138,9 @@ type stateKey struct{}
 
 // state is the per-request adapter state stored by Middleware.
 type state struct {
-	in     *Inertia
-	shared Props
+	in      *Inertia
+	shared  Props
+	encrypt *bool
 }
 
 func stateFrom(ctx context.Context) *state {
@@ -152,7 +157,7 @@ func (in *Inertia) Middleware(next http.Handler) http.Handler {
 		r = r.WithContext(context.WithValue(r.Context(), stateKey{}, &state{in: in, shared: Props{}}))
 
 		if !IsInertia(r) {
-			next.ServeHTTP(w, r)
+			next.ServeHTTP(&redirectWriter{ResponseWriter: w, r: r}, r)
 			return
 		}
 
@@ -168,7 +173,7 @@ func (in *Inertia) Middleware(next http.Handler) http.Handler {
 			return
 		}
 
-		next.ServeHTTP(&redirectWriter{ResponseWriter: w, r: r}, r)
+		next.ServeHTTP(&redirectWriter{ResponseWriter: w, r: r, inertia: true}, r)
 	})
 }
 
@@ -289,9 +294,7 @@ func (st *state) page(c *web.Ctx, component string, props Props) (*Page, error) 
 		OnceProps:      rs.onceProps,
 	}
 
-	if s := c.Session(); s != nil {
-		p.PreserveFragment = s.Get(preserveFragmentKey) == true
-	}
+	pageFlags(c, st, p)
 
 	return p, nil
 }
@@ -343,6 +346,7 @@ type redirectWriter struct {
 	http.ResponseWriter
 
 	r           *http.Request
+	inertia     bool
 	wroteHeader bool
 	discard     bool
 }
@@ -354,6 +358,15 @@ func (w *redirectWriter) WriteHeader(code int) {
 
 	w.wroteHeader = true
 
+	if code >= 300 && code < 400 {
+		reflash(w.r)
+	}
+
+	if !w.inertia {
+		w.ResponseWriter.WriteHeader(code)
+		return
+	}
+
 	if code == http.StatusFound &&
 		(w.r.Method == http.MethodPut || w.r.Method == http.MethodPatch || w.r.Method == http.MethodDelete) {
 		code = http.StatusSeeOther
@@ -361,7 +374,7 @@ func (w *redirectWriter) WriteHeader(code int) {
 
 	h := w.Header()
 	if loc := h.Get("Location"); code >= 300 && code < 400 && strings.Contains(loc, "#") &&
-		w.r.Header.Get("Purpose") != "prefetch" {
+		!IsPrefetch(w.r) {
 		h.Del("Location")
 		h.Del("Content-Type")
 		h.Set(HeaderRedirect, loc)

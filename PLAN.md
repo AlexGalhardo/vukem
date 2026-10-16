@@ -18,7 +18,7 @@ Task IDs: `<phase>.<group>.<task>` (e.g. `P.3.2`). Reference them in commit bodi
 | Field | Value |
 | --- | --- |
 | Current phase | **ALPHA** |
-| Next task | `B.3.4` (Vite & Inertia) |
+| Next task | `B.3.5` (Vite & Inertia) |
 | Last release | `v0.17.0` (B.2 Redis and Mongo drivers) |
 | Updated | 2026-10-16 |
 
@@ -487,7 +487,7 @@ Applies to **every** task:
   → verify: protocol tests per header/status.
 - [x] **B.3.3** Prop types (Optional, Always, Defer+rescue, Merge, DeepMerge, Prepend, MatchOn, Once, Scroll) with dotted-path recursion; partial reload filtering.
   → verify: table tests mirroring the protocol spec cases.
-- [ ] **B.3.4** History encryption flags, flash, prefetch, Precognition.
+- [x] **B.3.4** History encryption flags, flash, prefetch, Precognition.
   → verify: tests.
 - [ ] **B.3.5** SSR client with timeout + CSR fallback + health + dev endpoint discovery; `ssr:start`.
   → verify: fallback test with a failing fake SSR server.

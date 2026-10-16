@@ -134,6 +134,8 @@ return inertia.Render(c, "Posts/Index", inertia.Props{
 | Props | `Optional(v)`, `Always(v)`, `Defer(v).Group(g).Rescue()`, `Merge(v)` with `.Append(paths...)`/`.Prepend(paths...)`/`.MatchOn(fields...)`, `DeepMerge(v)`, `Once(v).As(key).Fresh().Until(t)`, `Scroll(v, meta)` / `ScrollPage(orm.Page)` / `ScrollCursor(orm.CursorPage, name)`; modifiers chain (`Defer(v).Merge()`, `Merge(v).Once()`). Values may be `func(ctx) (any, error)`; nested `map[string]any`/`Props` resolve recursively, top-level `"a.b"` keys unpack, and partial reloads filter by dotted path (`only`, `except`, `reset`, except-once) |
 | Page object | `component`, `props` (+`errors`), `url`, `version`, `encryptHistory`, `clearHistory`, `preserveFragment`, `mergeProps`, `prependProps`, `deepMergeProps`, `matchPropsOn`, `scrollProps`, `deferredProps`, `rescuedProps`, `sharedProps`, `onceProps`, `flash` |
 | Redirects | 302 → 303 for PUT/PATCH/DELETE; `inertia.Location(url)` (409 external); fragment redirects via `X-Inertia-Redirect`; `Back` |
+| History & flash | `Config.EncryptHistory` (opt-in, needs a secure context) or `inertia.EncryptHistory(ctx, bool)` per page; `inertia.ClearHistory(c)` on logout; `inertia.Flash(c, key, value)` fills `page.flash` once (survives redirects; prefetch requests do not consume it) |
+| Precognition | `r.Post("/users", inertia.Precognitive(schema, h))`: `Precognition: true` requests only validate (204 + `Precognition-Success`, or 422 `{message, errors}` filtered by `Precognition-Validate-Only`), `Vary: Precognition` always |
 | Shared data | `inertia.Share(key, fn)` globally or per request (middleware); auth user + flash by default |
 | Validation | errors flashed + `303` back; surfaced as `props.errors` |
 | Version | hash of the Vite manifest |
