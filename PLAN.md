@@ -552,7 +552,7 @@ Applies to **every** task:
   → verify: MCP protocol and tool tests; read-only query security test; install is idempotent and keeps user content.
 
 - [x] **B.9.1** ~~Inertia Vue and Svelte starters~~ — moved into B.3.6 (decision F4, 2026-10-16).
-- [ ] **B.9.2** templ-first starter (`vukem new <name> --templ`).
+- [x] **B.9.2** templ-first starter (`vukem new <name> --templ`).
   → verify: e2e: generated app builds, `templ generate` is clean and tests pass.
 - [x] **B.9.3** Typed RPC client generation (`vukem codegen:client`, TypeScript and Go) from typed handlers/OpenAPI with `z` types.
   → verify: golden output; `tsc --noEmit` and `go vet` pass on generated clients; round-trip test against a running app.
