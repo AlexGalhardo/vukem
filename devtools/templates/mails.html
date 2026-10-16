@@ -1,0 +1,27 @@
+{{define "mails"}}{{template "head" .}}
+{{if .Data}}<div class="scroll"><table>
+<tr><th>Time</th><th>Trace</th><th>Subject</th><th>To</th><th>Status</th></tr>
+{{range .Data}}<tr>
+<td class="mut">{{clock .Time}}</td><td>{{template "traceLink" .TraceID}}</td><td><a href="/_vukem/mails/{{.ID}}">{{or .Subject "(no subject)"}}</a></td>
+<td>{{join .To ", "}}</td><td>{{if .Err}}<span class="err">{{.Err}}</span>{{else}}<span class="ok">sent</span>{{end}}</td>
+</tr>
+{{end}}</table></div>{{else}}<p class="empty">No mail sent yet.</p>{{end}}
+{{template "foot" .}}{{end}}
+
+{{define "mail"}}{{template "head" .}}
+{{with .Data}}<dl>
+<dt>From</dt><dd>{{.From}}</dd>
+<dt>To</dt><dd>{{join .To ", "}}</dd>
+{{if .Cc}}<dt>Cc</dt><dd>{{join .Cc ", "}}</dd>{{end}}
+<dt>Subject</dt><dd>{{.Subject}}</dd>
+<dt>Trace</dt><dd>{{template "traceLink" .TraceID}}</dd>
+{{if .Attachments}}<dt>Attachments</dt><dd>{{join .Attachments "; "}}</dd>{{end}}
+{{if .Err}}<dt>Error</dt><dd class="err">{{.Err}}</dd>{{end}}
+</dl>
+{{if .HTML}}<h2>HTML</h2>
+<iframe sandbox="" referrerpolicy="no-referrer" title="Mail preview" srcdoc="{{.HTML}}"></iframe>
+{{end}}
+{{if .Text}}<h2>Text</h2>
+<pre>{{.Text}}</pre>
+{{end}}{{end}}
+{{template "foot" .}}{{end}}

@@ -40,6 +40,7 @@ vukem/                            module github.com/AlexGalhardo/vukem
 ├── sse/                          server-sent events: streams, heartbeat, hub (memory or Redis)
 ├── crypt/                        AES-256-GCM encryption, key rotation, encrypted cookies
 ├── i18n/                         JSON catalogs, CLDR plurals, locale middleware, translated validation
+├── devtools/                     /_vukem dev dashboard: requests, SQL (N+1), jobs, events, mail, logs
 ├── testing/                      fluent HTTP test client, DB helpers, fakes
 ├── cmd/vukem/                 global CLI
 ├── internal/

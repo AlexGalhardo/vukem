@@ -1,0 +1,48 @@
+{{define "queries"}}{{template "head" .}}
+{{if .Data}}<div class="scroll"><table>
+<tr><th>Time</th><th>Trace</th><th>Statement</th><th>Args</th><th class="num">Duration</th><th>Caller</th></tr>
+{{range .Data}}<tr>
+<td class="mut">{{clock .Time}}</td><td>{{template "traceLink" .TraceID}}</td>
+<td><code>{{.SQL}}</code>{{if .NPlusOne}} <span class="badge err">N+1</span>{{end}}{{if .Err}}<br><span class="err">{{.Err}}</span>{{end}}</td>
+<td class="mut"><code>{{join .Args ", "}}</code></td><td class="num">{{ms .Duration}}</td><td class="mut"><code>{{.Caller}}</code></td>
+</tr>
+{{end}}</table></div>{{else}}<p class="empty">No queries recorded yet.</p>{{end}}
+{{template "foot" .}}{{end}}
+
+{{define "jobs"}}{{template "head" .}}
+{{if .Data}}<div class="scroll"><table>
+<tr><th>Time</th><th>Trace</th><th>Kind</th><th>Queue</th><th>Status</th><th class="num">Attempt</th><th class="num">Duration</th><th>Error</th></tr>
+{{range .Data}}<tr>
+<td class="mut">{{clock .Time}}</td><td>{{template "traceLink" .TraceID}}</td><td><code>{{.Kind}}</code></td><td>{{.Queue}}</td>
+<td class="{{if eq .Status "failed"}}err{{else}}ok{{end}}">{{.Status}}</td><td class="num">{{.Attempt}}</td>
+<td class="num">{{if .Duration}}{{ms .Duration}}{{end}}</td><td class="err">{{.Err}}</td>
+</tr>
+{{end}}</table></div>{{else}}<p class="empty">No jobs recorded yet.</p>{{end}}
+{{template "foot" .}}{{end}}
+
+{{define "events"}}{{template "head" .}}
+{{if .Data}}<div class="scroll"><table>
+<tr><th>Time</th><th>Trace</th><th>Event</th><th class="num">Listeners</th><th class="num">Duration</th><th>Error</th></tr>
+{{range .Data}}<tr>
+<td class="mut">{{clock .Time}}</td><td>{{template "traceLink" .TraceID}}</td><td><code>{{.Type}}</code></td>
+<td class="num">{{.Listeners}}</td><td class="num">{{ms .Duration}}</td><td class="err">{{.Err}}</td>
+</tr>
+{{end}}</table></div>{{else}}<p class="empty">No events recorded yet.</p>{{end}}
+{{template "foot" .}}{{end}}
+
+{{define "logs"}}{{template "head" .}}
+{{if .Data}}<div class="scroll"><table>
+<tr><th>Time</th><th>Trace</th><th>Level</th><th>Message</th><th>Attributes</th></tr>
+{{range .Data}}<tr>
+<td class="mut">{{clock .Time}}</td><td>{{template "traceLink" .TraceID}}</td>
+<td class="{{if eq .Level "ERROR"}}err{{else if eq .Level "WARN"}}warn{{end}}">{{.Level}}</td><td>{{.Message}}</td><td class="mut"><pre>{{.Attrs}}</pre></td>
+</tr>
+{{end}}</table></div>{{else}}<p class="empty">No log records yet.</p>{{end}}
+{{template "foot" .}}{{end}}
+
+{{define "routes"}}{{template "head" .}}
+{{if .Data}}<div class="scroll"><table>
+<tr><th>Method</th><th>Path</th><th>Name</th><th>Middleware</th></tr>
+{{range .Data}}<tr><td>{{.Method}}</td><td><code>{{.Path}}</code></td><td><code>{{.Name}}</code></td><td class="mut"><code>{{join .Middleware ", "}}</code></td></tr>
+{{end}}</table></div>{{else}}<p class="empty">No routes.</p>{{end}}
+{{template "foot" .}}{{end}}

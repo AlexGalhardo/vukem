@@ -26,6 +26,7 @@ What Vukem does **by default** to protect applications, mapped to the [OWASP Top
 | CORS deny-by-default; `*` with credentials refused at boot | P |
 | Static files and uploads served through `os.Root` (no `../` traversal); dotfiles never served | P |
 | Signed URLs (HMAC, expiry) for temporary downloads and email verification | A |
+| The devtools dashboard (`/_vukem`) answers only a loopback peer with a loopback `Host` and no proxy headers (which also defeats DNS rebinding); others get a plain 404. `DEVTOOLS_INSECURE_ALLOW_REMOTE=true` lifts the check (`TestSecurity_A01_DevtoolsLoopbackOnly`) | B |
 | **SSRF:** `httpclient.Safe()` dialer rejects loopback, private, link-local and metadata (`169.254.169.254`) addresses after DNS resolution, limits redirects and re-checks each hop; used by framework features that fetch user-supplied URLs | A |
 | Idempotency keys are scoped to the caller, so a reused key never replays another user's response (`TestSecurity_A01_IdempotencyScopedToCaller`); a store outage refuses the request instead of risking a duplicate (`TestSecurity_A04_IdempotencyFailsClosed`) | B |
 | `drivers/s3` presigned GET/PUT URLs sign the validated key and expire after 1 s to 7 days; anything outside that range is refused (`TestSecurity_A01_S3PresignExpiryBounded`) | B |
@@ -51,6 +52,7 @@ What Vukem does **by default** to protect applications, mapped to the [OWASP Top
 | The Vite `hot` file is ignored in production (`TestSecurity_A02_ViteHotFileIgnoredInProduction`) and must hold an `http(s)` URL (`TestSecurity_A05_ViteRejectsUnsafeHotURL`) | B |
 | Debug error page only in development; production errors never include stack traces, SQL or config (`TestSecurity_A02_DebugPageOffInProduction`); the debug page redacts credentials and escapes error text and source (`TestSecurity_A09_DebugPageRedactsSecrets`) | P / B |
 | `vukem about` prints effective security settings (secrets redacted) to review deployments | P |
+| Devtools (`vukem.WithDevtools()`, `DEVTOOLS=true`) is a boot error with `APP_ENV=production` (`TestSecurity_A02_DevtoolsRefusedInProduction`) | B |
 | No default credentials, no sample admin user, `.env` git-ignored, `.env.example` without secrets | P |
 | Destructive commands (`migrate:fresh`, `db:wipe`) require `--force` in production | P |
 | `/openapi.json` (`vukem.ServeOpenAPI`) and the API reference UI (`apidocs.Serve`) are not served in production unless `OPENAPI_IN_PRODUCTION=true` (`TestSecurity_A02_OpenAPIOffInProduction`, `TestSecurity_A02_APIDocsOffInProduction`); the vendored Scalar bundle is pinned by SHA-256 and runs with telemetry and remote fonts off | B |
@@ -102,6 +104,7 @@ What Vukem does **by default** to protect applications, mapped to the [OWASP Top
 | Mail headers built with `net/mail` (no header injection); file names sanitised | A |
 | No shell execution in the framework; `os/exec` usage in CLI generators never passes user input through a shell | P |
 | Validator rejects invalid UTF-8 and control characters in string fields by default | P |
+| Devtools mail previews render in an `<iframe sandbox srcdoc>` with the HTML escaped, under a page CSP without any script source, so mail HTML never runs inline (`TestSecurity_A05_DevtoolsMailPreviewIsSandboxed`) | B |
 | Locale input (query, cookie, session, `Accept-Language`) is used only when it is a well-formed tag (`language[-Script][-REGION]`) of an available catalog; anything else falls back, so raw input never reaches headers, lookups or file paths (`TestSecurity_A05_LocaleInputRejected`) | B |
 
 ### A06:2025 — Insecure Design
@@ -156,6 +159,7 @@ What Vukem does **by default** to protect applications, mapped to the [OWASP Top
 | `events.Listen[security.Event]` hook to forward security events to alerting (email, Slack, SIEM) | A |
 | OpenTelemetry tracing module correlates logs and traces | B |
 | Trace spans (`drivers/otel`) record the route pattern, never the raw path or query string (`TestSecurity_A09_OTelSpansOmitPathAndQuery`) | B |
+| Devtools shows SQL as a normalized shape (literals replaced by `?`) and bound arguments as types and lengths, never values; job and event records carry kinds and types, not payloads (`TestSecurity_A09_DevtoolsRedactsQueryArgs`) | B |
 
 **App responsibility:** ship logs to durable storage and configure alerts on the security events.
 

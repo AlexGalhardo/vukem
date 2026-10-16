@@ -57,6 +57,10 @@ func (a *App) Mailer() (*mail.Mailer, error) {
 			}
 		}
 
+		if a.Devtools != nil {
+			t = a.Devtools.MailTransport(t)
+		}
+
 		var views web.Renderer
 		if a.Views != nil {
 			views = a.Views

@@ -17,6 +17,7 @@ import (
 	"github.com/AlexGalhardo/vukem/config"
 	"github.com/AlexGalhardo/vukem/crypt"
 	"github.com/AlexGalhardo/vukem/database"
+	"github.com/AlexGalhardo/vukem/devtools"
 	"github.com/AlexGalhardo/vukem/events"
 	"github.com/AlexGalhardo/vukem/i18n"
 	"github.com/AlexGalhardo/vukem/inertia"
@@ -67,6 +68,12 @@ type Config struct {
 	OpenAPIPrefix string `env:"OPENAPI_PREFIX"`
 	// OpenAPIInProduction serves /openapi.json in production too.
 	OpenAPIInProduction bool `env:"OPENAPI_IN_PRODUCTION"`
+	// Devtools enables the /_vukem dashboard (refused in production).
+	Devtools bool `env:"DEVTOOLS"`
+	// DevtoolsInsecureAllowRemote serves the dashboard to non-loopback
+	// clients (containers, remote VMs). Anyone who reaches the app then
+	// sees its requests, queries, logs and mail.
+	DevtoolsInsecureAllowRemote bool `env:"DEVTOOLS_INSECURE_ALLOW_REMOTE"`
 }
 
 // IsProduction reports whether APP_ENV is production.
@@ -128,6 +135,10 @@ type App struct {
 	// Events is the application event bus (WithListeners registers listeners).
 	Events *events.Bus
 
+	// Devtools is the development dashboard when WithDevtools or
+	// DEVTOOLS=true enabled it (nil otherwise).
+	Devtools *devtools.Devtools
+
 	jobs         []queue.Registration
 	queueDriver  queue.Driver
 	cacheStore   cache.Store
@@ -187,6 +198,7 @@ type options struct {
 	stdin         io.Reader
 	ready         chan<- string
 	noHTTP        bool
+	devtools      bool
 }
 
 // WithRoutes registers routes (and router middleware) after providers
@@ -243,6 +255,12 @@ func WithStdin(r io.Reader) Option {
 // WithReady receives the HTTP listen address once the server is listening.
 func WithReady(ch chan<- string) Option {
 	return func(o *options) error { o.ready = ch; return nil }
+}
+
+// WithDevtools enables the development dashboard at /_vukem (same as
+// DEVTOOLS=true). New fails when APP_ENV=production.
+func WithDevtools() Option {
+	return func(o *options) error { o.devtools = true; return nil }
 }
 
 // WithoutHTTP disables the HTTP server runner (workers-only processes).
@@ -323,6 +341,8 @@ func New(opts ...Option) (*App, error) {
 		return nil, err
 	}
 
+	cfg.Devtools = cfg.Devtools || o.devtools
+
 	key, err := checkConfig(&cfg)
 	if err != nil {
 		return nil, err
@@ -367,6 +387,21 @@ func New(opts ...Option) (*App, error) {
 		now = time.Now
 	}
 
+	var (
+		dt     *devtools.Devtools
+		routes *router.Router
+	)
+
+	if cfg.Devtools {
+		dt = devtools.New(devtools.Config{
+			InsecureAllowRemote: cfg.DevtoolsInsecureAllowRemote,
+			Level:               logLevel(&cfg),
+			Routes:              func() []router.RouteInfo { return routes.Routes() },
+			Now:                 now,
+		})
+		logger = slog.New(slog.NewMultiHandler(logger.Handler(), dt.LogHandler()))
+	}
+
 	app := &App{
 		Config:    cfg,
 		Source:    src,
@@ -393,6 +428,11 @@ func New(opts ...Option) (*App, error) {
 		mail:        mailState{transport: o.mailTransport},
 	}
 	app.Router = app.newRouter()
+	routes = app.Router
+
+	if dt != nil {
+		app.enableDevtools(dt)
+	}
 
 	if tg != nil {
 		app.Telegram = tg
@@ -401,6 +441,10 @@ func New(opts ...Option) (*App, error) {
 
 	app.Events = events.New(app.Log, 0)
 	app.Events.Register(o.listeners...)
+
+	if dt != nil {
+		app.Events.SetObserver(dt)
+	}
 	app.Router.Services().Events = app.Events
 	app.Events.SetQueue(func() (events.Enqueuer, error) { return app.Queue() })
 	app.OnShutdown(app.Events.Shutdown)
@@ -487,6 +531,10 @@ func checkConfig(cfg *Config) (config.Key, error) {
 		errs = append(errs, errors.New("vukem: APP_DEBUG must be false when APP_ENV=production"))
 	}
 
+	if cfg.IsProduction() && cfg.Devtools {
+		errs = append(errs, errors.New("vukem: devtools (WithDevtools, DEVTOOLS) must be off when APP_ENV=production"))
+	}
+
 	if cfg.Port < 0 || cfg.Port > 65535 {
 		errs = append(errs, fmt.Errorf("vukem: PORT %d is out of range", cfg.Port))
 	}
@@ -516,7 +564,8 @@ func newCrypt(key config.Key, previous config.Secret) (*crypt.Encrypter, error) 
 	return crypt.New(key.Derive("crypt", crypt.KeySize), old...)
 }
 
-func newLogger(cfg *Config, out io.Writer) *slog.Logger {
+// logLevel is LOG_LEVEL (default info), lowered to debug by APP_DEBUG.
+func logLevel(cfg *Config) slog.Level {
 	var level slog.Level
 	if err := level.UnmarshalText([]byte(cfg.LogLevel)); err != nil {
 		level = slog.LevelInfo
@@ -526,7 +575,11 @@ func newLogger(cfg *Config, out io.Writer) *slog.Logger {
 		level = min(level, slog.LevelDebug)
 	}
 
-	hopts := &slog.HandlerOptions{Level: level}
+	return level
+}
+
+func newLogger(cfg *Config, out io.Writer) *slog.Logger {
+	hopts := &slog.HandlerOptions{Level: logLevel(cfg)}
 
 	format := strings.ToLower(cfg.LogFormat)
 	if format == "" {

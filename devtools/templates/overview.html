@@ -1,0 +1,23 @@
+{{define "overview"}}{{template "head" .}}
+<div class="cards">
+{{range .Data.Counts}}<a class="card" href="/_vukem/{{.Link}}"><b>{{.N}}</b>{{.Name}}</a>
+{{end}}</div>
+{{with .Data.NPlusOne}}<h2>N+1 queries</h2>
+<div class="scroll"><table>
+<tr><th>Request</th><th>Path</th><th>Repeated statement</th><th class="num">Count</th></tr>
+{{range $r := .}}{{range .NPlusOne}}<tr><td>{{template "traceLink" $r.ID}}</td><td>{{$r.Method}} <code>{{$r.Path}}</code></td><td><code>{{.SQL}}</code></td><td class="num"><span class="badge err">{{.Count}}×</span></td></tr>
+{{end}}{{end}}</table></div>
+{{end}}
+<h2>Recent requests</h2>
+{{template "requestTable" .Data.Recent}}
+{{template "foot" .}}{{end}}
+
+{{define "requestTable"}}{{if .}}<div class="scroll"><table>
+<tr><th>Time</th><th>Trace</th><th>Method</th><th>Path</th><th>Route</th><th>Status</th><th class="num">Duration</th><th class="num">Queries</th></tr>
+{{range .}}<tr>
+<td class="mut">{{clock .Start}}</td><td>{{template "traceLink" .ID}}</td><td>{{.Method}}</td><td><code>{{.Path}}</code></td>
+<td>{{if .Route}}<code>{{.Route}}</code>{{else}}<span class="mut">{{.Pattern}}</span>{{end}}</td>
+<td class="{{status .Status}}">{{.Status}}</td><td class="num">{{ms .Duration}}</td>
+<td class="num">{{.Queries}}{{if .NPlusOne}} <span class="badge err">N+1</span>{{end}}</td>
+</tr>
+{{end}}</table></div>{{else}}<p class="empty">No requests recorded yet.</p>{{end}}{{end}}

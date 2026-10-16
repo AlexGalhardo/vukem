@@ -1,0 +1,67 @@
+{{define "head"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+{{if .Refresh}}<meta http-equiv="refresh" content="{{.Refresh}}">{{end}}
+<title>{{.Title}} · Vukem devtools</title>
+<style nonce="{{.Nonce}}">
+:root{--bg:#fff;--fg:#1d1d1f;--mut:#6b7280;--line:#e5e7eb;--acc:#4f46e5;--ok:#047857;--warn:#b45309;--err:#b91c1c;--chip:#f3f4f6}
+@media (prefers-color-scheme:dark){:root{--bg:#111827;--fg:#e5e7eb;--mut:#9ca3af;--line:#374151;--acc:#a5b4fc;--ok:#34d399;--warn:#fbbf24;--err:#f87171;--chip:#1f2937}}
+*{box-sizing:border-box}
+body{margin:0;font:14px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--bg);color:var(--fg)}
+header{display:flex;flex-wrap:wrap;gap:4px 16px;align-items:center;padding:10px 16px;border-bottom:1px solid var(--line)}
+nav{display:flex;flex-wrap:wrap;gap:4px}
+nav a{padding:4px 8px;border-radius:6px;color:var(--fg);text-decoration:none}
+nav a.on{background:var(--chip);color:var(--acc);font-weight:600}
+.refresh{margin-left:auto;color:var(--mut);font-size:12px}
+main{padding:16px;max-width:1400px}
+h1{font-size:18px;margin:0 0 12px}
+h2{font-size:15px;margin:20px 0 8px}
+a{color:var(--acc)}
+.scroll{overflow-x:auto}
+table{border-collapse:collapse;width:100%}
+th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--mut);font-weight:600;font-size:12px}
+code,pre{font:12px/1.4 ui-monospace,SFMono-Regular,Consolas,monospace}
+pre{white-space:pre-wrap;word-break:break-word;margin:0}
+.mut{color:var(--mut)}
+.num{text-align:right;white-space:nowrap}
+.badge{display:inline-block;padding:1px 6px;border-radius:9px;font-size:11px;font-weight:700;background:var(--chip)}
+.ok{color:var(--ok)}.warn{color:var(--warn)}.err{color:var(--err)}
+.badge.err{background:var(--err);color:var(--bg)}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px}
+.card{border:1px solid var(--line);border-radius:8px;padding:10px;text-decoration:none;color:var(--fg)}
+.card b{display:block;font-size:22px}
+dl{display:grid;grid-template-columns:max-content 1fr;gap:4px 12px;margin:0}
+dt{color:var(--mut)}dd{margin:0}
+iframe{width:100%;min-height:480px;border:1px solid var(--line);border-radius:8px;background:#fff}
+.empty{color:var(--mut);padding:12px 0}
+</style>
+</head>
+<body>
+<header>
+<strong>Vukem devtools</strong>
+<nav>
+<a href="/_vukem/"{{if eq .Nav "overview"}} class="on"{{end}}>Overview</a>
+<a href="/_vukem/requests"{{if eq .Nav "requests"}} class="on"{{end}}>Requests</a>
+<a href="/_vukem/queries"{{if eq .Nav "queries"}} class="on"{{end}}>Queries</a>
+<a href="/_vukem/jobs"{{if eq .Nav "jobs"}} class="on"{{end}}>Jobs</a>
+<a href="/_vukem/events"{{if eq .Nav "events"}} class="on"{{end}}>Events</a>
+<a href="/_vukem/mails"{{if eq .Nav "mails"}} class="on"{{end}}>Mails</a>
+<a href="/_vukem/logs"{{if eq .Nav "logs"}} class="on"{{end}}>Logs</a>
+<a href="/_vukem/routes"{{if eq .Nav "routes"}} class="on"{{end}}>Routes</a>
+</nav>
+<span class="refresh">{{if .Refresh}}auto-refresh {{.Refresh}}s · <a href="{{.Self}}">stop</a>{{else}}<a href="{{.Self}}?refresh=5">auto-refresh</a>{{end}}</span>
+</header>
+<main>
+<h1>{{.Title}}</h1>
+{{end}}
+
+{{define "foot"}}</main>
+</body>
+</html>
+{{end}}
+
+{{define "traceLink"}}{{if .}}<a href="/_vukem/requests/{{.}}"><code>{{.}}</code></a>{{else}}<span class="mut">-</span>{{end}}{{end}}

@@ -66,3 +66,5 @@ func (s Secret) MarshalJSON() ([]byte, error) // "\"[redacted]\""
 | Cookies | `HttpOnly`, `Secure` (unless `APP_ENV=development`), `SameSite=Lax` | Session cookie uses `__Host-` prefix over HTTPS |
 | CORS | deny all | Explicit origins required |
 | Destructive commands | require `--force` in production | `migrate:fresh`, `db:wipe` |
+| `DEVTOOLS` | `false` | `/_vukem` dashboard; a boot error in production ([devtools.md](devtools.md)) |
+| `DEVTOOLS_INSECURE_ALLOW_REMOTE` | `false` | Serve the dashboard to non-loopback clients |

@@ -85,6 +85,9 @@ func (a *App) Queue() (*queue.Queue, error) {
 		}
 
 		q := queue.New(d, a.Log)
+		if a.Devtools != nil {
+			q.SetObserver(a.Devtools)
+		}
 
 		regs := append(slices.Clone(a.jobs), a.Events.Jobs()...)
 		regs = append(regs, queue.HandleKind(MailJobKind, a.sendQueuedMail))

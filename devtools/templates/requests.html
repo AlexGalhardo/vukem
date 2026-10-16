@@ -1,0 +1,27 @@
+{{define "requests"}}{{template "head" .}}
+{{template "requestTable" .Data}}
+{{template "foot" .}}{{end}}
+
+{{define "trace"}}{{template "head" .}}
+{{with .Data.Request}}<dl>
+<dt>Trace</dt><dd><code>{{.ID}}</code></dd>
+<dt>Request ID</dt><dd><code>{{or .RequestID "-"}}</code></dd>
+<dt>Request</dt><dd>{{.Method}} <code>{{.Path}}</code></dd>
+<dt>Route</dt><dd><code>{{or .Route "-"}}</code> <span class="mut">{{.Pattern}}</span></dd>
+<dt>Status</dt><dd class="{{status .Status}}">{{.Status}}</dd>
+<dt>Started</dt><dd>{{clock .Start}}</dd>
+<dt>Duration</dt><dd>{{ms .Duration}}</dd>
+<dt>Queries</dt><dd>{{.Queries}} ({{ms .QueryTime}})</dd>
+</dl>
+{{with .NPlusOne}}<h2>N+1 queries</h2>
+<ul>{{range .}}<li><span class="badge err">{{.Count}}×</span> <code>{{.SQL}}</code></li>{{end}}</ul>
+{{end}}{{end}}
+<h2>Timeline</h2>
+{{if .Data.Items}}<div class="scroll"><table>
+<tr><th class="num">+</th><th>Kind</th><th>What</th><th>Detail</th></tr>
+{{range .Data.Items}}<tr>
+<td class="num mut">{{ms .Offset}}</td><td>{{.Kind}}{{if .Flag}} <span class="badge err">{{if eq .Kind "query"}}N+1{{else}}!{{end}}</span>{{end}}</td>
+<td>{{if .Link}}<a href="{{.Link}}">{{.Text}}</a>{{else}}<code>{{.Text}}</code>{{end}}</td><td class="mut"><code>{{.Detail}}</code></td>
+</tr>
+{{end}}</table></div>{{else}}<p class="empty">Nothing recorded during this request.</p>{{end}}
+{{template "foot" .}}{{end}}

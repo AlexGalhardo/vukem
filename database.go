@@ -53,6 +53,10 @@ func (a *App) DB() (*database.DB, error) {
 
 		opts = append(opts, database.WithEncrypter(a.Crypt))
 
+		if a.Devtools != nil {
+			opts = append(opts, database.WithQueryObserver(a.Devtools))
+		}
+
 		db, err := database.Open(context.Background(), cfg.URL, opts...)
 		if err != nil {
 			a.dbErr = err
