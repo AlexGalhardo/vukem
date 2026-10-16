@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.10] - 2026-10-16
+
+### Added
+
+- **lumektest:** Add testing toolkit with fluent client and DB assertions
+
 ## [0.0.9] - 2026-10-16
 
 ### Added
@@ -75,7 +81,8 @@ Project foundation. No framework code yet; see [PLAN.md](PLAN.md) for the roadma
 - README, MIT license, CONTRIBUTING, SECURITY and CODE_OF_CONDUCT.
 - Agent configuration: `AGENTS.md`, `CLAUDE.md`, path-scoped `.claude/rules/`, Go skills and project settings.
 
-[Unreleased]: https://github.com/AlexGalhardo/golang-framework/compare/v0.0.9...HEAD
+[Unreleased]: https://github.com/AlexGalhardo/golang-framework/compare/v0.0.10...HEAD
+[0.0.10]: https://github.com/AlexGalhardo/golang-framework/compare/v0.0.9...v0.0.10
 [0.0.9]: https://github.com/AlexGalhardo/golang-framework/compare/v0.0.8...v0.0.9
 [0.0.8]: https://github.com/AlexGalhardo/golang-framework/compare/v0.0.7...v0.0.8
 [0.0.7]: https://github.com/AlexGalhardo/golang-framework/compare/v0.0.6...v0.0.7
