@@ -51,6 +51,8 @@ vukem/                            module github.com/AlexGalhardo/vukem
 │   ├── redis/                    module …/drivers/redis (go-redis)
 │   ├── mongo/                    module …/drivers/mongo (mongo-driver v2)
 │   └── otel/                     module …/drivers/otel (OpenTelemetry tracing)
+├── contrib/
+│   └── stripe/                   module …/contrib/stripe (Stripe API + webhooks, stdlib)
 ├── starters/                     app skeletons embedded by `vukem new`
 ├── docs/
 └── go.work                       local development only (CI uses GOWORK=off)

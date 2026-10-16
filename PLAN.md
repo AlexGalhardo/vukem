@@ -559,9 +559,9 @@ Applies to **every** task:
 
 ### B.10 Payments (Stripe) & file uploads
 
-- [ ] **B.10.1** `contrib/stripe` module with a stdlib HTTP client (no stripe-go): customers, Checkout Sessions, subscriptions, Billing Portal, payment intents, idempotency keys, typed errors, retries on 429/5xx, API version pinned.
+- [x] **B.10.1** `contrib/stripe` module with a stdlib HTTP client (no stripe-go): customers, Checkout Sessions, subscriptions, Billing Portal, payment intents, idempotency keys, typed errors, retries on 429/5xx, API version pinned.
   → verify: tests against an in-process fake Stripe API; secret key never logged (`TestSecurity_A09_StripeKeyRedacted`).
-- [ ] **B.10.2** Stripe webhooks: `Stripe-Signature` verification (HMAC-SHA256, timestamp tolerance, multiple signatures), typed events dispatched to `events.Bus`, idempotent processing (event id store).
+- [x] **B.10.2** Stripe webhooks: `Stripe-Signature` verification (HMAC-SHA256, timestamp tolerance, multiple signatures), typed events dispatched to `events.Bus`, idempotent processing (event id store).
   → verify: forged, replayed and stale webhooks rejected (`TestSecurity_A08_StripeWebhookSignature`); duplicate event processed once.
 - [ ] **B.10.3** `vukem install:billing` scaffold: `billable` columns on users, plans config, checkout/portal routes, subscription sync from webhooks, `Subscribed`/`OnPlan` middleware, tests with the fake API.
   → verify: generated app tests pass.
