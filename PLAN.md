@@ -18,8 +18,8 @@ Task IDs: `<phase>.<group>.<task>` (e.g. `P.3.2`). Reference them in commit bodi
 | Field | Value |
 | --- | --- |
 | Current phase | **ALPHA** |
-| Next task | `A.6b.1` (SSRF-safe client), then A.7 |
-| Last release | `v0.12.0` (A.6c Telegram logging) |
+| Next task | `A.7.0` (docs site for ALPHA), `A.7.2` (examples/blog) |
+| Last release | `v0.13.0` (A.6b security building blocks) |
 | Updated | 2026-10-16 |
 
 ## Design references
@@ -411,13 +411,13 @@ Applies to **every** task:
 
 ### A.6b Security features
 
-- [ ] **A.6b.1** `httpclient.Safe()` SSRF-safe client (post-DNS IP checks, redirect re-check, timeouts, size limits).
+- [x] **A.6b.1** `httpclient.Safe()` SSRF-safe client (post-DNS IP checks, redirect re-check, timeouts, size limits).
   → verify: `TestSecurity_A01_SSRF*` against loopback, private, link-local, metadata and DNS-rebinding cases.
-- [ ] **A.6b.2** Signed URLs (HMAC + expiry) and `webhook.VerifyHMAC`.
+- [x] **A.6b.2** Signed URLs (HMAC + expiry) and `webhook.VerifyHMAC`.
   → verify: tampered/expired URL and bad signature rejected in constant time.
-- [ ] **A.6b.3** `security.Event` stream (`events.Listen[security.Event]`) for alerting; login/lockout/token events.
+- [x] **A.6b.3** `security.Event` stream (`events.Listen[security.Event]`) for alerting; login/lockout/token events.
   → verify: events emitted in auth flows.
-- [ ] **A.6b.4** Lint guard: `math/rand` forbidden in `auth`, `session`, `crypt`, `token` packages (depguard rule).
+- [x] **A.6b.4** Lint guard: `math/rand` forbidden in `auth`, `session`, `crypt`, `token` packages (depguard rule).
   → verify: a test file importing it fails lint in CI.
 
 ### A.7 Release train

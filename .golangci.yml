@@ -88,6 +88,21 @@ linters:
               desc: use the standard library and go-cmp (docs/testing.md)
             - pkg: gorm.io
               desc: not in the dependency allowlist (docs/architecture.md#dependency-policy)
+        crypto-randomness:
+          list-mode: lax
+          files:
+            - "**/auth/**"
+            - "**/session/**"
+            - "**/csrf/**"
+            - "**/signed/**"
+            - "**/social/**"
+            - "**/webhook/**"
+            - "**/config/**"
+          deny:
+            - pkg: math/rand
+              desc: security-sensitive code must use crypto/rand
+            - pkg: math/rand/v2
+              desc: security-sensitive code must use crypto/rand
     errcheck:
       check-type-assertions: true
     exhaustive:

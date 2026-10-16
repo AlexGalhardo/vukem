@@ -4,6 +4,9 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"time"
+
+	"github.com/AlexGalhardo/vukem/security"
 )
 
 type servicesKey struct{}
@@ -42,4 +45,27 @@ func SecurityEvent(r *http.Request, event string, attrs ...any) {
 	}
 
 	log.WarnContext(r.Context(), "security event", append(base, attrs...)...)
+
+	if d := ServicesFrom(r.Context()).Events; d != nil {
+		e := security.Event{
+			Name: event, At: time.Now().UTC(), Method: r.Method, Path: r.URL.Path,
+			IP: NewCtx(nil, r, ServicesFrom(r.Context())).IP(), RequestID: RequestID(r.Context()),
+			Attrs: map[string]any{},
+		}
+
+		for i := 0; i+1 < len(attrs); i += 2 {
+			if k, ok := attrs[i].(string); ok {
+				e.Attrs[k] = attrs[i+1]
+			}
+		}
+
+		if err := d.Dispatch(r.Context(), e); err != nil {
+			log.ErrorContext(r.Context(), "security event listener failed", "event", event, "err", err)
+		}
+	}
+}
+
+// EventDispatcher delivers security events to listeners (an events.Bus).
+type EventDispatcher interface {
+	Dispatch(ctx context.Context, event any) error
 }

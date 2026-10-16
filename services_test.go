@@ -9,6 +9,9 @@ import (
 
 	"github.com/AlexGalhardo/vukem/cache"
 	"github.com/AlexGalhardo/vukem/events"
+	"github.com/AlexGalhardo/vukem/router"
+	"github.com/AlexGalhardo/vukem/security"
+	"github.com/AlexGalhardo/vukem/web"
 )
 
 type orderPlaced struct{ ID int }
@@ -67,5 +70,28 @@ func TestEventsWiring(t *testing.T) {
 
 	if err := app.Events.Dispatch(t.Context(), orderPlaced{}); !errors.Is(err, events.ErrClosed) {
 		t.Fatalf("after shutdown = %v", err)
+	}
+}
+
+func TestSecurityEventsReachTheBus(t *testing.T) {
+	t.Parallel()
+
+	var got []security.Event
+
+	app := newTestApp(t, WithListeners(events.On(func(_ context.Context, e security.Event) error {
+		got = append(got, e)
+		return nil
+	})), WithRoutes(func(r *router.Router, _ *App) error {
+		r.Get("/deny", func(c *web.Ctx) error { return c.Authorize("anything", nil) })
+		return nil
+	}))
+
+	if rec := doReq(t, app, "/deny"); rec.Code != 403 {
+		t.Fatalf("status = %d", rec.Code)
+	}
+
+	if len(got) != 1 || got[0].Name != "authz.denied" || got[0].Attrs["ability"] != "anything" ||
+		got[0].Path != "/deny" {
+		t.Fatalf("events = %+v", got)
 	}
 }

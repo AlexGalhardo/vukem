@@ -49,6 +49,8 @@ type Services struct {
 	// CheckResponses makes JSONWith validate outgoing data against its
 	// schema (enabled outside production by the app).
 	CheckResponses bool
+	// Events receives a security.Event for every SecurityEvent (alerting).
+	Events EventDispatcher
 	// Authorizer backs Ctx.Authorize and the "can" template function
 	// (an authz.Gate). Without one, every authorization check denies.
 	Authorizer Authorizer

@@ -167,6 +167,16 @@ What Vukem does **by default** to protect applications, mapped to the [OWASP Top
 
 All configurable in `config/http.go`; API routes skip HTML-only headers.
 
+## Building blocks
+
+| Package | Use |
+| --- | --- |
+| `httpclient.Safe(opts)` | outbound requests to user-supplied URLs: only public addresses (checked on the resolved IP at connect time, so DNS rebinding and redirects to internal hosts fail), http(s) only, timeouts, redirect and body limits (`TestSecurity_A01_SSRF*`) |
+| `signed.New(key)` | signed URLs with expiry, constant-time verification, 403 middleware (`TestSecurity_A01_SignedURLTampering`) |
+| `webhook.VerifyHMAC`, `webhook.Middleware` | incoming webhooks signed with HMAC-SHA256 (hex or base64, `sha256=` prefix), body size limit, 401 (`TestSecurity_A08_WebhookMiddleware`) |
+| `security.Event` | every `web.SecurityEvent` (login failures, `authz.denied`, CSRF, rate limits, bad signatures) is also dispatched on `app.Events` for alerting: `events.Listen(app.Events, func(ctx, e security.Event) error {...})` |
+| depguard `crypto-randomness` | `math/rand` is a lint error in `auth`, `session`, `csrf`, `signed`, `social`, `webhook` and `config` |
+
 ## Verification
 
 - Every default above has a test named `TestSecurity_<Category>_<Behaviour>` (e.g. `TestSecurity_A01_StaticRejectsTraversal`), so `go test -run TestSecurity ./...` is the security regression suite.

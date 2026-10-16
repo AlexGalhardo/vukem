@@ -305,6 +305,7 @@ func New(opts ...Option) (*App, error) {
 
 	app.Events = events.New(app.Log, 0)
 	app.Events.Register(o.listeners...)
+	app.Router.Services().Events = app.Events
 	app.OnShutdown(app.Events.Shutdown)
 
 	if o.views != nil {
