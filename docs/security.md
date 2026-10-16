@@ -31,6 +31,7 @@ What Vukem does **by default** to protect applications, mapped to the [OWASP Top
 | Idempotency keys are scoped to the caller, so a reused key never replays another user's response (`TestSecurity_A01_IdempotencyScopedToCaller`); a store outage refuses the request instead of risking a duplicate (`TestSecurity_A04_IdempotencyFailsClosed`) | B |
 | `drivers/s3` presigned GET/PUT URLs sign the validated key and expire after 1 s to 7 days; anything outside that range is refused (`TestSecurity_A01_S3PresignExpiryBounded`) | B |
 | WebSocket upgrades (`drivers/websocket`) are same-origin only: a browser `Origin` outside the request host and the explicit `AllowedOrigins` allowlist gets 403 before the handler runs; `AllowedOrigins("*")` or a malformed pattern refuses every upgrade; accepting any origin needs `InsecureSkipOriginCheck()` (`TestSecurity_A01_WebSocketOriginChecked`) | B |
+| Broadcast channels (`broadcast`, SSE and `drivers/websocket` transports) fail closed: private and presence channels need a matching rule and a user, public channels must be declared, a rule error or gate denial (including 404) answers 403, and an SSE request with one refused channel streams nothing; channel names are limited to 128 characters of `A-Z a-z 0-9 _ - = @ . :` (400 otherwise), so lists, topics and frames cannot be forged (`TestSecurity_A01_BroadcastPrivateChannelsAuthorized`, in both modules) | B |
 
 **App responsibility:** call `Authorize` in every handler that touches owned data; scope queries by tenant/user.
 

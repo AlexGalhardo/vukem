@@ -140,7 +140,63 @@ r.Get("/feed", websocket.Handler(feed, websocket.AllowedOrigins("app.example.com
 - Origin: same-origin only by default; `AllowedOrigins(patterns...)` (`path.Match` on the host, or on `scheme://host` when the pattern has `://`) opens specific origins. `"*"` or a malformed pattern refuses every upgrade; `InsecureSkipOriginCheck()` is the only way to accept any origin. Requests without an `Origin` header (non-browser clients) are accepted.
 - Limits: `ReadLimit(n)` (default 32 KiB; larger messages close with 1009), `WriteTimeout(d)` per message (default 10s), `PingInterval(d)` / `PingTimeout(d)` (30s / 10s; zero interval disables). Pongs only arrive while something reads, so handlers that only write call `conn.CloseRead(ctx)`.
 - Closing: `fn` returning nil closes with 1000, an error with 1011. When the app shuts down, the same signal that ends SSE streams (`sse.ShutdownSignal`) closes every socket with 1001 "going away", so shutdown never waits on open sockets. The server's read/write timeouts are lifted for the socket, which enforces its own.
-- `Subprotocols(...)` negotiates subprotocols. Fan-out across instances arrives with the `broadcast` package (B.6.2).
+- `Subprotocols(...)` negotiates subprotocols. For channels with authorization and fan-out across instances, use `websocket.Broadcast` (below).
+
+### Broadcasting
+
+Package `broadcast` (core, stdlib only) pushes server events to browsers over named channels, like Laravel Broadcasting. Channels are public (`posts`), private (`private-user.42`) or presence (`presence-room.7`), chosen by the name prefix. Every channel kind needs a rule; decisions **fail closed**: no matching rule, a rule error, a missing `Config.User` or no user all deny.
+
+```go
+b := broadcast.New(broadcast.Config{
+	Broker:     redisClient, // sse.Broker; nil = this process only
+	User:       func(ctx context.Context) (any, error) { return auth.UserFrom[*models.User](ctx, "web") },
+	Authorizer: gate, // for PrivateGate (web.Authorizer, e.g. *authz.Gate)
+})
+defer b.Close()
+
+err := b.Public("posts")                     // undeclared public channels are denied
+err = b.Private("user.{id}", func(ctx context.Context, u any, p map[string]string) (bool, error) {
+	return u.(*models.User).ID == p["id"], nil
+})
+err = b.PrivateGate("post.{id}", "view", func(ctx context.Context, p map[string]string) (any, error) {
+	return models.Posts.Find(ctx, db, p["id"]) // c.Authorize("view", post) semantics
+})
+err = b.Presence("room.{id}", func(ctx context.Context, u any, p map[string]string) (broadcast.Member, bool, error) {
+	user := u.(*models.User)
+	return broadcast.Member{ID: user.ID, Info: map[string]string{"name": user.Name}}, true, nil
+})
+```
+
+- Patterns omit the prefix and split on `.`; `{param}` matches one segment. Invalid patterns are a boot error (the registration returns it). Names are 1–128 characters of `A-Z a-z 0-9 _ - = @ . :`; anything else is a 400, so commas, spaces, quotes and CR/LF never reach a list, a topic or a frame.
+- Events implement `Channels() []string`, optionally `BroadcastAs() string` (default: the Go type name) and `BroadcastWith() any` (default: the event as JSON). `b.Broadcast(ctx, event)` publishes on each channel through the hub (memory or `Broker`), so every instance delivers it; `b.Publish(ctx, channel, name, data)` skips the type. Event names starting with `presence:` are reserved.
+- From the events bus: `bus.Register(broadcast.Listener[PostPublished](b))` (sync; `ListenerAsync` in the background) or `broadcast.Queued[PostPublished](b, "broadcast.post_published")` to broadcast from a queue job with retries (register `bus.Jobs()` on the queue; the event must round-trip through JSON). Any job can call `b.Broadcast(ctx, ev)` directly.
+- `b.Subscribe(ctx, channels...)` authorizes every channel (all or nothing, at most `MaxChannels`, default 32) and returns a `*Subscription` (`Messages()`, `Members(channel)`, `Close()`); transports are built on it.
+
+Transports:
+
+- **SSE (core):** `r.Get("/broadcast/sse", b.SSE)` (or `b.SSEHandler()` for a plain mux) serves `GET /broadcast/sse?channels=posts,private-user.42`. Every channel is authorized before streaming; a refusal answers 400/403 and no stream starts. Each event is an SSE event named after the broadcast event whose data is `{"channel","event","data"}`; presence channels first get `presence:here` with the member list, then `presence:joining` / `presence:leaving`.
+- **WebSocket (`drivers/websocket`):** `r.Get("/broadcast/ws", websocket.Broadcast(b, opts...))`, same origin checks as `websocket.Handler`. Each subscribe is authorized in the context of the upgrade request, so mount both transports behind the auth middleware.
+
+WebSocket protocol (JSON text messages):
+
+| Direction | Message |
+| --- | --- |
+| client → server | `{"type":"subscribe","channel":"private-user.42"}`, `{"type":"unsubscribe","channel":"…"}` |
+| server → client | `{"type":"subscribed","channel":"…"}`, `{"type":"unsubscribed","channel":"…"}` |
+| server → client | `{"type":"event","channel":"…","event":"PostPublished","data":{…}}` |
+| server → client | `{"type":"here","channel":"presence-…","data":[{"id":"1","info":{…}}]}`, `{"type":"joining","channel":"…","data":{"id":"2"}}`, `{"type":"leaving",…}` |
+| server → client | `{"type":"error","channel":"…","status":403,"message":"This channel is unauthorized."}` (400 for invalid names, unknown types, too many channels; an invalid name is not echoed) |
+
+A subscription the server drops (64 events behind, or `b.Close()`) ends the SSE stream or closes the socket with 1001; the client reconnects and subscribes again.
+
+```js
+const ws = new WebSocket(`wss://${location.host}/broadcast/ws`)
+ws.onopen = () => ws.send(JSON.stringify({ type: 'subscribe', channel: 'private-user.42' }))
+ws.onmessage = (e) => { const m = JSON.parse(e.data); if (m.type === 'event') console.log(m.event, m.data) }
+// SSE: new EventSource('/broadcast/sse?channels=posts').addEventListener('PostPublished', (e) => JSON.parse(e.data))
+```
+
+Presence is tracked per instance: a user's several connections count as one member, and `joining`/`leaving` reach every instance through the broker, but `here` lists only the members connected to the instance serving the client. A cluster-wide member list needs a shared store (planned: Redis sets).
 
 ## Vite
 

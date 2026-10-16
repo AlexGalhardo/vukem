@@ -13,7 +13,7 @@ Design documents, one per area. The user guide lives at [vukem.vercel.app](https
 | Security defaults (OWASP Top 10:2025) | [security.md](security.md) |
 | Databases, ORM, migrations | [database.md](database.md) |
 | Authentication and authorization | [authentication.md](authentication.md) |
-| Views, HTMX, Inertia, Vite | [frontend.md](frontend.md) |
+| Views, HTMX, SSE, WebSockets, broadcasting, Inertia, Vite | [frontend.md](frontend.md) |
 | CLI | [cli.md](cli.md) |
 | Mail, cache, queue, scheduler and more | [subsystems.md](subsystems.md) |
 | Development dashboard (`/_vukem`) | [devtools.md](devtools.md) |

@@ -38,6 +38,7 @@ vukem/                            module github.com/AlexGalhardo/vukem
 ├── vite/                         Vite tags: hot file (dev), manifest, CSP nonce, SRI
 ├── inertia/                      Inertia.js v3 adapter: page object, version check, redirects, shared props
 ├── sse/                          server-sent events: streams, heartbeat, hub (memory or Redis)
+├── broadcast/                    channels (public/private/presence), authorization rules, SSE transport
 ├── crypt/                        AES-256-GCM encryption, key rotation, encrypted cookies
 ├── i18n/                         JSON catalogs, CLDR plurals, locale middleware, translated validation
 ├── devtools/                     /_vukem dev dashboard: requests, SQL (N+1), jobs, events, mail, logs
@@ -54,7 +55,7 @@ vukem/                            module github.com/AlexGalhardo/vukem
 │   ├── mongo/                    module …/drivers/mongo (mongo-driver v2)
 │   ├── otel/                     module …/drivers/otel (OpenTelemetry tracing)
 │   ├── s3/                       module …/drivers/s3 (stdlib SigV4 client, no AWS SDK)
-│   └── websocket/                module …/drivers/websocket (coder/websocket)
+│   └── websocket/                module …/drivers/websocket (coder/websocket, broadcast protocol)
 ├── contrib/
 │   └── stripe/                   module …/contrib/stripe (Stripe API + webhooks, stdlib)
 ├── starters/                     app skeletons embedded by `vukem new`
