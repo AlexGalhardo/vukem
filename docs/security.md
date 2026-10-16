@@ -27,6 +27,7 @@ What Vukem does **by default** to protect applications, mapped to the [OWASP Top
 | Static files and uploads served through `os.Root` (no `../` traversal); dotfiles never served | P |
 | Signed URLs (HMAC, expiry) for temporary downloads and email verification | A |
 | **SSRF:** `httpclient.Safe()` dialer rejects loopback, private, link-local and metadata (`169.254.169.254`) addresses after DNS resolution, limits redirects and re-checks each hop; used by framework features that fetch user-supplied URLs | A |
+| Idempotency keys are scoped to the caller, so a reused key never replays another user's response (`TestSecurity_A01_IdempotencyScopedToCaller`); a store outage refuses the request instead of risking a duplicate (`TestSecurity_A04_IdempotencyFailsClosed`) | B |
 
 **App responsibility:** call `Authorize` in every handler that touches owned data; scope queries by tenant/user.
 

@@ -1,0 +1,225 @@
+package api
+
+import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"io"
+	"maps"
+	"net/http"
+	"slices"
+	"time"
+
+	"github.com/AlexGalhardo/vukem/cache"
+	"github.com/AlexGalhardo/vukem/errs"
+	"github.com/AlexGalhardo/vukem/web"
+)
+
+// IdempotencyOptions tune Idempotency.
+type IdempotencyOptions struct {
+	// Methods guarded (default POST and PATCH).
+	Methods []string
+	// Required answers 400 when the header is missing.
+	Required bool
+	// TTL keeps completed responses (default 24h).
+	TTL time.Duration
+	// LockTTL bounds an in-flight request (default 1 minute).
+	LockTTL time.Duration
+	// MaxBody bounds the request body that is fingerprinted (default 1 MiB).
+	MaxBody int64
+	// Scope separates callers so one cannot replay another's response.
+	// Default: the Authorization header; set it for cookie sessions (e.g.
+	// the user ID).
+	Scope func(r *http.Request) string
+}
+
+// IdempotencyHeader is the request header carrying the key.
+const IdempotencyHeader = "Idempotency-Key"
+
+type idemRecord struct {
+	Fingerprint string      `json:"f"`
+	Done        bool        `json:"d"`
+	Status      int         `json:"s,omitempty"`
+	Header      http.Header `json:"h,omitempty"`
+	Body        []byte      `json:"b,omitempty"`
+}
+
+// Idempotency makes retried requests safe: the first request with an
+// Idempotency-Key runs and its response (status below 500) is stored;
+// repeats replay it with "Idempotent-Replayed: true". A repeat while the
+// first is running gets 409, and reusing a key for a different request
+// gets 422. If the store fails the request is refused with 503 (fail
+// closed) rather than risking a duplicate side effect.
+func Idempotency(store cache.Store, o IdempotencyOptions) func(http.Handler) http.Handler {
+	if len(o.Methods) == 0 {
+		o.Methods = []string{http.MethodPost, http.MethodPatch}
+	}
+
+	if o.TTL <= 0 {
+		o.TTL = 24 * time.Hour
+	}
+
+	if o.LockTTL <= 0 {
+		o.LockTTL = time.Minute
+	}
+
+	if o.MaxBody <= 0 {
+		o.MaxBody = 1 << 20
+	}
+
+	if o.Scope == nil {
+		o.Scope = func(r *http.Request) string { return r.Header.Get("Authorization") }
+	}
+
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			key := r.Header.Get(IdempotencyHeader)
+
+			if !slices.Contains(o.Methods, r.Method) || (key == "" && !o.Required) {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			if !validKey(key) {
+				web.Fail(
+					w,
+					r,
+					errs.New(
+						http.StatusBadRequest,
+						"A valid Idempotency-Key header (1-255 printable characters) is required.",
+					),
+				)
+				return
+			}
+
+			body, err := io.ReadAll(io.LimitReader(r.Body, o.MaxBody+1))
+			if err != nil || int64(len(body)) > o.MaxBody {
+				web.Fail(w, r, errs.ErrRequestTooLarge)
+				return
+			}
+
+			r.Body = io.NopCloser(bytes.NewReader(body))
+
+			ctx := r.Context()
+			storeKey := "idempotency:" + digest(o.Scope(r), "\x00", key)
+			fingerprint := digest(r.Method, "\x00", r.URL.RequestURI(), "\x00", string(body))
+
+			pending, _ := json.Marshal(idemRecord{Fingerprint: fingerprint})
+
+			added, err := store.Add(ctx, storeKey, pending, o.LockTTL)
+			if err != nil {
+				web.Fail(w, r, errs.New(http.StatusServiceUnavailable, "Idempotency store unavailable."))
+				return
+			}
+
+			if !added {
+				replay(w, r, store, storeKey, fingerprint)
+				return
+			}
+
+			rec := &recordingWriter{ResponseWriter: w, status: http.StatusOK}
+			next.ServeHTTP(rec, r)
+
+			if rec.status >= http.StatusInternalServerError {
+				_ = store.Delete(ctx, storeKey) // let the client retry
+				return
+			}
+
+			header := rec.Header().Clone()
+			header.Del("Set-Cookie") // never replay session cookies
+
+			done, err := json.Marshal(idemRecord{
+				Fingerprint: fingerprint, Done: true, Status: rec.status, Header: header, Body: rec.body.Bytes(),
+			})
+			if err == nil {
+				err = store.Set(ctx, storeKey, done, o.TTL)
+			}
+
+			if log := web.ServicesFrom(ctx).Log; err != nil && log != nil {
+				log.ErrorContext(ctx, "idempotency: store response", "err", err)
+			}
+		})
+	}
+}
+
+func replay(w http.ResponseWriter, r *http.Request, store cache.Store, storeKey, fingerprint string) {
+	raw, ok, err := store.Get(r.Context(), storeKey)
+	if err != nil {
+		web.Fail(w, r, errs.New(http.StatusServiceUnavailable, "Idempotency store unavailable."))
+		return
+	}
+
+	var rec idemRecord
+	if !ok || json.Unmarshal(raw, &rec) != nil {
+		web.Fail(w, r, errs.New(http.StatusConflict, "A request with this Idempotency-Key is being processed."))
+		return
+	}
+
+	switch {
+	case rec.Fingerprint != fingerprint:
+		web.SecurityEvent(r, "idempotency.key_reused")
+		web.Fail(
+			w,
+			r,
+			errs.New(http.StatusUnprocessableEntity, "This Idempotency-Key was used for a different request."),
+		)
+	case !rec.Done:
+		web.Fail(w, r, errs.New(http.StatusConflict, "A request with this Idempotency-Key is being processed."))
+	default:
+		maps.Copy(w.Header(), rec.Header)
+
+		w.Header().Set("Idempotent-Replayed", "true")
+		w.WriteHeader(rec.Status)
+		_, _ = w.Write(rec.Body)
+	}
+}
+
+func validKey(k string) bool {
+	if k == "" || len(k) > 255 {
+		return false
+	}
+
+	for i := range len(k) {
+		if k[i] < 0x21 || k[i] > 0x7e {
+			return false
+		}
+	}
+
+	return true
+}
+
+func digest(parts ...string) string {
+	h := sha256.New()
+	for _, p := range parts {
+		_, _ = io.WriteString(h, p)
+	}
+
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// recordingWriter writes through and keeps a copy of the response.
+type recordingWriter struct {
+	http.ResponseWriter
+
+	status      int
+	wroteHeader bool
+	body        bytes.Buffer
+}
+
+func (w *recordingWriter) WriteHeader(code int) {
+	if !w.wroteHeader {
+		w.status, w.wroteHeader = code, true
+	}
+
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w *recordingWriter) Write(b []byte) (int, error) {
+	w.wroteHeader = true
+	w.body.Write(b)
+
+	return w.ResponseWriter.Write(b)
+}
+
+func (w *recordingWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }

@@ -18,7 +18,7 @@ Task IDs: `<phase>.<group>.<task>` (e.g. `P.3.2`). Reference them in commit bodi
 | Field | Value |
 | --- | --- |
 | Current phase | **ALPHA** |
-| Next task | `B.0.4` (`Idempotency-Key` middleware) |
+| Next task | `B.0.6` (Scalar API reference) |
 | Last release | `v0.14.0` (A.7.2 example blog, auth.Optional) |
 | Updated | 2026-10-16 |
 
@@ -456,7 +456,7 @@ Applies to **every** task:
   → verify: a mismatching response fails the assertion.
 - [x] **B.0.5** `z` exports: `JSONSchema()` and `vukem codegen:types` (TypeScript types + optional Zod schemas).
   → verify: golden JSON Schema/TS output; `tsc --noEmit` passes on generated types.
-- [ ] **B.0.4** `Idempotency-Key` middleware (database/Redis store).
+- [x] **B.0.4** `Idempotency-Key` middleware (database/Redis store).
   → verify: a duplicate POST returns the stored response.
 - [ ] **B.0.6** API reference UI with **Scalar** (scalar.com): `api.Docs(spec)` serves the Scalar API Reference for the generated OpenAPI 3.1 document at `/docs` (configurable path, theme, auth presets), assets vendored with a pinned SHA-256 (no CDN by default), CSP nonce, off in production unless enabled; `vukem openapi:serve` for previews.
   → verify: golden HTML; the page loads with the default CSP; disabled in production by default (`TestSecurity_A02_APIDocsOffInProduction`).
