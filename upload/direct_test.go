@@ -65,7 +65,7 @@ func TestDirect(t *testing.T) {
 	}
 
 	if !strings.HasPrefix(out.Key, "avatars/") || !strings.HasSuffix(out.Key, ".png") ||
-		strings.Contains(out.Key, "me") ||
+		strings.Contains(out.Key, "..") || strings.Contains(out.Key, "me.png") ||
 		out.Method != http.MethodPut ||
 		out.Headers["Content-Type"] != "image/png" ||
 		!strings.Contains(out.URL, out.Key) {
