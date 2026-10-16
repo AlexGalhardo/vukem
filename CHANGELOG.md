@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.6] - 2026-10-16
+
+### Added
+
+- **z:** Add zod-style typed schemas and web parsing
+- **site:** Add documentation site with Next.js 16, Tailwind v4 and Base UI
+
+### Fixed
+
+- **deps:** Require go1.27.2 toolchain for standard library security fixes
+
 ## [0.0.5] - 2026-10-16
 
 ### Added
@@ -46,7 +57,8 @@ Project foundation. No framework code yet; see [PLAN.md](PLAN.md) for the roadma
 - README, MIT license, CONTRIBUTING, SECURITY and CODE_OF_CONDUCT.
 - Agent configuration: `AGENTS.md`, `CLAUDE.md`, path-scoped `.claude/rules/`, Go skills and project settings.
 
-[Unreleased]: https://github.com/AlexGalhardo/golang-framework/compare/v0.0.5...HEAD
+[Unreleased]: https://github.com/AlexGalhardo/golang-framework/compare/v0.0.6...HEAD
+[0.0.6]: https://github.com/AlexGalhardo/golang-framework/compare/v0.0.5...v0.0.6
 [0.0.5]: https://github.com/AlexGalhardo/golang-framework/compare/v0.0.4...v0.0.5
 [0.0.4]: https://github.com/AlexGalhardo/golang-framework/compare/v0.0.3...v0.0.4
 [0.0.3]: https://github.com/AlexGalhardo/golang-framework/compare/v0.0.2...v0.0.3
