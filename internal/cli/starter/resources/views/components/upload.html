@@ -1,0 +1,9 @@
+<form class="upload" method="post" action="{{.Action}}" enctype="multipart/form-data"
+	hx-post="{{.Action}}" hx-target="{{.Target}}" hx-swap="outerHTML" data-upload>
+	{{csrfField}}
+	<label>{{.Label}}
+		<input type="file" name="{{.Name}}" accept="{{.Accept}}" {{if .Multiple}}multiple{{end}} required>
+	</label>
+	<progress max="100" value="0" hidden></progress>
+	<button type="submit">Upload</button>
+</form>

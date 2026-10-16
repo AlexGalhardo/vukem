@@ -26,5 +26,13 @@ func Web(r *router.Router, app *vukem.App) error {
 	r.Get("/", controllers.Home).Name("home")
 	r.Resource("posts", controllers.NewPostController(db))
 
+	uploads, err := controllers.NewUploadController(app)
+	if err != nil {
+		return err
+	}
+
+	r.Get("/uploads", uploads.Index).Name("uploads.index")
+	r.Post("/uploads", uploads.Store).Name("uploads.store")
+
 	return nil
 }

@@ -16,6 +16,8 @@ import (
 var inertiaReplaced = []string{
 	"resources/views/home.html", "resources/views/layouts", "resources/views/partials", "resources/views/posts",
 	"resources/public/js", "resources/js/app.ts",
+	"resources/views/components", "resources/views/uploads", "app/controllers/upload_controller.go",
+	"tests/uploads_test.go",
 }
 
 func installInertia(set *flag.FlagSet) func(context.Context, *Env, []string) error {

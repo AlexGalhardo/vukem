@@ -1,0 +1,60 @@
+package tests
+
+import (
+	"bytes"
+	"mime/multipart"
+	"net/http"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/AlexGalhardo/vukem/vukemtest"
+
+	"{{.Module}}/bootstrap"
+)
+
+func uploadForm(t *testing.T, filename, content string) (*bytes.Buffer, string) {
+	t.Helper()
+
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+
+	w, err := mw.CreateFormFile("images", filename)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, _ = w.Write([]byte(content))
+	_ = mw.Close()
+
+	return &body, mw.FormDataContentType()
+}
+
+func TestUploads(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	app := vukemtest.New(t, bootstrap.New, vukemtest.Options{Env: map[string]string{"UPLOADS_DIR": dir}})
+
+	app.Client(t).Get("/uploads").AssertOK().AssertSee("No uploads yet").AssertSee("data-upload")
+
+	body, ct := uploadForm(t, "photo.png", "\x89PNG\r\n\x1a\n"+"pixels")
+	app.Client(t).HTMX().Do(http.MethodPost, "/uploads", body, ct).
+		AssertOK().
+		AssertFragment().
+		AssertSee(".png").
+		AssertDontSee("photo.png")
+
+	stored, _ := filepath.Glob(filepath.Join(dir, "images", "*.png"))
+	if len(stored) != 1 {
+		t.Fatalf("stored files = %v, want one random .png", stored)
+	}
+
+	// The content decides the type: an HTML page named .png is rejected.
+	body, ct = uploadForm(t, "evil.png", "<html><script>alert(1)</script></html>")
+	app.Client(t).AcceptJSON().Do(http.MethodPost, "/uploads", body, ct).AssertJSONValidationErrors("images")
+
+	if entries, _ := os.ReadDir(filepath.Join(dir, "images")); len(entries) != 1 {
+		t.Errorf("rejected upload left files: %v", entries)
+	}
+}

@@ -1,0 +1,91 @@
+package controllers
+
+import (
+	"context"
+	"net/http"
+	"path"
+
+	vukem "github.com/AlexGalhardo/vukem"
+	"github.com/AlexGalhardo/vukem/config"
+	"github.com/AlexGalhardo/vukem/storage"
+	"github.com/AlexGalhardo/vukem/upload"
+	"github.com/AlexGalhardo/vukem/web"
+)
+
+// UploadController is the example upload page: files stream to a private
+// disk (never buffered whole), checked by content type and extension,
+// with progress shown by the upload component.
+type UploadController struct {
+	disk storage.Disk
+}
+
+type uploadConfig struct {
+	Dir string `env:"UPLOADS_DIR" default:"storage/app/uploads"`
+}
+
+// NewUploadController opens the uploads disk (UPLOADS_DIR) and closes it
+// on shutdown.
+func NewUploadController(app *vukem.App) (*UploadController, error) {
+	cfg, err := config.Load[uploadConfig](app.Source)
+	if err != nil {
+		return nil, err
+	}
+
+	disk, err := storage.NewLocal(cfg.Dir, "")
+	if err != nil {
+		return nil, err
+	}
+
+	app.OnShutdown(func(context.Context) error { return disk.Close() })
+
+	return &UploadController{disk: disk}, nil
+}
+
+// imageRules accept up to three images of 2 MiB each per request.
+func imageRules() upload.Rules {
+	rules := upload.Images(2 << 20)
+	rules.MaxFiles = 3
+	rules.Dir = "images"
+
+	return rules
+}
+
+// Index lists the uploaded images; htmx requests get the "upload-list" block.
+func (uc *UploadController) Index(c *web.Ctx) error {
+	paths, err := uc.disk.List(c.Context(), "images")
+	if err != nil {
+		return err
+	}
+
+	names := make([]string, len(paths))
+	for i, p := range paths {
+		names[i] = path.Base(p)
+	}
+
+	if c.WantsJSON() {
+		return c.JSON(http.StatusOK, map[string]any{"data": names})
+	}
+
+	return c.Render("uploads/index", map[string]any{"Files": names}, web.Block("upload-list"))
+}
+
+// Store receives the images. Rejected uploads (too large, wrong type,
+// extension not matching the content) leave nothing on the disk.
+func (uc *UploadController) Store(c *web.Ctx) error {
+	form, err := upload.Receive(c, uc.disk, imageRules())
+	if err != nil {
+		return err
+	}
+
+	if c.WantsJSON() {
+		return c.JSON(http.StatusCreated, map[string]any{"data": form.Files})
+	}
+
+	if c.IsHTMX() {
+		return uc.Index(c)
+	}
+
+	_ = c.Flash("success", "Upload complete.")
+
+	return c.RedirectRoute("uploads.index")
+}

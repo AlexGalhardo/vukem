@@ -1,0 +1,19 @@
+{{define "title"}}Uploads{{end}}
+{{define "content"}}
+<h1>Uploads</h1>
+<p>Files stream to <code>storage/app/uploads</code> without being buffered; their type is detected from the content.</p>
+
+{{template "components/upload" dict
+	"Action" (route "uploads.store") "Target" "#upload-list" "Name" "images" "Multiple" true
+	"Label" "Images (PNG, JPEG, GIF or WebP, up to 2 MB each)" "Accept" "image/png,image/jpeg,image/gif,image/webp"}}
+
+{{block "upload-list" .}}
+<ul id="upload-list" class="list">
+	{{range .Files}}
+	<li>{{.}}</li>
+	{{else}}
+	<li class="empty">No uploads yet.</li>
+	{{end}}
+</ul>
+{{end}}
+{{end}}
