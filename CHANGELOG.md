@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-16
+
+### Added
+
+- **cli:** Answer JSON from the starter's post controller
+
 ## [0.1.0] - 2026-10-16
 
 ### Changed
@@ -99,7 +105,8 @@ Project foundation. No framework code yet; see [PLAN.md](PLAN.md) for the roadma
 - README, MIT license, CONTRIBUTING, SECURITY and CODE_OF_CONDUCT.
 - Agent configuration: `AGENTS.md`, `CLAUDE.md`, path-scoped `.claude/rules/`, Go skills and project settings.
 
-[Unreleased]: https://github.com/AlexGalhardo/golang-framework/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/AlexGalhardo/golang-framework/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/AlexGalhardo/golang-framework/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/AlexGalhardo/golang-framework/compare/v0.0.12...v0.1.0
 [0.0.12]: https://github.com/AlexGalhardo/golang-framework/compare/v0.0.11...v0.0.12
 [0.0.11]: https://github.com/AlexGalhardo/golang-framework/compare/v0.0.10...v0.0.11
