@@ -131,7 +131,7 @@ return inertia.Render(c, "Posts/Index", inertia.Props{
 | --- | --- |
 | Initial page | `<script data-page="app" type="application/json">` with `/` escaped |
 | Requests | `X-Inertia`, version check (409 + `X-Inertia-Location` on GET mismatch), partial reloads (`Partial-Component/Data/Except`), `X-Inertia-Reset`, error bags, once-props exclusion, `Purpose: prefetch`, Precognition |
-| Props | `Optional`, `Always`, `Defer(group, rescue)`, `Merge`, `DeepMerge`, `Prepend`, `MatchOn`, `Once(key, expiresAt)`, `Scroll(page)` — resolved recursively with dotted paths |
+| Props | `Optional(v)`, `Always(v)`, `Defer(v).Group(g).Rescue()`, `Merge(v)` with `.Append(paths...)`/`.Prepend(paths...)`/`.MatchOn(fields...)`, `DeepMerge(v)`, `Once(v).As(key).Fresh().Until(t)`, `Scroll(v, meta)` / `ScrollPage(orm.Page)` / `ScrollCursor(orm.CursorPage, name)`; modifiers chain (`Defer(v).Merge()`, `Merge(v).Once()`). Values may be `func(ctx) (any, error)`; nested `map[string]any`/`Props` resolve recursively, top-level `"a.b"` keys unpack, and partial reloads filter by dotted path (`only`, `except`, `reset`, except-once) |
 | Page object | `component`, `props` (+`errors`), `url`, `version`, `encryptHistory`, `clearHistory`, `preserveFragment`, `mergeProps`, `prependProps`, `deepMergeProps`, `matchPropsOn`, `scrollProps`, `deferredProps`, `rescuedProps`, `sharedProps`, `onceProps`, `flash` |
 | Redirects | 302 → 303 for PUT/PATCH/DELETE; `inertia.Location(url)` (409 external); fragment redirects via `X-Inertia-Redirect`; `Back` |
 | Shared data | `inertia.Share(key, fn)` globally or per request (middleware); auth user + flash by default |

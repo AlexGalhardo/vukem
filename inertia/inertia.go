@@ -74,14 +74,22 @@ type Inertia struct {
 
 // Page is the Inertia page object.
 type Page struct {
-	Component        string         `json:"component"`
-	Props            map[string]any `json:"props"`
-	URL              string         `json:"url"`
-	Version          string         `json:"version"`
-	EncryptHistory   bool           `json:"encryptHistory,omitempty"`
-	ClearHistory     bool           `json:"clearHistory,omitempty"`
-	PreserveFragment bool           `json:"preserveFragment,omitempty"`
-	SharedProps      []string       `json:"sharedProps,omitempty"`
+	Component        string                 `json:"component"`
+	Props            map[string]any         `json:"props"`
+	URL              string                 `json:"url"`
+	Version          string                 `json:"version"`
+	EncryptHistory   bool                   `json:"encryptHistory,omitempty"`
+	ClearHistory     bool                   `json:"clearHistory,omitempty"`
+	PreserveFragment bool                   `json:"preserveFragment,omitempty"`
+	MergeProps       []string               `json:"mergeProps,omitempty"`
+	PrependProps     []string               `json:"prependProps,omitempty"`
+	DeepMergeProps   []string               `json:"deepMergeProps,omitempty"`
+	MatchPropsOn     []string               `json:"matchPropsOn,omitempty"`
+	ScrollProps      map[string]scrollEntry `json:"scrollProps,omitempty"`
+	DeferredProps    map[string][]string    `json:"deferredProps,omitempty"`
+	RescuedProps     []string               `json:"rescuedProps,omitempty"`
+	SharedProps      []string               `json:"sharedProps,omitempty"`
+	OnceProps        map[string]onceMeta    `json:"onceProps,omitempty"`
 }
 
 // RootData is the data the root view receives on full page visits.
@@ -239,25 +247,46 @@ func (st *state) page(c *web.Ctx, component string, props Props) (*Page, error) 
 	all := maps.Clone(shared)
 	maps.Copy(all, props)
 
-	resolved := make(map[string]any, len(all)+1)
+	req := c.Request()
+	rs := &resolver{
+		ctx:     c.Context(),
+		log:     c.Log(),
+		inertia: IsInertia(req),
+		partial: IsInertia(req) && req.Header.Get(HeaderPartialComponent) == component,
+		only:    splitHeader(req.Header.Get(HeaderPartialData)),
+		except:  splitHeader(req.Header.Get(HeaderPartialExcept)),
+		reset:   splitHeader(req.Header.Get(HeaderReset)),
+		loaded:  splitHeader(req.Header.Get(HeaderExceptOnceProps)),
+		prepend: req.Header.Get(HeaderScrollMergeIntent) == "prepend",
+	}
 
-	for k, v := range all {
-		val, err := resolve(c.Context(), v)
-		if err != nil {
-			return nil, fmt.Errorf("inertia: prop %q: %w", k, err)
-		}
-
-		resolved[k] = val
+	resolved, err := rs.resolveAll(all)
+	if err != nil {
+		return nil, err
 	}
 
 	resolved["errors"] = validationErrors(c)
 
+	sharedKeys := map[string]bool{}
+	for k := range shared {
+		top, _, _ := strings.Cut(k, ".")
+		sharedKeys[top] = true
+	}
+
 	p := &Page{
-		Component:   component,
-		Props:       resolved,
-		URL:         c.Request().URL.RequestURI(),
-		Version:     st.in.Version(),
-		SharedProps: slices.Sorted(maps.Keys(shared)),
+		Component:      component,
+		Props:          resolved,
+		URL:            req.URL.RequestURI(),
+		Version:        st.in.Version(),
+		SharedProps:    slices.Sorted(maps.Keys(sharedKeys)),
+		MergeProps:     rs.merge,
+		PrependProps:   rs.prepended,
+		DeepMergeProps: rs.deep,
+		MatchPropsOn:   rs.matchOn,
+		ScrollProps:    rs.scroll,
+		DeferredProps:  rs.deferred,
+		RescuedProps:   rs.rescued,
+		OnceProps:      rs.onceProps,
 	}
 
 	if s := c.Session(); s != nil {
@@ -265,14 +294,6 @@ func (st *state) page(c *web.Ctx, component string, props Props) (*Page, error) 
 	}
 
 	return p, nil
-}
-
-func resolve(ctx context.Context, v any) (any, error) {
-	if fn, ok := v.(func(context.Context) (any, error)); ok {
-		return fn(ctx)
-	}
-
-	return v, nil
 }
 
 // validationErrors returns the first flashed message per field, namespaced
