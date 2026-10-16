@@ -4,9 +4,9 @@ Mail, cache, storage, events, queue, scheduler, encryption, rate limiting, i18n,
 
 | Subsystem | Phase | Core drivers | Driver modules | Fake |
 | --- | --- | --- | --- | --- |
-| Logging (`log/slog`) | Prototype | text (dev), JSON (prod), multi | — | capture handler |
+| Logging (`log/slog`) | Prototype / ALPHA | text (dev), JSON (prod), multi; **Telegram** handler (ALPHA) | — | capture handler |
 | Health | Prototype | `/up` + per-service checks | — | — |
-| Mail | ALPHA | SMTP (`net/smtp`), log, array | — | ✅ |
+| Mail | ALPHA | SMTP (`net/smtp`), **Resend** (HTTP API), log, array | — | ✅ |
 | Cache | ALPHA | memory (LRU + TTL), database | redis | ✅ |
 | Storage | ALPHA | local (`os.Root`), memory | s3 (post-1.0) | ✅ |
 | Events | ALPHA | in-process sync/async | — | ✅ |
@@ -25,6 +25,31 @@ Mail, cache, storage, events, queue, scheduler, encryption, rate limiting, i18n,
 - OpenTelemetry: a `telemetry` provider (BETA) wraps the router with `otelhttp`-style spans **in a separate module** to keep OTel out of core.
 - `/up` returns 200 when the app booted; `/up?checks=1` runs registered health checks (DB ping, Redis ping) with timeouts.
 
+## Telegram logging (ALPHA)
+
+A `slog.Handler` (package `logging/telegram`) that sends selected records to Telegram chats, ported from the maintainer's TypeScript [telegram-logger](https://github.com/AlexGalhardo/telegram-logger). Stdlib only (`net/http`).
+
+```go
+tg := telegram.NewHandler(telegram.Config{
+	BotToken: cfg.Telegram.BotToken, // TELEGRAM_BOT_TOKEN (config.Secret)
+	ChatID:   cfg.Telegram.ChatID,   // TELEGRAM_CHAT_ID (default chat)
+	ChatIDs:  map[slog.Level]string{slog.LevelError: "-100123"}, // optional per-level routing
+	MinLevel: slog.LevelError,
+	AppName:  app.Config.Name,
+	Env:      string(app.Config.Env),
+})
+app.Log = slog.New(slog.NewMultiHandler(app.Log.Handler(), tg)) // Go 1.26 fan-out
+```
+
+| Feature | Detail |
+| --- | --- |
+| Levels | debug, info, warn, error (+ `success` and `fatal` helpers via custom levels); `MinLevel` filter |
+| Routing | per-level chat ids, forum topic (`MessageThreadID`), `DisableNotification` |
+| Format | Telegram HTML: emoji per level, app name, environment, timestamp, attributes, error chain and stack; all user content HTML-escaped; truncated to 4096 chars |
+| Reliability | asynchronous bounded queue (never blocks or fails the request), per-request timeout, one retry honouring `retry_after` on HTTP 429 (capped), `OnError` callback, drained on shutdown |
+| Extras | `telegram.Contact(ctx, form)` for contact-form notifications (never filtered by level); `Send(ctx, html)` for pre-formatted messages |
+| Security | token held as `config.Secret`, never logged; disabled automatically when token/chat are missing (boot warning, not error) |
+
 ## Mail
 
 ```go
@@ -38,6 +63,8 @@ err := app.Queue.Dispatch(ctx, mail.Queued(Welcome{User: u})) // BETA
 ```
 
 Attachments, inline images, `mail:preview` route in development.
+
+Drivers: `smtp` (`net/smtp` + STARTTLS), **`resend`** (Resend HTTP API `POST https://api.resend.com/emails`, `RESEND_API_KEY` as `config.Secret`, idempotency key per message, tags, reply-to, attachments; errors mapped to typed errors with retry on 429/5xx), `log` (development) and `array` (tests). Select with `MAIL_MAILER=resend`.
 
 ## Cache
 

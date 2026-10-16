@@ -17,7 +17,7 @@ Task IDs: `<phase>.<group>.<task>` (e.g. `P.3.2`). Reference them in commit bodi
 | Field | Value |
 | --- | --- |
 | Current phase | **Prototype** |
-| Next task | `P.3.8` / `P.4.2` (P.2.5 after middleware; P.0.9 waits for GitHub billing, CI runs locally via `task ci:full`) |
+| Next task | `P.4.9` / `P.4.10`, then `P.5.1` (P.0.9 waits for GitHub billing; CI runs locally via `task ci:full`) |
 | Last release | `v0.0.1` (foundation, 2026-10-16) |
 | Updated | 2026-10-16 |
 
@@ -40,6 +40,7 @@ Task IDs: `<phase>.<group>.<task>` (e.g. `P.3.2`). Reference them in commit bodi
 | Subsystems (mail, cache, queue…) | [docs/subsystems.md](docs/subsystems.md) |
 | Testing | [docs/testing.md](docs/testing.md) |
 | Tooling & releases | [docs/tooling.md](docs/tooling.md) |
+| Documentation website (`site/`, lumek.vercel.app) | [docs/site.md](docs/site.md) |
 
 ## Definition of Done
 
@@ -118,7 +119,7 @@ Applies to **every** task:
   → verify: `synctest` test: SIGINT triggers shutdown in reverse order within timeout.
 - [x] **P.2.4** HTTP server runner with mandatory timeouts and `BaseContext`.
   → verify: test asserts non-zero timeouts; in-flight request completes during shutdown.
-- [ ] **P.2.5** `run(ctx, args, getenv, stdout)` pattern helper for `cmd/app`.
+- [x] **P.2.5** `run(ctx, args, getenv, stdout)` pattern helper for `cmd/app`.
   → verify: end-to-end test boots app on random port and polls `/up`.
 
 ### P.3 Router & ctx — needs: P.2
@@ -137,7 +138,7 @@ Applies to **every** task:
   → verify: tests per content type; oversized body → 413.
 - [x] **P.3.7** Adapters `Adapt`/`Wrap` between `HandlerFunc` and `http.Handler`.
   → verify: chi-style third-party middleware works in a test.
-- [ ] **P.3.8** Three middleware stacks (server, router, named) + `MethodOverride`.
+- [x] **P.3.8** Three middleware stacks (server, router, named) + `MethodOverride`.
   → verify: unmatched route runs only server stack; `_method=DELETE` routed correctly.
 - [x] **P.3.9** `route:list` data provider (`[]RouteInfo`).
   → verify: golden test of the table output.
@@ -148,19 +149,19 @@ Applies to **every** task:
 
 - [x] **P.4.1** `errs` types (`HTTPError`, sentinels, `ValidationError`) + `errors.Is/AsType` support.
   → verify: unit tests.
-- [ ] **P.4.2** Central handler with content negotiation (HTML / problem+json RFC 9457 / HTMX).
+- [x] **P.4.2** Central handler with content negotiation (HTML / problem+json RFC 9457 / HTMX).
   → verify: golden tests per format.
-- [ ] **P.4.3** Status pages (`errors/<status>.html` fallback to built-ins) and dev debug page (stack, request, redacted config).
+- [x] **P.4.3** Status pages (`errors/<status>.html` fallback to built-ins) and dev debug page (stack, request, redacted config).
   → verify: debug page never rendered when `APP_ENV=production` (test).
-- [ ] **P.4.4** Middleware: `Recover`, `RequestID`, `Logger` (slog), `Timeout`, `CORS` (deny by default), `Static` (`os.Root`, immutable cache for hashed files).
+- [x] **P.4.4** Middleware: `Recover`, `RequestID`, `Logger` (slog), `Timeout`, `CORS` (deny by default), `Static` (`os.Root`, immutable cache for hashed files).
   → verify: tests each; path traversal attempt on `Static` → 404.
-- [ ] **P.4.5** `/up` health route.
+- [x] **P.4.5** `/up` health route.
   → verify: test returns 200 after boot.
-- [ ] **P.4.6** JSON response helpers (`JSON`, `Created` + `Location`, `Accepted`, `NoContent`, `Problem`), 405 with `Allow`, automatic `HEAD`, `api.JSONOnly()` (415, body limit).
+- [x] **P.4.6** JSON response helpers (`JSON`, `Created` + `Location`, `Accepted`, `NoContent`, `Problem`), 405 with `Allow`, automatic `HEAD`, `api.JSONOnly()` (415, body limit).
   → verify: the status table in [docs/api.md](docs/api.md#errors) is covered by tests.
-- [ ] **P.4.7** `ETag`/`If-None-Match` (304) and `If-Match` (412) helpers, gzip middleware.
+- [x] **P.4.7** `ETag`/`If-None-Match` (304) and `If-Match` (412) helpers, gzip middleware.
   → verify: conditional request tests.
-- [ ] **P.4.8** Security headers middleware (nosniff, frame options, referrer, COOP, permissions policy, HSTS on HTTPS) + CSP builder with per-request nonce (`cspNonce` template func).
+- [x] **P.4.8** Security headers middleware (nosniff, frame options, referrer, COOP, permissions policy, HSTS on HTTPS) + CSP builder with per-request nonce (`cspNonce` template func).
   → verify: `TestSecurity_A02_*` header tests; nonce differs per request.
 - [ ] **P.4.9** Boot-time misconfiguration guard: refuse `APP_DEBUG` in production, short/missing `APP_KEY`, CORS `*` + credentials, insecure cookies in production; `MaxHeaderBytes` set.
   → verify: one failing-boot test per rule.
@@ -278,6 +279,9 @@ Applies to **every** task:
 
 ### P.12 Release `v0.1.0` — needs: P.0–P.11
 
+- [ ] **P.12.0** Documentation site (`site/`, Next.js 16 + Tailwind v4 + Base UI, Resend-like) deployed at lumek.vercel.app with pages for every Prototype feature.
+  → verify: `task site:build` green; Ctrl+K search, theme toggle, copy + toast work; production URL serves the new pages.
+
 - [ ] **P.12.1** GoReleaser config + `release.yml`.
   → verify: `goreleaser release --snapshot --clean` builds all targets.
 - [ ] **P.12.2** README quick start validated by following it on a clean machine/container.
@@ -381,6 +385,8 @@ Applies to **every** task:
   → verify: SMTP tested against an in-process fake SMTP server.
 - [ ] **A.5.2** HTML + text views, attachments, `mail:preview` dev route, `make:mail`, `FakeMail`.
   → verify: tests.
+- [ ] **A.5.3** **Resend** driver (`MAIL_MAILER=resend`, `RESEND_API_KEY`): send, attachments, reply-to, tags, idempotency key, typed errors, retry on 429/5xx.
+  → verify: tests against an in-process fake Resend API (`httptest.Server`); API key never appears in logs (`TestSecurity_A09_ResendKeyRedacted`).
 
 ### A.6 Cache, storage, events, rate limiting
 
@@ -392,6 +398,15 @@ Applies to **every** task:
   → verify: tests.
 - [ ] **A.6.4** Rate limiter (memory) + middleware + headers; default login throttle.
   → verify: `synctest` tests.
+
+### A.6c Telegram logging
+
+- [ ] **A.6c.1** `logging/telegram` `slog.Handler`: HTML formatting (emoji per level, app, env, time, attrs, error chain/stack), escaping, 4096-char truncation, `MinLevel`, per-level chat routing, thread id, silent mode.
+  → verify: golden message tests; `<script>` in attributes is escaped.
+- [ ] **A.6c.2** Delivery: async bounded queue, timeout, single retry on 429 with capped `retry_after`, `OnError`, drain on shutdown, auto-disable without config.
+  → verify: tests with fake Telegram API incl. 429 and timeout; `synctest` for retry timing; app never blocks when Telegram is down.
+- [ ] **A.6c.3** `Contact(ctx, form)` and `Send(ctx, html)` helpers + config (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `TELEGRAM_MIN_LEVEL`) + docs page.
+  → verify: tests; token redacted in `about`.
 
 ### A.6b Security features
 
@@ -405,6 +420,9 @@ Applies to **every** task:
   → verify: a test file importing it fails lint in CI.
 
 ### A.7 Release train
+
+- [ ] **A.7.0** Documentation site updated with every ALPHA feature (API starter, auth, social login, relations, Postgres, mail, cache, storage, events) and redeployed.
+  → verify: `task site:build` green; pages live on lumek.vercel.app.
 
 - [ ] **A.7.1** Each ALPHA group shipped as a minor (`v0.2.0`, `v0.3.0`…) with changelog.
   → verify: tags exist; `CHANGELOG.md` sections per release.
@@ -501,6 +519,9 @@ Applies to **every** task:
 - [ ] **B.5.4** Docs completeness: every package has overview + examples; guides for each starter.
   → verify: checklist.
 
+- [ ] **B.5.6** Documentation site updated with every BETA feature (OpenAPI, queue, scheduler, Inertia, Vite, Redis, Mongo, i18n, SSE, encryption) and redeployed.
+  → verify: `task site:build` green; pages live on lumek.vercel.app.
+
 ### BETA exit criteria
 
 - [ ] Two RCs with no API changes between them.
@@ -525,8 +546,8 @@ Applies to **every** task:
 
 ### S.2 Documentation site
 
-- [ ] **S.2.1** Docs site generated from `docs/` (static, hosted on GitHub Pages), versioned per minor.
-  → verify: deployed; link checker green.
+- [ ] **S.2.1** Docs site versioned per minor (`site/`, see [docs/site.md](docs/site.md)).
+  → verify: version switcher works; `task site:build` green.
 - [ ] **S.2.2** Tutorials: blog with HTMX, SaaS with Inertia, JSON API with tokens.
   → verify: each tutorial's code lives in `examples/` and is tested in CI.
 

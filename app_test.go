@@ -215,7 +215,7 @@ func TestRunStopsOnCancelInReverseOrder(t *testing.T) {
 		rec := &recorder{}
 		p := &testProvider{name: "p", rec: rec}
 
-		app, err := New(WithSource(testSource(nil)), WithProviders(p), WithLogger(discardLogger()),
+		app, err := New(WithSource(testSource(nil)), WithProviders(p), WithLogger(discardLogger()), WithoutHTTP(),
 			WithRunner("worker", RunnerFunc(func(ctx context.Context) error {
 				rec.add("run")
 				<-ctx.Done()
@@ -249,7 +249,7 @@ func TestRunReturnsRunnerError(t *testing.T) {
 
 	synctest.Test(t, func(t *testing.T) {
 		stopped := false
-		app, err := New(WithSource(testSource(nil)), WithLogger(discardLogger()))
+		app, err := New(WithSource(testSource(nil)), WithLogger(discardLogger()), WithoutHTTP())
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/AlexGalhardo/golang-framework/config"
+	"github.com/AlexGalhardo/golang-framework/router"
 )
 
 // Kind is the runtime in which the application is running. Providers can be
@@ -58,10 +59,17 @@ type App struct {
 	Log *slog.Logger
 	// Kind is the runtime kind (web, console, test).
 	Kind Kind
+	// Router holds the HTTP routes; /up is registered by default.
+	Router *router.Router
 
 	providers []Provider
 	runners   []namedRunner
 	hooks     []func(context.Context) error
+	commands  map[string]Command
+	health    health
+	stdout    io.Writer
+	ready     chan<- string
+	noHTTP    bool
 
 	mu       sync.Mutex
 	booted   bool
@@ -81,6 +89,31 @@ type options struct {
 	kind      Kind
 	providers []Provider
 	runners   []namedRunner
+	routes    []func(r *router.Router, app *App)
+	stdout    io.Writer
+	ready     chan<- string
+	noHTTP    bool
+}
+
+// WithRoutes registers routes (and router middleware) after providers
+// registered, so handlers can use the services they added.
+func WithRoutes(fn func(r *router.Router, app *App)) Option {
+	return func(o *options) error { o.routes = append(o.routes, fn); return nil }
+}
+
+// WithStdout sets where commands print (os.Stdout by default).
+func WithStdout(w io.Writer) Option {
+	return func(o *options) error { o.stdout = w; return nil }
+}
+
+// WithReady receives the HTTP listen address once the server is listening.
+func WithReady(ch chan<- string) Option {
+	return func(o *options) error { o.ready = ch; return nil }
+}
+
+// WithoutHTTP disables the HTTP server runner (workers-only processes).
+func WithoutHTTP() Option {
+	return func(o *options) error { o.noHTTP = true; return nil }
 }
 
 // WithSource uses an already resolved configuration source.
@@ -171,6 +204,11 @@ func New(opts ...Option) (*App, error) {
 		logger = newLogger(&cfg, out)
 	}
 
+	stdout := o.stdout
+	if stdout == nil {
+		stdout = os.Stdout
+	}
+
 	app := &App{
 		Config:    cfg,
 		Source:    src,
@@ -179,7 +217,11 @@ func New(opts ...Option) (*App, error) {
 		Kind:      o.kind,
 		providers: o.providers,
 		runners:   o.runners,
+		stdout:    stdout,
+		ready:     o.ready,
+		noHTTP:    o.noHTTP,
 	}
+	app.Router = app.newRouter()
 
 	for _, p := range app.providers {
 		if !runsIn(p, app.Kind) {
@@ -189,6 +231,10 @@ func New(opts ...Option) (*App, error) {
 		if err := p.Register(app); err != nil {
 			return nil, fmt.Errorf("lumek: register %T: %w", p, err)
 		}
+	}
+
+	for _, fn := range o.routes {
+		fn(app.Router, app)
 	}
 
 	return app, nil
@@ -292,6 +338,15 @@ func (a *App) Boot(ctx context.Context) error {
 func (a *App) Run(ctx context.Context) error {
 	if err := a.Boot(ctx); err != nil {
 		return err
+	}
+
+	if a.Kind == KindWeb && !a.noHTTP {
+		r, err := a.httpRunner()
+		if err != nil {
+			return err
+		}
+
+		a.AddRunner("http", r)
 	}
 
 	a.mu.Lock()

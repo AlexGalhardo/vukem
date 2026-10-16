@@ -90,6 +90,20 @@ tasks:
       - for: { var: MODULES }
         cmd: cd {{.ITEM}} && go mod tidy
 
+  site:dev:
+    desc: Run the documentation site locally
+    dir: site
+    cmds:
+      - npm run dev
+
+  site:build:
+    desc: Build and lint the documentation site
+    dir: site
+    cmds:
+      - npm ci
+      - npm run lint
+      - npm run build
+
   changelog:
     desc: Regenerate CHANGELOG.md from Conventional Commits
     cmds:
@@ -131,4 +145,5 @@ tasks:
       - task: services:up
       - task: test:integration
       - task: vuln
+      - task: site:build
       - task: cover

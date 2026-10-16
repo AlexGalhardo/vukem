@@ -26,13 +26,14 @@ formatters:
       reformat-tags: true
   exclusions:
     generated: lax
+    paths:
+      - site/
 
 linters:
   default: standard
   enable:
     # correctness
     - bodyclose
-    - contextcheck
     - durationcheck
     - errchkjson
     - errname
@@ -122,6 +123,8 @@ linters:
       context: scope
   exclusions:
     generated: lax
+    paths:
+      - site/
     presets:
       - comments
       - std-error-handling

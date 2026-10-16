@@ -25,3 +25,8 @@ go.work.sum
 
 # Claude Code local settings
 .claude/settings.local.json
+
+# Documentation site
+site/.next/
+site/.vercel/
+site/out/

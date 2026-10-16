@@ -206,7 +206,11 @@ func (r *Router) build() {
 		h = mw(h)
 	}
 
-	r.handler = h
+	// Outermost: expose services to middleware (web.Fail, web.ServicesFrom).
+	inner := h
+	r.handler = http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		inner.ServeHTTP(w, req.WithContext(web.WithServices(req.Context(), r.services)))
+	})
 }
 
 func register(mux *http.ServeMux, pattern string, h http.Handler) (err error) {
