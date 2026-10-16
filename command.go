@@ -156,6 +156,7 @@ func builtinCommands() []Command {
 		migrateCommands(),
 		seedCommands(),
 		queueCommands(),
+		scheduleCommands(),
 	)
 }
 

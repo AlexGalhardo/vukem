@@ -152,6 +152,9 @@ linters:
           - forcetypeassert
           - gosec
           - noctx
+      # Starter stubs are filled in by app developers.
+      - path: internal/cli/starter/
+        text: unused-parameter
 
 issues:
   max-issues-per-linter: 0

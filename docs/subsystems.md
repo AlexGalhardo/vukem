@@ -191,12 +191,20 @@ err = q.DispatchTx(ctx, tx, SendInvoice{OrderID: 1}) // database driver: enqueue
 ## Scheduler
 
 ```go
-s.Command("reports:send").DailyAt("08:00").WithoutOverlapping()
-s.Job(jobs.PruneSessions{}).Hourly()
-s.Func("ping", func(ctx context.Context) error { ... }).Every(5 * time.Minute)
+// routes/schedule.go (bootstrap passes it to vukem.WithSchedule)
+func Schedule(s *schedule.Schedule, app *vukem.App) {
+	s.Command("reports:send", "--daily").DailyAt("08:00").WithoutOverlapping()
+	s.Job(jobs.PruneSessions{}).Hourly()
+	s.Func("ping", func(ctx context.Context) error { ... }).EveryFiveMinutes()
+	s.Func("invoices", sendInvoices).Cron("30 9 1 * *").In(saoPaulo)
+}
 ```
 
-Runs in-process as a runner (`schedule:work`) or via a single cron entry calling `schedule:run`. Overlap prevention uses cache locks.
+- Expressions: five-field cron (`*`, values, ranges, steps, lists, `JAN`/`MON` names, `@daily`-style macros; Vixie OR semantics when both day fields are set) or helpers: `EveryMinute`, `EveryFiveMinutes`, `Every(15*time.Minute)` (whole minutes dividing an hour or a day), `Hourly`, `HourlyAt`, `Daily`, `DailyAt("HH:MM")`, `Weekdays`, `WeeklyOn`, `MonthlyOn`. Bad expressions panic at boot. The parser is fuzzed.
+- Time zone: `SCHEDULE_TIMEZONE` (IANA name, default UTC; the zone database is embedded, so it works on Windows hosts without one) or `.In(loc)` per task.
+- `WithoutOverlapping()` takes a lock in `App.Cache` (use `CACHE_STORE=database` or Redis when several servers run the schedule); a run is skipped while the previous one holds it.
+- Run it in process with `vukem schedule:work` (ticks at the start of every minute, drains running tasks on shutdown) or with one cron entry: `* * * * * cd /app && ./app schedule:run`. `vukem schedule:list` shows each task's next run.
+- Tasks run concurrently; failures and panics are logged and do not stop other tasks. Command tasks run in the same process through `App.Call`.
 
 ## Encryption
 

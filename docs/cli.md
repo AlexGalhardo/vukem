@@ -46,6 +46,8 @@ Exit codes: `0` success, `1` failure, `2` usage error.
 | `vukem build` | `vite build` (if present) then `go build -trimpath -ldflags "-s -w"` with embedded assets |
 | app: `migrate`, `migrate:rollback`, `migrate:reset`, `migrate:fresh`, `migrate:status` | Migrations |
 | app: `route:list [--json]` | Route table |
+| app: `queue:work`, `queue:failed`, `queue:retry`, `queue:forget` | Queue workers and failed jobs ([subsystems.md](subsystems.md#queue)) |
+| app: `schedule:run`, `schedule:work`, `schedule:list` | Scheduler ([subsystems.md](subsystems.md#scheduler)) |
 | app: `openapi:export` | Print the OpenAPI 3.1 document of the routes ([api.md](api.md#openapi)) |
 | app: `openapi:serve [-addr]` | Preview the Scalar API reference locally (register `apidocs.Command()`) |
 | app: `codegen:types [-zod] [-o file]` | TypeScript types for every schema and operation (`<Op>Body`, `<Op>Query`, `<Op>Response`), plus Zod schemas with `-zod` |
@@ -57,7 +59,7 @@ Shipped: `new --api`, `install:api`, `make:resource`, `make:factory`, `make:seed
 
 ### BETA
 
-`install:inertia`, `codegen:routes`, `ssr:start`, app: `queue:work`, `queue:retry`, `queue:failed`, `schedule:run`, `schedule:work`, `schedule:list`, `down`/`up` (maintenance mode).
+`install:inertia`, `codegen:routes`, `ssr:start`, app: `down`/`up` (maintenance mode).
 
 ## Generators and stubs
 

@@ -21,6 +21,7 @@ import (
 	"github.com/AlexGalhardo/vukem/mail"
 	"github.com/AlexGalhardo/vukem/queue"
 	"github.com/AlexGalhardo/vukem/router"
+	"github.com/AlexGalhardo/vukem/schedule"
 	"github.com/AlexGalhardo/vukem/schema"
 	"github.com/AlexGalhardo/vukem/session"
 	"github.com/AlexGalhardo/vukem/view"
@@ -104,11 +105,16 @@ type App struct {
 	// Events is the application event bus (WithListeners registers listeners).
 	Events *events.Bus
 
-	jobs        []queue.Registration
-	queueDriver queue.Driver
-	queueOnce   sync.Once
-	queue       *queue.Queue
-	queueErr    error
+	jobs         []queue.Registration
+	queueDriver  queue.Driver
+	schedules    []func(*schedule.Schedule, *App)
+	scheduleOnce sync.Once
+	schedule     *schedule.Schedule
+	scheduleErr  error
+
+	queueOnce sync.Once
+	queue     *queue.Queue
+	queueErr  error
 
 	now func() time.Time
 
@@ -146,6 +152,7 @@ type options struct {
 	listeners     []events.Registration
 	jobs          []queue.Registration
 	queueDriver   queue.Driver
+	schedules     []func(*schedule.Schedule, *App)
 	drivers       []database.Driver
 	stdout        io.Writer
 	ready         chan<- string
@@ -311,6 +318,7 @@ func New(opts ...Option) (*App, error) {
 		seeders:     o.seeders,
 		jobs:        o.jobs,
 		queueDriver: o.queueDriver,
+		schedules:   o.schedules,
 		mail:        mailState{transport: o.mailTransport},
 	}
 	app.Router = app.newRouter()
