@@ -83,7 +83,48 @@ routes/auth.go                                                    # login, regis
 tests/auth_test.go
 ```
 
-Flows included: register, login (rate-limited 5/min per email+IP), logout, forgot/reset password (signed, expiring, single-use token), email verification (signed URL), password confirmation for sensitive routes. 2FA (TOTP) and social login are post-1.0.
+Flows included: register, login (rate-limited 5/min per email+IP), logout, forgot/reset password (signed, expiring, single-use token), email verification (signed URL), password confirmation for sensitive routes, and social login with `--social` ([see below](#social-login-social-alpha)). 2FA (TOTP) is post-1.0.
+
+## Social login (`social`, ALPHA)
+
+Ally-style OAuth2/OIDC sign-in with GitHub, Google and others, built on the standard library (no `x/oauth2`).
+
+```go
+// config/social.go — credentials from env (SOCIAL_GITHUB_CLIENT_ID, ..._SECRET, ..._REDIRECT_URL)
+app.Social = social.New(app.Key,
+	social.GitHub(cfg.GitHub, social.Scopes("read:user", "user:email")),
+	social.Google(cfg.Google), // OpenID Connect: ID token verified (iss, aud, exp, nonce, signature via JWKS)
+)
+
+// routes
+r.Get("/auth/{provider}/redirect", func(c *web.Ctx) error {
+	return app.Social.Use(c.Param("provider")).Redirect(c) // 404 for unknown providers
+})
+
+r.Get("/auth/{provider}/callback", func(c *web.Ctx) error {
+	u, err := app.Social.Use(c.Param("provider")).User(c)
+	if err != nil {
+		return err // access denied, state mismatch, expired code → 400/403 problem or redirect with flash
+	}
+	user, err := actions.FindOrCreateFromSocial(c.Context(), db, u) // user-owned code from install:auth --social
+	if err != nil {
+		return err
+	}
+	return auth.Login(c, user)
+})
+```
+
+| Feature | Detail |
+| --- | --- |
+| Flow | Authorization Code + **PKCE (S256)** for every provider |
+| CSRF / replay | random `state` (and OIDC `nonce`) stored in a short-lived, signed, `HttpOnly` cookie bound to the provider; verified with constant-time compare and single use |
+| User | `social.User{Provider, ID, Email, EmailVerified, Name, Nickname, AvatarURL, Token{Access, Refresh, Expiry, Scopes}, Raw}` |
+| Stateless mode | `Stateless()` for API/SPA flows that keep state client-side; `UserFromToken(ctx, accessToken)` |
+| Built-in providers | GitHub, Google (OIDC), GitLab, Discord, Microsoft (Entra ID, OIDC), plus `social.OAuth2(...)` and `social.OIDC(issuerURL, ...)` for any compliant provider |
+| Security | redirect URL fixed in config (never from the request), only verified emails are reported as `EmailVerified`, outbound calls through a client with timeouts, tokens never logged |
+| Testing | `lumektest.FakeSocial(t, app, social.User{...})` short-circuits redirect/callback |
+
+`lumek install:auth --social github,google` adds the routes, the `social_accounts` migration (provider, provider_id, user_id) and the account-linking action.
 
 ## Authorization
 

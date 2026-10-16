@@ -31,6 +31,7 @@ golang-framework/                 module github.com/AlexGalhardo/golang-framewor
 ├── database/                     connection management, SQLite defaults, transactions
 ├── auth/                         guards, user provider, hashers, tokens        (ALPHA)
 ├── authz/                        gates, Policy[T]                               (ALPHA)
+├── social/                       OAuth2/OIDC social login (Ally-style)           (ALPHA)
 ├── mail/ cache/ storage/ event/                                                 (ALPHA)
 ├── queue/ schedule/ inertia/ vite/ i18n/ sse/ crypt/ ratelimit/                (BETA)
 ├── testing/                      fluent HTTP test client, DB helpers, fakes

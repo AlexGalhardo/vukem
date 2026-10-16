@@ -110,6 +110,8 @@ What Lumek does **by default** to protect applications, mapped to the [OWASP Top
 | Login throttling per email + IP; remember-me tokens rotated on use | A |
 | API tokens with expiry, abilities and revocation; `last_used_at` tracking | A |
 
+| Social login: PKCE, signed single-use `state`/`nonce` cookie, OIDC ID-token verification, redirect URL from config only | A |
+
 **Post-1.0:** TOTP 2FA, passkeys/WebAuthn.
 
 ### A08:2025 — Software or Data Integrity Failures

@@ -357,6 +357,12 @@ Applies to **every** task:
   → verify: e2e: generated tests pass in a new app.
 - [ ] **A.3.7** `ActingAs` in test client.
   → verify: tests.
+- [ ] **A.3.8** `social` core: provider interface, Authorization Code + PKCE, signed single-use state cookie, token exchange, `social.User`, stateless mode.
+  → verify: end-to-end test against an in-process fake OAuth2 server; `TestSecurity_A07_SocialStateMismatch`, replayed state and PKCE downgrade rejected.
+- [ ] **A.3.9** Providers: GitHub, GitLab, Discord, generic OAuth2; OIDC (Google, Microsoft, generic) with discovery, JWKS cache and ID-token checks (iss, aud, exp, nonce, RS256/ES256).
+  → verify: per-provider user-mapping golden tests; forged/expired ID tokens rejected.
+- [ ] **A.3.10** `install:auth --social` scaffold (routes, `social_accounts` migration, linking action) and `FakeSocial` test helper.
+  → verify: generated app tests pass.
 
 ### A.4 Authorization — needs: A.3
 
@@ -541,4 +547,4 @@ Applies to **every** task:
 
 ## Post-1.0 backlog (not scheduled)
 
-WebSockets/broadcasting, embedded admin panel, local dev dashboard (routes, queries, jobs, traces), JWT guard, Vue/Svelte Inertia starters, S3 storage driver, social login, TOTP 2FA, MySQL dialect, templ-first starter, typed RPC client generation.
+WebSockets/broadcasting, embedded admin panel, more social providers (Apple, LinkedIn, X), local dev dashboard (routes, queries, jobs, traces), JWT guard, Vue/Svelte Inertia starters, S3 storage driver, social login, TOTP 2FA, MySQL dialect, templ-first starter, typed RPC client generation.
