@@ -18,8 +18,8 @@ Task IDs: `<phase>.<group>.<task>` (e.g. `P.3.2`). Reference them in commit bodi
 | Field | Value |
 | --- | --- |
 | Current phase | **ALPHA** |
-| Next task | `A.3.8` (A.0.6, A.3.6 and A.3.10 after A.5 mail) |
-| Last release | `v0.4.0` (A.2 relations, factories, seeders, database rules) |
+| Next task | `A.4.1` (A.0.6, A.3.6 and A.3.10 after A.5 mail) |
+| Last release | `v0.5.0` (A.3 guards, tokens, hashing, social login) |
 | Updated | 2026-10-16 |
 
 ## Design references
@@ -362,9 +362,9 @@ Applies to **every** task:
   → verify: e2e: generated tests pass in a new app.
 - [x] **A.3.7** `ActingAs` in test client.
   → verify: tests.
-- [ ] **A.3.8** `social` core: provider interface, Authorization Code + PKCE, signed single-use state cookie, token exchange, `social.User`, stateless mode.
+- [x] **A.3.8** `social` core: provider interface, Authorization Code + PKCE, signed single-use state cookie, token exchange, `social.User`, stateless mode.
   → verify: end-to-end test against an in-process fake OAuth2 server; `TestSecurity_A07_SocialStateMismatch`, replayed state and PKCE downgrade rejected.
-- [ ] **A.3.9** Providers: GitHub, GitLab, Discord, generic OAuth2; OIDC (Google, Microsoft, generic) with discovery, JWKS cache and ID-token checks (iss, aud, exp, nonce, RS256/ES256).
+- [x] **A.3.9** Providers: GitHub, GitLab, Discord, generic OAuth2; OIDC (Google, Microsoft, generic) with discovery, JWKS cache and ID-token checks (iss, aud, exp, nonce, RS256/ES256).
   → verify: per-provider user-mapping golden tests; forged/expired ID tokens rejected.
 - [ ] **A.3.10** `install:auth --social` scaffold (routes, `social_accounts` migration, linking action) and `FakeSocial` test helper.
   → verify: generated app tests pass.

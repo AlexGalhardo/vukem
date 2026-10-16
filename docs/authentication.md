@@ -107,48 +107,52 @@ routes/auth.go                                                    # login, regis
 tests/auth_test.go
 ```
 
-Flows included: register, login (rate-limited 5/min per email+IP), logout, forgot/reset password (signed, expiring, single-use token), email verification (signed URL), password confirmation for sensitive routes, and social login with `--social` ([see below](#social-login-social-alpha)). 2FA (TOTP) is post-1.0.
+Flows included: register, login (rate-limited 5/min per email+IP), logout, forgot/reset password (signed, expiring, single-use token), email verification (signed URL), password confirmation for sensitive routes, and social login with `--social` ([see below](#social-login-social)). 2FA (TOTP) is post-1.0.
 
-## Social login (`social`, ALPHA)
+## Social login (`social`)
 
-Ally-style OAuth2/OIDC sign-in with GitHub, Google and others, built on the standard library (no `x/oauth2`).
+Ally-style OAuth2/OIDC sign-in, standard library only (no `x/oauth2`).
 
 ```go
-// config/social.go — credentials from env (SOCIAL_GITHUB_CLIENT_ID, ..._SECRET, ..._REDIRECT_URL)
-app.Social = social.New(app.Key,
-	social.GitHub(cfg.GitHub, social.Scopes("read:user", "user:email")),
-	social.Google(cfg.Google), // OpenID Connect: ID token verified (iss, aud, exp, nonce, signature via JWKS)
+s := social.New(app.Key.Derive("social.state", 32),
+	social.GitHub(social.Config{ClientID: id, ClientSecret: secret, RedirectURL: "https://app.test/auth/github/callback"}),
+	social.Google(googleCfg),                  // OIDC
+	social.Microsoft("common", microsoftCfg),  // OIDC (Entra ID)
+	social.GitLab(gitlabCfg), social.Discord(discordCfg),
+	social.OIDC("okta", "https://example.okta.com", oktaCfg), // any OIDC issuer
 )
 
-// routes
 r.Get("/auth/{provider}/redirect", func(c *web.Ctx) error {
-	return app.Social.Use(c.Param("provider")).Redirect(c) // 404 for unknown providers
+	return s.Redirect(c, c.Param("provider")) // 404 for unknown providers
 })
 
 r.Get("/auth/{provider}/callback", func(c *web.Ctx) error {
-	u, err := app.Social.Use(c.Param("provider")).User(c)
+	u, err := s.User(c, c.Param("provider"))
 	if err != nil {
-		return err // access denied, state mismatch, expired code → 400/403 problem or redirect with flash
+		return err // 400 bad/expired state, 403 access denied, 502 provider failure
 	}
+
 	user, err := actions.FindOrCreateFromSocial(c.Context(), db, u) // user-owned code from install:auth --social
 	if err != nil {
 		return err
 	}
-	return auth.Login(c, user)
+
+	return webGuard.Login(c, user)
 })
 ```
 
 | Feature | Detail |
 | --- | --- |
-| Flow | Authorization Code + **PKCE (S256)** for every provider |
-| CSRF / replay | random `state` (and OIDC `nonce`) stored in a short-lived, signed, `HttpOnly` cookie bound to the provider; verified with constant-time compare and single use |
+| Flow | Authorization Code + **PKCE (S256)** for every provider; `htmx` requests get `HX-Redirect` so the browser navigates |
+| CSRF / replay | random `state`, PKCE verifier and OIDC `nonce` in a 10-minute, HMAC-signed, `HttpOnly`, `SameSite=Lax` cookie bound to the provider; state compared in constant time; the cookie is cleared and the state recorded as used, so a replayed callback fails (`TestSecurity_A07_SocialStateMismatch`, `TestSecurity_A07_SocialReplayAndPKCE`) |
+| OIDC | discovery document, JWKS cache refreshed once for unknown `kid`, only RS256/ES256 (never `none`/HS*), RSA keys ≥ 2048 bits, checks `iss` (Microsoft `{tenantid}` templates), `aud`/`azp`, `exp`/`iat` with 1 minute leeway, `nonce` (`TestSecurity_A07_IDTokenChecks`) |
 | User | `social.User{Provider, ID, Email, EmailVerified, Name, Nickname, AvatarURL, Token{Access, Refresh, Expiry, Scopes}, Raw}` |
-| Stateless mode | `Stateless()` for API/SPA flows that keep state client-side; `UserFromToken(ctx, accessToken)` |
-| Built-in providers | GitHub, Google (OIDC), GitLab, Discord, Microsoft (Entra ID, OIDC), plus `social.OAuth2(...)` and `social.OIDC(issuerURL, ...)` for any compliant provider |
-| Security | redirect URL fixed in config (never from the request), only verified emails are reported as `EmailVerified`, outbound calls through a client with timeouts, tokens never logged |
-| Testing | `vukemtest.FakeSocial(t, app, social.User{...})` short-circuits redirect/callback |
+| Email trust | `EmailVerified` only when the provider vouches: GitHub primary verified address, GitLab `confirmed_at`, Discord `verified`, OIDC `email_verified` (Microsoft: `xms_edov`). Link accounts by `(Provider, ID)`, by email only when verified |
+| Stateless | `s.UserFromToken(ctx, "google", accessToken)` for API/SPA flows (profile/userinfo endpoint) |
+| Options | `social.WithEndpoints(...)` (GitHub Enterprise, self-hosted GitLab, tests), `social.WithAuthParams(...)`, `Config.Scopes`, `OIDC(...).AuthParams(...)`, `social.OAuth2(name, cfg, endpoints, scopes, mapUser)` |
+| Security | redirect URL fixed in config, provider calls through a client with a 10 s timeout and 1 MiB response limit, tokens never logged |
 
-`vukem install:auth --social github,google` adds the routes, the `social_accounts` migration (provider, provider_id, user_id) and the account-linking action.
+Planned: `vukem install:auth --social github,google` (routes, `social_accounts` migration, linking action) and `vukemtest.FakeSocial` (A.3.10, after mail); Apple, LinkedIn and X providers in BETA (B.8.3).
 
 ## Authorization
 
