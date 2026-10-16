@@ -70,10 +70,6 @@ func newProject(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 			return err
 		}
 
-		if st.kind == "inertia" {
-			return usagef("the Inertia starters are not available yet; use the HTMX or API starter")
-		}
-
 		data := starterData{Name: name, Module: *module}
 		if data.Module == "" {
 			data.Module = name
@@ -86,8 +82,13 @@ func newProject(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 		project := *env
 		project.Dir = dir
 
-		if st.kind == "api" {
+		switch st.kind {
+		case "api":
 			if err := makeAPIStarter(&project, data); err != nil {
+				return err
+			}
+		case "inertia":
+			if err := applyInertia(&project, st.framework); err != nil {
 				return err
 			}
 		}
@@ -118,8 +119,12 @@ func newProject(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 		}
 
 		desc := "htmx " + htmxVersion + ", Tailwind, SQLite"
-		if st.kind == "api" {
+
+		switch st.kind {
+		case "api":
 			desc = "JSON API, SQLite"
+		case "inertia":
+			desc = "Inertia + " + st.framework + ", Tailwind, SQLite"
 		}
 
 		fmt.Fprintf(env.Stdout, "\nCreated %s (%s). Next:\n\n  cd %s\n  vukem migrate\n  vukem serve\n\n",

@@ -43,7 +43,9 @@ func TestSecurity_A02_StarterViewsRespectCSP(t *testing.T) {
 
 	check := func(fsys fs.FS) fs.WalkDirFunc {
 		return func(p string, d fs.DirEntry, err error) error {
-			if err != nil || d.IsDir() || strings.Contains(p, "/views/mail/") { // emails are not served pages
+			// Emails are not served pages; JSX/Vue/Svelte event props are not
+			// inline HTML handlers.
+			if err != nil || d.IsDir() || strings.Contains(p, "/views/mail/") || !strings.HasSuffix(p, ".html") {
 				return err
 			}
 

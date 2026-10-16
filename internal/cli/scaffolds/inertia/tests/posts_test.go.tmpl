@@ -1,0 +1,92 @@
+package tests
+
+import (
+	"strconv"
+	"testing"
+
+	"github.com/AlexGalhardo/vukem/vukemtest"
+
+	"{{.Module}}/app/models"
+	"{{.Module}}/bootstrap"
+	"{{.Module}}/database/factories"
+)
+
+func TestPostsCRUD(t *testing.T) {
+	t.Parallel()
+
+	app := vukemtest.New(t, bootstrap.New)
+	c := app.Client(t).Inertia("")
+
+	c.PostJSON("/posts", map[string]any{"title": "Hello Vukem", "body": "First post."}).AssertRedirect("/posts/1")
+	vukemtest.AssertDatabaseHas(t, app, "posts", map[string]any{"title": "Hello Vukem"})
+
+	c.Get("/posts/1").AssertOK().
+		AssertInertia("Posts/Show").
+		PropEquals("post.title", "Hello Vukem")
+
+	c.Get("/posts").AssertOK().AssertInertia("Posts/Index").HasProp("posts", 1)
+	c.Get("/posts?q=nothing").AssertOK().
+		AssertInertia("Posts/Index").
+		HasProp("posts", 0).
+		PropEquals("filters.q", "nothing")
+	c.Get("/posts/1/edit").AssertOK().AssertInertia("Posts/Edit").PropEquals("post.id", 1)
+
+	c.PutJSON("/posts/1", map[string]any{"title": "Edited"}).AssertRedirect("/posts/1")
+	vukemtest.AssertDatabaseHas(t, app, "posts", map[string]any{"title": "Edited"})
+
+	c.Delete("/posts/1").AssertRedirect("/posts")
+	vukemtest.AssertDatabaseCount(t, app, "posts", 0)
+
+	app.Client(t).Get("/posts/1").AssertNotFound()
+}
+
+func TestPostsValidation(t *testing.T) {
+	t.Parallel()
+
+	app := vukemtest.New(t, bootstrap.New)
+	c := app.Client(t).Inertia("").WithHeader("Referer", "/posts/create")
+
+	c.PostJSON("/posts", map[string]any{"title": "x"}).AssertRedirect("/posts/create")
+	c.Get("/posts/create").AssertInertia("Posts/Create").HasProp("errors.title")
+
+	vukemtest.AssertDatabaseCount(t, app, "posts", 0)
+}
+
+func TestPostsJSON(t *testing.T) {
+	t.Parallel()
+
+	app := vukemtest.New(t, bootstrap.New)
+	api := app.Client(t).AcceptJSON()
+
+	api.PostJSON("/posts", map[string]any{"title": "From the API", "body": "JSON"}).
+		AssertCreated().
+		AssertJSONPath("title", "From the API")
+
+	api.GetJSON("/posts").AssertOK().AssertJSONCount("data", 1)
+	api.PostJSON("/posts", map[string]any{"title": "x"}).AssertJSONValidationErrors("title")
+}
+
+func TestPostsSeederAndFactory(t *testing.T) {
+	t.Parallel()
+
+	app := vukemtest.New(t, bootstrap.New)
+	if err := app.Seed(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	vukemtest.AssertDatabaseCount(t, app, "posts", 10)
+
+	db, err := app.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	post, err := factories.Post.State(func(p *models.Post) { p.Title = "Pinned" }).CreateOne(t.Context(), db)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	app.Client(t).Inertia("").Get("/posts/" + strconv.FormatInt(post.ID, 10)).
+		AssertInertia("Posts/Show").
+		PropEquals("post.title", "Pinned")
+}

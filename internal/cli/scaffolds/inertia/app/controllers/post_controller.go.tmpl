@@ -1,0 +1,150 @@
+package controllers
+
+import (
+	"net/http"
+	"strconv"
+
+	"github.com/AlexGalhardo/vukem/database"
+	"github.com/AlexGalhardo/vukem/inertia"
+	"github.com/AlexGalhardo/vukem/orm"
+	"github.com/AlexGalhardo/vukem/web"
+
+	"{{.Module}}/app/models"
+	"{{.Module}}/app/requests"
+)
+
+// PostController is the example CRUD rendered with Inertia pages
+// (resources/js/pages/Posts). Validation errors redirect back and reach the
+// page as props.errors; the same actions answer JSON for API clients.
+type PostController struct {
+	db *database.DB
+}
+
+// NewPostController returns a PostController using db.
+func NewPostController(db *database.DB) *PostController { return &PostController{db: db} }
+
+// Index lists posts, filtered by ?q=.
+func (pc *PostController) Index(c *web.Ctx) error {
+	q := orm.QueryOf[models.Post](pc.db).OrderBy("id", orm.Desc)
+	if search := c.Query("q"); search != "" {
+		q = q.Where("title", "LIKE", "%"+search+"%")
+	}
+
+	posts, err := q.Get(c.Context())
+	if err != nil {
+		return err
+	}
+
+	if c.WantsJSON() {
+		return c.JSON(http.StatusOK, map[string]any{"data": posts})
+	}
+
+	return inertia.Render(c, "Posts/Index", inertia.Props{
+		"posts":   posts,
+		"filters": map[string]string{"q": c.Query("q")},
+	})
+}
+
+// Create shows the form for a new post.
+func (*PostController) Create(c *web.Ctx) error { return inertia.Render(c, "Posts/Create", nil) }
+
+// Store validates and saves a new post.
+func (pc *PostController) Store(c *web.Ctx) error {
+	in, err := web.Parse(c, requests.PostSchema)
+	if err != nil {
+		return err
+	}
+
+	post := models.Post{Title: in.Title, Body: in.Body}
+	if err := orm.Create(c.Context(), pc.db, &post); err != nil {
+		return err
+	}
+
+	if c.WantsJSON() {
+		return c.Created("/posts/"+strconv.FormatInt(post.ID, 10), post)
+	}
+
+	inertia.Flash(c, "success", "Post created.")
+
+	return c.RedirectRoute("posts.show", "post", post.ID)
+}
+
+// Show displays a post.
+func (pc *PostController) Show(c *web.Ctx) error {
+	post, err := pc.find(c)
+	if err != nil {
+		return err
+	}
+
+	if c.WantsJSON() {
+		return c.JSON(http.StatusOK, post)
+	}
+
+	return inertia.Render(c, "Posts/Show", inertia.Props{"post": post})
+}
+
+// Edit shows the edit form.
+func (pc *PostController) Edit(c *web.Ctx) error {
+	post, err := pc.find(c)
+	if err != nil {
+		return err
+	}
+
+	return inertia.Render(c, "Posts/Edit", inertia.Props{"post": post})
+}
+
+// Update validates and saves changes.
+func (pc *PostController) Update(c *web.Ctx) error {
+	post, err := pc.find(c)
+	if err != nil {
+		return err
+	}
+
+	in, err := web.Parse(c, requests.PostSchema)
+	if err != nil {
+		return err
+	}
+
+	post.Title, post.Body = in.Title, in.Body
+	if err := orm.Update(c.Context(), pc.db, &post); err != nil {
+		return err
+	}
+
+	if c.WantsJSON() {
+		return c.JSON(http.StatusOK, post)
+	}
+
+	inertia.Flash(c, "success", "Post updated.")
+
+	return c.RedirectRoute("posts.show", "post", post.ID)
+}
+
+// Destroy deletes a post and goes back to the list.
+func (pc *PostController) Destroy(c *web.Ctx) error {
+	post, err := pc.find(c)
+	if err != nil {
+		return err
+	}
+
+	if err := orm.Delete(c.Context(), pc.db, &post); err != nil {
+		return err
+	}
+
+	if c.WantsJSON() {
+		return c.NoContent()
+	}
+
+	inertia.Flash(c, "success", "Post deleted.")
+
+	return c.RedirectRoute("posts.index")
+}
+
+// find loads the post in the URL or fails with 404.
+func (pc *PostController) find(c *web.Ctx) (models.Post, error) {
+	id, err := c.ParamInt("post")
+	if err != nil {
+		return models.Post{}, err
+	}
+
+	return orm.QueryOf[models.Post](pc.db).Find(c.Context(), id)
+}

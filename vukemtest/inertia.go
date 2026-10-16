@@ -11,10 +11,13 @@ import (
 	"testing"
 )
 
-// Inertia marks following requests as Inertia visits (X-Inertia) with the
-// client's asset version ("" when the app has no Vite build).
+// Inertia marks following requests as Inertia visits (X-Inertia, the
+// client's Accept header) with the client's asset version ("" when the app
+// has no Vite build). JSON bodies (PostJSON) then behave like Inertia form
+// submissions, not API calls.
 func (c *Client) Inertia(version string) *Client {
 	return c.WithHeader("X-Inertia", "true").
+		WithHeader("Accept", "text/html, application/xhtml+xml").
 		WithHeader("X-Requested-With", "XMLHttpRequest").
 		WithHeader("X-Inertia-Version", version)
 }

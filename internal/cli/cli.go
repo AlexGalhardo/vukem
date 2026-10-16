@@ -56,6 +56,12 @@ func commands() []command {
 		{"version", "", "Print the vukem version", nil},
 		{"install:auth", "", "Add login, registration, password reset and email verification", installAuth},
 		{"install:api", "", "Add API tokens, /api/v1 routes, CORS and rate limiting", installAPI},
+		{
+			"install:inertia",
+			"",
+			"Turn the HTMX starter into Inertia (--react, --vue or --svelte) with --force",
+			installInertia,
+		},
 		{"boost:install", "", "Add agent guidelines, skills and the vukem-boost MCP server", boostInstall},
 		{"key:generate", "", "Write a new APP_KEY to .env", keyGenerate},
 		{"make:controller", "<Name>", "Create a controller", makeController},

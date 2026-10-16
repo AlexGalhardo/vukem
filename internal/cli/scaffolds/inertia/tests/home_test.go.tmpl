@@ -1,0 +1,20 @@
+package tests
+
+import (
+	"testing"
+
+	"github.com/AlexGalhardo/vukem/vukemtest"
+
+	"{{.Module}}/bootstrap"
+)
+
+func TestHome(t *testing.T) {
+	t.Parallel()
+
+	app := vukemtest.New(t, bootstrap.New)
+
+	// First visit: HTML with the page object; Inertia visits: JSON.
+	app.Client(t).Get("/").AssertOK().AssertInertia("Home").HasProp("appName")
+	app.Client(t).Inertia("").Get("/").AssertOK().AssertInertia("Home")
+	app.Client(t).Get("/up").AssertOK()
+}
