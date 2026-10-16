@@ -2,6 +2,8 @@ package vite_test
 
 import (
 	"flag"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -254,6 +256,27 @@ func TestHotURL(t *testing.T) {
 
 	if got := newVite(t, vite.Config{FS: devFS()}).HotURL(); got != "" {
 		t.Errorf("HotURL() in production = %q, want empty", got)
+	}
+}
+
+func TestContextMiddleware(t *testing.T) {
+	t.Parallel()
+
+	if got := vite.FromContext(t.Context()); got != nil {
+		t.Fatalf("FromContext(empty) = %p, want nil", got)
+	}
+
+	v := newVite(t, vite.Config{FS: prodFS()})
+
+	var got *vite.Vite
+
+	h := v.Middleware()(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		got = vite.FromContext(r.Context())
+	}))
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(t.Context(), "GET", "/", http.NoBody))
+
+	if got != v {
+		t.Fatalf("FromContext() = %p, want %p", got, v)
 	}
 }
 
