@@ -1,0 +1,17 @@
+package tests
+
+import (
+	"testing"
+
+	"github.com/AlexGalhardo/golang-framework/lumektest"
+
+	"{{.Module}}/bootstrap"
+)
+
+func Test{{.Name}}(t *testing.T) {
+	t.Parallel()
+
+	app := lumektest.New(t, bootstrap.New)
+
+	app.Client(t).Get("/up").AssertOK()
+}

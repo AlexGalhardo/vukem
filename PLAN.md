@@ -18,8 +18,8 @@ Task IDs: `<phase>.<group>.<task>` (e.g. `P.3.2`). Reference them in commit bodi
 | Field | Value |
 | --- | --- |
 | Current phase | **Prototype** |
-| Next task | `P.10.1` (P.0.9 waits for GitHub billing) |
-| Last release | `v0.0.10` (P.9 testing toolkit) |
+| Next task | `P.11.0` (P.0.9 waits for GitHub billing) |
+| Last release | `v0.0.11` (P.10 CLI) |
 | Updated | 2026-10-16 |
 
 ## Design references
@@ -250,23 +250,23 @@ Applies to **every** task:
 
 ### P.10 CLI — needs: P.2
 
-- [ ] **P.10.1** `cmd/lumek` skeleton: command registry, `flag`-based parsing, `list`, `version`, help, exit codes.
+- [x] **P.10.1** `cmd/lumek` skeleton: command registry, `flag`-based parsing, `list`, `version`, help, exit codes.
   → verify: golden help output.
-- [ ] **P.10.2** Stub engine (`embed.FS`, local `stubs/` override, naming helpers, `go/format`).
+- [x] **P.10.2** Stub engine (`embed.FS`, local `stubs/` override, naming helpers, `go/format`).
   → verify: golden tests per stub.
-- [ ] **P.10.3** Codemod engine (`go/ast` append to known slices/functions + imports; fallback snippet).
+- [x] **P.10.3** Codemod engine (`go/ast` append to known slices/functions + imports; fallback snippet).
   → verify: golden tests incl. missing-marker fallback.
-- [ ] **P.10.4** Generators: `make:controller [--resource|--api]`, `make:model [-m -f -c]`, `make:migration`, `make:middleware`, `make:request`, `make:command`, `make:provider`, `make:test`.
+- [x] **P.10.4** Generators: `make:controller [--resource|--api]`, `make:model [-m -f -c]`, `make:migration`, `make:middleware`, `make:request`, `make:command`, `make:provider`, `make:test`.
   → verify: each generator in a temp project then `go build ./...` + `go vet ./...` pass.
-- [ ] **P.10.5** `key:generate`.
+- [x] **P.10.5** `key:generate`.
   → verify: writes valid base64 32-byte key; refuses overwrite without `--force`.
-- [ ] **P.10.6** Delegation to app binary (`go run ./cmd/app <cmd>`), with cached build.
+- [x] **P.10.6** Delegation to app binary (`go run ./cmd/app <cmd>`), with cached build.
   → verify: `lumek migrate` in a temp project runs migrations.
-- [ ] **P.10.7** App commands: `migrate*`, `route:list`, `about`, user `Command` interface.
+- [x] **P.10.7** App commands: `migrate*`, `route:list`, `about`, user `Command` interface.
   → verify: tests via `run(ctx, args, …)`.
-- [ ] **P.10.8** `serve` with polling watcher, rebuild/restart, template reload, optional `npm run dev`.
+- [x] **P.10.8** `serve` with polling watcher, rebuild/restart, template reload, optional `npm run dev`.
   → verify: e2e test edits a handler and observes new response within 5s.
-- [ ] **P.10.9** `build` (optional `vite build`, `go build -trimpath`).
+- [x] **P.10.9** `build` (optional `vite build`, `go build -trimpath`).
   → verify: e2e build produces runnable binary.
 
 ### P.11 Starter & `lumek new` — needs: P.4–P.10

@@ -13,6 +13,7 @@ import (
 
 	"github.com/AlexGalhardo/golang-framework/database"
 	"github.com/AlexGalhardo/golang-framework/errs"
+	"github.com/AlexGalhardo/golang-framework/internal/naming"
 )
 
 type Settings struct {
@@ -143,13 +144,13 @@ func TestMetaConventions(t *testing.T) {
 	}
 
 	for in, want := range map[string]string{"UserProfile": "user_profile", "HTTPCode": "http_code", "ID": "id", "APIKeyID": "api_key_id"} {
-		if got := snake(in); got != want {
+		if got := naming.Snake(in); got != want {
 			t.Errorf("snake(%q) = %q, want %q", in, got, want)
 		}
 	}
 
 	for in, want := range map[string]string{"user": "users", "category": "categories", "box": "boxes", "day": "days", "class": "classes", "batch": "batches"} {
-		if got := plural(in); got != want {
+		if got := naming.Plural(in); got != want {
 			t.Errorf("plural(%q) = %q, want %q", in, got, want)
 		}
 	}

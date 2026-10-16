@@ -1,0 +1,11 @@
+package bootstrap
+
+import (
+	"example.com/blog/app/providers"
+)
+
+func Providers() []any {
+	return []any{
+		providers.Mail{},
+	}
+}

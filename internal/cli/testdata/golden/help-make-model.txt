@@ -1,0 +1,10 @@
+Usage: lumek make:model [flags] <Name>
+
+Create a model (with -m, -f, -c)
+
+Flags:
+  -c	also create a resource controller
+  -f	also create a factory
+  -force
+    	overwrite existing files
+  -m	also create a create_<table>_table migration

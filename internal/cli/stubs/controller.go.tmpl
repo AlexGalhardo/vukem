@@ -1,0 +1,84 @@
+package controllers
+
+import (
+	"net/http"
+
+	"github.com/AlexGalhardo/golang-framework/web"
+)
+
+// {{.Name}}Controller handles {{.Snake}} requests.
+type {{.Name}}Controller struct{}
+
+// New{{.Name}}Controller returns a {{.Name}}Controller.
+func New{{.Name}}Controller() *{{.Name}}Controller { return &{{.Name}}Controller{} }
+{{if .API}}
+// Index lists {{.Plural}}: GET /{{.Plural}}.
+func (*{{.Name}}Controller) Index(c *web.Ctx) error {
+	return c.JSON(http.StatusOK, map[string]any{"data": []any{}})
+}
+
+// Store creates a {{.Snake}}: POST /{{.Plural}}.
+func (*{{.Name}}Controller) Store(c *web.Ctx) error {
+	return c.JSON(http.StatusCreated, map[string]any{})
+}
+
+// Show returns one {{.Snake}}: GET /{{.Plural}}/{ {{- .Snake -}} }.
+func (*{{.Name}}Controller) Show(c *web.Ctx) error {
+	id, err := c.ParamInt("{{.Snake}}")
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, map[string]any{"id": id})
+}
+
+// Update changes a {{.Snake}}: PUT/PATCH /{{.Plural}}/{ {{- .Snake -}} }.
+func (*{{.Name}}Controller) Update(c *web.Ctx) error {
+	return c.JSON(http.StatusOK, map[string]any{})
+}
+
+// Destroy deletes a {{.Snake}}: DELETE /{{.Plural}}/{ {{- .Snake -}} }.
+func (*{{.Name}}Controller) Destroy(c *web.Ctx) error {
+	return c.NoContent()
+}
+{{- else if .Resource}}
+// Index lists {{.Plural}}: GET /{{.Plural}}.
+func (*{{.Name}}Controller) Index(c *web.Ctx) error {
+	return c.String(http.StatusOK, "{{.Plural}} index")
+}
+
+// Create shows the form for a new {{.Snake}}: GET /{{.Plural}}/create.
+func (*{{.Name}}Controller) Create(c *web.Ctx) error {
+	return c.String(http.StatusOK, "new {{.Snake}} form")
+}
+
+// Store saves a new {{.Snake}}: POST /{{.Plural}}.
+func (*{{.Name}}Controller) Store(c *web.Ctx) error {
+	return c.Redirect("/{{.Plural}}")
+}
+
+// Show displays one {{.Snake}}: GET /{{.Plural}}/{ {{- .Snake -}} }.
+func (*{{.Name}}Controller) Show(c *web.Ctx) error {
+	return c.String(http.StatusOK, "{{.Snake}} "+c.Param("{{.Snake}}"))
+}
+
+// Edit shows the edit form: GET /{{.Plural}}/{ {{- .Snake -}} }/edit.
+func (*{{.Name}}Controller) Edit(c *web.Ctx) error {
+	return c.String(http.StatusOK, "edit {{.Snake}} "+c.Param("{{.Snake}}"))
+}
+
+// Update saves changes: PUT/PATCH /{{.Plural}}/{ {{- .Snake -}} }.
+func (*{{.Name}}Controller) Update(c *web.Ctx) error {
+	return c.Redirect("/{{.Plural}}/" + c.Param("{{.Snake}}"))
+}
+
+// Destroy deletes a {{.Snake}}: DELETE /{{.Plural}}/{ {{- .Snake -}} }.
+func (*{{.Name}}Controller) Destroy(c *web.Ctx) error {
+	return c.Redirect("/{{.Plural}}")
+}
+{{- else}}
+// Index handles the main {{.Snake}} page.
+func (*{{.Name}}Controller) Index(c *web.Ctx) error {
+	return c.String(http.StatusOK, "{{.Name}}")
+}
+{{- end}}

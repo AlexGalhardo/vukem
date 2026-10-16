@@ -1,0 +1,9 @@
+package bootstrap
+
+import lumek "github.com/AlexGalhardo/golang-framework"
+
+func Providers() []lumek.Provider {
+	return []lumek.Provider{
+		nil,
+	}
+}

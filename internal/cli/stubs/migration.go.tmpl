@@ -1,0 +1,30 @@
+package migrations
+
+import "github.com/AlexGalhardo/golang-framework/schema"
+
+func {{.Func}}() schema.Migration {
+	return schema.Migration{
+		ID: "{{.ID}}",
+{{- if .Create}}
+		Up: func(s *schema.Schema) error {
+			return s.Create("{{.Table}}", func(t *schema.Table) {
+				t.ID()
+				t.Timestamps()
+			})
+		},
+		Down: func(s *schema.Schema) error { return s.DropIfExists("{{.Table}}") },
+{{- else if .Alter}}
+		Up: func(s *schema.Schema) error {
+			return s.Table("{{.Table}}", func(t *schema.Table) {
+			})
+		},
+		Down: func(s *schema.Schema) error {
+			return s.Table("{{.Table}}", func(t *schema.Table) {
+			})
+		},
+{{- else}}
+		Up:   func(s *schema.Schema) error { return nil },
+		Down: func(s *schema.Schema) error { return nil },
+{{- end}}
+	}
+}

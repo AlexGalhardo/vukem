@@ -1,0 +1,188 @@
+package cli
+
+import (
+	"context"
+	"errors"
+	"flag"
+	"fmt"
+	"io/fs"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"slices"
+	"strings"
+	"time"
+)
+
+// cacheDir holds binaries built by delegation and serve; generated projects
+// ignore it in .gitignore.
+const cacheDir = ".lumek"
+
+func exe(name string) string {
+	if runtime.GOOS == "windows" {
+		return name + ".exe"
+	}
+
+	return name
+}
+
+// skipDirs are never watched or considered app sources.
+var skipDirs = []string{".git", cacheDir, "node_modules", "vendor", "storage", "bin", "dist", "public", "tmp"}
+
+// sourcesModTime returns the newest modification time of the Go sources
+// (and go.mod/go.sum) of the project.
+func sourcesModTime(dir string) (time.Time, error) {
+	var newest time.Time
+
+	err := walkSources(dir, func(_ string, info fs.FileInfo) {
+		if info.ModTime().After(newest) {
+			newest = info.ModTime()
+		}
+	})
+
+	return newest, err
+}
+
+func walkSources(dir string, fn func(path string, info fs.FileInfo)) error {
+	return filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+
+		if d.IsDir() {
+			if p != dir && (slices.Contains(skipDirs, d.Name()) || strings.HasPrefix(d.Name(), ".")) {
+				return filepath.SkipDir
+			}
+
+			return nil
+		}
+
+		name := d.Name()
+		if strings.HasSuffix(name, ".go") || name == "go.mod" || name == "go.sum" {
+			info, err := d.Info()
+			if err != nil {
+				return err
+			}
+
+			fn(p, info)
+		}
+
+		return nil
+	})
+}
+
+// appBinary builds cmd/app into .lumek/ when the sources changed since the
+// last build, and returns the binary path.
+func appBinary(ctx context.Context, env *Env) (string, error) {
+	if !exists(env, filepath.Join("cmd", "app")) {
+		return "", errors.New("no cmd/app in this directory: run lumek inside a Lumek project")
+	}
+
+	bin := env.path(filepath.Join(cacheDir, "bin", exe("app")))
+
+	newest, err := sourcesModTime(env.dirOrDot())
+	if err != nil {
+		return "", err
+	}
+
+	if info, err := os.Stat(bin); err == nil && info.ModTime().After(newest) {
+		return bin, nil
+	}
+
+	if err := goBuild(ctx, env, bin); err != nil {
+		return "", err
+	}
+
+	return bin, nil
+}
+
+func goBuild(ctx context.Context, env *Env, out string, extra ...string) error {
+	if !filepath.IsAbs(out) {
+		out = env.path(out)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(out), 0o750); err != nil {
+		return err
+	}
+
+	args := append([]string{"build"}, extra...)
+	args = append(args, "-o", out, "./cmd/app")
+
+	return tool(ctx, env, "go", args...)
+}
+
+func (env *Env) dirOrDot() string {
+	if env.Dir == "" {
+		return "."
+	}
+
+	return env.Dir
+}
+
+// delegate runs an app command (migrate, route:list, user commands) with
+// the project's binary, rebuilding it only when sources changed.
+func delegate(ctx context.Context, env *Env, args []string) error {
+	if !exists(env, filepath.Join("cmd", "app")) {
+		return usagef("unknown command %q (app commands need a Lumek project with cmd/app)", args[0])
+	}
+
+	bin, err := appBinary(ctx, env)
+	if err != nil {
+		return err
+	}
+
+	cmd := exec.CommandContext(ctx, bin, args...)
+	cmd.Dir = env.Dir
+	cmd.Stdin = env.Stdin
+	cmd.Stdout = env.Stdout
+	cmd.Stderr = env.Stderr
+
+	return cmd.Run()
+}
+
+func buildCmd(set *flag.FlagSet) func(context.Context, *Env, []string) error {
+	out := set.String("o", filepath.Join("bin", exe("app")), "output binary")
+
+	return func(ctx context.Context, env *Env, _ []string) error {
+		if !exists(env, filepath.Join("cmd", "app")) {
+			return errors.New("no cmd/app in this directory: run lumek inside a Lumek project")
+		}
+
+		if hasVite(env) {
+			if err := tool(ctx, env, npx(), "vite", "build"); err != nil {
+				return err
+			}
+		}
+
+		if err := goBuild(ctx, env, *out, "-trimpath", "-ldflags=-s -w"); err != nil {
+			return err
+		}
+
+		fmt.Fprintln(env.Stdout, "built", *out)
+
+		return nil
+	}
+}
+
+func hasVite(env *Env) bool {
+	for _, f := range []string{"vite.config.ts", "vite.config.js", "vite.config.mjs"} {
+		if exists(env, f) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func npx() string { return npmTool("npx") }
+
+func npm() string { return npmTool("npm") }
+
+func npmTool(name string) string {
+	if runtime.GOOS == "windows" {
+		return name + ".cmd"
+	}
+
+	return name
+}

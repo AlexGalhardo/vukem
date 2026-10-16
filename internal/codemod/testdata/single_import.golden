@@ -1,0 +1,13 @@
+package bootstrap
+
+import (
+	"example.com/blog/app/providers"
+	lumek "github.com/AlexGalhardo/golang-framework"
+)
+
+func Providers() []lumek.Provider {
+	return []lumek.Provider{
+		nil,
+		providers.Mail{},
+	}
+}

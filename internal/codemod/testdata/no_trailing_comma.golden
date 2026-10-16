@@ -1,0 +1,11 @@
+package migrations
+
+import "github.com/AlexGalhardo/golang-framework/schema"
+
+// All lists the migrations in order.
+func All() []schema.Migration {
+	return []schema.Migration{
+		m20260101000000CreateUsersTable(),
+		m20261016120000CreatePostsTable(),
+	}
+}

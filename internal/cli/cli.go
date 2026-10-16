@@ -1,0 +1,278 @@
+// Package cli implements the global `lumek` command: project scaffolding,
+// generators, the dev server and delegation of app commands to the
+// project's own binary (cmd/app). It works on files and never imports user
+// code.
+package cli
+
+import (
+	"context"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime/debug"
+	"strings"
+	"time"
+)
+
+// Env is everything the CLI touches outside its arguments, so tests can run
+// it in a temp directory with captured output.
+type Env struct {
+	// Dir is the project directory (the working directory).
+	Dir    string
+	Stdin  io.Reader
+	Stdout io.Writer
+	Stderr io.Writer
+	// Getenv reads the process environment.
+	Getenv func(string) (string, bool)
+	// Now is the clock used for migration timestamps.
+	Now func() time.Time
+	// Version overrides the build-info version (tests).
+	Version string
+}
+
+// ErrUsage marks invalid invocations; Run exits with code 2.
+var ErrUsage = errors.New("usage error")
+
+func usagef(format string, args ...any) error {
+	return fmt.Errorf("%w: %s", ErrUsage, fmt.Sprintf(format, args...))
+}
+
+type command struct {
+	name, args, desc string
+	flags            func(fs *flag.FlagSet) func(ctx context.Context, env *Env, args []string) error
+}
+
+func commands() []command {
+	return []command{
+		{"serve", "", "Run the app and restart it when Go files change", serveCmd},
+		{"build", "", "Build assets (Vite) and a production binary in bin/", buildCmd},
+		{"version", "", "Print the lumek version", nil},
+		{"key:generate", "", "Write a new APP_KEY to .env", keyGenerate},
+		{"make:controller", "<Name>", "Create a controller", makeController},
+		{"make:model", "<Name>", "Create a model (with -m, -f, -c)", makeModel},
+		{"make:migration", "<name>", "Create a migration and register it", makeMigration},
+		{"make:middleware", "<Name>", "Create an HTTP middleware", makeMiddleware},
+		{"make:request", "<Name>", "Create a validated request struct", makeRequest},
+		{"make:command", "<Name>", "Create an app command and register it", makeCommand},
+		{"make:provider", "<Name>", "Create a provider and register it", makeProvider},
+		{"make:test", "<Name>", "Create a test using the fluent client", makeTest},
+	}
+}
+
+// Run executes the command line and returns the process exit code:
+// 0 success, 1 failure, 2 usage error.
+func Run(ctx context.Context, args []string, env Env) int {
+	if env.Getenv == nil {
+		env.Getenv = func(string) (string, bool) { return "", false }
+	}
+
+	if env.Now == nil {
+		env.Now = time.Now
+	}
+
+	err := run(ctx, args, &env)
+
+	switch {
+	case err == nil:
+		return 0
+	case errors.Is(err, ErrUsage):
+		fmt.Fprintln(env.Stderr, err)
+		fmt.Fprintln(env.Stderr, "Run 'lumek list' for the available commands.")
+
+		return 2
+	default:
+		if code, ok := exitCode(err); ok {
+			return code
+		}
+
+		fmt.Fprintln(env.Stderr, "error:", err)
+
+		return 1
+	}
+}
+
+func run(ctx context.Context, args []string, env *Env) error {
+	if len(args) == 0 {
+		return list(env)
+	}
+
+	name, rest := args[0], args[1:]
+
+	switch name {
+	case "list", "help", "-h", "--help":
+		if len(rest) > 0 && name == "help" {
+			return help(env, rest[0])
+		}
+
+		return list(env)
+	case "version", "--version", "-v":
+		fmt.Fprintln(env.Stdout, "lumek", version(env))
+		return nil
+	}
+
+	for _, c := range commands() {
+		if c.name != name || c.flags == nil {
+			continue
+		}
+
+		fs := flag.NewFlagSet("lumek "+name, flag.ContinueOnError)
+		fs.SetOutput(env.Stdout)
+		fs.Usage = func() { printUsage(env, c, fs) }
+		runFn := c.flags(fs)
+
+		if err := fs.Parse(interleave(rest)); err != nil {
+			if errors.Is(err, flag.ErrHelp) {
+				return nil
+			}
+
+			return usagef("%v", err)
+		}
+
+		return runFn(ctx, env, fs.Args())
+	}
+
+	// Not a lumek command: hand it to the project's app binary.
+	return delegate(ctx, env, args)
+}
+
+// interleave moves flags after positional arguments to the front, so
+// "make:model Post -m" works like "make:model -m Post".
+func interleave(args []string) []string {
+	var flags, pos []string
+
+	for i, a := range args {
+		if a == "--" {
+			pos = append(pos, args[i+1:]...)
+			break
+		}
+
+		if strings.HasPrefix(a, "-") && a != "-" {
+			flags = append(flags, a)
+			continue
+		}
+
+		pos = append(pos, a)
+	}
+
+	return append(flags, pos...)
+}
+
+func list(env *Env) error {
+	fmt.Fprintf(env.Stdout, "Lumek %s\n\nUsage:\n  lumek <command> [flags] [args]\n\n", version(env))
+
+	width := 0
+	for _, c := range commands() {
+		width = max(width, len(strings.TrimSpace(c.name+" "+c.args)))
+	}
+
+	group := ""
+
+	for _, c := range commands() {
+		g, _, ok := strings.Cut(c.name, ":")
+		if !ok {
+			g = ""
+		}
+
+		if g != group {
+			fmt.Fprintf(env.Stdout, " %s\n", g)
+			group = g
+		}
+
+		fmt.Fprintf(env.Stdout, "  %-*s  %s\n", width, strings.TrimSpace(c.name+" "+c.args), c.desc)
+	}
+
+	fmt.Fprint(env.Stdout, "\nOther commands (migrate, route:list, about, your own) run in the app: lumek <command>.\n")
+
+	return nil
+}
+
+func help(env *Env, name string) error {
+	for _, c := range commands() {
+		if c.name != name {
+			continue
+		}
+
+		if c.flags == nil {
+			fmt.Fprintf(env.Stdout, "Usage: lumek %s\n\n%s\n", c.name, c.desc)
+			return nil
+		}
+
+		fs := flag.NewFlagSet("lumek "+name, flag.ContinueOnError)
+		fs.SetOutput(env.Stdout)
+		c.flags(fs)
+		printUsage(env, c, fs)
+
+		return nil
+	}
+
+	return usagef("unknown command %q", name)
+}
+
+func printUsage(env *Env, c command, fs *flag.FlagSet) {
+	fmt.Fprintf(env.Stdout, "Usage: lumek %s\n\n%s\n", strings.TrimSpace(c.name+" [flags] "+c.args), c.desc)
+
+	hasFlags := false
+
+	fs.VisitAll(func(*flag.Flag) { hasFlags = true })
+
+	if hasFlags {
+		fmt.Fprintln(env.Stdout, "\nFlags:")
+		fs.PrintDefaults()
+	}
+}
+
+func version(env *Env) string {
+	if env.Version != "" {
+		return env.Version
+	}
+
+	if bi, ok := debug.ReadBuildInfo(); ok && bi.Main.Version != "" && bi.Main.Version != "(devel)" {
+		return bi.Main.Version
+	}
+
+	return "devel"
+}
+
+func exitCode(err error) (int, bool) {
+	if ee, ok := errors.AsType[*exec.ExitError](err); ok && ee.ExitCode() > 0 {
+		return ee.ExitCode(), true
+	}
+
+	return 0, false
+}
+
+// exists reports whether a project-relative path exists.
+func exists(env *Env, rel string) bool {
+	_, err := os.Stat(env.path(rel))
+	return err == nil
+}
+
+func (env *Env) path(rel string) string { return filepath.Join(env.Dir, rel) }
+
+// tool runs an external program in the project directory with the CLI's
+// output streams.
+func tool(ctx context.Context, env *Env, name string, args ...string) error {
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Dir = env.Dir
+	cmd.Stdin = env.Stdin
+	cmd.Stdout = env.Stdout
+	cmd.Stderr = env.Stderr
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("%s %s: %w", name, strings.Join(args, " "), err)
+	}
+
+	return nil
+}
+
+func oneArg(args []string, what string) (string, error) {
+	if len(args) != 1 || args[0] == "" {
+		return "", usagef("expected exactly one %s", what)
+	}
+
+	return args[0], nil
+}

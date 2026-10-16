@@ -1,0 +1,9 @@
+package requests
+
+import "github.com/AlexGalhardo/golang-framework/z"
+
+// {{.Name}} is the validated input; declare fields with json/form and z tags.
+type {{.Name}} struct{}
+
+// {{.Name}}Schema validates {{.Name}}; use it with web.Parse(c, {{.Name}}Schema).
+var {{.Name}}Schema = z.For[{{.Name}}]()

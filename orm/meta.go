@@ -14,7 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode"
+
+	"github.com/AlexGalhardo/golang-framework/internal/naming"
 )
 
 // Model provides an auto-increment id and timestamps; embed it in models.
@@ -96,7 +97,7 @@ func buildMeta(rt reflect.Type) *meta {
 		}
 
 		if col == "" {
-			col = snake(f.Name)
+			col = naming.Snake(f.Name)
 		}
 
 		if !identRe.MatchString(col) {
@@ -144,40 +145,7 @@ func tableName(rt reflect.Type) string {
 		return t.Table()
 	}
 
-	return plural(snake(rt.Name()))
-}
-
-// snake converts "UserProfile" to "user_profile" and "HTTPCode" to "http_code".
-func snake(s string) string {
-	var b strings.Builder
-
-	runes := []rune(s)
-	for i, r := range runes {
-		if unicode.IsUpper(r) {
-			if i > 0 && (unicode.IsLower(runes[i-1]) || i+1 < len(runes) && unicode.IsLower(runes[i+1])) {
-				b.WriteByte('_')
-			}
-
-			r = unicode.ToLower(r)
-		}
-
-		b.WriteRune(r)
-	}
-
-	return b.String()
-}
-
-// plural applies common English rules to the last word.
-func plural(s string) string {
-	switch {
-	case strings.HasSuffix(s, "y") && len(s) > 1 && !strings.ContainsRune("aeiou", rune(s[len(s)-2])):
-		return s[:len(s)-1] + "ies"
-	case strings.HasSuffix(s, "s"), strings.HasSuffix(s, "x"), strings.HasSuffix(s, "z"),
-		strings.HasSuffix(s, "ch"), strings.HasSuffix(s, "sh"):
-		return s + "es"
-	default:
-		return s + "s"
-	}
+	return naming.Plural(naming.Snake(rt.Name()))
 }
 
 // column validates name against the model: plain columns, "table.column"

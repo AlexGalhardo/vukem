@@ -1,0 +1,21 @@
+Lumek v0.0.0-test
+
+Usage:
+  lumek <command> [flags] [args]
+
+  serve                   Run the app and restart it when Go files change
+  build                   Build assets (Vite) and a production binary in bin/
+  version                 Print the lumek version
+ key
+  key:generate            Write a new APP_KEY to .env
+ make
+  make:controller <Name>  Create a controller
+  make:model <Name>       Create a model (with -m, -f, -c)
+  make:migration <name>   Create a migration and register it
+  make:middleware <Name>  Create an HTTP middleware
+  make:request <Name>     Create a validated request struct
+  make:command <Name>     Create an app command and register it
+  make:provider <Name>    Create a provider and register it
+  make:test <Name>        Create a test using the fluent client
+
+Other commands (migrate, route:list, about, your own) run in the app: lumek <command>.

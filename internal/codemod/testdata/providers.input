@@ -1,0 +1,15 @@
+package bootstrap
+
+import (
+	lumek "github.com/AlexGalhardo/golang-framework"
+
+	"example.com/blog/app/providers"
+)
+
+// Providers lists the application providers, in registration order.
+// lumek make:provider appends to this list.
+func Providers() []lumek.Provider {
+	return []lumek.Provider{
+		&providers.AppProvider{}, // core services
+	}
+}

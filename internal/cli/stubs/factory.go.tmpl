@@ -1,0 +1,13 @@
+package factories
+
+import "{{.Module}}/app/models"
+
+// {{.Name}} returns a models.{{.Name}} with default values; overrides adjust it.
+func {{.Name}}(overrides ...func(*models.{{.Name}})) models.{{.Name}} {
+	var m models.{{.Name}}
+	for _, override := range overrides {
+		override(&m)
+	}
+
+	return m
+}
