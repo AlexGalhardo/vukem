@@ -24,7 +24,8 @@ Usage:
   make:factory <Name>     Create a model factory (fake data for tests and seeders)
   make:seeder <Name>      Create a seeder and register it
   make:event <Name>       Create an event type
-  make:listener <Name>    Create an event listener and register it (--event Name)
+  make:listener <Name>    Create an event listener and register it (--event Name [--async|--queued])
+  make:job <Name>         Create a queued job and register its handler
   make:mail <Name>        Create a mailable and its view
   make:policy <Name>      Create an authorization policy and register it
   make:test <Name>        Create a test using the fluent client

@@ -6,10 +6,12 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"slices"
 	"strings"
 	"text/tabwriter"
 	"time"
 
+	"github.com/AlexGalhardo/vukem/mail"
 	"github.com/AlexGalhardo/vukem/queue"
 )
 
@@ -18,6 +20,15 @@ import (
 func WithJobs(regs ...queue.Registration) Option {
 	return func(o *options) error { o.jobs = append(o.jobs, regs...); return nil }
 }
+
+// WithQueueDriver replaces the driver chosen by QUEUE_CONNECTION (tests
+// pass a queue.Fake).
+func WithQueueDriver(d queue.Driver) Option {
+	return func(o *options) error { o.queueDriver = d; return nil }
+}
+
+// MailJobKind is the queue job that sends queued mail (App.MailLater).
+const MailJobKind = "vukem.mail"
 
 // QueueConfig is read from QUEUE_* variables.
 type QueueConfig struct {
@@ -55,14 +66,15 @@ func (a *App) Queue() (*queue.Queue, error) {
 			return
 		}
 
-		var d queue.Driver
+		d := a.queueDriver
 
-		switch cfg.Connection {
-		case "sync":
+		switch {
+		case d != nil:
+		case cfg.Connection == "sync":
 			d = queue.Sync{}
-		case "memory":
+		case cfg.Connection == "memory":
 			d = queue.NewMemory()
-		case "database":
+		case cfg.Connection == "database":
 			if d, err = a.databaseQueue(cfg); err != nil {
 				a.queueErr = err
 				return
@@ -73,7 +85,11 @@ func (a *App) Queue() (*queue.Queue, error) {
 		}
 
 		q := queue.New(d, a.Log)
-		if err := q.Register(a.jobs...); err != nil {
+
+		regs := append(slices.Clone(a.jobs), a.Events.Jobs()...)
+		regs = append(regs, queue.HandleKind(MailJobKind, a.sendQueuedMail))
+
+		if err := q.Register(regs...); err != nil {
 			a.queueErr = err
 			return
 		}
@@ -103,6 +119,37 @@ func (a *App) databaseQueue(cfg QueueConfig) (*queue.Database, error) {
 	}
 
 	return d, nil
+}
+
+func (a *App) sendQueuedMail(ctx context.Context, msg mail.Message) error {
+	m, err := a.Mailer()
+	if err != nil {
+		return err
+	}
+
+	return m.Transport().Send(ctx, &msg)
+}
+
+// MailLater renders mailable now and sends it from a queue job (retried
+// with the queue's backoff; the message ID stays the same across retries,
+// so providers that deduplicate by it send it once).
+func (a *App) MailLater(ctx context.Context, mailable mail.Mailable, opts ...queue.Option) error {
+	m, err := a.Mailer()
+	if err != nil {
+		return err
+	}
+
+	msg, err := m.Render(ctx, mailable)
+	if err != nil {
+		return err
+	}
+
+	q, err := a.Queue()
+	if err != nil {
+		return err
+	}
+
+	return q.DispatchKind(ctx, MailJobKind, msg, opts...)
 }
 
 // queueRunner works the in-memory queue inside the web process.

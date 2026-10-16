@@ -182,6 +182,10 @@ err = q.DispatchTx(ctx, tx, SendInvoice{OrderID: 1}) // database driver: enqueue
 - `q.DispatchTx(ctx, tx, job)` inserts the job in the caller's transaction: it exists only if the transaction commits.
 - Commands: `queue:work [-queue high,default] [-concurrency 4] [-once] [-stop-when-empty]` (Ctrl+C drains running jobs), `queue:failed [-json]`, `queue:retry <ids…|all>`, `queue:forget <ids…|all>`.
 - The `database/dbtest` conformance suite covers the driver (exactly-once processing with concurrent workers, `DispatchTx` rollback, failed/retry/forget, takeover of abandoned jobs) on SQLite and Postgres.
+- `vukem make:job SendInvoice` writes `app/jobs/send_invoice.go` (job type, `Kind`, handler) and registers `queue.Handle(HandleSendInvoice)` in `app/jobs/registry.go`, which `bootstrap` passes to `WithJobs`.
+- **Queued mail:** `app.MailLater(ctx, mailable)` renders now and sends from a job (retried; the message ID is stable across retries).
+- **Queued listeners:** `events.OnQueued("update_stock", listeners.UpdateStock)` (or `make:listener UpdateStock --event OrderShipped --queued`) enqueues the event as JSON and runs the listener in a worker; `Dispatch` returns only enqueue errors.
+- **Testing:** pass `vukem.WithQueueDriver(fake)` with `fake := queue.NewFake()`; `queue.Dispatched[jobs.SendInvoice](fake)` returns the dispatched jobs, and `q.Work(ctx, queue.WorkOptions{StopWhenEmpty: true})` runs them when the test wants to.
 - Inspired by River (typed workers, transactional enqueue) and goqite (SQLite).
 
 ## Scheduler

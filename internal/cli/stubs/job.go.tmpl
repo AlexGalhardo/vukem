@@ -1,0 +1,15 @@
+package jobs
+
+import "context"
+
+// {{.Name}} is a queued job: q.Dispatch(ctx, jobs.{{.Name}}{...}). Its
+// fields are stored as JSON, so keep them serializable.
+type {{.Name}} struct{}
+
+// Kind names the job's handler; keep it stable across deploys.
+func ({{.Name}}) Kind() string { return "{{.Snake}}" }
+
+// Handle{{.Name}} runs the job. Returning an error retries it with backoff.
+func Handle{{.Name}}(ctx context.Context, j {{.Name}}) error {
+	return nil
+}

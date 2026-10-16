@@ -379,6 +379,7 @@ func makeEvent(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 func makeListener(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 	event := set.String("event", "", "the event type it handles (required)")
 	async := set.Bool("async", false, "run in the background (errors are logged)")
+	queued := set.Bool("queued", false, "run as a queue job (retried, survives restarts)")
 	force := set.Bool("force", false, "overwrite existing files")
 
 	return func(_ context.Context, env *Env, args []string) error {
@@ -402,17 +403,37 @@ func makeListener(set *flag.FlagSet) func(context.Context, *Env, []string) error
 			return err
 		}
 
-		fn := "events.On"
-		if *async {
-			fn = "events.OnAsync"
+		expr := "events.On(" + d.Name + ")"
+
+		switch {
+		case *async && *queued:
+			return usagef("--async and --queued are exclusive")
+		case *async:
+			expr = "events.OnAsync(" + d.Name + ")"
+		case *queued:
+			expr = `events.OnQueued("` + d.Snake + `", ` + d.Name + ")"
 		}
+
+		return register(env, "app/listeners/registry.go", "All", expr, "github.com/AlexGalhardo/vukem/events")
+	}
+}
+
+func makeJob(set *flag.FlagSet) func(context.Context, *Env, []string) error {
+	run := simple(set, "job name", "job.go.tmpl", "app/jobs/%s.go", "Job")
+
+	return func(ctx context.Context, env *Env, args []string) error {
+		if err := run(ctx, env, args); err != nil {
+			return err
+		}
+
+		name := className(args[0], "Job")
 
 		return register(
 			env,
-			"app/listeners/registry.go",
+			"app/jobs/registry.go",
 			"All",
-			fn+"("+d.Name+")",
-			"github.com/AlexGalhardo/vukem/events",
+			"queue.Handle(Handle"+name+")",
+			"github.com/AlexGalhardo/vukem/queue",
 		)
 	}
 }

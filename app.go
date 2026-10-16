@@ -104,10 +104,11 @@ type App struct {
 	// Events is the application event bus (WithListeners registers listeners).
 	Events *events.Bus
 
-	jobs      []queue.Registration
-	queueOnce sync.Once
-	queue     *queue.Queue
-	queueErr  error
+	jobs        []queue.Registration
+	queueDriver queue.Driver
+	queueOnce   sync.Once
+	queue       *queue.Queue
+	queueErr    error
 
 	now func() time.Time
 
@@ -144,6 +145,7 @@ type options struct {
 	mailTransport mail.Transport
 	listeners     []events.Registration
 	jobs          []queue.Registration
+	queueDriver   queue.Driver
 	drivers       []database.Driver
 	stdout        io.Writer
 	ready         chan<- string
@@ -305,10 +307,11 @@ func New(opts ...Option) (*App, error) {
 		drivers:   o.drivers,
 		now:       now,
 
-		migrations: o.migrations,
-		seeders:    o.seeders,
-		jobs:       o.jobs,
-		mail:       mailState{transport: o.mailTransport},
+		migrations:  o.migrations,
+		seeders:     o.seeders,
+		jobs:        o.jobs,
+		queueDriver: o.queueDriver,
+		mail:        mailState{transport: o.mailTransport},
 	}
 	app.Router = app.newRouter()
 
@@ -320,6 +323,7 @@ func New(opts ...Option) (*App, error) {
 	app.Events = events.New(app.Log, 0)
 	app.Events.Register(o.listeners...)
 	app.Router.Services().Events = app.Events
+	app.Events.SetQueue(func() (events.Enqueuer, error) { return app.Queue() })
 	app.OnShutdown(app.Events.Shutdown)
 
 	qcfg, err := configLoad[QueueConfig](app)

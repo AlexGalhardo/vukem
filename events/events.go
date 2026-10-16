@@ -7,8 +7,9 @@
 //	bus.Register(events.On(listeners.SendWelcome)) // func(ctx, UserRegistered) error
 //	err := bus.Dispatch(ctx, UserRegistered{User: u})
 //
-// Async listeners run on a bounded goroutine pool that Shutdown drains; a
-// queue-backed mode arrives with the queue (BETA).
+// Async listeners run on a bounded goroutine pool that Shutdown drains.
+// Queued listeners (OnQueued) run as queue jobs, so they survive restarts
+// and are retried.
 package events
 
 import (
@@ -19,6 +20,8 @@ import (
 	"reflect"
 	"slices"
 	"sync"
+
+	"github.com/AlexGalhardo/vukem/queue"
 )
 
 // Dispatcher dispatches events (Bus and Fake implement it).
@@ -27,16 +30,35 @@ type Dispatcher interface {
 }
 
 type listener struct {
-	async bool
-	fn    func(ctx context.Context, event any) error
-	name  string
+	async  bool
+	queued string // job kind for queued listeners
+	fn     func(ctx context.Context, event any) error
+	name   string
 }
 
-// Registration binds a listener to its event type; create it with On or
-// OnAsync.
+// Registration binds a listener to its event type; create it with On,
+// OnAsync or OnQueued.
 type Registration struct {
 	typ reflect.Type
 	l   listener
+	job queue.Registration
+}
+
+// Enqueuer sends events to queued listeners (*queue.Queue implements it).
+type Enqueuer interface {
+	DispatchKind(ctx context.Context, kind string, payload any, opts ...queue.Option) error
+}
+
+// OnQueued registers fn for events of type E as the queue job kind: Dispatch
+// enqueues the event (encoded as JSON) and a queue worker runs fn with
+// the queue's retries. The bus needs a queue (SetQueue; vukem.App wires
+// App.Queue) and the job handler must be registered on it (Jobs).
+func OnQueued[E any](kind string, fn func(ctx context.Context, e E) error, opts ...queue.Option) Registration {
+	return Registration{
+		typ: reflect.TypeFor[E](),
+		l:   listener{queued: kind, name: kind},
+		job: queue.HandleKind(kind, fn, opts...),
+	}
 }
 
 // On registers fn for events of type E, run synchronously by Dispatch (its
@@ -73,8 +95,32 @@ type Bus struct {
 
 	mu        sync.RWMutex
 	listeners map[reflect.Type][]listener
+	jobs      []queue.Registration
+	queue     func() (Enqueuer, error)
 	closed    bool
 }
+
+// SetQueue sets how queued listeners reach the queue (called lazily on
+// the first queued dispatch).
+func (b *Bus) SetQueue(fn func() (Enqueuer, error)) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	b.queue = fn
+}
+
+// Jobs returns the queue handlers of the queued listeners, to register on
+// the queue.
+func (b *Bus) Jobs() []queue.Registration {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	return slices.Clone(b.jobs)
+}
+
+// ErrNoQueue is returned when a queued listener runs on a bus without a
+// queue.
+var ErrNoQueue = errors.New("events: queued listener needs a queue (Bus.SetQueue)")
 
 // New returns a bus running at most workers async listeners at once
 // (0 = 16).
@@ -97,6 +143,10 @@ func (b *Bus) Register(regs ...Registration) {
 
 	for _, r := range regs {
 		b.listeners[r.typ] = append(b.listeners[r.typ], r.l)
+
+		if r.l.queued != "" {
+			b.jobs = append(b.jobs, r.job)
+		}
 	}
 }
 
@@ -116,6 +166,7 @@ func (b *Bus) Dispatch(ctx context.Context, event any) error {
 	b.mu.RLock()
 	ls := slices.Clone(b.listeners[reflect.TypeOf(event)])
 	closed := b.closed
+	getQueue := b.queue
 	b.mu.RUnlock()
 
 	if closed {
@@ -128,12 +179,33 @@ func (b *Bus) Dispatch(ctx context.Context, event any) error {
 			continue
 		}
 
+		if l.queued != "" {
+			if err := enqueue(ctx, getQueue, l.queued, event); err != nil {
+				return fmt.Errorf("events: %T queued listener %s: %w", event, l.name, err)
+			}
+
+			continue
+		}
+
 		if err := l.fn(ctx, event); err != nil {
 			return fmt.Errorf("events: %T listener %s: %w", event, l.name, err)
 		}
 	}
 
 	return nil
+}
+
+func enqueue(ctx context.Context, getQueue func() (Enqueuer, error), kind string, event any) error {
+	if getQueue == nil {
+		return ErrNoQueue
+	}
+
+	q, err := getQueue()
+	if err != nil {
+		return err
+	}
+
+	return q.DispatchKind(ctx, kind, event)
 }
 
 func (b *Bus) goAsync(ctx context.Context, l listener, event any) {

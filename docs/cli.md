@@ -53,11 +53,11 @@ Exit codes: `0` success, `1` failure, `2` usage error.
 
 ### ALPHA
 
-Shipped: `new --api`, `install:api`, `make:resource`, `make:factory`, `make:seeder`, `make:policy`, `make:mail`, `make:event`, `make:listener [--event Name] [--async]`, `install:auth [--social github,google]`, app: `db:seed`, `db:wipe` (both need `--force` in production). Planned: `stub:publish`, app: `db` (opens `sqlite3`/`psql` with the configured URL). `storage:link` was replaced by `storage.Handler` (see subsystems.md).
+Shipped: `new --api`, `install:api`, `make:resource`, `make:factory`, `make:seeder`, `make:policy`, `make:mail`, `make:event`, `make:listener [--event Name] [--async|--queued]`, `make:job`, `install:auth [--social github,google]`, app: `db:seed`, `db:wipe` (both need `--force` in production). Planned: `stub:publish`, app: `db` (opens `sqlite3`/`psql` with the configured URL). `storage:link` was replaced by `storage.Handler` (see subsystems.md).
 
 ### BETA
 
-`make:job`, `install:inertia`, `codegen:routes`, `ssr:start`, app: `queue:work`, `queue:retry`, `queue:failed`, `schedule:run`, `schedule:work`, `schedule:list`, `down`/`up` (maintenance mode).
+`install:inertia`, `codegen:routes`, `ssr:start`, app: `queue:work`, `queue:retry`, `queue:failed`, `schedule:run`, `schedule:work`, `schedule:list`, `down`/`up` (maintenance mode).
 
 ## Generators and stubs
 

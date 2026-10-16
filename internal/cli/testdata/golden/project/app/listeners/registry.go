@@ -6,5 +6,6 @@ import "github.com/AlexGalhardo/vukem/events"
 func All() []events.Registration {
 	return []events.Registration{
 		events.OnAsync(NotifyCustomer),
+		events.OnQueued("update_stock", UpdateStock),
 	}
 }

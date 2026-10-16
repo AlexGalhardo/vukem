@@ -145,19 +145,29 @@ type Registration struct {
 func Handle[J Job](fn func(ctx context.Context, j J) error, opts ...Option) Registration {
 	var zero J
 
+	return HandleKind(zero.Kind(), fn, opts...)
+}
+
+// HandleKind registers fn for jobs named kind whose payload decodes into T
+// (framework jobs such as queued mail and listeners; DispatchKind sends
+// them).
+func HandleKind[T any](kind string, fn func(ctx context.Context, v T) error, opts ...Option) Registration {
 	return Registration{
-		kind: zero.Kind(),
+		kind: kind,
 		opts: opts,
 		run: func(ctx context.Context, payload json.RawMessage) error {
-			var j J
-			if err := json.Unmarshal(payload, &j); err != nil {
-				return fmt.Errorf("decode %s payload: %w", zero.Kind(), err)
+			var v T
+			if err := json.Unmarshal(payload, &v); err != nil {
+				return fmt.Errorf("decode %s payload: %w", kind, err)
 			}
 
-			return fn(ctx, j)
+			return fn(ctx, v)
 		},
 	}
 }
+
+// Kind returns the job kind of the registration.
+func (r Registration) Kind() string { return r.kind }
 
 type handler struct {
 	run  func(ctx context.Context, payload json.RawMessage) error
@@ -225,7 +235,12 @@ func defaults() options {
 // dispatch. With an Inline driver the job runs now and its error is
 // returned.
 func (q *Queue) Dispatch(ctx context.Context, j Job, opts ...Option) error {
-	m, h, err := q.message(j, opts)
+	return q.DispatchKind(ctx, j.Kind(), j, opts...)
+}
+
+// DispatchKind enqueues payload (encoded as JSON) for the handler of kind.
+func (q *Queue) DispatchKind(ctx context.Context, kind string, payload any, opts ...Option) error {
+	m, h, err := q.message(kind, payload, opts)
 	if err != nil {
 		return err
 	}
@@ -250,7 +265,7 @@ func (q *Queue) DispatchTx(ctx context.Context, ex database.Executor, j Job, opt
 		return ErrNoTx
 	}
 
-	m, _, err := q.message(j, opts)
+	m, _, err := q.message(j.Kind(), j, opts)
 	if err != nil {
 		return err
 	}
@@ -261,17 +276,17 @@ func (q *Queue) DispatchTx(ctx context.Context, ex database.Executor, j Job, opt
 // Message builds the stored message for j (drivers with their own
 // transactional push use it).
 func (q *Queue) Message(j Job, opts ...Option) (*Message, error) {
-	m, _, err := q.message(j, opts)
+	m, _, err := q.message(j.Kind(), j, opts)
 	return m, err
 }
 
-func (q *Queue) message(j Job, opts []Option) (*Message, handler, error) {
+func (q *Queue) message(kind string, j any, opts []Option) (*Message, handler, error) {
 	q.mu.RLock()
-	h, ok := q.handlers[j.Kind()]
+	h, ok := q.handlers[kind]
 	q.mu.RUnlock()
 
 	if !ok {
-		return nil, handler{}, fmt.Errorf("%w: %q", ErrUnknownKind, j.Kind())
+		return nil, handler{}, fmt.Errorf("%w: %q", ErrUnknownKind, kind)
 	}
 
 	o := h.opts
@@ -281,13 +296,13 @@ func (q *Queue) message(j Job, opts []Option) (*Message, handler, error) {
 
 	payload, err := json.Marshal(j)
 	if err != nil {
-		return nil, handler{}, fmt.Errorf("queue: encode %s: %w", j.Kind(), err)
+		return nil, handler{}, fmt.Errorf("queue: encode %s: %w", kind, err)
 	}
 
 	now := q.now().UTC()
 
 	return &Message{
-		ID: newID(), Kind: j.Kind(), Queue: o.queue, Payload: payload, MaxRetries: o.retries,
+		ID: newID(), Kind: kind, Queue: o.queue, Payload: payload, MaxRetries: o.retries,
 		Timeout: o.timeout, AvailableAt: now.Add(o.delay), CreatedAt: now,
 	}, h, nil
 }
