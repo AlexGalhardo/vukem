@@ -18,7 +18,7 @@ Task IDs: `<phase>.<group>.<task>` (e.g. `P.3.2`). Reference them in commit bodi
 | Field | Value |
 | --- | --- |
 | Current phase | **ALPHA** |
-| Next task | `A.3.1` (A.0.6 after A.3.4) |
+| Next task | `A.3.8` (A.0.6, A.3.6 and A.3.10 after A.5 mail) |
 | Last release | `v0.4.0` (A.2 relations, factories, seeders, database rules) |
 | Updated | 2026-10-16 |
 
@@ -348,19 +348,19 @@ Applies to **every** task:
 
 ### A.3 Authentication — needs: P.6, A.2
 
-- [ ] **A.3.1** Hashers (argon2id default, bcrypt) + `NeedsRehash` + fake.
+- [x] **A.3.1** Hashers (argon2id default, bcrypt) + `NeedsRehash` + fake.
   → verify: PHC round-trip tests; 72-byte bcrypt guard.
-- [ ] **A.3.2** `Authenticatable`, `UserProvider`, `ORMProvider`.
+- [x] **A.3.2** `Authenticatable`, `UserProvider`, `ORMProvider`.
   → verify: tests.
-- [ ] **A.3.3** Session guard (attempt, login, logout, regenerate, timing-safe miss, remember-me).
+- [x] **A.3.3** Session guard (attempt, login, logout, regenerate, timing-safe miss, remember-me).
   → verify: tests incl. session fixation check.
-- [ ] **A.3.4** Access-token guard (create, hash, abilities, expiry, revoke, `last_used_at`).
+- [x] **A.3.4** Access-token guard (create, hash, abilities, expiry, revoke, `last_used_at`).
   → verify: tests.
-- [ ] **A.3.5** Middleware `Required`, `Guest`, `Verified`, `Ability`.
+- [x] **A.3.5** Middleware `Required`, `Guest`, `Verified`, `Ability`.
   → verify: tests.
 - [ ] **A.3.6** `install:auth` scaffold (controllers, actions, views, migrations, routes, tests) incl. password reset + email verification.
   → verify: e2e: generated tests pass in a new app.
-- [ ] **A.3.7** `ActingAs` in test client.
+- [x] **A.3.7** `ActingAs` in test client.
   → verify: tests.
 - [ ] **A.3.8** `social` core: provider interface, Authorization Code + PKCE, signed single-use state cookie, token exchange, `social.User`, stateless mode.
   → verify: end-to-end test against an in-process fake OAuth2 server; `TestSecurity_A07_SocialStateMismatch`, replayed state and PKCE downgrade rejected.

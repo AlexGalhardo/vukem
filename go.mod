@@ -6,6 +6,7 @@ toolchain go1.27.2
 
 require (
 	github.com/google/go-cmp v0.7.0
+	golang.org/x/crypto v0.57.0
 	modernc.org/sqlite v1.60.1
 )
 

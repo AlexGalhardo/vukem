@@ -16,58 +16,82 @@ Guards, user providers, hashing, tokens, the `install:auth` scaffold, gates and 
 
 ```go
 type Authenticatable interface {
-	AuthID() string
-	AuthPassword() string
+	AuthID() string       // primary key as a string
+	AuthPassword() string // stored hash
 }
 
 type UserProvider[U Authenticatable] interface {
 	ByID(ctx context.Context, id string) (U, error)
-	ByCredentials(ctx context.Context, creds map[string]string) (U, error) // never checks password
-}
-
-type Guard[U Authenticatable] interface {
-	User(c *web.Ctx) (U, error)       // cached per request
-	Check(c *web.Ctx) bool
-	Login(c *web.Ctx, u U) error
-	Logout(c *web.Ctx) error
+	ByCredentials(ctx context.Context, creds map[string]string) (U, error) // never checks the password
 }
 ```
 
-`auth.ORMProvider[models.User](db)` is the default provider (looks up by `email`).
+`auth.NewORMProvider[models.User](db)` is the default provider: `ByID` by primary key, `ByCredentials` by every credential except `password` (columns validated by the ORM), and it stores rehashed passwords (`PasswordColumn`, default `password`).
+
+## Wiring
+
+```go
+// routes/web.go
+users := auth.NewORMProvider[models.User](db)
+webGuard := auth.NewSessionGuard("web", users, hash.Default(), auth.NewRememberStore(db))
+apiGuard := auth.NewTokenGuard("api", users, auth.NewTokens(db))
+
+r.Post("/login", func(c *web.Ctx) error {
+	in, err := web.Parse(c, requests.LoginSchema)
+	if err != nil {
+		return err
+	}
+
+	if _, err := webGuard.Attempt(c, map[string]string{"email": in.Email, "password": in.Password},
+		auth.Remember(in.Remember)); err != nil {
+		return err // 422 on "email": "These credentials do not match our records."
+	}
+
+	return c.Redirect("/dashboard")
+})
+
+r.Get("/dashboard", dashboard).Use(auth.Required(webGuard))
+r.Group("/api", func(g *router.Group) { g.Use(auth.Required(apiGuard)) /* ... */ })
+
+user, err := auth.User[models.User](c, "web") // in handlers behind Required
+```
 
 ## Guards
 
-### `session` (web)
+### Session guard (`web`)
 
-- `Attempt(c, creds)`: fetch by credentials → verify hash → `session.Regenerate()` → store user id.
-- When the user is not found the hasher still runs against a dummy hash (timing-attack resistance).
-- Remember-me (opt-in): long-lived random token, SHA-256 stored in `remember_tokens`, rotated on use.
-- Password rehash on login when `Hasher.NeedsRehash` is true.
+- `Attempt(c, creds, auth.Remember(bool))`: provider lookup → constant-time hash check → `Login`. Unknown users still pay for a hash verification against a dummy hash, and both failures return the same 422 error (`TestSecurity_A07_LoginErrorsDoNotRevealUsers`). Failures emit the `auth.login_failed` security event.
+- `Login(c, u)` regenerates the session id (fixation) and stores the user id under `auth_<guard>`; `Logout(c)` invalidates the session and deletes the remember-me token.
+- Remember-me: cookie `remember_<guard>` = `<id>.<secret>` (HttpOnly, SameSite=Lax, Secure unless `InsecureCookies`), only `SHA-256(secret)` stored in `remember_tokens`, single use and rotated on every use, 30 days by default (`RememberFor`).
+- Rehash on login when `hasher.NeedsRehash` (e.g. bcrypt → argon2id) and the provider implements `PasswordUpdater`.
 
-### `access_token` (API)
+### Token guard (`api`)
 
-- Opaque token `<id>.<secret>` where secret is `crypto/rand.Text()`; only `SHA-256(secret)` is stored in `access_tokens(id, user_id, name, hash, abilities, last_used_at, expires_at)`.
-- `auth.Tokens.Create(ctx, user, "cli", []string{"posts:read"}, 30*24*time.Hour)` returns the plain token once.
-- Compared with `subtle.ConstantTimeCompare`; `TokenCan(c, "posts:read")`.
-- Revocation: delete the row. JWT is intentionally not the default (revocable, simpler); a JWT guard can be added later behind the same `Guard` interface.
+- Opaque tokens `<id>.<secret>` (`crypto/rand.Text()`); `access_tokens` stores `SHA-256(secret)`, name, abilities (JSON), `last_used_at` (updated at most once a minute) and optional expiry (`TestSecurity_A04_TokensStoredHashed`).
+- `tokens.Create(ctx, user.AuthID(), "cli", []string{"posts:read"}, 30*24*time.Hour)` returns the plain token once; `Revoke(ctx, id)`, `RevokeAll(ctx, userID)`; `auth.CurrentToken(c, "api")`, `auth.TokenCan(c, "api", "posts:read")`; `"*"` grants every ability.
+- Hashes are compared with `subtle.ConstantTimeCompare`; rejected tokens emit `token.rejected`. A JWT guard arrives in BETA (B.8.1).
 
 ### Middleware
 
 | Middleware | Effect |
 | --- | --- |
-| `auth.Required(guards...)` | 401 (API) or redirect to `login` route (web) |
-| `auth.Guest()` | redirect authenticated users to `home` |
-| `auth.Verified()` | requires `email_verified_at` |
-| `auth.Ability("posts:write")` | token ability check |
+| `auth.Required(guards...)` | first guard that authenticates wins; JSON clients get 401 with `WWW-Authenticate: Bearer`, browsers a redirect to the route named `login` (intended GET URL kept in the session under `auth.IntendedKey`) |
+| `auth.Guest(guards...)` | sends logged-in users to the route named `home` |
+| `auth.Verified(guard)` | 403 unless the user implements `EmailVerified() bool` and returns true |
+| `auth.Ability(guard, abilities...)` | 403 unless the token grants every ability (`authz.denied` event) |
+
+### Testing
+
+`app.Client(t).ActingAs("web", user)` starts a logged-in session; `.WithToken(plain)` sends a bearer token.
 
 ## Hashing
 
 | Driver | Default params | Notes |
 | --- | --- | --- |
 | **argon2id** (default) | m=64 MiB, t=1, p=4, 16-byte salt, 32-byte key | PHC string `$argon2id$v=19$m=…,t=…,p=…$salt$hash` |
-| bcrypt | cost 12 | 72-byte input limit enforced |
+| bcrypt | cost you choose (12 recommended) | inputs over 72 bytes are rejected (`ErrPasswordTooLong`), never truncated |
 
-`hash.Make`, `hash.Verify` (constant time), `hash.NeedsRehash`. Both from `golang.org/x/crypto`. In tests, `hash.Fake()` uses minimal parameters for speed.
+`hash.Default()`, `hash.Argon2id(params)`, `hash.Bcrypt(cost)`, `hash.Fake()` (tests). `Verify` reads both formats; `NeedsRehash` is true for other parameters or algorithms. Both come from `golang.org/x/crypto`.
 
 ## `install:auth` scaffold
 

@@ -46,6 +46,32 @@ func (c *Client) WithCookie(name, value string) *Client {
 	return c
 }
 
+// ActingAs logs the client in as user on the session guard named guard
+// ("web"), without going through the login form.
+func (c *Client) ActingAs(guard string, user interface{ AuthID() string }) *Client {
+	c.t.Helper()
+
+	m, err := c.app.Sessions()
+	if err != nil {
+		c.t.Fatalf("vukemtest: %v", err)
+	}
+
+	for _, ck := range m.Cookies(c.t.Context(), map[string]any{"auth_" + guard: user.AuthID()}) {
+		c.cookies[ck.Name] = ck
+	}
+
+	return c
+}
+
+// CookieValue returns the value of a cookie in the jar ("" when absent).
+func (c *Client) CookieValue(name string) string {
+	if ck, ok := c.cookies[name]; ok {
+		return ck.Value
+	}
+
+	return ""
+}
+
 // HTMX marks following requests as htmx partial requests.
 func (c *Client) HTMX() *Client {
 	return c.WithHeader("HX-Request", "true").WithHeader("HX-Request-Type", "partial")

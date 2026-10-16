@@ -221,6 +221,30 @@ func (m *Manager) Peek(ctx context.Context, cookies []*http.Cookie) map[string]a
 	return s.data
 }
 
+// Cookies returns the cookies of a new session holding data, as the
+// middleware would set them. Tests use it to start a request already
+// logged in (vukemtest Client.ActingAs).
+func (m *Manager) Cookies(ctx context.Context, data map[string]any) []*http.Cookie {
+	w := &headerRecorder{h: http.Header{}}
+	r, _ := http.NewRequestWithContext(ctx, http.MethodGet, "/", http.NoBody)
+
+	m.Middleware()(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		s := web.SessionFrom(r.Context())
+		for k, v := range data {
+			s.Put(k, v)
+		}
+	})).ServeHTTP(w, r)
+
+	return (&http.Response{Header: w.h}).Cookies()
+}
+
+// headerRecorder is the minimal ResponseWriter Cookies needs.
+type headerRecorder struct{ h http.Header }
+
+func (w *headerRecorder) Header() http.Header         { return w.h }
+func (w *headerRecorder) Write(b []byte) (int, error) { return len(b), nil }
+func (w *headerRecorder) WriteHeader(int)             {}
+
 // touchEvery limits idle-timeout refresh writes to one per minute.
 const touchEvery = time.Minute
 
