@@ -64,7 +64,7 @@ func (p *InertiaPage) Page() map[string]any { return p.page }
 
 // Prop returns the prop at path and whether it exists.
 func (p *InertiaPage) Prop(path string) (any, bool) {
-	var cur any = p.page["props"]
+	cur := p.page["props"]
 
 	for part := range strings.SplitSeq(path, ".") {
 		switch v := cur.(type) {
