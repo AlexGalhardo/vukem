@@ -496,3 +496,34 @@ func TestMemoryStoreExpiry(t *testing.T) {
 		t.Fatal("Delete")
 	}
 }
+
+func TestPeekAndStreaming(t *testing.T) {
+	t.Parallel()
+
+	m, _ := newManager(t, Config{})
+	h := m.Middleware()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		web.SessionFrom(r.Context()).Put("user", "ana")
+
+		if err := http.NewResponseController(w).Flush(); err != nil {
+			t.Error(err)
+		}
+
+		_, _ = w.Write([]byte("streamed"))
+	}))
+
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", http.NoBody)
+	h.ServeHTTP(rec, r.WithContext(web.WithServices(r.Context(), &web.Services{})))
+
+	if !rec.Flushed || rec.Body.String() != "streamed" {
+		t.Fatalf("flushed=%v body=%q", rec.Flushed, rec.Body.String())
+	}
+
+	if got := m.Peek(t.Context(), rec.Result().Cookies()); got["user"] != "ana" {
+		t.Fatalf("Peek = %v", got)
+	}
+
+	if got := m.Peek(t.Context(), nil); len(got) != 0 {
+		t.Fatalf("Peek without cookies = %v", got)
+	}
+}

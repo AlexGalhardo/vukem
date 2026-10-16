@@ -17,9 +17,9 @@ Task IDs: `<phase>.<group>.<task>` (e.g. `P.3.2`). Reference them in commit bodi
 
 | Field | Value |
 | --- | --- |
-| Current phase | **Prototype** |
-| Next task | `P.12.0` (P.0.9 waits for GitHub billing) |
-| Last release | `v0.0.12` (P.11 starter and `lumek new`) |
+| Current phase | **ALPHA** |
+| Next task | `A.0.1` (blocked: P.0.9 waits for GitHub billing; P.12.3 needs the repository to be public) |
+| Last release | `v0.1.1` (Prototype complete; starter JSON endpoints) |
 | Updated | 2026-10-16 |
 
 ## Design references
@@ -287,18 +287,18 @@ Applies to **every** task:
   → verify: `goreleaser release --snapshot --clean` builds all targets.
 - [x] **P.12.2** README quick start validated by following it on a clean machine/container.
   → verify: checklist in PR.
-- [ ] **P.12.3** Tag `v0.1.0`, warm proxy, verify `go install …/cmd/lumek@v0.1.0`.
+- [ ] **P.12.3** Tag `v0.1.0`, warm proxy, verify `go install …/cmd/lumek@v0.1.0`. Tagged and released with binaries; **blocked**: the repository is private, so proxy.golang.org cannot fetch it.
   → verify: pkg.go.dev shows docs and MIT license.
 
 ### Prototype exit criteria
 
 - [ ] `go install github.com/AlexGalhardo/golang-framework/cmd/lumek@latest` works on Windows, Linux, macOS.
-- [ ] `lumek new blog` → `lumek serve` → CRUD with HTMX partials, validation errors (422), flash messages — **no Node required**.
-- [ ] The starter's example controller also exposes JSON endpoints that return problem+json on errors, covered by API assertions.
-- [ ] Core coverage ≥ 80% overall; router, validate, session, orm, schema, config ≥ 90%.
+- [x] `lumek new blog` → `lumek serve` → CRUD with HTMX partials, validation errors (422), flash messages — **no Node required**.
+- [x] The starter's example controller also exposes JSON endpoints that return problem+json on errors, covered by API assertions.
+- [x] Core coverage ≥ 80% overall; router, validate, session, orm, schema, config ≥ 90%.
 - [ ] Zero third-party deps in core except `modernc.org/sqlite` and `golang.org/x/crypto`.
 - [ ] CI green on the full matrix; `govulncheck` clean.
-- [ ] Router benchmark: < 1 µs/op and ≤ 2 allocs for a static route on CI hardware (documented baseline).
+- [x] Router benchmark: < 1 µs/op and ≤ 2 allocs for a static route on CI hardware (documented baseline).
 - [ ] `go test -run TestSecurity ./...` covers every **P** row of [docs/security.md](docs/security.md); `gosec` and `govulncheck` clean.
 
 ---

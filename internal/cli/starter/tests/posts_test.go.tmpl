@@ -47,3 +47,25 @@ func TestPostsValidation(t *testing.T) {
 
 	lumektest.AssertDatabaseCount(t, app, "posts", 0)
 }
+
+func TestPostsJSON(t *testing.T) {
+	t.Parallel()
+
+	app := lumektest.New(t, bootstrap.New)
+	api := app.Client(t).AcceptJSON()
+
+	api.PostJSON("/posts", map[string]any{"title": "From the API", "body": "JSON"}).
+		AssertCreated().
+		AssertHeader("Location", "/posts/1").
+		AssertJSONPath("title", "From the API")
+
+	api.GetJSON("/posts").AssertOK().AssertJSONCount("data", 1)
+	api.GetJSON("/posts/1").AssertOK().AssertJSONPath("id", 1)
+	api.PutJSON("/posts/1", map[string]any{"title": "Renamed"}).AssertOK().AssertJSONPath("title", "Renamed")
+
+	api.PostJSON("/posts", map[string]any{"title": "x"}).AssertJSONValidationErrors("title")
+	api.GetJSON("/posts/99").AssertProblem(404)
+
+	api.Delete("/posts/1").AssertNoContent()
+	lumektest.AssertDatabaseCount(t, app, "posts", 0)
+}

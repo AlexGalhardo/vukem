@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"net/http"
+	"strconv"
 
 	"github.com/AlexGalhardo/golang-framework/database"
 	"github.com/AlexGalhardo/golang-framework/orm"
@@ -12,7 +13,8 @@ import (
 )
 
 // PostController is the example CRUD: forms with validation, flash
-// messages, and htmx fragments for search and delete.
+// messages, and htmx fragments for search and delete. The same actions
+// answer JSON (Accept: application/json), with problem+json errors.
 type PostController struct {
 	db *database.DB
 }
@@ -31,6 +33,10 @@ func (pc *PostController) Index(c *web.Ctx) error {
 	posts, err := q.Get(c.Context())
 	if err != nil {
 		return err
+	}
+
+	if c.WantsJSON() {
+		return c.JSON(http.StatusOK, map[string]any{"data": posts})
 	}
 
 	return c.Render("posts/index", map[string]any{"Posts": posts, "Search": c.Query("q")}, web.Block("post-list"))
@@ -52,6 +58,10 @@ func (pc *PostController) Store(c *web.Ctx) error {
 		return err
 	}
 
+	if c.WantsJSON() {
+		return c.Created("/posts/"+strconv.FormatInt(post.ID, 10), post)
+	}
+
 	_ = c.Flash("success", "Post created.")
 
 	return c.RedirectRoute("posts.show", "post", post.ID)
@@ -62,6 +72,10 @@ func (pc *PostController) Show(c *web.Ctx) error {
 	post, err := pc.find(c)
 	if err != nil {
 		return err
+	}
+
+	if c.WantsJSON() {
+		return c.JSON(http.StatusOK, post)
 	}
 
 	return c.Render("posts/show", post)
@@ -94,6 +108,10 @@ func (pc *PostController) Update(c *web.Ctx) error {
 		return err
 	}
 
+	if c.WantsJSON() {
+		return c.JSON(http.StatusOK, post)
+	}
+
 	_ = c.Flash("success", "Post updated.")
 
 	return c.RedirectRoute("posts.show", "post", post.ID)
@@ -111,7 +129,10 @@ func (pc *PostController) Destroy(c *web.Ctx) error {
 		return err
 	}
 
-	if c.IsHTMX() {
+	switch {
+	case c.WantsJSON():
+		return c.NoContent()
+	case c.IsHTMX():
 		return c.String(http.StatusOK, "")
 	}
 
