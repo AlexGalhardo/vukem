@@ -76,6 +76,7 @@ type Route struct {
 	handler http.Handler
 	mw      []Middleware
 	group   *Group
+	doc     any
 }
 
 // Name sets the route name used by URL generation. The names of enclosing
@@ -94,6 +95,16 @@ func (rt *Route) FullName() string {
 	return rt.group.namePrefix() + rt.name
 }
 
+// Path returns the full pattern path, group prefixes included.
+func (rt *Route) Path() string { return rt.path }
+
+// Doc attaches documentation (e.g. an api.Operation) that generators such
+// as the OpenAPI exporter read back through RouteInfo.Doc.
+func (rt *Route) Doc(v any) *Route {
+	rt.doc = v
+	return rt
+}
+
 // Use appends route middleware.
 func (rt *Route) Use(mw ...Middleware) *Route {
 	rt.mw = append(rt.mw, mw...)
@@ -106,6 +117,7 @@ type RouteInfo struct {
 	Path       string   `json:"path"`
 	Name       string   `json:"name,omitempty"`
 	Middleware []string `json:"middleware,omitempty"`
+	Doc        any      `json:"-"`
 }
 
 // Get registers a GET route (it also answers HEAD).
@@ -381,7 +393,7 @@ func (r *Router) Routes() []RouteInfo {
 	infos := make([]RouteInfo, 0, len(r.routes))
 
 	for _, rt := range r.routes {
-		info := RouteInfo{Method: rt.method, Path: rt.path, Name: rt.FullName()}
+		info := RouteInfo{Method: rt.method, Path: rt.path, Name: rt.FullName(), Doc: rt.doc}
 		if info.Method == "" {
 			info.Method = "ANY"
 		}

@@ -18,7 +18,7 @@ Task IDs: `<phase>.<group>.<task>` (e.g. `P.3.2`). Reference them in commit bodi
 | Field | Value |
 | --- | --- |
 | Current phase | **ALPHA** |
-| Next task | BETA `B.0.1` (typed handlers) |
+| Next task | `B.0.2` (OpenAPI 3.1 generator) |
 | Last release | `v0.14.0` (A.7.2 example blog, auth.Optional) |
 | Updated | 2026-10-16 |
 
@@ -448,7 +448,7 @@ Applies to **every** task:
 
 ### B.0 OpenAPI & API hardening
 
-- [ ] **B.0.1** Typed handlers `api.Register(g, pattern, op, func(c, In) (Out, error))`.
+- [x] **B.0.1** Typed handlers `api.Register(g, pattern, op, func(c, In) (Out, error))`.
   → verify: tests for binding, validation and response encoding.
 - [ ] **B.0.2** OpenAPI 3.1 generator (schemas from `json`/`validate` tags, problem catalogue, security schemes), `/openapi.json`, `vukem openapi:export`.
   → verify: generated document validates against the OpenAPI 3.1 JSON Schema; golden test.

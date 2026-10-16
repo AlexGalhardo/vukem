@@ -210,6 +210,9 @@ api.Register(g, "POST /products", api.Op{
 }, func(c *web.Ctx, in requests.StoreProduct) (resources.ProductJSON, error) { ... })
 ```
 
+- Input: query string, JSON/form body (not for GET, HEAD, DELETE) and path parameters, which win over body fields; validated with the input struct's `validate` tags (422 with field errors). `struct{}` means no input.
+- Output: JSON with `Op.Status`, or 201 for POST, 204 when the output type is `struct{}`, 200 otherwise. Errors returned by the handler go through the normal problem+json path.
+- Each typed route carries an `api.Operation` (`router.RouteInfo.Doc`) with its method, full path, params and input/output types for the generators below.
 - Request schema from the input struct (`json` + `validate` tags), response schema from the output type, errors from the problem catalogue.
 - `GET /openapi.json` (configurable, off in production by default) and `vukem openapi:export > openapi.json`.
 - Plain `HandlerFunc` routes still work; they appear in the document with a generic schema unless described with `api.Doc(...)`.

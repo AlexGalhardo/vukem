@@ -54,6 +54,12 @@ func ParseParams[T any](c *Ctx, schema z.Schema[T], names ...string) (T, error) 
 	return v, err
 }
 
+// ParseInput validates an already assembled input map (validation errors
+// become a 422 ValidationError).
+func ParseInput[T any](schema z.Schema[T], input map[string]any) (T, error) {
+	return parseWith(schema, input)
+}
+
 func parseWith[T any](schema z.Schema[T], input any) (T, error) {
 	v, err := schema.Parse(input)
 	if err == nil {
