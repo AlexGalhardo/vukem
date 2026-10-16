@@ -509,6 +509,10 @@ func TestInputJSONFormQuery(t *testing.T) {
 			t.Fatalf("Input() = %v, %v", got, err)
 		}
 
+		if fh, ok := got["upload"].(*multipart.FileHeader); !ok || fh.Filename != "a.txt" {
+			t.Fatalf("Input()[upload] = %#v, want the file header", got["upload"])
+		}
+
 		f, h, err := c.FormFile("upload")
 		if err != nil {
 			t.Fatal(err)
@@ -610,6 +614,36 @@ func TestSecurity_A06_InputRejectsOversizedForm(t *testing.T) {
 
 	if _, err := c.Input(); errs.Status(err) != http.StatusRequestEntityTooLarge {
 		t.Fatalf("Input() = %v, want 413", err)
+	}
+}
+
+func TestLimitBodyReplacesEarlierLimit(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct {
+		name          string
+		first, second int64
+		wantErr       bool
+	}{
+		{name: "route raises the router default", first: 10, second: 1000},
+		{name: "route lowers it", first: 1000, second: 10, wantErr: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			r := httptest.NewRequestWithContext(t.Context(), "POST", "/", strings.NewReader(strings.Repeat("x", 100)))
+			rec := httptest.NewRecorder()
+			r = LimitBody(rec, LimitBody(rec, r, tt.first), tt.second)
+
+			_, err := io.ReadAll(r.Body)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("ReadAll() = %v, wantErr %v", err, tt.wantErr)
+			}
+
+			if n, ok := BodyLimitOf(r); !ok || n != tt.second {
+				t.Fatalf("BodyLimitOf() = %d, %v, want %d", n, ok, tt.second)
+			}
+		})
 	}
 }
 

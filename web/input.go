@@ -50,9 +50,40 @@ func (c *Ctx) Input() (map[string]any, error) {
 		}
 
 		maps.Copy(out, FormToMap(c.r.PostForm))
+		maps.Copy(out, fileInput(c.r.MultipartForm))
 	}
 
 	return out, nil
+}
+
+// fileInput exposes uploaded files to schemas (z.File): one file is a
+// *multipart.FileHeader, several (or a "name[]" key) a list of them.
+func fileInput(f *multipart.Form) map[string]any {
+	out := map[string]any{}
+	if f == nil {
+		return out
+	}
+
+	for key, fhs := range f.File {
+		name, list := strings.CutSuffix(key, "[]")
+		if name == "" || len(fhs) == 0 || strings.ContainsAny(name, "[]") {
+			continue
+		}
+
+		if len(fhs) == 1 && !list {
+			out[name] = fhs[0]
+			continue
+		}
+
+		items := make([]any, len(fhs))
+		for i, fh := range fhs {
+			items[i] = fh
+		}
+
+		out[name] = items
+	}
+
+	return out
 }
 
 // QueryInput returns the query string as a generic map (see Input).
@@ -90,15 +121,37 @@ func (c *Ctx) FormValue(name string) string {
 
 type bodyLimitKey struct{}
 
+// bodyLimit remembers the unlimited body so a later, more specific limit
+// (a route's BodyLimit, upload rules) replaces the router default instead
+// of nesting under it.
+type bodyLimit struct {
+	n    int64
+	body io.ReadCloser
+}
+
 // LimitBody caps the request body at n bytes and marks the request so
-// handlers do not apply DefaultMaxBody on top. Body-limit middleware uses it.
+// handlers do not apply DefaultMaxBody on top. Body-limit middleware uses
+// it. Called again on the same request, the new limit replaces the old
+// one, so a route can raise or lower the router-wide default.
 func LimitBody(w http.ResponseWriter, r *http.Request, n int64) *http.Request {
-	r.Body = http.MaxBytesReader(w, r.Body, n)
-	return r.WithContext(context.WithValue(r.Context(), bodyLimitKey{}, n))
+	orig := r.Body
+	if prev, ok := r.Context().Value(bodyLimitKey{}).(bodyLimit); ok {
+		orig = prev.body
+	}
+
+	r.Body = http.MaxBytesReader(w, orig, n)
+
+	return r.WithContext(context.WithValue(r.Context(), bodyLimitKey{}, bodyLimit{n: n, body: orig}))
+}
+
+// BodyLimitOf returns the body limit set by LimitBody, if any.
+func BodyLimitOf(r *http.Request) (int64, bool) {
+	l, ok := r.Context().Value(bodyLimitKey{}).(bodyLimit)
+	return l.n, ok
 }
 
 func (c *Ctx) limitBody() {
-	if _, limited := c.r.Context().Value(bodyLimitKey{}).(int64); !limited {
+	if _, limited := BodyLimitOf(c.r); !limited {
 		c.r = LimitBody(c.w, c.r, DefaultMaxBody)
 	}
 }
