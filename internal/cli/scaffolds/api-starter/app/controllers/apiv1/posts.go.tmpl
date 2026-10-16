@@ -1,0 +1,110 @@
+package apiv1
+
+import (
+	"net/http"
+	"strconv"
+
+	"github.com/AlexGalhardo/vukem/api"
+	"github.com/AlexGalhardo/vukem/database"
+	"github.com/AlexGalhardo/vukem/orm"
+	"github.com/AlexGalhardo/vukem/web"
+
+	"{{.Module}}/app/models"
+	"{{.Module}}/app/requests"
+	"{{.Module}}/app/resources"
+)
+
+// Posts is the example JSON resource controller.
+type Posts struct {
+	db *database.DB
+}
+
+// NewPosts returns the posts controller.
+func NewPosts(db *database.DB) *Posts { return &Posts{db: db} }
+
+// Index lists posts with ?filter[title]=, ?sort=, ?page= and ?per_page=.
+func (p *Posts) Index(c *web.Ctx) error {
+	req, err := api.Query(c, orm.QueryOf[models.Post](p.db),
+		api.Filters("title"),
+		api.Sorts("title", "created_at", "-id"),
+		api.PerPage(20, 100),
+	)
+	if err != nil {
+		return err
+	}
+
+	page, err := req.Paginate(c.Context())
+	if err != nil {
+		return err
+	}
+
+	return api.Page(c, page, resources.Post)
+}
+
+// Show returns one post.
+func (p *Posts) Show(c *web.Ctx) error {
+	post, err := p.find(c)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, resources.Post(post))
+}
+
+// Store creates a post.
+func (p *Posts) Store(c *web.Ctx) error {
+	in, err := web.Parse(c, requests.PostSchema)
+	if err != nil {
+		return err
+	}
+
+	post := models.Post{Title: in.Title, Body: in.Body}
+	if err := orm.Create(c.Context(), p.db, &post); err != nil {
+		return err
+	}
+
+	return c.Created("/api/v1/posts/"+strconv.FormatInt(post.ID, 10), resources.Post(post))
+}
+
+// Update changes a post.
+func (p *Posts) Update(c *web.Ctx) error {
+	post, err := p.find(c)
+	if err != nil {
+		return err
+	}
+
+	in, err := web.Parse(c, requests.PostSchema)
+	if err != nil {
+		return err
+	}
+
+	post.Title, post.Body = in.Title, in.Body
+	if err := orm.Update(c.Context(), p.db, &post); err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, resources.Post(post))
+}
+
+// Destroy deletes a post.
+func (p *Posts) Destroy(c *web.Ctx) error {
+	post, err := p.find(c)
+	if err != nil {
+		return err
+	}
+
+	if err := orm.Delete(c.Context(), p.db, &post); err != nil {
+		return err
+	}
+
+	return c.NoContent()
+}
+
+func (p *Posts) find(c *web.Ctx) (models.Post, error) {
+	id, err := c.ParamInt("post")
+	if err != nil {
+		return models.Post{}, err
+	}
+
+	return orm.QueryOf[models.Post](p.db).Find(c.Context(), id)
+}

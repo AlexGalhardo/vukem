@@ -9,6 +9,7 @@ Usage:
   version                 Print the vukem version
  install
   install:auth            Add login, registration, password reset and email verification
+  install:api             Add API tokens, /api/v1 routes, CORS and rate limiting
  key
   key:generate            Write a new APP_KEY to .env
  make

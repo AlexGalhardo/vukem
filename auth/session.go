@@ -64,6 +64,18 @@ func Remember(on bool) LoginOption { return func(o *loginOpts) { o.remember = on
 // in. It returns a 422 validation error on the identifier field when they
 // do not match, taking the same time whether or not the user exists.
 func (g *SessionGuard[U]) Attempt(c *web.Ctx, creds map[string]string, opts ...LoginOption) (U, error) {
+	u, err := g.Validate(c, creds)
+	if err != nil {
+		return u, err
+	}
+
+	return u, g.Login(c, u, opts...)
+}
+
+// Validate checks creds like Attempt without logging in (API token
+// issuance). Unknown users cost the same hash verification and get the
+// same 422 error; a stale hash is upgraded after a successful check.
+func (g *SessionGuard[U]) Validate(c *web.Ctx, creds map[string]string) (U, error) {
 	var zero U
 
 	u, err := g.provider.ByCredentials(c.Context(), creds)
@@ -87,12 +99,12 @@ func (g *SessionGuard[U]) Attempt(c *web.Ctx, creds map[string]string, opts ...L
 	if g.hasher.NeedsRehash(u.AuthPassword()) {
 		if up, ok := g.provider.(PasswordUpdater[U]); ok {
 			if h, err := g.hasher.Make(creds["password"]); err == nil {
-				_ = up.UpdatePassword(c.Context(), u, h) // best effort: the login itself succeeded
+				_ = up.UpdatePassword(c.Context(), u, h) // best effort: the credentials were valid
 			}
 		}
 	}
 
-	return u, g.Login(c, u, opts...)
+	return u, nil
 }
 
 // Login logs u in: the session id is regenerated (fixation) and the user

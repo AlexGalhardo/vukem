@@ -1,0 +1,41 @@
+package routes
+
+import (
+	"github.com/AlexGalhardo/vukem"
+	"github.com/AlexGalhardo/vukem/auth"
+	"github.com/AlexGalhardo/vukem/middleware"
+	"github.com/AlexGalhardo/vukem/router"
+
+	"{{.Module}}/app/accounts"
+	"{{.Module}}/app/controllers/apiv1"
+)
+
+// Posts is the example JSON resource: anyone can read, token holders write.
+func Posts(r *router.Router, app *vukem.App) error {
+	acc, err := accounts.New(app)
+	if err != nil {
+		return err
+	}
+
+	db, err := app.DB()
+	if err != nil {
+		return err
+	}
+
+	posts := apiv1.NewPosts(db)
+
+	r.Group("/api/v1", func(g *router.Group) {
+		g.Use(middleware.JSONOnly())
+		g.Get("/posts", posts.Index).Name("posts.index")
+		g.Get("/posts/{post}", posts.Show).Name("posts.show")
+
+		g.Group("", func(w *router.Group) {
+			w.Use(auth.Required(acc.API))
+			w.Post("/posts", posts.Store).Name("posts.store")
+			w.Patch("/posts/{post}", posts.Update).Name("posts.update")
+			w.Delete("/posts/{post}", posts.Destroy).Name("posts.destroy")
+		})
+	}).Name("api.v1.")
+
+	return nil
+}

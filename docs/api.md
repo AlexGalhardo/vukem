@@ -5,21 +5,22 @@ Vukem is equally a framework for **JSON/REST APIs** and for server-rendered apps
 ## Starter
 
 ```sh
-vukem new shop --api        # JSON-only skeleton (no views, no htmx, no session/CSRF stack)
-vukem install:api           # add an API route group to an existing web app
+vukem new shop --api        # JSON-only skeleton (no views, no htmx, no sessions or CSRF)
+vukem install:api           # add token auth and /api/v1 to an existing project (web or API)
 ```
 
-API skeleton differences from the web starter:
+`vukem new shop --api` produces:
 
-| Area | Web starter | API starter |
-| --- | --- | --- |
-| Routes | `routes/web.go` | `routes/api.go` (prefix `/api/v1`) |
-| Middleware (router stack) | session, CSRF, flash | request id, JSON body limit, CORS, rate limit |
-| Auth guard | `session` | `access_token` (ALPHA) |
-| Errors | HTML / 422 fragment | `application/problem+json` |
-| Extra folders | `resources/views`, `public` | `app/resources` (transformers) |
+| Area | What you get |
+| --- | --- |
+| Middleware | `vukem.APIMiddleware`: recover, request id, logging, security headers, body limit; no sessions or CSRF |
+| Auth | users, `accounts` (shared with `install:auth`), opaque access tokens: `POST /api/v1/tokens` (email, password, device_name → 201 `{token, type, expires_at}`, 5 per minute per IP), `GET /api/v1/me`, `DELETE /api/v1/tokens/current` |
+| Example resource | `/api/v1/posts`: public reads with `?filter[title]`, `?sort=title,-id`, `?page`/`?per_page` envelopes; token-protected writes |
+| Cross-cutting | CORS from `CORS_ALLOWED_ORIGINS` (deny by default), 60 requests per minute per token/IP, problem+json errors |
+| Wire format | `app/resources` transformers (`vukem make:resource`) |
+| Tests | `tests/api_tokens_test.go`, `tests/posts_test.go` |
 
-A web app can have both: `routes/web.go` and `routes/api.go`, each group with its own middleware stack.
+`install:api` adds the token routes to a web app; it reuses the authentication core when `install:auth` already ran. A web app can serve both: `routes.All()` lists each route file.
 
 ## Routing
 

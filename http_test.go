@@ -307,3 +307,27 @@ func TestSessionDrivers(t *testing.T) {
 		t.Fatal("database driver without a usable database")
 	}
 }
+
+func TestAPIMiddleware(t *testing.T) {
+	t.Parallel()
+
+	app := newTestApp(t, WithRoutes(func(r *router.Router, app *App) error {
+		r.Post("/api/things", func(c *web.Ctx) error { return c.JSON(201, map[string]string{"ok": "yes"}) })
+		return APIMiddleware(app, r)
+	}))
+
+	h, err := app.Handler()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/things", strings.NewReader("{}"))
+	req.Header.Set("Content-Type", "application/json")
+	h.ServeHTTP(rec, req)
+
+	// No session cookie and no CSRF check for API apps.
+	if rec.Code != 201 || rec.Header().Get("Set-Cookie") != "" || rec.Header().Get("X-Request-Id") == "" {
+		t.Fatalf("api = %d %v", rec.Code, rec.Header())
+	}
+}

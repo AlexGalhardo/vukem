@@ -46,6 +46,7 @@ type starterData struct {
 func newProject(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 	module := set.String("module", "", "Go module path (default: the project name)")
 	framework := set.String("framework", "", "path to a local Vukem checkout to use instead of a release")
+	apiOnly := set.Bool("api", false, "JSON API starter: tokens, /api/v1, no views or sessions")
 
 	return func(ctx context.Context, env *Env, args []string) error {
 		name, err := oneArg(args, "project name")
@@ -73,6 +74,12 @@ func newProject(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 
 		project := *env
 		project.Dir = dir
+
+		if *apiOnly {
+			if err := makeAPIStarter(&project, data); err != nil {
+				return err
+			}
+		}
 
 		if err := requireFramework(ctx, &project, *framework); err != nil {
 			return err
@@ -191,4 +198,45 @@ func releaseVersion(v string) string {
 	}
 
 	return v
+}
+
+// apiStarterRemove lists the HTMX starter files an API project drops.
+var apiStarterRemove = []string{
+	"resources/views/home.html", "resources/views/layouts", "resources/views/partials", "resources/views/posts",
+	"resources/public", "app/controllers/home.go", "app/controllers/post_controller.go", "routes/web.go",
+	"tests/home_test.go",
+}
+
+// makeAPIStarter turns the starter into a JSON API: the api-starter
+// overlay, the authentication core and the API token routes.
+func makeAPIStarter(env *Env, sd starterData) error {
+	for _, rel := range apiStarterRemove {
+		if err := os.RemoveAll(env.path(filepath.FromSlash(rel))); err != nil {
+			return err
+		}
+	}
+
+	data, err := scaffoldData(env)
+	if err != nil {
+		return err
+	}
+
+	data["Name"], data["Module"] = sd.Name, sd.Module
+
+	for _, name := range []string{"api-starter", "auth-core", "api"} {
+		if err := installScaffold(env, name, data, true); err != nil {
+			return err
+		}
+	}
+
+	for _, reg := range []registration{
+		{"database/migrations/registry.go", "All", "m" + data["TS1"] + "CreateUsersTable()"},
+		{"database/migrations/registry.go", "All", "m" + data["TS2"] + "CreateAuthTables()"},
+	} {
+		if err := register(env, reg.file, reg.fn, reg.expr); err != nil {
+			return err
+		}
+	}
+
+	return appendEnvExample(env, []string{"CORS_ALLOWED_ORIGINS"})
 }

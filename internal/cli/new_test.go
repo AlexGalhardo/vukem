@@ -211,6 +211,17 @@ func TestNewProjectEndToEnd(t *testing.T) {
 		t.Fatalf("unknown provider = %d %s", code, errOut)
 	}
 
+	// install:api on a web project reuses the authentication core.
+	if code, out, errOut := vukem(
+		t,
+		project,
+		"install:api",
+	); code != 0 ||
+		!strings.Contains(out, "created routes/api.go") ||
+		strings.Contains(out, "created app/accounts/accounts.go") {
+		t.Fatalf("install:api = %d\n%s%s", code, out, errOut)
+	}
+
 	cmd = exec.CommandContext(t.Context(), "go", "test", "./...")
 	cmd.Dir = project
 	cmd.Env = append(os.Environ(), "GOWORK=off")
@@ -239,5 +250,53 @@ func TestReleaseVersion(t *testing.T) {
 		if got := releaseVersion(in); got != want {
 			t.Errorf("releaseVersion(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// TestNewAPIProjectEndToEnd creates a JSON API project and runs its tests.
+func TestNewAPIProjectEndToEnd(t *testing.T) {
+	t.Parallel()
+	requireGo(t)
+
+	repo, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dir := t.TempDir()
+
+	code, out, errOut := vukem(t, dir, "new", "shop", "--api", "--module", "example.com/shop", "--framework", repo)
+	if code != 0 {
+		t.Fatalf("vukem new --api = %d\n%s%s", code, out, errOut)
+	}
+
+	project := filepath.Join(dir, "shop")
+
+	for _, gone := range []string{"resources/public", "routes/web.go", "resources/views/home.html"} {
+		if _, err := os.Stat(filepath.Join(project, filepath.FromSlash(gone))); err == nil {
+			t.Errorf("%s still exists in the API starter", gone)
+		}
+	}
+
+	if env := read(t, project, ".env.example"); !strings.Contains(env, "CORS_ALLOWED_ORIGINS=") {
+		t.Errorf(".env.example = %q", env)
+	}
+
+	cmd := exec.CommandContext(t.Context(), "go", "test", "./...")
+	cmd.Dir = project
+	cmd.Env = append(os.Environ(), "GOWORK=off")
+
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("API starter tests: %v\n%s", err, out)
+	}
+
+	if code, out, errOut := vukem(
+		t,
+		project,
+		"route:list",
+	); code != 0 ||
+		!strings.Contains(out, "api.v1.posts.index") ||
+		!strings.Contains(out, "api.v1.tokens.store") {
+		t.Fatalf("route:list = %d\n%s%s", code, out, errOut)
 	}
 }

@@ -18,8 +18,8 @@ Task IDs: `<phase>.<group>.<task>` (e.g. `P.3.2`). Reference them in commit bodi
 | Field | Value |
 | --- | --- |
 | Current phase | **ALPHA** |
-| Next task | `A.0.6` (API starter, install:api), then A.6 |
-| Last release | `v0.9.0` (A.3.10 install:auth --social) |
+| Next task | `A.6.1` |
+| Last release | `v0.10.0` (A.0.6 API starter and install:api) |
 | Updated | 2026-10-16 |
 
 ## Design references
@@ -319,7 +319,7 @@ Applies to **every** task:
   → verify: preflight and 429 tests.
 - [x] **A.0.5** Unique-violation → 409 mapping per dialect; `Deprecation`/`Sunset` header helper.
   → verify: tests on SQLite and Postgres.
-- [ ] **A.0.6** `vukem new <name> --api` starter and `vukem install:api` (token issue/revoke endpoints, `routes/api.go`, tests). needs: A.3.4
+- [x] **A.0.6** `vukem new <name> --api` starter and `vukem install:api` (token issue/revoke endpoints, `routes/api.go`, tests). needs: A.3.4
   → verify: e2e: generated API app tests pass on all OSes.
 
 ### A.1 Postgres driver module
@@ -432,8 +432,8 @@ Applies to **every** task:
 
 ### ALPHA exit criteria
 
-- [ ] `vukem install:auth` produces a working login/register/reset/verify flow with passing generated tests.
-- [ ] `vukem new shop --api` produces a token-authenticated JSON API with pagination, filtering, CORS, rate limiting and problem+json errors, with passing generated tests.
+- [x] `vukem install:auth` produces a working login/register/reset/verify flow with passing generated tests.
+- [x] `vukem new shop --api` produces a token-authenticated JSON API with pagination, filtering, CORS, rate limiting and problem+json errors, with passing generated tests.
 - [ ] ORM + schema conformance suite green on SQLite and Postgres.
 - [ ] Mail, cache, storage, events, rate limiting each have a fake and docs.
 - [ ] Core deps still within the allowlist; Postgres pulled only via `drivers/postgres`.

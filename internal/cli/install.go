@@ -32,47 +32,29 @@ func installAuth(set *flag.FlagSet) func(context.Context, *Env, []string) error 
 	socialList := set.String("social", "", "also add social login: "+strings.Join(socialProviders, ","))
 
 	return func(ctx context.Context, env *Env, _ []string) error {
-		mod, err := modulePath(env)
+		providers, err := parseProviders(*socialList)
 		if err != nil {
 			return err
 		}
 
-		var providers []string
-
-		for p := range strings.SplitSeq(*socialList, ",") {
-			if p = strings.TrimSpace(strings.ToLower(p)); p == "" {
-				continue
-			}
-
-			if !slices.Contains(socialProviders, p) {
-				return usagef("unknown social provider %q (one of %s)", p, strings.Join(socialProviders, ", "))
-			}
-
-			providers = append(providers, p)
+		data, err := scaffoldData(env)
+		if err != nil {
+			return err
 		}
 
-		now := env.Now().UTC()
-		data := map[string]string{
-			"Module": mod,
-			"TS1":    now.Format("20060102150405"),
-			"TS2":    now.Add(time.Second).Format("20060102150405"),
-			"TS3":    now.Add(2 * time.Second).Format("20060102150405"),
+		regs, err := installCore(env, data, *force)
+		if err != nil {
+			return err
 		}
-
-		var regs []registration
 
 		// With --social on a project that already has install:auth, add only
 		// the social part.
-		if len(providers) == 0 || *force || !exists(env, filepath.Join("app", "accounts", "accounts.go")) {
-			if err := installScaffold(env, "auth", data, *force); err != nil {
+		if len(providers) == 0 || *force || !exists(env, filepath.Join("routes", "auth.go")) {
+			if err := installScaffold(env, "auth-web", data, *force); err != nil {
 				return err
 			}
 
-			regs = append(regs,
-				registration{"database/migrations/registry.go", "All", "m" + data["TS1"] + "CreateUsersTable()"},
-				registration{"database/migrations/registry.go", "All", "m" + data["TS2"] + "CreateAuthTables()"},
-				registration{"routes/registry.go", "All", "Auth"},
-			)
+			regs = append(regs, registration{"routes/registry.go", "All", "Auth"})
 		}
 
 		if len(providers) > 0 {
@@ -98,19 +80,12 @@ func installAuth(set *flag.FlagSet) func(context.Context, *Env, []string) error 
 				registration{"routes/registry.go", "All", "Social"},
 			)
 
-			if err := appendEnvExample(env, providers); err != nil {
+			if err := appendEnvExample(env, socialEnv(providers)); err != nil {
 				return err
 			}
 		}
 
-		for _, reg := range regs {
-			if err := register(env, reg.file, reg.fn, reg.expr); err != nil {
-				return err
-			}
-		}
-
-		// The scaffold imports packages (auth/hash → x/crypto) the starter did not.
-		if err := tool(ctx, env, "go", "mod", "tidy"); err != nil {
+		if err := finishInstall(ctx, env, regs); err != nil {
 			return err
 		}
 
@@ -123,10 +98,121 @@ func installAuth(set *flag.FlagSet) func(context.Context, *Env, []string) error 
 	}
 }
 
+func installAPI(set *flag.FlagSet) func(context.Context, *Env, []string) error {
+	force := set.Bool("force", false, "overwrite existing files")
+
+	return func(ctx context.Context, env *Env, _ []string) error {
+		data, err := scaffoldData(env)
+		if err != nil {
+			return err
+		}
+
+		regs, err := installCore(env, data, *force)
+		if err != nil {
+			return err
+		}
+
+		if err := installScaffold(env, "api", data, *force); err != nil {
+			return err
+		}
+
+		regs = append(regs, registration{"routes/registry.go", "All", "API"})
+
+		if err := appendEnvExample(env, []string{"CORS_ALLOWED_ORIGINS"}); err != nil {
+			return err
+		}
+
+		if err := finishInstall(ctx, env, regs); err != nil {
+			return err
+		}
+
+		fmt.Fprint(env.Stdout, "\nAPI installed: POST /api/v1/tokens, GET /api/v1/me, DELETE /api/v1/tokens/current.\n"+
+			"Run vukem migrate, and set CORS_ALLOWED_ORIGINS for browser clients.\n\n")
+
+		return nil
+	}
+}
+
+func parseProviders(list string) ([]string, error) {
+	var providers []string
+
+	for p := range strings.SplitSeq(list, ",") {
+		if p = strings.TrimSpace(strings.ToLower(p)); p == "" {
+			continue
+		}
+
+		if !slices.Contains(socialProviders, p) {
+			return nil, usagef("unknown social provider %q (one of %s)", p, strings.Join(socialProviders, ", "))
+		}
+
+		providers = append(providers, p)
+	}
+
+	return providers, nil
+}
+
+func scaffoldData(env *Env) (map[string]string, error) {
+	mod, err := modulePath(env)
+	if err != nil {
+		return nil, err
+	}
+
+	now := env.Now().UTC()
+
+	return map[string]string{
+		"Module": mod,
+		"Name":   filepath.Base(env.dirOrDot()),
+		"TS1":    now.Format("20060102150405"),
+		"TS2":    now.Add(time.Second).Format("20060102150405"),
+		"TS3":    now.Add(2 * time.Second).Format("20060102150405"),
+	}, nil
+}
+
+// installCore installs the shared authentication core (users, accounts,
+// tokens, mails) unless the project already has it.
+func installCore(env *Env, data map[string]string, force bool) ([]registration, error) {
+	if exists(env, filepath.Join("app", "accounts", "accounts.go")) && !force {
+		return nil, nil
+	}
+
+	if err := installScaffold(env, "auth-core", data, force); err != nil {
+		return nil, err
+	}
+
+	return []registration{
+		{"database/migrations/registry.go", "All", "m" + data["TS1"] + "CreateUsersTable()"},
+		{"database/migrations/registry.go", "All", "m" + data["TS2"] + "CreateAuthTables()"},
+	}, nil
+}
+
+// finishInstall registers the new code and fetches its dependencies.
+func finishInstall(ctx context.Context, env *Env, regs []registration) error {
+	for _, reg := range regs {
+		if err := register(env, reg.file, reg.fn, reg.expr); err != nil {
+			return err
+		}
+	}
+
+	// Scaffolds import packages (auth/hash → x/crypto) the starter did not.
+	return tool(ctx, env, "go", "mod", "tidy")
+}
+
+func socialEnv(providers []string) []string {
+	var keys []string
+
+	for _, p := range providers {
+		up := strings.ToUpper(p)
+		keys = append(keys, "SOCIAL_"+up+"_CLIENT_ID", "SOCIAL_"+up+"_CLIENT_SECRET")
+	}
+
+	return keys
+}
+
 type registration struct{ file, fn, expr string }
 
-// appendEnvExample documents the provider credentials in .env.example.
-func appendEnvExample(env *Env, providers []string) error {
+// appendEnvExample adds empty KEY= lines to .env.example for keys it does
+// not mention yet.
+func appendEnvExample(env *Env, keys []string) error {
 	p := env.path(".env.example")
 
 	b, err := os.ReadFile(p)
@@ -143,13 +229,10 @@ func appendEnvExample(env *Env, providers []string) error {
 		text += "\n"
 	}
 
-	for _, pr := range providers {
-		key := "SOCIAL_" + strings.ToUpper(pr) + "_CLIENT_ID"
-		if strings.Contains(text, key) {
-			continue
+	for _, key := range keys {
+		if !strings.Contains(text, key+"=") {
+			text += key + "=\n"
 		}
-
-		text += key + "=\nSOCIAL_" + strings.ToUpper(pr) + "_CLIENT_SECRET=\n"
 	}
 
 	return writeFile(p, []byte(text))

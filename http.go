@@ -106,6 +106,22 @@ type SessionConfig struct {
 	Secure string `env:"SESSION_SECURE" default:"auto"`
 }
 
+// APIMiddleware installs the stack of JSON-only apps: recover, request
+// id, logging and security headers on the server; the body limit on
+// routes. There are no sessions or CSRF: API clients authenticate with
+// tokens (see auth.TokenGuard), and CORS is configured by the routes.
+func APIMiddleware(app *App, r *router.Router) error {
+	r.UseServer(
+		middleware.Recover(),
+		middleware.RequestID(),
+		middleware.Logger(app.Log),
+		middleware.SecureHeaders(middleware.SecureHeadersConfig{}),
+	)
+	r.Use(middleware.BodyLimit(web.DefaultMaxBody))
+
+	return nil
+}
+
 // Sessions returns the session manager, building it from SESSION_* on
 // first use. Use SetSessionStore before the first call to change the store.
 func (a *App) Sessions() (*session.Manager, error) {
