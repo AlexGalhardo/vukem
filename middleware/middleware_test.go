@@ -526,3 +526,21 @@ func TestGzip(t *testing.T) {
 		t.Errorf("204 = %d %v", rec.Code, rec.Header())
 	}
 }
+
+func TestSecurity_A09_LoggerNeverLogsCredentials(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	h := Logger(slog.New(slog.NewTextHandler(&buf, nil)))(http.HandlerFunc(ok))
+
+	r := get(t, "/private?token=abc")
+	r.Header.Set("Authorization", "Bearer s3cr3t")
+	r.AddCookie(&http.Cookie{Name: "lumek_session", Value: "c00kie"})
+	do(t, h, r)
+
+	for _, leaked := range []string{"s3cr3t", "c00kie", "token=abc"} {
+		if strings.Contains(buf.String(), leaked) {
+			t.Fatalf("log leaked %q: %s", leaked, buf.String())
+		}
+	}
+}

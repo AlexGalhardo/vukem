@@ -15,6 +15,7 @@ import (
 
 	"github.com/AlexGalhardo/golang-framework/config"
 	"github.com/AlexGalhardo/golang-framework/router"
+	"github.com/AlexGalhardo/golang-framework/session"
 )
 
 // Kind is the runtime in which the application is running. Providers can be
@@ -70,6 +71,11 @@ type App struct {
 	stdout    io.Writer
 	ready     chan<- string
 	noHTTP    bool
+
+	sessOnce  sync.Once
+	sessions  *session.Manager
+	sessStore session.Store
+	sessErr   error
 
 	mu       sync.Mutex
 	booted   bool

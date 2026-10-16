@@ -7,11 +7,15 @@ import (
 	"maps"
 	"net/http"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/AlexGalhardo/golang-framework/config"
+	"github.com/AlexGalhardo/golang-framework/csrf"
 	"github.com/AlexGalhardo/golang-framework/middleware"
 	"github.com/AlexGalhardo/golang-framework/router"
+	"github.com/AlexGalhardo/golang-framework/session"
 	"github.com/AlexGalhardo/golang-framework/web"
 )
 
@@ -89,10 +93,71 @@ func (a *App) healthHandler(c *web.Ctx) error {
 	return c.JSON(code, web.Map{"status": status, "checks": results})
 }
 
-// DefaultMiddleware installs Lumek's recommended stacks on r: server stack
-// Recover, RequestID, Logger, SecureHeaders, MethodOverride; router stack
-// BodyLimit(10 MiB). Starters call it from bootstrap; customise freely.
-func DefaultMiddleware(app *App, r *router.Router) {
+// SessionConfig is loaded from SESSION_* variables.
+type SessionConfig struct {
+	// Driver is "cookie" (encrypted cookie, default) or "memory"; the
+	// database driver is installed by the database provider.
+	Driver      string        `env:"SESSION_DRIVER"       default:"cookie"`
+	Lifetime    time.Duration `env:"SESSION_LIFETIME"     default:"24h"`
+	IdleTimeout time.Duration `env:"SESSION_IDLE_TIMEOUT" default:"2h"`
+	CookieName  string        `env:"SESSION_COOKIE"       default:"lumek_session"`
+	// Secure defaults to true in production or when APP_URL is https.
+	Secure string `env:"SESSION_SECURE" default:"auto"`
+}
+
+// Sessions returns the session manager, building it from SESSION_* on
+// first use. Use SetSessionStore before the first call to change the store.
+func (a *App) Sessions() (*session.Manager, error) {
+	a.sessOnce.Do(func() {
+		var cfg SessionConfig
+		if a.sessErr = config.Fill(&cfg, a.Source); a.sessErr != nil {
+			return
+		}
+
+		secure := a.Config.IsProduction() || strings.HasPrefix(a.Config.URL, "https://")
+		if cfg.Secure != "auto" {
+			secure = cfg.Secure == "true" || cfg.Secure == "1"
+		}
+
+		sc := session.Config{
+			CookieName:  cfg.CookieName,
+			Secure:      secure,
+			IdleTimeout: cfg.IdleTimeout,
+			Lifetime:    cfg.Lifetime,
+			Production:  a.Config.IsProduction(),
+			Log:         a.Log,
+			Store:       a.sessStore,
+		}
+
+		switch {
+		case a.sessStore != nil:
+		case cfg.Driver == "memory":
+			sc.Store = session.NewMemoryStore()
+		case cfg.Driver == "cookie":
+			sc.CookieKey = a.Key.Derive("session.cookie", 32)
+		default:
+			a.sessErr = fmt.Errorf("lumek: unknown SESSION_DRIVER %q", cfg.Driver)
+			return
+		}
+
+		a.sessions, a.sessErr = session.New(sc)
+	})
+
+	return a.sessions, a.sessErr
+}
+
+// SetSessionStore makes sessions server-side with store (call it from a
+// provider's Register, before Sessions is first used).
+func (a *App) SetSessionStore(store session.Store) { a.sessStore = store }
+
+// DefaultMiddleware installs Lumek's recommended stacks on r:
+//   - server: Recover, RequestID, Logger, SecureHeaders, MethodOverride;
+//   - router: BodyLimit(10 MiB), sessions, CSRF (CrossOriginProtection,
+//     trusted origins from CSRF_TRUSTED_ORIGINS).
+//
+// It returns configuration errors (insecure production cookies, bad
+// origins) so they fail at boot. Starters call it from bootstrap.
+func DefaultMiddleware(app *App, r *router.Router) error {
 	r.UseServer(
 		middleware.Recover(),
 		middleware.RequestID(),
@@ -100,7 +165,27 @@ func DefaultMiddleware(app *App, r *router.Router) {
 		middleware.SecureHeaders(middleware.SecureHeadersConfig{}),
 		middleware.MethodOverride(),
 	)
-	r.Use(middleware.BodyLimit(web.DefaultMaxBody))
+
+	sessions, err := app.Sessions()
+	if err != nil {
+		return err
+	}
+
+	var origins []string
+	for o := range strings.SplitSeq(app.Source.Get("CSRF_TRUSTED_ORIGINS"), ",") {
+		if o = strings.TrimSpace(o); o != "" {
+			origins = append(origins, o)
+		}
+	}
+
+	csrfMW, err := csrf.Middleware(csrf.Config{TrustedOrigins: origins})
+	if err != nil {
+		return err
+	}
+
+	r.Use(middleware.BodyLimit(web.DefaultMaxBody), sessions.Middleware(), csrfMW)
+
+	return nil
 }
 
 func (a *App) newRouter() *router.Router {

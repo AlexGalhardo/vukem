@@ -18,8 +18,8 @@ Task IDs: `<phase>.<group>.<task>` (e.g. `P.3.2`). Reference them in commit bodi
 | Field | Value |
 | --- | --- |
 | Current phase | **Prototype** |
-| Next task | `P.6.1` (P.4.9/P.4.10 close with sessions; P.0.9 waits for GitHub billing) |
-| Last release | `v0.0.6` (P.5 typed schemas) |
+| Next task | `P.7.1` (P.0.9 waits for GitHub billing) |
+| Last release | `v0.0.7` (P.6 sessions and CSRF) |
 | Updated | 2026-10-16 |
 
 ## Design references
@@ -164,9 +164,9 @@ Applies to **every** task:
   → verify: conditional request tests.
 - [x] **P.4.8** Security headers middleware (nosniff, frame options, referrer, COOP, permissions policy, HSTS on HTTPS) + CSP builder with per-request nonce (`cspNonce` template func).
   → verify: `TestSecurity_A02_*` header tests; nonce differs per request.
-- [ ] **P.4.9** Boot-time misconfiguration guard: refuse `APP_DEBUG` in production, short/missing `APP_KEY`, CORS `*` + credentials, insecure cookies in production; `MaxHeaderBytes` set.
+- [x] **P.4.9** Boot-time misconfiguration guard: refuse `APP_DEBUG` in production, short/missing `APP_KEY`, CORS `*` + credentials, insecure cookies in production; `MaxHeaderBytes` set.
   → verify: one failing-boot test per rule.
-- [ ] **P.4.10** Security event logging (`event` attribute: `csrf.rejected`, `session.invalid`, `ratelimit.exceeded`…) and redaction of `Authorization`/`Cookie` headers and secrets.
+- [x] **P.4.10** Security event logging (`event` attribute: `csrf.rejected`, `session.invalid`, `ratelimit.exceeded`…) and redaction of `Authorization`/`Cookie` headers and secrets.
   → verify: log capture tests assert events present and secrets absent.
 
 ### P.5 Typed schemas `z` (validation) — needs: P.3
@@ -184,13 +184,13 @@ Applies to **every** task:
 
 ### P.6 Sessions & CSRF — needs: P.1, P.3
 
-- [ ] **P.6.1** Session manager (lazy load, dirty write, regenerate, invalidate, idle/absolute timeout).
+- [x] **P.6.1** Session manager (lazy load, dirty write, regenerate, invalidate, idle/absolute timeout).
   → verify: `synctest` tests for expiry.
-- [ ] **P.6.2** Stores: cookie (AES-GCM, 4 KB guard), memory, database (SQLite).
+- [x] **P.6.2** Stores: cookie (AES-GCM, 4 KB guard), memory, database (SQLite).
   → verify: shared store conformance test suite run against each store.
-- [ ] **P.6.3** Flash, reflash, old input, errors bag.
+- [x] **P.6.3** Flash, reflash, old input, errors bag.
   → verify: two-request tests.
-- [ ] **P.6.4** CSRF: `http.CrossOriginProtection` wiring + config (trusted origins, bypass patterns) + optional token fallback.
+- [x] **P.6.4** CSRF: `http.CrossOriginProtection` wiring + config (trusted origins, bypass patterns) + optional token fallback.
   → verify: cross-origin POST rejected; same-origin accepted; webhook bypass works.
 
 ### P.7 Database, ORM & migrations (SQLite) — needs: P.1

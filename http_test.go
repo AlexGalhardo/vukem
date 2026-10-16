@@ -76,7 +76,9 @@ func TestDefaultMiddlewareAndRoutes(t *testing.T) {
 	t.Parallel()
 
 	app := newTestApp(t, WithRoutes(func(r *router.Router, app *App) {
-		DefaultMiddleware(app, r)
+		if err := DefaultMiddleware(app, r); err != nil {
+			t.Fatal(err)
+		}
 		r.Get("/hello", func(c *web.Ctx) error { return c.String(200, "hi "+app.Config.Name) }).Name("hello")
 		r.Get("/boom", func(*web.Ctx) error { panic("x") })
 	}))
