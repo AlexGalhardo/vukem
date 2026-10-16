@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/AlexGalhardo/vukem/csrf"
+	"github.com/AlexGalhardo/vukem/i18n"
 	"github.com/AlexGalhardo/vukem/middleware"
 	"github.com/AlexGalhardo/vukem/web"
 )
@@ -54,7 +55,15 @@ func (e *Engine) funcs(ctx context.Context) template.FuncMap {
 			return trustedHTML(`<input type="hidden" name="` + csrf.FieldName + `" value="` + t + `">`)
 		},
 		"cspNonce": func() string { return middleware.CSPNonce(ctx) },
-		"old":      func(field string) string { return oldInput(ctx, field) },
+		"t": func(key string, args ...any) string {
+			if b := e.bundle(ctx); b != nil {
+				return b.T(e.locale(ctx), key, args...)
+			}
+
+			return key
+		},
+		"locale": func() string { return e.locale(ctx) },
+		"old":    func(field string) string { return oldInput(ctx, field) },
 		"errors": func() map[string][]string {
 			if s := web.SessionFrom(ctx); s != nil {
 				return fieldErrors(s.Get(web.ErrorsKey))
@@ -111,6 +120,27 @@ func (e *Engine) funcs(ctx context.Context) template.FuncMap {
 	maps.Copy(fm, e.cfg.Funcs)
 
 	return fm
+}
+
+func (e *Engine) bundle(ctx context.Context) *i18n.Bundle {
+	if e.cfg.I18n != nil {
+		return e.cfg.I18n
+	}
+
+	return i18n.BundleFrom(ctx)
+}
+
+// locale is the request locale, else the bundle's default, else "".
+func (e *Engine) locale(ctx context.Context) string {
+	if l := i18n.Locale(ctx); l != "" {
+		return l
+	}
+
+	if b := e.bundle(ctx); b != nil {
+		return b.Default()
+	}
+
+	return ""
 }
 
 // dict builds a map from key/value pairs, for passing data to partials:

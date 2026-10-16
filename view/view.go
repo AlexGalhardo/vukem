@@ -1,6 +1,6 @@
 // Package view renders html/template views with layouts, partials and
 // fragments (single blocks, for htmx), plus request-aware helpers: route,
-// asset, csrfField, old, errors, flash and cspNonce.
+// asset, csrfField, old, errors, flash, cspNonce, t and locale.
 //
 // Layout of the views directory:
 //
@@ -26,6 +26,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/AlexGalhardo/vukem/i18n"
 	"github.com/AlexGalhardo/vukem/vite"
 	"github.com/AlexGalhardo/vukem/web"
 )
@@ -50,6 +51,11 @@ type Config struct {
 	// Vite backs the "vite" and "viteReactRefresh" functions; "asset"
 	// resolves files Vite processed through it first.
 	Vite *vite.Vite
+	// I18n backs the "t" and "locale" functions, in the locale that
+	// i18n.Middleware stored in the request context (the bundle's default
+	// otherwise). Without it, the bundle in the context is used, and "t"
+	// returns the key when there is none.
+	I18n *i18n.Bundle
 }
 
 // Engine renders views; it implements web.Renderer.
