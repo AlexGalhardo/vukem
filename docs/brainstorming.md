@@ -23,6 +23,7 @@ Status legend: ✅ decided · ⏳ open
 | P1 | Go version | **1.27 minimum** (`go 1.27.0`) | 1.26 | Generic methods make the query builder ergonomic (`Query[T].Pluck[V]`); by 1.0, 1.28/1.29 will exist |
 | P2 | Repo layout | **Monorepo: core module + one module per heavy driver** (`drivers/postgres`, `drivers/redis`, `drivers/mongo`) | single module | `go get` of core never pulls pgx/redis/mongo; precedents: aws-sdk-go-v2, otel-go, gofiber/storage |
 | P3 | Versioning | **v0.x until 1.0**; BETA ships `v1.0.0-beta.N` → `-rc.N` → `v1.0.0`. Never move a tag; use `retract` | pre-releases from day one | Go modules: v0 has no compat promise; v2+ needs `/v2` path, so v1 must be durable |
+| P5 | Platforms | **Windows 11/10 first-class** alongside Linux and macOS; no cgo by default; Windows rules in [architecture.md](architecture.md#platform-support) | Unix-first with best-effort Windows | Maintainer requirement (2026-10-16) |
 | P4 | Git flow | **Trunk-based + squash merge**; PR title = Conventional Commit; initial scaffolding committed straight to `main` | direct commits forever | Clean linear history feeds git-cliff |
 
 ## Architecture

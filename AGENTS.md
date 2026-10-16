@@ -27,6 +27,7 @@ Lumek: a Laravel/AdonisJS-inspired, stdlib-first Go web framework. Module `githu
 - Commits: Conventional Commits, English, scope = package ([docs/tooling.md](docs/tooling.md#conventional-commits)).
 - After each PLAN.md task group: push and `task release -- vX.Y.Z` (changelog + GitHub release) — see [release process](docs/tooling.md#release-process).
 - Never edit released `CHANGELOG.md` sections by hand; never move a pushed tag.
+- Windows 11 is first-class: run `task test` here (Windows) and `task test:linux` (Docker) before releases.
 - Everything (code, comments, docs) in English.
 
 ## Where things live

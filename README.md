@@ -55,7 +55,7 @@ cd blog
 lumek serve          # http://localhost:3000
 ```
 
-Requires Go 1.27 or newer.
+Requires Go 1.27 or newer. Works on **Windows 11/10**, Linux and macOS — no C compiler needed.
 
 ## Documentation
 

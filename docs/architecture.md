@@ -172,6 +172,26 @@ Three middleware stacks (AdonisJS model): **server**, **router**, **named**. All
 
 See [http.md](http.md#errors). Summary: handlers return `error`; sentinel errors for conditions, typed errors for data; `errors.Is`/`errors.AsType`; the central handler negotiates the response format.
 
+## Platform support
+
+Windows is a first-class platform (maintainer requirement, 2026-10-16), with **Windows 11** as the primary Windows target.
+
+| OS | Support | Verified by |
+| --- | --- | --- |
+| Windows 11 (amd64, arm64) | first-class | local development machine + `windows-latest` CI job + e2e (`lumek new` → build → serve) |
+| Windows 10 22H2 | supported while Microsoft/Go support it | same suite |
+| Linux (amd64, arm64) | first-class | Docker `-race` job (`task test:linux`), CI |
+| macOS (arm64, amd64) | first-class | CI |
+
+Rules that keep Windows working:
+
+- Paths: `path/filepath` for OS paths, `path` only for URLs and `fs.FS` names; never hard-code `/` or `\`; generated projects use `filepath.Join`.
+- Files: close handles before deleting (Windows refuses to remove open files — `os.Root` and SQLite connections must be closed on shutdown and in tests via `t.Cleanup`); no reliance on Unix permissions.
+- Line endings: generators and stubs write LF; parsers (`.env`, commit messages, templates) accept CRLF.
+- Processes and signals: shutdown listens for `os.Interrupt` (Ctrl+C) and `SIGTERM`; the CLI never shells out through `sh`/`bash` — it runs binaries with `os/exec` and the `go` toolchain.
+- No cgo by default (`modernc.org/sqlite`), so `go install` works on Windows without a C compiler.
+- Tooling works in PowerShell and Git Bash: Taskfile (mvdan/sh), lefthook, winget-installable tools.
+
 ## API evolution
 
 - Pre-1.0: breaking changes allowed in minor releases, always listed under **Changed**/**Removed** in the changelog.
