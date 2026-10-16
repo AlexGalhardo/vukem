@@ -24,7 +24,3 @@ require (
 	modernc.org/memory v1.12.1 // indirect
 	modernc.org/sqlite v1.60.1 // indirect
 )
-
-// Development uses the core in this repository; consumers ignore replace
-// directives and get the version required above.
-replace github.com/AlexGalhardo/vukem => ../..

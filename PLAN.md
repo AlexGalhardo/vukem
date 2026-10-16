@@ -18,7 +18,7 @@ Task IDs: `<phase>.<group>.<task>` (e.g. `P.3.2`). Reference them in commit bodi
 | Field | Value |
 | --- | --- |
 | Current phase | **ALPHA** |
-| Next task | `A.2.1` (A.0.6 after A.3.4; blocked: P.0.9 waits for GitHub billing, P.12.3 needs a public repository) |
+| Next task | `A.2.1` (A.0.6 after A.3.4) |
 | Last release | `v0.3.0` (A.1 Postgres driver; project renamed to Vukem, repository public) |
 | Updated | 2026-10-16 |
 
@@ -287,12 +287,12 @@ Applies to **every** task:
   → verify: `goreleaser release --snapshot --clean` builds all targets.
 - [x] **P.12.2** README quick start validated by following it on a clean machine/container.
   → verify: checklist in PR.
-- [ ] **P.12.3** Tag `v0.1.0`, warm proxy, verify `go install …/cmd/vukem@v0.1.0`. Tagged and released with binaries; **blocked**: the repository is private, so proxy.golang.org cannot fetch it.
+- [x] **P.12.3** Tag `v0.1.0`, warm proxy, verify `go install …/cmd/vukem@v0.1.0`. Done with `v0.3.0`, the first tag under the public `github.com/AlexGalhardo/vukem` path (earlier tags declare the old private path): `go install …/cmd/vukem@v0.3.0`, `vukem new blog`, migrate, tests and build verified in a clean `golang:1.27` container; release binaries attached by `release.yml`.
   → verify: pkg.go.dev shows docs and MIT license.
 
 ### Prototype exit criteria
 
-- [ ] `go install github.com/AlexGalhardo/vukem/cmd/vukem@latest` works on Windows, Linux, macOS.
+- [x] `go install github.com/AlexGalhardo/vukem/cmd/vukem@latest` works on Windows, Linux, macOS (verified on Linux and Windows; macOS via the CI test matrix and release binaries).
 - [x] `vukem new blog` → `vukem serve` → CRUD with HTMX partials, validation errors (422), flash messages — **no Node required**.
 - [x] The starter's example controller also exposes JSON endpoints that return problem+json on errors, covered by API assertions.
 - [x] Core coverage ≥ 80% overall; router, validate, session, orm, schema, config ≥ 90%.
