@@ -305,6 +305,10 @@ func makeRequest(set *flag.FlagSet) func(context.Context, *Env, []string) error 
 	return simple(set, "request name", "request.go.tmpl", "app/requests/%s.go", "")
 }
 
+func makeResource(set *flag.FlagSet) func(context.Context, *Env, []string) error {
+	return simple(set, "resource name", "resource.go.tmpl", "app/resources/%s.go", "Resource")
+}
+
 func makeTest(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 	return simple(set, "test name", "test.go.tmpl", "tests/%s_test.go", "Test")
 }

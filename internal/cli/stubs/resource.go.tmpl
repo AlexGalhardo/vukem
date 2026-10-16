@@ -1,0 +1,25 @@
+package resources
+
+import (
+	"time"
+
+	"github.com/AlexGalhardo/golang-framework/api"
+
+	"{{.Module}}/app/models"
+)
+
+// {{.Name}}JSON is the wire format of models.{{.Name}}; add the fields
+// clients may see.
+type {{.Name}}JSON struct {
+	ID        int64     `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// {{.Name}} transforms one model.
+func {{.Name}}(m models.{{.Name}}) {{.Name}}JSON {
+	return {{.Name}}JSON{ID: m.ID, CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt}
+}
+
+// {{.Name}}List transforms a slice of models.
+func {{.Name}}List(ms []models.{{.Name}}) []{{.Name}}JSON { return api.Map(ms, {{.Name}}) }

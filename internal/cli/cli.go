@@ -60,6 +60,7 @@ func commands() []command {
 		{"make:request", "<Name>", "Create a validated request struct", makeRequest},
 		{"make:command", "<Name>", "Create an app command and register it", makeCommand},
 		{"make:provider", "<Name>", "Create a provider and register it", makeProvider},
+		{"make:resource", "<Name>", "Create an API resource (JSON transformer) for a model", makeResource},
 		{"make:test", "<Name>", "Create a test using the fluent client", makeTest},
 	}
 }

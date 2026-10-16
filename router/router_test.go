@@ -272,6 +272,11 @@ func TestResources(t *testing.T) {
 	r.Resource("posts", postController{})
 	r.APIResource("posts.comments", postController{}).Only("index", "show")
 	r.Resource("categories", partialController{}).Except("store")
+	r.Group("/api", func(g *Group) {
+		g.Name("api.")
+		g.APIResource("posts.comments", postController{}).Shallow()
+		g.APIResource("tags", postController{}).Only("index").Shallow() // not nested: no-op
+	})
 
 	got := r.Routes()
 	var lines []string
@@ -292,6 +297,13 @@ func TestResources(t *testing.T) {
 		"GET /posts/{post}/comments/{comment} posts.comments.show",
 		"GET /categories categories.index",
 		"GET /categories/{category} categories.show",
+		"GET /api/posts/{post}/comments api.posts.comments.index",
+		"POST /api/posts/{post}/comments api.posts.comments.store",
+		"GET /api/comments/{comment} api.posts.comments.show",
+		"PUT /api/comments/{comment} api.posts.comments.update",
+		"PATCH /api/comments/{comment} ",
+		"DELETE /api/comments/{comment} api.posts.comments.destroy",
+		"GET /api/tags api.tags.index",
 	}
 	if diff := cmp.Diff(want, lines); diff != "" {
 		t.Fatalf("routes mismatch (-want +got):\n%s", diff)

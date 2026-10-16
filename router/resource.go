@@ -30,6 +30,27 @@ type (
 // Resource is a set of routes generated from a controller.
 type Resource struct {
 	routes map[string][]*Route
+	// parents is the "/posts/{post}" part of nested resources, after the
+	// group prefix; Shallow removes it from member routes.
+	prefix, parents string
+}
+
+// Shallow makes the member routes of a nested resource top-level, as
+// their IDs are unique on their own: /posts/{post}/comments stays for
+// index/create/store, while show/edit/update/destroy become
+// /comments/{comment}. Route names do not change.
+func (rs *Resource) Shallow() *Resource {
+	if rs.parents == "" {
+		return rs
+	}
+
+	for _, action := range []string{"show", "edit", "update", "destroy"} {
+		for _, rt := range rs.routes[action] {
+			rt.path = rs.prefix + strings.TrimPrefix(rt.path, rs.prefix+rs.parents)
+		}
+	}
+
+	return rs
 }
 
 // Use applies middleware to the resource routes (all actions when none are
@@ -98,7 +119,7 @@ func (g *Group) resource(name string, ctrl any, forms bool) *Resource {
 	collection := base.String() + "/" + last
 	member := collection + "/{" + singular(last) + "}"
 
-	rs := &Resource{routes: map[string][]*Route{}}
+	rs := &Resource{routes: map[string][]*Route{}, prefix: g.fullPrefix(), parents: base.String()}
 	add := func(action, method, path string, h web.HandlerFunc) {
 		rt := g.add(method, path, nil, h).Name(name + "." + action)
 		rs.routes[action] = append(rs.routes[action], rt)

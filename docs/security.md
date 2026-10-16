@@ -145,7 +145,7 @@ What Lumek does **by default** to protect applications, mapped to the [OWASP Top
 | --- | --- |
 | **Central error handler** (single place) maps errors to responses; handlers return `error` instead of writing partial responses | P |
 | `Recover` middleware converts panics to 500, logs stack trace server-side, never to the client | P |
-| **Fail closed**: authorization errors, missing policies, session store failures and CSRF check errors deny the request | P / A |
+| **Fail closed**: authorization errors, missing policies, session store failures, rate limiter store failures and CSRF check errors deny the request | P / A |
 | `db.Tx` rolls back on error or panic; no partial writes | P |
 | Generic client messages (RFC 9457 problem details) without internals (CWE-209) | P |
 | Missing/invalid parameters produce 400/422 with field errors, never zero-value defaults silently (CWE-234) | P |

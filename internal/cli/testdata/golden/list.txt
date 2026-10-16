@@ -17,6 +17,7 @@ Usage:
   make:request <Name>     Create a validated request struct
   make:command <Name>     Create an app command and register it
   make:provider <Name>    Create a provider and register it
+  make:resource <Name>    Create an API resource (JSON transformer) for a model
   make:test <Name>        Create a test using the fluent client
 
 Other commands (migrate, route:list, about, your own) run in the app: lumek <command>.

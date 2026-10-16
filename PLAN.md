@@ -18,8 +18,8 @@ Task IDs: `<phase>.<group>.<task>` (e.g. `P.3.2`). Reference them in commit bodi
 | Field | Value |
 | --- | --- |
 | Current phase | **ALPHA** |
-| Next task | `A.0.1` (blocked: P.0.9 waits for GitHub billing; P.12.3 needs the repository to be public) |
-| Last release | `v0.1.1` (Prototype complete; starter JSON endpoints) |
+| Next task | `A.1.1` (A.0.6 after A.3.4; blocked: P.0.9 waits for GitHub billing, P.12.3 needs a public repository) |
+| Last release | `v0.2.0` (A.0 REST API toolkit) |
 | Updated | 2026-10-16 |
 
 ## Design references
@@ -309,15 +309,15 @@ Applies to **every** task:
 
 ### A.0 REST API starter — needs: P.4, P.5, P.9
 
-- [ ] **A.0.1** `APIResource`, nested and `Shallow()` resources.
+- [x] **A.0.1** `APIResource`, nested and `Shallow()` resources.
   → verify: route table golden test.
-- [ ] **A.0.2** Resource transformers (`make:resource`, `api.Map`) and pagination envelopes for offset and cursor pages (`orm.CursorPaginate`).
+- [x] **A.0.2** Resource transformers (`make:resource`, `api.Map`) and pagination envelopes for offset and cursor pages (`orm.CursorPaginate`).
   → verify: golden JSON tests.
-- [ ] **A.0.3** Query conventions (`api.Filters`, `Sorts`, `Includes`, `Fields`, `PerPage`) with allowlists and a 400 problem on unknown params.
+- [x] **A.0.3** Query conventions (`api.Filters`, `Sorts`, `Includes`, `Fields`, `PerPage`) with allowlists and a 400 problem on unknown params.
   → verify: table tests including SQL-injection attempts in sort/filter values.
-- [ ] **A.0.4** CORS middleware (deny by default, preflight, credentials) and API rate limiting per token/IP.
+- [x] **A.0.4** CORS middleware (deny by default, preflight, credentials) and API rate limiting per token/IP.
   → verify: preflight and 429 tests.
-- [ ] **A.0.5** Unique-violation → 409 mapping per dialect; `Deprecation`/`Sunset` header helper.
+- [x] **A.0.5** Unique-violation → 409 mapping per dialect; `Deprecation`/`Sunset` header helper.
   → verify: tests on SQLite and Postgres.
 - [ ] **A.0.6** `lumek new <name> --api` starter and `lumek install:api` (token issue/revoke endpoints, `routes/api.go`, tests). needs: A.3.4
   → verify: e2e: generated API app tests pass on all OSes.

@@ -219,6 +219,7 @@ var generated = []string{
 	"app/providers/billing_provider.go",
 	"bootstrap/providers.go",
 	"tests/post_test.go",
+	"app/resources/post.go",
 }
 
 func runGenerators(t *testing.T, dir string) {
@@ -236,6 +237,7 @@ func runGenerators(t *testing.T, dir string) {
 		{"make:command", "SendReportsCommand"},
 		{"make:provider", "Billing"},
 		{"make:test", "Post"},
+		{"make:resource", "PostResource"},
 	} {
 		if code, out, errOut := lumek(t, dir, args...); code != 0 {
 			t.Fatalf("lumek %v = %d\n%s%s", args, code, out, errOut)
