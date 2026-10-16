@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-16
+
+### Added
+
+- **api:** Add REST toolkit with pagination, query conventions and rate limiting
+
 ## [0.1.1] - 2026-10-16
 
 ### Added
@@ -105,7 +111,8 @@ Project foundation. No framework code yet; see [PLAN.md](PLAN.md) for the roadma
 - README, MIT license, CONTRIBUTING, SECURITY and CODE_OF_CONDUCT.
 - Agent configuration: `AGENTS.md`, `CLAUDE.md`, path-scoped `.claude/rules/`, Go skills and project settings.
 
-[Unreleased]: https://github.com/AlexGalhardo/golang-framework/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/AlexGalhardo/golang-framework/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/AlexGalhardo/golang-framework/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/AlexGalhardo/golang-framework/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/AlexGalhardo/golang-framework/compare/v0.0.12...v0.1.0
 [0.0.12]: https://github.com/AlexGalhardo/golang-framework/compare/v0.0.11...v0.0.12
