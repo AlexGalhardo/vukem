@@ -7,4 +7,5 @@ use (
 	./drivers/postgres
 	./drivers/mongo
 	./drivers/redis
+	./drivers/otel
 )

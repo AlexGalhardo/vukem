@@ -49,7 +49,8 @@ vukem/                            module github.com/AlexGalhardo/vukem
 ├── drivers/
 │   ├── postgres/                 module …/drivers/postgres (pgx)
 │   ├── redis/                    module …/drivers/redis (go-redis)
-│   └── mongo/                    module …/drivers/mongo (mongo-driver v2)
+│   ├── mongo/                    module …/drivers/mongo (mongo-driver v2)
+│   └── otel/                     module …/drivers/otel (OpenTelemetry tracing)
 ├── starters/                     app skeletons embedded by `vukem new`
 ├── docs/
 └── go.work                       local development only (CI uses GOWORK=off)
@@ -76,6 +77,7 @@ Package names are short, lowercase, singular and never `util`/`common`/`helpers`
 | `github.com/jackc/pgx/v5` | `drivers/postgres` | Postgres |
 | `github.com/redis/go-redis/v9` | `drivers/redis` | Redis |
 | `go.mongodb.org/mongo-driver/v2` | `drivers/mongo` | MongoDB |
+| `go.opentelemetry.io/otel` (+ `sdk`, `exporters/otlp/otlptrace/otlptracehttp`) | `drivers/otel` | Tracing |
 
 Anything else requires a brainstorming entry explaining why the stdlib is insufficient.
 

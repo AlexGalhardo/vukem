@@ -16,13 +16,14 @@ Mail, cache, storage, events, queue, scheduler, encryption, rate limiting, i18n,
 | Rate limiting | ALPHA / BETA | memory (GCRA) | redis | clock |
 | i18n | BETA | JSON files, CLDR plural rules subset | — | `i18n.New` + `Add` |
 | SSE | BETA (planned) | in-process hub | redis pub/sub | — |
+| Tracing (OpenTelemetry) | BETA | — | otel | `tracetest` recorder |
 
 ## Logging & observability
 
 - `app.Log` is a `*slog.Logger`; request logger adds `request_id`, method, route name, status, duration.
 - Context-aware: `vukem.Logger(ctx)` returns the request-scoped logger.
 - `Secret` values are redacted via `LogValuer`.
-- OpenTelemetry: a `telemetry` provider (BETA) wraps the router with `otelhttp`-style spans **in a separate module** to keep OTel out of core.
+- OpenTelemetry: `drivers/otel` (BETA) traces every request **in a separate module** to keep OTel out of core ([OpenTelemetry](#opentelemetry)).
 - `/up` returns 200 when the app booted; `/up?checks=1` runs registered health checks (DB ping, Redis ping) with timeouts.
 
 ## Telegram logging
@@ -226,6 +227,28 @@ msgs, err := rc.Subscribe(ctx, "orders")          // pub/sub (SSE fan-out); rc.P
 - The queue keeps jobs in sorted sets under `{queue}:` (one Cluster slot) and reserves them with one Lua script; abandoned jobs are taken over after their timeout plus one minute, failed jobs support `queue:failed`, `queue:retry` and `queue:forget`.
 - `Flush` deletes only the store's prefix (`SCAN` + `DEL`), never the whole database, and refuses an empty prefix.
 - The driver passes the `cachetest` and `queuetest` conformance suites.
+
+## OpenTelemetry
+
+`go get github.com/AlexGalhardo/vukem/drivers/otel` (OpenTelemetry Go SDK v1.47, OTLP/HTTP exporter, semantic conventions v1.43).
+
+```go
+app, err := vukem.New(
+	vukem.WithProviders(otel.New(otel.Config{})), // before routes: its middleware wraps the whole stack
+	vukem.WithRoutes(routes),
+)
+
+r.UseServer(otel.Middleware(tp)) // or bring your own trace.TracerProvider
+```
+
+- `otel.Middleware(tp, opts...)` is `func(http.Handler) http.Handler`: one server span per request, the trace continued from the incoming `traceparent` (W3C TraceContext + Baggage by default, `otel.WithPropagator` to change it).
+- The span is named `METHOD /route/{param}` after the matched ServeMux pattern, or just `METHOD` when nothing matched; raw paths never become span names. Installed with both `Router.UseServer` and `Router.Use` (what the provider does), the route-level copy names the span even when middleware in between replaced the request.
+- Attributes: `http.request.method` (unknown methods as `_OTHER`), `http.route`, `http.response.status_code`, `url.scheme`, `server.address`, `server.port`, `network.protocol.version`, `user_agent.original`. Paths and query strings are not recorded: they can carry tokens and signatures.
+- 5xx responses and panics set the span status to Error with `error.type`; 4xx stay unset, as the HTTP conventions ask. Panics are re-raised for `middleware.Recover`.
+- The provider reads `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` (used as is) or `OTEL_EXPORTER_OTLP_ENDPOINT` (`/v1/traces` appended); a non-http(s) URL is a boot error, and with neither set tracing is off. `OTEL_SDK_DISABLED=true` turns it off too. Other `OTEL_EXPORTER_OTLP_*` variables (headers, timeout, compression) are read by the exporter itself.
+- The resource carries `service.name` (`Config.ServiceName`, else `OTEL_SERVICE_NAME`, else `APP_NAME`) and `deployment.environment.name` (`APP_ENV`). Spans are batched and flushed by `app.Shutdown`.
+- `Config.Exporter` replaces OTLP (tests use `tracetest.NewInMemoryExporter`), `Config.Sampler` defaults to `ParentBased(AlwaysSample)`, and `Config.Global` also sets the OpenTelemetry globals for libraries instrumented through them (off by default: no package-level state).
+- Database spans are not built in: wrap `*sql.DB` drivers with an OTel `database/sql` instrumentation in the app if needed.
 
 ## Encryption
 

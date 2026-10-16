@@ -148,6 +148,7 @@ What Vukem does **by default** to protect applications, mapped to the [OWASP Top
 | Log injection prevented: `slog` attribute encoding (no raw string concatenation) | P |
 | `events.Listen[security.Event]` hook to forward security events to alerting (email, Slack, SIEM) | A |
 | OpenTelemetry tracing module correlates logs and traces | B |
+| Trace spans (`drivers/otel`) record the route pattern, never the raw path or query string (`TestSecurity_A09_OTelSpansOmitPathAndQuery`) | B |
 
 **App responsibility:** ship logs to durable storage and configure alerts on the security events.
 
