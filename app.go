@@ -87,6 +87,7 @@ type App struct {
 	commands  map[string]Command
 	health    health
 	stdout    io.Writer
+	stdin     io.Reader
 	ready     chan<- string
 	noHTTP    bool
 
@@ -160,6 +161,7 @@ type options struct {
 	schedules     []func(*schedule.Schedule, *App)
 	drivers       []database.Driver
 	stdout        io.Writer
+	stdin         io.Reader
 	ready         chan<- string
 	noHTTP        bool
 }
@@ -193,6 +195,11 @@ func WithClock(now func() time.Time) Option {
 // WithStdout sets where commands print (os.Stdout by default).
 func WithStdout(w io.Writer) Option {
 	return func(o *options) error { o.stdout = w; return nil }
+}
+
+// WithStdin sets where commands read input (os.Stdin by default).
+func WithStdin(r io.Reader) Option {
+	return func(o *options) error { o.stdin = r; return nil }
 }
 
 // WithReady receives the HTTP listen address once the server is listening.
@@ -307,6 +314,11 @@ func New(opts ...Option) (*App, error) {
 		stdout = os.Stdout
 	}
 
+	stdin := o.stdin
+	if stdin == nil {
+		stdin = os.Stdin
+	}
+
 	now := o.now
 	if now == nil {
 		now = time.Now
@@ -321,6 +333,7 @@ func New(opts ...Option) (*App, error) {
 		providers: o.providers,
 		runners:   o.runners,
 		stdout:    stdout,
+		stdin:     stdin,
 		ready:     o.ready,
 		noHTTP:    o.noHTTP,
 		drivers:   o.drivers,

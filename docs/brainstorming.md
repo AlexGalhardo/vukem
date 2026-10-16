@@ -37,6 +37,7 @@ Status legend: ✅ decided · ⏳ open
 | A5 | Config | **Typed structs per module**; own `.env` parser (no godotenv); precedence `.env.<env>.local` > `.env.local` > `.env.<env>` > `.env`; validated at boot; refuses to start without `APP_KEY`; `Secret` type logs `[redacted]` | caarlos0/env + godotenv | Removes stringly `config("a.b")`; AdonisJS-style boot validation |
 | A6 | App skeleton | Hybrid Laravel/Go layout (below) | `internal/`-only; literal Laravel copy | Familiar to Laravel/Adonis users, still short idiomatic package names |
 | A7 | CLI | **Global CLI** (`go install …/cmd/vukem@latest`) does `new`, `make:*`, `serve` (hot reload + optional Vite), `build`. App-bound commands (`migrate`, `db:seed`, `queue:work`, user commands) compile **into the app binary**; the global CLI delegates (`go run ./cmd/app <cmd>`). Generators register what they create by editing `bootstrap/*.go`. Parser: stdlib `flag` | Goravel-style `go run . artisan` only; cobra | Fast generators; no reflection discovery; zero deps |
+| A8 | Agent tooling | **Vukem Boost**: `vukem boost:install` writes AGENTS.md guidelines, `.claude/skills/vukem-*` and MCP configs; the app command `boost:mcp` is a stdlib MCP server (stdio) with read-only app tools | Separate module; third-party MCP SDK | Maintainer requirement (2026-10-16), Laravel Boost parity; zero deps |
 
 ### Generated app skeleton
 

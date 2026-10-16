@@ -36,7 +36,15 @@ Vukem is a complete Model-View-Controller (MVC) web framework for Go built on `n
 
 ## Agentic development
 
-Vukem is built to be worked on with coding agents. [AGENTS.md](AGENTS.md) (and [CLAUDE.md](CLAUDE.md)) give the rules and where things live; [PLAN.md](PLAN.md) is the task list, one verifiable task at a time; `.claude/rules/` holds path-scoped rules and `.claude/skills/` the Go and workflow skills. Every change goes through tests first, `golangci-lint`, Conventional Commits and the GitHub Actions gate.
+Vukem's predictable structure and conventions (generators, typed schemas, named routes, no magic) make it a natural fit for AI coding agents like Claude Code, Cursor and GitHub Copilot. Install **Vukem Boost** in your project to supercharge your AI workflow:
+
+```sh
+vukem boost:install
+```
+
+Boost adds Vukem guidelines to `AGENTS.md`, framework skills to `.claude/skills/` and the `vukem-boost` MCP server to `.mcp.json` (plus `.cursor/` and `.vscode/` when present). The server gives your agent tools to inspect the running app: application info, routes, commands, the database schema, read-only SQL queries, absolute URLs for named routes and a documentation search.
+
+The framework itself is built the same way. [AGENTS.md](AGENTS.md) (and [CLAUDE.md](CLAUDE.md)) give the rules and where things live; [PLAN.md](PLAN.md) is the task list, one verifiable task at a time; `.claude/rules/` holds path-scoped rules and `.claude/skills/` the Go and workflow skills. Every change goes through tests first, `golangci-lint`, Conventional Commits and the GitHub Actions gate.
 
 ## Contributing
 

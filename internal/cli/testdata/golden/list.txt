@@ -10,6 +10,8 @@ Usage:
  install
   install:auth            Add login, registration, password reset and email verification
   install:api             Add API tokens, /api/v1 routes, CORS and rate limiting
+ boost
+  boost:install           Add agent guidelines, skills and the vukem-boost MCP server
  key
   key:generate            Write a new APP_KEY to .env
  make

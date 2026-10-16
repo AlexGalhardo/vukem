@@ -152,7 +152,7 @@ func (c CommandFunc) Run(ctx context.Context, app *App, args []string) error {
 
 func builtinCommands() []Command {
 	return slices.Concat(
-		[]Command{routeListCommand(), aboutCommand(), openAPIExportCommand(), codegenTypesCommand()},
+		[]Command{routeListCommand(), aboutCommand(), openAPIExportCommand(), codegenTypesCommand(), boostMCPCommand()},
 		migrateCommands(),
 		seedCommands(),
 		queueCommands(),

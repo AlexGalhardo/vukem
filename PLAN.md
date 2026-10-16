@@ -548,6 +548,9 @@ Applies to **every** task:
 
 ### B.9 More starters & client generation
 
+- [x] **B.9.0** Vukem Boost (Laravel Boost-style): `vukem boost:install` (AGENTS.md guidelines, `.claude/skills/vukem-*`, MCP configs) and the `boost:mcp` app command (stdio MCP server with app tools).
+  → verify: MCP protocol and tool tests; read-only query security test; install is idempotent and keeps user content.
+
 - [x] **B.9.1** ~~Inertia Vue and Svelte starters~~ — moved into B.3.6 (decision F4, 2026-10-16).
 - [ ] **B.9.2** templ-first starter (`vukem new <name> --templ`).
   → verify: e2e: generated app builds, `templ generate` is clean and tests pass.
