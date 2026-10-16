@@ -18,8 +18,8 @@ Task IDs: `<phase>.<group>.<task>` (e.g. `P.3.2`). Reference them in commit bodi
 | Field | Value |
 | --- | --- |
 | Current phase | **Prototype** |
-| Next task | `P.7.1` (P.0.9 waits for GitHub billing) |
-| Last release | `v0.0.7` (P.6 sessions and CSRF) |
+| Next task | `P.8.1` (P.0.9 waits for GitHub billing) |
+| Last release | `v0.0.8` (P.7 database, ORM, migrations) |
 | Updated | 2026-10-16 |
 
 ## Design references
@@ -195,29 +195,29 @@ Applies to **every** task:
 
 ### P.7 Database, ORM & migrations (SQLite) — needs: P.1
 
-- [ ] **P.7.1** `database.Manager`, SQLite connection with pragmas, writer/reader pools, `BEGIN IMMEDIATE`.
+- [x] **P.7.1** `database.Manager`, SQLite connection with pragmas, writer/reader pools, `BEGIN IMMEDIATE`.
   → verify: concurrent write test (50 goroutines) without `SQLITE_BUSY`.
-- [ ] **P.7.2** Dialect interface (placeholders, quoting, type mapping) + SQLite dialect.
+- [x] **P.7.2** Dialect interface (placeholders, quoting, type mapping) + SQLite dialect.
   → verify: unit tests for SQL generation.
-- [ ] **P.7.3** Model metadata cache (table/column naming, `Model`, `SoftDeletes`, `ULIDModel`, optional interfaces).
+- [x] **P.7.3** Model metadata cache (table/column naming, `Model`, `SoftDeletes`, `ULIDModel`, optional interfaces).
   → verify: tests for naming conventions and overrides.
-- [ ] **P.7.4** `Query[T]`: where family, select/join/group/having/order/limit/offset, unknown-column check.
+- [x] **P.7.4** `Query[T]`: where family, select/join/group/having/order/limit/offset, unknown-column check.
   → verify: golden SQL tests + execution tests on SQLite.
-- [ ] **P.7.5** Reads: `Get`, `First`, `Find`, `Count`, `Exists`, `Pluck[V]`, `Each` (`iter.Seq2`), `Chunk`, `Paginate`.
+- [x] **P.7.5** Reads: `Get`, `First`, `Find`, `Count`, `Exists`, `Pluck[V]`, `Each` (`iter.Seq2`), `Chunk`, `Paginate`.
   → verify: tests incl. early `break` in `Each` closes rows (`sqlclosecheck` clean).
-- [ ] **P.7.6** Writes: `Create`, `Update`, `Query.Update`, `Delete` (soft), hooks.
+- [x] **P.7.6** Writes: `Create`, `Update`, `Query.Update`, `Delete` (soft), hooks.
   → verify: tests incl. timestamps and soft-delete scoping.
-- [ ] **P.7.7** Transactions `db.Tx` (commit/rollback/panic) + executor interface for `db`/`tx`.
+- [x] **P.7.7** Transactions `db.Tx` (commit/rollback/panic) + executor interface for `db`/`tx`.
   → verify: panic inside tx rolls back (test).
-- [ ] **P.7.8** `orm.JSON[T]`, `sql.Null[T]` support.
+- [x] **P.7.8** `orm.JSON[T]`, `sql.Null[T]` support.
   → verify: round-trip tests.
-- [ ] **P.7.9** Schema builder (create/alter/drop, column types, modifiers, foreign keys, indexes, `Raw`) for SQLite incl. table rebuild for unsupported `ALTER`.
+- [x] **P.7.9** Schema builder (create/alter/drop, column types, modifiers, foreign keys, indexes, `Raw`) for SQLite (add/rename/drop column via native ALTER; full table rebuild deferred, see `shortcut:` in schema/schema.go).
   → verify: golden DDL tests + apply on SQLite.
-- [ ] **P.7.10** Migration runner (batches, up/down, status, reset, fresh, step) with registry slice.
+- [x] **P.7.10** Migration runner (batches, up/down, status, reset, fresh, step) with registry slice.
   → verify: tests for each command on a temp DB.
-- [ ] **P.7.11** Injection hardening: identifiers validated against model metadata, `WhereRaw`/`Raw` require placeholders, validator rejects invalid UTF-8/control chars.
+- [x] **P.7.11** Injection hardening: identifiers validated against model metadata, `WhereRaw`/`Raw` require placeholders, validator rejects invalid UTF-8/control chars.
   → verify: `TestSecurity_A05_*` including payloads from the OWASP SQLi cheat sheet; fuzz `FuzzWhere`.
-- [ ] **P.7.12** Migration checksums; `migrate:status` reports modified applied migrations.
+- [x] **P.7.12** Migration checksums; `migrate:status` reports modified applied migrations.
   → verify: test edits an applied migration and sees the warning.
 
 ### P.8 Views & HTMX — needs: P.3

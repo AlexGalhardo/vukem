@@ -109,8 +109,9 @@ type SessionConfig struct {
 // first use. Use SetSessionStore before the first call to change the store.
 func (a *App) Sessions() (*session.Manager, error) {
 	a.sessOnce.Do(func() {
-		var cfg SessionConfig
-		if a.sessErr = config.Fill(&cfg, a.Source); a.sessErr != nil {
+		cfg, err := configLoad[SessionConfig](a)
+		if err != nil {
+			a.sessErr = err
 			return
 		}
 
@@ -270,3 +271,5 @@ func Main(build BuildFunc) int {
 
 	return 0
 }
+
+func configLoad[T any](a *App) (T, error) { return config.Load[T](a.Source) }

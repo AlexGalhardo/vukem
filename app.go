@@ -14,7 +14,9 @@ import (
 	"time"
 
 	"github.com/AlexGalhardo/golang-framework/config"
+	"github.com/AlexGalhardo/golang-framework/database"
 	"github.com/AlexGalhardo/golang-framework/router"
+	"github.com/AlexGalhardo/golang-framework/schema"
 	"github.com/AlexGalhardo/golang-framework/session"
 )
 
@@ -77,6 +79,12 @@ type App struct {
 	sessStore session.Store
 	sessErr   error
 
+	dbOnce     sync.Once
+	db         *database.DB
+	dbErr      error
+	drivers    []database.Driver
+	migrations []schema.Migration
+
 	mu       sync.Mutex
 	booted   bool
 	shutdown bool
@@ -86,19 +94,21 @@ type App struct {
 type Option func(*options) error
 
 type options struct {
-	source    *config.Source
-	fsys      fs.FS
-	getenv    func(string) (string, bool)
-	readFile  func(string) ([]byte, error)
-	logger    *slog.Logger
-	logOut    io.Writer
-	kind      Kind
-	providers []Provider
-	runners   []namedRunner
-	routes    []func(r *router.Router, app *App)
-	stdout    io.Writer
-	ready     chan<- string
-	noHTTP    bool
+	source     *config.Source
+	fsys       fs.FS
+	getenv     func(string) (string, bool)
+	readFile   func(string) ([]byte, error)
+	logger     *slog.Logger
+	logOut     io.Writer
+	kind       Kind
+	providers  []Provider
+	runners    []namedRunner
+	routes     []func(r *router.Router, app *App)
+	migrations []schema.Migration
+	drivers    []database.Driver
+	stdout     io.Writer
+	ready      chan<- string
+	noHTTP     bool
 }
 
 // WithRoutes registers routes (and router middleware) after providers
@@ -226,6 +236,9 @@ func New(opts ...Option) (*App, error) {
 		stdout:    stdout,
 		ready:     o.ready,
 		noHTTP:    o.noHTTP,
+		drivers:   o.drivers,
+
+		migrations: o.migrations,
 	}
 	app.Router = app.newRouter()
 
