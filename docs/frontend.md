@@ -139,7 +139,7 @@ return inertia.Render(c, "Posts/Index", inertia.Props{
 | Shared data | `inertia.Share(key, fn)` globally or per request (middleware); auth user + flash by default |
 | Validation | errors flashed + `303` back; surfaced as `props.errors` |
 | Version | hash of the Vite manifest |
-| SSR | POST to the Node SSR server (`/render`) with timeout; **falls back to client-side rendering** on any failure; dev uses the Vite plugin endpoint; per-route disable; `vukem ssr:start` supervises `node bootstrap/ssr/ssr.js` |
+| SSR | `Config.SSR = &inertia.SSRConfig{HotURL: vite.HotURL, Bundle: "bootstrap/ssr/ssr.js"}`: POST to the Node SSR server (`/render`, default `127.0.0.1:13714`, 3s timeout); **falls back to client-side rendering** on any failure (reported to `OnFailure`, default a warning log); dev uses the Vite plugin endpoint (`{hot}/__inertia_ssr`); `Except` path prefixes and `inertia.DisableSSR(ctx)` per request; `vukem ssr:start` runs `node bootstrap/ssr/ssr.js` and restarts it when it crashes, `vukem ssr:check` probes `/health` |
 | Testing | `res.AssertInertia(t, "Posts/Index").HasProp("posts", 3).MissingProp("stats")` |
 
 Typed routes for the frontend (Wayfinder/Tuyau-style): `vukem codegen:routes` boots the app in warmup mode (no connections) and emits `resources/js/routes.ts` with typed `route('posts.show', { id })` (BETA).

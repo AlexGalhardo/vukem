@@ -157,6 +157,7 @@ func builtinCommands() []Command {
 		seedCommands(),
 		queueCommands(),
 		scheduleCommands(),
+		ssrCommands(),
 	)
 }
 

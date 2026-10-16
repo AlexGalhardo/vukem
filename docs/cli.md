@@ -43,6 +43,7 @@ Exit codes: `0` success, `1` failure, `2` usage error.
 | `vukem make:provider <Name>` | Provider, appended to `bootstrap/providers.go` |
 | `vukem make:test <Name>` | Test file using the fluent test client |
 | `vukem key:generate [--show]` | Write `APP_KEY` to `.env` |
+| `vukem ssr:start [-bundle] [-runtime]`, `vukem ssr:check [-url]` | App commands: supervise the Inertia SSR server (restart on crash) and probe its `/health` |
 | `vukem boost:install` | Agent setup (Laravel Boost-style): guidelines block in `AGENTS.md` (re-runnable, text outside the markers is kept), `@AGENTS.md` in `CLAUDE.md`, skills in `.claude/skills/vukem-*`, and the `vukem-boost` MCP server in `.mcp.json`, `.cursor/mcp.json`, `.vscode/mcp.json` |
 | `vukem version` | Print the CLI version |
 | `vukem build` | `vite build` (if present) then `go build -trimpath -ldflags "-s -w"` with embedded assets |

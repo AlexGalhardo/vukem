@@ -236,6 +236,18 @@ func TestVersion(t *testing.T) {
 	}
 }
 
+func TestHotURL(t *testing.T) {
+	t.Parallel()
+
+	if got := newVite(t, vite.Config{FS: devFS(), Dev: true}).HotURL(); got != "http://localhost:5173" {
+		t.Errorf("HotURL() = %q", got)
+	}
+
+	if got := newVite(t, vite.Config{FS: devFS()}).HotURL(); got != "" {
+		t.Errorf("HotURL() in production = %q, want empty", got)
+	}
+}
+
 func TestNewRequiresFS(t *testing.T) {
 	t.Parallel()
 

@@ -68,6 +68,8 @@ type Config struct {
 	// EncryptHistory encrypts every page's history state on the client
 	// (needs a secure context); EncryptHistory(ctx, false) opts a page out.
 	EncryptHistory bool
+	// SSR enables server-side rendering (nil: client-side only).
+	SSR *SSRConfig
 }
 
 // Inertia is the adapter; build it with New.
@@ -122,6 +124,10 @@ func New(cfg Config) (*Inertia, error) {
 
 	cfg.Shared = maps.Clone(cfg.Shared)
 
+	if cfg.SSR != nil {
+		cfg.SSR = cfg.SSR.withDefaults()
+	}
+
 	return &Inertia{cfg: cfg}, nil
 }
 
@@ -141,6 +147,7 @@ type state struct {
 	in      *Inertia
 	shared  Props
 	encrypt *bool
+	noSSR   bool
 }
 
 func stateFrom(ctx context.Context) *state {
@@ -229,6 +236,10 @@ func Render(c *web.Ctx, component string, props Props) error {
 	if IsInertia(c.Request()) {
 		c.SetHeader(HeaderInertia, "true")
 		return c.JSON(http.StatusOK, p)
+	}
+
+	if head, body, ok := st.in.serverRender(c, st, p); ok {
+		return c.Render(st.in.cfg.RootView, RootData{Page: p, Inertia: trustedHTML(body), Head: trustedHTML(head)})
 	}
 
 	script, err := pageScript(p)

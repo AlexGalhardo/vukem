@@ -18,7 +18,7 @@ Task IDs: `<phase>.<group>.<task>` (e.g. `P.3.2`). Reference them in commit bodi
 | Field | Value |
 | --- | --- |
 | Current phase | **ALPHA** |
-| Next task | `B.3.5` (Vite & Inertia) |
+| Next task | `B.3.8` (Vite & Inertia) |
 | Last release | `v0.17.0` (B.2 Redis and Mongo drivers) |
 | Updated | 2026-10-16 |
 
@@ -489,7 +489,7 @@ Applies to **every** task:
   → verify: table tests mirroring the protocol spec cases.
 - [x] **B.3.4** History encryption flags, flash, prefetch, Precognition.
   → verify: tests.
-- [ ] **B.3.5** SSR client with timeout + CSR fallback + health + dev endpoint discovery; `ssr:start`.
+- [x] **B.3.5** SSR client with timeout + CSR fallback + health + dev endpoint discovery; `ssr:start`.
   → verify: fallback test with a failing fake SSR server.
 - [ ] **B.3.6** Inertia starters for React, Vue and Svelte (`vukem new --inertia=react|vue|svelte`, `install:inertia`): Vite, TS, Tailwind v4, pages, layouts, auth pages + `AssertInertia`.
   → verify: e2e: a new Inertia app per framework builds and its tests pass.

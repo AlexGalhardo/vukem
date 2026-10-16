@@ -186,6 +186,17 @@ func (v *Vite) Asset(p string) (string, bool) {
 	return v.url(c.File), true
 }
 
+// HotURL returns the dev server URL while it runs (Dev on and a valid hot
+// file), and "" otherwise; inertia.SSRConfig.HotURL uses it.
+func (v *Vite) HotURL() string {
+	u, err := v.hot()
+	if err != nil {
+		return ""
+	}
+
+	return u
+}
+
 // hot returns the dev server URL, or "" when not in Dev or no hot file
 // exists. A hot file that is not an http(s) origin is an error.
 func (v *Vite) hot() (string, error) {
