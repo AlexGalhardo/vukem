@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.5] - 2026-10-16
+
+### Added
+
+- **middleware:** Add built-in middleware, app HTTP wiring and commands
+
+## [0.0.4] - 2026-10-16
+
+### Added
+
+- **router:** Add ServeMux router, web.Ctx, errs and problem details
+
+## [0.0.3] - 2026-10-16
+
+### Added
+
+- **app:** Add App, provider lifecycle, runners and HTTP server
+
+## [0.0.2] - 2026-10-16
+
+### Added
+
+- **config:** Add .env parser, typed struct loading, secrets and app key
+
 ## [0.0.1] - 2026-10-16
 
 Project foundation. No framework code yet; see [PLAN.md](PLAN.md) for the roadmap.
@@ -22,5 +46,9 @@ Project foundation. No framework code yet; see [PLAN.md](PLAN.md) for the roadma
 - README, MIT license, CONTRIBUTING, SECURITY and CODE_OF_CONDUCT.
 - Agent configuration: `AGENTS.md`, `CLAUDE.md`, path-scoped `.claude/rules/`, Go skills and project settings.
 
-[Unreleased]: https://github.com/AlexGalhardo/golang-framework/compare/v0.0.1...HEAD
+[Unreleased]: https://github.com/AlexGalhardo/golang-framework/compare/v0.0.5...HEAD
+[0.0.5]: https://github.com/AlexGalhardo/golang-framework/compare/v0.0.4...v0.0.5
+[0.0.4]: https://github.com/AlexGalhardo/golang-framework/compare/v0.0.3...v0.0.4
+[0.0.3]: https://github.com/AlexGalhardo/golang-framework/compare/v0.0.2...v0.0.3
+[0.0.2]: https://github.com/AlexGalhardo/golang-framework/compare/v0.0.1...v0.0.2
 [0.0.1]: https://github.com/AlexGalhardo/golang-framework/releases/tag/v0.0.1
