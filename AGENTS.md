@@ -21,7 +21,7 @@ Vukem: a Laravel/AdonisJS-inspired, stdlib-first Go web framework. Module `githu
 - No globals, no `init()` registration, no reflection DI; `context.Context` first ([docs/architecture.md](docs/architecture.md)).
 - Stdlib first; new deps only via the [dependency policy](docs/architecture.md#dependency-policy).
 - Secure by default, fail closed; every default in [docs/security.md](docs/security.md) needs a `TestSecurity_*` test.
-- Core never imports `drivers/*`; each driver is its own module.
+- Core never imports `drivers/*` or `contrib/*`; each is its own module.
 - Tests: stdlib + go-cmp, table-driven, no network in unit tests ([docs/testing.md](docs/testing.md)).
 - Formatting: gofumpt + gci + golines via `golangci-lint fmt`; tabs in Go ([docs/tooling.md](docs/tooling.md)).
 - Commits: Conventional Commits, English, scope = package ([docs/tooling.md](docs/tooling.md#conventional-commits)).
@@ -37,6 +37,7 @@ Vukem: a Laravel/AdonisJS-inspired, stdlib-first Go web framework. Module `githu
 | `docs/` | design docs, one per area |
 | `internal/tools/` | repo tooling (commitlint) |
 | `drivers/*` | optional driver modules (postgres, redis, mongo) |
+| `contrib/*` | optional feature modules (graphql) |
 | `.claude/rules/` | path-scoped rules for agents |
 | `.claude/skills/` | Go skills (samber/cc-skills-golang) and workflow skills |
 

@@ -81,9 +81,12 @@ linters:
           list-mode: lax
           files:
             - "!**/drivers/**"
+            - "!**/contrib/**"
           deny:
             - pkg: github.com/AlexGalhardo/vukem/drivers
               desc: core must not import driver modules (docs/architecture.md#module-boundaries)
+            - pkg: github.com/AlexGalhardo/vukem/contrib
+              desc: core must not import contrib modules (docs/architecture.md#module-boundaries)
             - pkg: github.com/stretchr/testify
               desc: use the standard library and go-cmp (docs/testing.md)
             - pkg: gorm.io

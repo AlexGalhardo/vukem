@@ -57,6 +57,7 @@ vukem/                            module github.com/AlexGalhardo/vukem
 │   ├── s3/                       module …/drivers/s3 (stdlib SigV4 client, no AWS SDK)
 │   └── websocket/                module …/drivers/websocket (coder/websocket, broadcast protocol)
 ├── contrib/
+│   ├── graphql/                  module …/contrib/graphql (stdlib GraphQL server)
 │   └── stripe/                   module …/contrib/stripe (Stripe API + webhooks, stdlib)
 ├── starters/                     app skeletons embedded by `vukem new`
 ├── docs/
@@ -69,7 +70,8 @@ Package names are short, lowercase, singular and never `util`/`common`/`helpers`
 
 | Rule | Enforced by |
 | --- | --- |
-| Core never imports `drivers/*` | `depguard` linter + `drivers.md` agent rule |
+| Core never imports `drivers/*` or `contrib/*` | `depguard` linter + `drivers.md` agent rule |
+| `contrib/*` modules are optional features in their own module (like drivers), importing core only | `depguard` + review |
 | Drivers import core, never each other | `depguard` |
 | Core third-party deps limited to the allowlist | `depguard` + review |
 | Published `go.mod` files contain no `replace` | CI check |
@@ -87,6 +89,7 @@ Package names are short, lowercase, singular and never `util`/`common`/`helpers`
 | `go.mongodb.org/mongo-driver/v2` | `drivers/mongo` | MongoDB |
 | `go.opentelemetry.io/otel` (+ `sdk`, `exporters/otlp/otlptrace/otlptracehttp`) | `drivers/otel` | Tracing |
 | `github.com/coder/websocket` | `drivers/websocket` | WebSockets |
+| none (stdlib only) | `contrib/graphql` | GraphQL server; gqlgen/graphql-go are not used |
 
 `drivers/s3` adds no dependency: it signs requests with its own Signature Version 4 implementation, checked against the AWS test suite.
 

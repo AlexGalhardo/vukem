@@ -59,7 +59,7 @@ Spec: <https://www.conventionalcommits.org/en/v1.0.0/>. Enforced by the in-repo 
 ```
 
 - **Types:** `feat`, `fix`, `perf`, `refactor`, `docs`, `test`, `build`, `ci`, `chore`, `style`, `revert`.
-- **Scopes:** package or area — `router`, `ctx`, `config`, `validate`, `session`, `view`, `htmx`, `orm`, `schema`, `database`, `auth`, `authz`, `mail`, `cache`, `storage`, `event`, `queue`, `schedule`, `inertia`, `vite`, `cli`, `postgres`, `redis`, `mongo`, `otel`, `websocket`, `deps`, `release`, `docs`, `repo`.
+- **Scopes:** package or area — `router`, `ctx`, `config`, `validate`, `session`, `view`, `htmx`, `orm`, `schema`, `database`, `auth`, `authz`, `mail`, `cache`, `storage`, `event`, `queue`, `schedule`, `inertia`, `vite`, `cli`, `postgres`, `redis`, `mongo`, `otel`, `websocket`, `graphql`, `deps`, `release`, `docs`, `repo`.
 - Description: imperative, lowercase start, no trailing period, ≤ 100 chars header.
 - Breaking changes: `!` after type/scope; describe the impact in a `BREAKING CHANGE:` footer.
 - Allowed exceptions: `Merge …`, `Revert "…"`, `fixup!`/`squash!` (local only; blocked on push to `main`).

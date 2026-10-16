@@ -10,6 +10,7 @@ Design documents, one per area. The user guide lives at [vukem.vercel.app](https
 | Routing, validation, sessions, errors | [http.md](http.md) |
 | Typed schemas (Zod-style validation) | [validation.md](validation.md) |
 | REST APIs, OpenAPI, API reference | [api.md](api.md) |
+| GraphQL (`contrib/graphql`) | [graphql.md](graphql.md) |
 | Security defaults (OWASP Top 10:2025) | [security.md](security.md) |
 | Databases, ORM, migrations | [database.md](database.md) |
 | Authentication and authorization | [authentication.md](authentication.md) |

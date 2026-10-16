@@ -312,5 +312,6 @@ Golden outputs live in `openapi/testdata/shop.client.ts` and `shop.client.go`; a
 ## Beyond REST
 
 - **SSE** for server push (planned, BETA) — [frontend.md](frontend.md#sse-beta).
-- **GraphQL** (`contrib/graphql`, BETA B.6.3) and **gRPC** (`contrib/grpc` on connect-go, BETA B.11). Meanwhile any `http.Handler` (gqlgen, connect-go, grpc-gateway) mounts on the router and shares middleware, auth and the app container.
+- **GraphQL**: `contrib/graphql`, a stdlib schema-first server with typed resolvers, a batching loader over the ORM, limits and persisted queries — [graphql.md](graphql.md).
+- **gRPC** (`contrib/grpc` on connect-go, BETA B.11). Meanwhile any `http.Handler` (connect-go, grpc-gateway) mounts on the router and shares middleware, auth and the app container.
 - **API reference UI**: `apidocs.Serve(app, r, "/docs", apidocs.Config{Theme: "purple"})` renders the document with [Scalar](https://scalar.com) ([details](#api-reference-ui)).

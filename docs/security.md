@@ -28,6 +28,7 @@ What Vukem does **by default** to protect applications, mapped to the [OWASP Top
 | Signed URLs (HMAC, expiry) for temporary downloads and email verification | A |
 | The devtools dashboard (`/_vukem`) answers only a loopback peer with a loopback `Host` and no proxy headers (which also defeats DNS rebinding); others get a plain 404. `DEVTOOLS_INSECURE_ALLOW_REMOTE=true` lifts the check (`TestSecurity_A01_DevtoolsLoopbackOnly`) | B |
 | **SSRF:** `httpclient.Safe()` dialer rejects loopback, private, link-local and metadata (`169.254.169.254`) addresses after DNS resolution, limits redirects and re-checks each hop; used by framework features that fetch user-supplied URLs | A |
+| GraphQL mutations never run over GET (405 with `Allow: POST`), so links and image tags cannot change state; POST requires `application/json` (`TestSecurity_A01_GraphQLMutationsRequirePOST`) | B |
 | Idempotency keys are scoped to the caller, so a reused key never replays another user's response (`TestSecurity_A01_IdempotencyScopedToCaller`); a store outage refuses the request instead of risking a duplicate (`TestSecurity_A04_IdempotencyFailsClosed`) | B |
 | `drivers/s3` presigned GET/PUT URLs sign the validated key and expire after 1 s to 7 days; anything outside that range is refused (`TestSecurity_A01_S3PresignExpiryBounded`) | B |
 | WebSocket upgrades (`drivers/websocket`) are same-origin only: a browser `Origin` outside the request host and the explicit `AllowedOrigins` allowlist gets 403 before the handler runs; `AllowedOrigins("*")` or a malformed pattern refuses every upgrade; accepting any origin needs `InsecureSkipOriginCheck()` (`TestSecurity_A01_WebSocketOriginChecked`) | B |
@@ -57,6 +58,7 @@ What Vukem does **by default** to protect applications, mapped to the [OWASP Top
 | No default credentials, no sample admin user, `.env` git-ignored, `.env.example` without secrets | P |
 | Destructive commands (`migrate:fresh`, `db:wipe`) require `--force` in production | P |
 | `/openapi.json` (`vukem.ServeOpenAPI`) and the API reference UI (`apidocs.Serve`) are not served in production unless `OPENAPI_IN_PRODUCTION=true` (`TestSecurity_A02_OpenAPIOffInProduction`, `TestSecurity_A02_APIDocsOffInProduction`); the vendored Scalar bundle is pinned by SHA-256 and runs with telemetry and remote fonts off | B |
+| GraphQL (`contrib/graphql`): in production the explorer page is not registered and `__schema` / `__type` introspection is rejected unless `InsecureExplorerInProduction` / `InsecureIntrospectionInProduction` opt in; the explorer is embedded (no CDN) and runs under its own nonce CSP (`TestSecurity_A02_GraphQLExplorerOffInProduction`) | B |
 
 **App responsibility:** terminate TLS (or run behind a proxy that does), set `APP_URL` to the `https` origin, configure trusted proxies.
 
@@ -120,6 +122,7 @@ What Vukem does **by default** to protect applications, mapped to the [OWASP Top
 | Upload scanning fails closed: with `upload.Rules.Scanner` files stay in a dot-named quarantine path until scanned, infected files are deleted (422) and an unreachable scanner rejects the upload (503); tus and presigned-upload handlers refuse to boot without an `Authorize` hook | B |
 | Transactions with rollback-on-error/panic (`db.Tx`) so multi-step operations are atomic | P |
 | Threat model of each subsystem recorded in its doc before BETA; security review gate in [PLAN.md](../PLAN.md) (`B.5.2`) | B |
+| GraphQL operations are bounded before any resolver runs: depth 12, complexity 1000 (list arguments `first`/`last`/`limit` multiply cost), 30 aliases, 10000 tokens, 1 MiB body; persisted-query allowlist mode runs only listed documents and fails closed without a store (`TestSecurity_A06_GraphQLDepthAndComplexityLimits`, `TestSecurity_A06_GraphQLAllowlistOnly`) | B |
 
 ### A07:2025 — Authentication Failures
 
@@ -180,6 +183,7 @@ What Vukem does **by default** to protect applications, mapped to the [OWASP Top
 | Timeouts on server, DB queries (`context`), outbound HTTP; rate limiting and quotas against resource exhaustion | P / A |
 | Repeated identical errors aggregated in logs (sampling) to keep alerting useful | B |
 | `errcheck`, `nilerr`, `errorlint`, `forcetypeassert` linters enforce handled errors in the framework itself | P |
+| GraphQL resolver errors that are not client-safe (plain errors, 5xx, panics, serialization failures) are reported as `Internal server error` with code `INTERNAL_SERVER_ERROR` and logged; their text appears only with `WithDebug(true)` (`TestSecurity_A10_GraphQLInternalErrorsMasked`) | B |
 
 ## Security headers (defaults)
 
