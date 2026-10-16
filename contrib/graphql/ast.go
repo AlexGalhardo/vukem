@@ -55,6 +55,14 @@ func (t *typeRef) String() string {
 	return s
 }
 
+func (t *typeRef) named() string {
+	for t.elem != nil {
+		t = t.elem
+	}
+
+	return t.name
+}
+
 type selection interface{ location() Location }
 
 type field struct {
