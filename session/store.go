@@ -100,7 +100,7 @@ func (m *MemoryStore) Len() int {
 
 // --------------------------------------------------------------- database
 
-// SQLStore keeps sessions in a SQL table (SQLite or PostgreSQL):
+// SQLStore keeps sessions in a SQL table (SQLite, PostgreSQL or MySQL):
 //
 //	CREATE TABLE sessions (id TEXT PRIMARY KEY, data TEXT NOT NULL, expires_at BIGINT NOT NULL)
 type SQLStore struct {
@@ -108,6 +108,7 @@ type SQLStore struct {
 	table       string
 	placeholder func(n int) string
 	now         func() time.Time
+	mysql       bool
 
 	// Queries are built once from the validated table name.
 	qCreate, qLoad, qSave, qDelete, qPrune string
@@ -123,6 +124,11 @@ func WithTable(name string) SQLOption { return func(s *SQLStore) { s.table = nam
 func WithDollarPlaceholders() SQLOption {
 	return func(s *SQLStore) { s.placeholder = func(n int) string { return fmt.Sprintf("$%d", n) } }
 }
+
+// WithMySQL uses MySQL/MariaDB DDL and upserts. The id column is
+// VARBINARY so session ids compare exactly (MySQL's default collations are
+// case-insensitive).
+func WithMySQL() SQLOption { return func(s *SQLStore) { s.mysql = true } }
 
 var tableNameRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
@@ -144,6 +150,13 @@ func NewSQLStore(db *sql.DB, opts ...SQLOption) (*SQLStore, error) {
 	s.qLoad = "SELECT data FROM " + t + " WHERE id = " + p(1) + " AND expires_at > " + p(2)
 	s.qSave = "INSERT INTO " + t + " (id, data, expires_at) VALUES (" + p(1) + ", " + p(2) + ", " + p(3) + ")" +
 		" ON CONFLICT (id) DO UPDATE SET data = excluded.data, expires_at = excluded.expires_at"
+
+	if s.mysql {
+		s.qCreate = "CREATE TABLE IF NOT EXISTS " + t +
+			" (id VARBINARY(255) NOT NULL PRIMARY KEY, data LONGTEXT NOT NULL, expires_at BIGINT NOT NULL)"
+		s.qSave = "INSERT INTO " + t + " (id, data, expires_at) VALUES (" + p(1) + ", " + p(2) + ", " + p(3) + ")" +
+			" ON DUPLICATE KEY UPDATE data = VALUES(data), expires_at = VALUES(expires_at)"
+	}
 	s.qDelete = "DELETE FROM " + t + " WHERE id = " + p(1)
 	s.qPrune = "DELETE FROM " + t + " WHERE expires_at <= " + p(1)
 

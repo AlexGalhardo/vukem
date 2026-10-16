@@ -14,7 +14,6 @@ import (
 
 	"github.com/AlexGalhardo/vukem/config"
 	"github.com/AlexGalhardo/vukem/csrf"
-	"github.com/AlexGalhardo/vukem/database"
 	"github.com/AlexGalhardo/vukem/i18n"
 	"github.com/AlexGalhardo/vukem/middleware"
 	"github.com/AlexGalhardo/vukem/router"
@@ -331,7 +330,7 @@ func Main(build BuildFunc) int {
 }
 
 // databaseSessionStore stores sessions in the app database (SQLite or a
-// driver such as Postgres), creating the sessions table when missing.
+// driver such as Postgres or MySQL), creating the sessions table when missing.
 //
 // shortcut: expired rows are only pruned by SQLStore.Prune; schedule it
 // once the scheduler lands (BETA B.1.4).
@@ -342,8 +341,12 @@ func (a *App) databaseSessionStore() (session.Store, error) {
 	}
 
 	var opts []session.SQLOption
-	if db.Dialect() == database.Postgres {
+
+	switch db.Dialect().Name() {
+	case "postgres":
 		opts = append(opts, session.WithDollarPlaceholders())
+	case "mysql":
+		opts = append(opts, session.WithMySQL())
 	}
 
 	store, err := session.NewSQLStore(db.SQL(), opts...)

@@ -467,6 +467,15 @@ func TestSQLStoreTableValidationAndPrune(t *testing.T) {
 		t.Fatalf("dollar placeholders: %s", pg.qSave)
 	}
 
+	my, _ := NewSQLStore(db, WithMySQL())
+	if !strings.Contains(my.qSave, "ON DUPLICATE KEY UPDATE data = VALUES(data)") ||
+		!strings.Contains(
+			my.qCreate,
+			"id VARBINARY(255) NOT NULL PRIMARY KEY",
+		) || !strings.Contains(my.qLoad, "id = ?") {
+		t.Fatalf("mysql queries: %s / %s", my.qSave, my.qCreate)
+	}
+
 	_ = db.Close()
 	if _, _, err := s.Load(context.Background(), "x"); err == nil {
 		t.Fatal("Load on closed db = nil error")
