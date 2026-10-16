@@ -101,7 +101,7 @@ Spec: <https://www.conventionalcommits.org/en/v1.0.0/>. Enforced by the in-repo 
 | BETA | `v1.0.0-beta.N` | `v1.0.0-rc.N` → `v1.0.0` |
 
 1. Push the group's commits to `main`.
-2. `task release -- vX.Y.Z` — runs `task ci:full` (local pipeline while GitHub Actions billing is pending), then `internal/tools/release -push`:
+2. `task release -- vX.Y.Z` — runs `task ci:full` (the same pipeline as GitHub Actions, locally, so a release never waits for CI), then `internal/tools/release -push`:
    - requires a clean tree on `main`;
    - generates the version's section with git-cliff and inserts it below `[Unreleased]` in `CHANGELOG.md` (Keep a Changelog 1.1.0; released sections are never edited);
    - commits `chore(release): vX.Y.Z`, creates an annotated tag, pushes `main` and the tag;
@@ -139,7 +139,7 @@ Workflows declare `permissions: contents: read` at the top and pin third-party a
 | `task vuln` | govulncheck |
 | `task changelog` | git-cliff |
 | `task ci` | fast local gate: lint, vet, unit tests |
-| `task ci:full` | full pipeline locally (Windows tests, Linux `-race` tests in Docker, integration via Docker services, vuln, coverage) — **required before every release** while GitHub Actions billing is pending |
+| `task ci:full` | full pipeline locally (Windows tests, Linux `-race` tests in Docker, integration via Docker services, vuln, coverage) — **required before every release**; GitHub Actions runs the same jobs on every push and PR |
 | `task services:up` / `services:down` | Postgres, Redis, Mongo via `compose.yaml` |
 
 ## Agent configuration

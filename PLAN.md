@@ -90,7 +90,7 @@ Applies to **every** task:
   → verify: `task ci` passes on Windows and in CI.
 - [x] **P.0.8** Add `cliff.toml` (Keep a Changelog 1.1.0 mapping) and initial `CHANGELOG.md` with `[Unreleased]`.
   → verify: `git cliff --unreleased` renders KaC sections; markdownlint passes.
-- [ ] **P.0.9** GitHub: `ci.yml`, `pr-title.yml`, `codeql.yml`, `dependabot.yml`, issue forms, PR template, `CODEOWNERS`.
+- [x] **P.0.9** GitHub: `ci.yml`, `pr-title.yml`, `codeql.yml`, `dependabot.yml`, issue forms, PR template, `CODEOWNERS`.
   → verify: CI green on first push; a PR titled `update stuff` fails the title check.
 - [x] **P.0.10** OSS files: `README.md`, `LICENSE` (MIT), `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`.
   → verify: markdownlint passes; GitHub detects MIT license.
@@ -297,7 +297,7 @@ Applies to **every** task:
 - [x] The starter's example controller also exposes JSON endpoints that return problem+json on errors, covered by API assertions.
 - [x] Core coverage ≥ 80% overall; router, validate, session, orm, schema, config ≥ 90%.
 - [ ] Zero third-party deps in core except `modernc.org/sqlite` and `golang.org/x/crypto`.
-- [ ] CI green on the full matrix; `govulncheck` clean.
+- [x] CI green on the full matrix; `govulncheck` clean.
 - [x] Router benchmark: < 1 µs/op and ≤ 2 allocs for a static route on CI hardware (documented baseline).
 - [ ] `go test -run TestSecurity ./...` covers every **P** row of [docs/security.md](docs/security.md); `gosec` and `govulncheck` clean.
 
