@@ -8,10 +8,9 @@ Connections, the generic query builder, models, relations, migrations, factories
 | --- | --- | --- | --- |
 | SQLite | `modernc.org/sqlite` (pure Go) | core | Prototype |
 | PostgreSQL | `jackc/pgx/v5/stdlib` | `drivers/postgres` | ALPHA |
+| MySQL 8 / MariaDB 11 | `go-sql-driver/mysql` | `drivers/mysql` | BETA |
 | Redis | `redis/go-redis/v9` | `drivers/redis` | BETA |
 | MongoDB | `go.mongodb.org/mongo-driver/v2` | `drivers/mongo` | BETA |
-
-MySQL/MariaDB arrive in BETA as `drivers/mysql` (B.8.5).
 
 ## Connections
 
@@ -28,7 +27,7 @@ type Database struct {
 
 - `database.Manager` holds named connections (`app.DB.Conn("analytics")`); the default one is `app.DB.Default()`.
 - Each connection is a `*database.DB` wrapping `*sql.DB` plus its `Dialect`; `db.SQL()` exposes the raw `*sql.DB` (sqlc, other libraries).
-- Postgres registers its dialect when the user imports `drivers/postgres` and passes `postgres.Driver()` to the database provider — explicit, no `init()`.
+- Postgres and MySQL register their dialect when the user imports `drivers/postgres` or `drivers/mysql` and passes `postgres.Driver()` / `mysql.Driver()` to the database provider — explicit, no `init()`.
 
 ### PostgreSQL
 
@@ -48,7 +47,44 @@ vukem.New(append([]vukem.Option{
 DATABASE_URL=postgres://app:secret@localhost:5432/app?sslmode=disable
 ```
 
-Everything above the driver is dialect-neutral: the same models, queries, migrations and `SESSION_DRIVER=database` work on SQLite and Postgres. `database/dbtest.Run(t, db)` is the conformance suite every dialect must pass (schema, migrations, ORM, transactions); `drivers/postgres` runs it against `postgres:17` with `task services:up` and `go test -tags=integration`.
+Everything above the driver is dialect-neutral: the same models, queries, migrations and `SESSION_DRIVER=database` work on SQLite, Postgres and MySQL. `database/dbtest.Run(t, db)` is the conformance suite every dialect must pass (schema, migrations, ORM, transactions, database queue); `drivers/postgres` runs it against `postgres:17` and `drivers/mysql` against `mysql:8.4` and `mariadb:11.8`, with `task services:up` and `go test -tags=integration`.
+
+### MySQL and MariaDB
+
+```sh
+go get github.com/AlexGalhardo/vukem/drivers/mysql
+```
+
+```go
+// bootstrap/app.go
+vukem.New(append([]vukem.Option{
+	vukem.WithDatabaseDrivers(mysql.Driver()), // mysql:// and mariadb:// URLs
+	// ...
+}, opts...)...)
+```
+
+```sh
+DATABASE_URL=mysql://app:secret@localhost:3306/app
+DATABASE_URL=mysql://app:secret@db.internal:3306/app?tls=preferred
+```
+
+`mysql.DSN` turns the URL into a go-sql-driver DSN (percent-encode special characters in the password). Query parameters go to the driver unchanged and override these defaults:
+
+| Parameter | Default | Why |
+| --- | --- | --- |
+| `parseTime`, `loc`, `time_zone` | `true`, `UTC`, `'+00:00'` | `DATETIME` scans into `time.Time`, always in UTC |
+| `charset` | `utf8mb4` | Full Unicode |
+| `timeout` | `10s` | Dial timeout; per-query limits come from `context.Context` |
+| `clientFoundRows` | `true` | `UPDATE` counts matched rows, as on SQLite and Postgres (`orm.Update` relies on it) |
+| `tls` | `false` for `localhost`/loopback, otherwise `true` (verified certificate) | Secure by default; set `tls=preferred`, `skip-verify` or a registered config name explicitly (e.g. a Docker network host) |
+
+One `mysql` dialect covers MySQL 8.0.16+ and MariaDB 10.6+ (tested on MySQL 8.4 and MariaDB 11.8), so it uses only SQL both accept:
+
+- Inserts read the id from `LastInsertId` (MySQL has no `RETURNING`); upserts use `ON DUPLICATE KEY UPDATE … VALUES()`; the database queue reserves jobs in a transaction with `FOR UPDATE SKIP LOCKED`.
+- Column types: `BIGINT AUTO_INCREMENT` ids, `DATETIME(6)` timestamps, `JSON`, `CHAR(36)` UUIDs, `LONGTEXT` text, `LONGBLOB` binary, `VARCHAR(255)` enums with a `CHECK`. Text, JSON and binary defaults become expression defaults (`DEFAULT ('x')`).
+- Foreign keys added with `Table` are a separate `ADD FOREIGN KEY` clause (MySQL ignores inline `REFERENCES`); `DropIndex` names the table; `migrate:fresh` drops tables with foreign key checks off on one connection.
+- String comparisons follow the column collation, which is case-insensitive by default (`utf8mb4_0900_ai_ci`): `Where("email", x)` and unique indexes ignore case, and `ILIKE` is sent as `LIKE`. Session, cache and queue tables use binary keys so ids always compare exactly.
+- DDL commits implicitly, so a failed migration is not rolled back as it is on SQLite and Postgres; keep migrations small. `Text` columns cannot be `Unique` or indexed (use `String`).
 
 ### SQLite defaults
 

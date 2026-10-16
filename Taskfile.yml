@@ -4,7 +4,7 @@ version: "3"
 
 vars:
   # Every Go module in the repository (drivers are added as they land).
-  MODULES: ". drivers/postgres drivers/redis drivers/mongo drivers/otel drivers/s3 drivers/websocket contrib/stripe"
+  MODULES: ". drivers/postgres drivers/mysql drivers/redis drivers/mongo drivers/otel drivers/s3 drivers/websocket contrib/stripe"
 
 tasks:
   default:
@@ -62,7 +62,7 @@ tasks:
         cmd: cd {{.ITEM}} && go test -race -count=1 ./...
 
   test:integration:
-    desc: Run integration tests (needs DATABASE_URL, REDIS_URL, MONGO_URL, S3_ENDPOINT)
+    desc: Run integration tests (needs DATABASE_URL, MYSQL_URL, MARIADB_URL, REDIS_URL, MONGO_URL, S3_ENDPOINT)
     cmds:
       - for: { var: MODULES }
         cmd: cd {{.ITEM}} && go test -tags=integration -count=1 ./...
@@ -130,7 +130,7 @@ tasks:
       - docker run --rm -e GOWORK=off -v "{{.ROOT_DIR}}:/src" -v vukem-gomod:/go/pkg/mod -w /src golang:1.27 go test -race -count=1 ./...
 
   services:up:
-    desc: Start Postgres, Redis, Mongo and MinIO for integration tests (Docker)
+    desc: Start Postgres, MySQL, MariaDB, Redis, Mongo and MinIO for integration tests (Docker)
     cmds:
       - docker compose up -d --wait
 
@@ -150,6 +150,8 @@ tasks:
     desc: Full pipeline run locally before every release (mirrors GitHub Actions)
     env:
       DATABASE_URL: postgres://vukem:vukem@localhost:55432/vukem_test?sslmode=disable
+      MYSQL_URL: mysql://vukem:vukem@localhost:53306/vukem_test
+      MARIADB_URL: mariadb://vukem:vukem@localhost:53307/vukem_test
       REDIS_URL: redis://localhost:56379/0
       MONGO_URL: mongodb://localhost:57017
       S3_ENDPOINT: http://localhost:59000

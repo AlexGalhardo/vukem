@@ -86,6 +86,7 @@ What Vukem does **by default** to protect applications, mapped to the [OWASP Top
 | Encrypted cookies (`app.Crypt.SetCookie`/`Cookie`): cookie name authenticated, `HttpOnly`, `SameSite=Lax` and `Secure` over TLS by default (`TestSecurity_A04_EncryptedCookieDefaults`, `TestSecurity_A04_EncryptedCookieCannotMoveBetweenNames`) | B |
 | `orm.Encrypted[T]` column type for sensitive fields: table and column authenticated, never stored in plaintext, fails closed without an encrypter (`TestSecurity_A04_EncryptedColumnStoresNoPlaintext`, `TestSecurity_A04_EncryptedColumnFailsClosed`) | B |
 | TLS: Go's secure defaults (TLS 1.2+, hybrid post-quantum key exchange in Go 1.26+); no option to disable verification without `InsecureSkipVerify` naming | P |
+| `drivers/mysql`: without `tls=` in `DATABASE_URL`, every non-loopback host gets TLS with a verified certificate (`TestSecurity_A04_MySQLRemoteRequiresTLS`) | B |
 | `config.Secret` redacts secrets in logs, JSON and `%v` | P |
 | `drivers/s3` refuses a plain `http://` endpoint unless `S3_INSECURE_HTTP=true` (local MinIO only) (`TestSecurity_A04_S3RequiresTLS`) | B |
 

@@ -1,6 +1,6 @@
 ---
 title: Database
-description: SQLite by default with safe pragmas and split reader/writer pools, transactions, and opt-in drivers for PostgreSQL, Redis and MongoDB.
+description: SQLite by default with safe pragmas and split reader/writer pools, transactions, and opt-in drivers for PostgreSQL, MySQL/MariaDB, Redis and MongoDB.
 ---
 
 ## Support matrix
@@ -9,10 +9,11 @@ description: SQLite by default with safe pragmas and split reader/writer pools, 
 | --- | --- | --- |
 | SQLite (pure Go, no cgo) | core, `modernc.org/sqlite` | Available |
 | PostgreSQL | `drivers/postgres` (pgx) | Available |
+| MySQL 8 / MariaDB 11 | `drivers/mysql` (go-sql-driver/mysql) | Available |
 | [Redis](/docs/database/redis) (cache, sessions, queues, rate limiting) | `drivers/redis` (go-redis) | Available |
 | [MongoDB](/docs/database/mongodb) | `drivers/mongo` (official driver) | Available |
 
-Drivers are separate Go modules, so importing the core never downloads a heavy driver. MySQL/MariaDB (`drivers/mysql`) is planned for BETA.
+Drivers are separate Go modules, so importing the core never downloads a heavy driver.
 
 ## Connecting
 
@@ -87,11 +88,30 @@ vukem.New(append([]vukem.Option{
 DATABASE_URL=postgres://app:secret@localhost:5432/app?sslmode=disable
 ```
 
-Models, queries, migrations, relations, the database cache store and `SESSION_DRIVER=database` work unchanged on SQLite and PostgreSQL.
+Models, queries, migrations, relations, the database cache store and `SESSION_DRIVER=database` work unchanged on SQLite, PostgreSQL and MySQL.
+
+## MySQL and MariaDB
+
+```bash
+go get github.com/AlexGalhardo/vukem/drivers/mysql
+```
+
+```go title="bootstrap/app.go"
+vukem.New(append([]vukem.Option{
+	vukem.WithDatabaseDrivers(mysql.Driver()), // mysql:// and mariadb:// URLs
+	// ...
+}, opts...)...)
+```
+
+```bash title=".env"
+DATABASE_URL=mysql://app:secret@localhost:3306/app
+```
+
+The URL becomes a go-sql-driver DSN with `parseTime`, UTC times, `utf8mb4` and a 10s dial timeout; query parameters override them. Hosts other than `localhost` require TLS with a verified certificate unless the URL sets `tls=` (for example `tls=preferred`). Default MySQL collations compare text case-insensitively, so `Where` and unique indexes on strings ignore case.
 
 ## Conformance suite
 
-`database/dbtest.Run(t, db)` is the suite every dialect passes: migrations, schema changes, ORM round trips (JSON, nullable, booleans, times), unique violations as 409, foreign keys, soft deletes, cursor pagination, relations and transactions (including rollback on panic). `drivers/postgres` runs it against `postgres:17` with `go test -tags=integration`.
+`database/dbtest.Run(t, db)` is the suite every dialect passes: migrations, schema changes, ORM round trips (JSON, nullable, booleans, times), unique violations as 409, foreign keys, soft deletes, cursor pagination, relations and transactions (including rollback on panic). `drivers/postgres` runs it against `postgres:17` and `drivers/mysql` against `mysql:8.4` and `mariadb:11.8` with `go test -tags=integration`.
 
 ## Transactions and SQLite
 

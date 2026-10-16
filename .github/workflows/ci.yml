@@ -230,6 +230,49 @@ jobs:
           S3_SECRET_ACCESS_KEY: vukem-secret
         run: go test -tags=integration -count=1 ./...
 
+  mysql:
+    name: MySQL driver (MySQL 8.4, MariaDB 11.8)
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: vukem
+          MYSQL_USER: vukem
+          MYSQL_PASSWORD: vukem
+          MYSQL_DATABASE: vukem_test
+        ports: ["53306:3306"]
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -uvukem -pvukem" --health-interval 2s --health-retries 60
+      mariadb:
+        image: mariadb:11.8
+        env:
+          MARIADB_ROOT_PASSWORD: vukem
+          MARIADB_USER: vukem
+          MARIADB_PASSWORD: vukem
+          MARIADB_DATABASE: vukem_test
+        ports: ["53307:3306"]
+        options: >-
+          --health-cmd "healthcheck.sh --connect --innodb_initialized" --health-interval 2s --health-retries 60
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: "**/go.sum"
+      # shortcut: unit tests use the workspace because the driver needs
+      # database.MySQL and Driver.DSN from the unreleased core; add the
+      # GOWORK=off step once drivers/mysql requires that core release.
+      - name: Unit tests (workspace, current core)
+        working-directory: drivers/mysql
+        run: go test -count=1 ./...
+      - name: Conformance suites (workspace, current core)
+        working-directory: drivers/mysql
+        env:
+          MYSQL_URL: mysql://vukem:vukem@localhost:53306/vukem_test
+          MARIADB_URL: mariadb://vukem:vukem@localhost:53307/vukem_test
+        run: go test -tags=integration -count=1 ./...
+
   postgres:
     name: Postgres driver (integration)
     runs-on: ubuntu-latest

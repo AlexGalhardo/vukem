@@ -4,8 +4,9 @@ toolchain go1.27.2
 
 use (
 	.
-	./drivers/postgres
 	./drivers/mongo
+	./drivers/mysql
+	./drivers/postgres
 	./drivers/redis
 	./drivers/otel
 	./drivers/s3

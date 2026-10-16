@@ -26,7 +26,7 @@ vukem/                            module github.com/AlexGalhardo/vukem
 ├── view/                         View interface, html/template engine, fragments
 ├── htmx/                         htmx v4 request/response helpers
 ├── api/                          REST helpers: resources, query conventions, pagination, typed handlers, idempotency
-├── orm/                          generic query builder, dialects (sqlite, postgres)
+├── orm/                          generic query builder, dialects (sqlite, postgres, mysql)
 ├── schema/                       migration schema builder + runner
 ├── database/                     connection management, SQLite defaults, transactions
 ├── auth/                         guards, user provider, hashers, tokens        (ALPHA)
@@ -48,6 +48,7 @@ vukem/                            module github.com/AlexGalhardo/vukem
 │   └── tools/commitlint/         Conventional Commits validator
 ├── drivers/
 │   ├── postgres/                 module …/drivers/postgres (pgx)
+│   ├── mysql/                    module …/drivers/mysql (go-sql-driver/mysql; MySQL 8, MariaDB 11)
 │   ├── redis/                    module …/drivers/redis (go-redis)
 │   ├── mongo/                    module …/drivers/mongo (mongo-driver v2)
 │   ├── otel/                     module …/drivers/otel (OpenTelemetry tracing)
@@ -79,6 +80,7 @@ Package names are short, lowercase, singular and never `util`/`common`/`helpers`
 | `golang.org/x/crypto` | core | argon2id, bcrypt |
 | `github.com/google/go-cmp` | tests only | Diffs in assertions |
 | `github.com/jackc/pgx/v5` | `drivers/postgres` | Postgres |
+| `github.com/go-sql-driver/mysql` | `drivers/mysql` | MySQL 8 / MariaDB 11 |
 | `github.com/redis/go-redis/v9` | `drivers/redis` | Redis |
 | `go.mongodb.org/mongo-driver/v2` | `drivers/mongo` | MongoDB |
 | `go.opentelemetry.io/otel` (+ `sdk`, `exporters/otlp/otlptrace/otlptracehttp`) | `drivers/otel` | Tracing |

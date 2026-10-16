@@ -19,7 +19,7 @@ How the framework itself is tested, and the testing toolkit it ships to apps. De
 | Example | `example_test.go` | `go test ./...` | Doubles as pkg.go.dev docs |
 | Golden | `testdata/*.golden` | `go test ./... -update` | Generators, codemods, error pages, CLI output |
 | Fuzz | `Fuzz*` | `go test -fuzz=FuzzX ./router` | Router patterns, `.env` parser, validator tags, multipart |
-| Integration | `//go:build integration` | `task test:integration` | Needs `DATABASE_URL`, `REDIS_URL`, `MONGO_URL` |
+| Integration | `//go:build integration` | `task test:integration` | Needs `DATABASE_URL`, `MYSQL_URL`, `MARIADB_URL`, `REDIS_URL`, `MONGO_URL` |
 | End-to-end | `e2e/` | `task test:e2e` | `vukem new` → build → boot → HTTP checks, on all OSes |
 | Benchmarks | `Benchmark*` with `b.Loop()` | `task bench` | Router, query builder, render |
 
@@ -88,6 +88,6 @@ Available as their subsystems land: mail, queue, events, storage (in-memory `fs.
 | Job | Matrix |
 | --- | --- |
 | unit | `ubuntu`, `windows`, `macos` × Go `stable` (`oldstable` joins once Go 1.28 ships, since 1.27 is the minimum) |
-| integration | `ubuntu` + services `postgres:17`, `redis:7`, `mongo:8` |
+| integration | `ubuntu` + services `postgres:17`, `mysql:8.4`, `mariadb:11.8`, `redis:7`, `mongo:8` |
 | e2e | `ubuntu`, `windows`, `macos` × `stable` |
 | coverage | `ubuntu/stable` → Codecov, gate enforced by script |
