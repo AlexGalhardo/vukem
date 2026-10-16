@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.12] - 2026-10-16
+
+### Added
+
+- **BREAKING:** **cli:** Add lumek new with the HTMX + SQLite starter
+
 ## [0.0.11] - 2026-10-16
 
 ### Added
@@ -87,7 +93,8 @@ Project foundation. No framework code yet; see [PLAN.md](PLAN.md) for the roadma
 - README, MIT license, CONTRIBUTING, SECURITY and CODE_OF_CONDUCT.
 - Agent configuration: `AGENTS.md`, `CLAUDE.md`, path-scoped `.claude/rules/`, Go skills and project settings.
 
-[Unreleased]: https://github.com/AlexGalhardo/golang-framework/compare/v0.0.11...HEAD
+[Unreleased]: https://github.com/AlexGalhardo/golang-framework/compare/v0.0.12...HEAD
+[0.0.12]: https://github.com/AlexGalhardo/golang-framework/compare/v0.0.11...v0.0.12
 [0.0.11]: https://github.com/AlexGalhardo/golang-framework/compare/v0.0.10...v0.0.11
 [0.0.10]: https://github.com/AlexGalhardo/golang-framework/compare/v0.0.9...v0.0.10
 [0.0.9]: https://github.com/AlexGalhardo/golang-framework/compare/v0.0.8...v0.0.9
