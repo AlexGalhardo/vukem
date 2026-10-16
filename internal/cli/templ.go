@@ -16,7 +16,8 @@ const templTool = "github.com/a-h/templ/cmd/templ@v0.3.1070"
 
 // templReplaced lists the HTMX starter's html/template views; the templ
 // scaffold rewrites the controllers, routes and resources package.
-var templReplaced = []string{"resources/views"}
+// shortcut: the upload demo is html/template only, port it to templ when asked.
+var templReplaced = []string{"resources/views", "app/controllers/upload_controller.go", "tests/uploads_test.go"}
 
 const withViews = "\t\tvukem.WithViews(resources.Views()),\n"
 
