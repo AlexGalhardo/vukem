@@ -112,10 +112,31 @@ Inputs arrive as JSON values (`string`, `float64`, `bool`, `[]any`, `map[string]
 
 - `Path` — dotted path with indexes: `tags.2`, `author.email`
 - `Code` — stable machine code: `required`, `invalid_type`, `too_small`, `too_big`, `invalid_string`, `invalid_enum`, `custom`
-- `Message` — human message (i18n in BETA)
+- `Message` — human message (English by default; translated per request, see [Translated messages](#translated-messages))
 - `Params` — values used by the message (`{"min": 3}`)
 
 Issues are collected for the whole input (not first-error-only). The web error handler converts them into `*errs.ValidationError` → 422 / redirect + flash / problem+json ([http.md](http.md#errors)).
+
+## Translated messages
+
+Every built-in message has a key, `Issue.Key`: the detailed key when there is one (`too_small.string`, `string.email`, `too_small.positive`), else the code (`required`, `invalid_enum`). Custom messages (`Message` overrides, `Refine`, `Custom`) have no key and are never translated.
+
+`Issues.Localize(lookup)` rebuilds messages from translated templates: it tries `lookup(Key)`, then `lookup(Code)`, and replaces `{field}` with `lookup("attributes.<last path segment>")` when present (else the humanized name). Untranslated issues keep their English message.
+
+In an app, translation is opt-in and per request: `vukem.WithTranslations` + `DefaultMiddleware` install `i18n.Middleware`, which stores a localizer in the request context (`web.WithIssueLocalizer`). `web.Parse`, `Bind`, `ParseQuery` and `ParseParams` apply it before building the `*errs.ValidationError`; `web.ParseInput` has no request and stays English. Catalog keys live under `validation.`:
+
+```json
+{
+  "validation": {
+    "required": "O campo {field} é obrigatório.",
+    "too_small": { "string": "O campo {field} deve ter pelo menos {min} caracteres." },
+    "string": { "email": "O campo {field} deve ser um e-mail válido." },
+    "attributes": { "email": "e-mail" }
+  }
+}
+```
+
+Placeholders are the issue `Params` (`{min}`, `{max}`, `{len}`, `{options}`…). `{expected}` in `invalid_type` is English text (`a string`); translate the whole message instead of reusing it.
 
 ## Struct-tag shorthand
 

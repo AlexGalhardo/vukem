@@ -131,6 +131,16 @@ func (s StringSchema) Len(n int) StringSchema {
 	})
 }
 
+// required is Min(1) reported as CodeTooSmall with the "required" message,
+// the meaning of the "required" tag on a string.
+func (s StringSchema) required() StringSchema {
+	return s.kw("minLength", 1).with(nil, func(o *opts[string], c *pctx, path, v string) {
+		if v == "" {
+			o.issue(c, path, CodeTooSmall, CodeRequired, map[string]any{"min": 1})
+		}
+	})
+}
+
 // NonEmpty is Min(1).
 func (s StringSchema) NonEmpty() StringSchema { return s.Min(1) }
 

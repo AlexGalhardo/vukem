@@ -211,7 +211,7 @@ func (s NumberSchema[N]) Max(n N) NumberSchema[N] {
 func (s NumberSchema[N]) Positive() NumberSchema[N] {
 	return s.kw("exclusiveMinimum", 0).with(func(o *opts[N], c *pctx, path string, v N) {
 		if v <= 0 {
-			o.issue(c, path, CodeTooSmall, "too_small.number", map[string]any{"min": "greater than 0"})
+			o.issue(c, path, CodeTooSmall, "too_small.positive", map[string]any{"min": 0})
 		}
 	})
 }

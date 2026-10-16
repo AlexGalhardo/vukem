@@ -46,6 +46,10 @@ type Issue struct {
 	Code string `json:"code"`
 	// Message is a human-readable message.
 	Message string `json:"message"`
+	// Key is the message key Message was built from ("required",
+	// "too_small.string", "string.email"...); empty for custom messages
+	// (Message overrides, Refine, Custom). Localize uses it.
+	Key string `json:"-"`
 	// Params holds the values used by the message, e.g. {"min": 3}.
 	Params map[string]any `json:"params,omitempty"`
 }
@@ -126,6 +130,7 @@ var defaultMessages = map[string]string{
 	CodeNotUnique:        "The {field} field must not contain duplicates.",
 	"too_small.string":   "The {field} field must be at least {min} characters.",
 	"too_small.number":   "The {field} field must be at least {min}.",
+	"too_small.positive": "The {field} field must be greater than 0.",
 	"too_small.array":    "The {field} field must have at least {min} items.",
 	"too_small.date":     "The {field} field must be after {min}.",
 	"too_big.string":     "The {field} field must not be greater than {max} characters.",
@@ -148,10 +153,51 @@ var defaultMessages = map[string]string{
 	"string.utf8":        "The {field} field must be valid text.",
 }
 
+// Localize returns a copy of is with each built-in message rebuilt from the
+// template lookup returns for the issue's Key, then its Code (for example a
+// catalog's "validation.too_small.string" and "validation.too_small").
+// {field} becomes lookup("attributes.<name>") when present, where name is
+// the last path segment ("first_name"), or the humanized name otherwise.
+// Issues without a template, and custom messages, are kept unchanged.
+func (is Issues) Localize(lookup func(key string) (string, bool)) Issues {
+	out := slices.Clone(is)
+	if lookup == nil {
+		return out
+	}
+
+	for i, iss := range out {
+		if iss.Key == "" {
+			continue
+		}
+
+		tmpl, ok := lookup(iss.Key)
+		if !ok && iss.Code != iss.Key {
+			tmpl, ok = lookup(iss.Code)
+		}
+
+		if !ok {
+			continue
+		}
+
+		field := fieldName(iss.Path)
+		if segs := strings.Split(iss.Path, "."); iss.Path != "" {
+			if name, found := lookup("attributes." + segs[len(segs)-1]); found {
+				field = name
+			}
+		}
+
+		out[i].Message = renderField(tmpl, field, iss.Params)
+	}
+
+	return out
+}
+
 // render fills {placeholders} in tmpl.
 func render(tmpl, path string, params map[string]any) string {
-	field := fieldName(path)
+	return renderField(tmpl, fieldName(path), params)
+}
 
+func renderField(tmpl, field string, params map[string]any) string {
 	return placeholder.ReplaceAllStringFunc(tmpl, func(m string) string {
 		key := m[1 : len(m)-1]
 		if key == "field" {

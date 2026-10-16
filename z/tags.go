@@ -252,7 +252,7 @@ func stringFromRules(t reflect.Type, rs ruleSet, optional, nullable bool) (AnySc
 	s := String()
 
 	if rs.required {
-		s = s.Min(1).Message("too_small.string", defaultMessages[CodeRequired])
+		s = s.required()
 	}
 
 	for _, r := range rs.rules {
@@ -422,7 +422,7 @@ func (n numberAny) parseAny(c *pctx, path string, in any, present bool) (any, bo
 
 	rv := reflect.ValueOf(v)
 	if !rv.CanConvert(n.t) || rv.Convert(n.t).Convert(rv.Type()).Interface() != v {
-		c.add(path, CodeInvalidType, render(defaultMessages[CodeInvalidType], path,
+		c.addKeyed(path, CodeInvalidType, CodeInvalidType, render(defaultMessages[CodeInvalidType], path,
 			map[string]any{"expected": "a number in range"}), nil)
 
 		return nil, false, false
@@ -431,12 +431,9 @@ func (n numberAny) parseAny(c *pctx, path string, in any, present bool) (any, bo
 	f, _ := toNumber[float64](v, false)
 
 	if n.positive && f <= 0 {
-		c.add(
-			path,
-			CodeTooSmall,
-			render(defaultMessages["too_small.number"], path, map[string]any{"min": "greater than 0"}),
-			map[string]any{"min": 0},
-		)
+		params := map[string]any{"min": 0}
+		c.addKeyed(path, CodeTooSmall, "too_small.positive",
+			render(defaultMessages["too_small.positive"], path, params), params)
 
 		return nil, false, false
 	}
@@ -455,7 +452,7 @@ func (n numberAny) parseAny(c *pctx, path string, in any, present bool) (any, bo
 		}
 
 		params := map[string]any{param: be.n}
-		c.add(path, code, render(defaultMessages[key], path, params), params)
+		c.addKeyed(path, code, key, render(defaultMessages[key], path, params), params)
 
 		return nil, false, false
 	}

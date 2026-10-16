@@ -38,7 +38,13 @@ type pctx struct {
 }
 
 func (c *pctx) add(path, code string, msg string, params map[string]any) {
-	c.issues = append(c.issues, Issue{Path: path, Code: code, Message: msg, Params: params})
+	c.addKeyed(path, code, "", msg, params)
+}
+
+// addKeyed records an issue whose message came from defaultMessages[key],
+// so Issues.Localize can rebuild it from a translated template.
+func (c *pctx) addKeyed(path, code, key, msg string, params map[string]any) {
+	c.issues = append(c.issues, Issue{Path: path, Code: code, Key: key, Message: msg, Params: params})
 }
 
 // opts are the modifiers shared by every schema.
@@ -75,15 +81,16 @@ func (o *opts[T]) issue(c *pctx, path, code, key string, params map[string]any) 
 		tmpl, ok = o.messages[code]
 	}
 
-	if !ok {
-		tmpl, ok = defaultMessages[key]
+	if ok {
+		c.add(path, code, render(tmpl, path, params), cloneParams(params))
+		return
 	}
 
-	if !ok {
-		tmpl = defaultMessages[code]
+	if _, ok = defaultMessages[key]; !ok {
+		key = code
 	}
 
-	c.add(path, code, render(tmpl, path, params), cloneParams(params))
+	c.addKeyed(path, code, key, render(defaultMessages[key], path, params), cloneParams(params))
 }
 
 // parse runs the common pipeline around core: absence/null handling,
