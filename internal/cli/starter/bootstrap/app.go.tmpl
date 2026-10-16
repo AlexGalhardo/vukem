@@ -5,6 +5,7 @@ package bootstrap
 import (
 	vukem "github.com/AlexGalhardo/vukem"
 
+	"{{.Module}}/app/listeners"
 	"{{.Module}}/database/migrations"
 	"{{.Module}}/database/seeders"
 	"{{.Module}}/resources"
@@ -17,6 +18,7 @@ func New(opts ...vukem.Option) (*vukem.App, error) {
 		vukem.WithProviders(Providers()...),
 		vukem.WithMigrations(migrations.All()),
 		vukem.WithSeeders(seeders.All()...),
+		vukem.WithListeners(listeners.All()...),
 		vukem.WithViews(resources.Views()),
 	}
 

@@ -18,8 +18,8 @@ Task IDs: `<phase>.<group>.<task>` (e.g. `P.3.2`). Reference them in commit bodi
 | Field | Value |
 | --- | --- |
 | Current phase | **ALPHA** |
-| Next task | `A.6.1` |
-| Last release | `v0.10.0` (A.0.6 API starter and install:api) |
+| Next task | `A.6c.1` (Telegram logging), then A.6b, A.7 |
+| Last release | `v0.11.0` (A.6 cache, storage, events) |
 | Updated | 2026-10-16 |
 
 ## Design references
@@ -391,13 +391,13 @@ Applies to **every** task:
 
 ### A.6 Cache, storage, events, rate limiting
 
-- [ ] **A.6.1** Cache interface + memory (LRU/TTL) + database drivers; `Remember` with singleflight; locks.
+- [x] **A.6.1** Cache interface + memory (LRU/TTL) + database drivers; `Remember` with singleflight; locks.
   → verify: conformance suite; stampede test.
-- [ ] **A.6.2** Storage `Disk` + local (`os.Root`) + memory; signed temporary URLs; uploads helper; `storage:link`.
+- [x] **A.6.2** Storage `Disk` + local (`os.Root`) + memory; signed temporary URLs; uploads helper; `storage:link`.
   → verify: traversal tests; conformance suite.
-- [ ] **A.6.3** Typed events (`Listen[T]`, `Dispatch`), async pool tracked for shutdown, `make:event`/`make:listener`, `FakeEvents`.
+- [x] **A.6.3** Typed events (`Listen[T]`, `Dispatch`), async pool tracked for shutdown, `make:event`/`make:listener`, `FakeEvents`.
   → verify: tests.
-- [ ] **A.6.4** Rate limiter (memory) + middleware + headers; default login throttle.
+- [x] **A.6.4** Rate limiter (memory) + middleware + headers; default login throttle.
   → verify: `synctest` tests.
 
 ### A.6c Telegram logging

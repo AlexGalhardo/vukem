@@ -37,8 +37,9 @@ type stubData struct {
 	Func      string // generated function name, when the stub needs one
 	Resource  bool
 	API       bool
-	Create    bool // migration creates Table
-	Alter     bool // migration alters Table
+	Event     string // listener: event type name
+	Create    bool   // migration creates Table
+	Alter     bool   // migration alters Table
 }
 
 func newStubData(env *Env, name string) (stubData, error) {
@@ -368,6 +369,51 @@ func makeMail(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 		}
 
 		return generate(env, "mail.html.tmpl", "resources/views/mail/"+d.Snake+".html", d, *force)
+	}
+}
+
+func makeEvent(set *flag.FlagSet) func(context.Context, *Env, []string) error {
+	return simple(set, "event name", "event.go.tmpl", "app/events/%s.go", "Event")
+}
+
+func makeListener(set *flag.FlagSet) func(context.Context, *Env, []string) error {
+	event := set.String("event", "", "the event type it handles (required)")
+	async := set.Bool("async", false, "run in the background (errors are logged)")
+	force := set.Bool("force", false, "overwrite existing files")
+
+	return func(_ context.Context, env *Env, args []string) error {
+		name, err := oneArg(args, "listener name")
+		if err != nil {
+			return err
+		}
+
+		if *event == "" {
+			return usagef("--event is required")
+		}
+
+		d, err := newStubData(env, className(name, "Listener"))
+		if err != nil {
+			return err
+		}
+
+		d.Event = className(*event, "Event")
+
+		if err := generate(env, "listener.go.tmpl", "app/listeners/"+d.Snake+".go", d, *force); err != nil {
+			return err
+		}
+
+		fn := "events.On"
+		if *async {
+			fn = "events.OnAsync"
+		}
+
+		return register(
+			env,
+			"app/listeners/registry.go",
+			"All",
+			fn+"("+d.Name+")",
+			"github.com/AlexGalhardo/vukem/events",
+		)
 	}
 }
 

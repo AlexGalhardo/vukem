@@ -84,20 +84,72 @@ err = mailer.Send(ctx, Welcome{User: u})
 
 ## Cache
 
-`Get[T]`, `Put`, `Remember[T](ctx, key, ttl, fn)` with stampede protection (singleflight), `Forget`, `Flush`, atomic `Increment`, `Lock(key, ttl)`. Values encoded with `encoding/json`.
+```go
+c, err := app.Cache() // CACHE_STORE=memory (default) or database; CACHE_PREFIX, CACHE_TABLE, CACHE_MAX_ENTRIES
+
+user, err := cache.Remember(ctx, c, "user:42", time.Hour, func(ctx context.Context) (models.User, error) {
+	return orm.QueryOf[models.User](db).Find(ctx, 42)
+})
+
+err = c.Put(ctx, "settings", settings, 10*time.Minute)
+v, ok, err := cache.Get[Settings](ctx, c, "settings")
+n, err := c.Increment(ctx, "visits", 1, 24*time.Hour)
+
+lock := c.NewLock("reports:daily", time.Minute)
+if ok, _ := lock.TryAcquire(ctx); ok {
+	defer lock.Release(ctx) // only the owner can release
+}
+```
+
+- Values are JSON. `Remember` runs `fn` once for concurrent misses of a key in the process (singleflight) and never caches errors.
+- Stores implement `cache.Store` (`Get`, `Set`, atomic `Add`, `Delete`, owner-checked `DeleteIf`, `Increment`, `Flush`): `cache.NewMemory(maxEntries)` (LRU + TTL) and `cache.NewDatabase(db, table)` (SQLite/Postgres upserts; `Prune` removes expired rows). Redis comes with `drivers/redis` (BETA). `cache/cachetest.Run` is the conformance suite, run on memory, SQLite and Postgres.
 
 ## Storage
 
-`Disk` interface: `Put`, `Get`, `Open`, `Exists`, `Delete`, `URL`, `TemporaryURL` (signed, local disk served by a route). `c.File("avatar")` + `storage.PutUploaded(ctx, disk, file)` with randomised names and size/type checks.
+```go
+disk, err := storage.NewLocal("storage/app/public", "/storage") // os.Root: no "..", no escaping symlinks
+r.Handle("/storage/", http.StripPrefix("/storage", storage.Handler(disk, nil)))
+
+path, err := storage.PutUploaded(ctx, disk, fileHeader, "avatars", storage.Images(2<<20))
+url := disk.URL(path)
+
+private, _ := storage.NewLocal("storage/app/private", "")
+r.Handle("/files/", http.StripPrefix("/files", storage.Handler(private, signer)))
+link, err := storage.TemporaryURL(signer, "/files", "invoices/42.pdf", 15*time.Minute)
+```
+
+- `storage.Disk`: `Put` (atomic rename on local disks), `Open`, `Exists`, `Delete`, `List`, `URL`; helpers `storage.Get` and `storage.PutBytes`. Disks: `NewLocal` and `NewMemory` (tests); S3 in BETA (`drivers/s3`). `storage/storagetest` holds the conformance and traversal suites (`TestSecurity_A01_StorageTraversal`).
+- `PutUploaded` never uses the client's file name: random name, extension from the type detected in the content (`http.DetectContentType`), size checked from the header and again while copying, 422 for disallowed types or sizes.
+- `Handler` never serves dotfiles or directories, sends `X-Content-Type-Options: nosniff`, and with a `signed.Signer` only answers signed, unexpired URLs.
+- Decision: instead of `storage:link` (a symlink, which needs extra privileges on Windows), public files are served by `storage.Handler` from the disk itself.
 
 ## Events
 
 ```go
-events.Listen[events.UserRegistered](app.Events, sendWelcomeEmail)
-app.Events.Dispatch(ctx, events.UserRegistered{User: u})
+// app/events/order_shipped.go — vukem make:event OrderShipped
+type OrderShipped struct{ OrderID int64 }
+
+// app/listeners/notify_customer.go — vukem make:listener NotifyCustomer --event OrderShipped [--async]
+func NotifyCustomer(ctx context.Context, e events.OrderShipped) error { ... }
+
+// app/listeners/registry.go (make:listener appends), passed to vukem.WithListeners(listeners.All()...)
+func All() []events.Registration { return []events.Registration{events.OnAsync(NotifyCustomer)} }
+
+err := app.Events.Dispatch(ctx, events.OrderShipped{OrderID: 42})
 ```
 
-Typed by generics; listeners registered explicitly in `bootstrap/events.go` (edited by `make:listener`). Async listeners run on the queue (BETA) or a bounded goroutine pool tracked for shutdown.
+- Typed by generics: `events.On(fn)` infers the event type from the function. Synchronous listeners run in registration order and the first error stops the chain and is returned; async ones (`OnAsync`) run on a bounded pool with a context detached from the request, log their errors and panics, and are drained by `app.Shutdown`.
+- Tests: `events.NewFake()` records dispatches; `events.Dispatched[OrderShipped](fake)`.
+- Queue-backed listeners arrive with the queue (BETA).
+
+## Rate limiting
+
+```go
+login := ratelimit.Middleware(ratelimit.NewMemory(5, time.Minute), account.LoginThrottleKey)
+r.Post("/login", h.Login).Use(login)
+```
+
+GCRA limiter keyed by `ratelimit.ByToken`, `ByIP` or your own `KeyFunc`; responses include `RateLimit-*` headers, `429` adds `Retry-After`; a failing store denies. `install:auth` throttles logins per email and IP by default. Redis store in BETA.
 
 ## Queue
 
@@ -129,17 +181,6 @@ Runs in-process as a runner (`schedule:work`) or via a single cron entry calling
 ## Encryption
 
 `crypt.Encrypt/Decrypt` (AES-256-GCM, key from HKDF over `APP_KEY`), `APP_PREVIOUS_KEYS` for rotation, encrypted cookies, `orm.Encrypted[T]` column type.
-
-## Rate limiting
-
-```go
-app.Limiter.Define("login", func(c *web.Ctx) ratelimit.Limit {
-	return ratelimit.PerMinute(5).By(c.FormValue("email") + "|" + c.IP())
-})
-r.Post("/login", auth.Login).Use(ratelimit.Middleware("login"))
-```
-
-Responses include `RateLimit-*` headers and `Retry-After`.
 
 ## i18n
 

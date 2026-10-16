@@ -13,8 +13,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/AlexGalhardo/vukem/cache"
 	"github.com/AlexGalhardo/vukem/config"
 	"github.com/AlexGalhardo/vukem/database"
+	"github.com/AlexGalhardo/vukem/events"
 	"github.com/AlexGalhardo/vukem/mail"
 	"github.com/AlexGalhardo/vukem/router"
 	"github.com/AlexGalhardo/vukem/schema"
@@ -83,6 +85,12 @@ type App struct {
 	sessStore session.Store
 	sessErr   error
 	mail      mailState
+	cacheOnce sync.Once
+	cache     *cache.Cache
+	cacheErr  error
+
+	// Events is the application event bus (WithListeners registers listeners).
+	Events *events.Bus
 
 	now func() time.Time
 
@@ -117,6 +125,7 @@ type options struct {
 	migrations    []schema.Migration
 	seeders       []Seeder
 	mailTransport mail.Transport
+	listeners     []events.Registration
 	drivers       []database.Driver
 	stdout        io.Writer
 	ready         chan<- string
@@ -274,6 +283,10 @@ func New(opts ...Option) (*App, error) {
 		mail:       mailState{transport: o.mailTransport},
 	}
 	app.Router = app.newRouter()
+
+	app.Events = events.New(app.Log, 0)
+	app.Events.Register(o.listeners...)
+	app.OnShutdown(app.Events.Shutdown)
 
 	if o.views != nil {
 		engine, err := view.New(view.Config{FS: o.views, Reload: !cfg.IsProduction(), URLs: app.Router})

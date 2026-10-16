@@ -23,6 +23,8 @@ Usage:
   make:resource <Name>    Create an API resource (JSON transformer) for a model
   make:factory <Name>     Create a model factory (fake data for tests and seeders)
   make:seeder <Name>      Create a seeder and register it
+  make:event <Name>       Create an event type
+  make:listener <Name>    Create an event listener and register it (--event Name)
   make:mail <Name>        Create a mailable and its view
   make:policy <Name>      Create an authorization policy and register it
   make:test <Name>        Create a test using the fluent client

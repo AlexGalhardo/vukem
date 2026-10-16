@@ -1,0 +1,12 @@
+package listeners
+
+import (
+	"context"
+
+	"{{.Module}}/app/events"
+)
+
+// {{.Name}} handles events.{{.Event}}.
+func {{.Name}}(ctx context.Context, e events.{{.Event}}) error {
+	return nil
+}

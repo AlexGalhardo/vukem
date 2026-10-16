@@ -3,10 +3,13 @@
 package postgres
 
 import (
+	"context"
 	"os"
 	"testing"
 	"time"
 
+	"github.com/AlexGalhardo/vukem/cache"
+	"github.com/AlexGalhardo/vukem/cache/cachetest"
 	"github.com/AlexGalhardo/vukem/database"
 	"github.com/AlexGalhardo/vukem/database/dbtest"
 	"github.com/AlexGalhardo/vukem/session"
@@ -83,4 +86,22 @@ func TestSessionStore(t *testing.T) {
 	if _, ok, _ := store.Load(ctx, "s1"); ok {
 		t.Fatal("deleted session loaded")
 	}
+}
+
+func TestCacheStore(t *testing.T) {
+	db := open(t)
+
+	store, err := cache.NewDatabase(db, "dbt_cache")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, _ = db.ExecContext(t.Context(), "DROP TABLE IF EXISTS dbt_cache")
+	t.Cleanup(func() { _, _ = db.ExecContext(context.Background(), "DROP TABLE IF EXISTS dbt_cache") })
+
+	if err := store.CreateTable(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	cachetest.Run(t, store)
 }
