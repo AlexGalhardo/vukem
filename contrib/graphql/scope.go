@@ -30,6 +30,11 @@ func withScope(ctx context.Context, s *requestScope) context.Context {
 	return context.WithValue(ctx, scopeKey{}, s)
 }
 
+func scopeFrom(ctx context.Context) *requestScope {
+	s, _ := ctx.Value(scopeKey{}).(*requestScope)
+	return s
+}
+
 func newScope() *requestScope {
 	return &requestScope{running: 1, loaders: map[any]any{}}
 }
