@@ -107,6 +107,7 @@ type App struct {
 
 	jobs         []queue.Registration
 	queueDriver  queue.Driver
+	cacheStore   cache.Store
 	schedules    []func(*schedule.Schedule, *App)
 	scheduleOnce sync.Once
 	schedule     *schedule.Schedule
@@ -152,6 +153,8 @@ type options struct {
 	listeners     []events.Registration
 	jobs          []queue.Registration
 	queueDriver   queue.Driver
+	cacheStore    cache.Store
+	sessionStore  session.Store
 	schedules     []func(*schedule.Schedule, *App)
 	drivers       []database.Driver
 	stdout        io.Writer
@@ -318,6 +321,8 @@ func New(opts ...Option) (*App, error) {
 		seeders:     o.seeders,
 		jobs:        o.jobs,
 		queueDriver: o.queueDriver,
+		cacheStore:  o.cacheStore,
+		sessStore:   o.sessionStore,
 		schedules:   o.schedules,
 		mail:        mailState{transport: o.mailTransport},
 	}

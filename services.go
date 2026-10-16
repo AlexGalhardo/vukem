@@ -7,12 +7,25 @@ import (
 
 	"github.com/AlexGalhardo/vukem/cache"
 	"github.com/AlexGalhardo/vukem/events"
+	"github.com/AlexGalhardo/vukem/session"
 )
 
 // WithListeners registers event listeners on App.Events (generated apps
 // pass listeners.All(); vukem make:listener appends there).
 func WithListeners(regs ...events.Registration) Option {
 	return func(o *options) error { o.listeners = append(o.listeners, regs...); return nil }
+}
+
+// WithCacheStore replaces the store chosen by CACHE_STORE (e.g. Redis:
+// vukem.WithCacheStore(redisClient.CacheStore("cache:"))).
+func WithCacheStore(s cache.Store) Option {
+	return func(o *options) error { o.cacheStore = s; return nil }
+}
+
+// WithSessionStore replaces the store chosen by SESSION_DRIVER (e.g.
+// Redis: vukem.WithSessionStore(redisClient.SessionStore(""))).
+func WithSessionStore(s session.Store) Option {
+	return func(o *options) error { o.sessionStore = s; return nil }
 }
 
 // CacheConfig is read from CACHE_* variables.
@@ -35,10 +48,12 @@ func (a *App) Cache() (*cache.Cache, error) {
 			return
 		}
 
-		switch cfg.Store {
-		case "memory":
+		switch {
+		case a.cacheStore != nil:
+			a.cache = cache.New(a.cacheStore, cfg.Prefix)
+		case cfg.Store == "memory":
 			a.cache = cache.New(cache.NewMemory(cfg.MaxEntries), cfg.Prefix)
-		case "database":
+		case cfg.Store == "database":
 			db, err := a.DB()
 			if err != nil {
 				a.cacheErr = err

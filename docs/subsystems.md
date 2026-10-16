@@ -206,6 +206,27 @@ func Schedule(s *schedule.Schedule, app *vukem.App) {
 - Run it in process with `vukem schedule:work` (ticks at the start of every minute, drains running tasks on shutdown) or with one cron entry: `* * * * * cd /app && ./app schedule:run`. `vukem schedule:list` shows each task's next run.
 - Tasks run concurrently; failures and panics are logged and do not stop other tasks. Command tasks run in the same process through `App.Call`.
 
+## Redis
+
+`go get github.com/AlexGalhardo/vukem/drivers/redis` (go-redis v9; works with Redis 7+ and Valkey 8+, both run in CI).
+
+```go
+rc, err := redis.Open(ctx, os.Getenv("REDIS_URL")) // redis://localhost:6379/0, rediss:// for TLS
+
+app, err := vukem.New(
+	vukem.WithCacheStore(rc.CacheStore("cache:")),   // also backs scheduler and cache locks
+	vukem.WithSessionStore(rc.SessionStore("")),     // "session:" keys with TTL
+	vukem.WithQueueDriver(rc.Queue(redis.QueueOptions{})),
+)
+
+limiter := rc.RateLimiter("api:", 60, time.Minute) // ratelimit.Limiter shared by every server
+msgs, err := rc.Subscribe(ctx, "orders")          // pub/sub (SSE fan-out); rc.Publish(ctx, "orders", b)
+```
+
+- The queue keeps jobs in sorted sets under `{queue}:` (one Cluster slot) and reserves them with one Lua script; abandoned jobs are taken over after their timeout plus one minute, failed jobs support `queue:failed`, `queue:retry` and `queue:forget`.
+- `Flush` deletes only the store's prefix (`SCAN` + `DEL`), never the whole database, and refuses an empty prefix.
+- The driver passes the `cachetest` and `queuetest` conformance suites.
+
 ## Encryption
 
 `crypt.Encrypt/Decrypt` (AES-256-GCM, key from HKDF over `APP_KEY`), `APP_PREVIOUS_KEYS` for rotation, encrypted cookies, `orm.Encrypted[T]` column type.
