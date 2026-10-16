@@ -1,55 +1,113 @@
 ---
 title: Views
-description: Server-rendered HTML with html/template, layouts, fragments for htmx, and optional templ support.
+description: Server-rendered HTML with html/template, layouts, partials, fragments for htmx, request-aware helpers and optional templ support.
 ---
 
-<Callout type="warning">
-Planned for the Prototype release. The `view` package is not implemented yet; this page documents the design target. The `web.Renderer` interface used by error pages already exists.
-</Callout>
+Views use Go's `html/template`, which escapes HTML, attributes, JavaScript and URLs by context. Enable the engine with `lumek.WithViews(fsys)`:
 
-## The `html/template` engine
+```go title="bootstrap/app.go"
+lumek.WithViews(resources.Views()) // disk in development, embed.FS in the binary
+```
 
-Views live in `resources/views` and use Go's `html/template`, which escapes HTML, attributes, JavaScript and URLs by context.
+Outside production every render re-parses the views, so edits show up on refresh. Syntax errors in any view fail `lumek.New` at boot.
+
+## Directory layout
+
+```text
+resources/views/
+├── layouts/app.html          the default layout
+├── partials/post-fields.html shared: {{template "partials/post-fields" .}}
+├── components/alert.html     shared, by convention for reusable widgets
+├── home.html                 page "home"
+└── posts/index.html          page "posts/index"
+```
+
+`layouts/`, `partials/` and `components/` are shared by every page. Any other `.html` file is a page named by its path without the extension. Each page is parsed into its own template set, so block names never collide between pages.
+
+## Layouts and blocks
+
+```html title="resources/views/layouts/app.html"
+<!doctype html>
+<html lang="en">
+<head>
+	<title>{{block "title" .}}Lumek{{end}}</title>
+	<link rel="stylesheet" href="{{asset "css/app.css"}}">
+	{{htmxScript (asset "js/htmx.min.js")}}
+</head>
+<body>
+	{{with flash "success"}}<p class="flash">{{.}}</p>{{end}}
+	{{block "content" .}}{{end}}
+</body>
+</html>
+```
+
+```html title="resources/views/posts/show.html"
+{{define "title"}}{{.Title}}{{end}}
+{{define "content"}}
+<h1>{{.Title}}</h1>
+<p>{{.Body}}</p>
+{{end}}
+```
+
+Pages render inside `layouts/app.html`. A page picks another layout, or none, with a comment on its first line:
+
+```html
+{{/* layout: admin */}}
+{{/* layout: none */}}
+```
+
+An unknown layout name is a boot error.
+
+## Rendering
 
 ```go
-func (p *PostController) Index(c *web.Ctx) error {
-	posts, err := p.posts.All(c.Context())
-	if err != nil {
-		return err
-	}
-	return c.Render("posts/index", web.Map{"Posts": posts})
-}
+return c.Render("posts/show", post)                                  // 200, full page
+return c.Render("posts/index", data, web.Block("post-list"))          // block for htmx partial requests
+return c.Fragment("posts/index", "post-list", data)                   // always just the block
+return c.Render("posts/create", nil, web.WithStatus(http.StatusUnprocessableEntity))
 ```
 
-```html title="resources/views/posts/index.html"
-{{ define "content" }}
-<h1>Posts</h1>
-<ul id="post-list">
-	{{ range .Posts }}
-	<li><a href="{{ route "posts.show" "post" .ID }}">{{ .Title }}</a></li>
-	{{ end }}
-</ul>
-<script nonce="{{ cspNonce }}" src="/build/app.js"></script>
-{{ end }}
+Rendering is buffered: a template error never leaves a half-written page, it goes to the error handler instead. `web.Block` adds `Vary: HX-Request`. See [HTMX](/docs/frontend/htmx).
+
+## Template functions
+
+| Function | Output |
+| --- | --- |
+| `route "posts.show" "post" .ID` | URL of a named route |
+| `asset "css/app.css"` | `/css/app.css` (prefix configurable) |
+| `csrfField`, `csrfToken` | CSRF hidden input or token ([CSRF](/docs/basics/csrf)) |
+| `cspNonce` | The request's CSP nonce, for inline `<script nonce>` / `<style nonce>` |
+| `htmxScript "/js/htmx.min.js"` | `<script src defer nonce>` with the request's nonce |
+| `old "title"` | Previous input after a failed validation (dotted paths for nested fields) |
+| `error "title"`, `errors` | First error of a field, or all field errors |
+| `flash "success"` | A flashed session value |
+| `json .` | Value encoded as JSON, safe inside `<script>` |
+| `dict "Key" v ...` | A map, to pass several values to a partial |
+
+Request-scoped functions read the session and nonce from the request context; without a session they return empty values. Add your own with `view.Config.Funcs` when building a `view.Engine` yourself.
+
+<Callout type="warning">
+Planned: `vite` (BETA), `can` and `auth` (ALPHA), `t` for translations (BETA).
+</Callout>
+
+## The engine directly
+
+```go
+engine, err := view.New(view.Config{
+	FS:          os.DirFS("resources/views"),
+	Reload:      true,
+	URLs:        app.Router,           // for the route function
+	AssetPrefix: "/static",
+	Funcs:       template.FuncMap{"upper": strings.ToUpper},
+})
 ```
 
-Template functions: `route` (named URLs), `cspNonce` (per-request nonce from [secure headers](/docs/basics/middleware#secure-headers-and-csp-nonces)), `csrfField`, `old`, `errors`.
-
-## Fragments
-
-`c.Fragment(name, block, data)` renders a single `{{ block }}` of a view, so htmx requests receive only the part they swap. See [HTMX](/docs/frontend/htmx).
+`*view.Engine` implements `web.Renderer` (`Render`, `RenderBlock`, `Has`) and lists pages with `Names()`.
 
 ## Error pages
 
-When a `web.Renderer` is configured, the error handler renders `errors/<status>` (for example `errors/404.html`) if it exists. `web.Renderer` is implemented today by any type with:
-
-```go
-type Renderer interface {
-	Render(w io.Writer, name string, data any) error
-	Has(name string) bool
-}
-```
+The error handler renders `errors/<status>` (for example `resources/views/errors/404.html`) when that view exists, and a minimal built-in page otherwise.
 
 ## templ
 
-[templ](https://templ.guide) components are supported (not bundled) through `c.View(v view.View)`.
+[templ](https://templ.guide) components satisfy `web.View` (`Render(ctx, w) error`), so `c.View(components.PostList(posts))` renders them. templ is supported, not bundled.

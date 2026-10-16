@@ -6,7 +6,7 @@ description: Lumek brings Laravel and AdonisJS productivity to idiomatic Go, bui
 Lumek is a web framework for **REST APIs and full-stack apps**: routing, validation, an ORM with migrations, authentication, JSON resources with problem+json errors, HTMX-first views and an optional Inertia + React frontend, all driven by one CLI.
 
 <Callout type="warning">
-Lumek is in its **Prototype** phase. Nothing is released yet and APIs will change. Pages marked "Planned for ALPHA" or "Planned for BETA" describe the design target, not shipped code.
+Lumek is pre-1.0 and APIs will change between `v0.x` releases. Pages and callouts marked "Planned for ALPHA" or "Planned for BETA" describe the design target, not shipped code.
 </Callout>
 
 ## Why Lumek
@@ -52,20 +52,24 @@ func (p *PostController) Show(c *web.Ctx) error {
 
 | Area | Status |
 | --- | --- |
-| Configuration: `.env` loading, typed `config.Load`, `config.Secret`, `APP_KEY` key derivation | Implemented |
-| Application: providers, runners, graceful shutdown, HTTP server with safe timeouts | Implemented |
-| Router: groups, named routes, URL generation, resources, three middleware stacks, 404/405 | Implemented |
-| `*web.Ctx`: input, responses, redirects, problem+json errors | Implemented |
-| Middleware: recover, request id, logger, timeout, body limit, method override, CORS, static, secure headers, gzip, JSON-only | Implemented |
-| Validation (`z`), sessions, CSRF, views, ORM and migrations, CLI | Planned for the Prototype release |
-| Authentication, authorization, REST API starter, mail, cache, storage | Planned for ALPHA |
+| Configuration: `.env` loading, typed `config.Load`, `config.Secret`, `APP_KEY` key derivation | Available |
+| Application: providers, runners, commands, graceful shutdown, HTTP server with safe timeouts | Available |
+| Router: groups, named routes, URL generation, resources, three middleware stacks, 404/405 | Available |
+| `*web.Ctx`: input, responses, redirects, conditional requests, problem+json errors | Available |
+| Middleware: recover, request id, logger, timeout, body limit, method override, CORS, static, secure headers with CSP nonces, gzip, JSON-only | Available |
+| Validation with `z`, sessions with flash and old input, CSRF protection | Available |
+| SQLite, generic ORM, schema builder and migrations | Available |
+| `html/template` views with layouts and fragments, htmx 4 helpers | Available |
+| `lumektest` fluent test client and database assertions | Available |
+| `lumek` CLI: `new`, `serve`, `build`, `key:generate`, `make:*`, app commands | Available |
+| Authentication, authorization, REST API starter, PostgreSQL, mail, cache, storage | Planned for ALPHA |
 | OpenAPI, queues, Inertia + React, Vite, Redis, MongoDB | Planned for BETA |
 
 ## Next steps
 
 <CardGroup cols="2">
 <Card title="Installation" href="/docs/installation" icon="terminal">
-Requirements and how to add Lumek to a Go module.
+Install the CLI and create a project with `lumek new`.
 </Card>
 <Card title="Routing" href="/docs/basics/routing" icon="route">
 Verbs, groups, named routes and resource controllers.

@@ -5,17 +5,35 @@ import { LogoMark } from "@/components/logo";
 import { getNavGroups } from "@/lib/content";
 import { site } from "@/lib/site";
 
-const SAMPLE = `r := router.New(nil)
-r.UseServer(middleware.Recover(), middleware.RequestID(), middleware.Logger(app.Log))
+const SAMPLE = `func Web(r *router.Router, app *lumek.App) error {
+	if err := lumek.DefaultMiddleware(app, r); err != nil {
+		return err
+	}
 
-r.Get("/", func(c *web.Ctx) error {
-	return c.String(http.StatusOK, "Hello from Lumek")
-}).Name("home")
+	db, err := app.DB()
+	if err != nil {
+		return err
+	}
 
-r.Group("/api", func(g *router.Group) {
-	g.Use(middleware.JSONOnly())
-	g.APIResource("posts", posts) // posts.index, posts.store, posts.show…
-}).Name("api.")
+	r.Get("/", controllers.Home).Name("home")
+	r.Resource("posts", controllers.NewPostController(db)) // posts.index, posts.store…
+
+	return nil
+}
+
+func (pc *PostController) Store(c *web.Ctx) error {
+	in, err := web.Parse(c, requests.PostSchema) // typed input or 422 / redirect back
+	if err != nil {
+		return err
+	}
+
+	post := models.Post{Title: in.Title, Body: in.Body}
+	if err := orm.Create(c.Context(), pc.db, &post); err != nil {
+		return err
+	}
+
+	return c.RedirectRoute("posts.show", "post", post.ID)
+}
 `;
 
 const FEATURES = [
@@ -32,7 +50,7 @@ export default function Home() {
       <section className="max-w-2xl">
         <LogoMark className="mb-6 size-10" />
         <p className="mb-3 inline-flex items-center gap-2 rounded-full border border-border px-3 py-1 text-xs text-muted">
-          <span className="size-1.5 rounded-full bg-amber-500" aria-hidden /> Prototype phase: APIs will change
+          <span className="size-1.5 rounded-full bg-amber-500" aria-hidden /> Pre-1.0: APIs may change between v0.x releases
         </p>
         <h1 className="text-4xl font-semibold tracking-tight text-fg sm:text-5xl">A Go web framework for REST APIs and full-stack apps.</h1>
         <p className="mt-5 text-lg leading-relaxed text-muted">{site.tagline} Routing, validation, an ORM, authentication, problem+json errors and HTMX-first views, driven by one CLI.</p>

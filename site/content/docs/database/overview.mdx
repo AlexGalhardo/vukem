@@ -1,109 +1,71 @@
 ---
 title: Database
-description: SQLite by default, a generic query builder, plain-struct models, migrations and opt-in drivers for PostgreSQL, Redis and MongoDB.
+description: SQLite by default with safe pragmas and split reader/writer pools, transactions, and opt-in drivers for PostgreSQL, Redis and MongoDB.
 ---
-
-<Callout type="warning">
-Planned for the Prototype release (SQLite, query builder, models, migrations). Relations, factories and PostgreSQL are planned for ALPHA; Redis and MongoDB for BETA. Nothing on this page is implemented yet.
-</Callout>
 
 ## Support matrix
 
-| Database | Package | Phase |
+| Database | Package | Status |
 | --- | --- | --- |
-| SQLite (pure Go, no cgo) | core, `modernc.org/sqlite` | Prototype |
-| PostgreSQL | `drivers/postgres` (pgx) | ALPHA |
-| Redis (cache, sessions, queues) | `drivers/redis` | BETA |
-| MongoDB | `drivers/mongo` | BETA |
+| SQLite (pure Go, no cgo) | core, `modernc.org/sqlite` | Available |
+| PostgreSQL | `drivers/postgres` (pgx) | Planned for ALPHA |
+| Redis (cache, sessions, queues) | `drivers/redis` | Planned for BETA |
+| MongoDB | `drivers/mongo` | Planned for BETA |
 
-Drivers are separate Go modules, so importing the core never downloads a heavy driver.
+Drivers are separate Go modules, so importing the core never downloads a heavy driver. The query builder and migrations already speak both SQLite and PostgreSQL dialects.
 
-## Connections
+## Connecting
 
-```go title="config/database.go"
-type Database struct {
-	Default     string        `env:"DB_CONNECTION"   default:"sqlite"`
-	URL         string        `env:"DATABASE_URL"    default:"file:storage/database.sqlite"`
-	MaxOpen     int           `env:"DB_MAX_OPEN"     default:"10"`
-	MaxIdle     int           `env:"DB_MAX_IDLE"     default:"5"`
-	MaxLifetime time.Duration `env:"DB_MAX_LIFETIME" default:"30m"`
+`app.DB()` opens the default connection on first use from `DB_*` variables, registers a `db` health check (`/up?checks=1`) and closes it on shutdown:
+
+| Variable | Default |
+| --- | --- |
+| `DATABASE_URL` | `file:storage/database.sqlite` |
+| `DB_MAX_OPEN` | `10` |
+| `DB_MAX_IDLE` | `5` |
+
+```go title="routes/web.go"
+db, err := app.DB() // *database.DB
+if err != nil {
+	return err
 }
+r.Resource("posts", controllers.NewPostController(db))
 ```
 
-SQLite connections get WAL, `busy_timeout`, foreign keys and a single-writer pool plus a reader pool, so `SQLITE_BUSY` errors are avoided.
+SQLite URLs: `file:storage/app.db`, `sqlite:storage/app.db` or `:memory:`. Other schemes need their driver, added with `lumek.WithDatabaseDrivers(...)`.
 
-## Query builder
+Outside an app, `database.Open(ctx, url, database.WithConfig(cfg))` returns the same `*database.DB`; `database.FromSQL(conn, dialect)` wraps an existing `*sql.DB`.
 
-Generic, built on `database/sql`, always parameterised. Column names are validated against the model's cached column set, never interpolated from input.
+## SQLite defaults
+
+Every SQLite connection gets WAL journaling, `busy_timeout`, `foreign_keys=ON` and `BEGIN IMMEDIATE` for write transactions. Writes and transactions go to a **single-connection writer pool**, reads to a read-only reader pool, so concurrent requests do not fail with `SQLITE_BUSY`.
+
+## Raw SQL
+
+`*database.DB` and `*database.Tx` implement `database.Executor`:
 
 ```go
-users, err := orm.Query[models.User](db).
-	Where("active", true).
-	WhereIn("role", []string{"admin", "editor"}).
-	OrderBy("created_at", orm.Desc).
-	Limit(20).
-	Get(ctx) // []models.User
-
-user, err := orm.Query[models.User](db).Find(ctx, 42) // orm.ErrNoRows → 404 in handlers
-
-for u, err := range orm.Query[models.User](db).Each(ctx) { // range-over-func streaming
-	if err != nil {
-		return err
-	}
-	process(u)
-}
+var n int64
+err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM posts WHERE published = ?", true).Scan(&n)
 ```
 
-## Models
-
-Plain structs; no Active Record. Persistence functions take the executor (`db` or `tx`).
-
-```go
-type User struct {
-	orm.Model                   // ID, CreatedAt, UpdatedAt
-	Name     string
-	Email    string `db:"email"`
-	Password string `db:"password" json:"-"`
-}
-
-err = orm.Create(ctx, db, &user)
-err = orm.Update(ctx, db, &user)
-err = orm.Delete(ctx, db, &user)
-```
+Always pass values as arguments; never concatenate input into SQL. `db.Dialect()` gives `Quote` and `Placeholder` for portable statements, and `db.SQL()` exposes the underlying `*sql.DB`.
 
 ## Transactions
 
 ```go
-err = db.Tx(ctx, func(tx *database.Tx) error {
+err := db.Tx(ctx, func(tx *database.Tx) error {
 	if err := orm.Create(ctx, tx, &order); err != nil {
 		return err
 	}
+
 	return orm.Create(ctx, tx, &item)
-}) // commit on nil, rollback on error or panic
+}) // commit on nil, rollback on error or panic (the panic is re-raised)
 ```
 
-## Migrations
+`database.RunInTx(ctx, ex, fn)` joins the caller's transaction when `ex` is already a `*Tx`, or starts one when it is a `*DB`, which keeps service functions composable.
 
-```go title="migrations/20261016120000_create_users_table.go"
-var CreateUsersTable = schema.Migration{
-	ID: "20261016120000_create_users_table",
-	Up: func(s *schema.Schema) error {
-		return s.Create("users", func(t *schema.Table) {
-			t.ID()
-			t.String("name")
-			t.String("email").Unique()
-			t.Timestamps()
-		})
-	},
-	Down: func(s *schema.Schema) error { return s.Drop("users") },
-}
-```
+## Next
 
-```bash
-lumek make:migration create_posts_table
-lumek migrate
-lumek migrate:status
-lumek migrate:rollback
-```
-
-Migrations are listed in `migrations/registry.go` (appended by `make:migration`, no `init()` registration) and tracked with checksums. `migrate:fresh` and `db:wipe` require `--force` in production.
+- [ORM](/docs/database/orm): typed queries and models.
+- [Migrations](/docs/database/migrations): schema builder and `lumek migrate`.

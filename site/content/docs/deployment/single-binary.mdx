@@ -13,9 +13,7 @@ CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o bin/app ./cmd/app
 
 SQLite uses the pure-Go `modernc.org/sqlite` driver, so no cgo toolchain is needed and cross-compiling is a matter of `GOOS`/`GOARCH`.
 
-<Callout type="warning">
-Planned for the Prototype release: `lumek build` runs `vite build` when present, then the command above with embedded assets.
-</Callout>
+`lumek build` does this for you: it runs `npx vite build` when a `vite.config.*` exists, then `go build -trimpath -ldflags="-s -w" -o bin/app ./cmd/app` (`-o` changes the output). The starter embeds `resources/views` and `resources/public` with `//go:embed`, so the binary is self-contained.
 
 ## Embed public assets
 

@@ -1,36 +1,48 @@
 ---
 title: CSRF protection
-description: Cross-origin request forgery protection with Go's CrossOriginProtection and a token fallback.
+description: Cross-site request forgery protection with Go's CrossOriginProtection, plus an optional session token fallback.
 ---
 
-<Callout type="warning">
-Planned for the Prototype release. CSRF middleware is not implemented yet; this page documents the design target.
-</Callout>
+`lumek.DefaultMiddleware` installs `csrf.Middleware` on the router stack. Nothing else is needed for forms or htmx in modern browsers.
 
 ## How it works
 
-- `http.CrossOriginProtection` (Go 1.25) runs on the router stack and rejects cross-origin unsafe requests (`POST`, `PUT`, `PATCH`, `DELETE`) using the `Sec-Fetch-Site` and `Origin` headers. No token is needed in modern browsers.
-- The session cookie uses `SameSite=Lax`.
-- Trusted origins and bypass patterns (webhooks) are declared in `config/http.go`; unsafe behaviour requires an explicitly named opt-out.
-- A token fallback (`{{ csrfField }}` in forms, the `X-CSRF-Token` header, `hx-headers` for htmx) remains available for non-browser clients and old browsers, enabled by config.
-- Rejections are logged as the `csrf.rejected` security event.
+- `http.CrossOriginProtection` rejects cross-origin unsafe requests (`POST`, `PUT`, `PATCH`, `DELETE`) using the `Sec-Fetch-Site` and `Origin` headers. Requests without either header (curl, server-to-server API clients) pass.
+- Rejections answer **403** through the error handler and log a `csrf.rejected` security event.
+- The session cookie uses `SameSite=Lax` as a second layer.
+
+## Configuration
+
+```go
+mw, err := csrf.Middleware(csrf.Config{
+	TrustedOrigins: []string{"https://admin.example.com"}, // other origins allowed to post
+	BypassPatterns: []string{"POST /webhooks/stripe"},      // ServeMux patterns exempt (webhooks)
+	TokenFallback:  true,                                   // see below
+})
+if err != nil {
+	return err // invalid origins or patterns fail at boot
+}
+r.Use(mw)
+```
+
+With `DefaultMiddleware`, trusted origins come from `CSRF_TRUSTED_ORIGINS` (comma-separated).
+
+## Token fallback
+
+With `TokenFallback`, unsafe requests that carry **neither** `Sec-Fetch-Site` nor `Origin` but do carry a session cookie (old browsers) must present the session token, either in the `_token` form field or the `X-CSRF-Token` header. Comparison is constant-time. Register it after the session middleware.
+
+Forms in the starter always include the field, so they keep working with the fallback on:
 
 ```html title="resources/views/posts/create.html"
-<form method="post" action="{{ route "posts.store" }}">
-	{{ csrfField }}
+<form method="post" action="{{route "posts.store"}}">
+	{{csrfField}}
 	<input name="title">
 	<button>Save</button>
 </form>
 ```
 
-## Today
-
-Until the middleware ships, you can use the standard library directly:
-
-```go
-cop := http.NewCrossOriginProtection()
-if err := cop.AddTrustedOrigin("https://admin.example.com"); err != nil {
-	return err
-}
-r.Use(cop.Handler)
-```
+| Helper | Output |
+| --- | --- |
+| `{{csrfField}}` | `<input type="hidden" name="_token" value="…">` |
+| `{{csrfToken}}` | The token string, e.g. for `hx-headers` |
+| `csrf.Token(ctx)` | The token in Go code (`""` without a session) |

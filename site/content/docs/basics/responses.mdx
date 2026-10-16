@@ -68,8 +68,31 @@ c.SetHeader("Cache-Control", "no-store")
 c.SetCookie(&http.Cookie{Name: "theme", Value: "dark", Path: "/", HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode})
 ```
 
-## Planned
+## Conditional requests
 
-<Callout type="warning">
-Planned for the Prototype release: `c.Render` / `c.Fragment` for views and `c.JSONWith(status, schema, v)` to check outgoing JSON against a schema. `c.ETag` and caching helpers are planned for ALPHA.
-</Callout>
+```go
+func (pc *PostController) Show(c *web.Ctx) error {
+	post, err := pc.find(c)
+	if err != nil {
+		return err
+	}
+
+	etag, err := web.ETagOf(post) // strong ETag from the JSON encoding
+	if err != nil {
+		return err
+	}
+
+	if c.NotModified(etag, post.UpdatedAt) { // sets ETag/Last-Modified, writes 304 when fresh
+		return nil
+	}
+
+	return c.JSON(http.StatusOK, post)
+}
+```
+
+For optimistic concurrency on writes, `c.CheckIfMatch(currentETag)` returns `errs.ErrPreconditionFailed` (412) when the client's `If-Match` does not match.
+
+## Views and checked JSON
+
+- `c.Render`, `c.Fragment` and `c.View` render HTML: see [Views](/docs/basics/views).
+- `web.JSONWith(c, status, schema, v)` checks outgoing JSON against a `z` schema: see [Validation](/docs/basics/validation#typed-boundaries).

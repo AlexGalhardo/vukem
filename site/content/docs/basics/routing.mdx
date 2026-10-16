@@ -127,7 +127,7 @@ Call it at boot so misconfiguration fails before the server listens. `Router.Ser
 
 ## Listing routes
 
-`r.Routes()` returns method, path, name and middleware for every route, in registration order. It powers the planned `route:list` command.
+`r.Routes()` returns method, path, name and middleware for every route, in registration order. It powers `lumek route:list` (`--json` for machine-readable output).
 
 ```go
 for _, rt := range r.Routes() {

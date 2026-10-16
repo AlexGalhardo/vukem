@@ -68,8 +68,14 @@ _, lb, _ := net.ParseCIDR("10.0.0.0/8")
 services.TrustedProxies = []*net.IPNet{lb}
 ```
 
-## Planned helpers
+## Sessions, views and htmx
+
+| Helper | See |
+| --- | --- |
+| `c.Session()`, `c.Flash(key, v)`, `c.FlashValue(key)`, `c.Old(field)`, `c.Errors()` | [Sessions](/docs/basics/sessions) |
+| `c.Render(name, data, opts...)`, `c.Fragment(name, block, data)`, `c.View(v)` | [Views](/docs/basics/views) |
+| `c.IsHTMX()`, `c.IsPartial()`, `c.HTMX()` | [HTMX](/docs/frontend/htmx) |
 
 <Callout type="warning">
-Planned for the Prototype release: `Session()`, `Flash(key, msg)`, `Old(field)`, `Errors()`, `Render(name, data)`, `Fragment(name, block, data)` and `HTMX()` helpers. `User()`, `Auth()` and `Authorize(ability, subject)` are planned for ALPHA.
+Planned for ALPHA: `User()`, `Auth()` and `Authorize(ability, subject)`.
 </Callout>

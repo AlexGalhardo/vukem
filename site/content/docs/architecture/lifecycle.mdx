@@ -27,13 +27,31 @@ Runners stop and are awaited, then `OnShutdown` hooks and providers' `Shutdown` 
 
 ## Creating the app
 
-```go
-app, err := lumek.New(
-	lumek.WithProviders(&DatabaseProvider{}, &MailProvider{}),
-	lumek.WithRunner("http", lumek.NewHTTPServer(addr, handler)),
-	lumek.WithKind(lumek.KindWeb),
-)
+Applications build the app in one function, `bootstrap.New`, used by `cmd/app` and by the tests:
+
+```go title="bootstrap/app.go"
+func New(opts ...lumek.Option) (*lumek.App, error) {
+	app, err := lumek.New(append([]lumek.Option{
+		lumek.WithProviders(Providers()...),
+		lumek.WithMigrations(migrations.All()),
+		lumek.WithViews(resources.Views()),
+		lumek.WithRoutes(routes.Web),
+	}, opts...)...)
+	if err != nil {
+		return nil, err
+	}
+
+	app.AddCommand(Commands()...)
+
+	return app, nil
+}
 ```
+
+```go title="cmd/app/main.go"
+func main() { os.Exit(lumek.Main(bootstrap.New)) }
+```
+
+`lumek.Main(build)` loads `.env` and the process environment, wires `SIGINT`/`SIGTERM`, and runs `serve` (the default) or the command named by the first argument. It exits `2` on usage errors and `1` on failures. Its testable body is `lumek.RunMain(ctx, args, getenv, build, opts...)`.
 
 | Option | Purpose |
 | --- | --- |
@@ -42,9 +60,35 @@ app, err := lumek.New(
 | `WithLogger(l)` / `WithLogOutput(w)` | Custom `*slog.Logger`, or where the default logger writes |
 | `WithKind(k)` | `KindWeb` (default), `KindConsole` or `KindTest` |
 | `WithProviders(p...)` | Providers, registered and booted in order |
+| `WithRoutes(fn)` | `func(r *router.Router, app *lumek.App) error`, called after providers registered; an error stops `New` |
+| `WithViews(fsys)` | Enable the [view engine](/docs/basics/views) over `fsys`; views reload per request outside production |
+| `WithMigrations(m)` | Migrations used by `migrate*` commands and `app.Migrator()` |
+| `WithDatabaseDrivers(d...)` | Extra database drivers (PostgreSQL module, ALPHA) |
+| `WithClock(now)` | Clock for sessions and other time-based features (`lumektest.FakeClock`) |
 | `WithRunner(name, r)` | A long-running component started by `Run` |
+| `WithoutHTTP()` | Do not start the HTTP server runner (tests, workers) |
+| `WithStdout(w)` | Where commands print |
 
-The `App` exposes `Config`, `Source` (every configuration value), `Key` (decoded `APP_KEY`), `Log` and `Kind`.
+The `App` exposes `Config`, `Source` (every configuration value), `Key` (decoded `APP_KEY`), `Log`, `Kind`, `Router` and `Views`, plus `DB()`, `Migrator()`, `Sessions()`, `Handler()` and `Now()`.
+
+## Commands
+
+App commands run inside the app binary (`lumek <command>` delegates to it). Built in: `migrate`, `migrate:rollback`, `migrate:reset`, `migrate:fresh`, `migrate:status`, `route:list`, `about`. Add your own:
+
+```go title="app/commands/send_reports.go"
+func SendReports() lumek.Command {
+	return lumek.CommandFunc{
+		CommandName: "reports:send",
+		Desc:        "Email the weekly reports",
+		DefineFlags: func(fs *flag.FlagSet) { /* fs.Bool(...) */ },
+		Fn: func(ctx context.Context, app *lumek.App, args []string) error {
+			return nil
+		},
+	}
+}
+```
+
+Register it in `bootstrap/commands.go` (`lumek make:command` does it for you). Commands run with `KindConsole`, so providers limited to `KindWeb` are skipped.
 
 ## Providers
 

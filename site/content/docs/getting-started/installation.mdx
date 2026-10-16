@@ -1,6 +1,6 @@
 ---
 title: Installation
-description: Requirements, adding Lumek to a Go module and booting a minimal application.
+description: Install the lumek CLI, create a project from the HTMX + SQLite starter and run it.
 ---
 
 ## Requirements
@@ -8,134 +8,115 @@ description: Requirements, adding Lumek to a Go module and booting a minimal app
 | Tool | Version |
 | --- | --- |
 | Go | 1.27 or newer |
+| Git | Optional: `lumek new` runs `git init` when it is on `PATH` |
 | Node.js | Not required for the default HTMX starter. Only needed for Vite or Inertia (BETA). |
 
-Lumek's core depends only on the standard library plus a short allowlist (`modernc.org/sqlite` and `golang.org/x/crypto` once the database and auth packages land). Heavy drivers such as PostgreSQL, Redis and MongoDB ship as separate modules.
-
-## Add Lumek to a module
+Lumek runs on **Windows 11/10**, Linux and macOS. SQLite uses the pure-Go `modernc.org/sqlite` driver, so no C compiler is needed.
 
 <Callout type="warning">
-No version has been tagged yet. Until `v0.1.0`, depend on the `main` branch and expect breaking changes.
+Lumek is pre-1.0: APIs can change between `v0.x` releases. Pin a version in `go.mod` and read the changelog before upgrading.
 </Callout>
 
+## Install the CLI
+
+```bash
+go install github.com/AlexGalhardo/golang-framework/cmd/lumek@latest
+lumek version
+```
+
+`lumek` lands in `$(go env GOPATH)/bin` (`%USERPROFILE%\go\bin` on Windows); make sure that directory is on your `PATH`.
+
+## Create a project
+
 <Steps>
-<Step title="Create a module">
+<Step title="Scaffold">
 
 ```bash
-mkdir hello && cd hello
-go mod init example.com/hello
+lumek new blog --module example.com/blog
 ```
+
+This renders the embedded starter, requires the Lumek release that matches your CLI, runs `go mod tidy`, writes a fresh `APP_KEY` to `.env` (copied from `.env.example`) and runs `git init`.
 
 </Step>
-<Step title="Require the framework">
+<Step title="Migrate">
 
 ```bash
-go get github.com/AlexGalhardo/golang-framework@main
+cd blog
+lumek migrate
 ```
+
+Creates `storage/database.sqlite` and the `posts` table of the example CRUD.
 
 </Step>
-<Step title="Create an application key">
-
-`APP_KEY` is required: Lumek refuses to boot without a key of at least 32 bytes. Generate one with `config.GenerateKey` and store it in `.env`:
-
-```go title="cmd/keygen/main.go"
-package main
-
-import (
-	"fmt"
-
-	"github.com/AlexGalhardo/golang-framework/config"
-)
-
-func main() {
-	fmt.Println("APP_KEY=" + config.GenerateKey())
-}
-```
+<Step title="Serve">
 
 ```bash
-go run ./cmd/keygen > .env
+lumek serve
 ```
+
+Open `http://localhost:3000`. `lumek serve` rebuilds and restarts the app when a `.go` file changes; template edits show up on refresh without a restart.
 
 </Step>
-<Step title="Boot the app">
-
-Write the `main.go` shown in the next section, then run it:
+<Step title="Test">
 
 ```bash
-go run .
-# level=INFO msg=request method=GET path=/ status=200 …
+go test ./...
 ```
+
+The starter ships with tests for the home page and the posts CRUD.
 
 </Step>
 </Steps>
 
-## A minimal application
+### `lumek new` flags
 
-```go title="main.go"
+| Flag | Meaning |
+| --- | --- |
+| `--module <path>` | Go module path (default: the project name) |
+| `--framework <dir>` | Use a local checkout of Lumek through a `replace` directive instead of a release (for framework development) |
+
+Flags may come before or after the name: `lumek new blog --module example.com/blog` works.
+
+## Without the CLI
+
+Lumek is an ordinary Go module. To add it to an existing module:
+
+```bash
+go get github.com/AlexGalhardo/golang-framework@latest
+```
+
+A minimal `cmd/app/main.go`:
+
+```go title="cmd/app/main.go"
 package main
 
 import (
-	"context"
-	"fmt"
 	"net/http"
 	"os"
-	"os/signal"
-	"syscall"
 
 	lumek "github.com/AlexGalhardo/golang-framework"
-	"github.com/AlexGalhardo/golang-framework/middleware"
 	"github.com/AlexGalhardo/golang-framework/router"
 	"github.com/AlexGalhardo/golang-framework/web"
 )
 
-func main() {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
+func build(opts ...lumek.Option) (*lumek.App, error) {
+	return lumek.New(append(opts, lumek.WithRoutes(func(r *router.Router, app *lumek.App) error {
+		r.Get("/", func(c *web.Ctx) error {
+			return c.String(http.StatusOK, "Hello from Lumek")
+		}).Name("home")
 
-	if err := run(ctx); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
+		return lumek.DefaultMiddleware(app, r)
+	}))...)
 }
 
-func run(ctx context.Context) error {
-	app, err := lumek.New() // reads .env files and the environment
-	if err != nil {
-		return err
-	}
-
-	r := router.New(&web.Services{Log: app.Log, Debug: app.Config.Debug})
-	r.UseServer(middleware.Recover(), middleware.RequestID(), middleware.Logger(app.Log))
-
-	r.Get("/", func(c *web.Ctx) error {
-		return c.String(http.StatusOK, "Hello from Lumek")
-	}).Name("home")
-
-	h, err := r.Handler() // compiles routes; reports conflicts and duplicate names
-	if err != nil {
-		return err
-	}
-
-	app.AddRunner("http", lumek.NewHTTPServer(app.Addr(), h))
-
-	return app.Run(ctx) // blocks until SIGINT/SIGTERM, then shuts down gracefully
-}
+func main() { os.Exit(lumek.Main(build)) }
 ```
 
-The server listens on `HOST:PORT` (`localhost:3000` by default). Open `http://localhost:3000`.
-
-## The `lumek` CLI
-
-<Callout type="warning">
-Planned for the Prototype release (`v0.1.0`). The commands below are the design target.
-</Callout>
+`APP_KEY` is required: Lumek refuses to boot without a key of at least 32 bytes. Create `.env` with one:
 
 ```bash
-go install github.com/AlexGalhardo/golang-framework/cmd/lumek@latest
-
-lumek new blog
-cd blog
-lumek serve          # http://localhost:3000, restarts on .go changes
+lumek key:generate   # or: echo "APP_KEY=$(lumek key:generate --show)" > .env
+go run ./cmd/app     # serves on localhost:3000
 ```
 
-`lumek new` creates a project from an embedded starter (HTMX + SQLite), runs `go mod tidy`, generates `APP_KEY` and initialises git. See [Your first app](/docs/first-app).
+`lumek.Main` loads `.env` and the environment, handles `SIGINT`/`SIGTERM`, and runs `serve` or any [app command](/docs/cli/overview#app-commands) given as the first argument.

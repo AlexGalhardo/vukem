@@ -4,7 +4,7 @@ description: The z package parses untrusted input into typed Go values with Zod-
 ---
 
 <Callout type="info">
-Shipped in `v0.0.6`. Import `github.com/AlexGalhardo/golang-framework/z`.
+Import `github.com/AlexGalhardo/golang-framework/z`.
 </Callout>
 
 `z` is a Zod-inspired schema library: build a schema once, then **parse untrusted input into a typed Go value** or **check outgoing data** against the same contract.
@@ -69,9 +69,11 @@ Forms, query strings and route params arrive as strings; schemas coerce only whe
 
 | Request | Response |
 | --- | --- |
-| HTML form | `303` back with errors and old input flashed |
-| htmx | `422` re-rendering the form fragment |
+| HTML form (session middleware installed) | redirect back (`Back`) with errors and old input flashed; read them with `c.Errors()` / `c.Old(field)` or `{{error "title"}}` / `{{old "title"}}` in views |
+| htmx | `422` HTML error fragment (htmx 4 swaps 4xx responses) |
 | JSON / API | `422` `application/problem+json` with an `errors` map |
+
+Password fields, `_token` and `_method` are never flashed as old input.
 
 ## Struct-tag shorthand
 

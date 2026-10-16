@@ -49,7 +49,7 @@ export const navigation: NavCategory[] = [
   {
     title: "Database",
     dir: "database",
-    pages: ["overview"],
+    pages: ["overview", "orm", "migrations"],
   },
   {
     title: "Security",
@@ -64,6 +64,11 @@ export const navigation: NavCategory[] = [
   {
     title: "Testing",
     dir: "testing",
+    pages: ["overview"],
+  },
+  {
+    title: "CLI",
+    dir: "cli",
     pages: ["overview"],
   },
   {

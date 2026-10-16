@@ -3,37 +3,63 @@ title: Sessions
 description: Encrypted cookie, memory and database session stores with flash messages and old input.
 ---
 
-<Callout type="warning">
-Planned for the Prototype release. The `session` package is not implemented yet; this page documents the design target.
-</Callout>
+`lumek.DefaultMiddleware` installs the session middleware on the router stack; `app.Sessions()` builds the `*session.Manager` from `SESSION_*` variables.
+
+## Configuration
+
+| Variable | Default | Notes |
+| --- | --- | --- |
+| `SESSION_DRIVER` | `cookie` | `cookie` (data encrypted in the cookie) or `memory` |
+| `SESSION_LIFETIME` | `24h` | Absolute lifetime |
+| `SESSION_IDLE_TIMEOUT` | `2h` | Expires after inactivity |
+| `SESSION_COOKIE` | `lumek_session` | Cookie name |
+| `SESSION_SECURE` | `auto` | `auto` = secure in production or when `APP_URL` is `https://` |
 
 ## Stores
 
-| Store | Package | Phase |
+| Store | Package | Notes |
 | --- | --- | --- |
-| Cookie (AES-256-GCM, key derived with HKDF from `APP_KEY`, 4 KB limit) | core | Prototype |
-| Memory (tests and development) | core | Prototype |
-| Database (`sessions` table, SQLite or Postgres) | core | Prototype |
-| Redis | `drivers/redis` | BETA |
+| Cookie | `session` | AES-256-GCM with a key derived from `APP_KEY` (HKDF); tampered cookies are rejected and logged as `session.invalid` |
+| Memory | `session.NewMemoryStore()` | Tests and development |
+| Database | `session.NewSQLStore(db, opts...)` | `sessions` table (SQLite or PostgreSQL with `WithDollarPlaceholders()`); install with `app.SetSessionStore` before the first request |
+| Redis | `drivers/redis` | Planned for BETA |
 
 ## Usage
 
 ```go
 func (a *AuthController) Login(c *web.Ctx) error {
 	// …verify credentials…
-	c.Session().Regenerate() // new id, keep data: prevents session fixation
-	c.Session().Put("user_id", user.ID)
-	c.Flash("success", "Welcome back!")
+	s := c.Session()
+	s.Regenerate()             // new id, keep data: prevents session fixation
+	s.Put("user_id", user.ID)
+	_ = c.Flash("success", "Welcome back!")
+
 	return c.RedirectRoute("dashboard")
 }
 ```
 
-- `Get`, `Put`, `Forget`, `Pull` (get and remove).
-- `Flash(key, msg)` for the next request; `Reflash` keeps them one more request.
-- Old input after validation errors: `c.Old("title")` in forms.
-- `Regenerate()` on login and privilege change; `Invalidate()` on logout.
-- Idle and absolute timeouts; lazy loading (no store hit unless used); written only when dirty.
+| Method | Meaning |
+| --- | --- |
+| `Get(key)`, `Put(key, v)`, `Forget(keys...)`, `Pull(key)` | Read, write, remove, read-and-remove (values must be JSON-compatible) |
+| `Flash(key, v)` | Available on the next request only |
+| `Regenerate()` | New id, same data: call on login and privilege changes |
+| `Invalidate()` | Clear everything and issue a new id: call on logout |
 
-## Cookie defaults
+`c.Flash(key, v)` returns an error when no session middleware is installed; `c.FlashValue(key)` reads a flashed value.
 
-`HttpOnly`, `Secure` (unless `APP_ENV=development`), `SameSite=Lax`, and the `__Host-` prefix over HTTPS.
+## Validation errors and old input
+
+When a form post fails validation, the session's validation hook flashes the field errors and the submitted input, then redirects back. On the next request:
+
+```go
+c.Errors()       // map[string][]string
+c.Old("title")   // previous value; dotted paths for nested fields ("author.email")
+```
+
+In views use `{{error "title"}}`, `{{errors}}` and `{{old "title"}}`. Password fields, `_token` and `_method` are never flashed.
+
+## Behaviour
+
+- Lazy: nothing is read or written unless the handler uses the session; an untouched session writes no cookie.
+- Idle and absolute timeouts; the idle timestamp is refreshed at most once a minute.
+- Cookies are `HttpOnly`, `SameSite=Lax`, `Secure` per `SESSION_SECURE`. Cookie session data over 4 KB is not saved and is logged as an error (`session.ErrCookieTooLarge`); switch to a server-side store.

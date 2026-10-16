@@ -280,7 +280,7 @@ Applies to **every** task:
 
 ### P.12 Release `v0.1.0` — needs: P.0–P.11
 
-- [ ] **P.12.0** Documentation site (`site/`, Next.js 16 + Tailwind v4 + Base UI, Resend-like) deployed at lumek.vercel.app with pages for every Prototype feature.
+- [x] **P.12.0** Documentation site (`site/`, Next.js 16 + Tailwind v4 + Base UI, Resend-like) deployed at lumek.vercel.app with pages for every Prototype feature.
   → verify: `task site:build` green; Ctrl+K search, theme toggle, copy + toast work; production URL serves the new pages.
 
 - [x] **P.12.1** GoReleaser config + `release.yml`.

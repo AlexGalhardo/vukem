@@ -86,7 +86,7 @@ Covers `HX-Trigger`, `HX-Location` (string or object), `HX-Redirect`, `HX-Refres
 
 ### Validation flow
 
-Invalid form input → the validation hook flashes the errors and old input and redirects back (`303`, or `HX-Location` for htmx). The form reads them with `{{error "title"}}` and `{{old "title"}}`. JSON requests get a `422` problem+json instead.
+Invalid input from a classic form post → the validation hook flashes the errors and old input and redirects back (`303`); the form reads them with `{{error "title"}}` and `{{old "title"}}`. htmx requests get a **422** HTML fragment listing the errors, which htmx 4 swaps into the target. JSON requests get a `422` problem+json.
 
 ### SSE (BETA)
 

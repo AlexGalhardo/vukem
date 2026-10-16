@@ -62,9 +62,7 @@ r.Group("/api", func(g *router.Group) {
 
 ## Typed binding
 
-<Callout type="warning">
-Planned for the Prototype release: `web.Bind[T](c)`, `web.Parse(c, schema)`, `web.ParseQuery` and `web.ParseParams` decode and validate input into Go types in one step, returning 422 on failure. See [Validation](/docs/basics/validation).
-</Callout>
+`web.Bind[T](c)`, `web.Parse(c, schema)`, `web.ParseQuery` and `web.ParseParams` decode and validate input into Go types in one step. Invalid input becomes an `*errs.ValidationError`: JSON clients get 422 problem+json, form posts are redirected back with errors and old input flashed. See [Validation](/docs/basics/validation).
 
 ```go
 in, err := web.Bind[requests.StorePost](c) // typed requests.StorePost or 422

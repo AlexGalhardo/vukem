@@ -1,0 +1,82 @@
+---
+title: The lumek CLI
+description: Create projects, generate code, run the dev server, build binaries and run app commands such as migrate with one command.
+---
+
+```bash
+go install github.com/AlexGalhardo/golang-framework/cmd/lumek@latest
+lumek list
+```
+
+`lumek` works on files and shells out to the standard Go toolchain; it never imports your code. Commands it does not know are handed to your app binary, so `lumek migrate` works like `php artisan migrate`.
+
+## Commands
+
+| Command | Description |
+| --- | --- |
+| `lumek new <name> [--module path] [--framework dir]` | Create a project from the HTMX + SQLite starter, run `go mod tidy`, write `APP_KEY`, `git init` ([Installation](/docs/installation)) |
+| `lumek serve [--poll 500ms] [--no-vite]` | Build and run `cmd/app`; rebuild and restart when `.go`, `go.mod`, `go.sum` or `.env` change |
+| `lumek build [-o bin/app]` | `npx vite build` when a `vite.config.*` exists, then `go build -trimpath -ldflags="-s -w"` |
+| `lumek key:generate [--show] [--force]` | Write `APP_KEY` to `.env` (created from `.env.example` when missing) |
+| `lumek version` | Print the CLI version |
+| `lumek list`, `lumek help <command>` | List commands, or show one command's flags |
+
+Flags may come before or after arguments: `lumek make:model Post -m -c` equals `lumek make:model -m -c Post`.
+
+## Generators
+
+| Command | Creates |
+| --- | --- |
+| `make:controller <Name> [--resource] [--api]` | `app/controllers/<name>_controller.go`: an `Index` action, the 7 resource actions, or the 5 JSON actions |
+| `make:model <Name> [-m] [-f] [-c]` | `app/models/<name>.go`; `-m` a `create_<table>_table` migration, `-f` a factory in `database/factories/`, `-c` a resource controller |
+| `make:migration <name>` | `database/migrations/<timestamp>_<name>.go`, appended to `migrations.All()` |
+| `make:middleware <Name>` | `app/middleware/<name>.go` with a `func(http.Handler) http.Handler` |
+| `make:request <Name>` | `app/requests/<name>.go`: input struct and `z.For` schema |
+| `make:command <Name>` | `app/commands/<name>.go`, appended to `bootstrap.Commands()` |
+| `make:provider <Name>` | `app/providers/<name>_provider.go`, appended to `bootstrap.Providers()` |
+| `make:test <Name>` | `tests/<name>_test.go` using `lumektest` |
+
+- Generated Go is `gofmt`ed. Existing files are never overwritten without `--force`.
+- Conventional suffixes are optional: `PostController`, `BillingProvider` and `SendReportsCommand` work as names.
+- Registration edits the target file through its AST and adds imports; running a generator twice does not register twice. If the file was restructured, the generator prints the line to add by hand.
+
+### Custom stubs
+
+Stubs are `text/template` files embedded in the CLI. Put a file with the same name in your project's `stubs/` directory to override one (`controller.go.tmpl`, `model.go.tmpl`, `migration.go.tmpl`, `middleware.go.tmpl`, `request.go.tmpl`, `command.go.tmpl`, `provider.go.tmpl`, `factory.go.tmpl`, `test.go.tmpl`). Available data: `.Name` (Pascal), `.Snake`, `.Kebab`, `.Camel`, `.Plural`, `.Module`, and `.Table`, `.Timestamp`, `.ID`, `.Func`, `.Resource`, `.API` where relevant. Unknown keys are errors.
+
+## App commands
+
+Any other command runs inside your application:
+
+```bash
+lumek migrate
+lumek migrate:status --json
+lumek route:list
+lumek about
+lumek reports:send --dry-run   # your own command
+```
+
+`lumek` builds `cmd/app` into `.lumek/bin/app` and runs it with the same arguments. The binary is rebuilt only when a `.go`, `go.mod` or `go.sum` file is newer, so repeated commands start instantly. Built-in app commands: `migrate`, `migrate:rollback`, `migrate:reset`, `migrate:fresh`, `migrate:status`, `route:list`, `about`. Add your own with `lumek make:command` (see [Application lifecycle](/docs/architecture/lifecycle#commands)).
+
+Running the binary directly works too: `go run ./cmd/app migrate`.
+
+## `lumek serve`
+
+- Builds to a separate file and swaps it in after the old process stops, so it works on Windows where a running `.exe` cannot be overwritten.
+- A failed build prints the compiler errors and keeps the previous version running.
+- Views reload inside the app on every request in development; editing a template needs no rebuild.
+- When a `vite.config.*` exists, `npm run dev` runs alongside (disable with `--no-vite`).
+
+## Exit codes
+
+| Code | Meaning |
+| --- | --- |
+| `0` | Success |
+| `1` | Failure (the error is printed) |
+| `2` | Usage error: unknown command, missing argument, bad flag |
+
+A delegated app command's exit code is passed through unchanged.
+
+<Callout type="warning">
+Planned for ALPHA: `make:resource`, `make:policy`, `make:factory`, `make:seeder`, `make:mail`, `make:event`, `install:api`, `install:auth`, `stub:publish`, `db:seed`. Planned for BETA: `make:job`, `install:inertia`, `openapi:export`, queue and schedule commands.
+</Callout>

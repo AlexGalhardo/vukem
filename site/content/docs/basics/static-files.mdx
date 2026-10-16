@@ -6,11 +6,13 @@ description: Serve public assets through os.Root with traversal protection and l
 `middleware.Static` serves files from a directory when they exist and passes every other request on to the router.
 
 ```go
-static, err := middleware.Static("public", middleware.StaticConfig{})
+root, err := os.OpenRoot("public")
 if err != nil {
 	return err // directory missing
 }
-r.UseServer(static)
+app.OnShutdown(func(context.Context) error { return root.Close() }) // the caller owns root
+
+r.UseServer(middleware.Static(root, middleware.StaticConfig{}))
 ```
 
 Register it as **server** middleware so files are served without a matching route.
@@ -41,7 +43,7 @@ middleware.StaticConfig{
 
 ## Embedded assets
 
-`middleware.StaticFS` serves any `fs.FS`, such as an `embed.FS`, to ship a single binary:
+`middleware.StaticFS` serves any `fs.FS`, such as an `embed.FS`, to ship a single binary. The starter does this with `resources.Public()`, which uses `resources/public` on disk during development and the embedded copy otherwise:
 
 ```go
 //go:embed public

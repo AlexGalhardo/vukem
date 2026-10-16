@@ -111,6 +111,10 @@ Middleware renders errors with the same handler through `web.Fail(w, r, err)`.
 
 `middleware.Recover()` converts panics to 500 responses through the error handler and logs the stack trace server-side only.
 
+## Database errors
+
+`orm.ErrNotFound` (returned by `First` and `Find`) matches `errs.ErrNotFound`, so returning it answers 404. Unique-constraint violations are wrapped in `orm.ErrConflict` and answer 409.
+
 <Callout type="warning">
-Planned: per-type renderers (`h.Render[*MyErr](...)`) and a development debug page in the Prototype release; `orm.ErrNoRows` mapped to 404 once the ORM ships.
+Planned: per-type renderers and a development debug page.
 </Callout>

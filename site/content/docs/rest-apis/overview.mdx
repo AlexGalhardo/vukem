@@ -102,7 +102,7 @@ Planned for ALPHA. Filters, sorts, includes and fields are allowlists per endpoi
 </Callout>
 
 ```go
-q := api.Query[models.Product](c, orm.Query[models.Product](p.db),
+q := api.Query[models.Product](c, orm.QueryOf[models.Product](p.db),
 	api.Filters("category", "in_stock"), // ?filter[category]=books
 	api.Sorts("name", "price", "-created_at"),
 	api.Includes("reviews"),

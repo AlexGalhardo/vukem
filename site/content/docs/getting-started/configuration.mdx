@@ -18,7 +18,7 @@ The `config` package ships a small, standard-library-only `.env` parser. Values 
 ```dotenv title=".env"
 APP_NAME=Blog
 APP_ENV=development
-# Output of config.GenerateKey() (lumek key:generate once the CLI ships)
+# Written by lumek key:generate
 APP_KEY=base64:your-32-byte-key-in-base64
 APP_URL=http://localhost:3000
 
@@ -128,7 +128,7 @@ app.Log.Info("mail", "cfg", cfg) // password logged as [redacted]
 
 ## `APP_KEY`
 
-- Required. Generate it with `config.GenerateKey()` (32 random bytes from `crypto/rand`, `base64:`-encoded). `lumek key:generate` will write it to `.env` once the CLI ships.
+- Required. `lumek key:generate` writes one to `.env` (creating it from `.env.example` when missing); `--show` prints a key instead and `--force` replaces an existing one, which makes current sessions and encrypted data unreadable. In code, `config.GenerateKey()` returns 32 random bytes from `crypto/rand`, `base64:`-encoded.
 - The decoded key is available as `app.Key`. Never use it directly: derive a purpose-specific key with HKDF-SHA256 so cookies, sessions and encryption never share key material.
 
 ```go
