@@ -493,7 +493,7 @@ Applies to **every** task:
   → verify: fallback test with a failing fake SSR server.
 - [ ] **B.3.6** Inertia starters for React, Vue and Svelte (`vukem new --inertia=react|vue|svelte`, `install:inertia`): Vite, TS, Tailwind v4, pages, layouts, auth pages + `AssertInertia`.
   → verify: e2e: a new Inertia app per framework builds and its tests pass.
-- [ ] **B.3.7** `codegen:routes` → typed `routes.ts` (warmup boot mode).
+- [x] **B.3.7** `codegen:routes` → typed `routes.ts` (warmup boot mode).
   → verify: golden TS output; `tsc --noEmit` passes in starter.
 - [x] **B.3.8** HTMX starter on Vite + Tailwind CSS v4 (`@tailwindcss/vite`, `resources/css/app.css`, `{{vite}}` in the layout, hot-file plugin); `vukem new` prompts for the stack on a TTY (HTMX, Inertia → React/Vue/Svelte, API), flags skip it.
   → verify: e2e: `vukem new` HTMX app runs `npm run build` and its tests pass; prompt tests with a fake TTY.
