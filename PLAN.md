@@ -500,7 +500,7 @@ Applies to **every** task:
 
 ### B.4 Remaining subsystems
 
-- [ ] **B.4.1** Encryption with key rotation; encrypted cookies; `orm.Encrypted[T]`.
+- [x] **B.4.1** Encryption with key rotation; encrypted cookies; `orm.Encrypted[T]`.
   → verify: rotation tests.
 - [ ] **B.4.2** i18n (JSON catalogs, plurals, locale resolution, translated validation messages, `t` func).
   → verify: tests.
