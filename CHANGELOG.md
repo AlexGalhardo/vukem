@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-10-16
+
+### Added
+
+- **api:** Add typed handlers with api.Register
+- **openapi:** Generate OpenAPI 3.1 documents from the router
+- **vukemtest:** Assert responses match the OpenAPI document
+- **openapi:** Export JSON Schema and generate TypeScript and Zod types
+- **api:** Add the Idempotency-Key middleware
+- **apidocs:** Serve a Scalar API reference for the OpenAPI document
+
 ## [0.14.0] - 2026-10-16
 
 ### Added
@@ -192,7 +203,8 @@ Project foundation. No framework code yet; see [PLAN.md](PLAN.md) for the roadma
 - README, MIT license, CONTRIBUTING, SECURITY and CODE_OF_CONDUCT.
 - Agent configuration: `AGENTS.md`, `CLAUDE.md`, path-scoped `.claude/rules/`, Go skills and project settings.
 
-[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/AlexGalhardo/vukem/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/AlexGalhardo/vukem/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/AlexGalhardo/vukem/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/AlexGalhardo/vukem/compare/v0.11.0...v0.12.0
