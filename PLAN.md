@@ -507,6 +507,48 @@ Applies to **every** task:
 - [ ] **B.4.5** Optional OpenTelemetry module (`drivers/otel` or `contrib/otel`).
   → verify: span emitted per request in test exporter.
 
+### B.6 Realtime & GraphQL
+
+- [ ] **B.6.1** `drivers/websocket` module (coder/websocket): upgrade with origin check, ping/pong, read limits, graceful close on shutdown, `c.WebSocket(fn)`.
+  → verify: tests with an in-process client; cross-origin upgrade rejected (`TestSecurity_A01_WebSocketOrigin`).
+- [ ] **B.6.2** `broadcast` package: channels, private and presence channels authorized through gates, memory fan-out, Redis fan-out (via `drivers/redis`), SSE fallback, `Broadcast(ctx, event)` from events/jobs.
+  → verify: conformance suite (memory, Redis); unauthorized subscribe denied.
+- [ ] **B.6.3** `contrib/graphql` module: SDL parser, executor (queries, mutations, variables, fragments, introspection), typed resolvers, batching loader over the ORM, depth/complexity limits, persisted queries, errors with extensions.
+  → verify: spec-derived parser/executor tests; fuzzed parser; depth-limit test; N+1 avoided (query-count assertion).
+- [ ] **B.6.4** GraphQL subscriptions over WebSockets (graphql-ws protocol) using `broadcast`.
+  → verify: subscription e2e test.
+
+### B.7 Admin panel & dev dashboard
+
+- [ ] **B.7.1** `admin` package: resources from ORM models (list with filter/sort/search/pagination, create/edit forms from `z` schemas, delete with confirmation), HTMX UI embedded, auth + policies required, audit log of changes.
+  → verify: e2e CRUD through the admin in a test app; access without the `admin` ability denied (`TestSecurity_A01_AdminRequiresAbility`).
+- [ ] **B.7.2** `install:admin` scaffold and `make:admin-resource`.
+  → verify: generated app tests pass.
+- [ ] **B.7.3** `devtools` dashboard at `/_lumek` (development only; boot error if enabled in production): routes, requests with timings, SQL queries with N+1 detection, jobs, events, mail previews, logs, traces (ring buffers).
+  → verify: tests; enabling in production fails at boot (`TestSecurity_A02_DevtoolsNeverInProduction`).
+
+### B.8 Auth & integrations
+
+- [ ] **B.8.1** JWT guard (`auth/jwt`, stdlib): HS256/RS256/ES256/EdDSA, `alg` allowlist, `kid` + JWKS rotation, claim checks, refresh-token rotation with reuse detection.
+  → verify: RFC 7515/7519 test vectors; `none`/alg-confusion/expired/wrong-aud tokens rejected (`TestSecurity_A07_JWT*`).
+- [ ] **B.8.2** TOTP 2FA (`auth/totp`, RFC 6238): enrolment (otpauth URI + QR), hashed recovery codes, per-step replay protection, throttling, `install:auth --2fa`.
+  → verify: RFC 6238 vectors; replayed code rejected; generated app tests pass.
+- [ ] **B.8.3** Social providers Apple (ES256 client secret, `form_post`), LinkedIn (OIDC), X (OAuth 2.0 + PKCE) on the ALPHA `social` core.
+  → verify: per-provider golden user mapping against fake servers.
+- [ ] **B.8.4** `drivers/s3` storage module (stdlib SigV4 client): put/get/delete/list/stat, multipart upload, presigned GET/PUT URLs.
+  → verify: storage conformance suite against MinIO; SigV4 test vectors.
+- [ ] **B.8.5** `drivers/mysql` module (MySQL 8 / MariaDB 11 dialect).
+  → verify: ORM/schema conformance suite green against `mysql:8` and `mariadb:11`.
+
+### B.9 More starters & client generation
+
+- [ ] **B.9.1** Inertia Vue and Svelte starters (`install:inertia --vue|--svelte`) with the same pages and tests as React.
+  → verify: e2e: each new Inertia app builds and its tests pass.
+- [ ] **B.9.2** templ-first starter (`lumek new <name> --templ`).
+  → verify: e2e: generated app builds, `templ generate` is clean and tests pass.
+- [ ] **B.9.3** Typed RPC client generation (`lumek codegen:client`, TypeScript and Go) from typed handlers/OpenAPI with `z` types.
+  → verify: golden output; `tsc --noEmit` and `go vet` pass on generated clients; round-trip test against a running app.
+
 ### B.5 Stabilisation
 
 - [ ] **B.5.1** Public API review: every exported identifier justified; remove/rename before freeze; `//go:fix inline` for renamed APIs.
@@ -520,14 +562,14 @@ Applies to **every** task:
 - [ ] **B.5.4** Docs completeness: every package has overview + examples; guides for each starter.
   → verify: checklist.
 
-- [ ] **B.5.6** Documentation site updated with every BETA feature (OpenAPI, queue, scheduler, Inertia, Vite, Redis, Mongo, i18n, SSE, encryption) and redeployed.
+- [ ] **B.5.6** Documentation site updated with every BETA feature (OpenAPI, queue, scheduler, Inertia, Vite, Redis, Mongo, i18n, SSE, encryption, GraphQL, WebSockets/broadcasting, admin, dev dashboard, JWT, 2FA, S3, MySQL, new starters, client generation) and redeployed.
   → verify: `task site:build` green; pages live on lumek.vercel.app.
 
 ### BETA exit criteria
 
 - [ ] Two RCs with no API changes between them.
-- [ ] All conformance suites green on SQLite, Postgres, Redis, Mongo.
-- [ ] Inertia React starter and HTMX starter both pass e2e on all OSes.
+- [ ] All conformance suites green on SQLite, Postgres, MySQL, Redis, Mongo, S3 (MinIO).
+- [ ] HTMX, templ and Inertia (React, Vue, Svelte) starters all pass e2e on all OSes.
 - [ ] No open `security` issues; `govulncheck` clean; OpenSSF Scorecard ≥ 7.
 
 ---
@@ -569,4 +611,4 @@ Applies to **every** task:
 
 ## Post-1.0 backlog (not scheduled)
 
-WebSockets/broadcasting, embedded admin panel, more social providers (Apple, LinkedIn, X), local dev dashboard (routes, queries, jobs, traces), JWT guard, Vue/Svelte Inertia starters, S3 storage driver, social login, TOTP 2FA, MySQL dialect, templ-first starter, typed RPC client generation.
+Empty: the former backlog (GraphQL, WebSockets/broadcasting, admin panel, dev dashboard, JWT, TOTP 2FA, Apple/LinkedIn/X providers, S3, MySQL, Vue/Svelte and templ starters, typed RPC clients) moved into BETA groups B.6–B.9 on 2026-10-16. Social login itself ships in ALPHA (A.3.8–A.3.10).

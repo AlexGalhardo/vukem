@@ -95,7 +95,7 @@ blog/
 | F1 | Templates | **`html/template` default** (layouts + fragment rendering for HTMX); templ supported through `View.Render(ctx, w) error` with zero core dependency | templ default; html/template only | stdlib-first, but no lock-out of templ users |
 | F2 | HTMX | **htmx 4 vendored + served via `embed`; no Node required** for the default starter; Vite optional (Tailwind/bundling) | Vite always | `lumek new app` runs without `npm install` |
 | F3 | HTMX helpers | Own v4-aware helpers: `IsHTMX`, `IsPartial` (`HX-Request-Type`), history-restore detection, auto fragment/layout rendering, response header builder, `<hx-partial>`, 422 flow, `Vary: HX-Request` | angelofallars/htmx-go (htmx 2 era) | Existing libs predate v4 |
-| F4 | Inertia | **Own v3 adapter in BETA, React starter only** (full protocol, CSR fallback on SSR failure, integrated with session/flash/validation/Vite); Vue/Svelte post-1.0 | ALPHA; React+Vue | Keeps prototype/alpha small |
+| F4 | Inertia | **Own v3 adapter in BETA** (full protocol, CSR fallback on SSR failure, integrated with session/flash/validation/Vite); React starter first, Vue and Svelte starters later in BETA (B.9) | ALPHA; React only | Maintainer requirement (2026-10-16): Vue/Svelte moved from post-1.0 to BETA |
 | F5 | Vite | Laravel "hot file" model; `{{ vite "…" }}` template func; manifest hash = Inertia version | olivere/vite | Go can't host Vite in-process |
 
 ## Quality & tooling
@@ -120,9 +120,28 @@ blog/
 | --- | --- | --- |
 | Prototype | v0.1.x | JSON binding/responses + problem+json, router, config/env, App+providers, CLI (`new`, `serve`, `make:controller/model/migration`), ORM core + migrations on SQLite, validation, sessions + flash, CSRF, `html/template` + HTMX helpers, error handler, test client, health `/up`, graceful shutdown |
 | ALPHA | v0.2–v0.x | API starter (`new --api`, `install:api`, resources, query conventions, pagination envelopes, CORS), full auth (session + token guards, `install:auth`), gates/policies, relations, factories/seeders, mail, cache, storage (`os.Root`), events, Postgres driver |
-| BETA | v1.0.0-beta.N → rc.N | OpenAPI 3.1 generation, idempotency keys, queue (sync/database/redis), scheduler, Inertia v3 + React starter, Vite, Redis and Mongo drivers, i18n, SSE, encryption with key rotation, rate limiting |
+| BETA | v1.0.0-beta.N → rc.N | OpenAPI 3.1 generation, idempotency keys, queue (sync/database/redis), scheduler, Inertia v3 + React starter, Vite, Redis and Mongo drivers, i18n, SSE, encryption with key rotation, rate limiting; plus (maintainer requirement, 2026-10-16): GraphQL, WebSockets/broadcasting, embedded admin panel, local dev dashboard, JWT guard, TOTP 2FA, Apple/LinkedIn/X social providers, S3 storage driver, MySQL dialect, Vue/Svelte Inertia starters, templ-first starter, typed RPC client generation |
 | 1.0 Stable | v1.0.0 | API freeze, docs complete, stability policy, LTS line |
-| Post-1.0 | v1.x | WebSockets/broadcasting, embedded admin, dev dashboard, JWT guard, Vue/Svelte starters |
+| Post-1.0 | v1.x | Whatever the 1.0 users ask for; nothing scheduled |
+
+### BETA additions (2026-10-16)
+
+The maintainer moved the post-1.0 backlog into BETA. Choices that keep the core rules (stdlib first, no core deps beyond the allowlist, drivers as modules):
+
+| Feature | Decision |
+| --- | --- |
+| GraphQL | Own `graphql` module (`contrib/graphql`): schema-first SDL parser + executor (queries, mutations, variables, fragments, introspection), resolvers as typed Go funcs, dataloader-style batching over the ORM, depth/complexity limits, problem-style errors. No gqlgen/graphql-go dependency in core. |
+| WebSockets/broadcasting | `drivers/websocket` module wrapping `github.com/coder/websocket` (stdlib has no RFC 6455 server); core `broadcast` package with channels, private/presence authorization through gates, memory and Redis fan-out, SSE fallback. |
+| Admin panel | Embedded HTMX admin (`admin` package): resources declared in Go from ORM models (list, filter, sort, search, create/edit forms from `z` schemas, delete), protected by auth + policies, served under `/admin`, no Node. |
+| Dev dashboard | `devtools` package mounted at `/_lumek` only when `APP_ENV=development` (boot error otherwise): routes, last requests with timings, SQL queries (with N+1 detection), jobs, events, mail previews, slog records, traces; in-memory ring buffers. |
+| JWT guard | Stdlib JOSE subset in `auth/jwt`: HS256/RS256/ES256/EdDSA, `alg` allowlist (no `none`), `kid` + JWKS rotation, exp/nbf/iat/iss/aud checks, refresh tokens with rotation and reuse detection. |
+| TOTP 2FA | `auth/totp` (RFC 6238/4226, stdlib HMAC): enrolment QR (otpauth URI), recovery codes (hashed), replay protection per time step, rate limited; `install:auth --2fa`. |
+| Social providers | Apple (ES256 client secret JWT, form_post), LinkedIn (OIDC), X (OAuth 2.0 + PKCE) on top of the ALPHA `social` core. |
+| S3 storage | `drivers/s3` module with a stdlib SigV4 client (no AWS SDK): put/get/delete/list/stat, multipart upload, presigned URLs; tested against MinIO; works with R2/Spaces. |
+| MySQL | `drivers/mysql` module (`go-sql-driver/mysql`) with MySQL 8 / MariaDB 11 dialect; runs the shared ORM/schema conformance suite. |
+| Inertia Vue/Svelte | `install:inertia --vue` / `--svelte` starters with the same pages and tests as React. |
+| templ starter | `lumek new <name> --templ`: same app as the HTMX starter with templ components; templ is a dependency of the generated app only. |
+| Typed RPC client | `lumek codegen:client` emits a typed TypeScript (and Go) client from the typed handlers/OpenAPI document (B.0), with `z`-derived request/response types. |
 
 ## Open questions
 
