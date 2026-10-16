@@ -19,6 +19,7 @@ import (
 	"github.com/AlexGalhardo/vukem/events"
 	"github.com/AlexGalhardo/vukem/logging/telegram"
 	"github.com/AlexGalhardo/vukem/mail"
+	"github.com/AlexGalhardo/vukem/queue"
 	"github.com/AlexGalhardo/vukem/router"
 	"github.com/AlexGalhardo/vukem/schema"
 	"github.com/AlexGalhardo/vukem/session"
@@ -103,6 +104,11 @@ type App struct {
 	// Events is the application event bus (WithListeners registers listeners).
 	Events *events.Bus
 
+	jobs      []queue.Registration
+	queueOnce sync.Once
+	queue     *queue.Queue
+	queueErr  error
+
 	now func() time.Time
 
 	dbOnce     sync.Once
@@ -137,6 +143,7 @@ type options struct {
 	seeders       []Seeder
 	mailTransport mail.Transport
 	listeners     []events.Registration
+	jobs          []queue.Registration
 	drivers       []database.Driver
 	stdout        io.Writer
 	ready         chan<- string
@@ -300,6 +307,7 @@ func New(opts ...Option) (*App, error) {
 
 		migrations: o.migrations,
 		seeders:    o.seeders,
+		jobs:       o.jobs,
 		mail:       mailState{transport: o.mailTransport},
 	}
 	app.Router = app.newRouter()
@@ -313,6 +321,15 @@ func New(opts ...Option) (*App, error) {
 	app.Events.Register(o.listeners...)
 	app.Router.Services().Events = app.Events
 	app.OnShutdown(app.Events.Shutdown)
+
+	qcfg, err := configLoad[QueueConfig](app)
+	if err != nil {
+		return nil, err
+	}
+
+	if qcfg.Connection == "memory" && app.Kind == KindWeb {
+		app.AddRunner("queue", app.queueRunner(qcfg))
+	}
 
 	if o.views != nil {
 		engine, err := view.New(view.Config{FS: o.views, Reload: !cfg.IsProduction(), URLs: app.Router})

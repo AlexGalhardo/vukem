@@ -165,14 +165,19 @@ GCRA limiter keyed by `ratelimit.ByToken`, `ByIP` or your own `KeyFunc`; respons
 type SendInvoice struct{ OrderID int64 }
 func (SendInvoice) Kind() string { return "send_invoice" }
 
-queue.Register(app.Queue, func(ctx context.Context, j SendInvoice) error { ... },
+// bootstrap: vukem.WithJobs(jobs.All()...)
+queue.Handle(func(ctx context.Context, j SendInvoice) error { ... },
 	queue.Retries(5), queue.Backoff(queue.Exponential(time.Second)), queue.Timeout(time.Minute))
 
-err := app.Queue.Dispatch(ctx, SendInvoice{OrderID: 1}, queue.OnQueue("billing"), queue.Delay(5*time.Minute))
-err := app.Queue.DispatchTx(ctx, tx, SendInvoice{OrderID: 1}) // enqueued only if tx commits (database driver)
+q, err := app.Queue()
+err = q.Dispatch(ctx, SendInvoice{OrderID: 1}, queue.OnQueue("billing"), queue.Delay(5*time.Minute))
+err = q.DispatchTx(ctx, tx, SendInvoice{OrderID: 1}) // database driver: enqueued only if tx commits (B.1.2)
 ```
 
-- Payloads are JSON; `Kind()` maps to the registered handler (no reflection-based class names).
+- Payloads are JSON; `Kind()` maps to the registered handler (no reflection-based class names). Registering a kind twice is a boot error.
+- Defaults: queue `default`, 3 retries with exponential backoff from 1s (capped at 1h), 1-minute timeout per attempt; options on `Handle` set the defaults, options on `Dispatch` override them.
+- `QUEUE_CONNECTION`: `sync` (default; the job runs inside `Dispatch` and its error is returned), `memory` (in process; `serve` runs workers, `QUEUE_CONCURRENCY` default 4, `QUEUE_NAMES` in priority order), `database` (B.1.2), `redis` (B.2).
+- Workers (`q.Work`) recover panics, retry with backoff, then move the job to the failed jobs with its last error. On shutdown they stop reserving and let running jobs finish (their context is not cancelled; the job timeout still applies).
 - `failed_jobs` table, `queue:retry`, `queue:failed`; unique jobs; graceful drain on shutdown.
 - Inspired by River (typed workers, transactional enqueue) and goqite (SQLite).
 
