@@ -43,7 +43,7 @@ What Vukem does **by default** to protect applications, mapped to the [OWASP Top
 | `vukem about` prints effective security settings (secrets redacted) to review deployments | P |
 | No default credentials, no sample admin user, `.env` git-ignored, `.env.example` without secrets | P |
 | Destructive commands (`migrate:fresh`, `db:wipe`) require `--force` in production | P |
-| `/openapi.json` (`vukem.ServeOpenAPI`) and the API reference UI are not served in production unless `OPENAPI_IN_PRODUCTION=true` (`TestSecurity_A02_OpenAPIOffInProduction`) | B |
+| `/openapi.json` (`vukem.ServeOpenAPI`) and the API reference UI (`apidocs.Serve`) are not served in production unless `OPENAPI_IN_PRODUCTION=true` (`TestSecurity_A02_OpenAPIOffInProduction`, `TestSecurity_A02_APIDocsOffInProduction`); the vendored Scalar bundle is pinned by SHA-256 and runs with telemetry and remote fonts off | B |
 
 **App responsibility:** terminate TLS (or run behind a proxy that does), set `APP_URL` to the `https` origin, configure trusted proxies.
 

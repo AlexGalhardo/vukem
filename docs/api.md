@@ -239,6 +239,21 @@ app.Test(t).PostJSON("/api/v1/products", map[string]any{}).
 	AssertJSONValidationErrors("name", "price")
 ```
 
+### API reference UI
+
+```go
+vukem.ServeOpenAPI(app, r, "/openapi.json")
+apidocs.Serve(app, r, "/docs", apidocs.Config{
+	Theme:          "purple",
+	Authentication: map[string]any{"preferredSecurityScheme": "bearer"},
+})
+```
+
+- The Scalar bundle (`@scalar/api-reference` 1.72.3, MIT) is vendored in `apidocs/scalar`, embedded and pinned by SHA-256 (`apidocs.ScalarSHA256`, checked in tests): no CDN, telemetry, remote fonts or AI agent.
+- The page uses the request's CSP nonce for its scripts and a page-specific policy that only adds `style-src 'unsafe-inline'` (Scalar injects its styles at run time); `connect-src 'self'` keeps "try it" requests on your origin.
+- Like `/openapi.json`, it is not registered in production unless `OPENAPI_IN_PRODUCTION=true`. The `apidocs` package (about 4 MB) is linked only when imported.
+- `apidocs.Command()` adds `vukem openapi:serve [-addr localhost:8081]` to preview the reference locally.
+
 ### Types for clients
 
 - `z.JSONSchema(schema)` exports any `z` schema as JSON Schema 2020-12 (types, required keys, lengths, ranges, formats, patterns, enums, defaults, descriptions; `Refine`/`Custom` logic cannot be expressed).
@@ -250,4 +265,4 @@ app.Test(t).PostJSON("/api/v1/products", map[string]any{}).
 
 - **SSE** for server push (BETA) — [frontend.md](frontend.md#sse-beta).
 - **GraphQL** (`contrib/graphql`, BETA B.6.3) and **gRPC** (`contrib/grpc` on connect-go, BETA B.11). Meanwhile any `http.Handler` (gqlgen, connect-go, grpc-gateway) mounts on the router and shares middleware, auth and the app container.
-- **API reference UI**: Scalar renders the OpenAPI document at `/docs` (BETA B.0.6).
+- **API reference UI**: `apidocs.Serve(app, r, "/docs", apidocs.Config{Theme: "purple"})` renders the document with [Scalar](https://scalar.com) ([details](#api-reference-ui)).
