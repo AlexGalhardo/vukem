@@ -76,12 +76,11 @@ func TestHealthEndpoint(t *testing.T) {
 func TestDefaultMiddlewareAndRoutes(t *testing.T) {
 	t.Parallel()
 
-	app := newTestApp(t, WithRoutes(func(r *router.Router, app *App) {
-		if err := DefaultMiddleware(app, r); err != nil {
-			t.Fatal(err)
-		}
+	app := newTestApp(t, WithRoutes(func(r *router.Router, app *App) error {
 		r.Get("/hello", func(c *web.Ctx) error { return c.String(200, "hi "+app.Config.Name) }).Name("hello")
 		r.Get("/boom", func(*web.Ctx) error { panic("x") })
+
+		return DefaultMiddleware(app, r)
 	}))
 
 	rec := doReq(t, app, "/hello")
@@ -148,9 +147,15 @@ func TestCommands(t *testing.T) {
 
 	build := func(opts ...Option) (*App, error) {
 		app, err := New(
-			append(opts, WithLogger(discardLogger()), WithStdout(&out), WithRoutes(func(r *router.Router, _ *App) {
-				r.Get("/posts", func(*web.Ctx) error { return nil }).Name("posts.index")
-			}))...)
+			append(
+				opts,
+				WithLogger(discardLogger()),
+				WithStdout(&out),
+				WithRoutes(func(r *router.Router, _ *App) error {
+					r.Get("/posts", func(*web.Ctx) error { return nil }).Name("posts.index")
+					return nil
+				}),
+			)...)
 		if err != nil {
 			return nil, err
 		}
@@ -240,8 +245,9 @@ func TestWithViews(t *testing.T) {
 		"layouts/app.html": {Data: []byte(`<main>{{block "content" .}}{{end}}</main>`)},
 	}
 
-	app := newTestApp(t, WithViews(fsys), WithRoutes(func(r *router.Router, _ *App) {
+	app := newTestApp(t, WithViews(fsys), WithRoutes(func(r *router.Router, _ *App) error {
 		r.Get("/", func(c *web.Ctx) error { return c.Render("home", nil) }).Name("home")
+		return nil
 	}))
 
 	rec := doReq(t, app, "/")
@@ -252,5 +258,11 @@ func TestWithViews(t *testing.T) {
 	if _, err := New(WithSource(testSource(nil)), WithLogger(discardLogger()),
 		WithViews(fstest.MapFS{"bad.html": {Data: []byte("{{ x")}})); err == nil {
 		t.Fatal("broken views accepted at boot")
+	}
+
+	failing := WithRoutes(func(*router.Router, *App) error { return errors.New("no db") })
+	if _, err := New(WithSource(testSource(nil)), WithLogger(discardLogger()), failing); err == nil ||
+		!strings.Contains(err.Error(), "routes: no db") {
+		t.Fatalf("routes error = %v", err)
 	}
 }

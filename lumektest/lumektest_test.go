@@ -54,14 +54,14 @@ func build(opts ...lumek.Option) (*lumek.App, error) {
 	return lumek.New(append(opts,
 		lumek.WithMigrations(migrations),
 		lumek.WithViews(views),
-		lumek.WithRoutes(func(r *router.Router, app *lumek.App) {
+		lumek.WithRoutes(func(r *router.Router, app *lumek.App) error {
 			if err := lumek.DefaultMiddleware(app, r); err != nil {
-				panic(err)
+				return err
 			}
 
 			db, err := app.DB()
 			if err != nil {
-				panic(err)
+				return err
 			}
 
 			r.Get("/notes", func(c *web.Ctx) error {
@@ -111,6 +111,8 @@ func build(opts ...lumek.Option) (*lumek.App, error) {
 			r.Get("/secret", func(*web.Ctx) error { return errs.ErrForbidden })
 			r.Get("/teapot", func(c *web.Ctx) error { return c.String(418, "tea") })
 			r.Delete("/notes", func(c *web.Ctx) error { return c.NoContent() })
+
+			return nil
 		}),
 	)...)
 }

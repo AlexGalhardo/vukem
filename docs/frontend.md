@@ -5,23 +5,26 @@ Views, HTMX v4 (default), Inertia v3 (optional, React), and Vite. Decisions `F1`
 ## Views
 
 ```go
-type View interface {
-	Render(ctx context.Context, w io.Writer) error // satisfied by templ.Component
+// web.Renderer is implemented by view.Engine (html/template).
+type Renderer interface {
+	Render(ctx context.Context, w io.Writer, name string, data any) error
+	RenderBlock(ctx context.Context, w io.Writer, name, block string, data any) error
+	Has(name string) bool
 }
 
-type Engine interface {
-	Render(w io.Writer, name string, data any) error
-	Fragment(w io.Writer, name, block string, data any) error
+// web.View is satisfied by templ.Component.
+type View interface {
+	Render(ctx context.Context, w io.Writer) error
 }
 ```
 
 ### `html/template` engine (default)
 
-- Templates live in `resources/views/` and are loaded from an `fs.FS` (disk in development with reload on change, `embed.FS` in production builds).
-- Layouts: a page declares `{{ define "content" }}` and names its layout in a header comment or via `c.Render("posts/index", data, view.Layout("app"))`. Each page is parsed together with its layout and `partials/*` into its own template set (avoids name collisions).
-- **Fragments:** `c.Fragment("posts/index", "post-list", data)` executes only the named `{{ block }}`. The HTMX helper picks page vs fragment automatically.
-- Built-in funcs: `route`, `asset`, `vite`, `csrfField`, `old`, `error`, `errors`, `flash`, `can`, `auth`, `json`, `dict`, `htmxScript`, `t` (i18n, BETA).
-- Every render receives shared data (`.Flash`, `.Errors`, `.Old`, `.User`, `.CSRF`) merged with handler data.
+- `lumek.WithViews(fsys)` enables the `view` engine. The starter passes `resources.Views()`: files on disk during development, `embed.FS` in the binary. Views reload on every request outside production; syntax errors fail at boot.
+- Directory layout: `layouts/`, `partials/` and `components/` are shared; every other file is a page named by its path without extension (`posts/index`).
+- Layouts: a page defines blocks (`{{define "content"}}…{{end}}`) and renders inside `layouts/app.html`. Its first line can pick another layout, `{{/* layout: admin */}}`, or none, `{{/* layout: none */}}`. Each page gets its own template set, so block names never collide.
+- **Fragments:** `c.Render("posts/index", data, web.Block("post-list"))` renders the whole page for normal requests and only the `post-list` block for htmx partial requests; `c.Fragment(name, block, data)` always renders the block.
+- Funcs: `route`, `asset`, `csrfField`, `csrfToken`, `cspNonce`, `old`, `error`, `errors`, `flash`, `json` (safe in `<script>`), `dict` (data for partials), `htmxScript`. Request-scoped funcs read the session and CSP nonce from the request context. Planned: `vite` (BETA), `can`/`auth` (ALPHA), `t` (BETA).
 
 ### templ (supported, not bundled)
 
@@ -33,42 +36,45 @@ No templ import in the core; templ users add the dependency and `go tool templ g
 
 ## HTMX
 
-htmx **4.x** vendored at `public/js/htmx.min.js` by the starter and served by the static middleware — no Node required. The starter layout includes:
+The starter vendors **htmx 4.0.0** at `resources/public/js/htmx.min.js`, served by the static middleware, so no Node or CDN is needed. Its SHA-256 is pinned in `internal/cli/new.go` and checked by a test: upgrading means replacing the file and the hash together. The layout loads it with the request's CSP nonce:
 
 ```html
-<body hx-headers:inherited='{"X-CSRF-Token": "{{ .CSRF }}"}'>
-<script src="{{ asset "js/htmx.min.js" }}" defer></script>
+{{htmxScript (asset "js/htmx.min.js")}}
+<!-- <script src="/js/htmx.min.js" defer nonce="…"></script> -->
 ```
 
-(The token header is only needed when the token CSRF fallback is enabled; `CrossOriginProtection` covers browsers by default.)
+Starter views use no inline scripts, `hx-on`, event-handler or `style` attributes, so they run under the default CSP (`TestSecurity_A02_StarterViewsRespectCSP`). CSRF needs nothing extra for htmx: `CrossOriginProtection` checks `Sec-Fetch-Site`, and plain forms include `{{csrfField}}`.
 
 ### Request helpers
 
 | Helper | Meaning |
 | --- | --- |
-| `c.HTMX().Is()` | `HX-Request: true` |
-| `c.HTMX().IsPartial()` | `HX-Request-Type: partial` — render a fragment |
-| `c.HTMX().IsBoosted()` | `HX-Boosted` |
-| `c.HTMX().IsHistoryRestore()` | `HX-History-Restore-Request` — must render full page |
-| `c.HTMX().CurrentURL()`, `Source()`, `Target()` | parsed `tag#id` values |
+| `c.IsHTMX()`, `htmx.Is(r)` | `HX-Request: true` |
+| `c.IsPartial()`, `htmx.IsPartial(r)` | htmx request that is not `HX-Request-Type: full`; render a fragment |
+| `htmx.IsBoosted(r)` | `HX-Boosted` |
+| `htmx.IsHistoryRestore(r)` | `HX-History-Restore-Request`; must render the full page |
+| `htmx.CurrentURL(r)`, `htmx.Source(r)`, `htmx.Target(r)` | parsed `tag#id` values |
 
 ### Rendering
 
 ```go
 func (p *PostController) Index(c *web.Ctx) error {
-	posts, err := orm.Query[models.Post](p.db).Latest().Get(c.Context())
-	if err != nil { return err }
-	return c.Render("posts/index", web.Map{"Posts": posts}, htmx.Block("post-list"))
+	posts, err := orm.QueryOf[models.Post](p.db).Latest().Get(c.Context())
+	if err != nil {
+		return err
+	}
+
+	return c.Render("posts/index", map[string]any{"Posts": posts}, web.Block("post-list"))
 }
 ```
 
-`htmx.Block` makes the render return only that block for partial htmx requests and the full page otherwise. `Vary: HX-Request` is always set.
+`web.Block` makes the render return only that block for partial htmx requests and the full page otherwise. `Vary: HX-Request` is always set.
 
 ### Response helpers
 
 ```go
-c.HTMX().Trigger("post-created", web.Map{"id": p.ID}).
-	PushURL(c.URLFor("posts.show", "id", p.ID)).
+c.HTMX().Trigger("post-created", map[string]any{"id": p.ID}).
+	PushURL("/posts/" + id).
 	Retarget("#flash").Reswap("innerHTML")
 ```
 
@@ -80,7 +86,7 @@ Covers `HX-Trigger`, `HX-Location` (string or object), `HX-Redirect`, `HX-Refres
 
 ### Validation flow
 
-Invalid form submitted via htmx → error handler re-renders the form block with **422** (htmx 4 swaps 4xx by default), errors and old input populated.
+Invalid form input → the validation hook flashes the errors and old input and redirects back (`303`, or `HX-Location` for htmx). The form reads them with `{{error "title"}}` and `{{old "title"}}`. JSON requests get a `422` problem+json instead.
 
 ### SSE (BETA)
 

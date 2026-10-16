@@ -3,6 +3,7 @@ Lumek v0.0.0-test
 Usage:
   lumek <command> [flags] [args]
 
+  new <name>              Create a project from the HTMX + SQLite starter
   serve                   Run the app and restart it when Go files change
   build                   Build assets (Vite) and a production binary in bin/
   version                 Print the lumek version

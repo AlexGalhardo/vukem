@@ -22,11 +22,16 @@ Lumek is a web framework built on `net/http` and the standard library for **REST
 The API below is the design target ([docs/http.md](docs/http.md)), not released code yet.
 
 ```go
-func Web(r *router.Router, app *lumek.App) {
-	posts := controllers.NewPost(app)
+func Web(r *router.Router, app *lumek.App) error {
+	db, err := app.DB()
+	if err != nil {
+		return err
+	}
 
-	r.Get("/", home.Index).Name("home")
-	r.Resource("posts", posts) // posts.index, posts.store, posts.show…
+	r.Get("/", controllers.Home).Name("home")
+	r.Resource("posts", controllers.NewPostController(db)) // posts.index, posts.store, posts.show…
+
+	return nil
 }
 
 func (p *PostController) Store(c *web.Ctx) error {

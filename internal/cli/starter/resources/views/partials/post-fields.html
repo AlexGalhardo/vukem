@@ -1,0 +1,9 @@
+<label>Title
+	<input name="title" value="{{.Title}}" required minlength="3" maxlength="120"
+		{{with error "title"}}aria-invalid="true" aria-describedby="title-error"{{end}}>
+</label>
+{{with error "title"}}<p id="title-error" class="error">{{.}}</p>{{end}}
+<label>Body
+	<textarea name="body" rows="6">{{.Body}}</textarea>
+</label>
+{{with error "body"}}<p class="error">{{.}}</p>{{end}}

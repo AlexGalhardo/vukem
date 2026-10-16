@@ -186,9 +186,17 @@ func TestUsageErrors(t *testing.T) {
 func TestInterleave(t *testing.T) {
 	t.Parallel()
 
-	got := interleave([]string{"Post", "-m", "--force", "--", "-x"})
-	if diff := cmp.Diff([]string{"-m", "--force", "Post", "-x"}, got); diff != "" {
+	set := flag.NewFlagSet("x", flag.ContinueOnError)
+	set.Bool("m", false, "")
+	set.String("module", "", "")
+
+	got := interleave(set, []string{"blog", "-m", "--module", "a/b", "--module=c", "--force", "--", "-x"})
+	if diff := cmp.Diff([]string{"-m", "--module", "a/b", "--module=c", "--force", "blog", "-x"}, got); diff != "" {
 		t.Fatal(diff)
+	}
+
+	if got := interleave(set, []string{"--module"}); len(got) != 1 {
+		t.Fatalf("dangling value flag = %v", got)
 	}
 }
 

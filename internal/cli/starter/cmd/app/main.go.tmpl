@@ -1,0 +1,13 @@
+// Command app runs {{.Name}}: the HTTP server by default, or a command such
+// as migrate, route:list or about (lumek <command> delegates here).
+package main
+
+import (
+	"os"
+
+	lumek "github.com/AlexGalhardo/golang-framework"
+
+	"{{.Module}}/bootstrap"
+)
+
+func main() { os.Exit(lumek.Main(bootstrap.New)) }

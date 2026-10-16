@@ -1,0 +1,13 @@
+# Environment
+.env
+.env.*.local
+
+# Build output and caches
+/bin/
+.lumek/
+
+# Local data
+storage/*
+!storage/.gitkeep
+
+node_modules/

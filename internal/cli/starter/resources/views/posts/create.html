@@ -1,0 +1,9 @@
+{{define "title"}}New post{{end}}
+{{define "content"}}
+<h1>New post</h1>
+<form method="post" action="{{route "posts.store"}}">
+	{{csrfField}}
+	{{template "partials/post-fields" dict "Title" (old "title") "Body" (old "body")}}
+	<button type="submit">Create</button>
+</form>
+{{end}}

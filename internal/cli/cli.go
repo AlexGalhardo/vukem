@@ -48,6 +48,7 @@ type command struct {
 
 func commands() []command {
 	return []command{
+		{"new", "<name>", "Create a project from the HTMX + SQLite starter", newProject},
 		{"serve", "", "Run the app and restart it when Go files change", serveCmd},
 		{"build", "", "Build assets (Vite) and a production binary in bin/", buildCmd},
 		{"version", "", "Print the lumek version", nil},
@@ -124,7 +125,7 @@ func run(ctx context.Context, args []string, env *Env) error {
 		fs.Usage = func() { printUsage(env, c, fs) }
 		runFn := c.flags(fs)
 
-		if err := fs.Parse(interleave(rest)); err != nil {
+		if err := fs.Parse(interleave(fs, rest)); err != nil {
 			if errors.Is(err, flag.ErrHelp) {
 				return nil
 			}
@@ -139,26 +140,43 @@ func run(ctx context.Context, args []string, env *Env) error {
 	return delegate(ctx, env, args)
 }
 
-// interleave moves flags after positional arguments to the front, so
-// "make:model Post -m" works like "make:model -m Post".
-func interleave(args []string) []string {
+// interleave moves flags (and the values of non-boolean flags) in front of
+// positional arguments, so "make:model Post -m" works like
+// "make:model -m Post" and "new blog --module x" like "new --module x blog".
+func interleave(fs *flag.FlagSet, args []string) []string {
 	var flags, pos []string
 
-	for i, a := range args {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
 		if a == "--" {
 			pos = append(pos, args[i+1:]...)
 			break
 		}
 
-		if strings.HasPrefix(a, "-") && a != "-" {
-			flags = append(flags, a)
+		if !strings.HasPrefix(a, "-") || a == "-" {
+			pos = append(pos, a)
 			continue
 		}
 
-		pos = append(pos, a)
+		flags = append(flags, a)
+
+		name := strings.TrimLeft(a, "-")
+		if strings.Contains(name, "=") {
+			continue
+		}
+
+		if f := fs.Lookup(name); f != nil && !isBool(f) && i+1 < len(args) {
+			i++
+			flags = append(flags, args[i])
+		}
 	}
 
 	return append(flags, pos...)
+}
+
+func isBool(f *flag.Flag) bool {
+	b, ok := f.Value.(interface{ IsBoolFlag() bool })
+	return ok && b.IsBoolFlag()
 }
 
 func list(env *Env) error {

@@ -1,0 +1,28 @@
+// Package bootstrap wires the application together. There is no hidden
+// registration: everything the app uses is listed here.
+package bootstrap
+
+import (
+	lumek "github.com/AlexGalhardo/golang-framework"
+
+	"{{.Module}}/database/migrations"
+	"{{.Module}}/resources"
+	"{{.Module}}/routes"
+)
+
+// New builds the application; cmd/app and the tests call it.
+func New(opts ...lumek.Option) (*lumek.App, error) {
+	app, err := lumek.New(append([]lumek.Option{
+		lumek.WithProviders(Providers()...),
+		lumek.WithMigrations(migrations.All()),
+		lumek.WithViews(resources.Views()),
+		lumek.WithRoutes(routes.Web),
+	}, opts...)...)
+	if err != nil {
+		return nil, err
+	}
+
+	app.AddCommand(Commands()...)
+
+	return app, nil
+}

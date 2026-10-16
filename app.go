@@ -108,7 +108,7 @@ type options struct {
 	kind       Kind
 	providers  []Provider
 	runners    []namedRunner
-	routes     []func(r *router.Router, app *App)
+	routes     []func(r *router.Router, app *App) error
 	views      fs.FS
 	now        func() time.Time
 	migrations []schema.Migration
@@ -119,8 +119,9 @@ type options struct {
 }
 
 // WithRoutes registers routes (and router middleware) after providers
-// registered, so handlers can use the services they added.
-func WithRoutes(fn func(r *router.Router, app *App)) Option {
+// registered, so handlers can use the services they added. An error stops
+// New.
+func WithRoutes(fn func(r *router.Router, app *App) error) Option {
 	return func(o *options) error { o.routes = append(o.routes, fn); return nil }
 }
 
@@ -288,7 +289,9 @@ func New(opts ...Option) (*App, error) {
 	}
 
 	for _, fn := range o.routes {
-		fn(app.Router, app)
+		if err := fn(app.Router, app); err != nil {
+			return nil, fmt.Errorf("lumek: routes: %w", err)
+		}
 	}
 
 	return app, nil

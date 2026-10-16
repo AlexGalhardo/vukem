@@ -1,0 +1,11 @@
+{{define "title"}}{{.Title}}{{end}}
+{{define "content"}}
+<article>
+	<h1>{{.Title}}</h1>
+	<p>{{.Body}}</p>
+</article>
+<p>
+	<a href="{{route "posts.edit" "post" .ID}}">Edit</a> ·
+	<a href="{{route "posts.index"}}">All posts</a>
+</p>
+{{end}}

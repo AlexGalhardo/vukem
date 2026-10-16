@@ -18,8 +18,8 @@ Task IDs: `<phase>.<group>.<task>` (e.g. `P.3.2`). Reference them in commit bodi
 | Field | Value |
 | --- | --- |
 | Current phase | **Prototype** |
-| Next task | `P.11.0` (P.0.9 waits for GitHub billing) |
-| Last release | `v0.0.11` (P.10 CLI) |
+| Next task | `P.12.0` (P.0.9 waits for GitHub billing) |
+| Last release | `v0.0.12` (P.11 starter and `lumek new`) |
 | Updated | 2026-10-16 |
 
 ## Design references
@@ -271,11 +271,11 @@ Applies to **every** task:
 
 ### P.11 Starter & `lumek new` — needs: P.4–P.10
 
-- [ ] **P.11.0** Vendored htmx with pinned version and SHA-256 checked by a test; strict CSP in starter layout.
+- [x] **P.11.0** Vendored htmx with pinned version and SHA-256 checked by a test; strict CSP in starter layout.
   → verify: tampered file fails the test; starter pages render with no CSP violations (headless check in e2e).
-- [ ] **P.11.1** HTMX + SQLite starter (skeleton per [brainstorming.md](docs/brainstorming.md#generated-app-skeleton)), vendored htmx 4.x, minimal CSS, welcome page, example `PostController` CRUD with validation + flash + partials, tests.
+- [x] **P.11.1** HTMX + SQLite starter (skeleton per [brainstorming.md](docs/brainstorming.md#generated-app-skeleton)), vendored htmx 4.x, minimal CSS, welcome page, example `PostController` CRUD with validation + flash + partials, tests.
   → verify: starter's own tests pass.
-- [ ] **P.11.2** `lumek new <name> [--module]`: copy starter, rewrite module path, `go mod tidy`, `key:generate`, `git init`.
+- [x] **P.11.2** `lumek new <name> [--module]`: copy starter, rewrite module path, `go mod tidy`, `key:generate`, `git init`.
   → verify: e2e on ubuntu/windows/macos: `lumek new blog && cd blog && go test ./... && lumek build`.
 
 ### P.12 Release `v0.1.0` — needs: P.0–P.11
