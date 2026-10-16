@@ -155,6 +155,7 @@ func builtinCommands() []Command {
 		[]Command{routeListCommand(), aboutCommand(), openAPIExportCommand(), codegenTypesCommand()},
 		migrateCommands(),
 		seedCommands(),
+		queueCommands(),
 	)
 }
 

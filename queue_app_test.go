@@ -1,7 +1,12 @@
 package vukem
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"path/filepath"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -80,4 +85,113 @@ func TestMemoryQueueRunner(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
+}
+
+type flakyJob struct {
+	Fail bool `json:"fail"`
+}
+
+func (flakyJob) Kind() string { return "flaky" }
+
+func TestQueueCommandsOnDatabase(t *testing.T) {
+	t.Parallel()
+
+	dbURL := "file:" + filepath.Join(t.TempDir(), "queue.db")
+
+	var ran atomic.Int32
+
+	jobs := WithJobs(queue.Handle(func(_ context.Context, j flakyJob) error {
+		ran.Add(1)
+		if j.Fail {
+			return errors.New("card declined")
+		}
+
+		return nil
+	}, queue.Retries(0)))
+
+	run := func(args ...string) (string, error) {
+		var out bytes.Buffer
+
+		getenv := func(k string) (string, bool) {
+			v, ok := map[string]string{
+				"APP_KEY": testKey, "APP_ENV": "test", "DATABASE_URL": dbURL,
+				"QUEUE_CONNECTION": "database",
+			}[k]
+			return v, ok
+		}
+
+		build := func(opts ...Option) (*App, error) {
+			app, err := New(append(opts, WithLogger(discardLogger()), WithStdout(&out), jobs)...)
+			if err != nil {
+				return nil, err
+			}
+
+			app.AddCommand(
+				CommandFunc{CommandName: "test:dispatch", Fn: func(ctx context.Context, a *App, _ []string) error {
+					q, err := a.Queue()
+					if err != nil {
+						return err
+					}
+
+					if err := q.Dispatch(ctx, flakyJob{Fail: true}); err != nil {
+						return err
+					}
+
+					return q.Dispatch(ctx, flakyJob{})
+				}},
+			)
+
+			return app, nil
+		}
+
+		err := RunMain(t.Context(), append([]string{"app"}, args...), getenv, build)
+
+		return out.String(), err
+	}
+
+	if _, err := run("test:dispatch"); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := run("queue:work", "-once"); err != nil || ran.Load() != 1 {
+		t.Fatalf("work -once = %v ran=%d", err, ran.Load())
+	}
+
+	if _, err := run("queue:work", "-stop-when-empty", "-queue", "default", "-concurrency", "2"); err != nil ||
+		ran.Load() != 2 {
+		t.Fatalf("work = %v ran=%d", err, ran.Load())
+	}
+
+	out, err := run("queue:failed")
+	if err != nil || !strings.Contains(out, "card declined") || !strings.Contains(out, "flaky") {
+		t.Fatalf("queue:failed = %q %v", out, err)
+	}
+
+	if out, err := run("queue:failed", "-json"); err != nil || !strings.Contains(out, `"last_error": "card declined"`) {
+		t.Fatalf("queue:failed -json = %q %v", out, err)
+	}
+
+	if out, err := run("queue:retry", "all"); err != nil || !strings.Contains(out, "1 failed job(s) re-queued") {
+		t.Fatalf("queue:retry = %q %v", out, err)
+	}
+
+	_, _ = run("queue:work", "-stop-when-empty")
+
+	if out, err := run("queue:forget", "all"); err != nil || !strings.Contains(out, "1 failed job(s) deleted") {
+		t.Fatalf("queue:forget = %q %v", out, err)
+	}
+
+	if _, err := run("queue:retry"); err == nil {
+		t.Error("queue:retry without IDs accepted")
+	}
+}
+
+func TestFailedCommandsNeedAStore(t *testing.T) {
+	t.Parallel()
+
+	app := newTestApp(t)
+
+	if err := queueFailedCommand().Run(t.Context(), app, nil); !errors.Is(err, ErrNoFailedStore) {
+		t.Fatalf("queue:failed on sync = %v", err)
+	}
 }

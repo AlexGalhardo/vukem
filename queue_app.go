@@ -2,8 +2,13 @@ package vukem
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"flag"
 	"fmt"
 	"strings"
+	"text/tabwriter"
+	"time"
 
 	"github.com/AlexGalhardo/vukem/queue"
 )
@@ -23,6 +28,9 @@ type QueueConfig struct {
 	Queues string `env:"QUEUE_NAMES" default:"default"`
 	// Concurrency is the number of parallel workers.
 	Concurrency int `env:"QUEUE_CONCURRENCY" default:"4"`
+	// Table and FailedTable are the database driver's tables.
+	Table       string `env:"QUEUE_TABLE"        default:"jobs"`
+	FailedTable string `env:"QUEUE_FAILED_TABLE" default:"failed_jobs"`
 }
 
 // QueueNames returns Queues as a list.
@@ -54,8 +62,13 @@ func (a *App) Queue() (*queue.Queue, error) {
 			d = queue.Sync{}
 		case "memory":
 			d = queue.NewMemory()
+		case "database":
+			if d, err = a.databaseQueue(cfg); err != nil {
+				a.queueErr = err
+				return
+			}
 		default:
-			a.queueErr = fmt.Errorf("vukem: unknown QUEUE_CONNECTION %q (sync, memory)", cfg.Connection)
+			a.queueErr = fmt.Errorf("vukem: unknown QUEUE_CONNECTION %q (sync, memory, database)", cfg.Connection)
 			return
 		}
 
@@ -71,6 +84,27 @@ func (a *App) Queue() (*queue.Queue, error) {
 	return a.queue, a.queueErr
 }
 
+func (a *App) databaseQueue(cfg QueueConfig) (*queue.Database, error) {
+	db, err := a.DB()
+	if err != nil {
+		return nil, err
+	}
+
+	d, err := queue.NewDatabase(db, queue.DatabaseOptions{Table: cfg.Table, FailedTable: cfg.FailedTable})
+	if err != nil {
+		return nil, err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := d.CreateTables(ctx); err != nil {
+		return nil, err
+	}
+
+	return d, nil
+}
+
 // queueRunner works the in-memory queue inside the web process.
 func (a *App) queueRunner(cfg QueueConfig) Runner {
 	return RunnerFunc(func(ctx context.Context) error {
@@ -81,4 +115,165 @@ func (a *App) queueRunner(cfg QueueConfig) Runner {
 
 		return q.Work(ctx, queue.WorkOptions{Queues: cfg.QueueNames(), Concurrency: cfg.Concurrency})
 	})
+}
+
+func queueCommands() []Command {
+	return []Command{
+		queueWorkCommand(),
+		queueFailedCommand(),
+		queueRetryCommand("queue:retry"),
+		queueRetryCommand("queue:forget"),
+	}
+}
+
+func queueWorkCommand() Command {
+	var (
+		queues      *string
+		concurrency *int
+		once, empty *bool
+		sleep       *time.Duration
+	)
+
+	return CommandFunc{
+		CommandName: "queue:work",
+		Desc:        "Process queued jobs until stopped (Ctrl+C drains running jobs)",
+		DefineFlags: func(fs *flag.FlagSet) {
+			queues = fs.String("queue", "", "queues in priority order (default QUEUE_NAMES)")
+			concurrency = fs.Int("concurrency", 0, "parallel workers (default QUEUE_CONCURRENCY)")
+			once = fs.Bool("once", false, "process a single job")
+			empty = fs.Bool("stop-when-empty", false, "exit when no job is available")
+			sleep = fs.Duration("sleep", time.Second, "wait when the queue is empty")
+		},
+		Fn: func(ctx context.Context, app *App, _ []string) error {
+			cfg, err := configLoad[QueueConfig](app)
+			if err != nil {
+				return err
+			}
+
+			if *queues != "" {
+				cfg.Queues = *queues
+			}
+
+			if *concurrency > 0 {
+				cfg.Concurrency = *concurrency
+			}
+
+			q, err := app.Queue()
+			if err != nil {
+				return err
+			}
+
+			o := queue.WorkOptions{
+				Queues:        cfg.QueueNames(),
+				Concurrency:   cfg.Concurrency,
+				Sleep:         *sleep,
+				StopWhenEmpty: *empty,
+			}
+			if *once {
+				o.MaxJobs, o.Concurrency, o.StopWhenEmpty = 1, 1, true
+			}
+
+			app.Log.InfoContext(ctx, "queue worker started", "queues", o.Queues, "concurrency", o.Concurrency)
+
+			return q.Work(ctx, o)
+		},
+	}
+}
+
+// ErrNoFailedStore is returned by the failed-job commands for drivers that
+// do not keep failed jobs.
+var ErrNoFailedStore = errors.New("vukem: the queue driver does not keep failed jobs (use QUEUE_CONNECTION=database)")
+
+func failedStore(app *App) (queue.FailedStore, error) {
+	q, err := app.Queue()
+	if err != nil {
+		return nil, err
+	}
+
+	fs, ok := q.Driver().(queue.FailedStore)
+	if !ok {
+		return nil, ErrNoFailedStore
+	}
+
+	return fs, nil
+}
+
+func queueFailedCommand() Command {
+	var asJSON *bool
+
+	return CommandFunc{
+		CommandName: "queue:failed",
+		Desc:        "List failed jobs",
+		DefineFlags: func(fs *flag.FlagSet) { asJSON = fs.Bool("json", false, "print JSON") },
+		Fn: func(ctx context.Context, app *App, _ []string) error {
+			fs, err := failedStore(app)
+			if err != nil {
+				return err
+			}
+
+			jobs, err := fs.Failed(ctx)
+			if err != nil {
+				return err
+			}
+
+			if *asJSON {
+				enc := json.NewEncoder(app.stdout)
+				enc.SetIndent("", "  ")
+
+				return enc.Encode(jobs)
+			}
+
+			tw := tabwriter.NewWriter(app.stdout, 0, 4, 2, ' ', 0)
+			fmt.Fprintln(tw, "ID\tQUEUE\tKIND\tATTEMPTS\tFAILED AT\tERROR")
+
+			for i := range jobs {
+				j := &jobs[i]
+				msg, _, _ := strings.Cut(j.LastError, "\n")
+				fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\t%s\n", j.ID, j.Queue, j.Kind, j.Attempts,
+					j.FailedAt.Format(time.RFC3339), msg)
+			}
+
+			return tw.Flush()
+		},
+	}
+}
+
+func queueRetryCommand(name string) Command {
+	desc := "Re-queue failed jobs: IDs or all"
+	if name == "queue:forget" {
+		desc = "Delete failed jobs: IDs or all"
+	}
+
+	return CommandFunc{
+		CommandName: name,
+		Desc:        desc,
+		Fn: func(ctx context.Context, app *App, args []string) error {
+			if len(args) == 0 {
+				return fmt.Errorf("%s needs job IDs or \"all\"", name)
+			}
+
+			if len(args) == 1 && args[0] == "all" {
+				args = nil
+			}
+
+			fs, err := failedStore(app)
+			if err != nil {
+				return err
+			}
+
+			act, verb := fs.Retry, "re-queued"
+			if name == "queue:forget" {
+				act, verb = fs.Forget, "deleted"
+			}
+
+			n, err := act(ctx, args...)
+			if err != nil {
+				return err
+			}
+
+			fmt.Fprintf(app.stdout, "%d failed job(s) %s\n", n, verb)
+
+			return nil
+		},
+	}
 }

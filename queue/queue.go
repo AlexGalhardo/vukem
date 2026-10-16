@@ -25,6 +25,8 @@ import (
 	"runtime/debug"
 	"sync"
 	"time"
+
+	"github.com/AlexGalhardo/vukem/database"
 )
 
 // Job is a unit of background work. Kind names its handler and must be
@@ -61,6 +63,29 @@ type Driver interface {
 	Release(ctx context.Context, m *Message) error
 	// Fail moves m to the failed jobs.
 	Fail(ctx context.Context, m *Message) error
+}
+
+// TxPusher is implemented by drivers that can enqueue inside a database
+// transaction (Database).
+type TxPusher interface {
+	PushTx(ctx context.Context, ex database.Executor, m *Message) error
+}
+
+// FailedJob is a job that ran out of attempts.
+type FailedJob struct {
+	Message
+
+	FailedAt time.Time `json:"failed_at"`
+}
+
+// FailedStore is implemented by drivers that keep failed jobs (Database).
+type FailedStore interface {
+	// Failed lists failed jobs, newest first.
+	Failed(ctx context.Context) ([]FailedJob, error)
+	// Retry re-queues failed jobs (all when ids is empty).
+	Retry(ctx context.Context, ids ...string) (int, error)
+	// Forget deletes failed jobs (all when ids is empty).
+	Forget(ctx context.Context, ids ...string) (int, error)
 }
 
 // Inline is implemented by drivers that run jobs during Dispatch (Sync).
@@ -210,6 +235,27 @@ func (q *Queue) Dispatch(ctx context.Context, j Job, opts ...Option) error {
 	}
 
 	return q.driver.Push(ctx, m)
+}
+
+// ErrNoTx is returned by DispatchTx when the driver cannot enqueue inside
+// a transaction.
+var ErrNoTx = errors.New("queue: driver does not support DispatchTx")
+
+// DispatchTx enqueues j inside the transaction of ex: the job exists only
+// if the transaction commits, so it never runs for rolled-back work and is
+// never lost for committed work.
+func (q *Queue) DispatchTx(ctx context.Context, ex database.Executor, j Job, opts ...Option) error {
+	tp, ok := q.driver.(TxPusher)
+	if !ok {
+		return ErrNoTx
+	}
+
+	m, _, err := q.message(j, opts)
+	if err != nil {
+		return err
+	}
+
+	return tp.PushTx(ctx, ex, m)
 }
 
 // Message builds the stored message for j (drivers with their own

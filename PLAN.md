@@ -18,7 +18,7 @@ Task IDs: `<phase>.<group>.<task>` (e.g. `P.3.2`). Reference them in commit bodi
 | Field | Value |
 | --- | --- |
 | Current phase | **ALPHA** |
-| Next task | `B.1.2` (database queue driver) |
+| Next task | `B.1.3` (`make:job`, `FakeQueue`, queued mail/listeners) |
 | Last release | `v0.14.0` (A.7.2 example blog, auth.Optional) |
 | Updated | 2026-10-16 |
 
@@ -465,7 +465,7 @@ Applies to **every** task:
 
 - [x] **B.1.1** Queue interface, typed jobs (`Kind()`), registry, sync driver, options (retries, backoff, timeout, delay, queue name).
   → verify: tests.
-- [ ] **B.1.2** Database driver (SQLite + Postgres `SKIP LOCKED`), `DispatchTx`, `failed_jobs`, `queue:work/retry/failed`, graceful drain.
+- [x] **B.1.2** Database driver (SQLite + Postgres `SKIP LOCKED`), `DispatchTx`, `failed_jobs`, `queue:work/retry/failed`, graceful drain.
   → verify: concurrency tests; transactional enqueue rollback test.
 - [ ] **B.1.3** `make:job`, `FakeQueue`, queued mail/listeners.
   → verify: tests.
