@@ -163,6 +163,51 @@ link, err := disk.PresignGet("invoices/42.pdf", time.Hour)
 - Presigned URLs sign only the `host` header and expire after 1 s to 7 days (the SigV4 maximum). Credentials are `config.Secret`; errors and `%+v` never show them.
 - Integration tests run against MinIO (`task services:up`, port 59000); the driver passes `storagetest.Run` and `storagetest.RunTraversal`.
 
+## Uploads
+
+Package `upload` (BETA, stdlib only) goes beyond `storage.PutUploaded`: it never buffers a whole file.
+
+```go
+rules := upload.Images(5 << 20) // MaxFileSize + Types are required: zero Rules reject everything
+rules.MaxFiles, rules.Dir = 3, "photos"
+rules.Scanner = upload.ClamAV("127.0.0.1:3310") // optional
+
+form, err := upload.Receive(c, disk, rules) // form.Values, form.Files[i].Path/Name/Type/Size/SHA256
+```
+
+- `Receive` reads `r.MultipartReader()` part by part and streams each file to the `storage.Disk` (a 64 MiB upload allocates about 100 KiB). `Rules` bound the file size, the whole request (`MaxSize`, default `MaxFiles*MaxFileSize + 1 MiB`; it replaces the router-wide body limit for that route), the file count, and field count/size. Sizes fail with 413, types/extensions/count with 422; on any error every file already written is deleted.
+- Type checks: `http.DetectContentType` on the first 512 bytes must be in `Types`, and the client's extension must be one of those known for that type (`upload.Extensions("image/jpeg")` → `.jpg`, `.jpeg`), plus `Extensions` when set. The client's `Content-Type` is ignored. Stored names are random with the canonical extension; the sanitized client name (`upload.SanitizeName`) is metadata only.
+- `upload.Save(ctx, disk, rules, field, filename, r)` applies the same checks to any reader (finished tus uploads, imports).
+- Scanning: with `Rules.Scanner`, files are written to `QuarantineDir/.<random>` (dot-named, so `storage.Handler` never serves them), scanned, then copied to `Dir` and the quarantined copy deleted. `ErrInfected` → deleted + 422; a scanner error → deleted + 503 (fail closed). `upload.ClamAV(addr)` speaks clamd's `INSTREAM` over TCP with per-operation timeouts.
+- Nothing may read the body before `Receive`: `middleware.MethodOverride` leaves multipart bodies unread (multipart forms put `_method` in the query string) and handlers must not call `c.Input()`/`c.FormFile()` first.
+
+Resumable uploads implement tus 1.0 core with the creation, expiration and termination extensions:
+
+```go
+tus, err := upload.Tus(upload.TusConfig{
+	Dir: "storage/app/tus", BasePath: "/uploads/tus/", MaxSize: 2 << 30,
+	Authorize: func(r *http.Request) error { /* session or token check */ return nil },
+	OnComplete: func(ctx context.Context, info upload.TusInfo, open func() (io.ReadCloser, error)) error {
+		rc, err := open()
+		if err != nil {
+			return err
+		}
+		defer rc.Close()
+		_, err = upload.Save(ctx, disk, rules, "file", info.Filename(), rc)
+		return err
+	},
+})
+r.Handle("/uploads/tus/", tus)
+app.OnShutdown(func(context.Context) error { return tus.Close() })
+```
+
+- `OPTIONS` advertises `Tus-Version`, `Tus-Max-Size`, `Tus-Extension`; `POST` checks `Upload-Length` (≤ `MaxSize`) and `Upload-Metadata` (≤ 4 KiB, 32 pairs) and answers 201 with `Location: BasePath + <26-char random id>`; `HEAD` returns `Upload-Offset`/`Upload-Length` with `Cache-Control: no-store`; `PATCH` needs `Tus-Resumable: 1.0.0` (412 otherwise), `Content-Type: application/offset+octet-stream` (415) and the current `Upload-Offset` (409), and appends the body as it streams — an interrupted request keeps what arrived, and the client resumes from the offset `HEAD` reports. Concurrent `PATCH`es on one upload get 423.
+- Partial data lives in `Dir` through `os.Root`. The id is the capability, so `Authorize` is required (boot error when nil; return `nil` explicitly to allow everyone). Abandoned uploads expire after `Expiry` (24h): requests on them get 404 and `tus.Cleanup(ctx)` (schedule it) deletes them. When the last byte arrives `OnComplete` runs; its error is sent to the client (422 for validation) and the partial data is deleted either way.
+
+Direct-to-storage uploads skip the app server: `upload.Presigner` (`PresignPut(ctx, key, contentType, maxSize, ttl)`) is implemented by storage drivers (`drivers/s3`). `upload.Direct(DirectConfig{Presigner, Rules, Authorize})` answers `POST {"filename","content_type","size"}` with `{"key","url","method":"PUT","headers","expires_at"}` after checking the declared type, extension and size, under a random key in `Rules.Dir` (TTL 15 minutes, at most 1 hour). The declared type cannot be trusted, so call `upload.Verify(ctx, disk, key, rules)` when the client reports the upload done: it sniffs the stored object and deletes it when it breaks the rules.
+
+The HTMX starter ships `resources/views/components/upload.html` (a `data-upload` form with a `<progress>`) and a `/uploads` demo page. `resources/js/app.ts` swaps htmx 4's `fetch` for `XMLHttpRequest` on those forms (`htmx:before:request`) to report upload progress; no inline scripts, so the CSP holds. Validate files received through `c.Input()` with [`z.File()`](validation.md#schemas).
+
 ## Events
 
 ```go

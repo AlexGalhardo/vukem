@@ -106,6 +106,7 @@ What Vukem does **by default** to protect applications, mapped to the [OWASP Top
 | No shell execution in the framework; `os/exec` usage in CLI generators never passes user input through a shell | P |
 | Validator rejects invalid UTF-8 and control characters in string fields by default | P |
 | Devtools mail previews render in an `<iframe sandbox srcdoc>` with the HTML escaped, under a page CSP without any script source, so mail HTML never runs inline (`TestSecurity_A05_DevtoolsMailPreviewIsSandboxed`) | B |
+| Uploads (`upload`): the type is detected from the content (`http.DetectContentType`), never the client's `Content-Type`, and the file extension must match it; per-file and per-request sizes → 413, file and field counts bounded; stored names are random, so client file names (`../`, `\`, absolute paths) never reach a storage path; rejected requests leave no files (`TestSecurity_A05_UploadValidation`) | B |
 | Locale input (query, cookie, session, `Accept-Language`) is used only when it is a well-formed tag (`language[-Script][-REGION]`) of an available catalog; anything else falls back, so raw input never reaches headers, lookups or file paths (`TestSecurity_A05_LocaleInputRejected`) | B |
 
 ### A06:2025 — Insecure Design
@@ -116,6 +117,7 @@ What Vukem does **by default** to protect applications, mapped to the [OWASP Top
 | Rate limits on login, password reset, token issuance by default | A |
 | Request body size limits (`http.MaxBytesReader`) on every route; multipart limits; JSON depth/size limits | P |
 | WebSocket messages are capped at 32 KiB (`websocket.ReadLimit`; larger closes with 1009), every write has a timeout, pings drop peers that stop answering, and app shutdown closes sockets with 1001 instead of waiting on them (`TestSecurity_A06_WebSocketReadLimit`) | B |
+| Upload scanning fails closed: with `upload.Rules.Scanner` files stay in a dot-named quarantine path until scanned, infected files are deleted (422) and an unreachable scanner rejects the upload (503); tus and presigned-upload handlers refuse to boot without an `Authorize` hook | B |
 | Transactions with rollback-on-error/panic (`db.Tx`) so multi-step operations are atomic | P |
 | Threat model of each subsystem recorded in its doc before BETA; security review gate in [PLAN.md](../PLAN.md) (`B.5.2`) | B |
 
