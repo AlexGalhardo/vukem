@@ -127,7 +127,8 @@ func (t *Table) Float(name string) *Column { return t.add(name, kindFloat) }
 // Date adds a date column.
 func (t *Table) Date(name string) *Column { return t.add(name, kindDate) }
 
-// Timestamp adds a timestamp column (TIMESTAMPTZ on PostgreSQL).
+// Timestamp adds a timestamp column (TIMESTAMPTZ on PostgreSQL,
+// DATETIME(6) on MySQL).
 func (t *Table) Timestamp(name string) *Column { return t.add(name, kindTimestamp) }
 
 // Timestamps adds nullable created_at and updated_at.

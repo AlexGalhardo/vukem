@@ -282,6 +282,10 @@ func (m *Migrator) Fresh(ctx context.Context) ([]string, error) {
 func DropAll(ctx context.Context, db *database.DB) error { return dropAll(ctx, db) }
 
 func dropAll(ctx context.Context, db *database.DB) error {
+	if db.Dialect().Name() == "mysql" {
+		return dropAllMySQL(ctx, db)
+	}
+
 	var (
 		q       string
 		cascade string
@@ -369,4 +373,53 @@ func (m *Migrator) Status(ctx context.Context) ([]Status, error) {
 	slices.SortFunc(out, func(a, b Status) int { return cmp.Compare(a.ID, b.ID) })
 
 	return out, nil
+}
+
+// dropAllMySQL disables foreign key checks, which is a session setting,
+// so every statement runs on one pinned connection.
+func dropAllMySQL(ctx context.Context, db *database.DB) error {
+	conn, err := db.SQL().Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("schema: connect: %w", err)
+	}
+	defer conn.Close()
+
+	rows, err := conn.QueryContext(
+		ctx,
+		"SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_type = 'BASE TABLE'",
+	)
+	if err != nil {
+		return fmt.Errorf("schema: list tables: %w", err)
+	}
+
+	var tables []string
+
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			_ = rows.Close()
+			return err
+		}
+
+		tables = append(tables, name)
+	}
+
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return err
+	}
+
+	if _, err := conn.ExecContext(ctx, "SET FOREIGN_KEY_CHECKS = 0"); err != nil {
+		return fmt.Errorf("schema: disable foreign keys: %w", err)
+	}
+
+	// The connection returns to the pool, so restore the check first.
+	defer func() { _, _ = conn.ExecContext(context.WithoutCancel(ctx), "SET FOREIGN_KEY_CHECKS = 1") }()
+
+	for _, t := range tables {
+		if _, err := conn.ExecContext(ctx, "DROP TABLE IF EXISTS "+db.Dialect().Quote(t)); err != nil {
+			return fmt.Errorf("schema: drop %s: %w", t, err)
+		}
+	}
+
+	return nil
 }

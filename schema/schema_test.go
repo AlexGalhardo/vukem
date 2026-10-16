@@ -124,6 +124,70 @@ func TestPostgresDDL(t *testing.T) {
 	}
 }
 
+func TestMySQLDDL(t *testing.T) {
+	t.Parallel()
+
+	got := record(t, database.MySQL, usersPosts)
+	want := []string{
+		"CREATE TABLE `users` (\n" +
+			"  `id` BIGINT AUTO_INCREMENT PRIMARY KEY,\n" +
+			"  `name` VARCHAR(255) NOT NULL,\n" +
+			"  `email` VARCHAR(191) NOT NULL UNIQUE,\n" +
+			"  `active` BOOLEAN NOT NULL DEFAULT TRUE,\n" +
+			"  `age` INT NOT NULL DEFAULT 0,\n" +
+			"  `balance` DECIMAL(10, 2) NOT NULL DEFAULT 0.5,\n" +
+			"  `role` VARCHAR(255) NOT NULL DEFAULT 'user' CHECK (`role` IN ('admin', 'user')),\n" +
+			"  `settings` JSON,\n" +
+			"  `public_id` CHAR(36),\n" +
+			"  `ulid` CHAR(26),\n" +
+			"  `bio` LONGTEXT DEFAULT ('it''s me'),\n" +
+			"  `score` DOUBLE,\n" +
+			"  `born_on` DATE,\n" +
+			"  `avatar` LONGBLOB,\n" +
+			"  `verified_at` DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6),\n" +
+			"  `created_at` DATETIME(6),\n" +
+			"  `updated_at` DATETIME(6)\n" +
+			")",
+		"CREATE INDEX `users_name_age_index` ON `users` (`name`, `age`)",
+		"CREATE TABLE `posts` (\n" +
+			"  `id` BIGINT AUTO_INCREMENT PRIMARY KEY,\n" +
+			"  `user_id` BIGINT NOT NULL,\n" +
+			"  `title` VARCHAR(255) NOT NULL,\n" +
+			"  `deleted_at` DATETIME(6),\n" +
+			"  `created_at` DATETIME(6),\n" +
+			"  `updated_at` DATETIME(6),\n" +
+			"  FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE\n" +
+			")",
+		"CREATE INDEX `posts_title_index` ON `posts` (`title`)",
+		"CREATE UNIQUE INDEX `posts_user_id_title_unique` ON `posts` (`user_id`, `title`)",
+	}
+
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("DDL mismatch (-want +got):\n%s", diff)
+	}
+
+	alter := record(t, database.MySQL, func(s *Schema) error {
+		if err := s.Table("posts", func(t *Table) {
+			t.ForeignID("editor_id").Nullable().Constrained("users").NullOnDelete()
+			t.DropIndex("posts_title_index")
+		}); err != nil {
+			return err
+		}
+
+		return s.Drop("posts")
+	})
+	wantAlter := []string{
+		"ALTER TABLE `posts` ADD COLUMN `editor_id` BIGINT, ADD FOREIGN KEY (`editor_id`) " +
+			"REFERENCES `users` (`id`) ON DELETE SET NULL",
+		"DROP INDEX `posts_title_index` ON `posts`",
+		"DROP TABLE `posts`",
+	}
+
+	if diff := cmp.Diff(wantAlter, alter); diff != "" {
+		t.Fatalf("alter mismatch (-want +got):\n%s", diff)
+	}
+}
+
 func openDB(t *testing.T) *database.DB {
 	t.Helper()
 

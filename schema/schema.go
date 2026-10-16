@@ -1,5 +1,6 @@
-// Package schema builds DDL with a fluent, dialect-aware API (SQLite and
-// PostgreSQL) and runs versioned migrations with batches and checksums.
+// Package schema builds DDL with a fluent, dialect-aware API (SQLite,
+// PostgreSQL and MySQL/MariaDB) and runs versioned migrations with batches
+// and checksums.
 //
 //	s.Create("users", func(t *schema.Table) {
 //		t.ID()
@@ -47,7 +48,7 @@ func recorder(d database.Dialect) (*Schema, *[]string) {
 	return &Schema{ctx: context.Background(), d: d, record: &stmts}, &stmts
 }
 
-// Dialect returns the dialect name ("sqlite", "postgres").
+// Dialect returns the dialect name ("sqlite", "postgres", "mysql").
 func (s *Schema) Dialect() string { return s.d.Name() }
 
 func (s *Schema) exec(stmt string, args ...any) error {
@@ -64,6 +65,8 @@ func (s *Schema) exec(stmt string, args ...any) error {
 }
 
 func (s *Schema) q(ident string) string { return s.d.Quote(ident) }
+
+func (s *Schema) mysql() bool { return s.d.Name() == "mysql" }
 
 // Create creates table with the columns and indexes defined by fn.
 func (s *Schema) Create(table string, fn func(t *Table)) error {
@@ -112,7 +115,15 @@ func (s *Schema) Table(table string, fn func(t *Table)) error {
 			return fmt.Errorf("schema: cannot add a primary key column to existing table %s", table)
 		}
 
-		if err := s.exec("ALTER TABLE " + s.q(table) + " ADD COLUMN " + s.columnDef(c)); err != nil {
+		stmt := "ALTER TABLE " + s.q(table) + " ADD COLUMN " + s.columnDef(c)
+
+		// MySQL parses but ignores inline REFERENCES, so the key is a
+		// separate clause of the same ALTER TABLE.
+		if s.mysql() && c.ref != nil && c.refInline {
+			stmt += ", ADD " + s.foreignKeyDef(c.ref)
+		}
+
+		if err := s.exec(stmt); err != nil {
 			return err
 		}
 	}
@@ -124,7 +135,12 @@ func (s *Schema) Table(table string, fn func(t *Table)) error {
 	}
 
 	for _, name := range t.dropIdx {
-		if err := s.exec("DROP INDEX " + s.q(name)); err != nil {
+		stmt := "DROP INDEX " + s.q(name)
+		if s.mysql() {
+			stmt += " ON " + s.q(table) // MySQL indexes are per table
+		}
+
+		if err := s.exec(stmt); err != nil {
 			return err
 		}
 	}
@@ -217,6 +233,8 @@ func hasTable(ctx context.Context, ex database.Executor, table string) (bool, er
 	switch ex.Dialect().Name() {
 	case "postgres":
 		q = "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = $1"
+	case "mysql":
+		q = "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?"
 	default:
 		q = "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?"
 	}
@@ -245,7 +263,7 @@ func (s *Schema) columnDef(c *Column) string {
 	}
 
 	if c.hasDefault {
-		b.WriteString(" DEFAULT " + literal(c.def))
+		b.WriteString(" DEFAULT " + s.defaultSQL(c))
 	}
 
 	if c.unique {
@@ -261,11 +279,33 @@ func (s *Schema) columnDef(c *Column) string {
 		b.WriteString(" CHECK (" + s.q(c.name) + " IN (" + strings.Join(vals, ", ") + "))")
 	}
 
-	if c.ref != nil && c.refInline {
+	if c.ref != nil && c.refInline && !s.mysql() {
 		b.WriteString(" " + s.referenceClause(c.ref))
 	}
 
 	return b.String()
+}
+
+func (s *Schema) defaultSQL(c *Column) string {
+	lit := literal(c.def)
+	if !s.mysql() {
+		return lit
+	}
+
+	switch c.kind {
+	case kindText, kindJSON, kindBinary:
+		// MySQL 8 only accepts expression defaults on TEXT, JSON and BLOB.
+		return "(" + lit + ")"
+	case kindTimestamp:
+		// DATETIME(6) needs a CURRENT_TIMESTAMP of the same precision.
+		if e, ok := c.def.(Expr); ok && strings.EqualFold(strings.TrimSpace(string(e)), "CURRENT_TIMESTAMP") {
+			return "CURRENT_TIMESTAMP(6)"
+		}
+
+		return lit
+	default:
+		return lit
+	}
 }
 
 func (s *Schema) foreignKeyDef(fk *reference) string {
@@ -282,6 +322,10 @@ func (s *Schema) referenceClause(r *reference) string {
 }
 
 func (s *Schema) sqlType(c *Column) string {
+	if s.mysql() {
+		return mysqlType(c)
+	}
+
 	pg := s.d.Name() == "postgres"
 
 	switch c.kind {
@@ -343,6 +387,46 @@ func (s *Schema) sqlType(c *Column) string {
 		return "BLOB"
 	default:
 		return "TEXT"
+	}
+}
+
+// mysqlType maps column kinds for MySQL 8 and MariaDB 11. Timestamps are
+// DATETIME(6) (no 2038 limit, microseconds, no session time zone
+// conversion); enums are VARCHAR so they can be indexed and defaulted.
+func mysqlType(c *Column) string {
+	switch c.kind {
+	case kindID:
+		return "BIGINT AUTO_INCREMENT PRIMARY KEY"
+	case kindString:
+		return "VARCHAR(" + strconv.Itoa(c.length) + ")"
+	case kindText:
+		return "LONGTEXT"
+	case kindEnum:
+		return "VARCHAR(255)"
+	case kindInteger:
+		return "INT"
+	case kindBigInteger:
+		return "BIGINT"
+	case kindBoolean:
+		return "BOOLEAN"
+	case kindDecimal:
+		return "DECIMAL(" + strconv.Itoa(c.precision) + ", " + strconv.Itoa(c.scale) + ")"
+	case kindFloat:
+		return "DOUBLE"
+	case kindDate:
+		return "DATE"
+	case kindTimestamp:
+		return "DATETIME(6)"
+	case kindJSON:
+		return "JSON"
+	case kindUUID:
+		return "CHAR(36)"
+	case kindULID:
+		return "CHAR(26)"
+	case kindBinary:
+		return "LONGBLOB"
+	default:
+		return "LONGTEXT"
 	}
 }
 
