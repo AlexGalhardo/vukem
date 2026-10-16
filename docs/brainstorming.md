@@ -8,13 +8,13 @@ Status legend: ✅ decided · ⏳ open
 
 | # | Topic | Decision | Status |
 | --- | --- | --- | --- |
-| I1 | Name | **Vukem** — coined, unique word; also the CLI command (`vukem new blog`). Renamed from the working name "Lumek" by the maintainer on 2026-10-16 (v0.3.0) | ✅ |
+| I1 | Name | **Vukem** — coined, unique word; also the CLI command (`vukem new blog`). Picked by the maintainer on 2026-10-16 (v0.3.0) | ✅ |
 | I2 | Module path | `github.com/AlexGalhardo/vukem` (repository renamed from `golang-framework` and made public on 2026-10-16); root package name `vukem`. Tags before v0.3.0 declare the old path and are not installable from the new one | ✅ |
 | I3 | License | MIT © 2026 Alex Galhardo | ✅ |
 | I4 | Language | Code, comments, commits, docs, README: **English**. Discussion with maintainer may be Portuguese | ✅ |
 | I5 | Positioning | *Laravel/AdonisJS productivity assembled from idiomatic, `net/http`-native, separately usable packages — no globals, no reflection DI, codegen instead of magic* | ✅ |
 
-**Rejected names** (conflict check on pkg.go.dev, Homebrew, npm, GitHub): ipe, arara, caju, gale, kiln, tessera, anvil, rivet, loom, crucible, foundry, smithy, chisel, ember, blaze, alloy, forge. Clean-but-declined (maintainer wants a coined word, not an existing one): brasa, jabuti, tatu, ingot, quench, hearth, smelt. Coined finalists: zorvo, lumek (first choice, used until v0.2.x), kovra, trovik, velkor; the maintainer later picked **Vukem**.
+**Rejected names** (conflict check on pkg.go.dev, Homebrew, npm, GitHub): ipe, arara, caju, gale, kiln, tessera, anvil, rivet, loom, crucible, foundry, smithy, chisel, ember, blaze, alloy, forge. Clean-but-declined (maintainer wants a coined word, not an existing one): brasa, jabuti, tatu, ingot, quench, hearth, smelt. Coined finalists: zorvo, kovra, trovik, velkor; the maintainer picked **Vukem**.
 
 ## Platform
 

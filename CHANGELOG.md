@@ -118,7 +118,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **BREAKING:** Rename the framework from Lumek to Vukem
+- **BREAKING:** Rename the framework to Vukem
 
 ## [0.2.0] - 2026-10-16
 
@@ -142,19 +142,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **BREAKING:** **cli:** Add lumek new with the HTMX + SQLite starter
+- **BREAKING:** **cli:** Add vukem new with the HTMX + SQLite starter
 
 ## [0.0.11] - 2026-10-16
 
 ### Added
 
-- **cli:** Add the lumek command with generators, serve, build and delegation
+- **cli:** Add the vukem command with generators, serve, build and delegation
 
 ## [0.0.10] - 2026-10-16
 
 ### Added
 
-- **lumektest:** Add testing toolkit with fluent client and DB assertions
+- **vukemtest:** Add testing toolkit with fluent client and DB assertions
 
 ## [0.0.9] - 2026-10-16
 

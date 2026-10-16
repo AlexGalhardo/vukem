@@ -14,9 +14,6 @@
 
 Vukem is a web framework for Go with the productivity of Laravel and AdonisJS, built on `net/http` and the standard library. It gives you routing, validation, an ORM with migrations, authentication, queues, a scheduler, mail, OpenAPI documents and one CLI to generate and run it all, for **REST APIs and full-stack apps** alike.
 
-> [!WARNING]
-> Vukem is in active development (`v0.x`, heading to the 1.0 beta): it works end to end, but APIs may still change. Follow progress in [PLAN.md](PLAN.md).
-
 ## Summary
 
 - **HTTP**: `net/http`-native router with named routes, resources and groups; middleware is `func(http.Handler) http.Handler`.
@@ -38,35 +35,6 @@ Full documentation: **[vukem.vercel.app](https://vukem.vercel.app/docs/introduct
 - **Opt-in batteries.** Heavy drivers (PostgreSQL, Redis, MongoDB) are separate modules, so you only download what you use.
 - **Secure by default.** CSRF, security headers, Argon2id, safe SQL, fail-closed authorization, mapped to the [OWASP Top 10:2025](docs/security.md).
 - **Windows is first-class.** Pure Go, no C compiler, tested on Windows, Linux and macOS.
-
-## A taste
-
-```sh
-go install github.com/AlexGalhardo/vukem/cmd/vukem@latest
-
-vukem new blog && cd blog   # HTMX + SQLite starter (or: vukem new shop --api)
-vukem migrate
-vukem serve                 # http://localhost:3000, rebuilds on changes
-```
-
-```go
-type StoreProduct struct {
-	Name  string  `json:"name"  validate:"required,max=80"`
-	Price float64 `json:"price" validate:"min=0"`
-}
-
-func Routes(r *router.Router, app *vukem.App) error {
-	vukem.ServeOpenAPI(app, r, "/openapi.json")
-
-	api.Register(r, "POST /products", api.Op{Name: "products.store", Tags: []string{"products"}},
-		func(c *web.Ctx, in StoreProduct) (Product, error) {
-			p := Product{Name: in.Name, Price: in.Price}
-			return p, orm.Create(c.Context(), db, &p) // 201 JSON; invalid input is a 422 problem
-		})
-
-	return nil
-}
-```
 
 ## Agentic development
 
