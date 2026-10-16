@@ -182,6 +182,7 @@ type Queue struct {
 
 	mu       sync.RWMutex
 	handlers map[string]handler
+	obs      Observer
 }
 
 // New returns a queue on driver. log may be nil.
@@ -246,10 +247,21 @@ func (q *Queue) DispatchKind(ctx context.Context, kind string, payload any, opts
 	}
 
 	if in, ok := q.driver.(Inline); ok && in.Inline() {
-		return q.attempt(ctx, h, m)
+		q.observe(ctx, m, JobDispatched, 0, nil)
+
+		start := time.Now()
+		err := q.attempt(ctx, h, m)
+		q.observe(ctx, m, finished(err), time.Since(start), err)
+
+		return err
 	}
 
-	return q.driver.Push(ctx, m)
+	err = q.driver.Push(ctx, m)
+	if err == nil {
+		q.observe(ctx, m, JobDispatched, 0, nil)
+	}
+
+	return err
 }
 
 // ErrNoTx is returned by DispatchTx when the driver cannot enqueue inside
@@ -270,7 +282,12 @@ func (q *Queue) DispatchTx(ctx context.Context, ex database.Executor, j Job, opt
 		return err
 	}
 
-	return tp.PushTx(ctx, ex, m)
+	err = tp.PushTx(ctx, ex, m)
+	if err == nil {
+		q.observe(ctx, m, JobDispatched, 0, nil)
+	}
+
+	return err
 }
 
 // Message builds the stored message for j (drivers with their own
@@ -317,12 +334,17 @@ func (q *Queue) Process(ctx context.Context, m *Message) error {
 	m.Attempts++
 
 	var err error
+
+	start := time.Now()
+
 	if !ok {
 		err = fmt.Errorf("%w: %q", ErrUnknownKind, m.Kind)
 		m.MaxRetries = 0
 	} else {
 		err = q.attempt(ctx, h, m)
 	}
+
+	q.observe(ctx, m, finished(err), time.Since(start), err)
 
 	if err == nil {
 		return q.driver.Ack(ctx, m)
