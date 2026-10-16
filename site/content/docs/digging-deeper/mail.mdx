@@ -57,6 +57,6 @@ if len(app.Mails().SentTo("ana@example.com")) != 1 {
 }
 ```
 
-<Callout type="info">
-Queued mail is planned for BETA with the queue.
-</Callout>
+## Queued mail
+
+`app.MailLater(ctx, mailable)` renders the message now and sends it from a retried [queue](/docs/digging-deeper/queue) job. The message ID stays the same across retries, so Resend's idempotency key prevents duplicates.

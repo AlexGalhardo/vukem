@@ -98,7 +98,7 @@ Spec: <https://www.conventionalcommits.org/en/v1.0.0/>. Enforced by the in-repo 
 | --- | --- | --- |
 | Prototype | `v0.0.N` (patch bump per group) | `v0.1.0` when P.12 closes |
 | ALPHA | `v0.N.0` (minor bump per group) | last ALPHA minor |
-| BETA | `v1.0.0-beta.N` | `v1.0.0-rc.N` → `v1.0.0` |
+| BETA | `v0.N.0` per group (B.0 = `v0.15.0`, B.1 = `v0.16.0`, …) | `v1.0.0-beta.1` when BETA closes, then `v1.0.0-rc.N` → `v1.0.0` |
 
 1. Push the group's commits to `main`.
 2. `go run ./internal/tools/release -push vX.Y.Z` (or `task release -- vX.Y.Z`, which runs `task ci:full` first) once GitHub Actions is green for the pushed commits:
@@ -107,8 +107,9 @@ Spec: <https://www.conventionalcommits.org/en/v1.0.0/>. Enforced by the in-repo 
    - commits `chore(release): vX.Y.Z`, creates an annotated tag, pushes `main` and the tag;
    - publishes a GitHub release whose notes are that changelog section (`v0.x` and pre-releases are marked pre-release).
 3. Missed a group? Cut it retroactively: `go run ./internal/tools/release -no-commit -ref <commit> vX.Y.Z`, tag `<commit>`, commit the changelog, push, and create the GitHub release from the section.
-4. From `v0.1.0` on, release tags also get `vukem` CLI binaries (linux, macOS, Windows; amd64 and arm64) built by GoReleaser (`.goreleaser.yaml`), attached to the existing release without touching its notes. `release.yml` does it on tag push once Actions is available; until then run `task release:binaries` on the tagged commit (Docker; `SNAPSHOT=1` builds into `dist/` without publishing).
-5. Warm the proxy: `GOPROXY=https://proxy.golang.org go list -m github.com/AlexGalhardo/vukem@vX.Y.Z`.
+4. Driver modules are tagged separately as `drivers/<name>/vX.Y.Z` (e.g. `drivers/redis/v0.1.0`) once their CI job is green.
+5. From `v0.1.0` on, release tags also get `vukem` CLI binaries (linux, macOS, Windows; amd64 and arm64) built by GoReleaser (`.goreleaser.yaml`), attached to the existing release without touching its notes. `release.yml` does it on tag push once Actions is available; until then run `task release:binaries` on the tagged commit (Docker; `SNAPSHOT=1` builds into `dist/` without publishing).
+6. Warm the proxy: `GOPROXY=https://proxy.golang.org go list -m github.com/AlexGalhardo/vukem@vX.Y.Z`.
 
 ## CI (GitHub Actions)
 

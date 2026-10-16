@@ -6,8 +6,8 @@ The `vukem` command: scaffolding, generators, dev server, and delegation to the 
 
 | Binary | Installed by | Knows about the app? | Commands |
 | --- | --- | --- | --- |
-| **`vukem`** (global) | `go install github.com/AlexGalhardo/vukem/cmd/vukem@latest` | No — works on files | `new`, `make:*`, `install:*`, `serve`, `build`, `key:generate`, `version`, `upgrade` |
-| **app binary** (`cmd/app`) | built from the user's project | Yes — boots the app | `serve:http` (default), `migrate*`, `db:*`, `route:list`, `queue:work`, `schedule:*`, `about`, user commands |
+| **`vukem`** (global) | `go install github.com/AlexGalhardo/vukem/cmd/vukem@latest` | No — works on files | `new`, `make:*`, `install:*`, `serve`, `build`, `key:generate`, `version` |
+| **app binary** (`cmd/app`) | built from the user's project | Yes — boots the app | `serve:http` (default), `migrate*`, `db:*`, `route:list`, `queue:*`, `schedule:*`, `openapi:*`, `codegen:types`, `about`, user commands |
 
 When `vukem` receives a command it does not own, it delegates to the project's binary: `cmd/app` is built into `.vukem/bin/app` (rebuilt only when a `.go`, `go.mod` or `go.sum` file is newer than the binary) and run with the same arguments; its exit code is passed through. So `vukem migrate` works from the project root exactly like `php artisan migrate`. Projects ignore `.vukem/` in `.gitignore`.
 
@@ -43,6 +43,7 @@ Exit codes: `0` success, `1` failure, `2` usage error.
 | `vukem make:provider <Name>` | Provider, appended to `bootstrap/providers.go` |
 | `vukem make:test <Name>` | Test file using the fluent test client |
 | `vukem key:generate [--show]` | Write `APP_KEY` to `.env` |
+| `vukem version` | Print the CLI version |
 | `vukem build` | `vite build` (if present) then `go build -trimpath -ldflags "-s -w"` with embedded assets |
 | app: `migrate`, `migrate:rollback`, `migrate:reset`, `migrate:fresh`, `migrate:status` | Migrations |
 | app: `route:list [--json]` | Route table |
@@ -55,11 +56,13 @@ Exit codes: `0` success, `1` failure, `2` usage error.
 
 ### ALPHA
 
-Shipped: `new --api`, `install:api`, `make:resource`, `make:factory`, `make:seeder`, `make:policy`, `make:mail`, `make:event`, `make:listener [--event Name] [--async|--queued]`, `make:job`, `install:auth [--social github,google]`, app: `db:seed`, `db:wipe` (both need `--force` in production). Planned: `stub:publish`, app: `db` (opens `sqlite3`/`psql` with the configured URL). `storage:link` was replaced by `storage.Handler` (see subsystems.md).
+Shipped: `new --api`, `install:api`, `make:resource`, `make:factory`, `make:seeder`, `make:policy`, `make:mail`, `make:event`, `make:listener [--event Name] [--async|--queued]`, `make:job`, `install:auth [--social github,google]`, app: `db:seed`, `db:wipe` (both need `--force` in production). Planned: `stub:publish`, `upgrade`, app: `db` (opens `sqlite3`/`psql` with the configured URL). `storage:link` was replaced by `storage.Handler` (see subsystems.md).
 
 ### BETA
 
-`install:inertia`, `codegen:routes`, `ssr:start`, app: `down`/`up` (maintenance mode).
+Shipped: app: `openapi:export`, `codegen:types`, `openapi:serve` (via `apidocs.Command()`), `queue:work`, `queue:failed`, `queue:retry`, `queue:forget`, `schedule:run`, `schedule:work`, `schedule:list` (see the table above).
+
+Planned: `install:inertia`, `codegen:routes`, `ssr:start`, app: `down`/`up` (maintenance mode).
 
 ## Generators and stubs
 

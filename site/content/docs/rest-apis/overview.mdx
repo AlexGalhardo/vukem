@@ -118,9 +118,7 @@ r.Group("/api/v1", func(g *router.Group) {
 
 ## OpenAPI and API docs
 
-<Callout type="warning">
-Planned for BETA: typed handlers produce an OpenAPI 3.1 document without annotations (`GET /openapi.json`, `vukem openapi:export`), rendered at `/docs` by Scalar with vendored assets.
-</Callout>
+[Typed handlers](/docs/rest-apis/typed-handlers) (`api.Register`) bind and validate input from their types, and the same types produce an [OpenAPI 3.1 document](/docs/rest-apis/openapi) (`/openapi.json`, `vukem openapi:export`), TypeScript/Zod types (`vukem codegen:types`) and a Scalar API reference at `/docs`. Retried writes are safe with [idempotency keys](/docs/rest-apis/idempotency).
 
 ## Beyond REST
 

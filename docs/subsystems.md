@@ -10,12 +10,12 @@ Mail, cache, storage, events, queue, scheduler, encryption, rate limiting, i18n,
 | Cache | ALPHA | memory (LRU + TTL), database | redis | ✅ |
 | Storage | ALPHA | local (`os.Root`), memory | s3 (post-1.0) | ✅ |
 | Events | ALPHA | in-process sync/async | — | ✅ |
-| Queue | BETA | sync, database (SQLite/Postgres, `SELECT … FOR UPDATE SKIP LOCKED` on PG) | redis | ✅ |
+| Queue | BETA | sync, memory, database (SQLite/Postgres, `FOR UPDATE SKIP LOCKED` on PG) | redis | ✅ (`queue.Fake`) |
 | Scheduler | BETA | in-process cron | — | clock |
-| Encryption | BETA | AES-256-GCM with key rotation | — | — |
-| Rate limiting | ALPHA (memory) / BETA | memory, database | redis | clock |
-| i18n | BETA | JSON files, CLDR plural rules subset | — | — |
-| SSE | BETA | in-process hub | redis pub/sub | — |
+| Encryption | BETA (planned) | AES-256-GCM with key rotation | — | — |
+| Rate limiting | ALPHA / BETA | memory (GCRA) | redis | clock |
+| i18n | BETA (planned) | JSON files, CLDR plural rules subset | — | — |
+| SSE | BETA (planned) | in-process hub | redis pub/sub | — |
 
 ## Logging & observability
 
@@ -79,7 +79,7 @@ err = mailer.Send(ctx, Welcome{User: u})
 - Addresses go through `net/mail` (no header injection); subjects, tags and content ids with line breaks are rejected (`TestSecurity_A05_MailHeaderInjection`). `Bcc` is never written as a header.
 - Previews in development: `r.Handle("/_mail/", http.StripPrefix("/_mail/", mail.Preview(mailer, map[string]mail.Mailable{"welcome": sample})))`.
 - Tests: `MAIL_MAILER=array` by default in `vukemtest`; `app.Mails().SentTo("ana@example.com")`.
-- Queued mail arrives with the queue (BETA).
+- Queued mail: `app.MailLater(ctx, mailable)` renders now and sends from a retried queue job (see [Queue](#queue)).
 
 | `MAIL_MAILER` | Transport | Settings |
 | --- | --- | --- |
@@ -110,7 +110,7 @@ if ok, _ := lock.TryAcquire(ctx); ok {
 ```
 
 - Values are JSON. `Remember` runs `fn` once for concurrent misses of a key in the process (singleflight) and never caches errors.
-- Stores implement `cache.Store` (`Get`, `Set`, atomic `Add`, `Delete`, owner-checked `DeleteIf`, `Increment`, `Flush`): `cache.NewMemory(maxEntries)` (LRU + TTL) and `cache.NewDatabase(db, table)` (SQLite/Postgres upserts; `Prune` removes expired rows). Redis comes with `drivers/redis` (BETA). `cache/cachetest.Run` is the conformance suite, run on memory, SQLite and Postgres.
+- Stores implement `cache.Store` (`Get`, `Set`, atomic `Add`, `Delete`, owner-checked `DeleteIf`, `Increment`, `Flush`): `cache.NewMemory(maxEntries)` (LRU + TTL) and `cache.NewDatabase(db, table)` (SQLite/Postgres upserts; `Prune` removes expired rows). Redis comes with `drivers/redis` ([Redis](#redis)). `cache/cachetest.Run` is the conformance suite, run on memory, SQLite and Postgres.
 
 ## Storage
 
@@ -148,7 +148,7 @@ err := app.Events.Dispatch(ctx, events.OrderShipped{OrderID: 42})
 
 - Typed by generics: `events.On(fn)` infers the event type from the function. Synchronous listeners run in registration order and the first error stops the chain and is returned; async ones (`OnAsync`) run on a bounded pool with a context detached from the request, log their errors and panics, and are drained by `app.Shutdown`.
 - Tests: `events.NewFake()` records dispatches; `events.Dispatched[OrderShipped](fake)`.
-- Queue-backed listeners arrive with the queue (BETA).
+- Queued listeners: `events.OnQueued("kind", fn)` enqueues the event and runs `fn` in a queue worker (see [Queue](#queue)).
 
 ## Rate limiting
 

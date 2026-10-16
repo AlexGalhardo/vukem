@@ -198,7 +198,7 @@ Database unique-constraint violations are mapped to `409` by the dialect.
 | Health | `/up`, `/up?checks=1` |
 | Request ID | `X-Request-ID` propagated and returned |
 
-## OpenAPI (BETA)
+## OpenAPI
 
 Typed handlers produce an OpenAPI 3.1 document without annotations (Huma/Fuego approach):
 
@@ -263,6 +263,6 @@ apidocs.Serve(app, r, "/docs", apidocs.Config{
 
 ## Beyond REST
 
-- **SSE** for server push (BETA) — [frontend.md](frontend.md#sse-beta).
+- **SSE** for server push (planned, BETA) — [frontend.md](frontend.md#sse-beta).
 - **GraphQL** (`contrib/graphql`, BETA B.6.3) and **gRPC** (`contrib/grpc` on connect-go, BETA B.11). Meanwhile any `http.Handler` (gqlgen, connect-go, grpc-gateway) mounts on the router and shares middleware, auth and the app container.
 - **API reference UI**: `apidocs.Serve(app, r, "/docs", apidocs.Config{Theme: "purple"})` renders the document with [Scalar](https://scalar.com) ([details](#api-reference-ui)).

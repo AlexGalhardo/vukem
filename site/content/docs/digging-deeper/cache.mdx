@@ -25,7 +25,7 @@ n, err := c.Increment(ctx, "visits", 1, 24*time.Hour)
 | --- | --- |
 | `cache.NewMemory(maxEntries)` | LRU with TTLs, in process |
 | `cache.NewDatabase(db, table)` | SQLite and PostgreSQL upserts; `CreateTable`, `Prune` for expired rows |
-| Redis | planned for BETA (`drivers/redis`) |
+| [Redis](/docs/database/redis) | `vukem.WithCacheStore(rc.CacheStore("cache:"))` |
 
 | Variable | Default |
 | --- | --- |

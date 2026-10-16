@@ -35,6 +35,6 @@ _ = fake.Dispatch(ctx, events.OrderShipped{OrderID: 1})
 shipped := events.Dispatched[events.OrderShipped](fake)
 ```
 
-<Callout type="info">
-Queue-backed listeners are planned for BETA with the queue.
-</Callout>
+## Queued listeners
+
+`events.OnQueued("update_stock", listeners.UpdateStock)` (or `vukem make:listener UpdateStock --event OrderShipped --queued`) stores the event as JSON and runs the listener in a [queue](/docs/digging-deeper/queue) worker, with the queue's retries. `Dispatch` only reports enqueue errors.

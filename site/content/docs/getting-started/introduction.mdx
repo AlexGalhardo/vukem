@@ -6,7 +6,7 @@ description: Vukem brings Laravel and AdonisJS productivity to idiomatic Go, bui
 Vukem is a web framework for **REST APIs and full-stack apps**: routing, validation, an ORM with migrations, authentication, JSON resources with problem+json errors, HTMX-first views and an optional Inertia + React frontend, all driven by one CLI.
 
 <Callout type="warning">
-Vukem is pre-1.0 and APIs will change between `v0.x` releases. Callouts marked "Planned for BETA" describe the design target, not shipped code.
+Vukem is pre-1.0 and APIs will change between `v0.x` releases. Callouts marked "Planned" describe the design target, not shipped code.
 </Callout>
 
 ## Why Vukem
@@ -62,7 +62,9 @@ The Prototype (`v0.1`) and ALPHA (`v0.2`–`v0.13`) phases are complete.
 | [Mail](/docs/digging-deeper/mail) (SMTP, Resend), [cache](/docs/digging-deeper/cache), [storage](/docs/digging-deeper/storage), [events](/docs/digging-deeper/events), [Telegram logging](/docs/digging-deeper/telegram-logging) | Available |
 | [Security building blocks](/docs/security/building-blocks): SSRF-safe client, signed URLs, webhook signatures, security events | Available |
 | `vukemtest` and the [`vukem` CLI](/docs/cli/overview) | Available |
-| OpenAPI 3.1 + Scalar docs, queues and scheduler, Inertia (React, Vue, Svelte) + Vite, Redis, MongoDB, MySQL, S3 | Planned for BETA |
+| [Typed handlers](/docs/rest-apis/typed-handlers), [OpenAPI 3.1, TypeScript/Zod types and the Scalar API reference](/docs/rest-apis/openapi), [idempotency keys](/docs/rest-apis/idempotency) | Available |
+| [Queues](/docs/digging-deeper/queue) (sync, memory, database, Redis), [task scheduling](/docs/digging-deeper/scheduler), [Redis](/docs/database/redis), [MongoDB](/docs/database/mongodb) | Available |
+| Inertia (React, Vue, Svelte) + Vite, i18n, SSE, encryption, MySQL, S3 | Planned for BETA |
 | GraphQL, WebSockets/broadcasting, gRPC (connect-go), admin panel, dev dashboard, JWT guard, TOTP 2FA, Stripe, resumable uploads, templ starter, typed RPC clients | Planned for BETA |
 
 ## Next steps

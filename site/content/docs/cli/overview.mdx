@@ -43,7 +43,8 @@ Flags may come before or after arguments: `vukem make:model Post -m -c` equals `
 | `make:policy <Name>` | `app/policies/<name>_policy.go`, appended to `policies.All()` |
 | `make:mail <Name>` | `app/mail/<name>.go` and `resources/views/mail/<name>.html` |
 | `make:event <Name>` | `app/events/<name>.go` |
-| `make:listener <Name> --event <Event> [--async]` | `app/listeners/<name>.go`, appended to `listeners.All()` |
+| `make:listener <Name> --event <Event> [--async\|--queued]` | `app/listeners/<name>.go`, appended to `listeners.All()` (`--queued` runs it as a queue job) |
+| `make:job <Name>` | `app/jobs/<name>.go` (job type, `Kind`, handler), appended to `jobs.All()` |
 
 - Generated Go is `gofmt`ed. Existing files are never overwritten without `--force`.
 - Conventional suffixes are optional: `PostController`, `BillingProvider` and `SendReportsCommand` work as names.
@@ -51,7 +52,7 @@ Flags may come before or after arguments: `vukem make:model Post -m -c` equals `
 
 ### Custom stubs
 
-Stubs are `text/template` files embedded in the CLI. Put a file with the same name in your project's `stubs/` directory to override one (`controller.go.tmpl`, `model.go.tmpl`, `migration.go.tmpl`, `middleware.go.tmpl`, `request.go.tmpl`, `command.go.tmpl`, `provider.go.tmpl`, `factory.go.tmpl`, `seeder.go.tmpl`, `resource.go.tmpl`, `policy.go.tmpl`, `mail.go.tmpl`, `mail.html.tmpl`, `event.go.tmpl`, `listener.go.tmpl`, `test.go.tmpl`). Available data: `.Name` (Pascal), `.Snake`, `.Kebab`, `.Camel`, `.Plural`, `.Module`, and `.Table`, `.Timestamp`, `.ID`, `.Func`, `.Resource`, `.API` where relevant. Unknown keys are errors.
+Stubs are `text/template` files embedded in the CLI. Put a file with the same name in your project's `stubs/` directory to override one (`controller.go.tmpl`, `model.go.tmpl`, `migration.go.tmpl`, `middleware.go.tmpl`, `request.go.tmpl`, `command.go.tmpl`, `provider.go.tmpl`, `factory.go.tmpl`, `seeder.go.tmpl`, `resource.go.tmpl`, `policy.go.tmpl`, `mail.go.tmpl`, `mail.html.tmpl`, `event.go.tmpl`, `listener.go.tmpl`, `job.go.tmpl`, `test.go.tmpl`). Available data: `.Name` (Pascal), `.Snake`, `.Kebab`, `.Camel`, `.Plural`, `.Module`, and `.Table`, `.Timestamp`, `.ID`, `.Func`, `.Resource`, `.API` where relevant. Unknown keys are errors.
 
 ## App commands
 
@@ -61,11 +62,14 @@ Any other command runs inside your application:
 vukem migrate
 vukem migrate:status --json
 vukem route:list
+vukem queue:work
+vukem schedule:list
+vukem openapi:export > openapi.json
 vukem about
 vukem reports:send --dry-run   # your own command
 ```
 
-`vukem` builds `cmd/app` into `.vukem/bin/app` and runs it with the same arguments. The binary is rebuilt only when a `.go`, `go.mod` or `go.sum` file is newer, so repeated commands start instantly. Built-in app commands: `migrate`, `migrate:rollback`, `migrate:reset`, `migrate:fresh`, `migrate:status`, `db:seed`, `db:wipe`, `route:list`, `about`. Destructive commands need `--force` in production. Add your own with `vukem make:command` (see [Application lifecycle](/docs/architecture/lifecycle#commands)).
+`vukem` builds `cmd/app` into `.vukem/bin/app` and runs it with the same arguments. The binary is rebuilt only when a `.go`, `go.mod` or `go.sum` file is newer, so repeated commands start instantly. Built-in app commands: `migrate`, `migrate:rollback`, `migrate:reset`, `migrate:fresh`, `migrate:status`, `db:seed`, `db:wipe`, `route:list`, `about`, [`queue:work`, `queue:failed`, `queue:retry`, `queue:forget`](/docs/digging-deeper/queue#commands), [`schedule:run`, `schedule:work`, `schedule:list`](/docs/digging-deeper/scheduler#running-it), [`openapi:export`, `codegen:types`](/docs/rest-apis/openapi) and `openapi:serve` (when you add `apidocs.Command()`). Destructive commands need `--force` in production. Add your own with `vukem make:command` (see [Application lifecycle](/docs/architecture/lifecycle#commands)).
 
 Running the binary directly works too: `go run ./cmd/app migrate`.
 
@@ -87,5 +91,5 @@ Running the binary directly works too: `go run ./cmd/app migrate`.
 A delegated app command's exit code is passed through unchanged.
 
 <Callout type="info">
-Planned for BETA: `stub:publish`, `make:job`, `make:proto`, `install:inertia`, `install:admin`, `install:billing`, `openapi:export`, `codegen:client`, queue and schedule commands.
+Planned for BETA: `stub:publish`, `make:proto`, `install:inertia`, `install:admin`, `install:billing`, `codegen:client`.
 </Callout>

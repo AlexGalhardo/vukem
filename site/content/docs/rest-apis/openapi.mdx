@@ -1,0 +1,70 @@
+---
+title: OpenAPI and API reference
+description: Generate an OpenAPI 3.1 document from your routes, check responses against it, export TypeScript/Zod types and serve a Scalar API reference.
+---
+
+## The document
+
+```go
+func API(r *router.Router, app *vukem.App) error {
+	vukem.ServeOpenAPI(app, r, "/openapi.json")
+	apidocs.Serve(app, r, "/docs", apidocs.Config{Theme: "purple"})
+	// api.Register(...) routes
+	return nil
+}
+```
+
+```bash
+vukem openapi:export > openapi.json
+```
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `APP_NAME` | `Vukem` | `info.title` |
+| `API_VERSION` | `1.0.0` | `info.version` |
+| `OPENAPI_PREFIX` | empty | keep only routes under it, e.g. `/api` |
+| `OPENAPI_IN_PRODUCTION` | `false` | serve `/openapi.json` and `/docs` in production |
+
+- [Typed handlers](/docs/rest-apis/typed-handlers) are described from their types: `json` tags give property names, `validate` rules give constraints (`required`, `min`/`max`/`len`, `email`, `url`, `uuid`, `oneof`, `regex`, `positive`, `unique`, `dive`…), and a `doc:"..."` tag becomes the description.
+- Named structs become `components/schemas`; `orm` relations and `orm.NullTime` map to their JSON shape; errors reference shared `Problem` and `ValidationError` responses; `Op.Security` names become security requirements (`bearer` is predefined).
+- Plain routes get a generic entry; hide one with `.Doc(openapi.Skip{})`.
+- `app.OpenAPI()` returns the document, and `openapi.Generate(r.Routes(), openapi.Info{...})` builds one directly. CI validates a golden document with Redocly.
+
+<Callout type="info">
+OpenAPI cannot express a multi-segment `{path...}` wildcard, so it is documented as a single `{path}` segment.
+</Callout>
+
+## Checking responses in tests
+
+```go
+app.Client(t).GetJSON("/api/v1/products").AssertOK().AssertMatchesOpenAPI()
+```
+
+`AssertMatchesOpenAPI` finds the operation for the request path and checks the body against the schema of the response status (or the default problem response). Outside tests, `doc.ValidateResponse(method, path, status, body)` does the same.
+
+## Types for clients
+
+```bash
+vukem codegen:types -o resources/js/api.ts        # TypeScript types
+vukem codegen:types -zod -o resources/js/api.ts   # plus Zod schemas (zod 3.25+)
+```
+
+You get one type per component schema plus `<Operation>Body`, `<Operation>Query` and `<Operation>Response` for every named operation, and `<Name>Schema` Zod validators with `-zod`. CI type-checks the golden output with `tsc --strict`.
+
+Any `z` schema also exports on its own: `z.JSONSchema(schema)` returns JSON Schema 2020-12 (types, required keys, lengths, ranges, formats, patterns, enums, defaults, descriptions; `Refine`/`Custom` logic cannot be expressed).
+
+## API reference with Scalar
+
+```go
+apidocs.Serve(app, r, "/docs", apidocs.Config{
+	SpecURL:        "/openapi.json",
+	Theme:          "purple",
+	Layout:         "modern",
+	Authentication: map[string]any{"preferredSecurityScheme": "bearer"},
+})
+```
+
+- The [Scalar](https://scalar.com) bundle (`@scalar/api-reference` 1.72.3, MIT) is vendored, embedded and pinned by SHA-256: no CDN, no telemetry, no remote fonts, no AI agent.
+- The page uses the request's CSP nonce for its scripts; its policy only adds `style-src 'unsafe-inline'` (Scalar injects styles at run time), and `connect-src 'self'` keeps "try it" requests on your origin.
+- Like `/openapi.json`, it is not registered in production unless `OPENAPI_IN_PRODUCTION=true`.
+- The `apidocs` package (about 4 MB) is linked only when you import it. Add `apidocs.Command()` to your commands for `vukem openapi:serve [-addr localhost:8081]`, a local preview.

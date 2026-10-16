@@ -45,7 +45,7 @@ The public "how to use Vukem" website lives in [`site/`](../site) and is deploye
 9. **Testing** — Getting started, HTTP tests, API tests, Database testing, Fakes
 10. **Deployment** — Single binary, Docker, Reverse proxy and TLS
 
-Pages describe only what is implemented; planned features are marked with a "Planned for ALPHA/BETA" callout.
+Pages describe only what is implemented; planned features are marked with a "Planned" callout.
 
 ## Workflow
 

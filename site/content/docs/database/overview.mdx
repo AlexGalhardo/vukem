@@ -9,8 +9,8 @@ description: SQLite by default with safe pragmas and split reader/writer pools, 
 | --- | --- | --- |
 | SQLite (pure Go, no cgo) | core, `modernc.org/sqlite` | Available |
 | PostgreSQL | `drivers/postgres` (pgx) | Available |
-| Redis (cache, sessions, queues) | `drivers/redis` | Planned for BETA |
-| MongoDB | `drivers/mongo` | Planned for BETA |
+| [Redis](/docs/database/redis) (cache, sessions, queues, rate limiting) | `drivers/redis` (go-redis) | Available |
+| [MongoDB](/docs/database/mongodb) | `drivers/mongo` (official driver) | Available |
 
 Drivers are separate Go modules, so importing the core never downloads a heavy driver. MySQL/MariaDB (`drivers/mysql`) is planned for BETA.
 

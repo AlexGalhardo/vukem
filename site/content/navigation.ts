@@ -44,12 +44,12 @@ export const navigation: NavCategory[] = [
   {
     title: "REST APIs",
     dir: "rest-apis",
-    pages: ["overview", "pagination"],
+    pages: ["overview", "pagination", "typed-handlers", "openapi", "idempotency"],
   },
   {
     title: "Database",
     dir: "database",
-    pages: ["overview", "orm", "relations", "migrations", "factories-seeders"],
+    pages: ["overview", "orm", "relations", "migrations", "factories-seeders", "redis", "mongodb"],
   },
   {
     title: "Security",
@@ -59,7 +59,7 @@ export const navigation: NavCategory[] = [
   {
     title: "Digging deeper",
     dir: "digging-deeper",
-    pages: ["mail", "cache", "storage", "events", "telegram-logging"],
+    pages: ["mail", "cache", "storage", "events", "queue", "scheduler", "telegram-logging"],
   },
   {
     title: "Frontend",

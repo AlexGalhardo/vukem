@@ -8,7 +8,7 @@
 - Data that leaves the app (JSON responses, Inertia props, queued payloads) can be checked against a schema (always in development/test, opt-in in production).
 - Schemas are typed: a schema for `int` cannot be attached to a `string` field; mismatches are detected when the schema is built (at boot), not per request.
 - One engine: struct tags (`validate:"required,email"`) are shorthand compiled into the same schemas.
-- Schemas export to JSON Schema / OpenAPI (BETA) and TypeScript types (BETA) for frontends.
+- Schemas export to JSON Schema (`z.JSONSchema`), OpenAPI and TypeScript/Zod types (`vukem codegen:types`) for frontends.
 
 ## A taste
 
@@ -145,10 +145,10 @@ Supported rules: `required`, `min=N`, `max=N`, `len=N`, `email`, `url`, `uuid`, 
 | Inertia props | `inertia.Render` checks props against the page schema when registered (BETA) |
 | External HTTP | `z.ParseJSON(resp.Body, schema)` |
 
-## Exports (BETA)
+## Exports
 
-- `schema.JSONSchema()` → JSON Schema 2020-12 (used by the OpenAPI generator).
-- `vukem codegen:types` → `resources/js/types/*.ts` with TypeScript types (and optional Zod schemas) for every registered schema, so frontend and backend share one contract.
+- `z.JSONSchema(schema)` → JSON Schema 2020-12 (types, required keys, lengths, ranges, formats, patterns, enums, defaults, descriptions; `Refine`/`Custom` logic cannot be expressed).
+- `vukem codegen:types [-zod] [-o file]` → TypeScript types (and optional Zod schemas) for every schema and operation of the app's OpenAPI document, so frontend and backend share one contract ([api.md](api.md#types-for-clients)).
 
 ## Design notes
 

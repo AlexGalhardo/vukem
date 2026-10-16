@@ -1,0 +1,50 @@
+---
+title: Task scheduling
+description: Run functions, commands and queue jobs on cron expressions, in process or from one cron entry.
+---
+
+```go
+// routes/schedule.go, passed to vukem.WithSchedule by bootstrap
+func Schedule(s *schedule.Schedule, app *vukem.App) {
+	s.Command("reports:send", "--daily").DailyAt("08:00").WithoutOverlapping()
+	s.Job(jobs.PruneSessions{}).Hourly()
+	s.Func("ping", func(ctx context.Context) error { ... }).EveryFiveMinutes()
+	s.Func("invoices", sendInvoices).Cron("30 9 1 * *").In(saoPaulo)
+}
+```
+
+## Frequencies
+
+| Method | Expression |
+| --- | --- |
+| `EveryMinute()` (default) | `* * * * *` |
+| `EveryFiveMinutes()` | `*/5 * * * *` |
+| `Every(15 * time.Minute)` | `*/15 * * * *` (whole minutes dividing an hour or a day) |
+| `Hourly()`, `HourlyAt(7)` | `0 * * * *`, `7 * * * *` |
+| `Daily()`, `DailyAt("08:00")` | `0 0 * * *`, `0 8 * * *` |
+| `Weekdays()` | keeps the time, Monday–Friday |
+| `WeeklyOn(time.Monday, "09:00")` | `0 9 * * 1` |
+| `MonthlyOn(1, "00:00")` | `0 0 1 * *` |
+| `Cron(expr)` | any five-field expression |
+
+Cron expressions support `*`, values, ranges, steps (`*/15`, `10-50/20`), lists, `JAN`/`MON` names and `@hourly`, `@daily`, `@weekly`, `@monthly`, `@yearly`. When both day fields are set, a day matches either (Vixie cron). A bad expression panics at boot; the parser is fuzzed.
+
+## Time zones and overlap
+
+- `SCHEDULE_TIMEZONE` (IANA name, default `UTC`) applies to every task; `.In(loc)` overrides one. The zone database is embedded, so it works on Windows hosts without one.
+- `WithoutOverlapping()` skips a run while the previous one still holds its lock (released when it ends, or after 24h). Locks use `app.Cache()`: set `CACHE_STORE=database` or use [Redis](/docs/database/redis) when several servers run the schedule.
+
+## Running it
+
+```bash
+vukem schedule:work    # in process: ticks at the start of every minute
+vukem schedule:list    # each task and its next run
+```
+
+Or one crontab entry calling `schedule:run` every minute:
+
+```text
+* * * * * cd /srv/app && ./app schedule:run
+```
+
+Tasks due at the same minute run concurrently; failures and panics are logged and do not stop the others. Command tasks run in the same process through `app.Call`.

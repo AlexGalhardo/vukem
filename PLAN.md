@@ -19,7 +19,7 @@ Task IDs: `<phase>.<group>.<task>` (e.g. `P.3.2`). Reference them in commit bodi
 | --- | --- |
 | Current phase | **ALPHA** |
 | Next task | `B.3.1` (Vite & Inertia) |
-| Last release | `v0.16.0` (B.1 queue and scheduler) |
+| Last release | `v0.17.0` (B.2 Redis and Mongo drivers) |
 | Updated | 2026-10-16 |
 
 ## Design references

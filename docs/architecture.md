@@ -25,7 +25,7 @@ vukem/                            module github.com/AlexGalhardo/vukem
 ├── session/                      session manager, cookie/database/memory stores, flash
 ├── view/                         View interface, html/template engine, fragments
 ├── htmx/                         htmx v4 request/response helpers
-├── api/                          REST helpers: JSONOnly, resources, query conventions, pagination, OpenAPI (BETA)
+├── api/                          REST helpers: resources, query conventions, pagination, typed handlers, idempotency
 ├── orm/                          generic query builder, dialects (sqlite, postgres)
 ├── schema/                       migration schema builder + runner
 ├── database/                     connection management, SQLite defaults, transactions
@@ -33,7 +33,9 @@ vukem/                            module github.com/AlexGalhardo/vukem
 ├── authz/                        gates, Policy[T]                               (ALPHA)
 ├── social/                       OAuth2/OIDC social login (Ally-style)           (ALPHA)
 ├── mail/ cache/ storage/ event/                                                 (ALPHA)
-├── queue/ schedule/ inertia/ vite/ i18n/ sse/ crypt/ ratelimit/                (BETA)
+├── openapi/ apidocs/             OpenAPI 3.1 generator, TS/Zod codegen, Scalar API reference
+├── queue/ schedule/ ratelimit/   typed jobs (sync/memory/database drivers), cron scheduler, GCRA limiter
+├── inertia/ vite/ i18n/ sse/ crypt/                                            (planned, BETA)
 ├── testing/                      fluent HTTP test client, DB helpers, fakes
 ├── cmd/vukem/                 global CLI
 ├── internal/

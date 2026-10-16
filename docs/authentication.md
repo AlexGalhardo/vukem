@@ -222,4 +222,4 @@ if err := c.Authorize("create", (*models.Post)(nil)); err != nil { return err }
 
 ## Rate limiting
 
-Login and password reset are throttled by default via `ratelimit` (`x/time/rate`-style token bucket in memory; database/Redis stores in BETA).
+Login and password reset are throttled by default via `ratelimit` (GCRA in memory; `drivers/redis` provides a limiter shared by every server).

@@ -11,12 +11,16 @@ description: The layout of an application created by vukem new, and how the fram
 blog/
 ├── cmd/app/main.go            func main() { os.Exit(vukem.Main(bootstrap.New)) }
 ├── bootstrap/
-│   ├── app.go                 New(opts...): providers, migrations, views, routes
+│   ├── app.go                 New(opts...): providers, migrations, seeders, listeners, jobs, schedule, views, routes
 │   ├── providers.go           func Providers() []vukem.Provider   (make:provider appends)
 │   └── commands.go            func Commands() []vukem.Command     (make:command appends)
-├── routes/web.go              func Web(r *router.Router, app *vukem.App) error
+├── routes/
+│   ├── web.go                 func Web(r *router.Router, app *vukem.App) error
+│   └── schedule.go            func Schedule(s *schedule.Schedule, app *vukem.App)
 ├── app/
 │   ├── controllers/           Home, PostController
+│   ├── jobs/                  queued jobs + registry.go (make:job appends)
+│   ├── listeners/             event listeners + registry.go (make:listener appends)
 │   ├── models/                Post (orm.Model)
 │   └── requests/              input structs and z schemas
 ├── database/migrations/       timestamped migrations + registry.go (make:migration appends)
@@ -55,14 +59,16 @@ The module `github.com/AlexGalhardo/vukem` is split into small, single-purpose p
 
 | More packages | Purpose |
 | --- | --- |
-| `api`, `ratelimit` | REST envelopes, query conventions, deprecation headers; GCRA rate limiting |
+| `api`, `ratelimit` | REST envelopes, query conventions, typed handlers, idempotency keys, deprecation headers; GCRA rate limiting |
+| `openapi`, `apidocs` | OpenAPI 3.1 generation and validation, TypeScript/Zod codegen, Scalar API reference |
+| `queue`, `queue/queuetest`, `schedule` | typed jobs and drivers, driver conformance suite, cron scheduler |
 | `auth`, `auth/hash`, `authz`, `social`, `signed` | guards and tokens, password hashing, gates and policies, social login, signed URLs |
 | `mail`, `cache`, `storage`, `events`, `logging/telegram` | mail transports, cache stores, disks, typed events, Telegram logging |
 | `factory`, `database/dbtest` | model factories, dialect conformance suite |
 | `httpclient`, `webhook`, `security` | SSRF-safe client, webhook signatures, security events |
-| `drivers/postgres` (separate module) | PostgreSQL driver |
+| `drivers/postgres`, `drivers/redis`, `drivers/mongo` (separate modules) | PostgreSQL, Redis/Valkey and MongoDB drivers |
 
 | Planned | Phase |
 | --- | --- |
-| `queue`, `schedule`, `inertia`, `vite`, `i18n`, `sse`, OpenAPI + Scalar, `broadcast`, `admin`, `devtools` | BETA |
-| `drivers/redis`, `drivers/mongo`, `drivers/mysql`, `drivers/s3`, `contrib/graphql`, `contrib/grpc`, `contrib/stripe` (separate modules) | BETA |
+| `inertia`, `vite`, `i18n`, `sse`, `broadcast`, `admin`, `devtools` | BETA |
+| `drivers/mysql`, `drivers/s3`, `contrib/graphql`, `contrib/grpc`, `contrib/stripe` (separate modules) | BETA |
