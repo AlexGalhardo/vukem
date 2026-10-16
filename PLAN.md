@@ -543,7 +543,7 @@ Applies to **every** task:
   → verify: per-provider golden user mapping against fake servers.
 - [x] **B.8.4** `drivers/s3` storage module (stdlib SigV4 client): put/get/delete/list/stat, multipart upload, presigned GET/PUT URLs.
   → verify: storage conformance suite against MinIO; SigV4 test vectors.
-- [ ] **B.8.5** `drivers/mysql` module (MySQL 8 / MariaDB 11 dialect).
+- [x] **B.8.5** `drivers/mysql` module (MySQL 8 / MariaDB 11 dialect).
   → verify: ORM/schema conformance suite green against `mysql:8` and `mariadb:11`.
 
 ### B.9 More starters & client generation
@@ -554,7 +554,7 @@ Applies to **every** task:
 - [x] **B.9.1** ~~Inertia Vue and Svelte starters~~ — moved into B.3.6 (decision F4, 2026-10-16).
 - [ ] **B.9.2** templ-first starter (`vukem new <name> --templ`).
   → verify: e2e: generated app builds, `templ generate` is clean and tests pass.
-- [ ] **B.9.3** Typed RPC client generation (`vukem codegen:client`, TypeScript and Go) from typed handlers/OpenAPI with `z` types.
+- [x] **B.9.3** Typed RPC client generation (`vukem codegen:client`, TypeScript and Go) from typed handlers/OpenAPI with `z` types.
   → verify: golden output; `tsc --noEmit` and `go vet` pass on generated clients; round-trip test against a running app.
 
 ### B.10 Payments (Stripe) & file uploads
