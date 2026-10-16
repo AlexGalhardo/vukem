@@ -15,6 +15,7 @@ import (
 
 	"github.com/AlexGalhardo/vukem/config"
 	"github.com/AlexGalhardo/vukem/database"
+	"github.com/AlexGalhardo/vukem/mail"
 	"github.com/AlexGalhardo/vukem/router"
 	"github.com/AlexGalhardo/vukem/schema"
 	"github.com/AlexGalhardo/vukem/session"
@@ -81,6 +82,7 @@ type App struct {
 	sessions  *session.Manager
 	sessStore session.Store
 	sessErr   error
+	mail      mailState
 
 	now func() time.Time
 
@@ -100,24 +102,25 @@ type App struct {
 type Option func(*options) error
 
 type options struct {
-	source     *config.Source
-	fsys       fs.FS
-	getenv     func(string) (string, bool)
-	readFile   func(string) ([]byte, error)
-	logger     *slog.Logger
-	logOut     io.Writer
-	kind       Kind
-	providers  []Provider
-	runners    []namedRunner
-	routes     []func(r *router.Router, app *App) error
-	views      fs.FS
-	now        func() time.Time
-	migrations []schema.Migration
-	seeders    []Seeder
-	drivers    []database.Driver
-	stdout     io.Writer
-	ready      chan<- string
-	noHTTP     bool
+	source        *config.Source
+	fsys          fs.FS
+	getenv        func(string) (string, bool)
+	readFile      func(string) ([]byte, error)
+	logger        *slog.Logger
+	logOut        io.Writer
+	kind          Kind
+	providers     []Provider
+	runners       []namedRunner
+	routes        []func(r *router.Router, app *App) error
+	views         fs.FS
+	now           func() time.Time
+	migrations    []schema.Migration
+	seeders       []Seeder
+	mailTransport mail.Transport
+	drivers       []database.Driver
+	stdout        io.Writer
+	ready         chan<- string
+	noHTTP        bool
 }
 
 // WithRoutes registers routes (and router middleware) after providers
@@ -268,6 +271,7 @@ func New(opts ...Option) (*App, error) {
 
 		migrations: o.migrations,
 		seeders:    o.seeders,
+		mail:       mailState{transport: o.mailTransport},
 	}
 	app.Router = app.newRouter()
 

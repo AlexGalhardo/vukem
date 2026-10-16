@@ -29,6 +29,7 @@ import (
 
 	vukem "github.com/AlexGalhardo/vukem"
 	"github.com/AlexGalhardo/vukem/config"
+	"github.com/AlexGalhardo/vukem/mail"
 )
 
 // App is an application booted for one test.
@@ -73,6 +74,7 @@ func New(tb testing.TB, build vukem.BuildFunc, opts ...Options) *App {
 			"_",
 		) + "_" + rand.Text()[:8] + "?mode=memory&cache=shared",
 		"SESSION_DRIVER": "cookie",
+		"MAIL_MAILER":    "array",
 	}
 	maps.Copy(env, o.Env)
 
@@ -116,6 +118,24 @@ func New(tb testing.TB, build vukem.BuildFunc, opts ...Options) *App {
 	}
 
 	return &App{App: app, t: tb, handler: h}
+}
+
+// Mails returns the in-memory mail transport (MAIL_MAILER=array, the
+// default in tests) to assert on sent messages.
+func (a *App) Mails() *mail.Array {
+	a.t.Helper()
+
+	m, err := a.Mailer()
+	if err != nil {
+		a.t.Fatalf("vukemtest: mailer: %v", err)
+	}
+
+	arr, ok := m.Transport().(*mail.Array)
+	if !ok {
+		a.t.Fatalf("vukemtest: mail transport is %T, not *mail.Array", m.Transport())
+	}
+
+	return arr
 }
 
 // Handler returns the compiled HTTP handler.

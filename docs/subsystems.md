@@ -53,18 +53,34 @@ app.Log = slog.New(slog.NewMultiHandler(app.Log.Handler(), tg)) // Go 1.26 fan-o
 ## Mail
 
 ```go
+// app/mail/welcome.go — vukem make:mail Welcome (also creates resources/views/mail/welcome.html)
 type Welcome struct{ User models.User }
 
-func (m Welcome) Envelope() mail.Envelope { return mail.Envelope{To: []string{m.User.Email}, Subject: "Welcome"} }
-func (m Welcome) Content() mail.Content   { return mail.View("mail/welcome", m) } // html + text templates
+func (m Welcome) Envelope() mail.Envelope {
+	return mail.Envelope{To: []string{m.User.Email}, Subject: "Welcome!", Tags: map[string]string{"kind": "welcome"}}
+}
 
-err := app.Mail.Send(ctx, Welcome{User: u})
-err := app.Queue.Dispatch(ctx, mail.Queued(Welcome{User: u})) // BETA
+func (m Welcome) Content() mail.Content { return mail.View("mail/welcome", m) }
+
+mailer, err := app.Mailer()
+err = mailer.Send(ctx, Welcome{User: u})
 ```
 
-Attachments, inline images, `mail:preview` route in development.
+- Content: `mail.View(name, data)` renders the app's `html/template` view; the text part comes from `<name>_text` when it exists, otherwise from the HTML (links become `text (url)`). `mail.HTML(html, text)` and `mail.Text(text)` for literal bodies. Mail views use `{{/* layout: none */}}` or a mail layout.
+- Attachments: implement `Attachments() []mail.Attachment`; inline parts set `Inline` and `ContentID` and are referenced as `cid:...`.
+- Addresses go through `net/mail` (no header injection); subjects, tags and content ids with line breaks are rejected (`TestSecurity_A05_MailHeaderInjection`). `Bcc` is never written as a header.
+- Previews in development: `r.Handle("/_mail/", http.StripPrefix("/_mail/", mail.Preview(mailer, map[string]mail.Mailable{"welcome": sample})))`.
+- Tests: `MAIL_MAILER=array` by default in `vukemtest`; `app.Mails().SentTo("ana@example.com")`.
+- Queued mail arrives with the queue (BETA).
 
-Drivers: `smtp` (`net/smtp` + STARTTLS), **`resend`** (Resend HTTP API `POST https://api.resend.com/emails`, `RESEND_API_KEY` as `config.Secret`, idempotency key per message, tags, reply-to, attachments; errors mapped to typed errors with retry on 429/5xx), `log` (development) and `array` (tests). Select with `MAIL_MAILER=resend`.
+| `MAIL_MAILER` | Transport | Settings |
+| --- | --- | --- |
+| `smtp` | `net/smtp`, STARTTLS required (or implicit TLS on 465), AUTH PLAIN; multipart/mixed → related → alternative MIME, base64 parts | `SMTP_HOST`, `SMTP_PORT` (587), `SMTP_USERNAME`, `SMTP_PASSWORD` (secret), `SMTP_INSECURE` (local catchers only) |
+| `resend` | Resend HTTP API (`POST /emails`): tags, reply-to, attachments with content ids, the message id as `Idempotency-Key`, retries on 429 (honouring `Retry-After`, capped) and 5xx, typed `*mail.ResendError` | `RESEND_API_KEY` (secret, never logged: `TestSecurity_A09_ResendKeyRedacted`) |
+| `log` | logs recipients and subject (bodies at debug) | default outside production |
+| `array` | in-memory (tests) | default in `vukemtest` |
+
+`MAIL_FROM` sets the default sender. Production must set `MAIL_MAILER` explicitly; a missing or unknown value is an error, never silent loss of mail.
 
 ## Cache
 

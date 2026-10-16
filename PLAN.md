@@ -18,8 +18,8 @@ Task IDs: `<phase>.<group>.<task>` (e.g. `P.3.2`). Reference them in commit bodi
 | Field | Value |
 | --- | --- |
 | Current phase | **ALPHA** |
-| Next task | `A.5.1` (then A.0.6, A.3.6, A.3.10) |
-| Last release | `v0.6.0` (A.4 gates and policies) |
+| Next task | `A.3.6` (install:auth), then A.3.10, A.0.6, A.6 |
+| Last release | `v0.7.0` (A.5 mail: SMTP, Resend, previews) |
 | Updated | 2026-10-16 |
 
 ## Design references
@@ -382,11 +382,11 @@ Applies to **every** task:
 
 ### A.5 Mail — needs: P.8
 
-- [ ] **A.5.1** Mailable interface, SMTP (`net/smtp` + STARTTLS), log, array drivers.
+- [x] **A.5.1** Mailable interface, SMTP (`net/smtp` + STARTTLS), log, array drivers.
   → verify: SMTP tested against an in-process fake SMTP server.
-- [ ] **A.5.2** HTML + text views, attachments, `mail:preview` dev route, `make:mail`, `FakeMail`.
+- [x] **A.5.2** HTML + text views, attachments, `mail:preview` dev route, `make:mail`, `FakeMail`.
   → verify: tests.
-- [ ] **A.5.3** **Resend** driver (`MAIL_MAILER=resend`, `RESEND_API_KEY`): send, attachments, reply-to, tags, idempotency key, typed errors, retry on 429/5xx.
+- [x] **A.5.3** **Resend** driver (`MAIL_MAILER=resend`, `RESEND_API_KEY`): send, attachments, reply-to, tags, idempotency key, typed errors, retry on 429/5xx.
   → verify: tests against an in-process fake Resend API (`httptest.Server`); API key never appears in logs (`TestSecurity_A09_ResendKeyRedacted`).
 
 ### A.6 Cache, storage, events, rate limiting

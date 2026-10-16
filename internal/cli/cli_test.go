@@ -227,6 +227,8 @@ var generated = []string{
 	"app/models/user.go",
 	"app/policies/post_policy.go",
 	"app/policies/registry.go",
+	"app/mail/welcome.go",
+	"resources/views/mail/welcome.html",
 }
 
 func runGenerators(t *testing.T, dir string) {
@@ -250,6 +252,7 @@ func runGenerators(t *testing.T, dir string) {
 		{"make:seeder", "Users"},
 		{"make:model", "User"},
 		{"make:policy", "PostPolicy"},
+		{"make:mail", "WelcomeMail"},
 	} {
 		if code, out, errOut := vukem(t, dir, args...); code != 0 {
 			t.Fatalf("vukem %v = %d\n%s%s", args, code, out, errOut)

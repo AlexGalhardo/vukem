@@ -1,0 +1,16 @@
+package mail
+
+import "github.com/AlexGalhardo/vukem/mail"
+
+// {{.Name}} is an email; send it with app.Mailer() then Send(ctx, {{.Name}}{...}).
+type {{.Name}} struct {
+	To string
+}
+
+// Envelope implements mail.Mailable.
+func (m {{.Name}}) Envelope() mail.Envelope {
+	return mail.Envelope{To: []string{m.To}, Subject: "{{.Name}}"}
+}
+
+// Content implements mail.Mailable (resources/views/mail/{{.Snake}}.html).
+func (m {{.Name}}) Content() mail.Content { return mail.View("mail/{{.Snake}}", m) }

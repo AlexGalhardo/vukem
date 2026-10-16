@@ -349,6 +349,28 @@ func makePolicy(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 	}
 }
 
+func makeMail(set *flag.FlagSet) func(context.Context, *Env, []string) error {
+	force := set.Bool("force", false, "overwrite existing files")
+
+	return func(_ context.Context, env *Env, args []string) error {
+		name, err := oneArg(args, "mail name")
+		if err != nil {
+			return err
+		}
+
+		d, err := newStubData(env, className(name, "Mail"))
+		if err != nil {
+			return err
+		}
+
+		if err := generate(env, "mail.go.tmpl", "app/mail/"+d.Snake+".go", d, *force); err != nil {
+			return err
+		}
+
+		return generate(env, "mail.html.tmpl", "resources/views/mail/"+d.Snake+".html", d, *force)
+	}
+}
+
 func makeTest(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 	return simple(set, "test name", "test.go.tmpl", "tests/%s_test.go", "Test")
 }
