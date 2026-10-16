@@ -25,7 +25,8 @@ Lumek: a Laravel/AdonisJS-inspired, stdlib-first Go web framework. Module `githu
 - Tests: stdlib + go-cmp, table-driven, no network in unit tests ([docs/testing.md](docs/testing.md)).
 - Formatting: gofumpt + gci + golines via `golangci-lint fmt`; tabs in Go ([docs/tooling.md](docs/tooling.md)).
 - Commits: Conventional Commits, English, scope = package ([docs/tooling.md](docs/tooling.md#conventional-commits)).
-- Never edit `CHANGELOG.md` by hand; never move a pushed tag.
+- After each PLAN.md task group: push and `task release -- vX.Y.Z` (changelog + GitHub release) — see [release process](docs/tooling.md#release-process).
+- Never edit released `CHANGELOG.md` sections by hand; never move a pushed tag.
 - Everything (code, comments, docs) in English.
 
 ## Where things live

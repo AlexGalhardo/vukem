@@ -105,9 +105,15 @@ tasks:
       - npm run build
 
   changelog:
-    desc: Regenerate CHANGELOG.md from Conventional Commits
+    desc: Preview the next changelog section (does not write files)
     cmds:
-      - git cliff --output CHANGELOG.md
+      - git cliff --unreleased --strip all
+
+  release:
+    desc: "Cut a release at the end of a PLAN.md task group: task release -- vX.Y.Z (runs ci:full first)"
+    cmds:
+      - task: ci:full
+      - go run ./internal/tools/release -push {{.CLI_ARGS}}
 
   test:linux:
     desc: Run unit tests with -race on Linux inside Docker (no local gcc needed)

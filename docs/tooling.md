@@ -92,10 +92,23 @@ Spec: <https://www.conventionalcommits.org/en/v1.0.0/>. Enforced by the in-repo 
 
 ## Release process
 
-1. `task ci:full` passes locally; `task release:check` — clean tree on `main`, `git cliff --bumped-version` shows the next version.
-2. `task release -- vX.Y.Z` — regenerates `CHANGELOG.md`, commits `chore(release): vX.Y.Z`, creates an annotated tag.
-3. Push tag → GitHub Actions `release.yml`: GoReleaser builds `lumek` CLI binaries (windows/linux/darwin × amd64/arm64), checksums, SBOM; release notes from `git cliff --latest`.
-4. Warm the proxy: `GOPROXY=https://proxy.golang.org go list -m github.com/AlexGalhardo/golang-framework@vX.Y.Z`.
+**One release per PLAN.md task group** (P.1, P.2, …, A.0, A.1, …, B.0, …), cut as soon as the group's tasks are checked — never batch several groups into one release.
+
+| Phase | Version per group | Phase completion |
+| --- | --- | --- |
+| Prototype | `v0.0.N` (patch bump per group) | `v0.1.0` when P.12 closes |
+| ALPHA | `v0.N.0` (minor bump per group) | last ALPHA minor |
+| BETA | `v1.0.0-beta.N` | `v1.0.0-rc.N` → `v1.0.0` |
+
+1. Push the group's commits to `main`.
+2. `task release -- vX.Y.Z` — runs `task ci:full` (local pipeline while GitHub Actions billing is pending), then `internal/tools/release -push`:
+   - requires a clean tree on `main`;
+   - generates the version's section with git-cliff and inserts it below `[Unreleased]` in `CHANGELOG.md` (Keep a Changelog 1.1.0; released sections are never edited);
+   - commits `chore(release): vX.Y.Z`, creates an annotated tag, pushes `main` and the tag;
+   - publishes a GitHub release whose notes are that changelog section (`v0.x` and pre-releases are marked pre-release).
+3. Missed a group? Cut it retroactively: `go run ./internal/tools/release -no-commit -ref <commit> vX.Y.Z`, tag `<commit>`, commit the changelog, push, and create the GitHub release from the section.
+4. From `v0.1.0` on, GoReleaser (`release.yml`) also builds the `lumek` CLI binaries when Actions is available.
+5. Warm the proxy: `GOPROXY=https://proxy.golang.org go list -m github.com/AlexGalhardo/golang-framework@vX.Y.Z`.
 
 ## CI (GitHub Actions)
 

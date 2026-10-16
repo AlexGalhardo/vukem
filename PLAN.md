@@ -8,7 +8,8 @@ The single source of truth for **what to build next**. Every work session (human
 2. Find the **first unchecked task** in the **current phase** (see [Status](#status)). Tasks within a group are ordered; groups may run in parallel unless marked `needs:`.
 3. Work test-first. A task is done only when its **→ verify** line passes and the [Definition of Done](#definition-of-done) holds.
 4. Tick the box (`- [x]`), update [Status](#status), and commit with a Conventional Commit whose scope matches the group.
-5. Never start a task from a later phase while the current phase's exit criteria are unmet.
+5. When the **whole group** is checked: push and run `task release -- vX.Y.Z` (one release per group, with changelog and GitHub release — see [docs/tooling.md](docs/tooling.md#release-process)).
+6. Never start a task from a later phase while the current phase's exit criteria are unmet.
 
 Task IDs: `<phase>.<group>.<task>` (e.g. `P.3.2`). Reference them in commit bodies (`Refs: P.3.2`).
 
