@@ -1,0 +1,15 @@
+package seeders
+
+import (
+	"context"
+
+	"github.com/AlexGalhardo/vukem/database"
+)
+
+// {{.Name}}Seeder fills the database; vukem db:seed runs it.
+type {{.Name}}Seeder struct{}
+
+// Seed implements vukem.Seeder.
+func ({{.Name}}Seeder) Seed(ctx context.Context, db *database.DB) error {
+	return nil
+}

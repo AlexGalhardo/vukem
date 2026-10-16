@@ -89,6 +89,7 @@ type App struct {
 	dbErr      error
 	drivers    []database.Driver
 	migrations []schema.Migration
+	seeders    []Seeder
 
 	mu       sync.Mutex
 	booted   bool
@@ -112,6 +113,7 @@ type options struct {
 	views      fs.FS
 	now        func() time.Time
 	migrations []schema.Migration
+	seeders    []Seeder
 	drivers    []database.Driver
 	stdout     io.Writer
 	ready      chan<- string
@@ -265,6 +267,7 @@ func New(opts ...Option) (*App, error) {
 		now:       now,
 
 		migrations: o.migrations,
+		seeders:    o.seeders,
 	}
 	app.Router = app.newRouter()
 

@@ -8,6 +8,7 @@ package orm
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"regexp"
@@ -28,8 +29,38 @@ type Model struct {
 // SoftDeletes makes Delete set deleted_at instead of removing rows; queries
 // exclude deleted rows unless WithTrashed or OnlyTrashed is used.
 type SoftDeletes struct {
-	DeletedAt sql.Null[time.Time] `db:"deleted_at" json:"deleted_at"`
+	DeletedAt NullTime `db:"deleted_at" json:"deleted_at,omitzero"`
 }
+
+// NullTime is a nullable timestamp that encodes as JSON null or an RFC
+// 3339 time (sql.Null would encode as {"V":...,"Valid":...}).
+type NullTime struct {
+	sql.Null[time.Time]
+}
+
+// MarshalJSON implements json.Marshaler.
+func (n NullTime) MarshalJSON() ([]byte, error) {
+	if !n.Valid {
+		return []byte("null"), nil
+	}
+
+	return json.Marshal(n.V)
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (n *NullTime) UnmarshalJSON(b []byte) error {
+	if string(b) == "null" {
+		*n = NullTime{}
+		return nil
+	}
+
+	n.Valid = true
+
+	return json.Unmarshal(b, &n.V)
+}
+
+// IsZero reports a NULL value, so `json:",omitzero"` omits it.
+func (n NullTime) IsZero() bool { return !n.Valid }
 
 // Tabler overrides the table name (default: snake_case plural of the type).
 type Tabler interface{ Table() string }
@@ -53,6 +84,7 @@ type meta struct {
 	hasCreated bool
 	hasUpdated bool
 	soft       bool
+	relations  map[string]relation
 }
 
 var metaCache sync.Map //nolint:gochecknoglobals // memoization of immutable per-type metadata
@@ -61,8 +93,9 @@ var identRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // metaOf returns cached metadata for T, panicking on invalid models (a
 // programming error caught at first use, usually at boot).
-func metaOf[T any]() *meta {
-	rt := reflect.TypeFor[T]()
+func metaOf[T any]() *meta { return metaOfType(reflect.TypeFor[T]()) }
+
+func metaOfType(rt reflect.Type) *meta {
 	if v, ok := metaCache.Load(rt); ok {
 		m, _ := v.(*meta)
 		return m
@@ -79,7 +112,7 @@ func buildMeta(rt reflect.Type) *meta {
 		panic(fmt.Sprintf("orm: model must be a struct, got %s", rt))
 	}
 
-	m := &meta{typ: rt, table: tableName(rt), pk: "id", byColumn: map[string]field{}}
+	m := &meta{typ: rt, table: tableName(rt), pk: "id", byColumn: map[string]field{}, relations: map[string]relation{}}
 
 	zero := reflect.New(rt).Interface()
 	if k, ok := zero.(Keyer); ok {
@@ -88,6 +121,11 @@ func buildMeta(rt reflect.Type) *meta {
 
 	for _, f := range reflect.VisibleFields(rt) {
 		if !f.IsExported() || f.Anonymous && f.Type.Kind() == reflect.Struct {
+			continue
+		}
+
+		if isRelation(f.Type) {
+			m.relations[f.Name] = buildRelation(rt, f)
 			continue
 		}
 
@@ -119,6 +157,12 @@ func buildMeta(rt reflect.Type) *meta {
 			m.hasUpdated = f.Type == reflect.TypeFor[time.Time]()
 		case "deleted_at":
 			m.soft = true
+		}
+	}
+
+	for _, r := range m.relations {
+		if _, ok := m.byColumn[r.fk]; r.kind == relBelongsTo && !ok {
+			panic(fmt.Sprintf("orm: %s.%s needs a %q column (or an orm:\"fk:...\" tag)", rt, r.name, r.fk))
 		}
 	}
 

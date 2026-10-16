@@ -149,7 +149,7 @@ func (c CommandFunc) Run(ctx context.Context, app *App, args []string) error {
 }
 
 func builtinCommands() []Command {
-	return append([]Command{routeListCommand(), aboutCommand()}, migrateCommands()...)
+	return slices.Concat([]Command{routeListCommand(), aboutCommand()}, migrateCommands(), seedCommands())
 }
 
 func routeListCommand() Command {

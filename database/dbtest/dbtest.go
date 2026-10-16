@@ -39,6 +39,9 @@ type Author struct {
 	Active bool
 	Score  float64
 	Meta   orm.JSON[Meta]
+
+	Books     orm.HasMany[Book] `json:"books,omitzero"`
+	FirstBook orm.HasOne[Book]  `json:"first_book,omitzero" orm:"fk:author_id"`
 }
 
 // Table implements orm.Tabler.
@@ -52,6 +55,9 @@ type Book struct {
 	Title     string
 	Pages     int
 	Published *time.Time
+
+	Author orm.BelongsTo[Author] `json:"author,omitzero"`
+	Tags   orm.ManyToMany[Tag]   `json:"tags,omitzero"   orm:"pivot:dbt_book_tag"`
 }
 
 // Table implements orm.Tabler.
@@ -89,6 +95,7 @@ var migrations = []schema.Migration{
 		},
 		Down: func(s *schema.Schema) error { return s.DropIfExists("dbt_books") },
 	},
+	tagsMigration,
 }
 
 // Run executes the conformance suite against db. Subtests run in order and
@@ -103,6 +110,7 @@ func Run(t *testing.T, db *database.DB) {
 	t.Run("Migrations", func(t *testing.T) { testMigrations(ctx, t, db) })
 	t.Run("ORM", func(t *testing.T) { testORM(ctx, t, db) })
 	t.Run("Transactions", func(t *testing.T) { testTransactions(ctx, t, db) })
+	t.Run("Relations", func(t *testing.T) { testRelations(ctx, t, db) })
 	t.Run("SchemaAlter", func(t *testing.T) { testAlter(ctx, t, db) })
 }
 
@@ -110,7 +118,7 @@ func clean(ctx context.Context, t *testing.T, db *database.DB) {
 	t.Helper()
 
 	s := schema.New(ctx, db)
-	for _, table := range []string{"dbt_books", "dbt_authors", "dbt_tmp", "dbt_renamed"} {
+	for _, table := range []string{"dbt_book_tag", "dbt_tags", "dbt_books", "dbt_authors", "dbt_tmp", "dbt_renamed"} {
 		if err := s.DropIfExists(table); err != nil {
 			t.Fatalf("drop %s: %v", table, err)
 		}
@@ -141,7 +149,7 @@ func testMigrations(ctx context.Context, t *testing.T, db *database.DB) {
 	m := migrator(t, db)
 
 	ran, err := m.Up(ctx)
-	if err != nil || len(ran) != 2 {
+	if err != nil || len(ran) != len(migrations) {
 		t.Fatalf("Up = %v, %v", ran, err)
 	}
 
@@ -150,24 +158,26 @@ func testMigrations(ctx context.Context, t *testing.T, db *database.DB) {
 	}
 
 	st, err := m.Status(ctx)
-	if err != nil || len(st) != 2 || !st[0].Ran || !st[1].Ran || st[1].Changed {
+	last := len(migrations) - 1
+
+	if err != nil || len(st) != len(migrations) || !st[0].Ran || !st[last].Ran || st[last].Changed {
 		t.Fatalf("Status = %+v, %v", st, err)
 	}
 
 	rolled, err := m.Rollback(ctx, 1)
-	if err != nil || !slices.Equal(rolled, []string{"dbt_2_books"}) {
+	if err != nil || !slices.Equal(rolled, []string{migrations[last].ID}) {
 		t.Fatalf("Rollback = %v, %v", rolled, err)
 	}
 
-	if has, err := schema.New(ctx, db).HasTable("dbt_books"); err != nil || has {
-		t.Fatalf("books after rollback: has=%v err=%v", has, err)
+	if has, err := schema.New(ctx, db).HasTable("dbt_tags"); err != nil || has {
+		t.Fatalf("tags after rollback: has=%v err=%v", has, err)
 	}
 
 	if _, err := m.Fresh(ctx); err != nil {
 		t.Fatalf("Fresh: %v", err)
 	}
 
-	for _, table := range []string{"dbt_authors", "dbt_books"} {
+	for _, table := range []string{"dbt_authors", "dbt_books", "dbt_tags", "dbt_book_tag"} {
 		if has, err := schema.New(ctx, db).HasTable(table); err != nil || !has {
 			t.Fatalf("%s after Fresh: has=%v err=%v", table, has, err)
 		}

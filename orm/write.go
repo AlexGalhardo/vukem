@@ -179,7 +179,8 @@ func Delete[T any](ctx context.Context, ex database.Executor, model *T) error {
 			return ErrNotFound
 		}
 
-		rv.FieldByIndex(m.byColumn["deleted_at"].index).Set(reflect.ValueOf(sql.Null[time.Time]{V: now, Valid: true}))
+		rv.FieldByIndex(m.byColumn["deleted_at"].index).
+			Set(reflect.ValueOf(NullTime{sql.Null[time.Time]{V: now, Valid: true}}))
 
 		return nil
 	}
@@ -218,7 +219,7 @@ func Restore[T any](ctx context.Context, ex database.Executor, model *T) error {
 		return err
 	}
 
-	rv.FieldByIndex(m.byColumn["deleted_at"].index).Set(reflect.Zero(reflect.TypeFor[sql.Null[time.Time]]()))
+	rv.FieldByIndex(m.byColumn["deleted_at"].index).Set(reflect.Zero(reflect.TypeFor[NullTime]()))
 
 	return nil
 }

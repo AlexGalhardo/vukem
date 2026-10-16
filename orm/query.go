@@ -50,6 +50,7 @@ type Query[T any] struct {
 	limit   int
 	offset  int
 	trashed int // 0 exclude, 1 include, 2 only
+	with    []string
 	err     error
 }
 
@@ -447,6 +448,12 @@ func (q Query[T]) Get(ctx context.Context) ([]T, error) {
 		out = []T{}
 	}
 
+	if len(q.with) > 0 {
+		if err := loadRelations(ctx, q.ex, q.m, reflect.ValueOf(out), q.with); err != nil {
+			return nil, err
+		}
+	}
+
 	return out, nil
 }
 
@@ -502,13 +509,18 @@ func (q Query[T]) First(ctx context.Context) (T, error) {
 		q = q.OrderBy(q.m.pk, Asc)
 	}
 
-	for v, err := range q.Limit(1).Each(ctx) {
-		return v, err
+	items, err := q.Limit(1).Get(ctx)
+	if err != nil || len(items) == 0 {
+		var zero T
+
+		if err == nil {
+			err = ErrNotFound
+		}
+
+		return zero, err
 	}
 
-	var zero T
-
-	return zero, ErrNotFound
+	return items[0], nil
 }
 
 // Find returns the row with the given primary key or ErrNotFound.

@@ -278,6 +278,9 @@ func (m *Migrator) Fresh(ctx context.Context) ([]string, error) {
 	return m.Up(ctx)
 }
 
+// DropAll drops every table of the database (db:wipe, migrate:fresh).
+func DropAll(ctx context.Context, db *database.DB) error { return dropAll(ctx, db) }
+
 func dropAll(ctx context.Context, db *database.DB) error {
 	var (
 		q       string

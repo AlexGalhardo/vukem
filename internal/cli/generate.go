@@ -309,6 +309,27 @@ func makeResource(set *flag.FlagSet) func(context.Context, *Env, []string) error
 	return simple(set, "resource name", "resource.go.tmpl", "app/resources/%s.go", "Resource")
 }
 
+func makeFactory(set *flag.FlagSet) func(context.Context, *Env, []string) error {
+	return simple(set, "factory name", "factory.go.tmpl", "database/factories/%s_factory.go", "Factory")
+}
+
+func makeSeeder(set *flag.FlagSet) func(context.Context, *Env, []string) error {
+	run := simple(set, "seeder name", "seeder.go.tmpl", "database/seeders/%s_seeder.go", "Seeder")
+
+	return func(ctx context.Context, env *Env, args []string) error {
+		if err := run(ctx, env, args); err != nil {
+			return err
+		}
+
+		d, err := newStubData(env, className(args[0], "Seeder"))
+		if err != nil {
+			return err
+		}
+
+		return register(env, "database/seeders/registry.go", "All", d.Name+"Seeder{}")
+	}
+}
+
 func makeTest(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 	return simple(set, "test name", "test.go.tmpl", "tests/%s_test.go", "Test")
 }

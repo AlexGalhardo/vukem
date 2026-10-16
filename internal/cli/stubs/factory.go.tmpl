@@ -1,13 +1,13 @@
 package factories
 
-import "{{.Module}}/app/models"
+import (
+	"github.com/AlexGalhardo/vukem/factory"
 
-// {{.Name}} returns a models.{{.Name}} with default values; overrides adjust it.
-func {{.Name}}(overrides ...func(*models.{{.Name}})) models.{{.Name}} {
-	var m models.{{.Name}}
-	for _, override := range overrides {
-		override(&m)
-	}
+	"{{.Module}}/app/models"
+)
 
-	return m
-}
+// {{.Name}} builds models.{{.Name}} with fake data:
+// factories.{{.Name}}.Count(10).Create(ctx, db).
+var {{.Name}} = factory.New(func(f *factory.Faker) models.{{.Name}} {
+	return models.{{.Name}}{}
+})

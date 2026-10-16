@@ -138,22 +138,36 @@ func (User) Table() string { return "users" } // optional; default snake_case pl
 - No Active Record: models never hold a DB handle; persistence functions take the executor (`db` or `tx`).
 - **Strict mode** (default in development/test): accessing a relation that was not eager-loaded returns `orm.ErrNotLoaded`.
 
-## Relations (ALPHA)
+## Relations
 
 ```go
 type Post struct {
 	orm.Model
-	UserID int64
-	Author orm.BelongsTo[User]   `rel:"user_id"`
-	Tags   orm.ManyToMany[Tag]   `rel:"post_tag"`
-	Comments orm.HasMany[Comment]
+
+	UserID   int64
+	User     orm.BelongsTo[User]   `json:"user,omitzero"`               // posts.user_id → users.id
+	Comments orm.HasMany[Comment]  `json:"comments,omitzero"`           // comments.post_id
+	Tags     orm.ManyToMany[Tag]   `json:"tags,omitzero"`               // pivot post_tag(post_id, tag_id)
+	Cover    orm.HasOne[Image]     `json:"cover,omitzero" orm:"fk:owner_id"`
 }
 
-posts, err := orm.Query[Post](db).With("Author", "Comments").Get(ctx) // 1 + N queries batched by IN
-author, err := post.Author.Get()                                    // ErrNotLoaded if not eager-loaded
+posts, err := orm.QueryOf[Post](db).With("User", "Comments", "Tags").Get(ctx)
+user, err := posts[0].User.Get()   // *User (nil when the key points nowhere)
+tags, err := posts[0].Tags.Get()   // []Tag
+_, err = plain.User.Get()          // orm.ErrNotLoaded: relations are never lazy (strict mode)
 ```
 
-Supported: `HasOne`, `HasMany`, `BelongsTo`, `ManyToMany` (pivot table, `Attach/Detach/Sync`). Eager loading is explicit; there is no lazy loading.
+| Relation | Convention | Override (`orm` tag) |
+| --- | --- | --- |
+| `BelongsTo[T]` | column `<field>_id` on this model → `T`'s primary key | `fk:author_id` |
+| `HasOne[T]` / `HasMany[T]` | column `<model>_id` on `T` → this primary key | `fk:owner_id` |
+| `ManyToMany[T]` | pivot `<a>_<b>` (singular snake names, sorted), columns `<model>_id`, `<t>_id` | `pivot:taggings,fk:post_id,rk:tag_id` |
+
+- `With` works for `Get`, `First`, `Find`, `Paginate` and `CursorPaginate` (not `Each`): one query per relation batched with `IN` (chunks of 500), two for many-to-many. N rows with two relations cost 3 queries, which the conformance suite asserts on SQLite and Postgres.
+- Soft-deleted related rows are not loaded. Unknown relation names are query errors.
+- Relation fields are not columns; with `json:",omitzero"` they appear in JSON only when loaded.
+- Pivot writes: `orm.Attach(ctx, db, &post, "Tags", 1, 2)` (skips ids already linked), `orm.Detach(ctx, db, &post, "Tags", 2)` (no ids: all), `orm.Sync(ctx, db, &post, "Tags", 1, 3)` (exact set, in a transaction).
+- Nested eager loading (`"Comments.User"`) is not supported yet; load the second level with its own query.
 
 ## Migrations
 
@@ -186,19 +200,50 @@ var CreateUsersTable = schema.Migration{
 - Tracking table `migrations(id, batch, ran_at)`; each migration runs in a transaction where the dialect allows DDL in transactions.
 - Commands: `migrate`, `migrate:rollback [--step N]`, `migrate:reset`, `migrate:fresh [--seed]`, `migrate:status`, `make:migration create_posts_table` (name prefix `create_`/`add_`/`alter_` picks the stub).
 
-## Factories and seeders (ALPHA)
+## Factories and seeders
 
 ```go
-var UserFactory = factory.New(func(f *factory.Faker) models.User {
-	return models.User{Name: f.Name(), Email: f.Email(), Password: f.Password()}
-}).State("admin", func(u *models.User) { u.Role = "admin" })
+// database/factories/user_factory.go — vukem make:factory User
+var User = factory.New(func(f *factory.Faker) models.User {
+	return models.User{Name: f.Name(), Email: f.Email()}
+})
 
-users, err := UserFactory.Count(3).State("admin").Create(ctx, db)
-u := UserFactory.Make()                       // not persisted
+admins, err := factories.User.Count(3).State(func(u *models.User) { u.Role = "admin" }).Create(ctx, db)
+draft := factories.User.MakeOne() // not persisted
+same := factories.User.Seed(42).Count(5).Make() // reproducible data
+
+// Related models: AfterCreate runs inside Create's transaction.
+withPosts := factories.User.AfterCreate(func(ctx context.Context, ex database.Executor, u *models.User) error {
+	_, err := factories.Post.Count(2).State(func(p *models.Post) { p.UserID = u.ID }).Create(ctx, ex)
+	return err
+})
 ```
 
-- `factory.Faker` is a small built-in generator (names, emails, text, numbers, dates) backed by `math/rand/v2` with a seed — no faker dependency.
-- Seeders: `type DatabaseSeeder struct{}` with `Run(ctx, db) error`; `db:seed [--class Name]`; seeders can be limited to environments.
+- `factory.Faker` (no dependency): `Name`, `FirstName`, `LastName`, `Username`, `Email` (reserved example domains), `Word(s)`, `Sentence`, `Paragraph`, `Slug`, `URL`, `UUID`, `Int`, `Float`, `Bool`, `Time`, `factory.Pick(f, ...)`, `Seq()`. It uses `math/rand/v2` and must never generate secrets.
+- Factories are values: `State`, `Count`, `Seed`, `AfterCreate` return copies.
+- Seeders implement `vukem.Seeder` (`Seed(ctx, db) error`); `vukem make:seeder Users` creates one and registers it in `database/seeders/registry.go`, which the app passes to `vukem.WithSeeders(seeders.All()...)`. `vukem db:seed` runs them in order; tests call `app.Seed(ctx)`.
+- `vukem db:wipe` drops every table. Both commands need `--force` in production.
+
+## Database validation rules
+
+`z` schemas check shape and format without I/O. Rules that need the database run after parsing and return the same `422` validation error (flashed for forms):
+
+```go
+in, err := web.Parse(c, requests.RegisterSchema)
+if err != nil {
+	return err
+}
+
+if err := orm.Validate(c.Context(), db,
+	orm.Unique[models.User]("email", in.Email),                          // soft-deleted rows count, like the index
+	orm.Unique[models.User]("username", in.Username).Ignore(current.ID), // updates keep their own value
+	orm.Exists[models.Team]("id", in.TeamID).Field("team_id").Message("Pick a valid team."),
+); err != nil {
+	return err
+}
+```
+
+Empty values are skipped (`required` belongs to the schema). Columns are validated against the model, so input never chooses a column.
 
 ## MongoDB (BETA)
 

@@ -18,8 +18,8 @@ Task IDs: `<phase>.<group>.<task>` (e.g. `P.3.2`). Reference them in commit bodi
 | Field | Value |
 | --- | --- |
 | Current phase | **ALPHA** |
-| Next task | `A.2.1` (A.0.6 after A.3.4) |
-| Last release | `v0.3.0` (A.1 Postgres driver; project renamed to Vukem, repository public) |
+| Next task | `A.3.1` (A.0.6 after A.3.4) |
+| Last release | `v0.4.0` (A.2 relations, factories, seeders, database rules) |
 | Updated | 2026-10-16 |
 
 ## Design references
@@ -333,17 +333,17 @@ Applies to **every** task:
 
 ### A.2 Relations, factories, seeders — needs: P.7
 
-- [ ] **A.2.1** `HasOne`, `HasMany`, `BelongsTo` with `With(...)` eager loading (batched `IN`).
+- [x] **A.2.1** `HasOne`, `HasMany`, `BelongsTo` with `With(...)` eager loading (batched `IN`).
   → verify: query-count assertions (1 + 1 per relation).
-- [ ] **A.2.2** `ManyToMany` with pivot (`Attach`, `Detach`, `Sync`).
+- [x] **A.2.2** `ManyToMany` with pivot (`Attach`, `Detach`, `Sync`).
   → verify: tests on both dialects.
-- [ ] **A.2.3** Strict mode `ErrNotLoaded`.
+- [x] **A.2.3** Strict mode `ErrNotLoaded`.
   → verify: test.
-- [ ] **A.2.4** `factory` package (Faker subset, states, `Count`, `Make`, `Create`, relations).
+- [x] **A.2.4** `factory` package (Faker subset, states, `Count`, `Make`, `Create`, relations).
   → verify: tests.
-- [ ] **A.2.5** Seeders + `db:seed`, `db:wipe`, `make:factory`, `make:seeder`.
+- [x] **A.2.5** Seeders + `db:seed`, `db:wipe`, `make:factory`, `make:seeder`.
   → verify: e2e in temp project.
-- [ ] **A.2.6** DB validation rules `unique`, `exists`.
+- [x] **A.2.6** DB validation rules `unique`, `exists`.
   → verify: tests.
 
 ### A.3 Authentication — needs: P.6, A.2

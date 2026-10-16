@@ -220,6 +220,10 @@ var generated = []string{
 	"bootstrap/providers.go",
 	"tests/post_test.go",
 	"app/resources/post.go",
+	"app/models/comment.go",
+	"database/factories/comment_factory.go",
+	"database/seeders/users_seeder.go",
+	"database/seeders/registry.go",
 }
 
 func runGenerators(t *testing.T, dir string) {
@@ -238,6 +242,9 @@ func runGenerators(t *testing.T, dir string) {
 		{"make:provider", "Billing"},
 		{"make:test", "Post"},
 		{"make:resource", "PostResource"},
+		{"make:model", "Comment"},
+		{"make:factory", "CommentFactory"},
+		{"make:seeder", "Users"},
 	} {
 		if code, out, errOut := vukem(t, dir, args...); code != 0 {
 			t.Fatalf("vukem %v = %d\n%s%s", args, code, out, errOut)

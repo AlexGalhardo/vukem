@@ -1,13 +1,13 @@
 package factories
 
-import "example.com/blog/app/models"
+import (
+	"github.com/AlexGalhardo/vukem/factory"
 
-// Post returns a models.Post with default values; overrides adjust it.
-func Post(overrides ...func(*models.Post)) models.Post {
-	var m models.Post
-	for _, override := range overrides {
-		override(&m)
-	}
+	"example.com/blog/app/models"
+)
 
-	return m
-}
+// Post builds models.Post with fake data:
+// factories.Post.Count(10).Create(ctx, db).
+var Post = factory.New(func(f *factory.Faker) models.Post {
+	return models.Post{}
+})

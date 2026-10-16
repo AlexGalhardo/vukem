@@ -2,11 +2,14 @@ package tests
 
 import (
 	"net/url"
+	"strconv"
 	"testing"
 
 	"github.com/AlexGalhardo/vukem/vukemtest"
 
+	"{{.Module}}/app/models"
 	"{{.Module}}/bootstrap"
+	"{{.Module}}/database/factories"
 )
 
 func TestPostsCRUD(t *testing.T) {
@@ -68,4 +71,27 @@ func TestPostsJSON(t *testing.T) {
 
 	api.Delete("/posts/1").AssertNoContent()
 	vukemtest.AssertDatabaseCount(t, app, "posts", 0)
+}
+
+func TestPostsSeederAndFactory(t *testing.T) {
+	t.Parallel()
+
+	app := vukemtest.New(t, bootstrap.New)
+	if err := app.Seed(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	vukemtest.AssertDatabaseCount(t, app, "posts", 10)
+
+	db, err := app.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	post, err := factories.Post.State(func(p *models.Post) { p.Title = "Pinned" }).CreateOne(t.Context(), db)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	app.Client(t).Get("/posts/" + strconv.FormatInt(post.ID, 10)).AssertOK().AssertSee("Pinned")
 }
