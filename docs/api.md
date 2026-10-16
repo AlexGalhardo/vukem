@@ -261,6 +261,54 @@ apidocs.Serve(app, r, "/docs", apidocs.Config{
 
 `AssertMatchesOpenAPI()` validates the response against the generated document: it finds the operation for the request path, then checks the body against the schema of the response status (or the default problem response). It supports the JSON Schema subset the generator emits (types, `$ref`, `anyOf`/`allOf`, `required`, lengths, ranges, `pattern`, `enum`, `date-time`). `doc.ValidateResponse(method, path, status, body)` does the same outside tests. OpenAPI cannot express a multi-segment `{path...}` wildcard, so it is documented as one segment.
 
+### Client generation
+
+`vukem codegen:client` turns the OpenAPI document of the typed routes (`api.Register`, described from their `z` types) into a typed client. It runs in warmup mode, so no connection is opened.
+
+```sh
+vukem codegen:client                                  # TypeScript → resources/js/api.ts
+vukem codegen:client -lang go -package apiclient      # Go → internal/apiclient/client.go
+vukem codegen:client -lang go -o -                    # print to stdout
+```
+
+TypeScript (`openapi.TypeScriptClient(doc)`) emits the `codegen:types` types (no Zod), `<Op>Params` for path parameters and `createClient`. It has no dependencies and runs in browsers and Node 18+:
+
+```ts
+import { ApiError, createClient } from "./api";
+
+const api = createClient({ baseUrl: "", headers: () => ({ Authorization: `Bearer ${token}` }) });
+const product = await api.productsStore({ params: { shop: 1 }, body: { name: "Lamp" } });
+
+try {
+  await api.productsStore({ params: { shop: 1 }, body: { name: "x" } });
+} catch (err) {
+  if (err instanceof ApiError && err.status === 422) console.log(err.errors.name);
+}
+```
+
+- One async method per operation with an operationId, camelCase (`products.store` → `productsStore`). Its single argument `{ params, query, body }` holds only what the operation takes, and each part (and the argument) is required only when the operation requires it.
+- Path parameters are URL-encoded; query values skip `undefined`/`null` and repeat arrays (`?tags=a&tags=b`); bodies are JSON.
+- Options: `baseUrl` (default `""`, the page's origin), `fetch` (default `globalThis.fetch`), `headers` (object or per-request function), `credentials` (default `"same-origin"`).
+- Any non-2xx response throws `ApiError` with `status`, the parsed RFC 9457 `problem` and `errors` (field → messages on 422).
+
+Go (`openapi.GoClient(doc, pkg)`) emits gofmt'd, stdlib-only source:
+
+```go
+c := apiclient.New("https://shop.example")
+c.Header = func(r *http.Request) { r.Header.Set("Authorization", "Bearer "+token) }
+
+p, err := c.ProductsStore(ctx, 1, apiclient.ProductsStoreBody{Name: "Lamp"})
+if apiErr, ok := errors.AsType[*apiclient.Error](err); ok && apiErr.Status == 422 {
+	fmt.Println(apiErr.Problem.Errors["name"])
+}
+```
+
+- Component schemas become Go types: objects are structs with `json` tags (`omitempty` on optional fields), optional or nullable scalars and structs are pointers, `additionalProperties` maps, string enums named types with constants, `date-time` `time.Time`, integers `int64`, numbers `float64`, unions `json.RawMessage`. Inline schemas get `<Op>Body`, `<Op>Query` and `<Op>Response`.
+- `Client{BaseURL, HTTP, Header}`: `HTTP` defaults to `http.DefaultClient`; `Header` is called on every request. Each method takes `ctx`, the path parameters as typed arguments, then the query struct and the body; operations without a response body return only `error`.
+- Any non-2xx response returns `*apiclient.Error{Status, Problem}`.
+
+Golden outputs live in `openapi/testdata/shop.client.ts` and `shop.client.go`; a round-trip test runs the generated Go client against a live app, and CI type-checks the TypeScript client with `tsc --strict`.
+
 ## Beyond REST
 
 - **SSE** for server push (planned, BETA) — [frontend.md](frontend.md#sse-beta).

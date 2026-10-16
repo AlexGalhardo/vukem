@@ -42,7 +42,7 @@ const (
 	KindTest    Kind = "test"
 	// KindWarmup builds the app (config, Register, routes) but never runs
 	// providers' Boot or Shutdown, so no connection is opened. Commands that
-	// only read the route table (codegen:routes) run in it.
+	// only read the route table (codegen:routes, codegen:client) run in it.
 	KindWarmup Kind = "warmup"
 )
 
