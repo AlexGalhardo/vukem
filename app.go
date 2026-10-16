@@ -17,6 +17,7 @@ import (
 	"github.com/AlexGalhardo/vukem/config"
 	"github.com/AlexGalhardo/vukem/database"
 	"github.com/AlexGalhardo/vukem/events"
+	"github.com/AlexGalhardo/vukem/inertia"
 	"github.com/AlexGalhardo/vukem/logging/telegram"
 	"github.com/AlexGalhardo/vukem/mail"
 	"github.com/AlexGalhardo/vukem/queue"
@@ -82,6 +83,9 @@ type App struct {
 	Views *view.Engine
 	// Vite renders asset tags when WithVite was given (nil otherwise).
 	Vite *vite.Vite
+	// Inertia is the Inertia adapter when WithInertia was given (nil
+	// otherwise).
+	Inertia *inertia.Inertia
 
 	providers []Provider
 	runners   []namedRunner
@@ -151,6 +155,7 @@ type options struct {
 	routes        []func(r *router.Router, app *App) error
 	views         fs.FS
 	vite          fs.FS
+	inertia       *inertia.Config
 	now           func() time.Time
 	migrations    []schema.Migration
 	seeders       []Seeder
@@ -179,6 +184,13 @@ func WithRoutes(fn func(r *router.Router, app *App) error) Option {
 // or an embed.FS). Views reload on every request outside production.
 func WithViews(fsys fs.FS) Option {
 	return func(o *options) error { o.views = fsys; return nil }
+}
+
+// WithInertia enables the Inertia adapter (app.Inertia); add
+// app.Inertia.Middleware to the routes that render pages. Version and the
+// SSR dev endpoint default to app.Vite when WithVite is given.
+func WithInertia(cfg inertia.Config) Option {
+	return func(o *options) error { o.inertia = &cfg; return nil }
 }
 
 // WithVite enables the "vite" and "viteReactRefresh" view functions over the
@@ -374,6 +386,23 @@ func New(opts ...Option) (*App, error) {
 
 	if o.vite != nil {
 		if app.Vite, err = vite.New(vite.Config{FS: o.vite, Dev: !cfg.IsProduction()}); err != nil {
+			return nil, err
+		}
+	}
+
+	if o.inertia != nil {
+		icfg := *o.inertia
+		if icfg.Version == nil && app.Vite != nil {
+			icfg.Version = app.Vite.Version
+		}
+
+		if icfg.SSR != nil && icfg.SSR.HotURL == nil && app.Vite != nil {
+			ssr := *icfg.SSR
+			ssr.HotURL = app.Vite.HotURL
+			icfg.SSR = &ssr
+		}
+
+		if app.Inertia, err = inertia.New(icfg); err != nil {
 			return nil, err
 		}
 	}
