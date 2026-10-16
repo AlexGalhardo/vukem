@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-10-16
+
+### Added
+
+- **vite:** Add the vite package and view tag functions
+- **inertia:** Add the Inertia v3 core adapter
+- **cli:** Add Vukem Boost for coding agents
+- **inertia:** Add prop types and partial reload filtering
+- **inertia:** Add history encryption, flash, prefetch and precognition
+- **inertia:** Add the SSR client with client-side fallback
+- **cli:** Ship Vite and Tailwind v4 in the HTMX starter and prompt for the stack
+- **vukemtest:** Add WithInertia and Inertia assertions
+- **cli:** Add codegen:routes for typed frontend routes
+- **cli:** Add the Inertia React starter and install:inertia
+- **cli:** Add Inertia auth pages to install:auth
+- **web:** Add a youch-style debug error page
+- **sse:** Add server-sent event streams and a topic hub
+- **cli:** Add maintenance mode with vukem down and up
+- **auth:** Add the JWT guard with JWKS rotation and refresh tokens
+- **crypt:** Add encryption with key rotation and encrypted cookies
+- **orm:** Add the Encrypted column type
+- **z:** Record message keys and localize issues
+- **web:** Localize validation issues from the request context
+- **i18n:** Add JSON catalogs, plurals and locale resolution
+- **view:** Add the t and locale template functions
+- **i18n:** Wire translations into the app
+- **cli:** Add the Inertia Vue starter
+- **auth:** Add the TOTP package with a stdlib QR encoder
+- **cli:** Add the Inertia Svelte starter
+
+### Fixed
+
+- **site:** Align the docs TOC with the header and drop the pre-1.0 callouts
+
+### Security
+
+- **otel:** Add the OpenTelemetry driver module
+
 ## [0.17.0] - 2026-10-16
 
 ### Added
@@ -224,7 +262,8 @@ Project foundation. No framework code yet; see [PLAN.md](PLAN.md) for the roadma
 - README, MIT license, CONTRIBUTING, SECURITY and CODE_OF_CONDUCT.
 - Agent configuration: `AGENTS.md`, `CLAUDE.md`, path-scoped `.claude/rules/`, Go skills and project settings.
 
-[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.17.0...HEAD
+[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.18.0...HEAD
+[0.18.0]: https://github.com/AlexGalhardo/vukem/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/AlexGalhardo/vukem/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/AlexGalhardo/vukem/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/AlexGalhardo/vukem/compare/v0.14.0...v0.15.0
