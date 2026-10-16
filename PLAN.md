@@ -517,7 +517,7 @@ Applies to **every** task:
 
 - [x] **B.6.1** `drivers/websocket` module (coder/websocket): upgrade with origin check, ping/pong, read limits, graceful close on shutdown, `c.WebSocket(fn)`.
   → verify: tests with an in-process client; cross-origin upgrade rejected (`TestSecurity_A01_WebSocketOrigin`).
-- [ ] **B.6.2** `broadcast` package: channels, private and presence channels authorized through gates, memory fan-out, Redis fan-out (via `drivers/redis`), SSE fallback, `Broadcast(ctx, event)` from events/jobs.
+- [x] **B.6.2** `broadcast` package: channels, private and presence channels authorized through gates, memory fan-out, Redis fan-out (via `drivers/redis`), SSE fallback, `Broadcast(ctx, event)` from events/jobs.
   → verify: conformance suite (memory, Redis); unauthorized subscribe denied.
 - [ ] **B.6.3** `contrib/graphql` module: SDL parser, executor (queries, mutations, variables, fragments, introspection), typed resolvers, batching loader over the ORM, depth/complexity limits, persisted queries, errors with extensions.
   → verify: spec-derived parser/executor tests; fuzzed parser; depth-limit test; N+1 avoided (query-count assertion).
