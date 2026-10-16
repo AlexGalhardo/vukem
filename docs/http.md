@@ -49,7 +49,7 @@ Conflicting patterns panic at boot (ServeMux behaviour) and the router wraps the
 | `Updater` | `Update` | `PUT/PATCH /posts/{id}` |
 | `Destroyer` | `Destroy` | `DELETE /posts/{id}` |
 
-HTML forms can use `_method` (hidden field) for `PUT/PATCH/DELETE`; the method-override middleware applies only to `POST` with form content types.
+HTML forms can use `_method` (hidden field) for `PUT/PATCH/DELETE`; the method-override middleware applies only to `POST` with form content types. Multipart forms put it in the action's query string (`action="/posts/1?_method=PUT"`), so the body is never read before the handler streams it ([uploads](subsystems.md#uploads)).
 
 ## `*web.Ctx`
 
@@ -147,5 +147,5 @@ Stacks come from `errs.New`, `errs.Wrap`, `errs.WithStack(err)` (for errors from
 ## Static files and uploads
 
 - `public/` served by `middleware.Static` with `http.FileServerFS` over an `os.Root`; hashed assets get `Cache-Control: public, max-age=31536000, immutable`.
-- Request bodies limited by `http.MaxBytesReader` (configurable per route).
-- Uploads stored through `storage/` (ALPHA) using `os.Root` to prevent path traversal; filenames randomised by default.
+- Request bodies limited by `http.MaxBytesReader` (configurable per route: a route's `middleware.BodyLimit` or `upload.Rules.MaxSize` replaces the router-wide 10 MiB default).
+- Uploads stored through `storage/` (ALPHA) using `os.Root` to prevent path traversal; filenames randomised by default. Streaming, resumable and direct uploads: [subsystems.md#uploads](subsystems.md#uploads).

@@ -218,11 +218,16 @@ func TestMethodOverride(t *testing.T) {
 		{"POST", "application/x-www-form-urlencoded", "GET", "POST"},  // only unsafe verbs
 		{"POST", "application/json", "DELETE", "POST"},                // forms only
 		{"GET", "application/x-www-form-urlencoded", "DELETE", "GET"}, // POST only
+		{"POST", "multipart/form-data; boundary=x", "PUT", "PUT"},     // from the query
 	}
 
 	for _, tt := range tests {
-		body := url.Values{"_method": {tt.override}}.Encode()
-		r := httptest.NewRequestWithContext(t.Context(), tt.method, "/", strings.NewReader(body))
+		target, body := "/", url.Values{"_method": {tt.override}}.Encode()
+		if strings.HasPrefix(tt.ct, "multipart/") {
+			target, body = "/?"+body, "unread"
+		}
+
+		r := httptest.NewRequestWithContext(t.Context(), tt.method, target, strings.NewReader(body))
 		r.Header.Set("Content-Type", tt.ct)
 		do(t, h, r)
 

@@ -162,16 +162,27 @@ func BodyLimit(n int64) Middleware {
 }
 
 // MethodOverride lets HTML forms send PUT, PATCH and DELETE through a
-// hidden "_method" field on POST. Register it as server middleware so
-// routing sees the overridden method.
+// hidden "_method" field on POST. Multipart forms put it in the action's
+// query string instead ("?_method=PUT"), so their body is never buffered.
+// Register it as server middleware so routing sees the overridden method.
 func MethodOverride() Middleware {
 	allowed := []string{http.MethodPut, http.MethodPatch, http.MethodDelete}
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.Method == http.MethodPost && isFormContent(r) {
-				r = web.LimitBody(w, r, web.DefaultMaxBody)
-				if m := strings.ToUpper(r.PostFormValue("_method")); slices.Contains(allowed, m) {
+				var m string
+
+				// Multipart bodies are left unread so uploads can stream
+				// (package upload): their override comes from the query.
+				if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+					m = r.URL.Query().Get("_method")
+				} else {
+					r = web.LimitBody(w, r, web.DefaultMaxBody)
+					m = r.PostFormValue("_method")
+				}
+
+				if m = strings.ToUpper(m); slices.Contains(allowed, m) {
 					r.Method = m
 				}
 			}
