@@ -5,7 +5,7 @@ Vukem: a Laravel/AdonisJS-inspired, stdlib-first Go web framework. Module `githu
 ## Start here
 
 1. Read [PLAN.md](PLAN.md): pick the first unchecked task of the current phase.
-2. Read the docs that task touches (index in [README.md](README.md#documentation)).
+2. Read the docs that task touches (index in [docs/README.md](docs/README.md)).
 3. Decisions are final unless [docs/brainstorming.md](docs/brainstorming.md) is updated first.
 
 ## Commands

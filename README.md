@@ -1,111 +1,89 @@
-# Vukem
+<p align="center">
+  <a href="https://vukem.vercel.app"><img src=".github/logo-wordmark.svg" width="320" alt="Vukem"></a>
+</p>
 
-**Laravel and AdonisJS productivity, written in idiomatic Go.**
+<p align="center">
+  <a href="https://github.com/AlexGalhardo/vukem/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/AlexGalhardo/vukem/ci.yml?branch=main&label=tests" alt="Tests"></a>
+  <a href="https://github.com/AlexGalhardo/vukem/actions/workflows/release.yml"><img src="https://img.shields.io/github/actions/workflow/status/AlexGalhardo/vukem/release.yml?label=ci%2Fcd" alt="CI/CD"></a>
+  <a href="https://github.com/AlexGalhardo/vukem/releases"><img src="https://img.shields.io/github/v/release/AlexGalhardo/vukem?include_prereleases&label=version" alt="Version"></a>
+  <a href="https://pkg.go.dev/github.com/AlexGalhardo/vukem"><img src="https://pkg.go.dev/badge/github.com/AlexGalhardo/vukem.svg" alt="Go Reference"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/AlexGalhardo/vukem" alt="License"></a>
+</p>
 
-Vukem is a web framework built on `net/http` and the standard library for **REST APIs and full-stack apps**: routing, validation, an ORM with migrations, authentication, JSON resources with problem+json errors, HTMX-first views and an optional Inertia + React frontend, all driven by one CLI.
+## Introduction
+
+Vukem is a web framework for Go with the productivity of Laravel and AdonisJS, built on `net/http` and the standard library. It gives you routing, validation, an ORM with migrations, authentication, queues, a scheduler, mail, OpenAPI documents and one CLI to generate and run it all, for **REST APIs and full-stack apps** alike.
 
 > [!WARNING]
-> Vukem is a **prototype** (`v0.1.x`): it works end to end, but APIs will change before 1.0. Follow progress in [PLAN.md](PLAN.md).
+> Vukem is in active development (`v0.x`, heading to the 1.0 beta): it works end to end, but APIs may still change. Follow progress in [PLAN.md](PLAN.md).
+
+## Summary
+
+- **HTTP**: `net/http`-native router with named routes, resources and groups; middleware is `func(http.Handler) http.Handler`.
+- **Validation**: Zod-style typed schemas (`z`) for every input, exportable as JSON Schema, TypeScript and Zod.
+- **Database**: SQLite built in, PostgreSQL driver module, generic query builder, relations, migrations, factories and seeders.
+- **Auth**: sessions, API tokens, social login (OAuth2/OIDC), email verification, password reset, gates and policies.
+- **APIs**: JSON resources, pagination, RFC 9457 errors, rate limiting, idempotency keys, typed handlers, OpenAPI 3.1 and a Scalar API reference.
+- **Background work**: typed queue jobs (sync, memory, database), queued mail and listeners, cron scheduler.
+- **Frontend**: HTMX-first server-rendered views, with Inertia + React on the way.
+- **More**: mail (SMTP, Resend), cache, storage, events, Telegram logging, SSRF-safe HTTP client, signed URLs and webhooks.
+
+Full documentation: **[vukem.vercel.app](https://vukem.vercel.app/docs/introduction)** · design docs in [docs/](docs/README.md).
 
 ## Why Vukem
 
-- **Standard library first.** Handlers and middleware are plain `net/http`. Any `http.Handler` works.
+- **Standard library first.** Handlers are plain `net/http`; any `http.Handler` works.
 - **No magic.** No globals, no `init()` registration, no reflection-based dependency injection. Generators write code you own.
-- **Typed end to end.** Zod-style schemas (`z`) parse every input into Go types and check outgoing data; generic query builder, typed jobs and events, named routes checked at boot.
-- **Batteries included, opt-in.** SQLite out of the box; PostgreSQL, Redis and MongoDB as separate driver modules, so you only download what you use.
-- **APIs first-class.** `vukem new shop --api` gives a JSON-only app with token auth, pagination, CORS, rate limiting and RFC 9457 errors.
-- **Secure by default.** CSRF, security headers, argon2id, safe SQL building, fail-closed authorization, mapped to the [OWASP Top 10:2025](docs/security.md).
-- **No Node required** for the default HTMX starter.
+- **Typed end to end.** Inputs parse into Go types, outputs are checked, and the same types produce your OpenAPI and TypeScript.
+- **Opt-in batteries.** Heavy drivers (PostgreSQL, Redis, MongoDB) are separate modules, so you only download what you use.
+- **Secure by default.** CSRF, security headers, Argon2id, safe SQL, fail-closed authorization, mapped to the [OWASP Top 10:2025](docs/security.md).
+- **Windows is first-class.** Pure Go, no C compiler, tested on Windows, Linux and macOS.
 
 ## A taste
-
-This is the example CRUD that `vukem new` generates ([docs/http.md](docs/http.md)).
-
-```go
-func Web(r *router.Router, app *vukem.App) error {
-	db, err := app.DB()
-	if err != nil {
-		return err
-	}
-
-	r.Get("/", controllers.Home).Name("home")
-	r.Resource("posts", controllers.NewPostController(db)) // posts.index, posts.store, posts.show…
-
-	return nil
-}
-
-var PostSchema = z.Struct[Post](z.Shape{
-	"title": z.String().Trim().Min(3).Max(120),
-	"body":  z.String().Trim().Max(10_000),
-})
-
-func (pc *PostController) Store(c *web.Ctx) error {
-	in, err := web.Parse(c, requests.PostSchema) // invalid: errors flashed + redirect back (422 for JSON)
-	if err != nil {
-		return err
-	}
-
-	post := models.Post{Title: in.Title, Body: in.Body}
-	if err := orm.Create(c.Context(), pc.db, &post); err != nil {
-		return err
-	}
-
-	_ = c.Flash("success", "Post created.")
-
-	return c.RedirectRoute("posts.show", "post", post.ID)
-}
-
-func (pc *PostController) Index(c *web.Ctx) error {
-	posts, err := orm.QueryOf[models.Post](pc.db).Latest().Get(c.Context())
-	if err != nil {
-		return err
-	}
-
-	// Full page for browsers, only the "post-list" block for htmx requests.
-	return c.Render("posts/index", map[string]any{"Posts": posts}, web.Block("post-list"))
-}
-```
-
-## Quick start
 
 ```sh
 go install github.com/AlexGalhardo/vukem/cmd/vukem@latest
 
-vukem new blog       # HTMX + SQLite starter with an example CRUD
-cd blog
+vukem new blog && cd blog   # HTMX + SQLite starter (or: vukem new shop --api)
 vukem migrate
-vukem serve          # http://localhost:3000, rebuilds on Go changes
-go test ./...        # the starter ships with tests
-vukem build          # single production binary in bin/
+vukem serve                 # http://localhost:3000, rebuilds on changes
 ```
 
-Requires Go 1.27 or newer. Works on **Windows 11/10**, Linux and macOS — no C compiler needed.
+```go
+type StoreProduct struct {
+	Name  string  `json:"name"  validate:"required,max=80"`
+	Price float64 `json:"price" validate:"min=0"`
+}
 
-## Documentation
+func Routes(r *router.Router, app *vukem.App) error {
+	vukem.ServeOpenAPI(app, r, "/openapi.json")
 
-| Topic | Read |
-| --- | --- |
-| Roadmap and current task | [PLAN.md](PLAN.md) |
-| Architecture | [docs/architecture.md](docs/architecture.md) |
-| Configuration | [docs/configuration.md](docs/configuration.md) |
-| Routing, validation, sessions, errors | [docs/http.md](docs/http.md) |
-| Typed schemas (Zod-style validation) | [docs/validation.md](docs/validation.md) |
-| REST APIs | [docs/api.md](docs/api.md) |
-| Security defaults (OWASP Top 10:2025) | [docs/security.md](docs/security.md) |
-| Databases, ORM, migrations | [docs/database.md](docs/database.md) |
-| Authentication and authorization | [docs/authentication.md](docs/authentication.md) |
-| Views, HTMX, Inertia, Vite | [docs/frontend.md](docs/frontend.md) |
-| CLI | [docs/cli.md](docs/cli.md) |
-| Mail, cache, queue and more | [docs/subsystems.md](docs/subsystems.md) |
-| Testing | [docs/testing.md](docs/testing.md) |
-| Tooling and releases | [docs/tooling.md](docs/tooling.md) |
-| Design decisions | [docs/brainstorming.md](docs/brainstorming.md) |
-| Research behind the design | [docs/golang-web-search.md](docs/golang-web-search.md) |
+	api.Register(r, "POST /products", api.Op{Name: "products.store", Tags: []string{"products"}},
+		func(c *web.Ctx, in StoreProduct) (Product, error) {
+			p := Product{Name: in.Name, Price: in.Price}
+			return p, orm.Create(c.Context(), db, &p) // 201 JSON; invalid input is a 422 problem
+		})
+
+	return nil
+}
+```
+
+## Agentic development
+
+Vukem is built to be worked on with coding agents. [AGENTS.md](AGENTS.md) (and [CLAUDE.md](CLAUDE.md)) give the rules and where things live; [PLAN.md](PLAN.md) is the task list, one verifiable task at a time; `.claude/rules/` holds path-scoped rules and `.claude/skills/` the Go and workflow skills. Every change goes through tests first, `golangci-lint`, Conventional Commits and the GitHub Actions gate.
 
 ## Contributing
 
-Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) first; security issues go through [SECURITY.md](SECURITY.md).
+Thank you for considering contributing to Vukem! Read the [contribution guide](CONTRIBUTING.md) to get started.
+
+## Code of conduct
+
+To keep the community welcoming to everyone, please review and follow the [Code of Conduct](CODE_OF_CONDUCT.md).
+
+## Security vulnerabilities
+
+If you discover a security vulnerability, please follow the [security policy](SECURITY.md) instead of opening a public issue.
 
 ## License
 
-[MIT](LICENSE) © 2026 Alex Galhardo
+Vukem is open-source software licensed under the [MIT license](LICENSE).
