@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-10-16
+
+### Added
+
+- **subsystems:** Add cache, file storage and typed events
+
 ## [0.10.0] - 2026-10-16
 
 ### Added
@@ -164,7 +170,8 @@ Project foundation. No framework code yet; see [PLAN.md](PLAN.md) for the roadma
 - README, MIT license, CONTRIBUTING, SECURITY and CODE_OF_CONDUCT.
 - Agent configuration: `AGENTS.md`, `CLAUDE.md`, path-scoped `.claude/rules/`, Go skills and project settings.
 
-[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/AlexGalhardo/vukem/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/AlexGalhardo/vukem/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/AlexGalhardo/vukem/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/AlexGalhardo/vukem/compare/v0.7.0...v0.8.0
