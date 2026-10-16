@@ -1,0 +1,45 @@
+@import "tailwindcss";
+
+/* Starter styles: Tailwind utilities work in every view; these keep the
+   default pages readable without classes on every element. */
+@layer base {
+	:root {
+		--bg: #ffffff;
+		--fg: #1c1d21;
+		--muted: #6b6f76;
+		--accent: #4f46e5;
+		--danger: #c0262d;
+		--border: #e3e4e8;
+	}
+
+	@media (prefers-color-scheme: dark) {
+		:root {
+			--bg: #111214;
+			--fg: #ececef;
+			--muted: #9a9ea6;
+			--accent: #8b85ff;
+			--danger: #ff6b6b;
+			--border: #2a2c31;
+		}
+	}
+
+	* { box-sizing: border-box; }
+	body { margin: 0; font: 16px/1.6 system-ui, sans-serif; background: var(--bg); color: var(--fg); }
+	header { display: flex; justify-content: space-between; align-items: center; padding: 1rem; border-bottom: 1px solid var(--border); }
+	main { max-width: 42rem; margin: 0 auto; padding: 1rem; }
+	a { color: var(--accent); }
+	.brand { font-weight: 700; text-decoration: none; }
+	.button, button { display: inline-block; padding: .5rem 1rem; border: 0; border-radius: .4rem; background: var(--accent); color: #fff; font: inherit; text-decoration: none; cursor: pointer; }
+	button.link { background: none; color: var(--accent); padding: 0; }
+	.danger { color: var(--danger) !important; }
+	.toolbar { display: flex; justify-content: space-between; align-items: center; }
+	.list { list-style: none; padding: 0; }
+	.list li { display: flex; justify-content: space-between; padding: .5rem 0; border-bottom: 1px solid var(--border); }
+	.empty { color: var(--muted); }
+	.flash { padding: .75rem 1rem; border-radius: .4rem; background: color-mix(in srgb, var(--accent) 15%, transparent); }
+	.error { color: var(--danger); margin-top: -.5rem; }
+	label { display: block; margin-bottom: 1rem; }
+	input, textarea { display: block; width: 100%; padding: .5rem; margin-top: .25rem; border: 1px solid var(--border); border-radius: .4rem; background: var(--bg); color: var(--fg); font: inherit; }
+	input[type=search] { margin: 1rem 0; }
+	.hero { text-align: center; padding: 3rem 0; }
+}

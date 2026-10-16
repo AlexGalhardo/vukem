@@ -95,6 +95,12 @@ func (v *Vite) Tags(nonce string, entries ...string) (template.HTML, error) {
 	}
 
 	m, err := v.load()
+	if errors.Is(err, fs.ErrNotExist) && v.cfg.Dev {
+		// Development without a dev server or build (e.g. go test): render
+		// nothing instead of failing every page.
+		return "<!-- vite: no dev server and no build; run npm run dev -->" + "\n", nil
+	}
+
 	if err != nil {
 		return "", err
 	}

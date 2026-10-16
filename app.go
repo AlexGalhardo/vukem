@@ -80,6 +80,8 @@ type App struct {
 	Router *router.Router
 	// Views renders templates when WithViews was given (nil otherwise).
 	Views *view.Engine
+	// Vite renders asset tags when WithVite was given (nil otherwise).
+	Vite *vite.Vite
 
 	providers []Provider
 	runners   []namedRunner
@@ -370,16 +372,16 @@ func New(opts ...Option) (*App, error) {
 		app.AddRunner("queue", app.queueRunner(qcfg))
 	}
 
-	if o.views != nil {
-		vcfg := view.Config{FS: o.views, Reload: !cfg.IsProduction(), URLs: app.Router}
-
-		if o.vite != nil {
-			if vcfg.Vite, err = vite.New(vite.Config{FS: o.vite, Dev: !cfg.IsProduction()}); err != nil {
-				return nil, err
-			}
+	if o.vite != nil {
+		if app.Vite, err = vite.New(vite.Config{FS: o.vite, Dev: !cfg.IsProduction()}); err != nil {
+			return nil, err
 		}
+	}
 
-		engine, err := view.New(vcfg)
+	if o.views != nil {
+		engine, err := view.New(view.Config{
+			FS: o.views, Reload: !cfg.IsProduction(), URLs: app.Router, Vite: app.Vite,
+		})
 		if err != nil {
 			return nil, err
 		}

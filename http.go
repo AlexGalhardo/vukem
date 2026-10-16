@@ -174,6 +174,16 @@ func (a *App) Sessions() (*session.Manager, error) {
 // provider's Register, before Sessions is first used).
 func (a *App) SetSessionStore(store session.Store) { a.sessStore = store }
 
+// secureHeadersConfig allows the Vite dev server in the CSP while it runs
+// (app.Vite only reports it outside production).
+func secureHeadersConfig(app *App) middleware.SecureHeadersConfig {
+	if app.Vite == nil {
+		return middleware.SecureHeadersConfig{}
+	}
+
+	return middleware.SecureHeadersConfig{DevServer: app.Vite.HotURL}
+}
+
 // DefaultMiddleware installs Vukem's recommended stacks on r:
 //   - server: Recover, RequestID, Logger, SecureHeaders, MethodOverride;
 //   - router: BodyLimit(10 MiB), sessions, CSRF (CrossOriginProtection,
@@ -186,7 +196,7 @@ func DefaultMiddleware(app *App, r *router.Router) error {
 		middleware.Recover(),
 		middleware.RequestID(),
 		middleware.Logger(app.Log),
-		middleware.SecureHeaders(middleware.SecureHeadersConfig{}),
+		middleware.SecureHeaders(secureHeadersConfig(app)),
 		middleware.MethodOverride(),
 	)
 

@@ -150,6 +150,10 @@ func buildCmd(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 		}
 
 		if hasVite(env) {
+			if !exists(env, "node_modules") {
+				return errors.New("frontend dependencies missing: run npm install first")
+			}
+
 			if err := tool(ctx, env, npx(), "vite", "build"); err != nil {
 				return err
 			}

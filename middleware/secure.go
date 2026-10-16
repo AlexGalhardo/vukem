@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -28,6 +29,11 @@ type SecureHeadersConfig struct {
 	// TrustForwardedProto treats X-Forwarded-Proto: https as HTTPS (set it
 	// only behind a trusted proxy).
 	TrustForwardedProto bool
+	// DevServer returns the origin of a running asset dev server (the Vite
+	// hot URL) or "". When set, the origin is allowed in script-src,
+	// style-src, img-src, font-src and connect-src (plus its ws:// form for
+	// hot reload). Wire it only outside production.
+	DevServer func() string
 }
 
 // DefaultCSP is a strict policy suitable for server-rendered pages with
@@ -85,13 +91,46 @@ func SecureHeaders(cfg SecureHeadersConfig) Middleware {
 
 			if csp != "-" {
 				nonce := newNonce()
-				h.Set("Content-Security-Policy", strings.ReplaceAll(csp, "{nonce}", nonce))
+				policy := strings.ReplaceAll(csp, "{nonce}", nonce)
+
+				if cfg.DevServer != nil {
+					policy = allowDevServer(policy, cfg.DevServer())
+				}
+
+				h.Set("Content-Security-Policy", policy)
 				r = r.WithContext(context.WithValue(r.Context(), nonceKey{}, nonce))
 			}
 
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// devOrigin matches a bare http(s) origin, so a dev server URL can never
+// inject other CSP directives.
+var devOrigin = regexp.MustCompile(`^https?://[A-Za-z0-9.\-\[\]:]+$`)
+
+func allowDevServer(policy, origin string) string {
+	origin = strings.TrimSuffix(origin, "/")
+	if !devOrigin.MatchString(origin) {
+		return policy
+	}
+
+	ws := "ws" + strings.TrimPrefix(origin, "http")
+	extra := map[string]string{
+		"script-src": origin, "style-src": origin, "img-src": origin, "font-src": origin,
+		"connect-src": origin + " " + ws,
+	}
+
+	parts := strings.Split(policy, ";")
+	for i, part := range parts {
+		name, _, _ := strings.Cut(strings.TrimSpace(part), " ")
+		if add, ok := extra[name]; ok {
+			parts[i] = strings.TrimRight(part, " ") + " " + add
+		}
+	}
+
+	return strings.Join(parts, ";")
 }
 
 func newNonce() string {

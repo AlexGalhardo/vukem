@@ -41,6 +41,7 @@ What Vukem does **by default** to protect applications, mapped to the [OWASP Top
 | Content-Security-Policy builder with per-request nonces (`{{ cspNonce }}`), starter ships a strict policy; Vite tags get the nonce (`TestSecurity_A02_ViteTagsCarryNonce`) | P / B |
 | `boost:mcp` `database_query` accepts one `SELECT`/`WITH`/`EXPLAIN` statement without write keywords and runs it on a read-only connection (SQLite `query_only`, read-only transactions elsewhere) (`TestSecurity_A05_BoostQueryIsReadOnly`) | B |
 | The Inertia page object is embedded as JSON with `<`, `>`, `&` and `/` escaped, so prop data cannot close its `<script>` (`TestSecurity_A05_InertiaPageScriptCannotBreakOut`) | B |
+| The CSP allows the Vite dev server origin only while its hot file exists outside production; the origin must be a bare `http(s)://host:port` so it cannot inject directives | B |
 | The Vite `hot` file is ignored in production (`TestSecurity_A02_ViteHotFileIgnoredInProduction`) and must hold an `http(s)` URL (`TestSecurity_A05_ViteRejectsUnsafeHotURL`) | B |
 | Debug error page only in development; production errors never include stack traces, SQL or config | P |
 | `vukem about` prints effective security settings (secrets redacted) to review deployments | P |

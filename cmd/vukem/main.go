@@ -14,11 +14,14 @@ import (
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	info, err := os.Stdin.Stat()
+
 	code := cli.Run(ctx, os.Args[1:], cli.Env{
-		Stdin:  os.Stdin,
-		Stdout: os.Stdout,
-		Stderr: os.Stderr,
-		Getenv: os.LookupEnv,
+		Interactive: err == nil && info.Mode()&os.ModeCharDevice != 0,
+		Stdin:       os.Stdin,
+		Stdout:      os.Stdout,
+		Stderr:      os.Stderr,
+		Getenv:      os.LookupEnv,
 	})
 
 	stop()

@@ -32,7 +32,7 @@ Exit codes: `0` success, `1` failure, `2` usage error.
 
 | Command | Description |
 | --- | --- |
-| `vukem new <name> [--module path] [--api]` | Create a project from the embedded starter (HTMX + SQLite; JSON-only with `--api` from ALPHA), run `go mod tidy`, generate `APP_KEY`, `git init` |
+| `vukem new <name> [--module path] [--api \| --inertia react\|vue\|svelte] [--no-install]` | Create a project from the embedded starter (HTMX + Tailwind + SQLite by default; JSON-only with `--api`), run `go mod tidy`, generate `APP_KEY`, `npm install` (frontend starters), `git init`. On a terminal without stack flags it asks for the stack (HTMX, Inertia → React/Vue/Svelte, API) |
 | `vukem serve` | Build + run `cmd/app`, restart on `.go` changes (own watcher using polling + `os.Stat`; no fsnotify dep), reload templates without restart; runs `npm run dev` when a Vite config exists |
 | `vukem make:controller <Name> [--resource] [--api]` | Controller struct + constructor; `--resource` adds the 7 actions |
 | `vukem make:model <Name> [-m] [-f] [-c]` | Model; `-m` migration, `-f` factory, `-c` controller |

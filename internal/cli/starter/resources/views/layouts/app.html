@@ -4,7 +4,8 @@
 	<meta charset="utf-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1">
 	<title>{{block "title" .}}Vukem{{end}}</title>
-	<link rel="stylesheet" href="{{asset "css/app.css"}}">
+	<meta property="csp-nonce" nonce="{{cspNonce}}">
+	{{vite "resources/css/app.css" "resources/js/app.ts"}}
 	{{htmxScript (asset "js/htmx.min.js")}}
 </head>
 <body>

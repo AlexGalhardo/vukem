@@ -62,7 +62,12 @@ func serveCmd(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 				return fmt.Errorf("start vite: %w", err)
 			}
 
-			defer func() { _ = vite.Wait() }()
+			defer func() {
+				_ = vite.Wait()
+				// A killed dev server (Windows has no SIGTERM) cannot remove its
+				// hot file; a stale one would point pages at a dead server.
+				_ = os.Remove(env.path(filepath.Join("resources", "public", "hot")))
+			}()
 		}
 
 		return watch(ctx, env, *interval, args)

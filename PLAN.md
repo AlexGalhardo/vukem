@@ -18,7 +18,7 @@ Task IDs: `<phase>.<group>.<task>` (e.g. `P.3.2`). Reference them in commit bodi
 | Field | Value |
 | --- | --- |
 | Current phase | **ALPHA** |
-| Next task | `B.3.8` (Vite & Inertia) |
+| Next task | `B.3.6` (Vite & Inertia) |
 | Last release | `v0.17.0` (B.2 Redis and Mongo drivers) |
 | Updated | 2026-10-16 |
 
@@ -495,7 +495,7 @@ Applies to **every** task:
   → verify: e2e: a new Inertia app per framework builds and its tests pass.
 - [ ] **B.3.7** `codegen:routes` → typed `routes.ts` (warmup boot mode).
   → verify: golden TS output; `tsc --noEmit` passes in starter.
-- [ ] **B.3.8** HTMX starter on Vite + Tailwind CSS v4 (`@tailwindcss/vite`, `resources/css/app.css`, `{{vite}}` in the layout, hot-file plugin); `vukem new` prompts for the stack on a TTY (HTMX, Inertia → React/Vue/Svelte, API), flags skip it.
+- [x] **B.3.8** HTMX starter on Vite + Tailwind CSS v4 (`@tailwindcss/vite`, `resources/css/app.css`, `{{vite}}` in the layout, hot-file plugin); `vukem new` prompts for the stack on a TTY (HTMX, Inertia → React/Vue/Svelte, API), flags skip it.
   → verify: e2e: `vukem new` HTMX app runs `npm run build` and its tests pass; prompt tests with a fake TTY.
 
 ### B.4 Remaining subsystems

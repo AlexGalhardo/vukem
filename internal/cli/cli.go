@@ -26,6 +26,8 @@ type Env struct {
 	Stdin  io.Reader
 	Stdout io.Writer
 	Stderr io.Writer
+	// Interactive reports that Stdin is a terminal, so commands may prompt.
+	Interactive bool
 	// Getenv reads the process environment.
 	Getenv func(string) (string, bool)
 	// Now is the clock used for migration timestamps.

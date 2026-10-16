@@ -47,6 +47,8 @@ func newProject(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 	module := set.String("module", "", "Go module path (default: the project name)")
 	framework := set.String("framework", "", "path to a local Vukem checkout to use instead of a release")
 	apiOnly := set.Bool("api", false, "JSON API starter: tokens, /api/v1, no views or sessions")
+	inertiaFW := set.String("inertia", "", "Inertia starter with react, vue or svelte")
+	noInstall := set.Bool("no-install", false, "skip npm install")
 
 	return func(ctx context.Context, env *Env, args []string) error {
 		name, err := oneArg(args, "project name")
@@ -63,6 +65,15 @@ func newProject(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 			return fmt.Errorf("%s already exists", name)
 		}
 
+		st, err := chooseStack(env, *apiOnly, *inertiaFW)
+		if err != nil {
+			return err
+		}
+
+		if st.kind == "inertia" {
+			return usagef("the Inertia starters are not available yet; use the HTMX or API starter")
+		}
+
 		data := starterData{Name: name, Module: *module}
 		if data.Module == "" {
 			data.Module = name
@@ -75,7 +86,7 @@ func newProject(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 		project := *env
 		project.Dir = dir
 
-		if *apiOnly {
+		if st.kind == "api" {
 			if err := makeAPIStarter(&project, data); err != nil {
 				return err
 			}
@@ -102,10 +113,37 @@ func newProject(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 			}
 		}
 
-		fmt.Fprintf(env.Stdout, "\nCreated %s (htmx %s, SQLite). Next:\n\n  cd %s\n  vukem migrate\n  vukem serve\n\n",
-			name, htmxVersion, name)
+		if st.kind != "api" {
+			npmInstall(ctx, &project, *noInstall)
+		}
+
+		desc := "htmx " + htmxVersion + ", Tailwind, SQLite"
+		if st.kind == "api" {
+			desc = "JSON API, SQLite"
+		}
+
+		fmt.Fprintf(env.Stdout, "\nCreated %s (%s). Next:\n\n  cd %s\n  vukem migrate\n  vukem serve\n\n",
+			name, desc, name)
 
 		return nil
+	}
+}
+
+// npmInstall installs the frontend dependencies when npm is available; a
+// failure only warns, since the Go app works without built assets in
+// development.
+func npmInstall(ctx context.Context, env *Env, skip bool) {
+	if skip {
+		return
+	}
+
+	if _, err := exec.LookPath(npm()); err != nil {
+		fmt.Fprintln(env.Stdout, "npm not found: install Node.js, then run npm install")
+		return
+	}
+
+	if err := tool(ctx, env, npm(), "install", "--no-audit", "--no-fund"); err != nil {
+		fmt.Fprintf(env.Stderr, "npm install failed (run it again later): %v\n", err)
 	}
 }
 
@@ -204,7 +242,7 @@ func releaseVersion(v string) string {
 var apiStarterRemove = []string{
 	"resources/views/home.html", "resources/views/layouts", "resources/views/partials", "resources/views/posts",
 	"resources/public", "app/controllers/home.go", "app/controllers/post_controller.go", "routes/web.go",
-	"tests/home_test.go",
+	"tests/home_test.go", "package.json", "vite.config.ts", "resources/css", "resources/js", "resources/vite",
 }
 
 // makeAPIStarter turns the starter into a JSON API: the api-starter
@@ -214,6 +252,21 @@ func makeAPIStarter(env *Env, sd starterData) error {
 		if err := os.RemoveAll(env.path(filepath.FromSlash(rel))); err != nil {
 			return err
 		}
+	}
+
+	// No frontend assets: drop Vite from the bootstrap.
+	app := env.path(filepath.Join("bootstrap", "app.go"))
+
+	src, err := os.ReadFile(app)
+	if err != nil {
+		return err
+	}
+
+	if err := writeFile(
+		app,
+		bytes.ReplaceAll(src, []byte("\t\tvukem.WithVite(resources.Public()),\n"), nil),
+	); err != nil {
+		return err
 	}
 
 	data, err := scaffoldData(env)

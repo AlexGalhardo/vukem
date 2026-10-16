@@ -9,7 +9,9 @@ import (
 	"os"
 )
 
-//go:embed views public
+// all: keeps build/.vite/manifest.json (a dot directory) in the binary.
+//
+//go:embed views all:public
 var embedded embed.FS
 
 // Views returns the html/template views.

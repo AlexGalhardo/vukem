@@ -94,7 +94,7 @@ Invalid input from a classic form post → the validation hook flashes the error
 
 ## Vite
 
-Optional for the HTMX starter (Tailwind, bundling), required for Inertia.
+Every starter ships Vite 8 + Tailwind CSS v4 (`@tailwindcss/vite`) preconfigured (decision F2): `package.json`, `vite.config.ts`, `resources/css/app.css` (`@import "tailwindcss"` plus the starter styles in `@layer base`), `resources/js/app.ts` and the hot-file plugin `resources/vite/vukem.js`, which builds into `resources/public/build` (embedded with `//go:embed all:public`). `vukem new` runs `npm install` when npm is available (`--no-install` skips it); `vukem build` refuses to run without `node_modules`. Outside production the CSP allows the running dev server (`SecureHeadersConfig.DevServer`), and the layout carries `<meta property="csp-nonce">` so Vite's injected styles get the nonce. Without a dev server or a build, `{{vite}}` renders an HTML comment in development (tests need no Node) and fails in production.
 
 - `vukem.WithVite(os.DirFS("public"))` (or an `embed.FS`) enables the `vite` package (`vite.New(vite.Config{FS, Dev})`) behind the view funcs. `Dev` is on outside production.
 - A tiny Vite plugin shipped with the starter (`resources/vite/vukem.js`) writes `public/hot` with the dev server URL on start and deletes it on exit.

@@ -155,6 +155,15 @@ func TestTagsErrors(t *testing.T) {
 	}
 }
 
+func TestTagsDevWithoutBuild(t *testing.T) {
+	t.Parallel()
+
+	got, err := newVite(t, vite.Config{FS: fstest.MapFS{}, Dev: true}).Tags("n", "resources/js/app.ts")
+	if err != nil || !strings.HasPrefix(string(got), "<!-- vite:") {
+		t.Errorf("Tags() in dev without build = %q, %v", got, err)
+	}
+}
+
 func TestAsset(t *testing.T) {
 	t.Parallel()
 

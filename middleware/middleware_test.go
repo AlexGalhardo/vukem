@@ -544,3 +544,45 @@ func TestSecurity_A09_LoggerNeverLogsCredentials(t *testing.T) {
 		}
 	}
 }
+
+func TestSecureHeadersDevServer(t *testing.T) {
+	t.Parallel()
+
+	dev := ""
+	h := SecureHeaders(SecureHeadersConfig{DevServer: func() string { return dev }})(http.HandlerFunc(ok))
+
+	csp := func() string {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", http.NoBody))
+
+		return rec.Header().Get("Content-Security-Policy")
+	}
+
+	if got := csp(); strings.Contains(got, "localhost") {
+		t.Errorf("CSP without dev server = %q", got)
+	}
+
+	dev = "http://localhost:5173"
+	got := csp()
+
+	for _, want := range []string{
+		"script-src 'self' 'nonce-", "'nonce-",
+		"script-src 'self' 'nonce-", "http://localhost:5173",
+		"connect-src 'self' http://localhost:5173 ws://localhost:5173",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("CSP = %q, want it to contain %q", got, want)
+		}
+	}
+
+	for _, dir := range []string{"script-src", "style-src", "img-src", "font-src"} {
+		if !strings.Contains(strings.Split(strings.SplitAfter(got, dir)[1], ";")[0], "http://localhost:5173") {
+			t.Errorf("%s lacks the dev server: %q", dir, got)
+		}
+	}
+
+	dev = `http://x; script-src *`
+	if got := csp(); strings.Contains(got, "script-src *") {
+		t.Errorf("unsafe dev origin injected: %q", got)
+	}
+}

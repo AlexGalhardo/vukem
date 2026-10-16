@@ -160,7 +160,17 @@ func TestNewProjectEndToEnd(t *testing.T) {
 
 	dir := t.TempDir()
 
-	code, out, errOut := vukem(t, dir, "new", "blog", "--module", "example.com/blog", "--framework", repo)
+	code, out, errOut := vukem(
+		t,
+		dir,
+		"new",
+		"blog",
+		"--module",
+		"example.com/blog",
+		"--framework",
+		repo,
+		"--no-install",
+	)
 	if code != 0 {
 		t.Fatalf("vukem new = %d\n%s%s", code, out, errOut)
 	}
@@ -230,8 +240,29 @@ func TestNewProjectEndToEnd(t *testing.T) {
 		t.Fatalf("tests after install:auth: %v\n%s", err, out)
 	}
 
-	if code, out, errOut := vukem(t, project, "build"); code != 0 {
-		t.Fatalf("vukem build = %d\n%s%s", code, out, errOut)
+	if code, _, errOut := vukem(t, project, "build"); code != 1 || !strings.Contains(errOut, "npm install") {
+		t.Fatalf("vukem build without node_modules = %d %s", code, errOut)
+	}
+
+	if _, err := exec.LookPath(npm()); err != nil {
+		t.Log("npm not found: skipping npm install and vite build")
+	} else {
+		install := exec.CommandContext(t.Context(), npm(), "install", "--no-audit", "--no-fund")
+		install.Dir = project
+
+		if out, err := install.CombinedOutput(); err != nil {
+			t.Fatalf("npm install: %v\n%s", err, out)
+		}
+
+		if code, out, errOut := vukem(t, project, "build"); code != 0 {
+			t.Fatalf("vukem build = %d\n%s%s", code, out, errOut)
+		}
+
+		manifest := read(t, project, filepath.Join("resources", "public", "build", ".vite", "manifest.json"))
+		if !strings.Contains(manifest, `"resources/css/app.css"`) ||
+			!strings.Contains(manifest, `"resources/js/app.ts"`) {
+			t.Errorf("manifest = %s", manifest)
+		}
 	}
 
 	code, out, errOut = vukem(t, project, "route:list")
