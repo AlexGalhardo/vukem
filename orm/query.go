@@ -116,6 +116,12 @@ func (q Query[T]) where(or bool, colName string, args []any) Query[T] {
 		}
 
 		op, val = strings.ToUpper(s), args[1]
+
+		// MySQL has no ILIKE; its default collations already compare
+		// case-insensitively.
+		if op == "ILIKE" && q.ex != nil && q.ex.Dialect().Name() == "mysql" {
+			op = "LIKE"
+		}
 	default:
 		return q.fail(fmt.Errorf("orm: Where(%q) needs 1 or 2 arguments", colName))
 	}
@@ -366,8 +372,13 @@ func (q Query[T]) selectSQL(cols string) (string, []any) {
 	}
 
 	if q.offset > 0 {
-		if q.limit < 0 && q.ex.Dialect().Name() == "sqlite" {
-			b.WriteString(" LIMIT -1") // SQLite needs a LIMIT before OFFSET
+		if q.limit < 0 {
+			switch q.ex.Dialect().Name() {
+			case "sqlite":
+				b.WriteString(" LIMIT -1") // SQLite needs a LIMIT before OFFSET
+			case "mysql":
+				b.WriteString(" LIMIT 18446744073709551615") // MySQL too, documented as the max
+			}
 		}
 
 		b.WriteString(" OFFSET " + strconv.Itoa(q.offset))

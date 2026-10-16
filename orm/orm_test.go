@@ -590,6 +590,94 @@ func TestPostgresPlaceholders(t *testing.T) {
 	}
 }
 
+func TestMySQLSQL(t *testing.T) {
+	t.Parallel()
+
+	ex := fakeEx{database.MySQL}
+	tests := []struct {
+		name string
+		q    Query[User]
+		want string
+	}{
+		{
+			"placeholders and backticks",
+			QueryOf[User](ex).Where("name", "a").WhereIn("id", 1, 2).Limit(5).Offset(10),
+			"SELECT `id`, `created_at`, `updated_at`, `name`, `email`, `age`, `active`, `settings` FROM `users` " +
+				"WHERE `name` = ? AND `id` IN (?, ?) LIMIT 5 OFFSET 10",
+		},
+		{
+			"offset needs a limit",
+			QueryOf[User](ex).Select("id").Offset(3),
+			"SELECT `id` FROM `users` LIMIT 18446744073709551615 OFFSET 3",
+		},
+		{
+			"ilike becomes like",
+			QueryOf[User](ex).Select("id").Where("name", "ilike", "%a%"),
+			"SELECT `id` FROM `users` WHERE `name` LIKE ?",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, _, err := tt.q.SQL()
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Fatalf("SQL() mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestMySQLCreateUsesLastInsertID(t *testing.T) {
+	t.Parallel()
+
+	ex := &lastIDEx{id: 42}
+
+	u := User{Name: "Ana"}
+	if err := Create(t.Context(), ex, &u); err != nil {
+		t.Fatal(err)
+	}
+
+	if u.ID != 42 || strings.Contains(ex.query, "RETURNING") {
+		t.Fatalf("Create = id %d, query %q, want id 42 without RETURNING", u.ID, ex.query)
+	}
+
+	dup := &lastIDEx{err: errors.New("Error 1062 (23000): Duplicate entry 'Ana' for key 'users.name'")}
+	if err := Create(t.Context(), dup, &User{Name: "Ana"}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("duplicate = %v, want ErrConflict", err)
+	}
+}
+
+// lastIDEx is a MySQL executor whose inserts return a fixed id.
+type lastIDEx struct {
+	fakeEx
+
+	id    int64
+	err   error
+	query string
+}
+
+func (e *lastIDEx) Dialect() database.Dialect { return database.MySQL }
+
+func (e *lastIDEx) ExecContext(_ context.Context, q string, _ ...any) (sql.Result, error) {
+	e.query = q
+	if e.err != nil {
+		return nil, e.err
+	}
+
+	return driverResult(e.id), nil
+}
+
+type driverResult int64
+
+func (r driverResult) LastInsertId() (int64, error) { return int64(r), nil }
+func (driverResult) RowsAffected() (int64, error)   { return 1, nil }
+
 type fakeEx struct{ d database.Dialect }
 
 func (f fakeEx) Dialect() database.Dialect { return f.d }

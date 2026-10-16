@@ -105,16 +105,47 @@ func Create[T any](ctx context.Context, ex database.Executor, model *T) error {
 
 	pk := rv.FieldByIndex(m.byColumn[m.pk].index)
 
-	if m.autoID && pk.IsZero() {
+	switch {
+	case m.autoID && pk.IsZero() && ex.Dialect().Name() == "mysql":
+		// MySQL 8 has no RETURNING; the generated id comes back with the result.
+		if err := insertLastID(ctx, ex, q, args, pk); err != nil {
+			return fmt.Errorf("orm: insert %s: %w", m.table, err)
+		}
+	case m.autoID && pk.IsZero():
 		q += " RETURNING " + ex.Dialect().Quote(m.pk)
 		if err := ex.QueryRowContext(ctx, renumber(q, ex.Dialect()), args...).Scan(pk.Addr().Interface()); err != nil {
 			return fmt.Errorf("orm: insert %s: %w", m.table, mapError(err))
 		}
-	} else if _, err := ex.ExecContext(ctx, renumber(q, ex.Dialect()), args...); err != nil {
-		return fmt.Errorf("orm: insert %s: %w", m.table, mapError(err))
+	default:
+		if _, err := ex.ExecContext(ctx, renumber(q, ex.Dialect()), args...); err != nil {
+			return fmt.Errorf("orm: insert %s: %w", m.table, mapError(err))
+		}
 	}
 
 	return hook(ctx, model, AfterCreater.AfterCreate)
+}
+
+func insertLastID(ctx context.Context, ex database.Executor, q string, args []any, pk reflect.Value) error {
+	res, err := ex.ExecContext(ctx, q, args...)
+	if err != nil {
+		return mapError(err)
+	}
+
+	id, err := res.LastInsertId()
+	if err != nil {
+		return err
+	}
+
+	switch {
+	case pk.CanInt():
+		pk.SetInt(id)
+	case pk.CanUint():
+		pk.SetUint(uint64(id)) //nolint:gosec // G115: AUTO_INCREMENT ids are positive
+	default:
+		return fmt.Errorf("auto-increment key of kind %s", pk.Kind())
+	}
+
+	return nil
 }
 
 // Update writes every column of model (except the primary key and
@@ -358,7 +389,7 @@ func (*conflictError) Is(target error) bool { _, ok := target.(*conflictError); 
 func mapError(err error) error {
 	msg := strings.ToLower(err.Error())
 	if strings.Contains(msg, "unique constraint") || strings.Contains(msg, "duplicate key") ||
-		strings.Contains(msg, "constraint failed: unique") {
+		strings.Contains(msg, "constraint failed: unique") || strings.Contains(msg, "duplicate entry") {
 		return &conflictError{cause: err}
 	}
 
