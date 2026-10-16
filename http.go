@@ -15,6 +15,7 @@ import (
 	"github.com/AlexGalhardo/vukem/config"
 	"github.com/AlexGalhardo/vukem/csrf"
 	"github.com/AlexGalhardo/vukem/database"
+	"github.com/AlexGalhardo/vukem/i18n"
 	"github.com/AlexGalhardo/vukem/middleware"
 	"github.com/AlexGalhardo/vukem/router"
 	"github.com/AlexGalhardo/vukem/session"
@@ -197,7 +198,8 @@ func secureHeadersConfig(app *App) middleware.SecureHeadersConfig {
 // DefaultMiddleware installs Vukem's recommended stacks on r:
 //   - server: Recover, RequestID, Logger, SecureHeaders, MethodOverride;
 //   - router: BodyLimit(10 MiB), sessions, CSRF (CrossOriginProtection,
-//     trusted origins from CSRF_TRUSTED_ORIGINS).
+//     trusted origins from CSRF_TRUSTED_ORIGINS), and the i18n locale
+//     resolver when WithTranslations was given.
 //
 // It returns configuration errors (insecure production cookies, bad
 // origins) so they fail at boot. Starters call it from bootstrap.
@@ -229,6 +231,10 @@ func DefaultMiddleware(app *App, r *router.Router) error {
 	}
 
 	r.Use(middleware.BodyLimit(web.DefaultMaxBody), sessions.Middleware(), csrfMW)
+
+	if app.I18n != nil {
+		r.Use(i18n.Middleware(app.I18n, i18n.MiddlewareConfig{}))
+	}
 
 	return nil
 }

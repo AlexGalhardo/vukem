@@ -18,6 +18,7 @@ import (
 	"github.com/AlexGalhardo/vukem/crypt"
 	"github.com/AlexGalhardo/vukem/database"
 	"github.com/AlexGalhardo/vukem/events"
+	"github.com/AlexGalhardo/vukem/i18n"
 	"github.com/AlexGalhardo/vukem/inertia"
 	"github.com/AlexGalhardo/vukem/logging/telegram"
 	"github.com/AlexGalhardo/vukem/mail"
@@ -97,6 +98,9 @@ type App struct {
 	// Inertia is the Inertia adapter when WithInertia was given (nil
 	// otherwise).
 	Inertia *inertia.Inertia
+	// I18n holds the translations when WithTranslations was given (nil
+	// otherwise); DefaultMiddleware then resolves the request locale.
+	I18n *i18n.Bundle
 
 	providers []Provider
 	runners   []namedRunner
@@ -167,6 +171,7 @@ type options struct {
 	views         fs.FS
 	vite          fs.FS
 	inertia       *inertia.Config
+	lang          fs.FS
 	now           func() time.Time
 	migrations    []schema.Migration
 	seeders       []Seeder
@@ -209,6 +214,14 @@ func WithInertia(cfg inertia.Config) Option {
 // "hot" file is honoured only outside production.
 func WithVite(fsys fs.FS) Option {
 	return func(o *options) error { o.vite = fsys; return nil }
+}
+
+// WithTranslations loads the JSON catalogs at the root of fsys
+// (os.DirFS("resources/lang") or an embed.FS) into App.I18n, with
+// APP_LOCALE (default "en") as the fallback locale. Views get the "t" and
+// "locale" functions, and DefaultMiddleware installs i18n.Middleware.
+func WithTranslations(fsys fs.FS) Option {
+	return func(o *options) error { o.lang = fsys; return nil }
 }
 
 // WithClock sets the clock used by sessions and other time-based features
@@ -407,6 +420,12 @@ func New(opts ...Option) (*App, error) {
 		}
 	}
 
+	if o.lang != nil {
+		if app.I18n, err = i18n.Load(o.lang, i18n.Options{Default: app.Source.Get("APP_LOCALE")}); err != nil {
+			return nil, err
+		}
+	}
+
 	if o.inertia != nil {
 		icfg := *o.inertia
 		if icfg.Version == nil && app.Vite != nil {
@@ -426,7 +445,7 @@ func New(opts ...Option) (*App, error) {
 
 	if o.views != nil {
 		engine, err := view.New(view.Config{
-			FS: o.views, Reload: !cfg.IsProduction(), URLs: app.Router, Vite: app.Vite,
+			FS: o.views, Reload: !cfg.IsProduction(), URLs: app.Router, Vite: app.Vite, I18n: app.I18n,
 		})
 		if err != nil {
 			return nil, err
