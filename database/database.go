@@ -110,6 +110,7 @@ type DB struct {
 	reader  *sql.DB
 	log     *slog.Logger
 	enc     Encrypter
+	obs     QueryObserver
 }
 
 // Encrypter seals and opens column values for orm.Encrypted;
@@ -139,6 +140,7 @@ func Open(ctx context.Context, rawURL string, opts ...Option) (*DB, error) {
 	}
 
 	db.enc = o.enc
+	db.obs = o.obs
 
 	return db, nil
 }
@@ -163,6 +165,7 @@ type openOptions struct {
 	cfg     Config
 	drivers []Driver
 	enc     Encrypter
+	obs     QueryObserver
 }
 
 // WithEncrypter makes orm.Encrypted columns readable and writable through
@@ -322,22 +325,31 @@ func (db *DB) SQL() *sql.DB { return db.writer }
 
 // ExecContext runs a statement on the writer pool.
 func (db *DB) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
-	return db.writer.ExecContext(ctx, query, args...)
+	if db.obs == nil {
+		return db.writer.ExecContext(ctx, query, args...)
+	}
+
+	start := time.Now()
+	res, err := db.writer.ExecContext(ctx, query, args...)
+	db.obs.ObserveQuery(ctx, Query{SQL: query, Args: args, Duration: time.Since(start), Err: err})
+
+	return res, err
 }
 
 // QueryContext runs a query on the reader pool.
 func (db *DB) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
-	return db.reader.QueryContext(ctx, query, args...)
+	return observeRows(ctx, db.obs, db.reader.QueryContext, query, args)
 }
 
 // QueryRowContext runs a single-row query on the reader pool, except for
 // statements with RETURNING, which write and go to the writer pool.
 func (db *DB) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
+	pool := db.reader
 	if strings.Contains(strings.ToUpper(query), "RETURNING") {
-		return db.writer.QueryRowContext(ctx, query, args...)
+		pool = db.writer
 	}
 
-	return db.reader.QueryRowContext(ctx, query, args...)
+	return observeRow(ctx, db.obs, pool.QueryRowContext, query, args)
 }
 
 // Ping checks connectivity (used by health checks).
@@ -367,6 +379,7 @@ type Tx struct {
 	tx      *sql.Tx
 	dialect Dialect
 	enc     Encrypter
+	obs     QueryObserver
 }
 
 // Encrypter returns the encrypter of the DB that started the transaction.
@@ -377,17 +390,25 @@ func (tx *Tx) Dialect() Dialect { return tx.dialect }
 
 // ExecContext implements Executor.
 func (tx *Tx) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
-	return tx.tx.ExecContext(ctx, query, args...)
+	if tx.obs == nil {
+		return tx.tx.ExecContext(ctx, query, args...)
+	}
+
+	start := time.Now()
+	res, err := tx.tx.ExecContext(ctx, query, args...)
+	tx.obs.ObserveQuery(ctx, Query{SQL: query, Args: args, Duration: time.Since(start), Err: err})
+
+	return res, err
 }
 
 // QueryContext implements Executor.
 func (tx *Tx) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
-	return tx.tx.QueryContext(ctx, query, args...)
+	return observeRows(ctx, tx.obs, tx.tx.QueryContext, query, args)
 }
 
 // QueryRowContext implements Executor.
 func (tx *Tx) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
-	return tx.tx.QueryRowContext(ctx, query, args...)
+	return observeRow(ctx, tx.obs, tx.tx.QueryRowContext, query, args)
 }
 
 // SQL returns the underlying *sql.Tx.
@@ -402,7 +423,7 @@ func (db *DB) Tx(ctx context.Context, fn func(tx *Tx) error) (err error) {
 		return fmt.Errorf("database: begin: %w", err)
 	}
 
-	tx := &Tx{tx: sqlTx, dialect: db.dialect, enc: db.enc}
+	tx := &Tx{tx: sqlTx, dialect: db.dialect, enc: db.enc, obs: db.obs}
 
 	defer func() {
 		if p := recover(); p != nil {
