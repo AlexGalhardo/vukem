@@ -1,6 +1,6 @@
 // Package database manages SQL connections for Vukem: dialects, SQLite
 // defaults (WAL, busy timeout, foreign keys, a single-connection writer pool
-// beside a reader pool), PostgreSQL through driver modules, and
+// beside a reader pool), PostgreSQL and MySQL through driver modules, and
 // transactions that roll back on error or panic.
 package database
 
@@ -20,7 +20,7 @@ import (
 
 // Dialect describes SQL differences between databases.
 type Dialect interface {
-	// Name is "sqlite" or "postgres".
+	// Name is "sqlite", "postgres" or "mysql".
 	Name() string
 	// Placeholder returns the n-th (1-based) bind placeholder.
 	Placeholder(n int) string
@@ -40,16 +40,29 @@ func (postgresDialect) Name() string              { return "postgres" }
 func (postgresDialect) Placeholder(n int) string  { return fmt.Sprintf("$%d", n) }
 func (postgresDialect) Quote(ident string) string { return quoteIdent(ident) }
 
-// SQLite and Postgres are the built-in dialects.
+// mysqlDialect covers MySQL 8 and MariaDB 11: ? placeholders and
+// backtick-quoted identifiers.
+type mysqlDialect struct{}
+
+func (mysqlDialect) Name() string              { return "mysql" }
+func (mysqlDialect) Placeholder(int) string    { return "?" }
+func (mysqlDialect) Quote(ident string) string { return quoteWith(ident, "`") }
+
+// SQLite, Postgres and MySQL are the built-in dialects; Postgres and MySQL
+// connect through their driver modules.
 var (
 	SQLite   Dialect = sqliteDialect{}
 	Postgres Dialect = postgresDialect{}
+	MySQL    Dialect = mysqlDialect{}
 )
 
-func quoteIdent(ident string) string {
+func quoteIdent(ident string) string { return quoteWith(ident, `"`) }
+
+// quoteWith quotes each dot-separated part, doubling embedded quote chars.
+func quoteWith(ident, q string) string {
 	parts := strings.Split(ident, ".")
 	for i, p := range parts {
-		parts[i] = `"` + strings.ReplaceAll(p, `"`, `""`) + `"`
+		parts[i] = q + strings.ReplaceAll(p, q, q+q) + q
 	}
 
 	return strings.Join(parts, ".")
@@ -73,6 +86,10 @@ type Driver struct {
 	Dialect Dialect
 	// Schemes are the URL schemes the driver accepts ("postgres").
 	Schemes []string
+	// DSN, when set, turns the URL into the database/sql driver's data
+	// source name (MySQL's driver does not take URLs). Its errors must not
+	// echo the URL, which may hold a password.
+	DSN func(rawURL string) (string, error)
 }
 
 // Config tunes connection pools.
@@ -262,7 +279,16 @@ func openSQLite(ctx context.Context, rawURL string, cfg Config) (*DB, error) {
 }
 
 func openGeneric(ctx context.Context, d Driver, rawURL string, cfg Config) (*DB, error) {
-	conn, err := sql.Open(d.SQLName, rawURL)
+	dsn := rawURL
+
+	if d.DSN != nil {
+		var err error
+		if dsn, err = d.DSN(rawURL); err != nil {
+			return nil, fmt.Errorf("database: %s url: %w", d.Dialect.Name(), err)
+		}
+	}
+
+	conn, err := sql.Open(d.SQLName, dsn)
 	if err != nil {
 		return nil, fmt.Errorf("database: open %s: %w", d.Dialect.Name(), err)
 	}

@@ -194,6 +194,19 @@ func TestOpenErrorsAndDialects(t *testing.T) {
 		t.Fatal("dialect helpers")
 	}
 
+	if MySQL.Name() != "mysql" || MySQL.Placeholder(3) != "?" || MySQL.Quote("a`b.c") != "`a``b`.`c`" {
+		t.Fatal("mysql dialect helpers")
+	}
+
+	failDSN := Driver{
+		SQLName: "nope", Dialect: MySQL, Schemes: []string{"mysql"},
+		DSN: func(string) (string, error) { return "", errors.New("bad url") },
+	}
+	if _, err := Open(t.Context(), "mysql://u:secret@h/db", WithDriver(failDSN)); err == nil ||
+		!strings.Contains(err.Error(), "bad url") || strings.Contains(err.Error(), "secret") {
+		t.Fatalf("DSN error = %v", err)
+	}
+
 	if _, err := Open(t.Context(), "file:"+filepath.Join(t.TempDir(), "missing", "dir", "x.db")); err == nil {
 		t.Fatal("unreachable path accepted")
 	}
