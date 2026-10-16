@@ -48,6 +48,12 @@ type Config struct {
 	ShutdownTimeout time.Duration `env:"SHUTDOWN_TIMEOUT" default:"15s"`
 	LogLevel        string        `env:"LOG_LEVEL"        default:"info"`
 	LogFormat       string        `env:"LOG_FORMAT"`
+	// APIVersion is info.version of the OpenAPI document.
+	APIVersion string `env:"API_VERSION" default:"1.0.0"`
+	// OpenAPIPrefix keeps only routes under it in the document (e.g. /api).
+	OpenAPIPrefix string `env:"OPENAPI_PREFIX"`
+	// OpenAPIInProduction serves /openapi.json in production too.
+	OpenAPIInProduction bool `env:"OPENAPI_IN_PRODUCTION"`
 }
 
 // IsProduction reports whether APP_ENV is production.

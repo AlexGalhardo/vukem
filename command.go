@@ -149,7 +149,11 @@ func (c CommandFunc) Run(ctx context.Context, app *App, args []string) error {
 }
 
 func builtinCommands() []Command {
-	return slices.Concat([]Command{routeListCommand(), aboutCommand()}, migrateCommands(), seedCommands())
+	return slices.Concat(
+		[]Command{routeListCommand(), aboutCommand(), openAPIExportCommand()},
+		migrateCommands(),
+		seedCommands(),
+	)
 }
 
 func routeListCommand() Command {
@@ -180,6 +184,24 @@ func routeListCommand() Command {
 			}
 
 			return tw.Flush()
+		},
+	}
+}
+
+func openAPIExportCommand() Command {
+	return CommandFunc{
+		CommandName: "openapi:export",
+		Desc:        "Print the OpenAPI 3.1 document (vukem openapi:export > openapi.json)",
+		Fn: func(_ context.Context, app *App, _ []string) error {
+			doc, err := app.OpenAPI()
+			if err != nil {
+				return err
+			}
+
+			enc := json.NewEncoder(app.stdout)
+			enc.SetIndent("", "  ")
+
+			return enc.Encode(doc)
 		},
 	}
 }

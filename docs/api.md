@@ -214,7 +214,9 @@ api.Register(g, "POST /products", api.Op{
 - Output: JSON with `Op.Status`, or 201 for POST, 204 when the output type is `struct{}`, 200 otherwise. Errors returned by the handler go through the normal problem+json path.
 - Each typed route carries an `api.Operation` (`router.RouteInfo.Doc`) with its method, full path, params and input/output types for the generators below.
 - Request schema from the input struct (`json` + `validate` tags), response schema from the output type, errors from the problem catalogue.
-- `GET /openapi.json` (configurable, off in production by default) and `vukem openapi:export > openapi.json`.
+- `vukem.ServeOpenAPI(app, r, "/openapi.json")` serves the document (not registered in production unless `OPENAPI_IN_PRODUCTION=true`); `vukem openapi:export > openapi.json` prints it. Title is `APP_NAME`, version `API_VERSION`, and `OPENAPI_PREFIX=/api` keeps only API routes.
+- Schemas come from `json` tags (names, `-`) and `validate` rules (`required`, `min`/`max`/`len`, `email`, `url`, `uuid`, `oneof`, `regex`, `positive`, `unique`, `dive`...); a `doc:"..."` tag becomes the description. Named structs become `components/schemas`, `orm` relations and `NullTime` map to their JSON shape, errors reference the shared `Problem` and `ValidationError` responses, and `Op.Security` names (`bearer` is predefined) become security requirements.
+- `openapi.Generate(routes, openapi.Info{...})` builds the document directly; `.Doc(openapi.Skip{})` hides a route. CI validates a golden document with Redocly.
 - Plain `HandlerFunc` routes still work; they appear in the document with a generic schema unless described with `api.Doc(...)`.
 
 ## Testing
