@@ -174,6 +174,29 @@ func TestServeStopsOnShutdown(t *testing.T) {
 	}
 }
 
+func TestShutdownSignal(t *testing.T) {
+	t.Parallel()
+
+	if got := sse.ShutdownSignal(t.Context()); got != nil {
+		t.Errorf("ShutdownSignal(no signal) = %v, want nil", got)
+	}
+
+	stop := make(chan struct{})
+	got := sse.ShutdownSignal(sse.WithShutdown(t.Context(), stop))
+
+	if got == nil {
+		t.Fatal("ShutdownSignal(WithShutdown) = nil, want the stop channel")
+	}
+
+	close(stop)
+
+	select {
+	case <-got:
+	default:
+		t.Error("ShutdownSignal channel still open after stop was closed")
+	}
+}
+
 type memBroker struct {
 	mu   sync.Mutex
 	subs map[string][]chan []byte

@@ -9,5 +9,6 @@ use (
 	./drivers/redis
 	./drivers/otel
 	./drivers/s3
+	./drivers/websocket
 	./contrib/stripe
 )

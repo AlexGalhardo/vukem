@@ -94,6 +94,34 @@ Invalid input from a classic form post → the validation hook flashes the error
 
 `sse.NewHub(broker)` fans events out by topic: `hub.Publish(ctx, "posts", ev)` and `hub.Stream(s, "posts")`. With a nil broker it works within one process; pass the `drivers/redis` client to reach every instance. Slow subscribers that fall 64 events behind are dropped (the browser reconnects). Pairs with htmx `hx-sse`.
 
+### WebSockets
+
+`go get github.com/AlexGalhardo/vukem/drivers/websocket` (on `github.com/coder/websocket` v1.8). Core cannot import a driver, so the planned `c.WebSocket(fn)` is a function taking the context:
+
+```go
+r.Get("/chat", func(c *web.Ctx) error {
+	return websocket.Handle(c, func(conn *websocket.Conn) error {
+		for {
+			var msg Message
+			if err := conn.ReadJSON(conn.Context(), &msg); err != nil {
+				return nil // client left or the app is shutting down
+			}
+			if err := conn.WriteJSON(conn.Context(), reply(msg)); err != nil {
+				return err
+			}
+		}
+	})
+})
+r.Get("/feed", websocket.Handler(feed, websocket.AllowedOrigins("app.example.com")))
+```
+
+- `websocket.Handle(c, fn, opts...)`, `websocket.Handler(fn, opts...)` (a `web.HandlerFunc`) and `websocket.Serve(w, r, fn, opts...)` for plain handlers. A refused upgrade returns an HTTP error whose status was already sent.
+- `Conn`: `ReadText`, `ReadJSON`, `WriteText`, `WriteJSON` (each takes a context), `Close(code, reason)`, `CloseRead(ctx)` for write-only handlers, `Subprotocol()`, `Unwrap()` for binary or streaming I/O. `Conn.Context()` ends when the client goes away, the peer stops answering pings, `fn` returns or the app shuts down. One reader and one writer may run at the same time.
+- Origin: same-origin only by default; `AllowedOrigins(patterns...)` (`path.Match` on the host, or on `scheme://host` when the pattern has `://`) opens specific origins. `"*"` or a malformed pattern refuses every upgrade; `InsecureSkipOriginCheck()` is the only way to accept any origin. Requests without an `Origin` header (non-browser clients) are accepted.
+- Limits: `ReadLimit(n)` (default 32 KiB; larger messages close with 1009), `WriteTimeout(d)` per message (default 10s), `PingInterval(d)` / `PingTimeout(d)` (30s / 10s; zero interval disables). Pongs only arrive while something reads, so handlers that only write call `conn.CloseRead(ctx)`.
+- Closing: `fn` returning nil closes with 1000, an error with 1011. When the app shuts down, the same signal that ends SSE streams (`sse.ShutdownSignal`) closes every socket with 1001 "going away", so shutdown never waits on open sockets. The server's read/write timeouts are lifted for the socket, which enforces its own.
+- `Subprotocols(...)` negotiates subprotocols. Fan-out across instances arrives with the `broadcast` package (B.6.2).
+
 ## Vite
 
 Every starter ships Vite 8 + Tailwind CSS v4 (`@tailwindcss/vite`) preconfigured (decision F2): `package.json`, `vite.config.ts`, `resources/css/app.css` (`@import "tailwindcss"` plus the starter styles in `@layer base`), `resources/js/app.ts` and the hot-file plugin `resources/vite/vukem.js`, which builds into `resources/public/build` (embedded with `//go:embed all:public`). `vukem new` runs `npm install` when npm is available (`--no-install` skips it); `vukem build` refuses to run without `node_modules`. Outside production the CSP allows the running dev server (`SecureHeadersConfig.DevServer`), and the layout carries `<meta property="csp-nonce">` so Vite's injected styles get the nonce. Without a dev server or a build, `{{vite}}` renders an HTML comment in development (tests need no Node) and fails in production.

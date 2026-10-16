@@ -63,6 +63,15 @@ func WithShutdown(ctx context.Context, stop <-chan struct{}) context.Context {
 	return context.WithValue(ctx, shutdownKey{}, stop)
 }
 
+// ShutdownSignal returns the channel installed by WithShutdown, or nil when
+// ctx has none. Other long-lived connections (the WebSocket driver) end on
+// the same signal.
+func ShutdownSignal(ctx context.Context) <-chan struct{} {
+	stop, _ := ctx.Value(shutdownKey{}).(<-chan struct{})
+
+	return stop
+}
+
 // Serve streams events to the client of r with fn until fn returns, the
 // client goes away or the server shuts down (Stream.Context is then done).
 func Serve(w http.ResponseWriter, r *http.Request, fn func(*Stream) error, opts ...Option) error {
@@ -77,7 +86,7 @@ func Serve(w http.ResponseWriter, r *http.Request, fn func(*Stream) error, opts 
 	var wg sync.WaitGroup
 	defer wg.Wait() // no write may happen after the handler returns
 
-	if stop, ok := r.Context().Value(shutdownKey{}).(<-chan struct{}); ok {
+	if stop := ShutdownSignal(r.Context()); stop != nil {
 		wg.Go(func() {
 			select {
 			case <-stop:

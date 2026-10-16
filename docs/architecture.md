@@ -51,7 +51,8 @@ vukem/                            module github.com/AlexGalhardo/vukem
 │   ├── redis/                    module …/drivers/redis (go-redis)
 │   ├── mongo/                    module …/drivers/mongo (mongo-driver v2)
 │   ├── otel/                     module …/drivers/otel (OpenTelemetry tracing)
-│   └── s3/                       module …/drivers/s3 (stdlib SigV4 client, no AWS SDK)
+│   ├── s3/                       module …/drivers/s3 (stdlib SigV4 client, no AWS SDK)
+│   └── websocket/                module …/drivers/websocket (coder/websocket)
 ├── contrib/
 │   └── stripe/                   module …/contrib/stripe (Stripe API + webhooks, stdlib)
 ├── starters/                     app skeletons embedded by `vukem new`
@@ -81,6 +82,7 @@ Package names are short, lowercase, singular and never `util`/`common`/`helpers`
 | `github.com/redis/go-redis/v9` | `drivers/redis` | Redis |
 | `go.mongodb.org/mongo-driver/v2` | `drivers/mongo` | MongoDB |
 | `go.opentelemetry.io/otel` (+ `sdk`, `exporters/otlp/otlptrace/otlptracehttp`) | `drivers/otel` | Tracing |
+| `github.com/coder/websocket` | `drivers/websocket` | WebSockets |
 
 `drivers/s3` adds no dependency: it signs requests with its own Signature Version 4 implementation, checked against the AWS test suite.
 
