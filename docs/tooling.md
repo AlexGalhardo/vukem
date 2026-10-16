@@ -42,7 +42,7 @@ gopls: enable `"formatting.gofumpt": true` so editor and CI agree.
 | --- | --- |
 | `pre-commit` | `golangci-lint fmt` on staged `.go` (re-staged), `golangci-lint run --new-from-rev=HEAD`, `go mod tidy -diff`, `markdownlint-cli2` on staged `.md` |
 | `commit-msg` | `go run ./internal/tools/commitlint {1}` |
-| `pre-push` | `go test -count=1 ./...`, `go vet ./...`, `govulncheck ./...` |
+| `pre-push` | `go vet ./...` (tests, race, govulncheck and the OS matrix run in GitHub Actions) |
 
 Install with `task hooks` (`lefthook install`). Personal overrides go in `lefthook-local.yml` (git-ignored).
 
@@ -101,7 +101,7 @@ Spec: <https://www.conventionalcommits.org/en/v1.0.0/>. Enforced by the in-repo 
 | BETA | `v1.0.0-beta.N` | `v1.0.0-rc.N` → `v1.0.0` |
 
 1. Push the group's commits to `main`.
-2. `task release -- vX.Y.Z` — runs `task ci:full` (the same pipeline as GitHub Actions, locally, so a release never waits for CI), then `internal/tools/release -push`:
+2. `go run ./internal/tools/release -push vX.Y.Z` (or `task release -- vX.Y.Z`, which runs `task ci:full` first) once GitHub Actions is green for the pushed commits:
    - requires a clean tree on `main`;
    - generates the version's section with git-cliff and inserts it below `[Unreleased]` in `CHANGELOG.md` (Keep a Changelog 1.1.0; released sections are never edited);
    - commits `chore(release): vX.Y.Z`, creates an annotated tag, pushes `main` and the tag;
@@ -139,7 +139,7 @@ Workflows declare `permissions: contents: read` at the top and pin third-party a
 | `task vuln` | govulncheck |
 | `task changelog` | git-cliff |
 | `task ci` | fast local gate: lint, vet, unit tests |
-| `task ci:full` | full pipeline locally (Windows tests, Linux `-race` tests in Docker, integration via Docker services, vuln, coverage) — **required before every release**; GitHub Actions runs the same jobs on every push and PR |
+| `task ci:full` | full pipeline locally (Windows tests, Linux `-race` tests in Docker, integration via Docker services, vuln, coverage) — optional locally; GitHub Actions runs the same jobs on every push and PR and is the gate before a release |
 | `task services:up` / `services:down` | Postgres, Redis, Mongo via `compose.yaml` |
 
 ## Agent configuration

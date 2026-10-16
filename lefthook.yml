@@ -28,12 +28,10 @@ commit-msg:
     - name: conventional commit
       run: go run ./internal/tools/commitlint {1}
 
+# Tests, the race detector, govulncheck and the OS matrix run in GitHub
+# Actions on every push; run them locally with `task ci:full` when needed.
 pre-push:
   parallel: true
   jobs:
-    - name: go test
-      run: go test -count=1 ./...
     - name: go vet
       run: go vet ./...
-    - name: govulncheck
-      run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
