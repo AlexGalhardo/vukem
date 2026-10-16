@@ -51,7 +51,7 @@ Conflicting patterns panic at boot (ServeMux behaviour) and the router wraps the
 
 HTML forms can use `_method` (hidden field) for `PUT/PATCH/DELETE`; the method-override middleware applies only to `POST` with form content types.
 
-## `*Ctx`
+## `*web.Ctx`
 
 ```go
 type HandlerFunc func(c *Ctx) error
@@ -67,7 +67,7 @@ type HandlerFunc func(c *Ctx) error
 | Auth (ALPHA) | `User()`, `Auth()`, `Authorize(ability, subject)` |
 | HTMX | `HTMX()` returns request/response helpers ([frontend.md](frontend.md#htmx)) |
 
-`*Ctx` wraps `http.ResponseWriter` and `*http.Request`; `c.Writer()` and `c.Request()` give raw access. A `*Ctx` must not escape its handler goroutine.
+`*web.Ctx` wraps `http.ResponseWriter` and `*http.Request`; `c.Writer()` and `c.Request()` give raw access. A `*web.Ctx` must not escape its handler goroutine.
 
 Adapters: `router.Adapt(HandlerFunc) http.Handler` and `router.Wrap(http.Handler) HandlerFunc`.
 
@@ -85,36 +85,11 @@ Signature: `func(http.Handler) http.Handler`. Three stacks:
 
 ## Validation
 
-Own validator (`validate/`), struct-tag based, tags parsed and checked **at boot** (unknown rule or bad argument = boot error).
+Validation is done by the `z` package — Zod-style typed schemas. Full reference: [validation.md](validation.md).
 
 ```go
-// app/requests/store_post.go
-type StorePost struct {
-	Title  string   `form:"title"  json:"title"  validate:"required,max=255"`
-	Body   string   `form:"body"   json:"body"   validate:"required"`
-	Tags   []string `form:"tags"   json:"tags"   validate:"max=5,dive,alphanum"`
-	Status string   `form:"status" json:"status" validate:"oneof=draft published"`
-}
-
-// Optional hooks
-func (r *StorePost) Authorize(c *ctx.Ctx) error         { return c.Authorize("create", models.Post{}) }
-func (r *StorePost) Prepare()                           { r.Title = strings.TrimSpace(r.Title) }
-func (r *StorePost) Validate(c *ctx.Ctx, v *validate.Errors) { /* cross-field rules */ }
+in, err := web.Parse(c, requests.StorePostSchema) // typed requests.StorePost or 422
 ```
-
-```go
-func (p *PostController) Store(c *ctx.Ctx) error {
-	in, err := ctx.Bind[requests.StorePost](c)
-	if err != nil {
-		return err // *errs.ValidationError → handled centrally
-	}
-	// ...
-}
-```
-
-Prototype rule set: `required`, `omitempty`, `min`, `max`, `len`, `email`, `url`, `uuid`, `alpha`, `alphanum`, `numeric`, `oneof`, `regex`, `eqfield`, `confirmed`, `dive`, `before`/`after` (time). ALPHA adds DB rules `unique=table.column`, `exists=table.column` (need a `*database.Manager` in the validation context). Custom rules: `validate.Register("slug", fn)`.
-
-Messages are per-rule templates (`"The {field} must be at most {max} characters."`), overridable per field via an optional `Messages() map[string]string`; i18n in BETA.
 
 Failure behaviour (centralised in the error handler):
 

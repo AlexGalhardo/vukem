@@ -90,7 +90,7 @@ Runs in-process as a runner (`schedule:work`) or via a single cron entry calling
 ## Rate limiting
 
 ```go
-app.Limiter.Define("login", func(c *ctx.Ctx) ratelimit.Limit {
+app.Limiter.Define("login", func(c *web.Ctx) ratelimit.Limit {
 	return ratelimit.PerMinute(5).By(c.FormValue("email") + "|" + c.IP())
 })
 r.Post("/login", auth.Login).Use(ratelimit.Middleware("login"))

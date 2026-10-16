@@ -55,10 +55,10 @@ htmx **4.x** vendored at `public/js/htmx.min.js` by the starter and served by th
 ### Rendering
 
 ```go
-func (p *PostController) Index(c *ctx.Ctx) error {
+func (p *PostController) Index(c *web.Ctx) error {
 	posts, err := orm.Query[models.Post](p.db).Latest().Get(c.Context())
 	if err != nil { return err }
-	return c.Render("posts/index", ctx.Map{"Posts": posts}, htmx.Block("post-list"))
+	return c.Render("posts/index", web.Map{"Posts": posts}, htmx.Block("post-list"))
 }
 ```
 
@@ -67,7 +67,7 @@ func (p *PostController) Index(c *ctx.Ctx) error {
 ### Response helpers
 
 ```go
-c.HTMX().Trigger("post-created", ctx.Map{"id": p.ID}).
+c.HTMX().Trigger("post-created", web.Map{"id": p.ID}).
 	PushURL(c.URLFor("posts.show", "id", p.ID)).
 	Retarget("#flash").Reswap("innerHTML")
 ```

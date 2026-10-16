@@ -30,6 +30,7 @@ Task IDs: `<phase>.<group>.<task>` (e.g. `P.3.2`). Reference them in commit bodi
 | Architecture | [docs/architecture.md](docs/architecture.md) |
 | Configuration | [docs/configuration.md](docs/configuration.md) |
 | HTTP (routing, ctx, middleware, validation, sessions, errors) | [docs/http.md](docs/http.md) |
+| Typed schemas `z` (validation in and out) | [docs/validation.md](docs/validation.md) |
 | REST APIs | [docs/api.md](docs/api.md) |
 | Security (OWASP Top 10:2025 defaults) | [docs/security.md](docs/security.md) |
 | Databases | [docs/database.md](docs/database.md) |
@@ -166,18 +167,18 @@ Applies to **every** task:
 - [ ] **P.4.10** Security event logging (`event` attribute: `csrf.rejected`, `session.invalid`, `ratelimit.exceeded`…) and redaction of `Authorization`/`Cookie` headers and secrets.
   → verify: log capture tests assert events present and secrets absent.
 
-### P.5 Validation — needs: P.3
+### P.5 Typed schemas `z` (validation) — needs: P.3
 
-- [ ] **P.5.1** Tag parser + boot-time schema compilation (unknown rule = error).
-  → verify: tests; `FuzzTag`.
-- [ ] **P.5.2** Rule set (required, omitempty, min, max, len, email, url, uuid, alpha, alphanum, numeric, oneof, regex, eqfield, confirmed, dive, before, after).
-  → verify: table tests per rule (pass/fail/edge).
-- [ ] **P.5.3** Custom rule registry, messages with placeholders, per-field overrides.
-  → verify: tests.
-- [ ] **P.5.4** Form-request hooks (`Prepare`, `Authorize`, `Validate`) wired into `Bind[T]`.
-  → verify: tests for each hook order.
-- [ ] **P.5.5** Error handler integration (303 + flash, 422 for HTMX, problem+json for API).
-  → verify: three end-to-end tests.
+- [ ] **P.5.1** Core: `Schema[T]` interface, `Issues`/`Issue` (path, code, message, params), immutable modifiers (`Optional`, `Nullable`, `Default`, `Refine`, `Transform`, `Message`, `Describe`).
+  → verify: unit tests for each modifier; schemas safe for concurrent use (`-race`).
+- [ ] **P.5.2** Primitives: `String` (+ checks/transforms), integer family, `Float`, `Bool`, `Time`, `Enum`, with lossless coercion from strings.
+  → verify: table tests per check (pass/fail/edge) and per coercion.
+- [ ] **P.5.3** Composites: `Slice`, `Map`, `Struct[T](Shape)` with field mapping by `json`/`form` tag, type compatibility checked at construction, `Strict()`, nested paths in issues.
+  → verify: mismatched shape panics at construction; nested issue paths `a.b.2.c`.
+- [ ] **P.5.4** `FromTags[T]`, `Register[T]`/`For[T]` registry, `FieldError` helper, `ParseJSON(io.Reader, schema)`.
+  → verify: tag schemas equal hand-written ones on a shared test corpus; `FuzzParse` on JSON input.
+- [ ] **P.5.5** Web integration: `web.Parse`, `web.Bind[T]`, `ParseQuery`, `ParseParams` (form arrays/brackets), `JSONWith` output checks; issues → `*errs.ValidationError` → 303+flash / 422 / problem+json.
+  → verify: three end-to-end tests (form, HTMX, JSON) + output mismatch test.
 
 ### P.6 Sessions & CSRF — needs: P.1, P.3
 
@@ -428,6 +429,8 @@ Applies to **every** task:
   → verify: generated document validates against the OpenAPI 3.1 JSON Schema; golden test.
 - [ ] **B.0.3** `AssertMatchesOpenAPI()` test helper.
   → verify: a mismatching response fails the assertion.
+- [ ] **B.0.5** `z` exports: `JSONSchema()` and `lumek codegen:types` (TypeScript types + optional Zod schemas).
+  → verify: golden JSON Schema/TS output; `tsc --noEmit` passes on generated types.
 - [ ] **B.0.4** `Idempotency-Key` middleware (database/Redis store).
   → verify: a duplicate POST returns the stored response.
 

@@ -17,11 +17,11 @@ How Lumek is put together: modules, packages, application lifecycle, request lif
 golang-framework/                 module github.com/AlexGalhardo/golang-framework
 ├── app.go                        package lumek: App, Provider, builder
 ├── router/                       ServeMux wrapper, groups, names, resources, URLFor
-├── ctx/                          *Ctx: request/response helpers, Bind[T], Render
+├── web/                          *web.Ctx: request/response helpers, Parse/Bind[T], Render
 ├── middleware/                   built-in middleware (recover, logger, request id, timeout, cors…)
 ├── errs/                         HTTPError, ValidationError, central handler, RFC 9457
 ├── config/                       .env loader, Secret, typed config helpers
-├── validate/                     struct-tag validator, rule registry
+├── z/                            Zod-style typed schemas: parse input, check output, JSON Schema/TS export
 ├── session/                      session manager, cookie/database/memory stores, flash
 ├── view/                         View interface, html/template engine, fragments
 ├── htmx/                         htmx v4 request/response helpers
@@ -48,7 +48,7 @@ golang-framework/                 module github.com/AlexGalhardo/golang-framewor
 └── go.work                       local development only (CI uses GOWORK=off)
 ```
 
-Package names are short, lowercase, singular and never `util`/`common`/`helpers`. `ctx` is named to avoid clashing with `context`; if it reads poorly in practice it is renamed before 1.0.
+Package names are short, lowercase, singular and never `util`/`common`/`helpers`. The request context package is named `web` (not `ctx`) so it never shadows the conventional `ctx context.Context` variable.
 
 ## Module boundaries
 
@@ -163,7 +163,7 @@ Three middleware stacks (AdonisJS model): **server**, **router**, **named**. All
 ## Concurrency and context
 
 - `context.Context` is the first parameter of every I/O function; never stored in structs.
-- Request-scoped values (user, session, request id) live in the request context under unexported keys and are exposed through typed accessors on `*Ctx`.
+- Request-scoped values (user, session, request id) live in the request context under unexported keys and are exposed through typed accessors on `*web.Ctx`.
 - Work that must outlive the request uses `context.WithoutCancel` and is tracked by the app so shutdown can drain it.
 - The `http.Server` always sets `ReadHeaderTimeout`, `ReadTimeout`, `WriteTimeout`, `IdleTimeout`.
 

@@ -45,7 +45,7 @@ func API(r *router.Router, app *lumek.App) {
 
 ## Requests
 
-- `ctx.Bind[T](c)` decodes `application/json` (rejects unknown fields by default; configurable), runs validation, and on failure returns `422` problem+json.
+- `web.Bind[T](c)` decodes `application/json` (rejects unknown fields by default; configurable), runs validation, and on failure returns `422` problem+json.
 - Body size limited per group (`api.JSONOnly(api.MaxBody(1 << 20))`); oversize → `413`.
 - `api.JSONOnly()` rejects non-JSON bodies on write methods with `415` and sets `Accept` negotiation to JSON.
 - Query helpers: `c.QueryInt`, `c.QueryBool`, `c.QueryTime`, `c.QuerySlice`.
@@ -53,7 +53,7 @@ func API(r *router.Router, app *lumek.App) {
 ## Responses
 
 ```go
-func (p *ProductController) Show(c *ctx.Ctx) error {
+func (p *ProductController) Show(c *web.Ctx) error {
 	product, err := orm.Query[models.Product](p.db).Find(c.Context(), c.ParamInt64("product"))
 	if err != nil {
 		return err // ErrNoRows → 404 problem+json
@@ -61,8 +61,8 @@ func (p *ProductController) Show(c *ctx.Ctx) error {
 	return c.JSON(http.StatusOK, resources.Product(product))
 }
 
-func (p *ProductController) Store(c *ctx.Ctx) error {
-	in, err := ctx.Bind[requests.StoreProduct](c)
+func (p *ProductController) Store(c *web.Ctx) error {
+	in, err := web.Bind[requests.StoreProduct](c)
 	if err != nil { return err }
 	product := models.Product{Name: in.Name, Price: in.Price}
 	if err := orm.Create(c.Context(), p.db, &product); err != nil { return err }
@@ -191,7 +191,7 @@ api.Register(g, "POST /products", api.Op{
 	Name:    "products.store",
 	Summary: "Create a product",
 	Tags:    []string{"products"},
-}, func(c *ctx.Ctx, in requests.StoreProduct) (resources.ProductJSON, error) { ... })
+}, func(c *web.Ctx, in requests.StoreProduct) (resources.ProductJSON, error) { ... })
 ```
 
 - Request schema from the input struct (`json` + `validate` tags), response schema from the output type, errors from the problem catalogue.

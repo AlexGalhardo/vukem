@@ -26,10 +26,10 @@ type UserProvider[U Authenticatable] interface {
 }
 
 type Guard[U Authenticatable] interface {
-	User(c *ctx.Ctx) (U, error)       // cached per request
-	Check(c *ctx.Ctx) bool
-	Login(c *ctx.Ctx, u U) error
-	Logout(c *ctx.Ctx) error
+	User(c *web.Ctx) (U, error)       // cached per request
+	Check(c *web.Ctx) bool
+	Login(c *web.Ctx, u U) error
+	Logout(c *web.Ctx) error
 }
 ```
 

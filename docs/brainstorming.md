@@ -76,7 +76,7 @@ blog/
 
 | # | Topic | Decision | Alternatives | Rationale |
 | --- | --- | --- | --- | --- |
-| H1 | Validation | **Own validator with struct tags** (`validate:"required,email,max=255"`), tags parsed & checked at boot; optional `Rules()`/`Authorize()` interfaces; generic `Bind[T](c)`; failures → 422 / redirect+flash | go-playground/validator; VineJS-style builder | No heavy dep; boot-time tag checking kills the "runtime string" problem |
+| H1 | Validation | **`z`: Zod-inspired typed schemas** (`z.String().Min(3)`, `z.Struct[T](z.Shape{...})`) that parse untrusted input into typed values and check outgoing data; struct tags compile into the same schemas; exports to JSON Schema/OpenAPI and TypeScript. See [validation.md](validation.md) | tag-only validator; go-playground/validator | Maintainer requirement (2026-10-16): strongly typed checks on all data entering and leaving the app. Supersedes the earlier tag-only decision |
 | H2 | Sessions | **Own implementation**: cookie store (AES-GCM, key via HKDF from `APP_KEY`), database, memory; Redis in driver module; flash + old input; `RenewToken` anti-fixation | alexedwards/scs | Integrates tightly with flash/validation/Inertia; small surface |
 | H3 | CSRF | `http.CrossOriginProtection` (Go 1.25) + `SameSite=Lax` cookies; HTMX token via `hx-headers:inherited` when needed | gorilla/csrf | stdlib; gorilla/csrf had a 2025 CVE |
 | H4 | Authentication | **Guard × UserProvider**; guards `session` and `access_token` (opaque, SHA-256 in DB, abilities); hasher argon2id (default) + bcrypt with `NeedsRehash`; `install:auth` generates login/register/reset/verify as user-owned code (Fortify-style actions) | JWT default for APIs | Opaque tokens are revocable and simple; JWT can be added later |

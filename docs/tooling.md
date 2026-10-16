@@ -92,7 +92,7 @@ Spec: <https://www.conventionalcommits.org/en/v1.0.0/>. Enforced by the in-repo 
 
 ## Release process
 
-1. `task release:check` — clean tree on `main`, CI green, `git cliff --bumped-version` shows the next version.
+1. `task ci:full` passes locally; `task release:check` — clean tree on `main`, `git cliff --bumped-version` shows the next version.
 2. `task release -- vX.Y.Z` — regenerates `CHANGELOG.md`, commits `chore(release): vX.Y.Z`, creates an annotated tag.
 3. Push tag → GitHub Actions `release.yml`: GoReleaser builds `lumek` CLI binaries (windows/linux/darwin × amd64/arm64), checksums, SBOM; release notes from `git cliff --latest`.
 4. Warm the proxy: `GOPROXY=https://proxy.golang.org go list -m github.com/AlexGalhardo/golang-framework@vX.Y.Z`.
@@ -125,7 +125,9 @@ Workflows declare `permissions: contents: read` at the top and pin third-party a
 | `task cover` | coverage report + gate |
 | `task vuln` | govulncheck |
 | `task changelog` | git-cliff |
-| `task ci` | everything CI runs |
+| `task ci` | fast local gate: lint, vet, unit tests |
+| `task ci:full` | full pipeline locally (Windows tests, Linux `-race` tests in Docker, integration via Docker services, vuln, coverage) — **required before every release** while GitHub Actions billing is pending |
+| `task services:up` / `services:down` | Postgres, Redis, Mongo via `compose.yaml` |
 
 ## Agent configuration
 

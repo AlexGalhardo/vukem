@@ -1,0 +1,27 @@
+# Services for integration tests: `task services:up`, then `task test:integration`.
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: lumek
+      POSTGRES_PASSWORD: lumek
+      POSTGRES_DB: lumek_test
+    ports: ["55432:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lumek"]
+      interval: 2s
+      retries: 30
+  redis:
+    image: redis:7
+    ports: ["56379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      retries: 30
+  mongo:
+    image: mongo:8
+    ports: ["57017:27017"]
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.runCommand({ ping: 1 }).ok"]
+      interval: 3s
+      retries: 30

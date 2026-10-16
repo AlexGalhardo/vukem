@@ -11,7 +11,7 @@ Lumek is a web framework built on `net/http` and the standard library for **REST
 
 - **Standard library first.** Handlers and middleware are plain `net/http`. Any `http.Handler` works.
 - **No magic.** No globals, no `init()` registration, no reflection-based dependency injection. Generators write code you own.
-- **Typed.** Config structs, generic query builder, typed jobs and events, named routes checked at boot.
+- **Typed end to end.** Zod-style schemas (`z`) parse every input into Go types and check outgoing data; generic query builder, typed jobs and events, named routes checked at boot.
 - **Batteries included, opt-in.** SQLite out of the box; PostgreSQL, Redis and MongoDB as separate driver modules, so you only download what you use.
 - **APIs first-class.** `lumek new shop --api` gives a JSON-only app with token auth, pagination, CORS, rate limiting and RFC 9457 errors.
 - **Secure by default.** CSRF, security headers, argon2id, safe SQL building, fail-closed authorization, mapped to the [OWASP Top 10:2025](docs/security.md).
@@ -29,8 +29,8 @@ func Web(r *router.Router, app *lumek.App) {
 	r.Resource("posts", posts) // posts.index, posts.store, posts.show…
 }
 
-func (p *PostController) Store(c *ctx.Ctx) error {
-	in, err := ctx.Bind[requests.StorePost](c) // validates, 422 on failure
+func (p *PostController) Store(c *web.Ctx) error {
+	in, err := web.Bind[requests.StorePost](c) // validates, 422 on failure
 	if err != nil {
 		return err
 	}
@@ -65,6 +65,7 @@ Requires Go 1.27 or newer.
 | Architecture | [docs/architecture.md](docs/architecture.md) |
 | Configuration | [docs/configuration.md](docs/configuration.md) |
 | Routing, validation, sessions, errors | [docs/http.md](docs/http.md) |
+| Typed schemas (Zod-style validation) | [docs/validation.md](docs/validation.md) |
 | REST APIs | [docs/api.md](docs/api.md) |
 | Security defaults (OWASP Top 10:2025) | [docs/security.md](docs/security.md) |
 | Databases, ORM, migrations | [docs/database.md](docs/database.md) |
