@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>GraphQL Explorer</title>
+<style nonce="{{.Nonce}}">
+:root { color-scheme: light dark; --bg: #fff; --fg: #1d1d1f; --muted: #6e6e73; --line: #d2d2d7; --accent: #e10098; }
+@media (prefers-color-scheme: dark) { :root { --bg: #161618; --fg: #f5f5f7; --muted: #a1a1a6; --line: #3a3a3c; } }
+* { box-sizing: border-box; }
+body { margin: 0; font: 14px/1.4 system-ui, sans-serif; background: var(--bg); color: var(--fg); height: 100vh; display: flex; flex-direction: column; }
+header { display: flex; gap: 12px; align-items: center; padding: 8px 16px; border-bottom: 1px solid var(--line); }
+header h1 { font-size: 15px; margin: 0; }
+header code { color: var(--muted); }
+button { font: inherit; padding: 4px 14px; border: 1px solid var(--accent); background: var(--accent); color: #fff; border-radius: 6px; cursor: pointer; }
+button.ghost { background: transparent; color: var(--accent); }
+main { flex: 1; display: grid; grid-template-columns: 1fr 1fr 18rem; min-height: 0; }
+section { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--line); }
+label, .label { font-size: 12px; color: var(--muted); padding: 6px 12px; border-bottom: 1px solid var(--line); }
+textarea, pre { flex: 1; margin: 0; padding: 12px; border: 0; resize: none; background: transparent; color: inherit; font: 13px/1.5 ui-monospace, monospace; overflow: auto; white-space: pre; }
+textarea:focus { outline: 2px solid var(--accent); outline-offset: -2px; }
+#variables { flex: 0 0 8rem; border-top: 1px solid var(--line); }
+#schema { overflow: auto; padding: 8px 12px; font: 12px/1.5 ui-monospace, monospace; }
+#schema details { margin: 2px 0; }
+#schema .doc { color: var(--muted); }
+@media (max-width: 800px) { main { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>GraphQL Explorer</h1>
+  <code id="endpoint"></code>
+  <button id="run" title="Ctrl+Enter">Run</button>
+  <button id="load" class="ghost">Schema</button>
+</header>
+<main>
+  <section>
+    <label for="query">Query</label>
+    <textarea id="query" spellcheck="false">{ __typename }</textarea>
+    <label for="variables">Variables (JSON)</label>
+    <textarea id="variables" spellcheck="false">{}</textarea>
+  </section>
+  <section>
+    <div class="label" id="result-label">Response</div>
+    <pre id="result" aria-labelledby="result-label" aria-live="polite"></pre>
+  </section>
+  <section>
+    <div class="label">Schema</div>
+    <div id="schema"></div>
+  </section>
+</main>
+<script nonce="{{.Nonce}}">
+(() => {
+  const endpoint = {{.Endpoint}};
+  const introspection = {{.Introspection}};
+  const $ = (id) => document.getElementById(id);
+  $("endpoint").textContent = endpoint;
+
+  async function send(query, variables) {
+    const res = await fetch(endpoint, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json", "Accept": "application/graphql-response+json, application/json" },
+      body: JSON.stringify({ query, variables }),
+    });
+    return res.json();
+  }
+
+  async function run() {
+    let variables = {};
+    try { variables = JSON.parse($("variables").value || "{}"); }
+    catch (e) { $("result").textContent = "Variables are not valid JSON: " + e.message; return; }
+    $("result").textContent = "…";
+    try { $("result").textContent = JSON.stringify(await send($("query").value, variables), null, 2); }
+    catch (e) { $("result").textContent = String(e); }
+  }
+
+  function typeName(t) {
+    if (t.kind === "NON_NULL") return typeName(t.ofType) + "!";
+    if (t.kind === "LIST") return "[" + typeName(t.ofType) + "]";
+    return t.name;
+  }
+
+  async function loadSchema() {
+    const box = $("schema");
+    box.textContent = "…";
+    const res = await send(introspection, {});
+    box.textContent = "";
+    if (!res.data) { box.textContent = (res.errors || []).map((e) => e.message).join("\n"); return; }
+    for (const t of res.data.__schema.types) {
+      if (t.name.startsWith("__")) continue;
+      const d = document.createElement("details");
+      const s = document.createElement("summary");
+      s.textContent = t.kind.toLowerCase() + " " + t.name;
+      d.append(s);
+      if (t.description) { const p = document.createElement("div"); p.className = "doc"; p.textContent = t.description; d.append(p); }
+      for (const f of t.fields || t.inputFields || []) {
+        const line = document.createElement("div");
+        const args = (f.args || []).map((a) => a.name + ": " + typeName(a.type)).join(", ");
+        line.textContent = "  " + f.name + (args ? "(" + args + ")" : "") + ": " + typeName(f.type);
+        d.append(line);
+      }
+      for (const v of t.enumValues || []) {
+        const line = document.createElement("div");
+        line.textContent = "  " + v.name;
+        d.append(line);
+      }
+      box.append(d);
+    }
+  }
+
+  $("run").addEventListener("click", run);
+  $("load").addEventListener("click", loadSchema);
+  document.addEventListener("keydown", (e) => { if ((e.ctrlKey || e.metaKey) && e.key === "Enter") run(); });
+})();
+</script>
+</body>
+</html>
