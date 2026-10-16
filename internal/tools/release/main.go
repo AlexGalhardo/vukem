@@ -32,6 +32,7 @@ func run(args []string, out io.Writer) error {
 	push := fs.Bool("push", false, "push the commit and tag and create the GitHub release")
 	ref := fs.String("ref", "HEAD", "commit to tag (use an older commit for retroactive releases)")
 	noCommit := fs.Bool("no-commit", false, "only update CHANGELOG.md (batch retroactive releases)")
+	publishOnly := fs.Bool("publish-only", false, "only create the GitHub release for an existing pushed tag")
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -42,6 +43,20 @@ func run(args []string, out io.Writer) error {
 	}
 
 	version := fs.Arg(0)
+
+	if *publishOnly {
+		current, err := os.ReadFile("CHANGELOG.md")
+		if err != nil {
+			return err
+		}
+
+		notes := releaseNotes(string(current), version)
+		if notes == "" {
+			return fmt.Errorf("CHANGELOG.md has no section for %s", version)
+		}
+
+		return publish(version, notes)
+	}
 
 	if branch := git("rev-parse", "--abbrev-ref", "HEAD"); branch != "main" {
 		return fmt.Errorf("releases are cut from main, not %q", branch)
@@ -108,7 +123,13 @@ func run(args []string, out io.Writer) error {
 	}
 
 	if *push {
-		return publish(version, releaseNotes(updated, version))
+		if err := publish(version, releaseNotes(updated, version)); err != nil {
+			return err
+		}
+
+		fmt.Fprintln(out, "released", version)
+
+		return nil
 	}
 
 	fmt.Fprintf(out, "tagged %s; push with: git push origin main %s\n", version, version)
