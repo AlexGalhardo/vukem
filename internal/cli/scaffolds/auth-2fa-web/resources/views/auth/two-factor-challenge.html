@@ -1,0 +1,24 @@
+{{define "title"}}Two-factor authentication{{end}}
+{{define "content"}}
+<h1>Two-factor authentication</h1>
+<p>Enter the code from your authenticator app.</p>
+<form method="post" action="{{route "two-factor.login"}}">
+	{{csrfField}}
+	<label>Code
+		<input type="text" name="code" required inputmode="numeric" pattern="[0-9 ]*" autocomplete="one-time-code" autofocus>
+	</label>
+	{{with error "code"}}<p class="error">{{.}}</p>{{end}}
+	<button type="submit">Log in</button>
+</form>
+<details{{if error "recovery_code"}} open{{end}}>
+	<summary>Lost your device? Use a recovery code</summary>
+	<form method="post" action="{{route "two-factor.login"}}">
+		{{csrfField}}
+		<label>Recovery code
+			<input type="text" name="recovery_code" required autocomplete="off">
+		</label>
+		{{with error "recovery_code"}}<p class="error">{{.}}</p>{{end}}
+		<button type="submit">Log in</button>
+	</form>
+</details>
+{{end}}

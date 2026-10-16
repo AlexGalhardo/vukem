@@ -1,0 +1,226 @@
+package tests
+
+import (
+	"net/url"
+	"regexp"
+	"testing"
+	"time"
+
+	"github.com/AlexGalhardo/vukem/auth/totp"
+	"github.com/AlexGalhardo/vukem/vukemtest"
+
+	"{{.Module}}/bootstrap"
+)
+
+var (
+	secretRe   = regexp.MustCompile(`id="two-factor-secret">([A-Z2-7]+)<`)
+	recoveryRe = regexp.MustCompile(`[A-Z2-7]{5}-[A-Z2-7]{5}`)
+)
+
+// totpCode returns the app code of secret steps periods from now.
+func totpCode(t *testing.T, secret string, steps int) string {
+	t.Helper()
+
+	code, err := totp.Code(secret, time.Now().Add(time.Duration(steps)*30*time.Second), totp.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return code
+}
+
+// wrongCode returns a code that is valid at no step near now.
+func wrongCode(t *testing.T, secret string) string {
+	t.Helper()
+
+	near := map[string]bool{}
+	for step := -1; step <= 1; step++ {
+		near[totpCode(t, secret, step)] = true
+	}
+
+	for _, code := range []string{"000000", "111111", "222222", "333333"} {
+		if !near[code] {
+			return code
+		}
+	}
+
+	t.Fatal("no wrong code")
+
+	return ""
+}
+
+// enableTwoFactor registers email on c, turns two-factor authentication
+// on and returns the secret and the recovery codes. c stays logged in.
+func enableTwoFactor(t *testing.T, app *vukemtest.App, c *vukemtest.Client, email string) (string, []string) {
+	t.Helper()
+
+	register(t, app, c, email)
+
+	c.Get("/user/two-factor").AssertOK().AssertSee("Enable two-factor authentication")
+	c.PostForm("/user/two-factor", nil).AssertRedirect("/user/two-factor")
+
+	m := secretRe.FindStringSubmatch(c.Get("/user/two-factor").AssertOK().AssertSee("<svg").Body())
+	if m == nil {
+		t.Fatal("no setup key on the page")
+	}
+
+	secret := m[1]
+
+	// The secret is encrypted at rest.
+	vukemtest.AssertDatabaseMissing(t, app, "users", map[string]any{"two_factor_secret": secret})
+
+	c.WithHeader("Referer", "/user/two-factor").
+		PostForm("/user/two-factor/confirm", url.Values{"code": {wrongCode(t, secret)}}).
+		AssertSessionHasErrors("code")
+	c.PostForm("/user/two-factor/confirm", url.Values{"code": {totpCode(t, secret, 0)}}).
+		AssertRedirect("/user/two-factor")
+
+	codes := recoveryRe.FindAllString(c.Get("/user/two-factor").AssertOK().AssertSee("is on").Body(), -1)
+	if len(codes) != 8 {
+		t.Fatalf("recovery codes = %v", codes)
+	}
+
+	c.Get("/user/two-factor").AssertDontSee(codes[0]).AssertSee("8 recovery codes left") // shown once
+
+	return secret, codes
+}
+
+func passwordStep(c *vukemtest.Client, email string, remember bool) *vukemtest.Response {
+	form := url.Values{"email": {email}, "password": {"correct horse battery"}}
+	if remember {
+		form.Set("remember", "true")
+	}
+
+	return c.PostForm("/login", form)
+}
+
+func TestTwoFactorLogin(t *testing.T) {
+	t.Parallel()
+
+	app := vukemtest.New(t, bootstrap.New)
+	owner := app.Client(t)
+	secret, _ := enableTwoFactor(t, app, owner, "ana2fa@example.com")
+
+	owner.PostForm("/user/two-factor", nil).AssertStatus(409) // a confirmed setup is not replaced
+	owner.PostForm("/logout", nil).AssertRedirect("/")
+
+	// The password alone does not log in.
+	c := app.Client(t)
+	passwordStep(c, "ana2fa@example.com", true).AssertRedirect("/two-factor-challenge")
+	c.Get("/dashboard").AssertRedirect("/login")
+	c.Get("/two-factor-challenge").AssertOK().AssertSee("authenticator app")
+
+	c.WithHeader("Referer", "/two-factor-challenge").
+		PostForm("/two-factor-challenge", url.Values{"code": {wrongCode(t, secret)}}).
+		AssertSessionHasErrors("code")
+
+	// The confirmation used the current step: the next one logs in.
+	code := totpCode(t, secret, 1)
+	c.PostForm("/two-factor-challenge", url.Values{"code": {code}}).AssertRedirect("/dashboard")
+	c.Get("/dashboard").AssertOK().AssertSee("Ana Silva")
+
+	if c.CookieValue("remember_web") == "" {
+		t.Error("remember me was asked at the password step but no cookie was set")
+	}
+
+	// The same code cannot be used twice.
+	replay := app.Client(t)
+	passwordStep(replay, "ana2fa@example.com", false).AssertRedirect("/two-factor-challenge")
+	replay.WithHeader("Referer", "/two-factor-challenge").
+		PostForm("/two-factor-challenge", url.Values{"code": {code}}).
+		AssertSessionHasErrors("code")
+	replay.Get("/dashboard").AssertRedirect("/login")
+}
+
+func TestTwoFactorRecoveryCodes(t *testing.T) {
+	t.Parallel()
+
+	app := vukemtest.New(t, bootstrap.New)
+	owner := app.Client(t)
+	_, codes := enableTwoFactor(t, app, owner, "bob2fa@example.com")
+
+	c := app.Client(t)
+	passwordStep(c, "bob2fa@example.com", false).AssertRedirect("/two-factor-challenge")
+	c.PostForm("/two-factor-challenge", url.Values{"recovery_code": {codes[0]}}).AssertRedirect("/dashboard")
+	c.PostForm("/logout", nil).AssertRedirect("/")
+
+	// A recovery code works once.
+	passwordStep(c, "bob2fa@example.com", false).AssertRedirect("/two-factor-challenge")
+	c.WithHeader("Referer", "/two-factor-challenge").
+		PostForm("/two-factor-challenge", url.Values{"recovery_code": {codes[0]}}).
+		AssertSessionHasErrors("recovery_code")
+	c.PostForm("/two-factor-challenge", url.Values{"recovery_code": {codes[1]}}).AssertRedirect("/dashboard")
+
+	owner.Get("/user/two-factor").AssertSee("6 recovery codes left")
+
+	// Regenerating replaces every code.
+	owner.PostForm("/user/two-factor/recovery-codes", nil).AssertRedirect("/user/two-factor")
+
+	fresh := recoveryRe.FindAllString(owner.Get("/user/two-factor").Body(), -1)
+	if len(fresh) != 8 || fresh[0] == codes[2] {
+		t.Fatalf("regenerated codes = %v", fresh)
+	}
+
+	c.PostForm("/logout", nil).AssertRedirect("/")
+	passwordStep(c, "bob2fa@example.com", false).AssertRedirect("/two-factor-challenge")
+	c.WithHeader("Referer", "/two-factor-challenge").
+		PostForm("/two-factor-challenge", url.Values{"recovery_code": {codes[2]}}).
+		AssertSessionHasErrors("recovery_code")
+}
+
+func TestTwoFactorThrottle(t *testing.T) {
+	t.Parallel()
+
+	app := vukemtest.New(t, bootstrap.New)
+	secret, _ := enableTwoFactor(t, app, app.Client(t), "cid2fa@example.com")
+
+	attacker := app.Client(t)
+	passwordStep(attacker, "cid2fa@example.com", false).AssertRedirect("/two-factor-challenge")
+
+	for range 5 {
+		attacker.PostForm("/two-factor-challenge", url.Values{"code": {wrongCode(t, secret)}})
+	}
+
+	attacker.PostForm("/two-factor-challenge", url.Values{"code": {totpCode(t, secret, 1)}}).AssertStatus(429)
+
+	// Confirming a new setup is limited too.
+	c := app.Client(t)
+	register(t, app, c, "dan2fa@example.com")
+	c.PostForm("/user/two-factor", nil).AssertRedirect("/user/two-factor")
+
+	for range 5 {
+		c.PostForm("/user/two-factor/confirm", url.Values{"code": {"000000"}})
+	}
+
+	c.PostForm("/user/two-factor/confirm", url.Values{"code": {"000000"}}).AssertStatus(429)
+}
+
+func TestTwoFactorDisableNeedsPassword(t *testing.T) {
+	t.Parallel()
+
+	app := vukemtest.New(t, bootstrap.New)
+	c := app.Client(t)
+	enableTwoFactor(t, app, c, "eve2fa@example.com")
+
+	c.WithHeader("Referer", "/user/two-factor").
+		PostForm("/user/two-factor/disable", url.Values{"password": {"not my password"}}).
+		AssertSessionHasErrors("password")
+	c.Get("/user/two-factor").AssertSee("is on")
+
+	c.PostForm("/user/two-factor/disable", url.Values{"password": {"correct horse battery"}}).
+		AssertRedirect("/user/two-factor")
+	c.Get("/user/two-factor").AssertSee("Enable two-factor authentication")
+
+	c.PostForm("/logout", nil).AssertRedirect("/")
+	passwordStep(c, "eve2fa@example.com", false).AssertRedirect("/dashboard")
+}
+
+func TestTwoFactorChallengeNeedsPasswordStep(t *testing.T) {
+	t.Parallel()
+
+	app := vukemtest.New(t, bootstrap.New)
+	c := app.Client(t)
+
+	c.Get("/two-factor-challenge").AssertRedirect("/login")
+	c.PostForm("/two-factor-challenge", url.Values{"code": {"123456"}}).AssertRedirect("/login")
+}

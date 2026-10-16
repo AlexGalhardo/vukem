@@ -75,8 +75,10 @@ func TestNewInertiaProjectEndToEnd(t *testing.T) {
 
 			run("go", "test", "./...")
 
-			if code, out, errOut := vukem(t, project, "install:auth"); code != 0 {
-				t.Fatalf("install:auth = %d\n%s%s", code, out, errOut)
+			if code, out, errOut := vukem(t, project, "install:auth", "--2fa"); code != 0 ||
+				!strings.Contains(out, "created resources/js/pages/Auth/TwoFactorChallenge.") ||
+				!strings.Contains(out, "updated app/controllers/account/account.go") {
+				t.Fatalf("install:auth --2fa = %d\n%s%s", code, out, errOut)
 			}
 
 			if _, err := os.Stat(filepath.Join(project, "resources", "views", "auth")); err == nil {

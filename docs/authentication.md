@@ -130,6 +130,38 @@ Existing projects created before `routes.All()` get the exact lines to add print
 
 `vukem install:auth --social github,google` (also on a project that already ran `install:auth`) adds `routes/social.go` (`/auth/{provider}/redirect` and `/callback`), the `social_accounts` model and migration (unique provider + provider id), `accounts.NewSocial` (credentials from `SOCIAL_<NAME>_CLIENT_ID`/`_SECRET`, also appended to `.env.example`) and `FindOrCreateFromSocial`: an existing link signs in; a provider-verified email links to the existing account; an unverified email that matches an account is refused (409) so a provider account cannot take over a password account; otherwise a new user is created. Generated tests use `vukemtest.FakeSocial(social.User{...})`, which only works in test apps.
 
+## Two-factor authentication (`install:auth --2fa`)
+
+`vukem install:auth --2fa` (also on a project that already ran `install:auth`, like `--social`) adds Fortify-style TOTP two-factor authentication built on `auth/totp` (RFC 6238: SHA-1, 6 digits, 30 s, the authenticator-app defaults), for the HTMX starter and for the Inertia React, Vue and Svelte starters:
+
+```text
+app/models/two_factor.go                   TwoFactor: the 2FA columns of users (Table() = "users")
+app/accounts/two_factor.go                 enable, confirm, verify, recovery codes, disable, pending login
+app/controllers/account/two_factor*.go     settings page and login challenge handlers
+app/requests/two_factor.go                 code, challenge and password confirmation schemas
+database/migrations/*_add_two_factor_columns.go
+resources/views/auth/two-factor*.html      or resources/js/pages/Auth/TwoFactor*.{tsx,vue,svelte}
+routes/two_factor.go                       appended to routes.All()
+tests/two_factor_test.go                   the whole flow, run by go test
+```
+
+It also patches the user-owned `Login` handler (`Validate`, then the challenge, then `Login`), links the settings page from the dashboard and, when `routes/social.go` exists (before or after `--2fa`), makes social sign-in stop at the challenge too. If `Login` was rewritten by hand the command fails before writing anything and prints the change to make, so 2FA is never installed without being enforced.
+
+| Flow | Behaviour |
+| --- | --- |
+| Storage | `two_factor_secret` (`orm.Encrypted[string]`) and `two_factor_recovery_codes` (`orm.Encrypted[[]string]` of SHA-256 hashes) are encrypted with `APP_KEY`, never plaintext; `two_factor_confirmed_at`; `two_factor_last_step`. `TwoFactor` is its own model, so the secret never reaches `User` or the shared `auth.user` prop |
+| Enable (`GET/POST /user/two-factor`) | logged-in users get a new secret: QR code (inline SVG from `totp.QR` of the `otpauth://` URI, issuer `APP_NAME`) and the setup key for manual entry. A confirmed setup is never replaced (409), so enabling again cannot switch 2FA off without the password |
+| Confirm (`POST /user/two-factor/confirm`) | 2FA is on only after a valid code; then 8 recovery codes are shown **once** (flashed in the encrypted session, only hashes are stored) |
+| Recovery codes (`POST /user/two-factor/recovery-codes`) | regenerate: the old ones stop working, the new ones are shown once; the page shows how many are left |
+| Disable (`POST /user/two-factor/disable`) | needs the current password |
+| Login | a correct password for a user with confirmed 2FA does **not** log in: the session id is regenerated, the pending user id and the remember-me choice are stored, and the browser goes to `/two-factor-challenge`. The pending login expires after 5 minutes (`accounts.TwoFactorChallengeTTL`) |
+| Challenge (`GET/POST /two-factor-challenge`) | an app code (`totp.Validate` against `two_factor_last_step`, then the matched step is stored) or a recovery code (consumed, the remaining hashes stored) logs in with the remember-me choice and goes to the intended URL |
+| Replay | a code whose step is at or before the last accepted one is refused, including the code used to confirm; codes are checked inside a transaction that first writes the row, so concurrent requests with the same code run one after the other and one wins |
+| Throttling | challenge, confirm and disable: **5 per minute per user + IP** (`ratelimit`, 429 with `Retry-After`) |
+| Events | failed codes and passwords log the `auth.2fa_failed` security event (`user_id`, `stage`: `confirm`, `challenge`, `disable`) |
+
+The raw SVG is inserted with `template.HTML` (HTMX) or the framework's raw-HTML binding (`dangerouslySetInnerHTML`, `v-html`, `{@html}`): safe only because `totp.QR` writes it itself from server data; never do that with user input. Generated tests compute codes with `totp.Code(secret, time.Now(), totp.Options{})`.
+
 ## Social login (`social`)
 
 Ally-style OAuth2/OIDC sign-in, standard library only (no `x/oauth2`).

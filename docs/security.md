@@ -135,8 +135,9 @@ What Vukem does **by default** to protect applications, mapped to the [OWASP Top
 | API tokens with expiry, abilities and revocation; `last_used_at` tracking | A |
 
 | Social login: PKCE, signed single-use `state`/`nonce` cookie, OIDC ID-token verification, redirect URL from config only | A |
+| TOTP 2FA (`auth/totp`, `install:auth --2fa`): a code works once per time step, also across concurrent requests (`TestValidateWindowAndReplay` and the generated `TestTwoFactorLogin`); recovery codes stored as hashes and single use (`TestRecoveryCodes`, generated `TestTwoFactorRecoveryCodes`); secret and hashes in `orm.Encrypted` columns, challenge/confirm/disable limited to 5 per minute per user + IP, disabling needs the password (`TestSecurity_A07_TwoFactorScaffoldDefaults`, generated `TestTwoFactorThrottle`, `TestTwoFactorDisableNeedsPassword`); the scaffold refuses to install when it cannot enforce the code step at login (`TestSecurity_A07_TwoFactorFailsClosedOnEditedLogin`). Generated tests run in `TestNewProjectEndToEnd` and `TestNewInertiaProjectEndToEnd` | B |
 
-**Post-1.0:** TOTP 2FA, passkeys/WebAuthn.
+**Post-1.0:** passkeys/WebAuthn.
 
 ### A08:2025 — Software or Data Integrity Failures
 

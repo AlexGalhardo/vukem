@@ -30,6 +30,7 @@ var socialProviders = []string{"github", "gitlab", "discord", "google", "microso
 func installAuth(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 	force := set.Bool("force", false, "overwrite existing files")
 	socialList := set.String("social", "", "also add social login: "+strings.Join(socialProviders, ","))
+	twoFactor := set.Bool("2fa", false, "also add two-factor authentication (TOTP)")
 
 	return func(ctx context.Context, env *Env, _ []string) error {
 		if hasTempl(env) {
@@ -51,9 +52,10 @@ func installAuth(set *flag.FlagSet) func(context.Context, *Env, []string) error 
 			return err
 		}
 
-		// With --social on a project that already has install:auth, add only
-		// the social part.
-		if len(providers) == 0 || *force || !exists(env, filepath.Join("routes", "auth.go")) {
+		// With --social or --2fa on a project that already has install:auth,
+		// add only that part.
+		addOn := len(providers) > 0 || *twoFactor
+		if !addOn || *force || !exists(env, filepath.Join("routes", "auth.go")) {
 			for _, name := range authScaffolds(env) {
 				if err := installScaffold(env, name, data, *force); err != nil {
 					return err
@@ -91,6 +93,23 @@ func installAuth(set *flag.FlagSet) func(context.Context, *Env, []string) error 
 			}
 		}
 
+		if *twoFactor {
+			more, err := installTwoFactor(env, data, *force)
+			if err != nil {
+				return err
+			}
+
+			regs = append(regs, more...)
+		}
+
+		// Social sign-in also stops at the code step once 2FA is installed,
+		// whichever of the two came first.
+		if exists(env, filepath.Join("routes", "two_factor.go")) {
+			if err := applyPatches(env, socialTwoFactorPatch); err != nil {
+				return err
+			}
+		}
+
 		if err := finishInstall(ctx, env, regs); err != nil {
 			return err
 		}
@@ -99,6 +118,10 @@ func installAuth(set *flag.FlagSet) func(context.Context, *Env, []string) error 
 			"  vukem migrate\n"+
 			"  set MAIL_MAILER (smtp or resend) and APP_URL so verification and reset emails work\n"+
 			"  go test ./tests/...\n\n")
+
+		if *twoFactor {
+			fmt.Fprint(env.Stdout, "Two-factor authentication: users turn it on at /user/two-factor.\n\n")
+		}
 
 		return nil
 	}
@@ -171,6 +194,7 @@ func scaffoldData(env *Env) (map[string]string, error) {
 		"TS1":    now.Format("20060102150405"),
 		"TS2":    now.Add(time.Second).Format("20060102150405"),
 		"TS3":    now.Add(2 * time.Second).Format("20060102150405"),
+		"TS4":    now.Add(3 * time.Second).Format("20060102150405"),
 	}, nil
 }
 
@@ -270,7 +294,8 @@ func installScaffold(env *Env, name string, data map[string]string, force bool) 
 		}
 
 		rel := strings.TrimPrefix(p, root+"/")
-		rel = strings.NewReplacer("TS1", data["TS1"], "TS2", data["TS2"], "TS3", data["TS3"]).Replace(rel)
+		rel = strings.NewReplacer("TS1", data["TS1"], "TS2", data["TS2"], "TS3", data["TS3"], "TS4", data["TS4"]).
+			Replace(rel)
 
 		content, err := scaffoldFS.ReadFile(p)
 		if err != nil {

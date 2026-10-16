@@ -217,6 +217,25 @@ func TestNewProjectEndToEnd(t *testing.T) {
 		t.Fatalf("install:auth --social = %d\n%s%s", code, out, errOut)
 	}
 
+	// --2fa on a project with install:auth adds only two-factor
+	// authentication, and makes social sign-in ask for the code too.
+	if code, out, errOut := vukem(t, project, "install:auth", "--2fa"); code != 0 ||
+		!strings.Contains(out, "created routes/two_factor.go") || strings.Contains(out, "created routes/auth.go") ||
+		!strings.Contains(out, "updated app/controllers/account/account.go") ||
+		!strings.Contains(out, "updated routes/social.go") {
+		t.Fatalf("install:auth --2fa = %d\n%s%s", code, out, errOut)
+	}
+
+	if code, _, errOut := vukem(
+		t,
+		project,
+		"install:auth",
+		"--2fa",
+	); code != 1 ||
+		!strings.Contains(errOut, "already exist") {
+		t.Fatalf("second install:auth --2fa = %d %s", code, errOut)
+	}
+
 	if env := read(t, project, ".env.example"); !strings.Contains(env, "SOCIAL_GOOGLE_CLIENT_SECRET=") {
 		t.Fatalf(".env.example = %q", env)
 	}

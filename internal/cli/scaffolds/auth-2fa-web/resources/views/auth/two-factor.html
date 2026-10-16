@@ -1,0 +1,49 @@
+{{define "title"}}Two-factor authentication{{end}}
+{{define "content"}}
+<h1>Two-factor authentication</h1>
+{{with flash "status"}}<p class="flash" role="status">{{.}}</p>{{end}}
+{{if .Enabled}}
+<p>Two-factor authentication is on: logging in asks for a code from your authenticator app.</p>
+{{if .RecoveryCodes}}
+<p><strong>Store these recovery codes somewhere safe.</strong> Each one works once if you lose your device; they are not shown again.</p>
+<ul>
+	{{range .RecoveryCodes}}<li><code>{{.}}</code></li>
+	{{end}}
+</ul>
+{{else}}
+<p>You have {{.RecoveryCodesLeft}} recovery codes left.</p>
+{{end}}
+<form method="post" action="{{route "two-factor.recovery-codes"}}">
+	{{csrfField}}
+	<button type="submit">Regenerate recovery codes</button>
+</form>
+<h2>Turn off</h2>
+<form method="post" action="{{route "two-factor.disable"}}">
+	{{csrfField}}
+	<label>Current password
+		<input type="password" name="password" required autocomplete="current-password">
+	</label>
+	{{with error "password"}}<p class="error">{{.}}</p>{{end}}
+	<button type="submit">Disable two-factor authentication</button>
+</form>
+{{else if .Pending}}
+<p>Scan this QR code with your authenticator app, or enter the setup key by hand, then type the code it shows.</p>
+<figure>{{.QR}}</figure>
+<p>Setup key: <code id="two-factor-secret">{{.Secret}}</code></p>
+<form method="post" action="{{route "two-factor.confirm"}}">
+	{{csrfField}}
+	<label>Code
+		<input type="text" name="code" required inputmode="numeric" pattern="[0-9 ]*" autocomplete="one-time-code">
+	</label>
+	{{with error "code"}}<p class="error">{{.}}</p>{{end}}
+	<button type="submit">Confirm</button>
+</form>
+{{else}}
+<p>Add a second step to your login: a code from an authenticator app on your phone.</p>
+<form method="post" action="{{route "two-factor.enable"}}">
+	{{csrfField}}
+	<button type="submit">Enable two-factor authentication</button>
+</form>
+{{end}}
+<p><a href="{{route "dashboard"}}">Back to the dashboard</a></p>
+{{end}}
