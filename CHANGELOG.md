@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-10-16
+
+### Security
+
+- **security:** Add SSRF-safe client, webhook signatures and security events
+
 ## [0.12.0] - 2026-10-16
 
 ### Added
@@ -176,7 +182,8 @@ Project foundation. No framework code yet; see [PLAN.md](PLAN.md) for the roadma
 - README, MIT license, CONTRIBUTING, SECURITY and CODE_OF_CONDUCT.
 - Agent configuration: `AGENTS.md`, `CLAUDE.md`, path-scoped `.claude/rules/`, Go skills and project settings.
 
-[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/AlexGalhardo/vukem/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/AlexGalhardo/vukem/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/AlexGalhardo/vukem/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/AlexGalhardo/vukem/compare/v0.9.0...v0.10.0
