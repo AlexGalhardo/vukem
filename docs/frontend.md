@@ -108,7 +108,16 @@ Optional for the HTMX starter (Tailwind, bundling), required for Inertia.
 
 ## Inertia v3 (BETA)
 
-Own adapter in `inertia/`, React starter only before 1.0.
+Own adapter in `inertia/` with React, Vue and Svelte starters (B.3.6).
+
+```go
+in, err := inertia.New(inertia.Config{Version: viteInstance.Version}) // RootView "app", RootID "app"
+r.Use(in.Middleware) // Vary, version check, 302→303, fragment redirects
+
+// Root view (resources/views/app.html): {{.Head}} in <head>, {{.Inertia}} in <body>.
+```
+
+`inertia.Share(c.Context(), key, value)` adds per-request shared props (`Config.Shared` holds global ones); `inertia.Location(c, url)` forces a full visit; `inertia.PreserveFragment(c)` before a redirect keeps the URL fragment. Prop values of type `func(context.Context) (any, error)` resolve lazily.
 
 ```go
 return inertia.Render(c, "Posts/Index", inertia.Props{

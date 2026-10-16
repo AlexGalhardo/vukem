@@ -10,6 +10,8 @@
 package vite
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -41,6 +43,7 @@ type Vite struct {
 
 	mu       sync.Mutex
 	manifest manifest
+	version  string
 }
 
 type chunk struct {
@@ -228,9 +231,23 @@ func (v *Vite) load() (manifest, error) {
 		return nil, fmt.Errorf("vite: parse manifest: %w", err)
 	}
 
-	v.manifest = m
+	sum := sha256.Sum256(b)
+	v.manifest, v.version = m, hex.EncodeToString(sum[:16])
 
 	return m, nil
+}
+
+// Version returns a hash of the manifest, which changes with every build
+// (the Inertia asset version), or "" when there is no manifest.
+func (v *Vite) Version() string {
+	if _, err := v.load(); err != nil {
+		return ""
+	}
+
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	return v.version
 }
 
 func (v *Vite) url(file string) string {

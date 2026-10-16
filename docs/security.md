@@ -39,6 +39,7 @@ What Vukem does **by default** to protect applications, mapped to the [OWASP Top
 | `http.Server` always has `ReadHeaderTimeout`, `ReadTimeout`, `WriteTimeout`, `IdleTimeout`, `MaxHeaderBytes` | P |
 | Security headers middleware on by default: `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `X-Frame-Options: DENY` + CSP `frame-ancestors 'none'`, `Cross-Origin-Opener-Policy: same-origin`, `Strict-Transport-Security` (HTTPS only, configurable) | P |
 | Content-Security-Policy builder with per-request nonces (`{{ cspNonce }}`), starter ships a strict policy; Vite tags get the nonce (`TestSecurity_A02_ViteTagsCarryNonce`) | P / B |
+| The Inertia page object is embedded as JSON with `<`, `>`, `&` and `/` escaped, so prop data cannot close its `<script>` (`TestSecurity_A05_InertiaPageScriptCannotBreakOut`) | B |
 | The Vite `hot` file is ignored in production (`TestSecurity_A02_ViteHotFileIgnoredInProduction`) and must hold an `http(s)` URL (`TestSecurity_A05_ViteRejectsUnsafeHotURL`) | B |
 | Debug error page only in development; production errors never include stack traces, SQL or config | P |
 | `vukem about` prints effective security settings (secrets redacted) to review deployments | P |

@@ -36,7 +36,8 @@ vukem/                            module github.com/AlexGalhardo/vukem
 ├── openapi/ apidocs/             OpenAPI 3.1 generator, TS/Zod codegen, Scalar API reference
 ├── queue/ schedule/ ratelimit/   typed jobs (sync/memory/database drivers), cron scheduler, GCRA limiter
 ├── vite/                         Vite tags: hot file (dev), manifest, CSP nonce, SRI
-├── inertia/ i18n/ sse/ crypt/                                                 (planned, BETA)
+├── inertia/                      Inertia.js v3 adapter: page object, version check, redirects, shared props
+├── i18n/ sse/ crypt/                                                          (planned, BETA)
 ├── testing/                      fluent HTTP test client, DB helpers, fakes
 ├── cmd/vukem/                 global CLI
 ├── internal/

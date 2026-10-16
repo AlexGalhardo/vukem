@@ -216,6 +216,26 @@ func TestManifestReloadInDev(t *testing.T) {
 	}
 }
 
+func TestVersion(t *testing.T) {
+	t.Parallel()
+
+	v := newVite(t, vite.Config{FS: prodFS()})
+	got := v.Version()
+
+	if len(got) != 32 || got != v.Version() {
+		t.Errorf("Version() = %q, want a stable 32-char hash", got)
+	}
+
+	other := fstest.MapFS{"build/.vite/manifest.json": {Data: []byte(`{}`)}}
+	if newVite(t, vite.Config{FS: other}).Version() == got {
+		t.Error("Version() did not change with the manifest")
+	}
+
+	if got := newVite(t, vite.Config{FS: fstest.MapFS{}}).Version(); got != "" {
+		t.Errorf("Version() without manifest = %q, want empty", got)
+	}
+}
+
 func TestNewRequiresFS(t *testing.T) {
 	t.Parallel()
 
