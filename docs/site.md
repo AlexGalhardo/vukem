@@ -61,4 +61,4 @@ Repo tasks: `task site:dev`, `task site:build` (part of `task ci:full`).
 
 - Editing content: change or add `site/content/docs/<category>/<page>.mdx`, then register the page in `site/content/navigation.ts`.
 - **Update cadence:** the site is updated at the end of each phase (Prototype, ALPHA, BETA) — a release cannot be tagged until `task site:build` passes and the pages for the phase's features exist.
-- Deploy: `vercel deploy --prod` from `site/` (CLI linked to the maintainer's account) until the GitHub integration is connected; afterwards every push to `main` deploys.
+- Deploy: `cd site && vercel deploy --prod` (project `lumek`, team `galhardos-projects`, linked via `site/.vercel/`, framework pinned in `site/vercel.json`). Live at <https://lumek.vercel.app>. Once the Vercel GitHub integration is connected (Root Directory `site`), every push to `main` deploys.

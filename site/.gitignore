@@ -20,3 +20,6 @@ next-env.d.ts
 *.pem
 npm-debug.log*
 .env*.local
+
+.vercel
+.env*
