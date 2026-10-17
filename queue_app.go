@@ -120,7 +120,15 @@ func (a *App) Queue() (*queue.Queue, error) {
 			return
 		}
 
+		// Delays and retries follow the app clock (WithClock, vukemtest fake
+		// clocks) on every driver that reads one, custom drivers included.
+		if c, ok := d.(queue.Clock); ok {
+			c.SetClock(a.now)
+		}
+
 		q := queue.New(d, a.Log)
+		q.SetClock(a.now)
+
 		if a.Devtools != nil {
 			q.SetObserver(a.Devtools)
 		}

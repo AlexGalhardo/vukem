@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"maps"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
@@ -257,3 +259,69 @@ func TestWithJobsFuncPanicIsAnError(t *testing.T) {
 		}
 	}
 }
+
+// dbQueueApp returns an app on a fresh SQLite database with
+// QUEUE_CONNECTION=database (plus env), shut down after the test.
+func dbQueueApp(t *testing.T, env map[string]string, opts ...Option) *App {
+	t.Helper()
+
+	src := map[string]string{
+		"DATABASE_URL":     "file:" + filepath.Join(testutil.TempDir(t), "app.db"),
+		"QUEUE_CONNECTION": "database",
+	}
+	maps.Copy(src, env)
+
+	app := newTestApp(t, append([]Option{WithSource(testSource(src))}, opts...)...)
+	t.Cleanup(func() { _ = app.Shutdown(context.WithoutCancel(t.Context())) })
+
+	return app
+}
+
+// queue.Delay and retries follow the app clock (WithClock), on the
+// in-process and the database driver alike.
+func TestQueueFollowsAppClock(t *testing.T) {
+	t.Parallel()
+
+	for _, conn := range []string{"memory", "database"} {
+		t.Run(conn, func(t *testing.T) {
+			t.Parallel()
+
+			var (
+				mu    sync.Mutex
+				now   = time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC)
+				clock = func() time.Time { mu.Lock(); defer mu.Unlock(); return now }
+				runs  atomic.Int32
+			)
+
+			app := dbQueueApp(t, map[string]string{"QUEUE_CONNECTION": conn}, WithClock(clock),
+				WithJobs(queue.Handle(func(context.Context, pingJob) error { runs.Add(1); return nil })))
+
+			q, err := app.Queue()
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if err := q.Dispatch(t.Context(), pingJob{N: 1}, queue.Delay(10*time.Minute)); err != nil {
+				t.Fatal(err)
+			}
+
+			for _, step := range []struct {
+				advance time.Duration
+				want    int32
+			}{{9 * time.Minute, 0}, {time.Minute, 1}} {
+				mu.Lock()
+				now = now.Add(step.advance)
+				mu.Unlock()
+
+				if err := q.Work(t.Context(), queue.WorkOptions{StopWhenEmpty: true}); err != nil {
+					t.Fatal(err)
+				}
+
+				if got := runs.Load(); got != step.want {
+					t.Fatalf("after %v: runs = %d, want %d", step.advance, got, step.want)
+				}
+			}
+		})
+	}
+}
+
