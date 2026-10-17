@@ -170,6 +170,8 @@ It also patches the user-owned `Login` handler (`Validate`, then the challenge, 
 | Throttling | challenge, confirm and disable: **5 per minute per user + IP** (`ratelimit`, 429 with `Retry-After`) |
 | Events | failed codes and passwords log the `auth.2fa_failed` security event (`user_id`, `stage`: `confirm`, `challenge`, `disable`) |
 
+`totp.QR` (SVG) and `totp.QRMatrix` (modules) encode any text in byte mode at error correction level M, versions 1 to 40: up to 2331 bytes (long `otpauth://` URIs, PIX BR Codes); longer text returns `totp.ErrTooLong`.
+
 The raw SVG is inserted with `template.HTML` (HTMX) or the framework's raw-HTML binding (`dangerouslySetInnerHTML`, `v-html`, `{@html}`): safe only because `totp.QR` writes it itself from server data; never do that with user input. Generated tests compute codes with `totp.Code(secret, time.Now(), totp.Options{})`.
 
 ## Social login (`social`)

@@ -1,6 +1,7 @@
 package totp_test
 
 import (
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -8,8 +9,9 @@ import (
 	"github.com/AlexGalhardo/vukem/auth/totp"
 )
 
-// testdata/qr.golden holds matrices verified by decoding them with an
-// independent QR reader (jsQR); this test keeps the encoder from drifting.
+// testdata/qr.golden holds matrices (versions 1 to 40) verified by decoding
+// them with an independent QR reader (jsQR); this test keeps the encoder
+// from drifting.
 func TestQRMatrixGolden(t *testing.T) {
 	t.Parallel()
 
@@ -63,7 +65,13 @@ func TestQRSVG(t *testing.T) {
 		t.Errorf("SVG = %.200s", svg)
 	}
 
-	if _, err := totp.QR(strings.Repeat("x", 300), 200); err == nil {
-		t.Error("300-byte text encoded")
+	// 2331 bytes is the byte-mode capacity of version 40 at level M.
+	if svg, err := totp.QR(strings.Repeat("x", 2331), 200); err != nil ||
+		!strings.Contains(svg, `viewBox="0 0 185 185"`) {
+		t.Errorf("QR(2331 bytes) = %.80s, %v; want a version 40 code", svg, err)
+	}
+
+	if _, err := totp.QR(strings.Repeat("x", 2332), 200); !errors.Is(err, totp.ErrTooLong) {
+		t.Errorf("QR(2332 bytes) error = %v, want ErrTooLong", err)
 	}
 }

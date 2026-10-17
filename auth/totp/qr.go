@@ -8,29 +8,84 @@ import (
 
 // QR encoding (ISO/IEC 18004) of the enrolment URI, so the starter can show
 // a scannable code without a dependency: byte mode, error correction level
-// M, versions 1–10 (up to 213 bytes, plenty for otpauth URIs).
+// M, versions 1–40 (up to 2331 bytes: otpauth URIs, PIX BR Codes).
 
-// ErrTooLong is returned when the text does not fit a version 10 code.
+// ErrTooLong is returned when the text does not fit a version 40 code.
 var ErrTooLong = errors.New("totp: text too long for a QR code")
 
 type qrVersion struct {
 	ec     int      // EC codewords per block
 	blocks [][2]int // {count, data codewords per block}
-	align  []int    // alignment pattern centres
 }
 
-var qrVersions = [11]qrVersion{
+// qrVersions is the level M block structure (ISO/IEC 18004 table 9).
+var qrVersions = [41]qrVersion{
 	{},
-	{10, [][2]int{{1, 16}}, nil},
-	{16, [][2]int{{1, 28}}, []int{6, 18}},
-	{26, [][2]int{{1, 44}}, []int{6, 22}},
-	{18, [][2]int{{2, 32}}, []int{6, 26}},
-	{24, [][2]int{{2, 43}}, []int{6, 30}},
-	{16, [][2]int{{4, 27}}, []int{6, 34}},
-	{18, [][2]int{{4, 31}}, []int{6, 22, 38}},
-	{22, [][2]int{{2, 38}, {2, 39}}, []int{6, 24, 42}},
-	{22, [][2]int{{3, 36}, {2, 37}}, []int{6, 26, 46}},
-	{26, [][2]int{{4, 43}, {1, 44}}, []int{6, 28, 50}},
+	{10, [][2]int{{1, 16}}},
+	{16, [][2]int{{1, 28}}},
+	{26, [][2]int{{1, 44}}},
+	{18, [][2]int{{2, 32}}},
+	{24, [][2]int{{2, 43}}},
+	{16, [][2]int{{4, 27}}},
+	{18, [][2]int{{4, 31}}},
+	{22, [][2]int{{2, 38}, {2, 39}}},
+	{22, [][2]int{{3, 36}, {2, 37}}},
+	{26, [][2]int{{4, 43}, {1, 44}}},
+	{30, [][2]int{{1, 50}, {4, 51}}},
+	{22, [][2]int{{6, 36}, {2, 37}}},
+	{22, [][2]int{{8, 37}, {1, 38}}},
+	{24, [][2]int{{4, 40}, {5, 41}}},
+	{24, [][2]int{{5, 41}, {5, 42}}},
+	{28, [][2]int{{7, 45}, {3, 46}}},
+	{28, [][2]int{{10, 46}, {1, 47}}},
+	{26, [][2]int{{9, 43}, {4, 44}}},
+	{26, [][2]int{{3, 44}, {11, 45}}},
+	{26, [][2]int{{3, 41}, {13, 42}}},
+	{26, [][2]int{{17, 42}}},
+	{28, [][2]int{{17, 46}}},
+	{28, [][2]int{{4, 47}, {14, 48}}},
+	{28, [][2]int{{6, 45}, {14, 46}}},
+	{28, [][2]int{{8, 47}, {13, 48}}},
+	{28, [][2]int{{19, 46}, {4, 47}}},
+	{28, [][2]int{{22, 45}, {3, 46}}},
+	{28, [][2]int{{3, 45}, {23, 46}}},
+	{28, [][2]int{{21, 45}, {7, 46}}},
+	{28, [][2]int{{19, 47}, {10, 48}}},
+	{28, [][2]int{{2, 46}, {29, 47}}},
+	{28, [][2]int{{10, 46}, {23, 47}}},
+	{28, [][2]int{{14, 46}, {21, 47}}},
+	{28, [][2]int{{14, 46}, {23, 47}}},
+	{28, [][2]int{{12, 47}, {26, 48}}},
+	{28, [][2]int{{6, 47}, {34, 48}}},
+	{28, [][2]int{{29, 46}, {14, 47}}},
+	{28, [][2]int{{13, 46}, {32, 47}}},
+	{28, [][2]int{{40, 47}, {7, 48}}},
+	{28, [][2]int{{18, 47}, {31, 48}}},
+}
+
+// qrAlign returns the alignment pattern centres of ver (ISO/IEC 18004
+// annex E): 6, then evenly spaced (even steps) up to size-7.
+func qrAlign(ver int) []int {
+	if ver == 1 {
+		return nil
+	}
+
+	n := ver/7 + 2
+	size := 17 + 4*ver
+
+	step := 26 // version 32 is the one exception to the formula
+	if ver != 32 {
+		step = (ver*4 + n*2 + 1) / (n*2 - 2) * 2
+	}
+
+	pos := make([]int, n)
+	pos[0] = 6
+
+	for i := n - 1; i > 0; i-- {
+		pos[i] = size - 7 - (n-1-i)*step
+	}
+
+	return pos
 }
 
 func (v qrVersion) dataCodewords() int {
@@ -49,7 +104,7 @@ func QRMatrix(text string) ([][]bool, error) {
 
 	ver := 0
 
-	for v := 1; v <= 10; v++ {
+	for v := 1; v < len(qrVersions); v++ {
 		countBits := 8
 		if v >= 10 {
 			countBits = 16
@@ -273,7 +328,7 @@ func newQR(ver int) *qr {
 		q.set(6, i, i%2 == 0)
 	}
 
-	align := qrVersions[ver].align
+	align := qrAlign(ver)
 	for _, cy := range align {
 		for _, cx := range align {
 			if (cx == 6 && cy == 6) || (cx == 6 && cy == size-7) || (cx == size-7 && cy == 6) {
