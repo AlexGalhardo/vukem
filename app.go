@@ -24,6 +24,7 @@ import (
 	"github.com/AlexGalhardo/vukem/database"
 	"github.com/AlexGalhardo/vukem/devtools"
 	"github.com/AlexGalhardo/vukem/events"
+	"github.com/AlexGalhardo/vukem/flags"
 	"github.com/AlexGalhardo/vukem/i18n"
 	"github.com/AlexGalhardo/vukem/inertia"
 	"github.com/AlexGalhardo/vukem/logging"
@@ -181,6 +182,10 @@ type App struct {
 	cacheOnce  sync.Once
 	cache      *cache.Cache
 	cacheErr   error
+	flagDefs   []flags.AnyFlag
+	flagsOnce  sync.Once
+	ff         *flags.Flags
+	flagsErr   error
 
 	// Telegram is the Telegram log handler when TELEGRAM_* is set (nil
 	// otherwise); use it for Contact and Send.
@@ -283,6 +288,7 @@ type options struct {
 	noHTTP        bool
 	devtools      bool
 	telegram      []func(*telegram.Config)
+	flags         []flags.AnyFlag
 }
 
 // WithRoutes registers routes (and router middleware) after providers
@@ -461,6 +467,10 @@ func New(opts ...Option) (*App, error) {
 
 	cfg.Devtools = cfg.Devtools || o.devtools
 
+	if err := checkFlags(o.flags, src); err != nil {
+		return nil, err
+	}
+
 	key, err := checkConfig(&cfg, src.EnvSet(), o.kind == KindWarmup)
 	if err != nil {
 		return nil, err
@@ -599,6 +609,7 @@ func New(opts ...Option) (*App, error) {
 		sessStoreFunc:   o.sessionFunc,
 		schedules:       o.schedules,
 		mail:            mailState{transport: o.mailTransport},
+		flagDefs:        o.flags,
 	}
 	if key.IsZero() && cfg.Env == config.Development {
 		app.Log.Warn("APP_KEY is not set: sessions, encryption and signed URLs fail until you run `vukem key:generate`",

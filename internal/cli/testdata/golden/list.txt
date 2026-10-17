@@ -12,6 +12,7 @@ Usage:
   install:api                  Add API tokens, /api/v1 routes, CORS and rate limiting
   install:billing              Add Stripe subscriptions: plans, Checkout, Billing Portal, webhooks
   install:admin                Add the admin panel at /admin (needs install:auth)
+  install:flags                Add feature flags: app/features, the feature_flags table, WithFlags
   install:inertia              Turn the HTMX starter into Inertia (--react, --vue or --svelte) with --force
  boost
   boost:install                Add agent guidelines, skills and the vukem-boost MCP server

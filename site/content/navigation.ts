@@ -96,6 +96,7 @@ export const navigation: NavCategory[] = [
       "localization",
       "billing",
       "admin",
+      "feature-flags",
       "devtools",
       "opentelemetry",
       "telegram-logging",

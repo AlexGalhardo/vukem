@@ -32,6 +32,23 @@ func TestInstallAdminUsage(t *testing.T) {
 	}
 }
 
+func TestInstallFlagsUsage(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	writeTestFile(t, dir, "go.mod", "module example.com/app\n")
+
+	if code, _, errOut := vukem(t, dir, "install:flags"); code != 2 || !strings.Contains(errOut, "bootstrap/app.go") {
+		t.Errorf("install:flags outside a project = %d %q", code, errOut)
+	}
+
+	writeTestFile(t, dir, "bootstrap/app.go", "package bootstrap\n")
+
+	if code, _, errOut := vukem(t, dir, "install:flags"); code != 2 || !strings.Contains(errOut, "database") {
+		t.Errorf("install:flags without migrations = %d %q", code, errOut)
+	}
+}
+
 func writeTestFile(t *testing.T, dir, rel, content string) {
 	t.Helper()
 
@@ -70,6 +87,7 @@ func TestAdminEndToEnd(t *testing.T) {
 	steps := [][]string{
 		{"install:auth"},
 		{"install:admin"},
+		{"install:flags"},
 		{"make:admin-resource", "Post"},
 		{"make:model", "Tag", "-m"},
 		{"make:admin-resource", "Tag"},
@@ -101,6 +119,61 @@ func TestAdminEndToEnd(t *testing.T) {
 
 	if code, _, errOut := vukem(t, project, "install:admin"); code != 1 || !strings.Contains(errOut, "already exist") {
 		t.Errorf("second install:admin = %d %s", code, errOut)
+	}
+
+	if app := read(t, project, "bootstrap/app.go"); !strings.Contains(app, "vukem.WithFlags(features.All()...)") ||
+		!strings.Contains(app, "example.com/shop/app/features") {
+		t.Errorf("bootstrap/app.go does not register the flags:\n%s", app)
+	}
+
+	if !strings.Contains(read(t, project, "database/migrations/registry.go"), "CreateFeatureFlagsTable()") {
+		t.Error("the feature flags migration is not registered")
+	}
+
+	// A declared flag reaches the admin page through WithFlags, the
+	// migration and the panel wiring.
+	writeTestFile(t, project, "app/features/features.go", `package features
+
+import "github.com/AlexGalhardo/vukem/flags"
+
+var Beta = flags.Bool("beta", false).Describe("Beta features")
+
+func All() []flags.AnyFlag { return []flags.AnyFlag{Beta} }
+`)
+	writeTestFile(t, project, "tests/flags_page_test.go", `package tests
+
+import "testing"
+
+func TestFlagsPageListsBeta(t *testing.T) {
+	t.Parallel()
+
+	adminClient(t, newAdminApp(t), adminEmail).Get("/admin/_flags").AssertOK().AssertSee("Beta features")
+}
+`)
+
+	// Re-running install:flags, also with --force, keeps the app's flags
+	// and adds no second migration.
+	for _, args := range [][]string{{"install:flags"}, {"install:flags", "--force"}} {
+		if code, out, errOut := vukem(t, project, args...); code != 0 {
+			t.Fatalf("vukem %s again = %d\n%s%s", strings.Join(args, " "), code, out, errOut)
+		}
+	}
+
+	if !strings.Contains(read(t, project, "app/features/features.go"), "Beta features") {
+		t.Error("re-running install:flags overwrote app/features/features.go")
+	}
+
+	migs, err := filepath.Glob(filepath.Join(project, "database", "migrations", "*_create_feature_flags_table.go"))
+	if err != nil || len(migs) != 1 {
+		t.Errorf("feature flags migrations = %v, %v, want exactly one", migs, err)
+	}
+
+	if n := strings.Count(read(t, project, "database/migrations/registry.go"), "CreateFeatureFlagsTable()"); n != 1 {
+		t.Errorf("the feature flags migration is registered %d times, want 1", n)
+	}
+
+	if n := strings.Count(read(t, project, "bootstrap/app.go"), "vukem.WithFlags("); n != 1 {
+		t.Errorf("bootstrap/app.go registers the flags %d times, want 1", n)
 	}
 
 	cmd := exec.CommandContext(t.Context(), "go", "test", "./...")

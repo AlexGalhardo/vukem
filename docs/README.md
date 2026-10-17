@@ -20,7 +20,7 @@ Design documents, one per area. The user guide lives at [vukem.dev](https://vuke
 | Admin panel | [admin.md](admin.md) |
 | Views, HTMX, SSE, WebSockets, broadcasting, Inertia, Vite | [frontend.md](frontend.md) |
 | CLI | [cli.md](cli.md) |
-| Mail, cache, queue, scheduler and more | [subsystems.md](subsystems.md) |
+| Mail, cache, feature flags, queue, scheduler and more | [subsystems.md](subsystems.md) |
 | Stripe subscriptions (`install:billing`) | [billing.md](billing.md) |
 | Development dashboard (`/_vukem`) | [devtools.md](devtools.md) |
 | Stability policy and upgrade guides | [stability.md](stability.md), [upgrade/](upgrade/README.md), [pre-1.0 API review](api/review.md), [v1.0 API review](v1-api-review.md) |

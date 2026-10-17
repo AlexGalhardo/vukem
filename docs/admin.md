@@ -79,13 +79,14 @@ Configuration mistakes (unknown or sensitive columns in lists, a schema key with
 | --- | --- | --- |
 | GET | `/admin` | `admin` (dashboard: counts of resources the user may `viewAny`) |
 | GET | `/admin/_audit` | `admin` + `viewAuditLogs` |
+| GET / POST | `/admin/_flags`, `/admin/_flags/{name}` | `admin` + `manageFlags` (only with `Config.Flags`) |
 | GET | `/admin/{slug}` | `viewAny` on `(*T)(nil)` |
 | GET / POST | `/admin/{slug}/create`, `/admin/{slug}` | `create` on `(*T)(nil)` |
 | GET | `/admin/{slug}/{id}` | `view` on the record |
 | GET / POST | `/admin/{slug}/{id}/edit`, `/admin/{slug}/{id}` | `update` on the record |
 | GET / POST | `/admin/{slug}/{id}/delete` | `delete` on the record (GET is the confirmation page) |
 
-Route names are `admin.dashboard`, `admin.audit` and `admin.<slug>.<action>`. Lists answer htmx partial requests (search, sort, pagination) with the `list` block only.
+Route names are `admin.dashboard`, `admin.audit`, `admin.flags`, `admin.flags.update` and `admin.<slug>.<action>`. Lists answer htmx partial requests (search, sort, pagination) with the `list` block only.
 
 ## Security
 
@@ -99,3 +100,14 @@ Route names are `admin.dashboard`, `admin.audit` and `admin.<slug>.<action>`. Li
 ## Audit log
 
 Every create, update (when something changed) and delete writes an `admin.AuditLog` row in the same transaction: actor (`AuthID` of the guard's user), resource slug, record id, action and a JSON map `column → {before, after}` of the changed columns (`{redacted: true}` for sensitive ones). Register the table with `admin.Migration("<timestamp>_create_admin_audit_logs_table")` (`install:admin` does). The log is browsable at `/admin/_audit` with the `viewAuditLogs` ability.
+
+## Feature flags
+
+With `admin.Config{Flags: ff}` (`ff, err := app.Flags()`) the panel lists every registered [feature flag](subsystems.md#feature-flags) at `/admin/_flags`: name, description, kind, default (code or `FLAG_<NAME>`), current global value and whether it is stored. Boolean flags toggle with one button, int and string flags take a value, and "Reset to default" deletes the stored value. The `install:admin` scaffold passes `app.Flags()` and gives `manageFlags` to the same admins; an app that ran `install:admin` before v0.27.0 adds `Flags: ff` to its `vadmin.Config` and defines the ability on its gate.
+
+- Both routes need the `manageFlags` gate ability (fail closed: an undefined ability denies) and the panel's CSRF check (`TestSecurity_A01_AdminFlagsRequireAbilityAndRespectLocks`).
+- Locked flags are shown read-only; a crafted write is refused with 403 and logged as a `flags.locked_write` security event.
+- Every change writes a `flags.changed` audit event (`web.AuditEvent`, with `actor_id`, `flag`, `changed`, `old` and `new`) and an audit-log row (resource `_flags`, record = flag name, `value: {before, after}`), browsable at `/admin/_audit?resource=_flags`. String flag values are recorded only as their length and a SHA-256 prefix (`10 bytes, sha256:1a2b3c4d`), never in clear (`TestSecurity_A09_AdminFlagsRedactStringValues`).
+- The flag write and the audit row are **not atomic** (the store is pluggable): when the row fails after the flag changed, the change is logged at ERROR (redacted the same way) and the page redirects with a warning flash.
+- When the store is down the page answers 503 instead of showing defaults that would invite wrong toggles.
+- Flag values are not secrets: never store credentials in a string flag.

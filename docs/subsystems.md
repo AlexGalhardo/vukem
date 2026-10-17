@@ -8,6 +8,7 @@ Mail, cache, storage, events, queue, scheduler, encryption, rate limiting, i18n,
 | Health | Prototype | `/up` + per-service checks | — | — |
 | Mail | ALPHA | SMTP (`net/smtp`), **Resend** and **Mailtrap** (HTTP APIs), log, array | — | ✅ |
 | Cache | ALPHA | memory (LRU + TTL), database | redis | ✅ |
+| Feature flags | v0.27 | code + `FLAG_<NAME>`, database (cached) | — | any `flags.Store` |
 | Storage | ALPHA / BETA | local (`os.Root`), memory | s3 (AWS, R2, RustFS…) | ✅ |
 | Events | ALPHA | in-process sync/async | — | ✅ (`events.NewFake`) |
 | Queue | BETA | sync, memory, database (SQLite/Postgres, `FOR UPDATE SKIP LOCKED` on PG) | redis | ✅ (`queue.Fake`) |
@@ -128,6 +129,44 @@ if ok, _ := lock.TryAcquire(ctx); ok {
 - Values are JSON. `Remember` runs `fn` once for concurrent misses of a key in the process (singleflight) and never caches errors.
 - Stores implement `cache.Store` (`Get`, `Set`, atomic `Add`, `Delete`, owner-checked `DeleteIf`, `Increment`, `Flush`): `cache.NewMemory(maxEntries)` (LRU + TTL) and `cache.NewDatabase(db, table)` (SQLite, Postgres and MySQL upserts; `Increment` is one atomic upsert, so concurrent servers never read the same count; `CreateTable` indexes `expires_at`; `Prune` removes expired rows in batches and every app with `CACHE_STORE=database` schedules `cache:prune` hourly). Redis comes with `drivers/redis` ([Redis](#redis)). `cache/cachetest.Run` is the conformance suite (concurrent `Increment` included), run on memory, SQLite, Postgres, MySQL, MariaDB and Redis.
 - Shared stores: `cache.Shared(store)` reports whether every server sees the same entries; `OnOneServer()` and `RATE_LIMIT_STORE=cache` use it. A store declares it by implementing `cache.Sharer` (`Shared() bool`): memory `false`, database and Redis `true`. A wrapper (metrics, tracing) forwards it with its own `Shared()` or by exposing the inner store with `Unwrap() cache.Store`; a store with neither is not shared (fail closed). `cachetest.Run` requires `cache.Sharer`.
+
+## Feature flags
+
+Typed flags declared in code with a default, overridden by configuration and by stored values; inspired by Laravel Pennant, without its per-flag resolver closures.
+
+```go
+// app/features/features.go (vukem install:flags)
+var (
+	NewCheckout    = flags.Bool("new_checkout", false).Describe("Serve the new checkout")
+	UploadLimitMB  = flags.Int("upload_limit_mb", 10)
+	AdminTwoFactor = flags.Bool("admin_two_factor", true).Lock() // never switchable
+)
+
+func All() []flags.AnyFlag { return []flags.AnyFlag{NewCheckout, UploadLimitMB, AdminTwoFactor} }
+
+// bootstrap: vukem.WithFlags(features.All()...)
+ff, err := app.Flags()
+if ff.Enabled(ctx, features.NewCheckout) { ... }
+limit := flags.Get(ctx, ff, features.UploadLimitMB)
+
+r.Group("/checkout/v2", func(g *router.Group) { g.Use(ff.Require(features.NewCheckout)) }) // 404 while off
+ctx = flags.WithScope(ctx, flags.Scope("user:"+u.AuthID()))                             // per-user values
+_, err = flags.Put(ctx, ff, "tenant:7", features.UploadLimitMB, 50)
+```
+
+- **Kinds**: `flags.Bool`, `flags.Int`, `flags.String` (at most 1024 bytes), constrained by `flags.Type`. Names are lowercase letters, digits and `_` (up to 100). `Describe` adds the admin panel text, `Lock` pins the code default.
+- **Resolution**, lowest first: code default, `FLAG_<NAME>` (`FLAG_NEW_CHECKOUT=true`), the stored global value, the stored value of the request scope (`flags.WithScope(ctx, scope)`, one `flags.Scope` per request, such as `user:42` or `tenant:7`). Locked flags always have their code default.
+- **Scopes** are internal ids, never raw user input: 1 to 191 bytes of `a-z 0-9 : . _ -` (`flags.Global` is `""`). A read with an invalid scope returns the default and logs a warning; a write fails with `ErrInvalid`.
+- **Boot errors** (`vukem.New`): invalid or duplicate names, a `FLAG_<NAME>` value of the wrong kind, `FLAG_<NAME>` for a locked flag, and `FLAG_*` keys in `.env` files that name no registered flag, also when no flag is registered at all (process variables cannot be listed, so a typo there is not caught). Reading a flag that was not registered returns its code default and logs an error once per name; `Require` and `Share` log it when called, at boot, and treat the flag as off.
+- **Store**: `flags.Store` (`Load`, `Save`, `Delete` by scope). `app.Flags()` uses `flags.NewDatabaseStore` over `DB()`, table `feature_flags` (`flags.Migration`, added by `vukem install:flags`; `name`, `scope` (`""` = global), `value`, `updated_at`, unique `(name, scope)`; SQLite, Postgres and MySQL upserts). Without registered flags `app.Flags()` opens neither the database nor the cache.
+- **Cache**: stored values per scope are read through `app.Cache()` with `flags.DefaultTTL` (30 s), under a key that carries a per-scope generation; `Set`, `Put` and `Reset` bump it, so a load that was in flight during a write cannot cache the old values again. Instances sharing the cache (`CACHE_STORE=database` or Redis) see a change at once; with the default memory cache each instance sees it **within the TTL**, so use a shared cache when a flag is a kill switch that must apply immediately everywhere.
+- Known limit: a read costs one or two cache lookups (generation and values) plus a JSON decode of the scope's map; hot loops should read a flag once per request.
+- **Fail closed**: when the store or the cache errors, reads return the default (the code default, or `FLAG_<NAME>` when set), never a stored value. A kill switch must therefore default to its safe value in code (or be `Lock`ed): during an outage the code default wins over what the admin stored. A failed read logs a warning (deduplicated by the app logger) and never fails a request and `Require` responds 404. A stored value that no longer parses as the flag's kind is ignored. `Set`/`Reset` return `ErrUnknown`, `ErrLocked`, `ErrInvalid`, `ErrNoStore` or the store's error; `States` (the admin view) returns the store's error instead of guessing. `ff.All()` describes the registered flags as `[]flags.Info`.
+- **Audit**: `Change` holds the value before and after a write; `Sensitive` is true for string flags, which must be logged or audited only redacted (the admin panel records length and a SHA-256 prefix).
+- **Views and Inertia**: `ff.Expose(ctx, features.NewCheckout)` returns `map[string]any{"new_checkout": false}` for view data; `ff.Share(features.NewCheckout)` (after `inertia`'s middleware) adds it as the `flags` prop of every page. Only the flags passed are exposed, never all of them.
+- **Admin panel**: `admin.Config{Flags: ff}` adds `/admin/_flags` behind the `manageFlags` gate ability ([admin.md](admin.md#feature-flags)).
+- **Tests**: set `FLAG_<NAME>` in `vukemtest.Options.Env`, or `flags.Put(ctx, ff, flags.Global, features.X, true)` against the test database.
+- Out of scope: percentage rollouts, A/B variants and rule engines; build them in app code over `WithScope` and a flag's value.
 
 ## Storage
 

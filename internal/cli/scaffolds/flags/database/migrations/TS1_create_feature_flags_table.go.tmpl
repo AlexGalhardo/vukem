@@ -1,0 +1,11 @@
+package migrations
+
+import (
+	"github.com/AlexGalhardo/vukem/flags"
+	"github.com/AlexGalhardo/vukem/schema"
+)
+
+// Stored feature flag values (global and per scope).
+func m{{.TS1}}CreateFeatureFlagsTable() schema.Migration {
+	return flags.Migration("{{.TS1}}_create_feature_flags_table")
+}

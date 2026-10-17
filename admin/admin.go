@@ -34,6 +34,7 @@ import (
 	"github.com/AlexGalhardo/vukem/csrf"
 	"github.com/AlexGalhardo/vukem/database"
 	"github.com/AlexGalhardo/vukem/errs"
+	"github.com/AlexGalhardo/vukem/flags"
 	"github.com/AlexGalhardo/vukem/htmx"
 	"github.com/AlexGalhardo/vukem/orm"
 	"github.com/AlexGalhardo/vukem/router"
@@ -54,6 +55,9 @@ const (
 	AbilityAdmin = "admin"
 	// AbilityAudit is the gate ability required to read the audit log.
 	AbilityAudit = "viewAuditLogs"
+	// AbilityFlags is the gate ability required to see and change feature
+	// flags (Config.Flags).
+	AbilityFlags = "manageFlags"
 
 	AbilityViewAny = "viewAny"
 	AbilityView    = "view"
@@ -90,8 +94,13 @@ type Config struct {
 	Title string
 	// Views overrides embedded templates by path: layouts/admin.html,
 	// index.html, show.html, form.html, delete.html, dashboard.html,
-	// audit.html.
+	// audit.html, flags.html.
 	Views fs.FS
+	// Flags adds a page at <Prefix>/_flags to change the global value of
+	// the registered feature flags (app.Flags()); it needs the
+	// AbilityFlags gate ability. Locked flags are shown read-only. Every
+	// change is a "flags.changed" audit event and an audit-log entry.
+	Flags *flags.Flags
 }
 
 // Templates returns the embedded templates, to copy one into Config.Views
@@ -204,6 +213,11 @@ func (p *Panel) Mount(r *router.Router) error {
 			g.Get("", p.dashboard).Name("dashboard")
 			g.Get("/_audit", p.audit).Name("audit")
 
+			if p.cfg.Flags != nil {
+				g.Get("/"+FlagsResource, p.flagsPage).Name("flags")
+				g.Post("/"+FlagsResource+"/{name}", p.flagsUpdate).Name("flags.update")
+			}
+
 			for _, res := range p.resources {
 				res.routes(p, g)
 			}
@@ -295,12 +309,13 @@ type page struct {
 	Record   *recordView
 	Form     *formView
 	Audit    *auditView
+	Flags    *flagsView
 	Cards    []card
 }
 
 type panelView struct {
-	Title, Home, CSS, JS, AuditURL string
-	Nav                            []navItem
+	Title, Home, CSS, JS, AuditURL, FlagsURL string
+	Nav                                      []navItem
 }
 
 type navItem struct {
@@ -330,6 +345,10 @@ func (p *Panel) base(c *web.Ctx, title, active string) page {
 
 	if p.can(c, AbilityAudit, nil) {
 		pv.AuditURL = p.url("_audit")
+	}
+
+	if p.hasFlags() && p.can(c, AbilityFlags, nil) {
+		pv.FlagsURL = p.url(FlagsResource)
 	}
 
 	return page{Title: title, Panel: pv}
@@ -401,7 +420,7 @@ func (p *Panel) audit(c *web.Ctx) error {
 	}
 
 	q := orm.QueryOf[AuditLog](p.cfg.DB).OrderBy("id", orm.Desc)
-	if res := c.Query("resource"); res != "" && p.slugs[res] {
+	if res := c.Query("resource"); res != "" && (p.slugs[res] || res == FlagsResource) {
 		q = q.Where("resource", res)
 	}
 

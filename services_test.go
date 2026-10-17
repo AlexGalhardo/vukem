@@ -23,10 +23,12 @@ import (
 
 	"github.com/AlexGalhardo/vukem/cache"
 	"github.com/AlexGalhardo/vukem/events"
+	"github.com/AlexGalhardo/vukem/flags"
 	"github.com/AlexGalhardo/vukem/internal/testutil"
 	"github.com/AlexGalhardo/vukem/logging/telegram"
 	"github.com/AlexGalhardo/vukem/mail"
 	"github.com/AlexGalhardo/vukem/router"
+	"github.com/AlexGalhardo/vukem/schema"
 	"github.com/AlexGalhardo/vukem/security"
 	"github.com/AlexGalhardo/vukem/web"
 )
@@ -597,5 +599,78 @@ func TestTelegramStatusShowsLogForwarding(t *testing.T) {
 				t.Errorf("telegramStatus(TELEGRAM_LOG=%s) = %q, want %q", tt.log, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestFlagsFromConfig(t *testing.T) {
+	t.Parallel()
+
+	beta := flags.Bool("beta", false)
+	locked := flags.Bool("admin_two_factor", true).Lock()
+
+	for name, tc := range map[string]struct {
+		env  map[string]string
+		list []flags.AnyFlag
+	}{
+		"duplicate":              {nil, []flags.AnyFlag{beta, flags.Bool("beta", true)}},
+		"bad value":              {map[string]string{"FLAG_BETA": "sometimes"}, []flags.AnyFlag{beta}},
+		"locked override":        {map[string]string{"FLAG_ADMIN_TWO_FACTOR": "false"}, []flags.AnyFlag{locked}},
+		"unknown flag key":       {map[string]string{"FLAG_BETTA": "true"}, []flags.AnyFlag{beta}},
+		"flag key without flags": {map[string]string{"FLAG_BETA": "true"}, nil},
+	} {
+		if _, err := New(
+			WithSource(testSource(tc.env)),
+			WithLogger(discardLogger()),
+			WithFlags(tc.list...),
+		); err == nil {
+			t.Errorf("%s: New() = nil error, want a boot error", name)
+		}
+	}
+
+	// Without registered flags, Flags touches neither the database nor the cache.
+	plain, err := New(WithSource(testSource(map[string]string{"DATABASE_URL": "postgres://unreachable"})),
+		WithLogger(discardLogger()))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if ff, err := plain.Flags(); err != nil || len(ff.All()) != 0 || plain.db != nil {
+		t.Errorf("Flags() without flags = %v, %v (db opened: %v)", ff, err, plain.db != nil)
+	}
+
+	dbURL := "file:" + filepath.ToSlash(filepath.Join(testutil.TempDir(t), "f.db"))
+	app, err := New(WithSource(testSource(map[string]string{"DATABASE_URL": dbURL, "FLAG_BETA": "true"})),
+		WithLogger(discardLogger()), WithFlags(beta, locked),
+		WithMigrations([]schema.Migration{flags.Migration("1_create_feature_flags_table")}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() { _ = app.Shutdown(context.Background()) })
+
+	m, err := app.Migrator()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := m.Up(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	ff, err := app.Flags()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !ff.Enabled(t.Context(), beta) {
+		t.Error("FLAG_BETA=true did not override the code default")
+	}
+
+	if _, err := ff.Set(t.Context(), flags.Global, "beta", "false"); err != nil {
+		t.Fatal(err)
+	}
+
+	if again, _ := app.Flags(); again != ff || again.Enabled(t.Context(), beta) {
+		t.Error("the stored value did not win over FLAG_BETA, or Flags() built a second instance")
 	}
 }

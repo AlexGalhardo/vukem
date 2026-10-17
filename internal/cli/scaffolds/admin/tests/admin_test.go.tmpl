@@ -59,6 +59,7 @@ func TestAdminPanelAccess(t *testing.T) {
 	c := adminClient(t, app, adminEmail)
 	c.Get("/admin").AssertOK().AssertSee("Dashboard")
 	c.Get("/admin/_audit").AssertOK().AssertSee("Audit log")
+	c.Get("/admin/_flags").AssertOK().AssertSee("Feature flags")
 
 	// An unverified account with an admin's address is not an admin: anyone
 	// can sign up first with an address they do not own.

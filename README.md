@@ -30,7 +30,7 @@ Vukem is a complete Model-View-Controller (MVC) web framework for Go built on `n
 | **Frontend** | HTMX, templ or Inertia (React, Vue, Svelte) starters with Vite and Tailwind CSS v4, SSR and a youch-style error page. |
 | **Admin and devtools** | An HTMX admin panel generated from your models, with an audit log, and a `/_vukem` dashboard for requests, queries (with N+1 detection), jobs, mail and logs. |
 | **Billing and uploads** | Stripe subscriptions (`install:billing`), streaming, resumable (tus) and direct-to-S3 uploads with virus scanning. |
-| **More** | Mail (SMTP, Resend), cache, storage (local, S3), events, encryption, i18n, OpenTelemetry, Telegram logging, SSRF-safe HTTP client, signed URLs and webhooks. |
+| **More** | Mail (SMTP, Resend), cache, feature flags, storage (local, S3), events, encryption, i18n, OpenTelemetry, Telegram logging, SSRF-safe HTTP client, signed URLs and webhooks. |
 
 ## Why Vukem
 

@@ -1,0 +1,50 @@
+{{define "content"}}
+<h1>Feature flags</h1>
+<table>
+	<thead>
+		<tr>
+			<th scope="col">Flag</th>
+			<th scope="col">Type</th>
+			<th scope="col">Default</th>
+			<th scope="col">Value</th>
+			<th scope="col"><span class="muted">Change</span></th>
+		</tr>
+	</thead>
+	<tbody>
+		{{range .Flags.Rows}}
+		<tr>
+			<td><code>{{.Name}}</code>{{with .Description}}<br><span class="muted">{{.}}</span>{{end}}</td>
+			<td>{{.Kind}}</td>
+			<td>{{.Default}}</td>
+			<td>{{.Value}}{{if .Stored}} <span class="tag">stored</span>{{end}}</td>
+			<td class="actions">
+				{{if .Locked}}
+				<span class="tag">locked in code</span>
+				{{else}}
+				<form class="inline-form" method="post" action="{{.Action}}">
+					{{csrfField}}
+					{{if eq (print .Kind) "bool"}}
+					<input type="hidden" name="value" value="{{if .On}}false{{else}}true{{end}}">
+					<button type="submit"{{if .On}} class="danger"{{end}}>{{if .On}}Turn off{{else}}Turn on{{end}}</button>
+					{{else}}
+					<label class="muted" for="flag-{{.Name}}">New value</label>
+					<input id="flag-{{.Name}}" name="value" value="{{.Value}}"{{if eq (print .Kind) "int"}} type="number" step="1" required{{end}}>
+					<button type="submit">Save</button>
+					{{end}}
+				</form>
+				{{if .Stored}}
+				<form class="inline-form" method="post" action="{{.Action}}">
+					{{csrfField}}
+					<input type="hidden" name="reset" value="1">
+					<button type="submit">Reset to default</button>
+				</form>
+				{{end}}
+				{{end}}
+			</td>
+		</tr>
+		{{else}}
+		<tr><td class="empty" colspan="5">No feature flags are registered.</td></tr>
+		{{end}}
+	</tbody>
+</table>
+{{end}}

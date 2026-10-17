@@ -12,6 +12,7 @@ import (
 	"github.com/AlexGalhardo/vukem/auth/hash"
 	"github.com/AlexGalhardo/vukem/authz"
 	"github.com/AlexGalhardo/vukem/database"
+	"github.com/AlexGalhardo/vukem/flags"
 	"github.com/AlexGalhardo/vukem/orm"
 	"github.com/AlexGalhardo/vukem/router"
 	"github.com/AlexGalhardo/vukem/schema"
@@ -156,12 +157,15 @@ var migrations = []schema.Migration{
 		Down: func(*schema.Schema) error { return nil },
 	},
 	admin.Migration("2_create_admin_audit_logs_table"),
+	flags.Migration("3_create_feature_flags_table"),
 }
 
 type options struct {
 	views    fs.FS
 	noGate   bool
 	resource func() []admin.AnyResource
+	// flags registers these feature flags and passes app.Flags() to the panel.
+	flags []flags.AnyFlag
 }
 
 func resources() []admin.AnyResource {
@@ -183,7 +187,7 @@ func newApp(t *testing.T, o options) *vukemtest.App {
 	t.Helper()
 
 	build := func(opts ...vukem.Option) (*vukem.App, error) {
-		return vukem.New(append(opts, vukem.WithMigrations(migrations),
+		return vukem.New(append(opts, vukem.WithMigrations(migrations), vukem.WithFlags(o.flags...),
 			vukem.WithRoutes(func(r *router.Router, app *vukem.App) error {
 				if err := vukem.DefaultMiddleware(app, r); err != nil {
 					return err
@@ -201,6 +205,12 @@ func newApp(t *testing.T, o options) *vukemtest.App {
 
 				cfg := admin.Config{DB: db, Guard: guard, Views: o.views}
 
+				if o.flags != nil {
+					if cfg.Flags, err = app.Flags(); err != nil {
+						return err
+					}
+				}
+
 				if !o.noGate {
 					gate := authz.New(func(ctx context.Context) (*User, error) {
 						u, err := auth.UserFrom[User](ctx, "web")
@@ -210,6 +220,7 @@ func newApp(t *testing.T, o options) *vukemtest.App {
 						return u.Role == "admin" || u.Role == "editor"
 					})
 					gate.Define(admin.AbilityAudit, func(_ context.Context, u *User) bool { return u.Role == "admin" })
+					gate.Define(admin.AbilityFlags, func(_ context.Context, u *User) bool { return u.Role == "admin" })
 
 					if err := gate.Register(
 						authz.For[*Post](adminPolicy[*Post]{}),

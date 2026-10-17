@@ -43,6 +43,7 @@ Exit codes: `0` success, `1` failure, `2` usage error.
 | `vukem make:provider <Name>` | Provider, appended to `bootstrap/providers.go` |
 | `vukem make:test <Name>` | Test file using the fluent test client |
 | `vukem install:admin [--force]` | Admin panel at `/admin` (needs `install:auth`): `routes/admin.go`, `app/admin/`, audit-log migration, test, `ADMIN_EMAILS` ([admin.md](admin.md)) |
+| `vukem install:flags [--force]` | Feature flags: `app/features/features.go` (`All()`), the `feature_flags` migration and `vukem.WithFlags(features.All()...)` in `bootstrap/app.go`; with the admin panel they are toggled at `/admin/_flags`. Safe to re-run: `app/features/features.go` is never overwritten (not even with `--force`) and an existing feature flags migration is reused (`--force` rewrites it in place) ([subsystems.md](subsystems.md#feature-flags)) |
 | `vukem make:admin-resource <Model> [--force]` | Admin resource + policy for an existing model in `app/admin/<model>.go` and a test, registered in `app/admin/registry.go` |
 | `vukem key:generate [--show]` | Write `APP_KEY` to `.env` |
 | `vukem key:rotate` | Write a new `APP_KEY` to `.env` and move the old one to the front of `APP_PREVIOUS_KEYS` (keys are never printed). It refuses a malformed current or previous key, keeps `export`, indentation and inline comments, replaces `.env` atomically (through a symlink too), and warns when more than 3 previous keys remain; see [Key rotation](security.md#key-rotation) |

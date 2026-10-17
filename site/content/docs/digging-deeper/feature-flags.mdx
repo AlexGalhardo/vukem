@@ -1,0 +1,150 @@
+---
+title: Feature flags
+description: Typed flags declared in code, overridden by FLAG_ variables and by values stored per scope, toggled in the admin panel.
+---
+
+A feature flag turns code on or off without a deploy: ship the new checkout dark, switch it on for one tenant, then for everyone, and switch it off again if something breaks. In Vukem a flag is a typed value declared in code with a default; configuration and the database can override it, and the admin panel toggles it.
+
+```go
+// app/features/features.go (vukem install:flags)
+var (
+	NewCheckout    = flags.Bool("new_checkout", false).Describe("Serve the new checkout")
+	UploadLimitMB  = flags.Int("upload_limit_mb", 10)
+	HomeVariant    = flags.String("home_variant", "classic")
+	AdminTwoFactor = flags.Bool("admin_two_factor", true).Lock()
+)
+
+func All() []flags.AnyFlag {
+	return []flags.AnyFlag{NewCheckout, UploadLimitMB, HomeVariant, AdminTwoFactor}
+}
+```
+
+```go
+// bootstrap/app.go
+vukem.WithFlags(features.All()...),
+
+// anywhere with the app
+ff, err := app.Flags()
+
+if ff.Enabled(ctx, features.NewCheckout) {
+	// new code path
+}
+
+limit := flags.Get(ctx, ff, features.UploadLimitMB) // typed: int
+```
+
+## Install
+
+```bash
+vukem install:flags
+vukem migrate
+```
+
+`install:flags` creates `app/features/features.go`, registers the `feature_flags` migration and adds `vukem.WithFlags(features.All()...)` to `bootstrap/app.go`. Declare your flags there and list them in `All()`. Running it again is safe: it never overwrites `features.go` (not even with `--force`) and reuses the existing migration.
+
+## Declaring flags
+
+| Constructor | Value | Notes |
+| --- | --- | --- |
+| `flags.Bool(name, def)` | `bool` | on or off; `ff.Enabled(ctx, f)` |
+| `flags.Int(name, def)` | `int` | limits, percentages |
+| `flags.String(name, def)` | `string` | a variant name, at most 1024 bytes |
+
+- Names are lowercase letters, digits and `_`, starting with a letter (up to 100 characters).
+- `.Describe(text)` is shown in the admin panel.
+- `.Lock()` pins the code default: the environment cannot override it, stored values are ignored and writes fail. Lock security-critical flags (such as two-factor authentication for admins) so nobody can switch them off at runtime.
+
+## Where a value comes from
+
+Lowest precedence first:
+
+1. The code default.
+2. `FLAG_<NAME>` from the environment or `.env` files (`FLAG_NEW_CHECKOUT=true`, `FLAG_UPLOAD_LIMIT_MB=25`).
+3. The stored global value (the admin panel writes it).
+4. The stored value of the request scope, when the context carries one.
+
+A locked flag always has its code default.
+
+These mistakes stop the app at boot (`vukem.New` returns an error): an invalid or duplicate name, a `FLAG_<NAME>` value of the wrong type, `FLAG_<NAME>` for a locked flag, and a `FLAG_*` key in a `.env` file that names no registered flag (a typo), also when no flag is registered. Process environment variables cannot be listed, so a typo there is not caught.
+
+Reading a flag that is not in `All()` returns its code default and logs an error (once per flag).
+
+## Per-user and per-tenant values
+
+A scope (`flags.Scope`) is one internal id per request, such as `user:42` or `tenant:7`: 1 to 191 bytes of lowercase letters, digits and `: . _ -`. Build it from your own ids, never from raw user input. Set it in middleware after authentication; every read in that request then applies the values stored for the scope over the global ones. A read with an invalid scope returns the default and logs a warning; a write with one fails with `flags.ErrInvalid`.
+
+```go
+func FlagScope(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if u, err := auth.UserFrom[models.User](r.Context(), "web"); err == nil {
+			r = r.WithContext(flags.WithScope(r.Context(), flags.Scope("user:"+u.AuthID())))
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+// give one tenant a bigger limit
+_, err := flags.Put(ctx, ff, "tenant:7", features.UploadLimitMB, 50)
+
+// and take it back
+_, err = ff.Reset(ctx, "tenant:7", "upload_limit_mb")
+```
+
+`ff.Set(ctx, scope, name, value)` writes a value from a string (`"true"`, `"42"`), `flags.Put` writes a typed one and `ff.Reset` deletes the stored value. Each returns a `flags.Change` with the value before and after, for your own audit trail. Use `flags.Global` (`""`) for everyone.
+
+Percentage rollouts and A/B tests are not built in: write them in app code over a scope and a flag's value (for example a hash of the user id compared with an `Int` flag).
+
+## Routes, views and Inertia
+
+```go
+// 404 while the flag is off, as if the route did not exist
+r.Group("/checkout/v2", func(g *router.Group) {
+	g.Use(ff.Require(features.NewCheckout))
+	g.Get("", checkout.Show)
+})
+
+// html/template: pass the allowlisted flags in the view data
+return c.Render("home", map[string]any{"flags": ff.Expose(c.Context(), features.HomeVariant)})
+
+// Inertia: share them as the "flags" prop of every page (after inertia's middleware)
+r.Use(app.Inertia.Middleware, ff.Share(features.NewCheckout, features.HomeVariant))
+```
+
+Only the flags you pass reach the browser. Never expose all of them: flag names and values can reveal unreleased features.
+
+## Storage and caching
+
+Stored values live in the `feature_flags` table (`name`, `scope`, `value`, `updated_at`, unique `(name, scope)`) of the app database: SQLite, PostgreSQL or MySQL. Reads go through the app cache for 30 seconds (`flags.DefaultTTL`); every write invalidates the cached values of its scope, so servers that share the cache (`CACHE_STORE=database` or Redis) see a change at once. With the default memory cache, each server sees it **within 30 seconds**: use a shared cache when a flag is a kill switch that must stop something everywhere at once.
+
+**Fail closed:** when the database or the cache fails, a read returns the default (the code default, or `FLAG_<NAME>` when set), never a stored value, and logs a warning. A read never fails a request, and `Require` answers 404. Writes return the error. So give a kill switch its **safe value as the code default** (or `Lock` it): during an outage, what the admin stored is ignored.
+
+## Admin panel
+
+With the [admin panel](/docs/digging-deeper/admin) installed, the flags appear at `/admin/_flags` for users with the `manageFlags` ability (the `install:admin` scaffold gives it to the `ADMIN_EMAILS` admins). Boolean flags toggle with one button, int and string flags take a value, and "Reset to default" deletes the stored value. Locked flags are read-only.
+
+Every change is recorded twice: a `flags.changed` audit event (`web.AuditEvent` with `actor_id`, `flag`, `changed`, `old` and `new`) and a row in the admin audit log, browsable at `/admin/_audit?resource=_flags`. String values are recorded only as their length and a SHA-256 prefix. The flag write and the audit row are not atomic: if the row fails, the change is logged at ERROR and the page shows a warning.
+
+An app that ran `install:admin` before v0.27.0 wires it by hand in `routes/admin.go`:
+
+```go
+gate.Define(vadmin.AbilityFlags, func(_ context.Context, u *models.User) bool { return admins.Has(u) })
+
+ff, err := app.Flags()
+if err != nil {
+	return err
+}
+
+panel, err := vadmin.New(vadmin.Config{DB: acc.DB, Guard: acc.Web, Authorizer: gate, Flags: ff})
+```
+
+## Testing
+
+```go
+// a value for the whole test app
+app := vukemtest.New(t, bootstrap.New, vukemtest.Options{Env: map[string]string{"FLAG_NEW_CHECKOUT": "true"}})
+
+// or a stored value in the test database
+ff, _ := app.Flags()
+_, err := flags.Put(t.Context(), ff, flags.Global, features.NewCheckout, true)
+```

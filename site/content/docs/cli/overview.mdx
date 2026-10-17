@@ -18,6 +18,7 @@ vukem list
 | `vukem install:auth [--social github,google,…] [--2fa]` | Add login, registration, email verification and password reset ([Authentication](/docs/security/authentication)), optionally social login and [two-factor](/docs/security/two-factor) |
 | `vukem install:inertia --force [--react\|--vue\|--svelte]` | Turn the HTMX starter into an [Inertia](/docs/frontend/inertia) app |
 | `vukem install:admin`, `vukem make:admin-resource <Model>` | [Admin panel](/docs/digging-deeper/admin) and its resources |
+| `vukem install:flags` | [Feature flags](/docs/digging-deeper/feature-flags): definitions, table and registration |
 | `vukem install:billing` | [Stripe subscriptions](/docs/digging-deeper/billing) (needs `install:auth`) |
 | `vukem make:proto <Name>`, `vukem codegen:rpc [--protoc]` | [gRPC](/docs/rest-apis/grpc#code-generation) service skeleton and code generation |
 | `vukem down [--secret s]`, `vukem up` | Maintenance mode: 503 with `Retry-After`; `/<secret>` sets a signed bypass cookie |
