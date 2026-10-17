@@ -55,7 +55,7 @@ Set `Op.ValidateResponse: true` to check the output against its `validate` tags 
 api.Register(g, "GET /tasks", api.Op{Name: "tasks.index", ValidateResponse: true}, tasks.Index)
 ```
 
-The check runs when `web.Services.CheckResponses` is on, which the app enables outside production (the same switch as `web.JSONWith`). A mismatch is a server bug: it is logged and answered with a generic 500 instead of sending data that breaks the documented contract. In production the output is written without the check.
+The check runs when `web.Services.CheckResponses` is on (the same switch as `web.JSONWith`). The app turns it on whenever `APP_ENV` is not `production`, that is `development` or `test`: a staging deployment that runs with `APP_ENV=development` checks too and answers 500 on a mismatch. A mismatch is a server bug: it is logged and answered with a generic 500 instead of sending data that breaks the documented contract. In production the output is written without the check.
 
 A list field tagged `validate:"required"` must be present and not `null` (a nil slice fails), but may be empty; use `min=1` when it needs items.
 

@@ -30,10 +30,11 @@ type Op struct {
 	Security []string
 	// ValidateResponse checks the output against its `validate` tags
 	// (z.For[Out]) before writing it, when web.Services.CheckResponses is
-	// on (development and test by default, never in production). A mismatch
-	// is a server bug: it is logged and answered with a generic 500 instead
-	// of sending data that breaks the documented contract. Out must be a
-	// struct; Register panics otherwise.
+	// on: the app sets it whenever APP_ENV is not production, so a staging
+	// deployment with APP_ENV=development or test runs the check too. A
+	// mismatch is a server bug: it is logged and answered with a generic 500
+	// instead of sending data that breaks the documented contract. Out must
+	// be a struct; Register panics otherwise.
 	ValidateResponse bool
 }
 
