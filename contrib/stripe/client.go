@@ -383,6 +383,7 @@ type Error struct {
 	RequestID   string `json:"-"`
 }
 
+// Error returns the status, error type, code and message.
 func (e *Error) Error() string {
 	s := fmt.Sprintf("stripe: %d %s", e.Status, e.Type)
 	if e.Code != "" {
