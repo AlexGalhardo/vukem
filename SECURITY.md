@@ -33,3 +33,18 @@ Please include:
 | Fix released for confirmed issues | 30 days, faster for critical issues |
 
 Fixes are published as GitHub Security Advisories, which also feed the [Go vulnerability database](https://pkg.go.dev/vuln/) so `govulncheck` users are notified. Reporters are credited unless they prefer otherwise.
+
+## Verifying release artifacts
+
+Every `vukem` CLI release ships `checksums.txt`, a cosign keyless signature bundle `checksums.txt.sigstore.json`, an SPDX SBOM per archive (`<archive>.sbom.json`) and GitHub build provenance attestations, all produced by `.github/workflows/release.yml`. No long-lived signing key exists: the signing certificate is bound to that workflow and the release tag.
+
+```sh
+cosign verify-blob checksums.txt \
+  --bundle checksums.txt.sigstore.json \
+  --certificate-identity-regexp '^https://github\.com/AlexGalhardo/vukem/\.github/workflows/release\.yml@refs/tags/v' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+sha256sum --ignore-missing -c checksums.txt
+gh attestation verify vukem_<version>_<os>_<arch>.tar.gz -R AlexGalhardo/vukem
+```
+
+Supply-chain details: [docs/tooling.md](docs/tooling.md#supply-chain).

@@ -108,7 +108,7 @@ Spec: <https://www.conventionalcommits.org/en/v1.0.0/>. Enforced by the in-repo 
    - publishes a GitHub release whose notes are that changelog section (`v0.x` and pre-releases are marked pre-release).
 3. Missed a group? Cut it retroactively: `go run ./internal/tools/release -no-commit -ref <commit> vX.Y.Z`, tag `<commit>`, commit the changelog, push, and create the GitHub release from the section.
 4. Driver modules are tagged separately as `drivers/<name>/vX.Y.Z` (e.g. `drivers/redis/v0.1.0`) once their CI job is green.
-5. From `v0.1.0` on, release tags also get `vukem` CLI binaries (linux, macOS, Windows; amd64 and arm64) built by GoReleaser (`.goreleaser.yaml`), attached to the existing release without touching its notes. `release.yml` does it on tag push once Actions is available; until then run `task release:binaries` on the tagged commit (Docker; `SNAPSHOT=1` builds into `dist/` without publishing).
+5. From `v0.1.0` on, release tags also get `vukem` CLI binaries (linux, macOS, Windows; amd64 and arm64) built by GoReleaser (`.goreleaser.yaml`), attached to the existing release without touching its notes. `release.yml` does it on tag push and also uploads SBOMs and the cosign signature ([Supply chain](#supply-chain)). The local fallback, `task release:binaries` on the tagged commit (Docker; `SNAPSHOT=1` builds into `dist/` without publishing), skips signing: keyless signing needs the Actions OIDC token.
 6. Warm the proxy: `GOPROXY=https://proxy.golang.org go list -m github.com/AlexGalhardo/vukem@vX.Y.Z`.
 
 ## CI (GitHub Actions)
@@ -117,12 +117,34 @@ Spec: <https://www.conventionalcommits.org/en/v1.0.0/>. Enforced by the in-repo 
 | --- | --- | --- |
 | `ci.yml` | push to `main`, PRs | lint (per module), unit matrix, integration (services), e2e, markdownlint, govulncheck, coverage gate |
 | `pr-title.yml` | PR opened/edited | semantic PR title |
-| `release.yml` | tag `v*` | GoReleaser + git-cliff notes |
+| `release.yml` | tag `v*` | GoReleaser binaries, SBOMs, cosign keyless signature, build provenance |
 | `codeql.yml` | push, weekly | CodeQL Go |
 | `scorecard.yml` | push to `main`, weekly | OpenSSF Scorecard |
-| Dependabot | weekly | `gomod` (all modules, prefix `build(deps)`), `github-actions` (prefix `ci`) |
+| Dependabot | weekly | `gomod` (all modules, prefix `build(deps)`), `npm` (`site/`), `github-actions` (prefix `ci`) |
 
-Workflows declare `permissions: contents: read` at the top and pin third-party actions by commit SHA.
+Workflows declare `permissions: contents: read` at the top; jobs widen it only for what they write. Every action is pinned by full commit SHA with a `# vX.Y.Z` comment (Dependabot bumps both), and tools fetched in workflows use exact versions (`govulncheck@v1.9.0`, `@redocly/cli@1.34.3`), never `@latest`.
+
+### Supply chain
+
+- `release.yml` runs GoReleaser with syft (one SPDX SBOM per archive, `<archive>.sbom.json`) and cosign keyless: `checksums.txt.sigstore.json` is a Sigstore bundle signed with the workflow's GitHub OIDC identity, so no signing key or secret exists. `actions/attest-build-provenance` then attests every file listed in `checksums.txt`.
+- `checksums.txt` lists the archives and their SBOMs, so its signature covers all of them.
+- `scorecard.yml` runs OpenSSF Scorecard (target ≥ 7), publishes the results and uploads SARIF to code scanning.
+- Repository settings that Scorecard also checks are applied by an admin, never by workflows: a branch ruleset on `main` (pull request with the CI checks required, no force pushes or deletion), Dependabot alerts and security updates, private vulnerability reporting.
+
+### Verifying a release
+
+```sh
+VERSION=v0.30.0 # the release tag
+ARCHIVE="vukem_${VERSION#v}_linux_amd64.tar.gz"
+gh release download "$VERSION" -R AlexGalhardo/vukem \
+  -p checksums.txt -p checksums.txt.sigstore.json -p "$ARCHIVE" -p "$ARCHIVE.sbom.json"
+cosign verify-blob checksums.txt \
+  --bundle checksums.txt.sigstore.json \
+  --certificate-identity-regexp '^https://github\.com/AlexGalhardo/vukem/\.github/workflows/release\.yml@refs/tags/v' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+sha256sum --ignore-missing -c checksums.txt
+gh attestation verify "$ARCHIVE" -R AlexGalhardo/vukem
+```
 
 ## Task runner
 
