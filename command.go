@@ -161,6 +161,7 @@ func builtinCommands() []Command {
 		[]Command{
 			routeListCommand(),
 			aboutCommand(),
+			keyGenerateCommand(),
 			openAPIExportCommand(),
 			codegenTypesCommand(),
 			codegenRoutesCommand(),

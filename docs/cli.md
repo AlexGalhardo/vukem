@@ -7,7 +7,7 @@ The `vukem` command: scaffolding, generators, dev server, and delegation to the 
 | Binary | Installed by | Knows about the app? | Commands |
 | --- | --- | --- | --- |
 | **`vukem`** (global) | `go install github.com/AlexGalhardo/vukem/cmd/vukem@latest` | No — works on files | `new`, `make:*`, `install:*`, `serve`, `build`, `key:generate`, `codegen:rpc`, `version` |
-| **app binary** (`cmd/app`) | built from the user's project | Yes — boots the app | `serve:http` (default), `migrate*`, `db:*`, `route:list`, `queue:*`, `schedule:*`, `openapi:*`, `codegen:types`, `codegen:routes`, `codegen:client`, `about`, user commands |
+| **app binary** (`cmd/app`) | built from the user's project | Yes — boots the app | `serve:http` (default), `migrate*`, `db:*`, `route:list`, `queue:*`, `schedule:*`, `openapi:*`, `codegen:types`, `codegen:routes`, `codegen:client`, `about`, `key:generate` (prints a key, runs without booting), user commands |
 
 When `vukem` receives a command it does not own, it delegates to the project's binary: `cmd/app` is built into `.vukem/bin/app` (rebuilt only when a `.go`, `go.mod` or `go.sum` file is newer than the binary) and run with the same arguments; its exit code is passed through. So `vukem migrate` works from the project root exactly like `php artisan migrate`. Projects ignore `.vukem/` in `.gitignore`.
 

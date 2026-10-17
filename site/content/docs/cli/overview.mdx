@@ -75,9 +75,21 @@ vukem about
 vukem reports:send --dry-run   # your own command
 ```
 
-`vukem` builds `cmd/app` into `.vukem/bin/app` and runs it with the same arguments. The binary is rebuilt only when a `.go`, `go.mod` or `go.sum` file is newer, so repeated commands start instantly. Built-in app commands: `migrate`, `migrate:rollback`, `migrate:reset`, `migrate:fresh`, `migrate:status`, `db:seed`, `db:wipe`, `route:list`, `about`, [`queue:work`, `queue:failed`, `queue:retry`, `queue:forget`](/docs/digging-deeper/queue#commands), [`schedule:run`, `schedule:work`, `schedule:list`](/docs/digging-deeper/scheduler#running-it), [`openapi:export`, `codegen:types`](/docs/rest-apis/openapi), [`codegen:client`](/docs/rest-apis/client-generation), [`codegen:routes`](/docs/frontend/inertia#typed-routes), [`ssr:start`, `ssr:check`](/docs/frontend/inertia#server-side-rendering), `boost:mcp` and `openapi:serve` (when you add `apidocs.Command()`). Destructive commands need `--force` in production. Add your own with `vukem make:command` (see [Application lifecycle](/docs/architecture/lifecycle#commands)).
+`vukem` builds `cmd/app` into `.vukem/bin/app` and runs it with the same arguments. The binary is rebuilt only when a `.go`, `go.mod` or `go.sum` file is newer, so repeated commands start instantly. Built-in app commands: `migrate`, `migrate:rollback`, `migrate:reset`, `migrate:fresh`, `migrate:status`, `db:seed`, `db:wipe`, `route:list`, `about`, `key:generate`, [`queue:work`, `queue:failed`, `queue:retry`, `queue:forget`](/docs/digging-deeper/queue#commands), [`schedule:run`, `schedule:work`, `schedule:list`](/docs/digging-deeper/scheduler#running-it), [`openapi:export`, `codegen:types`](/docs/rest-apis/openapi), [`codegen:client`](/docs/rest-apis/client-generation), [`codegen:routes`](/docs/frontend/inertia#typed-routes), [`ssr:start`, `ssr:check`](/docs/frontend/inertia#server-side-rendering), `boost:mcp` and `openapi:serve` (when you add `apidocs.Command()`). Destructive commands need `--force` in production. Add your own with `vukem make:command` (see [Application lifecycle](/docs/architecture/lifecycle#commands)).
 
 Running the binary directly works too: `go run ./cmd/app migrate`.
+
+### `APP_KEY` without the global CLI
+
+Docker images and CI runners usually ship only your compiled binary, not `vukem`. The app's own `key:generate` **prints** a new key and never touches `.env`; it also works before any `APP_KEY` exists, since it runs without booting the app:
+
+```bash
+./app key:generate                    # base64:...
+export APP_KEY="$(./app key:generate)" # use it in the current shell
+docker run --rm my-app key:generate    # with ENTRYPOINT ["/app"]
+```
+
+Store the printed value in your secret manager or deployment environment. `vukem key:generate` (global CLI) is the one that writes `.env`.
 
 ## `vukem serve`
 

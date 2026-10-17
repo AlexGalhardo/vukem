@@ -297,6 +297,10 @@ func RunMain(ctx context.Context, args []string, getenv func(string) (string, bo
 		cmd, rest = args[1], args[2:]
 	}
 
+	if cmd == keyGenerateName {
+		return runKeyGenerate(rest, opts)
+	}
+
 	base := []Option{WithEnv(osDirFS("."), getenv)}
 	switch {
 	case isWarmupCommand(cmd):

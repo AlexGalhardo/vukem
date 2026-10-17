@@ -129,7 +129,7 @@ app.Log.Info("mail", "cfg", cfg) // password logged as [redacted]
 
 ## `APP_KEY`
 
-- Required. `vukem key:generate` writes one to `.env` (creating it from `.env.example` when missing); `--show` prints a key instead and `--force` replaces an existing one, which makes current sessions and encrypted data unreadable. In code, `config.GenerateKey()` returns 32 random bytes from `crypto/rand`, `base64:`-encoded.
+- Required. `vukem key:generate` writes one to `.env` (creating it from `.env.example` when missing); `--show` prints a key instead and `--force` replaces an existing one, which makes current sessions and encrypted data unreadable. Where only the compiled app exists (Docker, CI), `./app key:generate` prints a new key without booting the app or writing any file; see [CLI](/docs/cli/overview#app_key-without-the-global-cli). In code, `config.GenerateKey()` returns 32 random bytes from `crypto/rand`, `base64:`-encoded.
 - The decoded key is available as `app.Key`. Never use it directly: derive a purpose-specific key with HKDF-SHA256 so cookies, sessions and encryption never share key material.
 
 ```go
