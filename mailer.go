@@ -10,9 +10,9 @@ import (
 	"github.com/AlexGalhardo/vukem/web"
 )
 
-// MailConfig is read from MAIL_* (and SMTP_* / RESEND_*) variables.
+// MailConfig is read from MAIL_* (and SMTP_* / RESEND_* / MAILTRAP_*) variables.
 type MailConfig struct {
-	// Mailer is "smtp", "resend", "log" or "array" (tests). Production
+	// Mailer is "smtp", "resend", "mailtrap", "log" or "array" (tests). Production
 	// must choose explicitly; elsewhere it defaults to "log".
 	Mailer string `env:"MAIL_MAILER"`
 	From   string `env:"MAIL_FROM"   default:"Vukem <hello@example.com>"`
@@ -25,6 +25,10 @@ type MailConfig struct {
 	SMTPInsecure bool `env:"SMTP_INSECURE"`
 
 	ResendAPIKey config.Secret `env:"RESEND_API_KEY"`
+
+	MailtrapAPIToken config.Secret `env:"MAILTRAP_API_TOKEN"`
+	// MailtrapInboxID > 0 sends to that Email Sandbox inbox instead of delivering.
+	MailtrapInboxID int64 `env:"MAILTRAP_INBOX_ID"`
 }
 
 type mailState struct {
@@ -80,7 +84,7 @@ func (a *App) mailTransport(cfg MailConfig) (mail.Transport, error) {
 	switch cfg.Mailer {
 	case "":
 		if a.Config.IsProduction() {
-			return nil, errors.New("vukem: set MAIL_MAILER in production (smtp, resend or log)")
+			return nil, errors.New("vukem: set MAIL_MAILER in production (smtp, resend, mailtrap or log)")
 		}
 
 		return mail.Log{L: a.Log}, nil
@@ -99,6 +103,16 @@ func (a *App) mailTransport(cfg MailConfig) (mail.Transport, error) {
 		}
 
 		return mail.NewResend(mail.ResendConfig{APIKey: cfg.ResendAPIKey}), nil
+	case "mailtrap":
+		if cfg.MailtrapAPIToken.IsZero() {
+			return nil, errors.New("vukem: MAIL_MAILER=mailtrap needs MAILTRAP_API_TOKEN")
+		}
+
+		if cfg.MailtrapInboxID < 0 {
+			return nil, errors.New("vukem: MAILTRAP_INBOX_ID must be a positive sandbox inbox id")
+		}
+
+		return mail.NewMailtrap(mail.MailtrapConfig{APIToken: cfg.MailtrapAPIToken, InboxID: cfg.MailtrapInboxID}), nil
 	default:
 		return nil, fmt.Errorf("vukem: unknown MAIL_MAILER %q", cfg.Mailer)
 	}

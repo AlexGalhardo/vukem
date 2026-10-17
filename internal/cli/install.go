@@ -116,7 +116,7 @@ func installAuth(set *flag.FlagSet) func(context.Context, *Env, []string) error 
 
 		fmt.Fprint(env.Stdout, "\nAuthentication installed. Next:\n\n"+
 			"  vukem migrate\n"+
-			"  set MAIL_MAILER (smtp or resend) and APP_URL so verification and reset emails work\n"+
+			"  set MAIL_MAILER (smtp, resend or mailtrap) and APP_URL so verification and reset emails work\n"+
 			"  go test ./tests/...\n\n")
 
 		if *twoFactor {
