@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"regexp"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -31,7 +32,7 @@ type Store interface {
 type MemoryStore struct {
 	mu    sync.Mutex
 	items map[string]memItem
-	now   func() time.Time
+	clk   storeClock
 }
 
 type memItem struct {
@@ -41,7 +42,7 @@ type memItem struct {
 
 // NewMemoryStore returns an empty MemoryStore.
 func NewMemoryStore() *MemoryStore {
-	return &MemoryStore{items: map[string]memItem{}, now: time.Now}
+	return &MemoryStore{items: map[string]memItem{}}
 }
 
 // Load implements Store.
@@ -60,13 +61,6 @@ func (m *MemoryStore) Load(_ context.Context, id string) ([]byte, bool, error) {
 	}
 
 	return it.data, true, nil
-}
-
-func (m *MemoryStore) setClock(now func() time.Time) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	m.now = now
 }
 
 // Save implements Store.
@@ -114,7 +108,7 @@ type SQLStore struct {
 	db          *sql.DB
 	table       string
 	placeholder func(n int) string
-	now         func() time.Time
+	clk         storeClock
 	mysql       bool
 
 	// Queries are built once from the validated table name.
@@ -142,7 +136,7 @@ var tableNameRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 // NewSQLStore returns a SQLStore. The table name is validated because it is
 // interpolated into SQL (A05).
 func NewSQLStore(db *sql.DB, opts ...SQLOption) (*SQLStore, error) {
-	s := &SQLStore{db: db, table: "sessions", placeholder: func(int) string { return "?" }, now: time.Now}
+	s := &SQLStore{db: db, table: "sessions", placeholder: func(int) string { return "?" }}
 	for _, o := range opts {
 		o(s)
 	}
@@ -169,8 +163,6 @@ func NewSQLStore(db *sql.DB, opts ...SQLOption) (*SQLStore, error) {
 
 	return s, nil
 }
-
-func (s *SQLStore) setClock(now func() time.Time) { s.now = now }
 
 // CreateTable creates the sessions table if it does not exist.
 func (s *SQLStore) CreateTable(ctx context.Context) error {
@@ -277,3 +269,26 @@ func (s *sealer) open(name, value string) ([]byte, error) {
 
 	return plain, nil
 }
+
+// storeClock is a store's time source: time.Now until session.New hands it the
+// manager's Config.Now. Atomic because a store may be shared by managers or
+// pruned while it serves requests.
+type storeClock struct {
+	fn atomic.Pointer[func() time.Time]
+}
+
+func (c *storeClock) now() time.Time {
+	if fn := c.fn.Load(); fn != nil {
+		return (*fn)()
+	}
+
+	return time.Now()
+}
+
+func (m *MemoryStore) now() time.Time { return m.clk.now() }
+
+func (m *MemoryStore) setClock(now func() time.Time) { m.clk.fn.Store(&now) }
+
+func (s *SQLStore) now() time.Time { return s.clk.now() }
+
+func (s *SQLStore) setClock(now func() time.Time) { s.clk.fn.Store(&now) }

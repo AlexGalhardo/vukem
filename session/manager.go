@@ -39,8 +39,10 @@ type Config struct {
 	CookieKey []byte
 	// Production enables boot-time checks (Secure must be true).
 	Production bool
-	// Now is the clock (tests); defaults to time.Now. When set, the
-	// built-in stores (MemoryStore, SQLStore) expire sessions by it too.
+	// Now is the clock (tests); defaults to time.Now. When set, New hands
+	// it to the store so expiry and Prune follow the same clock: the
+	// built-in MemoryStore and SQLStore, and any store (or wrapper
+	// embedding one) with a setClock(func() time.Time) method.
 	Now func() time.Time
 	// Log receives security events and storage errors.
 	Log *slog.Logger
