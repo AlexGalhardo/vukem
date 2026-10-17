@@ -1,6 +1,6 @@
 ---
 title: Mail
-description: Mailables rendered from views and sent through SMTP, Resend, log or an in-memory transport for tests.
+description: Mailables rendered from views and sent through SMTP, Resend, Mailtrap, log or an in-memory transport for tests.
 ---
 
 ```go title="app/mail/welcome.go"
@@ -32,15 +32,34 @@ err = mailer.Send(ctx, Welcome{User: u})
 | --- | --- | --- |
 | `smtp` | `net/smtp` with required STARTTLS (or implicit TLS on 465), AUTH PLAIN, multipart MIME | `SMTP_HOST`, `SMTP_PORT` (587), `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_INSECURE` (local catchers only) |
 | `resend` | Resend HTTP API: tags, reply-to, attachments, the message id as `Idempotency-Key`, retries on 429/5xx, typed `*mail.ResendError` | `RESEND_API_KEY` |
+| `mailtrap` | Mailtrap Email API: cc/bcc, one reply-to, attachments and inline images, the `category` tag as category and other tags as custom variables, retries on 429/5xx, typed `*mail.MailtrapError` | `MAILTRAP_API_TOKEN`, `MAILTRAP_INBOX_ID` (sandbox) |
 | `log` | logs recipients and subject (bodies at debug) | default outside production |
 | `array` | in memory | default in `vukemtest` |
 
 `MAIL_FROM` sets the default sender. Production must set `MAIL_MAILER`; a missing or unknown value is an error, never silent loss of mail. `vukem.WithMailTransport(t)` plugs in your own `mail.Transport`.
 
+### Mailtrap
+
+Some hosts block outbound SMTP (Railway on some plans, other PaaS): `smtp` then fails with a dial timeout. Mailtrap's HTTP API goes over HTTPS on port 443 instead.
+
+```bash title=".env"
+MAIL_MAILER=mailtrap
+MAILTRAP_API_TOKEN=...      # Email API token, required: a missing token stops the app at boot
+MAILTRAP_INBOX_ID=1234567   # optional: deliver to this Email Sandbox inbox instead of real recipients
+MAIL_FROM="App <hello@your-verified-domain.com>"
+```
+
+- Without `MAILTRAP_INBOX_ID` mail goes to `https://send.api.mailtrap.io/api/send` (transactional stream); the sender domain must be verified in Mailtrap.
+- With `MAILTRAP_INBOX_ID` it goes to `https://sandbox.api.mailtrap.io/api/send/{inbox}`, for staging. Use a token that can access that inbox. With `APP_ENV=production` the app logs a warning at boot, since recipients receive nothing.
+- A `category` tag becomes Mailtrap's `category`; other tags are sent as `custom_variables` (they show up in webhooks and logs).
+- Mailtrap accepts a single reply-to address; more than one is an error rather than a silently dropped address.
+- The API has no idempotency key, so a 5xx answered after delivery can send twice when retried.
+- Errors are `*mail.MailtrapError` with the HTTP status and Mailtrap's `errors` list (or its `message` when the shape differs), at most 5 one-line items of 200 characters. They never carry the message body or the token but may contain addresses quoted by the API. `Retryable()` is true for 429 and 5xx; a 2xx answering `success: false` is a non-retryable error.
+
 ## Security
 
 - Addresses go through `net/mail`; subjects, tags and content ids with line breaks are rejected (no header injection). `Bcc` is never written as a header.
-- The Resend key and SMTP password are `config.Secret` and never appear in logs or errors.
+- The Resend key, Mailtrap token and SMTP password are `config.Secret` and never appear in logs or errors.
 
 ## Previews and tests
 

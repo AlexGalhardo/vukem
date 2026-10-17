@@ -6,7 +6,7 @@ Mail, cache, storage, events, queue, scheduler, encryption, rate limiting, i18n,
 | --- | --- | --- | --- | --- |
 | Logging (`log/slog`) | Prototype / ALPHA | text (dev), JSON (prod), multi; **Telegram** handler (ALPHA) | — | capture handler |
 | Health | Prototype | `/up` + per-service checks | — | — |
-| Mail | ALPHA | SMTP (`net/smtp`), **Resend** (HTTP API), log, array | — | ✅ |
+| Mail | ALPHA | SMTP (`net/smtp`), **Resend** and **Mailtrap** (HTTP APIs), log, array | — | ✅ |
 | Cache | ALPHA | memory (LRU + TTL), database | redis | ✅ |
 | Storage | ALPHA / BETA | local (`os.Root`), memory | s3 (AWS, R2, RustFS…) | ✅ |
 | Events | ALPHA | in-process sync/async | — | ✅ (`events.NewFake`) |
@@ -99,10 +99,11 @@ err = mailer.Send(ctx, Welcome{User: u})
 | --- | --- | --- |
 | `smtp` | `net/smtp`, STARTTLS required (or implicit TLS on 465), AUTH PLAIN; multipart/mixed → related → alternative MIME, base64 parts | `SMTP_HOST`, `SMTP_PORT` (587), `SMTP_USERNAME`, `SMTP_PASSWORD` (secret), `SMTP_INSECURE` (local catchers only) |
 | `resend` | Resend HTTP API (`POST /emails`): tags, reply-to, attachments with content ids, the message id as `Idempotency-Key`, retries on 429 (honouring `Retry-After`, capped) and 5xx, typed `*mail.ResendError` | `RESEND_API_KEY` (secret, never logged: `TestSecurity_A09_ResendKeyRedacted`) |
+| `mailtrap` | Mailtrap Email API (`POST send.api.mailtrap.io/api/send`, or `sandbox.api.mailtrap.io/api/send/{inbox}` with `MAILTRAP_INBOX_ID`): cc/bcc, one reply-to, attachments and inline images (`disposition: inline` + `content_id`), the `category` tag as `category` and other tags as `custom_variables`, retries on 429 (honouring `Retry-After`, capped) and 5xx, a 2xx with `success: false` is a non-retryable error, typed `*mail.MailtrapError` (never the body or token; may quote addresses; at most 5 one-line items of 200 characters), redirects not followed. A sandbox inbox in production logs a warning. No idempotency key: a 5xx answered after delivery may send twice | `MAILTRAP_API_TOKEN` (secret, required, never logged: `TestSecurity_A09_MailtrapTokenRedacted`), `MAILTRAP_INBOX_ID` (sandbox) |
 | `log` | logs recipients and subject (bodies at debug) | default outside production |
 | `array` | in-memory (tests) | default in `vukemtest` |
 
-`MAIL_FROM` sets the default sender. Production must set `MAIL_MAILER` explicitly; a missing or unknown value is an error, never silent loss of mail.
+`MAIL_FROM` sets the default sender. Production must set `MAIL_MAILER` explicitly; a missing or unknown value is an error, never silent loss of mail. Hosts that block outbound SMTP (Railway on some plans, other PaaS) time out on `smtp`; use an HTTP transport (`resend` or `mailtrap`) there.
 
 ## Cache
 
