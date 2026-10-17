@@ -353,3 +353,19 @@ jobs:
           GOWORK: "off"
           TEST_DATABASE_URL: postgres://vukem:vukem@localhost:55432/vukem_test?sslmode=disable
         run: go test -count=1 ./tests/
+      - name: Example JSON API
+        working-directory: examples/api
+        env:
+          GOWORK: "off"
+        run: go test -count=1 ./...
+      - name: Example SaaS (Go, no Node needed)
+        working-directory: examples/saas
+        env:
+          GOWORK: "off"
+        run: go test -count=1 ./...
+      - name: Example SaaS front end (type-check and build)
+        working-directory: examples/saas
+        run: |
+          npm install --no-audit --no-fund
+          npm run typecheck
+          npm run build
