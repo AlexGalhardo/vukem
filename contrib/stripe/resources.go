@@ -2,7 +2,6 @@ package stripe
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"net/url"
 )
@@ -152,12 +151,12 @@ func (c *Client) GetPaymentIntent(ctx context.Context, id string) (PaymentIntent
 
 // Do calls any endpoint not covered above and decodes the response into
 // out (a struct or *json.RawMessage).
+//
+// Deprecated: use Call, which also takes RequestOptions.
+//
+//go:fix inline
 func (c *Client) Do(ctx context.Context, method, path string, p Params, out any) error {
-	if out == nil {
-		out = &json.RawMessage{}
-	}
-
-	return c.call(ctx, method, path, p, out)
+	return c.Call(ctx, method, path, p, out)
 }
 
 // send calls path and decodes the response into a new T.
