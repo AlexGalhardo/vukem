@@ -59,7 +59,9 @@ func Open(ctx context.Context, uri string, db ...string) (*Client, error) {
 
 // OpenLazy is Open without the ping: it validates uri and the database
 // name but never contacts the server, so the app boots while MongoDB is
-// down and connects on first use. Call Ping from a readiness check.
+// down and connects on first use. Call Ping from a readiness check. The
+// client starts topology-monitoring goroutines right away, so Close it on
+// shutdown even if the server never answered.
 func OpenLazy(uri string, db ...string) (*Client, error) {
 	cs, err := connstring.ParseAndValidate(uri)
 	if err != nil {

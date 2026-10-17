@@ -43,7 +43,10 @@ A database in the URI path is also the default `authSource`. Appending `/app` to
 ```go
 m, err := mongo.OpenLazy(os.Getenv("MONGO_URL"), os.Getenv("MONGO_DATABASE"))
 app.AddHealthCheck("mongo", m.Ping) // /up?checks=1 fails until MongoDB answers
+app.OnShutdown(m.Close)
 ```
+
+The lazy client starts its topology-monitoring goroutines immediately, even before the server is up, so it must be closed on shutdown like any other client.
 
 Server selection waits 10 seconds unless the URI sets `serverSelectionTimeoutMS`.
 
