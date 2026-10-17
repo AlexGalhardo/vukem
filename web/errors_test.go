@@ -244,3 +244,44 @@ func TestCustomErrorHandler(t *testing.T) {
 		t.Fatalf("custom handler got %v", got)
 	}
 }
+
+// Keyed HTTP errors are shown in the request locale (errs.WithTranslator,
+// installed by i18n.Middleware); the English message is the fallback.
+func TestErrorHandlerTranslatesKeyedErrors(t *testing.T) {
+	t.Parallel()
+
+	keyed := errs.NewKey(http.StatusForbidden, "auth.unverified", "Your email address is not verified.", nil)
+	pt := func(key string, _ map[string]any) (string, bool) {
+		return "Seu endereço de e-mail não foi verificado.", key == "auth.unverified"
+	}
+
+	tests := []struct {
+		name       string
+		translator errs.Translator
+		want       string
+	}{
+		{"translated", pt, "Seu endereço de e-mail não foi verificado."},
+		{"no translator", nil, "Your email address is not verified."},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			rec, _ := runError(t, keyed, func(r *http.Request) {
+				r.Header.Set("Accept", "application/json")
+				if tt.translator != nil {
+					*r = *r.WithContext(errs.WithTranslator(r.Context(), tt.translator))
+				}
+			}, nil)
+
+			var p Problem
+			if err := json.Unmarshal(rec.Body.Bytes(), &p); err != nil {
+				t.Fatal(err)
+			}
+
+			if p.Detail != tt.want {
+				t.Errorf("detail = %q, want %q", p.Detail, tt.want)
+			}
+		})
+	}
+}

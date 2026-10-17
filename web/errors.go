@@ -102,7 +102,7 @@ func DefaultErrorHandler(c *Ctx, err error) {
 
 	switch {
 	case he != nil && status < 500:
-		detail = he.Text()
+		detail = he.LocalizedText(c.Context())
 	case verr != nil:
 		detail = fmt.Sprintf("%d field(s) are invalid.", len(verr.Fields))
 		title = "Validation failed"
