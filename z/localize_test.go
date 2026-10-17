@@ -262,3 +262,34 @@ func TestFieldErrorKey_Localize(t *testing.T) {
 		})
 	}
 }
+
+func TestCustom_FieldError(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		err  error
+		want Issues
+	}{
+		{"field error path", FieldError("sub", "bad"), Issues{{Path: "sub", Code: CodeCustom, Message: "bad"}}},
+		{
+			"empty key is FieldError",
+			FieldErrorKey("sub", "", "bad", nil),
+			Issues{{Path: "sub", Code: CodeCustom, Message: "bad"}},
+		},
+		{"plain error", stringError("plain"), Issues{{Code: CodeCustom, Message: "plain"}}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := Custom(func(any) (string, error) { return "", tt.err }).Parse("x")
+
+			got, _ := AsIssues(err)
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("Custom.Parse issues (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
