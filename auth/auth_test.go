@@ -284,8 +284,53 @@ func TestSessionUserKeyBackfilled(t *testing.T) {
 	ta := newApp(t, hash.Fake())
 	u := ta.user(t, "bea@example.com", "s3cret-pass", false)
 
-	ta.Client(t).ActingAs("web", u). // a session with only "auth_web"
-						Get("/whoami").AssertOK().AssertSee("bea@example.com").AssertSessionHas(web.SessionUserKey)
+	tests := []struct {
+		name string
+		data map[string]any
+	}{
+		{"missing", map[string]any{"auth_web": u.AuthID()}},
+		{"other guard logged out", map[string]any{"auth_web": u.AuthID(), web.SessionUserKey: "admin:99"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			m, err := ta.Sessions()
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			c := withSession(ta.Client(t), m.Cookies(t.Context(), tt.data))
+
+			got := c.Get("/whoami").AssertOK().AssertSee("bea@example.com").Session()[web.SessionUserKey]
+			if want := "web:" + u.AuthID(); got != want {
+				t.Fatalf("session user = %v, want %q", got, want)
+			}
+		})
+	}
+
+	// While another guard is still logged in, its owner is kept.
+	m, err := ta.Sessions()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	c := withSession(ta.Client(t), m.Cookies(t.Context(), map[string]any{
+		"auth_web": u.AuthID(), "auth_admin": "99", web.SessionUserKey: "admin:99",
+	}))
+
+	if got := c.Get("/whoami").AssertOK().Session()[web.SessionUserKey]; got != "admin:99" {
+		t.Fatalf("session user with another guard logged in = %v, want admin:99", got)
+	}
+}
+
+func withSession(c *vukemtest.Client, cookies []*http.Cookie) *vukemtest.Client {
+	for _, ck := range cookies {
+		c.WithCookie(ck.Name, ck.Value)
+	}
+
+	return c
 }
 
 func sessionCookie(c *vukemtest.Client) string { return c.CookieValue("vukem_session") }

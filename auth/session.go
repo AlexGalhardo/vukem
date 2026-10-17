@@ -127,7 +127,7 @@ func (g *SessionGuard[U]) Login(c *web.Ctx, u U, opts ...LoginOption) error {
 
 	s.Regenerate()
 	s.Put(g.key(), u.AuthID())
-	s.Put(web.SessionUserKey, u.AuthID())
+	s.Put(web.SessionUserKey, g.SessionUserID(u.AuthID()))
 	cache(c, g.name, u)
 
 	if o.remember && g.remember != nil {
@@ -135,6 +135,32 @@ func (g *SessionGuard[U]) Login(c *web.Ctx, u U, opts ...LoginOption) error {
 	}
 
 	return nil
+}
+
+// SessionUserID is the owner recorded with server-side sessions for the
+// user id (web.SessionUserKey): "<guard>:<id>", so guards over different
+// user tables never share an owner. Pass it to session.Manager.RevokeOthers.
+func (g *SessionGuard[U]) SessionUserID(id string) string { return g.name + ":" + id }
+
+// backfillSessionUser records the owner of sessions logged in before it
+// existed (v0.23 and earlier), or whose recorded guard has since logged
+// out. While another guard is still logged in, its owner is kept: the last
+// login owns the session.
+func (g *SessionGuard[U]) backfillSessionUser(s web.Session, id string) {
+	want := g.SessionUserID(id)
+
+	cur, _ := s.Get(web.SessionUserKey).(string)
+	if cur == want {
+		return
+	}
+
+	if guard, uid, ok := strings.Cut(cur, ":"); ok {
+		if other, _ := s.Get("auth_" + guard).(string); other == uid {
+			return
+		}
+	}
+
+	s.Put(web.SessionUserKey, want)
 }
 
 // Logout clears the session (new id, no data) and the remember-me token.
@@ -194,10 +220,7 @@ func (g *SessionGuard[U]) User(c *web.Ctx) (U, error) {
 
 		switch {
 		case err == nil:
-			// Sessions logged in before v0.24 lack the key RevokeOthers matches.
-			if s.Get(web.SessionUserKey) == nil {
-				s.Put(web.SessionUserKey, id)
-			}
+			g.backfillSessionUser(s, id)
 
 			cache(c, g.name, u)
 
