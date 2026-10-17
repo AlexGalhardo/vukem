@@ -3,6 +3,8 @@ title: Cache
 description: A typed cache over memory or database stores, with stampede-safe Remember, counters and locks.
 ---
 
+A cache keeps the result of slow work (a heavy query, an external API call) for a while, so the next request reads it instead of doing the work again. Every value has a **key** and a **TTL** (time to live). Start with the step-by-step guide at the [end of this page](#step-by-step-cache-a-slow-query) if you are new to caching.
+
 ```go
 c, err := app.Cache() // CACHE_STORE=memory (default) or database
 
@@ -35,3 +37,105 @@ n, err := c.Increment(ctx, "visits", 1, 24*time.Hour)
 | `CACHE_MAX_ENTRIES` | `10000` |
 
 Custom stores implement `cache.Store` and must pass `cache/cachetest.Run`.
+
+## Step by step: cache a slow query
+
+<Steps>
+<Step title="1. Get the cache once and keep it">
+
+```go title="app/controllers/posts.go"
+type PostController struct {
+	db    *database.DB
+	cache *cache.Cache
+}
+
+func NewPostController(app *vukem.App) (*PostController, error) {
+	db, err := app.DB()
+	if err != nil {
+		return nil, err
+	}
+
+	c, err := app.Cache() // memory by default; CACHE_STORE=database or Redis to share it
+	if err != nil {
+		return nil, err
+	}
+
+	return &PostController{db: db, cache: c}, nil
+}
+```
+
+</Step>
+<Step title="2. Wrap the slow call in Remember">
+
+```go
+func (p *PostController) Popular(c *web.Ctx) error {
+	posts, err := cache.Remember(c.Context(), p.cache, "posts:popular", 10*time.Minute,
+		func(ctx context.Context) ([]models.Post, error) {
+			return orm.QueryOf[models.Post](p.db).OrderBy("views", orm.Desc).Limit(10).Get(ctx)
+		})
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, posts)
+}
+```
+
+The first request runs the query and stores the JSON for 10 minutes; the next ones read it. If 100 requests miss the key at once, the query still runs once in this process.
+
+</Step>
+<Step title="3. Forget the key when the data changes">
+
+```go
+func (p *PostController) Update(c *web.Ctx) error {
+	// ... save the post ...
+
+	if err := p.cache.Forget(c.Context(), "posts:popular"); err != nil {
+		return err
+	}
+
+	return c.RedirectRoute("posts.index")
+}
+```
+
+</Step>
+<Step title="4. Share the cache between servers">
+
+```bash title=".env"
+CACHE_STORE=database   # a "cache" table in DATABASE_URL, created at boot
+```
+
+Or pass a [Redis](/docs/database/redis) store with `vukem.WithCacheStore`. Your code does not change.
+
+</Step>
+</Steps>
+
+## Counters and locks
+
+```go
+views, err := c.Increment(ctx, "post:42:views", 1, 24*time.Hour) // the TTL is set when the key is created
+
+lock := c.NewLock("reports:daily", 5*time.Minute) // expires on its own if the holder crashes
+ok, err := lock.TryAcquire(ctx)
+if err != nil || !ok {
+	return err // someone else is generating the report
+}
+defer lock.Release(ctx)
+```
+
+`lock.Block(ctx, 10*time.Second, 200*time.Millisecond)` waits up to 10 seconds, polling every 200 ms, and returns `cache.ErrNotAcquired` when the time runs out.
+
+## Pitfalls
+
+- **Values round-trip through JSON.** Unexported fields are lost and `time.Time` comes back with its offset, not its `*time.Location`. Cache plain data structs.
+- **Changing a cached struct.** Old entries may not decode into the new shape. Put a version in the key (`posts:popular:v2`) when you change the type.
+- **The memory store is per process.** With several servers, each has its own copy, `Forget` only clears the local one, and locks protect nothing across servers. Use `CACHE_STORE=database` or Redis there.
+- **`Put` with TTL 0 never expires.** Always pass a TTL unless the key is forgotten explicitly.
+- **`Flush` empties the whole store.** The same store may also hold rate-limit counters (`RATE_LIMIT_STORE=cache`), idempotency keys and webhook dedupe ids; flushing resets all of them.
+- **Errors are not cached.** A failing function runs again on the next call; protect a failing dependency with a timeout, not with the cache.
+
+## Security notes
+
+- Never cache a response that depends on the user under a shared key. Put the user id in the key (`user:42:dashboard`) or do not cache it.
+- Do not store secrets or tokens in the cache: the database store keeps them in a plain table, and Redis is often shared between apps. Keep a distinct `CACHE_PREFIX` per app on a shared Redis.
+- Keys built from user input should be bounded and normalised (`strings.ToLower`, length limit), so a client cannot fill the store with unique keys; the memory store is bounded by `CACHE_MAX_ENTRIES`.

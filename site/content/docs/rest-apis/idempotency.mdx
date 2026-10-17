@@ -3,6 +3,8 @@ title: Idempotency keys
 description: Make retried POST and PATCH requests safe with the Idempotency-Key header.
 ---
 
+Networks fail. A mobile client sends `POST /orders`, the server creates the order, and the response is lost on the way back. The client cannot tell whether the order exists, so it retries, and the customer is charged twice. An **idempotency key** fixes this: the client sends a unique `Idempotency-Key` header with the request and **the same key on every retry**; the server runs the request once and replays the stored answer to the retries.
+
 ```go
 c, _ := app.Cache()
 r.Group("/api/v1", func(g *router.Group) {
@@ -46,3 +48,94 @@ api.IdempotencyOptions{
 - To share keys between all callers on purpose (rare), return a constant such as `"public"`.
 - Responses with status 500 or above are not stored, so the client can retry. `Set-Cookie` is never replayed.
 - Any `cache.Store` works: memory, database or [Redis](/docs/database/redis).
+
+## Step by step
+
+<Steps>
+<Step title="1. Install the middleware after authentication">
+
+```go title="routes/api.go"
+c, err := app.Cache() // CACHE_STORE=database or Redis when several servers run
+if err != nil {
+	return err
+}
+
+r.Group("/api/v1", func(g *router.Group) {
+	g.Use(auth.Required(apiGuard))
+	g.Use(api.Idempotency(c.Store(), api.IdempotencyOptions{}))
+
+	g.Post("/orders", orders.Store).Name("orders.store")
+})
+```
+
+</Step>
+<Step title="2. Send a key from the client">
+
+```bash
+KEY=$(uuidgen)   # one new key per logical operation
+
+curl -s -X POST localhost:3000/api/v1/orders   -H "Authorization: Bearer $TOKEN" -H "Idempotency-Key: $KEY"   -H 'Content-Type: application/json' -d '{"product_id": 7, "quantity": 1}'
+# 201 Created, the order runs
+
+curl -si -X POST localhost:3000/api/v1/orders   -H "Authorization: Bearer $TOKEN" -H "Idempotency-Key: $KEY"   -H 'Content-Type: application/json' -d '{"product_id": 7, "quantity": 1}'
+# 201 Created again, with "Idempotent-Replayed: true": no second order
+```
+
+</Step>
+<Step title="3. Retry with the same key in your client">
+
+```ts
+async function createOrder(body: unknown, token: string) {
+	const key = crypto.randomUUID() // created once, before the first attempt
+	for (let attempt = 0; attempt < 3; attempt++) {
+		try {
+			const res = await fetch("/api/v1/orders", {
+				method: "POST",
+				headers: { Authorization: `Bearer ${token}`, "Idempotency-Key": key, "Content-Type": "application/json" },
+				body: JSON.stringify(body),
+			})
+			if (res.status !== 409 && res.status < 500) return res // 409: the first attempt is still running
+		} catch {
+			// network error: retry with the same key
+		}
+		await new Promise((r) => setTimeout(r, 500 * 2 ** attempt))
+	}
+	throw new Error("order failed")
+}
+```
+
+</Step>
+<Step title="4. Make the key mandatory where duplicates are expensive">
+
+```go
+g.Post("/payments", payments.Store).Use(api.Idempotency(c.Store(), api.IdempotencyOptions{Required: true}))
+```
+
+Requests without the header now get 400 instead of running unprotected.
+
+</Step>
+</Steps>
+
+## Testing
+
+```go
+client := app.Client(t).WithToken(plain).WithHeader("Idempotency-Key", "order-1")
+
+client.PostJSON("/api/v1/orders", body).AssertCreated()
+client.PostJSON("/api/v1/orders", body).AssertCreated().AssertHeader("Idempotent-Replayed", "true")
+```
+
+## Pitfalls
+
+- **A new key per retry defeats the purpose.** Generate the key once per operation, before the first attempt, and reuse it for every retry.
+- **The same key for a different request** gets 422. A key identifies one operation (method, URL and body), not a session.
+- **The memory store with several servers.** A retry that lands on another server runs again. Use `CACHE_STORE=database` or Redis.
+- **`TTL` shorter than your clients' retry window.** After `TTL` (24h by default) the key is forgotten and a late retry runs again.
+- **Handlers that take longer than `LockTTL`** (1 minute): after it, a retry is no longer answered 409 and may run concurrently. Raise `LockTTL` for slow endpoints, or move the work to a queue.
+- **5xx responses are not stored**, so the client can retry them. Make sure a handler that failed half-way can run again safely (use a transaction).
+
+## Security notes
+
+- Keys are scoped to the caller, so one user can never read another user's stored response by guessing a key.
+- If the cache store is unavailable the request is refused with 503 (fail closed) rather than risking a duplicate charge.
+- Stored responses live in the cache store: they can include personal data from the response body. Use a store you trust with that data, and keep `TTL` no longer than needed. `Set-Cookie` is never stored or replayed.

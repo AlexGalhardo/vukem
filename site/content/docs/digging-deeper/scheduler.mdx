@@ -3,6 +3,8 @@ title: Task scheduling
 description: Run functions, commands and queue jobs on cron expressions, in process or from one cron entry.
 ---
 
+The scheduler runs your code on a timetable: send a report every morning, prune old rows every hour, retry failed payments every five minutes. You declare every task in Go, in one file, instead of maintaining crontab lines on a server. New to it? Follow the [step-by-step guide](#step-by-step-a-daily-cleanup-task) below the reference.
+
 ```go
 // routes/schedule.go, passed to vukem.WithSchedule by bootstrap
 func Schedule(s *schedule.Schedule, app *vukem.App) {
@@ -63,3 +65,96 @@ The built-in prune tasks are idempotent, so running them on every replica is saf
 `schedule:work` stops the same way (running tasks get `SHUTDOWN_TIMEOUT`, then their `ctx` is cancelled); `schedule:run` passes its own `ctx`, cancelled on `SIGINT`/`SIGTERM`.
 
 Tasks due at the same minute run concurrently; failures and panics are logged and do not stop the others. Command tasks run in the same process through `app.Call`.
+
+## Step by step: a daily cleanup task
+
+<Steps>
+<Step title="1. Write the task as a function that honours ctx">
+
+```go title="app/tasks/prune_drafts.go"
+// PruneDrafts deletes drafts nobody touched in 30 days.
+func PruneDrafts(db *database.DB, now func() time.Time) func(context.Context) error {
+	return func(ctx context.Context) error {
+		_, err := db.ExecContext(ctx, `DELETE FROM posts WHERE status = 'draft' AND updated_at < ?`, now().AddDate(0, 0, -30))
+		return err
+	}
+}
+```
+
+Passing `ctx` to the query lets the scheduler cancel it on shutdown.
+
+</Step>
+<Step title="2. Declare it in routes/schedule.go">
+
+```go title="routes/schedule.go"
+func Schedule(s *schedule.Schedule, app *vukem.App) {
+	db, err := app.DB()
+	if err != nil {
+		app.Log.Error("schedule: database", "err", err)
+		return
+	}
+
+	s.Func("posts:prune-drafts", tasks.PruneDrafts(db, app.Now)).
+		DailyAt("03:00").
+		WithoutOverlapping()
+}
+```
+
+The starter's `bootstrap/app.go` already passes this function to `vukem.WithSchedule`. The name (`posts:prune-drafts`) appears in logs and in `schedule:list`.
+
+</Step>
+<Step title="3. Check the timetable">
+
+```bash
+vukem schedule:list
+# TASK                 EXPRESSION  NEXT RUN
+# posts:prune-drafts   0 3 * * *   2026-10-18T03:00:00Z
+```
+
+</Step>
+<Step title="4. Run it">
+
+Nothing else is needed: `vukem serve` in development and the app binary's `serve` in production run the scheduler in process. To run every due task once, right now, use `vukem schedule:run`.
+
+</Step>
+</Steps>
+
+### Tasks that are queue jobs or commands
+
+- `s.Job(jobs.SendDigest{}).WeeklyOn(time.Monday, "09:00")` only **dispatches** the job; a queue worker runs it, with the queue's retries. Prefer it for work that may fail and should be retried.
+- `s.Command("reports:send", "--daily")` runs an app command in the same process, exactly as `vukem reports:send --daily` would.
+
+## Testing
+
+`app.Schedule()` returns the schedule your app declared, so a test can check that a task exists and when it runs next:
+
+```go
+s, err := app.Schedule()
+if err != nil {
+	t.Fatal(err)
+}
+
+for _, task := range s.Tasks() {
+	if task.Name() == "posts:prune-drafts" {
+		if got := task.Expression(); got != "0 3 * * *" {
+			t.Fatalf("expression = %q", got)
+		}
+	}
+}
+```
+
+Test the task's function itself like any other function: call it with a `context.Context` and a fake clock.
+
+## Pitfalls
+
+- **Times are UTC by default.** `DailyAt("08:00")` is 08:00 UTC unless `SCHEDULE_TIMEZONE` or `.In(loc)` says otherwise. Around daylight-saving changes, a local time can be skipped or repeated.
+- **Long tasks overlap.** A five-minute task scheduled `EveryMinute()` runs five copies at once without `WithoutOverlapping()`.
+- **Several replicas run every task.** Read [Several replicas](#several-replicas) before scaling the web service.
+- **Ignoring `ctx`.** A task that does not pass `ctx` to its queries and HTTP calls delays shutdown until the platform kills the process.
+- **Heavy work in a task.** Tasks run inside the web process by default; dispatch a [queue job](/docs/digging-deeper/queue) for anything long or CPU-heavy so requests stay fast.
+
+## Security notes
+
+- Tasks run with the app's full privileges and without a request, so there is no user to authorize: never build a task's behaviour from data a user can edit without validating it.
+- Make tasks that move money or send messages **idempotent** (check "already sent" before sending), so a duplicate run is harmless.
+- Failures and panics are logged with the task name; route them to your alerting (for example [Telegram logging](/docs/digging-deeper/telegram-logging)).
