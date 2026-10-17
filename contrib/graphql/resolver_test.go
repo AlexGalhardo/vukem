@@ -39,14 +39,19 @@ type Product {
 	}
 
 	tests := []struct{ name, query, want string }{
-		{"json name", `{ product { id price_cents name } }`, `{"data":{"product":{"id":"p1","price_cents":1990,"name":"Mug"}}}`},
+		{
+			"json name",
+			`{ product { id price_cents name } }`,
+			`{"data":{"product":{"id":"p1","price_cents":1990,"name":"Mug"}}}`,
+		},
 		{
 			"go name of a tagged field", `{ product { priceCents title } }`,
 			`{"data":{"product":{"priceCents":1990,"title":"Mug"}}}`,
 		},
 		{"untagged go name", `{ product { stock tagless } }`, `{"data":{"product":{"stock":3,"tagless":"t"}}}`},
 		{
-			"json dash stays hidden", `{ product { secret } }`,
+			"json dash stays hidden",
+			`{ product { secret } }`,
 			`{"errors":[{"message":"Internal server error","locations":[{"line":1,"column":13}],"path":["product","secret"],
 			  "extensions":{"code":"INTERNAL_SERVER_ERROR"}}],"data":{"product":{"secret":null}}}`,
 		},
