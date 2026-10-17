@@ -62,35 +62,47 @@ func TestMiddleware_Resolution(t *testing.T) {
 		cfg     MiddlewareConfig
 		want    result
 	}{
-		{name: "default", target: "/", want: result{"en", "Hello, Ana!", "en", []string{"Accept-Language"}}},
+		{name: "default", target: "/", want: result{"en", "Hello, Ana!", "en", []string{"Cookie", "Accept-Language"}}},
 		{name: "query", target: "/?lang=pt-br", accept: "ru", want: result{"pt-BR", "Olá, Ana!", "pt-BR", nil}},
-		{name: "cookie", target: "/", cookie: "pt", accept: "ru", want: result{"pt", "Olá, Ana!", "pt", nil}},
-		{name: "session", target: "/", session: "ru", accept: "pt", want: result{"ru", "Hello, Ana!", "ru", nil}},
+		{
+			name:   "cookie",
+			target: "/",
+			cookie: "pt",
+			accept: "ru",
+			want:   result{"pt", "Olá, Ana!", "pt", []string{"Cookie"}},
+		},
+		{
+			name:    "session",
+			target:  "/",
+			session: "ru",
+			accept:  "pt",
+			want:    result{"ru", "Hello, Ana!", "ru", []string{"Cookie"}},
+		},
 		{
 			name: "query beats cookie and session", target: "/?lang=ru", cookie: "pt", session: "pt",
 			want: result{"ru", "Hello, Ana!", "ru", nil},
 		},
 		{
 			name: "invalid query falls through", target: "/?lang=../../etc/passwd", accept: "pt",
-			want: result{"pt", "Olá, Ana!", "pt", []string{"Accept-Language"}},
+			want: result{"pt", "Olá, Ana!", "pt", []string{"Cookie", "Accept-Language"}},
 		},
 		{
 			name: "unavailable cookie falls through", target: "/", cookie: "de", accept: "pt-PT",
-			want: result{"pt", "Olá, Ana!", "pt", []string{"Accept-Language"}},
+			want: result{"pt", "Olá, Ana!", "pt", []string{"Cookie", "Accept-Language"}},
 		},
 		{
 			name:    "non-string session ignored",
 			target:  "/",
 			session: 42,
-			want:    result{"en", "Hello, Ana!", "en", []string{"Accept-Language"}},
+			want:    result{"en", "Hello, Ana!", "en", []string{"Cookie", "Accept-Language"}},
 		},
 		{
 			name: "accept-language q-values", target: "/", accept: "de;q=0.9, ru;q=0.5, pt-BR;q=0.8, *;q=0.1",
-			want: result{"pt-BR", "Olá, Ana!", "pt-BR", []string{"Accept-Language"}},
+			want: result{"pt-BR", "Olá, Ana!", "pt-BR", []string{"Cookie", "Accept-Language"}},
 		},
 		{
 			name: "q=0 excluded", target: "/", accept: "pt;q=0, ru;q=0.2",
-			want: result{"ru", "Hello, Ana!", "ru", []string{"Accept-Language"}},
+			want: result{"ru", "Hello, Ana!", "ru", []string{"Cookie", "Accept-Language"}},
 		},
 		{
 			name: "custom names", target: "/?locale=pt", cookie: "ru",
@@ -100,7 +112,7 @@ func TestMiddleware_Resolution(t *testing.T) {
 		{
 			name: "disabled query", target: "/?lang=pt", accept: "ru",
 			cfg:  MiddlewareConfig{Query: "-"},
-			want: result{"ru", "Hello, Ana!", "ru", []string{"Accept-Language"}},
+			want: result{"ru", "Hello, Ana!", "ru", []string{"Cookie", "Accept-Language"}},
 		},
 		{
 			name: "header before query", target: "/?lang=ru", accept: "pt",
@@ -115,17 +127,17 @@ func TestMiddleware_Resolution(t *testing.T) {
 		{
 			name: "session before cookie", target: "/", cookie: "pt", session: "ru",
 			cfg:  MiddlewareConfig{Order: []Source{SourceSession, SourceCookie}},
-			want: result{"ru", "Hello, Ana!", "ru", nil},
+			want: result{"ru", "Hello, Ana!", "ru", []string{"Cookie"}},
 		},
 		{
 			name: "locales skip a disallowed query", target: "/?lang=ru", accept: "pt-BR",
 			cfg:  MiddlewareConfig{Locales: []string{"en", "pt"}},
-			want: result{"pt", "Olá, Ana!", "pt", []string{"Accept-Language"}},
+			want: result{"pt", "Olá, Ana!", "pt", []string{"Cookie", "Accept-Language"}},
 		},
 		{
 			name: "locales match the same language", target: "/", accept: "pt",
 			cfg:  MiddlewareConfig{Locales: []string{"en", "pt-BR"}},
-			want: result{"pt-BR", "Olá, Ana!", "pt-BR", []string{"Accept-Language"}},
+			want: result{"pt-BR", "Olá, Ana!", "pt-BR", []string{"Cookie", "Accept-Language"}},
 		},
 	}
 
@@ -184,6 +196,18 @@ func TestMiddlewareConfig_Validate(t *testing.T) {
 			if err := tt.cfg.Validate(b); (err != nil) != tt.wantErr {
 				t.Errorf("Validate() = %v, want error %t", err, tt.wantErr)
 			}
+
+			if _, err := NewMiddleware(b, tt.cfg); (err != nil) != tt.wantErr {
+				t.Errorf("NewMiddleware() = %v, want error %t", err, tt.wantErr)
+			}
+
+			defer func() {
+				if p := recover(); (p != nil) != tt.wantErr {
+					t.Errorf("Middleware() panic = %v, want panic %t", p, tt.wantErr)
+				}
+			}()
+
+			Middleware(b, tt.cfg)
 		})
 	}
 }

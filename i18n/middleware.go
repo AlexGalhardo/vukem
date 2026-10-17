@@ -95,8 +95,7 @@ var defaultOrder = []Source{SourceQuery, SourceCookie, SourceSession, SourceHead
 
 // Validate reports an Order with no, unknown or repeated sources, and
 // Locales that are not available in b or leave out its default locale.
-// Middleware ignores such entries; call Validate at boot to fail early
-// (vukem.DefaultMiddlewareWith does).
+// Middleware panics and NewMiddleware fails on such a config.
 func (c MiddlewareConfig) Validate(b *Bundle) error {
 	if c.Order != nil && len(c.Order) == 0 {
 		return errors.New("i18n: middleware Order is empty (nil uses the default order)")
@@ -170,19 +169,48 @@ func orDefault(v, def string) string {
 // stores the Bundle and locale in the request context (T, Locale, the view
 // "t" function), localizes validation messages of web.Parse/Bind and the
 // keyed errors of the framework (errs.WithTranslator, Bundle.Translator), sets
-// Content-Language and adds "Vary: Accept-Language" when the header was
-// consulted.
+// Content-Language and adds "Vary: Cookie" when the cookie or session
+// source was consulted and "Vary: Accept-Language" when the header was.
+// (A locale from the query needs no Vary: the URL is the cache key.)
+//
+// It panics, at construction, when cfg fails MiddlewareConfig.Validate;
+// NewMiddleware returns the error instead.
 func Middleware(b *Bundle, cfg MiddlewareConfig) func(http.Handler) http.Handler {
+	mw, err := NewMiddleware(b, cfg)
+	if err != nil {
+		panic(err)
+	}
+
+	return mw
+}
+
+// NewMiddleware is Middleware returning an invalid cfg as an error.
+func NewMiddleware(b *Bundle, cfg MiddlewareConfig) (func(http.Handler) http.Handler, error) {
+	if err := cfg.Validate(b); err != nil {
+		return nil, err
+	}
+
 	cfg = cfg.withDefaults()
+
+	match := b.Match
+	if len(cfg.Locales) > 0 {
+		allowed := map[string]bool{}
+		for _, l := range cfg.Locales {
+			canon, _ := Canonical(l) // Validate checked the tags
+			allowed[canon] = true
+		}
+
+		match = func(tag string) (string, bool) { return b.match(tag, func(l string) bool { return allowed[l] }) }
+	}
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			locale, usedHeader := resolve(b, cfg, r)
+			locale, vary := resolve(b, cfg, match, r)
 
 			w.Header().Set("Content-Language", locale)
 
-			if usedHeader {
-				w.Header().Add("Vary", "Accept-Language")
+			for _, h := range vary {
+				w.Header().Add("Vary", h)
 			}
 
 			ctx := WithLocale(WithBundle(r.Context(), b), locale)
@@ -191,23 +219,23 @@ func Middleware(b *Bundle, cfg MiddlewareConfig) func(http.Handler) http.Handler
 
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
-	}
+	}, nil
 }
 
-func resolve(b *Bundle, cfg MiddlewareConfig, r *http.Request) (string, bool) {
-	match := b.Match
-	if len(cfg.Locales) > 0 {
-		allowed := map[string]bool{}
-		for _, l := range cfg.Locales {
-			if canon, ok := Canonical(l); ok {
-				allowed[canon] = true
-			}
+// resolve returns the locale and the request headers it depended on.
+func resolve(
+	b *Bundle,
+	cfg MiddlewareConfig,
+	match func(string) (string, bool),
+	r *http.Request,
+) (string, []string) {
+	var vary []string
+
+	varyOn := func(h string) {
+		if !slices.Contains(vary, h) {
+			vary = append(vary, h)
 		}
-
-		match = func(tag string) (string, bool) { return b.match(tag, func(l string) bool { return allowed[l] }) }
 	}
-
-	usedHeader := false
 
 	for _, src := range cfg.Order {
 		var (
@@ -225,17 +253,24 @@ func resolve(b *Bundle, cfg MiddlewareConfig, r *http.Request) (string, bool) {
 				break
 			}
 
+			varyOn("Cookie")
+
 			if c, err := r.Cookie(cfg.Cookie); err == nil {
 				l, ok = match(c.Value)
 			}
 		case SourceSession:
-			if s := web.SessionFrom(r.Context()); s != nil && cfg.SessionKey != "-" {
-				if v, isString := s.Get(cfg.SessionKey).(string); isString {
-					l, ok = match(v)
-				}
+			s := web.SessionFrom(r.Context())
+			if s == nil || cfg.SessionKey == "-" {
+				break
+			}
+
+			varyOn("Cookie") // sessions are keyed by cookie
+
+			if v, isString := s.Get(cfg.SessionKey).(string); isString {
+				l, ok = match(v)
 			}
 		case SourceHeader:
-			usedHeader = true
+			varyOn("Accept-Language")
 
 			for _, tag := range parseAcceptLanguage(r.Header.Get("Accept-Language")) {
 				if l, ok = match(tag); ok {
@@ -245,9 +280,9 @@ func resolve(b *Bundle, cfg MiddlewareConfig, r *http.Request) (string, bool) {
 		}
 
 		if ok {
-			return l, usedHeader
+			return l, vary
 		}
 	}
 
-	return b.Default(), usedHeader
+	return b.Default(), vary
 }
