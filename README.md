@@ -34,6 +34,11 @@ Vukem is a complete Model-View-Controller (MVC) web framework for Go built on `n
 - **Secure by default.** CSRF, security headers, Argon2id, safe SQL, fail-closed authorization, mapped to the [OWASP Top 10:2025](docs/security.md).
 - **Windows is first-class.** Pure Go, no C compiler, tested on Windows, Linux and macOS.
 
+## Why MVC and not Hexagonal/Clean Architecture?
+
+- This framework was inspired by the simplicity of well established frameworks like: Laravel, Ruby on Rails, AdonisJS, Django.
+- Hexagonal and Clean Architecture are better developed without framework's attachment in Go ecosystem.
+
 ## Agentic development
 
 Vukem's predictable structure and conventions (generators, typed schemas, named routes, no magic) make it a natural fit for AI coding agents like Claude Code, Cursor and GitHub Copilot. Install **Vukem Boost** in your project to supercharge your AI workflow:
