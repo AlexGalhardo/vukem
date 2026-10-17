@@ -7,9 +7,11 @@ import (
 	"crypto/subtle"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -126,13 +128,105 @@ func (g *SessionGuard[U]) Login(c *web.Ctx, u U, opts ...LoginOption) error {
 	}
 
 	s.Regenerate()
-	s.Put(g.key(), u.AuthID())
-	s.Put(web.SessionUserKey, g.SessionUserID(u.AuthID()))
+
+	for k, v := range SessionValues(g.name, u) {
+		s.Put(k, v)
+	}
+
 	cache(c, g.name, u)
 
 	if o.remember && g.remember != nil {
 		return g.issueRemember(c, u.AuthID())
 	}
+
+	return nil
+}
+
+// SessionVersioner is implemented by users whose browser sessions can all
+// be ended at once by changing a number kept with the user (a
+// session_version column): SessionGuard records it on login and signs the
+// session out when it no longer matches, on every session driver,
+// encrypted cookies included. Bump it on a password reset or change; it
+// costs nothing per request, since the guard loads the user anyway.
+type SessionVersioner interface {
+	AuthSessionVersion() int64
+}
+
+// SessionValues returns the session values SessionGuard.Login stores for
+// user on the guard named guard: the user id, the owner under
+// web.SessionUserKey and, for a SessionVersioner, its session version.
+// Tests use it to start a logged-in session (vukemtest Client.ActingAs).
+func SessionValues(guard string, user interface{ AuthID() string }) map[string]any {
+	values := map[string]any{
+		"auth_" + guard:    user.AuthID(),
+		web.SessionUserKey: guard + ":" + user.AuthID(),
+	}
+
+	if v, ok := user.(SessionVersioner); ok {
+		values[versionKey(guard)] = v.AuthSessionVersion()
+	}
+
+	return values
+}
+
+func versionKey(guard string) string { return "_auth_version_" + guard }
+
+// sessionVersionOK reports whether the version recorded in s matches u's.
+// Sessions logged in before versions existed carry none, which counts as
+// 0: they last until the first bump. Anything unreadable is stale.
+func (g *SessionGuard[U]) sessionVersionOK(s web.Session, u U) bool {
+	v, ok := any(u).(SessionVersioner)
+	if !ok {
+		return true
+	}
+
+	var recorded int64
+
+	switch x := s.Get(versionKey(g.name)).(type) {
+	case nil:
+	case int64:
+		recorded = x
+	case int:
+		recorded = int64(x)
+	case json.Number:
+		n, err := strconv.ParseInt(string(x), 10, 64)
+		if err != nil {
+			return false
+		}
+
+		recorded = n
+	default:
+		return false
+	}
+
+	return recorded == v.AuthSessionVersion()
+}
+
+// RefreshSession reloads the logged-in user and records its current
+// session version in this session: call it after bumping the version when
+// the current session must stay signed in (two-factor authentication
+// turned on ends the others only).
+func (g *SessionGuard[U]) RefreshSession(c *web.Ctx) error {
+	s := c.Session()
+	if s == nil {
+		return errors.New("auth: session guard needs the session middleware")
+	}
+
+	id, _ := s.Get(g.key()).(string)
+	if id == "" {
+		return ErrUnauthenticated
+	}
+
+	u, err := g.provider.ByID(c.Context(), id)
+	if err != nil {
+		return fmt.Errorf("auth: refresh session: %w", err)
+	}
+
+	if v, ok := any(u).(SessionVersioner); ok {
+		s.Put(versionKey(g.name), v.AuthSessionVersion())
+	}
+
+	cache(c, g.name, u)
 
 	return nil
 }
@@ -219,6 +313,11 @@ func (g *SessionGuard[U]) User(c *web.Ctx) (U, error) {
 		u, err := g.provider.ByID(c.Context(), id)
 
 		switch {
+		case err == nil && !g.sessionVersionOK(s, u):
+			// The user's sessions were ended (password reset) after this
+			// login.
+			s.Forget(g.key(), versionKey(g.name))
+			web.SecurityEvent(c.Request(), "auth.session_revoked", "guard", g.name)
 		case err == nil:
 			g.backfillSessionUser(s, id)
 
