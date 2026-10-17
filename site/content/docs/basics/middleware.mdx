@@ -61,7 +61,7 @@ func requireAdmin(next http.Handler) http.Handler {
 | --- | --- |
 | `Recover()` | Converts panics to 500 through the error handler; the stack trace is logged server-side only. `http.ErrAbortHandler` is re-raised. |
 | `RequestID()` | Reuses a well-formed incoming `X-Request-ID` (max 128 safe characters) or generates one; stores it in the context and echoes it in the response. |
-| `Logger(log)` | One structured `slog` line per request: method, path, status, duration, bytes, request id. 5xx at `ERROR`, 4xx at `WARN`. |
+| `Logger(log)` | One structured `slog` line per request: method, path, status, duration, bytes, request id, `peer` (the `RemoteAddr` host) and `ip` (the client resolved through `TRUSTED_PROXIES`, as `c.IP()`). 5xx at `ERROR`, 4xx at `WARN`. |
 | `Timeout(d)` | Sets a deadline on the request context. |
 | `BodyLimit(n)` | Caps request bodies at `n` bytes; larger bodies fail with 413. |
 | `MethodOverride()` | Lets HTML forms send `PUT`, `PATCH` and `DELETE` via a hidden `_method` field on `POST`. Register it as server middleware so routing sees the new method. |
@@ -97,7 +97,7 @@ r.UseServer(middleware.SecureHeaders(middleware.SecureHeadersConfig{
 }))
 ```
 
-`X-Forwarded-Proto` counts only as a single header line saying `https`. `SecureHeadersConfig.Validate()` (called by `DefaultMiddleware` at boot) refuses `TrustForwardedProto` without `TrustedProxies`; without that check, an empty list trusts the header from any peer. `DefaultMiddleware` and `APIMiddleware` already install `SecureHeaders`; there, set `TRUST_FORWARDED_PROTO=true` and `TRUSTED_PROXIES` instead of adding a second one.
+`X-Forwarded-Proto` counts only as a single header line saying `https`. `SecureHeadersConfig.Validate()` (called by `DefaultMiddleware` at boot) refuses `TrustForwardedProto` without `TrustedProxies`; without that check, an empty list trusts the header from any peer. `DefaultMiddleware` and `APIMiddleware` already install `SecureHeaders`; there, set `TRUST_FORWARDED_PROTO=true` and `TRUSTED_PROXIES` instead of adding a second one. When the proxy's range cannot be trusted, `HSTSForce: true` (`HSTS_FORCE=true`) sends HSTS on every response instead; see [HSTS without a trusted range](/docs/deployment/docker-and-railway#hsts-without-a-trusted-range) for the trade-offs.
 
 | Header | Default |
 | --- | --- |

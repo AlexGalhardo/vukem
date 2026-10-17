@@ -297,12 +297,16 @@ func maintenanceConfig(app *App) middleware.MaintenanceConfig {
 }
 
 // secureHeadersConfig honours X-Forwarded-Proto from TRUSTED_PROXIES when
-// TRUST_FORWARDED_PROTO is set, and allows the Vite dev server in the CSP
-// while it runs (app.Vite only reports it outside production).
+// TRUST_FORWARDED_PROTO is set, forces HSTS in production with HSTS_FORCE,
+// and allows the Vite dev server in the CSP while it runs (app.Vite only
+// reports it outside production).
 func secureHeadersConfig(app *App) middleware.SecureHeadersConfig {
 	cfg := middleware.SecureHeadersConfig{
 		TrustForwardedProto: app.Config.TrustForwardedProto,
 		TrustedProxies:      app.proxies,
+		// Outside production APP_URL is often localhost: a pinned HSTS
+		// there breaks every other local http app.
+		HSTSForce: app.Config.HSTSForce && app.Config.IsProduction(),
 	}
 
 	if app.Vite != nil {

@@ -151,6 +151,66 @@ func TestLogger(t *testing.T) {
 	}
 }
 
+func TestLoggerRecordsPeerAndClientIP(t *testing.T) {
+	t.Parallel()
+
+	_, proxies, _ := net.ParseCIDR("10.0.0.0/8")
+
+	tests := []struct {
+		name     string
+		services *web.Services
+		peer     string
+		wantPeer string
+		wantIP   string
+	}{
+		{name: "no services", peer: "10.1.2.3:4000", wantPeer: "10.1.2.3", wantIP: "10.1.2.3"},
+		{
+			name:     "trusted proxy",
+			services: &web.Services{TrustedProxies: []*net.IPNet{proxies}},
+			peer:     "10.1.2.3:4000",
+			wantPeer: "10.1.2.3",
+			wantIP:   "203.0.113.9",
+		},
+		{
+			name:     "untrusted peer",
+			services: &web.Services{TrustedProxies: []*net.IPNet{proxies}},
+			peer:     "[2001:db8::1]:4000",
+			wantPeer: "2001:db8::1",
+			wantIP:   "2001:db8::1",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var buf bytes.Buffer
+
+			h := Logger(slog.New(slog.NewJSONHandler(&buf, nil)))(http.HandlerFunc(ok))
+			if tt.services != nil {
+				inner := h
+				h = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					inner.ServeHTTP(w, r.WithContext(web.WithServices(r.Context(), tt.services)))
+				})
+			}
+
+			r := get(t, "/")
+			r.RemoteAddr = tt.peer
+			r.Header.Set("X-Forwarded-For", "203.0.113.9")
+			do(t, h, r)
+
+			var got map[string]any
+			if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+				t.Fatal(err)
+			}
+
+			if got["peer"] != tt.wantPeer || got["ip"] != tt.wantIP {
+				t.Fatalf("Logger peer, ip = %v, %v, want %q, %q", got["peer"], got["ip"], tt.wantPeer, tt.wantIP)
+			}
+		})
+	}
+}
+
 func TestTimeout(t *testing.T) {
 	t.Parallel()
 
@@ -552,6 +612,44 @@ func TestSecurity_A02_ForwardedProtoOnlyFromTrustedProxies(t *testing.T) {
 				t.Fatalf("HSTS sent = %v, want %v", got, tt.wantHSTS)
 			}
 		})
+	}
+}
+
+func TestSecurity_A02_HSTSForce(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		cfg      SecureHeadersConfig
+		proto    string
+		wantHSTS bool
+	}{
+		// Default: a plain-HTTP request never gets HSTS, even when an
+		// untrusted client claims https.
+		{name: "off by default", cfg: SecureHeadersConfig{}},
+		{name: "off by default, claimed https", cfg: SecureHeadersConfig{}, proto: "https"},
+		{name: "forced on plain http", cfg: SecureHeadersConfig{HSTSForce: true}, wantHSTS: true},
+		{name: "forced but disabled", cfg: SecureHeadersConfig{HSTSForce: true, HSTSMaxAge: -1}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			r := get(t, "/")
+			if tt.proto != "" {
+				r.Header.Set("X-Forwarded-Proto", tt.proto)
+			}
+
+			got := do(t, SecureHeaders(tt.cfg)(http.HandlerFunc(ok)), r).Header().Get("Strict-Transport-Security")
+			if (got != "") != tt.wantHSTS {
+				t.Fatalf("Strict-Transport-Security = %q, want sent %v", got, tt.wantHSTS)
+			}
+		})
+	}
+
+	if err := (SecureHeadersConfig{HSTSForce: true, HSTSMaxAge: -1}).Validate(); err == nil {
+		t.Error("Validate(HSTSForce with HSTSMaxAge < 0) = nil, want an error")
 	}
 }
 

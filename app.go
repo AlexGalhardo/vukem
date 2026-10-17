@@ -94,6 +94,11 @@ type Config struct {
 	// TrustForwardedProto treats X-Forwarded-Proto: https from a trusted
 	// proxy as HTTPS (HSTS). It requires TRUSTED_PROXIES.
 	TrustForwardedProto bool `env:"TRUST_FORWARDED_PROTO"`
+	// HSTSForce sends HSTS on every response in production, for TLS
+	// proxies whose range cannot be put in TRUSTED_PROXIES. It requires an
+	// https APP_URL in every environment but is applied only in production
+	// (docs/security.md, A02).
+	HSTSForce bool `env:"HSTS_FORCE"`
 	// ClientIPHeader names a single-IP header set by the trusted proxy
 	// (such as X-Real-IP) that c.IP() reads instead of X-Forwarded-For.
 	// It requires TRUSTED_PROXIES.
@@ -407,6 +412,10 @@ func New(opts ...Option) (*App, error) {
 		return nil, errors.New("vukem: TRUST_FORWARDED_PROTO requires TRUSTED_PROXIES")
 	}
 
+	if cfg.HSTSForce && !strings.HasPrefix(cfg.URL, "https://") {
+		return nil, errors.New("vukem: HSTS_FORCE requires an https APP_URL")
+	}
+
 	if cfg.ClientIPHeader, err = clientIPHeader(cfg.ClientIPHeader, len(proxies) > 0); err != nil {
 		return nil, err
 	}
@@ -530,6 +539,10 @@ func New(opts ...Option) (*App, error) {
 	}); catchAll {
 		app.Log.Warn("TRUSTED_PROXIES trusts every address: any client can set its own c.IP(); " +
 			"trust only the proxy's network")
+	}
+
+	if cfg.HSTSForce && !cfg.IsProduction() {
+		app.Log.Warn("HSTS_FORCE is ignored outside production: HSTS is not forced", "env", string(cfg.Env))
 	}
 	routes = app.Router
 

@@ -80,6 +80,7 @@ Commit `.env.example` and git-ignore `.env` and `.env.*.local`. Never commit rea
 | `TRUSTED_PROXIES` | empty (trust nobody) | Comma-separated CIDRs or IPs whose `X-Forwarded-For` sets `c.IP()`; an invalid entry is a boot error ([Deploy](/docs/deployment/docker-and-railway#trusted-proxies)) |
 | `CLIENT_IP_HEADER` | empty | Read the client IP from this single-IP header (e.g. `X-Real-IP`) instead of `X-Forwarded-For`, only from `TRUSTED_PROXIES` peers |
 | `TRUST_FORWARDED_PROTO` | `false` | Treat `X-Forwarded-Proto: https` from a trusted proxy as HTTPS (HSTS); requires `TRUSTED_PROXIES` |
+| `HSTS_FORCE` | `false` | Send HSTS on every response in production when the TLS proxy's range cannot be trusted ([trade-offs](/docs/deployment/docker-and-railway#hsts-without-a-trusted-range)); validated in every environment (requires an `https://` `APP_URL`), applied only in production (a boot warning otherwise) |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 | `LOG_FORMAT` | `text` (`json` in production) | `text` or `json` |
 | `LOG_DEDUP_WINDOW` | `1m` in production, off elsewhere | Repeated identical errors become one `repeated` summary per window; `0` disables it |
@@ -152,5 +153,5 @@ signer, err := app.DeriveKey("signed.urls", 32) // config.ErrKeyMissing instead 
 | Missing `APP_KEY` with explicit `APP_ENV=development`/`test` | Boots; key-derived features fail closed on use |
 | `APP_DEBUG=true` with `APP_ENV=production` | Boot error |
 | `PORT` out of range | Boot error |
-| Invalid `TRUSTED_PROXIES` entry; `TRUST_FORWARDED_PROTO` or `CLIENT_IP_HEADER` without `TRUSTED_PROXIES`; an invalid or list `CLIENT_IP_HEADER` | Boot error |
+| Invalid `TRUSTED_PROXIES` entry; `TRUST_FORWARDED_PROTO` or `CLIENT_IP_HEADER` without `TRUSTED_PROXIES`; an invalid or list `CLIENT_IP_HEADER`; `HSTS_FORCE` without an `https://` `APP_URL` | Boot error |
 | Debug error details | Only when `Services.Debug` is set; never in production |
