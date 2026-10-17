@@ -207,6 +207,37 @@ func TestSecurity_A02_HSTSForceFromEnv(t *testing.T) {
 	}
 }
 
+func TestHSTSForceWarnsOutsideProduction(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct {
+		env  string
+		warn bool
+	}{
+		{env: "test", warn: true},
+		{env: "production"},
+	} {
+		t.Run(tt.env, func(t *testing.T) {
+			t.Parallel()
+
+			var buf bytes.Buffer
+
+			env := map[string]string{"APP_ENV": tt.env, "APP_URL": "https://example.com", "HSTS_FORCE": "true"}
+			if _, err := New(
+				WithSource(testSource(env)),
+				WithLogger(slog.New(slog.NewTextHandler(&buf, nil))),
+			); err != nil {
+				t.Fatal(err)
+			}
+
+			if got := strings.Contains(buf.String(), "level=WARN") &&
+				strings.Contains(buf.String(), "HSTS_FORCE"); got != tt.warn {
+				t.Fatalf("warned = %v, want %v; log %q", got, tt.warn, buf.String())
+			}
+		})
+	}
+}
+
 func with(m map[string]string, k, v string) map[string]string {
 	out := maps.Clone(m)
 	out[k] = v

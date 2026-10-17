@@ -31,8 +31,10 @@ type SecureHeadersConfig struct {
 	// HSTSMaxAge enables Strict-Transport-Security on HTTPS requests.
 	// Zero uses two years; negative disables it.
 	HSTSMaxAge time.Duration
-	// HSTSForce sends Strict-Transport-Security on every response, also on
-	// requests that look like plain HTTP. Use it only when every public
+	// HSTSForce sends Strict-Transport-Security on every response that
+	// reaches SecureHeaders, also on requests that look like plain HTTP
+	// (middleware installed before it, such as Maintenance's 503, answers
+	// without it). Use it only when every public
 	// request reaches a TLS-terminating proxy whose range cannot be
 	// trusted (so TrustForwardedProto cannot be used): it asserts the
 	// public origin is HTTPS-only instead of checking each request.

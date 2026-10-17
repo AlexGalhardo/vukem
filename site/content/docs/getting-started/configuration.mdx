@@ -80,7 +80,7 @@ Commit `.env.example` and git-ignore `.env` and `.env.*.local`. Never commit rea
 | `TRUSTED_PROXIES` | empty (trust nobody) | Comma-separated CIDRs or IPs whose `X-Forwarded-For` sets `c.IP()`; an invalid entry is a boot error ([Deploy](/docs/deployment/docker-and-railway#trusted-proxies)) |
 | `CLIENT_IP_HEADER` | empty | Read the client IP from this single-IP header (e.g. `X-Real-IP`) instead of `X-Forwarded-For`, only from `TRUSTED_PROXIES` peers |
 | `TRUST_FORWARDED_PROTO` | `false` | Treat `X-Forwarded-Proto: https` from a trusted proxy as HTTPS (HSTS); requires `TRUSTED_PROXIES` |
-| `HSTS_FORCE` | `false` | Send HSTS on every response in production when the TLS proxy's range cannot be trusted ([trade-offs](/docs/deployment/docker-and-railway#hsts-without-a-trusted-range)); requires an `https://` `APP_URL`, ignored outside production |
+| `HSTS_FORCE` | `false` | Send HSTS on every response in production when the TLS proxy's range cannot be trusted ([trade-offs](/docs/deployment/docker-and-railway#hsts-without-a-trusted-range)); validated in every environment (requires an `https://` `APP_URL`), applied only in production (a boot warning otherwise) |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 | `LOG_FORMAT` | `text` (`json` in production) | `text` or `json` |
 | `LOG_DEDUP_WINDOW` | `1m` in production, off elsewhere | Repeated identical errors become one `repeated` summary per window; `0` disables it |
