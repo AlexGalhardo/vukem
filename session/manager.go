@@ -46,6 +46,11 @@ type Config struct {
 	Now func() time.Time
 	// Log receives security events and storage errors.
 	Log *slog.Logger
+	// RecordClient stores the User-Agent (capped at 256 bytes) and the
+	// client network (IPv4 /24, IPv6 /48) with each new logged-in session
+	// of a ListStore, for Manager.UserSessions. Off by default: both are
+	// personal data, so turn it on only with a reason to show them.
+	RecordClient bool
 }
 
 // clocked is implemented by the built-in stores so Config.Now reaches them.
@@ -309,6 +314,14 @@ func (m *Manager) commit(w http.ResponseWriter, r *http.Request, s *Session) {
 		expiry = absolute
 	}
 
+	if m.sealer == nil {
+		if s.id == "" {
+			s.id = newID()
+		}
+
+		m.recordClient(w, r, s)
+	}
+
 	raw, err := encode(s.data)
 	if err != nil {
 		m.cfg.Log.ErrorContext(ctx, "session encode failed", "err", err)
@@ -324,10 +337,6 @@ func (m *Manager) commit(w http.ResponseWriter, r *http.Request, s *Session) {
 			return
 		}
 	} else {
-		if s.id == "" {
-			s.id = newID()
-		}
-
 		err := m.save(ctx, s, raw, expiry)
 		if errors.Is(err, ErrSessionNotFound) {
 			// Revoked or logged out elsewhere while this request ran.

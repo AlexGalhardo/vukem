@@ -31,7 +31,7 @@ It also patches your `Login` handler so a correct password leads to the challeng
 | --- | --- |
 | Storage | the secret and the recovery code hashes are [encrypted columns](/docs/security/encryption#encrypted-columns) keyed from `APP_KEY`; `TwoFactor` is its own model, so the secret never reaches `User` or shared props |
 | Enable (`/user/two-factor`) | a new secret, shown as a QR code (inline SVG of the `otpauth://` URI, issuer `APP_NAME`) and a setup key. A confirmed setup is never replaced (409) |
-| Confirm | 2FA is on only after a valid code; 8 recovery codes are then shown **once** (only hashes are stored); every other session of the user ends (`Accounts.RevokeOtherSessions`, with `SESSION_DRIVER=database`) |
+| Confirm | 2FA is on only after a valid code; 8 recovery codes are then shown **once** (only hashes are stored); every other session of the user ends on every session driver (`Accounts.RevokeOtherSessions` bumps the session version, then `Web.RefreshSession` keeps the current one) |
 | Recovery codes | regenerating invalidates the old ones; the page shows how many are left |
 | Disable | needs the current password |
 | Login | a correct password for a user with 2FA does **not** log in: the session id is regenerated, the pending login is stored for 5 minutes and the browser goes to `/two-factor-challenge` |

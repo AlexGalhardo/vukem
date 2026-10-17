@@ -13,6 +13,7 @@ import (
 	"github.com/AlexGalhardo/vukem/cache/cachetest"
 	"github.com/AlexGalhardo/vukem/drivers/redis"
 	"github.com/AlexGalhardo/vukem/queue/queuetest"
+	"github.com/AlexGalhardo/vukem/session/sessiontest"
 )
 
 // open connects to REDIS_URL (task services:up starts one on :56379).
@@ -40,6 +41,10 @@ func unique(name string) string { return "vukemtest:" + name + ":" + rand.Text()
 func TestCacheConformance(t *testing.T) {
 	c := open(t)
 	cachetest.Run(t, c.CacheStore(unique("cache")))
+}
+
+func TestSessionStoreConformance(t *testing.T) {
+	sessiontest.Run(t, open(t).SessionStore(unique("session")))
 }
 
 func TestSessionStore(t *testing.T) {

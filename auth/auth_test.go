@@ -29,14 +29,17 @@ import (
 type User struct {
 	orm.Model
 
-	Email      string
-	Password   string `json:"-"`
-	VerifiedAt orm.NullTime
+	Email          string
+	Password       string `json:"-"`
+	VerifiedAt     orm.NullTime
+	SessionVersion int64 `json:"-"`
 }
 
 func (u User) AuthID() string       { return strconv.FormatInt(u.ID, 10) }
 func (u User) AuthPassword() string { return u.Password }
 func (u User) EmailVerified() bool  { return u.VerifiedAt.Valid }
+
+func (u User) AuthSessionVersion() int64 { return u.SessionVersion }
 
 var migrations = []schema.Migration{{
 	ID: "1_auth",
@@ -46,6 +49,7 @@ var migrations = []schema.Migration{{
 			t.String("email").Unique()
 			t.String("password")
 			t.Timestamp("verified_at").Nullable()
+			t.BigInteger("session_version").Default(0)
 			t.Timestamps()
 		}); err != nil {
 			return err
@@ -154,6 +158,25 @@ func newApp(t *testing.T, hasher hash.Hasher, extra ...vukem.Option) *testApp {
 					return c.Redirect("/dashboard")
 				})
 				r.Post("/logout", func(c *web.Ctx) error { _ = ta.web.Logout(c); return c.Redirect("/") })
+				// /sessions/end-others ends the user's other sessions the way a
+				// 2FA scaffold does: bump the version, then keep this one.
+				r.Post("/sessions/end-others", func(c *web.Ctx) error {
+					u, err := auth.User[User](c, "web")
+					if err != nil {
+						return err
+					}
+
+					if _, err := orm.QueryOf[User](db).Where("id", u.ID).
+						Update(c.Context(), orm.Set{"session_version": u.SessionVersion + 1}); err != nil {
+						return err
+					}
+
+					if err := ta.web.RefreshSession(c); err != nil {
+						return err
+					}
+
+					return c.Redirect("/dashboard")
+				}).Use(auth.Required(ta.web))
 				r.Get("/dashboard", func(c *web.Ctx) error {
 					u, err := auth.User[User](c, "web")
 					if err != nil {

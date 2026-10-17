@@ -7,9 +7,11 @@ import (
 	"crypto/subtle"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -39,10 +41,21 @@ type SessionGuard[U Authenticatable] struct {
 }
 
 // NewSessionGuard returns the "web" style guard. remember may be nil to
-// disable remember-me.
+// disable remember-me. It panics when *U implements SessionVersioner but U
+// does not (AuthSessionVersion on a pointer receiver while the guard holds
+// values): the version would never be checked, so sessions could not be
+// ended.
 func NewSessionGuard[U Authenticatable](name string, p UserProvider[U], h hash.Hasher,
 	remember *RememberStore,
 ) *SessionGuard[U] {
+	var u U
+	if _, onValue := any(u).(SessionVersioner); !onValue {
+		if _, onPointer := any(&u).(SessionVersioner); onPointer {
+			panic(fmt.Sprintf("auth: %T implements SessionVersioner with a pointer receiver; "+
+				"declare AuthSessionVersion on the value receiver (func (u %T) AuthSessionVersion() int64)", &u, u))
+		}
+	}
+
 	dummy, _ := h.Make("dummy password for timing equalisation")
 
 	return &SessionGuard[U]{
@@ -126,12 +139,117 @@ func (g *SessionGuard[U]) Login(c *web.Ctx, u U, opts ...LoginOption) error {
 	}
 
 	s.Regenerate()
-	s.Put(g.key(), u.AuthID())
-	s.Put(web.SessionUserKey, g.SessionUserID(u.AuthID()))
+
+	for k, v := range SessionValues(g.name, u) {
+		s.Put(k, v)
+	}
+
 	cache(c, g.name, u)
 
 	if o.remember && g.remember != nil {
-		return g.issueRemember(c, u.AuthID())
+		return g.issueRemember(c, u)
+	}
+
+	return nil
+}
+
+// SessionVersioner is implemented by users whose browser sessions can all
+// be ended at once by changing a number kept with the user (a
+// session_version column): SessionGuard records it on login and signs the
+// session out when it no longer matches, on every session driver,
+// encrypted cookies included. Bump it on a password reset or change; it
+// costs nothing per request, since the guard loads the user anyway.
+type SessionVersioner interface {
+	AuthSessionVersion() int64
+}
+
+// SessionValues returns the session values SessionGuard.Login stores for
+// user on the guard named guard: the user id, the owner under
+// web.SessionUserKey and, for a SessionVersioner, its session version.
+// Tests use it to start a logged-in session (vukemtest Client.ActingAs).
+func SessionValues(guard string, user interface{ AuthID() string }) map[string]any {
+	values := map[string]any{
+		"auth_" + guard:    user.AuthID(),
+		web.SessionUserKey: guard + ":" + user.AuthID(),
+	}
+
+	if v, ok := user.(SessionVersioner); ok {
+		values[versionKey(guard)] = v.AuthSessionVersion()
+	}
+
+	return values
+}
+
+func versionKey(guard string) string { return "_auth_version_" + guard }
+
+// sessionVersionOK reports whether the version recorded in s matches u's.
+// Sessions logged in before versions existed carry none, which counts as
+// 0: they last until the first bump. Anything unreadable is stale.
+func (g *SessionGuard[U]) sessionVersionOK(s web.Session, u U) bool {
+	v, ok := any(u).(SessionVersioner)
+	if !ok {
+		return true
+	}
+
+	var recorded int64
+
+	switch x := s.Get(versionKey(g.name)).(type) {
+	case nil:
+	case int64:
+		recorded = x
+	case int:
+		recorded = int64(x)
+	case json.Number:
+		n, err := strconv.ParseInt(string(x), 10, 64)
+		if err != nil {
+			return false
+		}
+
+		recorded = n
+	default:
+		return false
+	}
+
+	return recorded == v.AuthSessionVersion()
+}
+
+// RefreshSession reloads the logged-in user and records its current
+// session version in this session, and issues a new remember-me token
+// when the request carries one: call it after bumping the version when the
+// current session must stay signed in (two-factor authentication turned
+// on, password changed: the others end).
+func (g *SessionGuard[U]) RefreshSession(c *web.Ctx) error {
+	s := c.Session()
+	if s == nil {
+		return errors.New("auth: session guard needs the session middleware")
+	}
+
+	id, _ := s.Get(g.key()).(string)
+	if id == "" {
+		return ErrUnauthenticated
+	}
+
+	u, err := g.provider.ByID(c.Context(), id)
+	if err != nil {
+		return fmt.Errorf("auth: refresh session: %w", err)
+	}
+
+	if v, ok := any(u).(SessionVersioner); ok {
+		s.Put(versionKey(g.name), v.AuthSessionVersion())
+	}
+
+	cache(c, g.name, u)
+
+	// Remember-me tokens are bound to the version they were issued under:
+	// the current device gets one for the new version.
+	if g.remember != nil {
+		if raw := c.Cookie(g.cookieName()); raw != "" {
+			if tokenID, _, ok := strings.Cut(raw, "."); ok {
+				_ = g.remember.delete(c.Context(), tokenID, u.AuthID())
+			}
+
+			return g.issueRemember(c, u)
+		}
 	}
 
 	return nil
@@ -165,13 +283,18 @@ func (g *SessionGuard[U]) backfillSessionUser(s web.Session, id string) {
 
 // Logout clears the session (new id, no data) and the remember-me token.
 func (g *SessionGuard[U]) Logout(c *web.Ctx) error {
+	userID := ""
+
 	if s := c.Session(); s != nil {
+		userID, _ = s.Get(g.key()).(string)
 		s.Invalidate()
 	}
 
 	if g.remember != nil {
-		if id, _, ok := strings.Cut(c.Cookie(g.cookieName()), "."); ok {
-			_ = g.remember.delete(c.Context(), id)
+		// Only the signed-out user's own token: a cookie planted from
+		// another account must not delete that account's token.
+		if tokenID, _, ok := strings.Cut(c.Cookie(g.cookieName()), "."); ok && userID != "" {
+			_ = g.remember.delete(c.Context(), tokenID, userID)
 		}
 
 		g.clearCookie(c)
@@ -219,6 +342,12 @@ func (g *SessionGuard[U]) User(c *web.Ctx) (U, error) {
 		u, err := g.provider.ByID(c.Context(), id)
 
 		switch {
+		case err == nil && !g.sessionVersionOK(s, u):
+			// The user's sessions were ended (password reset) after this
+			// login: end this one whole, so nothing stays attributed to the
+			// user (owner, other guards' keys, data).
+			s.Invalidate()
+			web.SecurityEvent(c.Request(), "auth.session_revoked", "guard", g.name)
 		case err == nil:
 			g.backfillSessionUser(s, id)
 
@@ -245,8 +374,8 @@ func (g *SessionGuard[U]) User(c *web.Ctx) (U, error) {
 
 func (g *SessionGuard[U]) cookieName() string { return "remember_" + g.name }
 
-func (g *SessionGuard[U]) issueRemember(c *web.Ctx, userID string) error {
-	value, err := g.remember.create(c.Context(), userID, time.Now().Add(g.RememberFor))
+func (g *SessionGuard[U]) issueRemember(c *web.Ctx, u U) error {
+	value, err := g.remember.create(c.Context(), u.AuthID(), sessionVersion(u), time.Now().Add(g.RememberFor))
 	if err != nil {
 		return err
 	}
@@ -277,7 +406,7 @@ func (g *SessionGuard[U]) fromRemember(c *web.Ctx) (U, bool) {
 		return zero, false
 	}
 
-	userID, err := g.remember.consume(c.Context(), raw)
+	tok, err := g.remember.consume(c.Context(), raw)
 	if err != nil {
 		g.clearCookie(c)
 		web.SecurityEvent(c.Request(), "auth.remember_rejected", "guard", g.name)
@@ -285,9 +414,18 @@ func (g *SessionGuard[U]) fromRemember(c *web.Ctx) (U, bool) {
 		return zero, false
 	}
 
-	u, err := g.provider.ByID(c.Context(), userID)
+	u, err := g.provider.ByID(c.Context(), tok.userID)
 	if err != nil {
 		g.clearCookie(c)
+		return zero, false
+	}
+
+	// Checked once the user is known: a token issued before the user's
+	// sessions were ended (session version bumped) is rejected.
+	if !tok.matches(sessionVersion(u)) {
+		g.clearCookie(c)
+		web.SecurityEvent(c.Request(), "auth.remember_rejected", "guard", g.name, "reason", "session version")
+
 		return zero, false
 	}
 
@@ -333,12 +471,12 @@ func (r *RememberStore) q(sqlText string) string {
 	return strings.ReplaceAll(b.String(), "{table}", d.Quote(r.table))
 }
 
-func (r *RememberStore) create(ctx context.Context, userID string, expires time.Time) (string, error) {
+func (r *RememberStore) create(ctx context.Context, userID string, version int64, expires time.Time) (string, error) {
 	id := rand.Text()
 	secret := rand.Text()
 
 	if _, err := r.ex.ExecContext(ctx, r.q("INSERT INTO {table} (id, user_id, hash, expires_at) VALUES (?, ?, ?, ?)"),
-		id, userID, digest(secret), expires.UTC()); err != nil {
+		id, userID, rememberHash(secret, version), expires.UTC()); err != nil {
 		return "", err
 	}
 
@@ -347,11 +485,41 @@ func (r *RememberStore) create(ctx context.Context, userID string, expires time.
 
 var errBadToken = errors.New("auth: invalid token")
 
-// consume validates and deletes the token, returning its user id.
-func (r *RememberStore) consume(ctx context.Context, raw string) (string, error) {
+// rememberHash is the stored hash of a remember-me secret issued under a
+// session version. Version 0 hashes the secret alone, so tokens issued
+// before versions existed keep working until the first bump.
+func rememberHash(secret string, version int64) string {
+	if version == 0 {
+		return digest(secret)
+	}
+
+	return digest(secret + "|v" + strconv.FormatInt(version, 10))
+}
+
+// consumedToken is a remember-me token deleted by consume; matches checks
+// it against the user's current session version.
+type consumedToken struct {
+	userID, stored, secret string
+}
+
+func (t consumedToken) matches(version int64) bool {
+	return subtle.ConstantTimeCompare([]byte(t.stored), []byte(rememberHash(t.secret, version))) == 1
+}
+
+func sessionVersion(u any) int64 {
+	if v, ok := u.(SessionVersioner); ok {
+		return v.AuthSessionVersion()
+	}
+
+	return 0
+}
+
+// consume deletes the token and checks its expiry; the caller checks the
+// secret with matches once the user (and so the session version) is known.
+func (r *RememberStore) consume(ctx context.Context, raw string) (consumedToken, error) {
 	id, secret, ok := strings.Cut(raw, ".")
 	if !ok || id == "" || secret == "" {
-		return "", errBadToken
+		return consumedToken{}, errBadToken
 	}
 
 	var (
@@ -362,7 +530,7 @@ func (r *RememberStore) consume(ctx context.Context, raw string) (string, error)
 	err := r.ex.QueryRowContext(ctx, r.q("SELECT user_id, hash, expires_at FROM {table} WHERE id = ?"), id).
 		Scan(&userID, &stored, &expires)
 	if err != nil {
-		return "", errBadToken
+		return consumedToken{}, errBadToken
 	}
 
 	// Single use, valid or not. Only the request whose DELETE removed the
@@ -370,22 +538,23 @@ func (r *RememberStore) consume(ctx context.Context, raw string) (string, error)
 	// pass the SELECT, and a failed DELETE would leave the token reusable.
 	res, err := r.ex.ExecContext(ctx, r.q("DELETE FROM {table} WHERE id = ?"), id)
 	if err != nil {
-		return "", errBadToken
+		return consumedToken{}, errBadToken
 	}
 
 	if n, err := res.RowsAffected(); err != nil || n != 1 {
-		return "", errBadToken
+		return consumedToken{}, errBadToken
 	}
 
-	if subtle.ConstantTimeCompare([]byte(stored), []byte(digest(secret))) != 1 || !expires.After(r.now()) {
-		return "", errBadToken
+	if !expires.After(r.now()) {
+		return consumedToken{}, errBadToken
 	}
 
-	return userID, nil
+	return consumedToken{userID: userID, stored: stored, secret: secret}, nil
 }
 
-func (r *RememberStore) delete(ctx context.Context, id string) error {
-	_, err := r.ex.ExecContext(ctx, r.q("DELETE FROM {table} WHERE id = ?"), id)
+// delete removes token id when it belongs to userID.
+func (r *RememberStore) delete(ctx context.Context, id, userID string) error {
+	_, err := r.ex.ExecContext(ctx, r.q("DELETE FROM {table} WHERE id = ? AND user_id = ?"), id, userID)
 	return err
 }
 

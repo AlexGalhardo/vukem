@@ -13,13 +13,24 @@ import (
 	"{{.Module}}/bootstrap"
 )
 
-// A password reset signs the user out of every browser. Sessions live in
-// the database here: encrypted cookie sessions (SESSION_DRIVER=cookie)
-// have no server-side record to revoke.
+// A password reset signs the user out of every browser, on every session
+// driver: database rows are deleted, and encrypted cookie sessions end
+// with the bumped session version.
 func TestPasswordResetEndsOtherSessions(t *testing.T) {
 	t.Parallel()
 
-	app := vukemtest.New(t, bootstrap.New, vukemtest.Options{Env: map[string]string{"SESSION_DRIVER": "database"}})
+	for _, driver := range []string{"database", "cookie"} {
+		t.Run(driver, func(t *testing.T) {
+			t.Parallel()
+			testPasswordResetEndsSessions(t, driver)
+		})
+	}
+}
+
+func testPasswordResetEndsSessions(t *testing.T, driver string) {
+	t.Helper()
+
+	app := vukemtest.New(t, bootstrap.New, vukemtest.Options{Env: map[string]string{"SESSION_DRIVER": driver}})
 
 	laptop := app.Client(t)
 	register(t, app, laptop, "eve@example.com")

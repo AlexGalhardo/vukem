@@ -227,7 +227,8 @@ func TestSecurity_A07_AuthScaffoldDefaults(t *testing.T) {
 }
 
 // Changing credentials ends the user's other sessions: a password reset
-// ends all of them and enabling 2FA all but the current one (generated
+// ends all of them and enabling 2FA all but the current one, on every
+// session driver through the user's session version (generated
 // TestPasswordResetEndsOtherSessions, run by TestNewProjectEndToEnd). The
 // login still regenerates the session id.
 func TestSecurity_A07_AuthScaffoldRevokesOtherSessions(t *testing.T) {
@@ -236,14 +237,24 @@ func TestSecurity_A07_AuthScaffoldRevokesOtherSessions(t *testing.T) {
 	revoke2FA := "h.a.RevokeOtherSessions(c.Context(), u.ID, c.Session().ID())"
 	files := map[string][]string{
 		"scaffolds/auth-core/app/accounts/accounts.go.tmpl": {
+			"if err := a.bumpSessionVersion(ctx, a.DB, userID); err != nil {",
+			`"DELETE FROM remember_tokens WHERE user_id = "`,
+			"UPDATE users SET session_version = session_version + 1 WHERE id = ",
 			"m.RevokeOthers(ctx, a.Web.SessionUserID(strconv.FormatInt(userID, 10)), keep)",
 			"sessions:  app.Sessions,",
 		},
 		"scaffolds/auth-core/app/accounts/passwords.go.tmpl": {
-			`return u, a.RevokeOtherSessions(ctx, u.ID, "")`,
+			"if err := a.bumpSessionVersion(ctx, tx, u.ID); err != nil {",
+			`return u, a.revokeServerSessions(ctx, u.ID, "")`,
+		},
+		"scaffolds/auth-core/app/models/user.go.tmpl": {
+			"func (u User) AuthSessionVersion() int64 { return u.SessionVersion }",
+		},
+		"scaffolds/auth-core/database/migrations/TS1_create_users_table.go.tmpl": {
+			`t.BigInteger("session_version").Default(0)`,
 		},
 		"scaffolds/auth-web/tests/sessions_test.go.tmpl": {
-			`"SESSION_DRIVER": "database"`,
+			`[]string{"database", "cookie"}`,
 			`c.Get("/login").AssertOK() // signed out`,
 		},
 	}
@@ -273,9 +284,15 @@ func TestSecurity_A07_AuthScaffoldRevokesOtherSessions(t *testing.T) {
 
 		flash := bytes.Index(b, []byte("c.Session().Flash(recoveryCodesFlash, codes)"))
 		revoke := bytes.Index(b, []byte("if err := "+revoke2FA+"; err != nil {\n\t\tweb.SecurityEvent("))
+		refresh := bytes.Index(b, []byte("if err := h.a.Web.RefreshSession(c); err != nil {\n\t\tweb.SecurityEvent("))
 
 		if flash < 0 || revoke < 0 || flash > revoke {
 			t.Errorf("%s: recovery codes flashed at %d, revocation with logged failure at %d", src, flash, revoke)
+		}
+
+		// The session version bump would end the current session too.
+		if refresh < revoke {
+			t.Errorf("%s: current session refreshed at %d, before the revocation at %d", src, refresh, revoke)
 		}
 	}
 }
