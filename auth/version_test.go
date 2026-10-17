@@ -88,3 +88,52 @@ func TestRefreshSessionKeepsCurrent(t *testing.T) {
 	current.Get("/dashboard").AssertOK()
 	other.Get("/dashboard").AssertRedirect("/login")
 }
+
+// A remember-me token is bound to the session version it was issued
+// under: once the version changes, a stolen remember cookie no longer logs
+// in, and RefreshSession issues the current device a new one.
+func TestSecurity_A07_RememberTokenBoundToSessionVersion(t *testing.T) {
+	t.Parallel()
+
+	ta := newApp(t, hash.Fake())
+	u := ta.user(t, "rae@example.com", "s3cret-pass", false)
+
+	login := func() *vukemtest.Client {
+		c := ta.Client(t)
+		c.PostForm("/login", url.Values{"email": {"rae@example.com"}, "password": {"s3cret-pass"}, "remember": {"on"}}).
+			AssertRedirect("/dashboard")
+
+		return c
+	}
+
+	// Ended by a bump made elsewhere (password reset).
+	stolen := login().CookieValue("remember_web")
+
+	db, err := ta.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := orm.QueryOf[User](db).Where("id", u.ID).
+		Update(t.Context(), orm.Set{"session_version": 1}); err != nil {
+		t.Fatal(err)
+	}
+
+	ta.Client(t).WithCookie("remember_web", stolen).Get("/dashboard").AssertRedirect("/login")
+
+	// The current device keeps signing in after its own bump (2FA on).
+	current := login()
+	other := login().CookieValue("remember_web")
+	before := current.CookieValue("remember_web")
+
+	current.PostForm("/sessions/end-others", nil).AssertRedirect("/dashboard")
+
+	after := current.CookieValue("remember_web")
+	if after == "" || after == before {
+		t.Fatalf("remember cookie after RefreshSession = %q, want a new token", after)
+	}
+
+	ta.Client(t).WithCookie("remember_web", other).Get("/dashboard").AssertRedirect("/login")
+	ta.Client(t).WithCookie("remember_web", before).Get("/dashboard").AssertRedirect("/login")
+	ta.Client(t).WithCookie("remember_web", after).Get("/dashboard").AssertOK()
+}

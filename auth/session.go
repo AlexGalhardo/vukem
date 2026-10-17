@@ -136,7 +136,7 @@ func (g *SessionGuard[U]) Login(c *web.Ctx, u U, opts ...LoginOption) error {
 	cache(c, g.name, u)
 
 	if o.remember && g.remember != nil {
-		return g.issueRemember(c, u.AuthID())
+		return g.issueRemember(c, u)
 	}
 
 	return nil
@@ -203,9 +203,10 @@ func (g *SessionGuard[U]) sessionVersionOK(s web.Session, u U) bool {
 }
 
 // RefreshSession reloads the logged-in user and records its current
-// session version in this session: call it after bumping the version when
-// the current session must stay signed in (two-factor authentication
-// turned on ends the others only).
+// session version in this session, and issues a new remember-me token
+// when the request carries one: call it after bumping the version when the
+// current session must stay signed in (two-factor authentication turned
+// on, password changed: the others end).
 func (g *SessionGuard[U]) RefreshSession(c *web.Ctx) error {
 	s := c.Session()
 	if s == nil {
@@ -227,6 +228,18 @@ func (g *SessionGuard[U]) RefreshSession(c *web.Ctx) error {
 	}
 
 	cache(c, g.name, u)
+
+	// Remember-me tokens are bound to the version they were issued under:
+	// the current device gets one for the new version.
+	if g.remember != nil {
+		if raw := c.Cookie(g.cookieName()); raw != "" {
+			if id, _, ok := strings.Cut(raw, "."); ok {
+				_ = g.remember.delete(c.Context(), id)
+			}
+
+			return g.issueRemember(c, u)
+		}
+	}
 
 	return nil
 }
@@ -344,8 +357,8 @@ func (g *SessionGuard[U]) User(c *web.Ctx) (U, error) {
 
 func (g *SessionGuard[U]) cookieName() string { return "remember_" + g.name }
 
-func (g *SessionGuard[U]) issueRemember(c *web.Ctx, userID string) error {
-	value, err := g.remember.create(c.Context(), userID, time.Now().Add(g.RememberFor))
+func (g *SessionGuard[U]) issueRemember(c *web.Ctx, u U) error {
+	value, err := g.remember.create(c.Context(), u.AuthID(), sessionVersion(u), time.Now().Add(g.RememberFor))
 	if err != nil {
 		return err
 	}
@@ -376,7 +389,7 @@ func (g *SessionGuard[U]) fromRemember(c *web.Ctx) (U, bool) {
 		return zero, false
 	}
 
-	userID, err := g.remember.consume(c.Context(), raw)
+	tok, err := g.remember.consume(c.Context(), raw)
 	if err != nil {
 		g.clearCookie(c)
 		web.SecurityEvent(c.Request(), "auth.remember_rejected", "guard", g.name)
@@ -384,9 +397,18 @@ func (g *SessionGuard[U]) fromRemember(c *web.Ctx) (U, bool) {
 		return zero, false
 	}
 
-	u, err := g.provider.ByID(c.Context(), userID)
+	u, err := g.provider.ByID(c.Context(), tok.userID)
 	if err != nil {
 		g.clearCookie(c)
+		return zero, false
+	}
+
+	// Checked once the user is known: a token issued before the user's
+	// sessions were ended (session version bumped) is rejected.
+	if !tok.matches(sessionVersion(u)) {
+		g.clearCookie(c)
+		web.SecurityEvent(c.Request(), "auth.remember_rejected", "guard", g.name, "reason", "session version")
+
 		return zero, false
 	}
 
@@ -432,12 +454,12 @@ func (r *RememberStore) q(sqlText string) string {
 	return strings.ReplaceAll(b.String(), "{table}", d.Quote(r.table))
 }
 
-func (r *RememberStore) create(ctx context.Context, userID string, expires time.Time) (string, error) {
+func (r *RememberStore) create(ctx context.Context, userID string, version int64, expires time.Time) (string, error) {
 	id := rand.Text()
 	secret := rand.Text()
 
 	if _, err := r.ex.ExecContext(ctx, r.q("INSERT INTO {table} (id, user_id, hash, expires_at) VALUES (?, ?, ?, ?)"),
-		id, userID, digest(secret), expires.UTC()); err != nil {
+		id, userID, rememberHash(secret, version), expires.UTC()); err != nil {
 		return "", err
 	}
 
@@ -446,11 +468,41 @@ func (r *RememberStore) create(ctx context.Context, userID string, expires time.
 
 var errBadToken = errors.New("auth: invalid token")
 
-// consume validates and deletes the token, returning its user id.
-func (r *RememberStore) consume(ctx context.Context, raw string) (string, error) {
+// rememberHash is the stored hash of a remember-me secret issued under a
+// session version. Version 0 hashes the secret alone, so tokens issued
+// before versions existed keep working until the first bump.
+func rememberHash(secret string, version int64) string {
+	if version == 0 {
+		return digest(secret)
+	}
+
+	return digest(secret + "|v" + strconv.FormatInt(version, 10))
+}
+
+// consumedToken is a remember-me token deleted by consume; matches checks
+// it against the user's current session version.
+type consumedToken struct {
+	userID, stored, secret string
+}
+
+func (t consumedToken) matches(version int64) bool {
+	return subtle.ConstantTimeCompare([]byte(t.stored), []byte(rememberHash(t.secret, version))) == 1
+}
+
+func sessionVersion(u any) int64 {
+	if v, ok := u.(SessionVersioner); ok {
+		return v.AuthSessionVersion()
+	}
+
+	return 0
+}
+
+// consume deletes the token and checks its expiry; the caller checks the
+// secret with matches once the user (and so the session version) is known.
+func (r *RememberStore) consume(ctx context.Context, raw string) (consumedToken, error) {
 	id, secret, ok := strings.Cut(raw, ".")
 	if !ok || id == "" || secret == "" {
-		return "", errBadToken
+		return consumedToken{}, errBadToken
 	}
 
 	var (
@@ -461,7 +513,7 @@ func (r *RememberStore) consume(ctx context.Context, raw string) (string, error)
 	err := r.ex.QueryRowContext(ctx, r.q("SELECT user_id, hash, expires_at FROM {table} WHERE id = ?"), id).
 		Scan(&userID, &stored, &expires)
 	if err != nil {
-		return "", errBadToken
+		return consumedToken{}, errBadToken
 	}
 
 	// Single use, valid or not. Only the request whose DELETE removed the
@@ -469,18 +521,18 @@ func (r *RememberStore) consume(ctx context.Context, raw string) (string, error)
 	// pass the SELECT, and a failed DELETE would leave the token reusable.
 	res, err := r.ex.ExecContext(ctx, r.q("DELETE FROM {table} WHERE id = ?"), id)
 	if err != nil {
-		return "", errBadToken
+		return consumedToken{}, errBadToken
 	}
 
 	if n, err := res.RowsAffected(); err != nil || n != 1 {
-		return "", errBadToken
+		return consumedToken{}, errBadToken
 	}
 
-	if subtle.ConstantTimeCompare([]byte(stored), []byte(digest(secret))) != 1 || !expires.After(r.now()) {
-		return "", errBadToken
+	if !expires.After(r.now()) {
+		return consumedToken{}, errBadToken
 	}
 
-	return userID, nil
+	return consumedToken{userID: userID, stored: stored, secret: secret}, nil
 }
 
 func (r *RememberStore) delete(ctx context.Context, id string) error {
