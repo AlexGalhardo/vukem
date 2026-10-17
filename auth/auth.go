@@ -33,6 +33,12 @@ type Authenticatable interface {
 
 // UserProvider loads users. ByCredentials never checks the password; the
 // guard does, in constant time.
+//
+// ByID must report a missing user as ErrUserNotFound (wrap it, or the
+// orm.ErrNotFound / sql.ErrNoRows the lookup returned): the session guard
+// forgets the session only then, and answers any other error with 503
+// while keeping the session, so returning a generic error for "not found"
+// leaves a deleted user's session failing instead of logging out.
 type UserProvider[U Authenticatable] interface {
 	ByID(ctx context.Context, id string) (U, error)
 	ByCredentials(ctx context.Context, creds map[string]string) (U, error)

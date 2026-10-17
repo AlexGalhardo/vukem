@@ -64,7 +64,7 @@ Every guard that authenticates a request also records `auth.Principal(ctx)` (`"<
 
 - `Attempt(c, creds, auth.Remember(bool))`: provider lookup → constant-time hash check → `Login`. Unknown users still pay for a hash verification against a dummy hash, and both failures return the same 422 error (`TestSecurity_A07_LoginErrorsDoNotRevealUsers`). Failures emit the `auth.login_failed` security event.
 - `Login(c, u)` regenerates the session id (fixation) and stores the user id under `auth_<guard>`; `Logout(c)` invalidates the session and deletes the remember-me token.
-- A session whose user no longer exists is forgotten. Any other lookup error (database down) is returned as a 503 and `auth.Required` answers with it, keeping the session, so an outage neither logs users out nor sends them to the login page (`TestSecurity_A04_SessionKeptWhenUserLookupFails`).
+- A session whose user no longer exists is forgotten: custom `UserProvider`s must report a missing user from `ByID` as `auth.ErrUserNotFound` (a wrapped `orm.ErrNotFound` or `sql.ErrNoRows` is accepted too). Any other lookup error (database down) is returned as a 503 and `auth.Required` answers with it, keeping the session, so an outage neither logs users out nor sends them to the login page (`TestSecurity_A04_SessionKeptWhenUserLookupFails`).
 - Remember-me: cookie `remember_<guard>` = `<id>.<secret>` (HttpOnly, SameSite=Lax, Secure unless `InsecureCookies`), only `SHA-256(secret)` stored in `remember_tokens`, single use and rotated on every use, 30 days by default (`RememberFor`).
 - Rehash on login when `hasher.NeedsRehash` (e.g. bcrypt → argon2id) and the provider implements `PasswordUpdater`.
 

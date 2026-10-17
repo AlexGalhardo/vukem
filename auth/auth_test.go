@@ -2,7 +2,9 @@ package auth_test
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -82,18 +84,25 @@ type testApp struct {
 	// down makes the session guard's user lookups fail like a database
 	// outage.
 	down atomic.Bool
+	// gone makes them answer not found the way custom providers often do,
+	// with a wrapped sql.ErrNoRows.
+	gone atomic.Bool
 }
 
-// flakyUsers fails ByID while down is set.
+// flakyUsers fails ByID while down or gone is set.
 type flakyUsers struct {
 	*auth.ORMProvider[User]
 
-	down *atomic.Bool
+	down, gone *atomic.Bool
 }
 
 func (f flakyUsers) ByID(ctx context.Context, id string) (User, error) {
 	if f.down.Load() {
 		return User{}, errors.New("database unavailable")
+	}
+
+	if f.gone.Load() {
+		return User{}, fmt.Errorf("load user %s: %w", id, sql.ErrNoRows)
 	}
 
 	return f.ORMProvider.ByID(ctx, id)
@@ -118,7 +127,7 @@ func newApp(t *testing.T, hasher hash.Hasher) *testApp {
 
 				users := auth.NewORMProvider[User](db)
 				ta.tokens = auth.NewTokens(db)
-				ta.web = auth.NewSessionGuard("web", flakyUsers{users, &ta.down}, hasher, auth.NewRememberStore(db))
+				ta.web = auth.NewSessionGuard("web", flakyUsers{users, &ta.down, &ta.gone}, hasher, auth.NewRememberStore(db))
 				ta.web.InsecureCookies = true
 				ta.api = auth.NewTokenGuard("api", users, ta.tokens)
 
@@ -651,4 +660,12 @@ func TestSecurity_A04_SessionKeptWhenUserLookupFails(t *testing.T) {
 
 	ta.down.Store(false)
 	c.Get("/dashboard").AssertOK().AssertSee("hello ana@example.com")
+
+	// A custom provider's wrapped sql.ErrNoRows means the user is gone:
+	// the session is forgotten and the browser goes to login.
+	ta.gone.Store(true)
+	c.Get("/dashboard").AssertRedirect("/login")
+
+	ta.gone.Store(false)
+	c.Get("/dashboard").AssertRedirect("/login")
 }

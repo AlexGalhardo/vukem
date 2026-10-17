@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
+	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -15,6 +16,7 @@ import (
 	"github.com/AlexGalhardo/vukem/auth/hash"
 	"github.com/AlexGalhardo/vukem/database"
 	"github.com/AlexGalhardo/vukem/errs"
+	"github.com/AlexGalhardo/vukem/orm"
 	"github.com/AlexGalhardo/vukem/web"
 )
 
@@ -152,6 +154,12 @@ func (g *SessionGuard[U]) Logout(c *web.Ctx) error {
 	return nil
 }
 
+// isNotFound reports a provider's "no such user": ErrUserNotFound, or the
+// orm.ErrNotFound / sql.ErrNoRows custom providers often return wrapped.
+func isNotFound(err error) bool {
+	return errors.Is(err, ErrUserNotFound) || errors.Is(err, orm.ErrNotFound) || errors.Is(err, sql.ErrNoRows)
+}
+
 // authenticate is Check that tells a guest (ErrUnauthenticated) apart
 // from a failed lookup, which Required answers with its error.
 func (g *SessionGuard[U]) authenticate(c *web.Ctx) error {
@@ -186,7 +194,7 @@ func (g *SessionGuard[U]) User(c *web.Ctx) (U, error) {
 		case err == nil:
 			cache(c, g.name, u)
 			return u, nil
-		case errors.Is(err, ErrUserNotFound):
+		case isNotFound(err):
 			s.Forget(g.key()) // the user was deleted
 		default:
 			// The store is failing: refuse the request but keep the session,
