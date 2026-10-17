@@ -22,7 +22,7 @@ Design documents, one per area. The user guide lives at [vukem.vercel.app](https
 | Mail, cache, queue, scheduler and more | [subsystems.md](subsystems.md) |
 | Stripe subscriptions (`install:billing`) | [billing.md](billing.md) |
 | Development dashboard (`/_vukem`) | [devtools.md](devtools.md) |
-| Stability policy and upgrade guides | [stability.md](stability.md), [upgrade/](upgrade/README.md) |
+| Stability policy and upgrade guides | [stability.md](stability.md), [upgrade/](upgrade/README.md), [pre-1.0 API review](api/review.md) |
 | Testing | [testing.md](testing.md) |
 | Performance baseline (vs net/http, chi, echo) | [performance.md](performance.md) |
 | Tooling and releases | [tooling.md](tooling.md) |
