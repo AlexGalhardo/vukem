@@ -45,6 +45,8 @@ func TestCreatePost(t *testing.T) {
 }
 ```
 
+`vukemtest.New` fails the test on any build, boot or migration error. `vukemtest.Build(t, build, opts...)` applies the same test defaults and returns `(*vukemtest.App, error)` instead, so a test can assert that a bad configuration fails closed (`errors.Is` works on the wrapped error).
+
 | Group | Methods |
 | --- | --- |
 | Requests | `Get`, `Post`, `PostJSON`, `PostForm`, `Put`, `Patch`, `Delete`, `WithHeader`, `WithCookie`, `WithSession`, `ActingAs(user, guard...)`, `HTMX()` (sets htmx headers), `Inertia()` |

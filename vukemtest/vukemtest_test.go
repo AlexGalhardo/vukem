@@ -358,3 +358,58 @@ func TestAssertHeaderContainsAndMissing(t *testing.T) {
 		app.Client(tb).Get("/teapot").AssertHeaderMissing("Content-Type")
 	})
 }
+
+func TestBuildReturnsErrors(t *testing.T) {
+	t.Parallel()
+
+	errBad := errors.New("bad config")
+
+	cases := map[string]struct {
+		build vukem.BuildFunc
+		opts  vukemtest.Options
+		want  string
+	}{
+		"build": {
+			build: func(...vukem.Option) (*vukem.App, error) { return nil, errBad },
+			want:  "vukemtest: build app: bad config",
+		},
+		"database": {
+			build: build,
+			opts:  vukemtest.Options{Env: map[string]string{"DATABASE_URL": "nope://x"}},
+			want:  `no driver for "nope" URLs`,
+		},
+		"session driver": {
+			build: build,
+			opts:  vukemtest.Options{Env: map[string]string{"SESSION_DRIVER": "bogus"}},
+			want:  `unknown SESSION_DRIVER "bogus"`,
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			app, err := vukemtest.Build(t, tc.build, tc.opts)
+			if err == nil || app != nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Build() = %v, %v, want nil, error containing %q", app, err, tc.want)
+			}
+		})
+	}
+
+	if _, err := vukemtest.Build(
+		t,
+		func(...vukem.Option) (*vukem.App, error) { return nil, errBad },
+	); !errors.Is(
+		err,
+		errBad,
+	) {
+		t.Errorf("Build() error = %v, want it to wrap %v", err, errBad)
+	}
+
+	app, err := vukemtest.Build(t, build)
+	if err != nil {
+		t.Fatalf("Build(valid) error = %v", err)
+	}
+
+	app.Client(t).Get("/notes").AssertOK()
+}

@@ -46,6 +46,17 @@ The fake clock drives every session driver: cookie expiry and the expiry checks 
 
 The returned `*vukemtest.App` embeds `*vukem.App` (`app.DB()`, `app.Config`…) and adds `Client`, `Handler` and `RefreshDatabase(t)` (drop everything and migrate again).
 
+`vukemtest.New` fails the test on a build, boot or migration error. To check that a bad configuration fails closed, use `vukemtest.Build`: same defaults, but it returns the error.
+
+```go
+_, err := vukemtest.Build(t, bootstrap.New, vukemtest.Options{
+	Env: map[string]string{"SESSION_DRIVER": "bogus"},
+})
+if err == nil {
+	t.Fatal("app booted with an unknown session driver")
+}
+```
+
 ## The client
 
 Each `app.Client(t)` has its own cookie jar, like a browser, so sessions and flash messages carry over between its requests.
