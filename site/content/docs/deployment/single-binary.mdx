@@ -50,7 +50,7 @@ Provide `APP_KEY` through the environment or a secret file (`APP_KEY=@file:/run/
 APP_ENV=production ./bin/app
 ```
 
-On `SIGINT` or `SIGTERM` the HTTP server stops accepting connections, drains in-flight requests, then runs shutdown hooks and providers in reverse order within `SHUTDOWN_TIMEOUT`. Pair it with your process manager's stop timeout.
+On `SIGINT` or `SIGTERM` the HTTP server stops accepting connections and drains in-flight requests while running scheduled tasks finish, each within `SHUTDOWN_TIMEOUT` (tasks still running are then cancelled through their `ctx`). Shutdown hooks and providers then run in reverse order with their own `SHUTDOWN_TIMEOUT`, so set your process manager's stop timeout to at least twice `SHUTDOWN_TIMEOUT`. Code that ignores `ctx` (a scheduled task, a custom runner) can still hold the process until it is killed.
 
 The same process runs the [scheduler](/docs/digging-deeper/scheduler#running-it) when tasks exist (including the hourly `session:prune` with `SESSION_DRIVER=database`), so one service is enough. With several replicas, or a separate `./bin/app schedule:work` process, set `SCHEDULE_IN_SERVE=false` on the web replicas so run-once tasks are not fired by every replica (see [Several replicas](/docs/digging-deeper/scheduler#several-replicas)).
 

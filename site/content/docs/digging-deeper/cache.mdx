@@ -24,7 +24,7 @@ n, err := c.Increment(ctx, "visits", 1, 24*time.Hour)
 | Store | Notes |
 | --- | --- |
 | `cache.NewMemory(maxEntries)` | LRU with TTLs, in process |
-| `cache.NewDatabase(db, table)` | SQLite, PostgreSQL and MySQL; `Increment` is one atomic upsert, so counters stay exact across servers; `CreateTable` (indexes `expires_at`), `Prune` for expired rows in batches (every app with `CACHE_STORE=database` schedules `cache:prune` hourly) |
+| `cache.NewDatabase(db, table)` | SQLite, PostgreSQL and MySQL; `Increment` is one atomic upsert, so counters stay exact across servers; `CreateTable` (indexes `expires_at`), `Prune` for expired rows in batches (every app with `CACHE_STORE=database` schedules `cache:prune` hourly, run by the scheduler inside `serve` unless `SCHEDULE_IN_SERVE=false`) |
 | [Redis](/docs/database/redis) | `vukem.WithCacheStore(rc.CacheStore("cache:"))` |
 
 | Variable | Default |
