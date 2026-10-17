@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -204,4 +205,45 @@ func TestReadyHandlerMountedWithoutSession(t *testing.T) {
 			t.Errorf("GET %s set a cookie %q, want none (probes must not create sessions)", target, c)
 		}
 	}
+}
+
+func TestSecurity_A10_HungHealthCheckRunsOnce(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		app := newTestApp(t)
+		release := make(chan struct{})
+
+		var started atomic.Int32
+
+		app.AddHealthCheckTimeout("hung", time.Second, func(context.Context) error {
+			started.Add(1)
+			<-release
+
+			return nil
+		})
+
+		// Probes keep hitting a hung dependency: each must fail fast without
+		// piling up another goroutine behind the first.
+		for i := range 5 {
+			if err := app.CheckHealth(t.Context())["hung"]; err == nil {
+				t.Fatalf("CheckHealth() #%d [hung] = nil, want an error", i)
+			}
+		}
+
+		if got := started.Load(); got != 1 {
+			t.Fatalf("hung check started %d times, want 1", got)
+		}
+
+		close(release)
+		synctest.Wait()
+
+		if err := app.CheckHealth(t.Context())["hung"]; err != nil {
+			t.Fatalf("CheckHealth() after the hung run ended = %v, want nil", err)
+		}
+
+		if got := started.Load(); got != 2 {
+			t.Fatalf("check started %d times after recovery, want 2", got)
+		}
+	})
 }

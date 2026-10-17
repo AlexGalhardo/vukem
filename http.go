@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/AlexGalhardo/vukem/config"
@@ -29,14 +30,20 @@ type HealthCheck func(ctx context.Context) error
 // AddHealthCheck.
 const DefaultHealthCheckTimeout = 3 * time.Second
 
+// errHealthCheckBusy reports a check whose previous run has not returned.
+var errHealthCheckBusy = errors.New("vukem: health check: previous run still in progress")
+
 type healthCheck struct {
 	fn      HealthCheck
 	timeout time.Duration
+	// running is set while a goroutine executes fn, including one abandoned
+	// at its timeout, so a hung dependency never accumulates goroutines.
+	running atomic.Bool
 }
 
 type health struct {
 	mu     sync.RWMutex
-	checks map[string]healthCheck
+	checks map[string]*healthCheck
 }
 
 // AddHealthCheck registers a readiness check, reported by ReadyHandler and
@@ -57,10 +64,10 @@ func (a *App) AddHealthCheckTimeout(name string, timeout time.Duration, check He
 	defer a.health.mu.Unlock()
 
 	if a.health.checks == nil {
-		a.health.checks = map[string]healthCheck{}
+		a.health.checks = map[string]*healthCheck{}
 	}
 
-	a.health.checks[name] = healthCheck{fn: check, timeout: timeout}
+	a.health.checks[name] = &healthCheck{fn: check, timeout: timeout}
 }
 
 // CheckHealth runs every registered check in parallel, each bounded by its
@@ -96,13 +103,20 @@ func (a *App) CheckHealth(ctx context.Context) map[string]error {
 
 // runHealthCheck returns when the check does or its timeout expires, so a
 // check that ignores ctx cannot hang the probe (its goroutine is abandoned).
-func runHealthCheck(ctx context.Context, check healthCheck) error {
+// While an abandoned run is still going, the check fails at once instead of
+// starting another goroutine.
+func runHealthCheck(ctx context.Context, check *healthCheck) error {
+	if !check.running.CompareAndSwap(false, true) {
+		return errHealthCheckBusy
+	}
+
 	ctx, cancel := context.WithTimeout(ctx, check.timeout)
 	defer cancel()
 
 	done := make(chan error, 1)
 
 	go func() {
+		defer check.running.Store(false)
 		defer func() {
 			if p := recover(); p != nil {
 				done <- fmt.Errorf("vukem: health check panicked: %v", p)
