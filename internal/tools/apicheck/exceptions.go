@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -70,7 +71,8 @@ func parseExceptions(r io.Reader, mods []module) ([]exception, error) {
 		return nil, fmt.Errorf("malformed exception file: %w", err)
 	}
 
-	if dec.More() {
+	// dec.More reports false before a stray "}", so read on to EOF.
+	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		return nil, errors.New("malformed exception file: trailing data after the JSON object")
 	}
 
@@ -122,14 +124,29 @@ func (e exception) validate(mods []module) error {
 		}
 	}
 
-	if _, ok := parseStable(e.Version); e.Version != "" && !ok {
+	if v, ok := parseStable(e.Version); e.Version != "" && !ok {
 		errs = append(errs, fmt.Errorf("version %q is not vMAJOR.MINOR.PATCH", e.Version))
+	} else if ok && e.Module != "" && !majorMatches(e.Module, v.major) {
+		// Otherwise a v2.x entry in a v1 module would never expire.
+		errs = append(errs, fmt.Errorf("version %q is not a release of module %s", e.Version, e.Module))
 	}
 
 	// Map iteration is random; sort for a stable message.
 	slices.SortFunc(errs, func(a, b error) int { return strings.Compare(a.Error(), b.Error()) })
 
 	return errors.Join(errs...)
+}
+
+// majorMatches reports whether major is a major version of modPath: N for a
+// /vN path (N >= 2), 0 or 1 otherwise.
+func majorMatches(modPath string, major int) bool {
+	if _, suffix, ok := strings.CutLast(modPath, "/v"); ok {
+		if n, err := strconv.Atoi(suffix); err == nil && n >= 2 {
+			return major == n
+		}
+	}
+
+	return major <= 1
 }
 
 // applyExceptions marks the incompatible changes of r covered by an exception

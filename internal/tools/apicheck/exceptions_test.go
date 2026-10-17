@@ -69,6 +69,9 @@ func TestParseExceptions(t *testing.T) {
 			wantErr: "malformed",
 		},
 		{name: "trailing data", in: `{"exceptions": []} {"exceptions": []}`, wantErr: "trailing data"},
+		{name: "stray closing brace", in: `{"exceptions": []}}`, wantErr: "malformed"},
+		{name: "trailing whitespace", in: "{\"exceptions\": []}\r\n\n"},
+		{name: "version of another major", in: withField("version", `"v2.0.1"`), wantErr: "is not a release of module"},
 		{name: "missing advisory", in: withField("advisory", `""`), wantErr: "missing advisory"},
 		{name: "blank justification", in: withField("justification", `"  "`), wantErr: "missing justification"},
 		{name: "missing version", in: withField("version", `""`), wantErr: "missing version"},
@@ -276,6 +279,29 @@ func TestGate(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestMajorMatches(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		mod   string
+		major int
+		want  bool
+	}{
+		{"example.com/core", 1, true},
+		{"example.com/core", 0, true},
+		{"example.com/core", 2, false},
+		{"example.com/core/v2", 2, true},
+		{"example.com/core/v2", 1, false},
+		{"example.com/core/drivers/v3", 3, true},
+		{"example.com/core/vendor", 1, true},
+	}
+	for _, tt := range tests {
+		if got := majorMatches(tt.mod, tt.major); got != tt.want {
+			t.Errorf("majorMatches(%q, %d) = %t, want %t", tt.mod, tt.major, got, tt.want)
+		}
 	}
 }
 
