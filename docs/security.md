@@ -208,6 +208,8 @@ What Vukem does **by default** to protect applications, mapped to the [OWASP Top
 | `events.Listen[security.Event]` hook to forward security events to alerting (email, Slack, SIEM) (`TestSecurityEventsReachTheBus`) | [x] |
 | OpenTelemetry tracing module (`drivers/otel`) traces requests, propagates `traceparent` and adds `trace_id` / `span_id` to log records logged with the span's context (`otel.LogHandler`, installed on `app.Log` by the provider) (`TestMiddleware_ServerSpanPerRequest`, `TestMiddleware_ExtractsTraceparentAndBaggage`, `TestLogHandler`, `TestProvider_CorrelatesRequestLogs`) | [x] |
 | Trace spans (`drivers/otel`) record the route pattern, never the raw path or query string (`TestSecurity_A09_OTelSpansOmitPathAndQuery`) | [x] |
+| Outbound HTTP spans (`drivers/otel` `Transport`) record method, host, port and status, never the path or query string, and inject `traceparent`/`baggage` only with `otel.WithClientPropagation()`; database spans omit bound arguments (and the SQL text unless `Config.QueryText`), queue spans omit payloads, mail spans omit recipients, subject and body (`TestSecurity_A09_OTelClientSpansOmitURLAndContext`, `TestObserver_Query`, `TestObserver_MailTransport`) | [x] |
+| A malformed `OTEL_EXPORTER_OTLP_*HEADERS` (collector API keys) or other `OTEL_*` setting is a boot error that names the variable, never its value (`TestSecurity_A09_OTelBadSettingsDoNotEchoHeaders`) | [x] |
 | Devtools shows SQL as a normalized shape (literals replaced by `?`) and bound arguments as types and lengths, never values; job and event records carry kinds and types, not payloads (`TestSecurity_A09_DevtoolsRedactsQueryArgs`) | [x] |
 
 **App responsibility:** ship logs to durable storage and configure alerts on the security events.

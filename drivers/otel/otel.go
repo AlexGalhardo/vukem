@@ -1,8 +1,11 @@
-// Package otel traces Vukem HTTP requests with OpenTelemetry: a net/http
-// server middleware that emits one server span per request (W3C
-// traceparent and baggage propagation, HTTP semantic conventions) and a
-// provider that builds an OTLP/HTTP TracerProvider from the environment
-// and flushes it on shutdown.
+// Package otel traces and measures Vukem apps with OpenTelemetry: a
+// net/http server middleware that emits one server span per request (W3C
+// traceparent and baggage propagation, HTTP semantic conventions), an
+// [Observer] that turns the app's database, queue and mail hooks
+// (App.Instrument) and outbound HTTP round trips into spans and metrics,
+// and a provider that builds an OTLP/HTTP TracerProvider (and a
+// MeterProvider on Config.MetricReader) from app.Source and flushes them
+// on shutdown.
 //
 //	app, err := vukem.New(vukem.WithProviders(otel.New(otel.Config{})), ...)
 //
@@ -22,9 +25,11 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/propagation"
 	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
 	"go.opentelemetry.io/otel/trace"
@@ -33,14 +38,19 @@ import (
 // ScopeName is the instrumentation scope of the spans this package emits.
 const ScopeName = "github.com/AlexGalhardo/vukem/drivers/otel"
 
-// Option configures Middleware.
+// Option configures Middleware, NewObserver and the Observer's Transport.
 type Option func(*options)
 
 type options struct {
 	propagator propagation.TextMapPropagator
+	meter      metric.MeterProvider
+	queryText  bool
+	inject     bool
 }
 
-// WithPropagator replaces the default W3C TraceContext + Baggage propagator.
+// WithPropagator replaces the default W3C TraceContext + Baggage propagator
+// (extracted by Middleware, injected by Transport with
+// WithClientPropagation).
 func WithPropagator(p propagation.TextMapPropagator) Option {
 	return func(o *options) { o.propagator = p }
 }
@@ -68,14 +78,12 @@ type state struct {
 // the whole stack; installing it again with Router.Use names the span even
 // when middleware in between replaced the *http.Request. 5xx responses and
 // panics mark the span as an error. Query strings and paths are not
-// recorded: they may carry tokens.
+// recorded: they may carry tokens. With WithMeterProvider each request is
+// also an http.server.request.duration sample (method, route, status).
 func Middleware(tp trace.TracerProvider, opts ...Option) func(http.Handler) http.Handler {
-	o := options{propagator: DefaultPropagator()}
-	for _, opt := range opts {
-		opt(&o)
-	}
-
+	o := newOptions(opts)
 	tracer := tp.Tracer(ScopeName)
+	duration := newInstruments(o.meter).httpServer
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -90,6 +98,7 @@ func Middleware(tp trace.TracerProvider, opts ...Option) func(http.Handler) http
 				return
 			}
 
+			start := time.Now()
 			ctx := o.propagator.Extract(r.Context(), propagation.HeaderCarrier(r.Header))
 			method := methodOf(r.Method)
 			route := routeOf(r.Pattern)
@@ -108,11 +117,25 @@ func Middleware(tp trace.TracerProvider, opts ...Option) func(http.Handler) http
 			req := r.WithContext(context.WithValue(ctx, ctxKey{}, st))
 			rw := &recorder{ResponseWriter: w}
 
+			metricAttrs := func(extra ...attribute.KeyValue) metric.MeasurementOption {
+				attrs := append([]attribute.KeyValue{
+					semconv.HTTPRequestMethodKey.String(method),
+					semconv.URLScheme(schemeOf(r)),
+				}, extra...)
+				if st.route != "" {
+					attrs = append(attrs, semconv.HTTPRoute(st.route))
+				}
+
+				return metric.WithAttributes(attrs...)
+			}
+
 			defer func() {
 				if p := recover(); p != nil {
 					span.SetAttributes(semconv.ErrorTypeKey.String("panic"))
 					span.SetStatus(codes.Error, "panic")
 					span.End()
+					duration.Record(ctx, time.Since(start).Seconds(),
+						metricAttrs(semconv.ErrorTypeKey.String("panic")))
 					panic(p)
 				}
 
@@ -130,14 +153,17 @@ func Middleware(tp trace.TracerProvider, opts ...Option) func(http.Handler) http
 					status = http.StatusOK
 				}
 
-				span.SetAttributes(semconv.HTTPResponseStatusCode(status))
+				attrs := []attribute.KeyValue{semconv.HTTPResponseStatusCode(status)}
+				span.SetAttributes(attrs[0])
 
 				if status >= http.StatusInternalServerError {
-					span.SetAttributes(semconv.ErrorTypeKey.String(strconv.Itoa(status)))
+					attrs = append(attrs, semconv.ErrorTypeKey.String(strconv.Itoa(status)))
+					span.SetAttributes(attrs[1])
 					span.SetStatus(codes.Error, http.StatusText(status))
 				}
 
 				span.End()
+				duration.Record(ctx, time.Since(start).Seconds(), metricAttrs(attrs...))
 			}()
 
 			next.ServeHTTP(rw, req)
@@ -193,15 +219,18 @@ func methodOf(m string) string {
 	}
 }
 
-func requestAttrs(r *http.Request, method string) []attribute.KeyValue {
-	scheme := "http"
+func schemeOf(r *http.Request) string {
 	if r.TLS != nil {
-		scheme = "https"
+		return "https"
 	}
 
+	return "http"
+}
+
+func requestAttrs(r *http.Request, method string) []attribute.KeyValue {
 	attrs := []attribute.KeyValue{
 		semconv.HTTPRequestMethodKey.String(method),
-		semconv.URLScheme(scheme),
+		semconv.URLScheme(schemeOf(r)),
 		semconv.NetworkProtocolVersion(protocolVersion(r)),
 	}
 
