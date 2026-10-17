@@ -33,6 +33,7 @@ import (
 	"path"
 	"slices"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/AlexGalhardo/vukem/errs"
@@ -456,15 +457,18 @@ func (c *capReader) Read(p []byte) (int, error) {
 }
 
 // SanitizeName returns a display-safe version of a client file name: the
-// last path element (either separator), without control characters,
-// quotes or leading dots, at most 200 characters; "file" when nothing is
-// left. It is meant for metadata (Content-Disposition, listings), never
+// last path element (either separator), without control and format
+// (bidi, zero-width) characters, quotes or leading dots, at most 200
+// characters; "file" when nothing is left. It is meant for metadata (Content-Disposition, listings), never
 // for storage paths.
 func SanitizeName(name string) string {
 	name = path.Base(strings.ReplaceAll(name, "\\", "/"))
 
 	name = strings.Map(func(r rune) rune {
-		if r < 0x20 || r == 0x7f || r == '"' || r == '/' || r == utf8.RuneError {
+		// Format characters (bidi overrides, zero-width) can disguise the
+		// extension: a right-to-left override before "fdp.exe" displays the
+		// name as "exe.pdf".
+		if r < 0x20 || r == 0x7f || r == '"' || r == '/' || r == utf8.RuneError || unicode.Is(unicode.Cf, r) {
 			return -1
 		}
 

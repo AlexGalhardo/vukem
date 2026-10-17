@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/AlexGalhardo/vukem/errs"
@@ -35,6 +36,8 @@ func FuzzSanitizeName(f *testing.F) {
 			t.Fatalf("SanitizeName(%q) is empty", name)
 		case strings.ContainsAny(got, "/\\\"\x7f"), strings.ContainsFunc(got, func(r rune) bool { return r < 0x20 }):
 			t.Fatalf("SanitizeName(%q) = %q, keeps a separator, quote or control character", name, got)
+		case strings.ContainsFunc(got, func(r rune) bool { return unicode.Is(unicode.Cf, r) }):
+			t.Fatalf("SanitizeName(%q) = %q, keeps a format (bidi or zero-width) character", name, got)
 		case strings.HasPrefix(got, "."):
 			t.Fatalf("SanitizeName(%q) = %q, is a dotfile", name, got)
 		case !utf8.ValidString(got), utf8.RuneCountInString(got) > maxNameLen:

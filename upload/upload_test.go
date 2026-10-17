@@ -349,6 +349,9 @@ func TestSanitizeName(t *testing.T) {
 		"":                                "file",
 		"a\"b\r\n.txt":                    "ab.txt",
 		strings.Repeat("é", 300) + ".png": strings.Repeat("é", 196) + ".png",
+		// Bidi overrides and zero-width characters spoof the extension.
+		"invoice\u202efdp.exe": "invoicefdp.exe",
+		"a\u200bb\ufeff.png":   "ab.png",
 	}
 
 	for in, want := range tests {
