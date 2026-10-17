@@ -588,7 +588,7 @@ Applies to **every** task:
 - [x] **B.5.4** Docs completeness: every package has overview + examples; guides for each starter.
   → verify: checklist.
 
-- [ ] **B.5.6** Documentation site updated with every BETA feature (OpenAPI, queue, scheduler, Inertia, Vite, Redis, Mongo, i18n, SSE, encryption, GraphQL, WebSockets/broadcasting, admin, dev dashboard, JWT, 2FA, S3, MySQL, new starters, client generation, Stripe, file uploads, Scalar API docs, gRPC) and redeployed.
+- [x] **B.5.6** Documentation site updated with every BETA feature (OpenAPI, queue, scheduler, Inertia, Vite, Redis, Mongo, i18n, SSE, encryption, GraphQL, WebSockets/broadcasting, admin, dev dashboard, JWT, 2FA, S3, MySQL, new starters, client generation, Stripe, file uploads, Scalar API docs, gRPC) and redeployed.
   → verify: `task site:build` green; pages live on vukem.vercel.app.
 
 ### BETA exit criteria
