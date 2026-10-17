@@ -429,3 +429,20 @@ func FuzzRoutePattern(f *testing.F) {
 		_, _ = r.Handler() // must not panic
 	})
 }
+
+func TestCompiled(t *testing.T) {
+	t.Parallel()
+
+	r := New(nil)
+	if r.Compiled() {
+		t.Fatal("Compiled() = true before Handler, want false")
+	}
+
+	if _, err := r.Handler(); err != nil {
+		t.Fatal(err)
+	}
+
+	if !r.Compiled() {
+		t.Fatal("Compiled() = false after Handler, want true")
+	}
+}
