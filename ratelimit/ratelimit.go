@@ -122,7 +122,9 @@ func ByIP(r *http.Request) string {
 }
 
 // ByToken keys requests by bearer token (hashed, never stored in clear),
-// falling back to the client IP.
+// falling back to the client IP. Use it after authentication
+// (auth.Required), behind an IP limit: before the token is verified, a
+// client rotating made-up tokens gets a fresh bucket on every request.
 func ByToken(r *http.Request) string {
 	if tok, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer "); ok && tok != "" {
 		sum := sha256.Sum256([]byte(tok))
@@ -132,13 +134,13 @@ func ByToken(r *http.Request) string {
 	return ByIP(r)
 }
 
-// Middleware limits requests with l, keyed by key (ByToken when nil). It
+// Middleware limits requests with l, keyed by key (ByIP when nil). It
 // sets RateLimit-Limit/Remaining/Reset on every response and answers 429
 // with Retry-After when the bucket is empty. A failing limiter denies the
 // request (fail closed).
 func Middleware(l Limiter, key KeyFunc) func(http.Handler) http.Handler {
 	if key == nil {
-		key = ByToken
+		key = ByIP
 	}
 
 	return func(next http.Handler) http.Handler {

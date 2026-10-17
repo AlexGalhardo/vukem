@@ -89,7 +89,7 @@ func TestSecurity_A06_RateLimitMiddlewareFailsClosed(t *testing.T) {
 
 	synctest.Test(t, func(t *testing.T) {
 		ok := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
-		h := Middleware(NewMemory(2, time.Minute), nil)(ok)
+		h := Middleware(NewMemory(2, time.Minute), ByToken)(ok)
 
 		req := func(token, ip string) *http.Request {
 			r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api", http.NoBody)
@@ -143,6 +143,30 @@ func TestSecurity_A06_RateLimitMiddlewareFailsClosed(t *testing.T) {
 			req("", "10.0.0.1"),
 		); rec.Code != http.StatusServiceUnavailable {
 			t.Fatalf("failing store = %d, want fail closed", rec.Code)
+		}
+	})
+}
+
+// The default key must not trust bearer tokens nobody verified yet: a
+// client rotating made-up tokens would get a fresh bucket per request.
+func TestSecurity_A06_RateLimitIgnoresUnverifiedTokens(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		ok := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+		h := Middleware(NewMemory(2, time.Minute), nil)(ok)
+
+		codes := make([]int, 0, 3)
+
+		for i := range 3 {
+			r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api", http.NoBody)
+			r.RemoteAddr = "192.0.2.7:1234"
+			r.Header.Set("Authorization", "Bearer random-"+strconv.Itoa(i))
+			codes = append(codes, serve(h, r).Code)
+		}
+
+		if codes[2] != http.StatusTooManyRequests {
+			t.Fatalf("Middleware(nil) with rotating tokens = %v, want the third request limited by IP", codes)
 		}
 	})
 }

@@ -234,7 +234,7 @@ login := ratelimit.Middleware(ratelimit.NewMemory(5, time.Minute), account.Login
 r.Post("/login", h.Login).Use(login)
 ```
 
-GCRA limiter keyed by `ratelimit.ByToken`, `ByIP` or your own `KeyFunc`; responses include `RateLimit-*` headers, `429` adds `Retry-After`; a failing store denies. `install:auth` throttles logins per email and IP by default. Redis store in BETA.
+GCRA limiter keyed by `ratelimit.ByIP` (default), `ByToken` (after `auth.Required` only) or your own `KeyFunc`; responses include `RateLimit-*` headers, `429` adds `Retry-After`; a failing store denies. `install:auth` throttles logins per email and IP by default. Redis store in BETA.
 
 ## Queue
 

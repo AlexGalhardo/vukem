@@ -32,12 +32,13 @@ func API(r *router.Router, app *vukem.App) error {
 	}
 
 	r.Group("/api/v1", func(g *router.Group) {
-		g.Use(middleware.JSONOnly(), cors, ratelimit.Middleware(ratelimit.NewMemory(60, time.Minute), ratelimit.ByToken))
+		g.Use(middleware.JSONOnly(), cors, ratelimit.Middleware(ratelimit.NewMemory(120, time.Minute), ratelimit.ByIP))
 
 		g.Post("/tokens", auth.IssueToken).Name("api.tokens.store")
 
 		g.Group("", func(p *router.Group) {
-			p.Use(auth.Required("api"))
+			// Tokens are a rate-limit key only once auth.Required verified them.
+			p.Use(auth.Required("api"), ratelimit.Middleware(ratelimit.NewMemory(60, time.Minute), ratelimit.ByToken))
 			p.APIResource("products", controllers.NewProduct(app)) // index, store, show, update, destroy
 			p.APIResource("products.reviews", controllers.NewReview(app)).Shallow()
 		})
@@ -189,7 +190,7 @@ Database unique-constraint violations are mapped to `409` by the dialect.
 | Concern | Support |
 | --- | --- |
 | CORS | `middleware.CORS(cfg)`: allowlisted origins, methods, headers, credentials, max-age; deny by default; `*` with credentials is a boot error |
-| Rate limiting | `ratelimit.Middleware(limiter, key)`: GCRA (`ratelimit.NewMemory(limit, window)`), keyed by `ratelimit.ByToken` (hashed bearer token, else IP) or `ByIP`; `RateLimit-Limit/Remaining/Reset` on every response, `429` + `Retry-After` when empty; a failing store denies (503) |
+| Rate limiting | `ratelimit.Middleware(limiter, key)`: GCRA (`ratelimit.NewMemory(limit, window)`), keyed by `ratelimit.ByIP` (the default) or `ratelimit.ByToken` (hashed bearer token, else IP; use it after `auth.Required`, behind an IP limit, since unverified tokens would each get a bucket); `RateLimit-Limit/Remaining/Reset` on every response, `429` + `Retry-After` when empty; a failing store denies (503) |
 | Versioning | URL prefix (`/api/v1`) by default; route groups make `/api/v2` side-by-side trivial; `api.Deprecate(since, sunset, link)` sets `Deprecation`, `Sunset` and `Link: rel="deprecation"` |
 | Caching | `c.ETag(v)` / `If-None-Match` → 304; `Last-Modified`; `Cache-Control` helpers |
 | Concurrency control | `If-Match` with ETag → 412 on mismatch |
