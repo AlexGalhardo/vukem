@@ -124,7 +124,7 @@ Every error carries `message`, `locations`, `path` and `extensions.code`:
 
 | Resolver error | `code` | Message |
 | --- | --- | --- |
-| `errs.HTTPError` 401 / 403 / 404 / 409 / 429 | `UNAUTHENTICATED` / `FORBIDDEN` / `NOT_FOUND` / `CONFLICT` / `TOO_MANY_REQUESTS` | the client-safe message |
+| `errs.HTTPError` 401 / 403 / 404 / 409 / 429 | `UNAUTHENTICATED` / `FORBIDDEN` / `NOT_FOUND` / `CONFLICT` / `TOO_MANY_REQUESTS` | the client-safe message; keyed errors (`errs.NewKey`) are translated by the request ctx's `errs.Translator` (`HTTPError.LocalizedText`) |
 | `errs.HTTPError` 400 / 422, `*errs.ValidationError`, `z.Issues` | `BAD_USER_INPUT` (+ `fields`) | client-safe |
 | anything else, any 5xx, leaf serialization failures | `INTERNAL_SERVER_ERROR` | `Internal server error` (the real text only with `graphql.WithDebug(true)`; logged with `graphql.WithLogger`) |
 | `*graphql.Error` (`graphql.NewError(msg, ext)`) | as given | as given |

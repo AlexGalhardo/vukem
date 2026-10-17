@@ -58,6 +58,8 @@ Every error carries `message`, `locations`, `path` and `extensions.code`:
 | anything else | `INTERNAL_SERVER_ERROR`, message `Internal server error` (real text only with `graphql.WithDebug(true)`) |
 | `graphql.NewError(msg, ext)` | as given |
 
+Keyed errors (`errs.NewKey`) get their message translated by the request's `errs.Translator` (`HTTPError.LocalizedText`).
+
 ## Batching (N+1)
 
 ```go

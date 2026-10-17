@@ -1,6 +1,7 @@
 package graphql
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"maps"
@@ -96,7 +97,7 @@ const internalMessage = "Internal server error"
 // fromResolverError converts an error returned by a resolver. Client-safe
 // errors (errs.HTTPError below 500, validation errors, *Error) keep their
 // message; anything else becomes "Internal server error" unless debug.
-func fromResolverError(err error, debug bool) *Error {
+func fromResolverError(ctx context.Context, err error, debug bool) *Error {
 	if ge, ok := errors.AsType[*Error](err); ok {
 		c := *ge
 		c.Extensions = maps.Clone(ge.Extensions)
@@ -128,7 +129,7 @@ func fromResolverError(err error, debug bool) *Error {
 				out.Message = err.Error()
 			}
 		} else if he, ok := errors.AsType[*errs.HTTPError](err); ok {
-			out.Message = he.Text()
+			out.Message = he.LocalizedText(ctx)
 		} else {
 			out.Message = clientMessage(err, status, debug)
 		}
