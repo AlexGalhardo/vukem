@@ -383,13 +383,27 @@ func TestSecurity_A01_SafeRedirectBlocksOpenRedirects(t *testing.T) {
 		"%zz":                          "/fallback",
 		// A same-host absolute URL must not become a scheme-relative path.
 		"http://example.com//evil.com/x":   "/fallback",
-		`http://example.com/\evil.com`:     "/%5Cevil.com",
+		`http://example.com/\evil.com`:     "/fallback",
 		"https://example.com/%2F/evil.com": "/%2F/evil.com",
+		// http.Redirect cleans relative targets: dot segments must not
+		// turn into "/\evil.com" after the check.
+		`/./\evil.com`:    "/fallback",
+		`/../\evil.com`:   "/fallback",
+		`/x/../\evil`:     "/fallback",
+		"/a/..//evil.com": "/a/..//evil.com",
 	}
 
 	for target, want := range tests {
-		if got := SafeRedirect(r, target, "/fallback"); got != want {
+		got := SafeRedirect(r, target, "/fallback")
+		if got != want {
 			t.Errorf("SafeRedirect(%q) = %q, want %q", target, got, want)
+		}
+
+		w := httptest.NewRecorder()
+		http.Redirect(w, r, got, http.StatusFound)
+
+		if loc := w.Header().Get("Location"); !isLocalPath(loc) {
+			t.Errorf("Redirect(SafeRedirect(%q)) Location = %q, leaves the origin", target, loc)
 		}
 	}
 }
@@ -699,6 +713,14 @@ func FuzzSafeRedirect(f *testing.F) {
 
 		if u := base.ResolveReference(ref); u.Host != "example.com" || u.Scheme != "http" || !isLocalPath(got) {
 			t.Fatalf("SafeRedirect(%q) = %q, leaves the origin", target, got)
+		}
+
+		// http.Redirect cleans relative paths: check what the browser gets.
+		w := httptest.NewRecorder()
+		http.Redirect(w, r, got, http.StatusFound)
+
+		if loc := w.Header().Get("Location"); !isLocalPath(loc) {
+			t.Fatalf("Redirect(SafeRedirect(%q)) Location = %q, leaves the origin", target, loc)
 		}
 	})
 }

@@ -206,13 +206,13 @@ func SafeRedirect(r *http.Request, target, fallback string) string {
 
 	switch {
 	case u.Scheme == "" && u.Host == "":
-		if isLocalPath(target) {
+		if isLocalPath(target) && isLocalPath(path.Clean(u.Path)) {
 			return target
 		}
 	case (u.Scheme == "http" || u.Scheme == "https") && u.Host == r.Host:
 		// "https://host//evil.com" has the path "//evil.com", which a
 		// browser reads as scheme-relative: check the result, not the input.
-		if p := u.RequestURI(); isLocalPath(p) {
+		if p := u.RequestURI(); isLocalPath(p) && isLocalPath(path.Clean(u.Path)) {
 			return p
 		}
 	}
@@ -221,7 +221,9 @@ func SafeRedirect(r *http.Request, target, fallback string) string {
 }
 
 // isLocalPath reports whether p is an absolute path on the current origin:
-// browsers treat a leading "//" or "/\" as another host.
+// browsers treat a leading "//" or "/\" as another host. Callers also
+// check the cleaned path, because http.Redirect cleans relative targets
+// ("/./\evil.com" becomes "/\evil.com").
 func isLocalPath(p string) bool {
 	return strings.HasPrefix(p, "/") && !strings.HasPrefix(p, "//") && !strings.HasPrefix(p, `/\`)
 }

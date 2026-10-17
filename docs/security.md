@@ -26,7 +26,7 @@ What Vukem does **by default** to protect applications, mapped to the [OWASP Top
 | CORS deny-by-default; `*` with credentials refused at boot | P |
 | Static files and uploads served through `os.Root` (no `../` traversal); dotfiles never served | P |
 | Signed URLs (HMAC, expiry) for temporary downloads and email verification | A |
-| Open redirects: `web.SafeRedirect` and `c.Back` accept only relative paths and same-host URLs, and check the resulting path, so `//evil.com`, `/\evil.com` and `https://app//evil.com` fall back (`TestSecurity_A01_SafeRedirectBlocksOpenRedirects`, `FuzzSafeRedirect`) | P / B |
+| Open redirects: `web.SafeRedirect` and `c.Back` accept only relative paths and same-host URLs, and check the resulting path before and after `http.Redirect` cleans it, so `//evil.com`, `/\evil.com`, `/./\evil.com` and `https://app//evil.com` fall back (`TestSecurity_A01_SafeRedirectBlocksOpenRedirects`, `FuzzSafeRedirect`) | P / B |
 | The devtools dashboard (`/_vukem`) answers only a loopback peer with a loopback `Host` and no proxy headers (which also defeats DNS rebinding); others get a plain 404. `DEVTOOLS_INSECURE_ALLOW_REMOTE=true` lifts the check (`TestSecurity_A01_DevtoolsLoopbackOnly`) | B |
 | **SSRF:** `httpclient.Safe()` dialer rejects loopback, private, link-local and metadata (`169.254.169.254`) addresses after DNS resolution, limits redirects and re-checks each hop; used by framework features that fetch user-supplied URLs | A |
 | GraphQL mutations never run over GET (405 with `Allow: POST`), so links and image tags cannot change state; POST requires `application/json` (`TestSecurity_A01_GraphQLMutationsRequirePOST`) | B |
