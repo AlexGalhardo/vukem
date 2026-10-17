@@ -13,6 +13,10 @@ import (
 	"{{.Module}}/bootstrap"
 )
 
+// pngHeader is a 1x1 PNG signature and IHDR chunk: uploads read the declared
+// dimensions, so a bare signature is rejected.
+const pngHeader = "\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x00\x00\x00\x00:~\x9bU"
+
 func uploadForm(t *testing.T, filename, content string) (*bytes.Buffer, string) {
 	t.Helper()
 
@@ -38,7 +42,7 @@ func TestUploads(t *testing.T) {
 
 	app.Client(t).Get("/uploads").AssertOK().AssertSee("No uploads yet").AssertSee("data-upload")
 
-	body, ct := uploadForm(t, "photo.png", "\x89PNG\r\n\x1a\n"+"pixels")
+	body, ct := uploadForm(t, "photo.png", pngHeader+"pixels")
 	app.Client(t).HTMX().Do(http.MethodPost, "/uploads", body, ct).
 		AssertOK().
 		AssertFragment().
