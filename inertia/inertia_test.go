@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -399,6 +400,76 @@ func TestPreserveFragment(t *testing.T) {
 
 	if got := page(t, hs.do(t, http.MethodGet, "/edit", xhr()))["preserveFragment"]; got != true {
 		t.Errorf("preserveFragment = %v, want true", got)
+	}
+}
+
+func TestRenderStatus(t *testing.T) {
+	t.Parallel()
+
+	hs := newHarness(t, baseConfig(), func(r *router.Router) {
+		r.Get("/status/{code}", func(c *web.Ctx) error {
+			code, err := strconv.Atoi(c.Param("code"))
+			if err != nil {
+				return err
+			}
+
+			return inertia.RenderStatus(c, code, "Errors/Status", inertia.Props{"code": code})
+		})
+	})
+
+	tests := []struct {
+		code    int
+		inertia bool
+		want    int
+	}{
+		{http.StatusGone, true, http.StatusGone},
+		{http.StatusGone, false, http.StatusGone},
+		{http.StatusNotFound, true, http.StatusNotFound},
+		{http.StatusUnprocessableEntity, false, http.StatusUnprocessableEntity},
+		{http.StatusServiceUnavailable, true, http.StatusServiceUnavailable},
+		{http.StatusCreated, true, http.StatusCreated},
+		// Statuses the protocol or HTTP gives another meaning are refused.
+		{http.StatusFound, true, http.StatusInternalServerError},
+		{http.StatusConflict, true, http.StatusInternalServerError},
+		{http.StatusNoContent, false, http.StatusInternalServerError},
+		{http.StatusNotModified, false, http.StatusInternalServerError},
+		{http.StatusContinue, true, http.StatusInternalServerError},
+		{600, true, http.StatusInternalServerError},
+	}
+
+	for _, tt := range tests {
+		var headers map[string]string
+		if tt.inertia {
+			headers = xhr()
+		}
+
+		target := "/status/" + strconv.Itoa(tt.code)
+		rec := hs.do(t, http.MethodGet, target, headers)
+
+		if rec.Code != tt.want {
+			t.Errorf("GET %s (inertia %t) = %d, want %d", target, tt.inertia, rec.Code, tt.want)
+			continue
+		}
+
+		if tt.want == http.StatusInternalServerError {
+			continue
+		}
+
+		if !tt.inertia {
+			if !strings.Contains(rec.Body.String(), `"component":"Errors\/Status"`) {
+				t.Errorf("GET %s HTML body = %q, want the page script", target, rec.Body.String())
+			}
+
+			continue
+		}
+
+		if rec.Header().Get("X-Inertia") != "true" {
+			t.Errorf("GET %s X-Inertia = %q, want true", target, rec.Header().Get("X-Inertia"))
+		}
+
+		if p := page(t, rec); p["component"] != "Errors/Status" {
+			t.Errorf("GET %s component = %v, want Errors/Status", target, p["component"])
+		}
 	}
 }
 
