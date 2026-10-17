@@ -28,6 +28,11 @@ func TestSecurity_A05_ExportCSVFormulaInjection(t *testing.T) {
 		"\r=1+1",
 		"-",
 		"+",
+		" =1+1",
+		"\n=1+1",
+		"\"=1+1\"",
+		"'@SUM(A1)",
+		"  -2+3",
 	}
 
 	want := make([]string, len(payloads))
@@ -121,6 +126,14 @@ func TestSecurity_A05_ExportFilenameHeaderInjection(t *testing.T) {
 		{"invoice\u202Efdp.exe", "invoicefdp.exe"},
 		{".env", "env"},
 		{"name\x00.csv", "name.csv"},
+		{"a\u0085b\u2028c\u2029d.csv", "abcd.csv"},
+		{"report.csv. . ", "report.csv"},
+		{"CON", "_CON"},
+		{"nul.csv", "_nul.csv"},
+		{"Com1.txt", "_Com1.txt"},
+		{"LPT9", "_LPT9"},
+		{"COM0.txt", "COM0.txt"},
+		{"CONSOLE.csv", "CONSOLE.csv"},
 		{"é" + strings.Repeat("a", 300) + ".csv", "é" + strings.Repeat("a", 195) + ".csv"},
 	}
 

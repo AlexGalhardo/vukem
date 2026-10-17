@@ -49,26 +49,29 @@ Every export is an attachment with `Cache-Control: no-store` (exports usually ho
 
 - Only the last path element is kept, for `/` and `\` alike: `../../etc/passwd` becomes `passwd`.
 - Control characters (CR, LF, NUL) and format characters (bidi overrides, zero-width) are removed, so a name cannot add headers or disguise its extension.
-- `< > : " / | ? *` become `_`; leading dots are removed; names are cut to 200 characters, keeping the extension; an empty result becomes `download`.
+- Control characters include C1 and the Unicode line and paragraph separators.
+- `< > : " / | ? *` become `_`; leading dots and trailing dots and spaces are removed; Windows device names (`CON`, `PRN`, `AUX`, `NUL`, `COM1`-`COM9`, `LPT1`-`LPT9`, with any extension) get a `_` prefix; names are cut to 200 characters, keeping the extension; an empty result becomes `download`.
+
+`c.Download` applies the same rules.
 - Non-ASCII names get an ASCII `filename` plus an RFC 5987 `filename*`: `relatório.csv` is sent as `filename="relat_rio.csv"; filename*=UTF-8''relat%C3%B3rio.csv`.
 
 ## CSV formula injection
 
-A spreadsheet runs a cell that starts with `=`, `+`, `-` or `@` as a formula, so a buyer named `=HYPERLINK(...)` could run code on the machine of whoever opens the file ([OWASP CSV injection](https://owasp.org/www-community/attacks/CSV_Injection)). Every cell, header included, goes through `export.SafeCell`: a cell starting with `=`, `+`, `-`, `@`, tab or carriage return gets a leading `'`, which spreadsheets show as text. Plain decimal numbers such as `-42` or `+3.14` stay as they are.
+A spreadsheet runs a cell that starts with `=`, `+`, `-` or `@` as a formula, so a buyer named `=HYPERLINK(...)` could run code on the machine of whoever opens the file ([OWASP CSV injection](https://owasp.org/www-community/attacks/CSV_Injection)). Every cell, header included, goes through `export.SafeCell`: a cell starting with `=`, `+`, `-`, `@`, tab or carriage return gets a leading `'`, which spreadsheets show as text. Some spreadsheets skip leading spaces, line breaks and quotes, so cells such as ` =1+1` or `"=1+1"` are guarded too. The cost is a few false positives: text like ` - note` also gets the apostrophe. Plain decimal numbers such as `-42` or `+3.14` stay as they are.
 
 `export.InsecureRawCells()` turns the guard off, for files that are never opened in a spreadsheet.
 
 ## Streaming
 
 - Nothing is sent before the first row. If the query fails up front, the function returns the error with the response untouched, and the error handler renders a normal error page.
-- After the first byte, a failure (a query error, a row that does not encode, a cancelled context) cannot change the status any more. The function drops the connection, so the browser reports a failed download instead of saving a CSV that stops in the middle and still looks complete. It returns an error wrapping `export.ErrIncomplete` and the cause; returned from a handler, the error handler only logs it. HTTP/2 connections cannot be dropped this way, so there the body just ends: check `errors.Is(err, export.ErrIncomplete)` and `panic(http.ErrAbortHandler)` if you need the reset.
-- The request context is checked before each row, and `Query.Each(c.Context())` stops the query when the client goes away.
+- After the first byte, a failure (a query error, a row that does not encode) cannot change the status any more. The function drops the connection, so the browser reports a failed download instead of saving a CSV that stops in the middle and still looks complete. On HTTP/1.x it hijacks and closes the connection and returns an error wrapping `export.ErrIncomplete` and the cause; returned from a handler, the error handler only logs it. Where the connection cannot be hijacked (HTTP/2), it panics with `http.ErrAbortHandler`, net/http's documented way to abort a response: the server recovers it silently and resets the stream, and `middleware.Recover` lets it through.
+- The request context is checked before each row, and `Query.Each(c.Context())` stops the query when the client goes away. A client that went away is not a server error: the returned error still matches `context.Canceled` but reports status 499, so the error handler logs it at debug level.
 
 | Option | Default | Effect |
 | --- | --- | --- |
 | `export.FlushEvery(n)` | 500 | flush to the client every `n` rows; the end is always flushed |
-| `export.WriteTimeout(d)` | 1 minute | write deadline set at the start and after every flush, so a long export outlives the server's `WriteTimeout` while a stalled client is still cut; zero keeps the server deadline |
-| `export.WithBOM()` | off | start a CSV with a UTF-8 BOM, which Excel needs to show accents |
+| `export.WriteTimeout(d)` | 1 minute | write deadline kept `d` ahead of every write to the client (renewed at most every `d/4`, or 1s), so a long export outlives the server's `WriteTimeout` while a client that stops reading is still cut; cleared when the export ends; zero keeps the server deadline |
+| `export.WithBOM()` | off | start a CSV with a UTF-8 BOM, which Excel needs to show accents; JSON and NDJSON ignore it |
 | `export.InsecureRawCells()` | off | disable the CSV formula guard |
 
 ## In plain net/http

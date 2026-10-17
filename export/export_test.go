@@ -1,18 +1,23 @@
 package export_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
 	"iter"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/AlexGalhardo/vukem/errs"
 	"github.com/AlexGalhardo/vukem/export"
 )
 
@@ -277,8 +282,13 @@ func TestContextCancelStopsBeforeFirstRow(t *testing.T) {
 	req := httptest.NewRequestWithContext(ctx, http.MethodGet, "/", nil)
 
 	err := export.NDJSON(rec, req, "u.ndjson", seq(user{1, "Ana"}))
-	if !errors.Is(err, context.Canceled) {
+	if !errors.Is(err, context.Canceled) || errors.Is(err, export.ErrIncomplete) {
 		t.Fatalf("NDJSON() = %v, want context.Canceled", err)
+	}
+
+	// A client that went away is not a server error.
+	if got := errs.Status(err); got != 499 {
+		t.Errorf("errs.Status(%v) = %d, want 499", err, got)
 	}
 
 	if rec.Body.Len() != 0 {
@@ -308,10 +318,11 @@ func TestContextCancelStopsIteration(t *testing.T) {
 	}
 
 	srvDone := make(chan int, 1)
+	served := make(chan error, 1)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() { srvDone <- pulled }()
 
-		_ = export.NDJSON(w, r.WithContext(ctx), "u.ndjson", rows)
+		served <- export.NDJSON(w, r.WithContext(ctx), "u.ndjson", rows, export.FlushEvery(1))
 	}))
 	t.Cleanup(srv.Close)
 
@@ -324,6 +335,92 @@ func TestContextCancelStopsIteration(t *testing.T) {
 	if got := <-srvDone; got != 4 {
 		t.Errorf("rows pulled = %d, want 4 (iteration stops once the context is done)", got)
 	}
+
+	err = <-served
+	if !errors.Is(err, context.Canceled) || errors.Is(err, export.ErrIncomplete) || errs.Status(err) != 499 {
+		t.Errorf("NDJSON() = %v (status %d), want context.Canceled with status 499", err, errs.Status(err))
+	}
+}
+
+// TestErrorMidStreamWithoutHijackPanics checks the abort where the
+// connection cannot be hijacked (HTTP/2, a recorder): net/http's
+// ErrAbortHandler panic resets the stream.
+func TestErrorMidStreamWithoutHijackPanics(t *testing.T) {
+	t.Parallel()
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", http.NoBody)
+
+	defer func() {
+		if p := recover(); p != http.ErrAbortHandler { //nolint:errorlint // sentinel compared by identity, as net/http does
+			t.Errorf("recover() = %v, want http.ErrAbortHandler", p)
+		}
+	}()
+
+	err := export.NDJSON(rec, req, "u.ndjson", failing(errors.New("boom"), user{1, "Ana"}), export.FlushEvery(1))
+	t.Errorf("NDJSON() = %v, want a panic", err)
+}
+
+// deadlineWriter is a ResponseWriter whose writes fail after the write
+// deadline, like a connection.
+type deadlineWriter struct {
+	header   http.Header
+	body     bytes.Buffer
+	deadline time.Time
+}
+
+func (d *deadlineWriter) Header() http.Header { return d.header }
+
+func (d *deadlineWriter) WriteHeader(int) {}
+
+func (d *deadlineWriter) Write(b []byte) (int, error) {
+	if !d.deadline.IsZero() && time.Now().After(d.deadline) {
+		return 0, os.ErrDeadlineExceeded
+	}
+
+	return d.body.Write(b)
+}
+
+func (d *deadlineWriter) Flush() {}
+
+func (d *deadlineWriter) SetWriteDeadline(t time.Time) error {
+	d.deadline = t
+
+	return nil
+}
+
+func TestWriteDeadlineFollowsWrites(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		// Rows larger than the write buffer reach the client between
+		// flushes; gaps stay under the timeout, the total does not.
+		big := strings.Repeat("x", 5000)
+		rows := func(yield func(user, error) bool) {
+			for i := range 10 {
+				time.Sleep(100 * time.Millisecond)
+
+				if !yield(user{ID: i, Name: big}, nil) {
+					return
+				}
+			}
+		}
+
+		w := &deadlineWriter{header: http.Header{}}
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", http.NoBody)
+
+		if err := export.NDJSON(w, req, "u.ndjson", rows, export.WriteTimeout(300*time.Millisecond)); err != nil {
+			t.Fatalf("NDJSON() = %v, want nil", err)
+		}
+
+		if got := strings.Count(w.body.String(), "\n"); got != 10 {
+			t.Errorf("rows written = %d, want 10", got)
+		}
+
+		if !w.deadline.IsZero() {
+			t.Errorf("deadline after the export = %v, want cleared", w.deadline)
+		}
+	})
 }
 
 // flushRecorder counts flushes.
@@ -417,6 +514,9 @@ func TestSafeCell(t *testing.T) {
 		{"+3.14", "+3.14"},
 		{"-0.5", "-0.5"},
 		{"a=b", "a=b"},
+		{" 42", " 42"},
+		{"'7", "'7"},
+		{"note - x", "note - x"},
 	}
 
 	for _, tt := range tests {

@@ -219,8 +219,9 @@ Package `export` (stdlib only) streams downloads row by row from any `iter.Seq2[
 - `export.CSV(w, r, name, header, rows, record)`, `export.JSON` (one array), `export.NDJSON` (`application/x-ndjson`), and `export.WriteCSV(w, r, name, fn)` for multi-section CSV files.
 - Attachments with `export.ContentDisposition(name)` (RFC 6266, RFC 5987 `filename*` for non-ASCII), `Cache-Control: no-store` and `nosniff`.
 - CSV cells go through `export.SafeCell` (OWASP CSV injection); `InsecureRawCells()` opts out.
-- Nothing is sent before the first row, so an early query error reaches the error handler. A failure after the first byte drops the connection (HTTP/1.x hijack) and returns an error wrapping `export.ErrIncomplete`; on HTTP/2 the body just ends.
-- `FlushEvery(n)` (500 rows), `WriteTimeout(d)` (1 minute, renewed at every flush, so long exports outlive the server `WriteTimeout`), `WithBOM()` for Excel.
+- Nothing is sent before the first row, so an early query error reaches the error handler. A failure after the first byte drops the connection: HTTP/1.x connections are hijacked and closed and the error wraps `export.ErrIncomplete`; where hijacking is impossible (HTTP/2) the function panics with `http.ErrAbortHandler`, which net/http recovers to reset the stream. A cancelled request context (client gone) returns an error with status 499, logged below error level.
+- `FlushEvery(n)` (500 rows), `WriteTimeout(d)` (1 minute, renewed before writes to the client at most every `d/4` or 1s, cleared at the end, so long exports outlive the server `WriteTimeout`), `WithBOM()` for Excel (CSV only).
+- The file-name sanitizer lives in `internal/disposition` and is shared with `web.Ctx.Download`.
 
 ## Events
 

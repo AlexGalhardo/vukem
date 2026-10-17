@@ -17,17 +17,17 @@ package export
 
 import (
 	"bufio"
+	"context"
 	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"iter"
 	"net/http"
-	"path"
 	"strings"
 	"time"
-	"unicode"
-	"unicode/utf8"
+
+	"github.com/AlexGalhardo/vukem/internal/disposition"
 )
 
 const (
@@ -37,14 +37,27 @@ const (
 	// the write deadline cuts a stalled client.
 	DefaultWriteTimeout = time.Minute
 
-	maxNameLen = 200
-	fallback   = "download"
-	bom        = "\ufeff"
+	// statusClientClosed is nginx's 499: the client went away, so the
+	// error handler logs it below error level.
+	statusClientClosed = 499
+
+	bom = "\ufeff"
 )
 
 // ErrIncomplete wraps a failure after the response started: the client got
-// part of the export and the connection was aborted where possible.
+// part of the export and the connection was dropped.
 var ErrIncomplete = errors.New("export: response incomplete")
+
+// clientGoneError is returned when the request context was cancelled (the
+// client disconnected): nothing failed on the server side.
+type clientGoneError struct{ err error }
+
+func (e clientGoneError) Error() string { return "export: client went away: " + e.err.Error() }
+
+func (e clientGoneError) Unwrap() error { return e.err }
+
+// HTTPStatus implements errs.StatusCoder.
+func (clientGoneError) HTTPStatus() int { return statusClientClosed }
 
 // Option configures an export.
 type Option func(*options)
@@ -60,13 +73,14 @@ type options struct {
 // after every row). The end of the export is always flushed.
 func FlushEvery(n int) Option { return func(o *options) { o.flushEvery = max(n, 1) } }
 
-// WriteTimeout sets the write deadline to d from the start and from every
-// flush, so a long export outlives the server's WriteTimeout while a
-// stalled client is still cut. Zero or negative keeps the server's deadline.
+// WriteTimeout keeps the write deadline d ahead of every write to the
+// client, so a long export outlives the server's WriteTimeout while a
+// client that stops reading for d is still cut. The deadline is cleared
+// when the export ends. Zero or negative keeps the server's deadline.
 func WriteTimeout(d time.Duration) Option { return func(o *options) { o.writeTimeout = d } }
 
 // WithBOM starts a CSV export with a UTF-8 byte order mark, which Excel
-// needs to read non-ASCII text correctly.
+// needs to read non-ASCII text correctly. JSON and NDJSON ignore it.
 func WithBOM() Option { return func(o *options) { o.bom = true } }
 
 // InsecureRawCells writes CSV cells as given, without the formula-injection
@@ -86,6 +100,7 @@ type stream struct {
 	started bool
 	dirty   bool
 	rows    int
+	renewed time.Time
 	// before runs inside start, before the first body byte (CSV header,
 	// JSON "[").
 	before func() error
@@ -103,10 +118,23 @@ func newStream(w http.ResponseWriter, r *http.Request, ctype, filename, ext stri
 		filename = "export." + ext
 	}
 
-	return &stream{
-		w: w, r: r, rc: http.NewResponseController(w), bw: bufio.NewWriter(w),
-		o: o, ctype: ctype, filename: filename,
+	s := &stream{w: w, r: r, rc: http.NewResponseController(w), o: o, ctype: ctype, filename: filename}
+	s.bw = bufio.NewWriter(deadlineWriter{s})
+
+	return s
+}
+
+// deadlineWriter renews the write deadline before bufio hands a full
+// buffer to the client, not only at flushes: one flush window can span
+// many buffers.
+type deadlineWriter struct{ s *stream }
+
+func (d deadlineWriter) Write(b []byte) (int, error) {
+	if err := d.s.renew(false); err != nil {
+		return 0, err
 	}
+
+	return d.s.w.Write(b)
 }
 
 // start sends the headers once, right before the first body byte.
@@ -121,7 +149,7 @@ func (s *stream) start() error {
 
 	s.started = true
 
-	if err := s.extendDeadline(); err != nil {
+	if err := s.renew(true); err != nil {
 		return err
 	}
 
@@ -176,19 +204,37 @@ func (s *stream) flush() error {
 
 	s.dirty = false
 
+	if err := s.renew(false); err != nil {
+		return err
+	}
+
 	if err := s.rc.Flush(); err != nil && !errors.Is(err, http.ErrNotSupported) {
 		return err
 	}
 
-	return s.extendDeadline()
+	return nil
 }
 
-func (s *stream) extendDeadline() error {
+// renew moves the write deadline writeTimeout ahead. Unless forced, it
+// runs at most every writeTimeout/4 (capped at 1s), so small writes do not
+// each pay for a deadline update.
+func (s *stream) renew(force bool) error {
 	if s.o.writeTimeout <= 0 {
 		return nil
 	}
 
-	err := s.rc.SetWriteDeadline(time.Now().Add(s.o.writeTimeout))
+	now := time.Now()
+	if !force && now.Sub(s.renewed) < min(time.Second, s.o.writeTimeout/4) {
+		return nil
+	}
+
+	s.renewed = now
+
+	return s.setDeadline(now.Add(s.o.writeTimeout))
+}
+
+func (s *stream) setDeadline(t time.Time) error {
+	err := s.rc.SetWriteDeadline(t)
 	if err != nil && !errors.Is(err, http.ErrNotSupported) {
 		return err
 	}
@@ -211,26 +257,46 @@ func (s *stream) finish(err error, after func() error) error {
 		err = s.flush()
 	}
 
-	if err == nil || !s.started {
+	if err == nil && s.started && s.o.writeTimeout > 0 {
+		// Otherwise the deadline stays on the keep-alive connection of a
+		// server whose WriteTimeout is 0 (it is then never reset).
+		err = s.setDeadline(time.Time{})
+	}
+
+	gone := errors.Is(err, context.Canceled) && s.r.Context().Err() != nil
+
+	switch {
+	case err == nil:
+		return nil
+	case !s.started && gone:
+		return clientGoneError{err}
+	case !s.started:
 		return err
 	}
 
 	s.abort()
+
+	if gone {
+		return clientGoneError{err}
+	}
 
 	return fmt.Errorf("%w: %w", ErrIncomplete, err)
 }
 
 // abort drops the connection so the client cannot mistake the bytes it got
 // for a whole file: a CSV or NDJSON file cut between rows still parses.
-//
-// shortcut: HTTP/2 has no hijack, so there the stream ends cleanly and only
-// ErrIncomplete reports the failure; panic(http.ErrAbortHandler) in the
-// handler resets it.
+// HTTP/1.x connections are hijacked and closed, so the caller still gets
+// the error. Where that is impossible (HTTP/2, writers without Hijack) it
+// panics with http.ErrAbortHandler, net/http's documented way to abort a
+// response: the server recovers it silently and resets the stream, and
+// middleware.Recover re-raises it.
 func (s *stream) abort() {
 	conn, _, err := s.rc.Hijack()
-	if err == nil {
-		_ = conn.Close()
+	if err != nil {
+		panic(http.ErrAbortHandler)
 	}
+
+	_ = conn.Close()
 }
 
 // each pulls rows and writes them with fn.
@@ -427,7 +493,10 @@ func NDJSON[T any](
 
 // SafeCell guards a CSV cell against formula injection (OWASP CSV
 // injection): a cell starting with =, +, -, @, tab or carriage return gets
-// a leading apostrophe so spreadsheets show it as text. Plain decimal
+// a leading apostrophe so spreadsheets show it as text. Some spreadsheets
+// skip leading spaces, line breaks and quotes, so a cell whose first other
+// character is =, +, - or @ is guarded too; the trade-off is that text such
+// as " - note" or "'@handle" also gains the apostrophe. Plain decimal
 // numbers ("-42", "+3.14") cannot run anything and stay as they are.
 func SafeCell(s string) string {
 	if s == "" || isNumber(s) {
@@ -437,6 +506,13 @@ func SafeCell(s string) string {
 	switch s[0] {
 	case '=', '+', '-', '@', '\t', '\r':
 		return "'" + s
+	}
+
+	if t := strings.TrimLeft(s, " \t\r\n\"'"); t != "" && !isNumber(t) {
+		switch t[0] {
+		case '=', '+', '-', '@':
+			return "'" + s
+		}
 	}
 
 	return s
@@ -469,83 +545,10 @@ func allDigits(s string) bool {
 
 // ContentDisposition returns an attachment Content-Disposition for
 // filename (RFC 6266). The name is reduced to its last path element
-// (either separator), loses control and format characters (bidi
-// overrides, zero-width), leading dots and characters Windows forbids, and
-// is cut to 200 characters keeping the extension; "download" when nothing
-// is left. Non-ASCII names get an ASCII filename plus an RFC 5987
-// filename*.
-func ContentDisposition(filename string) string {
-	name := sanitize(filename)
-
-	ascii := strings.Map(func(r rune) rune {
-		// Some browsers percent-decode filename, so % goes too.
-		if r >= utf8.RuneSelf || r == '%' {
-			return '_'
-		}
-
-		return r
-	}, name)
-
-	v := `attachment; filename="` + ascii + `"`
-	if ascii != name {
-		v += "; filename*=UTF-8''" + encode5987(name)
-	}
-
-	return v
-}
-
-func sanitize(name string) string {
-	name = path.Base(strings.ReplaceAll(name, `\`, "/"))
-
-	name = strings.Map(func(r rune) rune {
-		switch {
-		case r < 0x20, r == 0x7f, r == utf8.RuneError, unicode.Is(unicode.Cf, r):
-			return -1
-		case strings.ContainsRune(`<>:"/|?*`, r):
-			return '_'
-		}
-
-		return r
-	}, name)
-
-	name = strings.TrimLeft(strings.TrimSpace(name), ".")
-
-	if utf8.RuneCountInString(name) > maxNameLen {
-		ext := path.Ext(name)
-		if utf8.RuneCountInString(ext) > 16 {
-			ext = ""
-		}
-
-		runes := []rune(strings.TrimSuffix(name, ext))
-		name = string(runes[:maxNameLen-utf8.RuneCountInString(ext)]) + ext
-	}
-
-	if name == "" {
-		return fallback
-	}
-
-	return name
-}
-
-// encode5987 percent-encodes every byte outside attr-char (RFC 5987 §3.2.1).
-func encode5987(s string) string {
-	const hex = "0123456789ABCDEF"
-
-	var b strings.Builder
-
-	for i := range len(s) {
-		c := s[i]
-		if c < utf8.RuneSelf && (c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' ||
-			strings.IndexByte("!#$&+-.^_`|~", c) >= 0) {
-			b.WriteByte(c)
-
-			continue
-		}
-
-		b.WriteByte('%')
-		b.WriteByte(hex[c>>4])
-		b.WriteByte(hex[c&0x0f])
-	}
-
-	return b.String()
-}
+// (either separator) and loses control characters (C0, C1, U+2028/2029),
+// format characters (bidi overrides, zero-width), leading dots, trailing
+// dots and spaces and the characters Windows forbids; Windows device names
+// (CON, NUL, COM1...) get a "_" prefix; it is cut to 200 characters keeping
+// the extension, and is "download" when nothing is left. Non-ASCII names
+// get an ASCII filename plus an RFC 5987 filename*.
+func ContentDisposition(filename string) string { return disposition.Attachment(filename) }
