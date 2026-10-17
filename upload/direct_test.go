@@ -1,9 +1,11 @@
 package upload
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,6 +14,7 @@ import (
 
 	"github.com/AlexGalhardo/vukem/errs"
 	"github.com/AlexGalhardo/vukem/storage"
+	"github.com/AlexGalhardo/vukem/web"
 )
 
 type fakePresigner struct {
@@ -174,5 +177,34 @@ func TestSecurity_A01_DirectVerifyOnlyIssuedKeys(t *testing.T) {
 		if ok, _ := disk.Exists(t.Context(), key); !ok && !strings.Contains(key, "..") {
 			t.Errorf("Verify(%q) deleted an object it did not issue", key)
 		}
+	}
+}
+
+// failingWriter accepts headers but fails every body write (client gone).
+type failingWriter struct{ *httptest.ResponseRecorder }
+
+func (failingWriter) Write([]byte) (int, error) { return 0, errors.New("broken pipe") }
+
+func TestDirectLogsWriteErrors(t *testing.T) {
+	t.Parallel()
+
+	h, err := Direct(DirectConfig{
+		Presigner: &fakePresigner{}, Rules: Images(1 << 20), Authorize: func(*http.Request) error { return nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+
+	svc := &web.Services{Log: slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))}
+	r := httptest.NewRequestWithContext(web.WithServices(t.Context(), svc), http.MethodPost, "/presign",
+		strings.NewReader(`{"filename":"a.png","content_type":"image/png","size":10}`))
+	r.Header.Set("Content-Type", "application/json")
+
+	h.ServeHTTP(failingWriter{httptest.NewRecorder()}, r)
+
+	if !strings.Contains(buf.String(), "broken pipe") {
+		t.Fatalf("log = %q, want the response write error", buf.String())
 	}
 }

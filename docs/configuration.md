@@ -32,7 +32,7 @@ type App struct {
 	Env   config.Env     `env:"APP_ENV"   default:"development"` // development | production | test
 	Debug bool           `env:"APP_DEBUG" default:"false"`
 	URL   string         `env:"APP_URL"   validate:"required,url"`
-	Key   config.Secret  `env:"APP_KEY"   validate:"required,min=32"`
+	Key   config.Secret  `env:"APP_KEY"`                                // decode with config.ParseKey (32+ bytes); see APP_KEY below
 	Port  int            `env:"PORT"      default:"3000"`
 }
 ```
