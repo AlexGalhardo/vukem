@@ -263,6 +263,7 @@ err = q.DispatchTx(ctx, tx, SendInvoice{OrderID: 1}) // database driver: enqueue
 - `vukem make:job SendInvoice` writes `app/jobs/send_invoice.go` (job type, `Kind`, handler) and registers `queue.Handle(HandleSendInvoice)` in `app/jobs/registry.go`, which `bootstrap` passes to `WithJobs`.
 - **Queued mail:** `app.MailLater(ctx, mailable)` renders now and sends from a job (retried; the message ID is stable across retries).
 - **Queued listeners:** `events.OnQueued("update_stock", listeners.UpdateStock)` (or `make:listener UpdateStock --event OrderShipped --queued`) enqueues the event as JSON and runs the listener in a worker; `Dispatch` returns only enqueue errors.
+- **Outgoing webhooks:** `webhook.Sender` registers a `webhook.deliver` job (`s.Job()`) and `s.Send(ctx, q, webhook.Delivery{Endpoint, Payload})` enqueues it. Each attempt looks the endpoint up by id (URL and secret never enter the jobs tables), signs it with the Standard Webhooks scheme and posts through `httpclient.Safe`: 2xx succeeds, 410 Gone stops (`OnGone`), anything else retries (8 times, exponential from 30s). `webhook.SQLDeliveryLog` records each attempt. See [security.md](security.md#building-blocks).
 - **Testing:** pass `vukem.WithQueueDriver(fake)` with `fake := queue.NewFake()`; `queue.Dispatched[jobs.SendInvoice](fake)` returns the dispatched jobs, and `q.Work(ctx, queue.WorkOptions{StopWhenEmpty: true})` runs them when the test wants to.
 - Inspired by River (typed workers, transactional enqueue) and goqite (SQLite).
 

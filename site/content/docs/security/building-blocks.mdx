@@ -1,6 +1,6 @@
 ---
 title: Security building blocks
-description: SSRF-safe HTTP client, signed URLs, webhook signatures, security events and the crypto-randomness lint rule.
+description: SSRF-safe HTTP client, signed URLs, incoming and outgoing webhooks, security events and the crypto-randomness lint rule.
 ---
 
 ## SSRF-safe HTTP client
@@ -81,6 +81,158 @@ r.Post("/webhooks/resend", handle).Use(
 | Store unavailable | 503 (fail closed) |
 
 For providers with their own headers, pass a function that returns the event id, for example `func(r *http.Request) string { return r.Header.Get("X-Event-Id") }`. Use a shared store (database or Redis) when the app runs on more than one instance.
+
+## Outgoing webhooks
+
+Sometimes **your** app is the provider: a marketplace tells each seller "order.paid" at a URL the seller typed in. `webhook.Sender` does the hard parts:
+
+- it signs every request with the [Standard Webhooks](https://www.standardwebhooks.com) scheme, so receivers can verify it with `webhook.Standard` (or any Standard Webhooks library);
+- it sends from a **queue job**, so a slow or broken seller never slows down your request handler, and failed attempts are retried with exponential backoff;
+- it sends through `httpclient.Safe`, so a seller cannot make your server call `http://169.254.169.254` or `http://localhost:6379`.
+
+### 1. Give each endpoint a secret
+
+When a seller registers their URL, generate a secret, store both and show the secret once:
+
+```go
+secret, err := webhook.NewSecret() // "whsec_" + 32 random bytes in base64
+if err != nil {
+	return err
+}
+
+_, err = db.ExecContext(ctx,
+	`INSERT INTO seller_webhooks (seller_id, url, secret) VALUES (?, ?, ?)`, sellerID, url, secret)
+```
+
+Store the secret as you would any credential (for example as an `orm.Encrypted[string]` column).
+
+### 2. Create the sender and register its job
+
+The sender looks the endpoint up **by id** on every attempt. The queue only stores that id, never the URL or the secret, and a URL or secret changed by the seller applies to pending retries too.
+
+```go
+deliveries, err := webhook.NewSQLDeliveryLog(db, "") // table "webhook_deliveries"
+if err != nil {
+	return err
+}
+
+if err := deliveries.CreateTable(ctx); err != nil {
+	return err
+}
+
+sender, err := webhook.NewSender(webhook.SenderOptions{
+	Endpoint: func(ctx context.Context, id string) (webhook.Endpoint, error) {
+		var ep webhook.Endpoint
+		var active bool
+
+		err := db.QueryRowContext(ctx,
+			`SELECT url, secret, active FROM seller_webhooks WHERE seller_id = ?`, id).Scan(&ep.URL, &ep.Secret, &active)
+		if errors.Is(err, sql.ErrNoRows) || (err == nil && !active) {
+			return ep, webhook.ErrEndpointDisabled // drop the delivery, no retries
+		}
+
+		return ep, err // other errors are retried
+	},
+	Log: deliveries,
+	OnGone: func(ctx context.Context, id string) error { // the seller answered 410 Gone
+		_, err := db.ExecContext(ctx, `UPDATE seller_webhooks SET active = false WHERE seller_id = ?`, id)
+		return err
+	},
+})
+if err != nil {
+	return err
+}
+
+q, err := app.Queue()
+if err != nil {
+	return err
+}
+
+if err := q.Register(sender.Job()); err != nil {
+	return err
+}
+```
+
+### 3. Send an event
+
+```go
+payload, err := json.Marshal(map[string]any{
+	"type": "order.paid",
+	"data": map[string]any{"order_id": order.ID, "total": order.Total},
+})
+if err != nil {
+	return err
+}
+
+err = sender.Send(ctx, q, webhook.Delivery{
+	ID:       "order.paid." + strconv.FormatInt(order.ID, 10), // optional: "msg_<random>" when empty
+	Endpoint: strconv.FormatInt(order.SellerID, 10),
+	Payload:  payload,
+})
+```
+
+`Send` only enqueues; a worker (`vukem queue:work`, or `serve` with the memory driver) makes the HTTP call. The same `webhook-id` is sent on every retry, so the seller can drop duplicates (with `webhook.Dedupe` if they use Vukem too).
+
+### What happens on each attempt
+
+| Seller's answer | Result |
+| --- | --- |
+| `2xx` | delivered, done |
+| `410 Gone` | not retried; `OnGone` runs (disable the endpoint there) |
+| any other status, a redirect, a timeout or a connection error | retried after 30s, 1m, 2m, 4m … (capped at 1h), 8 retries, then the job lands in `queue:failed` |
+| URL resolves to a loopback, private or metadata address | refused before connecting (`httpclient.ErrBlockedAddress`), retried, then failed |
+| `http://` URL, missing or malformed secret | refused (nothing is sent unsigned or in plaintext), retried, then failed |
+| `Endpoint` returns `webhook.ErrEndpointDisabled` | dropped without a request |
+
+Each attempt is recorded in the log: endpoint id, event id, status, duration, error and time. Show a seller their last attempts with:
+
+```go
+attempts, err := deliveries.Recent(ctx, sellerID, 20) // newest first
+```
+
+Logs and errors name the endpoint id and event id only: never the URL (it may carry tokens), the secret or the payload.
+
+| Option | Default |
+| --- | --- |
+| `Timeout` | 15s per HTTP attempt |
+| `Retries` | 8 |
+| `Backoff` | `queue.Exponential(30 * time.Second)` |
+| `Logger` | `slog.Default()` |
+| `Now` | `time.Now` (the `webhook-timestamp` clock) |
+| `InsecureAllowHTTP`, `InsecureAllow` | off; tests only (see below) |
+
+### The receiving side
+
+A seller using Vukem verifies your deliveries with the middleware above:
+
+```go
+verify, err := webhook.Standard(sellerSecret, webhook.StandardOptions{})
+if err != nil {
+	return err
+}
+
+r.Post("/webhooks/marketplace", handleOrderPaid).Use(verify)
+```
+
+To sign a request by hand (in another language's test, for example), `webhook.SignStandard(secret, id, time.Now(), body)` returns the `webhook-signature` value.
+
+### Testing deliveries
+
+`httptest` servers listen on `127.0.0.1` over plain HTTP, which the sender refuses by default. Opt in explicitly, in tests only:
+
+```go
+srv := httptest.NewServer(verify(handler))
+
+sender, err := webhook.NewSender(webhook.SenderOptions{
+	Endpoint:          func(context.Context, string) (webhook.Endpoint, error) { return webhook.Endpoint{URL: srv.URL, Secret: secret}, nil },
+	InsecureAllowHTTP: true,
+	InsecureAllow:     []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")},
+})
+
+err = sender.Deliver(ctx, webhook.Delivery{ID: "msg_1", Endpoint: "seller-1", Payload: []byte(`{"type":"order.paid"}`)})
+```
+
+`Deliver` makes one attempt and returns an error when the queue would retry it. To test the dispatch instead, use `queue.NewFake()` and `queue.Dispatched`.
 
 ## Security events
 

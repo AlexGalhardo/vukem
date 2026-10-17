@@ -163,6 +163,7 @@ What Vukem does **by default** to protect applications, mapped to the [OWASP Top
 | CSRF protection with `http.CrossOriginProtection` (Fetch Metadata + Origin) on all unsafe methods; webhook bypasses must be declared (`TestSecurity_A01_CrossOriginProtection`) | [x] |
 | Webhook signature verification helper (`webhook.VerifyHMAC`) (`TestSecurity_A08_WebhookMiddleware`, `FuzzVerifyHMAC`) | [x] |
 | Standard Webhooks verification with a ±5 minute timestamp window against replays (`TestSecurity_A08_StandardWebhooks`); a malformed secret is a boot error; `webhook.Dedupe` runs each event id once and fails closed when its store is down (`TestSecurity_A08_WebhookDedupe`, `TestSecurity_A04_WebhookDedupeFailsClosed`) | [x] |
+| Outgoing webhooks (`webhook.Sender`): every attempt is signed with the Standard Webhooks scheme (verifiable with `webhook.Standard`), sent through `httpclient.Safe` so user-supplied endpoint URLs never reach loopback, private or metadata addresses (`TestSecurity_A01_OutgoingWebhookSSRF`), only over https unless `InsecureAllowHTTP` (`TestSecurity_A04_OutgoingWebhookRequiresHTTPS`), never unsigned (a missing or malformed secret fails the attempt), without following redirects; jobs carry the endpoint id, not its URL or secret, and logs and errors omit URL, secret and payload (`TestSecurity_A09_OutgoingWebhookLogsNoSecrets`) | [x] |
 | Release artifacts with checksums, SBOM and signatures (process: `.goreleaser.yaml`, `release.yml`) | [x] |
 | Migrations tracked with checksums; a modified, already-applied migration is reported by `migrate:status` (`TestMigratorChangedAndMissing`, `TestMigrateCommands`) | [x] |
 
@@ -221,6 +222,7 @@ All configurable in `config/http.go`; API routes skip HTML-only headers.
 | `app.Crypt` / `crypt.New(key, previous...)` | encryption with key rotation, encrypted cookies, `orm.Encrypted[T]` ([subsystems.md](subsystems.md#encryption)) |
 | `signed.New(key)` | signed URLs with expiry, constant-time verification, 403 middleware (`TestSecurity_A01_SignedURLTampering`) |
 | `webhook.VerifyHMAC`, `webhook.Middleware` | incoming webhooks signed with HMAC-SHA256 (hex or base64, `sha256=` prefix), body size limit, 401 (`TestSecurity_A08_WebhookMiddleware`) |
+| `webhook.Sender`, `webhook.NewSecret` | outgoing webhooks: Standard Webhooks signatures, `httpclient.Safe` delivery from a queue job, retries with backoff, 410 stops, `SQLDeliveryLog` of attempts (`TestSecurity_A01_OutgoingWebhookSSRF`, `TestSecurity_A04_OutgoingWebhookRequiresHTTPS`, `TestSecurity_A09_OutgoingWebhookLogsNoSecrets`) |
 | `security.Event` | every `web.SecurityEvent` (login failures, `authz.denied`, CSRF, rate limits, bad signatures) is also dispatched on `app.Events` for alerting: `events.Listen(app.Events, func(ctx, e security.Event) error {...})` |
 | depguard `crypto-randomness` | `math/rand` is a lint error in `auth`, `session`, `csrf`, `signed`, `crypt`, `social`, `webhook` and `config` |
 
