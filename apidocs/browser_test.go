@@ -83,6 +83,9 @@ func TestBrowser_APIDocsNoCSPViolations(t *testing.T) {
 		"--enable-logging=stderr", "--v=0", "--log-level=0",
 		"--virtual-time-budget=15000", "--dump-dom", srv.URL+"/docs")
 	cmd.Stderr = &stderr
+	// Chromium helper processes can keep stderr open after the browser
+	// exits; do not let them hang the test.
+	cmd.WaitDelay = 5 * time.Second
 
 	dom, err := cmd.Output()
 	if err != nil {
