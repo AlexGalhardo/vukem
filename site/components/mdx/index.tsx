@@ -5,6 +5,7 @@ import { Card, CardGroup } from "@/components/mdx/card";
 import { CodeBlock } from "@/components/mdx/code-block";
 import { Step, Steps } from "@/components/mdx/steps";
 import { CodeGroup, Tab, Tabs } from "@/components/mdx/tabs";
+import { defaultLocale, localizeHref, type Locale } from "@/lib/i18n";
 import { currentVersion, versionHref, type DocVersion } from "@/lib/versions";
 
 type HeadingProps = React.ComponentPropsWithoutRef<"h2">;
@@ -73,18 +74,20 @@ export const mdxComponents: MDXComponents = {
 };
 
 /**
- * Components for a page of version v: in a snapshot, links to /docs/...
- * (written against the current layout) stay inside that snapshot.
+ * Components for a page of version v in locale: in a snapshot, links to
+ * /docs/... (written against the current layout) stay inside that snapshot;
+ * in another locale they point at that locale's pages.
  */
-export function mdxComponentsFor(v: DocVersion): MDXComponents {
-  if (v.id === currentVersion.id) return mdxComponents;
+export function mdxComponentsFor(v: DocVersion, locale: Locale = defaultLocale): MDXComponents {
+  if (v.id === currentVersion.id && locale === defaultLocale) return mdxComponents;
+  const rewrite = (href: string): string => localizeHref(versionHref(href, v), locale);
 
-  function VersionedA({ href = "", ...rest }: React.ComponentPropsWithoutRef<"a">) {
-    return <A href={versionHref(href, v)} {...rest} />;
+  function LocalA({ href = "", ...rest }: React.ComponentPropsWithoutRef<"a">) {
+    return <A href={rewrite(href)} {...rest} />;
   }
-  function VersionedCard({ href, ...rest }: React.ComponentProps<typeof Card>) {
-    return <Card href={href ? versionHref(href, v) : href} {...rest} />;
+  function LocalCard({ href, ...rest }: React.ComponentProps<typeof Card>) {
+    return <Card href={href ? rewrite(href) : href} {...rest} />;
   }
 
-  return { ...mdxComponents, a: VersionedA, Card: VersionedCard };
+  return { ...mdxComponents, a: LocalA, Card: LocalCard };
 }

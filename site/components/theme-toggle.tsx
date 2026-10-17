@@ -4,21 +4,24 @@ import { useTheme } from "next-themes";
 import { Monitor, Moon, Sun } from "lucide-react";
 import { IconTooltip } from "@/components/icon-tooltip";
 import { useMounted } from "@/components/use-mounted";
+import { dict, type Locale } from "@/lib/i18n";
 
 const OPTIONS = [
-  { value: "light", label: "Light theme", icon: Sun },
-  { value: "dark", label: "Dark theme", icon: Moon },
-  { value: "system", label: "System theme", icon: Monitor },
+  { value: "light", label: "lightTheme", icon: Sun },
+  { value: "dark", label: "darkTheme", icon: Moon },
+  { value: "system", label: "systemTheme", icon: Monitor },
 ] as const;
 
-export function ThemeToggle() {
+export function ThemeToggle({ locale }: { locale: Locale }) {
+  const t = dict(locale);
   const { theme, setTheme } = useTheme();
   const mounted = useMounted();
   const current = mounted ? theme : undefined;
 
   return (
-    <div role="radiogroup" aria-label="Color theme" className="flex items-center gap-0.5 rounded-full border border-border p-0.5">
-      {OPTIONS.map(({ value, label, icon: Icon }) => {
+    <div role="radiogroup" aria-label={t.colorTheme} className="flex items-center gap-0.5 rounded-full border border-border p-0.5">
+      {OPTIONS.map(({ value, label: key, icon: Icon }) => {
+        const label = t[key];
         const active = current === value;
         return (
           <IconTooltip key={value} label={label}>

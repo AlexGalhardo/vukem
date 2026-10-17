@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { Collapsible } from "@base-ui/react/collapsible";
 import { ChevronRight } from "lucide-react";
 import type { NavGroup } from "@/lib/content";
+import { dict, splitLocale, type Locale } from "@/lib/i18n";
 import { versionOfPath } from "@/lib/versions";
 
 function Item({ href, title, active, onNavigate }: { href: string; title: string; active: boolean; onNavigate?: () => void }) {
@@ -31,18 +32,20 @@ function Item({ href, title, active, onNavigate }: { href: string; title: string
  */
 export function Sidebar({
   groupsByVersion,
+  locale,
   collapsible = false,
   onNavigate,
 }: {
   groupsByVersion: Record<string, NavGroup[]>;
+  locale: Locale;
   collapsible?: boolean;
   onNavigate?: () => void;
 }) {
   const pathname = usePathname();
-  const groups = groupsByVersion[versionOfPath(pathname).id] ?? [];
+  const groups = groupsByVersion[versionOfPath(splitLocale(pathname).path).id] ?? [];
 
   return (
-    <nav aria-label="Documentation" className={`text-sm ${collapsible ? "space-y-1" : "space-y-6"}`}>
+    <nav aria-label={dict(locale).documentation} className={`text-sm ${collapsible ? "space-y-1" : "space-y-6"}`}>
       {groups.map((group) => {
         const list = (
           <ul className="space-y-0.5">

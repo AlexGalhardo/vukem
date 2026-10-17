@@ -1,25 +1,12 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { notFound, redirect } from "next/navigation";
 import { ArrowLeft, ArrowRight, SquarePen } from "lucide-react";
 import { Toc } from "@/components/toc";
-import { getAllDocs, getDoc, getEveryDoc, getNeighbours, versionHome } from "@/lib/content";
+import { getAllDocs, getDoc, getNeighbours, versionHome, type Doc } from "@/lib/content";
+import { defaultLocale, dict, formatUpdated, localeInfo, type Locale } from "@/lib/i18n";
 import { renderMdx } from "@/lib/mdx";
 import { site } from "@/lib/site";
-import { currentVersion, docsBase, versions, type DocVersion } from "@/lib/versions";
-
-type Props = { params: Promise<{ slug: string[] }> };
-
-export const dynamicParams = false;
-
-export function generateStaticParams(): { slug: string[] }[] {
-  const roots = versions.filter((v) => v.prefix).map((v) => ({ slug: [v.prefix] })); // /docs/0.20 → its introduction
-  return [...roots, ...getEveryDoc().map((d) => ({ slug: d.slug }))];
-}
-
-function snapshotRoot(slug: string[]): DocVersion | undefined {
-  return slug.length === 1 ? versions.find((v) => v.prefix !== "" && v.prefix === slug[0]) : undefined;
-}
+import { currentVersion, docsBase, type DocVersion } from "@/lib/versions";
 
 /** The same page in the current docs, or the current introduction. */
 function latestHref(href: string, v: DocVersion): string {
@@ -28,29 +15,40 @@ function latestHref(href: string, v: DocVersion): string {
   return getAllDocs(currentVersion.id).some((d) => d.href === target) ? target : versionHome(currentVersion);
 }
 
-export async function generateMetadata({ params }: Props): Promise<Metadata> {
-  const { slug } = await params;
-  const doc = getDoc(slug);
-  if (!doc) return {};
+/** English URL of a doc (its href in the default locale). */
+function englishHref(doc: Doc): string {
+  return `/docs/${doc.slug.join("/")}`;
+}
+
+/**
+ * Canonical and hreflang: a translated page is its own canonical and the
+ * pair links both ways; an untranslated page (English text under another
+ * locale) points canonical and hreflang at the English page.
+ */
+export function docMetadata(doc: Doc): Metadata {
+  const en = englishHref(doc);
   const title = doc.version.id === currentVersion.id ? doc.title : `${doc.title} (${doc.version.label})`;
+  const languages: Record<string, string> = { [localeInfo.en.tag]: en, "x-default": en };
+  if (doc.version.id === currentVersion.id) {
+    for (const [locale, info] of Object.entries(localeInfo)) {
+      if (locale === defaultLocale) continue;
+      const translated = getDoc(doc.slug, locale as Locale);
+      if (translated?.translated) languages[info.tag] = translated.href;
+    }
+  }
+  const canonical = doc.translated ? doc.href : en;
   return {
     title,
     description: doc.description,
-    alternates: { canonical: doc.href },
-    openGraph: { title: doc.title, description: doc.description, url: doc.href },
+    alternates: { canonical, languages },
+    openGraph: { title: doc.title, description: doc.description, url: canonical, locale: localeInfo[doc.locale].tag.replace("-", "_") },
   };
 }
 
-export default async function DocPage({ params }: Props) {
-  const { slug } = await params;
-  const root = snapshotRoot(slug);
-  if (root) redirect(versionHome(root));
-
-  const doc = getDoc(slug);
-  if (!doc) notFound();
+export async function DocArticle({ doc }: { doc: Doc }): Promise<React.ReactElement> {
+  const t = dict(doc.locale);
   const outdated = doc.version.id !== currentVersion.id;
-
-  const content = await renderMdx(doc.body, doc.source, doc.version);
+  const content = await renderMdx(doc.body, doc.source, doc.version, doc.locale);
   const { prev, next } = getNeighbours(doc);
 
   return (
@@ -65,13 +63,31 @@ export default async function DocPage({ params }: Props) {
             </Link>
           </div>
         ) : null}
+        {doc.translated ? null : (
+          <div role="note" className="mb-8 rounded-xl border border-border bg-subtle px-4 py-3 text-sm text-muted">
+            {t.notTranslated}{" "}
+            <a href={englishHref(doc)} hrefLang="en" className="font-medium text-accent hover:underline">
+              {t.readInEnglish}
+            </a>
+          </div>
+        )}
         <header className="mb-10">
           <p className="mb-2 text-sm font-medium text-accent">{doc.category}</p>
-          <h1 className="text-3xl font-semibold tracking-tight text-fg sm:text-[2.125rem]">{doc.title}</h1>
-          <p className="mt-3 text-lg leading-relaxed text-muted">{doc.description}</p>
+          {/* An untranslated page keeps lang="en" on its English text so screen readers pronounce it right. */}
+          <div lang={doc.translated ? undefined : localeInfo.en.tag}>
+            <h1 className="text-3xl font-semibold tracking-tight text-fg sm:text-[2.125rem]">{doc.title}</h1>
+            <p className="mt-3 text-lg leading-relaxed text-muted">{doc.description}</p>
+          </div>
+          {doc.updated ? (
+            <p className="mt-3 text-sm text-faint">
+              {t.lastUpdated}: <time dateTime={doc.updated}>{formatUpdated(doc.updated, doc.locale)}</time>
+            </p>
+          ) : null}
         </header>
 
-        <article className="prose">{content}</article>
+        <article className="prose" lang={doc.translated ? undefined : localeInfo.en.tag}>
+          {content}
+        </article>
 
         <footer className="mt-16 space-y-8">
           <a
@@ -81,14 +97,14 @@ export default async function DocPage({ params }: Props) {
             className="inline-flex items-center gap-1.5 text-sm text-muted transition-colors hover:text-fg"
           >
             <SquarePen aria-hidden className="size-3.5" />
-            Edit this page on GitHub
+            {t.editOnGitHub}
           </a>
 
-          <nav aria-label="Pagination" className="grid gap-3 border-t border-border pt-8 sm:grid-cols-2">
+          <nav aria-label={t.pagination} className="grid gap-3 border-t border-border pt-8 sm:grid-cols-2">
             {prev ? (
               <Link href={prev.href} className="group rounded-xl border border-border p-4 transition-colors hover:border-border-strong hover:bg-subtle">
                 <span className="flex items-center gap-1 text-xs text-faint">
-                  <ArrowLeft aria-hidden className="size-3" /> Previous
+                  <ArrowLeft aria-hidden className="size-3" /> {t.previous}
                 </span>
                 <span className="mt-1 block text-sm font-medium text-fg">{prev.title}</span>
               </Link>
@@ -101,7 +117,7 @@ export default async function DocPage({ params }: Props) {
                 className="group rounded-xl border border-border p-4 text-right transition-colors hover:border-border-strong hover:bg-subtle"
               >
                 <span className="flex items-center justify-end gap-1 text-xs text-faint">
-                  Next <ArrowRight aria-hidden className="size-3" />
+                  {t.next} <ArrowRight aria-hidden className="size-3" />
                 </span>
                 <span className="mt-1 block text-sm font-medium text-fg">{next.title}</span>
               </Link>
@@ -111,7 +127,7 @@ export default async function DocPage({ params }: Props) {
       </main>
 
       <aside className="sticky top-(--header-h) hidden h-[calc(100dvh-var(--header-h))] w-56 shrink-0 overflow-y-auto py-10 xl:block">
-        <Toc headings={doc.headings} />
+        <Toc headings={doc.headings} locale={doc.locale} />
       </aside>
     </div>
   );

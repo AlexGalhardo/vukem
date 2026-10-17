@@ -1,6 +1,6 @@
 import Link from "next/link";
 
-export default function NotFound() {
+export function NotFoundView(): React.ReactElement {
   return (
     <main id="content" className="mx-auto max-w-xl px-4 py-24 text-center">
       <p className="text-sm font-medium text-accent">404</p>

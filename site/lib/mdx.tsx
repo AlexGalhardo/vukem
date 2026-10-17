@@ -4,10 +4,11 @@ import remarkGfm from "remark-gfm";
 import rehypeSlug from "rehype-slug";
 import remarkCodeBlocks from "@/lib/remark-code-blocks";
 import { mdxComponentsFor } from "@/components/mdx";
+import type { Locale } from "@/lib/i18n";
 import type { DocVersion } from "@/lib/versions";
 
 /** Compiles and renders an MDX body on the server (build time). */
-export async function renderMdx(body: string, source: string, version: DocVersion): Promise<React.ReactElement> {
+export async function renderMdx(body: string, source: string, version: DocVersion, locale: Locale): Promise<React.ReactElement> {
   try {
     const { default: Content } = await evaluate(body, {
       ...runtime,
@@ -15,7 +16,7 @@ export async function renderMdx(body: string, source: string, version: DocVersio
       remarkPlugins: [remarkGfm, remarkCodeBlocks],
       rehypePlugins: [rehypeSlug],
     });
-    return <Content components={mdxComponentsFor(version)} />;
+    return <Content components={mdxComponentsFor(version, locale)} />;
   } catch (err) {
     throw new Error(`content/${source}: ${err instanceof Error ? err.message : String(err)}`, { cause: err });
   }

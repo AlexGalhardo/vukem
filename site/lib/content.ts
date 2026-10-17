@@ -4,6 +4,8 @@ import { cache } from "react";
 import matter from "gray-matter";
 import { navigation, type NavCategory } from "@/content/navigation";
 import { navigation as navigationV0_20 } from "@/content/versions/0.20/navigation";
+import { defaultLocale, localizeHref, type Locale } from "@/lib/i18n";
+import { lastUpdated } from "@/lib/last-updated";
 import { extractHeadings, type Heading } from "@/lib/toc";
 import { currentVersion, docsBase, versions, type DocVersion } from "@/lib/versions";
 
@@ -18,13 +20,18 @@ const NAVIGATION: Record<string, NavCategory[]> = {
 export type DocMeta = {
   /** URL segments after /docs, e.g. ["basics", "routing"] or ["0.20", "basics", "routing"]. */
   slug: string[];
-  /** Path under site/content, e.g. "docs/basics/routing.mdx". */
+  /** Path under site/content, e.g. "docs/basics/routing.mdx" or "pt-br/docs/getting-started/introduction.mdx". */
   source: string;
   href: string;
   title: string;
   description: string;
   category: string;
   version: DocVersion;
+  locale: Locale;
+  /** False when a non-English page falls back to the English text. */
+  translated: boolean;
+  /** ISO 8601 date of the source file's last commit, if known. */
+  updated?: string;
 };
 
 export type Doc = DocMeta & {
@@ -32,26 +39,44 @@ export type Doc = DocMeta & {
   headings: Heading[];
 };
 
-function readDoc(v: DocVersion, dir: string, page: string, slug: string[], category: string): Doc {
-  const source = `${v.contentDir}/${dir}/${page}.mdx`;
+function readDoc(source: string): { title: string; description: string; body: string } {
   const raw = fs.readFileSync(path.join(CONTENT_ROOT, source), "utf8");
   const { data, content } = matter(raw);
-
   if (typeof data.title !== "string" || typeof data.description !== "string") {
     throw new Error(`content/${source}: front matter needs "title" and "description"`);
   }
+  return { title: data.title, description: data.description, body: content };
+}
 
+function makeDoc(v: DocVersion, source: string, slug: string[], category: string): Doc {
+  const { title, description, body } = readDoc(source);
   return {
     slug,
     source,
     href: `/docs/${slug.join("/")}`,
-    title: data.title,
-    description: data.description,
+    title,
+    description,
     category,
     version: v,
-    body: content,
-    headings: extractHeadings(content),
+    locale: defaultLocale,
+    translated: true,
+    updated: lastUpdated(source),
+    body,
+    headings: extractHeadings(body),
   };
+}
+
+/**
+ * The page in locale: its translation at content/<locale>/<source> when it
+ * exists, otherwise the English page with localized URLs and translated=false.
+ */
+function localize(doc: Doc, locale: Locale): Doc {
+  if (locale === defaultLocale) return doc;
+  const href = localizeHref(doc.href, locale);
+  const source = `${locale}/${doc.source}`;
+  if (!fs.existsSync(path.join(CONTENT_ROOT, source))) return { ...doc, href, locale, translated: false };
+  const { title, description, body } = readDoc(source);
+  return { ...doc, href, locale, source, title, description, body, headings: extractHeadings(body), updated: lastUpdated(source) };
 }
 
 function versionById(id: string): DocVersion {
@@ -60,38 +85,43 @@ function versionById(id: string): DocVersion {
   return v;
 }
 
-/** Every page of a version (default: current) in navigation order. Throws on missing files or front matter. */
-export const getAllDocs = cache((versionId: string = currentVersion.id): Doc[] => {
+/**
+ * Every page of a version (default: current) in navigation order. Other
+ * locales cover only the current version. Throws on missing files or front matter.
+ */
+export const getAllDocs = cache((versionId: string = currentVersion.id, locale: Locale = defaultLocale): Doc[] => {
   const v = versionById(versionId);
+  if (locale !== defaultLocale && versionId !== currentVersion.id) return [];
   return NAVIGATION[versionId].flatMap((cat) =>
     cat.pages.map((page) => {
       const prefix = cat.prefix ?? cat.dir;
       const slug = [v.prefix, prefix, page].filter((s) => s !== "");
-      return readDoc(v, cat.dir, page, slug, cat.title);
+      return localize(makeDoc(v, `${v.contentDir}/${cat.dir}/${page}.mdx`, slug, cat.title), locale);
     }),
   );
 });
 
-/** Every page of every version. */
+/** Every English page of every version. */
 export function getEveryDoc(): Doc[] {
   return versions.flatMap((v) => getAllDocs(v.id));
 }
 
-export function getDoc(slug: string[]): Doc | undefined {
+export function getDoc(slug: string[], locale: Locale = defaultLocale): Doc | undefined {
   const key = slug.join("/");
-  return getEveryDoc().find((d) => d.slug.join("/") === key);
+  const docs = locale === defaultLocale ? getEveryDoc() : getAllDocs(currentVersion.id, locale);
+  return docs.find((d) => d.slug.join("/") === key);
 }
 
 export function getNeighbours(doc: DocMeta): { prev?: DocMeta; next?: DocMeta } {
-  const all = getAllDocs(doc.version.id);
+  const all = getAllDocs(doc.version.id, doc.locale);
   const i = all.findIndex((d) => d.href === doc.href);
   return { prev: all[i - 1], next: all[i + 1] };
 }
 
 export type NavGroup = { title: string; items: { title: string; href: string }[] };
 
-export function getNavGroups(versionId: string = currentVersion.id): NavGroup[] {
-  const all = getAllDocs(versionId);
+export function getNavGroups(versionId: string = currentVersion.id, locale: Locale = defaultLocale): NavGroup[] {
+  const all = getAllDocs(versionId, locale);
   return NAVIGATION[versionId].map((cat) => ({
     title: cat.title,
     items: all
@@ -101,8 +131,9 @@ export function getNavGroups(versionId: string = currentVersion.id): NavGroup[] 
 }
 
 /** Sidebar groups keyed by version id, for client components that pick by pathname. */
-export function getNavGroupsByVersion(): Record<string, NavGroup[]> {
-  return Object.fromEntries(versions.map((v) => [v.id, getNavGroups(v.id)]));
+export function getNavGroupsByVersion(locale: Locale = defaultLocale): Record<string, NavGroup[]> {
+  const vs = locale === defaultLocale ? versions : [currentVersion];
+  return Object.fromEntries(vs.map((v) => [v.id, getNavGroups(v.id, locale)]));
 }
 
 /** URL of the first page of a version. */

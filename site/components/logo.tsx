@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { dict, localizeHref, type Locale } from "@/lib/i18n";
 
 // Vukem mark: two slanted strokes forming a V on Go-gopher blue.
 export function LogoMark({ className = "size-6" }: { className?: string }) {
@@ -12,12 +13,12 @@ export function LogoMark({ className = "size-6" }: { className?: string }) {
   );
 }
 
-export function Logo() {
+export function Logo({ locale }: { locale: Locale }) {
   return (
     <Link
-      href="/docs/introduction"
+      href={localizeHref("/docs/introduction", locale)}
       className="flex items-center gap-2 rounded-md font-semibold tracking-tight text-fg"
-      aria-label="Vukem documentation"
+      aria-label={dict(locale).logoLabel}
     >
       <LogoMark />
       <span className="text-[15px]">Vukem</span>
