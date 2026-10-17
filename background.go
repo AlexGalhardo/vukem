@@ -47,9 +47,10 @@ func WithQueueDriver(d queue.Driver) Option {
 // WithQueueDriverFunc replaces the driver chosen by QUEUE_CONNECTION with
 // one built by fn on the first app.Queue() call, after configuration
 // loaded, so fn can read app.Source. fn returns ErrUseDefault to keep the
-// QUEUE_CONNECTION driver (with QUEUE_CONNECTION=database, Boot creates
-// its tables either way). Any other error from fn, or a nil driver, is
-// returned by app.Queue(). fn must not call app.Queue() (or dispatch a
+// QUEUE_CONNECTION driver. Any other error from fn, or a nil driver, is
+// returned by app.Queue(). With QUEUE_CONNECTION=database, Boot runs fn
+// instead (once either way) and creates the queue tables only when fn
+// falls back to them; its error then fails the boot. fn must not call app.Queue() (or dispatch a
 // job): it runs inside Queue's sync.Once and that call would deadlock.
 func WithQueueDriverFunc(fn func(app *App) (queue.Driver, error)) Option {
 	return func(o *options) error { o.queueFunc, o.queueDriver = fn, nil; return nil }
@@ -107,8 +108,7 @@ func (a *App) Queue() (*queue.Queue, error) {
 
 		d := a.queueDriver
 		if d == nil && a.queueDriverFunc != nil {
-			d, err = lazyStore(a, a.queueDriverFunc, "WithQueueDriverFunc", "QUEUE_CONNECTION="+cfg.Connection)
-			if err != nil {
+			if d, err = a.resolveQueueDriverFunc(cfg); err != nil {
 				a.queueErr = fmt.Errorf("vukem: queue driver: %w", err)
 				return
 			}
@@ -185,9 +185,9 @@ func (a *App) jobRegistrations() (regs []queue.Registration, err error) {
 // whose single writer connection the transaction holds, it would block
 // until the timeout and fail.
 //
-// A WithQueueDriverFunc driver may fall back to the database queue
-// (ErrUseDefault), so its tables are created too: fn itself only runs
-// inside the first Queue call.
+// A WithQueueDriverFunc runs here to learn whether it falls back to the
+// database queue (ErrUseDefault): only then are the tables needed, so a
+// Redis driver adds no database dependency at boot.
 func (a *App) prepareDatabaseQueue(ctx context.Context) error {
 	if a.queueDriver != nil {
 		return nil
@@ -196,6 +196,17 @@ func (a *App) prepareDatabaseQueue(ctx context.Context) error {
 	cfg, err := configLoad[QueueConfig](a)
 	if err != nil || cfg.Connection != "database" {
 		return err
+	}
+
+	if a.queueDriverFunc != nil {
+		d, err := a.resolveQueueDriverFunc(cfg)
+		if err != nil {
+			return fmt.Errorf("vukem: queue driver: %w", err)
+		}
+
+		if d != nil {
+			return nil
+		}
 	}
 
 	d, err := a.databaseQueue(ctx, cfg)
@@ -209,6 +220,17 @@ func (a *App) prepareDatabaseQueue(ctx context.Context) error {
 	a.mu.Unlock()
 
 	return nil
+}
+
+// resolveQueueDriverFunc runs WithQueueDriverFunc once; a nil driver
+// without error means ErrUseDefault (build the QUEUE_CONNECTION driver).
+func (a *App) resolveQueueDriverFunc(cfg QueueConfig) (queue.Driver, error) {
+	a.queueFuncOnce.Do(func() {
+		a.queueFuncDriver, a.queueFuncErr = lazyStore(a, a.queueDriverFunc, "WithQueueDriverFunc",
+			"QUEUE_CONNECTION="+cfg.Connection)
+	})
+
+	return a.queueFuncDriver, a.queueFuncErr
 }
 
 // databaseQueueDriver returns the driver Boot prepared, or builds it when

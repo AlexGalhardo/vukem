@@ -143,10 +143,18 @@ func lazyStore[T comparable](a *App, fn func(*App) (T, error), option, def strin
 	v, err := fn(a)
 
 	switch {
-	case errors.Is(err, ErrUseDefault) && v != zero:
+	case isUseDefault(err) && v != zero:
 		return zero, fmt.Errorf("%s returned a store together with ErrUseDefault", option)
-	case errors.Is(err, ErrUseDefault):
-		a.Log.Info("vukem: "+option+" chose the configured default", "store", def)
+	case isUseDefault(err):
+		// In production a fallback usually means a missing or misspelled
+		// REDIS_URL, so it must stand out.
+		level := slog.LevelInfo
+		if a.Config.IsProduction() {
+			level = slog.LevelWarn
+		}
+
+		a.Log.Log(context.Background(), level, "vukem: "+option+" chose the configured default", "store", def)
+
 		return zero, nil
 	case err != nil:
 		return zero, err
@@ -158,6 +166,25 @@ func lazyStore[T comparable](a *App, fn func(*App) (T, error), option, def strin
 	}
 
 	return v, nil
+}
+
+// isUseDefault reports whether err is ErrUseDefault or a chain of single
+// wraps of it. errors.Is would also match inside errors.Join or a multi-%w
+// error, which carries another, real failure that must not be swallowed.
+func isUseDefault(err error) bool {
+	for err != nil {
+		if err == ErrUseDefault { //nolint:errorlint // the chain is walked by hand: errors.Is also matches joined errors
+			return true
+		}
+
+		if _, multi := err.(interface{ Unwrap() []error }); multi {
+			return false
+		}
+
+		err = errors.Unwrap(err)
+	}
+
+	return false
 }
 
 // MailConfig is read from MAIL_* (and SMTP_* / RESEND_* / MAILTRAP_*) variables.

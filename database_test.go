@@ -3,13 +3,16 @@ package vukem
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -19,6 +22,7 @@ import (
 	"github.com/AlexGalhardo/vukem/database"
 	"github.com/AlexGalhardo/vukem/internal/testutil"
 	"github.com/AlexGalhardo/vukem/queue"
+	"github.com/AlexGalhardo/vukem/router"
 	"github.com/AlexGalhardo/vukem/schema"
 	"github.com/AlexGalhardo/vukem/session"
 )
@@ -647,6 +651,233 @@ func TestSecurity_A02_LazyStoreFuncErrorNeverFallsBack(t *testing.T) {
 
 	if m, err := app.Sessions(); !errors.Is(err, boom) || m != nil {
 		t.Errorf("Sessions() = %v, %v, want no manager and %v", m != nil, err, boom)
+	}
+}
+
+// Only ErrUseDefault itself, or a single-wrap chain of it, falls back: a
+// joined or multi-%w error also carries a real failure and must surface.
+func TestSecurity_A02_LazyStoreFuncJoinedErrorDoesNotFallBack(t *testing.T) {
+	t.Parallel()
+
+	redisErr := errors.New("redis: dial tcp: connection refused")
+
+	for name, err := range map[string]error{
+		"joined":       errors.Join(redisErr, ErrUseDefault),
+		"multi %w":     fmt.Errorf("%w; %w", redisErr, ErrUseDefault),
+		"wrapped join": fmt.Errorf("cache: %w", errors.Join(ErrUseDefault, redisErr)),
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			app := newTestApp(t,
+				WithCacheStoreFunc(func(*App) (cache.Store, error) { return nil, err }),
+				WithSessionStoreFunc(func(*App) (session.Store, error) { return nil, err }),
+				WithQueueDriverFunc(func(*App) (queue.Driver, error) { return nil, err }),
+			)
+
+			if _, got := app.Cache(); !errors.Is(got, redisErr) {
+				t.Errorf("Cache() error = %v, want %v", got, redisErr)
+			}
+
+			if _, got := app.Sessions(); !errors.Is(got, redisErr) {
+				t.Errorf("Sessions() error = %v, want %v", got, redisErr)
+			}
+
+			if _, got := app.Queue(); !errors.Is(got, redisErr) {
+				t.Errorf("Queue() error = %v, want %v", got, redisErr)
+			}
+		})
+	}
+}
+
+// The fallback session store is the cookie driver: the cookie carries the
+// encrypted data, so another app with the same APP_KEY and no store reads
+// it, and it keeps the cookie flags.
+func TestLazySessionFuncFallsBackToCookieDriver(t *testing.T) {
+	t.Parallel()
+
+	app := newTestApp(t, WithSessionStoreFunc(func(*App) (session.Store, error) { return nil, ErrUseDefault }))
+
+	m, err := app.Sessions()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cookies := m.Cookies(t.Context(), map[string]any{"user": "ana"})
+	if len(cookies) == 0 || !cookies[0].HttpOnly || cookies[0].SameSite != http.SameSiteLaxMode {
+		t.Fatalf("Cookies() = %+v, want an HttpOnly SameSite=Lax session cookie", cookies)
+	}
+
+	other, err := newTestApp(t).Sessions()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got := other.Peek(t.Context(), cookies)["user"]; got != "ana" {
+		t.Errorf("Peek() on another app = %v, want ana (data in the cookie, SESSION_DRIVER=cookie)", got)
+	}
+}
+
+// A session store func error is a boot error: DefaultMiddleware builds the
+// sessions while the routes are registered, so New fails.
+func TestLazySessionFuncErrorFailsBoot(t *testing.T) {
+	t.Parallel()
+
+	boom := errors.New("redis: parse url: invalid scheme")
+
+	_, err := New(WithSource(testSource(nil)), WithLogger(discardLogger()),
+		WithSessionStoreFunc(func(*App) (session.Store, error) { return nil, boom }),
+		WithRoutes(func(r *router.Router, app *App) error { return DefaultMiddleware(app, r) }),
+	)
+	if !errors.Is(err, boom) {
+		t.Errorf("New() error = %v, want %v", err, boom)
+	}
+}
+
+// With QUEUE_CONNECTION=database next to a queue func, Boot resolves the
+// func: a driver of its own (Redis) needs no database at boot; only a
+// fallback prepares the database queue; a func error fails the boot. The
+// func runs once either way.
+func TestBootResolvesQueueDriverFunc(t *testing.T) {
+	t.Parallel()
+
+	unreachable := "file:" + filepath.Join(testutil.TempDir(t), "missing", "app.db")
+	boom := errors.New("redis: parse url: invalid scheme")
+
+	for name, tt := range map[string]struct {
+		dbURL   string
+		driver  queue.Driver
+		err     error
+		wantErr error
+		wantDB  bool
+	}{
+		"own driver, database unreachable": {dbURL: unreachable, driver: queue.NewMemory()},
+		"fallback":                         {err: ErrUseDefault, wantDB: true},
+		"error":                            {err: boom, wantErr: boom},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			var calls atomic.Int32
+
+			env := map[string]string{}
+			if tt.dbURL != "" {
+				env["DATABASE_URL"] = tt.dbURL
+			}
+
+			app := dbQueueApp(t, env, WithQueueDriverFunc(func(*App) (queue.Driver, error) {
+				calls.Add(1)
+				return tt.driver, tt.err
+			}))
+
+			if err := app.Boot(t.Context()); !errors.Is(err, tt.wantErr) {
+				t.Fatalf("Boot() = %v, want %v", err, tt.wantErr)
+			}
+
+			if got := app.queueDB != nil; got != tt.wantDB {
+				t.Errorf("Boot() prepared the database queue = %v, want %v", got, tt.wantDB)
+			}
+
+			if tt.wantErr != nil {
+				return
+			}
+
+			q, err := app.Queue()
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if tt.driver != nil && q.Driver() != tt.driver {
+				t.Errorf("Queue().Driver() = %T, want the func's driver", q.Driver())
+			}
+
+			if got := calls.Load(); got != 1 {
+				t.Errorf("queue func ran %d times, want 1", got)
+			}
+		})
+	}
+}
+
+// Concurrent first calls build the lazy store once and share it.
+func TestLazyCacheFuncConcurrentFirstUse(t *testing.T) {
+	t.Parallel()
+
+	var calls atomic.Int32
+
+	app := newTestApp(t, WithCacheStoreFunc(func(*App) (cache.Store, error) {
+		calls.Add(1)
+		return nil, ErrUseDefault
+	}))
+
+	var (
+		wg     sync.WaitGroup
+		caches = make([]*cache.Cache, 16)
+	)
+
+	for i := range caches {
+		wg.Go(func() {
+			c, err := app.Cache()
+			if err != nil {
+				t.Error(err)
+			}
+
+			caches[i] = c
+		})
+	}
+
+	wg.Wait()
+
+	if got := calls.Load(); got != 1 {
+		t.Errorf("cache func ran %d times, want 1", got)
+	}
+
+	for _, c := range caches[1:] {
+		if c != caches[0] {
+			t.Fatal("Cache() returned different caches to concurrent callers")
+		}
+	}
+}
+
+// A fallback in production usually means a missing or misspelled
+// REDIS_URL, so it is logged at Warn there and at Info elsewhere.
+func TestLazyStoreFallbackLogLevel(t *testing.T) {
+	t.Parallel()
+
+	for env, want := range map[string]slog.Level{"production": slog.LevelWarn, "test": slog.LevelInfo} {
+		t.Run(env, func(t *testing.T) {
+			t.Parallel()
+
+			var buf bytes.Buffer
+
+			app := newTestApp(t,
+				WithSource(testSource(map[string]string{"APP_ENV": env})),
+				WithLogger(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))),
+				WithCacheStoreFunc(func(*App) (cache.Store, error) { return nil, ErrUseDefault }),
+			)
+
+			if _, err := app.Cache(); err != nil {
+				t.Fatal(err)
+			}
+
+			var rec struct {
+				Level string `json:"level"`
+				Msg   string `json:"msg"`
+			}
+
+			for line := range strings.Lines(buf.String()) {
+				if err := json.Unmarshal(
+					[]byte(line),
+					&rec,
+				); err == nil &&
+					strings.Contains(rec.Msg, "WithCacheStoreFunc") {
+					break
+				}
+			}
+
+			if rec.Level != want.String() {
+				t.Errorf("fallback log level = %q, want %q (log %s)", rec.Level, want, buf.String())
+			}
+		})
 	}
 }
 

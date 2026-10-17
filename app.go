@@ -210,6 +210,11 @@ type App struct {
 	queueErr  error
 	// queueDB is the database queue driver Boot prepared (tables created).
 	queueDB *queue.Database
+	// queueFunc* hold the queueDriverFunc result, resolved once at Boot
+	// (QUEUE_CONNECTION=database) or by the first Queue call.
+	queueFuncOnce   sync.Once
+	queueFuncDriver queue.Driver
+	queueFuncErr    error
 
 	now func() time.Time
 	// proxies is the parsed TRUSTED_PROXIES.
