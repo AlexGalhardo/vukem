@@ -67,6 +67,14 @@ tasks:
       - for: { var: MODULES }
         cmd: cd {{.ITEM}} && go test -tags=integration -count=1 ./...
 
+  bench:
+    desc: "Run core and comparative benchmarks (internal/bench: net/http, chi, echo); COUNT=6, compare runs with benchstat"
+    vars:
+      COUNT: '{{.COUNT | default "6"}}'
+    cmds:
+      - go test -run '^$' -bench . -benchmem -count {{.COUNT}} ./router ./web ./orm
+      - cd internal/bench && go test -run '^$' -bench . -benchmem -count {{.COUNT}} .
+
   cover:
     desc: Write coverage.out and print the total
     cmds:

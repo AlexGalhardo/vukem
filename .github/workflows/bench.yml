@@ -1,0 +1,44 @@
+name: Bench
+
+# Manual only: shared runners are too noisy to gate merges on timings.
+# Results are uploaded for comparison with docs/performance.md.
+on:
+  workflow_dispatch:
+    inputs:
+      count:
+        description: Runs per benchmark (benchstat needs >= 6 for confidence intervals)
+        default: "6"
+
+permissions:
+  contents: read
+
+jobs:
+  bench:
+    name: Benchmarks (ubuntu)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    env:
+      COUNT: ${{ inputs.count }}
+    defaults:
+      run:
+        shell: bash # -o pipefail, so a failing benchmark is not hidden by tee
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: "**/go.sum"
+      - name: Core micro-benchmarks
+        run: go test -run '^$' -bench . -benchmem -count "$COUNT" ./router ./web ./orm | tee core.txt
+      - name: Comparative benchmarks (net/http, chi, echo)
+        working-directory: internal/bench
+        run: go test -run '^$' -bench . -benchmem -count "$COUNT" . | tee ../../compare.txt
+      - name: Summarize with benchstat
+        run: |
+          go install golang.org/x/perf/cmd/benchstat@v0.0.0-20261009192801-be2c69fb417e
+          "$(go env GOPATH)/bin/benchstat" core.txt | tee core.benchstat.txt
+          "$(go env GOPATH)/bin/benchstat" -col /impl compare.txt | tee compare.benchstat.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: bench
+          path: "*.txt"

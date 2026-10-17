@@ -116,6 +116,7 @@ blog/
 | Q9 | Markdown | markdownlint-cli2 (MD010 ignores `go` fences; MD024 siblings-only; MD013 off) | rumdl | Requested; Node already present |
 | Q10 | CI | GitHub Actions: lint, test matrix (ubuntu/windows/macos × stable; oldstable once Go 1.28 ships), integration (PG/Redis/Mongo services), govulncheck, markdownlint, semantic PR title, CodeQL, Dependabot | — | — |
 | Q11 | Agent config | `AGENTS.md` canonical (≤50 lines, links to docs), `CLAUDE.md` imports it; `.claude/rules/*` path-scoped; `.claude/settings.json` with permission allowlist + PostToolUse format hook | rules only | Maintainer approved |
+| Q12 | Comparative benchmarks (B.5.3) | Own module `internal/bench` (in `go.work`, not in `MODULES`) depending on chi and echo; run by `task bench` and a manual `Bench` workflow; results in [performance.md](performance.md) | Benchmarks in core tests; third-party benchmark suites | A comparison needs the competitors as code, and keeping them in a never-published module leaves the core's `go.mod` untouched |
 
 ## Phase scope
 
