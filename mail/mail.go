@@ -116,6 +116,7 @@ type Mailer struct {
 	from      string
 	transport Transport
 	views     web.Renderer
+	enqueue   Enqueue
 }
 
 // New returns a Mailer sending from the default from address through t.
