@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.21.1] - 2026-10-17
+
+### Added
+
+- **logging:** Aggregate repeated identical errors
+- **otel:** Add trace and span ids to log records
+
+### Fixed
+
+- **crypt:** Bound integer arithmetic flagged by CodeQL
+
+### Security
+
+- **cli:** Pin govulncheck as a go tool in new apps
+
 ## [0.21.0] - 2026-10-17
 
 ### Added
@@ -395,7 +410,8 @@ Project foundation. No framework code yet; see [PLAN.md](PLAN.md) for the roadma
 - README, MIT license, CONTRIBUTING, SECURITY and CODE_OF_CONDUCT.
 - Agent configuration: `AGENTS.md`, `CLAUDE.md`, path-scoped `.claude/rules/`, Go skills and project settings.
 
-[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.21.0...HEAD
+[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.21.1...HEAD
+[0.21.1]: https://github.com/AlexGalhardo/vukem/compare/v0.21.0...v0.21.1
 [0.21.0]: https://github.com/AlexGalhardo/vukem/compare/v0.20.1...v0.21.0
 [0.20.1]: https://github.com/AlexGalhardo/vukem/compare/v0.20.0...v0.20.1
 [0.20.0]: https://github.com/AlexGalhardo/vukem/compare/v0.19.0...v0.20.0
