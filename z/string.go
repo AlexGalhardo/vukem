@@ -99,6 +99,13 @@ func (s StringSchema) ToLower() StringSchema { return s.with(strings.ToLower, ni
 // ToUpper upper-cases the value before checks.
 func (s StringSchema) ToUpper() StringSchema { return s.with(strings.ToUpper, nil) }
 
+// Preprocess normalizes the value with fn before checks, e.g. stripping a
+// phone number down to digits so Regex sees the normalized form.
+// Pre-steps (Trim, ToLower, ToUpper, Preprocess) run in declaration order
+// after the UTF-8 check and before every check (Min, Regex, Email...);
+// Transform runs after the checks, and Refine last.
+func (s StringSchema) Preprocess(fn func(string) string) StringSchema { return s.with(fn, nil) }
+
 // Min requires at least n characters (runes).
 func (s StringSchema) Min(n int) StringSchema {
 	return s.kw("minLength", n).with(nil, func(o *opts[string], c *pctx, path, v string) {
@@ -250,7 +257,8 @@ func (s StringSchema) Default(v string) StringSchema {
 	return s
 }
 
-// Refine adds a custom check; return FieldError for nested paths.
+// Refine adds a custom check; return FieldError for nested paths or
+// FieldErrorKey for a translatable message.
 func (s StringSchema) Refine(fn func(string) error) StringSchema {
 	s.o = s.o.clone()
 	s.o.refines = append(s.o.refines, fn)
@@ -258,7 +266,8 @@ func (s StringSchema) Refine(fn func(string) error) StringSchema {
 	return s
 }
 
-// Transform maps the parsed value.
+// Transform maps the value after the checks; Refine sees the result. Use
+// Preprocess to normalize before the checks.
 func (s StringSchema) Transform(fn func(string) string) StringSchema {
 	s.o = s.o.clone()
 	s.o.transforms = append(s.o.transforms, fn)
