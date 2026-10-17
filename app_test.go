@@ -215,6 +215,93 @@ func TestNewLoadsFromEnvAndLogger(t *testing.T) {
 	}
 }
 
+// TestSecurity_A09_RepeatedErrorsAggregated: in production the default
+// logger writes a burst of identical errors once, plus a "repeated"
+// summary with the count (flushed by Shutdown at the latest).
+func TestSecurity_A09_RepeatedErrorsAggregated(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		env         map[string]string
+		wantRecords int
+		wantSummary bool
+	}{
+		{
+			name:        "production default",
+			env:         map[string]string{"APP_ENV": "production"},
+			wantRecords: 1,
+			wantSummary: true,
+		},
+		{name: "development default", env: map[string]string{"APP_ENV": "development"}, wantRecords: 3},
+		{
+			name:        "opt in outside production",
+			env:         map[string]string{"LOG_DEDUP_WINDOW": "30s"},
+			wantRecords: 1,
+			wantSummary: true,
+		},
+		{
+			name:        "disabled in production",
+			env:         map[string]string{"APP_ENV": "production", "LOG_DEDUP_WINDOW": "0"},
+			wantRecords: 3,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var buf bytes.Buffer
+
+			app, err := New(WithSource(testSource(tt.env)), WithLogOutput(&buf), WithoutHTTP())
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			for range 3 {
+				app.Log.Error("db down", "error", "timeout")
+			}
+
+			if err := app.Shutdown(t.Context()); err != nil {
+				t.Fatalf("Shutdown() = %v", err)
+			}
+
+			out := buf.String()
+			if got := strings.Count(out, "db down"); got != tt.wantRecords+boolInt(tt.wantSummary) {
+				t.Errorf(
+					"records mentioning the error = %d, want %d\n%s",
+					got,
+					tt.wantRecords+boolInt(tt.wantSummary),
+					out,
+				)
+			}
+
+			if got := strings.Contains(out, "repeated") && strings.Contains(out, "count"); got != tt.wantSummary {
+				t.Errorf("summary written = %v, want %v\n%s", got, tt.wantSummary, out)
+			}
+		})
+	}
+}
+
+func boolInt(b bool) int {
+	if b {
+		return 1
+	}
+
+	return 0
+}
+
+func TestNewRejectsBadLogDedupWindow(t *testing.T) {
+	t.Parallel()
+
+	for _, v := range []string{"soon", "-1m"} {
+		_, err := New(WithSource(testSource(map[string]string{"LOG_DEDUP_WINDOW": v})), WithLogger(discardLogger()))
+		if err == nil || !strings.Contains(err.Error(), "LOG_DEDUP_WINDOW") {
+			t.Errorf("New(LOG_DEDUP_WINDOW=%q) = %v, want a LOG_DEDUP_WINDOW error", v, err)
+		}
+	}
+}
+
 func TestRunStopsOnCancelInReverseOrder(t *testing.T) {
 	t.Parallel()
 

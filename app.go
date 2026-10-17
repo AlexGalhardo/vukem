@@ -21,6 +21,7 @@ import (
 	"github.com/AlexGalhardo/vukem/events"
 	"github.com/AlexGalhardo/vukem/i18n"
 	"github.com/AlexGalhardo/vukem/inertia"
+	"github.com/AlexGalhardo/vukem/logging"
 	"github.com/AlexGalhardo/vukem/logging/telegram"
 	"github.com/AlexGalhardo/vukem/mail"
 	"github.com/AlexGalhardo/vukem/queue"
@@ -66,6 +67,10 @@ type Config struct {
 	H2C       bool   `env:"HTTP_H2C"`
 	LogLevel  string `env:"LOG_LEVEL"  default:"info"`
 	LogFormat string `env:"LOG_FORMAT"`
+	// LogDedupWindow collapses repeated identical ERROR records of the
+	// default logger into one summary per window (a Go duration; "0"
+	// disables it). Empty means 1m in production and off elsewhere.
+	LogDedupWindow string `env:"LOG_DEDUP_WINDOW"`
 	// APIVersion is info.version of the OpenAPI document.
 	APIVersion string `env:"API_VERSION" default:"1.0.0"`
 	// OpenAPIPrefix keeps only routes under it in the document (e.g. /api).
@@ -357,8 +362,15 @@ func New(opts ...Option) (*App, error) {
 		return nil, err
 	}
 
+	dedupWindow, err := logDedupWindow(&cfg)
+	if err != nil {
+		return nil, err
+	}
+
 	logger := o.logger
-	if logger == nil {
+	ownLogger := logger == nil
+
+	if ownLogger {
 		out := o.logOut
 		if out == nil {
 			out = os.Stderr
@@ -374,6 +386,14 @@ func New(opts ...Option) (*App, error) {
 
 	if tg != nil {
 		logger = slog.New(slog.NewMultiHandler(logger.Handler(), tg))
+	}
+
+	// Dedup sits in front of Telegram too, so an error burst is one chat
+	// message plus a summary. A WithLogger logger is used as given.
+	var dedup *logging.Dedup
+	if ownLogger && dedupWindow > 0 {
+		dedup = logging.NewDedup(logger.Handler(), logging.DedupOptions{Window: dedupWindow})
+		logger = slog.New(dedup)
 	}
 
 	stdout := o.stdout
@@ -441,6 +461,12 @@ func New(opts ...Option) (*App, error) {
 	if tg != nil {
 		app.Telegram = tg
 		app.OnShutdown(tg.Close)
+	}
+
+	if dedup != nil {
+		// Registered after Telegram so it runs first: the pending summaries
+		// still reach the chat.
+		app.OnShutdown(dedup.Close)
 	}
 
 	app.Events = events.New(app.Log, 0)
@@ -587,6 +613,28 @@ func logLevel(cfg *Config) slog.Level {
 	}
 
 	return level
+}
+
+// logDedupWindow is LOG_DEDUP_WINDOW: empty means
+// logging.DefaultDedupWindow in production and off elsewhere.
+func logDedupWindow(cfg *Config) (time.Duration, error) {
+	if cfg.LogDedupWindow == "" {
+		if cfg.IsProduction() {
+			return logging.DefaultDedupWindow, nil
+		}
+
+		return 0, nil
+	}
+
+	d, err := time.ParseDuration(cfg.LogDedupWindow)
+	if err != nil || d < 0 {
+		return 0, fmt.Errorf(
+			"vukem: LOG_DEDUP_WINDOW %q: want a duration such as 1m, or 0 to disable",
+			cfg.LogDedupWindow,
+		)
+	}
+
+	return d, nil
 }
 
 func newLogger(cfg *Config, out io.Writer) *slog.Logger {
