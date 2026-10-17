@@ -1,7 +1,8 @@
 // Package telegram is a log/slog handler that sends records to Telegram
 // chats, ported from the maintainer's TypeScript telegram-logger. Messages
 // are queued and sent in the background, so logging never blocks or fails
-// a request.
+// a request; [Handler.SendSync] and [Handler.ContactSync] deliver right away
+// and return the error, for jobs that retry.
 //
 //	tg := telegram.NewHandler(telegram.Config{BotToken: token, ChatID: "-100123", MinLevel: slog.LevelError})
 //	log := slog.New(slog.NewMultiHandler(base, tg))
@@ -52,8 +53,17 @@ type Config struct {
 	ChatIDs map[slog.Level]string
 	// MinLevel filters records (default: error).
 	MinLevel slog.Level
-	AppName  string
-	Env      string
+	// Filter, when set, forwards only the log records it returns true for
+	// (Send and Contact are never filtered).
+	Filter func(ctx context.Context, r slog.Record) bool
+	// RateLimit caps the log records forwarded per RatePeriod (0: no cap);
+	// the excess is dropped and ErrRateLimited reported to OnError once per
+	// period. Send and Contact are never rate limited.
+	RateLimit int
+	// RatePeriod is the RateLimit window (default 1 minute).
+	RatePeriod time.Duration
+	AppName    string
+	Env        string
 	// ThreadID posts into a forum topic.
 	ThreadID int
 	// Silent sends without notification sound.
@@ -87,6 +97,10 @@ type state struct {
 	closed  bool
 	enabled bool
 	now     func() time.Time
+
+	rateMu      sync.Mutex
+	windowStart time.Time
+	windowCount int
 }
 
 // Handler implements slog.Handler.
@@ -98,6 +112,13 @@ type Handler struct {
 
 // ErrQueueFull is reported when a message is dropped.
 var ErrQueueFull = errors.New("telegram: queue full, message dropped")
+
+// ErrRateLimited is reported when log records are dropped by RateLimit.
+var ErrRateLimited = errors.New("telegram: rate limit reached, log records dropped")
+
+// ErrDisabled is returned by the synchronous senders when the bot token or
+// chat id is missing.
+var ErrDisabled = errors.New("telegram: not configured")
 
 // NewHandler returns a handler and starts its sender goroutine (when
 // enabled); call Close to drain it.
@@ -112,6 +133,10 @@ func NewHandler(cfg Config) *Handler {
 
 	if cfg.Timeout <= 0 {
 		cfg.Timeout = 5 * time.Second
+	}
+
+	if cfg.RatePeriod <= 0 {
+		cfg.RatePeriod = time.Minute
 	}
 
 	if cfg.MaxRetryAfter <= 0 {
@@ -146,8 +171,16 @@ func (h *Handler) Enabled(_ context.Context, l slog.Level) bool {
 }
 
 // Handle implements slog.Handler: it formats r and queues it.
-func (h *Handler) Handle(_ context.Context, r slog.Record) error {
-	if !h.Enabled(context.Background(), r.Level) {
+func (h *Handler) Handle(ctx context.Context, r slog.Record) error {
+	if !h.Enabled(ctx, r.Level) {
+		return nil
+	}
+
+	if h.s.cfg.Filter != nil && !h.s.cfg.Filter(ctx, r) {
+		return nil
+	}
+
+	if !h.s.allow() {
 		return nil
 	}
 
@@ -192,24 +225,41 @@ func (h *Handler) qualify(a slog.Attr) slog.Attr {
 }
 
 // Send queues a pre-formatted HTML message for the default chat (the
-// caller escapes user content).
+// caller escapes user content). Delivery errors go to OnError; use
+// SendSync to get them.
 func (h *Handler) Send(_ context.Context, htmlText string) {
 	if h.s.enabled {
 		h.s.enqueue(h.s.cfg.ChatID, truncate(htmlText))
 	}
 }
 
-// Contact queues a contact-form notification (never filtered by level);
-// every field is escaped.
-func (h *Handler) Contact(_ context.Context, fields map[string]string) {
-	if !h.s.enabled {
-		return
-	}
+// SendSync sends a pre-formatted HTML message to the default chat now,
+// bypassing the queue, and returns the delivery error (ErrDisabled when not
+// configured). Each request is bounded by Timeout and the whole call by
+// ctx; the error never contains the bot token.
+func (h *Handler) SendSync(ctx context.Context, htmlText string) error {
+	return h.s.sendNow(ctx, truncate(htmlText))
+}
 
+// Contact queues a contact-form notification (never filtered by level);
+// every field is escaped. Delivery errors go to OnError; use ContactSync
+// to get them.
+func (h *Handler) Contact(_ context.Context, fields map[string]string) {
+	if h.s.enabled {
+		h.s.enqueue(h.s.cfg.ChatID, contactText(h.s.cfg, fields))
+	}
+}
+
+// ContactSync sends a contact-form notification now, like SendSync.
+func (h *Handler) ContactSync(ctx context.Context, fields map[string]string) error {
+	return h.s.sendNow(ctx, contactText(h.s.cfg, fields))
+}
+
+func contactText(cfg Config, fields map[string]string) string {
 	var b strings.Builder
 
 	b.WriteString("📬 <b>New contact</b>")
-	writeHeader(&b, h.s.cfg)
+	writeHeader(&b, cfg)
 
 	var body strings.Builder
 
@@ -217,7 +267,7 @@ func (h *Handler) Contact(_ context.Context, fields map[string]string) {
 		fmt.Fprintf(&body, "%s: %s\n", k, fields[k])
 	}
 
-	h.s.enqueue(h.s.cfg.ChatID, finish(b.String(), body.String()))
+	return finish(b.String(), body.String())
 }
 
 // Close stops accepting messages and waits for queued ones until ctx is
@@ -255,6 +305,38 @@ func (s *state) chatFor(l slog.Level) string {
 	return s.cfg.ChatID
 }
 
+func (s *state) sendNow(ctx context.Context, text string) error {
+	if !s.enabled || s.cfg.ChatID == "" {
+		return ErrDisabled
+	}
+
+	return s.deliver(ctx, message{chat: s.cfg.ChatID, text: text})
+}
+
+// allow applies RateLimit with a fixed window.
+func (s *state) allow() bool {
+	if s.cfg.RateLimit <= 0 {
+		return true
+	}
+
+	s.rateMu.Lock()
+	now := s.now()
+
+	if now.Sub(s.windowStart) >= s.cfg.RatePeriod {
+		s.windowStart, s.windowCount = now, 0
+	}
+
+	s.windowCount++
+	n := s.windowCount
+	s.rateMu.Unlock()
+
+	if n == s.cfg.RateLimit+1 {
+		s.cfg.OnError(ErrRateLimited) // outside the lock: OnError may log
+	}
+
+	return n <= s.cfg.RateLimit
+}
+
 func (s *state) enqueue(chat, text string) {
 	if chat == "" {
 		return
@@ -276,14 +358,14 @@ func (s *state) enqueue(chat, text string) {
 
 func (s *state) run() {
 	for m := range s.queue {
-		if err := s.deliver(m); err != nil {
+		if err := s.deliver(context.Background(), m); err != nil {
 			s.cfg.OnError(err)
 		}
 	}
 }
 
 // deliver posts m, retrying once after a 429 with a capped retry_after.
-func (s *state) deliver(m message) error {
+func (s *state) deliver(ctx context.Context, m message) error {
 	payload := map[string]any{"chat_id": m.chat, "text": m.text, "parse_mode": "HTML", "disable_web_page_preview": true}
 	if s.cfg.ThreadID != 0 {
 		payload["message_thread_id"] = s.cfg.ThreadID
@@ -299,14 +381,19 @@ func (s *state) deliver(m message) error {
 	}
 
 	for attempt := range 2 {
-		wait, err := s.post(body)
+		wait, err := s.post(ctx, body)
 		if err == nil || wait == 0 || attempt == 1 {
 			return err
 		}
 
-		time.Sleep(
-			min(wait, s.cfg.MaxRetryAfter),
-		) //nolint:forbidigo // honour Telegram's retry_after in the sender goroutine
+		timer := time.NewTimer(min(wait, s.cfg.MaxRetryAfter))
+
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			timer.Stop()
+			return fmt.Errorf("telegram: waiting for retry_after: %w", ctx.Err())
+		}
 	}
 
 	return nil
@@ -322,8 +409,8 @@ func (e *apiError) Error() string {
 	return fmt.Sprintf("telegram: sendMessage %d: %s", e.Status, e.Description)
 }
 
-func (s *state) post(body []byte) (time.Duration, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), s.cfg.Timeout)
+func (s *state) post(ctx context.Context, body []byte) (time.Duration, error) {
+	ctx, cancel := context.WithTimeout(ctx, s.cfg.Timeout)
 	defer cancel()
 
 	url := s.cfg.BaseURL + "/bot" + s.cfg.BotToken.Reveal() + "/sendMessage"
@@ -370,8 +457,26 @@ func redact(err error, token string) error {
 		return err
 	}
 
-	return errors.New(strings.ReplaceAll(err.Error(), token, "[redacted]"))
+	r := &redactedError{msg: strings.ReplaceAll(err.Error(), token, "[redacted]")}
+
+	// Keep context errors matchable (errors.Is) without exposing the
+	// url.Error, whose URL holds the token.
+	for _, cause := range []error{context.DeadlineExceeded, context.Canceled} {
+		if errors.Is(err, cause) {
+			r.cause = cause
+		}
+	}
+
+	return r
 }
+
+type redactedError struct {
+	msg   string
+	cause error
+}
+
+func (e *redactedError) Error() string { return e.msg }
+func (e *redactedError) Unwrap() error { return e.cause }
 
 var levelInfo = map[slog.Level][2]string{ //nolint:gochecknoglobals // read-only table
 	slog.LevelDebug: {"🐛", "DEBUG"},
