@@ -45,7 +45,7 @@ Exit codes: `0` success, `1` failure, `2` usage error.
 | `vukem install:admin [--force]` | Admin panel at `/admin` (needs `install:auth`): `routes/admin.go`, `app/admin/`, audit-log migration, test, `ADMIN_EMAILS` ([admin.md](admin.md)) |
 | `vukem make:admin-resource <Model> [--force]` | Admin resource + policy for an existing model in `app/admin/<model>.go` and a test, registered in `app/admin/registry.go` |
 | `vukem key:generate [--show]` | Write `APP_KEY` to `.env` |
-| `vukem key:rotate` | Write a new `APP_KEY` to `.env` and move the old one to the front of `APP_PREVIOUS_KEYS` (keys are never printed; see [Key rotation](security.md#key-rotation)) |
+| `vukem key:rotate` | Write a new `APP_KEY` to `.env` and move the old one to the front of `APP_PREVIOUS_KEYS` (keys are never printed). It refuses a malformed current or previous key, keeps `export`, indentation and inline comments, replaces `.env` atomically (through a symlink too), and warns when more than 3 previous keys remain; see [Key rotation](security.md#key-rotation) |
 | `vukem ssr:start [-bundle] [-runtime]`, `vukem ssr:check [-url]` | App commands: supervise the Inertia SSR server (restart on crash) and probe its `/health` |
 | `vukem install:billing [--force]` | Stripe subscriptions for the `install:auth` users (required first): plans config, billing columns and `subscriptions` table, Checkout/Portal routes, `POST /stripe/webhook` sync, `Subscribed`/`OnPlan` middleware, tests with a fake Stripe API; requires `contrib/stripe` v0.1.0. See [billing.md](billing.md) |
 | `vukem install:inertia --force [--react\|--vue\|--svelte] [--no-install]` | Turn the HTMX starter into an Inertia app (replaces its pages, controllers and tests; `--force` required) and run `npm install` |
