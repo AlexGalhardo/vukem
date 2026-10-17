@@ -310,31 +310,40 @@ func (w *wsSession[C]) subscribe(m wsMessage) error {
 
 func (w *wsSession[C]) run(ctx context.Context, id string, op *wsOp, req Request) {
 	// A client "complete" removes the op first; the server then sends
-	// nothing more for this id.
-	finish := func(sendComplete bool) {
+	// nothing more for this id. The id is freed before the terminal
+	// message goes out, so a client reusing it as soon as it reads
+	// "error" or "complete" is not closed with 4409.
+	release := func() bool {
 		w.mu.Lock()
+		defer w.mu.Unlock()
+
 		mine := w.ops[id] == op
 		if mine {
 			delete(w.ops, id)
 		}
-		w.mu.Unlock()
 
-		if mine && sendComplete && w.ctx.Err() == nil {
+		return mine
+	}
+
+	finish := func(sendComplete bool) {
+		if release() && sendComplete && w.ctx.Err() == nil {
 			w.send(wsMessage{ID: id, Type: "complete"})
 		}
 	}
 
 	if gerr := w.cfg.Persisted.resolve(ctx, &req); gerr != nil {
-		w.sendErrors(id, []*Error{gerr})
-		finish(false)
+		if release() {
+			w.sendErrors(id, []*Error{gerr})
+		}
 
 		return
 	}
 
 	p, errs := w.s.prepare(req, w.cfg.Introspection)
 	if errs != nil {
-		w.sendErrors(id, errs)
-		finish(false)
+		if release() {
+			w.sendErrors(id, errs)
+		}
 
 		return
 	}
