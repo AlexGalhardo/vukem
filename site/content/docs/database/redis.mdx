@@ -77,7 +77,7 @@ The last of `WithCacheStore` / `WithCacheStoreFunc` (and likewise for sessions a
 
 | Feature | API |
 | --- | --- |
-| Cache store | `rc.CacheStore(prefix)` implements `cache.Store`; `Flush` deletes only the prefix (`SCAN` + `DEL`) and refuses an empty one |
+| Cache store | `rc.CacheStore(prefix)` implements `cache.Store`; `Flush` deletes only the prefix (`SCAN` + `DEL`) and refuses an empty one; it declares `cache.Sharer` (`Shared()` is `true`), so `OnOneServer()` and `RATE_LIMIT_STORE=cache` accept it. Upgrade `drivers/redis` together with core: a driver release without `Shared()` is treated as not shared and refused |
 | Sessions | `rc.SessionStore(prefix)` implements `session.ListStore`: `RevokeOthers`, `UserSessions` and `RevokeSession` work as on the database store. Keys hold SHA-256 of the session id, never the cookie value; sessions saved under the clear id by older versions move to the hashed key on their first load. Each session records its owner (`<prefix>owner:<hash>`) and each user a set of session hashes (`<prefix>user:<owner>`); every command touches one key (Redis Cluster works), so listing or revoking costs three round trips per session of the user; needs Redis 6.2+ |
 | Queue | `rc.Queue(redis.QueueOptions{Prefix, Grace})`: sorted sets under `{queue}:` (one Cluster slot), atomic Lua reservation, failed jobs for `queue:failed`, `queue:retry`, `queue:forget` |
 | Rate limiting | `rc.RateLimiter("api:", 60, time.Minute)` implements `ratelimit.Limiter` with GCRA, shared by every server |

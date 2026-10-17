@@ -124,7 +124,7 @@ Do not limit by `ByToken` before the token is verified: a client sending a made-
 
 Rate limiting is a security control, so it **fails closed**: when the store cannot answer (database down, Redis unreachable), the request is denied with `503 Service Unavailable` instead of passing unlimited. The client never sees the store error.
 
-An unknown `RATE_LIMIT_STORE` value (a typo such as `databse`), or `cache` over the memory cache, makes `app.RateLimiters()` return an error, so the app does not boot with per-process limits you did not ask for. A limiter name outside 1–64 of `A-Z a-z 0-9 . _ -` denies every request.
+An unknown `RATE_LIMIT_STORE` value (a typo such as `databse`), or `cache` over a cache that is not shared (the memory cache, or a custom store or wrapper that does not declare `cache.Sharer`, see [shared stores](/docs/digging-deeper/cache#shared-stores)), makes `app.RateLimiters()` return an error, so the app does not boot with per-process limits you did not ask for. A limiter name outside 1–64 of `A-Z a-z 0-9 . _ -` denies every request.
 
 ## Without the app
 
