@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"reflect"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -215,6 +216,37 @@ func (m *meta) column(name string) (string, error) {
 
 // TableOf returns the table name of model T.
 func TableOf[T any]() string { return metaOf[T]().table }
+
+// FieldInfo describes a mapped column of a model, for tools that work with
+// any model (the admin panel, exporters).
+type FieldInfo struct {
+	// Column is the column name.
+	Column string
+	// Name is the Go field name.
+	Name string
+	// Index locates the field for reflect.Value.FieldByIndex.
+	Index []int
+	// Type is the Go field type.
+	Type reflect.Type
+	// Tag is the struct field tag.
+	Tag reflect.StructTag
+}
+
+// FieldsOf returns the mapped columns of model T in field order.
+func FieldsOf[T any]() []FieldInfo {
+	m := metaOf[T]()
+
+	out := make([]FieldInfo, len(m.fields))
+	for i, f := range m.fields {
+		sf := m.typ.FieldByIndex(f.index)
+		out[i] = FieldInfo{Column: f.column, Name: sf.Name, Index: slices.Clone(f.index), Type: f.typ, Tag: sf.Tag}
+	}
+
+	return out
+}
+
+// PrimaryKeyOf returns the primary key column of model T.
+func PrimaryKeyOf[T any]() string { return metaOf[T]().pk }
 
 // Columns returns the column names of model T in field order.
 func Columns[T any]() []string {

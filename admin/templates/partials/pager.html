@@ -1,0 +1,7 @@
+{{if gt .Last 1}}
+<nav class="pager" aria-label="Pagination">
+	{{if .PrevURL}}<a href="{{.PrevURL}}" hx-get="{{.PrevURL}}" hx-target="#admin-list" hx-swap="outerHTML" hx-push-url="true" rel="prev">Previous</a>{{end}}
+	<span>Page {{.Page}} of {{.Last}}</span>
+	{{if .NextURL}}<a href="{{.NextURL}}" hx-get="{{.NextURL}}" hx-target="#admin-list" hx-swap="outerHTML" hx-push-url="true" rel="next">Next</a>{{end}}
+</nav>
+{{end}}

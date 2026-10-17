@@ -1,0 +1,10 @@
+{{define "content"}}
+<h1>Dashboard</h1>
+<ul class="cards">
+	{{range .Cards}}
+	<li><a href="{{.URL}}"><span class="count">{{.Count}}</span> {{.Label}}</a></li>
+	{{else}}
+	<li class="empty">No resources you can view yet.</li>
+	{{end}}
+</ul>
+{{end}}

@@ -3,6 +3,7 @@ package z
 import (
 	"fmt"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -479,6 +480,21 @@ func (s StructSchema[T]) Keys() []string {
 	}
 
 	return keys
+}
+
+// Field returns the struct field of T that key parses into, for tools that
+// map schema keys to other types (the admin panel copies them to models).
+func (s StructSchema[T]) Field(key string) (reflect.StructField, bool) {
+	for _, f := range s.core.fields {
+		if f.key == key {
+			sf := s.core.rt.FieldByIndex(f.index)
+			sf.Index = slices.Clone(f.index)
+
+			return sf, true
+		}
+	}
+
+	return reflect.StructField{}, false
 }
 
 // Parse implements Schema.

@@ -1,0 +1,45 @@
+{{define "content"}}
+<h1>{{.Title}}</h1>
+{{with .Form.Errors}}
+<div class="alert" role="alert">
+	<ul>{{range .}}<li>{{.}}</li>{{end}}</ul>
+</div>
+{{end}}
+<form class="admin-form" method="post" action="{{.Form.Action}}">
+	{{csrfField}}
+	{{range .Form.Fields}}
+	<div class="field{{if .Error}} invalid{{end}}">
+		{{if eq .Type "checkbox"}}
+		{{if not .ReadOnly}}<input type="hidden" name="{{.Key}}" value="false">{{end}}
+		<label class="check">
+			<input type="checkbox" id="{{.ID}}" name="{{.Key}}" value="true"{{if .Checked}} checked{{end}}{{if .ReadOnly}} disabled{{end}}
+				{{if .Error}}aria-invalid="true" aria-describedby="{{.ID}}-error"{{end}}>
+			{{.Label}}
+		</label>
+		{{else}}
+		<label for="{{.ID}}">{{.Label}}{{if .Required}} <span class="req" aria-hidden="true">*</span>{{end}}</label>
+		{{if eq .Type "textarea"}}
+		<textarea id="{{.ID}}" name="{{.Key}}" rows="6"{{if .Required}} required{{end}}{{with .MaxLength}} maxlength="{{.}}"{{end}}{{if .ReadOnly}} disabled{{end}}
+			{{if .Error}}aria-invalid="true" aria-describedby="{{.ID}}-error"{{end}}>{{.Value}}</textarea>
+		{{else if eq .Type "select"}}
+		<select id="{{.ID}}" name="{{.Key}}"{{if .Required}} required{{end}}{{if .ReadOnly}} disabled{{end}}
+			{{if .Error}}aria-invalid="true" aria-describedby="{{.ID}}-error"{{end}}>
+			{{if not .Required}}<option value=""></option>{{end}}
+			{{$v := .Value}}{{range .Options}}<option value="{{.}}"{{if eq . $v}} selected{{end}}>{{.}}</option>{{end}}
+		</select>
+		{{else}}
+		<input id="{{.ID}}" type="{{.Type}}" name="{{.Key}}" value="{{.Value}}"{{if .Required}} required{{end}}
+			{{with .MaxLength}}maxlength="{{.}}"{{end}} {{with .Min}}min="{{.}}"{{end}} {{with .Max}}max="{{.}}"{{end}}
+			{{if eq .Type "password"}}autocomplete="new-password"{{end}}{{if .ReadOnly}} disabled{{end}}
+			{{if .Error}}aria-invalid="true" aria-describedby="{{.ID}}-error"{{end}}>
+		{{end}}
+		{{end}}
+		{{if .Error}}<p class="error" id="{{.ID}}-error">{{.Error}}</p>{{end}}
+	</div>
+	{{end}}
+	<div class="form-actions">
+		<button type="submit">{{.Form.Submit}}</button>
+		<a href="{{.Form.Cancel}}">Cancel</a>
+	</div>
+</form>
+{{end}}

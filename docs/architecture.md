@@ -31,6 +31,7 @@ vukem/                            module github.com/AlexGalhardo/vukem
 ├── database/                     connection management, SQLite defaults, transactions
 ├── auth/                         guards, user provider, hashers, tokens        (ALPHA)
 ├── authz/                        gates, Policy[T]                               (ALPHA)
+├── admin/                        admin panel from ORM models + z schemas, audit log (BETA)
 ├── social/                       OAuth2/OIDC social login (Ally-style)           (ALPHA)
 ├── mail/ cache/ storage/ event/                                                 (ALPHA)
 ├── openapi/ apidocs/             OpenAPI 3.1 generator, TS/Zod codegen, Scalar API reference

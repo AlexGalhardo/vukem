@@ -1,0 +1,16 @@
+{{define "content"}}
+<div class="toolbar">
+	<h1>{{.Title}}</h1>
+	<div class="buttons">
+		{{with .Record.EditURL}}<a class="button" href="{{.}}">Edit</a>{{end}}
+		{{with .Record.DelURL}}<a class="button danger" href="{{.}}">Delete</a>{{end}}
+	</div>
+</div>
+<dl class="record">
+	{{range .Record.Fields}}
+	<dt>{{.Label}}</dt>
+	<dd>{{if .Value}}{{.Value}}{{else}}<span class="muted">—</span>{{end}}</dd>
+	{{end}}
+</dl>
+<p><a href="{{.Resource.URL}}">Back to {{.Resource.Plural}}</a></p>
+{{end}}

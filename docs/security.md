@@ -34,6 +34,8 @@ What Vukem does **by default** to protect applications, mapped to the [OWASP Top
 | WebSocket upgrades (`drivers/websocket`) are same-origin only: a browser `Origin` outside the request host and the explicit `AllowedOrigins` allowlist gets 403 before the handler runs; `AllowedOrigins("*")` or a malformed pattern refuses every upgrade; accepting any origin needs `InsecureSkipOriginCheck()` (`TestSecurity_A01_WebSocketOriginChecked`) | B |
 | Broadcast channels (`broadcast`, SSE and `drivers/websocket` transports) fail closed: private and presence channels need a matching rule and a user, public channels must be declared, a rule error or gate denial (including 404) answers 403, and an SSE request with one refused channel streams nothing; channel names are limited to 128 characters of `A-Z a-z 0-9 _ - = @ . :` (400 otherwise), so lists, topics and frames cannot be forged (`TestSecurity_A01_BroadcastPrivateChannelsAuthorized`, in both modules) | B |
 | GraphQL subscriptions (`contrib/graphql`) authorize like the rest of the app: `graphql.ServeWS` runs on the same-origin `drivers/websocket` upgrade, `connection_init` goes through the `OnConnect` hook (an error closes with 4403) and no operation runs before `connection_ack` (4401); `FromBroadcast` subscribes with `broadcast.Server.Subscribe` in the operation's context, so a channel denied by its rule, or a client without a user, fails the subscription with `FORBIDDEN` and receives no events (`TestSecurity_A01_GraphQLSubscriptionsAuthorized`) | B |
+| Admin panel (`admin`): every route requires the guard, the panel ability (`admin`) and the policy ability for the action (`viewAny`, `view`, `create`, `update`, `delete`); a missing ability, policy or authorizer is a 403, and guests are sent to login (`TestSecurity_A01_AdminRequiresAuthAndPolicy`, `TestSecurity_A01_AdminRequiresAbility`); its forms are CSRF-checked with the session-token fallback (`TestSecurity_A01_AdminCSRF`) | B |
+| Admin forms write only `z` schema keys: the primary key, timestamps, hidden, read-only and unknown fields are never assigned; a schema key for the primary key or timestamps is a boot error (`TestSecurity_A01_AdminMassAssignment`) | B |
 
 **App responsibility:** call `Authorize` in every handler that touches owned data; scope queries by tenant/user.
 
@@ -55,6 +57,7 @@ What Vukem does **by default** to protect applications, mapped to the [OWASP Top
 | `install:billing`: `POST /stripe/webhook` runs outside sessions and CSRF but only with a verified `Stripe-Signature`, each event once, and answers 503 without a signing secret; access comes from webhooks (Checkout `payment_status` gated), never the success page; `Subscribed`/`OnPlan` deny on a missing user or a database error; missing Stripe settings stop production at boot; the API base URL can only be overridden in tests (`TestSecurity_A08_BillingWebhookOutsideCSRFButSigned`) | B |
 | The Vite `hot` file is ignored in production (`TestSecurity_A02_ViteHotFileIgnoredInProduction`) and must hold an `http(s)` URL (`TestSecurity_A05_ViteRejectsUnsafeHotURL`) | B |
 | Debug error page only in development; production errors never include stack traces, SQL or config (`TestSecurity_A02_DebugPageOffInProduction`); the debug page redacts credentials and escapes error text and source (`TestSecurity_A09_DebugPageRedactsSecrets`) | P / B |
+| Admin pages run under a strict CSP: embedded htmx and CSS, no inline scripts, styles or handlers, `Cache-Control: no-store`, and a strict policy when the app sent none (`TestSecurity_A02_AdminStrictHeaders`) | B |
 | `vukem about` prints effective security settings (secrets redacted) to review deployments | P |
 | Devtools (`vukem.WithDevtools()`, `DEVTOOLS=true`) is a boot error with `APP_ENV=production` (`TestSecurity_A02_DevtoolsRefusedInProduction`) | B |
 | No default credentials, no sample admin user, `.env` git-ignored, `.env.example` without secrets | P |
@@ -105,6 +108,7 @@ What Vukem does **by default** to protect applications, mapped to the [OWASP Top
 | Query builder always uses bound parameters; identifiers (columns, tables) validated against model metadata, never interpolated from input | P |
 | `WhereRaw`/`Raw` require placeholders; lint rule and docs flag string concatenation into raw SQL | P |
 | API query conventions (`filter`, `sort`, `include`, `fields`) are **allowlists**; unknown values → 400 | A |
+| Admin list `sort`, `filter[...]` and search only reach SQL for allowlisted columns (unknown ones are ignored) and values are bound parameters (`TestSecurity_A05_AdminSortAndSearchAllowlisted`) | B |
 | `html/template` contextual auto-escaping for HTML, attributes, JS and URLs; `template.HTML` usage flagged in review | P |
 | JSON responses via `encoding/json` (escapes `<`, `>`, `&`); Inertia page data escapes `/` inside `<script>` | P / B |
 | Mail headers built with `net/mail` (no header injection); file names sanitised | A |
@@ -167,6 +171,7 @@ What Vukem does **by default** to protect applications, mapped to the [OWASP Top
 | Secrets, passwords, tokens and `Authorization`/`Cookie` headers redacted from logs | P |
 | `drivers/s3` keeps the secret key and session token in `config.Secret`; formatting a config or disk and S3 errors never include them or a request signature (`TestSecurity_A09_S3NeverLeaksCredentials`) | B |
 | Log injection prevented: `slog` attribute encoding (no raw string concatenation) | P |
+| The admin audit log (`admin_audit_logs`: actor, resource, record, action, before/after of changed columns) never stores sensitive columns (`json:"-"`, secret-like names, `Sensitive(...)`): they are recorded as redacted, without values, and never shown or echoed into forms (`TestSecurity_A09_AdminAuditOmitsSensitive`) | B |
 | `events.Listen[security.Event]` hook to forward security events to alerting (email, Slack, SIEM) | A |
 | OpenTelemetry tracing module correlates logs and traces | B |
 | Trace spans (`drivers/otel`) record the route pattern, never the raw path or query string (`TestSecurity_A09_OTelSpansOmitPathAndQuery`) | B |

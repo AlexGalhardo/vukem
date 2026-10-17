@@ -1,0 +1,40 @@
+{{define "content"}}
+<h1>Audit log</h1>
+{{block "list" .}}
+<div id="admin-list">
+	<table>
+		<thead>
+			<tr>
+				<th scope="col">When (UTC)</th>
+				<th scope="col">Actor</th>
+				<th scope="col">Action</th>
+				<th scope="col">Resource</th>
+				<th scope="col">Record</th>
+				<th scope="col">Changes</th>
+			</tr>
+		</thead>
+		<tbody>
+			{{range .Audit.Entries}}
+			<tr>
+				<td>{{.When}}</td>
+				<td>{{.Actor}}</td>
+				<td><span class="tag tag-{{.Action}}">{{.Action}}</span></td>
+				<td>{{.Resource}}</td>
+				<td>{{.RecordID}}</td>
+				<td>
+					<ul class="changes">
+						{{range .Changes}}
+						<li><code>{{.Column}}</code>: {{if .Redacted}}<span class="muted">changed (redacted)</span>{{else}}{{.Before}} → {{.After}}{{end}}</li>
+						{{end}}
+					</ul>
+				</td>
+			</tr>
+			{{else}}
+			<tr><td class="empty" colspan="6">No changes recorded yet.</td></tr>
+			{{end}}
+		</tbody>
+	</table>
+	{{template "partials/pager" .Audit.Pager}}
+</div>
+{{end}}
+{{end}}

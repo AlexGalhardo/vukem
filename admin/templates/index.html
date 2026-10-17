@@ -1,0 +1,66 @@
+{{define "content"}}
+<div class="toolbar">
+	<h1>{{.Resource.Plural}}</h1>
+	{{with .Resource.CreateURL}}<a class="button" href="{{.}}">New {{$.Resource.Singular}}</a>{{end}}
+</div>
+
+{{if or .List.Searchable .List.Filters}}
+<form class="filters" method="get" action="{{.Resource.URL}}" role="search"
+	hx-get="{{.Resource.URL}}" hx-target="#admin-list" hx-swap="outerHTML" hx-push-url="true">
+	{{if .List.Searchable}}
+	<input type="search" name="q" value="{{.List.Search}}" placeholder="Search {{.Resource.Plural}}"
+		aria-label="Search {{.Resource.Plural}}"
+		hx-get="{{.Resource.URL}}" hx-include="closest form" hx-trigger="input changed delay:300ms, search"
+		hx-target="#admin-list" hx-swap="outerHTML" hx-push-url="true">
+	{{end}}
+	{{range .List.Filters}}
+	<label>{{.Label}}
+		{{if .Options}}
+		<select name="{{.Param}}">
+			<option value="">All</option>
+			{{range .Options}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}
+		</select>
+		{{else}}
+		<input name="{{.Param}}" value="{{.Value}}">
+		{{end}}
+	</label>
+	{{end}}
+	{{with .List.Sort}}<input type="hidden" name="sort" value="{{.}}"><input type="hidden" name="dir" value="{{$.List.Dir}}">{{end}}
+	<button type="submit">Apply</button>
+</form>
+{{end}}
+
+{{block "list" .}}
+<div id="admin-list">
+	<p class="total">{{.List.Total}} {{if eq .List.Total 1}}record{{else}}records{{end}}</p>
+	<table>
+		<thead>
+			<tr>
+				{{range .List.Columns}}
+				<th scope="col"{{with .Sorted}} aria-sort="{{if eq . "asc"}}ascending{{else}}descending{{end}}"{{end}}>
+					{{if .SortURL}}<a href="{{.SortURL}}" hx-get="{{.SortURL}}" hx-target="#admin-list" hx-swap="outerHTML"
+						hx-push-url="true">{{.Label}}{{if eq .Sorted "asc"}} ▲{{else if eq .Sorted "desc"}} ▼{{end}}</a>{{else}}{{.Label}}{{end}}
+				</th>
+				{{end}}
+				<th scope="col"><span class="visually-hidden">Actions</span></th>
+			</tr>
+		</thead>
+		<tbody>
+			{{range .List.Rows}}
+			<tr>
+				{{range .Cells}}<td>{{.}}</td>{{end}}
+				<td class="actions">
+					{{with .ShowURL}}<a href="{{.}}">View</a>{{end}}
+					{{with .EditURL}}<a href="{{.}}">Edit</a>{{end}}
+					{{with .DelURL}}<a class="danger" href="{{.}}">Delete</a>{{end}}
+				</td>
+			</tr>
+			{{else}}
+			<tr><td class="empty" colspan="{{.List.ColSpan}}">Nothing found.</td></tr>
+			{{end}}
+		</tbody>
+	</table>
+	{{template "partials/pager" .List.Pager}}
+</div>
+{{end}}
+{{end}}

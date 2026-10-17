@@ -1,0 +1,11 @@
+{{define "content"}}
+<h1>{{.Title}}</h1>
+<div class="confirm">
+	<p>Delete {{.Resource.Singular}} <strong>{{.Record.ID}}</strong>? This cannot be undone.</p>
+	<form method="post" action="{{.Record.DeleteAction}}">
+		{{csrfField}}
+		<button type="submit" class="danger">Delete {{.Resource.Singular}}</button>
+		<a href="{{.Record.Cancel}}">Cancel</a>
+	</form>
+</div>
+{{end}}
