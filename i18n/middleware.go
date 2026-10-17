@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/AlexGalhardo/vukem/errs"
 	"github.com/AlexGalhardo/vukem/web"
 	"github.com/AlexGalhardo/vukem/z"
 )
@@ -88,7 +89,8 @@ func orDefault(v, def string) string {
 // quality, matched with Bundle.Match) and the default locale. Values that
 // are not well-formed locales of an available catalog are ignored. It
 // stores the Bundle and locale in the request context (T, Locale, the view
-// "t" function), localizes validation messages of web.Parse/Bind, sets
+// "t" function), localizes validation messages of web.Parse/Bind and the
+// keyed errors of the framework (errs.WithTranslator, Bundle.Translator), sets
 // Content-Language and adds "Vary: Accept-Language" when the header was
 // consulted.
 func Middleware(b *Bundle, cfg MiddlewareConfig) func(http.Handler) http.Handler {
@@ -106,6 +108,7 @@ func Middleware(b *Bundle, cfg MiddlewareConfig) func(http.Handler) http.Handler
 
 			ctx := WithLocale(WithBundle(r.Context(), b), locale)
 			ctx = web.WithIssueLocalizer(ctx, func(is z.Issues) z.Issues { return b.LocalizeIssues(locale, is) })
+			ctx = errs.WithTranslator(ctx, b.Translator(locale))
 
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})

@@ -279,8 +279,10 @@ func WithVite(fsys fs.FS) Option {
 
 // WithTranslations loads the JSON catalogs at the root of fsys
 // (os.DirFS("resources/lang") or an embed.FS) into App.I18n, with
-// APP_LOCALE (default "en") as the fallback locale. Views get the "t" and
-// "locale" functions, and DefaultMiddleware installs i18n.Middleware.
+// APP_LOCALE (default "en") as the fallback locale, plus the framework's
+// built-in messages for keys the catalogs do not define
+// (i18n.Bundle.AddBuiltin). Views get the "t" and "locale" functions, and
+// DefaultMiddleware installs i18n.Middleware.
 func WithTranslations(fsys fs.FS) Option {
 	return func(o *options) error { o.lang = fsys; return nil }
 }
@@ -597,6 +599,10 @@ func New(opts ...Option) (*App, error) {
 
 	if o.lang != nil {
 		if app.I18n, err = i18n.Load(o.lang, i18n.Options{Default: app.Source.Get("APP_LOCALE")}); err != nil {
+			return nil, err
+		}
+
+		if err := app.I18n.AddBuiltin(); err != nil {
 			return nil, err
 		}
 	}
