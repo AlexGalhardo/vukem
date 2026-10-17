@@ -144,7 +144,7 @@ if err != nil {
 page, err := req.Paginate(c.Context()) // or req.Query.CursorPaginate(ctx, req.Cursor, req.PerPage, orm.Asc)
 ```
 
-Unknown filter/sort/field/include → `400` problem+json listing the allowed values (`TestSecurity_A05_QueryConventionsRejectUnknownColumns`). Filter values are always bound parameters; `true`/`false` become booleans.
+Unknown filter/sort/field/include → `400` problem+json listing the allowed values (`TestSecurity_A05_QueryConventionsRejectUnknownColumns`). Filter values are always bound parameters; `true`/`false` become booleans. `?page` above `api.MaxPage(n)` (default 1000) and a filter with more values than `api.MaxFilterValues(n)` (default 100) are 400 too, so a request cannot make the database skip millions of rows or bind thousands of parameters; use `?cursor` for deep lists (`TestSecurity_A04_QueryBoundsPageAndFilterLists`).
 
 ## Errors
 

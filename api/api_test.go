@@ -297,3 +297,53 @@ func TestDeprecate(t *testing.T) {
 		t.Fatal("optional headers set")
 	}
 }
+
+func TestSecurity_A04_QueryBoundsPageAndFilterLists(t *testing.T) {
+	t.Parallel()
+
+	db := setup(t)
+	long := strings.TrimSuffix(strings.Repeat("x,", 101), ",")
+
+	tests := []struct {
+		target string
+		code   int
+		detail string
+	}{
+		{"/p?page=1000", 200, ""},
+		{"/p?page=1001", 400, "page"},
+		{"/p?page=99999999999", 400, "page"},
+		{"/p?filter[category]=" + long, 400, "filter[category]"},
+		{"/p?filter[category]=" + strings.TrimSuffix(strings.Repeat("x,", 100), ","), 200, ""},
+	}
+
+	for _, tt := range tests {
+		rec, body := call(t, tt.target, listHandler(db))
+		if rec.Code != tt.code {
+			t.Errorf("%.60s = %d %v, want %d", tt.target, rec.Code, body, tt.code)
+			continue
+		}
+
+		if tt.detail != "" && !strings.Contains(body["detail"].(string), tt.detail) {
+			t.Errorf("%.60s detail = %q, want it to name %q", tt.target, body["detail"], tt.detail)
+		}
+	}
+
+	custom := func(c *web.Ctx) error {
+		_, err := Query(c, orm.QueryOf[Product](db), Filters("category"), MaxPage(5), MaxFilterValues(2))
+		return err
+	}
+
+	for target, want := range map[string]int{
+		"/p?page=5": 200, "/p?page=6": 400, "/p?filter[category]=a,b": 200, "/p?filter[category]=a,b,c": 400,
+	} {
+		if rec, body := call(t, target, func(c *web.Ctx) error {
+			if err := custom(c); err != nil {
+				return err
+			}
+
+			return c.JSON(200, map[string]any{})
+		}); rec.Code != want {
+			t.Errorf("custom limits %s = %d %v, want %d", target, rec.Code, body, want)
+		}
+	}
+}
