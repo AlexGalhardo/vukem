@@ -183,7 +183,7 @@ func TestMiddleware_InstallsErrorTranslator(t *testing.T) {
 
 	var got string
 
-	h := Middleware(b, MiddlewareConfig{})(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+	h := mustMiddleware(t, b, MiddlewareConfig{})(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		got = errs.Translate(r.Context(), "auth.token_ability", "fallback", map[string]any{"ability": "posts:delete"})
 	}))
 

@@ -64,8 +64,13 @@ Shared props: `inertia.Config.Shared` for global ones, `inertia.Share(c.Context(
 `inertia.I18n` sends the [i18n](/docs/digging-deeper/localization) catalog to your components, so Vue and React use the same JSON files as the server:
 
 ```go
+locale, err := i18n.Middleware(bundle, i18n.MiddlewareConfig{}) // resolves the locale (cookie, ?lang=, Accept-Language)
+if err != nil {
+	return err
+}
+
 r.Use(
-	i18n.Middleware(bundle, i18n.MiddlewareConfig{}), // resolves the locale (cookie, ?lang=, Accept-Language)
+	locale,
 	in.Middleware,
 	inertia.I18n("ui.", "nav."), // only keys under ui.* and nav.* reach the browser
 )

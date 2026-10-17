@@ -29,12 +29,23 @@ type result struct {
 	Vary     []string
 }
 
+func mustMiddleware(t *testing.T, b *Bundle, cfg MiddlewareConfig) func(http.Handler) http.Handler {
+	t.Helper()
+
+	mw, err := Middleware(b, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return mw
+}
+
 func serve(t *testing.T, b *Bundle, cfg MiddlewareConfig, r *http.Request) result {
 	t.Helper()
 
 	var got result
 
-	h := Middleware(b, cfg)(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+	h := mustMiddleware(t, b, cfg)(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		got.Locale = Locale(r.Context())
 		got.Hello = T(r.Context(), "welcome", "name", "Ana")
 	}))
@@ -197,17 +208,10 @@ func TestMiddlewareConfig_Validate(t *testing.T) {
 				t.Errorf("Validate() = %v, want error %t", err, tt.wantErr)
 			}
 
-			if _, err := NewMiddleware(b, tt.cfg); (err != nil) != tt.wantErr {
-				t.Errorf("NewMiddleware() = %v, want error %t", err, tt.wantErr)
+			mw, err := Middleware(b, tt.cfg)
+			if (err != nil) != tt.wantErr || (mw == nil) != tt.wantErr {
+				t.Errorf("Middleware() = (nil %t, %v), want error %t", mw == nil, err, tt.wantErr)
 			}
-
-			defer func() {
-				if p := recover(); (p != nil) != tt.wantErr {
-					t.Errorf("Middleware() panic = %v, want panic %t", p, tt.wantErr)
-				}
-			}()
-
-			Middleware(b, tt.cfg)
 		})
 	}
 }
@@ -240,7 +244,7 @@ func TestMiddleware_LocalizesValidation(t *testing.T) {
 
 	var fields map[string][]string
 
-	h := Middleware(b, MiddlewareConfig{})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	h := mustMiddleware(t, b, MiddlewareConfig{})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		web.NewCtx(w, r, &web.Services{}).Serve(func(c *web.Ctx) error {
 			_, err := web.ParseQuery(c, schema)
 			if ve, ok := errors.AsType[*errs.ValidationError](err); ok {
