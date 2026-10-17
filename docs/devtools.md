@@ -38,7 +38,7 @@ Pages are server-rendered `html/template` with one nonce'd `<style>` and no scri
 | --- | --- |
 | Requests | `Devtools.Middleware()` is the outermost server middleware (timings cover the whole stack); `RouteMiddleware()` captures the matched pattern; the route name comes from `Router.Routes()` |
 | SQL | `database.QueryObserver`, set with `database.WithQueryObserver` by `App.DB()`; transactions inherit it. Other observers (`vukem.WithQueryObservers`, `db.AddQueryObserver`) run next to it; only `db.SetQueryObserver` replaces it. Statements run on `DB.SQL()` directly (sqlc) bypass it |
-| Jobs | `queue.Observer` (`Queue.SetObserver`): dispatched, processed, failed |
+| Jobs | `queue.Observer` (added with `Queue.AddObserver` by `App.Queue()`, next to `app.Instrument` hooks): dispatched, processed, failed |
 | Events | `events.Observer` (`Bus.SetObserver`) |
 | Mail | `Devtools.MailTransport` wraps the transport chosen by `MAIL_MAILER` |
 | Logs | `Devtools.LogHandler()` is teed next to the app handler with `slog.NewMultiHandler` |

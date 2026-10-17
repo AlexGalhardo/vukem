@@ -220,3 +220,42 @@ func TestInstrumentQueriesWithDevtoolsAndQueryObservers(t *testing.T) {
 		t.Errorf("len(Devtools.Queries()) = %d, want 1", got)
 	}
 }
+
+type panicJobHook struct{}
+
+func (panicJobHook) ObserveJob(context.Context, queue.JobEvent) { panic("observer bug") }
+
+// A panicking job hook neither fails the dispatch nor starves the hooks
+// after it, and devtools still sees each step once.
+func TestInstrumentJobsPanicIsContained(t *testing.T) {
+	t.Parallel()
+
+	app := newTestApp(t,
+		WithSource(testSource(map[string]string{"APP_ENV": "development", "DEVTOOLS": "true"})),
+		WithJobs(queue.Handle(func(context.Context, pingJob) error { return nil })),
+	)
+
+	hook := &hookLog{name: "b"}
+	for _, obs := range []queue.Observer{panicJobHook{}, hook} {
+		if err := app.Instrument(Instrumentation{Jobs: obs}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	q, err := app.Queue()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := q.Dispatch(t.Context(), pingJob{N: 1}); err != nil {
+		t.Fatalf("Dispatch() = %v", err)
+	}
+
+	if diff := cmp.Diff([]string{"b job ping dispatched", "b job ping processed"}, hook.log); diff != "" {
+		t.Errorf("hook after the panicking one (-want +got):\n%s", diff)
+	}
+
+	if got := len(app.Devtools.Jobs()); got != 2 {
+		t.Errorf("len(Devtools.Jobs()) = %d, want 2", got)
+	}
+}

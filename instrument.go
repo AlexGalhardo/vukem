@@ -1,7 +1,6 @@
 package vukem
 
 import (
-	"context"
 	"errors"
 	"sync"
 
@@ -90,9 +89,11 @@ func (a *App) queryObservers() []database.QueryObserver {
 	return append(obs, a.inst.queries...)
 }
 
-// jobObserver freezes the job hooks and returns them with devtools (nil
-// when there is none).
-func (a *App) jobObserver() queue.Observer {
+// jobObservers freezes the job hooks and returns every observer of
+// Queue(): devtools, then Instrument's. Queue() adds each with
+// queue.AddObserver, which skips typed nils and contains a panicking
+// observer without starving the others.
+func (a *App) jobObservers() []queue.Observer {
 	a.inst.mu.Lock()
 	defer a.inst.mu.Unlock()
 
@@ -103,16 +104,7 @@ func (a *App) jobObserver() queue.Observer {
 		obs = append(obs, a.Devtools)
 	}
 
-	obs = append(obs, a.inst.jobs...)
-
-	switch len(obs) {
-	case 0:
-		return nil
-	case 1:
-		return obs[0]
-	default:
-		return jobObservers(obs)
-	}
+	return append(obs, a.inst.jobs...)
 }
 
 // wrapMail freezes the mail hooks and applies them to t.
@@ -127,12 +119,4 @@ func (a *App) wrapMail(t mail.Transport) mail.Transport {
 	}
 
 	return t
-}
-
-type jobObservers []queue.Observer
-
-func (o jobObservers) ObserveJob(ctx context.Context, e queue.JobEvent) {
-	for _, obs := range o {
-		obs.ObserveJob(ctx, e)
-	}
 }

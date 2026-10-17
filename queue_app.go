@@ -137,8 +137,8 @@ func (a *App) Queue() (*queue.Queue, error) {
 		q := queue.New(d, a.Log)
 		q.SetClock(a.now)
 
-		if obs := a.jobObserver(); obs != nil {
-			q.SetObserver(obs)
+		for _, obs := range a.jobObservers() {
+			q.AddObserver(obs)
 		}
 
 		regs, err := a.jobRegistrations()
