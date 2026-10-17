@@ -1,11 +1,14 @@
 package vukem
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
+	"slices"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -300,11 +303,42 @@ func WithAppSeeders(seeders ...AppSeeder) Option {
 	return func(o *options) error { o.seeders = append(o.seeders, seeders...); return nil }
 }
 
-// Seed runs every registered seeder in order; the first error stops it.
-// db:seed boots the app first, so seeders see services providers open in
-// Boot; call Boot before Seed when calling it directly.
+// FlagSeeder is a Seeder or AppSeeder that takes command-line flags from
+// db:seed. SeedFlags defines them on fs before each run; bind them to
+// fields of a pointer receiver:
+//
+//	func (s *DemoCatalog) SeedFlags(fs *flag.FlagSet) {
+//		fs.BoolVar(&s.fresh, "fresh", false, "delete the demo catalog first")
+//	}
+//
+//	vukem db:seed DemoCatalog --fresh
+//
+// The flags of every seeder that runs are accepted; seeders defining the
+// same flag all receive its value. "force" and "class" belong to db:seed
+// and cannot be redefined. App.Seed applies the defaults.
+type FlagSeeder interface {
+	SeedFlags(fs *flag.FlagSet)
+}
+
+// Seed runs every registered seeder in order, with their flag defaults;
+// the first error stops it. db:seed boots the app first, so seeders see
+// services providers open in Boot; call Boot before Seed when calling it
+// directly.
 func (a *App) Seed(ctx context.Context) error {
-	for _, s := range a.seeders {
+	fs, err := seedFlagSet(a.seeders, new(bool), io.Discard)
+	if err != nil {
+		return err
+	}
+
+	if err := fs.Parse(nil); err != nil {
+		return err
+	}
+
+	return a.runSeeders(ctx, a.seeders)
+}
+
+func (a *App) runSeeders(ctx context.Context, seeders []AppSeeder) error {
+	for _, s := range seeders {
 		if err := s.SeedApp(ctx, a); err != nil {
 			return fmt.Errorf("seed %s: %w", seederName(s), err)
 		}
@@ -315,13 +349,19 @@ func (a *App) Seed(ctx context.Context) error {
 	return nil
 }
 
+// seederValue is the seeder as registered (the Seeder inside a dbSeeder).
+func seederValue(s AppSeeder) any {
+	if d, ok := s.(dbSeeder); ok {
+		return d.s
+	}
+
+	return s
+}
+
 // seederName is the seeder's Name() when it has one (Seeder or
 // AppSeeder), else its type name.
 func seederName(s AppSeeder) string {
-	var v any = s
-	if d, ok := s.(dbSeeder); ok {
-		v = d.s
-	}
+	v := seederValue(s)
 
 	if n, ok := v.(interface{ Name() string }); ok {
 		return n.Name()
@@ -332,27 +372,265 @@ func seederName(s AppSeeder) string {
 	return name[strings.LastIndex(name, ".")+1:]
 }
 
+// seedCommand is db:seed [Name...] [--class Name] [--force] [seeder flags].
+// It parses its own arguments: the seeder flags are known only once the
+// names have picked the seeders that run.
+type seedCommand struct{}
+
+func (seedCommand) Name() string { return "db:seed" }
+
+func (seedCommand) Description() string {
+	return "Run the database seeders (db:seed [Name...] [--class Name] [--force] [seeder flags])"
+}
+
+func (seedCommand) Flags(*flag.FlagSet) {}
+
+func (seedCommand) rawArgs() {}
+
+func (seedCommand) Run(ctx context.Context, app *App, args []string) error {
+	names, flagArgs := splitSeedArgs(args)
+
+	run, err := selectSeeders(app.seeders, names)
+	if err != nil {
+		return seedUsage(app, err)
+	}
+
+	force := new(bool)
+
+	fs, err := seedFlagSet(run, force, app.stdout)
+	if err != nil {
+		return err
+	}
+
+	if err := fs.Parse(flagArgs); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+
+		return fmt.Errorf("db:seed: %w: %w", err, errUsage) // flag printed the message
+	}
+
+	if fs.NArg() > 0 {
+		return seedUsage(
+			app,
+			fmt.Errorf("db:seed: unexpected argument %q (seeder names go before the flags)", fs.Arg(0)),
+		)
+	}
+
+	if app.Config.IsProduction() && !*force {
+		return errForceRequired
+	}
+
+	if len(app.seeders) == 0 {
+		fmt.Fprintln(app.stdout, "No seeders registered (vukem make:seeder).")
+		return nil
+	}
+
+	return app.runSeeders(ctx, run)
+}
+
+// seedUsage prints err (Main prints nothing for a usage error) and marks it
+// as one.
+func seedUsage(app *App, err error) error {
+	fmt.Fprintln(app.stdout, err)
+	return fmt.Errorf("%w: %w", err, errUsage)
+}
+
+// splitSeedArgs returns the seeder names and the flag arguments. Names come
+// first, mixed with db:seed's own --force and --class; the first other flag
+// starts the seeder flags. Every --class value is a name.
+func splitSeedArgs(args []string) (names, flagArgs []string) {
+	inFlags := false
+
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		name, value, hasValue := strings.Cut(strings.TrimLeft(a, "-"), "=")
+		isFlag := strings.HasPrefix(a, "-") && a != "-"
+
+		switch {
+		case a == "--":
+			return names, append(flagArgs, args[i:]...)
+		case isFlag && name == "class":
+			if hasValue {
+				names = append(names, value)
+			} else if i+1 < len(args) {
+				names = append(names, args[i+1])
+				i++
+			}
+		case !isFlag && !inFlags:
+			names = append(names, a)
+		case isFlag && name != "force":
+			inFlags = true
+
+			flagArgs = append(flagArgs, a)
+		default:
+			flagArgs = append(flagArgs, a)
+		}
+	}
+
+	return names, flagArgs
+}
+
+// selectSeeders returns every seeder when names is empty, else the named
+// ones in argument order, once each. A name matches a seeder's name
+// case-insensitively, also without its "Seeder" suffix.
+func selectSeeders(all []AppSeeder, names []string) ([]AppSeeder, error) {
+	if len(names) == 0 {
+		return all, nil
+	}
+
+	var out []AppSeeder
+
+	for _, q := range names {
+		var exact, suffixed []AppSeeder
+
+		for _, s := range all {
+			switch n := seederName(s); {
+			case strings.EqualFold(n, q):
+				exact = append(exact, s)
+			case strings.EqualFold(n, q+"Seeder"):
+				suffixed = append(suffixed, s)
+			}
+		}
+
+		found := exact
+		if len(found) == 0 {
+			found = suffixed
+		}
+
+		switch len(found) {
+		case 0:
+			return nil, fmt.Errorf("db:seed: unknown seeder %q (registered: %s)", q, seederNames(all))
+		case 1:
+			if !slices.Contains(out, found[0]) {
+				out = append(out, found[0])
+			}
+		default:
+			return nil, fmt.Errorf("db:seed: seeder name %q is ambiguous (registered: %s)", q, seederNames(all))
+		}
+	}
+
+	return out, nil
+}
+
+func seederNames(all []AppSeeder) string {
+	if len(all) == 0 {
+		return "none"
+	}
+
+	names := make([]string, len(all))
+	for i, s := range all {
+		names[i] = seederName(s)
+	}
+
+	return strings.Join(names, ", ")
+}
+
+// seedFlagSet defines db:seed's own flags and those of every FlagSeeder in
+// seeders on one set. A flag several seeders define is set on all of them;
+// redefining force or class is an error, so no seeder can take over the
+// production guard.
+func seedFlagSet(seeders []AppSeeder, force *bool, out io.Writer) (*flag.FlagSet, error) {
+	fs := flag.NewFlagSet("db:seed", flag.ContinueOnError)
+	fs.SetOutput(out)
+	fs.BoolVar(force, "force", false, "allow in production")
+	fs.Var(ignoredFlag{}, "class", "run only this seeder (repeatable; same as a name before the flags)")
+
+	defined := map[string][]*flag.Flag{}
+
+	var order []string
+
+	for _, s := range seeders {
+		fsr, ok := seederValue(s).(FlagSeeder)
+		if !ok {
+			continue
+		}
+
+		sub := flag.NewFlagSet(seederName(s), flag.ContinueOnError)
+		fsr.SeedFlags(sub)
+
+		var err error
+
+		sub.VisitAll(func(f *flag.Flag) {
+			if fs.Lookup(f.Name) != nil {
+				err = cmp.Or(err, fmt.Errorf("seeder %s: flag -%s is reserved by db:seed", seederName(s), f.Name))
+				return
+			}
+
+			if defined[f.Name] == nil {
+				order = append(order, f.Name)
+			}
+
+			defined[f.Name] = append(defined[f.Name], f)
+		})
+
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	for _, name := range order {
+		flags := defined[name]
+		values := make(fanout, len(flags))
+		bools := 0
+
+		for i, f := range flags {
+			values[i] = f.Value
+			if b, ok := f.Value.(interface{ IsBoolFlag() bool }); ok && b.IsBoolFlag() {
+				bools++
+			}
+		}
+
+		switch bools {
+		case 0:
+			fs.Var(values, name, flags[0].Usage)
+		case len(flags):
+			fs.Var(boolFanout{values}, name, flags[0].Usage)
+		default:
+			return nil, fmt.Errorf("db:seed: seeders define flag -%s both as a bool and with a value", name)
+		}
+	}
+
+	return fs, nil
+}
+
+// fanout sets one flag value on every seeder that defines the flag.
+type fanout []flag.Value
+
+func (f fanout) String() string {
+	if len(f) == 0 {
+		return ""
+	}
+
+	return f[0].String()
+}
+
+func (f fanout) Set(s string) error {
+	for _, v := range f {
+		if err := v.Set(s); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+type boolFanout struct{ fanout }
+
+func (boolFanout) IsBoolFlag() bool { return true }
+
+// ignoredFlag accepts --class on the flag set; splitSeedArgs already read
+// its values.
+type ignoredFlag struct{}
+
+func (ignoredFlag) String() string   { return "" }
+func (ignoredFlag) Set(string) error { return nil }
+
 func seedCommands() []Command {
-	var seedForce, wipeForce *bool
+	var wipeForce *bool
 
 	return []Command{
-		CommandFunc{
-			CommandName: "db:seed",
-			Desc:        "Run the database seeders",
-			DefineFlags: func(fs *flag.FlagSet) { seedForce = fs.Bool("force", false, "allow in production") },
-			Fn: func(ctx context.Context, app *App, _ []string) error {
-				if app.Config.IsProduction() && !*seedForce {
-					return errForceRequired
-				}
-
-				if len(app.seeders) == 0 {
-					fmt.Fprintln(app.stdout, "No seeders registered (vukem make:seeder).")
-					return nil
-				}
-
-				return app.Seed(ctx)
-			},
-		},
+		seedCommand{},
 		CommandFunc{
 			CommandName: "db:wipe",
 			Desc:        "Drop every table",

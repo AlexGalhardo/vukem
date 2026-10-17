@@ -75,12 +75,58 @@ func (PostsSeeder) Seed(ctx context.Context, db *database.DB) error {
 }
 ```
 
+### Running seeders
+
 ```bash
-vukem db:seed   # runs every seeder in vukem.WithSeeders(seeders.All()...), in order
-vukem db:wipe   # drops every table
+vukem db:seed                              # every seeder in vukem.WithSeeders(seeders.All()...), in order
+vukem db:seed DemoCatalog Users            # only these, in this order
+vukem db:seed --class DemoCatalog          # same as a name; repeatable
+vukem db:seed DemoCatalog --fresh          # flags after the names go to the seeders
+vukem db:seed DemoCatalog --fresh --force  # production
+vukem db:wipe                              # drops every table
 ```
 
-Both commands need `--force` in production. Tests call `app.Seed(ctx)`.
+A name matches the seeder's name (`Name()` or its Go type) case-insensitively, also without the `Seeder` suffix (`posts` runs `PostsSeeder`). An unknown or ambiguous name fails before any seeder runs, and so do unknown flags and stray arguments.
+
+Both commands need `--force` in production. `--force` may come before or after the names; `db:seed` checks it after parsing everything and before the first seeder runs. Tests call `app.Seed(ctx)`, which runs every seeder with its flag defaults.
+
+### Seeder flags
+
+A seeder that takes options implements `vukem.FlagSeeder` and binds its flags to fields of a pointer receiver:
+
+```go title="database/seeders/demo_catalog.go"
+type DemoCatalog struct {
+	fresh bool
+	count int
+}
+
+func (s *DemoCatalog) SeedFlags(fs *flag.FlagSet) {
+	fs.BoolVar(&s.fresh, "fresh", false, "delete the demo catalog first")
+	fs.IntVar(&s.count, "count", 2000, "products to create")
+}
+
+func (s *DemoCatalog) SeedApp(ctx context.Context, app *vukem.App) error {
+	db, err := app.DB()
+	if err != nil {
+		return err
+	}
+
+	if s.fresh {
+		if _, err := db.ExecContext(ctx, "DELETE FROM products WHERE demo = ?", true); err != nil {
+			return err
+		}
+	}
+
+	_, err = factories.Product.Seed(42).Count(s.count).CreateMany(ctx, db)
+	return err
+}
+```
+
+```go title="bootstrap/app.go"
+vukem.WithAppSeeders(&seeders.DemoCatalog{}),
+```
+
+`vukem db:seed DemoCatalog --fresh --count 500` sets both fields; `vukem db:seed DemoCatalog -h` lists the flags. Only the flags of the seeders that run are accepted, and every seeder that defines a flag receives its value (`db:seed --fresh` reaches each seeder with a `--fresh` flag). `--force` and `--class` belong to `db:seed`: a seeder that defines either fails the command, so no seeder can take over the production check.
 
 ### Seeders that need the app
 
