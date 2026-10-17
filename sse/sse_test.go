@@ -4,9 +4,11 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -337,5 +339,287 @@ func TestHubStreamEndsOnClose(t *testing.T) {
 
 	if _, err := io.ReadAll(res.Body); err != nil && !errors.Is(err, io.EOF) {
 		t.Errorf("read after close = %v", err)
+	}
+}
+
+// countingBroker tracks live broker subscriptions; a subscription ends when
+// its context is cancelled, as with drivers/redis.
+type countingBroker struct {
+	mu     sync.Mutex
+	total  int
+	active map[string]int
+	subs   map[string][]chan []byte
+}
+
+func (b *countingBroker) Publish(_ context.Context, channel string, payload []byte) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	for _, ch := range b.subs[channel] {
+		ch <- payload
+	}
+
+	return nil
+}
+
+func (b *countingBroker) Subscribe(ctx context.Context, channels ...string) (<-chan []byte, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if b.active == nil {
+		b.active, b.subs = map[string]int{}, map[string][]chan []byte{}
+	}
+
+	ch := make(chan []byte, 8)
+	for _, c := range channels {
+		b.total++
+		b.active[c]++
+		b.subs[c] = append(b.subs[c], ch)
+	}
+
+	context.AfterFunc(ctx, func() {
+		b.mu.Lock()
+		defer b.mu.Unlock()
+
+		for _, c := range channels {
+			b.active[c]--
+			if b.active[c] == 0 {
+				delete(b.active, c)
+			}
+
+			b.subs[c] = slices.DeleteFunc(b.subs[c], func(x chan []byte) bool { return x == ch })
+		}
+
+		close(ch)
+	})
+
+	return ch, nil
+}
+
+func (b *countingBroker) counts() (total, active int) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	return b.total, len(b.active)
+}
+
+func TestHubReleasesBrokerSubscriptions(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		leave func(cancel context.CancelFunc, stop func())
+	}{
+		{"unsubscribe", func(_ context.CancelFunc, stop func()) { stop() }},
+		{"context cancel", func(cancel context.CancelFunc, _ func()) { cancel() }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			// synctest fails the test if any goroutine is still blocked when
+			// the bubble ends, so it doubles as the goroutine-leak check.
+			synctest.Test(t, func(t *testing.T) {
+				broker := &countingBroker{}
+				hub := sse.NewHub(broker)
+				defer hub.Close()
+
+				const users = 50
+				for i := range users {
+					ctx, cancel := context.WithCancel(t.Context())
+					topic := fmt.Sprintf("user:%d", i)
+					_, stopA := hub.Subscribe(ctx, topic)
+					_, stopB := hub.Subscribe(t.Context(), topic)
+
+					synctest.Wait()
+
+					if _, active := broker.counts(); active != 1 {
+						t.Fatalf("active broker subscriptions with 2 local subscribers = %d, want 1", active)
+					}
+
+					stopB()
+					tt.leave(cancel, stopA)
+					cancel()
+				}
+
+				synctest.Wait()
+
+				total, active := broker.counts()
+				if total != users || active != 0 {
+					t.Errorf("broker subscriptions total, active = %d, %d, want %d, 0", total, active, users)
+				}
+
+				// A topic that emptied out subscribes again on the next subscriber.
+				ch, stop := hub.Subscribe(t.Context(), "user:0")
+				defer stop()
+
+				synctest.Wait()
+
+				if err := hub.Publish(t.Context(), "user:0", sse.Event{Data: "again"}); err != nil {
+					t.Fatal(err)
+				}
+
+				synctest.Wait()
+
+				select {
+				case ev := <-ch:
+					if ev.Data != "again" {
+						t.Errorf("event after resubscribe = %+v", ev)
+					}
+				default:
+					t.Error("event after resubscribe not delivered")
+				}
+			})
+		})
+	}
+}
+
+// gatedBroker blocks Subscribe until gate closes (or ctx ends) and fails
+// the first fail calls; delivery goes through an embedded countingBroker.
+type gatedBroker struct {
+	countingBroker
+
+	gate  chan struct{}
+	mu2   sync.Mutex
+	fail  int
+	calls int
+}
+
+func (b *gatedBroker) Subscribe(ctx context.Context, channels ...string) (<-chan []byte, error) {
+	b.mu2.Lock()
+	b.calls++
+	failing := b.calls <= b.fail
+	b.mu2.Unlock()
+
+	if b.gate != nil {
+		select {
+		case <-b.gate:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+
+	if failing {
+		return nil, errors.New("broker down")
+	}
+
+	return b.countingBroker.Subscribe(ctx, channels...)
+}
+
+func received(ch <-chan sse.Event) (sse.Event, bool) {
+	select {
+	case ev := <-ch:
+		return ev, true
+	default:
+		return sse.Event{}, false
+	}
+}
+
+func TestHubSubscribersWaitForTheRelay(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		broker := &gatedBroker{gate: make(chan struct{})}
+		hub := sse.NewHub(broker)
+		defer hub.Close()
+
+		results := make(chan (<-chan sse.Event), 2)
+
+		for range 2 {
+			go func() {
+				ch, _ := hub.Subscribe(t.Context(), "posts")
+				results <- ch
+			}()
+		}
+
+		synctest.Wait()
+
+		if len(results) != 0 {
+			t.Fatal("Subscribe returned before the broker subscription was ready")
+		}
+
+		close(broker.gate)
+
+		chans := []<-chan sse.Event{<-results, <-results}
+
+		if err := hub.Publish(t.Context(), "posts", sse.Event{Data: "1"}); err != nil {
+			t.Fatal(err)
+		}
+
+		synctest.Wait()
+
+		for i, ch := range chans {
+			if ev, ok := received(ch); !ok || ev.Data != "1" {
+				t.Errorf("subscriber %d got %+v, %t; want the event published right after Subscribe", i, ev, ok)
+			}
+		}
+	})
+}
+
+func TestHubBrokerFailureClosesSubscribers(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		gated bool
+	}{
+		{"subscribe error", false},
+		// The gate stays shut: Subscribe must give up after its timeout.
+		{"subscribe blocks", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			synctest.Test(t, func(t *testing.T) {
+				// The gate is made inside the bubble so blocking on it lets
+				// fake time advance.
+				broker := &gatedBroker{fail: 1}
+				if tt.gated {
+					broker.gate = make(chan struct{})
+				}
+
+				hub := sse.NewHub(broker)
+				defer hub.Close()
+
+				ch, stop := hub.Subscribe(t.Context(), "posts")
+				defer stop()
+
+				synctest.Wait()
+
+				select {
+				case _, open := <-ch:
+					if open {
+						t.Error("received an event on a failed subscription")
+					}
+				default:
+					t.Fatal("subscriber left attached to a failed broker subscription")
+				}
+
+				if n := hub.Subscribers("posts"); n != 0 {
+					t.Errorf("Subscribers after failure = %d, want 0", n)
+				}
+
+				if broker.gate != nil {
+					close(broker.gate)
+				}
+
+				// The next subscriber retries the broker.
+				ch2, stop2 := hub.Subscribe(t.Context(), "posts")
+				defer stop2()
+
+				if err := hub.Publish(t.Context(), "posts", sse.Event{Data: "retry"}); err != nil {
+					t.Fatal(err)
+				}
+
+				synctest.Wait()
+
+				if ev, ok := received(ch2); !ok || ev.Data != "retry" {
+					t.Errorf("after retry got %+v, %t; want the event", ev, ok)
+				}
+			})
+		})
 	}
 }

@@ -163,6 +163,17 @@ if err := q.Register(sender.Job()); err != nil {
 }
 ```
 
+`SQLDeliveryLog` owns its schema (only the table name is configurable). If you already have a deliveries table, implement `webhook.DeliveryLog` instead and map each `Attempt` (endpoint id, event id, status, duration, error category, time; never the URL, secret or payload) onto your columns. `Record` runs after every attempt from concurrent workers; its error is logged and never retries the delivery:
+
+```go
+Log: webhook.DeliveryLogFunc(func(ctx context.Context, a webhook.Attempt) error {
+	_, err := db.ExecContext(ctx,
+		`INSERT INTO seller_webhook_deliveries (seller_id, message_id, http_status, failure, created_at)
+		 VALUES (?, ?, ?, ?, ?)`, a.Endpoint, a.EventID, a.Status, a.Error, a.At)
+	return err
+}),
+```
+
 ### 3. Send an event
 
 ```go

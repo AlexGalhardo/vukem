@@ -171,6 +171,9 @@ type App struct {
 	// Telegram is the Telegram log handler when TELEGRAM_* is set (nil
 	// otherwise); use it for Contact and Send.
 	Telegram *telegram.Handler
+	// telegramLogs reports whether log records are forwarded to Telegram
+	// (TELEGRAM_LOG).
+	telegramLogs bool
 
 	// Events is the application event bus (WithListeners registers listeners).
 	Events *events.Bus
@@ -256,6 +259,7 @@ type options struct {
 	ready         chan<- string
 	noHTTP        bool
 	devtools      bool
+	telegram      []func(*telegram.Config)
 }
 
 // WithRoutes registers routes (and router middleware) after providers
@@ -478,12 +482,12 @@ func New(opts ...Option) (*App, error) {
 		logger = newLogger(&cfg, out)
 	}
 
-	tg, err := telegramHandler(src, &cfg)
+	tg, tgLogs, err := telegramHandler(src, &cfg, o.telegram)
 	if err != nil {
 		return nil, err
 	}
 
-	if tg != nil {
+	if tgLogs {
 		logger = slog.New(slog.NewMultiHandler(logger.Handler(), tg))
 	}
 
@@ -588,6 +592,7 @@ func New(opts ...Option) (*App, error) {
 
 	if tg != nil {
 		app.Telegram = tg
+		app.telegramLogs = tgLogs
 		app.OnShutdown(tg.Close)
 	}
 

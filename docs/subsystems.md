@@ -38,11 +38,21 @@ TELEGRAM_BOT_TOKEN=123456:ABC...   # config.Secret, never logged
 TELEGRAM_CHAT_ID=-1001234567890
 TELEGRAM_MIN_LEVEL=error           # debug, info, warn, error
 TELEGRAM_THREAD_ID=42              # optional forum topic
+TELEGRAM_LOG=true                  # false: no log forwarding, app.Telegram only for Send/Contact
+TELEGRAM_RATE_LIMIT=20             # optional cap on forwarded log records per minute (0: none)
 ```
 
 ```go
 app.Telegram.Contact(ctx, map[string]string{"name": in.Name, "message": in.Message}) // never filtered by level
 app.Telegram.Send(ctx, "<b>Deploy</b> finished")                                     // pre-formatted HTML
+
+// In a queued job: deliver now and return the error so the job retries.
+err := app.Telegram.ContactSync(ctx, fields) // or SendSync; telegram.ErrDisabled when not configured
+
+// Only forward the records you mark (Filter sees log records, never Send/Contact).
+vukem.WithTelegram(func(c *telegram.Config) {
+	c.Filter = func(_ context.Context, r slog.Record) bool { return r.Level >= telegram.LevelFatal }
+})
 
 // Standalone: per-level routing, silent mode, custom error handling.
 tg := telegram.NewHandler(telegram.Config{
@@ -57,8 +67,9 @@ defer tg.Close(ctx)
 | Levels | debug, info, warn, error plus `telegram.LevelSuccess` and `telegram.LevelFatal`; `MinLevel` filter |
 | Routing | per-level chat ids, forum topic (`ThreadID`), `Silent` |
 | Format | Telegram HTML: emoji and level, app name, environment, UTC time, then the message and attributes (groups dotted, error chains as "caused by") in a `<pre>` block; all content escaped; truncated to 4096 characters without cutting tags or entities |
-| Reliability | bounded queue (`QueueSize`, drops and reports when full), per-request `Timeout`, one retry after HTTP 429 honouring `retry_after` capped by `MaxRetryAfter`, `OnError`, drained by `app.Shutdown` |
-| Security | token held as `config.Secret`; request errors are redacted (`TestSecurity_A09_TelegramTokenRedacted`); `vukem about` shows only on/off; disabled when token or chat is missing |
+| Reliability | bounded queue (`QueueSize`, drops and reports when full), per-request `Timeout`, one retry after HTTP 429 honouring `retry_after` capped by `MaxRetryAfter`, `OnError` (never reentrant; records logged from it or carrying its error are not forwarded, so it may log through the app logger), drained by `app.Shutdown`; `SendSync` / `ContactSync` skip the queue and return the error (bounded by `Timeout` per request and by ctx) |
+| Log forwarding | on by default for records at `MinLevel`+; `TELEGRAM_LOG=false` turns it off; `Filter` and `RateLimit`/`RatePeriod` (`TELEGRAM_RATE_LIMIT` per minute, `ErrRateLimited` reported once per window) narrow it; `vukem.WithTelegram` edits the config in code |
+| Security | token held as `config.Secret`; request errors are redacted, also from `SendSync`/`ContactSync` (`TestSecurity_A09_TelegramTokenRedacted`, `TestSecurity_A09_TelegramSyncErrorRedactsToken`); `vukem about` shows only on/off; disabled when token or chat is missing |
 
 ## Mail
 
@@ -291,7 +302,7 @@ err = q.DispatchTx(ctx, tx, SendInvoice{OrderID: 1}) // exists only if tx commit
 - `vukem make:job SendInvoice` writes `app/jobs/send_invoice.go` (job type, `Kind`, and `HandleSendInvoice(app *vukem.App)` returning the handler) and registers `queue.Handle(HandleSendInvoice(app))` in `app/jobs/registry.go`, whose `All(app)` `bootstrap` passes to `vukem.WithJobsFunc`. Handlers reach `app.DB()`, `app.Now()` and `app.Mailer()` without globals; the function runs once, inside the first `app.Queue()` call (a panic in it becomes that call's error). It may get `app.DB()`, `app.Mailer()`, `app.Crypt` and `app.Now()`, but must not dispatch: `app.Queue()`, `app.Events.Dispatch` with queued listeners, `SendLater`/`MailLater` or running scheduled jobs wait for the queue being built and deadlock (handlers may do all of that when they run). Projects whose `All()` takes no app keep getting dependency-free handlers registered with `WithJobs`.
 - **Queued mail:** `mailer.SendLater(ctx, mailable)` / `app.MailLater(ctx, mailable)` renders now and sends from a job (retried; the message ID is stable across retries). The payload is the rendered message sealed with `app.Crypt`, so mail bodies and addresses never reach the jobs tables in clear text. Clear-text mail jobs (queued before v0.24.0) fail unless `QUEUE_ALLOW_LEGACY_MAIL=true`, an upgrade window that logs a warning per job: drain the queue before upgrading, or set the flag until the old jobs are gone. The additional data is fixed, so someone with write access to the jobs table can replay a sealed mail (accepted: that access allows worse).
 - **Queued listeners:** `events.OnQueued("update_stock", listeners.UpdateStock)` (or `make:listener UpdateStock --event OrderShipped --queued`) enqueues the event as JSON and runs the listener in a worker; `Dispatch` returns only enqueue errors.
-- **Outgoing webhooks:** `webhook.Sender` registers a `webhook.deliver` job (`s.Job()`) and `s.Send(ctx, q, webhook.Delivery{Endpoint, Payload})` enqueues it. Each attempt looks the endpoint up by id (URL and secret never enter the jobs tables), signs it with the Standard Webhooks scheme and posts through `httpclient.Safe`: 2xx succeeds, 410 Gone stops (`OnGone`), anything else retries (8 times, exponential from 30s). `webhook.SQLDeliveryLog` records each attempt. See [security.md](security.md#building-blocks).
+- **Outgoing webhooks:** `webhook.Sender` registers a `webhook.deliver` job (`s.Job()`) and `s.Send(ctx, q, webhook.Delivery{Endpoint, Payload})` enqueues it. Each attempt looks the endpoint up by id (URL and secret never enter the jobs tables), signs it with the Standard Webhooks scheme and posts through `httpclient.Safe`: 2xx succeeds, 410 Gone stops (`OnGone`), anything else retries (8 times, exponential from 30s). `webhook.SQLDeliveryLog` records each attempt in its own table; apps with an existing deliveries table implement `webhook.DeliveryLog` (or wrap a function in `webhook.DeliveryLogFunc`) and map `Attempt` onto their columns. See [security.md](security.md#building-blocks).
 - **Testing:** pass `vukem.WithQueueDriver(fake)` with `fake := queue.NewFake()`; `queue.Dispatched[jobs.SendInvoice](fake)` returns the dispatched jobs, and `q.Work(ctx, queue.WorkOptions{StopWhenEmpty: true})` runs them when the test wants to.
 - Inspired by River (typed workers, transactional enqueue) and goqite (SQLite).
 

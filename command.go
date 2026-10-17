@@ -341,5 +341,9 @@ func telegramStatus(app *App) string {
 		return "off"
 	}
 
+	if !app.telegramLogs {
+		return "on (token [redacted], log forwarding off)"
+	}
+
 	return "on (token [redacted])"
 }

@@ -25,15 +25,30 @@ type Attempt struct {
 }
 
 // DeliveryLog stores delivery attempts, for example to show a seller why
-// their endpoint is failing.
+// their endpoint is failing. It is the extension point for apps that
+// already have a deliveries table: implement Record (or wrap a function in
+// DeliveryLogFunc) and map Attempt onto your own columns; SQLDeliveryLog is
+// one implementation with a fixed schema.
+//
+// The Sender calls Record after every attempt, from concurrent queue
+// workers, with a context that outlives the job (5s timeout). A Record
+// error is logged and never retries or fails the delivery.
 type DeliveryLog interface {
 	Record(ctx context.Context, a Attempt) error
 }
 
+// DeliveryLogFunc adapts a function to DeliveryLog.
+type DeliveryLogFunc func(ctx context.Context, a Attempt) error
+
+// Record implements DeliveryLog.
+func (f DeliveryLogFunc) Record(ctx context.Context, a Attempt) error { return f(ctx, a) }
+
 // SQLDeliveryLog keeps attempts in a table (SQLite, Postgres or MySQL):
 // id, endpoint, event_id, status, duration_ms, error and attempted_at in
 // Unix milliseconds. CreateTable creates it. Prune old rows with a
-// scheduled DELETE if the table grows too large.
+// scheduled DELETE if the table grows too large. Only the table name is
+// configurable; to write into an existing table with other columns,
+// implement DeliveryLog instead.
 type SQLDeliveryLog struct {
 	db    *database.DB
 	table string
