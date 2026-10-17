@@ -28,7 +28,7 @@ if errors.Is(err, stripe.ErrCardDeclined) { /* ... */ }
 
 - Every request pins `Stripe-Version` (`stripe.APIVersion`). POSTs carry an `Idempotency-Key` (generated, or yours), so retries on 429, 5xx and network errors are safe; `Retry-After` and `Stripe-Should-Retry` are honoured.
 - Errors are `*stripe.Error{Status, Type, Code, DeclineCode, Message, Param, RequestID}`; match them with `errors.Is` against `ErrCardDeclined`, `ErrInvalid`, `ErrRateLimited` or `ErrAuth`.
-- Resources: customers (`Create/Get/UpdateCustomer`), Checkout Sessions, subscriptions (`Get/Update/CancelSubscription`), `CreatePortalSession`, payment intents, Connect (below), and `Call` for any other endpoint (`Do` is deprecated in its favour). `stripe.Params` nests (`line_items[0][price]`).
+- Resources: customers (`Create/Get/UpdateCustomer`), Checkout Sessions, subscriptions (`Get/Update/CancelSubscription`), `CreatePortalSession`, payment intents, refunds (`CreateRefund/GetRefund`), Connect (below), and `Call` for any other endpoint (`Do` is deprecated in its favour). `stripe.Params` nests (`line_items[0][price]`).
 - Never pass `payment_method_types` to Checkout: dynamic payment methods come from the Dashboard.
 - The client prints as `rk_…abcd`, never the full key.
 
@@ -116,33 +116,58 @@ stripe listen --forward-to localhost:3000/stripe/webhook   # prints the whsec_ s
 
 ## Stripe Connect (marketplaces)
 
-A marketplace takes the payment and pays part of it out to a seller. The client covers Stripe Connect with Express accounts:
+A marketplace takes the payment and pays part of it out to a seller. The client covers Stripe Connect with [Accounts v2](https://docs.stripe.com/connect/accounts-v2), Stripe's current API for connected accounts (the Marketplace showcase saw a new platform's v1 account creation refused), plus the v1 transfers, refunds and reversals that pay and claw back sellers:
 
 ```go
-// 1. Create the seller's connected account and send them to Stripe's onboarding.
-acct, err := sc.CreateAccount(ctx, stripe.Params{
-	"controller[stripe_dashboard][type]": "express",
-	"controller[fees][payer]":            "application",
-	"controller[losses][payments]":       "application",
-})
-link, err := sc.CreateAccountLink(ctx, stripe.Params{
-	"account":     acct.ID,
-	"type":        "account_onboarding",
-	"refresh_url": appURL + "/seller/onboarding",
-	"return_url":  appURL + "/seller",
+// 1. Create the seller's connected account (Express dashboard, platform owns fees and losses)
+//    and send them to Stripe's onboarding. v2 bodies are JSON; Params nest.
+acct, err := sc.CreateAccountV2(ctx, stripe.Params{
+	"contact_email": seller.Email,
+	"dashboard":     "express",
+	"identity":      stripe.Params{"country": "br"},
+	"defaults": stripe.Params{"responsibilities": stripe.Params{
+		"fees_collector": "application", "losses_collector": "application",
+	}},
+	"configuration": stripe.Params{
+		"merchant":  stripe.Params{"capabilities": stripe.Params{"card_payments": stripe.Params{"requested": true}}},
+		"recipient": stripe.Params{"capabilities": stripe.Params{
+			"stripe_balance": stripe.Params{"stripe_transfers": stripe.Params{"requested": true}},
+		}},
+	},
+	"include": []string{"configuration.recipient", "requirements"},
+}, stripe.IdempotencyKey("shop-7-account"))
+link, err := sc.CreateAccountLinkV2(ctx, stripe.Params{
+	"account": acct.ID,
+	"use_case": stripe.Params{
+		"type": "account_onboarding",
+		"account_onboarding": stripe.Params{
+			"configurations": []string{"merchant", "recipient"},
+			"refresh_url":    appURL + "/seller/onboarding",
+			"return_url":     appURL + "/seller",
+		},
+	},
 }) // single use: redirect only the signed-in account holder to link.URL
 
-// 2. Charge the buyer and route the money (a destination charge with your fee).
-pi, err := sc.CreatePaymentIntent(ctx, stripe.Params{
-	"amount":                    "10000",
-	"currency":                  "brl",
-	"application_fee_amount":    "1000",
-	"transfer_data[destination]": acct.ID,
-}, "order-42-payment") // idempotency key tied to the order
+// 2. After onboarding: the seller can be paid once stripe_transfers is active.
+acct, err = sc.GetAccountV2(ctx, acct.ID, []string{"configuration.recipient"})
+ready := acct.Configuration.Recipient != nil &&
+	acct.Configuration.Recipient.Capabilities.StripeBalance.StripeTransfers.Status == "active"
+
+// 3. Separate charges and transfers: pay the seller's share, and on a refund
+//    reverse it first, then refund the buyer. Keys tie retries to the order.
+tr, err := sc.CreateTransfer(ctx, stripe.Params{
+	"amount": 9000, "currency": "brl", "destination": acct.ID, "transfer_group": "order-42",
+}, stripe.IdempotencyKey("order-42-transfer"))
+_, err = sc.CreateTransferReversal(ctx, tr.ID, stripe.Params{"amount": 9000},
+	stripe.IdempotencyKey("order-42-reversal"))
+_, err = sc.CreateRefund(ctx, stripe.Params{"payment_intent": piID, "amount": 10000},
+	stripe.IdempotencyKey("order-42-refund"))
 ```
 
-- `GetAccount` reports `ChargesEnabled`, `DetailsSubmitted` and `Requirements`; `CreateLoginLink` opens the seller's Express dashboard; `CreateTransfer`/`GetTransfer` cover separate charges and transfers.
-- `sc.ForAccount("acct_…")` or the per-request `stripe.OnAccount("acct_…")` act **as** a connected account (direct charges). The platform-only methods above refuse that scope with `stripe.ErrInvalidRequestOption`, so they never run against the wrong account.
+- `UpdateAccountV2` changes an account (a `nil` metadata value removes the key). `Call` sends any other `/v2/...` endpoint as JSON, with an `Idempotency-Key` on POST and DELETE.
+- The v1 methods (`CreateAccount`, `GetAccount`, `CreateAccountLink`) still work for platforms that already use them, and Stripe still requires v1 for OAuth, Treasury and card issuing; Stripe discourages keeping both versions indefinitely. A v2 account id works with every v1 endpoint (transfers, `Stripe-Account`).
+- `CreateLoginLink` opens the seller's Express dashboard; `GetTransfer`, `GetRefund` and `GetTransferReversal` read back what you created. Destination charges are plain params (`application_fee_amount`, `transfer_data[destination]` on a PaymentIntent; `reverse_transfer` on a refund).
+- `sc.ForAccount("acct_…")` or the per-request `stripe.OnAccount("acct_…")` act **as** a connected account (direct charges, and refunds of them). The platform-only methods (accounts v1 and v2, account and login links, transfers and reversals) refuse that scope with `stripe.ErrInvalidRequestOption`, so they never run against the wrong account.
 - Connect events are signed with a different secret than platform events: add it to `WebhookConfig.Secrets` and read the seller from `Event.Account`.
 
 The full reference is in the [`contrib/stripe` documentation](https://github.com/AlexGalhardo/vukem/blob/main/docs/subsystems.md). The [Marketplace showcase app](/docs/showcase#marketplace-inertia-and-react) uses Connect in production.
