@@ -629,3 +629,32 @@ func TestIntrospectionTypeLookup(t *testing.T) {
 		{"name":"secretBackstory","type":{"kind":"SCALAR","ofType":null}},
 		{"name":"primaryFunction","type":{"kind":"SCALAR","ofType":null}}]},"missing":null}}`, got)
 }
+
+// conflictError is a 4xx StatusCoder wrapping a driver error, like
+// orm.ErrConflict.
+type conflictError struct{ cause error }
+
+func (e *conflictError) Error() string   { return "unique constraint violated: " + e.cause.Error() }
+func (e *conflictError) Unwrap() error   { return e.cause }
+func (e *conflictError) HTTPStatus() int { return http.StatusConflict }
+
+func TestSecurity_A10_GraphQLClientErrorsMasked(t *testing.T) {
+	t.Parallel()
+
+	err := fmt.Errorf("create user: %w", &conflictError{cause: errors.New(`pq: duplicate key "users_email_key"`)})
+
+	ge := fromResolverError(err, false)
+	if strings.Contains(ge.Message, "users_email_key") || ge.Message != "Conflict" || ge.Code() != CodeConflict {
+		t.Errorf(
+			"fromResolverError(conflict) = %q (%s), want %q without driver text",
+			ge.Message,
+			ge.Code(),
+			"Conflict",
+		)
+	}
+
+	he := fromResolverError(fmt.Errorf("wrap: %w", errs.New(http.StatusNotFound, "Post not found.")), false)
+	if he.Message != "Post not found." {
+		t.Errorf("fromResolverError(HTTPError) = %q, want its client message", he.Message)
+	}
+}

@@ -130,7 +130,7 @@ func fromResolverError(err error, debug bool) *Error {
 		} else if he, ok := errors.AsType[*errs.HTTPError](err); ok {
 			out.Message = he.Text()
 		} else {
-			out.Message = err.Error()
+			out.Message = clientMessage(err, status, debug)
 		}
 	}
 
@@ -149,6 +149,22 @@ func isIssues(err error) bool {
 func isValidation(err error) bool {
 	_, ok := errors.AsType[*errs.ValidationError](err)
 	return ok
+}
+
+// clientMessage is the text of a non-HTTPError 4xx error. A leaf
+// StatusCoder is the app's own client error and keeps its text; one that
+// wraps a cause (orm's unique-constraint conflict wraps the driver error)
+// or any other error gets the status text only (CWE-209).
+func clientMessage(err error, status int, debug bool) string {
+	if debug {
+		return err.Error()
+	}
+
+	if sc, ok := errors.AsType[errs.StatusCoder](err); ok && errors.Unwrap(sc) == nil {
+		return sc.Error()
+	}
+
+	return http.StatusText(status)
 }
 
 func codeFor(status int) string {
