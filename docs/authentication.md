@@ -68,7 +68,7 @@ user, err := auth.User[models.User](c, "web") // in handlers behind Required
 ### Token guard (`api`)
 
 - Opaque tokens `<id>.<secret>` (`crypto/rand.Text()`); `access_tokens` stores `SHA-256(secret)`, name, abilities (JSON), `last_used_at` (updated at most once a minute) and optional expiry (`TestSecurity_A04_TokensStoredHashed`).
-- `tokens.Create(ctx, user.AuthID(), "cli", []string{"posts:read"}, 30*24*time.Hour)` returns the plain token once; `Revoke(ctx, id)`, `RevokeAll(ctx, userID)`; `auth.CurrentToken(c, "api")`, `auth.TokenCan(c, "api", "posts:read")`; `"*"` grants every ability.
+- `tokens.Create(ctx, user.AuthID(), "cli", []string{"posts:read"}, 30*24*time.Hour)` returns the plain token once; `List(ctx, userID)` (no secrets), `RevokeFor(ctx, userID, id)` (owner-checked: use it when the id comes from user input), `Revoke(ctx, id)` (unchecked, for the current token), `RevokeAll(ctx, userID)`; `auth.CurrentToken(c, "api")`, `auth.TokenCan(c, "api", "posts:read")`; `"*"` grants every ability.
 - Hashes are compared with `subtle.ConstantTimeCompare`; rejected tokens emit `token.rejected`.
 
 ### JWT guard (`auth/jwt`)

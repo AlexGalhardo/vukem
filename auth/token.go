@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/json"
+	"fmt"
 	"slices"
 	"strings"
 	"time"
@@ -140,10 +141,58 @@ func (t *Tokens) Find(ctx context.Context, plain string) (Token, error) {
 	return tok, nil
 }
 
-// Revoke deletes a token.
+// Revoke deletes a token by id without checking who owns it. Use RevokeFor
+// when the id comes from user input (a "revoke" button in a dashboard).
 func (t *Tokens) Revoke(ctx context.Context, id string) error {
 	_, err := t.ex.ExecContext(ctx, t.q("DELETE FROM {table} WHERE id = ?"), id)
 	return err
+}
+
+// RevokeFor deletes token id only if it belongs to userID and reports
+// whether a token was deleted, so a caller cannot revoke another user's
+// token by guessing its id.
+func (t *Tokens) RevokeFor(ctx context.Context, userID, id string) (bool, error) {
+	res, err := t.ex.ExecContext(ctx, t.q("DELETE FROM {table} WHERE id = ? AND user_id = ?"), id, userID)
+	if err != nil {
+		return false, err
+	}
+
+	n, err := res.RowsAffected()
+
+	return n > 0, err
+}
+
+// List returns userID's tokens, newest first (never the secrets).
+func (t *Tokens) List(ctx context.Context, userID string) ([]Token, error) {
+	rows, err := t.ex.QueryContext(
+		ctx,
+		t.q("SELECT id, name, abilities, last_used_at, expires_at FROM {table} WHERE user_id = ? "+
+			"ORDER BY created_at DESC, id"),
+		userID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []Token
+
+	for rows.Next() {
+		tok := Token{UserID: userID}
+
+		var abil string
+		if err := rows.Scan(&tok.ID, &tok.Name, &abil, &tok.LastUsedAt, &tok.ExpiresAt); err != nil {
+			return nil, err
+		}
+
+		if err := json.Unmarshal([]byte(abil), &tok.Abilities); err != nil {
+			return nil, fmt.Errorf("auth: token %s abilities: %w", tok.ID, err)
+		}
+
+		out = append(out, tok)
+	}
+
+	return out, rows.Err()
 }
 
 // RevokeAll deletes every token of userID.

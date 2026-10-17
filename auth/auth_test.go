@@ -482,6 +482,45 @@ func TestProviderEdgeCases(t *testing.T) {
 	}
 }
 
+func TestSecurity_A01_TokenRevokeScopedToOwner(t *testing.T) {
+	t.Parallel()
+
+	ta := newApp(t, hash.Fake())
+	ana := ta.user(t, "ana@example.com", "pw", true)
+	bob := ta.user(t, "bob@example.com", "pw", true)
+	ctx := t.Context()
+
+	anaPlain, anaTok, _ := ta.tokens.Create(ctx, ana.AuthID(), "ana-cli", []string{"posts:read"}, 0)
+	_, bobTok, _ := ta.tokens.Create(ctx, bob.AuthID(), "bob-cli", nil, 0)
+
+	// Bob passing Ana's token id must not delete it.
+	if ok, err := ta.tokens.RevokeFor(ctx, bob.AuthID(), anaTok.ID); err != nil || ok {
+		t.Fatalf("RevokeFor(bob, ana's token) = %v, %v, want false, nil", ok, err)
+	}
+
+	if _, err := ta.tokens.Find(ctx, anaPlain); err != nil {
+		t.Fatalf("ana's token gone after bob's revoke: %v", err)
+	}
+
+	list, err := ta.tokens.List(ctx, ana.AuthID())
+	if err != nil || len(list) != 1 || list[0].ID != anaTok.ID || list[0].Name != "ana-cli" ||
+		!list[0].Can("posts:read") {
+		t.Fatalf("List(ana) = %+v, %v", list, err)
+	}
+
+	if ok, err := ta.tokens.RevokeFor(ctx, ana.AuthID(), anaTok.ID); err != nil || !ok {
+		t.Fatalf("RevokeFor(ana, own token) = %v, %v, want true, nil", ok, err)
+	}
+
+	if list, _ := ta.tokens.List(ctx, ana.AuthID()); len(list) != 0 {
+		t.Errorf("List(ana) after revoke = %+v, want empty", list)
+	}
+
+	if list, _ := ta.tokens.List(ctx, bob.AuthID()); len(list) != 1 || list[0].ID != bobTok.ID {
+		t.Errorf("List(bob) = %+v, want only bob's token", list)
+	}
+}
+
 func TestSecurity_A04_TokensStoredHashed(t *testing.T) {
 	t.Parallel()
 
