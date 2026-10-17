@@ -4,13 +4,16 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/AlexGalhardo/vukem/database"
+	"github.com/AlexGalhardo/vukem/schema"
 	"github.com/AlexGalhardo/vukem/web"
 )
 
@@ -22,6 +25,9 @@ type Token struct {
 	Abilities  []string   `json:"abilities"`
 	LastUsedAt *time.Time `json:"last_used_at"`
 	ExpiresAt  *time.Time `json:"expires_at"`
+	// RevokedAt is when the token was revoked; a revoked token is kept for
+	// the audit trail (List shows it) until Prune deletes it.
+	RevokedAt *time.Time `json:"revoked_at"`
 }
 
 // Can reports whether the token grants ability ("*" grants everything).
@@ -33,7 +39,9 @@ func (t Token) Can(ability string) bool {
 // only SHA-256(secret) is stored. Table (created by install:auth / install:api):
 // access_tokens(id TEXT PRIMARY KEY, user_id TEXT, name TEXT, hash TEXT,
 // abilities TEXT, last_used_at TIMESTAMP NULL, expires_at TIMESTAMP NULL,
-// created_at TIMESTAMP).
+// revoked_at TIMESTAMP NULL, created_at TIMESTAMP). Tables created before
+// revoked_at existed need TokensRevokedAtMigration; until then Find
+// refuses every token.
 type Tokens struct {
 	// Prefix starts every newly issued token ("vk_"), so secret scanners
 	// (GitHub push protection, gitleaks) can match leaked tokens. It is up
@@ -140,7 +148,9 @@ func validPrefix(p string) error {
 	return nil
 }
 
-// Find validates a plain token and returns it, or errBadToken. It updates
+// Find validates a plain token and returns it, or an error for an unknown,
+// wrong, expired or revoked token (or a failed lookup). Every token pays
+// for the same digest comparison before its state is checked. It updates
 // last_used_at at most once a minute.
 func (t *Tokens) Find(ctx context.Context, plain string) (Token, error) {
 	id, secret, ok := strings.Cut(plain, ".")
@@ -160,17 +170,26 @@ func (t *Tokens) Find(ctx context.Context, plain string) (Token, error) {
 		abil   string
 	)
 
-	err := t.ex.QueryRowContext(ctx, t.q("SELECT user_id, name, hash, abilities, last_used_at, expires_at FROM {table} WHERE id = ?"),
-		id).
-		Scan(&tok.UserID, &tok.Name, &stored, &abil, &tok.LastUsedAt, &tok.ExpiresAt)
-	if err != nil {
-		return Token{}, errBadToken
+	err := t.ex.QueryRowContext(ctx, t.q("SELECT user_id, name, hash, abilities, last_used_at, expires_at, revoked_at "+
+		"FROM {table} WHERE id = ?"), id).
+		Scan(&tok.UserID, &tok.Name, &stored, &abil, &tok.LastUsedAt, &tok.ExpiresAt, &tok.RevokedAt)
+	found := err == nil
+
+	if !found {
+		// An unknown id compares against a digest-sized placeholder, so it
+		// costs what a known one does.
+		stored = strings.Repeat("0", len(digest(secret)))
 	}
 
 	now := t.now().UTC()
+	match := subtle.ConstantTimeCompare([]byte(stored), []byte(digest(secret))) == 1
+	live := tok.RevokedAt == nil && (tok.ExpiresAt == nil || tok.ExpiresAt.After(now))
 
-	if subtle.ConstantTimeCompare([]byte(stored), []byte(digest(secret))) != 1 ||
-		tok.ExpiresAt != nil && !tok.ExpiresAt.After(now) {
+	if !found || !match || !live {
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return Token{}, fmt.Errorf("auth: find token: %w", err)
+		}
+
 		return Token{}, errBadToken
 	}
 
@@ -192,18 +211,29 @@ func (t *Tokens) Find(ctx context.Context, plain string) (Token, error) {
 	return tok, nil
 }
 
-// Revoke deletes a token by id without checking who owns it. Use RevokeFor
-// when the id comes from user input (a "revoke" button in a dashboard).
+// Revoke marks a token revoked by id without checking who owns it; the row
+// stays (List shows it) until Prune deletes it, and a second revoke keeps
+// the first time. Use RevokeFor when the id comes from user input (a
+// "revoke" button in a dashboard).
 func (t *Tokens) Revoke(ctx context.Context, id string) error {
-	_, err := t.ex.ExecContext(ctx, t.q("DELETE FROM {table} WHERE id = ?"), id)
+	_, err := t.ex.ExecContext(ctx, t.q("UPDATE {table} SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL"),
+		t.now().UTC(), id)
+
 	return err
 }
 
-// RevokeFor deletes token id only if it belongs to userID and reports
-// whether a token was deleted, so a caller cannot revoke another user's
-// token by guessing its id.
+// RevokeFor revokes token id only if it belongs to userID and reports
+// whether a live token was revoked (false for another user's token, an
+// unknown id or one already revoked), so a caller cannot revoke another
+// user's token by guessing its id.
 func (t *Tokens) RevokeFor(ctx context.Context, userID, id string) (bool, error) {
-	res, err := t.ex.ExecContext(ctx, t.q("DELETE FROM {table} WHERE id = ? AND user_id = ?"), id, userID)
+	res, err := t.ex.ExecContext(
+		ctx,
+		t.q("UPDATE {table} SET revoked_at = ? WHERE id = ? AND user_id = ? AND revoked_at IS NULL"),
+		t.now().UTC(),
+		id,
+		userID,
+	)
 	if err != nil {
 		return false, err
 	}
@@ -213,11 +243,12 @@ func (t *Tokens) RevokeFor(ctx context.Context, userID, id string) (bool, error)
 	return n > 0, err
 }
 
-// List returns userID's tokens, newest first (never the secrets).
+// List returns userID's tokens, newest first, revoked ones included with
+// RevokedAt set (never the secrets).
 func (t *Tokens) List(ctx context.Context, userID string) ([]Token, error) {
 	rows, err := t.ex.QueryContext(
 		ctx,
-		t.q("SELECT id, name, abilities, last_used_at, expires_at FROM {table} WHERE user_id = ? "+
+		t.q("SELECT id, name, abilities, last_used_at, expires_at, revoked_at FROM {table} WHERE user_id = ? "+
 			"ORDER BY created_at DESC, id"),
 		userID,
 	)
@@ -232,7 +263,7 @@ func (t *Tokens) List(ctx context.Context, userID string) ([]Token, error) {
 		tok := Token{UserID: userID}
 
 		var abil string
-		if err := rows.Scan(&tok.ID, &tok.Name, &abil, &tok.LastUsedAt, &tok.ExpiresAt); err != nil {
+		if err := rows.Scan(&tok.ID, &tok.Name, &abil, &tok.LastUsedAt, &tok.ExpiresAt, &tok.RevokedAt); err != nil {
 			return nil, err
 		}
 
@@ -246,10 +277,55 @@ func (t *Tokens) List(ctx context.Context, userID string) ([]Token, error) {
 	return out, rows.Err()
 }
 
-// RevokeAll deletes every token of userID.
+// RevokeAll revokes every live token of userID.
 func (t *Tokens) RevokeAll(ctx context.Context, userID string) error {
-	_, err := t.ex.ExecContext(ctx, t.q("DELETE FROM {table} WHERE user_id = ?"), userID)
+	_, err := t.ex.ExecContext(
+		ctx,
+		t.q("UPDATE {table} SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL"),
+		t.now().UTC(),
+		userID,
+	)
+
 	return err
+}
+
+// Prune deletes the tokens revoked or expired before cutoff and returns how
+// many it deleted. Schedule it to bound the table while keeping recent
+// revocations visible in List.
+func (t *Tokens) Prune(ctx context.Context, cutoff time.Time) (int64, error) {
+	cutoff = cutoff.UTC()
+
+	res, err := t.ex.ExecContext(
+		ctx,
+		t.q("DELETE FROM {table} WHERE (revoked_at IS NOT NULL AND revoked_at < ?) "+
+			"OR (expires_at IS NOT NULL AND expires_at < ?)"),
+		cutoff,
+		cutoff,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("auth: prune tokens: %w", err)
+	}
+
+	return res.RowsAffected()
+}
+
+// TokensRevokedAtMigration returns migration id adding the revoked_at column
+// to an access_tokens table created before v0.26.0. It skips a table that
+// already has it (the current install:auth scaffold), and its Down is a
+// no-op, since the column may predate it.
+func TokensRevokedAtMigration(id string) schema.Migration {
+	return schema.Migration{
+		ID: id,
+		Up: func(s *schema.Schema) error {
+			has, err := s.HasColumn("access_tokens", "revoked_at")
+			if err != nil || has {
+				return err
+			}
+
+			return s.Table("access_tokens", func(t *schema.Table) { t.Timestamp("revoked_at").Nullable() })
+		},
+		Down: func(*schema.Schema) error { return nil },
+	}
 }
 
 // TokenGuard authenticates "Authorization: Bearer <token>" requests.

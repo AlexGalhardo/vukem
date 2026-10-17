@@ -8,7 +8,7 @@ An API token is a long random string a client sends on every request in the `Aut
 | | Opaque tokens (`auth.Tokens`) | JWT (`auth/jwt`) |
 | --- | --- | --- |
 | Checked by | a database lookup | a signature, no lookup |
-| Revoke one token | delete its row, effective immediately | wait for expiry, or keep a deny list |
+| Revoke one token | mark its row revoked, effective immediately | wait for expiry, or keep a deny list |
 | Best for | your own API and its clients, personal access tokens | tokens issued by an identity provider, many services |
 
 ## How a token looks and is stored
@@ -21,6 +21,7 @@ vk_<id>.<secret>
 - `<id>` finds the row; `<secret>` proves the caller knows the token. Both come from `crypto/rand`.
 - Only `SHA-256(secret)` is stored, in the `access_tokens` table. A database leak does not leak usable tokens, and the comparison is constant time.
 - `last_used_at` is updated at most once a minute, so busy clients do not write on every request.
+- Revoking sets `revoked_at`; the row stays so the user (and an audit) can see when a token was revoked. A revoked token is refused exactly like a wrong one: it pays for the same hash comparison first. `Prune` deletes old revoked and expired rows.
 
 ## Step by step
 
@@ -172,18 +173,37 @@ Abilities limit what a **token** may do; they do not replace [authorization](/do
 ## A "My API tokens" page
 
 ```go
-list, err := tokens.List(ctx, user.AuthID()) // newest first, never the secrets
+list, err := tokens.List(ctx, user.AuthID()) // newest first, revoked ones too (RevokedAt set), never the secrets
 
-deleted, err := tokens.RevokeFor(ctx, user.AuthID(), c.Param("id"))
+revoked, err := tokens.RevokeFor(ctx, user.AuthID(), c.Param("id"))
 if err != nil {
 	return err
 }
-if !deleted {
-	return errs.ErrNotFound // not this user's token: do not reveal that it exists
+if !revoked {
+	return errs.ErrNotFound // not this user's live token: do not reveal that it exists
 }
 
 err = tokens.RevokeAll(ctx, user.AuthID()) // e.g. after a password change
 ```
+
+Revoked tokens stay listed until you delete them. Run `Prune` from a [scheduled task](/docs/digging-deeper/scheduler) to keep the table small:
+
+```go
+// Deletes tokens revoked or expired more than 90 days ago.
+n, err := tokens.Prune(ctx, app.Now().AddDate(0, 0, -90))
+```
+
+## Upgrading a table created before v0.26.0
+
+Older `install:auth` scaffolds created `access_tokens` without `revoked_at`. Until the column exists every token is refused (the lookup fails, and a failed check denies). Add the shipped migration to your list; it skips a table that already has the column:
+
+```go title="database/migrations/20261101000000_access_tokens_revoked_at.go"
+func m20261101000000AccessTokensRevokedAt() schema.Migration {
+	return auth.TokensRevokedAtMigration("20261101000000_access_tokens_revoked_at")
+}
+```
+
+Register it in your migrations list like the others, then run `vukem migrate`.
 
 ## Testing
 
@@ -199,6 +219,7 @@ app.Client(t).WithToken(plain).GetJSON("/api/v1/me").AssertOK()
 ## Pitfalls
 
 - **`ttl` 0 never expires.** `Create(ctx, id, name, abilities, 0)` returns a token valid until revoked. Pass a lifetime unless you mean it (the scaffold uses 30 days).
+- **Revoked tokens are listed.** `List` returns them with `RevokedAt` set; filter them out (or show them greyed out) on a "My API tokens" page.
 - **`Revoke` has no owner check.** Use it only for the token of the current request (`auth.CurrentToken`). When the id comes from a form or URL, use `RevokeFor`, or one user can revoke another's tokens by guessing ids.
 - **The plain token is gone after `Create`.** Show it once and tell the user to copy it; there is no way to read it back.
 - **Changing `Prefix` is safe.** Tokens issued without a prefix, or under an earlier one, keep working.

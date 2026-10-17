@@ -72,6 +72,7 @@ var migrations = []schema.Migration{{
 			t.Text("abilities")
 			t.Timestamp("last_used_at").Nullable()
 			t.Timestamp("expires_at").Nullable()
+			t.Timestamp("revoked_at").Nullable()
 			t.Timestamp("created_at")
 		})
 	},
@@ -686,7 +687,7 @@ func TestSecurity_A01_TokenRevokeScopedToOwner(t *testing.T) {
 	anaPlain, anaTok, _ := ta.tokens.Create(ctx, ana.AuthID(), "ana-cli", []string{"posts:read"}, 0)
 	_, bobTok, _ := ta.tokens.Create(ctx, bob.AuthID(), "bob-cli", nil, 0)
 
-	// Bob passing Ana's token id must not delete it.
+	// Bob passing Ana's token id must not revoke it.
 	if ok, err := ta.tokens.RevokeFor(ctx, bob.AuthID(), anaTok.ID); err != nil || ok {
 		t.Fatalf("RevokeFor(bob, ana's token) = %v, %v, want false, nil", ok, err)
 	}
@@ -697,7 +698,7 @@ func TestSecurity_A01_TokenRevokeScopedToOwner(t *testing.T) {
 
 	list, err := ta.tokens.List(ctx, ana.AuthID())
 	if err != nil || len(list) != 1 || list[0].ID != anaTok.ID || list[0].Name != "ana-cli" ||
-		!list[0].Can("posts:read") {
+		!list[0].Can("posts:read") || list[0].RevokedAt != nil {
 		t.Fatalf("List(ana) = %+v, %v", list, err)
 	}
 
@@ -705,12 +706,22 @@ func TestSecurity_A01_TokenRevokeScopedToOwner(t *testing.T) {
 		t.Fatalf("RevokeFor(ana, own token) = %v, %v, want true, nil", ok, err)
 	}
 
-	if list, _ := ta.tokens.List(ctx, ana.AuthID()); len(list) != 0 {
-		t.Errorf("List(ana) after revoke = %+v, want empty", list)
+	if _, err := ta.tokens.Find(ctx, anaPlain); err == nil {
+		t.Error("Find(ana's token) after her revoke = nil error, want rejected")
 	}
 
-	if list, _ := ta.tokens.List(ctx, bob.AuthID()); len(list) != 1 || list[0].ID != bobTok.ID {
-		t.Errorf("List(bob) = %+v, want only bob's token", list)
+	if list, _ := ta.tokens.List(ctx, ana.AuthID()); len(list) != 1 || list[0].RevokedAt == nil {
+		t.Errorf("List(ana) after revoke = %+v, want her token marked revoked", list)
+	}
+
+	// RevokeAll is scoped to its user too.
+	if err := ta.tokens.RevokeAll(ctx, ana.AuthID()); err != nil {
+		t.Fatal(err)
+	}
+
+	if list, _ := ta.tokens.List(ctx, bob.AuthID()); len(list) != 1 || list[0].ID != bobTok.ID ||
+		list[0].RevokedAt != nil {
+		t.Errorf("List(bob) = %+v, want only bob's live token", list)
 	}
 }
 
