@@ -82,6 +82,7 @@ type Task struct {
 	loc     *time.Location
 	overlap bool
 	lockTTL time.Duration
+	oneHost bool
 }
 
 // Func schedules fn under name.
@@ -210,6 +211,60 @@ func (t *Task) WithoutOverlapping(ttl ...time.Duration) *Task {
 	return t
 }
 
+// OnOneServer runs each occurrence of the task on one server only: the
+// first scheduler to take the occurrence's lock (task name and minute) in
+// Options.Locks runs it, the others skip it. The lock store must be shared
+// by the servers (database or Redis cache); with an in-process store,
+// where every server would run the task, Validate fails and the task
+// refuses to run (fail closed).
+func (t *Task) OnOneServer() *Task {
+	t.oneHost = true
+	return t
+}
+
+// ErrLocksNotShared is returned for OnOneServer tasks when Options.Locks is
+// an in-process store (the memory cache).
+var ErrLocksNotShared = errors.New(
+	"schedule: OnOneServer needs a lock store shared by the servers (CACHE_STORE=database or Redis)",
+)
+
+// Validate reports configuration that cannot work: an OnOneServer task with
+// an in-process lock store.
+func (s *Schedule) Validate() error {
+	if localStore(s.o.Locks.Store()) {
+		for _, t := range s.tasks {
+			if t.oneHost {
+				return fmt.Errorf("%w: task %q", ErrLocksNotShared, t.name)
+			}
+		}
+	}
+
+	return nil
+}
+
+// localStore reports whether st keeps its entries in this process, looking
+// through stores that wrap another one and expose it with Unwrap.
+func localStore(st cache.Store) bool {
+	for st != nil {
+		if _, ok := st.(*cache.Memory); ok {
+			return true
+		}
+
+		u, ok := st.(interface{ Unwrap() cache.Store })
+		if !ok {
+			return false
+		}
+
+		st = u.Unwrap()
+	}
+
+	return false
+}
+
+// oneHostTTL keeps an occurrence's lock well past its minute, so a server
+// whose clock lags a little still finds it taken.
+const oneHostTTL = time.Hour
+
 func (t *Task) cronFields() string {
 	if m, ok := macros[strings.ToLower(t.cron.expr)]; ok {
 		return m
@@ -280,6 +335,25 @@ func (s *Schedule) RunDue(ctx context.Context, now time.Time) error {
 
 func (s *Schedule) runTask(ctx context.Context, t *Task, now time.Time) (err error) {
 	log := s.o.Log.With("task", t.name)
+
+	if t.oneHost {
+		if localStore(s.o.Locks.Store()) {
+			return ErrLocksNotShared
+		}
+
+		// Never released: the occurrence stays taken until the lock expires.
+		key := "schedule:one:" + t.name + ":" + now.UTC().Format("2006-01-02T15:04")
+
+		ok, err := s.o.Locks.NewLock(key, oneHostTTL).TryAcquire(ctx)
+		if err != nil {
+			return fmt.Errorf("lock: %w", err)
+		}
+
+		if !ok {
+			log.InfoContext(ctx, "scheduled task skipped: another server runs it")
+			return nil
+		}
+	}
 
 	if t.overlap {
 		lock := s.o.Locks.NewLock("schedule:"+t.name, t.lockTTL)

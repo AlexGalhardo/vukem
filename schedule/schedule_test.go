@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/AlexGalhardo/vukem/cache"
 	"github.com/AlexGalhardo/vukem/queue"
 	"github.com/AlexGalhardo/vukem/schedule"
 )
@@ -257,5 +258,53 @@ func TestWorkStopTimeoutCancelsRunningTasks(t *testing.T) {
 				}
 			})
 		})
+	}
+}
+
+// sharedStore stands for a store several servers share (database, Redis):
+// any store other than the in-process memory cache.
+type sharedStore struct{ cache.Store }
+
+// OnOneServer runs each occurrence once across schedulers sharing the lock
+// store, and refuses to run on an in-process store, where every server
+// would run it.
+func TestOnOneServer(t *testing.T) {
+	t.Parallel()
+
+	var runs atomic.Int32
+
+	locks := cache.New(sharedStore{cache.NewMemory(0)}, "")
+	servers := make([]*schedule.Schedule, 3)
+
+	for i := range servers {
+		servers[i] = newSchedule(schedule.Options{Locks: locks})
+		servers[i].Func("draw", func(context.Context) error { runs.Add(1); return nil }).EveryMinute().OnOneServer()
+
+		if err := servers[i].Validate(); err != nil {
+			t.Fatalf("Validate() on a shared store = %v", err)
+		}
+	}
+
+	for i, minute := range []string{"2026-10-16 11:00", "2026-10-16 11:01"} {
+		for _, s := range servers {
+			if err := s.RunDue(t.Context(), at(minute)); err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		if got, want := runs.Load(), int32(i+1); got != want {
+			t.Fatalf("after %s: runs = %d, want %d (once per minute)", minute, got, want)
+		}
+	}
+
+	local := newSchedule(schedule.Options{})
+	local.Func("draw", func(context.Context) error { runs.Add(1); return nil }).EveryMinute().OnOneServer()
+
+	if err := local.Validate(); err == nil || !strings.Contains(err.Error(), "OnOneServer") {
+		t.Fatalf("Validate() on the memory store = %v, want an OnOneServer error", err)
+	}
+
+	if err := local.RunDue(t.Context(), at("2026-10-16 11:02")); err == nil || runs.Load() != 2 {
+		t.Fatalf("RunDue() on the memory store = %v (runs %d), want an error and no run", err, runs.Load())
 	}
 }
