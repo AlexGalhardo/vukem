@@ -18,7 +18,7 @@ Every provider's `Register` runs in declared order (providers whose `Kinds()` ex
 Every `WithRoutes` function runs in order. Services set in `Register` are available; clients a provider opens in `Boot` are **not yet**. In `KindWarmup`, `WithRoutesAfterBoot` functions run here too, since warmup never boots.
 </Step>
 <Step title="Boot (Run, commands, vukemtest)">
-Providers implementing `Booter` run `Boot(ctx, app)` in order. Boot may use services registered by other providers. Then every `WithRoutesAfterBoot` function runs, so those routes can use what `Boot` opened. Boot runs once; a second call is a no-op.
+Providers implementing `Booter` run `Boot(ctx, app)` in order. Boot may use services registered by other providers. Then every `WithRoutesAfterBoot` function runs, so those routes can use what `Boot` opened. Boot runs once and is not retryable: later calls (concurrent ones wait) return the first call's error, or `nil` after a successful boot.
 </Step>
 <Step title="Run">
 The HTTP handler is compiled from the router, then every runner starts in its own goroutine. `Run` blocks until the context is cancelled (for example by `SIGTERM`) or a runner fails.
@@ -55,7 +55,28 @@ app, err := vukem.New(
 )
 ```
 
-Those routes exist only after `Boot`. If the router is compiled earlier (`app.Handler()`, `app.Router.URL` or a request before `Boot`), `Boot` fails with `vukem.ErrRoutesCompiled` instead of silently dropping them. In `KindWarmup` they run at the end of `New` so `codegen:routes` sees the full table; booted services are still unset there, so keep the function to registering routes. The order of `WithRoutes` and providers is unchanged.
+Those routes exist only after `Boot`, and the app fails closed around that:
+
+- `app.Handler()` returns `vukem.ErrNotBooted` while they are pending, instead of serving 404 for them.
+- If the router is compiled before `Boot` anyway (`app.Router.Handler()`, `app.Router.URL`, a request, or a `URL()` call inside a `WithRoutes` function), `Boot` fails with `vukem.ErrRoutesCompiled` instead of silently dropping them.
+
+They share the router with `WithRoutes`: global middleware (`r.Use`, `r.UseServer`, everything `DefaultMiddleware` installed) applies to them, but groups created inside a `WithRoutes` function do not, so create the group again or add the route middleware they need. Do not call `vukem.DefaultMiddleware` again in an after-boot function: it would install the whole stack a second time.
+
+In `KindWarmup` (`codegen:routes`, `codegen:client`) they run at the end of `New` so the route table is complete, but `Boot` never ran and booted clients are still unset. Register the routes without touching those clients, or branch on the kind:
+
+```go
+vukem.WithRoutesAfterBoot(func(r *router.Router, app *vukem.App) error {
+	var ctrl *catalog.Controller
+	if app.Kind != vukem.KindWarmup { // Boot ran: the client is open
+		ctrl = catalog.New(search.Client)
+	}
+
+	r.Get("/search", ctrl.Search).Name("search") // a method value on a nil pointer is fine; it is never called in warmup
+	return nil
+})
+```
+
+A panic in an after-boot function during warmup is returned from `New` as an error saying route registration must not use booted services during warmup. The order of `WithRoutes` and providers is unchanged.
 
 ## Creating the app
 

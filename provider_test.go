@@ -96,7 +96,8 @@ func TestRoutesAfterBootErrors(t *testing.T) {
 		t.Fatalf("Boot() = %v, want routes after boot error", err)
 	}
 
-	// A handler compiled before Boot would silently miss the late routes.
+	// A router compiled before Boot (here through Router.Handler) would
+	// silently miss the late routes.
 	late := WithRoutesAfterBoot(func(r *router.Router, _ *App) error {
 		r.Get("/late", func(*web.Ctx) error { return nil })
 		return nil
@@ -107,7 +108,7 @@ func TestRoutesAfterBootErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := app.Handler(); err != nil {
+	if _, err := app.Router.Handler(); err != nil {
 		t.Fatal(err)
 	}
 
@@ -144,4 +145,81 @@ func TestRoutesAfterBootInWarmup(t *testing.T) {
 
 func hasRoute(app *App, name string) bool {
 	return slices.ContainsFunc(app.Router.Routes(), func(r router.RouteInfo) bool { return r.Name == name })
+}
+
+func TestBootErrorIsSticky(t *testing.T) {
+	t.Parallel()
+
+	p := &testProvider{name: "x", rec: &recorder{}, fail: "boot"}
+
+	app, err := New(WithSource(testSource(nil)), WithLogger(discardLogger()), WithProviders(p))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	first := app.Boot(t.Context())
+	if first == nil {
+		t.Fatal("Boot() = nil, want boot error")
+	}
+
+	if again := app.Boot(t.Context()); !errors.Is(again, first) {
+		t.Fatalf("second Boot() = %v, want %v", again, first)
+	}
+
+	if got := p.rec.get(); len(got) != 2 { // register + one boot
+		t.Fatalf("provider calls = %v, want Boot once", got)
+	}
+}
+
+func TestHandlerRefusesPendingRoutesAfterBoot(t *testing.T) {
+	t.Parallel()
+
+	app, err := New(WithSource(testSource(nil)), WithLogger(discardLogger()),
+		WithRoutesAfterBoot(func(*router.Router, *App) error { return nil }))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := app.Handler(); !errors.Is(err, ErrNotBooted) {
+		t.Fatalf("Handler() before Boot = %v, want ErrNotBooted", err)
+	}
+
+	if app.Router.Compiled() {
+		t.Fatal("Handler() compiled the router while routes were pending")
+	}
+
+	if err := app.Boot(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := app.Handler(); err != nil {
+		t.Fatalf("Handler() after Boot = %v", err)
+	}
+}
+
+func TestRoutesAfterBootPanicInWarmup(t *testing.T) {
+	t.Parallel()
+
+	p := &clientProvider{rec: &recorder{}}
+
+	_, err := New(WithSource(testSource(nil)), WithLogger(discardLogger()), WithKind(KindWarmup),
+		WithProviders(p),
+		WithRoutesAfterBoot(func(r *router.Router, _ *App) error {
+			client := *p.client // nil: warmup never boots
+			r.Get("/client", func(c *web.Ctx) error { return c.String(http.StatusOK, client) })
+
+			return nil
+		}),
+	)
+	if err == nil || !strings.Contains(err.Error(), "must not use booted services during warmup") {
+		t.Fatalf("New() in warmup = %v, want warmup panic error", err)
+	}
+}
+
+func TestErrRoutesCompiledHint(t *testing.T) {
+	t.Parallel()
+
+	if msg := ErrRoutesCompiled.Error(); !strings.Contains(msg, "call Boot before Handler/Router.URL") {
+		t.Fatalf("ErrRoutesCompiled = %q, want a hint", msg)
+	}
 }

@@ -485,8 +485,15 @@ func (a *App) newRouter() *router.Router {
 	return r
 }
 
-// Handler returns the compiled HTTP handler.
-func (a *App) Handler() (http.Handler, error) { return a.Router.Handler() }
+// Handler returns the compiled HTTP handler. It fails with ErrNotBooted
+// while routes from WithRoutesAfterBoot wait for Boot.
+func (a *App) Handler() (http.Handler, error) {
+	if a.pendingBootRoutes() {
+		return nil, ErrNotBooted
+	}
+
+	return a.Router.Handler()
+}
 
 func (a *App) httpRunner() (Runner, error) {
 	h, err := a.Handler()
