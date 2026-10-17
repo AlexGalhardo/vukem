@@ -1,8 +1,8 @@
 // Package stripe is a Stripe API client and webhook receiver built on the
 // standard library (no stripe-go): customers, Checkout Sessions,
-// subscriptions, Billing Portal sessions, PaymentIntents and Connect
-// (Express accounts, onboarding and login links, transfers, the
-// Stripe-Account header) with the API version pinned, idempotency keys on
+// subscriptions, Billing Portal sessions, PaymentIntents, refunds and Connect
+// (Accounts v2 and v1 accounts, onboarding and login links, transfers and
+// reversals, the Stripe-Account header) with the API version pinned, idempotency keys on
 // every POST, retries on 429/5xx and typed errors; webhooks verify
 // Stripe-Signature (platform and Connect secrets), process each event once
 // and dispatch it to an events.Bus.
@@ -187,7 +187,9 @@ func validAccountID(id string) bool {
 
 // Call sends any request (Connect endpoints, refunds, ...) and decodes the
 // JSON response into out (a struct, *json.RawMessage or nil to discard).
-// POSTs carry an Idempotency-Key: IdempotencyKey's, or a generated one.
+// POSTs (and API v2 DELETEs) carry an Idempotency-Key: IdempotencyKey's, or
+// a generated one. A path under /v2/ is API v2: writes send p as JSON
+// (a nil value is JSON null, which v2 uses to clear a metadata key).
 func (c *Client) Call(ctx context.Context, method, path string, p Params, out any, opts ...RequestOption) error {
 	if out == nil {
 		out = &json.RawMessage{}
@@ -212,10 +214,16 @@ func (c *Client) call(ctx context.Context, method, path string, p Params, out an
 		return err
 	}
 
-	body := encodeParams(p)
+	v2 := strings.HasPrefix(path, "/v2/")
+
+	body, contentType, err := encodeBody(method, v2, p)
+	if err != nil {
+		return fmt.Errorf("stripe: encode %s: %w", path, err)
+	}
 
 	idemKey := ""
-	if method == http.MethodPost {
+	// API v2 replays DELETEs idempotently too (docs.stripe.com/api-v2-overview#idempotency).
+	if method == http.MethodPost || (v2 && method == http.MethodDelete) {
 		idemKey = o.idemKey
 		if idemKey == "" {
 			idemKey = rand.Text()
@@ -225,7 +233,7 @@ func (c *Client) call(ctx context.Context, method, path string, p Params, out an
 	var lastErr error
 
 	for attempt := 0; ; attempt++ {
-		retry, wait, err := c.do(ctx, method, path, body, idemKey, o.account, out)
+		retry, wait, err := c.do(ctx, method, path, body, contentType, idemKey, o.account, out)
 		if err == nil {
 			return nil
 		}
@@ -248,7 +256,7 @@ func (c *Client) call(ctx context.Context, method, path string, p Params, out an
 
 func (c *Client) do(
 	ctx context.Context,
-	method, path, body, idemKey, account string,
+	method, path, body, contentType, idemKey, account string,
 	out any,
 ) (retry bool, wait time.Duration, err error) {
 	target := c.baseURL + path
@@ -270,8 +278,8 @@ func (c *Client) do(
 	req.Header.Set("Stripe-Version", APIVersion)
 	req.Header.Set("User-Agent", "vukem-stripe/1")
 
-	if method != http.MethodGet {
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
 	}
 
 	if idemKey != "" {
@@ -380,6 +388,27 @@ func parseError(res *http.Response, b []byte) *Error {
 	}
 
 	return e
+}
+
+// encodeBody encodes p for the request: a query string on GET (v2 reads
+// arrays as include[0]=a, the same bracket syntax as v1), JSON for API v2
+// writes (v2 rejects form bodies) and a form for v1 writes. It returns the
+// Content-Type ("" on GET).
+func encodeBody(method string, v2 bool, p Params) (body, contentType string, err error) {
+	switch {
+	case method == http.MethodGet:
+		return encodeParams(p), "", nil
+	case v2:
+		if p == nil {
+			p = Params{}
+		}
+
+		b, err := json.Marshal(p)
+
+		return string(b), "application/json", err
+	default:
+		return encodeParams(p), "application/x-www-form-urlencoded", nil
+	}
 }
 
 // encodeParams form-encodes p with Stripe's bracket syntax, keys sorted.

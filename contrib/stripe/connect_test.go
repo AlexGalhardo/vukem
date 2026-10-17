@@ -323,6 +323,22 @@ func TestSecurity_A03_StripeRequestHeadersValidated(t *testing.T) {
 			_, err := c.CreateLoginLink(t.Context(), "../customers/cus_1")
 			return err
 		},
+		"v2 account id with a path": func() error {
+			_, err := c.GetAccountV2(t.Context(), "acct_1/../../v1/balance", nil)
+			return err
+		},
+		"v2 update of a non-account": func() error {
+			_, err := c.UpdateAccountV2(t.Context(), "cus_1", nil)
+			return err
+		},
+		"empty refund id": func() error {
+			_, err := c.GetRefund(t.Context(), "")
+			return err
+		},
+		"empty transfer for a reversal": func() error {
+			_, err := c.CreateTransferReversal(t.Context(), "", nil)
+			return err
+		},
 	}
 
 	for name, call := range tests {
@@ -380,6 +396,30 @@ func TestSecurity_A01_StripePlatformOnlyRefusesAccountScope(t *testing.T) {
 		},
 		"CreateTransfer with OnAccount": func() error {
 			_, err := platform.CreateTransfer(ctx, nil, stripe.OnAccount("acct_1"))
+			return err
+		},
+		"CreateAccountV2 via ForAccount": func() error {
+			_, err := scoped.CreateAccountV2(ctx, nil)
+			return err
+		},
+		"GetAccountV2 via ForAccount": func() error {
+			_, err := scoped.GetAccountV2(ctx, "acct_1", nil)
+			return err
+		},
+		"UpdateAccountV2 with OnAccount": func() error {
+			_, err := platform.UpdateAccountV2(ctx, "acct_1", nil, stripe.OnAccount("acct_1"))
+			return err
+		},
+		"CreateAccountLinkV2 via ForAccount": func() error {
+			_, err := scoped.CreateAccountLinkV2(ctx, nil)
+			return err
+		},
+		"CreateTransferReversal via ForAccount": func() error {
+			_, err := scoped.CreateTransferReversal(ctx, "tr_1", nil)
+			return err
+		},
+		"GetTransferReversal with OnAccount": func() error {
+			_, err := platform.GetTransferReversal(ctx, "tr_1", "trr_1", stripe.OnAccount("acct_1"))
 			return err
 		},
 	}
