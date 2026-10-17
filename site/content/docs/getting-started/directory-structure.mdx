@@ -66,9 +66,9 @@ The module `github.com/AlexGalhardo/vukem` is split into small, single-purpose p
 | `mail`, `cache`, `storage`, `events`, `logging/telegram` | mail transports, cache stores, disks, typed events, Telegram logging |
 | `factory`, `database/dbtest` | model factories, dialect conformance suite |
 | `httpclient`, `webhook`, `security` | SSRF-safe client, webhook signatures, security events |
-| `drivers/postgres`, `drivers/redis`, `drivers/mongo` (separate modules) | PostgreSQL, Redis/Valkey and MongoDB drivers |
-
-| Planned | Phase |
-| --- | --- |
-| `inertia`, `vite`, `i18n`, `sse`, `broadcast`, `admin`, `devtools` | BETA |
-| `drivers/mysql`, `drivers/s3`, `contrib/graphql`, `contrib/grpc`, `contrib/stripe` (separate modules) | BETA |
+| `vite`, `inertia` | Vite asset tags; Inertia v3 adapter |
+| `crypt`, `i18n`, `sse`, `broadcast`, `upload` | encryption, translations, server-sent events, realtime channels, streaming and resumable uploads |
+| `admin`, `devtools` | admin panel; development dashboard |
+| `auth/jwt`, `auth/totp` | JWT guard and refresh tokens; TOTP two-factor |
+| `drivers/postgres`, `drivers/mysql`, `drivers/redis`, `drivers/mongo`, `drivers/s3`, `drivers/websocket`, `drivers/otel` (separate modules) | PostgreSQL, MySQL/MariaDB, Redis/Valkey, MongoDB, S3, WebSockets, OpenTelemetry |
+| `contrib/graphql`, `contrib/grpc`, `contrib/stripe` (separate modules) | GraphQL server, gRPC on connect-go, Stripe client |

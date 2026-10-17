@@ -1,13 +1,17 @@
 ---
-title: Inertia + React
-description: Build single-page React apps with server-side routing and controllers through Vukem's Inertia v3 adapter.
+title: Inertia
+description: Build single-page React, Vue or Svelte apps with server-side routing and controllers through Vukem's Inertia v3 adapter.
 ---
 
-<Callout type="warning">
-Planned for BETA. The `inertia` and `vite` packages are not implemented yet; this page documents the design target.
-</Callout>
+Vukem ships its own Inertia v3 adapter in the `inertia` package, with starters for React, Vue and Svelte.
 
-Vukem ships its own Inertia v3 adapter. Before 1.0, the starter targets React.
+```bash
+vukem new app --inertia react         # or vue, svelte
+vukem install:inertia --force --react # turn an HTMX starter into an Inertia app
+vukem serve                           # Go app with reload + npm run dev
+```
+
+## Rendering pages
 
 ```go
 func (p *PostController) Index(c *web.Ctx) error {
@@ -18,29 +22,93 @@ func (p *PostController) Index(c *web.Ctx) error {
 
 	return inertia.Render(c, "Posts/Index", inertia.Props{
 		"posts":   posts,
-		"filters": inertia.Optional(loadFilters),
+		"filters": inertia.Optional(func(ctx context.Context) (any, error) { return loadFilters(ctx) }),
 		"stats":   inertia.Defer(statsFn).Group("sidebar"),
 	})
 }
 ```
 
-## Features
+The starter wires it for you:
+
+```go
+vukem.WithInertia(inertia.Config{})              // bootstrap/app.go → app.Inertia
+r.Use(app.Inertia.Middleware, shareProps(app))   // routes/web.go: Vary, version check, 302→303, fragment redirects
+```
+
+The root view `resources/views/app.html` holds the CSP nonce meta, `{{vite}}`, `{{.Head}}` in `<head>` and `{{.Inertia}}` in `<body>`. The initial page is a `<script data-page="app" type="application/json">` with `/` escaped.
+
+## Props
+
+| Prop | Behaviour |
+| --- | --- |
+| plain value or `func(ctx) (any, error)` | always sent; functions resolve lazily |
+| `Optional(v)` | only when a partial reload asks for it |
+| `Always(v)` | even when a partial reload excludes it |
+| `Defer(v).Group(g).Rescue()` | loaded after the first render, grouped; `Rescue` keeps the page alive if it fails |
+| `Merge(v)` with `.Append(paths...)` / `.Prepend(paths...)` / `.MatchOn(fields...)`, `DeepMerge(v)` | merged into the client's current value |
+| `Once(v).As(key).Fresh().Until(t)` | sent once and remembered by the client |
+| `Scroll(v, meta)`, `ScrollPage(orm.Page)`, `ScrollCursor(orm.CursorPage, name)` | infinite scrolling |
+
+Modifiers chain (`Defer(v).Merge()`, `Merge(v).Once()`). Nested maps resolve recursively, top-level `"a.b"` keys unpack, and partial reloads filter by dotted path (`only`, `except`, `reset`).
+
+Shared props: `inertia.Config.Shared` for global ones, `inertia.Share(c.Context(), key, value)` per request. The starters share the auth user and flash messages.
+
+## Requests and redirects
 
 | Area | Support |
 | --- | --- |
-| Requests | `X-Inertia`, asset version check (409), partial reloads, error bags, prefetch |
-| Props | `Optional`, `Always`, `Defer`, `Merge`, `DeepMerge`, `Once`, `Scroll` |
-| Redirects | 303 after `PUT`/`PATCH`/`DELETE`; `inertia.Location(url)` for external URLs |
-| Shared data | `inertia.Share(key, fn)` globally or per request; auth user and flash by default |
-| Validation | Errors flashed, `303` back, surfaced as `props.errors` |
-| SSR | Node SSR server with timeout; falls back to client-side rendering on any failure |
-| Typed routes | `vukem codegen:routes` emits `resources/js/routes.ts` |
+| Version | hash of the Vite manifest; a GET with an old version gets 409 + `X-Inertia-Location` |
+| Partial reloads | `Partial-Component`, `Partial-Data`, `Partial-Except`, `X-Inertia-Reset`, error bags, prefetch (`Purpose: prefetch`) |
+| Redirects | 302 → 303 after PUT/PATCH/DELETE; `inertia.Location(c, url)` forces a full visit (409 for external URLs); `inertia.PreserveFragment(c)` keeps the URL fragment |
+| Validation | errors flashed and `303` back, surfaced as `props.errors` |
+| Flash | `inertia.Flash(c, key, value)` fills `page.flash` once; survives redirects, not consumed by prefetch |
+| History | `Config.EncryptHistory` (needs a secure context) or `inertia.EncryptHistory(ctx, bool)` per page; `inertia.ClearHistory(c)` on logout |
 
-## Vite
+### Precognition
 
-`{{ vite "resources/js/app.tsx" }}` emits the dev server scripts when `public/hot` exists, or reads the Vite manifest to emit hashed scripts, styles and `modulepreload` links, with CSP nonces. `/build/*` is served with immutable cache headers by `middleware.Static`.
+```go
+r.Post("/users", inertia.Precognitive(schema, h))
+```
+
+`Precognition: true` requests only validate: 204 with `Precognition-Success`, or 422 `{message, errors}` filtered by `Precognition-Validate-Only`. `Vary: Precognition` is always set.
+
+## Server-side rendering
+
+```go
+inertia.Config{SSR: &inertia.SSRConfig{Bundle: "bootstrap/ssr/ssr.js"}}
+```
+
+- Pages are POSTed to the Node SSR server (`/render`, default `127.0.0.1:13714`, 3s timeout). Any failure **falls back to client-side rendering** and is reported to `OnFailure` (a warning log by default).
+- In development the Vite plugin endpoint (`{hot}/__inertia_ssr`) is used.
+- `Except` path prefixes and `inertia.DisableSSR(ctx)` skip SSR per request.
+- `vukem ssr:start` runs `node bootstrap/ssr/ssr.js` and restarts it when it crashes; `vukem ssr:check` probes `/health`.
+
+SSR is off by default.
+
+## Typed routes
 
 ```bash
-vukem install:inertia
-vukem serve   # Go app with reload + npm run dev
+vukem codegen:routes            # resources/js/routes.ts (-o file, -o - for stdout)
 ```
+
+```ts
+import { route, routes, type RouteName } from "./routes";
+
+route("posts.show", { id: 7 });                     // "/posts/7"
+route("files.show", { path: "a b/c" }, { page: 2 }); // "/files/a%20b/c?page=2"
+routes["posts.store"].method;                       // "POST"
+```
+
+The command boots the app in warmup mode (config and route definitions, no `Boot`, no connections) and writes only named routes. Params are typed per route; regenerate after changing routes and commit the file. For typed API calls, see [client generation](/docs/rest-apis/client-generation).
+
+## Testing
+
+```go
+app.Client(t).Inertia("").Get("/posts").
+	AssertInertia("Posts/Index").
+	HasProp("posts", 3).
+	MissingProp("stats").
+	PropEquals("filters.q", "go")
+```
+
+Works on first visits (HTML) and Inertia visits (JSON). `Inertia(version)` also sends the Inertia `Accept` header, so `PostJSON` behaves like a form submission.

@@ -83,12 +83,12 @@ Rendering is buffered: a template error never leaves a half-written page, it goe
 | `flash "success"` | A flashed session value |
 | `json .` | Value encoded as JSON, safe inside `<script>` |
 | `dict "Key" v ...` | A map, to pass several values to a partial |
+| `vite "resources/js/app.ts"`, `viteReactRefresh` | [Vite](/docs/frontend/vite) dev server or manifest tags |
+| `t "key" "name" v`, `locale` | [Translations](/docs/digging-deeper/localization) and the request's locale |
 
 Request-scoped functions read the session and nonce from the request context; without a session they return empty values. Add your own with `view.Config.Funcs` when building a `view.Engine` yourself.
 
-<Callout type="warning">
-`can` checks [authorization](/docs/security/authorization#templates). Planned for BETA: `vite` and `t` (translations).
-</Callout>
+`can` checks [authorization](/docs/security/authorization#templates).
 
 ## The engine directly
 

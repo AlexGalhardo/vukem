@@ -1,0 +1,81 @@
+---
+title: File uploads
+description: Streaming multipart uploads with per-route limits, content sniffing and virus scanning, resumable tus uploads and direct-to-S3 presigned uploads.
+---
+
+Package `upload` (stdlib only) goes beyond [`storage.PutUploaded`](/docs/digging-deeper/storage#uploads): it never buffers a whole file.
+
+```go
+rules := upload.Images(5 << 20) // MaxFileSize and Types are required: zero Rules reject everything
+rules.MaxFiles, rules.Dir = 3, "photos"
+rules.Scanner = upload.ClamAV("127.0.0.1:3310") // optional
+
+form, err := upload.Receive(c, disk, rules) // form.Values, form.Files[i].Path/Name/Type/Size/SHA256
+```
+
+## Streaming multipart
+
+- `Receive` reads `r.MultipartReader()` part by part and streams each file to the `storage.Disk`: a 64 MiB upload allocates about 100 KiB.
+- `Rules` bound the file size, the whole request (`MaxSize`, default `MaxFiles*MaxFileSize + 1 MiB`, which replaces the router-wide body limit for that route), the file count, and field count and size. Sizes fail with 413; types, extensions and count with 422. On any error every file already written is deleted.
+- **Type checks:** `http.DetectContentType` on the first 512 bytes must be in `Types`, and the client's extension must be one known for that type (`upload.Extensions("image/jpeg")` → `.jpg`, `.jpeg`). The client's `Content-Type` is ignored. Stored names are random with the canonical extension; the sanitized client name (`upload.SanitizeName`) is metadata only.
+- `upload.Save(ctx, disk, rules, field, filename, r)` applies the same checks to any reader (finished tus uploads, imports).
+
+<Callout type="warning">
+Nothing may read the body before `Receive`: do not call `c.Input()` or `c.FormFile()` first. `middleware.MethodOverride` leaves multipart bodies unread (multipart forms put `_method` in the query string).
+</Callout>
+
+### Virus scanning
+
+With `Rules.Scanner`, files are written to `QuarantineDir/.<random>` (dot-named, so `storage.Handler` never serves them), scanned, then copied to `Dir`. `ErrInfected` deletes the file and answers 422; a scanner error deletes it and answers 503 (fail closed). `upload.ClamAV(addr)` speaks clamd's `INSTREAM` over TCP with per-operation timeouts.
+
+## Resumable uploads (tus)
+
+`upload.Tus` implements tus 1.0 core with the creation, expiration and termination extensions:
+
+```go
+tus, err := upload.Tus(upload.TusConfig{
+	Dir: "storage/app/tus", BasePath: "/uploads/tus/", MaxSize: 2 << 30,
+	Authorize: func(r *http.Request) error { /* session or token check */ return nil },
+	OnComplete: func(ctx context.Context, info upload.TusInfo, open func() (io.ReadCloser, error)) error {
+		rc, err := open()
+		if err != nil {
+			return err
+		}
+		defer rc.Close()
+		_, err = upload.Save(ctx, disk, rules, "file", info.Filename(), rc)
+		return err
+	},
+})
+r.Handle("/uploads/tus/", tus)
+app.OnShutdown(func(context.Context) error { return tus.Close() })
+```
+
+- `POST` checks `Upload-Length` and `Upload-Metadata` and answers 201 with a random `Location`; `HEAD` returns the offset; `PATCH` needs `Tus-Resumable: 1.0.0`, `Content-Type: application/offset+octet-stream` and the current `Upload-Offset`, and appends the body as it streams. An interrupted request keeps what arrived. Concurrent `PATCH`es on one upload get 423.
+- The upload id is the capability, so `Authorize` is required (boot error when nil; return `nil` explicitly to allow everyone).
+- Abandoned uploads expire after `Expiry` (24h); schedule `tus.Cleanup(ctx)` to delete them. When the last byte arrives `OnComplete` runs; its error goes to the client (422 for validation) and the partial data is deleted either way.
+
+## Direct-to-S3 uploads
+
+Browsers can upload straight to the bucket. `upload.Direct` takes any `upload.Presigner`:
+
+```go
+type Presigner interface {
+	PresignPut(ctx context.Context, key, contentType string, maxSize int64, ttl time.Duration) (url string, headers http.Header, err error)
+}
+
+direct, err := upload.Direct(upload.DirectConfig{Presigner: presigner, Rules: rules, Authorize: authorize})
+r.Handle("/uploads/presign", direct)
+
+// later, when the client reports the upload done:
+file, err := upload.Verify(ctx, disk, key, rules)
+```
+
+<Callout type="info">
+The [S3 disk](/docs/digging-deeper/storage#s3)'s own `PresignPut(key, ttl)` signs only the `host` header and does not implement `upload.Presigner` yet; wrap your presigning in a type with the signature above.
+</Callout>
+
+`Direct` answers `POST {"filename","content_type","size"}` with `{"key","url","method":"PUT","headers","expires_at"}` after checking the declared type, extension and size, under a random key in `Rules.Dir` (TTL 15 minutes, at most 1 hour). The declared type cannot be trusted, so `upload.Verify` sniffs the stored object and deletes it when it breaks the rules.
+
+## HTMX progress component
+
+The HTMX starter ships `resources/views/components/upload.html` (a `data-upload` form with a `<progress>`) and a `/uploads` demo page. `resources/js/app.ts` swaps htmx's `fetch` for `XMLHttpRequest` on those forms to report progress, without inline scripts, so the CSP holds. Validate files received through `c.Input()` with `z.File()` ([validation](/docs/basics/validation)).

@@ -14,11 +14,17 @@ vukem list
 
 | Command | Description |
 | --- | --- |
-| `vukem new <name> [--api] [--module path] [--framework dir]` | Create a project from the HTMX + SQLite starter, or a JSON-only API with `--api`; run `go mod tidy`, write `APP_KEY`, `git init` ([Installation](/docs/installation)) |
-| `vukem install:auth [--social github,google]` | Add login, registration, email verification and password reset ([Authentication](/docs/security/authentication)), optionally social login |
+| `vukem new <name> [--api \| --templ \| --inertia react\|vue\|svelte] [--module path] [--no-install] [--framework dir]` | Create a project from a [starter](/docs/starters) (prompts for the stack on a terminal); run `go mod tidy`, write `APP_KEY`, `npm install`, `git init` |
+| `vukem install:auth [--social github,google,…] [--2fa]` | Add login, registration, email verification and password reset ([Authentication](/docs/security/authentication)), optionally social login and [two-factor](/docs/security/two-factor) |
+| `vukem install:inertia --force [--react\|--vue\|--svelte]` | Turn the HTMX starter into an [Inertia](/docs/frontend/inertia) app |
+| `vukem install:admin`, `vukem make:admin-resource <Model>` | [Admin panel](/docs/digging-deeper/admin) and its resources |
+| `vukem install:billing` | [Stripe subscriptions](/docs/digging-deeper/billing) (needs `install:auth`) |
+| `vukem make:proto <Name>`, `vukem codegen:rpc [--protoc]` | [gRPC](/docs/rest-apis/grpc#code-generation) service skeleton and code generation |
+| `vukem down [--secret s]`, `vukem up` | Maintenance mode: 503 with `Retry-After`; `/<secret>` sets a signed bypass cookie |
+| `vukem boost:install` | Guidelines, skills and the `boost:mcp` MCP server for AI coding agents |
 | `vukem install:api` | Add API tokens, `/api/v1`, CORS and rate limiting ([REST APIs](/docs/rest-apis/overview)) |
-| `vukem serve [--poll 500ms] [--no-vite]` | Build and run `cmd/app`; rebuild and restart when `.go`, `go.mod`, `go.sum` or `.env` change |
-| `vukem build [-o bin/app]` | `npx vite build` when a `vite.config.*` exists, then `go build -trimpath -ldflags="-s -w"` |
+| `vukem serve [--poll 500ms] [--no-vite]` | Build and run `cmd/app`; rebuild and restart when `.go`, `.templ`, `go.mod`, `go.sum` or `.env` change |
+| `vukem build [-o bin/app]` | `go tool templ generate` when `.templ` files exist, `vite build` when a `vite.config.*` exists, then `go build -trimpath -ldflags="-s -w"` |
 | `vukem key:generate [--show] [--force]` | Write `APP_KEY` to `.env` (created from `.env.example` when missing) |
 | `vukem version` | Print the CLI version |
 | `vukem list`, `vukem help <command>` | List commands, or show one command's flags |
@@ -69,7 +75,7 @@ vukem about
 vukem reports:send --dry-run   # your own command
 ```
 
-`vukem` builds `cmd/app` into `.vukem/bin/app` and runs it with the same arguments. The binary is rebuilt only when a `.go`, `go.mod` or `go.sum` file is newer, so repeated commands start instantly. Built-in app commands: `migrate`, `migrate:rollback`, `migrate:reset`, `migrate:fresh`, `migrate:status`, `db:seed`, `db:wipe`, `route:list`, `about`, [`queue:work`, `queue:failed`, `queue:retry`, `queue:forget`](/docs/digging-deeper/queue#commands), [`schedule:run`, `schedule:work`, `schedule:list`](/docs/digging-deeper/scheduler#running-it), [`openapi:export`, `codegen:types`](/docs/rest-apis/openapi) and `openapi:serve` (when you add `apidocs.Command()`). Destructive commands need `--force` in production. Add your own with `vukem make:command` (see [Application lifecycle](/docs/architecture/lifecycle#commands)).
+`vukem` builds `cmd/app` into `.vukem/bin/app` and runs it with the same arguments. The binary is rebuilt only when a `.go`, `go.mod` or `go.sum` file is newer, so repeated commands start instantly. Built-in app commands: `migrate`, `migrate:rollback`, `migrate:reset`, `migrate:fresh`, `migrate:status`, `db:seed`, `db:wipe`, `route:list`, `about`, [`queue:work`, `queue:failed`, `queue:retry`, `queue:forget`](/docs/digging-deeper/queue#commands), [`schedule:run`, `schedule:work`, `schedule:list`](/docs/digging-deeper/scheduler#running-it), [`openapi:export`, `codegen:types`](/docs/rest-apis/openapi), [`codegen:client`](/docs/rest-apis/client-generation), [`codegen:routes`](/docs/frontend/inertia#typed-routes), [`ssr:start`, `ssr:check`](/docs/frontend/inertia#server-side-rendering), `boost:mcp` and `openapi:serve` (when you add `apidocs.Command()`). Destructive commands need `--force` in production. Add your own with `vukem make:command` (see [Application lifecycle](/docs/architecture/lifecycle#commands)).
 
 Running the binary directly works too: `go run ./cmd/app migrate`.
 
@@ -91,5 +97,5 @@ Running the binary directly works too: `go run ./cmd/app migrate`.
 A delegated app command's exit code is passed through unchanged.
 
 <Callout type="info">
-Planned for BETA: `stub:publish`, `make:proto`, `install:inertia`, `install:admin`, `install:billing`, `codegen:client`.
+Planned: `stub:publish` (copy the embedded stubs into `stubs/`).
 </Callout>

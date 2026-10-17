@@ -1,0 +1,57 @@
+---
+title: Client generation
+description: Generate a dependency-free TypeScript client or a stdlib-only Go client from the OpenAPI document of your typed handlers.
+---
+
+`vukem codegen:client` turns the [OpenAPI document](/docs/rest-apis/openapi) of the [typed routes](/docs/rest-apis/typed-handlers) into a typed client. It boots the app in warmup mode, so no database or other connection is opened.
+
+```bash
+vukem codegen:client                               # TypeScript → resources/js/api.ts
+vukem codegen:client -lang go -package apiclient   # Go → internal/apiclient/client.go
+vukem codegen:client -lang go -o -                 # print to stdout
+```
+
+Regenerate after changing routes and commit the output. Only operations with a name (`api.Op{Name: "products.store"}`) get a method.
+
+## TypeScript
+
+The client contains the [`codegen:types`](/docs/rest-apis/openapi#types-for-clients) types, `<Op>Params` for path parameters and `createClient`. It has no dependencies and runs in browsers and Node 18+.
+
+```ts
+import { ApiError, createClient } from "./api";
+
+const api = createClient({ baseUrl: "", headers: () => ({ Authorization: `Bearer ${token}` }) });
+const product = await api.productsStore({ params: { shop: 1 }, body: { name: "Lamp" } });
+
+try {
+  await api.productsStore({ params: { shop: 1 }, body: { name: "x" } });
+} catch (err) {
+  if (err instanceof ApiError && err.status === 422) console.log(err.errors.name);
+}
+```
+
+- One async method per operation, camelCase (`products.store` → `productsStore`). Its argument `{ params, query, body }` holds only what the operation takes, and each part is required only when the operation requires it.
+- Path parameters are URL-encoded; query values skip `undefined`/`null` and repeat arrays (`?tags=a&tags=b`); bodies are JSON.
+- Options: `baseUrl` (default `""`, the page's origin), `fetch` (default `globalThis.fetch`), `headers` (an object or a per-request function), `credentials` (default `"same-origin"`).
+- Any non-2xx response throws `ApiError` with `status`, the parsed RFC 9457 `problem` and `errors` (field → messages on 422).
+
+## Go
+
+```go
+c := apiclient.New("https://shop.example")
+c.Header = func(r *http.Request) { r.Header.Set("Authorization", "Bearer "+token) }
+
+p, err := c.ProductsStore(ctx, 1, apiclient.ProductsStoreBody{Name: "Lamp"})
+if apiErr, ok := errors.AsType[*apiclient.Error](err); ok && apiErr.Status == 422 {
+	fmt.Println(apiErr.Problem.Errors["name"])
+}
+```
+
+- The output is gofmt'd and uses only the standard library.
+- Schemas become Go types: objects are structs with `json` tags (`omitempty` on optional fields), optional or nullable values are pointers, string enums are named types with constants, `date-time` is `time.Time`, integers `int64`, numbers `float64`, unions `json.RawMessage`. Inline schemas become `<Op>Body`, `<Op>Query` and `<Op>Response`.
+- `Client{BaseURL, HTTP, Header}`: `HTTP` defaults to `http.DefaultClient`; `Header` runs on every request. Methods take `ctx`, the path parameters, then the query struct and the body; operations without a response body return only `error`.
+- Any non-2xx response returns `*apiclient.Error{Status, Problem}`.
+
+A round-trip test runs the generated Go client against a live app, and CI type-checks the TypeScript client with `tsc --strict`.
+
+For typed URLs of named web routes (not API calls), see [`codegen:routes`](/docs/frontend/inertia#typed-routes). For gRPC clients, see [gRPC](/docs/rest-apis/grpc#code-generation).

@@ -92,7 +92,7 @@ err = tokens.RevokeAll(ctx, user.AuthID())
 if auth.TokenCan(c, "api", "posts:read") { /* ... */ } // "*" grants everything
 ```
 
-Opaque tokens `<id>.<secret>` from `crypto/rand`; only the SHA-256 of the secret is stored, compared in constant time; `last_used_at` is updated at most once a minute. A JWT guard is planned for BETA.
+Opaque tokens `<id>.<secret>` from `crypto/rand`; only the SHA-256 of the secret is stored, compared in constant time; `last_used_at` is updated at most once a minute. For signed tokens from an identity provider, use the [JWT guard](/docs/security/jwt); for TOTP, see [two-factor authentication](/docs/security/two-factor).
 
 ## Middleware
 

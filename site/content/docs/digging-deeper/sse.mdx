@@ -1,0 +1,55 @@
+---
+title: Server-sent events
+description: Stream text/event-stream responses with heartbeats, reconnect support and clean shutdown, and fan events out by topic across instances.
+---
+
+```go
+r.Get("/clock", func(c *web.Ctx) error {
+	return c.SSE(func(s *sse.Stream) error {
+		t := time.NewTicker(time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-s.Context().Done():
+				return nil
+			case now := <-t.C:
+				if err := s.Send("tick", now.Format(time.TimeOnly)); err != nil {
+					return err
+				}
+			}
+		}
+	})
+})
+```
+
+In plain `net/http` handlers use `sse.Serve(w, r, fn)`.
+
+## Streams
+
+- Every event is flushed through `http.ResponseController`, and the server's `WriteTimeout` is lifted for the stream.
+- A `: ping` comment goes out every 15s; change it with `sse.Heartbeat(d)`.
+- `Stream.Context()` ends when the client disconnects, when `fn` returns or when the app shuts down. The HTTP server signals open streams on shutdown, so it never waits on them.
+- `s.Send(event, data)`, `s.SendJSON(event, v)` and `s.SendEvent(sse.Event{ID, Event, Data, Retry})`; `s.LastEventID()` reads the client's `Last-Event-ID` after a reconnect.
+- Field values lose CR and LF, so input cannot forge extra fields.
+
+## Hub
+
+`sse.NewHub(broker)` fans events out by topic:
+
+```go
+hub := sse.NewHub(nil) // nil broker: this process only; pass the drivers/redis client for every instance
+
+err := hub.Publish(ctx, "posts", sse.Event{Event: "created", Data: html})
+
+r.Get("/posts/stream", func(c *web.Ctx) error {
+	return c.SSE(func(s *sse.Stream) error { return hub.Stream(s, "posts") })
+})
+```
+
+Subscribers that fall 64 events behind are dropped; the browser reconnects on its own.
+
+## With htmx
+
+The stream pairs with htmx's `hx-sse`: send rendered HTML fragments as event data and let htmx swap them in. See [HTMX](/docs/frontend/htmx).
+
+For named channels with authorization (private and presence channels), use [broadcasting](/docs/digging-deeper/broadcasting), which also serves over SSE.

@@ -1,0 +1,66 @@
+---
+title: JWT
+description: A stdlib JWT guard with HS256, RS256, ES256 and EdDSA, an algorithm allowlist, key rotation and JWKS, and refresh tokens with reuse detection.
+---
+
+Package `auth/jwt` uses only the standard library. Use it when tokens come from an identity provider or must be verified without a database lookup; for first-party APIs the opaque [token guard](/docs/security/authentication#token-guard) is simpler.
+
+## Signing
+
+```go
+key := jwt.HS256("2026-10", secret) // ≥ 32 bytes; also jwt.RS256(kid, rsaKey), jwt.ES256(kid, p256Key), jwt.EdDSA(kid, ed25519Key)
+
+token, err := jwt.Sign(key, jwt.Claims{
+	Subject:   user.AuthID(),
+	Issuer:    "https://app.example.com",
+	Audience:  []string{"api"},
+	ExpiresAt: time.Now().Add(15 * time.Minute),
+})
+```
+
+RSA keys need at least 2048 bits. `Claims` also has `NotBefore`, `IssuedAt`, `ID` and `Extra` for custom claims.
+
+## Verifying
+
+```go
+verifier := jwt.NewVerifier(jwt.StaticKeys(current, previous), jwt.VerifyOptions{
+	Issuer:   "https://app.example.com",
+	Audience: "api",
+})
+
+guard := jwt.NewGuard[models.User]("api", verifier, users) // an auth.Checker
+r.Group("/api", func(g *router.Group) {
+	g.Use(auth.Required(guard))
+	g.Get("/me", func(c *web.Ctx) error {
+		claims, _ := jwt.ClaimsFrom(c, "api")
+		return c.JSON(http.StatusOK, claims)
+	})
+})
+```
+
+- The header `alg` must be in `VerifyOptions.Algorithms` (default: all four) **and** equal the algorithm of the key chosen by `kid`, so HMAC-with-a-public-key confusion and `none` are impossible.
+- `exp` is required by default (`AllowMissingExpiry` opts out); `nbf` and `iat` are checked with 30s leeway (`Leeway`); `iss` and `aud` match exactly.
+- Duplicate JSON members and tokens over 8 KiB are rejected. Every failure wraps `jwt.ErrInvalid`, and rejected tokens emit the `jwt.rejected` security event.
+
+### Key sets
+
+| Key set | Use |
+| --- | --- |
+| `jwt.StaticKeys(current, previous...)` | your own keys, with rotation by `kid` |
+| `&jwt.RemoteJWKS{URL: issuer + "/.well-known/jwks.json"}` | an identity provider's keys: cached, refetched on an unknown `kid` at most once a minute, refreshed hourly |
+| `jwt.PublicJWKS(keys...)` | builds your own JWKS document to publish (HMAC keys are never included) |
+
+## Refresh tokens
+
+```go
+refresh := jwt.NewRefreshTokens(db) // migration: jwt.RefreshTokensMigration("<timestamp>_create_refresh_tokens_table")
+
+plain, err := refresh.Issue(ctx, user.AuthID())  // starts a token family
+userID, next, err := refresh.Rotate(ctx, plain)   // consumes it, returns the user id and a new token
+if errors.Is(err, jwt.ErrRefreshReused) { /* the whole family was revoked */ }
+
+err = refresh.Revoke(ctx, plain)      // logout
+err = refresh.RevokeUser(ctx, userID) // password change
+```
+
+Refresh tokens are opaque; only their SHA-256 is stored. Rotation is atomic, so concurrent rotations have exactly one winner. Presenting a consumed token returns `jwt.ErrRefreshReused` and revokes the whole family.

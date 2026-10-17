@@ -1,6 +1,6 @@
 ---
 title: Storage
-description: Local and in-memory disks behind os.Root, a file handler, signed temporary URLs and safe uploads.
+description: Local, in-memory and S3 disks, a file handler, signed temporary URLs, presigned URLs and safe uploads.
 ---
 
 ```go
@@ -13,7 +13,7 @@ url := disk.URL(path)
 
 ## Disks
 
-`storage.Disk` has `Put` (atomic rename on local disks), `Open`, `Exists`, `Delete`, `List` and `URL`; `storage.Get` and `storage.PutBytes` are helpers. `storage.NewMemory(baseURL)` serves tests. Custom disks pass `storage/storagetest` (conformance and traversal suites). S3 is planned for BETA.
+`storage.Disk` has `Put` (atomic rename on local disks), `Open`, `Exists`, `Delete`, `List` and `URL`; `storage.Get` and `storage.PutBytes` are helpers. `storage.NewMemory(baseURL)` serves tests, and [S3](#s3) lives in its own module. Custom disks pass `storage/storagetest` (conformance and traversal suites).
 
 ## Serving files
 
@@ -37,6 +37,39 @@ storage.Images(2 << 20)                                               // JPEG, P
 storage.UploadRules{MaxSize: 10 << 20, Types: []string{"application/pdf"}}
 ```
 
-<Callout type="info">
-Streaming, resumable (tus) and direct-to-S3 uploads, `z` file rules and an htmx progress component are planned for BETA.
-</Callout>
+For streaming, resumable (tus), scanned and direct-to-bucket uploads, see [File uploads](/docs/digging-deeper/uploads).
+
+## S3
+
+```bash
+go get github.com/AlexGalhardo/vukem/drivers/s3
+```
+
+A `storage.Disk` on Amazon S3 or any S3-compatible service (MinIO, Cloudflare R2, DigitalOcean Spaces, Backblaze B2). There is no AWS SDK: requests are signed by a standard-library Signature Version 4 implementation verified against the AWS test suite.
+
+```go
+cfg, err := config.Load[s3.Config](app.Config.Source)
+disk, err := s3.New(cfg) // validates the config, no I/O
+
+err = disk.Put(ctx, "videos/intro.mp4", file)                   // one PUT up to S3_PART_SIZE, multipart above
+info, err := disk.Stat(ctx, "videos/intro.mp4")                 // Size, ETag, ContentType, LastModified
+up, err := disk.PresignPut("uploads/avatar.png", 5*time.Minute) // browser uploads straight to the bucket
+link, err := disk.PresignGet("invoices/42.pdf", time.Hour)
+```
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `S3_BUCKET` | — | bucket name (3–63 of `a-z 0-9 . -`) |
+| `S3_REGION` | `us-east-1` | signing region (`auto` for R2) |
+| `S3_ENDPOINT` | `https://s3.<region>.amazonaws.com` | origin of an S3-compatible service |
+| `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | — | required; `S3_SESSION_TOKEN` for temporary credentials |
+| `S3_USE_PATH_STYLE` | `false` | `endpoint/bucket/key` instead of `bucket.endpoint/key` (MinIO) |
+| `S3_INSECURE_HTTP` | `false` | allow an `http://` endpoint (local development only) |
+| `S3_PART_SIZE` | 8 MiB | multipart part size, 5 MiB to 5 GiB |
+| `S3_PUBLIC_URL` | — | prefix for `disk.URL` (CDN or public bucket); empty means private |
+
+- `Put` buffers at most one part. A multipart upload is aborted on any failure (part error, reader error, cancelled context, a `200` carrying an `<Error>`), so no orphaned parts are billed. The content type comes from the extension, else from the first bytes.
+- `Open` streams the object; `List` follows continuation tokens and skips folder placeholders. Missing objects match `fs.ErrNotExist`; other failures are `*s3.Error` (`StatusCode`, `Code`, `Message`, `RequestID`).
+- Keys go through `storage.Clean`: no empty key, no leading `/`, no `..`, backslash or `:`.
+- Presigned URLs sign only the `host` header and expire after 1 second to 7 days. Credentials are `config.Secret`, so errors and `%+v` never show them.
+- Integration tests run against MinIO (`task services:up`); the driver passes `storagetest.Run` and `storagetest.RunTraversal`.

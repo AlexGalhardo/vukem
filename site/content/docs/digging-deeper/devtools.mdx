@@ -1,0 +1,56 @@
+---
+title: Dev dashboard
+description: A development-only dashboard at /_vukem with requests, SQL queries and N+1 detection, jobs, events, mail previews, logs and per-request traces.
+---
+
+The `devtools` package (core, stdlib only) serves a dashboard at `/_vukem`: recent requests with timings, SQL queries with N+1 detection, jobs, events, sent mail previews, log records, a per-request trace and the route table. Everything lives in bounded in-memory ring buffers (200 records per kind).
+
+## Enabling
+
+```bash
+DEVTOOLS=true vukem serve   # or set DEVTOOLS=true in .env
+```
+
+```go
+app, err := vukem.New(vukem.WithDevtools(), /* … */) // app.Devtools; nil when off
+```
+
+<Callout type="warning">
+`APP_ENV=production` with devtools enabled is a boot error. Prefer the `DEVTOOLS` variable over the option in code that also runs in production.
+</Callout>
+
+- The dashboard answers only requests whose direct peer is a loopback address, whose `Host` is `localhost`, `*.localhost` or a loopback IP, and that carry no `Forwarded`, `X-Forwarded-*` or `X-Real-Ip` header. Anything else gets a plain 404. The `Host` check stops DNS-rebinding pages from reading the dashboard through your browser.
+- `DEVTOOLS_INSECURE_ALLOW_REMOTE=true` drops those checks (an app in a container or a remote VM). Anyone who reaches the app then sees its requests, queries, logs and mail.
+
+## Pages
+
+| Path | Shows |
+| --- | --- |
+| `/_vukem/` | counts per kind, N+1 alerts, recent requests |
+| `/_vukem/requests`, `/_vukem/requests/{id}` | requests (method, path, route, status, duration, query count); the trace of one request with a timeline of its queries, logs, jobs, events and mail |
+| `/_vukem/queries` | normalized SQL, redacted arguments, duration, caller frame, N+1 badge |
+| `/_vukem/jobs` | dispatched and attempted jobs (kind, queue, status, attempt, error) |
+| `/_vukem/events` | dispatched event types, listener count, duration, error |
+| `/_vukem/mails`, `/_vukem/mails/{id}` | sent messages and their HTML and text preview |
+| `/_vukem/logs` | log records at `LOG_LEVEL` or above |
+| `/_vukem/routes` | the route table with middleware |
+
+Pages are server-rendered with no script, so they work under the default CSP. `?refresh=5` reloads the page every 5 seconds (2–60). The dashboard's own requests are never recorded.
+
+## How it collects
+
+| Kind | Hook |
+| --- | --- |
+| Requests | outermost server middleware, so timings cover the whole stack |
+| SQL | a `database.QueryObserver` set by `app.DB()`; statements run on `DB.SQL()` directly bypass it |
+| Jobs, events | `queue.Observer` and `events.Observer` |
+| Mail | wraps the transport chosen by `MAIL_MAILER` |
+| Logs | a handler teed next to the app's |
+
+The observed packages never import `devtools`; with it off, each hook costs one nil check.
+
+## Redaction and N+1
+
+- SQL is shown as a normalized shape (literals and placeholders become `?`). Bound arguments are shown as types and lengths (`string(len=16)`, `int`, `NULL`), never values. Jobs and events show kinds and Go types, not payloads.
+- A `SELECT` shape that runs at least 3 times in one request (`devtools.Config.NPlusOneThreshold`) is flagged as N+1.
+- Mail HTML renders in a sandboxed `iframe` under a CSP with no script source that blocks remote images (and tracking pixels).

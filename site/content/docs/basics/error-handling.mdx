@@ -115,6 +115,6 @@ Middleware renders errors with the same handler through `web.Fail(w, r, err)`.
 
 `orm.ErrNotFound` (returned by `First` and `Find`) matches `errs.ErrNotFound`, so returning it answers 404. Unique-constraint violations are wrapped in `orm.ErrConflict` and answer 409.
 
-<Callout type="warning">
-Planned: per-type renderers and a development debug page.
-</Callout>
+## Debug error page
+
+With `APP_DEBUG=true` outside production, 5xx errors in a browser render a debug page: the error message and root type, the `Unwrap` chain, the stack with source snippets (app frames open, framework and standard library frames collapsed), the request (method, URL, route, request id, headers with `Authorization`, `Cookie` and token headers redacted) and the Go version. Stacks come from recovered panics and from errors created with `errs.New`, `Wrap` or `WithStack`. JSON clients keep getting problem+json (with the error text as `detail`) and htmx gets the fragment. `vukem serve` prints the same report in colour on stderr. The page never renders in production.

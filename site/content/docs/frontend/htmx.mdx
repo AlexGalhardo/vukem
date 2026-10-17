@@ -82,6 +82,4 @@ Attribute values are escaped; `content` must be HTML you rendered (for example f
 
 ## Server-sent events
 
-<Callout type="warning">
-Planned for BETA: `c.SSE(func(s *sse.Stream) error { … })`, pairing with htmx `hx-sse`.
-</Callout>
+`c.SSE(func(s *sse.Stream) error { … })` streams events that pair with htmx `hx-sse`; see [Server-sent events](/docs/digging-deeper/sse). For file inputs with a progress bar, see [File uploads](/docs/digging-deeper/uploads#htmx-progress-component).

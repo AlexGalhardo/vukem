@@ -1,0 +1,70 @@
+---
+title: Encryption
+description: AES-256-GCM encryption derived from APP_KEY, with key rotation, encrypted cookies and encrypted ORM columns.
+---
+
+Package `crypt` (stdlib only). `app.Crypt` is built at boot from a key derived with HKDF from `APP_KEY`, plus keys derived from `APP_PREVIOUS_KEYS`.
+
+```go
+token := app.Crypt.EncryptString("4111 1111 1111 1111")
+plain, err := app.Crypt.DecryptString(token) // crypt.ErrInvalid on any failure
+
+// Additional data binds a token to its purpose; Open needs the same bytes.
+token = app.Crypt.Seal(payload, []byte("invoice:42"))
+payload, err = app.Crypt.Open(token, []byte("invoice:42"))
+```
+
+- AES-256-GCM with a random 96-bit nonce per token; keys are 32 bytes (`crypt.New(current, previous...)`).
+- A token is unpadded base64url of `version | key id | nonce | ciphertext | tag`. The key id selects the key; the header is authenticated with the additional data.
+- Every failure (malformed, tampered, unknown key, other additional data) returns `crypt.ErrInvalid`, without telling which.
+
+## Key rotation
+
+```bash
+# .env
+APP_KEY=base64:new…
+APP_PREVIOUS_KEYS=base64:old…,base64:older…
+```
+
+`app.Crypt` encrypts with `APP_KEY` and still decrypts tokens sealed with any previous key, so encrypted cookies and columns survive a rotation. A malformed entry is a boot error.
+
+```go
+if app.Crypt.NeedsRotation(token) { // sealed with a previous key
+	token, err = app.Crypt.Rotate(token, []byte("invoice:42"))
+}
+```
+
+To rotate: move the current `APP_KEY` to `APP_PREVIOUS_KEYS`, run `vukem key:generate --force`, re-save rows with encrypted columns (each save re-encrypts with the new key), then drop the old key. Sessions and signed URLs use only the current key, so they are invalidated.
+
+## Encrypted cookies
+
+```go
+err := app.Crypt.SetCookie(w, r, http.Cookie{Name: "cart", Value: "3", Path: "/"})
+cart, err := app.Crypt.Cookie(r, "cart") // http.ErrNoCookie or crypt.ErrInvalid
+```
+
+The cookie name is the additional data. `SetCookie` always sets `HttpOnly`, defaults `SameSite` to Lax, adds `Secure` when the request came over TLS (set it yourself behind a TLS-terminating proxy), refuses `SameSite=None` without `Secure`, and refuses values over 4 KB (`crypt.ErrCookieTooLarge`).
+
+## Encrypted columns
+
+`orm.Encrypted[T]` stores `T` as JSON encrypted with the connection's encrypter. `app.DB()` passes `app.Crypt`; elsewhere use `database.Open(ctx, url, database.WithEncrypter(enc))`.
+
+```go
+type Patient struct {
+	orm.Model
+	Name      string
+	Diagnosis orm.Encrypted[string] `json:"-"` // TEXT column
+}
+
+p := Patient{Name: "Ada", Diagnosis: orm.Encrypted[string]{V: "flu"}}
+err := orm.Create(ctx, db, &p)                       // stores ciphertext
+got, err := orm.QueryOf[Patient](db).Find(ctx, p.ID) // got.Diagnosis.V == "flu"
+```
+
+- Sealed on `Create`, `Update` and `Query.Update`; opened by queries, eager loads and `Pluck`. The additional data is `orm:<table>.<column>`, so a ciphertext copied to another column or table is rejected; renaming the table or column needs a re-encryption.
+- **Fails closed:** without an encrypter, writes and reads return `orm.ErrNoEncrypter` and nothing is stored. Passing an `Encrypted` value to `database/sql` directly is an error, so plaintext never reaches the database by accident.
+- Saving a model re-encrypts every encrypted column with the current key.
+- Not queryable: encryption is randomized, so `Where("diagnosis", …)` cannot match. NULL reads as the zero value.
+- JSON encoding uses the plain value; tag the field `json:"-"` to keep it out of API responses.
+
+[Two-factor authentication](/docs/security/two-factor) stores its secrets and recovery codes in encrypted columns.

@@ -1,6 +1,6 @@
 ---
 title: Installation
-description: Install the vukem CLI, create a project from the HTMX + SQLite starter and run it.
+description: Install the vukem CLI, create a project from a starter and run it.
 ---
 
 ## Requirements
@@ -9,7 +9,7 @@ description: Install the vukem CLI, create a project from the HTMX + SQLite star
 | --- | --- |
 | Go | 1.27 or newer |
 | Git | Optional: `vukem new` runs `git init` when it is on `PATH` |
-| Node.js | Not required for the default HTMX starter. Only needed for Vite or Inertia (BETA). |
+| Node.js | For the Vite + Tailwind build of the web starters and for Inertia; not needed by Go tests or the `--api` starter |
 
 Vukem runs on **Windows 11/10**, Linux and macOS. SQLite uses the pure-Go `modernc.org/sqlite` driver, so no C compiler is needed.
 
@@ -31,7 +31,7 @@ vukem version
 vukem new blog --module example.com/blog
 ```
 
-This renders the embedded starter, requires the Vukem release that matches your CLI, runs `go mod tidy`, writes a fresh `APP_KEY` to `.env` (copied from `.env.example`) and runs `git init`.
+This renders the embedded starter (HTMX by default; see [Starters](/docs/starters) for templ, Inertia and API), requires the Vukem release that matches your CLI, runs `go mod tidy`, writes a fresh `APP_KEY` to `.env` (copied from `.env.example`) and runs `git init`.
 
 </Step>
 <Step title="Migrate">
@@ -69,6 +69,8 @@ The starter ships with tests for the home page and the posts CRUD.
 | Flag | Meaning |
 | --- | --- |
 | `--module <path>` | Go module path (default: the project name) |
+| `--api`, `--templ`, `--inertia react\|vue\|svelte` | Pick the [starter](/docs/starters); without one, a terminal prompts for the stack (HTMX by default) |
+| `--no-install` | Skip `npm install` |
 | `--framework <dir>` | Use a local checkout of Vukem through a `replace` directive instead of a release (for framework development) |
 
 Flags may come before or after the name: `vukem new blog --module example.com/blog` works.

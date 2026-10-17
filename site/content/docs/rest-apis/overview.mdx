@@ -122,4 +122,9 @@ r.Group("/api/v1", func(g *router.Group) {
 
 ## Beyond REST
 
-GraphQL (`contrib/graphql`) and gRPC (`contrib/grpc` on connect-go) are planned for BETA. Today any `http.Handler` (gqlgen, connect-go, grpc-gateway) mounts with `r.Handle` and shares the middleware stacks.
+- [GraphQL](/docs/rest-apis/graphql) with `contrib/graphql`: schema-first, typed resolvers, batching loader, limits, persisted queries and subscriptions.
+- [gRPC](/docs/rest-apis/grpc), gRPC-Web and Connect with `contrib/grpc` on connect-go, on the same router and port.
+- Typed [TypeScript and Go clients](/docs/rest-apis/client-generation) generated from your typed handlers.
+- Server push with [SSE](/docs/digging-deeper/sse) and [broadcasting](/docs/digging-deeper/broadcasting).
+
+Any other `http.Handler` mounts with `r.Handle` and shares the middleware stacks.

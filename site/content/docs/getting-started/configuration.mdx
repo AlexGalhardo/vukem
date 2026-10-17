@@ -135,9 +135,7 @@ app.Log.Info("mail", "cfg", cfg) // password logged as [redacted]
 sessionKey := app.Key.Derive("session", 32) // HKDF info "vukem:session"
 ```
 
-<Callout type="warning">
-Key rotation with `APP_PREVIOUS_KEYS` is planned for BETA.
-</Callout>
+`APP_PREVIOUS_KEYS` lists former keys (comma-separated, same `base64:` format) so encrypted cookies and columns survive a rotation; see [Encryption](/docs/security/encryption#key-rotation).
 
 ## Secure defaults
 

@@ -1,0 +1,48 @@
+---
+title: Vite
+description: Asset tags for the Vite dev server and production manifest, with CSP nonces, SRI, React Refresh and immutable caching.
+---
+
+Every starter ships Vite 8 and Tailwind CSS v4 preconfigured. The Go side is the `vite` package, enabled with `vukem.WithVite`:
+
+```go title="bootstrap/app.go"
+vukem.WithVite(resources.Public()) // or os.DirFS("resources/public"); app.Vite
+```
+
+```html title="resources/views/layouts/app.html"
+<meta property="csp-nonce" content="{{cspNonce}}">
+{{ vite "resources/css/app.css" "resources/js/app.ts" }}
+```
+
+## Dev server and manifest
+
+| Situation | `vite` renders |
+| --- | --- |
+| `public/hot` exists and the app is not in production | `<script type="module" src="{hot}/@vite/client">` plus each entry (CSS entries as `<link rel="stylesheet">`) |
+| otherwise | tags read from `public/build/.vite/manifest.json`: `modulepreload` links for recursive static imports, stylesheets for entry and imported CSS, then the module script; each file once across entries |
+| neither, in development | an HTML comment, so Go tests need no Node |
+| neither, in production | an error |
+
+- The starter's plugin `resources/vite/vukem.js` writes `public/hot` with the dev server URL on start and deletes it on exit. The hot file must hold an `http(s)` URL and is ignored in production.
+- The manifest is cached in production and re-read in development.
+- `{{ viteReactRefresh }}` emits the React Refresh preamble while the dev server runs (empty otherwise).
+- `{{ asset "resources/img/logo.png" }}` resolves through the dev server or the manifest when Vite knows the file, else falls back to the public path.
+
+## Security
+
+- Every tag carries the request's CSP nonce. Outside production the CSP allows the running dev server (`SecureHeadersConfig.DevServer`), and the `csp-nonce` meta lets Vite give its injected styles the nonce.
+- Manifest `integrity` values (for example from `vite-plugin-manifest-sri`) become SRI attributes.
+- `/build/*` is served with immutable cache headers.
+
+## templ and plain handlers
+
+Components and handlers without the view engine use the instance in the context: `r.Use(app.Vite.Middleware())`, then `vite.FromContext(ctx).Tags(nonce, entries...)`. The [templ starter](/docs/starters#templ) wraps it in a `viteTags` helper.
+
+## Commands
+
+```bash
+vukem serve   # Go app with reload, plus npm run dev when vite.config.* exists (--no-vite to skip)
+vukem build   # vite build into resources/public/build, then go build with the assets embedded
+```
+
+`vukem build` refuses to run without `node_modules`; run `npm install` first.
