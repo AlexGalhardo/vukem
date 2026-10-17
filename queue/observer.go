@@ -12,11 +12,11 @@ type JobStatus string
 
 // Job steps reported to an Observer.
 const (
-	// JobDispatched: the job was stored (or is about to run inline).
+	// JobDispatched reports that the job was stored (or is about to run inline).
 	JobDispatched JobStatus = "dispatched"
-	// JobProcessed: an attempt succeeded.
+	// JobProcessed reports that an attempt succeeded.
 	JobProcessed JobStatus = "processed"
-	// JobFailed: an attempt failed (it may still be retried).
+	// JobFailed reports that an attempt failed (it may still be retried).
 	JobFailed JobStatus = "failed"
 )
 
