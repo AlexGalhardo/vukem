@@ -1,6 +1,10 @@
 package database
 
-import "testing"
+import (
+	"errors"
+	"strings"
+	"testing"
+)
 
 func TestRebind(t *testing.T) {
 	t.Parallel()
@@ -68,5 +72,85 @@ func TestRebindRunsOnSQLite(t *testing.T) {
 
 	if got != "a?" {
 		t.Fatalf("SELECT = %q, want %q", got, "a?")
+	}
+}
+
+func TestRebindChecked(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		d       Dialect
+		query   string
+		want    string
+		wantErr error
+	}{
+		{
+			"postgres numbers",
+			Postgres,
+			"SELECT * FROM t WHERE a = ? AND b = ?",
+			"SELECT * FROM t WHERE a = $1 AND b = $2",
+			nil,
+		},
+		{"sqlite unchanged", SQLite, "SELECT * FROM t WHERE a = ?", "SELECT * FROM t WHERE a = ?", nil},
+		{"mysql unchanged", MySQL, "SELECT * FROM t WHERE a = ?", "SELECT * FROM t WHERE a = ?", nil},
+		{"dollar params alone", Postgres, "SELECT * FROM t WHERE a = $1", "SELECT * FROM t WHERE a = $1", nil},
+		{"dollar inside literal", Postgres, "SELECT '$1' WHERE a = ?", "SELECT '$1' WHERE a = $1", nil},
+		{
+			"jsonb operator",
+			Postgres,
+			"SELECT 1 WHERE data ?? 'k' AND id = ?",
+			"SELECT 1 WHERE data ? 'k' AND id = $1",
+			nil,
+		},
+		{"mixed placeholders", Postgres, "SELECT * FROM t WHERE a = $1 AND b = ?", "", ErrMixedPlaceholders},
+		{"unterminated literal postgres", Postgres, "SELECT 'oops WHERE a = ?", "", ErrUnterminatedSQL},
+		{"unterminated literal sqlite", SQLite, "SELECT 'oops WHERE a = ?", "", ErrUnterminatedSQL},
+		{"unterminated without placeholders", MySQL, "SELECT `a FROM t", "", ErrUnterminatedSQL},
+		{"trailing line comment", Postgres, "SELECT ? -- note", "", ErrUnterminatedSQL},
+		{"unterminated block comment", SQLite, "SELECT ? /* note", "", ErrUnterminatedSQL},
+		{"unterminated dollar body", Postgres, "SELECT $fn$ body WHERE a = ?", "", ErrUnterminatedSQL},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := RebindChecked(tt.d, tt.query)
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("RebindChecked(%s, %q) error = %v, want %v", tt.d.Name(), tt.query, err, tt.wantErr)
+			}
+
+			if got != tt.want {
+				t.Fatalf("RebindChecked(%s, %q) = %q, want %q", tt.d.Name(), tt.query, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRebindCheckedErrorQuotesAShortPrefix(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name, query, want string
+	}{
+		{"short query whole", "SELECT 'oops", `"SELECT 'oops"`},
+		{"long query cut", "SELECT '" + strings.Repeat("a", 100), `"SELECT '` + strings.Repeat("a", 72) + `…"`},
+		{
+			"cut on a rune boundary",
+			"SELECT '" + strings.Repeat("a", 71) + "çç" + strings.Repeat("b", 20),
+			`"SELECT '` + strings.Repeat("a", 71) + `…"`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := RebindChecked(Postgres, tt.query)
+			if err == nil || !strings.HasSuffix(err.Error(), ": "+tt.want) {
+				t.Fatalf("RebindChecked(%q) error = %v, want it to end with %s", tt.query, err, tt.want)
+			}
+		})
 	}
 }

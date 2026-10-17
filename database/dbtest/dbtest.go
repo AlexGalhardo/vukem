@@ -139,7 +139,7 @@ func clean(ctx context.Context, t *testing.T, db *database.DB) {
 	t.Helper()
 
 	s := schema.New(ctx, db)
-	for _, table := range []string{"dbt_book_tag", "dbt_tags", "dbt_books", "dbt_authors", "dbt_tmp", "dbt_renamed", "dbt_jobs", "dbt_failed_jobs", "dbt_numbers", "dbt_desc"} {
+	for _, table := range []string{"dbt_book_tag", "dbt_tags", "dbt_books", "dbt_authors", "dbt_tmp", "dbt_renamed", "dbt_jobs", "dbt_failed_jobs", "dbt_old_jobs", "dbt_old_failed_jobs", "dbt_numbers", "dbt_desc"} {
 		if err := s.DropIfExists(table); err != nil {
 			t.Fatalf("drop %s: %v", table, err)
 		}
