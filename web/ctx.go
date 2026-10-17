@@ -217,15 +217,23 @@ func (c *Ctx) IP() string {
 		return host
 	}
 
-	fwd := c.r.Header.Get("X-Forwarded-For")
+	// Every header line counts: a proxy may append its own line instead of
+	// extending the client's, so the first line alone is client-controlled.
+	fwd := strings.Join(c.r.Header.Values("X-Forwarded-For"), ",")
 	if fwd == "" {
 		return host
 	}
 
-	// Walk right to left, skipping trusted proxies.
+	// Walk right to left, skipping trusted proxies; an entry that is not an
+	// IP means the chain cannot be trusted, so the peer address is used.
 	parts := strings.Split(fwd, ",")
 	for _, p := range slices.Backward(parts) {
-		if ip := strings.TrimSpace(p); !c.trusted(ip) {
+		ip := strings.TrimSpace(p)
+		if net.ParseIP(ip) == nil {
+			return host
+		}
+
+		if !c.trusted(ip) {
 			return ip
 		}
 	}

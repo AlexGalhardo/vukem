@@ -129,6 +129,10 @@ func TestSecurity_A01_IPIgnoresSpoofedForwardedFor(t *testing.T) {
 		{name: "no header", remote: "10.0.0.1:5000", trusted: true, want: "10.0.0.1"},
 		{name: "all trusted", remote: "10.0.0.1:1", xff: "10.0.0.5", trusted: true, want: "10.0.0.5"},
 		{name: "no port", remote: "1.2.3.4", want: "1.2.3.4"},
+		// A proxy that appends its own header line (HAProxy) must not let
+		// the client's first line win.
+		{name: "two header lines", remote: "10.0.0.1:1", xff: "6.6.6.6\n9.9.9.9", trusted: true, want: "9.9.9.9"},
+		{name: "not an ip", remote: "10.0.0.1:1", xff: "6.6.6.6, evil", trusted: true, want: "10.0.0.1"},
 	}
 
 	for _, tt := range tests {
@@ -138,7 +142,9 @@ func TestSecurity_A01_IPIgnoresSpoofedForwardedFor(t *testing.T) {
 			r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", http.NoBody)
 			r.RemoteAddr = tt.remote
 			if tt.xff != "" {
-				r.Header.Set("X-Forwarded-For", tt.xff)
+				for line := range strings.SplitSeq(tt.xff, "\n") {
+					r.Header.Add("X-Forwarded-For", line)
+				}
 			}
 
 			s := &Services{}
