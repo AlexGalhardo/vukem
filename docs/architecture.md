@@ -134,8 +134,8 @@ type Shutdowner interface { Shutdown(ctx context.Context, app *App) error } // r
 Lifecycle (inspired by AdonisJS v7 and Goravel runners):
 
 1. **Load config** — `.env` files → typed structs → validate. Abort on error.
-2. **Register** — every provider, in declared order.
-3. **Boot** — every provider, in declared order.
+2. **Register** — every provider, in declared order; then the `WithRoutes` functions (still inside `New`).
+3. **Boot** — every provider, in declared order; then the `WithRoutesAfterBoot` functions, for routes that need clients opened in Boot. Warmup (`codegen:*`) never boots and runs them at the end of `New`.
 4. **Start** — runners (HTTP server, queue worker, scheduler) started under one `errgroup` bound to a `signal.NotifyContext`.
 5. **Shutdown** — on signal: `http.Server.Shutdown`, drain runners, then providers' `Shutdown` in **reverse** order, each under a timeout.
 

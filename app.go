@@ -152,6 +152,9 @@ type App struct {
 	ready     chan<- string
 	noHTTP    bool
 
+	// bootRoutes run at the end of Boot (WithRoutesAfterBoot).
+	bootRoutes []func(r *router.Router, app *App) error
+
 	sessOnce  sync.Once
 	sessions  *session.Manager
 	sessStore session.Store
@@ -223,6 +226,7 @@ type options struct {
 	providers     []Provider
 	runners       []namedRunner
 	routes        []func(r *router.Router, app *App) error
+	bootRoutes    []func(r *router.Router, app *App) error
 	views         fs.FS
 	vite          fs.FS
 	inertia       *inertia.Config
@@ -256,6 +260,23 @@ type options struct {
 func WithRoutes(fn func(r *router.Router, app *App) error) Option {
 	return func(o *options) error { o.routes = append(o.routes, fn); return nil }
 }
+
+// WithRoutesAfterBoot registers routes at the end of Boot, after every
+// provider's Boot, so handlers can use clients a provider opens in Boot (a
+// database or object-store client). The routes exist only once the app
+// booted: Run, commands and vukemtest boot first; code that calls Handler
+// right after New must call Boot before it ([ErrRoutesCompiled] otherwise).
+// In [KindWarmup], which never boots, they run at the end of New so the
+// route table is complete; booted services are then still unset.
+func WithRoutesAfterBoot(fn func(r *router.Router, app *App) error) Option {
+	return func(o *options) error { o.bootRoutes = append(o.bootRoutes, fn); return nil }
+}
+
+// ErrRoutesCompiled is returned by Boot when routes from
+// WithRoutesAfterBoot are pending but the router was already compiled
+// (Handler, Router.URL or a request before Boot), so they would never be
+// served.
+var ErrRoutesCompiled = errors.New("vukem: router compiled before Boot; routes after boot would be lost")
 
 // WithViews renders html/template views from fsys (os.DirFS("resources/views")
 // or an embed.FS). Views reload on every request outside production.
@@ -646,6 +667,13 @@ func New(opts ...Option) (*App, error) {
 		}
 	}
 
+	app.bootRoutes = o.bootRoutes
+	if app.Kind == KindWarmup {
+		if err := app.addBootRoutes(); err != nil {
+			return nil, err
+		}
+	}
+
 	return app, nil
 }
 
@@ -894,6 +922,28 @@ func (a *App) Boot(ctx context.Context) error {
 
 		if err := b.Boot(ctx, a); err != nil {
 			return fmt.Errorf("vukem: boot %T: %w", p, err)
+		}
+	}
+
+	return a.addBootRoutes()
+}
+
+// addBootRoutes runs the WithRoutesAfterBoot functions once.
+func (a *App) addBootRoutes() error {
+	fns := a.bootRoutes
+	a.bootRoutes = nil
+
+	if len(fns) == 0 {
+		return nil
+	}
+
+	if a.Router.Compiled() {
+		return ErrRoutesCompiled
+	}
+
+	for _, fn := range fns {
+		if err := fn(a.Router, a); err != nil {
+			return fmt.Errorf("vukem: routes after boot: %w", err)
 		}
 	}
 

@@ -8,22 +8,54 @@ A Vukem application is a `*vukem.App`: configuration, logger, providers and long
 ## Overview
 
 <Steps>
-<Step title="Load config">
-`.env` files and the environment are merged, filled into `vukem.Config` and checked. Missing `APP_KEY`, debug in production or an invalid port abort boot.
+<Step title="Load config (New)">
+`.env` files and the environment are merged, filled into `vukem.Config` and checked. Missing `APP_KEY`, debug in production or an invalid port abort boot. The logger, `app.Crypt`, the router (with `/up`), `app.Events`, Vite, translations, Inertia and views are built next.
 </Step>
-<Step title="Register">
-Every provider's `Register` runs in declared order. Register binds services and must not perform I/O.
+<Step title="Register (New)">
+Every provider's `Register` runs in declared order (providers whose `Kinds()` excludes the runtime kind are skipped). Register binds services and must not perform I/O.
 </Step>
-<Step title="Boot">
-Providers implementing `Booter` run `Boot(ctx, app)` in order. Boot may use services registered by other providers.
+<Step title="Routes (New)">
+Every `WithRoutes` function runs in order. Services set in `Register` are available; clients a provider opens in `Boot` are **not yet**. In `KindWarmup`, `WithRoutesAfterBoot` functions run here too, since warmup never boots.
+</Step>
+<Step title="Boot (Run, commands, vukemtest)">
+Providers implementing `Booter` run `Boot(ctx, app)` in order. Boot may use services registered by other providers. Then every `WithRoutesAfterBoot` function runs, so those routes can use what `Boot` opened. Boot runs once; a second call is a no-op.
 </Step>
 <Step title="Run">
-Every runner starts in its own goroutine. `Run` blocks until the context is cancelled (for example by `SIGTERM`) or a runner fails.
+The HTTP handler is compiled from the router, then every runner starts in its own goroutine. `Run` blocks until the context is cancelled (for example by `SIGTERM`) or a runner fails.
 </Step>
 <Step title="Shutdown">
 Runners stop and are awaited: the HTTP server drains requests and the scheduler gives running tasks up to `SHUTDOWN_TIMEOUT`, then cancels their `ctx` (a runner or task that ignores `ctx` is waited for without limit). Then `OnShutdown` hooks and providers' `Shutdown` run in **reverse** order, within a fresh `SHUTDOWN_TIMEOUT`.
 </Step>
 </Steps>
+
+Who boots, by entry point:
+
+| Entry point | Kind | Boot | Routes after boot |
+| --- | --- | --- | --- |
+| `serve` (`app.Run`) | `KindWeb` | yes, before the HTTP handler is compiled | at the end of Boot |
+| App commands (`migrate`, `db:seed`, `route:list`, your own) | `KindConsole` | yes, before the command runs | at the end of Boot |
+| `codegen:routes`, `codegen:client` | `KindWarmup` | never (no connection opened) | at the end of `New` |
+| `vukemtest.New` | `KindTest` | yes, before migrations | at the end of Boot |
+| `vukem.New` called directly | as given | only when you call `app.Boot(ctx)` | at the end of Boot |
+
+### Routes that need booted services
+
+`WithRoutes` runs inside `New`, before any provider's `Boot`. When a route's controller needs a client that a provider only opens in `Boot` (a database, Mongo or S3 client), register those routes with `WithRoutesAfterBoot` instead:
+
+```go title="bootstrap/app.go"
+search := &providers.Search{} // opens its Mongo client in Boot
+
+app, err := vukem.New(
+	vukem.WithProviders(search),
+	vukem.WithRoutes(routes.Web),
+	vukem.WithRoutesAfterBoot(func(r *router.Router, app *vukem.App) error {
+		r.Get("/search", catalog.New(search.Client).Search).Name("search")
+		return nil
+	}),
+)
+```
+
+Those routes exist only after `Boot`. If the router is compiled earlier (`app.Handler()`, `app.Router.URL` or a request before `Boot`), `Boot` fails with `vukem.ErrRoutesCompiled` instead of silently dropping them. In `KindWarmup` they run at the end of `New` so `codegen:routes` sees the full table; booted services are still unset there, so keep the function to registering routes. The order of `WithRoutes` and providers is unchanged.
 
 ## Creating the app
 
@@ -60,7 +92,8 @@ func main() { os.Exit(vukem.Main(bootstrap.New)) }
 | `WithLogger(l)` / `WithLogOutput(w)` | Custom `*slog.Logger`, or where the default logger writes |
 | `WithKind(k)` | `KindWeb` (default), `KindConsole` or `KindTest` |
 | `WithProviders(p...)` | Providers, registered and booted in order |
-| `WithRoutes(fn)` | `func(r *router.Router, app *vukem.App) error`, called after providers registered; an error stops `New` |
+| `WithRoutes(fn)` | `func(r *router.Router, app *vukem.App) error`, called in `New` after providers registered; an error stops `New` |
+| `WithRoutesAfterBoot(fn)` | Same signature, called at the end of `Boot` after every provider booted; an error fails `Boot` |
 | `WithViews(fsys)` | Enable the [view engine](/docs/basics/views) over `fsys`; views reload per request outside production |
 | `WithMigrations(m)` | Migrations used by `migrate*` commands and `app.Migrator()` |
 | `WithDatabaseDrivers(d...)` | Extra database drivers (`postgres.Driver()`) |
