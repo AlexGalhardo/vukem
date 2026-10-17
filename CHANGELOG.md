@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-10-17
+
+### Added
+
+- **webhook:** Add signed outgoing webhooks with retries and delivery log
+- **postgres:** Add pgtest helper for per-test databases
+- **vukem:** Add key:generate app command
+- **imaging:** Add contrib/imaging for safe image thumbnails
+- **ratelimit:** Add a fixed-window limiter over a shared counter
+- **app:** Choose the rate limit store with RATE_LIMIT_STORE
+- **cli:** Build scaffold rate limiters from RATE_LIMIT_STORE
+- **app:** Prune expired database cache entries hourly
+- **app:** Find the cache pruner through wrapped stores
+- **site:** Add last-updated dates and a pt-BR locale
+
+### Changed
+
+- **cache:** Increment database counters in one statement
+- **site:** Remove the docs version switcher
+
+### Fixed
+
+- **webhook:** Harden outgoing deliveries after review
+- **postgres:** Make pgtest cleanup robust to reconnecting pools
+- **vukem:** Send key:generate diagnostics to stderr
+- **imaging:** Apply review findings to thumbnails
+- **cache:** Make database Increment atomic across connections
+- **ratelimit:** Hash every window key and validate limiter names
+- **app:** Refuse RATE_LIMIT_STORE=cache over the memory cache
+
+### Security
+
+- **webhook:** Document outgoing webhooks and their security guarantees
+- **app:** Check unknown RATE_LIMIT_STORE values as a security default
+- **ratelimit:** Document shared rate limits and RATE_LIMIT_STORE
+
 ## [0.22.0] - 2026-10-17
 
 ### Added
@@ -439,7 +475,8 @@ Project foundation. No framework code yet; see [PLAN.md](PLAN.md) for the roadma
 - README, MIT license, CONTRIBUTING, SECURITY and CODE_OF_CONDUCT.
 - Agent configuration: `AGENTS.md`, `CLAUDE.md`, path-scoped `.claude/rules/`, Go skills and project settings.
 
-[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.22.0...HEAD
+[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.23.0...HEAD
+[0.23.0]: https://github.com/AlexGalhardo/vukem/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/AlexGalhardo/vukem/compare/v0.21.1...v0.22.0
 [0.21.1]: https://github.com/AlexGalhardo/vukem/compare/v0.21.0...v0.21.1
 [0.21.0]: https://github.com/AlexGalhardo/vukem/compare/v0.20.1...v0.21.0
