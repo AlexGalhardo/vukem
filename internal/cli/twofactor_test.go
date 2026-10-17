@@ -253,7 +253,6 @@ func TestSecurity_A07_AuthScaffoldRevokesOtherSessions(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-
 		for _, want := range wants {
 			if !bytes.Contains(b, []byte(want)) {
 				t.Errorf("%s lacks %q", src, want)
@@ -277,6 +276,36 @@ func TestSecurity_A07_AuthScaffoldRevokesOtherSessions(t *testing.T) {
 
 		if flash < 0 || revoke < 0 || flash > revoke {
 			t.Errorf("%s: recovery codes flashed at %d, revocation with logged failure at %d", src, flash, revoke)
+		}
+	}
+}
+
+// The password reset form answers alike for known and unknown emails and
+// queues the mail, so the response time does not reveal accounts either;
+// the generated TestPasswordResetAnswersAlike checks the behaviour in
+// TestNewProjectEndToEnd / TestNewInertiaProjectEndToEnd.
+func TestSecurity_A07_PasswordResetAnswersAlike(t *testing.T) {
+	t.Parallel()
+
+	src, err := scaffoldFS.ReadFile("scaffolds/auth-core/app/accounts/passwords.go.tmpl")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !bytes.Contains(src, []byte("a.Mailer.SendLater(ctx, mail.ResetPassword{")) ||
+		bytes.Contains(src, []byte("a.Mailer.Send(ctx, mail.ResetPassword{")) {
+		t.Error("SendResetLink does not queue the reset mail")
+	}
+
+	for _, kit := range []string{"auth-web", "auth-inertia"} {
+		test, err := scaffoldFS.ReadFile("scaffolds/" + kit + "/tests/password_reset_test.go.tmpl")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range []string{"func TestPasswordResetAnswersAlike(", "nobody@example.com", "vukem.MailJobKind"} {
+			if !bytes.Contains(test, []byte(want)) {
+				t.Errorf("%s password reset test lacks %q", kit, want)
+			}
 		}
 	}
 }
