@@ -65,7 +65,8 @@ func (*Tokens) Me(c *web.Ctx) error {
 	return c.JSON(http.StatusOK, u)
 }
 
-// Revoke deletes the token used by this request: DELETE /api/v1/tokens/current.
+// Revoke revokes the token used by this request (the row stays, marked
+// revoked_at): DELETE /api/v1/tokens/current.
 func (h *Tokens) Revoke(c *web.Ctx) error {
 	tok, ok := auth.CurrentToken(c, "api")
 	if !ok {
