@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -500,6 +501,39 @@ func TestSecurity_A02_SecureHeaders(t *testing.T) {
 
 	if CSPNonce(context.Background()) != "" {
 		t.Error("CSPNonce without middleware")
+	}
+}
+
+func TestSecurity_A02_ForwardedProtoOnlyFromTrustedProxies(t *testing.T) {
+	t.Parallel()
+
+	_, proxies, _ := net.ParseCIDR("10.0.0.0/8")
+	h := SecureHeaders(SecureHeadersConfig{TrustForwardedProto: true, TrustedProxies: []*net.IPNet{proxies}})(
+		http.HandlerFunc(ok),
+	)
+
+	tests := []struct {
+		name     string
+		peer     string
+		wantHSTS bool
+	}{
+		{name: "trusted proxy", peer: "10.0.0.1:1234", wantHSTS: true},
+		{name: "spoofed by a client", peer: "198.51.100.7:1234"},
+		{name: "unparsable peer", peer: "garbage"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			r := get(t, "/")
+			r.RemoteAddr = tt.peer
+			r.Header.Set("X-Forwarded-Proto", "https")
+
+			if got := do(t, h, r).Header().Get("Strict-Transport-Security") != ""; got != tt.wantHSTS {
+				t.Fatalf("HSTS sent = %v, want %v", got, tt.wantHSTS)
+			}
+		})
 	}
 }
 

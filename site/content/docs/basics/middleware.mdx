@@ -92,9 +92,12 @@ The zero `CORSConfig` allows no cross-origin requests. Defaults: methods `GET, H
 ```go
 r.UseServer(middleware.SecureHeaders(middleware.SecureHeadersConfig{
 	HSTSMaxAge:          365 * 24 * time.Hour,
-	TrustForwardedProto: true, // only behind a trusted proxy
+	TrustForwardedProto: true,    // only behind a trusted proxy
+	TrustedProxies:      proxies, // []*net.IPNet: honour X-Forwarded-Proto only from these peers
 }))
 ```
+
+`DefaultMiddleware` and `APIMiddleware` already install `SecureHeaders`; there, set `TRUST_FORWARDED_PROTO=true` and `TRUSTED_PROXIES` instead of adding a second one.
 
 | Header | Default |
 | --- | --- |

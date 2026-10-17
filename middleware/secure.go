@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"net"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -39,6 +40,10 @@ type SecureHeadersConfig struct {
 	// TrustForwardedProto treats X-Forwarded-Proto: https as HTTPS (set it
 	// only behind a trusted proxy).
 	TrustForwardedProto bool
+	// TrustedProxies, when non-empty, limits TrustForwardedProto to
+	// requests whose direct peer is in one of these networks, so clients
+	// that reach the app around the proxy cannot claim HTTPS.
+	TrustedProxies []*net.IPNet
 	// DevServer returns the origin of a running asset dev server (the Vite
 	// hot URL) or "". When set, the origin is allowed in script-src,
 	// style-src, img-src, font-src and connect-src (plus its ws:// form for
@@ -128,7 +133,8 @@ func SecureHeaders(cfg SecureHeadersConfig) Middleware {
 				h.Set("Reporting-Endpoints", reporting)
 			}
 
-			https := r.TLS != nil || (cfg.TrustForwardedProto && r.Header.Get("X-Forwarded-Proto") == "https")
+			https := r.TLS != nil || (cfg.TrustForwardedProto && r.Header.Get("X-Forwarded-Proto") == "https" &&
+				fromTrustedPeer(r, cfg.TrustedProxies))
 			if hsts != "" && https {
 				h.Set("Strict-Transport-Security", hsts)
 			}
@@ -368,6 +374,26 @@ func checkReportURI(raw string) error {
 	}
 
 	return fmt.Errorf("middleware: ReportURI %q must be an https URL or a path", raw)
+}
+
+// fromTrustedPeer reports whether the direct peer is in proxies; an empty
+// list keeps the pre-TrustedProxies behaviour (any peer).
+func fromTrustedPeer(r *http.Request, proxies []*net.IPNet) bool {
+	if len(proxies) == 0 {
+		return true
+	}
+
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+
+	return slices.ContainsFunc(proxies, func(n *net.IPNet) bool { return n.Contains(ip) })
 }
 
 // devOrigin matches a bare http(s) origin, so a dev server URL can never
