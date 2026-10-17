@@ -311,7 +311,17 @@ func (r *RememberStore) consume(ctx context.Context, raw string) (string, error)
 		return "", errBadToken
 	}
 
-	_ = r.delete(ctx, id) // single use, valid or not
+	// Single use, valid or not. Only the request whose DELETE removed the
+	// row may log in: two concurrent requests with a stolen cookie both
+	// pass the SELECT, and a failed DELETE would leave the token reusable.
+	res, err := r.ex.ExecContext(ctx, r.q("DELETE FROM {table} WHERE id = ?"), id)
+	if err != nil {
+		return "", errBadToken
+	}
+
+	if n, err := res.RowsAffected(); err != nil || n != 1 {
+		return "", errBadToken
+	}
 
 	if subtle.ConstantTimeCompare([]byte(stored), []byte(digest(secret))) != 1 || !expires.After(r.now()) {
 		return "", errBadToken

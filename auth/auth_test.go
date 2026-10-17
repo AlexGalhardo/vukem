@@ -2,9 +2,12 @@ package auth_test
 
 import (
 	"context"
+	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -289,6 +292,39 @@ func TestRememberMe(t *testing.T) {
 		WithCookie("remember_web", fresh.CookieValue("remember_web")).
 		Get("/dashboard").
 		AssertRedirect("/login")
+}
+
+// A stolen remember-me cookie replayed concurrently logs in at most once.
+func TestSecurity_A07_RememberTokenSingleUseUnderConcurrency(t *testing.T) {
+	t.Parallel()
+
+	ta := newApp(t, hash.Fake())
+	ta.user(t, "eve@example.com", "s3cret-pass", false)
+
+	for range 5 {
+		c := ta.Client(t)
+		c.PostForm("/login", url.Values{"email": {"eve@example.com"}, "password": {"s3cret-pass"}, "remember": {"on"}})
+		token := c.CookieValue("remember_web")
+
+		var (
+			wg sync.WaitGroup
+			ok atomic.Int32
+		)
+
+		for range 8 {
+			wg.Go(func() {
+				if ta.Client(t).WithCookie("remember_web", token).Get("/dashboard").Status() == http.StatusOK {
+					ok.Add(1)
+				}
+			})
+		}
+
+		wg.Wait()
+
+		if n := ok.Load(); n != 1 {
+			t.Fatalf("concurrent replays of one remember token logged in %d times, want 1", n)
+		}
+	}
 }
 
 func TestPasswordRehashOnLogin(t *testing.T) {

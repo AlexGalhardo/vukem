@@ -146,7 +146,7 @@ What Vukem does **by default** to protect applications, mapped to the [OWASP Top
 | Credential check hashes a dummy password when the user does not exist (timing-safe, no user enumeration) | A |
 | Generic error messages on login and password reset ("If the email exists…") | A |
 | Password rules action (min length 12 by default, max 72 bytes for bcrypt) editable in user code | A |
-| Login throttling per email + IP (5 per minute) and per account from any IP (20 per 10 minutes), keyed by the email normalized like the login schema (trimmed, lower case) so spaces and case open no new buckets (generated `TestLoginLogoutAndThrottle`, run by `TestNewProjectEndToEnd` / `TestNewInertiaProjectEndToEnd`); remember-me tokens rotated on use (`TestRememberMe`) | A / B |
+| Login throttling per email + IP (5 per minute) and per account from any IP (20 per 10 minutes), keyed by the email normalized like the login schema (trimmed, lower case) so spaces and case open no new buckets (generated `TestLoginLogoutAndThrottle`, run by `TestNewProjectEndToEnd` / `TestNewInertiaProjectEndToEnd`); remember-me tokens rotated on use and single use even under concurrent replay (`TestRememberMe`, `TestSecurity_A07_RememberTokenSingleUseUnderConcurrency`) | A / B |
 | API tokens with expiry, abilities and revocation; `last_used_at` tracking | A |
 
 | Social login: PKCE, signed single-use `state`/`nonce` cookie, OIDC ID-token verification, redirect URL from config only | A |
