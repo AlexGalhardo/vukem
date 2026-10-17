@@ -211,7 +211,7 @@ func APIMiddleware(app *App, r *router.Router) error {
 		middleware.RequestID(),
 		middleware.Maintenance(maintenanceConfig(app)),
 		middleware.Logger(app.Log),
-		middleware.SecureHeaders(middleware.SecureHeadersConfig{}),
+		middleware.SecureHeaders(secureHeadersConfig(app)),
 	)
 	r.Use(middleware.BodyLimit(web.DefaultMaxBody))
 
@@ -296,14 +296,20 @@ func maintenanceConfig(app *App) middleware.MaintenanceConfig {
 	}
 }
 
-// secureHeadersConfig allows the Vite dev server in the CSP while it runs
-// (app.Vite only reports it outside production).
+// secureHeadersConfig honours X-Forwarded-Proto from TRUSTED_PROXIES when
+// TRUST_FORWARDED_PROTO is set, and allows the Vite dev server in the CSP
+// while it runs (app.Vite only reports it outside production).
 func secureHeadersConfig(app *App) middleware.SecureHeadersConfig {
-	if app.Vite == nil {
-		return middleware.SecureHeadersConfig{}
+	cfg := middleware.SecureHeadersConfig{
+		TrustForwardedProto: app.Config.TrustForwardedProto,
+		TrustedProxies:      app.proxies,
 	}
 
-	return middleware.SecureHeadersConfig{DevServer: app.Vite.HotURL}
+	if app.Vite != nil {
+		cfg.DevServer = app.Vite.HotURL
+	}
+
+	return cfg
 }
 
 // DefaultMiddleware installs Vukem's recommended stacks on r:
@@ -461,6 +467,8 @@ func (a *App) newRouter() *router.Router {
 		Debug:          debug,
 		ProblemBaseURL: a.Source.Get("APP_PROBLEM_BASE_URL"),
 		CheckResponses: !a.Config.IsProduction(),
+		TrustedProxies: a.proxies,
+		ClientIPHeader: a.Config.ClientIPHeader,
 	}
 
 	if debug && a.Kind == KindWeb {

@@ -43,7 +43,7 @@ The public "how to use Vukem" website lives in [`site/`](../site) and is deploye
 7. **Frontend** — HTMX, Vite, Inertia (React, Vue, Svelte)
 8. **Digging deeper** — Mail, Cache, Storage (with S3), File uploads, Events, Queues, Scheduler, SSE, WebSockets and broadcasting, Localization, Billing (Stripe), Admin panel, Dev dashboard, Telegram logging
 9. **Testing** — Getting started, HTTP tests, API tests, Database testing, Fakes
-10. **Deployment** — Single binary, Docker, Reverse proxy and TLS
+10. **Deployment** — Single binary (reverse proxy and TLS), Docker and Railway
 
 Pages describe only what is implemented; planned features are marked with a "Planned" callout.
 

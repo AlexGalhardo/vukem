@@ -113,6 +113,6 @@ export const navigation: NavCategory[] = [
   {
     title: "Deployment",
     dir: "deployment",
-    pages: ["single-binary"],
+    pages: ["single-binary", "docker-and-railway"],
   },
 ];

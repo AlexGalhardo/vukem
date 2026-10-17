@@ -74,9 +74,12 @@ Commit `.env.example` and git-ignore `.env` and `.env.*.local`. Never commit rea
 | `APP_DEBUG` | `false` | Must be `false` when `APP_ENV=production` (boot error otherwise) |
 | `APP_URL` | `http://localhost:3000` | Public origin of the app |
 | `APP_KEY` | — | **Required in production** (and for any key-derived feature), at least 32 bytes, `base64:` prefix optional |
-| `HOST` | `localhost` | Listen host |
+| `HOST` | `localhost` | Listen host; `0.0.0.0` for all IPv4 interfaces, `::` for IPv6 (dual-stack on most systems) |
 | `PORT` | `3000` | Listen port, 0–65535 |
 | `SHUTDOWN_TIMEOUT` | `15s` | Graceful shutdown budget |
+| `TRUSTED_PROXIES` | empty (trust nobody) | Comma-separated CIDRs or IPs whose `X-Forwarded-For` sets `c.IP()`; an invalid entry is a boot error ([Deploy](/docs/deployment/docker-and-railway#trusted-proxies)) |
+| `CLIENT_IP_HEADER` | empty | Read the client IP from this single-IP header (e.g. `X-Real-IP`) instead of `X-Forwarded-For`, only from `TRUSTED_PROXIES` peers |
+| `TRUST_FORWARDED_PROTO` | `false` | Treat `X-Forwarded-Proto: https` from a trusted proxy as HTTPS (HSTS); requires `TRUSTED_PROXIES` |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 | `LOG_FORMAT` | `text` (`json` in production) | `text` or `json` |
 | `LOG_DEDUP_WINDOW` | `1m` in production, off elsewhere | Repeated identical errors become one `repeated` summary per window; `0` disables it |
@@ -149,4 +152,5 @@ signer, err := app.DeriveKey("signed.urls", 32) // config.ErrKeyMissing instead 
 | Missing `APP_KEY` with explicit `APP_ENV=development`/`test` | Boots; key-derived features fail closed on use |
 | `APP_DEBUG=true` with `APP_ENV=production` | Boot error |
 | `PORT` out of range | Boot error |
+| Invalid `TRUSTED_PROXIES` entry; `TRUST_FORWARDED_PROTO` or `CLIENT_IP_HEADER` without `TRUSTED_PROXIES`; an invalid or list `CLIENT_IP_HEADER` | Boot error |
 | Debug error details | Only when `Services.Debug` is set; never in production |

@@ -1,0 +1,16 @@
+# Secrets: configure the container through its environment instead.
+.env
+.env.*
+
+# VCS, local tools and build output
+.git/
+.vukem/
+/bin/
+node_modules/
+
+# Local data (SQLite files, uploads)
+storage/
+
+# Vite: dev server marker; the image builds its own assets
+/resources/public/hot
+/resources/public/build/

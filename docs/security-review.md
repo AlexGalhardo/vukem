@@ -91,6 +91,8 @@ Accepted or deferred, with the reason and what an app can do meanwhile.
 | R-13 | Low | `storage.PutUploaded` accepts any content type when `UploadRules.Types` is empty, unlike `upload.Rules` | use `upload.Receive` / `upload.Save`, which fail closed |
 | R-14 | Low | `orm.Encrypted` binds table and column, not the row id, so a ciphertext can be moved between rows by someone with database write access | out of the threat model (database write access) |
 
+**R-11 follow-up (2026-10-17, branch `fix/deploy`):** the proxy options are now configurable from the environment. `TRUSTED_PROXIES` (CIDRs or IPs) feeds `web.Services.TrustedProxies`, `TRUST_FORWARDED_PROTO` enables HSTS from `X-Forwarded-Proto`, honoured only from those peers, and `CLIENT_IP_HEADER` (e.g. `X-Real-IP`) reads the client IP from a single-IP proxy header, also only from those peers. Invalid values refuse the boot. The Inertia 409 location still uses `r.Host`; that part of R-11 is open.
+
 ## App responsibilities
 
 Beyond the per-category lists in [security.md](security.md):

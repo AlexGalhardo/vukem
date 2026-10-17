@@ -24,6 +24,8 @@ vukem new site --minimal             # HTMX without a database
 
 Every starter except `--minimal` ships SQLite, migrations, a posts CRUD example and tests that pass with `go test ./...`. `vukem new` runs `go mod tidy`, writes `APP_KEY`, installs frontend dependencies with `--pm` (default npm) when it is on `PATH` (frontend starters) and `git init`.
 
+Every starter also ships a production `Dockerfile` (Vite assets with the chosen package manager, a static Go binary built with the tags in `.buildtags`, a non-root Alpine runtime with `APP_ENV=production` and `HOST=0.0.0.0`) and a `.dockerignore` that keeps `.env` files, `node_modules` and `storage/` out of the image. Railway and other platforms build it without extra configuration: see [Docker and Railway](/docs/deployment/docker-and-railway).
+
 ## HTMX on Vite
 
 The default starter vendors **htmx 4.0.0** (served by the static middleware, SHA-256 pinned), and builds CSS and scripts with Vite 8 and Tailwind CSS v4 (`@tailwindcss/vite`):
@@ -68,7 +70,7 @@ The app gets `vukem.WithInertia(inertia.Config{})`, controllers that call `inert
 
 ## Minimal
 
-`vukem new site --minimal` is the HTMX starter for a stateless app: the home page, layout, vendored htmx and Vite, with no `database/`, models, posts or uploads examples, and no `DATABASE_URL`. Sessions, cache, queue and rate limits keep their cookie, memory and sync defaults, which need no database. Its `.buildtags` file holds `vukem_nosqlite`, so `vukem build` and `vukem serve` leave the SQLite driver out of the binary (about 4 MB smaller); opening a SQLite database in such a build fails with an error naming the tag. A custom Dockerfile must build with `go build -tags vukem_nosqlite ./cmd/app`. Tests run with plain `go test ./...`. To add a database later, delete the tag from `.buildtags` (or configure another driver) and run `vukem install:auth` or `make:migration` as usual.
+`vukem new site --minimal` is the HTMX starter for a stateless app: the home page, layout, vendored htmx and Vite, with no `database/`, models, posts or uploads examples, and no `DATABASE_URL`. Sessions, cache, queue and rate limits keep their cookie, memory and sync defaults, which need no database. Its `.buildtags` file holds `vukem_nosqlite`, so `vukem build` and `vukem serve` leave the SQLite driver out of the binary (about 4 MB smaller); opening a SQLite database in such a build fails with an error naming the tag. The starter `Dockerfile` reads `.buildtags` too, so the image is built with the same tags; a hand-written Dockerfile must pass them (`go build -tags vukem_nosqlite ./cmd/app`). Tests run with plain `go test ./...`. To add a database later, delete the tag from `.buildtags` (or configure another driver) and run `vukem install:auth` or `make:migration` as usual.
 
 ## API
 

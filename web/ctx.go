@@ -20,6 +20,7 @@ import (
 	"mime"
 	"net"
 	"net/http"
+	"net/netip"
 	"slices"
 	"strconv"
 	"strings"
@@ -55,6 +56,11 @@ type Services struct {
 	DebugOut io.Writer
 	// TrustedProxies lists CIDRs whose X-Forwarded-For is honoured by IP().
 	TrustedProxies []*net.IPNet
+	// ClientIPHeader, when set, names a header (such as X-Real-IP) that a
+	// trusted proxy sets to the client IP. IP() then reads it instead of
+	// X-Forwarded-For, only from TrustedProxies peers; a missing, repeated
+	// or non-IP value falls back to the peer address.
+	ClientIPHeader string
 	// ProblemBaseURL prefixes RFC 9457 problem "type" URIs; empty means
 	// "about:blank".
 	ProblemBaseURL string
@@ -217,8 +223,9 @@ func (c *Ctx) WantsJSON() bool {
 // IsHTMX reports whether the request was made by htmx.
 func (c *Ctx) IsHTMX() bool { return c.r.Header.Get("HX-Request") == "true" }
 
-// IP returns the client IP. X-Forwarded-For is honoured only when the
-// direct peer is a trusted proxy (docs/security.md, A01/A02).
+// IP returns the client IP. X-Forwarded-For (or ClientIPHeader when set)
+// is honoured only when the direct peer is a trusted proxy
+// (docs/security.md, A01/A02).
 func (c *Ctx) IP() string {
 	host, _, err := net.SplitHostPort(c.r.RemoteAddr)
 	if err != nil {
@@ -227,6 +234,21 @@ func (c *Ctx) IP() string {
 
 	if !c.trusted(host) {
 		return host
+	}
+
+	if c.s.ClientIPHeader != "" {
+		// One line holding one IP: anything else may carry client input.
+		vals := c.r.Header.Values(c.s.ClientIPHeader)
+		if len(vals) != 1 {
+			return host
+		}
+
+		ip, ok := canonicalIP(vals[0])
+		if !ok {
+			return host
+		}
+
+		return ip
 	}
 
 	// Every header line counts: a proxy may append its own line instead of
@@ -240,8 +262,8 @@ func (c *Ctx) IP() string {
 	// IP means the chain cannot be trusted, so the peer address is used.
 	parts := strings.Split(fwd, ",")
 	for _, p := range slices.Backward(parts) {
-		ip := strings.TrimSpace(p)
-		if net.ParseIP(ip) == nil {
+		ip, ok := canonicalIP(p)
+		if !ok {
 			return host
 		}
 
@@ -250,7 +272,21 @@ func (c *Ctx) IP() string {
 		}
 	}
 
-	return strings.TrimSpace(parts[0])
+	ip, _ := canonicalIP(parts[0])
+
+	return ip
+}
+
+// canonicalIP parses s and returns it in one spelling (IPv4-mapped IPv6
+// unmapped, IPv6 lowercased and compressed), so rate-limit keys for the
+// same client never differ.
+func canonicalIP(s string) (string, bool) {
+	addr, err := netip.ParseAddr(strings.TrimSpace(s))
+	if err != nil {
+		return "", false
+	}
+
+	return addr.Unmap().String(), true
 }
 
 func (c *Ctx) trusted(host string) bool {

@@ -1,0 +1,139 @@
+---
+title: Docker and Railway
+description: Build the starter's Dockerfile, run it anywhere, and deploy it on Railway with Postgres, Redis or MongoDB, a healthcheck and trusted proxies.
+---
+
+Every project made by `vukem new` has a production `Dockerfile` and a `.dockerignore` at its root. The image is the same everywhere: plain Docker, Railway, Fly or Render.
+
+## The starter image
+
+The `Dockerfile` has up to three stages:
+
+| Stage | Image | What it does |
+| --- | --- | --- |
+| `assets` (not in `--api` projects) | `node:24.22.0-alpine3.24`, or `oven/bun:1.4.3-alpine` with `--pm bun` | installs dependencies from the lockfile (`npm ci`, `bun install --frozen-lockfile`, `pnpm`/`yarn` through corepack) and runs `vite build` |
+| `build` | `golang:1.27.2-alpine3.24` | `go mod download`, `templ generate` in `--templ` projects, copies `resources/public/build` from `assets`, then `CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -tags <.buildtags> ./cmd/app` (the same tags as `vukem build`; `--minimal` apps leave SQLite out with `vukem_nosqlite`) |
+| runtime | `alpine:3.24.2` | the binary at `/app/app`, CA certificates and time zones, a non-root `app` user (uid 10001), a writable `/app/storage` |
+
+The runtime sets `APP_ENV=production`, `HOST=0.0.0.0` (the default `localhost` is unreachable from outside a container), `PORT=3000` and `LOG_FORMAT=json`. Views and assets are embedded in the binary, so the image holds one file. `.dockerignore` keeps `.env` and `.env.*`, `node_modules`, `.git`, `bin/` and `storage/` out of the build context: secrets reach the container through its environment only.
+
+<Callout type="warning">
+Commit the lockfile (`package-lock.json`, `bun.lock`, `pnpm-lock.yaml` or `yarn.lock`): the image installs from it and fails without it. A project created with `vukem new --framework <path>` points `go.mod` at a local checkout with a `replace` directive; remove it (`go get github.com/AlexGalhardo/vukem@<version>`) before building an image.
+</Callout>
+
+## Run it with Docker
+
+```bash
+docker build -t blog .
+docker run --rm blog key:generate            # prints a new APP_KEY
+docker run -d -p 3000:3000 \
+  -e APP_KEY=base64:... \
+  -e APP_URL=https://blog.example.com \
+  blog
+curl -i http://localhost:3000/up
+```
+
+The image's entry point is the app binary, so any command runs the same way: `docker run --rm -e APP_KEY=... blog migrate`, `... blog route:list`, `... blog about`. `/up` answers `200` while the app is up; `/up?checks=1` also runs the health checks of providers (database, Redis, MongoDB).
+
+The default `DATABASE_URL` is SQLite in `storage/` (`/app/storage` in the image). Mount a volume there to keep it across restarts, or use PostgreSQL. The app runs as uid `10001`, so the mount must be writable by it: a new named volume (`-v blog-storage:/app/storage`) copies the ownership of the image's `/app/storage`, but a bind mount or a volume created elsewhere keeps its owner, often root. Then `chown -R 10001:10001` the directory on the host, or run the container with `--user 0` (less isolation).
+
+## Configure production
+
+| Variable | Value |
+| --- | --- |
+| `APP_KEY` | **Required**, from `vukem key:generate --show` or `docker run --rm <image> key:generate`. Keep it stable: changing it invalidates sessions and encrypted data |
+| `APP_URL` | the public `https://` origin |
+| `APP_ENV` | `production` (set by the image) |
+| `HOST`, `PORT` | `0.0.0.0` and `3000` (set by the image; platforms such as Railway inject their own `PORT`) |
+| `DATABASE_URL` | SQLite by default, `postgres://...` with the [PostgreSQL driver](/docs/database/overview#postgresql) |
+| `TRUSTED_PROXIES` | the proxy networks in front of the app, see [below](#trusted-proxies) |
+| `TRUST_FORWARDED_PROTO` | `true` behind a proxy that terminates TLS (sends HSTS) |
+| `SHUTDOWN_TIMEOUT` | shorter than the platform's stop timeout (default `15s`) |
+
+The app refuses to boot with a missing or short `APP_KEY`, `APP_DEBUG=true` in production, or an invalid `TRUSTED_PROXIES` entry, so a misconfigured deploy fails its healthcheck instead of serving.
+
+## Trusted proxies
+
+Behind a load balancer or a platform edge, the direct peer of every request is the proxy. `c.IP()` (rate limits, login throttles, logs) returns that peer unless it is trusted; only then is `X-Forwarded-For` read, right to left, skipping trusted hops. Nobody is trusted by default.
+
+```dotenv
+TRUSTED_PROXIES=10.0.0.0/8,192.0.2.10   # CIDRs or single IPs, comma-separated
+TRUST_FORWARDED_PROTO=true              # X-Forwarded-Proto: https from those peers enables HSTS
+CLIENT_IP_HEADER=X-Real-IP              # optional: one-IP header set by the proxy, instead of X-Forwarded-For
+```
+
+`vukem.New` applies them to the router and to the default `SecureHeaders`; `vukem about` prints the result. With `CLIENT_IP_HEADER`, `c.IP()` reads that header instead of `X-Forwarded-For`, still only from trusted peers, and only when it holds exactly one IP (anything else falls back to the peer address). An entry that is neither an IP nor a CIDR, an invalid or list header name, or `TRUST_FORWARDED_PROTO` / `CLIENT_IP_HEADER` without `TRUSTED_PROXIES` stops the boot. Trust only the networks your proxy connects from: a trusted peer can claim any client address.
+
+## Deploy on Railway
+
+Railway builds a service with the `Dockerfile` at the root of its source directory as soon as it finds one ([Dockerfiles](https://docs.railway.com/builds/dockerfiles)), so the starter needs no build configuration.
+
+<Steps>
+<Step title="Create the project and the app service">
+
+In a new Railway project, add a service from your GitHub repository (or run `railway up` from the project directory). The build log shows `Using detected Dockerfile!`.
+
+</Step>
+<Step title="Add the databases you use">
+
+Add PostgreSQL, Redis or MongoDB from **+ New → Database**. Each runs as its own service and exposes connection variables that other services reference with `${{ServiceName.VARIABLE}}` ([variables](https://docs.railway.com/reference/variables)):
+
+| Database | Variables Railway exposes | In the app service |
+| --- | --- | --- |
+| PostgreSQL | `DATABASE_URL`, `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE` | `DATABASE_URL=${{Postgres.DATABASE_URL}}` |
+| Redis | `REDIS_URL`, `REDISHOST`, `REDISPORT`, `REDISUSER`, `REDISPASSWORD` | `REDIS_URL=${{Redis.REDIS_URL}}` |
+| MongoDB | `MONGO_URL`, `MONGOHOST`, `MONGOPORT`, `MONGOUSER`, `MONGOPASSWORD` | `MONGO_URL=${{MongoDB.MONGO_URL}}` |
+
+The namespace is the database service's name as shown in the canvas; rename the reference if you renamed the service. PostgreSQL needs `drivers/postgres` registered with `vukem.WithDatabaseDrivers(postgres.Driver())`; Redis and MongoDB are opened by your code from `REDIS_URL` and `MONGO_URL` ([Redis](/docs/database/redis), [MongoDB](/docs/database/mongodb)). If `MONGO_URL` has no database in its path, pass the name: `mongo.Open(ctx, os.Getenv("MONGO_URL"), "app")`.
+
+</Step>
+<Step title="Set the app variables">
+
+In the app service's **Variables**:
+
+```dotenv
+APP_KEY=base64:...                         # vukem key:generate --show
+APP_URL=https://blog.up.railway.app         # the domain from Settings → Networking
+DATABASE_URL=${{Postgres.DATABASE_URL}}
+```
+
+Do not set `PORT`: Railway injects it and the app listens on it ([healthchecks](https://docs.railway.com/reference/healthchecks)). Generate a public domain under **Settings → Networking**. See [trusted proxies on Railway](#trusted-proxies-on-railway) before setting `TRUSTED_PROXIES`.
+
+</Step>
+<Step title="Healthcheck, migrations and restarts">
+
+Under **Settings → Deploy**:
+
+- **Healthcheck Path**: `/up`. Railway calls it with the host `healthcheck.railway.app` and switches traffic to the new deployment only after a `2xx`; it does not monitor the endpoint once the deployment is live.
+- **Pre-deploy Command**: `/app/app migrate`. It runs in a separate container with the service's variables and private network, but without volumes ([pre-deploy command](https://docs.railway.com/deployments/pre-deploy-command)), so use it with PostgreSQL, not with SQLite on a volume.
+- **Restart Policy**: `On Failure` with a few retries, so a crash restarts the container while a boot error (bad configuration) does not loop forever.
+
+</Step>
+<Step title="Deploy">
+
+Push to the connected branch (or `railway up`). Check `https://<domain>/up`, then `/up?checks=1` for the database checks.
+
+</Step>
+</Steps>
+
+### Trusted proxies on Railway
+
+What Railway documents about its HTTP edge ([public networking specs and limits](https://docs.railway.com/networking/public-networking/specs-and-limits)): all public traffic is HTTPS (TLS 1.2+), `X-Forwarded-Proto` is always `https`, `X-Real-IP` carries the client's remote IP and `X-Forwarded-Host` the original host. It does **not** document `X-Forwarded-For` or the address range its edge connects to your service from. A range such as `100.0.0.0/8` (or `100.64.0.0/10`) seen in community answers is not part of Railway's documentation and may change.
+
+Because the header Railway documents is `X-Real-IP`, the matching setting is `CLIENT_IP_HEADER=X-Real-IP`. It is honoured only from `TRUSTED_PROXIES` peers, and Railway does not tell you which range that is, so the trade-off stays yours:
+
+- **`TRUSTED_PROXIES` unset (the default, safe).** `c.IP()` is the edge's address, so per-IP rate limits and login throttles key on the edge: all clients share one bucket. Key limits by user or token where you can.
+- **`TRUSTED_PROXIES` set to a range you verified.** Log the peer address of a few requests (`r.RemoteAddr`) from your deployment, trust the narrowest range that covers it, and re-check after Railway changes. Then set `CLIENT_IP_HEADER=X-Real-IP` and, for HSTS, `TRUST_FORWARDED_PROTO=true`. If the edge later connects from outside that range, `c.IP()` falls back to the edge address (limits get stricter, never spoofable).
+- **Never trust `0.0.0.0/0`.** Any client, or another service on the project's private network, could then send its own `X-Real-IP` and choose its `c.IP()`.
+
+### Scheduler and queue workers
+
+The web service runs only the HTTP server (and the in-memory queue). Run the scheduler as a second service from the same repository with the start command `/app/app schedule:work` (**Settings → Deploy → Custom Start Command**; it replaces the image's `ENTRYPOINT`) and the same variables; it needs no domain or healthcheck. Railway's cron schedules run at most every 5 minutes ([cron jobs](https://docs.railway.com/cron-jobs)), so they cannot replace `schedule:run` every minute. A database or Redis queue needs a worker service the same way, with `/app/app queue:work`.
+
+### Volumes
+
+For SQLite or local uploads, attach a volume at `/app/storage`. Railway documents that images running as a non-root UID have permission issues on volumes and that `RAILWAY_RUN_UID=0` fixes them ([volumes](https://docs.railway.com/volumes/reference)); the starter image runs as uid `10001`, so set that variable on the service. It runs the app as root inside the container. Migrations then have to run in the app container, because pre-deploy commands get no volume: set the start command to `/bin/sh -c "/app/app migrate && exec /app/app"` (Railway runs start commands in exec form, without a shell, and they replace the image's `ENTRYPOINT`: [start command](https://docs.railway.com/deployments/start-command)).
+
+<Callout>
+Railway's Config as Code files (`railway.json`, `railway.toml`) are deprecated: new services cannot opt into them and existing files stop being read on 2026-12-01 ([Config as Code](https://docs.railway.com/reference/config-as-code)). Starters therefore ship no `railway.json`; set the healthcheck, pre-deploy command and restart policy in the service settings, or in Railway's [Infrastructure as Code](https://docs.railway.com/infrastructure-as-code) file (`healthcheck: "/up"`, `preDeploy: "/app/app migrate"`).
+</Callout>

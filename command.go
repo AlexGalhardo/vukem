@@ -275,6 +275,7 @@ func aboutCommand() Command {
 				{"Address", app.Addr()},
 				{"Go", runtime.Version()},
 				{"APP_KEY", app.Config.Key.String()},
+				{"Trusted proxies", trustedProxiesStatus(app)},
 				{"Telegram", telegramStatus(app)},
 				{"Providers", strconv.Itoa(len(app.providers))},
 				{"Routes", strconv.Itoa(len(app.Router.Routes()))},
@@ -311,6 +312,28 @@ func stderr() io.Writer { return os.Stderr }
 
 func signalContext() (context.Context, context.CancelFunc) {
 	return signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+}
+
+func trustedProxiesStatus(app *App) string {
+	if len(app.proxies) == 0 {
+		return "none"
+	}
+
+	nets := make([]string, len(app.proxies))
+	for i, n := range app.proxies {
+		nets[i] = n.String()
+	}
+
+	s := strings.Join(nets, ", ")
+	if app.Config.ClientIPHeader != "" {
+		s += " (client IP from " + app.Config.ClientIPHeader + ")"
+	}
+
+	if app.Config.TrustForwardedProto {
+		s += " (X-Forwarded-Proto trusted)"
+	}
+
+	return s
 }
 
 func telegramStatus(app *App) string {

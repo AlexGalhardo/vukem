@@ -7,8 +7,12 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"net"
+	"net/http"
 	"os"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -83,6 +87,17 @@ type Config struct {
 	// clients (containers, remote VMs). Anyone who reaches the app then
 	// sees its requests, queries, logs and mail.
 	DevtoolsInsecureAllowRemote bool `env:"DEVTOOLS_INSECURE_ALLOW_REMOTE"`
+	// TrustedProxies lists the proxies (comma-separated CIDRs or IPs) whose
+	// X-Forwarded-For is honoured by c.IP(). Empty trusts nobody; an
+	// invalid entry is a boot error.
+	TrustedProxies string `env:"TRUSTED_PROXIES"`
+	// TrustForwardedProto treats X-Forwarded-Proto: https from a trusted
+	// proxy as HTTPS (HSTS). It requires TRUSTED_PROXIES.
+	TrustForwardedProto bool `env:"TRUST_FORWARDED_PROTO"`
+	// ClientIPHeader names a single-IP header set by the trusted proxy
+	// (such as X-Real-IP) that c.IP() reads instead of X-Forwarded-For.
+	// It requires TRUSTED_PROXIES.
+	ClientIPHeader string `env:"CLIENT_IP_HEADER"`
 }
 
 // IsProduction reports whether APP_ENV is production.
@@ -174,6 +189,8 @@ type App struct {
 	queueErr  error
 
 	now func() time.Time
+	// proxies is the parsed TRUSTED_PROXIES.
+	proxies []*net.IPNet
 
 	dbOnce     sync.Once
 	db         *database.DB
@@ -381,6 +398,19 @@ func New(opts ...Option) (*App, error) {
 		return nil, err
 	}
 
+	proxies, err := parseTrustedProxies(cfg.TrustedProxies)
+	if err != nil {
+		return nil, err
+	}
+
+	if cfg.TrustForwardedProto && len(proxies) == 0 {
+		return nil, errors.New("vukem: TRUST_FORWARDED_PROTO requires TRUSTED_PROXIES")
+	}
+
+	if cfg.ClientIPHeader, err = clientIPHeader(cfg.ClientIPHeader, len(proxies) > 0); err != nil {
+		return nil, err
+	}
+
 	enc, err := newCrypt(key, cfg.PreviousKeys)
 	if err != nil {
 		return nil, err
@@ -471,6 +501,7 @@ func New(opts ...Option) (*App, error) {
 		noHTTP:    o.noHTTP,
 		drivers:   o.drivers,
 		now:       now,
+		proxies:   proxies,
 
 		migrations:  o.migrations,
 		seeders:     o.seeders,
@@ -492,6 +523,14 @@ func New(opts ...Option) (*App, error) {
 	}
 
 	app.Router = app.newRouter()
+
+	if catchAll := slices.ContainsFunc(proxies, func(n *net.IPNet) bool {
+		ones, _ := n.Mask.Size()
+		return ones == 0
+	}); catchAll {
+		app.Log.Warn("TRUSTED_PROXIES trusts every address: any client can set its own c.IP(); " +
+			"trust only the proxy's network")
+	}
 	routes = app.Router
 
 	if dt != nil {
@@ -633,6 +672,66 @@ func checkConfig(cfg *Config, envSet bool) (config.Key, error) {
 	return key, errors.Join(errs...)
 }
 
+// parseTrustedProxies parses TRUSTED_PROXIES: comma-separated CIDRs or
+// bare IPs (a single host). Empty entries are skipped; anything else that
+// does not parse refuses the boot, since a dropped entry would silently
+// change which client IPs rate limits and logs see.
+func parseTrustedProxies(s string) ([]*net.IPNet, error) {
+	var nets []*net.IPNet
+
+	for entry := range strings.SplitSeq(s, ",") {
+		if entry = strings.TrimSpace(entry); entry == "" {
+			continue
+		}
+
+		if _, n, err := net.ParseCIDR(entry); err == nil {
+			nets = append(nets, n)
+			continue
+		}
+
+		ip := net.ParseIP(entry)
+		if ip == nil {
+			return nil, fmt.Errorf("vukem: TRUSTED_PROXIES entry %q is not an IP or CIDR", entry)
+		}
+
+		bits := 128
+		if ip4 := ip.To4(); ip4 != nil {
+			ip, bits = ip4, 32
+		}
+
+		nets = append(nets, &net.IPNet{IP: ip, Mask: net.CIDRMask(bits, bits)})
+	}
+
+	return nets, nil
+}
+
+// headerToken matches an HTTP field name (RFC 9110 token).
+var headerToken = regexp.MustCompile("^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
+
+// clientIPHeader validates CLIENT_IP_HEADER and returns it canonicalized.
+// List headers are refused: their leftmost entries come from the client.
+func clientIPHeader(name string, haveProxies bool) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", nil
+	}
+
+	if !headerToken.MatchString(name) {
+		return "", fmt.Errorf("vukem: CLIENT_IP_HEADER %q is not a valid header name", name)
+	}
+
+	name = http.CanonicalHeaderKey(name)
+	if name == "X-Forwarded-For" || name == "Forwarded" {
+		return "", fmt.Errorf("vukem: CLIENT_IP_HEADER %q is a list; leave it empty to use X-Forwarded-For", name)
+	}
+
+	if !haveProxies {
+		return "", errors.New("vukem: CLIENT_IP_HEADER requires TRUSTED_PROXIES")
+	}
+
+	return name, nil
+}
+
 // newCrypt builds app.Crypt: the "crypt" key derived from APP_KEY encrypts,
 // keys derived from APP_PREVIOUS_KEYS only decrypt. A malformed previous key
 // is a boot error. Without APP_KEY it returns nil (see crypt.ErrNoKey).
@@ -739,8 +838,12 @@ func (a *App) DeriveKey(purpose string, n int) ([]byte, error) {
 // Now returns the current time from the app clock (see WithClock).
 func (a *App) Now() time.Time { return a.now() }
 
-// Addr returns the HTTP listen address from HOST and PORT.
-func (a *App) Addr() string { return fmt.Sprintf("%s:%d", a.Config.Host, a.Config.Port) }
+// Addr returns the HTTP listen address from HOST and PORT. IPv6 hosts
+// ("::", "fd12::1") are bracketed; a host already in brackets is accepted.
+func (a *App) Addr() string {
+	host := strings.TrimSuffix(strings.TrimPrefix(a.Config.Host, "["), "]")
+	return net.JoinHostPort(host, strconv.Itoa(a.Config.Port))
+}
 
 // AddRunner adds a long-running component. Call it from Register or Boot.
 func (a *App) AddRunner(name string, r Runner) {

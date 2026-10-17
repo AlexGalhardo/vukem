@@ -91,7 +91,7 @@ Central error handler (P); `Recover` middleware (P); fail closed on authorizatio
 
 ## Your responsibility
 
-- Terminate TLS (or run behind a proxy that does), set `APP_URL` to the `https` origin and configure trusted proxies.
+- Terminate TLS (or run behind a proxy that does), set `APP_URL` to the `https` origin and set `TRUSTED_PROXIES` (plus `TRUST_FORWARDED_PROTO=true` behind a TLS-terminating proxy).
 - Authorize every handler that touches owned data and scope queries by tenant or user.
 - Keep running `govulncheck`, review dependency updates and protect CI secrets.
 - Ship logs to durable storage and alert on security events.
