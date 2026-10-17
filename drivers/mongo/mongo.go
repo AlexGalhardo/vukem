@@ -1,7 +1,7 @@
 // Package mongo connects Vukem to MongoDB with a typed collection API. It
 // is deliberately not the SQL query builder: filters and updates are BSON.
 //
-//	m, err := mongo.Open(ctx, os.Getenv("MONGO_URL")) // mongodb://localhost:27017/app
+//	m, err := mongo.Open(ctx, os.Getenv("MONGO_URL"), os.Getenv("MONGO_DATABASE"))
 //	users := mongo.Collection[User](m, "users")
 //	u, err := users.FindOne(ctx, bson.D{{Key: "email", Value: email}})
 //	for u, err := range users.Find(ctx, bson.D{{Key: "active", Value: true}}) { ... }
@@ -34,9 +34,33 @@ type Client struct {
 	db     *mongo.Database
 }
 
-// Open connects to uri and pings the primary. The database is the URI
-// path (mongodb://host/app) or db when given.
+// Open connects to uri and pings the primary, so a server that is down
+// fails boot. The database is db when given and non-empty, else the URI
+// path (mongodb://host/app):
+//
+//	mongo.Open(ctx, os.Getenv("MONGO_URL"), os.Getenv("MONGO_DATABASE"))
+//
+// A database in the URI path is also the default authSource; when the
+// user lives in admin (managed providers), keep the path empty and pass
+// db, or add ?authSource=admin. Use OpenLazy to start without the server.
 func Open(ctx context.Context, uri string, db ...string) (*Client, error) {
+	m, err := OpenLazy(uri, db...)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := m.Ping(ctx); err != nil {
+		_ = m.client.Disconnect(context.WithoutCancel(ctx))
+		return nil, err
+	}
+
+	return m, nil
+}
+
+// OpenLazy is Open without the ping: it validates uri and the database
+// name but never contacts the server, so the app boots while MongoDB is
+// down and connects on first use. Call Ping from a readiness check.
+func OpenLazy(uri string, db ...string) (*Client, error) {
 	cs, err := connstring.ParseAndValidate(uri)
 	if err != nil {
 		return nil, fmt.Errorf("mongo: parse uri: %w", err)
@@ -48,24 +72,23 @@ func Open(ctx context.Context, uri string, db ...string) (*Client, error) {
 	}
 
 	if name == "" {
-		return nil, errors.New("mongo: no database in the URI (mongodb://host/<db>)")
+		return nil, errors.New("mongo: no database: pass it to Open (e.g. MONGO_DATABASE) or set the URI path")
 	}
 
-	c, err := mongo.Connect(options.Client().ApplyURI(uri).SetServerSelectionTimeout(10 * time.Second))
+	opts := options.Client().ApplyURI(uri)
+	if !cs.ServerSelectionTimeoutSet {
+		opts.SetServerSelectionTimeout(10 * time.Second)
+	}
+
+	c, err := mongo.Connect(opts)
 	if err != nil {
 		return nil, fmt.Errorf("mongo: connect: %w", err)
 	}
 
-	m := &Client{client: c, db: c.Database(name)}
-	if err := m.Ping(ctx); err != nil {
-		_ = c.Disconnect(context.WithoutCancel(ctx))
-		return nil, err
-	}
-
-	return m, nil
+	return &Client{client: c, db: c.Database(name)}, nil
 }
 
-// Ping checks the primary is reachable (health checks).
+// Ping checks the primary is reachable; use it in a readiness check.
 func (m *Client) Ping(ctx context.Context) error {
 	if err := m.client.Ping(ctx, readpref.Primary()); err != nil {
 		return fmt.Errorf("mongo: ping: %w", err)
