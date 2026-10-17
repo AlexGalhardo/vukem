@@ -110,6 +110,12 @@ func build(opts ...vukem.Option) (*vukem.App, error) {
 			})
 
 			r.Get("/secret", func(*web.Ctx) error { return errs.ErrForbidden })
+			r.Get("/flash-pulled", func(c *web.Ctx) error {
+				_ = c.Flash("gone", "x")
+				c.Session().Pull("gone") // still listed as flashed, value removed
+
+				return c.NoContent()
+			})
 			r.Get("/teapot", func(c *web.Ctx) error { return c.String(418, "tea") })
 			r.Get("/accept", func(c *web.Ctx) error { return c.String(200, c.Header("Accept")) })
 			r.Delete("/notes", func(c *web.Ctx) error { return c.NoContent() })
@@ -417,4 +423,20 @@ func TestBuildReturnsErrors(t *testing.T) {
 	}
 
 	app.Client(t).Get("/notes").AssertOK()
+}
+
+func TestAssertFlashNeedsPresence(t *testing.T) {
+	t.Parallel()
+
+	app := vukemtest.New(t, build)
+
+	app.Client(t).Get("/flash-pulled").AssertNoFlash("gone")
+	app.Client(t).PostForm("/notes", url.Values{"body": {"long enough"}}).AssertNoFlash("other")
+
+	expectFailure(t, `no flash "gone"`, func(tb *fakeTB) {
+		app.Client(tb).Get("/flash-pulled").AssertFlash("gone", nil)
+	})
+	expectFailure(t, `flash "success" present ("Note saved."), want none`, func(tb *fakeTB) {
+		app.Client(tb).PostForm("/notes", url.Values{"body": {"long enough"}}).AssertNoFlash("success")
+	})
 }

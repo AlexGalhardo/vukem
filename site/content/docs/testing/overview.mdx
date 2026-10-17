@@ -78,7 +78,7 @@ Assertions chain and, on failure, print the request, status, headers and body.
 | APIs | `AssertProblem(status)` (RFC 9457), `AssertJSONValidationErrors(fields...)` |
 | htmx | `AssertHXTrigger(event)` |
 | Session | `AssertSessionHas`, `AssertSessionMissing`, `AssertSessionHasErrors(fields...)`, `Session()` |
-| Flash | `AssertFlash(key, v)`: `c.Flash` or `inertia.Flash` data, in the session after a redirect or in an Inertia page's `flash` object |
+| Flash | `AssertFlash(key, v)`, `AssertNoFlash(key)`: `c.Flash` or `inertia.Flash` data, in the session after a redirect or in an Inertia page's `flash` object (the key must be present, so `AssertFlash(key, nil)` does not match a missing value) |
 | Raw | `Status()`, `Body()`, `Header(key)`, `Recorder()` |
 
 ```go

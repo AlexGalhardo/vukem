@@ -128,13 +128,21 @@ func TestAssertFlash(t *testing.T) {
 		// ...then the next page carries it in page.flash.
 		c.Get("/posts").AssertFlash("status", "Post saved.").
 			AssertInertia("Posts/Index").FlashEquals("status", "Post saved.")
-		c.Get("/posts").AssertInertia("Posts/Index").MissingFlash("status")
+		c.Get("/posts").AssertNoFlash("status").AssertInertia("Posts/Index").MissingFlash("status")
 
 		expectFailure(t, `flash "status" = "Post saved.", want "nope"`, func(tb *fakeTB) {
 			app.Client(tb).Inertia("").PostJSON("/posts", map[string]any{}).AssertFlash("status", "nope")
 		})
 		expectFailure(t, `no flash "status"`, func(tb *fakeTB) {
 			app.Client(tb).Inertia("").Get("/posts").AssertFlash("status", "x")
+		})
+		expectFailure(t, `flash "status" present`, func(tb *fakeTB) {
+			cl := app.Client(tb).Inertia("")
+			cl.PostJSON("/posts", map[string]any{})
+			cl.Get("/posts").AssertInertia("Posts/Index").MissingFlash("status")
+		})
+		expectFailure(t, `flash "status" present ("Post saved."), want none`, func(tb *fakeTB) {
+			app.Client(tb).Inertia("").PostJSON("/posts", map[string]any{}).AssertNoFlash("status")
 		})
 		expectFailure(t, `flash "status" missing`, func(tb *fakeTB) {
 			app.Client(tb).Inertia("").Get("/posts").AssertInertia("Posts/Index").FlashEquals("status", "x")

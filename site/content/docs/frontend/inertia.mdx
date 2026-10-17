@@ -181,7 +181,7 @@ app.Client(t).Inertia("").Get("/posts").
 	PropEquals("filters.q", "go")
 ```
 
-Flash data (`inertia.Flash`) lives in `page.flash`, not in props. Assert it with `FlashEquals(key, v)` / `MissingFlash(key)` on the page, or with `AssertFlash(key, v)` on any response, which also finds it in the session before the redirect is followed:
+Flash data (`inertia.Flash`) lives in `page.flash`, not in props. `FlashEquals(key, v)` / `MissingFlash(key)` on the page read only `page.flash`. `AssertFlash(key, v)` / `AssertNoFlash(key)` on any response also look in the session, so they work before the redirect is followed:
 
 ```go
 c := app.Client(t).Inertia("")

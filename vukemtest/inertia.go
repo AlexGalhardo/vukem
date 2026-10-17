@@ -192,7 +192,8 @@ func show(v any) string {
 }
 
 // FlashEquals asserts that the page's flash object (inertia.Flash) has key
-// equal to want, compared like PropEquals.
+// equal to want, compared like PropEquals. It reads only page.flash; use
+// Response.AssertFlash to also find flash data still in the session.
 func (p *InertiaPage) FlashEquals(key string, want any) *InertiaPage {
 	p.t.Helper()
 
@@ -210,7 +211,8 @@ func (p *InertiaPage) FlashEquals(key string, want any) *InertiaPage {
 	return p
 }
 
-// MissingFlash asserts that the page's flash object has no key.
+// MissingFlash asserts that the page's flash object has no key. It reads
+// only page.flash; Response.AssertNoFlash also checks the session.
 func (p *InertiaPage) MissingFlash(key string) *InertiaPage {
 	p.t.Helper()
 

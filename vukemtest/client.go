@@ -631,7 +631,9 @@ const inertiaFlashKey = "_inertia_flash"
 // AssertFlash asserts that key was flashed with a value equal to want
 // (compared by JSON encoding). It finds web flash data (c.Flash) and
 // inertia.Flash data, either still in the session after a redirect or
-// rendered in the "flash" object of an Inertia page.
+// rendered in the "flash" object of an Inertia page. The key must be
+// present: want nil matches a flashed nil, not a missing value.
+// InertiaPage.FlashEquals reads only the page's flash object.
 func (r *Response) AssertFlash(key string, want any) *Response {
 	r.t.Helper()
 
@@ -642,6 +644,18 @@ func (r *Response) AssertFlash(key string, want any) *Response {
 
 	if !sameJSON(got, want) {
 		r.fail("flash %q = %s, want %s", key, show(got), show(want))
+	}
+
+	return r
+}
+
+// AssertNoFlash asserts that key is not flashed, neither in the session
+// nor in an Inertia page's flash object.
+func (r *Response) AssertNoFlash(key string) *Response {
+	r.t.Helper()
+
+	if got, ok := r.flash(key); ok {
+		r.fail("flash %q present (%s), want none", key, show(got))
 	}
 
 	return r
@@ -669,15 +683,18 @@ func (r *Response) flash(key string) (any, bool) {
 	// A plain session value is not a flash: the key must be listed as
 	// flashed (new on this request, or carried to the next one).
 	for _, list := range []string{"_flash.old", "_flash.new"} {
+		var listed bool
+
 		switch keys := s[list].(type) {
 		case []any:
-			if slices.Contains(keys, any(key)) {
-				return s[key], true
-			}
+			listed = slices.Contains(keys, any(key))
 		case []string:
-			if slices.Contains(keys, key) {
-				return s[key], true
-			}
+			listed = slices.Contains(keys, key)
+		}
+
+		// A listed key whose value was pulled is not a flash anymore.
+		if v, ok := s[key]; listed && ok {
+			return v, true
 		}
 	}
 

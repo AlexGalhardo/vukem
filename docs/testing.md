@@ -53,7 +53,7 @@ func TestCreatePost(t *testing.T) {
 | Status | `AssertOK`, `AssertCreated`, `AssertNoContent`, `AssertStatus(n)`, `AssertNotFound`, `AssertForbidden`, `AssertUnprocessable` |
 | Redirects | `AssertRedirect(url)`, `AssertRedirectRoute(name, params...)` |
 | Body | `AssertSee(text)`, `AssertDontSee`, `AssertJSON(v)`, `AssertJSONPath("data.title", "x")`, `AssertHeader` |
-| Session | `AssertSessionHas`, `AssertSessionHasErrors("title")`, `AssertFlash(key, v)` (web and Inertia flash), `AssertValid`, `AssertInvalid("title")` |
+| Session | `AssertSessionHas`, `AssertSessionHasErrors("title")`, `AssertFlash(key, v)`, `AssertNoFlash(key)` (web and Inertia flash, session or page), `AssertValid`, `AssertInvalid("title")` |
 | HTMX | `AssertHXTrigger("post-created")`, `AssertFragment("post-list")` |
 | Inertia | `AssertInertia(component)` with prop and flash (`FlashEquals`, `MissingFlash`) assertions |
 
