@@ -26,6 +26,7 @@ vukem openapi:export > openapi.json
 | `OPENAPI_IN_PRODUCTION` | `false` | serve `/openapi.json` and `/docs` in production |
 
 - [Typed handlers](/docs/rest-apis/typed-handlers) are described from their types: `json` tags give property names, `validate` rules give constraints (`required`, `min`/`max`/`len`, `email`, `url`, `uuid`, `oneof`, `regex`, `positive`, `unique`, `dive`…), and a `doc:"..."` tag becomes the description.
+- `required` lists the key in `required`. On a string it also emits `minLength: 1`, since an empty string is rejected; on a list it emits no `minItems`, since an empty list passes (tag `min=1` when items are needed).
 - Named structs become `components/schemas`; `orm` relations and `orm.NullTime` map to their JSON shape; errors reference shared `Problem` and `ValidationError` responses; `Op.Security` names become security requirements (`bearer` is predefined).
 - Plain routes get a generic entry; hide one with `.Doc(openapi.Skip{})`.
 - `app.OpenAPI()` returns the document, and `openapi.Generate(r.Routes(), openapi.Info{...})` builds one directly. CI validates a golden document with Redocly.

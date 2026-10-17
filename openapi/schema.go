@@ -335,6 +335,11 @@ func stringSchema(rules []string) Schema {
 	sc := Schema{"type": "string"}
 	lengths(sc, rules, "minLength", "maxLength")
 
+	// z rejects "" for a required string whatever min says.
+	if n, _ := sc["minLength"].(int); has(rules, "required") && n < 1 {
+		sc["minLength"] = 1
+	}
+
 	for _, r := range rules {
 		name, arg, _ := strings.Cut(strings.TrimSpace(r), "=")
 
