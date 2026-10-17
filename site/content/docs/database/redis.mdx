@@ -29,4 +29,5 @@ app.AddHealthCheck("redis", rc.Ping)
 | Pub/sub | `rc.Publish(ctx, channel, b)`, `msgs, err := rc.Subscribe(ctx, channels...)` |
 
 - Works with Redis 7+ and Valkey 8+; CI runs the `cachetest` and `queuetest` conformance suites on both.
+- `Open` pings the server, so the app does not boot while Redis is down; a malformed URL always fails. `redis.OpenLazy(url)` only parses the URL and connects on first use, so the process starts and `rc.Ping` reports the outage in a readiness check (`app.AddHealthCheck`). go-redis retries a failed command 3 times with backoff, so that `Ping` takes seconds while Redis is down; for a fast readiness answer set `?dial_timeout=1s&max_retries=-1` on the URL (or use a separate client with those options for the check).
 - `redis.New(client)` wraps an existing go-redis client (Cluster, Sentinel, custom options); `rc.Redis()` returns it.

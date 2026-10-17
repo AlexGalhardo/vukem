@@ -146,3 +146,29 @@ func TestCollection(t *testing.T) {
 		t.Fatal("accessors or health check")
 	}
 }
+
+func TestOpenLazyConnectsOnFirstUse(t *testing.T) {
+	url := os.Getenv("MONGO_URL")
+	if url == "" {
+		url = "mongodb://localhost:57017"
+	}
+
+	m, err := mongo.OpenLazy(url, "vukemtest_"+rand.Text()[:8])
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() {
+		ctx := t.Context()
+		_ = m.Database().Drop(ctx)
+		_ = m.Close(ctx)
+	})
+
+	if err := m.Ping(t.Context()); err != nil {
+		t.Fatalf("Ping = %v", err)
+	}
+
+	if _, err := mongo.Collection[user](m, "users").Insert(t.Context(), user{Email: "lazy@example.com"}); err != nil {
+		t.Fatalf("Insert = %v", err)
+	}
+}

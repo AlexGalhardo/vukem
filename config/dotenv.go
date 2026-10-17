@@ -6,7 +6,7 @@
 // .env.<APP_ENV>, .env. Structs are filled with [Fill] using `env` and
 // `default` struct tags.
 //
-// [LoadSource] builds the [Source] the app reads from (app.Config.Source),
+// [LoadSource] builds the [Source] the app reads from (app.Source),
 // [Load] fills a typed struct from it, [Secret] keeps sensitive values out
 // of logs and output, and [Key] parses APP_KEY and derives purpose keys
 // from it.

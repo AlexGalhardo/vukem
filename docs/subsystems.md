@@ -8,7 +8,7 @@ Mail, cache, storage, events, queue, scheduler, encryption, rate limiting, i18n,
 | Health | Prototype | `/up` + per-service checks | — | — |
 | Mail | ALPHA | SMTP (`net/smtp`), **Resend** (HTTP API), log, array | — | ✅ |
 | Cache | ALPHA | memory (LRU + TTL), database | redis | ✅ |
-| Storage | ALPHA / BETA | local (`os.Root`), memory | s3 (AWS, MinIO, R2…) | ✅ |
+| Storage | ALPHA / BETA | local (`os.Root`), memory | s3 (AWS, R2, RustFS…) | ✅ |
 | Events | ALPHA | in-process sync/async | — | ✅ (`events.NewFake`) |
 | Queue | BETA | sync, memory, database (SQLite/Postgres, `FOR UPDATE SKIP LOCKED` on PG) | redis | ✅ (`queue.Fake`) |
 | Scheduler | BETA | in-process cron | — | clock |
@@ -135,15 +135,18 @@ link, err := storage.TemporaryURL(signer, "/files", "invoices/42.pdf", 15*time.M
 
 ### S3
 
-`go get github.com/AlexGalhardo/vukem/drivers/s3`: a `storage.Disk` on Amazon S3 or any S3-compatible service (MinIO, Cloudflare R2, DigitalOcean Spaces, Backblaze B2). No AWS SDK: requests are signed by a stdlib Signature Version 4 implementation verified against the AWS test suite.
+`go get github.com/AlexGalhardo/vukem/drivers/s3`: a `storage.Disk` on Amazon S3 or any S3-compatible service (Cloudflare R2, DigitalOcean Spaces, Backblaze B2, RustFS, SeaweedFS, Garage). No AWS SDK: requests are signed by a stdlib Signature Version 4 implementation verified against the AWS test suite.
 
 ```go
-cfg, err := config.Load[s3.Config](app.Config.Source)
+cfg, err := config.Load[s3.Config](app.Source)
 disk, err := s3.New(cfg) // validates config, no I/O
 
 err = disk.Put(ctx, "videos/intro.mp4", file)            // one PUT up to S3_PART_SIZE, multipart above
 info, err := disk.Stat(ctx, "videos/intro.mp4")          // HEAD: Size, ETag, ContentType, LastModified
 up, err := disk.PresignPut("uploads/avatar.png", 5*time.Minute) // browser uploads straight to the bucket
+up, err := disk.PresignPutWith("uploads/avatar.png", 5*time.Minute, s3.PresignPutOptions{
+	ContentType: "image/png", ContentLength: size, // signed: the upload must send exactly these
+})
 link, err := disk.PresignGet("invoices/42.pdf", time.Hour)
 ```
 
@@ -153,7 +156,7 @@ link, err := disk.PresignGet("invoices/42.pdf", time.Hour)
 | `S3_REGION` | `us-east-1` | signing region (`auto` for R2) |
 | `S3_ENDPOINT` | `https://s3.<region>.amazonaws.com` | bare origin of an S3-compatible service |
 | `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | — | required; `S3_SESSION_TOKEN` for temporary credentials |
-| `S3_USE_PATH_STYLE` | `false` | `endpoint/bucket/key` instead of `bucket.endpoint/key` (MinIO) |
+| `S3_USE_PATH_STYLE` | `false` | `endpoint/bucket/key` instead of `bucket.endpoint/key` (most self-hosted servers) |
 | `S3_INSECURE_HTTP` | `false` | allow an `http://` endpoint (local development only) |
 | `S3_PART_SIZE` | 8 MiB | multipart part size, 5 MiB to 5 GiB |
 | `S3_PUBLIC_URL` | — | prefix for `disk.URL` (CDN or public bucket); empty = private |
@@ -161,8 +164,8 @@ link, err := disk.PresignGet("invoices/42.pdf", time.Hour)
 - `Put` buffers at most one part: small bodies go in one signed `PUT`, larger ones become a multipart upload that is aborted on any failure (part error, reader error, cancelled context, a `200` that carries an `<Error>`), so no orphaned parts are billed. Content type comes from the extension, else from the first bytes.
 - `Open` streams the object; `List` uses ListObjectsV2 and follows continuation tokens; folder placeholder keys (ending in `/`) are skipped. Missing objects match `fs.ErrNotExist`; other failures are `*s3.Error` (`StatusCode`, `Code`, `Message`, `RequestID`).
 - Keys go through `storage.Clean`: no empty key, no leading `/` (so `/a` and `a` cannot name different objects), no `..`, backslash or `:`.
-- Presigned URLs sign only the `host` header and expire after 1 s to 7 days (the SigV4 maximum). Credentials are `config.Secret`; errors and `%+v` never show them.
-- Integration tests run against MinIO (`task services:up`, port 59000); the driver passes `storagetest.Run` and `storagetest.RunTraversal`.
+- Presigned URLs expire after 1 s to 7 days (the SigV4 maximum). `PresignGet` and `PresignPut` sign only the `host` header, so a `PresignPut` URL accepts any type and size. `PresignPutWith` also signs `Content-Type` and/or `Content-Length` (`s3.PresignPutOptions`): the uploader must send exactly those values or S3 answers 403. Browsers set `Content-Length` from the body but must send the `Content-Type` header explicitly (`fetch(url, {method: "PUT", headers: {"Content-Type": type}, body: file})`); invalid options return `s3.ErrInvalidPresign`. A signed `Content-Length` is an exact size, not a ceiling: pass the real file size the client declared (after checking it against your maximum), never the maximum itself, or every smaller file gets 403. Credentials are `config.Secret`; errors and `%+v` never show them.
+- Integration tests run against RustFS (`rustfs/rustfs`, pinned in `compose.yaml`; `task services:up`, port 59000); the driver passes `storagetest.Run` and `storagetest.RunTraversal`.
 
 ## Uploads
 
@@ -205,7 +208,7 @@ app.OnShutdown(func(context.Context) error { return tus.Close() })
 - `OPTIONS` advertises `Tus-Version`, `Tus-Max-Size`, `Tus-Extension`; `POST` checks `Upload-Length` (≤ `MaxSize`) and `Upload-Metadata` (≤ 4 KiB, 32 pairs) and answers 201 with `Location: BasePath + <26-char random id>`; `HEAD` returns `Upload-Offset`/`Upload-Length` with `Cache-Control: no-store`; `PATCH` needs `Tus-Resumable: 1.0.0` (412 otherwise), `Content-Type: application/offset+octet-stream` (415) and the current `Upload-Offset` (409), and appends the body as it streams — an interrupted request keeps what arrived, and the client resumes from the offset `HEAD` reports. Concurrent `PATCH`es on one upload get 423.
 - Partial data lives in `Dir` through `os.Root`. The id is the capability, so `Authorize` is required (boot error when nil; return `nil` explicitly to allow everyone). Abandoned uploads expire after `Expiry` (24h): requests on them get 404 and `tus.Cleanup(ctx)` (schedule it) deletes them. When the last byte arrives `OnComplete` runs; its error is sent to the client (422 for validation) and the partial data is deleted either way.
 
-Direct-to-storage uploads skip the app server: `upload.Presigner` (`PresignPut(ctx, key, contentType, maxSize, ttl)`) is an interface you implement for your storage provider; `drivers/s3`'s `PresignPut(key, expires)` signs only the host, so wrap it (or another SDK) when the bucket must enforce the content type and size. `upload.Direct(DirectConfig{Presigner, Rules, Authorize})` answers `POST {"filename","content_type","size"}` with `{"key","url","method":"PUT","headers","expires_at"}` after checking the declared type, extension and size, under a random key in `Rules.Dir` (TTL 15 minutes, at most 1 hour). The declared type cannot be trusted, so call `upload.Verify(ctx, disk, key, rules)` when the client reports the upload done: it sniffs the stored object and deletes it when it breaks the rules.
+Direct-to-storage uploads skip the app server: `upload.Presigner` (`PresignPut(ctx, key, contentType, maxSize, ttl)`) is an interface you implement for your storage provider; wrap `drivers/s3`'s `PresignPutWith(key, ttl, s3.PresignPutOptions{ContentType: contentType, ContentLength: maxSize})` and return `Content-Type` in `headers`, so the bucket enforces the type and size; plain `PresignPut(key, expires)` signs only the host. Despite its name, `Direct` passes the client's declared `size` (already checked against `Rules.MaxFileSize`) as `maxSize`, which is what a signed `Content-Length` needs: it is an exact size, so a wrapper that signed `Rules.MaxFileSize` would reject every smaller file with 403. The client must send exactly the size it declared. `upload.Direct(DirectConfig{Presigner, Rules, Authorize})` answers `POST {"filename","content_type","size"}` with `{"key","url","method":"PUT","headers","expires_at"}` after checking the declared type, extension and size, under a random key in `Rules.Dir` (TTL 15 minutes, at most 1 hour). The declared type cannot be trusted, so call `upload.Verify(ctx, disk, key, rules)` when the client reports the upload done: it sniffs the stored object and deletes it when it breaks the rules.
 
 The HTMX starter ships `resources/views/components/upload.html` (a `data-upload` form with a `<progress>`) and a `/uploads` demo page. `resources/js/app.ts` swaps htmx 4's `fetch` for `XMLHttpRequest` on those forms (`htmx:before:request`) to report upload progress; no inline scripts, so the CSP holds. Validate files received through `c.Input()` with [`z.File()`](validation.md#schemas).
 
@@ -314,6 +317,7 @@ msgs, err := rc.Subscribe(ctx, "orders")          // pub/sub (SSE fan-out); rc.P
 
 - The queue keeps jobs in sorted sets under `{queue}:` (one Cluster slot) and reserves them with one Lua script; abandoned jobs are taken over after their timeout plus one minute, failed jobs support `queue:failed`, `queue:retry` and `queue:forget`.
 - `Flush` deletes only the store's prefix (`SCAN` + `DEL`), never the whole database, and refuses an empty prefix.
+- `Open` pings the server, so the app does not boot while Redis is down; a malformed URL always fails. `redis.OpenLazy(url)` only parses the URL and connects on first use, so the process starts and `rc.Ping` reports the outage in a readiness check (`app.AddHealthCheck("redis", rc.Ping)`). go-redis retries a failed command 3 times with backoff, so that `Ping` takes seconds while Redis is down; for a fast readiness answer set `?dial_timeout=1s&max_retries=-1` on the URL (or open a separate client with those options just for the check).
 - The driver passes the `cachetest` and `queuetest` conformance suites.
 
 ## OpenTelemetry

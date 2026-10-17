@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -27,9 +28,9 @@ func env(key, fallback string) string {
 	return fallback
 }
 
-// openMinIO connects to S3_ENDPOINT (task services:up starts MinIO on
+// openS3 connects to S3_ENDPOINT (task services:up starts RustFS on
 // :59000) and creates a bucket unique to the test.
-func openMinIO(t *testing.T) *Disk {
+func openS3(t *testing.T) *Disk {
 	t.Helper()
 
 	d, err := New(Config{
@@ -48,7 +49,7 @@ func openMinIO(t *testing.T) *Disk {
 
 	resp, err := d.do(t.Context(), http.MethodPut, "", nil, nil, nil)
 	if err != nil {
-		t.Fatalf("minio: %v (start it with task services:up)", err)
+		t.Fatalf("s3: %v (start it with task services:up)", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -73,17 +74,17 @@ func openMinIO(t *testing.T) *Disk {
 	return d
 }
 
-func TestMinIOConformance(t *testing.T) {
-	d := openMinIO(t)
+func TestS3Conformance(t *testing.T) {
+	d := openS3(t)
 	d.maxKeys = 2
 
 	storagetest.Run(t, d)
 	storagetest.RunTraversal(t, d)
 }
 
-func TestMinIOMultipartAndStat(t *testing.T) {
+func TestS3MultipartAndStat(t *testing.T) {
 	ctx := t.Context()
-	d := openMinIO(t)
+	d := openS3(t)
 
 	data := make([]byte, 2*MinPartSize+12345)
 	_, _ = rand.Read(data)
@@ -108,9 +109,9 @@ func TestMinIOMultipartAndStat(t *testing.T) {
 	}
 }
 
-func TestMinIOPresign(t *testing.T) {
+func TestS3Presign(t *testing.T) {
 	ctx := t.Context()
-	d := openMinIO(t)
+	d := openS3(t)
 
 	putURL, err := d.PresignPut("uploads/report final.pdf", 5*time.Minute)
 	if err != nil {
@@ -160,5 +161,49 @@ func TestMinIOPresign(t *testing.T) {
 
 	if resp.StatusCode != http.StatusForbidden {
 		t.Errorf("tampered presigned GET = %d, want 403", resp.StatusCode)
+	}
+}
+
+func TestS3PresignPutWith(t *testing.T) {
+	d := openS3(t)
+	data := []byte("\x89PNG fake")
+
+	u, err := d.PresignPutWith("avatars/1.png", time.Minute, PresignPutOptions{
+		ContentType:   "image/png",
+		ContentLength: int64(len(data)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	put := func(ctype string, body []byte) int {
+		req, _ := http.NewRequestWithContext(t.Context(), http.MethodPut, u, bytes.NewReader(body))
+		req.Header.Set("Content-Type", ctype)
+
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		drain(resp)
+
+		return resp.StatusCode
+	}
+
+	if got := put("text/html", data); got != http.StatusForbidden {
+		t.Errorf("PUT with another content type = %d, want 403", got)
+	}
+
+	if got := put("image/png", append(slices.Clone(data), 'x')); got != http.StatusForbidden {
+		t.Errorf("PUT with another size = %d, want 403", got)
+	}
+
+	if got := put("image/png", data); got != http.StatusOK {
+		t.Fatalf("matching PUT = %d, want 200", got)
+	}
+
+	info, err := d.Stat(t.Context(), "avatars/1.png")
+	if err != nil || info.Size != int64(len(data)) || info.ContentType != "image/png" {
+		t.Errorf("Stat = %+v %v", info, err)
 	}
 }

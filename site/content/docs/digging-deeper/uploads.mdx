@@ -72,7 +72,7 @@ file, err := upload.Verify(ctx, disk, key, rules)
 ```
 
 <Callout type="info">
-The [S3 disk](/docs/digging-deeper/storage#s3)'s own `PresignPut(key, ttl)` signs only the `host` header and does not implement `upload.Presigner` yet; wrap your presigning in a type with the signature above.
+The [S3 disk](/docs/digging-deeper/storage#s3) does not implement `upload.Presigner` itself. Wrap `disk.PresignPutWith(key, ttl, s3.PresignPutOptions{ContentType: contentType, ContentLength: maxSize})` and return `Content-Type` in `headers`, so the bucket rejects any other type or size. Despite its name, `Direct` passes the client's declared `size` (already checked against `Rules.MaxFileSize`) as `maxSize`. A signed `Content-Length` is an exact size, not a ceiling: signing `Rules.MaxFileSize` instead would reject every smaller file with 403, and the client must upload exactly the size it declared. Plain `PresignPut(key, ttl)` signs only the `host` header.
 </Callout>
 
 `Direct` answers `POST {"filename","content_type","size"}` with `{"key","url","method":"PUT","headers","expires_at"}` after checking the declared type, extension and size, under a random key in `Rules.Dir` (TTL 15 minutes, at most 1 hour). The declared type cannot be trusted, so `upload.Verify` sniffs the stored object and deletes it when it breaks the rules.

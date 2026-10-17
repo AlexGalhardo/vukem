@@ -49,16 +49,15 @@ services:
       test: ["CMD", "mongosh", "--quiet", "--eval", "db.runCommand({ ping: 1 }).ok"]
       interval: 3s
       retries: 30
-  minio:
-    # MinIO no longer publishes server images (minio/minio, quay.io/minio/minio);
-    # pgsty/minio is the community build of the same server, pinned by release.
-    image: pgsty/minio:RELEASE.2026-08-04T00-00-00Z
-    command: ["server", "/data"]
+  rustfs:
+    # S3-compatible server for drivers/s3 (MinIO stopped publishing images and
+    # archived its repository). Pin a stable release, never latest or preview.
+    image: rustfs/rustfs:1.0.2
     environment:
-      MINIO_ROOT_USER: vukem
-      MINIO_ROOT_PASSWORD: vukem-secret
+      RUSTFS_ACCESS_KEY: vukem
+      RUSTFS_SECRET_KEY: vukem-secret
     ports: ["59000:9000"]
     healthcheck:
-      test: ["CMD", "curl", "-fs", "http://localhost:9000/minio/health/live"]
+      test: ["CMD", "curl", "-fs", "http://localhost:9000/health"]
       interval: 2s
       retries: 30

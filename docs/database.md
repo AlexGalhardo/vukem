@@ -317,8 +317,8 @@ Empty values are skipped (`required` belongs to the schema). Columns are validat
 `go get github.com/AlexGalhardo/vukem/drivers/mongo` (official driver v2). A separate, typed API, not the SQL builder:
 
 ```go
-m, err := mongo.Open(ctx, os.Getenv("MONGO_URL")) // mongodb://localhost:27017/app (database from the path)
-app.AddHealthCheck("mongo", m.Ping)                // reported by /up?checks=1
+m, err := mongo.Open(ctx, os.Getenv("MONGO_URL"), os.Getenv("MONGO_DATABASE")) // empty MONGO_DATABASE: database from the URI path
+app.AddHealthCheck("mongo", m.Ping)                                              // reported by /up?checks=1
 
 users := mongo.Collection[models.User](m, "users")
 u, err := users.FindOne(ctx, bson.D{{Key: "email", Value: e}}) // mongo.ErrNotFound when missing
@@ -329,6 +329,10 @@ totals, err := mongo.Aggregate[Total](ctx, users, pipeline)
 ```
 
 Also `All`, `Count`, `InsertMany`, `UpdateMany`, `ReplaceOne`, `DeleteOne`, `DeleteMany` and `Raw()` for indexes and change streams. **Never pass decoded request JSON as a filter**: operators such as `$where` or `$ne` would come from the client; build filters from validated fields.
+
+- **Database name.** `Open(ctx, uri, db)` uses `db` when it is non-empty, else the URI path (`mongodb://host:27017/app`); with neither, `Open` fails. Managed providers often give a URL without a path (Railway's `MONGO_URL` is `mongodb://mongo:<password>@mongodb.railway.internal:27017`), so set `MONGO_DATABASE=app` instead of editing the URL.
+- **authSource.** A database in the URI path is also the default `authSource`: appending `/app` to a provider URL makes the driver authenticate against `app` instead of `admin`, and login fails. Keep the path empty and pass the database name, or add `?authSource=admin` (`mongodb://user:pw@host:27017/app?authSource=admin`).
+- **Boot without the server.** `Open` pings the primary, so the app does not boot while MongoDB is down; a malformed URI always fails. `mongo.OpenLazy(uri, db)` validates the URI and database name without contacting the server, which lets the process start and report the outage through `m.Ping` in a readiness check (`app.AddHealthCheck`). The client starts its topology-monitoring goroutines immediately (even before the server is up), so close it on shutdown: `app.OnShutdown(m.Close)`. Server selection waits 10 s unless the URI sets `serverSelectionTimeoutMS`.
 
 ## Redis
 

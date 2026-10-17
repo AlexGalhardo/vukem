@@ -1,9 +1,9 @@
 // Package s3 is a storage.Disk on Amazon S3 or any S3-compatible service
-// (MinIO, Cloudflare R2, Backblaze B2, Wasabi...). It speaks the REST API
+// (Cloudflare R2, Backblaze B2, Wasabi, RustFS...). It speaks the REST API
 // directly with a standard-library AWS Signature Version 4 client: no AWS
 // SDK.
 //
-//	cfg, err := config.Load[s3.Config](app.Config.Source) // S3_BUCKET, S3_REGION, ...
+//	cfg, err := config.Load[s3.Config](app.Source) // S3_BUCKET, S3_REGION, ...
 //	disk, err := s3.New(cfg)
 //	err = storage.PutBytes(ctx, disk, "avatars/1.png", png)
 //	link, err := disk.PresignGet("invoices/42.pdf", 15*time.Minute)
@@ -12,7 +12,7 @@
 // storage.Clean (no empty key, no leading "/", no "..", no backslash or
 // ':'), so "a/b.txt" and "/a/b.txt" can never name different objects.
 //
-// Endpoints must use https; a plain http endpoint (local MinIO) is refused
+// Endpoints must use https; a plain http endpoint (a local server) is refused
 // unless Config.InsecureHTTP is set. Credentials are config.Secret values
 // and never appear in errors, logs or fmt output.
 //
@@ -58,6 +58,8 @@ const (
 var (
 	ErrConfig        = errors.New("s3: invalid configuration")
 	ErrInvalidExpiry = errors.New("s3: presign expiry must be between 1s and 7 days")
+	// ErrInvalidPresign reports a PresignPutOptions value S3 cannot sign.
+	ErrInvalidPresign = errors.New("s3: invalid presign options")
 )
 
 // Config is the S3 connection; load it with config.Load[s3.Config].
@@ -72,7 +74,7 @@ type Config struct {
 	// SessionToken is set for temporary (STS) credentials.
 	SessionToken config.Secret `env:"S3_SESSION_TOKEN"`
 	// UsePathStyle addresses endpoint/bucket/key instead of
-	// bucket.endpoint/key (MinIO and most self-hosted services).
+	// bucket.endpoint/key (most self-hosted services).
 	UsePathStyle bool `env:"S3_USE_PATH_STYLE"`
 	// InsecureHTTP allows an http:// endpoint; only for local development.
 	InsecureHTTP bool `env:"S3_INSECURE_HTTP"`
@@ -589,16 +591,56 @@ func (d *Disk) URL(p string) string {
 // PresignGet returns a URL anyone can use to download p until expires
 // elapses (1s to 7 days).
 func (d *Disk) PresignGet(p string, expires time.Duration) (string, error) {
-	return d.presign(http.MethodGet, p, expires)
+	return d.presign(http.MethodGet, p, expires, nil)
 }
 
 // PresignPut returns a URL anyone can use to upload p (a single PUT, up to
-// 5 GiB) until expires elapses (1s to 7 days).
+// 5 GiB) until expires elapses (1s to 7 days). Any content type and size
+// are accepted; use PresignPutWith to bind them.
 func (d *Disk) PresignPut(p string, expires time.Duration) (string, error) {
-	return d.presign(http.MethodPut, p, expires)
+	return d.presign(http.MethodPut, p, expires, nil)
 }
 
-func (d *Disk) presign(method, p string, expires time.Duration) (string, error) {
+// PresignPutOptions binds a presigned PUT to the upload a server checked.
+// Each set field becomes a signed header: the uploader must send exactly
+// that value or S3 answers 403 SignatureDoesNotMatch. Browsers set
+// Content-Length from the body; Content-Type must be set explicitly
+// (fetch(url, {method: "PUT", headers: {"Content-Type": type}, body})).
+type PresignPutOptions struct {
+	// ContentType is the exact Content-Type the upload must send.
+	ContentType string
+	// ContentLength is the exact body size in bytes (0 leaves it free). It
+	// is not a ceiling: sign the real size the client declared, after
+	// checking it against your maximum, or smaller files get 403.
+	ContentLength int64
+}
+
+// PresignPutWith is PresignPut bound by o: the URL only accepts an upload
+// with the given Content-Type and Content-Length.
+func (d *Disk) PresignPutWith(p string, expires time.Duration, o PresignPutOptions) (string, error) {
+	headers := map[string]string{}
+
+	if o.ContentType != "" {
+		if _, _, err := mime.ParseMediaType(o.ContentType); err != nil ||
+			strings.ContainsAny(o.ContentType, "\r\n") {
+			return "", fmt.Errorf("%w: content type %q", ErrInvalidPresign, o.ContentType)
+		}
+
+		headers["content-type"] = o.ContentType
+	}
+
+	if o.ContentLength < 0 || o.ContentLength > MaxPartSize {
+		return "", fmt.Errorf("%w: content length %d (0 to 5 GiB)", ErrInvalidPresign, o.ContentLength)
+	}
+
+	if o.ContentLength > 0 {
+		headers["content-length"] = strconv.FormatInt(o.ContentLength, 10)
+	}
+
+	return d.presign(http.MethodPut, p, expires, headers)
+}
+
+func (d *Disk) presign(method, p string, expires time.Duration, headers map[string]string) (string, error) {
 	key, err := storage.Clean(p)
 	if err != nil {
 		return "", err
@@ -608,7 +650,7 @@ func (d *Disk) presign(method, p string, expires time.Duration) (string, error) 
 		return "", ErrInvalidExpiry
 	}
 
-	return d.signer.presign(method, d.objectURL(key, nil), d.now(), expires), nil
+	return d.signer.presign(method, d.objectURL(key, nil), d.now(), expires, headers), nil
 }
 
 // drain lets the connection be reused.

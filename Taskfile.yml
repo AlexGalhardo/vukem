@@ -147,7 +147,7 @@ tasks:
       - docker run --rm -e GOWORK=off -v "{{.ROOT_DIR}}:/src" -v vukem-gomod:/go/pkg/mod -w /src golang:1.27 go test -race -count=1 ./...
 
   services:up:
-    desc: Start Postgres, MySQL, MariaDB, Redis, Mongo and MinIO for integration tests (Docker)
+    desc: Start Postgres, MySQL, MariaDB, Redis, Mongo and RustFS (S3) for integration tests (Docker)
     cmds:
       - docker compose up -d --wait
 

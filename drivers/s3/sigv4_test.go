@@ -192,7 +192,7 @@ func TestSigV4S3Examples(t *testing.T) {
 		t.Parallel()
 
 		u := &url.URL{Scheme: "https", Host: "examplebucket.s3.amazonaws.com", Path: "/test.txt"}
-		got := s.presign(http.MethodGet, u, now, 24*time.Hour)
+		got := s.presign(http.MethodGet, u, now, 24*time.Hour, nil)
 
 		want := "https://examplebucket.s3.amazonaws.com/test.txt" +
 			"?X-Amz-Algorithm=AWS4-HMAC-SHA256" +
@@ -241,7 +241,7 @@ func TestSignAddsSessionToken(t *testing.T) {
 		t.Errorf("session token not signed: %v", req.Header)
 	}
 
-	u := s.presign(http.MethodGet, req.URL, time.Now(), time.Minute)
+	u := s.presign(http.MethodGet, req.URL, time.Now(), time.Minute, nil)
 	if !strings.Contains(u, "X-Amz-Security-Token=TOKEN") {
 		t.Errorf("presign without token: %s", u)
 	}

@@ -20,7 +20,7 @@ type User struct {
 func Example() {
 	ctx := context.Background()
 
-	m, err := mongo.Open(ctx, os.Getenv("MONGO_URL")) // e.g. mongodb on localhost:27017, database "app"
+	m, err := mongo.Open(ctx, os.Getenv("MONGO_URL"), os.Getenv("MONGO_DATABASE"))
 	if err != nil {
 		panic(err)
 	}

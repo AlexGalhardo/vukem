@@ -8,8 +8,8 @@ go get github.com/AlexGalhardo/vukem/drivers/mongo
 ```
 
 ```go
-m, err := mongo.Open(ctx, os.Getenv("MONGO_URL")) // mongodb://localhost:27017/app (database from the path)
-app.AddHealthCheck("mongo", m.Ping)                // reported by /up?checks=1
+m, err := mongo.Open(ctx, os.Getenv("MONGO_URL"), os.Getenv("MONGO_DATABASE")) // empty MONGO_DATABASE: database from the URI path
+app.AddHealthCheck("mongo", m.Ping)                                              // reported by /up?checks=1
 
 users := mongo.Collection[models.User](m, "users")
 
@@ -23,7 +23,32 @@ matched, modified, err := users.UpdateOne(ctx, filter, bson.D{{Key: "$set", Valu
 totals, err := mongo.Aggregate[Total](ctx, users, pipeline)
 ```
 
-Also `All`, `Count`, `InsertMany`, `UpdateMany`, `ReplaceOne`, `DeleteOne`, `DeleteMany`, and `Raw()` on the client and on collections for indexes, transactions and change streams. The database name can also be passed as `mongo.Open(ctx, uri, "app")`.
+Also `All`, `Count`, `InsertMany`, `UpdateMany`, `ReplaceOne`, `DeleteOne`, `DeleteMany`, and `Raw()` on the client and on collections for indexes, transactions and change streams.
+
+## Connection
+
+| Variable | Meaning |
+| --- | --- |
+| `MONGO_URL` | connection string; its path (`mongodb://host:27017/app`) names the database when `MONGO_DATABASE` is empty |
+| `MONGO_DATABASE` | database name passed as the third argument of `mongo.Open`; wins over the URI path |
+
+Managed providers often give a URL without a path (Railway's `MONGO_URL` is `mongodb://mongo:<password>@mongodb.railway.internal:27017`). Set `MONGO_DATABASE` instead of editing the URL: with neither a path nor a name, `Open` fails.
+
+<Callout type="warning">
+A database in the URI path is also the default `authSource`. Appending `/app` to a provider URL makes the driver authenticate against `app` instead of `admin`, and login fails. Keep the path empty and set `MONGO_DATABASE`, or add `?authSource=admin` (`mongodb://user:pw@host:27017/app?authSource=admin`).
+</Callout>
+
+`Open` pings the primary, so the app does not boot while MongoDB is down; a malformed URI always fails. To start anyway and let a readiness check report the outage, use `mongo.OpenLazy`, which validates the URI and database name without contacting the server:
+
+```go
+m, err := mongo.OpenLazy(os.Getenv("MONGO_URL"), os.Getenv("MONGO_DATABASE"))
+app.AddHealthCheck("mongo", m.Ping) // /up?checks=1 fails until MongoDB answers
+app.OnShutdown(m.Close)
+```
+
+The lazy client starts its topology-monitoring goroutines immediately, even before the server is up, so it must be closed on shutdown like any other client.
+
+Server selection waits 10 seconds unless the URI sets `serverSelectionTimeoutMS`.
 
 <Callout type="warning">
 Never pass decoded request JSON as a filter: operators such as `$where` or `$ne` would come from the client. Build filters from validated fields.
