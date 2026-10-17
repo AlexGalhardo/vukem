@@ -89,6 +89,22 @@ err := db.Tx(ctx, func(tx *database.Tx) error {
 
 `tx.AfterCommit(func(ctx context.Context) { ... })` runs work once the transaction commits, in registration order, and drops it on rollback or panic. A hook registered after the `db.Tx` function returned never runs; a panicking hook is logged and the others still run (`db.Tx` returns nil, since the commit happened). `queue.DispatchTx` uses it on drivers without transactional storage.
 
+## UUIDs
+
+Package `uuid` (stdlib only) makes RFC 9562 UUIDs for public ids, without a third-party dependency:
+
+```go
+type Order struct {
+	orm.Model
+	PublicID uuid.UUID // t.UUID("public_id").Unique() in the migration
+}
+
+o := Order{PublicID: uuid.NewV7()}      // time-ordered; uuid.NewV4() is fully random
+u, err := uuid.Parse(r.PathValue("id")) // errors.Is(err, uuid.ErrInvalid) → 404
+```
+
+Both versions draw their random bits from `crypto/rand`. A v7 UUID sorts by its creation millisecond (random order inside one) and reveals that time (`u.Time()`). `Parse` accepts only the canonical 36-character form, in either case. A `uuid.UUID` is JSON and query-string text, is written to SQL as text (PostgreSQL `uuid`, text columns elsewhere) and scans text or 16-byte binary columns; scan nullable columns into a `*uuid.UUID`.
+
 ## Next
 
 - [ORM](/docs/database/orm): typed queries and models.

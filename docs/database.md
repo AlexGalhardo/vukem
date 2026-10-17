@@ -163,6 +163,20 @@ Column names passed as strings are validated against the model's cached column s
 
 Raw SQL shared between dialects is written once with `?` and passed through `database.Rebind(ex.Dialect(), query)`: on PostgreSQL the n-th `?` becomes `$n`, elsewhere the query is unchanged. `?` inside string literals, quoted identifiers, dollar-quoted bodies and comments is left alone, and `??` is a literal `?` on PostgreSQL (jsonb operators). `DB.ExecContext`/`QueryContext` never rebind on their own, so queries already written with `$n` keep working.
 
+## UUIDs
+
+Package `uuid` (stdlib only) generates and parses RFC 9562 UUIDs for public ids:
+
+```go
+id := uuid.NewV7()               // time-ordered: sorts by creation millisecond, random inside one
+key := uuid.NewV4()              // fully random
+u, err := uuid.Parse(r.PathValue("id")) // canonical 36-char form only; errors.Is(err, uuid.ErrInvalid)
+```
+
+- Randomness comes from `crypto/rand` (122 random bits for v4, 74 for v7); a v7 UUID reveals its creation time (`u.Time()`).
+- `uuid.UUID` is a `[16]byte`: JSON and query strings use the canonical lowercase text (`encoding.TextMarshaler`); SQL writes the text (`driver.Valuer`: PostgreSQL `uuid`, SQLite/MySQL text) and scans text or 16-byte binary columns. NULL needs a `*uuid.UUID`; an empty string never parses as the nil UUID.
+- `t.UUID("public_id").Unique()` in a migration matches it.
+
 ## Models
 
 Plain structs. Mapping is computed **once per type** with reflection and cached; no reflection in the hot path beyond scanning.
