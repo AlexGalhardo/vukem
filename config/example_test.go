@@ -16,7 +16,7 @@ type MailConfig struct {
 }
 
 func ExampleLoad() {
-	// Apps pass app.Config.Source, loaded from .env files and the process
+	// Apps pass app.Source, loaded from .env files and the process
 	// environment.
 	src := config.MapSource(map[string]string{
 		"MAIL_HOST":     "smtp.example.com",
