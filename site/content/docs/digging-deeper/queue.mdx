@@ -9,31 +9,41 @@ type SendInvoice struct{ OrderID int64 }
 
 func (SendInvoice) Kind() string { return "send_invoice" }
 
-func HandleSendInvoice(ctx context.Context, j SendInvoice) error { ... }
+// HandleSendInvoice builds the handler from the app: database, clock, mailer.
+func HandleSendInvoice(app *vukem.App) func(ctx context.Context, j SendInvoice) error {
+	return func(ctx context.Context, j SendInvoice) error {
+		db, err := app.DB()
+		// ...
+	}
+}
 
-// app/jobs/registry.go, passed to vukem.WithJobs by bootstrap
-func All() []queue.Registration {
+// app/jobs/registry.go, passed to vukem.WithJobsFunc by bootstrap
+func All(app *vukem.App) []queue.Registration {
 	return []queue.Registration{
-		queue.Handle(HandleSendInvoice, queue.Retries(5), queue.Timeout(time.Minute)),
+		queue.Handle(HandleSendInvoice(app), queue.Retries(5), queue.Timeout(time.Minute)),
 	}
 }
 ```
 
+`vukem.WithJobsFunc(jobs.All)` calls `All` once, when the queue is first built, so handlers get the app's services without globals. It runs inside the first `app.Queue()` call (a panic becomes that call's error). `All` may get `app.DB()`, `app.Mailer()`, `app.Crypt` and `app.Now()`, but must not dispatch: `app.Queue()`, `app.Events.Dispatch` with queued listeners, `SendLater`/`MailLater` or running scheduled jobs deadlock there (a handler may, when it runs). `vukem.WithJobs(regs...)` still registers handlers that need nothing from the app.
+
 ```go
 q, err := app.Queue()
 err = q.Dispatch(ctx, jobs.SendInvoice{OrderID: 1}, queue.OnQueue("billing"), queue.Delay(5*time.Minute))
-err = q.DispatchTx(ctx, tx, jobs.SendInvoice{OrderID: 1}) // database driver: only if tx commits
+err = q.DispatchTx(ctx, tx, jobs.SendInvoice{OrderID: 1}) // only if tx commits
 ```
 
 - Payloads are JSON; `Kind()` names the handler and must stay stable across deploys. Registering a kind twice is a boot error.
 - Defaults: queue `default`, 3 retries, exponential backoff from 1s (capped at 1h), 1-minute timeout per attempt. Options on `Handle` set defaults; options on `Dispatch` override them. Backoffs: `queue.Exponential(base)`, `queue.Constant(d)`, or any `func(attempt int) time.Duration`.
 - Workers recover panics, retry with backoff and then move the job to the failed jobs with its last error. On shutdown they stop reserving and let running jobs finish.
+- `DispatchTx(ctx, tx, job)` works on every driver: the database driver inserts the job inside the transaction; `sync`, `memory`, `queue.Fake` and Redis dispatch it right after the commit (`database.Tx.AfterCommit`), and never for rolled-back work. On `sync` the job runs after the commit, so its error is logged instead of returned.
+- `sync` cannot delay a job: `Dispatch(ctx, j, queue.Delay(d))` returns `queue.ErrInlineDelay` instead of running it early. Tests that dispatch delayed jobs use `queue.NewFake()`.
 
 ## Drivers
 
 | `QUEUE_CONNECTION` | Behaviour |
 | --- | --- |
-| `sync` (default) | the job runs inside `Dispatch`; its error is returned, no retries |
+| `sync` (default) | the job runs inside `Dispatch`; its error is returned, no retries; `queue.Delay` is refused with `queue.ErrInlineDelay` |
 | `memory` | in process; `serve` runs the workers; lost on restart |
 | `database` | SQLite or Postgres tables `jobs` and `failed_jobs`, created on first use; any number of worker processes |
 | Redis | `vukem.WithQueueDriver(rc.Queue(redis.QueueOptions{}))`, see [Redis](/docs/database/redis) |
@@ -43,6 +53,7 @@ err = q.DispatchTx(ctx, tx, jobs.SendInvoice{OrderID: 1}) // database driver: on
 | `QUEUE_NAMES` | `default` (priority order, comma-separated) |
 | `QUEUE_CONCURRENCY` | `4` |
 | `QUEUE_TABLE`, `QUEUE_FAILED_TABLE` | `jobs`, `failed_jobs` |
+| `QUEUE_ALLOW_LEGACY_MAIL` | `false`: clear-text mail jobs queued before v0.24.0 fail; `true` sends them (upgrade window, a warning per job) |
 
 The database and Redis drivers reserve each job atomically (Postgres uses `FOR UPDATE SKIP LOCKED`). A job whose worker died is taken over after its timeout plus one minute, so delivery is **at least once**: make handlers idempotent. If the first worker was only slow (not dead) and finishes after the takeover, its result is dropped with `queue.ErrReservationLost` instead of deleting, retrying or failing the job the second worker now owns.
 
@@ -61,13 +72,13 @@ vukem queue:forget <id…|all>
 ## Queued mail and listeners
 
 ```go
-err := app.MailLater(ctx, mail.Welcome{User: u}) // rendered now, sent from a retried job
+err := mailer.SendLater(ctx, mail.Welcome{User: u}) // or app.MailLater: rendered now, sent from a retried job
 
 // app/listeners/registry.go (vukem make:listener UpdateStock --event OrderShipped --queued)
 events.OnQueued("update_stock", UpdateStock)
 ```
 
-`MailLater` keeps the message ID across retries, so providers that deduplicate by it send once. A queued listener's event is stored as JSON and run by a worker; `Dispatch` only reports enqueue errors.
+`SendLater` keeps the message ID across retries, so providers that deduplicate by it send once, and stores the message encrypted with `app.Crypt`. A queued listener's event is stored as JSON and run by a worker; `Dispatch` only reports enqueue errors.
 
 ## Testing
 

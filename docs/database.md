@@ -146,7 +146,7 @@ err = db.Tx(ctx, func(tx *database.Tx) error {
 }) // commit on nil, rollback on error or panic
 ```
 
-Inside `db.Tx`, use `tx` for every query (pass it as the `database.Executor`). SQLite has a single writer connection, so a write through `db` while the transaction holds it waits forever; `database.RunInTx(ctx, ex, fn)` joins the caller's transaction when `ex` is already a `*database.Tx`.
+Inside `db.Tx`, use `tx` for every query (pass it as the `database.Executor`). SQLite has a single writer connection, so a write through `db` while the transaction holds it waits forever; `database.RunInTx(ctx, ex, fn)` joins the caller's transaction when `ex` is already a `*database.Tx`. `tx.AfterCommit(func(ctx context.Context) { ... })` runs work once the transaction commits (in registration order) and drops it on rollback or panic; a hook registered after the `db.Tx` function returned never runs, a panicking hook is logged while the others still run (`db.Tx` returns nil: the commit happened), and calling it on a `Tx` not started by `db.Tx` panics; `queue.DispatchTx` uses it on drivers without transactional storage.
 
 | Group | Methods |
 | --- | --- |

@@ -15,10 +15,22 @@ import (
 	"github.com/AlexGalhardo/vukem/queue"
 )
 
-// WithJobs registers job handlers on the application queue (generated apps
-// pass jobs.All(); vukem make:job appends there).
+// WithJobs registers job handlers on the application queue. Handlers that
+// need the app (database, clock, mailer) use WithJobsFunc.
 func WithJobs(regs ...queue.Registration) Option {
 	return func(o *options) error { o.jobs = append(o.jobs, regs...); return nil }
+}
+
+// WithJobsFunc registers job handlers built from the app, so they reach
+// its database, clock, mailer and other services without globals
+// (generated apps pass jobs.All). fn runs once, inside the first
+// app.Queue call; a panic in fn becomes that call's error. fn may get
+// app.DB, app.Mailer, app.Crypt and app.Now; it must not dispatch: no
+// app.Queue, app.Events.Dispatch (queued listeners), Mailer.SendLater /
+// app.MailLater or running scheduled jobs, which wait for the queue being
+// built and deadlock. Handlers may do all of that when they run.
+func WithJobsFunc(fn func(app *App) []queue.Registration) Option {
+	return func(o *options) error { o.jobFuncs = append(o.jobFuncs, fn); return nil }
 }
 
 // WithQueueDriver replaces the driver chosen by QUEUE_CONNECTION (tests
@@ -42,6 +54,10 @@ type QueueConfig struct {
 	// Table and FailedTable are the database driver's tables.
 	Table       string `env:"QUEUE_TABLE"        default:"jobs"`
 	FailedTable string `env:"QUEUE_FAILED_TABLE" default:"failed_jobs"`
+	// AllowLegacyMail sends clear-text mail jobs queued before v0.24.0
+	// (an upgrade window: drain the queue before upgrading, or set it
+	// until the old jobs are gone). Off, they fail.
+	AllowLegacyMail bool `env:"QUEUE_ALLOW_LEGACY_MAIL"`
 }
 
 // QueueNames returns Queues as a list.
@@ -89,7 +105,13 @@ func (a *App) Queue() (*queue.Queue, error) {
 			q.SetObserver(a.Devtools)
 		}
 
-		regs := append(slices.Clone(a.jobs), a.Events.Jobs()...)
+		regs, err := a.jobRegistrations()
+		if err != nil {
+			a.queueErr = err
+			return
+		}
+
+		regs = append(regs, a.Events.Jobs()...)
 		regs = append(regs, queue.HandleKind(MailJobKind, a.sendQueuedMail))
 
 		if err := q.Register(regs...); err != nil {
@@ -101,6 +123,23 @@ func (a *App) Queue() (*queue.Queue, error) {
 	})
 
 	return a.queue, a.queueErr
+}
+
+// jobRegistrations runs the WithJobsFunc functions; a panic in one becomes
+// the Queue error instead of leaving a nil queue behind the sync.Once.
+func (a *App) jobRegistrations() (regs []queue.Registration, err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			err = fmt.Errorf("vukem: WithJobsFunc panicked: %v", p)
+		}
+	}()
+
+	regs = slices.Clone(a.jobs)
+	for _, fn := range a.jobFuncs {
+		regs = append(regs, fn(a)...)
+	}
+
+	return regs, nil
 }
 
 func (a *App) databaseQueue(cfg QueueConfig) (*queue.Database, error) {
@@ -124,27 +163,30 @@ func (a *App) databaseQueue(cfg QueueConfig) (*queue.Database, error) {
 	return d, nil
 }
 
-func (a *App) sendQueuedMail(ctx context.Context, msg mail.Message) error {
-	m, err := a.Mailer()
-	if err != nil {
-		return err
-	}
+// queuedMail is the payload of a MailJobKind job: the rendered message,
+// encrypted with app.Crypt so bodies (reset links, tokens) and addresses
+// never sit in the jobs tables, queue:failed output or logs in clear text.
+// Message is the clear-text payload of jobs queued before v0.24.0, refused
+// unless QUEUE_ALLOW_LEGACY_MAIL=true. The additional data is fixed, so
+// someone with write access to the jobs table can replay a sealed mail;
+// that access already allows far worse.
+type queuedMail struct {
+	Sealed string `json:"sealed,omitempty"`
 
-	return m.Transport().Send(ctx, &msg)
+	mail.Message
 }
 
-// MailLater renders mailable now and sends it from a queue job (retried
-// with the queue's backoff; the message ID stays the same across retries,
-// so providers that deduplicate by it send it once).
-func (a *App) MailLater(ctx context.Context, mailable mail.Mailable, opts ...queue.Option) error {
-	m, err := a.Mailer()
-	if err != nil {
-		return err
-	}
+// ErrLegacyMail fails a clear-text mail job when QUEUE_ALLOW_LEGACY_MAIL
+// is off.
+var ErrLegacyMail = errors.New("vukem: clear-text mail job refused (QUEUE_ALLOW_LEGACY_MAIL is off)")
 
-	msg, err := m.Render(ctx, mailable)
+// mailJobAD binds sealed mail payloads to the mail job.
+const mailJobAD = "queue:" + MailJobKind
+
+func (a *App) enqueueMail(ctx context.Context, msg *mail.Message, opts ...queue.Option) error {
+	plain, err := json.Marshal(msg) //nolint:musttag // Go field names, as mail jobs always used
 	if err != nil {
-		return err
+		return fmt.Errorf("vukem: encode queued mail: %w", err)
 	}
 
 	q, err := a.Queue()
@@ -152,7 +194,62 @@ func (a *App) MailLater(ctx context.Context, mailable mail.Mailable, opts ...que
 		return err
 	}
 
-	return q.DispatchKind(ctx, MailJobKind, msg, opts...)
+	return q.DispatchKind(
+		ctx,
+		MailJobKind,
+		map[string]string{"sealed": a.Crypt.Seal(plain, []byte(mailJobAD))},
+		opts...)
+}
+
+func (a *App) sendQueuedMail(ctx context.Context, p queuedMail) error {
+	m, err := a.Mailer()
+	if err != nil {
+		return err
+	}
+
+	msg := p.Message
+	if p.Sealed == "" {
+		cfg, err := configLoad[QueueConfig](a)
+		if err != nil {
+			return err
+		}
+
+		if !cfg.AllowLegacyMail {
+			a.Log.WarnContext(
+				ctx,
+				"clear-text mail job refused (set QUEUE_ALLOW_LEGACY_MAIL=true to drain jobs queued before v0.24.0)",
+			)
+			return ErrLegacyMail
+		}
+
+		a.Log.WarnContext(
+			ctx,
+			"clear-text mail job sent (QUEUE_ALLOW_LEGACY_MAIL=true; unset it once old jobs are drained)",
+		)
+	} else {
+		plain, err := a.Crypt.Open(p.Sealed, []byte(mailJobAD))
+		if err != nil {
+			return fmt.Errorf("vukem: open queued mail: %w", err)
+		}
+
+		msg = mail.Message{}
+		if err := json.Unmarshal(plain, &msg); err != nil { //nolint:musttag // see enqueueMail
+			return fmt.Errorf("vukem: decode queued mail: %w", err)
+		}
+	}
+
+	return m.Transport().Send(ctx, &msg)
+}
+
+// MailLater renders mailable now and sends it from a queue job: see
+// mail.Mailer.SendLater (the app's mailer encrypts the job payload).
+func (a *App) MailLater(ctx context.Context, mailable mail.Mailable, opts ...queue.Option) error {
+	m, err := a.Mailer()
+	if err != nil {
+		return err
+	}
+
+	return m.SendLater(ctx, mailable, opts...)
 }
 
 // queueRunner works the in-memory queue inside the web process.

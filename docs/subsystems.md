@@ -81,7 +81,7 @@ err = mailer.Send(ctx, Welcome{User: u})
 - Addresses go through `net/mail` (no header injection); subjects, tags and content ids with line breaks are rejected (`TestSecurity_A05_MailHeaderInjection`). `Bcc` is never written as a header.
 - Previews in development: `r.Handle("/_mail/", http.StripPrefix("/_mail/", mail.Preview(mailer, map[string]mail.Mailable{"welcome": sample})))`.
 - Tests: `MAIL_MAILER=array` by default in `vukemtest`; `app.Mails().SentTo("ana@example.com")`.
-- Queued mail: `app.MailLater(ctx, mailable)` renders now and sends from a retried queue job (see [Queue](#queue)).
+- Queued mail: `mailer.SendLater(ctx, mailable, opts...)` (or `app.MailLater`) renders now and sends from a retried queue job whose payload is encrypted with `app.Crypt` (see [Queue](#queue)). A `*mail.Mailer` built with `mail.New` needs `SetEnqueue`; otherwise `SendLater` returns `mail.ErrNoQueue`.
 
 | `MAIL_MAILER` | Transport | Settings |
 | --- | --- | --- |
@@ -255,25 +255,29 @@ GCRA needs compare-and-set, which `cache.Store` lacks, so the store-agnostic lim
 type SendInvoice struct{ OrderID int64 }
 func (SendInvoice) Kind() string { return "send_invoice" }
 
-// bootstrap: vukem.WithJobs(jobs.All()...)
-queue.Handle(func(ctx context.Context, j SendInvoice) error { ... },
-	queue.Retries(5), queue.Backoff(queue.Exponential(time.Second)), queue.Timeout(time.Minute))
+// app/jobs/registry.go; bootstrap passes vukem.WithJobsFunc(jobs.All)
+func All(app *vukem.App) []queue.Registration {
+	return []queue.Registration{
+		queue.Handle(HandleSendInvoice(app),
+			queue.Retries(5), queue.Backoff(queue.Exponential(time.Second)), queue.Timeout(time.Minute)),
+	}
+}
 
 q, err := app.Queue()
 err = q.Dispatch(ctx, SendInvoice{OrderID: 1}, queue.OnQueue("billing"), queue.Delay(5*time.Minute))
-err = q.DispatchTx(ctx, tx, SendInvoice{OrderID: 1}) // database driver: enqueued only if tx commits (B.1.2)
+err = q.DispatchTx(ctx, tx, SendInvoice{OrderID: 1}) // exists only if tx commits (every driver)
 ```
 
 - Payloads are JSON; `Kind()` maps to the registered handler (no reflection-based class names). Registering a kind twice is a boot error.
 - Defaults: queue `default`, 3 retries with exponential backoff from 1s (capped at 1h), 1-minute timeout per attempt; options on `Handle` set the defaults, options on `Dispatch` override them.
-- `QUEUE_CONNECTION`: `sync` (default; the job runs inside `Dispatch` and its error is returned), `memory` (in process; `serve` runs workers, `QUEUE_CONCURRENCY` default 4, `QUEUE_NAMES` in priority order), `database` (B.1.2), `redis` (B.2).
+- `QUEUE_CONNECTION`: `sync` (default; the job runs inside `Dispatch` and its error is returned; a delayed job is refused with `queue.ErrInlineDelay` instead of running early, so use `memory`, `database` or `queue.Fake` where jobs are delayed), `memory` (in process; `serve` runs workers, `QUEUE_CONCURRENCY` default 4, `QUEUE_NAMES` in priority order), `database` (B.1.2), `redis` (B.2).
 - Workers (`q.Work`) recover panics, retry with backoff, then move the job to the failed jobs with its last error. On shutdown they stop reserving and let running jobs finish (their context is not cancelled; the job timeout still applies).
 - **Database driver** (`QUEUE_CONNECTION=database`, SQLite and Postgres): tables `jobs` and `failed_jobs` (`QUEUE_TABLE`, `QUEUE_FAILED_TABLE`) are created on first use. Workers reserve a job with one atomic `UPDATE … RETURNING` (Postgres adds `FOR UPDATE SKIP LOCKED`), so any number of `queue:work` processes can share them. A job whose worker died is taken over after its timeout plus one minute: delivery is at least once, so make handlers idempotent.
-- `q.DispatchTx(ctx, tx, job)` inserts the job in the caller's transaction: it exists only if the transaction commits.
+- `q.DispatchTx(ctx, tx, job)` ties the job to the caller's transaction: it exists only if the transaction commits. The database driver inserts it in the transaction; drivers without transactional storage (`sync`, `memory`, `queue.Fake`, Redis) dispatch it from `database.Tx.AfterCommit`, so the same code works in tests and development. On `sync` the job then runs right after the commit and a handler error is logged (the caller already returned). Errors known up front (unknown kind, `ErrInlineDelay`) are returned inside the transaction; with a `*database.DB` the job is dispatched at once.
 - Commands: `queue:work [-queue high,default] [-concurrency 4] [-once] [-stop-when-empty]` (Ctrl+C drains running jobs), `queue:failed [-json]`, `queue:retry <ids…|all>`, `queue:forget <ids…|all>`.
 - The `database/dbtest` conformance suite covers the driver (exactly-once processing with concurrent workers, `DispatchTx` rollback, failed/retry/forget, takeover of abandoned jobs) on SQLite and Postgres.
-- `vukem make:job SendInvoice` writes `app/jobs/send_invoice.go` (job type, `Kind`, handler) and registers `queue.Handle(HandleSendInvoice)` in `app/jobs/registry.go`, which `bootstrap` passes to `WithJobs`.
-- **Queued mail:** `app.MailLater(ctx, mailable)` renders now and sends from a job (retried; the message ID is stable across retries).
+- `vukem make:job SendInvoice` writes `app/jobs/send_invoice.go` (job type, `Kind`, and `HandleSendInvoice(app *vukem.App)` returning the handler) and registers `queue.Handle(HandleSendInvoice(app))` in `app/jobs/registry.go`, whose `All(app)` `bootstrap` passes to `vukem.WithJobsFunc`. Handlers reach `app.DB()`, `app.Now()` and `app.Mailer()` without globals; the function runs once, inside the first `app.Queue()` call (a panic in it becomes that call's error). It may get `app.DB()`, `app.Mailer()`, `app.Crypt` and `app.Now()`, but must not dispatch: `app.Queue()`, `app.Events.Dispatch` with queued listeners, `SendLater`/`MailLater` or running scheduled jobs wait for the queue being built and deadlock (handlers may do all of that when they run). Projects whose `All()` takes no app keep getting dependency-free handlers registered with `WithJobs`.
+- **Queued mail:** `mailer.SendLater(ctx, mailable)` / `app.MailLater(ctx, mailable)` renders now and sends from a job (retried; the message ID is stable across retries). The payload is the rendered message sealed with `app.Crypt`, so mail bodies and addresses never reach the jobs tables in clear text. Clear-text mail jobs (queued before v0.24.0) fail unless `QUEUE_ALLOW_LEGACY_MAIL=true`, an upgrade window that logs a warning per job: drain the queue before upgrading, or set the flag until the old jobs are gone. The additional data is fixed, so someone with write access to the jobs table can replay a sealed mail (accepted: that access allows worse).
 - **Queued listeners:** `events.OnQueued("update_stock", listeners.UpdateStock)` (or `make:listener UpdateStock --event OrderShipped --queued`) enqueues the event as JSON and runs the listener in a worker; `Dispatch` returns only enqueue errors.
 - **Outgoing webhooks:** `webhook.Sender` registers a `webhook.deliver` job (`s.Job()`) and `s.Send(ctx, q, webhook.Delivery{Endpoint, Payload})` enqueues it. Each attempt looks the endpoint up by id (URL and secret never enter the jobs tables), signs it with the Standard Webhooks scheme and posts through `httpclient.Safe`: 2xx succeeds, 410 Gone stops (`OnGone`), anything else retries (8 times, exponential from 30s). `webhook.SQLDeliveryLog` records each attempt. See [security.md](security.md#building-blocks).
 - **Testing:** pass `vukem.WithQueueDriver(fake)` with `fake := queue.NewFake()`; `queue.Dispatched[jobs.SendInvoice](fake)` returns the dispatched jobs, and `q.Work(ctx, queue.WorkOptions{StopWhenEmpty: true})` runs them when the test wants to.

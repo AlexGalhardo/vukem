@@ -47,6 +47,8 @@ type stubData struct {
 	// Admin resources: URL segment and whether requests.<Name>Schema exists.
 	Slug       string
 	HasRequest bool
+	// Job handlers are built from the app (jobs.All takes *vukem.App).
+	App bool
 }
 
 func newStubData(env *Env, name string) (stubData, error) {
@@ -426,24 +428,38 @@ func makeListener(set *flag.FlagSet) func(context.Context, *Env, []string) error
 }
 
 func makeJob(set *flag.FlagSet) func(context.Context, *Env, []string) error {
-	run := simple(set, "job name", "job.go.tmpl", "app/jobs/%s.go", "Job")
+	force := set.Bool("force", false, "overwrite existing files")
 
-	return func(ctx context.Context, env *Env, args []string) error {
-		if err := run(ctx, env, args); err != nil {
+	return func(_ context.Context, env *Env, args []string) error {
+		name, err := oneArg(args, "job name")
+		if err != nil {
 			return err
 		}
 
-		name := className(args[0], "Job")
+		d, err := newStubData(env, className(name, "Job"))
+		if err != nil {
+			return err
+		}
 
-		return register(
-			env,
-			"app/jobs/registry.go",
-			"All",
-			"queue.Handle(Handle"+name+")",
-			"github.com/AlexGalhardo/vukem/queue",
-		)
+		// Registries from before WithJobsFunc (All() without the app) keep
+		// the dependency-free handler, so make:job never breaks the build.
+		reg, _ := os.ReadFile(env.path(filepath.Join("app", "jobs", "registry.go")))
+		d.App = jobsTakeApp.Match(reg)
+
+		if err := generate(env, "job.go.tmpl", fmt.Sprintf("app/jobs/%s.go", d.Snake), d, *force); err != nil {
+			return err
+		}
+
+		expr := "queue.Handle(Handle" + d.Name + ")"
+		if d.App {
+			expr = "queue.Handle(Handle" + d.Name + "(app))"
+		}
+
+		return register(env, "app/jobs/registry.go", "All", expr, "github.com/AlexGalhardo/vukem/queue")
 	}
 }
+
+var jobsTakeApp = regexp.MustCompile(`func All\(app \*vukem\.App\)`)
 
 func makeTest(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 	return simple(set, "test name", "test.go.tmpl", "tests/%s_test.go", "Test")

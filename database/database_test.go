@@ -3,6 +3,8 @@ package database
 import (
 	"context"
 	"errors"
+	"fmt"
+	"log/slog"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -295,4 +297,105 @@ func TestEncrypterReachesDBAndTx(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestTxAfterCommit(t *testing.T) {
+	t.Parallel()
+
+	db, err := Open(t.Context(), ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	ctx := t.Context()
+
+	var ran []string
+
+	err = db.Tx(ctx, func(tx *Tx) error {
+		tx.AfterCommit(func(context.Context) { ran = append(ran, "a") })
+
+		return RunInTx(ctx, tx, func(inner *Tx) error {
+			inner.AfterCommit(func(context.Context) { ran = append(ran, "b") })
+
+			if len(ran) != 0 {
+				t.Error("AfterCommit hook ran before the commit")
+			}
+
+			return nil
+		})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if want := []string{"a", "b"}; strings.Join(ran, ",") != strings.Join(want, ",") {
+		t.Fatalf("hooks after commit = %v, want %v", ran, want)
+	}
+
+	ran = nil
+	_ = db.Tx(ctx, func(tx *Tx) error {
+		tx.AfterCommit(func(context.Context) { ran = append(ran, "rolled back") })
+		return errors.New("boom")
+	})
+
+	func() {
+		defer func() { _ = recover() }()
+		_ = db.Tx(ctx, func(tx *Tx) error {
+			tx.AfterCommit(func(context.Context) { ran = append(ran, "panicked") })
+			panic("x")
+		})
+	}()
+
+	if len(ran) != 0 {
+		t.Fatalf("hooks after rollback = %v, want none", ran)
+	}
+}
+
+func TestTxAfterCommitHookPanicKeepsTheRest(t *testing.T) {
+	t.Parallel()
+
+	db, err := Open(t.Context(), ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	var logs strings.Builder
+
+	db.log = slog.New(slog.NewTextHandler(&logs, nil))
+
+	var ran []string
+
+	err = db.Tx(t.Context(), func(tx *Tx) error {
+		tx.AfterCommit(func(context.Context) { ran = append(ran, "a") })
+		tx.AfterCommit(func(context.Context) { panic("boom") })
+		tx.AfterCommit(func(context.Context) { ran = append(ran, "c") })
+
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Tx() = %v, want nil (the commit happened)", err)
+	}
+
+	if strings.Join(ran, ",") != "a,c" {
+		t.Errorf("hooks run = %v, want [a c]", ran)
+	}
+
+	if !strings.Contains(logs.String(), "boom") {
+		t.Errorf("log = %q, want the hook panic", logs.String())
+	}
+}
+
+func TestTxAfterCommitOutsideDBTxPanics(t *testing.T) {
+	t.Parallel()
+
+	defer func() {
+		p := recover()
+		if p == nil || !strings.Contains(fmt.Sprint(p), "AfterCommit") {
+			t.Fatalf("recover() = %v, want a panic naming AfterCommit", p)
+		}
+	}()
+
+	new(Tx).AfterCommit(func(context.Context) {})
 }

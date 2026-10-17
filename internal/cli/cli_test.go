@@ -308,6 +308,34 @@ func TestGeneratorsGolden(t *testing.T) {
 	}
 }
 
+// Projects whose jobs.All predates WithJobsFunc keep getting handlers
+// without the app, so make:job never breaks their build.
+func TestMakeJobLegacyRegistry(t *testing.T) {
+	t.Parallel()
+
+	dir := project(t)
+	legacy := "package jobs\n\nimport \"github.com/AlexGalhardo/vukem/queue\"\n\n" +
+		"func All() []queue.Registration {\n\treturn []queue.Registration{}\n}\n"
+
+	if err := os.WriteFile(filepath.Join(dir, "app", "jobs", "registry.go"), []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if code, out, errOut := vukem(t, dir, "make:job", "Ping"); code != 0 {
+		t.Fatalf("make:job = %d\n%s%s", code, out, errOut)
+	}
+
+	job := read(t, dir, "app/jobs/ping.go")
+	if !strings.Contains(job, "func HandlePing(ctx context.Context, j Ping) error {") ||
+		strings.Contains(job, "vukem") {
+		t.Errorf("legacy job stub =\n%s", job)
+	}
+
+	if reg := read(t, dir, "app/jobs/registry.go"); !strings.Contains(reg, "queue.Handle(HandlePing),") {
+		t.Errorf("legacy registry =\n%s", reg)
+	}
+}
+
 func TestRegisterFallback(t *testing.T) {
 	t.Parallel()
 
