@@ -24,7 +24,9 @@ type RateLimitConfig struct {
 //	login := ratelimit.Middleware(limiters("login", 5, time.Minute), account.LoginThrottleKey)
 //
 // An unknown store is an error, not a silent fallback to memory, and so
-// is RATE_LIMIT_STORE=cache over the per-process memory cache.
+// is RATE_LIMIT_STORE=cache over a store [cache.Shared] does not report
+// as shared (the per-process memory cache, or a custom store or wrapper
+// that does not declare cache.Sharer).
 func (a *App) RateLimiters() (ratelimit.Factory, error) {
 	cfg, err := configLoad[RateLimitConfig](a)
 	if err != nil {
@@ -44,7 +46,8 @@ func (a *App) RateLimiters() (ratelimit.Factory, error) {
 
 		if !shared {
 			return nil, errors.New("vukem: RATE_LIMIT_STORE=cache needs a cache shared by every server " +
-				"(CACHE_STORE=database or vukem.WithCacheStore with Redis); the memory cache keeps one budget per process")
+				"(CACHE_STORE=database or vukem.WithCacheStore with Redis; a custom store or wrapper must implement " +
+				"cache.Sharer); the memory cache keeps one budget per process")
 		}
 
 		c, err := a.Cache()
@@ -60,28 +63,16 @@ func (a *App) RateLimiters() (ratelimit.Factory, error) {
 	}
 }
 
-// cacheShared reports whether App.Cache reaches every server: any store but
-// the per-process memory one (CACHE_STORE=database, or Redis set with
-// WithCacheStore / WithCacheStoreFunc). It resolves the store through
-// Cache, so a lazy store is read under its sync.Once.
+// cacheShared reports whether App.Cache reaches every server
+// ([cache.Shared]): CACHE_STORE=database, or a store set with
+// WithCacheStore / WithCacheStoreFunc that declares cache.Sharer (Redis).
+// It resolves the store through Cache, so a lazy store is read under its
+// sync.Once.
 func (a *App) cacheShared() (bool, error) {
 	c, err := a.Cache()
 	if err != nil {
 		return false, err
 	}
 
-	for s := c.Store(); s != nil; {
-		if _, ok := s.(*cache.Memory); ok {
-			return false, nil
-		}
-
-		u, ok := s.(interface{ Unwrap() cache.Store })
-		if !ok {
-			return true, nil
-		}
-
-		s = u.Unwrap()
-	}
-
-	return true, nil
+	return cache.Shared(c.Store()), nil
 }
