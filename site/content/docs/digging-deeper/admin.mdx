@@ -15,7 +15,7 @@ vukem migrate
 ADMIN_EMAILS=you@example.com vukem serve   # then open /admin
 ```
 
-- `install:admin` (needs `install:auth`) writes `routes/admin.go` (the panel with its own `authz.Gate`), `app/admin/admin.go` (admins read from `ADMIN_EMAILS`; nobody is an admin when it is empty), `app/admin/registry.go`, the audit-log migration and `tests/admin_test.go`.
+- `install:admin` (needs `install:auth`) writes `routes/admin.go` (the panel with its own `authz.Gate`), `app/admin/admin.go` (admins read from `ADMIN_EMAILS`; nobody is an admin when it is empty, and a listed address counts only once verified), `app/admin/registry.go`, the audit-log migration and `tests/admin_test.go`.
 - `make:admin-resource <Model>` checks that `models.<Model>` exists and writes `app/admin/<model>.go` (the resource, using `requests.<Model>Schema` when it exists, and a policy allowing admins every action) plus a test, registered in `app/admin/registry.go`.
 
 ## Wiring

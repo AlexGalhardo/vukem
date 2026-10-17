@@ -1,6 +1,10 @@
 package tests
 
 import (
+	"context"
+	"errors"
+	"fmt"
+	"net/http"
 	"net/url"
 	"regexp"
 	"strings"
@@ -8,6 +12,7 @@ import (
 	"time"
 
 	vukem "github.com/AlexGalhardo/vukem"
+	"github.com/AlexGalhardo/vukem/cache"
 	"github.com/AlexGalhardo/vukem/queue"
 	"github.com/AlexGalhardo/vukem/vukemtest"
 
@@ -43,14 +48,35 @@ func signUpForm(name, email, password string) map[string]any {
 	return map[string]any{"name": name, "email": email, "password": password, "password_confirmation": password}
 }
 
-// register signs email up and logs c in: sign-up itself never logs in.
-func register(t *testing.T, c *vukemtest.Client, email string) {
+// register signs email up, verifies it and logs c in: sign-up itself
+// never logs in, and signed-in pages need a verified email.
+func register(t *testing.T, app *vukemtest.App, c *vukemtest.Client, email string) {
 	t.Helper()
 
 	c.PostJSON("/register", signUpForm("Ana Silva", email, "correct horse battery")).
 		AssertRedirect("/register/check-email")
+	verifyEmail(t, app, email)
 	c.PostJSON("/login", map[string]any{"email": email, "password": "correct horse battery"}).
 		AssertRedirect("/dashboard")
+}
+
+// verifyEmail marks email verified directly (the mail may be queued).
+func verifyEmail(t *testing.T, app *vukemtest.App, email string) {
+	t.Helper()
+
+	acc, err := accounts.New(app.App)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	u, err := acc.Users.ByCredentials(t.Context(), map[string]string{"email": email})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := acc.MarkVerified(t.Context(), acc.DB, &u); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestRegisterAndVerifyEmail(t *testing.T) {
@@ -73,7 +99,7 @@ func TestRegisterAndVerifyEmail(t *testing.T) {
 
 	// Another signed-in user cannot use the link.
 	other := app.Client(t).Inertia("")
-	register(t, other, "bea@example.com")
+	register(t, app, other, "bea@example.com")
 	other.Get(verify).AssertForbidden()
 	vukemtest.AssertDatabaseHas(t, app, "users", map[string]any{"email": "ana@example.com", "email_verified_at": nil})
 
@@ -99,7 +125,7 @@ func TestRegisterDoesNotRevealAccounts(t *testing.T) {
 	app := vukemtest.New(t, bootstrap.New, vukemtest.Options{
 		AppOptions: []vukem.Option{vukem.WithQueueDriver(fake)},
 	})
-	register(t, app.Client(t).Inertia(""), "ana@example.com")
+	register(t, app, app.Client(t).Inertia(""), "ana@example.com")
 
 	mailJobs := func() int {
 		n := 0
@@ -140,11 +166,114 @@ func TestRegisterDoesNotRevealAccounts(t *testing.T) {
 		AssertRedirect("/dashboard")
 }
 
+// An unverified account can log in but reaches only the verification
+// notice, so an account someone pre-registered with another person's
+// address is useless until its owner verifies it.
+func TestUnverifiedUsersSeeTheNotice(t *testing.T) {
+	t.Parallel()
+
+	app := vukemtest.New(t, bootstrap.New)
+	c := app.Client(t).Inertia("")
+
+	c.PostJSON("/register", signUpForm("Uma", "uma@example.com", "correct horse battery")).
+		AssertRedirect("/register/check-email")
+	c.PostJSON("/login", map[string]any{"email": "uma@example.com", "password": "correct horse battery"}).
+		AssertRedirect("/dashboard")
+	c.Get("/dashboard").AssertRedirect("/email/verify")
+	c.Get("/email/verify").AssertInertia("Auth/VerifyEmail").PropEquals("auth.user.email", "uma@example.com")
+
+	c.Get(link(t, app, "uma@example.com")).AssertRedirect("/dashboard")
+	c.Get("/dashboard").AssertInertia("Dashboard").PropEquals("auth.user.name", "Uma")
+}
+
+// Sign-up is limited per address and per IP. The limit counts requests,
+// not accounts: an existing address and a new one are limited after the
+// same number of attempts, with the same 429.
+func TestRegisterThrottle(t *testing.T) {
+	t.Parallel()
+
+	// attempts signs email up until the limit answers 429 and returns how
+	// many attempts went through.
+	attempts := func(t *testing.T, app *vukemtest.App, email func(i int) string) int {
+		t.Helper()
+
+		c := app.Client(t).Inertia("")
+
+		for i := range 30 {
+			res := c.PostJSON("/register", signUpForm("Mallory", email(i), "another long password"))
+			if res.Status() == http.StatusTooManyRequests {
+				return i
+			}
+
+			res.AssertRedirect("/register/check-email")
+		}
+
+		t.Fatal("sign-up is not rate limited")
+
+		return 0
+	}
+
+	existing := vukemtest.New(t, bootstrap.New)
+	register(t, existing, existing.Client(t).Inertia(""), "ana@example.com")
+
+	// The first sign-up of ana@example.com created the account.
+	known := 1 + attempts(t, existing, func(int) string { return "ana@example.com" })
+	unknown := attempts(t, vukemtest.New(t, bootstrap.New), func(int) string { return "zed@example.com" })
+
+	if known != unknown {
+		t.Errorf("an existing address is limited after %d sign-ups, a new one after %d", known, unknown)
+	}
+
+	perIP := attempts(t, vukemtest.New(t, bootstrap.New), func(i int) string { return fmt.Sprintf("user%d@example.com", i) })
+	if perIP <= unknown {
+		t.Errorf("the IP limit (%d) is not above the address limit (%d)", perIP, unknown)
+	}
+}
+
+// failingIncrements is a cache store whose counters are down.
+type failingIncrements struct{ cache.Store }
+
+func (failingIncrements) Increment(context.Context, string, int64, time.Duration) (int64, error) {
+	return 0, errors.New("cache down")
+}
+
+// With the cache down, signing up with an existing email still answers
+// like a new one: the notice is skipped (and logged), never an error.
+func TestRegisterSurvivesCacheOutage(t *testing.T) {
+	t.Parallel()
+
+	fake := queue.NewFake()
+	app := vukemtest.New(t, bootstrap.New, vukemtest.Options{AppOptions: []vukem.Option{
+		vukem.WithQueueDriver(fake),
+		vukem.WithCacheStore(failingIncrements{cache.NewMemory(1000)}),
+	}})
+	register(t, app, app.Client(t).Inertia(""), "ana@example.com")
+
+	for _, tc := range []struct {
+		email string
+		jobs  int
+	}{
+		{"ana@example.com", 0}, // notice skipped
+		{"new@example.com", 1}, // verification mail
+	} {
+		before := len(fake.Messages())
+
+		app.Client(t).Inertia("").PostJSON("/register", signUpForm("Mallory", tc.email, "another long password")).
+			AssertRedirect("/register/check-email")
+
+		if got := len(fake.Messages()) - before; got != tc.jobs {
+			t.Errorf("sign-up with %s queued %d jobs, want %d", tc.email, got, tc.jobs)
+		}
+	}
+
+	vukemtest.AssertDatabaseHas(t, app, "users", map[string]any{"email": "new@example.com"})
+}
+
 func TestLoginLogoutAndThrottle(t *testing.T) {
 	t.Parallel()
 
 	app := vukemtest.New(t, bootstrap.New)
-	register(t, app.Client(t).Inertia(""), "bob@example.com")
+	register(t, app, app.Client(t).Inertia(""), "bob@example.com")
 
 	c := app.Client(t).Inertia("").WithHeader("Referer", "/login")
 	c.PostJSON("/login", map[string]any{"email": "bob@example.com", "password": "wrong"}).AssertRedirect("/login")
@@ -170,7 +299,7 @@ func TestPasswordReset(t *testing.T) {
 	t.Parallel()
 
 	app := vukemtest.New(t, bootstrap.New)
-	register(t, app.Client(t).Inertia(""), "cid@example.com")
+	register(t, app, app.Client(t).Inertia(""), "cid@example.com")
 
 	c := app.Client(t).Inertia("")
 

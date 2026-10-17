@@ -85,8 +85,8 @@ func TestSecurity_A08_BillingWebhookOutsideCSRFButSigned(t *testing.T) {
 		"scaffolds/billing/routes/billing.go.tmpl": {
 			"r.UseServer(b.Webhook())",
 			"events.Listen(app.Events, b.HandleWebhook)",
-			`h.Checkout).Name("billing.checkout").Use(required)`,
-			`h.Portal).Name("billing.portal").Use(required)`,
+			`h.Checkout).Name("billing.checkout").Use(required, verified)`,
+			`h.Portal).Name("billing.portal").Use(required, verified)`,
 		},
 		"scaffolds/billing/app/billing/billing.go.tmpl": {
 			"stripe.WebhookHandler(stripe.WebhookConfig{",

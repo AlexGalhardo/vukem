@@ -134,7 +134,7 @@ func TestSecurity_A07_TwoFactorScaffoldDefaults(t *testing.T) {
 		},
 		"scaffolds/auth-2fa/routes/two_factor.go.tmpl": {
 			"h.Challenge).Use(auth.Guest(acc.Web), challenge)",
-			"h.Confirm).Name(\"two-factor.confirm\").Use(required, confirm)",
+			"h.Confirm).Name(\"two-factor.confirm\").Use(required, verified, confirm)",
 		},
 	}
 
@@ -414,6 +414,135 @@ func TestSecurity_A07_SignupIsEnumerationSafe(t *testing.T) {
 		if !bytes.Contains(test, []byte("func TestRegisterDoesNotRevealAccounts(")) {
 			t.Errorf("%s lacks the generated TestRegisterDoesNotRevealAccounts", kit)
 		}
+	}
+}
+
+// Pages behind a login also need a verified email, so an account someone
+// pre-registered with another person's address is useless until that
+// person verifies it (and a password reset then ends the squatter's
+// sessions): the dashboard, 2FA settings, billing and the admin panel
+// (admin by email) require auth.Verified, and API tokens are not issued to
+// unverified users. The generated TestUnverifiedUsersSeeTheNotice and
+// TestAPITokenNeedsVerifiedEmail check the behaviour end to end.
+func TestSecurity_A07_AuthScaffoldRequiresVerifiedEmail(t *testing.T) {
+	t.Parallel()
+
+	files := map[string][]string{
+		"scaffolds/auth-web/routes/auth.go.tmpl": {
+			"verified := auth.Verified(acc.Web)",
+			`r.Get("/dashboard", h.Dashboard).Name("dashboard").Use(required, verified)`,
+		},
+		"scaffolds/auth-inertia/routes/auth.go.tmpl": {
+			"verified := auth.Verified(acc.Web)",
+			`r.Get("/dashboard", h.Dashboard).Name("dashboard").Use(required, verified)`,
+		},
+		"scaffolds/auth-2fa/routes/two_factor.go.tmpl":       {"verified := auth.Verified(acc.Web)"},
+		"scaffolds/billing/routes/billing.go.tmpl":           {"verified := auth.Verified(acc.Web)"},
+		"scaffolds/admin/app/admin/admin.go.tmpl":            {"u.EmailVerified()"},
+		"scaffolds/api/app/controllers/apiv1/tokens.go.tmpl": {"if !u.EmailVerified() {"},
+		"scaffolds/auth-web/tests/auth_test.go.tmpl":         {"func TestUnverifiedUsersSeeTheNotice("},
+		"scaffolds/auth-inertia/tests/auth_test.go.tmpl":     {"func TestUnverifiedUsersSeeTheNotice("},
+		"scaffolds/api/tests/api_tokens_test.go.tmpl":        {"func TestAPITokenNeedsVerifiedEmail("},
+	}
+
+	for src, wants := range files {
+		b, err := scaffoldFS.ReadFile(src)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		for _, want := range wants {
+			if !bytes.Contains(b, []byte(want)) {
+				t.Errorf("%s lacks %q", src, want)
+			}
+		}
+	}
+
+	// Every signed-in route of the 2FA and billing scaffolds needs it.
+	for _, src := range []string{"scaffolds/auth-2fa/routes/two_factor.go.tmpl", "scaffolds/billing/routes/billing.go.tmpl"} {
+		b, err := scaffoldFS.ReadFile(src)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		for line := range strings.Lines(string(b)) {
+			if strings.Contains(line, "Use(required") && !strings.Contains(line, "Use(required, verified") {
+				t.Errorf("%s: route without auth.Verified: %s", src, strings.TrimSpace(line))
+			}
+		}
+	}
+}
+
+// POST /register is limited per IP and per address (a hash of it, so the
+// limiter store holds no emails), through app.RateLimiters so
+// RATE_LIMIT_STORE=cache shares the budget. The limit counts requests, not
+// accounts, so new and existing addresses hit it alike (generated
+// TestRegisterThrottle).
+func TestSecurity_A07_SignupRateLimited(t *testing.T) {
+	t.Parallel()
+
+	for _, kit := range []string{"auth-web", "auth-inertia"} {
+		routes, err := scaffoldFS.ReadFile("scaffolds/" + kit + "/routes/auth.go.tmpl")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		for _, want := range []string{
+			`limiters("register", `,
+			`limiters("register.email", `,
+			`r.Post("/register", h.Register).Use(guest, signupIP, signupEmail)`,
+		} {
+			if !bytes.Contains(routes, []byte(want)) {
+				t.Errorf("%s routes lack %q", kit, want)
+			}
+		}
+
+		ctrl, err := scaffoldFS.ReadFile("scaffolds/" + kit + "/app/controllers/account/account.go.tmpl")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if !bytes.Contains(ctrl, []byte("sha256.Sum256([]byte(loginEmail(r)))")) {
+			t.Errorf("%s RegisterThrottleKey does not hash the address", kit)
+		}
+
+		test, err := scaffoldFS.ReadFile("scaffolds/" + kit + "/tests/auth_test.go.tmpl")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		for _, want := range []string{"func TestRegisterThrottle(", "func TestRegisterSurvivesCacheOutage("} {
+			if !bytes.Contains(test, []byte(want)) {
+				t.Errorf("%s lacks the generated %s", kit, want)
+			}
+		}
+	}
+}
+
+// A failing cache on the existing-email path must not answer differently
+// from the new-email path: the notice is skipped and the error logged,
+// never returned (generated TestRegisterSurvivesCacheOutage).
+func TestSecurity_A07_SignupCacheOutageIsNoOracle(t *testing.T) {
+	t.Parallel()
+
+	users, err := scaffoldFS.ReadFile("scaffolds/auth-core/app/accounts/users.go.tmpl")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	start := bytes.Index(users, []byte("func (a *Accounts) notifyExisting("))
+	if start < 0 {
+		t.Fatal("no notifyExisting")
+	}
+
+	body, _, ok := bytes.Cut(users[start:], []byte("\n}\n"))
+	if !ok {
+		t.Fatal("notifyExisting has no end")
+	}
+
+	if bytes.Count(body, []byte("a.log.ErrorContext(")) < 2 ||
+		bytes.Contains(body, []byte("if err != nil {\n\t\treturn err")) {
+		t.Errorf("notifyExisting returns cache errors instead of logging them:\n%s", body)
 	}
 }
 

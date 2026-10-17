@@ -177,6 +177,8 @@ func newUser(t *testing.T, app *vukemtest.App, email string) models.User {
 	}
 
 	u := models.User{Name: "Ana Silva", Email: email, Password: "not used"}
+	u.EmailVerifiedAt.V, u.EmailVerifiedAt.Valid = time.Now().UTC(), true
+
 	if err := orm.Create(t.Context(), db, &u); err != nil {
 		t.Fatal(err)
 	}

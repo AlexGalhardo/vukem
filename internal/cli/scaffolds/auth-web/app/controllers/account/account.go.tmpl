@@ -3,6 +3,8 @@
 package account
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"net/http"
 	"strings"
 
@@ -39,6 +41,18 @@ func LoginAccountThrottleKey(r *http.Request) string {
 	}
 
 	return "login-account:" + loginEmail(r)
+}
+
+// RegisterThrottleKey limits sign-ups per address. It keys on a hash of
+// the normalized email, so the limiter store holds no addresses.
+func RegisterThrottleKey(r *http.Request) string {
+	if r.Method != http.MethodPost {
+		return ""
+	}
+
+	sum := sha256.Sum256([]byte(loginEmail(r)))
+
+	return "register:" + hex.EncodeToString(sum[:])
 }
 
 // loginEmail normalizes the email like LoginSchema (trimmed, lower case):

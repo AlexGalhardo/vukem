@@ -27,7 +27,9 @@ func NewAdmins(list string) Admins {
 	return a
 }
 
-// Has reports whether u is an admin.
+// Has reports whether u is an admin: a verified email listed in
+// ADMIN_EMAILS. Without the verification, anyone who signed up first with
+// an admin's address would get the panel.
 func (a Admins) Has(u *models.User) bool {
-	return u != nil && u.Email != "" && slices.Contains(a.emails, strings.ToLower(u.Email))
+	return u != nil && u.EmailVerified() && u.Email != "" && slices.Contains(a.emails, strings.ToLower(u.Email))
 }

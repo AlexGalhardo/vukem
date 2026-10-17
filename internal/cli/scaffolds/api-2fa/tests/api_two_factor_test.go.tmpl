@@ -31,6 +31,8 @@ func TestAPITokenRequiresTwoFactor(t *testing.T) {
 	}
 
 	u := models.User{Name: "2FA User", Email: "2fa-api@example.com", Password: h}
+	u.EmailVerifiedAt.V, u.EmailVerifiedAt.Valid = time.Now().UTC(), true
+
 	if err := orm.Create(t.Context(), acc.DB, &u); err != nil {
 		t.Fatal(err)
 	}

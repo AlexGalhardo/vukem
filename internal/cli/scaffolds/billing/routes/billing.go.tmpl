@@ -32,10 +32,11 @@ func Billing(r *router.Router, app *vukem.App) error {
 
 	h := account.NewBilling(b)
 	required := auth.Required(acc.Web)
+	verified := auth.Verified(acc.Web)
 
-	r.Get("/billing", h.Show).Name("billing.show").Use(required)
-	r.Post("/billing/checkout/{plan}", h.Checkout).Name("billing.checkout").Use(required)
-	r.Post("/billing/portal", h.Portal).Name("billing.portal").Use(required)
+	r.Get("/billing", h.Show).Name("billing.show").Use(required, verified)
+	r.Post("/billing/checkout/{plan}", h.Checkout).Name("billing.checkout").Use(required, verified)
+	r.Post("/billing/portal", h.Portal).Name("billing.portal").Use(required, verified)
 
 	return nil
 }

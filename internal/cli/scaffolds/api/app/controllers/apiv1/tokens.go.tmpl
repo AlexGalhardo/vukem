@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/AlexGalhardo/vukem/auth"
+	"github.com/AlexGalhardo/vukem/errs"
 	"github.com/AlexGalhardo/vukem/web"
 	"github.com/AlexGalhardo/vukem/z"
 
@@ -52,6 +53,12 @@ func (h *Tokens) Issue(c *web.Ctx) error {
 	u, err := h.a.Web.Validate(c, map[string]string{"email": strings.ToLower(in.Email), "password": in.Password})
 	if err != nil {
 		return err
+	}
+
+	// A token is a login: an unverified address may belong to someone else
+	// (anyone can sign up first with it).
+	if !u.EmailVerified() {
+		return errs.NewKey(http.StatusForbidden, "auth.unverified", "Your email address is not verified.", nil)
 	}
 
 	plain, tok, err := h.a.Tokens.Create(c.Context(), u.AuthID(), in.DeviceName, []string{"*"}, h.TTL)
