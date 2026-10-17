@@ -157,11 +157,16 @@ func buildCmd(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 		}
 
 		if hasVite(env) {
-			if !exists(env, "node_modules") {
-				return errors.New("frontend dependencies missing: run npm install first")
+			pm, err := packageManager(env.Dir, "")
+			if err != nil {
+				return err
 			}
 
-			if err := tool(ctx, env, npx(), "vite", "build"); err != nil {
+			if !exists(env, "node_modules") {
+				return fmt.Errorf("frontend dependencies missing: run %s first", pm.install())
+			}
+
+			if err := tool(ctx, env, pm.binary(), append(slices.Clone(pm.exec), "vite", "build")...); err != nil {
 				return err
 			}
 		}
@@ -185,8 +190,6 @@ func hasVite(env *Env) bool {
 
 	return false
 }
-
-func npx() string { return npmTool("npx") }
 
 func npm() string { return npmTool("npm") }
 

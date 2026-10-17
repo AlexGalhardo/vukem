@@ -49,7 +49,8 @@ func newProject(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 	apiOnly := set.Bool("api", false, "JSON API starter: tokens, /api/v1, no views or sessions")
 	inertiaFW := set.String("inertia", "", "Inertia starter with react, vue or svelte")
 	templ := set.Bool("templ", false, "HTMX starter with templ components instead of html/template views")
-	noInstall := set.Bool("no-install", false, "skip npm install")
+	noInstall := set.Bool("no-install", false, "skip installing frontend dependencies")
+	pmFlag := set.String("pm", "", "JavaScript package manager: npm, bun, pnpm or yarn (default npm)")
 
 	return func(ctx context.Context, env *Env, args []string) error {
 		name, err := oneArg(args, "project name")
@@ -67,6 +68,11 @@ func newProject(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 		}
 
 		st, err := chooseStack(env, *apiOnly, *templ, *inertiaFW)
+		if err != nil {
+			return err
+		}
+
+		pm, err := packageManager(dir, *pmFlag)
 		if err != nil {
 			return err
 		}
@@ -136,7 +142,7 @@ func newProject(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 		}
 
 		if st.kind != "api" {
-			npmInstall(ctx, &project, *noInstall)
+			jsInstall(ctx, &project, pm, *noInstall)
 		}
 
 		desc := "htmx " + htmxVersion + ", Tailwind, SQLite"
@@ -157,21 +163,21 @@ func newProject(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 	}
 }
 
-// npmInstall installs the frontend dependencies when npm is available; a
-// failure only warns, since the Go app works without built assets in
-// development.
-func npmInstall(ctx context.Context, env *Env, skip bool) {
+// jsInstall installs the frontend dependencies with pm when it is
+// available; a failure only warns, since the Go app works without built
+// assets in development.
+func jsInstall(ctx context.Context, env *Env, pm jsPM, skip bool) {
 	if skip {
 		return
 	}
 
-	if _, err := exec.LookPath(npm()); err != nil {
-		fmt.Fprintln(env.Stdout, "npm not found: install Node.js, then run npm install")
+	if _, err := exec.LookPath(pm.binary()); err != nil {
+		fmt.Fprintf(env.Stdout, "%s not found: install it, then run %s\n", pm.name, pm.install())
 		return
 	}
 
-	if err := tool(ctx, env, npm(), "install", "--no-audit", "--no-fund"); err != nil {
-		fmt.Fprintf(env.Stderr, "npm install failed (run it again later): %v\n", err)
+	if err := tool(ctx, env, pm.binary(), pm.installArgs...); err != nil {
+		fmt.Fprintf(env.Stderr, "%s failed (run it again later): %v\n", pm.install(), err)
 	}
 }
 

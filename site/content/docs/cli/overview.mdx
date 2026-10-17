@@ -14,7 +14,7 @@ vukem list
 
 | Command | Description |
 | --- | --- |
-| `vukem new <name> [--api \| --templ \| --inertia react\|vue\|svelte] [--module path] [--no-install] [--framework dir]` | Create a project from a [starter](/docs/starters) (prompts for the stack on a terminal); run `go mod tidy`, write `APP_KEY`, `npm install`, `git init` |
+| `vukem new <name> [--api \| --templ \| --inertia react\|vue\|svelte] [--module path] [--pm npm\|bun\|pnpm\|yarn] [--no-install] [--framework dir]` | Create a project from a [starter](/docs/starters) (prompts for the stack on a terminal); run `go mod tidy`, write `APP_KEY`, install frontend dependencies with `--pm` (default `npm`), `git init` |
 | `vukem install:auth [--social github,google,…] [--2fa]` | Add login, registration, email verification and password reset ([Authentication](/docs/security/authentication)), optionally social login and [two-factor](/docs/security/two-factor) |
 | `vukem install:inertia --force [--react\|--vue\|--svelte]` | Turn the HTMX starter into an [Inertia](/docs/frontend/inertia) app |
 | `vukem install:admin`, `vukem make:admin-resource <Model>` | [Admin panel](/docs/digging-deeper/admin) and its resources |
@@ -84,7 +84,8 @@ Running the binary directly works too: `go run ./cmd/app migrate`.
 - Builds to a separate file and swaps it in after the old process stops, so it works on Windows where a running `.exe` cannot be overwritten.
 - A failed build prints the compiler errors and keeps the previous version running.
 - Views reload inside the app on every request in development; editing a template needs no rebuild.
-- When a `vite.config.*` exists, `npm run dev` runs alongside (disable with `--no-vite`).
+- When a `vite.config.*` exists, `<pm> run dev` runs alongside (disable with `--no-vite`).
+- **Package manager:** `serve`, `build` and `install:inertia` use the one whose lockfile is in the project (`bun.lock` → Bun, `pnpm-lock.yaml` → pnpm, `yarn.lock` → Yarn), else npm. No configuration needed: run `bun install` once and the CLI follows.
 
 ## Exit codes
 

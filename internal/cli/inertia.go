@@ -25,7 +25,7 @@ func installInertia(set *flag.FlagSet) func(context.Context, *Env, []string) err
 	vue := set.Bool("vue", false, "Vue pages")
 	svelte := set.Bool("svelte", false, "Svelte pages")
 	force := set.Bool("force", false, "replace the HTMX starter pages, controllers and tests")
-	noInstall := set.Bool("no-install", false, "skip npm install")
+	noInstall := set.Bool("no-install", false, "skip installing frontend dependencies")
 
 	return func(ctx context.Context, env *Env, _ []string) error {
 		fw := "react"
@@ -57,7 +57,12 @@ func installInertia(set *flag.FlagSet) func(context.Context, *Env, []string) err
 			return err
 		}
 
-		npmInstall(ctx, env, *noInstall)
+		pm, err := packageManager(env.Dir, "")
+		if err != nil {
+			return err
+		}
+
+		jsInstall(ctx, env, pm, *noInstall)
 		fmt.Fprintf(env.Stdout, "Inertia (%s) installed: pages in resources/js/pages. Run vukem serve.\n", fw)
 
 		return nil

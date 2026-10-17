@@ -70,7 +70,8 @@ The starter ships with tests for the home page and the posts CRUD.
 | --- | --- |
 | `--module <path>` | Go module path (default: the project name) |
 | `--api`, `--templ`, `--inertia react\|vue\|svelte` | Pick the [starter](/docs/starters); without one, a terminal prompts for the stack (HTMX by default) |
-| `--no-install` | Skip `npm install` |
+| `--pm` | Package manager for the frontend: `npm` (default), `bun`, `pnpm` or `yarn` |
+| `--no-install` | Skip installing frontend dependencies |
 | `--framework <dir>` | Use a local checkout of Vukem through a `replace` directive instead of a release (for framework development) |
 
 Flags may come before or after the name: `vukem new blog --module example.com/blog` works.

@@ -10,7 +10,8 @@ vukem new blog                       # HTMX + html/template (default)
 vukem new blog --templ               # HTMX + templ components
 vukem new blog --inertia react       # Inertia + React (also: vue, svelte)
 vukem new shop --api                 # JSON-only REST API
-vukem new blog --no-install          # skip npm install
+vukem new blog --pm bun             # bun install instead of npm install
+vukem new blog --no-install          # skip installing frontend dependencies
 ```
 
 | Starter | Views | Frontend | Node.js |
@@ -20,7 +21,7 @@ vukem new blog --no-install          # skip npm install
 | Inertia | React, Vue or Svelte pages in `resources/js/pages` | Vite 8, TypeScript, Tailwind CSS v4 | required |
 | API | none | none | not used |
 
-Every starter ships SQLite, migrations, a posts CRUD example and tests that pass with `go test ./...`. `vukem new` runs `go mod tidy`, writes `APP_KEY`, runs `npm install` when npm is on `PATH` (frontend starters) and `git init`.
+Every starter ships SQLite, migrations, a posts CRUD example and tests that pass with `go test ./...`. `vukem new` runs `go mod tidy`, writes `APP_KEY`, installs frontend dependencies with `--pm` (default npm) when it is on `PATH` (frontend starters) and `git init`.
 
 ## HTMX on Vite
 

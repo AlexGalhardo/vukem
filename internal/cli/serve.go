@@ -62,7 +62,12 @@ func serveCmd(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 		}
 
 		if hasVite(env) && !*noVite {
-			vite := exec.CommandContext(ctx, npm(), "run", "dev") //nolint:gosec // G204: fixed program name
+			pm, err := packageManager(env.Dir, "")
+			if err != nil {
+				return err
+			}
+
+			vite := exec.CommandContext(ctx, pm.binary(), "run", "dev") //nolint:gosec // G204: known package manager
 			vite.Dir, vite.Stdout, vite.Stderr = env.Dir, env.Stdout, env.Stderr
 
 			if err := vite.Start(); err != nil {
