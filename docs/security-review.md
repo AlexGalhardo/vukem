@@ -12,7 +12,7 @@ BETA gate review of Vukem against its security contract ([security.md](security.
 
 ## Method
 
-1. **Contract check.** Every row of [security.md](security.md) was traced to the test that asserts it, or to the mechanism (lint rule, CI job, release config) that enforces it. Rows without one got a `TestSecurity_*` test; rows that promised more than the code does were corrected. Of the 74 Prototype and ALPHA rows, 73 name their test or mechanism and one (starter tool pinning) names a tracked gap (R-6); of the 50 BETA rows, 49 name a test and one (log aggregation) names a gap (R-7).
+1. **Contract check.** Every row of [security.md](security.md) was traced to the test that asserts it, or to the mechanism (lint rule, CI job, release config) that enforces it. Rows without one got a `TestSecurity_*` test; rows that promised more than the code does were corrected. Of the 74 Prototype and ALPHA rows, 73 name their test or mechanism and one (starter tool pinning) names a tracked gap (R-6); of the 50 BETA rows, 49 name a test and one (log aggregation) names a gap (R-7). Both gaps are closed since; every row now names its test or mechanism.
 2. **Code review.** Five parallel passes over the scope (auth and crypto; data, uploads and SQL; the HTTP surface; outbound, realtime and contrib; the contract itself), each tracing untrusted input from the trust boundary to the sensitive sink before reporting, scoring with DREAD and checking for upstream guards.
 3. **Fixes.** Each confirmed issue got a failing test first, a root-cause fix and its own `fix(<pkg>)` commit with a [security.md](security.md) row update.
 4. **Static analysis.** `golangci-lint run ./...` (gosec, depguard, errcheck, …) and `govulncheck` v1.9.0 on the root module and every contrib, driver and example module (see [Tooling results](#tooling-results)).
@@ -37,7 +37,7 @@ BETA gate review of Vukem against its security contract ([security.md](security.
 | V13 Configuration | pass after fixes | boot refusals; unknown `APP_ENV` now a boot error (F-21); debug, devtools, OpenAPI, GraphQL explorer and gRPC reflection off in production |
 | V14 Data Protection | pass | `config.Secret` redaction, `orm.Encrypted`, admin audit redaction, `Cache-Control: no-store` on admin |
 | V15 Secure Coding and Architecture | pass | no reflection deserialization in queues, no shell execution (gosec G204), stdlib-first dependency policy |
-| V16 Security Logging and Error Handling | pass after fixes | WARN security events (`TestSecurity_A09_SecurityEventsAtWarn`); CWE-209 masking in GraphQL (F-03) and gRPC (F-05); maintenance panic (F-12); no trace correlation or aggregation (R-7) |
+| V16 Security Logging and Error Handling | pass after fixes | WARN security events (`TestSecurity_A09_SecurityEventsAtWarn`); CWE-209 masking in GraphQL (F-03) and gRPC (F-05); maintenance panic (F-12); trace correlation (`TestProvider_CorrelatesRequestLogs`) and error aggregation (`TestSecurity_A09_RepeatedErrorsAggregated`), closing R-7 |
 | V17 WebRTC | n.a. | the framework has no WebRTC |
 
 ## Findings
@@ -81,8 +81,8 @@ Accepted or deferred, with the reason and what an app can do meanwhile.
 | R-3 | Low | a session store `Delete` failure after `Regenerate` / `Invalidate` is only logged, and a `Load` failure starts an empty session rather than denying | monitor `session` errors; the store being down signs users out, it never reuses data |
 | R-4 | Low | `webhook.VerifyHMAC` / `webhook.Middleware` sign the body only, without a timestamp, so captured deliveries can be replayed | make webhook handlers idempotent on the event id (as `contrib/stripe` does) |
 | R-5 | Low | the 2FA challenge is throttled per user and IP only, and forgot-password sends mail synchronously (timing reveals known emails) | add a per-user challenge limiter and queue the reset mail in the generated code |
-| R-6 | Low | supply chain: `govulncheck` runs on every push and in `task ci` but not in the pre-push hook, a weekly cron or generated apps; starters do not pin tools with the `tool` directive | tracked for the supply-chain work; apps should run `govulncheck` in their CI |
-| R-7 | Low | logs carry no trace id from `drivers/otel` and repeated errors are not aggregated | correlate through the request id until log correlation lands |
+| R-6 | Low | supply chain: `govulncheck` ran on every push and in `task ci` but not in the pre-push hook, a weekly cron or generated apps; starters did not pin tools with the `tool` directive | closed `47f0cef` (pre-push hook, weekly `vuln.yml` on every module) and `a56c203` (`vukem new` pins `govulncheck` with a `tool` directive) |
+| R-7 | Low | logs carried no trace id from `drivers/otel` and repeated errors were not aggregated | closed `48a79fd` (`otel.LogHandler` adds `trace_id` / `span_id`) and `023820b` (`logging.Dedup` on the production logger, `LOG_DEDUP_WINDOW`) |
 | R-8 | Low | `graphql.WSConfig.Persisted` is separate from `HandlerConfig.Persisted`: an allowlist on HTTP does not cover subscriptions unless repeated | configure both; fail-closed sharing is post-BETA |
 | R-9 | Low | `signed.New` accepts any key length (the app wires a 32-byte key derived from `APP_KEY`, so only direct use is affected) | use `app.Signer`; rejecting short keys changes the constructor signature |
 | R-10 | Low | admin search does not escape `%` / `_` and `api.Query` does not cap `IN` lists or sort terms (cost amplification) | limit request sizes; escaping helpers are planned |

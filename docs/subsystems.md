@@ -23,6 +23,7 @@ Mail, cache, storage, events, queue, scheduler, encryption, rate limiting, i18n,
 - `app.Log` is a `*slog.Logger`; request logger adds `request_id`, method, route name, status, duration.
 - Context-aware: `vukem.Logger(ctx)` returns the request-scoped logger.
 - `Secret` values are redacted via `LogValuer`.
+- Error aggregation: `logging.NewDedup(next, opts)` is a stdlib `slog.Handler` that writes the first ERROR record of a kind (same level, message, handler attributes and `event` / `error` / `err` values) and counts the repeats inside a window; when the window ends (a timer per window, or `Close`), one `repeated` record carries `message`, `count` and `window`. Untracked kinds beyond 1024 per window pass through. The default logger uses it in production with a 1-minute window, in front of Telegram, and `app.Shutdown` flushes pending summaries; `LOG_DEDUP_WINDOW` changes the window (`0` disables, any duration enables it outside production). Loggers passed with `WithLogger` are used as given.
 - OpenTelemetry: `drivers/otel` (BETA) traces every request **in a separate module** to keep OTel out of core ([OpenTelemetry](#opentelemetry)).
 - `/up` returns 200 when the app booted; `/up?checks=1` runs registered health checks (DB ping, Redis ping) with timeouts.
 
@@ -324,6 +325,7 @@ r.UseServer(otel.Middleware(tp)) // or bring your own trace.TracerProvider
 - The provider reads `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` (used as is) or `OTEL_EXPORTER_OTLP_ENDPOINT` (`/v1/traces` appended); a non-http(s) URL is a boot error, and with neither set tracing is off. `OTEL_SDK_DISABLED=true` turns it off too. Other `OTEL_EXPORTER_OTLP_*` variables (headers, timeout, compression) are read by the exporter itself.
 - The resource carries `service.name` (`Config.ServiceName`, else `OTEL_SERVICE_NAME`, else `APP_NAME`) and `deployment.environment.name` (`APP_ENV`). Spans are batched and flushed by `app.Shutdown`.
 - `Config.Exporter` replaces OTLP (tests use `tracetest.NewInMemoryExporter`), `Config.Sampler` defaults to `ParentBased(AlwaysSample)`, and `Config.Global` also sets the OpenTelemetry globals for libraries instrumented through them (off by default: no package-level state).
+- Log correlation: `otel.LogHandler(next)` adds `trace_id` and `span_id` (hex) to records whose context carries a valid span; the provider wraps `app.Log` and the router's `web.Ctx.Log()` logger with it when tracing is on, so request logs and `c.Log().InfoContext(c.Context(), ...)` records link to their trace. Log with the `*Context` methods; records logged without a context are not correlated.
 - Database spans are not built in: wrap `*sql.DB` drivers with an OTel `database/sql` instrumentation in the app if needed.
 
 ## Encryption
