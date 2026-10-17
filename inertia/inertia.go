@@ -72,6 +72,9 @@ type Config struct {
 	EncryptHistory bool
 	// SSR enables server-side rendering (nil: client-side only).
 	SSR *SSRConfig
+	// ErrorComponent is the page ErrorPage renders for errors on Inertia
+	// requests (default "Error"); it receives the props status and message.
+	ErrorComponent string
 }
 
 // Inertia is the adapter; build it with New.
@@ -118,6 +121,10 @@ func New(cfg Config) (*Inertia, error) {
 
 	if cfg.RootID == "" {
 		cfg.RootID = "app"
+	}
+
+	if cfg.ErrorComponent == "" {
+		cfg.ErrorComponent = "Error"
 	}
 
 	if strings.ContainsAny(cfg.RootID, "\"'<>& ") {

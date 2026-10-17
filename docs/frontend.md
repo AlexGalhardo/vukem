@@ -230,6 +230,8 @@ r.Use(in.Middleware) // Vary, version check, 302→303, fragment redirects
 
 `inertia.Share(c.Context(), key, value)` adds per-request shared props (`Config.Shared` holds global ones); `inertia.Location(c, url)` forces a full visit; `inertia.PreserveFragment(c)` before a redirect keeps the URL fragment; `inertia.RenderStatus(c, status, component, props)` renders a page with a 2xx/4xx/5xx status (error pages; 204, 205, 304, 1xx, 3xx and 409 are refused). Prop values of type `func(context.Context) (any, error)` resolve lazily.
 
+Errors on Inertia requests (`X-Inertia: true`) render `Config.ErrorComponent` (default `"Error"`) with the props `status` and `message` and the request's shared props, so the client shows an error page instead of the raw HTML response in its modal: `web.DefaultErrorHandler` calls `web.Services.ErrorPage`, which `vukem.WithInertia` sets to `app.Inertia.ErrorPage` (it also covers unmatched routes, which run no route middleware). `message` is the error's own message for 4xx (`errs.New(404, "Record not found")`) and only the status text for 5xx (CWE-209). Full page loads keep the HTML status page, JSON clients problem+json, form posts with validation errors the redirect back, and in development a 5xx still shows the debug report. If the shared props fail to resolve, the HTML page is sent. The starters ship `resources/js/pages/Error.{tsx,vue,svelte}`; set `app.Router.Services().ErrorPage = nil` to keep the HTML page.
+
 ```go
 return inertia.Render(c, "Posts/Index", inertia.Props{
 	"posts":   posts,

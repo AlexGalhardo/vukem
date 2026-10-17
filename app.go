@@ -331,8 +331,11 @@ func WithViews(fsys fs.FS) Option {
 }
 
 // WithInertia enables the Inertia adapter (app.Inertia); add
-// app.Inertia.Middleware to the routes that render pages. Version and the
-// SSR dev endpoint default to app.Vite when WithVite is given.
+// app.Inertia.Middleware to the routes that render pages. Errors on Inertia
+// requests render inertia.Config.ErrorComponent (default "Error", see
+// inertia.Inertia.ErrorPage); set app.Router.Services().ErrorPage to nil
+// to keep the HTML error page. Version and the SSR dev endpoint default to
+// app.Vite when WithVite is given.
 func WithInertia(cfg inertia.Config) Option {
 	return func(o *options) error { o.inertia = &cfg; return nil }
 }
@@ -706,6 +709,8 @@ func New(opts ...Option) (*App, error) {
 		if app.Inertia, err = inertia.New(icfg); err != nil {
 			return nil, err
 		}
+
+		app.Router.Services().ErrorPage = app.Inertia.ErrorPage
 	}
 
 	if o.views != nil {

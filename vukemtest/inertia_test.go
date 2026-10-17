@@ -161,3 +161,16 @@ func TestAssertFlash(t *testing.T) {
 		})
 	}
 }
+
+func TestInertiaErrorPageInstalledByWithInertia(t *testing.T) {
+	t.Parallel()
+
+	app := vukemtest.New(t, buildInertia)
+
+	app.Client(t).Inertia("").Get("/missing").AssertStatus(404).
+		AssertInertia("Error").
+		PropEquals("status", 404).
+		PropEquals("message", "Not Found")
+
+	app.Client(t).Get("/missing").AssertStatus(404).AssertHeader("X-Inertia", "")
+}
