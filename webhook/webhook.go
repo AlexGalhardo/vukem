@@ -9,6 +9,11 @@
 // 401 ([ErrSignature]) on mismatch; [VerifyHMAC] and [Sign] are the
 // building blocks for custom schemes and tests.
 //
+// Outgoing webhooks: [Sender] delivers [Delivery] payloads from queue jobs,
+// signed with the Standard Webhooks scheme ([NewSecret], [SignStandard]),
+// through [httpclient.Safe] with retries and backoff; [SQLDeliveryLog]
+// records each attempt.
+//
 // See https://github.com/AlexGalhardo/vukem/blob/main/docs/security.md.
 package webhook
 
