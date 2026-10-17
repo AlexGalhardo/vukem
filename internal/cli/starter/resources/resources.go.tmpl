@@ -1,6 +1,8 @@
 // Package resources holds views and public assets. They are embedded in
 // the binary; during development the files on disk are used instead so
-// template edits show up on refresh.
+// template edits show up on refresh. With APP_ENV=production in the
+// process environment the embedded files are always used, even when a
+// resources/ directory exists next to the binary.
 package resources
 
 import (
@@ -21,10 +23,18 @@ func Views() fs.FS { return dirOrEmbedded("views") }
 func Public() fs.FS { return dirOrEmbedded("public") }
 
 func dirOrEmbedded(dir string) fs.FS {
+	if os.Getenv("APP_ENV") == "production" {
+		return embeddedDir(dir)
+	}
+
 	if info, err := os.Stat("resources/" + dir); err == nil && info.IsDir() {
 		return os.DirFS("resources/" + dir)
 	}
 
+	return embeddedDir(dir)
+}
+
+func embeddedDir(dir string) fs.FS {
 	sub, err := fs.Sub(embedded, dir)
 	if err != nil {
 		panic(err) // unreachable: the directory is embedded above
