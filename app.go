@@ -96,10 +96,13 @@ type App struct {
 	Config Config
 	// Source gives access to every configuration value (for module configs).
 	Source *config.Source
-	// Key is the decoded APP_KEY; derive purpose-specific keys from it.
+	// Key is the decoded APP_KEY; derive purpose-specific keys from it
+	// (DeriveKey returns an error instead of panicking when it is unset).
+	// It is zero only outside production when APP_KEY is unset.
 	Key config.Key
 	// Crypt encrypts with a key derived from APP_KEY and still decrypts
 	// values sealed with APP_PREVIOUS_KEYS. DB() hands it to orm.Encrypted.
+	// It is nil when Key is zero; its methods then fail with crypt.ErrNoKey.
 	Crypt *crypt.Encrypter
 	// Log is the application logger.
 	Log *slog.Logger
@@ -580,8 +583,11 @@ func New(opts ...Option) (*App, error) {
 func checkConfig(cfg *Config) (config.Key, error) {
 	var errs []error
 
+	// Outside production a missing key is allowed: every key-derived feature
+	// then fails closed (Key.Derive panics, Crypt is nil, cookie sessions
+	// refuse to start). A malformed key is always an error.
 	key, err := config.ParseKey(cfg.Key)
-	if err != nil {
+	if err != nil && (!errors.Is(err, config.ErrKeyMissing) || cfg.IsProduction()) {
 		errs = append(errs, err)
 	}
 
@@ -609,7 +615,7 @@ func checkConfig(cfg *Config) (config.Key, error) {
 
 // newCrypt builds app.Crypt: the "crypt" key derived from APP_KEY encrypts,
 // keys derived from APP_PREVIOUS_KEYS only decrypt. A malformed previous key
-// is a boot error.
+// is a boot error. Without APP_KEY it returns nil (see crypt.ErrNoKey).
 func newCrypt(key config.Key, previous config.Secret) (*crypt.Encrypter, error) {
 	var old [][]byte
 
@@ -624,6 +630,10 @@ func newCrypt(key config.Key, previous config.Secret) (*crypt.Encrypter, error) 
 		}
 
 		old = append(old, k.Derive("crypt", crypt.KeySize))
+	}
+
+	if key.IsZero() {
+		return nil, nil
 	}
 
 	return crypt.New(key.Derive("crypt", crypt.KeySize), old...)
@@ -694,6 +704,17 @@ func (a *App) Stderr() io.Writer { return a.stderr }
 
 // Stdin is where commands read input (WithStdin, os.Stdin by default).
 func (a *App) Stdin() io.Reader { return a.stdin }
+
+// DeriveKey returns an n-byte key for purpose derived from APP_KEY (see
+// config.Key.Derive). It fails with config.ErrKeyMissing when the app
+// booted without APP_KEY, so a key-derived feature fails closed.
+func (a *App) DeriveKey(purpose string, n int) ([]byte, error) {
+	if a.Key.IsZero() {
+		return nil, fmt.Errorf("vukem: %s: %w", purpose, config.ErrKeyMissing)
+	}
+
+	return a.Key.Derive(purpose, n), nil
+}
 
 // Now returns the current time from the app clock (see WithClock).
 func (a *App) Now() time.Time { return a.now() }

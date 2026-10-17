@@ -3,6 +3,8 @@ package config
 import (
 	"bytes"
 	"encoding/base64"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -79,4 +81,26 @@ func TestGenerateKey(t *testing.T) {
 	if GenerateKey() == s {
 		t.Fatal("GenerateKey() repeated a key")
 	}
+}
+
+func TestSecurity_A04_ZeroKeyNeverDerives(t *testing.T) {
+	t.Parallel()
+
+	if _, err := ParseKey(NewSecret("")); !errors.Is(err, ErrKeyMissing) {
+		t.Fatalf("ParseKey(\"\") error = %v, want ErrKeyMissing", err)
+	}
+
+	var k Key
+	if !k.IsZero() {
+		t.Fatal("Key{}.IsZero() = false, want true")
+	}
+
+	defer func() {
+		if p := fmt.Sprint(recover()); !strings.Contains(p, "APP_KEY is not set") {
+			t.Fatalf("Key{}.Derive() panic = %q, want an APP_KEY message", p)
+		}
+	}()
+
+	k.Derive("session.cookie", 32)
+	t.Fatal("Key{}.Derive() returned, want a panic")
 }

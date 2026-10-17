@@ -159,7 +159,12 @@ func TestSecurity_A02_BootRefusesMisconfiguration(t *testing.T) {
 		src  *config.Source
 		want string
 	}{
-		{name: "missing key", src: config.MapSource(map[string]string{}), want: "APP_KEY is not set"},
+		// Outside production a missing key is allowed (TestSecurity_A04_MissingKeyFailsClosed).
+		{
+			name: "missing key in production",
+			src:  config.MapSource(map[string]string{"APP_ENV": "production"}),
+			want: "APP_KEY is not set",
+		},
 		{
 			name: "short key",
 			src:  config.MapSource(map[string]string{"APP_KEY": "base64:YWJj"}),

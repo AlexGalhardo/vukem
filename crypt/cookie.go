@@ -21,10 +21,14 @@ func cookieAD(name string) []byte { return []byte("cookie:" + name) }
 // adds the Set-Cookie header. Defaults are secure: HttpOnly is always set,
 // SameSite defaults to Lax, and Secure is set when r arrived over TLS (set
 // c.Secure yourself behind a TLS-terminating proxy). Nothing is written on
-// error.
+// error; a nil Encrypter (no APP_KEY) returns ErrNoKey.
 //
 //nolint:gosec // G124: HttpOnly is forced, SameSite defaults to Lax and Secure follows TLS below
 func (e *Encrypter) SetCookie(w http.ResponseWriter, r *http.Request, c http.Cookie) error {
+	if e == nil {
+		return ErrNoKey
+	}
+
 	c.Value = e.Seal([]byte(c.Value), cookieAD(c.Name))
 	c.HttpOnly = true
 	c.Secure = c.Secure || r.TLS != nil

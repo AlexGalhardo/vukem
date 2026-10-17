@@ -235,7 +235,9 @@ func (a *App) Sessions() (*session.Manager, error) {
 		case cfg.Driver == "memory":
 			sc.Store = session.NewMemoryStore()
 		case cfg.Driver == "cookie":
-			sc.CookieKey = a.Key.Derive("session.cookie", 32)
+			if sc.CookieKey, a.sessErr = a.DeriveKey("SESSION_DRIVER=cookie", 32); a.sessErr != nil {
+				return
+			}
 		case cfg.Driver == "database":
 			sc.Store, a.sessErr = a.databaseSessionStore()
 			if a.sessErr != nil {
@@ -257,10 +259,13 @@ func (a *App) Sessions() (*session.Manager, error) {
 // provider's Register, before Sessions is first used).
 func (a *App) SetSessionStore(store session.Store) { a.sessStore = store }
 
-// maintenanceConfig signs bypass cookies with a key derived from APP_KEY.
+// maintenanceConfig signs bypass cookies with a key derived from APP_KEY;
+// without one the bypass is disabled (the app stays down for everyone).
 func maintenanceConfig(app *App) middleware.MaintenanceConfig {
+	key, _ := app.DeriveKey("maintenance", 32)
+
 	return middleware.MaintenanceConfig{
-		Key:    app.Key.Derive("maintenance", 32),
+		Key:    key,
 		Secure: app.Config.IsProduction() || strings.HasPrefix(app.Config.URL, "https://"),
 	}
 }

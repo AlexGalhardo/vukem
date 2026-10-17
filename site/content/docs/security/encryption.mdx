@@ -3,7 +3,7 @@ title: Encryption
 description: AES-256-GCM encryption derived from APP_KEY, with key rotation, encrypted cookies and encrypted ORM columns.
 ---
 
-Package `crypt` (stdlib only). `app.Crypt` is built at boot from a key derived with HKDF from `APP_KEY`, plus keys derived from `APP_PREVIOUS_KEYS`.
+Package `crypt` (stdlib only). `app.Crypt` is built at boot from a key derived with HKDF from `APP_KEY`, plus keys derived from `APP_PREVIOUS_KEYS`. Outside production an app may boot without `APP_KEY`; `app.Crypt` is then nil and fails closed (`crypt.ErrNoKey` from `Decrypt` and `SetCookie`, a panic from `Encrypt`).
 
 ```go
 token := app.Crypt.EncryptString("4111 1111 1111 1111")

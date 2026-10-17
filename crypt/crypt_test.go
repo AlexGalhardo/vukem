@@ -5,6 +5,8 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -248,4 +250,40 @@ func FuzzDecrypt(f *testing.F) {
 			}
 		}
 	})
+}
+
+func TestSecurity_A04_NilEncrypterFailsClosed(t *testing.T) {
+	t.Parallel()
+
+	var e *Encrypter
+
+	if _, err := e.Decrypt("token"); !errors.Is(err, ErrNoKey) {
+		t.Errorf("nil Encrypter.Decrypt() error = %v, want ErrNoKey", err)
+	}
+
+	if _, err := e.Rotate("token", nil); !errors.Is(err, ErrNoKey) {
+		t.Errorf("nil Encrypter.Rotate() error = %v, want ErrNoKey", err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", http.NoBody)
+
+	if err := e.SetCookie(rec, req, http.Cookie{Name: "c", Value: "v"}); !errors.Is(err, ErrNoKey) ||
+		rec.Header().Get("Set-Cookie") != "" {
+		t.Errorf("nil Encrypter.SetCookie() error = %v, header %q, want ErrNoKey and no cookie",
+			err, rec.Header().Get("Set-Cookie"))
+	}
+
+	if e.NeedsRotation("token") {
+		t.Error("nil Encrypter.NeedsRotation() = true, want false")
+	}
+
+	defer func() {
+		if p := recover(); p != ErrNoKey.Error() {
+			t.Fatalf("nil Encrypter.Encrypt() panic = %v, want %q", p, ErrNoKey)
+		}
+	}()
+
+	e.Encrypt([]byte("secret"))
+	t.Fatal("nil Encrypter.Encrypt() returned, want a panic")
 }
