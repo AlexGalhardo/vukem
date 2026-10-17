@@ -37,6 +37,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/AlexGalhardo/vukem/cache"
 	"github.com/AlexGalhardo/vukem/errs"
 	"github.com/AlexGalhardo/vukem/web"
 )
@@ -108,10 +109,16 @@ type Social struct {
 	StateTTL time.Duration
 	// InsecureCookies drops the Secure flag (plain-HTTP development only).
 	InsecureCookies bool
-	now             func() time.Time
+	// States records consumed states until they expire, so a replayed
+	// callback is refused on every instance and after a restart. Set it to
+	// the app cache store (app.Cache() then Store()) when the app runs more
+	// than one replica; nil keeps the set in process memory. A store error
+	// refuses the callback.
+	States cache.Store
+	now    func() time.Time
 
 	mu   sync.Mutex
-	used map[string]int64 // consumed states until they expire
+	used map[string]int64 // consumed states when States is nil
 }
 
 // New returns Social with providers; key signs the state cookie (derive it
@@ -222,7 +229,12 @@ func (s *Social) User(c *web.Ctx, provider string) (User, error) {
 		return User{}, ErrState
 	}
 
-	if !s.consume(st) {
+	fresh, err := s.consume(c.Context(), st)
+	if err != nil {
+		return User{}, errs.Wrap(http.StatusServiceUnavailable, fmt.Errorf("social: record state: %w", err))
+	}
+
+	if !fresh {
 		web.SecurityEvent(c.Request(), "social.state_replayed", "provider", provider)
 		return User{}, ErrState
 	}
@@ -305,12 +317,19 @@ func (s *Social) UserFromToken(ctx context.Context, provider, accessToken string
 	return u, nil
 }
 
-// consume marks a state as used; a second callback with the same signed
-// cookie (a replay) is rejected.
-//
-// shortcut: the used set lives in memory, so replay protection is per
-// instance; move it to the cache store (A.6.1) for multi-instance apps.
-func (s *Social) consume(st statePayload) bool {
+// consume marks a state as used and reports whether it was unused; a
+// second callback with the same signed cookie (a replay) is rejected. The
+// store's Add is atomic, so concurrent callbacks on different instances
+// cannot both win.
+func (s *Social) consume(ctx context.Context, st statePayload) (bool, error) {
+	if s.States != nil {
+		// The cookie is refused after Expires anyway; one extra second
+		// covers clock rounding.
+		ttl := time.Unix(st.Expires, 0).Sub(s.now()) + time.Second
+
+		return s.States.Add(ctx, "social:state:"+st.State, []byte("1"), max(ttl, time.Second))
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -322,12 +341,12 @@ func (s *Social) consume(st statePayload) bool {
 	}
 
 	if _, seen := s.used[st.State]; seen {
-		return false
+		return false, nil
 	}
 
 	s.used[st.State] = st.Expires
 
-	return true
+	return true, nil
 }
 
 func (s *Social) cookie(provider, value string, maxAge int) *http.Cookie {
