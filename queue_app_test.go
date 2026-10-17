@@ -524,3 +524,20 @@ func TestDatabaseQueueFirstUseInsideTransaction(t *testing.T) {
 		t.Fatalf("Pending() = %d, %v; want the committed job", n, err)
 	}
 }
+
+// With QUEUE_CONNECTION=database, Boot prepares the queue tables; an
+// unreachable database fails the boot with an error naming the queue.
+func TestBootFailsClearlyWhenQueueDatabaseIsUnreachable(t *testing.T) {
+	t.Parallel()
+
+	app := newTestApp(t, WithSource(testSource(map[string]string{
+		"QUEUE_CONNECTION": "database",
+		"DATABASE_URL":     "file:" + filepath.Join(t.TempDir(), "missing", "app.db"),
+	})))
+
+	err := app.Boot(t.Context())
+	if err == nil || !strings.Contains(err.Error(), "QUEUE_CONNECTION=database") ||
+		!strings.Contains(err.Error(), "database unreachable") {
+		t.Fatalf("Boot() = %v, want an error naming the database queue", err)
+	}
+}

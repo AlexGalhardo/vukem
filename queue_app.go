@@ -194,7 +194,8 @@ func (a *App) prepareDatabaseQueue(ctx context.Context) error {
 
 	d, err := a.databaseQueue(ctx, cfg)
 	if err != nil {
-		return fmt.Errorf("vukem: queue: %w", err)
+		return fmt.Errorf("vukem: QUEUE_CONNECTION=database: create the queue tables at boot "+
+			"(database unreachable or not writable?): %w", err)
 	}
 
 	a.mu.Lock()
