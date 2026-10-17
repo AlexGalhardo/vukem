@@ -86,7 +86,7 @@ vukem db:seed DemoCatalog --fresh --force  # production
 vukem db:wipe                              # drops every table
 ```
 
-A name matches the seeder's name (`Name()` or its Go type) case-insensitively, also without the `Seeder` suffix (`posts` runs `PostsSeeder`). An unknown or ambiguous name fails before any seeder runs, and so do unknown flags and stray arguments.
+A name matches the seeder's name (`Name()` or its Go type) case-insensitively, also without the `Seeder` suffix (`posts` runs `PostsSeeder`). An unknown or ambiguous name fails before any seeder runs, and so do unknown flags, stray arguments and a `--class` without a name.
 
 Both commands need `--force` in production. `--force` may come before or after the names; `db:seed` checks it after parsing everything and before the first seeder runs. Tests call `app.Seed(ctx)`, which runs every seeder with its flag defaults.
 
@@ -126,7 +126,7 @@ func (s *DemoCatalog) SeedApp(ctx context.Context, app *vukem.App) error {
 vukem.WithAppSeeders(&seeders.DemoCatalog{}),
 ```
 
-`vukem db:seed DemoCatalog --fresh --count 500` sets both fields; `vukem db:seed DemoCatalog -h` lists the flags. Only the flags of the seeders that run are accepted, and every seeder that defines a flag receives its value (`db:seed --fresh` reaches each seeder with a `--fresh` flag). `--force` and `--class` belong to `db:seed`: a seeder that defines either fails the command, so no seeder can take over the production check.
+`vukem db:seed DemoCatalog --fresh --count 500` sets both fields; `vukem db:seed DemoCatalog -h` lists the flags. Only the flags of the seeders that run are accepted, and every seeder that defines a flag receives its value (`db:seed --fresh` reaches each seeder with a `--fresh` flag). `--force`, `--class`, `--help` and `-h` belong to `db:seed`: a seeder that defines one fails the command, so no seeder can take over the production check or hide the usage. `db:seed` always reads `--force` and `--class` as its own flags, so they cannot be values of a seeder flag (`--note --force` sets `--force` and fails because `--note` has no value). Register a seeder with flags as a pointer (`&seeders.DemoCatalog{}`): flags bound to a value would set a copy, so `db:seed` refuses a value seeder that defines flags.
 
 ### Seeders that need the app
 

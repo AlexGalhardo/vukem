@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -304,8 +305,10 @@ func WithAppSeeders(seeders ...AppSeeder) Option {
 }
 
 // FlagSeeder is a Seeder or AppSeeder that takes command-line flags from
-// db:seed. SeedFlags defines them on fs before each run; bind them to
-// fields of a pointer receiver:
+// db:seed. SeedFlags defines them on fs before each run. Implement it on a
+// pointer receiver, bind the flags to its fields and register the pointer
+// (&DemoCatalog{}); a seeder registered as a value that defines flags is an
+// error, since the flags would bind to a copy:
 //
 //	func (s *DemoCatalog) SeedFlags(fs *flag.FlagSet) {
 //		fs.BoolVar(&s.fresh, "fresh", false, "delete the demo catalog first")
@@ -314,8 +317,10 @@ func WithAppSeeders(seeders ...AppSeeder) Option {
 //	vukem db:seed DemoCatalog --fresh
 //
 // The flags of every seeder that runs are accepted; seeders defining the
-// same flag all receive its value. "force" and "class" belong to db:seed
-// and cannot be redefined. App.Seed applies the defaults.
+// same flag all receive its value. "force", "class", "help" and "h" belong
+// to db:seed and cannot be redefined, and the words --force and --class are
+// always read as db:seed's flags, so they cannot be values of a seeder
+// flag. App.Seed applies the defaults.
 type FlagSeeder interface {
 	SeedFlags(fs *flag.FlagSet)
 }
@@ -388,7 +393,10 @@ func (seedCommand) Flags(*flag.FlagSet) {}
 func (seedCommand) rawArgs() {}
 
 func (seedCommand) Run(ctx context.Context, app *App, args []string) error {
-	names, flagArgs := splitSeedArgs(args)
+	names, flagArgs, err := splitSeedArgs(args)
+	if err != nil {
+		return seedUsage(app, err)
+	}
 
 	run, err := selectSeeders(app.seeders, names)
 	if err != nil {
@@ -438,9 +446,15 @@ func seedUsage(app *App, err error) error {
 
 // splitSeedArgs returns the seeder names and the flag arguments. Names come
 // first, mixed with db:seed's own --force and --class; the first other flag
-// starts the seeder flags. Every --class value is a name.
-func splitSeedArgs(args []string) (names, flagArgs []string) {
+// starts the seeder flags. --force and --class are always db:seed's, never
+// a seeder flag's value. Every --class value is a name, and a --class
+// without one is an error: selecting nothing would run every seeder.
+func splitSeedArgs(args []string) (names, flagArgs []string, err error) {
 	inFlags := false
+
+	// --force is moved in front of the seeder flags, so it is never read as
+	// the value of one ("--note --force").
+	var force []string
 
 	for i := 0; i < len(args); i++ {
 		a := args[i]
@@ -449,17 +463,23 @@ func splitSeedArgs(args []string) (names, flagArgs []string) {
 
 		switch {
 		case a == "--":
-			return names, append(flagArgs, args[i:]...)
+			return names, slices.Concat(force, flagArgs, args[i:]), nil
 		case isFlag && name == "class":
-			if hasValue {
-				names = append(names, value)
-			} else if i+1 < len(args) {
-				names = append(names, args[i+1])
+			if !hasValue && i+1 < len(args) {
+				value = args[i+1]
 				i++
 			}
+
+			if strings.TrimSpace(value) == "" {
+				return nil, nil, errors.New("db:seed: -class needs a seeder name")
+			}
+
+			names = append(names, value)
 		case !isFlag && !inFlags:
 			names = append(names, a)
-		case isFlag && name != "force":
+		case isFlag && name == "force":
+			force = append(force, a)
+		case isFlag:
 			inFlags = true
 
 			flagArgs = append(flagArgs, a)
@@ -468,7 +488,7 @@ func splitSeedArgs(args []string) (names, flagArgs []string) {
 		}
 	}
 
-	return names, flagArgs
+	return names, slices.Concat(force, flagArgs), nil
 }
 
 // selectSeeders returns every seeder when names is empty, else the named
@@ -481,15 +501,19 @@ func selectSeeders(all []AppSeeder, names []string) ([]AppSeeder, error) {
 
 	var out []AppSeeder
 
-	for _, q := range names {
-		var exact, suffixed []AppSeeder
+	// Seeders are deduplicated by index: a value seeder with a slice, map
+	// or func field would make == panic.
+	picked := make([]bool, len(all))
 
-		for _, s := range all {
+	for _, q := range names {
+		var exact, suffixed []int
+
+		for i, s := range all {
 			switch n := seederName(s); {
 			case strings.EqualFold(n, q):
-				exact = append(exact, s)
+				exact = append(exact, i)
 			case strings.EqualFold(n, q+"Seeder"):
-				suffixed = append(suffixed, s)
+				suffixed = append(suffixed, i)
 			}
 		}
 
@@ -502,8 +526,9 @@ func selectSeeders(all []AppSeeder, names []string) ([]AppSeeder, error) {
 		case 0:
 			return nil, fmt.Errorf("db:seed: unknown seeder %q (registered: %s)", q, seederNames(all))
 		case 1:
-			if !slices.Contains(out, found[0]) {
-				out = append(out, found[0])
+			if !picked[found[0]] {
+				picked[found[0]] = true
+				out = append(out, all[found[0]])
 			}
 		default:
 			return nil, fmt.Errorf("db:seed: seeder name %q is ambiguous (registered: %s)", q, seederNames(all))
@@ -527,9 +552,10 @@ func seederNames(all []AppSeeder) string {
 }
 
 // seedFlagSet defines db:seed's own flags and those of every FlagSeeder in
-// seeders on one set. A flag several seeders define is set on all of them;
-// redefining force or class is an error, so no seeder can take over the
-// production guard.
+// seeders on one set. A flag several seeders define is set on all of them.
+// Redefining force, class, help or h is an error, so no seeder can take over
+// the production guard or hide the usage; a seeder defining flags must be a
+// pointer, or they would bind to a copy.
 func seedFlagSet(seeders []AppSeeder, force *bool, out io.Writer) (*flag.FlagSet, error) {
 	fs := flag.NewFlagSet("db:seed", flag.ContinueOnError)
 	fs.SetOutput(out)
@@ -551,8 +577,13 @@ func seedFlagSet(seeders []AppSeeder, force *bool, out io.Writer) (*flag.FlagSet
 
 		var err error
 
+		if hasFlags(sub) && reflect.ValueOf(seederValue(s)).Kind() != reflect.Pointer {
+			return nil, fmt.Errorf("seeder %s defines flags but is not a pointer: register &%s{} so they bind to it",
+				seederName(s), seederName(s))
+		}
+
 		sub.VisitAll(func(f *flag.Flag) {
-			if fs.Lookup(f.Name) != nil {
+			if reservedSeedFlag(f.Name) {
 				err = cmp.Or(err, fmt.Errorf("seeder %s: flag -%s is reserved by db:seed", seederName(s), f.Name))
 				return
 			}
@@ -592,6 +623,24 @@ func seedFlagSet(seeders []AppSeeder, force *bool, out io.Writer) (*flag.FlagSet
 	}
 
 	return fs, nil
+}
+
+// reservedSeedFlag reports the flags that belong to db:seed (help and h
+// print the usage).
+func reservedSeedFlag(name string) bool {
+	switch name {
+	case "force", "class", "help", "h":
+		return true
+	default:
+		return false
+	}
+}
+
+func hasFlags(fs *flag.FlagSet) bool {
+	n := 0
+	fs.VisitAll(func(*flag.Flag) { n++ })
+
+	return n > 0
 }
 
 // fanout sets one flag value on every seeder that defines the flag.

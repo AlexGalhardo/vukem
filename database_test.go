@@ -1043,6 +1043,30 @@ func TestSeedCommandSelectsSeedersAndPassesFlags(t *testing.T) {
 			want: []string{"Users fresh=false n=0"},
 		},
 		{name: "help", args: []string{"DemoCatalog", "-h"}, wantErr: "-count"},
+		{
+			name:    "force is never a seeder flag value",
+			env:     "production",
+			args:    []string{"DemoCatalog", "--count", "--force"},
+			wantErr: "flag needs an argument: -count",
+		},
+		{name: "class without a name", args: []string{"--class"}, wantErr: "-class needs a seeder name"},
+		{
+			name:    "class without a name in production",
+			env:     "production",
+			args:    []string{"--force", "--class"},
+			wantErr: "-class needs a seeder name",
+		},
+		{
+			name:    "empty class",
+			env:     "production",
+			args:    []string{"--force", "--class="},
+			wantErr: "-class needs a seeder name",
+		},
+		{
+			name:    "class without a name after flags",
+			args:    []string{"--fresh", "--class"},
+			wantErr: "-class needs a seeder name",
+		},
 	}
 
 	for _, tt := range tests {
@@ -1107,7 +1131,7 @@ func TestSeedCommandSelectsSeedersAndPassesFlags(t *testing.T) {
 func TestSecurity_A02_SeederFlagsCannotShadowForce(t *testing.T) {
 	t.Parallel()
 
-	for _, reserved := range []string{"force", "class"} {
+	for _, reserved := range []string{"force", "class", "help", "h"} {
 		t.Run(reserved, func(t *testing.T) {
 			t.Parallel()
 
@@ -1134,4 +1158,70 @@ func TestSecurity_A02_SeederFlagsCannotShadowForce(t *testing.T) {
 			}
 		})
 	}
+}
+
+// uncomparableSeeder is a value seeder that == would panic on.
+type uncomparableSeeder struct {
+	tags []string
+	log  *[]string
+}
+
+func (s uncomparableSeeder) Name() string { return "Tags" }
+
+func (s uncomparableSeeder) SeedApp(context.Context, *App) error {
+	*s.log = append(*s.log, "tags")
+	return nil
+}
+
+type valueFlagSeeder struct{}
+
+func (valueFlagSeeder) Name() string { return "ValueFlags" }
+
+func (s valueFlagSeeder) SeedFlags(fs *flag.FlagSet) { fs.Bool("fresh", false, "") }
+
+func (valueFlagSeeder) SeedApp(context.Context, *App) error { return nil }
+
+func TestSeedCommandSeederKinds(t *testing.T) {
+	t.Parallel()
+
+	run := func(t *testing.T, seeder AppSeeder, args ...string) (string, error) {
+		t.Helper()
+
+		var out bytes.Buffer
+
+		getenv := func(k string) (string, bool) {
+			v, ok := map[string]string{"APP_KEY": testKey, "APP_ENV": "test", "DATABASE_URL": ":memory:"}[k]
+			return v, ok
+		}
+
+		build := func(opts ...Option) (*App, error) {
+			return New(append(opts, WithLogger(discardLogger()), WithStdout(&out), WithAppSeeders(seeder))...)
+		}
+
+		err := RunMain(t.Context(), append([]string{"app", "db:seed"}, args...), getenv, build)
+
+		return out.String(), err
+	}
+
+	t.Run("uncomparable value seeder named twice", func(t *testing.T) {
+		t.Parallel()
+
+		var log []string
+
+		if out, err := run(t, uncomparableSeeder{tags: []string{"a"}, log: &log}, "Tags", "tags"); err != nil {
+			t.Fatalf("db:seed Tags tags = %v, output %q", err, out)
+		}
+
+		if diff := cmp.Diff([]string{"tags"}, log); diff != "" {
+			t.Errorf("runs (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("value receiver with flags", func(t *testing.T) {
+		t.Parallel()
+
+		if _, err := run(t, valueFlagSeeder{}); err == nil || !strings.Contains(err.Error(), "pointer") {
+			t.Fatalf("db:seed with a value FlagSeeder = %v, want a pointer receiver error", err)
+		}
+	})
 }
