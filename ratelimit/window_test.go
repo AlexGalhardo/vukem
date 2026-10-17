@@ -2,6 +2,8 @@ package ratelimit
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -99,13 +101,56 @@ func TestWindowBoundsKeyLength(t *testing.T) {
 		}
 	}
 
-	if !strings.Contains(rec.keys[0], "ip:192.0.2.1") {
-		t.Errorf("short key = %q, want it readable", rec.keys[0])
+	// MySQL keys are VARBINARY(255); keys are hashed to a fixed length.
+	if len(rec.keys[0]) != len(rec.keys[1]) || len(rec.keys[1]) > 128 {
+		t.Errorf("stored keys %q, want one fixed length ≤ 128", rec.keys)
+	}
+}
+
+// Keys come from requests (emails, tokens): no key may land in another
+// key's bucket, whatever bytes or separators it carries.
+func TestSecurity_A07_RateLimitKeysDoNotCollide(t *testing.T) {
+	t.Parallel()
+
+	long := "login:" + strings.Repeat("a", 400) + "@example.com"
+	sum := sha256.Sum256([]byte(long))
+
+	rec := &recorder{}
+	w := NewWindow(rec, "login", 5, time.Minute)
+	keys := []string{
+		long,
+		"sha256:" + hex.EncodeToString(sum[:16]), // the old encoding of long
+		"a:b", "a", "a:b:0", "x\x00y", "x\ny",
 	}
 
-	// MySQL keys are VARBINARY(255): long keys (emails) are hashed.
-	if n := len(rec.keys[1]); n > 128 {
-		t.Errorf("long key stored with %d bytes, want ≤ 128", n)
+	for _, key := range keys {
+		if _, err := w.Allow(t.Context(), key); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	seen := map[string]string{}
+	for i, stored := range rec.keys {
+		if prev, ok := seen[stored]; ok {
+			t.Fatalf("keys %q and %q share the bucket %q", prev, keys[i], stored)
+		}
+
+		seen[stored] = keys[i]
+	}
+}
+
+func TestWindowRejectsBadNames(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{"", "a:b", strings.Repeat("n", 65), "bad\nname"} {
+		w := NewWindow(&recorder{}, name, 5, time.Minute)
+		if _, err := w.Allow(t.Context(), "ip:192.0.2.1"); err == nil {
+			t.Errorf("NewWindow(%q).Allow() succeeded, want an error (deny)", name)
+		}
+	}
+
+	if _, err := NewWindow(&recorder{}, "two-factor.challenge_1", 5, time.Minute).Allow(t.Context(), "k"); err != nil {
+		t.Errorf("valid name: %v", err)
 	}
 }
 

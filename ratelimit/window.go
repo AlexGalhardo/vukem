@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"regexp"
 	"strconv"
 	"time"
 )
@@ -34,7 +35,9 @@ type Window struct {
 }
 
 // NewWindow allows limit requests per window for each key, counted in c
-// under "ratelimit:<name>:<key>:<window start>".
+// under "ratelimit:<name>:<SHA-256 of key>:<window start>". name is 1-64
+// letters, digits, '.', '_' or '-'; with any other name every Allow
+// fails, so the route denies (503) instead of sharing budgets.
 func NewWindow(c Counter, name string, limit int, window time.Duration) *Window {
 	return &Window{
 		counter: c, name: name, limit: max(limit, 1),
@@ -42,9 +45,15 @@ func NewWindow(c Counter, name string, limit int, window time.Duration) *Window 
 	}
 }
 
+var nameRe = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
+
 // Allow implements Limiter. Denied requests count too, so a client that
 // keeps hammering stays limited until the window ends.
 func (w *Window) Allow(ctx context.Context, key string) (Result, error) {
+	if !nameRe.MatchString(w.name) {
+		return Result{}, fmt.Errorf("ratelimit: invalid limiter name %q (1-64 of A-Z a-z 0-9 . _ -)", w.name)
+	}
+
 	now := w.now()
 	start := now.Truncate(w.window)
 	reset := start.Add(w.window).Sub(now)
@@ -68,15 +77,11 @@ func (w *Window) Allow(ctx context.Context, key string) (Result, error) {
 	return res, nil
 }
 
-// maxKey keeps bucket keys within database key columns (VARBINARY(255) on
-// MySQL); longer keys, such as emails in login throttles, are hashed.
-const maxKey = 64
-
+// bucket hashes every key: keys come from requests, so a raw key could
+// carry separators or forge the encoding of another one, and the hash
+// keeps every database key within VARBINARY(255) on MySQL.
 func (w *Window) bucket(key string, start time.Time) string {
-	if len(key) > maxKey {
-		sum := sha256.Sum256([]byte(key))
-		key = "sha256:" + hex.EncodeToString(sum[:16])
-	}
+	sum := sha256.Sum256([]byte(key))
 
-	return "ratelimit:" + w.name + ":" + key + ":" + strconv.FormatInt(start.UnixMilli(), 10)
+	return "ratelimit:" + w.name + ":" + hex.EncodeToString(sum[:16]) + ":" + strconv.FormatInt(start.UnixMilli(), 10)
 }
