@@ -48,18 +48,21 @@ type Argon2Params struct {
 	KeyLen  uint32
 }
 
-// DefaultArgon2 follows the OWASP password storage recommendation
-// (m=64 MiB, t=1, p=4) with 16-byte salts and 32-byte keys.
-var DefaultArgon2 = Argon2Params{
-	Memory:  64 * 1024,
-	Time:    1,
-	Threads: 4,
-	SaltLen: 16,
-	KeyLen:  32,
-} //nolint:gochecknoglobals // read-only defaults
+// DefaultArgon2Params returns the OWASP password storage recommendation
+// (m=64 MiB, t=1, p=4) with 16-byte salts and 32-byte keys. It returns a
+// copy, so tuning one field never weakens Default for the whole process.
+func DefaultArgon2Params() Argon2Params {
+	return Argon2Params{
+		Memory:  64 * 1024,
+		Time:    1,
+		Threads: 4,
+		SaltLen: 16,
+		KeyLen:  32,
+	}
+}
 
-// Default returns the argon2id hasher with DefaultArgon2.
-func Default() Hasher { return Argon2id(DefaultArgon2) }
+// Default returns the argon2id hasher with DefaultArgon2Params.
+func Default() Hasher { return Argon2id(DefaultArgon2Params()) }
 
 // Fake returns a fast argon2id hasher for tests (never in production).
 func Fake() Hasher {

@@ -36,6 +36,31 @@ func TestRoundTrips(t *testing.T) {
 	}
 }
 
+func TestSecurity_A04_Argon2Defaults(t *testing.T) {
+	t.Parallel()
+
+	want := Argon2Params{Memory: 64 * 1024, Time: 1, Threads: 4, SaltLen: 16, KeyLen: 32}
+
+	p := DefaultArgon2Params()
+	if p != want {
+		t.Fatalf("DefaultArgon2Params() = %+v, want %+v (OWASP)", p, want)
+	}
+
+	p.Memory = 8
+	if got := DefaultArgon2Params(); got != want {
+		t.Errorf("DefaultArgon2Params() after mutating a copy = %+v, want %+v", got, want)
+	}
+
+	h, err := Default().Make("correct horse")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if Argon2id(want).NeedsRehash(h) {
+		t.Errorf("Default() hash %q does not use the OWASP parameters", h)
+	}
+}
+
 func TestArgon2PHCFormat(t *testing.T) {
 	t.Parallel()
 

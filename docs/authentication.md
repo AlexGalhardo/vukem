@@ -100,7 +100,7 @@ Standard library only. `jwt.Sign(key, jwt.Claims{Subject, Issuer, Audience, Expi
 | **argon2id** (default) | m=64 MiB, t=1, p=4, 16-byte salt, 32-byte key | PHC string `$argon2id$v=19$m=…,t=…,p=…$salt$hash` |
 | bcrypt | cost you choose (12 recommended) | inputs over 72 bytes are rejected (`ErrPasswordTooLong`), never truncated |
 
-`hash.Default()`, `hash.Argon2id(params)`, `hash.Bcrypt(cost)`, `hash.Fake()` (tests). `Verify` reads both formats; `NeedsRehash` is true for other parameters or algorithms. Both come from `golang.org/x/crypto`.
+`hash.Default()`, `hash.Argon2id(params)` (start from `hash.DefaultArgon2Params()`), `hash.Bcrypt(cost)`, `hash.Fake()` (tests). `Verify` reads both formats; `NeedsRehash` is true for other parameters or algorithms. Both come from `golang.org/x/crypto`.
 
 ## `install:auth` scaffold
 

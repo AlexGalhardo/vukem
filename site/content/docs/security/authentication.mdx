@@ -111,7 +111,7 @@ Opaque tokens `<id>.<secret>` from `crypto/rand`; only the SHA-256 of the secret
 | argon2id (default) | m=64 MiB, t=1, p=4, 16-byte salt, 32-byte key | PHC string `$argon2id$v=19$m=…,t=…,p=…$salt$hash` |
 | bcrypt | your cost (12 recommended) | inputs over 72 bytes are rejected, never truncated |
 
-`hash.Default()`, `hash.Argon2id(params)`, `hash.Bcrypt(cost)`, `hash.Fake()` for tests. `hash.Verify` reads both formats.
+`hash.Default()`, `hash.Argon2id(params)` (start from `hash.DefaultArgon2Params()`), `hash.Bcrypt(cost)`, `hash.Fake()` for tests. `hash.Verify` reads both formats.
 
 ## Testing
 
