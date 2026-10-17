@@ -21,4 +21,9 @@
 // queries) with automatic persisted queries or an allowlist; [Serve]
 // mounts it on a Vukem router with an explorer page that is off in
 // production.
+//
+// Subscriptions bind a root field to a channel of events ([Subscription],
+// [FromBroadcast] for broadcast channels) and are served by [ServeWS]
+// (graphql-ws protocol over any WebSocket connection, e.g.
+// drivers/websocket) or by [Schema.Handler] as server-sent events.
 package graphql

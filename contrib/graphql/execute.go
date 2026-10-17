@@ -188,19 +188,29 @@ func (s *Schema) run(ctx context.Context, p *prepared) *Response {
 		}}}
 	}
 
-	e := &executor{s: s, frags: map[string]*fragmentDef{}, vars: p.vars, scope: newScope()}
-	for _, f := range p.doc.fragments {
-		e.frags[f.name] = f
-	}
-
-	ctx = withScope(ctx, e.scope)
-
 	root := s.query
 	if p.op.kind == opMutation {
 		root = s.mutation
 	}
 
-	obj, ok := e.selectionSet(ctx, p.op.sel, root, nil, nil, p.op.kind == opMutation)
+	return s.execute(ctx, p, root, nil, p.op.kind == opMutation)
+}
+
+func (s *Schema) newExecutor(p *prepared) *executor {
+	e := &executor{s: s, frags: map[string]*fragmentDef{}, vars: p.vars, scope: newScope()}
+	for _, f := range p.doc.fragments {
+		e.frags[f.name] = f
+	}
+
+	return e
+}
+
+// execute runs the operation's selection set on rootValue of root.
+func (s *Schema) execute(ctx context.Context, p *prepared, root *namedType, rootValue any, serial bool) *Response {
+	e := s.newExecutor(p)
+	ctx = withScope(ctx, e.scope)
+
+	obj, ok := e.selectionSet(ctx, p.op.sel, root, rootValue, nil, serial)
 	e.scope.end(ctx)
 
 	var data []byte

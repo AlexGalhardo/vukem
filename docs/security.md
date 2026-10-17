@@ -33,6 +33,7 @@ What Vukem does **by default** to protect applications, mapped to the [OWASP Top
 | `drivers/s3` presigned GET/PUT URLs sign the validated key and expire after 1 s to 7 days; anything outside that range is refused (`TestSecurity_A01_S3PresignExpiryBounded`) | B |
 | WebSocket upgrades (`drivers/websocket`) are same-origin only: a browser `Origin` outside the request host and the explicit `AllowedOrigins` allowlist gets 403 before the handler runs; `AllowedOrigins("*")` or a malformed pattern refuses every upgrade; accepting any origin needs `InsecureSkipOriginCheck()` (`TestSecurity_A01_WebSocketOriginChecked`) | B |
 | Broadcast channels (`broadcast`, SSE and `drivers/websocket` transports) fail closed: private and presence channels need a matching rule and a user, public channels must be declared, a rule error or gate denial (including 404) answers 403, and an SSE request with one refused channel streams nothing; channel names are limited to 128 characters of `A-Z a-z 0-9 _ - = @ . :` (400 otherwise), so lists, topics and frames cannot be forged (`TestSecurity_A01_BroadcastPrivateChannelsAuthorized`, in both modules) | B |
+| GraphQL subscriptions (`contrib/graphql`) authorize like the rest of the app: `graphql.ServeWS` runs on the same-origin `drivers/websocket` upgrade, `connection_init` goes through the `OnConnect` hook (an error closes with 4403) and no operation runs before `connection_ack` (4401); `FromBroadcast` subscribes with `broadcast.Server.Subscribe` in the operation's context, so a channel denied by its rule, or a client without a user, fails the subscription with `FORBIDDEN` and receives no events (`TestSecurity_A01_GraphQLSubscriptionsAuthorized`) | B |
 
 **App responsibility:** call `Authorize` in every handler that touches owned data; scope queries by tenant/user.
 
@@ -124,6 +125,7 @@ What Vukem does **by default** to protect applications, mapped to the [OWASP Top
 | Transactions with rollback-on-error/panic (`db.Tx`) so multi-step operations are atomic | P |
 | Threat model of each subsystem recorded in its doc before BETA; security review gate in [PLAN.md](../PLAN.md) (`B.5.2`) | B |
 | GraphQL operations are bounded before any resolver runs: depth 12, complexity 1000 (list arguments `first`/`last`/`limit` multiply cost), 30 aliases, 10000 tokens, 1 MiB body; persisted-query allowlist mode runs only listed documents and fails closed without a store (`TestSecurity_A06_GraphQLDepthAndComplexityLimits`, `TestSecurity_A06_GraphQLAllowlistOnly`) | B |
+| GraphQL subscriptions are bounded: every WebSocket and SSE document goes through the same parse, validation, limits and persisted-query checks as HTTP; a socket that does not send `connection_init` within 10s is closed (4408); one connection runs at most 32 operations (`TOO_MANY_REQUESTS` beyond); introspection is off over the socket unless `WSConfig.Introspection` (`TestSecurity_A06_GraphQLSubscriptionsBounded`) | B |
 
 ### A07:2025 — Authentication Failures
 

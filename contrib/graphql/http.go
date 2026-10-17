@@ -64,6 +64,11 @@ type handler struct {
 }
 
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPost && acceptsEventStream(r.Header.Get("Accept")) {
+		h.serveSSE(w, r)
+		return
+	}
+
 	media, ok := negotiate(r.Header.Get("Accept"))
 	if !ok {
 		http.Error(

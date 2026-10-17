@@ -112,12 +112,17 @@ type fieldType struct {
 	deprecated *string
 	parent     *namedType
 
-	resolve resolveFn
-	async   bool // has a user resolver: may run concurrently with siblings
-	cost    int
+	resolve   resolveFn
+	subscribe subscribeFn // source stream of a subscription root field
+	async     bool        // has a user resolver: may run concurrently with siblings
+	cost      int
 }
 
 type resolveFn func(ctx context.Context, parent any, args map[string]any) (any, error)
+
+// subscribeFn creates a source event stream (spec §6.2.3.1); next blocks
+// for the next event and reports false when the stream or ctx ends.
+type subscribeFn func(ctx context.Context, args map[string]any) (next func(context.Context) (any, bool), err error)
 
 type inputValue struct {
 	name       string
@@ -215,6 +220,7 @@ type builder struct {
 type binding struct {
 	typeName, field string
 	resolve         resolveFn
+	subscribe       subscribeFn
 	argNames        []string // json names of the Go args struct, checked against the SDL
 	cost            int
 }
@@ -864,6 +870,7 @@ func (b *builder) bind() error {
 		}
 
 		f.resolve = bd.resolve
+		f.subscribe = bd.subscribe
 		f.async = true
 		f.cost = cmp.Or(bd.cost, 1)
 	}
@@ -876,6 +883,15 @@ func (b *builder) bind() error {
 		for _, f := range root.fields {
 			if f.resolve == nil {
 				return fmt.Errorf("graphql: %s.%s has no resolver (bind it with graphql.Query/Mutation/Field)",
+					root.name, f.name)
+			}
+		}
+	}
+
+	if root := b.s.subscr; root != nil {
+		for _, f := range root.fields {
+			if f.subscribe == nil {
+				return fmt.Errorf("graphql: %s.%s has no source stream (bind it with graphql.Subscription)",
 					root.name, f.name)
 			}
 		}
@@ -897,6 +913,12 @@ func (b *builder) rootName(k opKind) string {
 		}
 
 		return "Mutation"
+	case opSubscription:
+		if b.s.subscr != nil {
+			return b.s.subscr.name
+		}
+
+		return "Subscription"
 	default:
 		return b.s.query.name
 	}

@@ -49,7 +49,74 @@ schema, err := graphql.New(sdl,
 - Query fields that have a resolver run concurrently with their siblings, and items of composite lists run concurrently; output keeps document order. Mutation root fields run one after another. `graphql.WithoutConcurrency()` resolves everything serially (for resolvers sharing one `*sql.Tx`).
 - Null propagation follows the spec: an error in a non-null field nulls the nearest nullable parent; `data` is `null` when a non-null root field fails and absent for request errors.
 - Panics in resolvers are recovered and reported as internal errors.
-- Subscriptions validate but do not execute over this transport yet (B.6.4).
+- Subscription operations run through `schema.Subscribe`, `graphql.ServeWS` or the handler's SSE mode ([Subscriptions](#subscriptions)); `Execute` and plain JSON POST reject them with `BAD_REQUEST`.
+
+## Subscriptions
+
+A subscription root field is bound to a source stream: a resolver that returns a channel. Each value received is the field's value for that event and is completed against the selection set (spec §6.2.3 `CreateSourceEventStream` / `ExecuteSubscriptionEvent`), so the client gets one response per event.
+
+```go
+// SDL: type Subscription { postCreated: Post!  countdown(from: Int!): Int! }
+graphql.Subscription("countdown", func(ctx context.Context, a CountArgs) (<-chan int, error) {
+	ch := make(chan int)
+	go func() {
+		defer close(ch) // closing the channel completes the subscription
+		for i := a.From; i > 0; i-- {
+			select {
+			case ch <- i:
+			case <-ctx.Done(): // the client unsubscribed or left
+				return
+			}
+		}
+	}()
+	return ch, nil
+}),
+graphql.Subscription("postCreated", graphql.FromBroadcast[graphql.NoArgs, Post](b,
+	func(context.Context, graphql.NoArgs) ([]string, error) { return []string{"posts"}, nil },
+	"post.created")), // optional event-name filter
+```
+
+- `Subscription[A, O](field, fn, opts...)` decodes and validates `A` like `Query`. The resolver owns the channel: it closes it to complete and must stop sending once `ctx` is done. An error from `fn` is a field error of the single response (`next` with `errors`, then `complete`). Every field of the subscription root needs a `Subscription` binding (boot error otherwise).
+- `FromBroadcast[A, O](b, channels, events...)` subscribes to [broadcast](frontend.md#broadcasting) channels with `b.Subscribe` in the operation's context, so the public / private / presence rules apply and **fail closed**: a denied channel fails the subscription with `FORBIDDEN`. Message data is decoded from JSON into `O` (`broadcast.Message` passes messages through); presence notifications are skipped unless named in `events`; data that does not decode is dropped. A mutation that calls `b.Publish` / `b.Broadcast` reaches every subscriber, across instances with a broker.
+- `schema.Subscribe(ctx, req)` returns an `iter.Seq[*Response]` (or the error response when the request fails before the stream starts); queries and mutations yield one response. Cancel `ctx` to stop it.
+
+### WebSocket transport (graphql-ws)
+
+`graphql.ServeWS(schema, conn, graphql.WSConfig{…})` speaks the [`graphql-transport-ws`](https://github.com/enisdenjo/graphql-ws/blob/master/PROTOCOL.md) protocol, compatible with the `graphql-ws` client (Apollo Client `GraphQLWsLink`, urql, Relay):
+
+```go
+r.Get("/graphql/ws", websocket.Handler(func(c *websocket.Conn) error {
+	return graphql.ServeWS(schema, c, graphql.WSConfig{
+		OnConnect: func(ctx context.Context, payload map[string]any) (context.Context, error) {
+			return auth.FromToken(ctx, payload["token"]) // error → close 4403
+		},
+		Persisted: persisted, // the HandlerConfig value, so the allowlist covers both
+	})
+}, websocket.Subprotocols(graphql.WSProtocol)))
+```
+
+`contrib/graphql` does not depend on a WebSocket library: `ServeWS` takes a small `WSConn[C]` interface (`Context`, `Subprotocol`, `ReadText`, `WriteText`, `Close(code C, reason)`), generic over the close-code type so [`drivers/websocket`](frontend.md#websockets)'s `*Conn` satisfies it without an adapter and `C` is inferred. The driver keeps doing the upgrade work: same-origin check, 32 KiB read limit, ping/pong keepalive, write timeouts and shutdown.
+
+| Message / event | Behaviour |
+| --- | --- |
+| `connection_init` | must arrive within `InitTimeout` (10s) or the socket closes with 4408; `OnConnect(ctx, payload)` returns the context operations run in (nil hook: the upgrade request's context); an error closes with 4403; a second init closes with 4429 |
+| `ping` / `pong` | `ping` is answered with `pong` at any time; `pong` is ignored |
+| `subscribe` | before `connection_ack` closes with 4401; an id already running closes with 4409; parse, validation, variable, limit and persisted-query errors answer `error` with the GraphQL errors; more than `MaxSubscriptions` (32) running operations answer `error` with `TOO_MANY_REQUESTS` |
+| `next` / `complete` | one `next` per event, `complete` when the source ends; queries and mutations get one `next` and `complete` |
+| client `complete` | stops the operation (its context is cancelled; nothing more is sent for the id, which can be reused) |
+| invalid JSON, unknown type, missing id | close 4400; wrong subprotocol closes with 4406; an unencodable response closes with 4500 |
+
+Introspection is rejected over the socket unless `WSConfig.Introspection` is set.
+
+### SSE transport (graphql-sse)
+
+`schema.Handler` (and `graphql.Serve`) answer a POST that accepts `text/event-stream` in the graphql-sse "distinct connections" mode: one `next` event per result (`data` is the response JSON), then a `complete` event. Request errors are a JSON response with 400 before the stream opens. Subscriptions over GET and the "single connection" mode are not supported.
+
+```js
+import { createClient } from 'graphql-ws'
+const client = createClient({ url: `wss://${location.host}/graphql/ws`, connectionParams: { token } })
+client.subscribe({ query: 'subscription { postCreated { id title } }' }, { next: console.log, error: console.error, complete: () => {} })
+```
 
 ## Errors
 
@@ -108,7 +175,7 @@ graphql.Serve(app, r, "/graphql", schema, graphql.Config{
 
 ## Known gaps
 
-- Subscriptions (B.6.4) and incremental delivery (`@defer` / `@stream`) are not implemented.
+- Incremental delivery (`@defer` / `@stream`) is not implemented; subscriptions support the graphql-ws protocol and graphql-sse distinct connections only.
 - Field merging validation compares fields that share a response key in one selection set; it does not recurse into the merged sub-selections of fields from different branches.
 - Complexity is an upper bound: `@skip` / `@include` are not evaluated when measuring.
 - The explorer is a small built-in page, not the GraphiQL bundle; any GraphQL IDE can point at the endpoint in development.

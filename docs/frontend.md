@@ -196,6 +196,8 @@ ws.onmessage = (e) => { const m = JSON.parse(e.data); if (m.type === 'event') co
 // SSE: new EventSource('/broadcast/sse?channels=posts').addEventListener('PostPublished', (e) => JSON.parse(e.data))
 ```
 
+GraphQL subscriptions can be fed by broadcast channels (`graphql.FromBroadcast`, same authorization rules) and served over the `graphql-transport-ws` protocol or SSE: see [GraphQL subscriptions](graphql.md#subscriptions).
+
 Presence is tracked per instance: a user's several connections count as one member, and `joining`/`leaving` reach every instance through the broker, but `here` lists only the members connected to the instance serving the client. A cluster-wide member list needs a shared store (planned: Redis sets).
 
 ## Vite
