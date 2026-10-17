@@ -60,8 +60,11 @@ The starter vendors **htmx 4.0.0** at `resources/public/js/htmx.min.js`, served 
 
 ```html
 {{htmxScript (asset "js/htmx.min.js")}}
+{{vite "resources/css/app.css" "resources/js/app.ts"}}
 <!-- <script src="/js/htmx.min.js" defer nonce="…"></script> -->
 ```
+
+Keep `htmxScript` before `vite`: the htmx tag is `defer` and the Vite entry is a module script, and both run in document order, so this order makes `window.htmx` defined when `resources/js/app.ts` runs. The starter checks it in `tests/home_test.go` (`TestLayoutLoadsHTMXBeforeVite`).
 
 Starter views use no inline scripts, `hx-on`, event-handler or `style` attributes, so they run under the default CSP (`TestSecurity_A02_StarterViewsRespectCSP`). CSRF needs nothing extra for htmx: `CrossOriginProtection` checks `Sec-Fetch-Site`, and plain forms include `{{csrfField}}`.
 

@@ -9,8 +9,11 @@ The layout loads it with the request's CSP nonce:
 
 ```html title="resources/views/layouts/app.html"
 {{htmxScript (asset "js/htmx.min.js")}}
+{{vite "resources/css/app.css" "resources/js/app.ts"}}
 <!-- <script src="/js/htmx.min.js" defer nonce="…"></script> -->
 ```
+
+Keep `htmxScript` before `vite`: the htmx tag is `defer` and the Vite entry is a module script, and both run in document order, so this order makes `window.htmx` defined when `resources/js/app.ts` runs. The starter checks it in `tests/home_test.go` (`TestLayoutLoadsHTMXBeforeVite`).
 
 Starter views use no inline scripts, `hx-on`, event-handler or `style` attributes, so they run under the default Content-Security-Policy. CSRF needs no extra setup: `CrossOriginProtection` checks `Sec-Fetch-Site`, which browsers send with htmx requests.
 

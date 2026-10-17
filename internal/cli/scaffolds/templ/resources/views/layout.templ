@@ -1,6 +1,8 @@
 package views
 
 // Layout is the page shell; pages render inside it: @Layout("Title") { … }.
+// htmx loads before the Vite tags: deferred and module scripts run in
+// document order, so resources/js/app.ts can use window.htmx.
 templ Layout(title string) {
 	<!DOCTYPE html>
 	<html lang="en">
@@ -9,8 +11,8 @@ templ Layout(title string) {
 			<meta name="viewport" content="width=device-width, initial-scale=1"/>
 			<title>{ title }</title>
 			<meta property="csp-nonce" nonce={ cspNonce(ctx) }/>
-			@viteTags("resources/css/app.css", "resources/js/app.ts")
 			@script(asset(ctx, "js/htmx.min.js"))
+			@viteTags("resources/css/app.css", "resources/js/app.ts")
 		</head>
 		<body>
 			<header>

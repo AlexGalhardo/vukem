@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/AlexGalhardo/vukem/vukemtest"
@@ -16,4 +17,27 @@ func TestHome(t *testing.T) {
 	app.Client(t).Get("/").AssertOK().AssertSee("Your Vukem app is running")
 	app.Client(t).Get("/up").AssertOK()
 	app.Client(t).Get("/js/htmx.min.js").AssertOK()
+}
+
+// The Vite entry (resources/js/app.ts) is a module script, and module and
+// deferred scripts run in document order: htmx must come first so that
+// window.htmx exists when app.ts runs.
+func TestLayoutLoadsHTMXBeforeVite(t *testing.T) {
+	t.Parallel()
+
+	app := vukemtest.New(t, bootstrap.New)
+	body := app.Client(t).Get("/").AssertOK().Body()
+
+	htmx := strings.Index(body, `src="/js/htmx.min.js"`)
+	if htmx < 0 {
+		t.Fatalf("GET / has no htmx script:\n%s", body)
+	}
+
+	// No dev server and no build renders a comment; the dev server renders
+	// @vite/client; a build renders /build/ assets.
+	for _, marker := range []string{"<!-- vite:", "/@vite/client", `"/build/`} {
+		if i := strings.Index(body, marker); i >= 0 && i < htmx {
+			t.Errorf("GET / loads %q before htmx", marker)
+		}
+	}
 }
