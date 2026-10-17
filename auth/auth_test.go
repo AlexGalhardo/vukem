@@ -696,7 +696,13 @@ func TestSecurity_A04_TokenPrefixForSecretScanning(t *testing.T) {
 	}
 
 	// The prefix is a label, not a credential: the secret still decides.
-	if _, err := ta.tokens.Find(ctx, plain[:len(plain)-1]+"X"); err == nil {
+	// The replacement differs from the last character, so the secret always changes.
+	wrong := "X"
+	if strings.HasSuffix(plain, wrong) {
+		wrong = "Y"
+	}
+
+	if _, err := ta.tokens.Find(ctx, plain[:len(plain)-1]+wrong); err == nil {
 		t.Error("Find(prefixed token with a wrong secret) = nil, want error")
 	}
 
