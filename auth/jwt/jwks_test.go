@@ -2,6 +2,7 @@ package jwt_test
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -131,5 +132,54 @@ func TestRemoteJWKSRotation(t *testing.T) {
 
 	if srv.calls != calls {
 		t.Errorf("unknown kids refetched the JWKS %d times within MinRefresh", srv.calls-calls)
+	}
+}
+
+func TestSecurity_A07_RemoteJWKSRequiresAudienceAndIssuer(t *testing.T) {
+	t.Parallel()
+
+	ks := keys(t)
+	srv := newJWKSServer(t)
+	srv.publish(t, ks[1])
+
+	// A token the shared identity provider issued for another app.
+	other := claims()
+	other.Audience = []string{"someone-else"}
+
+	tok, err := jwt.Sign(ks[1], other)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name string
+		opts jwt.VerifyOptions
+		ok   bool
+	}{
+		{"no audience", jwt.VerifyOptions{Issuer: "https://vukem.test"}, false},
+		{"no issuer", jwt.VerifyOptions{Audience: "someone-else"}, false},
+		{"neither", jwt.VerifyOptions{}, false},
+		{"wrong audience", jwt.VerifyOptions{Issuer: "https://vukem.test", Audience: "api"}, false},
+		{"bound", jwt.VerifyOptions{Issuer: "https://vukem.test", Audience: "someone-else"}, true},
+		{"explicit opt-out", jwt.VerifyOptions{InsecureSkipAudience: true, InsecureSkipIssuer: true}, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			tt.opts.Now = clock
+			v := jwt.NewVerifier(&jwt.RemoteJWKS{URL: srv.URL}, tt.opts)
+
+			if misconfigured := v.Err() != nil; misconfigured != (tt.opts.Audience == "" && !tt.opts.InsecureSkipAudience ||
+				tt.opts.Issuer == "" && !tt.opts.InsecureSkipIssuer) {
+				t.Fatalf("Err() = %v", v.Err())
+			}
+
+			_, err := v.Verify(t.Context(), tok)
+			if (err == nil) != tt.ok || err != nil && !errors.Is(err, jwt.ErrInvalid) {
+				t.Fatalf("Verify() = %v, want ok %v", err, tt.ok)
+			}
+		})
 	}
 }
