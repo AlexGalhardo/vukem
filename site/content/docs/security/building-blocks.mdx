@@ -274,6 +274,20 @@ events.Listen(app.Events, func(ctx context.Context, e security.Event) error {
 
 `security.Event` carries `Name`, `At`, `Method`, `Path`, `IP`, `RequestID` and `Attrs` (never secrets).
 
+## Audit events
+
+Routine records that are not attacks (an admin recorded a payout, a role was granted) go through `web.AuditEvent` instead, so they do not drown the security alerts. It logs at `INFO` with message `audit event` and the same envelope (`event`, `method`, `path`, `request_id`), and dispatches a `security.Audit` (the fields of `security.Event`, a distinct type):
+
+```go
+web.AuditEvent(c.Request(), "payout.recorded", "actor_id", admin.AuthID(), "payout_id", p.ID)
+
+events.Listen(app.Events, func(ctx context.Context, a security.Audit) error {
+	return auditLog.Append(ctx, a.Name, a.Attrs)
+})
+```
+
+Pass the actor as an attribute and never pass secrets; a `config.Secret` value is logged masked.
+
 ## Lint guard
 
 The `crypto-randomness` depguard rule makes `math/rand` a lint error in `auth`, `session`, `csrf`, `signed`, `social`, `webhook`, `config` and `uuid`.

@@ -28,7 +28,7 @@ Vukem's security defaults are a design contract. Each default lands in a phase (
 | `APP_KEY` sub-keys derived with HKDF-SHA256 per purpose | A04 |
 | Request bodies capped (10 MiB default, `BodyLimit` per route); JSON trailing data rejected | A06 |
 | Request ids validated (safe characters, max 128) before logging | A09 |
-| Structured `slog` request logs; `web.SecurityEvent` logs security events at `WARN` | A09 |
+| Structured `slog` request logs; `web.SecurityEvent` logs security events at `WARN`, `web.AuditEvent` routine audit records at `INFO` | A09 |
 | Central error handler; 5xx details never sent to clients unless debug | A10 |
 | `Recover` converts panics to 500 and logs stacks server-side only | A10 |
 

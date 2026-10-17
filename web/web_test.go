@@ -2,6 +2,7 @@ package web
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -18,7 +19,9 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/AlexGalhardo/vukem/config"
 	"github.com/AlexGalhardo/vukem/errs"
+	"github.com/AlexGalhardo/vukem/security"
 )
 
 func newCtx(t *testing.T, r *http.Request, s *Services) (*Ctx, *httptest.ResponseRecorder) {
@@ -765,6 +768,69 @@ func TestSecurity_A09_SecurityEventsAtWarn(t *testing.T) {
 		if rec[k] != v {
 			t.Errorf("security event %s = %v, want %v (record %s)", k, rec[k], v, buf.String())
 		}
+	}
+}
+
+type recordingDispatcher struct{ got []any }
+
+func (d *recordingDispatcher) Dispatch(_ context.Context, e any) error {
+	d.got = append(d.got, e)
+	return nil
+}
+
+// Audit events are INFO records with the security event envelope (event,
+// method, path, request_id), dispatched as security.Audit so alerting on
+// security.Event never sees routine records. A config.Secret attribute is
+// logged masked.
+func TestSecurity_A09_AuditEventsAtInfo(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+
+	d := &recordingDispatcher{}
+	s := &Services{Log: slog.New(slog.NewJSONHandler(&buf, nil)), Events: d}
+	r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/admin/payouts", http.NoBody)
+	r = r.WithContext(WithRequestID(WithServices(r.Context(), s), "req-1"))
+
+	AuditEvent(r, "payout.recorded", "actor_id", "7", "amount", 1500, "pix_key", config.NewSecret("hunter2"))
+
+	var rec map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &rec); err != nil {
+		t.Fatalf("log record %q: %v", buf.String(), err)
+	}
+
+	want := map[string]any{
+		"level":      "INFO",
+		"msg":        "audit event",
+		"event":      "payout.recorded",
+		"method":     "POST",
+		"path":       "/admin/payouts",
+		"request_id": "req-1",
+		"actor_id":   "7",
+		"amount":     float64(1500),
+	}
+	for k, v := range want {
+		if rec[k] != v {
+			t.Errorf("audit event %s = %v, want %v (record %s)", k, rec[k], v, buf.String())
+		}
+	}
+
+	if strings.Contains(buf.String(), "hunter2") {
+		t.Errorf("audit event logged a secret: %s", buf.String())
+	}
+
+	if len(d.got) != 1 {
+		t.Fatalf("dispatched %d events, want 1", len(d.got))
+	}
+
+	a, ok := d.got[0].(security.Audit)
+	if !ok {
+		t.Fatalf("dispatched %T, want security.Audit", d.got[0])
+	}
+
+	if a.Name != "payout.recorded" || a.RequestID != "req-1" || a.Path != "/admin/payouts" ||
+		a.Attrs["actor_id"] != "7" {
+		t.Errorf("dispatched audit = %+v", a)
 	}
 }
 

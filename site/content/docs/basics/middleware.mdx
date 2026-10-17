@@ -53,7 +53,7 @@ func requireAdmin(next http.Handler) http.Handler {
 }
 ```
 
-`web.Fail(w, r, err)` renders an error with the same format as handlers (HTML page, htmx fragment or problem+json). `web.SecurityEvent(r, "authz.denied", ...)` logs a security event at `WARN` with a stable `event` attribute.
+`web.Fail(w, r, err)` renders an error with the same format as handlers (HTML page, htmx fragment or problem+json). `web.SecurityEvent(r, "authz.denied", ...)` logs a security event at `WARN` with a stable `event` attribute. `web.AuditEvent(r, "payout.recorded", ...)` logs a routine audit record at `INFO` with the same envelope.
 
 ## Built-in middleware
 
