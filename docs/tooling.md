@@ -68,7 +68,7 @@ Spec: <https://www.conventionalcommits.org/en/v1.0.0/>. Enforced by the in-repo 
 
 - [SemVer 2.0.0](https://semver.org/spec/v2.0.0.html). Tags `vMAJOR.MINOR.PATCH` (leading `v`, required by Go).
 - **v0.x** during Prototype/ALPHA: minor bumps may break; patch never breaks.
-- BETA: `v1.0.0-beta.N`, then `v1.0.0-rc.N`, then `v1.0.0`.
+- BETA: `v0.N.0` per group, then `v1.0.0` directly once the 1.0 exit criteria hold (no release candidates, see brainstorming Q14).
 - Driver modules are tagged with their path prefix: `drivers/postgres/v0.3.0`.
 - **Never move or delete a pushed tag** (the Go proxy caches forever). Bad release → new patch with `retract` in `go.mod`.
 - Release order for multi-module changes: core → update drivers' `go.mod` → tag drivers.
@@ -98,7 +98,7 @@ Spec: <https://www.conventionalcommits.org/en/v1.0.0/>. Enforced by the in-repo 
 | --- | --- | --- |
 | Prototype | `v0.0.N` (patch bump per group) | `v0.1.0` when P.12 closes |
 | ALPHA | `v0.N.0` (minor bump per group) | last ALPHA minor |
-| BETA | `v0.N.0` per group (B.0 = `v0.15.0`, B.1 = `v0.16.0`, …) | `v1.0.0-beta.1` when BETA closes, then `v1.0.0-rc.N` → `v1.0.0` |
+| BETA | `v0.N.0` per group (B.0 = `v0.15.0`, B.1 = `v0.16.0`, …) | `v1.0.0` when BETA and the 1.0 exit criteria close (Q14) |
 
 1. Push the group's commits to `main`.
 2. `go run ./internal/tools/release -push vX.Y.Z` (or `task release -- vX.Y.Z`, which runs `task ci:full` first) once GitHub Actions is green for the pushed commits:

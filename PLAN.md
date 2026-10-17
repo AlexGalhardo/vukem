@@ -442,7 +442,7 @@ Applies to **every** task:
 
 ---
 
-## Phase 3 — BETA (`v1.0.0-beta.N` → `v1.0.0-rc.N`)
+## Phase 3 — BETA (`v0.x` → `v1.0.0`)
 
 **Goal:** feature-complete 1.0 surface; API stabilisation begins.
 
@@ -593,7 +593,6 @@ Applies to **every** task:
 
 ### BETA exit criteria
 
-- [ ] Two RCs with no API changes between them.
 - [x] All conformance suites green on SQLite, Postgres, MySQL, Redis, Mongo, S3 (MinIO).
 - [x] HTMX, templ and Inertia (React, Vue, Svelte) starters all pass e2e on all OSes.
 - [ ] No open `security` issues; `govulncheck` clean; OpenSSF Scorecard ≥ 7.
@@ -632,3 +631,6 @@ Applies to **every** task:
 - [ ] All previous exit criteria still hold.
 - [ ] Stability policy published; API frozen (apidiff gate in CI against `v1.0.0`).
 - [ ] At least one real project (maintainer's) running on 1.0 in production.
+- [ ] Vukem Forms Project
+- [ ] Vukem Go Interviews Questions Quizz Project
+- [ ] Vukem Rifa Project

@@ -118,6 +118,7 @@ blog/
 | Q11 | Agent config | `AGENTS.md` canonical (≤50 lines, links to docs), `CLAUDE.md` imports it; `.claude/rules/*` path-scoped; `.claude/settings.json` with permission allowlist + PostToolUse format hook | rules only | Maintainer approved |
 | Q12 | Comparative benchmarks (B.5.3) | Own module `internal/bench` (in `go.work`, not in `MODULES`) depending on chi and echo; run by `task bench` and a manual `Bench` workflow; results in [performance.md](performance.md) | Benchmarks in core tests; third-party benchmark suites | A comparison needs the competitors as code, and keeping them in a never-published module leaves the core's `go.mod` untouched |
 | Q13 | 1.0 announcement (S.3.2) | README and the GitHub release only; posts to Go community channels (r/golang, Gophers Slack, golang-nuts) are the maintainer's call, outside the plan | Agent-written posts on community channels | Maintainer decision (2026-10-17): those channels speak for the maintainer |
+| Q14 | 1.0 validation | No release candidates: v1.0.0 follows the latest v0.x once three maintainer projects (Forms, Go interview quiz, Rifa) run in production on Railway, each in its own repository using the published modules; payments only in Stripe and AbacatePay sandboxes | Two RCs with no API changes between them | Maintainer decision (2026-10-17): real apps exercise the API better than an RC soak |
 
 ## Phase scope
 
