@@ -61,6 +61,8 @@ func (a *App) Mailer() (*mail.Mailer, error) {
 			t = a.Devtools.MailTransport(t)
 		}
 
+		t = a.wrapMail(t)
+
 		var views web.Renderer
 		if a.Views != nil {
 			views = a.Views

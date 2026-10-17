@@ -64,8 +64,8 @@ func (a *App) DB() (*database.DB, error) {
 			opts = append(opts, database.WithEncrypter(a.Crypt))
 		}
 
-		if a.Devtools != nil {
-			opts = append(opts, database.WithQueryObserver(a.Devtools))
+		if obs := a.queryObserver(); obs != nil {
+			opts = append(opts, database.WithQueryObserver(obs))
 		}
 
 		for _, obs := range a.queryObs {
