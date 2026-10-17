@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.1] - 2026-10-17
+
+### Changed
+
+- **web:** Allocate the response writer inside Ctx and add WriteString
+- **orm:** Reuse scan buffers across rows and presize limited Get
+
+### Fixed
+
+- **release:** Ignore driver and contrib tags when finding the previous release
+
+### Security
+
+- **docs:** Document release signing, sboms and verification
+
 ## [0.20.0] - 2026-10-17
 
 ### Added
@@ -331,7 +346,8 @@ Project foundation. No framework code yet; see [PLAN.md](PLAN.md) for the roadma
 - README, MIT license, CONTRIBUTING, SECURITY and CODE_OF_CONDUCT.
 - Agent configuration: `AGENTS.md`, `CLAUDE.md`, path-scoped `.claude/rules/`, Go skills and project settings.
 
-[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.20.0...HEAD
+[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.20.1...HEAD
+[0.20.1]: https://github.com/AlexGalhardo/vukem/compare/v0.20.0...v0.20.1
 [0.20.0]: https://github.com/AlexGalhardo/vukem/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/AlexGalhardo/vukem/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/AlexGalhardo/vukem/compare/v0.17.0...v0.18.0
