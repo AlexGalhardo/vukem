@@ -296,7 +296,7 @@ Applies to **every** task:
 - [x] `vukem new blog` → `vukem serve` → CRUD with HTMX partials, validation errors (422), flash messages — **no Node required**.
 - [x] The starter's example controller also exposes JSON endpoints that return problem+json on errors, covered by API assertions.
 - [x] Core coverage ≥ 80% overall; router, validate, session, orm, schema, config ≥ 90%.
-- [ ] Zero third-party deps in core except `modernc.org/sqlite` and `golang.org/x/crypto`.
+- [x] Zero third-party deps in core except `modernc.org/sqlite` and `golang.org/x/crypto`.
 - [x] CI green on the full matrix; `govulncheck` clean.
 - [x] Router benchmark: < 1 µs/op and ≤ 2 allocs for a static route on CI hardware (documented baseline).
 - [ ] `go test -run TestSecurity ./...` covers every **P** row of [docs/security.md](docs/security.md); `gosec` and `govulncheck` clean.
@@ -434,9 +434,9 @@ Applies to **every** task:
 
 - [x] `vukem install:auth` produces a working login/register/reset/verify flow with passing generated tests.
 - [x] `vukem new shop --api` produces a token-authenticated JSON API with pagination, filtering, CORS, rate limiting and problem+json errors, with passing generated tests.
-- [ ] ORM + schema conformance suite green on SQLite and Postgres.
-- [ ] Mail, cache, storage, events, rate limiting each have a fake and docs.
-- [ ] Core deps still within the allowlist; Postgres pulled only via `drivers/postgres`.
+- [x] ORM + schema conformance suite green on SQLite and Postgres.
+- [x] Mail, cache, storage, events, rate limiting each have a fake and docs.
+- [x] Core deps still within the allowlist; Postgres pulled only via `drivers/postgres`.
 - [ ] Every **A** row of [docs/security.md](docs/security.md) has its `TestSecurity_*` test.
 - [ ] Coverage gates hold; integration CI green.
 
