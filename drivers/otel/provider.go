@@ -3,6 +3,7 @@ package otel
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"strings"
 
@@ -108,6 +109,11 @@ func (p *Provider) Register(app *vukem.App) error {
 		otelglobal.SetTracerProvider(p.tp)
 		otelglobal.SetTextMapPropagator(DefaultPropagator())
 	}
+
+	// Loggers taken from app.Log after Register (request logging, web.Ctx.Log,
+	// queue, mail) carry the trace and span ids of the record's context.
+	app.Log = slog.New(LogHandler(app.Log.Handler()))
+	app.Router.Services().Log = app.Log
 
 	mw := Middleware(p.tp)
 	app.Router.UseServer(mw)

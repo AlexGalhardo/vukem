@@ -9,6 +9,9 @@
 // or, with a TracerProvider of your own:
 //
 //	r.UseServer(otel.Middleware(tp))
+//	log := slog.New(otel.LogHandler(base)) // trace_id and span_id on records
+//
+// The provider installs [LogHandler] on app.Log itself.
 //
 // See https://github.com/AlexGalhardo/vukem/blob/main/docs/subsystems.md.
 package otel
