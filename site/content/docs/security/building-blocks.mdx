@@ -165,13 +165,13 @@ if err != nil {
 }
 
 err = sender.Send(ctx, q, webhook.Delivery{
-	ID:       "order.paid." + strconv.FormatInt(order.ID, 10), // optional: "msg_<random>" when empty
+	ID:       "order_paid_" + strconv.FormatInt(order.ID, 10), // optional: "msg_<random>" when empty; no dots or spaces, at most 255 bytes
 	Endpoint: strconv.FormatInt(order.SellerID, 10),
 	Payload:  payload,
 })
 ```
 
-`Send` only enqueues; a worker (`vukem queue:work`, or `serve` with the memory driver) makes the HTTP call. The same `webhook-id` is sent on every retry, so the seller can drop duplicates (with `webhook.Dedupe` if they use Vukem too).
+`Send` only enqueues; a worker (`vukem queue:work`, or `serve` with the memory driver) makes the HTTP call. The same `webhook-id` is sent on every retry, so the seller can drop duplicates (with `webhook.Dedupe` if they use Vukem too). The payload is stored in the job as JSON, so insignificant whitespace may be removed before sending; the signature always covers the exact bytes sent.
 
 ### What happens on each attempt
 
@@ -179,12 +179,15 @@ err = sender.Send(ctx, q, webhook.Delivery{
 | --- | --- |
 | `2xx` | delivered, done |
 | `410 Gone` | not retried; `OnGone` runs (disable the endpoint there) |
-| any other status, a redirect, a timeout or a connection error | retried after 30s, 1m, 2m, 4m … (capped at 1h), 8 retries, then the job lands in `queue:failed` |
+| `3xx` | not retried: redirects are not followed, because they would send the signed body elsewhere |
+| any other status, a timeout or a connection error | retried after 30s, 1m, 2m, 4m … (capped at 1h), 8 retries, then the job lands in `queue:failed` |
 | URL resolves to a loopback, private or metadata address | refused before connecting (`httpclient.ErrBlockedAddress`), retried, then failed |
-| `http://` URL, missing or malformed secret | refused (nothing is sent unsigned or in plaintext), retried, then failed |
+| `http://` URL, `user:password@` in the URL, missing or malformed secret | refused (nothing is sent unsigned or in plaintext), retried, then failed |
 | `Endpoint` returns `webhook.ErrEndpointDisabled` | dropped without a request |
+| `Delivery.ID` empty or invalid when the job runs | dropped (recorded as `invalid`); retrying cannot fix it |
+| `OnGone` returns an error | logged; the delivery is still not retried, so make `OnGone` reliable |
 
-Each attempt is recorded in the log: endpoint id, event id, status, duration, error and time. Show a seller their last attempts with:
+Each attempt is recorded in the log: endpoint id, event id, status, duration, time and an error **category** (`blocked_address`, `timeout`, `refused`, `tls`, `network`, `http_status`, `invalid`, or empty on success). The category is safe to show the endpoint owner; the full error (resolved address, TLS details) stays in your server log. Show a seller their last attempts (at most 1000) with:
 
 ```go
 attempts, err := deliveries.Recent(ctx, sellerID, 20) // newest first
@@ -195,7 +198,7 @@ Logs and errors name the endpoint id and event id only: never the URL (it may ca
 | Option | Default |
 | --- | --- |
 | `Timeout` | 15s per HTTP attempt |
-| `Retries` | 8 |
+| `Retries` | 8 (`-1` for no retries) |
 | `Backoff` | `queue.Exponential(30 * time.Second)` |
 | `Logger` | `slog.Default()` |
 | `Now` | `time.Now` (the `webhook-timestamp` clock) |

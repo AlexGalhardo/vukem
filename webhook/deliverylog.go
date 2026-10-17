@@ -2,6 +2,7 @@ package webhook
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -18,7 +19,7 @@ type Attempt struct {
 	// Status is the HTTP status, 0 when no response arrived.
 	Status   int
 	Duration time.Duration
-	// Error is the transport error (refused, timeout, blocked address).
+	// Error is empty on success or one of the Attempt* categories.
 	Error string
 	At    time.Time
 }
@@ -38,9 +39,14 @@ type SQLDeliveryLog struct {
 	table string
 }
 
-var logTableRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+// The table name is at most 51 bytes so the index name ("_endpoint_at"
+// suffix) stays within the 63-byte identifier limit of Postgres and MySQL.
+var logTableRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,50}$`)
 
-const maxErrorLen = 1000
+const (
+	maxErrorLen = 1000
+	maxRecent   = 1000
+)
 
 // NewSQLDeliveryLog returns a log on table (default "webhook_deliveries").
 func NewSQLDeliveryLog(db *database.DB, table string) (*SQLDeliveryLog, error) {
@@ -115,6 +121,12 @@ func (l *SQLDeliveryLog) CreateTable(ctx context.Context) error {
 
 // Record implements DeliveryLog. Errors longer than 1000 bytes are cut.
 func (l *SQLDeliveryLog) Record(ctx context.Context, a Attempt) error {
+	// MySQL indexes these as VARCHAR(255); refuse rather than truncate, as a
+	// cut id would point at another endpoint or event.
+	if len(a.Endpoint) > maxIDLen || len(a.EventID) > maxIDLen {
+		return errors.New("webhook: record attempt: endpoint and event id must be at most 255 bytes")
+	}
+
 	msg := a.Error
 	if len(msg) > maxErrorLen {
 		msg = strings.ToValidUTF8(msg[:maxErrorLen], "")
@@ -129,10 +141,11 @@ func (l *SQLDeliveryLog) Record(ctx context.Context, a Attempt) error {
 	return nil
 }
 
-// Recent returns the latest limit attempts for endpoint, newest first.
+// Recent returns the latest limit attempts (1 to 1000) for endpoint,
+// newest first.
 func (l *SQLDeliveryLog) Recent(ctx context.Context, endpoint string, limit int) ([]Attempt, error) {
 	rows, err := l.db.QueryContext(ctx, l.q(`SELECT endpoint, event_id, status, duration_ms, error, attempted_at
-		FROM {t} WHERE endpoint = ? ORDER BY attempted_at DESC, id DESC LIMIT ?`), endpoint, max(limit, 1))
+		FROM {t} WHERE endpoint = ? ORDER BY attempted_at DESC, id DESC LIMIT ?`), endpoint, min(max(limit, 1), maxRecent))
 	if err != nil {
 		return nil, fmt.Errorf("webhook: recent attempts: %w", err)
 	}

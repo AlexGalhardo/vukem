@@ -6,6 +6,7 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -13,11 +14,14 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
+	"net"
 	"net/http"
 	"net/netip"
 	"net/url"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/AlexGalhardo/vukem/httpclient"
@@ -88,7 +92,9 @@ type Delivery struct {
 	ID string `json:"id"`
 	// Endpoint identifies the endpoint for SenderOptions.Endpoint.
 	Endpoint string `json:"endpoint"`
-	// Payload is the JSON body, sent as is.
+	// Payload is the JSON body. It is stored inside the job JSON, so
+	// insignificant whitespace may be compacted; the signature covers the
+	// bytes actually sent.
 	Payload json.RawMessage `json:"payload"`
 }
 
@@ -101,14 +107,16 @@ type SenderOptions struct {
 	// Log records every attempt (optional); see SQLDeliveryLog.
 	Log DeliveryLog
 	// OnGone runs when an endpoint answers 410 Gone, for example to
-	// disable it. Deliveries answered with 410 are not retried.
+	// disable it. Deliveries answered with 410 are not retried; an OnGone
+	// error is logged and not retried either.
 	OnGone func(ctx context.Context, endpoint string) error
 	// Logger receives delivery outcomes without URLs, secrets or payloads
 	// (default slog.Default()).
 	Logger *slog.Logger
 	// Timeout bounds one HTTP attempt (default 15s).
 	Timeout time.Duration
-	// Retries is how many times a failed delivery is retried (default 8).
+	// Retries is how many times a failed delivery is retried (0 means the
+	// default, 8; a negative value means no retries).
 	Retries int
 	// Backoff is the delay before retry n (default exponential from 30s,
 	// capped at one hour: 30s, 1m, 2m … about two hours in total).
@@ -150,8 +158,11 @@ func NewSender(o SenderOptions) (*Sender, error) {
 		o.Timeout = 15 * time.Second
 	}
 
-	if o.Retries <= 0 {
+	switch {
+	case o.Retries == 0:
 		o.Retries = 8
+	case o.Retries < 0:
+		o.Retries = 0
 	}
 
 	if o.Backoff == nil {
@@ -162,9 +173,12 @@ func NewSender(o SenderOptions) (*Sender, error) {
 		o.Now = time.Now
 	}
 
-	client := httpclient.Safe(httpclient.Options{Timeout: o.Timeout, MaxBody: 64 << 10, Allow: o.InsecureAllow})
+	// Only the status matters, so the body is not bounded here (a large
+	// Content-Length must not turn a 2xx into a retry); Deliver reads at
+	// most maxResponseRead of it.
+	client := httpclient.Safe(httpclient.Options{Timeout: o.Timeout, MaxBody: math.MaxInt64, Allow: o.InsecureAllow})
 	// A redirect would re-send the signed body elsewhere (or drop it on a
-	// 302); like other senders, treat 3xx as a failed attempt.
+	// 302), so 3xx is a final answer.
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 
 	return &Sender{o: o, client: client}, nil
@@ -180,8 +194,8 @@ func (s *Sender) Job() queue.Registration {
 // Send enqueues d on q. Options such as queue.OnQueue apply to this
 // dispatch.
 func (s *Sender) Send(ctx context.Context, q *queue.Queue, d Delivery, opts ...queue.Option) error {
-	if d.Endpoint == "" {
-		return errors.New("webhook: delivery without an endpoint")
+	if d.Endpoint == "" || len(d.Endpoint) > maxIDLen {
+		return errors.New("webhook: delivery needs an endpoint id of at most 255 bytes")
 	}
 
 	if !json.Valid(d.Payload) {
@@ -197,13 +211,29 @@ func (s *Sender) Send(ctx context.Context, q *queue.Queue, d Delivery, opts ...q
 		d.ID = "msg_" + hex.EncodeToString(b)
 	}
 
+	if !validID(d.ID) {
+		return errInvalidID
+	}
+
 	return q.DispatchKind(ctx, DeliverKind, d, opts...)
 }
 
 // Deliver makes one attempt and records it. It returns nil when the
-// delivery is done (2xx, 410 Gone or a disabled endpoint) and an error
-// when it should be retried. Errors never contain the URL or secret.
+// delivery is done: 2xx, 410 Gone, 3xx (redirects are not followed), a
+// disabled endpoint or an invalid delivery id. Any other outcome is an
+// error so the queue retries it. Errors never contain the URL or secret.
 func (s *Sender) Deliver(ctx context.Context, d Delivery) error {
+	a := Attempt{Endpoint: d.Endpoint, EventID: d.ID, At: s.o.Now().UTC()}
+
+	if !validID(d.ID) {
+		// Retrying cannot fix the id, and receivers dedupe on it.
+		a.Error = AttemptInvalid
+		s.record(ctx, a)
+		s.o.Logger.WarnContext(ctx, "webhook: invalid delivery id, dropped", "endpoint", d.Endpoint)
+
+		return nil
+	}
+
 	ep, err := s.o.Endpoint(ctx, d.Endpoint)
 	if errors.Is(err, ErrEndpointDisabled) {
 		s.o.Logger.InfoContext(ctx, "webhook: endpoint disabled, delivery dropped", "endpoint", d.Endpoint, "id", d.ID)
@@ -214,34 +244,17 @@ func (s *Sender) Deliver(ctx context.Context, d Delivery) error {
 		return fmt.Errorf("webhook: load endpoint %q: %w", d.Endpoint, err)
 	}
 
-	// Fail closed: never send an unsigned or plaintext delivery.
-	key, err := decodeSecret(ep.Secret)
+	req, err := s.request(ctx, d, ep, a.At)
 	if err != nil {
+		// Retried, so an endpoint fixed in the meantime still gets the event.
+		a.Error = AttemptInvalid
+		s.record(ctx, a)
+
 		return fmt.Errorf("webhook: endpoint %q: %w", d.Endpoint, err)
 	}
 
-	u, err := url.Parse(ep.URL)
-	if err != nil || u.Host == "" || (u.Scheme != "https" && (u.Scheme != "http" || !s.o.InsecureAllowHTTP)) {
-		return fmt.Errorf("webhook: endpoint %q needs an absolute https URL", d.Endpoint)
-	}
-
-	at := s.o.Now()
-	ts := strconv.FormatInt(at.Unix(), 10)
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), bytes.NewReader(d.Payload))
-	if err != nil {
-		return fmt.Errorf("webhook: endpoint %q: build request", d.Endpoint)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "vukem-webhook")
-	req.Header.Set("webhook-id", d.ID)
-	req.Header.Set("webhook-timestamp", ts)
-	req.Header.Set("webhook-signature", signStandard(key, d.ID, ts, d.Payload))
-
 	start := time.Now()
 	resp, err := s.client.Do(req)
-	a := Attempt{Endpoint: d.Endpoint, EventID: d.ID, At: at.UTC()}
 
 	if err != nil {
 		// *url.Error repeats the URL, which may carry tokens.
@@ -249,10 +262,17 @@ func (s *Sender) Deliver(ctx context.Context, d Delivery) error {
 			err = ue.Err
 		}
 
-		a.Error = err.Error()
+		// Attempts are shown to endpoint owners: a category, not the
+		// resolved address or TLS details (those stay in the server log).
+		a.Error = category(err)
 	} else {
 		a.Status = resp.StatusCode
-		_, _ = io.Copy(io.Discard, resp.Body) // lets the connection be reused
+		if a.Status < 200 || a.Status >= 300 {
+			a.Error = AttemptHTTPStatus
+		}
+
+		// A small answer is drained so the connection can be reused.
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxResponseRead))
 		_ = resp.Body.Close()
 	}
 
@@ -267,6 +287,9 @@ func (s *Sender) Deliver(ctx context.Context, d Delivery) error {
 		return fmt.Errorf("webhook: deliver to %q: %w", d.Endpoint, err)
 	case a.Status >= 200 && a.Status < 300:
 		log.InfoContext(ctx, "webhook: delivered")
+		return nil
+	case a.Status >= 300 && a.Status < 400:
+		log.WarnContext(ctx, "webhook: endpoint redirected, not retrying")
 		return nil
 	case a.Status == http.StatusGone:
 		log.WarnContext(ctx, "webhook: endpoint gone, not retrying")
@@ -284,14 +307,127 @@ func (s *Sender) Deliver(ctx context.Context, d Delivery) error {
 	}
 }
 
+// request builds the signed POST. Fail closed: never an unsigned,
+// plaintext or credential-carrying request.
+func (s *Sender) request(ctx context.Context, d Delivery, ep Endpoint, at time.Time) (*http.Request, error) {
+	key, err := decodeSecret(ep.Secret)
+	if err != nil {
+		return nil, err
+	}
+
+	u, err := url.Parse(ep.URL)
+	if err != nil || u.Hostname() == "" || u.User != nil ||
+		(u.Scheme != "https" && (u.Scheme != "http" || !s.o.InsecureAllowHTTP)) {
+		return nil, errors.New("needs an absolute https URL without credentials")
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), bytes.NewReader(d.Payload))
+	if err != nil {
+		return nil, errors.New("build request")
+	}
+
+	ts := strconv.FormatInt(at.Unix(), 10)
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "vukem-webhook")
+	req.Header.Set("webhook-id", d.ID)
+	req.Header.Set("webhook-timestamp", ts)
+	req.Header.Set("webhook-signature", signStandard(key, d.ID, ts, d.Payload))
+
+	return req, nil
+}
+
 // record logs an attempt; a log failure does not fail the delivery, which
-// already happened and would be sent twice on retry.
+// already happened and would be sent twice on retry. It outlives the job
+// context: timed-out and cancelled attempts are the ones worth keeping.
 func (s *Sender) record(ctx context.Context, a Attempt) {
 	if s.o.Log == nil {
 		return
 	}
 
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+
 	if err := s.o.Log.Record(ctx, a); err != nil {
 		s.o.Logger.ErrorContext(ctx, "webhook: record attempt", "endpoint", a.Endpoint, "id", a.EventID, "err", err)
 	}
+}
+
+// Attempt.Error categories, safe to show to endpoint owners.
+const (
+	// AttemptBlockedAddress means the URL resolved to an internal address.
+	AttemptBlockedAddress = "blocked_address"
+	// AttemptTimeout means the attempt timed out or was cancelled.
+	AttemptTimeout = "timeout"
+	// AttemptRefused means the connection was refused.
+	AttemptRefused = "refused"
+	// AttemptTLS means the TLS handshake or certificate check failed.
+	AttemptTLS = "tls"
+	// AttemptNetwork is any other transport error (DNS, reset…).
+	AttemptNetwork = "network"
+	// AttemptHTTPStatus means the endpoint answered a non-2xx status.
+	AttemptHTTPStatus = "http_status"
+	// AttemptInvalid means an invalid delivery id, endpoint URL or secret.
+	AttemptInvalid = "invalid"
+)
+
+const (
+	maxIDLen        = 255
+	maxResponseRead = 64 << 10
+)
+
+var errInvalidID = errors.New("webhook: delivery id must be 1-255 printable ASCII bytes without dots or spaces")
+
+// validID keeps ids unambiguous in the signed "<id>.<timestamp>.<body>"
+// content and safe in headers.
+func validID(id string) bool {
+	if id == "" || len(id) > maxIDLen {
+		return false
+	}
+
+	for i := range len(id) {
+		if c := id[i]; c <= ' ' || c > '~' || c == '.' {
+			return false
+		}
+	}
+
+	return true
+}
+
+func category(err error) string {
+	switch {
+	case errors.Is(err, httpclient.ErrBlockedAddress):
+		return AttemptBlockedAddress
+	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled), isTimeout(err):
+		return AttemptTimeout
+	case errors.Is(err, syscall.ECONNREFUSED):
+		return AttemptRefused
+	case isTLS(err):
+		return AttemptTLS
+	default:
+		return AttemptNetwork
+	}
+}
+
+func isTimeout(err error) bool {
+	ne, ok := errors.AsType[net.Error](err)
+	return ok && ne.Timeout()
+}
+
+func isTLS(err error) bool {
+	if _, ok := errors.AsType[*tls.CertificateVerificationError](err); ok {
+		return true
+	}
+
+	if _, ok := errors.AsType[tls.RecordHeaderError](err); ok {
+		return true
+	}
+
+	if _, ok := errors.AsType[tls.AlertError](err); ok {
+		return true
+	}
+
+	msg := err.Error()
+
+	return strings.Contains(msg, "tls:") || strings.Contains(msg, "x509:")
 }

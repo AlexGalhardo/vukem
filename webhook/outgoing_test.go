@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"net/netip"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -318,13 +319,22 @@ func TestSenderRetriesWithExponentialBackoff(t *testing.T) {
 		t.Errorf("body = %s, want %s", rc.bodies[2], payload)
 	}
 
-	var statuses []int
+	var (
+		statuses []int
+		cats     []string
+	)
+
 	for _, a := range log.all() {
 		if a.Endpoint != "seller-1" || a.EventID != rc.ids[0] || a.At.IsZero() || a.Duration < 0 {
 			t.Errorf("attempt = %+v, want endpoint, event id, time and duration", a)
 		}
 
 		statuses = append(statuses, a.Status)
+		cats = append(cats, a.Error)
+	}
+
+	if diff := cmp.Diff([]string{"http_status", "http_status", ""}, cats); diff != "" {
+		t.Errorf("logged error categories (-want +got):\n%s", diff)
 	}
 
 	if diff := cmp.Diff([]int{500, 429, 204}, statuses); diff != "" {
@@ -429,6 +439,10 @@ func TestSendValidatesDelivery(t *testing.T) {
 		{Payload: json.RawMessage(`{}`)},
 		{Endpoint: "seller-1", Payload: json.RawMessage(`{bad`)},
 		{Endpoint: "seller-1"},
+		{ID: "evt.1", Endpoint: "seller-1", Payload: json.RawMessage(`{}`)},
+		{ID: "evt 1", Endpoint: "seller-1", Payload: json.RawMessage(`{}`)},
+		{ID: strings.Repeat("a", 256), Endpoint: "seller-1", Payload: json.RawMessage(`{}`)},
+		{Endpoint: strings.Repeat("e", 256), Payload: json.RawMessage(`{}`)},
 	} {
 		if err := s.Send(t.Context(), q, d); err == nil {
 			t.Errorf("Send(%+v) = nil, want error", d)
@@ -459,7 +473,7 @@ func TestSecurity_A01_OutgoingWebhookSSRF(t *testing.T) {
 				t.Fatalf("Deliver(%s) = %v, want ErrBlockedAddress", target, err)
 			}
 
-			if a := log.all(); len(a) != 1 || a[0].Status != 0 || !strings.Contains(a[0].Error, "not allowed") {
+			if a := log.all(); len(a) != 1 || a[0].Status != 0 || a[0].Error != webhook.AttemptBlockedAddress {
 				t.Fatalf("logged attempts = %+v, want one blocked attempt", a)
 			}
 		})
@@ -490,7 +504,7 @@ func TestSecurity_A09_OutgoingWebhookLogsNoSecrets(t *testing.T) {
 
 	var buf bytes.Buffer
 
-	secretURL := strings.Replace(srv.URL, "http://", "http://user:pa55word@", 1) + "/hook?token=tok3n"
+	secretURL := srv.URL + "/hook?token=tok3n"
 	s := newSender(t, webhook.SenderOptions{
 		Endpoint: endpoints(secretURL), InsecureAllowHTTP: true, InsecureAllow: loopback,
 		Logger: slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})),
@@ -510,7 +524,7 @@ func TestSecurity_A09_OutgoingWebhookLogsNoSecrets(t *testing.T) {
 	}
 
 	out := buf.String() + strings.Join(errs, "\n")
-	for _, leak := range []string{"MDEyMzQ1Njc4", "4242424242424242", "pa55word", "tok3n"} {
+	for _, leak := range []string{"MDEyMzQ1Njc4", "4242424242424242", "tok3n"} {
 		if strings.Contains(out, leak) {
 			t.Errorf("logs and errors contain %q:\n%s", leak, out)
 		}
@@ -537,8 +551,10 @@ func openSQLite(t *testing.T) *database.DB {
 func TestSQLDeliveryLog(t *testing.T) {
 	t.Parallel()
 
-	if _, err := webhook.NewSQLDeliveryLog(openSQLite(t), "bad;name"); err == nil {
-		t.Fatal("NewSQLDeliveryLog(bad;name) = nil, want error")
+	for _, name := range []string{"bad;name", strings.Repeat("t", 52)} {
+		if _, err := webhook.NewSQLDeliveryLog(openSQLite(t), name); err == nil {
+			t.Fatalf("NewSQLDeliveryLog(%q) = nil, want error", name)
+		}
 	}
 
 	l, err := webhook.NewSQLDeliveryLog(openSQLite(t), "")
@@ -570,6 +586,10 @@ func TestSQLDeliveryLog(t *testing.T) {
 		}
 	}
 
+	if err := l.Record(t.Context(), webhook.Attempt{Endpoint: strings.Repeat("e", 256), EventID: "msg_1"}); err == nil {
+		t.Error("Record(256-byte endpoint) = nil, want error")
+	}
+
 	got, err := l.Recent(t.Context(), "seller-1", 10)
 	if err != nil {
 		t.Fatal(err)
@@ -577,5 +597,159 @@ func TestSQLDeliveryLog(t *testing.T) {
 
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("Recent(seller-1) (-want +got):\n%s", diff)
+	}
+}
+
+func TestSenderTreatsLargeResponseBodyByStatus(t *testing.T) {
+	t.Parallel()
+
+	for _, status := range []int{http.StatusOK, http.StatusGone} {
+		t.Run(strconv.Itoa(status), func(t *testing.T) {
+			t.Parallel()
+
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Length", strconv.Itoa(20<<20))
+				w.WriteHeader(status)
+				_, _ = w.Write(bytes.Repeat([]byte("x"), 1<<20))
+			}))
+			t.Cleanup(srv.Close)
+
+			log := &memLog{}
+			s := newSender(t, webhook.SenderOptions{
+				Endpoint: endpoints(srv.URL), Log: log, InsecureAllowHTTP: true, InsecureAllow: loopback,
+			})
+
+			err := s.Deliver(
+				t.Context(),
+				webhook.Delivery{ID: "msg_1", Endpoint: "seller-1", Payload: json.RawMessage(`{}`)},
+			)
+			if a := log.all(); err != nil || len(a) != 1 || a[0].Status != status {
+				t.Fatalf("Deliver(large %d body) = %v, attempts %+v, want nil and status %d", status, err, a, status)
+			}
+		})
+	}
+}
+
+func TestSenderStopsOnRedirect(t *testing.T) {
+	t.Parallel()
+
+	rc := &receiver{statuses: []int{http.StatusFound}}
+	srv := rc.server(t)
+
+	s := newSender(
+		t,
+		webhook.SenderOptions{Endpoint: endpoints(srv.URL), InsecureAllowHTTP: true, InsecureAllow: loopback},
+	)
+
+	err := s.Deliver(t.Context(), webhook.Delivery{ID: "msg_1", Endpoint: "seller-1", Payload: json.RawMessage(`{}`)})
+	if err != nil || len(rc.ids) != 1 {
+		t.Fatalf("Deliver(302) = %v with %d requests, want nil (no retry) and 1", err, len(rc.ids))
+	}
+}
+
+type ctxLog struct {
+	memLog
+
+	ctxErr error
+}
+
+func (l *ctxLog) Record(ctx context.Context, a webhook.Attempt) error {
+	l.ctxErr = ctx.Err()
+	return l.memLog.Record(ctx, a)
+}
+
+func TestSenderRecordsAttemptAfterCancel(t *testing.T) {
+	t.Parallel()
+
+	rc := &receiver{statuses: []int{http.StatusNoContent}}
+	srv := rc.server(t)
+	log := &ctxLog{}
+
+	s := newSender(t, webhook.SenderOptions{
+		Endpoint: endpoints(srv.URL), Log: log, InsecureAllowHTTP: true, InsecureAllow: loopback,
+	})
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	if err := s.Deliver(
+		ctx,
+		webhook.Delivery{ID: "msg_1", Endpoint: "seller-1", Payload: json.RawMessage(`{}`)},
+	); err == nil {
+		t.Fatal("Deliver(cancelled) = nil, want a retryable error")
+	}
+
+	if a := log.all(); len(a) != 1 || a[0].Error != webhook.AttemptTimeout || log.ctxErr != nil {
+		t.Fatalf("attempts = %+v, record ctx err = %v, want one timeout recorded with a live context", a, log.ctxErr)
+	}
+}
+
+func TestDeliverRejectsInvalidInput(t *testing.T) {
+	t.Parallel()
+
+	rc := &receiver{statuses: []int{http.StatusNoContent}}
+	srv := rc.server(t)
+
+	userinfo := strings.Replace(srv.URL, "http://", "http://user:pa55word@", 1)
+
+	for _, tc := range []struct {
+		name  string
+		url   string
+		id    string
+		retry bool
+	}{
+		{"empty id", srv.URL, "", false},
+		{"id with dot", srv.URL, "a.b", false},
+		{"userinfo in URL", userinfo, "msg_1", true},
+		{"no host", "http:///hook", "msg_1", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			log := &memLog{}
+			s := newSender(t, webhook.SenderOptions{
+				Endpoint: endpoints(tc.url), Log: log, InsecureAllowHTTP: true, InsecureAllow: loopback,
+			})
+
+			err := s.Deliver(
+				t.Context(),
+				webhook.Delivery{ID: tc.id, Endpoint: "seller-1", Payload: json.RawMessage(`{}`)},
+			)
+			if (err != nil) != tc.retry || (err != nil && strings.Contains(err.Error(), "pa55word")) {
+				t.Fatalf("Deliver(%s) = %v, want retry %v without credentials", tc.name, err, tc.retry)
+			}
+
+			if a := log.all(); len(a) != 1 || a[0].Error != webhook.AttemptInvalid {
+				t.Fatalf("attempts = %+v, want one invalid attempt", a)
+			}
+		})
+	}
+
+	if len(rc.ids) != 0 {
+		t.Fatalf("server got %d requests, want 0", len(rc.ids))
+	}
+}
+
+func TestSenderNoRetries(t *testing.T) {
+	t.Parallel()
+
+	fake := queue.NewFake()
+	s := newSender(t, webhook.SenderOptions{Endpoint: endpoints("https://example.com"), Retries: -1})
+
+	q := queue.New(fake, slog.New(slog.DiscardHandler))
+	if err := q.Register(s.Job()); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.Send(
+		t.Context(),
+		q,
+		webhook.Delivery{Endpoint: "seller-1", Payload: json.RawMessage(`{}`)},
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	if m := fake.Messages(); len(m) != 1 || m[0].MaxRetries != 0 {
+		t.Fatalf("messages = %+v, want one with MaxRetries 0", m)
 	}
 }
