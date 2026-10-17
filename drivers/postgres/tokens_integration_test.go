@@ -3,6 +3,7 @@
 package postgres
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -20,7 +21,8 @@ func TestTokensSoftRevoke(t *testing.T) {
 
 	drop := func() { _, _ = db.ExecContext(ctx, "DROP TABLE IF EXISTS access_tokens") }
 	drop()
-	t.Cleanup(func() { _, _ = db.ExecContext(t.Context(), "DROP TABLE IF EXISTS access_tokens") })
+	// t.Context is cancelled before Cleanup runs, so the drop needs its own context.
+	t.Cleanup(func() { _, _ = db.ExecContext(context.Background(), "DROP TABLE IF EXISTS access_tokens") })
 
 	s := schema.New(ctx, db)
 
