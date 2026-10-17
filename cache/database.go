@@ -15,7 +15,8 @@ import (
 )
 
 // Database stores entries in a table (SQLite, Postgres or MySQL):
-// cache(key TEXT PRIMARY KEY, value TEXT NOT NULL, expires_at BIGINT)
+// cache(key TEXT PRIMARY KEY, value TEXT NOT NULL, expires_at BIGINT); value
+// is BYTEA on Postgres
 // with expires_at in Unix milliseconds (0 = never). CreateTable creates it.
 // On MySQL key and value are binary (VARBINARY, LONGBLOB) so lookups stay
 // exact and case-sensitive.
@@ -41,6 +42,19 @@ func NewDatabase(db *database.DB, table string) (*Database, error) {
 }
 
 func (d *Database) mysql() bool { return d.db.Dialect().Name() == "mysql" }
+
+func (d *Database) postgres() bool { return d.db.Dialect().Name() == "postgres" }
+
+// val binds a value: Postgres stores BYTEA (TEXT rejects NUL and invalid
+// UTF-8); SQLite keeps binding strings so rows written by older versions
+// still compare equal in DeleteIf.
+func (d *Database) val(b []byte) any {
+	if d.postgres() {
+		return b
+	}
+
+	return string(b)
+}
 
 // q renders sqlText with the table name, the key column ({k}, a reserved
 // word on MySQL) and dialect placeholders.
@@ -75,12 +89,32 @@ func (d *Database) q(sqlText string) string {
 // CreateTable creates the cache table if missing.
 func (d *Database) CreateTable(ctx context.Context) error {
 	stmt := `CREATE TABLE IF NOT EXISTS {t} ({k} TEXT PRIMARY KEY, value TEXT NOT NULL, expires_at BIGINT NOT NULL DEFAULT 0)`
-	if d.mysql() {
+	switch {
+	case d.mysql():
 		stmt = `CREATE TABLE IF NOT EXISTS {t} ({k} VARBINARY(255) NOT NULL PRIMARY KEY, value LONGBLOB NOT NULL,
 			expires_at BIGINT NOT NULL DEFAULT 0)`
+	case d.postgres():
+		stmt = `CREATE TABLE IF NOT EXISTS {t} ({k} TEXT PRIMARY KEY, value BYTEA NOT NULL, expires_at BIGINT NOT NULL DEFAULT 0)`
 	}
 
-	_, err := d.db.ExecContext(ctx, d.q(stmt))
+	if _, err := d.db.ExecContext(ctx, d.q(stmt)); err != nil {
+		return err
+	}
+
+	if !d.postgres() {
+		return nil
+	}
+
+	// Tables created before v0.22 have a TEXT value column: convert it once.
+	var typ string
+
+	err := d.db.QueryRowContext(ctx, `SELECT data_type FROM information_schema.columns
+		WHERE table_schema = current_schema() AND table_name = $1 AND column_name = 'value'`, d.table).Scan(&typ)
+	if err != nil || typ == "bytea" {
+		return err
+	}
+
+	_, err = d.db.ExecContext(ctx, d.q(`ALTER TABLE {t} ALTER COLUMN value TYPE BYTEA USING convert_to(value, 'UTF8')`))
 
 	return err
 }
@@ -108,7 +142,7 @@ func (d *Database) expiry(ttl time.Duration) int64 {
 
 // Get implements Store.
 func (d *Database) Get(ctx context.Context, key string) ([]byte, bool, error) {
-	var v string
+	var v []byte
 
 	err := d.db.QueryRowContext(ctx, d.q(`SELECT value FROM {t} WHERE {k} = ? AND (expires_at = 0 OR expires_at > ?)`),
 		key, d.nowMS()).Scan(&v)
@@ -116,12 +150,12 @@ func (d *Database) Get(ctx context.Context, key string) ([]byte, bool, error) {
 		return nil, false, nil
 	}
 
-	return []byte(v), err == nil, err
+	return v, err == nil, err
 }
 
 // Set implements Store.
 func (d *Database) Set(ctx context.Context, key string, value []byte, ttl time.Duration) error {
-	_, err := d.db.ExecContext(ctx, d.upsert(), key, string(value), d.expiry(ttl))
+	_, err := d.db.ExecContext(ctx, d.upsert(), key, d.val(value), d.expiry(ttl))
 
 	return err
 }
@@ -135,7 +169,7 @@ func (d *Database) Add(ctx context.Context, key string, value []byte, ttl time.D
 	res, err := d.db.ExecContext(ctx, d.q(`INSERT INTO {t} ({k}, value, expires_at) VALUES (?, ?, ?)
 		ON CONFLICT ({k}) DO UPDATE SET value = excluded.value, expires_at = excluded.expires_at
 		WHERE {t}.expires_at <> 0 AND {t}.expires_at <= ?`),
-		key, string(value), d.expiry(ttl), d.nowMS())
+		key, d.val(value), d.expiry(ttl), d.nowMS())
 	if err != nil {
 		return false, err
 	}
@@ -156,7 +190,7 @@ func (d *Database) addMySQL(ctx context.Context, key string, value []byte, ttl t
 	}
 
 	_, err := d.db.ExecContext(ctx, d.q(`INSERT INTO {t} ({k}, value, expires_at) VALUES (?, ?, ?)`),
-		key, string(value), d.expiry(ttl))
+		key, d.val(value), d.expiry(ttl))
 	if err != nil {
 		if isDuplicateKey(err) {
 			return false, nil
@@ -187,7 +221,7 @@ func (d *Database) Delete(ctx context.Context, keys ...string) error {
 
 // DeleteIf implements Store.
 func (d *Database) DeleteIf(ctx context.Context, key string, value []byte) (bool, error) {
-	res, err := d.db.ExecContext(ctx, d.q(`DELETE FROM {t} WHERE {k} = ? AND value = ?`), key, string(value))
+	res, err := d.db.ExecContext(ctx, d.q(`DELETE FROM {t} WHERE {k} = ? AND value = ?`), key, d.val(value))
 	if err != nil {
 		return false, err
 	}
@@ -202,7 +236,7 @@ func (d *Database) Increment(ctx context.Context, key string, delta int64, ttl t
 	var n int64
 
 	err := d.db.Tx(ctx, func(tx *database.Tx) error {
-		var v string
+		var v []byte
 
 		err := tx.QueryRowContext(ctx, d.q(`SELECT value FROM {t} WHERE {k} = ? AND (expires_at = 0 OR expires_at > ?)`),
 			key, d.nowMS()).
@@ -211,20 +245,25 @@ func (d *Database) Increment(ctx context.Context, key string, delta int64, ttl t
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
 			n = delta
-			_, err = tx.ExecContext(ctx, d.upsert(), key, strconv.FormatInt(n, 10), d.expiry(ttl))
+			_, err = tx.ExecContext(ctx, d.upsert(), key, d.val([]byte(strconv.FormatInt(n, 10))), d.expiry(ttl))
 
 			return err
 		case err != nil:
 			return err
 		}
 
-		cur, err := strconv.ParseInt(string(bytes.TrimSpace([]byte(v))), 10, 64)
+		cur, err := strconv.ParseInt(string(bytes.TrimSpace(v)), 10, 64)
 		if err != nil {
 			return fmt.Errorf("cache: %s is not an integer", key)
 		}
 
 		n = cur + delta
-		_, err = tx.ExecContext(ctx, d.q(`UPDATE {t} SET value = ? WHERE {k} = ?`), strconv.FormatInt(n, 10), key)
+		_, err = tx.ExecContext(
+			ctx,
+			d.q(`UPDATE {t} SET value = ? WHERE {k} = ?`),
+			d.val([]byte(strconv.FormatInt(n, 10))),
+			key,
+		)
 
 		return err
 	})

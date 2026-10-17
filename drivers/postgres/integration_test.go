@@ -105,3 +105,43 @@ func TestCacheStore(t *testing.T) {
 
 	cachetest.Run(t, store)
 }
+
+func TestCacheStoreUpgradesTextValueColumn(t *testing.T) {
+	db := open(t)
+	ctx := t.Context()
+
+	_, _ = db.ExecContext(ctx, "DROP TABLE IF EXISTS dbt_cache_legacy")
+	t.Cleanup(func() { _, _ = db.ExecContext(context.Background(), "DROP TABLE IF EXISTS dbt_cache_legacy") })
+
+	// The pre-v0.22 layout, with a live row.
+	if _, err := db.ExecContext(ctx, `CREATE TABLE dbt_cache_legacy (key TEXT PRIMARY KEY, value TEXT NOT NULL,
+		expires_at BIGINT NOT NULL DEFAULT 0)`); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := db.ExecContext(
+		ctx,
+		`INSERT INTO dbt_cache_legacy (key, value) VALUES ('old', '{"n":1}')`,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := cache.NewDatabase(db, "dbt_cache_legacy")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for range 2 { // idempotent
+		if err := store.CreateTable(ctx); err != nil {
+			t.Fatalf("CreateTable() on legacy table = %v", err)
+		}
+	}
+
+	if got, ok, err := store.Get(ctx, "old"); err != nil || !ok || string(got) != `{"n":1}` {
+		t.Fatalf("Get(old) after upgrade = %q %v %v", got, ok, err)
+	}
+
+	if err := store.Set(ctx, "bin", []byte{0, 0xff}, time.Minute); err != nil {
+		t.Fatalf("Set(binary) after upgrade = %v", err)
+	}
+}

@@ -6,6 +6,7 @@
 package cachetest
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"sync"
@@ -57,6 +58,28 @@ func Run(t *testing.T, store cache.Store) {
 
 		if _, ok, _ := cache.Get[user](ctx, c, "u1"); ok {
 			t.Fatal("forgotten key still present")
+		}
+	})
+
+	t.Run("BinaryValues", func(t *testing.T) {
+		// NUL and invalid UTF-8 bytes: gob/msgpack payloads, hashes, images.
+		raw := []byte{0x00, 0xff, 0xfe, 'a', 0x00, 0x80}
+
+		if err := store.Set(ctx, "ct:bin", raw, time.Minute); err != nil {
+			t.Fatalf("Set(binary) = %v", err)
+		}
+
+		got, ok, err := store.Get(ctx, "ct:bin")
+		if err != nil || !ok || !bytes.Equal(got, raw) {
+			t.Fatalf("Get(binary) = %x %v %v, want %x", got, ok, err, raw)
+		}
+
+		if ok, err := store.Add(ctx, "ct:bin2", raw, time.Minute); err != nil || !ok {
+			t.Fatalf("Add(binary) = %v %v", ok, err)
+		}
+
+		if ok, err := store.DeleteIf(ctx, "ct:bin2", raw); err != nil || !ok {
+			t.Fatalf("DeleteIf(binary) = %v %v", ok, err)
 		}
 	})
 
