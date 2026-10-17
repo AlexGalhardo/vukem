@@ -612,10 +612,11 @@ func TestFlagsFromConfig(t *testing.T) {
 		env  map[string]string
 		list []flags.AnyFlag
 	}{
-		"duplicate":        {nil, []flags.AnyFlag{beta, flags.Bool("beta", true)}},
-		"bad value":        {map[string]string{"FLAG_BETA": "sometimes"}, []flags.AnyFlag{beta}},
-		"locked override":  {map[string]string{"FLAG_ADMIN_TWO_FACTOR": "false"}, []flags.AnyFlag{locked}},
-		"unknown flag key": {map[string]string{"FLAG_BETTA": "true"}, []flags.AnyFlag{beta}},
+		"duplicate":              {nil, []flags.AnyFlag{beta, flags.Bool("beta", true)}},
+		"bad value":              {map[string]string{"FLAG_BETA": "sometimes"}, []flags.AnyFlag{beta}},
+		"locked override":        {map[string]string{"FLAG_ADMIN_TWO_FACTOR": "false"}, []flags.AnyFlag{locked}},
+		"unknown flag key":       {map[string]string{"FLAG_BETTA": "true"}, []flags.AnyFlag{beta}},
+		"flag key without flags": {map[string]string{"FLAG_BETA": "true"}, nil},
 	} {
 		if _, err := New(
 			WithSource(testSource(tc.env)),

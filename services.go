@@ -191,16 +191,16 @@ func isUseDefault(err error) bool {
 
 // WithFlags registers the application's feature flags (app.Flags). Invalid
 // or duplicate names, bad FLAG_<NAME> values, FLAG_<NAME> for a locked flag
-// and FLAG_ keys in .env files that name no flag stop New.
+// and FLAG_ keys in .env files that name no registered flag stop New, with
+// or without WithFlags. Process environment variables cannot be listed, so
+// a FLAG_ typo there goes unnoticed.
 func WithFlags(list ...flags.AnyFlag) Option {
 	return func(o *options) error { o.flags = append(o.flags, list...); return nil }
 }
 
+// checkFlags runs the validation app.Flags repeats, also with no flags: a
+// FLAG_ key in .env then names no flag either.
 func checkFlags(list []flags.AnyFlag, src *config.Source) error {
-	if len(list) == 0 {
-		return nil
-	}
-
 	_, err := flags.New(flags.Config{Flags: list, Env: src})
 
 	return err
