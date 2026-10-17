@@ -103,15 +103,28 @@ type Verifiable interface {
 }
 
 // Verified requires the user authenticated by guard to have a verified
-// email (403 otherwise). Place it after Required.
+// email. Signed-in browsers without one are redirected to the route named
+// "verification.notice" when the app has it (the install:auth scaffold
+// does); JSON clients, and apps without that route, get 403. Place it
+// after Required.
 func Verified(guard Checker) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			c := ctxOf(w, r)
 
-			if guard.Check(c) {
-				if v, ok := c.Context().Value(userKey{guard.Name()}).(Verifiable); ok && v.EmailVerified() {
-					next.ServeHTTP(w, c.Request())
+			if !guard.Check(c) {
+				c.HandleError(errs.New(http.StatusForbidden, "Your email address is not verified."))
+				return
+			}
+
+			if v, ok := c.Context().Value(userKey{guard.Name()}).(Verifiable); ok && v.EmailVerified() {
+				next.ServeHTTP(w, c.Request())
+				return
+			}
+
+			if !c.WantsJSON() && hasSession(c) {
+				if u, err := c.URL("verification.notice"); err == nil {
+					_ = c.Redirect(u)
 					return
 				}
 			}

@@ -105,7 +105,7 @@ Opaque tokens `<id>.<secret>` from `crypto/rand`; only the SHA-256 of the secret
 | `auth.Required(guards...)` | first guard that authenticates wins; JSON clients get 401 with `WWW-Authenticate: Bearer`, browsers a redirect to the route named `login` (intended URL kept) |
 | `auth.Optional(guards...)` | authenticates when possible, never blocks (pages that show more to members) |
 | `auth.Guest(guards...)` | sends logged-in users to the route named `home` |
-| `auth.Verified(guard)` | 403 unless the user's `EmailVerified()` is true |
+| `auth.Verified(guard)` | passes when the user's `EmailVerified()` is true; otherwise browsers are redirected to the route named `verification.notice` (created by `install:auth`) and JSON clients, or apps without that route, get 403 |
 | `auth.Ability(guard, abilities...)` | 403 unless the token grants every ability |
 
 ## Hashing

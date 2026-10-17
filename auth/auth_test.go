@@ -137,6 +137,8 @@ func newApp(t *testing.T, hasher hash.Hasher) *testApp {
 				}).Use(auth.Optional(ta.web))
 				r.Get("/verified", func(c *web.Ctx) error { return c.String(200, "ok") }).
 					Use(auth.Required(ta.web), auth.Verified(ta.web))
+				r.Get("/email/verify", func(c *web.Ctx) error { return c.String(200, "check your inbox") }).
+					Name("verification.notice")
 
 				r.Group("/api", func(g *router.Group) {
 					g.Use(auth.Required(ta.api, ta.web))
@@ -230,8 +232,8 @@ func TestSessionLoginLogout(t *testing.T) {
 	}
 
 	c.Get("/dashboard").AssertOK().AssertSee("hello ana@example.com")
-	c.Get("/login").AssertRedirect("/") // Guest
-	c.Get("/verified").AssertForbidden()
+	c.Get("/login").AssertRedirect("/")                // Guest
+	c.Get("/verified").AssertRedirect("/email/verify") // unverified browsers go to the notice
 
 	c.PostForm("/logout", nil).AssertRedirect("/")
 	c.Get("/dashboard").AssertRedirect("/login")
@@ -447,7 +449,8 @@ func TestActingAsAndVerified(t *testing.T) {
 	ta.Client(t).ActingAs("web", verified).Get("/verified").AssertOK()
 	ta.Client(t).ActingAs("web", verified).Get("/whoami").AssertOK().AssertSee("v@example.com")
 	ta.Client(t).Get("/whoami").AssertOK().AssertSee("guest")
-	ta.Client(t).ActingAs("web", unverified).Get("/verified").AssertForbidden()
+	ta.Client(t).ActingAs("web", unverified).Get("/verified").AssertRedirect("/email/verify")
+	ta.Client(t).ActingAs("web", unverified).GetJSON("/verified").AssertForbidden()
 	ta.Client(t).ActingAs("web", verified).Get("/dashboard").AssertSee("hello v@example.com")
 
 	// A session for a deleted user is not authenticated.
