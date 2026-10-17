@@ -19,6 +19,7 @@ import (
 
 	"github.com/AlexGalhardo/vukem/errs"
 	"github.com/AlexGalhardo/vukem/web"
+	"github.com/AlexGalhardo/vukem/z"
 )
 
 // tus protocol constants (https://tus.io/protocols/resumable-upload).
@@ -539,6 +540,10 @@ func clientMessage(err error, status int) string {
 		for _, k := range sortedKeys(ve.Fields) {
 			return ve.First(k)
 		}
+	}
+
+	if is, ok := z.AsIssues(err); ok && status == http.StatusUnprocessableEntity && len(is) > 0 {
+		return is[0].Message
 	}
 
 	return http.StatusText(status)
