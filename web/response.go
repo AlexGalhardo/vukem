@@ -11,6 +11,8 @@ import (
 	"net/url"
 	"path"
 	"strings"
+
+	"github.com/AlexGalhardo/vukem/internal/disposition"
 )
 
 var errNoURLs = errors.New("web: no URL generator configured")
@@ -229,7 +231,11 @@ func isLocalPath(p string) bool {
 }
 
 // File serves name from fsys (with Range and If-Modified-Since support).
-func (c *Ctx) File(fsys fs.FS, name string) error {
+func (c *Ctx) File(fsys fs.FS, name string) error { return c.file(fsys, name, nil) }
+
+// file serves name; ready runs once the file is known to be servable,
+// before any byte is written.
+func (c *Ctx) file(fsys fs.FS, name string, ready func()) error {
 	f, err := fsys.Open(name)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
@@ -247,6 +253,10 @@ func (c *Ctx) File(fsys fs.FS, name string) error {
 
 	if st.IsDir() {
 		return errNotFound()
+	}
+
+	if ready != nil {
+		ready()
 	}
 
 	rs, ok := f.(io.ReadSeeker)
@@ -269,8 +279,17 @@ func (c *Ctx) File(fsys fs.FS, name string) error {
 	return nil
 }
 
-// Download serves name from fsys as an attachment called filename.
+// Download serves name from fsys as an attachment called filename (the
+// base of name when empty). The name is sanitized like
+// export.ContentDisposition: last path element only, no control or bidi
+// characters, an RFC 5987 filename* when it is not ASCII. The header is
+// set only once the file opened, so an error page is not an attachment.
 func (c *Ctx) Download(fsys fs.FS, name, filename string) error {
-	c.w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": filename}))
-	return c.File(fsys, name)
+	if filename == "" {
+		filename = path.Base(name)
+	}
+
+	return c.file(fsys, name, func() {
+		c.w.Header().Set("Content-Disposition", disposition.Attachment(filename))
+	})
 }

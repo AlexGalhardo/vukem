@@ -59,7 +59,7 @@ return c.File(assets, "2026/q3.pdf")                       // Range and If-Modif
 return c.Download(assets, "2026/q3.pdf", "Q3 report.pdf")  // Content-Disposition: attachment
 ```
 
-Missing files and directories return 404. Open user-controlled paths through an `os.Root` (`root.FS()`) so `..` cannot escape the directory.
+Missing files and directories return 404, without a `Content-Disposition` header. The download name is sanitized like [export file names](/docs/digging-deeper/exports#headers-and-file-names): only its last path element is kept, control and bidi characters are removed, and non-ASCII names get an RFC 5987 `filename*`. An empty name uses the file's own name. Open user-controlled paths through an `os.Root` (`root.FS()`) so `..` cannot escape the directory.
 
 ## Headers and cookies
 
