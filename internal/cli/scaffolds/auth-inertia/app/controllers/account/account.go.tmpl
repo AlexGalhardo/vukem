@@ -14,6 +14,7 @@ import (
 
 	"github.com/AlexGalhardo/vukem/auth"
 	"github.com/AlexGalhardo/vukem/inertia"
+	"github.com/AlexGalhardo/vukem/ratelimit"
 	"github.com/AlexGalhardo/vukem/web"
 
 	"{{.Module}}/app/accounts"
@@ -34,7 +35,7 @@ func LoginThrottleKey(r *http.Request) string {
 		return ""
 	}
 
-	return "login:" + loginEmail(r) + ":" + web.NewCtx(nil, r, web.ServicesFrom(r.Context())).IP()
+	return "login:" + loginEmail(r) + ":" + ratelimit.ByIP(r)
 }
 
 // LoginAccountThrottleKey limits login attempts per email from any IP, so

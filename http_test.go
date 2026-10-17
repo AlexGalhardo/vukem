@@ -34,6 +34,7 @@ import (
 	"github.com/AlexGalhardo/vukem/mail"
 	"github.com/AlexGalhardo/vukem/middleware"
 	"github.com/AlexGalhardo/vukem/queue"
+	"github.com/AlexGalhardo/vukem/ratelimit"
 	"github.com/AlexGalhardo/vukem/router"
 	"github.com/AlexGalhardo/vukem/schedule"
 	"github.com/AlexGalhardo/vukem/schema"
@@ -1085,6 +1086,21 @@ func TestSecurity_A02_TrustedProxiesMisconfigurationRefusesBoot(t *testing.T) {
 			env:  map[string]string{"HSTS_FORCE": "true", "APP_URL": "http://example.com"},
 			want: "HSTS_FORCE requires an https APP_URL",
 		},
+		{
+			name: "ipv6 prefix zero",
+			env:  map[string]string{"RATE_LIMIT_IPV6_PREFIX": "0"},
+			want: "RATE_LIMIT_IPV6_PREFIX",
+		},
+		{
+			name: "ipv6 prefix too long",
+			env:  map[string]string{"RATE_LIMIT_IPV6_PREFIX": "129"},
+			want: "RATE_LIMIT_IPV6_PREFIX",
+		},
+		{
+			name: "ipv6 prefix not a number",
+			env:  map[string]string{"RATE_LIMIT_IPV6_PREFIX": "/64"},
+			want: "RATE_LIMIT_IPV6_PREFIX",
+		},
 		// X-Forwarded-Proto from any peer would let clients claim HTTPS.
 		{
 			name: "proto without proxies",
@@ -1100,6 +1116,154 @@ func TestSecurity_A02_TrustedProxiesMisconfigurationRefusesBoot(t *testing.T) {
 			_, err := New(WithSource(testSource(tt.env)), WithLogger(discardLogger()))
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("New() error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestSecurity_A06_RateLimitIPv6PrefixFromEnv(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		env    map[string]string
+		peer   string
+		header string // X-Real-IP; default 2001:db8:5:6:7::8
+		want   string
+	}{
+		{name: "default /64", peer: "[2001:db8:1:2::9]:1", want: "ip:2001:db8:1:2::/64"},
+		{
+			name: "env /56",
+			env:  map[string]string{"RATE_LIMIT_IPV6_PREFIX": "56"},
+			peer: "[2001:db8:1:2::9]:1",
+			want: "ip:2001:db8:1::/56",
+		},
+		{
+			name: "ipv4 unchanged",
+			env:  map[string]string{"RATE_LIMIT_IPV6_PREFIX": "56"},
+			peer: "198.51.100.7:1",
+			want: "ip:198.51.100.7",
+		},
+		{
+			name: "proxy header ipv6",
+			env:  map[string]string{"TRUSTED_PROXIES": "100.64.0.0/24", "CLIENT_IP_HEADER": "X-Real-IP"},
+			peer: "100.64.0.3:1",
+			want: "ip:2001:db8:5:6::/64",
+		},
+		{
+			name:   "proxy header ipv4-mapped",
+			env:    map[string]string{"TRUSTED_PROXIES": "100.64.0.0/24", "CLIENT_IP_HEADER": "X-Real-IP"},
+			peer:   "100.64.0.3:1",
+			header: "::ffff:203.0.113.9",
+			want:   "ip:203.0.113.9",
+		},
+		{
+			name: "env /1",
+			env:  map[string]string{"RATE_LIMIT_IPV6_PREFIX": "1"},
+			peer: "[2001:db8:1:2::9]:1",
+			want: "ip:::/1",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			app, err := New(WithSource(testSource(tt.env)), WithLogger(discardLogger()),
+				WithRoutes(func(r *router.Router, _ *App) error {
+					r.Get("/ip", func(c *web.Ctx) error { return c.String(http.StatusOK, ratelimit.ByIP(c.Request())) })
+					return nil
+				}))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			header := tt.header
+			if header == "" {
+				header = "2001:db8:5:6:7::8"
+			}
+
+			rec := proxyReq(t, app, tt.peer, map[string]string{"X-Real-IP": header})
+			if got := rec.Body.String(); got != tt.want {
+				t.Fatalf("ByIP = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSecurity_A09_WarnsOnceOnProxyHeadersWithoutTrustedProxies(t *testing.T) {
+	t.Parallel()
+
+	const warning = "every client shares one rate-limit bucket"
+
+	tests := []struct {
+		name   string
+		env    map[string]string
+		peer   string
+		header string
+		ip     string // c.IP(); default the peer host
+		want   int    // warnings after three requests
+	}{
+		{name: "railway edge", peer: "100.64.0.7:4000", header: "X-Real-IP", want: 1},
+		{name: "private peer xff", peer: "10.1.2.3:4000", header: "X-Forwarded-For", want: 1},
+		{name: "loopback peer", peer: "127.0.0.1:4000", header: "X-Forwarded-For", want: 1},
+		{name: "ula peer", peer: "[fd00::1]:4000", header: "X-Real-IP", want: 1},
+		{name: "public peer", peer: "198.51.100.7:4000", header: "X-Forwarded-For"},
+		{name: "no header", peer: "100.64.0.7:4000"},
+		{
+			name:   "proxies set",
+			env:    map[string]string{"TRUSTED_PROXIES": "100.64.0.0/24", "CLIENT_IP_HEADER": "X-Real-IP"},
+			peer:   "100.64.0.7:4000",
+			header: "X-Real-IP",
+			ip:     "203.0.113.9",
+		},
+		{
+			name:   "not production",
+			env:    map[string]string{"APP_ENV": "test"},
+			peer:   "100.64.0.7:4000",
+			header: "X-Real-IP",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			env := map[string]string{"APP_ENV": "production", "APP_URL": "https://example.com"}
+			maps.Copy(env, tt.env)
+
+			var buf bytes.Buffer
+
+			app, err := New(WithSource(testSource(env)), WithLogger(slog.New(slog.NewTextHandler(&buf, nil))),
+				WithRoutes(func(r *router.Router, _ *App) error {
+					r.Get("/ip", func(c *web.Ctx) error { return c.String(http.StatusOK, c.IP()) })
+					return nil
+				}))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			host, _, _ := net.SplitHostPort(tt.peer)
+
+			for range 3 {
+				header := map[string]string{}
+				if tt.header != "" {
+					header[tt.header] = "203.0.113.9"
+				}
+
+				// Without TRUSTED_PROXIES the header is never trusted, warning or not.
+				want := host
+				if tt.ip != "" {
+					want = tt.ip
+				}
+
+				if got := proxyReq(t, app, tt.peer, header).Body.String(); got != want {
+					t.Fatalf("IP() = %q, want %q", got, want)
+				}
+			}
+
+			if got := strings.Count(buf.String(), warning); got != tt.want {
+				t.Fatalf("warnings = %d, want %d; log %q", got, tt.want, buf.String())
 			}
 		})
 	}

@@ -96,7 +96,7 @@ The second argument of `ratelimit.Middleware` picks the bucket for a request:
 
 | Key | Buckets by | Use it for |
 | --- | --- | --- |
-| `ratelimit.ByIP` (also when `nil`) | client IP, honouring trusted proxies | public routes, logins, sign-ups |
+| `ratelimit.ByIP` (also when `nil`) | client IP, honouring trusted proxies; IPv6 by `/64` | public routes, logins, sign-ups |
 | `ratelimit.ByToken` | SHA-256 of the bearer token, else the IP | routes **behind** `auth.Required` |
 | your own `KeyFunc` | anything: user id, email + IP, tenant | per-user or per-account limits |
 
@@ -113,6 +113,8 @@ byEmail := func(r *http.Request) string {
 
 r.Post("/login", h.Login).Use(ratelimit.Middleware(limiters("login", 5, time.Minute), byEmail))
 ```
+
+`ByIP` keys IPv4 clients per address and IPv6 clients per network: an IPv6 client usually owns a whole `/64` and can pick a new address for every request, so a per-address key would give it a fresh bucket each time. The prefix is `/64` by default and set with `RATE_LIMIT_IPV6_PREFIX` (1–128; `48` is stricter, `128` keys each address). IPv4-mapped IPv6 (`::ffff:203.0.113.5`) counts as IPv4. Keys that combine the IP with something else, like `byEmail` above, should embed `ratelimit.ByIP(r)` (or `ratelimit.IPKey(ip, prefix)`) rather than `c.IP()`, so they group IPv6 the same way. Behind a proxy, set `TRUSTED_PROXIES` first, or every client shares the proxy's bucket (see [Docker & Railway](/docs/deployment/docker-and-railway#trusted-proxies)).
 
 A `KeyFunc` returning `""` skips limiting for that request. Normalize what you key by (trim, lower-case), or `Alice@x.com` and `alice@x.com ` get separate budgets.
 
@@ -145,6 +147,7 @@ http.Handle("/login", ratelimit.Middleware(l, ratelimit.ByIP)(loginHandler))
 | Option | Default | Description |
 | --- | --- | --- |
 | `RATE_LIMIT_STORE` | `memory` | `memory` (per process, GCRA) or `cache` (shared through `app.Cache()`, fixed windows) |
+| `RATE_LIMIT_IPV6_PREFIX` | `64` | prefix length `ByIP` groups IPv6 clients by (1–128) |
 | `CACHE_STORE` | `memory` | with `RATE_LIMIT_STORE=cache`: `database` shares limits through the SQL database (required unless a Redis store is set with `vukem.WithCacheStore`) |
 | `CACHE_TABLE` | `cache` | table of the database cache store |
 | `CACHE_PREFIX` | `vukem:` | prefix of every cache key, rate limit counters included |

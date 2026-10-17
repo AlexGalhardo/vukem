@@ -14,6 +14,7 @@ import (
 	"github.com/AlexGalhardo/vukem/examples/saas/app/accounts"
 	"github.com/AlexGalhardo/vukem/examples/saas/app/requests"
 	"github.com/AlexGalhardo/vukem/inertia"
+	"github.com/AlexGalhardo/vukem/ratelimit"
 	"github.com/AlexGalhardo/vukem/web"
 )
 
@@ -48,7 +49,7 @@ func LoginThrottleKey(r *http.Request) string {
 		r.Body = io.NopCloser(bytes.NewReader(body))
 	}
 
-	return "login:" + strings.ToLower(email) + ":" + web.NewCtx(nil, r, web.ServicesFrom(r.Context())).IP()
+	return "login:" + strings.ToLower(email) + ":" + ratelimit.ByIP(r)
 }
 
 // ShowLogin renders the login page.

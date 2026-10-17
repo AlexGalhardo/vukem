@@ -10,6 +10,7 @@ import (
 	"github.com/AlexGalhardo/vukem/examples/blog/app/accounts"
 	"github.com/AlexGalhardo/vukem/examples/blog/app/models"
 	"github.com/AlexGalhardo/vukem/examples/blog/app/requests"
+	"github.com/AlexGalhardo/vukem/ratelimit"
 	"github.com/AlexGalhardo/vukem/web"
 )
 
@@ -27,10 +28,7 @@ func LoginThrottleKey(r *http.Request) string {
 		return ""
 	}
 
-	return "login:" + strings.ToLower(
-		r.PostFormValue("email"),
-	) + ":" + web.NewCtx(nil, r, web.ServicesFrom(r.Context())).
-		IP()
+	return "login:" + strings.ToLower(r.PostFormValue("email")) + ":" + ratelimit.ByIP(r)
 }
 
 // ShowLogin renders the login form.

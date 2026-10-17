@@ -61,6 +61,11 @@ type Services struct {
 	// X-Forwarded-For, only from TrustedProxies peers; a missing, repeated
 	// or non-IP value falls back to the peer address.
 	ClientIPHeader string
+	// IPv6Prefix is the prefix length per-IP keys (ratelimit.ByIP) group
+	// IPv6 clients by, since one client usually owns a whole /64; 0 or any
+	// value outside 1-128 means 64. IPv4 (and IPv4-mapped IPv6) keys stay
+	// per address.
+	IPv6Prefix int
 	// ProblemBaseURL prefixes RFC 9457 problem "type" URIs; empty means
 	// "about:blank".
 	ProblemBaseURL string

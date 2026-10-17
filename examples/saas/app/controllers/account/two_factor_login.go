@@ -6,6 +6,7 @@ import (
 	"github.com/AlexGalhardo/vukem/auth"
 	"github.com/AlexGalhardo/vukem/examples/saas/app/accounts"
 	"github.com/AlexGalhardo/vukem/examples/saas/app/models"
+	"github.com/AlexGalhardo/vukem/ratelimit"
 	"github.com/AlexGalhardo/vukem/web"
 )
 
@@ -36,7 +37,7 @@ func TwoFactorThrottleKey(r *http.Request) string {
 		id = u.AuthID()
 	}
 
-	return "2fa:" + id + ":" + web.NewCtx(nil, r, web.ServicesFrom(r.Context())).IP()
+	return "2fa:" + id + ":" + ratelimit.ByIP(r)
 }
 
 // startTwoFactor sends users with two-factor authentication to the code

@@ -18,6 +18,7 @@ import (
 	"encoding/hex"
 	"math"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"strings"
 	"sync"
@@ -118,9 +119,54 @@ func (m *Memory) prune(now time.Time) {
 // KeyFunc picks the bucket for a request; "" skips limiting.
 type KeyFunc func(r *http.Request) string
 
-// ByIP keys requests by client IP (honouring trusted proxies).
+// DefaultIPv6Prefix is the IPv6 prefix length [ByIP] groups clients by
+// when web.Services.IPv6Prefix is 0.
+const DefaultIPv6Prefix = 64
+
+// ByIP keys requests by client IP (honouring trusted proxies). IPv4 keys
+// are per address (IPv4-mapped IPv6 counts as IPv4); IPv6 keys are per
+// web.Services.IPv6Prefix network (default /64, RATE_LIMIT_IPV6_PREFIX in
+// apps), because a client owning a /64 can pick a new address per request.
 func ByIP(r *http.Request) string {
-	return "ip:" + web.NewCtx(nil, r, web.ServicesFrom(r.Context())).IP()
+	s := web.ServicesFrom(r.Context())
+	return "ip:" + IPKey(web.NewCtx(nil, r, s).IP(), s.IPv6Prefix)
+}
+
+// IPKey returns the per-client part of an IP rate-limit key: an IPv4
+// address as is (IPv4-mapped IPv6 unmapped), an IPv6 address as its
+// network of prefix bits ("2001:db8:1:2::/64"); a prefix outside 1-128
+// means [DefaultIPv6Prefix]. A value that is not an IP is returned as is:
+// it is still one stable key per peer. Custom KeyFuncs that combine the
+// client IP with other parts (email, user) use it, or [ByIP], so IPv6
+// clients cannot rotate addresses inside their /64.
+func IPKey(ip string, prefix int) string {
+	addr, err := netip.ParseAddr(ip)
+	if err != nil {
+		return ip
+	}
+
+	// ParseAddr accepts only the canonical dotted form for IPv4, so ip
+	// is already the key.
+	if addr.Is4() {
+		return ip
+	}
+
+	addr = addr.Unmap()
+	if addr.Is4() {
+		return addr.String()
+	}
+
+	bits := prefix
+	if bits < 1 || bits > 128 {
+		bits = DefaultIPv6Prefix
+	}
+
+	p, err := addr.WithZone("").Prefix(bits)
+	if err != nil {
+		return addr.String()
+	}
+
+	return p.String()
 }
 
 // ByToken keys requests by bearer token (hashed, never stored in clear),

@@ -65,6 +65,8 @@ CLIENT_IP_HEADER=X-Real-IP              # optional: one-IP header set by the pro
 
 `vukem.New` applies them to the router and to the default `SecureHeaders`; `vukem about` prints the result. With `CLIENT_IP_HEADER`, `c.IP()` reads that header instead of `X-Forwarded-For`, still only from trusted peers, and only when it holds exactly one IP (anything else falls back to the peer address). An entry that is neither an IP nor a CIDR, an invalid or list header name, or `TRUST_FORWARDED_PROTO` / `CLIENT_IP_HEADER` without `TRUSTED_PROXIES` stops the boot. Trust only the networks your proxy connects from: a trusted peer can claim any client address.
 
+In production, when `TRUSTED_PROXIES` is empty and a request from a private, CGNAT (`100.64.0.0/10`) or loopback peer carries `X-Forwarded-For` or `X-Real-IP`, the app logs one warning per process, containing `every client shares one rate-limit bucket`. The header is still ignored; set `TRUSTED_PROXIES` to silence it.
+
 Each request log line from `middleware.Logger` carries both addresses: `peer` is the direct connection (the `r.RemoteAddr` host, the proxy when there is one) and `ip` is the client resolved through `TRUSTED_PROXIES` (what `c.IP()` returns). Before trusting a range, read `peer` from a few requests; once the range is trusted, `ip` should show the real client while `peer` stays the proxy. Client IPs are personal data under LGPD/GDPR: set the log retention or anonymization of your log drain accordingly.
 
 ### HSTS without a trusted range
@@ -106,9 +108,12 @@ In the app service's **Variables**:
 APP_KEY=base64:...                         # vukem key:generate --show
 APP_URL=https://blog.up.railway.app         # the domain from Settings → Networking
 DATABASE_URL=${{Postgres.DATABASE_URL}}
+TRUSTED_PROXIES=100.64.0.0/24               # Railway's edge, see below
+CLIENT_IP_HEADER=X-Real-IP
+TRUST_FORWARDED_PROTO=true
 ```
 
-Do not set `PORT`: Railway injects it and the app listens on it ([healthchecks](https://docs.railway.com/reference/healthchecks)). Generate a public domain under **Settings → Networking**. See [trusted proxies on Railway](#trusted-proxies-on-railway) before setting `TRUSTED_PROXIES`.
+Do not set `PORT`: Railway injects it and the app listens on it ([healthchecks](https://docs.railway.com/reference/healthchecks)). Generate a public domain under **Settings → Networking**. [Trusted proxies on Railway](#trusted-proxies-on-railway) explains the last three and how to check them.
 
 </Step>
 <Step title="Healthcheck, migrations and restarts">
@@ -129,14 +134,22 @@ Push to the connected branch (or `railway up`). Check `https://<domain>/up`, the
 
 ### Trusted proxies on Railway
 
-What Railway documents about its HTTP edge ([public networking specs and limits](https://docs.railway.com/networking/public-networking/specs-and-limits)): all public traffic is HTTPS (TLS 1.2+), `X-Forwarded-Proto` is always `https`, `X-Real-IP` carries the client's remote IP and `X-Forwarded-Host` the original host. It does **not** document `X-Forwarded-For` or the address range its edge connects to your service from. A range such as `100.0.0.0/8` (or `100.64.0.0/10`) seen in community answers is not part of Railway's documentation and may change.
+Set these on every service that serves HTTP:
 
-Because the header Railway documents is `X-Real-IP`, the matching setting is `CLIENT_IP_HEADER=X-Real-IP`. It is honoured only from `TRUSTED_PROXIES` peers, and Railway does not tell you which range that is, so the trade-off stays yours:
+```dotenv
+TRUSTED_PROXIES=100.64.0.0/24
+CLIENT_IP_HEADER=X-Real-IP
+TRUST_FORWARDED_PROTO=true
+```
 
-- **`TRUSTED_PROXIES` unset (the default, safe).** `c.IP()` is the edge's address, so per-IP rate limits and login throttles key on the edge: all clients share one bucket. Key limits by user or token where you can.
-- **`TRUSTED_PROXIES` set to a range you verified.** Read the `peer` field of a few request log lines from your deployment, trust the narrowest range that covers it, and re-check after Railway changes. Then set `CLIENT_IP_HEADER=X-Real-IP` and, for HSTS, `TRUST_FORWARDED_PROTO=true`. If the edge later connects from outside that range, `c.IP()` falls back to the edge address (limits get stricter, never spoofable).
-- **HSTS either way.** Every public request on Railway is HTTPS, so with `TRUSTED_PROXIES` unset set `HSTS_FORCE=true` to still send HSTS ([HSTS without a trusted range](#hsts-without-a-trusted-range)).
-- **Never trust `0.0.0.0/0`.** Any client, or another service on the project's private network, could then send its own `X-Real-IP` and choose its `c.IP()`.
+The observed peer is `100.64.0.x` (the `peer` field of the request log) and Railway sets `X-Real-IP` to the client's address; confirm both in your own logs. Without these values `c.IP()` is the edge address, so per-IP rate limits and login throttles put every client in one bucket, and the app logs the warning [above](#trusted-proxies) on the first proxied request.
+
+What Railway documents about its HTTP edge ([public networking specs and limits](https://docs.railway.com/networking/public-networking/specs-and-limits)): all public traffic is HTTPS (TLS 1.2+), `X-Forwarded-Proto` is always `https`, `X-Real-IP` carries the client's remote IP and `X-Forwarded-Host` the original host. It does **not** document `X-Forwarded-For` or the range its edge connects from, so `100.64.0.0/24` is observed, not promised:
+
+- **Check it on your deployment.** Read `peer` from a few request log lines; with the values above, `ip` should show the real client while `peer` stays in `100.64.0.x`. Re-check after Railway changes its edge.
+- **Outside the range, limits get stricter, never spoofable.** The recommended `/24` is narrower than the `100.64.0.0/10` the warning checks: if the edge later connects from elsewhere in that space, `c.IP()` falls back to the edge address (one shared bucket again) and the warning returns. Widen `TRUSTED_PROXIES` only to a range you observed.
+- **Without a trusted range, still send HSTS.** Every public request on Railway is HTTPS, so with `TRUSTED_PROXIES` unset set `HSTS_FORCE=true` ([HSTS without a trusted range](#hsts-without-a-trusted-range)).
+- **Never trust `0.0.0.0/0` or all of `100.64.0.0/10`.** Any client, or another service on the project's private network, could then send its own `X-Real-IP` and choose its `c.IP()`.
 
 ### Scheduler and queue workers
 
