@@ -119,6 +119,8 @@ var LoginSchema = z.FromTags[Login]() // panics at boot on unknown rules
 
 `web.Bind[T](c)` uses the tag schema for `T` (built once and cached by `z.For[T]()`).
 
+`required` on a string means non-empty. On a list it means present and not null, as with OpenAPI `required`: an empty list passes, so use `min=1` when the list must have items.
+
 ## Typed boundaries
 
 | Boundary | API |
