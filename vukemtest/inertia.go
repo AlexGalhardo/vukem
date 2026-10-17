@@ -12,10 +12,16 @@ import (
 )
 
 // Inertia marks following requests as Inertia visits (X-Inertia, the
-// client's Accept header) with the client's asset version ("" when the app
-// has no Vite build). JSON bodies (PostJSON) then behave like Inertia form
-// submissions, not API calls.
+// client's Accept header) with asset version. "" sends the app's current
+// version (app.Inertia.Version()), so tests keep passing after a Vite
+// build; pass another value to test the 409 version-mismatch reload. JSON
+// bodies (PostJSON) then behave like Inertia form submissions, not API
+// calls.
 func (c *Client) Inertia(version string) *Client {
+	if version == "" && c.app.Inertia != nil {
+		version = c.app.Inertia.Version()
+	}
+
 	return c.WithHeader("X-Inertia", "true").
 		WithHeader("Accept", "text/html, application/xhtml+xml").
 		WithHeader("X-Requested-With", "XMLHttpRequest").

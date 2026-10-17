@@ -13,11 +13,15 @@ import (
 )
 
 func buildInertia(opts ...vukem.Option) (*vukem.App, error) {
+	return buildInertiaWith(inertia.Config{}, opts...)
+}
+
+func buildInertiaWith(cfg inertia.Config, opts ...vukem.Option) (*vukem.App, error) {
 	return vukem.New(append(opts,
 		vukem.WithViews(fstest.MapFS{
 			"app.html": {Data: []byte(`{{/* layout: none */}}<html><body>{{.Inertia}}</body></html>`)},
 		}),
-		vukem.WithInertia(inertia.Config{}),
+		vukem.WithInertia(cfg),
 		vukem.WithRoutes(func(r *router.Router, app *vukem.App) error {
 			if err := vukem.DefaultMiddleware(app, r); err != nil {
 				return err
@@ -91,4 +95,16 @@ func TestAssertInertiaFailures(t *testing.T) {
 			expectFailure(t, want, fn)
 		})
 	}
+}
+
+func TestInertiaClientUsesAppVersion(t *testing.T) {
+	t.Parallel()
+
+	// An app with a Vite build has a non-empty asset version.
+	app := vukemtest.New(t, func(opts ...vukem.Option) (*vukem.App, error) {
+		return buildInertiaWith(inertia.Config{Version: func() string { return "abc" }}, opts...)
+	})
+
+	app.Client(t).Inertia("").Get("/posts").AssertOK().AssertInertia("Posts/Index")
+	app.Client(t).Inertia("stale").Get("/posts").AssertStatus(409)
 }

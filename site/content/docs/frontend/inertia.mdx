@@ -181,4 +181,4 @@ app.Client(t).Inertia("").Get("/posts").
 	PropEquals("filters.q", "go")
 ```
 
-Works on first visits (HTML) and Inertia visits (JSON). `Inertia(version)` also sends the Inertia `Accept` header, so `PostJSON` behaves like a form submission.
+Works on first visits (HTML) and Inertia visits (JSON). `Inertia("")` sends the app's current asset version, so tests keep passing after `bun run build`; pass any other value (`Inertia("stale")`) to test the 409 version-mismatch reload. `Inertia(version)` also sends the Inertia `Accept` header, so `PostJSON` behaves like a form submission.
