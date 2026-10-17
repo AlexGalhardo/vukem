@@ -49,6 +49,11 @@ type reference struct {
 	onDelete string
 }
 
+type check struct {
+	name string
+	expr string
+}
+
 type index struct {
 	name   string
 	cols   []string
@@ -66,6 +71,8 @@ type Table struct {
 	renames [][2]string
 	drops   []string
 	dropIdx []string
+	checks  []check
+	dropChk []string
 	err     error
 }
 
@@ -224,6 +231,49 @@ func (t *Table) DropIndex(name string) {
 	}
 
 	t.dropIdx = append(t.dropIdx, name)
+}
+
+// Check adds a named CHECK constraint. expr is raw SQL written by the
+// developer (never user input); it should only use syntax every target
+// dialect understands. On Create it works on SQLite, PostgreSQL and MySQL.
+// On Table (alter) SQLite cannot add constraints to an existing table, so
+// the migration fails instead of silently skipping the rule. MySQL scopes
+// constraint names per database, so prefix them with the table name.
+func (t *Table) Check(name, expr string) {
+	if err := checkIdent("check", name); err != nil {
+		t.fail(err)
+		return
+	}
+
+	if strings.TrimSpace(expr) == "" {
+		t.fail(fmt.Errorf("schema: check %s needs an expression", name))
+		return
+	}
+
+	if t.alter && t.s.d.Name() == "sqlite" {
+		t.fail(fmt.Errorf("schema: sqlite cannot add a check to existing table %s; add it in Create", t.name))
+		return
+	}
+
+	t.checks = append(t.checks, check{name: name, expr: expr})
+}
+
+// DropCheck drops a named CHECK constraint (alter only; not supported on
+// SQLite).
+func (t *Table) DropCheck(name string) {
+	if err := checkIdent("check", name); err != nil {
+		t.fail(err)
+		return
+	}
+
+	switch {
+	case !t.alter:
+		t.fail(fmt.Errorf("schema: DropCheck(%s) is alter only", name))
+	case t.s.d.Name() == "sqlite":
+		t.fail(fmt.Errorf("schema: sqlite cannot drop a check from existing table %s", t.name))
+	default:
+		t.dropChk = append(t.dropChk, name)
+	}
 }
 
 // Nullable allows NULL.
