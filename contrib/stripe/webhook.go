@@ -34,7 +34,10 @@ type Event struct {
 	Created    int64  `json:"created"`
 	Livemode   bool   `json:"livemode"`
 	APIVersion string `json:"api_version"`
-	Data       struct {
+	// Account is the connected account (acct_...) a Connect event happened
+	// on; "" for events on the platform account itself.
+	Account string `json:"account,omitempty"`
+	Data    struct {
 		Object             json.RawMessage `json:"object"`
 		PreviousAttributes json.RawMessage `json:"previous_attributes,omitempty"`
 	} `json:"data"`
@@ -114,6 +117,28 @@ func ConstructEvent(payload []byte, header, secret string, tolerance time.Durati
 	return e, nil
 }
 
+// constructEventAny verifies payload against each secret in turn and
+// returns the first match; a verified payload that is not an event stops
+// the search.
+func constructEventAny(
+	payload []byte,
+	header string,
+	secrets []string,
+	tol time.Duration,
+	now time.Time,
+) (Event, error) {
+	var err error
+
+	for _, s := range secrets {
+		var ev Event
+		if ev, err = ConstructEvent(payload, header, s, tol, now); err == nil || !errors.Is(err, ErrSignature) {
+			return ev, err
+		}
+	}
+
+	return Event{}, err
+}
+
 // Received is dispatched on the events.Bus for every verified, first-seen
 // webhook event; listen with events.On[stripe.Received] and switch on
 // Event.Type.
@@ -123,6 +148,11 @@ type Received struct{ Event Event }
 type WebhookConfig struct {
 	// Secret is the endpoint's signing secret (whsec_...).
 	Secret string
+	// Secrets are further signing secrets accepted besides Secret: a
+	// platform endpoint and a Connect endpoint ("Events on connected
+	// accounts") have different secrets even when both post to the same
+	// URL. A payload must verify against one of them.
+	Secrets []string
 	// Store remembers processed event ids (cache.Store: memory, database or
 	// Redis). Required: without it duplicates would be processed twice.
 	Store cache.Store
@@ -150,8 +180,21 @@ const (
 // releases the claim and answers 500, so Stripe redelivers. Mount it
 // outside CSRF protection (Stripe is a server, not a browser).
 func WebhookHandler(cfg WebhookConfig) (http.Handler, error) {
-	if cfg.Secret == "" || cfg.Store == nil || cfg.Bus == nil {
-		return nil, errors.New("stripe: webhook needs Secret, Store and Bus")
+	var secrets []string
+	if cfg.Secret != "" {
+		secrets = append(secrets, cfg.Secret)
+	}
+
+	for _, s := range cfg.Secrets {
+		if s == "" {
+			return nil, errors.New("stripe: webhook Secrets has an empty secret")
+		}
+
+		secrets = append(secrets, s)
+	}
+
+	if len(secrets) == 0 || cfg.Store == nil || cfg.Bus == nil {
+		return nil, errors.New("stripe: webhook needs Secret (or Secrets), Store and Bus")
 	}
 
 	if cfg.Tolerance == 0 {
@@ -182,7 +225,7 @@ func WebhookHandler(cfg WebhookConfig) (http.Handler, error) {
 			return
 		}
 
-		ev, err := ConstructEvent(payload, r.Header.Get("Stripe-Signature"), cfg.Secret, cfg.Tolerance, cfg.Now())
+		ev, err := constructEventAny(payload, r.Header.Get("Stripe-Signature"), secrets, cfg.Tolerance, cfg.Now())
 		if err != nil {
 			cfg.Log.WarnContext(r.Context(), "stripe webhook rejected", "event", "stripe.webhook_rejected", "err", err)
 			http.Error(w, "invalid signature", http.StatusBadRequest)
