@@ -451,10 +451,7 @@ func TestMailLaterTx(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			// SQLite has one writer connection: the queue creates its tables
-			// before a transaction holds it (serve's worker does it at boot).
-			q, err := app.Queue()
-			if err != nil {
+			if err := app.Boot(ctx); err != nil {
 				t.Fatal(err)
 			}
 
@@ -475,6 +472,11 @@ func TestMailLaterTx(t *testing.T) {
 				}
 			}
 
+			q, err := app.Queue()
+			if err != nil {
+				t.Fatal(err)
+			}
+
 			if err := q.Work(ctx, queue.WorkOptions{StopWhenEmpty: true}); err != nil {
 				t.Fatal(err)
 			}
@@ -484,5 +486,41 @@ func TestMailLaterTx(t *testing.T) {
 				t.Fatalf("sent = %+v, want only the committed mail", sent)
 			}
 		})
+	}
+}
+
+// Boot creates the database queue tables, so the first app.Queue() can
+// happen inside a transaction: on SQLite that transaction holds the only
+// writer connection, and creating the tables there would block and fail.
+func TestDatabaseQueueFirstUseInsideTransaction(t *testing.T) {
+	t.Parallel()
+
+	app := dbQueueApp(t, nil, WithJobs(queue.Handle(func(context.Context, pingJob) error { return nil })))
+	ctx := t.Context()
+
+	if err := app.Boot(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err := app.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = db.Tx(ctx, func(tx *database.Tx) error {
+		q, err := app.Queue()
+		if err != nil {
+			return err
+		}
+
+		return q.DispatchTx(ctx, tx, pingJob{N: 1})
+	})
+	if err != nil {
+		t.Fatalf("DispatchTx as the first queue use = %v, want nil", err)
+	}
+
+	q, _ := app.Queue()
+	if n, err := q.Driver().(*queue.Database).Pending(ctx); err != nil || n != 1 {
+		t.Fatalf("Pending() = %d, %v; want the committed job", n, err)
 	}
 }

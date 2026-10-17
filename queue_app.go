@@ -119,7 +119,7 @@ func (a *App) Queue() (*queue.Queue, error) {
 		case cfg.Connection == "memory":
 			d = queue.NewMemory()
 		case cfg.Connection == "database":
-			if d, err = a.databaseQueue(cfg); err != nil {
+			if d, err = a.databaseQueueDriver(cfg); err != nil {
 				a.queueErr = err
 				return
 			}
@@ -178,7 +178,47 @@ func (a *App) jobRegistrations() (regs []queue.Registration, err error) {
 	return regs, nil
 }
 
-func (a *App) databaseQueue(cfg QueueConfig) (*queue.Database, error) {
+// prepareDatabaseQueue creates the database queue tables at Boot, so the
+// first app.Queue() never runs DDL: called inside a transaction on SQLite,
+// whose single writer connection the transaction holds, it would block
+// until the timeout and fail.
+func (a *App) prepareDatabaseQueue(ctx context.Context) error {
+	if a.queueDriver != nil || a.queueDriverFunc != nil {
+		return nil
+	}
+
+	cfg, err := configLoad[QueueConfig](a)
+	if err != nil || cfg.Connection != "database" {
+		return err
+	}
+
+	d, err := a.databaseQueue(ctx, cfg)
+	if err != nil {
+		return fmt.Errorf("vukem: queue: %w", err)
+	}
+
+	a.mu.Lock()
+	a.queueDB = d
+	a.mu.Unlock()
+
+	return nil
+}
+
+// databaseQueueDriver returns the driver Boot prepared, or builds it when
+// the app was not booted.
+func (a *App) databaseQueueDriver(cfg QueueConfig) (*queue.Database, error) {
+	a.mu.Lock()
+	d := a.queueDB
+	a.mu.Unlock()
+
+	if d != nil {
+		return d, nil
+	}
+
+	return a.databaseQueue(context.Background(), cfg)
+}
+
+func (a *App) databaseQueue(ctx context.Context, cfg QueueConfig) (*queue.Database, error) {
 	db, err := a.DB()
 	if err != nil {
 		return nil, err
@@ -189,7 +229,7 @@ func (a *App) databaseQueue(cfg QueueConfig) (*queue.Database, error) {
 		return nil, err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	defer cancel()
 
 	if err := d.CreateTables(ctx); err != nil {

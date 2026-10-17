@@ -201,6 +201,8 @@ type App struct {
 	queueOnce sync.Once
 	queue     *queue.Queue
 	queueErr  error
+	// queueDB is the database queue driver Boot prepared (tables created).
+	queueDB *queue.Database
 
 	now func() time.Time
 	// proxies is the parsed TRUSTED_PROXIES.
@@ -966,6 +968,10 @@ func (a *App) Boot(ctx context.Context) error {
 }
 
 func (a *App) boot(ctx context.Context) error {
+	if err := a.prepareDatabaseQueue(ctx); err != nil {
+		return err
+	}
+
 	for _, p := range a.providers {
 		b, ok := p.(Booter)
 		if !ok || !runsIn(p, a.Kind) {
