@@ -129,7 +129,7 @@ if err := cfg.Validate(); err != nil {
 }
 ```
 
-`SecureHeaders` never fails: invalid extras are dropped (the policy stays stricter), so call `Validate` at boot. Anything weaker than the helper allows needs a full `CSP` string.
+`SecureHeaders` never fails: invalid extras are dropped (the policy stays stricter), so call `Validate` at boot (`vukem.DefaultMiddlewareWith` does). Anything weaker than the helper allows needs a full `CSP` string.
 
 Styles injected at runtime need the nonce too, since `style-src` has no `'unsafe-inline'`. The starters already handle the common cases:
 
@@ -146,6 +146,32 @@ Styles injected at runtime need the nonce too, since `style-src` has no `'unsafe
 | --- | --- |
 | Server | `Recover`, `RequestID`, `Logger`, `SecureHeaders`, `MethodOverride` |
 | Router | `BodyLimit(web.DefaultMaxBody)`, sessions, CSRF (`CSRF_TRUSTED_ORIGINS` adds trusted origins) |
+
+`vukem.DefaultMiddlewareWith(app, r, opts)` installs the same stack with options; the zero `vukem.MiddlewareOptions` is `DefaultMiddleware`:
+
+```go
+err := vukem.DefaultMiddlewareWith(app, r, vukem.MiddlewareOptions{
+	// Runs after the defaults (Vite dev server) are set; validated at boot.
+	SecureHeaders: func(cfg *middleware.SecureHeadersConfig) {
+		cfg.CSPSources = map[string][]string{
+			"script-src":  {"https://plausible.io"},
+			"connect-src": {"https://plausible.io"},
+		}
+		cfg.ReportURI = "/csp-reports"
+	},
+	SessionBypass: []string{"/webhooks/"},             // no session (no cookie) on these routes
+	CSRFBypass:    []string{"POST /webhooks/{name}"},  // signed webhooks; logged at boot
+})
+```
+
+| Option | Effect |
+| --- | --- |
+| `SecureHeaders` | Edits the `SecureHeadersConfig` (`CSPSources`, `ReportURI`, `TrustForwardedProto`, ...). An invalid result fails at boot. |
+| `Stateless` | No session middleware at all, for cookieless apps. CSRF protection stays on. |
+| `SessionBypass` | `ServeMux` patterns served without sessions. |
+| `CSRFBypass` | `ServeMux` patterns exempt from CSRF checks; each one is logged at boot. Protect them another way (signatures). |
+
+Maintenance mode, the body limit and CSRF for every other route stay on: the options only add sources or skip what you list.
 
 ## Generating middleware
 
