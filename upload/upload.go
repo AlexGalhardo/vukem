@@ -301,7 +301,7 @@ func Receive(c *web.Ctx, d storage.Disk, rules Rules) (*Form, error) {
 		}
 	}()
 
-	fields := 0
+	fields, parts := 0, 0
 
 	for {
 		part, err := mr.NextPart()
@@ -311,6 +311,12 @@ func Receive(c *web.Ctx, d storage.Disk, rules Rules) (*Form, error) {
 
 		if err != nil {
 			return nil, clientError(err)
+		}
+
+		// Parts without a name are skipped but still parsed: count every
+		// part, or tiny nameless parts would bypass MaxFields.
+		if parts++; parts > r.MaxFields+r.MaxFiles {
+			return nil, ErrTooManyFields
 		}
 
 		name := part.FormName()

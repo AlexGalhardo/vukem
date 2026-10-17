@@ -337,6 +337,27 @@ func TestSecurity_A05_UploadValidation(t *testing.T) {
 	})
 }
 
+// Nameless parts are ignored but still parsed, so they count toward the
+// part limit: thousands of tiny parts must not fit under MaxSize.
+func TestSecurity_A06_UploadNamelessPartsBounded(t *testing.T) {
+	t.Parallel()
+
+	var b strings.Builder
+	for range 100 {
+		b.WriteString("--B\r\nContent-Type: text/plain\r\n\r\nx\r\n")
+	}
+
+	b.WriteString("--B--\r\n")
+
+	r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/upload", strings.NewReader(b.String()))
+	r.Header.Set("Content-Type", "multipart/form-data; boundary=B")
+
+	_, err := Receive(web.NewCtx(httptest.NewRecorder(), r, nil), storage.NewMemory(""), Images(1<<10))
+	if !errors.Is(err, ErrTooManyFields) {
+		t.Fatalf("Receive(100 nameless parts) = %v, want ErrTooManyFields", err)
+	}
+}
+
 func TestSanitizeName(t *testing.T) {
 	t.Parallel()
 
