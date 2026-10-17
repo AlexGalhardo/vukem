@@ -39,7 +39,7 @@ schema, err := graphql.New(sdl,
 
 - `Field[P, A, O](type, field, fn, opts...)`, `Query[A, O]` and `Mutation[A, O]`. `P` is the parent value; `A` is decoded from the arguments through `json` tags and checked with `validate` tags and a `Validate() error` method; `O` is serialized per the selection set.
 - A Go argument the field does not declare, a binding to an unknown field and a root field without a resolver are boot errors.
-- Unbound fields read the parent: a map key, or a struct field by `json` name (`json:"-"` hides it).
+- Unbound fields read the parent: a map key, or a struct field by `json` name (`json:"-"` hides it), falling back to a case-insensitive Go name, tagged or not (`PriceCents` with `json:"price_cents"` also answers `priceCents`). An exact `json` name wins over another field's Go name.
 - Scalars: `Int` (32-bit, checked), `Float`, `String`, `Boolean`, `ID`; custom ones with `graphql.Scalar("DateTime", graphql.ScalarFuncs{Serialize, Parse})`. Interfaces and unions resolve through `graphql.ResolveType`, a `GraphQLTypename()` method or `graphql.Object[T]("Type")`.
 
 ## Execution
