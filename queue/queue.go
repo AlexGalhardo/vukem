@@ -343,7 +343,15 @@ var ErrNoTx = errors.New("queue: driver does not support DispatchTx")
 // the transaction. With a *database.DB (no open transaction) the job is
 // dispatched now.
 func (q *Queue) DispatchTx(ctx context.Context, ex database.Executor, j Job, opts ...Option) error {
-	m, h, err := q.message(j.Kind(), j, opts)
+	return q.DispatchKindTx(ctx, ex, j.Kind(), j, opts...)
+}
+
+// DispatchKindTx is DispatchTx for a payload sent to the handler of kind
+// (framework jobs such as queued mail, see DispatchKind).
+func (q *Queue) DispatchKindTx(ctx context.Context, ex database.Executor, kind string, payload any,
+	opts ...Option,
+) error {
+	m, h, err := q.message(kind, payload, opts)
 	if err != nil {
 		return err
 	}
