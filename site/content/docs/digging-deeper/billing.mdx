@@ -28,7 +28,7 @@ if errors.Is(err, stripe.ErrCardDeclined) { /* ... */ }
 
 - Every request pins `Stripe-Version` (`stripe.APIVersion`). POSTs carry an `Idempotency-Key` (generated, or yours), so retries on 429, 5xx and network errors are safe; `Retry-After` and `Stripe-Should-Retry` are honoured.
 - Errors are `*stripe.Error{Status, Type, Code, DeclineCode, Message, Param, RequestID}`; match them with `errors.Is` against `ErrCardDeclined`, `ErrInvalid`, `ErrRateLimited` or `ErrAuth`.
-- Resources: customers (`Create/Get/UpdateCustomer`), Checkout Sessions, subscriptions (`Get/Update/CancelSubscription`), `CreatePortalSession`, payment intents, and `Do` for any other endpoint. `stripe.Params` nests (`line_items[0][price]`).
+- Resources: customers (`Create/Get/UpdateCustomer`), Checkout Sessions, subscriptions (`Get/Update/CancelSubscription`), `CreatePortalSession`, payment intents, Connect (below), and `Call` for any other endpoint (`Do` is deprecated in its favour). `stripe.Params` nests (`line_items[0][price]`).
 - Never pass `payment_method_types` to Checkout: dynamic payment methods come from the Dashboard.
 - The client prints as `rk_…abcd`, never the full key.
 
@@ -113,3 +113,36 @@ In production the app refuses to boot while `STRIPE_KEY`, `STRIPE_WEBHOOK_SECRET
 ```bash
 stripe listen --forward-to localhost:3000/stripe/webhook   # prints the whsec_ secret
 ```
+
+## Stripe Connect (marketplaces)
+
+A marketplace takes the payment and pays part of it out to a seller. The client covers Stripe Connect with Express accounts:
+
+```go
+// 1. Create the seller's connected account and send them to Stripe's onboarding.
+acct, err := sc.CreateAccount(ctx, stripe.Params{
+	"controller[stripe_dashboard][type]": "express",
+	"controller[fees][payer]":            "application",
+	"controller[losses][payments]":       "application",
+})
+link, err := sc.CreateAccountLink(ctx, stripe.Params{
+	"account":     acct.ID,
+	"type":        "account_onboarding",
+	"refresh_url": appURL + "/seller/onboarding",
+	"return_url":  appURL + "/seller",
+}) // single use: redirect only the signed-in account holder to link.URL
+
+// 2. Charge the buyer and route the money (a destination charge with your fee).
+pi, err := sc.CreatePaymentIntent(ctx, stripe.Params{
+	"amount":                    "10000",
+	"currency":                  "brl",
+	"application_fee_amount":    "1000",
+	"transfer_data[destination]": acct.ID,
+}, "order-42-payment") // idempotency key tied to the order
+```
+
+- `GetAccount` reports `ChargesEnabled`, `DetailsSubmitted` and `Requirements`; `CreateLoginLink` opens the seller's Express dashboard; `CreateTransfer`/`GetTransfer` cover separate charges and transfers.
+- `sc.ForAccount("acct_…")` or the per-request `stripe.OnAccount("acct_…")` act **as** a connected account (direct charges). The platform-only methods above refuse that scope with `stripe.ErrInvalidRequestOption`, so they never run against the wrong account.
+- Connect events are signed with a different secret than platform events: add it to `WebhookConfig.Secrets` and read the seller from `Event.Account`.
+
+The full reference is in the [`contrib/stripe` documentation](https://github.com/AlexGalhardo/vukem/blob/main/docs/subsystems.md). The [Marketplace showcase app](/docs/showcase#marketplace-inertia-and-react) uses Connect in production.

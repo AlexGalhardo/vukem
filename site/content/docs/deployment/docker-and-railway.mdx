@@ -140,7 +140,11 @@ Because the header Railway documents is `X-Real-IP`, the matching setting is `CL
 
 ### Scheduler and queue workers
 
-The web service runs only the HTTP server (and the in-memory queue). Run the scheduler as a second service from the same repository with the start command `/app/app schedule:work` (**Settings → Deploy → Custom Start Command**; it replaces the image's `ENTRYPOINT`) and the same variables; it needs no domain or healthcheck. Railway's cron schedules run at most every 5 minutes ([cron jobs](https://docs.railway.com/cron-jobs)), so they cannot replace `schedule:run` every minute. A database or Redis queue needs a worker service the same way, with `/app/app queue:work`.
+The web service's `serve` command (the image's default) also runs the [scheduler](/docs/digging-deeper/scheduler) in process (`SCHEDULE_IN_SERVE=true` by default), so a single service runs your scheduled tasks and the built-in prune tasks: no second service is needed.
+
+Run the scheduler as its own service only when tasks must fire exactly once across several web replicas: set `SCHEDULE_IN_SERVE=false` on the web service, then add a second service from the same repository with the start command `/app/app schedule:work` (**Settings → Deploy → Custom Start Command**; it replaces the image's `ENTRYPOINT`) and the same variables; it needs no domain or healthcheck. Railway's cron schedules run at most every 5 minutes ([cron jobs](https://docs.railway.com/cron-jobs)), so they cannot replace `schedule:run` every minute.
+
+Queues: the in-memory queue runs inside `serve`. For a database or Redis queue, see the [queue page](/docs/digging-deeper/queue) for how its worker runs; a separate worker service uses the start command `/app/app queue:work` the same way.
 
 ### Volumes
 

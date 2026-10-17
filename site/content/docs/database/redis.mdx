@@ -3,6 +3,8 @@ title: Redis
 description: Cache, sessions, queues, a shared rate limiter, locks and pub/sub on Redis or Valkey.
 ---
 
+Redis (or its open-source fork Valkey) is an in-memory key-value server. Vukem uses it as a **shared** backend: when your app runs on more than one server, the cache, sessions, queue, rate limits and locks must live somewhere every server can see. One Redis gives you all five. The [step-by-step guide](#step-by-step-sessions-and-cache-on-redis) at the end starts from zero.
+
 ```bash
 go get github.com/AlexGalhardo/vukem/drivers/redis
 ```
@@ -85,3 +87,109 @@ The last of `WithCacheStore` / `WithCacheStoreFunc` (and likewise for sessions a
 - Works with Redis 7+ and Valkey 8+; CI runs the `cachetest` and `queuetest` conformance suites on both.
 - `Open` pings the server, so the app does not boot while Redis is down; a malformed URL always fails. `redis.OpenLazy(url)` only parses the URL and connects on first use, so the process starts and `rc.Ping` reports the outage in a readiness check (`app.AddHealthCheck`). go-redis retries a failed command 3 times with backoff, so that `Ping` takes seconds while Redis is down; for a fast readiness answer set `?dial_timeout=1s&max_retries=-1` on the URL (or use a separate client with those options for the check).
 - `redis.New(client)` wraps an existing go-redis client (Cluster, Sentinel, custom options); `rc.Redis()` returns it.
+
+## Step by step: sessions and cache on Redis
+
+<Steps>
+<Step title="1. Start Redis locally">
+
+```yaml title="compose.yaml"
+services:
+  redis:
+    image: redis:7.4
+    ports: ["6379:6379"]
+```
+
+```bash
+docker compose up -d redis
+```
+
+</Step>
+<Step title="2. Add the driver and the URL">
+
+```bash
+go get github.com/AlexGalhardo/vukem/drivers/redis
+```
+
+```bash title=".env"
+REDIS_URL=redis://localhost:6379/0
+```
+
+</Step>
+<Step title="3. Plug Redis into the app">
+
+Use the lazy options shown in [Reading `REDIS_URL` from the app configuration](#reading-redis_url-from-the-app-configuration), so the URL comes from `.env` and from `vukemtest` sources. For a quick start, the eager form is enough:
+
+```go title="bootstrap/app.go"
+rc, err := redis.Open(ctx, os.Getenv("REDIS_URL")) // fails when Redis is down
+if err != nil {
+	return nil, err
+}
+
+app, err := vukem.New(
+	vukem.WithCacheStore(rc.CacheStore("myapp:cache:")),
+	vukem.WithSessionStore(rc.SessionStore("myapp:session:")),
+	// ...
+)
+if err != nil {
+	return nil, err
+}
+
+app.AddHealthCheck("redis", rc.Ping)
+app.OnShutdown(func(context.Context) error { return rc.Close() })
+```
+
+</Step>
+<Step title="4. Share rate limits">
+
+```bash title=".env"
+RATE_LIMIT_STORE=cache   # limiters count in app.Cache(), now Redis
+```
+
+Or use the Redis GCRA limiter directly: `ratelimit.Middleware(rc.RateLimiter("login:", 5, time.Minute), ratelimit.ByIP)`.
+
+</Step>
+<Step title="5. Check that it works">
+
+```bash
+vukem serve
+curl -s -c jar.txt http://localhost:3000/ > /dev/null   # creates a session
+docker compose exec redis redis-cli --scan --pattern 'myapp:*'
+curl -s 'http://localhost:3000/up?checks=1'               # "redis" is reported
+```
+
+</Step>
+</Steps>
+
+## Pub/sub
+
+```go
+msgs, err := rc.Subscribe(ctx, "orders") // the channel closes when ctx ends
+if err != nil {
+	return err
+}
+
+go func() {
+	for b := range msgs {
+		log.Printf("order event: %s", b)
+	}
+}()
+
+err = rc.Publish(ctx, "orders", []byte(`{"id":42}`))
+```
+
+Pub/sub is fire-and-forget: subscribers that are offline miss messages. Use the queue for work that must not be lost.
+
+## Pitfalls
+
+- **One Redis, several apps.** Give every store its own prefix per app (`myapp:cache:`, `myapp:session:`), or two apps read each other's keys.
+- **Eviction policies.** A Redis configured with `maxmemory-policy allkeys-lru` may evict sessions and queued jobs under memory pressure. Use `noeviction` (or `volatile-lru`) for a Redis that holds sessions or queues, or run a separate one for the cache.
+- **`os.Getenv` before `.env` loads.** The eager form reads the process environment only; use the lazy `With...Func` options to read `app.Source`.
+- **Slow readiness checks while Redis is down.** go-redis retries; add `?dial_timeout=1s&max_retries=-1` to the URL used by the health check.
+- **Persistence.** A default Redis may lose recent writes on restart. Queues and sessions need AOF or RDB persistence enabled (managed Redis usually has it).
+
+## Security notes
+
+- Never expose Redis to the internet. Bind it to a private network, require a password (`redis://:password@host:6379/0`) and use `rediss://` (TLS) across networks.
+- Keep the password in an environment variable, never in code or in a committed `.env`.
+- Sessions in Redis hold only session data; still, anyone with Redis access can read or forge sessions, so treat Redis credentials like database credentials.

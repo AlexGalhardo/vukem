@@ -39,6 +39,14 @@ Vukem is a complete Model-View-Controller (MVC) web framework for Go built on `n
 - **Secure by default.** CSRF, security headers, Argon2id, safe SQL, fail-closed authorization, mapped to the [OWASP Top 10:2025](docs/security.md).
 - **Windows is first-class.** Pure Go, no C compiler, tested on Windows, Linux and macOS.
 
+## Showcase
+
+Open-source reference apps built with Vukem, live in production ([details](https://vukem.vercel.app/docs/showcase)):
+
+- [vukem-golang-quiz-htmx](https://github.com/AlexGalhardo/vukem-golang-quiz-htmx) ([live](https://vukem-quiz.up.railway.app)): HTMX 4, embedded JSON, i18n, CSP nonces, Lighthouse 100.
+- [vukem-rifa-vuejs](https://github.com/AlexGalhardo/vukem-rifa-vuejs) ([live](https://vukem-rifa.up.railway.app)): Inertia v3 + Vue, PostgreSQL, PIX with AbacatePay, a ledger, a REST API with Scalar, scheduler and queue inside `serve`.
+- [vukem-micro-mercadolivre-reactjs](https://github.com/AlexGalhardo/vukem-micro-mercadolivre-reactjs) ([live](https://vukem-marketplace.up.railway.app)): Inertia v3 + React + Base UI, PostgreSQL, Redis and MongoDB, Stripe Connect and PIX, REST, GraphQL and gRPC, OpenTelemetry.
+
 ## Why MVC and not Hexagonal/Clean Architecture?
 
 - This framework was inspired by the simplicity of well established frameworks like: Laravel, Ruby on Rails, AdonisJS, Django.

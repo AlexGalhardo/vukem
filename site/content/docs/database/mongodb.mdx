@@ -3,6 +3,8 @@ title: MongoDB
 description: A typed collection API over the official MongoDB driver.
 ---
 
+MongoDB stores JSON-like **documents** in **collections** instead of rows in tables. It suits data whose shape varies or grows over time: audit trails, event history, product attributes, telemetry. `drivers/mongo` wraps the official driver with typed collections, so a `Coll[User]` reads and writes `User` values. The [step-by-step guide](#step-by-step-an-audit-log) below the reference starts from zero.
+
 ```bash
 go get github.com/AlexGalhardo/vukem/drivers/mongo
 ```
@@ -55,3 +57,136 @@ Never pass decoded request JSON as a filter: operators such as `$where` or `$ne`
 </Callout>
 
 MongoDB has its own API on purpose: the SQL query builder and migrations do not apply to it.
+
+## Step by step: an audit log
+
+<Steps>
+<Step title="1. Start MongoDB locally">
+
+```yaml title="compose.yaml"
+services:
+  mongo:
+    image: mongo:8.0
+    ports: ["27017:27017"]
+```
+
+```bash
+docker compose up -d mongo
+```
+
+```bash title=".env"
+MONGO_URL=mongodb://localhost:27017
+MONGO_DATABASE=app
+```
+
+</Step>
+<Step title="2. Describe the document">
+
+```go title="app/models/audit_entry.go"
+import "go.mongodb.org/mongo-driver/v2/bson"
+
+type AuditEntry struct {
+	ID     bson.ObjectID  `bson:"_id,omitempty" json:"id"`
+	UserID int64          `bson:"user_id"       json:"user_id"`
+	Action string         `bson:"action"        json:"action"`
+	Data   map[string]any `bson:"data"          json:"data"`
+	At     time.Time      `bson:"at"            json:"at"`
+}
+```
+
+`omitempty` on `_id` lets MongoDB generate the id on insert.
+
+</Step>
+<Step title="3. Connect at boot and create an index">
+
+```go title="app/audit/audit.go"
+import (
+	"go.mongodb.org/mongo-driver/v2/bson"
+	mongodriver "go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
+
+	"github.com/AlexGalhardo/vukem/drivers/mongo"
+)
+
+type Log struct {
+	entries *mongo.Coll[models.AuditEntry]
+}
+
+func New(ctx context.Context, app *vukem.App) (*Log, error) {
+	m, err := mongo.Open(ctx, app.Source.Get("MONGO_URL"), app.Source.Get("MONGO_DATABASE"))
+	if err != nil {
+		return nil, err
+	}
+
+	app.AddHealthCheck("mongo", m.Ping)
+	app.OnShutdown(m.Close)
+
+	entries := mongo.Collection[models.AuditEntry](m, "audit_entries")
+
+	// Indexes are created through the official driver: Raw() returns it.
+	_, err = entries.Raw().Indexes().CreateOne(ctx, mongodriver.IndexModel{
+		Keys: bson.D{{Key: "user_id", Value: 1}, {Key: "at", Value: -1}},
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &Log{entries: entries}, nil
+}
+```
+
+`CreateOne` does nothing when the same index already exists, so it is safe on every boot.
+
+</Step>
+<Step title="4. Write and read">
+
+```go
+func (l *Log) Record(ctx context.Context, userID int64, action string, data map[string]any) error {
+	_, err := l.entries.Insert(ctx, models.AuditEntry{UserID: userID, Action: action, Data: data, At: time.Now().UTC()})
+	return err
+}
+
+func (l *Log) Recent(ctx context.Context, userID int64) ([]models.AuditEntry, error) {
+	return l.entries.All(ctx,
+		bson.D{{Key: "user_id", Value: userID}}, // built from a typed value, never from request JSON
+		options.Find().SetSort(bson.D{{Key: "at", Value: -1}}).SetLimit(50),
+	)
+}
+```
+
+</Step>
+<Step title="5. Use it from a handler">
+
+```go
+func (h *Account) Activity(c *web.Ctx) error {
+	u, err := auth.User[models.User](c, "web")
+	if err != nil {
+		return err
+	}
+
+	entries, err := h.audit.Recent(c.Context(), u.ID)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, entries)
+}
+```
+
+</Step>
+</Steps>
+
+## Pitfalls
+
+- **Database name.** With neither a path in `MONGO_URL` nor `MONGO_DATABASE`, `Open` fails; a path in the URI also changes `authSource` (see the warning above).
+- **No migrations.** Collections are created on first insert. Create indexes in code at boot (as above) or in a deploy script; a missing index turns queries into full scans.
+- **Unique constraints need a unique index.** Without one, two concurrent inserts both succeed. Add `Options: options.Index().SetUnique(true)` and check `mongodriver.IsDuplicateKeyError(err)`.
+- **Zero values are written.** A `0` or `""` field is stored unless the tag has `omitempty`; with `omitempty` you cannot store an explicit zero. Choose per field.
+- **Times are stored in UTC milliseconds.** Nanoseconds are truncated; compare times at millisecond precision in tests.
+- **Large `Find` results.** `All` loads everything into memory; iterate with `Find` (a cursor) and set a limit for big collections.
+
+## Security notes
+
+- **Operator injection.** Decoding request JSON into a `bson.M` filter lets a client send `{"email": {"$ne": ""}}` and match every document. Validate input with [`z`](/docs/basics/validation) into typed fields first, then build `bson.D` filters from those fields.
+- Enable authentication on every MongoDB outside your laptop, use a user with access to the app's database only, and keep the credentials in `MONGO_URL` in the environment.
+- Use TLS (`mongodb+srv://` on Atlas, or `?tls=true`) across networks.

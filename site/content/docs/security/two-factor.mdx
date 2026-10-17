@@ -3,6 +3,8 @@ title: Two-factor authentication
 description: TOTP two-factor authentication (RFC 6238) with QR enrolment, hashed recovery codes, replay protection and throttling, scaffolded by install:auth --2fa.
 ---
 
+Two-factor authentication (2FA) asks for something the user **has** (a phone with an authenticator app) on top of something they **know** (the password). A stolen or reused password is then not enough to sign in. Vukem implements TOTP: the app and the server share a secret and both compute a 6-digit code from it and the current time, every 30 seconds.
+
 ```bash
 vukem install:auth --2fa   # also works on a project that already ran install:auth
 vukem migrate
@@ -52,3 +54,83 @@ code, err := totp.Code(secret, time.Now(), totp.Options{})   // in tests
 ```
 
 The QR SVG is written by `totp.QR` itself from server data, which is why the scaffold may insert it as raw HTML. Never do that with user input.
+
+In the Inertia starters the scaffold sends the QR code to the page as a `data:image/svg+xml;base64,…` URL rendered with a plain `<img>`, so no raw HTML is injected into React, Vue or Svelte.
+
+## Step by step
+
+<Steps>
+<Step title="1. Install and migrate">
+
+```bash
+vukem install:auth --2fa
+vukem migrate        # adds the two-factor columns to users
+go test ./tests/...  # the scaffold's tests cover the whole flow
+```
+
+</Step>
+<Step title="2. Enable it as a user">
+
+1. Sign in and open `/user/two-factor`.
+2. Click **Enable**: a QR code and a setup key appear.
+3. Scan the QR code with an authenticator app (Google Authenticator, 1Password, Aegis…).
+4. Type the 6-digit code to **confirm**. 2FA is on only after this step.
+5. Save the 8 recovery codes shown once, in a password manager.
+
+</Step>
+<Step title="3. Sign in with a code">
+
+Sign out and sign in again. After the password you land on `/two-factor-challenge`; type the current code from the app, or one recovery code if the phone is lost.
+
+</Step>
+<Step title="4. Test it without a phone">
+
+`totp.Code` computes the code the app would show, so tests can drive the whole flow:
+
+```go
+code, err := totp.Code(secret, time.Now(), totp.Options{})
+if err != nil {
+	t.Fatal(err)
+}
+
+client.PostForm("/two-factor-challenge", url.Values{"code": {code}}).AssertRedirect("/dashboard")
+```
+
+A code is accepted only once (replay protection), so a test that signs in twice needs the code of a **later** time step: `totp.Code(secret, time.Now().Add(30*time.Second), totp.Options{})`.
+
+</Step>
+</Steps>
+
+## Using `totp` without the scaffold
+
+```go
+// Enrolment: generate and store the secret (encrypted), show the QR code.
+secret, err := totp.GenerateSecret()
+uri := totp.URI(app.Config.Name, user.Email, secret, totp.Options{})
+svg, err := totp.QR(uri, 200)
+
+// Confirmation and login: validate, then store the step to block replays.
+step, ok := totp.Validate(secret, input, time.Now(), tf.TwoFactorLastStep, totp.Options{})
+if !ok {
+	return errs.ErrUnprocessable // and count the failure for throttling
+}
+tf.TwoFactorLastStep = step // models.TwoFactor in the scaffold; save it in the same update that logs the user in
+```
+
+`Validate` accepts the previous and the next 30-second step as well, for clock skew between the phone and the server.
+
+## Pitfalls
+
+- **Server clock.** TOTP depends on the time. A server more than about 30 seconds off makes every code fail; keep NTP on (containers use the host clock).
+- **Not storing the step.** Without saving the returned step as `lastStep`, the same code works again for up to 90 seconds.
+- **Turning 2FA on before confirmation.** Only enable it after a valid code, or a user who scanned nothing is locked out. The scaffold does this.
+- **Losing recovery codes.** They are shown once and stored as hashes only. Offer regeneration (it invalidates the old ones) from the settings page.
+- **A custom `Login` handler.** The scaffold patches the default one; if you rewrite login later, keep the "password OK → challenge" step, or 2FA is silently skipped.
+
+## Security notes
+
+- The secret is a credential: the scaffold stores it in an [encrypted column](/docs/security/encryption#encrypted-columns) keyed from `APP_KEY`, in its own model so it never reaches JSON responses or Inertia props.
+- Throttle every endpoint that accepts a code (the scaffold allows 5 per minute per user and IP): six digits are guessable without a limit.
+- Disabling 2FA and regenerating recovery codes require the current password.
+- Confirming 2FA ends the user's other sessions (with `SESSION_DRIVER=database`), so a session opened by an attacker before enrolment does not survive it.
+- Failed codes are logged as the `auth.2fa_failed` [security event](/docs/security/building-blocks#security-events).

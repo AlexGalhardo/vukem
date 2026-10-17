@@ -1,0 +1,175 @@
+---
+title: CSP and security headers
+description: What each security header does, how the nonce-based Content-Security-Policy works, and how to add analytics, embeds, Inertia and violation reports without weakening it.
+---
+
+Browsers enforce a set of response headers that block whole classes of attacks: cross-site scripting (XSS), clickjacking, MIME sniffing and downgrade to HTTP. `vukem.DefaultMiddleware` and `vukem.APIMiddleware` install `middleware.SecureHeaders` on every response, so a new app is already protected. This page explains what you get and how to change it safely.
+
+## What every response carries
+
+| Header | Default | Blocks |
+| --- | --- | --- |
+| `Content-Security-Policy` | `middleware.DefaultCSP` with a fresh nonce per request | injected scripts and styles (XSS), loading from unknown origins, framing (`frame-ancestors 'none'`) |
+| `Strict-Transport-Security` | `max-age=63072000; includeSubDomains`, on HTTPS requests only | later visits over plain HTTP |
+| `X-Content-Type-Options` | `nosniff` | a file served as text being run as a script |
+| `X-Frame-Options` | `DENY` | clickjacking in old browsers |
+| `Referrer-Policy` | `strict-origin-when-cross-origin` | full URLs (with tokens in the query) leaking to other sites |
+| `Cross-Origin-Opener-Policy` | `same-origin` | other windows holding a reference to yours |
+| `Permissions-Policy` | `camera=(), microphone=(), geolocation=()` | embedded content asking for devices |
+
+See them yourself:
+
+```bash
+curl -sI http://localhost:3000/ | grep -iE 'content-security|x-frame|referrer|permissions|nosniff|cross-origin'
+```
+
+## How the CSP works
+
+The default policy is:
+
+```text
+default-src 'self'; script-src 'self' 'nonce-{nonce}'; style-src 'self' 'nonce-{nonce}';
+img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self';
+frame-ancestors 'none'; form-action 'self'
+```
+
+- Files from your own origin (`'self'`) load normally: the Vite bundle, images, fonts.
+- An **inline** `<script>` or `<style>` runs only if it carries the request's **nonce**, a random value that changes on every response. An attacker who injects `<script>` into a page cannot know it.
+- There is no `'unsafe-inline'` and no `'unsafe-eval'`.
+
+<Steps>
+<Step title="1. Put the nonce on inline tags">
+
+In `html/template` views, use the `cspNonce` function:
+
+```html title="resources/views/layouts/app.html"
+<script nonce="{{cspNonce}}">
+	window.appConfig = {{json .Config}};
+</script>
+```
+
+The `vite` function already adds the nonce to the tags it writes. In Go code, read it with `middleware.CSPNonce(c.Context())`.
+
+</Step>
+<Step title="2. Move inline event handlers and style attributes into files">
+
+These are blocked and no nonce can unblock them:
+
+```html
+<button onclick="save()">Save</button>   <!-- blocked: use addEventListener in a .ts file -->
+<div style="color: red">…</div>          <!-- blocked: use a class -->
+```
+
+Setting `el.style.color` from JavaScript is allowed.
+
+</Step>
+<Step title="3. Open the browser console">
+
+Every blocked resource is reported as `Refused to load …` or `Refused to execute inline script …`, with the directive that blocked it. Fix the page, or add the source as shown below.
+
+</Step>
+</Steps>
+
+## Adding a source (analytics, embeds, CDNs)
+
+Do not rewrite the policy to add one origin. `CSPSources` adds sources to named directives and keeps the rest of the policy and the nonce:
+
+```go title="routes/web.go"
+err := vukem.DefaultMiddlewareWith(app, r, vukem.MiddlewareOptions{
+	SecureHeaders: func(cfg *middleware.SecureHeadersConfig) {
+		cfg.CSPSources = map[string][]string{
+			"script-src":  {"https://plausible.io"},
+			"connect-src": {"https://plausible.io"},
+			"frame-src":   {"https://www.youtube-nocookie.com"}, // starts from default-src: 'self' + this
+		}
+	},
+})
+if err != nil {
+	return err // an unsafe or malformed source fails the boot
+}
+```
+
+`CSPSources` refuses anything that would make the policy unsafe: `'unsafe-*'` keywords, static nonces, `*` hosts, wildcards over fewer than two labels (`*.com`), host wildcards in script directives, and broad schemes outside the few directives where they are harmless (`https:`/`data:`/`blob:` for images and media, `https:`/`wss:` for `connect-src`). If you truly need one of those, write a full `CSP` string; that makes the weakening visible in code review.
+
+## A library that injects a fixed `<style>`
+
+Some component libraries insert a `<style>` tag at runtime without a nonce. Allow exactly that style with its hash, which the browser console prints in the error message:
+
+```go
+cfg.CSPSources = map[string][]string{
+	"style-src": {"'sha256-…'"},
+}
+```
+
+## Inertia, htmx and Vite
+
+- **Inertia:** the root view has `<meta property="csp-nonce" nonce="{{cspNonce}}">`, and the starters pass that nonce to `createInertiaApp({ nonce })`, so the progress bar's styles are allowed.
+- **htmx 4:** its indicator styles use a constructed stylesheet, which the CSP does not block.
+- **Vite in development:** while the dev server runs (outside production only) its origin and its `ws://` form are added to the policy automatically, so hot reload works.
+
+## Collecting violation reports
+
+Before tightening a policy in production, collect what it would block:
+
+```go
+cfg.ReportURI = "/csp-reports" // or an https:// URL of a reporting service
+```
+
+This adds `report-uri` and `report-to` to the policy and a `Reporting-Endpoints` header. The browser then `POST`s a JSON report for every violation. Vukem does not ship a receiver: handle the route yourself, limit its body size and rate, and never trust the contents (anyone can post to it).
+
+```go
+limiters, err := app.RateLimiters()
+if err != nil {
+	return err
+}
+
+reports := ratelimit.Middleware(limiters("csp.reports", 30, time.Minute), ratelimit.ByIP)
+
+r.Post("/csp-reports", func(c *web.Ctx) error {
+	body, err := io.ReadAll(io.LimitReader(c.Request().Body, 16<<10))
+	if err != nil {
+		return err
+	}
+
+	c.Log().WarnContext(c.Context(), "csp violation", "report", string(body))
+
+	return c.NoContent()
+}).Use(reports)
+```
+
+Browsers send reports without a CSRF token. If your CSRF settings reject them, add the route to `CSRFBypass` (it only stores text, so the bypass is harmless) and to `SessionBypass` so reports do not create sessions.
+
+## HTTPS behind a proxy (HSTS)
+
+HSTS is only sent on HTTPS requests. Behind a TLS-terminating proxy (Railway, Fly, a load balancer), the app sees plain HTTP, so tell it which proxies to believe:
+
+```bash title=".env"
+TRUST_FORWARDED_PROTO=true
+TRUSTED_PROXIES=10.0.0.0/8   # the proxy's address range
+```
+
+`TRUST_FORWARDED_PROTO=true` without `TRUSTED_PROXIES` refuses the boot: any client could otherwise claim HTTPS. When the proxy's address range is unknown, `HSTS_FORCE=true` (`SecureHeadersConfig.HSTSForce`) sends HSTS on every response in production instead; it needs an `https://` `APP_URL` and has trade-offs described in [HSTS without a trusted range](/docs/deployment/docker-and-railway#hsts-without-a-trusted-range). See [Middleware](/docs/basics/middleware#secure-headers-and-csp-nonces) and [Docker and Railway](/docs/deployment/docker-and-railway).
+
+## Other options
+
+| `SecureHeadersConfig` field | Effect |
+| --- | --- |
+| `CSP` | a full custom policy; `{nonce}` is replaced per request; `"-"` disables the header |
+| `HSTSMaxAge` | HSTS lifetime; negative disables it |
+| `HSTSForce` | HSTS on every response, for a TLS proxy whose range cannot be trusted (`HSTS_FORCE`) |
+| `FrameOptions` | defaults to `DENY`; `"-"` disables it |
+| `ReferrerPolicy`, `PermissionsPolicy` | replace the defaults |
+| `CSPSources`, `ReportURI` | as above |
+
+## Pitfalls
+
+- **Do not add a second `SecureHeaders`.** The default stacks already install it; change it with `DefaultMiddlewareWith` instead.
+- **A static nonce is no nonce.** Never hard-code `'nonce-abc'`: `CSPSources` refuses it, and in a custom `CSP` it would let any injected script run.
+- **Nonces and caching.** A page that embeds the nonce must not be served from a shared cache (CDN) to other users, or their nonce will not match the header.
+- **`SecureHeaders` never fails at runtime.** Invalid extras are dropped with one warning (the policy stays stricter). `DefaultMiddlewareWith` validates at boot; when you build the config yourself, call `cfg.Validate()`.
+
+## Security notes
+
+- The CSP is a second line of defence. `html/template` escaping is still what prevents XSS; never pass user input through `template.HTML`.
+- Keep `frame-ancestors 'none'` unless a page really has to be embedded, and then list the embedding origins explicitly with a custom `CSP`.
+- The defaults are covered by `TestSecurity_A02_*` tests; see [Security overview](/docs/security/overview).

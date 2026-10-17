@@ -1,0 +1,170 @@
+---
+title: OpenTelemetry
+description: Trace every HTTP request with OpenTelemetry, export spans over OTLP/HTTP to any collector, and link your logs to traces with the drivers/otel module.
+---
+
+[OpenTelemetry](https://opentelemetry.io) (OTel) is the vendor-neutral standard for traces, metrics and logs. A **trace** follows one request through your system; it is made of **spans**, each one a timed operation (`GET /posts/{slug}`, `SELECT posts`). Backends such as Grafana Tempo, Jaeger, Honeycomb, Datadog or Railway's tracing view show them as a timeline.
+
+Vukem ships OTel in a **separate module**, `drivers/otel`, so the OpenTelemetry SDK is only downloaded by apps that use it.
+
+## What you get
+
+- **One server span per HTTP request**, named after the matched route pattern (`GET /posts/{slug}`), never the raw path.
+- **Trace propagation**: an incoming W3C `traceparent` (and `baggage`) header continues the caller's trace.
+- **HTTP semantic conventions**: method, route, status code, scheme, protocol, server address and user agent. `5xx` responses and panics mark the span as an error.
+- **Log correlation**: records logged with the request's context get `trace_id` and `span_id`, so a log line links to its trace.
+- **Export over OTLP/HTTP**, configured with the standard `OTEL_*` variables, flushed on shutdown.
+
+Check the module's package documentation for what else is exported in your version.
+
+## Step by step
+
+<Steps>
+<Step title="1. Add the module">
+
+```bash
+go get github.com/AlexGalhardo/vukem/drivers/otel
+```
+
+</Step>
+<Step title="2. Register the provider before your routes">
+
+```go title="bootstrap/app.go"
+import "github.com/AlexGalhardo/vukem/drivers/otel"
+
+app, err := vukem.New(
+	vukem.WithProviders(otel.New(otel.Config{})), // before routes: its middleware wraps the whole stack
+	vukem.WithRoutes(routes.All),
+	// ...
+)
+```
+
+The provider builds a `TracerProvider`, installs the tracing middleware on the router, wraps `app.Log` so logs carry trace ids, and exports pending spans when the app shuts down.
+
+</Step>
+<Step title="3. Point it at a collector">
+
+```bash title=".env"
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318   # OTLP/HTTP; /v1/traces is appended
+OTEL_SERVICE_NAME=shop                              # defaults to APP_NAME
+```
+
+Without `OTEL_EXPORTER_OTLP_ENDPOINT` (or `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, used as is) tracing stays **off** and costs nothing, so the same binary runs in development without a collector. `OTEL_SDK_DISABLED=true` turns it off explicitly. A value that is not an `http(s)` URL fails the boot.
+
+</Step>
+<Step title="4. Run a collector locally and look at a trace">
+
+Jaeger's all-in-one image accepts OTLP and has a UI:
+
+```bash
+docker run --rm -p 16686:16686 -p 4318:4318 jaegertracing/jaeger:2.5.0
+vukem serve
+curl http://localhost:3000/
+```
+
+Open `http://localhost:16686`, pick your service and you will see one span per request.
+
+</Step>
+<Step title="5. Log with the request context">
+
+```go
+func (h *Orders) Store(c *web.Ctx) error {
+	c.Log().InfoContext(c.Context(), "order created", "order_id", id) // gets trace_id and span_id
+	return c.NoContent()
+}
+```
+
+Only the `*Context` logging methods see the span. `c.Log().Info(...)` without a context logs without trace ids.
+
+</Step>
+</Steps>
+
+## Configuration
+
+| Variable or field | Default | Notes |
+| --- | --- | --- |
+| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | — | full URL of the traces endpoint, used as is |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | — | base URL; `/v1/traces` is appended |
+| `OTEL_SERVICE_NAME` / `Config.ServiceName` | `APP_NAME` | the `service.name` resource attribute; `deployment.environment.name` is `APP_ENV` |
+| `OTEL_SDK_DISABLED` | `false` | `true` disables tracing |
+| `Config.Sampler` | `ParentBased(AlwaysSample)` | e.g. `sdktrace.ParentBased(sdktrace.TraceIDRatioBased(0.1))` to keep 10% |
+| `Config.Exporter` | OTLP/HTTP | any `sdktrace.SpanExporter` (tests, other protocols) |
+| `Config.Global` | `false` | also install the provider and propagator as OTel globals, for libraries instrumented through them |
+
+Most hosted backends need an API key header (`OTEL_EXPORTER_OTLP_HEADERS=x-api-key=...`). That variable is read by the OpenTelemetry exporter itself, from the **process environment**: set it in your platform's variables, since a value only in `.env` may not reach the exporter.
+
+## Your own spans
+
+Get a tracer from the provider and start child spans inside a handler. They join the request's trace through the context:
+
+```go title="bootstrap/app.go"
+tracing := otel.New(otel.Config{})
+
+app, err := vukem.New(vukem.WithProviders(tracing) /* , ... */)
+if err != nil {
+	return nil, err
+}
+
+checkout := &controllers.Checkout{Tracer: tracing.TracerProvider().Tracer("shop/checkout")}
+```
+
+```go title="app/controllers/checkout.go"
+type Checkout struct {
+	Tracer trace.Tracer // go.opentelemetry.io/otel/trace
+}
+
+func (h *Checkout) Pay(c *web.Ctx) error {
+	ctx, span := h.Tracer.Start(c.Context(), "charge card")
+	defer span.End()
+
+	return chargeCard(ctx) // pass ctx down so deeper spans nest
+}
+```
+
+`TracerProvider()` returns a no-op provider while tracing is off, so this code needs no `if`.
+
+## Bringing your own TracerProvider
+
+Without the provider, install the middleware yourself:
+
+```go
+r.UseServer(otel.Middleware(tp))                  // one span per request
+log := slog.New(otel.LogHandler(base.Handler())) // trace_id / span_id on records
+```
+
+`otel.WithPropagator(p)` replaces the default W3C TraceContext + Baggage propagator.
+
+## Testing
+
+Use the SDK's in-memory recorder, no collector needed:
+
+```go
+sr := tracetest.NewSpanRecorder()
+tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(sr))
+
+r := router.New(nil)
+r.UseServer(otel.Middleware(tp))
+r.Get("/posts/{slug}", show)
+
+r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/posts/hello", http.NoBody))
+
+if got := sr.Ended()[0].Name(); got != "GET /posts/{slug}" {
+	t.Fatalf("span name = %q", got)
+}
+```
+
+Or pass `otel.Config{Exporter: tracetest.NewInMemoryExporter()}` to the provider.
+
+## Pitfalls
+
+- **Register the provider before routes.** Otherwise middleware added earlier is not inside the span.
+- **No endpoint, no traces.** Tracing is silently off without `OTEL_EXPORTER_OTLP_ENDPOINT`; check the variable first when a backend shows nothing.
+- **Port 4318 is OTLP/HTTP, 4317 is gRPC.** The built-in exporter speaks HTTP.
+- **Spans are batched.** They reach the backend a few seconds later, and on graceful shutdown. A process killed with `SIGKILL` loses the last batch.
+- **Sample in production.** `AlwaysSample` sends every request; busy apps usually keep a ratio.
+
+## Security notes
+
+- Spans record the **route pattern**, never the raw path or the query string, which may carry tokens or personal data.
+- Do not put secrets, tokens or personal data in span attributes or baggage: they leave your infrastructure. Incoming `baggage` is client-controlled; never trust it for decisions.
+- Send traces over `https://` to collectors outside your private network.
