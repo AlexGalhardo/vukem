@@ -1,0 +1,11 @@
+package migrations
+
+import (
+	"github.com/AlexGalhardo/vukem/admin"
+	"github.com/AlexGalhardo/vukem/schema"
+)
+
+// The admin panel writes every change it makes to this table.
+func m{{.TS1}}CreateAdminAuditLogsTable() schema.Migration {
+	return admin.Migration("{{.TS1}}_create_admin_audit_logs_table")
+}

@@ -1,0 +1,18 @@
+package admin
+
+import (
+	vadmin "github.com/AlexGalhardo/vukem/admin"
+	"github.com/AlexGalhardo/vukem/authz"
+)
+
+// Resources lists the panel's resources; vukem make:admin-resource appends
+// here.
+func Resources() []vadmin.AnyResource {
+	return []vadmin.AnyResource{}
+}
+
+// Policies lists what admins may do per model; vukem make:admin-resource
+// appends here. A resource without a policy denies every action.
+func Policies(admins Admins) []authz.Policy {
+	return []authz.Policy{}
+}

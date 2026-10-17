@@ -57,6 +57,7 @@ func commands() []command {
 		{"install:auth", "", "Add login, registration, password reset and email verification", installAuth},
 		{"install:api", "", "Add API tokens, /api/v1 routes, CORS and rate limiting", installAPI},
 		{"install:billing", "", "Add Stripe subscriptions: plans, Checkout, Billing Portal, webhooks", installBilling},
+		{"install:admin", "", "Add the admin panel at /admin (needs install:auth)", installAdmin},
 		{
 			"install:inertia",
 			"",
@@ -87,6 +88,12 @@ func commands() []command {
 		{"make:job", "<Name>", "Create a queued job and register its handler", makeJob},
 		{"make:mail", "<Name>", "Create a mailable and its view", makeMail},
 		{"make:policy", "<Name>", "Create an authorization policy and register it", makePolicy},
+		{
+			"make:admin-resource",
+			"<Model>",
+			"Create an admin panel resource and policy for a model and register them",
+			makeAdminResource,
+		},
 		{"make:test", "<Name>", "Create a test using the fluent client", makeTest},
 		{"make:proto", "<Name>", "Create a gRPC service .proto (and buf.yaml, buf.gen.yaml)", makeProto},
 		{

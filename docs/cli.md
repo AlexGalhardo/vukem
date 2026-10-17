@@ -42,6 +42,8 @@ Exit codes: `0` success, `1` failure, `2` usage error.
 | `vukem make:command <Name>` | App command, appended to `bootstrap/commands.go` |
 | `vukem make:provider <Name>` | Provider, appended to `bootstrap/providers.go` |
 | `vukem make:test <Name>` | Test file using the fluent test client |
+| `vukem install:admin [--force]` | Admin panel at `/admin` (needs `install:auth`): `routes/admin.go`, `app/admin/`, audit-log migration, test, `ADMIN_EMAILS` ([admin.md](admin.md)) |
+| `vukem make:admin-resource <Model> [--force]` | Admin resource + policy for an existing model in `app/admin/<model>.go` and a test, registered in `app/admin/registry.go` |
 | `vukem key:generate [--show]` | Write `APP_KEY` to `.env` |
 | `vukem ssr:start [-bundle] [-runtime]`, `vukem ssr:check [-url]` | App commands: supervise the Inertia SSR server (restart on crash) and probe its `/health` |
 | `vukem install:billing [--force]` | Stripe subscriptions for the `install:auth` users (required first): plans config, billing columns and `subscriptions` table, Checkout/Portal routes, `POST /stripe/webhook` sync, `Subscribed`/`OnPlan` middleware, tests with a fake Stripe API; requires `contrib/stripe` v0.1.0. See [billing.md](billing.md) |

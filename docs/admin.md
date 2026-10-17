@@ -2,6 +2,18 @@
 
 Package `admin` (stdlib only, core) generates an admin panel from ORM models: paginated lists with search, sort and filters, detail pages, create/edit forms built from `z` schemas, deletes with a confirmation page, and an audit log of every change. Plan tasks `B.7.1` (package) and `B.7.2` (`install:admin`, `make:admin-resource`).
 
+## Quick start
+
+```sh
+vukem install:auth
+vukem install:admin
+vukem make:admin-resource Post
+vukem migrate
+ADMIN_EMAILS=you@example.com vukem serve   # then open /admin
+```
+
+`install:admin` (needs `install:auth`) writes `routes/admin.go` (the panel with its own `authz.Gate`), `app/admin/admin.go` (`Admins`, read from `ADMIN_EMAILS`; nobody is an admin when it is empty), `app/admin/registry.go` (`Resources()`, `Policies(admins)`), the audit-log migration and `tests/admin_test.go`; it registers the migration and the route file and adds `ADMIN_EMAILS` to `.env.example`. `make:admin-resource <Model>` checks that `models.<Model>` exists, writes `app/admin/<model>.go` (the resource, using `requests.<Model>Schema` when it exists, and a policy allowing admins every action) and `tests/admin_<model>_test.go`, and registers both in `app/admin/registry.go`.
+
 ## Wiring
 
 ```go

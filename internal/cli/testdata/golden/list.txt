@@ -3,41 +3,43 @@ Vukem v0.0.0-test
 Usage:
   vukem <command> [flags] [args]
 
-  new <name>              Create a project from the HTMX + SQLite starter
-  serve                   Run the app and restart it when Go files change
-  build                   Build assets (Vite) and a production binary in bin/
-  version                 Print the vukem version
+  new <name>                   Create a project from the HTMX + SQLite starter
+  serve                        Run the app and restart it when Go files change
+  build                        Build assets (Vite) and a production binary in bin/
+  version                      Print the vukem version
  install
-  install:auth            Add login, registration, password reset and email verification
-  install:api             Add API tokens, /api/v1 routes, CORS and rate limiting
-  install:billing         Add Stripe subscriptions: plans, Checkout, Billing Portal, webhooks
-  install:inertia         Turn the HTMX starter into Inertia (--react, --vue or --svelte) with --force
+  install:auth                 Add login, registration, password reset and email verification
+  install:api                  Add API tokens, /api/v1 routes, CORS and rate limiting
+  install:billing              Add Stripe subscriptions: plans, Checkout, Billing Portal, webhooks
+  install:admin                Add the admin panel at /admin (needs install:auth)
+  install:inertia              Turn the HTMX starter into Inertia (--react, --vue or --svelte) with --force
  boost
-  boost:install           Add agent guidelines, skills and the vukem-boost MCP server
+  boost:install                Add agent guidelines, skills and the vukem-boost MCP server
  key
-  key:generate            Write a new APP_KEY to .env
+  key:generate                 Write a new APP_KEY to .env
  
-  down                    Put the app in maintenance mode (503; --secret or --with-secret to bypass)
-  up                      Bring the app out of maintenance mode
+  down                         Put the app in maintenance mode (503; --secret or --with-secret to bypass)
+  up                           Bring the app out of maintenance mode
  make
-  make:controller <Name>  Create a controller
-  make:model <Name>       Create a model (with -m, -f, -c)
-  make:migration <name>   Create a migration and register it
-  make:middleware <Name>  Create an HTTP middleware
-  make:request <Name>     Create a validated request struct
-  make:command <Name>     Create an app command and register it
-  make:provider <Name>    Create a provider and register it
-  make:resource <Name>    Create an API resource (JSON transformer) for a model
-  make:factory <Name>     Create a model factory (fake data for tests and seeders)
-  make:seeder <Name>      Create a seeder and register it
-  make:event <Name>       Create an event type
-  make:listener <Name>    Create an event listener and register it (--event Name [--async|--queued])
-  make:job <Name>         Create a queued job and register its handler
-  make:mail <Name>        Create a mailable and its view
-  make:policy <Name>      Create an authorization policy and register it
-  make:test <Name>        Create a test using the fluent client
-  make:proto <Name>       Create a gRPC service .proto (and buf.yaml, buf.gen.yaml)
+  make:controller <Name>       Create a controller
+  make:model <Name>            Create a model (with -m, -f, -c)
+  make:migration <name>        Create a migration and register it
+  make:middleware <Name>       Create an HTTP middleware
+  make:request <Name>          Create a validated request struct
+  make:command <Name>          Create an app command and register it
+  make:provider <Name>         Create a provider and register it
+  make:resource <Name>         Create an API resource (JSON transformer) for a model
+  make:factory <Name>          Create a model factory (fake data for tests and seeders)
+  make:seeder <Name>           Create a seeder and register it
+  make:event <Name>            Create an event type
+  make:listener <Name>         Create an event listener and register it (--event Name [--async|--queued])
+  make:job <Name>              Create a queued job and register its handler
+  make:mail <Name>             Create a mailable and its view
+  make:policy <Name>           Create an authorization policy and register it
+  make:admin-resource <Model>  Create an admin panel resource and policy for a model and register them
+  make:test <Name>             Create a test using the fluent client
+  make:proto <Name>            Create a gRPC service .proto (and buf.yaml, buf.gen.yaml)
  codegen
-  codegen:rpc             Generate Go and connect-go code from proto/ (buf or protoc, plugins via go tool)
+  codegen:rpc                  Generate Go and connect-go code from proto/ (buf or protoc, plugins via go tool)
 
 Other commands (migrate, route:list, about, your own) run in the app: vukem <command>.

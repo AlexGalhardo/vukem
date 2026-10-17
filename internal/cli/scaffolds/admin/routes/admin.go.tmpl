@@ -1,0 +1,55 @@
+package routes
+
+import (
+	"context"
+
+	"github.com/AlexGalhardo/vukem"
+	vadmin "github.com/AlexGalhardo/vukem/admin"
+	"github.com/AlexGalhardo/vukem/auth"
+	"github.com/AlexGalhardo/vukem/authz"
+	"github.com/AlexGalhardo/vukem/router"
+
+	"{{.Module}}/app/accounts"
+	"{{.Module}}/app/admin"
+	"{{.Module}}/app/models"
+)
+
+// Admin mounts the admin panel at /admin (vukem install:admin). Admins are
+// the users listed in ADMIN_EMAILS; resources live in app/admin and are
+// added with vukem make:admin-resource.
+func Admin(r *router.Router, app *vukem.App) error {
+	acc, err := accounts.New(app)
+	if err != nil {
+		return err
+	}
+
+	admins := admin.NewAdmins(app.Source.Get("ADMIN_EMAILS"))
+
+	// The panel has its own gate, so its policies never mix with the app's.
+	gate := authz.New(func(ctx context.Context) (*models.User, error) {
+		u, err := auth.UserFrom[models.User](ctx, acc.Web.Name())
+		return &u, err
+	})
+	gate.Define(vadmin.AbilityAdmin, func(_ context.Context, u *models.User) bool { return admins.Has(u) })
+	gate.Define(vadmin.AbilityAudit, func(_ context.Context, u *models.User) bool { return admins.Has(u) })
+
+	if err := gate.Register(admin.Policies(admins)...); err != nil {
+		return err
+	}
+
+	panel, err := vadmin.New(vadmin.Config{
+		DB:         acc.DB,
+		Guard:      acc.Web,
+		Authorizer: gate,
+		Title:      app.Config.Name + " admin",
+	})
+	if err != nil {
+		return err
+	}
+
+	if err := panel.Register(admin.Resources()...); err != nil {
+		return err
+	}
+
+	return panel.Mount(r)
+}

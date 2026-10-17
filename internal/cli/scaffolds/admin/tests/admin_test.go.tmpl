@@ -1,0 +1,51 @@
+package tests
+
+import (
+	"testing"
+
+	"github.com/AlexGalhardo/vukem/orm"
+	"github.com/AlexGalhardo/vukem/vukemtest"
+
+	"{{.Module}}/app/models"
+	"{{.Module}}/bootstrap"
+)
+
+const adminEmail = "admin@example.com"
+
+// newAdminApp boots the app with adminEmail listed in ADMIN_EMAILS.
+func newAdminApp(t *testing.T) *vukemtest.App {
+	t.Helper()
+
+	return vukemtest.New(t, bootstrap.New, vukemtest.Options{Env: map[string]string{"ADMIN_EMAILS": adminEmail}})
+}
+
+// adminClient creates a user with email and returns a same-origin browser
+// client logged in as that user.
+func adminClient(t *testing.T, app *vukemtest.App, email string) *vukemtest.Client {
+	t.Helper()
+
+	db, err := app.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	u := models.User{Name: "Test", Email: email, Password: "unused"}
+	if err := orm.Create(t.Context(), db, &u); err != nil {
+		t.Fatal(err)
+	}
+
+	return app.Client(t).WithHeader("Sec-Fetch-Site", "same-origin").ActingAs("web", u)
+}
+
+func TestAdminPanelAccess(t *testing.T) {
+	t.Parallel()
+
+	app := newAdminApp(t)
+
+	app.Client(t).Get("/admin").AssertRedirect("/login")
+	adminClient(t, app, "user@example.com").Get("/admin").AssertForbidden()
+
+	c := adminClient(t, app, adminEmail)
+	c.Get("/admin").AssertOK().AssertSee("Dashboard")
+	c.Get("/admin/_audit").AssertOK().AssertSee("Audit log")
+}

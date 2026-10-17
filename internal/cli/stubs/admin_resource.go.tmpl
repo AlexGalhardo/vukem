@@ -1,0 +1,52 @@
+package admin
+
+import (
+	"context"
+
+	vadmin "github.com/AlexGalhardo/vukem/admin"
+{{- if not .HasRequest}}
+	"github.com/AlexGalhardo/vukem/z"
+{{- end}}
+
+	"{{.Module}}/app/models"
+{{- if .HasRequest}}
+	"{{.Module}}/app/requests"
+{{- end}}
+)
+
+// {{.Name}} is the admin resource for models.{{.Name}} at /admin/{{.Slug}}.
+// Chain options to tune it: .Search("title"), .Filter("status"),
+// .List("id", "title"), .Hidden("body") (see the admin package docs).
+func {{.Name}}() *vadmin.Resource[models.{{.Name}}] {
+{{- if .HasRequest}}
+	return vadmin.NewResource[models.{{.Name}}](requests.{{.Name}}Schema)
+{{- else}}
+	// Add form fields to the shape, e.g. "title": z.String().Trim().Min(3).
+	return vadmin.NewResource[models.{{.Name}}](z.Struct[models.{{.Name}}](z.Shape{}))
+{{- end}}
+}
+
+// {{.Name}}Policy decides what admins may do with {{.Plural}} in the panel.
+// Ability names map to methods; narrow them per action as needed.
+type {{.Name}}Policy struct{ Admins Admins }
+
+// ViewAny allows the list.
+func (p {{.Name}}Policy) ViewAny(_ context.Context, u *models.User) bool { return p.Admins.Has(u) }
+
+// View allows the detail page.
+func (p {{.Name}}Policy) View(_ context.Context, u *models.User, _ *models.{{.Name}}) bool {
+	return p.Admins.Has(u)
+}
+
+// Create allows the create form.
+func (p {{.Name}}Policy) Create(_ context.Context, u *models.User) bool { return p.Admins.Has(u) }
+
+// Update allows the edit form.
+func (p {{.Name}}Policy) Update(_ context.Context, u *models.User, _ *models.{{.Name}}) bool {
+	return p.Admins.Has(u)
+}
+
+// Delete allows deleting.
+func (p {{.Name}}Policy) Delete(_ context.Context, u *models.User, _ *models.{{.Name}}) bool {
+	return p.Admins.Has(u)
+}

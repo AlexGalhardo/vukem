@@ -1,0 +1,16 @@
+package tests
+
+import "testing"
+
+func TestAdmin{{.Name}}Resource(t *testing.T) {
+	t.Parallel()
+
+	app := newAdminApp(t)
+	c := adminClient(t, app, adminEmail)
+
+	c.Get("/admin").AssertOK().AssertSee(`href="/admin/{{.Slug}}"`)
+	c.Get("/admin/{{.Slug}}").AssertOK()
+	c.Get("/admin/{{.Slug}}/create").AssertOK()
+
+	adminClient(t, app, "user@example.com").Get("/admin/{{.Slug}}").AssertForbidden()
+}
