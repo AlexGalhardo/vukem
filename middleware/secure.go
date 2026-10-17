@@ -62,11 +62,16 @@ type SecureHeadersConfig struct {
 	ReportURI string
 }
 
-// Validate reports CSPSources and ReportURI values that SecureHeaders
-// would drop. Call it at boot: SecureHeaders never fails, it serves the
+// Validate reports TrustForwardedProto without TrustedProxies, and
+// CSPSources and ReportURI values that SecureHeaders would drop. Call it at boot: SecureHeaders never fails, it serves the
 // policy without the invalid extras (stricter, never weaker).
 func (cfg SecureHeadersConfig) Validate() error {
+	if cfg.TrustForwardedProto && len(cfg.TrustedProxies) == 0 {
+		return errors.New("middleware: TrustForwardedProto needs TrustedProxies, or any client can claim HTTPS")
+	}
+
 	_, err := cfg.policy()
+
 	return err
 }
 
@@ -133,7 +138,7 @@ func SecureHeaders(cfg SecureHeadersConfig) Middleware {
 				h.Set("Reporting-Endpoints", reporting)
 			}
 
-			https := r.TLS != nil || (cfg.TrustForwardedProto && r.Header.Get("X-Forwarded-Proto") == "https" &&
+			https := r.TLS != nil || (cfg.TrustForwardedProto && forwardedHTTPS(r) &&
 				fromTrustedPeer(r, cfg.TrustedProxies))
 			if hsts != "" && https {
 				h.Set("Strict-Transport-Security", hsts)
@@ -374,6 +379,13 @@ func checkReportURI(raw string) error {
 	}
 
 	return fmt.Errorf("middleware: ReportURI %q must be an https URL or a path", raw)
+}
+
+// forwardedHTTPS reports a single X-Forwarded-Proto line saying https; a
+// second line may have come from the client.
+func forwardedHTTPS(r *http.Request) bool {
+	vals := r.Header.Values("X-Forwarded-Proto")
+	return len(vals) == 1 && strings.TrimSpace(vals[0]) == "https"
 }
 
 // fromTrustedPeer reports whether the direct peer is in proxies; an empty

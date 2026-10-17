@@ -522,6 +522,24 @@ func TestSecurity_A02_ForwardedProtoOnlyFromTrustedProxies(t *testing.T) {
 		{name: "unparsable peer", peer: "garbage"},
 	}
 
+	// A second line may come from the client, whichever one Get returns.
+	r := get(t, "/")
+	r.RemoteAddr = "10.0.0.1:1234"
+	r.Header.Add("X-Forwarded-Proto", "https")
+	r.Header.Add("X-Forwarded-Proto", "http")
+
+	if got := do(t, h, r).Header().Get("Strict-Transport-Security"); got != "" {
+		t.Errorf("HSTS with two X-Forwarded-Proto lines = %q, want none", got)
+	}
+
+	if err := (SecureHeadersConfig{TrustForwardedProto: true}).Validate(); err == nil {
+		t.Error("Validate(TrustForwardedProto without TrustedProxies) = nil, want an error")
+	}
+
+	if err := (SecureHeadersConfig{TrustForwardedProto: true, TrustedProxies: []*net.IPNet{proxies}}).Validate(); err != nil {
+		t.Errorf("Validate(TrustForwardedProto with TrustedProxies) = %v, want nil", err)
+	}
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()

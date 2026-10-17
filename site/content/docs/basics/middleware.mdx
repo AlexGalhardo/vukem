@@ -97,7 +97,7 @@ r.UseServer(middleware.SecureHeaders(middleware.SecureHeadersConfig{
 }))
 ```
 
-`DefaultMiddleware` and `APIMiddleware` already install `SecureHeaders`; there, set `TRUST_FORWARDED_PROTO=true` and `TRUSTED_PROXIES` instead of adding a second one.
+`X-Forwarded-Proto` counts only as a single header line saying `https`. `SecureHeadersConfig.Validate()` (called by `DefaultMiddleware` at boot) refuses `TrustForwardedProto` without `TrustedProxies`; without that check, an empty list trusts the header from any peer. `DefaultMiddleware` and `APIMiddleware` already install `SecureHeaders`; there, set `TRUST_FORWARDED_PROTO=true` and `TRUSTED_PROXIES` instead of adding a second one.
 
 | Header | Default |
 | --- | --- |
