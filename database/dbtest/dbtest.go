@@ -100,6 +100,11 @@ var migrations = []schema.Migration{
 	tagsMigration,
 }
 
+// SubtestTimeout bounds each top-level subtest of Run: its context is
+// cancelled after it, so a statement stuck on a lock or a slow server
+// fails the subtest with context.DeadlineExceeded.
+const SubtestTimeout = 2 * time.Minute
+
 // Run executes the conformance suite against db. Subtests run in order and
 // share tables, so they are not parallel.
 func Run(t *testing.T, db *database.DB) {
@@ -109,14 +114,25 @@ func Run(t *testing.T, db *database.DB) {
 	clean(ctx, t, db)
 	t.Cleanup(func() { clean(context.Background(), t, db) })
 
-	t.Run("Migrations", func(t *testing.T) { testMigrations(ctx, t, db) })
-	t.Run("ORM", func(t *testing.T) { testORM(ctx, t, db) })
-	t.Run("Transactions", func(t *testing.T) { testTransactions(ctx, t, db) })
-	t.Run("Relations", func(t *testing.T) { testRelations(ctx, t, db) })
-	t.Run("SchemaAlter", func(t *testing.T) { testAlter(ctx, t, db) })
-	t.Run("Queue", func(t *testing.T) { testQueue(ctx, t, db) })
-	t.Run("BulkLocksChecks", func(t *testing.T) { testBulkLocksChecks(ctx, t, db) })
-	t.Run("PartialIndexRebind", func(t *testing.T) { testPartialIndexRebind(ctx, t, db) })
+	run := func(name string, fn func(context.Context, *testing.T, *database.DB)) {
+		t.Run(name, func(t *testing.T) {
+			// A lock wait or a slow server fails this subtest instead of
+			// hanging the run until go test's global timeout.
+			ctx, cancel := context.WithTimeout(ctx, SubtestTimeout)
+			defer cancel()
+
+			fn(ctx, t, db)
+		})
+	}
+
+	run("Migrations", testMigrations)
+	run("ORM", testORM)
+	run("Transactions", testTransactions)
+	run("Relations", testRelations)
+	run("SchemaAlter", testAlter)
+	run("Queue", testQueue)
+	run("BulkLocksChecks", testBulkLocksChecks)
+	run("PartialIndexRebind", testPartialIndexRebind)
 }
 
 func clean(ctx context.Context, t *testing.T, db *database.DB) {

@@ -150,7 +150,7 @@ The URL becomes a go-sql-driver DSN with `parseTime`, UTC times, `utf8mb4` and a
 
 ## Conformance suite
 
-`database/dbtest.Run(t, db)` is the suite every dialect passes: migrations, schema changes, ORM round trips (JSON, nullable, booleans, times), unique violations as 409, foreign keys, soft deletes, cursor pagination, relations and transactions (including rollback on panic). `drivers/postgres` runs it against `postgres:17` and `drivers/mysql` against `mysql:8.4` and `mariadb:11.8` with `go test -tags=integration`.
+`database/dbtest.Run(t, db)` is the suite every dialect passes: migrations, schema changes, ORM round trips (JSON, nullable, booleans, times), unique violations as 409, foreign keys, soft deletes, cursor pagination, relations and transactions (including rollback on panic). `drivers/postgres` runs it against `postgres:17` and `drivers/mysql` against `mysql:8.4` and `mariadb:11.8` with `go test -tags=integration`. Each top-level subtest gets a context cancelled after `dbtest.SubtestTimeout` (2 minutes), so a stuck lock or a slow server fails that subtest instead of hanging the run.
 
 ## Transactions and SQLite
 

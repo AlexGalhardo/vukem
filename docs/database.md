@@ -48,7 +48,7 @@ vukem.New(append([]vukem.Option{
 DATABASE_URL=postgres://app:secret@localhost:5432/app?sslmode=disable
 ```
 
-Everything above the driver is dialect-neutral: the same models, queries, migrations and `SESSION_DRIVER=database` work on SQLite, Postgres and MySQL. `database/dbtest.Run(t, db)` is the conformance suite every dialect must pass (schema, migrations, ORM, transactions, database queue); `drivers/postgres` runs it against `postgres:17` and `drivers/mysql` against `mysql:8.4` and `mariadb:11.8`, with `task services:up` and `go test -tags=integration`.
+Everything above the driver is dialect-neutral: the same models, queries, migrations and `SESSION_DRIVER=database` work on SQLite, Postgres and MySQL. `database/dbtest.Run(t, db)` is the conformance suite every dialect must pass (schema, migrations, ORM, transactions, database queue); `drivers/postgres` runs it against `postgres:17` and `drivers/mysql` against `mysql:8.4` and `mariadb:11.8`, with `task services:up` and `go test -tags=integration`. Each top-level subtest gets a context cancelled after `dbtest.SubtestTimeout` (2 minutes), so a stuck lock or a slow server fails that subtest instead of hanging the run.
 
 ### MySQL and MariaDB
 

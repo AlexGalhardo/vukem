@@ -34,6 +34,13 @@ func (descRow) Table() string { return "dbt_desc" }
 // per row against limits of 32766 and 65535).
 const bulkRows = 20000
 
+// mysqlBulkRows is the row count on MySQL, where CreateMany with generated
+// ids runs one INSERT per row (no reliable ids for multi-row inserts):
+// bulkRows round trips would only test the server's latency (about 45ms
+// per parameterized statement against Docker Desktop on Windows, i.e. 15
+// minutes per server).
+const mysqlBulkRows = 200
+
 func testBulkLocksChecks(ctx context.Context, t *testing.T, db *database.DB) {
 	t.Helper()
 
@@ -48,7 +55,12 @@ func testBulkLocksChecks(ctx context.Context, t *testing.T, db *database.DB) {
 		t.Fatal(err)
 	}
 
-	numbers := make([]number, bulkRows)
+	rows := bulkRows
+	if db.Dialect().Name() == "mysql" {
+		rows = mysqlBulkRows
+	}
+
+	numbers := make([]number, rows)
 	for i := range numbers {
 		numbers[i] = number{Value: i + 1, Status: "free"}
 	}
@@ -57,11 +69,11 @@ func testBulkLocksChecks(ctx context.Context, t *testing.T, db *database.DB) {
 		t.Fatalf("CreateMany: %v", err)
 	}
 
-	if n, err := orm.QueryOf[number](db).Count(ctx); err != nil || n != bulkRows {
-		t.Fatalf("Count after CreateMany = %d, %v, want %d", n, err, bulkRows)
+	if n, err := orm.QueryOf[number](db).Count(ctx); err != nil || n != int64(rows) {
+		t.Fatalf("Count after CreateMany = %d, %v, want %d", n, err, rows)
 	}
 
-	for _, i := range []int{0, bulkRows / 2, bulkRows - 1} {
+	for _, i := range []int{0, rows / 2, rows - 1} {
 		got, err := orm.QueryOf[number](db).Find(ctx, numbers[i].ID)
 		if err != nil || got.Value != numbers[i].Value {
 			t.Fatalf("Find(numbers[%d].ID = %d) = %+v, %v, want value %d", i, numbers[i].ID, got, err, numbers[i].Value)
