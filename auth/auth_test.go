@@ -177,6 +177,8 @@ func newApp(t *testing.T, hasher hash.Hasher, extra ...vukem.Option) *testApp {
 				r.Group("/v1", func(g *router.Group) {
 					g.Use(auth.Required(ta.api))
 					g.Get("/me", func(c *web.Ctx) error { return c.NoContent() })
+					g.Get("/accept", func(c *web.Ctx) error { return c.String(200, c.Header("Accept")) }).
+						Use(auth.Ability(ta.api, "posts:read"))
 					g.Delete("/posts", func(c *web.Ctx) error { return c.NoContent() }).
 						Use(auth.Ability(ta.api, "posts:delete"))
 				})
@@ -571,6 +573,10 @@ func TestTokenOnlyRoutesAnswerProblemJSON(t *testing.T) {
 	if ct := res.Header("Content-Type"); !strings.HasPrefix(ct, "application/problem+json") {
 		t.Errorf("DELETE /v1/posts Content-Type = %q, want application/problem+json", ct)
 	}
+
+	// Only errors are forced to JSON: an authenticated handler still sees
+	// the client's Accept header and can negotiate.
+	ta.Client(t).WithHeader("Accept", "text/html").WithToken(plain).Get("/v1/accept").AssertOK().AssertSee("text/html")
 
 	// A session guard in the list keeps the browser redirect.
 	ta.Client(t).WithHeader("Accept", "text/html").Get("/dashboard").AssertRedirect("/login")

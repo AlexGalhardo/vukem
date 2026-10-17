@@ -28,9 +28,6 @@ func Required(guards ...Checker) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			c := ctxOf(w, r)
-			if apiOnly {
-				c = apiCtx(w, r)
-			}
 
 			for _, g := range guards {
 				if ec, ok := g.(errChecker); ok {
@@ -42,7 +39,7 @@ func Required(guards ...Checker) func(http.Handler) http.Handler {
 
 					// Fail closed without treating the caller as a guest.
 					if !errors.Is(err, ErrUnauthenticated) {
-						c.HandleError(err)
+						fail(c, apiOnly, err)
 						return
 					}
 
@@ -56,9 +53,7 @@ func Required(guards ...Checker) func(http.Handler) http.Handler {
 			}
 
 			if apiOnly || c.WantsJSON() || !hasSession(c) {
-				err := ErrUnauthenticated.WithHeader("WWW-Authenticate", `Bearer realm="api"`)
-				c.HandleError(err)
-
+				fail(c, apiOnly, ErrUnauthenticated.WithHeader("WWW-Authenticate", `Bearer realm="api"`))
 				return
 			}
 
@@ -95,17 +90,19 @@ func allAPI(guards []Checker) bool {
 	return len(guards) > 0
 }
 
-// apiCtx makes errors render as problem+json: API routes must not answer
-// HTML because a browser (or a client sending Accept: text/html) calls them.
-func apiCtx(w http.ResponseWriter, r *http.Request) *web.Ctx {
-	if c := ctxOf(w, r); c.WantsJSON() {
-		return c
+// fail renders err; for API guards always as problem+json, because API
+// routes must not answer HTML when a browser (or a client sending Accept:
+// text/html) calls them. Only the error path sees the forced Accept: the
+// next handler keeps the client's header.
+func fail(c *web.Ctx, apiOnly bool, err error) {
+	if !apiOnly || c.WantsJSON() {
+		c.HandleError(err)
+		return
 	}
 
-	r = r.Clone(r.Context())
+	r := c.Request().Clone(c.Context())
 	r.Header.Set("Accept", "application/json")
-
-	return ctxOf(w, r)
+	ctxOf(c.Writer(), r).HandleError(err)
 }
 
 // errChecker is a guard that reports why authentication failed.
@@ -204,19 +201,16 @@ func Ability(guard Checker, abilities ...string) func(http.Handler) http.Handler
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			c := ctxOf(w, r)
-			if apiOnly {
-				c = apiCtx(w, r)
-			}
 
 			if !guard.Check(c) {
-				c.HandleError(ErrUnauthenticated)
+				fail(c, apiOnly, ErrUnauthenticated)
 				return
 			}
 
 			for _, a := range abilities {
 				if !TokenCan(c, guard.Name(), a) {
 					web.SecurityEvent(c.Request(), "authz.denied", "ability", a)
-					c.HandleError(
+					fail(c, apiOnly,
 						errs.NewKey(
 							http.StatusForbidden,
 							"auth.token_ability",
