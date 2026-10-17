@@ -66,6 +66,8 @@ z.String().Preprocess(digitsOnly).Regex(e164) // Regex sees "11987654321"
 z.String().Transform(digitsOnly).Regex(e164)  // Regex sees the raw input
 ```
 
+The output of the pre-steps is checked again for invalid UTF-8 and control characters, and `Preprocess(nil)` panics. JSON Schema and OpenAPI keywords (`pattern`, `minLength`…) describe the normalized value, after `Trim`/`ToLower`/`Preprocess`, not the raw input.
+
 ## Coercion
 
 Forms, query strings and route params arrive as strings; schemas coerce only where it is lossless: numeric strings to `Int`/`Float`, `"on"`/`"1"`/`"true"` to `Bool`, RFC 3339 strings to `Time`, repeated keys to slices and bracketed keys to structs.
@@ -84,7 +86,7 @@ Password fields, `_token` and `_method` are never flashed as old input.
 
 ## Translated refinements
 
-Built-in messages are translated from `validation.*` catalog keys (see [localization](/docs/digging-deeper/localization)). A `Refine` callback makes its message translatable by returning `z.FieldErrorKey(path, key, fallback, params)` instead of `z.FieldError`; `fallback` is the English message, used when the locale has no `validation.<key>`:
+Built-in messages are translated from `validation.*` catalog keys (see [localization](/docs/digging-deeper/localization)). A `Refine` callback makes its message translatable by returning `z.FieldErrorKey(path, key, fallback, params)` instead of `z.FieldError`; `fallback` is the English message, used when the locale has no `validation.<key>`. With an empty `key`, `FieldErrorKey` behaves like `z.FieldError`. Placeholder names in `fallback` and in catalog templates are lower snake_case (`{field}`, `{other_field}`); other braces are left as is. Messages are plain text: escaping is the renderer's job (`html/template` does it in views).
 
 ```go
 .Refine(func(r Register) error {

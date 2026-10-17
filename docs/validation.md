@@ -99,6 +99,8 @@ z.String().Preprocess(digitsOnly).Regex(e164) // Regex sees "11987654321"
 z.String().Transform(digitsOnly).Regex(e164)  // Regex sees the raw input
 ```
 
+The output of the pre-steps is checked again for invalid UTF-8 and control characters, and `Preprocess(nil)` panics. JSON Schema and OpenAPI keywords (`pattern`, `minLength`…) describe the normalized value, after `Trim`/`ToLower`/`Preprocess`, not the raw input.
+
 ## Coercion
 
 Inputs arrive as JSON values (`string`, `float64`, `bool`, `[]any`, `map[string]any`) or as strings (forms, query, params, env). Schemas coerce only where it is lossless:
@@ -146,7 +148,7 @@ In an app, translation is opt-in and per request: `vukem.WithTranslations` + `De
 }
 ```
 
-Refine callbacks (and `Custom` parsers) make their messages translatable with `z.FieldErrorKey(path, key, fallback, params)`: the issue gets `Code` `custom`, `Key` `key` and `Params` `params`, and `Message` is `fallback` with `{field}` and params filled in. `path` is relative to the refined value (`""` for the value itself). A key without a translation keeps the fallback (it never falls back to a `custom` template):
+Refine callbacks (and `Custom` parsers) make their messages translatable with `z.FieldErrorKey(path, key, fallback, params)`: the issue gets `Code` `custom`, `Key` `key` and `Params` `params`, and `Message` is `fallback` with `{field}` and params filled in. `path` is relative to the refined value (`""` for the value itself). A key without a translation keeps the fallback (it never falls back to a `custom` template). With an empty `key`, `FieldErrorKey` behaves like `z.FieldError`. Placeholder names in `fallback` and in catalog templates are lower snake_case (`{field}`, `{other_field}`); other braces are left as is. Messages are plain text: escaping is the renderer's job (`html/template` does it in views).
 
 ```go
 }).Refine(func(r Register) error {
@@ -167,6 +169,8 @@ Refine callbacks (and `Custom` parsers) make their messages translatable with `z
   }
 }
 ```
+
+A `Custom` parser that returns `z.FieldError` or `z.FieldErrorKey` reports the issue at the sub-path with the bare message, like `Refine` (before v0.24 it was one issue at the schema path reading `path: msg`).
 
 Placeholders are the issue `Params` (`{min}`, `{max}`, `{len}`, `{options}`…). `{expected}` in `invalid_type` is English text (`a string`); translate the whole message instead of reusing it.
 
