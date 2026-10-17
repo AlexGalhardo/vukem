@@ -609,7 +609,9 @@ func (d *Disk) PresignPut(p string, expires time.Duration) (string, error) {
 type PresignPutOptions struct {
 	// ContentType is the exact Content-Type the upload must send.
 	ContentType string
-	// ContentLength is the exact body size in bytes (0 leaves it free).
+	// ContentLength is the exact body size in bytes (0 leaves it free). It
+	// is not a ceiling: sign the real size the client declared, after
+	// checking it against your maximum, or smaller files get 403.
 	ContentLength int64
 }
 
