@@ -49,10 +49,17 @@ type Accounts struct {
 // credentials change: password reset or change, two-factor enabled. It
 // bumps the user's session version, which ends sessions on every
 // SESSION_DRIVER (encrypted cookies included), and deletes server-side
-// sessions. With keep set, also call a.Web.RefreshSession(c) so the
-// current session survives the bump.
+// sessions and remember-me tokens (tokens issued before the bump no
+// longer sign in anyway). With keep set, also call a.Web.RefreshSession(c)
+// so the current session survives the bump and its device gets a new
+// remember-me token.
 func (a *Accounts) RevokeOtherSessions(ctx context.Context, userID int64, keep string) error {
 	if err := a.bumpSessionVersion(ctx, a.DB, userID); err != nil {
+		return err
+	}
+
+	if _, err := a.DB.ExecContext(ctx, "DELETE FROM remember_tokens WHERE user_id = "+a.DB.Dialect().Placeholder(1),
+		strconv.FormatInt(userID, 10)); err != nil {
 		return err
 	}
 

@@ -238,6 +238,7 @@ func TestSecurity_A07_AuthScaffoldRevokesOtherSessions(t *testing.T) {
 	files := map[string][]string{
 		"scaffolds/auth-core/app/accounts/accounts.go.tmpl": {
 			"if err := a.bumpSessionVersion(ctx, a.DB, userID); err != nil {",
+			`"DELETE FROM remember_tokens WHERE user_id = "`,
 			"UPDATE users SET session_version = session_version + 1 WHERE id = ",
 			"m.RevokeOthers(ctx, a.Web.SessionUserID(strconv.FormatInt(userID, 10)), keep)",
 			"sessions:  app.Sessions,",
