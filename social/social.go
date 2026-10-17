@@ -6,7 +6,12 @@
 // and OIDC nonce travel in a short-lived, HMAC-signed, HttpOnly cookie that
 // is checked in constant time and used once.
 //
-//	s := social.New(app.Key.Derive("social.state", 32),
+//	key, err := app.DeriveKey("social.state", 32) // fails without APP_KEY
+//	if err != nil {
+//		return err
+//	}
+//
+//	s := social.New(key,
 //		social.GitHub(social.Config{ClientID: id, ClientSecret: secret, RedirectURL: url}),
 //		social.Google(googleCfg),
 //	)
@@ -127,9 +132,23 @@ type Social struct {
 	used map[string]int64 // consumed states when States is nil
 }
 
+// MinKeyLen is the minimum state-cookie key length; New panics below it.
+const MinKeyLen = 32
+
 // New returns Social with providers; key signs the state cookie (derive it
-// from APP_KEY: app.Key.Derive("social.state", 32)).
+// from APP_KEY: app.DeriveKey("social.state", 32)). It panics when key is
+// shorter than MinKeyLen: an empty or short HMAC key makes states forgeable.
 func New(key []byte, providers ...Provider) *Social {
+	if len(key) < MinKeyLen {
+		panic(
+			fmt.Sprintf(
+				"social: key must be at least %d bytes, got %d (derive it with app.DeriveKey)",
+				MinKeyLen,
+				len(key),
+			),
+		)
+	}
+
 	s := &Social{
 		key:       key,
 		providers: map[string]Provider{},

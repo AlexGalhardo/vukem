@@ -2,7 +2,12 @@
 // expiry and an HMAC-SHA256 signature over their path and query, for email
 // verification, unsubscribe links or temporary downloads.
 //
-//	s := signed.New(app.Key.Derive("signed.urls", 32))
+//	key, err := app.DeriveKey("signed.urls", 32) // fails without APP_KEY
+//	if err != nil {
+//		return err
+//	}
+//
+//	s := signed.New(key)
 //	link, _ := s.Sign(appURL+"/email/verify/42", time.Hour)
 //	r.Get("/email/verify/{id}", verify).Use(s.Middleware())
 //
@@ -17,6 +22,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -38,8 +44,25 @@ type Signer struct {
 	now func() time.Time
 }
 
-// New returns a Signer; derive key from APP_KEY.
-func New(key []byte) *Signer { return &Signer{key: key, now: time.Now} }
+// New returns a Signer; derive key from APP_KEY (app.DeriveKey). It
+// panics when key is shorter than MinKeyLen.
+func New(key []byte) *Signer {
+	if len(key) < MinKeyLen {
+		// An empty or short HMAC key makes every link forgeable.
+		panic(
+			fmt.Sprintf(
+				"signed: key must be at least %d bytes, got %d (derive it with app.DeriveKey)",
+				MinKeyLen,
+				len(key),
+			),
+		)
+	}
+
+	return &Signer{key: key, now: time.Now}
+}
+
+// MinKeyLen is the minimum signing key length; New panics below it.
+const MinKeyLen = 32
 
 // Sign adds "expires" (Unix seconds; ttl 0 means no expiry) and
 // "signature" query parameters to rawURL. Only the path and query are
