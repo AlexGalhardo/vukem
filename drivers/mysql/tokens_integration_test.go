@@ -3,6 +3,7 @@
 package mysql
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -20,7 +21,8 @@ func TestTokensLegacyTable(t *testing.T) {
 
 		ctx := t.Context()
 		_, _ = db.ExecContext(ctx, "DROP TABLE IF EXISTS access_tokens")
-		t.Cleanup(func() { _, _ = db.ExecContext(t.Context(), "DROP TABLE IF EXISTS access_tokens") })
+		// t.Context is cancelled before Cleanup runs, so the drop needs its own context.
+		t.Cleanup(func() { _, _ = db.ExecContext(context.Background(), "DROP TABLE IF EXISTS access_tokens") })
 
 		s := schema.New(ctx, db)
 		if err := s.Create("access_tokens", func(t *schema.Table) {
