@@ -1,14 +1,21 @@
 package middleware
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
+	"fmt"
+	"maps"
 	"net/http"
+	"net/url"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/AlexGalhardo/vukem/web"
 )
@@ -36,6 +43,25 @@ type SecureHeadersConfig struct {
 	// style-src, img-src, font-src and connect-src (plus its ws:// form for
 	// hot reload). Wire it only outside production.
 	DevServer func() string
+	// CSPSources adds sources to directives of the policy, e.g. an
+	// analytics origin in script-src and connect-src, or the 'sha256-...'
+	// hash of a style a library injects. A "-src" directive missing from
+	// the policy starts from the default-src sources. Unsafe sources
+	// ('unsafe-*' keywords, "*", nonces, scheme-only sources in script
+	// directives) are refused: write a full CSP to opt into them.
+	CSPSources map[string][]string
+	// ReportURI receives CSP violation reports: an absolute http(s) URL or
+	// a path. It adds report-uri and report-to directives and a
+	// Reporting-Endpoints header naming the "csp-endpoint" group.
+	ReportURI string
+}
+
+// Validate reports CSPSources and ReportURI values that SecureHeaders
+// would drop. Call it at boot: SecureHeaders never fails, it serves the
+// policy without the invalid extras (stricter, never weaker).
+func (cfg SecureHeadersConfig) Validate() error {
+	_, err := cfg.policy()
+	return err
 }
 
 // DefaultCSP is a strict policy suitable for server-rendered pages with
@@ -50,9 +76,15 @@ func CSPNonce(ctx context.Context) string { return web.CSPNonce(ctx) }
 
 // SecureHeaders sets security headers on every response (A02).
 func SecureHeaders(cfg SecureHeadersConfig) Middleware {
-	csp := cfg.CSP
-	if csp == "" {
-		csp = DefaultCSP
+	csp, err := cfg.policy()
+	if err != nil {
+		cfg.CSPSources, cfg.ReportURI = nil, ""
+		csp, _ = cfg.policy()
+	}
+
+	reporting := ""
+	if cfg.ReportURI != "" {
+		reporting = reportGroup + `="` + cfg.ReportURI + `"`
 	}
 
 	hsts := ""
@@ -81,6 +113,10 @@ func SecureHeaders(cfg SecureHeadersConfig) Middleware {
 				h.Set("X-Frame-Options", frame)
 			}
 
+			if reporting != "" {
+				h.Set("Reporting-Endpoints", reporting)
+			}
+
 			https := r.TLS != nil || (cfg.TrustForwardedProto && r.Header.Get("X-Forwarded-Proto") == "https")
 			if hsts != "" && https {
 				h.Set("Strict-Transport-Security", hsts)
@@ -101,6 +137,151 @@ func SecureHeaders(cfg SecureHeadersConfig) Middleware {
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// reportGroup is the Reporting-Endpoints group named by report-to.
+const reportGroup = "csp-endpoint"
+
+// policy returns the CSP template with CSPSources and ReportURI applied.
+// Without either, a custom CSP is returned unchanged.
+func (cfg SecureHeadersConfig) policy() (string, error) {
+	csp := cmp.Or(cfg.CSP, DefaultCSP)
+	if len(cfg.CSPSources) == 0 && cfg.ReportURI == "" {
+		return csp, nil
+	}
+
+	if csp == "-" {
+		return "", errors.New("middleware: CSPSources and ReportURI need a Content-Security-Policy (CSP is \"-\")")
+	}
+
+	dirs := parseCSP(csp)
+
+	for _, name := range slices.Sorted(maps.Keys(cfg.CSPSources)) {
+		if err := checkCSPSources(name, cfg.CSPSources[name]); err != nil {
+			return "", err
+		}
+
+		i := slices.IndexFunc(dirs, func(d cspDirective) bool { return d.name == name })
+		if i < 0 {
+			if !strings.HasSuffix(name, "-src") {
+				return "", fmt.Errorf("middleware: CSP directive %q is not in the policy; set CSP instead", name)
+			}
+
+			dirs = append(dirs, cspDirective{name: name, sources: defaultSources(dirs)})
+			i = len(dirs) - 1
+		}
+
+		for _, src := range cfg.CSPSources[name] {
+			if !slices.Contains(dirs[i].sources, src) {
+				dirs[i].sources = append(dirs[i].sources, src)
+			}
+		}
+	}
+
+	if cfg.ReportURI != "" {
+		if err := checkReportURI(cfg.ReportURI); err != nil {
+			return "", err
+		}
+
+		if slices.ContainsFunc(
+			dirs,
+			func(d cspDirective) bool { return d.name == "report-uri" || d.name == "report-to" },
+		) {
+			return "", errors.New("middleware: the CSP already reports; drop ReportURI or its report-uri/report-to")
+		}
+
+		dirs = append(dirs,
+			cspDirective{name: "report-uri", sources: []string{cfg.ReportURI}},
+			cspDirective{name: "report-to", sources: []string{reportGroup}},
+		)
+	}
+
+	parts := make([]string, len(dirs))
+	for i, d := range dirs {
+		parts[i] = strings.Join(append([]string{d.name}, d.sources...), " ")
+	}
+
+	return strings.Join(parts, "; "), nil
+}
+
+type cspDirective struct {
+	name    string
+	sources []string
+}
+
+func parseCSP(csp string) []cspDirective {
+	var dirs []cspDirective
+
+	for part := range strings.SplitSeq(csp, ";") {
+		fields := strings.Fields(part)
+		if len(fields) > 0 {
+			dirs = append(dirs, cspDirective{name: strings.ToLower(fields[0]), sources: fields[1:]})
+		}
+	}
+
+	return dirs
+}
+
+// defaultSources seeds a new fetch directive with default-src, which it
+// would otherwise fall back to; 'none' is dropped as it cannot be combined.
+func defaultSources(dirs []cspDirective) []string {
+	for _, d := range dirs {
+		if d.name == "default-src" {
+			return slices.DeleteFunc(slices.Clone(d.sources), func(s string) bool { return s == "'none'" })
+		}
+	}
+
+	return nil
+}
+
+var (
+	cspDirectiveName = regexp.MustCompile(`^[a-z][a-z-]*$`)
+	cspHash          = regexp.MustCompile(`^'sha(256|384|512)-[A-Za-z0-9+/_=-]+'$`)
+	cspScheme        = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9+.-]*:$`)
+)
+
+// scriptDirectives run code: a scheme-only source ("https:", "data:")
+// there would allow any script.
+var scriptDirectives = []string{"default-src", "script-src", "script-src-elem", "object-src", "worker-src", "base-uri"}
+
+func checkCSPSources(name string, sources []string) error {
+	if !cspDirectiveName.MatchString(name) || name == "report-uri" || name == "report-to" {
+		return fmt.Errorf("middleware: invalid CSP directive %q in CSPSources", name)
+	}
+
+	for _, src := range sources {
+		lower := strings.ToLower(src)
+
+		switch {
+		case src == "" || strings.ContainsAny(src, ";,\"") || strings.ContainsFunc(src, spaceOrControl):
+			return fmt.Errorf("middleware: invalid CSP source %q for %s", src, name)
+		case src == "*" || strings.Contains(lower, "unsafe"):
+			return fmt.Errorf("middleware: CSP source %s for %s is unsafe; set CSP to opt in", src, name)
+		case strings.HasPrefix(src, "'") && !cspHash.MatchString(src) &&
+			lower != "'self'" && lower != "'strict-dynamic'" && lower != "'report-sample'":
+			return fmt.Errorf("middleware: CSP source %s for %s is not allowed (nonces are per request)", src, name)
+		case cspScheme.MatchString(src) && slices.Contains(scriptDirectives, name):
+			return fmt.Errorf("middleware: scheme-only CSP source %s would allow any %s", src, name)
+		}
+	}
+
+	return nil
+}
+
+func spaceOrControl(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }
+
+func checkReportURI(raw string) error {
+	u, err := url.Parse(raw)
+
+	switch {
+	case err != nil || strings.ContainsAny(raw, ";,\"'") || strings.ContainsFunc(raw, spaceOrControl):
+	case (u.Scheme == "http" || u.Scheme == "https") && u.Host != "":
+		return nil
+	case u.Scheme == "" && u.Host == "" && strings.HasPrefix(raw, "/") && !strings.HasPrefix(raw, "//"):
+		return nil
+	}
+
+	return fmt.Errorf("middleware: ReportURI %q must be an http(s) URL or a path", raw)
 }
 
 // devOrigin matches a bare http(s) origin, so a dev server URL can never

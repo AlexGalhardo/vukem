@@ -113,6 +113,31 @@ nonce := middleware.CSPNonce(c.Context())
 return c.HTML(http.StatusOK, `<script nonce="`+nonce+`">init()</script>`)
 ```
 
+`CSPSources` adds sources to the policy (the default or your `CSP`) without rewriting it. A `-src` directive missing from the policy starts from the `default-src` sources. `ReportURI` (an `https://` URL or a path) adds `report-uri` and `report-to` plus the matching `Reporting-Endpoints` header:
+
+```go
+cfg := middleware.SecureHeadersConfig{
+	CSPSources: map[string][]string{
+		"script-src":  {"https://plausible.io"},
+		"connect-src": {"https://plausible.io"},
+		"frame-src":   {"https://www.youtube-nocookie.com"}, // becomes 'self' https://www.youtube-nocookie.com
+	},
+	ReportURI: "/csp-reports",
+}
+if err := cfg.Validate(); err != nil {
+	return err // refused: 'unsafe-*', "*", static nonces, "https:"/"data:" in script directives
+}
+```
+
+`SecureHeaders` never fails: invalid extras are dropped (the policy stays stricter), so call `Validate` at boot. Anything weaker than the helper allows needs a full `CSP` string.
+
+Styles injected at runtime need the nonce too, since `style-src` has no `'unsafe-inline'`. The starters already handle the common cases:
+
+- **Inertia progress bar:** `createInertiaApp({ nonce })` reads it from `<meta property="csp-nonce">` (the scaffolds do this).
+- **htmx 4 indicator:** injected as a constructed stylesheet, which the CSP does not block. On htmx 2, set `htmx.config.inlineStyleNonce` or `includeIndicatorStyles: false`.
+- **A library that injects a fixed `<style>` and accepts no nonce:** add its hash, e.g. `CSPSources: {"style-src": {"'sha256-…'"}}` (the browser console prints the hash it expects).
+- `style="…"` attributes in server-rendered HTML stay blocked; use classes. Setting `el.style.x` from JavaScript is not affected.
+
 ## Default stack
 
 `vukem.DefaultMiddleware(app, r)`, called by the starter's `routes.Web`, installs:
