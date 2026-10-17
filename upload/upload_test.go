@@ -24,6 +24,9 @@ import (
 
 const (
 	pngMagic = "\x89PNG\r\n\x1a\n"
+	// pngHead is a valid 1x1 PNG signature and IHDR chunk: enough for the
+	// pixel check, which reads only the header.
+	pngHead  = pngMagic + "\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x00\x00\x00\x00:~\x9bU"
 	jpgMagic = "\xff\xd8\xff\xe0"
 )
 
@@ -86,7 +89,7 @@ func TestReceive(t *testing.T) {
 	disk := storage.NewMemory("/storage")
 	rules := Images(1 << 20)
 	rules.Dir = "avatars"
-	content := pngMagic + strings.Repeat("x", 1000)
+	content := pngHead + strings.Repeat("x", 1000)
 
 	form, err := receive(t, disk, rules,
 		part{field: "title", content: "Me"},
@@ -174,7 +177,7 @@ func TestReceiveLargeFileBoundedMemory(t *testing.T) { //nolint:paralleltest // 
 		}
 
 		chunk := bytes.Repeat([]byte("vukem!!!"), 4096)
-		copy(chunk, pngMagic)
+		copy(chunk, pngHead)
 
 		for written := 0; written < size; written += len(chunk) {
 			_, _ = want.Write(chunk)
@@ -197,7 +200,10 @@ func TestReceiveLargeFileBoundedMemory(t *testing.T) { //nolint:paralleltest // 
 	runtime.GC()
 	runtime.ReadMemStats(&before)
 
-	form, err := Receive(web.NewCtx(httptest.NewRecorder(), r, nil), disk, Images(size))
+	rules := Images(size)
+	rules.MaxPixels = 0 // discardDisk cannot reopen the file for the header check
+
+	form, err := Receive(web.NewCtx(httptest.NewRecorder(), r, nil), disk, rules)
 
 	runtime.ReadMemStats(&after)
 
@@ -220,7 +226,7 @@ func TestReceiveLargeFileBoundedMemory(t *testing.T) { //nolint:paralleltest // 
 func TestSecurity_A05_UploadValidation(t *testing.T) {
 	t.Parallel()
 
-	png := pngMagic + strings.Repeat("p", 600)
+	png := pngHead + strings.Repeat("p", 600)
 
 	tests := []struct {
 		name       string

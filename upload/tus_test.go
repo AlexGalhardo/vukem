@@ -180,7 +180,7 @@ func TestTusResumesAfterInterruption(t *testing.T) {
 	t.Parallel()
 
 	env := newTus(t, nil)
-	content := []byte(pngMagic + strings.Repeat("0123456789", 20_000))
+	content := []byte(pngHead + strings.Repeat("0123456789", 20_000))
 	half := len(content) / 2
 
 	res := env.do(t, http.MethodOptions, "/files/", nil, map[string]string{"Tus-Resumable": "", "Authorization": ""})

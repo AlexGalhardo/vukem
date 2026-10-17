@@ -123,11 +123,17 @@ func TestVerify(t *testing.T) {
 	rules.Dir = "a"
 
 	good, spoofed, big := rules.storedPath(".png"), rules.storedPath(".png"), rules.storedPath(".png")
-	_ = storage.PutBytes(t.Context(), disk, good, []byte(pngMagic+"data"))
+	_ = storage.PutBytes(t.Context(), disk, good, []byte(pngHead+"data"))
 	_ = storage.PutBytes(t.Context(), disk, spoofed, []byte("<html></html>"))
 	_ = storage.PutBytes(t.Context(), disk, big, []byte(pngMagic+strings.Repeat("x", 2<<10)))
 
-	if f, err := Verify(t.Context(), disk, good, rules); err != nil || f.Type != "image/png" || f.Size != 12 {
+	if f, err := Verify(
+		t.Context(),
+		disk,
+		good,
+		rules,
+	); err != nil || f.Type != "image/png" ||
+		f.Size != int64(len(pngHead+"data")) {
 		t.Fatalf("Verify(good) = %+v, %v", f, err)
 	}
 

@@ -76,6 +76,11 @@ type Rules struct {
 	MaxSize int64
 	// MaxFiles is the number of files accepted (default 1).
 	MaxFiles int
+	// MaxPixels bounds width × height of JPEG, PNG, GIF and WebP files,
+	// read from their header after storing (decompression bombs); files of
+	// those types without a readable header are rejected. Images sets
+	// DefaultMaxPixels; 0 skips the check.
+	MaxPixels int64
 	// Types are the allowed MIME types, matched against the type detected
 	// from the content (http.DetectContentType); the client's
 	// Content-Type is ignored (required).
@@ -97,9 +102,14 @@ type Rules struct {
 	QuarantineDir string
 }
 
-// Images allows JPEG, PNG, GIF and WebP files up to maxSize bytes.
+// Images allows JPEG, PNG, GIF and WebP files up to maxSize bytes and
+// DefaultMaxPixels.
 func Images(maxSize int64) Rules {
-	return Rules{MaxFileSize: maxSize, Types: []string{"image/jpeg", "image/png", "image/gif", "image/webp"}}
+	return Rules{
+		MaxFileSize: maxSize,
+		MaxPixels:   DefaultMaxPixels,
+		Types:       []string{"image/jpeg", "image/png", "image/gif", "image/webp"},
+	}
 }
 
 // File is a stored upload.
@@ -410,6 +420,11 @@ func save(ctx context.Context, d storage.Disk, r Rules, field, filename string, 
 		default:
 			return File{}, fmt.Errorf("upload: store %s: %w", target, err)
 		}
+	}
+
+	if err := checkImage(ctx, d, target, typ, field, r.MaxPixels); err != nil {
+		_ = d.Delete(context.WithoutCancel(ctx), target)
+		return File{}, err
 	}
 
 	if r.Scanner != nil {

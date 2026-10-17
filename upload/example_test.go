@@ -17,7 +17,8 @@ func ExampleSave() {
 	rules := upload.Images(2 << 20)
 	rules.Dir = "avatars"
 
-	png := []byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR")
+	// A 1x1 PNG header: Images also checks the declared dimensions.
+	png := []byte("\x89PNG\r\n\x1a\n" + "\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x00\x00\x00\x00:~\x9bU")
 	f, err := upload.Save(ctx, disk, rules, "avatar", "../../Me.png", bytes.NewReader(png))
 	if err != nil {
 		fmt.Println(err)

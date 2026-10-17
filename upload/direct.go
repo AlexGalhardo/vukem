@@ -176,7 +176,8 @@ func Direct(cfg DirectConfig) (http.Handler, error) {
 }
 
 // Verify checks an object already on d (a finished direct upload) against
-// rules: detected type, extension of key, size. Only keys Presign could
+// rules: detected type, extension of key, size and, for images, the
+// declared dimensions (Rules.MaxPixels). Only keys Presign could
 // have issued for rules are accepted (400 otherwise, without touching the
 // disk). It deletes the object when it fails and returns its File
 // description otherwise.
@@ -213,6 +214,10 @@ func Verify(ctx context.Context, d storage.Disk, key string, rules Rules) (File,
 		return File{}, fmt.Errorf("upload: verify %s: %w", key, copyErr)
 	default:
 		err = matchErr
+	}
+
+	if err == nil {
+		err = checkImage(ctx, d, key, typ, "file", r.MaxPixels)
 	}
 
 	if err != nil {
