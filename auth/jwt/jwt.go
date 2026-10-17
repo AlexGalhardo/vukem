@@ -348,6 +348,15 @@ func (k Key) verify(input, sig []byte) bool {
 	return false
 }
 
+// SharedKeySet is a KeySet whose keys an identity provider also uses for
+// its other clients (RemoteJWKS). A Verifier over one requires Audience and
+// Issuer. Custom KeySets that wrap a RemoteJWKS should forward SharedKeys
+// (embedding *RemoteJWKS does).
+type SharedKeySet interface {
+	KeySet
+	SharedKeys() bool
+}
+
 // KeySet finds verification keys by id (kid); "" asks for the only key.
 type KeySet interface {
 	Key(ctx context.Context, kid string) (Key, error)
@@ -421,20 +430,20 @@ func NewVerifier(keys KeySet, opts VerifyOptions) *Verifier {
 
 	v := &Verifier{keys: keys, opts: opts}
 
-	if _, remote := keys.(*RemoteJWKS); remote {
+	if sk, ok := keys.(SharedKeySet); ok && sk.SharedKeys() {
 		switch {
 		case opts.Audience == "" && !opts.InsecureSkipAudience:
-			v.err = invalid("a remote key set needs VerifyOptions.Audience")
+			v.err = errors.New("jwt: a shared key set (RemoteJWKS) needs VerifyOptions.Audience")
 		case opts.Issuer == "" && !opts.InsecureSkipIssuer:
-			v.err = invalid("a remote key set needs VerifyOptions.Issuer")
+			v.err = errors.New("jwt: a shared key set (RemoteJWKS) needs VerifyOptions.Issuer")
 		}
 	}
 
 	return v
 }
 
-// Err reports a misconfiguration that makes every Verify fail (a
-// *RemoteJWKS without Audience or Issuer); check it at boot.
+// Err reports a misconfiguration that makes every Verify fail (a shared
+// key set without Audience or Issuer); check it at boot. NewGuard does.
 func (v *Verifier) Err() error { return v.err }
 
 func invalid(format string, args ...any) error {
@@ -445,7 +454,7 @@ func invalid(format string, args ...any) error {
 // Every failure wraps ErrInvalid.
 func (v *Verifier) Verify(ctx context.Context, token string) (Claims, error) {
 	if v.err != nil {
-		return Claims{}, v.err
+		return Claims{}, ErrInvalid // the detail is in Err, not in client-facing errors
 	}
 
 	if len(token) > maxTokenSize {
