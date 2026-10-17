@@ -21,6 +21,7 @@ Design documents, one per area. The user guide lives at [vukem.vercel.app](https
 | Stripe subscriptions (`install:billing`) | [billing.md](billing.md) |
 | Development dashboard (`/_vukem`) | [devtools.md](devtools.md) |
 | Testing | [testing.md](testing.md) |
+| Performance baseline (vs net/http, chi, echo) | [performance.md](performance.md) |
 | Tooling and releases | [tooling.md](tooling.md) |
 | Documentation site | [site.md](site.md) |
 | Design decisions | [brainstorming.md](brainstorming.md) |
