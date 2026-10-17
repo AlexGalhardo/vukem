@@ -2,7 +2,10 @@
 // PNG, GIF and WebP from a storage.Disk, checks the declared dimensions
 // before decoding (decompression bombs), scales the image down to fit a
 // box without upscaling, and stores it as JPEG, or PNG when the source has
-// transparency. Re-encoding drops all metadata (EXIF, GPS).
+// transparency. Re-encoding drops all metadata (EXIF, GPS). Animated GIFs
+// become a still of their first frame. Peak memory per call is roughly the
+// source file plus its decoded pixels (up to ~8 bytes per pixel for 16-bit
+// PNG): bound concurrency, for example by making thumbnails in a queue job.
 //
 //	res, err := imaging.Thumbnail(ctx, disk, file.Path, "thumbs/"+id, imaging.Options{MaxWidth: 400, MaxHeight: 400})
 //
@@ -19,6 +22,8 @@ import (
 	"image/jpeg"
 	"image/png"
 	"io"
+	"regexp"
+	"slices"
 
 	"golang.org/x/image/draw"
 	"golang.org/x/image/webp"
@@ -27,10 +32,12 @@ import (
 	"github.com/AlexGalhardo/vukem/upload"
 )
 
-// Defaults applied when an Options field is zero.
+// Defaults applied when an Options field is zero, and the largest output
+// side accepted.
 const (
 	DefaultQuality  = 82
 	DefaultMaxBytes = 25 << 20
+	MaxSide         = 1 << 14
 )
 
 var (
@@ -65,7 +72,8 @@ type Result struct {
 }
 
 // Thumbnail reads src from d, scales it to fit opts and stores it at dst
-// plus ".jpg" or ".png". Nothing is written when it fails.
+// plus ".jpg" or ".png", replacing an existing file there. On failure the
+// output is removed (best effort).
 func Thumbnail(ctx context.Context, d storage.Disk, src, dst string, opts Options) (Result, error) {
 	img, err := load(ctx, d, src, opts)
 	if err != nil {
@@ -74,6 +82,8 @@ func Thumbnail(ctx context.Context, d storage.Disk, src, dst string, opts Option
 
 	return store(ctx, d, img, dst, opts)
 }
+
+var sizeName = regexp.MustCompile(`^[A-Za-z0-9_-]{1,32}$`)
 
 // Thumbnails stores one thumbnail per named size from a single decode,
 // at dst + "-" + name + extension.
@@ -87,17 +97,25 @@ func Thumbnails(
 		return nil, fmt.Errorf("%w: no sizes", ErrInvalidOptions)
 	}
 
-	// The strictest limits apply to the shared decode.
-	var lim Options
-	for _, o := range sizes {
+	// The strictest limits (defaults resolved) apply to the shared decode.
+	lim := Options{MaxWidth: 1, MaxHeight: 1}
+
+	names := make([]string, 0, len(sizes))
+	for name, o := range sizes {
+		if !sizeName.MatchString(name) {
+			return nil, fmt.Errorf("%w: size name %q (letters, digits, - and _)", ErrInvalidOptions, name)
+		}
+
 		if err := validate(o); err != nil {
 			return nil, err
 		}
 
-		lim.MaxWidth, lim.MaxHeight = 1, 1
-		lim.MaxPixels = minPositive(lim.MaxPixels, o.MaxPixels)
-		lim.MaxBytes = minPositive(lim.MaxBytes, o.MaxBytes)
+		lim.MaxPixels = minPositive(lim.MaxPixels, cmpOr(o.MaxPixels, upload.DefaultMaxPixels))
+		lim.MaxBytes = minPositive(lim.MaxBytes, cmpOr(o.MaxBytes, DefaultMaxBytes))
+		names = append(names, name)
 	}
+
+	slices.Sort(names)
 
 	img, err := load(ctx, d, src, lim)
 	if err != nil {
@@ -106,7 +124,9 @@ func Thumbnails(
 
 	out := make(map[string]Result, len(sizes))
 
-	for name, o := range sizes {
+	for _, name := range names {
+		o := sizes[name]
+
 		r, err := store(ctx, d, img, dst+"-"+name, o)
 		if err != nil {
 			for _, done := range out {
@@ -123,8 +143,9 @@ func Thumbnails(
 }
 
 func validate(o Options) error {
-	if o.MaxWidth <= 0 || o.MaxHeight <= 0 || o.Quality < 0 || o.Quality > 100 || o.MaxPixels < 0 || o.MaxBytes < 0 {
-		return fmt.Errorf("%w: MaxWidth and MaxHeight must be > 0, Quality 0-100", ErrInvalidOptions)
+	if o.MaxWidth <= 0 || o.MaxHeight <= 0 || o.MaxWidth > MaxSide || o.MaxHeight > MaxSide ||
+		o.Quality < 0 || o.Quality > 100 || o.MaxPixels < 0 || o.MaxBytes < 0 {
+		return fmt.Errorf("%w: MaxWidth and MaxHeight must be 1-%d, Quality 0-100", ErrInvalidOptions, MaxSide)
 	}
 
 	return nil
@@ -180,9 +201,14 @@ func load(ctx context.Context, d storage.Disk, src string, o Options) (image.Ima
 		return nil, ErrTooLarge
 	}
 
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	// Animated GIFs decode their first frame only.
 	img, err := decode(bytes.NewReader(raw))
 	if err != nil {
-		return nil, ErrUnsupported
+		return nil, fmt.Errorf("%w: %w", ErrUnsupported, err)
 	}
 
 	return img, nil
@@ -214,6 +240,10 @@ func codecs(raw []byte) (func(io.Reader) (image.Config, error), func(io.Reader) 
 
 func store(ctx context.Context, d storage.Disk, img image.Image, dst string, o Options) (Result, error) {
 	if err := validate(o); err != nil {
+		return Result{}, err
+	}
+
+	if err := ctx.Err(); err != nil {
 		return Result{}, err
 	}
 
@@ -250,6 +280,7 @@ func store(ctx context.Context, d storage.Disk, img image.Image, dst string, o O
 	}
 
 	if err := storage.PutBytes(ctx, d, res.Path, buf.Bytes()); err != nil {
+		_ = d.Delete(context.WithoutCancel(ctx), res.Path) // a partial write
 		return Result{}, fmt.Errorf("imaging: store %s: %w", res.Path, err)
 	}
 
@@ -263,11 +294,11 @@ func fit(w, h, maxW, maxH int) (int, int) {
 		return w, h
 	}
 
-	if w*maxH > h*maxW { // width is the binding side
-		return maxW, max(1, h*maxW/w)
+	if int64(w)*int64(maxH) > int64(h)*int64(maxW) { // width is the binding side
+		return maxW, max(1, int(int64(h)*int64(maxW)/int64(w)))
 	}
 
-	return max(1, w*maxH/h), maxH
+	return max(1, int(int64(w)*int64(maxH)/int64(h))), maxH
 }
 
 func isOpaque(img image.Image) bool {

@@ -111,15 +111,17 @@ What it does, step by step:
 1. Reads the file from the disk (at most `MaxBytes`, 25 MiB by default) and picks the decoder from the **content** (JPEG, PNG, GIF, WebP), never the file name.
 2. Reads only the header and refuses images that declare more than `MaxPixels` (`upload.DefaultMaxPixels`, 25 megapixels) **before** decoding: a decompression bomb never gets decoded.
 3. Scales down to fit `MaxWidth` × `MaxHeight`, keeping the aspect ratio (CatmullRom filter). Small images are never upscaled.
-4. Writes a JPEG (`Quality`, default 82), or a PNG when the image has transparency. Re-encoding removes all metadata (EXIF, GPS location). EXIF orientation is not applied: photos taken sideways stay sideways.
+4. Writes a JPEG (`Quality`, default 82), or a PNG when the image has transparency, replacing a file already at that path. Re-encoding removes all metadata (EXIF, GPS location). EXIF orientation is not applied: photos taken sideways stay sideways. Animated GIFs become a still of their first frame.
 
 | Error | When |
 | --- | --- |
 | `imaging.ErrTooLarge` | the file is bigger than `MaxBytes` or declares more than `MaxPixels` |
 | `imaging.ErrUnsupported` | not a readable JPEG, PNG, GIF or WebP |
-| `imaging.ErrInvalidOptions` | `MaxWidth`/`MaxHeight` missing, `Quality` outside 0–100 |
+| `imaging.ErrInvalidOptions` | `MaxWidth`/`MaxHeight` missing or above 16384, `Quality` outside 0–100, a `Thumbnails` size name that is not letters, digits, `-` or `_` |
 
-Nothing is written when it fails. Resizing large photos takes CPU time: for big uploads, store the original in the request and make thumbnails in a [queue job](/docs/digging-deeper/queue).
+On failure the output is removed. `Thumbnails` applies the strictest `MaxPixels`/`MaxBytes` of all sizes (defaults included) to its single decode.
+
+Memory: one call holds the source file plus its decoded pixels, up to about 8 bytes per pixel (16-bit PNG), so a 25-megapixel image can take ~200 MB. Resizing also takes CPU time. For big uploads, store the original in the request and make thumbnails in a [queue job](/docs/digging-deeper/queue) with limited concurrency.
 
 ## HTMX progress component
 

@@ -3,9 +3,11 @@ package imaging
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/binary"
 	"errors"
 	"image"
 	"image/color"
+	"image/gif"
 	"image/jpeg"
 	"image/png"
 	"strings"
@@ -191,5 +193,147 @@ func TestOptionsValidation(t *testing.T) {
 		if _, err := Thumbnail(t.Context(), disk, "p", "o", o); err == nil {
 			t.Errorf("Thumbnail(%+v) = nil error, want invalid options", o)
 		}
+	}
+}
+
+// webpVP8X is the header of an extended WebP declaring a w×h canvas.
+func webpVP8X(w, h int) []byte {
+	b := make([]byte, 30)
+	copy(b, "RIFF")
+	binary.LittleEndian.PutUint32(b[4:], 22)
+	copy(b[8:], "WEBPVP8X")
+	binary.LittleEndian.PutUint32(b[16:], 10)
+
+	for i, v := range []int{w - 1, h - 1} {
+		b[24+i*3], b[25+i*3], b[26+i*3] = byte(v), byte(v>>8), byte(v>>16)
+	}
+
+	return b
+}
+
+// gifHeader is a GIF89a logical screen declaring w×h, without pixels.
+func gifHeader(w, h int) []byte {
+	b := []byte("GIF89a\x00\x00\x00\x00\x00\x00\x00;")
+	binary.LittleEndian.PutUint16(b[6:], uint16(w))
+	binary.LittleEndian.PutUint16(b[8:], uint16(h))
+
+	return b
+}
+
+func TestSecurity_A05_ThumbnailRefusesBombHeaders(t *testing.T) {
+	t.Parallel()
+
+	disk := storage.NewMemory("")
+	_ = storage.PutBytes(t.Context(), disk, "bomb.webp", webpVP8X(1<<14, 1<<14))
+	_ = storage.PutBytes(t.Context(), disk, "bomb.gif", gifHeader(60000, 60000))
+
+	for _, src := range []string{"bomb.webp", "bomb.gif"} {
+		if _, err := Thumbnail(
+			t.Context(),
+			disk,
+			src,
+			"o",
+			Options{MaxWidth: 10, MaxHeight: 10},
+		); !errors.Is(
+			err,
+			ErrTooLarge,
+		) {
+			t.Errorf("Thumbnail(%s) = %v, want ErrTooLarge before decoding", src, err)
+		}
+	}
+}
+
+func TestThumbnailSniffsContentNotName(t *testing.T) {
+	t.Parallel()
+
+	var jpg bytes.Buffer
+	if err := jpeg.Encode(&jpg, opaque(20, 20), nil); err != nil {
+		t.Fatal(err)
+	}
+
+	disk := storage.NewMemory("")
+	_ = storage.PutBytes(t.Context(), disk, "looks-like.png", jpg.Bytes())
+	_ = storage.PutBytes(t.Context(), disk, "script.jpg", []byte("<script>alert(1)</script>"))
+
+	if res, err := Thumbnail(
+		t.Context(),
+		disk,
+		"looks-like.png",
+		"a",
+		Options{MaxWidth: 10, MaxHeight: 10},
+	); err != nil ||
+		res.Type != "image/jpeg" {
+		t.Errorf("JPEG named .png = %+v, %v", res, err)
+	}
+
+	if _, err := Thumbnail(
+		t.Context(),
+		disk,
+		"script.jpg",
+		"b",
+		Options{MaxWidth: 10, MaxHeight: 10},
+	); !errors.Is(
+		err,
+		ErrUnsupported,
+	) {
+		t.Errorf("text named .jpg = %v, want ErrUnsupported", err)
+	}
+}
+
+func TestThumbnailsValidatesNamesAndAppliesDefaultLimits(t *testing.T) {
+	t.Parallel()
+
+	disk := storage.NewMemory("")
+	_ = storage.PutBytes(t.Context(), disk, "p.png", encodePNG(t, opaque(20, 20)))
+
+	for _, name := range []string{"../x", "a/b", "", "a b"} {
+		if _, err := Thumbnails(
+			t.Context(),
+			disk,
+			"p.png",
+			"o",
+			map[string]Options{name: {MaxWidth: 5, MaxHeight: 5}},
+		); !errors.Is(
+			err,
+			ErrInvalidOptions,
+		) {
+			t.Errorf("size name %q = %v, want ErrInvalidOptions", name, err)
+		}
+	}
+
+	// A size without MaxPixels keeps the default; another size's larger
+	// limit must not lift it, and the strictest explicit one wins.
+	_, err := Thumbnails(t.Context(), disk, "p.png", "o", map[string]Options{
+		"a": {MaxWidth: 5, MaxHeight: 5},
+		"b": {MaxWidth: 5, MaxHeight: 5, MaxPixels: 100},
+	})
+	if !errors.Is(err, ErrTooLarge) {
+		t.Errorf("Thumbnails with a 100 px size = %v, want ErrTooLarge", err)
+	}
+}
+
+func TestThumbnailAnimatedGIFUsesFirstFrame(t *testing.T) {
+	t.Parallel()
+
+	pal := color.Palette{color.Black, color.White}
+	anim := &gif.GIF{
+		Image: []*image.Paletted{
+			image.NewPaletted(image.Rect(0, 0, 40, 20), pal),
+			image.NewPaletted(image.Rect(0, 0, 40, 20), pal),
+		},
+		Delay: []int{10, 10},
+	}
+
+	var buf bytes.Buffer
+	if err := gif.EncodeAll(&buf, anim); err != nil {
+		t.Fatal(err)
+	}
+
+	disk := storage.NewMemory("")
+	_ = storage.PutBytes(t.Context(), disk, "a.gif", buf.Bytes())
+
+	res, err := Thumbnail(t.Context(), disk, "a.gif", "g", Options{MaxWidth: 20, MaxHeight: 20})
+	if err != nil || res.Width != 20 || res.Height != 10 {
+		t.Fatalf("animated GIF = %+v, %v", res, err)
 	}
 }
