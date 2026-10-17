@@ -212,3 +212,5 @@ td.actions a { margin-left: .6rem; }
 	main { padding: 1rem; }
 	table { display: block; overflow-x: auto; }
 }
+.inline-form { display: flex; gap: .5rem; align-items: center; margin: 0; }
+.inline-form input { max-width: 14rem; }

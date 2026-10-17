@@ -17,6 +17,7 @@
 		<nav class="sidebar" aria-label="Resources">
 			<a href="{{.Panel.Home}}">Dashboard</a>
 			{{range .Panel.Nav}}<a href="{{.URL}}"{{if .Active}} aria-current="page"{{end}}>{{.Label}}</a>{{end}}
+			{{with .Panel.FlagsURL}}<a href="{{.}}"{{if eq $.Title "Feature flags"}} aria-current="page"{{end}}>Feature flags</a>{{end}}
 			{{with .Panel.AuditURL}}<a class="audit-link" href="{{.}}">Audit log</a>{{end}}
 		</nav>
 		<main id="main">
