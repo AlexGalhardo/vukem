@@ -48,9 +48,10 @@ The default `DATABASE_URL` is SQLite in `storage/` (`/app/storage` in the image)
 | `DATABASE_URL` | SQLite by default, `postgres://...` with the [PostgreSQL driver](/docs/database/overview#postgresql) |
 | `TRUSTED_PROXIES` | the proxy networks in front of the app, see [below](#trusted-proxies) |
 | `TRUST_FORWARDED_PROTO` | `true` behind a proxy that terminates TLS (sends HSTS) |
+| `HSTS_FORCE` | `true` only when the TLS proxy's range cannot be trusted, see [HSTS without a trusted range](#hsts-without-a-trusted-range) |
 | `SHUTDOWN_TIMEOUT` | shorter than the platform's stop timeout (default `15s`) |
 
-The app refuses to boot with a missing or short `APP_KEY`, `APP_DEBUG=true` in production, or an invalid `TRUSTED_PROXIES` entry, so a misconfigured deploy fails its healthcheck instead of serving.
+The app refuses to boot with a missing or short `APP_KEY`, `APP_DEBUG=true` in production, an invalid `TRUSTED_PROXIES` entry, or `HSTS_FORCE=true` without an `https://` `APP_URL`, so a misconfigured deploy fails its healthcheck instead of serving.
 
 ## Trusted proxies
 
@@ -63,6 +64,16 @@ CLIENT_IP_HEADER=X-Real-IP              # optional: one-IP header set by the pro
 ```
 
 `vukem.New` applies them to the router and to the default `SecureHeaders`; `vukem about` prints the result. With `CLIENT_IP_HEADER`, `c.IP()` reads that header instead of `X-Forwarded-For`, still only from trusted peers, and only when it holds exactly one IP (anything else falls back to the peer address). An entry that is neither an IP nor a CIDR, an invalid or list header name, or `TRUST_FORWARDED_PROTO` / `CLIENT_IP_HEADER` without `TRUSTED_PROXIES` stops the boot. Trust only the networks your proxy connects from: a trusted peer can claim any client address.
+
+Each request log line from `middleware.Logger` carries both addresses: `peer` is the direct connection (the `r.RemoteAddr` host, the proxy when there is one) and `ip` is the client resolved through `TRUSTED_PROXIES` (what `c.IP()` returns). Before trusting a range, read `peer` from a few requests; once the range is trusted, `ip` should show the real client while `peer` stays the proxy.
+
+### HSTS without a trusted range
+
+`Strict-Transport-Security` is sent only on requests the app knows were HTTPS: TLS on the app itself, or `X-Forwarded-Proto: https` from a `TRUSTED_PROXIES` peer with `TRUST_FORWARDED_PROTO=true`. When the TLS proxy's range is unknown, neither holds and HSTS is never sent. `HSTS_FORCE=true` sends it on every response instead, when `APP_ENV=production` and `APP_URL` is `https://` (it is a boot error with any other `APP_URL`, and not applied outside production so localhost is never pinned). It is off by default. Trade-offs:
+
+- It asserts that the public origin is HTTPS-only instead of checking each request. Browsers ignore HSTS received over plain HTTP ([RFC 6797 section 8.1](https://www.rfc-editor.org/rfc/rfc6797#section-8.1)), so a client that reaches the app over HTTP around the proxy gains or loses nothing.
+- The header is `max-age=63072000; includeSubDomains` (two years): every subdomain of the `APP_URL` host must serve HTTPS too, and turning it off later does not unpin browsers that already saw it until `max-age` expires.
+- Prefer `TRUSTED_PROXIES` plus `TRUST_FORWARDED_PROTO=true` whenever the range is known: it also fixes `c.IP()`, which `HSTS_FORCE` does not touch.
 
 ## Deploy on Railway
 
@@ -123,7 +134,8 @@ What Railway documents about its HTTP edge ([public networking specs and limits]
 Because the header Railway documents is `X-Real-IP`, the matching setting is `CLIENT_IP_HEADER=X-Real-IP`. It is honoured only from `TRUSTED_PROXIES` peers, and Railway does not tell you which range that is, so the trade-off stays yours:
 
 - **`TRUSTED_PROXIES` unset (the default, safe).** `c.IP()` is the edge's address, so per-IP rate limits and login throttles key on the edge: all clients share one bucket. Key limits by user or token where you can.
-- **`TRUSTED_PROXIES` set to a range you verified.** Log the peer address of a few requests (`r.RemoteAddr`) from your deployment, trust the narrowest range that covers it, and re-check after Railway changes. Then set `CLIENT_IP_HEADER=X-Real-IP` and, for HSTS, `TRUST_FORWARDED_PROTO=true`. If the edge later connects from outside that range, `c.IP()` falls back to the edge address (limits get stricter, never spoofable).
+- **`TRUSTED_PROXIES` set to a range you verified.** Read the `peer` field of a few request log lines from your deployment, trust the narrowest range that covers it, and re-check after Railway changes. Then set `CLIENT_IP_HEADER=X-Real-IP` and, for HSTS, `TRUST_FORWARDED_PROTO=true`. If the edge later connects from outside that range, `c.IP()` falls back to the edge address (limits get stricter, never spoofable).
+- **HSTS either way.** Every public request on Railway is HTTPS, so with `TRUSTED_PROXIES` unset set `HSTS_FORCE=true` to still send HSTS ([HSTS without a trusted range](#hsts-without-a-trusted-range)).
 - **Never trust `0.0.0.0/0`.** Any client, or another service on the project's private network, could then send its own `X-Real-IP` and choose its `c.IP()`.
 
 ### Scheduler and queue workers

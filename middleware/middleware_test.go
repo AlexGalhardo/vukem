@@ -615,6 +615,44 @@ func TestSecurity_A02_ForwardedProtoOnlyFromTrustedProxies(t *testing.T) {
 	}
 }
 
+func TestSecurity_A02_HSTSForce(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		cfg      SecureHeadersConfig
+		proto    string
+		wantHSTS bool
+	}{
+		// Default: a plain-HTTP request never gets HSTS, even when an
+		// untrusted client claims https.
+		{name: "off by default", cfg: SecureHeadersConfig{}},
+		{name: "off by default, claimed https", cfg: SecureHeadersConfig{}, proto: "https"},
+		{name: "forced on plain http", cfg: SecureHeadersConfig{HSTSForce: true}, wantHSTS: true},
+		{name: "forced but disabled", cfg: SecureHeadersConfig{HSTSForce: true, HSTSMaxAge: -1}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			r := get(t, "/")
+			if tt.proto != "" {
+				r.Header.Set("X-Forwarded-Proto", tt.proto)
+			}
+
+			got := do(t, SecureHeaders(tt.cfg)(http.HandlerFunc(ok)), r).Header().Get("Strict-Transport-Security")
+			if (got != "") != tt.wantHSTS {
+				t.Fatalf("Strict-Transport-Security = %q, want sent %v", got, tt.wantHSTS)
+			}
+		})
+	}
+
+	if err := (SecureHeadersConfig{HSTSForce: true, HSTSMaxAge: -1}).Validate(); err == nil {
+		t.Error("Validate(HSTSForce with HSTSMaxAge < 0) = nil, want an error")
+	}
+}
+
 func TestGzip(t *testing.T) {
 	t.Parallel()
 

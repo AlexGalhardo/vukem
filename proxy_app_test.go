@@ -3,6 +3,7 @@ package vukem
 import (
 	"bytes"
 	"log/slog"
+	"maps"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -113,6 +114,11 @@ func TestSecurity_A02_TrustedProxiesMisconfigurationRefusesBoot(t *testing.T) {
 			env:  map[string]string{"TRUSTED_PROXIES": "10.0.0.0/8", "CLIENT_IP_HEADER": "x-forwarded-for"},
 			want: "CLIENT_IP_HEADER",
 		},
+		{
+			name: "forced hsts without https url",
+			env:  map[string]string{"HSTS_FORCE": "true", "APP_URL": "http://example.com"},
+			want: "HSTS_FORCE requires an https APP_URL",
+		},
 		// X-Forwarded-Proto from any peer would let clients claim HTTPS.
 		{
 			name: "proto without proxies",
@@ -168,6 +174,44 @@ func TestSecurity_A02_TrustForwardedProtoOnlyFromTrustedProxies(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSecurity_A02_HSTSForceFromEnv(t *testing.T) {
+	t.Parallel()
+
+	prod := map[string]string{"APP_ENV": "production", "APP_URL": "https://example.com"}
+
+	tests := []struct {
+		name     string
+		env      map[string]string
+		wantHSTS bool
+	}{
+		// Plain HTTP from the proxy, no trusted range: no HSTS by default.
+		{name: "off by default", env: prod},
+		{name: "forced in production", env: with(prod, "HSTS_FORCE", "true"), wantHSTS: true},
+		{
+			name: "not applied outside production",
+			env:  map[string]string{"APP_URL": "https://example.com", "HSTS_FORCE": "true"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			rec := proxyReq(t, proxyApp(t, tt.env), "198.51.100.7:1", nil)
+			if got := rec.Header().Get("Strict-Transport-Security") != ""; got != tt.wantHSTS {
+				t.Fatalf("HSTS sent = %v, want %v", got, tt.wantHSTS)
+			}
+		})
+	}
+}
+
+func with(m map[string]string, k, v string) map[string]string {
+	out := maps.Clone(m)
+	out[k] = v
+
+	return out
 }
 
 func TestAddrJoinsHostAndPort(t *testing.T) {

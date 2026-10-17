@@ -31,6 +31,13 @@ type SecureHeadersConfig struct {
 	// HSTSMaxAge enables Strict-Transport-Security on HTTPS requests.
 	// Zero uses two years; negative disables it.
 	HSTSMaxAge time.Duration
+	// HSTSForce sends Strict-Transport-Security on every response, also on
+	// requests that look like plain HTTP. Use it only when every public
+	// request reaches a TLS-terminating proxy whose range cannot be
+	// trusted (so TrustForwardedProto cannot be used): it asserts the
+	// public origin is HTTPS-only instead of checking each request.
+	// Browsers ignore HSTS received over plain HTTP (RFC 6797 section 8.1).
+	HSTSForce bool
 	// FrameOptions defaults to DENY; "-" disables it.
 	FrameOptions string
 	// ReferrerPolicy defaults to strict-origin-when-cross-origin.
@@ -62,12 +69,17 @@ type SecureHeadersConfig struct {
 	ReportURI string
 }
 
-// Validate reports TrustForwardedProto without TrustedProxies, and
-// CSPSources and ReportURI values that SecureHeaders would drop. Call it at boot: SecureHeaders never fails, it serves the
-// policy without the invalid extras (stricter, never weaker).
+// Validate reports TrustForwardedProto without TrustedProxies, HSTSForce
+// with HSTS disabled, and CSPSources and ReportURI values that
+// SecureHeaders would drop. Call it at boot: SecureHeaders never fails, it
+// serves the policy without the invalid extras (stricter, never weaker).
 func (cfg SecureHeadersConfig) Validate() error {
 	if cfg.TrustForwardedProto && len(cfg.TrustedProxies) == 0 {
 		return errors.New("middleware: TrustForwardedProto needs TrustedProxies, or any client can claim HTTPS")
+	}
+
+	if cfg.HSTSForce && cfg.HSTSMaxAge < 0 {
+		return errors.New("middleware: HSTSForce needs HSTS (HSTSMaxAge is negative)")
 	}
 
 	_, err := cfg.policy()
@@ -138,7 +150,7 @@ func SecureHeaders(cfg SecureHeadersConfig) Middleware {
 				h.Set("Reporting-Endpoints", reporting)
 			}
 
-			https := r.TLS != nil || (cfg.TrustForwardedProto && forwardedHTTPS(r) &&
+			https := cfg.HSTSForce || r.TLS != nil || (cfg.TrustForwardedProto && forwardedHTTPS(r) &&
 				fromTrustedPeer(r, cfg.TrustedProxies))
 			if hsts != "" && https {
 				h.Set("Strict-Transport-Security", hsts)

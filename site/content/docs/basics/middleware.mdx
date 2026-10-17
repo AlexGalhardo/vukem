@@ -97,7 +97,7 @@ r.UseServer(middleware.SecureHeaders(middleware.SecureHeadersConfig{
 }))
 ```
 
-`X-Forwarded-Proto` counts only as a single header line saying `https`. `SecureHeadersConfig.Validate()` (called by `DefaultMiddleware` at boot) refuses `TrustForwardedProto` without `TrustedProxies`; without that check, an empty list trusts the header from any peer. `DefaultMiddleware` and `APIMiddleware` already install `SecureHeaders`; there, set `TRUST_FORWARDED_PROTO=true` and `TRUSTED_PROXIES` instead of adding a second one.
+`X-Forwarded-Proto` counts only as a single header line saying `https`. `SecureHeadersConfig.Validate()` (called by `DefaultMiddleware` at boot) refuses `TrustForwardedProto` without `TrustedProxies`; without that check, an empty list trusts the header from any peer. `DefaultMiddleware` and `APIMiddleware` already install `SecureHeaders`; there, set `TRUST_FORWARDED_PROTO=true` and `TRUSTED_PROXIES` instead of adding a second one. When the proxy's range cannot be trusted, `HSTSForce: true` (`HSTS_FORCE=true`) sends HSTS on every response instead; see [HSTS without a trusted range](/docs/deployment/docker-and-railway#hsts-without-a-trusted-range) for the trade-offs.
 
 | Header | Default |
 | --- | --- |
