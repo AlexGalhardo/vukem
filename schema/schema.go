@@ -201,7 +201,12 @@ func (s *Schema) createIndexes(t *Table) error {
 			cols[i] = s.q(c)
 		}
 
-		if err := s.exec(kw + s.q(ix.name) + " ON " + s.q(t.name) + " (" + strings.Join(cols, ", ") + ")"); err != nil {
+		stmt := kw + s.q(ix.name) + " ON " + s.q(t.name) + " (" + strings.Join(cols, ", ") + ")"
+		if ix.where != "" {
+			stmt += " WHERE " + ix.where
+		}
+
+		if err := s.exec(stmt); err != nil {
 			return err
 		}
 	}

@@ -100,6 +100,11 @@ var migrations = []schema.Migration{
 	tagsMigration,
 }
 
+// SubtestTimeout bounds each top-level subtest of Run: its context is
+// cancelled after it, so a statement stuck on a lock or a slow server
+// fails the subtest with context.DeadlineExceeded.
+const SubtestTimeout = 2 * time.Minute
+
 // Run executes the conformance suite against db. Subtests run in order and
 // share tables, so they are not parallel.
 func Run(t *testing.T, db *database.DB) {
@@ -109,13 +114,25 @@ func Run(t *testing.T, db *database.DB) {
 	clean(ctx, t, db)
 	t.Cleanup(func() { clean(context.Background(), t, db) })
 
-	t.Run("Migrations", func(t *testing.T) { testMigrations(ctx, t, db) })
-	t.Run("ORM", func(t *testing.T) { testORM(ctx, t, db) })
-	t.Run("Transactions", func(t *testing.T) { testTransactions(ctx, t, db) })
-	t.Run("Relations", func(t *testing.T) { testRelations(ctx, t, db) })
-	t.Run("SchemaAlter", func(t *testing.T) { testAlter(ctx, t, db) })
-	t.Run("Queue", func(t *testing.T) { testQueue(ctx, t, db) })
-	t.Run("BulkLocksChecks", func(t *testing.T) { testBulkLocksChecks(ctx, t, db) })
+	run := func(name string, fn func(context.Context, *testing.T, *database.DB)) {
+		t.Run(name, func(t *testing.T) {
+			// A lock wait or a slow server fails this subtest instead of
+			// hanging the run until go test's global timeout.
+			ctx, cancel := context.WithTimeout(ctx, SubtestTimeout)
+			defer cancel()
+
+			fn(ctx, t, db)
+		})
+	}
+
+	run("Migrations", testMigrations)
+	run("ORM", testORM)
+	run("Transactions", testTransactions)
+	run("Relations", testRelations)
+	run("SchemaAlter", testAlter)
+	run("Queue", testQueue)
+	run("BulkLocksChecks", testBulkLocksChecks)
+	run("PartialIndexRebind", testPartialIndexRebind)
 }
 
 func clean(ctx context.Context, t *testing.T, db *database.DB) {
@@ -470,5 +487,56 @@ func testAlter(ctx context.Context, t *testing.T, db *database.DB) {
 
 	if err := s.Drop("dbt_renamed"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// testPartialIndexRebind checks Index(...).Where on the dialects that have
+// partial indexes (MySQL must refuse it) and runs the inserts through
+// database.Rebind, including a "?" inside a string literal.
+func testPartialIndexRebind(ctx context.Context, t *testing.T, db *database.DB) {
+	t.Helper()
+
+	s := schema.New(ctx, db)
+
+	err := s.Create("dbt_reservations", func(t *schema.Table) {
+		t.ID()
+		t.Integer("number_id")
+		t.String("status", 20)
+		t.UniqueIndex("number_id").Where("status = 'live'")
+	})
+	if db.Dialect().Name() == "mysql" {
+		if err == nil {
+			_ = s.DropIfExists("dbt_reservations")
+			t.Fatal("mysql accepted a partial index")
+		}
+
+		return
+	}
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() { _ = s.DropIfExists("dbt_reservations") })
+
+	insert := database.Rebind(db.Dialect(),
+		"INSERT INTO dbt_reservations (number_id, status) VALUES (?, CASE WHEN ? THEN 'live' ELSE 'gone?' END)")
+
+	for _, live := range []bool{false, false, true} {
+		if _, err := db.ExecContext(ctx, insert, 7, live); err != nil {
+			t.Fatalf("insert live=%v: %v", live, err)
+		}
+	}
+
+	if _, err := db.ExecContext(ctx, insert, 7, true); err == nil {
+		t.Fatal("second live reservation accepted; partial unique index missing")
+	}
+
+	var n int
+	if err := db.QueryRowContext(ctx, database.Rebind(
+		db.Dialect(),
+		"SELECT COUNT(*) FROM dbt_reservations WHERE status = 'gone?' AND number_id = ?",
+	), 7).Scan(&n); err != nil || n != 2 {
+		t.Fatalf("count = %d, %v, want 2", n, err)
 	}
 }

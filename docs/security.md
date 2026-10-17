@@ -249,7 +249,7 @@ All configurable in `config/http.go`; API routes skip HTML-only headers.
 | `webhook.VerifyHMAC`, `webhook.Middleware` | incoming webhooks signed with HMAC-SHA256 (hex or base64, `sha256=` prefix), body size limit, 401 (`TestSecurity_A08_WebhookMiddleware`) |
 | `webhook.Sender`, `webhook.NewSecret` | outgoing webhooks: Standard Webhooks signatures, `httpclient.Safe` delivery from a queue job, retries with backoff, 410 stops, `SQLDeliveryLog` of attempts (`TestSecurity_A01_OutgoingWebhookSSRF`, `TestSecurity_A04_OutgoingWebhookRequiresHTTPS`, `TestSecurity_A09_OutgoingWebhookLogsNoSecrets`) |
 | `security.Event` | every `web.SecurityEvent` (login failures, `authz.denied`, CSRF, rate limits, bad signatures) is also dispatched on `app.Events` for alerting: `events.Listen(app.Events, func(ctx, e security.Event) error {...})` |
-| depguard `crypto-randomness` | `math/rand` is a lint error in `auth`, `session`, `csrf`, `signed`, `crypt`, `social`, `webhook` and `config` |
+| depguard `crypto-randomness` | `math/rand` is a lint error in `auth`, `session`, `csrf`, `signed`, `crypt`, `social`, `webhook`, `config` and `uuid` |
 
 ## Verification
 

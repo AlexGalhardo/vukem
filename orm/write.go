@@ -136,11 +136,11 @@ func insertOne(ctx context.Context, ex database.Executor, m *meta, rv reflect.Va
 		}
 	case m.autoID && pk.IsZero():
 		q += " RETURNING " + ex.Dialect().Quote(m.pk)
-		if err := ex.QueryRowContext(ctx, renumber(q, ex.Dialect()), args...).Scan(pk.Addr().Interface()); err != nil {
+		if err := ex.QueryRowContext(ctx, rebind(q, ex.Dialect()), args...).Scan(pk.Addr().Interface()); err != nil {
 			return fmt.Errorf("orm: insert %s: %w", m.table, mapError(err))
 		}
 	default:
-		if _, err := ex.ExecContext(ctx, renumber(q, ex.Dialect()), args...); err != nil {
+		if _, err := ex.ExecContext(ctx, rebind(q, ex.Dialect()), args...); err != nil {
 			return fmt.Errorf("orm: insert %s: %w", m.table, mapError(err))
 		}
 	}
@@ -211,7 +211,7 @@ func Update[T any](ctx context.Context, ex database.Executor, model *T) error {
 	q := "UPDATE " + ex.Dialect().Quote(m.table) + " SET " + strings.Join(sets, ", ") +
 		" WHERE " + ex.Dialect().Quote(m.pk) + " = ?"
 
-	res, err := ex.ExecContext(ctx, renumber(q, ex.Dialect()), args...)
+	res, err := ex.ExecContext(ctx, rebind(q, ex.Dialect()), args...)
 	if err != nil {
 		return fmt.Errorf("orm: update %s: %w", m.table, mapError(err))
 	}
@@ -338,7 +338,10 @@ func (q Query[T]) Update(ctx context.Context, set Set) (int64, error) {
 	}
 
 	where, wargs := q.whereSQL()
-	query := renumber("UPDATE "+q.quote(q.m.table)+" SET "+strings.Join(sets, ", ")+where, q.ex.Dialect())
+	query, err := renumber("UPDATE "+q.quote(q.m.table)+" SET "+strings.Join(sets, ", ")+where, q.ex.Dialect())
+	if err != nil {
+		return 0, err
+	}
 
 	res, err := q.ex.ExecContext(ctx, query, append(args, wargs...)...)
 	if err != nil {
@@ -362,7 +365,12 @@ func (q Query[T]) Delete(ctx context.Context) (int64, error) {
 
 	where, args := q.whereSQL()
 
-	res, err := q.ex.ExecContext(ctx, renumber("DELETE FROM "+q.quote(q.m.table)+where, q.ex.Dialect()), args...)
+	query, err := renumber("DELETE FROM "+q.quote(q.m.table)+where, q.ex.Dialect())
+	if err != nil {
+		return 0, err
+	}
+
+	res, err := q.ex.ExecContext(ctx, query, args...)
 	if err != nil {
 		return 0, fmt.Errorf("orm: delete %s: %w", q.m.table, mapError(err))
 	}

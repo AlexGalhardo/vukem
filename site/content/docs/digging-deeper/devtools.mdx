@@ -42,7 +42,7 @@ Pages are server-rendered with no script, so they work under the default CSP. `?
 | Kind | Hook |
 | --- | --- |
 | Requests | outermost server middleware, so timings cover the whole stack |
-| SQL | a `database.QueryObserver` set by `app.DB()`; statements run on `DB.SQL()` directly bypass it |
+| SQL | a `database.QueryObserver` set by `app.DB()`; observers added with `vukem.WithQueryObservers` (tracing) run next to it; statements run on `DB.SQL()` directly bypass it |
 | Jobs, events | `queue.Observer` and `events.Observer` |
 | Mail | wraps the transport chosen by `MAIL_MAILER` |
 | Logs | a handler teed next to the app's |

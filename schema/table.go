@@ -58,6 +58,14 @@ type index struct {
 	name   string
 	cols   []string
 	unique bool
+	where  string
+}
+
+// Index is an index added by Table.Index or Table.UniqueIndex; chain Where
+// to make it partial.
+type Index struct {
+	t  *Table
+	ix *index
 }
 
 // Table collects column and index definitions for Create or Table.
@@ -66,7 +74,7 @@ type Table struct {
 	name    string
 	alter   bool
 	cols    []*Column
-	indexes []index
+	indexes []*index
 	fks     []*reference
 	renames [][2]string
 	drops   []string
@@ -176,16 +184,19 @@ func (t *Table) Enum(name string, values ...string) *Column {
 func (t *Table) ForeignID(name string) *Column { return t.add(name, kindBigInteger) }
 
 // Index adds an index over cols (name derived: table_col1_col2_index).
-func (t *Table) Index(cols ...string) { t.addIndex(cols, false) }
+func (t *Table) Index(cols ...string) *Index { return t.addIndex(cols, false) }
 
-// UniqueIndex adds a unique index over cols.
-func (t *Table) UniqueIndex(cols ...string) { t.addIndex(cols, true) }
+// UniqueIndex adds a unique index over cols (name derived:
+// table_col1_col2_unique).
+func (t *Table) UniqueIndex(cols ...string) *Index { return t.addIndex(cols, true) }
 
-func (t *Table) addIndex(cols []string, unique bool) {
+func (t *Table) addIndex(cols []string, unique bool) *Index {
+	ix := &index{cols: cols, unique: unique}
+
 	for _, c := range cols {
 		if err := checkIdent("column", c); err != nil {
 			t.fail(err)
-			return
+			return &Index{t: t, ix: ix} // detached: never emitted, t.err aborts the migration
 		}
 	}
 
@@ -194,10 +205,30 @@ func (t *Table) addIndex(cols []string, unique bool) {
 		suffix = "_unique"
 	}
 
-	t.indexes = append(
-		t.indexes,
-		index{name: t.name + "_" + strings.Join(cols, "_") + suffix, cols: cols, unique: unique},
-	)
+	ix.name = t.name + "_" + strings.Join(cols, "_") + suffix
+	t.indexes = append(t.indexes, ix)
+
+	return &Index{t: t, ix: ix}
+}
+
+// Where makes the index partial: only rows matching expr are indexed (and,
+// for a unique index, must be unique), e.g. one live reservation per number
+// with UniqueIndex("number_id").Where("status = 'live'"). expr is raw SQL
+// written by the developer (never user input). PostgreSQL and SQLite
+// support it; MySQL and MariaDB have no partial indexes, so the migration
+// fails instead of creating a full index that would reject valid rows.
+func (i *Index) Where(expr string) *Index {
+	switch {
+	case strings.TrimSpace(expr) == "":
+		i.t.fail(fmt.Errorf("schema: partial index on %s needs an expression", i.t.name))
+	case i.t.s.mysql():
+		i.t.fail(fmt.Errorf("schema: mysql does not support partial indexes (index on %s); "+
+			"enforce the rule another way, e.g. a generated column with a unique index", i.t.name))
+	default:
+		i.ix.where = expr
+	}
+
+	return i
 }
 
 // RenameColumn renames a column (alter only).

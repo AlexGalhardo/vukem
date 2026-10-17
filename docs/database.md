@@ -27,6 +27,7 @@ type Database struct {
 
 - `database.Manager` holds named connections (`app.DB.Conn("analytics")`); the default one is `app.DB.Default()`.
 - Each connection is a `*database.DB` wrapping `*sql.DB` plus its `Dialect`; `db.SQL()` exposes the raw `*sql.DB` (sqlc, other libraries).
+- Query observers (`database.QueryObserver`) see every statement run through a `DB` or its transactions (SQL, args, duration, error). `database.WithQueryObserver` can be passed several times and `db.AddQueryObserver` appends: all of them are notified in order. `db.SetQueryObserver` replaces them all. `vukem.WithQueryObservers(obs...)` adds observers to `app.DB()` next to devtools. Nil observers, typed nil pointers included, are ignored. A panicking observer is logged (observer type and panic value, never SQL or args) and skipped: the statement still returns its result or rows, and the observers after it still run.
 - Postgres and MySQL register their dialect when the user imports `drivers/postgres` or `drivers/mysql` and passes `postgres.Driver()` / `mysql.Driver()` to the database provider — explicit, no `init()`.
 
 ### PostgreSQL
@@ -47,7 +48,7 @@ vukem.New(append([]vukem.Option{
 DATABASE_URL=postgres://app:secret@localhost:5432/app?sslmode=disable
 ```
 
-Everything above the driver is dialect-neutral: the same models, queries, migrations and `SESSION_DRIVER=database` work on SQLite, Postgres and MySQL. `database/dbtest.Run(t, db)` is the conformance suite every dialect must pass (schema, migrations, ORM, transactions, database queue); `drivers/postgres` runs it against `postgres:17` and `drivers/mysql` against `mysql:8.4` and `mariadb:11.8`, with `task services:up` and `go test -tags=integration`.
+Everything above the driver is dialect-neutral: the same models, queries, migrations and `SESSION_DRIVER=database` work on SQLite, Postgres and MySQL. `database/dbtest.Run(t, db)` is the conformance suite every dialect must pass (schema, migrations, ORM, transactions, database queue); `drivers/postgres` runs it against `postgres:17` and `drivers/mysql` against `mysql:8.4` and `mariadb:11.8`, with `task services:up` and `go test -tags=integration`. Each top-level subtest gets a context cancelled after `dbtest.SubtestTimeout` (2 minutes), so a stuck lock or a slow server fails that subtest instead of hanging the run.
 
 ### MySQL and MariaDB
 
@@ -160,6 +161,26 @@ Inside `db.Tx`, use `tx` for every query (pass it as the `database.Executor`). S
 
 Column names passed as strings are validated against the model's cached column set at query build time (unknown column → error before hitting the database). Raw SQL is the explicit escape hatch.
 
+Raw SQL shared between dialects is written once with `?` and passed through `database.Rebind(ex.Dialect(), query)`: on PostgreSQL the n-th `?` becomes `$n`, elsewhere the query is unchanged. `?` inside string literals, quoted identifiers, dollar-quoted bodies and comments is left alone, and `??` is a literal `?` on PostgreSQL (jsonb operators). `DB.ExecContext`/`QueryContext` never rebind on their own, so queries already written with `$n` keep working.
+
+The orm uses the same scanner (`internal/sqlscan`): `WhereRaw` counts placeholders with the rules `Rebind` renumbers with, so the two cannot disagree, and it rejects a fragment that ends inside a literal, identifier or comment (a trailing `--` comment too). It also rejects explicit `$n` parameters on PostgreSQL, which would bind another condition's value once the statement is renumbered; without an executor, `WhereRaw` lexes with SQLite's rules. Statements with a WHERE clause (select, `Query.Update`, `Query.Delete`) fail closed with an error if they end inside a literal or comment.
+
+Dialect rules: every dialect skips `'…'` and `"…"`, `--` and `/* */` comments; PostgreSQL adds `E'…'`, nested comments and `$tag$` bodies (a backtick is an operator there); MySQL adds `` `…` ``, backslash escapes, `#` comments and needs whitespace after `--`; SQLite adds `` `…` `` and `[…]` identifiers. The lexer assumes the servers' default settings: `standard_conforming_strings` on (PostgreSQL), no `ANSI_QUOTES` or `NO_BACKSLASH_ESCAPES` (MySQL). MySQL executes the contents of `/*! */` and `/*+ */` comments, but they are skipped like any comment, so placeholders inside them are not supported. `Rebind` does not check for `$n` mixed with `?`: write one style per query.
+
+## UUIDs
+
+Package `uuid` (stdlib only) generates and parses RFC 9562 UUIDs for public ids:
+
+```go
+id := uuid.NewV7()               // time-ordered: sorts by creation millisecond, random inside one
+key := uuid.NewV4()              // fully random
+u, err := uuid.Parse(r.PathValue("id")) // canonical 36-char form only; errors.Is(err, uuid.ErrInvalid)
+```
+
+- Randomness comes from `crypto/rand` (122 random bits for v4, 74 for v7); a v7 UUID reveals its creation time (`u.Time()`).
+- `uuid.UUID` is a `[16]byte`: JSON and query strings use the canonical lowercase text (`encoding.TextMarshaler`); SQL writes the text (`driver.Valuer`: PostgreSQL `uuid`, SQLite/MySQL text) and scans text or 16-byte binary columns. NULL needs a `*uuid.UUID`; an empty string never parses as the nil UUID.
+- `t.UUID("public_id").Unique()` in a migration matches it.
+
 ## Models
 
 Plain structs. Mapping is computed **once per type** with reflection and cached; no reflection in the hot path beyond scanning.
@@ -265,6 +286,7 @@ var CreateUsersTable = schema.Migration{
 - Column types: `ID`, `BigInteger`, `Integer`, `String(n)`, `Text`, `Boolean`, `Decimal(p,s)`, `Float`, `Date`, `Timestamp`, `Timestamps`, `SoftDeletes`, `JSON`, `UUID`, `ULID`, `Enum(vals)`, `ForeignID("user_id").Constrained().CascadeOnDelete()`; modifiers `Nullable`, `Default`, `Unique`, `Index`, `Comment`.
 - `s.Table(name, fn)` alters (add/rename/drop column, indexes); SQLite table rebuild handled by the dialect where `ALTER` is unsupported.
 - `t.Check(name, expr)` adds a named CHECK constraint (in `Create` on every dialect; in `s.Table` on PostgreSQL and MySQL only, SQLite fails the migration); `t.DropCheck(name)` removes one (MySQL 8.0.19+ / MariaDB 10.2+).
+- `t.Index(cols...)` / `t.UniqueIndex(cols...)` return an `*Index`; `.Where(expr)` makes it partial (`CREATE [UNIQUE] INDEX … WHERE expr`) on PostgreSQL and SQLite. MySQL/MariaDB have no partial indexes, so `Where` fails the migration there instead of creating a full index.
 - `s.Raw(sql)` for anything else.
 - Tracking table `migrations(id, batch, ran_at)`; each migration runs in a transaction where the dialect allows DDL in transactions.
 - Commands: `migrate`, `migrate:rollback [--step N]`, `migrate:reset`, `migrate:fresh [--seed]`, `migrate:status`, `make:migration create_posts_table` (name prefix `create_`/`add_`/`alter_` picks the stub).

@@ -54,6 +54,25 @@ err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM posts WHERE published = ?",
 
 Always pass values as arguments; never concatenate input into SQL. `db.Dialect()` gives `Quote` and `Placeholder` for portable statements, and `db.SQL()` exposes the underlying `*sql.DB`.
 
+PostgreSQL uses `$1, $2` placeholders where SQLite and MySQL use `?`. Write raw SQL once with `?` and rebind it for the connection's dialect:
+
+```go
+q := database.Rebind(db.Dialect(), "SELECT id FROM posts WHERE author_id = ? AND status = ?")
+rows, err := db.QueryContext(ctx, q, authorID, "published") // $1, $2 on PostgreSQL
+```
+
+`Rebind` leaves `?` inside string literals, quoted identifiers, dollar-quoted bodies and comments alone. On PostgreSQL `??` is a literal `?`, for jsonb operators (`data ?? 'key'`). `ExecContext` and `QueryContext` never rebind on their own, so queries already written with `$n` keep working. Write one style per query: a `$n` mixed with `?` is not renumbered and would bind the wrong value. The lexer assumes the servers' default settings: `standard_conforming_strings` on (PostgreSQL), no `ANSI_QUOTES` or `NO_BACKSLASH_ESCAPES` (MySQL). MySQL executes the contents of `/*! */` and `/*+ */` comments, but they are skipped like any comment, so placeholders inside them are not supported.
+
+## Query observers
+
+A `database.QueryObserver` sees every statement run through a `DB` and its transactions (SQL, duration, error; `Args` hold user data, so never log them). Add one to `app.DB()` with an option; it runs next to devtools instead of replacing it:
+
+```go
+app, err := vukem.New(vukem.WithQueryObservers(sqlTracer))
+```
+
+On a `DB` you open yourself, pass `database.WithQueryObserver` once per observer or call `db.AddQueryObserver` before sharing the `DB`. `db.SetQueryObserver` replaces every observer. A panicking observer is logged and skipped, so it never fails the query or stops the other observers.
+
 ## Transactions
 
 ```go
@@ -69,6 +88,22 @@ err := db.Tx(ctx, func(tx *database.Tx) error {
 `database.RunInTx(ctx, ex, fn)` joins the caller's transaction when `ex` is already a `*Tx`, or starts one when it is a `*DB`, which keeps service functions composable.
 
 `tx.AfterCommit(func(ctx context.Context) { ... })` runs work once the transaction commits, in registration order, and drops it on rollback or panic. A hook registered after the `db.Tx` function returned never runs; a panicking hook is logged and the others still run (`db.Tx` returns nil, since the commit happened). `queue.DispatchTx` uses it on drivers without transactional storage.
+
+## UUIDs
+
+Package `uuid` (stdlib only) makes RFC 9562 UUIDs for public ids, without a third-party dependency:
+
+```go
+type Order struct {
+	orm.Model
+	PublicID uuid.UUID // t.UUID("public_id").Unique() in the migration
+}
+
+o := Order{PublicID: uuid.NewV7()}      // time-ordered; uuid.NewV4() is fully random
+u, err := uuid.Parse(r.PathValue("id")) // errors.Is(err, uuid.ErrInvalid) → 404
+```
+
+Both versions draw their random bits from `crypto/rand`. A v7 UUID sorts by its creation millisecond (random order inside one) and reveals that time (`u.Time()`). `Parse` accepts only the canonical 36-character form, in either case. A `uuid.UUID` is JSON and query-string text, is written to SQL as text (PostgreSQL `uuid`, text columns elsewhere) and scans text or 16-byte binary columns; scan nullable columns into a `*uuid.UUID`.
 
 ## Next
 
@@ -115,7 +150,7 @@ The URL becomes a go-sql-driver DSN with `parseTime`, UTC times, `utf8mb4` and a
 
 ## Conformance suite
 
-`database/dbtest.Run(t, db)` is the suite every dialect passes: migrations, schema changes, ORM round trips (JSON, nullable, booleans, times), unique violations as 409, foreign keys, soft deletes, cursor pagination, relations and transactions (including rollback on panic). `drivers/postgres` runs it against `postgres:17` and `drivers/mysql` against `mysql:8.4` and `mariadb:11.8` with `go test -tags=integration`.
+`database/dbtest.Run(t, db)` is the suite every dialect passes: migrations, schema changes, ORM round trips (JSON, nullable, booleans, times), unique violations as 409, foreign keys, soft deletes, cursor pagination, relations and transactions (including rollback on panic). `drivers/postgres` runs it against `postgres:17` and `drivers/mysql` against `mysql:8.4` and `mariadb:11.8` with `go test -tags=integration`. Each top-level subtest gets a context cancelled after `dbtest.SubtestTimeout` (2 minutes), so a stuck lock or a slow server fails that subtest instead of hanging the run.
 
 ## Transactions and SQLite
 

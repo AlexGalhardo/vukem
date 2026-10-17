@@ -13,6 +13,7 @@ import (
 
 	"github.com/AlexGalhardo/vukem/database"
 	"github.com/AlexGalhardo/vukem/errs"
+	"github.com/AlexGalhardo/vukem/internal/sqlscan"
 )
 
 // ErrNotFound is returned when First/Find match no row. It matches
@@ -215,29 +216,40 @@ func (q Query[T]) WhereBetween(colName string, low, high any) Query[T] {
 }
 
 // WhereRaw adds a raw condition. It must use "?" placeholders for every
-// value; never concatenate input into sql.
+// value; never concatenate input into sql. Placeholders are found the way
+// the dialect lexes SQL (database.Rebind's rules): "?" inside literals,
+// quoted identifiers, comments and PostgreSQL dollar-quoted bodies does not
+// count, and "??" is a literal "?" on PostgreSQL. A fragment that ends
+// inside a literal, identifier or comment (including a "--" comment without
+// a newline) is rejected, since it would swallow the SQL appended after it,
+// and so are explicit PostgreSQL "$n" parameters. Without an executor the
+// fragment is lexed with SQLite's rules.
 func (q Query[T]) WhereRaw(sqlFrag string, args ...any) Query[T] {
-	if n := countPlaceholders(sqlFrag); n != len(args) {
-		return q.fail(fmt.Errorf("orm: WhereRaw(%q) has %d placeholders but %d args", sqlFrag, n, len(args)))
+	dialect := ""
+	if q.ex != nil {
+		dialect = q.ex.Dialect().Name()
+	}
+
+	scan := sqlscan.Scan(dialect, sqlFrag, nil)
+	if !scan.Terminated {
+		return q.fail(
+			fmt.Errorf("orm: WhereRaw(%q) ends inside an unterminated literal, identifier or comment", sqlFrag),
+		)
+	}
+
+	if scan.DollarParams > 0 {
+		// The orm renumbers every "?" of the statement, so a "$1" here would
+		// bind another condition's value.
+		return q.fail(fmt.Errorf("orm: WhereRaw(%q) uses $n parameters; write ? placeholders", sqlFrag))
+	}
+
+	if scan.Placeholders != len(args) {
+		return q.fail(
+			fmt.Errorf("orm: WhereRaw(%q) has %d placeholders but %d args", sqlFrag, scan.Placeholders, len(args)),
+		)
 	}
 
 	return q.addCond(false, "("+sqlFrag+")", args...)
-}
-
-// countPlaceholders counts "?" outside single-quoted literals.
-func countPlaceholders(s string) int {
-	n, inQuote := 0, false
-
-	for _, r := range s {
-		switch {
-		case r == '\'':
-			inQuote = !inQuote
-		case r == '?' && !inQuote:
-			n++
-		}
-	}
-
-	return n
 }
 
 // WhereGroup adds a parenthesised group built by fn.
@@ -436,7 +448,7 @@ func wrapOr(conds []cond) []cond {
 	return []cond{{sql: "(" + frag + ")", args: args}}
 }
 
-func (q Query[T]) selectSQL(cols string) (string, []any) {
+func (q Query[T]) selectSQL(cols string) (string, []any, error) {
 	where, args := q.whereSQL()
 
 	var b strings.Builder
@@ -465,7 +477,9 @@ func (q Query[T]) selectSQL(cols string) (string, []any) {
 
 	b.WriteString(q.lockSQL())
 
-	return renumber(b.String(), q.ex.Dialect()), args
+	s, err := renumber(b.String(), q.ex.Dialect())
+
+	return s, args, err
 }
 
 func (q Query[T]) columnList() string {
@@ -486,31 +500,31 @@ func (q Query[T]) columnList() string {
 	return strings.Join(cols, ", ")
 }
 
-// renumber converts "?" placeholders to the dialect's style.
-func renumber(sqlText string, d database.Dialect) string {
-	if d.Placeholder(1) == "?" {
-		return sqlText
+// errUnterminatedSQL fails a statement whose raw part ends inside a
+// literal, identifier or comment, which would swallow the generated SQL
+// after it (WhereRaw rejects such fragments first; this is the backstop).
+var errUnterminatedSQL = errors.New("orm: statement ends inside an unterminated literal, identifier or comment")
+
+// rebind converts the "?" placeholders of a statement built only from
+// validated, quoted identifiers (inserts, pivots, relations), which cannot
+// end inside a literal or comment. Statements with a WHERE clause, which
+// may hold WhereRaw fragments, go through renumber.
+func rebind(sqlText string, d database.Dialect) string { return database.Rebind(d, sqlText) }
+
+// renumber converts "?" placeholders to the dialect's style, with the
+// lexer database.Rebind uses, and fails closed on unterminated SQL.
+func renumber(sqlText string, d database.Dialect) (string, error) {
+	var ph func(int) string
+	if d.Placeholder(1) != "?" {
+		ph = d.Placeholder
 	}
 
-	var b strings.Builder
-
-	n := 0
-	inQuote := false
-
-	for _, r := range sqlText {
-		switch {
-		case r == '\'':
-			inQuote = !inQuote
-			b.WriteRune(r)
-		case r == '?' && !inQuote:
-			n++
-			b.WriteString(d.Placeholder(n))
-		default:
-			b.WriteRune(r)
-		}
+	r := sqlscan.Scan(d.Name(), sqlText, ph)
+	if !r.Terminated {
+		return "", errUnterminatedSQL
 	}
 
-	return b.String()
+	return r.SQL, nil
 }
 
 // SQL returns the SELECT statement and its arguments (debugging, tests).
@@ -519,9 +533,7 @@ func (q Query[T]) SQL() (string, []any, error) {
 		return "", nil, q.err
 	}
 
-	s, args := q.selectSQL(q.columnList())
-
-	return s, args, nil
+	return q.selectSQL(q.columnList())
 }
 
 // Get returns every matching row.
@@ -571,7 +583,11 @@ func (q Query[T]) Each(ctx context.Context) iter.Seq2[T, error] {
 			return
 		}
 
-		query, args := q.selectSQL(q.columnList())
+		query, args, err := q.selectSQL(q.columnList())
+		if err != nil {
+			yield(zero, err)
+			return
+		}
 
 		rows, err := q.ex.QueryContext(ctx, query, args...)
 		if err != nil {
@@ -637,7 +653,10 @@ func (q Query[T]) Count(ctx context.Context) (int64, error) {
 		return 0, q.err
 	}
 
-	query, args := q.countSQL()
+	query, args, err := q.countSQL()
+	if err != nil {
+		return 0, err
+	}
 
 	var n int64
 	if err := q.ex.QueryRowContext(ctx, query, args...).Scan(&n); err != nil {
@@ -647,7 +666,7 @@ func (q Query[T]) Count(ctx context.Context) (int64, error) {
 	return n, nil
 }
 
-func (q Query[T]) countSQL() (string, []any) {
+func (q Query[T]) countSQL() (string, []any, error) {
 	q.orders, q.limit, q.offset, q.lock, q.wait = nil, -1, 0, "", ""
 	return q.selectSQL("COUNT(*)")
 }
@@ -673,7 +692,10 @@ func (q Query[T]) Pluck[V any](ctx context.Context, colName string) ([]V, error)
 		return nil, err
 	}
 
-	query, args := q.selectSQL(q.quote(col))
+	query, args, err := q.selectSQL(q.quote(col))
+	if err != nil {
+		return nil, err
+	}
 
 	rows, err := q.ex.QueryContext(ctx, query, args...)
 	if err != nil {

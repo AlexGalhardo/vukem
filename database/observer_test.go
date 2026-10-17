@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 
@@ -89,4 +91,171 @@ func TestQueryObserverSeesDBAndTxStatements(t *testing.T) {
 	if diff := cmp.Diff([]bool{false, false, false, false, false, true}, obs.err); diff != "" {
 		t.Errorf("errors (-want +got):\n%s", diff)
 	}
+}
+
+func TestQueryObserversFanOut(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		opts  func(a, b, c *queryLog) []Option
+		after func(db *DB, a, b, c *queryLog)
+		want  [3]int
+	}{
+		{
+			name: "every WithQueryObserver is notified",
+			opts: func(a, b, _ *queryLog) []Option { return []Option{WithQueryObserver(a), WithQueryObserver(b)} },
+			want: [3]int{2, 2, 0},
+		},
+		{
+			name:  "AddQueryObserver keeps the existing ones",
+			opts:  func(a, _, _ *queryLog) []Option { return []Option{WithQueryObserver(a)} },
+			after: func(db *DB, _, b, c *queryLog) { db.AddQueryObserver(b); db.AddQueryObserver(c) },
+			want:  [3]int{2, 2, 2},
+		},
+		{
+			name:  "SetQueryObserver replaces them all",
+			opts:  func(a, b, _ *queryLog) []Option { return []Option{WithQueryObserver(a), WithQueryObserver(b)} },
+			after: func(db *DB, _, _, c *queryLog) { db.SetQueryObserver(c) },
+			want:  [3]int{0, 0, 2},
+		},
+		{
+			name:  "nil observers are ignored",
+			opts:  func(a, _, _ *queryLog) []Option { return []Option{WithQueryObserver(nil), WithQueryObserver(a)} },
+			after: func(db *DB, _, _, _ *queryLog) { db.AddQueryObserver(nil) },
+			want:  [3]int{2, 0, 0},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			a, b, c := &queryLog{}, &queryLog{}, &queryLog{}
+
+			db, err := Open(t.Context(), ":memory:", tt.opts(a, b, c)...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = db.Close() })
+
+			if tt.after != nil {
+				tt.after(db, a, b, c)
+			}
+
+			if _, err := db.ExecContext(t.Context(), "SELECT 1"); err != nil {
+				t.Fatal(err)
+			}
+
+			if err := db.Tx(t.Context(), func(tx *Tx) error {
+				_, err := tx.ExecContext(t.Context(), "SELECT 2")
+				return err
+			}); err != nil {
+				t.Fatal(err)
+			}
+
+			got := [3]int{len(a.got), len(b.got), len(c.got)}
+			if got != tt.want {
+				t.Fatalf("observed counts = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+type panicObserver struct{}
+
+func (panicObserver) ObserveQuery(context.Context, Query) { panic("observer bug") }
+
+func TestQueryObserverPanicIsContained(t *testing.T) {
+	t.Parallel()
+
+	var logs strings.Builder
+
+	after := &queryLog{}
+
+	db, err := Open(t.Context(), ":memory:",
+		WithConfig(Config{Log: slog.New(slog.NewTextHandler(&lockedWriter{w: &logs}, nil))}),
+		WithQueryObserver(panicObserver{}), WithQueryObserver(after))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	ctx := t.Context()
+
+	rows, err := db.QueryContext(ctx, "SELECT 1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	defer rows.Close()
+
+	if !rows.Next() {
+		t.Fatal("QueryContext rows empty after a panicking observer")
+	}
+
+	for rows.Next() {
+	}
+
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	var n int
+	if err := db.QueryRowContext(ctx, "SELECT 2").Scan(&n); err != nil || n != 2 {
+		t.Fatalf("QueryRowContext = %d, %v, want 2", n, err)
+	}
+
+	if _, err := db.ExecContext(ctx, "SELECT 3"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := db.Tx(ctx, func(tx *Tx) error {
+		_, err := tx.ExecContext(ctx, "SELECT 4")
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if diff := cmp.Diff([]string{"SELECT 1", "SELECT 2", "SELECT 3", "SELECT 4"}, after.got); diff != "" {
+		t.Errorf("observer after the panicking one (-want +got):\n%s", diff)
+	}
+
+	if got := logs.String(); strings.Count(got, "query observer panicked") != 4 || strings.Contains(got, "SELECT") {
+		t.Errorf("logs = %q, want 4 panic records without SQL", got)
+	}
+}
+
+func TestTypedNilQueryObserverIsIgnored(t *testing.T) {
+	t.Parallel()
+
+	var typedNil *queryLog
+
+	db, err := Open(t.Context(), ":memory:", WithQueryObserver(typedNil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	db.AddQueryObserver(typedNil)
+
+	if _, err := db.ExecContext(t.Context(), "SELECT 1"); err != nil {
+		t.Fatal(err)
+	}
+
+	if db.obs != nil {
+		t.Fatalf("db.obs = %#v, want nil", db.obs)
+	}
+}
+
+type lockedWriter struct {
+	mu sync.Mutex
+	w  *strings.Builder
+}
+
+func (l *lockedWriter) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	return l.w.Write(p)
 }
