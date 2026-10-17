@@ -27,9 +27,9 @@ const (
 
 // verifySigV4 checks r the way S3 does: header or query signature,
 // credential scope, signed payload hash and presign expiry.
-func verifySigV4(r *http.Request, body []byte, now time.Time) error {
+func verifySigV4(r *http.Request, body []byte, now time.Time, region string) error {
 	if r.URL.Query().Has("X-Amz-Signature") {
-		return verifyPresigned(r, now)
+		return verifyPresigned(r, now, region)
 	}
 
 	auth, ok := strings.CutPrefix(r.Header.Get("Authorization"), algorithm+" ")
@@ -49,7 +49,7 @@ func verifySigV4(r *http.Request, body []byte, now time.Time) error {
 		return fmt.Errorf("bad x-amz-date: %w", err)
 	}
 
-	s := signer{accessKey: testAccessKey, secret: config.NewSecret(testSecret), region: testRegion, service: "s3"}
+	s := signer{accessKey: testAccessKey, secret: config.NewSecret(testSecret), region: region, service: "s3"}
 	if fields["Credential"] != testAccessKey+"/"+s.scope(t) {
 		return fmt.Errorf("bad credential scope %q", fields["Credential"])
 	}
@@ -94,7 +94,7 @@ func verifySigV4(r *http.Request, body []byte, now time.Time) error {
 	return nil
 }
 
-func verifyPresigned(r *http.Request, now time.Time) error {
+func verifyPresigned(r *http.Request, now time.Time, region string) error {
 	q := r.URL.Query()
 	sig := q.Get("X-Amz-Signature")
 	q.Del("X-Amz-Signature")
@@ -113,7 +113,7 @@ func verifyPresigned(r *http.Request, now time.Time) error {
 		return errors.New("request has expired")
 	}
 
-	s := signer{accessKey: testAccessKey, secret: config.NewSecret(testSecret), region: testRegion, service: "s3"}
+	s := signer{accessKey: testAccessKey, secret: config.NewSecret(testSecret), region: region, service: "s3"}
 	if q.Get("X-Amz-Credential") != testAccessKey+"/"+s.scope(t) {
 		return errors.New("bad credential")
 	}
@@ -170,10 +170,26 @@ type fakeS3 struct {
 	failPart int  // answer 500 to this part number
 	badDone  bool // CompleteMultipartUpload answers 200 with an <Error>
 	calls    []string
+	// region is the signing region ("" = testRegion).
+	region string
+	// noBucket starts the fake without its bucket (CreateBucket creates it);
+	// foreign makes the bucket name taken by another account.
+	noBucket bool
+	foreign  bool
+	// location is the LocationConstraint the bucket was created with.
+	location string
 }
 
 func newFakeS3() *fakeS3 {
 	return &fakeS3{objects: map[string]fakeObject{}, uploads: map[string]map[int][]byte{}}
+}
+
+func (f *fakeS3) signingRegion() string {
+	if f.region == "" {
+		return testRegion
+	}
+
+	return f.region
 }
 
 func (f *fakeS3) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -183,7 +199,7 @@ func (f *fakeS3) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := verifySigV4(r, body, time.Now()); err != nil {
+	if err := verifySigV4(r, body, time.Now(), f.signingRegion()); err != nil {
 		writeS3Error(w, http.StatusForbidden, "SignatureDoesNotMatch", err.Error())
 		return
 	}
@@ -199,6 +215,16 @@ func (f *fakeS3) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	q := r.URL.Query()
 	f.calls = append(f.calls, r.Method+" "+callName(q))
+
+	if key == "" && r.Method == http.MethodPut && len(q) == 0 {
+		f.createBucket(w, body)
+		return
+	}
+
+	if f.noBucket {
+		writeS3Error(w, http.StatusNotFound, "NoSuchBucket", "The specified bucket does not exist")
+		return
+	}
 
 	switch {
 	case key == "" && r.Method == http.MethodGet && q.Get("list-type") == "2":
@@ -255,6 +281,45 @@ func (f *fakeS3) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeS3Error(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "")
 	}
+}
+
+// createBucket answers CreateBucket like S3 outside us-east-1: the
+// LocationConstraint must name the signing region (and is omitted for
+// us-east-1), and an existing bucket is a 409.
+func (f *fakeS3) createBucket(w http.ResponseWriter, body []byte) {
+	switch {
+	case f.foreign:
+		writeS3Error(w, http.StatusConflict, "BucketAlreadyExists", "The requested bucket name is not available.")
+		return
+	case !f.noBucket:
+		writeS3Error(
+			w,
+			http.StatusConflict,
+			"BucketAlreadyOwnedByYou",
+			"Your previous request to create the named bucket succeeded.",
+		)
+		return
+	}
+
+	var cfg createBucketConfiguration
+	if len(body) > 0 {
+		if err := xml.Unmarshal(body, &cfg); err != nil {
+			writeS3Error(w, http.StatusBadRequest, "MalformedXML", "")
+			return
+		}
+	}
+
+	want := f.signingRegion()
+	if want == "us-east-1" || want == "auto" {
+		want = ""
+	}
+
+	if cfg.LocationConstraint != want {
+		writeS3Error(w, http.StatusBadRequest, "IllegalLocationConstraintException", "")
+		return
+	}
+
+	f.noBucket, f.location = false, cfg.LocationConstraint
 }
 
 func callName(q url.Values) string {

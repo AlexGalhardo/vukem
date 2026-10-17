@@ -47,16 +47,12 @@ func openS3(t *testing.T) *Disk {
 		t.Fatal(err)
 	}
 
-	resp, err := d.do(t.Context(), http.MethodPut, "", nil, nil, nil)
-	if err != nil {
-		t.Fatalf("s3: %v (start it with task services:up)", err)
+	// Twice: CreateBucket is idempotent for a bucket the caller owns.
+	for range 2 {
+		if err := d.CreateBucket(t.Context()); err != nil {
+			t.Fatalf("CreateBucket() = %v (start S3 with task services:up)", err)
+		}
 	}
-
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("create bucket: %v", readError("create bucket", d.bucket, resp))
-	}
-
-	drain(resp)
 
 	t.Cleanup(func() {
 		ctx := t.Context()
