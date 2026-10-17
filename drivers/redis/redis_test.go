@@ -41,3 +41,28 @@ func TestOfflineBehaviour(t *testing.T) {
 		t.Errorf("limiter defaults = %+v", l)
 	}
 }
+
+func TestOpenLazy(t *testing.T) {
+	t.Parallel()
+
+	if _, err := OpenLazy("not-a-url"); err == nil {
+		t.Error("OpenLazy(bad URL) = nil error, want an error")
+	}
+
+	// No server listens on port 1: OpenLazy must not contact it, and Ping
+	// reports the outage for a readiness check.
+	c, err := OpenLazy("redis://127.0.0.1:1/3?dial_timeout=300ms&max_retries=-1")
+	if err != nil {
+		t.Fatalf("OpenLazy without a server = %v, want nil", err)
+	}
+
+	t.Cleanup(func() { _ = c.Close() })
+
+	if c.Redis() == nil {
+		t.Fatal("OpenLazy returned a client without a pool")
+	}
+
+	if err := c.Ping(t.Context()); err == nil {
+		t.Error("Ping without a server = nil, want an error")
+	}
+}

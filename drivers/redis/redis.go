@@ -25,20 +25,32 @@ type Client struct {
 }
 
 // Open connects to url (redis://[user:pass@]host:port/db or rediss:// for
-// TLS) and pings the server.
+// TLS) and pings the server, so a server that is down fails boot. Use
+// OpenLazy to start without it.
 func Open(ctx context.Context, url string) (*Client, error) {
-	opts, err := goredis.ParseURL(url)
+	c, err := OpenLazy(url)
 	if err != nil {
-		return nil, fmt.Errorf("redis: parse url: %w", err)
+		return nil, err
 	}
 
-	c := New(goredis.NewClient(opts))
 	if err := c.Ping(ctx); err != nil {
 		_ = c.Close()
 		return nil, err
 	}
 
 	return c, nil
+}
+
+// OpenLazy is Open without the ping: a malformed url still fails, but the
+// server is only contacted on first use, so the app boots while Redis is
+// down. Call Ping from a readiness check.
+func OpenLazy(url string) (*Client, error) {
+	opts, err := goredis.ParseURL(url)
+	if err != nil {
+		return nil, fmt.Errorf("redis: parse url: %w", err)
+	}
+
+	return New(goredis.NewClient(opts)), nil
 }
 
 // New wraps an existing go-redis client (cluster, sentinel, custom
@@ -48,7 +60,7 @@ func New(rdb goredis.UniversalClient) *Client { return &Client{rdb: rdb} }
 // Redis returns the underlying go-redis client.
 func (c *Client) Redis() goredis.UniversalClient { return c.rdb }
 
-// Ping checks connectivity (health checks).
+// Ping checks connectivity; use it in a readiness check.
 func (c *Client) Ping(ctx context.Context) error {
 	if err := c.rdb.Ping(ctx).Err(); err != nil {
 		return fmt.Errorf("redis: ping: %w", err)

@@ -128,3 +128,21 @@ func TestPubSubAndFlushSafety(t *testing.T) {
 		t.Fatal("flush without a prefix must be refused")
 	}
 }
+
+func TestOpenLazyConnectsOnFirstUse(t *testing.T) {
+	url := os.Getenv("REDIS_URL")
+	if url == "" {
+		url = "redis://localhost:56379/0"
+	}
+
+	c, err := redis.OpenLazy(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() { _ = c.Close() })
+
+	if err := c.Ping(t.Context()); err != nil {
+		t.Fatalf("Ping = %v", err)
+	}
+}
