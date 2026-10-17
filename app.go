@@ -205,7 +205,7 @@ type App struct {
 	dbErr      error
 	drivers    []database.Driver
 	migrations []schema.Migration
-	seeders    []Seeder
+	seeders    []AppSeeder
 
 	mu       sync.Mutex
 	booted   bool
@@ -233,7 +233,7 @@ type options struct {
 	lang          fs.FS
 	now           func() time.Time
 	migrations    []schema.Migration
-	seeders       []Seeder
+	seeders       []AppSeeder
 	mailTransport mail.Transport
 	listeners     []events.Registration
 	jobs          []queue.Registration
