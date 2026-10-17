@@ -1048,7 +1048,7 @@ var ErrWarmupRun = errors.New("vukem: a warmup app cannot boot or run")
 // Run boots the app, starts every runner and blocks until ctx is cancelled
 // or a runner fails; then it shuts everything down gracefully within
 // SHUTDOWN_TIMEOUT. A cancelled ctx is a clean exit (nil error). Runners
-// that have not returned SHUTDOWN_TIMEOUT (plus one second) after the
+// that have not returned SHUTDOWN_TIMEOUT (plus three seconds) after the
 // cancel are logged and left behind: shutdown hooks and providers run
 // anyway, so one runner ignoring ctx cannot hold the process forever.
 func (a *App) Run(ctx context.Context) error {
@@ -1133,7 +1133,7 @@ func (a *App) Run(ctx context.Context) error {
 // runnerGrace lets runners that stop at SHUTDOWN_TIMEOUT themselves (the
 // HTTP drain, the scheduler, the queue worker) return before Run stops
 // waiting for them.
-const runnerGrace = time.Second
+const runnerGrace = 3 * time.Second
 
 // waitTimeout waits for wg up to d and reports whether it finished.
 func waitTimeout(wg *sync.WaitGroup, d time.Duration) bool {

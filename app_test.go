@@ -375,7 +375,7 @@ func TestRunReturnsRunnerError(t *testing.T) {
 }
 
 // A runner that ignores ctx cannot hold shutdown forever: Run waits
-// SHUTDOWN_TIMEOUT plus a one-second grace, logs it and shuts the app down.
+// SHUTDOWN_TIMEOUT plus a three-second grace, logs it and shuts the app down.
 func TestRunBoundsRunnersIgnoringContext(t *testing.T) {
 	t.Parallel()
 
@@ -405,8 +405,8 @@ func TestRunBoundsRunnersIgnoringContext(t *testing.T) {
 			t.Fatalf("Run() = %v, want nil", err)
 		}
 
-		if waited := time.Since(start); waited != 6*time.Second {
-			t.Fatalf("Run waited %v after cancel, want SHUTDOWN_TIMEOUT + 1s (6s)", waited)
+		if waited := time.Since(start); waited != 8*time.Second {
+			t.Fatalf("Run waited %v after cancel, want SHUTDOWN_TIMEOUT + 3s (8s)", waited)
 		}
 
 		if got := rec.get(); !slices.Contains(got, "shutdown:p") {
