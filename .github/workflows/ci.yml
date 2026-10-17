@@ -273,26 +273,25 @@ jobs:
         run: go test -tags=integration -count=1 ./...
 
   s3:
-    name: S3 driver (MinIO)
+    name: S3 driver (RustFS)
     runs-on: ubuntu-latest
     env:
-      # Same pinned image as compose.yaml; service containers cannot pass
-      # MinIO's "server /data" command, so it is started with docker run.
-      MINIO_IMAGE: pgsty/minio:RELEASE.2026-08-04T00-00-00Z
+      # Same pinned image as compose.yaml.
+      RUSTFS_IMAGE: rustfs/rustfs:1.0.2
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache-dependency-path: "**/go.sum"
-      - name: Start MinIO
+      - name: Start RustFS
         run: |
-          docker run -d --name minio -p 59000:9000             -e MINIO_ROOT_USER=vukem -e MINIO_ROOT_PASSWORD=vukem-secret             "$MINIO_IMAGE" server /data
+          docker run -d --name rustfs -p 59000:9000             -e RUSTFS_ACCESS_KEY=vukem -e RUSTFS_SECRET_KEY=vukem-secret             "$RUSTFS_IMAGE"
           for i in $(seq 1 30); do
-            curl -fs http://localhost:59000/minio/health/live && exit 0
+            curl -fs http://localhost:59000/health && exit 0
             sleep 2
           done
-          docker logs minio
+          docker logs rustfs
           exit 1
       - name: Unit tests (module alone)
         working-directory: drivers/s3

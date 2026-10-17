@@ -100,7 +100,7 @@ What Vukem does **by default** to protect applications, mapped to the [OWASP Top
 | TLS: Go's secure defaults (TLS 1.2+, hybrid post-quantum key exchange in Go 1.26+); no option to disable verification without `InsecureSkipVerify` naming (enforced by `.golangci.yml` gosec G402) | [x] |
 | `drivers/mysql`: without `tls=` in `DATABASE_URL`, every non-loopback host gets TLS with a verified certificate (`TestSecurity_A04_MySQLRemoteRequiresTLS`) | [x] |
 | `config.Secret` redacts secrets in logs, JSON and `%v` (`TestSecurity_A04_SecretRedaction`) | [x] |
-| `drivers/s3` refuses a plain `http://` endpoint unless `S3_INSECURE_HTTP=true` (local MinIO only) (`TestSecurity_A04_S3RequiresTLS`) | [x] |
+| `drivers/s3` refuses a plain `http://` endpoint unless `S3_INSECURE_HTTP=true` (local S3-compatible server only) (`TestSecurity_A04_S3RequiresTLS`) | [x] |
 
 ### A05:2025 — Injection
 

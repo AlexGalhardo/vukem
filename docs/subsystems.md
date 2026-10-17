@@ -8,7 +8,7 @@ Mail, cache, storage, events, queue, scheduler, encryption, rate limiting, i18n,
 | Health | Prototype | `/up` + per-service checks | — | — |
 | Mail | ALPHA | SMTP (`net/smtp`), **Resend** (HTTP API), log, array | — | ✅ |
 | Cache | ALPHA | memory (LRU + TTL), database | redis | ✅ |
-| Storage | ALPHA / BETA | local (`os.Root`), memory | s3 (AWS, MinIO, R2…) | ✅ |
+| Storage | ALPHA / BETA | local (`os.Root`), memory | s3 (AWS, R2, RustFS…) | ✅ |
 | Events | ALPHA | in-process sync/async | — | ✅ (`events.NewFake`) |
 | Queue | BETA | sync, memory, database (SQLite/Postgres, `FOR UPDATE SKIP LOCKED` on PG) | redis | ✅ (`queue.Fake`) |
 | Scheduler | BETA | in-process cron | — | clock |
@@ -135,7 +135,7 @@ link, err := storage.TemporaryURL(signer, "/files", "invoices/42.pdf", 15*time.M
 
 ### S3
 
-`go get github.com/AlexGalhardo/vukem/drivers/s3`: a `storage.Disk` on Amazon S3 or any S3-compatible service (MinIO, Cloudflare R2, DigitalOcean Spaces, Backblaze B2). No AWS SDK: requests are signed by a stdlib Signature Version 4 implementation verified against the AWS test suite.
+`go get github.com/AlexGalhardo/vukem/drivers/s3`: a `storage.Disk` on Amazon S3 or any S3-compatible service (Cloudflare R2, DigitalOcean Spaces, Backblaze B2, RustFS, SeaweedFS, Garage). No AWS SDK: requests are signed by a stdlib Signature Version 4 implementation verified against the AWS test suite.
 
 ```go
 cfg, err := config.Load[s3.Config](app.Config.Source)
@@ -156,7 +156,7 @@ link, err := disk.PresignGet("invoices/42.pdf", time.Hour)
 | `S3_REGION` | `us-east-1` | signing region (`auto` for R2) |
 | `S3_ENDPOINT` | `https://s3.<region>.amazonaws.com` | bare origin of an S3-compatible service |
 | `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | — | required; `S3_SESSION_TOKEN` for temporary credentials |
-| `S3_USE_PATH_STYLE` | `false` | `endpoint/bucket/key` instead of `bucket.endpoint/key` (MinIO) |
+| `S3_USE_PATH_STYLE` | `false` | `endpoint/bucket/key` instead of `bucket.endpoint/key` (most self-hosted servers) |
 | `S3_INSECURE_HTTP` | `false` | allow an `http://` endpoint (local development only) |
 | `S3_PART_SIZE` | 8 MiB | multipart part size, 5 MiB to 5 GiB |
 | `S3_PUBLIC_URL` | — | prefix for `disk.URL` (CDN or public bucket); empty = private |
@@ -165,7 +165,7 @@ link, err := disk.PresignGet("invoices/42.pdf", time.Hour)
 - `Open` streams the object; `List` uses ListObjectsV2 and follows continuation tokens; folder placeholder keys (ending in `/`) are skipped. Missing objects match `fs.ErrNotExist`; other failures are `*s3.Error` (`StatusCode`, `Code`, `Message`, `RequestID`).
 - Keys go through `storage.Clean`: no empty key, no leading `/` (so `/a` and `a` cannot name different objects), no `..`, backslash or `:`.
 - Presigned URLs expire after 1 s to 7 days (the SigV4 maximum). `PresignGet` and `PresignPut` sign only the `host` header, so a `PresignPut` URL accepts any type and size. `PresignPutWith` also signs `Content-Type` and/or `Content-Length` (`s3.PresignPutOptions`): the uploader must send exactly those values or S3 answers 403. Browsers set `Content-Length` from the body but must send the `Content-Type` header explicitly (`fetch(url, {method: "PUT", headers: {"Content-Type": type}, body: file})`); invalid options return `s3.ErrInvalidPresign`. Credentials are `config.Secret`; errors and `%+v` never show them.
-- Integration tests run against MinIO (`task services:up`, port 59000); the driver passes `storagetest.Run` and `storagetest.RunTraversal`.
+- Integration tests run against RustFS (`rustfs/rustfs`, pinned in `compose.yaml`; `task services:up`, port 59000); the driver passes `storagetest.Run` and `storagetest.RunTraversal`.
 
 ## Uploads
 

@@ -1,5 +1,5 @@
 // Package s3 is a storage.Disk on Amazon S3 or any S3-compatible service
-// (MinIO, Cloudflare R2, Backblaze B2, Wasabi...). It speaks the REST API
+// (Cloudflare R2, Backblaze B2, Wasabi, RustFS...). It speaks the REST API
 // directly with a standard-library AWS Signature Version 4 client: no AWS
 // SDK.
 //
@@ -12,7 +12,7 @@
 // storage.Clean (no empty key, no leading "/", no "..", no backslash or
 // ':'), so "a/b.txt" and "/a/b.txt" can never name different objects.
 //
-// Endpoints must use https; a plain http endpoint (local MinIO) is refused
+// Endpoints must use https; a plain http endpoint (a local server) is refused
 // unless Config.InsecureHTTP is set. Credentials are config.Secret values
 // and never appear in errors, logs or fmt output.
 //
@@ -74,7 +74,7 @@ type Config struct {
 	// SessionToken is set for temporary (STS) credentials.
 	SessionToken config.Secret `env:"S3_SESSION_TOKEN"`
 	// UsePathStyle addresses endpoint/bucket/key instead of
-	// bucket.endpoint/key (MinIO and most self-hosted services).
+	// bucket.endpoint/key (most self-hosted services).
 	UsePathStyle bool `env:"S3_USE_PATH_STYLE"`
 	// InsecureHTTP allows an http:// endpoint; only for local development.
 	InsecureHTTP bool `env:"S3_INSECURE_HTTP"`
