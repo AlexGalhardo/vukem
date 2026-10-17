@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -792,8 +793,12 @@ func (a *App) DeriveKey(purpose string, n int) ([]byte, error) {
 // Now returns the current time from the app clock (see WithClock).
 func (a *App) Now() time.Time { return a.now() }
 
-// Addr returns the HTTP listen address from HOST and PORT.
-func (a *App) Addr() string { return fmt.Sprintf("%s:%d", a.Config.Host, a.Config.Port) }
+// Addr returns the HTTP listen address from HOST and PORT. IPv6 hosts
+// ("::", "fd12::1") are bracketed; a host already in brackets is accepted.
+func (a *App) Addr() string {
+	host := strings.TrimSuffix(strings.TrimPrefix(a.Config.Host, "["), "]")
+	return net.JoinHostPort(host, strconv.Itoa(a.Config.Port))
+}
 
 // AddRunner adds a long-running component. Call it from Register or Boot.
 func (a *App) AddRunner(name string, r Runner) {

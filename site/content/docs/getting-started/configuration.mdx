@@ -74,7 +74,7 @@ Commit `.env.example` and git-ignore `.env` and `.env.*.local`. Never commit rea
 | `APP_DEBUG` | `false` | Must be `false` when `APP_ENV=production` (boot error otherwise) |
 | `APP_URL` | `http://localhost:3000` | Public origin of the app |
 | `APP_KEY` | — | **Required in production** (and for any key-derived feature), at least 32 bytes, `base64:` prefix optional |
-| `HOST` | `localhost` | Listen host |
+| `HOST` | `localhost` | Listen host; `0.0.0.0` for all IPv4 interfaces, `::` for IPv6 (dual-stack on most systems) |
 | `PORT` | `3000` | Listen port, 0–65535 |
 | `SHUTDOWN_TIMEOUT` | `15s` | Graceful shutdown budget |
 | `TRUSTED_PROXIES` | empty (trust nobody) | Comma-separated CIDRs or IPs whose `X-Forwarded-For` sets `c.IP()`; an invalid entry is a boot error ([Deploy](/docs/deployment/docker-and-railway#trusted-proxies)) |

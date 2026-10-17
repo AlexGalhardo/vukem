@@ -1,6 +1,7 @@
 package vukem
 
 import (
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -147,6 +148,37 @@ func TestSecurity_A02_TrustForwardedProtoOnlyFromTrustedProxies(t *testing.T) {
 			rec := proxyReq(t, proxyApp(t, tt.env), tt.peer, https)
 			if got := rec.Header().Get("Strict-Transport-Security") != ""; got != tt.wantHSTS {
 				t.Fatalf("HSTS sent = %v, want %v", got, tt.wantHSTS)
+			}
+		})
+	}
+}
+
+func TestAddrJoinsHostAndPort(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		host string
+		want string
+	}{
+		{host: "localhost", want: "localhost:8080"},
+		{host: "0.0.0.0", want: "0.0.0.0:8080"},
+		// IPv6 hosts need brackets, or "::" becomes the invalid ":::8080".
+		{host: "::", want: "[::]:8080"},
+		{host: "[::]", want: "[::]:8080"},
+		{host: "fd12::1", want: "[fd12::1]:8080"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.host, func(t *testing.T) {
+			t.Parallel()
+
+			app := newTestApp(t, WithSource(testSource(map[string]string{"HOST": tt.host, "PORT": "8080"})))
+			if got := app.Addr(); got != tt.want {
+				t.Fatalf("Addr() = %q, want %q", got, tt.want)
+			}
+
+			if _, _, err := net.SplitHostPort(app.Addr()); err != nil {
+				t.Fatalf("Addr() %q is not host:port: %v", app.Addr(), err)
 			}
 		})
 	}
