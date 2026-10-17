@@ -37,6 +37,10 @@ type Options struct {
 	// only protects one process; use the database or Redis cache store
 	// when several servers run the schedule).
 	Locks *cache.Cache
+	// Namespace keeps the locks of WithoutOverlapping and OnOneServer apart
+	// when several apps share one lock store (app.Schedule passes the
+	// normalized APP_NAME). Empty keeps the keys of v0.24.0.
+	Namespace string
 	// Commands runs app commands for Command tasks.
 	Commands func(ctx context.Context, name string, args []string) error
 	// Queue dispatches Job tasks.
@@ -285,6 +289,15 @@ func clock(hhmm string) (h, m string) {
 	return strconv.Itoa(hv), strconv.Itoa(mv)
 }
 
+// ns is the lock key namespace segment ("" or "<namespace>:").
+func (s *Schedule) ns() string {
+	if s.o.Namespace == "" {
+		return ""
+	}
+
+	return s.o.Namespace + ":"
+}
+
 func (s *Schedule) loc(t *Task) *time.Location {
 	if t.loc != nil {
 		return t.loc
@@ -342,7 +355,7 @@ func (s *Schedule) runTask(ctx context.Context, t *Task, now time.Time) (err err
 		}
 
 		// Never released: the occurrence stays taken until the lock expires.
-		key := "schedule:one:" + t.name + ":" + now.UTC().Format("2006-01-02T15:04")
+		key := "schedule:one:" + s.ns() + t.name + ":" + now.UTC().Format("2006-01-02T15:04")
 
 		ok, err := s.o.Locks.NewLock(key, oneHostTTL).TryAcquire(ctx)
 		if err != nil {
@@ -356,7 +369,7 @@ func (s *Schedule) runTask(ctx context.Context, t *Task, now time.Time) (err err
 	}
 
 	if t.overlap {
-		lock := s.o.Locks.NewLock("schedule:"+t.name, t.lockTTL)
+		lock := s.o.Locks.NewLock("schedule:"+s.ns()+t.name, t.lockTTL)
 
 		ok, err := lock.TryAcquire(ctx)
 		if err != nil {

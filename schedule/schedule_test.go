@@ -308,3 +308,53 @@ func TestOnOneServer(t *testing.T) {
 		t.Fatalf("RunDue() on the memory store = %v (runs %d), want an error and no run", err, runs.Load())
 	}
 }
+
+// Apps sharing one lock store (one Redis, one cache table) keep their
+// locks apart through Options.Namespace: the same task name in two apps
+// runs in both, and once per occurrence within each app.
+func TestLockNamespace(t *testing.T) {
+	t.Parallel()
+
+	locks := cache.New(sharedStore{cache.NewMemory(0)}, "")
+
+	// The shop's prune is still running elsewhere: only the shop skips it.
+	held := locks.NewLock("schedule:shop:prune", time.Hour)
+	if ok, err := held.TryAcquire(t.Context()); !ok || err != nil {
+		t.Fatalf("TryAcquire() = %v, %v", ok, err)
+	}
+
+	runs := map[string]*atomic.Int32{}
+
+	for _, app := range []string{"shop", "blog", "shop"} {
+		sched := newSchedule(schedule.Options{Locks: locks, Namespace: app})
+
+		for _, task := range []string{"draw", "prune"} {
+			if runs[app+" "+task] == nil {
+				runs[app+" "+task] = &atomic.Int32{}
+			}
+
+			n := runs[app+" "+task]
+			fn := sched.Func(task, func(context.Context) error { n.Add(1); return nil }).EveryMinute()
+
+			if task == "draw" {
+				fn.OnOneServer()
+			} else {
+				fn.WithoutOverlapping()
+			}
+		}
+
+		if err := sched.RunDue(t.Context(), at("2026-10-16 11:00")); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got := map[string]int32{}
+	for k, v := range runs {
+		got[k] = v.Load()
+	}
+
+	want := map[string]int32{"shop draw": 1, "blog draw": 1, "shop prune": 0, "blog prune": 1}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("runs (-want +got):\n%s", diff)
+	}
+}
