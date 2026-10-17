@@ -195,7 +195,8 @@ func TestSecurity_A07_AuthScaffoldDefaults(t *testing.T) {
 			"subtle.ConstantTimeCompare([]byte(stored), []byte(digest(token)))",
 			"a.expired(created, a.ResetTTL)",
 			"DELETE FROM remember_tokens WHERE user_id",
-			"DELETE FROM access_tokens WHERE user_id",
+			"tokens := auth.NewTokens(tx)",
+			"tokens.RevokeAll(ctx, u.AuthID())",
 		},
 		"scaffolds/auth-web/app/controllers/account/account.go.tmpl": {
 			"strings.ToLower(strings.TrimSpace(r.PostFormValue(\"email\")))",
