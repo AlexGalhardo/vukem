@@ -594,8 +594,8 @@ Applies to **every** task:
 ### BETA exit criteria
 
 - [ ] Two RCs with no API changes between them.
-- [ ] All conformance suites green on SQLite, Postgres, MySQL, Redis, Mongo, S3 (MinIO).
-- [ ] HTMX, templ and Inertia (React, Vue, Svelte) starters all pass e2e on all OSes.
+- [x] All conformance suites green on SQLite, Postgres, MySQL, Redis, Mongo, S3 (MinIO).
+- [x] HTMX, templ and Inertia (React, Vue, Svelte) starters all pass e2e on all OSes.
 - [ ] No open `security` issues; `govulncheck` clean; OpenSSF Scorecard ≥ 7.
 
 ---
