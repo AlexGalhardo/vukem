@@ -87,3 +87,17 @@ func TestQueueSetClock(t *testing.T) {
 		t.Fatalf("clock() = %v, want %v", got, fixed)
 	}
 }
+
+// The cache store declares itself shared (cache.Sharer, asserted
+// structurally so the module builds against cores without it): without
+// the declaration OnOneServer and RATE_LIMIT_STORE=cache refuse Redis.
+func TestCacheStoreIsShared(t *testing.T) {
+	t.Parallel()
+
+	var st any = (&Client{}).CacheStore("cache:")
+
+	s, ok := st.(interface{ Shared() bool })
+	if !ok || !s.Shared() {
+		t.Fatalf("CacheStore() Shared = %v (declared %v), want true", ok && s.Shared(), ok)
+	}
+}
