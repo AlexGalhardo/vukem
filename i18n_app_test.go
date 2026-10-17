@@ -11,6 +11,7 @@ import (
 	"github.com/AlexGalhardo/vukem/i18n"
 	"github.com/AlexGalhardo/vukem/router"
 	"github.com/AlexGalhardo/vukem/web"
+	"github.com/AlexGalhardo/vukem/z"
 )
 
 func TestWithTranslations(t *testing.T) {
@@ -226,6 +227,119 @@ func TestDefaultMiddlewareWithI18n_BootErrors(t *testing.T) {
 				MiddlewareOptions{I18n: &tt.cfg},
 			); err == nil {
 				t.Errorf("DefaultMiddlewareWith(%s) = nil, want an error", name)
+			}
+		})
+	}
+}
+
+func TestAPIMiddlewareWithI18n(t *testing.T) {
+	t.Parallel()
+
+	lang := fstest.MapFS{
+		"en.json": {Data: []byte(`{"hello": "Hello"}`)},
+		"pt.json": {Data: []byte(`{"hello": "Olá", "validation": {"too_small": {"string": "Curto demais."}}}`)},
+	}
+
+	schema := z.Struct[struct {
+		Q string `json:"q"`
+	}](z.Shape{"q": z.String().Min(3)})
+
+	tests := []struct {
+		name     string
+		opts     APIMiddlewareOptions
+		target   string
+		cookie   string
+		accept   string
+		wantCode int
+		wantBody string
+		wantLang string
+	}{
+		{"query", APIMiddlewareOptions{}, "/?lang=pt&q=abc", "", "", 200, "Olá", "pt"},
+		{"header", APIMiddlewareOptions{}, "/?q=abc", "", "pt", 200, "Olá", "pt"},
+		{"cookie ignored", APIMiddlewareOptions{}, "/?q=abc", "pt", "", 200, "Hello", "en"},
+		{"localized 422", APIMiddlewareOptions{}, "/?q=a", "", "pt", 422, "Curto demais.", "pt"},
+		{
+			"custom order",
+			APIMiddlewareOptions{I18n: &i18n.MiddlewareConfig{Order: []i18n.Source{i18n.SourceCookie}}},
+			"/?lang=en&q=abc", "pt", "", 200, "Olá", "pt",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			app := newTestApp(t, WithTranslations(lang), WithRoutes(func(r *router.Router, app *App) error {
+				r.Get("/", func(c *web.Ctx) error {
+					if _, err := web.ParseQuery(c, schema); err != nil {
+						return err
+					}
+
+					return c.String(http.StatusOK, i18n.T(c.Context(), "hello"))
+				})
+
+				return APIMiddlewareWith(app, r, tt.opts)
+			}))
+
+			h, err := app.Handler()
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, tt.target, http.NoBody)
+			r.Header.Set("Accept", "application/json")
+
+			if tt.cookie != "" {
+				r.AddCookie(&http.Cookie{Name: "lang", Value: tt.cookie})
+			}
+
+			if tt.accept != "" {
+				r.Header.Set("Accept-Language", tt.accept)
+			}
+
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, r)
+
+			if rec.Code != tt.wantCode || !strings.Contains(rec.Body.String(), tt.wantBody) ||
+				rec.Header().Get("Content-Language") != tt.wantLang {
+				t.Errorf(
+					"GET %s = %d %q (Content-Language %q), want %d containing %q (%q)",
+					tt.target,
+					rec.Code,
+					rec.Body.String(),
+					rec.Header().Get("Content-Language"),
+					tt.wantCode,
+					tt.wantBody,
+					tt.wantLang,
+				)
+			}
+		})
+	}
+}
+
+func TestAPIMiddlewareWithI18n_BootErrors(t *testing.T) {
+	t.Parallel()
+
+	lang := fstest.MapFS{"en.json": {Data: []byte(`{"hello": "Hello"}`)}}
+
+	tests := map[string]struct {
+		opts []Option
+		cfg  i18n.MiddlewareConfig
+	}{
+		"without translations": {nil, i18n.MiddlewareConfig{}},
+		"locales without default": {
+			[]Option{WithTranslations(lang)},
+			i18n.MiddlewareConfig{Locales: []string{"pt"}},
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			r := router.New(&web.Services{})
+			if err := APIMiddlewareWith(newTestApp(t, tt.opts...), r, APIMiddlewareOptions{I18n: &tt.cfg}); err == nil {
+				t.Errorf("APIMiddlewareWith(%s) = nil, want an error", name)
 			}
 		})
 	}
