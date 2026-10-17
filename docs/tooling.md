@@ -115,7 +115,7 @@ Spec: <https://www.conventionalcommits.org/en/v1.0.0/>. Enforced by the in-repo 
 
 | Workflow | Trigger | Jobs |
 | --- | --- | --- |
-| `ci.yml` | push to `main`, PRs | lint (per module), unit matrix, integration (services), e2e, markdownlint, govulncheck, coverage gate |
+| `ci.yml` | push to `main`, PRs | lint (per module), unit matrix, integration (services), e2e, markdownlint, govulncheck, coverage gate, `apidiff` ([API compatibility](#api-compatibility)) |
 | `pr-title.yml` | PR opened/edited | semantic PR title |
 | `release.yml` | tag `v*` | GoReleaser binaries, SBOMs, cosign keyless signature, build provenance |
 | `codeql.yml` | push, weekly | CodeQL Go |
@@ -146,6 +146,17 @@ sha256sum --ignore-missing -c checksums.txt
 gh attestation verify "$ARCHIVE" -R AlexGalhardo/vukem
 ```
 
+## API compatibility
+
+The 1.x [stability policy](stability.md) is enforced by the `apidiff` job in `ci.yml` on pull requests and pushes to `main`:
+
+- `go run ./internal/tools/apicheck` (stdlib only, Windows-safe) walks the core module and every `drivers/*` and `contrib/*` module, picks the latest stable tag of the major version (core `v1.*`, nested modules `drivers/x/v1.*`; pre-releases are ignored), extracts it with `git archive` into a temporary directory and runs [`apidiff`](https://pkg.go.dev/golang.org/x/exp/cmd/apidiff) `-m -incompatible` on the tag and the working tree, both type-checked with `GOWORK=off`.
+- Any incompatible change fails the job with one `::error` annotation per identifier. A breaking change needs a new major version (`/v2` module path); renames keep the old name as a deprecated alias or wrapper marked `//go:fix inline`.
+- A module without a stable `v1` tag is skipped with a `::notice`, so the job passes until `v1.0.0` and the driver `v1` tags exist; a module added later is gated from its first `v1` tag.
+- The job needs the tags: it checks out with `fetch-depth: 0`. `apidiff` comes from `golang.org/x/exp`, which has no releases, so it is pinned to an exact pseudo-version (`APIDIFF_VERSION` in `Taskfile.yml`, same value in `ci.yml`) and installed with `go install`, never added to a `go.mod`.
+
+Locally, `task api:check` installs the pinned `apidiff` and runs the gate. `-major v0` compares with the latest `v0` tags instead, and `-report file.md` writes every compatible and incompatible change grouped by package without failing: the pre-freeze review in [docs/api/](api/review.md) was produced with `task api:check -- -major v0 -head v1.0.0 -report docs/api/apidiff-v0.20.1-to-v1.0.0.md`.
+
 ## Task runner
 
 `Taskfile.yml` is the single entry point (same commands locally and in CI):
@@ -160,6 +171,7 @@ gh attestation verify "$ARCHIVE" -R AlexGalhardo/vukem
 | `task test:integration` | integration tests |
 | `task cover` | coverage report + gate |
 | `task vuln` | govulncheck |
+| `task api:check` | apidiff gate against the latest `v1` tags ([API compatibility](#api-compatibility)) |
 | `task changelog` | git-cliff |
 | `task ci` | fast local gate: lint, vet, unit tests |
 | `task ci:full` | full pipeline locally (Windows tests, Linux `-race` tests in Docker, integration via Docker services, vuln, coverage) — optional locally; GitHub Actions runs the same jobs on every push and PR and is the gate before a release |

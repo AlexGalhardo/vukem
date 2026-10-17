@@ -12,6 +12,7 @@ Vukem: a Laravel/AdonisJS-inspired, stdlib-first Go web framework. Module `githu
 
 - `task ci`: lint, vet and test (run before finishing any task)
 - `task fmt` / `task lint` / `task test` / `task test:integration`
+- `task api:check`: apidiff gate on exported API (renames keep a deprecated `//go:fix inline` alias) — see [API compatibility](docs/tooling.md#api-compatibility)
 - `go test ./path/...` for a single package
 
 ## Rules
