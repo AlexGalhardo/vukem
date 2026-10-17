@@ -22,7 +22,7 @@ func TestRequire(t *testing.T) {
 
 	ok := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 
-	status := func(h http.Handler, scope string) int {
+	status := func(h http.Handler, scope flags.Scope) int {
 		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", nil)
 		if scope != "" {
 			req = req.WithContext(flags.WithScope(req.Context(), scope))

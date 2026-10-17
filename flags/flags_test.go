@@ -29,14 +29,14 @@ var errDown = errors.New("store down")
 // memStore is an in-memory Store that counts loads and can fail.
 type memStore struct {
 	mu    sync.Mutex
-	data  map[string]map[string]string
+	data  map[flags.Scope]map[string]string
 	loads int
 	fail  bool
 }
 
-func newMemStore() *memStore { return &memStore{data: map[string]map[string]string{}} }
+func newMemStore() *memStore { return &memStore{data: map[flags.Scope]map[string]string{}} }
 
-func (s *memStore) Load(_ context.Context, scope string) (map[string]string, error) {
+func (s *memStore) Load(_ context.Context, scope flags.Scope) (map[string]string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -48,7 +48,7 @@ func (s *memStore) Load(_ context.Context, scope string) (map[string]string, err
 	return maps.Clone(s.data[scope]), nil
 }
 
-func (s *memStore) Save(_ context.Context, scope, name, value string) error {
+func (s *memStore) Save(_ context.Context, scope flags.Scope, name, value string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -65,7 +65,7 @@ func (s *memStore) Save(_ context.Context, scope, name, value string) error {
 	return nil
 }
 
-func (s *memStore) Delete(_ context.Context, scope, name string) error {
+func (s *memStore) Delete(_ context.Context, scope flags.Scope, name string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -78,7 +78,7 @@ func (s *memStore) Delete(_ context.Context, scope, name string) error {
 	return nil
 }
 
-func (s *memStore) put(scope, name, value string) {
+func (s *memStore) put(scope flags.Scope, name, value string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -209,8 +209,12 @@ func TestUnregisteredFlagReturnsCodeDefault(t *testing.T) {
 		t.Errorf("Get() of a flag registered with another kind = %q, want its code default", got)
 	}
 
-	if !strings.Contains(logs.String(), "not registered") {
-		t.Errorf("logs = %q, want an error about the unregistered flag", logs.String())
+	for range 5 {
+		f.Enabled(t.Context(), flags.Bool("ghost", false))
+	}
+
+	if n := strings.Count(logs.String(), "not registered"); n != 2 {
+		t.Errorf("logs = %q, want one error per unregistered flag (2), got %d", logs.String(), n)
 	}
 }
 
@@ -257,8 +261,14 @@ func TestSetPutReset(t *testing.T) {
 		}
 	}
 
-	if _, err := f.Set(ctx, strings.Repeat("s", 192), "new_checkout", "true"); !errors.Is(err, flags.ErrInvalid) {
-		t.Errorf("Set() with a long scope = %v, want ErrInvalid", err)
+	for _, scope := range []flags.Scope{flags.Scope(strings.Repeat("s", 192)), "User:1", "user 1", "a/b", "ü"} {
+		if _, err := f.Set(ctx, scope, "new_checkout", "true"); !errors.Is(err, flags.ErrInvalid) {
+			t.Errorf("Set(scope %q) = %v, want ErrInvalid", scope, err)
+		}
+	}
+
+	if ch, err = f.Set(ctx, flags.Global, "home_variant", "bold"); err != nil || !ch.Sensitive {
+		t.Errorf("Set(string flag) = %+v, %v, want a Sensitive change", ch, err)
 	}
 
 	noStore := newFlags(t, flags.Config{})
@@ -316,12 +326,8 @@ func TestStates(t *testing.T) {
 
 	want := []flags.State{
 		{
-			Name:        "new_checkout",
-			Description: "Serve the new checkout",
-			Kind:        flags.KindBool,
-			Default:     "false",
-			Value:       "true",
-			Stored:      true,
+			Name: "new_checkout", Description: "Serve the new checkout", Kind: flags.KindBool, Default: "false",
+			Value: "true", Stored: true,
 		},
 		{Name: "admin_two_factor", Kind: flags.KindBool, Locked: true, Default: "true", Value: "true"},
 		{Name: "upload_limit_mb", Kind: flags.KindInt, Default: "10", Value: "10"},
@@ -352,15 +358,92 @@ func TestFlagAccessors(t *testing.T) {
 
 	f := newFlags(t, flags.Config{})
 
-	var names []string
-	for _, af := range f.All() {
-		names = append(names, af.Name())
+	want := []flags.Info{
+		{Name: "new_checkout", Description: "Serve the new checkout", Kind: flags.KindBool, Default: "false"},
+		{Name: "admin_two_factor", Kind: flags.KindBool, Default: "true", Locked: true},
+		{Name: "upload_limit_mb", Kind: flags.KindInt, Default: "10"},
+		{Name: "home_variant", Kind: flags.KindString, Default: "classic"},
 	}
-
-	if diff := cmp.Diff(
-		[]string{"new_checkout", "admin_two_factor", "upload_limit_mb", "home_variant"},
-		names,
-	); diff != "" {
+	if diff := cmp.Diff(want, f.All()); diff != "" {
 		t.Errorf("All() (-want +got):\n%s", diff)
 	}
+}
+
+func TestInvalidScopeReadsDefault(t *testing.T) {
+	t.Parallel()
+
+	var logs bytes.Buffer
+
+	store := newMemStore()
+	store.put(flags.Global, "new_checkout", "true")
+
+	f := newFlags(t, flags.Config{Store: store, Log: slog.New(slog.NewTextHandler(&logs, nil))})
+
+	if f.Enabled(flags.WithScope(t.Context(), "User 1"), checkout) {
+		t.Error("a read with an invalid scope did not return the default")
+	}
+
+	if n := strings.Count(logs.String(), "invalid scope"); n != 1 {
+		t.Errorf("logs = %q, want one invalid scope warning", logs.String())
+	}
+
+	if !f.Enabled(flags.WithScope(t.Context(), "tenant:acme.eu-1_x"), checkout) {
+		t.Error("a valid scope lost the global value")
+	}
+}
+
+// blockingStore holds the first Load after taking its snapshot, so a test
+// can write while that read is in flight.
+type blockingStore struct {
+	*memStore
+
+	once    sync.Once
+	started chan struct{}
+	release chan struct{}
+}
+
+func (s *blockingStore) Load(ctx context.Context, scope flags.Scope) (map[string]string, error) {
+	snap, err := s.memStore.Load(ctx, scope)
+
+	first := false
+	s.once.Do(func() { first = true })
+
+	if first {
+		close(s.started)
+		<-s.release
+	}
+
+	return snap, err
+}
+
+func TestInFlightLoadCannotRestoreStaleValues(t *testing.T) {
+	t.Parallel()
+
+	ctx := t.Context()
+	store := &blockingStore{memStore: newMemStore(), started: make(chan struct{}), release: make(chan struct{})}
+	c := cache.New(cache.NewMemory(100), "race:")
+	f := newFlags(t, flags.Config{Store: store, Cache: c})
+
+	var wg sync.WaitGroup
+
+	wg.Go(func() { f.Enabled(ctx, checkout) }) // loads the old (empty) values, then waits
+
+	<-store.started
+
+	if _, err := f.Set(ctx, flags.Global, "new_checkout", "true"); err != nil {
+		t.Fatal(err)
+	}
+
+	close(store.release) // the stale load now fills the cache
+	wg.Wait()
+
+	for range 3 {
+		wg.Go(func() {
+			if !f.Enabled(ctx, checkout) {
+				t.Error("a read after Set returned the value a stale in-flight load cached")
+			}
+		})
+	}
+
+	wg.Wait()
 }

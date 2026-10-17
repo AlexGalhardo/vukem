@@ -30,7 +30,7 @@ func (f *Flags) Require(flag Flag[bool]) func(http.Handler) http.Handler {
 
 // on is Enabled, except that an unregistered flag is off.
 func (f *Flags) on(ctx context.Context, flag Flag[bool]) bool {
-	d, ok := f.lookup(ctx, flag.name, KindBool)
+	d, ok := f.lookup(ctx, flag.definition())
 	return ok && decode[bool](f.resolve(ctx, d, scopeFrom(ctx)))
 }
 
@@ -51,6 +51,6 @@ func (f *Flags) Share(allow ...AnyFlag) func(http.Handler) http.Handler {
 // check logs every flag in list that is not registered.
 func (f *Flags) check(ctx context.Context, list ...AnyFlag) {
 	for _, af := range list {
-		f.lookup(ctx, af.Name(), af.Kind())
+		f.lookup(ctx, af.definition())
 	}
 }

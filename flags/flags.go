@@ -14,7 +14,8 @@
 // the scope in the context ([WithScope]). Locked flags always have their
 // code default. Reads fail closed: when the store or the cache errors, the
 // default (the code default, or FLAG_<NAME> when set) is returned and a
-// warning is logged; a read never fails a request.
+// warning is logged; a read never fails a request. A kill switch should
+// therefore default to its safe value in code, or be locked.
 //
 // See https://github.com/AlexGalhardo/vukem/blob/main/docs/subsystems.md#feature-flags.
 package flags
@@ -27,14 +28,15 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/AlexGalhardo/vukem/cache"
 	"github.com/AlexGalhardo/vukem/config"
 )
 
-// Value is the set of types a flag can hold.
-type Value interface{ bool | int | string }
+// Type is the set of types a flag can hold.
+type Type interface{ bool | int | string }
 
 // Kind names the type of a flag's value.
 type Kind string
@@ -46,13 +48,18 @@ const (
 	KindString Kind = "string"
 )
 
+// Scope names who a stored value applies to: an internal identifier such
+// as "user:42" or "tenant:7", never raw user input. It is 1 to 191 bytes of
+// lowercase letters, digits and ":._-"; Global ("") applies to everyone.
+type Scope string
+
 // Global is the scope of values that apply to everyone.
-const Global = ""
+const Global Scope = ""
 
 // DefaultTTL is how long stored values stay cached when Config.TTL is zero.
-// Writes forget the cached values, so a change shows at once on every
-// instance sharing the cache; the TTL bounds staleness for instances that
-// do not (a memory cache per process).
+// Writes invalidate the cached values, so a change shows at once on every
+// instance sharing the cache; instances with their own memory cache see it
+// within the TTL.
 const DefaultTTL = 30 * time.Second
 
 // EnvPrefix prefixes the configuration key that overrides a flag's code
@@ -66,7 +73,12 @@ const (
 	maxValue = 1024
 )
 
-var nameRe = regexp.MustCompile(`^[a-z][a-z0-9_]{0,99}$`)
+var (
+	nameRe  = regexp.MustCompile(`^[a-z][a-z0-9_]{0,99}$`)
+	scopeRe = regexp.MustCompile(`^[a-z0-9:._-]{1,191}$`)
+)
+
+func (s Scope) valid() bool { return s == Global || scopeRe.MatchString(string(s)) }
 
 // Errors returned by Set, Put and Reset.
 var (
@@ -78,7 +90,7 @@ var (
 
 // Flag is a typed feature flag. Declare it once (a package-level value is
 // fine: it is immutable) and register it with vukem.WithFlags.
-type Flag[T Value] struct {
+type Flag[T Type] struct {
 	name   string
 	def    T
 	locked bool
@@ -122,13 +134,20 @@ func (f Flag[T]) definition() definition {
 	return definition{name: f.name, desc: f.desc, kind: f.Kind(), def: encode(f.def), locked: f.locked}
 }
 
-// AnyFlag is a Flag of any type, for registration and allowlists.
+// AnyFlag is a Flag of any type, for registration and allowlists. Only
+// Flag implements it.
 type AnyFlag interface {
-	Name() string
-	Description() string
-	Locked() bool
-	Kind() Kind
 	definition() definition
+}
+
+// Info describes a registered flag.
+type Info struct {
+	Name        string
+	Description string
+	Kind        Kind
+	// Default is the encoded code default ("true", "10", "classic").
+	Default string
+	Locked  bool
 }
 
 type definition struct {
@@ -138,7 +157,11 @@ type definition struct {
 	locked     bool
 }
 
-func kindOf[T Value]() Kind {
+func (d definition) info() Info {
+	return Info{Name: d.name, Description: d.desc, Kind: d.kind, Default: d.def, Locked: d.locked}
+}
+
+func kindOf[T Type]() Kind {
 	var zero T
 
 	switch any(zero).(type) {
@@ -151,7 +174,7 @@ func kindOf[T Value]() Kind {
 	}
 }
 
-func encode[T Value](v T) string {
+func encode[T Type](v T) string {
 	switch x := any(v).(type) {
 	case bool:
 		return strconv.FormatBool(x)
@@ -164,7 +187,7 @@ func encode[T Value](v T) string {
 	return "" // unreachable: T is bool, int or string
 }
 
-func decode[T Value](s string) T {
+func decode[T Type](s string) T {
 	var out T
 
 	switch p := any(&out).(type) {
@@ -208,11 +231,11 @@ func normalize(kind Kind, raw string) (string, error) {
 // Store keeps stored values by scope (Global is "").
 type Store interface {
 	// Load returns the stored values of scope by flag name.
-	Load(ctx context.Context, scope string) (map[string]string, error)
+	Load(ctx context.Context, scope Scope) (map[string]string, error)
 	// Save stores the value of name in scope.
-	Save(ctx context.Context, scope, name, value string) error
+	Save(ctx context.Context, scope Scope, name, value string) error
 	// Delete removes the value of name in scope; a missing row is no error.
-	Delete(ctx context.Context, scope, name string) error
+	Delete(ctx context.Context, scope Scope, name string) error
 }
 
 // Config configures New.
@@ -224,13 +247,15 @@ type Config struct {
 	// FLAG_<NAME> only, and writes fail with ErrNoStore.
 	Store Store
 	// Cache caches the stored values for TTL. Nil reads the store every
-	// time.
+	// time. Use a cache shared by every instance (database or Redis) when
+	// a flag is a kill switch that must apply at once.
 	Cache *cache.Cache
 	// TTL is how long stored values stay cached (DefaultTTL when zero).
 	TTL time.Duration
 	// Env resolves FLAG_<NAME> overrides (app.Source). When it also lists
-	// its keys (config.Source does, for .env files), a FLAG_ key that
-	// names no flag is an error.
+	// its keys (config.Source does, for .env files and maps), a FLAG_ key
+	// that names no flag is an error; process variables cannot be listed,
+	// so a typo there goes unnoticed.
 	Env config.Lookuper
 	// Log receives the warnings of failed reads (slog.Default when nil).
 	Log *slog.Logger
@@ -245,6 +270,9 @@ type Flags struct {
 	cache    *cache.Cache
 	ttl      time.Duration
 	log      *slog.Logger
+	// unknown holds the unregistered names already logged, so a hot path
+	// logs once per name instead of once per read.
+	unknown sync.Map
 }
 
 // New validates cfg: flag names (lowercase letters, digits and
@@ -336,35 +364,29 @@ func New(cfg Config) (*Flags, error) {
 
 func envKey(name string) string { return EnvPrefix + strings.ToUpper(name) }
 
-// All returns the registered flags in registration order.
-func (f *Flags) All() []AnyFlag {
-	out := make([]AnyFlag, len(f.defs))
+// All describes the registered flags in registration order.
+func (f *Flags) All() []Info {
+	out := make([]Info, len(f.defs))
 	for i, d := range f.defs {
-		out[i] = d
+		out[i] = d.info()
 	}
 
 	return out
 }
 
-// definition implements AnyFlag, so All can return registered definitions.
-func (d definition) Name() string           { return d.name }
-func (d definition) Description() string    { return d.desc }
-func (d definition) Locked() bool           { return d.locked }
-func (d definition) Kind() Kind             { return d.kind }
-func (d definition) definition() definition { return d }
-
 type scopeKey struct{}
 
 // WithScope returns a context whose flag reads also apply the values
-// stored for scope (for example "user:42" or "tenant:7"); stored scope
-// values win over global ones. Set it once per request in middleware,
-// after authentication. An empty scope reads global values only.
-func WithScope(ctx context.Context, scope string) context.Context {
+// stored for scope; stored scope values win over global ones. Set it once
+// per request in middleware, after authentication, from an internal id
+// ("user:" + u.AuthID()), never from raw input. A read with an invalid
+// scope returns the default and logs a warning.
+func WithScope(ctx context.Context, scope Scope) context.Context {
 	return context.WithValue(ctx, scopeKey{}, scope)
 }
 
-func scopeFrom(ctx context.Context) string {
-	s, _ := ctx.Value(scopeKey{}).(string)
+func scopeFrom(ctx context.Context) Scope {
+	s, _ := ctx.Value(scopeKey{}).(Scope)
 	return s
 }
 
@@ -372,11 +394,11 @@ func scopeFrom(ctx context.Context) string {
 func (f *Flags) Enabled(ctx context.Context, flag Flag[bool]) bool { return Get(ctx, f, flag) }
 
 // Get returns the value of flag for the scope in ctx. It never fails: on a
-// store or cache error it returns the default and logs a warning; for a
-// flag that was not registered it returns the code default and logs an
-// error.
-func Get[T Value](ctx context.Context, f *Flags, flag Flag[T]) T {
-	d, ok := f.lookup(ctx, flag.name, flag.Kind())
+// store or cache error, or an invalid scope, it returns the default and
+// logs a warning; for a flag that was not registered it returns the code
+// default and logs an error (once per name).
+func Get[T Type](ctx context.Context, f *Flags, flag Flag[T]) T {
+	d, ok := f.lookup(ctx, flag.definition())
 	if !ok {
 		return flag.def
 	}
@@ -384,21 +406,29 @@ func Get[T Value](ctx context.Context, f *Flags, flag Flag[T]) T {
 	return decode[T](f.resolve(ctx, d, scopeFrom(ctx)))
 }
 
-// lookup returns the registered definition of name, logging an error when
-// there is none or it has another kind.
-func (f *Flags) lookup(ctx context.Context, name string, kind Kind) (definition, bool) {
-	d, ok := f.byName[name]
-	if !ok || d.kind != kind {
-		f.log.ErrorContext(ctx, "flags: flag is not registered (vukem.WithFlags)", "flag", name, "kind", kind)
-		return definition{}, false
+// lookup returns the registered definition with the name and kind of want,
+// logging an error the first time one is missing.
+func (f *Flags) lookup(ctx context.Context, want definition) (definition, bool) {
+	d, ok := f.byName[want.name]
+	if ok && d.kind == want.kind {
+		return d, true
 	}
 
-	return d, true
+	if _, logged := f.unknown.LoadOrStore(want.name+"/"+string(want.kind), true); !logged {
+		f.log.ErrorContext(ctx, "flags: flag is not registered (vukem.WithFlags)", "flag", want.name, "kind", want.kind)
+	}
+
+	return definition{}, false
 }
 
 // resolve returns the encoded value of d for scope through the cache.
-func (f *Flags) resolve(ctx context.Context, d definition, scope string) string {
+func (f *Flags) resolve(ctx context.Context, d definition, scope Scope) string {
 	if d.locked || f.store == nil {
+		return f.defaults[d.name]
+	}
+
+	if !scope.valid() {
+		f.log.WarnContext(ctx, "flags: invalid scope, using defaults", "scope_bytes", len(scope))
 		return f.defaults[d.name]
 	}
 
@@ -450,36 +480,72 @@ func (f *Flags) warn(ctx context.Context, err error) {
 	f.log.WarnContext(ctx, "flags: store unavailable, using defaults", "err", err)
 }
 
-func cacheKey(scope string) string {
-	if scope == Global {
-		return "flags:v1:global"
-	}
+func genKey(scope Scope) string { return "flags:v1:gen:" + string(scope) }
 
-	return "flags:v1:scope:" + scope
+func dataKey(scope Scope, gen int64) string {
+	return "flags:v1:data:" + strconv.FormatInt(gen, 10) + ":" + string(scope)
 }
 
-func (f *Flags) cached(ctx context.Context, scope string) (map[string]string, error) {
+// cached loads scope through the cache. The key carries the scope's
+// generation, which every write bumps: a Load that started before a write
+// can only fill the previous generation's key, which no reader uses any
+// more, so it cannot bring the old values back.
+func (f *Flags) cached(ctx context.Context, scope Scope) (map[string]string, error) {
 	if f.cache == nil {
 		return f.store.Load(ctx, scope)
 	}
 
-	return cache.Remember(ctx, f.cache, cacheKey(scope), f.ttl, func(ctx context.Context) (map[string]string, error) {
-		return f.store.Load(ctx, scope)
-	})
+	gen, _, err := cache.Get[int64](ctx, f.cache, genKey(scope))
+	if err != nil {
+		return nil, err
+	}
+
+	return cache.Remember(
+		ctx,
+		f.cache,
+		dataKey(scope, gen),
+		f.ttl,
+		func(ctx context.Context) (map[string]string, error) {
+			return f.store.Load(ctx, scope)
+		},
+	)
+}
+
+// invalidate bumps the generation of scope after a write.
+func (f *Flags) invalidate(ctx context.Context, scope Scope) {
+	if f.cache == nil {
+		return
+	}
+
+	// The generation never expires: one that expired would restart at a
+	// generation whose key may still be cached.
+	gen, err := f.cache.Increment(ctx, genKey(scope), 1, 0)
+	if err != nil {
+		// The TTL bounds staleness.
+		f.log.WarnContext(ctx, "flags: invalidate cached values", "scope", string(scope), "err", err)
+		return
+	}
+
+	_ = f.cache.Forget(ctx, dataKey(scope, gen-1)) // no reader uses it any more; free it early
 }
 
 // Change describes a write: the flag's resolved value in its scope before
-// and after it.
+// and after it. Sensitive is true for string flags, whose values may be
+// anything: log or audit them only redacted (the admin panel records their
+// length and a SHA-256 prefix).
 type Change struct {
-	Flag, Scope string
-	Old, New    string
+	Flag      string
+	Scope     Scope
+	Old, New  string
+	Sensitive bool
 }
 
 // Set stores the value of the flag called name in scope (Global for
 // everyone). value is parsed by the flag's kind ("true", "42", "blue").
-// It fails with ErrUnknown, ErrLocked, ErrInvalid or ErrNoStore, or with
-// the store's error. The cached values of scope are forgotten.
-func (f *Flags) Set(ctx context.Context, scope, name, value string) (Change, error) {
+// It fails with ErrUnknown, ErrLocked, ErrInvalid (also for an invalid
+// scope) or ErrNoStore, or with the store's error. Readers sharing the
+// cache see the new value at once.
+func (f *Flags) Set(ctx context.Context, scope Scope, name, value string) (Change, error) {
 	return f.write(ctx, scope, name, func(d definition) error {
 		v, err := normalize(d.kind, value)
 		if err != nil {
@@ -491,17 +557,17 @@ func (f *Flags) Set(ctx context.Context, scope, name, value string) (Change, err
 }
 
 // Put stores a typed value of flag in scope; see Set.
-func Put[T Value](ctx context.Context, f *Flags, scope string, flag Flag[T], value T) (Change, error) {
+func Put[T Type](ctx context.Context, f *Flags, scope Scope, flag Flag[T], value T) (Change, error) {
 	return f.Set(ctx, scope, flag.name, encode(value))
 }
 
 // Reset removes the stored value of the flag called name in scope, so it
 // falls back to the global value (for a scope) or the default.
-func (f *Flags) Reset(ctx context.Context, scope, name string) (Change, error) {
+func (f *Flags) Reset(ctx context.Context, scope Scope, name string) (Change, error) {
 	return f.write(ctx, scope, name, func(definition) error { return f.store.Delete(ctx, scope, name) })
 }
 
-func (f *Flags) write(ctx context.Context, scope, name string, apply func(definition) error) (Change, error) {
+func (f *Flags) write(ctx context.Context, scope Scope, name string, apply func(definition) error) (Change, error) {
 	d, ok := f.byName[name]
 
 	switch {
@@ -511,8 +577,8 @@ func (f *Flags) write(ctx context.Context, scope, name string, apply func(defini
 		return Change{}, fmt.Errorf("%w: %q", ErrLocked, name)
 	case f.store == nil:
 		return Change{}, ErrNoStore
-	case len(scope) > maxScope:
-		return Change{}, fmt.Errorf("%w: scope longer than %d bytes", ErrInvalid, maxScope)
+	case !scope.valid():
+		return Change{}, fmt.Errorf("%w: a scope is 1 to %d bytes of a-z 0-9 : . _ -", ErrInvalid, maxScope)
 	}
 
 	old, err := f.fresh(ctx, d, scope)
@@ -524,23 +590,18 @@ func (f *Flags) write(ctx context.Context, scope, name string, apply func(defini
 		return Change{}, fmt.Errorf("flags: write %q: %w", name, err)
 	}
 
-	if f.cache != nil {
-		// The TTL bounds staleness if this fails.
-		if err := f.cache.Forget(ctx, cacheKey(scope)); err != nil {
-			f.log.WarnContext(ctx, "flags: forget cached values", "scope", scope, "err", err)
-		}
-	}
+	f.invalidate(ctx, scope)
 
 	now, err := f.fresh(ctx, d, scope)
 	if err != nil {
 		return Change{}, fmt.Errorf("flags: read %q: %w", name, err)
 	}
 
-	return Change{Flag: name, Scope: scope, Old: old, New: now}, nil
+	return Change{Flag: name, Scope: scope, Old: old, New: now, Sensitive: d.kind == KindString}, nil
 }
 
 // fresh resolves d for scope from the store, bypassing the cache.
-func (f *Flags) fresh(ctx context.Context, d definition, scope string) (string, error) {
+func (f *Flags) fresh(ctx context.Context, d definition, scope Scope) (string, error) {
 	global, err := f.store.Load(ctx, Global)
 	if err != nil {
 		return "", err
@@ -558,14 +619,11 @@ func (f *Flags) fresh(ctx context.Context, d definition, scope string) (string, 
 	return f.pick(ctx, d, global, scoped), nil
 }
 
-// State is a flag as the admin panel shows it.
+// State is a flag as the admin panel shows it. Its Default is the code
+// default, or FLAG_<NAME> when set.
 type State struct {
-	Name        string
-	Description string
-	Kind        Kind
-	Locked      bool
-	// Default is the code default, or FLAG_<NAME> when set.
-	Default string
+	Info
+
 	// Value is the resolved value in the scope.
 	Value string
 	// Stored reports whether the scope has a stored value (ignored for
@@ -575,7 +633,11 @@ type State struct {
 
 // States returns every registered flag resolved for scope, read from the
 // store without the cache. Unlike reads, it returns the store's error.
-func (f *Flags) States(ctx context.Context, scope string) ([]State, error) {
+func (f *Flags) States(ctx context.Context, scope Scope) ([]State, error) {
+	if !scope.valid() {
+		return nil, fmt.Errorf("%w: invalid scope", ErrInvalid)
+	}
+
 	layers := []map[string]string{}
 
 	if f.store != nil {
@@ -604,10 +666,10 @@ func (f *Flags) States(ctx context.Context, scope string) ([]State, error) {
 			_, stored = layers[n-1][d.name] // the scope's own layer
 		}
 
-		out = append(out, State{
-			Name: d.name, Description: d.desc, Kind: d.kind, Locked: d.locked,
-			Default: f.defaults[d.name], Value: f.pick(ctx, d, layers...), Stored: stored && !d.locked,
-		})
+		info := d.info()
+		info.Default = f.defaults[d.name]
+
+		out = append(out, State{Info: info, Value: f.pick(ctx, d, layers...), Stored: stored && !d.locked})
 	}
 
 	return out, nil
@@ -622,7 +684,7 @@ func (f *Flags) Expose(ctx context.Context, allow ...AnyFlag) map[string]any {
 	scope := scopeFrom(ctx)
 
 	for _, af := range allow {
-		d, ok := f.lookup(ctx, af.Name(), af.Kind())
+		d, ok := f.lookup(ctx, af.definition())
 		if !ok {
 			continue
 		}

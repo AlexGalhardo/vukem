@@ -52,8 +52,8 @@ func NewDatabaseStore(db *database.DB, now func() time.Time) *DatabaseStore {
 func (s *DatabaseStore) q(sqlText string) string { return database.Rebind(s.db.Dialect(), sqlText) }
 
 // Load implements Store.
-func (s *DatabaseStore) Load(ctx context.Context, scope string) (map[string]string, error) {
-	rows, err := s.db.QueryContext(ctx, s.q("SELECT name, value FROM "+Table+" WHERE scope = ?"), scope)
+func (s *DatabaseStore) Load(ctx context.Context, scope Scope) (map[string]string, error) {
+	rows, err := s.db.QueryContext(ctx, s.q("SELECT name, value FROM "+Table+" WHERE scope = ?"), string(scope))
 	if err != nil {
 		return nil, fmt.Errorf("load flags: %w", err)
 	}
@@ -74,7 +74,7 @@ func (s *DatabaseStore) Load(ctx context.Context, scope string) (map[string]stri
 }
 
 // Save implements Store.
-func (s *DatabaseStore) Save(ctx context.Context, scope, name, value string) error {
+func (s *DatabaseStore) Save(ctx context.Context, scope Scope, name, value string) error {
 	stmt := `INSERT INTO ` + Table + ` (name, scope, value, updated_at) VALUES (?, ?, ?, ?)
 		ON CONFLICT (name, scope) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
 	if s.db.Dialect().Name() == "mysql" {
@@ -82,13 +82,13 @@ func (s *DatabaseStore) Save(ctx context.Context, scope, name, value string) err
 		ON DUPLICATE KEY UPDATE value = VALUES(value), updated_at = VALUES(updated_at)`
 	}
 
-	_, err := s.db.ExecContext(ctx, s.q(stmt), name, scope, value, s.now().UTC())
+	_, err := s.db.ExecContext(ctx, s.q(stmt), name, string(scope), value, s.now().UTC())
 
 	return err
 }
 
 // Delete implements Store.
-func (s *DatabaseStore) Delete(ctx context.Context, scope, name string) error {
-	_, err := s.db.ExecContext(ctx, s.q("DELETE FROM "+Table+" WHERE name = ? AND scope = ?"), name, scope)
+func (s *DatabaseStore) Delete(ctx context.Context, scope Scope, name string) error {
+	_, err := s.db.ExecContext(ctx, s.q("DELETE FROM "+Table+" WHERE name = ? AND scope = ?"), name, string(scope))
 	return err
 }

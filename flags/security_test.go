@@ -36,7 +36,7 @@ func (downCache) Increment(context.Context, string, int64, time.Duration) (int64
 // scopeFailStore serves the global scope and fails every other one.
 type scopeFailStore struct{ *memStore }
 
-func (s *scopeFailStore) Load(ctx context.Context, scope string) (map[string]string, error) {
+func (s *scopeFailStore) Load(ctx context.Context, scope flags.Scope) (map[string]string, error) {
 	if scope != flags.Global {
 		return nil, errDown
 	}
