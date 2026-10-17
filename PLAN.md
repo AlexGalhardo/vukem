@@ -563,7 +563,7 @@ Applies to **every** task:
   → verify: tests against an in-process fake Stripe API; secret key never logged (`TestSecurity_A09_StripeKeyRedacted`).
 - [x] **B.10.2** Stripe webhooks: `Stripe-Signature` verification (HMAC-SHA256, timestamp tolerance, multiple signatures), typed events dispatched to `events.Bus`, idempotent processing (event id store).
   → verify: forged, replayed and stale webhooks rejected (`TestSecurity_A08_StripeWebhookSignature`); duplicate event processed once.
-- [ ] **B.10.3** `vukem install:billing` scaffold: `billable` columns on users, plans config, checkout/portal routes, subscription sync from webhooks, `Subscribed`/`OnPlan` middleware, tests with the fake API.
+- [x] **B.10.3** `vukem install:billing` scaffold: `billable` columns on users, plans config, checkout/portal routes, subscription sync from webhooks, `Subscribed`/`OnPlan` middleware, tests with the fake API.
   → verify: generated app tests pass.
 - [x] **B.10.4** File uploads, beyond `storage.PutUploaded` (ALPHA): streaming multipart parsing without buffering whole files, per-route size/type limits, chunked/resumable uploads (tus 1.0 core), direct-to-S3 presigned uploads, `z` file rules (`z.File().MaxSize().Types()`), an htmx upload component with progress, optional scan hook (ClamAV) before files become visible.
   → verify: large-file upload test with bounded memory; resumed upload completes after interruption; spoofed type and oversize rejected (`TestSecurity_A05_UploadValidation`).
