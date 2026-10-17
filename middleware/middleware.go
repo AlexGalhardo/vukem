@@ -16,6 +16,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"runtime/debug"
 	"slices"
@@ -102,7 +103,10 @@ func validRequestID(id string) bool {
 }
 
 // Logger logs one structured line per request (method, path, status,
-// duration, size, request id). 5xx log at ERROR, 4xx at WARN.
+// duration, size, request id, peer address and client IP). peer is the
+// direct connection (RemoteAddr host); ip is the client resolved through
+// web.Services.TrustedProxies, as c.IP() returns it. 5xx log at ERROR, 4xx
+// at WARN.
 func Logger(log *slog.Logger) Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -129,6 +133,11 @@ func Logger(log *slog.Logger) Middleware {
 				level = slog.LevelWarn
 			}
 
+			peer, _, err := net.SplitHostPort(r.RemoteAddr)
+			if err != nil {
+				peer = r.RemoteAddr
+			}
+
 			log.LogAttrs(r.Context(), level, "request",
 				slog.String("method", r.Method),
 				slog.String("path", r.URL.Path),
@@ -136,6 +145,8 @@ func Logger(log *slog.Logger) Middleware {
 				slog.Duration("duration", time.Since(start)),
 				slog.Int64("bytes", rw.Size()),
 				slog.String("request_id", web.RequestID(r.Context())),
+				slog.String("peer", peer),
+				slog.String("ip", web.NewCtx(nil, r, web.ServicesFrom(r.Context())).IP()),
 			)
 		})
 	}
