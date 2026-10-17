@@ -5,7 +5,9 @@ import (
 	"context"
 	"flag"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/AlexGalhardo/vukem/cache"
@@ -121,4 +123,145 @@ func TestStorePrunerUnwraps(t *testing.T) {
 			t.Errorf("%s: storePruner() = %v, want %v", name, ok, tt.want)
 		}
 	}
+}
+
+// serve runs the schedule in process unless SCHEDULE_IN_SERVE=false, and
+// the scheduler stops with the app: synctest fails if a goroutine leaks.
+func TestRunStartsSchedulerInServe(t *testing.T) {
+	t.Parallel()
+
+	for name, tt := range map[string]struct {
+		env  map[string]string
+		kind Kind
+		want bool
+	}{
+		"web default":     {kind: KindWeb, want: true},
+		"web opted out":   {env: map[string]string{"SCHEDULE_IN_SERVE": "false"}, kind: KindWeb},
+		"web opted in":    {env: map[string]string{"SCHEDULE_IN_SERVE": "true"}, kind: KindWeb, want: true},
+		"console never":   {kind: KindConsole},
+		"test kind never": {kind: KindTest},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			synctest.Test(t, func(t *testing.T) {
+				var runs atomic.Int32
+
+				app, err := New(WithSource(testSource(tt.env)), WithLogger(discardLogger()), WithoutHTTP(),
+					WithKind(tt.kind),
+					WithSchedule(func(s *schedule.Schedule, _ *App) {
+						s.Func("tick", func(context.Context) error { runs.Add(1); return nil }).EveryMinute()
+					}))
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				ctx, cancel := context.WithCancel(t.Context())
+				done := make(chan error, 1)
+				go func() { done <- app.Run(ctx) }()
+
+				time.Sleep(90 * time.Second)
+				synctest.Wait()
+				cancel()
+
+				if err := <-done; err != nil {
+					t.Fatalf("Run() = %v, want nil on clean shutdown", err)
+				}
+
+				if got := runs.Load() > 0; got != tt.want {
+					t.Fatalf("task ran = %v (%d runs), want %v", got, runs.Load(), tt.want)
+				}
+			})
+		})
+	}
+}
+
+// Without tasks the scheduler runner exits at once and serve keeps running.
+func TestRunWithoutScheduledTasks(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		app, err := New(WithSource(testSource(nil)), WithLogger(discardLogger()), WithoutHTTP())
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		ctx, cancel := context.WithCancel(t.Context())
+		done := make(chan error, 1)
+		go func() { done <- app.Run(ctx) }()
+
+		synctest.Wait()
+
+		select {
+		case err := <-done:
+			t.Fatalf("Run() returned early: %v", err)
+		default:
+		}
+
+		cancel()
+
+		if err := <-done; err != nil {
+			t.Fatalf("Run() = %v, want nil", err)
+		}
+	})
+}
+
+// A broken schedule configuration stops serve instead of silently never
+// running the tasks.
+func TestRunFailsOnBadScheduleConfig(t *testing.T) {
+	t.Parallel()
+
+	if _, err := New(WithSource(testSource(map[string]string{"SCHEDULE_IN_SERVE": "maybe"}))); err == nil ||
+		!strings.Contains(err.Error(), "SCHEDULE_IN_SERVE") {
+		t.Fatalf("New(SCHEDULE_IN_SERVE=maybe) = %v, want an error", err)
+	}
+
+	synctest.Test(t, func(t *testing.T) {
+		app, err := New(WithSource(testSource(map[string]string{"SCHEDULE_TIMEZONE": "Mars/Olympus"})),
+			WithLogger(discardLogger()), WithoutHTTP(),
+			WithSchedule(func(s *schedule.Schedule, _ *App) {
+				s.Func("tick", func(context.Context) error { return nil }).EveryMinute()
+			}))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if err := app.Run(t.Context()); err == nil || !strings.Contains(err.Error(), "runner schedule") {
+			t.Fatalf("Run() = %v, want a scheduler error", err)
+		}
+	})
+}
+
+// A task still running at shutdown gets SHUTDOWN_TIMEOUT to finish, then its
+// context is cancelled and Run returns.
+func TestRunBoundsSchedulerShutdown(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		app, err := New(WithSource(testSource(map[string]string{"SHUTDOWN_TIMEOUT": "5s"})),
+			WithLogger(discardLogger()), WithoutHTTP(),
+			WithSchedule(func(s *schedule.Schedule, _ *App) {
+				s.Func("stuck", func(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }).EveryMinute()
+			}))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		ctx, cancel := context.WithCancel(t.Context())
+		done := make(chan error, 1)
+		go func() { done <- app.Run(ctx) }()
+
+		time.Sleep(time.Minute)
+		synctest.Wait()
+		cancel()
+
+		start := time.Now()
+		if err := <-done; err != nil {
+			t.Fatalf("Run() = %v", err)
+		}
+
+		if waited := time.Since(start); waited != 5*time.Second {
+			t.Fatalf("Run waited %v after cancel, want SHUTDOWN_TIMEOUT (5s)", waited)
+		}
+	})
 }

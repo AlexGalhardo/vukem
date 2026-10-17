@@ -180,3 +180,82 @@ func TestWorkRunsEveryMinuteWithoutOverlapping(t *testing.T) {
 		}
 	})
 }
+
+// On shutdown Work waits for running tasks, but only StopTimeout: then it
+// cancels their context so a stuck task cannot hold the process forever.
+func TestWorkStopTimeoutCancelsRunningTasks(t *testing.T) {
+	t.Parallel()
+
+	for name, tt := range map[string]struct {
+		stop     time.Duration
+		task     func(ctx context.Context) error
+		wantWait time.Duration
+		wantErr  bool
+	}{
+		"blocking task is cancelled after StopTimeout": {
+			stop:     10 * time.Second,
+			task:     func(ctx context.Context) error { <-ctx.Done(); return ctx.Err() },
+			wantWait: 10 * time.Second,
+			wantErr:  true,
+		},
+		"short task finishes first": {
+			stop: 10 * time.Second,
+			task: func(ctx context.Context) error {
+				select {
+				case <-time.After(2 * time.Second):
+					return ctx.Err()
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			},
+			wantWait: 2 * time.Second,
+		},
+		"default StopTimeout is 30s": {
+			task:     func(ctx context.Context) error { <-ctx.Done(); return ctx.Err() },
+			wantWait: 30 * time.Second,
+			wantErr:  true,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			synctest.Test(t, func(t *testing.T) {
+				var taskErr atomic.Value
+
+				s := newSchedule(schedule.Options{StopTimeout: tt.stop})
+				s.Func("job", func(ctx context.Context) error {
+					err := tt.task(ctx)
+					taskErr.Store(errors.Join(err, errors.New("ran")))
+
+					return err
+				}).EveryMinute()
+
+				ctx, cancel := context.WithCancel(t.Context())
+				done := make(chan error, 1)
+				go func() { done <- s.Work(ctx, nil) }()
+
+				time.Sleep(time.Minute)
+				synctest.Wait()
+				cancel()
+
+				start := time.Now()
+				if err := <-done; err != nil {
+					t.Fatalf("Work() = %v", err)
+				}
+
+				if waited := time.Since(start); waited != tt.wantWait {
+					t.Errorf("Work waited %v, want %v", waited, tt.wantWait)
+				}
+
+				err, _ := taskErr.Load().(error)
+				if err == nil {
+					t.Fatal("task did not finish before Work returned")
+				}
+
+				if got := errors.Is(err, context.Canceled); got != tt.wantErr {
+					t.Errorf("task err = %v, want cancelled %v", err, tt.wantErr)
+				}
+			})
+		})
+	}
+}

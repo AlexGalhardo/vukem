@@ -21,7 +21,7 @@ description: Encrypted cookie, memory and database session stores with flash mes
 | --- | --- | --- |
 | Cookie | `session` | AES-256-GCM with a key derived from `APP_KEY` (HKDF); tampered cookies are rejected and logged as `session.invalid` |
 | Memory | `session.NewMemoryStore()` | Tests and development |
-| Database | `SESSION_DRIVER=database`, or `session.NewSQLStore(db, opts...)` | `sessions` table in the app database (SQLite, PostgreSQL, MySQL), created at boot. Expired rows are deleted by `session:prune`, which the app schedules hourly: run the scheduler (`schedule:work`, or `schedule:run` from cron) |
+| Database | `SESSION_DRIVER=database`, or `session.NewSQLStore(db, opts...)` | `sessions` table in the app database (SQLite, PostgreSQL, MySQL), created at boot. Expired rows are deleted by `session:prune`, which the app schedules hourly; `serve` runs the scheduler in process (unless `SCHEDULE_IN_SERVE=false`, then run `schedule:work` or `schedule:run` from cron) |
 | Redis | [`drivers/redis`](/docs/database/redis) | `vukem.WithSessionStore(rc.SessionStore(""))` |
 
 ## Usage

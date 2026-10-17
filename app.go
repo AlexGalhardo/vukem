@@ -491,6 +491,15 @@ func New(opts ...Option) (*App, error) {
 		app.AddRunner("queue", app.queueRunner(qcfg))
 	}
 
+	scfg, err := configLoad[ScheduleConfig](app)
+	if err != nil {
+		return nil, err
+	}
+
+	if scfg.InServe && app.Kind == KindWeb {
+		app.AddRunner("schedule", app.scheduleRunner())
+	}
+
 	if o.vite != nil {
 		if app.Vite, err = vite.New(vite.Config{FS: o.vite, Dev: !cfg.IsProduction()}); err != nil {
 			return nil, err

@@ -25,6 +25,32 @@ func WithSchedule(fn func(s *schedule.Schedule, app *App)) Option {
 type ScheduleConfig struct {
 	// Timezone of the expressions (IANA name, default UTC).
 	Timezone string `env:"SCHEDULE_TIMEZONE" default:"UTC"`
+	// InServe runs the scheduler inside serve. Set it to false when a
+	// dedicated schedule:work process (or a cron calling schedule:run)
+	// runs the schedule instead.
+	InServe bool `env:"SCHEDULE_IN_SERVE" default:"true"`
+}
+
+// scheduleRunner works the schedule inside the web process, so a
+// single-process deploy still runs the built-in prune tasks. It exits at
+// once when nothing is scheduled.
+func (a *App) scheduleRunner() Runner {
+	return RunnerFunc(func(ctx context.Context) error {
+		s, err := a.Schedule()
+		if err != nil {
+			return err
+		}
+
+		if len(s.Tasks()) == 0 {
+			return nil
+		}
+
+		a.Log.InfoContext(ctx,
+			"scheduler running inside serve; set SCHEDULE_IN_SERVE=false if you run schedule:work",
+			"tasks", len(s.Tasks()))
+
+		return s.Work(ctx, a.now)
+	})
 }
 
 // Schedule returns the application schedule, built on first use. Locks
@@ -56,6 +82,8 @@ func (a *App) Schedule() (*schedule.Schedule, error) {
 			Locks:    locks,
 			Commands: a.Call,
 			Queue:    func() (*queue.Queue, error) { return a.Queue() },
+			// Running tasks share the shutdown budget of the HTTP drain.
+			StopTimeout: a.Config.ShutdownTimeout,
 		})
 
 		// Database sessions keep expired rows until pruned.
@@ -116,7 +144,7 @@ func scheduleCommands() []Command {
 		},
 		CommandFunc{
 			CommandName: "schedule:work",
-			Desc:        "Run the scheduler in the foreground (every minute, until stopped)",
+			Desc:        "Run the scheduler in the foreground (pair with SCHEDULE_IN_SERVE=false on serve)",
 			Fn: func(ctx context.Context, app *App, _ []string) error {
 				s, err := app.Schedule()
 				if err != nil {

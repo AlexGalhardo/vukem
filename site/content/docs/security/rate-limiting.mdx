@@ -138,7 +138,7 @@ l := myLimiter                                                  // anything impl
 http.Handle("/login", ratelimit.Middleware(l, ratelimit.ByIP)(loginHandler))
 ```
 
-`NewWindow` takes a `ratelimit.Counter`: anything with an `Increment(ctx, key, delta, ttl)` that is atomic across the servers sharing it. Keys are stored as `ratelimit:<name>:<SHA-256 of key>:<window start>` and expire after one window: hashing every key keeps request data (emails, separators, control bytes) out of the store and stops one key from forging another's bucket. The database cache keeps expired rows until pruned: every app with `CACHE_STORE=database` schedules `cache:prune` hourly (also through a store that wraps it and exposes it with `Unwrap() cache.Store`), so run the scheduler (`schedule:work`, or `schedule:run` from cron), or call `Prune` on your `cache.Database` yourself.
+`NewWindow` takes a `ratelimit.Counter`: anything with an `Increment(ctx, key, delta, ttl)` that is atomic across the servers sharing it. Keys are stored as `ratelimit:<name>:<SHA-256 of key>:<window start>` and expire after one window: hashing every key keeps request data (emails, separators, control bytes) out of the store and stops one key from forging another's bucket. The database cache keeps expired rows until pruned: every app with `CACHE_STORE=database` schedules `cache:prune` hourly (also through a store that wraps it and exposes it with `Unwrap() cache.Store`), which `serve` runs through its in-process scheduler (with `SCHEDULE_IN_SERVE=false`, run `schedule:work` or `schedule:run` from cron instead), or call `Prune` on your `cache.Database` yourself.
 
 ## Options
 

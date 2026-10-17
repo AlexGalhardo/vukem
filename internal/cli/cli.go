@@ -51,7 +51,7 @@ type command struct {
 func commands() []command {
 	return []command{
 		{"new", "<name>", "Create a project from the HTMX + SQLite starter", newProject},
-		{"serve", "", "Run the app and restart it when Go files change", serveCmd},
+		{"serve", "", "Run the app (HTTP, scheduler) and restart it when Go files change", serveCmd},
 		{"build", "", "Build assets (Vite) and a production binary in bin/", buildCmd},
 		{"version", "", "Print the vukem version", nil},
 		{"install:auth", "", "Add login, registration, password reset and email verification", installAuth},
