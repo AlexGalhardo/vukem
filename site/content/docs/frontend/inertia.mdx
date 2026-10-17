@@ -53,6 +53,76 @@ Modifiers chain (`Defer(v).Merge()`, `Merge(v).Once()`). Nested maps resolve rec
 
 Shared props: `inertia.Config.Shared` for global ones, `inertia.Share(c.Context(), key, value)` per request. The starters share the auth user and flash messages.
 
+## Translations (i18n)
+
+`inertia.I18n` sends the [i18n](/docs/digging-deeper/localization) catalog to your components, so Vue and React use the same JSON files as the server:
+
+```go
+r.Use(
+	i18n.Middleware(bundle, i18n.MiddlewareConfig{}), // resolves the locale (cookie, ?lang=, Accept-Language)
+	in.Middleware,
+	inertia.I18n("ui.", "nav."), // only keys under ui.* and nav.* reach the browser
+)
+```
+
+Every page then gets three props:
+
+| Prop | Example | Notes |
+| --- | --- | --- |
+| `locale` | `"pt-BR"` | the locale resolved for this request |
+| `locales` | `["en", "pt-BR"]` | for a language switcher |
+| `messages` | `{"nav.home": "Início"}` | flat keys, with fallback to the default locale; plural messages are objects (`{"one": "...", "other": "..."}`) |
+
+`messages` is a once prop keyed by locale: the browser downloads the catalog on the first visit and again only when the locale changes.
+
+A small helper is enough on the client. It fills `{name}` placeholders and picks plural forms with `Intl.PluralRules`, like the server's `i18n.T`:
+
+```ts
+// resources/js/lib/i18n.ts
+type Message = string | Record<string, string>
+
+export function translate(
+	messages: Record<string, Message>,
+	locale: string,
+	key: string,
+	params: Record<string, string | number> = {},
+): string {
+	let msg = messages[key]
+	if (msg === undefined) return key
+	if (typeof msg !== "string") {
+		const n = Number(params.count)
+		msg = (n === 0 && msg.zero) || msg[new Intl.PluralRules(locale).select(n)] || msg.other || key
+	}
+	return msg.replace(/\{(\w+)\}/g, (m, k) => (k in params ? String(params[k]) : m))
+}
+```
+
+```vue
+<!-- Vue -->
+<script setup lang="ts">
+import { usePage } from "@inertiajs/vue3"
+import { translate } from "@/lib/i18n"
+
+const page = usePage()
+const t = (key: string, params = {}) => translate(page.props.messages, page.props.locale, key, params)
+</script>
+
+<template><a href="/">{{ t("nav.home") }}</a></template>
+```
+
+```tsx
+// React
+import { usePage } from "@inertiajs/react"
+import { translate } from "@/lib/i18n"
+
+export function useT() {
+	const { messages, locale } = usePage().props as { messages: Record<string, string>; locale: string }
+	return (key: string, params = {}) => translate(messages, locale, key, params)
+}
+```
+
+To switch language, link to any page with `?lang=pt-BR` (or set the locale cookie) and the next visit carries the new catalog.
+
 ## Requests and redirects
 
 | Area | Support |

@@ -269,3 +269,34 @@ func TestCanonical(t *testing.T) {
 		}
 	}
 }
+
+func TestBundle_Messages(t *testing.T) {
+	t.Parallel()
+
+	b := loadTest(t, Options{})
+
+	got := b.Messages("pt-BR")
+	want := map[string]any{
+		"welcome":       "Olá, {name}!",
+		"posts.created": "Post criado.",
+		"posts.count":   map[string]string{"one": "{count} post", "other": "{count} posts"},
+		"flat.key":      "Flat key",
+		"only.en":       "English only",
+	}
+
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("Messages(pt-BR) mismatch (-want +got):\n%s", diff)
+	}
+
+	if diff := cmp.Diff(map[string]any{"posts.created": "Post criado.", "posts.count": map[string]string{
+		"one": "{count} post", "other": "{count} posts",
+	}}, b.Messages("pt-BR", "posts.")); diff != "" {
+		t.Errorf("Messages(pt-BR, posts.) mismatch (-want +got):\n%s", diff)
+	}
+
+	// The returned map is a copy: mutating it does not touch the catalog.
+	got["welcome"] = "x"
+	if b.T("pt-BR", "welcome", "name", "Ana") != "Olá, Ana!" {
+		t.Error("Messages() result aliases the catalog")
+	}
+}

@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/AlexGalhardo/vukem/i18n"
 	"github.com/AlexGalhardo/vukem/inertia"
 	"github.com/AlexGalhardo/vukem/router"
 	"github.com/AlexGalhardo/vukem/view"
@@ -433,5 +434,50 @@ func TestSecurity_A05_InertiaPageScriptCannotBreakOut(t *testing.T) {
 	if strings.Count(body, "</script>") != 1 || strings.Contains(body, "<script>alert") ||
 		strings.Contains(body, "<!--") {
 		t.Errorf("page script leaked markup: %s", body)
+	}
+}
+
+func TestI18nSharesLocaleAndMessages(t *testing.T) {
+	t.Parallel()
+
+	bundle, err := i18n.New(i18n.Options{Default: "en"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_ = bundle.Add("en", map[string]any{"nav": map[string]any{"home": "Home"}, "server.only": "x"})
+	_ = bundle.Add("pt-BR", map[string]any{"nav": map[string]any{"home": "Início"}})
+
+	hs := newHarness(t, baseConfig(), func(r *router.Router) {
+		r.Get("/", func(c *web.Ctx) error { return inertia.Render(c, "Home", nil) }).Use(
+			func(next http.Handler) http.Handler {
+				return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+					ctx := i18n.WithLocale(i18n.WithBundle(req.Context(), bundle), "pt-BR")
+					next.ServeHTTP(w, req.WithContext(ctx))
+				})
+			},
+			inertia.I18n("nav."),
+		)
+	})
+
+	p := page(t, hs.do(t, http.MethodGet, "/", xhr()))
+	props, _ := p["props"].(map[string]any)
+
+	if props["locale"] != "pt-BR" {
+		t.Errorf("locale prop = %v, want pt-BR", props["locale"])
+	}
+
+	if diff := cmp.Diff([]any{"en", "pt-BR"}, props["locales"]); diff != "" {
+		t.Errorf("locales prop mismatch (-want +got):\n%s", diff)
+	}
+
+	if diff := cmp.Diff(map[string]any{"nav.home": "Início"}, props["messages"]); diff != "" {
+		t.Errorf("messages prop mismatch (-want +got):\n%s", diff)
+	}
+
+	// Messages are a once prop keyed by locale: a client that has them skips them.
+	again := page(t, hs.do(t, http.MethodGet, "/", xhr("X-Inertia-Except-Once-Props", "i18n:pt-BR")))
+	if props, _ := again["props"].(map[string]any); props["messages"] != nil {
+		t.Errorf("messages resent to a client that has them: %v", props["messages"])
 	}
 }

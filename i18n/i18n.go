@@ -319,6 +319,38 @@ func (b *Bundle) Lookup(locale, key string) (string, bool) {
 	return m.text, true
 }
 
+// Messages returns the catalog a client needs to translate for locale:
+// every key resolved along the same fallback chain as T, as raw templates
+// (strings, or map[string]string of plural forms). With prefixes, only keys
+// starting with one of them are returned, which keeps server-only messages
+// out of the page. The result is a fresh map the caller may modify.
+func (b *Bundle) Messages(locale string, prefixes ...string) map[string]any {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	chain := b.chain(locale)
+	out := map[string]any{}
+
+	// Least specific first, so more specific locales overwrite.
+	for _, l := range slices.Backward(chain) {
+		for key, m := range b.catalogs[l] {
+			if len(prefixes) > 0 && !slices.ContainsFunc(prefixes, func(p string) bool {
+				return strings.HasPrefix(key, p)
+			}) {
+				continue
+			}
+
+			if m.forms != nil {
+				out[key] = maps.Clone(m.forms)
+			} else {
+				out[key] = m.text
+			}
+		}
+	}
+
+	return out
+}
+
 // LocalizeIssues rebuilds the built-in validation messages of is from the
 // "validation.*" keys of locale (see z.Issues.Localize); untranslated
 // issues keep their English message.
