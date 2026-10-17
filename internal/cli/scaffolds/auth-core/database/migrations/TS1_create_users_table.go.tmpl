@@ -12,6 +12,8 @@ func m{{.TS1}}CreateUsersTable() schema.Migration {
 				t.String("email").Unique()
 				t.String("password")
 				t.Timestamp("email_verified_at").Nullable()
+				// Bumped to end every session of the user (Accounts.RevokeOtherSessions).
+				t.BigInteger("session_version").Default(0)
 				t.Timestamps()
 			})
 		},

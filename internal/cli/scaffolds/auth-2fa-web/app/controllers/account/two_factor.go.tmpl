@@ -104,6 +104,12 @@ func (h *TwoFactorHandlers) Confirm(c *web.Ctx) error {
 		web.SecurityEvent(c.Request(), "session.revoke_failed", "user_id", u.AuthID(), "err", err.Error())
 	}
 
+	// The session version bump ends this session too unless it records the
+	// new version.
+	if err := h.a.Web.RefreshSession(c); err != nil {
+		web.SecurityEvent(c.Request(), "session.refresh_failed", "user_id", u.AuthID(), "err", err.Error())
+	}
+
 	return c.Redirect("/user/two-factor")
 }
 

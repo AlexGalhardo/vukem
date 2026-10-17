@@ -46,11 +46,31 @@ type Accounts struct {
 
 // RevokeOtherSessions signs userID out of every browser session except
 // keep (the current session id, "" for all). Call it whenever the
-// credentials change: password reset or change, two-factor enabled.
-// Encrypted cookie sessions (SESSION_DRIVER=cookie, the default) have no
-// server-side record to delete and are left alone: use
-// SESSION_DRIVER=database to make this effective.
+// credentials change: password reset or change, two-factor enabled. It
+// bumps the user's session version, which ends sessions on every
+// SESSION_DRIVER (encrypted cookies included), and deletes server-side
+// sessions. With keep set, also call a.Web.RefreshSession(c) so the
+// current session survives the bump.
 func (a *Accounts) RevokeOtherSessions(ctx context.Context, userID int64, keep string) error {
+	if err := a.bumpSessionVersion(ctx, a.DB, userID); err != nil {
+		return err
+	}
+
+	return a.revokeServerSessions(ctx, userID, keep)
+}
+
+// bumpSessionVersion ends every session of userID on the next request.
+func (a *Accounts) bumpSessionVersion(ctx context.Context, ex database.Executor, userID int64) error {
+	_, err := ex.ExecContext(ctx,
+		"UPDATE users SET session_version = session_version + 1 WHERE id = "+ex.Dialect().Placeholder(1), userID)
+
+	return err
+}
+
+// revokeServerSessions deletes the server-side sessions of userID except
+// keep, so they end at once and leave the store. Encrypted cookie
+// sessions have no record to delete: the version bump ends them.
+func (a *Accounts) revokeServerSessions(ctx context.Context, userID int64, keep string) error {
 	m, err := a.sessions()
 	if err != nil {
 		return err
