@@ -56,7 +56,7 @@ func (a *Accounts) RevokeOtherSessions(ctx context.Context, userID int64, keep s
 		return err
 	}
 
-	err = m.RevokeOthers(ctx, strconv.FormatInt(userID, 10), keep)
+	err = m.RevokeOthers(ctx, a.Web.SessionUserID(strconv.FormatInt(userID, 10)), keep)
 	if errors.Is(err, session.ErrRevokeUnsupported) {
 		return nil
 	}

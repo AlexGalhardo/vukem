@@ -12,6 +12,9 @@ vukem migrate
 
 `install:auth` copies **code you own** into the project and registers its migrations and routes:
 
+> A password reset and turning on 2FA end the user's other sessions only with server-side sessions: set `SESSION_DRIVER=database`. With the default encrypted cookie driver there is nothing to revoke, and `Accounts.RevokeOtherSessions` does nothing ([Sessions](/docs/basics/sessions#revoking-a-users-other-sessions)).
+
+
 ```text
 app/models/user.go                          User (AuthID, AuthPassword, EmailVerified)
 app/accounts/{accounts,users,passwords}.go  guards, registration, verification, password resets
@@ -24,6 +27,7 @@ resources/views/auth/*.html, resources/views/mail/*.html
 routes/auth.go                              appended to routes.All()
 tests/auth_test.go                          the whole flow
 tests/auth_messages_test.go                 every message translated
+tests/sessions_test.go                      a password reset ends the user's other sessions
 ```
 
 | Flow | Behaviour |

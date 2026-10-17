@@ -236,14 +236,12 @@ func TestSecurity_A07_AuthScaffoldRevokesOtherSessions(t *testing.T) {
 	revoke2FA := "h.a.RevokeOtherSessions(c.Context(), u.ID, c.Session().ID())"
 	files := map[string][]string{
 		"scaffolds/auth-core/app/accounts/accounts.go.tmpl": {
-			"m.RevokeOthers(ctx, strconv.FormatInt(userID, 10), keep)",
+			"m.RevokeOthers(ctx, a.Web.SessionUserID(strconv.FormatInt(userID, 10)), keep)",
 			"sessions:  app.Sessions,",
 		},
 		"scaffolds/auth-core/app/accounts/passwords.go.tmpl": {
 			`return u, a.RevokeOtherSessions(ctx, u.ID, "")`,
 		},
-		"scaffolds/auth-2fa-web/app/controllers/account/two_factor.go.tmpl":     {revoke2FA},
-		"scaffolds/auth-2fa-inertia/app/controllers/account/two_factor.go.tmpl": {revoke2FA},
 		"scaffolds/auth-web/tests/sessions_test.go.tmpl": {
 			`"SESSION_DRIVER": "database"`,
 			`c.Get("/login").AssertOK() // signed out`,
@@ -260,6 +258,25 @@ func TestSecurity_A07_AuthScaffoldRevokesOtherSessions(t *testing.T) {
 			if !bytes.Contains(b, []byte(want)) {
 				t.Errorf("%s lacks %q", src, want)
 			}
+		}
+	}
+
+	// Enabling 2FA flashes the one-time recovery codes before revoking, and
+	// a revocation failure is logged instead of failing the request.
+	for _, src := range []string{
+		"scaffolds/auth-2fa-web/app/controllers/account/two_factor.go.tmpl",
+		"scaffolds/auth-2fa-inertia/app/controllers/account/two_factor.go.tmpl",
+	} {
+		b, err := scaffoldFS.ReadFile(src)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		flash := bytes.Index(b, []byte("c.Session().Flash(recoveryCodesFlash, codes)"))
+		revoke := bytes.Index(b, []byte("if err := "+revoke2FA+"; err != nil {\n\t\tweb.SecurityEvent("))
+
+		if flash < 0 || revoke < 0 || flash > revoke {
+			t.Errorf("%s: recovery codes flashed at %d, revocation with logged failure at %d", src, flash, revoke)
 		}
 	}
 }
