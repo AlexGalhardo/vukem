@@ -96,15 +96,24 @@ type Provider interface {
 
 // Errors returned by the callback, mapped to HTTP statuses.
 var (
-	ErrUnknownProvider = &errs.HTTPError{Status: http.StatusNotFound, Message: "Unknown sign-in provider."}
-	ErrState           = &errs.HTTPError{
+	// Their Key ("social.*") translates the message in the request locale
+	// (errs.HTTPError.LocalizedText).
+	ErrUnknownProvider = &errs.HTTPError{
+		Status: http.StatusNotFound, Message: "Unknown sign-in provider.", Key: "social.unknown_provider",
+	}
+	ErrState = &errs.HTTPError{
 		Status:  http.StatusBadRequest,
 		Message: "The sign-in attempt expired or is invalid. Please try again.",
+		Key:     "social.state",
 	}
-	ErrAccessDenied = &errs.HTTPError{Status: http.StatusForbidden, Message: "Sign-in was cancelled."}
+	ErrAccessDenied = &errs.HTTPError{
+		Status: http.StatusForbidden, Message: "Sign-in was cancelled.", Key: "social.denied",
+	}
 	// ErrProvider is returned when the provider answers with an error other
 	// than access_denied; the provider's code is logged, not shown.
-	ErrProvider = &errs.HTTPError{Status: http.StatusBadRequest, Message: "Sign-in failed. Please try again."}
+	ErrProvider = &errs.HTTPError{
+		Status: http.StatusBadRequest, Message: "Sign-in failed. Please try again.", Key: "social.failed",
+	}
 )
 
 // Social is the set of configured providers.
