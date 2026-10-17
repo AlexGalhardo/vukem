@@ -25,7 +25,8 @@ func NewSocial(app *vukem.App, names ...string) (*social.Social, error) {
 		return nil, err
 	}
 
-	s := social.New(key)
+	// A sign-in started before an APP_KEY rotation can still finish.
+	s := social.New(key).WithPreviousKeys(app.DerivePreviousKeys("social.state", 32)...)
 	s.InsecureCookies = !app.Config.IsProduction() && !strings.HasPrefix(app.Config.URL, "https://")
 
 	base := strings.TrimSuffix(app.Config.URL, "/")

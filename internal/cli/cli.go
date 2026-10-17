@@ -66,6 +66,7 @@ func commands() []command {
 		},
 		{"boost:install", "", "Add agent guidelines, skills and the vukem-boost MCP server", boostInstall},
 		{"key:generate", "", "Write a new APP_KEY to .env", keyGenerate},
+		{"key:rotate", "", "Replace APP_KEY in .env and keep the old one in APP_PREVIOUS_KEYS", keyRotate},
 		{"down", "", "Put the app in maintenance mode (503; --secret or --with-secret to bypass)", downCmd},
 		{"up", "", "Bring the app out of maintenance mode", upCmd},
 		{"make:controller", "<Name>", "Create a controller", makeController},
