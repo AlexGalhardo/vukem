@@ -110,7 +110,7 @@ A handler can also return `z.FieldError`, `z.FieldErrorKey` or `z.Issues` direct
 
 When the data being validated is not client input (a database row, an upstream API response), wrap the error so it is not reported to the client as its own mistake: `return errs.Wrap(http.StatusInternalServerError, err)` answers a plain 500 with no field errors.
 
-Return `z.FieldError` or `z.FieldErrorKey` from `Refine` and `Custom` for any message meant for the client. Any other error fails closed: the issue gets the generic message "The {field} field is invalid." (key `invalid`, so `validation.invalid` translates it), its text stays in `Issue.Err`, and `web.Parse`/the error handler log it at Warn. Before v0.25 the raw `err.Error()` text was the message.
+Return `z.FieldError` or `z.FieldErrorKey` from `Refine` and `Custom` for any message meant for the client. Any other error fails closed: the issue gets the generic message `The {field} field is invalid.` (key `invalid`, so `validation.invalid` translates it), its text stays in `Issue.Err`, and `web.Parse`/the error handler log it at Warn. Before v0.25 the raw `err.Error()` text was the message.
 
 ```go
 if taken {
