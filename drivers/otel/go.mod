@@ -3,7 +3,7 @@ module github.com/AlexGalhardo/vukem/drivers/otel
 go 1.27.2
 
 require (
-	github.com/AlexGalhardo/vukem v0.17.0
+	github.com/AlexGalhardo/vukem v0.24.0
 	github.com/google/go-cmp v0.7.0
 	go.opentelemetry.io/otel v1.47.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.47.0
@@ -27,6 +27,7 @@ require (
 	go.opentelemetry.io/otel/log v1.47.0 // indirect
 	go.opentelemetry.io/otel/metric v1.47.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.11.0 // indirect
+	golang.org/x/crypto v0.58.0 // indirect
 	golang.org/x/net v0.61.0 // indirect
 	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
