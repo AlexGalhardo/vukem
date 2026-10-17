@@ -22,8 +22,10 @@ import (
 )
 
 // Presigner issues URLs that let a client upload one object straight to
-// storage (drivers/s3 implements it). The signature must bind the key,
-// the content type and the maximum size, and expire after ttl.
+// storage. The signature must bind the key, the content type and the
+// maximum size, and expire after ttl. drivers/s3's PresignPut signs the
+// key and expiry only, so an adapter over it must add the size and type
+// conditions (or rely on Verify, which runs after the upload).
 type Presigner interface {
 	PresignPut(
 		ctx context.Context,
@@ -174,16 +176,18 @@ func Direct(cfg DirectConfig) (http.Handler, error) {
 }
 
 // Verify checks an object already on d (a finished direct upload) against
-// rules: detected type, extension of key, size. It deletes the object
-// when it fails and returns its File description otherwise.
+// rules: detected type, extension of key, size. Only keys Presign could
+// have issued for rules are accepted (400 otherwise, without touching the
+// disk). It deletes the object when it fails and returns its File
+// description otherwise.
 func Verify(ctx context.Context, d storage.Disk, key string, rules Rules) (File, error) {
 	r, err := rules.normalized()
 	if err != nil {
 		return File{}, err
 	}
 
-	if _, err := storage.Clean(key); err != nil {
-		return File{}, err
+	if !r.issued(key) {
+		return File{}, errInvalidKey
 	}
 
 	f, err := d.Open(ctx, key)
@@ -224,6 +228,31 @@ func Verify(ctx context.Context, d storage.Disk, key string, rules Rules) (File,
 		Size:   r.MaxFileSize - body.left,
 		SHA256: hex.EncodeToString(sum.Sum(nil)),
 	}, nil
+}
+
+// errInvalidKey rejects a Verify key that Presign could not have issued.
+var errInvalidKey = errs.New(http.StatusBadRequest, "The upload key is invalid.")
+
+// issued reports whether key has the shape of a key Presign issues for r
+// (storedPath: a random lower-case name and a known extension under
+// r.Dir), so a client-reported key never opens or deletes other objects.
+// Keys are random, not bound to a caller: apps that share Rules.Dir between
+// users must also check that the key was presigned for this caller.
+func (r Rules) issued(key string) bool {
+	dir, name := path.Split(key)
+	if dir != "" {
+		dir = strings.TrimSuffix(dir, "/")
+	}
+
+	if dir != strings.TrimSuffix(r.Dir, "/") {
+		return false
+	}
+
+	id, ext, ok := strings.Cut(name, ".")
+
+	return ok && validID(id) && slices.ContainsFunc(slices.Collect(maps.Values(extensions)), func(exts []string) bool {
+		return slices.Contains(exts, "."+ext)
+	})
 }
 
 func sortedKeys[V any](m map[string]V) []string { return slices.Sorted(maps.Keys(m)) }

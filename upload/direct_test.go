@@ -120,21 +120,53 @@ func TestVerify(t *testing.T) {
 
 	disk := storage.NewMemory("")
 	rules := Images(1 << 10)
-	_ = storage.PutBytes(t.Context(), disk, "a/good.png", []byte(pngMagic+"data"))
-	_ = storage.PutBytes(t.Context(), disk, "a/spoofed.png", []byte("<html></html>"))
-	_ = storage.PutBytes(t.Context(), disk, "a/big.png", []byte(pngMagic+strings.Repeat("x", 2<<10)))
+	rules.Dir = "a"
 
-	if f, err := Verify(t.Context(), disk, "a/good.png", rules); err != nil || f.Type != "image/png" || f.Size != 12 {
+	good, spoofed, big := rules.storedPath(".png"), rules.storedPath(".png"), rules.storedPath(".png")
+	_ = storage.PutBytes(t.Context(), disk, good, []byte(pngMagic+"data"))
+	_ = storage.PutBytes(t.Context(), disk, spoofed, []byte("<html></html>"))
+	_ = storage.PutBytes(t.Context(), disk, big, []byte(pngMagic+strings.Repeat("x", 2<<10)))
+
+	if f, err := Verify(t.Context(), disk, good, rules); err != nil || f.Type != "image/png" || f.Size != 12 {
 		t.Fatalf("Verify(good) = %+v, %v", f, err)
 	}
 
-	for key, want := range map[string]int{"a/spoofed.png": 422, "a/big.png": 413} {
+	for key, want := range map[string]int{spoofed: 422, big: 413} {
 		if _, err := Verify(t.Context(), disk, key, rules); errs.Status(err) != want {
 			t.Errorf("Verify(%s) = %v, want %d", key, err, want)
 		}
 
 		if ok, _ := disk.Exists(t.Context(), key); ok {
 			t.Errorf("Verify(%s) kept the rejected object", key)
+		}
+	}
+}
+
+// Verify takes a client-reported key: only keys Presign could have issued
+// (a random name under Rules.Dir) may be opened or deleted, so a client
+// cannot make the server delete or adopt another object.
+func TestSecurity_A01_DirectVerifyOnlyIssuedKeys(t *testing.T) {
+	t.Parallel()
+
+	disk := storage.NewMemory("")
+	rules := Images(1 << 10)
+	rules.Dir = "uploads"
+
+	others := []string{
+		"invoices/other-user.pdf", "uploads/avatar.png", "uploads/nested/" + strings.Repeat("a", 26) + ".png",
+		"uploads/" + strings.Repeat("a", 26), "uploads/" + strings.Repeat("A", 26) + ".png", "uploads/../x.png",
+		strings.Repeat("a", 26) + ".png",
+	}
+
+	for _, key := range others {
+		_ = storage.PutBytes(t.Context(), disk, key, []byte("<html>someone else's</html>"))
+
+		if _, err := Verify(t.Context(), disk, key, rules); errs.Status(err) != http.StatusBadRequest {
+			t.Errorf("Verify(%q) = %v, want 400", key, err)
+		}
+
+		if ok, _ := disk.Exists(t.Context(), key); !ok && !strings.Contains(key, "..") {
+			t.Errorf("Verify(%q) deleted an object it did not issue", key)
 		}
 	}
 }
