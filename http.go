@@ -303,11 +303,7 @@ func (a *App) Sessions() (*session.Manager, error) {
 		}
 
 		if a.sessStore == nil && a.sessStoreFunc != nil {
-			a.sessStore, err = a.sessStoreFunc(a)
-			if err == nil && a.sessStore == nil {
-				err = errors.New("WithSessionStoreFunc returned a nil store")
-			}
-
+			a.sessStore, err = lazyStore(a, a.sessStoreFunc, "WithSessionStoreFunc", "SESSION_DRIVER="+cfg.Driver)
 			if err != nil {
 				a.sessErr = fmt.Errorf("vukem: session store: %w", err)
 				return

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"path/filepath"
@@ -523,6 +524,152 @@ func TestLazyStoreFuncsRejectNil(t *testing.T) {
 
 	if _, err := app.Queue(); err == nil || !strings.Contains(err.Error(), "nil") {
 		t.Errorf("Queue() error = %v, want a nil-driver error", err)
+	}
+}
+
+// A store func returns ErrUseDefault (directly or wrapped) when its service
+// is not configured: the app then builds what CACHE_STORE, SESSION_DRIVER
+// and QUEUE_CONNECTION choose, as if no func had been passed.
+func TestLazyStoreFuncsUseDefault(t *testing.T) {
+	t.Parallel()
+
+	for name, errDefault := range map[string]error{
+		"direct":  ErrUseDefault,
+		"wrapped": fmt.Errorf("REDIS_URL is not set: %w", ErrUseDefault),
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			app := newTestApp(t,
+				WithCacheStoreFunc(func(*App) (cache.Store, error) { return nil, errDefault }),
+				WithSessionStoreFunc(func(*App) (session.Store, error) { return nil, errDefault }),
+				WithQueueDriverFunc(func(*App) (queue.Driver, error) { return nil, errDefault }),
+			)
+
+			c, err := app.Cache()
+			if err != nil {
+				t.Fatalf("Cache() = %v, want the CACHE_STORE default", err)
+			}
+
+			if _, ok := c.Store().(*cache.Memory); !ok {
+				t.Errorf("Cache().Store() = %T, want *cache.Memory (CACHE_STORE=memory)", c.Store())
+			}
+
+			if _, err := app.Sessions(); err != nil {
+				t.Fatalf("Sessions() = %v, want the SESSION_DRIVER default", err)
+			}
+
+			if app.sessStore != nil {
+				t.Errorf("session store = %T, want none (SESSION_DRIVER=cookie)", app.sessStore)
+			}
+
+			q, err := app.Queue()
+			if err != nil {
+				t.Fatalf("Queue() = %v, want the QUEUE_CONNECTION default", err)
+			}
+
+			if _, ok := q.Driver().(queue.Sync); !ok {
+				t.Errorf("Queue().Driver() = %T, want queue.Sync (QUEUE_CONNECTION=sync)", q.Driver())
+			}
+		})
+	}
+}
+
+// The default is the configured one, not a hard-coded memory store.
+func TestLazyStoreFuncsUseConfiguredDefault(t *testing.T) {
+	t.Parallel()
+
+	useDefault := func(*App) (cache.Store, error) { return nil, ErrUseDefault }
+	app := dbQueueApp(t, map[string]string{"CACHE_STORE": "database", "SESSION_DRIVER": "database"},
+		WithCacheStoreFunc(useDefault),
+		WithSessionStoreFunc(func(*App) (session.Store, error) { return nil, ErrUseDefault }),
+		WithQueueDriverFunc(func(*App) (queue.Driver, error) { return nil, ErrUseDefault }),
+	)
+
+	// Boot creates the database queue tables even with a driver func,
+	// so the first Queue() never runs DDL inside a transaction.
+	if err := app.Boot(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	if app.queueDB == nil {
+		t.Error("Boot() did not prepare the database queue the store func falls back to")
+	}
+
+	c, err := app.Cache()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, ok := c.Store().(*cache.Database); !ok {
+		t.Errorf("Cache().Store() = %T, want *cache.Database (CACHE_STORE=database)", c.Store())
+	}
+
+	if _, err := app.Sessions(); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, ok := app.sessPruner.(*session.SQLStore); !ok {
+		t.Errorf("session store = %T, want *session.SQLStore (SESSION_DRIVER=database)", app.sessPruner)
+	}
+
+	q, err := app.Queue()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, ok := q.Driver().(*queue.Database); !ok {
+		t.Errorf("Queue().Driver() = %T, want *queue.Database (QUEUE_CONNECTION=database)", q.Driver())
+	}
+}
+
+// A store func that fails (Redis URL configured but malformed, a client
+// that cannot be built) is an error, never a silent fallback to the
+// configured default: only ErrUseDefault selects it. DefaultMiddleware
+// builds the sessions at boot, so serve does not start.
+func TestSecurity_A02_LazyStoreFuncErrorNeverFallsBack(t *testing.T) {
+	t.Parallel()
+
+	boom := errors.New("redis: parse url: invalid scheme")
+	app := newTestApp(t,
+		WithCacheStoreFunc(func(*App) (cache.Store, error) { return nil, boom }),
+		WithSessionStoreFunc(func(*App) (session.Store, error) { return nil, boom }),
+		WithQueueDriverFunc(func(*App) (queue.Driver, error) { return nil, boom }),
+	)
+
+	if c, err := app.Cache(); !errors.Is(err, boom) || c != nil {
+		t.Errorf("Cache() = %v, %v, want no cache and %v", c != nil, err, boom)
+	}
+
+	if q, err := app.Queue(); !errors.Is(err, boom) || q != nil {
+		t.Errorf("Queue() = %v, %v, want no queue and %v", q != nil, err, boom)
+	}
+
+	if m, err := app.Sessions(); !errors.Is(err, boom) || m != nil {
+		t.Errorf("Sessions() = %v, %v, want no manager and %v", m != nil, err, boom)
+	}
+}
+
+// A store together with ErrUseDefault is ambiguous: an error, not a guess.
+func TestLazyStoreFuncsRejectStoreWithUseDefault(t *testing.T) {
+	t.Parallel()
+
+	app := newTestApp(t,
+		WithCacheStoreFunc(func(*App) (cache.Store, error) { return cache.NewMemory(1), ErrUseDefault }),
+		WithSessionStoreFunc(func(*App) (session.Store, error) { return session.NewMemoryStore(), ErrUseDefault }),
+		WithQueueDriverFunc(func(*App) (queue.Driver, error) { return queue.NewMemory(), ErrUseDefault }),
+	)
+
+	if _, err := app.Cache(); err == nil {
+		t.Error("Cache() = nil error, want an error for a store with ErrUseDefault")
+	}
+
+	if _, err := app.Sessions(); err == nil {
+		t.Error("Sessions() = nil error, want an error for a store with ErrUseDefault")
+	}
+
+	if _, err := app.Queue(); err == nil {
+		t.Error("Queue() = nil error, want an error for a driver with ErrUseDefault")
 	}
 }
 

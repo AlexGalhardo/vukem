@@ -1029,6 +1029,12 @@ func TestScheduleOnOneServerNeedsSharedCache(t *testing.T) {
 		"memory cache":          {fail: true},
 		"database cache":        {env: map[string]string{"CACHE_STORE": "database"}},
 		"opaque wrapped memory": {fail: true, opt: WithCacheStore(opaqueStore{cache.NewMemory(0)})},
+		// A store func falling back to the default cache keeps its answer.
+		"lazy default memory": {fail: true, opt: WithCacheStoreFunc(useDefaultCache)},
+		"lazy default database": {
+			env: map[string]string{"CACHE_STORE": "database"},
+			opt: WithCacheStoreFunc(useDefaultCache),
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -1053,6 +1059,8 @@ func TestScheduleOnOneServerNeedsSharedCache(t *testing.T) {
 		})
 	}
 }
+
+func useDefaultCache(*App) (cache.Store, error) { return nil, ErrUseDefault }
 
 // sharedCache stands for a store several apps share (Redis, a database).
 type sharedCache struct{ cache.Store }

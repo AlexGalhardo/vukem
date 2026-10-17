@@ -31,10 +31,19 @@ func WithCacheStore(s cache.Store) Option {
 	return func(o *options) error { o.cacheStore, o.cacheFunc = s, nil; return nil }
 }
 
+// ErrUseDefault is returned by a WithCacheStoreFunc, WithSessionStoreFunc
+// or WithQueueDriverFunc function (directly or wrapped) to use the store
+// CACHE_STORE, SESSION_DRIVER or QUEUE_CONNECTION configures instead, e.g.
+// when REDIS_URL is not set. The function must return it with a nil store.
+// Any other error, and a nil store with a nil error, fail instead: a
+// service that is configured but broken never falls back silently.
+var ErrUseDefault = errors.New("vukem: use the configured default store")
+
 // WithCacheStoreFunc replaces the store chosen by CACHE_STORE with one
 // built by fn on the first app.Cache() call, after configuration loaded,
-// so fn can read app.Source (e.g. REDIS_URL from .env or vukemtest). An
-// error from fn, or a nil store, is returned by app.Cache(). fn may
+// so fn can read app.Source (e.g. REDIS_URL from .env or vukemtest). fn
+// returns ErrUseDefault to keep the CACHE_STORE store. Any other error
+// from fn, or a nil store, is returned by app.Cache(). fn may
 // register cleanup with app.OnShutdown, but must not call app.Cache() (or
 // anything that does, such as app.RateLimiters()): fn runs inside Cache's
 // sync.Once and that call would deadlock.
@@ -51,8 +60,10 @@ func WithSessionStore(s session.Store) Option {
 
 // WithSessionStoreFunc replaces the store chosen by SESSION_DRIVER with one
 // built by fn on the first app.Sessions() call (DefaultMiddleware makes it
-// at boot), after configuration loaded. An error from fn, or a nil store,
-// is returned by app.Sessions(). SetSessionStore still takes precedence.
+// at boot), after configuration loaded. fn returns ErrUseDefault to keep
+// the SESSION_DRIVER store (cookie sessions by default). Any other error
+// from fn, or a nil store, is returned by app.Sessions(). SetSessionStore
+// still takes precedence.
 // fn must not call app.Sessions() (or DefaultMiddleware): it runs inside
 // Sessions' sync.Once and that call would deadlock.
 func WithSessionStoreFunc(fn func(app *App) (session.Store, error)) Option {
@@ -79,20 +90,16 @@ func (a *App) Cache() (*cache.Cache, error) {
 			return
 		}
 
-		switch {
-		case a.cacheStore != nil:
-			a.cache = cache.New(a.cacheStore, cfg.Prefix)
-		case a.cacheStoreFunc != nil:
-			store, err := a.cacheStoreFunc(a)
-			if err == nil && store == nil {
-				err = errors.New("WithCacheStoreFunc returned a nil store")
-			}
-
-			if err != nil {
+		store := a.cacheStore
+		if store == nil && a.cacheStoreFunc != nil {
+			if store, err = lazyStore(a, a.cacheStoreFunc, "WithCacheStoreFunc", "CACHE_STORE="+cfg.Store); err != nil {
 				a.cacheErr = fmt.Errorf("vukem: cache store: %w", err)
 				return
 			}
+		}
 
+		switch {
+		case store != nil:
 			a.cache = cache.New(store, cfg.Prefix)
 		case cfg.Store == "memory":
 			a.cache = cache.New(cache.NewMemory(cfg.MaxEntries), cfg.Prefix)
@@ -124,6 +131,33 @@ func (a *App) Cache() (*cache.Cache, error) {
 	})
 
 	return a.cache, a.cacheErr
+}
+
+// lazyStore runs a With*Func store function. It returns the zero value
+// (no store: build the configured default) when fn returns ErrUseDefault,
+// and an error for a nil store or a store returned together with
+// ErrUseDefault, which would leave unclear which one the app uses.
+func lazyStore[T comparable](a *App, fn func(*App) (T, error), option, def string) (T, error) {
+	var zero T
+
+	v, err := fn(a)
+
+	switch {
+	case errors.Is(err, ErrUseDefault) && v != zero:
+		return zero, fmt.Errorf("%s returned a store together with ErrUseDefault", option)
+	case errors.Is(err, ErrUseDefault):
+		a.Log.Info("vukem: "+option+" chose the configured default", "store", def)
+		return zero, nil
+	case err != nil:
+		return zero, err
+	case v == zero:
+		return zero, fmt.Errorf(
+			"%s returned a nil store (return vukem.ErrUseDefault for the configured default)",
+			option,
+		)
+	}
+
+	return v, nil
 }
 
 // MailConfig is read from MAIL_* (and SMTP_* / RESEND_* / MAILTRAP_*) variables.
