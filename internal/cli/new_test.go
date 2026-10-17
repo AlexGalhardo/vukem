@@ -184,6 +184,15 @@ func TestNewProjectEndToEnd(t *testing.T) {
 		t.Errorf(".env = %q", env)
 	}
 
+	if df := read(t, project, "Dockerfile"); !strings.Contains(df, "AS assets") ||
+		!strings.Contains(df, "./cmd/app") {
+		t.Errorf("Dockerfile = %q", df)
+	}
+
+	if _, err := os.Stat(filepath.Join(project, ".dockerignore")); err != nil {
+		t.Error(err)
+	}
+
 	requireGovulncheckTool(t, project)
 
 	cmd := exec.CommandContext(t.Context(), "go", "test", "./...")
@@ -377,6 +386,10 @@ func TestNewAPIProjectEndToEnd(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(project, filepath.FromSlash(gone))); err == nil {
 			t.Errorf("%s still exists in the API starter", gone)
 		}
+	}
+
+	if df := read(t, project, "Dockerfile"); strings.Contains(df, "AS assets") || !strings.Contains(df, "./cmd/app") {
+		t.Errorf("API Dockerfile = %q", df)
 	}
 
 	if env := read(t, project, ".env.example"); !strings.Contains(env, "CORS_ALLOWED_ORIGINS=") {

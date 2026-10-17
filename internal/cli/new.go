@@ -113,6 +113,10 @@ func newProject(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 			}
 		}
 
+		if err := writeDocker(dir, st.kind, pm); err != nil {
+			return err
+		}
+
 		if err := requireFramework(ctx, &project, *framework); err != nil {
 			return err
 		}

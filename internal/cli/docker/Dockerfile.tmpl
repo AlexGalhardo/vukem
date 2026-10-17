@@ -1,0 +1,43 @@
+# Production image: {{if .Assets}}Vite assets, {{end}}a static Go binary, a small non-root runtime.
+# Railway, Fly, Render and plain Docker build it as is:
+# https://vukem.vercel.app/docs/deployment/docker-and-railway
+{{- if .Assets}}
+
+FROM {{.JSImage}} AS assets
+WORKDIR /src
+{{- if .Corepack}}
+RUN corepack enable
+{{- end}}
+COPY package.json {{.Lockfile}}* ./
+RUN {{.Install}}
+COPY . .
+RUN {{.Build}}
+{{- end}}
+
+FROM golang:1.27.2-alpine3.24 AS build
+WORKDIR /src
+ENV CGO_ENABLED=0
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+{{- if .Templ}}
+RUN go tool templ generate
+{{- end}}
+{{- if .Assets}}
+COPY --from=assets /src/resources/public/build resources/public/build
+{{- end}}
+RUN go build -trimpath -ldflags="-s -w" -o /out/app ./cmd/app
+
+FROM alpine:3.24.2
+RUN apk add --no-cache ca-certificates tzdata \
+	&& adduser -D -H -u 10001 app \
+	&& mkdir -p /app/storage \
+	&& chown app:app /app/storage
+WORKDIR /app
+COPY --from=build /out/app /app/app
+USER app
+# The platform's PORT overrides this one; HOST=0.0.0.0 makes the server
+# reachable from outside the container. Pass secrets at runtime, never here.
+ENV APP_ENV=production HOST=0.0.0.0 PORT=3000 LOG_FORMAT=json
+EXPOSE 3000
+ENTRYPOINT ["/app/app"]

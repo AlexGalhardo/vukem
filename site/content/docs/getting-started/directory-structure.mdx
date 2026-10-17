@@ -31,6 +31,8 @@ blog/
 ├── storage/                   SQLite database and local data (git-ignored)
 ├── tests/                     home_test.go, posts_test.go (vukemtest)
 ├── .env.example               copied to .env with a fresh APP_KEY
+├── Dockerfile                 production image (see Deployment)
+├── .dockerignore              keeps .env, node_modules and storage/ out of the image
 └── go.mod
 ```
 

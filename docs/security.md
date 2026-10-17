@@ -67,6 +67,7 @@ What Vukem does **by default** to protect applications, mapped to the [OWASP Top
 | `vukem about` prints effective security settings (secrets redacted) to review deployments (`TestCommands` (about)) | [x] |
 | Devtools (`vukem.WithDevtools()`, `DEVTOOLS=true`) is a boot error with `APP_ENV=production` (`TestSecurity_A02_DevtoolsRefusedInProduction`) | [x] |
 | No default credentials, no sample admin user, `.env` git-ignored, `.env.example` without secrets (`TestSecurity_A02_StarterShipsNoSecrets`) | [x] |
+| The starter `Dockerfile` runs as a non-root user and sets no secrets; its `.dockerignore` keeps `.env` and `.env.*` out of the build context (`TestSecurity_A02_DockerIgnoresSecrets`) | [x] |
 | Destructive commands (`migrate:fresh`, `db:wipe`) require `--force` in production (`TestSecurity_A02_DestructiveCommandsNeedForce`) | [x] |
 | `/openapi.json` (`vukem.ServeOpenAPI`) and the API reference UI (`apidocs.Serve`) are not served in production unless `OPENAPI_IN_PRODUCTION=true` (`TestSecurity_A02_OpenAPIOffInProduction`, `TestSecurity_A02_APIDocsOffInProduction`); the vendored Scalar bundle is pinned by SHA-256 and runs with telemetry and remote fonts off | [x] |
 | GraphQL (`contrib/graphql`): in production the explorer page is not registered and `__schema` / `__type` introspection is rejected unless `InsecureExplorerInProduction` / `InsecureIntrospectionInProduction` opt in; the explorer is embedded (no CDN) and runs under its own nonce CSP (`TestSecurity_A02_GraphQLExplorerOffInProduction`) | [x] |
