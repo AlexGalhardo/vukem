@@ -1,0 +1,18 @@
+{
+  "auth": {
+    "failed": "Essas credenciais não correspondem aos nossos registros.",
+    "unauthenticated": "Não autenticado.",
+    "unverified": "Seu endereço de e-mail não foi verificado.",
+    "token_ability": "Este token não tem permissão para {ability}."
+  },
+  "social": {
+    "unknown_provider": "Provedor de login desconhecido.",
+    "state": "A tentativa de login expirou ou é inválida. Tente novamente.",
+    "denied": "O login foi cancelado.",
+    "failed": "Não foi possível entrar. Tente novamente."
+  },
+  "validation": {
+    "unique": "O campo {field} já está em uso.",
+    "exists": "O campo {field} selecionado é inválido."
+  }
+}

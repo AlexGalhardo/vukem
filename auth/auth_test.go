@@ -12,6 +12,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/AlexGalhardo/vukem"
@@ -108,13 +109,13 @@ func (f flakyUsers) ByID(ctx context.Context, id string) (User, error) {
 	return f.ORMProvider.ByID(ctx, id)
 }
 
-func newApp(t *testing.T, hasher hash.Hasher) *testApp {
+func newApp(t *testing.T, hasher hash.Hasher, extra ...vukem.Option) *testApp {
 	t.Helper()
 
 	ta := &testApp{hasher: hasher}
 
 	build := func(opts ...vukem.Option) (*vukem.App, error) {
-		return vukem.New(append(opts, vukem.WithMigrations(migrations),
+		return vukem.New(append(append(opts, extra...), vukem.WithMigrations(migrations),
 			vukem.WithRoutes(func(r *router.Router, app *vukem.App) error {
 				if err := vukem.DefaultMiddleware(app, r); err != nil {
 					return err
@@ -695,7 +696,13 @@ func TestSecurity_A04_TokenPrefixForSecretScanning(t *testing.T) {
 	}
 
 	// The prefix is a label, not a credential: the secret still decides.
-	if _, err := ta.tokens.Find(ctx, plain[:len(plain)-1]+"X"); err == nil {
+	// The replacement differs from the last character, so the secret always changes.
+	wrong := "X"
+	if strings.HasSuffix(plain, wrong) {
+		wrong = "Y"
+	}
+
+	if _, err := ta.tokens.Find(ctx, plain[:len(plain)-1]+wrong); err == nil {
 		t.Error("Find(prefixed token with a wrong secret) = nil, want error")
 	}
 
@@ -731,4 +738,49 @@ func TestSecurity_A04_SessionKeptWhenUserLookupFails(t *testing.T) {
 
 	ta.gone.Store(false)
 	c.Get("/dashboard").AssertRedirect("/login")
+}
+
+// ptBR serves the framework's built-in Brazilian Portuguese messages.
+var ptBR = vukem.WithTranslations(fstest.MapFS{"en.json": {Data: []byte(`{}`)}, "pt-BR.json": {Data: []byte(`{}`)}})
+
+// Translated login errors stay identical for unknown users and wrong
+// passwords.
+func TestSecurity_A07_TranslatedLoginErrorsDoNotRevealUsers(t *testing.T) {
+	t.Parallel()
+
+	ta := newApp(t, hash.Fake(), ptBR)
+	ta.user(t, "ana@example.com", "s3cret-pass", false)
+
+	for _, email := range []string{"ana@example.com", "nobody@example.com"} {
+		ta.Client(t).AcceptJSON().WithHeader("Accept-Language", "pt-BR").
+			PostJSON("/login", map[string]any{"email": email, "password": "nope"}).
+			AssertJSONValidationErrors("email").
+			AssertJSONPath("errors.email.0", "Essas credenciais não correspondem aos nossos registros.")
+	}
+}
+
+func TestAuthErrorsTranslated(t *testing.T) {
+	t.Parallel()
+
+	ta := newApp(t, hash.Fake(), ptBR)
+	u := ta.user(t, "u@example.com", "pw", false)
+
+	plain, _, err := ta.tokens.Create(t.Context(), u.AuthID(), "cli", []string{"posts:read"}, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	pt := func() *vukemtest.Client {
+		return ta.Client(t).AcceptJSON().WithHeader("Accept-Language", "pt-BR")
+	}
+
+	pt().GetJSON("/api/me").AssertUnauthorized().AssertJSONPath("detail", "Não autenticado.")
+	pt().ActingAs("web", u).GetJSON("/verified").AssertForbidden().
+		AssertJSONPath("detail", "Seu endereço de e-mail não foi verificado.")
+	pt().WithToken(plain).Delete("/api/posts").AssertForbidden().
+		AssertJSONPath("detail", "Este token não tem permissão para posts:delete.")
+
+	// Without a matching locale the English messages stay.
+	ta.Client(t).AcceptJSON().WithToken(plain).Delete("/api/posts").AssertForbidden().
+		AssertJSONPath("detail", "This token cannot posts:delete.")
 }

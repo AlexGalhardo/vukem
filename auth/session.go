@@ -89,7 +89,7 @@ func (g *SessionGuard[U]) Validate(c *web.Ctx, creds map[string]string) (U, erro
 		_, _ = g.hasher.Verify(g.dummy, creds["password"])
 		web.SecurityEvent(c.Request(), "auth.login_failed", "guard", g.name)
 
-		return zero, credentialsError(g.IdentifierField)
+		return zero, credentialsError(c.Context(), g.IdentifierField)
 	case err != nil:
 		return zero, err
 	}
@@ -97,7 +97,7 @@ func (g *SessionGuard[U]) Validate(c *web.Ctx, creds map[string]string) (U, erro
 	ok, err := g.hasher.Verify(u.AuthPassword(), creds["password"])
 	if err != nil || !ok {
 		web.SecurityEvent(c.Request(), "auth.login_failed", "guard", g.name)
-		return zero, credentialsError(g.IdentifierField)
+		return zero, credentialsError(c.Context(), g.IdentifierField)
 	}
 
 	if g.hasher.NeedsRehash(u.AuthPassword()) {

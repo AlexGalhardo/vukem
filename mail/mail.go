@@ -77,6 +77,20 @@ type Mailable interface {
 	Content() Content
 }
 
+// ContextEnveloper is implemented by mailables whose envelope depends on
+// the send's context, such as a subject in the request locale:
+//
+//	func (m Welcome) EnvelopeContext(ctx context.Context) mail.Envelope {
+//		return mail.Envelope{To: []string{m.User.Email}, Subject: i18n.T(ctx, "mail.welcome")}
+//	}
+//
+// The Mailer calls it instead of Envelope, which stays the fallback for
+// code without a context. SendLater renders before queueing, so the
+// subject uses the context of the SendLater call.
+type ContextEnveloper interface {
+	EnvelopeContext(ctx context.Context) Envelope
+}
+
 // Attachable is implemented by mailables that attach files.
 type Attachable interface {
 	Attachments() []Attachment
@@ -145,7 +159,12 @@ var ErrNoRecipients = errors.New("mail: no recipients")
 
 // Render builds the Message without sending it (previews, tests).
 func (m *Mailer) Render(ctx context.Context, mailable Mailable) (*Message, error) {
-	env := mailable.Envelope()
+	var env Envelope
+	if ce, ok := mailable.(ContextEnveloper); ok {
+		env = ce.EnvelopeContext(ctx)
+	} else {
+		env = mailable.Envelope()
+	}
 
 	msg := &Message{ID: rand.Text(), From: env.From, Subject: env.Subject, Tags: env.Tags}
 	if msg.From == "" {

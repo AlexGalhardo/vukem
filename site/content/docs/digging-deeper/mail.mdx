@@ -24,6 +24,7 @@ err = mailer.Send(ctx, Welcome{User: u})
 - `mail.View(name, data)` renders an `html/template` view; the text part comes from `<name>_text` when it exists, otherwise from the HTML (links become `text (url)`). Mail views use `{{/* layout: none */}}`.
 - `mail.HTML(html, text)` and `mail.Text(text)` for literal bodies.
 - Attachments: implement `Attachments() []mail.Attachment`; inline parts set `Inline` and `ContentID` and are referenced as `cid:...`.
+- Context: implement `EnvelopeContext(ctx) mail.Envelope` (`mail.ContextEnveloper`) to build the envelope from the send's context, e.g. a subject in the request locale with `i18n.T(ctx, key)`. The Mailer calls it instead of `Envelope`, which stays required as the context-free fallback. `SendLater` renders before queueing, so it uses the context of the call.
 
 ## Transports
 

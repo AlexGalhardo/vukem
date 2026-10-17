@@ -28,9 +28,12 @@ type HTTPError struct {
 	Message string      // safe to show to clients; empty means the status text
 	Err     error       // internal cause: logged, never shown
 	Headers http.Header // added to the response (Allow, Retry-After…)
+	Key     string         // i18n key translating Message per request (errs.NewKey)
+	Params  map[string]any // {name} placeholders of Key
 }
 
 errs.New(http.StatusConflict, "That slug is taken.")
+errs.NewKey(http.StatusConflict, "posts.slug_taken", "That slug is taken.", nil) // translated in the request locale
 errs.Wrap(http.StatusBadGateway, err)
 errs.ErrTooManyRequests.WithHeader("Retry-After", "30")
 ```
@@ -98,7 +101,7 @@ if !verr.Empty() {
 
 ## What clients see
 
-- 4xx: the `HTTPError` message.
+- 4xx: the `HTTPError` message, translated from its `Key` in the request locale when the app uses [localization](/docs/digging-deeper/localization#framework-messages).
 - 5xx: only the status text, unless `Services.Debug` is set (never in production).
 - Every error is logged with method, path, status and request id: 5xx at `ERROR`, the rest at `DEBUG`.
 - If the response was already written, the error is only logged.

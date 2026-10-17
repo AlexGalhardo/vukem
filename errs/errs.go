@@ -29,6 +29,11 @@ type HTTPError struct {
 	Err error
 	// Headers are added to the response (e.g. Allow, Retry-After).
 	Headers http.Header
+	// Key is the i18n message key Message translates (see NewKey); empty
+	// means Message is shown as is.
+	Key string
+	// Params fill the {name} placeholders of the translated Key.
+	Params map[string]any
 
 	stack []uintptr
 }

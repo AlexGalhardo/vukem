@@ -27,7 +27,7 @@ func (s *Server) SSEHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := s.serveSSE(w, r); err != nil {
 			if he, ok := errors.AsType[*errs.HTTPError](err); ok {
-				http.Error(w, he.Text(), he.Status)
+				http.Error(w, he.LocalizedText(r.Context()), he.Status)
 			}
 		}
 	})

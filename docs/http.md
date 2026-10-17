@@ -127,10 +127,11 @@ Features: `Get/Put/Forget/Pull`, `Flash` (next request), `Reflash`, old input, `
 ```go
 var ErrNotFound = errs.New(http.StatusNotFound, "not found")
 
-type HTTPError struct { Status int; Message string; Err error }
+type HTTPError struct { Status int; Message string; Err error; Headers http.Header; Key string; Params map[string]any }
 type ValidationError struct { Fields map[string][]string }
 ```
 
+- `errs.NewKey(status, key, fallback, params)` gives an `*HTTPError` a message key: the error handler shows `HTTPError.LocalizedText(ctx)`, translated by the request's `errs.Translator` (installed by `i18n.Middleware`, see [i18n](subsystems.md#i18n)), with `Message` as the English fallback. `errs.Translate(ctx, key, fallback, params)` does the same for any message built with a context.
 - `NewValidation().Add(field, msg)` returns the `*ValidationError` for chaining (`return errs.NewValidation().Add(...)`); `Append(field, msg)` has no result, for statements that errcheck would otherwise flag.
 
 - Handlers return errors; `errs.Handler` maps them:
