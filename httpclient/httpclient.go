@@ -36,6 +36,11 @@ type Options struct {
 	// Allow lists extra prefixes that may be reached (e.g. an internal
 	// service network). Use sparingly.
 	Allow []netip.Prefix
+	// WrapTransport, when set, wraps the client's transport (tracing,
+	// metrics; drivers/otel's Transport fits). The address check runs in
+	// the dialer below it, so a wrapper that delegates to the transport it
+	// is given cannot reach blocked addresses.
+	WrapTransport func(http.RoundTripper) http.RoundTripper
 }
 
 // ErrBlockedAddress is returned when the destination is an internal address.
@@ -127,9 +132,14 @@ func Safe(o Options) *http.Client {
 		IdleConnTimeout:       30 * time.Second,
 	}
 
+	var rt http.RoundTripper = &limitTransport{rt: transport, max: o.MaxBody}
+	if o.WrapTransport != nil {
+		rt = o.WrapTransport(rt)
+	}
+
 	return &http.Client{
 		Timeout:   o.Timeout,
-		Transport: &limitTransport{rt: transport, max: o.MaxBody},
+		Transport: rt,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) >= o.MaxRedirects {
 				return fmt.Errorf("httpclient: stopped after %d redirects", o.MaxRedirects)

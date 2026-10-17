@@ -197,3 +197,45 @@ func fetch(do func() (*http.Response, error)) error {
 
 	return err
 }
+
+type countingTransport struct {
+	next  http.RoundTripper
+	calls *int
+}
+
+func (t countingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	*t.calls++
+	return t.next.RoundTrip(req)
+}
+
+func TestSecurity_A01_SSRFWrappedTransport(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer srv.Close()
+
+	var calls int
+
+	wrap := func(rt http.RoundTripper) http.RoundTripper { return countingTransport{next: rt, calls: &calls} }
+
+	// The wrapper sees the request, but the address check still runs below it.
+	if err := fetch(func() (*http.Response, error) {
+		return Safe(Options{WrapTransport: wrap}).Get(srv.URL)
+	}); !errors.Is(err, ErrBlockedAddress) {
+		t.Fatalf("wrapped Get(loopback) = %v, want ErrBlockedAddress", err)
+	}
+
+	resp, err := Safe(Options{WrapTransport: wrap, Allow: []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}}).
+		Get(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_ = resp.Body.Close()
+
+	if calls != 2 {
+		t.Fatalf("WrapTransport round trips = %d, want 2", calls)
+	}
+}
