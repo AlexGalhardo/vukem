@@ -81,6 +81,8 @@ func TestDedup(t *testing.T) {
 				}
 
 				time.Sleep(time.Minute)
+
+				synctest.Wait() // let the window timer flush before the next record
 			},
 			want: []string{
 				"ERROR db down error=boom",
@@ -92,6 +94,7 @@ func TestDedup(t *testing.T) {
 			log: func(log *slog.Logger) {
 				log.Error("db down", "error", boom)
 				time.Sleep(time.Minute)
+				synctest.Wait() // let the window timer flush before the next record
 			},
 			want: []string{"ERROR db down error=boom"},
 		},
@@ -101,8 +104,10 @@ func TestDedup(t *testing.T) {
 				log.Error("db down", "error", boom)
 				log.Error("db down", "error", boom)
 				time.Sleep(time.Minute)
+				synctest.Wait() // let the window timer flush before the next record
 				log.Error("db down", "error", boom)
 				time.Sleep(time.Minute)
+				synctest.Wait() // let the window timer flush before the next record
 			},
 			want: []string{
 				"ERROR db down error=boom",
@@ -119,6 +124,7 @@ func TestDedup(t *testing.T) {
 				log.Error("other", "event", "a", "error", boom)
 				log.Error("failed", "event", "a", "error", boom, "user", 7)
 				time.Sleep(time.Minute)
+				synctest.Wait() // let the window timer flush before the next record
 			},
 			want: []string{
 				"ERROR failed event=a error=boom",
@@ -143,6 +149,7 @@ func TestDedup(t *testing.T) {
 				log.With("job", "b").Error("failed")
 				log.With("job", "a").Error("failed")
 				time.Sleep(time.Minute)
+				synctest.Wait() // let the window timer flush before the next record
 			},
 			want: []string{
 				"ERROR failed job=a",
@@ -249,6 +256,7 @@ func TestDedupConcurrent(t *testing.T) {
 
 		wg.Wait()
 		time.Sleep(time.Minute)
+		synctest.Wait() // let the window timer flush before the next record
 		synctest.Wait()
 
 		want := []string{
