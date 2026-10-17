@@ -90,7 +90,7 @@ func (f Factory[T]) Make() []T {
 		seed = binary.LittleEndian.Uint64(b[:])
 	}
 
-	fk := NewFakerWithLocale(seed, f.locale)
+	fk := NewFaker(seed).WithLocale(f.locale)
 	out := make([]T, f.count)
 
 	for i := range out {
@@ -138,9 +138,13 @@ func (f Factory[T]) Create(ctx context.Context, ex database.Executor) ([]T, erro
 // CreateMany builds Count models and inserts them with orm.CreateMany:
 // multi-row INSERTs split under the dialect's bound-parameter limit, with
 // the generated ids written back (RETURNING on PostgreSQL and SQLite, one
-// INSERT per row on MySQL). It runs in a transaction (joined when ex is a
-// *database.Tx), and AfterCreate hooks run once every row is stored, in
-// order, inside that transaction; a hook error rolls back every row.
+// INSERT per row on MySQL). AfterCreate hooks run once every row is
+// stored, in order, inside the same transaction.
+//
+// Given a *database.DB, CreateMany opens that transaction and an insert or
+// hook error rolls back every row. Given a *database.Tx it joins it: the
+// error is returned and the caller owns the rollback (db.Tx rolls back when
+// its function returns the error).
 //
 // Prefer it to Create for seeding many rows; Create inserts one row at a
 // time and runs each model's hooks right after its insert.

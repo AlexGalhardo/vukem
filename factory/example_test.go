@@ -53,8 +53,8 @@ func ExampleFactory_Create() {
 	// Output: 3 3 true
 }
 
-func ExampleNewFakerWithLocale() {
-	f := factory.NewFakerWithLocale(2026, factory.LocalePTBR())
+func ExampleFaker_WithLocale() {
+	f := factory.NewFaker(2026).WithLocale(factory.LocalePTBR())
 
 	fmt.Println(f.Name())
 	fmt.Println(f.ProductTitle())

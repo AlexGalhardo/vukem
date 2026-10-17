@@ -3,9 +3,14 @@ package factory
 import "strings"
 
 // Locale selects the language and country of the data a Faker generates.
-// The zero Locale keeps the original data set (mixed names, lorem ipsum),
-// so seeded output from before locales existed does not change; the
-// commerce, company and address methods use English data then.
+//
+// The zero Locale is not English: it is the original data set (a mixed
+// list of mostly Brazilian first names, lorem ipsum words), kept so that
+// NewFaker(seed) and Factory.Seed(n) produce the same rows they did before
+// locales existed. Only the methods that data set never had (Company,
+// ProductTitle, ProductDescription, Category and the address methods) use
+// English data there. Pass LocaleEN or LocalePTBR for one consistent
+// language.
 type Locale struct{ d *localeData }
 
 // LocaleEN returns the English (United States) locale.

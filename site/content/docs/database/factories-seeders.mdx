@@ -31,7 +31,7 @@ withPosts := factories.User.AfterCreate(func(ctx context.Context, ex database.Ex
 products, err := factories.Product.Seed(42).Count(2000).CreateMany(ctx, db)
 ```
 
-`CreateMany` splits the rows into multi-row `INSERT`s under the dialect's bound-parameter limit and writes the generated ids back (`RETURNING` on PostgreSQL and SQLite; MySQL cannot report the ids of a multi-row insert, so there each row is its own `INSERT`). Everything runs in one transaction, joined when you pass a `*database.Tx`; `AfterCreate` hooks run after every row is stored, in order, inside it, and a hook error rolls back every row. On a local SQLite file 1000 users take 20 ms instead of 65 ms; against a networked database the gain is larger.
+`CreateMany` splits the rows into multi-row `INSERT`s under the dialect's bound-parameter limit and writes the generated ids back (`RETURNING` on PostgreSQL and SQLite; MySQL cannot report the ids of a multi-row insert, so there each row is its own `INSERT`). `AfterCreate` hooks run after every row is stored, in order, in the same transaction. Given a `*database.DB`, `CreateMany` opens that transaction and an insert or hook error rolls back every row; given a `*database.Tx` it joins it, returns the error and leaves the rollback to you (`db.Tx` rolls back when its function returns the error). On a local SQLite file 1000 users take 20 ms instead of 65 ms; against a networked database the gain is larger.
 - `factory.Faker` has no dependency: `Name`, `FirstName`, `LastName`, `Username`, `Email` (reserved example domains), `Word`, `Words`, `Sentence`, `Paragraph`, `Slug`, `URL`, `UUID`, `Int`, `Float`, `Bool`, `Time`, `factory.Pick(f, ...)` and `Seq()`. It uses `math/rand/v2` and must never generate secrets.
 
 ### Locales and commerce data
@@ -60,8 +60,12 @@ catalog := factories.Product.Seed(42).Count(2000).Make()
 | `Address` (city and state match) | `2417 Sunset St, Georgetown, KY 34691` | `Rua Getúlio Vargas, 2417 - Fortaleza/CE, 34691-928` |
 
 - `f.EmailFor(name)` derives the address from a name you already generated (`ana.luiza.13120@example.com`), on the same reserved domains as `Email`.
-- `f.FakeCPF()` returns a CPF-formatted string (`867.974.402-70`) whose check digit is wrong on purpose: it can never be a real person's CPF, and a CPF validator rejects it. Seed the column directly.
-- `factory.NewFakerWithLocale(seed, l)` builds a Faker outside a factory. Without a locale the Faker keeps its original data (mixed names, lorem ipsum), so seeds written before locales produce the same rows; its commerce and address methods use English.
+- `f.FakeCPF()` returns a CPF-formatted string (`867.974.402-70`) whose first check digit is always wrong: it can never be a real person's CPF, and every standard CPF validator rejects it. Seed the column directly.
+- `factory.NewFaker(seed).WithLocale(l)` builds a Faker outside a factory.
+
+<Callout type="warning">
+Without a locale the Faker is **not** English: it keeps its original data set (mostly Brazilian first names, lorem ipsum), so seeds written before locales produce the same rows. Only the methods that data set never had (`Company`, the product and address methods) use English there. Pass `factory.LocaleEN()` for consistent English data.
+</Callout>
 
 ## Seeders
 

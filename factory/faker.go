@@ -18,15 +18,22 @@ type Faker struct {
 	seq int
 }
 
-// NewFaker returns a Faker seeded with seed, with the zero Locale.
-func NewFaker(seed uint64) *Faker { return NewFakerWithLocale(seed, Locale{}) }
-
-// NewFakerWithLocale returns a Faker seeded with seed that generates
-// names, words, companies, products and addresses in locale l.
-func NewFakerWithLocale(seed uint64, l Locale) *Faker {
+// NewFaker returns a Faker seeded with seed, with the zero Locale (the
+// original data set; see Locale). Choose a locale with WithLocale:
+//
+//	f := factory.NewFaker(42).WithLocale(factory.LocalePTBR())
+func NewFaker(seed uint64) *Faker {
 	src := rand.NewPCG(seed, seed^0x9e3779b97f4a7c15)
 
-	return &Faker{r: rand.New(src), loc: l.d} //nolint:gosec // G404: fake data, never secrets
+	return &Faker{r: rand.New(src)} //nolint:gosec // G404: fake data, never secrets
+}
+
+// WithLocale makes f generate names, words, companies, products and
+// addresses in l, and returns f. It consumes no randomness, so the output
+// stays reproducible for the seed.
+func (f *Faker) WithLocale(l Locale) *Faker {
+	f.loc = l.d
+	return f
 }
 
 // Locale returns the Faker's locale.
@@ -261,9 +268,9 @@ func (f *Faker) Address() string {
 }
 
 // FakeCPF returns a string in the Brazilian CPF format ("123.456.789-09")
-// whose first check digit is wrong on purpose: it can never be a real
-// person's CPF, and a CPF validator rejects it. Seed CPF columns directly;
-// do not send it through validation meant for real documents.
+// whose first check digit is always wrong: it can never be a real person's
+// CPF, and every standard CPF validator rejects it. Seed CPF columns
+// directly; do not send it through validation meant for real documents.
 func (f *Faker) FakeCPF() string {
 	var d [11]int
 	for i := range 9 {

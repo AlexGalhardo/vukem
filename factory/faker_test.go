@@ -53,12 +53,12 @@ func TestFakerLocalesAreDeterministic(t *testing.T) {
 		t.Run(l.Name(), func(t *testing.T) {
 			t.Parallel()
 
-			a, b := sample(NewFakerWithLocale(7, l)), sample(NewFakerWithLocale(7, l))
+			a, b := sample(NewFaker(7).WithLocale(l)), sample(NewFaker(7).WithLocale(l))
 			if diff := cmp.Diff(a, b); diff != "" {
 				t.Errorf("same seed, different data (-first +second):\n%s", diff)
 			}
 
-			if c := sample(NewFakerWithLocale(8, l)); slices.Equal(a, c) {
+			if c := sample(NewFaker(8).WithLocale(l)); slices.Equal(a, c) {
 				t.Error("different seeds, same data")
 			}
 		})
@@ -80,7 +80,7 @@ func TestFakerLocaleData(t *testing.T) {
 		t.Run(tt.locale.Name(), func(t *testing.T) {
 			t.Parallel()
 
-			f := NewFakerWithLocale(99, tt.locale)
+			f := NewFaker(99).WithLocale(tt.locale)
 			d := tt.data
 
 			for i := range 50 {
@@ -122,7 +122,7 @@ func TestFakerLocaleData(t *testing.T) {
 func TestFakerPTBR(t *testing.T) {
 	t.Parallel()
 
-	f := NewFakerWithLocale(5, LocalePTBR())
+	f := NewFaker(5).WithLocale(LocalePTBR())
 	cep := regexp.MustCompile(`^\d{5}-\d{3}$`)
 	address := regexp.MustCompile(`^(Rua|Avenida|Travessa|Alameda|Praça) .+, \d+ - .+/[A-Z]{2}, \d{5}-\d{3}$`)
 
@@ -154,7 +154,7 @@ func TestFakerPTBR(t *testing.T) {
 func TestFakerEN(t *testing.T) {
 	t.Parallel()
 
-	f := NewFakerWithLocale(5, LocaleEN())
+	f := NewFaker(5).WithLocale(LocaleEN())
 	address := regexp.MustCompile(`^\d+ \w+ \w+, [A-Za-z ]+, [A-Z]{2} \d{5}$`)
 
 	for range 50 {
