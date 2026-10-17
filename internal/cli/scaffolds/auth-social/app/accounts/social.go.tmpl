@@ -19,8 +19,13 @@ import (
 // NewSocial configures the providers listed in names from
 // SOCIAL_<NAME>_CLIENT_ID and SOCIAL_<NAME>_CLIENT_SECRET; the callback is
 // APP_URL/auth/<name>/callback. Providers without credentials are skipped.
-func NewSocial(app *vukem.App, names ...string) *social.Social {
-	s := social.New(app.Key.Derive("social.state", 32))
+func NewSocial(app *vukem.App, names ...string) (*social.Social, error) {
+	key, err := app.DeriveKey("social.state", 32)
+	if err != nil {
+		return nil, err
+	}
+
+	s := social.New(key)
 	s.InsecureCookies = !app.Config.IsProduction() && !strings.HasPrefix(app.Config.URL, "https://")
 
 	base := strings.TrimSuffix(app.Config.URL, "/")
@@ -85,7 +90,7 @@ func NewSocial(app *vukem.App, names ...string) *social.Social {
 		}
 	}
 
-	return s
+	return s, nil
 }
 
 // FindOrCreateFromSocial returns the user linked to su, linking by email

@@ -55,13 +55,18 @@ func New(app *vukem.App) (*Accounts, error) {
 	users := auth.NewORMProvider[models.User](db)
 	tokens := auth.NewTokens(db)
 
+	signingKey, err := app.DeriveKey("signed.urls", 32)
+	if err != nil {
+		return nil, err
+	}
+
 	web := auth.NewSessionGuard("web", users, hasher, auth.NewRememberStore(db))
 	web.InsecureCookies = !app.Config.IsProduction() && !strings.HasPrefix(app.Config.URL, "https://")
 
 	return &Accounts{
 		DB: db, Mailer: mailer, Users: users, Web: web, Tokens: tokens, Hasher: hasher,
 		API:       auth.NewTokenGuard("api", users, tokens),
-		Signer:    signed.New(app.Key.Derive("signed.urls", 32)),
+		Signer:    signed.New(signingKey),
 		URL:       strings.TrimSuffix(app.Config.URL, "/"),
 		ResetTTL:  time.Hour,
 		VerifyTTL: time.Hour,

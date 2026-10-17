@@ -16,7 +16,10 @@ func Social(r *router.Router, app *vukem.App) error {
 		return err
 	}
 
-	s := accounts.NewSocial(app, {{.Providers}})
+	s, err := accounts.NewSocial(app, {{.Providers}})
+	if err != nil {
+		return err
+	}
 
 	// Used OAuth states live in the cache store, so a replayed callback is
 	// refused on every instance: use a shared store (CACHE_STORE=database
