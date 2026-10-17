@@ -27,6 +27,35 @@ withPosts := factories.User.AfterCreate(func(ctx context.Context, ex database.Ex
 - Factories are values: `State`, `Count`, `Seed` and `AfterCreate` return copies, so a base factory can be shared.
 - `factory.Faker` has no dependency: `Name`, `FirstName`, `LastName`, `Username`, `Email` (reserved example domains), `Word`, `Words`, `Sentence`, `Paragraph`, `Slug`, `URL`, `UUID`, `Int`, `Float`, `Bool`, `Time`, `factory.Pick(f, ...)` and `Seq()`. It uses `math/rand/v2` and must never generate secrets.
 
+### Locales and commerce data
+
+`factory.LocaleEN()` and `factory.LocalePTBR()` switch the Faker to English or Brazilian Portuguese data, embedded in the package. Seeded output stays reproducible per locale:
+
+```go title="database/factories/product_factory.go"
+var Product = factory.New(func(f *factory.Faker) models.Product {
+	return models.Product{
+		Title:       f.ProductTitle(),       // "Cadeira Ergonômica de Aço"
+		Description: f.ProductDescription(), // "Mochila Leve de Couro, ideal para o dia a dia. Envio em 24 horas."
+		Category:    f.Category(),           // "Casa e Cozinha"
+		Seller:      f.Company(),            // "Silva & Costa Comércio Ltda"
+	}
+}).Locale(factory.LocalePTBR())
+
+catalog := factories.Product.Seed(42).Count(2000).Make()
+```
+
+| Method | `LocaleEN()` | `LocalePTBR()` |
+| --- | --- | --- |
+| `Name`, `Word`, `Sentence` | English names and words | Brazilian names, Portuguese words |
+| `Company` | `Baker Logistics LLC` | `Soares & Alves Papelaria Ltda` |
+| `ProductTitle`, `ProductDescription`, `Category` | `Vintage Leather Lamp`, `Electronics` | `Luminária Vintage de Couro`, `Eletrônicos` |
+| `StreetAddress`, `City`, `State`, `PostalCode` | `2417 Sunset St`, `Georgetown`, `KY`, ZIP | `Rua Getúlio Vargas, 2417`, `Fortaleza`, `CE`, CEP |
+| `Address` (city and state match) | `2417 Sunset St, Georgetown, KY 34691` | `Rua Getúlio Vargas, 2417 - Fortaleza/CE, 34691-928` |
+
+- `f.EmailFor(name)` derives the address from a name you already generated (`ana.luiza.13120@example.com`), on the same reserved domains as `Email`.
+- `f.FakeCPF()` returns a CPF-formatted string (`867.974.402-70`) whose check digit is wrong on purpose: it can never be a real person's CPF, and a CPF validator rejects it. Seed the column directly.
+- `factory.NewFakerWithLocale(seed, l)` builds a Faker outside a factory. Without a locale the Faker keeps its original data (mixed names, lorem ipsum), so seeds written before locales produce the same rows; its commerce and address methods use English.
+
 ## Seeders
 
 ```go title="database/seeders/posts_seeder.go"

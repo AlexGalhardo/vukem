@@ -52,3 +52,17 @@ func ExampleFactory_Create() {
 	fmt.Println(len(created), n, created[0].ID > 0)
 	// Output: 3 3 true
 }
+
+func ExampleNewFakerWithLocale() {
+	f := factory.NewFakerWithLocale(2026, factory.LocalePTBR())
+
+	fmt.Println(f.Name())
+	fmt.Println(f.ProductTitle())
+	fmt.Println(f.Category())
+	fmt.Println(f.Address())
+	// Output:
+	// Arthur Dias
+	// Mochila Rústica de Cerâmica
+	// Beleza
+	// Avenida Getúlio Vargas, 748 - Manaus/AM, 37267-205
+}

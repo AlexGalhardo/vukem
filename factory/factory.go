@@ -30,6 +30,7 @@ type Factory[T any] struct {
 	def    func(f *Faker) T
 	states []func(*T)
 	after  []func(ctx context.Context, ex database.Executor, m *T) error
+	locale Locale
 	count  int
 	seed   uint64
 	seeded bool
@@ -59,6 +60,14 @@ func (f Factory[T]) Seed(seed uint64) Factory[T] {
 	return f
 }
 
+// Locale makes the definition's Faker generate data in l:
+//
+//	Products.Locale(factory.LocalePTBR()).Seed(42).Count(100).Make()
+func (f Factory[T]) Locale(l Locale) Factory[T] {
+	f.locale = l
+	return f
+}
+
 // AfterCreate runs fn for every created model, inside Create; use it to
 // create related models:
 //
@@ -80,7 +89,7 @@ func (f Factory[T]) Make() []T {
 		seed = binary.LittleEndian.Uint64(b[:])
 	}
 
-	fk := NewFaker(seed)
+	fk := NewFakerWithLocale(seed, f.locale)
 	out := make([]T, f.count)
 
 	for i := range out {
