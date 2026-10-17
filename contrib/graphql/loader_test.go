@@ -90,9 +90,13 @@ type User { id: ID! name: String! posts: [Post!]! }
 func blogSchema(t *testing.T, db *countingDB) *graphql.Schema {
 	t.Helper()
 
-	users := graphql.NewLoader(graphql.ByKey(orm.QueryOf[User](db), "id", func(u *User) int64 { return u.ID }))
+	// BatchWait(0): only the resolution tick dispatches batches. The 10ms
+	// fallback timer would split them when a loaded machine delays the
+	// sibling resolvers, making the query count depend on wall time.
+	users := graphql.NewLoader(graphql.ByKey(orm.QueryOf[User](db), "id", func(u *User) int64 { return u.ID }),
+		graphql.BatchWait(0))
 	postsByUser := graphql.NewLoader(graphql.GroupByKey(orm.QueryOf[Post](db).OrderBy("id", orm.Asc), "user_id",
-		func(p *Post) int64 { return p.UserID }))
+		func(p *Post) int64 { return p.UserID }), graphql.BatchWait(0))
 
 	s, err := graphql.New(blogSDL,
 		graphql.Query("posts", func(ctx context.Context, _ graphql.NoArgs) ([]Post, error) {

@@ -256,7 +256,7 @@ func convertParent[P any](v any) (P, bool) {
 }
 
 // property is the default resolver: a map key, or a struct field matched
-// by json name, then by case-insensitive Go name.
+// by json name, then by case-insensitive Go name (tagged fields included).
 func (s *Schema) property(parent any, name string) (any, error) {
 	if parent == nil {
 		return nil, nil
@@ -335,12 +335,14 @@ func (s *Schema) fieldIndex(rt reflect.Type) map[string][]int {
 			m[name] = f.Index
 		}
 
-		if _, dup := folded[strings.ToLower(f.Name)]; !dup && f.Tag.Get("json") == "" {
+		if _, dup := folded[strings.ToLower(f.Name)]; !dup {
 			folded[strings.ToLower(f.Name)] = f.Index
 		}
 	}
 
-	// Untagged Go names also match case-insensitively (ID → id).
+	// Go names, tagged or not, also match case-insensitively (ID → id,
+	// PriceCents `json:"price_cents"` → priceCents). Exact json names are
+	// looked up first, so they win over another field's Go name.
 	for k, v := range folded {
 		m[foldPrefix+k] = v
 	}

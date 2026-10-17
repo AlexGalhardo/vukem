@@ -53,6 +53,8 @@ remaining, ok := totp.UseRecoveryCode(input, hashes)
 code, err := totp.Code(secret, time.Now(), totp.Options{})   // in tests
 ```
 
+`totp.QR` (and `totp.QRMatrix` for other renderers) encodes any text in byte mode at error correction level M, versions 1 to 40: up to 2331 bytes, enough for long `otpauth://` URIs and PIX BR Codes. Longer text returns `totp.ErrTooLong`.
+
 The QR SVG is written by `totp.QR` itself from server data, which is why the scaffold may insert it as raw HTML. Never do that with user input.
 
 In the Inertia starters the scaffold sends the QR code to the page as a `data:image/svg+xml;base64,…` URL rendered with a plain `<img>`, so no raw HTML is injected into React, Vue or Svelte.
