@@ -126,6 +126,7 @@ func TestNewRejectsMisconfiguration(t *testing.T) {
 		{"bad bool env", all(), map[string]string{"FLAG_NEW_CHECKOUT": "maybe"}, "FLAG_NEW_CHECKOUT"},
 		{"bad int env", all(), map[string]string{"FLAG_UPLOAD_LIMIT_MB": "ten"}, "FLAG_UPLOAD_LIMIT_MB"},
 		{"unknown env key", all(), map[string]string{"FLAG_NEW_CHEKOUT": "true"}, "names no registered flag"},
+		{"lowercase env key", all(), map[string]string{"FLAG_new_checkout": "true"}, "names no registered flag"},
 	}
 
 	for _, tt := range tests {

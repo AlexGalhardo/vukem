@@ -315,9 +315,13 @@ func New(cfg Config) (*Flags, error) {
 	}
 
 	if lister, ok := cfg.Env.(interface{ Keys() []string }); ok {
+		known := map[string]bool{}
+		for _, d := range f.defs {
+			known[envKey(d.name)] = true
+		}
+
 		for _, k := range lister.Keys() {
-			name, ok := strings.CutPrefix(k, EnvPrefix)
-			if ok && f.byName[strings.ToLower(name)].name == "" {
+			if strings.HasPrefix(k, EnvPrefix) && !known[k] {
 				errs = append(errs, fmt.Errorf("flags: %s names no registered flag", k))
 			}
 		}
