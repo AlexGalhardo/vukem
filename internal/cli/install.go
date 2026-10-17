@@ -147,6 +147,11 @@ func installAPI(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 
 		regs = append(regs, registration{"routes/registry.go", "All", "API"})
 
+		// With two-factor authentication installed, tokens need the code too.
+		if err := applyAPITwoFactor(env, data); err != nil {
+			return err
+		}
+
 		if err := appendEnvExample(env, []string{"CORS_ALLOWED_ORIGINS"}); err != nil {
 			return err
 		}

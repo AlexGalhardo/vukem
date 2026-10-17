@@ -66,6 +66,48 @@ var socialTwoFactorPatch = patch{
 	marker: "StartTwoFactorChallenge",
 }
 
+// apiTwoFactorPatch makes API token issuance (install:api) ask for the
+// second factor too, so a password alone never yields a token.
+var apiTwoFactorPatch = patch{
+	file: "app/controllers/apiv1/tokens.go",
+	old: `	u, err := h.a.Web.Validate(c, map[string]string{"email": strings.ToLower(in.Email), "password": in.Password})
+	if err != nil {
+		return err
+	}
+`,
+	new: `	u, err := h.a.Web.Validate(c, map[string]string{"email": strings.ToLower(in.Email), "password": in.Password})
+	if err != nil {
+		return err
+	}
+
+	// Users with two-factor authentication send a code or a recovery code (vukem install:auth --2fa).
+	if err := h.a.CheckTwoFactor(c.Context(), u.ID, in.Code, in.RecoveryCode); err != nil {
+		return err
+	}
+`,
+	marker: "CheckTwoFactor(",
+}
+
+// applyAPITwoFactor protects API token issuance once both install:api and
+// install:auth --2fa ran, whichever came first: it patches the handler
+// and adds the generated test.
+func applyAPITwoFactor(env *Env, data map[string]string) error {
+	if !exists(env, filepath.Join("routes", "two_factor.go")) ||
+		!exists(env, filepath.FromSlash(apiTwoFactorPatch.file)) {
+		return nil
+	}
+
+	if err := applyPatches(env, apiTwoFactorPatch); err != nil {
+		return err
+	}
+
+	if exists(env, filepath.Join("tests", "api_two_factor_test.go")) {
+		return nil
+	}
+
+	return installScaffold(env, "api-2fa", data, false)
+}
+
 const dashboardLinkClass = `"text-indigo-600 hover:underline dark:text-indigo-400"`
 
 // dashboardTwoFactorPatches link the settings page from the dashboard of
@@ -107,7 +149,7 @@ var dashboardTwoFactorPatches = []patch{
 func installTwoFactor(env *Env, data map[string]string, force bool) ([]registration, error) {
 	// Without the login change 2FA could be turned on but never asked
 	// for: refuse before writing anything (fail closed).
-	if err := checkPatches(env, loginTwoFactorPatch, socialTwoFactorPatch); err != nil {
+	if err := checkPatches(env, loginTwoFactorPatch, socialTwoFactorPatch, apiTwoFactorPatch); err != nil {
 		return nil, err
 	}
 
@@ -123,6 +165,10 @@ func installTwoFactor(env *Env, data map[string]string, force bool) ([]registrat
 	}
 
 	if err := applyPatches(env, append([]patch{loginTwoFactorPatch}, dashboardTwoFactorPatches...)...); err != nil {
+		return nil, err
+	}
+
+	if err := applyAPITwoFactor(env, data); err != nil {
 		return nil, err
 	}
 

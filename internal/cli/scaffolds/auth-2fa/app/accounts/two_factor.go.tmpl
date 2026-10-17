@@ -155,6 +155,31 @@ func (a *Accounts) VerifyTwoFactor(ctx context.Context, userID int64, code, reco
 	return ok && err == nil, err
 }
 
+// CheckTwoFactor is the second factor of credential exchanges without a
+// session, such as API token issuance: users without 2FA pass, users with
+// it need a valid code or recovery code (a validation error otherwise).
+func (a *Accounts) CheckTwoFactor(ctx context.Context, userID int64, code, recovery string) error {
+	tf, err := a.TwoFactor(ctx, userID)
+	if err != nil || !tf.Enabled() {
+		return err
+	}
+
+	if code == "" && recovery == "" {
+		return errs.NewValidation().Add("code", "Enter the code from your authenticator app or a recovery code.")
+	}
+
+	ok, err := a.VerifyTwoFactor(ctx, userID, code, recovery)
+	if err != nil {
+		return err
+	}
+
+	if !ok {
+		return InvalidTwoFactorCode()
+	}
+
+	return nil
+}
+
 // RegenerateRecoveryCodes replaces the recovery codes and returns the new
 // ones to show once.
 func (a *Accounts) RegenerateRecoveryCodes(ctx context.Context, userID int64) ([]string, error) {

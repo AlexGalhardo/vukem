@@ -28,12 +28,18 @@ type issueInput struct {
 	Email      string `json:"email"`
 	Password   string `json:"password"`
 	DeviceName string `json:"device_name"`
+	// Code or RecoveryCode is required for users with two-factor
+	// authentication (vukem install:auth --2fa).
+	Code         string `json:"code"`
+	RecoveryCode string `json:"recovery_code"`
 }
 
 var issueSchema = z.Struct[issueInput](z.Shape{
-	"email":       z.String().Trim().Email(),
-	"password":    z.String().Min(1),
-	"device_name": z.String().Trim().Min(1).Max(100),
+	"email":         z.String().Trim().Email(),
+	"password":      z.String().Min(1),
+	"device_name":   z.String().Trim().Min(1).Max(100),
+	"code":          z.String().Trim().Max(16).Optional(),
+	"recovery_code": z.String().Trim().Max(32).Optional(),
 })
 
 // Issue exchanges email and password for a token: POST /api/v1/tokens.

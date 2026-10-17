@@ -251,14 +251,18 @@ func TestNewProjectEndToEnd(t *testing.T) {
 		t.Fatalf("unknown provider = %d %s", code, errOut)
 	}
 
-	// install:api on a web project reuses the authentication core.
+	// install:api on a web project reuses the authentication core; with
+	// two-factor authentication installed, token issuance asks for the code
+	// too (TestAPITokenRequiresTwoFactor runs below).
 	if code, out, errOut := vukem(
 		t,
 		project,
 		"install:api",
 	); code != 0 ||
 		!strings.Contains(out, "created routes/api.go") ||
-		strings.Contains(out, "created app/accounts/accounts.go") {
+		strings.Contains(out, "created app/accounts/accounts.go") ||
+		!strings.Contains(out, "updated app/controllers/apiv1/tokens.go") ||
+		!strings.Contains(out, "created tests/api_two_factor_test.go") {
 		t.Fatalf("install:api = %d\n%s%s", code, out, errOut)
 	}
 

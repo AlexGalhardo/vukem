@@ -37,6 +37,7 @@ func TestTwoFactorPatchesMatchScaffolds(t *testing.T) {
 		{"scaffolds/auth-web/app/controllers/account/account.go.tmpl", loginTwoFactorPatch},
 		{"scaffolds/auth-inertia/app/controllers/account/account.go.tmpl", loginTwoFactorPatch},
 		{"scaffolds/auth-social/routes/social.go.tmpl", socialTwoFactorPatch},
+		{"scaffolds/api/app/controllers/apiv1/tokens.go.tmpl", apiTwoFactorPatch},
 		{"scaffolds/auth-web/resources/views/auth/dashboard.html", dashboardTwoFactorPatches[0]},
 		{"scaffolds/inertia-react/resources/js/pages/Dashboard.tsx", dashboardTwoFactorPatches[1]},
 		{"scaffolds/auth-inertia-react/resources/js/pages/Dashboard.tsx", dashboardTwoFactorPatches[1]},

@@ -1,0 +1,70 @@
+package tests
+
+import (
+	"testing"
+	"time"
+
+	"github.com/AlexGalhardo/vukem/auth/totp"
+	"github.com/AlexGalhardo/vukem/orm"
+	"github.com/AlexGalhardo/vukem/vukemtest"
+
+	"{{.Module}}/app/accounts"
+	"{{.Module}}/app/models"
+	"{{.Module}}/bootstrap"
+)
+
+// A password alone never yields an API token for a user with two-factor
+// authentication: the code (or a recovery code, once) is required.
+func TestAPITokenRequiresTwoFactor(t *testing.T) {
+	t.Parallel()
+
+	app := vukemtest.New(t, bootstrap.New)
+
+	acc, err := accounts.New(app.App)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	h, err := acc.Hasher.Make("correct horse battery")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	u := models.User{Name: "2FA User", Email: "2fa-api@example.com", Password: h}
+	if err := orm.Create(t.Context(), acc.DB, &u); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := acc.EnableTwoFactor(t.Context(), u.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	tf, err := acc.TwoFactor(t.Context(), u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	code, err := totp.Code(tf.TwoFactorSecret.V, time.Now(), totp.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	recovery, ok, err := acc.ConfirmTwoFactor(t.Context(), u.ID, code)
+	if err != nil || !ok {
+		t.Fatalf("ConfirmTwoFactor() = %v, %v", ok, err)
+	}
+
+	issue := func(extra map[string]any) *vukemtest.Response {
+		body := map[string]any{"email": u.Email, "password": "correct horse battery", "device_name": "cli"}
+		for k, v := range extra {
+			body[k] = v
+		}
+
+		return app.Client(t).PostJSON("/api/v1/tokens", body)
+	}
+
+	issue(nil).AssertJSONValidationErrors("code")
+	issue(map[string]any{"code": code}).AssertJSONValidationErrors("code") // each time step works once
+	issue(map[string]any{"recovery_code": recovery[0]}).AssertCreated().AssertJSONPath("type", "Bearer")
+	issue(map[string]any{"recovery_code": recovery[0]}).AssertJSONValidationErrors("code") // single use
+}
