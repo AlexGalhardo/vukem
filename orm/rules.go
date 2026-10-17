@@ -20,10 +20,13 @@ import (
 //	}
 type Rule struct {
 	field   string
+	column  string
 	message string
-	check   func(ctx context.Context, ex database.Executor, r Rule) (bool, error)
-	ignore  any
-	value   any
+	// key translates message in the request locale; Message clears it.
+	key    string
+	check  func(ctx context.Context, ex database.Executor, r Rule) (bool, error)
+	ignore any
+	value  any
 }
 
 // Unique passes when no row of T has column = value (soft-deleted rows
@@ -31,7 +34,9 @@ type Rule struct {
 func Unique[T any](column string, value any) Rule {
 	return Rule{
 		field:   column,
+		column:  column,
 		value:   value,
+		key:     "validation.unique",
 		message: "The " + column + " has already been taken.",
 		check: func(ctx context.Context, ex database.Executor, r Rule) (bool, error) {
 			q := QueryOf[T](ex).WithTrashed().Where(column, value)
@@ -50,7 +55,9 @@ func Unique[T any](column string, value any) Rule {
 func Exists[T any](column string, value any) Rule {
 	return Rule{
 		field:   column,
+		column:  column,
 		value:   value,
+		key:     "validation.exists",
 		message: "The selected " + column + " is invalid.",
 		check: func(ctx context.Context, ex database.Executor, _ Rule) (bool, error) {
 			return QueryOf[T](ex).Where(column, value).Exists(ctx)
@@ -64,12 +71,14 @@ func (r Rule) Ignore(id any) Rule { r.ignore = id; return r }
 // Field reports the error on name instead of the column name.
 func (r Rule) Field(name string) Rule { r.field = name; return r }
 
-// Message replaces the error message.
-func (r Rule) Message(msg string) Rule { r.message = msg; return r }
+// Message replaces the error message; it is used as is, not translated.
+func (r Rule) Message(msg string) Rule { r.message, r.key = msg, ""; return r }
 
 // Validate runs rules and returns an *errs.ValidationError (422) listing
 // the failing fields, or nil. Empty values (nil, "", zero numbers) are
-// skipped: required-ness belongs to the z schema.
+// skipped: required-ness belongs to the z schema. The built-in messages
+// follow the request locale ("validation.unique", "validation.exists"; see
+// errs.WithTranslator, installed by i18n.Middleware).
 func Validate(ctx context.Context, ex database.Executor, rules ...Rule) error {
 	verr := errs.NewValidation()
 
@@ -84,7 +93,7 @@ func Validate(ctx context.Context, ex database.Executor, rules ...Rule) error {
 		}
 
 		if !ok {
-			verr = verr.Add(r.field, r.message)
+			verr = verr.Add(r.field, r.localized(ctx))
 		}
 	}
 
@@ -106,4 +115,17 @@ func isEmpty(v any) bool {
 	}
 
 	return rv.IsZero()
+}
+
+// localized translates the built-in message through the Translator of ctx
+// (errs.WithTranslator), naming the column by its
+// "validation.attributes.<column>" translation when the catalog has one.
+func (r Rule) localized(ctx context.Context) string {
+	if r.key == "" {
+		return r.message
+	}
+
+	field := errs.Translate(ctx, "validation.attributes."+r.column, r.column, nil)
+
+	return errs.Translate(ctx, r.key, r.message, map[string]any{"field": field})
 }

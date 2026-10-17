@@ -312,6 +312,8 @@ if err := orm.Validate(c.Context(), db,
 }
 ```
 
+The built-in messages follow the request locale (`validation.unique`, `validation.exists`, with `{field}` from `validation.attributes.<column>`; see [i18n](subsystems.md#i18n)); a `Message` override is used as is.
+
 Empty values are skipped (`required` belongs to the schema). Columns are validated against the model, so input never chooses a column.
 
 ## MongoDB
