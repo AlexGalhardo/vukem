@@ -13,14 +13,12 @@ func TestRateLimitersFromConfig(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name    string
-		env     map[string]string
-		wantErr bool
+		name string
+		env  map[string]string
 	}{
 		{name: "default is memory", env: nil},
 		{name: "memory", env: map[string]string{"RATE_LIMIT_STORE": "memory"}},
 		{name: "cache", env: map[string]string{"RATE_LIMIT_STORE": "cache"}},
-		{name: "unknown store", env: map[string]string{"RATE_LIMIT_STORE": "redis"}, wantErr: true},
 	}
 
 	for _, tt := range tests {
@@ -30,12 +28,8 @@ func TestRateLimitersFromConfig(t *testing.T) {
 			app := newTestApp(t, WithSource(testSource(tt.env)))
 
 			limiters, err := app.RateLimiters()
-			if (err != nil) != tt.wantErr {
-				t.Fatalf("RateLimiters() error = %v, want error %v", err, tt.wantErr)
-			}
-
 			if err != nil {
-				return
+				t.Fatal(err)
 			}
 
 			l := limiters("api", 1, time.Minute)
@@ -47,6 +41,18 @@ func TestRateLimitersFromConfig(t *testing.T) {
 				t.Fatal("second Allow() allowed, want limit 1")
 			}
 		})
+	}
+}
+
+// A typo in RATE_LIMIT_STORE must not quietly fall back to per-process
+// limits, which multiply the budget by the number of servers.
+func TestSecurity_A02_UnknownRateLimitStoreFails(t *testing.T) {
+	t.Parallel()
+
+	app := newTestApp(t, WithSource(testSource(map[string]string{"RATE_LIMIT_STORE": "databse"})))
+
+	if limiters, err := app.RateLimiters(); err == nil || limiters != nil {
+		t.Fatalf("RateLimiters() with RATE_LIMIT_STORE=databse = %v, %v, want an error", limiters != nil, err)
 	}
 }
 
