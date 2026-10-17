@@ -16,7 +16,7 @@ A CI gate (`apidiff`, see [tooling.md](tooling.md#api-compatibility)) compares e
 - Packages under `internal/`, `testdata/`, and identifiers documented as experimental.
 - Exact error message text, log output and HTML markup of the built-in error and dashboard pages.
 - Performance characteristics (they may improve or regress within reason; see [performance.md](performance.md)).
-- Security fixes: when a default is unsafe, it is changed in a minor or patch release even if that breaks an app relying on the unsafe behaviour. Such changes are called out under **Security** in the changelog, with an `Insecure…` opt-out when one is reasonable.
+- Security fixes: when a default is unsafe, it is changed in a minor or patch release even if that breaks an app relying on the unsafe behaviour. Such changes are called out under **Security** in the changelog, with an `Insecure…` opt-out when one is reasonable. A security fix that breaks an exported API also needs an entry in the `apicheck` [exception list](tooling.md#security-exceptions).
 - Bugs: behaviour that contradicts the documentation is fixed.
 
 Breaking changes outside these exceptions only ship in a new major version with a new module path (`/v2`).

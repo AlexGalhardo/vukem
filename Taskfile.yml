@@ -85,10 +85,11 @@ tasks:
       - go run ./internal/tools/covergate coverage.out
 
   vet:
-    desc: Run go vet and preview go fix modernizations
+    desc: Run go vet, preview go fix modernizations and check the //go:fix inline wrappers
     cmds:
       - go vet ./...
       - go fix -diff ./...
+      - go run ./internal/tools/fixinline
 
   vuln:
     desc: Scan for known vulnerabilities

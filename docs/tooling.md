@@ -30,6 +30,7 @@ gopls: enable `"formatting.gofumpt": true` so editor and CI agree.
 - `nolint` requires a specific linter and an explanation.
 - revive's `exported` and `package-comments` rules are enforced (no `comments` exclusion preset): every exported identifier needs a doc comment starting with its name.
 - `go vet ./...` and `go fix -diff ./...` (modernizers) run in CI.
+- `go run ./internal/tools/fixinline` (CI lint job, `task vet`) checks every `//go:fix inline` wrapper: through a build overlay (the tree is not written) it adds callers to the wrapper's package whose argument variables reuse the parameter names (in order, rotated by one, and with one argument replaced by an expression while the same-named variable is in scope), runs `go fix -diff` and fails unless each call becomes exactly the wrapper's body with the arguments substituted, or when the in-order call is not inlined at all. A rotated or literal call that `go fix` leaves alone is printed as a `note:` (it still compiles). Supported wrappers forward to one call in a single statement, without type parameters or build constraints; anything else fails the check until the tool learns it.
 - `govulncheck ./...` in CI, in the pre-push hook and in the weekly `vuln.yml` cron (every module).
 - Multi-module: `task lint` loops over every module; CI runs one job per module with `GOWORK=off`.
 
@@ -170,7 +171,31 @@ There is no baseline file: the latest stable `v1` tag of each module is the base
 
 1. On the release commit, `task api:check -- -major v0 -head v1.0.0 -report docs/api/apidiff-v0.25.0-to-v1.0.0.md` (base: the last `v0` tag) lists what changed since the last `v0`; every incompatible entry must be in the [1.0 upgrade guide](upgrade/1.0.md). Commit the report.
 2. Tag the core `v1.0.0` and every published nested module `drivers/<name>/v1.0.0` / `contrib/<name>/v1.0.0` (after their `go.mod` requires core `v1.0.0`). A module left on `v0` stays outside the gate until its first `v1` tag.
-3. From then on the `apidiff` job fails any incompatible change. A security fix that must break an API (allowed by the [stability policy](stability.md#what-is-not-covered)) is merged by an admin over the failed check, with the reason in the PR and under **Security** in the changelog. A `/v2` module needs the CI step switched to `-major v2` for that module.
+3. From then on the `apidiff` job fails any incompatible change. A security fix that must break an API (allowed by the [stability policy](stability.md#what-is-not-covered)) needs an entry in the [exception list](#security-exceptions), never an admin merge over the failed check. A `/v2` module needs the CI step switched to `-major v2` for that module.
+
+### Security exceptions
+
+`.config/apicheck-exceptions.json` is the only sanctioned way to ship an incompatible change after `v1` (decision B6). Each entry names one change exactly as the gate prints it:
+
+```json
+{
+  "exceptions": [
+    {
+      "module": "github.com/AlexGalhardo/vukem",
+      "symbol": "github.com/AlexGalhardo/vukem/auth/hash.DefaultArgon2",
+      "change": "removed",
+      "justification": "the default parameters are below the OWASP minimum; callers must pick explicit ones",
+      "advisory": "https://github.com/AlexGalhardo/vukem/security/advisories/GHSA-xxxx-xxxx-xxxx",
+      "version": "v1.4.1"
+    }
+  ]
+}
+```
+
+- `module` is a published module path, `symbol` the import path and identifier from the `::error` annotation, `change` the apidiff message (matched exactly, so a different break to the same symbol is not covered), `advisory` an `https` link to the GitHub security advisory or issue, and `version` the release of that module that ships the break (`vX.Y.Z`).
+- The gate turns a covered change into a `::warning` and still fails on every other incompatible change. One entry covers one change.
+- The gate fails when the file is malformed (unknown fields, trailing data, bad JSON), when an entry misses a field, names an unknown module or a symbol outside it, has a non-`https` advisory, a non-stable version or a version of another major than the module (`v0`/`v1` for a path without `/vN`), is duplicated, matches no change (unused, including for a module without a `v1` tag) or has expired: once the module's base tag is at or past `version`, the break is in the baseline and the entry must be removed right after that release.
+- The file is validated in report mode too; a missing file means no exceptions. Ship the break as `fix(scope)!:` with a `BREAKING CHANGE:` footer naming the advisory, so it lands under **Security** in the changelog.
 
 ## Task runner
 
@@ -199,7 +224,7 @@ The root keeps only what tools or Go require there; everything else has a fixed 
 | Path | What lives there |
 | --- | --- |
 | root | the `vukem` package (grouped by theme: `app.go`, `http.go`, `database.go`, `background.go`, `services.go`, `command.go`, `codegen.go`, `boost.go`, `doc.go` and their tests), one directory per public package, `go.mod`/`go.sum`/`go.work`, `README.md`, `LICENSE`, `CHANGELOG.md`, `AGENTS.md`, `Taskfile.yml`, `lefthook.yml` and the configs tools only discover at the root (`.editorconfig`, `.gitattributes`, `.gitignore`, `.golangci.yml`, `.markdownlint-cli2.jsonc`, `osv-scanner.toml`, which OpenSSF Scorecard reads) |
-| `.config/` | `cliff.toml` (passed with `--config`), `goreleaser.yaml` (GoReleaser finds it on its own), `compose.yaml` (passed with `-f`; `name: vukem` keeps the container names) |
+| `.config/` | `cliff.toml` (passed with `--config`), `goreleaser.yaml` (GoReleaser finds it on its own), `compose.yaml` (passed with `-f`; `name: vukem` keeps the container names), `apicheck-exceptions.json` (read by `internal/tools/apicheck`, see [Security exceptions](#security-exceptions)) |
 | `.github/` | workflows, Dependabot, issue/PR templates and the community files `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md` (GitHub detects them there) |
 | `.claude/` | `CLAUDE.md`, rules, skills and settings |
 | `docs/` | design docs and the roadmap `PLAN.md` |

@@ -283,7 +283,8 @@ func resolve(
 //go:fix inline
 func NewMiddleware(bundle *Bundle, config MiddlewareConfig) (func(http.Handler) http.Handler, error) {
 	// The parameters are not named b and cfg on purpose: with those names,
-	// go fix (Go 1.27.2) rewrote NewMiddleware(b, MiddlewareConfig{}) into
-	// Middleware(MiddlewareConfig{}, cfg).
+	// go fix was reported to rewrite NewMiddleware(b, MiddlewareConfig{})
+	// into Middleware(MiddlewareConfig{}, cfg) (v0.26.0, B2; not reproduced
+	// on Go 1.27.2). internal/tools/fixinline checks this wrapper.
 	return Middleware(bundle, config)
 }

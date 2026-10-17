@@ -98,13 +98,13 @@ Any alias still present when `v1.0.0` is tagged stays for all of `v1` ([stabilit
 
 Known limits, recorded so the owner can decide (none blocks `v1.0.0`):
 
-- **No exception list.** The [stability policy](stability.md#what-is-not-covered) lets security fixes break an unsafe API in a minor, but the gate cannot tell them apart; such a change must be merged by an admin over the failed check, with the reason in the PR and the changelog's **Security** section. An allowlist file (`docs/api/exceptions.txt`, checked by `apicheck`) could replace that (proposal B6).
+- **Security exceptions (B6, done).** The [stability policy](stability.md#what-is-not-covered) lets security fixes break an unsafe API in a minor; such a break needs an entry in `.config/apicheck-exceptions.json` (module, symbol, exact change, justification, advisory link, shipping version), and the gate fails on malformed, unused or expired entries ([tooling.md](tooling.md#security-exceptions)). No admin merge over a failed check.
 - **Deleted modules are not reported.** Modules are discovered from the working tree, so deleting a published module's directory passes the gate.
 - **Behaviour is not checked.** apidiff only sees types and signatures; documented behaviour stays a review responsibility.
 
 ## Proposed breaking changes (owner decision)
 
-The owner decided B1, B2, B3, B4, B5 and B7; B6 is still open. B1 and B2 are applied on branch `fix/v1-breaks`; the others need no code change now.
+The owner decided every proposal; B6 was moved before `v1` and is implemented in `internal/tools/apicheck`. B1 and B2 are applied on branch `fix/v1-breaks`; the others need no code change now.
 
 | ID | Change | Why | Cost | Recommendation | Decision | Status |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -113,7 +113,7 @@ The owner decided B1, B2, B3, B4, B5 and B7; B6 is still open. B1 and B2 are app
 | B3 | `middleware.SecureHeaders` returns an error instead of serving a stricter policy when `Validate` fails | consistency with `CORS` | breaks every app wiring it by hand; the current fail-stricter behaviour is safe | keep; no change | keep | no change |
 | B4 | `signed.New` and `social.New` return an error | runtime keys come from `APP_KEY` | breaks callers; `App.DeriveKey` already fails on a missing key before them | keep; add error-returning constructors in a 1.x minor only if needed (additive) | keep | no change |
 | B5 | Decide which nested modules get `v1.0.0`: `contrib/imaging` (`v0.1.0`), `drivers/mysql` (`v0.1.1`) and `drivers/websocket` (`v0.1.1`) have had one release | a `v1` tag freezes them | staying on `v0` leaves them outside the gate, documented as experimental | tag all modules `v1.0.0` together unless one has known API debt | all modules get `v1.0.0` | at release time; no tag now |
-| B6 | Add an exception list to `apicheck` for security-driven breaks | the gate has no sanctioned override | new tooling, small | add in a 1.x minor when the first case appears | open | — |
+| B6 | Add an exception list to `apicheck` for security-driven breaks | the gate has no sanctioned override | new tooling, small | add in a 1.x minor when the first case appears | do it now, before `v1` | applied: `.config/apicheck-exceptions.json`, see [tooling.md](tooling.md#security-exceptions) |
 | B7 | Merge `queue.*.SetClock` into a `queue.WithClock` option | one way to set a clock | breaks tests that call `SetClock`; owned by the queue work in progress | keep for v1 | keep | no change |
 
 ## Commits
