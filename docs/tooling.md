@@ -190,7 +190,7 @@ There is no baseline file: the latest stable `v1` tag of each module is the base
 ## Agent configuration
 
 - `AGENTS.md` — canonical agent instructions (≤ 50 lines, links to docs).
-- `CLAUDE.md` — imports `@AGENTS.md`, Claude-specific notes.
+- `.claude/CLAUDE.md` — imports `@../AGENTS.md`, Claude-specific notes.
 - `.claude/rules/` — path-scoped rules (`go.md`, `testing.md`, `commits.md`, `changelog.md`, `markdown.md`, `drivers.md`).
 - `.claude/skills/` — samber/cc-skills-golang + workflow skills.
 - `.claude/settings.json` — permission allowlist (`go`, `golangci-lint`, `task`, `git` read commands) and a PostToolUse hook that runs `golangci-lint fmt` on edited `.go` files.
