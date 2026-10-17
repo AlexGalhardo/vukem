@@ -14,6 +14,7 @@ This adds `/auth/{provider}/redirect` and `/auth/{provider}/callback`, the `soci
 - an existing link signs in;
 - an email the provider verified links to the existing account; when that local account was never verified, its password is replaced with a random one and its sessions, remember-me and API tokens end (like a password reset), since they may belong to whoever signed up first with the address;
 - an **unverified** email matching an account is refused with 409, so a provider account cannot take over a password account;
+- after the sign-in, the callback goes back to the page that asked for the login (the intended URL, such as an email verification link, which needs the account's login), or to `/dashboard`;
 - otherwise a new user is created.
 
 It also works on projects that already ran `install:auth`.

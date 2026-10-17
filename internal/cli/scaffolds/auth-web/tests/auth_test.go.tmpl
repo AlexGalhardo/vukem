@@ -102,10 +102,13 @@ func TestRegisterAndVerifyEmail(t *testing.T) {
 	other.Get(verify).AssertForbidden()
 	vukemtest.AssertDatabaseHas(t, app, "users", map[string]any{"email": "ana@example.com", "email_verified_at": nil})
 
-	// Signed out, the link verifies the address and leads to the login page.
+	// Signed out, the link asks for the account's login first, keeps itself
+	// as the intended URL and verifies once the login comes back to it.
 	c.Get(verify).AssertRedirect("/login")
+	vukemtest.AssertDatabaseHas(t, app, "users", map[string]any{"email": "ana@example.com", "email_verified_at": nil})
 	c.PostForm("/login", url.Values{"email": {"ana@example.com"}, "password": {"correct horse battery"}}).
-		AssertRedirect("/dashboard")
+		AssertRedirect(verify)
+	c.Get(verify).AssertRedirect("/dashboard")
 	c.Get("/dashboard").AssertOK().AssertSee("Ana Silva").AssertSee("verified")
 	c.Get(verify).AssertRedirect("/dashboard")
 }
@@ -266,9 +269,11 @@ func TestRegisterSurvivesCacheOutage(t *testing.T) {
 }
 
 // Someone who signs up first with another person's address can log in to
-// the unverified account, but verifying it (the mailbox owner clicking the
-// link, signed out) ends that session, its remember-me token and its API
-// tokens: nothing opened before the address was proven survives.
+// the unverified account, but the mailbox owner clicking the link signed
+// out verifies nothing: the link needs the account's login. Verifying it
+// signed in (here from a second device) ends every other session, the
+// remember-me token and the API tokens of the account, and keeps the
+// verifier's session.
 func TestVerificationEndsOtherSessions(t *testing.T) {
 	t.Parallel()
 
@@ -277,27 +282,31 @@ func TestVerificationEndsOtherSessions(t *testing.T) {
 	squatter := app.Client(t)
 	squatter.PostForm("/register", signUpForm("Mallory", "vic@example.com", "correct horse battery")).
 		AssertRedirect("/register/check-email")
-	squatter.PostForm("/login", url.Values{
-		"email": {"vic@example.com"}, "password": {"correct horse battery"}, "remember": {"true"},
-	}).AssertRedirect("/dashboard")
+	squatter.PostForm("/login", url.Values{"email": {"vic@example.com"}, "password": {"correct horse battery"}, "remember": {"true"}}).
+		AssertRedirect("/dashboard")
 	squatter.Get("/email/verify").AssertOK()
 
 	userID := apiTokenFor(t, app, "vic@example.com")
 	vukemtest.AssertDatabaseHas(t, app, "remember_tokens", map[string]any{"user_id": userID})
 
-	app.Client(t).Get(link(t, app, "vic@example.com")).AssertRedirect("/login")
+	verify := link(t, app, "vic@example.com")
+
+	// The mailbox owner, signed out, only reaches the login page.
+	app.Client(t).Get(verify).AssertRedirect("/login")
+	vukemtest.AssertDatabaseHas(t, app, "users", map[string]any{"email": "vic@example.com", "email_verified_at": nil})
+	squatter.Get("/email/verify").AssertOK()
+
+	// Signed in as the account, the link verifies it and ends the rest.
+	device := app.Client(t)
+	device.Get(verify).AssertRedirect("/login")
+	device.PostForm("/login", url.Values{"email": {"vic@example.com"}, "password": {"correct horse battery"}}).
+		AssertRedirect(verify)
+	device.Get(verify).AssertRedirect("/dashboard")
+	device.Get("/dashboard").AssertOK()
 
 	squatter.Get("/email/verify").AssertRedirect("/login")
 	vukemtest.AssertDatabaseMissing(t, app, "remember_tokens", map[string]any{"user_id": userID})
 	vukemtest.AssertDatabaseMissing(t, app, "access_tokens", map[string]any{"user_id": userID})
-
-	// Signed in as the account, the verifier keeps their own session.
-	owner := app.Client(t)
-	owner.PostForm("/register", signUpForm("Own", "own@example.com", "correct horse battery")).
-		AssertRedirect("/register/check-email")
-	owner.PostForm("/login", url.Values{"email": {"own@example.com"}, "password": {"correct horse battery"}}).AssertRedirect("/dashboard")
-	owner.Get(link(t, app, "own@example.com")).AssertRedirect("/dashboard")
-	owner.Get("/dashboard").AssertOK()
 }
 
 // The link carries a hash of the address: once the email changes, a link
@@ -323,6 +332,9 @@ func TestVerificationLinkBoundToEmail(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	c.Get(verify).AssertRedirect("/login")
+	c.PostForm("/login", url.Values{"email": {"new@example.com"}, "password": {"correct horse battery"}}).
+		AssertRedirect(verify)
 	c.Get(verify).AssertForbidden()
 	vukemtest.AssertDatabaseHas(t, app, "users", map[string]any{"email": "new@example.com", "email_verified_at": nil})
 }

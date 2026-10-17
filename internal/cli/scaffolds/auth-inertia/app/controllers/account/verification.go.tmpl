@@ -2,13 +2,11 @@ package account
 
 import (
 	"crypto/subtle"
-	"errors"
 	"net/http"
 
 	"github.com/AlexGalhardo/vukem/auth"
 	"github.com/AlexGalhardo/vukem/errs"
 	"github.com/AlexGalhardo/vukem/inertia"
-	"github.com/AlexGalhardo/vukem/orm"
 	"github.com/AlexGalhardo/vukem/web"
 
 	"{{.Module}}/app/accounts"
@@ -29,62 +27,44 @@ func (*Handlers) Notice(c *web.Ctx) error {
 	return inertia.Render(c, "Auth/VerifyEmail", nil)
 }
 
-// Verify handles the signed link from the verification email. Sign-up
-// does not log in, so the link works signed out and then leads to the
-// login page (it proves the mailbox, not the password); signed in as the
-// link's account it goes to the dashboard, signed in as someone else 403.
-// The link is void once the address changes (email_hash). Verifying ends
-// every other session and token of the account (VerifyEmail), so whatever
-// was opened before the address was proven does not become verified.
+// Verify handles the signed link from the verification email. The route
+// needs the account's login (auth.Required): signed out, the link leads to
+// the login page and verification completes after it, so a link for an
+// account someone else created with this address verifies nothing for
+// whoever merely owns the mailbox. Signed in as another account it is a
+// 403. The link is void once the address changes (email_hash). Verifying
+// ends every other session and token of the account (VerifyEmail), so
+// whatever was opened before the address was proven does not become
+// verified; the current session is kept.
 func (h *Handlers) Verify(c *web.Ctx) error {
 	id, err := c.ParamInt("id")
 	if err != nil {
 		return err
 	}
 
-	u, err := orm.QueryOf[models.User](h.a.DB).Find(c.Context(), id)
+	u, err := auth.User[models.User](c, "web")
 	if err != nil {
 		return err
+	}
+
+	if u.ID != id {
+		return errs.New(http.StatusForbidden, h.a.T(c.Context(), "auth.verification_wrong_account"))
 	}
 
 	if subtle.ConstantTimeCompare([]byte(c.Query("email_hash")), []byte(accounts.EmailHash(u.Email))) != 1 {
 		return errs.New(http.StatusForbidden, h.a.T(c.Context(), "auth.verification_invalid"))
 	}
 
-	// No auth middleware on this route: ask the guard directly. A failing
-	// user store is an error, not "signed out".
-	current, err := h.a.Web.User(c)
-	signedIn := err == nil
-
-	if err != nil && !errors.Is(err, auth.ErrUnauthenticated) {
-		return err
-	}
-
-	if signedIn && current.ID != u.ID {
-		return errs.New(http.StatusForbidden, h.a.T(c.Context(), "auth.verification_wrong_account"))
-	}
-
-	keep := ""
-	if signedIn {
-		keep = c.Session().ID()
-	}
-
-	if err := h.a.VerifyEmail(c.Context(), &u, keep); err != nil {
+	if err := h.a.VerifyEmail(c.Context(), &u, c.Session().ID()); err != nil {
 		return err
 	}
 
 	// The version bump ended the current session too: keep it.
-	if signedIn {
-		if err := h.a.Web.RefreshSession(c); err != nil {
-			return err
-		}
+	if err := h.a.Web.RefreshSession(c); err != nil {
+		return err
 	}
 
 	inertia.Flash(c, "status", h.a.T(c.Context(), "auth.email_verified"))
-
-	if !signedIn {
-		return c.Redirect("/login")
-	}
 
 	return c.Redirect("/dashboard")
 }
