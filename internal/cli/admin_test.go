@@ -151,6 +151,31 @@ func TestFlagsPageListsBeta(t *testing.T) {
 }
 `)
 
+	// Re-running install:flags, also with --force, keeps the app's flags
+	// and adds no second migration.
+	for _, args := range [][]string{{"install:flags"}, {"install:flags", "--force"}} {
+		if code, out, errOut := vukem(t, project, args...); code != 0 {
+			t.Fatalf("vukem %s again = %d\n%s%s", strings.Join(args, " "), code, out, errOut)
+		}
+	}
+
+	if !strings.Contains(read(t, project, "app/features/features.go"), "Beta features") {
+		t.Error("re-running install:flags overwrote app/features/features.go")
+	}
+
+	migs, err := filepath.Glob(filepath.Join(project, "database", "migrations", "*_create_feature_flags_table.go"))
+	if err != nil || len(migs) != 1 {
+		t.Errorf("feature flags migrations = %v, %v, want exactly one", migs, err)
+	}
+
+	if n := strings.Count(read(t, project, "database/migrations/registry.go"), "CreateFeatureFlagsTable()"); n != 1 {
+		t.Errorf("the feature flags migration is registered %d times, want 1", n)
+	}
+
+	if n := strings.Count(read(t, project, "bootstrap/app.go"), "vukem.WithFlags("); n != 1 {
+		t.Errorf("bootstrap/app.go registers the flags %d times, want 1", n)
+	}
+
 	cmd := exec.CommandContext(t.Context(), "go", "test", "./...")
 	cmd.Dir = project
 	cmd.Env = append(os.Environ(), "GOWORK=off")
