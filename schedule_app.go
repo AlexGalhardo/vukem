@@ -81,8 +81,10 @@ func (a *App) Schedule() (*schedule.Schedule, error) {
 			Location: loc,
 			Log:      a.Log,
 			Locks:    locks,
-			Commands: a.Call,
-			Queue:    func() (*queue.Queue, error) { return a.Queue() },
+			// Apps sharing a cache store keep their task locks apart.
+			Namespace: lockNamespace(a.Config.Name),
+			Commands:  a.Call,
+			Queue:     func() (*queue.Queue, error) { return a.Queue() },
 			// Running tasks share the shutdown budget of the HTTP drain.
 			StopTimeout: a.Config.ShutdownTimeout,
 		})
@@ -262,4 +264,33 @@ func storePruner(s cache.Store) (pruner, bool) {
 	}
 
 	return nil, false
+}
+
+// lockNamespace turns APP_NAME into a lock key segment: lowercase ASCII
+// letters and digits, other runs of characters become one "-".
+func lockNamespace(name string) string {
+	var b strings.Builder
+
+	dash := false
+
+	for _, r := range strings.ToLower(name) {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
+			if dash && b.Len() > 0 {
+				b.WriteByte('-')
+			}
+
+			b.WriteRune(r)
+			dash = false
+
+			continue
+		}
+
+		dash = true
+	}
+
+	if b.Len() == 0 {
+		return "app"
+	}
+
+	return b.String()
 }

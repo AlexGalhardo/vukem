@@ -300,3 +300,42 @@ func TestScheduleOnOneServerNeedsSharedCache(t *testing.T) {
 		})
 	}
 }
+
+// sharedCache stands for a store several apps share (Redis, a database).
+type sharedCache struct{ cache.Store }
+
+// Schedule locks are namespaced by APP_NAME, so two apps sharing one
+// cache store each run their own task of the same name.
+func TestScheduleLocksAreNamespacedByAppName(t *testing.T) {
+	t.Parallel()
+
+	store := sharedCache{cache.NewMemory(0)}
+
+	var runs atomic.Int32
+
+	for _, name := range []string{"Shop", "Blog", "Shop"} {
+		app := newTestApp(t, WithSource(testSource(map[string]string{"APP_NAME": name})), WithCacheStore(store),
+			WithSchedule(func(s *schedule.Schedule, _ *App) {
+				s.Func("draw", func(context.Context) error { runs.Add(1); return nil }).EveryMinute().OnOneServer()
+			}))
+
+		s, err := app.Schedule()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if err := s.RunDue(t.Context(), time.Date(2026, 10, 16, 11, 0, 0, 0, time.UTC)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if got := runs.Load(); got != 2 {
+		t.Fatalf("draw runs = %d, want 2 (once for Shop, once for Blog)", got)
+	}
+
+	for in, want := range map[string]string{"My Shop!": "my-shop", "Vukem": "vukem", "  ": "app", "café_2": "caf-2"} {
+		if got := lockNamespace(in); got != want {
+			t.Errorf("lockNamespace(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
