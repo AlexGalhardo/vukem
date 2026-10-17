@@ -166,6 +166,7 @@ func (a *App) Sessions() (*session.Manager, error) {
 			return
 		}
 
+		a.sessPruner, _ = sc.Store.(sessionPruner)
 		a.sessions, a.sessErr = session.New(sc)
 	})
 
@@ -336,11 +337,14 @@ func Main(build BuildFunc) int {
 	return 0
 }
 
+// sessionPruner is a session store that keeps expired rows until pruned.
+type sessionPruner interface {
+	Prune(ctx context.Context) (int64, error)
+}
+
 // databaseSessionStore stores sessions in the app database (SQLite or a
-// driver such as Postgres or MySQL), creating the sessions table when missing.
-//
-// shortcut: expired rows are only pruned by SQLStore.Prune; schedule it
-// once the scheduler lands (BETA B.1.4).
+// driver such as Postgres or MySQL), creating the sessions table when
+// missing. Expired rows are deleted by the hourly session:prune task.
 func (a *App) databaseSessionStore() (session.Store, error) {
 	db, err := a.DB()
 	if err != nil {

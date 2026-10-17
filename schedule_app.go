@@ -57,6 +57,11 @@ func (a *App) Schedule() (*schedule.Schedule, error) {
 			Queue:    func() (*queue.Queue, error) { return a.Queue() },
 		})
 
+		// Database sessions keep expired rows until pruned.
+		if sess, err := configLoad[SessionConfig](a); err == nil && sess.Driver == "database" {
+			s.Command("session:prune").Hourly().WithoutOverlapping()
+		}
+
 		for _, fn := range a.schedules {
 			fn(s, a)
 		}
@@ -141,6 +146,29 @@ func scheduleCommands() []Command {
 				}
 
 				return tw.Flush()
+			},
+		},
+		CommandFunc{
+			CommandName: "session:prune",
+			Desc:        "Delete expired database sessions (scheduled hourly with SESSION_DRIVER=database)",
+			Fn: func(ctx context.Context, app *App, _ []string) error {
+				if _, err := app.Sessions(); err != nil {
+					return err
+				}
+
+				if app.sessPruner == nil {
+					fmt.Fprintln(app.stdout, "Sessions are not stored in the database: nothing to prune.")
+					return nil
+				}
+
+				n, err := app.sessPruner.Prune(ctx)
+				if err != nil {
+					return err
+				}
+
+				fmt.Fprintf(app.stdout, "Pruned %d expired sessions.\n", n)
+
+				return nil
 			},
 		},
 	}

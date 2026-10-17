@@ -14,10 +14,12 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	"github.com/AlexGalhardo/vukem/database"
 	"github.com/AlexGalhardo/vukem/internal/testutil"
 	"github.com/AlexGalhardo/vukem/router"
+	"github.com/AlexGalhardo/vukem/schedule"
 	"github.com/AlexGalhardo/vukem/schema"
 	"github.com/AlexGalhardo/vukem/web"
 )
@@ -395,5 +397,77 @@ func TestAPIMiddleware(t *testing.T) {
 	// No session cookie and no CSRF check for API apps.
 	if rec.Code != 201 || rec.Header().Get("Set-Cookie") != "" || rec.Header().Get("X-Request-Id") == "" {
 		t.Fatalf("api = %d %v", rec.Code, rec.Header())
+	}
+}
+
+func TestDatabaseSessionsArePrunedOnSchedule(t *testing.T) {
+	t.Parallel()
+
+	dbURL := "file:" + filepath.ToSlash(filepath.Join(testutil.TempDir(t), "s.db"))
+
+	newApp := func(driver string) *App {
+		app, err := New(WithSource(testSource(map[string]string{"SESSION_DRIVER": driver, "DATABASE_URL": dbURL})),
+			WithLogger(discardLogger()))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		t.Cleanup(func() { _ = app.Shutdown(context.Background()) })
+
+		return app
+	}
+
+	app := newApp("database")
+
+	s, err := app.Schedule()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var task *schedule.Task
+	for _, tk := range s.Tasks() {
+		if tk.Name() == "session:prune" {
+			task = tk
+		}
+	}
+
+	if task == nil || task.Expression() != "0 * * * *" {
+		t.Fatalf("session:prune not scheduled hourly: %v", task)
+	}
+
+	if _, err := app.Sessions(); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err := app.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// One expired row, one live row.
+	if _, err := db.ExecContext(t.Context(), "INSERT INTO sessions (id, data, expires_at) VALUES (?, ?, ?), (?, ?, ?)",
+		"OLD", "x", time.Now().Add(-time.Hour).Unix(), "NEW", "x", time.Now().Add(time.Hour).Unix()); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := app.Call(t.Context(), "session:prune", nil); err != nil {
+		t.Fatalf("session:prune = %v", err)
+	}
+
+	var n int
+	if err := db.QueryRowContext(t.Context(), "SELECT count(*) FROM sessions").Scan(&n); err != nil || n != 1 {
+		t.Fatalf("sessions after prune = %d, %v, want 1", n, err)
+	}
+
+	// Cookie sessions have nothing to prune and no task.
+	cs, err := newApp("cookie").Schedule()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tk := range cs.Tasks() {
+		if tk.Name() == "session:prune" {
+			t.Fatal("session:prune scheduled for cookie sessions")
+		}
 	}
 }

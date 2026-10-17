@@ -131,11 +131,13 @@ type App struct {
 	sessOnce  sync.Once
 	sessions  *session.Manager
 	sessStore session.Store
-	sessErr   error
-	mail      mailState
-	cacheOnce sync.Once
-	cache     *cache.Cache
-	cacheErr  error
+	// sessPruner is the session store when it keeps expired rows (database).
+	sessPruner sessionPruner
+	sessErr    error
+	mail       mailState
+	cacheOnce  sync.Once
+	cache      *cache.Cache
+	cacheErr   error
 
 	// Telegram is the Telegram log handler when TELEGRAM_* is set (nil
 	// otherwise); use it for Contact and Send.
