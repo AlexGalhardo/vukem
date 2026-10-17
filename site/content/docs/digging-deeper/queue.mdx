@@ -25,7 +25,7 @@ func All(app *vukem.App) []queue.Registration {
 }
 ```
 
-`vukem.WithJobsFunc(jobs.All)` calls `All` once, when the queue is first built, so handlers get the app's services without globals. `All` must not call `app.Queue()` (a handler may, when it runs). `vukem.WithJobs(regs...)` still registers handlers that need nothing from the app.
+`vukem.WithJobsFunc(jobs.All)` calls `All` once, when the queue is first built, so handlers get the app's services without globals. It runs inside the first `app.Queue()` call (a panic becomes that call's error). `All` may get `app.DB()`, `app.Mailer()`, `app.Crypt` and `app.Now()`, but must not dispatch: `app.Queue()`, `app.Events.Dispatch` with queued listeners, `SendLater`/`MailLater` or running scheduled jobs deadlock there (a handler may, when it runs). `vukem.WithJobs(regs...)` still registers handlers that need nothing from the app.
 
 ```go
 q, err := app.Queue()
@@ -53,6 +53,7 @@ err = q.DispatchTx(ctx, tx, jobs.SendInvoice{OrderID: 1}) // only if tx commits
 | `QUEUE_NAMES` | `default` (priority order, comma-separated) |
 | `QUEUE_CONCURRENCY` | `4` |
 | `QUEUE_TABLE`, `QUEUE_FAILED_TABLE` | `jobs`, `failed_jobs` |
+| `QUEUE_ALLOW_LEGACY_MAIL` | `false`: clear-text mail jobs queued before v0.24.0 fail; `true` sends them (upgrade window, a warning per job) |
 
 The database and Redis drivers reserve each job atomically (Postgres uses `FOR UPDATE SKIP LOCKED`). A job whose worker died is taken over after its timeout plus one minute, so delivery is **at least once**: make handlers idempotent. If the first worker was only slow (not dead) and finishes after the takeover, its result is dropped with `queue.ErrReservationLost` instead of deleting, retrying or failing the job the second worker now owns.
 

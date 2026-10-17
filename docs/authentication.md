@@ -134,7 +134,7 @@ tests/auth_messages_test.go                every message translated
 
 Flash messages, controller errors and mail subjects go through `accounts.T(ctx, key)`, with English and Brazilian Portuguese catalogs in `app/accounts/lang/<locale>/*.json` (keys `auth.*`; `--2fa` and `--social` add `two_factor.json` and `social.json`). `T` uses the request locale that `i18n.Middleware` resolves when the app uses `vukem.WithTranslations`, and English otherwise. A key in the app's own catalog for that locale or its language (`resources/lang/pt-BR.json`, then `pt.json`) wins, so the app can reword a message or add a locale without editing the scaffold. Field messages of the `z` schemas in `app/requests` and the views stay in English. `tests/auth_messages_test.go` checks that every key exists in every locale. Mailables built without a `Subject` keep the English one.
 
-The reset link mail is queued (`mailer.SendLater`), so the forgot-password answer does not wait for the mail server and its timing does not tell known emails from unknown ones. That needs a real queue: set `QUEUE_CONNECTION=memory` (workers inside `serve`) or `database` in production; with the default `sync` the mail is still sent during the request.
+The reset link mail is queued (`mailer.SendLater`), so the forgot-password answer does not wait for the mail server and its timing does not tell known emails from unknown ones. That needs a real queue: set `QUEUE_CONNECTION=database` in production (`memory` also answers fast, but a restart loses queued reset mails, so users may need to ask again); with the default `sync` the mail is still sent during the request.
 
 Existing projects created before `routes.All()` get the exact lines to add printed instead. `--force` overwrites existing files.
 
