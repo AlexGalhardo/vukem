@@ -58,6 +58,8 @@ user, err := auth.User[models.User](c, "web") // in handlers behind Required
 
 ## Guards
 
+Every guard that authenticates a request also records `auth.Principal(ctx)` (`"<guard>:<user id>"`, cleared on logout), for code that keys data by caller without knowing the guard, such as `api.Idempotency`.
+
 ### Session guard (`web`)
 
 - `Attempt(c, creds, auth.Remember(bool))`: provider lookup → constant-time hash check → `Login`. Unknown users still pay for a hash verification against a dummy hash, and both failures return the same 422 error (`TestSecurity_A07_LoginErrorsDoNotRevealUsers`). Failures emit the `auth.login_failed` security event.

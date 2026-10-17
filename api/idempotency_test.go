@@ -12,7 +12,9 @@ import (
 	"time"
 
 	"github.com/AlexGalhardo/vukem/api"
+	"github.com/AlexGalhardo/vukem/auth"
 	"github.com/AlexGalhardo/vukem/cache"
+	"github.com/AlexGalhardo/vukem/web"
 )
 
 func idemHandler(
@@ -189,5 +191,50 @@ func TestSecurity_A04_IdempotencyFailsClosed(t *testing.T) {
 
 	if rec := send(t, h, "POST", "/orders", "k", "Bearer t", `{}`); rec.Code != 503 || calls.Load() != 0 {
 		t.Fatalf("store down = %d calls=%d, want 503 and no call", rec.Code, calls.Load())
+	}
+}
+
+type principal string
+
+func (p principal) AuthID() string       { return string(p) }
+func (p principal) AuthPassword() string { return "" }
+
+// as authenticates the request as user id with the "api" guard, as
+// auth.Required would before Idempotency.
+func as(id string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c := web.NewCtx(w, r, nil)
+		auth.SetUser(c, "api", principal(id))
+		next.ServeHTTP(w, c.Request())
+	})
+}
+
+func TestSecurity_A01_IdempotencyScopedToPrincipal(t *testing.T) {
+	t.Parallel()
+
+	var calls atomic.Int32
+
+	h := idemHandler(cache.NewMemory(100), &calls, api.IdempotencyOptions{})
+
+	steps := []struct {
+		name      string
+		handler   http.Handler
+		auth      string
+		wantCalls int32
+	}{
+		{"user 7, first token", as("7", h), "Bearer t1", 1},
+		{"user 7, rotated token replays", as("7", h), "Bearer t2", 1},
+		{"user 8 with user 7's old token", as("8", h), "Bearer t1", 2},
+		// No principal (e.g. the token was revoked): the header scope is
+		// not the principal scope the response was stored under.
+		{"unauthenticated, same header", h, "Bearer t1", 3},
+	}
+
+	for _, st := range steps {
+		send(t, st.handler, "POST", "/orders", "k", st.auth, `{}`)
+
+		if got := calls.Load(); got != st.wantCalls {
+			t.Fatalf("%s: handler calls = %d, want %d", st.name, got, st.wantCalls)
+		}
 	}
 }

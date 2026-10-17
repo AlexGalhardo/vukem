@@ -134,9 +134,27 @@ type Checker interface {
 
 type userKey struct{ guard string }
 
-// cache stores the user for this request in c's context.
+type principalKey struct{}
+
+// cache stores the user for this request in c's context, and the
+// principal Principal reports (cleared when u is nil, on logout).
 func cache(c *web.Ctx, guard string, u any) {
-	c.SetRequest(c.Request().WithContext(context.WithValue(c.Context(), userKey{guard}, u)))
+	ctx := context.WithValue(c.Context(), userKey{guard}, u)
+
+	p := ""
+	if a, ok := u.(Authenticatable); ok {
+		p = guard + ":" + a.AuthID()
+	}
+
+	c.SetRequest(c.Request().WithContext(context.WithValue(ctx, principalKey{}, p)))
+}
+
+// Principal returns "<guard>:<user id>" for the user most recently
+// authenticated on this request by any guard, for code that must key data
+// by caller without knowing the guard (api.Idempotency).
+func Principal(ctx context.Context) (string, bool) {
+	p, _ := ctx.Value(principalKey{}).(string)
+	return p, p != ""
 }
 
 func cached[U any](c *web.Ctx, guard string) (U, bool) {

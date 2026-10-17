@@ -11,6 +11,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/AlexGalhardo/vukem/auth"
 	"github.com/AlexGalhardo/vukem/cache"
 	"github.com/AlexGalhardo/vukem/errs"
 	"github.com/AlexGalhardo/vukem/web"
@@ -29,9 +30,12 @@ type IdempotencyOptions struct {
 	// MaxBody bounds the request body that is fingerprinted (default 1 MiB).
 	MaxBody int64
 	// Scope separates callers so one cannot replay another's response.
-	// Default: the Authorization header; set it for cookie sessions (e.g.
-	// the user ID). A request with a key whose scope is empty is refused
-	// with 400; return a constant to share keys on purpose.
+	// Default: the authenticated principal (auth.Principal: guard and user
+	// id) when an auth middleware ran before Idempotency, else a SHA-256 of
+	// the Authorization header. Place Idempotency after auth.Required so
+	// a revoked token is refused before any replay. A request with a key
+	// whose scope is empty is refused with 400; return a constant to share
+	// keys on purpose.
 	Scope func(r *http.Request) string
 }
 
@@ -70,7 +74,7 @@ func Idempotency(store cache.Store, o IdempotencyOptions) func(http.Handler) htt
 	}
 
 	if o.Scope == nil {
-		o.Scope = func(r *http.Request) string { return r.Header.Get("Authorization") }
+		o.Scope = defaultScope
 	}
 
 	return func(next http.Handler) http.Handler {
@@ -187,6 +191,20 @@ func replay(w http.ResponseWriter, r *http.Request, store cache.Store, storeKey,
 		w.WriteHeader(rec.Status)
 		_, _ = w.Write(rec.Body)
 	}
+}
+
+// defaultScope is the authenticated principal, else a hash of the
+// Authorization header (never the credential itself), else "".
+func defaultScope(r *http.Request) string {
+	if p, ok := auth.Principal(r.Context()); ok {
+		return "principal:" + p
+	}
+
+	if h := r.Header.Get("Authorization"); h != "" {
+		return "authorization:" + digest(h)
+	}
+
+	return ""
 }
 
 func validKey(k string) bool {
