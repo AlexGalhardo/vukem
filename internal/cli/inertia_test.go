@@ -9,10 +9,10 @@ import (
 )
 
 // inertiaFrameworks under test; each needs a scaffolds/inertia-<name>.
-var inertiaStarters = []struct{ name, entry string }{
-	{"react", "resources/js/app.tsx"},
-	{"vue", "resources/js/app.ts"},
-	{"svelte", "resources/js/app.ts"},
+var inertiaStarters = []struct{ name, entry, page string }{
+	{"react", "resources/js/app.tsx", "tsx"},
+	{"vue", "resources/js/app.ts", "vue"},
+	{"svelte", "resources/js/app.ts", "svelte"},
 }
 
 // TestNewInertiaProjectEndToEnd creates an Inertia project per framework,
@@ -55,6 +55,10 @@ func TestNewInertiaProjectEndToEnd(t *testing.T) {
 				"vukem.WithInertia(inertia.Config{})",
 			) {
 				t.Errorf("bootstrap/app.go =\n%s", app)
+			}
+
+			if page := read(t, project, "resources/js/pages/Error."+st.page); !strings.Contains(page, "status") {
+				t.Errorf("Error page = %q, want one showing status and message", page)
 			}
 
 			if !strings.Contains(read(t, project, "vite.config.ts"), st.entry) {

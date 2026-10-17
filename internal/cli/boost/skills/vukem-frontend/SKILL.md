@@ -10,4 +10,4 @@ description: Views (html/template), htmx, Vite, Tailwind and Inertia in a Vukem 
 - Every form posts `{{csrfField}}`. No inline scripts, `style` or event-handler attributes: the CSP is strict; scripts get `nonce="{{cspNonce}}"` (the `vite` func adds it).
 - htmx: `c.IsHTMX()`, `c.HTMX().Trigger(...)`, redirects become `HX-Location` automatically.
 - Vite: `{{vite "resources/css/app.css" "resources/js/app.ts"}}` in the layout; `vukem serve` runs the dev server; `vukem build` builds assets and the binary.
-- Inertia: `inertia.Render(c, "Posts/Index", inertia.Props{...})`; shared data with `inertia.Share(ctx, key, value)`; external redirects with `inertia.Location`.
+- Inertia: `inertia.Render(c, "Posts/Index", inertia.Props{...})`; shared data with `inertia.Share(ctx, key, value)`; external redirects with `inertia.Location`. Handler errors on Inertia visits render `resources/js/pages/Error` with `status` and `message` (status text only for 5xx).
