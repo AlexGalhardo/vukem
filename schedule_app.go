@@ -10,6 +10,7 @@ import (
 	"time"
 	_ "time/tzdata" // SCHEDULE_TIMEZONE works on hosts without a zone database (Windows)
 
+	"github.com/AlexGalhardo/vukem/cache"
 	"github.com/AlexGalhardo/vukem/queue"
 	"github.com/AlexGalhardo/vukem/schedule"
 )
@@ -63,7 +64,7 @@ func (a *App) Schedule() (*schedule.Schedule, error) {
 		}
 
 		// So does the database cache, with one row per rate limit window.
-		if _, ok := locks.Store().(pruner); ok {
+		if _, ok := storePruner(locks.Store()); ok {
 			s.Command("cache:prune").Hourly().WithoutOverlapping()
 		}
 
@@ -185,7 +186,7 @@ func scheduleCommands() []Command {
 					return err
 				}
 
-				p, ok := c.Store().(pruner)
+				p, ok := storePruner(c.Store())
 				if !ok {
 					fmt.Fprintln(app.stdout, "The cache does not keep expired entries: nothing to prune.")
 					return nil
@@ -207,4 +208,23 @@ func scheduleCommands() []Command {
 // pruner is a store that keeps expired rows until pruned (database cache).
 type pruner interface {
 	Prune(ctx context.Context) (int64, error)
+}
+
+// storePruner finds the pruner in s, looking through stores that wrap
+// another one (metrics, tracing) and expose it with Unwrap.
+func storePruner(s cache.Store) (pruner, bool) {
+	for s != nil {
+		if p, ok := s.(pruner); ok {
+			return p, true
+		}
+
+		u, ok := s.(interface{ Unwrap() cache.Store })
+		if !ok {
+			return nil, false
+		}
+
+		s = u.Unwrap()
+	}
+
+	return nil, false
 }

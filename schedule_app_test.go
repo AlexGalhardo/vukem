@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AlexGalhardo/vukem/cache"
 	"github.com/AlexGalhardo/vukem/schedule"
 )
 
@@ -88,5 +89,36 @@ func TestScheduleErrorsAndCall(t *testing.T) {
 	bad := newTestApp(t, WithSource(testSource(map[string]string{"SCHEDULE_TIMEZONE": "Mars/Olympus"})))
 	if _, err := bad.Schedule(); err == nil {
 		t.Error("bad timezone accepted")
+	}
+}
+
+type prunable struct{ cache.Store }
+
+func (prunable) Prune(context.Context) (int64, error) { return 0, nil }
+
+type wrapped struct{ cache.Store }
+
+func (w wrapped) Unwrap() cache.Store { return w.Store }
+
+// A store wrapped for metrics or tracing still gets pruned when it
+// exposes the store underneath with Unwrap.
+func TestStorePrunerUnwraps(t *testing.T) {
+	t.Parallel()
+
+	db := prunable{cache.NewMemory(0)}
+
+	for name, tt := range map[string]struct {
+		store cache.Store
+		want  bool
+	}{
+		"database":       {store: db, want: true},
+		"wrapped":        {store: wrapped{db}, want: true},
+		"wrapped twice":  {store: wrapped{wrapped{db}}, want: true},
+		"memory":         {store: cache.NewMemory(0), want: false},
+		"wrapped memory": {store: wrapped{cache.NewMemory(0)}, want: false},
+	} {
+		if _, ok := storePruner(tt.store); ok != tt.want {
+			t.Errorf("%s: storePruner() = %v, want %v", name, ok, tt.want)
+		}
 	}
 }
