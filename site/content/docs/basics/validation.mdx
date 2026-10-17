@@ -46,7 +46,7 @@ if err != nil {
 
 | Constructor | Go type | Checks and transforms |
 | --- | --- | --- |
-| `z.String()` | `string` | `Min`, `Max`, `Len`, `NonEmpty`, `Email`, `URL`, `UUID`, `ULID`, `Regex`, `Alpha`, `Alphanum`, `Numeric`, `StartsWith`, `EndsWith`, `Includes`, `OneOf`; `Trim`, `ToLower`, `ToUpper`; invalid UTF-8 and control characters rejected |
+| `z.String()` | `string` | `Min`, `Max`, `Len`, `NonEmpty`, `Email`, `URL`, `UUID`, `ULID`, `Regex`, `Alpha`, `Alphanum`, `Numeric`, `StartsWith`, `EndsWith`, `Includes`, `OneOf`; `Trim`, `ToLower`, `ToUpper`, `Preprocess(fn)`; invalid UTF-8 and control characters rejected |
 | `z.Int()`, `z.Int32()`, `z.Int64()`, `z.Uint()`, `z.Uint64()`, `z.NumberOf[T]()` | integers | `Min`, `Max`, `Positive`, `NonNegative`, `MultipleOf`; fractions and overflow rejected |
 | `z.Float()`, `z.Float32()` | floats | `Min`, `Max`, `Positive`; NaN and ±Inf rejected |
 | `z.Bool()` | `bool` | — |
@@ -58,6 +58,15 @@ if err != nil {
 | `z.Custom[T](fn)` | `T` | user parser |
 
 Every schema supports `Optional()`, `Nullable()`, `Default(v)`, `Refine(fn)`, `Transform(fn)`, `Message(code, msg)` and `Describe(text)`. Schemas are immutable values, safe to share across goroutines.
+
+A parse runs in this order: coercion and type check, then string pre-steps (`Trim`, `ToLower`, `ToUpper`, `Preprocess`, in declaration order), then checks (`Min`, `Regex`, `Email`…), then `Transform`, then `Refine`. Normalize with `Preprocess` when the checks must see the normalized value:
+
+```go
+z.String().Preprocess(digitsOnly).Regex(e164) // Regex sees "11987654321"
+z.String().Transform(digitsOnly).Regex(e164)  // Regex sees the raw input
+```
+
+The output of the pre-steps is checked again for invalid UTF-8 and control characters, and `Preprocess(nil)` panics. JSON Schema and OpenAPI keywords (`pattern`, `minLength`…) describe the normalized value, after `Trim`/`ToLower`/`Preprocess`, not the raw input.
 
 ## Coercion
 
@@ -74,6 +83,28 @@ Forms, query strings and route params arrive as strings; schemas coerce only whe
 | JSON / API | `422` `application/problem+json` with an `errors` map |
 
 Password fields, `_token` and `_method` are never flashed as old input.
+
+## Translated refinements
+
+Built-in messages are translated from `validation.*` catalog keys (see [localization](/docs/digging-deeper/localization)). A `Refine` callback makes its message translatable by returning `z.FieldErrorKey(path, key, fallback, params)` instead of `z.FieldError`; `fallback` is the English message, used when the locale has no `validation.<key>`. With an empty `key`, `FieldErrorKey` behaves like `z.FieldError`. Placeholder names in `fallback` and in catalog templates are lower snake_case (`{field}`, `{other_field}`); other braces are left as is. Messages are plain text: escaping is the renderer's job (`html/template` does it in views).
+
+```go
+.Refine(func(r Register) error {
+	if r.Password != r.PasswordConfirmation {
+		return z.FieldErrorKey("password_confirmation", "confirmed", "The {field} does not match.", nil)
+	}
+	return nil
+})
+```
+
+```json title="resources/lang/pt-BR.json"
+{
+  "validation": {
+    "confirmed": "A {field} não confere.",
+    "attributes": { "password_confirmation": "confirmação de senha" }
+  }
+}
+```
 
 ## Struct-tag shorthand
 

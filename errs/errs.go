@@ -112,15 +112,26 @@ func NewValidation() *ValidationError {
 	return &ValidationError{Fields: map[string][]string{}}
 }
 
-// Add appends a message for field.
+// Add appends a message for field and returns e for chaining:
+//
+//	return errs.NewValidation().Add("email", "taken").Add("name", "required")
+//
+// Because the result is an error type, errcheck flags a bare v.Add(...)
+// statement; use [ValidationError.Append] there.
 func (e *ValidationError) Add(field, message string) *ValidationError {
+	e.Append(field, message)
+	return e
+}
+
+// Append appends a message for field. It is Add without a result, for
+// collecting messages in statements (loops, conditionals) without an
+// unchecked-error lint warning.
+func (e *ValidationError) Append(field, message string) {
 	if e.Fields == nil {
 		e.Fields = map[string][]string{}
 	}
 
 	e.Fields[field] = append(e.Fields[field], message)
-
-	return e
 }
 
 // Empty reports whether no field has errors.

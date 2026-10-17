@@ -3,6 +3,8 @@ package z
 import (
 	"encoding/json"
 	"errors"
+	"regexp"
+	"strings"
 	"testing"
 	"time"
 )
@@ -201,4 +203,91 @@ func TestTagNumericKinds(t *testing.T) {
 	if _, err := s.Parse(map[string]any{"u": "1", "i8": "200"}); err == nil {
 		t.Fatal("int8 overflow accepted")
 	}
+}
+
+func TestStringPreprocess(t *testing.T) {
+	t.Parallel()
+
+	digits := func(s string) string {
+		return strings.Map(func(r rune) rune {
+			if r >= '0' && r <= '9' {
+				return r
+			}
+
+			return -1
+		}, s)
+	}
+	e164 := regexp.MustCompile(`^\d{10,11}$`)
+
+	tests := []struct {
+		name    string
+		schema  StringSchema
+		in      string
+		want    string
+		wantErr bool
+	}{
+		{
+			"checks see normalized value",
+			String().Preprocess(digits).Regex(e164),
+			"(11) 98765-4321",
+			"11987654321",
+			false,
+		},
+		{"transform does not feed checks", String().Transform(digits).Regex(e164), "(11) 98765-4321", "", true},
+		{"declaration order", String().Trim().Preprocess(func(s string) string { return "+" + s }), " 1 ", "+1", false},
+		{"before transform", String().Transform(strings.ToUpper).Preprocess(digits), "a1b2", "12", false},
+		{"failing check", String().Preprocess(digits).Min(3), "a1", "", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := tt.schema.Parse(tt.in)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("Parse(%q) error = %v, wantErr %v", tt.in, err, tt.wantErr)
+			}
+
+			if got != tt.want {
+				t.Errorf("Parse(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestStringPreprocess_RevalidatesOutput(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		fn   func(string) string
+	}{
+		{"control char", func(s string) string { return s + "\x00" }},
+		{"invalid utf8", func(s string) string { return s + "\xff" }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := String().Preprocess(tt.fn).Parse("ok")
+
+			is, ok := AsIssues(err)
+			if !ok || len(is) != 1 || is[0].Key != "string.utf8" {
+				t.Errorf("Parse(%q) error = %v, want one string.utf8 issue", "ok", err)
+			}
+		})
+	}
+}
+
+func TestStringPreprocess_NilPanics(t *testing.T) {
+	t.Parallel()
+
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("Preprocess(nil) did not panic")
+		}
+	}()
+
+	String().Preprocess(nil)
 }

@@ -449,7 +449,8 @@ func (s StructSchema[T]) Optional() StructSchema[T] { s.o = s.o.clone(); s.o.opt
 // Nullable allows null.
 func (s StructSchema[T]) Nullable() StructSchema[T] { s.o = s.o.clone(); s.o.nullable = true; return s }
 
-// Refine adds a cross-field check; return FieldError to point at a field.
+// Refine adds a cross-field check; return FieldError to point at a field,
+// or FieldErrorKey for a translatable message.
 func (s StructSchema[T]) Refine(fn func(T) error) StructSchema[T] {
 	s.o = s.o.clone()
 	s.o.refines = append(s.o.refines, fn)
@@ -522,7 +523,8 @@ type CustomSchema[T any] struct {
 }
 
 // Custom returns a schema whose parsing is done by fn; a returned error
-// becomes an issue with its message.
+// becomes an issue with its message ([FieldError] and [FieldErrorKey] are
+// honored as in Refine).
 func Custom[T any](fn func(in any) (T, error)) CustomSchema[T] { return CustomSchema[T]{fn: fn} }
 
 // GoType implements AnySchema.
@@ -534,7 +536,7 @@ func (s CustomSchema[T]) parseAny(c *pctx, path string, in any, present bool) (a
 	v, set, ok := parse(&s.o, c, path, in, present, true, func(c *pctx, path string, in any) (T, bool) {
 		v, err := s.fn(in)
 		if err != nil {
-			c.add(path, CodeCustom, err.Error(), nil)
+			c.addErr(path, err)
 			return v, false
 		}
 

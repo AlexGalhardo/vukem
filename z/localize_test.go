@@ -128,3 +128,168 @@ func TestPositive_Message(t *testing.T) {
 type stringError string
 
 func (e stringError) Error() string { return string(e) }
+
+type confirmInput struct {
+	Password             string `json:"password"`
+	PasswordConfirmation string `json:"password_confirmation"`
+}
+
+func TestFieldErrorKey(t *testing.T) {
+	t.Parallel()
+
+	confirm := Struct[confirmInput](Shape{
+		"password":              String(),
+		"password_confirmation": String(),
+	}).Refine(func(in confirmInput) error {
+		if in.Password != in.PasswordConfirmation {
+			return FieldErrorKey("password_confirmation", "confirmed",
+				"The {field} field does not match {other}.", map[string]any{"other": "password"})
+		}
+
+		return nil
+	})
+
+	tests := []struct {
+		name   string
+		schema AnySchema
+		in     any
+		want   Issues
+	}{
+		{
+			"struct field", confirm,
+			map[string]any{"password": "a", "password_confirmation": "b"},
+			Issues{{
+				Path:    "password_confirmation",
+				Code:    CodeCustom,
+				Key:     "confirmed",
+				Message: "The password confirmation field does not match password.",
+				Params:  map[string]any{"other": "password"},
+			}},
+		},
+		{
+			"root value", String().Refine(func(string) error {
+				return FieldErrorKey("", "phone", "The {field} field must be a phone number.", nil)
+			}), "x",
+			Issues{{Code: CodeCustom, Key: "phone", Message: "The value field must be a phone number."}},
+		},
+		{
+			"nested under parent path", Struct[struct {
+				User confirmInput `json:"user"`
+			}](Shape{"user": confirm}),
+			map[string]any{"user": map[string]any{"password": "a", "password_confirmation": "b"}},
+			Issues{{
+				Path:    "user.password_confirmation",
+				Code:    CodeCustom,
+				Key:     "confirmed",
+				Message: "The password confirmation field does not match password.",
+				Params:  map[string]any{"other": "password"},
+			}},
+		},
+		{
+			"custom schema", Custom(func(any) (string, error) {
+				return "", FieldErrorKey("", "custom_rule", "Bad {field}.", nil)
+			}), "x",
+			Issues{{Code: CodeCustom, Key: "custom_rule", Message: "Bad value."}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := parseRoot[any](tt.schema, tt.in)
+
+			got, ok := AsIssues(err)
+			if !ok {
+				t.Fatalf("Parse(%v) error = %v, want Issues", tt.in, err)
+			}
+
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("Parse(%v) issues (-want +got):\n%s", tt.in, diff)
+			}
+		})
+	}
+}
+
+func TestFieldErrorKey_Localize(t *testing.T) {
+	t.Parallel()
+
+	catalogs := map[string]map[string]string{
+		"en": {"confirmed": "The {field} confirmation does not match."},
+		"pt-BR": {
+			"confirmed":                        "A confirmação do campo {field} não confere com {other}.",
+			"custom":                           "must not be used for keyed custom issues",
+			"attributes.password_confirmation": "confirmação de senha",
+		},
+	}
+
+	is := Issues{
+		{
+			Path:    "password_confirmation",
+			Code:    CodeCustom,
+			Key:     "confirmed",
+			Message: "fallback",
+			Params:  map[string]any{"other": "senha"},
+		},
+		{Path: "x", Code: CodeCustom, Key: "untranslated", Message: "fallback kept"},
+	}
+
+	tests := []struct {
+		locale string
+		want   []string
+	}{
+		{"en", []string{"The password confirmation confirmation does not match.", "fallback kept"}},
+		{"pt-BR", []string{"A confirmação do campo confirmação de senha não confere com senha.", "fallback kept"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.locale, func(t *testing.T) {
+			t.Parallel()
+
+			got := is.Localize(func(key string) (string, bool) {
+				s, ok := catalogs[tt.locale][key]
+				return s, ok
+			})
+
+			msgs := make([]string, 0, len(got))
+			for _, i := range got {
+				msgs = append(msgs, i.Message)
+			}
+
+			if diff := cmp.Diff(tt.want, msgs); diff != "" {
+				t.Errorf("Localize(%s) messages (-want +got):\n%s", tt.locale, diff)
+			}
+		})
+	}
+}
+
+func TestCustom_FieldError(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		err  error
+		want Issues
+	}{
+		{"field error path", FieldError("sub", "bad"), Issues{{Path: "sub", Code: CodeCustom, Message: "bad"}}},
+		{
+			"empty key is FieldError",
+			FieldErrorKey("sub", "", "bad", nil),
+			Issues{{Path: "sub", Code: CodeCustom, Message: "bad"}},
+		},
+		{"plain error", stringError("plain"), Issues{{Code: CodeCustom, Message: "plain"}}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := Custom(func(any) (string, error) { return "", tt.err }).Parse("x")
+
+			got, _ := AsIssues(err)
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("Custom.Parse issues (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
