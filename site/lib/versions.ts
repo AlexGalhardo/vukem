@@ -36,10 +36,3 @@ export function versionHref(href: string, v: DocVersion): string {
   if (!v.prefix || !href.startsWith("/docs/")) return href;
   return `${docsBase(v)}${href.slice("/docs".length)}`;
 }
-
-/** The page path relative to its version base, e.g. "/basics/routing". */
-export function pageOfPath(pathname: string): string {
-  const v = versionOfPath(pathname);
-  const base = docsBase(v);
-  return pathname.startsWith(base) ? pathname.slice(base.length) : "";
-}
