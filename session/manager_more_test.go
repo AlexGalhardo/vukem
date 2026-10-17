@@ -411,3 +411,41 @@ func TestSQLStoreErrorsOnClosedDB(t *testing.T) {
 		}
 	}
 }
+
+// Stores must use the manager's clock: with a fake clock in the past, an
+// expiry of "fake now + 1h" is already in the past on the wall clock.
+func TestStoresUseManagerClock(t *testing.T) {
+	t.Parallel()
+
+	past := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(testutil.TempDir(t), "clock.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() { _ = db.Close() })
+
+	sqlStore, err := NewSQLStore(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := sqlStore.CreateTable(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	for name, st := range map[string]Store{"memory": NewMemoryStore(), "sql": sqlStore} {
+		if _, err := New(Config{Store: st, Now: func() time.Time { return past }}); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := st.Save(t.Context(), "id", []byte("{}"), past.Add(time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+
+		if _, ok, err := st.Load(t.Context(), "id"); !ok || err != nil {
+			t.Errorf("%s: Load(unexpired by the manager clock) = %v, %v, want found", name, ok, err)
+		}
+	}
+}

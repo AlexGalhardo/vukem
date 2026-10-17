@@ -99,7 +99,7 @@ clock.Advance(24 * time.Hour)
 | Rate limiting | `ratelimit.NewMemory(limit, window)` | drive time with `testing/synctest` |
 | Social login | `social.Fake(name, callback, user)` | with `vukemtest.FakeSocial` |
 | Password hashing | `hash.Fake()` | fast parameters |
-| Clock | `vukemtest.NewFakeClock(t0)` | `Now`, `Advance`, `Set`; pass `clock.Now` as `vukemtest.Options.Clock` |
+| Clock | `vukemtest.NewFakeClock(t0)` | `Now`, `Advance`, `Set`; pass `clock.Now` as `vukemtest.Options.Clock`; sessions (cookie, `memory`, `database`) expire by it |
 
 ## CI matrix
 

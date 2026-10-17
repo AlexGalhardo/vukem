@@ -62,6 +62,13 @@ func (m *MemoryStore) Load(_ context.Context, id string) ([]byte, bool, error) {
 	return it.data, true, nil
 }
 
+func (m *MemoryStore) setClock(now func() time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.now = now
+}
+
 // Save implements Store.
 func (m *MemoryStore) Save(_ context.Context, id string, data []byte, expiry time.Time) error {
 	m.mu.Lock()
@@ -162,6 +169,8 @@ func NewSQLStore(db *sql.DB, opts ...SQLOption) (*SQLStore, error) {
 
 	return s, nil
 }
+
+func (s *SQLStore) setClock(now func() time.Time) { s.now = now }
 
 // CreateTable creates the sessions table if it does not exist.
 func (s *SQLStore) CreateTable(ctx context.Context) error {

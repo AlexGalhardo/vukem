@@ -39,11 +39,15 @@ type Config struct {
 	CookieKey []byte
 	// Production enables boot-time checks (Secure must be true).
 	Production bool
-	// Now is the clock (tests); defaults to time.Now.
+	// Now is the clock (tests); defaults to time.Now. When set, the
+	// built-in stores (MemoryStore, SQLStore) expire sessions by it too.
 	Now func() time.Time
 	// Log receives security events and storage errors.
 	Log *slog.Logger
 }
+
+// clocked is implemented by the built-in stores so Config.Now reaches them.
+type clocked interface{ setClock(now func() time.Time) }
 
 // Manager loads and saves sessions around each request.
 type Manager struct {
@@ -73,6 +77,10 @@ func New(cfg Config) (*Manager, error) {
 
 	if cfg.Now == nil {
 		cfg.Now = time.Now
+	} else if c, ok := cfg.Store.(clocked); ok {
+		// Cookie expiry follows cfg.Now; a store on the wall clock would drop
+		// sessions a fake clock in the past just created.
+		c.setClock(cfg.Now)
 	}
 
 	if cfg.Log == nil {

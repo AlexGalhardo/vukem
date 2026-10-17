@@ -42,6 +42,8 @@ app := vukemtest.New(t, bootstrap.New, vukemtest.Options{
 clock.Advance(3 * time.Hour) // e.g. expire the idle session timeout
 ```
 
+The fake clock drives every session driver: cookie expiry and the expiry checks of the `memory` and `database` stores both follow it, so a clock fixed in the past keeps sessions alive. The client's cookie jar never checks `Expires`; a cookie is dropped only when the response deletes it.
+
 The returned `*vukemtest.App` embeds `*vukem.App` (`app.DB()`, `app.Config`…) and adds `Client`, `Handler` and `RefreshDatabase(t)` (drop everything and migrate again).
 
 ## The client
