@@ -1,6 +1,8 @@
 package stripe_test
 
 import (
+	"bytes"
+	"encoding/hex"
 	"strconv"
 	"strings"
 	"testing"
@@ -52,9 +54,15 @@ func FuzzConstructEvent(f *testing.F) {
 				continue
 			}
 
+			// Hex is case-insensitive: compare decoded MACs, not strings.
 			_, sig, _ := strings.Cut(stripe.SignForTest(payload, secret, at), ",v1=")
-			if strings.Contains(header, "v1="+sig) {
-				return
+			want, _ := hex.DecodeString(sig)
+
+			for p := range strings.SplitSeq(header, ",") {
+				k, v, _ := strings.Cut(strings.TrimSpace(p), "=")
+				if got, derr := hex.DecodeString(v); k == "v1" && derr == nil && bytes.Equal(got, want) {
+					return
+				}
 			}
 		}
 
