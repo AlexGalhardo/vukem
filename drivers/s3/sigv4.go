@@ -4,6 +4,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"maps"
 	"net/http"
 	"net/url"
 	"slices"
@@ -70,17 +71,30 @@ func (s signer) sign(req *http.Request, payloadHash string, now time.Time) {
 }
 
 // presign returns u with the query-string signature for method, valid for
-// expires. Only the host header is signed, so any client can use the URL.
-func (s signer) presign(method string, u *url.URL, now time.Time, expires time.Duration) string {
+// expires. host and the given headers (lowercase names) are signed: with
+// none, any client can use the URL; with some, the request must send each
+// header with exactly that value.
+func (s signer) presign(
+	method string,
+	u *url.URL,
+	now time.Time,
+	expires time.Duration,
+	headers map[string]string,
+) string {
 	t := now.UTC()
 	scope := s.scope(t)
+
+	signed := map[string]string{"host": trimHeader(u.Host)}
+	for k, v := range headers {
+		signed[k] = trimHeader(v)
+	}
 
 	q := u.Query()
 	q.Set("X-Amz-Algorithm", algorithm)
 	q.Set("X-Amz-Credential", s.accessKey+"/"+scope)
 	q.Set("X-Amz-Date", t.Format(amzDateFormat))
 	q.Set("X-Amz-Expires", strconv.FormatInt(int64(expires/time.Second), 10))
-	q.Set("X-Amz-SignedHeaders", "host")
+	q.Set("X-Amz-SignedHeaders", signedNames(signed))
 
 	if !s.token.IsZero() {
 		q.Set("X-Amz-Security-Token", s.token.Reveal())
@@ -89,8 +103,7 @@ func (s signer) presign(method string, u *url.URL, now time.Time, expires time.D
 	signedURL := *u
 	signedURL.RawQuery = canonicalQuery(q)
 
-	req := &http.Request{Method: method, URL: &signedURL, Host: u.Host, Header: http.Header{}}
-	creq, _ := canonicalRequest(req, unsignedPayload)
+	creq, _ := canonicalRequestHeaders(method, &signedURL, signed, unsignedPayload)
 	sig := s.signature(t, stringToSign(t, scope, creq))
 
 	signedURL.RawQuery += "&X-Amz-Signature=" + sig
@@ -138,30 +151,39 @@ func canonicalRequest(req *http.Request, payloadHash string) (creq, signed strin
 		headers[lk] = strings.Join(vals, ",")
 	}
 
-	names := make([]string, 0, len(headers))
-	for k := range headers {
-		names = append(names, k)
-	}
+	return canonicalRequestHeaders(req.Method, req.URL, headers, payloadHash)
+}
 
-	slices.Sort(names)
+// canonicalRequestHeaders builds the canonical request from already
+// lowercased and trimmed headers, all of which are signed.
+func canonicalRequestHeaders(
+	method string,
+	u *url.URL,
+	headers map[string]string,
+	payloadHash string,
+) (creq, signed string) {
+	signed = signedNames(headers)
 
 	var ch strings.Builder
-	for _, k := range names {
+	for k := range strings.SplitSeq(signed, ";") {
 		ch.WriteString(k + ":" + headers[k] + "\n")
 	}
 
-	signed = strings.Join(names, ";")
+	q, _ := url.ParseQuery(u.RawQuery)
 
-	q, _ := url.ParseQuery(req.URL.RawQuery)
-
-	creq = req.Method + "\n" +
-		canonicalURI(req.URL.Path) + "\n" +
+	creq = method + "\n" +
+		canonicalURI(u.Path) + "\n" +
 		canonicalQuery(q) + "\n" +
 		ch.String() + "\n" +
 		signed + "\n" +
 		payloadHash
 
 	return creq, signed
+}
+
+// signedNames returns the header names sorted and ';'-joined.
+func signedNames(headers map[string]string) string {
+	return strings.Join(slices.Sorted(maps.Keys(headers)), ";")
 }
 
 // canonicalURI encodes every path segment once; "/" separators are kept.

@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -589,5 +590,112 @@ func TestURLPrivate(t *testing.T) {
 	d, _ := newTestDisk(t)
 	if got := d.URL("a.txt"); got != "" {
 		t.Errorf("URL on a private disk = %q", got)
+	}
+}
+
+func presignedPut(t *testing.T, u, ctype string, body []byte) int {
+	t.Helper()
+
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodPut, u, bytes.NewReader(body))
+	if ctype != "" {
+		req.Header.Set("Content-Type", ctype)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_ = resp.Body.Close()
+
+	return resp.StatusCode
+}
+
+func TestPresignPutWith(t *testing.T) {
+	t.Parallel()
+
+	d, f := newTestDisk(t)
+	data := []byte(`{"ok":true}`)
+
+	u, err := d.PresignPutWith("uploads/a.json", 5*time.Minute, PresignPutOptions{
+		ContentType:   "application/json",
+		ContentLength: int64(len(data)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(u, "X-Amz-SignedHeaders=content-length%3Bcontent-type%3Bhost") {
+		t.Errorf("PresignPutWith URL = %s, want content-length;content-type;host signed", u)
+	}
+
+	if got := presignedPut(t, u, "application/json", data); got != http.StatusOK {
+		t.Fatalf("matching PUT = %d, want 200", got)
+	}
+
+	if got := f.objects["uploads/a.json"].ctype; got != "application/json" {
+		t.Errorf("stored content type = %q", got)
+	}
+
+	// Zero options sign only host, like PresignPut.
+	u, err = d.PresignPutWith("uploads/b.txt", time.Minute, PresignPutOptions{})
+	if err != nil || !strings.Contains(u, "X-Amz-SignedHeaders=host&") {
+		t.Errorf("PresignPutWith(zero) = %s %v", u, err)
+	}
+
+	for _, o := range []PresignPutOptions{
+		{ContentLength: -1},
+		{ContentLength: MaxPartSize + 1},
+		{ContentType: "text/plain\r\nX-Evil: 1"},
+		{ContentType: "not a media type"},
+	} {
+		if _, err := d.PresignPutWith("a.txt", time.Minute, o); !errors.Is(err, ErrInvalidPresign) {
+			t.Errorf("PresignPutWith(%+v) = %v, want ErrInvalidPresign", o, err)
+		}
+	}
+
+	if _, err := d.PresignPutWith("../x", time.Minute, PresignPutOptions{}); !errors.Is(err, storage.ErrInvalidPath) {
+		t.Errorf("PresignPutWith(traversal) = %v", err)
+	}
+
+	if _, err := d.PresignPutWith("a.txt", 0, PresignPutOptions{}); !errors.Is(err, ErrInvalidExpiry) {
+		t.Errorf("PresignPutWith(0s) = %v", err)
+	}
+}
+
+func TestSecurity_A01_S3PresignPutBindsTypeAndSize(t *testing.T) {
+	t.Parallel()
+
+	d, f := newTestDisk(t)
+	data := []byte("PNG-bytes")
+
+	u, err := d.PresignPutWith("avatars/1.png", time.Minute, PresignPutOptions{
+		ContentType:   "image/png",
+		ContentLength: int64(len(data)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for name, tc := range map[string]struct {
+		ctype string
+		body  []byte
+	}{
+		"other type":   {"text/html", data},
+		"missing type": {"", data},
+		"larger body":  {"image/png", append(slices.Clone(data), make([]byte, 1<<20)...)},
+		"smaller body": {"image/png", data[:3]},
+	} {
+		if got := presignedPut(t, u, tc.ctype, tc.body); got != http.StatusForbidden {
+			t.Errorf("%s: PUT = %d, want 403", name, got)
+		}
+	}
+
+	if _, ok := f.objects["avatars/1.png"]; ok {
+		t.Fatal("a mismatching upload was stored")
+	}
+
+	if got := presignedPut(t, u, "image/png", data); got != http.StatusOK {
+		t.Errorf("matching PUT = %d, want 200", got)
 	}
 }

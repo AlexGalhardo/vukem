@@ -114,17 +114,35 @@ func verifyPresigned(r *http.Request, now time.Time) error {
 	}
 
 	s := signer{accessKey: testAccessKey, secret: config.NewSecret(testSecret), region: testRegion, service: "s3"}
-	if q.Get("X-Amz-Credential") != testAccessKey+"/"+s.scope(t) || q.Get("X-Amz-SignedHeaders") != "host" {
-		return errors.New("bad credential or signed headers")
+	if q.Get("X-Amz-Credential") != testAccessKey+"/"+s.scope(t) {
+		return errors.New("bad credential")
 	}
 
-	canon := &http.Request{
-		Method: r.Method,
-		URL:    &url.URL{Path: r.URL.Path, RawQuery: canonicalQuery(q)},
-		Host:   r.Host,
-		Header: http.Header{},
+	// Like S3, every signed header must be present with the signed value;
+	// Content-Length is checked against the body actually received.
+	headers := map[string]string{}
+
+	for n := range strings.SplitSeq(q.Get("X-Amz-SignedHeaders"), ";") {
+		switch n {
+		case "host":
+			headers[n] = r.Host
+		case "content-length":
+			headers[n] = strconv.FormatInt(r.ContentLength, 10)
+		default:
+			if r.Header.Get(n) == "" {
+				return fmt.Errorf("signed header %s missing", n)
+			}
+
+			headers[n] = trimHeader(r.Header.Get(n))
+		}
 	}
-	creq, _ := canonicalRequest(canon, unsignedPayload)
+
+	if _, ok := headers["host"]; !ok {
+		return errors.New("host not signed")
+	}
+
+	u := &url.URL{Path: r.URL.Path, RawQuery: canonicalQuery(q)}
+	creq, _ := canonicalRequestHeaders(r.Method, u, headers, unsignedPayload)
 
 	want := s.signature(t, stringToSign(t, s.scope(t), creq))
 	if !hmac.Equal([]byte(want), []byte(sig)) {
