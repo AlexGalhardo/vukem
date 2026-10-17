@@ -79,11 +79,17 @@ func DefaultErrorHandler(c *Ctx, err error) {
 	status := errs.Status(err)
 	he, _ := errors.AsType[*errs.HTTPError](err)
 	verr, _ := errors.AsType[*errs.ValidationError](err)
+	level := slog.LevelDebug
+
 	if verr == nil {
-		verr = issuesValidation(c.Context(), err) // z.FieldError or Issues returned by the handler
+		// z.FieldError or Issues returned by the handler: logged at Info, as
+		// they may be a bug (internal data validated without errs.Wrap(500)).
+		if verr = issuesValidation(c.Context(), c.Log(), err); verr != nil {
+			level = slog.LevelInfo
+		}
 	}
 
-	logError(c, status, err)
+	logError(c, status, err, level)
 
 	if c.s.Debug && status >= 500 {
 		c.writeDebugReport(status, err)
@@ -129,7 +135,9 @@ func DefaultErrorHandler(c *Ctx, err error) {
 		}
 
 		_ = c.writeProblem(p)
-	case verr != nil && !c.IsHTMX() && c.validationHook(verr):
+	// GET/HEAD never redirect back: the previous page may be this one.
+	case verr != nil && !c.IsHTMX() && c.r.Method != http.MethodGet && c.r.Method != http.MethodHead &&
+		c.validationHook(verr):
 	case c.s.Debug && status >= 500 && !c.IsHTMX():
 		c.renderDebugPage(status, err)
 	default:
@@ -142,13 +150,12 @@ func (c *Ctx) validationHook(verr *errs.ValidationError) bool {
 	return ok && hook(c, verr)
 }
 
-func logError(c *Ctx, status int, err error) {
+func logError(c *Ctx, status int, err error, level slog.Level) {
 	attrs := []any{"status", status, "method", c.r.Method, "path", c.r.URL.Path, "err", err}
 	if id := RequestID(c.Context()); id != "" {
 		attrs = append(attrs, "request_id", id)
 	}
 
-	level := slog.LevelDebug
 	if status >= 500 {
 		level = slog.LevelError
 	}

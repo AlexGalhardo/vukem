@@ -386,3 +386,91 @@ func TestErrorHandlerZValidationErrors(t *testing.T) {
 		}
 	})
 }
+
+func TestSecurity_A10_ZIssuesFailClosed(t *testing.T) {
+	t.Parallel()
+
+	secret := errors.New("db: connection refused to 10.0.0.5")
+	schema := z.Struct[struct {
+		Name string `json:"name"`
+	}](z.Shape{"name": z.String().Refine(func(string) error { return secret })})
+	_, issues := schema.Parse(map[string]any{"name": "x"})
+
+	jsonReq := func(r *http.Request) { r.Header.Set("Accept", "application/json") }
+
+	t.Run("internal data wrapped as 500", func(t *testing.T) {
+		t.Parallel()
+
+		rec, _ := runError(t, errs.Wrap(http.StatusInternalServerError, issues), jsonReq, nil)
+
+		var p Problem
+		if err := json.Unmarshal(rec.Body.Bytes(), &p); err != nil {
+			t.Fatal(err)
+		}
+
+		if rec.Code != http.StatusInternalServerError || p.Errors != nil {
+			t.Errorf("wrapped issues = %d errors %v, want 500 without field errors", rec.Code, p.Errors)
+		}
+	})
+
+	t.Run("returned issues", func(t *testing.T) {
+		t.Parallel()
+
+		rec, logs := runError(t, issues, jsonReq, nil)
+		if rec.Code != http.StatusUnprocessableEntity || strings.Contains(rec.Body.String(), "10.0.0.5") ||
+			!strings.Contains(rec.Body.String(), "The name field is invalid.") {
+			t.Errorf("response = %d %q, want 422 with the generic message", rec.Code, rec.Body.String())
+		}
+
+		if !strings.Contains(logs, "level=INFO") || !strings.Contains(logs, "10.0.0.5") {
+			t.Errorf("logs = %q, want an INFO line with the raw refine error", logs)
+		}
+	})
+
+	t.Run("parse", func(t *testing.T) {
+		t.Parallel()
+
+		var logs bytes.Buffer
+
+		s := &Services{Log: slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))}
+		r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/?name=x", http.NoBody)
+		r.Header.Set("Accept", "application/json")
+		rec := httptest.NewRecorder()
+
+		NewCtx(rec, r, s).Serve(func(c *Ctx) error {
+			_, err := ParseQuery(c, schema)
+			return err
+		})
+
+		if rec.Code != http.StatusUnprocessableEntity || strings.Contains(rec.Body.String(), "10.0.0.5") {
+			t.Errorf("response = %d %q, want 422 without the raw error", rec.Code, rec.Body.String())
+		}
+
+		if !strings.Contains(logs.String(), "10.0.0.5") {
+			t.Errorf("logs = %q, want the raw refine error", logs.String())
+		}
+	})
+}
+
+func TestErrorHandlerValidationHookSkipsGET(t *testing.T) {
+	t.Parallel()
+
+	for _, method := range []string{http.MethodGet, http.MethodHead} {
+		called := false
+		hook := ValidationHook(func(c *Ctx, _ *errs.ValidationError) bool {
+			called = true
+			_ = c.Redirect("/form")
+
+			return true
+		})
+
+		rec, _ := runError(t, errs.NewValidation().Add("q", "too short"), func(r *http.Request) {
+			r.Method = method
+			*r = *r.WithContext(WithValidationHook(r.Context(), hook))
+		}, nil)
+
+		if called || rec.Code != http.StatusUnprocessableEntity {
+			t.Errorf("%s: hook called = %t, status %d; want no redirect and 422", method, called, rec.Code)
+		}
+	}
+}
