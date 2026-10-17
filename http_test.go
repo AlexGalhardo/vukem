@@ -14,6 +14,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -2383,4 +2384,77 @@ func devtoolsGet(t *testing.T, app *App, path string) *httptest.ResponseRecorder
 	h.ServeHTTP(rec, req)
 
 	return rec
+}
+
+// TestSecurity_A02_BuiltinErrorPagesUnderCSP renders every built-in status
+// page through DefaultMiddleware and checks it against the response's own
+// Content-Security-Policy: no style or event-handler attributes, and every
+// <style> and <script> element carries the request nonce (A30).
+func TestSecurity_A02_BuiltinErrorPagesUnderCSP(t *testing.T) {
+	t.Parallel()
+
+	routes := WithRoutes(func(r *router.Router, app *App) error {
+		r.Get("/only-get", func(c *web.Ctx) error { return c.String(200, "ok") })
+		r.Get("/forbidden", func(*web.Ctx) error { return errs.ErrForbidden })
+		r.Get("/invalid", func(*web.Ctx) error { return errs.NewValidation().Add("title", "required") })
+		r.Get("/boom", func(*web.Ctx) error { return errors.New("boom") })
+
+		return DefaultMiddleware(app, r)
+	})
+
+	nonceRe := regexp.MustCompile(`'nonce-([^']+)'`)
+	inlineAttr := regexp.MustCompile(`(?i)<[^>]+\s(style|on[a-z]+)\s*=`)
+	element := regexp.MustCompile(`(?i)<(style|script)\b[^>]*>`)
+
+	for _, env := range []string{"test", "development"} {
+		app := newTestApp(t, WithSource(testSource(map[string]string{"APP_ENV": env})), routes)
+
+		h, err := app.Handler()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		for _, tt := range []struct {
+			method, target, hx string
+			status             int
+		}{
+			{http.MethodPost, "/only-get", "", 405},
+			{http.MethodGet, "/missing", "", 404},
+			{http.MethodGet, "/forbidden", "", 403},
+			{http.MethodGet, "/invalid", "", 422},
+			{http.MethodGet, "/boom", "", 500},
+			{http.MethodGet, "/missing", "true", 404},
+		} {
+			req := httptest.NewRequestWithContext(t.Context(), tt.method, tt.target, http.NoBody)
+			req.Header.Set("Accept", "text/html")
+
+			if tt.hx != "" {
+				req.Header.Set("HX-Request", tt.hx)
+			}
+
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+
+			name := env + " " + tt.method + " " + tt.target + " hx=" + tt.hx
+			body := rec.Body.String()
+
+			m := nonceRe.FindStringSubmatch(rec.Header().Get("Content-Security-Policy"))
+			if rec.Code != tt.status || len(m) < 2 || !strings.Contains(body, "<") {
+				t.Errorf("%s = %d CSP %q, want %d with a nonce CSP and HTML", name, rec.Code,
+					rec.Header().Get("Content-Security-Policy"), tt.status)
+
+				continue
+			}
+
+			if a := inlineAttr.FindString(body); a != "" {
+				t.Errorf("%s has an inline attribute CSP blocks: %q", name, a)
+			}
+
+			for _, el := range element.FindAllString(body, -1) {
+				if !strings.Contains(el, `nonce="`+m[1]+`"`) {
+					t.Errorf("%s: %s lacks the request nonce", name, el)
+				}
+			}
+		}
+	}
 }

@@ -136,7 +136,7 @@ type ValidationError struct { Fields map[string][]string }
 
 - Handlers return errors; `errs.Handler` maps them:
   - `*ValidationError` → see the validation table above.
-  - `*HTTPError` / sentinels → status page (`resources/views/errors/<status>.html`) or problem+json.
+  - `*HTTPError` / sentinels → status page (`resources/views/errors/<status>.html`, which receives `.Nonce` for a nonce'd `<style>`) or problem+json. The built-in status pages have no inline style attributes and nonce their `<style>`, so they render under the default CSP.
   - `orm.ErrNoRows` → 404.
   - anything else → 500, logged with request id; debug page in development.
 - Content negotiation: `Accept: application/json` or `/api` routes → RFC 9457 problem details; HTMX → fragment/status; `Services.ErrorPage` (Inertia requests with `vukem.WithInertia`: the `Error` page component with `status` and a client-safe `message`); otherwise HTML.
