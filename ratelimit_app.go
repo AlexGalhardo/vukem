@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/AlexGalhardo/vukem/cache"
 	"github.com/AlexGalhardo/vukem/ratelimit"
 )
 
@@ -59,17 +60,28 @@ func (a *App) RateLimiters() (ratelimit.Factory, error) {
 	}
 }
 
-// cacheShared reports whether App.Cache reaches every server: a store set
-// with WithCacheStore (Redis) or CACHE_STORE=database.
+// cacheShared reports whether App.Cache reaches every server: any store but
+// the per-process memory one (CACHE_STORE=database, or Redis set with
+// WithCacheStore / WithCacheStoreFunc). It resolves the store through
+// Cache, so a lazy store is read under its sync.Once.
 func (a *App) cacheShared() (bool, error) {
-	if a.cacheStore != nil || a.cacheStoreFunc != nil {
-		return true, nil
-	}
-
-	cfg, err := configLoad[CacheConfig](a)
+	c, err := a.Cache()
 	if err != nil {
 		return false, err
 	}
 
-	return cfg.Store == "database", nil
+	for s := c.Store(); s != nil; {
+		if _, ok := s.(*cache.Memory); ok {
+			return false, nil
+		}
+
+		u, ok := s.(interface{ Unwrap() cache.Store })
+		if !ok {
+			return true, nil
+		}
+
+		s = u.Unwrap()
+	}
+
+	return true, nil
 }

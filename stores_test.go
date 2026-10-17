@@ -2,6 +2,7 @@ package vukem
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -41,7 +42,7 @@ func TestLazyStoreFuncs(t *testing.T) {
 
 	var calls []string
 
-	store := cache.NewMemory(10)
+	store := sharedStore{cache.NewMemory(10)}
 	fake := queue.NewFake()
 
 	app := newTestApp(t,
@@ -85,7 +86,7 @@ func TestLazyStoreFuncs(t *testing.T) {
 
 	shared, err := app.cacheShared()
 	if err != nil || !shared {
-		t.Errorf("cacheShared() = %v, %v, want true (a custom store is shared)", shared, err)
+		t.Errorf("cacheShared() = %v, %v, want true (a non-memory store is shared)", shared, err)
 	}
 }
 
@@ -109,6 +110,28 @@ func TestLazyStoreFuncErrors(t *testing.T) {
 
 	if _, err := app.Queue(); !errors.Is(err, boom) {
 		t.Errorf("Queue() error = %v, want %v", err, boom)
+	}
+}
+
+func TestLazyStoreFuncsRejectNil(t *testing.T) {
+	t.Parallel()
+
+	app := newTestApp(t,
+		WithCacheStoreFunc(func(*App) (cache.Store, error) { return nil, nil }),
+		WithSessionStoreFunc(func(*App) (session.Store, error) { return nil, nil }),
+		WithQueueDriverFunc(func(*App) (queue.Driver, error) { return nil, nil }),
+	)
+
+	if _, err := app.Cache(); err == nil || !strings.Contains(err.Error(), "nil") {
+		t.Errorf("Cache() error = %v, want a nil-store error", err)
+	}
+
+	if _, err := app.Sessions(); err == nil || !strings.Contains(err.Error(), "nil") {
+		t.Errorf("Sessions() error = %v, want a nil-store error", err)
+	}
+
+	if _, err := app.Queue(); err == nil || !strings.Contains(err.Error(), "nil") {
+		t.Errorf("Queue() error = %v, want a nil-driver error", err)
 	}
 }
 

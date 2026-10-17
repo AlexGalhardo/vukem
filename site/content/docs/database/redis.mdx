@@ -71,7 +71,7 @@ app, err := vukem.New(
 )
 ```
 
-The last of `WithCacheStore` / `WithCacheStoreFunc` (and likewise for sessions and queues) wins; `SetSessionStore` from a provider still overrides both.
+The last of `WithCacheStore` / `WithCacheStoreFunc` (and likewise for sessions and queues) wins; `SetSessionStore` from a provider still overrides both. A function that returns `nil, nil` is an error. A function must not call the accessor it feeds (`app.Cache()` inside `WithCacheStoreFunc`, `app.Sessions()` or `DefaultMiddleware` inside `WithSessionStoreFunc`, `app.Queue()` inside `WithQueueDriverFunc`): it runs inside that accessor's `sync.Once` and would deadlock.
 
 | Feature | API |
 | --- | --- |
