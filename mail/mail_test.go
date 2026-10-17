@@ -155,6 +155,14 @@ func TestSecurity_A05_MailHeaderInjection(t *testing.T) {
 		t.Error("content id with line break accepted")
 	}
 
+	// A content type taken from an upload must not inject part headers.
+	if _, err := Build(&Message{
+		From: "a@b.co", To: []string{"c@d.co"},
+		Attachments: []Attachment{{Filename: "a.txt", ContentType: "text/plain\r\nContent-Transfer-Encoding: 7bit"}},
+	}); err == nil {
+		t.Error("attachment content type with line break accepted")
+	}
+
 	// Without a view engine View contents fail instead of sending empty mail.
 	if err := m.Send(t.Context(), raw{Envelope{To: []string{"a@b.co"}}, View("x", nil)}); err == nil {
 		t.Error("view without engine accepted")

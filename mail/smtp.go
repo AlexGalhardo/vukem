@@ -282,6 +282,17 @@ func writeAttachment(mw *multipart.Writer, a Attachment, disposition string) err
 		}
 	}
 
+	// The type may come from an upload: parse and re-format it so it can
+	// never carry a line break into the part headers.
+	mt, params, err := mime.ParseMediaType(ct)
+	if err != nil {
+		return fmt.Errorf("mail: invalid attachment content type: %w", err)
+	}
+
+	if ct = mime.FormatMediaType(mt, params); ct == "" {
+		return errors.New("mail: invalid attachment content type")
+	}
+
 	h := textproto.MIMEHeader{
 		"Content-Type":              {ct},
 		"Content-Transfer-Encoding": {"base64"},

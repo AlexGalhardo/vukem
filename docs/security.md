@@ -114,7 +114,7 @@ What Vukem does **by default** to protect applications, mapped to the [OWASP Top
 | `html/template` contextual auto-escaping for HTML, attributes, JS and URLs; `template.HTML` usage flagged in review | P |
 | JSON request detection (`middleware.JSONOnly`, `c.IsJSON`) parses the media type: only `application/json` and `application/*+json` count, so a CORS-simple `text/plain; x=+json` body cannot pass as JSON without a preflight (`TestSecurity_A05_JSONOnlyRejectsSimpleContentTypes`) | B |
 | JSON responses via `encoding/json` (escapes `<`, `>`, `&`); Inertia page data escapes `/` inside `<script>` | P / B |
-| Mail headers built with `net/mail` (no header injection); file names sanitised | A |
+| Mail headers built with `net/mail` (no header injection); file names sanitised; attachment content types parsed and re-formatted (`TestSecurity_A05_MailHeaderInjection`) | A |
 | No shell execution in the framework; `os/exec` usage in CLI generators never passes user input through a shell | P |
 | Validator rejects invalid UTF-8 and control characters in string fields by default | P |
 | Devtools mail previews render in an `<iframe sandbox srcdoc>` with the HTML escaped, under a page CSP without any script source, so mail HTML never runs inline (`TestSecurity_A05_DevtoolsMailPreviewIsSandboxed`) | B |
