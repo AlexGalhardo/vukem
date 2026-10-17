@@ -46,29 +46,29 @@ Severity follows DREAD (Critical 8–10, High 6–7.9, Medium 4–5.9, Low 1–3
 
 | ID | Severity | Component | Finding | Status |
 | --- | --- | --- | --- | --- |
-| F-01 | Medium | `web.SafeRedirect` | `https://app//evil.com` became the scheme-relative `//evil.com` (open redirect, CWE-601) | fixed `dc25cab` |
-| F-02 | High | `contrib/graphql` | introspection selections skipped every limit: a 1 KB fragment chain over `__Type` returned 7 MB, growing about 2.7× per level (unauthenticated DoS) | fixed `53cd8a0` |
-| F-03 | Medium | `contrib/graphql` | 4xx errors that wrap a cause (orm's unique-constraint conflict) sent driver text, table and constraint names to clients (CWE-209) | fixed `9f58dc7` |
-| F-04 | Medium | `web.SafeRedirect` | `/./\evil.com` passed the check and `http.Redirect` cleaned it into `/\evil.com` (open redirect) | fixed `e5d9968` |
-| F-05 | Medium | `contrib/grpc` | a returned or wrapped `*connect.Error` with a server-fault code kept its text (database errors, downstream dial addresses) | fixed `ddd7f3b` |
-| F-06 | Low | `middleware.JSONOnly`, `web.Ctx.IsJSON` | `text/plain; x=+json` (CORS-simple, no preflight) passed as JSON | fixed `0a55352` |
-| F-07 | Medium | `httpclient` | 6to4, local NAT64, Teredo, IPv4-compatible and -translated IPv6, site-local and the 6to4 relay were allowed (SSRF to loopback and metadata on NAT64 / 6to4 hosts) | fixed `78cca9b` |
-| F-08 | High | `install:api` + `install:auth --2fa` | `POST /api/v1/tokens` issued a 30-day `*` token for email and password alone, bypassing two-factor authentication | fixed `5e620c5` |
-| F-09 | High | `install:auth` | the login throttle key lower-cased but did not trim the email while the schema trims it: unlimited guesses with `" a@b.co"`, `"a@b.co "`… from one IP; no per-account limit | fixed `1827aab` |
-| F-10 | Medium | `ratelimit` | `ByToken` was the default key and the API scaffold used it before authentication: rotating made-up bearer tokens were never limited and grew the store | fixed `e7d8491` (breaking) |
-| F-11 | Medium | `upload.Verify` | the client-reported key was only path-cleaned: any object on the disk could be deleted or adopted as the caller's upload | fixed `26af7a7` |
-| F-12 | Low | `middleware.Maintenance` | an empty request path (absolute-form or `*` target) panicked in the bypass check (500 and stack in logs) | fixed `2aeeb84` |
-| F-13 | Low | `storage.Handler` | files under dot directories (`.git/config`) were served; uploaded HTML/XML ran on the app origin | fixed `87246fe` |
-| F-14 | Low | `upload.Receive` | nameless multipart parts were not counted, so thousands of tiny parts bypassed `MaxFields` | fixed `da8da3e` |
-| F-15 | Low | `upload.SanitizeName` | bidi overrides and zero-width characters survived, disguising extensions | fixed `cd02452` |
-| F-16 | Low | `auth` remember-me | concurrent replays of one stolen cookie all logged in; a failed DELETE left the token reusable | fixed `2205f96` |
-| F-17 | Low | `mail` | attachment `ContentType` was written raw into MIME part headers (header injection from upload metadata) | fixed `6e94e81` |
-| F-18 | Low | `web.Ctx.IP` | only the first `X-Forwarded-For` line was read: behind a proxy that appends a line, the client chose its IP (rate limit and throttle evasion) | fixed `de4e830` |
-| F-19 | Medium | `install:auth` password reset | a reset kept API tokens issued with the old password, and concurrent resets with one link could both succeed | fixed `1827aab` |
-| F-20 | Low | `docs/security.md` | rows promised behaviour the code lacks (events `auth.locked` / `token.revoked`, 72-byte passwords, JSON depth limit, govulncheck pre-push and cron, starter tool pinning, log correlation and aggregation) | corrected `821f84b`; gaps R-6, R-7 |
-| F-21 | Medium | `app` boot | an unknown `APP_ENV` (`prod`, `Production`, trailing space) skipped every production check (debug page, devtools, insecure cookies) | fixed `a9df8ee` (breaking) |
+| F-01 | Medium | `web.SafeRedirect` | `https://app//evil.com` became the scheme-relative `//evil.com` (open redirect, CWE-601) | fixed `56dd98e` |
+| F-02 | High | `contrib/graphql` | introspection selections skipped every limit: a 1 KB fragment chain over `__Type` returned 7 MB, growing about 2.7× per level (unauthenticated DoS) | fixed `f04dd80` |
+| F-03 | Medium | `contrib/graphql` | 4xx errors that wrap a cause (orm's unique-constraint conflict) sent driver text, table and constraint names to clients (CWE-209) | fixed `c3aa7e4` |
+| F-04 | Medium | `web.SafeRedirect` | `/./\evil.com` passed the check and `http.Redirect` cleaned it into `/\evil.com` (open redirect) | fixed `bdf0fbe` |
+| F-05 | Medium | `contrib/grpc` | a returned or wrapped `*connect.Error` with a server-fault code kept its text (database errors, downstream dial addresses) | fixed `30e98a9` |
+| F-06 | Low | `middleware.JSONOnly`, `web.Ctx.IsJSON` | `text/plain; x=+json` (CORS-simple, no preflight) passed as JSON | fixed `c5cb0d6` |
+| F-07 | Medium | `httpclient` | 6to4, local NAT64, Teredo, IPv4-compatible and -translated IPv6, site-local and the 6to4 relay were allowed (SSRF to loopback and metadata on NAT64 / 6to4 hosts) | fixed `4254b55` |
+| F-08 | High | `install:api` + `install:auth --2fa` | `POST /api/v1/tokens` issued a 30-day `*` token for email and password alone, bypassing two-factor authentication | fixed `c34e04e` |
+| F-09 | High | `install:auth` | the login throttle key lower-cased but did not trim the email while the schema trims it: unlimited guesses with `" a@b.co"`, `"a@b.co "`… from one IP; no per-account limit | fixed `1ef3674` |
+| F-10 | Medium | `ratelimit` | `ByToken` was the default key and the API scaffold used it before authentication: rotating made-up bearer tokens were never limited and grew the store | fixed `994276b` (breaking) |
+| F-11 | Medium | `upload.Verify` | the client-reported key was only path-cleaned: any object on the disk could be deleted or adopted as the caller's upload | fixed `31f6178` |
+| F-12 | Low | `middleware.Maintenance` | an empty request path (absolute-form or `*` target) panicked in the bypass check (500 and stack in logs) | fixed `95a19ba` |
+| F-13 | Low | `storage.Handler` | files under dot directories (`.git/config`) were served; uploaded HTML/XML ran on the app origin | fixed `88da87a` |
+| F-14 | Low | `upload.Receive` | nameless multipart parts were not counted, so thousands of tiny parts bypassed `MaxFields` | fixed `5897d11` |
+| F-15 | Low | `upload.SanitizeName` | bidi overrides and zero-width characters survived, disguising extensions | fixed `5077f1c` |
+| F-16 | Low | `auth` remember-me | concurrent replays of one stolen cookie all logged in; a failed DELETE left the token reusable | fixed `9afea58` |
+| F-17 | Low | `mail` | attachment `ContentType` was written raw into MIME part headers (header injection from upload metadata) | fixed `6396868` |
+| F-18 | Low | `web.Ctx.IP` | only the first `X-Forwarded-For` line was read: behind a proxy that appends a line, the client chose its IP (rate limit and throttle evasion) | fixed `8188ae4` |
+| F-19 | Medium | `install:auth` password reset | a reset kept API tokens issued with the old password, and concurrent resets with one link could both succeed | fixed `1ef3674` |
+| F-20 | Low | `docs/security.md` | rows promised behaviour the code lacks (events `auth.locked` / `token.revoked`, 72-byte passwords, JSON depth limit, govulncheck pre-push and cron, starter tool pinning, log correlation and aggregation) | corrected `e31231c`; gaps R-6, R-7 |
+| F-21 | Medium | `app` boot | an unknown `APP_ENV` (`prod`, `Production`, trailing space) skipped every production check (debug page, devtools, insecure cookies) | fixed `4824717` (breaking) |
 
-The fuzzing campaign found one oracle bug (upper-case hex in `Stripe-Signature` is the same MAC, not a forgery), fixed in `287e3ed` with the input kept as a regression seed.
+The fuzzing campaign found one oracle bug (upper-case hex in `Stripe-Signature` is the same MAC, not a forgery), fixed in `349bf75` with the input kept as a regression seed.
 
 ## Residual risks
 
@@ -132,7 +132,7 @@ Local campaign: each target ran for 10 minutes with `-parallel 1`, eight process
 | `FuzzTusRequest` (new, tus headers) | `upload` | 10m | 526,091 | pass |
 | `FuzzParseQuery` | `contrib/graphql` | ≥ 10m (suspend) | 1,564,704 | pass |
 | `FuzzParseSchema` | `contrib/graphql` | ≥ 10m (suspend) | 1,453,829 | pass |
-| `FuzzConstructEvent` (new) | `contrib/stripe` | 10m | 1,878,379 | pass (first run: oracle fix `287e3ed`) |
+| `FuzzConstructEvent` (new) | `contrib/stripe` | 10m | 1,878,379 | pass (first run: oracle fix `349bf75`) |
 
 ## Tooling results
 
