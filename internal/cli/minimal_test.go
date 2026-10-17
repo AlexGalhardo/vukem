@@ -52,6 +52,16 @@ func TestNewMinimalProjectEndToEnd(t *testing.T) {
 		t.Errorf("%s = %q", buildTagsFile, tags)
 	}
 
+	// The image must build with the same tags as vukem build.
+	if df := read(
+		t,
+		project,
+		"Dockerfile",
+	); !strings.Contains(df, buildTagsFile) ||
+		!strings.Contains(df, `-tags "$tags"`) {
+		t.Errorf("Dockerfile ignores %s: %q", buildTagsFile, df)
+	}
+
 	goCmd := func(args ...string) string {
 		t.Helper()
 

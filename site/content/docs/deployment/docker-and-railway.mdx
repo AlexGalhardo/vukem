@@ -12,7 +12,7 @@ The `Dockerfile` has up to three stages:
 | Stage | Image | What it does |
 | --- | --- | --- |
 | `assets` (not in `--api` projects) | `node:24.22.0-alpine3.24`, or `oven/bun:1.4.3-alpine` with `--pm bun` | installs dependencies from the lockfile (`npm ci`, `bun install --frozen-lockfile`, `pnpm`/`yarn` through corepack) and runs `vite build` |
-| `build` | `golang:1.27.2-alpine3.24` | `go mod download`, `templ generate` in `--templ` projects, copies `resources/public/build` from `assets`, then `CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" ./cmd/app` |
+| `build` | `golang:1.27.2-alpine3.24` | `go mod download`, `templ generate` in `--templ` projects, copies `resources/public/build` from `assets`, then `CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -tags <.buildtags> ./cmd/app` (the same tags as `vukem build`; `--minimal` apps leave SQLite out with `vukem_nosqlite`) |
 | runtime | `alpine:3.24.2` | the binary at `/app/app`, CA certificates and time zones, a non-root `app` user (uid 10001), a writable `/app/storage` |
 
 The runtime sets `APP_ENV=production`, `HOST=0.0.0.0` (the default `localhost` is unreachable from outside a container), `PORT=3000` and `LOG_FORMAT=json`. Views and assets are embedded in the binary, so the image holds one file. `.dockerignore` keeps `.env` and `.env.*`, `node_modules`, `.git`, `bin/` and `storage/` out of the build context: secrets reach the container through its environment only.

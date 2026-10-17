@@ -12,7 +12,9 @@ func TestWriteDocker(t *testing.T) {
 	common := []string{
 		"FROM golang:1.27.2-alpine3.24 AS build",
 		"COPY go.mod go.sum ./",
-		`go build -trimpath -ldflags="-s -w" -o /out/app ./cmd/app`,
+		// .buildtags is read at build time, so later edits reach the image.
+		`.buildtags`,
+		`go build -trimpath -ldflags="-s -w" -tags "$tags" -o /out/app ./cmd/app`,
 		"USER app",
 		"ENV APP_ENV=production HOST=0.0.0.0 PORT=3000",
 		`ENTRYPOINT ["/app/app"]`,
@@ -62,6 +64,13 @@ func TestWriteDocker(t *testing.T) {
 				"RUN yarn install --frozen-lockfile",
 				"RUN yarn run build",
 			},
+		},
+		{
+			name:    "minimal",
+			kind:    "minimal",
+			pm:      "npm",
+			want:    []string{"AS assets", "RUN npm run build"},
+			notWant: []string{"templ generate"},
 		},
 		{
 			name:    "api has no assets",
