@@ -68,7 +68,7 @@ err := db.Tx(ctx, func(tx *database.Tx) error {
 
 `database.RunInTx(ctx, ex, fn)` joins the caller's transaction when `ex` is already a `*Tx`, or starts one when it is a `*DB`, which keeps service functions composable.
 
-`tx.AfterCommit(func(ctx context.Context) { ... })` runs work once the transaction commits, in registration order, and drops it on rollback or panic. `queue.DispatchTx` uses it on drivers without transactional storage.
+`tx.AfterCommit(func(ctx context.Context) { ... })` runs work once the transaction commits, in registration order, and drops it on rollback or panic. A hook registered after the `db.Tx` function returned never runs; a panicking hook is logged and the others still run (`db.Tx` returns nil, since the commit happened). `queue.DispatchTx` uses it on drivers without transactional storage.
 
 ## Next
 

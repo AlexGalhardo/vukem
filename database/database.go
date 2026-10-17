@@ -395,6 +395,7 @@ type Tx struct {
 
 	// A pointer keeps Tx comparable, as it was before AfterCommit.
 	hooks *txHooks
+	log   *slog.Logger
 }
 
 type txHooks struct {
@@ -404,10 +405,17 @@ type txHooks struct {
 
 // AfterCommit runs fn once the transaction commits, after DB.Tx's fn
 // returned (hooks run in registration order, with DB.Tx's context). A
-// rollback or panic discards the hooks. Queues use it to enqueue jobs that
+// rollback or panic discards the hooks; a hook registered after DB.Tx's fn
+// returned never runs. A panicking hook is logged and the remaining hooks
+// still run (the commit already happened, so DB.Tx returns nil). It panics
+// on a Tx not started by DB.Tx (a programmer error). Queues use it to enqueue jobs that
 // must not exist for rolled-back work (queue.DispatchTx on drivers without
 // transactional storage).
 func (tx *Tx) AfterCommit(fn func(ctx context.Context)) {
+	if tx.hooks == nil {
+		panic("database: AfterCommit on a Tx not started by DB.Tx")
+	}
+
 	tx.hooks.mu.Lock()
 	defer tx.hooks.mu.Unlock()
 
@@ -455,7 +463,7 @@ func (db *DB) Tx(ctx context.Context, fn func(tx *Tx) error) (err error) {
 		return fmt.Errorf("database: begin: %w", err)
 	}
 
-	tx := &Tx{tx: sqlTx, dialect: db.dialect, enc: db.enc, obs: db.obs, hooks: &txHooks{}}
+	tx := &Tx{tx: sqlTx, dialect: db.dialect, enc: db.enc, obs: db.obs, hooks: &txHooks{}, log: db.log}
 
 	defer func() {
 		if p := recover(); p != nil {
@@ -482,10 +490,25 @@ func (db *DB) Tx(ctx context.Context, fn func(tx *Tx) error) (err error) {
 	tx.hooks.mu.Unlock()
 
 	for _, fn := range hooks {
-		fn(ctx)
+		tx.runHook(ctx, fn)
 	}
 
 	return nil
+}
+
+func (tx *Tx) runHook(ctx context.Context, fn func(context.Context)) {
+	defer func() {
+		if p := recover(); p != nil {
+			log := tx.log
+			if log == nil {
+				log = slog.Default()
+			}
+
+			log.ErrorContext(ctx, "database: AfterCommit hook panicked", "panic", fmt.Sprint(p))
+		}
+	}()
+
+	fn(ctx)
 }
 
 // RunInTx runs fn inside ex's transaction when ex is already a *Tx, or in
