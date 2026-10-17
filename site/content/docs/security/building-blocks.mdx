@@ -20,7 +20,12 @@ resp, err := client.Get(userURL)
 ## Signed URLs
 
 ```go
-signer := signed.New(app.Key.Derive("signed.urls", 32))
+key, err := app.DeriveKey("signed.urls", 32) // config.ErrKeyMissing without APP_KEY
+if err != nil {
+	return err
+}
+
+signer := signed.New(key) // panics on a key shorter than 32 bytes
 link, err := signer.Sign(appURL+"/unsubscribe/42", 7*24*time.Hour) // adds expires and signature
 
 r.Get("/unsubscribe/{id}", unsubscribe).Use(signer.Middleware()) // 403 when tampered or expired

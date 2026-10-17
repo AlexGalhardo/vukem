@@ -1,9 +1,14 @@
 package vukem
 
 import (
+	"errors"
+	"strings"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
+
 	"github.com/AlexGalhardo/vukem/cache"
+	"github.com/AlexGalhardo/vukem/queue"
 	"github.com/AlexGalhardo/vukem/session"
 )
 
@@ -29,5 +34,117 @@ func TestWithStores(t *testing.T) {
 
 	if _, err := app.Sessions(); err != nil {
 		t.Errorf("sessions with a given store = %v", err)
+	}
+}
+
+func TestLazyStoreFuncs(t *testing.T) {
+	t.Parallel()
+
+	var calls []string
+
+	store := sharedStore{cache.NewMemory(10)}
+	fake := queue.NewFake()
+
+	app := newTestApp(t,
+		WithSource(testSource(map[string]string{"REDIS_URL": "redis://from-config"})),
+		WithCacheStoreFunc(func(app *App) (cache.Store, error) {
+			calls = append(calls, "cache:"+app.Source.Get("REDIS_URL"))
+			return store, nil
+		}),
+		WithSessionStoreFunc(func(app *App) (session.Store, error) {
+			calls = append(calls, "session:"+app.Source.Get("REDIS_URL"))
+			return session.NewMemoryStore(), nil
+		}),
+		WithQueueDriverFunc(func(app *App) (queue.Driver, error) {
+			calls = append(calls, "queue:"+app.Source.Get("REDIS_URL"))
+			return fake, nil
+		}),
+	)
+
+	if len(calls) != 0 {
+		t.Fatalf("store funcs ran during New: %v, want lazy", calls)
+	}
+
+	for range 2 {
+		if _, err := app.Cache(); err != nil {
+			t.Fatal(err)
+		}
+
+		if _, err := app.Sessions(); err != nil {
+			t.Fatal(err)
+		}
+
+		if _, err := app.Queue(); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	want := []string{"cache:redis://from-config", "session:redis://from-config", "queue:redis://from-config"}
+	if diff := cmp.Diff(want, calls); diff != "" {
+		t.Errorf("store func calls (-want +got):\n%s", diff)
+	}
+
+	shared, err := app.cacheShared()
+	if err != nil || !shared {
+		t.Errorf("cacheShared() = %v, %v, want true (a non-memory store is shared)", shared, err)
+	}
+}
+
+func TestLazyStoreFuncErrors(t *testing.T) {
+	t.Parallel()
+
+	boom := errors.New("redis down")
+	app := newTestApp(t,
+		WithCacheStoreFunc(func(*App) (cache.Store, error) { return nil, boom }),
+		WithSessionStoreFunc(func(*App) (session.Store, error) { return nil, boom }),
+		WithQueueDriverFunc(func(*App) (queue.Driver, error) { return nil, boom }),
+	)
+
+	if _, err := app.Cache(); !errors.Is(err, boom) {
+		t.Errorf("Cache() error = %v, want %v", err, boom)
+	}
+
+	if _, err := app.Sessions(); !errors.Is(err, boom) {
+		t.Errorf("Sessions() error = %v, want %v", err, boom)
+	}
+
+	if _, err := app.Queue(); !errors.Is(err, boom) {
+		t.Errorf("Queue() error = %v, want %v", err, boom)
+	}
+}
+
+func TestLazyStoreFuncsRejectNil(t *testing.T) {
+	t.Parallel()
+
+	app := newTestApp(t,
+		WithCacheStoreFunc(func(*App) (cache.Store, error) { return nil, nil }),
+		WithSessionStoreFunc(func(*App) (session.Store, error) { return nil, nil }),
+		WithQueueDriverFunc(func(*App) (queue.Driver, error) { return nil, nil }),
+	)
+
+	if _, err := app.Cache(); err == nil || !strings.Contains(err.Error(), "nil") {
+		t.Errorf("Cache() error = %v, want a nil-store error", err)
+	}
+
+	if _, err := app.Sessions(); err == nil || !strings.Contains(err.Error(), "nil") {
+		t.Errorf("Sessions() error = %v, want a nil-store error", err)
+	}
+
+	if _, err := app.Queue(); err == nil || !strings.Contains(err.Error(), "nil") {
+		t.Errorf("Queue() error = %v, want a nil-driver error", err)
+	}
+}
+
+func TestStoreOptionsLastWins(t *testing.T) {
+	t.Parallel()
+
+	eager := cache.NewMemory(10)
+	app := newTestApp(t,
+		WithCacheStoreFunc(func(*App) (cache.Store, error) { return nil, errors.New("replaced") }),
+		WithCacheStore(eager),
+	)
+
+	if _, err := app.Cache(); err != nil {
+		t.Fatalf("Cache() = %v, want the later WithCacheStore to win", err)
 	}
 }

@@ -65,7 +65,8 @@ func WriteMaintenance(file string, m MaintenanceState) error {
 type MaintenanceConfig struct {
 	// File is the state file (default DefaultMaintenanceFile).
 	File string
-	// Key signs bypass cookies (derive it from APP_KEY).
+	// Key signs bypass cookies (derive it from APP_KEY). Without a key the
+	// secret bypass is disabled: an unkeyed HMAC would be forgeable.
 	Key []byte
 	// Except lists paths always served (default "/up").
 	Except []string
@@ -98,7 +99,7 @@ func Maintenance(cfg MaintenanceConfig) Middleware {
 				return
 			}
 
-			if m.SecretHash != "" {
+			if m.SecretHash != "" && len(cfg.Key) > 0 {
 				token := bypassToken(cfg.Key, m.SecretHash)
 
 				if c, err := r.Cookie(MaintenanceCookie); err == nil && hmac.Equal([]byte(c.Value), []byte(token)) {

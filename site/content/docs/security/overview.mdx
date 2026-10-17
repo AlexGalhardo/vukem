@@ -9,7 +9,7 @@ Vukem's security defaults are a design contract. Each default lands in a phase (
 
 1. **Secure by default, explicit to loosen.** Unsafe behaviour needs an opt-out with a visible name (`InsecureSkipX`), never a missing opt-in.
 2. **Fail closed.** If a check cannot be performed (store down, key missing, policy not registered), the request is denied.
-3. **Refuse to boot when misconfigured.** Missing `APP_KEY`, debug in production, wildcard CORS with credentials: boot error, not a warning.
+3. **Refuse to boot when misconfigured.** Missing `APP_KEY` in production, debug in production, wildcard CORS with credentials: boot error, not a warning.
 4. **Standard library crypto only.** `crypto/*` and `golang.org/x/crypto`; no custom algorithms.
 5. **Small dependency surface** so supply-chain risk stays auditable.
 
@@ -17,7 +17,7 @@ Vukem's security defaults are a design contract. Each default lands in a phase (
 
 | Default | OWASP |
 | --- | --- |
-| Boot refuses a missing or short `APP_KEY`, `APP_DEBUG=true` in production and an invalid port | A02 |
+| Boot refuses a missing `APP_KEY` in production or with `APP_ENV` unset (with an explicit `development`/`test`, key-derived features fail closed on use) or a short one, `APP_DEBUG=true` in production and an invalid port | A02 |
 | `NewHTTPServer` always sets read, write, header and idle timeouts and `MaxHeaderBytes` | A02 |
 | `SecureHeaders`: CSP with per-request nonce, HSTS on HTTPS, `nosniff`, `X-Frame-Options: DENY`, COOP, Referrer and Permissions policies | A02 |
 | CORS deny by default; `"*"` with credentials refused at construction | A01 / A02 |

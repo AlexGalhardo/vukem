@@ -13,7 +13,7 @@ func {{.Name}}() vukem.Command {
 		CommandName: "{{.Kebab}}",
 		Desc:        "Describe what {{.Kebab}} does",
 		Fn: func(ctx context.Context, app *vukem.App, args []string) error {
-			fmt.Println("{{.Kebab}} ran with", args)
+			fmt.Fprintln(app.Stdout(), "{{.Kebab}} ran with", args)
 			return nil
 		},
 	}

@@ -75,11 +75,31 @@ func TestSecurity_A02_RateLimitCacheNeedsSharedStore(t *testing.T) {
 	}
 
 	// A store set in code (Redis) is shared.
-	app = newTestApp(t, WithSource(testSource(env)), WithCacheStore(cache.NewMemory(0)))
+	app = newTestApp(t, WithSource(testSource(env)), WithCacheStore(sharedStore{cache.NewMemory(0)}))
 	if _, err := app.RateLimiters(); err != nil {
 		t.Fatalf("RateLimiters() with WithCacheStore = %v", err)
 	}
+
+	// The memory store set in code, directly, lazily or wrapped, is not.
+	for name, opt := range map[string]Option{
+		"eager":   WithCacheStore(cache.NewMemory(0)),
+		"lazy":    WithCacheStoreFunc(func(*App) (cache.Store, error) { return cache.NewMemory(0), nil }),
+		"wrapped": WithCacheStore(wrappedStore{cache.NewMemory(0)}),
+	} {
+		app = newTestApp(t, WithSource(testSource(env)), opt)
+		if limiters, err := app.RateLimiters(); err == nil || limiters != nil {
+			t.Errorf("RateLimiters() with a %s memory store = %v, %v, want an error", name, limiters != nil, err)
+		}
+	}
 }
+
+// sharedStore stands for a store every server reaches (Redis).
+type sharedStore struct{ *cache.Memory }
+
+// wrappedStore decorates a store (metrics) and exposes it with Unwrap.
+type wrappedStore struct{ cache.Store }
+
+func (w wrappedStore) Unwrap() cache.Store { return w.Store }
 
 // Two app instances on one database (two servers) share the budget with
 // RATE_LIMIT_STORE=cache and CACHE_STORE=database.

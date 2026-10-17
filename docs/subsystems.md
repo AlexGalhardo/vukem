@@ -25,7 +25,7 @@ Mail, cache, storage, events, queue, scheduler, encryption, rate limiting, i18n,
 - `Secret` values are redacted via `LogValuer`.
 - Error aggregation: `logging.NewDedup(next, opts)` is a stdlib `slog.Handler` that writes the first ERROR record of a kind (same level, message, handler attributes and `event` / `error` / `err` values) and counts the repeats inside a window; when the window ends (a timer per window, or `Close`), one `repeated` record carries `message`, `count` and `window`. Untracked kinds beyond 1024 per window pass through. The default logger uses it in production with a 1-minute window, in front of Telegram, and `app.Shutdown` flushes pending summaries; `LOG_DEDUP_WINDOW` changes the window (`0` disables, any duration enables it outside production). Loggers passed with `WithLogger` are used as given.
 - OpenTelemetry: `drivers/otel` (BETA) traces every request **in a separate module** to keep OTel out of core ([OpenTelemetry](#opentelemetry)).
-- `/up` returns 200 when the app booted; `/up?checks=1` runs registered health checks (DB ping, Redis ping) with timeouts.
+- `/up` returns 200 when the app booted (liveness, no dependency touched). `app.AddHealthCheck` / `AddHealthCheckTimeout` register readiness checks (`app.DB()` adds `db`); `app.ReadyHandler()` (mount it at `/ready`) and `/up?checks=1` run them in parallel, each with its own timeout (default 3s), and answer 200 or 503 with `ok`/`fail` per check, never the error text. `app.CheckHealth(ctx)` returns the raw errors.
 
 ## Telegram logging
 
@@ -319,6 +319,7 @@ limiter := rc.RateLimiter("api:", 60, time.Minute) // ratelimit.Limiter shared b
 msgs, err := rc.Subscribe(ctx, "orders")          // pub/sub (SSE fan-out); rc.Publish(ctx, "orders", b)
 ```
 
+- `os.Getenv` runs before `vukem.New` loads `.env` and `vukemtest` sources. `vukem.WithCacheStoreFunc`, `WithSessionStoreFunc` and `WithQueueDriverFunc` take `func(*App) (store, error)` instead, called on the first `app.Cache()` / `app.Sessions()` / `app.Queue()` after configuration loaded, so the URL comes from `app.Source.Get("REDIS_URL")`; the function's error is returned by that call. The last of the eager and lazy option wins.
 - The queue keeps jobs in sorted sets under `{queue}:` (one Cluster slot) and reserves them with one Lua script; abandoned jobs are taken over after their timeout plus one minute, failed jobs support `queue:failed`, `queue:retry` and `queue:forget`.
 - `Flush` deletes only the store's prefix (`SCAN` + `DEL`), never the whole database, and refuses an empty prefix.
 - `Open` pings the server, so the app does not boot while Redis is down; a malformed URL always fails. `redis.OpenLazy(url)` only parses the URL and connects on first use, so the process starts and `rc.Ping` reports the outage in a readiness check (`app.AddHealthCheck("redis", rc.Ping)`). go-redis retries a failed command 3 times with backoff, so that `Ping` takes seconds while Redis is down; for a fast readiness answer set `?dial_timeout=1s&max_retries=-1` on the URL (or open a separate client with those options just for the check).

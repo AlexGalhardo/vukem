@@ -85,6 +85,7 @@ func SendReports() vukem.Command {
 		Desc:        "Email the weekly reports",
 		DefineFlags: func(fs *flag.FlagSet) { /* fs.Bool(...) */ },
 		Fn: func(ctx context.Context, app *vukem.App, args []string) error {
+			fmt.Fprintln(app.Stdout(), "reports sent")
 			return nil
 		},
 	}
@@ -92,6 +93,8 @@ func SendReports() vukem.Command {
 ```
 
 Register it in `bootstrap/commands.go` (`vukem make:command` does it for you). Commands run with `KindConsole`, so providers limited to `KindWeb` are skipped.
+
+Print through `app.Stdout()` and `app.Stderr()` and read `app.Stdin()` rather than the `os` streams: `vukem.WithStdout`, `WithStderr` and `WithStdin` then redirect them, which is how tests capture or silence a command's output.
 
 ## Providers
 

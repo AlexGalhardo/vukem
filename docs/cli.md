@@ -106,6 +106,13 @@ type Command interface {
 
 `vukem make:command SendReports` generates this and appends it to `bootstrap/commands.go`. Commands run with the `console` environment (providers limited to `web` are skipped).
 
+Commands print through `app.Stdout()` and `app.Stderr()` and read `app.Stdin()` instead of the `os` streams, so `vukem.WithStdout`, `WithStderr` and `WithStdin` (used by tests to capture or silence output) apply to them:
+
+```go
+fmt.Fprintf(app.Stdout(), "%d users promoted
+", n)
+```
+
 ### `boost:mcp`
 
 Built-in app command started by agents (`go run ./cmd/app boost:mcp`): a Model Context Protocol server over stdio (JSON-RPC 2.0, newline-delimited, stdlib only). Tools: `application_info`, `list_routes`, `list_commands`, `database_schema`, `database_query` (one read-only statement, max 100 rows), `get_absolute_url`, `search_docs` (fetches `llms-full.txt` from the docs site).

@@ -290,8 +290,10 @@ func TestCommands(t *testing.T) {
 func TestRunMainBuildError(t *testing.T) {
 	t.Parallel()
 
-	err := RunMain(t.Context(), []string{"app"}, func(string) (string, bool) { return "", false },
-		New)
+	// Outside production a missing APP_KEY is not a boot error.
+	getenv := func(k string) (string, bool) { return map[string]string{"APP_ENV": "production"}[k], k == "APP_ENV" }
+
+	err := RunMain(t.Context(), []string{"app"}, getenv, New)
 	if err == nil || !strings.Contains(err.Error(), "APP_KEY") {
 		t.Fatalf("RunMain() = %v, want APP_KEY error", err)
 	}

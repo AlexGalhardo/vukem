@@ -51,7 +51,11 @@ func (a *App) DB() (*database.DB, error) {
 			opts = append(opts, database.WithDriver(d))
 		}
 
-		opts = append(opts, database.WithEncrypter(a.Crypt))
+		// A nil *crypt.Encrypter in the interface would defeat orm's
+		// ErrNoEncrypter check.
+		if a.Crypt != nil {
+			opts = append(opts, database.WithEncrypter(a.Crypt))
+		}
 
 		if a.Devtools != nil {
 			opts = append(opts, database.WithQueryObserver(a.Devtools))

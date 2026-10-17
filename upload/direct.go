@@ -171,7 +171,11 @@ func Direct(cfg DirectConfig) (http.Handler, error) {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
-		_ = json.NewEncoder(w).Encode(out)
+		if err := json.NewEncoder(w).Encode(out); err != nil {
+			if log := web.ServicesFrom(r.Context()).Log; log != nil {
+				log.DebugContext(r.Context(), "upload: write presign response", "err", err) // client gone
+			}
+		}
 	}), nil
 }
 

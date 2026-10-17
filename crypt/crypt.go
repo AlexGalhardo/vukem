@@ -46,6 +46,10 @@ const (
 // The causes are deliberately not distinguished.
 var ErrInvalid = errors.New("crypt: invalid or tampered ciphertext")
 
+// ErrNoKey is returned when opening with a nil Encrypter: app.Crypt is nil
+// when the app booted without APP_KEY (outside production).
+var ErrNoKey = errors.New("crypt: no key: APP_KEY is not set (run `vukem key:generate`)")
+
 type key struct {
 	id   [keyIDSize]byte
 	aead cipher.AEAD
@@ -92,8 +96,12 @@ func keyID(raw []byte) [keyIDSize]byte {
 
 // Seal encrypts plaintext with the current key, authenticating ad
 // (additional data, not stored in the token) alongside it. Open must be
-// given the same ad.
+// given the same ad. It panics on a nil Encrypter (no APP_KEY).
 func (e *Encrypter) Seal(plaintext, ad []byte) string {
+	if e == nil {
+		panic(ErrNoKey.Error())
+	}
+
 	k := e.keys[0]
 
 	// The capacity is only a hint: skip it rather than overflow on huge inputs.
@@ -114,8 +122,13 @@ func (e *Encrypter) Seal(plaintext, ad []byte) string {
 }
 
 // Open decrypts a token produced by Seal with the same ad, using the current
-// or any previous key. Every failure returns ErrInvalid.
+// or any previous key. Every failure returns ErrInvalid, or ErrNoKey on a
+// nil Encrypter.
 func (e *Encrypter) Open(token string, ad []byte) ([]byte, error) {
+	if e == nil {
+		return nil, ErrNoKey
+	}
+
 	raw, id, ok := parse(token)
 	if !ok {
 		return nil, ErrInvalid
@@ -156,7 +169,12 @@ func (e *Encrypter) DecryptString(token string) (string, error) {
 // key other than the current one; re-seal it with Rotate. It does not
 // authenticate the token.
 func (e *Encrypter) NeedsRotation(token string) bool {
+	if e == nil {
+		return false
+	}
+
 	_, id, ok := parse(token)
+
 	return ok && id != e.keys[0].id
 }
 

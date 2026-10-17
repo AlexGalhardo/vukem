@@ -196,7 +196,7 @@ Database unique-constraint violations are mapped to `409` by the dialect.
 | Concurrency control | `If-Match` with ETag → 412 on mismatch |
 | Idempotency | `api.Idempotency(store, api.IdempotencyOptions{})` on any `cache.Store` (memory, database, Redis): the first `POST`/`PATCH` with an `Idempotency-Key` runs and its response (below 500, without `Set-Cookie`) is stored for 24h; repeats replay it with `Idempotent-Replayed: true`, an in-flight duplicate gets 409, the same key with a different request 422. Keys are scoped to the caller: by default the authenticated user (`auth.Principal`, when `auth.Required`/`auth.Optional` ran first, which is where it belongs), else a SHA-256 of `Authorization`; set `Scope` for other identities (`TestSecurity_A01_IdempotencyScopedToPrincipal`). Store errors answer 503. |
 | Compression | gzip middleware (stdlib `compress/gzip`) |
-| Health | `/up`, `/up?checks=1` |
+| Health | `/up` (liveness), `/up?checks=1` or `app.ReadyHandler()` (readiness) |
 | Request ID | `X-Request-ID` propagated and returned |
 
 ## OpenAPI

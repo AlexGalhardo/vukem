@@ -10,10 +10,6 @@ import (
 	"github.com/AlexGalhardo/vukem/config"
 )
 
-func withStderr(w *bytes.Buffer) Option {
-	return func(o *options) error { o.stderr = w; return nil }
-}
-
 func assertKey(t *testing.T, out string) {
 	t.Helper()
 
@@ -37,7 +33,7 @@ func TestRunMain_KeyGenerate(t *testing.T) {
 	run := func(args ...string) (stdout, stderr string, err error) {
 		var out, errOut bytes.Buffer
 		err = RunMain(t.Context(), append([]string{"app", "key:generate"}, args...), noEnv, noBuild,
-			WithStdout(&out), withStderr(&errOut))
+			WithStdout(&out), WithStderr(&errOut))
 
 		return out.String(), errOut.String(), err
 	}

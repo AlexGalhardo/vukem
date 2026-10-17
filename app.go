@@ -96,10 +96,13 @@ type App struct {
 	Config Config
 	// Source gives access to every configuration value (for module configs).
 	Source *config.Source
-	// Key is the decoded APP_KEY; derive purpose-specific keys from it.
+	// Key is the decoded APP_KEY; derive purpose-specific keys from it
+	// (DeriveKey returns an error instead of panicking when it is unset).
+	// It is zero only outside production when APP_KEY is unset.
 	Key config.Key
 	// Crypt encrypts with a key derived from APP_KEY and still decrypts
 	// values sealed with APP_PREVIOUS_KEYS. DB() hands it to orm.Encrypted.
+	// It is nil when Key is zero; its methods then fail with crypt.ErrNoKey.
 	Crypt *crypt.Encrypter
 	// Log is the application logger.
 	Log *slog.Logger
@@ -124,6 +127,7 @@ type App struct {
 	commands  map[string]Command
 	health    health
 	stdout    io.Writer
+	stderr    io.Writer
 	stdin     io.Reader
 	ready     chan<- string
 	noHTTP    bool
@@ -131,6 +135,8 @@ type App struct {
 	sessOnce  sync.Once
 	sessions  *session.Manager
 	sessStore session.Store
+	// sessStoreFunc builds sessStore on first use (WithSessionStoreFunc).
+	sessStoreFunc func(*App) (session.Store, error)
 	// sessPruner is the session store when it keeps expired rows (database).
 	sessPruner sessionPruner
 	sessErr    error
@@ -150,14 +156,18 @@ type App struct {
 	// DEVTOOLS=true enabled it (nil otherwise).
 	Devtools *devtools.Devtools
 
-	jobs         []queue.Registration
-	jobFuncs     []func(*App) []queue.Registration
-	queueDriver  queue.Driver
-	cacheStore   cache.Store
-	schedules    []func(*schedule.Schedule, *App)
-	scheduleOnce sync.Once
-	schedule     *schedule.Schedule
-	scheduleErr  error
+	jobs        []queue.Registration
+	jobFuncs    []func(*App) []queue.Registration
+	queueDriver queue.Driver
+	cacheStore  cache.Store
+	// Built on first use of Queue() / Cache() (WithQueueDriverFunc,
+	// WithCacheStoreFunc).
+	queueDriverFunc func(*App) (queue.Driver, error)
+	cacheStoreFunc  func(*App) (cache.Store, error)
+	schedules       []func(*schedule.Schedule, *App)
+	scheduleOnce    sync.Once
+	schedule        *schedule.Schedule
+	scheduleErr     error
 
 	queueOnce sync.Once
 	queue     *queue.Queue
@@ -205,10 +215,13 @@ type options struct {
 	queueDriver   queue.Driver
 	cacheStore    cache.Store
 	sessionStore  session.Store
+	queueFunc     func(*App) (queue.Driver, error)
+	cacheFunc     func(*App) (cache.Store, error)
+	sessionFunc   func(*App) (session.Store, error)
 	schedules     []func(*schedule.Schedule, *App)
 	drivers       []database.Driver
 	stdout        io.Writer
-	stderr        io.Writer // key:generate diagnostics; tests set it directly
+	stderr        io.Writer
 	stdin         io.Reader
 	ready         chan<- string
 	noHTTP        bool
@@ -259,6 +272,12 @@ func WithClock(now func() time.Time) Option {
 // WithStdout sets where commands print (os.Stdout by default).
 func WithStdout(w io.Writer) Option {
 	return func(o *options) error { o.stdout = w; return nil }
+}
+
+// WithStderr sets where commands print diagnostics (os.Stderr by
+// default).
+func WithStderr(w io.Writer) Option {
+	return func(o *options) error { o.stderr = w; return nil }
 }
 
 // WithStdin sets where commands read input (os.Stdin by default).
@@ -357,7 +376,7 @@ func New(opts ...Option) (*App, error) {
 
 	cfg.Devtools = cfg.Devtools || o.devtools
 
-	key, err := checkConfig(&cfg)
+	key, err := checkConfig(&cfg, src.EnvSet())
 	if err != nil {
 		return nil, err
 	}
@@ -406,6 +425,11 @@ func New(opts ...Option) (*App, error) {
 		stdout = os.Stdout
 	}
 
+	errOut := o.stderr
+	if errOut == nil {
+		errOut = os.Stderr
+	}
+
 	stdin := o.stdin
 	if stdin == nil {
 		stdin = os.Stdin
@@ -441,6 +465,7 @@ func New(opts ...Option) (*App, error) {
 		providers: o.providers,
 		runners:   o.runners,
 		stdout:    stdout,
+		stderr:    errOut,
 		stdin:     stdin,
 		ready:     o.ready,
 		noHTTP:    o.noHTTP,
@@ -454,9 +479,18 @@ func New(opts ...Option) (*App, error) {
 		queueDriver: o.queueDriver,
 		cacheStore:  o.cacheStore,
 		sessStore:   o.sessionStore,
-		schedules:   o.schedules,
-		mail:        mailState{transport: o.mailTransport},
+
+		queueDriverFunc: o.queueFunc,
+		cacheStoreFunc:  o.cacheFunc,
+		sessStoreFunc:   o.sessionFunc,
+		schedules:       o.schedules,
+		mail:            mailState{transport: o.mailTransport},
 	}
+	if key.IsZero() && cfg.Env == config.Development {
+		app.Log.Warn("APP_KEY is not set: sessions, encryption and signed URLs fail until you run `vukem key:generate`",
+			"env", string(cfg.Env))
+	}
+
 	app.Router = app.newRouter()
 	routes = app.Router
 
@@ -563,12 +597,17 @@ func New(opts ...Option) (*App, error) {
 	return app, nil
 }
 
-// checkConfig enforces secure defaults at boot (fail closed).
-func checkConfig(cfg *Config) (config.Key, error) {
+// checkConfig enforces secure defaults at boot (fail closed). envSet
+// reports whether APP_ENV was given explicitly (config.Source.EnvSet).
+func checkConfig(cfg *Config, envSet bool) (config.Key, error) {
 	var errs []error
 
+	// A missing key is allowed only with an explicit APP_ENV=development or
+	// test (a forgotten APP_ENV in production must not boot keyless); every
+	// key-derived feature then fails closed (Key.Derive panics, Crypt is nil,
+	// cookie sessions refuse to start). A malformed key is always an error.
 	key, err := config.ParseKey(cfg.Key)
-	if err != nil {
+	if err != nil && (!errors.Is(err, config.ErrKeyMissing) || !envSet || cfg.IsProduction()) {
 		errs = append(errs, err)
 	}
 
@@ -596,7 +635,7 @@ func checkConfig(cfg *Config) (config.Key, error) {
 
 // newCrypt builds app.Crypt: the "crypt" key derived from APP_KEY encrypts,
 // keys derived from APP_PREVIOUS_KEYS only decrypt. A malformed previous key
-// is a boot error.
+// is a boot error. Without APP_KEY it returns nil (see crypt.ErrNoKey).
 func newCrypt(key config.Key, previous config.Secret) (*crypt.Encrypter, error) {
 	var old [][]byte
 
@@ -611,6 +650,10 @@ func newCrypt(key config.Key, previous config.Secret) (*crypt.Encrypter, error) 
 		}
 
 		old = append(old, k.Derive("crypt", crypt.KeySize))
+	}
+
+	if key.IsZero() {
+		return nil, nil
 	}
 
 	return crypt.New(key.Derive("crypt", crypt.KeySize), old...)
@@ -668,6 +711,29 @@ func newLogger(cfg *Config, out io.Writer) *slog.Logger {
 	}
 
 	return slog.New(slog.NewTextHandler(out, hopts))
+}
+
+// Stdout is where commands print results (WithStdout, os.Stdout by
+// default). Commands write here instead of os.Stdout so tests can capture
+// or silence them.
+func (a *App) Stdout() io.Writer { return a.stdout }
+
+// Stderr is where commands print diagnostics (WithStderr, os.Stderr by
+// default).
+func (a *App) Stderr() io.Writer { return a.stderr }
+
+// Stdin is where commands read input (WithStdin, os.Stdin by default).
+func (a *App) Stdin() io.Reader { return a.stdin }
+
+// DeriveKey returns an n-byte key for purpose derived from APP_KEY (see
+// config.Key.Derive). It fails with config.ErrKeyMissing when the app
+// booted without APP_KEY, so a key-derived feature fails closed.
+func (a *App) DeriveKey(purpose string, n int) ([]byte, error) {
+	if a.Key.IsZero() {
+		return nil, fmt.Errorf("vukem: %s: %w", purpose, config.ErrKeyMissing)
+	}
+
+	return a.Key.Derive(purpose, n), nil
 }
 
 // Now returns the current time from the app clock (see WithClock).

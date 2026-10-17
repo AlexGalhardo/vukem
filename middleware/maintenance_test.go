@@ -156,3 +156,25 @@ func TestMaintenanceBrokenFileFailsClosed(t *testing.T) {
 		t.Errorf("unreadable down file = %d, want 503", rec.Code)
 	}
 }
+
+func TestSecurity_A01_MaintenanceBypassNeedsKey(t *testing.T) {
+	t.Parallel()
+
+	file := filepath.Join(t.TempDir(), "down")
+	if err := WriteMaintenance(file, MaintenanceState{Secret: "let-me-in"}); err != nil {
+		t.Fatal(err)
+	}
+
+	s := &web.Services{Log: slog.New(slog.DiscardHandler)}
+	mw := Maintenance(MaintenanceConfig{File: file})
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mw(http.HandlerFunc(ok)).ServeHTTP(w, r.WithContext(web.WithServices(r.Context(), s)))
+	})
+
+	// Without a key the bypass cookie would be an unkeyed, forgeable HMAC.
+	rec := mget(t, h, "/let-me-in", nil)
+	if rec.Code != http.StatusServiceUnavailable || rec.Header().Get("Set-Cookie") != "" {
+		t.Fatalf("GET /<secret> without a key = %d, Set-Cookie %q, want 503 and no cookie",
+			rec.Code, rec.Header().Get("Set-Cookie"))
+	}
+}

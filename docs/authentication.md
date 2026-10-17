@@ -177,7 +177,12 @@ The raw SVG is inserted with `template.HTML` (HTMX) or the framework's raw-HTML 
 Ally-style OAuth2/OIDC sign-in, standard library only (no `x/oauth2`).
 
 ```go
-s := social.New(app.Key.Derive("social.state", 32),
+key, err := app.DeriveKey("social.state", 32) // config.ErrKeyMissing without APP_KEY
+if err != nil {
+	return err
+}
+
+s := social.New(key, // panics on a key shorter than 32 bytes
 	social.GitHub(social.Config{ClientID: id, ClientSecret: secret, RedirectURL: "https://app.test/auth/github/callback"}),
 	social.Google(googleCfg),                  // OIDC
 	social.Microsoft("common", microsoftCfg),  // OIDC (Entra ID)

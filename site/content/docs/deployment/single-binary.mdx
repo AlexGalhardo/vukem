@@ -54,6 +54,21 @@ On `SIGINT` or `SIGTERM` the HTTP server stops accepting connections and drains 
 
 The same process runs the [scheduler](/docs/digging-deeper/scheduler#running-it) when tasks exist (including the hourly `session:prune` with `SESSION_DRIVER=database`), so one service is enough. With several replicas, or a separate `./bin/app schedule:work` process, set `SCHEDULE_IN_SERVE=false` on the web replicas so run-once tasks are not fired by every replica (see [Several replicas](/docs/digging-deeper/scheduler#several-replicas)).
 
+## Health checks
+
+`GET /up` is the liveness probe: it answers `200 {"status":"ok"}` once the app booted, without touching a dependency or creating a session. Use it as the container healthcheck.
+
+For readiness, register a check per dependency and mount `app.ReadyHandler()` where the platform expects it:
+
+```go
+app.AddHealthCheck("redis", rc.Ping)                              // 3s timeout
+app.AddHealthCheckTimeout("search", 500*time.Millisecond, search.Ping)
+
+r.Handle("GET /ready", app.ReadyHandler())
+```
+
+`app.DB()` registers a `db` check by itself. The handler runs every check in parallel, each bounded by its own timeout (a check that ignores its context is abandoned at the deadline), and answers `200` or `503` with `{"status":"ok"|"fail","checks":{"db":"ok","redis":"fail"}}` and `Cache-Control: no-store`. Errors are logged, never returned to the client. `GET /up?checks=1` gives the same answer; `app.CheckHealth(ctx)` returns the raw errors for a custom endpoint.
+
 ## Behind a reverse proxy
 
 Terminate TLS at the proxy (Caddy, nginx, a load balancer) and tell Vukem which proxies to trust:
