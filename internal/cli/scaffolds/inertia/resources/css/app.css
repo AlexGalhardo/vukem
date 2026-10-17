@@ -1,0 +1,6 @@
+@import "tailwindcss";
+
+/* Inertia pages style themselves with Tailwind utilities. Dark mode follows
+   the "dark" class on <html> (set before paint in app.html), so a theme
+   toggle can override the system preference. */
+@custom-variant dark (&:where(.dark, .dark *));
