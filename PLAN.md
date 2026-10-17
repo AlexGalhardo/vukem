@@ -617,7 +617,7 @@ Applies to **every** task:
 
 - [x] **S.2.1** Docs site versioned per minor (`site/`, see [docs/site.md](docs/site.md)).
   → verify: version switcher works; `task site:build` green.
-- [ ] **S.2.2** Tutorials: blog with HTMX, SaaS with Inertia, JSON API with tokens.
+- [x] **S.2.2** Tutorials: blog with HTMX, SaaS with Inertia, JSON API with tokens.
   → verify: each tutorial's code lives in `examples/` and is tested in CI.
 
 ### S.3 Release
