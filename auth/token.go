@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"slices"
 	"strings"
@@ -55,16 +56,66 @@ type Tokens struct {
 	// time.Now). Set it to app.Now so a fake clock (vukem.WithClock,
 	// vukemtest.Options.Clock) drives token expiry.
 	Now func() time.Time
+	// Log receives the one-time hint that access_tokens lacks revoked_at
+	// (default slog.Default()); the token guard uses the request logger.
+	Log *slog.Logger
 
 	ex    database.Executor
 	table string
 	// outdatedLogged keeps the missing revoked_at hint to one log line.
 	outdatedLogged atomic.Bool
+	// revokedAtSeen skips the column probe once revoked_at was found.
+	revokedAtSeen atomic.Bool
 }
 
 // errNoRevokedAt marks a lookup that failed because access_tokens predates
 // the revoked_at column.
 var errNoRevokedAt = errors.New("auth: access_tokens has no revoked_at column")
+
+// outdatedHint is logged once per Tokens when access_tokens predates
+// revoked_at.
+const outdatedHint = "auth: access_tokens has no revoked_at column, so every API token is refused and " +
+	"revoking deletes the row; add auth.TokensRevokedAtMigration to the app's migrations and run vukem migrate"
+
+// sqlStater is implemented by driver errors carrying an SQLSTATE code
+// (*pgconn.PgError).
+type sqlStater interface {
+	error
+	SQLState() string
+}
+
+// missingRevokedAt reports whether err is the database saying the
+// revoked_at column does not exist: SQLSTATE 42703 (PostgreSQL), "no such
+// column" (SQLite) or error 1054 (MySQL/MariaDB), naming that column.
+func missingRevokedAt(err error) bool {
+	msg := err.Error()
+	if !strings.Contains(msg, "revoked_at") {
+		return false
+	}
+
+	if se, ok := errors.AsType[sqlStater](err); ok {
+		return se.SQLState() == "42703"
+	}
+
+	return strings.Contains(msg, "no such column: revoked_at") || strings.Contains(msg, "Error 1054")
+}
+
+// logOutdated logs outdatedHint the first time it is called on t.
+func (t *Tokens) logOutdated(ctx context.Context, log *slog.Logger, attrs ...any) {
+	if !t.outdatedLogged.CompareAndSwap(false, true) {
+		return
+	}
+
+	if log == nil {
+		log = t.Log
+	}
+
+	if log == nil {
+		log = slog.Default()
+	}
+
+	log.ErrorContext(ctx, outdatedHint, attrs...)
+}
 
 // NewTokens uses the access_tokens table.
 func NewTokens(ex database.Executor) *Tokens {
@@ -196,9 +247,7 @@ func (t *Tokens) Find(ctx context.Context, plain string) (Token, error) {
 
 	if !found || !match || !live {
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			// Drivers word it differently ("no such column", "does not
-			// exist", "Unknown column"), but all name the column.
-			if strings.Contains(strings.ToLower(err.Error()), "revoked_at") {
+			if missingRevokedAt(err) {
 				return Token{}, fmt.Errorf("auth: find token: %w: %w", errNoRevokedAt, err)
 			}
 
@@ -231,9 +280,7 @@ func (t *Tokens) Find(ctx context.Context, plain string) (Token, error) {
 // the first time. Use RevokeFor when the id comes from user input (a
 // "revoke" button in a dashboard).
 func (t *Tokens) Revoke(ctx context.Context, id string) error {
-	_, err := t.ex.ExecContext(ctx, t.q("UPDATE {table} SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL"),
-		t.now().UTC(), id)
-
+	_, err := t.revoke(ctx, "id = ?", id)
 	return err
 }
 
@@ -242,20 +289,45 @@ func (t *Tokens) Revoke(ctx context.Context, id string) error {
 // unknown id or one already revoked), so a caller cannot revoke another
 // user's token by guessing its id.
 func (t *Tokens) RevokeFor(ctx context.Context, userID, id string) (bool, error) {
-	res, err := t.ex.ExecContext(
-		ctx,
-		t.q("UPDATE {table} SET revoked_at = ? WHERE id = ? AND user_id = ? AND revoked_at IS NULL"),
-		t.now().UTC(),
-		id,
-		userID,
-	)
-	if err != nil {
-		return false, err
+	n, err := t.revoke(ctx, "id = ? AND user_id = ?", id, userID)
+	return n > 0, err
+}
+
+// revoke sets revoked_at on the live tokens matching where. On a table
+// without the column it deletes them instead, the safe side of a revoke;
+// the column is probed first because a failed UPDATE would abort an
+// enclosing PostgreSQL transaction (the install:auth password reset).
+func (t *Tokens) revoke(ctx context.Context, where string, args ...any) (int64, error) {
+	if !t.revokedAtSeen.Load() {
+		has, err := schema.New(ctx, t.ex).HasColumn(t.table, "revoked_at")
+		if err != nil {
+			return 0, fmt.Errorf("auth: revoke token: %w", err)
+		}
+
+		if !has {
+			t.logOutdated(ctx, nil)
+
+			res, err := t.ex.ExecContext(ctx, t.q("DELETE FROM {table} WHERE "+where), args...)
+			if err != nil {
+				return 0, fmt.Errorf("auth: revoke token: %w", err)
+			}
+
+			return res.RowsAffected()
+		}
+
+		t.revokedAtSeen.Store(true)
 	}
 
-	n, err := res.RowsAffected()
+	res, err := t.ex.ExecContext(
+		ctx,
+		t.q("UPDATE {table} SET revoked_at = ? WHERE "+where+" AND revoked_at IS NULL"),
+		append([]any{t.now().UTC()}, args...)...,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("auth: revoke token: %w", err)
+	}
 
-	return n > 0, err
+	return res.RowsAffected()
 }
 
 // List returns userID's tokens, newest first, revoked ones included with
@@ -294,28 +366,27 @@ func (t *Tokens) List(ctx context.Context, userID string) ([]Token, error) {
 
 // RevokeAll revokes every live token of userID.
 func (t *Tokens) RevokeAll(ctx context.Context, userID string) error {
-	_, err := t.ex.ExecContext(
-		ctx,
-		t.q("UPDATE {table} SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL"),
-		t.now().UTC(),
-		userID,
-	)
-
+	_, err := t.revoke(ctx, "user_id = ?", userID)
 	return err
 }
 
 // Prune deletes the tokens revoked or expired before cutoff and returns how
 // many it deleted. Schedule it to bound the table while keeping recent
-// revocations visible in List.
+// revocations visible in List. Expiry is compared with the earlier of
+// cutoff and now, so a cutoff in the future never deletes a live token.
 func (t *Tokens) Prune(ctx context.Context, cutoff time.Time) (int64, error) {
 	cutoff = cutoff.UTC()
+	expired := cutoff
+	if now := t.now().UTC(); now.Before(expired) {
+		expired = now
+	}
 
 	res, err := t.ex.ExecContext(
 		ctx,
 		t.q("DELETE FROM {table} WHERE (revoked_at IS NOT NULL AND revoked_at < ?) "+
 			"OR (expires_at IS NOT NULL AND expires_at < ?)"),
 		cutoff,
-		cutoff,
+		expired,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("auth: prune tokens: %w", err)
@@ -401,10 +472,8 @@ func (g *TokenGuard[U]) User(c *web.Ctx) (U, error) {
 		web.SecurityEvent(c.Request(), "token.rejected", "guard", g.name)
 		return zero, ErrUnauthenticated
 	default:
-		if errors.Is(err, errNoRevokedAt) && g.tokens.outdatedLogged.CompareAndSwap(false, true) {
-			c.Log().ErrorContext(c.Context(), "auth: access_tokens has no revoked_at column, so every API token "+
-				"is refused; add auth.TokensRevokedAtMigration to the app's migrations and run vukem migrate",
-				"guard", g.name)
+		if errors.Is(err, errNoRevokedAt) {
+			g.tokens.logOutdated(c.Context(), c.Log(), "guard", g.name)
 		}
 
 		return zero, errs.Wrap(http.StatusServiceUnavailable, err)

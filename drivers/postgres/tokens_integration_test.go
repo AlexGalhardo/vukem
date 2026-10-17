@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/AlexGalhardo/vukem/auth"
+	"github.com/AlexGalhardo/vukem/database"
 	"github.com/AlexGalhardo/vukem/schema"
 )
 
@@ -46,8 +47,27 @@ func TestTokensSoftRevoke(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := tokens.Find(ctx, plain); err == nil || !strings.Contains(err.Error(), "revoked_at") {
-		t.Fatalf("Find() without revoked_at = %v, want an error naming the column", err)
+	// SQLSTATE 42703 is recognised as the missing column (the guard then
+	// logs the migration to add).
+	if _, err := tokens.Find(ctx, plain); err == nil ||
+		!strings.Contains(err.Error(), "access_tokens has no revoked_at column") {
+		t.Fatalf("Find() without revoked_at = %v, want the missing column recognised", err)
+	}
+
+	// Revoking still works before the upgrade, also inside a transaction
+	// (a failed UPDATE would abort it): the rows are deleted instead.
+	_, legacy, _ := tokens.Create(ctx, "3", "legacy", nil, 0)
+	if err := db.Tx(ctx, func(tx *database.Tx) error {
+		return auth.NewTokens(tx).RevokeAll(ctx, "3")
+	}); err != nil {
+		t.Fatalf("RevokeAll() in a transaction on a legacy table = %v", err)
+	}
+
+	var n int
+	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM access_tokens WHERE id = $1", legacy.ID).
+		Scan(&n); err != nil ||
+		n != 0 {
+		t.Fatalf("legacy token rows after RevokeAll = %d, %v, want 0", n, err)
 	}
 
 	upgrade := auth.TokensRevokedAtMigration("2_access_tokens_revoked_at")
@@ -83,11 +103,18 @@ func TestTokensSoftRevoke(t *testing.T) {
 		t.Fatalf("List() = %+v, %v, want the token revoked at %v", list, err, now)
 	}
 
+	// A cutoff past now still keeps tokens that have not expired.
+	_, live, _ := tokens.Create(ctx, "1", "live", nil, time.Hour)
+
 	if n, err := tokens.Prune(ctx, now); err != nil || n != 0 {
 		t.Fatalf("Prune(at revocation) = %d, %v, want 0", n, err)
 	}
 
-	if n, err := tokens.Prune(ctx, now.Add(time.Second)); err != nil || n != 1 {
-		t.Fatalf("Prune(after revocation) = %d, %v, want 1", n, err)
+	if n, err := tokens.Prune(ctx, now.AddDate(1, 0, 0)); err != nil || n != 1 {
+		t.Fatalf("Prune(next year) = %d, %v, want 1 (the revoked token)", n, err)
+	}
+
+	if list, _ := tokens.List(ctx, "1"); len(list) != 1 || list[0].ID != live.ID {
+		t.Fatalf("List() after Prune = %+v, want only the live token", list)
 	}
 }

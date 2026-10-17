@@ -314,3 +314,82 @@ func TestTokenGuardUserLookupErrors(t *testing.T) {
 		})
 	}
 }
+
+func TestTokensRevokeOnLegacyTable(t *testing.T) {
+	t.Parallel()
+
+	logs := &syncBuffer{}
+	ta := newApp(t, hash.Fake())
+	ana := ta.user(t, "ana@example.com", "pw", true)
+	bob := ta.user(t, "bob@example.com", "pw", true)
+	ctx := t.Context()
+	ta.tokens.Log = slog.New(slog.NewTextHandler(logs, nil))
+
+	plain, tok, _ := ta.tokens.Create(ctx, ana.AuthID(), "a", nil, 0)
+	_, tok2, _ := ta.tokens.Create(ctx, ana.AuthID(), "b", nil, 0)
+	_, bobTok, _ := ta.tokens.Create(ctx, bob.AuthID(), "c", nil, 0)
+
+	db, _ := ta.DB()
+	if _, err := db.ExecContext(ctx, "ALTER TABLE access_tokens DROP COLUMN revoked_at"); err != nil {
+		t.Fatal(err)
+	}
+
+	count := func(id string) int {
+		var n int
+		if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM access_tokens WHERE id = ?", id).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+
+		return n
+	}
+
+	// Revoking stays possible (and safe) before the upgrade: the row is
+	// deleted instead.
+	if ok, err := ta.tokens.RevokeFor(ctx, bob.AuthID(), tok.ID); err != nil || ok || count(tok.ID) != 1 {
+		t.Fatalf("RevokeFor(bob, ana's token) on a legacy table = %v, %v, want false, nil, row kept", ok, err)
+	}
+
+	if ok, err := ta.tokens.RevokeFor(ctx, ana.AuthID(), tok.ID); err != nil || !ok || count(tok.ID) != 0 {
+		t.Fatalf("RevokeFor(ana, own token) on a legacy table = %v, %v, want true, nil, row deleted", ok, err)
+	}
+
+	if err := ta.tokens.Revoke(ctx, tok2.ID); err != nil || count(tok2.ID) != 0 {
+		t.Fatalf("Revoke() on a legacy table = %v, want nil, row deleted", err)
+	}
+
+	// The password reset of install:auth runs RevokeAll in a transaction.
+	if err := db.Tx(ctx, func(tx *database.Tx) error {
+		return auth.NewTokens(tx).RevokeAll(ctx, bob.AuthID())
+	}); err != nil || count(bobTok.ID) != 0 {
+		t.Fatalf("RevokeAll() in a transaction on a legacy table = %v, want nil, row deleted", err)
+	}
+
+	if n := strings.Count(logs.String(), "auth.TokensRevokedAtMigration"); n != 1 {
+		t.Errorf("logs name auth.TokensRevokedAtMigration %d times, want once:\n%s", n, logs)
+	}
+
+	// DELETE /tokens/current cannot authenticate on a legacy table: the
+	// lookup fails, which is a 503, never a 500 or a 401.
+	ta.Client(t).WithToken(plain).Get("/v1/me").AssertStatus(http.StatusServiceUnavailable)
+}
+
+func TestTokensPruneKeepsLiveTokens(t *testing.T) {
+	t.Parallel()
+
+	ta := newApp(t, hash.Fake())
+	u := ta.user(t, "ana@example.com", "pw", true)
+	ctx := t.Context()
+	now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+	ta.tokens.Now = func() time.Time { return now }
+
+	plain, _, _ := ta.tokens.Create(ctx, u.AuthID(), "month", nil, 30*24*time.Hour)
+
+	// A cutoff in the future must not delete tokens that have not expired.
+	if n, err := ta.tokens.Prune(ctx, now.AddDate(1, 0, 0)); err != nil || n != 0 {
+		t.Fatalf("Prune(next year) = %d, %v, want 0, nil", n, err)
+	}
+
+	if _, err := ta.tokens.Find(ctx, plain); err != nil {
+		t.Fatalf("Find() after Prune(next year) = %v, want the live token", err)
+	}
+}

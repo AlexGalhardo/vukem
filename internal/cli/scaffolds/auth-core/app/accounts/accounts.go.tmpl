@@ -119,6 +119,7 @@ func New(app *vukem.App) (*Accounts, error) {
 	// it specific to this app. Tokens issued before it stay valid.
 	tokens.Prefix = "vk_"
 	tokens.Now = app.Now // a fake app clock also drives token expiry
+	tokens.Log = app.Log
 
 	signingKey, err := app.DeriveKey("signed.urls", 32)
 	if err != nil {

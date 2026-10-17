@@ -21,7 +21,7 @@ vk_<id>.<secret>
 - `<id>` finds the row; `<secret>` proves the caller knows the token. Both come from `crypto/rand`.
 - Only `SHA-256(secret)` is stored, in the `access_tokens` table. A database leak does not leak usable tokens, and the comparison is constant time.
 - `last_used_at` is updated at most once a minute, so busy clients do not write on every request.
-- Revoking sets `revoked_at`; the row stays so the user (and an audit) can see when a token was revoked. A revoked token is refused exactly like a wrong one: it pays for the same hash comparison first. `Prune` deletes old revoked and expired rows.
+- Revoking sets `revoked_at`; the row stays so the user (and an audit) can see when a token was revoked. A revoked token is refused exactly like a wrong one: it pays for the same hash comparison first. `Prune` deletes old revoked and expired rows, never a token that is still live.
 
 ## Step by step
 
@@ -195,7 +195,7 @@ n, err := tokens.Prune(ctx, app.Now().AddDate(0, 0, -90))
 
 ## Upgrading a table created before v0.26.0
 
-Older `install:auth` scaffolds created `access_tokens` without `revoked_at`. Until the column exists every token is refused with `503 Service Unavailable` (the lookup fails, and a failed check denies), and the guard logs one error naming `auth.TokensRevokedAtMigration`. The same 503 answers any other store failure, such as the database being down; only a missing, wrong, expired or revoked token gets 401. Add the shipped migration to your list; it skips a table that already has the column:
+Older `install:auth` scaffolds created `access_tokens` without `revoked_at`. Until the column exists every token is refused with `503 Service Unavailable` (the lookup fails, and a failed check denies), revoking deletes the row instead (the safe side), and one error naming `auth.TokensRevokedAtMigration` is logged. The same 503 answers any other store failure, such as the database being down; only a missing, wrong, expired or revoked token gets 401. Add the shipped migration to your list; it skips a table that already has the column:
 
 ```go title="database/migrations/20261101000000_access_tokens_revoked_at.go"
 func m20261101000000AccessTokensRevokedAt() schema.Migration {
@@ -203,7 +203,7 @@ func m20261101000000AccessTokensRevokedAt() schema.Migration {
 }
 ```
 
-Register it in your migrations list like the others, then run `vukem migrate`. The repository's `examples/*` apps still pin v0.20.0 and need the same migration when they move to v0.26.0.
+Register it in your migrations list like the others, then run `vukem migrate`. A project created with the current `install:auth` already has the column; the migration is then a no-op. The `examples/*` apps in the repository ship this migration.
 
 ## Testing
 
@@ -219,6 +219,7 @@ app.Client(t).WithToken(plain).GetJSON("/api/v1/me").AssertOK()
 ## Pitfalls
 
 - **`ttl` 0 never expires.** `Create(ctx, id, name, abilities, 0)` returns a token valid until revoked. Pass a lifetime unless you mean it (the scaffold uses 30 days).
+- **Session guard first on mixed routes.** `auth.Required(webGuard, apiGuard)`, not the reverse: `Required` stops at a guard that fails with 503, so with the token guard first a browser with a valid session and a stray `Bearer` header gets 503 while the token store is down.
 - **Revoked tokens are listed.** `List` returns them with `RevokedAt` set; filter them out (or show them greyed out) on a "My API tokens" page.
 - **`Revoke` has no owner check.** Use it only for the token of the current request (`auth.CurrentToken`). When the id comes from a form or URL, use `RevokeFor`, or one user can revoke another's tokens by guessing ids.
 - **The plain token is gone after `Create`.** Show it once and tell the user to copy it; there is no way to read it back.
