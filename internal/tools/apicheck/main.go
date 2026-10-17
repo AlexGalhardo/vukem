@@ -114,12 +114,19 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 		r := result{Module: m, Base: base, Changes: changes}
 		results = append(results, r)
 
+		// The gate passes -incompatible to apidiff, so compatible changes are
+		// only counted in report mode.
+		compatible := strconv.Itoa(r.count(false))
+		if *report == "" {
+			compatible = "unchecked"
+		}
+
 		fmt.Fprintf(
 			out,
-			"%s: %d incompatible, %d compatible changes since %s\n",
+			"%s: %d incompatible, %s compatible changes since %s\n",
 			m.Path,
 			r.count(true),
-			r.count(false),
+			compatible,
 			base,
 		)
 
