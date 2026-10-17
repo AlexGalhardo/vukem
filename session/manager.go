@@ -409,9 +409,9 @@ func (w *commitWriter) Write(b []byte) (int, error) {
 func (w *commitWriter) Flush() {
 	w.ensureCommitted()
 
-	if f, ok := w.ResponseWriter.(http.Flusher); ok {
-		f.Flush()
-	}
+	// ResponseController follows Unwrap, so wrappers that hide http.Flusher
+	// (logging, metrics) still flush the connection.
+	_ = http.NewResponseController(w.ResponseWriter).Flush()
 }
 
 // Unwrap supports http.ResponseController.

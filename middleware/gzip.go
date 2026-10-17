@@ -151,9 +151,7 @@ func (g *gzipWriter) Flush() {
 		_ = g.gz.Flush()
 	}
 
-	if f, ok := g.ResponseWriter.(http.Flusher); ok {
-		f.Flush()
-	}
+	_ = http.NewResponseController(g.ResponseWriter).Flush()
 }
 
 // Hijack supports websocket upgrades through the middleware.

@@ -536,3 +536,28 @@ func TestPeekAndStreaming(t *testing.T) {
 		t.Fatalf("Peek without cookies = %v", got)
 	}
 }
+
+// unwrapOnly hides http.Flusher like a logging writer that only implements
+// Unwrap, so Flush must reach the connection through it.
+type unwrapOnly struct{ http.ResponseWriter }
+
+func (u unwrapOnly) Unwrap() http.ResponseWriter { return u.ResponseWriter }
+
+func TestFlushThroughUnwrapOnlyWriter(t *testing.T) {
+	t.Parallel()
+
+	m, _ := newManager(t, Config{})
+	h := m.Middleware()(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if err := http.NewResponseController(w).Flush(); err != nil {
+			t.Error(err)
+		}
+	}))
+
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", http.NoBody)
+	h.ServeHTTP(unwrapOnly{rec}, r.WithContext(web.WithServices(r.Context(), &web.Services{})))
+
+	if !rec.Flushed {
+		t.Fatal("Flush did not reach the underlying writer")
+	}
+}
