@@ -296,3 +296,56 @@ func TestEncrypterReachesDBAndTx(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestTxAfterCommit(t *testing.T) {
+	t.Parallel()
+
+	db, err := Open(t.Context(), ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	ctx := t.Context()
+
+	var ran []string
+
+	err = db.Tx(ctx, func(tx *Tx) error {
+		tx.AfterCommit(func(context.Context) { ran = append(ran, "a") })
+
+		return RunInTx(ctx, tx, func(inner *Tx) error {
+			inner.AfterCommit(func(context.Context) { ran = append(ran, "b") })
+
+			if len(ran) != 0 {
+				t.Error("AfterCommit hook ran before the commit")
+			}
+
+			return nil
+		})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if want := []string{"a", "b"}; strings.Join(ran, ",") != strings.Join(want, ",") {
+		t.Fatalf("hooks after commit = %v, want %v", ran, want)
+	}
+
+	ran = nil
+	_ = db.Tx(ctx, func(tx *Tx) error {
+		tx.AfterCommit(func(context.Context) { ran = append(ran, "rolled back") })
+		return errors.New("boom")
+	})
+
+	func() {
+		defer func() { _ = recover() }()
+		_ = db.Tx(ctx, func(tx *Tx) error {
+			tx.AfterCommit(func(context.Context) { ran = append(ran, "panicked") })
+			panic("x")
+		})
+	}()
+
+	if len(ran) != 0 {
+		t.Fatalf("hooks after rollback = %v, want none", ran)
+	}
+}
