@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/AlexGalhardo/vukem/errs"
@@ -25,6 +26,22 @@ func Required(guards ...Checker) func(http.Handler) http.Handler {
 			c := ctxOf(w, r)
 
 			for _, g := range guards {
+				if ec, ok := g.(errChecker); ok {
+					err := ec.authenticate(c)
+					if err == nil {
+						next.ServeHTTP(w, c.Request())
+						return
+					}
+
+					// Fail closed without treating the caller as a guest.
+					if !errors.Is(err, ErrUnauthenticated) {
+						c.HandleError(err)
+						return
+					}
+
+					continue
+				}
+
 				if g.Check(c) {
 					next.ServeHTTP(w, c.Request())
 					return
@@ -50,6 +67,11 @@ func Required(guards ...Checker) func(http.Handler) http.Handler {
 			_ = c.Redirect(target)
 		})
 	}
+}
+
+// errChecker is a guard that reports why authentication failed.
+type errChecker interface {
+	authenticate(c *web.Ctx) error
 }
 
 func hasSession(c *web.Ctx) bool { return c.Session() != nil }

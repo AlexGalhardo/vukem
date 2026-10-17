@@ -142,6 +142,7 @@ What Vukem does **by default** to protect applications, mapped to the [OWASP Top
 | Default | Check |
 | --- | --- |
 | Session id regenerated on login and privilege change (anti-fixation); invalidated on logout (`TestSecurity_A07_SessionRegeneratedOnLogin`, `TestSecurity_A07_SessionInvalidatedOnLogout`) | [x] |
+| When the session guard cannot load the signed-in user for a reason other than "not found" (database down), `auth.Required` answers 503 and keeps the session instead of logging the user out or treating them as a guest (`TestSecurity_A04_SessionKeptWhenUserLookupFails`) | [x] |
 | Cookies: `HttpOnly`, `Secure`, `SameSite=Lax`, `__Host-` prefix over HTTPS (`TestSecurity_A07_SessionCookieFlags`, `TestSecurity_A02_ConfigChecks`) | [x] |
 | Idle and absolute session timeouts (`TestAbsoluteLifetimeAndTouch`, `TestSessionLifecycleAllStores`) | [x] |
 | Credential check hashes a dummy password when the user does not exist (timing-safe, no user enumeration) (`TestSecurity_A07_DummyHashOnUnknownUser`) | [x] |

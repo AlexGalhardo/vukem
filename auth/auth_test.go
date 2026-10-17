@@ -2,6 +2,7 @@ package auth_test
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -78,6 +79,24 @@ type testApp struct {
 	api    *auth.TokenGuard[User]
 	tokens *auth.Tokens
 	hasher hash.Hasher
+	// down makes the session guard's user lookups fail like a database
+	// outage.
+	down atomic.Bool
+}
+
+// flakyUsers fails ByID while down is set.
+type flakyUsers struct {
+	*auth.ORMProvider[User]
+
+	down *atomic.Bool
+}
+
+func (f flakyUsers) ByID(ctx context.Context, id string) (User, error) {
+	if f.down.Load() {
+		return User{}, errors.New("database unavailable")
+	}
+
+	return f.ORMProvider.ByID(ctx, id)
 }
 
 func newApp(t *testing.T, hasher hash.Hasher) *testApp {
@@ -99,7 +118,7 @@ func newApp(t *testing.T, hasher hash.Hasher) *testApp {
 
 				users := auth.NewORMProvider[User](db)
 				ta.tokens = auth.NewTokens(db)
-				ta.web = auth.NewSessionGuard("web", users, hasher, auth.NewRememberStore(db))
+				ta.web = auth.NewSessionGuard("web", flakyUsers{users, &ta.down}, hasher, auth.NewRememberStore(db))
 				ta.web.InsecureCookies = true
 				ta.api = auth.NewTokenGuard("api", users, ta.tokens)
 
@@ -614,4 +633,22 @@ func TestSecurity_A04_TokenPrefixForSecretScanning(t *testing.T) {
 			t.Errorf("Create() with Prefix %q = nil, want error", bad)
 		}
 	}
+}
+
+func TestSecurity_A04_SessionKeptWhenUserLookupFails(t *testing.T) {
+	t.Parallel()
+
+	ta := newApp(t, hash.Fake())
+	ta.user(t, "ana@example.com", "s3cret-pass", false)
+
+	c := ta.Client(t)
+	c.PostForm("/login", url.Values{"email": {"ana@example.com"}, "password": {"s3cret-pass"}}).
+		AssertRedirect("/dashboard")
+
+	// A failing lookup is a server error, not a logout or a login redirect.
+	ta.down.Store(true)
+	c.Get("/dashboard").AssertStatus(http.StatusServiceUnavailable)
+
+	ta.down.Store(false)
+	c.Get("/dashboard").AssertOK().AssertSee("hello ana@example.com")
 }

@@ -7,12 +7,14 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/AlexGalhardo/vukem/auth/hash"
 	"github.com/AlexGalhardo/vukem/database"
+	"github.com/AlexGalhardo/vukem/errs"
 	"github.com/AlexGalhardo/vukem/web"
 )
 
@@ -150,6 +152,13 @@ func (g *SessionGuard[U]) Logout(c *web.Ctx) error {
 	return nil
 }
 
+// authenticate is Check that tells a guest (ErrUnauthenticated) apart
+// from a failed lookup, which Required answers with its error.
+func (g *SessionGuard[U]) authenticate(c *web.Ctx) error {
+	_, err := g.User(c)
+	return err
+}
+
 // Check implements Checker: session user, else a valid remember-me cookie.
 func (g *SessionGuard[U]) Check(c *web.Ctx) bool {
 	_, err := g.User(c)
@@ -172,12 +181,18 @@ func (g *SessionGuard[U]) User(c *web.Ctx) (U, error) {
 
 	if id, ok := s.Get(g.key()).(string); ok && id != "" {
 		u, err := g.provider.ByID(c.Context(), id)
-		if err == nil {
+
+		switch {
+		case err == nil:
 			cache(c, g.name, u)
 			return u, nil
+		case errors.Is(err, ErrUserNotFound):
+			s.Forget(g.key()) // the user was deleted
+		default:
+			// The store is failing: refuse the request but keep the session,
+			// so an outage does not log everyone out.
+			return zero, errs.Wrap(http.StatusServiceUnavailable, fmt.Errorf("auth: load user: %w", err))
 		}
-
-		s.Forget(g.key()) // the user was deleted
 	}
 
 	if g.remember != nil {
