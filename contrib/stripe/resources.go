@@ -149,16 +149,6 @@ func (c *Client) GetPaymentIntent(ctx context.Context, id string) (PaymentIntent
 	return send[PaymentIntent](ctx, c, http.MethodGet, "/v1/payment_intents/"+url.PathEscape(id), nil, "")
 }
 
-// Do calls any endpoint not covered above and decodes the response into
-// out (a struct or *json.RawMessage).
-//
-// Deprecated: use Call, which also takes RequestOptions.
-//
-//go:fix inline
-func (c *Client) Do(ctx context.Context, method, path string, p Params, out any) error {
-	return c.Call(ctx, method, path, p, out)
-}
-
 // send calls path and decodes the response into a new T.
 func send[T any](ctx context.Context, c *Client, method, path string, p Params, idemKey string) (T, error) {
 	return sendOpts[T](ctx, c, method, path, p, IdempotencyKey(idemKey))
