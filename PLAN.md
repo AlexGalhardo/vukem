@@ -570,9 +570,9 @@ Applies to **every** task:
 
 ### B.11 gRPC
 
-- [ ] **B.11.1** `contrib/grpc` module on **connect-go** (net/http native: gRPC, gRPC-Web and Connect protocols on the same router, HTTP/2 via `h2c` in development): `vukem.MountRPC(r, path, handler)`, interceptors bridging auth guards, `z` validation, problem details → gRPC status codes, request id and logging.
+- [x] **B.11.1** `contrib/grpc` module on **connect-go** (net/http native: gRPC, gRPC-Web and Connect protocols on the same router, HTTP/2 via `h2c` in development): `vukem.MountRPC(r, path, handler)`, interceptors bridging auth guards, `z` validation, problem details → gRPC status codes, request id and logging.
   → verify: unary and server-streaming tests with gRPC and Connect clients against the app router; unauthenticated calls get `Unauthenticated`.
-- [ ] **B.11.2** Codegen and tooling: `vukem make:proto`, `buf.gen.yaml` template, `vukem codegen:rpc` (protoc-gen-go + protoc-gen-connect-go via `go tool`), gRPC health checking and server reflection (dev only), `vukemtest` RPC client helpers.
+- [x] **B.11.2** Codegen and tooling: `vukem make:proto`, `buf.gen.yaml` template, `vukem codegen:rpc` (protoc-gen-go + protoc-gen-connect-go via `go tool`), gRPC health checking and server reflection (dev only), `vukemtest` RPC client helpers.
   → verify: generated service compiles and its tests pass in a new app.
 
 ### B.5 Stabilisation
