@@ -41,10 +41,21 @@ type SessionGuard[U Authenticatable] struct {
 }
 
 // NewSessionGuard returns the "web" style guard. remember may be nil to
-// disable remember-me.
+// disable remember-me. It panics when *U implements SessionVersioner but U
+// does not (AuthSessionVersion on a pointer receiver while the guard holds
+// values): the version would never be checked, so sessions could not be
+// ended.
 func NewSessionGuard[U Authenticatable](name string, p UserProvider[U], h hash.Hasher,
 	remember *RememberStore,
 ) *SessionGuard[U] {
+	var u U
+	if _, onValue := any(u).(SessionVersioner); !onValue {
+		if _, onPointer := any(&u).(SessionVersioner); onPointer {
+			panic(fmt.Sprintf("auth: %T implements SessionVersioner with a pointer receiver; "+
+				"declare AuthSessionVersion on the value receiver (func (u %T) AuthSessionVersion() int64)", &u, u))
+		}
+	}
+
 	dummy, _ := h.Make("dummy password for timing equalisation")
 
 	return &SessionGuard[U]{
@@ -233,8 +244,8 @@ func (g *SessionGuard[U]) RefreshSession(c *web.Ctx) error {
 	// the current device gets one for the new version.
 	if g.remember != nil {
 		if raw := c.Cookie(g.cookieName()); raw != "" {
-			if id, _, ok := strings.Cut(raw, "."); ok {
-				_ = g.remember.delete(c.Context(), id)
+			if tokenID, _, ok := strings.Cut(raw, "."); ok {
+				_ = g.remember.delete(c.Context(), tokenID, u.AuthID())
 			}
 
 			return g.issueRemember(c, u)
@@ -272,13 +283,18 @@ func (g *SessionGuard[U]) backfillSessionUser(s web.Session, id string) {
 
 // Logout clears the session (new id, no data) and the remember-me token.
 func (g *SessionGuard[U]) Logout(c *web.Ctx) error {
+	userID := ""
+
 	if s := c.Session(); s != nil {
+		userID, _ = s.Get(g.key()).(string)
 		s.Invalidate()
 	}
 
 	if g.remember != nil {
-		if id, _, ok := strings.Cut(c.Cookie(g.cookieName()), "."); ok {
-			_ = g.remember.delete(c.Context(), id)
+		// Only the signed-out user's own token: a cookie planted from
+		// another account must not delete that account's token.
+		if tokenID, _, ok := strings.Cut(c.Cookie(g.cookieName()), "."); ok && userID != "" {
+			_ = g.remember.delete(c.Context(), tokenID, userID)
 		}
 
 		g.clearCookie(c)
@@ -328,8 +344,9 @@ func (g *SessionGuard[U]) User(c *web.Ctx) (U, error) {
 		switch {
 		case err == nil && !g.sessionVersionOK(s, u):
 			// The user's sessions were ended (password reset) after this
-			// login.
-			s.Forget(g.key(), versionKey(g.name))
+			// login: end this one whole, so nothing stays attributed to the
+			// user (owner, other guards' keys, data).
+			s.Invalidate()
 			web.SecurityEvent(c.Request(), "auth.session_revoked", "guard", g.name)
 		case err == nil:
 			g.backfillSessionUser(s, id)
@@ -535,8 +552,9 @@ func (r *RememberStore) consume(ctx context.Context, raw string) (consumedToken,
 	return consumedToken{userID: userID, stored: stored, secret: secret}, nil
 }
 
-func (r *RememberStore) delete(ctx context.Context, id string) error {
-	_, err := r.ex.ExecContext(ctx, r.q("DELETE FROM {table} WHERE id = ?"), id)
+// delete removes token id when it belongs to userID.
+func (r *RememberStore) delete(ctx context.Context, id, userID string) error {
+	_, err := r.ex.ExecContext(ctx, r.q("DELETE FROM {table} WHERE id = ? AND user_id = ?"), id, userID)
 	return err
 }
 
