@@ -21,6 +21,7 @@ The public "how to use Vukem" website lives in [`site/`](../site) and is deploye
 | Search | `Ctrl+K` / `⌘K` command palette over a build-time index of titles, headings and text |
 | Theme | Light/dark/system toggle, persisted, no flash on load |
 | Navigation | Left sidebar grouped by category, right "On this page" table of contents, previous/next links, "Edit on GitHub" link |
+| Changelog | `/changelog` (and `/pt-br/changelog`) renders the repository `CHANGELOG.md` at build time as plain Markdown (braces stay literal), linked from the header; every item links to its commit (`cliff.toml` template) |
 | Agents | `llms.txt` and `llms-full.txt` generated from the MDX content |
 | Hosting | Vercel project `vukem` (Root Directory `site`), production at `vukem.dev`, connected to GitHub: every push to `main` deploys production, other branches get previews |
 

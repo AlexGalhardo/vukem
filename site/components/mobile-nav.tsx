@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { Dialog } from "@base-ui/react/dialog";
 import { Menu, X } from "lucide-react";
 import { Sidebar } from "@/components/sidebar";
@@ -30,6 +31,13 @@ export function MobileNav({ groupsByVersion, locale }: { groupsByVersion: Record
             </Dialog.Close>
           </div>
           <div className="flex-1 overflow-y-auto px-3 py-4">
+            <Link
+              href={locale === "en" ? "/changelog" : `/${locale}/changelog`}
+              onClick={() => setOpen(false)}
+              className="mb-4 flex rounded-lg px-2 py-1.5 text-sm font-medium text-muted hover:bg-hover hover:text-fg"
+            >
+              {t.changelog}
+            </Link>
             <Sidebar groupsByVersion={groupsByVersion} locale={locale} collapsible onNavigate={() => setOpen(false)} />
           </div>
         </Dialog.Popup>

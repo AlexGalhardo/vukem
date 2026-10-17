@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Logo } from "@/components/logo";
 import { MobileNav } from "@/components/mobile-nav";
 import { SearchDialog } from "@/components/search-dialog";
@@ -31,6 +32,12 @@ export function Header({ locale }: { locale: Locale }) {
           <SearchDialog />
         </div>
         <div className="flex items-center justify-end gap-2">
+          <Link
+            href={locale === "en" ? "/changelog" : `/${locale}/changelog`}
+            className="hidden h-8 items-center rounded-lg px-2.5 text-sm font-medium text-muted transition-colors hover:bg-hover hover:text-fg sm:inline-flex"
+          >
+            {t.changelog}
+          </Link>
           <IconTooltip label={t.githubTooltip}>
             <a
               href={site.repo}
