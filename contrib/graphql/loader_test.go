@@ -427,3 +427,69 @@ func TestLoaderBatchWaitFallback(t *testing.T) {
 		})
 	}
 }
+
+// TestLoaderBatchWaitAgeCap: a chain of siblings that keeps making
+// progress cannot hold the first keys until all of them finish; the batch
+// is sent once its oldest key waited 10×BatchWait.
+func TestLoaderBatchWaitAgeCap(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		start := time.Now()
+
+		var (
+			batches [][]int
+			sent    []time.Duration
+		)
+
+		l := graphql.NewLoader(func(_ context.Context, keys []int) (map[int]int, error) {
+			batches = append(batches, slices.Sorted(slices.Values(keys)))
+			sent = append(sent, time.Since(start))
+
+			out := map[int]int{}
+			for _, k := range keys {
+				out[k] = k
+			}
+
+			return out, nil
+		})
+
+		items := make([]Item, 30)
+		for i := range items {
+			items[i].ID = i
+		}
+
+		s, err := graphql.New(`type Query { items: [Item!]! } type Item { id: Int! v: Int! }`,
+			graphql.Query("items", func(context.Context, graphql.NoArgs) ([]Item, error) { return items, nil }),
+			graphql.Field("Item", "v", func(ctx context.Context, it *Item, _ graphql.NoArgs) (int, error) {
+				time.Sleep(time.Duration(it.ID) * 6 * time.Millisecond)
+				return l.Load(ctx, it.ID)
+			}),
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		resp := s.Execute(t.Context(), graphql.Request{Query: `{ items { v } }`})
+		if len(resp.Errors) > 0 {
+			t.Fatalf("Execute errors = %v", resp.Errors)
+		}
+
+		var first, second []int
+		for i := range 30 {
+			if i <= 16 {
+				first = append(first, i)
+			} else {
+				second = append(second, i)
+			}
+		}
+
+		if diff := cmp.Diff([][]int{first, second}, batches); diff != "" {
+			t.Errorf("batches mismatch (-want +got):\n%s", diff)
+		}
+
+		if want := 10 * graphql.DefaultBatchWait; len(sent) == 0 || sent[0] != want {
+			t.Errorf("first batch sent after %v, want %v", sent, want)
+		}
+	})
+}

@@ -42,7 +42,8 @@ func MaxBatch(n int) LoaderOption { return func(c *loaderConfig) { c.maxBatch = 
 // (no resolver started, finished or called a loader) for d (default 10ms).
 // It only matters when resolvers block on something other than a loader
 // (a mutex, a channel, their own goroutines); slow siblings that keep
-// making progress, as on a loaded machine, do not split the batch.
+// making progress, as on a loaded machine, do not split the batch, up to
+// 10×d after its first key.
 // 0 disables the fallback.
 func BatchWait(d time.Duration) LoaderOption { return func(c *loaderConfig) { c.wait = d } }
 
@@ -73,6 +74,7 @@ type loaderState[K comparable, V any] struct {
 	cache   map[K]*entry[V]
 	pending []K
 	dirty   bool
+	since   time.Time // when the oldest pending key was queued
 	timer   *time.Timer
 }
 
@@ -184,6 +186,7 @@ func (st *loaderState[K, V]) add(ctx context.Context, sc *requestScope, key K) {
 		sc.dirty = append(sc.dirty, st)
 
 		if st.l.wait > 0 {
+			st.since = time.Now()
 			st.armLocked(ctx, sc, st.l.wait)
 		}
 	}
@@ -193,11 +196,16 @@ func (st *loaderState[K, V]) add(ctx context.Context, sc *requestScope, key K) {
 	}
 }
 
+// maxBatchAge caps, in BatchWaits, how long the oldest pending key waits
+// while siblings keep making progress, so a long chain of sequential
+// sibling work cannot hold it until the whole operation is done.
+const maxBatchAge = 10
+
 // armLocked starts the fallback timer; called with sc.mu held. When it
-// fires it flushes only if the scope made no progress for a whole wait,
-// otherwise it re-arms for the rest of it: a timer measured from the
-// first key would split batches whenever siblings are merely slow to be
-// scheduled.
+// fires it flushes only if the scope made no progress for a whole wait
+// or the oldest key waited maxBatchAge waits; otherwise it re-arms for
+// the rest: a timer measured from the first key alone would split
+// batches whenever siblings are merely slow to be scheduled.
 func (st *loaderState[K, V]) armLocked(ctx context.Context, sc *requestScope, d time.Duration) {
 	var t *time.Timer
 
@@ -209,8 +217,9 @@ func (st *loaderState[K, V]) armLocked(ctx context.Context, sc *requestScope, d 
 			return
 		}
 
-		if idle := time.Since(sc.lastProgress); idle < st.l.wait {
-			st.armLocked(ctx, sc, st.l.wait-idle)
+		idle, age := time.Since(sc.lastProgress), time.Since(st.since)
+		if maxAge := maxBatchAge * st.l.wait; idle < st.l.wait && age < maxAge {
+			st.armLocked(ctx, sc, min(st.l.wait-idle, maxAge-age))
 			return
 		}
 
