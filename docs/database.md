@@ -163,7 +163,9 @@ Column names passed as strings are validated against the model's cached column s
 
 Raw SQL shared between dialects is written once with `?` and passed through `database.Rebind(ex.Dialect(), query)`: on PostgreSQL the n-th `?` becomes `$n`, elsewhere the query is unchanged. `?` inside string literals, quoted identifiers, dollar-quoted bodies and comments is left alone, and `??` is a literal `?` on PostgreSQL (jsonb operators). `DB.ExecContext`/`QueryContext` never rebind on their own, so queries already written with `$n` keep working.
 
-The orm uses the same scanner (`internal/sqlscan`): `WhereRaw` counts placeholders with the rules `Rebind` renumbers with, so the two cannot disagree, and it rejects a fragment that ends inside a literal, identifier or comment (a trailing `--` comment too).
+The orm uses the same scanner (`internal/sqlscan`): `WhereRaw` counts placeholders with the rules `Rebind` renumbers with, so the two cannot disagree, and it rejects a fragment that ends inside a literal, identifier or comment (a trailing `--` comment too). It also rejects explicit `$n` parameters on PostgreSQL, which would bind another condition's value once the statement is renumbered; without an executor, `WhereRaw` lexes with SQLite's rules. Statements with a WHERE clause (select, `Query.Update`, `Query.Delete`) fail closed with an error if they end inside a literal or comment.
+
+Dialect rules: every dialect skips `'…'` and `"…"`, `--` and `/* */` comments; PostgreSQL adds `E'…'`, nested comments and `$tag$` bodies (a backtick is an operator there); MySQL adds `` `…` ``, backslash escapes, `#` comments and needs whitespace after `--`; SQLite adds `` `…` `` and `[…]` identifiers. The lexer assumes the servers' default settings: `standard_conforming_strings` on (PostgreSQL), no `ANSI_QUOTES` or `NO_BACKSLASH_ESCAPES` (MySQL). MySQL executes the contents of `/*! */` and `/*+ */` comments, but they are skipped like any comment, so placeholders inside them are not supported. `Rebind` does not check for `$n` mixed with `?`: write one style per query.
 
 ## UUIDs
 

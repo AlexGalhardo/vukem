@@ -40,7 +40,7 @@ func Attach[T any](ctx context.Context, ex database.Executor, model *T, relation
 	}
 
 	d := ex.Dialect()
-	q := renumber("INSERT INTO "+d.Quote(rel.pivot)+" ("+d.Quote(rel.fk)+", "+d.Quote(rel.rk)+") VALUES (?, ?)", d)
+	q := rebind("INSERT INTO "+d.Quote(rel.pivot)+" ("+d.Quote(rel.fk)+", "+d.Quote(rel.rk)+") VALUES (?, ?)", d)
 
 	for _, id := range ids {
 		if slices.Contains(existing, normKey(id)) {
@@ -73,7 +73,7 @@ func Detach[T any](ctx context.Context, ex database.Executor, model *T, relation
 		args = append(args, ids...)
 	}
 
-	if _, err := ex.ExecContext(ctx, renumber(q, d), args...); err != nil {
+	if _, err := ex.ExecContext(ctx, rebind(q, d), args...); err != nil {
 		return fmt.Errorf("orm: detach %s: %w", rel.pivot, err)
 	}
 
@@ -120,7 +120,7 @@ func Sync[T any](ctx context.Context, ex database.Executor, model *T, relation s
 func pivotIDs(ctx context.Context, ex database.Executor, rel relation, key any) ([]any, error) {
 	d := ex.Dialect()
 
-	rows, err := ex.QueryContext(ctx, renumber("SELECT "+d.Quote(rel.rk)+" FROM "+d.Quote(rel.pivot)+
+	rows, err := ex.QueryContext(ctx, rebind("SELECT "+d.Quote(rel.rk)+" FROM "+d.Quote(rel.pivot)+
 		" WHERE "+d.Quote(rel.fk)+" = ?", d), key)
 	if err != nil {
 		return nil, fmt.Errorf("orm: read %s: %w", rel.pivot, err)

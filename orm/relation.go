@@ -335,7 +335,7 @@ func loadPivot(ctx context.Context, ex database.Executor, m *meta, items reflect
 	d := ex.Dialect()
 
 	for chunk := range slices.Chunk(keys, 500) {
-		q := renumber("SELECT "+d.Quote(rel.fk)+", "+d.Quote(rel.rk)+" FROM "+d.Quote(rel.pivot)+
+		q := rebind("SELECT "+d.Quote(rel.fk)+", "+d.Quote(rel.rk)+" FROM "+d.Quote(rel.pivot)+
 			" WHERE "+d.Quote(rel.fk)+" IN ("+marks(len(chunk))+")", d)
 
 		err := eachRow(ctx, ex, q, chunk, func(rows *sql.Rows) error {
@@ -414,7 +414,7 @@ func selectIn(
 
 		var scan func(*sql.Rows, reflect.Value) error
 
-		err := eachRow(ctx, ex, renumber(q, d), chunk, func(rows *sql.Rows) error {
+		err := eachRow(ctx, ex, rebind(q, d), chunk, func(rows *sql.Rows) error {
 			if scan == nil {
 				var err error
 				if scan, err = rm.scanner(rows, encrypterOf(ex)); err != nil {

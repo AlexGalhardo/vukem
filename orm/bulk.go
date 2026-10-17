@@ -201,14 +201,14 @@ func insertBatch[T any](
 		strings.TrimSuffix(strings.Repeat(row+", ", len(batch)), ", ")
 
 	if !genID {
-		if _, err := ex.ExecContext(ctx, renumber(q, d), args...); err != nil {
+		if _, err := ex.ExecContext(ctx, rebind(q, d), args...); err != nil {
 			return fmt.Errorf("orm: insert %s: %w", m.table, mapError(err))
 		}
 
 		return nil
 	}
 
-	ids, err := returnIDs(ctx, ex, renumber(q+" RETURNING "+d.Quote(m.pk), d), args)
+	ids, err := returnIDs(ctx, ex, rebind(q+" RETURNING "+d.Quote(m.pk), d), args)
 	if err != nil {
 		return fmt.Errorf("orm: insert %s: %w", m.table, mapError(err))
 	}

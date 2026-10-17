@@ -134,7 +134,7 @@ func TestLockOnSQLite(t *testing.T) {
 func TestCountDropsLock(t *testing.T) {
 	t.Parallel()
 
-	got, _ := QueryOf[User](fakeEx{database.Postgres}).LockForUpdate().SkipLocked().countSQL()
+	got, _, _ := QueryOf[User](fakeEx{database.Postgres}).LockForUpdate().SkipLocked().countSQL()
 	if want := `SELECT COUNT(*) FROM "users"`; got != want {
 		t.Fatalf("countSQL() = %q, want %q", got, want)
 	}

@@ -93,6 +93,9 @@ func TestWhereRawRejectsUnsafeFragments(t *testing.T) {
 		{"unterminated literal", database.Postgres, "name = 'x", nil, "unterminated"},
 		{"unterminated block comment", database.SQLite, "age > ? /*", []any{1}, "unterminated"},
 		{"unterminated identifier", database.MySQL, "`age > ?", nil, "unterminated"},
+		{"explicit $n on postgres", database.Postgres, "age > $1", []any{1}, "$n parameters"},
+		{"$n mixed with ? on postgres", database.Postgres, "age > ? AND id = $1", []any{1, 2}, "$n parameters"},
+		{"mysql -- without space keeps the placeholder", database.MySQL, "age--?", nil, "1 placeholders but 0 args"},
 	}
 
 	for _, tt := range tests {
@@ -104,5 +107,23 @@ func TestWhereRawRejectsUnsafeFragments(t *testing.T) {
 				t.Fatalf("WhereRaw(%q) err = %v, want containing %q", tt.frag, err, tt.want)
 			}
 		})
+	}
+}
+
+// A fragment that reaches renumber without WhereRaw's checks still fails
+// closed instead of running SQL whose tail is swallowed by a literal.
+func TestRenumberRejectsUnterminatedSQL(t *testing.T) {
+	t.Parallel()
+
+	for _, d := range []database.Dialect{database.Postgres, database.SQLite, database.MySQL} {
+		q := QueryOf[User](fakeEx{d}).addCond(false, "(name = 'x)").Where("id", 9)
+
+		if _, _, err := q.SQL(); err == nil || !strings.Contains(err.Error(), "unterminated") {
+			t.Errorf("%s: SQL() err = %v, want an unterminated-SQL error", d.Name(), err)
+		}
+
+		if _, err := q.Delete(t.Context()); err == nil || !strings.Contains(err.Error(), "unterminated") {
+			t.Errorf("%s: Delete() err = %v, want an unterminated-SQL error", d.Name(), err)
+		}
 	}
 }
