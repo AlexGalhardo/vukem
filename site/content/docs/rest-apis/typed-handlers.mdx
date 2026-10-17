@@ -47,6 +47,18 @@ r.Group("/api/v1/shops/{shop}", func(g *router.Group) {
 
 Errors returned by the handler go through the normal [problem+json](/docs/basics/error-handling) path.
 
+### Response validation
+
+Set `Op.ValidateResponse: true` to check the output against its `validate` tags before it is written (the output type must be a struct, otherwise `Register` panics at boot):
+
+```go
+api.Register(g, "GET /tasks", api.Op{Name: "tasks.index", ValidateResponse: true}, tasks.Index)
+```
+
+The check runs when `web.Services.CheckResponses` is on, which the app enables outside production (the same switch as `web.JSONWith`). A mismatch is a server bug: it is logged and answered with a generic 500 instead of sending data that breaks the documented contract. In production the output is written without the check.
+
+A list field tagged `validate:"required"` must be present and not `null` (a nil slice fails), but may be empty; use `min=1` when it needs items.
+
 ## Route metadata
 
 `Op.Name` names the route (and becomes the OpenAPI `operationId`). Every typed route carries an `*api.Operation` with its method, full path (group prefixes included), path parameters and input/output types, readable from `router.RouteInfo.Doc`. That is what the [OpenAPI generator](/docs/rest-apis/openapi) uses; plain `web.HandlerFunc` routes keep working beside typed ones.

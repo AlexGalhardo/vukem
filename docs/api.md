@@ -213,6 +213,7 @@ api.Register(g, "POST /products", api.Op{
 
 - Input: query string, JSON/form body (not for GET, HEAD, DELETE) and path parameters, which win over body fields; validated with the input struct's `validate` tags (422 with field errors). `struct{}` means no input.
 - Output: JSON with `Op.Status`, or 201 for POST, 204 when the output type is `struct{}`, 200 otherwise. Errors returned by the handler go through the normal problem+json path.
+- `Op.ValidateResponse: true` checks the output against its `validate` tags (`z.For[Out]`, Out must be a struct) before writing it, when `web.Services.CheckResponses` is on (outside production, like `web.JSONWith`). A mismatch is logged and answered with a generic 500, so contract drift fails loudly in development and tests; production never pays for the check.
 - Each typed route carries an `api.Operation` (`router.RouteInfo.Doc`) with its method, full path, params and input/output types for the generators below.
 - Request schema from the input struct (`json` + `validate` tags), response schema from the output type, errors from the problem catalogue.
 - `vukem.ServeOpenAPI(app, r, "/openapi.json")` serves the document (not registered in production unless `OPENAPI_IN_PRODUCTION=true`); `vukem openapi:export > openapi.json` prints it. Title is `APP_NAME`, version `API_VERSION`, and `OPENAPI_PREFIX=/api` keeps only API routes.
