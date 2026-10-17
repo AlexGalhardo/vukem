@@ -7,6 +7,135 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-10-17
+
+### Added
+
+- **middleware:** Log peer address and resolved client IP per request
+- **middleware:** Add HSTSForce and HSTS_FORCE for untrusted TLS proxies
+- **stripe:** Add connect resources and per-request idempotency and account options
+- **stripe:** Accept connect webhook secrets and expose event account
+- **router:** Report whether routes were compiled
+- **vukem:** Add WithRoutesAfterBoot for routes that need booted services
+- **vukem:** Let seeders reach the app with WithAppSeeders
+- **vukem:** Name seeders through an optional Name method
+- **export:** Stream CSV, JSON and NDJSON downloads
+- **errs:** Add message keys and a request translator to errors
+- **web:** Show keyed http errors in the request locale
+- **i18n:** Ship built-in en and pt-BR framework messages
+- **auth:** Translate guard errors through message keys
+- **social:** Add message keys to callback errors
+- **orm:** Translate unique and exists rule messages
+- **mail:** Build envelopes from the send context with ContextEnveloper
+- **telegram:** Add SendSync/ContactSync, Filter and RateLimit
+- **vukem:** Add TELEGRAM_LOG, TELEGRAM_RATE_LIMIT and WithTelegram
+- **webhook:** Add DeliveryLogFunc and document DeliveryLog as the extension point
+- **grpc:** Serve rpc services on their own port as an app runner
+- **s3:** Add idempotent region-aware CreateBucket
+- **totp:** Encode qr codes up to version 40
+- **api:** Add Op.ValidateResponse to check typed handler output
+- **BREAKING:** **openapi:** Emit zod 4 schemas and inline request body schemas
+- **vukem:** Run codegen:types without a database or APP_KEY
+- **BREAKING:** **i18n:** Add locale source order and allowed locales to MiddlewareConfig
+- **vukem:** Add MiddlewareOptions.I18n and APIMiddlewareWith
+- **inertia:** Add RenderStatus for pages with a non-200 status
+- **i18n:** Fail closed on invalid middleware config and vary on cookie
+- **vukem:** Install the locale resolver in APIMiddleware
+- **vukem:** Add ServeOpenAPIWith for prefixed, production-opted documents
+- **BREAKING:** **schema:** Add partial indexes with Index/UniqueIndex(...).Where(expr)
+- **database:** Add Rebind for portable raw SQL placeholders
+- **database:** Fan out query observers and add vukem.WithQueryObservers
+- **uuid:** Add stdlib UUID v4/v7 package
+- **session:** List a user's sessions and revoke one by handle
+- **vukem:** Read SESSION_RECORD_CLIENT into the session config
+- **auth:** End sessions on every driver with a per-user session version
+- **vukemtest:** Add WithSession and stamp the session version in ActingAs
+- **redis:** Implement session.ListStore on the session store
+- **cli:** End every session on password reset with a session version
+- **queue:** Add Queue.SetClock and the queue.Clock driver interface
+- **queue:** Bound the worker drain with WorkOptions.StopTimeout
+- **queue:** Add DispatchKindTx
+- **redis:** Implement queue.Clock on the queue driver
+- **mail:** Add Mailer.SendLaterTx
+- **schedule:** Add Task.OnOneServer
+- **BREAKING:** **app:** Run a queue worker in serve for persistent queues
+- **app:** Add MailLaterTx
+- **app:** Refuse OnOneServer schedules on the in-process cache
+- **schedule:** Namespace task locks with Options.Namespace
+- **httpclient:** Add Options.WrapTransport for tracing and metrics
+- **vukem:** Add App.Instrument hooks for database, queue and mail
+- **otel:** Add metrics, data-layer spans and OTEL_* settings from app.Source
+- **otel:** Export metrics over OTLP/HTTP from OTEL_* settings
+
+### Changed
+
+- **stripe:** Deprecate Do in favour of Call
+
+### Fixed
+
+- **middleware:** Warn when HSTS_FORCE is ignored and document its scope and log privacy
+- **tools:** Report compatible apidiff changes as unchecked in gate mode
+- **stripe:** Refuse account scope on platform calls and decode expanded ids
+- **router:** Mark the router compiled before building it
+- **vukem:** Fail closed around routes after boot and keep the boot error
+- **middleware:** Hijack through wrapped writers in gzip
+- **web:** Sanitize Download file names
+- **export:** Renew write deadline per write and always abort mid-stream
+- **i18n:** Fill only existing catalogs of the same locale with built-in messages
+- **errs:** Copy the params given to NewKey
+- **broadcast:** Show keyed sse refusals in the request locale
+- **sse:** Release a topic's broker subscription when its last subscriber leaves
+- **telegram:** Report errors outside the queue lock and never forward OnError records
+- **sse:** Make every subscriber wait for its topic relay and fail closed
+- **vukem:** Show telegram log forwarding off in about
+- **graphql:** Fold go names of json-tagged fields in the default resolver
+- **graphql:** Free a websocket subscription id before its terminal message
+- **grpc:** Refuse a cleartext production port in Server too
+- **BREAKING:** **z:** Treat required on a list as present, not non-empty
+- **openapi:** Emit minLength 1 for required strings
+- **BREAKING:** **openapi:** Suffix component names that shadow typescript globals
+- **vukem:** Never boot a warmup app and export openapi in warmup
+- **openapi:** Reserve the fetch types the generated client uses
+- **openapi:** Fail typescript codegen on colliding generated names
+- **web:** Answer 422 for z.FieldError and z.Issues returned by handlers
+- **BREAKING:** **z:** Hide the text of plain Refine and Custom errors
+- **web:** Fail closed on z issues and skip redirect-back for GET
+- **upload:** Send z validation messages from tus completion
+- **apidocs:** Keep the nonce-only CSP and pass axe serious checks
+- **auth:** Answer problem+json on token routes and use the app clock
+- **auth:** Force JSON only on the error path of API guards
+- **openapi:** Match PathPrefix on whole path segments
+- **apidocs:** Limit the CSP shim to plain style values and hide scalar.com links
+- **orm:** Share the Rebind lexer for WhereRaw placeholder counting
+- **dbtest:** Bound each conformance subtest and shrink the MySQL bulk insert
+- **orm:** Lex MySQL -- comments, backticks and SQLite brackets per dialect
+- **orm:** Reject $n in WhereRaw and fail closed on unterminated WHERE SQL
+- **database:** Contain panicking query observers and ignore typed nils
+- **auth:** Bind remember-me tokens to the user's session version
+- **cli:** Delete remember-me tokens when ending a user's other sessions
+- **redis:** Key sessions by SHA-256 of the id and re-key legacy keys
+- **auth:** Harden session version checks and remember-me deletion
+- **session:** Strip control and format runes from the recorded user agent
+- **app:** Follow the app clock in the queue and its drivers
+- **app:** Stop waiting for runners that ignore ctx after SHUTDOWN_TIMEOUT
+- **cli:** Queue the verification mail in the auth scaffold
+- **queue:** Return reserve errors from Work with StopWhenEmpty
+- **app:** Create the database queue tables at boot
+- **app:** Namespace schedule locks by APP_NAME
+- **queue:** Free only shutdown-caused interruptions, at most three in a row
+- **app:** Give runners three seconds of grace after SHUTDOWN_TIMEOUT
+- **app:** Name the database queue in its boot error
+- **httpclient:** Fail closed when WrapTransport returns nil
+- **otel:** Harden provider boot, shutdown and globals; add db.system.name
+- **vukem:** Chain Instrument query hooks through database observers
+- **queue:** Contain panicking job observers and add AddObserver
+- **vukem:** Add Instrument job hooks through queue.AddObserver
+- **tools:** Exempt the sessiontest conformance suite from the coverage gate
+
+### Security
+
+- **site:** Expand cache, scheduler, idempotency, two-factor, redis and mongodb pages
+
 ## [0.24.0] - 2026-10-17
 
 ### Added
@@ -568,7 +697,8 @@ Project foundation. No framework code yet; see [PLAN.md](PLAN.md) for the roadma
 - README, MIT license, CONTRIBUTING, SECURITY and CODE_OF_CONDUCT.
 - Agent configuration: `AGENTS.md`, `CLAUDE.md`, path-scoped `.claude/rules/`, Go skills and project settings.
 
-[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.24.0...HEAD
+[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.25.0...HEAD
+[0.25.0]: https://github.com/AlexGalhardo/vukem/compare/v0.24.0...v0.25.0
 [0.24.0]: https://github.com/AlexGalhardo/vukem/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/AlexGalhardo/vukem/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/AlexGalhardo/vukem/compare/v0.21.1...v0.22.0
