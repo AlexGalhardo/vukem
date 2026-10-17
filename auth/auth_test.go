@@ -231,6 +231,10 @@ func newApp(t *testing.T, hasher hash.Hasher, extra ...vukem.Option) *testApp {
 						})
 				})
 
+				// Mounted after Required, ProblemJSON comes too late.
+				r.Get("/papi-late", func(c *web.Ctx) error { return c.NoContent() }).
+					Use(auth.Required(ta.api, ta.web), auth.ProblemJSON)
+
 				r.Group("/api", func(g *router.Group) {
 					g.Use(auth.Required(ta.api, ta.web))
 					g.Get("/me", func(c *web.Ctx) error {
@@ -688,6 +692,9 @@ func TestProblemJSONGroupForcesAuthFailures(t *testing.T) {
 
 	// Authenticated handlers still see the client's Accept header.
 	ta.Client(t).ActingAs("web", verified).WithHeader("Accept", html).Get("/papi/me").AssertOK().AssertSee("text/html")
+
+	// Order matters: Required mounted before ProblemJSON keeps the redirect.
+	ta.Client(t).WithHeader("Accept", html).Get("/papi-late").AssertRedirect("/login")
 }
 
 func TestTokensUseTheirClock(t *testing.T) {

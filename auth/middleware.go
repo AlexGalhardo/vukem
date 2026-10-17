@@ -23,7 +23,8 @@ func ctxOf(w http.ResponseWriter, r *http.Request) *web.Ctx {
 // intended URL is remembered for GET requests. When every guard is an
 // [APIGuard] (token and JWT guards), nobody is redirected: the 401 is always
 // problem+json, whatever the Accept header or session cookie says; the
-// same holds for any guards under [ProblemJSON].
+// same holds for any guards under [ProblemJSON], which must be mounted
+// before Required (Required mounted first never sees it and redirects).
 func Required(guards ...Checker) func(http.Handler) http.Handler {
 	allAPIGuards := allAPI(guards)
 
@@ -128,13 +129,17 @@ func isProblemJSON(ctx context.Context) bool {
 
 // ProblemJSON is route-group middleware for APIs whose authentication is
 // not only [APIGuard]s: a session fallback next to a token guard, or a
-// custom authenticator or scope check. Mount it before them (g.Use(
-// auth.ProblemJSON, auth.Required(api, web))): below it, Required,
+// custom authenticator or scope check. Mount it first, before every
+// middleware it should affect (g.Use(auth.ProblemJSON, auth.Required(api,
+// web))): middleware that runs before it is not affected, so Required
+// mounted ahead of it still redirects browsers. Below it, Required,
 // Ability and Verified never redirect to the login or verification pages,
 // and every 401 and 403 that middleware renders (the auth middleware, or
 // custom middleware rejecting through web.Fail or web.ServicesFrom) is an
 // RFC 9457 problem+json, whatever the Accept header says, like the
-// built-in API guards. Only the error path sees the forced Accept: other
+// built-in API guards. That covers any 401 or 403 from middleware below it,
+// not only authentication: a CSRF or rate-limit 403 is problem+json too.
+// Only the error path sees the forced Accept: other
 // statuses and the handlers keep negotiating with the client's header.
 // Handler errors go through the router's error handler as usual; an API
 // handler that returns a 401 or 403 should answer JSON itself.
