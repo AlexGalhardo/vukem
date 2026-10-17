@@ -6,6 +6,7 @@ Design documents, one per area. The user guide lives at [vukem.vercel.app](https
 | --- | --- |
 | Roadmap and current task | [PLAN.md](../PLAN.md) |
 | Starter guides (HTMX, templ, Inertia, API) | [guides/](guides/README.md) |
+| Tutorials (code in `examples/`) | [blog with HTMX](tutorials/blog-htmx.md), [SaaS with Inertia](tutorials/saas-inertia.md), [JSON API with tokens](tutorials/json-api.md) |
 | Architecture | [architecture.md](architecture.md) |
 | Configuration | [configuration.md](configuration.md) |
 | Routing, validation, sessions, errors | [http.md](http.md) |
