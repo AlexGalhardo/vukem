@@ -35,7 +35,8 @@ err = q.DispatchTx(ctx, tx, jobs.SendInvoice{OrderID: 1}) // only if tx commits
 
 - Payloads are JSON; `Kind()` names the handler and must stay stable across deploys. Registering a kind twice is a boot error.
 - Defaults: queue `default`, 3 retries, exponential backoff from 1s (capped at 1h), 1-minute timeout per attempt. Options on `Handle` set defaults; options on `Dispatch` override them. Backoffs: `queue.Exponential(base)`, `queue.Constant(d)`, or any `func(attempt int) time.Duration`.
-- Workers recover panics, retry with backoff and then move the job to the failed jobs with its last error. On shutdown they stop reserving and let running jobs finish.
+- Workers recover panics, retry with backoff and then move the job to the failed jobs with its last error. On shutdown they stop reserving and give running jobs `SHUTDOWN_TIMEOUT` to finish, then cancel their `ctx`: a job interrupted that way goes back to the queue without using an attempt (`queue.WorkOptions.StopTimeout`; 0 waits for each job's own timeout).
+- Delays, retry backoff and the database and Redis drivers' availability checks use the app clock (`vukem.WithClock`, the fake clock of `vukemtest`), so advancing a fake clock makes delayed jobs due. `app.Queue()` sets it on every driver implementing `queue.Clock` (`SetClock`); `queue.Queue.SetClock` sets it outside the app.
 - `DispatchTx(ctx, tx, job)` works on every driver: the database driver inserts the job inside the transaction; `sync`, `memory`, `queue.Fake` and Redis dispatch it right after the commit (`database.Tx.AfterCommit`), and never for rolled-back work. On `sync` the job runs after the commit, so its error is logged instead of returned.
 - `sync` cannot delay a job: `Dispatch(ctx, j, queue.Delay(d))` returns `queue.ErrInlineDelay` instead of running it early. Tests that dispatch delayed jobs use `queue.NewFake()`.
 
@@ -44,23 +45,30 @@ err = q.DispatchTx(ctx, tx, jobs.SendInvoice{OrderID: 1}) // only if tx commits
 | `QUEUE_CONNECTION` | Behaviour |
 | --- | --- |
 | `sync` (default) | the job runs inside `Dispatch`; its error is returned, no retries; `queue.Delay` is refused with `queue.ErrInlineDelay` |
-| `memory` | in process; `serve` runs the workers; lost on restart |
-| `database` | SQLite or Postgres tables `jobs` and `failed_jobs`, created on first use; any number of worker processes |
+| `memory` | in process; `serve` always runs the workers; lost on restart |
+| `database` | SQLite or Postgres tables `jobs` and `failed_jobs`, created on first use; a worker in `serve` (`QUEUE_IN_SERVE`) and any number of `queue:work` processes |
 | Redis | `vukem.WithQueueDriver(rc.Queue(redis.QueueOptions{}))`, see [Redis](/docs/database/redis) |
 
 | Variable | Default |
 | --- | --- |
 | `QUEUE_NAMES` | `default` (priority order, comma-separated) |
 | `QUEUE_CONCURRENCY` | `4` |
+| `QUEUE_IN_SERVE` | `true`: `serve` runs a worker for the database queue and custom drivers (Redis); `false` leaves the jobs to `queue:work` |
 | `QUEUE_TABLE`, `QUEUE_FAILED_TABLE` | `jobs`, `failed_jobs` |
 | `QUEUE_ALLOW_LEGACY_MAIL` | `false`: clear-text mail jobs queued before v0.24.0 fail; `true` sends them (upgrade window, a warning per job) |
 
 The database and Redis drivers reserve each job atomically (Postgres uses `FOR UPDATE SKIP LOCKED`). A job whose worker died is taken over after its timeout plus one minute, so delivery is **at least once**: make handlers idempotent. If the first worker was only slow (not dead) and finishes after the takeover, its result is dropped with `queue.ErrReservationLost` instead of deleting, retrying or failing the job the second worker now owns.
 
+## Running workers
+
+`serve` runs a queue worker next to the HTTP server, so a single-process deploy (one Railway, Fly or Render service) still sends queued mail and runs jobs: always for `memory`, and for `database` and custom drivers such as Redis unless `QUEUE_IN_SERVE=false`. `sync` needs no worker. The worker polls `QUEUE_NAMES` with `QUEUE_CONCURRENCY` workers and stops with the server (running jobs get `SHUTDOWN_TIMEOUT`).
+
+To process jobs only in dedicated processes, set `QUEUE_IN_SERVE=false` on the web service and run `queue:work` (below). Leaving the in-serve worker on next to `queue:work` processes is safe: each reservation is atomic and owned by one worker, so the extra worker never processes a job a second time at once; it only adds workers, and their load, to the web process. On SQLite every worker shares the single writer connection, so keep `QUEUE_CONCURRENCY` low there.
+
 ## Commands
 
 ```bash
-vukem queue:work                                  # until Ctrl+C (drains running jobs)
+vukem queue:work                                  # until Ctrl+C (drains running jobs within SHUTDOWN_TIMEOUT)
 vukem queue:work -queue high,default -concurrency 8
 vukem queue:work -once                            # a single job
 vukem queue:work -stop-when-empty
@@ -73,12 +81,13 @@ vukem queue:forget <id…|all>
 
 ```go
 err := mailer.SendLater(ctx, mail.Welcome{User: u}) // or app.MailLater: rendered now, sent from a retried job
+err = app.MailLaterTx(ctx, tx, mail.Receipt{Order: o}) // or mailer.SendLaterTx: queued only if tx commits
 
 // app/listeners/registry.go (vukem make:listener UpdateStock --event OrderShipped --queued)
 events.OnQueued("update_stock", UpdateStock)
 ```
 
-`SendLater` keeps the message ID across retries, so providers that deduplicate by it send once, and stores the message encrypted with `app.Crypt`. A queued listener's event is stored as JSON and run by a worker; `Dispatch` only reports enqueue errors.
+`SendLater` keeps the message ID across retries, so providers that deduplicate by it send once, and stores the message encrypted with `app.Crypt`. `SendLaterTx`/`MailLaterTx` tie the mail to a transaction like `DispatchTx`, so a rolled-back payment never emails the buyer. On SQLite, build the queue (`app.Queue()`, which the `serve` worker does at boot) before opening the transaction: creating the queue tables needs the single writer connection the transaction holds. A queued listener's event is stored as JSON and run by a worker; `Dispatch` only reports enqueue errors.
 
 ## Testing
 
