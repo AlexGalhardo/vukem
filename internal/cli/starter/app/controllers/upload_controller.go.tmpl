@@ -2,6 +2,8 @@ package controllers
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"path"
 
@@ -20,25 +22,38 @@ type UploadController struct {
 }
 
 type uploadConfig struct {
-	Dir string `env:"UPLOADS_DIR" default:"storage/app/uploads"`
+	// Disk is "local" (Dir on the filesystem) or "memory" (tests only).
+	Disk string `env:"UPLOADS_DISK" default:"local"`
+	Dir  string `env:"UPLOADS_DIR" default:"storage/app/uploads"`
 }
 
-// NewUploadController opens the uploads disk (UPLOADS_DIR) and closes it
-// on shutdown.
+// NewUploadController opens the uploads disk (UPLOADS_DISK, UPLOADS_DIR)
+// and closes it on shutdown.
 func NewUploadController(app *vukem.App) (*UploadController, error) {
 	cfg, err := config.Load[uploadConfig](app.Source)
 	if err != nil {
 		return nil, err
 	}
 
-	disk, err := storage.NewLocal(cfg.Dir, "")
-	if err != nil {
-		return nil, err
+	switch cfg.Disk {
+	case "memory":
+		if app.Config.IsProduction() {
+			return nil, errors.New("UPLOADS_DISK=memory loses every upload on restart: not allowed in production")
+		}
+
+		return &UploadController{disk: storage.NewMemory("")}, nil
+	case "local":
+		disk, err := storage.NewLocal(cfg.Dir, "")
+		if err != nil {
+			return nil, err
+		}
+
+		app.OnShutdown(func(context.Context) error { return disk.Close() })
+
+		return &UploadController{disk: disk}, nil
+	default:
+		return nil, fmt.Errorf("UPLOADS_DISK=%q: want local or memory", cfg.Disk)
 	}
-
-	app.OnShutdown(func(context.Context) error { return disk.Close() })
-
-	return &UploadController{disk: disk}, nil
 }
 
 // imageRules accept up to three images of 2 MiB each per request.
