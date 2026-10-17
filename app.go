@@ -151,6 +151,7 @@ type App struct {
 	Devtools *devtools.Devtools
 
 	jobs         []queue.Registration
+	jobFuncs     []func(*App) []queue.Registration
 	queueDriver  queue.Driver
 	cacheStore   cache.Store
 	schedules    []func(*schedule.Schedule, *App)
@@ -200,6 +201,7 @@ type options struct {
 	mailTransport mail.Transport
 	listeners     []events.Registration
 	jobs          []queue.Registration
+	jobFuncs      []func(*App) []queue.Registration
 	queueDriver   queue.Driver
 	cacheStore    cache.Store
 	sessionStore  session.Store
@@ -448,6 +450,7 @@ func New(opts ...Option) (*App, error) {
 		migrations:  o.migrations,
 		seeders:     o.seeders,
 		jobs:        o.jobs,
+		jobFuncs:    o.jobFuncs,
 		queueDriver: o.queueDriver,
 		cacheStore:  o.cacheStore,
 		sessStore:   o.sessionStore,

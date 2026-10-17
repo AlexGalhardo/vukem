@@ -196,3 +196,51 @@ func TestFailedCommandsNeedAStore(t *testing.T) {
 		t.Fatalf("queue:failed on sync = %v", err)
 	}
 }
+
+// WithJobsFunc builds handlers from the app, so they reach its database,
+// clock and other services without globals.
+func TestWithJobsFuncReachesTheApp(t *testing.T) {
+	t.Parallel()
+
+	fixed := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+
+	var (
+		got   time.Time
+		built int
+	)
+
+	handlers := func(app *App) []queue.Registration {
+		built++
+
+		return []queue.Registration{
+			queue.Handle(func(context.Context, pingJob) error { got = app.Now(); return nil }),
+		}
+	}
+
+	app := newTestApp(t, WithClock(func() time.Time { return fixed }), WithJobsFunc(handlers))
+
+	q, err := app.Queue()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := app.Queue(); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := q.Dispatch(t.Context(), pingJob{N: 1}); err != nil {
+		t.Fatal(err)
+	}
+
+	if !got.Equal(fixed) || built != 1 {
+		t.Fatalf("handler saw now = %v (built %d times), want %v (once)", got, built, fixed)
+	}
+
+	dup := newTestApp(t,
+		WithJobs(queue.Handle(func(context.Context, pingJob) error { return nil })),
+		WithJobsFunc(handlers),
+	)
+	if _, err := dup.Queue(); !errors.Is(err, queue.ErrDuplicateKind) {
+		t.Errorf("Queue() with a kind from WithJobs and WithJobsFunc = %v, want ErrDuplicateKind", err)
+	}
+}

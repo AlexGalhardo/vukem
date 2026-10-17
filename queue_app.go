@@ -15,10 +15,18 @@ import (
 	"github.com/AlexGalhardo/vukem/queue"
 )
 
-// WithJobs registers job handlers on the application queue (generated apps
-// pass jobs.All(); vukem make:job appends there).
+// WithJobs registers job handlers on the application queue. Handlers that
+// need the app (database, clock, mailer) use WithJobsFunc.
 func WithJobs(regs ...queue.Registration) Option {
 	return func(o *options) error { o.jobs = append(o.jobs, regs...); return nil }
+}
+
+// WithJobsFunc registers job handlers built from the app, so they reach
+// its database, clock, mailer and other services without globals
+// (generated apps pass jobs.All). fn runs once, when the queue is first
+// built; it must not call app.Queue (handlers may, when they run).
+func WithJobsFunc(fn func(app *App) []queue.Registration) Option {
+	return func(o *options) error { o.jobFuncs = append(o.jobFuncs, fn); return nil }
 }
 
 // WithQueueDriver replaces the driver chosen by QUEUE_CONNECTION (tests
@@ -89,7 +97,12 @@ func (a *App) Queue() (*queue.Queue, error) {
 			q.SetObserver(a.Devtools)
 		}
 
-		regs := append(slices.Clone(a.jobs), a.Events.Jobs()...)
+		regs := slices.Clone(a.jobs)
+		for _, fn := range a.jobFuncs {
+			regs = append(regs, fn(a)...)
+		}
+
+		regs = append(regs, a.Events.Jobs()...)
 		regs = append(regs, queue.HandleKind(MailJobKind, a.sendQueuedMail))
 
 		if err := q.Register(regs...); err != nil {

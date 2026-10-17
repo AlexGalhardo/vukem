@@ -50,7 +50,7 @@ Flags may come before or after arguments: `vukem make:model Post -m -c` equals `
 | `make:mail <Name>` | `app/mail/<name>.go` and `resources/views/mail/<name>.html` |
 | `make:event <Name>` | `app/events/<name>.go` |
 | `make:listener <Name> --event <Event> [--async\|--queued]` | `app/listeners/<name>.go`, appended to `listeners.All()` (`--queued` runs it as a queue job) |
-| `make:job <Name>` | `app/jobs/<name>.go` (job type, `Kind`, handler), appended to `jobs.All()` |
+| `make:job <Name>` | `app/jobs/<name>.go` (job type, `Kind`, handler built from the app), appended to `jobs.All(app)` |
 
 - Generated Go is `gofmt`ed. Existing files are never overwritten without `--force`.
 - Conventional suffixes are optional: `PostController`, `BillingProvider` and `SendReportsCommand` work as names.
