@@ -10,6 +10,11 @@
 // deletes and encrypted columns ([Encrypted]) are declared on the struct.
 // Tables come from package schema migrations.
 //
+// An invalid model (not a struct, a bad table or column name, no primary
+// key, a relation without its foreign key, an unknown orm tag option)
+// panics on its first use, usually at boot: it is a programming error, not
+// a runtime condition.
+//
 // See https://github.com/AlexGalhardo/vukem/blob/main/docs/database.md.
 package orm
 
