@@ -391,7 +391,7 @@ func TestSecurity_A07_SignupIsEnumerationSafe(t *testing.T) {
 
 		for _, want := range []string{
 			`r.Get("/register/check-email", h.CheckEmail).Name("register.check").Use(guest)`,
-			`r.Get("/email/verify/{id}", h.Verify).Name("verification.verify").Use(acc.Signer.Middleware())`,
+			`r.Get("/email/verify/{id}", h.Verify).Name("verification.verify").Use(required)`,
 		} {
 			if !bytes.Contains(routes, []byte(want)) {
 				t.Errorf("%s routes lack %q", kit, want)
@@ -403,7 +403,7 @@ func TestSecurity_A07_SignupIsEnumerationSafe(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		if !bytes.Contains(verify, []byte("signedIn && current.ID != u.ID")) {
+		if !bytes.Contains(verify, []byte("if u.ID != id {")) {
 			t.Errorf("%s Verify does not refuse another signed-in user", kit)
 		}
 
@@ -582,7 +582,7 @@ func TestSecurity_A07_ProvingTheEmailEndsSquatterAccess(t *testing.T) {
 	for _, kit := range []string{"auth-web", "auth-inertia"} {
 		files["scaffolds/"+kit+"/app/controllers/account/verification.go.tmpl"] = []string{
 			`subtle.ConstantTimeCompare([]byte(c.Query("email_hash")), []byte(accounts.EmailHash(u.Email))) != 1`,
-			"h.a.VerifyEmail(c.Context(), &u, keep)",
+			"h.a.VerifyEmail(c.Context(), &u, c.Session().ID())",
 			"h.a.Web.RefreshSession(c)",
 		}
 		files["scaffolds/"+kit+"/tests/auth_test.go.tmpl"] = []string{
@@ -614,6 +614,64 @@ func TestSecurity_A07_ProvingTheEmailEndsSquatterAccess(t *testing.T) {
 
 		if bytes.Contains(b, []byte("h.a.MarkVerified(")) {
 			t.Errorf("%s Verify calls MarkVerified instead of VerifyEmail", kit)
+		}
+	}
+}
+
+// The verification link needs the login of the account it verifies: the
+// route runs auth.Required, so a signed-out click leads to the login page
+// with the link kept as the intended URL, and the handler checks the
+// signature (an expired link leads to the resend page, a bad one is a 403
+// and a security event) and verifies only the signed-in user (403 for
+// another account). Whoever merely owns the mailbox cannot verify an account
+// someone else created with the address. The generated
+// TestRegisterAndVerifyEmail and TestVerificationEndsOtherSessions check
+// the behaviour end to end.
+func TestSecurity_A07_VerificationLinkRequiresLogin(t *testing.T) {
+	t.Parallel()
+
+	for _, kit := range []string{"auth-web", "auth-inertia"} {
+		routes, err := scaffoldFS.ReadFile("scaffolds/" + kit + "/routes/auth.go.tmpl")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if !bytes.Contains(
+			routes,
+			[]byte(`h.Verify).Name("verification.verify").Use(required)`),
+		) {
+			t.Errorf("%s: the verification route lacks auth.Required", kit)
+		}
+
+		verify, err := scaffoldFS.ReadFile("scaffolds/" + kit + "/app/controllers/account/verification.go.tmpl")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		for _, want := range []string{
+			`u, err := auth.User[models.User](c, "web")`,
+			"if u.ID != id {",
+			"if err := h.a.Signer.Verify(c.Request()); err != nil {",
+			`web.SecurityEvent(c.Request(), "url.signature_invalid")`,
+		} {
+			if !bytes.Contains(verify, []byte(want)) {
+				t.Errorf("%s Verify lacks %q", kit, want)
+			}
+		}
+
+		// Loading the link's user by id would let a signed-out click verify it.
+		if bytes.Contains(verify, []byte("orm.QueryOf[models.User]")) {
+			t.Errorf("%s Verify loads the link's user instead of the signed-in one", kit)
+		}
+
+		tests, err := scaffoldFS.ReadFile("scaffolds/" + kit + "/tests/auth_test.go.tmpl")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if !bytes.Contains(tests, []byte("AssertRedirect(verify)")) ||
+			!bytes.Contains(tests, []byte("func TestExpiredVerificationLinkOffersANewOne(")) {
+			t.Errorf("%s tests do not follow the link back after the login", kit)
 		}
 	}
 }
