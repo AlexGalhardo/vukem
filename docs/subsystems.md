@@ -9,13 +9,13 @@ Mail, cache, storage, events, queue, scheduler, encryption, rate limiting, i18n,
 | Mail | ALPHA | SMTP (`net/smtp`), **Resend** (HTTP API), log, array | — | ✅ |
 | Cache | ALPHA | memory (LRU + TTL), database | redis | ✅ |
 | Storage | ALPHA / BETA | local (`os.Root`), memory | s3 (AWS, MinIO, R2…) | ✅ |
-| Events | ALPHA | in-process sync/async | — | ✅ |
+| Events | ALPHA | in-process sync/async | — | ✅ (`events.NewFake`) |
 | Queue | BETA | sync, memory, database (SQLite/Postgres, `FOR UPDATE SKIP LOCKED` on PG) | redis | ✅ (`queue.Fake`) |
 | Scheduler | BETA | in-process cron | — | clock |
-| Encryption | BETA (planned) | AES-256-GCM with key rotation | — | — |
-| Rate limiting | ALPHA / BETA | memory (GCRA) | redis | clock |
+| Encryption | BETA | AES-256-GCM with key rotation | — | — |
+| Rate limiting | ALPHA / BETA | memory (GCRA) | redis | ✅ (memory + `synctest`) |
 | i18n | BETA | JSON files, CLDR plural rules subset | — | `i18n.New` + `Add` |
-| SSE | BETA (planned) | in-process hub | redis pub/sub | — |
+| SSE | BETA | in-process hub | redis pub/sub | — |
 | Tracing (OpenTelemetry) | BETA | — | otel | `tracetest` recorder |
 
 ## Logging & observability

@@ -65,23 +65,40 @@ Requests run in-process via `httptest` (no ports). Each assertion failure prints
 
 ### Fakes
 
-Fakes replace services **on the app instance** (no globals):
+Fakes replace services **on the app instance** (no globals), through the same options production code uses:
 
 ```go
-mail := vukemtest.FakeMail(t, app)
-q := vukemtest.FakeQueue(t, app)
-ev := vukemtest.FakeEvents(t, app, events.UserRegistered{})
-clock := vukemtest.FakeClock(t, app, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+outbox := mail.NewArray()
+jobs := queue.NewFake()
+clock := vukemtest.NewFakeClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+
+app := vukemtest.New(t, bootstrap.New, vukemtest.Options{
+	Clock: clock.Now,
+	AppOptions: []vukem.Option{
+		vukem.WithMailTransport(outbox),
+		vukem.WithQueueDriver(jobs),
+		vukem.WithCacheStore(cache.NewMemory(1000)),
+	},
+})
 
 // ... exercise code ...
 
-mail.AssertSent[mails.Welcome](t, func(m mails.Welcome) bool { return m.To == "a@b.c" })
-q.AssertPushed[jobs.SendInvoice](t, 1)
-ev.AssertDispatched[events.UserRegistered](t)
+sent := outbox.SentTo("a@b.c")             // []mail.Message
+invoices := queue.Dispatched[jobs.SendInvoice](jobs)
 clock.Advance(24 * time.Hour)
 ```
 
-Available as their subsystems land: mail, queue, events, storage (in-memory `fs.FS`), cache, HTTP client (`FakeHTTP` with stray-request prevention), clock, hasher (fast params).
+| Subsystem | Fake | Notes |
+| --- | --- | --- |
+| Mail | `mail.NewArray()` | `Sent()`, `SentTo(addr)`, `Reset()` |
+| Queue | `queue.NewFake()` | `queue.Dispatched[J](fake)`; `Work(ctx, WorkOptions{StopWhenEmpty: true})` runs jobs |
+| Events | `events.NewFake()` (an `events.Dispatcher`) | `events.Dispatched[E](fake)` |
+| Cache | `cache.NewMemory(n)` | LRU + TTL, same `cache.Store` contract (`cache/cachetest`) |
+| Storage | `storage.NewMemory(base)` | same `storage.Disk` contract (`storage/storagetest`) |
+| Rate limiting | `ratelimit.NewMemory(limit, window)` | drive time with `testing/synctest` |
+| Social login | `social.Fake(name, callback, user)` | with `vukemtest.FakeSocial` |
+| Password hashing | `hash.Fake()` | fast parameters |
+| Clock | `vukemtest.NewFakeClock(t0)` | `Now`, `Advance`, `Set`; pass `clock.Now` as `vukemtest.Options.Clock` |
 
 ## CI matrix
 
