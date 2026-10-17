@@ -204,16 +204,26 @@ func SafeRedirect(r *http.Request, target, fallback string) string {
 		return fallback
 	}
 
-	if u.Scheme == "" && u.Host == "" && strings.HasPrefix(u.Path, "/") && !strings.HasPrefix(target, "//") &&
-		!strings.HasPrefix(target, `/\`) {
-		return target
-	}
-
-	if (u.Scheme == "http" || u.Scheme == "https") && u.Host == r.Host {
-		return u.RequestURI()
+	switch {
+	case u.Scheme == "" && u.Host == "":
+		if isLocalPath(target) {
+			return target
+		}
+	case (u.Scheme == "http" || u.Scheme == "https") && u.Host == r.Host:
+		// "https://host//evil.com" has the path "//evil.com", which a
+		// browser reads as scheme-relative: check the result, not the input.
+		if p := u.RequestURI(); isLocalPath(p) {
+			return p
+		}
 	}
 
 	return fallback
+}
+
+// isLocalPath reports whether p is an absolute path on the current origin:
+// browsers treat a leading "//" or "/\" as another host.
+func isLocalPath(p string) bool {
+	return strings.HasPrefix(p, "/") && !strings.HasPrefix(p, "//") && !strings.HasPrefix(p, `/\`)
 }
 
 // File serves name from fsys (with Range and If-Modified-Since support).

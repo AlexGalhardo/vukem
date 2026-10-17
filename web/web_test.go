@@ -381,6 +381,10 @@ func TestSecurity_A01_SafeRedirectBlocksOpenRedirects(t *testing.T) {
 		"relative/path":                "/fallback",
 		"http://example.com.evil.com/": "/fallback",
 		"%zz":                          "/fallback",
+		// A same-host absolute URL must not become a scheme-relative path.
+		"http://example.com//evil.com/x":   "/fallback",
+		`http://example.com/\evil.com`:     "/%5Cevil.com",
+		"https://example.com/%2F/evil.com": "/%2F/evil.com",
 	}
 
 	for target, want := range tests {
@@ -666,5 +670,35 @@ func FuzzFormToMap(f *testing.F) {
 			return
 		}
 		_ = FormToMap(vals)
+	})
+}
+
+func FuzzSafeRedirect(f *testing.F) {
+	for _, s := range []string{
+		"/ok", "//evil.com", `/\evil.com`, "http://example.com//evil.com", "https://example.com/a?b=1",
+		"javascript:alert(1)", "/%2F/x", "http://example.com:80/x", "\t//evil.com", "",
+	} {
+		f.Add(s)
+	}
+
+	r := httptest.NewRequestWithContext(f.Context(), http.MethodGet, "http://example.com/", http.NoBody)
+	base, _ := url.Parse("http://example.com/page")
+
+	f.Fuzz(func(t *testing.T, target string) {
+		got := SafeRedirect(r, target, "/fallback")
+		if got == "/fallback" {
+			return
+		}
+
+		// Whatever is accepted must stay on this origin once a browser
+		// resolves it against the current page.
+		ref, err := url.Parse(got)
+		if err != nil {
+			t.Fatalf("SafeRedirect(%q) = %q, unparsable", target, got)
+		}
+
+		if u := base.ResolveReference(ref); u.Host != "example.com" || u.Scheme != "http" || !isLocalPath(got) {
+			t.Fatalf("SafeRedirect(%q) = %q, leaves the origin", target, got)
+		}
 	})
 }
