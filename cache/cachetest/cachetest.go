@@ -121,6 +121,54 @@ func Run(t *testing.T, store cache.Store) {
 		}
 	})
 
+	// Rate limits count with Increment: concurrent callers (other servers)
+	// must never read the same value, or requests go uncounted.
+	t.Run("IncrementConcurrent", func(t *testing.T) {
+		const workers, each = 8, 10
+
+		var (
+			wg   sync.WaitGroup
+			mu   sync.Mutex
+			seen = map[int64]bool{}
+			errs atomic.Int32
+		)
+
+		for range workers {
+			wg.Go(func() {
+				for range each {
+					n, err := c.Increment(ctx, "concurrent", 1, time.Minute)
+					if err != nil {
+						errs.Add(1)
+						continue
+					}
+
+					mu.Lock()
+					seen[n] = true
+					mu.Unlock()
+				}
+			})
+		}
+
+		wg.Wait()
+
+		if errs.Load() != 0 || len(seen) != workers*each {
+			t.Fatalf("concurrent Increment: %d errors, %d distinct values, want 0 and %d",
+				errs.Load(), len(seen), workers*each)
+		}
+	})
+
+	t.Run("IncrementRestartsExpired", func(t *testing.T) {
+		if _, err := c.Increment(ctx, "window", 5, 20*time.Millisecond); err != nil {
+			t.Fatal(err)
+		}
+
+		time.Sleep(40 * time.Millisecond) //nolint:forbidigo // real expiry in the store
+
+		if n, err := c.Increment(ctx, "window", 1, time.Minute); err != nil || n != 1 {
+			t.Fatalf("Increment after expiry = %d %v, want 1", n, err)
+		}
+	})
+
 	t.Run("RememberSingleflight", func(t *testing.T) {
 		var calls atomic.Int32
 

@@ -231,39 +231,55 @@ func (d *Database) DeleteIf(ctx context.Context, key string, value []byte) (bool
 	return n == 1, err
 }
 
-// Increment implements Store (atomically, in a transaction).
+// Increment implements Store, atomically across connections and servers:
+// a no-op upsert first creates the row ("0") or locks the existing one, so
+// concurrent increments of a key queue up instead of reading the same
+// value (rate limits count with it). A live row keeps its expiry; an
+// expired one restarts at delta with ttl.
 func (d *Database) Increment(ctx context.Context, key string, delta int64, ttl time.Duration) (int64, error) {
+	lock := d.q(`INSERT INTO {t} ({k}, value, expires_at) VALUES (?, ?, ?)
+		ON CONFLICT ({k}) DO UPDATE SET expires_at = {t}.expires_at`)
+	read := d.q(`SELECT value, expires_at FROM {t} WHERE {k} = ?`)
+
+	if d.mysql() {
+		lock = d.q(`INSERT INTO {t} ({k}, value, expires_at) VALUES (?, ?, ?)
+		ON DUPLICATE KEY UPDATE expires_at = expires_at`)
+	}
+
+	if d.mysql() || d.postgres() {
+		read += " FOR UPDATE" // SQLite has one writer: the upsert already holds the lock
+	}
+
 	var n int64
 
 	err := d.db.Tx(ctx, func(tx *database.Tx) error {
-		var v []byte
-
-		err := tx.QueryRowContext(ctx, d.q(`SELECT value FROM {t} WHERE {k} = ? AND (expires_at = 0 OR expires_at > ?)`),
-			key, d.nowMS()).
-			Scan(&v)
-
-		switch {
-		case errors.Is(err, sql.ErrNoRows):
-			n = delta
-			_, err = tx.ExecContext(ctx, d.upsert(), key, d.val([]byte(strconv.FormatInt(n, 10))), d.expiry(ttl))
-
-			return err
-		case err != nil:
+		if _, err := tx.ExecContext(ctx, lock, key, d.val([]byte("0")), d.expiry(ttl)); err != nil {
 			return err
 		}
 
-		cur, err := strconv.ParseInt(string(bytes.TrimSpace(v)), 10, 64)
-		if err != nil {
-			return fmt.Errorf("cache: %s is not an integer", key)
+		var (
+			v       []byte
+			expires int64
+		)
+
+		if err := tx.QueryRowContext(ctx, read, key).Scan(&v, &expires); err != nil {
+			return err
+		}
+
+		var cur int64
+
+		if expires != 0 && expires <= d.nowMS() {
+			expires = d.expiry(ttl)
+		} else {
+			var err error
+			if cur, err = strconv.ParseInt(string(bytes.TrimSpace(v)), 10, 64); err != nil {
+				return fmt.Errorf("cache: %s is not an integer", key)
+			}
 		}
 
 		n = cur + delta
-		_, err = tx.ExecContext(
-			ctx,
-			d.q(`UPDATE {t} SET value = ? WHERE {k} = ?`),
-			d.val([]byte(strconv.FormatInt(n, 10))),
-			key,
-		)
+		_, err := tx.ExecContext(ctx, d.q(`UPDATE {t} SET value = ?, expires_at = ? WHERE {k} = ?`),
+			d.val([]byte(strconv.FormatInt(n, 10))), expires, key)
 
 		return err
 	})
