@@ -9,7 +9,9 @@ import (
 	"reflect"
 	"runtime/debug"
 	"slices"
+	"strings"
 	"sync"
+	"sync/atomic"
 )
 
 // Request is a GraphQL request (GraphQL over HTTP "request parameters").
@@ -157,7 +159,14 @@ type executor struct {
 
 	mu   sync.Mutex
 	errs []*Error
+
+	metaFields atomic.Int64 // introspection fields resolved so far
 }
+
+// maxIntrospectionFields stops list fan-out inside introspection (each
+// __Type level can return every type again), which the static limits
+// cannot see; IntrospectionQuery on a large schema stays well below it.
+const maxIntrospectionFields = 200_000
 
 // path is a response path, built as a linked list and flattened only when
 // an error needs it.
@@ -469,6 +478,22 @@ func (e *executor) field(
 	}
 
 	nullResult := func() (any, bool) { return nil, fd.typ.kind != kindNonNull }
+
+	if strings.HasPrefix(objType.name, "__") {
+		switch n := e.metaFields.Add(1); {
+		case n == e.s.maxMetaFields+1:
+			e.addError(&Error{
+				Message: fmt.Sprintf("Introspection resolves more than %d fields.", e.s.maxMetaFields),
+				Extensions: map[string]any{
+					"code": CodeLimitExceeded, "limit": "introspection fields", "max": e.s.maxMetaFields,
+				},
+			}, g.fields, p)
+
+			return nullResult()
+		case n > e.s.maxMetaFields:
+			return nullResult()
+		}
+	}
 
 	args, err := e.arguments(fd, f)
 	if err != nil {

@@ -7,7 +7,15 @@ type cost struct {
 	depth      int
 	complexity int
 	aliases    int
+	// introDepth is the depth of __schema / __type selections, bounded by
+	// maxIntrospectionDepth instead of MaxDepth so the standard
+	// IntrospectionQuery always fits.
+	introDepth int
 }
+
+// maxIntrospectionDepth fits IntrospectionQuery (depth 14) and stops
+// deeper __Type chains, whose list fan-out grows exponentially.
+const maxIntrospectionDepth = 16
 
 // limitWalker measures an operation; fragment results are memoized so
 // fragments spread many times cost linear, not exponential, work.
@@ -64,6 +72,10 @@ func (s *Schema) checkLimits(doc *document, op *operation, vars map[string]any) 
 		exceeded("aliases", c.aliases, l.MaxAliases)
 	}
 
+	if c.introDepth > maxIntrospectionDepth {
+		exceeded("introspection depth", c.introDepth, maxIntrospectionDepth)
+	}
+
 	return errs
 }
 
@@ -84,6 +96,7 @@ func (w *limitWalker) selection(sel []selection, parent *namedType) cost {
 		out.depth = max(out.depth, c.depth)
 		out.complexity = saturating(out.complexity, c.complexity)
 		out.aliases = saturating(out.aliases, c.aliases)
+		out.introDepth = max(out.introDepth, c.introDepth)
 	}
 
 	for _, s := range sel {
@@ -121,8 +134,7 @@ func (w *limitWalker) field(f *field, parent *namedType) cost {
 	}
 
 	fd := w.s.fieldFor(parent, f.name)
-	if fd == nil || fd == w.s.metaSchema || fd == w.s.metaType || fd == w.s.metaTypename {
-		// Introspection is gated separately and is deep by design.
+	if fd == nil || fd == w.s.metaTypename {
 		return c
 	}
 
@@ -137,6 +149,15 @@ func (w *limitWalker) field(f *field, parent *namedType) cost {
 	c.depth += sub.depth
 	c.aliases = saturating(c.aliases, sub.aliases)
 	c.complexity = saturating(c.complexity, multiply(sub.complexity, w.multiplier(f)))
+	c.introDepth = sub.introDepth
+
+	if fd == w.s.metaSchema || fd == w.s.metaType {
+		// Introspection is deep by design: its depth has its own bound, but
+		// its aliases and fields still count (a fragment chain over __Type
+		// otherwise grows the response exponentially).
+		c.introDepth = max(c.introDepth, c.depth)
+		c.depth = 0
+	}
 
 	return c
 }

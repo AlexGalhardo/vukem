@@ -24,10 +24,13 @@ type Schema struct {
 	subscr     *namedType
 	desc       string
 
-	limits     Limits
-	debug      bool
-	log        *slog.Logger
-	concurrent bool
+	limits Limits
+	// maxMetaFields bounds the introspection fields one operation
+	// resolves (maxIntrospectionFields; lowered in tests).
+	maxMetaFields int64
+	debug         bool
+	log           *slog.Logger
+	concurrent    bool
 
 	metaTypename *fieldType
 	metaSchema   *fieldType
@@ -164,7 +167,8 @@ type ScalarFuncs struct {
 // defaults; negative values disable a limit.
 type Limits struct {
 	// MaxDepth is the deepest field nesting (default 12). Introspection
-	// fields are not counted.
+	// selections have their own depth bound (16) and a cap on resolved
+	// fields (200000); their aliases and complexity count here.
 	MaxDepth int
 	// MaxComplexity is the summed field cost (default 1000). Each field
 	// costs 1 (or its Cost option); a field with a first/last/limit
@@ -338,6 +342,7 @@ func New(sdl string, opts ...Option) (*Schema, error) {
 	}
 
 	b.s.limits = b.limits.withDefaults()
+	b.s.maxMetaFields = maxIntrospectionFields
 
 	return b.s, nil
 }

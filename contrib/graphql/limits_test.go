@@ -2,6 +2,7 @@ package graphql
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -124,6 +125,68 @@ func TestLimitsConfigurable(t *testing.T) {
 
 	if r := s.Execute(t.Context(), Request{Query: `{ nodes(first: 100000) { expensive } }`}); len(r.Errors) > 0 {
 		t.Errorf("disabled complexity errors = %v", r.Errors)
+	}
+}
+
+// introspectionBomb nests a fragment n levels deep, each level selecting
+// the previous one twice through aliases and once through a list.
+func introspectionBomb(n int) string {
+	var b strings.Builder
+
+	b.WriteString(`{ __type(name: "__Type") { ...F` + strconv.Itoa(n) + ` } }`)
+	b.WriteString("\nfragment F0 on __Type { name }")
+
+	for i := 1; i <= n; i++ {
+		prev := "F" + strconv.Itoa(i-1)
+		b.WriteString("\nfragment F" + strconv.Itoa(i) + " on __Type { name ofType { ..." + prev +
+			" } a: fields { type { ..." + prev + " } } b: fields { type { ..." + prev + " } } }")
+	}
+
+	return b.String()
+}
+
+func TestSecurity_A06_GraphQLIntrospectionBounded(t *testing.T) {
+	t.Parallel()
+
+	s := nodeSchema(t)
+
+	r := s.Execute(t.Context(), Request{Query: introspectionBomb(10)})
+	if firstCode(r) != CodeLimitExceeded {
+		t.Fatalf(
+			"introspection bomb: code = %q (%d bytes of data), want %s",
+			firstCode(r),
+			len(r.Data),
+			CodeLimitExceeded,
+		)
+	}
+
+	// List fan-out without aliases: every level returns all fields again.
+	deep := "{ __schema { types { " + strings.Repeat(
+		"fields { type { ",
+		10,
+	) + "name" + strings.Repeat(
+		" } }",
+		10,
+	) + " } } }"
+	if r := s.Execute(t.Context(), Request{Query: deep}); firstCode(r) != CodeLimitExceeded {
+		t.Fatalf(
+			"deep introspection: code = %q (%d bytes of data), want %s",
+			firstCode(r),
+			len(r.Data),
+			CodeLimitExceeded,
+		)
+	}
+}
+
+func TestSecurity_A06_GraphQLIntrospectionFieldCap(t *testing.T) {
+	t.Parallel()
+
+	s := nodeSchema(t)
+	s.maxMetaFields = 50
+
+	r := s.Execute(t.Context(), Request{Query: IntrospectionQuery})
+	if firstCode(r) != CodeLimitExceeded || len(r.Errors) != 1 {
+		t.Fatalf("capped introspection: errors = %v, want one %s", r.Errors, CodeLimitExceeded)
 	}
 }
 
