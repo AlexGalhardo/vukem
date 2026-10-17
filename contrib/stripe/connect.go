@@ -106,8 +106,12 @@ func (c *Client) CreateTransfer(ctx context.Context, p Params, opts ...RequestOp
 	return sendOpts[Transfer](ctx, c, http.MethodPost, "/v1/transfers", p, withPlatformOnly(opts)...)
 }
 
-// GetTransfer retrieves a transfer.
+// GetTransfer retrieves a transfer (a tr_ id).
 func (c *Client) GetTransfer(ctx context.Context, id string, opts ...RequestOption) (Transfer, error) {
+	if !validID(id, "tr_") {
+		return Transfer{}, fmt.Errorf("%w: transfer id must be a tr_ id", ErrInvalidRequestOption)
+	}
+
 	return sendOpts[Transfer](
 		ctx,
 		c,
