@@ -97,6 +97,10 @@ func (s *Schema) Create(table string, fn func(t *Table)) error {
 		defs = append(defs, s.foreignKeyDef(fk))
 	}
 
+	for _, c := range t.checks {
+		defs = append(defs, s.checkDef(c))
+	}
+
 	if err := s.exec("CREATE TABLE " + s.q(table) + " (\n  " + strings.Join(defs, ",\n  ") + "\n)"); err != nil {
 		return err
 	}
@@ -135,6 +139,14 @@ func (s *Schema) Table(table string, fn func(t *Table)) error {
 		}
 	}
 
+	// Drop checks before renames and column drops: a check that references
+	// a dropped column would otherwise block the drop.
+	for _, name := range t.dropChk {
+		if err := s.exec("ALTER TABLE " + s.q(table) + " DROP CONSTRAINT " + s.q(name)); err != nil {
+			return err
+		}
+	}
+
 	for _, r := range t.renames {
 		if err := s.exec("ALTER TABLE " + s.q(table) + " RENAME COLUMN " + s.q(r[0]) + " TO " + s.q(r[1])); err != nil {
 			return err
@@ -160,7 +172,21 @@ func (s *Schema) Table(table string, fn func(t *Table)) error {
 		}
 	}
 
-	return s.createIndexes(t)
+	if err := s.createIndexes(t); err != nil {
+		return err
+	}
+
+	for _, c := range t.checks {
+		if err := s.exec("ALTER TABLE " + s.q(table) + " ADD " + s.checkDef(c)); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (s *Schema) checkDef(c check) string {
+	return "CONSTRAINT " + s.q(c.name) + " CHECK (" + c.expr + ")"
 }
 
 func (s *Schema) createIndexes(t *Table) error {

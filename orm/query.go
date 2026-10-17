@@ -51,6 +51,8 @@ type Query[T any] struct {
 	offset  int
 	trashed int // 0 exclude, 1 include, 2 only
 	with    []string
+	lock    string // "", "UPDATE" or "SHARE"
+	wait    string // "", "SKIP LOCKED" or "NOWAIT"
 	err     error
 }
 
@@ -323,6 +325,83 @@ func (q Query[T]) WithTrashed() Query[T] { q.trashed = 1; return q }
 // OnlyTrashed returns only soft-deleted rows.
 func (q Query[T]) OnlyTrashed() Query[T] { q.trashed = 2; return q }
 
+// ErrLockOutsideTx is returned when a locking query (LockForUpdate,
+// ForShare) runs on a *database.DB instead of a *database.Tx: the lock
+// would be released as soon as the statement ends.
+var ErrLockOutsideTx = errors.New("orm: row locks need a transaction (run the query on a *database.Tx)")
+
+// LockForUpdate appends FOR UPDATE: matching rows stay locked against
+// other writers until the transaction ends. The query must run on a
+// *database.Tx. On SQLite it is a no-op, because SQLite has no row locks
+// and a write transaction (BEGIN IMMEDIATE) already locks the database.
+func (q Query[T]) LockForUpdate() Query[T] { q.lock = "UPDATE"; return q }
+
+// ForShare appends FOR SHARE (LOCK IN SHARE MODE on MySQL, which MariaDB
+// also understands): matching rows can be read but not changed by other
+// transactions until this one ends. Like LockForUpdate it needs a
+// *database.Tx and is a no-op on SQLite.
+func (q Query[T]) ForShare() Query[T] { q.lock = "SHARE"; return q }
+
+// SkipLocked makes the lock skip rows other transactions hold instead of
+// waiting (work queues). Call it after LockForUpdate or ForShare. Like the
+// lock itself it is a no-op on SQLite.
+func (q Query[T]) SkipLocked() Query[T] { return q.lockWait("SKIP LOCKED") }
+
+// NoWait makes the lock fail at once when a row is held by another
+// transaction instead of waiting. Call it after LockForUpdate or ForShare.
+// It is a no-op on SQLite, where it never fails: a second writer waits for
+// the database lock (busy timeout) instead.
+func (q Query[T]) NoWait() Query[T] { return q.lockWait("NOWAIT") }
+
+func (q Query[T]) lockWait(mode string) Query[T] {
+	if q.lock == "" {
+		return q.fail(fmt.Errorf("orm: %s needs LockForUpdate or ForShare first", mode))
+	}
+
+	q.wait = mode
+
+	return q
+}
+
+func (q Query[T]) lockSQL() string {
+	if q.lock == "" {
+		return ""
+	}
+
+	switch q.ex.Dialect().Name() {
+	case "sqlite":
+		return ""
+	case "mysql":
+		// FOR SHARE is MySQL 8 only; LOCK IN SHARE MODE runs on MySQL and
+		// MariaDB but takes no SKIP LOCKED/NOWAIT on MySQL.
+		if q.lock == "SHARE" && q.wait == "" {
+			return " LOCK IN SHARE MODE"
+		}
+	}
+
+	out := " FOR " + q.lock
+	if q.wait != "" {
+		out += " " + q.wait
+	}
+
+	return out
+}
+
+// checkLock rejects a lock on a pool: without a transaction the rows are
+// unlocked as soon as the statement returns, which silently breaks the
+// caller's invariant. Other executors (wrappers, test doubles) pass.
+func (q Query[T]) checkLock() error {
+	if q.lock == "" {
+		return nil
+	}
+
+	if _, ok := q.ex.(*database.DB); ok {
+		return ErrLockOutsideTx
+	}
+
+	return nil
+}
+
 // build renders the WHERE clause with dialect placeholders.
 func (q Query[T]) whereSQL() (string, []any) {
 	conds := slices.Clone(q.conds)
@@ -383,6 +462,8 @@ func (q Query[T]) selectSQL(cols string) (string, []any) {
 
 		b.WriteString(" OFFSET " + strconv.Itoa(q.offset))
 	}
+
+	b.WriteString(q.lockSQL())
 
 	return renumber(b.String(), q.ex.Dialect()), args
 }
@@ -485,6 +566,11 @@ func (q Query[T]) Each(ctx context.Context) iter.Seq2[T, error] {
 			return
 		}
 
+		if err := q.checkLock(); err != nil {
+			yield(zero, err)
+			return
+		}
+
 		query, args := q.selectSQL(q.columnList())
 
 		rows, err := q.ex.QueryContext(ctx, query, args...)
@@ -543,15 +629,15 @@ func (q Query[T]) Find(ctx context.Context, id any) (T, error) {
 	return q.Where(q.m.pk, id).First(ctx)
 }
 
-// Count returns the number of matching rows.
+// Count returns the number of matching rows. It ignores LockForUpdate and
+// ForShare: PostgreSQL rejects row locks on aggregates, so lock the rows
+// with Get or Pluck when the count must stay stable.
 func (q Query[T]) Count(ctx context.Context) (int64, error) {
 	if q.err != nil {
 		return 0, q.err
 	}
 
-	c := q
-	c.orders, c.limit, c.offset = nil, -1, 0
-	query, args := c.selectSQL("COUNT(*)")
+	query, args := q.countSQL()
 
 	var n int64
 	if err := q.ex.QueryRowContext(ctx, query, args...).Scan(&n); err != nil {
@@ -561,7 +647,12 @@ func (q Query[T]) Count(ctx context.Context) (int64, error) {
 	return n, nil
 }
 
-// Exists reports whether any row matches.
+func (q Query[T]) countSQL() (string, []any) {
+	q.orders, q.limit, q.offset, q.lock, q.wait = nil, -1, 0, "", ""
+	return q.selectSQL("COUNT(*)")
+}
+
+// Exists reports whether any row matches (without row locks, see Count).
 func (q Query[T]) Exists(ctx context.Context) (bool, error) {
 	n, err := q.Limit(1).Count(ctx)
 	return n > 0, err
@@ -576,6 +667,10 @@ func (q Query[T]) Pluck[V any](ctx context.Context, colName string) ([]V, error)
 
 	if q.err != nil {
 		return nil, q.err
+	}
+
+	if err := q.checkLock(); err != nil {
+		return nil, err
 	}
 
 	query, args := q.selectSQL(q.quote(col))

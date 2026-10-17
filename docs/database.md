@@ -109,20 +109,20 @@ Generic, built on `database/sql`, dialect-aware placeholders (`?` vs `$1`), alwa
 
 ```go
 // Select
-users, err := orm.Query[models.User](db).
+users, err := orm.QueryOf[models.User](db).
 	Where("active", true).
 	WhereIn("role", []string{"admin", "editor"}).
 	OrderBy("created_at", orm.Desc).
 	Limit(20).
 	Get(ctx)                                  // []User
 
-user, err := orm.Query[models.User](db).Find(ctx, 42)   // ErrNoRows → 404 in handlers
-n, err := orm.Query[models.User](db).Where("active", true).Count(ctx)
-ok, err := orm.Query[models.User](db).Where("email", e).Exists(ctx)
-emails, err := orm.Query[models.User](db).Pluck[string](ctx, "email") // Go 1.27 generic method
+user, err := orm.QueryOf[models.User](db).Find(ctx, 42) // orm.ErrNotFound → 404 in handlers
+n, err := orm.QueryOf[models.User](db).Where("active", true).Count(ctx)
+ok, err := orm.QueryOf[models.User](db).Where("email", e).Exists(ctx)
+emails, err := orm.QueryOf[models.User](db).Pluck[string](ctx, "email") // Go 1.27 generic method
 
 // Streaming with range-over-func
-for u, err := range orm.Query[models.User](db).Each(ctx) {
+for u, err := range orm.QueryOf[models.User](db).Each(ctx) {
 	if err != nil { return err }
 	process(u)
 }
@@ -130,8 +130,12 @@ for u, err := range orm.Query[models.User](db).Each(ctx) {
 // Writes
 err = orm.Create(ctx, db, &user)            // fills ID, timestamps
 err = orm.Update(ctx, db, &user)            // all columns (explicit)
-err = orm.Query[models.User](db).Where("id", id).Update(ctx, orm.Set{"name": "x"})
+_, err = orm.QueryOf[models.User](db).Where("id", id).Update(ctx, orm.Set{"name": "x"})
 err = orm.Delete(ctx, db, &user)            // soft delete if model opts in
+err = orm.CreateMany(ctx, db, users)        // multi-row INSERT, batched; atomic on db and tx only
+
+// Row locks (inside a transaction; no-op on SQLite)
+num, err := orm.QueryOf[models.Number](tx).Where("id", id).LockForUpdate().First(ctx)
 
 // Transactions
 err = db.Tx(ctx, func(tx *database.Tx) error {
@@ -145,11 +149,12 @@ Inside `db.Tx`, use `tx` for every query (pass it as the `database.Executor`). S
 | Group | Methods |
 | --- | --- |
 | Where | `Where(col, val)`, `Where(col, op, val)`, `OrWhere`, `WhereIn`, `WhereNotIn`, `WhereNull`, `WhereNotNull`, `WhereBetween`, `WhereRaw(sql, args...)`, grouped `WhereGroup(func(q))` |
-| Shape | `Select(cols...)`, `Distinct()`, `Join/LeftJoin`, `GroupBy`, `Having`, `OrderBy`, `Limit`, `Offset` |
+| Shape | `Select(cols...)`, `OrderBy`, `Latest()`, `Limit`, `Offset`, `WithTrashed()`, `OnlyTrashed()` |
 | Read | `Get`, `First`, `Find`, `Count`, `Exists`, `Pluck[V]`, `Each`, `Chunk(n, fn)` |
+| Lock | `LockForUpdate()`, `ForShare()`, then optional `SkipLocked()` / `NoWait()`; needs a `*database.Tx` (`orm.ErrLockOutsideTx` otherwise); all four are no-ops on SQLite, where `NoWait` never fails |
 | Paginate | `Paginate(ctx, page, perPage)` → `Page[T]{Items, Total, Page, PerPage, LastPage}`; `CursorPaginate(ctx, cursor, perPage, dir)` → `CursorPage[T]` |
-| Scopes | `Scope(fns ...func(*Query[T]) *Query[T])` |
-| Raw | `orm.Raw[T](db, sql, args...)` scans into `T` |
+| Scopes | `Scope(fns ...func(Query[T]) Query[T])` |
+| Raw | `WhereRaw(sql, args...)` for conditions; `db.QueryContext` for anything else |
 
 Column names passed as strings are validated against the model's cached column set at query build time (unknown column → error before hitting the database). Raw SQL is the explicit escape hatch.
 
@@ -257,6 +262,7 @@ var CreateUsersTable = schema.Migration{
 - `registry.go` holds `var All = []schema.Migration{...}`, appended by `make:migration` (codemod) — no `init()` registration.
 - Column types: `ID`, `BigInteger`, `Integer`, `String(n)`, `Text`, `Boolean`, `Decimal(p,s)`, `Float`, `Date`, `Timestamp`, `Timestamps`, `SoftDeletes`, `JSON`, `UUID`, `ULID`, `Enum(vals)`, `ForeignID("user_id").Constrained().CascadeOnDelete()`; modifiers `Nullable`, `Default`, `Unique`, `Index`, `Comment`.
 - `s.Table(name, fn)` alters (add/rename/drop column, indexes); SQLite table rebuild handled by the dialect where `ALTER` is unsupported.
+- `t.Check(name, expr)` adds a named CHECK constraint (in `Create` on every dialect; in `s.Table` on PostgreSQL and MySQL only, SQLite fails the migration); `t.DropCheck(name)` removes one (MySQL 8.0.19+ / MariaDB 10.2+).
 - `s.Raw(sql)` for anything else.
 - Tracking table `migrations(id, batch, ran_at)`; each migration runs in a transaction where the dialect allows DDL in transactions.
 - Commands: `migrate`, `migrate:rollback [--step N]`, `migrate:reset`, `migrate:fresh [--seed]`, `migrate:status`, `make:migration create_posts_table` (name prefix `create_`/`add_`/`alter_` picks the stub).
