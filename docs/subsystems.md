@@ -180,7 +180,7 @@ link, err := disk.PresignGet("invoices/42.pdf", time.Hour)
 - `disk.CreateBucket(ctx)` creates the bucket in `S3_REGION` (a `LocationConstraint`, except for `us-east-1` and `auto`), for dev setup and tests against a fresh local S3 (RustFS, MinIO). A bucket the credentials already own is not an error; a name taken by another account is an `*s3.Error` with `Code` `BucketAlreadyExists`.
 - Keys go through `storage.Clean`: no empty key, no leading `/` (so `/a` and `a` cannot name different objects), no `..`, backslash or `:`.
 - Presigned URLs expire after 1 s to 7 days (the SigV4 maximum). `PresignGet` and `PresignPut` sign only the `host` header, so a `PresignPut` URL accepts any type and size. `PresignPutWith` also signs `Content-Type` and/or `Content-Length` (`s3.PresignPutOptions`): the uploader must send exactly those values or S3 answers 403. Browsers set `Content-Length` from the body but must send the `Content-Type` header explicitly (`fetch(url, {method: "PUT", headers: {"Content-Type": type}, body: file})`); invalid options return `s3.ErrInvalidPresign`. A signed `Content-Length` is an exact size, not a ceiling: pass the real file size the client declared (after checking it against your maximum), never the maximum itself, or every smaller file gets 403. Credentials are `config.Secret`; errors and `%+v` never show them.
-- Integration tests run against RustFS (`rustfs/rustfs`, pinned in `compose.yaml`; `task services:up`, port 59000); the driver passes `storagetest.Run` and `storagetest.RunTraversal`.
+- Integration tests run against RustFS (`rustfs/rustfs`, pinned in `.config/compose.yaml`; `task services:up`, port 59000); the driver passes `storagetest.Run` and `storagetest.RunTraversal`.
 
 ## Uploads
 

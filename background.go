@@ -10,10 +10,13 @@ import (
 	"strings"
 	"text/tabwriter"
 	"time"
+	_ "time/tzdata" // SCHEDULE_TIMEZONE works on hosts without a zone database (Windows)
 
+	"github.com/AlexGalhardo/vukem/cache"
 	"github.com/AlexGalhardo/vukem/database"
 	"github.com/AlexGalhardo/vukem/mail"
 	"github.com/AlexGalhardo/vukem/queue"
+	"github.com/AlexGalhardo/vukem/schedule"
 )
 
 // WithJobs registers job handlers on the application queue. Handlers that
@@ -563,4 +566,277 @@ func queueRetryCommand(name string) Command {
 			return nil
 		},
 	}
+}
+
+// WithSchedule declares scheduled tasks (generated apps pass
+// routes.Schedule).
+func WithSchedule(fn func(s *schedule.Schedule, app *App)) Option {
+	return func(o *options) error { o.schedules = append(o.schedules, fn); return nil }
+}
+
+// ScheduleConfig is read from SCHEDULE_* variables.
+type ScheduleConfig struct {
+	// Timezone of the expressions (IANA name, default UTC).
+	Timezone string `env:"SCHEDULE_TIMEZONE" default:"UTC"`
+	// InServe runs the scheduler inside serve. Set it to false when a
+	// dedicated schedule:work process (or a cron calling schedule:run)
+	// runs the schedule instead.
+	InServe bool `env:"SCHEDULE_IN_SERVE" default:"true"`
+}
+
+// scheduleRunner works the schedule inside the web process, so a
+// single-process deploy still runs the built-in prune tasks. It exits at
+// once when nothing is scheduled.
+func (a *App) scheduleRunner() Runner {
+	return RunnerFunc(func(ctx context.Context) error {
+		s, err := a.Schedule()
+		if err != nil {
+			return err
+		}
+
+		if len(s.Tasks()) == 0 {
+			return nil
+		}
+
+		a.Log.InfoContext(ctx,
+			"scheduler running inside serve; set SCHEDULE_IN_SERVE=false if you run schedule:work",
+			"tasks", len(s.Tasks()))
+
+		return s.Work(ctx, a.now)
+	})
+}
+
+// Schedule returns the application schedule, built on first use. Locks
+// for WithoutOverlapping and OnOneServer use App.Cache (set
+// CACHE_STORE=database or Redis when several servers run the schedule;
+// OnOneServer tasks make the in-process cache an error).
+func (a *App) Schedule() (*schedule.Schedule, error) {
+	a.scheduleOnce.Do(func() {
+		cfg, err := configLoad[ScheduleConfig](a)
+		if err != nil {
+			a.scheduleErr = err
+			return
+		}
+
+		loc, err := time.LoadLocation(cfg.Timezone)
+		if err != nil {
+			a.scheduleErr = fmt.Errorf("vukem: SCHEDULE_TIMEZONE: %w", err)
+			return
+		}
+
+		locks, err := a.Cache()
+		if err != nil {
+			a.scheduleErr = err
+			return
+		}
+
+		s := schedule.New(schedule.Options{
+			Location: loc,
+			Log:      a.Log,
+			Locks:    locks,
+			// Apps sharing a cache store keep their task locks apart.
+			Namespace: lockNamespace(a.Config.Name),
+			Commands:  a.Call,
+			Queue:     func() (*queue.Queue, error) { return a.Queue() },
+			// Running tasks share the shutdown budget of the HTTP drain.
+			StopTimeout: a.Config.ShutdownTimeout,
+		})
+
+		// Database sessions keep expired rows until pruned.
+		if sess, err := configLoad[SessionConfig](a); err == nil && sess.Driver == "database" {
+			s.Command("session:prune").Hourly().WithoutOverlapping()
+		}
+
+		// So does the database cache, with one row per rate limit window.
+		if _, ok := storePruner(locks.Store()); ok {
+			s.Command("cache:prune").Hourly().WithoutOverlapping()
+		}
+
+		for _, fn := range a.schedules {
+			fn(s, a)
+		}
+
+		// OnOneServer with the in-process cache would run on every server.
+		if err := s.Validate(); err != nil {
+			a.scheduleErr = fmt.Errorf("vukem: %w", err)
+			return
+		}
+
+		a.schedule = s
+	})
+
+	return a.schedule, a.scheduleErr
+}
+
+// Call runs the app command name with args inside the current process (the
+// app is already booted), e.g. from a scheduled task.
+func (a *App) Call(ctx context.Context, name string, args []string) error {
+	for _, c := range a.Commands() {
+		if c.Name() != name {
+			continue
+		}
+
+		fs := flag.NewFlagSet(name, flag.ContinueOnError)
+		fs.SetOutput(a.stdout)
+		c.Flags(fs)
+
+		if err := fs.Parse(args); err != nil {
+			return fmt.Errorf("%s: %w", name, err)
+		}
+
+		return c.Run(ctx, a, fs.Args())
+	}
+
+	return fmt.Errorf("vukem: unknown command %q", name)
+}
+
+func scheduleCommands() []Command {
+	return []Command{
+		CommandFunc{
+			CommandName: "schedule:run",
+			Desc:        "Run the scheduled tasks due now (call it every minute from cron)",
+			Fn: func(ctx context.Context, app *App, _ []string) error {
+				s, err := app.Schedule()
+				if err != nil {
+					return err
+				}
+
+				return s.RunDue(ctx, app.now().Truncate(time.Minute))
+			},
+		},
+		CommandFunc{
+			CommandName: "schedule:work",
+			Desc:        "Run the scheduler in the foreground (pair with SCHEDULE_IN_SERVE=false on serve)",
+			Fn: func(ctx context.Context, app *App, _ []string) error {
+				s, err := app.Schedule()
+				if err != nil {
+					return err
+				}
+
+				app.Log.InfoContext(ctx, "scheduler started", "tasks", len(s.Tasks()))
+
+				return s.Work(ctx, app.now)
+			},
+		},
+		CommandFunc{
+			CommandName: "schedule:list",
+			Desc:        "List the scheduled tasks and their next run",
+			Fn: func(_ context.Context, app *App, _ []string) error {
+				s, err := app.Schedule()
+				if err != nil {
+					return err
+				}
+
+				if len(s.Tasks()) == 0 {
+					return errors.New("no scheduled tasks (declare them in routes/schedule.go)")
+				}
+
+				tw := tabwriter.NewWriter(app.stdout, 0, 4, 2, ' ', 0)
+				fmt.Fprintln(tw, "TASK\tEXPRESSION\tNEXT RUN")
+
+				now := app.now()
+				for _, t := range s.Tasks() {
+					next := s.Next(t, now)
+					fmt.Fprintf(tw, "%s\t%s\t%s\n", t.Name(), t.Expression(),
+						strings.Replace(next.Format(time.RFC3339), "0001-01-01T00:00:00Z", "never", 1))
+				}
+
+				return tw.Flush()
+			},
+		},
+		CommandFunc{
+			CommandName: "session:prune",
+			Desc:        "Delete expired database sessions (scheduled hourly with SESSION_DRIVER=database)",
+			Fn: func(ctx context.Context, app *App, _ []string) error {
+				if _, err := app.Sessions(); err != nil {
+					return err
+				}
+
+				if app.sessPruner == nil {
+					fmt.Fprintln(app.stdout, "Sessions are not stored in the database: nothing to prune.")
+					return nil
+				}
+
+				n, err := app.sessPruner.Prune(ctx)
+				if err != nil {
+					return err
+				}
+
+				fmt.Fprintf(app.stdout, "Pruned %d expired sessions.\n", n)
+
+				return nil
+			},
+		},
+		CommandFunc{
+			CommandName: "cache:prune",
+			Desc:        "Delete expired database cache entries (scheduled hourly with CACHE_STORE=database)",
+			Fn: func(ctx context.Context, app *App, _ []string) error {
+				c, err := app.Cache()
+				if err != nil {
+					return err
+				}
+
+				p, ok := storePruner(c.Store())
+				if !ok {
+					fmt.Fprintln(app.stdout, "The cache does not keep expired entries: nothing to prune.")
+					return nil
+				}
+
+				n, err := p.Prune(ctx)
+				if err != nil {
+					return err
+				}
+
+				fmt.Fprintf(app.stdout, "Pruned %d expired cache entries.\n", n)
+
+				return nil
+			},
+		},
+	}
+}
+
+// pruner is a store that keeps expired rows until pruned (database cache).
+type pruner interface {
+	Prune(ctx context.Context) (int64, error)
+}
+
+// storePruner finds the pruner in s, looking through stores that wrap
+// another one (metrics, tracing) and expose it with Unwrap.
+func storePruner(s cache.Store) (pruner, bool) {
+	for l := range cache.Layers(s) {
+		if p, ok := l.(pruner); ok {
+			return p, true
+		}
+	}
+
+	return nil, false
+}
+
+// lockNamespace turns APP_NAME into a lock key segment: lowercase ASCII
+// letters and digits, other runs of characters become one "-".
+func lockNamespace(name string) string {
+	var b strings.Builder
+
+	dash := false
+
+	for _, r := range strings.ToLower(name) {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
+			if dash && b.Len() > 0 {
+				b.WriteByte('-')
+			}
+
+			b.WriteRune(r)
+			dash = false
+
+			continue
+		}
+
+		dash = true
+	}
+
+	if b.Len() == 0 {
+		return "app"
+	}
+
+	return b.String()
 }

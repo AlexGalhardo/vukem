@@ -89,7 +89,7 @@ Spec: <https://www.conventionalcommits.org/en/v1.0.0/>. Enforced by the in-repo 
 | body/footer mentioning `security` | Security |
 | `docs`, `test`, `ci`, `build`, `chore`, `style` | omitted |
 
-`task changelog` regenerates the file; released sections are never edited by hand. The `[Unreleased]` section exists at all times.
+The template lives in `.config/cliff.toml` (git-cliff is called with `--config .config/cliff.toml`). Every entry ends with its short commit hash linked to the commit on GitHub, so each Added/Fixed/Security line points at the code that changed; the docs site renders the same file at [vukem.dev/changelog](https://vukem.dev/changelog). `task changelog` previews the next section; released sections are never edited by hand (change the template or the commit history instead). The `[Unreleased]` section exists at all times.
 
 ## Release process
 
@@ -108,9 +108,13 @@ Spec: <https://www.conventionalcommits.org/en/v1.0.0/>. Enforced by the in-repo 
    - commits `chore(release): vX.Y.Z`, creates an annotated tag, pushes `main` and the tag;
    - publishes a GitHub release whose notes are that changelog section (`v0.x` and pre-releases are marked pre-release).
 3. Missed a group? Cut it retroactively: `go run ./internal/tools/release -no-commit -ref <commit> vX.Y.Z`, tag `<commit>`, commit the changelog, push, and create the GitHub release from the section.
-4. Driver modules are tagged separately as `drivers/<name>/vX.Y.Z` (e.g. `drivers/redis/v0.1.0`) once their CI job is green.
-5. From `v0.1.0` on, release tags also get `vukem` CLI binaries (linux, macOS, Windows; amd64 and arm64) built by GoReleaser (`.goreleaser.yaml`), attached to the existing release without touching its notes. `release.yml` does it on tag push and also uploads SBOMs and the cosign signature ([Supply chain](#supply-chain)). The local fallback, `task release:binaries` on the tagged commit (Docker; `SNAPSHOT=1` builds into `dist/` without publishing), skips signing: keyless signing needs the Actions OIDC token.
-6. Warm the proxy: `GOPROXY=https://proxy.golang.org go list -m github.com/AlexGalhardo/vukem@vX.Y.Z`.
+4. Nested modules (`drivers/*`, `contrib/*`) are tagged separately as `<dir>/vX.Y.Z` (e.g. `drivers/redis/v0.4.0`) after the core release:
+   - tag only modules with non-test changes since their last tag (`git log <dir>/<last tag>..HEAD -- <dir>`); a breaking change is a minor bump before v1;
+   - first run each changed module against the published core: `cd <dir> && GOWORK=off go test ./...` (the workspace hides a missing `go.mod` bump);
+   - test-only changes (integration tests) need no tag.
+5. From `v0.1.0` on, release tags also get `vukem` CLI binaries (linux, macOS, Windows; amd64 and arm64) built by GoReleaser (`.config/goreleaser.yaml`), attached to the existing release without touching its notes. `release.yml` does it on tag push and also uploads SBOMs and the cosign signature ([Supply chain](#supply-chain)). The local fallback, `task release:binaries` on the tagged commit (Docker; `SNAPSHOT=1` builds into `dist/` without publishing), skips signing: keyless signing needs the Actions OIDC token.
+6. Warm the proxy: `GOPROXY=https://proxy.golang.org go list -m github.com/AlexGalhardo/vukem@vX.Y.Z`. Right after a tag push the proxy and `sum.golang.org` can answer 404 for a few minutes (negative cache): poll `https://proxy.golang.org/github.com/!alex!galhardo/vukem/@v/vX.Y.Z.info` until it returns 200 before bumping apps.
+7. Bump the reference apps only after the proxy serves the new versions. A setting that only the new version understands (for example `MAIL_MAILER=mailtrap`, added in v0.26.0) is set on the platform **after** the bumped app is deployed: an unknown value fails the boot (fail closed).
 
 ## CI (GitHub Actions)
 
@@ -122,6 +126,7 @@ Spec: <https://www.conventionalcommits.org/en/v1.0.0/>. Enforced by the in-repo 
 | `release.yml` | tag `v*` | GoReleaser binaries, SBOMs, cosign keyless signature, build provenance |
 | `codeql.yml` | push, weekly | CodeQL Go |
 | `scorecard.yml` | push to `main`, weekly | OpenSSF Scorecard |
+| `site.yml` | push to `main` and PRs touching `site/**` or `CHANGELOG.md` | docs site `npm ci`, lint and `next build` (Vercel only builds after the push, so MDX errors are caught here first) |
 | Dependabot | weekly | `gomod` (all modules, prefix `build(deps)`), `npm` (`site/`), `github-actions` (prefix `ci`) |
 
 Workflows declare `permissions: contents: read` at the top; jobs widen it only for what they write. Every action is pinned by full commit SHA with a `# vX.Y.Z` comment (Dependabot bumps both), and tools fetched in workflows use exact versions (`govulncheck@v1.9.0`, `@redocly/cli@1.34.3`), never `@latest`.
@@ -185,12 +190,33 @@ There is no baseline file: the latest stable `v1` tag of each module is the base
 | `task changelog` | git-cliff |
 | `task ci` | fast local gate: lint, vet, unit tests |
 | `task ci:full` | full pipeline locally (Windows tests, Linux `-race` tests in Docker, integration via Docker services, vuln, coverage) — optional locally; GitHub Actions runs the same jobs on every push and PR and is the gate before a release |
-| `task services:up` / `services:down` | Postgres, Redis, Mongo via `compose.yaml` |
+| `task services:up` / `services:down` | Postgres, Redis, Mongo via `.config/compose.yaml` |
+
+## Repository layout
+
+The root keeps only what tools or Go require there; everything else has a fixed home:
+
+| Path | What lives there |
+| --- | --- |
+| root | the `vukem` package (grouped by theme: `app.go`, `http.go`, `database.go`, `background.go`, `services.go`, `command.go`, `codegen.go`, `boost.go`, `doc.go` and their tests), one directory per public package, `go.mod`/`go.sum`/`go.work`, `README.md`, `LICENSE`, `CHANGELOG.md`, `AGENTS.md`, `Taskfile.yml`, `lefthook.yml` and the configs tools only discover at the root (`.editorconfig`, `.gitattributes`, `.gitignore`, `.golangci.yml`, `.markdownlint-cli2.jsonc`, `osv-scanner.toml`, which OpenSSF Scorecard reads) |
+| `.config/` | `cliff.toml` (passed with `--config`), `goreleaser.yaml` (GoReleaser finds it on its own), `compose.yaml` (passed with `-f`; `name: vukem` keeps the container names) |
+| `.github/` | workflows, Dependabot, issue/PR templates and the community files `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md` (GitHub detects them there) |
+| `.claude/` | `CLAUDE.md`, rules, skills and settings |
+| `docs/` | design docs and the roadmap `PLAN.md` |
+
+Add a new file to the root only when a tool cannot be pointed elsewhere; new root package code goes into the matching theme file instead of a new one.
+
+### Windows and Git Bash
+
+- Git Bash rewrites arguments that start with `/` into Windows paths: `railway ssh -- /app/rifa …` becomes `C:/Program Files/Git/app/rifa`. Prefix the command with `MSYS_NO_PATHCONV=1`, or double the slash for Windows flags (`taskkill //PID 123 //F`).
+- Never kill processes by image name (`taskkill /IM app.exe`): other projects' servers share the name. Stop your own background task, or a PID you started.
+- The first `railway ssh` needs the host key in `~/.ssh/known_hosts`; non-interactive shells cannot answer the prompt (`Host key verification failed`).
+- A stale `site/.next` from `next dev` breaks `next build` type checks; delete it before a local production build.
 
 ## Agent configuration
 
-- `AGENTS.md` — canonical agent instructions (≤ 50 lines, links to docs).
-- `CLAUDE.md` — imports `@AGENTS.md`, Claude-specific notes.
-- `.claude/rules/` — path-scoped rules (`go.md`, `testing.md`, `commits.md`, `changelog.md`, `markdown.md`, `drivers.md`).
-- `.claude/skills/` — samber/cc-skills-golang + workflow skills.
+- `AGENTS.md` — canonical agent instructions (≤ 50 lines, links to docs); the roadmap is [`docs/PLAN.md`](PLAN.md).
+- `.claude/CLAUDE.md` — imports `@../AGENTS.md`, Claude-specific notes.
+- `.claude/rules/` — path-scoped rules (`go.md`, `testing.md`, `commits.md`, `changelog.md`, `markdown.md`, `drivers.md`, `secure-coding.md`, `site.md`, `release.md`).
+- `.claude/skills/` — samber/cc-skills-golang + workflow skills, and `vukem-release` (the end-to-end release and app-bump cycle).
 - `.claude/settings.json` — permission allowlist (`go`, `golangci-lint`, `task`, `git` read commands) and a PostToolUse hook that runs `golangci-lint fmt` on edited `.go` files.

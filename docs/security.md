@@ -1,6 +1,6 @@
 # Security
 
-What Vukem does **by default** to protect applications, mapped to the [OWASP Top 10:2025](https://top10.owasp.org/2025/), and what remains the application's responsibility. Reporting vulnerabilities in Vukem itself: [SECURITY.md](../SECURITY.md).
+What Vukem does **by default** to protect applications, mapped to the [OWASP Top 10:2025](https://top10.owasp.org/2025/), and what remains the application's responsibility. Reporting vulnerabilities in Vukem itself: [SECURITY.md](../.github/SECURITY.md).
 
 ## Principles
 
@@ -88,7 +88,7 @@ What Vukem does **by default** to protect applications, mapped to the [OWASP Top
 | `go.sum` checksum database verification (Go default) — never disabled (process: Go default, no `GONOSUMDB`/`GOFLAGS` override in the repo or CI) | [x] |
 | `govulncheck` v1.9.0 on every push and pull request, in `task ci` (`task vuln`), in the pre-push hook and weekly on every module (core, `drivers/*`, `contrib/*`, `examples/*`); generated apps pin it too (CI: `vuln` job in `ci.yml`; `lefthook.yml` pre-push `govulncheck`; `vuln.yml` weekly cron; `TestNewProjectEndToEnd`) | [x] |
 | Dependabot for Go modules and GitHub Actions; actions pinned by commit SHA; OpenSSF Scorecard (process: `.github/dependabot.yml`, SHA-pinned `uses:` in every workflow, `scorecard.yml`) | [x] |
-| Releases built by GoReleaser with checksums and **SBOM**; signed artifacts (cosign, keyless) (process: `.goreleaser.yaml` `checksum`, `sboms`, `signs`; `release.yml`) | [x] |
+| Releases built by GoReleaser with checksums and **SBOM**; signed artifacts (cosign, keyless) (process: `.config/goreleaser.yaml` `checksum`, `sboms`, `signs`; `release.yml`) | [x] |
 | htmx is vendored with a pinned version and checksum verified by a test; no CDN by default (`TestVendoredHTMX`) | [x] |
 | `depguard` blocks driver and contrib modules and denied packages in core; other new dependencies go through the [dependency policy](architecture.md#dependency-policy) review (enforced by `.golangci.yml` depguard `core`) | [x] |
 | Starters pin dependency versions in `go.mod` / `go.sum` and pin `govulncheck` v1.9.0 with a `tool` directive (`go tool govulncheck ./...`; the templ starter pins templ the same way) (`TestNewProjectEndToEnd`, `TestNewAPIProjectEndToEnd`, `TestNewTemplProjectEndToEnd`) | [x] |
@@ -150,7 +150,7 @@ What Vukem does **by default** to protect applications, mapped to the [OWASP Top
 | WebSocket messages are capped at 32 KiB (`websocket.ReadLimit`; larger closes with 1009), every write has a timeout, pings drop peers that stop answering, and app shutdown closes sockets with 1001 instead of waiting on them (`TestSecurity_A06_WebSocketReadLimit`) | [x] |
 | Upload scanning fails closed: with `upload.Rules.Scanner` files stay in a dot-named quarantine path until scanned, infected files are deleted (422) and an unreachable scanner rejects the upload (503); tus and presigned-upload handlers refuse to boot without an `Authorize` hook (`TestReceiveScansBeforeFilesBecomeVisible`, `TestClamAVUnavailableFailsClosed`, `TestTusConfigIsValidatedAtBoot`, `TestDirectRequiresAuthorize`) | [x] |
 | Transactions with rollback-on-error/panic (`db.Tx`) so multi-step operations are atomic (`TestTxCommitRollbackPanic`) | [x] |
-| Threat model of each subsystem recorded in its doc before BETA; security review gate in [PLAN.md](../PLAN.md) (`B.5.2`) (process: [security-review.md](security-review.md)) | [x] |
+| Threat model of each subsystem recorded in its doc before BETA; security review gate in [PLAN.md](PLAN.md) (`B.5.2`) (process: [security-review.md](security-review.md)) | [x] |
 | GraphQL operations are bounded before any resolver runs: depth 12, complexity 1000 (list arguments `first`/`last`/`limit` multiply cost), 30 aliases, 10000 tokens, 1 MiB body; introspection (`__schema`, `__type`) counts toward aliases and complexity, nests at most 16 levels and resolves at most 200000 fields, so fragment chains over `__Type` cannot grow the response exponentially (`TestSecurity_A06_GraphQLIntrospectionBounded`, `TestSecurity_A06_GraphQLIntrospectionFieldCap`); persisted-query allowlist mode runs only listed documents and fails closed without a store (`TestSecurity_A06_GraphQLDepthAndComplexityLimits`, `TestSecurity_A06_GraphQLAllowlistOnly`) | [x] |
 | GraphQL subscriptions are bounded: every WebSocket and SSE document goes through the same parse, validation, limits and persisted-query checks as HTTP; a socket that does not send `connection_init` within 10s is closed (4408); one connection runs at most 32 operations (`TOO_MANY_REQUESTS` beyond); introspection is off over the socket unless `WSConfig.Introspection` (`TestSecurity_A06_GraphQLSubscriptionsBounded`) | [x] |
 
@@ -194,7 +194,7 @@ What Vukem does **by default** to protect applications, mapped to the [OWASP Top
 | Webhook signature verification helper (`webhook.VerifyHMAC`) (`TestSecurity_A08_WebhookMiddleware`, `FuzzVerifyHMAC`); `webhook.HMAC` returns a boot error for an empty secret or header, while the lenient `webhook.Middleware` refuses every request in that case (`TestSecurity_A05_WebhookHMACRefusesEmptySecretAtBoot`) | [x] |
 | Standard Webhooks verification with a ±5 minute timestamp window against replays (`TestSecurity_A08_StandardWebhooks`); a malformed secret is a boot error; `webhook.Dedupe` runs each event id once and fails closed when its store is down (`TestSecurity_A08_WebhookDedupe`, `TestSecurity_A04_WebhookDedupeFailsClosed`) | [x] |
 | Outgoing webhooks (`webhook.Sender`): every attempt is signed with the Standard Webhooks scheme (verifiable with `webhook.Standard`), sent through `httpclient.Safe` so user-supplied endpoint URLs never reach loopback, private or metadata addresses (`TestSecurity_A01_OutgoingWebhookSSRF`), only over https unless `InsecureAllowHTTP` (`TestSecurity_A04_OutgoingWebhookRequiresHTTPS`), never unsigned (a missing or malformed secret fails the attempt), without following redirects (3xx is final); attempts store an error category, never the resolved address or TLS detail; jobs carry the endpoint id, not its URL or secret, and logs and errors omit URL, secret and payload (`TestSecurity_A09_OutgoingWebhookLogsNoSecrets`) | [x] |
-| Release artifacts with checksums, SBOM and signatures (process: `.goreleaser.yaml`, `release.yml`) | [x] |
+| Release artifacts with checksums, SBOM and signatures (process: `.config/goreleaser.yaml`, `release.yml`) | [x] |
 | Migrations tracked with checksums; a modified, already-applied migration is reported by `migrate:status` (`TestMigratorChangedAndMissing`, `TestMigrateCommands`) | [x] |
 
 ### A09:2025 — Security Logging and Alerting Failures

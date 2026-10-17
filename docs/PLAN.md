@@ -4,11 +4,11 @@ The single source of truth for **what to build next**. Every work session (human
 
 ## How to use this file
 
-1. Read [AGENTS.md](AGENTS.md) (rules) and the docs linked from the task you pick.
+1. Read [AGENTS.md](../AGENTS.md) (rules) and the docs linked from the task you pick.
 2. Find the **first unchecked task** in the **current phase** (see [Status](#status)). Tasks within a group are ordered; groups may run in parallel unless marked `needs:`.
 3. Work test-first. A task is done only when its **→ verify** line passes and the [Definition of Done](#definition-of-done) holds.
 4. Tick the box (`- [x]`), update [Status](#status), and commit with a Conventional Commit whose scope matches the group.
-5. When the **whole group** is checked: push and run `task release -- vX.Y.Z` (one release per group, with changelog and GitHub release — see [docs/tooling.md](docs/tooling.md#release-process)).
+5. When the **whole group** is checked: push and run `task release -- vX.Y.Z` (one release per group, with changelog and GitHub release — see [docs/tooling.md](tooling.md#release-process)).
 6. Never start a task from a later phase while the current phase's exit criteria are unmet.
 
 Task IDs: `<phase>.<group>.<task>` (e.g. `P.3.2`). Reference them in commit bodies (`Refs: P.3.2`).
@@ -26,22 +26,22 @@ Task IDs: `<phase>.<group>.<task>` (e.g. `P.3.2`). Reference them in commit bodi
 
 | Topic | Doc |
 | --- | --- |
-| Decisions log | [docs/brainstorming.md](docs/brainstorming.md) |
-| Research | [docs/golang-web-search.md](docs/golang-web-search.md) |
-| Architecture | [docs/architecture.md](docs/architecture.md) |
-| Configuration | [docs/configuration.md](docs/configuration.md) |
-| HTTP (routing, ctx, middleware, validation, sessions, errors) | [docs/http.md](docs/http.md) |
-| Typed schemas `z` (validation in and out) | [docs/validation.md](docs/validation.md) |
-| REST APIs | [docs/api.md](docs/api.md) |
-| Security (OWASP Top 10:2025 defaults) | [docs/security.md](docs/security.md) |
-| Databases | [docs/database.md](docs/database.md) |
-| Auth | [docs/authentication.md](docs/authentication.md) |
-| Frontend (views, HTMX, Inertia, Vite) | [docs/frontend.md](docs/frontend.md) |
-| CLI | [docs/cli.md](docs/cli.md) |
-| Subsystems (mail, cache, queue…) | [docs/subsystems.md](docs/subsystems.md) |
-| Testing | [docs/testing.md](docs/testing.md) |
-| Tooling & releases | [docs/tooling.md](docs/tooling.md) |
-| Documentation website (`site/`, vukem.dev) | [docs/site.md](docs/site.md) |
+| Decisions log | [docs/brainstorming.md](brainstorming.md) |
+| Research | [docs/golang-web-search.md](golang-web-search.md) |
+| Architecture | [docs/architecture.md](architecture.md) |
+| Configuration | [docs/configuration.md](configuration.md) |
+| HTTP (routing, ctx, middleware, validation, sessions, errors) | [docs/http.md](http.md) |
+| Typed schemas `z` (validation in and out) | [docs/validation.md](validation.md) |
+| REST APIs | [docs/api.md](api.md) |
+| Security (OWASP Top 10:2025 defaults) | [docs/security.md](security.md) |
+| Databases | [docs/database.md](database.md) |
+| Auth | [docs/authentication.md](authentication.md) |
+| Frontend (views, HTMX, Inertia, Vite) | [docs/frontend.md](frontend.md) |
+| CLI | [docs/cli.md](cli.md) |
+| Subsystems (mail, cache, queue…) | [docs/subsystems.md](subsystems.md) |
+| Testing | [docs/testing.md](testing.md) |
+| Tooling & releases | [docs/tooling.md](tooling.md) |
+| Documentation website (`site/`, vukem.dev) | [docs/site.md](site.md) |
 
 ## Definition of Done
 
@@ -50,10 +50,10 @@ Applies to **every** task:
 - Tests written first and passing: `task test` (and `task test:integration` when DB drivers are touched).
 - `task lint` clean (golangci-lint + markdownlint), no new `nolint` without explanation.
 - Exported identifiers documented (godoc, full sentences); runnable `Example` for new public APIs.
-- Coverage of touched packages does not drop below the gate in [docs/testing.md](docs/testing.md#policy-framework).
-- No new third-party dependency unless listed in [docs/architecture.md](docs/architecture.md#dependency-policy) (update it + brainstorming otherwise).
+- Coverage of touched packages does not drop below the gate in [docs/testing.md](testing.md#policy-framework).
+- No new third-party dependency unless listed in [docs/architecture.md](architecture.md#dependency-policy) (update it + brainstorming otherwise).
 - Core does not import `drivers/*`; no package-level mutable state; no `init()` registration.
-- Every security default the task introduces (see [docs/security.md](docs/security.md)) has a `TestSecurity_<Axx>_<Behaviour>` test; unsafe options are opt-out with an explicit name; failures deny (fail closed).
+- Every security default the task introduces (see [docs/security.md](security.md)) has a `TestSecurity_<Axx>_<Behaviour>` test; unsafe options are opt-out with an explicit name; failures deny (fail closed).
 - Relevant doc in `docs/` updated if behaviour or API changed.
 - Conventional Commit; `CHANGELOG.md` regenerated at release time only.
 
@@ -78,7 +78,7 @@ Applies to **every** task:
   → verify: `go build ./...` succeeds.
 - [x] **P.0.2** Add `.editorconfig`, `.gitattributes`, `.gitignore`.
   → verify: `git ls-files --eol` shows `i/lf` for text files.
-- [x] **P.0.3** Add `.golangci.yml` (v2, formatters + linters + depguard per [tooling.md](docs/tooling.md#formatting-and-linting)).
+- [x] **P.0.3** Add `.golangci.yml` (v2, formatters + linters + depguard per [tooling.md](tooling.md#formatting-and-linting)).
   → verify: `golangci-lint config verify` and `golangci-lint run ./...` pass.
 - [x] **P.0.4** Add `.markdownlint-cli2.jsonc`.
   → verify: `npx markdownlint-cli2 "**/*.md"` passes.
@@ -159,7 +159,7 @@ Applies to **every** task:
 - [x] **P.4.5** `/up` health route.
   → verify: test returns 200 after boot.
 - [x] **P.4.6** JSON response helpers (`JSON`, `Created` + `Location`, `Accepted`, `NoContent`, `Problem`), 405 with `Allow`, automatic `HEAD`, `api.JSONOnly()` (415, body limit).
-  → verify: the status table in [docs/api.md](docs/api.md#errors) is covered by tests.
+  → verify: the status table in [docs/api.md](api.md#errors) is covered by tests.
 - [x] **P.4.7** `ETag`/`If-None-Match` (304) and `If-Match` (412) helpers, gzip middleware.
   → verify: conditional request tests.
 - [x] **P.4.8** Security headers middleware (nosniff, frame options, referrer, COOP, permissions policy, HSTS on HTTPS) + CSP builder with per-request nonce (`cspNonce` template func).
@@ -273,7 +273,7 @@ Applies to **every** task:
 
 - [x] **P.11.0** Vendored htmx with pinned version and SHA-256 checked by a test; strict CSP in starter layout.
   → verify: tampered file fails the test; starter pages render with no CSP violations (headless check in e2e).
-- [x] **P.11.1** HTMX + SQLite starter (skeleton per [brainstorming.md](docs/brainstorming.md#generated-app-skeleton)), vendored htmx 4.x, minimal CSS, welcome page, example `PostController` CRUD with validation + flash + partials, tests.
+- [x] **P.11.1** HTMX + SQLite starter (skeleton per [brainstorming.md](brainstorming.md#generated-app-skeleton)), vendored htmx 4.x, minimal CSS, welcome page, example `PostController` CRUD with validation + flash + partials, tests.
   → verify: starter's own tests pass.
 - [x] **P.11.2** `vukem new <name> [--module]`: copy starter, rewrite module path, `go mod tidy`, `key:generate`, `git init`.
   → verify: e2e on ubuntu/windows/macos: `vukem new blog && cd blog && go test ./... && vukem build`.
@@ -299,7 +299,7 @@ Applies to **every** task:
 - [x] Zero third-party deps in core except `modernc.org/sqlite` and `golang.org/x/crypto`.
 - [x] CI green on the full matrix; `govulncheck` clean.
 - [x] Router benchmark: < 1 µs/op and ≤ 2 allocs for a static route on CI hardware (documented baseline).
-- [x] `go test -run TestSecurity ./...` covers every Prototype default of [docs/security.md](docs/security.md) (each row names its test or enforcing mechanism); `gosec` and `govulncheck` clean.
+- [x] `go test -run TestSecurity ./...` covers every Prototype default of [docs/security.md](security.md) (each row names its test or enforcing mechanism); `gosec` and `govulncheck` clean.
 
 ---
 
@@ -437,7 +437,7 @@ Applies to **every** task:
 - [x] ORM + schema conformance suite green on SQLite and Postgres.
 - [x] Mail, cache, storage, events, rate limiting each have a fake and docs.
 - [x] Core deps still within the allowlist; Postgres pulled only via `drivers/postgres`.
-- [x] Every ALPHA default of [docs/security.md](docs/security.md) has its `TestSecurity_*` test or enforcing mechanism.
+- [x] Every ALPHA default of [docs/security.md](security.md) has its `TestSecurity_*` test or enforcing mechanism.
 - [x] Coverage gates hold; integration CI green.
 
 ---
@@ -579,7 +579,7 @@ Applies to **every** task:
 
 - [x] **B.5.1** Public API review: every exported identifier justified; remove/rename before freeze; `//go:fix inline` for renamed APIs.
   → verify: `apidiff` report reviewed and committed under `docs/api/`.
-- [x] **B.5.2** Security review against [docs/security.md](docs/security.md) (OWASP Top 10:2025, ASVS L2 checklist for CSRF, sessions, auth, uploads, SQL building, headers) + fuzzing campaign (≥ 1h per fuzz target).
+- [x] **B.5.2** Security review against [docs/security.md](security.md) (OWASP Top 10:2025, ASVS L2 checklist for CSRF, sessions, auth, uploads, SQL building, headers) + fuzzing campaign (≥ 1h per fuzz target).
   → verify: findings tracked and closed; every BETA default of docs/security.md is checked (`[x]`) and names its test.
 - [x] **B.5.5** Supply chain: cosign keyless signing of release artifacts, SBOM published, actions pinned by SHA, OpenSSF Scorecard ≥ 7.
   → verify: `cosign verify-blob` in release workflow; Scorecard badge.
@@ -614,7 +614,7 @@ Applies to **every** task:
 
 ### S.2 Documentation site
 
-- [x] **S.2.1** Docs site versioned per minor (`site/`, see [docs/site.md](docs/site.md)).
+- [x] **S.2.1** Docs site versioned per minor (`site/`, see [docs/site.md](site.md)).
   → verify: version switcher works; `task site:build` green.
 - [x] **S.2.2** Tutorials: blog with HTMX, SaaS with Inertia, JSON API with tokens.
   → verify: each tutorial's code lives in `examples/` and is tested in CI.

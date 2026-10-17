@@ -4,20 +4,27 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"maps"
 	"net/http"
 	"os"
+	"os/exec"
 	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/AlexGalhardo/vukem/cache"
 	"github.com/AlexGalhardo/vukem/config"
 	"github.com/AlexGalhardo/vukem/csrf"
+	"github.com/AlexGalhardo/vukem/devtools"
 	"github.com/AlexGalhardo/vukem/i18n"
+	"github.com/AlexGalhardo/vukem/inertia"
 	"github.com/AlexGalhardo/vukem/middleware"
+	"github.com/AlexGalhardo/vukem/openapi"
+	"github.com/AlexGalhardo/vukem/ratelimit"
 	"github.com/AlexGalhardo/vukem/router"
 	"github.com/AlexGalhardo/vukem/session"
 	"github.com/AlexGalhardo/vukem/web"
@@ -701,3 +708,239 @@ func (a *App) databaseSessionStore() (session.Store, error) {
 }
 
 func configLoad[T any](a *App) (T, error) { return config.Load[T](a.Source) }
+
+func ssrCommands() []Command { return []Command{ssrStartCommand(), ssrCheckCommand()} }
+
+// ssrStartCommand supervises the Inertia SSR server: it runs the bundle with
+// node and restarts it when it crashes, until the command is stopped.
+func ssrStartCommand() Command {
+	var (
+		bundle, runtime *string
+		delay           *time.Duration
+	)
+
+	return CommandFunc{
+		CommandName: "ssr:start",
+		Desc:        "Run the Inertia SSR server (node bootstrap/ssr/ssr.js) and restart it if it crashes",
+		DefineFlags: func(fs *flag.FlagSet) {
+			bundle = fs.String("bundle", "bootstrap/ssr/ssr.js", "SSR bundle built by vite build --ssr")
+			runtime = fs.String("runtime", "node", "JavaScript runtime that runs the bundle")
+			delay = fs.Duration("restart-delay", time.Second, "wait before restarting a crashed server")
+		},
+		Fn: func(ctx context.Context, app *App, _ []string) error {
+			if _, err := os.Stat(*bundle); err != nil {
+				return fmt.Errorf("ssr:start: bundle %s not found (run npm run build): %w", *bundle, err)
+			}
+
+			for {
+				cmd := exec.CommandContext(ctx, *runtime, *bundle) //nolint:gosec // G204: developer-supplied flags
+				cmd.Stdout, cmd.Stderr = app.stdout, os.Stderr
+				cmd.WaitDelay = 5 * time.Second
+
+				err := cmd.Run()
+
+				// Stopped (Ctrl+C) or a clean exit (POST /shutdown): done.
+				if err == nil || ctx.Err() != nil {
+					return nil //nolint:nilerr // the process was killed on purpose
+				}
+
+				app.Log.WarnContext(ctx, "ssr: server exited, restarting", "err", err, "delay", *delay)
+
+				select {
+				case <-ctx.Done():
+					return nil
+				case <-time.After(*delay):
+				}
+			}
+		},
+	}
+}
+
+func ssrCheckCommand() Command {
+	var url *string
+
+	return CommandFunc{
+		CommandName: "ssr:check",
+		Desc:        "Check that the Inertia SSR server answers /health (exit 1 otherwise)",
+		DefineFlags: func(fs *flag.FlagSet) {
+			url = fs.String("url", inertia.DefaultSSRURL, "SSR server URL")
+		},
+		Fn: func(ctx context.Context, app *App, _ []string) error {
+			ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			defer cancel()
+
+			req, err := http.NewRequestWithContext(
+				ctx,
+				http.MethodGet,
+				strings.TrimSuffix(*url, "/")+"/health",
+				http.NoBody,
+			)
+			if err != nil {
+				return err
+			}
+
+			res, err := http.DefaultClient.Do(req)
+			if err != nil {
+				return fmt.Errorf("ssr:check: %w", err)
+			}
+			defer res.Body.Close()
+
+			if res.StatusCode != http.StatusOK {
+				return errors.New("ssr:check: " + res.Status)
+			}
+
+			_, err = fmt.Fprintln(app.stdout, "SSR server is healthy")
+
+			return err
+		},
+	}
+}
+
+// OpenAPI returns the OpenAPI 3.1 document of the app's routes (title
+// APP_NAME, version API_VERSION, filtered by OPENAPI_PREFIX).
+func (a *App) OpenAPI() (*openapi.Document, error) {
+	return a.openAPI(a.Config.OpenAPIPrefix)
+}
+
+func (a *App) openAPI(prefix string) (*openapi.Document, error) {
+	if _, err := a.Router.Handler(); err != nil {
+		return nil, err
+	}
+
+	return openapi.Generate(a.Router.Routes(), openapi.Info{
+		Title:      a.Config.Name,
+		Version:    a.Config.APIVersion,
+		Servers:    []string{a.Config.URL},
+		PathPrefix: prefix,
+	}), nil
+}
+
+// OpenAPIOptions tunes [ServeOpenAPIWith].
+type OpenAPIOptions struct {
+	// PathPrefix keeps only routes under it, e.g. "/api/v1" (default
+	// Config.OpenAPIPrefix, OPENAPI_PREFIX).
+	PathPrefix string
+	// InProduction serves this document in production too. Set it for a
+	// public API; OPENAPI_IN_PRODUCTION=true does the same for every
+	// document and API reference page.
+	InProduction bool
+}
+
+// ServeOpenAPI registers GET path (e.g. "/openapi.json") serving the
+// document. In production it registers nothing (and returns nil) unless
+// OPENAPI_IN_PRODUCTION=true: the document maps the whole API surface.
+func ServeOpenAPI(app *App, r *router.Router, path string) *router.Route {
+	route := ServeOpenAPIWith(app, r, path, OpenAPIOptions{})
+	if route != nil {
+		route.Name("openapi")
+	}
+
+	return route
+}
+
+// ServeOpenAPIWith is [ServeOpenAPI] with options: a document per path
+// prefix (one per API version) and a per-document production opt-in. The
+// route is unnamed, so several documents can coexist; name it if needed.
+//
+//	vukem.ServeOpenAPIWith(app, r, "/api/v1/openapi.json",
+//		vukem.OpenAPIOptions{PathPrefix: "/api/v1", InProduction: true})
+func ServeOpenAPIWith(app *App, r *router.Router, path string, opts OpenAPIOptions) *router.Route {
+	if app.Config.IsProduction() && !app.Config.OpenAPIInProduction && !opts.InProduction {
+		return nil
+	}
+
+	prefix := opts.PathPrefix
+	if prefix == "" {
+		prefix = app.Config.OpenAPIPrefix
+	}
+
+	return r.Get(path, func(c *web.Ctx) error {
+		doc, err := app.openAPI(prefix)
+		if err != nil {
+			return err
+		}
+
+		return c.JSON(200, doc)
+	}).Doc(openapi.Skip{})
+}
+
+// RateLimitConfig is read from RATE_LIMIT_* variables.
+type RateLimitConfig struct {
+	// Store is "memory" (default: GCRA per process) or "cache" (fixed
+	// windows counted in App.Cache, which must be shared by every server:
+	// CACHE_STORE=database or a Redis store set with WithCacheStore).
+	Store string `env:"RATE_LIMIT_STORE" default:"memory"`
+}
+
+// RateLimiters returns a factory for the limiters routes use, chosen by
+// RATE_LIMIT_STORE, so switching to a shared store needs no code change:
+//
+//	limiters, err := app.RateLimiters()
+//	login := ratelimit.Middleware(limiters("login", 5, time.Minute), account.LoginThrottleKey)
+//
+// An unknown store is an error, not a silent fallback to memory, and so
+// is RATE_LIMIT_STORE=cache over a store [cache.Shared] does not report
+// as shared (the per-process memory cache, or a custom store or wrapper
+// that does not declare cache.Sharer).
+func (a *App) RateLimiters() (ratelimit.Factory, error) {
+	cfg, err := configLoad[RateLimitConfig](a)
+	if err != nil {
+		return nil, err
+	}
+
+	switch cfg.Store {
+	case "memory":
+		return func(_ string, limit int, window time.Duration) ratelimit.Limiter {
+			return ratelimit.NewMemory(limit, window)
+		}, nil
+	case "cache":
+		shared, err := a.cacheShared()
+		if err != nil {
+			return nil, err
+		}
+
+		if !shared {
+			return nil, errors.New("vukem: RATE_LIMIT_STORE=cache needs a cache shared by every server " +
+				"(CACHE_STORE=database or vukem.WithCacheStore with Redis; a custom store or wrapper must implement " +
+				"cache.Sharer); the memory cache keeps one budget per process")
+		}
+
+		c, err := a.Cache()
+		if err != nil {
+			return nil, err
+		}
+
+		return func(name string, limit int, window time.Duration) ratelimit.Limiter {
+			return ratelimit.NewWindow(c, name, limit, window)
+		}, nil
+	default:
+		return nil, fmt.Errorf("vukem: unknown RATE_LIMIT_STORE %q (memory or cache)", cfg.Store)
+	}
+}
+
+// cacheShared reports whether App.Cache reaches every server
+// ([cache.Shared]): CACHE_STORE=database, or a store set with
+// WithCacheStore / WithCacheStoreFunc that declares cache.Sharer (Redis).
+// It resolves the store through Cache, so a lazy store is read under its
+// sync.Once.
+func (a *App) cacheShared() (bool, error) {
+	c, err := a.Cache()
+	if err != nil {
+		return false, err
+	}
+
+	return cache.Shared(c.Store()), nil
+}
+
+// enableDevtools wires the dashboard: its recorder is the outermost server
+// middleware (so timings cover the whole stack), the route middleware
+// captures the matched pattern, and the routes live under /_vukem. The
+// database, queue and mailer pick it up when they are first built; the
+// logger and event bus are wired in New.
+func (a *App) enableDevtools(dt *devtools.Devtools) {
+	a.Devtools = dt
+
+	a.Router.UseServer(dt.Middleware())
+	a.Router.Use(dt.RouteMiddleware())
+	dt.Register(a.Router)
+}

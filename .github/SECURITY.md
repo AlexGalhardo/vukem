@@ -1,6 +1,6 @@
 # Security policy
 
-This file covers reporting vulnerabilities in Vukem. The protections the framework applies to your application are documented in [docs/security.md](docs/security.md).
+This file covers reporting vulnerabilities in Vukem. The protections the framework applies to your application are documented in [docs/security.md](../docs/security.md).
 
 ## Supported versions
 
@@ -11,7 +11,7 @@ This file covers reporting vulnerabilities in Vukem. The protections the framewo
 | `release/1.x` LTS | Security fixes for 12 months |
 | `v0.x` | ❌ |
 
-The full support window (latest minor, previous minor, `release/1.x` LTS branch) is defined in the [stability policy](docs/stability.md#security-support-window).
+The full support window (latest minor, previous minor, `release/1.x` LTS branch) is defined in the [stability policy](../docs/stability.md#security-support-window).
 
 ## Reporting a vulnerability
 
@@ -53,4 +53,4 @@ sha256sum --ignore-missing -c checksums.txt
 gh attestation verify vukem_<version>_<os>_<arch>.tar.gz -R AlexGalhardo/vukem
 ```
 
-Supply-chain details: [docs/tooling.md](docs/tooling.md#supply-chain).
+Supply-chain details: [docs/tooling.md](../docs/tooling.md#supply-chain).

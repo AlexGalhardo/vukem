@@ -16,3 +16,5 @@ paths:
 - Use modern Go (1.27): `for i := range n`, `min`/`max`, `errors.AsType`, `t.Context()`, `b.Loop()`, `new(expr)`.
 - Windows 11 is a first-class target: `filepath` for OS paths, close files/roots/DB handles before deleting (use `t.Cleanup`), accept CRLF input, no `sh`/`bash` in code paths, no cgo (see docs/architecture.md#platform-support).
 - Comment only the *why*; known limits use `// shortcut: <limit>, <when to upgrade>`.
+- Deprecated wrappers use `//go:fix inline`; name their parameters differently from common caller variables (`bundle`, `config`): Go 1.27.2's inliner can swap arguments when a parameter name matches a caller's argument name. Check with `go fix -diff ./...`.
+- Root package code goes into the matching theme file (`app.go`, `http.go`, `database.go`, `background.go`, `services.go`, `command.go`, `codegen.go`), not a new root file.

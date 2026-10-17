@@ -34,6 +34,7 @@ import (
 	"github.com/AlexGalhardo/vukem/schedule"
 	"github.com/AlexGalhardo/vukem/schema"
 	"github.com/AlexGalhardo/vukem/session"
+	"github.com/AlexGalhardo/vukem/sse"
 	"github.com/AlexGalhardo/vukem/view"
 	"github.com/AlexGalhardo/vukem/vite"
 )
@@ -1225,4 +1226,265 @@ func (a *App) Shutdown(ctx context.Context) error {
 	}
 
 	return errors.Join(errs...)
+}
+
+// Provider registers services into the App. Register must not perform I/O;
+// use Boot for work that needs other services.
+type Provider interface {
+	Register(app *App) error
+}
+
+// Booter is implemented by providers that need a boot phase. Boot runs after
+// every provider registered.
+type Booter interface {
+	Boot(ctx context.Context, app *App) error
+}
+
+// Shutdowner is implemented by providers that release resources. Shutdown
+// runs in reverse provider order.
+type Shutdowner interface {
+	Shutdown(ctx context.Context, app *App) error
+}
+
+// KindFilter limits a provider to some runtime kinds. Providers that do not
+// implement it run everywhere.
+type KindFilter interface {
+	Kinds() []Kind
+}
+
+func runsIn(p Provider, k Kind) bool {
+	f, ok := p.(KindFilter)
+	if !ok {
+		return true
+	}
+
+	return slices.Contains(f.Kinds(), k)
+}
+
+// ProviderFunc adapts a function to a Provider with only a Register phase.
+type ProviderFunc func(app *App) error
+
+// Register calls f.
+func (f ProviderFunc) Register(app *App) error { return f(app) }
+
+// Runner is a long-running component (HTTP server, queue worker, scheduler).
+// Run blocks until ctx is done or the runner fails, and must return after
+// releasing its resources.
+type Runner interface {
+	Run(ctx context.Context) error
+}
+
+// RunnerFunc adapts a function to a Runner.
+type RunnerFunc func(ctx context.Context) error
+
+// Run calls f.
+func (f RunnerFunc) Run(ctx context.Context) error { return f(ctx) }
+
+type namedRunner struct {
+	name   string
+	runner Runner
+}
+
+// Server timeouts applied by NewHTTPServer. Zero timeouts are never used
+// (Slowloris protection, docs/security.md A02).
+const (
+	DefaultReadHeaderTimeout = 10 * time.Second
+	DefaultReadTimeout       = 30 * time.Second
+	DefaultWriteTimeout      = 60 * time.Second
+	DefaultIdleTimeout       = 120 * time.Second
+	DefaultMaxHeaderBytes    = 1 << 20
+)
+
+// HTTPServer runs an *http.Server as a Runner with graceful shutdown.
+type HTTPServer struct {
+	Server *http.Server
+	// ShutdownTimeout bounds the graceful drain of in-flight requests.
+	ShutdownTimeout time.Duration
+	// Listener, when set, is used instead of listening on Server.Addr.
+	Listener net.Listener
+	// Ready, when set, receives the bound address once listening.
+	Ready chan<- string
+}
+
+// NewHTTPServer returns an HTTPServer for handler on addr with secure
+// timeouts.
+func NewHTTPServer(addr string, handler http.Handler) *HTTPServer {
+	return &HTTPServer{
+		Server: &http.Server{
+			Addr:              addr,
+			Handler:           handler,
+			ReadHeaderTimeout: DefaultReadHeaderTimeout,
+			ReadTimeout:       DefaultReadTimeout,
+			WriteTimeout:      DefaultWriteTimeout,
+			IdleTimeout:       DefaultIdleTimeout,
+			MaxHeaderBytes:    DefaultMaxHeaderBytes,
+		},
+		ShutdownTimeout: 15 * time.Second,
+	}
+}
+
+// Run listens and serves until ctx is done, then drains in-flight requests.
+func (s *HTTPServer) Run(ctx context.Context) error {
+	ln := s.Listener
+	if ln == nil {
+		var err error
+
+		var lc net.ListenConfig
+		if ln, err = lc.Listen(ctx, "tcp", s.Server.Addr); err != nil {
+			return err
+		}
+	}
+
+	// In-flight handlers observe the base context; it is not cancelled on
+	// shutdown so requests can finish, but carries the app's values.
+	// Server-sent event streams end when shutdown starts, so Shutdown does
+	// not wait on connections that never finish by themselves.
+	stopping := make(chan struct{})
+	s.Server.RegisterOnShutdown(sync.OnceFunc(func() { close(stopping) }))
+
+	base := sse.WithShutdown(context.WithoutCancel(ctx), stopping)
+	s.Server.BaseContext = func(net.Listener) context.Context { return base }
+
+	if s.Ready != nil {
+		s.Ready <- ln.Addr().String()
+	}
+
+	errc := make(chan error, 1)
+
+	go func() { errc <- s.Server.Serve(ln) }()
+
+	select {
+	case err := <-errc:
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+
+		return err
+	case <-ctx.Done():
+	}
+
+	shutCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.ShutdownTimeout)
+	defer cancel()
+
+	if err := s.Server.Shutdown(shutCtx); err != nil {
+		return err
+	}
+
+	if err := <-errc; err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
+
+	return nil
+}
+
+// Instrumentation is a set of neutral hook points that a provider
+// (tracing, metrics) attaches to with App.Instrument. Core only reports to
+// them and never imports an instrumentation library; drivers/otel turns
+// the reports into spans and metrics. Nil fields are skipped.
+type Instrumentation struct {
+	// Queries is notified of every statement run through DB() and its
+	// transactions, after devtools and WithQueryObservers.
+	Queries database.QueryObserver
+	// Jobs is notified of every job step of Queue(), next to devtools.
+	Jobs queue.Observer
+	// Mail wraps the transport of Mailer(). Wrappers apply in registration
+	// order around the devtools-wrapped transport, so the last one
+	// registered is the outermost.
+	Mail func(mail.Transport) mail.Transport
+}
+
+// ErrInstrumentTooLate is returned by App.Instrument when a hook targets a
+// service that was already built: it would never be called.
+var ErrInstrumentTooLate = errors.New(
+	"vukem: Instrument must run before DB(), Queue() or Mailer() is first used (call it from a provider's Register)",
+)
+
+type instruments struct {
+	mu      sync.Mutex
+	queries []database.QueryObserver
+	jobs    []queue.Observer
+	mail    []func(mail.Transport) mail.Transport
+
+	dbBuilt, queueBuilt, mailBuilt bool
+}
+
+// Instrument attaches in's hooks to the database, queue and mailer. Call it
+// from a provider's Register, before those services are first used; a hook
+// for a service already built fails with ErrInstrumentTooLate and no hook
+// of in is attached. Several calls add up.
+func (a *App) Instrument(in Instrumentation) error {
+	a.inst.mu.Lock()
+	defer a.inst.mu.Unlock()
+
+	if (in.Queries != nil && a.inst.dbBuilt) ||
+		(in.Jobs != nil && a.inst.queueBuilt) ||
+		(in.Mail != nil && a.inst.mailBuilt) {
+		return ErrInstrumentTooLate
+	}
+
+	if in.Queries != nil {
+		a.inst.queries = append(a.inst.queries, in.Queries)
+	}
+
+	if in.Jobs != nil {
+		a.inst.jobs = append(a.inst.jobs, in.Jobs)
+	}
+
+	if in.Mail != nil {
+		a.inst.mail = append(a.inst.mail, in.Mail)
+	}
+
+	return nil
+}
+
+// queryObservers freezes the query hooks and returns every observer of
+// DB(): devtools, then WithQueryObservers, then Instrument's. DB() passes
+// each to database.WithQueryObserver, which skips typed nils and contains
+// a panicking observer without starving the others.
+func (a *App) queryObservers() []database.QueryObserver {
+	a.inst.mu.Lock()
+	defer a.inst.mu.Unlock()
+
+	a.inst.dbBuilt = true
+
+	var obs []database.QueryObserver
+	if a.Devtools != nil {
+		obs = append(obs, a.Devtools)
+	}
+
+	obs = append(obs, a.queryObs...)
+
+	return append(obs, a.inst.queries...)
+}
+
+// jobObservers freezes the job hooks and returns every observer of
+// Queue(): devtools, then Instrument's. Queue() adds each with
+// queue.AddObserver, which skips typed nils and contains a panicking
+// observer without starving the others.
+func (a *App) jobObservers() []queue.Observer {
+	a.inst.mu.Lock()
+	defer a.inst.mu.Unlock()
+
+	a.inst.queueBuilt = true
+
+	var obs []queue.Observer
+	if a.Devtools != nil {
+		obs = append(obs, a.Devtools)
+	}
+
+	return append(obs, a.inst.jobs...)
+}
+
+// wrapMail freezes the mail hooks and applies them to t.
+func (a *App) wrapMail(t mail.Transport) mail.Transport {
+	a.inst.mu.Lock()
+	defer a.inst.mu.Unlock()
+
+	a.inst.mailBuilt = true
+
+	for _, wrap := range a.inst.mail {
+		t = wrap(t)
+	}
+
+	return t
 }

@@ -124,7 +124,7 @@ tasks:
   changelog:
     desc: Preview the next changelog section (does not write files)
     cmds:
-      - git cliff --unreleased --strip all
+      - git cliff --config .config/cliff.toml --unreleased --strip all
 
   release:
     desc: "Cut a release at the end of a PLAN.md task group: task release -- vX.Y.Z (runs ci:full first)"
@@ -149,12 +149,12 @@ tasks:
   services:up:
     desc: Start Postgres, MySQL, MariaDB, Redis, Mongo and RustFS (S3) for integration tests (Docker)
     cmds:
-      - docker compose up -d --wait
+      - docker compose -f .config/compose.yaml up -d --wait
 
   services:down:
     desc: Stop integration services
     cmds:
-      - docker compose down
+      - docker compose -f .config/compose.yaml down
 
   ci:
     desc: Fast local gate (lint, vet, unit tests)

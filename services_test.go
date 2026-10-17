@@ -1,15 +1,29 @@
 package vukem
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"flag"
+	"fmt"
+	"log/slog"
+	"maps"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
+	"slices"
+	"strings"
+	"sync"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/AlexGalhardo/vukem/cache"
 	"github.com/AlexGalhardo/vukem/events"
 	"github.com/AlexGalhardo/vukem/internal/testutil"
+	"github.com/AlexGalhardo/vukem/logging/telegram"
+	"github.com/AlexGalhardo/vukem/mail"
 	"github.com/AlexGalhardo/vukem/router"
 	"github.com/AlexGalhardo/vukem/security"
 	"github.com/AlexGalhardo/vukem/web"
@@ -168,5 +182,308 @@ func TestDatabaseCacheIsPrunedOnSchedule(t *testing.T) {
 
 	if got := scheduled(newApp("memory")); got != "" {
 		t.Fatalf("cache:prune scheduled for the memory cache (%q)", got)
+	}
+}
+
+type hello struct{}
+
+func (hello) Envelope() mail.Envelope { return mail.Envelope{To: []string{"a@b.co"}, Subject: "Hi"} }
+func (hello) Content() mail.Content   { return mail.View("mail/hello", nil) }
+
+func TestMailerFromConfig(t *testing.T) {
+	t.Parallel()
+
+	for env, want := range map[string]string{
+		"array":    "*mail.Array",
+		"log":      "mail.Log",
+		"":         "mail.Log",
+		"smtp":     "*mail.SMTP",
+		"resend":   "error",
+		"mailtrap": "error",
+		"pigeon":   "error",
+	} {
+		app, err := New(WithSource(testSource(map[string]string{"MAIL_MAILER": env})), WithLogger(discardLogger()))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		m, err := app.Mailer()
+
+		got := "error"
+		if err == nil {
+			got = strings.TrimPrefix(typeName(m.Transport()), "")
+		}
+
+		if got != want {
+			t.Errorf("MAIL_MAILER=%q: transport %s (err %v), want %s", env, got, err, want)
+		}
+	}
+
+	prod, _ := New(WithSource(testSource(map[string]string{"APP_ENV": "production"})), WithLogger(discardLogger()))
+	if _, err := prod.Mailer(); err == nil {
+		t.Fatal("production without MAIL_MAILER accepted")
+	}
+
+	withKey, _ := New(WithSource(testSource(map[string]string{"MAIL_MAILER": "resend", "RESEND_API_KEY": "re_x"})),
+		WithLogger(discardLogger()))
+	if m, err := withKey.Mailer(); err != nil || typeName(m.Transport()) != "*mail.Resend" {
+		t.Fatalf("resend = %v", err)
+	}
+}
+
+func TestMailerMailtrapFromConfig(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		env     map[string]string
+		wantErr string
+	}{
+		{"sending", map[string]string{"MAILTRAP_API_TOKEN": "mt_x"}, ""},
+		{"sandbox", map[string]string{"MAILTRAP_API_TOKEN": "mt_x", "MAILTRAP_INBOX_ID": "4242"}, ""},
+		{"missing token", map[string]string{"MAILTRAP_INBOX_ID": "4242"}, "MAILTRAP_API_TOKEN"},
+		{
+			"negative inbox",
+			map[string]string{"MAILTRAP_API_TOKEN": "mt_x", "MAILTRAP_INBOX_ID": "-1"},
+			"MAILTRAP_INBOX_ID",
+		},
+		{"production without token", map[string]string{"APP_ENV": "production"}, "MAILTRAP_API_TOKEN"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			tt.env["MAIL_MAILER"] = "mailtrap"
+
+			app, err := New(WithSource(testSource(tt.env)), WithLogger(discardLogger()))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			m, err := app.Mailer()
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("Mailer() = %v, want an error naming %s", err, tt.wantErr)
+				}
+
+				if strings.Contains(err.Error(), "mt_x") {
+					t.Fatalf("Mailer() error leaks the token: %v", err)
+				}
+
+				return
+			}
+
+			if err != nil || typeName(m.Transport()) != "*mail.Mailtrap" {
+				t.Fatalf("Mailer() = %v, %v, want *mail.Mailtrap", m, err)
+			}
+		})
+	}
+}
+
+func TestMailerUsesAppViews(t *testing.T) {
+	t.Parallel()
+
+	arr := mail.NewArray()
+	app, err := New(WithSource(testSource(nil)), WithLogger(discardLogger()), WithMailTransport(arr),
+		WithViews(fstest.MapFS{"mail/hello.html": {Data: []byte("{{/* layout: none */}}<p>Hello</p>")}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	m, err := app.Mailer()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := m.Send(t.Context(), hello{}); err != nil {
+		t.Fatal(err)
+	}
+
+	if sent := arr.Sent(); len(sent) != 1 || sent[0].HTML != "<p>Hello</p>" || sent[0].Text != "Hello" {
+		t.Fatalf("sent = %+v", sent)
+	}
+}
+
+func typeName(v any) string {
+	return strings.ReplaceAll(fmtType(v), "github.com/AlexGalhardo/vukem/", "")
+}
+
+func fmtType(v any) string { return fmt.Sprintf("%T", v) }
+
+func TestMailerMailtrapSandboxInProductionWarns(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct {
+		env  map[string]string
+		warn bool
+	}{
+		{map[string]string{"APP_ENV": "production", "MAILTRAP_INBOX_ID": "4242"}, true},
+		{map[string]string{"APP_ENV": "production"}, false},
+		{map[string]string{"MAILTRAP_INBOX_ID": "4242"}, false},
+	} {
+		tt.env["MAIL_MAILER"] = "mailtrap"
+		tt.env["MAILTRAP_API_TOKEN"] = "mt_x"
+
+		var logs bytes.Buffer
+
+		app, err := New(WithSource(testSource(tt.env)), WithLogger(slog.New(slog.NewTextHandler(&logs, nil))))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if _, err := app.Mailer(); err != nil {
+			t.Fatalf("Mailer(%v) = %v", tt.env, err)
+		}
+
+		if got := strings.Contains(logs.String(), "Mailtrap sandbox"); got != tt.warn {
+			t.Errorf("Mailer(%v) warned = %v, want %v; logs:\n%s", tt.env, got, tt.warn, logs.String())
+		}
+	}
+}
+
+func TestTelegramFromConfig(t *testing.T) {
+	t.Parallel()
+
+	off, err := New(WithSource(testSource(nil)), WithLogger(discardLogger()))
+	if err != nil || off.Telegram != nil {
+		t.Fatalf("without config: %v %v", off.Telegram, err)
+	}
+
+	var out bytes.Buffer
+
+	on, err := New(WithSource(testSource(map[string]string{
+		"TELEGRAM_BOT_TOKEN": "123:SUPERSECRET", "TELEGRAM_CHAT_ID": "-1", "TELEGRAM_MIN_LEVEL": "warn",
+	})), WithLogger(discardLogger()), WithStdout(&out))
+	if err != nil || on.Telegram == nil {
+		t.Fatalf("with config: %v", err)
+	}
+
+	if !on.Telegram.Enabled(context.Background(), 4) || on.Telegram.Enabled(context.Background(), 0) {
+		t.Fatal("MinLevel not applied")
+	}
+
+	cmd := aboutCommand()
+	cmd.Flags(flag.NewFlagSet("about", flag.ContinueOnError))
+
+	if err := cmd.Run(t.Context(), on, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(out.String(), "on (token [redacted])") || strings.Contains(out.String(), "SUPERSECRET") {
+		t.Fatalf("about = %s", out.String())
+	}
+
+	if err := on.Shutdown(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := New(WithSource(testSource(map[string]string{
+		"TELEGRAM_BOT_TOKEN": "x", "TELEGRAM_CHAT_ID": "-1", "TELEGRAM_MIN_LEVEL": "loud",
+	})), WithLogger(discardLogger())); err == nil {
+		t.Fatal("bad level accepted")
+	}
+}
+
+func TestTelegramLogForwarding(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		env       map[string]string
+		configure func(*telegram.Config)
+		wantLogs  int
+	}{
+		{"default forwards errors", nil, nil, 2},
+		{"TELEGRAM_LOG=false keeps Send only", map[string]string{"TELEGRAM_LOG": "false"}, nil, 0},
+		{"TELEGRAM_RATE_LIMIT caps records", map[string]string{"TELEGRAM_RATE_LIMIT": "1"}, nil, 1},
+		{"WithTelegram filter", nil, func(c *telegram.Config) {
+			c.Filter = func(_ context.Context, r slog.Record) bool { return r.Message == "second" }
+		}, 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var (
+				mu   sync.Mutex
+				sent []string
+			)
+
+			api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var body struct {
+					Text string `json:"text"`
+				}
+				_ = json.NewDecoder(r.Body).Decode(&body)
+
+				mu.Lock()
+				sent = append(sent, body.Text)
+				mu.Unlock()
+
+				_, _ = w.Write([]byte(`{"ok":true}`))
+			}))
+			t.Cleanup(api.Close)
+
+			env := map[string]string{"TELEGRAM_BOT_TOKEN": "123:T", "TELEGRAM_CHAT_ID": "-1"}
+			maps.Copy(env, tt.env)
+
+			app, err := New(WithSource(testSource(env)), WithLogger(discardLogger()),
+				WithTelegram(func(c *telegram.Config) {
+					c.BaseURL = api.URL
+					if tt.configure != nil {
+						tt.configure(c)
+					}
+				}))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			app.Log.Error("first")
+			app.Log.Error("second")
+			app.Telegram.Send(t.Context(), "explicit")
+
+			if err := app.Shutdown(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+
+			mu.Lock()
+			defer mu.Unlock()
+
+			if got := len(sent) - 1; got != tt.wantLogs || !slices.Contains(sent, "explicit") {
+				t.Errorf("forwarded log records = %d, want %d (sent %q)", got, tt.wantLogs, sent)
+			}
+		})
+	}
+}
+
+func TestTelegramStatusShowsLogForwarding(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		log  string
+		want string
+	}{
+		{"true", "on (token [redacted])"},
+		{"false", "on (token [redacted], log forwarding off)"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.log, func(t *testing.T) {
+			t.Parallel()
+
+			app, err := New(WithSource(testSource(map[string]string{
+				"TELEGRAM_BOT_TOKEN": "123:T", "TELEGRAM_CHAT_ID": "-1", "TELEGRAM_LOG": tt.log,
+			})), WithLogger(discardLogger()))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			t.Cleanup(func() { _ = app.Shutdown(context.Background()) })
+
+			if got := telegramStatus(app); got != tt.want {
+				t.Errorf("telegramStatus(TELEGRAM_LOG=%s) = %q, want %q", tt.log, got, tt.want)
+			}
+		})
 	}
 }

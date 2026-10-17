@@ -4,7 +4,7 @@ Vukem: a Laravel/AdonisJS-inspired, stdlib-first Go web framework. Module `githu
 
 ## Start here
 
-1. Read [PLAN.md](PLAN.md): pick the first unchecked task of the current phase.
+1. Read [PLAN.md](docs/PLAN.md): pick the first unchecked task of the current phase.
 2. Read the docs that task touches (index in [docs/README.md](docs/README.md)).
 3. Decisions are final unless [docs/brainstorming.md](docs/brainstorming.md) is updated first.
 
@@ -17,7 +17,7 @@ Vukem: a Laravel/AdonisJS-inspired, stdlib-first Go web framework. Module `githu
 
 ## Rules
 
-- Test first; a task is done only when its `→ verify` line passes and the [Definition of Done](PLAN.md#definition-of-done) holds.
+- Test first; a task is done only when its `→ verify` line passes and the [Definition of Done](docs/PLAN.md#definition-of-done) holds.
 - `net/http`-native APIs; middleware is `func(http.Handler) http.Handler` ([docs/http.md](docs/http.md)).
 - No globals, no `init()` registration, no reflection DI; `context.Context` first ([docs/architecture.md](docs/architecture.md)).
 - Stdlib first; new deps only via the [dependency policy](docs/architecture.md#dependency-policy).
@@ -35,12 +35,14 @@ Vukem: a Laravel/AdonisJS-inspired, stdlib-first Go web framework. Module `githu
 
 | Path | What |
 | --- | --- |
-| `docs/` | design docs, one per area |
+| `docs/` | design docs, one per area, and the roadmap `PLAN.md` |
+| `.config/` | git-cliff, GoReleaser and Compose configs ([layout](docs/tooling.md#repository-layout)) |
+| `.github/` | workflows, templates, CONTRIBUTING, SECURITY, CODE_OF_CONDUCT |
 | `internal/tools/` | repo tooling (commitlint, covergate, release) |
 | `drivers/*` | optional driver modules (postgres, redis, mongo) |
 | `contrib/*` | optional feature modules (graphql, grpc, stripe, imaging) |
 | `.claude/rules/` | path-scoped rules for agents |
-| `.claude/skills/` | Go skills (samber/cc-skills-golang) and workflow skills |
+| `.claude/skills/` | Go skills, workflow skills and `vukem-release` (release + app bumps) |
 
 ## When stuck
 

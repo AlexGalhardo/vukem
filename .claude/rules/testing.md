@@ -14,3 +14,5 @@ paths:
 - Time-dependent code uses `testing/synctest` or the fake clock, never `time.Sleep`.
 - Golden files live in `testdata/` and are refreshed with `-update`.
 - Failure messages follow `Func(args) = got, want want`.
+- `t.Context()` is cancelled before `t.Cleanup` functions run: cleanup that talks to a database (drop a table, delete rows) uses `context.Background()`, or the cleanup silently does nothing and leaks state into other tests sharing the service.
+- Integration tests on a shared database create and drop only their own tables.
