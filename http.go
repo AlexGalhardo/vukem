@@ -199,6 +199,9 @@ type SessionConfig struct {
 	CookieName  string        `env:"SESSION_COOKIE"       default:"vukem_session"`
 	// Secure defaults to true in production or when APP_URL is https.
 	Secure string `env:"SESSION_SECURE" default:"auto"`
+	// RecordClient keeps the user agent and client network with each
+	// logged-in server-side session (session.Config.RecordClient).
+	RecordClient bool `env:"SESSION_RECORD_CLIENT" default:"false"`
 }
 
 // APIMiddleware installs the stack of JSON-only apps: recover, request
@@ -310,14 +313,15 @@ func (a *App) Sessions() (*session.Manager, error) {
 		}
 
 		sc := session.Config{
-			CookieName:  cfg.CookieName,
-			Secure:      secure,
-			IdleTimeout: cfg.IdleTimeout,
-			Lifetime:    cfg.Lifetime,
-			Production:  a.Config.IsProduction(),
-			Log:         a.Log,
-			Store:       a.sessStore,
-			Now:         a.now,
+			CookieName:   cfg.CookieName,
+			Secure:       secure,
+			IdleTimeout:  cfg.IdleTimeout,
+			Lifetime:     cfg.Lifetime,
+			RecordClient: cfg.RecordClient,
+			Production:   a.Config.IsProduction(),
+			Log:          a.Log,
+			Store:        a.sessStore,
+			Now:          a.now,
 		}
 
 		switch {
