@@ -60,7 +60,37 @@ func TypeScript(d *Document, zod bool) (string, error) {
 		}
 	}
 
-	return strings.TrimRight(b.String(), "\n") + "\n", nil
+	out := strings.TrimRight(b.String(), "\n") + "\n"
+
+	return out, checkDeclarations(out)
+}
+
+var declRe = regexp.MustCompile(`(?m)^(?:export )?(?:type|const|class|interface|function) ([A-Za-z_$][A-Za-z0-9_$]*)`)
+
+// checkDeclarations fails when generated code declares a name twice: two
+// components, a component and an operation type (<Op>Body, <Op>Params...)
+// or two operation ids that map to the same TypeScript name. Emitting it
+// would not compile.
+func checkDeclarations(src string) error {
+	seen := map[string]bool{}
+
+	var dups []string
+
+	for _, m := range declRe.FindAllStringSubmatch(src, -1) {
+		if seen[m[1]] && !slices.Contains(dups, m[1]) {
+			dups = append(dups, m[1])
+		}
+
+		seen[m[1]] = true
+	}
+
+	if len(dups) > 0 {
+		return fmt.Errorf("openapi: generated TypeScript declares %s more than once: "+
+			"a schema or operation name collides with another one (or with its Type-suffixed form); "+
+			"rename the Go type or the operation", strings.Join(dups, ", "))
+	}
+
+	return nil
 }
 
 type operation struct {

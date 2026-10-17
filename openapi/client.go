@@ -183,7 +183,7 @@ func TypeScriptClient(d *Document) (string, error) {
 
 	b.WriteString("  };\n}\n")
 
-	return b.String(), nil
+	return b.String(), checkDeclarations(b.String())
 }
 
 func writeTSDoc(b *strings.Builder, op *clientOp, indent string) {
