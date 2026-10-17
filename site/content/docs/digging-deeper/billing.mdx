@@ -27,7 +27,7 @@ if errors.Is(err, stripe.ErrCardDeclined) { /* ... */ }
 ```
 
 - Every request pins `Stripe-Version` (`stripe.APIVersion`). POSTs carry an `Idempotency-Key` (generated, or yours), so retries on 429, 5xx and network errors are safe; `Retry-After` and `Stripe-Should-Retry` are honoured.
-- Errors are `*stripe.Error{Status, Type, Code, DeclineCode, Message, Param, RequestID}`; match them with `errors.Is` against `ErrCardDeclined`, `ErrInvalid`, `ErrRateLimited` or `ErrAuth`.
+- Errors are `*stripe.Error{Status, Type, Code, DeclineCode, Message, Param, RequestID}`; match them with `errors.Is` against `ErrCardDeclined`, `ErrInvalid`, `ErrRateLimited`, `ErrAuth` or `ErrNotFound` (the same sentinels match API v1 and v2 errors).
 - Resources: customers (`Create/Get/UpdateCustomer`), Checkout Sessions, subscriptions (`Get/Update/CancelSubscription`), `CreatePortalSession`, payment intents, refunds (`CreateRefund/GetRefund`), Connect (below), and `Call` for any other endpoint (`Do` is deprecated in its favour). `stripe.Params` nests (`line_items[0][price]`).
 - Never pass `payment_method_types` to Checkout: dynamic payment methods come from the Dashboard.
 - The client prints as `rk_…abcd`, never the full key.
@@ -141,7 +141,7 @@ link, err := sc.CreateAccountLinkV2(ctx, stripe.Params{
 	"use_case": stripe.Params{
 		"type": "account_onboarding",
 		"account_onboarding": stripe.Params{
-			"configurations": []string{"merchant", "recipient"},
+			"configurations": []string{"merchant", "recipient"}, // required on the pinned API version
 			"refresh_url":    appURL + "/seller/onboarding",
 			"return_url":     appURL + "/seller",
 		},
