@@ -177,8 +177,12 @@ func TestKeys(t *testing.T) {
 	r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", http.NoBody)
 	r.RemoteAddr = "192.0.2.1:80"
 
-	if got := ByToken(r); got != "ip:192.0.2.1" {
-		t.Fatalf("ByToken without token = %q", got)
+	// Never "" (which skips limiting): no or an empty token keys by IP.
+	for _, h := range []string{"", "Bearer ", "Bearer", "Basic abc"} {
+		r.Header.Set("Authorization", h)
+		if got := ByToken(r); got != "ip:192.0.2.1" {
+			t.Fatalf("ByToken with Authorization %q = %q, want the IP key", h, got)
+		}
 	}
 
 	r.Header.Set("Authorization", "Bearer secret-token")
