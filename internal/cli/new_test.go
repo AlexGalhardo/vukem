@@ -401,3 +401,40 @@ func TestNewAPIProjectEndToEnd(t *testing.T) {
 		t.Fatalf("route:list = %d\n%s%s", code, out, errOut)
 	}
 }
+
+// A generated `return u, orm.Create(ctx, tx, &u)` leaves unspecified whether
+// u is read before or after Create sets its ID (gocritic evalOrder), so
+// scaffolds must mutate first and return after.
+func TestScaffoldsDoNotReturnValueMutatedInSameStatement(t *testing.T) {
+	t.Parallel()
+
+	ret := regexp.MustCompile(`^\s*return ([A-Za-z_]\w*), (.+)$`)
+
+	check := func(fsys fs.FS) fs.WalkDirFunc {
+		return func(p string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() || !(strings.HasSuffix(p, ".go") || strings.HasSuffix(p, ".go.tmpl")) {
+				return err
+			}
+
+			b, err := fs.ReadFile(fsys, p)
+			if err != nil {
+				return err
+			}
+
+			for i, line := range strings.Split(string(b), "\n") {
+				m := ret.FindStringSubmatch(line)
+				if m != nil && regexp.MustCompile(`&`+m[1]+`\b`).MatchString(m[2]) {
+					t.Errorf("%s:%d returns %s while mutating it: %s", p, i+1, m[1], strings.TrimSpace(line))
+				}
+			}
+
+			return nil
+		}
+	}
+
+	for name, fsys := range map[string]fs.FS{"scaffolds": scaffoldFS, "starter": starterFS} {
+		if err := fs.WalkDir(fsys, name, check(fsys)); err != nil {
+			t.Fatal(err)
+		}
+	}
+}

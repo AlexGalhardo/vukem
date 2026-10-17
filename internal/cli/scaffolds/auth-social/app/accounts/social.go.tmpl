@@ -153,6 +153,9 @@ func (a *Accounts) createSocialUser(ctx context.Context, tx database.Executor, s
 	}
 
 	u := models.User{Name: name, Email: email, Password: h}
+	if err := orm.Create(ctx, tx, &u); err != nil {
+		return models.User{}, err
+	}
 
-	return u, orm.Create(ctx, tx, &u)
+	return u, nil
 }
