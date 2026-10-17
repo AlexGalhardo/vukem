@@ -39,7 +39,10 @@ type Options struct {
 // service to Vukem: request validation (Rules and messages with a
 // Validate() error method), error mapping (Error), one log line per RPC
 // with its code, duration and request id, panic recovery (Internal for the
-// client, the stack in the log) and the message size limit.
+// client, the stack in the log) and the message size limit. A Validate
+// error is InvalidArgument only for z.Issues, *errs.ValidationError and
+// Field()/Reason() errors (protoc-gen-validate); any other error is
+// mapped, masked and logged like a handler error.
 func HandlerOptions(opts Options) []connect.HandlerOption {
 	maxBytes := opts.MaxMessageBytes
 	if maxBytes <= 0 {
@@ -89,6 +92,16 @@ func (r schemaRule[T]) check(msg any) (bool, error) {
 // validation (protovalidate-style Validate methods).
 type validator interface{ Validate() error }
 
+// fieldReasoner is the per-field error of protoc-gen-validate (PGV):
+// its text names the field and the broken rule, safe for clients.
+// z.Issues and *errs.ValidationError need no case: ErrorContext maps them
+// to InvalidArgument with field violations.
+type fieldReasoner interface {
+	error
+	Field() string
+	Reason() string
+}
+
 type interceptor struct {
 	log   *slog.Logger
 	rules []Rule
@@ -103,11 +116,14 @@ func (in *interceptor) validate(msg any) error {
 
 	if v, ok := msg.(validator); ok {
 		if err := v.Validate(); err != nil {
-			if _, isIssues := z.AsIssues(err); isIssues {
-				return err
+			// Only known validation errors are the client's fault; anything
+			// else (a failed uniqueness query, a 5xx) goes through
+			// ErrorContext, which masks and logs it (CWE-209).
+			if _, ok := errors.AsType[fieldReasoner](err); ok {
+				return connect.NewError(connect.CodeInvalidArgument, err)
 			}
 
-			return connect.NewError(connect.CodeInvalidArgument, err)
+			return err
 		}
 	}
 

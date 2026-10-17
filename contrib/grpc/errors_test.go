@@ -154,6 +154,22 @@ func TestError_KeepsHeadersAsMetadata(t *testing.T) {
 	}
 }
 
+func TestSecurity_A10_GRPCServerErrorHeadersAllowlisted(t *testing.T) {
+	t.Parallel()
+
+	got := Error(errs.New(http.StatusServiceUnavailable, "").
+		WithHeader("Retry-After", "30").
+		WithHeader("X-Upstream", "10.0.3.7:6379"))
+
+	if v := got.Meta().Get("Retry-After"); v != "30" {
+		t.Errorf("Error(503).Meta()[Retry-After] = %q, want 30", v)
+	}
+
+	if v := got.Meta().Get("X-Upstream"); v != "" {
+		t.Errorf("Error(503).Meta()[X-Upstream] = %q, want it dropped", v)
+	}
+}
+
 func TestCodeOf(t *testing.T) {
 	t.Parallel()
 
@@ -214,28 +230,87 @@ func TestErrors_KeepsTheAppErrorHandlerForOtherRequests(t *testing.T) {
 	}
 }
 
-type selfValidating struct{ ok bool }
+// selfValidating returns err from Validate, like a generated message.
+type selfValidating struct{ err error }
 
-func (m *selfValidating) Validate() error {
-	if m.ok {
-		return nil
-	}
+func (m *selfValidating) Validate() error { return m.err }
 
-	return errors.New("name is required")
-}
+// pgvError mimics protoc-gen-validate's per-field error.
+type pgvError struct{ field, reason string }
+
+func (e pgvError) Error() string  { return "invalid " + e.field + ": " + e.reason }
+func (e pgvError) Field() string  { return e.field }
+func (e pgvError) Reason() string { return e.reason }
 
 func TestInterceptor_UsesValidateMethods(t *testing.T) {
 	t.Parallel()
 
 	in := &interceptor{}
 
-	if err := in.validate(&selfValidating{ok: true}); err != nil {
+	if err := in.validate(&selfValidating{}); err != nil {
 		t.Errorf("validate(valid) = %v", err)
 	}
 
-	err := Error(in.validate(&selfValidating{}))
-	if err.Code() != connect.CodeInvalidArgument || err.Message() != "name is required" {
-		t.Errorf("validate(invalid) = %v, want invalid_argument: name is required", err)
+	tests := map[string]struct {
+		err     error
+		message string
+	}{
+		"field reason error": {pgvError{"name", "is required"}, "invalid name: is required"},
+		"validation error":   {errs.NewValidation().Add("name", "is required"), "invalid request"},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			got := Error(in.validate(&selfValidating{err: tt.err}))
+			if got.Code() != connect.CodeInvalidArgument || got.Message() != tt.message {
+				t.Errorf(
+					"validate(%v) = %v %q, want invalid_argument %q",
+					tt.err,
+					got.Code(),
+					got.Message(),
+					tt.message,
+				)
+			}
+		})
+	}
+}
+
+func TestSecurity_A10_GRPCValidateErrorsMasked(t *testing.T) {
+	t.Parallel()
+
+	in := &interceptor{}
+
+	tests := map[string]struct {
+		err  error
+		code connect.Code
+	}{
+		"db error":  {fmt.Errorf("check unique name: %w", errors.New("pq: password=hunter2")), connect.CodeInternal},
+		"5xx error": {errs.New(http.StatusServiceUnavailable, "redis hunter2 down"), connect.CodeUnavailable},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			err := in.validate(&selfValidating{err: tt.err})
+			if !logsCause(err, ErrorContext(t.Context(), err)) {
+				t.Errorf("validate(%v) cause would not be logged", tt.err)
+			}
+
+			got := ErrorContext(t.Context(), err)
+			if got.Code() != tt.code || got.Message() != internalMessage {
+				t.Errorf(
+					"validate(%v) = %v %q, want %v %q",
+					tt.err,
+					got.Code(),
+					got.Message(),
+					tt.code,
+					internalMessage,
+				)
+			}
+		})
 	}
 }
 

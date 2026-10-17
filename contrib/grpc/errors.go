@@ -71,9 +71,11 @@ func ErrorContext(ctx context.Context, err error) *connect.Error {
 	// errors the client should fix (CWE-209).
 	if status, ok := serverStatus(err); ok {
 		cerr := connect.NewError(CodeOf(status), errors.New(internalMessage))
+		// Only headers meant for clients: a 5xx's other headers may carry
+		// the same internals as its message.
 		if herr, ok := errors.AsType[*errs.HTTPError](err); ok {
-			for k, v := range herr.Headers {
-				cerr.Meta()[k] = slices.Clone(v)
+			if v := herr.Headers.Values("Retry-After"); len(v) > 0 {
+				cerr.Meta()["Retry-After"] = slices.Clone(v)
 			}
 		}
 
