@@ -596,7 +596,7 @@ func (q Query[T]) Each(ctx context.Context) iter.Seq2[T, error] {
 		}
 		defer rows.Close()
 
-		scan, err := q.m.scanner(rows, encrypterOf(q.ex))
+		scan, err := q.m.scanner(rows, q.ex)
 		if err != nil {
 			yield(zero, err)
 			return
@@ -704,6 +704,7 @@ func (q Query[T]) Pluck[V any](ctx context.Context, colName string) ([]V, error)
 	defer rows.Close()
 
 	out := []V{}
+	lite := isSQLite(q.ex)
 
 	for rows.Next() {
 		var v V
@@ -717,7 +718,7 @@ func (q Query[T]) Pluck[V any](ctx context.Context, colName string) ([]V, error)
 			if err := openValue(encrypterOf(q.ex), o, token, q.m.table, bareColumn(col)); err != nil {
 				return nil, err
 			}
-		} else if err := rows.Scan(&v); err != nil {
+		} else if err := rows.Scan(pluckDest(&v, lite)); err != nil {
 			return nil, fmt.Errorf("orm: pluck %s.%s: %w", q.m.table, col, err)
 		}
 
@@ -784,21 +785,25 @@ func (q Query[T]) Paginate(ctx context.Context, page, perPage int) (Page[T], err
 }
 
 // scanner maps result columns to struct fields once per query. Encrypted
-// columns are scanned as ciphertext and opened with enc.
-func (m *meta) scanner(rows *sql.Rows, enc database.Encrypter) (func(*sql.Rows, reflect.Value) error, error) {
+// columns are scanned as ciphertext and opened with ex's encrypter; on
+// SQLite, time fields also accept text timestamps.
+func (m *meta) scanner(rows *sql.Rows, ex database.Executor) (func(*sql.Rows, reflect.Value) error, error) {
 	cols, err := rows.Columns()
 	if err != nil {
 		return nil, err
 	}
 
+	enc, lite := encrypterOf(ex), isSQLite(ex)
 	idx := make([][]int, len(cols))
 	encrypted := make([]bool, len(cols))
+	times := make([]bool, len(cols))
 	anyEncrypted := false
 
 	for i, c := range cols {
 		if f, ok := m.byColumn[c]; ok {
 			idx[i] = f.index
 			encrypted[i] = reflect.PointerTo(f.typ).Implements(reflect.TypeFor[opener]())
+			times[i] = lite && isTimeType(f.typ)
 			anyEncrypted = anyEncrypted || encrypted[i]
 		}
 	}
@@ -820,6 +825,8 @@ func (m *meta) scanner(rows *sql.Rows, enc database.Encrypter) (func(*sql.Rows, 
 				dest[i] = ignored
 			case encrypted[i]:
 				dest[i] = &tokens[i]
+			case times[i]:
+				dest[i] = timeDest(v.FieldByIndex(index).Addr().Interface())
 			default:
 				dest[i] = v.FieldByIndex(index).Addr().Interface()
 			}
