@@ -72,6 +72,9 @@ jobs:
       - name: go test
         shell: bash # PowerShell would split -coverprofile=coverage.out at the dot
         run: go test -race -count=1 -coverprofile=coverage.out ./...
+      - name: Coverage gate
+        if: matrix.os == 'ubuntu-latest'
+        run: go run ./internal/tools/covergate -v coverage.out
       - name: Upload coverage
         if: matrix.os == 'ubuntu-latest'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
