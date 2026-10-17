@@ -61,7 +61,7 @@ return panel.Mount(r)
 | `Slug(s)` / `Labels(singular, plural)` / `Label(col, text)` | URL segment (default: table in kebab-case) and UI names |
 | `List(cols...)` | List columns, in order (default: every visible column) |
 | `Column(label, func(T) string)` | Computed list and detail column (escaped) |
-| `Search(cols...)` | Search box over string columns (`LIKE`, `ILIKE` on Postgres, bound parameters) |
+| `Search(cols...)` | Search box over string columns (`LIKE`, `ILIKE` on Postgres, bound parameters; `%` and `_` in the text match literally) |
 | `Sortable(cols...)` | Sortable columns (default: the listed ones) |
 | `Filter(col, options...)` | Exact-match filter; a select with options (yes/no for booleans), else a text box |
 | `PerPage(n)` | Page size (default 20, max 200) |

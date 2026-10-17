@@ -160,7 +160,7 @@ func (r *Resource[T]) index(p *Panel) web.HandlerFunc {
 
 		if s := strings.TrimSpace(qs.Get("q")); s != "" && lv.Searchable {
 			lv.Search = s
-			q = r.searchQuery(q, p.cfg.DB.Dialect().Name(), s)
+			q = r.searchQuery(q, p.cfg.DB.Dialect(), s)
 		}
 
 		for _, f := range r.filters {
@@ -210,27 +210,26 @@ func (r *Resource[T]) index(p *Panel) web.HandlerFunc {
 	}
 }
 
-func (r *Resource[T]) searchQuery(q orm.Query[T], dialect, s string) orm.Query[T] {
+func (r *Resource[T]) searchQuery(q orm.Query[T], dialect database.Dialect, s string) orm.Query[T] {
 	op := "LIKE" // SQLite and MySQL compare case-insensitively by default
-	if dialect == "postgres" {
+	if dialect.Name() == "postgres" {
 		op = "ILIKE"
 	}
 
-	// shortcut: % and _ in the search text act as wildcards; escape them
-	// when exact substring search matters.
-	pattern := "%" + s + "%"
+	// "!" escapes the wildcards so the text matches literally. Unlike "\",
+	// it is not special in MySQL string literals, and it replaces Postgres'
+	// default "\" escape.
+	pattern := "%" + strings.NewReplacer("!", "!!", "%", "!%", "_", "!_").Replace(s) + "%"
 
-	return q.WhereGroup(func(g orm.Query[T]) orm.Query[T] {
-		for i, col := range r.search {
-			if i == 0 {
-				g = g.Where(col, op, pattern)
-			} else {
-				g = g.OrWhere(col, op, pattern)
-			}
-		}
+	conds := make([]string, len(r.search))
+	args := make([]any, len(r.search))
 
-		return g
-	})
+	for i, col := range r.search {
+		conds[i] = dialect.Quote(col) + " " + op + " ? ESCAPE '!'"
+		args[i] = pattern
+	}
+
+	return q.WhereRaw(strings.Join(conds, " OR "), args...)
 }
 
 func (r *Resource[T]) filterView(f filter, qs url.Values) (filterView, any, bool) {

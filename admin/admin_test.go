@@ -213,3 +213,27 @@ func TestTemplatesHaveNoInlineCode(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestAdminSearchEscapesWildcards(t *testing.T) {
+	t.Parallel()
+
+	app := newApp(t, options{})
+	c := as(t, app, "admin")
+
+	for _, title := range []string{"Done 100% here", "Done 1000 here", "snake_case", "snakeXcase", "Wow! yes", "Wowza yes"} {
+		createPost(t, app, Post{Title: title, Status: "live"})
+	}
+
+	tests := []struct {
+		q, see, dontSee string
+	}{
+		{q: "100%", see: "Done 100% here", dontSee: "Done 1000 here"},
+		{q: "e_c", see: "snake_case", dontSee: "snakeXcase"},
+		{q: "w!", see: "Wow! yes", dontSee: "Wowza yes"},
+	}
+
+	for _, tt := range tests {
+		c.Get("/admin/posts?" + url.Values{"q": {tt.q}}.Encode()).
+			AssertOK().AssertSee(tt.see).AssertDontSee(tt.dontSee).AssertSee("1 record")
+	}
+}
