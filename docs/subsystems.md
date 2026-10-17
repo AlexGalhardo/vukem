@@ -112,7 +112,7 @@ if ok, _ := lock.TryAcquire(ctx); ok {
 ```
 
 - Values are JSON. `Remember` runs `fn` once for concurrent misses of a key in the process (singleflight) and never caches errors.
-- Stores implement `cache.Store` (`Get`, `Set`, atomic `Add`, `Delete`, owner-checked `DeleteIf`, `Increment`, `Flush`): `cache.NewMemory(maxEntries)` (LRU + TTL) and `cache.NewDatabase(db, table)` (SQLite, Postgres and MySQL upserts; `Increment` locks the row, so concurrent servers never read the same count; `Prune` removes expired rows and the app schedules `cache:prune` hourly). Redis comes with `drivers/redis` ([Redis](#redis)). `cache/cachetest.Run` is the conformance suite (concurrent `Increment` included), run on memory, SQLite, Postgres, MySQL, MariaDB and Redis.
+- Stores implement `cache.Store` (`Get`, `Set`, atomic `Add`, `Delete`, owner-checked `DeleteIf`, `Increment`, `Flush`): `cache.NewMemory(maxEntries)` (LRU + TTL) and `cache.NewDatabase(db, table)` (SQLite, Postgres and MySQL upserts; `Increment` is one atomic upsert, so concurrent servers never read the same count; `CreateTable` indexes `expires_at`; `Prune` removes expired rows in batches and every app with `CACHE_STORE=database` schedules `cache:prune` hourly). Redis comes with `drivers/redis` ([Redis](#redis)). `cache/cachetest.Run` is the conformance suite (concurrent `Increment` included), run on memory, SQLite, Postgres, MySQL, MariaDB and Redis.
 
 ## Storage
 
@@ -244,7 +244,7 @@ Limiters are keyed by `ratelimit.ByIP` (default), `ByToken` (after `auth.Require
 | `ratelimit.NewWindow(counter, name, limit, window)` (`RATE_LIMIT_STORE=cache`) | fixed window on `Increment`; up to 2×`limit` around a window boundary | yes, with `CACHE_STORE=database` (SQLite, PostgreSQL, MySQL) or a Redis cache store |
 | `rc.RateLimiter(prefix, limit, window)` ([Redis](#redis)) | GCRA in a Lua script | yes |
 
-GCRA needs compare-and-set, which `cache.Store` lacks, so the store-agnostic limiter uses fixed windows: correct with an atomic `Increment` alone (`cache.Database.Increment` locks the row, so concurrent servers never read the same count).
+GCRA needs compare-and-set, which `cache.Store` lacks, so the store-agnostic limiter uses fixed windows: correct with an atomic `Increment` alone (`cache.Database.Increment` is one upsert, so concurrent servers never read the same count). Window keys are hashed, limiter names are 1–64 of `A-Z a-z 0-9 . _ -`, and `RATE_LIMIT_STORE=cache` over the memory cache is a boot error.
 
 ## Queue
 

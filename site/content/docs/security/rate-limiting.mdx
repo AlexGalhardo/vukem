@@ -56,7 +56,20 @@ CACHE_STORE=database      # cache rows in the "cache" table, created at boot
 RATE_LIMIT_STORE=cache    # limiters count in that cache
 ```
 
-Every server reading the same `DATABASE_URL` now shares one budget per key. The counter increments lock their row, so concurrent requests on different servers never read the same count.
+Every server reading the same `DATABASE_URL` now shares one budget per key. Each count is one atomic upsert on the key's row, so concurrent requests on different servers never read the same count.
+
+`RATE_LIMIT_STORE=cache` with the default `CACHE_STORE=memory` is a boot error: that cache lives in each process, so the limits would look shared while every server kept its own budget.
+
+### What it costs
+
+Each request through a limiter costs one statement on the database:
+
+| Database | Per request |
+| --- | --- |
+| PostgreSQL, SQLite | one `INSERT ... ON CONFLICT DO UPDATE ... RETURNING` |
+| MySQL, MariaDB | one `INSERT ... ON DUPLICATE KEY UPDATE` and one `SELECT` in a transaction |
+
+A route behind two limiters (per IP and per account on login) pays it twice. Requests for the same key queue on its row lock, which is what keeps the count exact; requests for different keys do not wait on each other. A deadlock or serialization failure is retried once, then the request is denied (`503`). Expired windows stay as rows until `cache:prune` (scheduled hourly, see [Without the app](#without-the-app)) deletes them through an index on `expires_at`, in batches of 1000. When rate-limited traffic is heavy enough for these writes to matter, move the counters to Redis.
 
 <Callout type="warning">
 Fixed windows are aligned to the clock (`12:00:00`–`12:01:00`, then `12:01:00`–`12:02:00`). A client can spend its whole budget at the end of one window and again at the start of the next: up to 2 × `limit` within a short span. That is fine for login throttles and abuse protection; when bursts must stay within `limit` across servers, use the Redis GCRA limiter below.
@@ -111,7 +124,7 @@ Do not limit by `ByToken` before the token is verified: a client sending a made-
 
 Rate limiting is a security control, so it **fails closed**: when the store cannot answer (database down, Redis unreachable), the request is denied with `503 Service Unavailable` instead of passing unlimited. The client never sees the store error.
 
-An unknown `RATE_LIMIT_STORE` value (a typo such as `databse`) makes `app.RateLimiters()` return an error, so the app does not boot with per-process limits you did not ask for.
+An unknown `RATE_LIMIT_STORE` value (a typo such as `databse`), or `cache` over the memory cache, makes `app.RateLimiters()` return an error, so the app does not boot with per-process limits you did not ask for. A limiter name outside 1–64 of `A-Z a-z 0-9 . _ -` denies every request.
 
 ## Without the app
 
@@ -125,14 +138,14 @@ l := myLimiter                                                  // anything impl
 http.Handle("/login", ratelimit.Middleware(l, ratelimit.ByIP)(loginHandler))
 ```
 
-`NewWindow` takes a `ratelimit.Counter`: anything with an `Increment(ctx, key, delta, ttl)` that is atomic across the servers sharing it. Keys are stored as `ratelimit:<name>:<key>:<window start>` (keys longer than 64 bytes are hashed) and expire after one window. The database cache keeps expired rows until pruned: the app schedules `cache:prune` hourly, so run the scheduler (`schedule:work`, or `schedule:run` from cron), or call `Prune` on your `cache.Database` yourself.
+`NewWindow` takes a `ratelimit.Counter`: anything with an `Increment(ctx, key, delta, ttl)` that is atomic across the servers sharing it. Keys are stored as `ratelimit:<name>:<SHA-256 of key>:<window start>` and expire after one window: hashing every key keeps request data (emails, separators, control bytes) out of the store and stops one key from forging another's bucket. The database cache keeps expired rows until pruned: every app with `CACHE_STORE=database` schedules `cache:prune` hourly (also through a store that wraps it and exposes it with `Unwrap() cache.Store`), so run the scheduler (`schedule:work`, or `schedule:run` from cron), or call `Prune` on your `cache.Database` yourself.
 
 ## Options
 
 | Option | Default | Description |
 | --- | --- | --- |
 | `RATE_LIMIT_STORE` | `memory` | `memory` (per process, GCRA) or `cache` (shared through `app.Cache()`, fixed windows) |
-| `CACHE_STORE` | `memory` | with `RATE_LIMIT_STORE=cache`: `database` shares limits through the SQL database |
+| `CACHE_STORE` | `memory` | with `RATE_LIMIT_STORE=cache`: `database` shares limits through the SQL database (required unless a Redis store is set with `vukem.WithCacheStore`) |
 | `CACHE_TABLE` | `cache` | table of the database cache store |
 | `CACHE_PREFIX` | `vukem:` | prefix of every cache key, rate limit counters included |
 
