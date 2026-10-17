@@ -122,7 +122,8 @@ func Run(t *testing.T, store session.ListStore) {
 		for _, s := range list {
 			keys = append(keys, s.Key)
 
-			if s.Expiry.Unix() != exp.Unix() || len(s.Data) == 0 {
+			// Stores keeping a TTL report the expiry to the millisecond.
+			if d := s.Expiry.Sub(exp).Abs(); d > 2*time.Second || len(s.Data) == 0 {
 				t.Errorf("listed %+v, want expiry %v and data", s, exp)
 			}
 		}

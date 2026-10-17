@@ -196,49 +196,6 @@ func escapeGlob(s string) string {
 	return string(out)
 }
 
-// ---------------------------------------------------------------- sessions
-
-// SessionStore implements session.Store.
-type SessionStore struct {
-	rdb    goredis.UniversalClient
-	prefix string
-}
-
-// SessionStore returns a session store with keys under prefix (default
-// "session:").
-func (c *Client) SessionStore(prefix string) *SessionStore {
-	if prefix == "" {
-		prefix = "session:"
-	}
-
-	return &SessionStore{rdb: c.rdb, prefix: prefix}
-}
-
-// Load implements session.Store.
-func (s *SessionStore) Load(ctx context.Context, id string) ([]byte, bool, error) {
-	b, err := s.rdb.Get(ctx, s.prefix+id).Bytes()
-	if errors.Is(err, goredis.Nil) {
-		return nil, false, nil
-	}
-
-	return b, err == nil, err
-}
-
-// Save implements session.Store.
-func (s *SessionStore) Save(ctx context.Context, id string, data []byte, expiry time.Time) error {
-	ttl := time.Until(expiry)
-	if ttl <= 0 {
-		return s.Delete(ctx, id)
-	}
-
-	return s.rdb.Set(ctx, s.prefix+id, data, ttl).Err()
-}
-
-// Delete implements session.Store.
-func (s *SessionStore) Delete(ctx context.Context, id string) error {
-	return s.rdb.Del(ctx, s.prefix+id).Err()
-}
-
 // ---------------------------------------------------------------- pub/sub
 
 // Publish sends payload on channel (server-sent events fan-out, cache
