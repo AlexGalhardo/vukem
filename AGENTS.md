@@ -35,12 +35,14 @@ Vukem: a Laravel/AdonisJS-inspired, stdlib-first Go web framework. Module `githu
 
 | Path | What |
 | --- | --- |
-| `docs/` | design docs, one per area |
+| `docs/` | design docs, one per area, and the roadmap `PLAN.md` |
+| `.config/` | git-cliff, GoReleaser and Compose configs ([layout](docs/tooling.md#repository-layout)) |
+| `.github/` | workflows, templates, CONTRIBUTING, SECURITY, CODE_OF_CONDUCT |
 | `internal/tools/` | repo tooling (commitlint, covergate, release) |
 | `drivers/*` | optional driver modules (postgres, redis, mongo) |
 | `contrib/*` | optional feature modules (graphql, grpc, stripe, imaging) |
 | `.claude/rules/` | path-scoped rules for agents |
-| `.claude/skills/` | Go skills (samber/cc-skills-golang) and workflow skills |
+| `.claude/skills/` | Go skills, workflow skills and `vukem-release` (release + app bumps) |
 
 ## When stuck
 

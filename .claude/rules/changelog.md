@@ -11,3 +11,4 @@ paths:
 - Never edit released sections by hand; fix the commit history or `.config/cliff.toml` instead.
 - Sections: Added, Changed, Deprecated, Removed, Fixed, Security. `[Unreleased]` always exists.
 - Versions follow SemVer with Go tags `vX.Y.Z`; never move or delete a pushed tag (use `retract`).
+- Every entry links its commit (template in `.config/cliff.toml`); the docs site renders `CHANGELOG.md` at `/changelog`, so a broken entry shows up there too.
