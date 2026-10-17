@@ -1,6 +1,8 @@
 // Package htmx provides helpers for htmx 4: reading htmx request headers,
 // building response headers, and rendering <hx-partial> and out-of-band
 // fragments. See https://four.htmx.org/reference/headers/.
+//
+// See https://github.com/AlexGalhardo/vukem/blob/main/docs/frontend.md.
 package htmx
 
 import (

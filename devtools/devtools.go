@@ -9,6 +9,13 @@
 // DEVTOOLS_INSECURE_ALLOW_REMOTE=true. Collection hooks are observers set
 // on the database, queue and event bus, a mail transport wrapper and a
 // slog handler, so an app without devtools pays nothing.
+//
+// [New] returns the [Devtools] collector; [Devtools.Middleware] records
+// requests, [Devtools.Register] mounts the dashboard at [Path], and the
+// Observe methods, [Devtools.MailTransport] and [Devtools.LogHandler] are
+// the hooks the app wires for you.
+//
+// See https://github.com/AlexGalhardo/vukem/blob/main/docs/devtools.md.
 package devtools
 
 import (

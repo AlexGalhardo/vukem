@@ -16,6 +16,8 @@
 //		return err
 //	}
 //	return panel.Mount(r)
+//
+// See https://github.com/AlexGalhardo/vukem/blob/main/docs/admin.md.
 package admin
 
 import (

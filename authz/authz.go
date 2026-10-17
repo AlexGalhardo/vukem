@@ -10,6 +10,8 @@
 //	r.Services().Authorizer = gate
 //
 //	if err := c.Authorize("update", post); err != nil { return err } // 403 / 404
+//
+// See https://github.com/AlexGalhardo/vukem/blob/main/docs/authentication.md.
 package authz
 
 import (

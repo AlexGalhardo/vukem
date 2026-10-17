@@ -7,6 +7,13 @@
 // and script tags for each entry and its recursive imports, deduplicated
 // across entries. Every tag gets the CSP nonce, and the manifest's
 // "integrity" values become SRI attributes.
+//
+// The app builds one [Vite] with [New] from the public directory; views
+// reach it through the "vite" template function (package view), Inertia
+// uses [Vite.Version] as its asset version, and [Vite.Asset] resolves files
+// Vite processed. Every starter except the API one ships a Vite setup.
+//
+// See https://github.com/AlexGalhardo/vukem/blob/main/docs/frontend.md.
 package vite
 
 import (

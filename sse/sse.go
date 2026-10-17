@@ -8,6 +8,8 @@
 // write timeout for the stream and ends when the client disconnects, the
 // callback returns or the server shuts down. A Hub fans events out to many
 // streams, in memory or through a Broker (drivers/redis) across instances.
+//
+// See https://github.com/AlexGalhardo/vukem/blob/main/docs/frontend.md.
 package sse
 
 import (

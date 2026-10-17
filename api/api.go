@@ -1,7 +1,14 @@
 // Package api holds REST helpers on top of web and orm: resource
 // transformers, pagination envelopes, allowlisted query conventions
 // (filter, sort, fields, include, pagination) and deprecation headers.
-// See docs/api.md.
+//
+// [Register] adds typed handlers (input bound and validated, output written
+// as JSON) that package openapi describes; [Collection], [Page] and
+// [Cursor] answer list endpoints in an [Envelope]; [Query] applies the
+// allowlisted query string to an orm.Query; [Idempotency] and [Deprecate]
+// are middleware. API-only apps start from `vukem new <name> --api`.
+//
+// See https://github.com/AlexGalhardo/vukem/blob/main/docs/api.md.
 package api
 
 import (

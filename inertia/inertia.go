@@ -14,6 +14,8 @@
 // The first visit renders the root view (RootView, default "app") with the
 // page object in RootData.Inertia; later visits made by the Inertia client
 // (X-Inertia: true) get the page object as JSON.
+//
+// See https://github.com/AlexGalhardo/vukem/blob/main/docs/frontend.md.
 package inertia
 
 import (

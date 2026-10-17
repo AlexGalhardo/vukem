@@ -1,6 +1,12 @@
 // Package hash hashes and verifies passwords: argon2id by default (PHC
 // string format), bcrypt for compatibility. Verify recognises both, so a
 // database can move from bcrypt to argon2id through NeedsRehash on login.
+//
+// Every Hasher ([Default], [Argon2id], [Bcrypt], [Fake] for tests) makes and
+// verifies hashes in constant time; the auth guards take one to check
+// passwords on login.
+//
+// See https://github.com/AlexGalhardo/vukem/blob/main/docs/authentication.md.
 package hash
 
 import (

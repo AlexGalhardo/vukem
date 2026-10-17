@@ -11,6 +11,12 @@
 //
 // A page uses the default layout ("app") unless its first line is a
 // comment naming another one: {{/* layout: admin */}} or {{/* layout: none */}}.
+//
+// [New] parses every view at boot into an [Engine], which implements
+// web.Renderer: handlers call c.Render("posts/index", data) for a page and
+// c.Fragment("posts/index", "items", data) for one block (htmx swaps).
+//
+// See https://github.com/AlexGalhardo/vukem/blob/main/docs/frontend.md.
 package view
 
 import (

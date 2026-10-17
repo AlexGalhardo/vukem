@@ -3,6 +3,8 @@
 // and `validate` tags; plain routes get a generic entry.
 //
 //	doc := openapi.Generate(r.Routes(), openapi.Info{Title: "Shop", Version: "1.0.0"})
+//
+// See https://github.com/AlexGalhardo/vukem/blob/main/docs/api.md.
 package openapi
 
 import (

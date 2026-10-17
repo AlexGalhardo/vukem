@@ -5,6 +5,8 @@
 //
 //	vukem.ServeOpenAPI(app, r, "/openapi.json")
 //	apidocs.Serve(app, r, "/docs", apidocs.Config{})
+//
+// See https://github.com/AlexGalhardo/vukem/blob/main/docs/api.md.
 package apidocs
 
 import (

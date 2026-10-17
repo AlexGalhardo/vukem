@@ -15,6 +15,8 @@
 //		u, err := s.User(c, c.Param("provider"))
 //		...
 //	})
+//
+// See https://github.com/AlexGalhardo/vukem/blob/main/docs/authentication.md.
 package social
 
 import (

@@ -19,6 +19,8 @@
 //
 // Decisions fail closed: a channel without a matching rule, a rule that
 // errors and a client without a user are all denied.
+//
+// See https://github.com/AlexGalhardo/vukem/blob/main/docs/frontend.md.
 package broadcast
 
 import (

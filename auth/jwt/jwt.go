@@ -6,6 +6,8 @@
 //
 //	tok, err := jwt.Sign(key, jwt.Claims{Subject: u.AuthID(), ExpiresAt: time.Now().Add(15 * time.Minute)})
 //	claims, err := verifier.Verify(ctx, tok)
+//
+// See https://github.com/AlexGalhardo/vukem/blob/main/docs/authentication.md.
 package jwt
 
 import (

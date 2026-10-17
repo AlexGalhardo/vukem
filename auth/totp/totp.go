@@ -3,6 +3,8 @@
 // otpauth:// enrolment URIs with an SVG QR code, validation with one step
 // of clock skew and replay protection, and hashed single-use recovery
 // codes. Standard library only.
+//
+// See https://github.com/AlexGalhardo/vukem/blob/main/docs/authentication.md.
 package totp
 
 import (

@@ -1,6 +1,14 @@
 // Package auth authenticates requests: guards (session for browsers,
 // access tokens for APIs), user providers, middleware and password hashing
-// (auth/hash). See docs/authentication.md.
+// (auth/hash).
+//
+// A guard ([SessionGuard], [TokenGuard], or jwt.Guard in auth/jwt) loads
+// users through a [UserProvider] such as [ORMProvider]. Routes opt in with
+// the [Required], [Guest], [Optional], [Verified] and [Ability] middleware,
+// and handlers read the user with [User]. Apps scaffold the whole flow
+// with `vukem install:auth`.
+//
+// See https://github.com/AlexGalhardo/vukem/blob/main/docs/authentication.md.
 package auth
 
 import (
