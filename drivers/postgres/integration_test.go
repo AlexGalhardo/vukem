@@ -102,11 +102,18 @@ func TestCacheStore(t *testing.T) {
 	_, _ = db.ExecContext(t.Context(), "DROP TABLE IF EXISTS dbt_cache")
 	t.Cleanup(func() { _, _ = db.ExecContext(context.Background(), "DROP TABLE IF EXISTS dbt_cache") })
 
-	if err := store.CreateTable(t.Context()); err != nil {
-		t.Fatal(err)
+	// Twice: every boot runs it, the expires_at index included.
+	for range 2 {
+		if err := store.CreateTable(t.Context()); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	cachetest.Run(t, store)
+
+	if _, err := store.Prune(t.Context()); err != nil {
+		t.Fatalf("Prune() = %v", err)
+	}
 }
 
 // Two connection pools stand for two app servers sharing one Postgres:

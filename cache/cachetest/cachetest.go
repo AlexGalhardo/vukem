@@ -119,6 +119,10 @@ func Run(t *testing.T, store cache.Store) {
 		if _, err := c.Increment(ctx, "text", 1, time.Minute); err == nil {
 			t.Fatal("incrementing a string succeeded")
 		}
+
+		if v, ok, err := cache.Get[string](ctx, c, "text"); err != nil || !ok || v != "abc" {
+			t.Fatalf("value after a failed Increment = %q %v %v, want it unchanged", v, ok, err)
+		}
 	})
 
 	// Rate limits count with Increment: concurrent callers (other servers)

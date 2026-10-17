@@ -21,9 +21,10 @@ import (
 // On MySQL key and value are binary (VARBINARY, LONGBLOB) so lookups stay
 // exact and case-sensitive.
 type Database struct {
-	db    *database.DB
-	table string
-	now   func() time.Time
+	db         *database.DB
+	table      string
+	now        func() time.Time
+	pruneBatch int
 }
 
 var tableRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
@@ -38,7 +39,7 @@ func NewDatabase(db *database.DB, table string) (*Database, error) {
 		return nil, fmt.Errorf("cache: invalid table name %q", table)
 	}
 
-	return &Database{db: db, table: table, now: time.Now}, nil
+	return &Database{db: db, table: table, now: time.Now, pruneBatch: 1000}, nil
 }
 
 func (d *Database) mysql() bool { return d.db.Dialect().Name() == "mysql" }
@@ -101,6 +102,10 @@ func (d *Database) CreateTable(ctx context.Context) error {
 		return err
 	}
 
+	if err := d.createExpiryIndex(ctx); err != nil {
+		return err
+	}
+
 	if !d.postgres() {
 		return nil
 	}
@@ -115,6 +120,32 @@ func (d *Database) CreateTable(ctx context.Context) error {
 	}
 
 	_, err = d.db.ExecContext(ctx, d.q(`ALTER TABLE {t} ALTER COLUMN value TYPE BYTEA USING convert_to(value, 'UTF8')`))
+
+	return err
+}
+
+// createExpiryIndex indexes expires_at for Prune. MySQL has no CREATE
+// INDEX IF NOT EXISTS: it checks first, and tolerates a server that
+// booted at the same time and won the race (error 1061).
+func (d *Database) createExpiryIndex(ctx context.Context) error {
+	name := d.table + "_expires_at"
+	stmt := "CREATE INDEX " + d.db.Dialect().Quote(name) + d.q(" ON {t} (expires_at)")
+
+	if !d.mysql() {
+		_, err := d.db.ExecContext(ctx, strings.Replace(stmt, "CREATE INDEX", "CREATE INDEX IF NOT EXISTS", 1))
+		return err
+	}
+
+	var n int
+	if err := d.db.QueryRowContext(ctx, `SELECT count(*) FROM information_schema.statistics
+		WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?`, d.table, name).Scan(&n); err != nil || n > 0 {
+		return err
+	}
+
+	_, err := d.db.ExecContext(ctx, stmt)
+	if err != nil && strings.Contains(err.Error(), "Error 1061") {
+		return nil
+	}
 
 	return err
 }
@@ -231,60 +262,109 @@ func (d *Database) DeleteIf(ctx context.Context, key string, value []byte) (bool
 	return n == 1, err
 }
 
-// Increment implements Store, atomically across connections and servers:
-// a no-op upsert first creates the row ("0") or locks the existing one, so
-// concurrent increments of a key queue up instead of reading the same
-// value (rate limits count with it). A live row keeps its expiry; an
-// expired one restarts at delta with ttl.
+// Increment implements Store with one upsert that adds delta to the row
+// (or creates it), so it is atomic across connections and servers: rate
+// limits count with it. A live row keeps its expiry; an expired one
+// restarts at delta with ttl. A value that is not an integer is left as
+// it is and Increment fails. MySQL has no RETURNING: there the upsert and
+// a SELECT of the locked row share a transaction.
 func (d *Database) Increment(ctx context.Context, key string, delta int64, ttl time.Duration) (int64, error) {
-	lock := d.q(`INSERT INTO {t} ({k}, value, expires_at) VALUES (?, ?, ?)
-		ON CONFLICT ({k}) DO UPDATE SET expires_at = {t}.expires_at`)
-	read := d.q(`SELECT value, expires_at FROM {t} WHERE {k} = ?`)
+	now, start := d.nowMS(), d.val([]byte(strconv.FormatInt(delta, 10)))
 
-	if d.mysql() {
-		lock = d.q(`INSERT INTO {t} ({k}, value, expires_at) VALUES (?, ?, ?)
-		ON DUPLICATE KEY UPDATE expires_at = expires_at`)
-	}
+	var v []byte
 
-	if d.mysql() || d.postgres() {
-		read += " FOR UPDATE" // SQLite has one writer: the upsert already holds the lock
-	}
+	err := retryOnConflict(func() error {
+		if d.mysql() {
+			return d.db.Tx(ctx, func(tx *database.Tx) error {
+				if _, err := tx.ExecContext(
+					ctx,
+					d.incrementSQL(),
+					key,
+					start,
+					d.expiry(ttl),
+					now,
+					delta,
+					now,
+				); err != nil {
+					return err
+				}
 
-	var n int64
-
-	err := d.db.Tx(ctx, func(tx *database.Tx) error {
-		if _, err := tx.ExecContext(ctx, lock, key, d.val([]byte("0")), d.expiry(ttl)); err != nil {
-			return err
+				return tx.QueryRowContext(ctx, d.q(`SELECT value FROM {t} WHERE {k} = ?`), key).Scan(&v)
+			})
 		}
 
-		var (
-			v       []byte
-			expires int64
-		)
-
-		if err := tx.QueryRowContext(ctx, read, key).Scan(&v, &expires); err != nil {
-			return err
-		}
-
-		var cur int64
-
-		if expires != 0 && expires <= d.nowMS() {
-			expires = d.expiry(ttl)
-		} else {
-			var err error
-			if cur, err = strconv.ParseInt(string(bytes.TrimSpace(v)), 10, 64); err != nil {
-				return fmt.Errorf("cache: %s is not an integer", key)
-			}
-		}
-
-		n = cur + delta
-		_, err := tx.ExecContext(ctx, d.q(`UPDATE {t} SET value = ?, expires_at = ? WHERE {k} = ?`),
-			d.val([]byte(strconv.FormatInt(n, 10))), expires, key)
-
-		return err
+		return d.db.QueryRowContext(ctx, d.incrementSQL(), key, start, d.expiry(ttl), now, delta, now).Scan(&v)
 	})
+	if err != nil {
+		return 0, err
+	}
 
-	return n, err
+	// The SQL writes canonical integers; anything else is a value it left
+	// alone because it was not one.
+	s := string(bytes.TrimSpace(v))
+
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil || strconv.FormatInt(n, 10) != s {
+		return 0, fmt.Errorf("cache: %s is not an integer", key)
+	}
+
+	return n, nil
+}
+
+// incrementSQL binds key, start value, expiry, now, delta, now. Postgres
+// casts the bytes (a non-integer fails the statement); SQLite and MySQL
+// only add to a value that round-trips as an integer and keep others.
+func (d *Database) incrementSQL() string {
+	switch {
+	case d.postgres():
+		return d.q(`INSERT INTO {t} ({k}, value, expires_at) VALUES (?, ?, ?)
+		ON CONFLICT ({k}) DO UPDATE SET
+			value = CASE WHEN {t}.expires_at <> 0 AND {t}.expires_at <= ? THEN excluded.value
+				ELSE convert_to((convert_from({t}.value, 'UTF8')::bigint + ?)::text, 'UTF8') END,
+			expires_at = CASE WHEN {t}.expires_at <> 0 AND {t}.expires_at <= ? THEN excluded.expires_at
+				ELSE {t}.expires_at END
+		RETURNING value`)
+	case d.mysql():
+		// Assignments run left to right: value reads the old expires_at.
+		return d.q(`INSERT INTO {t} ({k}, value, expires_at) VALUES (?, ?, ?)
+		ON DUPLICATE KEY UPDATE
+			value = CASE WHEN expires_at <> 0 AND expires_at <= ? THEN VALUES(value)
+				WHEN CAST(CAST(TRIM(value) AS SIGNED) AS CHAR) = TRIM(value)
+				THEN CAST(CAST(TRIM(value) AS SIGNED) + ? AS CHAR)
+				ELSE value END,
+			expires_at = CASE WHEN expires_at <> 0 AND expires_at <= ? THEN VALUES(expires_at) ELSE expires_at END`)
+	default:
+		return d.q(`INSERT INTO {t} ({k}, value, expires_at) VALUES (?, ?, ?)
+		ON CONFLICT ({k}) DO UPDATE SET
+			value = CASE WHEN {t}.expires_at <> 0 AND {t}.expires_at <= ? THEN excluded.value
+				WHEN CAST(CAST(trim({t}.value) AS INTEGER) AS TEXT) = trim({t}.value)
+				THEN CAST(CAST(trim({t}.value) AS INTEGER) + ? AS TEXT)
+				ELSE {t}.value END,
+			expires_at = CASE WHEN {t}.expires_at <> 0 AND {t}.expires_at <= ? THEN excluded.expires_at
+				ELSE {t}.expires_at END
+		RETURNING value`)
+	}
+}
+
+// retryOnConflict runs fn again once when the database aborted it to
+// break a deadlock or a serialization conflict; a second failure is
+// returned (rate limits then deny the request).
+func retryOnConflict(fn func() error) error {
+	err := fn()
+	if err != nil && isConflict(err) {
+		err = fn()
+	}
+
+	return err
+}
+
+// isConflict matches MySQL error 1213 and Postgres SQLSTATE 40001/40P01
+// without importing the drivers.
+func isConflict(err error) bool {
+	msg := err.Error()
+
+	return strings.Contains(msg, "Error 1213") || strings.Contains(msg, "SQLSTATE 40001") ||
+		strings.Contains(msg, "SQLSTATE 40P01")
 }
 
 // Flush implements Store.
@@ -293,12 +373,31 @@ func (d *Database) Flush(ctx context.Context) error {
 	return err
 }
 
-// Prune deletes expired rows (schedule it, e.g. hourly).
+// Prune deletes expired rows (scheduled hourly as cache:prune), in
+// batches so a large backlog never holds one long lock.
 func (d *Database) Prune(ctx context.Context) (int64, error) {
-	res, err := d.db.ExecContext(ctx, d.q(`DELETE FROM {t} WHERE expires_at <> 0 AND expires_at <= ?`), d.nowMS())
-	if err != nil {
-		return 0, err
+	stmt := d.q(`DELETE FROM {t} WHERE {k} IN
+		(SELECT {k} FROM {t} WHERE expires_at <> 0 AND expires_at <= ? LIMIT ?)`)
+	if d.mysql() {
+		stmt = d.q(`DELETE FROM {t} WHERE expires_at <> 0 AND expires_at <= ? LIMIT ?`)
 	}
 
-	return res.RowsAffected()
+	var total int64
+
+	for {
+		res, err := d.db.ExecContext(ctx, stmt, d.nowMS(), d.pruneBatch)
+		if err != nil {
+			return total, err
+		}
+
+		n, err := res.RowsAffected()
+		if err != nil {
+			return total, err
+		}
+
+		total += n
+		if n < int64(d.pruneBatch) {
+			return total, nil
+		}
+	}
 }

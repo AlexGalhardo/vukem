@@ -121,3 +121,71 @@ func TestRememberCancelledWaiter(t *testing.T) {
 		t.Fatal("Store")
 	}
 }
+
+func openSQLiteStore(t *testing.T) (*database.DB, *cache.Database) {
+	t.Helper()
+
+	db, err := database.Open(t.Context(), ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() { _ = db.Close() })
+
+	store, err := cache.NewDatabase(db, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return db, store
+}
+
+// Prune scans expires_at: CreateTable indexes it, and running it again
+// (every boot does) must not fail.
+func TestDatabaseCreateTableIndexesExpiry(t *testing.T) {
+	t.Parallel()
+
+	db, store := openSQLiteStore(t)
+
+	for range 2 {
+		if err := store.CreateTable(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var n int
+	if err := db.QueryRowContext(t.Context(),
+		`SELECT count(*) FROM sqlite_master WHERE type = 'index' AND name = 'cache_expires_at'`).Scan(&n); err != nil ||
+		n != 1 {
+		t.Fatalf("cache_expires_at indexes = %d, %v, want 1", n, err)
+	}
+}
+
+// Prune deletes in batches so a large backlog does not hold one long lock.
+func TestDatabasePrunesInBatches(t *testing.T) {
+	t.Parallel()
+
+	_, store := openSQLiteStore(t)
+	if err := store.CreateTable(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	cache.SetPruneBatch(store, 2)
+
+	ctx := t.Context()
+	for i := range 5 {
+		_ = store.Set(ctx, "old"+strconv.Itoa(i), []byte("1"), time.Millisecond)
+	}
+
+	_ = store.Set(ctx, "live", []byte("1"), time.Hour)
+
+	time.Sleep(5 * time.Millisecond) //nolint:forbidigo // real expiry
+
+	if n, err := store.Prune(ctx); err != nil || n != 5 {
+		t.Fatalf("Prune = %d %v, want 5", n, err)
+	}
+
+	if _, ok, _ := store.Get(ctx, "live"); !ok {
+		t.Fatal("Prune deleted a live entry")
+	}
+}
