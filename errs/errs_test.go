@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/google/go-cmp/cmp"
 )
 
 func TestHTTPError(t *testing.T) {
@@ -62,6 +64,25 @@ func TestValidationError(t *testing.T) {
 	zero.Add("x", "y")
 	if zero.First("x") != "y" {
 		t.Error("Add on zero value failed")
+	}
+}
+
+func TestValidationError_Append(t *testing.T) {
+	t.Parallel()
+
+	v := NewValidation()
+	v.Append("price", "locked")
+	v.Append("price", "too low")
+
+	var zero ValidationError
+	zero.Append("x", "y")
+
+	if diff := cmp.Diff(map[string][]string{"price": {"locked", "too low"}}, v.Fields); diff != "" {
+		t.Errorf("Append fields (-want +got):\n%s", diff)
+	}
+
+	if got := zero.First("x"); got != "y" {
+		t.Errorf("zero.First(x) = %q, want %q", got, "y")
 	}
 }
 
