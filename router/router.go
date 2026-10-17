@@ -28,6 +28,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/AlexGalhardo/vukem/errs"
 	"github.com/AlexGalhardo/vukem/web"
@@ -45,6 +46,7 @@ type Router struct {
 	root     *Group
 
 	once     sync.Once
+	compiled atomic.Bool
 	mux      *http.ServeMux
 	names    map[string]*Route
 	handler  http.Handler
@@ -170,9 +172,18 @@ func (r *Router) APIResource(name string, ctrl any) *Resource { return r.root.AP
 // Handler compiles the routes. It reports pattern conflicts, invalid
 // patterns and duplicate names. Routes added afterwards are ignored.
 func (r *Router) Handler() (http.Handler, error) {
-	r.once.Do(r.build)
+	r.once.Do(func() {
+		// Set first so a route added while building is refused too.
+		r.compiled.Store(true)
+		r.build()
+	})
+
 	return r.handler, r.buildErr
 }
+
+// Compiled reports whether the routes were compiled (by Handler, URL or a
+// first request). Routes added after that are not served.
+func (r *Router) Compiled() bool { return r.compiled.Load() }
 
 // ServeHTTP compiles on first use and serves; it panics on a build error,
 // so call Handler at boot to surface errors early.

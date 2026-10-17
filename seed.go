@@ -22,21 +22,70 @@ type SeederFunc func(ctx context.Context, db *database.DB) error
 // Seed implements Seeder.
 func (f SeederFunc) Seed(ctx context.Context, db *database.DB) error { return f(ctx, db) }
 
-// WithSeeders registers the seeders run by `db:seed` (generated apps pass
-// seeders.All()).
-func WithSeeders(seeders ...Seeder) Option {
-	return func(o *options) error { o.seeders = append(o.seeders, seeders...); return nil }
+// AppSeeder is a seeder that needs the booted App: configuration
+// (app.Source), the logger, storage disks or services added by providers.
+// It opens the database itself with app.DB() when it needs it.
+type AppSeeder interface {
+	SeedApp(ctx context.Context, app *App) error
 }
 
-// Seed runs every registered seeder in order; the first error stops it.
-func (a *App) Seed(ctx context.Context) error {
-	db, err := a.DB()
+// AppSeederFunc adapts a function to AppSeeder.
+type AppSeederFunc func(ctx context.Context, app *App) error
+
+// SeedApp implements AppSeeder.
+func (f AppSeederFunc) SeedApp(ctx context.Context, app *App) error { return f(ctx, app) }
+
+// NamedAppSeeder returns an AppSeeder printed and reported as name (by
+// db:seed and in errors) instead of its Go type, which is the same for
+// every AppSeederFunc.
+func NamedAppSeeder(name string, fn AppSeederFunc) AppSeeder { return namedAppSeeder{name, fn} }
+
+type namedAppSeeder struct {
+	name string
+	fn   AppSeederFunc
+}
+
+func (n namedAppSeeder) SeedApp(ctx context.Context, app *App) error { return n.fn(ctx, app) }
+
+func (n namedAppSeeder) Name() string { return n.name }
+
+// dbSeeder runs a Seeder as an AppSeeder, so both kinds share one ordered
+// list.
+type dbSeeder struct{ s Seeder }
+
+func (d dbSeeder) SeedApp(ctx context.Context, app *App) error {
+	db, err := app.DB()
 	if err != nil {
 		return err
 	}
 
+	return d.s.Seed(ctx, db)
+}
+
+// WithSeeders registers the seeders run by `db:seed` (generated apps pass
+// seeders.All()).
+func WithSeeders(seeders ...Seeder) Option {
+	return func(o *options) error {
+		for _, s := range seeders {
+			o.seeders = append(o.seeders, dbSeeder{s})
+		}
+
+		return nil
+	}
+}
+
+// WithAppSeeders registers seeders that receive the App instead of only
+// the database. They run with the WithSeeders ones, in option order.
+func WithAppSeeders(seeders ...AppSeeder) Option {
+	return func(o *options) error { o.seeders = append(o.seeders, seeders...); return nil }
+}
+
+// Seed runs every registered seeder in order; the first error stops it.
+// db:seed boots the app first, so seeders see services providers open in
+// Boot; call Boot before Seed when calling it directly.
+func (a *App) Seed(ctx context.Context) error {
 	for _, s := range a.seeders {
-		if err := s.Seed(ctx, db); err != nil {
+		if err := s.SeedApp(ctx, a); err != nil {
 			return fmt.Errorf("seed %s: %w", seederName(s), err)
 		}
 
@@ -46,8 +95,20 @@ func (a *App) Seed(ctx context.Context) error {
 	return nil
 }
 
-func seederName(s Seeder) string {
-	name := fmt.Sprintf("%T", s)
+// seederName is the seeder's Name() when it has one (Seeder or
+// AppSeeder), else its type name.
+func seederName(s AppSeeder) string {
+	var v any = s
+	if d, ok := s.(dbSeeder); ok {
+		v = d.s
+	}
+
+	if n, ok := v.(interface{ Name() string }); ok {
+		return n.Name()
+	}
+
+	name := fmt.Sprintf("%T", v)
+
 	return name[strings.LastIndex(name, ".")+1:]
 }
 

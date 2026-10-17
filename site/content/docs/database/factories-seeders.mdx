@@ -46,6 +46,37 @@ vukem db:wipe   # drops every table
 
 Both commands need `--force` in production. Tests call `app.Seed(ctx)`.
 
+### Seeders that need the app
+
+A `Seeder` only gets the database. A seeder that reads configuration, logs, or uses a service a provider opened (an S3 disk for seeded images) implements `vukem.AppSeeder` instead and is registered with `vukem.WithAppSeeders`:
+
+```go title="database/seeders/users_seeder.go"
+func Users() vukem.AppSeeder {
+	return vukem.NamedAppSeeder("Users", func(ctx context.Context, app *vukem.App) error {
+		if app.Config.IsProduction() {
+			return errors.New("demo users are not seeded in production")
+		}
+
+		db, err := app.DB()
+		if err != nil {
+			return err
+		}
+
+		password := app.Source.Get("SEED_PASSWORD")
+		app.Log.InfoContext(ctx, "seeding demo users")
+
+		return createDemoUsers(ctx, db, password)
+	})
+}
+```
+
+```go title="bootstrap/app.go"
+vukem.WithSeeders(seeders.All()...),
+vukem.WithAppSeeders(seeders.Users()),
+```
+
+Both kinds run in one list, in option order. `db:seed` prints `Seeded: <name>` and errors read `seed <name>: ...`, where the name is the seeder's `Name() string` method when it has one, else its Go type (`AppSeederFunc` for every function); `vukem.NamedAppSeeder("Users", fn)` gives a function a name. `db:seed` boots the app before seeding, so services providers open in `Boot` are ready; call `app.Boot(ctx)` before `app.Seed(ctx)` when you seed from your own code. A provider's service can be handed to the seeder when `bootstrap` builds both (`seeders.Media(mediaProvider)`).
+
 ## Database validation rules
 
 `z` schemas check shape and format without I/O. Rules that need the database run after parsing and return the same 422 validation error (flashed for forms):

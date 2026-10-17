@@ -152,6 +152,9 @@ type App struct {
 	ready     chan<- string
 	noHTTP    bool
 
+	// bootRoutes run at the end of Boot (WithRoutesAfterBoot).
+	bootRoutes []func(r *router.Router, app *App) error
+
 	sessOnce  sync.Once
 	sessions  *session.Manager
 	sessStore session.Store
@@ -202,10 +205,14 @@ type App struct {
 	dbErr      error
 	drivers    []database.Driver
 	migrations []schema.Migration
-	seeders    []Seeder
+	seeders    []AppSeeder
 
-	mu       sync.Mutex
-	booted   bool
+	mu     sync.Mutex
+	booted bool
+	// bootMu serializes Boot, so a concurrent call waits for the first
+	// one and gets its error.
+	bootMu   sync.Mutex
+	bootErr  error
 	shutdown bool
 }
 
@@ -223,13 +230,14 @@ type options struct {
 	providers     []Provider
 	runners       []namedRunner
 	routes        []func(r *router.Router, app *App) error
+	bootRoutes    []func(r *router.Router, app *App) error
 	views         fs.FS
 	vite          fs.FS
 	inertia       *inertia.Config
 	lang          fs.FS
 	now           func() time.Time
 	migrations    []schema.Migration
-	seeders       []Seeder
+	seeders       []AppSeeder
 	mailTransport mail.Transport
 	listeners     []events.Registration
 	jobs          []queue.Registration
@@ -256,6 +264,32 @@ type options struct {
 func WithRoutes(fn func(r *router.Router, app *App) error) Option {
 	return func(o *options) error { o.routes = append(o.routes, fn); return nil }
 }
+
+// WithRoutesAfterBoot registers routes at the end of Boot, after every
+// provider's Boot, so handlers can use clients a provider opens in Boot (a
+// database or object-store client). The routes exist only once the app
+// booted: Run, commands and vukemtest boot first; Handler fails with
+// [ErrNotBooted] before that, and Boot fails with [ErrRoutesCompiled] when
+// the router was compiled earlier. Global router middleware applies to
+// them; groups made in WithRoutes do not. In [KindWarmup], which never
+// boots, they run at the end of New so the route table is complete; booted
+// services are then still unset (check app.Kind) and a panic is returned
+// as an error.
+func WithRoutesAfterBoot(fn func(r *router.Router, app *App) error) Option {
+	return func(o *options) error { o.bootRoutes = append(o.bootRoutes, fn); return nil }
+}
+
+// ErrRoutesCompiled is returned by Boot when routes from
+// WithRoutesAfterBoot are pending but the router was already compiled
+// (Handler, Router.URL or a request before Boot), so they would never be
+// served.
+var ErrRoutesCompiled = errors.New("vukem: router compiled before Boot, so routes after boot would be lost; " +
+	"call Boot before Handler/Router.URL; avoid URL() inside WithRoutes")
+
+// ErrNotBooted is returned by Handler when routes from WithRoutesAfterBoot
+// are pending because Boot has not run: serving then would answer 404 for
+// them.
+var ErrNotBooted = errors.New("vukem: routes after boot are pending; call Boot before Handler")
 
 // WithViews renders html/template views from fsys (os.DirFS("resources/views")
 // or an embed.FS). Views reload on every request outside production.
@@ -646,6 +680,13 @@ func New(opts ...Option) (*App, error) {
 		}
 	}
 
+	app.bootRoutes = o.bootRoutes
+	if app.Kind == KindWarmup {
+		if err := app.addBootRoutes(); err != nil {
+			return nil, err
+		}
+	}
+
 	return app, nil
 }
 
@@ -875,17 +916,28 @@ func (a *App) OnShutdown(fn func(context.Context) error) {
 	a.hooks = append(a.hooks, fn)
 }
 
-// Boot runs every provider's Boot hook once, in order.
+// Boot runs every provider's Boot hook once, in order, then the
+// WithRoutesAfterBoot functions. Boot is not retryable: later calls return
+// the first call's error (nil after a successful boot).
 func (a *App) Boot(ctx context.Context) error {
-	a.mu.Lock()
-	if a.booted {
-		a.mu.Unlock()
-		return nil
-	}
+	a.bootMu.Lock()
+	defer a.bootMu.Unlock()
 
+	a.mu.Lock()
+	booted := a.booted
 	a.booted = true
 	a.mu.Unlock()
 
+	if booted {
+		return a.bootErr
+	}
+
+	a.bootErr = a.boot(ctx)
+
+	return a.bootErr
+}
+
+func (a *App) boot(ctx context.Context) error {
 	for _, p := range a.providers {
 		b, ok := p.(Booter)
 		if !ok || !runsIn(p, a.Kind) {
@@ -897,7 +949,61 @@ func (a *App) Boot(ctx context.Context) error {
 		}
 	}
 
+	return a.addBootRoutes()
+}
+
+// addBootRoutes runs the WithRoutesAfterBoot functions once.
+func (a *App) addBootRoutes() error {
+	a.mu.Lock()
+	fns := a.bootRoutes
+	a.bootRoutes = nil
+	a.mu.Unlock()
+
+	if len(fns) == 0 {
+		return nil
+	}
+
+	if a.Router.Compiled() {
+		return ErrRoutesCompiled
+	}
+
+	for _, fn := range fns {
+		if err := a.runBootRoutes(fn); err != nil {
+			return err
+		}
+	}
+
 	return nil
+}
+
+// runBootRoutes runs fn. In warmup a panic (typically a nil client that
+// only Boot sets) becomes an error naming the cause, so codegen:routes
+// reports it instead of crashing.
+func (a *App) runBootRoutes(fn func(r *router.Router, app *App) error) (err error) {
+	if a.Kind == KindWarmup {
+		defer func() {
+			if v := recover(); v != nil {
+				err = fmt.Errorf("vukem: routes after boot panicked: %v "+
+					"(route registration must not use booted services during warmup; "+
+					"check app.Kind == vukem.KindWarmup)", v)
+			}
+		}()
+	}
+
+	if err := fn(a.Router, a); err != nil {
+		return fmt.Errorf("vukem: routes after boot: %w", err)
+	}
+
+	return nil
+}
+
+// pendingBootRoutes reports whether WithRoutesAfterBoot functions have not
+// run yet.
+func (a *App) pendingBootRoutes() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	return len(a.bootRoutes) > 0
 }
 
 // Run boots the app, starts every runner and blocks until ctx is cancelled
