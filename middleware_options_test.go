@@ -218,3 +218,53 @@ func TestBypassMatchesRouter(t *testing.T) {
 		}
 	}
 }
+
+func TestAPIMiddlewareWith(t *testing.T) {
+	t.Parallel()
+
+	app := newTestApp(t, WithRoutes(func(r *router.Router, app *App) error {
+		r.Get("/ping", func(c *web.Ctx) error { return c.JSON(http.StatusOK, web.Map{"ok": true}) })
+
+		return APIMiddlewareWith(app, r, APIMiddlewareOptions{
+			SecureHeaders: func(cfg *middleware.SecureHeadersConfig) { cfg.ReportURI = "/csp-reports" },
+		})
+	}))
+
+	rec := serve(t, app, http.MethodGet, "/ping", false)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /ping = %d, want 200", rec.Code)
+	}
+
+	if csp := rec.Header().Get("Content-Security-Policy"); !strings.Contains(csp, "report-uri /csp-reports") ||
+		!strings.Contains(csp, "default-src 'self'") {
+		t.Errorf("CSP = %q, want the defaults plus the report URI", csp)
+	}
+
+	if got := rec.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Errorf("X-Content-Type-Options = %q, want nosniff", got)
+	}
+}
+
+func TestSecurity_A02_APIMiddlewareWithRefusesBadOptions(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]APIMiddlewareOptions{
+		"unsafe CSP source": {SecureHeaders: func(cfg *middleware.SecureHeadersConfig) {
+			cfg.CSPSources = map[string][]string{"script-src": {"'unsafe-eval'"}}
+		}},
+		"bad report URI": {SecureHeaders: func(cfg *middleware.SecureHeadersConfig) {
+			cfg.ReportURI = "javascript:alert(1)"
+		}},
+	}
+
+	for name, opts := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			r := router.New(&web.Services{})
+			if err := APIMiddlewareWith(newTestApp(t), r, opts); err == nil {
+				t.Errorf("APIMiddlewareWith(%s) = nil, want an error", name)
+			}
+		})
+	}
+}

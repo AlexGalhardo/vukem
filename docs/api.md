@@ -13,7 +13,7 @@ vukem install:api           # add token auth and /api/v1 to an existing project 
 
 | Area | What you get |
 | --- | --- |
-| Middleware | `vukem.APIMiddleware`: recover, request id, logging, security headers, body limit; no sessions or CSRF |
+| Middleware | `vukem.APIMiddleware`: recover, request id, logging, security headers, body limit; no sessions or CSRF (`vukem.APIMiddlewareWith` edits the security headers) |
 | Auth | users, `accounts` (shared with `install:auth`), opaque access tokens: `POST /api/v1/tokens` (email, password, device_name → 201 `{token, type, expires_at}`, 5 per minute per IP), `GET /api/v1/me`, `DELETE /api/v1/tokens/current` |
 | Example resource | `/api/v1/posts`: public reads with `?filter[title]`, `?sort=title,-id`, `?page`/`?per_page` envelopes; token-protected writes |
 | Cross-cutting | CORS from `CORS_ALLOWED_ORIGINS` (deny by default), 60 requests per minute per token/IP, problem+json errors |

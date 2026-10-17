@@ -175,6 +175,7 @@ err := vukem.DefaultMiddlewareWith(app, r, vukem.MiddlewareOptions{
 | `Stateless` | No session middleware at all, for cookieless apps. CSRF protection stays on as `Origin`/`Sec-Fetch-Site` checks only: `csrfToken`/`csrfField` render empty, and session features (`c.Flash`, session login) return an error. |
 | `SessionBypass` | `ServeMux` patterns served without sessions. A pattern ending in `/` (`/webhooks/`) covers its whole subtree; `POST /hooks/{id}` matches one method and path. Refused together with `Stateless`. |
 | `CSRFBypass` | `ServeMux` patterns (same matching) exempt from CSRF checks; each one is logged at boot. Protect them another way (signatures). |
+| `I18n` | `*i18n.MiddlewareConfig` for the locale resolver installed by `WithTranslations` (nil: defaults): sources and their order (`Order`), the selectable `Locales`, parameter and cookie names. Validated at boot; refused without `WithTranslations`. See [Localization](/docs/digging-deeper/localization#locale-resolution). |
 
 Maintenance mode, the body limit and CSRF for every other route stay on: the options only add sources or skip what you list.
 
@@ -187,5 +188,5 @@ vukem make:middleware RequireAdmin   # app/middleware/require_admin.go
 The generated `func RequireAdmin(next http.Handler) http.Handler` is plain Go: attach it with `r.Use`, `g.Use` or `route.Use`. There is no named-middleware registry.
 
 <Callout type="warning">
-Auth middleware (`auth.Required`, `auth.Optional`, `auth.Guest`, `auth.Verified`, `auth.Ability`) is described in [Authentication](/docs/security/authentication#middleware); `ratelimit.Middleware(limiter, key)` in [Rate limiting](/docs/security/rate-limiting); `signed.Signer.Middleware()` and `webhook.Middleware` in [Security building blocks](/docs/security/building-blocks). JSON-only apps use `vukem.APIMiddleware(app, r)`: the default stack without sessions or CSRF.
+Auth middleware (`auth.Required`, `auth.Optional`, `auth.Guest`, `auth.Verified`, `auth.Ability`) is described in [Authentication](/docs/security/authentication#middleware); `ratelimit.Middleware(limiter, key)` in [Rate limiting](/docs/security/rate-limiting); `signed.Signer.Middleware()` and `webhook.Middleware` in [Security building blocks](/docs/security/building-blocks). JSON-only apps use `vukem.APIMiddleware(app, r)`: the default stack without sessions or CSRF. `vukem.APIMiddlewareWith(app, r, vukem.APIMiddlewareOptions{SecureHeaders: ...})` edits its `SecureHeadersConfig` the same way (validated at boot); there are no session or CSRF bypasses because that stack has neither.
 </Callout>

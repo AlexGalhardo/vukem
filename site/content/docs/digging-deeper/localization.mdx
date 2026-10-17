@@ -58,6 +58,17 @@ b.T("pt-BR", "posts.count", "count", 3)                 // a Bundle directly
 
 Candidates must be valid tags matching an available catalog (exact, shorter form, then same language); invalid input is ignored. The middleware stores the bundle and locale in the context (`i18n.Locale`, `i18n.WithLocale`, `i18n.BundleFrom`), sets `Content-Language`, and adds `Vary: Accept-Language` when the header was consulted. Rename or disable (`"-"`) the sources with `Query`, `Cookie` and `SessionKey`. To remember a user's choice, set the cookie or session value yourself.
 
+`Order` picks the sources and their order (a source left out is off), and `Locales` limits the locales a request can select (it must include the default, which stays the fallback). `cfg.Validate(bundle)` reports unknown or repeated sources and locales without a catalog; `vukem.DefaultMiddlewareWith` takes the config as `MiddlewareOptions.I18n` and validates it at boot:
+
+```go
+err := vukem.DefaultMiddlewareWith(app, r, vukem.MiddlewareOptions{
+	I18n: &i18n.MiddlewareConfig{
+		Order:   []i18n.Source{i18n.SourceQuery, i18n.SourceHeader}, // no cookie, no session
+		Locales: []string{"en", "pt-BR"},
+	},
+})
+```
+
 ## Validation messages
 
 The middleware also translates `web.Parse`/`Bind` validation messages from `validation.*` keys in your catalogs, so [validation](/docs/basics/validation) errors follow the request's locale.
