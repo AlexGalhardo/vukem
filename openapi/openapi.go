@@ -27,7 +27,9 @@ type Info struct {
 	Version     string
 	Description string
 	Servers     []string
-	// PathPrefix keeps only routes under it (e.g. "/api"); empty keeps all.
+	// PathPrefix keeps only routes under it, matching whole segments
+	// ("/api/v1" keeps /api/v1 and /api/v1/..., not /api/v10); empty keeps
+	// all.
 	PathPrefix string
 	// SecuritySchemes adds or replaces schemes; "bearer" (HTTP bearer
 	// token) is predefined.
@@ -140,7 +142,7 @@ func Generate(routes []router.RouteInfo, info Info) *Document {
 		}
 
 		path := oaPath(rt.Path)
-		if !strings.HasPrefix(path, info.PathPrefix) {
+		if !underPrefix(path, info.PathPrefix) {
 			continue
 		}
 
@@ -319,4 +321,10 @@ func typedOperation(s *Schemas, t *api.Operation) *Operation {
 	})
 
 	return op
+}
+
+func underPrefix(path, prefix string) bool {
+	prefix = strings.TrimSuffix(prefix, "/")
+
+	return prefix == "" || path == prefix || strings.HasPrefix(path, prefix+"/")
 }

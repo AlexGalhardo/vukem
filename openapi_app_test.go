@@ -117,6 +117,8 @@ func TestServeOpenAPIWithPrefix(t *testing.T) {
 		ServeOpenAPI(app, r, "/openapi.json")
 		api.Register(r, "GET /api/v1/ping", api.Op{Name: "ping"},
 			func(*web.Ctx, struct{}) (pingOut, error) { return pingOut{Pong: true}, nil })
+		api.Register(r, "GET /api/v10/ping", api.Op{Name: "ping10"},
+			func(*web.Ctx, struct{}) (pingOut, error) { return pingOut{Pong: true}, nil })
 		api.Register(r, "GET /internal/stats", api.Op{Name: "stats"},
 			func(*web.Ctx, struct{}) (pingOut, error) { return pingOut{}, nil })
 
