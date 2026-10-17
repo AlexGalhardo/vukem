@@ -38,11 +38,21 @@ TELEGRAM_BOT_TOKEN=123456:ABC...   # config.Secret, never logged
 TELEGRAM_CHAT_ID=-1001234567890
 TELEGRAM_MIN_LEVEL=error           # debug, info, warn, error
 TELEGRAM_THREAD_ID=42              # optional forum topic
+TELEGRAM_LOG=true                  # false: no log forwarding, app.Telegram only for Send/Contact
+TELEGRAM_RATE_LIMIT=20             # optional cap on forwarded log records per minute (0: none)
 ```
 
 ```go
 app.Telegram.Contact(ctx, map[string]string{"name": in.Name, "message": in.Message}) // never filtered by level
 app.Telegram.Send(ctx, "<b>Deploy</b> finished")                                     // pre-formatted HTML
+
+// In a queued job: deliver now and return the error so the job retries.
+err := app.Telegram.ContactSync(ctx, fields) // or SendSync; telegram.ErrDisabled when not configured
+
+// Only forward the records you mark (Filter sees log records, never Send/Contact).
+vukem.WithTelegram(func(c *telegram.Config) {
+	c.Filter = func(_ context.Context, r slog.Record) bool { return r.Level >= telegram.LevelFatal }
+})
 
 // Standalone: per-level routing, silent mode, custom error handling.
 tg := telegram.NewHandler(telegram.Config{
@@ -57,8 +67,9 @@ defer tg.Close(ctx)
 | Levels | debug, info, warn, error plus `telegram.LevelSuccess` and `telegram.LevelFatal`; `MinLevel` filter |
 | Routing | per-level chat ids, forum topic (`ThreadID`), `Silent` |
 | Format | Telegram HTML: emoji and level, app name, environment, UTC time, then the message and attributes (groups dotted, error chains as "caused by") in a `<pre>` block; all content escaped; truncated to 4096 characters without cutting tags or entities |
-| Reliability | bounded queue (`QueueSize`, drops and reports when full), per-request `Timeout`, one retry after HTTP 429 honouring `retry_after` capped by `MaxRetryAfter`, `OnError`, drained by `app.Shutdown` |
-| Security | token held as `config.Secret`; request errors are redacted (`TestSecurity_A09_TelegramTokenRedacted`); `vukem about` shows only on/off; disabled when token or chat is missing |
+| Reliability | bounded queue (`QueueSize`, drops and reports when full), per-request `Timeout`, one retry after HTTP 429 honouring `retry_after` capped by `MaxRetryAfter`, `OnError`, drained by `app.Shutdown`; `SendSync` / `ContactSync` skip the queue and return the error (bounded by `Timeout` per request and by ctx) |
+| Log forwarding | on by default for records at `MinLevel`+; `TELEGRAM_LOG=false` turns it off; `Filter` and `RateLimit`/`RatePeriod` (`TELEGRAM_RATE_LIMIT` per minute, `ErrRateLimited` reported once per window) narrow it; `vukem.WithTelegram` edits the config in code |
+| Security | token held as `config.Secret`; request errors are redacted, also from `SendSync`/`ContactSync` (`TestSecurity_A09_TelegramTokenRedacted`, `TestSecurity_A09_TelegramSyncErrorRedactsToken`); `vukem about` shows only on/off; disabled when token or chat is missing |
 
 ## Mail
 

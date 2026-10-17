@@ -256,6 +256,7 @@ type options struct {
 	ready         chan<- string
 	noHTTP        bool
 	devtools      bool
+	telegram      []func(*telegram.Config)
 }
 
 // WithRoutes registers routes (and router middleware) after providers
@@ -478,12 +479,12 @@ func New(opts ...Option) (*App, error) {
 		logger = newLogger(&cfg, out)
 	}
 
-	tg, err := telegramHandler(src, &cfg)
+	tg, tgLogs, err := telegramHandler(src, &cfg, o.telegram)
 	if err != nil {
 		return nil, err
 	}
 
-	if tg != nil {
+	if tgLogs {
 		logger = slog.New(slog.NewMultiHandler(logger.Handler(), tg))
 	}
 
