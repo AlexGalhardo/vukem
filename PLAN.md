@@ -585,7 +585,7 @@ Applies to **every** task:
   → verify: `cosign verify-blob` in release workflow; Scorecard badge.
 - [x] **B.5.3** Performance baseline (router, ORM, render, full request) vs net/http, chi, echo.
   → verify: `docs/benchmarks.md` committed.
-- [ ] **B.5.4** Docs completeness: every package has overview + examples; guides for each starter.
+- [x] **B.5.4** Docs completeness: every package has overview + examples; guides for each starter.
   → verify: checklist.
 
 - [ ] **B.5.6** Documentation site updated with every BETA feature (OpenAPI, queue, scheduler, Inertia, Vite, Redis, Mongo, i18n, SSE, encryption, GraphQL, WebSockets/broadcasting, admin, dev dashboard, JWT, 2FA, S3, MySQL, new starters, client generation, Stripe, file uploads, Scalar API docs, gRPC) and redeployed.
