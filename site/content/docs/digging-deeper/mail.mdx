@@ -59,4 +59,4 @@ if len(app.Mails().SentTo("ana@example.com")) != 1 {
 
 ## Queued mail
 
-`app.MailLater(ctx, mailable)` renders the message now and sends it from a retried [queue](/docs/digging-deeper/queue) job. The message ID stays the same across retries, so Resend's idempotency key prevents duplicates.
+`mailer.SendLater(ctx, mailable, opts...)` (or `app.MailLater`) renders the message now and sends it from a retried [queue](/docs/digging-deeper/queue) job. The message ID stays the same across retries, so Resend's idempotency key prevents duplicates. The job payload is the rendered message encrypted with `app.Crypt`, so reset links and other tokens never sit in the jobs tables or `queue:failed` output in clear text. Queue options apply to the mail job: `queue.OnQueue("mail")`, `queue.Retries(5)`. With `QUEUE_CONNECTION=sync` the mail is sent during the call; use `memory` or `database` so requests do not wait for the mail server.

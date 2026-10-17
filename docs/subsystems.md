@@ -81,7 +81,7 @@ err = mailer.Send(ctx, Welcome{User: u})
 - Addresses go through `net/mail` (no header injection); subjects, tags and content ids with line breaks are rejected (`TestSecurity_A05_MailHeaderInjection`). `Bcc` is never written as a header.
 - Previews in development: `r.Handle("/_mail/", http.StripPrefix("/_mail/", mail.Preview(mailer, map[string]mail.Mailable{"welcome": sample})))`.
 - Tests: `MAIL_MAILER=array` by default in `vukemtest`; `app.Mails().SentTo("ana@example.com")`.
-- Queued mail: `app.MailLater(ctx, mailable)` renders now and sends from a retried queue job (see [Queue](#queue)).
+- Queued mail: `mailer.SendLater(ctx, mailable, opts...)` (or `app.MailLater`) renders now and sends from a retried queue job whose payload is encrypted with `app.Crypt` (see [Queue](#queue)). A `*mail.Mailer` built with `mail.New` needs `SetEnqueue`; otherwise `SendLater` returns `mail.ErrNoQueue`.
 
 | `MAIL_MAILER` | Transport | Settings |
 | --- | --- | --- |
@@ -277,7 +277,7 @@ err = q.DispatchTx(ctx, tx, SendInvoice{OrderID: 1}) // database driver: enqueue
 - Commands: `queue:work [-queue high,default] [-concurrency 4] [-once] [-stop-when-empty]` (Ctrl+C drains running jobs), `queue:failed [-json]`, `queue:retry <ids…|all>`, `queue:forget <ids…|all>`.
 - The `database/dbtest` conformance suite covers the driver (exactly-once processing with concurrent workers, `DispatchTx` rollback, failed/retry/forget, takeover of abandoned jobs) on SQLite and Postgres.
 - `vukem make:job SendInvoice` writes `app/jobs/send_invoice.go` (job type, `Kind`, and `HandleSendInvoice(app *vukem.App)` returning the handler) and registers `queue.Handle(HandleSendInvoice(app))` in `app/jobs/registry.go`, whose `All(app)` `bootstrap` passes to `vukem.WithJobsFunc`. Handlers reach `app.DB()`, `app.Now()` and `app.Mailer()` without globals; the function runs once, when the queue is built, so it must not call `app.Queue()` itself (handlers may). Projects whose `All()` takes no app keep getting dependency-free handlers registered with `WithJobs`.
-- **Queued mail:** `app.MailLater(ctx, mailable)` renders now and sends from a job (retried; the message ID is stable across retries).
+- **Queued mail:** `mailer.SendLater(ctx, mailable)` / `app.MailLater(ctx, mailable)` renders now and sends from a job (retried; the message ID is stable across retries). The payload is the rendered message sealed with `app.Crypt`, so mail bodies and addresses never reach the jobs tables in clear text; jobs queued in clear text by older versions still send.
 - **Queued listeners:** `events.OnQueued("update_stock", listeners.UpdateStock)` (or `make:listener UpdateStock --event OrderShipped --queued`) enqueues the event as JSON and runs the listener in a worker; `Dispatch` returns only enqueue errors.
 - **Outgoing webhooks:** `webhook.Sender` registers a `webhook.deliver` job (`s.Job()`) and `s.Send(ctx, q, webhook.Delivery{Endpoint, Payload})` enqueues it. Each attempt looks the endpoint up by id (URL and secret never enter the jobs tables), signs it with the Standard Webhooks scheme and posts through `httpclient.Safe`: 2xx succeeds, 410 Gone stops (`OnGone`), anything else retries (8 times, exponential from 30s). `webhook.SQLDeliveryLog` records each attempt. See [security.md](security.md#building-blocks).
 - **Testing:** pass `vukem.WithQueueDriver(fake)` with `fake := queue.NewFake()`; `queue.Dispatched[jobs.SendInvoice](fake)` returns the dispatched jobs, and `q.Work(ctx, queue.WorkOptions{StopWhenEmpty: true})` runs them when the test wants to.

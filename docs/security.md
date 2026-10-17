@@ -103,6 +103,7 @@ What Vukem does **by default** to protect applications, mapped to the [OWASP Top
 | TLS: Go's secure defaults (TLS 1.2+, hybrid post-quantum key exchange in Go 1.26+); no option to disable verification without `InsecureSkipVerify` naming (enforced by `.golangci.yml` gosec G402) | [x] |
 | `drivers/mysql`: without `tls=` in `DATABASE_URL`, every non-loopback host gets TLS with a verified certificate (`TestSecurity_A04_MySQLRemoteRequiresTLS`) | [x] |
 | `config.Secret` redacts secrets in logs, JSON and `%v` (`TestSecurity_A04_SecretRedaction`) | [x] |
+| Queued mail (`mailer.SendLater`, `app.MailLater`): the rendered message is stored in the job sealed with `app.Crypt` (additional data binds it to the mail job), so reset links, tokens and addresses never sit in the jobs tables, `queue:failed` output or logs in clear text; a tampered payload fails the job instead of sending (`TestSecurity_A04_QueuedMailPayloadIsEncrypted`) | [x] |
 | `drivers/s3` refuses a plain `http://` endpoint unless `S3_INSECURE_HTTP=true` (local S3-compatible server only) (`TestSecurity_A04_S3RequiresTLS`) | [x] |
 
 ### A05:2025 — Injection

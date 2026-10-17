@@ -69,13 +69,13 @@ vukem queue:forget <id…|all>
 ## Queued mail and listeners
 
 ```go
-err := app.MailLater(ctx, mail.Welcome{User: u}) // rendered now, sent from a retried job
+err := mailer.SendLater(ctx, mail.Welcome{User: u}) // or app.MailLater: rendered now, sent from a retried job
 
 // app/listeners/registry.go (vukem make:listener UpdateStock --event OrderShipped --queued)
 events.OnQueued("update_stock", UpdateStock)
 ```
 
-`MailLater` keeps the message ID across retries, so providers that deduplicate by it send once. A queued listener's event is stored as JSON and run by a worker; `Dispatch` only reports enqueue errors.
+`SendLater` keeps the message ID across retries, so providers that deduplicate by it send once, and stores the message encrypted with `app.Crypt`. A queued listener's event is stored as JSON and run by a worker; `Dispatch` only reports enqueue errors.
 
 ## Testing
 

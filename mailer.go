@@ -67,6 +67,7 @@ func (a *App) Mailer() (*mail.Mailer, error) {
 		}
 
 		a.mail.mailer = mail.New(t, cfg.From, views)
+		a.mail.mailer.SetEnqueue(a.enqueueMail)
 	})
 
 	return a.mail.mailer, a.mail.err

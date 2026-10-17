@@ -137,27 +137,23 @@ func (a *App) databaseQueue(cfg QueueConfig) (*queue.Database, error) {
 	return d, nil
 }
 
-func (a *App) sendQueuedMail(ctx context.Context, msg mail.Message) error {
-	m, err := a.Mailer()
-	if err != nil {
-		return err
-	}
+// queuedMail is the payload of a MailJobKind job: the rendered message,
+// encrypted with app.Crypt so bodies (reset links, tokens) and addresses
+// never sit in the jobs tables, queue:failed output or logs in clear text.
+// Message is the clear-text payload of jobs queued before v0.24.0.
+type queuedMail struct {
+	Sealed string `json:"sealed,omitempty"`
 
-	return m.Transport().Send(ctx, &msg)
+	mail.Message
 }
 
-// MailLater renders mailable now and sends it from a queue job (retried
-// with the queue's backoff; the message ID stays the same across retries,
-// so providers that deduplicate by it send it once).
-func (a *App) MailLater(ctx context.Context, mailable mail.Mailable, opts ...queue.Option) error {
-	m, err := a.Mailer()
-	if err != nil {
-		return err
-	}
+// mailJobAD binds sealed mail payloads to the mail job.
+const mailJobAD = "queue:" + MailJobKind
 
-	msg, err := m.Render(ctx, mailable)
+func (a *App) enqueueMail(ctx context.Context, msg *mail.Message, opts ...queue.Option) error {
+	plain, err := json.Marshal(msg) //nolint:musttag // Go field names, as mail jobs always used
 	if err != nil {
-		return err
+		return fmt.Errorf("vukem: encode queued mail: %w", err)
 	}
 
 	q, err := a.Queue()
@@ -165,7 +161,44 @@ func (a *App) MailLater(ctx context.Context, mailable mail.Mailable, opts ...que
 		return err
 	}
 
-	return q.DispatchKind(ctx, MailJobKind, msg, opts...)
+	return q.DispatchKind(
+		ctx,
+		MailJobKind,
+		map[string]string{"sealed": a.Crypt.Seal(plain, []byte(mailJobAD))},
+		opts...)
+}
+
+func (a *App) sendQueuedMail(ctx context.Context, p queuedMail) error {
+	m, err := a.Mailer()
+	if err != nil {
+		return err
+	}
+
+	msg := p.Message
+	if p.Sealed != "" {
+		plain, err := a.Crypt.Open(p.Sealed, []byte(mailJobAD))
+		if err != nil {
+			return fmt.Errorf("vukem: open queued mail: %w", err)
+		}
+
+		msg = mail.Message{}
+		if err := json.Unmarshal(plain, &msg); err != nil { //nolint:musttag // see enqueueMail
+			return fmt.Errorf("vukem: decode queued mail: %w", err)
+		}
+	}
+
+	return m.Transport().Send(ctx, &msg)
+}
+
+// MailLater renders mailable now and sends it from a queue job: see
+// mail.Mailer.SendLater (the app's mailer encrypts the job payload).
+func (a *App) MailLater(ctx context.Context, mailable mail.Mailable, opts ...queue.Option) error {
+	m, err := a.Mailer()
+	if err != nil {
+		return err
+	}
+
+	return m.SendLater(ctx, mailable, opts...)
 }
 
 // queueRunner works the in-memory queue inside the web process.
