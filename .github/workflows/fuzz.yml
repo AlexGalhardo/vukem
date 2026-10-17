@@ -1,0 +1,77 @@
+name: Fuzz
+
+# Weekly fuzzing campaign: every target runs for an hour (B.5.2). Crashers
+# are uploaded as artifacts; commit them under testdata/fuzz/<Target>/ as
+# regression seeds together with the fix.
+on:
+  schedule:
+    - cron: "17 3 * * 0" # Sundays 03:17 UTC
+  workflow_dispatch:
+    inputs:
+      fuzztime:
+        description: Duration per target (go test -fuzztime)
+        default: 1h
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  fuzz:
+    name: ${{ matrix.target }} (${{ matrix.module }}/${{ matrix.pkg }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { module: ., pkg: ./auth/jwt, target: FuzzVerify }
+          - { module: ., pkg: ./config, target: FuzzParseEnv }
+          - { module: ., pkg: ./crypt, target: FuzzDecrypt }
+          - { module: ., pkg: ./i18n, target: FuzzCanonical }
+          - { module: ., pkg: ./i18n, target: FuzzParseAcceptLanguage }
+          - { module: ., pkg: ./orm, target: FuzzWhereColumn }
+          - { module: ., pkg: ./router, target: FuzzRoutePattern }
+          - { module: ., pkg: ./router, target: FuzzServePath }
+          - { module: ., pkg: ./schedule, target: FuzzParseCron }
+          - { module: ., pkg: ./session, target: FuzzSessionCookie }
+          - { module: ., pkg: ./storage, target: FuzzClean }
+          - { module: ., pkg: ./upload, target: FuzzParseClamReply }
+          - { module: ., pkg: ./upload, target: FuzzParseMetadata }
+          - { module: ., pkg: ./upload, target: FuzzReceive }
+          - { module: ., pkg: ./upload, target: FuzzSanitizeName }
+          - { module: ., pkg: ./upload, target: FuzzTusRequest }
+          - { module: ., pkg: ./web, target: FuzzFormToMap }
+          - { module: ., pkg: ./web, target: FuzzSafeRedirect }
+          - { module: ., pkg: ./webhook, target: FuzzVerifyHMAC }
+          - { module: ., pkg: ./z, target: FuzzParse }
+          - { module: contrib/graphql, pkg: ., target: FuzzParseQuery }
+          - { module: contrib/graphql, pkg: ., target: FuzzParseSchema }
+          - { module: contrib/stripe, pkg: ., target: FuzzConstructEvent }
+    env:
+      FUZZTIME: ${{ inputs.fuzztime || '1h' }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ matrix.module }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: "**/go.sum"
+      - name: go test -fuzz
+        env:
+          PKG: ${{ matrix.pkg }}
+          TARGET: ${{ matrix.target }}
+        run: go test "$PKG" -run '^$' -fuzz "^${TARGET}\$" -fuzztime "$FUZZTIME"
+      - name: Upload crashers
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: crashers-${{ matrix.target }}
+          path: ${{ matrix.module }}/${{ matrix.pkg }}/testdata/fuzz/${{ matrix.target }}/
+          if-no-files-found: ignore
