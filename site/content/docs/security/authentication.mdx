@@ -12,11 +12,11 @@ vukem migrate
 
 `install:auth` copies **code you own** into the project and registers its migrations and routes:
 
-> A password reset and turning on 2FA end the user's other sessions only with server-side sessions: set `SESSION_DRIVER=database`. With the default encrypted cookie driver there is nothing to revoke, and `Accounts.RevokeOtherSessions` does nothing ([Sessions](/docs/basics/sessions#revoking-a-users-other-sessions)).
+> A password reset and turning on 2FA end the user's other sessions on every session driver: `Accounts.RevokeOtherSessions` bumps `users.session_version`, which signs out encrypted cookie sessions too, and deletes server-side records ([Sessions](/docs/basics/sessions#revoking-a-users-other-sessions)).
 
 
 ```text
-app/models/user.go                          User (AuthID, AuthPassword, EmailVerified)
+app/models/user.go                          User (AuthID, AuthPassword, AuthSessionVersion, EmailVerified)
 app/accounts/{accounts,users,passwords}.go  guards, registration, verification, password resets
 app/accounts/{messages.go,lang/}            auth messages in en and pt-BR (accounts.T)
 app/controllers/account/*.go                login, register, logout, forgot/reset password, verification, dashboard
@@ -85,6 +85,7 @@ user, err := auth.User[models.User](c, "web") // in handlers behind Required
 
 - `Attempt` checks the password in constant time; unknown users still cost a hash verification and get the same 422 error. Failures emit the `auth.login_failed` security event.
 - `Login` regenerates the session id (fixation) and stores the user id, also under `web.SessionUserKey` so `session.Manager.RevokeOthers` can end the user's other sessions ([Sessions](/docs/basics/sessions)); `Logout` invalidates the session and deletes the remember-me token.
+- Users implementing `auth.SessionVersioner` have their session version recorded on login; once the user's version changes, older sessions are signed out on every driver. `RefreshSession(c)` keeps the current session across a bump.
 - Remember-me cookies hold `<id>.<secret>`; only `SHA-256(secret)` is stored, and tokens rotate on every use.
 - Stale hashes (bcrypt, weaker argon2 parameters) are upgraded on login.
 - `Validate(c, creds)` checks credentials without logging in (token issuance).
@@ -133,6 +134,6 @@ Set `tokens.Prefix` (the `install:auth` scaffold uses `vk_`; pick one specific t
 ## Testing
 
 ```go
-app.Client(t).ActingAs("web", user).Get("/dashboard").AssertOK()
+app.Client(t).ActingAs("web", user).Get("/dashboard").AssertOK() // stores what Login stores, session version included
 app.Client(t).WithToken(plain).GetJSON("/api/v1/me").AssertOK()
 ```

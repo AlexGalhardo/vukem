@@ -61,7 +61,7 @@ Each `app.Client(t)` keeps its own cookie jar between requests. Assertions are m
 | Group | Methods |
 | --- | --- |
 | Requests | `Get`, `GetJSON`, `PostForm`, `PostJSON`, `PutJSON`, `PatchJSON`, `Delete`, `Do(method, target, body, contentType)` |
-| Client state | `WithHeader`, `WithToken`, `WithCookie`, `CookieValue`, `AcceptJSON()`, `ActingAs(guard, user)`, `HTMX()` (htmx headers), `Inertia(version)` |
+| Client state | `WithHeader`, `WithToken`, `WithCookie`, `CookieValue`, `AcceptJSON()`, `ActingAs(guard, user)` (what `SessionGuard.Login` stores, session version included), `WithSession(values)` (adds session values, keeping the current ones), `HTMX()` (htmx headers), `Inertia(version)` |
 | Status | `AssertStatus(n)`, `AssertOK`, `AssertCreated`, `AssertNoContent`, `AssertNotFound`, `AssertForbidden`, `AssertUnauthorized`, `AssertUnprocessable` |
 | Redirects | `AssertRedirect(url)` (3xx or `HX-Location`), `AssertRedirectRoute(name, params...)` |
 | Body and headers | `AssertSee(text)`, `AssertDontSee`, `AssertHeader`, `AssertHeaderContains`, `AssertHeaderMissing` |

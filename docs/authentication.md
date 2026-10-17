@@ -66,6 +66,7 @@ Every guard that authenticates a request also records `auth.Principal(ctx)` (`gu
 
 - `Attempt(c, creds, auth.Remember(bool))`: provider lookup → constant-time hash check → `Login`. Unknown users still pay for a hash verification against a dummy hash, and both failures return the same 422 error (`TestSecurity_A07_LoginErrorsDoNotRevealUsers`). Failures emit the `auth.login_failed` security event.
 - `Login(c, u)` regenerates the session id (fixation) and stores the user id under `auth_<guard>` and the owner `"<guard>:<id>"` (`SessionUserID`) under `web.SessionUserKey` (backfilled on the next request for older sessions), so `session.Manager.RevokeOthers(ctx, owner, keepID)` can end the user's other server-side sessions; `Logout(c)` invalidates the session and deletes the remember-me token.
+- A user type implementing `SessionVersioner` (`AuthSessionVersion() int64`) has its version recorded on login; a session whose version no longer matches the user's is signed out on its next request, whatever the session driver. Bump the version to end every session; `RefreshSession(c)` re-records it in the current session when that one must stay. `SessionValues(guard, user)` returns what `Login` stores.
 - A session whose user no longer exists is forgotten: custom `UserProvider`s must report a missing user from `ByID` as `auth.ErrUserNotFound` (a wrapped `orm.ErrNotFound` or `sql.ErrNoRows` is accepted too). Any other lookup error (database down) is returned as a 503 and `auth.Required` answers with it, keeping the session, so an outage neither logs users out nor sends them to the login page (`TestSecurity_A04_SessionKeptWhenUserLookupFails`).
 - Remember-me: cookie `remember_<guard>` = `<id>.<secret>` (HttpOnly, SameSite=Lax, Secure unless `InsecureCookies`), only `SHA-256(secret)` stored in `remember_tokens`, single use and rotated on every use, 30 days by default (`RememberFor`).
 - Rehash on login when `hasher.NeedsRehash` (e.g. bcrypt → argon2id) and the provider implements `PasswordUpdater`.
@@ -97,7 +98,7 @@ Standard library only. `jwt.Sign(key, jwt.Claims{Subject, Issuer, Audience, Expi
 
 ### Testing
 
-`app.Client(t).ActingAs("web", user)` starts a logged-in session; `.WithToken(plain)` sends a bearer token.
+`app.Client(t).ActingAs("web", user)` starts a logged-in session (with the user's session version), `.WithSession(values)` adds values such as an app's own login stamp; `.WithToken(plain)` sends a bearer token.
 
 ## Hashing
 
@@ -131,7 +132,7 @@ tests/auth_messages_test.go                every message translated
 | Register | unique email (`orm.Unique`, case-insensitive), argon2id hash, login, verification email |
 | Login | `Attempt` with remember-me, intended URL, **5 attempts per minute per email + IP** (`ratelimit`), same error for unknown users |
 | Email verification | signed link (`signed` package, HMAC + 1 hour expiry), must match the logged-in user; resend limited to 3 per minute |
-| Forgot / reset password | same answer for unknown emails; random token stored as SHA-256, 1 hour, single use; reset ends every session (with `SESSION_DRIVER=database`), remembered session and API token (`Accounts.RevokeOtherSessions`; call it too if you add a password change form) |
+| Forgot / reset password | same answer for unknown emails; random token stored as SHA-256, 1 hour, single use; reset ends every session on every session driver (`users.session_version` bumped with the password; server-side records deleted), remembered session and API token (`Accounts.RevokeOtherSessions`; call it too if you add a password change form) |
 | Logout | session invalidated, remember-me token deleted |
 
 Flash messages, controller errors and mail subjects go through `accounts.T(ctx, key)`, with English and Brazilian Portuguese catalogs in `app/accounts/lang/<locale>/*.json` (keys `auth.*`; `--2fa` and `--social` add `two_factor.json` and `social.json`). `T` uses the request locale that `i18n.Middleware` resolves when the app uses `vukem.WithTranslations`, and English otherwise. A key in the app's own catalog for that locale or its language (`resources/lang/pt-BR.json`, then `pt.json`) wins, so the app can reword a message or add a locale without editing the scaffold. Field messages of the `z` schemas in `app/requests` and the views stay in English. Errors from the framework itself (failed login, unverified email, missing token ability, social sign-in, `orm.Unique`) carry their own keys and are translated by the built-in catalogs ([i18n](subsystems.md#i18n)); the login error stays the same for unknown users and wrong passwords in every locale. `tests/auth_messages_test.go` checks that every key exists in every locale. Mailables built without a `Subject` keep the English one.
@@ -163,7 +164,7 @@ It also patches the user-owned `Login` handler (`Validate`, then the challenge, 
 | --- | --- |
 | Storage | `two_factor_secret` (`orm.Encrypted[string]`) and `two_factor_recovery_codes` (`orm.Encrypted[[]string]` of SHA-256 hashes) are encrypted with `APP_KEY`, never plaintext; `two_factor_confirmed_at`; `two_factor_last_step`. `TwoFactor` is its own model, so the secret never reaches `User` or the shared `auth.user` prop |
 | Enable (`GET/POST /user/two-factor`) | logged-in users get a new secret: QR code (inline SVG from `totp.QR` of the `otpauth://` URI, issuer `APP_NAME`) and the setup key for manual entry. A confirmed setup is never replaced (409), so enabling again cannot switch 2FA off without the password |
-| Confirm (`POST /user/two-factor/confirm`) | 2FA is on only after a valid code; then 8 recovery codes are shown **once** (flashed in the encrypted session, only hashes are stored); every other session of the user ends (`Accounts.RevokeOtherSessions`) |
+| Confirm (`POST /user/two-factor/confirm`) | 2FA is on only after a valid code; then 8 recovery codes are shown **once** (flashed in the encrypted session, only hashes are stored); every other session of the user ends (`Accounts.RevokeOtherSessions`, then `Web.RefreshSession` keeps the current one) |
 | Recovery codes (`POST /user/two-factor/recovery-codes`) | regenerate: the old ones stop working, the new ones are shown once; the page shows how many are left |
 | Disable (`POST /user/two-factor/disable`) | needs the current password |
 | Login | a correct password for a user with confirmed 2FA does **not** log in: the session id is regenerated, the pending user id and the remember-me choice are stored, and the browser goes to `/two-factor-challenge`. The pending login expires after 5 minutes (`accounts.TwoFactorChallengeTTL`) |

@@ -187,6 +187,7 @@ Handlers are `net/http` handlers, so `httptest` works too: `h, err := app.Handle
 
 ```go
 app.Client(t).ActingAs("web", user).Get("/dashboard").AssertOK()   // logged in on the session guard
+app.Client(t).ActingAs("web", user).WithSession(map[string]any{"stamp": s}) // extra session values
 app.Client(t).WithToken(plain).GetJSON("/api/v1/me").AssertOK()   // bearer token
 
 app.Mails().SentTo("ana@example.com")  // MAIL_MAILER=array in tests

@@ -78,7 +78,7 @@ The last of `WithCacheStore` / `WithCacheStoreFunc` (and likewise for sessions a
 | Feature | API |
 | --- | --- |
 | Cache store | `rc.CacheStore(prefix)` implements `cache.Store`; `Flush` deletes only the prefix (`SCAN` + `DEL`) and refuses an empty one |
-| Sessions | `rc.SessionStore(prefix)` implements `session.Store` |
+| Sessions | `rc.SessionStore(prefix)` implements `session.ListStore`: `RevokeOthers`, `UserSessions` and `RevokeSession` work as on the database store. Each session records its owner (`<prefix>owner:<id>`) and each user a set of session ids (`<prefix>user:<owner>`); every command touches one key (Redis Cluster works); needs Redis 6.2+ |
 | Queue | `rc.Queue(redis.QueueOptions{Prefix, Grace})`: sorted sets under `{queue}:` (one Cluster slot), atomic Lua reservation, failed jobs for `queue:failed`, `queue:retry`, `queue:forget` |
 | Rate limiting | `rc.RateLimiter("api:", 60, time.Minute)` implements `ratelimit.Limiter` with GCRA, shared by every server |
 | Locks | `cache.New(rc.CacheStore("locks:"), "").NewLock(name, ttl)` |

@@ -335,7 +335,7 @@ rc, err := redis.Open(ctx, os.Getenv("REDIS_URL")) // redis://localhost:6379/0, 
 
 app, err := vukem.New(
 	vukem.WithCacheStore(rc.CacheStore("cache:")),   // also backs scheduler and cache locks
-	vukem.WithSessionStore(rc.SessionStore("")),     // "session:" keys with TTL
+	vukem.WithSessionStore(rc.SessionStore("")),     // "session:" keys with TTL; revoke and list per user
 	vukem.WithQueueDriver(rc.Queue(redis.QueueOptions{})),
 )
 
