@@ -244,3 +244,16 @@ func TestWithJobsFuncReachesTheApp(t *testing.T) {
 		t.Errorf("Queue() with a kind from WithJobs and WithJobsFunc = %v, want ErrDuplicateKind", err)
 	}
 }
+
+func TestWithJobsFuncPanicIsAnError(t *testing.T) {
+	t.Parallel()
+
+	app := newTestApp(t, WithJobsFunc(func(*App) []queue.Registration { panic("boom") }))
+
+	for range 2 {
+		q, err := app.Queue()
+		if q != nil || err == nil || !strings.Contains(err.Error(), "WithJobsFunc panicked: boom") {
+			t.Fatalf("Queue() = %v, %v; want nil and the panic as an error", q, err)
+		}
+	}
+}

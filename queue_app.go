@@ -23,8 +23,12 @@ func WithJobs(regs ...queue.Registration) Option {
 
 // WithJobsFunc registers job handlers built from the app, so they reach
 // its database, clock, mailer and other services without globals
-// (generated apps pass jobs.All). fn runs once, when the queue is first
-// built; it must not call app.Queue (handlers may, when they run).
+// (generated apps pass jobs.All). fn runs once, inside the first
+// app.Queue call; a panic in fn becomes that call's error. fn may get
+// app.DB, app.Mailer, app.Crypt and app.Now; it must not dispatch: no
+// app.Queue, app.Events.Dispatch (queued listeners), Mailer.SendLater /
+// app.MailLater or running scheduled jobs, which wait for the queue being
+// built and deadlock. Handlers may do all of that when they run.
 func WithJobsFunc(fn func(app *App) []queue.Registration) Option {
 	return func(o *options) error { o.jobFuncs = append(o.jobFuncs, fn); return nil }
 }
@@ -97,9 +101,10 @@ func (a *App) Queue() (*queue.Queue, error) {
 			q.SetObserver(a.Devtools)
 		}
 
-		regs := slices.Clone(a.jobs)
-		for _, fn := range a.jobFuncs {
-			regs = append(regs, fn(a)...)
+		regs, err := a.jobRegistrations()
+		if err != nil {
+			a.queueErr = err
+			return
 		}
 
 		regs = append(regs, a.Events.Jobs()...)
@@ -114,6 +119,23 @@ func (a *App) Queue() (*queue.Queue, error) {
 	})
 
 	return a.queue, a.queueErr
+}
+
+// jobRegistrations runs the WithJobsFunc functions; a panic in one becomes
+// the Queue error instead of leaving a nil queue behind the sync.Once.
+func (a *App) jobRegistrations() (regs []queue.Registration, err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			err = fmt.Errorf("vukem: WithJobsFunc panicked: %v", p)
+		}
+	}()
+
+	regs = slices.Clone(a.jobs)
+	for _, fn := range a.jobFuncs {
+		regs = append(regs, fn(a)...)
+	}
+
+	return regs, nil
 }
 
 func (a *App) databaseQueue(cfg QueueConfig) (*queue.Database, error) {
