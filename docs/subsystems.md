@@ -401,7 +401,7 @@ safe := httpclient.Safe(httpclient.Options{WrapTransport: tracing.Transport}) //
 
 ### Metrics
 
-Metrics are on when `Config.MetricReader` is set, or else when `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` (used as is) or `OTEL_EXPORTER_OTLP_ENDPOINT` with `OTEL_METRICS_EXPORTER=otlp` (`/v1/metrics` appended) selects an OTLP/HTTP collector. The generic endpoint alone does not turn metrics on, so apps that set it for traces keep the same output after upgrading; `OTEL_METRICS_EXPORTER=none` turns metrics off. `OTEL_EXPORTER_OTLP_[METRICS_]HEADERS`, `_TIMEOUT` and `_COMPRESSION` follow the traces rules, and `OTEL_METRIC_EXPORT_INTERVAL` (milliseconds, default 60000) sets the export period. The provider builds a `MeterProvider` with the same resource and records, through the same hooks:
+Metrics are on when `Config.MetricReader` is set, or else when `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` (used as is) or else `OTEL_EXPORTER_OTLP_ENDPOINT` (`/v1/metrics` appended) selects an OTLP/HTTP collector: as in the OpenTelemetry spec, `OTEL_METRICS_EXPORTER` defaults to `otlp` and the generic endpoint applies to every signal (since v0.27; before, metrics also needed `OTEL_METRICS_EXPORTER=otlp`). `OTEL_METRICS_EXPORTER=none` turns metrics off, for a collector that accepts only traces such as Railway's tracing receiver; values other than `otlp` and `none` fail the boot. `OTEL_EXPORTER_OTLP_[METRICS_]HEADERS`, `_TIMEOUT` and `_COMPRESSION` follow the traces rules, and `OTEL_METRIC_EXPORT_INTERVAL` (milliseconds, default 60000) sets the export period. The provider builds a `MeterProvider` with the same resource and records, through the same hooks:
 
 | Metric | Kind | Attributes |
 | --- | --- | --- |

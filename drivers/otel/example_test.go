@@ -16,8 +16,9 @@ import (
 	"github.com/AlexGalhardo/vukem/web"
 )
 
-// The provider reads OTEL_EXPORTER_OTLP_ENDPOINT (tracing is off without
-// it), traces every request and flushes spans when the app shuts down.
+// The provider reads OTEL_EXPORTER_OTLP_ENDPOINT (traces and metrics are
+// off without it), traces and measures every request and flushes both when
+// the app shuts down.
 func Example() {
 	app, err := vukem.New(vukem.WithProviders(otel.New(otel.Config{})))
 	if err != nil {
