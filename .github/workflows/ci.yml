@@ -190,6 +190,24 @@ jobs:
         working-directory: contrib/stripe
         run: go test -count=1 ./...
 
+  grpc:
+    name: gRPC module
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: "**/go.sum"
+      - name: Unit tests (module alone)
+        working-directory: contrib/grpc
+        env:
+          GOWORK: "off"
+        run: go test -race -count=1 ./...
+      - name: Unit tests (workspace, current core)
+        working-directory: contrib/grpc
+        run: go test -count=1 ./...
+
   redis:
     name: Redis driver (${{ matrix.image }})
     runs-on: ubuntu-latest

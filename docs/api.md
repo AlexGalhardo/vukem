@@ -309,9 +309,63 @@ if apiErr, ok := errors.AsType[*apiclient.Error](err); ok && apiErr.Status == 42
 
 Golden outputs live in `openapi/testdata/shop.client.ts` and `shop.client.go`; a round-trip test runs the generated Go client against a live app, and CI type-checks the TypeScript client with `tsc --strict`.
 
+## gRPC
+
+`contrib/grpc` (module `github.com/AlexGalhardo/vukem/contrib/grpc`, package `grpc`) serves [connect-go](https://connectrpc.com) services from the app router. connect-go handlers are plain `net/http`, so **gRPC, gRPC-Web and Connect** share one port, the router's middleware (request id, logging, rate limiting, auth guards) and the app container; no separate `google.golang.org/grpc` server.
+
+```go
+func routes(r *router.Router, app *vukem.App) error {
+	opts := grpc.HandlerOptions(grpc.Options{
+		Rules: []grpc.Rule{grpc.Validate(z.Struct[greetv1.GreetRequest](z.Shape{"name": z.String().Min(1)}))},
+	})
+
+	path, h := greetv1connect.NewGreetServiceHandler(&greeter{}, opts...)
+	grpc.Mount(r, path, h).Use(grpc.Required(apiGuard), ratelimit.Middleware(limiter, ratelimit.ByToken))
+
+	grpc.Health(r, grpchealth.NewStaticChecker(greetv1connect.GreetServiceName))
+	grpc.Reflection(app, r, greetv1connect.GreetServiceName) // not in production
+
+	return nil
+}
+
+func (g *greeter) Greet(ctx context.Context, req *connect.Request[greetv1.GreetRequest]) (*connect.Response[greetv1.GreetResponse], error) {
+	user, err := auth.UserFrom[*models.User](ctx, "api")
+	if err != nil {
+		return nil, err
+	}
+
+	return connect.NewResponse(&greetv1.GreetResponse{Greeting: "Hello, " + user.Name}), nil
+}
+```
+
+- `grpc.Mount(r, path, h)` registers the generated handler on a router or group and returns the `*router.Route`. Middleware added with `.Use` runs inside the protocol error bridge (`grpc.Errors()`): anything it rejects through the error handler (401, 403, 429 with `Retry-After` metadata, 413, 503) reaches the client as an RPC error with the matching code. Router and group middleware run outside the bridge; add `grpc.Errors()` to a group to get the same mapping there.
+- `grpc.Required(guards...)` is `auth.Required` for RPCs: `Unauthenticated` instead of a login redirect, even in apps with sessions. Methods read the user with `auth.UserFrom(ctx, guard)`; `auth.Optional` works as is.
+- `grpc.HandlerOptions(grpc.Options{...})` bundles the connect-go options: request validation (`Rules`, plus messages with a `Validate() error` method), error mapping, one `rpc` log line per call (`procedure`, `protocol`, `code`, `duration`, `request_id`), panic recovery and a 4 MiB message limit (`MaxMessageBytes`, `ResourceExhausted` beyond). `Interceptors` run inside these. Append your own `connect.HandlerOption`s to the slice.
+- `grpc.Error(err)` is the mapping: `*connect.Error` as is; `context.Canceled`/`DeadlineExceeded`; `z.Issues` and `*errs.ValidationError` → `InvalidArgument` with a `google.rpc.BadRequest` detail (one field violation per message); `*errs.HTTPError` → the code of its status (`grpc.CodeOf`: 400/422 `InvalidArgument`, 401 `Unauthenticated`, 403 `PermissionDenied`, 404 `NotFound`, 409 `AlreadyExists`, 412 `FailedPrecondition`, 429 `ResourceExhausted`, 501 `Unimplemented`, 503 `Unavailable`, 504 `DeadlineExceeded`, other 4xx `FailedPrecondition`, 5xx `Internal`) with its client-safe message; anything else → `Internal` "internal error", the cause only in the log.
+- `grpc.Validate(z.Struct[pkg.Msg](shape))` checks every `*pkg.Msg` request, unary or streamed; keys are the message's proto field names (its Go JSON tags).
+- **Health**: `grpc.Health(r, checker)` mounts `grpc.health.v1.Health` ([grpchealth](https://pkg.go.dev/connectrpc.com/grpchealth)) for load balancers and probes.
+- **Reflection**: `grpc.Reflection(app, r, services...)` mounts `grpc.reflection.v1` and `v1alpha` ([grpcreflect](https://pkg.go.dev/connectrpc.com/grpcreflect)) for `grpcurl` and `buf curl`. It publishes the whole API, so in production it registers nothing and returns false unless `GRPC_REFLECTION_IN_PRODUCTION=true`.
+- **HTTP/2**: native gRPC needs HTTP/2. Outside production the app server also speaks HTTP/2 cleartext (h2c, stdlib `http.Protocols`), so `grpcurl -plaintext localhost:3000 list` works with `vukem serve`. Production expects TLS: terminate it at a proxy that speaks HTTP/2 to the app (h2c with `HTTP_H2C=true`), or serve TLS yourself. gRPC-Web and Connect also work over HTTP/1.1, from browsers too (same-origin, or CORS on the route).
+- Route middleware that wraps the writer stays compatible with streams: `Mount` flushes through the whole writer chain. Avoid `middleware.Timeout` and `Gzip` on RPC routes (use deadlines and connect-go compression instead).
+
+### Testing RPC services
+
+`contrib/grpc/grpctest` runs the app handler on an in-process HTTP/2 server and lists the client options of each protocol, so one test covers them all:
+
+```go
+h, _ := app.Handler()
+srv := grpctest.NewServer(t, h) // TLS + HTTP/2; NewH2CServer for cleartext
+
+for _, p := range grpctest.Protocols() { // grpc, grpc-web, connect, connect+json
+	client := greetv1connect.NewGreetServiceClient(srv.Client, srv.URL, p.Options...)
+	res, err := client.Greet(t.Context(), connect.NewRequest(&greetv1.GreetRequest{Name: "Ada"}))
+	// ...
+}
+```
+
 ## Beyond REST
 
 - **SSE** for server push (planned, BETA) — [frontend.md](frontend.md#sse-beta).
 - **GraphQL**: `contrib/graphql`, a stdlib schema-first server with typed resolvers, a batching loader over the ORM, limits and persisted queries — [graphql.md](graphql.md).
-- **gRPC** (`contrib/grpc` on connect-go, BETA B.11). Meanwhile any `http.Handler` (connect-go, grpc-gateway) mounts on the router and shares middleware, auth and the app container.
+- **gRPC**, gRPC-Web and Connect on connect-go: [gRPC](#grpc).
 - **API reference UI**: `apidocs.Serve(app, r, "/docs", apidocs.Config{Theme: "purple"})` renders the document with [Scalar](https://scalar.com) ([details](#api-reference-ui)).

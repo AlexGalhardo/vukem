@@ -58,6 +58,7 @@ vukem/                            module github.com/AlexGalhardo/vukem
 │   └── websocket/                module …/drivers/websocket (coder/websocket, broadcast protocol)
 ├── contrib/
 │   ├── graphql/                  module …/contrib/graphql (stdlib GraphQL server)
+│   ├── grpc/                     module …/contrib/grpc (gRPC, gRPC-Web, Connect on connect-go)
 │   └── stripe/                   module …/contrib/stripe (Stripe API + webhooks, stdlib)
 ├── starters/                     app skeletons embedded by `vukem new`
 ├── docs/
@@ -90,6 +91,7 @@ Package names are short, lowercase, singular and never `util`/`common`/`helpers`
 | `go.opentelemetry.io/otel` (+ `sdk`, `exporters/otlp/otlptrace/otlptracehttp`) | `drivers/otel` | Tracing |
 | `github.com/coder/websocket` | `drivers/websocket` | WebSockets |
 | none (stdlib only) | `contrib/graphql` | GraphQL server; gqlgen/graphql-go are not used |
+| `connectrpc.com/connect` (+ `grpchealth`, `grpcreflect`), `google.golang.org/protobuf`, `google.golang.org/genproto/googleapis/rpc` | `contrib/grpc` | gRPC, gRPC-Web and Connect on `net/http`; health, reflection, `google.rpc.BadRequest` details |
 
 `drivers/s3` adds no dependency: it signs requests with its own Signature Version 4 implementation, checked against the AWS test suite.
 

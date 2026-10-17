@@ -13,4 +13,5 @@ use (
 	./drivers/websocket
 	./contrib/stripe
 	./contrib/graphql
+	./contrib/grpc
 )

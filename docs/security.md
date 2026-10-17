@@ -61,6 +61,7 @@ What Vukem does **by default** to protect applications, mapped to the [OWASP Top
 | Destructive commands (`migrate:fresh`, `db:wipe`) require `--force` in production | P |
 | `/openapi.json` (`vukem.ServeOpenAPI`) and the API reference UI (`apidocs.Serve`) are not served in production unless `OPENAPI_IN_PRODUCTION=true` (`TestSecurity_A02_OpenAPIOffInProduction`, `TestSecurity_A02_APIDocsOffInProduction`); the vendored Scalar bundle is pinned by SHA-256 and runs with telemetry and remote fonts off | B |
 | GraphQL (`contrib/graphql`): in production the explorer page is not registered and `__schema` / `__type` introspection is rejected unless `InsecureExplorerInProduction` / `InsecureIntrospectionInProduction` opt in; the explorer is embedded (no CDN) and runs under its own nonce CSP (`TestSecurity_A02_GraphQLExplorerOffInProduction`) | B |
+| gRPC server reflection (`grpc.Reflection`, `contrib/grpc`) is not served in production unless `GRPC_REFLECTION_IN_PRODUCTION=true` (`TestSecurity_A02_GRPCReflectionOffInProduction`) | B |
 
 **App responsibility:** terminate TLS (or run behind a proxy that does), set `APP_URL` to the `https` origin, configure trusted proxies.
 
@@ -185,6 +186,7 @@ What Vukem does **by default** to protect applications, mapped to the [OWASP Top
 | Missing/invalid parameters produce 400/422 with field errors, never zero-value defaults silently (CWE-234) | P |
 | Timeouts on server, DB queries (`context`), outbound HTTP; rate limiting and quotas against resource exhaustion | P / A |
 | Repeated identical errors aggregated in logs (sampling) to keep alerting useful | B |
+| RPC errors (`contrib/grpc`): unknown errors and panics reach clients as `Internal` "internal error", the cause and stack only in the server log (`TestSecurity_A10_GRPCInternalErrorsHidden`); request messages are capped at 4 MiB (`ResourceExhausted` beyond, `TestSecurity_A10_GRPCMessageSizeLimited`) | B |
 | `errcheck`, `nilerr`, `errorlint`, `forcetypeassert` linters enforce handled errors in the framework itself | P |
 | GraphQL resolver errors that are not client-safe (plain errors, 5xx, panics, serialization failures) are reported as `Internal server error` with code `INTERNAL_SERVER_ERROR` and logged; their text appears only with `WithDebug(true)` (`TestSecurity_A10_GraphQLInternalErrorsMasked`) | B |
 

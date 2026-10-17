@@ -1,0 +1,30 @@
+syntax = "proto3";
+
+package greet.v1;
+
+option go_package = "github.com/AlexGalhardo/vukem/contrib/grpc/testdata/gen/greet/v1;greetv1";
+
+// GreetService is the example service used by the contrib/grpc tests.
+service GreetService {
+  // Greet answers one greeting.
+  rpc Greet(GreetRequest) returns (GreetResponse) {}
+  // GreetStream streams count greetings.
+  rpc GreetStream(GreetStreamRequest) returns (stream GreetStreamResponse) {}
+}
+
+message GreetRequest {
+  string name = 1;
+}
+
+message GreetResponse {
+  string greeting = 1;
+}
+
+message GreetStreamRequest {
+  string name = 1;
+  int32 count = 2;
+}
+
+message GreetStreamResponse {
+  string greeting = 1;
+}
