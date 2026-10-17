@@ -166,3 +166,57 @@ func TestInstrumentAfterUseIsAnError(t *testing.T) {
 		})
 	}
 }
+
+type panicObserver struct{}
+
+func (panicObserver) ObserveQuery(context.Context, database.Query) { panic("observer bug") }
+
+// Devtools, WithQueryObservers and Instrument each see a query exactly
+// once, and a panicking hook does not starve the ones after it.
+func TestInstrumentQueriesWithDevtoolsAndQueryObservers(t *testing.T) {
+	t.Parallel()
+
+	option, hook := &countingObserver{}, &countingObserver{}
+
+	app, err := New(
+		WithSource(testSource(map[string]string{
+			"APP_ENV": "development", "DEVTOOLS": "true", "DATABASE_URL": ":memory:",
+		})),
+		WithLogger(discardLogger()),
+		WithQueryObservers(option),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = app.Shutdown(context.Background()) })
+
+	if err := app.Instrument(Instrumentation{Queries: panicObserver{}}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := app.Instrument(Instrumentation{Queries: hook}); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err := app.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := db.ExecContext(t.Context(), "SELECT 1"); err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{"SELECT 1"}
+	if diff := cmp.Diff(want, option.sql); diff != "" {
+		t.Errorf("WithQueryObservers observer (-want +got):\n%s", diff)
+	}
+
+	if diff := cmp.Diff(want, hook.sql); diff != "" {
+		t.Errorf("Instrument observer after a panicking one (-want +got):\n%s", diff)
+	}
+
+	if got := len(app.Devtools.Queries()); got != 1 {
+		t.Errorf("len(Devtools.Queries()) = %d, want 1", got)
+	}
+}

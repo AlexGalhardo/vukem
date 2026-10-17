@@ -16,7 +16,7 @@ import (
 // the reports into spans and metrics. Nil fields are skipped.
 type Instrumentation struct {
 	// Queries is notified of every statement run through DB() and its
-	// transactions, next to devtools.
+	// transactions, after devtools and WithQueryObservers.
 	Queries database.QueryObserver
 	// Jobs is notified of every job step of Queue(), next to devtools.
 	Jobs queue.Observer
@@ -70,9 +70,11 @@ func (a *App) Instrument(in Instrumentation) error {
 	return nil
 }
 
-// queryObserver freezes the query hooks and returns them with devtools
-// (nil when there is none).
-func (a *App) queryObserver() database.QueryObserver {
+// queryObservers freezes the query hooks and returns every observer of
+// DB(): devtools, then WithQueryObservers, then Instrument's. DB() passes
+// each to database.WithQueryObserver, which skips typed nils and contains
+// a panicking observer without starving the others.
+func (a *App) queryObservers() []database.QueryObserver {
 	a.inst.mu.Lock()
 	defer a.inst.mu.Unlock()
 
@@ -83,16 +85,9 @@ func (a *App) queryObserver() database.QueryObserver {
 		obs = append(obs, a.Devtools)
 	}
 
-	obs = append(obs, a.inst.queries...)
+	obs = append(obs, a.queryObs...)
 
-	switch len(obs) {
-	case 0:
-		return nil
-	case 1:
-		return obs[0]
-	default:
-		return queryObservers(obs)
-	}
+	return append(obs, a.inst.queries...)
 }
 
 // jobObserver freezes the job hooks and returns them with devtools (nil
@@ -132,14 +127,6 @@ func (a *App) wrapMail(t mail.Transport) mail.Transport {
 	}
 
 	return t
-}
-
-type queryObservers []database.QueryObserver
-
-func (o queryObservers) ObserveQuery(ctx context.Context, q database.Query) {
-	for _, obs := range o {
-		obs.ObserveQuery(ctx, q)
-	}
 }
 
 type jobObservers []queue.Observer
