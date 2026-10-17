@@ -23,6 +23,18 @@ func NewMemory() *Memory {
 	return &Memory{now: time.Now, reserved: map[string]*Message{}}
 }
 
+// SetClock sets the clock Pop compares availability with (default
+// time.Now); it implements Clock.
+func (d *Memory) SetClock(now func() time.Time) {
+	if now == nil {
+		now = time.Now
+	}
+
+	d.mu.Lock()
+	d.now = now
+	d.mu.Unlock()
+}
+
 // Push implements Driver.
 func (d *Memory) Push(_ context.Context, m *Message) error {
 	d.mu.Lock()

@@ -202,6 +202,35 @@ func New(driver Driver, log *slog.Logger) *Queue {
 // Driver returns the queue's driver.
 func (q *Queue) Driver() Driver { return q.driver }
 
+// Clock is implemented by drivers whose availability checks read a clock
+// (Memory, Database); app.Queue sets the app clock on them.
+type Clock interface {
+	SetClock(now func() time.Time)
+}
+
+// SetClock sets the clock that stamps dispatched jobs and schedules
+// retries (default time.Now). Delays only follow it when the driver
+// compares availability with the same clock (Memory.SetClock,
+// DatabaseOptions.Now); app.Queue wires the app clock (WithClock) into
+// both.
+func (q *Queue) SetClock(now func() time.Time) {
+	if now == nil {
+		now = time.Now
+	}
+
+	q.mu.Lock()
+	q.now = now
+	q.mu.Unlock()
+}
+
+func (q *Queue) clock() time.Time {
+	q.mu.RLock()
+	now := q.now
+	q.mu.RUnlock()
+
+	return now()
+}
+
 // ErrDuplicateKind is returned by Register for a kind registered twice.
 var ErrDuplicateKind = errors.New("queue: job kind already registered")
 
@@ -375,7 +404,7 @@ func (q *Queue) message(kind string, j any, opts []Option) (*Message, handler, e
 		return nil, handler{}, fmt.Errorf("queue: encode %s: %w", kind, err)
 	}
 
-	now := q.now().UTC()
+	now := q.clock().UTC()
 
 	return &Message{
 		ID: newID(), Kind: kind, Queue: o.queue, Payload: payload, MaxRetries: o.retries,
@@ -422,7 +451,7 @@ func (q *Queue) Process(ctx context.Context, m *Message) error {
 		backoff = h.opts.backoff
 	}
 
-	m.AvailableAt = q.now().UTC().Add(backoff(m.Attempts))
+	m.AvailableAt = q.clock().UTC().Add(backoff(m.Attempts))
 	log.WarnContext(ctx, "job will be retried", "at", m.AvailableAt)
 
 	return q.driver.Release(ctx, m)
