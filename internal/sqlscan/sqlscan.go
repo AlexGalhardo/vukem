@@ -11,8 +11,12 @@ type Result struct {
 	// SQL is the statement with every placeholder replaced by the
 	// placeholder function's output (and, on PostgreSQL, "??" by "?").
 	SQL string
-	// Placeholders is the number of bind placeholders found.
+	// Placeholders is the number of "?" bind placeholders found.
 	Placeholders int
+	// DollarParams counts explicit PostgreSQL "$n" parameters outside
+	// literals, comments and dollar-quoted bodies. Mixed with "?" they
+	// would bind the wrong values, so callers that renumber reject them.
+	DollarParams int
 	// Terminated is false when the statement ends inside a literal, a quoted
 	// identifier, a comment (a "--" comment needs its newline) or a
 	// dollar-quoted body: a fragment like that would swallow whatever SQL
@@ -20,29 +24,38 @@ type Result struct {
 	Terminated bool
 }
 
-// Scan walks query as dialect ("postgres", "mysql", "sqlite") lexes it.
-// ph renders the n-th (1-based) placeholder; nil keeps "?".
+// Scan walks query as dialect ("postgres", "mysql", "sqlite") lexes it;
+// any other name, including "", lexes like SQLite. ph renders the n-th
+// (1-based) placeholder; nil keeps "?".
 //
-// Every dialect skips '…' literals, "…" and `…` quoted text, "--" line
-// comments and /* */ block comments. PostgreSQL adds E'…' backslash
-// escapes, nested block comments, $tag$…$tag$ bodies and "??" as a literal
-// "?" (jsonb operators). MySQL adds backslash escapes in quoted strings and
-// "#" line comments. Elsewhere "??" is two placeholders.
+// Every dialect skips '…' literals, "…" quoted text, "--" line comments and
+// /* */ block comments. PostgreSQL adds E'…' backslash escapes, nested
+// block comments, $tag$…$tag$ bodies and "??" as a literal "?" (jsonb
+// operators). MySQL adds `…` identifiers, backslash escapes in quoted
+// strings, "#" comments, and needs a space, tab or newline after "--" for
+// a comment ("a--1" is a minus a minus). SQLite adds `…` and […]
+// identifiers. Outside PostgreSQL "??" is two placeholders.
+//
+// It assumes the servers' default lexing: standard_conforming_strings on
+// (PostgreSQL), no ANSI_QUOTES or NO_BACKSLASH_ESCAPES (MySQL). MySQL runs
+// the contents of /*! */ and /*+ */ comments, but Scan skips them like
+// any comment, so placeholders there are not supported.
 func Scan(dialect, query string, ph func(n int) string) Result {
 	s := scanner{query: query, ph: ph, pg: dialect == "postgres", my: dialect == "mysql", ok: true}
+	s.lite = !s.pg && !s.my
 	s.b.Grow(len(query) + 8)
 	s.run()
 
-	return Result{SQL: s.b.String(), Placeholders: s.n, Terminated: s.ok}
+	return Result{SQL: s.b.String(), Placeholders: s.n, DollarParams: s.dollars, Terminated: s.ok}
 }
 
 type scanner struct {
-	query  string
-	ph     func(int) string
-	pg, my bool
-	b      strings.Builder
-	n      int
-	ok     bool
+	query        string
+	ph           func(int) string
+	pg, my, lite bool
+	b            strings.Builder
+	n, dollars   int
+	ok           bool
 }
 
 func (s *scanner) run() {
@@ -55,9 +68,11 @@ func (s *scanner) run() {
 		case c == '\'':
 			escapes := s.my || (s.pg && i > 0 && (q[i-1] == 'E' || q[i-1] == 'e') && (i < 2 || !isIdentByte(q[i-2])))
 			i = s.copy(i, s.skipQuoted(i, escapes))
-		case c == '"' || c == '`':
+		case c == '"', c == '`' && !s.pg:
 			i = s.copy(i, s.skipQuoted(i, s.my && c == '"'))
-		case c == '-' && strings.HasPrefix(q[i:], "--"), c == '#' && s.my:
+		case c == '[' && s.lite:
+			i = s.copy(i, s.skipBracket(i))
+		case c == '-' && s.lineComment(i), c == '#' && s.my:
 			i = s.copy(i, s.skipLineComment(i))
 		case c == '/' && strings.HasPrefix(q[i:], "/*"):
 			i = s.copy(i, s.skipBlockComment(i))
@@ -90,6 +105,37 @@ func (s *scanner) copy(i, end int) int {
 	s.b.WriteString(s.query[i:end])
 
 	return end
+}
+
+// lineComment reports whether "--" starts a comment at query[i]: always on
+// PostgreSQL and SQLite, only before whitespace or the end on MySQL.
+func (s *scanner) lineComment(i int) bool {
+	q := s.query
+	if !strings.HasPrefix(q[i:], "--") {
+		return false
+	}
+
+	if !s.my || i+2 == len(q) {
+		return true
+	}
+
+	switch q[i+2] {
+	case ' ', '\t', '\n', '\r':
+		return true
+	}
+
+	return false
+}
+
+// skipBracket returns the index after a SQLite [identifier].
+func (s *scanner) skipBracket(i int) int {
+	if j := strings.IndexByte(s.query[i:], ']'); j >= 0 {
+		return i + j + 1
+	}
+
+	s.ok = false
+
+	return len(s.query)
 }
 
 // skipQuoted returns the index after the quoted text opened at query[i]; a
@@ -169,7 +215,15 @@ func (s *scanner) skipDollarQuote(i int) int {
 		j++
 	}
 
-	if j >= len(q) || q[j] != '$' || (j > i+1 && isDigit(q[i+1])) {
+	if j > i+1 && isDigit(q[i+1]) {
+		if isAllDigits(q[i+1 : j]) {
+			s.dollars++ // $n parameter
+		}
+
+		return i + 1
+	}
+
+	if j >= len(q) || q[j] != '$' {
 		return i + 1
 	}
 
@@ -185,6 +239,16 @@ func (s *scanner) skipDollarQuote(i int) int {
 
 func isIdentByte(c byte) bool {
 	return c == '_' || isDigit(c) || (c|0x20 >= 'a' && c|0x20 <= 'z') || c >= 0x80
+}
+
+func isAllDigits(s string) bool {
+	for i := range len(s) {
+		if !isDigit(s[i]) {
+			return false
+		}
+	}
+
+	return true
 }
 
 func isDigit(c byte) bool { return c >= '0' && c <= '9' }
