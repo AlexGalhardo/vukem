@@ -2136,6 +2136,7 @@ func TestSecurity_A02_RateLimitCacheNeedsSharedStore(t *testing.T) {
 	for name, opt := range map[string]Option{
 		"eager":          WithCacheStore(cache.NewMemory(0)),
 		"lazy":           WithCacheStoreFunc(func(*App) (cache.Store, error) { return cache.NewMemory(0), nil }),
+		"lazy default":   WithCacheStoreFunc(func(*App) (cache.Store, error) { return nil, ErrUseDefault }),
 		"wrapped":        WithCacheStore(wrappedStore{cache.NewMemory(0)}),
 		"opaque wrapped": WithCacheStore(opaqueStore{cache.NewMemory(0)}),
 	} {
