@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/AlexGalhardo/vukem/errs"
@@ -105,7 +106,7 @@ func Maintenance(cfg MaintenanceConfig) Middleware {
 					return
 				}
 
-				sum := sha256.Sum256([]byte(r.URL.Path[1:]))
+				sum := sha256.Sum256([]byte(strings.TrimPrefix(r.URL.Path, "/"))) // "" for "*" targets
 				if hmac.Equal([]byte(hex.EncodeToString(sum[:])), []byte(m.SecretHash)) {
 					// Secure follows cfg.Secure: off for plain-HTTP development.
 					http.SetCookie(

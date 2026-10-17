@@ -115,6 +115,8 @@ func TestSecurity_A01_MaintenanceBypassNeedsSecret(t *testing.T) {
 	for name, mod := range map[string]func(*http.Request){
 		"forged cookie": func(r *http.Request) { r.AddCookie(&http.Cookie{Name: MaintenanceCookie, Value: "x"}) },
 		"wrong secret":  func(r *http.Request) { r.URL.Path = "/let-me-out" },
+		// An absolute-form or "*" request target has an empty path.
+		"empty path": func(r *http.Request) { r.URL.Path = "" },
 	} {
 		if rec := mget(t, h, "/x", mod); rec.Code != http.StatusServiceUnavailable {
 			t.Errorf("%s = %d, want 503", name, rec.Code)
