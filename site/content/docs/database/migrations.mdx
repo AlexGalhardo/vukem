@@ -48,7 +48,7 @@ func All() []schema.Migration {
 
 | `Schema` | `Table` columns | Column modifiers |
 | --- | --- | --- |
-| `Create`, `Table` (alter), `Drop`, `DropIfExists`, `Rename`, `HasTable`, `Raw` | `ID`, `String(name, len?)`, `Text`, `Integer`, `BigInteger`, `Boolean`, `Decimal(p, s)`, `Float`, `Date`, `Timestamp`, `Timestamps`, `SoftDeletes`, `JSON`, `UUID`, `ULID`, `Binary`, `Enum(name, values...)`, `ForeignID` | `Nullable`, `Default`, `Unique`, `Index`, `Constrained(table?)`, `CascadeOnDelete`, `NullOnDelete`, `RestrictOnDelete` |
+| `Create`, `Table` (alter), `Drop`, `DropIfExists`, `Rename`, `HasTable`, `HasColumn`, `Raw` | `ID`, `String(name, len?)`, `Text`, `Integer`, `BigInteger`, `Boolean`, `Decimal(p, s)`, `Float`, `Date`, `Timestamp`, `Timestamps`, `SoftDeletes`, `JSON`, `UUID`, `ULID`, `Binary`, `Enum(name, values...)`, `ForeignID` | `Nullable`, `Default`, `Unique`, `Index`, `Constrained(table?)`, `CascadeOnDelete`, `NullOnDelete`, `RestrictOnDelete` |
 
 Altering: `t.RenameColumn(from, to)`, `t.DropColumn(names...)`, `t.Index(cols...)`, `t.UniqueIndex(cols...)`, `t.DropIndex(name)`, `t.DropCheck(name)`.
 

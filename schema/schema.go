@@ -285,6 +285,43 @@ func hasTable(ctx context.Context, ex database.Executor, table string) (bool, er
 	return n > 0, nil
 }
 
+// HasColumn reports whether table has column (false while recording, and
+// for a missing table), so an upgrade migration can add a column only to
+// tables created before it existed.
+func (s *Schema) HasColumn(table, column string) (bool, error) {
+	if err := checkIdent("table", table); err != nil {
+		return false, err
+	}
+
+	if err := checkIdent("column", column); err != nil {
+		return false, err
+	}
+
+	if s.record != nil {
+		return false, nil
+	}
+
+	var q string
+
+	switch s.d.Name() {
+	case "postgres":
+		q = "SELECT COUNT(*) FROM information_schema.columns " +
+			"WHERE table_schema = current_schema() AND table_name = $1 AND column_name = $2"
+	case "mysql":
+		q = "SELECT COUNT(*) FROM information_schema.columns " +
+			"WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?"
+	default:
+		q = "SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?"
+	}
+
+	var n int
+	if err := s.ex.QueryRowContext(s.ctx, q, table, column).Scan(&n); err != nil {
+		return false, fmt.Errorf("schema: has column: %w", err)
+	}
+
+	return n > 0, nil
+}
+
 // ------------------------------------------------------------------ DDL
 
 func (s *Schema) columnDef(c *Column) string {

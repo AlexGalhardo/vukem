@@ -10,5 +10,6 @@ func All() []schema.Migration {
 		m20261016184614CreateAuthTables(),
 		m20261016184615CreatePostsTable(),
 		m20261016184616CreateCommentsTable(),
+		m20261017200000AccessTokensRevokedAt(),
 	}
 }

@@ -131,12 +131,14 @@ func TestPasswordReset(t *testing.T) {
 	}
 
 	userID := apiTokenFor(t, app, "cid@example.com")
-	vukemtest.AssertDatabaseHas(t, app, "access_tokens", map[string]any{"user_id": userID})
+	vukemtest.AssertDatabaseHas(t, app, "access_tokens", map[string]any{"user_id": userID, "revoked_at": nil})
 
 	c.PostForm("/reset-password", form).AssertRedirect("/login")
 
-	// The new password ends API tokens issued with the old one.
-	vukemtest.AssertDatabaseMissing(t, app, "access_tokens", map[string]any{"user_id": userID})
+	// The new password revokes API tokens issued with the old one; the
+	// rows stay for the audit trail.
+	vukemtest.AssertDatabaseMissing(t, app, "access_tokens", map[string]any{"user_id": userID, "revoked_at": nil})
+	vukemtest.AssertDatabaseHas(t, app, "access_tokens", map[string]any{"user_id": userID})
 
 	// Single use.
 	c.WithHeader("Referer", reset).PostForm("/reset-password", form).AssertSessionHasErrors("email")

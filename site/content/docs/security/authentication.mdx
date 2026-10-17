@@ -98,25 +98,26 @@ tokens.Now = app.Now // the app clock (vukem.WithClock) drives expiry and last u
 apiGuard := auth.NewTokenGuard("api", users, tokens)
 
 plain, tok, err := tokens.Create(ctx, user.AuthID(), "cli", []string{"posts:read"}, 30*24*time.Hour)
-list, err := tokens.List(ctx, user.AuthID())               // for a "My API keys" page; never the secrets
-deleted, err := tokens.RevokeFor(ctx, user.AuthID(), id)  // id from a form: only deletes the user's own token
+list, err := tokens.List(ctx, user.AuthID())               // for a "My API keys" page; revoked ones have RevokedAt set; never the secrets
+revoked, err := tokens.RevokeFor(ctx, user.AuthID(), id)  // id from a form: only revokes the user's own live token
 err = tokens.Revoke(ctx, tok.ID)                          // no owner check: only for the token of this request
 err = tokens.RevokeAll(ctx, user.AuthID())                // e.g. after a password change
+n, err := tokens.Prune(ctx, app.Now().AddDate(0, 0, -90)) // delete rows revoked or expired 90+ days ago (never live ones)
 
 if auth.TokenCan(c, "api", "posts:read") { /* ... */ } // "*" grants everything
 ```
 
-A `ttl` of `0` in `tokens.Create` means the token never expires (valid until revoked); the `install:api` scaffold issues 30-day tokens. Opaque tokens `<prefix><id>.<secret>` from `crypto/rand`; only the SHA-256 of the secret is stored, compared in constant time; `last_used_at` is updated at most once a minute.
+A `ttl` of `0` in `tokens.Create` means the token never expires (valid until revoked); the `install:api` scaffold issues 30-day tokens. Opaque tokens `<prefix><id>.<secret>` from `crypto/rand`; only the SHA-256 of the secret is stored, compared in constant time; `last_used_at` is updated at most once a minute. Revoking sets `revoked_at` instead of deleting the row, so a "My API keys" page and an audit can still see the token; a revoked token is refused like a wrong one. Tables created before v0.26.0 need the `revoked_at` column: add `auth.TokensRevokedAtMigration("<timestamp>_access_tokens_revoked_at")` to your migrations (until then every token is refused with 503 and revoking deletes the row).
 
 Set `tokens.Prefix` (the `install:auth` scaffold uses `vk_`; pick one specific to your app) so new tokens are easy to spot: add a custom secret-scanning pattern such as `vk_[A-Z2-7]{26}\.[A-Z2-7]{26}` to GitHub or gitleaks. Tokens issued without a prefix, or under an earlier one, keep working.
 
-> When a token id comes from the request (a "Revoke" button), always use `RevokeFor`: it deletes the token only if it belongs to the signed-in user and returns `false` otherwise, so answer 404. For signed tokens from an identity provider, use the [JWT guard](/docs/security/jwt); for TOTP, see [two-factor authentication](/docs/security/two-factor).
+> When a token id comes from the request (a "Revoke" button), always use `RevokeFor`: it revokes the token only if it belongs to the signed-in user and is still live, and returns `false` otherwise, so answer 404. For signed tokens from an identity provider, use the [JWT guard](/docs/security/jwt); for TOTP, see [two-factor authentication](/docs/security/two-factor).
 
 ## Middleware
 
 | Middleware | Effect |
 | --- | --- |
-| `auth.Required(guards...)` | first guard that authenticates wins; JSON clients get 401 with `WWW-Authenticate: Bearer`, browsers a redirect to the route named `login` (intended URL kept). When every guard is an `auth.APIGuard` (token and JWT guards), the 401 is always problem+json, never a redirect |
+| `auth.Required(guards...)` | first guard that authenticates wins; JSON clients get 401 with `WWW-Authenticate: Bearer`, browsers a redirect to the route named `login` (intended URL kept). When every guard is an `auth.APIGuard` (token and JWT guards), the 401 is always problem+json, never a redirect. A guard whose store fails answers 503 and stops the list, so put the session guard before the token guard on mixed routes: `auth.Required(webGuard, apiGuard)` |
 | `auth.Optional(guards...)` | authenticates when possible, never blocks (pages that show more to members) |
 | `auth.Guest(guards...)` | sends logged-in users to the route named `home` |
 | `auth.Verified(guard)` | passes when the user's `EmailVerified()` is true; otherwise browsers are redirected to the route named `verification.notice` (created by `install:auth`) and JSON clients, or apps without that route, get 403 |

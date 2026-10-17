@@ -11,5 +11,6 @@ func All() []schema.Migration {
 		m20261017090942AddTwoFactorColumns(),
 		m20261017090943AddBillingTables(),
 		m20261017091250CreateProjectsTable(),
+		m20261017200000AccessTokensRevokedAt(),
 	}
 }
