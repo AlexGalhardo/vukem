@@ -57,6 +57,18 @@ verr.Empty()        // false
 return verr         // 422
 ```
 
+`Add` returns the error for chaining, so errcheck flags it as a bare statement. Use `Append` (no result) when collecting messages in a loop or conditional:
+
+```go
+verr := errs.NewValidation()
+if locked {
+	verr.Append("price", "The price cannot change after the first sale.")
+}
+if !verr.Empty() {
+	return verr
+}
+```
+
 ### Status mapping
 
 `errs.Status(err)` returns the status of an `*HTTPError`, 422 for a `*ValidationError`, the status of any error implementing `errs.StatusCoder` (`HTTPStatus() int`), and 500 otherwise.

@@ -68,7 +68,7 @@ if errors.As(err, &issues) {
 
 | Constructor | Go type | Checks / transforms |
 | --- | --- | --- |
-| `z.String()` | `string` | `Min`, `Max`, `Len`, `Email`, `URL`, `UUID`, `ULID`, `Regex`, `Alpha`, `Alphanum`, `Numeric`, `StartsWith`, `EndsWith`, `Includes`, `OneOf`; `Trim`, `ToLower`, `ToUpper` |
+| `z.String()` | `string` | `Min`, `Max`, `Len`, `Email`, `URL`, `UUID`, `ULID`, `Regex`, `Alpha`, `Alphanum`, `Numeric`, `StartsWith`, `EndsWith`, `Includes`, `OneOf`; `Trim`, `ToLower`, `ToUpper`, `Preprocess(fn)` |
 | `z.Int()`, `z.Int64()`, `z.Uint()`… | integer types | `Min`, `Max`, `Positive`, `NonNegative`, `MultipleOf` |
 | `z.Float()` | `float64` | `Min`, `Max`, `Positive`, `Finite` |
 | `z.Bool()` | `bool` | — |
@@ -87,10 +87,17 @@ Modifiers on every schema:
 | `Optional()` | key may be absent; target must be a pointer, or the zero value is kept |
 | `Nullable()` | `null` accepted (pointer target) |
 | `Default(v)` | value used when absent |
-| `Refine(fn)` | custom check on the parsed value |
-| `Transform(fn)` | map the parsed value (same type) |
+| `Refine(fn)` | custom check on the parsed value; return `z.FieldError` / `z.FieldErrorKey` to target a field |
+| `Transform(fn)` | map the parsed value (same type), after the checks |
 | `Message(code, msg)` | override a message |
 | `Describe(text)` | description for OpenAPI/TypeScript |
+
+Order of a parse: coercion and type check → string pre-steps (`Trim`, `ToLower`, `ToUpper`, `Preprocess`, in declaration order) → checks (`Min`, `Regex`, `Email`…) → `Transform` → `Refine`. To validate a normalized value, normalize with `Preprocess`:
+
+```go
+z.String().Preprocess(digitsOnly).Regex(e164) // Regex sees "11987654321"
+z.String().Transform(digitsOnly).Regex(e164)  // Regex sees the raw input
+```
 
 ## Coercion
 
@@ -122,7 +129,7 @@ Issues are collected for the whole input (not first-error-only). The web error h
 
 ## Translated messages
 
-Every built-in message has a key, `Issue.Key`: the detailed key when there is one (`too_small.string`, `string.email`, `too_small.positive`), else the code (`required`, `invalid_enum`). Custom messages (`Message` overrides, `Refine`, `Custom`) have no key and are never translated.
+Every built-in message has a key, `Issue.Key`: the detailed key when there is one (`too_small.string`, `string.email`, `too_small.positive`), else the code (`required`, `invalid_enum`). Custom messages (`Message` overrides, plain `Refine`/`Custom` errors, `z.FieldError`) have no key and are never translated; return `z.FieldErrorKey` instead to make them translatable.
 
 `Issues.Localize(lookup)` rebuilds messages from translated templates: it tries `lookup(Key)`, then `lookup(Code)`, and replaces `{field}` with `lookup("attributes.<last path segment>")` when present (else the humanized name). Untranslated issues keep their English message.
 
@@ -135,6 +142,28 @@ In an app, translation is opt-in and per request: `vukem.WithTranslations` + `De
     "too_small": { "string": "O campo {field} deve ter pelo menos {min} caracteres." },
     "string": { "email": "O campo {field} deve ser um e-mail válido." },
     "attributes": { "email": "e-mail" }
+  }
+}
+```
+
+Refine callbacks (and `Custom` parsers) make their messages translatable with `z.FieldErrorKey(path, key, fallback, params)`: the issue gets `Code` `custom`, `Key` `key` and `Params` `params`, and `Message` is `fallback` with `{field}` and params filled in. `path` is relative to the refined value (`""` for the value itself). A key without a translation keeps the fallback (it never falls back to a `custom` template):
+
+```go
+}).Refine(func(r Register) error {
+	if r.Password != r.PasswordConfirmation {
+		return z.FieldErrorKey("password_confirmation", "confirmed", "The {field} does not match.", nil)
+	}
+	return nil
+})
+```
+
+`en.json` may override the fallback with `{"validation": {"confirmed": "…"}}`; `pt-BR.json`:
+
+```json
+{
+  "validation": {
+    "confirmed": "A {field} não confere.",
+    "attributes": { "password_confirmation": "confirmação de senha" }
   }
 }
 ```

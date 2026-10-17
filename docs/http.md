@@ -129,6 +129,8 @@ type HTTPError struct { Status int; Message string; Err error }
 type ValidationError struct { Fields map[string][]string }
 ```
 
+- `NewValidation().Add(field, msg)` returns the `*ValidationError` for chaining (`return errs.NewValidation().Add(...)`); `Append(field, msg)` has no result, for statements that errcheck would otherwise flag.
+
 - Handlers return errors; `errs.Handler` maps them:
   - `*ValidationError` → see the validation table above.
   - `*HTTPError` / sentinels → status page (`resources/views/errors/<status>.html`) or problem+json.
