@@ -474,3 +474,78 @@ func TestErrorHandlerValidationHookSkipsGET(t *testing.T) {
 		}
 	}
 }
+
+func TestErrorHandlerErrorPage(t *testing.T) {
+	t.Parallel()
+
+	type call struct {
+		Status  int
+		Message string
+	}
+
+	secret := errors.New(`pq: password authentication failed for user "app"`)
+
+	tests := []struct {
+		name  string
+		err   error
+		setup func(r *http.Request)
+		debug bool
+		want  []call
+	}{
+		{"4xx message", errs.New(404, "Record not found"), nil, false, []call{{404, "Record not found"}}},
+		{"status text", errs.ErrForbidden, nil, false, []call{{403, "Forbidden"}}},
+		{"5xx hides the cause", secret, nil, false, []call{{500, "Internal Server Error"}}},
+		{
+			"5xx hides its message",
+			errs.New(503, "db "+secret.Error()),
+			nil,
+			false,
+			[]call{{503, "Service Unavailable"}},
+		},
+		{"4xx hides a wrapped cause", errs.Wrap(404, secret), nil, false, []call{{404, "Not Found"}}},
+		{"JSON clients get problem+json", errs.ErrNotFound, func(r *http.Request) {
+			r.Header.Set("Accept", "application/json")
+		}, false, nil},
+		{
+			"htmx gets the fragment",
+			errs.ErrNotFound,
+			func(r *http.Request) { r.Header.Set("HX-Request", "true") },
+			false,
+			nil,
+		},
+		{"debug 5xx shows the report", secret, nil, true, nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var calls []call
+
+			s := &Services{
+				Debug:    tt.debug,
+				DebugOut: io.Discard,
+				ErrorPage: func(c *Ctx, status int, message string) bool {
+					calls = append(calls, call{status, message})
+					return c.String(status, "custom") == nil
+				},
+			}
+
+			rec, _ := runError(t, tt.err, tt.setup, s)
+
+			if diff := cmp.Diff(tt.want, calls); diff != "" {
+				t.Errorf("ErrorPage calls (-want +got):\n%s", diff)
+			}
+
+			if got := rec.Body.String() == "custom"; got != (tt.want != nil) {
+				t.Errorf("body = %q, want the hook's page: %v", rec.Body, tt.want != nil)
+			}
+		})
+	}
+
+	// A hook that writes nothing falls back to the HTML page.
+	s := &Services{ErrorPage: func(*Ctx, int, string) bool { return false }}
+	if rec, _ := runError(t, errs.ErrNotFound, nil, s); !strings.Contains(rec.Body.String(), "<h1>404 Not Found</h1>") {
+		t.Errorf("fallback body = %q, want the HTML page", rec.Body)
+	}
+}

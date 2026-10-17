@@ -78,7 +78,17 @@ type Services struct {
 	// Authorizer backs Ctx.Authorize and the "can" template function
 	// (an authz.Gate). Without one, every authorization check denies.
 	Authorizer Authorizer
+	// ErrorPage lets a frontend adapter render DefaultErrorHandler's error
+	// page in its own format (vukem.WithInertia installs
+	// inertia.Inertia.ErrorPage, an Inertia page for Inertia requests).
+	// Nil keeps the HTML page.
+	ErrorPage ErrorPageFunc
 }
+
+// ErrorPageFunc renders an error page with status and a client-safe
+// message (never a 5xx cause, CWE-209). It reports whether it wrote a
+// response; false falls back to the HTML page.
+type ErrorPageFunc func(c *Ctx, status int, message string) bool
 
 // Ctx is the per-request context. It must not be used after the handler
 // returns or from other goroutines.

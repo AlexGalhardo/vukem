@@ -1,6 +1,7 @@
 package web
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -71,6 +72,8 @@ func WithValidationHook(ctx context.Context, hook ValidationHook) context.Contex
 //   - classic form posts with a validation error go to the validation hook
 //     (flash errors and redirect back) when one is installed;
 //   - htmx requests get an HTML fragment with the status (htmx 4 swaps 4xx);
+//   - Services.ErrorPage, when set, renders the page in its own format
+//     (an Inertia page for Inertia requests);
 //   - browsers get an HTML status page (views "errors/<status>" if present).
 //
 // 5xx details are never sent to clients unless Services.Debug is set
@@ -140,6 +143,7 @@ func DefaultErrorHandler(c *Ctx, err error) {
 		c.validationHook(verr):
 	case c.s.Debug && status >= 500 && !c.IsHTMX():
 		c.renderDebugPage(status, err)
+	case c.s.ErrorPage != nil && !c.IsHTMX() && c.s.ErrorPage(c, status, cmp.Or(detail, title)):
 	default:
 		c.renderErrorPage(status, title, detail, verr)
 	}
