@@ -148,7 +148,7 @@ TRUST_FORWARDED_PROTO=true
 TRUSTED_PROXIES=10.0.0.0/8   # the proxy's address range
 ```
 
-`TRUST_FORWARDED_PROTO=true` without `TRUSTED_PROXIES` refuses the boot: any client could otherwise claim HTTPS. See [Middleware](/docs/basics/middleware#secure-headers-and-csp-nonces) and [Docker and Railway](/docs/deployment/docker-and-railway).
+`TRUST_FORWARDED_PROTO=true` without `TRUSTED_PROXIES` refuses the boot: any client could otherwise claim HTTPS. When the proxy's address range is unknown, `HSTS_FORCE=true` (`SecureHeadersConfig.HSTSForce`) sends HSTS on every response in production instead; it needs an `https://` `APP_URL` and has trade-offs described in [HSTS without a trusted range](/docs/deployment/docker-and-railway#hsts-without-a-trusted-range). See [Middleware](/docs/basics/middleware#secure-headers-and-csp-nonces) and [Docker and Railway](/docs/deployment/docker-and-railway).
 
 ## Other options
 
@@ -156,6 +156,7 @@ TRUSTED_PROXIES=10.0.0.0/8   # the proxy's address range
 | --- | --- |
 | `CSP` | a full custom policy; `{nonce}` is replaced per request; `"-"` disables the header |
 | `HSTSMaxAge` | HSTS lifetime; negative disables it |
+| `HSTSForce` | HSTS on every response, for a TLS proxy whose range cannot be trusted (`HSTS_FORCE`) |
 | `FrameOptions` | defaults to `DENY`; `"-"` disables it |
 | `ReferrerPolicy`, `PermissionsPolicy` | replace the defaults |
 | `CSPSources`, `ReportURI` | as above |
