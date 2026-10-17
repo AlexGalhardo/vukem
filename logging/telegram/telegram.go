@@ -83,7 +83,8 @@ type Config struct {
 	// are not forwarded to Telegram, so logging the error through a logger
 	// that includes this handler cannot loop.
 	OnError func(error)
-	// BaseURL defaults to https://api.telegram.org (tests use a fake).
+	// BaseURL defaults to https://api.telegram.org; vukem.New reads it from
+	// TELEGRAM_API_URL (a self-hosted Bot API server, or a fake in tests).
 	BaseURL string
 	// HTTP is the client (default: Timeout per request).
 	HTTP *http.Client

@@ -40,6 +40,7 @@ TELEGRAM_MIN_LEVEL=error           # debug, info, warn, error
 TELEGRAM_THREAD_ID=42              # optional forum topic
 TELEGRAM_LOG=true                  # false: no log forwarding, app.Telegram only for Send/Contact
 TELEGRAM_RATE_LIMIT=20             # optional cap on forwarded log records per minute (0: none)
+TELEGRAM_API_URL=https://api.telegram.org  # optional: self-hosted Bot API server or a fake; https outside development/test
 ```
 
 ```go
@@ -69,7 +70,7 @@ defer tg.Close(ctx)
 | Format | Telegram HTML: emoji and level, app name, environment, UTC time, then the message and attributes (groups dotted, error chains as "caused by") in a `<pre>` block; all content escaped; truncated to 4096 characters without cutting tags or entities |
 | Reliability | bounded queue (`QueueSize`, drops and reports when full), per-request `Timeout`, one retry after HTTP 429 honouring `retry_after` capped by `MaxRetryAfter`, `OnError` (never reentrant; records logged from it or carrying its error are not forwarded, so it may log through the app logger), drained by `app.Shutdown`; `SendSync` / `ContactSync` skip the queue and return the error (bounded by `Timeout` per request and by ctx) |
 | Log forwarding | on by default for records at `MinLevel`+; `TELEGRAM_LOG=false` turns it off; `Filter` and `RateLimit`/`RatePeriod` (`TELEGRAM_RATE_LIMIT` per minute, `ErrRateLimited` reported once per window) narrow it; `vukem.WithTelegram` edits the config in code |
-| Security | token held as `config.Secret`; request errors are redacted, also from `SendSync`/`ContactSync` (`TestSecurity_A09_TelegramTokenRedacted`, `TestSecurity_A09_TelegramSyncErrorRedactsToken`); `vukem about` shows only on/off; disabled when token or chat is missing |
+| Security | token held as `config.Secret`; request errors are redacted, also from `SendSync`/`ContactSync` (`TestSecurity_A09_TelegramTokenRedacted`, `TestSecurity_A09_TelegramSyncErrorRedactsToken`); `vukem about` shows only on/off; disabled when token or chat is missing; `TELEGRAM_API_URL` (default `https://api.telegram.org`, the token travels in its path) must be https outside development and test, without credentials, query or fragment, and a bad value fails boot without echoing it (`TestSecurity_A04_TelegramAPIURLRequiresHTTPS`); `WithTelegram` setting `BaseURL` still wins |
 
 ## Mail
 
@@ -403,7 +404,7 @@ safe := httpclient.Safe(httpclient.Options{WrapTransport: tracing.Transport}) //
 
 ### Metrics
 
-Metrics are on when `Config.MetricReader` is set, or else when `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` (used as is) or `OTEL_EXPORTER_OTLP_ENDPOINT` with `OTEL_METRICS_EXPORTER=otlp` (`/v1/metrics` appended) selects an OTLP/HTTP collector. The generic endpoint alone does not turn metrics on, so apps that set it for traces keep the same output after upgrading; `OTEL_METRICS_EXPORTER=none` turns metrics off. `OTEL_EXPORTER_OTLP_[METRICS_]HEADERS`, `_TIMEOUT` and `_COMPRESSION` follow the traces rules, and `OTEL_METRIC_EXPORT_INTERVAL` (milliseconds, default 60000) sets the export period. The provider builds a `MeterProvider` with the same resource and records, through the same hooks:
+Metrics are on when `Config.MetricReader` is set, or else when `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` (used as is) or else `OTEL_EXPORTER_OTLP_ENDPOINT` (`/v1/metrics` appended) selects an OTLP/HTTP collector: as in the OpenTelemetry spec, `OTEL_METRICS_EXPORTER` defaults to `otlp` and the generic endpoint applies to every signal (since v0.27; before, metrics also needed `OTEL_METRICS_EXPORTER=otlp`). `OTEL_METRICS_EXPORTER=none` turns metrics off, for a collector that accepts only traces such as Railway's tracing receiver; values other than `otlp` and `none` fail the boot. `OTEL_EXPORTER_OTLP_[METRICS_]HEADERS`, `_TIMEOUT` and `_COMPRESSION` follow the traces rules, and `OTEL_METRIC_EXPORT_INTERVAL` (milliseconds, default 60000) sets the export period. The provider builds a `MeterProvider` with the same resource and records, through the same hooks:
 
 | Metric | Kind | Attributes |
 | --- | --- | --- |

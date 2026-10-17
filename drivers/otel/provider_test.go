@@ -12,9 +12,9 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/google/go-cmp/cmp"
 	otelglobal "go.opentelemetry.io/otel"
@@ -187,7 +187,15 @@ func TestProvider_Endpoint(t *testing.T) {
 		env     map[string]string
 		wantErr string
 	}{
-		{name: "generic endpoint", env: map[string]string{"OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector:4318/"}},
+		{
+			// Metrics off: this case checks traces, and a metrics shutdown
+			// would dial the collector.
+			name: "generic endpoint",
+			env: map[string]string{
+				"OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector:4318/",
+				"OTEL_METRICS_EXPORTER":       "none",
+			},
+		},
 		{
 			name: "traces endpoint",
 			env:  map[string]string{"OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "https://collector.example.com/v1/traces"},
@@ -260,8 +268,34 @@ func TestProvider_MetricsEndpoint(t *testing.T) {
 			wantMetrics: true,
 		},
 		{
-			name: "generic endpoint alone keeps metrics off",
-			env:  map[string]string{"OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector:4318"},
+			// The spec defaults OTEL_METRICS_EXPORTER to otlp, so the
+			// generic endpoint covers every signal.
+			name:        "generic endpoint alone turns metrics on",
+			env:         map[string]string{"OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector:4318"},
+			wantMetrics: true,
+		},
+		{
+			name: "none keeps the generic endpoint to traces",
+			env: map[string]string{
+				"OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector:4318",
+				"OTEL_METRICS_EXPORTER":       "none",
+			},
+		},
+		{
+			name: "metrics endpoint overrides the generic one",
+			env: map[string]string{
+				"OTEL_EXPORTER_OTLP_ENDPOINT":         "http://collector:4318",
+				"OTEL_EXPORTER_OTLP_METRICS_ENDPOINT": "https://metrics.example.com/v1/metrics",
+			},
+			wantMetrics: true,
+		},
+		{
+			name: "bad metrics endpoint wins over a good generic one",
+			env: map[string]string{
+				"OTEL_EXPORTER_OTLP_ENDPOINT":         "http://collector:4318",
+				"OTEL_EXPORTER_OTLP_METRICS_ENDPOINT": "collector:4318",
+			},
+			wantErr: "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT must be an http(s) URL",
 		},
 		{
 			name: "none turns the metrics endpoint off",
@@ -299,7 +333,23 @@ func TestProvider_MetricsEndpoint(t *testing.T) {
 
 			p := otel.New(otel.Config{})
 
-			app, err := newApp(t, tt.env, p)
+			// The metrics shutdown flushes to the collector: point every
+			// endpoint at a local one, so the test does no network I/O.
+			collector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			}))
+			t.Cleanup(collector.Close)
+
+			env := map[string]string{}
+			for k, v := range tt.env {
+				env[k] = strings.NewReplacer(
+					"http://collector:4318", collector.URL,
+					"https://collector.example.com", collector.URL,
+					"https://metrics.example.com", collector.URL,
+				).Replace(v)
+			}
+
+			app, err := newApp(t, env, p)
 			if tt.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 					t.Fatalf("New() error = %v, want %q", err, tt.wantErr)
@@ -317,11 +367,9 @@ func TestProvider_MetricsEndpoint(t *testing.T) {
 				t.Errorf("MeterProvider() is the SDK provider = %v, want %v", got, tt.wantMetrics)
 			}
 
-			// Nothing was exported yet, so shutting down does not dial the collector.
-			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
-			defer cancel()
-
-			_ = app.Shutdown(ctx)
+			if err := app.Shutdown(t.Context()); err != nil {
+				t.Fatal(err)
+			}
 		})
 	}
 }
@@ -488,9 +536,15 @@ func TestProvider_ExporterSettingsFromSource(t *testing.T) {
 		Path, APIKey, Encoding string
 	}
 
-	got := make(chan request, 1)
+	var (
+		mu  sync.Mutex
+		got []request
+	)
+
 	collector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		got <- request{r.URL.Path, r.Header.Get("X-Api-Key"), r.Header.Get("Content-Encoding")}
+		mu.Lock()
+		got = append(got, request{r.URL.Path, r.Header.Get("X-Api-Key"), r.Header.Get("Content-Encoding")})
+		mu.Unlock()
 
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -514,9 +568,18 @@ func TestProvider_ExporterSettingsFromSource(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	want := request{Path: "/v1/traces", APIKey: "k ey", Encoding: "gzip"}
-	if diff := cmp.Diff(want, <-got); diff != "" {
-		t.Fatalf("collector request (-want +got):\n%s", diff)
+	mu.Lock()
+	defer mu.Unlock()
+
+	slices.SortFunc(got, func(a, b request) int { return strings.Compare(a.Path, b.Path) })
+
+	// The generic endpoint carries both signals, each on its own path.
+	want := []request{
+		{Path: "/v1/metrics", APIKey: "k ey", Encoding: "gzip"},
+		{Path: "/v1/traces", APIKey: "k ey", Encoding: "gzip"},
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("collector requests (-want +got):\n%s", diff)
 	}
 }
 

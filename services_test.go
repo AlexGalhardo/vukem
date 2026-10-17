@@ -19,6 +19,8 @@ import (
 	"testing/fstest"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
+
 	"github.com/AlexGalhardo/vukem/cache"
 	"github.com/AlexGalhardo/vukem/events"
 	"github.com/AlexGalhardo/vukem/internal/testutil"
@@ -452,6 +454,116 @@ func TestTelegramLogForwarding(t *testing.T) {
 
 			if got := len(sent) - 1; got != tt.wantLogs || !slices.Contains(sent, "explicit") {
 				t.Errorf("forwarded log records = %d, want %d (sent %q)", got, tt.wantLogs, sent)
+			}
+		})
+	}
+}
+
+func TestTelegramAPIURLFromEnv(t *testing.T) {
+	t.Parallel()
+
+	var (
+		mu    sync.Mutex
+		paths []string
+	)
+
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		paths = append(paths, r.URL.Path)
+		mu.Unlock()
+
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	t.Cleanup(api.Close)
+
+	// A trailing slash is dropped, so the path is not //bot<token>.
+	app, err := New(WithSource(testSource(map[string]string{
+		"TELEGRAM_BOT_TOKEN": "123:T", "TELEGRAM_CHAT_ID": "-1", "TELEGRAM_LOG": "false",
+		"TELEGRAM_API_URL": api.URL + "/",
+	})), WithLogger(discardLogger()))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := app.Telegram.SendSync(t.Context(), "hi"); err != nil {
+		t.Fatalf("SendSync() = %v, want nil", err)
+	}
+
+	if err := app.Shutdown(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if diff := cmp.Diff([]string{"/bot123:T/sendMessage"}, paths); diff != "" {
+		t.Errorf("Bot API requests (-want +got):\n%s", diff)
+	}
+}
+
+// TELEGRAM_API_URL carries the bot token in its path, so it must be https
+// outside development and test, and a bad value fails boot without echoing
+// the URL or the token.
+func TestSecurity_A04_TelegramAPIURLRequiresHTTPS(t *testing.T) {
+	t.Parallel()
+
+	const token = "123:SUPERSECRET"
+
+	tests := []struct {
+		name    string
+		env     string
+		url     string
+		wantErr bool
+	}{
+		{"default", "production", "", false},
+		{"https in production", "production", "https://bot-api.example.com", false},
+		{"https with a path prefix", "production", "https://proxy.example.com/telegram", false},
+		{"http in production", "production", "http://bot-api.example.com", true},
+		{"http on loopback in production", "production", "http://127.0.0.1:8081", true},
+		{"http in development", "development", "http://localhost:8081", false},
+		{"http in test", "test", "http://127.0.0.1:8081", false},
+		{"other scheme", "development", "ftp://bot-api.example.com", true},
+		{"no host", "development", "https://", true},
+		{"not a URL", "development", "bot-api.example.com", true},
+		{"userinfo", "production", "https://user:" + token + "@bot-api.example.com", true},
+		{"query", "production", "https://bot-api.example.com?token=" + token, true},
+		{"fragment", "production", "https://bot-api.example.com#" + token, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			env := map[string]string{"APP_ENV": tt.env, "TELEGRAM_BOT_TOKEN": token, "TELEGRAM_CHAT_ID": "-1"}
+			if tt.url != "" {
+				env["TELEGRAM_API_URL"] = tt.url
+			}
+
+			app, err := New(WithSource(testSource(env)), WithLogger(discardLogger()))
+			if (err != nil) != tt.wantErr {
+				t.Fatalf(
+					"New(TELEGRAM_API_URL=%q, APP_ENV=%s) error = %v, want error %v",
+					tt.url,
+					tt.env,
+					err,
+					tt.wantErr,
+				)
+			}
+
+			if err != nil {
+				if !strings.Contains(err.Error(), "TELEGRAM_API_URL") {
+					t.Errorf("error %q does not name TELEGRAM_API_URL", err)
+				}
+
+				if strings.Contains(err.Error(), "SUPERSECRET") || strings.Contains(err.Error(), "example.com") {
+					t.Errorf("error %q echoes the URL or the token", err)
+				}
+
+				return
+			}
+
+			if err := app.Shutdown(t.Context()); err != nil {
+				t.Fatal(err)
 			}
 		})
 	}

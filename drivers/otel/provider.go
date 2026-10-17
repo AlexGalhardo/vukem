@@ -44,10 +44,10 @@ type Config struct {
 	// on it (same resource as the traces) and records HTTP server, outbound
 	// HTTP, database and queue metrics. Pass
 	// sdkmetric.NewPeriodicReader(exporter) with the exporter of your
-	// backend. When nil, OTEL_EXPORTER_OTLP_METRICS_ENDPOINT (or
-	// OTEL_EXPORTER_OTLP_ENDPOINT with OTEL_METRICS_EXPORTER=otlp) selects
-	// an OTLP/HTTP collector, exported every OTEL_METRIC_EXPORT_INTERVAL
-	// milliseconds (60s by default); with neither, no metric is recorded.
+	// backend. When nil, OTEL_EXPORTER_OTLP_METRICS_ENDPOINT, else
+	// OTEL_EXPORTER_OTLP_ENDPOINT, selects an OTLP/HTTP collector, exported
+	// every OTEL_METRIC_EXPORT_INTERVAL milliseconds (60s by default);
+	// OTEL_METRICS_EXPORTER=none, or neither endpoint, records no metric.
 	MetricReader sdkmetric.Reader
 	// QueryText records the SQL text on database spans (see WithQueryText).
 	QueryText bool
@@ -63,9 +63,10 @@ type Config struct {
 }
 
 // Provider is a vukem.Provider that builds a TracerProvider (and a
-// MeterProvider with Config.MetricReader), traces and measures every HTTP
-// request with Middleware, attaches an Observer to the app's database,
-// queue and mailer, and flushes pending data on Shutdown.
+// MeterProvider with Config.MetricReader or an OTLP metrics endpoint),
+// traces and measures every HTTP request with Middleware, attaches an
+// Observer to the app's database, queue and mailer, and flushes pending
+// data on Shutdown.
 type Provider struct {
 	cfg Config
 	tp  *sdktrace.TracerProvider
@@ -335,16 +336,16 @@ func (p *Provider) Shutdown(ctx context.Context, _ *vukem.App) error {
 // tracesEndpoint follows the OTLP exporter spec: the per-signal variable is
 // used as is, the generic one gets /v1/traces appended.
 func tracesEndpoint(getenv func(string) string) (string, error) {
-	return signalEndpoint(getenv, "TRACES", true)
+	return signalEndpoint(getenv, "TRACES")
 }
 
-// signalEndpoint returns OTEL_EXPORTER_OTLP_<SIGNAL>_ENDPOINT as is or, when
-// generic is true, OTEL_EXPORTER_OTLP_ENDPOINT with /v1/<signal> appended.
-func signalEndpoint(getenv func(string) string, signal string, generic bool) (string, error) {
+// signalEndpoint returns OTEL_EXPORTER_OTLP_<SIGNAL>_ENDPOINT as is, else
+// OTEL_EXPORTER_OTLP_ENDPOINT with /v1/<signal> appended.
+func signalEndpoint(getenv func(string) string, signal string) (string, error) {
 	key := "OTEL_EXPORTER_OTLP_" + signal + "_ENDPOINT"
 
 	endpoint := getenv(key)
-	if endpoint == "" && generic {
+	if endpoint == "" {
 		key, endpoint = "OTEL_EXPORTER_OTLP_ENDPOINT", getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
 		if endpoint != "" {
 			endpoint = strings.TrimRight(endpoint, "/") + "/v1/" + strings.ToLower(signal)
@@ -366,24 +367,20 @@ func signalEndpoint(getenv func(string) string, signal string, generic bool) (st
 // metricReader builds a periodic reader over the OTLP/HTTP metrics
 // exporter; it returns nil when metrics are not configured.
 //
-// OTEL_EXPORTER_OTLP_METRICS_ENDPOINT turns metrics on by itself. The
-// generic OTEL_EXPORTER_OTLP_ENDPOINT only does with OTEL_METRICS_EXPORTER=otlp,
-// so apps that set it for traces do not start exporting metrics on upgrade;
-// OTEL_METRICS_EXPORTER=none turns metrics off.
+// As in the OpenTelemetry spec, OTEL_METRICS_EXPORTER defaults to otlp:
+// OTEL_EXPORTER_OTLP_METRICS_ENDPOINT, else OTEL_EXPORTER_OTLP_ENDPOINT
+// with /v1/metrics, turns metrics on, and OTEL_METRICS_EXPORTER=none turns
+// them off.
 func metricReader(getenv func(string) string) (sdkmetric.Reader, error) {
-	generic := false
-
-	switch v := getenv("OTEL_METRICS_EXPORTER"); v {
-	case "":
+	switch getenv("OTEL_METRICS_EXPORTER") {
+	case "", "otlp":
 	case "none":
 		return nil, nil //nolint:nilnil // nil means "metrics off"
-	case "otlp":
-		generic = true
 	default:
 		return nil, errors.New("otel: OTEL_METRICS_EXPORTER must be otlp or none")
 	}
 
-	endpoint, err := signalEndpoint(getenv, "METRICS", generic)
+	endpoint, err := signalEndpoint(getenv, "METRICS")
 	if err != nil || endpoint == "" {
 		return nil, err
 	}

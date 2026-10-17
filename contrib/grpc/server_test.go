@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -178,33 +179,81 @@ func TestServe_AddsRunnerToApp(t *testing.T) {
 	}
 }
 
-// In production a cleartext gRPC port needs the same opt-in as the main
-// server's h2c (HTTP_H2C=true): otherwise it must be TLS.
+// In production a cleartext gRPC port needs its own opt-in
+// (GRPC_INSECURE_CLEARTEXT=true or ServerOptions.InsecureCleartext),
+// independent of the main server's HTTP_H2C: otherwise it must be TLS.
 func TestSecurity_A02_GRPCServerCleartextInProductionNeedsOptIn(t *testing.T) {
 	t.Parallel()
 
-	prod := map[string]string{"APP_KEY": config.GenerateKey(), "APP_ENV": "production"}
+	tests := []struct {
+		name    string
+		env     map[string]string
+		opts    grpc.ServerOptions
+		wantErr error
+	}{
+		{"production, no TLS", map[string]string{}, grpc.ServerOptions{}, grpc.ErrCleartextInProduction},
+		{"production, TLS", map[string]string{}, grpc.ServerOptions{TLS: &tls.Config{}}, nil},
+		{
+			"production, HTTP_H2C=true does not open the gRPC port",
+			map[string]string{"HTTP_H2C": "true"},
+			grpc.ServerOptions{},
+			grpc.ErrCleartextInProduction,
+		},
+		{
+			"production, GRPC_INSECURE_CLEARTEXT=true",
+			map[string]string{"GRPC_INSECURE_CLEARTEXT": "true"},
+			grpc.ServerOptions{},
+			nil,
+		},
+		{
+			"production, GRPC_INSECURE_CLEARTEXT=false",
+			map[string]string{"GRPC_INSECURE_CLEARTEXT": "false"},
+			grpc.ServerOptions{},
+			grpc.ErrCleartextInProduction,
+		},
+		{
+			"production, InsecureCleartext option",
+			map[string]string{},
+			grpc.ServerOptions{InsecureCleartext: true},
+			nil,
+		},
+		{
+			"production, invalid GRPC_INSECURE_CLEARTEXT",
+			map[string]string{"GRPC_INSECURE_CLEARTEXT": "yes"},
+			grpc.ServerOptions{},
+			grpc.ErrInvalidInsecureCleartext,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-	err := grpc.Serve(newApp(t, prod), ":0", rpcRouter(), grpc.ServerOptions{})
-	if !errors.Is(err, grpc.ErrCleartextInProduction) {
-		t.Fatalf("Serve(production, no TLS) = %v, want ErrCleartextInProduction", err)
+			env := map[string]string{"APP_KEY": config.GenerateKey(), "APP_ENV": "production"}
+			maps.Copy(env, tt.env)
+
+			if err := grpc.Serve(newApp(t, env), ":0", rpcRouter(), tt.opts); !errors.Is(err, tt.wantErr) {
+				t.Errorf("Serve(%s) = %v, want %v", tt.name, err, tt.wantErr)
+			}
+		})
 	}
 
-	if err := grpc.Serve(newApp(t, prod), ":0", rpcRouter(), grpc.ServerOptions{TLS: &tls.Config{}}); err != nil {
-		t.Errorf("Serve(production, TLS) = %v, want nil", err)
+	err := grpc.Serve(
+		newApp(t, map[string]string{"APP_KEY": config.GenerateKey(), "APP_ENV": "production"}),
+		":0",
+		rpcRouter(),
+		grpc.ServerOptions{},
+	)
+	if err == nil || !strings.Contains(err.Error(), "GRPC_INSECURE_CLEARTEXT") {
+		t.Errorf("Serve(production, no TLS) error %v does not name GRPC_INSECURE_CLEARTEXT", err)
 	}
 
-	optIn := map[string]string{"APP_KEY": config.GenerateKey(), "APP_ENV": "production", "HTTP_H2C": "true"}
-	if err := grpc.Serve(newApp(t, optIn), ":0", rpcRouter(), grpc.ServerOptions{}); err != nil {
-		t.Errorf("Serve(production, HTTP_H2C=true) = %v, want nil", err)
-	}
-
-	if !strings.Contains(err.Error(), "HTTP_H2C") {
-		t.Errorf("error %q does not name HTTP_H2C", err)
-	}
-
-	// Server applies the same rule; a missing config counts as production.
-	for name, cfg := range map[string]*vukem.Config{"production": {Env: config.Production}, "nil config": nil} {
+	// Server applies the same rule; a missing config counts as production
+	// and HTTP_H2C does not count as the gRPC opt-in.
+	for name, cfg := range map[string]*vukem.Config{
+		"production":            {Env: config.Production},
+		"production + HTTP_H2C": {Env: config.Production, H2C: true},
+		"nil config":            nil,
+	} {
 		if _, err := grpc.Server(
 			cfg,
 			":0",
@@ -218,8 +267,8 @@ func TestSecurity_A02_GRPCServerCleartextInProductionNeedsOptIn(t *testing.T) {
 		}
 	}
 
-	h2c := &vukem.Config{Env: config.Production, H2C: true}
-	if _, err := grpc.Server(h2c, ":0", rpcRouter(), grpc.ServerOptions{}); err != nil {
-		t.Errorf("Server(production, HTTP_H2C=true) = %v, want nil", err)
+	prod := &vukem.Config{Env: config.Production}
+	if _, err := grpc.Server(prod, ":0", rpcRouter(), grpc.ServerOptions{InsecureCleartext: true}); err != nil {
+		t.Errorf("Server(production, InsecureCleartext) = %v, want nil", err)
 	}
 }
