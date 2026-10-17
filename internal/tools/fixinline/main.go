@@ -3,9 +3,10 @@
 //
 //	go run ./internal/tools/fixinline [-v]
 //
-// Go 1.27.2's inliner was seen rewriting i18n.NewMiddleware(b,
-// MiddlewareConfig{}) into Middleware(MiddlewareConfig{}, cfg) while the
-// wrapper's parameters were named b and cfg (v0.26.0, decision B2). For each
+// An inliner argument swap was reported when a parameter name matches a
+// caller's argument name: i18n.NewMiddleware(b, MiddlewareConfig{}) became
+// Middleware(MiddlewareConfig{}, cfg) while the wrapper's parameters were
+// named b and cfg (v0.26.0, decision B2; not reproduced on Go 1.27.2). For each
 // wrapper the command adds a generated file to the wrapper's package through
 // a go build overlay (the working tree is never written), with callers whose
 // argument variables reuse the parameter names: in order, rotated by one, and
