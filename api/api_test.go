@@ -347,3 +347,28 @@ func TestSecurity_A04_QueryBoundsPageAndFilterLists(t *testing.T) {
 		}
 	}
 }
+
+func TestQueryLimitsDefaultWhenNotPositive(t *testing.T) {
+	t.Parallel()
+
+	db := setup(t)
+
+	for _, n := range []int{0, -1} {
+		handler := func(c *web.Ctx) error {
+			if _, err := Query(c, orm.QueryOf[Product](db), Filters("category"), MaxPage(n), MaxFilterValues(n)); err != nil {
+				return err
+			}
+
+			return c.JSON(200, map[string]any{})
+		}
+
+		for target, want := range map[string]int{
+			"/p?page=2": 200, "/p?page=1000": 200, "/p?page=1001": 400,
+			"/p?filter[category]=a,b": 200,
+		} {
+			if rec, body := call(t, target, handler); rec.Code != want {
+				t.Errorf("limits %d: %s = %d %v, want %d", n, target, rec.Code, body, want)
+			}
+		}
+	}
+}

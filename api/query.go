@@ -30,11 +30,24 @@ const (
 
 // MaxPage bounds ?page (default DefaultMaxPage), so a request cannot make
 // the database skip millions of rows (OFFSET); use ?cursor for deep lists.
-func MaxPage(n int) Option { return func(s *spec) { s.maxPage = n } }
+// n <= 0 keeps the default.
+func MaxPage(n int) Option {
+	return func(s *spec) {
+		if n > 0 {
+			s.maxPage = n
+		}
+	}
+}
 
 // MaxFilterValues bounds the comma-separated values of one ?filter[col]
-// (default DefaultMaxFilterValues).
-func MaxFilterValues(n int) Option { return func(s *spec) { s.maxFilterValues = n } }
+// (default DefaultMaxFilterValues). n <= 0 keeps the default.
+func MaxFilterValues(n int) Option {
+	return func(s *spec) {
+		if n > 0 {
+			s.maxFilterValues = n
+		}
+	}
+}
 
 // Filters allows ?filter[col]=value (comma-separated values mean IN).
 func Filters(cols ...string) Option { return func(s *spec) { s.filters = cols } }
