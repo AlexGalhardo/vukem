@@ -13,7 +13,7 @@ func SendReports() vukem.Command {
 		CommandName: "send-reports",
 		Desc:        "Describe what send-reports does",
 		Fn: func(ctx context.Context, app *vukem.App, args []string) error {
-			fmt.Println("send-reports ran with", args)
+			fmt.Fprintln(app.Stdout(), "send-reports ran with", args)
 			return nil
 		},
 	}

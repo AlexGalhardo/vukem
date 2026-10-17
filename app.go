@@ -124,6 +124,7 @@ type App struct {
 	commands  map[string]Command
 	health    health
 	stdout    io.Writer
+	stderr    io.Writer
 	stdin     io.Reader
 	ready     chan<- string
 	noHTTP    bool
@@ -208,7 +209,7 @@ type options struct {
 	schedules     []func(*schedule.Schedule, *App)
 	drivers       []database.Driver
 	stdout        io.Writer
-	stderr        io.Writer // key:generate diagnostics; tests set it directly
+	stderr        io.Writer
 	stdin         io.Reader
 	ready         chan<- string
 	noHTTP        bool
@@ -259,6 +260,12 @@ func WithClock(now func() time.Time) Option {
 // WithStdout sets where commands print (os.Stdout by default).
 func WithStdout(w io.Writer) Option {
 	return func(o *options) error { o.stdout = w; return nil }
+}
+
+// WithStderr sets where commands print diagnostics (os.Stderr by
+// default).
+func WithStderr(w io.Writer) Option {
+	return func(o *options) error { o.stderr = w; return nil }
 }
 
 // WithStdin sets where commands read input (os.Stdin by default).
@@ -406,6 +413,11 @@ func New(opts ...Option) (*App, error) {
 		stdout = os.Stdout
 	}
 
+	errOut := o.stderr
+	if errOut == nil {
+		errOut = os.Stderr
+	}
+
 	stdin := o.stdin
 	if stdin == nil {
 		stdin = os.Stdin
@@ -441,6 +453,7 @@ func New(opts ...Option) (*App, error) {
 		providers: o.providers,
 		runners:   o.runners,
 		stdout:    stdout,
+		stderr:    errOut,
 		stdin:     stdin,
 		ready:     o.ready,
 		noHTTP:    o.noHTTP,
@@ -669,6 +682,18 @@ func newLogger(cfg *Config, out io.Writer) *slog.Logger {
 
 	return slog.New(slog.NewTextHandler(out, hopts))
 }
+
+// Stdout is where commands print results (WithStdout, os.Stdout by
+// default). Commands write here instead of os.Stdout so tests can capture
+// or silence them.
+func (a *App) Stdout() io.Writer { return a.stdout }
+
+// Stderr is where commands print diagnostics (WithStderr, os.Stderr by
+// default).
+func (a *App) Stderr() io.Writer { return a.stderr }
+
+// Stdin is where commands read input (WithStdin, os.Stdin by default).
+func (a *App) Stdin() io.Reader { return a.stdin }
 
 // Now returns the current time from the app clock (see WithClock).
 func (a *App) Now() time.Time { return a.now() }

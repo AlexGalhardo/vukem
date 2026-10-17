@@ -25,7 +25,8 @@ func serveReady(t *testing.T, app *App) (int, healthBody, *httptest.ResponseReco
 	t.Helper()
 
 	rec := httptest.NewRecorder()
-	app.ReadyHandler().ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/ready", http.NoBody))
+	app.ReadyHandler().
+		ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/ready", http.NoBody))
 
 	var body healthBody
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
