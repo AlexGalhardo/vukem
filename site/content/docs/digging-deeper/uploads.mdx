@@ -77,6 +77,50 @@ The [S3 disk](/docs/digging-deeper/storage#s3)'s own `PresignPut(key, ttl)` sign
 
 `Direct` answers `POST {"filename","content_type","size"}` with `{"key","url","method":"PUT","headers","expires_at"}` after checking the declared type, extension and size, under a random key in `Rules.Dir` (TTL 15 minutes, at most 1 hour). The declared type cannot be trusted, so `upload.Verify` sniffs the stored object and deletes it when it breaks the rules.
 
+## Thumbnails (`contrib/imaging`)
+
+Product photos, avatars and galleries need smaller copies. The optional module `contrib/imaging` makes them:
+
+```bash
+go get github.com/AlexGalhardo/vukem/contrib/imaging
+```
+
+```go
+form, err := upload.Receive(c, disk, upload.Images(10<<20))
+if err != nil {
+	return err
+}
+
+photo := form.Files[0]
+
+// One size:
+thumb, err := imaging.Thumbnail(c.Context(), disk, photo.Path, "products/"+id+"/thumb",
+	imaging.Options{MaxWidth: 400, MaxHeight: 400})
+// thumb.Path = "products/<id>/thumb.jpg", thumb.Width, thumb.Height
+
+// Several sizes from one decode:
+sizes, err := imaging.Thumbnails(c.Context(), disk, photo.Path, "products/"+id, map[string]imaging.Options{
+	"sm": {MaxWidth: 320, MaxHeight: 320},
+	"lg": {MaxWidth: 1200, MaxHeight: 1200, Quality: 88},
+})
+// sizes["sm"].Path = "products/<id>-sm.jpg"
+```
+
+What it does, step by step:
+
+1. Reads the file from the disk (at most `MaxBytes`, 25 MiB by default) and picks the decoder from the **content** (JPEG, PNG, GIF, WebP), never the file name.
+2. Reads only the header and refuses images that declare more than `MaxPixels` (`upload.DefaultMaxPixels`, 25 megapixels) **before** decoding: a decompression bomb never gets decoded.
+3. Scales down to fit `MaxWidth` × `MaxHeight`, keeping the aspect ratio (CatmullRom filter). Small images are never upscaled.
+4. Writes a JPEG (`Quality`, default 82), or a PNG when the image has transparency. Re-encoding removes all metadata (EXIF, GPS location). EXIF orientation is not applied: photos taken sideways stay sideways.
+
+| Error | When |
+| --- | --- |
+| `imaging.ErrTooLarge` | the file is bigger than `MaxBytes` or declares more than `MaxPixels` |
+| `imaging.ErrUnsupported` | not a readable JPEG, PNG, GIF or WebP |
+| `imaging.ErrInvalidOptions` | `MaxWidth`/`MaxHeight` missing, `Quality` outside 0–100 |
+
+Nothing is written when it fails. Resizing large photos takes CPU time: for big uploads, store the original in the request and make thumbnails in a [queue job](/docs/digging-deeper/queue).
+
 ## HTMX progress component
 
 The HTMX starter ships `resources/views/components/upload.html` (a `data-upload` form with a `<progress>`) and a `/uploads` demo page. `resources/js/app.ts` swaps htmx's `fetch` for `XMLHttpRequest` on those forms to report progress, without inline scripts, so the CSP holds. Validate files received through `c.Input()` with `z.File()` ([validation](/docs/basics/validation)).

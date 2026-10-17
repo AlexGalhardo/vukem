@@ -28,6 +28,7 @@ jobs:
           - drivers/websocket
           - contrib/graphql
           - contrib/grpc
+          - contrib/imaging
           - contrib/stripe
           - examples/api
           - examples/blog
