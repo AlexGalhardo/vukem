@@ -69,6 +69,8 @@ func (greeter) Greet(
 		return nil, errs.ErrNotFound
 	case "taken":
 		return nil, errs.NewValidation().Add("name", "is taken")
+	case "unimplemented":
+		return nil, errs.New(http.StatusNotImplemented, "driver password=hunter2 missing")
 	case "keyed":
 		return nil, errs.NewKey(http.StatusForbidden, "greet.denied", "Greeting denied.", nil)
 	}
@@ -358,6 +360,29 @@ func TestSecurity_A10_GRPCInternalErrorsHidden(t *testing.T) {
 			t.Errorf("server log lacks the hidden causes:\n%s", out)
 		}
 	})
+}
+
+func TestSecurity_A10_GRPCServerHTTPErrorsLogged(t *testing.T) {
+	t.Parallel()
+
+	var logs syncBuffer
+
+	srv := grpctest.NewServer(
+		t,
+		newHandler(t, setup{opts: grpc.Options{Log: slog.New(slog.NewTextHandler(&logs, nil))}}),
+	)
+	client := greetv1connect.NewGreetServiceClient(srv.Client, srv.URL)
+
+	_, err := client.Greet(t.Context(), authed(&greetv1.GreetRequest{Name: "unimplemented"}))
+
+	cerr, ok := errors.AsType[*connect.Error](err)
+	if !ok || cerr.Code() != connect.CodeUnimplemented || cerr.Message() != "internal error" {
+		t.Fatalf("Greet(unimplemented) = %v, want unimplemented: internal error", err)
+	}
+
+	if out := logs.String(); !strings.Contains(out, "level=ERROR") || !strings.Contains(out, "hunter2") {
+		t.Errorf("server log lacks the hidden 5xx cause:\n%s", out)
+	}
 }
 
 func TestSecurity_A10_GRPCMessageSizeLimited(t *testing.T) {

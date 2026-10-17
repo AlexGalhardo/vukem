@@ -192,7 +192,7 @@ func (in *interceptor) finish(
 
 	if cerr != nil {
 		code = cerr.Code().String()
-		if isServerFault(cerr.Code()) {
+		if logsCause(err, cerr) {
 			level = slog.LevelError
 			attrs = append(attrs, "err", err)
 		}

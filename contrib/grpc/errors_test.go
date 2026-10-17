@@ -49,7 +49,7 @@ func TestError(t *testing.T) {
 			"unavailable",
 			errs.Wrap(http.StatusServiceUnavailable, errors.New("redis down")),
 			connect.CodeUnavailable,
-			"Service Unavailable",
+			"internal error",
 		},
 		{"status coder", teapot{}, connect.CodeFailedPrecondition, "I'm a teapot"},
 		{"unknown", errors.New("pq: password authentication failed"), connect.CodeInternal, "internal error"},
@@ -236,5 +236,59 @@ func TestInterceptor_UsesValidateMethods(t *testing.T) {
 	err := Error(in.validate(&selfValidating{}))
 	if err.Code() != connect.CodeInvalidArgument || err.Message() != "name is required" {
 		t.Errorf("validate(invalid) = %v, want invalid_argument: name is required", err)
+	}
+}
+
+type badGatewayError struct{}
+
+func (badGatewayError) Error() string   { return "upstream 10.0.3.7: password=hunter2" }
+func (badGatewayError) HTTPStatus() int { return http.StatusBadGateway }
+
+func TestSecurity_A10_GRPCServerHTTPErrorsMasked(t *testing.T) {
+	t.Parallel()
+
+	leaky := func(string, map[string]any) (string, bool) { return "dsn postgres://app:hunter2@db", true }
+	ctx := errs.WithTranslator(t.Context(), leaky)
+
+	secret := errors.New("db: password=hunter2")
+	_, issues := z.Struct[struct {
+		Name string `json:"name"`
+	}](z.Shape{"name": z.String().Refine(func(string) error { return secret })}).Parse(map[string]any{"name": "x"})
+
+	tests := map[string]struct {
+		err  error
+		code connect.Code
+	}{
+		"500 message": {
+			errs.New(http.StatusInternalServerError, "query failed: password=hunter2"),
+			connect.CodeInternal,
+		},
+		"503 keyed": {
+			errs.NewKey(http.StatusServiceUnavailable, "db.down", "redis hunter2 down", nil),
+			connect.CodeUnavailable,
+		},
+		"501 message": {errs.New(http.StatusNotImplemented, "driver hunter2 missing"), connect.CodeUnimplemented},
+		"504 message": {
+			errs.New(http.StatusGatewayTimeout, "upstream hunter2 slow"),
+			connect.CodeDeadlineExceeded,
+		},
+		"5xx status coder": {badGatewayError{}, connect.CodeInternal},
+		"500 wraps issues": {errs.Wrap(http.StatusInternalServerError, issues), connect.CodeInternal},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			got := ErrorContext(ctx, tt.err)
+			if got.Code() != tt.code || got.Message() != internalMessage || len(got.Details()) != 0 {
+				t.Errorf("ErrorContext(%v) = %v %q (%d details), want %v %q without details",
+					tt.err, got.Code(), got.Message(), len(got.Details()), tt.code, internalMessage)
+			}
+
+			if strings.Contains(got.Error(), "hunter2") {
+				t.Errorf("ErrorContext(%v) leaked the cause: %v", tt.err, got)
+			}
+		})
 	}
 }
