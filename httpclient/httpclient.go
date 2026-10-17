@@ -48,7 +48,13 @@ var blocked = mustPrefixes( //nolint:gochecknoglobals // read-only table
 	"0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16", "172.16.0.0/12",
 	"192.0.0.0/24", "192.0.2.0/24", "192.168.0.0/16", "198.18.0.0/15", "198.51.100.0/24", "203.0.113.0/24",
 	"224.0.0.0/4", "240.0.0.0/4", "255.255.255.255/32",
+	"192.88.99.0/24",
 	"::/128", "::1/128", "64:ff9b::/96", "100::/64", "2001:db8::/32", "fc00::/7", "fe80::/10", "ff00::/8",
+	// IPv6 forms that embed or translate an IPv4 address, which a NAT64,
+	// 6to4 or Teredo gateway may route to internal hosts: IPv4-compatible,
+	// IPv4-translated, local-use NAT64, Teredo and 6to4; plus deprecated
+	// site-local.
+	"::/96", "::ffff:0:0:0/96", "64:ff9b:1::/48", "2001::/32", "2002::/16", "fec0::/10",
 )
 
 func mustPrefixes(s ...string) []netip.Prefix {

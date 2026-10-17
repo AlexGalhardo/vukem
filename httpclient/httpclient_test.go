@@ -17,6 +17,10 @@ func TestSecurity_A01_SSRFAddresses(t *testing.T) {
 		"127.0.0.1", "127.1.2.3", "10.0.0.5", "172.16.3.4", "192.168.1.1", "169.254.169.254", // cloud metadata
 		"100.64.0.1", "0.0.0.0", "224.0.0.1", "255.255.255.255", "198.18.0.1",
 		"::1", "::", "fe80::1", "fd00::1", "ff02::1", "::ffff:127.0.0.1", "::ffff:169.254.169.254", "64:ff9b::7f00:1",
+		// IPv6 forms that embed or translate an IPv4 address: 6to4, local NAT64,
+		// Teredo, IPv4-compatible and IPv4-translated; site-local; 6to4 relay.
+		"2002:7f00:1::", "2002:a9fe:a9fe::", "64:ff9b:1::7f00:1", "2001:0:4136:e378::1", "::7f00:1", "::ffff:0:7f00:1",
+		"fec0::1", "192.88.99.1",
 	} {
 		if Allowed(netip.MustParseAddr(s), nil) {
 			t.Errorf("%s allowed", s)
