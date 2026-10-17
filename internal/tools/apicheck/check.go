@@ -185,6 +185,8 @@ type change struct {
 	Subject      string
 	Message      string
 	Incompatible bool
+	// Excepted marks an incompatible change allowed by an exception entry.
+	Excepted bool
 }
 
 // parseReport parses `apidiff -m` output: "Incompatible changes:" and
@@ -251,11 +253,13 @@ type result struct {
 	Changes []change
 }
 
+// count returns the compatible or incompatible changes; excepted
+// incompatible changes are not counted.
 func (r result) count(incompatible bool) int {
 	n := 0
 
 	for _, c := range r.Changes {
-		if c.Incompatible == incompatible {
+		if c.Incompatible == incompatible && !c.Excepted {
 			n++
 		}
 	}

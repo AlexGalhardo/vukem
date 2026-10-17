@@ -7,6 +7,10 @@
 //
 // Gate mode (default) fails when a module has incompatible changes since its
 // latest stable tag of -major (core vX.Y.Z, nested modules drivers/x/vX.Y.Z).
+// The only sanctioned override is an entry in the exception file
+// (-exceptions, default .config/apicheck-exceptions.json) for a
+// security-driven break; the gate also fails when an entry is malformed,
+// expired or unused.
 // A module without such a tag is skipped with a notice, so the gate passes
 // until the first v1 tag exists. Report mode (-report) writes compatible and
 // incompatible changes as Markdown and never fails because of them.
@@ -51,6 +55,11 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 	major := fs.String("major", "v1", "compare with the latest stable tag of this major version")
 	report := fs.String("report", "", "write a Markdown report of all changes to this file instead of gating")
 	head := fs.String("head", "HEAD", "label of the compared tree in the report title")
+	exceptionsFlag := fs.String(
+		"exceptions",
+		filepath.Join(".config", "apicheck-exceptions.json"),
+		"exception file for security-driven breaks, relative to the repository root",
+	)
 	apidiffFlag := fs.String(
 		"apidiff",
 		"apidiff",
@@ -62,7 +71,9 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 	}
 
 	if fs.NArg() != 0 {
-		return errors.New("usage: apicheck [-major v1] [-report file.md] [-head label] [-apidiff path]")
+		return errors.New(
+			"usage: apicheck [-major v1] [-report file.md] [-head label] [-exceptions file.json] [-apidiff path]",
+		)
 	}
 
 	apidiff, err := lookTool(ctx, *apidiffFlag)
@@ -78,6 +89,17 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 	root = filepath.FromSlash(root)
 
 	mods, err := discoverModules(root)
+	if err != nil {
+		return err
+	}
+
+	exceptionsFile := *exceptionsFlag
+	if !filepath.IsAbs(exceptionsFile) {
+		exceptionsFile = filepath.Join(root, exceptionsFile)
+	}
+
+	// Validated in report mode too, so a bad entry fails before any release.
+	exceptions, err := loadExceptions(exceptionsFile, mods)
 	if err != nil {
 		return err
 	}
@@ -111,48 +133,79 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 			return fmt.Errorf("%s: %w", m.Path, err)
 		}
 
-		r := result{Module: m, Base: base, Changes: changes}
-		results = append(results, r)
-
-		// The gate passes -incompatible to apidiff, so compatible changes are
-		// only counted in report mode.
-		compatible := strconv.Itoa(r.count(false))
-		if *report == "" {
-			compatible = "unchecked"
-		}
-
-		fmt.Fprintf(
-			out,
-			"%s: %d incompatible, %s compatible changes since %s\n",
-			m.Path,
-			r.count(true),
-			compatible,
-			base,
-		)
-
-		for _, c := range changes {
-			if c.Incompatible && *report == "" {
-				fmt.Fprintf(
-					out,
-					"::error title=apidiff::%s: %s\n",
-					importPath(m.Path, c.Package)+"."+c.Subject,
-					c.Message,
-				)
-			}
-		}
+		results = append(results, result{Module: m, Base: base, Changes: changes})
 	}
 
 	if *report != "" {
+		for _, r := range results {
+			if r.Skipped == "" {
+				fmt.Fprintf(out, "%s: %d incompatible, %d compatible changes since %s\n",
+					r.Module.Path, r.count(true), r.count(false), r.Base)
+			}
+		}
+
 		return writeReport(*report, *major, *head, results)
+	}
+
+	return gate(out, results, exceptions)
+}
+
+// gate applies the exceptions to the incompatible changes, prints one
+// annotation per change (::warning when excepted, ::error otherwise) and
+// fails on any remaining incompatible change and on expired or unused
+// exceptions.
+func gate(out io.Writer, results []result, exceptions []exception) error {
+	var (
+		used []int
+		errs []error
+	)
+
+	for i := range results {
+		r := &results[i]
+		if r.Skipped != "" {
+			continue
+		}
+
+		u, err := applyExceptions(r, exceptions)
+		if err != nil {
+			errs = append(errs, err)
+		}
+
+		used = append(used, u...)
+
+		// The gate passes -incompatible to apidiff, so compatible changes
+		// are not listed.
+		fmt.Fprintf(out, "%s: %d incompatible, unchecked compatible changes since %s\n",
+			r.Module.Path, r.count(true), r.Base)
+
+		for _, c := range r.Changes {
+			if !c.Incompatible {
+				continue
+			}
+
+			level, note := "error", ""
+			if c.Excepted {
+				level, note = "warning", " (allowed by the apicheck exception file)"
+			}
+
+			fmt.Fprintf(out, "::%s title=apidiff::%s: %s%s\n",
+				level, importPath(r.Module.Path, c.Package)+"."+c.Subject, c.Message, note)
+		}
+	}
+
+	if err := unusedExceptions(exceptions, used); err != nil {
+		errs = append(errs, err)
 	}
 
 	for _, r := range results {
 		if r.count(true) > 0 {
-			return errIncompatible
+			errs = append(errs, errIncompatible)
+
+			break
 		}
 	}
 
-	return nil
+	return errors.Join(errs...)
 }
 
 func writeReport(file, major, head string, results []result) error {
