@@ -1,0 +1,18 @@
+/* WCAG AA (4.5:1) text colors for Scalar's default theme, which fails axe
+   color-contrast for muted text and HTTP method labels. The doubled class
+   outranks the theme's own .light-mode/.dark-mode rules. Checked by
+   TestDefaultThemeColorsMeetAA against the theme backgrounds. */
+.light-mode.light-mode {
+  --scalar-color-2: #5e5e5e;
+  --scalar-color-3: #676767;
+  --scalar-color-green: #04754c;
+  --scalar-color-red: #c80000;
+  --scalar-color-yellow: #7f6400;
+  --scalar-color-orange: #b23c00;
+  --scalar-color-blue: #0068ad;
+  --scalar-color-query: #00767a;
+}
+.dark-mode.dark-mode {
+  --scalar-color-3: #949494;
+  --scalar-color-red: #ff6161;
+}
