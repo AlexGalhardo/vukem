@@ -7,6 +7,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-10-17
+
+### Added
+
+- **stripe:** Add typed Accounts v2, refunds and transfer reversals
+- **BREAKING:** **cache:** Add Sharer contract and fail closed on undeclared stores
+- **redis:** Declare the cache store shared
+- **cache:** Bound Unwrap chains with cache.Layers
+- **database:** Add RebindChecked that rejects unterminated SQL and mixed placeholders
+- **BREAKING:** **queue:** Pop same-millisecond database jobs in push order
+- **signed:** Verify links signed with previous keys
+- **social:** Accept state cookies signed with previous keys
+- **session:** Open cookie sessions sealed with previous keys
+- **middleware:** Accept maintenance bypass cookies from previous keys
+- **cli:** Add key:rotate and pass previous keys in auth scaffolds
+- **grpc:** Add ErrorContext to translate keyed errors into the request locale
+- **schema:** Add Schema.HasColumn for upgrade migrations
+- **BREAKING:** **auth:** Soft revoke API tokens with revoked_at
+- **cli:** Add revoked_at to the install:auth access_tokens table
+- **cli:** Revoke API tokens with Tokens.RevokeAll on password reset
+- **BREAKING:** **i18n:** Return the config error from Middleware instead of panicking
+- **mail:** Add the Mailtrap Email API transport
+- **vukem:** Select the Mailtrap transport with MAIL_MAILER=mailtrap
+
+### Changed
+
+- **graphql:** Derive the 5xx check from errs.Status
+- **BREAKING:** **orm:** Remove the deprecated BeforeCreater and AfterCreater aliases
+- **BREAKING:** **mail:** Remove the deprecated WithAttachments alias
+- **BREAKING:** **stripe:** Remove the deprecated Client.Do
+
+### Fixed
+
+- **BREAKING:** **stripe:** Map v2 errors and validate Call paths and object ids
+- **BREAKING:** **schedule:** Check OnOneServer locks with cache.Shared
+- **BREAKING:** **vukem:** Require a declared shared cache for RATE_LIMIT_STORE=cache
+- **schedule:** Name cache.Sharer in ErrLocksNotShared
+- **database:** Quote only an 80-byte prefix of the query in RebindChecked errors
+- **queue:** Add the seq column only on an unknown-column probe error
+- **cli:** Keep the starter upload test off the filesystem
+- **cli:** Make key:rotate atomic and keep .env line syntax
+- **graphql:** Keep loader batches whole while siblings make progress
+- **graphql:** Translate keyed resolver errors into the request locale
+- **graphql:** Hide field errors wrapped in a 5xx HTTPError
+- **BREAKING:** **grpc:** Send 5xx HTTPErrors as "internal error" and log their cause
+- **graphql:** Cap how long a pending loader batch waits for progress
+- **BREAKING:** **grpc:** Mask unknown Validate errors and 5xx headers
+- **auth:** Answer 503 when the token store fails
+- **auth:** Keep revoking possible on access_tokens without revoked_at
+- **mail:** Harden Mailtrap error decoding and redirects
+
+### Security
+
+- **cache:** Document the cache.Sharer contract
+- **vukem:** Honour APP_PREVIOUS_KEYS in every APP_KEY-derived feature
+- **web:** Add AuditEvent for routine audit records at info
+- **BREAKING:** **cli:** Make the install:auth sign-up enumeration-safe
+- **BREAKING:** **cli:** Require verified email and rate limit sign-up in install:auth
+- **BREAKING:** **cli:** End squatter access when the email is proven
+
 ## [0.25.0] - 2026-10-17
 
 ### Added
@@ -697,7 +757,8 @@ Project foundation. No framework code yet; see [PLAN.md](PLAN.md) for the roadma
 - README, MIT license, CONTRIBUTING, SECURITY and CODE_OF_CONDUCT.
 - Agent configuration: `AGENTS.md`, `CLAUDE.md`, path-scoped `.claude/rules/`, Go skills and project settings.
 
-[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.25.0...HEAD
+[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.26.0...HEAD
+[0.26.0]: https://github.com/AlexGalhardo/vukem/compare/v0.25.0...v0.26.0
 [0.25.0]: https://github.com/AlexGalhardo/vukem/compare/v0.24.0...v0.25.0
 [0.24.0]: https://github.com/AlexGalhardo/vukem/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/AlexGalhardo/vukem/compare/v0.22.0...v0.23.0
