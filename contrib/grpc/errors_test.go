@@ -71,6 +71,39 @@ func TestError(t *testing.T) {
 	}
 }
 
+func TestSecurity_A10_GRPCConnectErrorsMasked(t *testing.T) {
+	t.Parallel()
+
+	downstream := connect.NewError(connect.CodeUnavailable, errors.New("dial tcp 10.0.3.7:8080: connection refused"))
+	tests := map[string]struct {
+		err  error
+		code connect.Code
+	}{
+		"handler internal": {connect.NewError(connect.CodeInternal, errors.New("pq: hunter2")), connect.CodeInternal},
+		"wrapped client":   {fmt.Errorf("billing: %w", downstream), connect.CodeUnavailable},
+		"data loss": {
+			connect.NewError(connect.CodeDataLoss, errors.New("disk /var/db corrupt")),
+			connect.CodeDataLoss,
+		},
+		"unknown": {connect.NewError(connect.CodeUnknown, errors.New("secret")), connect.CodeUnknown},
+	}
+
+	for name, tt := range tests {
+		got := Error(tt.err)
+		if got.Code() != tt.code || got.Message() != internalMessage || len(got.Details()) > 0 {
+			t.Errorf(
+				"%s: Error(%v) = %v %q, want %v %q",
+				name,
+				tt.err,
+				got.Code(),
+				got.Message(),
+				tt.code,
+				internalMessage,
+			)
+		}
+	}
+}
+
 func TestError_KeepsHeadersAsMetadata(t *testing.T) {
 	t.Parallel()
 

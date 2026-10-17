@@ -19,7 +19,9 @@ import (
 const internalMessage = "internal error"
 
 // Error converts err into the RPC error clients receive:
-//   - a *connect.Error is kept as is;
+//   - a *connect.Error is kept as is, except that server-fault codes
+//     (Internal, Unknown, DataLoss, Unavailable) get the message
+//     "internal error";
 //   - context cancellation and deadlines become Canceled and DeadlineExceeded;
 //   - z.Issues and *errs.ValidationError become InvalidArgument with a
 //     google.rpc.BadRequest detail listing the field violations;
@@ -35,6 +37,13 @@ func Error(err error) *connect.Error {
 	}
 
 	if cerr, ok := errors.AsType[*connect.Error](err); ok {
+		// Server-fault codes often carry a cause (connect.NewError(Internal,
+		// dbErr), or a failed downstream call with its dial address): keep
+		// the code, hide the text; the caller logs err.
+		if isServerFault(cerr.Code()) {
+			return connect.NewError(cerr.Code(), errors.New(internalMessage))
+		}
+
 		return cerr
 	}
 
