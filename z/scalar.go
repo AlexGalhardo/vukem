@@ -223,13 +223,16 @@ type EnumSchema[T ~string] struct {
 	values []T
 }
 
-// Enum returns a schema accepting one of values.
+// Enum returns a schema accepting one of values; it panics when values is
+// empty.
 func Enum(values ...string) EnumSchema[string] { return EnumOf(values...) }
 
 // EnumOf returns an enum schema for a named string type:
 //
 //	type Status string
 //	z.EnumOf(StatusDraft, StatusPublished)
+//
+// It panics when values is empty.
 func EnumOf[T ~string](values ...T) EnumSchema[T] {
 	if len(values) == 0 {
 		panic("z: Enum needs at least one value")
