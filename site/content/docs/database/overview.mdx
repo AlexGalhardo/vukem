@@ -54,6 +54,15 @@ err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM posts WHERE published = ?",
 
 Always pass values as arguments; never concatenate input into SQL. `db.Dialect()` gives `Quote` and `Placeholder` for portable statements, and `db.SQL()` exposes the underlying `*sql.DB`.
 
+PostgreSQL uses `$1, $2` placeholders where SQLite and MySQL use `?`. Write raw SQL once with `?` and rebind it for the connection's dialect:
+
+```go
+q := database.Rebind(db.Dialect(), "SELECT id FROM posts WHERE author_id = ? AND status = ?")
+rows, err := db.QueryContext(ctx, q, authorID, "published") // $1, $2 on PostgreSQL
+```
+
+`Rebind` leaves `?` inside string literals, quoted identifiers, dollar-quoted bodies and comments alone. On PostgreSQL `??` is a literal `?`, for jsonb operators (`data ?? 'key'`). `ExecContext` and `QueryContext` never rebind on their own, so queries already written with `$n` keep working.
+
 ## Transactions
 
 ```go

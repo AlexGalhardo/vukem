@@ -160,6 +160,8 @@ Inside `db.Tx`, use `tx` for every query (pass it as the `database.Executor`). S
 
 Column names passed as strings are validated against the model's cached column set at query build time (unknown column → error before hitting the database). Raw SQL is the explicit escape hatch.
 
+Raw SQL shared between dialects is written once with `?` and passed through `database.Rebind(ex.Dialect(), query)`: on PostgreSQL the n-th `?` becomes `$n`, elsewhere the query is unchanged. `?` inside string literals, quoted identifiers, dollar-quoted bodies and comments is left alone, and `??` is a literal `?` on PostgreSQL (jsonb operators). `DB.ExecContext`/`QueryContext` never rebind on their own, so queries already written with `$n` keep working.
+
 ## Models
 
 Plain structs. Mapping is computed **once per type** with reflection and cached; no reflection in the hot path beyond scanning.
