@@ -391,7 +391,7 @@ func TestSecurity_A07_SignupIsEnumerationSafe(t *testing.T) {
 
 		for _, want := range []string{
 			`r.Get("/register/check-email", h.CheckEmail).Name("register.check").Use(guest)`,
-			`r.Get("/email/verify/{id}", h.Verify).Name("verification.verify").Use(acc.Signer.Middleware(), required)`,
+			`r.Get("/email/verify/{id}", h.Verify).Name("verification.verify").Use(required)`,
 		} {
 			if !bytes.Contains(routes, []byte(want)) {
 				t.Errorf("%s routes lack %q", kit, want)
@@ -619,10 +619,11 @@ func TestSecurity_A07_ProvingTheEmailEndsSquatterAccess(t *testing.T) {
 }
 
 // The verification link needs the login of the account it verifies: the
-// route runs auth.Required after the signature check, so a signed-out
-// click leads to the login page with the link kept as the intended URL,
-// and the handler verifies only the signed-in user (403 for another
-// account). Whoever merely owns the mailbox cannot verify an account
+// route runs auth.Required, so a signed-out click leads to the login page
+// with the link kept as the intended URL, and the handler checks the
+// signature (an expired link leads to the resend page, a bad one is a 403
+// and a security event) and verifies only the signed-in user (403 for
+// another account). Whoever merely owns the mailbox cannot verify an account
 // someone else created with the address. The generated
 // TestRegisterAndVerifyEmail and TestVerificationEndsOtherSessions check
 // the behaviour end to end.
@@ -637,9 +638,9 @@ func TestSecurity_A07_VerificationLinkRequiresLogin(t *testing.T) {
 
 		if !bytes.Contains(
 			routes,
-			[]byte(`h.Verify).Name("verification.verify").Use(acc.Signer.Middleware(), required)`),
+			[]byte(`h.Verify).Name("verification.verify").Use(required)`),
 		) {
-			t.Errorf("%s: the verification route lacks the signature check followed by auth.Required", kit)
+			t.Errorf("%s: the verification route lacks auth.Required", kit)
 		}
 
 		verify, err := scaffoldFS.ReadFile("scaffolds/" + kit + "/app/controllers/account/verification.go.tmpl")
@@ -650,6 +651,8 @@ func TestSecurity_A07_VerificationLinkRequiresLogin(t *testing.T) {
 		for _, want := range []string{
 			`u, err := auth.User[models.User](c, "web")`,
 			"if u.ID != id {",
+			"if err := h.a.Signer.Verify(c.Request()); err != nil {",
+			`web.SecurityEvent(c.Request(), "url.signature_invalid")`,
 		} {
 			if !bytes.Contains(verify, []byte(want)) {
 				t.Errorf("%s Verify lacks %q", kit, want)
@@ -666,7 +669,8 @@ func TestSecurity_A07_VerificationLinkRequiresLogin(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		if !bytes.Contains(tests, []byte("AssertRedirect(verify)")) {
+		if !bytes.Contains(tests, []byte("AssertRedirect(verify)")) ||
+			!bytes.Contains(tests, []byte("func TestExpiredVerificationLinkOffersANewOne(")) {
 			t.Errorf("%s tests do not follow the link back after the login", kit)
 		}
 	}
