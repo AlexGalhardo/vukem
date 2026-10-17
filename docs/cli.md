@@ -56,7 +56,7 @@ Exit codes: `0` success, `1` failure, `2` usage error.
 | app: `route:list [--json]` | Route table |
 | app: `queue:work`, `queue:failed`, `queue:retry`, `queue:forget` | Queue workers and failed jobs ([subsystems.md](subsystems.md#queue)) |
 | app: `schedule:run`, `schedule:work`, `schedule:list` | Scheduler ([subsystems.md](subsystems.md#scheduler)) |
-| app: `openapi:export` | Print the OpenAPI 3.1 document of the routes ([api.md](api.md#openapi)) |
+| app: `openapi:export` | Print the OpenAPI 3.1 document of the routes ([api.md](api.md#openapi)); runs in warmup mode (no provider `Boot`, no database, `APP_KEY` optional) |
 | app: `openapi:serve [-addr]` | Preview the Scalar API reference locally (register `apidocs.Command()`) |
 | app: `codegen:types [-zod] [-o file]` | TypeScript types for every schema and operation (`<Op>Body`, `<Op>Query`, `<Op>Response`), plus Zod 4 schemas (`<Name>Schema`, `<Op>BodySchema`) with `-zod`; runs in warmup mode (no provider `Boot`, no database, `APP_KEY` optional) |
 | app: `codegen:routes [-o file]` | Typed `routes.ts` for the frontend (`route(name, params, query)`, `RouteName`, `routes`); default `resources/js/routes.ts`, `-o -` prints to stdout; runs in warmup mode, no connections ([frontend.md](frontend.md)) |

@@ -49,7 +49,8 @@ const (
 	// KindWarmup builds the app (config, Register, routes) but never runs
 	// providers' Boot or Shutdown, so no connection is opened. Commands that
 	// only read the route table (codegen:routes, codegen:client,
-	// codegen:types) run in it, and it tolerates a missing APP_KEY.
+	// codegen:types, openapi:export) run in it, and it tolerates a missing
+	// APP_KEY. Boot and Run return ErrWarmupRun; never expose its Router.
 	KindWarmup Kind = "warmup"
 )
 
@@ -936,8 +937,13 @@ func (a *App) OnShutdown(fn func(context.Context) error) {
 
 // Boot runs every provider's Boot hook once, in order, then the
 // WithRoutesAfterBoot functions. Boot is not retryable: later calls return
-// the first call's error (nil after a successful boot).
+// the first call's error (nil after a successful boot). A KindWarmup app
+// never boots: Boot returns [ErrWarmupRun].
 func (a *App) Boot(ctx context.Context) error {
+	if a.Kind == KindWarmup {
+		return ErrWarmupRun
+	}
+
 	a.bootMu.Lock()
 	defer a.bootMu.Unlock()
 
@@ -1024,18 +1030,15 @@ func (a *App) pendingBootRoutes() bool {
 	return len(a.bootRoutes) > 0
 }
 
-// ErrWarmupRun is returned by Run on a KindWarmup app: it is built only to
-// read its routes (and may lack APP_KEY), so it never serves.
-var ErrWarmupRun = errors.New("vukem: a warmup app cannot run")
+// ErrWarmupRun is returned by Boot (and so Run) on a KindWarmup app: it is
+// built only to read its routes and may lack APP_KEY, so it never opens
+// connections or serves. Never expose a warmup app's Router or Handler.
+var ErrWarmupRun = errors.New("vukem: a warmup app cannot boot or run")
 
 // Run boots the app, starts every runner and blocks until ctx is cancelled
 // or a runner fails; then it shuts everything down gracefully within
 // SHUTDOWN_TIMEOUT. A cancelled ctx is a clean exit (nil error).
 func (a *App) Run(ctx context.Context) error {
-	if a.Kind == KindWarmup {
-		return ErrWarmupRun
-	}
-
 	if err := a.Boot(ctx); err != nil {
 		return err
 	}

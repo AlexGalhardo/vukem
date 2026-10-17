@@ -20,19 +20,30 @@ func (unreachableDB) Boot(context.Context, *App) error {
 	return errors.New("dial tcp: database unreachable")
 }
 
-func TestCodegenTypesWithoutDatabaseOrKey(t *testing.T) {
+func TestRouteCommandsWithoutDatabaseOrKey(t *testing.T) {
 	t.Parallel()
 
 	env := config.MapSource(map[string]string{}) // no APP_KEY, no APP_ENV, no database
 
 	tests := []struct {
 		name    string
+		args    []string
+		want    string
 		routes  func(*router.Router, *App) error
 		wantErr error
 	}{
-		{name: "routes only", routes: openAPIRoutes},
 		{
-			name: "routes that derive a key fail closed",
+			name: "codegen:types", args: []string{"codegen:types", "-zod"},
+			want: "export type PingResponse = PingOut;", routes: openAPIRoutes,
+		},
+		{
+			name:   "openapi:export",
+			args:   []string{"openapi:export"},
+			want:   `"operationId": "ping"`,
+			routes: openAPIRoutes,
+		},
+		{
+			name: "routes that derive a key fail closed", args: []string{"codegen:types"},
 			routes: func(r *router.Router, app *App) error {
 				if _, err := app.DeriveKey("signing", 32); err != nil {
 					return err
@@ -55,13 +66,13 @@ func TestCodegenTypesWithoutDatabaseOrKey(t *testing.T) {
 					WithProviders(unreachableDB{}), WithRoutes(tt.routes))...)
 			}
 
-			err := RunMain(t.Context(), []string{"app", "codegen:types", "-zod"}, env.Lookup, build)
+			err := RunMain(t.Context(), append([]string{"app"}, tt.args...), env.Lookup, build)
 			if !errors.Is(err, tt.wantErr) {
-				t.Fatalf("codegen:types error = %v, want %v", err, tt.wantErr)
+				t.Fatalf("%v error = %v, want %v", tt.args, err, tt.wantErr)
 			}
 
-			if tt.wantErr == nil && !strings.Contains(out.String(), "export type PingResponse = PingOut;") {
-				t.Errorf("codegen:types output = %q", out.String())
+			if tt.wantErr == nil && !strings.Contains(out.String(), tt.want) {
+				t.Errorf("%v output = %q, want %q", tt.args, out.String(), tt.want)
 			}
 		})
 	}
@@ -93,10 +104,16 @@ func TestSecurity_A02_WarmupToleratesOnlyAMissingKey(t *testing.T) {
 		}
 	}
 
-	// A warmup app never serves or starts runners, even when asked to.
-	app, err := warmup(map[string]string{})
+	// A warmup app never boots providers, serves or starts runners, even
+	// when a custom main asks it to.
+	app, err := New(WithKind(KindWarmup), WithSource(config.MapSource(map[string]string{})),
+		WithLogger(discardLogger()), WithProviders(unreachableDB{}))
 	if err != nil {
 		t.Fatal(err)
+	}
+
+	if err := app.Boot(t.Context()); !errors.Is(err, ErrWarmupRun) {
+		t.Errorf("warmup Boot() = %v, want ErrWarmupRun", err)
 	}
 
 	app.AddRunner("worker", RunnerFunc(func(context.Context) error {

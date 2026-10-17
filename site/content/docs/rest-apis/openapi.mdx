@@ -18,6 +18,8 @@ func API(r *router.Router, app *vukem.App) error {
 vukem openapi:export > openapi.json
 ```
 
+`openapi:export` and `codegen:types` build the app in warmup mode: no provider `Boot`, no database connection, `APP_KEY` optional. A warmup app never boots or serves (`Boot` and `Run` return `vukem.ErrWarmupRun`), so never expose its router from a custom `main`.
+
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `APP_NAME` | `Vukem` | `info.title` |
