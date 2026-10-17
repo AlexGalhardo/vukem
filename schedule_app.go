@@ -45,7 +45,9 @@ func (a *App) scheduleRunner() Runner {
 			return nil
 		}
 
-		a.Log.InfoContext(ctx, "scheduler started in serve", "tasks", len(s.Tasks()))
+		a.Log.InfoContext(ctx,
+			"scheduler running inside serve; set SCHEDULE_IN_SERVE=false if you run schedule:work",
+			"tasks", len(s.Tasks()))
 
 		return s.Work(ctx, a.now)
 	})
