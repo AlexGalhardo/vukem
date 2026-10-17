@@ -22,8 +22,6 @@ import (
 	"slices"
 	"strings"
 	"time"
-
-	_ "modernc.org/sqlite" // pure-Go SQLite driver ("sqlite"); no cgo, works on Windows
 )
 
 // Dialect describes SQL differences between databases.
@@ -250,6 +248,11 @@ func sqliteDSN(rawURL string, write bool) (dsn string, memory bool) {
 }
 
 func openSQLite(ctx context.Context, rawURL string, cfg Config) (*DB, error) {
+	if !sqliteLinked {
+		return nil, errors.New("database: SQLite is not linked into this binary (built with -tags vukem_nosqlite); " +
+			"rebuild without the tag or set DATABASE_URL to another driver")
+	}
+
 	wdsn, memory := sqliteDSN(rawURL, true)
 
 	writer, err := sql.Open("sqlite", wdsn)

@@ -103,6 +103,8 @@ PRAGMA temp_store = MEMORY;
 - Tests use `file::memory:?cache=shared` or a file in `t.TempDir()`.
 - Known SQLite quirk: an unknown double-quoted identifier is read as a string literal, so `t.Index("misspelled")` in a migration creates a useless index on a constant instead of failing. Postgres and MySQL reject it; run the migrations of apps that deploy on them against that database in CI (`TEST_DATABASE_URL`).
 
+Apps that never open a SQLite database can leave the driver out with the `vukem_nosqlite` build tag (`go build -tags vukem_nosqlite`, or `vukem_nosqlite` in the project's `.buildtags`, which `vukem new --minimal` writes). `database.Open` then refuses SQLite URLs with an error naming the tag. Tests (`vukemtest`) keep using in-memory SQLite, so run them without the tag.
+
 ## Query builder
 
 Generic, built on `database/sql`, dialect-aware placeholders (`?` vs `$1`), always parameterised.
