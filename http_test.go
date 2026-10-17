@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -132,6 +133,59 @@ func TestRunMainServesHTTP(t *testing.T) {
 	cancel()
 	if err := <-errc; err != nil {
 		t.Fatalf("RunMain() = %v", err)
+	}
+}
+
+func TestRunMainServesH2COutsideProduction(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		env  map[string]string
+		want bool
+	}{
+		{"development", map[string]string{"APP_ENV": "development"}, true},
+		{"production", map[string]string{"APP_ENV": "production"}, false},
+		{"production opt-in", map[string]string{"APP_ENV": "production", "HTTP_H2C": "true"}, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			ready := make(chan string, 1)
+			ctx, cancel := context.WithCancel(t.Context())
+			env := map[string]string{"APP_KEY": testKey, "PORT": "0", "HOST": "127.0.0.1"}
+			maps.Copy(env, tt.env)
+			getenv := func(k string) (string, bool) { v, ok := env[k]; return v, ok }
+			build := func(opts ...Option) (*App, error) {
+				return New(append(opts, WithLogger(discardLogger()), WithReady(ready))...)
+			}
+
+			errc := make(chan error, 1)
+			go func() { errc <- RunMain(ctx, []string{"app"}, getenv, build) }()
+
+			addr := <-ready
+
+			var protocols http.Protocols
+			protocols.SetUnencryptedHTTP2(true)
+			client := &http.Client{Transport: &http.Transport{Protocols: &protocols}}
+
+			req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+addr+"/up", http.NoBody)
+			res, err := client.Do(req)
+			if err == nil {
+				res.Body.Close()
+			}
+
+			if got := err == nil && res.ProtoMajor == 2; got != tt.want {
+				t.Errorf("h2c GET /up served = %v (err %v), want %v", got, err, tt.want)
+			}
+
+			cancel()
+			if err := <-errc; err != nil {
+				t.Fatalf("RunMain() = %v", err)
+			}
+		})
 	}
 }
 

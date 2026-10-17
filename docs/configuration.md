@@ -68,3 +68,4 @@ func (s Secret) MarshalJSON() ([]byte, error) // "\"[redacted]\""
 | Destructive commands | require `--force` in production | `migrate:fresh`, `db:wipe` |
 | `DEVTOOLS` | `false` | `/_vukem` dashboard; a boot error in production ([devtools.md](devtools.md)) |
 | `DEVTOOLS_INSECURE_ALLOW_REMOTE` | `false` | Serve the dashboard to non-loopback clients |
+| `HTTP_H2C` | `false` | The app server speaks HTTP/2 without TLS (prior knowledge, for gRPC clients) outside production; `true` enables it in production behind a proxy that speaks h2c ([api.md](api.md#grpc)) |

@@ -60,8 +60,12 @@ type Config struct {
 	Host            string        `env:"HOST"              default:"localhost"`
 	Port            int           `env:"PORT"              default:"3000"`
 	ShutdownTimeout time.Duration `env:"SHUTDOWN_TIMEOUT"  default:"15s"`
-	LogLevel        string        `env:"LOG_LEVEL"         default:"info"`
-	LogFormat       string        `env:"LOG_FORMAT"`
+	// H2C serves HTTP/2 without TLS (prior knowledge, for gRPC clients) in
+	// production too, behind a proxy that speaks h2c. It is always on
+	// outside production.
+	H2C       bool   `env:"HTTP_H2C"`
+	LogLevel  string `env:"LOG_LEVEL"  default:"info"`
+	LogFormat string `env:"LOG_FORMAT"`
 	// APIVersion is info.version of the OpenAPI document.
 	APIVersion string `env:"API_VERSION" default:"1.0.0"`
 	// OpenAPIPrefix keeps only routes under it in the document (e.g. /api).

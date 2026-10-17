@@ -268,6 +268,13 @@ func (a *App) httpRunner() (Runner, error) {
 
 	srv := NewHTTPServer(a.Addr(), h)
 	srv.ShutdownTimeout = a.Config.ShutdownTimeout
+
+	if !a.Config.IsProduction() || a.Config.H2C {
+		var p http.Protocols
+		p.SetHTTP1(true)
+		p.SetUnencryptedHTTP2(true)
+		srv.Server.Protocols = &p
+	}
 	srv.Ready = a.ready
 
 	return RunnerFunc(func(ctx context.Context) error {
