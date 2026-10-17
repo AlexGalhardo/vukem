@@ -29,7 +29,9 @@ func (h *hookLog) add(s string) {
 
 func (h *hookLog) ObserveQuery(_ context.Context, q database.Query) { h.add("query " + q.SQL) }
 
-func (h *hookLog) ObserveJob(_ context.Context, e queue.JobEvent) { h.add("job " + e.Kind + " " + string(e.Status)) }
+func (h *hookLog) ObserveJob(_ context.Context, e queue.JobEvent) {
+	h.add("job " + e.Kind + " " + string(e.Status))
+}
 
 type hookTransport struct {
 	next mail.Transport
