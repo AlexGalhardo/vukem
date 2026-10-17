@@ -15,20 +15,9 @@ SQLite uses the pure-Go `modernc.org/sqlite` driver, so no cgo toolchain is need
 
 `vukem build` does this for you: it runs `npx vite build` when a `vite.config.*` exists, then `go build -trimpath -ldflags="-s -w" -o bin/app ./cmd/app` (`-o` changes the output). The starter embeds `resources/views` and `resources/public` with `//go:embed`, so the binary is self-contained.
 
-## Embed public assets
+## Embedded assets
 
-```go title="cmd/app/main.go"
-//go:embed public
-var publicFS embed.FS
-
-func staticMiddleware() (middleware.Middleware, error) {
-	sub, err := fs.Sub(publicFS, "public")
-	if err != nil {
-		return nil, err
-	}
-	return middleware.StaticFS(sub, middleware.StaticConfig{}), nil
-}
-```
+The starter's `resources` package embeds `resources/views` and `resources/public` (including Vite's `build/` output) and `bootstrap` serves them; nothing else is needed. With `APP_ENV=production` the embedded files are always used, even when a `resources/` directory sits next to the binary. Run `vite build` before `go build` (as `vukem build` does) or the binary embeds no CSS and JavaScript.
 
 ## Configure production
 
@@ -36,7 +25,7 @@ func staticMiddleware() (middleware.Middleware, error) {
 APP_ENV=production
 APP_DEBUG=false
 APP_URL=https://example.com
-HOST=0.0.0.0
+HOST=0.0.0.0           # the default, localhost, is unreachable from other machines and containers
 PORT=3000
 LOG_FORMAT=json
 SHUTDOWN_TIMEOUT=20s
@@ -71,23 +60,24 @@ r.Handle("GET /ready", app.ReadyHandler())
 
 ## Behind a reverse proxy
 
-Terminate TLS at the proxy (Caddy, nginx, a load balancer) and tell Vukem which proxies to trust:
+Terminate TLS at the proxy (Caddy, nginx, a load balancer) and tell Vukem which proxies to trust through the environment:
 
-```go
-_, proxy, _ := net.ParseCIDR("10.0.0.0/8")
-
-services := &web.Services{TrustedProxies: []*net.IPNet{proxy}}
-
-r.UseServer(middleware.SecureHeaders(middleware.SecureHeadersConfig{
-	TrustForwardedProto: true, // send HSTS when the proxy says the request was HTTPS
-}))
+```dotenv
+TRUSTED_PROXIES=10.0.0.0/8     # CIDRs or IPs, comma-separated; nobody is trusted by default
+TRUST_FORWARDED_PROTO=true     # send HSTS when a trusted proxy says the request was HTTPS
 ```
+
+`vukem.New` applies them to the router's `web.Services` and to the `SecureHeaders` that `DefaultMiddleware` already installs, so do not build another `web.Services` or add a second `SecureHeaders`. An invalid entry stops the boot. Details: [trusted proxies](/docs/deployment/docker-and-railway#trusted-proxies).
+
+## Containers and platforms
+
+Every starter ships a `Dockerfile`; see [Docker and Railway](/docs/deployment/docker-and-railway) for the image, the variables and a step-by-step Railway deploy.
 
 ## Checklist
 
 - `APP_ENV=production`, `APP_DEBUG=false`, a unique `APP_KEY`.
 - `APP_URL` set to the `https` origin.
-- Trusted proxies configured; HSTS enabled behind TLS.
+- `TRUSTED_PROXIES` set to the proxy's network; `TRUST_FORWARDED_PROTO=true` behind TLS (HSTS).
 - Logs shipped as JSON to durable storage, with alerts on security events.
 - `govulncheck ./...` in CI.
 - Scheduler: in `serve` by default; `SCHEDULE_IN_SERVE=false` when a single `schedule:work` process runs it (required for run-once tasks with several replicas).
