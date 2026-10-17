@@ -96,3 +96,77 @@ func TestSecurityEventsReachTheBus(t *testing.T) {
 		t.Fatalf("events = %+v", got)
 	}
 }
+
+// Database cache rows (rate limit counters among them) stay until pruned:
+// the app schedules cache:prune hourly when the cache keeps expired rows.
+func TestDatabaseCacheIsPrunedOnSchedule(t *testing.T) {
+	t.Parallel()
+
+	dbURL := "file:" + filepath.ToSlash(filepath.Join(testutil.TempDir(t), "c.db"))
+
+	newApp := func(store string) *App {
+		app, err := New(WithSource(testSource(map[string]string{"CACHE_STORE": store, "DATABASE_URL": dbURL})),
+			WithLogger(discardLogger()))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		t.Cleanup(func() { _ = app.Shutdown(context.Background()) })
+
+		return app
+	}
+
+	scheduled := func(app *App) string {
+		s, err := app.Schedule()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		for _, tk := range s.Tasks() {
+			if tk.Name() == "cache:prune" {
+				return tk.Expression()
+			}
+		}
+
+		return ""
+	}
+
+	app := newApp("database")
+	if got := scheduled(app); got != "0 * * * *" {
+		t.Fatalf("cache:prune schedule = %q, want hourly", got)
+	}
+
+	c, err := app.Cache()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := t.Context()
+	if err := c.Store().Set(ctx, "old", []byte("1"), time.Millisecond); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := c.Store().Set(ctx, "live", []byte("1"), time.Hour); err != nil {
+		t.Fatal(err)
+	}
+
+	time.Sleep(5 * time.Millisecond) //nolint:forbidigo // real expiry in the database
+
+	if err := app.Call(ctx, "cache:prune", nil); err != nil {
+		t.Fatalf("cache:prune = %v", err)
+	}
+
+	db, err := app.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var n int
+	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM cache").Scan(&n); err != nil || n != 1 {
+		t.Fatalf("cache rows after prune = %d, %v, want 1", n, err)
+	}
+
+	if got := scheduled(newApp("memory")); got != "" {
+		t.Fatalf("cache:prune scheduled for the memory cache (%q)", got)
+	}
+}

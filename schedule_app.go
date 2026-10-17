@@ -62,6 +62,11 @@ func (a *App) Schedule() (*schedule.Schedule, error) {
 			s.Command("session:prune").Hourly().WithoutOverlapping()
 		}
 
+		// So does the database cache, with one row per rate limit window.
+		if _, ok := locks.Store().(pruner); ok {
+			s.Command("cache:prune").Hourly().WithoutOverlapping()
+		}
+
 		for _, fn := range a.schedules {
 			fn(s, a)
 		}
@@ -171,5 +176,35 @@ func scheduleCommands() []Command {
 				return nil
 			},
 		},
+		CommandFunc{
+			CommandName: "cache:prune",
+			Desc:        "Delete expired database cache entries (scheduled hourly with CACHE_STORE=database)",
+			Fn: func(ctx context.Context, app *App, _ []string) error {
+				c, err := app.Cache()
+				if err != nil {
+					return err
+				}
+
+				p, ok := c.Store().(pruner)
+				if !ok {
+					fmt.Fprintln(app.stdout, "The cache does not keep expired entries: nothing to prune.")
+					return nil
+				}
+
+				n, err := p.Prune(ctx)
+				if err != nil {
+					return err
+				}
+
+				fmt.Fprintf(app.stdout, "Pruned %d expired cache entries.\n", n)
+
+				return nil
+			},
+		},
 	}
+}
+
+// pruner is a store that keeps expired rows until pruned (database cache).
+type pruner interface {
+	Prune(ctx context.Context) (int64, error)
 }
