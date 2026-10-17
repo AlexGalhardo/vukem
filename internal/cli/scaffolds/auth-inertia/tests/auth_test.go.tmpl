@@ -5,9 +5,11 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/AlexGalhardo/vukem/vukemtest"
 
+	"{{.Module}}/app/accounts"
 	"{{.Module}}/bootstrap"
 )
 
@@ -94,8 +96,9 @@ func TestLoginLogoutAndThrottle(t *testing.T) {
 	c.Get("/dashboard").AssertRedirect("/login")
 
 	attacker := app.Client(t).Inertia("")
-	for range 4 {
-		attacker.PostJSON("/login", map[string]any{"email": "bob@example.com", "password": "guess"})
+	// Spaces and case do not open new buckets: they are the same account.
+	for _, email := range []string{"bob@example.com", " bob@example.com", "BOB@example.com ", "	bob@example.com"} {
+		attacker.PostJSON("/login", map[string]any{"email": email, "password": "guess"})
 	}
 
 	attacker.PostJSON("/login", map[string]any{"email": "bob@example.com", "password": "guess"}).AssertStatus(429)
@@ -134,11 +137,39 @@ func TestPasswordReset(t *testing.T) {
 		"password": "a brand new password", "password_confirmation": "a brand new password",
 	}
 
+	userID := apiTokenFor(t, app, "cid@example.com")
+	vukemtest.AssertDatabaseHas(t, app, "access_tokens", map[string]any{"user_id": userID})
+
 	c.PostJSON("/reset-password", form).AssertRedirect("/login")
+
+	// The new password ends API tokens issued with the old one.
+	vukemtest.AssertDatabaseMissing(t, app, "access_tokens", map[string]any{"user_id": userID})
 
 	// Single use.
 	c.WithHeader("Referer", reset).PostJSON("/reset-password", form).AssertRedirect(reset)
 
 	c.PostJSON("/login", map[string]any{"email": "cid@example.com", "password": "a brand new password"}).
 		AssertRedirect("/dashboard")
+}
+
+// apiTokenFor issues an API token for email directly, to check that a
+// password reset revokes it.
+func apiTokenFor(t *testing.T, app *vukemtest.App, email string) string {
+	t.Helper()
+
+	acc, err := accounts.New(app.App)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	u, err := acc.Users.ByCredentials(t.Context(), map[string]string{"email": email})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, err := acc.Tokens.Create(t.Context(), u.AuthID(), "cli", []string{"*"}, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+
+	return u.AuthID()
 }

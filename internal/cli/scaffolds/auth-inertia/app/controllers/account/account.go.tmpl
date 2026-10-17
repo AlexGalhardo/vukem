@@ -26,13 +26,29 @@ type Handlers struct {
 // New returns the handlers.
 func New(a *accounts.Accounts) *Handlers { return &Handlers{a: a} }
 
-// LoginThrottleKey limits login attempts per email and IP. Inertia posts
-// JSON, so the email is read from a JSON body as well as from a form.
+// LoginThrottleKey limits login attempts per email and IP.
 func LoginThrottleKey(r *http.Request) string {
 	if r.Method != http.MethodPost {
 		return ""
 	}
 
+	return "login:" + loginEmail(r) + ":" + web.NewCtx(nil, r, web.ServicesFrom(r.Context())).IP()
+}
+
+// LoginAccountThrottleKey limits login attempts per email from any IP, so
+// many addresses cannot share the guessing budget of one account.
+func LoginAccountThrottleKey(r *http.Request) string {
+	if r.Method != http.MethodPost {
+		return ""
+	}
+
+	return "login-account:" + loginEmail(r)
+}
+
+// loginEmail normalizes the email like LoginSchema (trimmed, lower case),
+// so " a@b.co" and "A@b.co " share a bucket. Inertia posts JSON, so the
+// email is read from a JSON body as well as from a form.
+func loginEmail(r *http.Request) string {
 	email := r.PostFormValue("email")
 
 	if email == "" && strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
@@ -49,7 +65,7 @@ func LoginThrottleKey(r *http.Request) string {
 		r.Body = io.NopCloser(bytes.NewReader(body))
 	}
 
-	return "login:" + strings.ToLower(email) + ":" + web.NewCtx(nil, r, web.ServicesFrom(r.Context())).IP()
+	return strings.ToLower(strings.TrimSpace(email))
 }
 
 // ShowLogin renders the login page.

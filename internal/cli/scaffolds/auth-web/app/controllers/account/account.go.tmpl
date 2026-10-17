@@ -28,7 +28,23 @@ func LoginThrottleKey(r *http.Request) string {
 		return ""
 	}
 
-	return "login:" + strings.ToLower(r.PostFormValue("email")) + ":" + web.NewCtx(nil, r, web.ServicesFrom(r.Context())).IP()
+	return "login:" + loginEmail(r) + ":" + web.NewCtx(nil, r, web.ServicesFrom(r.Context())).IP()
+}
+
+// LoginAccountThrottleKey limits login attempts per email from any IP, so
+// many addresses cannot share the guessing budget of one account.
+func LoginAccountThrottleKey(r *http.Request) string {
+	if r.Method != http.MethodPost {
+		return ""
+	}
+
+	return "login-account:" + loginEmail(r)
+}
+
+// loginEmail normalizes the email like LoginSchema (trimmed, lower case):
+// " a@b.co" and "A@b.co " are the same account and the same bucket.
+func loginEmail(r *http.Request) string {
+	return strings.ToLower(strings.TrimSpace(r.PostFormValue("email")))
 }
 
 // ShowLogin renders the login form.
