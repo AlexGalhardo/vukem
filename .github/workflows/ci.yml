@@ -278,7 +278,7 @@ jobs:
     name: S3 driver (RustFS)
     runs-on: ubuntu-latest
     env:
-      # Same pinned image as compose.yaml.
+      # Same pinned image as .config/compose.yaml.
       RUSTFS_IMAGE: rustfs/rustfs:1.0.2
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

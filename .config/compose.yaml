@@ -1,4 +1,7 @@
 # Services for integration tests: `task services:up`, then `task test:integration`.
+# The project name is pinned: this file lives in .config/, and Compose would
+# otherwise name the containers after that folder.
+name: vukem
 services:
   postgres:
     image: postgres:17

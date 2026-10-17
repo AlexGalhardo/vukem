@@ -109,7 +109,7 @@ Spec: <https://www.conventionalcommits.org/en/v1.0.0/>. Enforced by the in-repo 
    - publishes a GitHub release whose notes are that changelog section (`v0.x` and pre-releases are marked pre-release).
 3. Missed a group? Cut it retroactively: `go run ./internal/tools/release -no-commit -ref <commit> vX.Y.Z`, tag `<commit>`, commit the changelog, push, and create the GitHub release from the section.
 4. Driver modules are tagged separately as `drivers/<name>/vX.Y.Z` (e.g. `drivers/redis/v0.1.0`) once their CI job is green.
-5. From `v0.1.0` on, release tags also get `vukem` CLI binaries (linux, macOS, Windows; amd64 and arm64) built by GoReleaser (`.goreleaser.yaml`), attached to the existing release without touching its notes. `release.yml` does it on tag push and also uploads SBOMs and the cosign signature ([Supply chain](#supply-chain)). The local fallback, `task release:binaries` on the tagged commit (Docker; `SNAPSHOT=1` builds into `dist/` without publishing), skips signing: keyless signing needs the Actions OIDC token.
+5. From `v0.1.0` on, release tags also get `vukem` CLI binaries (linux, macOS, Windows; amd64 and arm64) built by GoReleaser (`.config/goreleaser.yaml`), attached to the existing release without touching its notes. `release.yml` does it on tag push and also uploads SBOMs and the cosign signature ([Supply chain](#supply-chain)). The local fallback, `task release:binaries` on the tagged commit (Docker; `SNAPSHOT=1` builds into `dist/` without publishing), skips signing: keyless signing needs the Actions OIDC token.
 6. Warm the proxy: `GOPROXY=https://proxy.golang.org go list -m github.com/AlexGalhardo/vukem@vX.Y.Z`.
 
 ## CI (GitHub Actions)
@@ -185,7 +185,7 @@ There is no baseline file: the latest stable `v1` tag of each module is the base
 | `task changelog` | git-cliff |
 | `task ci` | fast local gate: lint, vet, unit tests |
 | `task ci:full` | full pipeline locally (Windows tests, Linux `-race` tests in Docker, integration via Docker services, vuln, coverage) — optional locally; GitHub Actions runs the same jobs on every push and PR and is the gate before a release |
-| `task services:up` / `services:down` | Postgres, Redis, Mongo via `compose.yaml` |
+| `task services:up` / `services:down` | Postgres, Redis, Mongo via `.config/compose.yaml` |
 
 ## Agent configuration
 

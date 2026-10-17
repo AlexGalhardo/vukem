@@ -74,7 +74,7 @@ func run(args []string, out io.Writer) error {
 		rangeArg = previous + ".." + *ref
 	}
 
-	section, err := output("git", "cliff", rangeArg, "--tag", version, "--strip", "all")
+	section, err := output("git", "cliff", "--config", ".config/cliff.toml", rangeArg, "--tag", version, "--strip", "all")
 	if err != nil {
 		return fmt.Errorf("git cliff: %w", err)
 	}
