@@ -9,8 +9,8 @@ import (
 	"github.com/AlexGalhardo/vukem/router"
 )
 
-// ReflectionInProductionEnv opts in to server reflection in production.
-const ReflectionInProductionEnv = "GRPC_REFLECTION_IN_PRODUCTION"
+// InsecureReflectionInProductionEnv opts in to server reflection in production.
+const InsecureReflectionInProductionEnv = "GRPC_INSECURE_REFLECTION_IN_PRODUCTION"
 
 // Health mounts the standard grpc.health.v1.Health service, so load
 // balancers, Kubernetes probes and grpc-health-probe can check the app.
@@ -25,9 +25,9 @@ func Health(r Mounter, checker grpchealth.Checker, opts ...connect.HandlerOption
 // for the named services (e.g. greetv1connect.GreetServiceName), so tools
 // like grpcurl and buf curl can discover them. Reflection publishes the
 // whole API surface, so in production it registers nothing and returns
-// false unless GRPC_REFLECTION_IN_PRODUCTION=true.
+// false unless GRPC_INSECURE_REFLECTION_IN_PRODUCTION=true.
 func Reflection(app *vukem.App, r Mounter, services ...string) bool {
-	if app.Config.IsProduction() && app.Source.Get(ReflectionInProductionEnv) != "true" {
+	if app.Config.IsProduction() && app.Source.Get(InsecureReflectionInProductionEnv) != "true" {
 		return false
 	}
 

@@ -61,7 +61,7 @@ What Vukem does **by default** to protect applications, mapped to the [OWASP Top
 | Destructive commands (`migrate:fresh`, `db:wipe`) require `--force` in production | P |
 | `/openapi.json` (`vukem.ServeOpenAPI`) and the API reference UI (`apidocs.Serve`) are not served in production unless `OPENAPI_IN_PRODUCTION=true` (`TestSecurity_A02_OpenAPIOffInProduction`, `TestSecurity_A02_APIDocsOffInProduction`); the vendored Scalar bundle is pinned by SHA-256 and runs with telemetry and remote fonts off | B |
 | GraphQL (`contrib/graphql`): in production the explorer page is not registered and `__schema` / `__type` introspection is rejected unless `InsecureExplorerInProduction` / `InsecureIntrospectionInProduction` opt in; the explorer is embedded (no CDN) and runs under its own nonce CSP (`TestSecurity_A02_GraphQLExplorerOffInProduction`) | B |
-| gRPC server reflection (`grpc.Reflection`, `contrib/grpc`) is not served in production unless `GRPC_REFLECTION_IN_PRODUCTION=true` (`TestSecurity_A02_GRPCReflectionOffInProduction`) | B |
+| gRPC server reflection (`grpc.Reflection`, `contrib/grpc`) is not served in production unless `GRPC_INSECURE_REFLECTION_IN_PRODUCTION=true` (`TestSecurity_A02_GRPCReflectionOffInProduction`) | B |
 
 **App responsibility:** terminate TLS (or run behind a proxy that does), set `APP_URL` to the `https` origin, configure trusted proxies.
 

@@ -509,11 +509,11 @@ func TestSecurity_A02_GRPCReflectionOffInProduction(t *testing.T) {
 
 	reflectionHandler(
 		t,
-		map[string]string{"APP_ENV": "production", "GRPC_REFLECTION_IN_PRODUCTION": "true"},
+		map[string]string{"APP_ENV": "production", "GRPC_INSECURE_REFLECTION_IN_PRODUCTION": "true"},
 		&registered,
 	)
 	if !registered {
-		t.Error("Reflection() = false with GRPC_REFLECTION_IN_PRODUCTION=true")
+		t.Error("Reflection() = false with GRPC_INSECURE_REFLECTION_IN_PRODUCTION=true")
 	}
 }
 
