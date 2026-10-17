@@ -393,8 +393,13 @@ type Tx struct {
 	enc     Encrypter
 	obs     QueryObserver
 
-	mu          sync.Mutex
-	afterCommit []func(ctx context.Context)
+	// A pointer keeps Tx comparable, as it was before AfterCommit.
+	hooks *txHooks
+}
+
+type txHooks struct {
+	mu  sync.Mutex
+	fns []func(ctx context.Context)
 }
 
 // AfterCommit runs fn once the transaction commits, after DB.Tx's fn
@@ -403,10 +408,10 @@ type Tx struct {
 // must not exist for rolled-back work (queue.DispatchTx on drivers without
 // transactional storage).
 func (tx *Tx) AfterCommit(fn func(ctx context.Context)) {
-	tx.mu.Lock()
-	defer tx.mu.Unlock()
+	tx.hooks.mu.Lock()
+	defer tx.hooks.mu.Unlock()
 
-	tx.afterCommit = append(tx.afterCommit, fn)
+	tx.hooks.fns = append(tx.hooks.fns, fn)
 }
 
 // Encrypter returns the encrypter of the DB that started the transaction.
@@ -450,7 +455,7 @@ func (db *DB) Tx(ctx context.Context, fn func(tx *Tx) error) (err error) {
 		return fmt.Errorf("database: begin: %w", err)
 	}
 
-	tx := &Tx{tx: sqlTx, dialect: db.dialect, enc: db.enc, obs: db.obs}
+	tx := &Tx{tx: sqlTx, dialect: db.dialect, enc: db.enc, obs: db.obs, hooks: &txHooks{}}
 
 	defer func() {
 		if p := recover(); p != nil {
@@ -471,10 +476,10 @@ func (db *DB) Tx(ctx context.Context, fn func(tx *Tx) error) (err error) {
 		return fmt.Errorf("database: commit: %w", err)
 	}
 
-	tx.mu.Lock()
-	hooks := tx.afterCommit
-	tx.afterCommit = nil
-	tx.mu.Unlock()
+	tx.hooks.mu.Lock()
+	hooks := tx.hooks.fns
+	tx.hooks.fns = nil
+	tx.hooks.mu.Unlock()
 
 	for _, fn := range hooks {
 		fn(ctx)
