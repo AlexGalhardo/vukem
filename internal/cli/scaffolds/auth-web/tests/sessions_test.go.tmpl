@@ -1,0 +1,58 @@
+package tests
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"net/url"
+	"testing"
+	"time"
+
+	"github.com/AlexGalhardo/vukem/vukemtest"
+
+	"{{.Module}}/app/accounts"
+	"{{.Module}}/bootstrap"
+)
+
+// A password reset signs the user out of every browser. Sessions live in
+// the database here: encrypted cookie sessions (SESSION_DRIVER=cookie)
+// have no server-side record to revoke.
+func TestPasswordResetEndsOtherSessions(t *testing.T) {
+	t.Parallel()
+
+	app := vukemtest.New(t, bootstrap.New, vukemtest.Options{Env: map[string]string{"SESSION_DRIVER": "database"}})
+
+	laptop := app.Client(t)
+	register(t, app, laptop, "eve@example.com")
+
+	phone := app.Client(t)
+	phone.PostForm("/login", url.Values{"email": {"eve@example.com"}, "password": {"correct horse battery"}}).
+		AssertRedirect("/dashboard")
+
+	for _, c := range []*vukemtest.Client{laptop, phone} {
+		c.Get("/login").AssertRedirect("/") // signed in
+	}
+
+	acc, err := accounts.New(app.App)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const token = "a-known-reset-token"
+
+	sum := sha256.Sum256([]byte(token))
+	d := acc.DB.Dialect()
+
+	if _, err := acc.DB.ExecContext(t.Context(), "INSERT INTO password_resets (email, hash, created_at) VALUES ("+
+		d.Placeholder(1)+", "+d.Placeholder(2)+", "+d.Placeholder(3)+")",
+		"eve@example.com", hex.EncodeToString(sum[:]), time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := acc.ResetPassword(t.Context(), "eve@example.com", token, "a brand new password"); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, c := range []*vukemtest.Client{laptop, phone} {
+		c.Get("/login").AssertOK() // signed out
+	}
+}

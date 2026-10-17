@@ -86,6 +86,11 @@ func (h *TwoFactorHandlers) Confirm(c *web.Ctx) error {
 		return h.a.InvalidTwoFactorCode(c.Context())
 	}
 
+	// A session stolen before 2FA was on must not outlive it.
+	if err := h.a.RevokeOtherSessions(c.Context(), u.ID, c.Session().ID()); err != nil {
+		return err
+	}
+
 	c.Session().Flash(recoveryCodesFlash, codes)
 	inertia.Flash(c, "status", h.a.T(c.Context(), "auth.two_factor.enabled"))
 

@@ -225,3 +225,41 @@ func TestSecurity_A07_AuthScaffoldDefaults(t *testing.T) {
 		}
 	}
 }
+
+// Changing credentials ends the user's other sessions: a password reset
+// ends all of them and enabling 2FA all but the current one (generated
+// TestPasswordResetEndsOtherSessions, run by TestNewProjectEndToEnd). The
+// login still regenerates the session id.
+func TestSecurity_A07_AuthScaffoldRevokesOtherSessions(t *testing.T) {
+	t.Parallel()
+
+	revoke2FA := "h.a.RevokeOtherSessions(c.Context(), u.ID, c.Session().ID())"
+	files := map[string][]string{
+		"scaffolds/auth-core/app/accounts/accounts.go.tmpl": {
+			"m.RevokeOthers(ctx, strconv.FormatInt(userID, 10), keep)",
+			"sessions:  app.Sessions,",
+		},
+		"scaffolds/auth-core/app/accounts/passwords.go.tmpl": {
+			`return u, a.RevokeOtherSessions(ctx, u.ID, "")`,
+		},
+		"scaffolds/auth-2fa-web/app/controllers/account/two_factor.go.tmpl":     {revoke2FA},
+		"scaffolds/auth-2fa-inertia/app/controllers/account/two_factor.go.tmpl": {revoke2FA},
+		"scaffolds/auth-web/tests/sessions_test.go.tmpl": {
+			`"SESSION_DRIVER": "database"`,
+			`c.Get("/login").AssertOK() // signed out`,
+		},
+	}
+
+	for src, wants := range files {
+		b, err := scaffoldFS.ReadFile(src)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		for _, want := range wants {
+			if !bytes.Contains(b, []byte(want)) {
+				t.Errorf("%s lacks %q", src, want)
+			}
+		}
+	}
+}
