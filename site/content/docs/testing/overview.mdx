@@ -86,6 +86,79 @@ vukemtest.AssertDatabaseMissing(t, app, "posts", map[string]any{"title": "Spam"}
 vukemtest.AssertDatabaseCount(t, app, "posts", 1)
 ```
 
+## Testing against PostgreSQL
+
+The in-memory SQLite database is fast and needs nothing installed, but an app that relies on PostgreSQL features (`jsonb`, `ILIKE`, arrays, `RETURNING` quirks) should run its tests on PostgreSQL too. The `pgtest` package, shipped with the Postgres driver, gives **each test its own empty database** and drops it when the test ends:
+
+```bash
+go get github.com/AlexGalhardo/vukem/drivers/postgres
+```
+
+**1. Start a server.** Any PostgreSQL works; locally, Docker is the quickest:
+
+```bash
+docker run -d --name pg-test -p 5432:5432 -e POSTGRES_PASSWORD=secret postgres:17
+```
+
+**2. Tell the tests where it is.** `pgtest` reads an admin URL from `TEST_DATABASE_URL` (or `POSTGRES_URL`). Its role needs the `CREATEDB` privilege; the database in the path is only used to connect.
+
+```bash
+# macOS / Linux
+export TEST_DATABASE_URL="postgres://postgres:secret@localhost:5432/postgres?sslmode=disable"
+```
+
+```powershell
+# Windows PowerShell
+$env:TEST_DATABASE_URL = "postgres://postgres:secret@localhost:5432/postgres?sslmode=disable"
+```
+
+**3. Pass the database to `vukemtest.New`.** `pgtest.Database(t, "")` creates `pgtest_<random>`, returns its URL and drops it in `t.Cleanup`:
+
+```go title="tests/posts_postgres_test.go"
+import (
+	"net/url"
+	"testing"
+
+	"github.com/AlexGalhardo/vukem"
+	"github.com/AlexGalhardo/vukem/drivers/postgres"
+	"github.com/AlexGalhardo/vukem/drivers/postgres/pgtest"
+	"github.com/AlexGalhardo/vukem/vukemtest"
+
+	"example.com/blog/bootstrap"
+)
+
+func TestCreatePost_Postgres(t *testing.T) {
+	t.Parallel() // safe: every test gets its own database
+
+	app := vukemtest.New(t, bootstrap.New, vukemtest.Options{
+		Env: map[string]string{"DATABASE_URL": pgtest.Database(t, "")},
+		// Only needed if bootstrap.New does not register the driver already.
+		AppOptions: []vukem.Option{vukem.WithDatabaseDrivers(postgres.Driver())},
+	})
+
+	app.Client(t).
+		PostForm("/posts", url.Values{"title": {"Hello"}, "body": {"World"}}).
+		AssertRedirect("/posts/1")
+
+	vukemtest.AssertDatabaseHas(t, app, "posts", map[string]any{"title": "Hello"})
+}
+```
+
+Migrations run on the fresh database exactly as they do on SQLite. Call `pgtest.Database` **before** `vukemtest.New`: cleanups run in reverse order, so the app closes its connections before the database is dropped (any connection left open is terminated first).
+
+When no URL is set or the server is unreachable, the test **fails** with a message saying so, rather than silently passing. To keep `go test ./...` green on machines without PostgreSQL, opt in explicitly:
+
+```go
+func TestCreatePost_Postgres(t *testing.T) {
+	if testing.Short() || os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("set TEST_DATABASE_URL to run PostgreSQL tests")
+	}
+	// ...
+}
+```
+
+Or put Postgres tests behind a build tag (`//go:build integration` at the top of the file) and run them with `go test -tags integration ./...`. In CI, start PostgreSQL as a service container and set `TEST_DATABASE_URL` in the job environment.
+
 ## Generating tests
 
 ```bash

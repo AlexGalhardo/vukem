@@ -61,7 +61,7 @@ Requests run in-process via `httptest` (no ports). Each assertion failure prints
 
 - Default test connection: SQLite in memory (one database per test via unique `file:<test>?mode=memory&cache=shared` name), migrations applied once per package and cloned, or a fresh migrate when cheaper.
 - `vukemtest.RefreshDatabase(t, app)` wraps the test in a transaction rolled back in `t.Cleanup` (Postgres/SQLite).
-- Postgres integration: `CREATE DATABASE test_x TEMPLATE vukem_template` per package for speed.
+- Postgres: `pgtest.Database(t, adminURL)` (module `drivers/postgres`, package `pgtest`) creates an empty `pgtest_<random>` database per test from an admin URL (`TEST_DATABASE_URL`, then `POSTGRES_URL`), returns its URL for `vukemtest.Options.Env["DATABASE_URL"]` and drops it in `t.Cleanup` after terminating its connections. An unreachable server fails the test; apps opt in with `testing.Short`, an env check or a build tag.
 - Assertions: `AssertDatabaseHas`, `AssertDatabaseMissing`, `AssertDatabaseCount`, `AssertSoftDeleted`.
 
 ### Fakes
