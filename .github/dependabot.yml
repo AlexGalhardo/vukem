@@ -3,6 +3,9 @@ updates:
   - package-ecosystem: gomod
     directories:
       - "/"
+      - "/drivers/*"
+      - "/contrib/*"
+      - "/examples/blog"
     schedule:
       interval: weekly
     groups:
@@ -12,9 +15,25 @@ updates:
       prefix: build
       include: scope
 
+  # Workflows pin actions by commit SHA with a "# vX.Y.Z" comment; Dependabot
+  # bumps both together.
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
     commit-message:
       prefix: ci
+
+  - package-ecosystem: npm
+    directory: /site
+    schedule:
+      interval: weekly
+    groups:
+      site-deps:
+        patterns: ["*"]
+    commit-message:
+      prefix: build
+      include: scope

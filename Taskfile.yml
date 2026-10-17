@@ -82,7 +82,7 @@ tasks:
   vuln:
     desc: Scan for known vulnerabilities
     cmds:
-      - go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+      - go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 
   tidy:
     desc: Tidy every module
