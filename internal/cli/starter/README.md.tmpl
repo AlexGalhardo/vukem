@@ -6,6 +6,10 @@ A [Vukem](https://vukem.vercel.app) application.
 vukem serve        # run with reload on http://localhost:3000
 vukem migrate      # apply migrations
 go test ./...      # run the tests
+go tool govulncheck ./...  # scan for known vulnerabilities (pinned in go.mod)
 vukem build        # production binary in bin/
 vukem list         # all commands
 ```
+
+Run `go tool govulncheck ./...` in CI and on a schedule: new advisories
+appear after your code ships.

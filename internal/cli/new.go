@@ -102,6 +102,10 @@ func newProject(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 			return err
 		}
 
+		if err := addGovulncheck(ctx, &project); err != nil {
+			return err
+		}
+
 		if st.kind == "templ" {
 			if err := addTempl(ctx, &project); err != nil {
 				return err

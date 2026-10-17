@@ -14,6 +14,10 @@ import (
 // tool directive; the generated *_templ.go files must match its version.
 const templTool = "github.com/a-h/templ/cmd/templ@v0.3.1070"
 
+// govulncheckTool is pinned as a go.mod tool directive in every new app so
+// `go tool govulncheck ./...` scans with a reviewed version.
+const govulncheckTool = "golang.org/x/vuln/cmd/govulncheck@v1.9.0"
+
 // templReplaced lists the HTMX starter's html/template views; the templ
 // scaffold rewrites the controllers, routes and resources package.
 // shortcut: the upload demo is html/template only, port it to templ when asked.
@@ -57,6 +61,11 @@ func applyTempl(env *Env) error {
 // addTempl pins the templ generator as a go tool of the project.
 func addTempl(ctx context.Context, env *Env) error {
 	return tool(ctx, env, "go", "get", "-tool", templTool)
+}
+
+// addGovulncheck pins govulncheck as a go tool of the project.
+func addGovulncheck(ctx context.Context, env *Env) error {
+	return tool(ctx, env, "go", "get", "-tool", govulncheckTool)
 }
 
 // hasTempl reports whether the project has templ components.

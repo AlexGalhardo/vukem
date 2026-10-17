@@ -184,6 +184,8 @@ func TestNewProjectEndToEnd(t *testing.T) {
 		t.Errorf(".env = %q", env)
 	}
 
+	requireGovulncheckTool(t, project)
+
 	cmd := exec.CommandContext(t.Context(), "go", "test", "./...")
 	cmd.Dir = project
 	cmd.Env = append(os.Environ(), "GOWORK=off")
@@ -323,6 +325,21 @@ func TestNewProjectEndToEnd(t *testing.T) {
 	}
 }
 
+// requireGovulncheckTool fails unless the generated go.mod pins govulncheck
+// with a tool directive, so `go tool govulncheck ./...` works out of the box.
+func requireGovulncheckTool(t *testing.T, project string) {
+	t.Helper()
+
+	mod := read(t, project, "go.mod")
+	if !hasTool([]byte(mod), "golang.org/x/vuln/cmd/govulncheck") {
+		t.Errorf("go.mod has no govulncheck tool directive:\n%s", mod)
+	}
+
+	if !strings.Contains(mod, "golang.org/x/vuln v1.9.0") {
+		t.Errorf("go.mod does not pin golang.org/x/vuln v1.9.0:\n%s", mod)
+	}
+}
+
 func TestReleaseVersion(t *testing.T) {
 	t.Parallel()
 
@@ -354,6 +371,7 @@ func TestNewAPIProjectEndToEnd(t *testing.T) {
 	}
 
 	project := filepath.Join(dir, "shop")
+	requireGovulncheckTool(t, project)
 
 	for _, gone := range []string{"resources/public", "routes/web.go", "resources/views/home.html"} {
 		if _, err := os.Stat(filepath.Join(project, filepath.FromSlash(gone))); err == nil {

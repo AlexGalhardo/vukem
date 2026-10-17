@@ -107,7 +107,9 @@ func TestNewTemplProjectEndToEnd(t *testing.T) {
 		t.Errorf("bootstrap/app.go still enables html/template views:\n%s", app)
 	}
 
-	if mod := read(t, project, "go.mod"); !strings.Contains(mod, "tool github.com/a-h/templ/cmd/templ") {
+	requireGovulncheckTool(t, project)
+
+	if mod := read(t, project, "go.mod"); !hasTool([]byte(mod), "github.com/a-h/templ/cmd/templ") {
 		t.Errorf("go.mod has no templ tool directive:\n%s", mod)
 	}
 

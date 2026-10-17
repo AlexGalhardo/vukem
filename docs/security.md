@@ -74,12 +74,12 @@ What Vukem does **by default** to protect applications, mapped to the [OWASP Top
 | --- | --- |
 | Core depends only on the stdlib, `modernc.org/sqlite` and `golang.org/x/crypto`; heavy drivers are separate modules (opt-in) (enforced by `.golangci.yml` depguard `core` and the module split in `go.work`) | [x] |
 | `go.sum` checksum database verification (Go default) — never disabled (process: Go default, no `GONOSUMDB`/`GOFLAGS` override in the repo or CI) | [x] |
-| `govulncheck` v1.9.0 on every push and pull request and in `task ci` (`task vuln`); not yet in the pre-push hook, a weekly cron or generated apps (CI: `vuln` job in `ci.yml`; gap R-6 in [security-review.md](security-review.md#residual-risks)) | [ ] |
+| `govulncheck` v1.9.0 on every push and pull request, in `task ci` (`task vuln`), in the pre-push hook and weekly on every module (core, `drivers/*`, `contrib/*`, `examples/*`); generated apps pin it too (CI: `vuln` job in `ci.yml`; `lefthook.yml` pre-push `govulncheck`; `vuln.yml` weekly cron; `TestNewProjectEndToEnd`) | [x] |
 | Dependabot for Go modules and GitHub Actions; actions pinned by commit SHA; OpenSSF Scorecard (process: `.github/dependabot.yml`, SHA-pinned `uses:` in every workflow, `scorecard.yml`) | [x] |
 | Releases built by GoReleaser with checksums and **SBOM**; signed artifacts (cosign, keyless) (process: `.goreleaser.yaml` `checksum`, `sboms`, `signs`; `release.yml`) | [x] |
 | htmx is vendored with a pinned version and checksum verified by a test; no CDN by default (`TestVendoredHTMX`) | [x] |
 | `depguard` blocks driver and contrib modules and denied packages in core; other new dependencies go through the [dependency policy](architecture.md#dependency-policy) review (enforced by `.golangci.yml` depguard `core`) | [x] |
-| Starters pin dependency versions in `go.mod` / `go.sum`; tools are not pinned with the `tool` directive yet (gap R-6 in [security-review.md](security-review.md#residual-risks)) | [ ] |
+| Starters pin dependency versions in `go.mod` / `go.sum` and pin `govulncheck` v1.9.0 with a `tool` directive (`go tool govulncheck ./...`; the templ starter pins templ the same way) (`TestNewProjectEndToEnd`, `TestNewAPIProjectEndToEnd`, `TestNewTemplProjectEndToEnd`) | [x] |
 
 **App responsibility:** keep running `govulncheck`, review dependency updates, protect CI secrets.
 
