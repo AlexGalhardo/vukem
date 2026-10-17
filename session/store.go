@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -30,7 +31,8 @@ type Store interface {
 
 // UserStore is a Store that records which user owns each session, so all
 // sessions of a user can be ended at once (password reset, 2FA enable).
-// SQLStore and MemoryStore implement it; cookie sessions cannot.
+// SQLStore, MemoryStore and drivers/redis implement it; cookie sessions
+// cannot.
 type UserStore interface {
 	Store
 	// Create stores a new session owned by userID ("" for a guest).
@@ -147,6 +149,47 @@ func (m *MemoryStore) RevokeOthers(_ context.Context, userID, keepID string) err
 	return nil
 }
 
+// ListUser implements ListStore.
+func (m *MemoryStore) ListUser(_ context.Context, userID string) ([]StoredSession, error) {
+	if userID == "" {
+		return nil, errNoUser
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	now := m.now()
+
+	var out []StoredSession
+
+	for k, it := range m.items {
+		if it.userID == userID && now.Before(it.expiry) {
+			out = append(out, StoredSession{Key: storageKey(k), Data: slices.Clone(it.data), Expiry: it.expiry})
+		}
+	}
+
+	return out, nil
+}
+
+// DeleteUserKey implements ListStore.
+func (m *MemoryStore) DeleteUserKey(_ context.Context, userID, key string) (bool, error) {
+	if userID == "" {
+		return false, errNoUser
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for k, it := range m.items {
+		if it.userID == userID && storageKey(k) == key {
+			delete(m.items, k)
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
 // put stores an item; the caller holds mu.
 func (m *MemoryStore) put(id, userID string, data []byte, expiry time.Time) {
 	// Opportunistic cleanup keeps memory bounded without a goroutine.
@@ -198,7 +241,7 @@ type SQLStore struct {
 
 	// Queries are built once from the validated table name.
 	qCreate, qLoad, qSave, qInsert, qUpdate, qExists, qRekey, qDelete, qPrune, qRevoke string
-	qHasUser, qAddUser, qIndex                                                         string
+	qHasUser, qAddUser, qIndex, qList, qDeleteUser                                     string
 
 	beforeRekey func() // test hook: runs between reading and re-keying a legacy row
 }
@@ -260,6 +303,8 @@ func NewSQLStore(db *sql.DB, opts ...SQLOption) (*SQLStore, error) {
 	s.qDelete = "DELETE FROM " + t + " WHERE id = " + p(1) + " OR id = " + p(2)
 	s.qPrune = "DELETE FROM " + t + " WHERE expires_at <= " + p(1)
 	s.qRevoke = "DELETE FROM " + t + " WHERE user_id = " + p(1) + " AND id <> " + p(2)
+	s.qList = "SELECT id, data, expires_at FROM " + t + " WHERE user_id = " + p(1) + " AND expires_at > " + p(2)
+	s.qDeleteUser = "DELETE FROM " + t + " WHERE id = " + p(1) + " AND user_id = " + p(2)
 	s.qHasUser = "SELECT user_id FROM " + t + " WHERE 1 = 0"
 	s.qAddUser = "ALTER TABLE " + t + " ADD COLUMN user_id VARCHAR(255)"
 
@@ -518,6 +563,65 @@ func (s *SQLStore) RevokeOthers(ctx context.Context, userID, keepID string) erro
 	}
 
 	return nil
+}
+
+// ListUser implements ListStore. Rows still keyed by a clear id (written
+// before ids were hashed) are left out: their key is a session id.
+func (s *SQLStore) ListUser(ctx context.Context, userID string) ([]StoredSession, error) {
+	if userID == "" {
+		return nil, errNoUser
+	}
+
+	//nolint:gosec // G701: query built once from a validated table name; values are bound parameters
+	rows, err := s.db.QueryContext(ctx, s.qList, userID, s.now().Unix())
+	if err != nil {
+		return nil, fmt.Errorf("session: list: %w", err)
+	}
+	defer rows.Close()
+
+	var out []StoredSession
+
+	for rows.Next() {
+		var (
+			key, data string
+			expires   int64
+		)
+
+		if err := rows.Scan(&key, &data, &expires); err != nil {
+			return nil, fmt.Errorf("session: list: %w", err)
+		}
+
+		if digestRe.MatchString(key) {
+			out = append(out, StoredSession{Key: key, Data: []byte(data), Expiry: time.Unix(expires, 0)})
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("session: list: %w", err)
+	}
+
+	return out, nil
+}
+
+// DeleteUserKey implements ListStore.
+func (s *SQLStore) DeleteUserKey(ctx context.Context, userID, key string) (bool, error) {
+	if userID == "" {
+		return false, errNoUser
+	}
+
+	if !digestRe.MatchString(key) {
+		return false, nil
+	}
+
+	//nolint:gosec // G701: query built once from a validated table name; values are bound parameters
+	res, err := s.db.ExecContext(ctx, s.qDeleteUser, key, userID)
+	if err != nil {
+		return false, fmt.Errorf("session: delete: %w", err)
+	}
+
+	n, err := res.RowsAffected()
+
+	return n > 0, err
 }
 
 // Prune deletes expired sessions; schedule it periodically.
