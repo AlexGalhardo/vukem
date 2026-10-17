@@ -1,8 +1,11 @@
 package queue_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 
@@ -79,4 +82,49 @@ func TestObserverSeesDispatchAndAttempts(t *testing.T) {
 			t.Errorf("events (-want +got):\n%s", diff)
 		}
 	})
+}
+
+type panicJobObserver struct{}
+
+func (panicJobObserver) ObserveJob(context.Context, queue.JobEvent) { panic("observer bug") }
+
+func TestObserverPanicIsContained(t *testing.T) {
+	t.Parallel()
+
+	var logs bytes.Buffer
+
+	q := queue.New(queue.Sync{}, slog.New(slog.NewTextHandler(&logs, nil)))
+	if err := q.Register(queue.Handle(func(context.Context, sendInvoice) error { return nil })); err != nil {
+		t.Fatal(err)
+	}
+
+	var typedNil *jobLog
+
+	obs := &jobLog{}
+	q.SetObserver(panicJobObserver{})
+	q.AddObserver(typedNil) // skipped: its method would panic
+	q.AddObserver(obs)
+
+	if err := q.Dispatch(t.Context(), sendInvoice{OrderID: 4242}); err != nil {
+		t.Fatalf("Dispatch() with a panicking observer = %v, want nil", err)
+	}
+
+	if diff := cmp.Diff([]string{"send_invoice:dispatched", "send_invoice:processed"}, obs.got); diff != "" {
+		t.Errorf("observer after the panicking one (-want +got):\n%s", diff)
+	}
+
+	out := logs.String()
+	if !strings.Contains(out, "job observer panicked") || !strings.Contains(out, "queue_test.panicJobObserver") {
+		t.Errorf("log = %q, want the observer type", out)
+	}
+
+	if strings.Contains(out, "4242") {
+		t.Errorf("log = %q, leaks the payload", out)
+	}
+
+	q.SetObserver(nil)
+
+	if err := q.Dispatch(t.Context(), sendInvoice{OrderID: 1}); err != nil || len(obs.got) != 2 {
+		t.Fatalf("SetObserver(nil) kept observers: err %v, events %v", err, obs.got)
+	}
 }

@@ -36,10 +36,22 @@ type Options struct {
 	// Allow lists extra prefixes that may be reached (e.g. an internal
 	// service network). Use sparingly.
 	Allow []netip.Prefix
+	// WrapTransport, when set, wraps the client's transport (tracing,
+	// metrics; drivers/otel's Transport fits). It must delegate every
+	// request to the transport it is given: the address check runs in that
+	// transport's dialer, so a delegating wrapper cannot reach blocked
+	// addresses. A wrapper returning nil makes every request fail with
+	// ErrNilTransport (http.Client would otherwise use
+	// http.DefaultTransport, which has no address check).
+	WrapTransport func(http.RoundTripper) http.RoundTripper
 }
 
 // ErrBlockedAddress is returned when the destination is an internal address.
 var ErrBlockedAddress = errors.New("httpclient: destination address is not allowed")
+
+// ErrNilTransport is returned by every request of a client whose
+// Options.WrapTransport returned nil.
+var ErrNilTransport = errors.New("httpclient: Options.WrapTransport returned a nil transport")
 
 // ErrBodyTooLarge is returned by reads past Options.MaxBody.
 var ErrBodyTooLarge = errors.New("httpclient: response body too large")
@@ -127,9 +139,16 @@ func Safe(o Options) *http.Client {
 		IdleConnTimeout:       30 * time.Second,
 	}
 
+	var rt http.RoundTripper = &limitTransport{rt: transport, max: o.MaxBody}
+	if o.WrapTransport != nil {
+		if rt = o.WrapTransport(rt); rt == nil {
+			rt = nilTransport{}
+		}
+	}
+
 	return &http.Client{
 		Timeout:   o.Timeout,
-		Transport: &limitTransport{rt: transport, max: o.MaxBody},
+		Transport: rt,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) >= o.MaxRedirects {
 				return fmt.Errorf("httpclient: stopped after %d redirects", o.MaxRedirects)
@@ -142,6 +161,16 @@ func Safe(o Options) *http.Client {
 			return nil
 		},
 	}
+}
+
+type nilTransport struct{}
+
+func (nilTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.Body != nil {
+		_ = req.Body.Close()
+	}
+
+	return nil, ErrNilTransport
 }
 
 type limitTransport struct {

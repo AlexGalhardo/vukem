@@ -167,6 +167,7 @@ type App struct {
 	sessPruner sessionPruner
 	sessErr    error
 	mail       mailState
+	inst       instruments
 	cacheOnce  sync.Once
 	cache      *cache.Cache
 	cacheErr   error

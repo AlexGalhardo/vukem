@@ -2,20 +2,34 @@ package otel_test
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"maps"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
+	otelglobal "go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	metricnoop "go.opentelemetry.io/otel/metric/noop"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	tracenoop "go.opentelemetry.io/otel/trace/noop"
 
 	"github.com/AlexGalhardo/vukem"
 	"github.com/AlexGalhardo/vukem/config"
 	"github.com/AlexGalhardo/vukem/drivers/otel"
+	"github.com/AlexGalhardo/vukem/mail"
+	"github.com/AlexGalhardo/vukem/queue"
 	"github.com/AlexGalhardo/vukem/router"
 	"github.com/AlexGalhardo/vukem/web"
 )
@@ -65,6 +79,18 @@ func TestProvider_ExportsSpanPerRequestOnShutdown(t *testing.T) {
 			env:     map[string]string{"OTEL_SERVICE_NAME": "x"},
 			cfg:     otel.Config{ServiceName: "cfg"},
 			service: "cfg",
+		},
+		{
+			name:    "OTEL_RESOURCE_ATTRIBUTES service.name over APP_NAME",
+			env:     map[string]string{"OTEL_RESOURCE_ATTRIBUTES": "service.name=from%20attrs,team=core"},
+			service: "from attrs",
+		},
+		{
+			name: "OTEL_SERVICE_NAME over OTEL_RESOURCE_ATTRIBUTES",
+			env: map[string]string{
+				"OTEL_SERVICE_NAME": "shop-api", "OTEL_RESOURCE_ATTRIBUTES": "service.name=from-attrs",
+			},
+			service: "shop-api",
 		},
 	}
 
@@ -205,5 +231,379 @@ func TestProvider_Endpoint(t *testing.T) {
 				t.Fatal(err)
 			}
 		})
+	}
+}
+
+type pingJob struct{}
+
+func (pingJob) Kind() string { return "ping" }
+
+type noticeMail struct{}
+
+func (noticeMail) Envelope() mail.Envelope {
+	return mail.Envelope{To: []string{"ana@example.com"}, Subject: "Notice"}
+}
+
+func (noticeMail) Content() mail.Content { return mail.Text("hello") }
+
+func TestProvider_InstrumentsDatabaseQueueMailAndHTTP(t *testing.T) {
+	t.Parallel()
+
+	exp := keepExporter{tracetest.NewInMemoryExporter()}
+	reader := sdkmetric.NewManualReader()
+	p := otel.New(otel.Config{Exporter: exp, MetricReader: reader})
+
+	app, err := vukem.New(
+		vukem.WithSource(config.MapSource(map[string]string{
+			"APP_KEY": config.GenerateKey(), "APP_ENV": "development",
+			"DATABASE_URL": "file:" + filepath.Join(t.TempDir(), "o.db"), "MAIL_MAILER": "array",
+		})),
+		vukem.WithLogger(slog.New(slog.DiscardHandler)),
+		vukem.WithStdout(io.Discard),
+		vukem.WithProviders(p),
+		vukem.WithJobs(queue.Handle(func(context.Context, pingJob) error { return nil })),
+		vukem.WithRoutes(func(r *router.Router, app *vukem.App) error {
+			r.Get("/orders/{id}", func(c *web.Ctx) error {
+				db, err := app.DB()
+				if err != nil {
+					return err
+				}
+
+				if _, err := db.ExecContext(c.Context(), "SELECT 1"); err != nil {
+					return err
+				}
+
+				q, err := app.Queue()
+				if err != nil {
+					return err
+				}
+
+				if err := q.Dispatch(c.Context(), pingJob{}); err != nil {
+					return err
+				}
+
+				m, err := app.Mailer()
+				if err != nil {
+					return err
+				}
+
+				if err := m.Send(c.Context(), noticeMail{}); err != nil {
+					return err
+				}
+
+				return c.String(http.StatusOK, "order")
+			})
+
+			return nil
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	app.Router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/orders/7", http.NoBody))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /orders/7 = %d, want 200: %s", rec.Code, rec.Body)
+	}
+
+	var rm metricdata.ResourceMetrics
+	if err := reader.Collect(t.Context(), &rm); err != nil {
+		t.Fatal(err)
+	}
+
+	var metrics []string
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			metrics = append(metrics, m.Name)
+		}
+	}
+
+	slices.Sort(metrics)
+
+	wantMetrics := []string{otel.MetricDBDuration, otel.MetricHTTPServerDuration, otel.MetricJobDuration}
+	if diff := cmp.Diff(wantMetrics, metrics); diff != "" {
+		t.Errorf("metrics (-want +got):\n%s", diff)
+	}
+
+	// Shutdown closes the database before t.TempDir is removed (Windows).
+	if err := app.Shutdown(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	var names []string
+	for _, s := range exp.GetSpans() {
+		names = append(names, s.Name)
+
+		if s.Name == "SELECT" {
+			if got := attribute.NewSet(s.Attributes...); got.HasValue("db.system.name") {
+				if v, _ := got.Value("db.system.name"); v.AsString() != "sqlite" {
+					t.Errorf("SELECT db.system.name = %q, want sqlite (from DATABASE_URL)", v.AsString())
+				}
+			} else {
+				t.Error("SELECT span has no db.system.name")
+			}
+		}
+	}
+
+	slices.Sort(names)
+
+	want := []string{"GET /orders/{id}", "SELECT", "mail send", "process default", "send default"}
+	if diff := cmp.Diff(want, names); diff != "" {
+		t.Fatalf("exported spans (-want +got):\n%s", diff)
+	}
+}
+
+func TestProvider_MetricsWithoutTraces(t *testing.T) {
+	t.Parallel()
+
+	reader := sdkmetric.NewManualReader()
+	p := otel.New(otel.Config{MetricReader: reader})
+
+	app, err := newApp(t, nil, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	app.Router.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/orders/7", http.NoBody))
+
+	if _, ok := p.TracerProvider().(*sdktrace.TracerProvider); ok {
+		t.Error("TracerProvider() is the SDK provider without an endpoint, want no-op")
+	}
+
+	var rm metricdata.ResourceMetrics
+	if err := reader.Collect(t.Context(), &rm); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(rm.ScopeMetrics) != 1 || rm.ScopeMetrics[0].Metrics[0].Name != otel.MetricHTTPServerDuration {
+		t.Fatalf("metrics = %+v, want %s", rm.ScopeMetrics, otel.MetricHTTPServerDuration)
+	}
+
+	if err := app.Shutdown(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestProvider_ExporterSettingsFromSource checks that OTEL_* exporter
+// settings in app.Source (a .env file, here a map) reach the collector,
+// not only those of the process environment.
+func TestProvider_ExporterSettingsFromSource(t *testing.T) {
+	t.Parallel()
+
+	type request struct {
+		Path, APIKey, Encoding string
+	}
+
+	got := make(chan request, 1)
+	collector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got <- request{r.URL.Path, r.Header.Get("X-Api-Key"), r.Header.Get("Content-Encoding")}
+
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(collector.Close)
+
+	p := otel.New(otel.Config{})
+
+	app, err := newApp(t, map[string]string{
+		"OTEL_EXPORTER_OTLP_ENDPOINT":    collector.URL,
+		"OTEL_EXPORTER_OTLP_HEADERS":     "x-api-key=k%20ey, other=1",
+		"OTEL_EXPORTER_OTLP_COMPRESSION": "gzip",
+		"OTEL_EXPORTER_OTLP_TIMEOUT":     "5000",
+	}, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	app.Router.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/orders/7", http.NoBody))
+
+	if err := app.Shutdown(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	want := request{Path: "/v1/traces", APIKey: "k ey", Encoding: "gzip"}
+	if diff := cmp.Diff(want, <-got); diff != "" {
+		t.Fatalf("collector request (-want +got):\n%s", diff)
+	}
+}
+
+func TestProvider_SamplerFromSource(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		env   map[string]string
+		spans int
+	}{
+		{env: map[string]string{"OTEL_TRACES_SAMPLER": "always_off"}, spans: 0},
+		{env: map[string]string{"OTEL_TRACES_SAMPLER": "traceidratio", "OTEL_TRACES_SAMPLER_ARG": "0"}, spans: 0},
+		{env: map[string]string{"OTEL_TRACES_SAMPLER": "parentbased_traceidratio"}, spans: 1},
+		{env: map[string]string{"OTEL_TRACES_SAMPLER": "always_on"}, spans: 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.env["OTEL_TRACES_SAMPLER"]+tt.env["OTEL_TRACES_SAMPLER_ARG"], func(t *testing.T) {
+			t.Parallel()
+
+			exp := keepExporter{tracetest.NewInMemoryExporter()}
+
+			app, err := newApp(t, tt.env, otel.New(otel.Config{Exporter: exp}))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			app.Router.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/orders/7", http.NoBody))
+
+			if err := app.Shutdown(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+
+			if n := len(exp.GetSpans()); n != tt.spans {
+				t.Fatalf("exported spans = %d, want %d", n, tt.spans)
+			}
+		})
+	}
+}
+
+func TestSecurity_A09_OTelBadSettingsDoNotEchoHeaders(t *testing.T) {
+	t.Parallel()
+
+	const secret = "s3cr3t-api-key"
+
+	tests := []struct {
+		name    string
+		env     map[string]string
+		wantErr string
+	}{
+		{
+			name:    "headers",
+			env:     map[string]string{"OTEL_EXPORTER_OTLP_HEADERS": "Authorization Bearer " + secret},
+			wantErr: "OTEL_EXPORTER_OTLP_HEADERS: entry 1 is not key=value",
+		},
+		{
+			name:    "traces headers",
+			env:     map[string]string{"OTEL_EXPORTER_OTLP_TRACES_HEADERS": "a=1,b=%zz" + secret},
+			wantErr: "OTEL_EXPORTER_OTLP_TRACES_HEADERS: entry 2: bad percent-encoding",
+		},
+		{
+			name:    "timeout",
+			env:     map[string]string{"OTEL_EXPORTER_OTLP_TRACES_TIMEOUT": "10s"},
+			wantErr: "OTEL_EXPORTER_OTLP_TRACES_TIMEOUT must be a positive number of milliseconds",
+		},
+		{
+			name:    "compression",
+			env:     map[string]string{"OTEL_EXPORTER_OTLP_COMPRESSION": "zstd"},
+			wantErr: "OTEL_EXPORTER_OTLP_COMPRESSION must be gzip or none",
+		},
+		{
+			name:    "sampler",
+			env:     map[string]string{"OTEL_TRACES_SAMPLER": "sometimes"},
+			wantErr: "unknown OTEL_TRACES_SAMPLER",
+		},
+		{
+			name:    "sampler arg",
+			env:     map[string]string{"OTEL_TRACES_SAMPLER": "traceidratio", "OTEL_TRACES_SAMPLER_ARG": "2"},
+			wantErr: "OTEL_TRACES_SAMPLER_ARG must be a ratio between 0 and 1",
+		},
+		{
+			name:    "resource attributes",
+			env:     map[string]string{"OTEL_RESOURCE_ATTRIBUTES": "=x"},
+			wantErr: "OTEL_RESOURCE_ATTRIBUTES: entry 1 is not key=value",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			tt.env["OTEL_EXPORTER_OTLP_ENDPOINT"] = "http://collector:4318"
+
+			_, err := newApp(t, tt.env, otel.New(otel.Config{}))
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("New() error = %v, want %q", err, tt.wantErr)
+			}
+
+			if strings.Contains(err.Error(), secret) {
+				t.Fatalf("New() error = %v, echoes the header value", err)
+			}
+
+			for k, v := range tt.env {
+				if k != "OTEL_EXPORTER_OTLP_ENDPOINT" && strings.Contains(err.Error(), strconv.Quote(v)) {
+					t.Errorf("New() error = %v, echoes the %s value", err, k)
+				}
+			}
+		})
+	}
+}
+
+func TestProvider_InstrumentAfterDBUseFails(t *testing.T) {
+	t.Parallel()
+
+	early := vukem.ProviderFunc(func(app *vukem.App) error {
+		_, err := app.DB()
+		return err
+	})
+
+	exp := &shutdownExporter{InMemoryExporter: tracetest.NewInMemoryExporter()}
+	reader := sdkmetric.NewManualReader()
+
+	_, err := vukem.New(
+		vukem.WithSource(config.MapSource(map[string]string{
+			"APP_KEY": config.GenerateKey(), "APP_ENV": "development", "DATABASE_URL": ":memory:",
+		})),
+		vukem.WithLogger(slog.New(slog.DiscardHandler)),
+		vukem.WithProviders(early, otel.New(otel.Config{Exporter: exp, MetricReader: reader})),
+	)
+
+	if !errors.Is(err, vukem.ErrInstrumentTooLate) {
+		t.Fatalf("New() = %v, want ErrInstrumentTooLate", err)
+	}
+
+	// The failed Register must not leak the batcher and reader.
+	if !exp.shut.Load() {
+		t.Error("span exporter not shut down after a failed Register")
+	}
+
+	if err := reader.Collect(t.Context(), &metricdata.ResourceMetrics{}); !errors.Is(err, sdkmetric.ErrReaderShutdown) {
+		t.Errorf("reader.Collect() = %v, want ErrReaderShutdown", err)
+	}
+}
+
+type shutdownExporter struct {
+	*tracetest.InMemoryExporter
+
+	shut atomic.Bool
+}
+
+func (e *shutdownExporter) Shutdown(ctx context.Context) error {
+	e.shut.Store(true)
+	return e.InMemoryExporter.Shutdown(ctx)
+}
+
+// TestProvider_GlobalInstallsOnlyRealProviders is not parallel: it
+// changes the OpenTelemetry globals.
+func TestProvider_GlobalInstallsOnlyRealProviders(t *testing.T) {
+	existing := sdktrace.NewTracerProvider()
+	t.Cleanup(func() { _ = existing.Shutdown(context.Background()) })
+
+	otelglobal.SetTracerProvider(existing)
+	t.Cleanup(func() { otelglobal.SetTracerProvider(tracenoop.NewTracerProvider()) })
+	t.Cleanup(func() { otelglobal.SetMeterProvider(metricnoop.NewMeterProvider()) })
+
+	p := otel.New(otel.Config{MetricReader: sdkmetric.NewManualReader(), Global: true})
+
+	app, err := newApp(t, nil, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() { _ = app.Shutdown(context.Background()) })
+
+	if otelglobal.GetTracerProvider() != existing {
+		t.Error("Global replaced the global TracerProvider with a no-op (tracing is off)")
+	}
+
+	if otelglobal.GetMeterProvider() != p.MeterProvider() {
+		t.Error("Global did not install the MeterProvider")
 	}
 }

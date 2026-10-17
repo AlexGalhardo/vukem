@@ -300,6 +300,7 @@ err = q.DispatchTx(ctx, tx, SendInvoice{OrderID: 1}) // exists only if tx commit
 - Time: `queue.Delay`, retry backoff and the drivers' availability checks use one clock. `app.Queue()` sets the app clock (`WithClock`) with `Queue.SetClock` and on drivers implementing `queue.Clock` (`Memory`, `Database`, Redis `Queue`), so fake clocks make delayed jobs due.
 - **Database driver** (`QUEUE_CONNECTION=database`, SQLite and Postgres): tables `jobs` and `failed_jobs` (`QUEUE_TABLE`, `QUEUE_FAILED_TABLE`) are created at `Boot` (on first use when the app is not booted; an unreachable database then fails the boot of every command with an error naming `QUEUE_CONNECTION=database`), so the first `app.Queue()` never runs DDL inside a transaction (on SQLite that would wait for the writer connection the transaction holds). Jobs available at the same millisecond have no guaranteed order (ties break on the random id). With `StopWhenEmpty` (`queue:work -once`, `-stop-when-empty`) a reserve error ends `Work` with that error instead of looking like an empty queue. Workers reserve a job with one atomic `UPDATE … RETURNING` (Postgres adds `FOR UPDATE SKIP LOCKED`), so any number of `queue:work` processes can share them. A job whose worker died is taken over after its timeout plus one minute: delivery is at least once, so make handlers idempotent.
 - `q.DispatchTx(ctx, tx, job)` ties the job to the caller's transaction: it exists only if the transaction commits. The database driver inserts it in the transaction; drivers without transactional storage (`sync`, `memory`, `queue.Fake`, Redis) dispatch it from `database.Tx.AfterCommit`, so the same code works in tests and development. On `sync` the job then runs right after the commit and a handler error is logged (the caller already returned). Errors known up front (unknown kind, `ErrInlineDelay`) are returned inside the transaction; with a `*database.DB` the job is dispatched at once.
+- Job observers (`queue.Observer`: dispatched, processed, failed; never the payload): `q.AddObserver` appends, `q.SetObserver` replaces them all; `app.Queue()` adds devtools and the `app.Instrument` hooks. Nil observers, typed nil pointers included, are ignored. A panicking observer is logged (observer type, job kind and id, panic value) and skipped: the dispatch or attempt goes on and the observers after it still run.
 - Commands: `queue:work [-queue high,default] [-concurrency 4] [-once] [-stop-when-empty]` (Ctrl+C drains running jobs), `queue:failed [-json]`, `queue:retry <ids…|all>`, `queue:forget <ids…|all>`.
 - The `database/dbtest` conformance suite covers the driver (exactly-once processing with concurrent workers, `DispatchTx` rollback, failed/retry/forget, takeover of abandoned jobs) on SQLite and Postgres.
 - `vukem make:job SendInvoice` writes `app/jobs/send_invoice.go` (job type, `Kind`, and `HandleSendInvoice(app *vukem.App)` returning the handler) and registers `queue.Handle(HandleSendInvoice(app))` in `app/jobs/registry.go`, whose `All(app)` `bootstrap` passes to `vukem.WithJobsFunc`. Handlers reach `app.DB()`, `app.Now()` and `app.Mailer()` without globals; the function runs once, inside the first `app.Queue()` call (a panic in it becomes that call's error). It may get `app.DB()`, `app.Mailer()`, `app.Crypt` and `app.Now()`, but must not dispatch: `app.Queue()`, `app.Events.Dispatch` with queued listeners, `SendLater`/`MailLater` or running scheduled jobs wait for the queue being built and deadlock (handlers may do all of that when they run). Projects whose `All()` takes no app keep getting dependency-free handlers registered with `WithJobs`.
@@ -370,11 +371,45 @@ r.UseServer(otel.Middleware(tp)) // or bring your own trace.TracerProvider
 - The span is named `METHOD /route/{param}` after the matched ServeMux pattern, or just `METHOD` when nothing matched; raw paths never become span names. Installed with both `Router.UseServer` and `Router.Use` (what the provider does), the route-level copy names the span even when middleware in between replaced the request.
 - Attributes: `http.request.method` (unknown methods as `_OTHER`), `http.route`, `http.response.status_code`, `url.scheme`, `server.address`, `server.port`, `network.protocol.version`, `user_agent.original`. Paths and query strings are not recorded: they can carry tokens and signatures.
 - 5xx responses and panics set the span status to Error with `error.type`; 4xx stay unset, as the HTTP conventions ask. Panics are re-raised for `middleware.Recover`.
-- The provider reads `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` (used as is) or `OTEL_EXPORTER_OTLP_ENDPOINT` (`/v1/traces` appended); a non-http(s) URL is a boot error, and with neither set tracing is off. `OTEL_SDK_DISABLED=true` turns it off too. Other `OTEL_EXPORTER_OTLP_*` variables (headers, timeout, compression) are read by the exporter itself.
-- The resource carries `service.name` (`Config.ServiceName`, else `OTEL_SERVICE_NAME`, else `APP_NAME`) and `deployment.environment.name` (`APP_ENV`). Spans are batched and flushed by `app.Shutdown`.
-- `Config.Exporter` replaces OTLP (tests use `tracetest.NewInMemoryExporter`), `Config.Sampler` defaults to `ParentBased(AlwaysSample)`, and `Config.Global` also sets the OpenTelemetry globals for libraries instrumented through them (off by default: no package-level state).
+- The provider reads `OTEL_*` settings from `app.Source`, so `.env` files work as well as the process environment: `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` (used as is) or `OTEL_EXPORTER_OTLP_ENDPOINT` (`/v1/traces` appended); `OTEL_EXPORTER_OTLP_[TRACES_]HEADERS` (`key=value,...`, percent-decoded; collector API keys), `OTEL_EXPORTER_OTLP_[TRACES_]TIMEOUT` (milliseconds) and `OTEL_EXPORTER_OTLP_[TRACES_]COMPRESSION` (`gzip` or `none`); `OTEL_TRACES_SAMPLER` / `OTEL_TRACES_SAMPLER_ARG` (`always_on`, `always_off`, `traceidratio`, `parentbased_always_on`, `parentbased_always_off`, `parentbased_traceidratio`); `OTEL_RESOURCE_ATTRIBUTES`. A non-http(s) endpoint or a malformed value is a boot error that names the variable, never its value. With no endpoint tracing is off; `OTEL_SDK_DISABLED=true` turns everything off.
+- The resource carries `deployment.environment.name` (`APP_ENV`), then `OTEL_RESOURCE_ATTRIBUTES`, and `service.name` from `Config.ServiceName`, else `OTEL_SERVICE_NAME`, else the attributes, else `APP_NAME`. Spans and metrics are batched and flushed by `app.Shutdown`, which `app.Run` calls after the HTTP server and queue worker have drained (within `SHUTDOWN_TIMEOUT`); called with a context without deadline, the flush gives up after 10s.
+- `Config.Exporter` replaces OTLP (tests use `tracetest.NewInMemoryExporter`), `Config.Sampler` wins over `OTEL_TRACES_SAMPLER` (default `ParentBased(AlwaysSample)`), and `Config.Global` also sets the OpenTelemetry globals for libraries instrumented through them (off by default: no package-level state); only signals that are on are installed (tracer and propagator with tracing, meter with metrics), so a disabled one never replaces an existing global with a no-op.
 - Log correlation: `otel.LogHandler(next)` adds `trace_id` and `span_id` (hex) to records whose context carries a valid span; the provider wraps `app.Log` and the router's `web.Ctx.Log()` logger with it when tracing is on, so request logs and `c.Log().InfoContext(c.Context(), ...)` records link to their trace. Log with the `*Context` methods; records logged without a context are not correlated.
-- Database spans are not built in: wrap `*sql.DB` drivers with an OTel `database/sql` instrumentation in the app if needed.
+
+### Database, queue, mail and outbound HTTP
+
+Core exposes neutral hook points and never imports OpenTelemetry: `app.Instrument(vukem.Instrumentation{Queries, Jobs, Mail})` adds a `database.QueryObserver`, a `queue.Observer` and a mail transport wrapper next to devtools, and `httpclient.Options.WrapTransport` wraps a `Safe` client's transport. The wrapper must delegate to the transport it is given, where the SSRF check runs; one returning nil fails every request with `httpclient.ErrNilTransport` instead of falling back to `http.DefaultTransport`. `Instrument` must run before `DB()`, `Queue()` or `Mailer()` is first used, so call it from a provider's `Register`; a late hook fails with `vukem.ErrInstrumentTooLate`. The otel provider treats that as a boot error, not a warning (list `otel.New` first in `WithProviders`): a silently partial trace is harder to notice than a failed boot, and the providers it built are shut down.
+
+The provider attaches an `otel.Observer` (build one with `otel.NewObserver(tp, opts...)` for a custom setup):
+
+| Source | Span | Attributes (never values, addresses or payloads) |
+| --- | --- | --- |
+| `DB()` statements | client span named after the operation (`SELECT`, `INSERT`...) | `db.system.name` (from the `DATABASE_URL` scheme: `postgresql`, `mysql`, `mariadb`, `sqlite`; `Config.DBSystem` / `otel.WithDBSystem` to set it), `db.operation.name`; `db.query.text` only with `Config.QueryText` / `otel.WithQueryText()` |
+| `Queue()` dispatch | producer `send <queue>` | `messaging.system=vukem`, `messaging.destination.name`, `messaging.message.id`, `vukem.job.kind` |
+| `Queue()` attempt | consumer `process <queue>` | as above plus `vukem.job.attempt`; failures set Error and `error.type` |
+| `Mailer()` sends | client `mail send` | none (no recipient, subject or body) |
+| `p.Transport(rt)` / `observer.Transport(rt)` | client `METHOD` | `http.request.method`, `url.scheme`, `server.address`, `server.port`, `http.response.status_code`; 4xx/5xx set Error |
+
+Database and job reports arrive after the work is done, so those spans are back-dated by the reported duration and parented to the caller's context (a query inside a request is a child of the request span). Jobs run by a worker start a new trace: the dispatching request's context is not carried in the job payload. Outbound requests never get the path or query string recorded, and `traceparent`/`baggage` are injected only with `otel.WithClientPropagation()` (trace ids and baggage would otherwise reach third parties).
+
+```go
+client := &http.Client{Transport: tracing.Transport(nil)}                     // tracing := otel.New(cfg)
+safe := httpclient.Safe(httpclient.Options{WrapTransport: tracing.Transport}) // user-supplied URLs
+```
+
+### Metrics
+
+`Config.MetricReader` turns metrics on: the provider builds a `MeterProvider` on it with the same resource and records, through the same hooks:
+
+| Metric | Kind | Attributes |
+| --- | --- | --- |
+| `http.server.request.duration` (s) | histogram | method, `http.route`, status code, `url.scheme`, `error.type` on 5xx and panics |
+| `http.client.request.duration` (s) | histogram | method, `server.address`, `server.port`, status code, `error.type` |
+| `db.client.operation.duration` (s) | histogram | `db.system.name`, `db.operation.name`, `error.type` |
+| `messaging.process.duration` (s) | histogram | `messaging.destination.name`, `vukem.job.kind`, `error.type` |
+| `vukem.queue.job.failures` | counter | as above |
+
+Histogram counts are the request, query and job counts. The module ships no metric exporter: pass `sdkmetric.NewPeriodicReader(exporter)` with your backend's exporter (for OTLP, `go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp`). `otel.Middleware(tp, otel.WithMeterProvider(mp))` records the server metric without the provider. Without a reader (and without an endpoint) the provider does nothing.
 
 ## Encryption
 
