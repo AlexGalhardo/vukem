@@ -59,6 +59,17 @@ func startServer(t *testing.T, runner vukem.Runner, ready <-chan string) (string
 	return addr, stop
 }
 
+func mustServer(t *testing.T, addr string, opts grpc.ServerOptions) vukem.Runner {
+	t.Helper()
+
+	r, err := grpc.Server(&vukem.Config{Env: config.Development}, addr, rpcRouter(), opts)
+	if err != nil {
+		t.Fatalf("Server() error = %v", err)
+	}
+
+	return r
+}
+
 func TestServer_ServesGRPCOnItsOwnPort(t *testing.T) {
 	t.Parallel()
 
@@ -86,9 +97,11 @@ func TestServer_ServesGRPCOnItsOwnPort(t *testing.T) {
 			t.Parallel()
 
 			ready := make(chan string, 1)
-			addr, stop := startServer(t, grpc.Server("127.0.0.1:0", rpcRouter(), grpc.ServerOptions{
-				TLS: tt.tls, Ready: ready,
-			}), ready)
+			addr, stop := startServer(
+				t,
+				mustServer(t, "127.0.0.1:0", grpc.ServerOptions{TLS: tt.tls, Ready: ready}),
+				ready,
+			)
 
 			client := greetv1connect.NewGreetServiceClient(tt.client, tt.scheme+"://"+addr, connect.WithGRPC())
 
@@ -111,7 +124,7 @@ func TestServer_ServesGRPCOnItsOwnPort(t *testing.T) {
 func TestServer_ListenErrorFails(t *testing.T) {
 	t.Parallel()
 
-	err := grpc.Server("127.0.0.1:-1", rpcRouter(), grpc.ServerOptions{}).Run(t.Context())
+	err := mustServer(t, "127.0.0.1:-1", grpc.ServerOptions{}).Run(t.Context())
 	if err == nil {
 		t.Fatal("Run(invalid addr) = nil, want error")
 	}
@@ -188,5 +201,25 @@ func TestSecurity_A02_GRPCServerCleartextInProductionNeedsOptIn(t *testing.T) {
 
 	if !strings.Contains(err.Error(), "HTTP_H2C") {
 		t.Errorf("error %q does not name HTTP_H2C", err)
+	}
+
+	// Server applies the same rule; a missing config counts as production.
+	for name, cfg := range map[string]*vukem.Config{"production": {Env: config.Production}, "nil config": nil} {
+		if _, err := grpc.Server(
+			cfg,
+			":0",
+			rpcRouter(),
+			grpc.ServerOptions{},
+		); !errors.Is(
+			err,
+			grpc.ErrCleartextInProduction,
+		) {
+			t.Errorf("Server(%s, no TLS) = %v, want ErrCleartextInProduction", name, err)
+		}
+	}
+
+	h2c := &vukem.Config{Env: config.Production, H2C: true}
+	if _, err := grpc.Server(h2c, ":0", rpcRouter(), grpc.ServerOptions{}); err != nil {
+		t.Errorf("Server(production, HTTP_H2C=true) = %v, want nil", err)
 	}
 }

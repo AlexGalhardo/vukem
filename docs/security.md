@@ -74,7 +74,7 @@ What Vukem does **by default** to protect applications, mapped to the [OWASP Top
 | `/openapi.json` (`vukem.ServeOpenAPI`) and the API reference UI (`apidocs.Serve`) are not served in production unless `OPENAPI_IN_PRODUCTION=true` (`TestSecurity_A02_OpenAPIOffInProduction`, `TestSecurity_A02_APIDocsOffInProduction`); the vendored Scalar bundle is pinned by SHA-256 and runs with telemetry and remote fonts off | [x] |
 | GraphQL (`contrib/graphql`): in production the explorer page is not registered and `__schema` / `__type` introspection is rejected unless `InsecureExplorerInProduction` / `InsecureIntrospectionInProduction` opt in; the explorer is embedded (no CDN) and runs under its own nonce CSP (`TestSecurity_A02_GraphQLExplorerOffInProduction`) | [x] |
 | gRPC server reflection (`grpc.Reflection`, `contrib/grpc`) is not served in production unless `GRPC_INSECURE_REFLECTION_IN_PRODUCTION=true` (`TestSecurity_A02_GRPCReflectionOffInProduction`) | [x] |
-| A separate gRPC port (`grpc.Serve`, `contrib/grpc`) without TLS is refused in production unless `HTTP_H2C=true` (`ErrCleartextInProduction`, `TestSecurity_A02_GRPCServerCleartextInProductionNeedsOptIn`) | [x] |
+| A separate gRPC port (`grpc.Serve`, `grpc.Server`, `contrib/grpc`) without TLS is refused in production unless `HTTP_H2C=true` (`ErrCleartextInProduction`, `TestSecurity_A02_GRPCServerCleartextInProductionNeedsOptIn`) | [x] |
 
 **App responsibility:** terminate TLS (or run behind a proxy that does), set `APP_URL` to the `https` origin, set `TRUSTED_PROXIES` to the proxy's network (and `TRUST_FORWARDED_PROTO=true` when it terminates TLS).
 
