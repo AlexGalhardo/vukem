@@ -76,6 +76,14 @@ func TestHTTPErrorLocalizedText(t *testing.T) {
 		})
 	}
 
+	params := map[string]any{"name": "Bia"}
+	owned := NewKey(http.StatusForbidden, "greet", "Hello", params)
+	params["name"] = "Changed"
+
+	if got := owned.LocalizedText(tr); got != "Olá, Bia" {
+		t.Errorf("LocalizedText() after the caller changed params = %q, want %q", got, "Olá, Bia")
+	}
+
 	if got := keyed.Error(); got != "403 Hello" {
 		t.Errorf("Error() = %q, want the English fallback", got)
 	}

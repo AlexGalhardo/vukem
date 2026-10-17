@@ -1,6 +1,9 @@
 package errs
 
-import "context"
+import (
+	"context"
+	"maps"
+)
 
 // Translator returns the message for key in the request locale with
 // {name} placeholders filled from params, or false when no catalog has
@@ -39,9 +42,9 @@ func Translate(ctx context.Context, key, fallback string, params map[string]any)
 
 // NewKey returns an *HTTPError whose client-safe message is translated
 // from key with params ([HTTPError.LocalizedText]); message is the English
-// fallback, also used by Error.
+// fallback, also used by Error. Params is copied.
 func NewKey(status int, key, message string, params map[string]any) *HTTPError {
-	return &HTTPError{Status: status, Message: message, Key: key, Params: params, stack: callers(1)}
+	return &HTTPError{Status: status, Message: message, Key: key, Params: maps.Clone(params), stack: callers(1)}
 }
 
 // LocalizedText returns Text translated from Key by the Translator of
