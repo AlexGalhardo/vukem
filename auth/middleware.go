@@ -135,7 +135,7 @@ func Verified(guard Checker) func(http.Handler) http.Handler {
 			c := ctxOf(w, r)
 
 			if !guard.Check(c) {
-				c.HandleError(errs.New(http.StatusForbidden, "Your email address is not verified."))
+				c.HandleError(errUnverified())
 				return
 			}
 
@@ -151,7 +151,7 @@ func Verified(guard Checker) func(http.Handler) http.Handler {
 				}
 			}
 
-			c.HandleError(errs.New(http.StatusForbidden, "Your email address is not verified."))
+			c.HandleError(errUnverified())
 		})
 	}
 }
@@ -171,7 +171,14 @@ func Ability(guard Checker, abilities ...string) func(http.Handler) http.Handler
 			for _, a := range abilities {
 				if !TokenCan(c, guard.Name(), a) {
 					web.SecurityEvent(c.Request(), "authz.denied", "ability", a)
-					c.HandleError(errs.New(http.StatusForbidden, "This token cannot "+a+"."))
+					c.HandleError(
+						errs.NewKey(
+							http.StatusForbidden,
+							"auth.token_ability",
+							"This token cannot "+a+".",
+							map[string]any{"ability": a},
+						),
+					)
 
 					return
 				}
@@ -180,4 +187,8 @@ func Ability(guard Checker, abilities ...string) func(http.Handler) http.Handler
 			next.ServeHTTP(w, c.Request())
 		})
 	}
+}
+
+func errUnverified() error {
+	return errs.NewKey(http.StatusForbidden, "auth.unverified", "Your email address is not verified.", nil)
 }

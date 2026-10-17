@@ -53,16 +53,20 @@ type PasswordUpdater[U Authenticatable] interface {
 // Errors returned by guards.
 var (
 	// ErrUnauthenticated is 401 (WWW-Authenticate is added by middleware).
-	ErrUnauthenticated = &errs.HTTPError{Status: http.StatusUnauthorized, Message: "Unauthenticated."}
+	ErrUnauthenticated = &errs.HTTPError{
+		Status: http.StatusUnauthorized, Message: "Unauthenticated.", Key: "auth.unauthenticated",
+	}
 	// ErrUserNotFound is returned by providers for unknown users.
 	ErrUserNotFound = errors.New("auth: user not found")
 )
 
 // credentialsError is the 422 shown for a failed login, on the identifier
 // field so forms display it next to the email input. The message never
-// says which part was wrong (user enumeration).
-func credentialsError(field string) error {
-	return errs.NewValidation().Add(field, "These credentials do not match our records.")
+// says which part was wrong (user enumeration); it is translated from
+// "auth.failed" in the request locale.
+func credentialsError(ctx context.Context, field string) error {
+	msg := errs.Translate(ctx, "auth.failed", "These credentials do not match our records.", nil)
+	return errs.NewValidation().Add(field, msg)
 }
 
 // ORMProvider loads users of model U with the ORM: ByID by primary key,
