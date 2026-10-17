@@ -3,6 +3,7 @@ package graphql
 import (
 	"context"
 	"sync"
+	"time"
 )
 
 // requestScope is the per-operation state shared by the executor and the
@@ -14,8 +15,12 @@ import (
 type requestScope struct {
 	mu      sync.Mutex
 	running int
-	dirty   []flusher
-	loaders map[any]any // *Loader[K,V] → *loaderState[K,V]
+	// lastProgress is when a goroutine last started, finished or called
+	// a loader; the loaders' fallback timer uses it to tell a stalled
+	// operation from a slow one.
+	lastProgress time.Time
+	dirty        []flusher
+	loaders      map[any]any // *Loader[K,V] → *loaderState[K,V]
 }
 
 // flusher is a loader state with keys waiting for a batch.
@@ -43,6 +48,7 @@ func newScope() *requestScope {
 func (s *requestScope) begin() {
 	s.mu.Lock()
 	s.running++
+	s.lastProgress = time.Now()
 	s.mu.Unlock()
 }
 
@@ -63,6 +69,8 @@ func (s *requestScope) wait(ctx context.Context, wg *sync.WaitGroup) {
 }
 
 func (s *requestScope) dispatchLocked(ctx context.Context) {
+	s.lastProgress = time.Now()
+
 	if s.running > 0 || len(s.dirty) == 0 {
 		return
 	}

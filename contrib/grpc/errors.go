@@ -28,10 +28,23 @@ const internalMessage = "internal error"
 //   - an *errs.HTTPError (or errs.StatusCoder) gets the code of its status
 //     (401 Unauthenticated, 403 PermissionDenied, 404 NotFound, 409
 //     AlreadyExists, 422 InvalidArgument, 429 ResourceExhausted, 503
-//     Unavailable, ...) and its client-safe message;
+//     Unavailable, ...) and its client-safe message below 500; from 500 up
+//     the message is "internal error" (the caller logs err), and a 5xx
+//     wins over the z.Issues it wraps;
 //   - anything else is Internal with the message "internal error", never the
 //     error text.
+//
+// Keyed HTTPErrors (errs.NewKey) keep their English fallback; use
+// [ErrorContext] to translate them into the request locale.
 func Error(err error) *connect.Error {
+	return ErrorContext(context.Background(), err)
+}
+
+// ErrorContext is [Error] with the HTTPError message translated by the
+// errs.Translator of ctx ([errs.HTTPError.LocalizedText]), so keyed errors
+// follow the request locale. Mount and HandlerOptions use it with the
+// request ctx.
+func ErrorContext(ctx context.Context, err error) *connect.Error {
 	if err == nil {
 		return nil
 	}
@@ -54,6 +67,21 @@ func Error(err error) *connect.Error {
 		return connect.NewError(connect.CodeDeadlineExceeded, errors.New("deadline exceeded"))
 	}
 
+	// 5xx first: errs.Wrap(500, issues) carries internal data, not field
+	// errors the client should fix (CWE-209).
+	if status, ok := serverStatus(err); ok {
+		cerr := connect.NewError(CodeOf(status), errors.New(internalMessage))
+		// Only headers meant for clients: a 5xx's other headers may carry
+		// the same internals as its message.
+		if herr, ok := errors.AsType[*errs.HTTPError](err); ok {
+			if v := herr.Headers.Values("Retry-After"); len(v) > 0 {
+				cerr.Meta()["Retry-After"] = slices.Clone(v)
+			}
+		}
+
+		return cerr
+	}
+
 	if issues, ok := z.AsIssues(err); ok {
 		return invalid(issues.Fields())
 	}
@@ -63,7 +91,7 @@ func Error(err error) *connect.Error {
 	}
 
 	if herr, ok := errors.AsType[*errs.HTTPError](err); ok {
-		cerr := connect.NewError(CodeOf(herr.Status), errors.New(herr.Text()))
+		cerr := connect.NewError(CodeOf(herr.Status), errors.New(herr.LocalizedText(ctx)))
 		for k, v := range herr.Headers {
 			cerr.Meta()[k] = slices.Clone(v)
 		}
@@ -130,6 +158,32 @@ func invalid(fields map[string][]string) *connect.Error {
 	}
 
 	return cerr
+}
+
+// serverStatus returns the status of err's *errs.HTTPError (or, without
+// one, its errs.StatusCoder) when it is a 5xx: its text is a server
+// detail, never sent to clients.
+func serverStatus(err error) (int, bool) {
+	status := 0
+	if herr, ok := errors.AsType[*errs.HTTPError](err); ok {
+		status = herr.Status
+	} else if sc, ok := errors.AsType[errs.StatusCoder](err); ok {
+		status = sc.HTTPStatus()
+	}
+
+	return status, status >= http.StatusInternalServerError
+}
+
+// logsCause reports whether the client got a generic message for err, so
+// the caller must log err: a server-fault code or a 5xx status.
+func logsCause(err error, cerr *connect.Error) bool {
+	if isServerFault(cerr.Code()) {
+		return true
+	}
+
+	_, ok := serverStatus(err)
+
+	return ok
 }
 
 // isServerFault reports codes whose cause must be logged: the client only

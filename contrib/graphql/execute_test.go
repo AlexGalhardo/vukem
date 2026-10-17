@@ -18,6 +18,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/AlexGalhardo/vukem/errs"
+	"github.com/AlexGalhardo/vukem/z"
 )
 
 var update = flag.Bool("update", false, "rewrite golden files")
@@ -643,7 +644,7 @@ func TestSecurity_A10_GraphQLClientErrorsMasked(t *testing.T) {
 
 	err := fmt.Errorf("create user: %w", &conflictError{cause: errors.New(`pq: duplicate key "users_email_key"`)})
 
-	ge := fromResolverError(err, false)
+	ge := fromResolverError(t.Context(), err, false)
 	if strings.Contains(ge.Message, "users_email_key") || ge.Message != "Conflict" || ge.Code() != CodeConflict {
 		t.Errorf(
 			"fromResolverError(conflict) = %q (%s), want %q without driver text",
@@ -653,8 +654,84 @@ func TestSecurity_A10_GraphQLClientErrorsMasked(t *testing.T) {
 		)
 	}
 
-	he := fromResolverError(fmt.Errorf("wrap: %w", errs.New(http.StatusNotFound, "Post not found.")), false)
+	he := fromResolverError(
+		t.Context(),
+		fmt.Errorf("wrap: %w", errs.New(http.StatusNotFound, "Post not found.")),
+		false,
+	)
 	if he.Message != "Post not found." {
 		t.Errorf("fromResolverError(HTTPError) = %q, want its client message", he.Message)
+	}
+}
+
+func TestExecute_LocalizesKeyedErrors(t *testing.T) {
+	t.Parallel()
+
+	s, err := New(`type Query { post: String }`,
+		Query("post", func(context.Context, NoArgs) (*string, error) {
+			return nil, fmt.Errorf("load: %w",
+				errs.NewKey(http.StatusNotFound, "post.missing", "Post not found.", map[string]any{"id": 7}))
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tr := func(key string, params map[string]any) (string, bool) {
+		if key == "post.missing" {
+			return fmt.Sprintf("Post %v não encontrado.", params["id"]), true
+		}
+
+		return "", false
+	}
+
+	tests := map[string]struct {
+		ctx  context.Context
+		want string
+	}{
+		"translator in ctx": {errs.WithTranslator(t.Context(), tr), "Post 7 não encontrado."},
+		"no translator":     {t.Context(), "Post not found."},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			resp := s.Execute(tt.ctx, Request{Query: `{ post }`})
+			if len(resp.Errors) != 1 || resp.Errors[0].Message != tt.want || resp.Errors[0].Code() != CodeNotFound {
+				t.Errorf("Execute errors = %v, want one %s %q", resp.Errors, CodeNotFound, tt.want)
+			}
+		})
+	}
+}
+
+func TestSecurity_A10_GraphQLServerHTTPErrorsMasked(t *testing.T) {
+	t.Parallel()
+
+	leaky := func(string, map[string]any) (string, bool) { return "dsn postgres://app:hunter2@db", true }
+	ctx := errs.WithTranslator(t.Context(), leaky)
+
+	secret := errors.New("db: password=hunter2")
+	_, issues := z.Struct[struct {
+		Name string `json:"name"`
+	}](z.Shape{"name": z.String().Refine(func(string) error { return secret })}).Parse(map[string]any{"name": "x"})
+
+	tests := map[string]error{
+		"500 message":      errs.New(http.StatusInternalServerError, "query failed: password=hunter2"),
+		"503 keyed":        errs.NewKey(http.StatusServiceUnavailable, "db.down", "redis hunter2 down", nil),
+		"500 wraps issues": errs.Wrap(http.StatusInternalServerError, issues),
+		"500 wraps fields": errs.Wrap(http.StatusInternalServerError, errs.NewValidation().Add("name", "hunter2")),
+	}
+
+	for name, err := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			ge := fromResolverError(ctx, err, false)
+			if ge.Message != internalMessage || ge.Code() != CodeInternal || ge.Extensions["fields"] != nil {
+				t.Errorf("fromResolverError(%v) = %q %s %v, want %q %s without fields",
+					err, ge.Message, ge.Code(), ge.Extensions, internalMessage, CodeInternal)
+			}
+		})
 	}
 }

@@ -208,7 +208,7 @@ func (s *Schema) subscribe(ctx context.Context, p *prepared) (iter.Seq[*Response
 		}
 	}
 
-	e.addError(err, g.fields, fp)
+	e.addError(ctx, err, g.fields, fp)
 
 	return nil, &Response{Errors: e.errs}
 }

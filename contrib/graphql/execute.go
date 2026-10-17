@@ -227,7 +227,7 @@ func (s *Schema) execute(ctx context.Context, p *prepared, root *namedType, root
 	if ok {
 		var err error
 		if data, err = json.Marshal(obj); err != nil {
-			e.addError(fmt.Errorf("encode response: %w", err), nil, nil)
+			e.addError(ctx, fmt.Errorf("encode response: %w", err), nil, nil)
 
 			data = []byte("null")
 		}
@@ -267,8 +267,8 @@ func comparePaths(a, b []any) int {
 	return len(a) - len(b)
 }
 
-func (e *executor) addError(err error, fields []*field, p *path) {
-	ge := fromResolverError(err, e.s.debug)
+func (e *executor) addError(ctx context.Context, err error, fields []*field, p *path) {
+	ge := fromResolverError(ctx, err, e.s.debug)
 	if len(fields) > 0 && len(ge.Locations) == 0 {
 		ge.Locations = []Location{fields[0].pos}
 	}
@@ -278,7 +278,7 @@ func (e *executor) addError(err error, fields []*field, p *path) {
 	}
 
 	if ge.Code() == CodeInternal {
-		e.s.log.Error("graphql: resolver error", "path", fmt.Sprint(ge.Path), "error", err)
+		e.s.log.ErrorContext(ctx, "graphql: resolver error", "path", fmt.Sprint(ge.Path), "error", err)
 	}
 
 	e.mu.Lock()
@@ -438,7 +438,7 @@ func (e *executor) selectionSet(
 		e.scope.begin()
 		wg.Go(func() {
 			defer e.scope.end(ctx)
-			defer e.recoverInto(g.fields, fp)
+			defer e.recoverInto(ctx, g.fields, fp)
 
 			obj.vals[i], oks[i] = e.field(ctx, objType, value, g, fd, fp)
 		})
@@ -455,10 +455,19 @@ func (e *executor) selectionSet(
 	return obj, true
 }
 
-func (e *executor) recoverInto(fields []*field, p *path) {
+func (e *executor) recoverInto(ctx context.Context, fields []*field, p *path) {
 	if r := recover(); r != nil {
-		e.s.log.Error("graphql: panic", "path", fmt.Sprint(p.slice()), "panic", r, "stack", string(debug.Stack()))
-		e.addError(fmt.Errorf("panic: %v", r), fields, p)
+		e.s.log.ErrorContext(
+			ctx,
+			"graphql: panic",
+			"path",
+			fmt.Sprint(p.slice()),
+			"panic",
+			r,
+			"stack",
+			string(debug.Stack()),
+		)
+		e.addError(ctx, fmt.Errorf("panic: %v", r), fields, p)
 	}
 }
 
@@ -482,7 +491,7 @@ func (e *executor) field(
 	if strings.HasPrefix(objType.name, "__") {
 		switch n := e.metaFields.Add(1); {
 		case n == e.s.maxMetaFields+1:
-			e.addError(&Error{
+			e.addError(ctx, &Error{
 				Message: fmt.Sprintf("Introspection resolves more than %d fields.", e.s.maxMetaFields),
 				Extensions: map[string]any{
 					"code": CodeLimitExceeded, "limit": "introspection fields", "max": e.s.maxMetaFields,
@@ -497,13 +506,13 @@ func (e *executor) field(
 
 	args, err := e.arguments(fd, f)
 	if err != nil {
-		e.addError(err, g.fields, p)
+		e.addError(ctx, err, g.fields, p)
 		return nullResult()
 	}
 
 	v, err := e.resolve(ctx, fd, parent, args)
 	if err != nil {
-		e.addError(err, g.fields, p)
+		e.addError(ctx, err, g.fields, p)
 		return nullResult()
 	}
 
@@ -591,7 +600,7 @@ func (e *executor) complete(ctx context.Context, fd *fieldType, t *gtype, fields
 		}
 
 		if r == nil {
-			e.addError(&Error{
+			e.addError(ctx, &Error{
 				Message:    fmt.Sprintf("Cannot return null for non-nullable field %s.%s.", fd.parent.name, fd.name),
 				Extensions: map[string]any{"code": CodeInternal},
 			}, fields, p)
@@ -634,7 +643,7 @@ func (e *executor) completeNullable(
 	case t.named.isLeaf():
 		out, err := serializeLeaf(t.named, deref(v))
 		if err != nil {
-			e.addError(err, fields, p)
+			e.addError(ctx, err, fields, p)
 			return nil, false
 		}
 
@@ -645,7 +654,7 @@ func (e *executor) completeNullable(
 	if objType.isAbstract() {
 		var err error
 		if objType, err = e.runtimeType(t.named, v, fd); err != nil {
-			e.addError(err, fields, p)
+			e.addError(ctx, err, fields, p)
 			return nil, false
 		}
 	}
@@ -677,7 +686,7 @@ func (e *executor) completeList(
 	}
 
 	if rv.Kind() != reflect.Slice && rv.Kind() != reflect.Array {
-		e.addError(fmt.Errorf("expected a list for field %s.%s, got %T", fd.parent.name, fd.name, v), fields, p)
+		e.addError(ctx, fmt.Errorf("expected a list for field %s.%s, got %T", fd.parent.name, fd.name, v), fields, p)
 		return nil, false
 	}
 
@@ -700,7 +709,7 @@ func (e *executor) completeList(
 			e.scope.begin()
 			wg.Go(func() {
 				defer e.scope.end(ctx)
-				defer e.recoverInto(fields, ip)
+				defer e.recoverInto(ctx, fields, ip)
 
 				out[i], oks[i] = e.complete(ctx, fd, t.ofType, fields, item, ip)
 			})

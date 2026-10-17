@@ -69,6 +69,10 @@ func (greeter) Greet(
 		return nil, errs.ErrNotFound
 	case "taken":
 		return nil, errs.NewValidation().Add("name", "is taken")
+	case "unimplemented":
+		return nil, errs.New(http.StatusNotImplemented, "driver password=hunter2 missing")
+	case "keyed":
+		return nil, errs.NewKey(http.StatusForbidden, "greet.denied", "Greeting denied.", nil)
 	}
 
 	user, err := auth.UserFrom[string](ctx, "api")
@@ -358,6 +362,29 @@ func TestSecurity_A10_GRPCInternalErrorsHidden(t *testing.T) {
 	})
 }
 
+func TestSecurity_A10_GRPCServerHTTPErrorsLogged(t *testing.T) {
+	t.Parallel()
+
+	var logs syncBuffer
+
+	srv := grpctest.NewServer(
+		t,
+		newHandler(t, setup{opts: grpc.Options{Log: slog.New(slog.NewTextHandler(&logs, nil))}}),
+	)
+	client := greetv1connect.NewGreetServiceClient(srv.Client, srv.URL)
+
+	_, err := client.Greet(t.Context(), authed(&greetv1.GreetRequest{Name: "unimplemented"}))
+
+	cerr, ok := errors.AsType[*connect.Error](err)
+	if !ok || cerr.Code() != connect.CodeUnimplemented || cerr.Message() != "internal error" {
+		t.Fatalf("Greet(unimplemented) = %v, want unimplemented: internal error", err)
+	}
+
+	if out := logs.String(); !strings.Contains(out, "level=ERROR") || !strings.Contains(out, "hunter2") {
+		t.Errorf("server log lacks the hidden 5xx cause:\n%s", out)
+	}
+}
+
 func TestSecurity_A10_GRPCMessageSizeLimited(t *testing.T) {
 	t.Parallel()
 
@@ -535,4 +562,48 @@ func (s *syncBuffer) String() string {
 	defer s.mu.Unlock()
 
 	return s.b.String()
+}
+
+// ptBR translates the keyed errors of the greet service, like the
+// Translator the app's locale middleware stores in the request ctx.
+func ptBR(key string, _ map[string]any) (string, bool) {
+	if key == "greet.denied" {
+		return "Saudação negada.", true
+	}
+
+	return "", false
+}
+
+func TestHandlerOptions_LocalizesKeyedErrors(t *testing.T) {
+	t.Parallel()
+
+	withLocale := func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			next.ServeHTTP(w, r.WithContext(errs.WithTranslator(r.Context(), ptBR)))
+		})
+	}
+
+	tests := map[string]struct {
+		mw   []router.Middleware
+		want string
+	}{
+		"translator in ctx": {[]router.Middleware{withLocale}, "Saudação negada."},
+		"no translator":     {nil, "Greeting denied."},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			srv := grpctest.NewServer(t, newHandler(t, setup{mw: tt.mw}))
+			client := greetv1connect.NewGreetServiceClient(srv.Client, srv.URL)
+
+			_, err := client.Greet(t.Context(), authed(&greetv1.GreetRequest{Name: "keyed"}))
+
+			cerr, ok := errors.AsType[*connect.Error](err)
+			if !ok || cerr.Code() != connect.CodePermissionDenied || cerr.Message() != tt.want {
+				t.Errorf("Greet(keyed) error = %v, want PermissionDenied %q", err, tt.want)
+			}
+		})
+	}
 }

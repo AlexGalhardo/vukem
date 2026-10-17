@@ -37,9 +37,14 @@ type loaderConfig struct {
 // MaxBatch splits batches larger than n keys (default: unlimited).
 func MaxBatch(n int) LoaderOption { return func(c *loaderConfig) { c.maxBatch = n } }
 
-// BatchWait bounds how long a key waits for the resolution tick before
-// its batch is sent anyway (default 10ms). It only matters when resolvers
-// block on something other than a loader (a mutex, their own goroutines).
+// BatchWait is the fallback for when the resolution tick never comes:
+// a pending batch is sent anyway once the operation has made no progress
+// (no resolver started, finished or called a loader) for d (default 10ms).
+// It only matters when resolvers block on something other than a loader
+// (a mutex, a channel, their own goroutines); slow siblings that keep
+// making progress, as on a loaded machine, do not split the batch, up to
+// 10×d after its first key.
+// 0 disables the fallback.
 func BatchWait(d time.Duration) LoaderOption { return func(c *loaderConfig) { c.wait = d } }
 
 // DefaultBatchWait is the default BatchWait.
@@ -69,6 +74,7 @@ type loaderState[K comparable, V any] struct {
 	cache   map[K]*entry[V]
 	pending []K
 	dirty   bool
+	since   time.Time // when the oldest pending key was queued
 	timer   *time.Timer
 }
 
@@ -180,17 +186,46 @@ func (st *loaderState[K, V]) add(ctx context.Context, sc *requestScope, key K) {
 		sc.dirty = append(sc.dirty, st)
 
 		if st.l.wait > 0 {
-			st.timer = time.AfterFunc(st.l.wait, func() {
-				sc.mu.Lock()
-				st.flushLocked(ctx, sc)
-				sc.mu.Unlock()
-			})
+			st.since = time.Now()
+			st.armLocked(ctx, sc, st.l.wait)
 		}
 	}
 
 	if st.l.maxBatch > 0 && len(st.pending) >= st.l.maxBatch {
 		st.flushLocked(ctx, sc)
 	}
+}
+
+// maxBatchAge caps, in BatchWaits, how long the oldest pending key waits
+// while siblings keep making progress, so a long chain of sequential
+// sibling work cannot hold it until the whole operation is done.
+const maxBatchAge = 10
+
+// armLocked starts the fallback timer; called with sc.mu held. When it
+// fires it flushes only if the scope made no progress for a whole wait
+// or the oldest key waited maxBatchAge waits; otherwise it re-arms for
+// the rest: a timer measured from the first key alone would split
+// batches whenever siblings are merely slow to be scheduled.
+func (st *loaderState[K, V]) armLocked(ctx context.Context, sc *requestScope, d time.Duration) {
+	var t *time.Timer
+
+	t = time.AfterFunc(d, func() {
+		sc.mu.Lock()
+		defer sc.mu.Unlock()
+
+		if st.timer != t { // flushed (and maybe re-armed) meanwhile
+			return
+		}
+
+		idle, age := time.Since(sc.lastProgress), time.Since(st.since)
+		if maxAge := maxBatchAge * st.l.wait; idle < st.l.wait && age < maxAge {
+			st.armLocked(ctx, sc, min(st.l.wait-idle, maxAge-age))
+			return
+		}
+
+		st.flushLocked(ctx, sc)
+	})
+	st.timer = t
 }
 
 // flushLocked starts batches for the pending keys; idempotent.
