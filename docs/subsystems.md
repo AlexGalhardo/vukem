@@ -438,6 +438,7 @@ cart, err := app.Crypt.Cookie(r, "cart") // http.ErrNoCookie or crypt.ErrInvalid
 - Every failure (malformed, tampered, unknown key, other additional data) returns `crypt.ErrInvalid`, without telling which.
 - `SetCookie` always sets `HttpOnly`, defaults `SameSite` to Lax, adds `Secure` when the request came over TLS (set `Secure` yourself behind a TLS-terminating proxy), refuses `SameSite=None` without `Secure` and values over 4 KB (`crypt.ErrCookieTooLarge`).
 - Database columns: [`orm.Encrypted[T]`](database.md#encrypted-columns).
+- Key rotation: `app.Crypt` opens tokens sealed with any `APP_PREVIOUS_KEYS` entry and seals with `APP_KEY`. Other keyed features take their previous keys from `app.DerivePreviousKeys(purpose, n)`; see [Key rotation](security.md#key-rotation) for the full procedure and `vukem key:rotate`.
 
 ## i18n
 

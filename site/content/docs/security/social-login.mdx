@@ -32,7 +32,7 @@ s := social.New(key, // panics on a key shorter than 32 bytes
 	social.Microsoft("common", microsoftCfg),  // OpenID Connect (Entra ID)
 	social.GitLab(gitlabCfg), social.Discord(discordCfg),
 	social.OIDC("okta", "https://example.okta.com", oktaCfg), // any OIDC issuer
-)
+).WithPreviousKeys(app.DerivePreviousKeys("social.state", 32)...) // APP_KEY rotation
 
 r.Get("/auth/{provider}/redirect", func(c *web.Ctx) error {
 	return s.Redirect(c, c.Param("provider")) // 404 for unknown providers

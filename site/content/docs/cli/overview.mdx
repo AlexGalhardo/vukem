@@ -26,6 +26,7 @@ vukem list
 | `vukem serve [--poll 500ms] [--no-vite]` | Build and run `cmd/app`; rebuild and restart when `.go`, `.templ`, `go.mod`, `go.sum` or `.env` change |
 | `vukem build [-o bin/app]` | `go tool templ generate` when `.templ` files exist, `vite build` when a `vite.config.*` exists, then `go build -trimpath -ldflags="-s -w"` |
 | `vukem key:generate [--show] [--force]` | Write `APP_KEY` to `.env` (created from `.env.example` when missing) |
+| `vukem key:rotate` | Write a new `APP_KEY` to `.env` and move the old one to the front of `APP_PREVIOUS_KEYS` ([key rotation](/docs/security/encryption#key-rotation)) |
 | `vukem version` | Print the CLI version |
 | `vukem list`, `vukem help <command>` | List commands, or show one command's flags |
 

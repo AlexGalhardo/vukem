@@ -19,7 +19,11 @@ func NewSigner(app *vukem.App) (*signed.Signer, error) {
 		return nil, err
 	}
 
-	return signed.New(key), nil // panics on a key shorter than 32 bytes
+	// Links signed before an APP_KEY rotation verify until the old key
+	// leaves APP_PREVIOUS_KEYS; new links always use APP_KEY.
+	previous := app.DerivePreviousKeys("signed.urls", 32)
+
+	return signed.New(key).WithPreviousKeys(previous...), nil // panics on a key shorter than 32 bytes
 }
 ```
 

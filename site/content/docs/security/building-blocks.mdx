@@ -25,7 +25,8 @@ if err != nil {
 	return err
 }
 
-signer := signed.New(key) // panics on a key shorter than 32 bytes
+signer := signed.New(key). // panics on a key shorter than 32 bytes
+	WithPreviousKeys(app.DerivePreviousKeys("signed.urls", 32)...) // APP_KEY rotation
 link, err := signer.Sign(appURL+"/unsubscribe/42", 7*24*time.Hour) // adds expires and signature
 
 r.Get("/unsubscribe/{id}", unsubscribe).Use(signer.Middleware()) // 403 when tampered or expired

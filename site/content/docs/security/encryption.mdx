@@ -26,7 +26,19 @@ APP_KEY=base64:new…
 APP_PREVIOUS_KEYS=base64:old…,base64:older…
 ```
 
-`app.Crypt` encrypts with `APP_KEY` and still decrypts tokens sealed with any previous key, so encrypted cookies and columns survive a rotation. A malformed entry is a boot error.
+Previous keys only open or verify; everything new is sealed or signed with `APP_KEY`. A malformed entry is a boot error. They cover every feature keyed by `APP_KEY`:
+
+- `app.Crypt`: encrypted cookies, `orm.Encrypted` columns and queued mail payloads.
+- Cookie sessions, with the CSRF token and flash data they carry: re-sealed with the new key on the next request that reads them.
+- The maintenance bypass cookie: re-issued under the new key.
+- Signed URLs and social login state, when the app passes its previous keys (the `install:auth` scaffolds do):
+
+```go
+signer := signed.New(key).WithPreviousKeys(app.DerivePreviousKeys("signed.urls", 32)...)
+s := social.New(key, providers...).WithPreviousKeys(app.DerivePreviousKeys("social.state", 32)...)
+```
+
+Remember-me, API and refresh tokens are stored as hashes, and JWT keys are configured separately, so they do not depend on `APP_KEY`.
 
 ```go
 if app.Crypt.NeedsRotation(token) { // sealed with a previous key
@@ -34,7 +46,13 @@ if app.Crypt.NeedsRotation(token) { // sealed with a previous key
 }
 ```
 
-To rotate: move the current `APP_KEY` to `APP_PREVIOUS_KEYS`, run `vukem key:generate --force`, re-save rows with encrypted columns (each save re-encrypts with the new key), then drop the old key. Sessions and signed URLs use only the current key, so they are invalidated.
+To rotate:
+
+1. Locally, run `vukem key:rotate`: it writes a new `APP_KEY` to `.env` and moves the old one to the front of `APP_PREVIOUS_KEYS` (no key is printed). In production, generate a key (`vukem key:generate --show` or `./app key:generate`), set `APP_PREVIOUS_KEYS=<old key>` and `APP_KEY=<new key>` in the secret store, and deploy every instance with both.
+2. Wait for what the old key signed to expire: `SESSION_LIFETIME`, the TTL of signed links already sent (links without a TTL stop working), queued and failed mail jobs, 12 hours for maintenance bypass cookies. Re-save rows with encrypted columns (each save re-seals them) and re-seal other stored tokens with `NeedsRotation` / `Rotate`.
+3. Remove the old key. Anything still sealed with it fails closed: the session is empty, signed links answer 403, mail jobs fail and encrypted columns return `crypt.ErrInvalid`.
+
+A previous key still verifies sessions and signed URLs, so whoever holds it can forge them during the window. After a leak, re-encrypt stored data in a short maintenance window that has the leaked key, then drop it at once instead of keeping it in `APP_PREVIOUS_KEYS`.
 
 ## Encrypted cookies
 

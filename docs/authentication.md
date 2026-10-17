@@ -196,7 +196,7 @@ s := social.New(key, // panics on a key shorter than 32 bytes
 	social.LinkedIn(linkedinCfg),              // OIDC
 	social.X(xCfg),                            // OAuth 2.0 + PKCE, Basic auth at the token endpoint; no email
 	apple,                                     // social.Apple(social.AppleConfig{Config, TeamID, KeyID, PrivateKey: p8})
-)
+).WithPreviousKeys(app.DerivePreviousKeys("social.state", 32)...) // APP_KEY rotation
 ```
 
 Sign in with Apple signs its client secret (an ES256 JWT, cached for an hour) with the `.p8` key, and answers with `response_mode=form_post`: the callback is a cross-site `POST` from `appleid.apple.com`. Register `POST` on the callback route, serve the app over HTTPS (the state cookie becomes `SameSite=None; Secure`, and `Redirect` refuses to run with `InsecureCookies`), and add `https://appleid.apple.com` to `CSRF_TRUSTED_ORIGINS`. Apple sends the user's name only on the first sign-in (read from the posted `user` field). `install:auth --social apple,linkedin,x` wires all three; Apple reads `SOCIAL_APPLE_CLIENT_ID`, `SOCIAL_APPLE_TEAM_ID`, `SOCIAL_APPLE_KEY_ID` and `SOCIAL_APPLE_PRIVATE_KEY_PATH`.
