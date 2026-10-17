@@ -3,7 +3,7 @@
 // directly with a standard-library AWS Signature Version 4 client: no AWS
 // SDK.
 //
-//	cfg, err := config.Load[s3.Config](app.Config.Source) // S3_BUCKET, S3_REGION, ...
+//	cfg, err := config.Load[s3.Config](app.Source) // S3_BUCKET, S3_REGION, ...
 //	disk, err := s3.New(cfg)
 //	err = storage.PutBytes(ctx, disk, "avatars/1.png", png)
 //	link, err := disk.PresignGet("invoices/42.pdf", 15*time.Minute)

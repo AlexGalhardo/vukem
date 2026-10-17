@@ -138,7 +138,7 @@ link, err := storage.TemporaryURL(signer, "/files", "invoices/42.pdf", 15*time.M
 `go get github.com/AlexGalhardo/vukem/drivers/s3`: a `storage.Disk` on Amazon S3 or any S3-compatible service (Cloudflare R2, DigitalOcean Spaces, Backblaze B2, RustFS, SeaweedFS, Garage). No AWS SDK: requests are signed by a stdlib Signature Version 4 implementation verified against the AWS test suite.
 
 ```go
-cfg, err := config.Load[s3.Config](app.Config.Source)
+cfg, err := config.Load[s3.Config](app.Source)
 disk, err := s3.New(cfg) // validates config, no I/O
 
 err = disk.Put(ctx, "videos/intro.mp4", file)            // one PUT up to S3_PART_SIZE, multipart above
