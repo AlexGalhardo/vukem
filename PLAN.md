@@ -595,7 +595,7 @@ Applies to **every** task:
 
 - [x] All conformance suites green on SQLite, Postgres, MySQL, Redis, Mongo, S3 (MinIO).
 - [x] HTMX, templ and Inertia (React, Vue, Svelte) starters all pass e2e on all OSes.
-- [ ] No open `security` issues; `govulncheck` clean; OpenSSF Scorecard ≥ 7.
+- [x] No open `security` issues; `govulncheck` clean; OpenSSF Scorecard ≥ 7.
 
 ---
 
