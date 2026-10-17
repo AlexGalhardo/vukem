@@ -56,13 +56,13 @@ const (
 
 // Errors returned (as client-safe *errs.HTTPError values) by Receive and Save.
 var (
-	// ErrFileTooLarge: a file is larger than Rules.MaxFileSize (413).
+	// ErrFileTooLarge reports a file larger than Rules.MaxFileSize (413).
 	ErrFileTooLarge = errs.New(http.StatusRequestEntityTooLarge, "The file is too large.")
-	// ErrFieldTooLarge: a form field is larger than Rules.MaxFieldSize (413).
+	// ErrFieldTooLarge reports a form field larger than Rules.MaxFieldSize (413).
 	ErrFieldTooLarge = errs.New(http.StatusRequestEntityTooLarge, "A form field is too large.")
-	// ErrTooManyFields: more than Rules.MaxFields fields (413).
+	// ErrTooManyFields reports more than Rules.MaxFields fields (413).
 	ErrTooManyFields = errs.New(http.StatusRequestEntityTooLarge, "Too many form fields.")
-	// ErrNotMultipart: the request is not multipart/form-data (415).
+	// ErrNotMultipart reports a request that is not multipart/form-data (415).
 	ErrNotMultipart = errs.New(http.StatusUnsupportedMediaType, "The request must be multipart/form-data.")
 )
 
