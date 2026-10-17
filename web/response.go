@@ -48,6 +48,19 @@ func (w *ResponseWriter) Write(b []byte) (int, error) {
 	return n, err
 }
 
+// WriteString writes s like Write, without copying it into a []byte when
+// the underlying writer is an io.StringWriter.
+func (w *ResponseWriter) WriteString(s string) (int, error) {
+	if !w.written {
+		w.WriteHeader(http.StatusOK)
+	}
+
+	n, err := io.WriteString(w.ResponseWriter, s)
+	w.size += int64(n)
+
+	return n, err
+}
+
 // Status returns the written status (0 when nothing was written).
 func (w *ResponseWriter) Status() int { return w.status }
 
@@ -71,7 +84,7 @@ func (c *Ctx) Status(code int) *Ctx {
 func (c *Ctx) String(status int, s string) error {
 	c.w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	c.w.WriteHeader(status)
-	_, err := io.WriteString(c.w, s)
+	_, err := c.w.WriteString(s)
 
 	return err
 }
@@ -81,7 +94,7 @@ func (c *Ctx) String(status int, s string) error {
 func (c *Ctx) HTML(status int, html string) error {
 	c.w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	c.w.WriteHeader(status)
-	_, err := io.WriteString(c.w, html)
+	_, err := c.w.WriteString(html)
 
 	return err
 }

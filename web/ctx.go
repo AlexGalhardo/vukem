@@ -63,7 +63,10 @@ type Services struct {
 // Ctx is the per-request context. It must not be used after the handler
 // returns or from other goroutines.
 type Ctx struct {
-	w     *ResponseWriter
+	w *ResponseWriter
+	// rw backs w when the writer is not already a *ResponseWriter, so a
+	// request allocates one object instead of two.
+	rw    ResponseWriter
 	r     *http.Request
 	s     *Services
 	route string
@@ -75,12 +78,16 @@ func NewCtx(w http.ResponseWriter, r *http.Request, s *Services) *Ctx {
 		s = &Services{}
 	}
 
-	rw, ok := w.(*ResponseWriter)
-	if !ok {
-		rw = &ResponseWriter{ResponseWriter: w}
+	c := &Ctx{r: r, s: s}
+
+	if rw, ok := w.(*ResponseWriter); ok {
+		c.w = rw
+	} else {
+		c.rw.ResponseWriter = w
+		c.w = &c.rw
 	}
 
-	return &Ctx{w: rw, r: r, s: s}
+	return c
 }
 
 // Request returns the underlying request.
