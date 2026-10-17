@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/AlexGalhardo/vukem/database"
@@ -24,6 +25,10 @@ type Database struct {
 	failed string
 	grace  time.Duration
 	now    func() time.Time
+	// reserved maps each *Message handed out by Pop to its reserved_at,
+	// so a worker that ran past its timeout cannot settle the job after
+	// another worker re-reserved it.
+	reserved sync.Map
 }
 
 // DatabaseOptions name the tables.
@@ -200,6 +205,8 @@ func (d *Database) Pop(ctx context.Context, queues []string) (*Message, error) {
 			return nil, fmt.Errorf("queue: reserve: %w", err)
 		}
 
+		d.reserved.Store(m, now)
+
 		return m, nil
 	}
 
@@ -240,6 +247,8 @@ func (d *Database) popMySQL(ctx context.Context, dl database.Dialect, queues []s
 			return nil, fmt.Errorf("queue: reserve: %w", err)
 		}
 
+		d.reserved.Store(m, now)
+
 		return m, nil
 	}
 
@@ -270,33 +279,65 @@ func scanMessage(row scanner, extra ...any) (*Message, error) {
 	return &m, nil
 }
 
+// ErrReservationLost is returned by Ack, Release and Fail when the job's
+// reservation expired and another worker reserved it again: the job
+// belongs to that worker now, so the stale result is dropped.
+var ErrReservationLost = errors.New("queue: job reservation lost to another worker")
+
+// owns returns the WHERE clause and arguments matching m only while it
+// still holds the reservation Pop gave it. Messages that did not come
+// from this driver's Pop match by id.
+func (d *Database) owns(m *Message) (string, []any) {
+	if at, ok := d.reserved.LoadAndDelete(m); ok {
+		return ` WHERE id = ? AND reserved_at = ?`, []any{m.ID, at}
+	}
+
+	return ` WHERE id = ?`, []any{m.ID}
+}
+
+func settled(res sql.Result, err error) error {
+	if err != nil {
+		return err
+	}
+
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n == 0 {
+		return ErrReservationLost
+	}
+
+	return nil
+}
+
 // Ack implements Driver.
 func (d *Database) Ack(ctx context.Context, m *Message) error {
-	_, err := d.db.ExecContext(ctx, d.q(d.db.Dialect(), `DELETE FROM {j} WHERE id = ?`), m.ID)
-	return err
+	where, args := d.owns(m)
+	return settled(d.db.ExecContext(ctx, d.q(d.db.Dialect(), `DELETE FROM {j}`+where), args...))
 }
 
 // Release implements Driver.
 func (d *Database) Release(ctx context.Context, m *Message) error {
-	_, err := d.db.ExecContext(ctx, d.q(d.db.Dialect(),
-		`UPDATE {j} SET reserved_at = 0, attempts = ?, available_at = ?, last_error = ? WHERE id = ?`),
-		m.Attempts, ms(m.AvailableAt), m.LastError, m.ID)
+	where, args := d.owns(m)
 
-	return err
+	return settled(d.db.ExecContext(ctx, d.q(d.db.Dialect(),
+		`UPDATE {j} SET reserved_at = 0, attempts = ?, available_at = ?, last_error = ?`+where),
+		append([]any{m.Attempts, ms(m.AvailableAt), m.LastError}, args...)...))
 }
 
 // Fail implements Driver: the job moves to the failed table.
 func (d *Database) Fail(ctx context.Context, m *Message) error {
+	where, args := d.owns(m)
+
 	return d.db.Tx(ctx, func(tx *database.Tx) error {
+		// Delete first: if the reservation was lost, nothing is copied.
+		if err := settled(tx.ExecContext(ctx, d.q(tx.Dialect(), `DELETE FROM {j}`+where), args...)); err != nil {
+			return err
+		}
+
 		_, err := tx.ExecContext(ctx, d.q(tx.Dialect(), `INSERT INTO {f} (`+jobColumns+`, failed_at)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
 			m.ID, m.Queue, m.Kind, string(m.Payload), m.Attempts, m.MaxRetries, m.Timeout.Milliseconds(),
 			ms(m.AvailableAt), ms(m.CreatedAt), m.LastError, ms(d.now()))
-		if err != nil {
-			return err
-		}
-
-		_, err = tx.ExecContext(ctx, d.q(tx.Dialect(), `DELETE FROM {j} WHERE id = ?`), m.ID)
 
 		return err
 	})

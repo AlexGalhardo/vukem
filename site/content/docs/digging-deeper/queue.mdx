@@ -44,7 +44,7 @@ err = q.DispatchTx(ctx, tx, jobs.SendInvoice{OrderID: 1}) // database driver: on
 | `QUEUE_CONCURRENCY` | `4` |
 | `QUEUE_TABLE`, `QUEUE_FAILED_TABLE` | `jobs`, `failed_jobs` |
 
-The database and Redis drivers reserve each job atomically (Postgres uses `FOR UPDATE SKIP LOCKED`). A job whose worker died is taken over after its timeout plus one minute, so delivery is **at least once**: make handlers idempotent.
+The database and Redis drivers reserve each job atomically (Postgres uses `FOR UPDATE SKIP LOCKED`). A job whose worker died is taken over after its timeout plus one minute, so delivery is **at least once**: make handlers idempotent. If the first worker was only slow (not dead) and finishes after the takeover, its result is dropped with `queue.ErrReservationLost` instead of deleting, retrying or failing the job the second worker now owns.
 
 ## Commands
 

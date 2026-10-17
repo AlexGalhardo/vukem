@@ -188,6 +188,70 @@ func TestDatabaseRoundTripsMessageFields(t *testing.T) {
 	}
 }
 
+func TestDatabaseStaleWorkerCannotSettleAReReservedJob(t *testing.T) {
+	t.Parallel()
+
+	settles := map[string]func(*queue.Database) func(context.Context, *queue.Message) error{
+		"Ack":     func(d *queue.Database) func(context.Context, *queue.Message) error { return d.Ack },
+		"Release": func(d *queue.Database) func(context.Context, *queue.Message) error { return d.Release },
+		"Fail":    func(d *queue.Database) func(context.Context, *queue.Message) error { return d.Fail },
+	}
+
+	for name, settle := range settles {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			var offset atomic.Int64
+
+			now := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+			d := newDatabaseDriver(t, openSQLite(t), queue.DatabaseOptions{
+				Now: func() time.Time { return now.Add(time.Duration(offset.Load())) },
+			})
+			ctx := t.Context()
+
+			if err := d.Push(ctx, &queue.Message{
+				ID: "j", Kind: "k", Queue: "default", Payload: []byte(`{}`), Timeout: time.Second,
+				AvailableAt: now, CreatedAt: now,
+			}); err != nil {
+				t.Fatal(err)
+			}
+
+			stale, err := d.Pop(ctx, []string{"default"})
+			if err != nil || stale == nil {
+				t.Fatalf("first Pop() = %v, %v", stale, err)
+			}
+
+			// The first worker hangs past timeout + grace; another worker takes the job.
+			offset.Add(int64(2 * time.Minute))
+
+			fresh, err := d.Pop(ctx, []string{"default"})
+			if err != nil || fresh == nil {
+				t.Fatalf("second Pop() = %v, %v", fresh, err)
+			}
+
+			if err := settle(d)(ctx, stale); !errors.Is(err, queue.ErrReservationLost) {
+				t.Fatalf("stale %s() = %v, want ErrReservationLost", name, err)
+			}
+
+			if n, _ := d.Pending(ctx); n != 1 {
+				t.Fatalf("Pending() after stale %s = %d, want 1 (job owned by the second worker)", name, n)
+			}
+
+			if failed, _ := d.Failed(ctx); len(failed) != 0 {
+				t.Fatalf("Failed() after stale %s = %v, want none", name, failed)
+			}
+
+			if err := d.Ack(ctx, fresh); err != nil {
+				t.Fatalf("fresh Ack() = %v", err)
+			}
+
+			if n, _ := d.Pending(ctx); n != 0 {
+				t.Errorf("Pending() after fresh Ack = %d, want 0", n)
+			}
+		})
+	}
+}
+
 func TestDatabaseRetryResetsAttemptsAndAvailability(t *testing.T) {
 	t.Parallel()
 
