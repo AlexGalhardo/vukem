@@ -577,7 +577,7 @@ Applies to **every** task:
 
 ### B.5 Stabilisation
 
-- [ ] **B.5.1** Public API review: every exported identifier justified; remove/rename before freeze; `//go:fix inline` for renamed APIs.
+- [x] **B.5.1** Public API review: every exported identifier justified; remove/rename before freeze; `//go:fix inline` for renamed APIs.
   → verify: `apidiff` report reviewed and committed under `docs/api/`.
 - [ ] **B.5.2** Security review against [docs/security.md](docs/security.md) (OWASP Top 10:2025, ASVS L2 checklist for CSRF, sessions, auth, uploads, SQL building, headers) + fuzzing campaign (≥ 1h per fuzz target).
   → verify: findings tracked and closed; every **B** row has its test.
