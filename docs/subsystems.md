@@ -25,7 +25,7 @@ Mail, cache, storage, events, queue, scheduler, encryption, rate limiting, i18n,
 - `Secret` values are redacted via `LogValuer`.
 - Error aggregation: `logging.NewDedup(next, opts)` is a stdlib `slog.Handler` that writes the first ERROR record of a kind (same level, message, handler attributes and `event` / `error` / `err` values) and counts the repeats inside a window; when the window ends (a timer per window, or `Close`), one `repeated` record carries `message`, `count` and `window`. Untracked kinds beyond 1024 per window pass through. The default logger uses it in production with a 1-minute window, in front of Telegram, and `app.Shutdown` flushes pending summaries; `LOG_DEDUP_WINDOW` changes the window (`0` disables, any duration enables it outside production). Loggers passed with `WithLogger` are used as given.
 - OpenTelemetry: `drivers/otel` (BETA) traces every request **in a separate module** to keep OTel out of core ([OpenTelemetry](#opentelemetry)).
-- `/up` returns 200 when the app booted; `/up?checks=1` runs registered health checks (DB ping, Redis ping) with timeouts.
+- `/up` returns 200 when the app booted (liveness, no dependency touched). `app.AddHealthCheck` / `AddHealthCheckTimeout` register readiness checks (`app.DB()` adds `db`); `app.ReadyHandler()` (mount it at `/ready`) and `/up?checks=1` run them in parallel, each with its own timeout (default 3s), and answer 200 or 503 with `ok`/`fail` per check, never the error text. `app.CheckHealth(ctx)` returns the raw errors.
 
 ## Telegram logging
 

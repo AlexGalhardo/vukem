@@ -2,6 +2,7 @@ package vukem
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -24,75 +25,147 @@ import (
 // HealthCheck reports whether a dependency (database, cache...) is healthy.
 type HealthCheck func(ctx context.Context) error
 
-// healthTimeout bounds every health check run by /up?checks=1.
-const healthTimeout = 3 * time.Second
+// DefaultHealthCheckTimeout bounds a health check registered with
+// AddHealthCheck.
+const DefaultHealthCheckTimeout = 3 * time.Second
+
+type healthCheck struct {
+	fn      HealthCheck
+	timeout time.Duration
+}
 
 type health struct {
 	mu     sync.RWMutex
-	checks map[string]HealthCheck
+	checks map[string]healthCheck
 }
 
-// AddHealthCheck registers a check reported by GET /up?checks=1.
+// AddHealthCheck registers a readiness check, reported by ReadyHandler and
+// GET /up?checks=1 and bounded by DefaultHealthCheckTimeout. A check with
+// the same name replaces the previous one.
 func (a *App) AddHealthCheck(name string, check HealthCheck) {
+	a.AddHealthCheckTimeout(name, DefaultHealthCheckTimeout, check)
+}
+
+// AddHealthCheckTimeout is AddHealthCheck with its own timeout (<= 0 means
+// DefaultHealthCheckTimeout).
+func (a *App) AddHealthCheckTimeout(name string, timeout time.Duration, check HealthCheck) {
+	if timeout <= 0 {
+		timeout = DefaultHealthCheckTimeout
+	}
+
 	a.health.mu.Lock()
 	defer a.health.mu.Unlock()
 
 	if a.health.checks == nil {
-		a.health.checks = map[string]HealthCheck{}
+		a.health.checks = map[string]healthCheck{}
 	}
 
-	a.health.checks[name] = check
+	a.health.checks[name] = healthCheck{fn: check, timeout: timeout}
 }
 
-// healthHandler answers 200 when the app booted. With ?checks=1 it runs
-// every check (in parallel, with a timeout) and answers 503 if one fails;
-// error details are not exposed, only "fail".
-func (a *App) healthHandler(c *web.Ctx) error {
-	if !c.QueryBool("checks") {
-		return c.JSON(http.StatusOK, web.Map{"status": "ok"})
-	}
-
+// CheckHealth runs every registered check in parallel, each bounded by its
+// timeout, and returns each check's error by name (nil when healthy). The
+// errors may hold hosts or credentials: log them, never send them to a
+// client (ReadyHandler only reports "ok" or "fail").
+func (a *App) CheckHealth(ctx context.Context) map[string]error {
 	a.health.mu.RLock()
 	checks := maps.Clone(a.health.checks)
 	a.health.mu.RUnlock()
 
-	ctx, cancel := context.WithTimeout(c.Context(), healthTimeout)
-	defer cancel()
-
 	var (
 		wg      sync.WaitGroup
 		mu      sync.Mutex
-		results = map[string]string{}
-		failed  bool
+		results = make(map[string]error, len(checks))
 	)
 
-	for _, name := range slices.Sorted(maps.Keys(checks)) {
+	for name, check := range checks {
 		wg.Go(func() {
-			status := "ok"
-			if err := checks[name](ctx); err != nil {
-				status = "fail"
-
-				a.Log.WarnContext(ctx, "health check failed", "check", name, "err", err)
-			}
+			err := runHealthCheck(ctx, check)
 
 			mu.Lock()
 			defer mu.Unlock()
 
-			results[name] = status
-			failed = failed || status != "ok"
+			results[name] = err
 		})
 	}
 
 	wg.Wait()
 
+	return results
+}
+
+// runHealthCheck returns when the check does or its timeout expires, so a
+// check that ignores ctx cannot hang the probe (its goroutine is abandoned).
+func runHealthCheck(ctx context.Context, check healthCheck) error {
+	ctx, cancel := context.WithTimeout(ctx, check.timeout)
+	defer cancel()
+
+	done := make(chan error, 1)
+
+	go func() {
+		defer func() {
+			if p := recover(); p != nil {
+				done <- fmt.Errorf("vukem: health check panicked: %v", p)
+			}
+		}()
+
+		done <- check.fn(ctx)
+	}()
+
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		return fmt.Errorf("vukem: health check: %w", ctx.Err())
+	}
+}
+
+// ReadyHandler is a readiness probe: it runs every health check (see
+// CheckHealth) and answers JSON {"status":"ok"|"fail","checks":{name:
+// "ok"|"fail"}} with 200, or 503 when a check fails. Failures are logged;
+// their details never reach the client. Mount it where the platform
+// expects it, e.g. r.Handle("GET /ready", app.ReadyHandler()); GET /up
+// stays the liveness probe.
+func (a *App) ReadyHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		a.writeReadiness(w, r)
+	})
+}
+
+func (a *App) writeReadiness(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	results := a.CheckHealth(ctx)
+
+	checks := make(map[string]string, len(results))
 	status, code := "ok", http.StatusOK
-	if failed {
-		status, code = "fail", http.StatusServiceUnavailable
+
+	for _, name := range slices.Sorted(maps.Keys(results)) {
+		checks[name] = "ok"
+
+		if err := results[name]; err != nil {
+			checks[name] = "fail"
+			status, code = "fail", http.StatusServiceUnavailable
+
+			a.Log.WarnContext(ctx, "health check failed", "check", name, "err", err)
+		}
 	}
 
-	c.SetHeader("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(code)
+	_ = json.NewEncoder(w).Encode(map[string]any{"status": status, "checks": checks})
+}
 
-	return c.JSON(code, web.Map{"status": status, "checks": results})
+// healthHandler is the liveness probe: 200 once the app booted. With
+// ?checks=1 it answers like ReadyHandler.
+func (a *App) healthHandler(c *web.Ctx) error {
+	if !c.QueryBool("checks") {
+		return c.JSON(http.StatusOK, web.Map{"status": "ok"})
+	}
+
+	a.writeReadiness(c.Writer(), c.Request())
+
+	return nil
 }
 
 // SessionConfig is loaded from SESSION_* variables.
