@@ -1,0 +1,260 @@
+---
+title: Webhooks
+description: Receive webhooks safely (signatures, replay window, duplicate events) and send your own signed, retried, SSRF-safe webhooks to your users, step by step.
+---
+
+A webhook is an HTTP `POST` one system sends to another when something happens: "payment succeeded", "email bounced", "order paid". Vukem covers both directions:
+
+| Direction | You are | Package pieces |
+| --- | --- | --- |
+| **Incoming** | the receiver (Stripe, Resend or GitHub call you) | `webhook.Standard`, `webhook.HMAC`, `webhook.Dedupe` |
+| **Outgoing** | the provider (you call your users' URLs) | `webhook.Sender`, `webhook.NewSecret`, a [queue](/docs/digging-deeper/queue) |
+
+This page is the guided tour. Every option and status code is listed in [Security building blocks](/docs/security/building-blocks#webhook-signatures).
+
+## Receiving webhooks
+
+Anyone on the internet can `POST` to your webhook URL, so a handler must never trust a request until it has checked three things:
+
+1. **The signature**: the body was signed with a secret only you and the provider know.
+2. **The time**: the request is recent, so a captured request cannot be replayed next week.
+3. **The event id**: providers deliver *at least once*, so the same event can arrive twice.
+
+<Steps>
+<Step title="1. Store the provider's secret">
+
+```bash title=".env"
+RESEND_WEBHOOK_SECRET=whsec_...   # copied from the provider's dashboard
+```
+
+</Step>
+<Step title="2. Build the verifier at boot">
+
+Providers that follow [Standard Webhooks](https://www.standardwebhooks.com) (Svix, Resend, Clerk…) send `webhook-id`, `webhook-timestamp` and `webhook-signature`:
+
+```go title="routes/webhooks.go"
+verify, err := webhook.Standard(app.Source.Get("RESEND_WEBHOOK_SECRET"), webhook.StandardOptions{})
+if err != nil {
+	return err // an empty or malformed secret fails the boot, not the first webhook
+}
+```
+
+For providers with a plain HMAC header (GitHub's `X-Hub-Signature-256`, for example):
+
+```go
+verify, err := webhook.HMAC("X-Hub-Signature-256", []byte(app.Source.Get("GITHUB_WEBHOOK_SECRET")), 1<<20)
+if err != nil {
+	return err
+}
+```
+
+For Stripe, use `stripe.WebhookHandler` from `contrib/stripe`; see [Billing](/docs/digging-deeper/billing).
+
+</Step>
+<Step title="3. Drop duplicate deliveries">
+
+```go
+c, err := app.Cache()
+if err != nil {
+	return err
+}
+
+dedupe := webhook.Dedupe(c.Store(), webhook.StandardID, webhook.DedupeOptions{})
+```
+
+`webhook.StandardID` reads the `webhook-id` header. For other providers pass your own function, for example `func(r *http.Request) string { return r.Header.Get("X-GitHub-Delivery") }`.
+
+</Step>
+<Step title="4. Register the route, outside sessions and CSRF">
+
+```go
+r.Post("/webhooks/resend", handleResend).Use(verify, dedupe) // verify first, always
+```
+
+Webhooks carry no cookies, so keep the session middleware off them. With the default stack:
+
+```go
+err := vukem.DefaultMiddlewareWith(app, r, vukem.MiddlewareOptions{
+	SessionBypass: []string{"/webhooks/"},               // no session cookie created
+	CSRFBypass:    []string{"POST /webhooks/{provider}"}, // protected by the signature instead
+})
+```
+
+</Step>
+<Step title="5. Write the handler">
+
+```go
+type resendEvent struct {
+	Type string `json:"type"`
+	Data struct {
+		EmailID string `json:"email_id"`
+	} `json:"data"`
+}
+
+func handleResend(c *web.Ctx) error {
+	var ev resendEvent
+	if err := c.BindJSON(&ev); err != nil {
+		return err
+	}
+
+	switch ev.Type {
+	case "email.bounced":
+		// mark the address as bouncing
+	default:
+		// ignore events you do not use, but still answer 2xx
+	}
+
+	return c.NoContent()
+}
+```
+
+Answer `2xx` quickly. Slow work goes to a [queue job](/docs/digging-deeper/queue); the provider retries on timeouts and on `5xx`.
+
+</Step>
+</Steps>
+
+### What the receiver answers
+
+| Request | Answer |
+| --- | --- |
+| Bad or missing signature | 401, handler not run |
+| Timestamp more than 5 minutes off (`Standard`) | 401 |
+| Body larger than the limit (1 MiB by default) | 413 |
+| Event already handled | 200 with `Webhook-Duplicate: true`, handler not run |
+| Same event while the first is still running | 409, the provider retries |
+| Cache store down | 503, the provider retries (fail closed) |
+
+## Sending webhooks
+
+When your users register a URL to hear about their events, you are the provider. `webhook.Sender` signs every request with the Standard Webhooks scheme, sends it from a queue job with exponential backoff, and refuses URLs that point at your internal network.
+
+<Steps>
+<Step title="1. Store an endpoint with its own secret">
+
+```go
+secret, err := webhook.NewSecret() // "whsec_" + 32 random bytes
+if err != nil {
+	return err
+}
+
+_, err = db.ExecContext(ctx,
+	`INSERT INTO seller_webhooks (seller_id, url, secret, active) VALUES (?, ?, ?, ?)`, sellerID, url, secret, true)
+```
+
+Show the secret to the user once, so they can verify your requests. Store it as a credential (for example in an `orm.Encrypted[string]` column).
+
+</Step>
+<Step title="2. Create the sender and register its job at boot">
+
+```go
+deliveries, err := webhook.NewSQLDeliveryLog(db, "") // optional: a log of attempts
+if err != nil {
+	return err
+}
+if err := deliveries.CreateTable(ctx); err != nil {
+	return err
+}
+
+sender, err := webhook.NewSender(webhook.SenderOptions{
+	// Looked up on every attempt: the queue stores only the id, never the URL or secret.
+	Endpoint: func(ctx context.Context, id string) (webhook.Endpoint, error) {
+		var ep webhook.Endpoint
+		var active bool
+
+		err := db.QueryRowContext(ctx,
+			`SELECT url, secret, active FROM seller_webhooks WHERE seller_id = ?`, id).Scan(&ep.URL, &ep.Secret, &active)
+		if errors.Is(err, sql.ErrNoRows) || (err == nil && !active) {
+			return ep, webhook.ErrEndpointDisabled // dropped, not retried
+		}
+
+		return ep, err
+	},
+	Log: deliveries,
+	OnGone: func(ctx context.Context, id string) error { // the endpoint answered 410 Gone
+		_, err := db.ExecContext(ctx, `UPDATE seller_webhooks SET active = ? WHERE seller_id = ?`, false, id)
+		return err
+	},
+})
+if err != nil {
+	return err
+}
+
+q, err := app.Queue()
+if err != nil {
+	return err
+}
+if err := q.Register(sender.Job()); err != nil {
+	return err
+}
+```
+
+`Log` accepts anything with a `Record(ctx, webhook.Attempt) error` method, so you can write attempts to your own table instead of `webhook.NewSQLDeliveryLog`.
+
+</Step>
+<Step title="3. Send an event">
+
+```go
+payload, err := json.Marshal(map[string]any{
+	"type": "order.paid",
+	"data": map[string]any{"order_id": order.ID},
+})
+if err != nil {
+	return err
+}
+
+err = sender.Send(ctx, q, webhook.Delivery{
+	ID:       "order_paid_" + strconv.FormatInt(order.ID, 10), // the same id on every retry
+	Endpoint: strconv.FormatInt(order.SellerID, 10),
+	Payload:  payload,
+})
+```
+
+`Send` only enqueues. A worker makes the HTTP call; see [Queues](/docs/digging-deeper/queue) for how workers run.
+
+</Step>
+<Step title="4. Show the user what happened">
+
+```go
+attempts, err := deliveries.Recent(ctx, sellerID, 20) // newest first
+```
+
+Each attempt has a status, a duration and an error **category** (`blocked_address`, `timeout`, `refused`, `tls`, `network`, `http_status`, `invalid`) that is safe to show to the endpoint owner.
+
+</Step>
+</Steps>
+
+Retries follow `queue.Exponential(30 * time.Second)`: 30s, 1m, 2m, 4m… capped at one hour, 8 retries, then the job lands in `queue:failed`. Redirects are never followed, and `410 Gone` stops retries and calls `OnGone`.
+
+## Testing
+
+```go
+// Receiving: sign a request the way the provider would.
+sig, err := webhook.SignStandard(secret, "msg_1", time.Now(), body)
+```
+
+To test sending against an `httptest` server (plain HTTP on `127.0.0.1`), opt in explicitly, in tests only:
+
+```go
+sender, err := webhook.NewSender(webhook.SenderOptions{
+	Endpoint:          func(context.Context, string) (webhook.Endpoint, error) { return webhook.Endpoint{URL: srv.URL, Secret: secret}, nil },
+	InsecureAllowHTTP: true,
+	InsecureAllow:     []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")},
+})
+
+err = sender.Deliver(ctx, webhook.Delivery{ID: "msg_1", Endpoint: "seller-1", Payload: []byte(`{"type":"order.paid"}`)})
+```
+
+## Pitfalls
+
+- **Parsing before verifying.** The signature covers the raw bytes. The middleware reads and restores the body for you; do not read it in an earlier middleware.
+- **A memory dedupe store with several instances.** Each instance remembers only its own events. Use `CACHE_STORE=database` or [Redis](/docs/database/redis).
+- **Doing the work inside the request.** Providers time out after a few seconds and retry, which multiplies the work. Enqueue a job and answer `2xx`.
+- **Answering `4xx` for events you do not handle.** The provider will retry them. Answer `2xx` and ignore them.
+- **Sending from the request handler.** Always go through `Send` (the queue), never call your users' URLs inline: one slow endpoint would slow down your app.
+
+## Security notes
+
+- Prefer `webhook.HMAC` and `webhook.Standard`, which fail at boot on an empty secret, over the lenient `webhook.Middleware`.
+- A plain body HMAC does not stop replays; use `Standard` (timestamp window) where the provider supports it, plus `Dedupe`.
+- Outgoing requests go through `httpclient.Safe`: loopback, private, link-local (cloud metadata) and other internal addresses are refused at connect time, so a user cannot point a webhook at `http://169.254.169.254`. Plain `http://` URLs and URLs with credentials are refused too.
+- Logs and errors name the endpoint id and event id only: never the URL, the secret or the payload.

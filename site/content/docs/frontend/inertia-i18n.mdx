@@ -1,0 +1,220 @@
+---
+title: Inertia and i18n
+description: Translate an Inertia app (React, Vue or Svelte) from the same JSON catalogs as the server, with a language switcher, translated validation errors and a correct html lang, step by step.
+---
+
+An Inertia app renders on the client, but its translations can still live on the server, next to the Go code: one set of JSON files in `resources/lang`, used by `html/template` views, validation messages, mail and your components. This guide wires that up in an Inertia starter. The reference for each piece is in [Localization](/docs/digging-deeper/localization) and [Inertia](/docs/frontend/inertia#translations-i18n).
+
+## How it fits together
+
+1. `vukem.WithTranslations` loads `resources/lang/*.json` at boot.
+2. `vukem.DefaultMiddleware` then installs `i18n.Middleware`, which picks the request's locale (`?lang=`, the `lang` cookie, the session, `Accept-Language`, the default).
+3. `inertia.I18n(prefixes...)` shares three props with every page: `locale`, `locales` and `messages`.
+4. A ten-line `translate` helper on the client reads them.
+
+## Step by step
+
+<Steps>
+<Step title="1. Write the catalogs">
+
+```json title="resources/lang/en.json"
+{
+  "nav": { "home": "Home", "posts": "Posts" },
+  "ui": {
+    "welcome": "Welcome, {name}!",
+    "posts": { "count": { "zero": "No posts", "one": "{count} post", "other": "{count} posts" } }
+  }
+}
+```
+
+```json title="resources/lang/pt-BR.json"
+{
+  "nav": { "home": "Início", "posts": "Posts" },
+  "ui": {
+    "welcome": "Bem-vindo, {name}!",
+    "posts": { "count": { "zero": "Nenhum post", "one": "{count} post", "other": "{count} posts" } }
+  }
+}
+```
+
+Keys missing from `pt-BR.json` fall back to the default locale (`APP_LOCALE`, `en` by default).
+
+</Step>
+<Step title="2. Load them at boot">
+
+```go title="bootstrap/app.go"
+app, err := vukem.New(
+	vukem.WithTranslations(os.DirFS("resources/lang")), // bad JSON or file names fail New
+	vukem.WithInertia(inertia.Config{}),
+	// ...
+)
+```
+
+To ship the catalogs inside the binary, pass an embedded `fs.FS` (for example `fs.Sub` of an `embed.FS`) instead of `os.DirFS`.
+
+</Step>
+<Step title="3. Share them with every page">
+
+The starter's `routes/web.go` already calls `DefaultMiddleware` (which now resolves the locale) and installs the Inertia middleware. Add `inertia.I18n` **after** both:
+
+```go title="routes/web.go"
+if err := vukem.DefaultMiddleware(app, r); err != nil {
+	return err
+}
+
+r.Use(
+	app.Inertia.Middleware,
+	inertia.I18n("nav.", "ui."), // only these keys reach the browser
+	shareProps(app),
+)
+```
+
+</Step>
+<Step title="4. Add the client helper">
+
+```ts title="resources/js/lib/i18n.ts"
+type Message = string | Record<string, string>
+
+export function translate(
+	messages: Record<string, Message>,
+	locale: string,
+	key: string,
+	params: Record<string, string | number> = {},
+): string {
+	let msg = messages[key]
+	if (msg === undefined) return key
+	if (typeof msg !== "string") {
+		const n = Number(params.count)
+		msg = (n === 0 && msg.zero) || msg[new Intl.PluralRules(locale).select(n)] || msg.other || key
+	}
+	return msg.replace(/\{(\w+)\}/g, (m, k) => (k in params ? String(params[k]) : m))
+}
+```
+
+`messages` arrives with flat keys (`"ui.welcome"`); plural messages are objects keyed by CLDR category, the same rules the server's `i18n.T` uses.
+
+</Step>
+<Step title="5. Use it in your components">
+
+<Tabs>
+<Tab title="React">
+
+```tsx title="resources/js/lib/use-t.ts"
+import { usePage } from "@inertiajs/react"
+import { translate } from "@/lib/i18n"
+
+type I18nProps = { messages: Record<string, string>; locale: string; locales: string[] }
+
+export function useT() {
+	const { messages, locale } = usePage<I18nProps>().props
+	return (key: string, params = {}) => translate(messages, locale, key, params)
+}
+```
+
+```tsx title="resources/js/pages/Home.tsx"
+import { useT } from "@/lib/use-t"
+
+export default function Home({ user, postCount }: { user: { name: string }; postCount: number }) {
+	const t = useT()
+	return (
+		<>
+			<h1>{t("ui.welcome", { name: user.name })}</h1>
+			<p>{t("ui.posts.count", { count: postCount })}</p>
+		</>
+	)
+}
+```
+
+</Tab>
+<Tab title="Vue">
+
+```vue title="resources/js/pages/Home.vue"
+<script setup lang="ts">
+import { usePage } from "@inertiajs/vue3"
+import { translate } from "@/lib/i18n"
+
+defineProps<{ user: { name: string }; postCount: number }>()
+
+const page = usePage()
+const t = (key: string, params = {}) => translate(page.props.messages, page.props.locale, key, params)
+</script>
+
+<template>
+	<h1>{{ t("ui.welcome", { name: user.name }) }}</h1>
+	<p>{{ t("ui.posts.count", { count: postCount }) }}</p>
+</template>
+```
+
+</Tab>
+<Tab title="Svelte">
+
+```svelte title="resources/js/pages/Home.svelte"
+<script lang="ts">
+	import { usePage } from "@inertiajs/svelte"
+	import { translate } from "@/lib/i18n"
+
+	let { user, postCount }: { user: { name: string }; postCount: number } = $props()
+
+	const page = usePage<{ messages: Record<string, string>; locale: string }>()
+	const t = (key: string, params = {}) => translate(page.props.messages, page.props.locale, key, params)
+</script>
+
+<h1>{t("ui.welcome", { name: user.name })}</h1>
+<p>{t("ui.posts.count", { count: postCount })}</p>
+```
+
+</Tab>
+</Tabs>
+
+</Step>
+<Step title="6. Add a language switcher">
+
+A plain link with `?lang=` switches the locale for that request:
+
+```tsx
+const { locales } = usePage<I18nProps>().props
+
+{locales.map((l) => (
+	<Link key={l} href={`?lang=${l}`} preserveScroll>{l}</Link>
+))}
+```
+
+To **remember** the choice, set the `lang` cookie (or the session value `locale`) on the server, for example in a small route:
+
+```go title="routes/web.go"
+r.Post("/locale", func(c *web.Ctx) error {
+	l, ok := app.I18n.Match(c.FormValue("locale")) // only locales that have a catalog
+	if !ok {
+		return errs.ErrNotFound
+	}
+
+	c.SetCookie(&http.Cookie{
+		Name: "lang", Value: l, Path: "/", MaxAge: 365 * 24 * 3600,
+		HttpOnly: true, Secure: app.Config.IsProduction(), SameSite: http.SameSiteLaxMode,
+	})
+
+	return c.Back("/")
+}).Name("locale.update")
+```
+
+</Step>
+</Steps>
+
+## What else follows the locale
+
+- **`<html lang>`**: the starters' root view writes `<html lang="{{or locale "en"}}">`, so screen readers and the browser's translate prompt see the right language.
+- **Validation errors**: `web.Parse` messages are translated from the `validation.*` keys of your catalogs, so the `errors` your forms show (`useForm().errors`) are already in the user's language.
+- **Flash messages and mail** translated with `i18n.T(c.Context(), "key")` use the same locale.
+
+## Pitfalls
+
+- **Order matters.** `inertia.I18n` must run after the locale is resolved and after the Inertia middleware; installed before them, pages get the default locale or no props at all.
+- **Pass prefixes.** `inertia.I18n()` with no prefix sends the **whole** catalog to the browser, including server-only texts (mail, admin). List the prefixes the UI needs.
+- **`messages` is a once prop.** The client keeps it until the locale changes, so a deploy with new keys is picked up on the next full page load or locale switch; Inertia's asset version check already forces a reload after a new build.
+- **A switcher that only links to `?lang=`** forgets the choice on the next navigation without the parameter. Set the cookie as in step 6.
+- **Plural keys need `count`.** `t("ui.posts.count")` without `{ count }` falls back to the `other` form.
+
+## Security notes
+
+- Translations are plain text. React, Vue and Svelte escape them; never render them with `dangerouslySetInnerHTML`, `v-html` or `{@html}`, especially when a placeholder holds user input.
+- The locale from `?lang=`, cookies and `Accept-Language` is validated against the available catalogs; invalid values are ignored, so they cannot reach file paths or responses.

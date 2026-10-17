@@ -113,3 +113,9 @@ In production the app refuses to boot while `STRIPE_KEY`, `STRIPE_WEBHOOK_SECRET
 ```bash
 stripe listen --forward-to localhost:3000/stripe/webhook   # prints the whsec_ secret
 ```
+
+## Stripe Connect (marketplaces)
+
+<Callout type="info">
+`contrib/stripe` has no Stripe Connect helpers yet (connected accounts, account links, transfers); they are planned for `contrib/stripe`. Until then, call the Connect endpoints with the generic `client.Do(ctx, method, path, params, &out)`. The [Marketplace showcase app](/docs/showcase#marketplace-inertia-and-react) implements Connect payouts in its own code.
+</Callout>

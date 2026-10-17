@@ -34,18 +34,18 @@ The public "how to use Vukem" website lives in [`site/`](../site) and is deploye
 
 ## Categories
 
-1. **Getting started** — Introduction, Installation, Starters, Your first app, Configuration, Directory structure
+1. **Getting started** — Introduction, Installation, Starters, Your first app, Configuration, Directory structure, Showcase (the three reference apps)
 2. **Architecture** — Request lifecycle, Application and providers, Context and shutdown
 3. **The basics** — Routing, Middleware, Controllers, HTTP context, Requests and input, Responses, Validation (`z`), Error handling, Logging, Static files, Sessions, CSRF, Views
 4. **APIs** (folder `rest-apis`) — Overview, Pagination, Typed handlers, OpenAPI and the Scalar reference, Client generation, Idempotency, GraphQL, gRPC
 5. **Database** — Getting started, Query builder, Models, Relations, Migrations, Factories and seeders, Transactions, PostgreSQL, Redis, MongoDB
-6. **Security** — Overview (OWASP Top 10:2025), Authentication, Social login, JWT, Two-factor, Authorization, Encryption, Building blocks
-7. **Frontend** — HTMX, Vite, Inertia (React, Vue, Svelte)
-8. **Digging deeper** — Mail, Cache, Storage (with S3), File uploads, Events, Queues, Scheduler, SSE, WebSockets and broadcasting, Localization, Billing (Stripe), Admin panel, Dev dashboard, Telegram logging
+6. **Security** — Overview (OWASP Top 10:2025), Authentication, Social login, JWT, API tokens, Two-factor, Authorization, Rate limiting, CSP and security headers, Signed URLs, Encryption, Building blocks
+7. **Frontend** — HTMX, Vite, Inertia (React, Vue, Svelte), Inertia and i18n
+8. **Digging deeper** — Mail, Cache, Storage (with S3), File uploads, Events, Queues, Scheduler, SSE, WebSockets and broadcasting, Webhooks, Localization, Billing (Stripe), Admin panel, Dev dashboard, OpenTelemetry, Telegram logging
 9. **Testing** — Getting started, HTTP tests, API tests, Database testing, Fakes
 10. **Deployment** — Single binary (reverse proxy and TLS), Docker and Railway
 
-Pages describe only what is implemented; planned features are marked with a "Planned" callout.
+Pages describe only what is implemented; planned features are marked with a "Planned" callout. Guides follow the same shape: a short explanation of the concept, a step-by-step section with runnable code, then "Pitfalls" and "Security notes".
 
 ## Versions
 
