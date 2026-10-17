@@ -112,7 +112,8 @@ func (g *SessionGuard[U]) Validate(c *web.Ctx, creds map[string]string) (U, erro
 }
 
 // Login logs u in: the session id is regenerated (fixation) and the user
-// id stored.
+// id stored, also under web.SessionUserKey so server-side session stores
+// can revoke the user's other sessions (session.Manager.RevokeOthers).
 func (g *SessionGuard[U]) Login(c *web.Ctx, u U, opts ...LoginOption) error {
 	var o loginOpts
 	for _, opt := range opts {
@@ -126,6 +127,7 @@ func (g *SessionGuard[U]) Login(c *web.Ctx, u U, opts ...LoginOption) error {
 
 	s.Regenerate()
 	s.Put(g.key(), u.AuthID())
+	s.Put(web.SessionUserKey, u.AuthID())
 	cache(c, g.name, u)
 
 	if o.remember && g.remember != nil {
@@ -192,7 +194,13 @@ func (g *SessionGuard[U]) User(c *web.Ctx) (U, error) {
 
 		switch {
 		case err == nil:
+			// Sessions logged in before v0.24 lack the key RevokeOthers matches.
+			if s.Get(web.SessionUserKey) == nil {
+				s.Put(web.SessionUserKey, id)
+			}
+
 			cache(c, g.name, u)
+
 			return u, nil
 		case isNotFound(err):
 			s.Forget(g.key()) // the user was deleted

@@ -258,7 +258,8 @@ func TestSessionLoginLogout(t *testing.T) {
 	before := sessionCookie(c)
 
 	c.PostForm("/login", url.Values{"email": {"ana@example.com"}, "password": {"s3cret-pass"}}).
-		AssertRedirect("/dashboard")
+		AssertRedirect("/dashboard").
+		AssertSessionHas(web.SessionUserKey) // server-side stores index the session by user
 
 	if after := sessionCookie(c); after == before {
 		t.Fatal("session cookie unchanged on login")
@@ -268,11 +269,23 @@ func TestSessionLoginLogout(t *testing.T) {
 	c.Get("/login").AssertRedirect("/")                // Guest
 	c.Get("/verified").AssertRedirect("/email/verify") // unverified browsers go to the notice
 
-	c.PostForm("/logout", nil).AssertRedirect("/")
+	c.PostForm("/logout", nil).AssertRedirect("/").AssertSessionMissing(web.SessionUserKey)
 	c.Get("/dashboard").AssertRedirect("/login")
 
 	// JSON clients get 401 instead of a redirect.
 	ta.Client(t).GetJSON("/dashboard").AssertUnauthorized().AssertHeader("WWW-Authenticate", `Bearer realm="api"`)
+}
+
+// Sessions logged in before the user key existed get it on their next
+// authenticated request, so RevokeOthers reaches them.
+func TestSessionUserKeyBackfilled(t *testing.T) {
+	t.Parallel()
+
+	ta := newApp(t, hash.Fake())
+	u := ta.user(t, "bea@example.com", "s3cret-pass", false)
+
+	ta.Client(t).ActingAs("web", u). // a session with only "auth_web"
+						Get("/whoami").AssertOK().AssertSee("bea@example.com").AssertSessionHas(web.SessionUserKey)
 }
 
 func sessionCookie(c *vukemtest.Client) string { return c.CookieValue("vukem_session") }
