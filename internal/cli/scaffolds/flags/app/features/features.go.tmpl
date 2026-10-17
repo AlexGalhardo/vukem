@@ -1,0 +1,18 @@
+// Package features declares the application's feature flags (vukem
+// install:flags). Each flag has a typed default; FLAG_<NAME> overrides it
+// and the admin panel (/admin/_flags) stores a value per flag. Lock the
+// flags nobody may switch at runtime.
+//
+//	var NewCheckout = flags.Bool("new_checkout", false).Describe("Serve the new checkout")
+//
+//	ff, err := app.Flags()
+//	if ff.Enabled(ctx, features.NewCheckout) { ... }
+package features
+
+import "github.com/AlexGalhardo/vukem/flags"
+
+// All lists the registered flags; bootstrap passes them to vukem.WithFlags.
+// Reading a flag missing here returns its code default and logs an error.
+func All() []flags.AnyFlag {
+	return []flags.AnyFlag{}
+}

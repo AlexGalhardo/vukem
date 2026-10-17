@@ -58,6 +58,7 @@ func commands() []command {
 		{"install:api", "", "Add API tokens, /api/v1 routes, CORS and rate limiting", installAPI},
 		{"install:billing", "", "Add Stripe subscriptions: plans, Checkout, Billing Portal, webhooks", installBilling},
 		{"install:admin", "", "Add the admin panel at /admin (needs install:auth)", installAdmin},
+		{"install:flags", "", "Add feature flags: app/features, the feature_flags table, WithFlags", installFlags},
 		{
 			"install:inertia",
 			"",
