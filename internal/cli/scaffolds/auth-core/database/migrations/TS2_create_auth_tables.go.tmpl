@@ -25,6 +25,8 @@ func m{{.TS2}}CreateAuthTables() schema.Migration {
 				t.Text("abilities")
 				t.Timestamp("last_used_at").Nullable()
 				t.Timestamp("expires_at").Nullable()
+				// Set by Tokens.Revoke; the row stays until Tokens.Prune.
+				t.Timestamp("revoked_at").Nullable()
 				t.Timestamp("created_at")
 			}); err != nil {
 				return err
