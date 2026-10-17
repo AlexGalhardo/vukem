@@ -173,8 +173,9 @@ func (r *Router) APIResource(name string, ctrl any) *Resource { return r.root.AP
 // patterns and duplicate names. Routes added afterwards are ignored.
 func (r *Router) Handler() (http.Handler, error) {
 	r.once.Do(func() {
-		r.build()
+		// Set first so a route added while building is refused too.
 		r.compiled.Store(true)
+		r.build()
 	})
 
 	return r.handler, r.buildErr

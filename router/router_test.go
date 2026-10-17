@@ -446,3 +446,24 @@ func TestCompiled(t *testing.T) {
 		t.Fatal("Compiled() = false after Handler, want true")
 	}
 }
+
+func TestCompiledDuringBuild(t *testing.T) {
+	t.Parallel()
+
+	r := New(nil)
+
+	var during bool
+
+	r.Get("/x", func(*web.Ctx) error { return nil }).Use(func(h http.Handler) http.Handler {
+		during = r.Compiled()
+		return h
+	})
+
+	if _, err := r.Handler(); err != nil {
+		t.Fatal(err)
+	}
+
+	if !during {
+		t.Fatal("Compiled() = false while building, want true")
+	}
+}
