@@ -66,7 +66,8 @@ func run(args []string, out io.Writer) error {
 		return fmt.Errorf("working tree is not clean:\n%s", dirty)
 	}
 
-	previous := git("describe", "--tags", "--abbrev=0", *ref+"^")
+	// Only core tags: driver and contrib tags (drivers/x/v0.1.0) are not releases.
+	previous := git("describe", "--tags", "--abbrev=0", "--match", "v[0-9]*", *ref+"^")
 
 	rangeArg := *ref
 	if previous != "" {

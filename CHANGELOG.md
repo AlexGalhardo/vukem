@@ -9,9 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.20.0] - 2026-10-17
 
+### Added
+
+- **graphql:** Add the contrib/graphql module with lexer and parser
+- **graphql:** Add schemas, validation, execution and introspection
+- **graphql:** Add the batching loader with ORM helpers
+- **cli:** Add install:billing for Stripe subscriptions
+- **graphql:** Add subscriptions over graphql-ws and SSE
+- **app:** Serve http/2 cleartext outside production
+- **grpc:** Add the contrib/grpc module on connect-go
+- **cli:** Add make:proto and codegen:rpc
+- **admin:** Add the admin panel package
+- **cli:** Add install:admin and make:admin-resource
+
 ### Changed
 
-- Maintenance release (no user-facing changes).
+- **BREAKING:** **grpc:** Name the production reflection opt-out insecure
+
+### Fixed
+
+- **session:** Flush through writers that only implement Unwrap
+
+### Security
+
+- **graphql:** Serve GraphQL over HTTP with persisted queries
+- **graphql:** Document the contrib/graphql module
 
 ## [0.19.0] - 2026-10-16
 
