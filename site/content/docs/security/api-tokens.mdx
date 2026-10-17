@@ -195,7 +195,7 @@ n, err := tokens.Prune(ctx, app.Now().AddDate(0, 0, -90))
 
 ## Upgrading a table created before v0.26.0
 
-Older `install:auth` scaffolds created `access_tokens` without `revoked_at`. Until the column exists every token is refused (the lookup fails, and a failed check denies). Add the shipped migration to your list; it skips a table that already has the column:
+Older `install:auth` scaffolds created `access_tokens` without `revoked_at`. Until the column exists every token is refused with `503 Service Unavailable` (the lookup fails, and a failed check denies), and the guard logs one error naming `auth.TokensRevokedAtMigration`. The same 503 answers any other store failure, such as the database being down; only a missing, wrong, expired or revoked token gets 401. Add the shipped migration to your list; it skips a table that already has the column:
 
 ```go title="database/migrations/20261101000000_access_tokens_revoked_at.go"
 func m20261101000000AccessTokensRevokedAt() schema.Migration {
@@ -203,7 +203,7 @@ func m20261101000000AccessTokensRevokedAt() schema.Migration {
 }
 ```
 
-Register it in your migrations list like the others, then run `vukem migrate`.
+Register it in your migrations list like the others, then run `vukem migrate`. The repository's `examples/*` apps still pin v0.20.0 and need the same migration when they move to v0.26.0.
 
 ## Testing
 
@@ -231,4 +231,4 @@ app.Client(t).WithToken(plain).GetJSON("/api/v1/me").AssertOK()
 - Throttle the issuing endpoint by IP (the scaffold allows 5 per minute) and the API by token (`ratelimit.ByToken` hashes the token before using it as a key).
 - Add a secret-scanning pattern for your prefix, for example `vk_[A-Z2-7]{26}\.[A-Z2-7]{26}`, to GitHub push protection or gitleaks.
 - Rejected tokens are logged as [security events](/docs/security/building-blocks#security-events) and never written to logs in clear.
-- Revoke every token on password reset; the `install:auth` reset flow already does.
+- Revoke every token on password reset; the `install:auth` reset flow already does, with `Tokens.RevokeAll` inside the reset transaction.

@@ -8,11 +8,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/AlexGalhardo/vukem/database"
+	"github.com/AlexGalhardo/vukem/errs"
 	"github.com/AlexGalhardo/vukem/schema"
 	"github.com/AlexGalhardo/vukem/web"
 )
@@ -55,7 +58,13 @@ type Tokens struct {
 
 	ex    database.Executor
 	table string
+	// outdatedLogged keeps the missing revoked_at hint to one log line.
+	outdatedLogged atomic.Bool
 }
+
+// errNoRevokedAt marks a lookup that failed because access_tokens predates
+// the revoked_at column.
+var errNoRevokedAt = errors.New("auth: access_tokens has no revoked_at column")
 
 // NewTokens uses the access_tokens table.
 func NewTokens(ex database.Executor) *Tokens {
@@ -187,6 +196,12 @@ func (t *Tokens) Find(ctx context.Context, plain string) (Token, error) {
 
 	if !found || !match || !live {
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			// Drivers word it differently ("no such column", "does not
+			// exist", "Unknown column"), but all name the column.
+			if strings.Contains(strings.ToLower(err.Error()), "revoked_at") {
+				return Token{}, fmt.Errorf("auth: find token: %w: %w", errNoRevokedAt, err)
+			}
+
 			return Token{}, fmt.Errorf("auth: find token: %w", err)
 		}
 
@@ -354,8 +369,18 @@ func (g *TokenGuard[U]) Check(c *web.Ctx) bool {
 	return err == nil
 }
 
-// User returns the token's user (cached for the request) or
-// ErrUnauthenticated.
+// authenticate tells a missing, wrong, expired or revoked token
+// (ErrUnauthenticated) apart from a failing store, which Required answers
+// with 503.
+func (g *TokenGuard[U]) authenticate(c *web.Ctx) error {
+	_, err := g.User(c)
+	return err
+}
+
+// User returns the token's user (cached for the request), ErrUnauthenticated
+// for a missing, unknown, wrong, expired or revoked token, or a 503 error
+// when the token or user lookup fails (database down, access_tokens
+// without revoked_at), so an outage is not reported as bad credentials.
 func (g *TokenGuard[U]) User(c *web.Ctx) (U, error) {
 	if u, ok := cached[U](c, g.name); ok {
 		return u, nil
@@ -369,14 +394,29 @@ func (g *TokenGuard[U]) User(c *web.Ctx) (U, error) {
 	}
 
 	tok, err := g.tokens.Find(c.Context(), strings.TrimSpace(plain))
-	if err != nil {
+
+	switch {
+	case err == nil:
+	case errors.Is(err, errBadToken):
 		web.SecurityEvent(c.Request(), "token.rejected", "guard", g.name)
 		return zero, ErrUnauthenticated
+	default:
+		if errors.Is(err, errNoRevokedAt) && g.tokens.outdatedLogged.CompareAndSwap(false, true) {
+			c.Log().ErrorContext(c.Context(), "auth: access_tokens has no revoked_at column, so every API token "+
+				"is refused; add auth.TokensRevokedAtMigration to the app's migrations and run vukem migrate",
+				"guard", g.name)
+		}
+
+		return zero, errs.Wrap(http.StatusServiceUnavailable, err)
 	}
 
 	u, err := g.provider.ByID(c.Context(), tok.UserID)
 	if err != nil {
-		return zero, ErrUnauthenticated
+		if isNotFound(err) {
+			return zero, ErrUnauthenticated
+		}
+
+		return zero, errs.Wrap(http.StatusServiceUnavailable, fmt.Errorf("auth: load user: %w", err))
 	}
 
 	cache(c, g.name, u)

@@ -1,15 +1,28 @@
 package auth_test
 
 import (
+	"bytes"
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/AlexGalhardo/vukem"
 	"github.com/AlexGalhardo/vukem/auth"
 	"github.com/AlexGalhardo/vukem/auth/hash"
 	"github.com/AlexGalhardo/vukem/database"
+	"github.com/AlexGalhardo/vukem/errs"
 	"github.com/AlexGalhardo/vukem/internal/testutil"
 	"github.com/AlexGalhardo/vukem/schema"
+	"github.com/AlexGalhardo/vukem/web"
 )
 
 func TestSecurity_A07_RevokedTokenRejected(t *testing.T) {
@@ -189,5 +202,115 @@ func TestTokensRevokedAtMigration(t *testing.T) {
 	// On a table that already has the column (new scaffold) it is a no-op.
 	if err := upgrade.Up(schema.New(ctx, db)); err != nil {
 		t.Errorf("upgrade on a current table = %v, want nil", err)
+	}
+}
+
+// syncBuffer is a log sink safe for concurrent handlers.
+type syncBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (s *syncBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.b.Write(p)
+}
+
+func (s *syncBuffer) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.b.String()
+}
+
+func TestSecurity_A04_TokenGuardStoreFailureIs503(t *testing.T) {
+	t.Parallel()
+
+	logs := &syncBuffer{}
+	ta := newApp(t, hash.Fake(), vukem.WithLogger(slog.New(slog.NewTextHandler(logs, nil))))
+	u := ta.user(t, "ana@example.com", "pw", true)
+	ctx := t.Context()
+
+	plain, _, err := ta.tokens.Create(ctx, u.AuthID(), "cli", []string{"*"}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Unknown, wrong and revoked tokens stay 401.
+	ta.Client(t).WithToken("nope.nope").Get("/v1/me").AssertUnauthorized()
+
+	db, _ := ta.DB()
+
+	// An access_tokens table from before revoked_at: the lookup fails, which
+	// is an infrastructure failure (503), not a bad token (401).
+	if _, err := db.ExecContext(ctx, "ALTER TABLE access_tokens DROP COLUMN revoked_at"); err != nil {
+		t.Fatal(err)
+	}
+
+	for range 2 {
+		res := ta.Client(t).WithHeader("Accept", "text/html").WithToken(plain).Get("/v1/me")
+		if res.Status() != http.StatusServiceUnavailable ||
+			!strings.HasPrefix(res.Header("Content-Type"), "application/problem+json") {
+			t.Fatalf("GET /v1/me without revoked_at = %d %q, want 503 problem+json", res.Status(),
+				res.Header("Content-Type"))
+		}
+
+		if strings.Contains(res.Body(), "revoked_at") {
+			t.Errorf("503 body leaks the database error: %s", res.Body())
+		}
+	}
+
+	if n := strings.Count(logs.String(), "auth.TokensRevokedAtMigration"); n != 1 {
+		t.Errorf("logs name auth.TokensRevokedAtMigration %d times, want once:\n%s", n, logs)
+	}
+}
+
+// errUsers answers every lookup with err.
+type errUsers struct{ err error }
+
+func (p errUsers) ByID(context.Context, string) (User, error) { return User{}, p.err }
+
+func (p errUsers) ByCredentials(context.Context, map[string]string) (User, error) {
+	return User{}, p.err
+}
+
+func TestTokenGuardUserLookupErrors(t *testing.T) {
+	t.Parallel()
+
+	ta := newApp(t, hash.Fake())
+	u := ta.user(t, "ana@example.com", "pw", true)
+
+	plain, _, err := ta.tokens.Create(t.Context(), u.AuthID(), "cli", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name   string
+		err    error
+		status int
+	}{
+		{"user deleted", auth.ErrUserNotFound, http.StatusUnauthorized},
+		{"wrapped sql.ErrNoRows", fmt.Errorf("load: %w", sql.ErrNoRows), http.StatusUnauthorized},
+		{"database down", errors.New("connection refused"), http.StatusServiceUnavailable},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			g := auth.NewTokenGuard[User]("api", errUsers{tt.err}, ta.tokens)
+			r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", nil)
+			r.Header.Set("Authorization", "Bearer "+plain)
+
+			_, err := g.User(web.NewCtx(httptest.NewRecorder(), r, nil))
+
+			var he *errs.HTTPError
+			if !errors.As(err, &he) || he.Status != tt.status {
+				t.Errorf("User() = %v, want status %d", err, tt.status)
+			}
+		})
 	}
 }
