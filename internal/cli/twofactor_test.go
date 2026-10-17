@@ -327,6 +327,96 @@ func TestSecurity_A07_PasswordResetAnswersAlike(t *testing.T) {
 	}
 }
 
+// Sign-up answers alike for new and existing emails: no validation error,
+// no login before verification, the same redirect, and on both paths a
+// password hash plus one queued mail (verification, or a notice to the
+// owner limited to one per hour per address); the verification link works
+// signed out and refuses another signed-in user. The generated
+// TestRegisterDoesNotRevealAccounts checks the behaviour in
+// TestNewProjectEndToEnd / TestNewInertiaProjectEndToEnd.
+func TestSecurity_A07_SignupIsEnumerationSafe(t *testing.T) {
+	t.Parallel()
+
+	users, err := scaffoldFS.ReadFile("scaffolds/auth-core/app/accounts/users.go.tmpl")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	hash := bytes.Index(users, []byte("h, err := a.Hasher.Make(in.Password)"))
+	lookup := bytes.Index(users, []byte(`Where("email", email).First(ctx)`))
+
+	if hash < 0 || lookup < 0 || hash > lookup {
+		t.Errorf("Register hashes at %d and looks the email up at %d: both paths must hash first", hash, lookup)
+	}
+
+	for _, want := range []string{
+		"return false, a.notifyExisting(ctx, existing)",
+		`c.Increment(ctx, "register:exists:"+hex.EncodeToString(sum[:]), 1, time.Hour)`,
+		"a.Mailer.SendLater(ctx, mail.AccountExists{",
+		"a.Mailer.SendLater(ctx, mail.VerifyEmail{",
+	} {
+		if !bytes.Contains(users, []byte(want)) {
+			t.Errorf("users.go lacks %q", want)
+		}
+	}
+
+	if bytes.Contains(users, []byte("orm.Unique[models.User]")) {
+		t.Error("Register still rejects existing emails with a validation error")
+	}
+
+	for _, kit := range []string{"auth-web", "auth-inertia"} {
+		ctrl, err := scaffoldFS.ReadFile("scaffolds/" + kit + "/app/controllers/account/account.go.tmpl")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		start := bytes.Index(ctrl, []byte("func (h *Handlers) Register("))
+		end := bytes.Index(ctrl[start:], []byte("\n}\n"))
+
+		if start < 0 || end < 0 {
+			t.Fatalf("%s: no Register handler", kit)
+		}
+
+		register := ctrl[start : start+end]
+		if bytes.Contains(register, []byte("Web.Login(")) ||
+			!bytes.Contains(register, []byte(`c.Redirect("/register/check-email")`)) {
+			t.Errorf("%s Register logs in or does not redirect to /register/check-email:\n%s", kit, register)
+		}
+
+		routes, err := scaffoldFS.ReadFile("scaffolds/" + kit + "/routes/auth.go.tmpl")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		for _, want := range []string{
+			`r.Get("/register/check-email", h.CheckEmail).Name("register.check").Use(guest)`,
+			`r.Get("/email/verify/{id}", h.Verify).Name("verification.verify").Use(acc.Signer.Middleware())`,
+		} {
+			if !bytes.Contains(routes, []byte(want)) {
+				t.Errorf("%s routes lack %q", kit, want)
+			}
+		}
+
+		verify, err := scaffoldFS.ReadFile("scaffolds/" + kit + "/app/controllers/account/verification.go.tmpl")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if !bytes.Contains(verify, []byte("signedIn && current.ID != u.ID")) {
+			t.Errorf("%s Verify does not refuse another signed-in user", kit)
+		}
+
+		test, err := scaffoldFS.ReadFile("scaffolds/" + kit + "/tests/auth_test.go.tmpl")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if !bytes.Contains(test, []byte("func TestRegisterDoesNotRevealAccounts(")) {
+			t.Errorf("%s lacks the generated TestRegisterDoesNotRevealAccounts", kit)
+		}
+	}
+}
+
 // The verification mail is queued like the reset mail, so registering does
 // not wait for the mail server (and a slow server cannot time out sign-up).
 func TestVerificationMailIsQueued(t *testing.T) {

@@ -1,0 +1,11 @@
+{{/* layout: none */}}
+<!doctype html>
+<html lang="en">
+<body>
+	<p>Hello {{.User.Name}},</p>
+	<p>Someone tried to create an account with this email address, which already has one. If it was you, sign in or reset your password:</p>
+	<p><a href="{{.LoginLink}}">Sign in</a></p>
+	<p><a href="{{.ResetLink}}">Reset password</a></p>
+	<p>If it was not you, ignore this email: nothing was changed.</p>
+</body>
+</html>

@@ -39,3 +39,21 @@ func (m ResetPassword) Envelope() mail.Envelope {
 
 // Content implements mail.Mailable.
 func (m ResetPassword) Content() mail.Content { return mail.View("mail/reset_password", m) }
+
+// AccountExists tells the owner of an address that someone tried to sign
+// up with it: the sign-up form answers the same for every address, so this
+// mail is the only place that says the account exists.
+type AccountExists struct {
+	User      models.User
+	LoginLink string
+	ResetLink string
+	Subject   string
+}
+
+// Envelope implements mail.Mailable.
+func (m AccountExists) Envelope() mail.Envelope {
+	return mail.Envelope{To: []string{m.User.Email}, Subject: cmp.Or(m.Subject, "Someone tried to sign up with your email")}
+}
+
+// Content implements mail.Mailable.
+func (m AccountExists) Content() mail.Content { return mail.View("mail/account_exists", m) }

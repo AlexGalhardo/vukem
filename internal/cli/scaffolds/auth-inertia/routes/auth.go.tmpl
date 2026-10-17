@@ -43,6 +43,7 @@ func Auth(r *router.Router, app *vukem.App) error {
 	r.Post("/login", h.Login).Use(guest, throttle, perAccount)
 	r.Get("/register", h.ShowRegister).Name("register").Use(guest)
 	r.Post("/register", h.Register).Use(guest)
+	r.Get("/register/check-email", h.CheckEmail).Name("register.check").Use(guest)
 	r.Post("/logout", h.Logout).Name("logout").Use(required)
 
 	r.Get("/forgot-password", h.ShowForgot).Name("password.request").Use(guest)
@@ -51,7 +52,8 @@ func Auth(r *router.Router, app *vukem.App) error {
 	r.Post("/reset-password", h.Reset).Name("password.update").Use(guest)
 
 	r.Get("/email/verify", h.Notice).Name("verification.notice").Use(required)
-	r.Get("/email/verify/{id}", h.Verify).Name("verification.verify").Use(required, acc.Signer.Middleware())
+	// The signed link works signed out too: sign-up does not log in.
+	r.Get("/email/verify/{id}", h.Verify).Name("verification.verify").Use(acc.Signer.Middleware())
 	r.Post("/email/verification-notification", h.Resend).Name("verification.send").Use(required, mails)
 
 	r.Get("/dashboard", h.Dashboard).Name("dashboard").Use(required)

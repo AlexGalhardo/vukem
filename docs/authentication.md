@@ -119,9 +119,9 @@ app/accounts/{accounts,users,passwords}.go guards, registration, verification, p
 app/accounts/{messages.go,lang/}          auth messages in en and pt-BR (accounts.T)
 app/controllers/account/*.go               login, register, logout, forgot/reset password, verification, dashboard
 app/requests/auth.go                       z schemas (password ≥ 12 characters, confirmation)
-app/mail/auth.go                           VerifyEmail and ResetPassword mailables
+app/mail/auth.go                           VerifyEmail, ResetPassword and AccountExists mailables
 database/migrations/*_create_users_table.go, *_create_auth_tables.go (remember, access and reset tokens)
-resources/views/auth/*.html, resources/views/mail/{verify_email,reset_password}.html
+resources/views/auth/*.html, resources/views/mail/{verify_email,reset_password,account_exists}.html
 routes/auth.go                             appended to routes.All()
 tests/auth_test.go                         the whole flow, run by go test
 tests/auth_messages_test.go                every message translated
@@ -129,11 +129,13 @@ tests/auth_messages_test.go                every message translated
 
 | Flow | Behaviour |
 | --- | --- |
-| Register | unique email (`orm.Unique`, case-insensitive), argon2id hash, login, verification email |
+| Register | the same answer for new and existing emails (redirect to `/register/check-email`, no validation error, **no login**): a new email gets the account and a verification mail; an existing one gets a "someone tried to sign up" notice (`AccountExists`, at most one per hour per address through the cache, keyed by a hash of the address) and nothing is created or changed. Both paths hash the password with argon2id and queue one mail (`SendLater`), so the timing does not reveal accounts either (`TestSecurity_A07_SignupIsEnumerationSafe`, generated `TestRegisterDoesNotRevealAccounts`) |
 | Login | `Attempt` with remember-me, intended URL, **5 attempts per minute per email + IP** (`ratelimit`), same error for unknown users |
-| Email verification | signed link (`signed` package, HMAC + 1 hour expiry), must match the logged-in user; resend limited to 3 per minute |
+| Email verification | signed link (`signed` package, HMAC + 1 hour expiry) that works signed out (then leads to `/login`; it proves the mailbox, not the password), goes to the dashboard for its own account and answers 403 to another signed-in user; resend (signed in) limited to 3 per minute |
 | Forgot / reset password | same answer for unknown emails; random token stored as SHA-256, 1 hour, single use; reset ends every session on every session driver (`users.session_version` bumped with the password; server-side records deleted), remembered session and API token (`Accounts.RevokeOtherSessions`; call it too if you add a password change form) |
 | Logout | session invalidated, remember-me token deleted |
+
+Since sign-up never says "this email is taken", a user who forgot they have an account learns it from the notice mail, which links to the login and password reset pages. The trade-off: a sign-up form that cannot tell users their email is taken, and a mail queue that must work (`QUEUE_CONNECTION=database` in production). Apps that ran `install:auth` before v0.26.0 keep the old flow (409 for a taken email, login before verification) until they port `Register`, `Verify`, `routes/auth.go` and the new `AccountExists` mail, or re-run `install:auth --force`.
 
 Flash messages, controller errors and mail subjects go through `accounts.T(ctx, key)`, with English and Brazilian Portuguese catalogs in `app/accounts/lang/<locale>/*.json` (keys `auth.*`; `--2fa` and `--social` add `two_factor.json` and `social.json`). `T` uses the request locale that `i18n.Middleware` resolves when the app uses `vukem.WithTranslations`, and English otherwise. A key in the app's own catalog for that locale or its language (`resources/lang/pt-BR.json`, then `pt.json`) wins, so the app can reword a message or add a locale without editing the scaffold. Field messages of the `z` schemas in `app/requests` and the views stay in English. Errors from the framework itself (failed login, unverified email, missing token ability, social sign-in, `orm.Unique`) carry their own keys and are translated by the built-in catalogs ([i18n](subsystems.md#i18n)); the login error stays the same for unknown users and wrong passwords in every locale. `tests/auth_messages_test.go` checks that every key exists in every locale. Mailables built without a `Subject` keep the English one.
 

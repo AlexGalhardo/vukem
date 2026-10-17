@@ -1,9 +1,13 @@
 package account
 
 import (
+	"errors"
+	"net/http"
+
 	"github.com/AlexGalhardo/vukem/auth"
 	"github.com/AlexGalhardo/vukem/errs"
 	"github.com/AlexGalhardo/vukem/inertia"
+	"github.com/AlexGalhardo/vukem/orm"
 	"github.com/AlexGalhardo/vukem/web"
 
 	"{{.Module}}/app/models"
@@ -23,15 +27,32 @@ func (*Handlers) Notice(c *web.Ctx) error {
 	return inertia.Render(c, "Auth/VerifyEmail", nil)
 }
 
-// Verify handles the signed link from the verification email.
+// Verify handles the signed link from the verification email. Sign-up
+// does not log in, so the link works signed out and then leads to the
+// login page (it proves the mailbox, not the password); signed in as the
+// link's account it goes to the dashboard, signed in as someone else 403.
 func (h *Handlers) Verify(c *web.Ctx) error {
-	u, err := auth.User[models.User](c, "web")
+	id, err := c.ParamInt("id")
 	if err != nil {
 		return err
 	}
 
-	if c.Param("id") != u.AuthID() {
-		return errs.New(403, h.a.T(c.Context(), "auth.verification_wrong_account"))
+	u, err := orm.QueryOf[models.User](h.a.DB).Find(c.Context(), id)
+	if err != nil {
+		return err
+	}
+
+	// No auth middleware on this route: ask the guard directly. A failing
+	// user store is an error, not "signed out".
+	current, err := h.a.Web.User(c)
+	signedIn := err == nil
+
+	if err != nil && !errors.Is(err, auth.ErrUnauthenticated) {
+		return err
+	}
+
+	if signedIn && current.ID != u.ID {
+		return errs.New(http.StatusForbidden, h.a.T(c.Context(), "auth.verification_wrong_account"))
 	}
 
 	if err := h.a.MarkVerified(c.Context(), h.a.DB, &u); err != nil {
@@ -39,6 +60,10 @@ func (h *Handlers) Verify(c *web.Ctx) error {
 	}
 
 	inertia.Flash(c, "status", h.a.T(c.Context(), "auth.email_verified"))
+
+	if !signedIn {
+		return c.Redirect("/login")
+	}
 
 	return c.Redirect("/dashboard")
 }

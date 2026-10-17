@@ -2,6 +2,9 @@ package accounts
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -14,26 +17,67 @@ import (
 	"{{.Module}}/app/requests"
 )
 
-// Register creates a user (unique email, hashed password) and sends the
-// verification email.
-func (a *Accounts) Register(ctx context.Context, in requests.Register) (models.User, error) {
-	email := strings.ToLower(in.Email)
-
-	if err := orm.Validate(ctx, a.DB, orm.Unique[models.User]("email", email)); err != nil {
-		return models.User{}, err
-	}
+// Register signs in.Email up without revealing whether it already has an
+// account: the caller always answers "check your email" and never logs in.
+// A new address gets the account and a verification mail; an existing one
+// gets a notice ("sign in or reset your password", at most one per hour
+// per address) and nothing is created or changed. Both paths hash the
+// password and queue one mail, so they take about the same time. It
+// reports whether an account was created.
+func (a *Accounts) Register(ctx context.Context, in requests.Register) (bool, error) {
+	email := strings.ToLower(strings.TrimSpace(in.Email))
 
 	h, err := a.Hasher.Make(in.Password)
 	if err != nil {
-		return models.User{}, err
+		return false, err
+	}
+
+	existing, err := orm.QueryOf[models.User](a.DB).Where("email", email).First(ctx)
+	if err == nil {
+		return false, a.notifyExisting(ctx, existing)
+	}
+
+	if !errors.Is(err, orm.ErrNotFound) {
+		return false, err
 	}
 
 	u := models.User{Name: in.Name, Email: email, Password: h}
 	if err := orm.Create(ctx, a.DB, &u); err != nil {
-		return models.User{}, err
+		// A concurrent sign-up with the same email won the unique index.
+		if existing, findErr := orm.QueryOf[models.User](a.DB).Where("email", email).First(ctx); findErr == nil {
+			return false, a.notifyExisting(ctx, existing)
+		}
+
+		return false, err
 	}
 
-	return u, a.SendVerification(ctx, u)
+	return true, a.SendVerification(ctx, u)
+}
+
+// notifyExisting tells the owner of an existing account that someone tried
+// to sign up with it, at most once per hour per address, so the form cannot
+// be used to flood a mailbox. The cache key holds a hash, not the address.
+func (a *Accounts) notifyExisting(ctx context.Context, u models.User) error {
+	c, err := a.cache()
+	if err != nil {
+		return err
+	}
+
+	sum := sha256.Sum256([]byte(u.Email))
+
+	n, err := c.Increment(ctx, "register:exists:"+hex.EncodeToString(sum[:]), 1, time.Hour)
+	if err != nil {
+		return err
+	}
+
+	if n > 1 {
+		return nil
+	}
+
+	return a.Mailer.SendLater(ctx, mail.AccountExists{
+		User: u, LoginLink: a.URL + "/login", ResetLink: a.URL + "/forgot-password",
+		Subject: a.T(ctx, "auth.mail.account_exists_subject"),
+	})
 }
 
 // SendVerification emails a signed link that verifies u's address. The
