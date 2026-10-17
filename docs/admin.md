@@ -107,6 +107,7 @@ With `admin.Config{Flags: ff}` (`ff, err := app.Flags()`) the panel lists every 
 
 - Both routes need the `manageFlags` gate ability (fail closed: an undefined ability denies) and the panel's CSRF check (`TestSecurity_A01_AdminFlagsRequireAbilityAndRespectLocks`).
 - Locked flags are shown read-only; a crafted write is refused with 403 and logged as a `flags.locked_write` security event.
-- Every change writes a `flags.changed` audit event (`web.AuditEvent`, with `actor_id`, `flag`, `old` and `new`) and an audit-log row (resource `_flags`, record = flag name, `value: {before, after}`), browsable at `/admin/_audit?resource=_flags`. The flag write and the audit row are separate statements (the store is pluggable), so a failed audit insert after a successful write answers 500 while the audit event is already logged.
+- Every change writes a `flags.changed` audit event (`web.AuditEvent`, with `actor_id`, `flag`, `changed`, `old` and `new`) and an audit-log row (resource `_flags`, record = flag name, `value: {before, after}`), browsable at `/admin/_audit?resource=_flags`. String flag values are recorded only as their length and a SHA-256 prefix (`10 bytes, sha256:1a2b3c4d`), never in clear (`TestSecurity_A09_AdminFlagsRedactStringValues`).
+- The flag write and the audit row are **not atomic** (the store is pluggable): when the row fails after the flag changed, the change is logged at ERROR (redacted the same way) and the page redirects with a warning flash.
 - When the store is down the page answers 503 instead of showing defaults that would invite wrong toggles.
 - Flag values are not secrets: never store credentials in a string flag.
