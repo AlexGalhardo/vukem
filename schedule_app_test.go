@@ -3,7 +3,10 @@ package vukem
 import (
 	"bytes"
 	"context"
+	"errors"
 	"flag"
+	"maps"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -11,6 +14,7 @@ import (
 	"time"
 
 	"github.com/AlexGalhardo/vukem/cache"
+	"github.com/AlexGalhardo/vukem/internal/testutil"
 	"github.com/AlexGalhardo/vukem/schedule"
 )
 
@@ -264,4 +268,35 @@ func TestRunBoundsSchedulerShutdown(t *testing.T) {
 			t.Fatalf("Run waited %v after cancel, want SHUTDOWN_TIMEOUT (5s)", waited)
 		}
 	})
+}
+
+// OnOneServer needs the lock store the servers share: with the in-process
+// cache the schedule does not build (serve and schedule:work fail at boot).
+func TestScheduleOnOneServerNeedsSharedCache(t *testing.T) {
+	t.Parallel()
+
+	for name, tt := range map[string]struct {
+		env  map[string]string
+		fail bool
+	}{
+		"memory cache":   {fail: true},
+		"database cache": {env: map[string]string{"CACHE_STORE": "database"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			env := map[string]string{"DATABASE_URL": "file:" + filepath.Join(testutil.TempDir(t), "app.db")}
+			maps.Copy(env, tt.env)
+
+			app := newTestApp(t, WithSource(testSource(env)), WithSchedule(func(s *schedule.Schedule, _ *App) {
+				s.Func("draw", func(context.Context) error { return nil }).Daily().OnOneServer()
+			}))
+			t.Cleanup(func() { _ = app.Shutdown(context.WithoutCancel(t.Context())) })
+
+			_, err := app.Schedule()
+			if got := errors.Is(err, schedule.ErrLocksNotShared); got != tt.fail {
+				t.Fatalf("Schedule() = %v, want ErrLocksNotShared: %v", err, tt.fail)
+			}
+		})
+	}
 }

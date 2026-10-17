@@ -54,8 +54,9 @@ func (a *App) scheduleRunner() Runner {
 }
 
 // Schedule returns the application schedule, built on first use. Locks
-// for WithoutOverlapping use App.Cache (set CACHE_STORE=database or Redis
-// when several servers run the schedule).
+// for WithoutOverlapping and OnOneServer use App.Cache (set
+// CACHE_STORE=database or Redis when several servers run the schedule;
+// OnOneServer tasks make the in-process cache an error).
 func (a *App) Schedule() (*schedule.Schedule, error) {
 	a.scheduleOnce.Do(func() {
 		cfg, err := configLoad[ScheduleConfig](a)
@@ -98,6 +99,12 @@ func (a *App) Schedule() (*schedule.Schedule, error) {
 
 		for _, fn := range a.schedules {
 			fn(s, a)
+		}
+
+		// OnOneServer with the in-process cache would run on every server.
+		if err := s.Validate(); err != nil {
+			a.scheduleErr = fmt.Errorf("vukem: %w", err)
+			return
 		}
 
 		a.schedule = s
