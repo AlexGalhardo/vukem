@@ -6,10 +6,12 @@ This file covers reporting vulnerabilities in Vukem. The protections the framewo
 
 | Version | Supported |
 | --- | --- |
-| Latest `v0.x` minor | ✅ |
-| Older `v0.x` | ❌ |
+| Latest `v1` minor | ✅ |
+| Previous `v1` minor | Security fixes for 6 months |
+| `release/1.x` LTS | Security fixes for 12 months |
+| `v0.x` | ❌ |
 
-Vukem is pre-1.0: only the latest minor release receives fixes. A long-term support policy will be published with v1.0.0.
+The full support window (latest minor, previous minor, `release/1.x` LTS branch) is defined in the [stability policy](docs/stability.md#security-support-window).
 
 ## Reporting a vulnerability
 

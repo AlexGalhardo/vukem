@@ -606,11 +606,11 @@ Applies to **every** task:
 
 ### S.1 Stability & governance
 
-- [ ] **S.1.1** `docs/stability.md`: compatibility promise (Go 1 style), deprecation policy (≥ 2 minors), supported Go versions (latest two), security support window.
+- [x] **S.1.1** `docs/stability.md`: compatibility promise (Go 1 style), deprecation policy (≥ 2 minors), supported Go versions (latest two), security support window.
   → verify: linked from README and SECURITY.md.
-- [ ] **S.1.2** Release cadence: minor every ~3 months, patches as needed; `release/1.x` LTS branch policy.
+- [x] **S.1.2** Release cadence: minor every ~3 months, patches as needed; `release/1.x` LTS branch policy.
   → verify: documented in CONTRIBUTING.
-- [ ] **S.1.3** Upgrade guide template (`docs/upgrade/`) used for every minor.
+- [x] **S.1.3** Upgrade guide template (`docs/upgrade/`) used for every minor.
   → verify: present for 0.x → 1.0.
 
 ### S.2 Documentation site

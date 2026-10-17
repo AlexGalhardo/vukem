@@ -49,6 +49,16 @@ Types: `feat`, `fix`, `perf`, `refactor`, `docs`, `test`, `build`, `ci`, `chore`
 
 Do not edit `CHANGELOG.md` by hand: each release section is generated from commit messages by git-cliff when a PLAN.md task group is released (`task release -- vX.Y.Z`) ([Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/)). Versioning follows [SemVer](https://semver.org); see [docs/tooling.md](docs/tooling.md#versioning).
 
+## Release cadence
+
+- **Minor releases** (`v1.N.0`) ship about every **3 months** with new features, deprecations and an upgrade guide in [docs/upgrade/](docs/upgrade/README.md) copied from its [template](docs/upgrade/TEMPLATE.md).
+- **Patch releases** (`v1.N.M`) ship whenever a fix is ready: bug and security fixes only, never API changes.
+- **Release candidates**: each minor gets at least one `v1.N.0-rc.N` tag a week before the final release; an RC is promoted only if nothing in the public API changed since it.
+- **`release/1.x` LTS branch**: created from the last `v1` minor when `v2` work starts. It receives security fixes for 12 months, cherry-picked from `main` by the maintainer and tagged as patches of that minor.
+- Driver and contrib modules are released with the same version numbers as the core when they change in that release.
+
+What each kind of release may change is defined in the [stability policy](docs/stability.md).
+
 ## Code of conduct
 
 This project follows the [Contributor Covenant](CODE_OF_CONDUCT.md).
