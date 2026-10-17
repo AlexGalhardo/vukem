@@ -38,6 +38,8 @@ err = q.DispatchTx(ctx, tx, jobs.SendInvoice{OrderID: 1}) // only if tx commits
 - Workers recover panics, retry with backoff and then move the job to the failed jobs with its last error. On shutdown they stop reserving and give running jobs `SHUTDOWN_TIMEOUT` to finish, then cancel their `ctx`: a job interrupted that way goes back to the queue without using an attempt (`queue.WorkOptions.StopTimeout`; 0 waits for each job's own timeout).
 - Delays, retry backoff and the database and Redis drivers' availability checks use the app clock (`vukem.WithClock`, the fake clock of `vukemtest`), so advancing a fake clock makes delayed jobs due. `app.Queue()` sets it on every driver implementing `queue.Clock` (`SetClock`); `queue.Queue.SetClock` sets it outside the app.
 - `DispatchTx(ctx, tx, job)` works on every driver: the database driver inserts the job inside the transaction; `sync`, `memory`, `queue.Fake` and Redis dispatch it right after the commit (`database.Tx.AfterCommit`), and never for rolled-back work. On `sync` the job runs after the commit, so its error is logged instead of returned.
+- `queue:work -once` and `-stop-when-empty` exit with an error when the store fails (instead of treating it as an empty queue); a long-running worker logs the error and keeps polling.
+- Jobs dispatched in the same millisecond have no guaranteed order on the database driver (ties break on the random job id).
 - `sync` cannot delay a job: `Dispatch(ctx, j, queue.Delay(d))` returns `queue.ErrInlineDelay` instead of running it early. Tests that dispatch delayed jobs use `queue.NewFake()`.
 
 ## Drivers
@@ -46,7 +48,7 @@ err = q.DispatchTx(ctx, tx, jobs.SendInvoice{OrderID: 1}) // only if tx commits
 | --- | --- |
 | `sync` (default) | the job runs inside `Dispatch`; its error is returned, no retries; `queue.Delay` is refused with `queue.ErrInlineDelay` |
 | `memory` | in process; `serve` always runs the workers; lost on restart |
-| `database` | SQLite or Postgres tables `jobs` and `failed_jobs`, created on first use; a worker in `serve` (`QUEUE_IN_SERVE`) and any number of `queue:work` processes |
+| `database` | SQLite or Postgres tables `jobs` and `failed_jobs`, created at boot (so the first `app.Queue()` may run inside a transaction); a worker in `serve` (`QUEUE_IN_SERVE`) and any number of `queue:work` processes |
 | Redis | `vukem.WithQueueDriver(rc.Queue(redis.QueueOptions{}))`, see [Redis](/docs/database/redis) |
 
 | Variable | Default |
@@ -87,7 +89,7 @@ err = app.MailLaterTx(ctx, tx, mail.Receipt{Order: o}) // or mailer.SendLaterTx:
 events.OnQueued("update_stock", UpdateStock)
 ```
 
-`SendLater` keeps the message ID across retries, so providers that deduplicate by it send once, and stores the message encrypted with `app.Crypt`. `SendLaterTx`/`MailLaterTx` tie the mail to a transaction like `DispatchTx`, so a rolled-back payment never emails the buyer. On SQLite, build the queue (`app.Queue()`, which the `serve` worker does at boot) before opening the transaction: creating the queue tables needs the single writer connection the transaction holds. A queued listener's event is stored as JSON and run by a worker; `Dispatch` only reports enqueue errors.
+`SendLater` keeps the message ID across retries, so providers that deduplicate by it send once, and stores the message encrypted with `app.Crypt`. `SendLaterTx`/`MailLaterTx` tie the mail to a transaction like `DispatchTx`, so a rolled-back payment never emails the buyer. A queued listener's event is stored as JSON and run by a worker; `Dispatch` only reports enqueue errors.
 
 ## Testing
 
