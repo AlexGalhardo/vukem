@@ -438,7 +438,7 @@ Applies to **every** task:
 - [x] Mail, cache, storage, events, rate limiting each have a fake and docs.
 - [x] Core deps still within the allowlist; Postgres pulled only via `drivers/postgres`.
 - [ ] Every **A** row of [docs/security.md](docs/security.md) has its `TestSecurity_*` test.
-- [ ] Coverage gates hold; integration CI green.
+- [x] Coverage gates hold; integration CI green.
 
 ---
 
