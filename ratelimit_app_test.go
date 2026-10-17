@@ -80,11 +80,13 @@ func TestSecurity_A02_RateLimitCacheNeedsSharedStore(t *testing.T) {
 		t.Fatalf("RateLimiters() with WithCacheStore = %v", err)
 	}
 
-	// The memory store set in code, directly, lazily or wrapped, is not.
+	// The memory store set in code, directly, lazily or wrapped, is not,
+	// nor is a store that does not declare cache.Sharer (fail closed).
 	for name, opt := range map[string]Option{
-		"eager":   WithCacheStore(cache.NewMemory(0)),
-		"lazy":    WithCacheStoreFunc(func(*App) (cache.Store, error) { return cache.NewMemory(0), nil }),
-		"wrapped": WithCacheStore(wrappedStore{cache.NewMemory(0)}),
+		"eager":          WithCacheStore(cache.NewMemory(0)),
+		"lazy":           WithCacheStoreFunc(func(*App) (cache.Store, error) { return cache.NewMemory(0), nil }),
+		"wrapped":        WithCacheStore(wrappedStore{cache.NewMemory(0)}),
+		"opaque wrapped": WithCacheStore(opaqueStore{cache.NewMemory(0)}),
 	} {
 		app = newTestApp(t, WithSource(testSource(env)), opt)
 		if limiters, err := app.RateLimiters(); err == nil || limiters != nil {
@@ -95,6 +97,12 @@ func TestSecurity_A02_RateLimitCacheNeedsSharedStore(t *testing.T) {
 
 // sharedStore stands for a store every server reaches (Redis).
 type sharedStore struct{ *cache.Memory }
+
+func (sharedStore) Shared() bool { return true }
+
+// opaqueStore decorates a store (metrics) without declaring cache.Sharer
+// or exposing Unwrap.
+type opaqueStore struct{ cache.Store }
 
 // wrappedStore decorates a store (metrics) and exposes it with Unwrap.
 type wrappedStore struct{ cache.Store }

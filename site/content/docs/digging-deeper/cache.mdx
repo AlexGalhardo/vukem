@@ -38,6 +38,16 @@ n, err := c.Increment(ctx, "visits", 1, 24*time.Hour)
 
 Custom stores implement `cache.Store` and must pass `cache/cachetest.Run`.
 
+### Shared stores
+
+Features that coordinate servers through the cache (`OnOneServer()` tasks, `RATE_LIMIT_STORE=cache`) ask `cache.Shared(store)` whether every server sees the same entries. A store answers by implementing `cache.Sharer`:
+
+```go
+func (s *MyStore) Shared() bool { return true } // backed by a service every server reaches
+```
+
+The built-in stores declare it: memory is not shared, database and Redis (`drivers/redis`) are. The SQLite database store counts as shared only between processes on the same host; servers on several hosts need PostgreSQL, MySQL or Redis. A wrapper (metrics, tracing) forwards the answer of the store it wraps, either with its own `Shared()` or by exposing that store with `Unwrap() cache.Store`. A store that does neither is treated as **not shared** (fail closed), so a metrics wrapper around the memory cache cannot pass for a shared lock store. `cachetest.Run` fails a store that does not implement `cache.Sharer`.
+
 ## Step by step: cache a slow query
 
 <Steps>

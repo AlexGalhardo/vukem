@@ -261,9 +261,39 @@ func TestWorkStopTimeoutCancelsRunningTasks(t *testing.T) {
 	}
 }
 
-// sharedStore stands for a store several servers share (database, Redis):
-// any store other than the in-process memory cache.
+// sharedStore stands for a store several servers share (database, Redis).
 type sharedStore struct{ cache.Store }
+
+func (sharedStore) Shared() bool { return true }
+
+// opaqueStore decorates a store (metrics) without declaring cache.Sharer
+// or exposing Unwrap.
+type opaqueStore struct{ cache.Store }
+
+// A wrapper around the memory cache that says nothing about the store it
+// wraps must not pass for a shared lock store: every server would run the
+// OnOneServer task.
+func TestSecurity_A02_OnOneServerRefusesUndeclaredStore(t *testing.T) {
+	t.Parallel()
+
+	var runs atomic.Int32
+
+	s := newSchedule(schedule.Options{Locks: cache.New(opaqueStore{cache.NewMemory(0)}, "")})
+	s.Func("draw", func(context.Context) error { runs.Add(1); return nil }).EveryMinute().OnOneServer()
+
+	if err := s.Validate(); !errors.Is(err, schedule.ErrLocksNotShared) {
+		t.Fatalf("Validate() on a wrapped memory store = %v, want ErrLocksNotShared", err)
+	}
+
+	err := s.RunDue(t.Context(), at("2026-10-16 11:00"))
+	if !errors.Is(err, schedule.ErrLocksNotShared) || runs.Load() != 0 {
+		t.Fatalf(
+			"RunDue() on a wrapped memory store = %v (runs %d), want ErrLocksNotShared and no run",
+			err,
+			runs.Load(),
+		)
+	}
+}
 
 // OnOneServer runs each occurrence once across schedulers sharing the lock
 // store, and refuses to run on an in-process store, where every server

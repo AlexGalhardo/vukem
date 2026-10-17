@@ -149,6 +149,11 @@ func (s *Store) Increment(ctx context.Context, key string, delta int64, ttl time
 	return increment.Run(ctx, s.rdb, []string{s.k(key)}, delta, ttl.Milliseconds()).Int64()
 }
 
+// Shared implements cache.Sharer: every server connected to the same Redis
+// sees the same entries, so OnOneServer and RATE_LIMIT_STORE=cache accept
+// the store.
+func (*Store) Shared() bool { return true }
+
 // Flush implements cache.Store: it deletes the keys under the prefix.
 func (s *Store) Flush(ctx context.Context) error {
 	if s.prefix == "" {

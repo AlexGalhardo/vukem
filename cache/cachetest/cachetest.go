@@ -29,6 +29,14 @@ func Run(t *testing.T, store cache.Store) {
 
 	c := cache.New(store, "ct:")
 
+	// Without the declaration cache.Shared reports false, and OnOneServer
+	// and RATE_LIMIT_STORE=cache refuse the store even when it is shared.
+	t.Run("DeclaresShared", func(t *testing.T) {
+		if _, ok := store.(cache.Sharer); !ok {
+			t.Errorf("%T does not implement cache.Sharer (Shared() bool)", store)
+		}
+	})
+
 	t.Run("GetPutForget", func(t *testing.T) {
 		type user struct {
 			ID   int    `json:"id"`

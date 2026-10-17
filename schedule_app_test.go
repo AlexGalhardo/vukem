@@ -106,6 +106,11 @@ type wrapped struct{ cache.Store }
 
 func (w wrapped) Unwrap() cache.Store { return w.Store }
 
+// selfWrapped unwraps to itself; storePruner must not loop on it.
+type selfWrapped struct{ cache.Store }
+
+func (s *selfWrapped) Unwrap() cache.Store { return s }
+
 // A store wrapped for metrics or tracing still gets pruned when it
 // exposes the store underneath with Unwrap.
 func TestStorePrunerUnwraps(t *testing.T) {
@@ -122,6 +127,7 @@ func TestStorePrunerUnwraps(t *testing.T) {
 		"wrapped twice":  {store: wrapped{wrapped{db}}, want: true},
 		"memory":         {store: cache.NewMemory(0), want: false},
 		"wrapped memory": {store: wrapped{cache.NewMemory(0)}, want: false},
+		"self reference": {store: &selfWrapped{Store: cache.NewMemory(0)}, want: false},
 	} {
 		if _, ok := storePruner(tt.store); ok != tt.want {
 			t.Errorf("%s: storePruner() = %v, want %v", name, ok, tt.want)
@@ -277,10 +283,12 @@ func TestScheduleOnOneServerNeedsSharedCache(t *testing.T) {
 
 	for name, tt := range map[string]struct {
 		env  map[string]string
+		opt  Option
 		fail bool
 	}{
-		"memory cache":   {fail: true},
-		"database cache": {env: map[string]string{"CACHE_STORE": "database"}},
+		"memory cache":          {fail: true},
+		"database cache":        {env: map[string]string{"CACHE_STORE": "database"}},
+		"opaque wrapped memory": {fail: true, opt: WithCacheStore(opaqueStore{cache.NewMemory(0)})},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -288,9 +296,14 @@ func TestScheduleOnOneServerNeedsSharedCache(t *testing.T) {
 			env := map[string]string{"DATABASE_URL": "file:" + filepath.Join(testutil.TempDir(t), "app.db")}
 			maps.Copy(env, tt.env)
 
-			app := newTestApp(t, WithSource(testSource(env)), WithSchedule(func(s *schedule.Schedule, _ *App) {
+			opts := []Option{WithSource(testSource(env)), WithSchedule(func(s *schedule.Schedule, _ *App) {
 				s.Func("draw", func(context.Context) error { return nil }).Daily().OnOneServer()
-			}))
+			})}
+			if tt.opt != nil {
+				opts = append(opts, tt.opt)
+			}
+
+			app := newTestApp(t, opts...)
 			t.Cleanup(func() { _ = app.Shutdown(context.WithoutCancel(t.Context())) })
 
 			_, err := app.Schedule()
@@ -303,6 +316,8 @@ func TestScheduleOnOneServerNeedsSharedCache(t *testing.T) {
 
 // sharedCache stands for a store several apps share (Redis, a database).
 type sharedCache struct{ cache.Store }
+
+func (sharedCache) Shared() bool { return true }
 
 // Schedule locks are namespaced by APP_NAME, so two apps sharing one
 // cache store each run their own task of the same name.
