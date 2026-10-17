@@ -565,3 +565,53 @@ func TestUserFromContext(t *testing.T) {
 		t.Fatal("user found in an empty context")
 	}
 }
+
+func TestSecurity_A04_TokenPrefixForSecretScanning(t *testing.T) {
+	t.Parallel()
+
+	ta := newApp(t, hash.Fake())
+	u := ta.user(t, "ana@example.com", "pw", true)
+	ctx := t.Context()
+
+	legacy, _, err := ta.tokens.Create(ctx, u.AuthID(), "legacy", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ta.tokens.Prefix = "old_"
+
+	rotated, _, err := ta.tokens.Create(ctx, u.AuthID(), "rotated", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ta.tokens.Prefix = "vk_"
+
+	plain, tok, err := ta.tokens.Create(ctx, u.AuthID(), "cli", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.HasPrefix(plain, "vk_") || strings.HasPrefix(tok.ID, "vk_") {
+		t.Fatalf("Create() = %q (id %q), want a vk_ prefix on the plain token only", plain, tok.ID)
+	}
+
+	// Tokens issued before the prefix, or under an earlier one, keep working.
+	for name, p := range map[string]string{"prefixed": plain, "legacy": legacy, "earlier prefix": rotated} {
+		if _, err := ta.tokens.Find(ctx, p); err != nil {
+			t.Errorf("Find(%s) = %v, want nil", name, err)
+		}
+	}
+
+	// The prefix is a label, not a credential: the secret still decides.
+	if _, err := ta.tokens.Find(ctx, plain[:len(plain)-1]+"X"); err == nil {
+		t.Error("Find(prefixed token with a wrong secret) = nil, want error")
+	}
+
+	for _, bad := range []string{"vk", "vk._", "vk-_", "a b_", strings.Repeat("a", 32) + "_"} {
+		ta.tokens.Prefix = bad
+		if _, _, err := ta.tokens.Create(ctx, u.AuthID(), "bad", nil, 0); err == nil {
+			t.Errorf("Create() with Prefix %q = nil, want error", bad)
+		}
+	}
+}

@@ -29,12 +29,18 @@ func (t Token) Can(ability string) bool {
 	return slices.Contains(t.Abilities, "*") || slices.Contains(t.Abilities, ability)
 }
 
-// Tokens issues and checks opaque access tokens "<id>.<secret>"; only
-// SHA-256(secret) is stored. Table (created by install:auth / install:api):
+// Tokens issues and checks opaque access tokens "<prefix><id>.<secret>";
+// only SHA-256(secret) is stored. Table (created by install:auth / install:api):
 // access_tokens(id TEXT PRIMARY KEY, user_id TEXT, name TEXT, hash TEXT,
 // abilities TEXT, last_used_at TIMESTAMP NULL, expires_at TIMESTAMP NULL,
 // created_at TIMESTAMP).
 type Tokens struct {
+	// Prefix starts every newly issued token ("vk_"), so secret scanners
+	// (GitHub push protection, gitleaks) can match leaked tokens. It is up
+	// to 32 letters, digits or underscores and ends with "_". Tokens issued
+	// without it, or under an earlier prefix, stay valid.
+	Prefix string
+
 	ex    database.Executor
 	table string
 	now   func() time.Time
@@ -57,6 +63,10 @@ func (t *Tokens) Create(
 	abilities []string,
 	ttl time.Duration,
 ) (string, Token, error) {
+	if err := validPrefix(t.Prefix); err != nil {
+		return "", Token{}, err
+	}
+
 	now := t.now().UTC()
 	tok := Token{ID: rand.Text(), UserID: userID, Name: name, Abilities: abilities}
 
@@ -92,13 +102,41 @@ func (t *Tokens) Create(
 		return "", Token{}, err
 	}
 
-	return tok.ID + "." + secret, tok, nil
+	return t.Prefix + tok.ID + "." + secret, tok, nil
+}
+
+// maxPrefix bounds Tokens.Prefix.
+const maxPrefix = 32
+
+func validPrefix(p string) error {
+	if p == "" {
+		return nil
+	}
+
+	ok := len(p) <= maxPrefix && strings.HasSuffix(p, "_") && !strings.ContainsFunc(p, func(r rune) bool {
+		return (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != '_'
+	})
+	if !ok {
+		return fmt.Errorf(
+			"auth: token prefix %q: want up to %d letters, digits or underscores ending in _",
+			p,
+			maxPrefix,
+		)
+	}
+
+	return nil
 }
 
 // Find validates a plain token and returns it, or errBadToken. It updates
 // last_used_at at most once a minute.
 func (t *Tokens) Find(ctx context.Context, plain string) (Token, error) {
 	id, secret, ok := strings.Cut(plain, ".")
+	// Ids come from rand.Text (base32, no "_"), so whatever precedes the
+	// last "_" is a prefix: the current one, an earlier one, or none.
+	if i := strings.LastIndexByte(id, '_'); i >= 0 {
+		id = id[i+1:]
+	}
+
 	if !ok || id == "" || secret == "" {
 		return Token{}, errBadToken
 	}
