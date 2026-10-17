@@ -84,14 +84,18 @@ Only the `*Context` logging methods see the span. `c.Log().Info(...)` without a 
 | Variable or field | Default | Notes |
 | --- | --- | --- |
 | `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | — | full URL of the traces endpoint, used as is |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | — | base URL; `/v1/traces` is appended |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | — | base URL; `/v1/traces` is appended (and `/v1/metrics` with `OTEL_METRICS_EXPORTER=otlp`) |
+| `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | — | full URL of the metrics endpoint, used as is; turns metrics on |
+| `OTEL_METRICS_EXPORTER` | — | `otlp` sends metrics to the generic endpoint; `none` turns metrics off |
+| `OTEL_METRIC_EXPORT_INTERVAL` | `60000` | metrics export period in milliseconds |
+| `Config.MetricReader` | — | any `sdkmetric.Reader`; overrides the OTLP metrics settings |
 | `OTEL_SERVICE_NAME` / `Config.ServiceName` | `APP_NAME` | the `service.name` resource attribute; `deployment.environment.name` is `APP_ENV` |
 | `OTEL_SDK_DISABLED` | `false` | `true` disables tracing |
 | `Config.Sampler` | `ParentBased(AlwaysSample)` | e.g. `sdktrace.ParentBased(sdktrace.TraceIDRatioBased(0.1))` to keep 10% |
 | `Config.Exporter` | OTLP/HTTP | any `sdktrace.SpanExporter` (tests, other protocols) |
 | `Config.Global` | `false` | also install the provider and propagator as OTel globals, for libraries instrumented through them |
 
-Most hosted backends need an API key header (`OTEL_EXPORTER_OTLP_HEADERS=x-api-key=...`). That variable is read by the OpenTelemetry exporter itself, from the **process environment**: set it in your platform's variables, since a value only in `.env` may not reach the exporter.
+Most hosted backends need an API key header (`OTEL_EXPORTER_OTLP_HEADERS=x-api-key=...`, or the `_TRACES_`/`_METRICS_` variants). The provider reads every `OTEL_*` setting through `app.Source`, so a value in `.env` works like one in the process environment. A malformed value fails the boot with an error that names the variable but never echoes its value.
 
 ## Your own spans
 

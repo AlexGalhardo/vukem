@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
@@ -32,39 +33,102 @@ func signalValue(getenv func(string) string, signal, name string) (string, strin
 	return key, getenv(key)
 }
 
-// traceExporterOptions turns the headers, timeout and compression settings
-// into exporter options.
-func traceExporterOptions(getenv func(string) string) ([]otlptracehttp.Option, error) {
-	var opts []otlptracehttp.Option
+// exporterSettings are the headers, timeout and compression of one signal's
+// OTLP exporter.
+type exporterSettings struct {
+	headers map[string]string
+	timeout time.Duration
+	gzip    *bool
+}
 
-	if key, v := signalValue(getenv, "TRACES", "HEADERS"); v != "" {
+// signalSettings reads the headers, timeout and compression settings of
+// signal (TRACES or METRICS).
+func signalSettings(getenv func(string) string, signal string) (exporterSettings, error) {
+	var s exporterSettings
+
+	if key, v := signalValue(getenv, signal, "HEADERS"); v != "" {
 		headers, err := parseList(v)
 		if err != nil {
 			// The value is not echoed: headers carry API keys.
-			return nil, fmt.Errorf("otel: %s: %w", key, err)
+			return s, fmt.Errorf("otel: %s: %w", key, err)
 		}
 
-		opts = append(opts, otlptracehttp.WithHeaders(headers))
+		s.headers = headers
 	}
 
-	if key, v := signalValue(getenv, "TRACES", "TIMEOUT"); v != "" {
+	if key, v := signalValue(getenv, signal, "TIMEOUT"); v != "" {
 		ms, err := strconv.Atoi(v)
 		if err != nil || ms <= 0 {
-			return nil, fmt.Errorf("otel: %s must be a positive number of milliseconds", key)
+			return s, fmt.Errorf("otel: %s must be a positive number of milliseconds", key)
 		}
 
-		opts = append(opts, otlptracehttp.WithTimeout(time.Duration(ms)*time.Millisecond))
+		s.timeout = time.Duration(ms) * time.Millisecond
 	}
 
-	if key, v := signalValue(getenv, "TRACES", "COMPRESSION"); v != "" {
+	if key, v := signalValue(getenv, signal, "COMPRESSION"); v != "" {
 		switch v {
-		case "gzip":
-			opts = append(opts, otlptracehttp.WithCompression(otlptracehttp.GzipCompression))
-		case "none":
-			opts = append(opts, otlptracehttp.WithCompression(otlptracehttp.NoCompression))
+		case "gzip", "none":
+			gz := v == "gzip"
+			s.gzip = &gz
 		default:
-			return nil, fmt.Errorf("otel: %s must be gzip or none", key)
+			return s, fmt.Errorf("otel: %s must be gzip or none", key)
 		}
+	}
+
+	return s, nil
+}
+
+// traceExporterOptions turns the traces settings into exporter options.
+func traceExporterOptions(getenv func(string) string) ([]otlptracehttp.Option, error) {
+	s, err := signalSettings(getenv, "TRACES")
+	if err != nil {
+		return nil, err
+	}
+
+	var opts []otlptracehttp.Option
+	if s.headers != nil {
+		opts = append(opts, otlptracehttp.WithHeaders(s.headers))
+	}
+
+	if s.timeout > 0 {
+		opts = append(opts, otlptracehttp.WithTimeout(s.timeout))
+	}
+
+	if s.gzip != nil {
+		c := otlptracehttp.NoCompression
+		if *s.gzip {
+			c = otlptracehttp.GzipCompression
+		}
+
+		opts = append(opts, otlptracehttp.WithCompression(c))
+	}
+
+	return opts, nil
+}
+
+// metricExporterOptions turns the metrics settings into exporter options.
+func metricExporterOptions(getenv func(string) string) ([]otlpmetrichttp.Option, error) {
+	s, err := signalSettings(getenv, "METRICS")
+	if err != nil {
+		return nil, err
+	}
+
+	var opts []otlpmetrichttp.Option
+	if s.headers != nil {
+		opts = append(opts, otlpmetrichttp.WithHeaders(s.headers))
+	}
+
+	if s.timeout > 0 {
+		opts = append(opts, otlpmetrichttp.WithTimeout(s.timeout))
+	}
+
+	if s.gzip != nil {
+		c := otlpmetrichttp.NoCompression
+		if *s.gzip {
+			c = otlpmetrichttp.GzipCompression
+		}
+
+		opts = append(opts, otlpmetrichttp.WithCompression(c))
 	}
 
 	return opts, nil

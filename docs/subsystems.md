@@ -399,7 +399,7 @@ safe := httpclient.Safe(httpclient.Options{WrapTransport: tracing.Transport}) //
 
 ### Metrics
 
-`Config.MetricReader` turns metrics on: the provider builds a `MeterProvider` on it with the same resource and records, through the same hooks:
+Metrics are on when `Config.MetricReader` is set, or else when `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` (used as is) or `OTEL_EXPORTER_OTLP_ENDPOINT` with `OTEL_METRICS_EXPORTER=otlp` (`/v1/metrics` appended) selects an OTLP/HTTP collector. The generic endpoint alone does not turn metrics on, so apps that set it for traces keep the same output after upgrading; `OTEL_METRICS_EXPORTER=none` turns metrics off. `OTEL_EXPORTER_OTLP_[METRICS_]HEADERS`, `_TIMEOUT` and `_COMPRESSION` follow the traces rules, and `OTEL_METRIC_EXPORT_INTERVAL` (milliseconds, default 60000) sets the export period. The provider builds a `MeterProvider` with the same resource and records, through the same hooks:
 
 | Metric | Kind | Attributes |
 | --- | --- | --- |

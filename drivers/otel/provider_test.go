@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 	otelglobal "go.opentelemetry.io/otel"
@@ -230,6 +231,97 @@ func TestProvider_Endpoint(t *testing.T) {
 			if err := app.Shutdown(t.Context()); err != nil {
 				t.Fatal(err)
 			}
+		})
+	}
+}
+
+func TestProvider_MetricsEndpoint(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		env         map[string]string
+		wantMetrics bool
+		wantErr     string
+	}{
+		{
+			name: "metrics endpoint",
+			env: map[string]string{
+				"OTEL_EXPORTER_OTLP_METRICS_ENDPOINT": "https://collector.example.com/v1/metrics",
+			},
+			wantMetrics: true,
+		},
+		{
+			name: "generic endpoint with the otlp metrics exporter",
+			env: map[string]string{
+				"OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector:4318",
+				"OTEL_METRICS_EXPORTER":       "otlp",
+			},
+			wantMetrics: true,
+		},
+		{
+			name: "generic endpoint alone keeps metrics off",
+			env:  map[string]string{"OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector:4318"},
+		},
+		{
+			name: "none turns the metrics endpoint off",
+			env: map[string]string{
+				"OTEL_EXPORTER_OTLP_METRICS_ENDPOINT": "http://collector:4318/v1/metrics",
+				"OTEL_METRICS_EXPORTER":               "none",
+			},
+		},
+		{
+			name:    "bad metrics endpoint",
+			env:     map[string]string{"OTEL_EXPORTER_OTLP_METRICS_ENDPOINT": "collector:4318"},
+			wantErr: "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT must be an http(s) URL",
+		},
+		{
+			name: "unknown metrics exporter",
+			env: map[string]string{
+				"OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector:4318",
+				"OTEL_METRICS_EXPORTER":       "prometheus",
+			},
+			wantErr: "OTEL_METRICS_EXPORTER must be otlp or none",
+		},
+		{
+			name: "bad export interval",
+			env: map[string]string{
+				"OTEL_EXPORTER_OTLP_METRICS_ENDPOINT": "http://collector:4318/v1/metrics",
+				"OTEL_METRIC_EXPORT_INTERVAL":         "1m",
+			},
+			wantErr: "OTEL_METRIC_EXPORT_INTERVAL must be a positive number of milliseconds",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			p := otel.New(otel.Config{})
+
+			app, err := newApp(t, tt.env, p)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("New() error = %v, want %q", err, tt.wantErr)
+				}
+
+				return
+			}
+
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			_, got := p.MeterProvider().(*sdkmetric.MeterProvider)
+			if got != tt.wantMetrics {
+				t.Errorf("MeterProvider() is the SDK provider = %v, want %v", got, tt.wantMetrics)
+			}
+
+			// Nothing was exported yet, so shutting down does not dial the collector.
+			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+			defer cancel()
+
+			_ = app.Shutdown(ctx)
 		})
 	}
 }
@@ -484,6 +576,14 @@ func TestSecurity_A09_OTelBadSettingsDoNotEchoHeaders(t *testing.T) {
 			name:    "traces headers",
 			env:     map[string]string{"OTEL_EXPORTER_OTLP_TRACES_HEADERS": "a=1,b=%zz" + secret},
 			wantErr: "OTEL_EXPORTER_OTLP_TRACES_HEADERS: entry 2: bad percent-encoding",
+		},
+		{
+			name: "metrics headers",
+			env: map[string]string{
+				"OTEL_EXPORTER_OTLP_METRICS_ENDPOINT": "http://collector:4318/v1/metrics",
+				"OTEL_EXPORTER_OTLP_METRICS_HEADERS":  "Authorization Bearer " + secret,
+			},
+			wantErr: "OTEL_EXPORTER_OTLP_METRICS_HEADERS: entry 1 is not key=value",
 		},
 		{
 			name:    "timeout",
