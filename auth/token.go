@@ -56,7 +56,9 @@ func (t *Tokens) q(sqlText string) string {
 }
 
 // Create issues a token for userID and returns the plain value, shown to
-// the client once. ttl 0 means no expiry.
+// the client once. ttl 0 means the token never expires and stays valid
+// until revoked; pass a ttl unless that is intended (the install:api
+// scaffold issues 30-day tokens).
 func (t *Tokens) Create(
 	ctx context.Context,
 	userID, name string,
