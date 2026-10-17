@@ -2,6 +2,7 @@ package queue
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -18,7 +19,9 @@ type WorkOptions struct {
 	// MaxJobs stops after processing this many jobs (0 = no limit), e.g.
 	// for "queue:work --once".
 	MaxJobs int
-	// StopWhenEmpty returns when no job is available.
+	// StopWhenEmpty returns when no job is available. A reserve error then
+	// ends Work with that error (without it, the error is logged and the
+	// worker keeps polling).
 	StopWhenEmpty bool
 	// StopTimeout bounds the drain once ctx is cancelled: jobs still
 	// running after it have their context cancelled and go back to the
@@ -84,6 +87,18 @@ func (q *Queue) Work(ctx context.Context, o WorkOptions) error {
 					}
 
 					q.log.ErrorContext(ctx, "queue: reserve job", "err", err)
+
+					// A store error is not an empty queue: report it rather
+					// than exiting cleanly with jobs left behind.
+					if o.StopWhenEmpty {
+						mu.Lock()
+						if firstErr == nil {
+							firstErr = fmt.Errorf("queue: reserve job: %w", err)
+						}
+						mu.Unlock()
+
+						return
+					}
 				}
 
 				if m == nil {
