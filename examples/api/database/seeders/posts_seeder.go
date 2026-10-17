@@ -1,0 +1,17 @@
+package seeders
+
+import (
+	"context"
+
+	"github.com/AlexGalhardo/vukem/database"
+	"github.com/AlexGalhardo/vukem/examples/api/database/factories"
+)
+
+// PostsSeeder creates demo posts.
+type PostsSeeder struct{}
+
+// Seed implements vukem.Seeder.
+func (PostsSeeder) Seed(ctx context.Context, db *database.DB) error {
+	_, err := factories.Post.Count(10).Create(ctx, db)
+	return err
+}

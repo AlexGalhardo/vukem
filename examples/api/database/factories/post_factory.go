@@ -1,0 +1,12 @@
+// Package factories builds models with fake data for tests and seeders.
+package factories
+
+import (
+	"github.com/AlexGalhardo/vukem/examples/api/app/models"
+	"github.com/AlexGalhardo/vukem/factory"
+)
+
+// Post builds models.Post with fake data: factories.Post.Count(10).Create(ctx, db).
+var Post = factory.New(func(f *factory.Faker) models.Post {
+	return models.Post{Title: f.Words(4), Body: f.Paragraph()}
+})

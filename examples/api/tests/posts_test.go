@@ -1,0 +1,41 @@
+package tests
+
+import (
+	"testing"
+
+	"github.com/AlexGalhardo/vukem/examples/api/bootstrap"
+	"github.com/AlexGalhardo/vukem/vukemtest"
+)
+
+func TestPostsAPI(t *testing.T) {
+	t.Parallel()
+
+	app := vukemtest.New(t, bootstrap.New)
+	token := apiUser(t, app, "writer@example.com")
+	writer := app.Client(t).WithToken(token)
+
+	writer.PostJSON("/api/v1/posts", map[string]any{"title": "Hello API", "body": "First."}).
+		AssertCreated().
+		AssertHeader("Location", "/api/v1/posts/1").
+		AssertJSONPath("title", "Hello API")
+
+	writer.PostJSON("/api/v1/posts", map[string]any{"title": "Second post"}).AssertCreated()
+	writer.PostJSON("/api/v1/posts", map[string]any{"title": "x"}).AssertJSONValidationErrors("title")
+
+	// Anyone can read; pages come in an envelope.
+	reader := app.Client(t)
+	reader.GetJSON("/api/v1/posts?sort=title&per_page=1").AssertOK().
+		AssertJSONCount("data", 1).
+		AssertJSONPath("data.0.title", "Hello API").
+		AssertJSONPath("meta.total", 2).
+		AssertJSONPath("links.next", "/api/v1/posts?page=2&per_page=1&sort=title")
+	reader.GetJSON("/api/v1/posts?sort=password").AssertStatus(400)
+	reader.GetJSON("/api/v1/posts/99").AssertProblem(404)
+
+	// Writes need a token.
+	reader.PostJSON("/api/v1/posts", map[string]any{"title": "Nope"}).AssertUnauthorized()
+
+	writer.PatchJSON("/api/v1/posts/1", map[string]any{"title": "Edited"}).AssertOK().AssertJSONPath("title", "Edited")
+	writer.Delete("/api/v1/posts/1").AssertNoContent()
+	vukemtest.AssertDatabaseCount(t, app, "posts", 1)
+}

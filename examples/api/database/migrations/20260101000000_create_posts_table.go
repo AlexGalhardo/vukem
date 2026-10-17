@@ -1,0 +1,18 @@
+package migrations
+
+import "github.com/AlexGalhardo/vukem/schema"
+
+func m20260101000000CreatePostsTable() schema.Migration {
+	return schema.Migration{
+		ID: "20260101000000_create_posts_table",
+		Up: func(s *schema.Schema) error {
+			return s.Create("posts", func(t *schema.Table) {
+				t.ID()
+				t.String("title")
+				t.Text("body")
+				t.Timestamps()
+			})
+		},
+		Down: func(s *schema.Schema) error { return s.DropIfExists("posts") },
+	}
+}
