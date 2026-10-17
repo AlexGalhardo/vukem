@@ -254,3 +254,40 @@ func TestStringPreprocess(t *testing.T) {
 		})
 	}
 }
+
+func TestStringPreprocess_RevalidatesOutput(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		fn   func(string) string
+	}{
+		{"control char", func(s string) string { return s + "\x00" }},
+		{"invalid utf8", func(s string) string { return s + "\xff" }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := String().Preprocess(tt.fn).Parse("ok")
+
+			is, ok := AsIssues(err)
+			if !ok || len(is) != 1 || is[0].Key != "string.utf8" {
+				t.Errorf("Parse(%q) error = %v, want one string.utf8 issue", "ok", err)
+			}
+		})
+	}
+}
+
+func TestStringPreprocess_NilPanics(t *testing.T) {
+	t.Parallel()
+
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("Preprocess(nil) did not panic")
+		}
+	}()
+
+	String().Preprocess(nil)
+}

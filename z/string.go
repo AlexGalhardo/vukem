@@ -64,15 +64,20 @@ func (s StringSchema) core(c *pctx, path string, in any) (string, bool) {
 		return "", false
 	}
 
-	if !utf8.ValidString(v) || strings.ContainsFunc(v, func(r rune) bool {
-		return unicode.IsControl(r) && r != '\n' && r != '\r' && r != '\t'
-	}) {
+	if !safeText(v) {
 		s.o.issue(c, path, CodeInvalidString, "string.utf8", nil)
 		return "", false
 	}
 
 	for _, p := range s.pre {
 		v = p(v)
+	}
+
+	// Fail closed: a Preprocess func must not reintroduce what the first
+	// check rejected.
+	if len(s.pre) > 0 && !safeText(v) {
+		s.o.issue(c, path, CodeInvalidString, "string.utf8", nil)
+		return "", false
 	}
 
 	before := len(c.issues)
@@ -82,6 +87,14 @@ func (s StringSchema) core(c *pctx, path string, in any) (string, bool) {
 	}
 
 	return v, len(c.issues) == before
+}
+
+// safeText reports whether v is valid UTF-8 without control characters
+// other than tab, newline and carriage return.
+func safeText(v string) bool {
+	return utf8.ValidString(v) && !strings.ContainsFunc(v, func(r rune) bool {
+		return unicode.IsControl(r) && r != '\n' && r != '\r' && r != '\t'
+	})
 }
 
 // Parse implements Schema.
@@ -103,8 +116,17 @@ func (s StringSchema) ToUpper() StringSchema { return s.with(strings.ToUpper, ni
 // phone number down to digits so Regex sees the normalized form.
 // Pre-steps (Trim, ToLower, ToUpper, Preprocess) run in declaration order
 // after the UTF-8 check and before every check (Min, Regex, Email...);
-// Transform runs after the checks, and Refine last.
-func (s StringSchema) Preprocess(fn func(string) string) StringSchema { return s.with(fn, nil) }
+// Transform runs after the checks, and Refine last. The result is checked
+// again for invalid UTF-8 and control characters (fail closed). The
+// normalized value is what JSON Schema keywords (pattern, minLength...)
+// describe. Preprocess panics if fn is nil.
+func (s StringSchema) Preprocess(fn func(string) string) StringSchema {
+	if fn == nil {
+		panic("z: StringSchema.Preprocess: nil func")
+	}
+
+	return s.with(fn, nil)
+}
 
 // Min requires at least n characters (runes).
 func (s StringSchema) Min(n int) StringSchema {
