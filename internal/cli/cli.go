@@ -88,6 +88,13 @@ func commands() []command {
 		{"make:mail", "<Name>", "Create a mailable and its view", makeMail},
 		{"make:policy", "<Name>", "Create an authorization policy and register it", makePolicy},
 		{"make:test", "<Name>", "Create a test using the fluent client", makeTest},
+		{"make:proto", "<Name>", "Create a gRPC service .proto (and buf.yaml, buf.gen.yaml)", makeProto},
+		{
+			"codegen:rpc",
+			"",
+			"Generate Go and connect-go code from proto/ (buf or protoc, plugins via go tool)",
+			codegenRPC,
+		},
 	}
 }
 

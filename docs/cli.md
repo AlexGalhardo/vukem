@@ -6,7 +6,7 @@ The `vukem` command: scaffolding, generators, dev server, and delegation to the 
 
 | Binary | Installed by | Knows about the app? | Commands |
 | --- | --- | --- | --- |
-| **`vukem`** (global) | `go install github.com/AlexGalhardo/vukem/cmd/vukem@latest` | No — works on files | `new`, `make:*`, `install:*`, `serve`, `build`, `key:generate`, `version` |
+| **`vukem`** (global) | `go install github.com/AlexGalhardo/vukem/cmd/vukem@latest` | No — works on files | `new`, `make:*`, `install:*`, `serve`, `build`, `key:generate`, `codegen:rpc`, `version` |
 | **app binary** (`cmd/app`) | built from the user's project | Yes — boots the app | `serve:http` (default), `migrate*`, `db:*`, `route:list`, `queue:*`, `schedule:*`, `openapi:*`, `codegen:types`, `codegen:routes`, `codegen:client`, `about`, user commands |
 
 When `vukem` receives a command it does not own, it delegates to the project's binary: `cmd/app` is built into `.vukem/bin/app` (rebuilt only when a `.go`, `go.mod` or `go.sum` file is newer than the binary) and run with the same arguments; its exit code is passed through. So `vukem migrate` works from the project root exactly like `php artisan migrate`. Projects ignore `.vukem/` in `.gitignore`.
@@ -59,6 +59,8 @@ Exit codes: `0` success, `1` failure, `2` usage error.
 | app: `codegen:types [-zod] [-o file]` | TypeScript types for every schema and operation (`<Op>Body`, `<Op>Query`, `<Op>Response`), plus Zod schemas with `-zod` |
 | app: `codegen:routes [-o file]` | Typed `routes.ts` for the frontend (`route(name, params, query)`, `RouteName`, `routes`); default `resources/js/routes.ts`, `-o -` prints to stdout; runs in warmup mode, no connections ([frontend.md](frontend.md)) |
 | app: `codegen:client [-lang ts\|go] [-o file] [-package name]` | Typed API client from the OpenAPI document: TypeScript `createClient` (default `resources/js/api.ts`) or a stdlib-only Go `Client` (default `internal/apiclient/client.go`, package `apiclient`); `-o -` prints to stdout; runs in warmup mode ([api.md](api.md#client-generation)) |
+| `vukem make:proto <Name> [--force]` | gRPC service skeleton `proto/<name>/v1/<name>.proto` (package `<name>.v1`, `go_package` under `gen/`, one `Get<Name>` RPC), plus `buf.yaml` and a `buf.gen.yaml` running `protoc-gen-go` and `protoc-gen-connect-go` through `go tool` when they do not exist yet; prints the `go get -tool` lines ([api.md](api.md#code-generation)) |
+| `vukem codegen:rpc [--protoc] [-proto dir] [-out dir]` | Generate Go and connect-go code: `buf generate` with `buf.gen.yaml` (`go tool buf` when buf is a tool of the module, else `buf` on `PATH`), otherwise `protoc` with the plugins built by `go tool -n`; refuses to run until both plugins are `tool` directives in `go.mod` ([api.md](api.md#code-generation)) |
 | app: `about` | Versions, environment, drivers, config summary (secrets redacted) |
 
 ### ALPHA
@@ -67,7 +69,7 @@ Shipped: `new --api`, `install:api`, `make:resource`, `make:factory`, `make:seed
 
 ### BETA
 
-Shipped: app: `openapi:export`, `codegen:types`, `codegen:routes`, `codegen:client`, `openapi:serve` (via `apidocs.Command()`), `queue:work`, `queue:failed`, `queue:retry`, `queue:forget`, `schedule:run`, `schedule:work`, `schedule:list` (see the table above).
+Shipped: `make:proto`, `codegen:rpc`, app: `openapi:export`, `codegen:types`, `codegen:routes`, `codegen:client`, `openapi:serve` (via `apidocs.Command()`), `queue:work`, `queue:failed`, `queue:retry`, `queue:forget`, `schedule:run`, `schedule:work`, `schedule:list` (see the table above).
 
 Planned: `install:inertia`, `ssr:start`, app: `down`/`up` (maintenance mode).
 

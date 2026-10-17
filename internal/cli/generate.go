@@ -40,6 +40,10 @@ type stubData struct {
 	Event     string // listener: event type name
 	Create    bool   // migration creates Table
 	Alter     bool   // migration alters Table
+
+	GoPkg           string // proto: Go package name ("blogpostv1")
+	ProtobufVersion string // buf.gen.yaml: protoc-gen-go version
+	ConnectVersion  string // buf.gen.yaml: protoc-gen-connect-go version
 }
 
 func newStubData(env *Env, name string) (stubData, error) {

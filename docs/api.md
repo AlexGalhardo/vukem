@@ -348,6 +348,22 @@ func (g *greeter) Greet(ctx context.Context, req *connect.Request[greetv1.GreetR
 - **HTTP/2**: native gRPC needs HTTP/2. Outside production the app server also speaks HTTP/2 cleartext (h2c, stdlib `http.Protocols`), so `grpcurl -plaintext localhost:3000 list` works with `vukem serve`. Production expects TLS: terminate it at a proxy that speaks HTTP/2 to the app (h2c with `HTTP_H2C=true`), or serve TLS yourself. gRPC-Web and Connect also work over HTTP/1.1, from browsers too (same-origin, or CORS on the route).
 - Route middleware that wraps the writer stays compatible with streams: `Mount` flushes through the whole writer chain. Avoid `middleware.Timeout` and `Gzip` on RPC routes (use deadlines and connect-go compression instead).
 
+### Code generation
+
+The framework never needs `protoc` itself; your app runs the generators as [Go tools](https://go.dev/doc/modules/managing-dependencies#tools) pinned in its `go.mod`:
+
+```sh
+vukem make:proto Invoice      # proto/invoice/v1/invoice.proto, buf.yaml, buf.gen.yaml
+go get -tool google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.12
+go get -tool connectrpc.com/connect/cmd/protoc-gen-connect-go@v1.21.1
+go get github.com/AlexGalhardo/vukem/contrib/grpc
+vukem codegen:rpc             # gen/invoice/v1/*.pb.go and invoicev1connect/*.connect.go
+```
+
+- **buf** (recommended): `codegen:rpc` runs `buf generate` with the `buf.gen.yaml` from `make:proto`, whose plugins are `local: ["go", "tool", "protoc-gen-go"]` and `["go", "tool", "protoc-gen-connect-go"]`. Pin buf too with `go get -tool github.com/bufbuild/buf/cmd/buf@v1.74.0` (then `go tool buf` is used), or install it on `PATH`. `buf lint` and `buf breaking` use the generated `buf.yaml` (STANDARD, FILE).
+- **protoc**: without `buf.gen.yaml` or buf (or with `--protoc`), `codegen:rpc` calls `protoc -I proto` on every `.proto` under `-proto` with the two plugins built by `go tool -n`, writing `paths=source_relative` output to `-out` (`gen`).
+- Generated code is committed like any source; regenerate after editing a `.proto`.
+
 ### Testing RPC services
 
 `contrib/grpc/grpctest` runs the app handler on an in-process HTTP/2 server and lists the client options of each protocol, so one test covers them all:

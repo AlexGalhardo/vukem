@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+package {{.Snake}}.v1;
+
+option go_package = "{{.Module}}/gen/{{.Snake}}/v1;{{.GoPkg}}";
+
+// {{.Name}}Service is served by contrib/grpc (gRPC, gRPC-Web and Connect).
+service {{.Name}}Service {
+  // Get{{.Name}} returns one {{.Name}}.
+  rpc Get{{.Name}}(Get{{.Name}}Request) returns (Get{{.Name}}Response) {}
+}
+
+message Get{{.Name}}Request {
+  int64 id = 1;
+}
+
+message Get{{.Name}}Response {
+  int64 id = 1;
+  string name = 2;
+}

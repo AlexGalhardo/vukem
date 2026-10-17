@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+package blog_post.v1;
+
+option go_package = "example.com/blog/gen/blog_post/v1;blogpostv1";
+
+// BlogPostService is served by contrib/grpc (gRPC, gRPC-Web and Connect).
+service BlogPostService {
+  // GetBlogPost returns one BlogPost.
+  rpc GetBlogPost(GetBlogPostRequest) returns (GetBlogPostResponse) {}
+}
+
+message GetBlogPostRequest {
+  int64 id = 1;
+}
+
+message GetBlogPostResponse {
+  int64 id = 1;
+  string name = 2;
+}

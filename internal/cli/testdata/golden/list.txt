@@ -36,5 +36,8 @@ Usage:
   make:mail <Name>        Create a mailable and its view
   make:policy <Name>      Create an authorization policy and register it
   make:test <Name>        Create a test using the fluent client
+  make:proto <Name>       Create a gRPC service .proto (and buf.yaml, buf.gen.yaml)
+ codegen
+  codegen:rpc             Generate Go and connect-go code from proto/ (buf or protoc, plugins via go tool)
 
 Other commands (migrate, route:list, about, your own) run in the app: vukem <command>.
