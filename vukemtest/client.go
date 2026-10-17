@@ -83,9 +83,21 @@ func (c *Client) AcceptJSON() *Client { return c.WithHeader("Accept", "applicati
 // Get sends GET.
 func (c *Client) Get(target string) *Response { return c.Do(http.MethodGet, target, nil, "") }
 
-// GetJSON sends GET accepting JSON.
+// GetJSON sends one GET accepting JSON; later requests keep the client's
+// own Accept header (use AcceptJSON to change it for good).
 func (c *Client) GetJSON(target string) *Response {
-	return c.WithHeader("Accept", "application/json").Get(target)
+	prev, had := c.headers["Accept"]
+	c.headers.Set("Accept", "application/json")
+
+	defer func() {
+		if had {
+			c.headers["Accept"] = prev
+		} else {
+			c.headers.Del("Accept")
+		}
+	}()
+
+	return c.Get(target)
 }
 
 // Delete sends DELETE.

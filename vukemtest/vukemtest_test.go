@@ -111,6 +111,7 @@ func build(opts ...vukem.Option) (*vukem.App, error) {
 
 			r.Get("/secret", func(*web.Ctx) error { return errs.ErrForbidden })
 			r.Get("/teapot", func(c *web.Ctx) error { return c.String(418, "tea") })
+			r.Get("/accept", func(c *web.Ctx) error { return c.String(200, c.Header("Accept")) })
 			r.Delete("/notes", func(c *web.Ctx) error { return c.NoContent() })
 
 			return nil
@@ -325,4 +326,20 @@ func TestAssertMatchesOpenAPI(t *testing.T) {
 		app.Client(tb).GetJSON("/api/codes/abcdef").AssertMatchesOpenAPI()
 	})
 	expectFailure(t, "no operation", func(tb *fakeTB) { app.Client(tb).GetJSON("/nowhere").AssertMatchesOpenAPI() })
+}
+
+func TestGetJSONDoesNotStick(t *testing.T) {
+	t.Parallel()
+
+	c := vukemtest.New(t, build).Client(t)
+
+	c.GetJSON("/accept").AssertSee("application/json")
+
+	if got := c.Get("/accept").Body(); strings.Contains(got, "application/json") {
+		t.Errorf("Accept after GetJSON = %q, want the client's default", got)
+	}
+
+	c.AcceptJSON()
+	c.GetJSON("/accept")
+	c.Get("/accept").AssertSee("application/json") // AcceptJSON stays
 }
