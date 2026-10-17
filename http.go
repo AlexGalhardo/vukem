@@ -132,6 +132,11 @@ func (a *App) ReadyHandler() http.Handler {
 	})
 }
 
+type readiness struct {
+	Status string            `json:"status"`
+	Checks map[string]string `json:"checks"`
+}
+
 func (a *App) writeReadiness(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	results := a.CheckHealth(ctx)
@@ -153,7 +158,9 @@ func (a *App) writeReadiness(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(code)
-	_ = json.NewEncoder(w).Encode(map[string]any{"status": status, "checks": checks})
+	if err := json.NewEncoder(w).Encode(readiness{Status: status, Checks: checks}); err != nil {
+		a.Log.DebugContext(ctx, "write readiness response", "err", err) // client gone
+	}
 }
 
 // healthHandler is the liveness probe: 200 once the app booted. With
