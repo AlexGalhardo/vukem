@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"path"
+	"strings"
 
 	"github.com/AlexGalhardo/vukem/i18n"
 )
@@ -51,9 +52,9 @@ func loadMessages() (*i18n.Bundle, error) {
 
 // T translates an "auth.*" message into the request locale, which
 // i18n.Middleware resolves when the app uses vukem.WithTranslations
-// (English otherwise). A key in the app's own catalog for that locale
-// (resources/lang/<locale>.json) wins, so the app can reword a message or
-// add a locale without editing lang/.
+// (English otherwise). A key in the app's own catalog for that locale or
+// its language (resources/lang/pt-BR.json, then pt.json) wins, so the app
+// can reword a message or add a locale without editing lang/.
 func (a *Accounts) T(ctx context.Context, key string, args ...any) string {
 	locale := i18n.Locale(ctx)
 
@@ -62,8 +63,19 @@ func (a *Accounts) T(ctx context.Context, key string, args ...any) string {
 			locale = app.Default()
 		}
 
-		if app.Has(locale, key) {
-			return app.T(locale, key, args...)
+		// pt-BR, then pt: an app's pt.json serves pt-BR requests. The app's
+		// default locale is not tried, so it never hides a translation here.
+		for l := locale; l != ""; {
+			if app.Has(l, key) {
+				return app.T(l, key, args...)
+			}
+
+			i := strings.LastIndex(l, "-")
+			if i < 0 {
+				break
+			}
+
+			l = l[:i]
 		}
 	}
 

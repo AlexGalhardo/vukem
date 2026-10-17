@@ -7,6 +7,7 @@ import (
 	"github.com/AlexGalhardo/vukem/vukemtest"
 
 	"{{.Module}}/app/accounts"
+	"{{.Module}}/app/mail"
 	"{{.Module}}/bootstrap"
 )
 
@@ -57,5 +58,28 @@ func TestAuthMessages(t *testing.T) {
 
 	if got := acc.T(i18n.WithBundle(t.Context(), own), key); got != "Done." {
 		t.Errorf("T(%q) with the app's catalog = %q, want %q", key, got, "Done.")
+	}
+
+	// The app's "pt" catalog serves pt-BR requests too.
+	if err := own.Add("pt", map[string]any{key: "Pronto."}); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := i18n.WithLocale(i18n.WithBundle(t.Context(), own), "pt-BR")
+	if got := acc.T(ctx, key); got != "Pronto." {
+		t.Errorf("T(%q) in pt-BR with the app's pt catalog = %q, want %q", key, got, "Pronto.")
+	}
+}
+
+// Mailables built without a translated subject keep an English one.
+func TestAuthMailSubjectFallback(t *testing.T) {
+	t.Parallel()
+
+	if got := (mail.VerifyEmail{}).Envelope().Subject; got != "Verify your email address" {
+		t.Errorf("VerifyEmail subject = %q", got)
+	}
+
+	if got := (mail.ResetPassword{}).Envelope().Subject; got != "Reset your password" {
+		t.Errorf("ResetPassword subject = %q", got)
 	}
 }

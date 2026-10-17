@@ -1,6 +1,8 @@
 package mail
 
 import (
+	"cmp"
+
 	"github.com/AlexGalhardo/vukem/mail"
 
 	"{{.Module}}/app/models"
@@ -10,14 +12,14 @@ import (
 type VerifyEmail struct {
 	User models.User
 	Link string
-	// Subject is translated by the sender (accounts.T); mailables have no
-	// request context.
+	// Subject is translated by the sender (accounts.T), since mailables
+	// have no request context; empty means English.
 	Subject string
 }
 
 // Envelope implements mail.Mailable.
 func (m VerifyEmail) Envelope() mail.Envelope {
-	return mail.Envelope{To: []string{m.User.Email}, Subject: m.Subject}
+	return mail.Envelope{To: []string{m.User.Email}, Subject: cmp.Or(m.Subject, "Verify your email address")}
 }
 
 // Content implements mail.Mailable.
@@ -32,7 +34,7 @@ type ResetPassword struct {
 
 // Envelope implements mail.Mailable.
 func (m ResetPassword) Envelope() mail.Envelope {
-	return mail.Envelope{To: []string{m.User.Email}, Subject: m.Subject}
+	return mail.Envelope{To: []string{m.User.Email}, Subject: cmp.Or(m.Subject, "Reset your password")}
 }
 
 // Content implements mail.Mailable.
