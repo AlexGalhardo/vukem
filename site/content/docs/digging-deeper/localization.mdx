@@ -44,6 +44,7 @@ b.T("pt-BR", "posts.count", "count", 3)                 // a Bundle directly
 - **Fallback chain:** the locale, its shorter forms, then the default (`pt-BR` → `pt` → `en`). A missing key returns the key and calls `Options.OnMissing` when set; translating never panics.
 - **Arguments:** key/value pairs (`"name", "Ana"`) or one `map[string]any`; unknown placeholders stay as written. Output is plain text, so `html/template` escapes it.
 - **Plurals:** an object keyed by CLDR categories (`zero`, `one`, `two`, `few`, `many`, `other`; `other` is required), chosen by the numeric `count` argument. Rules cover most European languages, Arabic, Hebrew and the CJK/South-East Asian languages; others use the English rule. An explicit `zero` form wins for 0 in every language. `i18n.PluralCategory(locale, n)` exposes the rules.
+- **Vue / React / Svelte (Inertia):** `inertia.I18n()` shares the catalog with your components; see [Translations in Inertia](/docs/frontend/inertia#translations-i18n).
 
 ## Locale resolution
 
