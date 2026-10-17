@@ -1,0 +1,24 @@
+package migrations
+
+import "github.com/AlexGalhardo/vukem/schema"
+
+func m20261017090942AddTwoFactorColumns() schema.Migration {
+	return schema.Migration{
+		ID: "20261017090942_add_two_factor_columns",
+		Up: func(s *schema.Schema) error {
+			return s.Table("users", func(t *schema.Table) {
+				t.Text("two_factor_secret").Nullable()         // orm.Encrypted ciphertext
+				t.Text("two_factor_recovery_codes").Nullable() // orm.Encrypted list of SHA-256 hashes
+				t.Timestamp("two_factor_confirmed_at").Nullable()
+				t.BigInteger("two_factor_last_step").Default(0)
+			})
+		},
+		Down: func(s *schema.Schema) error {
+			return s.Table("users", func(t *schema.Table) {
+				t.DropColumn(
+					"two_factor_secret", "two_factor_recovery_codes", "two_factor_confirmed_at", "two_factor_last_step",
+				)
+			})
+		},
+	}
+}

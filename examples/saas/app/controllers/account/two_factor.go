@@ -1,0 +1,194 @@
+package account
+
+import (
+	"errors"
+
+	"github.com/AlexGalhardo/vukem/auth"
+	"github.com/AlexGalhardo/vukem/errs"
+	"github.com/AlexGalhardo/vukem/examples/saas/app/accounts"
+	"github.com/AlexGalhardo/vukem/examples/saas/app/models"
+	"github.com/AlexGalhardo/vukem/examples/saas/app/requests"
+	"github.com/AlexGalhardo/vukem/inertia"
+	"github.com/AlexGalhardo/vukem/web"
+)
+
+// Show renders the two-factor settings page.
+func (h *TwoFactorHandlers) Show(c *web.Ctx) error {
+	u, err := auth.User[models.User](c, "web")
+	if err != nil {
+		return err
+	}
+
+	tf, err := h.a.TwoFactor(c.Context(), u.ID)
+	if err != nil {
+		return err
+	}
+
+	props := inertia.Props{
+		"enabled":           tf.Enabled(),
+		"pending":           tf.Pending(),
+		"recoveryCodes":     flashedCodes(c),
+		"recoveryCodesLeft": len(tf.TwoFactorRecoveryCodes.V),
+		"secret":            nil,
+		"qr":                nil,
+	}
+
+	if tf.Pending() {
+		_, svg, err := accounts.TwoFactorQR(h.issuer, u.Email, tf.TwoFactorSecret.V)
+		if err != nil {
+			return err
+		}
+
+		// The page inserts qr as raw HTML: safe because totp.QR writes this
+		// SVG itself (numbers and path commands, no input text).
+		props["secret"], props["qr"] = tf.TwoFactorSecret.V, svg
+	}
+
+	return inertia.Render(c, "Auth/TwoFactor", props)
+}
+
+// Enable creates a secret to scan; it is active once confirmed.
+func (h *TwoFactorHandlers) Enable(c *web.Ctx) error {
+	u, err := auth.User[models.User](c, "web")
+	if err != nil {
+		return err
+	}
+
+	if err := h.a.EnableTwoFactor(c.Context(), u.ID); err != nil {
+		return err
+	}
+
+	return c.Redirect("/user/two-factor")
+}
+
+// Confirm turns two-factor authentication on with a first code and shows
+// the recovery codes once.
+func (h *TwoFactorHandlers) Confirm(c *web.Ctx) error {
+	u, err := auth.User[models.User](c, "web")
+	if err != nil {
+		return err
+	}
+
+	in, err := web.Parse(c, requests.TwoFactorCodeSchema)
+	if err != nil {
+		return err
+	}
+
+	codes, ok, err := h.a.ConfirmTwoFactor(c.Context(), u.ID, in.Code)
+	if err != nil {
+		return err
+	}
+
+	if !ok {
+		web.SecurityEvent(c.Request(), "auth.2fa_failed", "user_id", u.AuthID(), "stage", "confirm")
+		return accounts.InvalidTwoFactorCode()
+	}
+
+	c.Session().Flash(recoveryCodesFlash, codes)
+	inertia.Flash(c, "status", "Two-factor authentication is on.")
+
+	return c.Redirect("/user/two-factor")
+}
+
+// RegenerateRecoveryCodes replaces the recovery codes and shows the new
+// ones once.
+func (h *TwoFactorHandlers) RegenerateRecoveryCodes(c *web.Ctx) error {
+	u, err := auth.User[models.User](c, "web")
+	if err != nil {
+		return err
+	}
+
+	codes, err := h.a.RegenerateRecoveryCodes(c.Context(), u.ID)
+	if err != nil {
+		return err
+	}
+
+	c.Session().Flash(recoveryCodesFlash, codes)
+
+	return c.Redirect("/user/two-factor")
+}
+
+// Disable turns two-factor authentication off after checking the
+// current password.
+func (h *TwoFactorHandlers) Disable(c *web.Ctx) error {
+	u, err := auth.User[models.User](c, "web")
+	if err != nil {
+		return err
+	}
+
+	in, err := web.Parse(c, requests.ConfirmPasswordSchema)
+	if err != nil {
+		return err
+	}
+
+	if ok, err := h.a.Hasher.Verify(u.Password, in.Password); err != nil || !ok {
+		web.SecurityEvent(c.Request(), "auth.2fa_failed", "user_id", u.AuthID(), "stage", "disable")
+		return errs.NewValidation().Add("password", "The password is incorrect.")
+	}
+
+	if err := h.a.DisableTwoFactor(c.Context(), u.ID); err != nil {
+		return err
+	}
+
+	inertia.Flash(c, "status", "Two-factor authentication is off.")
+
+	return c.Redirect("/user/two-factor")
+}
+
+// ShowChallenge renders the code step of the login.
+func (h *TwoFactorHandlers) ShowChallenge(c *web.Ctx) error {
+	if _, _, err := h.a.PendingTwoFactor(c); err != nil {
+		return expiredChallenge(c, err)
+	}
+
+	return inertia.Render(c, "Auth/TwoFactorChallenge", nil)
+}
+
+// Challenge finishes the login with a code from the app or a recovery
+// code, then goes to the page the user wanted.
+func (h *TwoFactorHandlers) Challenge(c *web.Ctx) error {
+	u, remember, err := h.a.PendingTwoFactor(c)
+	if err != nil {
+		return expiredChallenge(c, err)
+	}
+
+	in, err := web.Parse(c, requests.TwoFactorChallengeSchema)
+	if err != nil {
+		return err
+	}
+
+	ok, err := h.a.VerifyTwoFactor(c.Context(), u.ID, in.Code, in.RecoveryCode)
+	if err != nil {
+		return err
+	}
+
+	if !ok {
+		web.SecurityEvent(c.Request(), "auth.2fa_failed", "user_id", u.AuthID(), "stage", "challenge")
+
+		if in.Code == "" {
+			return errs.NewValidation().Add("recovery_code", "The recovery code is invalid.")
+		}
+
+		return accounts.InvalidTwoFactorCode()
+	}
+
+	accounts.ClearTwoFactorChallenge(c)
+
+	if err := h.a.Web.Login(c, u, auth.Remember(remember)); err != nil {
+		return err
+	}
+
+	target, _ := c.Session().Pull(auth.IntendedKey).(string)
+
+	return c.Redirect(web.SafeRedirect(c.Request(), target, "/dashboard"))
+}
+
+func expiredChallenge(c *web.Ctx, err error) error {
+	if !errors.Is(err, accounts.ErrNoTwoFactorChallenge) {
+		return err
+	}
+
+	inertia.Flash(c, "status", "Your login expired. Please log in again.")
+
+	return c.Redirect("/login")
+}

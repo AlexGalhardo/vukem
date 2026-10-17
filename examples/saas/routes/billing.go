@@ -1,0 +1,40 @@
+package routes
+
+import (
+	"github.com/AlexGalhardo/vukem"
+	"github.com/AlexGalhardo/vukem/auth"
+	"github.com/AlexGalhardo/vukem/events"
+	"github.com/AlexGalhardo/vukem/examples/saas/app/accounts"
+	"github.com/AlexGalhardo/vukem/examples/saas/app/billing"
+	"github.com/AlexGalhardo/vukem/examples/saas/app/controllers/account"
+	"github.com/AlexGalhardo/vukem/router"
+)
+
+// Billing registers the billing page, Stripe Checkout, the Billing Portal
+// and the Stripe webhook (vukem install:billing). Protect your own routes
+// with b.Subscribed() or b.OnPlan("pro") after auth.Required.
+func Billing(r *router.Router, app *vukem.App) error {
+	acc, err := accounts.New(app)
+	if err != nil {
+		return err
+	}
+
+	b, err := billing.New(app)
+	if err != nil {
+		return err
+	}
+
+	// POST /stripe/webhook runs before the session and CSRF middleware:
+	// Stripe authenticates with Stripe-Signature, not cookies.
+	r.UseServer(b.Webhook())
+	events.Listen(app.Events, b.HandleWebhook)
+
+	h := account.NewBilling(b)
+	required := auth.Required(acc.Web)
+
+	r.Get("/billing", h.Show).Name("billing.show").Use(required)
+	r.Post("/billing/checkout/{plan}", h.Checkout).Name("billing.checkout").Use(required)
+	r.Post("/billing/portal", h.Portal).Name("billing.portal").Use(required)
+
+	return nil
+}

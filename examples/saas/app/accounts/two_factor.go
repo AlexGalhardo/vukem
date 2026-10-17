@@ -1,0 +1,294 @@
+package accounts
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/AlexGalhardo/vukem/auth/totp"
+	"github.com/AlexGalhardo/vukem/database"
+	"github.com/AlexGalhardo/vukem/errs"
+	"github.com/AlexGalhardo/vukem/examples/saas/app/models"
+	"github.com/AlexGalhardo/vukem/orm"
+	"github.com/AlexGalhardo/vukem/web"
+)
+
+// Two-factor authentication settings (vukem install:auth --2fa).
+const (
+	// RecoveryCodeCount is how many single-use recovery codes a user gets.
+	RecoveryCodeCount = 8
+	// TwoFactorChallengeTTL is how long the code step stays open after a
+	// correct password.
+	TwoFactorChallengeTTL = 5 * time.Minute
+
+	pendingUserKey     = "two_factor.user"
+	pendingRememberKey = "two_factor.remember"
+	pendingSinceKey    = "two_factor.since"
+)
+
+var (
+	// ErrNoTwoFactorChallenge means there is no pending login, or it expired.
+	ErrNoTwoFactorChallenge = errors.New("accounts: no pending two-factor login")
+
+	errTwoFactorEnabled = errs.New(http.StatusConflict, "Two-factor authentication is already enabled.")
+	errTwoFactorOff     = errs.New(http.StatusConflict, "Two-factor authentication is not enabled.")
+)
+
+// InvalidTwoFactorCode is the validation error for a wrong code.
+func InvalidTwoFactorCode() error {
+	return errs.NewValidation().Add("code", "The code is invalid.")
+}
+
+// TwoFactor returns the two-factor state of the user.
+func (a *Accounts) TwoFactor(ctx context.Context, userID int64) (models.TwoFactor, error) {
+	return orm.QueryOf[models.TwoFactor](a.DB).Find(ctx, userID)
+}
+
+// EnableTwoFactor stores a new secret waiting for confirmation. A
+// confirmed setup is never replaced here: that would turn 2FA off
+// without the password check of DisableTwoFactor.
+func (a *Accounts) EnableTwoFactor(ctx context.Context, userID int64) error {
+	secret, err := totp.GenerateSecret()
+	if err != nil {
+		return err
+	}
+
+	user := orm.QueryOf[models.TwoFactor](a.DB).Where("id", userID)
+
+	n, err := user.WhereNull("two_factor_confirmed_at").Update(ctx, orm.Set{
+		"two_factor_secret":         orm.Encrypted[string]{V: secret},
+		"two_factor_recovery_codes": nil,
+		"two_factor_last_step":      0,
+	})
+	if err != nil {
+		return err
+	}
+
+	if n == 0 {
+		return errTwoFactorEnabled
+	}
+
+	return nil
+}
+
+// ConfirmTwoFactor turns 2FA on when code matches the pending secret and
+// returns the recovery codes to show once. ok is false for a wrong code.
+func (a *Accounts) ConfirmTwoFactor(
+	ctx context.Context, userID int64, code string,
+) (plain []string, ok bool, err error) {
+	err = a.DB.Tx(ctx, func(tx *database.Tx) error {
+		tf, err := lockTwoFactor(ctx, tx, userID, a.now())
+		if err != nil {
+			return err
+		}
+
+		switch {
+		case tf.Enabled():
+			return errTwoFactorEnabled
+		case !tf.Pending():
+			return errTwoFactorOff
+		}
+
+		step, valid := a.checkCode(tf, code)
+		if !valid {
+			return nil
+		}
+
+		codes, hashes, err := totp.RecoveryCodes(RecoveryCodeCount)
+		if err != nil {
+			return err
+		}
+
+		plain, ok = codes, true
+
+		_, err = orm.QueryOf[models.TwoFactor](tx).Where("id", userID).Update(ctx, orm.Set{
+			"two_factor_confirmed_at":   a.now().UTC(),
+			"two_factor_last_step":      step,
+			"two_factor_recovery_codes": orm.Encrypted[[]string]{V: hashes},
+		})
+
+		return err
+	})
+
+	return plain, ok, err
+}
+
+// VerifyTwoFactor checks a code from the app (each time step works once)
+// or consumes a recovery code. Exactly one of code and recovery is used.
+func (a *Accounts) VerifyTwoFactor(ctx context.Context, userID int64, code, recovery string) (bool, error) {
+	ok := false
+
+	err := a.DB.Tx(ctx, func(tx *database.Tx) error {
+		tf, err := lockTwoFactor(ctx, tx, userID, a.now())
+		if err != nil || !tf.Enabled() {
+			return err
+		}
+
+		set := orm.Set{}
+
+		if code != "" {
+			step, valid := a.checkCode(tf, code)
+			if !valid {
+				return nil
+			}
+
+			set["two_factor_last_step"] = step
+		} else {
+			left, valid := totp.UseRecoveryCode(recovery, tf.TwoFactorRecoveryCodes.V)
+			if !valid {
+				return nil
+			}
+
+			set["two_factor_recovery_codes"] = orm.Encrypted[[]string]{V: left}
+		}
+
+		ok = true
+		_, err = orm.QueryOf[models.TwoFactor](tx).Where("id", userID).Update(ctx, set)
+
+		return err
+	})
+
+	return ok && err == nil, err
+}
+
+// RegenerateRecoveryCodes replaces the recovery codes and returns the new
+// ones to show once.
+func (a *Accounts) RegenerateRecoveryCodes(ctx context.Context, userID int64) ([]string, error) {
+	plain, hashes, err := totp.RecoveryCodes(RecoveryCodeCount)
+	if err != nil {
+		return nil, err
+	}
+
+	user := orm.QueryOf[models.TwoFactor](a.DB).Where("id", userID)
+
+	n, err := user.WhereNotNull("two_factor_confirmed_at").Update(ctx, orm.Set{
+		"two_factor_recovery_codes": orm.Encrypted[[]string]{V: hashes},
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if n == 0 {
+		return nil, errTwoFactorOff
+	}
+
+	return plain, nil
+}
+
+// DisableTwoFactor removes the secret and the recovery codes (check the
+// password first).
+func (a *Accounts) DisableTwoFactor(ctx context.Context, userID int64) error {
+	_, err := orm.QueryOf[models.TwoFactor](a.DB).Where("id", userID).Update(ctx, orm.Set{
+		"two_factor_secret":         nil,
+		"two_factor_recovery_codes": nil,
+		"two_factor_confirmed_at":   nil,
+		"two_factor_last_step":      0,
+	})
+
+	return err
+}
+
+// TwoFactorQR returns the enrolment URI of secret for account (the
+// email) and its QR code as SVG.
+func TwoFactorQR(issuer, account, secret string) (uri, svg string, err error) {
+	uri = totp.URI(issuer, account, secret, totp.Options{})
+	svg, err = totp.QR(uri, 200)
+
+	return uri, svg, err
+}
+
+// StartTwoFactorChallenge is called after a correct password. For users
+// with 2FA it records the pending login in the session (new session id)
+// instead of logging in, and returns true: send them to
+// /two-factor-challenge.
+func (a *Accounts) StartTwoFactorChallenge(c *web.Ctx, u models.User, remember bool) (bool, error) {
+	tf, err := a.TwoFactor(c.Context(), u.ID)
+	if err != nil || !tf.Enabled() {
+		return false, err
+	}
+
+	s := c.Session()
+	if s == nil {
+		return false, errors.New("accounts: two-factor login needs the session middleware")
+	}
+
+	s.Regenerate()
+	s.Put(pendingUserKey, u.AuthID())
+	s.Put(pendingRememberKey, remember)
+	s.Put(pendingSinceKey, strconv.FormatInt(a.now().Unix(), 10))
+
+	return true, nil
+}
+
+// PendingTwoFactor returns the user waiting at the challenge and whether
+// they asked to be remembered, or ErrNoTwoFactorChallenge.
+func (a *Accounts) PendingTwoFactor(c *web.Ctx) (models.User, bool, error) {
+	s := c.Session()
+	if s == nil {
+		return models.User{}, false, ErrNoTwoFactorChallenge
+	}
+
+	id, _ := s.Get(pendingUserKey).(string)
+	since, _ := s.Get(pendingSinceKey).(string)
+	remember, _ := s.Get(pendingRememberKey).(bool)
+
+	at, err := strconv.ParseInt(since, 10, 64)
+	if id == "" || err != nil || a.now().After(time.Unix(at, 0).Add(TwoFactorChallengeTTL)) {
+		ClearTwoFactorChallenge(c)
+		return models.User{}, false, ErrNoTwoFactorChallenge
+	}
+
+	u, err := a.Users.ByID(c.Context(), id)
+	if err != nil {
+		ClearTwoFactorChallenge(c)
+		return models.User{}, false, ErrNoTwoFactorChallenge
+	}
+
+	return u, remember, nil
+}
+
+// PendingTwoFactorID returns the id of the user waiting at the challenge,
+// or "" (throttle keys).
+func PendingTwoFactorID(r *http.Request) string {
+	if s := web.SessionFrom(r.Context()); s != nil {
+		id, _ := s.Get(pendingUserKey).(string)
+		return id
+	}
+
+	return ""
+}
+
+// ClearTwoFactorChallenge forgets the pending login.
+func ClearTwoFactorChallenge(c *web.Ctx) {
+	if s := c.Session(); s != nil {
+		s.Forget(pendingUserKey, pendingRememberKey, pendingSinceKey)
+	}
+}
+
+// lockTwoFactor reads the user's two-factor columns inside tx after
+// touching the row: the write takes the row lock (Postgres) or the write
+// lock (SQLite), so concurrent requests with the same code run one after
+// the other and only the first one wins.
+func lockTwoFactor(ctx context.Context, tx database.Executor, userID int64, now time.Time) (models.TwoFactor, error) {
+	q := orm.QueryOf[models.TwoFactor](tx).Where("id", userID)
+
+	n, err := q.Update(ctx, orm.Set{"updated_at": now.UTC()})
+	if err != nil {
+		return models.TwoFactor{}, err
+	}
+
+	if n == 0 {
+		return models.TwoFactor{}, orm.ErrNotFound
+	}
+
+	return q.First(ctx)
+}
+
+// checkCode validates an app code; steps up to the last used one fail.
+func (a *Accounts) checkCode(tf models.TwoFactor, code string) (int64, bool) {
+	code = strings.ReplaceAll(code, " ", "")
+	return totp.Validate(tf.TwoFactorSecret.V, code, a.now(), tf.TwoFactorLastStep, totp.Options{})
+}

@@ -1,0 +1,15 @@
+{{/* layout: none */}}<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>Vukem</title>
+	<meta property="csp-nonce" nonce="{{cspNonce}}">
+	{{viteReactRefresh}}
+	{{vite "resources/css/app.css" "resources/js/app.tsx"}}
+	{{.Head}}
+</head>
+<body class="bg-white text-zinc-900 antialiased dark:bg-zinc-950 dark:text-zinc-100">
+	{{.Inertia}}
+</body>
+</html>
