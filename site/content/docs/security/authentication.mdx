@@ -93,6 +93,7 @@ user, err := auth.User[models.User](c, "web") // in handlers behind Required
 
 ```go
 tokens := auth.NewTokens(db)
+tokens.Now = app.Now // the app clock (vukem.WithClock) drives expiry and last use
 apiGuard := auth.NewTokenGuard("api", users, tokens)
 
 plain, tok, err := tokens.Create(ctx, user.AuthID(), "cli", []string{"posts:read"}, 30*24*time.Hour)
@@ -114,11 +115,11 @@ Set `tokens.Prefix` (the `install:auth` scaffold uses `vk_`; pick one specific t
 
 | Middleware | Effect |
 | --- | --- |
-| `auth.Required(guards...)` | first guard that authenticates wins; JSON clients get 401 with `WWW-Authenticate: Bearer`, browsers a redirect to the route named `login` (intended URL kept) |
+| `auth.Required(guards...)` | first guard that authenticates wins; JSON clients get 401 with `WWW-Authenticate: Bearer`, browsers a redirect to the route named `login` (intended URL kept). When every guard is an `auth.APIGuard` (token and JWT guards), the 401 is always problem+json, never a redirect |
 | `auth.Optional(guards...)` | authenticates when possible, never blocks (pages that show more to members) |
 | `auth.Guest(guards...)` | sends logged-in users to the route named `home` |
 | `auth.Verified(guard)` | passes when the user's `EmailVerified()` is true; otherwise browsers are redirected to the route named `verification.notice` (created by `install:auth`) and JSON clients, or apps without that route, get 403 |
-| `auth.Ability(guard, abilities...)` | 403 unless the token grants every ability |
+| `auth.Ability(guard, abilities...)` | 403 unless the token grants every ability (problem+json for an `auth.APIGuard`) |
 
 ## Hashing
 

@@ -19,11 +19,18 @@ func ctxOf(w http.ResponseWriter, r *http.Request) *web.Ctx {
 // Required lets the request through when any guard authenticates it. JSON
 // and API clients get 401 (with WWW-Authenticate: Bearer when a token guard
 // is involved); browsers are redirected to the route named "login", and the
-// intended URL is remembered for GET requests.
+// intended URL is remembered for GET requests. When every guard is an
+// [APIGuard] (token and JWT guards), nobody is redirected: the 401 is always
+// problem+json, whatever the Accept header or session cookie says.
 func Required(guards ...Checker) func(http.Handler) http.Handler {
+	apiOnly := allAPI(guards)
+
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			c := ctxOf(w, r)
+			if apiOnly {
+				c = apiCtx(w, r)
+			}
 
 			for _, g := range guards {
 				if ec, ok := g.(errChecker); ok {
@@ -48,7 +55,7 @@ func Required(guards ...Checker) func(http.Handler) http.Handler {
 				}
 			}
 
-			if c.WantsJSON() || !hasSession(c) {
+			if apiOnly || c.WantsJSON() || !hasSession(c) {
 				err := ErrUnauthenticated.WithHeader("WWW-Authenticate", `Bearer realm="api"`)
 				c.HandleError(err)
 
@@ -67,6 +74,38 @@ func Required(guards ...Checker) func(http.Handler) http.Handler {
 			_ = c.Redirect(target)
 		})
 	}
+}
+
+// APIGuard is a guard for API clients that authenticate every request with
+// a credential they carry (TokenGuard, jwt.Guard). Required and Ability
+// answer problem+json and never redirect when their guards are APIGuards.
+type APIGuard interface {
+	Checker
+	// APIOnly marks the guard; it is never called.
+	APIOnly()
+}
+
+func allAPI(guards []Checker) bool {
+	for _, g := range guards {
+		if _, ok := g.(APIGuard); !ok {
+			return false
+		}
+	}
+
+	return len(guards) > 0
+}
+
+// apiCtx makes errors render as problem+json: API routes must not answer
+// HTML because a browser (or a client sending Accept: text/html) calls them.
+func apiCtx(w http.ResponseWriter, r *http.Request) *web.Ctx {
+	if c := ctxOf(w, r); c.WantsJSON() {
+		return c
+	}
+
+	r = r.Clone(r.Context())
+	r.Header.Set("Accept", "application/json")
+
+	return ctxOf(w, r)
 }
 
 // errChecker is a guard that reports why authentication failed.
@@ -157,11 +196,17 @@ func Verified(guard Checker) func(http.Handler) http.Handler {
 }
 
 // Ability requires the request's access token (from guard) to grant every
-// ability; 403 otherwise. Place it after Required.
+// ability; 403 otherwise (problem+json when guard is an [APIGuard]). Place
+// it after Required.
 func Ability(guard Checker, abilities ...string) func(http.Handler) http.Handler {
+	apiOnly := allAPI([]Checker{guard})
+
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			c := ctxOf(w, r)
+			if apiOnly {
+				c = apiCtx(w, r)
+			}
 
 			if !guard.Check(c) {
 				c.HandleError(ErrUnauthenticated)
