@@ -15,6 +15,8 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
+
 	"github.com/AlexGalhardo/vukem/config"
 	"github.com/AlexGalhardo/vukem/sse"
 )
@@ -277,6 +279,20 @@ func TestRunReturnsRunnerError(t *testing.T) {
 			t.Fatal("other runner was not stopped")
 		}
 	})
+}
+
+// Slowloris and oversized headers are bounded on every server the app runs.
+func TestSecurity_A02_ServerTimeouts(t *testing.T) {
+	t.Parallel()
+
+	s := NewHTTPServer(":0", http.NotFoundHandler()).Server
+
+	got := []any{s.ReadHeaderTimeout, s.ReadTimeout, s.WriteTimeout, s.IdleTimeout, s.MaxHeaderBytes}
+	want := []any{10 * time.Second, 30 * time.Second, 60 * time.Second, 120 * time.Second, 1 << 20}
+
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("NewHTTPServer() limits mismatch (-want +got):\n%s", diff)
+	}
 }
 
 func TestHTTPServerGracefulShutdown(t *testing.T) {

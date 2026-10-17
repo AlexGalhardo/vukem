@@ -680,6 +680,38 @@ func TestFormToMapDepthLimit(t *testing.T) {
 	}
 }
 
+// Security events are WARN records with a stable "event" attribute, the
+// request method and path, so alerts can match on them.
+func TestSecurity_A09_SecurityEventsAtWarn(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+
+	s := &Services{Log: slog.New(slog.NewJSONHandler(&buf, nil))}
+	r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/login", http.NoBody)
+	r = r.WithContext(WithServices(r.Context(), s))
+
+	SecurityEvent(r, "auth.login_failed", "guard", "web")
+
+	var rec map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &rec); err != nil {
+		t.Fatalf("log record %q: %v", buf.String(), err)
+	}
+
+	want := map[string]any{
+		"level":  "WARN",
+		"event":  "auth.login_failed",
+		"method": "POST",
+		"path":   "/login",
+		"guard":  "web",
+	}
+	for k, v := range want {
+		if rec[k] != v {
+			t.Errorf("security event %s = %v, want %v (record %s)", k, rec[k], v, buf.String())
+		}
+	}
+}
+
 func FuzzFormToMap(f *testing.F) {
 	for _, s := range []string{"a=1", "a[]=1&a[]=2", "a[b][0]=x", "a[=1", "[]=x", "a[0]=1&a[1][b]=2"} {
 		f.Add(s)

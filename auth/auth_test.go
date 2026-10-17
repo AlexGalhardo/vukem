@@ -256,6 +256,39 @@ func TestSecurity_A07_LoginErrorsDoNotRevealUsers(t *testing.T) {
 	}
 }
 
+// countingHasher counts Verify calls of the wrapped hasher.
+type countingHasher struct {
+	hash.Hasher
+
+	verifies atomic.Int32
+}
+
+func (h *countingHasher) Verify(hashed, password string) (bool, error) {
+	h.verifies.Add(1)
+	return h.Hasher.Verify(hashed, password)
+}
+
+// An unknown email costs one password hash comparison too, so response
+// time does not reveal which accounts exist.
+func TestSecurity_A07_DummyHashOnUnknownUser(t *testing.T) {
+	t.Parallel()
+
+	h := &countingHasher{Hasher: hash.Fake()}
+	ta := newApp(t, h)
+	ta.user(t, "ana@example.com", "s3cret-pass", false)
+
+	for _, email := range []string{"ana@example.com", "nobody@example.com"} {
+		before := h.verifies.Load()
+
+		ta.Client(t).AcceptJSON().PostJSON("/login", map[string]any{"email": email, "password": "nope"}).
+			AssertJSONValidationErrors("email")
+
+		if n := h.verifies.Load() - before; n != 1 {
+			t.Errorf("login as %s ran Verify %d times, want 1", email, n)
+		}
+	}
+}
+
 func TestRememberMe(t *testing.T) {
 	t.Parallel()
 

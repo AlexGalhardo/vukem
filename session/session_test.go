@@ -255,6 +255,57 @@ func TestSecurity_A07_SessionRegeneratedOnLogin(t *testing.T) {
 	}
 }
 
+// The production session cookie is host-only, Secure, HttpOnly and
+// SameSite=Lax with the __Host- prefix.
+func TestSecurity_A07_SessionCookieFlags(t *testing.T) {
+	t.Parallel()
+
+	m, _ := newManager(t, Config{Store: NewMemoryStore(), Secure: true, Production: true})
+	h := appHandler(m, &bytes.Buffer{})
+
+	r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "https://app.example.com/put?v=x", http.NoBody)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, r)
+
+	cookies := rec.Result().Cookies()
+	if len(cookies) != 1 {
+		t.Fatalf("Set-Cookie = %v, want one session cookie", rec.Header().Values("Set-Cookie"))
+	}
+
+	ck := cookies[0]
+	if !strings.HasPrefix(ck.Name, "__Host-") || !ck.Secure || !ck.HttpOnly || ck.SameSite != http.SameSiteLaxMode ||
+		ck.Path != "/" || ck.Domain != "" {
+		t.Errorf("session cookie = %+v, want __Host-, Secure, HttpOnly, SameSite=Lax, Path=/, no Domain", ck)
+	}
+}
+
+// Logout deletes the server-side session: replaying the old cookie (a
+// copy kept by an attacker) gets a fresh, empty session.
+func TestSecurity_A07_SessionInvalidatedOnLogout(t *testing.T) {
+	t.Parallel()
+
+	store := NewMemoryStore()
+	m, clk := newManager(t, Config{Store: store})
+	store.now = clk.Now
+	c := newClient(t, appHandler(m, &bytes.Buffer{}))
+
+	c.do("GET", "/login", nil)
+	stolen := *c.cookies[m.CookieName()]
+
+	c.do("GET", "/logout", nil)
+
+	if _, found, _ := store.Load(t.Context(), stolen.Value); found {
+		t.Fatal("session still in the store after logout")
+	}
+
+	replay := newClient(t, appHandler(m, &bytes.Buffer{}))
+	replay.cookies[stolen.Name] = &stolen
+
+	if got := replay.do("GET", "/get", nil).Body.String(); got != "" {
+		t.Fatalf("old cookie after logout = %q, want an empty session", got)
+	}
+}
+
 func TestSecurity_A08_TamperedCookieRejected(t *testing.T) {
 	t.Parallel()
 

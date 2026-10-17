@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -71,6 +72,31 @@ func TestMigrateCommands(t *testing.T) {
 	}
 	if out, err := run("test", "migrate:reset"); err != nil || !strings.Contains(out, "Rolled back:") {
 		t.Fatalf("reset = %q %v", out, err)
+	}
+}
+
+func TestSecurity_A02_DestructiveCommandsNeedForce(t *testing.T) {
+	t.Parallel()
+
+	for _, cmd := range []string{"migrate:fresh", "migrate:reset", "db:wipe", "db:seed"} {
+		t.Run(cmd, func(t *testing.T) {
+			t.Parallel()
+
+			dbURL := "file:" + filepath.Join(t.TempDir(), "app.db")
+			getenv := func(k string) (string, bool) {
+				v, ok := map[string]string{"APP_KEY": testKey, "APP_ENV": "production", "DATABASE_URL": dbURL}[k]
+				return v, ok
+			}
+
+			build := func(opts ...Option) (*App, error) {
+				return New(
+					append(opts, WithLogger(discardLogger()), WithStdout(io.Discard), WithMigrations(appMigrations))...)
+			}
+
+			if err := RunMain(t.Context(), []string{"app", cmd}, getenv, build); !errors.Is(err, errForceRequired) {
+				t.Fatalf("%s in production = %v, want errForceRequired", cmd, err)
+			}
+		})
 	}
 }
 

@@ -18,14 +18,14 @@ What Vukem does **by default** to protect applications, mapped to the [OWASP Top
 
 | Default | Phase |
 | --- | --- |
-| Routes are public unless wrapped in `auth.Required()`; `vukem route:list` shows the middleware of every route so unprotected routes are visible | P / A |
-| Policies resolved by Go type; **unregistered policy = deny** (fail closed), not allow | A |
-| `DenyAsNotFound()` to avoid leaking resource existence (IDOR enumeration) | A |
-| Query builder scopes (`Scope(ownedBy(user))`) and route-level `Authorize` make ownership checks one line | A |
-| Mass assignment impossible by construction: models are filled from explicit request structs (`Bind[T]`), never from raw maps | P |
-| CORS deny-by-default; `*` with credentials refused at boot | P |
+| Routes are public unless wrapped in `auth.Required()`; `vukem route:list` shows the middleware of every route so unprotected routes are visible (`TestRoutesListsMiddlewareNames`, `TestCommands` (route:list)) | P / A |
+| Policies resolved by Go type; **unregistered policy = deny** (fail closed), not allow (`TestSecurity_A01_UnregisteredPolicyDenies`) | A |
+| `DenyAsNotFound()` to avoid leaking resource existence (IDOR enumeration) (`TestGatesAndPolicies`) | A |
+| Query builder scopes (`Scope(ownedBy(user))`) and route-level `Authorize` make ownership checks one line (`TestCtxAuthorizeAndTemplateCan`, `TestAuthorize`) | A |
+| Mass assignment impossible by construction: models are filled from explicit request structs (`Bind[T]`), never from raw maps (`TestBindFromTags`, `TestSecurity_A01_AdminMassAssignment`) | P |
+| CORS deny-by-default; `*` with credentials refused at boot (`TestSecurity_A01_CORS`) | P |
 | Static files and uploads served through `os.Root` (no `../` traversal); dotfiles and files under dot directories never served; `storage.Handler` responses carry a `sandbox` CSP so uploaded HTML/XML cannot script the app origin (inline PDF viewers may need a download link) (`TestSecurity_A01_StaticRejectsTraversal`, `TestSecurity_A01_StorageTraversal`, `TestSecurity_A01_StorageHandlerHidesDotPaths`) | P / B |
-| Signed URLs (HMAC, expiry) for temporary downloads and email verification | A |
+| Signed URLs (HMAC, expiry) for temporary downloads and email verification (`TestSecurity_A01_SignedURLTampering`) | A |
 | Client IP (`c.IP()`, used by rate limits, login throttles and logs) reads `X-Forwarded-For` only from `TrustedProxies` peers, across every header line, right to left; a non-IP entry falls back to the peer address (`TestSecurity_A01_IPIgnoresSpoofedForwardedFor`) | P / B |
 | Open redirects: `web.SafeRedirect` and `c.Back` accept only relative paths and same-host URLs, and check the resulting path before and after `http.Redirect` cleans it, so `//evil.com`, `/\evil.com`, `/./\evil.com` and `https://app//evil.com` fall back (`TestSecurity_A01_SafeRedirectBlocksOpenRedirects`, `FuzzSafeRedirect`) | P / B |
 | The devtools dashboard (`/_vukem`) answers only a loopback peer with a loopback `Host` and no proxy headers (which also defeats DNS rebinding); others get a plain 404. `DEVTOOLS_INSECURE_ALLOW_REMOTE=true` lifts the check (`TestSecurity_A01_DevtoolsLoopbackOnly`) | B |
@@ -46,12 +46,12 @@ What Vukem does **by default** to protect applications, mapped to the [OWASP Top
 | Default | Phase |
 | --- | --- |
 | Boot refuses: missing/short `APP_KEY`, an `APP_ENV` other than `development`, `test` or `production` (a typo would skip every production check), `APP_DEBUG=true` with `APP_ENV=production`, CORS wildcard + credentials, cookies without `Secure` in production (`TestSecurity_A02_BootRefusesMisconfiguration`, `TestSecurity_A01_CORS`, `TestSecurity_A02_ConfigChecks`) | P |
-| `http.Server` always has `ReadHeaderTimeout`, `ReadTimeout`, `WriteTimeout`, `IdleTimeout`, `MaxHeaderBytes` | P |
-| Security headers middleware on by default: `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `X-Frame-Options: DENY` + CSP `frame-ancestors 'none'`, `Cross-Origin-Opener-Policy: same-origin`, `Strict-Transport-Security` (HTTPS only, configurable) | P |
+| `http.Server` always has `ReadHeaderTimeout`, `ReadTimeout`, `WriteTimeout`, `IdleTimeout`, `MaxHeaderBytes` (`TestSecurity_A02_ServerTimeouts`) | P |
+| Security headers middleware on by default: `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `X-Frame-Options: DENY` + CSP `frame-ancestors 'none'`, `Cross-Origin-Opener-Policy: same-origin`, `Strict-Transport-Security` (HTTPS only, configurable) (`TestSecurity_A02_SecureHeaders`, `TestPageWorksUnderTheDefaultSecureHeaders`) | P |
 | Content-Security-Policy builder with per-request nonces (`{{ cspNonce }}`), starter ships a strict policy; Vite tags get the nonce (`TestSecurity_A02_ViteTagsCarryNonce`) | P / B |
 | `boost:mcp` `database_query` accepts one `SELECT`/`WITH`/`EXPLAIN` statement without write keywords and runs it on a read-only connection (SQLite `query_only`, read-only transactions elsewhere) (`TestSecurity_A05_BoostQueryIsReadOnly`) | B |
 | The Inertia page object is embedded as JSON with `<`, `>`, `&` and `/` escaped, so prop data cannot close its `<script>` (`TestSecurity_A05_InertiaPageScriptCannotBreakOut`) | B |
-| The CSP allows the Vite dev server origin only while its hot file exists outside production; the origin must be a bare `http(s)://host:port` so it cannot inject directives | B |
+| The CSP allows the Vite dev server origin only while its hot file exists outside production; the origin must be a bare `http(s)://host:port` so it cannot inject directives (`TestSecureHeadersDevServer`, `TestSecurity_A05_ViteRejectsUnsafeHotURL`) | B |
 | Server-sent event fields (`id`, `event`, `data`) cannot carry CR/LF into new fields (`TestSecurity_A05_SSEFieldInjection`) | B |
 | Maintenance mode stores only the SHA-256 of the bypass secret; the bypass cookie is an HMAC (key derived from `APP_KEY`) bound to that secret, `HttpOnly`, `SameSite=Lax`, `Secure` in production; an unreadable state file keeps the app down (`TestSecurity_A01_MaintenanceBypassNeedsSecret`) | B |
 | JWTs: algorithm pinned per key (no `none`, no HMAC/public-key confusion), `exp` required, weak keys refused (`TestSecurity_A04_JWTAlgorithmConfusion`); refresh tokens stored hashed, single use, reuse revokes the family (`TestSecurity_A07_RefreshConcurrentRotationSingleWinner`) | B |
@@ -60,10 +60,10 @@ What Vukem does **by default** to protect applications, mapped to the [OWASP Top
 | The Vite `hot` file is ignored in production (`TestSecurity_A02_ViteHotFileIgnoredInProduction`) and must hold an `http(s)` URL (`TestSecurity_A05_ViteRejectsUnsafeHotURL`) | B |
 | Debug error page only in development; production errors never include stack traces, SQL or config (`TestSecurity_A02_DebugPageOffInProduction`); the debug page redacts credentials and escapes error text and source (`TestSecurity_A09_DebugPageRedactsSecrets`) | P / B |
 | Admin pages run under a strict CSP: embedded htmx and CSS, no inline scripts, styles or handlers, `Cache-Control: no-store`, and a strict policy when the app sent none (`TestSecurity_A02_AdminStrictHeaders`) | B |
-| `vukem about` prints effective security settings (secrets redacted) to review deployments | P |
+| `vukem about` prints effective security settings (secrets redacted) to review deployments (`TestCommands` (about)) | P |
 | Devtools (`vukem.WithDevtools()`, `DEVTOOLS=true`) is a boot error with `APP_ENV=production` (`TestSecurity_A02_DevtoolsRefusedInProduction`) | B |
-| No default credentials, no sample admin user, `.env` git-ignored, `.env.example` without secrets | P |
-| Destructive commands (`migrate:fresh`, `db:wipe`) require `--force` in production | P |
+| No default credentials, no sample admin user, `.env` git-ignored, `.env.example` without secrets (`TestSecurity_A02_StarterShipsNoSecrets`) | P |
+| Destructive commands (`migrate:fresh`, `db:wipe`) require `--force` in production (`TestSecurity_A02_DestructiveCommandsNeedForce`) | P |
 | `/openapi.json` (`vukem.ServeOpenAPI`) and the API reference UI (`apidocs.Serve`) are not served in production unless `OPENAPI_IN_PRODUCTION=true` (`TestSecurity_A02_OpenAPIOffInProduction`, `TestSecurity_A02_APIDocsOffInProduction`); the vendored Scalar bundle is pinned by SHA-256 and runs with telemetry and remote fonts off | B |
 | GraphQL (`contrib/graphql`): in production the explorer page is not registered and `__schema` / `__type` introspection is rejected unless `InsecureExplorerInProduction` / `InsecureIntrospectionInProduction` opt in; the explorer is embedded (no CDN) and runs under its own nonce CSP (`TestSecurity_A02_GraphQLExplorerOffInProduction`) | B |
 | gRPC server reflection (`grpc.Reflection`, `contrib/grpc`) is not served in production unless `GRPC_INSECURE_REFLECTION_IN_PRODUCTION=true` (`TestSecurity_A02_GRPCReflectionOffInProduction`) | B |
@@ -74,14 +74,14 @@ What Vukem does **by default** to protect applications, mapped to the [OWASP Top
 
 | Default | Phase |
 | --- | --- |
-| Core depends only on the stdlib, `modernc.org/sqlite` and `golang.org/x/crypto`; heavy drivers are separate modules (opt-in) | P |
-| `go.sum` checksum database verification (Go default) — never disabled | P |
-| `govulncheck` in CI, pre-push hook and weekly cron; generated apps get the same `task vuln` | P |
-| Dependabot for Go modules and GitHub Actions; actions pinned by commit SHA; OpenSSF Scorecard | P / B |
-| Releases built by GoReleaser with checksums and **SBOM**; signed artifacts (cosign, keyless) | P / B |
-| htmx is vendored with a pinned version and checksum verified by a test; no CDN by default | P |
-| `depguard` blocks non-allowlisted imports in core | P |
-| Starters pin tool versions with the `go.mod` `tool` directive | P |
+| Core depends only on the stdlib, `modernc.org/sqlite` and `golang.org/x/crypto`; heavy drivers are separate modules (opt-in) (enforced by `.golangci.yml` depguard `core` and the module split in `go.work`) | P |
+| `go.sum` checksum database verification (Go default) — never disabled (process: Go default, no `GONOSUMDB`/`GOFLAGS` override in the repo or CI) | P |
+| `govulncheck` v1.9.0 on every push and pull request and in `task ci` (`task vuln`); not yet in the pre-push hook, a weekly cron or generated apps (CI: `vuln` job in `ci.yml`; gap R-6 in [security-review.md](security-review.md#residual-risks)) | P |
+| Dependabot for Go modules and GitHub Actions; actions pinned by commit SHA; OpenSSF Scorecard (process: `.github/dependabot.yml`, SHA-pinned `uses:` in every workflow, `scorecard.yml`) | P / B |
+| Releases built by GoReleaser with checksums and **SBOM**; signed artifacts (cosign, keyless) (process: `.goreleaser.yaml` `checksum`, `sboms`, `signs`; `release.yml`) | P / B |
+| htmx is vendored with a pinned version and checksum verified by a test; no CDN by default (`TestVendoredHTMX`) | P |
+| `depguard` blocks driver and contrib modules and denied packages in core; other new dependencies go through the [dependency policy](architecture.md#dependency-policy) review (enforced by `.golangci.yml` depguard `core`) | P |
+| Starters pin dependency versions in `go.mod` / `go.sum`; tools are not pinned with the `tool` directive yet (gap R-6 in [security-review.md](security-review.md#residual-risks)) | P |
 
 **App responsibility:** keep running `govulncheck`, review dependency updates, protect CI secrets.
 
@@ -89,34 +89,34 @@ What Vukem does **by default** to protect applications, mapped to the [OWASP Top
 
 | Default | Phase |
 | --- | --- |
-| Passwords: **argon2id** (m=64 MiB, t=1, p=4) with PHC strings; bcrypt supported; automatic rehash on login | A |
-| Randomness only from `crypto/rand` (`rand.Text()` for tokens); `math/rand` blocked in security packages by lint | P |
-| Session cookies and encrypted cookies: AES-256-GCM, keys derived with HKDF from `APP_KEY` (distinct `info` per purpose) | P |
-| API tokens stored as SHA-256 hashes; plain token shown once | A |
-| Constant-time comparisons (`subtle.ConstantTimeCompare`, `hmac.Equal`) for tokens, signatures, CSRF tokens | P |
+| Passwords: **argon2id** (m=64 MiB, t=1, p=4) with PHC strings; bcrypt supported; automatic rehash on login (`TestArgon2PHCFormat`, `TestPasswordRehashOnLogin`, `TestBcryptMigrationAndLimits`) | A |
+| Randomness only from `crypto/rand` (`rand.Text()` for tokens); `math/rand` blocked in security packages by lint (enforced by `.golangci.yml` depguard `crypto-randomness`) | P |
+| Session cookies and encrypted cookies: AES-256-GCM, keys derived with HKDF from `APP_KEY` (distinct `info` per purpose) (`TestSecurity_A08_TamperedCookieRejected`, `TestKeyDerive`, `TestSecurity_A04_AppCryptUsesDerivedKey`) | P |
+| API tokens stored as SHA-256 hashes; plain token shown once (`TestSecurity_A04_TokensStoredHashed`) | A |
+| Constant-time comparisons (`subtle.ConstantTimeCompare`, `hmac.Equal`) for tokens, signatures, CSRF tokens (process: [security-review.md](security-review.md) audit of `==` on secrets; `FuzzVerifyHMAC`, `FuzzConstructEvent`) | P |
 | `app.Crypt` (`crypt` package): AES-256-GCM with random nonces, key derived with HKDF from `APP_KEY`; versioned tokens carry a key id; additional data binds a token to its purpose; tampering, unknown keys and wrong additional data all fail with `crypt.ErrInvalid` (`TestSecurity_A04_TamperingRejected`, `TestSecurity_A04_AssociatedDataMismatchRejected`, `TestSecurity_A04_AppCryptUsesDerivedKey`) | B |
 | Key rotation via `APP_PREVIOUS_KEYS` (decrypt-only old keys; a malformed one is a boot error) (`TestSecurity_A04_KeyRotation`, `TestSecurity_A04_AppCryptRotatesWithPreviousKeys`, `TestSecurity_A04_EncryptedColumnKeyRotation`) | B |
 | Encrypted cookies (`app.Crypt.SetCookie`/`Cookie`): cookie name authenticated, `HttpOnly`, `SameSite=Lax` and `Secure` over TLS by default (`TestSecurity_A04_EncryptedCookieDefaults`, `TestSecurity_A04_EncryptedCookieCannotMoveBetweenNames`) | B |
 | `orm.Encrypted[T]` column type for sensitive fields: table and column authenticated, never stored in plaintext, fails closed without an encrypter (`TestSecurity_A04_EncryptedColumnStoresNoPlaintext`, `TestSecurity_A04_EncryptedColumnFailsClosed`) | B |
-| TLS: Go's secure defaults (TLS 1.2+, hybrid post-quantum key exchange in Go 1.26+); no option to disable verification without `InsecureSkipVerify` naming | P |
+| TLS: Go's secure defaults (TLS 1.2+, hybrid post-quantum key exchange in Go 1.26+); no option to disable verification without `InsecureSkipVerify` naming (enforced by `.golangci.yml` gosec G402) | P |
 | `drivers/mysql`: without `tls=` in `DATABASE_URL`, every non-loopback host gets TLS with a verified certificate (`TestSecurity_A04_MySQLRemoteRequiresTLS`) | B |
-| `config.Secret` redacts secrets in logs, JSON and `%v` | P |
+| `config.Secret` redacts secrets in logs, JSON and `%v` (`TestSecurity_A04_SecretRedaction`) | P |
 | `drivers/s3` refuses a plain `http://` endpoint unless `S3_INSECURE_HTTP=true` (local MinIO only) (`TestSecurity_A04_S3RequiresTLS`) | B |
 
 ### A05:2025 — Injection
 
 | Default | Phase |
 | --- | --- |
-| Query builder always uses bound parameters; identifiers (columns, tables) validated against model metadata, never interpolated from input | P |
-| `WhereRaw`/`Raw` require placeholders; lint rule and docs flag string concatenation into raw SQL | P |
-| API query conventions (`filter`, `sort`, `include`, `fields`) are **allowlists**; unknown values → 400 | A |
+| Query builder always uses bound parameters; identifiers (columns, tables) validated against model metadata, never interpolated from input (`TestSecurity_A05_QueryBuilderRejectsInjection`, `TestSecurity_A05_SchemaRejectsBadIdentifiers`, `FuzzWhereColumn`) | P |
+| `WhereRaw` needs one bound argument per placeholder; gosec (G201/G202) flags SQL built by string concatenation (`TestSecurity_A05_QueryBuilderRejectsInjection`; enforced by `.golangci.yml` gosec) | P |
+| API query conventions (`filter`, `sort`, `include`, `fields`) are **allowlists**; unknown values → 400 (`TestSecurity_A05_QueryConventionsRejectUnknownColumns`) | A |
 | Admin list `sort`, `filter[...]` and search only reach SQL for allowlisted columns (unknown ones are ignored) and values are bound parameters (`TestSecurity_A05_AdminSortAndSearchAllowlisted`) | B |
-| `html/template` contextual auto-escaping for HTML, attributes, JS and URLs; `template.HTML` usage flagged in review | P |
+| `html/template` contextual auto-escaping for HTML, attributes, JS and URLs; `template.HTML` usage flagged in review (`TestSecurity_A05_FragmentsEscapeAttributes`, `TestSecurity_A02_StarterViewsRespectCSP`) | P |
 | JSON request detection (`middleware.JSONOnly`, `c.IsJSON`) parses the media type: only `application/json` and `application/*+json` count, so a CORS-simple `text/plain; x=+json` body cannot pass as JSON without a preflight (`TestSecurity_A05_JSONOnlyRejectsSimpleContentTypes`) | B |
-| JSON responses via `encoding/json` (escapes `<`, `>`, `&`); Inertia page data escapes `/` inside `<script>` | P / B |
+| JSON responses via `encoding/json` (escapes `<`, `>`, `&`); Inertia page data escapes `/` inside `<script>` (`TestSecurity_A05_InertiaPageScriptCannotBreakOut`) | P / B |
 | Mail headers built with `net/mail` (no header injection); file names sanitised; attachment content types parsed and re-formatted (`TestSecurity_A05_MailHeaderInjection`) | A |
-| No shell execution in the framework; `os/exec` usage in CLI generators never passes user input through a shell | P |
-| Validator rejects invalid UTF-8 and control characters in string fields by default | P |
+| No shell execution in the framework; `os/exec` usage in CLI generators never passes user input through a shell (enforced by `.golangci.yml` gosec G204) | P |
+| Validator rejects invalid UTF-8 and control characters in string fields by default (`TestString`) | P |
 | Devtools mail previews render in an `<iframe sandbox srcdoc>` with the HTML escaped, under a page CSP without any script source, so mail HTML never runs inline (`TestSecurity_A05_DevtoolsMailPreviewIsSandboxed`) | B |
 | Uploads (`upload`): the type is detected from the content (`http.DetectContentType`), never the client's `Content-Type`, and the file extension must match it; per-file and per-request sizes → 413, file and field counts bounded (nameless parts count too, `TestSecurity_A06_UploadNamelessPartsBounded`); stored names are random, so client file names (`../`, `\`, absolute paths) never reach a storage path; rejected requests leave no files (`TestSecurity_A05_UploadValidation`); `upload.Verify` (direct uploads) only opens or deletes keys `Presign` could have issued, a random name under `Rules.Dir` (`TestSecurity_A01_DirectVerifyOnlyIssuedKeys`) | B |
 | Locale input (query, cookie, session, `Accept-Language`) is used only when it is a well-formed tag (`language[-Script][-REGION]`) of an available catalog; anything else falls back, so raw input never reaches headers, lookups or file paths (`TestSecurity_A05_LocaleInputRejected`) | B |
@@ -126,13 +126,13 @@ What Vukem does **by default** to protect applications, mapped to the [OWASP Top
 | Default | Phase |
 | --- | --- |
 | Opinionated, reviewed flows generated by `install:auth` / `install:api` (reset tokens single-use, also across concurrent resets, and expiring; a reset ends remembered sessions and API tokens; email verification signed; re-confirm password for sensitive actions) (generated `TestPasswordReset`, `TestRegisterAndVerifyEmail`, `TestTwoFactorDisableNeedsPassword`, run by `TestNewProjectEndToEnd` / `TestNewInertiaProjectEndToEnd`) | A |
-| Rate limits on login, password reset, token issuance by default | A |
+| Rate limits on login, password reset, token issuance by default (`TestSecurity_A07_AuthScaffoldDefaults`, generated `TestLoginLogoutAndThrottle`) | A |
 | `ratelimit.Middleware` keys by client IP unless told otherwise and denies when its store fails (503); `ByToken` is meant for routes behind `auth.Required` (the `install:api` scaffold limits by IP first), so made-up bearer tokens cannot each get a fresh bucket (`TestSecurity_A06_RateLimitIgnoresUnverifiedTokens`, `TestSecurity_A06_RateLimitMiddlewareFailsClosed`) | B |
-| Request body size limits (`http.MaxBytesReader`) on every route; multipart limits; JSON depth/size limits | P |
+| Request body size limits (`http.MaxBytesReader`) on every route; multipart limits; form key nesting limited to 16 levels, JSON nesting bounded by `encoding/json` (`TestSecurity_A06_BodyLimit`, `TestSecurity_A06_InputRejectsOversizedForm`, `TestFormToMapDepthLimit`, `TestSecurity_A06_UploadNamelessPartsBounded`) | P |
 | WebSocket messages are capped at 32 KiB (`websocket.ReadLimit`; larger closes with 1009), every write has a timeout, pings drop peers that stop answering, and app shutdown closes sockets with 1001 instead of waiting on them (`TestSecurity_A06_WebSocketReadLimit`) | B |
-| Upload scanning fails closed: with `upload.Rules.Scanner` files stay in a dot-named quarantine path until scanned, infected files are deleted (422) and an unreachable scanner rejects the upload (503); tus and presigned-upload handlers refuse to boot without an `Authorize` hook | B |
-| Transactions with rollback-on-error/panic (`db.Tx`) so multi-step operations are atomic | P |
-| Threat model of each subsystem recorded in its doc before BETA; security review gate in [PLAN.md](../PLAN.md) (`B.5.2`) | B |
+| Upload scanning fails closed: with `upload.Rules.Scanner` files stay in a dot-named quarantine path until scanned, infected files are deleted (422) and an unreachable scanner rejects the upload (503); tus and presigned-upload handlers refuse to boot without an `Authorize` hook (`TestReceiveScansBeforeFilesBecomeVisible`, `TestClamAVUnavailableFailsClosed`, `TestTusConfigIsValidatedAtBoot`, `TestDirectRequiresAuthorize`) | B |
+| Transactions with rollback-on-error/panic (`db.Tx`) so multi-step operations are atomic (`TestTxCommitRollbackPanic`) | P |
+| Threat model of each subsystem recorded in its doc before BETA; security review gate in [PLAN.md](../PLAN.md) (`B.5.2`) (process: [security-review.md](security-review.md)) | B |
 | GraphQL operations are bounded before any resolver runs: depth 12, complexity 1000 (list arguments `first`/`last`/`limit` multiply cost), 30 aliases, 10000 tokens, 1 MiB body; introspection (`__schema`, `__type`) counts toward aliases and complexity, nests at most 16 levels and resolves at most 200000 fields, so fragment chains over `__Type` cannot grow the response exponentially (`TestSecurity_A06_GraphQLIntrospectionBounded`, `TestSecurity_A06_GraphQLIntrospectionFieldCap`); persisted-query allowlist mode runs only listed documents and fails closed without a store (`TestSecurity_A06_GraphQLDepthAndComplexityLimits`, `TestSecurity_A06_GraphQLAllowlistOnly`) | B |
 | GraphQL subscriptions are bounded: every WebSocket and SSE document goes through the same parse, validation, limits and persisted-query checks as HTTP; a socket that does not send `connection_init` within 10s is closed (4408); one connection runs at most 32 operations (`TOO_MANY_REQUESTS` beyond); introspection is off over the socket unless `WSConfig.Introspection` (`TestSecurity_A06_GraphQLSubscriptionsBounded`) | B |
 
@@ -140,16 +140,16 @@ What Vukem does **by default** to protect applications, mapped to the [OWASP Top
 
 | Default | Phase |
 | --- | --- |
-| Session id regenerated on login and privilege change (anti-fixation); invalidated on logout | P / A |
-| Cookies: `HttpOnly`, `Secure`, `SameSite=Lax`, `__Host-` prefix over HTTPS | P |
-| Idle and absolute session timeouts | P |
-| Credential check hashes a dummy password when the user does not exist (timing-safe, no user enumeration) | A |
-| Generic error messages on login and password reset ("If the email exists…") | A |
-| Password rules action (min length 12 by default, max 72 bytes for bcrypt) editable in user code | A |
+| Session id regenerated on login and privilege change (anti-fixation); invalidated on logout (`TestSecurity_A07_SessionRegeneratedOnLogin`, `TestSecurity_A07_SessionInvalidatedOnLogout`) | P / A |
+| Cookies: `HttpOnly`, `Secure`, `SameSite=Lax`, `__Host-` prefix over HTTPS (`TestSecurity_A07_SessionCookieFlags`, `TestSecurity_A02_ConfigChecks`) | P |
+| Idle and absolute session timeouts (`TestAbsoluteLifetimeAndTouch`, `TestSessionLifecycleAllStores`) | P |
+| Credential check hashes a dummy password when the user does not exist (timing-safe, no user enumeration) (`TestSecurity_A07_DummyHashOnUnknownUser`) | A |
+| Generic error messages on login and password reset ("If the email exists…") (`TestSecurity_A07_LoginErrorsDoNotRevealUsers`, generated `TestPasswordReset`) | A |
+| Password rules in user code (`app/requests/auth.go`): at least 12 and at most 256 characters by default; argon2id has no 72-byte limit and `hash.Bcrypt` refuses longer passwords (`TestSecurity_A07_AuthScaffoldDefaults`, `TestBcryptMigrationAndLimits`) | A |
 | Login throttling per email + IP (5 per minute) and per account from any IP (20 per 10 minutes), keyed by the email normalized like the login schema (trimmed, lower case) so spaces and case open no new buckets (generated `TestLoginLogoutAndThrottle`, run by `TestNewProjectEndToEnd` / `TestNewInertiaProjectEndToEnd`); remember-me tokens rotated on use and single use even under concurrent replay (`TestRememberMe`, `TestSecurity_A07_RememberTokenSingleUseUnderConcurrency`) | A / B |
-| API tokens with expiry, abilities and revocation; `last_used_at` tracking | A |
+| API tokens with expiry, abilities and revocation; `last_used_at` tracking (`TestTokensAndAbilities`) | A |
 
-| Social login: PKCE, signed single-use `state`/`nonce` cookie, OIDC ID-token verification, redirect URL from config only | A |
+| Social login: PKCE, signed single-use `state`/`nonce` cookie, OIDC ID-token verification, redirect URL from config only (`TestSecurity_A07_SocialStateMismatch`, `TestSecurity_A07_SocialReplayAndPKCE`, `TestSecurity_A07_IDTokenChecks`) | A |
 | TOTP 2FA (`auth/totp`, `install:auth --2fa`): a code works once per time step, also across concurrent requests (`TestValidateWindowAndReplay` and the generated `TestTwoFactorLogin`); recovery codes stored as hashes and single use (`TestRecoveryCodes`, generated `TestTwoFactorRecoveryCodes`); secret and hashes in `orm.Encrypted` columns, challenge/confirm/disable limited to 5 per minute per user + IP, disabling needs the password (`TestSecurity_A07_TwoFactorScaffoldDefaults`, generated `TestTwoFactorThrottle`, `TestTwoFactorDisableNeedsPassword`); the scaffold refuses to install when it cannot enforce the code step at login (`TestSecurity_A07_TwoFactorFailsClosedOnEditedLogin`); with `install:api`, `POST /api/v1/tokens` needs the code or a recovery code too, whichever was installed first (generated `TestAPITokenRequiresTwoFactor`, `TestTwoFactorPatchesMatchScaffolds`). Generated tests run in `TestNewProjectEndToEnd` and `TestNewInertiaProjectEndToEnd` | B |
 
 **Post-1.0:** passkeys/WebAuthn.
@@ -158,26 +158,26 @@ What Vukem does **by default** to protect applications, mapped to the [OWASP Top
 
 | Default | Phase |
 | --- | --- |
-| Signed and encrypted cookies (tampering detected) | P |
-| Signed URLs and signed email-verification links (HMAC with expiry) | A |
-| Queue payloads are JSON mapped to registered job kinds — **no reflection-based deserialization of arbitrary types** | B |
-| CSRF protection with `http.CrossOriginProtection` (Fetch Metadata + Origin) on all unsafe methods; webhook bypasses must be declared | P |
-| Webhook signature verification helper (`webhook.VerifyHMAC`) | A |
-| Release artifacts with checksums, SBOM and signatures | P / B |
-| Migrations tracked with checksums; a modified, already-applied migration is reported by `migrate:status` | P |
+| Signed and encrypted cookies (tampering detected) (`TestSecurity_A08_TamperedCookieRejected`, `TestSecurity_A04_EncryptedCookieCannotMoveBetweenNames`) | P |
+| Signed URLs and signed email-verification links (HMAC with expiry) (`TestSecurity_A01_SignedURLTampering`, generated `TestRegisterAndVerifyEmail`) | A |
+| Queue payloads are JSON mapped to registered job kinds — **no reflection-based deserialization of arbitrary types** (`TestTimeoutPanicAndUnknownKind`, `TestRegisterAndDispatchErrors`) | B |
+| CSRF protection with `http.CrossOriginProtection` (Fetch Metadata + Origin) on all unsafe methods; webhook bypasses must be declared (`TestSecurity_A01_CrossOriginProtection`) | P |
+| Webhook signature verification helper (`webhook.VerifyHMAC`) (`TestSecurity_A08_WebhookMiddleware`, `FuzzVerifyHMAC`) | A |
+| Release artifacts with checksums, SBOM and signatures (process: `.goreleaser.yaml`, `release.yml`) | P / B |
+| Migrations tracked with checksums; a modified, already-applied migration is reported by `migrate:status` (`TestMigratorChangedAndMissing`, `TestMigrateCommands`) | P |
 
 ### A09:2025 — Security Logging and Alerting Failures
 
 | Default | Phase |
 | --- | --- |
-| Structured `slog` request logs with request id, user id (when authenticated), route name, status, duration | P |
-| Security events logged at `WARN` with a stable `event` attribute: `auth.login_failed`, `auth.locked`, `authz.denied`, `csrf.rejected`, `ratelimit.exceeded`, `token.revoked`, `session.invalid` | P / A |
-| Secrets, passwords, tokens and `Authorization`/`Cookie` headers redacted from logs | P |
+| Structured `slog` request logs with request id, user id (when authenticated), route name, status, duration (`TestLogger`) | P |
+| Security events logged at `WARN` with a stable `event` attribute: `auth.login_failed`, `auth.remember_rejected`, `authz.denied`, `csrf.rejected`, `ratelimit.exceeded`, `session.invalid`, `url.signature_invalid`, `webhook.signature_invalid`, `broadcast.denied`, `idempotency.key_reused` (`TestSecurity_A09_SecurityEventsAtWarn`, `TestSecurity_A08_TamperedCookieRejected`, `TestSecurity_A01_CrossOriginProtection`) | P / A |
+| Secrets, passwords, tokens and `Authorization`/`Cookie` headers redacted from logs (`TestSecurity_A09_LoggerNeverLogsCredentials`) | P |
 | `drivers/s3` keeps the secret key and session token in `config.Secret`; formatting a config or disk and S3 errors never include them or a request signature (`TestSecurity_A09_S3NeverLeaksCredentials`) | B |
-| Log injection prevented: `slog` attribute encoding (no raw string concatenation) | P |
+| Log injection prevented: `slog` attribute encoding (no raw string concatenation) (`TestRequestID`, `TestSecurity_A05_SSEFieldInjection`) | P |
 | The admin audit log (`admin_audit_logs`: actor, resource, record, action, before/after of changed columns) never stores sensitive columns (`json:"-"`, secret-like names, `Sensitive(...)`): they are recorded as redacted, without values, and never shown or echoed into forms (`TestSecurity_A09_AdminAuditOmitsSensitive`) | B |
-| `events.Listen[security.Event]` hook to forward security events to alerting (email, Slack, SIEM) | A |
-| OpenTelemetry tracing module correlates logs and traces | B |
+| `events.Listen[security.Event]` hook to forward security events to alerting (email, Slack, SIEM) (`TestSecurityEventsReachTheBus`) | A |
+| OpenTelemetry tracing module (`drivers/otel`) traces requests and propagates `traceparent`; trace ids are not added to log records yet (`TestMiddleware_ServerSpanPerRequest`, `TestMiddleware_ExtractsTraceparentAndBaggage`; log correlation is gap R-7 in [security-review.md](security-review.md#residual-risks)) | B |
 | Trace spans (`drivers/otel`) record the route pattern, never the raw path or query string (`TestSecurity_A09_OTelSpansOmitPathAndQuery`) | B |
 | Devtools shows SQL as a normalized shape (literals replaced by `?`) and bound arguments as types and lengths, never values; job and event records carry kinds and types, not payloads (`TestSecurity_A09_DevtoolsRedactsQueryArgs`) | B |
 
@@ -187,16 +187,16 @@ What Vukem does **by default** to protect applications, mapped to the [OWASP Top
 
 | Default | Phase |
 | --- | --- |
-| **Central error handler** (single place) maps errors to responses; handlers return `error` instead of writing partial responses | P |
-| `Recover` middleware converts panics to 500, logs stack trace server-side, never to the client | P |
-| **Fail closed**: authorization errors, missing policies, session store failures, rate limiter store failures and CSRF check errors deny the request | P / A |
-| `db.Tx` rolls back on error or panic; no partial writes | P |
-| Generic client messages (RFC 9457 problem details) without internals (CWE-209) | P |
-| Missing/invalid parameters produce 400/422 with field errors, never zero-value defaults silently (CWE-234) | P |
-| Timeouts on server, DB queries (`context`), outbound HTTP; rate limiting and quotas against resource exhaustion | P / A |
-| Repeated identical errors aggregated in logs (sampling) to keep alerting useful | B |
+| **Central error handler** (single place) maps errors to responses; handlers return `error` instead of writing partial responses (`TestErrorHandlerProblemJSON`, `TestErrorHandlerAfterWrite`) | P |
+| `Recover` middleware converts panics to 500, logs stack trace server-side, never to the client (`TestSecurity_A10_RecoverHidesPanic`) | P |
+| **Fail closed**: authorization errors, missing policies, rate limiter store failures and CSRF check errors deny the request; a session store failure drops the session (the user is signed out) instead of reusing data (`TestSecurity_A01_UnregisteredPolicyDenies`, `TestSecurity_A06_RateLimitMiddlewareFailsClosed`, `TestSecurity_A01_CrossOriginProtection`, `TestSecurity_A04_IdempotencyFailsClosed`) | P / A |
+| `db.Tx` rolls back on error or panic; no partial writes (`TestTxCommitRollbackPanic`) | P |
+| Generic client messages (RFC 9457 problem details) without internals (CWE-209) (`TestSecurity_A10_InternalErrorsNotLeaked`) | P |
+| Missing/invalid parameters produce 400/422 with field errors, never zero-value defaults silently (CWE-234) (`TestBindJSONErrors`, `TestParseJSONSuccessAndProblem`) | P |
+| Timeouts on server, DB queries (`context`), outbound HTTP; rate limiting and quotas against resource exhaustion (`TestSecurity_A02_ServerTimeouts`, `TestTimeout`, `TestLimitsAndAllowedServer`, `TestSecurity_A06_RateLimitMiddlewareFailsClosed`) | P / A |
+| Repeated identical errors aggregated in logs (sampling) to keep alerting useful: not implemented yet (gap R-7 in [security-review.md](security-review.md#residual-risks)) | B |
 | RPC errors (`contrib/grpc`): unknown errors and panics reach clients as `Internal` "internal error", the cause and stack only in the server log, and a returned or wrapped `*connect.Error` with a server-fault code (Internal, Unknown, DataLoss, Unavailable) keeps its code but not its text (`TestSecurity_A10_GRPCInternalErrorsHidden`, `TestSecurity_A10_GRPCConnectErrorsMasked`); request messages are capped at 4 MiB (`ResourceExhausted` beyond, `TestSecurity_A10_GRPCMessageSizeLimited`) | B |
-| `errcheck`, `nilerr`, `errorlint`, `forcetypeassert` linters enforce handled errors in the framework itself | P |
+| `errcheck`, `nilerr`, `errorlint`, `forcetypeassert` linters enforce handled errors in the framework itself (enforced by `.golangci.yml`) | P |
 | GraphQL resolver errors that are not client-safe (plain errors, 5xx, panics, serialization failures) are reported as `Internal server error` with code `INTERNAL_SERVER_ERROR` and logged; their text appears only with `WithDebug(true)`; a 4xx error that wraps a cause (orm's unique-constraint conflict wraps the driver error) gets only its status text (`TestSecurity_A10_GraphQLInternalErrorsMasked`, `TestSecurity_A10_GraphQLClientErrorsMasked`) | B |
 
 ## Security headers (defaults)

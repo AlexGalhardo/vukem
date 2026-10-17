@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -134,6 +135,80 @@ func TestSecurity_A07_TwoFactorScaffoldDefaults(t *testing.T) {
 		"scaffolds/auth-2fa/routes/two_factor.go.tmpl": {
 			"h.Challenge).Use(auth.Guest(acc.Web), challenge)",
 			"h.Confirm).Name(\"two-factor.confirm\").Use(required, confirm)",
+		},
+	}
+
+	for src, wants := range files {
+		b, err := scaffoldFS.ReadFile(src)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		for _, want := range wants {
+			if !bytes.Contains(b, []byte(want)) {
+				t.Errorf("%s lacks %q", src, want)
+			}
+		}
+	}
+}
+
+// New projects ship no secret and no credential: .env (with the generated
+// APP_KEY) is git-ignored and .env.example leaves every key empty.
+func TestSecurity_A02_StarterShipsNoSecrets(t *testing.T) {
+	t.Parallel()
+
+	ignore, err := starterFS.ReadFile("starter/gitignore")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !slices.Contains(strings.Split(strings.ReplaceAll(string(ignore), "\r\n", "\n"), "\n"), ".env") {
+		t.Errorf("starter .gitignore does not ignore .env:\n%s", ignore)
+	}
+
+	example, err := starterFS.ReadFile("starter/.env.example.tmpl")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for line := range strings.SplitSeq(string(example), "\n") {
+		k, v, _ := strings.Cut(strings.TrimSpace(line), "=")
+		if strings.Contains(k, "KEY") || strings.Contains(k, "SECRET") || strings.Contains(k, "PASSWORD") {
+			if v != "" {
+				t.Errorf(".env.example sets %s=%q, want it empty", k, v)
+			}
+		}
+	}
+}
+
+// The authentication scaffold keeps its secure defaults; the generated
+// tests (TestRegisterAndVerifyEmail, TestLoginLogoutAndThrottle,
+// TestPasswordReset) check the behaviour in TestNewProjectEndToEnd.
+func TestSecurity_A07_AuthScaffoldDefaults(t *testing.T) {
+	t.Parallel()
+
+	files := map[string][]string{
+		"scaffolds/auth-core/app/requests/auth.go.tmpl": {
+			`"password":              z.String().Min(12).Max(256),`,
+		},
+		"scaffolds/auth-core/app/accounts/passwords.go.tmpl": {
+			"subtle.ConstantTimeCompare([]byte(stored), []byte(digest(token)))",
+			"a.expired(created, a.ResetTTL)",
+			"DELETE FROM remember_tokens WHERE user_id",
+			"DELETE FROM access_tokens WHERE user_id",
+		},
+		"scaffolds/auth-web/app/controllers/account/account.go.tmpl": {
+			"strings.ToLower(strings.TrimSpace(r.PostFormValue(\"email\")))",
+		},
+		"scaffolds/auth-inertia/app/controllers/account/account.go.tmpl": {
+			"strings.ToLower(strings.TrimSpace(email))",
+		},
+		"scaffolds/auth-web/routes/auth.go.tmpl": {
+			`r.Post("/login", h.Login).Use(guest, throttle, perAccount)`,
+			`h.SendResetLink).Name("password.email").Use(guest, mails)`,
+		},
+		"scaffolds/auth-inertia/routes/auth.go.tmpl": {
+			`r.Post("/login", h.Login).Use(guest, throttle, perAccount)`,
 		},
 	}
 
