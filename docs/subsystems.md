@@ -212,6 +212,16 @@ Direct-to-storage uploads skip the app server: `upload.Presigner` (`PresignPut(c
 
 The HTMX starter ships `resources/views/components/upload.html` (a `data-upload` form with a `<progress>`) and a `/uploads` demo page. `resources/js/app.ts` swaps htmx 4's `fetch` for `XMLHttpRequest` on those forms (`htmx:before:request`) to report upload progress; no inline scripts, so the CSP holds. Validate files received through `c.Input()` with [`z.File()`](validation.md#schemas).
 
+## Exports
+
+Package `export` (stdlib only) streams downloads row by row from any `iter.Seq2[T, error]`, such as `orm` `Query.Each`, so large exports never sit in memory. Guide: [Exports](https://vukem.vercel.app/docs/digging-deeper/exports).
+
+- `export.CSV(w, r, name, header, rows, record)`, `export.JSON` (one array), `export.NDJSON` (`application/x-ndjson`), and `export.WriteCSV(w, r, name, fn)` for multi-section CSV files.
+- Attachments with `export.ContentDisposition(name)` (RFC 6266, RFC 5987 `filename*` for non-ASCII), `Cache-Control: no-store` and `nosniff`.
+- CSV cells go through `export.SafeCell` (OWASP CSV injection); `InsecureRawCells()` opts out.
+- Nothing is sent before the first row, so an early query error reaches the error handler. A failure after the first byte drops the connection (HTTP/1.x hijack) and returns an error wrapping `export.ErrIncomplete`; on HTTP/2 the body just ends.
+- `FlushEvery(n)` (500 rows), `WriteTimeout(d)` (1 minute, renewed at every flush, so long exports outlive the server `WriteTimeout`), `WithBOM()` for Excel.
+
 ## Events
 
 ```go

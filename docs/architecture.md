@@ -39,6 +39,7 @@ vukem/                            module github.com/AlexGalhardo/vukem
 ├── vite/                         Vite tags: hot file (dev), manifest, CSP nonce, SRI
 ├── inertia/                      Inertia.js v3 adapter: page object, version check, redirects, shared props
 ├── sse/                          server-sent events: streams, heartbeat, hub (memory or Redis)
+├── export/                       streaming CSV/JSON/NDJSON downloads, safe file names, CSV formula guard
 ├── broadcast/                    channels (public/private/presence), authorization rules, SSE transport
 ├── crypt/                        AES-256-GCM encryption, key rotation, encrypted cookies
 ├── i18n/                         JSON catalogs, CLDR plurals, locale middleware, translated validation

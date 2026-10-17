@@ -83,6 +83,7 @@ export const navigation: NavCategory[] = [
       "cache",
       "storage",
       "uploads",
+      "exports",
       "events",
       "queue",
       "scheduler",

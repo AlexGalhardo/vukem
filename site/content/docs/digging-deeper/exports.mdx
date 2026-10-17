@@ -1,0 +1,76 @@
+---
+title: Exports
+description: Stream CSV, JSON and NDJSON downloads row by row from ORM queries, with safe file names and CSV formula-injection protection.
+---
+
+```go
+r.Get("/users/export.csv", func(c *web.Ctx) error {
+	return export.CSV(c.Writer(), c.Request(), "users.csv",
+		[]string{"id", "name", "email"},
+		orm.QueryOf[User](db).OrderBy("id", orm.Asc).Each(c.Context()),
+		func(u User) []string {
+			return []string{strconv.FormatInt(u.ID, 10), u.Name, u.Email}
+		})
+})
+```
+
+The `export` package writes one row at a time, so a large export never sits in memory. Rows come from any `iter.Seq2[T, error]`, and `orm` `Query.Each` is one: it reads from the database while the client downloads.
+
+## Formats
+
+| Function | Content-Type | Body |
+| --- | --- | --- |
+| `export.CSV(w, r, name, header, rows, record)` | `text/csv; charset=utf-8` | header row, then `record(row)` for each row |
+| `export.WriteCSV(w, r, name, fn)` | `text/csv; charset=utf-8` | whatever `fn` writes with `cw.Write(record)` |
+| `export.JSON(w, r, name, rows)` | `application/json; charset=utf-8` | one JSON array, one element per row |
+| `export.NDJSON(w, r, name, rows)` | `application/x-ndjson` | one JSON object per line |
+
+`WriteCSV` fits files that are not one row per item, such as several sections with their own headers. An empty record writes a blank line:
+
+```go
+return export.WriteCSV(c.Writer(), c.Request(), "raffle-audit.csv", func(cw *export.CSVWriter) error {
+	if err := cw.Write([]string{"record", "id", "title"}); err != nil {
+		return err
+	}
+	if err := cw.Write([]string{"raffle", id, raffle.Title}); err != nil {
+		return err
+	}
+	return cw.Write(nil) // blank line before the next section
+})
+```
+
+An empty `name` becomes `export.csv`, `export.json` or `export.ndjson`.
+
+## Headers and file names
+
+Every export is an attachment with `Cache-Control: no-store` (exports usually hold personal data) and `X-Content-Type-Options: nosniff`.
+
+`export.ContentDisposition(name)` builds the header (RFC 6266), and you can use it for other downloads:
+
+- Only the last path element is kept, for `/` and `\` alike: `../../etc/passwd` becomes `passwd`.
+- Control characters (CR, LF, NUL) and format characters (bidi overrides, zero-width) are removed, so a name cannot add headers or disguise its extension.
+- `< > : " / | ? *` become `_`; leading dots are removed; names are cut to 200 characters, keeping the extension; an empty result becomes `download`.
+- Non-ASCII names get an ASCII `filename` plus an RFC 5987 `filename*`: `relatório.csv` is sent as `filename="relat_rio.csv"; filename*=UTF-8''relat%C3%B3rio.csv`.
+
+## CSV formula injection
+
+A spreadsheet runs a cell that starts with `=`, `+`, `-` or `@` as a formula, so a buyer named `=HYPERLINK(...)` could run code on the machine of whoever opens the file ([OWASP CSV injection](https://owasp.org/www-community/attacks/CSV_Injection)). Every cell, header included, goes through `export.SafeCell`: a cell starting with `=`, `+`, `-`, `@`, tab or carriage return gets a leading `'`, which spreadsheets show as text. Plain decimal numbers such as `-42` or `+3.14` stay as they are.
+
+`export.InsecureRawCells()` turns the guard off, for files that are never opened in a spreadsheet.
+
+## Streaming
+
+- Nothing is sent before the first row. If the query fails up front, the function returns the error with the response untouched, and the error handler renders a normal error page.
+- After the first byte, a failure (a query error, a row that does not encode, a cancelled context) cannot change the status any more. The function drops the connection, so the browser reports a failed download instead of saving a CSV that stops in the middle and still looks complete. It returns an error wrapping `export.ErrIncomplete` and the cause; returned from a handler, the error handler only logs it. HTTP/2 connections cannot be dropped this way, so there the body just ends: check `errors.Is(err, export.ErrIncomplete)` and `panic(http.ErrAbortHandler)` if you need the reset.
+- The request context is checked before each row, and `Query.Each(c.Context())` stops the query when the client goes away.
+
+| Option | Default | Effect |
+| --- | --- | --- |
+| `export.FlushEvery(n)` | 500 | flush to the client every `n` rows; the end is always flushed |
+| `export.WriteTimeout(d)` | 1 minute | write deadline set at the start and after every flush, so a long export outlives the server's `WriteTimeout` while a stalled client is still cut; zero keeps the server deadline |
+| `export.WithBOM()` | off | start a CSV with a UTF-8 BOM, which Excel needs to show accents |
+| `export.InsecureRawCells()` | off | disable the CSV formula guard |
+
+## In plain net/http
+
+The functions take an `http.ResponseWriter` and the `*http.Request`, so they work outside `web.Ctx` too. In that case, write an error page only when the error does not wrap `export.ErrIncomplete`, because that error means the download had already started.
