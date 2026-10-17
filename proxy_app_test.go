@@ -1,6 +1,8 @@
 package vukem
 
 import (
+	"bytes"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -232,6 +234,36 @@ func TestSecurity_A01_ClientIPHeaderFromEnv(t *testing.T) {
 			rec := proxyReq(t, proxyApp(t, tt.env), tt.peer, headers)
 			if got := rec.Body.String(); got != tt.want {
 				t.Fatalf("IP() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestTrustedProxiesWarnsOnCatchAll(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct {
+		proxies string
+		warn    bool
+	}{
+		{proxies: "0.0.0.0/0", warn: true},
+		{proxies: "10.0.0.0/8, ::/0", warn: true},
+		{proxies: "10.0.0.0/8"},
+	} {
+		t.Run(tt.proxies, func(t *testing.T) {
+			t.Parallel()
+
+			var buf bytes.Buffer
+
+			_, err := New(WithSource(testSource(map[string]string{"TRUSTED_PROXIES": tt.proxies})),
+				WithLogger(slog.New(slog.NewTextHandler(&buf, nil))))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if got := strings.Contains(buf.String(), "level=WARN") &&
+				strings.Contains(buf.String(), "TRUSTED_PROXIES"); got != tt.warn {
+				t.Fatalf("warned = %v, want %v; log %q", got, tt.warn, buf.String())
 			}
 		})
 	}

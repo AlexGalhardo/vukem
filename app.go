@@ -523,6 +523,14 @@ func New(opts ...Option) (*App, error) {
 	}
 
 	app.Router = app.newRouter()
+
+	if catchAll := slices.ContainsFunc(proxies, func(n *net.IPNet) bool {
+		ones, _ := n.Mask.Size()
+		return ones == 0
+	}); catchAll {
+		app.Log.Warn("TRUSTED_PROXIES trusts every address: any client can set its own c.IP(); " +
+			"trust only the proxy's network")
+	}
 	routes = app.Router
 
 	if dt != nil {
