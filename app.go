@@ -135,6 +135,8 @@ type App struct {
 	sessOnce  sync.Once
 	sessions  *session.Manager
 	sessStore session.Store
+	// sessStoreFunc builds sessStore on first use (WithSessionStoreFunc).
+	sessStoreFunc func(*App) (session.Store, error)
 	// sessPruner is the session store when it keeps expired rows (database).
 	sessPruner sessionPruner
 	sessErr    error
@@ -154,14 +156,18 @@ type App struct {
 	// DEVTOOLS=true enabled it (nil otherwise).
 	Devtools *devtools.Devtools
 
-	jobs         []queue.Registration
-	jobFuncs     []func(*App) []queue.Registration
-	queueDriver  queue.Driver
-	cacheStore   cache.Store
-	schedules    []func(*schedule.Schedule, *App)
-	scheduleOnce sync.Once
-	schedule     *schedule.Schedule
-	scheduleErr  error
+	jobs        []queue.Registration
+	jobFuncs    []func(*App) []queue.Registration
+	queueDriver queue.Driver
+	cacheStore  cache.Store
+	// Built on first use of Queue() / Cache() (WithQueueDriverFunc,
+	// WithCacheStoreFunc).
+	queueDriverFunc func(*App) (queue.Driver, error)
+	cacheStoreFunc  func(*App) (cache.Store, error)
+	schedules       []func(*schedule.Schedule, *App)
+	scheduleOnce    sync.Once
+	schedule        *schedule.Schedule
+	scheduleErr     error
 
 	queueOnce sync.Once
 	queue     *queue.Queue
@@ -209,6 +215,9 @@ type options struct {
 	queueDriver   queue.Driver
 	cacheStore    cache.Store
 	sessionStore  session.Store
+	queueFunc     func(*App) (queue.Driver, error)
+	cacheFunc     func(*App) (cache.Store, error)
+	sessionFunc   func(*App) (session.Store, error)
 	schedules     []func(*schedule.Schedule, *App)
 	drivers       []database.Driver
 	stdout        io.Writer
@@ -470,8 +479,12 @@ func New(opts ...Option) (*App, error) {
 		queueDriver: o.queueDriver,
 		cacheStore:  o.cacheStore,
 		sessStore:   o.sessionStore,
-		schedules:   o.schedules,
-		mail:        mailState{transport: o.mailTransport},
+
+		queueDriverFunc: o.queueFunc,
+		cacheStoreFunc:  o.cacheFunc,
+		sessStoreFunc:   o.sessionFunc,
+		schedules:       o.schedules,
+		mail:            mailState{transport: o.mailTransport},
 	}
 	app.Router = app.newRouter()
 	routes = app.Router

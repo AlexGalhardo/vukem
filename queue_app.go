@@ -34,9 +34,18 @@ func WithJobsFunc(fn func(app *App) []queue.Registration) Option {
 }
 
 // WithQueueDriver replaces the driver chosen by QUEUE_CONNECTION (tests
-// pass a queue.Fake).
+// pass a queue.Fake). The last of WithQueueDriver and WithQueueDriverFunc
+// wins.
 func WithQueueDriver(d queue.Driver) Option {
-	return func(o *options) error { o.queueDriver = d; return nil }
+	return func(o *options) error { o.queueDriver, o.queueFunc = d, nil; return nil }
+}
+
+// WithQueueDriverFunc replaces the driver chosen by QUEUE_CONNECTION with
+// one built by fn on the first app.Queue() call, after configuration
+// loaded, so fn can read app.Source. An error from fn is returned by
+// app.Queue().
+func WithQueueDriverFunc(fn func(app *App) (queue.Driver, error)) Option {
+	return func(o *options) error { o.queueFunc, o.queueDriver = fn, nil; return nil }
 }
 
 // MailJobKind is the queue job that sends queued mail (App.MailLater).
@@ -86,6 +95,11 @@ func (a *App) Queue() (*queue.Queue, error) {
 
 		switch {
 		case d != nil:
+		case a.queueDriverFunc != nil:
+			if d, err = a.queueDriverFunc(a); err != nil {
+				a.queueErr = fmt.Errorf("vukem: queue driver: %w", err)
+				return
+			}
 		case cfg.Connection == "sync":
 			d = queue.Sync{}
 		case cfg.Connection == "memory":

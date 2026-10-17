@@ -19,6 +19,60 @@ app, err := vukem.New(
 app.AddHealthCheck("redis", rc.Ping)
 ```
 
+### Reading `REDIS_URL` from the app configuration
+
+`os.Getenv` above runs before `vukem.New` loads `.env`, `.env.local` and the sources `vukemtest` passes. To read the URL from `app.Source`, use the lazy options: each function runs on the first `app.Cache()`, `app.Sessions()` or `app.Queue()` call, after configuration loaded, and its error is returned by that call (`DefaultMiddleware` builds sessions at boot, so a bad URL is still a boot error).
+
+```go
+var (
+	once  sync.Once
+	rc    *redis.Client
+	rcErr error
+)
+
+client := func(app *vukem.App) (*redis.Client, error) {
+	once.Do(func() {
+		if rc, rcErr = redis.Open(context.Background(), app.Source.Get("REDIS_URL")); rcErr != nil {
+			return
+		}
+
+		app.AddHealthCheck("redis", rc.Ping)
+		app.OnShutdown(func(context.Context) error { return rc.Close() })
+	})
+
+	return rc, rcErr
+}
+
+app, err := vukem.New(
+	vukem.WithCacheStoreFunc(func(app *vukem.App) (cache.Store, error) {
+		c, err := client(app)
+		if err != nil {
+			return nil, err
+		}
+
+		return c.CacheStore("cache:"), nil
+	}),
+	vukem.WithSessionStoreFunc(func(app *vukem.App) (session.Store, error) {
+		c, err := client(app)
+		if err != nil {
+			return nil, err
+		}
+
+		return c.SessionStore(""), nil
+	}),
+	vukem.WithQueueDriverFunc(func(app *vukem.App) (queue.Driver, error) {
+		c, err := client(app)
+		if err != nil {
+			return nil, err
+		}
+
+		return c.Queue(redis.QueueOptions{}), nil
+	}),
+)
+```
+
+The last of `WithCacheStore` / `WithCacheStoreFunc` (and likewise for sessions and queues) wins; `SetSessionStore` from a provider still overrides both.
+
 | Feature | API |
 | --- | --- |
 | Cache store | `rc.CacheStore(prefix)` implements `cache.Store`; `Flush` deletes only the prefix (`SCAN` + `DEL`) and refuses an empty one |

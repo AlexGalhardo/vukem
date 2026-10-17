@@ -62,7 +62,7 @@ func (a *App) RateLimiters() (ratelimit.Factory, error) {
 // cacheShared reports whether App.Cache reaches every server: a store set
 // with WithCacheStore (Redis) or CACHE_STORE=database.
 func (a *App) cacheShared() (bool, error) {
-	if a.cacheStore != nil {
+	if a.cacheStore != nil || a.cacheStoreFunc != nil {
 		return true, nil
 	}
 

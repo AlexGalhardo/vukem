@@ -214,6 +214,13 @@ func (a *App) Sessions() (*session.Manager, error) {
 			return
 		}
 
+		if a.sessStore == nil && a.sessStoreFunc != nil {
+			if a.sessStore, err = a.sessStoreFunc(a); err != nil {
+				a.sessErr = fmt.Errorf("vukem: session store: %w", err)
+				return
+			}
+		}
+
 		secure := a.Config.IsProduction() || strings.HasPrefix(a.Config.URL, "https://")
 		if cfg.Secure != "auto" {
 			secure = cfg.Secure == "true" || cfg.Secure == "1"
