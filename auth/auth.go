@@ -33,6 +33,12 @@ type Authenticatable interface {
 
 // UserProvider loads users. ByCredentials never checks the password; the
 // guard does, in constant time.
+//
+// ByID must report a missing user as ErrUserNotFound (wrap it, or the
+// orm.ErrNotFound / sql.ErrNoRows the lookup returned): the session guard
+// forgets the session only then, and answers any other error with 503
+// while keeping the session, so returning a generic error for "not found"
+// leaves a deleted user's session failing instead of logging out.
 type UserProvider[U Authenticatable] interface {
 	ByID(ctx context.Context, id string) (U, error)
 	ByCredentials(ctx context.Context, creds map[string]string) (U, error)
@@ -134,9 +140,31 @@ type Checker interface {
 
 type userKey struct{ guard string }
 
-// cache stores the user for this request in c's context.
+type principalKey struct{}
+
+type principal struct{ guard, id string }
+
+// cache stores the user for this request in c's context, and the
+// principal Principal reports (cleared when u is nil, on logout).
 func cache(c *web.Ctx, guard string, u any) {
-	c.SetRequest(c.Request().WithContext(context.WithValue(c.Context(), userKey{guard}, u)))
+	ctx := context.WithValue(c.Context(), userKey{guard}, u)
+
+	var p principal
+	if a, ok := u.(Authenticatable); ok {
+		p = principal{guard: guard, id: a.AuthID()}
+	}
+
+	c.SetRequest(c.Request().WithContext(context.WithValue(ctx, principalKey{}, p)))
+}
+
+// Principal returns the guard and user id of the user most recently
+// authenticated on this request by any guard, for code that must key data
+// by caller without knowing the guard (api.Idempotency). Combine the two
+// unambiguously (length-prefixed or hashed): either may contain any
+// character.
+func Principal(ctx context.Context) (guard, id string, ok bool) {
+	p, _ := ctx.Value(principalKey{}).(principal)
+	return p.guard, p.id, p.id != ""
 }
 
 func cached[U any](c *web.Ctx, guard string) (U, bool) {

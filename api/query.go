@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"slices"
 	"strconv"
 	"strings"
@@ -18,6 +19,34 @@ type Option func(*spec)
 type spec struct {
 	filters, sorts, includes, fields []string
 	perPage, maxPerPage              int
+	maxPage, maxFilterValues         int
+}
+
+// Default bounds of Query; see MaxPage and MaxFilterValues.
+const (
+	DefaultMaxPage         = 1000
+	DefaultMaxFilterValues = 100
+)
+
+// MaxPage bounds ?page (default DefaultMaxPage), so a request cannot make
+// the database skip millions of rows (OFFSET); use ?cursor for deep lists.
+// n <= 0 keeps the default.
+func MaxPage(n int) Option {
+	return func(s *spec) {
+		if n > 0 {
+			s.maxPage = n
+		}
+	}
+}
+
+// MaxFilterValues bounds the comma-separated values of one ?filter[col]
+// (default DefaultMaxFilterValues). n <= 0 keeps the default.
+func MaxFilterValues(n int) Option {
+	return func(s *spec) {
+		if n > 0 {
+			s.maxFilterValues = n
+		}
+	}
 }
 
 // Filters allows ?filter[col]=value (comma-separated values mean IN).
@@ -55,15 +84,20 @@ func (r Request[T]) Paginate(ctx context.Context) (orm.Page[T], error) {
 // Query applies ?filter, ?sort, ?fields, ?include, ?page, ?per_page and
 // ?cursor to q. Every column must be allowlisted: an unknown filter, sort,
 // field or include is a 400 problem naming the allowed values, so request
-// input never chooses columns freely.
+// input never chooses columns freely. A ?page above MaxPage or a filter
+// with more than MaxFilterValues values is a 400 too.
 func Query[T any](c *web.Ctx, q orm.Query[T], opts ...Option) (Request[T], error) {
-	s := spec{perPage: 20, maxPerPage: 100}
+	s := spec{perPage: 20, maxPerPage: 100, maxPage: DefaultMaxPage, maxFilterValues: DefaultMaxFilterValues}
 	for _, o := range opts {
 		o(&s)
 	}
 
 	values := c.Request().URL.Query()
 	req := Request[T]{Page: max(c.QueryInt("page", 1), 1), Cursor: values.Get("cursor")}
+	if req.Page > s.maxPage {
+		return req, errs.New(http.StatusBadRequest, fmt.Sprintf("Query parameter page must be at most %d.", s.maxPage))
+	}
+
 	req.PerPage = min(max(c.QueryInt("per_page", s.perPage), 1), s.maxPerPage)
 
 	for key, vals := range values {
@@ -78,6 +112,10 @@ func Query[T any](c *web.Ctx, q orm.Query[T], opts ...Option) (Request[T], error
 		}
 
 		parts := strings.Split(vals[len(vals)-1], ",")
+		if len(parts) > s.maxFilterValues {
+			return req, errs.New(http.StatusBadRequest,
+				fmt.Sprintf("Query parameter filter[%s] accepts at most %d values.", col, s.maxFilterValues))
+		}
 		args := make([]any, len(parts))
 
 		for i, p := range parts {

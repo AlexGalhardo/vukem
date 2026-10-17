@@ -348,6 +348,15 @@ func (k Key) verify(input, sig []byte) bool {
 	return false
 }
 
+// SharedKeySet is a KeySet whose keys an identity provider also uses for
+// its other clients (RemoteJWKS). A Verifier over one requires Audience and
+// Issuer. Custom KeySets that wrap a RemoteJWKS should forward SharedKeys
+// (embedding *RemoteJWKS does).
+type SharedKeySet interface {
+	KeySet
+	SharedKeys() bool
+}
+
 // KeySet finds verification keys by id (kid); "" asks for the only key.
 type KeySet interface {
 	Key(ctx context.Context, kid string) (Key, error)
@@ -378,10 +387,18 @@ type VerifyOptions struct {
 	// Algorithms allowed (default: all supported); each key still only
 	// accepts its own algorithm.
 	Algorithms []string
-	// Issuer, when set, must equal "iss".
+	// Issuer, when set, must equal "iss". Required with a *RemoteJWKS.
 	Issuer string
-	// Audience, when set, must be in "aud".
+	// Audience, when set, must be in "aud". Required with a *RemoteJWKS:
+	// an identity provider signs tokens for all of its clients with the
+	// same keys, so without it a token issued to another app is accepted.
 	Audience string
+	// InsecureSkipAudience accepts any "aud" with a *RemoteJWKS.
+	// Dangerous: tokens the provider issued to other apps pass.
+	InsecureSkipAudience bool
+	// InsecureSkipIssuer accepts any "iss" with a *RemoteJWKS.
+	// Dangerous: tokens from other tenants of a multi-tenant provider pass.
+	InsecureSkipIssuer bool
 	// Leeway tolerates clock skew (default 30s).
 	Leeway time.Duration
 	// AllowMissingExpiry accepts tokens without "exp" (off by default).
@@ -394,6 +411,7 @@ type VerifyOptions struct {
 type Verifier struct {
 	keys KeySet
 	opts VerifyOptions
+	err  error // misconfiguration: every Verify fails with it
 }
 
 // NewVerifier returns a Verifier.
@@ -410,8 +428,23 @@ func NewVerifier(keys KeySet, opts VerifyOptions) *Verifier {
 		opts.Now = time.Now
 	}
 
-	return &Verifier{keys: keys, opts: opts}
+	v := &Verifier{keys: keys, opts: opts}
+
+	if sk, ok := keys.(SharedKeySet); ok && sk.SharedKeys() {
+		switch {
+		case opts.Audience == "" && !opts.InsecureSkipAudience:
+			v.err = errors.New("jwt: a shared key set (RemoteJWKS) needs VerifyOptions.Audience")
+		case opts.Issuer == "" && !opts.InsecureSkipIssuer:
+			v.err = errors.New("jwt: a shared key set (RemoteJWKS) needs VerifyOptions.Issuer")
+		}
+	}
+
+	return v
 }
+
+// Err reports a misconfiguration that makes every Verify fail (a shared
+// key set without Audience or Issuer); check it at boot. NewGuard does.
+func (v *Verifier) Err() error { return v.err }
 
 func invalid(format string, args ...any) error {
 	return fmt.Errorf("%w: %s", ErrInvalid, fmt.Sprintf(format, args...))
@@ -420,6 +453,10 @@ func invalid(format string, args ...any) error {
 // Verify checks the signature and claims of token and returns its claims.
 // Every failure wraps ErrInvalid.
 func (v *Verifier) Verify(ctx context.Context, token string) (Claims, error) {
+	if v.err != nil {
+		return Claims{}, ErrInvalid // the detail is in Err, not in client-facing errors
+	}
+
 	if len(token) > maxTokenSize {
 		return Claims{}, invalid("token larger than %d bytes", maxTokenSize)
 	}

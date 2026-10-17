@@ -12,7 +12,9 @@ import (
 	"time"
 
 	"github.com/AlexGalhardo/vukem/api"
+	"github.com/AlexGalhardo/vukem/auth"
 	"github.com/AlexGalhardo/vukem/cache"
+	"github.com/AlexGalhardo/vukem/web"
 )
 
 func idemHandler(
@@ -39,7 +41,7 @@ func idemHandler(
 	}))
 }
 
-func send(t *testing.T, h http.Handler, method, path, key, auth, body string) *httptest.ResponseRecorder {
+func send(t *testing.T, h http.Handler, method, path, key, authorization, body string) *httptest.ResponseRecorder {
 	t.Helper()
 
 	rec := httptest.NewRecorder()
@@ -49,7 +51,7 @@ func send(t *testing.T, h http.Handler, method, path, key, auth, body string) *h
 		r.Header.Set(api.IdempotencyHeader, key)
 	}
 
-	r.Header.Set("Authorization", auth)
+	r.Header.Set("Authorization", authorization)
 	h.ServeHTTP(rec, r)
 
 	return rec
@@ -189,5 +191,106 @@ func TestSecurity_A04_IdempotencyFailsClosed(t *testing.T) {
 
 	if rec := send(t, h, "POST", "/orders", "k", "Bearer t", `{}`); rec.Code != 503 || calls.Load() != 0 {
 		t.Fatalf("store down = %d calls=%d, want 503 and no call", rec.Code, calls.Load())
+	}
+}
+
+type principal string
+
+func (p principal) AuthID() string       { return string(p) }
+func (p principal) AuthPassword() string { return "" }
+
+// as authenticates the request as user id with the "api" guard, as
+// auth.Required would before Idempotency.
+func as(id string, next http.Handler) http.Handler { return asGuard("api", id, next) }
+
+func asGuard(guard, id string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c := web.NewCtx(w, r, nil)
+		auth.SetUser(c, guard, principal(id))
+		next.ServeHTTP(w, c.Request())
+	})
+}
+
+func TestSecurity_A01_IdempotencyScopedToPrincipal(t *testing.T) {
+	t.Parallel()
+
+	var calls atomic.Int32
+
+	h := idemHandler(cache.NewMemory(100), &calls, api.IdempotencyOptions{})
+
+	steps := []struct {
+		name      string
+		handler   http.Handler
+		auth      string
+		wantCalls int32
+	}{
+		{"user 7, first token", as("7", h), "Bearer t1", 1},
+		{"user 7, rotated token replays", as("7", h), "Bearer t2", 1},
+		{"user 8 with user 7's old token", as("8", h), "Bearer t1", 2},
+		// No principal (e.g. the token was revoked): the header scope is
+		// not the principal scope the response was stored under.
+		{"unauthenticated, same header", h, "Bearer t1", 3},
+	}
+
+	for _, st := range steps {
+		send(t, st.handler, "POST", "/orders", "k", st.auth, `{}`)
+
+		if got := calls.Load(); got != st.wantCalls {
+			t.Fatalf("%s: handler calls = %d, want %d", st.name, got, st.wantCalls)
+		}
+	}
+}
+
+func TestSecurity_A01_IdempotencyScopeHasNoSeparatorCollisions(t *testing.T) {
+	t.Parallel()
+
+	var calls atomic.Int32
+
+	h := idemHandler(cache.NewMemory(100), &calls, api.IdempotencyOptions{})
+
+	send(t, asGuard("a:b", "c", h), "POST", "/orders", "k", "", `{}`)
+	send(t, asGuard("a", "b:c", h), "POST", "/orders", "k", "", `{}`)
+
+	if calls.Load() != 2 {
+		t.Fatalf(
+			"guard %q user %q and guard %q user %q share a scope (calls = %d)",
+			"a:b",
+			"c",
+			"a",
+			"b:c",
+			calls.Load(),
+		)
+	}
+}
+
+func TestSecurity_A01_IdempotencyTokenPrefixDoesNotForkScope(t *testing.T) {
+	t.Parallel()
+
+	const (
+		id     = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+		secret = "234567ABCDEFGHIJKLMNOPQRST"
+	)
+
+	var calls atomic.Int32
+
+	h := idemHandler(cache.NewMemory(100), &calls, api.IdempotencyOptions{})
+
+	for _, header := range []string{
+		"Bearer vk_" + id + "." + secret,
+		"Bearer " + id + "." + secret,
+		"Bearer old_" + id + "." + secret,
+	} {
+		send(t, h, "POST", "/orders", "k", header, `{}`)
+	}
+
+	if calls.Load() != 1 {
+		t.Fatalf("one token under different prefixes ran %d times, want 1", calls.Load())
+	}
+
+	// The secret still separates callers.
+	send(t, h, "POST", "/orders", "k", "Bearer vk_"+id+"."+strings.Repeat("A", 26), `{}`)
+
+	if calls.Load() != 2 {
+		t.Fatalf("same token id with another secret replayed (calls = %d)", calls.Load())
 	}
 }

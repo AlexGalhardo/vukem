@@ -135,6 +135,10 @@ type RemoteJWKS struct {
 	fetched time.Time
 }
 
+// SharedKeys implements SharedKeySet: a provider's JWKS signs tokens for
+// all of its clients.
+func (*RemoteJWKS) SharedKeys() bool { return true }
+
 // Key implements KeySet.
 func (r *RemoteJWKS) Key(ctx context.Context, kid string) (Key, error) {
 	now := time.Now

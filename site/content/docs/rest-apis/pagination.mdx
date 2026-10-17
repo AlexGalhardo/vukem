@@ -28,6 +28,7 @@ func (p *Products) Index(c *web.Ctx) error {
 ```
 
 - Every column is an **allowlist**. An unknown filter, sort, field or include answers 400 listing the allowed values; input never chooses a column freely.
+- `?page` is capped by `api.MaxPage(n)` (default 1000) and each `filter[col]` list by `api.MaxFilterValues(n)` (default 100); above either, 400. Use `?cursor` for deep lists.
 - Filter values are always bound parameters. Comma-separated values become `IN`; `true`/`false` become booleans.
 - `req.Includes` lists the requested relations; pass them to `Query.With` (see [relations](/docs/database/relations)).
 

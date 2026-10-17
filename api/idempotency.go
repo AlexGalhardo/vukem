@@ -9,8 +9,11 @@ import (
 	"maps"
 	"net/http"
 	"slices"
+	"strconv"
+	"strings"
 	"time"
 
+	"github.com/AlexGalhardo/vukem/auth"
 	"github.com/AlexGalhardo/vukem/cache"
 	"github.com/AlexGalhardo/vukem/errs"
 	"github.com/AlexGalhardo/vukem/web"
@@ -29,9 +32,12 @@ type IdempotencyOptions struct {
 	// MaxBody bounds the request body that is fingerprinted (default 1 MiB).
 	MaxBody int64
 	// Scope separates callers so one cannot replay another's response.
-	// Default: the Authorization header; set it for cookie sessions (e.g.
-	// the user ID). A request with a key whose scope is empty is refused
-	// with 400; return a constant to share keys on purpose.
+	// Default: the authenticated principal (auth.Principal: guard and user
+	// id) when an auth middleware ran before Idempotency, else a SHA-256 of
+	// the Authorization header. Place Idempotency after auth.Required so
+	// a revoked token is refused before any replay. A request with a key
+	// whose scope is empty is refused with 400; return a constant to share
+	// keys on purpose.
 	Scope func(r *http.Request) string
 }
 
@@ -70,7 +76,7 @@ func Idempotency(store cache.Store, o IdempotencyOptions) func(http.Handler) htt
 	}
 
 	if o.Scope == nil {
-		o.Scope = func(r *http.Request) string { return r.Header.Get("Authorization") }
+		o.Scope = defaultScope
 	}
 
 	return func(next http.Handler) http.Handler {
@@ -187,6 +193,52 @@ func replay(w http.ResponseWriter, r *http.Request, store cache.Store, storeKey,
 		w.WriteHeader(rec.Status)
 		_, _ = w.Write(rec.Body)
 	}
+}
+
+// defaultScope is the authenticated principal, else a hash of the
+// Authorization header (never the credential itself), else "".
+func defaultScope(r *http.Request) string {
+	if guard, id, ok := auth.Principal(r.Context()); ok {
+		// Length-prefixed, so ("a:b", "c") and ("a", "b:c") differ.
+		return "principal:" + strconv.Itoa(len(guard)) + ":" + guard + ":" + id
+	}
+
+	if h := r.Header.Get("Authorization"); h != "" {
+		return "authorization:" + digest(unprefixedToken(h))
+	}
+
+	return ""
+}
+
+// unprefixedToken drops the configurable prefix of an auth.Tokens bearer
+// token ("Bearer vk_<id>.<secret>"), so one token keeps one scope whatever
+// prefix it was issued under. The id and secret stay: a token id alone
+// must never be enough to reach someone's stored responses. Other values
+// are returned unchanged.
+func unprefixedToken(h string) string {
+	tok, ok := strings.CutPrefix(h, "Bearer ")
+	if !ok {
+		return h
+	}
+
+	id, secret, ok := strings.Cut(strings.TrimSpace(tok), ".")
+	if i := strings.LastIndexByte(id, '_'); ok && i >= 0 {
+		id = id[i+1:]
+	}
+
+	if !ok || !isRandText(id) || !isRandText(secret) {
+		return h
+	}
+
+	return "Bearer " + id + "." + secret
+}
+
+// isRandText reports whether s looks like crypto/rand.Text output (26
+// characters of base32), the form of auth.Tokens ids and secrets.
+func isRandText(s string) bool {
+	return len(s) == 26 && !strings.ContainsFunc(s, func(r rune) bool {
+		return (r < 'A' || r > 'Z') && (r < '2' || r > '7')
+	})
 }
 
 func validKey(k string) bool {

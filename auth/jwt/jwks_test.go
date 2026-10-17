@@ -1,9 +1,12 @@
 package jwt_test
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -132,4 +135,89 @@ func TestRemoteJWKSRotation(t *testing.T) {
 	if srv.calls != calls {
 		t.Errorf("unknown kids refetched the JWKS %d times within MinRefresh", srv.calls-calls)
 	}
+}
+
+func TestSecurity_A07_RemoteJWKSRequiresAudienceAndIssuer(t *testing.T) {
+	t.Parallel()
+
+	ks := keys(t)
+	srv := newJWKSServer(t)
+	srv.publish(t, ks[1])
+
+	// A token the shared identity provider issued for another app.
+	other := claims()
+	other.Audience = []string{"someone-else"}
+
+	tok, err := jwt.Sign(ks[1], other)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name string
+		opts jwt.VerifyOptions
+		ok   bool
+	}{
+		{"no audience", jwt.VerifyOptions{Issuer: "https://vukem.test"}, false},
+		{"no issuer", jwt.VerifyOptions{Audience: "someone-else"}, false},
+		{"neither", jwt.VerifyOptions{}, false},
+		{"wrong audience", jwt.VerifyOptions{Issuer: "https://vukem.test", Audience: "api"}, false},
+		{"bound", jwt.VerifyOptions{Issuer: "https://vukem.test", Audience: "someone-else"}, true},
+		{"explicit opt-out", jwt.VerifyOptions{InsecureSkipAudience: true, InsecureSkipIssuer: true}, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			tt.opts.Now = clock
+			misconfigured := tt.opts.Audience == "" && !tt.opts.InsecureSkipAudience ||
+				tt.opts.Issuer == "" && !tt.opts.InsecureSkipIssuer
+
+			// A custom KeySet wrapping the remote one is just as shared.
+			for name, ks := range map[string]jwt.KeySet{
+				"remote":  &jwt.RemoteJWKS{URL: srv.URL},
+				"wrapped": loggingKeys{&jwt.RemoteJWKS{URL: srv.URL}},
+			} {
+				v := jwt.NewVerifier(ks, tt.opts)
+
+				if (v.Err() != nil) != misconfigured {
+					t.Fatalf("%s: Err() = %v, want misconfigured %v", name, v.Err(), misconfigured)
+				}
+
+				_, err := v.Verify(t.Context(), tok)
+				if (err == nil) != tt.ok || err != nil && !errors.Is(err, jwt.ErrInvalid) {
+					t.Fatalf("%s: Verify() = %v, want ok %v", name, err, tt.ok)
+				}
+
+				// The configuration detail stays out of Verify's error.
+				if misconfigured && strings.Contains(err.Error(), "VerifyOptions") {
+					t.Errorf("%s: Verify() = %q, leaks the configuration", name, err)
+				}
+
+				if misconfigured {
+					assertGuardPanics(t, v)
+				}
+			}
+		})
+	}
+}
+
+// loggingKeys is a custom KeySet that forwards to a remote one.
+type loggingKeys struct{ *jwt.RemoteJWKS }
+
+func (l loggingKeys) Key(ctx context.Context, kid string) (jwt.Key, error) {
+	return l.RemoteJWKS.Key(ctx, kid)
+}
+
+func assertGuardPanics(t *testing.T, v *jwt.Verifier) {
+	t.Helper()
+
+	defer func() {
+		if recover() == nil {
+			t.Error("NewGuard with a misconfigured verifier did not fail at boot")
+		}
+	}()
+
+	jwt.NewGuard[user]("api", v, users{})
 }

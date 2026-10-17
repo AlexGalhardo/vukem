@@ -47,7 +47,7 @@ r.Group("/api", func(g *router.Group) {
 | Key set | Use |
 | --- | --- |
 | `jwt.StaticKeys(current, previous...)` | your own keys, with rotation by `kid` |
-| `&jwt.RemoteJWKS{URL: issuer + "/.well-known/jwks.json"}` | an identity provider's keys: cached, refetched on an unknown `kid` at most once a minute, refreshed hourly |
+| `&jwt.RemoteJWKS{URL: issuer + "/.well-known/jwks.json"}` | an identity provider's keys: cached, refetched on an unknown `kid` at most once a minute, refreshed hourly. Needs `VerifyOptions.Audience` and `Issuer` (the provider signs tokens for every client with the same keys); without them `jwt.NewGuard` panics at boot, `verifier.Err()` says why and every token is refused. Custom key sets wrapping it implement `jwt.SharedKeySet` (embedding `*jwt.RemoteJWKS` does). `InsecureSkipAudience` / `InsecureSkipIssuer` opt out, dangerously |
 | `jwt.PublicJWKS(keys...)` | builds your own JWKS document to publish (HMAC keys are never included) |
 
 ## Refresh tokens

@@ -2,6 +2,9 @@ package auth_test
 
 import (
 	"context"
+	"database/sql"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -78,6 +81,31 @@ type testApp struct {
 	api    *auth.TokenGuard[User]
 	tokens *auth.Tokens
 	hasher hash.Hasher
+	// down makes the session guard's user lookups fail like a database
+	// outage.
+	down atomic.Bool
+	// gone makes them answer not found the way custom providers often do,
+	// with a wrapped sql.ErrNoRows.
+	gone atomic.Bool
+}
+
+// flakyUsers fails ByID while down or gone is set.
+type flakyUsers struct {
+	*auth.ORMProvider[User]
+
+	down, gone *atomic.Bool
+}
+
+func (f flakyUsers) ByID(ctx context.Context, id string) (User, error) {
+	if f.down.Load() {
+		return User{}, errors.New("database unavailable")
+	}
+
+	if f.gone.Load() {
+		return User{}, fmt.Errorf("load user %s: %w", id, sql.ErrNoRows)
+	}
+
+	return f.ORMProvider.ByID(ctx, id)
 }
 
 func newApp(t *testing.T, hasher hash.Hasher) *testApp {
@@ -99,7 +127,12 @@ func newApp(t *testing.T, hasher hash.Hasher) *testApp {
 
 				users := auth.NewORMProvider[User](db)
 				ta.tokens = auth.NewTokens(db)
-				ta.web = auth.NewSessionGuard("web", users, hasher, auth.NewRememberStore(db))
+				ta.web = auth.NewSessionGuard(
+					"web",
+					flakyUsers{users, &ta.down, &ta.gone},
+					hasher,
+					auth.NewRememberStore(db),
+				)
 				ta.web.InsecureCookies = true
 				ta.api = auth.NewTokenGuard("api", users, ta.tokens)
 
@@ -564,4 +597,80 @@ func TestUserFromContext(t *testing.T) {
 	if _, err := auth.UserFrom[User](t.Context(), "web"); err == nil {
 		t.Fatal("user found in an empty context")
 	}
+}
+
+func TestSecurity_A04_TokenPrefixForSecretScanning(t *testing.T) {
+	t.Parallel()
+
+	ta := newApp(t, hash.Fake())
+	u := ta.user(t, "ana@example.com", "pw", true)
+	ctx := t.Context()
+
+	legacy, _, err := ta.tokens.Create(ctx, u.AuthID(), "legacy", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ta.tokens.Prefix = "old_"
+
+	rotated, _, err := ta.tokens.Create(ctx, u.AuthID(), "rotated", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ta.tokens.Prefix = "vk_"
+
+	plain, tok, err := ta.tokens.Create(ctx, u.AuthID(), "cli", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.HasPrefix(plain, "vk_") || strings.HasPrefix(tok.ID, "vk_") {
+		t.Fatalf("Create() = %q (id %q), want a vk_ prefix on the plain token only", plain, tok.ID)
+	}
+
+	// Tokens issued before the prefix, or under an earlier one, keep working.
+	for name, p := range map[string]string{"prefixed": plain, "legacy": legacy, "earlier prefix": rotated} {
+		if _, err := ta.tokens.Find(ctx, p); err != nil {
+			t.Errorf("Find(%s) = %v, want nil", name, err)
+		}
+	}
+
+	// The prefix is a label, not a credential: the secret still decides.
+	if _, err := ta.tokens.Find(ctx, plain[:len(plain)-1]+"X"); err == nil {
+		t.Error("Find(prefixed token with a wrong secret) = nil, want error")
+	}
+
+	for _, bad := range []string{"vk", "vk._", "vk-_", "a b_", strings.Repeat("a", 32) + "_"} {
+		ta.tokens.Prefix = bad
+		if _, _, err := ta.tokens.Create(ctx, u.AuthID(), "bad", nil, 0); err == nil {
+			t.Errorf("Create() with Prefix %q = nil, want error", bad)
+		}
+	}
+}
+
+func TestSecurity_A04_SessionKeptWhenUserLookupFails(t *testing.T) {
+	t.Parallel()
+
+	ta := newApp(t, hash.Fake())
+	ta.user(t, "ana@example.com", "s3cret-pass", false)
+
+	c := ta.Client(t)
+	c.PostForm("/login", url.Values{"email": {"ana@example.com"}, "password": {"s3cret-pass"}}).
+		AssertRedirect("/dashboard")
+
+	// A failing lookup is a server error, not a logout or a login redirect.
+	ta.down.Store(true)
+	c.Get("/dashboard").AssertStatus(http.StatusServiceUnavailable)
+
+	ta.down.Store(false)
+	c.Get("/dashboard").AssertOK().AssertSee("hello ana@example.com")
+
+	// A custom provider's wrapped sql.ErrNoRows means the user is gone:
+	// the session is forgotten and the browser goes to login.
+	ta.gone.Store(true)
+	c.Get("/dashboard").AssertRedirect("/login")
+
+	ta.gone.Store(false)
+	c.Get("/dashboard").AssertRedirect("/login")
 }

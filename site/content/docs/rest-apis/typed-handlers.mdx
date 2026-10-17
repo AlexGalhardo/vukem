@@ -11,6 +11,8 @@ type StoreProduct struct {
 }
 
 r.Group("/api/v1/shops/{shop}", func(g *router.Group) {
+	g.Use(auth.Required(apiGuard)) // Op.Security only documents the scheme
+
 	api.Register(g, "POST /products", api.Op{
 		Name:     "products.store",
 		Summary:  "Create a product",
@@ -48,3 +50,5 @@ Errors returned by the handler go through the normal [problem+json](/docs/basics
 ## Route metadata
 
 `Op.Name` names the route (and becomes the OpenAPI `operationId`). Every typed route carries an `*api.Operation` with its method, full path (group prefixes included), path parameters and input/output types, readable from `router.RouteInfo.Doc`. That is what the [OpenAPI generator](/docs/rest-apis/openapi) uses; plain `web.HandlerFunc` routes keep working beside typed ones.
+
+`Op.Security` only declares the security scheme in the OpenAPI document; it does not authenticate anything. Protect the route or its group with `auth.Required` (and `auth.Ability` for token abilities).

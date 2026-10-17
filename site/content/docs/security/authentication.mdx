@@ -94,7 +94,9 @@ err = tokens.RevokeAll(ctx, user.AuthID())                // e.g. after a passwo
 if auth.TokenCan(c, "api", "posts:read") { /* ... */ } // "*" grants everything
 ```
 
-Opaque tokens `<id>.<secret>` from `crypto/rand`; only the SHA-256 of the secret is stored, compared in constant time; `last_used_at` is updated at most once a minute.
+A `ttl` of `0` in `tokens.Create` means the token never expires (valid until revoked); the `install:api` scaffold issues 30-day tokens. Opaque tokens `<prefix><id>.<secret>` from `crypto/rand`; only the SHA-256 of the secret is stored, compared in constant time; `last_used_at` is updated at most once a minute.
+
+Set `tokens.Prefix` (the `install:auth` scaffold uses `vk_`; pick one specific to your app) so new tokens are easy to spot: add a custom secret-scanning pattern such as `vk_[A-Z2-7]{26}\.[A-Z2-7]{26}` to GitHub or gitleaks. Tokens issued without a prefix, or under an earlier one, keep working.
 
 > When a token id comes from the request (a "Revoke" button), always use `RevokeFor`: it deletes the token only if it belongs to the signed-in user and returns `false` otherwise, so answer 404. For signed tokens from an identity provider, use the [JWT guard](/docs/security/jwt); for TOTP, see [two-factor authentication](/docs/security/two-factor).
 

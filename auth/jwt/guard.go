@@ -2,6 +2,7 @@ package jwt
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/AlexGalhardo/vukem/auth"
@@ -17,8 +18,14 @@ type Guard[U auth.Authenticatable] struct {
 	provider auth.UserProvider[U]
 }
 
-// NewGuard returns a JWT guard named name.
+// NewGuard returns a JWT guard named name. It panics when v.Err() reports
+// a misconfiguration (a RemoteJWKS without Audience or Issuer), so the app
+// fails at boot rather than refusing every token.
 func NewGuard[U auth.Authenticatable](name string, v *Verifier, p auth.UserProvider[U]) *Guard[U] {
+	if err := v.Err(); err != nil {
+		panic(fmt.Sprintf("jwt: guard %q: %v", name, err))
+	}
+
 	return &Guard[U]{name: name, verifier: v, provider: p}
 }
 

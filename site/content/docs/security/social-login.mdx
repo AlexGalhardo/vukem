@@ -46,7 +46,7 @@ r.Get("/auth/{provider}/callback", func(c *web.Ctx) error {
 | Feature | Detail |
 | --- | --- |
 | Flow | Authorization Code + PKCE (S256) for every provider; htmx requests get `HX-Redirect` |
-| State | state, PKCE verifier and nonce in a 10-minute, HMAC-signed, `HttpOnly`, `SameSite=Lax` cookie; compared in constant time; used states are remembered, so a replayed callback fails |
+| State | state, PKCE verifier and nonce in a 10-minute, HMAC-signed, `HttpOnly`, `SameSite=Lax` cookie; compared in constant time; used states are remembered, so a replayed callback fails. Set `s.States` to the cache store (`c, _ := app.Cache(); s.States = c.Store()`, done by `install:auth --social`) so this holds across replicas and restarts. In production use a persistent, shared store (`CACHE_STORE=database` or Redis): the memory store evicts entries past `CACHE_MAX_ENTRIES`, and an evicted state could be replayed until its cookie expires; a store error refuses the callback (503) |
 | OIDC | discovery, JWKS cache (refreshed once for unknown key ids), RS256/ES256 only, checks of `iss`, `aud`/`azp`, `exp`/`iat` (1 minute leeway) and `nonce` |
 | Email trust | `EmailVerified` only when the provider vouches: GitHub primary verified address, GitLab `confirmed_at`, Discord `verified`, OIDC `email_verified` (Microsoft `xms_edov`) |
 | Stateless | `s.UserFromToken(ctx, "google", accessToken)` for API/SPA flows |

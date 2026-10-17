@@ -31,13 +31,18 @@ The signature covers path and query (HMAC-SHA256), is checked in constant time a
 ## Webhook signatures
 
 ```go
-r.Post("/webhooks/github", handle).Use(webhook.Middleware("X-Hub-Signature-256", secret, 1<<20))
+verify, err := webhook.HMAC("X-Hub-Signature-256", secret, 1<<20) // error at boot on an empty secret
+if err != nil {
+	return err
+}
+
+r.Post("/webhooks/github", handle).Use(verify)
 
 ok := webhook.VerifyHMAC(secret, body, r.Header.Get("X-Signature")) // hex or base64, optional "sha256=" prefix
 sig := webhook.Sign(secret, payload)                                  // for outgoing webhooks
 ```
 
-The middleware reads at most `maxBody` bytes (413; `0` means 1 MiB), verifies, restores the body for the handler and answers 401 otherwise. A plain body HMAC does not stop someone who captured a valid request from sending it again, so add the two pieces below.
+`webhook.Middleware(header, secret, maxBody)` is the lenient form: with an empty secret it reports nothing and refuses every request, so prefer `webhook.HMAC`. The middleware reads at most `maxBody` bytes (413; `0` means 1 MiB), verifies, restores the body for the handler and answers 401 otherwise. A plain body HMAC does not stop someone who captured a valid request from sending it again, so add the two pieces below.
 
 ### Standard Webhooks (Svix, Resend, Clerk…)
 

@@ -58,17 +58,21 @@ user, err := auth.User[models.User](c, "web") // in handlers behind Required
 
 ## Guards
 
+Every guard that authenticates a request also records `auth.Principal(ctx)` (`guard, id, ok`; cleared on logout; combine guard and id length-prefixed or hashed, since either may contain any character), for code that keys data by caller without knowing the guard, such as `api.Idempotency`.
+
 ### Session guard (`web`)
 
 - `Attempt(c, creds, auth.Remember(bool))`: provider lookup → constant-time hash check → `Login`. Unknown users still pay for a hash verification against a dummy hash, and both failures return the same 422 error (`TestSecurity_A07_LoginErrorsDoNotRevealUsers`). Failures emit the `auth.login_failed` security event.
 - `Login(c, u)` regenerates the session id (fixation) and stores the user id under `auth_<guard>`; `Logout(c)` invalidates the session and deletes the remember-me token.
+- A session whose user no longer exists is forgotten: custom `UserProvider`s must report a missing user from `ByID` as `auth.ErrUserNotFound` (a wrapped `orm.ErrNotFound` or `sql.ErrNoRows` is accepted too). Any other lookup error (database down) is returned as a 503 and `auth.Required` answers with it, keeping the session, so an outage neither logs users out nor sends them to the login page (`TestSecurity_A04_SessionKeptWhenUserLookupFails`).
 - Remember-me: cookie `remember_<guard>` = `<id>.<secret>` (HttpOnly, SameSite=Lax, Secure unless `InsecureCookies`), only `SHA-256(secret)` stored in `remember_tokens`, single use and rotated on every use, 30 days by default (`RememberFor`).
 - Rehash on login when `hasher.NeedsRehash` (e.g. bcrypt → argon2id) and the provider implements `PasswordUpdater`.
 
 ### Token guard (`api`)
 
-- Opaque tokens `<id>.<secret>` (`crypto/rand.Text()`); `access_tokens` stores `SHA-256(secret)`, name, abilities (JSON), `last_used_at` (updated at most once a minute) and optional expiry (`TestSecurity_A04_TokensStoredHashed`).
-- `tokens.Create(ctx, user.AuthID(), "cli", []string{"posts:read"}, 30*24*time.Hour)` returns the plain token once; `List(ctx, userID)` (no secrets), `RevokeFor(ctx, userID, id)` (owner-checked: use it when the id comes from user input), `Revoke(ctx, id)` (unchecked, for the current token), `RevokeAll(ctx, userID)`; `auth.CurrentToken(c, "api")`, `auth.TokenCan(c, "api", "posts:read")`; `"*"` grants every ability.
+- Opaque tokens `<prefix><id>.<secret>` (`crypto/rand.Text()`). `tokens.Prefix = "vk_"` (set by the `install:auth` scaffold; pick one specific to your app) starts every new token so secret scanners can match leaks: register a custom pattern such as `vk_[A-Z2-7]{26}\.[A-Z2-7]{26}` in GitHub secret scanning or gitleaks. The prefix is up to 32 letters, digits or underscores ending in `_` (`Create` fails otherwise); tokens issued without it or under an earlier prefix stay valid (`TestSecurity_A04_TokenPrefixForSecretScanning`).
+- `access_tokens` stores `SHA-256(secret)`, name, abilities (JSON), `last_used_at` (updated at most once a minute) and optional expiry (`TestSecurity_A04_TokensStoredHashed`).
+- `tokens.Create(ctx, user.AuthID(), "cli", []string{"posts:read"}, 30*24*time.Hour)` returns the plain token once. A `ttl` of `0` means **no expiry**: the token stays valid until revoked, so pass a ttl unless that is intended (the `install:api` scaffold issues 30-day tokens); `List(ctx, userID)` (no secrets), `RevokeFor(ctx, userID, id)` (owner-checked: use it when the id comes from user input), `Revoke(ctx, id)` (unchecked, for the current token), `RevokeAll(ctx, userID)`; `auth.CurrentToken(c, "api")`, `auth.TokenCan(c, "api", "posts:read")`; `"*"` grants every ability.
 - Hashes are compared with `subtle.ConstantTimeCompare`; rejected tokens emit `token.rejected`.
 
 ### JWT guard (`auth/jwt`)
@@ -76,7 +80,7 @@ user, err := auth.User[models.User](c, "web") // in handlers behind Required
 Standard library only. `jwt.Sign(key, jwt.Claims{Subject, Issuer, Audience, ExpiresAt, NotBefore, IssuedAt, ID, Extra})` with `jwt.HS256(kid, secret)` (≥ 32 bytes), `jwt.RS256(kid, rsaKey)` (≥ 2048 bits), `jwt.ES256(kid, p256Key)` or `jwt.EdDSA(kid, ed25519Key)`.
 
 - `jwt.NewVerifier(keys, jwt.VerifyOptions{Issuer, Audience, Algorithms, Leeway, AllowMissingExpiry})`: the header `alg` must be allowed **and** equal the algorithm of the key picked by `kid`, so HMAC-with-a-public-key confusion and `none` are impossible (`TestSecurity_A04_JWTAlgorithmConfusion`); `exp` is required by default, `nbf`/`iat` checked with 30s leeway, `iss`/`aud` exact; duplicate JSON members and tokens over 8 KiB are rejected. Every failure wraps `jwt.ErrInvalid`.
-- Key sets: `jwt.StaticKeys(current, previous...)` for rotation; `&jwt.RemoteJWKS{URL: issuer + "/.well-known/jwks.json"}` caches an identity provider's keys, refetches on an unknown `kid` at most once a minute and refreshes hourly; `jwt.PublicJWKS(keys...)` builds your own JWKS document (HMAC keys are never published).
+- Key sets: `jwt.StaticKeys(current, previous...)` for rotation; `&jwt.RemoteJWKS{URL: issuer + "/.well-known/jwks.json"}` caches an identity provider's keys, refetches on an unknown `kid` at most once a minute and refreshes hourly. A verifier over a `RemoteJWKS` needs `Audience` and `Issuer`: the provider signs tokens for all of its clients with the same keys, so without them a token issued to another app would pass. Missing either, `verifier.Err()` says which, `jwt.NewGuard` panics at boot, and every `Verify` fails with a bare `jwt.ErrInvalid` (the detail never reaches clients). Custom key sets that wrap a `RemoteJWKS` implement `jwt.SharedKeySet` (`SharedKeys() bool`; embedding `*jwt.RemoteJWKS` forwards it) to get the same check. `InsecureSkipAudience` / `InsecureSkipIssuer` opt out (dangerous) (`TestSecurity_A07_RemoteJWKSRequiresAudienceAndIssuer`); `jwt.PublicJWKS(keys...)` builds your own JWKS document (HMAC keys are never published).
 - `jwt.NewGuard[User]("api", verifier, provider)` implements `auth.Checker` (`auth.Required(guard)`); `jwt.ClaimsFrom(c, "api")` exposes the claims; rejected tokens emit `jwt.rejected`.
 - Refresh tokens: `jwt.NewRefreshTokens(db)` with `jwt.RefreshTokensMigration(id)` stores only `SHA-256` of opaque tokens; `Issue(ctx, userID)` starts a family, `Rotate(ctx, token)` consumes it and returns the user and a new token, atomically (one winner among concurrent rotations, `TestSecurity_A07_RefreshConcurrentRotationSingleWinner`); presenting a consumed token returns `jwt.ErrRefreshReused` and revokes the whole family. `Revoke(ctx, token)` (logout) and `RevokeUser(ctx, id)` (password change).
 
@@ -204,13 +208,13 @@ r.Get("/auth/{provider}/callback", func(c *web.Ctx) error {
 | Feature | Detail |
 | --- | --- |
 | Flow | Authorization Code + **PKCE (S256)** for every provider; `htmx` requests get `HX-Redirect` so the browser navigates |
-| CSRF / replay | random `state`, PKCE verifier and OIDC `nonce` in a 10-minute, HMAC-signed, `HttpOnly`, `SameSite=Lax` cookie bound to the provider; state compared in constant time; the cookie is cleared and the state recorded as used, so a replayed callback fails (`TestSecurity_A07_SocialStateMismatch`, `TestSecurity_A07_SocialReplayAndPKCE`) |
+| CSRF / replay | random `state`, PKCE verifier and OIDC `nonce` in a 10-minute, HMAC-signed, `HttpOnly`, `SameSite=Lax` cookie bound to the provider; state compared in constant time; the cookie is cleared and the state recorded as used, so a replayed callback fails (`TestSecurity_A07_SocialStateMismatch`, `TestSecurity_A07_SocialReplayAndPKCE`). Used states live in process memory unless `s.States` is set to a cache store (`c, _ := app.Cache(); s.States = c.Store()`, keys `social:state:<state>`); set it when the app runs more than one replica, with `CACHE_STORE=database` or Redis. In production the store must be persistent and shared: the memory cache store is bounded (`CACHE_MAX_ENTRIES`) and evicts entries, and an evicted state could be replayed until its cookie expires. A store error refuses the callback (503) |
 | OIDC | discovery document, JWKS cache refreshed once for unknown `kid`, only RS256/ES256 (never `none`/HS*), RSA keys ≥ 2048 bits, checks `iss` (Microsoft `{tenantid}` templates), `aud`/`azp`, `exp`/`iat` with 1 minute leeway, `nonce` (`TestSecurity_A07_IDTokenChecks`) |
 | User | `social.User{Provider, ID, Email, EmailVerified, Name, Nickname, AvatarURL, Token{Access, Refresh, Expiry, Scopes}, Raw}` |
 | Email trust | `EmailVerified` only when the provider vouches: GitHub primary verified address, GitLab `confirmed_at`, Discord `verified`, OIDC `email_verified` (Microsoft: `xms_edov`). Link accounts by `(Provider, ID)`, by email only when verified |
 | Stateless | `s.UserFromToken(ctx, "google", accessToken)` for API/SPA flows (profile/userinfo endpoint) |
 | Options | `social.WithEndpoints(...)` (GitHub Enterprise, self-hosted GitLab, tests), `social.WithAuthParams(...)`, `Config.Scopes`, `OIDC(...).AuthParams(...)`, `social.OAuth2(name, cfg, endpoints, scopes, mapUser)` |
-| Security | redirect URL fixed in config, provider calls through a client with a 10 s timeout and 1 MiB response limit, tokens never logged |
+| Security | a provider `error` other than `access_denied` answers `social.ErrProvider` (400, fixed message) and logs the sanitized code, so a crafted callback link cannot put text on the page (`TestSecurity_A03_SocialProviderErrorNotReflected`); redirect URL fixed in config, provider calls through a client with a 10 s timeout and 1 MiB response limit, tokens never logged |
 
 Apple (`social.Apple`, form-post callback), LinkedIn (`social.LinkedIn`) and X (`social.X`) are built in. `social.Fake(name, callbackURL, user)` is a provider for tests.
 

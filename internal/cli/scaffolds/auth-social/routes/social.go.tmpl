@@ -18,6 +18,16 @@ func Social(r *router.Router, app *vukem.App) error {
 
 	s := accounts.NewSocial(app, {{.Providers}})
 
+	// Used OAuth states live in the cache store, so a replayed callback is
+	// refused on every instance: use a shared store (CACHE_STORE=database
+	// or Redis) when several instances run.
+	c, err := app.Cache()
+	if err != nil {
+		return err
+	}
+
+	s.States = c.Store()
+
 	r.Get("/auth/{provider}/redirect", func(c *web.Ctx) error {
 		return s.Redirect(c, c.Param("provider"))
 	}).Name("social.redirect").Use(auth.Guest(acc.Web))

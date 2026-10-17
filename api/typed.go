@@ -24,7 +24,9 @@ type Op struct {
 	// output type is struct{}, 200 otherwise.
 	Status     int
 	Deprecated bool
-	// Security lists the security schemes required (e.g. "bearer").
+	// Security lists the security schemes the OpenAPI document declares
+	// (e.g. "bearer"). It is documentation only and does not authenticate
+	// the route: add auth.Required (and auth.Ability) to the route or group.
 	Security []string
 }
 
