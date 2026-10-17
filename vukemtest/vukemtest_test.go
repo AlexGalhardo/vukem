@@ -12,6 +12,8 @@ import (
 	"testing/fstest"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
+
 	vukem "github.com/AlexGalhardo/vukem"
 	"github.com/AlexGalhardo/vukem/api"
 	"github.com/AlexGalhardo/vukem/errs"
@@ -439,4 +441,35 @@ func TestAssertFlashNeedsPresence(t *testing.T) {
 	expectFailure(t, `flash "success" present ("Note saved."), want none`, func(tb *fakeTB) {
 		app.Client(tb).PostForm("/notes", url.Values{"body": {"long enough"}}).AssertNoFlash("success")
 	})
+}
+
+type actor string
+
+func (a actor) AuthID() string { return string(a) }
+
+// ActingAs and WithSession add to the session in either order, keeping
+// what is already there.
+func TestActingAsWithSession(t *testing.T) {
+	t.Parallel()
+
+	app := vukemtest.New(t, build)
+
+	tests := map[string]*vukemtest.Client{
+		"values first": app.Client(t).WithSession(map[string]any{"stamp": "s1"}).ActingAs("web", actor("7")),
+		"login first":  app.Client(t).ActingAs("web", actor("7")).WithSession(map[string]any{"stamp": "s1"}),
+	}
+
+	for name, c := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			s := c.Get("/teapot").Session()
+			got := map[string]any{"stamp": s["stamp"], "auth_web": s["auth_web"], "owner": s[web.SessionUserKey]}
+			want := map[string]any{"stamp": "s1", "auth_web": "7", "owner": "web:7"}
+
+			if diff := cmp.Diff(want, got); diff != "" {
+				t.Fatalf("session (-want +got):\n%s", diff)
+			}
+		})
+	}
 }

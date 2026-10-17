@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/AlexGalhardo/vukem/auth"
 )
 
 // Client sends in-process requests to the app and keeps cookies between
@@ -48,8 +50,19 @@ func (c *Client) WithCookie(name, value string) *Client {
 }
 
 // ActingAs logs the client in as user on the session guard named guard
-// ("web"), without going through the login form.
+// ("web"), without going through the login form: the session holds what
+// auth.SessionGuard.Login stores (auth.SessionValues), the user's session
+// version included. Values already in the client's session are kept.
 func (c *Client) ActingAs(guard string, user interface{ AuthID() string }) *Client {
+	c.t.Helper()
+
+	return c.WithSession(auth.SessionValues(guard, user))
+}
+
+// WithSession adds values to the client's session (a login stamp kept by
+// the app, a feature flag...), keeping what it already holds. It starts a
+// new session, as a login would.
+func (c *Client) WithSession(values map[string]any) *Client {
 	c.t.Helper()
 
 	m, err := c.app.Sessions()
@@ -57,7 +70,10 @@ func (c *Client) ActingAs(guard string, user interface{ AuthID() string }) *Clie
 		c.t.Fatalf("vukemtest: %v", err)
 	}
 
-	for _, ck := range m.Cookies(c.t.Context(), map[string]any{"auth_" + guard: user.AuthID()}) {
+	data := m.Peek(c.t.Context(), slices.Collect(maps.Values(c.cookies)))
+	maps.Copy(data, values)
+
+	for _, ck := range m.Cookies(c.t.Context(), data) {
 		c.cookies[ck.Name] = ck
 	}
 
