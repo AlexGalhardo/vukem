@@ -117,6 +117,7 @@ blog/
 | Q10 | CI | GitHub Actions: lint, test matrix (ubuntu/windows/macos × stable; oldstable once Go 1.28 ships), integration (PG/Redis/Mongo services), govulncheck, markdownlint, semantic PR title, CodeQL, Dependabot | — | — |
 | Q11 | Agent config | `AGENTS.md` canonical (≤50 lines, links to docs), `CLAUDE.md` imports it; `.claude/rules/*` path-scoped; `.claude/settings.json` with permission allowlist + PostToolUse format hook | rules only | Maintainer approved |
 | Q12 | Comparative benchmarks (B.5.3) | Own module `internal/bench` (in `go.work`, not in `MODULES`) depending on chi and echo; run by `task bench` and a manual `Bench` workflow; results in [performance.md](performance.md) | Benchmarks in core tests; third-party benchmark suites | A comparison needs the competitors as code, and keeping them in a never-published module leaves the core's `go.mod` untouched |
+| Q13 | 1.0 announcement (S.3.2) | README and the GitHub release only; posts to Go community channels (r/golang, Gophers Slack, golang-nuts) are the maintainer's call, outside the plan | Agent-written posts on community channels | Maintainer decision (2026-10-17): those channels speak for the maintainer |
 
 ## Phase scope
 

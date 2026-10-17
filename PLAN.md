@@ -47,15 +47,15 @@ Task IDs: `<phase>.<group>.<task>` (e.g. `P.3.2`). Reference them in commit bodi
 
 Applies to **every** task:
 
-- [ ] Tests written first and passing: `task test` (and `task test:integration` when DB drivers are touched).
-- [ ] `task lint` clean (golangci-lint + markdownlint), no new `nolint` without explanation.
-- [ ] Exported identifiers documented (godoc, full sentences); runnable `Example` for new public APIs.
-- [ ] Coverage of touched packages does not drop below the gate in [docs/testing.md](docs/testing.md#policy-framework).
-- [ ] No new third-party dependency unless listed in [docs/architecture.md](docs/architecture.md#dependency-policy) (update it + brainstorming otherwise).
-- [ ] Core does not import `drivers/*`; no package-level mutable state; no `init()` registration.
-- [ ] Every security default the task introduces (see [docs/security.md](docs/security.md)) has a `TestSecurity_<Axx>_<Behaviour>` test; unsafe options are opt-out with an explicit name; failures deny (fail closed).
-- [ ] Relevant doc in `docs/` updated if behaviour or API changed.
-- [ ] Conventional Commit; `CHANGELOG.md` regenerated at release time only.
+- Tests written first and passing: `task test` (and `task test:integration` when DB drivers are touched).
+- `task lint` clean (golangci-lint + markdownlint), no new `nolint` without explanation.
+- Exported identifiers documented (godoc, full sentences); runnable `Example` for new public APIs.
+- Coverage of touched packages does not drop below the gate in [docs/testing.md](docs/testing.md#policy-framework).
+- No new third-party dependency unless listed in [docs/architecture.md](docs/architecture.md#dependency-policy) (update it + brainstorming otherwise).
+- Core does not import `drivers/*`; no package-level mutable state; no `init()` registration.
+- Every security default the task introduces (see [docs/security.md](docs/security.md)) has a `TestSecurity_<Axx>_<Behaviour>` test; unsafe options are opt-out with an explicit name; failures deny (fail closed).
+- Relevant doc in `docs/` updated if behaviour or API changed.
+- Conventional Commit; `CHANGELOG.md` regenerated at release time only.
 
 ## Phase overview
 
@@ -624,7 +624,7 @@ Applies to **every** task:
 
 - [ ] **S.3.1** `v1.0.0` tag for core and all driver modules (`drivers/*/v1.0.0`).
   → verify: `go get` each module at v1.0.0 works; pkg.go.dev updated.
-- [ ] **S.3.2** Announcement (README, GitHub release, Go community channels).
+- [ ] **S.3.2** Announcement (README and GitHub release; posting to Go community channels is left to the maintainer, see brainstorming).
   → verify: published.
 
 ### 1.0 Stable exit criteria
@@ -632,9 +632,3 @@ Applies to **every** task:
 - [ ] All previous exit criteria still hold.
 - [ ] Stability policy published; API frozen (apidiff gate in CI against `v1.0.0`).
 - [ ] At least one real project (maintainer's) running on 1.0 in production.
-
----
-
-## Post-1.0 backlog (not scheduled)
-
-Empty: the former backlog (GraphQL, WebSockets/broadcasting, admin panel, dev dashboard, JWT, TOTP 2FA, Apple/LinkedIn/X providers, S3, MySQL, Vue/Svelte and templ starters, typed RPC clients) moved into BETA groups B.6–B.9 on 2026-10-16. Social login itself ships in ALPHA (A.3.8–A.3.10).
