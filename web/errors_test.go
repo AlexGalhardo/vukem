@@ -478,31 +478,39 @@ func TestErrorHandlerValidationHookSkipsGET(t *testing.T) {
 func TestErrorHandlerErrorPage(t *testing.T) {
 	t.Parallel()
 
-	type call struct {
-		Status  int
-		Message string
-	}
-
 	secret := errors.New(`pq: password authentication failed for user "app"`)
+	verr := errs.NewValidation().Add("title", "required")
+	get := func(r *http.Request) { r.Method = http.MethodGet }
 
 	tests := []struct {
 		name  string
 		err   error
 		setup func(r *http.Request)
 		debug bool
-		want  []call
+		want  []ErrorPage
 	}{
-		{"4xx message", errs.New(404, "Record not found"), nil, false, []call{{404, "Record not found"}}},
-		{"status text", errs.ErrForbidden, nil, false, []call{{403, "Forbidden"}}},
-		{"5xx hides the cause", secret, nil, false, []call{{500, "Internal Server Error"}}},
+		{"4xx message", errs.New(404, "Record not found"), nil, false, []ErrorPage{
+			{Status: 404, Title: "Not Found", Detail: "Record not found"},
+		}},
+		{"status text", errs.ErrForbidden, nil, false, []ErrorPage{{Status: 403, Title: "Forbidden"}}},
+		{"5xx hides the cause", secret, nil, false, []ErrorPage{{Status: 500, Title: "Internal Server Error"}}},
+		{"5xx hides its message", errs.New(503, "db "+secret.Error()), nil, false, []ErrorPage{
+			{Status: 503, Title: "Service Unavailable"},
+		}},
 		{
-			"5xx hides its message",
-			errs.New(503, "db "+secret.Error()),
+			"4xx hides a wrapped cause",
+			errs.Wrap(404, secret),
 			nil,
 			false,
-			[]call{{503, "Service Unavailable"}},
+			[]ErrorPage{{Status: 404, Title: "Not Found"}},
 		},
-		{"4xx hides a wrapped cause", errs.Wrap(404, secret), nil, false, []call{{404, "Not Found"}}},
+		{"field errors on a GET", verr, get, false, []ErrorPage{{
+			Status: 422, Title: "Validation failed", Detail: "1 field(s) are invalid.",
+			Errors: map[string][]string{"title": {"required"}},
+		}}},
+		{"5xx wrapping field errors hides them", errs.Wrap(500, verr), nil, false, []ErrorPage{
+			{Status: 500, Title: "Internal Server Error"},
+		}},
 		{"JSON clients get problem+json", errs.ErrNotFound, func(r *http.Request) {
 			r.Header.Set("Accept", "application/json")
 		}, false, nil},
@@ -520,16 +528,12 @@ func TestErrorHandlerErrorPage(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			var calls []call
+			var calls []ErrorPage
 
-			s := &Services{
-				Debug:    tt.debug,
-				DebugOut: io.Discard,
-				ErrorPage: func(c *Ctx, status int, message string) bool {
-					calls = append(calls, call{status, message})
-					return c.String(status, "custom") == nil
-				},
-			}
+			s := &Services{Debug: tt.debug, DebugOut: io.Discard, ErrorPage: func(c *Ctx, e ErrorPage) bool {
+				calls = append(calls, e)
+				return c.String(e.Status, "custom") == nil
+			}}
 
 			rec, _ := runError(t, tt.err, tt.setup, s)
 
@@ -544,7 +548,7 @@ func TestErrorHandlerErrorPage(t *testing.T) {
 	}
 
 	// A hook that writes nothing falls back to the HTML page.
-	s := &Services{ErrorPage: func(*Ctx, int, string) bool { return false }}
+	s := &Services{ErrorPage: func(*Ctx, ErrorPage) bool { return false }}
 	if rec, _ := runError(t, errs.ErrNotFound, nil, s); !strings.Contains(rec.Body.String(), "<h1>404 Not Found</h1>") {
 		t.Errorf("fallback body = %q, want the HTML page", rec.Body)
 	}

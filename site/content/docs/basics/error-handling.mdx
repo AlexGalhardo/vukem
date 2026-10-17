@@ -85,7 +85,7 @@ if !verr.Empty() {
 | Wants JSON (`Accept` has JSON and not HTML, or a JSON body with no preference) | `application/problem+json`; 422 includes the `errors` map |
 | Classic form post with a validation error | Validation hook: flash errors and redirect back (installed by the session package); `GET`/`HEAD` requests get the 422 page instead |
 | htmx (`HX-Request: true`) | HTML fragment with the status (htmx 4 swaps 4xx) |
-| Inertia (`X-Inertia: true`, with `vukem.WithInertia`) | The `Error` page component with the props `status` and `message` (status text only for 5xx) |
+| Inertia (`X-Inertia: true`, with `vukem.WithInertia`) | The `Error` page component with the props `status`, `title` and `message` (status text only for 5xx; `errors` for a 4xx validation error) |
 | Browser | HTML page: the view `errors/<status>` when a `Renderer` has it, else a built-in page |
 
 ```json title="404 problem+json"

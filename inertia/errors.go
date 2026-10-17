@@ -1,22 +1,24 @@
 package inertia
 
 import (
+	"cmp"
 	"encoding/json"
+	"slices"
 
 	"github.com/AlexGalhardo/vukem/web"
 )
 
-// ErrorPage renders Config.ErrorComponent with the props status and
-// message for an Inertia request, so the client shows an error page instead
-// of the raw HTML response in a modal. It is a web.ErrorPageFunc: install it
-// as web.Services.ErrorPage (vukem.WithInertia does). It writes nothing for
-// other requests (full page loads keep the HTML status page), for statuses
-// outside 4xx/5xx, or when the page props fail to resolve.
-//
-// message comes from web.DefaultErrorHandler: the error's own message for
-// 4xx, the status text for 5xx (CWE-209).
-func (in *Inertia) ErrorPage(c *web.Ctx, status int, message string) bool {
-	if !IsInertia(c.Request()) || status < 400 || status > 599 {
+// ErrorPage renders Config.ErrorComponent for an Inertia request, so the
+// client shows an error page instead of the raw HTML response in a modal.
+// The props are status, title and message (e.Detail, or e.Title when it is
+// empty), plus the shared props; e.Errors (a 4xx validation error) becomes
+// the errors prop, first message per field, over any flashed errors. It is
+// a web.ErrorPageFunc: install it as web.Services.ErrorPage
+// (vukem.WithInertia does). It writes nothing for other requests (full page
+// loads keep the HTML status page), for statuses outside 4xx/5xx, or when
+// the page props fail to resolve or encode.
+func (in *Inertia) ErrorPage(c *web.Ctx, e web.ErrorPage) bool {
+	if !IsInertia(c.Request()) || e.Status < 400 || e.Status > 599 {
 		return false
 	}
 
@@ -26,24 +28,46 @@ func (in *Inertia) ErrorPage(c *web.Ctx, status int, message string) bool {
 		st = &state{in: in, shared: Props{}}
 	}
 
-	p, err := st.page(c, in.cfg.ErrorComponent, Props{"status": status, "message": message})
+	props := Props{"status": e.Status, "title": e.Title, "message": cmp.Or(e.Detail, e.Title)}
+
+	p, err := st.page(c, in.cfg.ErrorComponent, props)
 	if err != nil {
-		c.Log().ErrorContext(c.Context(), "inertia: render error page", "status", status, "err", err)
+		c.Log().ErrorContext(c.Context(), "inertia: render error page", "status", e.Status, "err", err)
 		return false
+	}
+
+	if len(e.Errors) > 0 {
+		fields, _ := p.Props["errors"].(map[string]any)
+		if fields == nil {
+			fields = map[string]any{}
+		}
+
+		for field, msgs := range e.Errors {
+			if len(msgs) > 0 {
+				fields[field] = msgs[0]
+			}
+		}
+
+		p.Props["errors"] = fields
 	}
 
 	// Encoded before any header is set, so a failure falls back cleanly.
 	b, err := json.Marshal(p)
 	if err != nil {
-		c.Log().ErrorContext(c.Context(), "inertia: encode error page", "status", status, "err", err)
+		c.Log().ErrorContext(c.Context(), "inertia: encode error page", "status", e.Status, "err", err)
 		return false
 	}
 
 	c.SetHeader(HeaderInertia, "true")
 	c.SetHeader("Cache-Control", "no-store")
 
-	if err := c.Blob(status, "application/json", b); err != nil {
-		c.Log().DebugContext(c.Context(), "inertia: write error page", "status", status, "err", err)
+	// Middleware adds Vary on matched routes; unmatched ones need it here.
+	if !slices.Contains(c.Writer().Header().Values("Vary"), HeaderInertia) {
+		c.Writer().Header().Add("Vary", HeaderInertia)
+	}
+
+	if err := c.Blob(e.Status, "application/json", b); err != nil {
+		c.Log().DebugContext(c.Context(), "inertia: write error page", "status", e.Status, "err", err)
 	}
 
 	return true

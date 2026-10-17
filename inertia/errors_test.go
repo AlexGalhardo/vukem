@@ -25,6 +25,7 @@ func errorRoutes(r *router.Router) {
 	r.Get("/forbidden", func(*web.Ctx) error { return errs.ErrForbidden })
 	r.Get("/conflict", func(*web.Ctx) error { return errs.ErrConflict })
 	r.Get("/boom", func(*web.Ctx) error { return errors.New(secret) })
+	r.Get("/invalid", func(*web.Ctx) error { return errs.NewValidation().Add("q", "too short").Add("q", "bad") })
 	r.Get("/wrapped", func(*web.Ctx) error { return errs.Wrap(http.StatusNotFound, errors.New(secret)) })
 	r.Get("/unavailable", func(*web.Ctx) error {
 		return errs.New(http.StatusServiceUnavailable, "replica "+secret)
@@ -133,14 +134,28 @@ func TestErrorPageForInertiaRequests(t *testing.T) {
 				t.Errorf("props lack errors: %v", props)
 			}
 
-			if rec.Header().Get("Cache-Control") != "no-store" {
-				t.Errorf("Cache-Control = %q, want no-store", rec.Header().Get("Cache-Control"))
+			if rec.Header().Get("Cache-Control") != "no-store" || rec.Header().Get("Vary") != "X-Inertia" {
+				t.Errorf("headers = %v, want Cache-Control no-store and Vary X-Inertia", rec.Header())
 			}
 		})
 	}
 
+	// Field errors of a 422 reach the page as Inertia's errors prop (first
+	// message per field).
+	rec := serve(t, h, "/invalid", xhr())
+	props, _ := page(t, rec)["props"].(map[string]any)
+
+	if diff := cmp.Diff(map[string]any{
+		"status": float64(422), "title": "Validation failed", "message": "1 field(s) are invalid.",
+		"errors": map[string]any{"q": "too short"},
+	}, map[string]any{
+		"status": props["status"], "title": props["title"], "message": props["message"], "errors": props["errors"],
+	}); rec.Code != 422 || diff != "" {
+		t.Errorf("GET /invalid = %d, props (-want +got):\n%s", rec.Code, diff)
+	}
+
 	// Props shared by middleware on matched routes reach the error page.
-	props, _ := page(t, serve(t, h, "/missing", xhr()))["props"].(map[string]any)
+	props, _ = page(t, serve(t, h, "/missing", xhr()))["props"].(map[string]any)
 	if props["appName"] != "Shop" {
 		t.Errorf("shared props = %v, want appName", props)
 	}

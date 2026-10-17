@@ -1,7 +1,6 @@
 package web
 
 import (
-	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -143,10 +142,25 @@ func DefaultErrorHandler(c *Ctx, err error) {
 		c.validationHook(verr):
 	case c.s.Debug && status >= 500 && !c.IsHTMX():
 		c.renderDebugPage(status, err)
-	case c.s.ErrorPage != nil && !c.IsHTMX() && c.s.ErrorPage(c, status, cmp.Or(detail, title)):
+	case c.s.ErrorPage != nil && !c.IsHTMX() && c.s.ErrorPage(c, safeErrorPage(status, title, detail, verr)):
 	default:
 		c.renderErrorPage(status, title, detail, verr)
 	}
+}
+
+// safeErrorPage is what Services.ErrorPage receives: for 5xx only the status
+// text, even when the error wraps field errors or carries a message.
+func safeErrorPage(status int, title, detail string, verr *errs.ValidationError) ErrorPage {
+	if status >= http.StatusInternalServerError {
+		return ErrorPage{Status: status, Title: http.StatusText(status)}
+	}
+
+	e := ErrorPage{Status: status, Title: title, Detail: detail}
+	if verr != nil {
+		e.Errors = verr.Fields
+	}
+
+	return e
 }
 
 func (c *Ctx) validationHook(verr *errs.ValidationError) bool {

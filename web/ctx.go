@@ -85,10 +85,26 @@ type Services struct {
 	ErrorPage ErrorPageFunc
 }
 
-// ErrorPageFunc renders an error page with status and a client-safe
-// message (never a 5xx cause, CWE-209). It reports whether it wrote a
-// response; false falls back to the HTML page.
-type ErrorPageFunc func(c *Ctx, status int, message string) bool
+// ErrorPageFunc renders an error page described by e. It reports whether
+// it wrote a response; false falls back to the HTML page.
+type ErrorPageFunc func(c *Ctx, e ErrorPage) bool
+
+// ErrorPage is the client-safe description of an error that
+// DefaultErrorHandler hands to Services.ErrorPage. Its text never holds a
+// 5xx cause or message, nor a wrapped cause (CWE-209).
+type ErrorPage struct {
+	// Status is the HTTP status.
+	Status int
+	// Title is the status text, or "Validation failed" for a 4xx with
+	// field errors.
+	Title string
+	// Detail is the error's own (translated) message for 4xx; empty when
+	// it would repeat Title, and always empty for 5xx.
+	Detail string
+	// Errors holds the field errors of a 4xx validation error (all
+	// messages per field); nil otherwise.
+	Errors map[string][]string
+}
 
 // Ctx is the per-request context. It must not be used after the handler
 // returns or from other goroutines.
