@@ -1,0 +1,98 @@
+package vukem
+
+import (
+	"context"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/AlexGalhardo/vukem/internal/testutil"
+)
+
+func TestRateLimitersFromConfig(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		env     map[string]string
+		wantErr bool
+	}{
+		{name: "default is memory", env: nil},
+		{name: "memory", env: map[string]string{"RATE_LIMIT_STORE": "memory"}},
+		{name: "cache", env: map[string]string{"RATE_LIMIT_STORE": "cache"}},
+		{name: "unknown store", env: map[string]string{"RATE_LIMIT_STORE": "redis"}, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			app := newTestApp(t, WithSource(testSource(tt.env)))
+
+			limiters, err := app.RateLimiters()
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("RateLimiters() error = %v, want error %v", err, tt.wantErr)
+			}
+
+			if err != nil {
+				return
+			}
+
+			l := limiters("api", 1, time.Minute)
+			if res, err := l.Allow(t.Context(), "ip:192.0.2.1"); err != nil || !res.Allowed {
+				t.Fatalf("first Allow() = %+v, %v", res, err)
+			}
+
+			if res, _ := l.Allow(t.Context(), "ip:192.0.2.1"); res.Allowed {
+				t.Fatal("second Allow() allowed, want limit 1")
+			}
+		})
+	}
+}
+
+// Two app instances on one database (two servers) share the budget with
+// RATE_LIMIT_STORE=cache and CACHE_STORE=database.
+func TestRateLimitersShareTheDatabase(t *testing.T) {
+	t.Parallel()
+
+	env := map[string]string{
+		"RATE_LIMIT_STORE": "cache",
+		"CACHE_STORE":      "database",
+		"DATABASE_URL":     "file:" + filepath.ToSlash(filepath.Join(testutil.TempDir(t), "rl.db")),
+	}
+
+	var allowed int
+
+	for range 2 {
+		app, err := New(WithSource(testSource(env)), WithLogger(discardLogger()))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		t.Cleanup(func() { _ = app.Shutdown(context.Background()) })
+
+		limiters, err := app.RateLimiters()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		l := limiters("login", 3, time.Hour)
+
+		for range 2 {
+			res, err := l.Allow(t.Context(), "ip:192.0.2.1")
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if res.Allowed {
+				allowed++
+			}
+		}
+	}
+
+	// shortcut: a window boundary between the requests would reset the
+	// count; a 1h window makes that unlikely enough for a unit test.
+	if allowed != 3 {
+		t.Fatalf("4 requests across 2 instances, limit 3: %d allowed, want 3", allowed)
+	}
+}
