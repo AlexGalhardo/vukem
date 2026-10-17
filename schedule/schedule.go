@@ -231,7 +231,8 @@ func (t *Task) OnOneServer() *Task {
 // not shared by the servers ([cache.Shared] is false): the memory cache, or
 // a store that does not declare [cache.Sharer].
 var ErrLocksNotShared = errors.New(
-	"schedule: OnOneServer needs a lock store shared by the servers (CACHE_STORE=database or Redis)",
+	"schedule: OnOneServer needs a lock store shared by the servers " +
+		"(CACHE_STORE=database, Redis, or a custom store implementing cache.Sharer)",
 )
 
 // Validate reports configuration that cannot work: an OnOneServer task with
