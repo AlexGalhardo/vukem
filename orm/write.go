@@ -93,6 +93,15 @@ func Create[T any](ctx context.Context, ex database.Executor, model *T) error {
 	setTime(rv, m, "created_at", now, true)
 	setTime(rv, m, "updated_at", now, true)
 
+	if err := insertOne(ctx, ex, m, rv); err != nil {
+		return err
+	}
+
+	return hook(ctx, model, AfterCreator.AfterCreate)
+}
+
+// insertOne inserts the row in rv and fills a generated primary key.
+func insertOne(ctx context.Context, ex database.Executor, m *meta, rv reflect.Value) error {
 	var (
 		cols, marks []string
 		args        []any
@@ -136,7 +145,7 @@ func Create[T any](ctx context.Context, ex database.Executor, model *T) error {
 		}
 	}
 
-	return hook(ctx, model, AfterCreator.AfterCreate)
+	return nil
 }
 
 func insertLastID(ctx context.Context, ex database.Executor, q string, args []any, pk reflect.Value) error {
@@ -150,6 +159,10 @@ func insertLastID(ctx context.Context, ex database.Executor, q string, args []an
 		return err
 	}
 
+	return setID(pk, id)
+}
+
+func setID(pk reflect.Value, id int64) error {
 	switch {
 	case pk.CanInt():
 		pk.SetInt(id)
