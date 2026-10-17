@@ -116,7 +116,10 @@ type Social struct {
 	// callback is refused on every instance and after a restart. Set it to
 	// the app cache store (app.Cache() then Store()) when the app runs more
 	// than one replica; nil keeps the set in process memory. A store error
-	// refuses the callback.
+	// refuses the callback. In production use a persistent, shared store
+	// (CACHE_STORE=database or Redis): the memory store is bounded
+	// (CACHE_MAX_ENTRIES) and evicts entries, and an evicted state can be
+	// replayed until its cookie expires.
 	States cache.Store
 	now    func() time.Time
 
