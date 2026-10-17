@@ -7,6 +7,7 @@ import (
 	"testing/fstest"
 
 	"github.com/AlexGalhardo/vukem/i18n"
+	"github.com/AlexGalhardo/vukem/z"
 )
 
 func Example() {
@@ -41,4 +42,52 @@ func Example() {
 	// 1 publicação
 	// 3 publicações
 	// pt 2 publicações
+}
+
+// A Refine callback returns z.FieldErrorKey so its message is translated
+// like the built-in ones, from "validation.<key>".
+func ExampleBundle_LocalizeIssues_refine() {
+	lang := fstest.MapFS{
+		"en.json": {Data: []byte(`{"validation": {
+			"confirmed": "The {field} does not match the {other}."
+		}}`)},
+		"pt-BR.json": {Data: []byte(`{"validation": {
+			"confirmed": "A {field} não confere.",
+			"attributes": {"password_confirmation": "confirmação de senha"}
+		}}`)},
+	}
+
+	b, err := i18n.Load(lang, i18n.Options{Default: "en"})
+	if err != nil {
+		panic(err)
+	}
+
+	type register struct {
+		Password             string `json:"password"`
+		PasswordConfirmation string `json:"password_confirmation"`
+	}
+
+	schema := z.Struct[register](z.Shape{
+		"password":              z.String(),
+		"password_confirmation": z.String(),
+	}).Refine(func(r register) error {
+		if r.Password != r.PasswordConfirmation {
+			return z.FieldErrorKey("password_confirmation", "confirmed",
+				"The {field} field does not match.", map[string]any{"other": "password"})
+		}
+
+		return nil
+	})
+
+	_, err = schema.Parse(map[string]any{"password": "a", "password_confirmation": "b"})
+	is, _ := z.AsIssues(err)
+
+	fmt.Println(is.First("password_confirmation"))
+	fmt.Println(b.LocalizeIssues("en", is).First("password_confirmation"))
+	fmt.Println(b.LocalizeIssues("pt-BR", is).First("password_confirmation"))
+
+	// Output:
+	// The password confirmation field does not match.
+	// The password confirmation does not match the password.
+	// A confirmação de senha não confere.
 }

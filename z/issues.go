@@ -55,8 +55,9 @@ type Issue struct {
 	// Message is a human-readable message.
 	Message string `json:"message"`
 	// Key is the message key Message was built from ("required",
-	// "too_small.string", "string.email"...); empty for custom messages
-	// (Message overrides, Refine, Custom). Localize uses it.
+	// "too_small.string", "string.email"...), or the key given to
+	// FieldErrorKey; empty for other custom messages (Message overrides,
+	// Refine and Custom errors). Localize uses it.
 	Key string `json:"-"`
 	// Params holds the values used by the message, e.g. {"min": 3}.
 	Params map[string]any `json:"params,omitempty"`
@@ -116,14 +117,27 @@ func AsIssues(err error) (Issues, bool) {
 }
 
 // FieldError returns an error for Refine callbacks that points at a field
-// path relative to the refined value.
+// path relative to the refined value. Its message is never translated; use
+// [FieldErrorKey] for a translatable one.
 func FieldError(path, message string) error {
 	return &fieldError{path: path, message: message}
+}
+
+// FieldErrorKey returns a translatable error for Refine callbacks (and
+// [Custom] parsers). The issue points at path relative to the refined value
+// ("" for the value itself), gets Code [CodeCustom], Key key and Params
+// params, and its Message is fallback with {field} and params filled in.
+// [Issues.Localize] rebuilds the message from the template for key, so with
+// package i18n a key "confirmed" is looked up as "validation.confirmed".
+func FieldErrorKey(path, key, fallback string, params map[string]any) error {
+	return &fieldError{path: path, message: fallback, key: key, params: cloneParams(params)}
 }
 
 type fieldError struct {
 	path    string
 	message string
+	key     string
+	params  map[string]any
 }
 
 func (e *fieldError) Error() string { return e.path + ": " + e.message }
@@ -169,7 +183,8 @@ var defaultMessages = map[string]string{
 // catalog's "validation.too_small.string" and "validation.too_small").
 // {field} becomes lookup("attributes.<name>") when present, where name is
 // the last path segment ("first_name"), or the humanized name otherwise.
-// Issues without a template, and custom messages, are kept unchanged.
+// Issues without a template, and custom messages without a key, are kept
+// unchanged.
 func (is Issues) Localize(lookup func(key string) (string, bool)) Issues {
 	out := slices.Clone(is)
 	if lookup == nil {
@@ -182,7 +197,9 @@ func (is Issues) Localize(lookup func(key string) (string, bool)) Issues {
 		}
 
 		tmpl, ok := lookup(iss.Key)
-		if !ok && iss.Code != iss.Key {
+		// Keyed custom issues (FieldErrorKey) fall back to their own
+		// message, not to a generic "custom" template.
+		if !ok && iss.Code != iss.Key && iss.Code != CodeCustom {
 			tmpl, ok = lookup(iss.Code)
 		}
 

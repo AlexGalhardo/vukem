@@ -41,6 +41,27 @@ func (c *pctx) add(path, code string, msg string, params map[string]any) {
 	c.addKeyed(path, code, "", msg, params)
 }
 
+// addErr records the error a Refine callback or Custom parser returned at
+// path, honoring FieldError and FieldErrorKey.
+func (c *pctx) addErr(path string, err error) {
+	fe, ok := errors.AsType[*fieldError](err)
+	if !ok {
+		c.add(path, CodeCustom, err.Error(), nil)
+		return
+	}
+
+	if fe.path != "" {
+		path = joinPath(path, fe.path)
+	}
+
+	if fe.key == "" {
+		c.add(path, CodeCustom, fe.message, nil)
+		return
+	}
+
+	c.addKeyed(path, CodeCustom, fe.key, render(fe.message, path, fe.params), cloneParams(fe.params))
+}
+
 // addKeyed records an issue whose message came from defaultMessages[key],
 // so Issues.Localize can rebuild it from a translated template.
 func (c *pctx) addKeyed(path, code, key, msg string, params map[string]any) {
@@ -132,11 +153,7 @@ func parse[T any](o *opts[T], c *pctx, path string, in any, present bool, emptyI
 
 	for _, r := range o.refines {
 		if err := r(v); err != nil {
-			if fe, isField := errors.AsType[*fieldError](err); isField {
-				c.add(joinPath(path, fe.path), CodeCustom, fe.message, nil)
-			} else {
-				c.add(path, CodeCustom, err.Error(), nil)
-			}
+			c.addErr(path, err)
 		}
 	}
 
