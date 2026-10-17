@@ -13,5 +13,6 @@ use (
 	./contrib/stripe
 	./contrib/graphql
 	./contrib/grpc
+	./contrib/imaging
 	./internal/bench
 )

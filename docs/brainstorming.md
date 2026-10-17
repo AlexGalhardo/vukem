@@ -152,6 +152,7 @@ The maintainer moved the post-1.0 backlog into BETA. Choices that keep the core 
 | File uploads (2026-10-16) | Builds on `storage`: streaming multipart, per-route limits, tus-style resumable uploads, presigned direct-to-S3, `z` file rules, htmx progress component, optional virus-scan hook. Implementation choices (B.10.4): a later `web.LimitBody` replaces the router-wide body limit instead of nesting under it (so a route or `upload.Rules` can raise it); `MethodOverride` reads `_method` from the query string for multipart forms so their bodies stay unread; tus and presign handlers require an `Authorize` hook (boot error when missing). |
 | API docs UI (2026-10-16) | Scalar API Reference (scalar.com) renders the generated OpenAPI 3.1 document; assets vendored and hash-pinned like htmx, CSP-compatible, disabled in production unless enabled. |
 | gRPC (2026-10-16) | `contrib/grpc` on connect-go: it is plain `net/http`, so gRPC, gRPC-Web and Connect share the router, middleware and auth; google.golang.org/grpc's separate server is not needed. Codegen through `buf`/`protoc-gen-connect-go` run with `go tool`. |
+| Image thumbnails (2026-10-17) | `contrib/imaging` on `golang.org/x/image` v0.47.0 (approved by the maintainer while building the marketplace showcase): the stdlib has no WebP decoder and only nearest-neighbour scaling. A separate module keeps the core free of the dependency. |
 
 ## Open questions
 

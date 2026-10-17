@@ -93,6 +93,7 @@ Package names are short, lowercase, singular and never `util`/`common`/`helpers`
 | `github.com/coder/websocket` | `drivers/websocket` | WebSockets |
 | none (stdlib only) | `contrib/graphql` | GraphQL server; gqlgen/graphql-go are not used |
 | `connectrpc.com/connect` (+ `grpchealth`, `grpcreflect`), `google.golang.org/protobuf`, `google.golang.org/genproto/googleapis/rpc` | `contrib/grpc` | gRPC, gRPC-Web and Connect on `net/http`; health, reflection, `google.rpc.BadRequest` details |
+| `golang.org/x/image` | `contrib/imaging` | WebP decoding and high-quality scaling (`draw.CatmullRom`) for thumbnails; the stdlib has neither |
 | `github.com/go-chi/chi/v5`, `github.com/labstack/echo/v4` | `internal/bench` (bench only) | Comparative benchmarks ([performance.md](performance.md)); never imported by core or drivers |
 
 `drivers/s3` adds no dependency: it signs requests with its own Signature Version 4 implementation, checked against the AWS test suite.
