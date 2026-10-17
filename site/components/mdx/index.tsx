@@ -5,6 +5,7 @@ import { Card, CardGroup } from "@/components/mdx/card";
 import { CodeBlock } from "@/components/mdx/code-block";
 import { Step, Steps } from "@/components/mdx/steps";
 import { CodeGroup, Tab, Tabs } from "@/components/mdx/tabs";
+import { currentVersion, versionHref, type DocVersion } from "@/lib/versions";
 
 type HeadingProps = React.ComponentPropsWithoutRef<"h2">;
 
@@ -70,3 +71,20 @@ export const mdxComponents: MDXComponents = {
   Tab,
   Tabs,
 };
+
+/**
+ * Components for a page of version v: in a snapshot, links to /docs/...
+ * (written against the current layout) stay inside that snapshot.
+ */
+export function mdxComponentsFor(v: DocVersion): MDXComponents {
+  if (v.id === currentVersion.id) return mdxComponents;
+
+  function VersionedA({ href = "", ...rest }: React.ComponentPropsWithoutRef<"a">) {
+    return <A href={versionHref(href, v)} {...rest} />;
+  }
+  function VersionedCard({ href, ...rest }: React.ComponentProps<typeof Card>) {
+    return <Card href={href ? versionHref(href, v) : href} {...rest} />;
+  }
+
+  return { ...mdxComponents, a: VersionedA, Card: VersionedCard };
+}

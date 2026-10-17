@@ -1,0 +1,81 @@
+---
+title: Starters
+description: Pick a stack for vukem new — HTMX, HTMX with templ, Inertia with React, Vue or Svelte, or a JSON API — all on Vite and Tailwind CSS v4.
+---
+
+`vukem new` renders one of five starters. On a terminal without a stack flag it asks which one you want; in scripts pass the flag.
+
+```bash
+vukem new blog                       # HTMX + html/template (default)
+vukem new blog --templ               # HTMX + templ components
+vukem new blog --inertia react       # Inertia + React (also: vue, svelte)
+vukem new shop --api                 # JSON-only REST API
+vukem new blog --no-install          # skip npm install
+```
+
+| Starter | Views | Frontend | Node.js |
+| --- | --- | --- | --- |
+| HTMX (default) | `html/template` in `resources/views` | htmx 4 (vendored), Vite 8, Tailwind CSS v4 | for Vite builds |
+| HTMX + templ | templ components in `resources/views` (package `views`) | same as HTMX | for Vite builds |
+| Inertia | React, Vue or Svelte pages in `resources/js/pages` | Vite 8, TypeScript, Tailwind CSS v4 | required |
+| API | none | none | not used |
+
+Every starter ships SQLite, migrations, a posts CRUD example and tests that pass with `go test ./...`. `vukem new` runs `go mod tidy`, writes `APP_KEY`, runs `npm install` when npm is on `PATH` (frontend starters) and `git init`.
+
+## HTMX on Vite
+
+The default starter vendors **htmx 4.0.0** (served by the static middleware, SHA-256 pinned), and builds CSS and scripts with Vite 8 and Tailwind CSS v4 (`@tailwindcss/vite`):
+
+```text
+package.json, vite.config.ts
+resources/css/app.css       @import "tailwindcss" + starter styles in @layer base
+resources/js/app.ts
+resources/vite/vukem.js     hot-file plugin (writes public/hot while the dev server runs)
+resources/public/build/     vite build output, embedded in the binary
+```
+
+The layout loads assets with `{{ vite "resources/css/app.css" "resources/js/app.ts" }}` ([Vite](/docs/frontend/vite)). Without a dev server or a build, the tag renders an HTML comment in development, so Go tests never need Node. Starter views have no inline scripts or handlers and run under the default CSP. See [HTMX](/docs/frontend/htmx) for the request and response helpers.
+
+## templ
+
+`vukem new app --templ` is the HTMX starter with the same pages and tests written as [templ](https://templ.guide) components:
+
+- templ is pinned as a Go tool (`tool` line in `go.mod`); run it with `go tool templ generate`.
+- The generated `*_templ.go` files are committed, so `go build` and `go test` work without running templ.
+- `vukem serve` runs `go tool templ generate` before every build when `.templ` files exist and watches them; `vukem build` generates before `vite build`.
+- `resources/views/helpers.go` wraps the context helpers (`route`, `asset`, `viteTags`, `script`, `flash`, `old`, `fieldError`, `csrfField`). Scripts go through helpers that add the CSP nonce, so components contain no raw `<script>` tags.
+
+```go
+return c.View(views.PostsIndex(posts), web.Partial(views.PostList(posts)))
+```
+
+`web.Partial` renders the fragment for htmx partial requests and the page otherwise. Components read request data through `web.FlashFrom(ctx, key)`, `web.OldInput(ctx, field)`, `web.ErrorsFrom(ctx)`, `csrf.Token(ctx)` and `middleware.CSPNonce(ctx)`.
+
+<Callout type="info">
+`vukem install:auth` writes `html/template` pages and refuses templ projects for now.
+</Callout>
+
+## Inertia (React, Vue, Svelte)
+
+```bash
+vukem new app --inertia react         # or vue, svelte
+vukem install:inertia --force --vue   # convert an existing HTMX starter
+```
+
+The app gets `vukem.WithInertia(inertia.Config{})`, controllers that call `inertia.Render`, the root view `resources/views/app.html`, TypeScript pages in `resources/js/pages`, a default layout in `resources/js/layouts` and tests with `AssertInertia`. `npm run typecheck` runs `tsc` (React), `vue-tsc` or `svelte-check`. `vukem install:auth` on an Inertia app adds `Auth/*` and `Dashboard` pages. See [Inertia](/docs/frontend/inertia).
+
+## API
+
+`vukem new shop --api` is a JSON-only app: `/api/v1` routes, token guard, CORS, rate limiting and problem+json errors, no views or Node. See [REST APIs](/docs/rest-apis/overview).
+
+## Add-ons
+
+These scaffolds work on top of any web starter:
+
+| Command | Adds |
+| --- | --- |
+| `vukem install:auth [--social …] [--2fa]` | [Authentication](/docs/security/authentication), [social login](/docs/security/social-login), [two-factor](/docs/security/two-factor) |
+| `vukem install:admin` | [Admin panel](/docs/digging-deeper/admin) at `/admin` |
+| `vukem install:billing` | [Stripe subscriptions](/docs/digging-deeper/billing) |
+| `vukem install:api` | Token-authenticated `/api/v1` routes |
+| `vukem boost:install` | Guidelines, skills and an MCP server for AI coding agents |

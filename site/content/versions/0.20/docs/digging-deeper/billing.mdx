@@ -1,0 +1,115 @@
+---
+title: Billing with Stripe
+description: A stdlib Stripe client with retries and idempotency keys, verified webhooks, and the install:billing scaffold for subscriptions with Checkout and the Billing Portal.
+---
+
+## The Stripe client
+
+```bash
+go get github.com/AlexGalhardo/vukem/contrib/stripe
+```
+
+`contrib/stripe` is a separate module on the standard library (no stripe-go). Use a restricted key (`rk_…`).
+
+```go
+sc, err := stripe.New(cfg.Key.Reveal(), stripe.WithRetries(2)) // cfg.Key is a config.Secret
+
+session, err := sc.CreateCheckoutSession(ctx, stripe.Params{
+	"mode":                    "subscription",
+	"customer":                customerID,
+	"line_items[0][price]":    priceID,
+	"line_items[0][quantity]": "1",
+	"success_url":             "https://app.example.com/billing?checkout=success",
+})
+
+pi, err := sc.CreatePaymentIntent(ctx, params, "order-42") // your own idempotency key
+if errors.Is(err, stripe.ErrCardDeclined) { /* ... */ }
+```
+
+- Every request pins `Stripe-Version` (`stripe.APIVersion`). POSTs carry an `Idempotency-Key` (generated, or yours), so retries on 429, 5xx and network errors are safe; `Retry-After` and `Stripe-Should-Retry` are honoured.
+- Errors are `*stripe.Error{Status, Type, Code, DeclineCode, Message, Param, RequestID}`; match them with `errors.Is` against `ErrCardDeclined`, `ErrInvalid`, `ErrRateLimited` or `ErrAuth`.
+- Resources: customers (`Create/Get/UpdateCustomer`), Checkout Sessions, subscriptions (`Get/Update/CancelSubscription`), `CreatePortalSession`, payment intents, and `Do` for any other endpoint. `stripe.Params` nests (`line_items[0][price]`).
+- Never pass `payment_method_types` to Checkout: dynamic payment methods come from the Dashboard.
+- The client prints as `rk_…abcd`, never the full key.
+
+### Webhooks
+
+```go
+c, err := app.Cache()
+if err != nil {
+	return err
+}
+webhook, err := stripe.WebhookHandler(stripe.WebhookConfig{
+	Secret: cfg.WebhookSecret.Reveal(), Store: c.Store(), Bus: app.Events, Log: app.Log,
+})
+
+events.Listen(app.Events, func(ctx context.Context, r stripe.Received) error {
+	switch r.Event.Type {
+	case "checkout.session.completed", "checkout.session.async_payment_succeeded":
+		cs, err := stripe.Decode[stripe.CheckoutSession](r.Event)
+		if err != nil {
+			return err
+		}
+		return fulfil(ctx, cs)
+	}
+	return nil
+})
+```
+
+Stripe is a server, not a browser: mount the handler ahead of the session and CSRF middleware (the billing scaffold wraps it in a server middleware registered with `r.UseServer`). A valid signature is its authentication.
+
+- `Stripe-Signature` is verified (HMAC-SHA256 of `t.payload`, any of several `v1` signatures, ±5 minutes tolerance).
+- The event id is claimed in a `cache.Store` (memory, database or Redis), so a duplicate delivery is acknowledged without processing. `stripe.Received{Event}` goes to the `events.Bus` and the event is marked done only after that; a failing listener releases the claim and answers 500 so Stripe redelivers.
+- Fulfil orders from `checkout.session.completed` or `checkout.session.async_payment_succeeded`, never from the success page.
+- `stripe.SignForTest` signs payloads for your tests.
+
+## Subscriptions: `install:billing`
+
+```bash
+vukem install:auth       # required first: billing bills its users
+vukem install:billing
+vukem migrate
+```
+
+The scaffold copies user-owned code for the HTMX starter and the Inertia starters (React, Vue, Svelte):
+
+| File | Contents |
+| --- | --- |
+| `config/billing.go` | `STRIPE_KEY`, `STRIPE_WEBHOOK_SECRET` and one `STRIPE_PRICE_<PLAN>` per plan (`basic`, `pro`) |
+| `database/migrations/<ts>_add_billing_tables.go` | `users.stripe_customer_id` and a `subscriptions` table |
+| `app/models/billing.go` | `models.Billable` and `models.Subscription` with `Valid()` (`active` or `trialing`) |
+| `app/billing/billing.go` | the `Billing` service: customer, checkout, portal, webhook sync, middleware |
+| `app/controllers/account/billing*.go`, billing page | handlers; `resources/views/billing/show.html` or `resources/js/pages/Billing.*` |
+| `routes/billing.go`, `tests/billing*_test.go` | routes, and tests against a fake Stripe API |
+
+### Routes
+
+| Route | Behaviour |
+| --- | --- |
+| `GET /billing` | plans and the current subscription; `?checkout=success` only shows a note and grants nothing |
+| `POST /billing/checkout/{plan}` | creates the Stripe customer on first use, then a Checkout Session in `subscription` mode, and redirects (303) |
+| `POST /billing/portal` | redirects to a Billing Portal session |
+| `POST /stripe/webhook` | the verified webhook, mounted with `r.UseServer` ahead of sessions and CSRF |
+
+Redirects leave the app as a 303 for forms, `inertia.Location` for Inertia visits, `HX-Redirect` for htmx and `{"url": …}` for JSON clients.
+
+### Webhooks keep subscriptions in sync
+
+Access comes from webhooks only. The scaffold handles `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `customer.subscription.*` (created, updated, deleted, paused, resumed), `invoice.paid` and `invoice.payment_failed`. Each sync fetches the subscription from Stripe (events can arrive out of order) and upserts it. Processed event ids live in the app cache, so use a shared store (`CACHE_STORE=database` or Redis) with several instances.
+
+### Gating routes
+
+```go
+r.Get("/reports", reports).Use(auth.Required(acc.Web), b.Subscribed())
+r.Get("/exports", exports).Use(auth.Required(acc.Web), b.OnPlan("pro"))
+```
+
+Users without a valid subscription (or on the wrong plan) are redirected to `/billing` with a flash message, or get 402 problem+json. Missing users, unknown plans and database errors deny too.
+
+### Configuration
+
+In production the app refuses to boot while `STRIPE_KEY`, `STRIPE_WEBHOOK_SECRET` or a plan price is missing; elsewhere billing answers 503 until they are set. Develop against a Stripe sandbox:
+
+```bash
+stripe listen --forward-to localhost:3000/stripe/webhook   # prints the whsec_ secret
+```

@@ -1,0 +1,126 @@
+---
+title: Your first app
+description: Tour the starter's example CRUD, then add a model, migration and controller of your own with the generators.
+---
+
+`vukem new` gives you a working blog: a `PostController` with forms, validation, flash messages and htmx fragments on SQLite, covered by tests. This page walks through it and then adds a second resource.
+
+## The example CRUD
+
+```go title="routes/web.go"
+func Web(r *router.Router, app *vukem.App) error {
+	if err := vukem.DefaultMiddleware(app, r); err != nil {
+		return err
+	}
+
+	r.UseServer(middleware.StaticFS(resources.Public(), middleware.StaticConfig{Prefix: "/"}))
+
+	db, err := app.DB()
+	if err != nil {
+		return err
+	}
+
+	r.Get("/", controllers.Home).Name("home")
+	r.Resource("posts", controllers.NewPostController(db)) // posts.index, posts.store, posts.show…
+
+	return nil
+}
+```
+
+```go title="app/controllers/post_controller.go"
+func (pc *PostController) Store(c *web.Ctx) error {
+	in, err := web.Parse(c, requests.PostSchema) // invalid → flash errors + redirect back
+	if err != nil {
+		return err
+	}
+
+	post := models.Post{Title: in.Title, Body: in.Body}
+	if err := orm.Create(c.Context(), pc.db, &post); err != nil {
+		return err
+	}
+
+	_ = c.Flash("success", "Post created.")
+
+	return c.RedirectRoute("posts.show", "post", post.ID)
+}
+```
+
+```go title="app/requests/post.go"
+var PostSchema = z.Struct[Post](z.Shape{
+	"title": z.String().Trim().Min(3).Max(120),
+	"body":  z.String().Trim().Max(10_000),
+})
+```
+
+The index page has a search box that asks for only the `post-list` block, and delete buttons that remove the row in place:
+
+```go
+return c.Render("posts/index", map[string]any{"Posts": posts, "Search": c.Query("q")}, web.Block("post-list"))
+```
+
+```html title="resources/views/posts/index.html"
+<input type="search" name="q" hx-get="{{route "posts.index"}}"
+	hx-trigger="input changed delay:300ms, search" hx-target="#post-list">
+
+{{block "post-list" .}}
+<ul id="post-list">
+	{{range .Posts}}
+	<li>
+		<a href="{{route "posts.show" "post" .ID}}">{{.Title}}</a>
+		<button hx-delete="{{route "posts.destroy" "post" .ID}}" hx-target="closest li" hx-swap="outerHTML">Delete</button>
+	</li>
+	{{end}}
+</ul>
+{{end}}
+```
+
+## Add a resource
+
+<Steps>
+<Step title="Generate a model, migration and controller">
+
+```bash
+vukem make:model Comment -m -c
+```
+
+Creates `app/models/comment.go`, `database/migrations/<timestamp>_create_comments_table.go` (registered in `migrations.All()`) and a resource `app/controllers/comment_controller.go`.
+
+</Step>
+<Step title="Add columns">
+
+```go title="database/migrations/20261016120000_create_comments_table.go"
+return s.Create("comments", func(t *schema.Table) {
+	t.ID()
+	t.ForeignID("post_id").Constrained().CascadeOnDelete()
+	t.Text("body")
+	t.Timestamps()
+})
+```
+
+```bash
+vukem migrate
+```
+
+</Step>
+<Step title="Route it">
+
+```go title="routes/web.go"
+r.Resource("comments", controllers.NewCommentController())
+```
+
+```bash
+vukem route:list
+```
+
+</Step>
+<Step title="Test it">
+
+```bash
+vukem make:test Comment   # tests/comment_test.go using vukemtest
+go test ./...
+```
+
+</Step>
+</Steps>
+
+See [Directory structure](/docs/directory-structure) for everything the starter contains and [CLI](/docs/cli/overview) for every generator.

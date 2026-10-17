@@ -7,7 +7,7 @@ import { Sidebar } from "@/components/sidebar";
 import type { NavGroup } from "@/lib/content";
 
 /** Drawer with the sidebar for small screens. */
-export function MobileNav({ groups }: { groups: NavGroup[] }) {
+export function MobileNav({ groupsByVersion }: { groupsByVersion: Record<string, NavGroup[]> }) {
   const [open, setOpen] = useState(false);
 
   return (
@@ -28,7 +28,7 @@ export function MobileNav({ groups }: { groups: NavGroup[] }) {
             </Dialog.Close>
           </div>
           <div className="flex-1 overflow-y-auto px-3 py-4">
-            <Sidebar groups={groups} collapsible onNavigate={() => setOpen(false)} />
+            <Sidebar groupsByVersion={groupsByVersion} collapsible onNavigate={() => setOpen(false)} />
           </div>
         </Dialog.Popup>
       </Dialog.Portal>

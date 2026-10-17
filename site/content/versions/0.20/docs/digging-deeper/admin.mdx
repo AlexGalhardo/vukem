@@ -1,0 +1,92 @@
+---
+title: Admin panel
+description: Generate an HTMX admin panel from ORM models, with search, sort, filters, z-schema forms, policies on every action and an audit log.
+---
+
+Package `admin` (core, stdlib only) builds an admin panel from your models: paginated lists with search, sort and filters, detail pages, create and edit forms from `z` schemas, deletes behind a confirmation page, and an audit log of every change.
+
+## Quick start
+
+```bash
+vukem install:auth
+vukem install:admin
+vukem make:admin-resource Post
+vukem migrate
+ADMIN_EMAILS=you@example.com vukem serve   # then open /admin
+```
+
+- `install:admin` (needs `install:auth`) writes `routes/admin.go` (the panel with its own `authz.Gate`), `app/admin/admin.go` (admins read from `ADMIN_EMAILS`; nobody is an admin when it is empty), `app/admin/registry.go`, the audit-log migration and `tests/admin_test.go`.
+- `make:admin-resource <Model>` checks that `models.<Model>` exists and writes `app/admin/<model>.go` (the resource, using `requests.<Model>Schema` when it exists, and a policy allowing admins every action) plus a test, registered in `app/admin/registry.go`.
+
+## Wiring
+
+```go
+panel, err := admin.New(admin.Config{DB: db, Guard: acc.Web, Authorizer: gate})
+if err != nil {
+	return err
+}
+if err := panel.Register(
+	admin.NewResource[models.Post](requests.PostSchema).
+		Search("title", "body").
+		Filter("status", "draft", "published").
+		List("id", "title", "status", "created_at"),
+); err != nil {
+	return err
+}
+return panel.Mount(r)
+```
+
+The gate defines `admin.AbilityAdmin` (every page) and `admin.AbilityAudit` (the audit log), and registers a policy per model.
+
+| `Config` field | Default | Meaning |
+| --- | --- | --- |
+| `DB` | required | records and the audit log |
+| `Guard` | required | authenticates admins; guests go to the `login` route (401 for JSON) |
+| `Authorizer` | `Services.Authorizer` | decides panel and policy abilities; with none, everything is denied |
+| `Prefix` | `/admin` | URL prefix |
+| `Ability` | `admin` | gate ability required on every page |
+| `Title` | `Admin` | header text |
+| `Views` | embedded | `fs.FS` overriding templates by path; `admin.Templates()` returns the originals to copy |
+
+## Resources
+
+`admin.NewResource[T](schema)` takes the model type and infers the input type from the `z.StructSchema`. Columns come from the ORM metadata; form fields come from the schema keys. Controls follow the schema: enums become selects, booleans checkboxes, numbers number inputs, `Email()` and `URL()` typed inputs, dates `datetime-local`, short strings text inputs and longer ones textareas.
+
+| Option | Effect |
+| --- | --- |
+| `Slug(s)`, `Labels(singular, plural)`, `Label(col, text)` | URL segment and UI names |
+| `List(cols...)`, `Column(label, func(T) string)` | list columns; computed columns (escaped) |
+| `Search(cols...)` | search over string columns (`LIKE`, `ILIKE` on Postgres, bound parameters) |
+| `Sortable(cols...)`, `Filter(col, options...)`, `PerPage(n)` | sorting, exact-match filters, page size (default 20, max 200) |
+| `Hidden(cols...)`, `ReadOnly(cols...)`, `Sensitive(cols...)` | never shown; shown but never written; secret columns |
+| `Input(key, kind)` | override a form control |
+| `BeforeSave(fn)` | runs inside the transaction before create/update (hash a password, set an owner) |
+
+Configuration mistakes (unknown columns, a schema key without a column, duplicate slugs) are returned by `Panel.Register` at boot.
+
+## Routes
+
+| Path | Ability |
+| --- | --- |
+| `GET /admin` | `admin` (dashboard with counts) |
+| `GET /admin/_audit` | `admin` + `viewAuditLogs` |
+| `GET /admin/{slug}` | `viewAny` |
+| `/admin/{slug}/create`, `POST /admin/{slug}` | `create` |
+| `GET /admin/{slug}/{id}` | `view` on the record |
+| `/admin/{slug}/{id}/edit`, `POST /admin/{slug}/{id}` | `update` on the record |
+| `/admin/{slug}/{id}/delete` | `delete` on the record (GET is the confirmation page) |
+
+Route names are `admin.dashboard`, `admin.audit` and `admin.<slug>.<action>`. Lists answer htmx partial requests (search, sort, pagination) with the list block only.
+
+## Security
+
+- **Fail closed:** every route needs the guard, the panel ability and the policy ability; anything missing answers 403 and logs an `authz.denied` security event.
+- **CSRF:** the panel adds CSRF protection to its routes; forms carry the token.
+- **Mass assignment:** only schema keys are written; the primary key, timestamps, hidden and read-only columns never are.
+- **Injection:** sort, filter and search columns are allowlists; values are bound parameters.
+- **Secrets:** columns tagged `json:"-"`, named like `password`, `secret`, `token`, `api_key`, `private_key`, `recovery` or `otp`, or marked `Sensitive` are never displayed, searched, sorted or filtered. As form fields they are empty password inputs that keep the stored value when left blank.
+- **Strict CSP:** templates, htmx and CSS are embedded and served from `/admin/_assets/` with no inline code; pages are `Cache-Control: no-store`.
+
+## Audit log
+
+Every create, update (when something changed) and delete writes an `admin.AuditLog` row in the same transaction: the actor, resource, record id, action and a JSON map of changed columns (`before`, `after`; sensitive columns only record that they changed). Register the table with `admin.Migration("<timestamp>_create_admin_audit_logs_table")` (`install:admin` does) and browse it at `/admin/_audit`.

@@ -1,0 +1,50 @@
+---
+title: Typed handlers
+description: api.Register binds and validates the input struct, writes the output as JSON and describes the route for OpenAPI.
+---
+
+```go
+type StoreProduct struct {
+	ShopID int64   `json:"shop"  validate:"required,positive"`
+	Name   string  `json:"name"  validate:"required,max=80" doc:"Display name"`
+	Price  float64 `json:"price" validate:"min=0"`
+}
+
+r.Group("/api/v1/shops/{shop}", func(g *router.Group) {
+	api.Register(g, "POST /products", api.Op{
+		Name:     "products.store",
+		Summary:  "Create a product",
+		Tags:     []string{"products"},
+		Security: []string{"bearer"},
+	}, func(c *web.Ctx, in StoreProduct) (resources.Product, error) {
+		p := models.Product{ShopID: in.ShopID, Name: in.Name, Price: in.Price}
+		if err := orm.Create(c.Context(), db, &p); err != nil {
+			return resources.Product{}, err
+		}
+
+		return resources.FromProduct(p), nil
+	})
+})
+```
+
+## Input
+
+- The input is built from the query string, the JSON or form body and the path parameters, in that order; **path parameters win** over body fields of the same name (a body cannot change `{shop}`).
+- `GET`, `HEAD` and `DELETE` read only the query string.
+- It is validated with the input struct's `validate` tags (the same rules as `web.Bind`); failures answer 422 with field errors, malformed JSON answers 400.
+- Use `struct{}` as the input type when there is none.
+
+## Output
+
+| Case | Status |
+| --- | --- |
+| `Op.Status` set | that status |
+| output type is `struct{}` | 204, no body |
+| `POST` | 201 |
+| otherwise | 200 |
+
+Errors returned by the handler go through the normal [problem+json](/docs/basics/error-handling) path.
+
+## Route metadata
+
+`Op.Name` names the route (and becomes the OpenAPI `operationId`). Every typed route carries an `*api.Operation` with its method, full path (group prefixes included), path parameters and input/output types, readable from `router.RouteInfo.Doc`. That is what the [OpenAPI generator](/docs/rest-apis/openapi) uses; plain `web.HandlerFunc` routes keep working beside typed ones.

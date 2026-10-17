@@ -1,0 +1,59 @@
+---
+title: Security building blocks
+description: SSRF-safe HTTP client, signed URLs, webhook signatures, security events and the crypto-randomness lint rule.
+---
+
+## SSRF-safe HTTP client
+
+Use `httpclient.Safe` for every outbound request to a URL a user controls (webhooks, link previews, avatars by URL):
+
+```go
+client := httpclient.Safe(httpclient.Options{Timeout: 5 * time.Second, MaxBody: 2 << 20})
+resp, err := client.Get(userURL)
+// or: resp, err := httpclient.Get(ctx, userURL)
+```
+
+- Only public addresses: loopback, private, link-local (cloud metadata `169.254.169.254`), CGNAT, multicast and reserved ranges are refused, also as IPv4-mapped IPv6.
+- The check runs on the resolved IP at connect time, so DNS rebinding and redirects to internal hosts fail too.
+- `http`/`https` only, at most 5 redirects, no proxy, timeouts, and bodies over `MaxBody` fail. `Options.Allow` adds trusted prefixes.
+
+## Signed URLs
+
+```go
+signer := signed.New(app.Key.Derive("signed.urls", 32))
+link, err := signer.Sign(appURL+"/unsubscribe/42", 7*24*time.Hour) // adds expires and signature
+
+r.Get("/unsubscribe/{id}", unsubscribe).Use(signer.Middleware()) // 403 when tampered or expired
+```
+
+The signature covers path and query (HMAC-SHA256), is checked in constant time and works behind proxies. `storage.TemporaryURL` builds on it.
+
+## Webhook signatures
+
+```go
+r.Post("/webhooks/github", handle).Use(webhook.Middleware("X-Hub-Signature-256", secret, 1<<20))
+
+ok := webhook.VerifyHMAC(secret, body, r.Header.Get("X-Signature")) // hex or base64, optional "sha256=" prefix
+sig := webhook.Sign(secret, payload)                                  // for outgoing webhooks
+```
+
+The middleware reads at most `maxBody` bytes (413), verifies, restores the body for the handler and answers 401 otherwise.
+
+## Security events
+
+Every `web.SecurityEvent` (failed logins, `authz.denied`, CSRF rejections, rate limits, bad signatures, rejected tokens) is logged at `WARN` and dispatched as a `security.Event` on the app event bus:
+
+```go
+events.Listen(app.Events, func(ctx context.Context, e security.Event) error {
+	if e.Name == "auth.login_failed" {
+		app.Telegram.Send(ctx, "Failed login from "+html.EscapeString(e.IP))
+	}
+	return nil
+})
+```
+
+`security.Event` carries `Name`, `At`, `Method`, `Path`, `IP`, `RequestID` and `Attrs` (never secrets).
+
+## Lint guard
+
+The `crypto-randomness` depguard rule makes `math/rand` a lint error in `auth`, `session`, `csrf`, `signed`, `social`, `webhook` and `config`.

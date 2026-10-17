@@ -3,7 +3,8 @@ import { MobileNav } from "@/components/mobile-nav";
 import { SearchDialog } from "@/components/search-dialog";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { IconTooltip } from "@/components/icon-tooltip";
-import { getNavGroups } from "@/lib/content";
+import { VersionSwitcher } from "@/components/version-switcher";
+import { getNavGroupsByVersion } from "@/lib/content";
 import { site } from "@/lib/site";
 
 function GitHubIcon({ className }: { className?: string }) {
@@ -14,14 +15,22 @@ function GitHubIcon({ className }: { className?: string }) {
   );
 }
 
+function hrefsOf(groupsByVersion: Record<string, { items: { href: string }[] }[]>): Record<string, string[]> {
+  return Object.fromEntries(
+    Object.entries(groupsByVersion).map(([id, groups]) => [id, groups.flatMap((g) => g.items.map((i) => i.href))]),
+  );
+}
+
 export function Header() {
+  const groupsByVersion = getNavGroupsByVersion();
   return (
     <header className="sticky top-0 z-40 h-(--header-h) border-b border-border bg-bg/80 backdrop-blur-md supports-[backdrop-filter]:bg-bg/70">
       {/* Same container as app/docs/layout.tsx; the left column matches the sidebar width. */}
       <div className="mx-auto flex h-full max-w-[90rem] items-center gap-3 px-4 sm:px-6 lg:grid lg:grid-cols-[16rem_1fr_16rem] lg:gap-0">
         <div className="flex items-center gap-3">
-          <MobileNav groups={getNavGroups()} />
+          <MobileNav groupsByVersion={groupsByVersion} />
           <Logo />
+          <VersionSwitcher hrefsByVersion={hrefsOf(groupsByVersion)} />
         </div>
         <div className="flex flex-1 justify-end sm:justify-center">
           <SearchDialog />

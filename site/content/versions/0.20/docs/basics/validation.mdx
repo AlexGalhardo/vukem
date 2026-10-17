@@ -1,0 +1,111 @@
+---
+title: Validation
+description: The z package parses untrusted input into typed Go values with Zod-style schemas, and checks outgoing data with the same contract.
+---
+
+<Callout type="info">
+Import `github.com/AlexGalhardo/vukem/z`.
+</Callout>
+
+`z` is a Zod-inspired schema library: build a schema once, then **parse untrusted input into a typed Go value** or **check outgoing data** against the same contract.
+
+## A taste
+
+```go title="app/requests/post.go"
+type StorePost struct {
+	Title       string     `json:"title"`
+	Body        string     `json:"body"`
+	Tags        []string   `json:"tags"`
+	Status      string     `json:"status"`
+	PublishedAt *time.Time `json:"published_at"`
+}
+
+var StorePostSchema = z.Struct[StorePost](z.Shape{
+	"title":        z.String().Trim().Min(3).Max(255),
+	"body":         z.String().Min(1),
+	"tags":         z.Slice(z.String().Trim().ToLower().Alphanum()).Max(5).Default([]string{}),
+	"status":       z.Enum("draft", "published").Default("draft"),
+	"published_at": z.Time().Optional(),
+}).Refine(func(p StorePost) error {
+	if p.Status == "published" && p.PublishedAt == nil {
+		return z.FieldError("published_at", "required when status is published")
+	}
+	return nil
+})
+```
+
+```go
+// In a handler: decode + parse + validate; failures become 422.
+in, err := web.Parse(c, requests.StorePostSchema) // in is requests.StorePost
+if err != nil {
+	return err
+}
+```
+
+## Schemas
+
+| Constructor | Go type | Checks and transforms |
+| --- | --- | --- |
+| `z.String()` | `string` | `Min`, `Max`, `Len`, `NonEmpty`, `Email`, `URL`, `UUID`, `ULID`, `Regex`, `Alpha`, `Alphanum`, `Numeric`, `StartsWith`, `EndsWith`, `Includes`, `OneOf`; `Trim`, `ToLower`, `ToUpper`; invalid UTF-8 and control characters rejected |
+| `z.Int()`, `z.Int32()`, `z.Int64()`, `z.Uint()`, `z.Uint64()`, `z.NumberOf[T]()` | integers | `Min`, `Max`, `Positive`, `NonNegative`, `MultipleOf`; fractions and overflow rejected |
+| `z.Float()`, `z.Float32()` | floats | `Min`, `Max`, `Positive`; NaN and ±Inf rejected |
+| `z.Bool()` | `bool` | — |
+| `z.Time()` | `time.Time` | `After`, `Before`, `Layouts(...)` (default RFC 3339, `datetime-local`, date) |
+| `z.Enum(vals...)`, `z.EnumOf[T](vals...)` | `string` or a named string type | membership |
+| `z.Slice(elem)` | `[]E` | `Min`, `Max`, `Len`, `NonEmpty`, `Unique` |
+| `z.Map(val)` | `map[string]V` | `Min`, `Max` |
+| `z.Struct[T](z.Shape{...})` | `T` | field schemas; `Strict()` rejects unknown keys |
+| `z.Custom[T](fn)` | `T` | user parser |
+
+Every schema supports `Optional()`, `Nullable()`, `Default(v)`, `Refine(fn)`, `Transform(fn)`, `Message(code, msg)` and `Describe(text)`. Schemas are immutable values, safe to share across goroutines.
+
+## Coercion
+
+Forms, query strings and route params arrive as strings; schemas coerce only where it is lossless: numeric strings to `Int`/`Float`, `"on"`/`"1"`/`"true"` to `Bool`, RFC 3339 strings to `Time`, repeated keys to slices and bracketed keys to structs.
+
+## Errors
+
+`Parse` returns `z.Issues`, collected for the whole input. Each issue has a dotted `Path` (`tags.2`, `author.email`), a stable `Code` (`required`, `invalid_type`, `too_small`, `too_big`, `invalid_string`, `invalid_enum`, `custom`), a `Message` and `Params`. The error handler converts them to an `*errs.ValidationError`:
+
+| Request | Response |
+| --- | --- |
+| HTML form (session middleware installed) | redirect back (`Back`) with errors and old input flashed; read them with `c.Errors()` / `c.Old(field)` or `{{error "title"}}` / `{{old "title"}}` in views |
+| htmx | `422` HTML error fragment (htmx 4 swaps 4xx responses) |
+| JSON / API | `422` `application/problem+json` with an `errors` map |
+
+Password fields, `_token` and `_method` are never flashed as old input.
+
+## Struct-tag shorthand
+
+```go
+type Login struct {
+	Email    string `json:"email"    validate:"required,email"`
+	Password string `json:"password" validate:"required,min=12"`
+}
+
+var LoginSchema = z.FromTags[Login]() // panics at boot on unknown rules
+```
+
+`web.Bind[T](c)` uses the tag schema for `T` (built once and cached by `z.For[T]()`).
+
+## Typed boundaries
+
+| Boundary | API |
+| --- | --- |
+| Body (JSON, form, multipart) | `web.Parse(c, schema)`, `web.Bind[T](c)` |
+| Query string | `web.ParseQuery(c, schema)` |
+| Route params | `web.ParseParams(c, schema, "id")` — invalid params answer 404 |
+| Outgoing JSON | `web.JSONWith(c, status, schema, v)` — outside production a contract violation is logged and answered with 500 |
+| Any reader | `z.ParseJSON(r, schema)` |
+
+```json title="422 response"
+{
+  "type": "about:blank",
+  "title": "Validation failed",
+  "status": 422,
+  "detail": "1 field(s) are invalid.",
+  "instance": "/posts",
+  "request_id": "Q2V5…",
+  "errors": { "title": ["The title field must be at least 3 characters."] }
+}
+```

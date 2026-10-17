@@ -1,0 +1,113 @@
+---
+title: Testing
+description: Boot the app per test with an isolated in-memory database, drive it with a fluent in-process client, and assert on responses, sessions and rows.
+---
+
+The `vukemtest` package boots your real application, `bootstrap.New`, in the test environment and sends requests in-process: no port, no network.
+
+```go title="tests/posts_test.go"
+func TestCreatePost(t *testing.T) {
+	t.Parallel()
+
+	app := vukemtest.New(t, bootstrap.New)
+
+	app.Client(t).
+		PostForm("/posts", url.Values{"title": {"Hello"}, "body": {"World"}}).
+		AssertRedirect("/posts/1").
+		AssertSessionHas("success")
+
+	vukemtest.AssertDatabaseHas(t, app, "posts", map[string]any{"title": "Hello"})
+}
+```
+
+## `vukemtest.New`
+
+`vukemtest.New(t, build, opts...)`:
+
+- sets `APP_ENV=test`, a random `APP_KEY` and cookie sessions;
+- points `DATABASE_URL` at a **private in-memory SQLite database** per test, so parallel tests never share rows;
+- does not start the HTTP listener and discards logs;
+- boots providers, runs the registered migrations and shuts the app down in `t.Cleanup`.
+
+```go
+clock := vukemtest.NewFakeClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+
+app := vukemtest.New(t, bootstrap.New, vukemtest.Options{
+	Env:            map[string]string{"MAIL_FROM": "test@example.com"},
+	Clock:          clock.Now,          // app.Now() and sessions use the fake clock
+	SkipMigrations: false,
+	AppOptions:     []vukem.Option{},   // extra options passed to build
+})
+
+clock.Advance(3 * time.Hour) // e.g. expire the idle session timeout
+```
+
+The returned `*vukemtest.App` embeds `*vukem.App` (`app.DB()`, `app.Config`…) and adds `Client`, `Handler` and `RefreshDatabase(t)` (drop everything and migrate again).
+
+## The client
+
+Each `app.Client(t)` has its own cookie jar, like a browser, so sessions and flash messages carry over between its requests.
+
+| Requests | Options |
+| --- | --- |
+| `Get`, `GetJSON`, `Delete`, `PostForm(url, values)`, `PostJSON`, `PutJSON`, `PatchJSON`, `Do(method, url, body, contentType)` | `WithHeader`, `WithToken` (Bearer), `WithCookie`, `AcceptJSON()`, `HTMX()` (partial htmx request) |
+
+## Assertions
+
+Assertions chain and, on failure, print the request, status, headers and body.
+
+| Group | Methods |
+| --- | --- |
+| Status | `AssertStatus(n)`, `AssertOK`, `AssertCreated`, `AssertNoContent`, `AssertNotFound`, `AssertForbidden`, `AssertUnauthorized`, `AssertUnprocessable` |
+| Redirects | `AssertRedirect(path)` (3xx or `HX-Location`), `AssertRedirectRoute(name, params...)` |
+| Body and headers | `AssertSee`, `AssertDontSee`, `AssertHeader`, `AssertFragment` (no `<html>` document) |
+| JSON | `AssertJSON(v)`, `AssertJSONPath("data.0.title", v)`, `AssertJSONCount(path, n)`, `JSONPath(path)` |
+| APIs | `AssertProblem(status)` (RFC 9457), `AssertJSONValidationErrors(fields...)` |
+| htmx | `AssertHXTrigger(event)` |
+| Session | `AssertSessionHas`, `AssertSessionMissing`, `AssertSessionHasErrors(fields...)`, `Session()` |
+| Raw | `Status()`, `Body()`, `Header(key)`, `Recorder()` |
+
+```go
+api := app.Client(t).WithToken(token)
+
+api.PostJSON("/api/posts", map[string]any{"title": ""}).
+	AssertJSONValidationErrors("title")
+
+api.GetJSON("/api/posts/99").AssertProblem(http.StatusNotFound)
+
+app.Client(t).HTMX().Get("/posts?q=go").AssertOK().AssertFragment()
+```
+
+## Database assertions
+
+```go
+vukemtest.AssertDatabaseHas(t, app, "posts", map[string]any{"title": "Hello", "deleted_at": nil}) // nil → IS NULL
+vukemtest.AssertDatabaseMissing(t, app, "posts", map[string]any{"title": "Spam"})
+vukemtest.AssertDatabaseCount(t, app, "posts", 1)
+```
+
+## Generating tests
+
+```bash
+vukem make:test Comment   # tests/comment_test.go
+```
+
+## Plain `httptest`
+
+Handlers are `net/http` handlers, so `httptest` works too: `h, err := app.Handler()` then `h.ServeHTTP(rec, req)`. Time-dependent code without an app can use `testing/synctest`.
+
+## Authentication, mail and data
+
+```go
+app.Client(t).ActingAs("web", user).Get("/dashboard").AssertOK()   // logged in on the session guard
+app.Client(t).WithToken(plain).GetJSON("/api/v1/me").AssertOK()   // bearer token
+
+app.Mails().SentTo("ana@example.com")  // MAIL_MAILER=array in tests
+
+posts, err := factories.Post.Count(3).Create(t.Context(), db)
+err = app.Seed(t.Context())
+```
+
+- `vukemtest.FakeSocial(user)` returns `Options.Env` entries that sign in through a fake provider in apps scaffolded with `install:auth --social`.
+- `vukemtest.App.CookieValue(name)` reads the client's cookie jar.
+- See [Factories and seeders](/docs/database/factories-seeders) and [Events](/docs/digging-deeper/events#testing) for `events.NewFake()`.

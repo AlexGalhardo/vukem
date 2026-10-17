@@ -1,0 +1,135 @@
+---
+title: Middleware
+description: Standard func(http.Handler) http.Handler middleware in three stacks, plus Vukem's built-in middleware.
+---
+
+Middleware has the standard signature, so any `net/http` middleware works with Vukem:
+
+```go
+type Middleware = func(http.Handler) http.Handler
+```
+
+## Three stacks
+
+| Stack | Registered with | Runs |
+| --- | --- | --- |
+| **Server** | `r.UseServer(mw...)` | Every request, even when no route matches (404s, static files, CORS preflight) |
+| **Router** | `r.Use(mw...)` | Only when a route matches |
+| **Route / group** | `g.Use(mw...)`, `route.Use(mw...)`, `resource.Use(mw...)` | Only for the routes it is attached to |
+
+```go
+r := router.New(services)
+
+r.UseServer(
+	middleware.Recover(),
+	middleware.RequestID(),
+	middleware.Logger(app.Log),
+	middleware.SecureHeaders(middleware.SecureHeadersConfig{}),
+	middleware.MethodOverride(),
+	static,
+)
+
+r.Use(middleware.Timeout(30 * time.Second))
+
+r.Group("/api", func(g *router.Group) {
+	g.Use(middleware.JSONOnly(), middleware.BodyLimit(1<<20))
+	g.APIResource("posts", posts)
+})
+```
+
+The order is outermost first: server stack, then router stack, then each enclosing group from the outside in, then the route's own middleware.
+
+## Writing middleware
+
+```go
+func requireAdmin(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !isAdmin(r) {
+			web.Fail(w, r, errs.ErrForbidden) // rendered by the error handler
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+```
+
+`web.Fail(w, r, err)` renders an error with the same format as handlers (HTML page, htmx fragment or problem+json). `web.SecurityEvent(r, "authz.denied", ...)` logs a security event at `WARN` with a stable `event` attribute.
+
+## Built-in middleware
+
+| Middleware | Purpose |
+| --- | --- |
+| `Recover()` | Converts panics to 500 through the error handler; the stack trace is logged server-side only. `http.ErrAbortHandler` is re-raised. |
+| `RequestID()` | Reuses a well-formed incoming `X-Request-ID` (max 128 safe characters) or generates one; stores it in the context and echoes it in the response. |
+| `Logger(log)` | One structured `slog` line per request: method, path, status, duration, bytes, request id. 5xx at `ERROR`, 4xx at `WARN`. |
+| `Timeout(d)` | Sets a deadline on the request context. |
+| `BodyLimit(n)` | Caps request bodies at `n` bytes; larger bodies fail with 413. |
+| `MethodOverride()` | Lets HTML forms send `PUT`, `PATCH` and `DELETE` via a hidden `_method` field on `POST`. Register it as server middleware so routing sees the new method. |
+| `JSONOnly()` | Write requests must send JSON (415 otherwise) and errors render as problem+json. |
+| `CORS(cfg)` | Cross-origin resource sharing, deny by default. |
+| `SecureHeaders(cfg)` | Security headers and a nonce-based Content-Security-Policy. |
+| `Static(root, cfg)` / `StaticFS(fsys, cfg)` | Serves files from an `*os.Root` or any `fs.FS`. See [Static files](/docs/basics/static-files). |
+| `Gzip()` | Compresses text-like responses of 1 KiB or more for clients that accept gzip. |
+
+### CORS
+
+```go
+cors, err := middleware.CORS(middleware.CORSConfig{
+	AllowedOrigins:   []string{"https://app.example.com"},
+	AllowCredentials: true,
+	MaxAge:           10 * time.Minute,
+})
+if err != nil {
+	return err // "*" with credentials is refused at boot
+}
+r.UseServer(cors)
+```
+
+The zero `CORSConfig` allows no cross-origin requests. Defaults: methods `GET, HEAD, POST, PUT, PATCH, DELETE`; headers `Accept, Authorization, Content-Type, X-Requested-With, X-CSRF-Token`. Register it as **server** middleware so preflight requests are answered before routing.
+
+### Secure headers and CSP nonces
+
+```go
+r.UseServer(middleware.SecureHeaders(middleware.SecureHeadersConfig{
+	HSTSMaxAge:          365 * 24 * time.Hour,
+	TrustForwardedProto: true, // only behind a trusted proxy
+}))
+```
+
+| Header | Default |
+| --- | --- |
+| `Content-Security-Policy` | `middleware.DefaultCSP` with a fresh nonce per request |
+| `Strict-Transport-Security` | `max-age=63072000; includeSubDomains` on HTTPS requests |
+| `X-Content-Type-Options` | `nosniff` |
+| `X-Frame-Options` | `DENY` |
+| `Referrer-Policy` | `strict-origin-when-cross-origin` |
+| `Cross-Origin-Opener-Policy` | `same-origin` |
+| `Permissions-Policy` | `camera=(), microphone=(), geolocation=()` |
+
+`CSP` accepts a custom policy where `{nonce}` is replaced per request; `"-"` disables the header (same for `FrameOptions`). A negative `HSTSMaxAge` disables HSTS. Read the nonce with `middleware.CSPNonce(r.Context())` and add it to inline scripts and styles:
+
+```go
+nonce := middleware.CSPNonce(c.Context())
+return c.HTML(http.StatusOK, `<script nonce="`+nonce+`">init()</script>`)
+```
+
+## Default stack
+
+`vukem.DefaultMiddleware(app, r)`, called by the starter's `routes.Web`, installs:
+
+| Stack | Middleware |
+| --- | --- |
+| Server | `Recover`, `RequestID`, `Logger`, `SecureHeaders`, `MethodOverride` |
+| Router | `BodyLimit(web.DefaultMaxBody)`, sessions, CSRF (`CSRF_TRUSTED_ORIGINS` adds trusted origins) |
+
+## Generating middleware
+
+```bash
+vukem make:middleware RequireAdmin   # app/middleware/require_admin.go
+```
+
+The generated `func RequireAdmin(next http.Handler) http.Handler` is plain Go: attach it with `r.Use`, `g.Use` or `route.Use`. There is no named-middleware registry.
+
+<Callout type="warning">
+Auth middleware (`auth.Required`, `auth.Optional`, `auth.Guest`, `auth.Verified`, `auth.Ability`) is described in [Authentication](/docs/security/authentication#middleware); `ratelimit.Middleware(limiter, key)` in [REST APIs](/docs/rest-apis/overview#rate-limiting); `signed.Signer.Middleware()` and `webhook.Middleware` in [Security building blocks](/docs/security/building-blocks). JSON-only apps use `vukem.APIMiddleware(app, r)`: the default stack without sessions or CSRF.
+</Callout>

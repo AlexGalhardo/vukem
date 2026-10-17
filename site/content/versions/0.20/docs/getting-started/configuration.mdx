@@ -1,0 +1,147 @@
+---
+title: Configuration
+description: Typed configuration loaded from environment variables and .env files, with secrets that never reach logs.
+---
+
+Vukem has no stringly lookups such as `config("app.name")`. Configuration is read once at boot into typed structs; invalid values abort boot with **all** problems listed, not only the first one.
+
+## `.env` files
+
+The `config` package ships a small, standard-library-only `.env` parser. Values are resolved with this precedence, highest first:
+
+1. The real process environment
+2. `.env.<APP_ENV>.local`
+3. `.env.local` (skipped when `APP_ENV=test`, so tests are reproducible)
+4. `.env.<APP_ENV>`
+5. `.env`
+
+```dotenv title=".env"
+APP_NAME=Blog
+APP_ENV=development
+# Written by vukem key:generate
+APP_KEY=base64:your-32-byte-key-in-base64
+APP_URL=http://localhost:3000
+
+# ${VAR} interpolation
+ASSET_URL=${APP_URL}/build
+
+# Read the value from a file (Docker and Kubernetes secrets)
+DB_PASSWORD=@file:/run/secrets/db
+
+# Quotes and escapes
+GREETING="Hello\nWorld"
+export LOG_LEVEL=debug
+```
+
+Supported syntax: `KEY=value`, `export KEY=value`, single and double quotes, `\n` escapes inside double quotes (values may span lines), `#` comments, `${OTHER}` interpolation and the `@file:` prefix. The `@` keeps SQLite DSNs such as `file:storage/app.db` untouched.
+
+Per-environment files override `.env`:
+
+<CodeGroup>
+
+```dotenv title=".env.example"
+APP_NAME=Blog
+APP_ENV=development
+APP_KEY=
+APP_URL=http://localhost:3000
+```
+
+```dotenv title=".env.test"
+APP_DEBUG=true
+LOG_LEVEL=warn
+PORT=0
+```
+
+```dotenv title=".env.production"
+APP_URL=https://blog.example.com
+LOG_FORMAT=json
+```
+
+</CodeGroup>
+
+<Callout type="tip">
+Commit `.env.example` and git-ignore `.env` and `.env.*.local`. Never commit real secrets.
+</Callout>
+
+## Core settings
+
+`vukem.New` loads the core `vukem.Config`:
+
+| Variable | Default | Notes |
+| --- | --- | --- |
+| `APP_NAME` | `Vukem` | |
+| `APP_ENV` | `development` | `development`, `production` or `test` |
+| `APP_DEBUG` | `false` | Must be `false` when `APP_ENV=production` (boot error otherwise) |
+| `APP_URL` | `http://localhost:3000` | Public origin of the app |
+| `APP_KEY` | — | **Required**, at least 32 bytes, `base64:` prefix optional |
+| `HOST` | `localhost` | Listen host |
+| `PORT` | `3000` | Listen port, 0–65535 |
+| `SHUTDOWN_TIMEOUT` | `15s` | Graceful shutdown budget |
+| `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
+| `LOG_FORMAT` | `text` (`json` in production) | `text` or `json` |
+
+## Typed module config
+
+Fill your own structs with `config.Load[T]` using `env` and `default` tags. Fields of nested structs without an `env` tag are filled recursively.
+
+```go title="config/mail.go"
+type Mail struct {
+	Host     string        `env:"MAIL_HOST"     default:"localhost"`
+	Port     int           `env:"MAIL_PORT"     default:"1025"`
+	From     string        `env:"MAIL_FROM"`
+	Password config.Secret `env:"MAIL_PASSWORD"`
+	Timeout  time.Duration `env:"MAIL_TIMEOUT"  default:"10s"`
+	Cc       []string      `env:"MAIL_CC"` // comma-separated
+}
+
+func LoadMail(app *vukem.App) (Mail, error) {
+	return config.Load[Mail](app.Source) // every conversion error, joined
+}
+```
+
+Supported field types: `string`, `bool`, ints, uints, floats, `time.Duration`, `[]string` (comma-separated), `*url.URL`, `config.Secret` and any `encoding.TextUnmarshaler`.
+
+### Testing with a fake environment
+
+Tests inject configuration instead of calling `os.Setenv`:
+
+```go
+src := config.MapSource(map[string]string{
+	"APP_KEY": config.GenerateKey(),
+	"APP_ENV": "test",
+})
+
+app, err := vukem.New(vukem.WithSource(src))
+```
+
+`vukem.WithEnv(fsys, getenv)` loads `.env` files from any `fs.FS` (for example `fstest.MapFS`) with a custom `getenv`.
+
+## `Secret`
+
+`config.Secret` holds sensitive values. Every formatting path prints `[redacted]`: `fmt` (`%v`, `%s`, `%#v`), `encoding/json`, `encoding.TextMarshaler` and `log/slog`.
+
+```go
+cfg.Password.Reveal() // the real value, only where it is used
+fmt.Println(cfg.Password)        // [redacted]
+app.Log.Info("mail", "cfg", cfg) // password logged as [redacted]
+```
+
+## `APP_KEY`
+
+- Required. `vukem key:generate` writes one to `.env` (creating it from `.env.example` when missing); `--show` prints a key instead and `--force` replaces an existing one, which makes current sessions and encrypted data unreadable. In code, `config.GenerateKey()` returns 32 random bytes from `crypto/rand`, `base64:`-encoded.
+- The decoded key is available as `app.Key`. Never use it directly: derive a purpose-specific key with HKDF-SHA256 so cookies, sessions and encryption never share key material.
+
+```go
+sessionKey := app.Key.Derive("session", 32) // HKDF info "vukem:session"
+```
+
+`APP_PREVIOUS_KEYS` lists former keys (comma-separated, same `base64:` format) so encrypted cookies and columns survive a rotation; see [Encryption](/docs/security/encryption#key-rotation).
+
+## Secure defaults
+
+| Check | Behaviour |
+| --- | --- |
+| Missing or short `APP_KEY` | Boot error |
+| `APP_DEBUG=true` with `APP_ENV=production` | Boot error |
+| `PORT` out of range | Boot error |
+| Debug error details | Only when `Services.Debug` is set; never in production |

@@ -1,0 +1,62 @@
+---
+title: Localization
+description: JSON translation catalogs with CLDR plurals, locale resolution from the request, a t view function and translated validation messages.
+---
+
+Package `i18n` (stdlib only) loads one JSON catalog per locale from `resources/lang/<locale>.json` (`en.json`, `pt-BR.json`; `pt_BR.json` is accepted). Keys are nested objects or dotted names; values are strings with `{name}` placeholders, or plural objects.
+
+```json title="resources/lang/en.json"
+{
+  "welcome": "Hello, {name}!",
+  "posts": {
+    "created": "Post created.",
+    "count": { "zero": "No posts", "one": "{count} post", "other": "{count} posts" }
+  }
+}
+```
+
+```go title="bootstrap/app.go"
+app, err := vukem.New(
+	vukem.WithTranslations(os.DirFS("resources/lang")), // app.I18n; APP_LOCALE is the default (en)
+	vukem.WithViews(resources.Views()),
+	vukem.WithRoutes(routes), // routes call vukem.DefaultMiddleware
+)
+```
+
+`WithTranslations` loads the bundle at boot (bad JSON or file names fail `New`), gives views the `t` and `locale` functions and makes `vukem.DefaultMiddleware` install the locale middleware after sessions.
+
+<Callout type="info">
+Starters do not ship catalogs yet: add `resources/lang/en.json` and pass `WithTranslations`.
+</Callout>
+
+## Translating
+
+```go
+c.Flash("status", i18n.T(c.Context(), "posts.created")) // the request's locale
+b.T("pt-BR", "posts.count", "count", 3)                 // a Bundle directly
+```
+
+```html
+<html lang="{{locale}}">
+<p>{{t "welcome" "name" .User.Name}} · {{t "posts.count" "count" (len .Posts)}}</p>
+```
+
+- **Fallback chain:** the locale, its shorter forms, then the default (`pt-BR` → `pt` → `en`). A missing key returns the key and calls `Options.OnMissing` when set; translating never panics.
+- **Arguments:** key/value pairs (`"name", "Ana"`) or one `map[string]any`; unknown placeholders stay as written. Output is plain text, so `html/template` escapes it.
+- **Plurals:** an object keyed by CLDR categories (`zero`, `one`, `two`, `few`, `many`, `other`; `other` is required), chosen by the numeric `count` argument. Rules cover most European languages, Arabic, Hebrew and the CJK/South-East Asian languages; others use the English rule. An explicit `zero` form wins for 0 in every language. `i18n.PluralCategory(locale, n)` exposes the rules.
+
+## Locale resolution
+
+`i18n.Middleware(bundle, i18n.MiddlewareConfig{})` picks the locale, in order, from:
+
+1. `?lang=`
+2. the `lang` cookie
+3. the session value `locale` (when sessions run first)
+4. `Accept-Language` (q-values, at most 16 entries)
+5. the default locale
+
+Candidates must be valid tags matching an available catalog (exact, shorter form, then same language); invalid input is ignored. The middleware stores the bundle and locale in the context (`i18n.Locale`, `i18n.WithLocale`, `i18n.BundleFrom`), sets `Content-Language`, and adds `Vary: Accept-Language` when the header was consulted. Rename or disable (`"-"`) the sources with `Query`, `Cookie` and `SessionKey`. To remember a user's choice, set the cookie or session value yourself.
+
+## Validation messages
+
+The middleware also translates `web.Parse`/`Bind` validation messages from `validation.*` keys in your catalogs, so [validation](/docs/basics/validation) errors follow the request's locale.

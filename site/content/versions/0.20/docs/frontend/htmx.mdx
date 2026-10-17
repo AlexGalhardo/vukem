@@ -1,0 +1,85 @@
+---
+title: HTMX
+description: HTMX-first server rendering with htmx 4 request and response helpers, fragments, multi-target partials and a vendored, checksum-pinned htmx.
+---
+
+The starter vendors **htmx 4.0.0** at `resources/public/js/htmx.min.js`, served by the static middleware, so **no Node or CDN is required**. The file's SHA-256 is pinned in the CLI and checked by a test; upgrading means replacing the file and the hash together.
+
+The layout loads it with the request's CSP nonce:
+
+```html title="resources/views/layouts/app.html"
+{{htmxScript (asset "js/htmx.min.js")}}
+<!-- <script src="/js/htmx.min.js" defer nonce="…"></script> -->
+```
+
+Starter views use no inline scripts, `hx-on`, event-handler or `style` attributes, so they run under the default Content-Security-Policy. CSRF needs no extra setup: `CrossOriginProtection` checks `Sec-Fetch-Site`, which browsers send with htmx requests.
+
+## Request helpers
+
+| Helper | Meaning |
+| --- | --- |
+| `c.IsHTMX()`, `htmx.Is(r)` | `HX-Request: true` |
+| `c.IsPartial()`, `htmx.IsPartial(r)` | htmx request that is not `HX-Request-Type: full` nor a history restore: render a fragment |
+| `htmx.IsBoosted(r)` | `HX-Boosted: true` |
+| `htmx.IsHistoryRestore(r)` | `HX-History-Restore-Request`: must render the full page |
+| `htmx.CurrentURL(r)` | `HX-Current-URL` |
+| `htmx.Source(r)`, `htmx.Target(r)` | `HX-Source` / `HX-Target` parsed into `htmx.Element{Tag, ID}` |
+
+## Rendering blocks
+
+```go
+func (pc *PostController) Index(c *web.Ctx) error {
+	posts, err := orm.QueryOf[models.Post](pc.db).Latest().Get(c.Context())
+	if err != nil {
+		return err
+	}
+
+	return c.Render("posts/index", map[string]any{"Posts": posts}, web.Block("post-list"))
+}
+```
+
+`web.Block` renders only that `{{block}}` for partial htmx requests and the full page otherwise; `Vary: HX-Request` is always set so caches keep both. `c.Fragment(name, block, data)` always renders just the block.
+
+## Response helpers
+
+`c.HTMX()` returns a chainable `*htmx.Response` that sets response headers:
+
+```go
+c.HTMX().
+	Trigger("post-created", map[string]any{"id": post.ID}). // merged into one HX-Trigger JSON object
+	PushURL(c.MustURL("posts.show", "post", post.ID)).
+	Retarget("#flash").
+	Reswap("innerHTML")
+```
+
+| Method | Header |
+| --- | --- |
+| `Trigger(event, detail)` | `HX-Trigger` (several calls merge) |
+| `Location(path)`, `LocationWith(htmx.LocationOptions{…})` | `HX-Location` (string or object with target, swap, select, values, headers) |
+| `Redirect(url)` | `HX-Redirect` (full page load) |
+| `Refresh()` | `HX-Refresh: true` |
+| `PushURL(url)`, `ReplaceURL(url)` | `HX-Push-Url`, `HX-Replace-Url` |
+| `Retarget(sel)`, `Reswap(style)`, `Reselect(sel)` | `HX-Retarget`, `HX-Reswap`, `HX-Reselect` |
+
+`c.Redirect` already answers htmx requests with `HX-Location` (navigation without a full reload) and other clients with a 302/303.
+
+## Several targets in one response
+
+```go
+html := htmx.Partial("#post-list", "beforeend", rowHTML) + htmx.OOB("post-count", "", countHTML)
+```
+
+- `htmx.Partial(target, swap, content)` wraps content in htmx 4's `<hx-partial hx-target hx-swap>`.
+- `htmx.OOB(id, swap, content)` renders an `hx-swap-oob` element (swap defaults to `true`).
+
+Attribute values are escaped; `content` must be HTML you rendered (for example from a view), never raw user input.
+
+## Errors and validation
+
+- Errors returned to htmx requests render as an HTML fragment with the real status; htmx 4 swaps 4xx and 5xx responses by default.
+- Validation errors on htmx requests answer **422** with that fragment. Classic (non-htmx) form posts are redirected back with errors and old input flashed instead.
+- Deleting in place: return an empty `200` (`c.String(http.StatusOK, "")`) and use `hx-swap="outerHTML"` on the row, as the starter's `Destroy` does.
+
+## Server-sent events
+
+`c.SSE(func(s *sse.Stream) error { … })` streams events that pair with htmx `hx-sse`; see [Server-sent events](/docs/digging-deeper/sse). For file inputs with a progress bar, see [File uploads](/docs/digging-deeper/uploads#htmx-progress-component).

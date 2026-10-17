@@ -1,0 +1,86 @@
+---
+title: Queues
+description: Typed background jobs with retries, backoff and timeouts on sync, memory, database or Redis drivers.
+---
+
+```go
+// app/jobs/send_invoice.go (vukem make:job SendInvoice)
+type SendInvoice struct{ OrderID int64 }
+
+func (SendInvoice) Kind() string { return "send_invoice" }
+
+func HandleSendInvoice(ctx context.Context, j SendInvoice) error { ... }
+
+// app/jobs/registry.go, passed to vukem.WithJobs by bootstrap
+func All() []queue.Registration {
+	return []queue.Registration{
+		queue.Handle(HandleSendInvoice, queue.Retries(5), queue.Timeout(time.Minute)),
+	}
+}
+```
+
+```go
+q, err := app.Queue()
+err = q.Dispatch(ctx, jobs.SendInvoice{OrderID: 1}, queue.OnQueue("billing"), queue.Delay(5*time.Minute))
+err = q.DispatchTx(ctx, tx, jobs.SendInvoice{OrderID: 1}) // database driver: only if tx commits
+```
+
+- Payloads are JSON; `Kind()` names the handler and must stay stable across deploys. Registering a kind twice is a boot error.
+- Defaults: queue `default`, 3 retries, exponential backoff from 1s (capped at 1h), 1-minute timeout per attempt. Options on `Handle` set defaults; options on `Dispatch` override them. Backoffs: `queue.Exponential(base)`, `queue.Constant(d)`, or any `func(attempt int) time.Duration`.
+- Workers recover panics, retry with backoff and then move the job to the failed jobs with its last error. On shutdown they stop reserving and let running jobs finish.
+
+## Drivers
+
+| `QUEUE_CONNECTION` | Behaviour |
+| --- | --- |
+| `sync` (default) | the job runs inside `Dispatch`; its error is returned, no retries |
+| `memory` | in process; `serve` runs the workers; lost on restart |
+| `database` | SQLite or Postgres tables `jobs` and `failed_jobs`, created on first use; any number of worker processes |
+| Redis | `vukem.WithQueueDriver(rc.Queue(redis.QueueOptions{}))`, see [Redis](/docs/database/redis) |
+
+| Variable | Default |
+| --- | --- |
+| `QUEUE_NAMES` | `default` (priority order, comma-separated) |
+| `QUEUE_CONCURRENCY` | `4` |
+| `QUEUE_TABLE`, `QUEUE_FAILED_TABLE` | `jobs`, `failed_jobs` |
+
+The database and Redis drivers reserve each job atomically (Postgres uses `FOR UPDATE SKIP LOCKED`). A job whose worker died is taken over after its timeout plus one minute, so delivery is **at least once**: make handlers idempotent.
+
+## Commands
+
+```bash
+vukem queue:work                                  # until Ctrl+C (drains running jobs)
+vukem queue:work -queue high,default -concurrency 8
+vukem queue:work -once                            # a single job
+vukem queue:work -stop-when-empty
+vukem queue:failed [-json]
+vukem queue:retry <id…|all>
+vukem queue:forget <id…|all>
+```
+
+## Queued mail and listeners
+
+```go
+err := app.MailLater(ctx, mail.Welcome{User: u}) // rendered now, sent from a retried job
+
+// app/listeners/registry.go (vukem make:listener UpdateStock --event OrderShipped --queued)
+events.OnQueued("update_stock", UpdateStock)
+```
+
+`MailLater` keeps the message ID across retries, so providers that deduplicate by it send once. A queued listener's event is stored as JSON and run by a worker; `Dispatch` only reports enqueue errors.
+
+## Testing
+
+```go
+fake := queue.NewFake()
+app := vukemtest.New(t, bootstrap.New, vukemtest.Options{
+	AppOptions: []vukem.Option{vukem.WithQueueDriver(fake)},
+})
+// ... exercise the app ...
+invoices := queue.Dispatched[jobs.SendInvoice](fake)
+
+q, _ := app.Queue()
+_ = q.Work(t.Context(), queue.WorkOptions{StopWhenEmpty: true}) // run them when you want
+```
+
+Custom drivers implement `queue.Driver` (and optionally `queue.FailedStore` and `queue.TxPusher`) and should pass `queue/queuetest.Run`.

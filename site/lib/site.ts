@@ -3,5 +3,5 @@ export const site = {
   tagline: "Laravel and AdonisJS productivity, written in idiomatic Go.",
   url: process.env.NEXT_PUBLIC_SITE_URL ?? "https://vukem.vercel.app",
   repo: "https://github.com/AlexGalhardo/vukem",
-  editBase: "https://github.com/AlexGalhardo/vukem/edit/main/site/content/docs",
+  editBase: "https://github.com/AlexGalhardo/vukem/edit/main/site/content",
 } as const;

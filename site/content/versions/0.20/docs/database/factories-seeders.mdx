@@ -1,0 +1,68 @@
+---
+title: Factories, seeders and database rules
+description: Model factories with a built-in Faker, seeders with db:seed, and the Unique and Exists validation rules.
+---
+
+## Factories
+
+```go title="database/factories/user_factory.go"
+// vukem make:factory User
+var User = factory.New(func(f *factory.Faker) models.User {
+	return models.User{Name: f.Name(), Email: f.Email()}
+})
+```
+
+```go
+admins, err := factories.User.Count(3).State(func(u *models.User) { u.Role = "admin" }).Create(ctx, db)
+draft := factories.User.MakeOne()                // not saved
+same := factories.User.Seed(42).Count(5).Make()  // reproducible data
+
+// Related models: AfterCreate runs inside Create's transaction.
+withPosts := factories.User.AfterCreate(func(ctx context.Context, ex database.Executor, u *models.User) error {
+	_, err := factories.Post.Count(2).State(func(p *models.Post) { p.UserID = u.ID }).Create(ctx, ex)
+	return err
+})
+```
+
+- Factories are values: `State`, `Count`, `Seed` and `AfterCreate` return copies, so a base factory can be shared.
+- `factory.Faker` has no dependency: `Name`, `FirstName`, `LastName`, `Username`, `Email` (reserved example domains), `Word`, `Words`, `Sentence`, `Paragraph`, `Slug`, `URL`, `UUID`, `Int`, `Float`, `Bool`, `Time`, `factory.Pick(f, ...)` and `Seq()`. It uses `math/rand/v2` and must never generate secrets.
+
+## Seeders
+
+```go title="database/seeders/posts_seeder.go"
+// vukem make:seeder Posts (registered in database/seeders/registry.go)
+type PostsSeeder struct{}
+
+func (PostsSeeder) Seed(ctx context.Context, db *database.DB) error {
+	_, err := factories.Post.Count(10).Create(ctx, db)
+	return err
+}
+```
+
+```bash
+vukem db:seed   # runs every seeder in vukem.WithSeeders(seeders.All()...), in order
+vukem db:wipe   # drops every table
+```
+
+Both commands need `--force` in production. Tests call `app.Seed(ctx)`.
+
+## Database validation rules
+
+`z` schemas check shape and format without I/O. Rules that need the database run after parsing and return the same 422 validation error (flashed for forms):
+
+```go
+in, err := web.Parse(c, requests.RegisterSchema)
+if err != nil {
+	return err
+}
+
+if err := orm.Validate(c.Context(), db,
+	orm.Unique[models.User]("email", in.Email),                          // soft-deleted rows count, like the index
+	orm.Unique[models.User]("username", in.Username).Ignore(current.ID), // updates keep their own value
+	orm.Exists[models.Team]("id", in.TeamID).Field("team_id").Message("Pick a valid team."),
+); err != nil {
+	return err
+}
+```
+
+Empty values are skipped (`required` belongs to the schema). Columns are validated against the model.

@@ -1,0 +1,101 @@
+---
+title: The vukem CLI
+description: Create projects, generate code, run the dev server, build binaries and run app commands such as migrate with one command.
+---
+
+```bash
+go install github.com/AlexGalhardo/vukem/cmd/vukem@latest
+vukem list
+```
+
+`vukem` works on files and shells out to the standard Go toolchain; it never imports your code. Commands it does not know are handed to your app binary, so `vukem migrate` works like `php artisan migrate`.
+
+## Commands
+
+| Command | Description |
+| --- | --- |
+| `vukem new <name> [--api \| --templ \| --inertia react\|vue\|svelte] [--module path] [--no-install] [--framework dir]` | Create a project from a [starter](/docs/starters) (prompts for the stack on a terminal); run `go mod tidy`, write `APP_KEY`, `npm install`, `git init` |
+| `vukem install:auth [--social github,google,…] [--2fa]` | Add login, registration, email verification and password reset ([Authentication](/docs/security/authentication)), optionally social login and [two-factor](/docs/security/two-factor) |
+| `vukem install:inertia --force [--react\|--vue\|--svelte]` | Turn the HTMX starter into an [Inertia](/docs/frontend/inertia) app |
+| `vukem install:admin`, `vukem make:admin-resource <Model>` | [Admin panel](/docs/digging-deeper/admin) and its resources |
+| `vukem install:billing` | [Stripe subscriptions](/docs/digging-deeper/billing) (needs `install:auth`) |
+| `vukem make:proto <Name>`, `vukem codegen:rpc [--protoc]` | [gRPC](/docs/rest-apis/grpc#code-generation) service skeleton and code generation |
+| `vukem down [--secret s]`, `vukem up` | Maintenance mode: 503 with `Retry-After`; `/<secret>` sets a signed bypass cookie |
+| `vukem boost:install` | Guidelines, skills and the `boost:mcp` MCP server for AI coding agents |
+| `vukem install:api` | Add API tokens, `/api/v1`, CORS and rate limiting ([REST APIs](/docs/rest-apis/overview)) |
+| `vukem serve [--poll 500ms] [--no-vite]` | Build and run `cmd/app`; rebuild and restart when `.go`, `.templ`, `go.mod`, `go.sum` or `.env` change |
+| `vukem build [-o bin/app]` | `go tool templ generate` when `.templ` files exist, `vite build` when a `vite.config.*` exists, then `go build -trimpath -ldflags="-s -w"` |
+| `vukem key:generate [--show] [--force]` | Write `APP_KEY` to `.env` (created from `.env.example` when missing) |
+| `vukem version` | Print the CLI version |
+| `vukem list`, `vukem help <command>` | List commands, or show one command's flags |
+
+Flags may come before or after arguments: `vukem make:model Post -m -c` equals `vukem make:model -m -c Post`.
+
+## Generators
+
+| Command | Creates |
+| --- | --- |
+| `make:controller <Name> [--resource] [--api]` | `app/controllers/<name>_controller.go`: an `Index` action, the 7 resource actions, or the 5 JSON actions |
+| `make:model <Name> [-m] [-f] [-c]` | `app/models/<name>.go`; `-m` a `create_<table>_table` migration, `-f` a factory in `database/factories/`, `-c` a resource controller |
+| `make:migration <name>` | `database/migrations/<timestamp>_<name>.go`, appended to `migrations.All()` |
+| `make:middleware <Name>` | `app/middleware/<name>.go` with a `func(http.Handler) http.Handler` |
+| `make:request <Name>` | `app/requests/<name>.go`: input struct and `z.For` schema |
+| `make:command <Name>` | `app/commands/<name>.go`, appended to `bootstrap.Commands()` |
+| `make:provider <Name>` | `app/providers/<name>_provider.go`, appended to `bootstrap.Providers()` |
+| `make:test <Name>` | `tests/<name>_test.go` using `vukemtest` |
+| `make:resource <Name>` | `app/resources/<name>.go`: JSON transformer and `api.Map` list helper |
+| `make:factory <Name>` | `database/factories/<name>_factory.go` with `factory.New` |
+| `make:seeder <Name>` | `database/seeders/<name>_seeder.go`, appended to `seeders.All()` |
+| `make:policy <Name>` | `app/policies/<name>_policy.go`, appended to `policies.All()` |
+| `make:mail <Name>` | `app/mail/<name>.go` and `resources/views/mail/<name>.html` |
+| `make:event <Name>` | `app/events/<name>.go` |
+| `make:listener <Name> --event <Event> [--async\|--queued]` | `app/listeners/<name>.go`, appended to `listeners.All()` (`--queued` runs it as a queue job) |
+| `make:job <Name>` | `app/jobs/<name>.go` (job type, `Kind`, handler), appended to `jobs.All()` |
+
+- Generated Go is `gofmt`ed. Existing files are never overwritten without `--force`.
+- Conventional suffixes are optional: `PostController`, `BillingProvider` and `SendReportsCommand` work as names.
+- Registration edits the target file through its AST and adds imports; running a generator twice does not register twice. If the file was restructured, the generator prints the line to add by hand.
+
+### Custom stubs
+
+Stubs are `text/template` files embedded in the CLI. Put a file with the same name in your project's `stubs/` directory to override one (`controller.go.tmpl`, `model.go.tmpl`, `migration.go.tmpl`, `middleware.go.tmpl`, `request.go.tmpl`, `command.go.tmpl`, `provider.go.tmpl`, `factory.go.tmpl`, `seeder.go.tmpl`, `resource.go.tmpl`, `policy.go.tmpl`, `mail.go.tmpl`, `mail.html.tmpl`, `event.go.tmpl`, `listener.go.tmpl`, `job.go.tmpl`, `test.go.tmpl`). Available data: `.Name` (Pascal), `.Snake`, `.Kebab`, `.Camel`, `.Plural`, `.Module`, and `.Table`, `.Timestamp`, `.ID`, `.Func`, `.Resource`, `.API` where relevant. Unknown keys are errors.
+
+## App commands
+
+Any other command runs inside your application:
+
+```bash
+vukem migrate
+vukem migrate:status --json
+vukem route:list
+vukem queue:work
+vukem schedule:list
+vukem openapi:export > openapi.json
+vukem about
+vukem reports:send --dry-run   # your own command
+```
+
+`vukem` builds `cmd/app` into `.vukem/bin/app` and runs it with the same arguments. The binary is rebuilt only when a `.go`, `go.mod` or `go.sum` file is newer, so repeated commands start instantly. Built-in app commands: `migrate`, `migrate:rollback`, `migrate:reset`, `migrate:fresh`, `migrate:status`, `db:seed`, `db:wipe`, `route:list`, `about`, [`queue:work`, `queue:failed`, `queue:retry`, `queue:forget`](/docs/digging-deeper/queue#commands), [`schedule:run`, `schedule:work`, `schedule:list`](/docs/digging-deeper/scheduler#running-it), [`openapi:export`, `codegen:types`](/docs/rest-apis/openapi), [`codegen:client`](/docs/rest-apis/client-generation), [`codegen:routes`](/docs/frontend/inertia#typed-routes), [`ssr:start`, `ssr:check`](/docs/frontend/inertia#server-side-rendering), `boost:mcp` and `openapi:serve` (when you add `apidocs.Command()`). Destructive commands need `--force` in production. Add your own with `vukem make:command` (see [Application lifecycle](/docs/architecture/lifecycle#commands)).
+
+Running the binary directly works too: `go run ./cmd/app migrate`.
+
+## `vukem serve`
+
+- Builds to a separate file and swaps it in after the old process stops, so it works on Windows where a running `.exe` cannot be overwritten.
+- A failed build prints the compiler errors and keeps the previous version running.
+- Views reload inside the app on every request in development; editing a template needs no rebuild.
+- When a `vite.config.*` exists, `npm run dev` runs alongside (disable with `--no-vite`).
+
+## Exit codes
+
+| Code | Meaning |
+| --- | --- |
+| `0` | Success |
+| `1` | Failure (the error is printed) |
+| `2` | Usage error: unknown command, missing argument, bad flag |
+
+A delegated app command's exit code is passed through unchanged.
+
+<Callout type="info">
+Planned: `stub:publish` (copy the embedded stubs into `stubs/`).
+</Callout>

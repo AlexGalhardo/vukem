@@ -1,0 +1,54 @@
+---
+title: Two-factor authentication
+description: TOTP two-factor authentication (RFC 6238) with QR enrolment, hashed recovery codes, replay protection and throttling, scaffolded by install:auth --2fa.
+---
+
+```bash
+vukem install:auth --2fa   # also works on a project that already ran install:auth
+vukem migrate
+```
+
+The scaffold adds Fortify-style TOTP two-factor authentication on top of `auth/totp` (RFC 6238: SHA-1, 6 digits, 30 seconds, the authenticator-app defaults), for the HTMX starter and the Inertia React, Vue and Svelte starters:
+
+```text
+app/models/two_factor.go                 TwoFactor: the 2FA columns of users
+app/accounts/two_factor.go               enable, confirm, verify, recovery codes, disable, pending login
+app/controllers/account/two_factor*.go   settings page and login challenge
+app/requests/two_factor.go               code, challenge and password confirmation schemas
+database/migrations/*_add_two_factor_columns.go
+resources/views/auth/two-factor*.html    or resources/js/pages/Auth/TwoFactor*.{tsx,vue,svelte}
+routes/two_factor.go                     appended to routes.All()
+tests/two_factor_test.go                 the whole flow
+```
+
+It also patches your `Login` handler so a correct password leads to the challenge, links the settings page from the dashboard, and makes [social sign-in](/docs/security/social-login) stop at the challenge too. If `Login` was rewritten by hand, the command fails before writing anything and prints the change to make, so 2FA is never installed without being enforced.
+
+## Flows
+
+| Flow | Behaviour |
+| --- | --- |
+| Storage | the secret and the recovery code hashes are [encrypted columns](/docs/security/encryption#encrypted-columns) keyed from `APP_KEY`; `TwoFactor` is its own model, so the secret never reaches `User` or shared props |
+| Enable (`/user/two-factor`) | a new secret, shown as a QR code (inline SVG of the `otpauth://` URI, issuer `APP_NAME`) and a setup key. A confirmed setup is never replaced (409) |
+| Confirm | 2FA is on only after a valid code; 8 recovery codes are then shown **once** (only hashes are stored) |
+| Recovery codes | regenerating invalidates the old ones; the page shows how many are left |
+| Disable | needs the current password |
+| Login | a correct password for a user with 2FA does **not** log in: the session id is regenerated, the pending login is stored for 5 minutes and the browser goes to `/two-factor-challenge` |
+| Challenge | an app code or a recovery code (consumed) logs in with the remember-me choice and goes to the intended URL |
+| Replay | a code whose time step is at or before the last accepted one is refused, including the confirmation code; concurrent requests with the same code have one winner |
+| Throttling | challenge, confirm and disable: **5 per minute per user + IP** (429 with `Retry-After`) |
+| Events | failed codes and passwords log the `auth.2fa_failed` security event |
+
+## The `totp` package
+
+```go
+secret, err := totp.GenerateSecret()                       // base32
+uri := totp.URI("Vukem", user.Email, secret, totp.Options{}) // otpauth://totp/...
+svg, err := totp.QR(uri, 200)                                // inline SVG
+
+step, ok := totp.Validate(secret, code, time.Now(), lastStep, totp.Options{}) // store step on success
+plain, hashes, err := totp.RecoveryCodes(8)                  // show plain once, store hashes
+remaining, ok := totp.UseRecoveryCode(input, hashes)
+code, err := totp.Code(secret, time.Now(), totp.Options{})   // in tests
+```
+
+The QR SVG is written by `totp.QR` itself from server data, which is why the scaffold may insert it as raw HTML. Never do that with user input.

@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { Collapsible } from "@base-ui/react/collapsible";
 import { ChevronRight } from "lucide-react";
 import type { NavGroup } from "@/lib/content";
+import { versionOfPath } from "@/lib/versions";
 
 function Item({ href, title, active, onNavigate }: { href: string; title: string; active: boolean; onNavigate?: () => void }) {
   return (
@@ -25,18 +26,20 @@ function Item({ href, title, active, onNavigate }: { href: string; title: string
 
 /**
  * Category-grouped page list. On mobile (`collapsible`) each group is a
- * Base UI Collapsible, open when it contains the current page.
+ * Base UI Collapsible, open when it contains the current page. Shows the
+ * groups of the docs version the current pathname belongs to.
  */
 export function Sidebar({
-  groups,
+  groupsByVersion,
   collapsible = false,
   onNavigate,
 }: {
-  groups: NavGroup[];
+  groupsByVersion: Record<string, NavGroup[]>;
   collapsible?: boolean;
   onNavigate?: () => void;
 }) {
   const pathname = usePathname();
+  const groups = groupsByVersion[versionOfPath(pathname).id] ?? [];
 
   return (
     <nav aria-label="Documentation" className={`text-sm ${collapsible ? "space-y-1" : "space-y-6"}`}>

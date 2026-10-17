@@ -2,20 +2,29 @@ import fs from "node:fs";
 import path from "node:path";
 import { cache } from "react";
 import matter from "gray-matter";
-import { navigation } from "@/content/navigation";
+import { navigation, type NavCategory } from "@/content/navigation";
+import { navigation as navigationV0_20 } from "@/content/versions/0.20/navigation";
 import { extractHeadings, type Heading } from "@/lib/toc";
+import { currentVersion, docsBase, versions, type DocVersion } from "@/lib/versions";
 
-const CONTENT_DIR = path.join(process.cwd(), "content", "docs");
+const CONTENT_ROOT = path.join(process.cwd(), "content");
+
+/** Sidebar of each version in lib/versions.ts. */
+const NAVIGATION: Record<string, NavCategory[]> = {
+  "1.0": navigation,
+  "0.20": navigationV0_20,
+};
 
 export type DocMeta = {
-  /** URL segments after /docs, e.g. ["basics", "routing"]. */
+  /** URL segments after /docs, e.g. ["basics", "routing"] or ["0.20", "basics", "routing"]. */
   slug: string[];
-  /** Path under content/docs without extension, e.g. "basics/routing". */
-  file: string;
+  /** Path under site/content, e.g. "docs/basics/routing.mdx". */
+  source: string;
   href: string;
   title: string;
   description: string;
   category: string;
+  version: DocVersion;
 };
 
 export type Doc = DocMeta & {
@@ -23,57 +32,80 @@ export type Doc = DocMeta & {
   headings: Heading[];
 };
 
-function readDoc(dir: string, page: string, slug: string[], category: string): Doc {
-  const file = `${dir}/${page}`;
-  const raw = fs.readFileSync(path.join(CONTENT_DIR, `${file}.mdx`), "utf8");
+function readDoc(v: DocVersion, dir: string, page: string, slug: string[], category: string): Doc {
+  const source = `${v.contentDir}/${dir}/${page}.mdx`;
+  const raw = fs.readFileSync(path.join(CONTENT_ROOT, source), "utf8");
   const { data, content } = matter(raw);
 
   if (typeof data.title !== "string" || typeof data.description !== "string") {
-    throw new Error(`content/docs/${file}.mdx: front matter needs "title" and "description"`);
+    throw new Error(`content/${source}: front matter needs "title" and "description"`);
   }
 
   return {
     slug,
-    file,
+    source,
     href: `/docs/${slug.join("/")}`,
     title: data.title,
     description: data.description,
     category,
+    version: v,
     body: content,
     headings: extractHeadings(content),
   };
 }
 
-/** Every page in navigation order. Throws on missing files or front matter. */
-export const getAllDocs = cache((): Doc[] =>
-  navigation.flatMap((cat) =>
+function versionById(id: string): DocVersion {
+  const v = versions.find((x) => x.id === id);
+  if (!v || !NAVIGATION[id]) throw new Error(`unknown docs version ${id}: register it in lib/versions.ts and lib/content.ts`);
+  return v;
+}
+
+/** Every page of a version (default: current) in navigation order. Throws on missing files or front matter. */
+export const getAllDocs = cache((versionId: string = currentVersion.id): Doc[] => {
+  const v = versionById(versionId);
+  return NAVIGATION[versionId].flatMap((cat) =>
     cat.pages.map((page) => {
       const prefix = cat.prefix ?? cat.dir;
-      const slug = prefix ? [prefix, page] : [page];
-      return readDoc(cat.dir, page, slug, cat.title);
+      const slug = [v.prefix, prefix, page].filter((s) => s !== "");
+      return readDoc(v, cat.dir, page, slug, cat.title);
     }),
-  ),
-);
+  );
+});
+
+/** Every page of every version. */
+export function getEveryDoc(): Doc[] {
+  return versions.flatMap((v) => getAllDocs(v.id));
+}
 
 export function getDoc(slug: string[]): Doc | undefined {
   const key = slug.join("/");
-  return getAllDocs().find((d) => d.slug.join("/") === key);
+  return getEveryDoc().find((d) => d.slug.join("/") === key);
 }
 
 export function getNeighbours(doc: DocMeta): { prev?: DocMeta; next?: DocMeta } {
-  const all = getAllDocs();
+  const all = getAllDocs(doc.version.id);
   const i = all.findIndex((d) => d.href === doc.href);
   return { prev: all[i - 1], next: all[i + 1] };
 }
 
 export type NavGroup = { title: string; items: { title: string; href: string }[] };
 
-export function getNavGroups(): NavGroup[] {
-  const all = getAllDocs();
-  return navigation.map((cat) => ({
+export function getNavGroups(versionId: string = currentVersion.id): NavGroup[] {
+  const all = getAllDocs(versionId);
+  return NAVIGATION[versionId].map((cat) => ({
     title: cat.title,
     items: all
       .filter((d) => d.category === cat.title)
       .map((d) => ({ title: d.title, href: d.href })),
   }));
+}
+
+/** Sidebar groups keyed by version id, for client components that pick by pathname. */
+export function getNavGroupsByVersion(): Record<string, NavGroup[]> {
+  return Object.fromEntries(versions.map((v) => [v.id, getNavGroups(v.id)]));
+}
+
+/** URL of the first page of a version. */
+export function versionHome(v: DocVersion): string {
+  return `${docsBase(v)}/introduction`;
 }

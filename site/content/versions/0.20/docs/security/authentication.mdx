@@ -1,0 +1,121 @@
+---
+title: Authentication
+description: Session and access-token guards, argon2id hashing, remember-me, auth middleware and the install:auth scaffold.
+---
+
+## Quick start
+
+```bash
+vukem install:auth   # login, registration, email verification, password reset, tests
+vukem migrate
+```
+
+`install:auth` copies **code you own** into the project and registers its migrations and routes:
+
+```text
+app/models/user.go                          User (AuthID, AuthPassword, EmailVerified)
+app/accounts/{accounts,users,passwords}.go  guards, registration, verification, password resets
+app/controllers/account/*.go                login, register, logout, forgot/reset password, verification, dashboard
+app/requests/auth.go                        z schemas (password at least 12 characters, confirmation)
+app/mail/auth.go                            VerifyEmail and ResetPassword mailables
+database/migrations/*                       users, remember tokens, access tokens, password resets
+resources/views/auth/*.html, resources/views/mail/*.html
+routes/auth.go                              appended to routes.All()
+tests/auth_test.go                          the whole flow
+```
+
+| Flow | Behaviour |
+| --- | --- |
+| Register | unique email (case-insensitive), argon2id hash, login, verification email |
+| Login | remember-me, intended URL, **5 attempts per minute per email + IP**, the same error for unknown users |
+| Email verification | signed link (HMAC, 1 hour), must match the logged-in user; resend limited to 3 per minute |
+| Forgot / reset password | the same answer for unknown emails; random token stored as SHA-256, 1 hour, single use; reset logs out remembered sessions |
+| Logout | session invalidated, remember-me token deleted |
+
+## Concepts
+
+```go
+type Authenticatable interface {
+	AuthID() string       // primary key as a string
+	AuthPassword() string // stored hash
+}
+
+type UserProvider[U Authenticatable] interface {
+	ByID(ctx context.Context, id string) (U, error)
+	ByCredentials(ctx context.Context, creds map[string]string) (U, error) // never checks the password
+}
+```
+
+`auth.NewORMProvider[models.User](db)` looks users up by primary key and by every credential except `password`, and stores rehashed passwords.
+
+## Session guard
+
+```go
+users := auth.NewORMProvider[models.User](db)
+webGuard := auth.NewSessionGuard("web", users, hash.Default(), auth.NewRememberStore(db))
+
+r.Post("/login", func(c *web.Ctx) error {
+	in, err := web.Parse(c, requests.LoginSchema)
+	if err != nil {
+		return err
+	}
+
+	creds := map[string]string{"email": in.Email, "password": in.Password}
+	if _, err := webGuard.Attempt(c, creds, auth.Remember(in.Remember)); err != nil {
+		return err // 422 on "email": "These credentials do not match our records."
+	}
+
+	return c.Redirect("/dashboard")
+})
+
+r.Get("/dashboard", dashboard).Use(auth.Required(webGuard))
+
+user, err := auth.User[models.User](c, "web") // in handlers behind Required
+```
+
+- `Attempt` checks the password in constant time; unknown users still cost a hash verification and get the same 422 error. Failures emit the `auth.login_failed` security event.
+- `Login` regenerates the session id (fixation) and stores the user id; `Logout` invalidates the session and deletes the remember-me token.
+- Remember-me cookies hold `<id>.<secret>`; only `SHA-256(secret)` is stored, and tokens rotate on every use.
+- Stale hashes (bcrypt, weaker argon2 parameters) are upgraded on login.
+- `Validate(c, creds)` checks credentials without logging in (token issuance).
+
+## Token guard
+
+```go
+tokens := auth.NewTokens(db)
+apiGuard := auth.NewTokenGuard("api", users, tokens)
+
+plain, tok, err := tokens.Create(ctx, user.AuthID(), "cli", []string{"posts:read"}, 30*24*time.Hour)
+err = tokens.Revoke(ctx, tok.ID)
+err = tokens.RevokeAll(ctx, user.AuthID())
+
+if auth.TokenCan(c, "api", "posts:read") { /* ... */ } // "*" grants everything
+```
+
+Opaque tokens `<id>.<secret>` from `crypto/rand`; only the SHA-256 of the secret is stored, compared in constant time; `last_used_at` is updated at most once a minute. For signed tokens from an identity provider, use the [JWT guard](/docs/security/jwt); for TOTP, see [two-factor authentication](/docs/security/two-factor).
+
+## Middleware
+
+| Middleware | Effect |
+| --- | --- |
+| `auth.Required(guards...)` | first guard that authenticates wins; JSON clients get 401 with `WWW-Authenticate: Bearer`, browsers a redirect to the route named `login` (intended URL kept) |
+| `auth.Optional(guards...)` | authenticates when possible, never blocks (pages that show more to members) |
+| `auth.Guest(guards...)` | sends logged-in users to the route named `home` |
+| `auth.Verified(guard)` | 403 unless the user's `EmailVerified()` is true |
+| `auth.Ability(guard, abilities...)` | 403 unless the token grants every ability |
+
+## Hashing
+
+| Driver | Defaults | Notes |
+| --- | --- | --- |
+| argon2id (default) | m=64 MiB, t=1, p=4, 16-byte salt, 32-byte key | PHC string `$argon2id$v=19$m=…,t=…,p=…$salt$hash` |
+| bcrypt | your cost (12 recommended) | inputs over 72 bytes are rejected, never truncated |
+
+`hash.Default()`, `hash.Argon2id(params)`, `hash.Bcrypt(cost)`, `hash.Fake()` for tests. `hash.Verify` reads both formats.
+
+## Testing
+
+```go
+app.Client(t).ActingAs("web", user).Get("/dashboard").AssertOK()
+app.Client(t).WithToken(plain).GetJSON("/api/v1/me").AssertOK()
+```

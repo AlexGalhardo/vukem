@@ -1,0 +1,120 @@
+---
+title: Installation
+description: Install the vukem CLI, create a project from a starter and run it.
+---
+
+## Requirements
+
+| Tool | Version |
+| --- | --- |
+| Go | 1.27 or newer |
+| Git | Optional: `vukem new` runs `git init` when it is on `PATH` |
+| Node.js | For the Vite + Tailwind build of the web starters and for Inertia; not needed by Go tests or the `--api` starter |
+
+Vukem runs on **Windows 11/10**, Linux and macOS. SQLite uses the pure-Go `modernc.org/sqlite` driver, so no C compiler is needed.
+
+## Install the CLI
+
+```bash
+go install github.com/AlexGalhardo/vukem/cmd/vukem@latest
+vukem version
+```
+
+`vukem` lands in `$(go env GOPATH)/bin` (`%USERPROFILE%\go\bin` on Windows); make sure that directory is on your `PATH`.
+
+## Create a project
+
+<Steps>
+<Step title="Scaffold">
+
+```bash
+vukem new blog --module example.com/blog
+```
+
+This renders the embedded starter (HTMX by default; see [Starters](/docs/starters) for templ, Inertia and API), requires the Vukem release that matches your CLI, runs `go mod tidy`, writes a fresh `APP_KEY` to `.env` (copied from `.env.example`) and runs `git init`.
+
+</Step>
+<Step title="Migrate">
+
+```bash
+cd blog
+vukem migrate
+```
+
+Creates `storage/database.sqlite` and the `posts` table of the example CRUD.
+
+</Step>
+<Step title="Serve">
+
+```bash
+vukem serve
+```
+
+Open `http://localhost:3000`. `vukem serve` rebuilds and restarts the app when a `.go` file changes; template edits show up on refresh without a restart.
+
+</Step>
+<Step title="Test">
+
+```bash
+go test ./...
+```
+
+The starter ships with tests for the home page and the posts CRUD.
+
+</Step>
+</Steps>
+
+### `vukem new` flags
+
+| Flag | Meaning |
+| --- | --- |
+| `--module <path>` | Go module path (default: the project name) |
+| `--api`, `--templ`, `--inertia react\|vue\|svelte` | Pick the [starter](/docs/starters); without one, a terminal prompts for the stack (HTMX by default) |
+| `--no-install` | Skip `npm install` |
+| `--framework <dir>` | Use a local checkout of Vukem through a `replace` directive instead of a release (for framework development) |
+
+Flags may come before or after the name: `vukem new blog --module example.com/blog` works.
+
+## Without the CLI
+
+Vukem is an ordinary Go module. To add it to an existing module:
+
+```bash
+go get github.com/AlexGalhardo/vukem@latest
+```
+
+A minimal `cmd/app/main.go`:
+
+```go title="cmd/app/main.go"
+package main
+
+import (
+	"net/http"
+	"os"
+
+	vukem "github.com/AlexGalhardo/vukem"
+	"github.com/AlexGalhardo/vukem/router"
+	"github.com/AlexGalhardo/vukem/web"
+)
+
+func build(opts ...vukem.Option) (*vukem.App, error) {
+	return vukem.New(append(opts, vukem.WithRoutes(func(r *router.Router, app *vukem.App) error {
+		r.Get("/", func(c *web.Ctx) error {
+			return c.String(http.StatusOK, "Hello from Vukem")
+		}).Name("home")
+
+		return vukem.DefaultMiddleware(app, r)
+	}))...)
+}
+
+func main() { os.Exit(vukem.Main(build)) }
+```
+
+`APP_KEY` is required: Vukem refuses to boot without a key of at least 32 bytes. Create `.env` with one:
+
+```bash
+vukem key:generate   # or: echo "APP_KEY=$(vukem key:generate --show)" > .env
+go run ./cmd/app     # serves on localhost:3000
+```
+
+`vukem.Main` loads `.env` and the environment, handles `SIGINT`/`SIGTERM`, and runs `serve` or any [app command](/docs/cli/overview#app-commands) given as the first argument.

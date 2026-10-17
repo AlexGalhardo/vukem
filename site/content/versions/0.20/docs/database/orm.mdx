@@ -1,0 +1,113 @@
+---
+title: ORM
+description: Plain-struct models and a generic, always-parameterised query builder with pagination, streaming, soft deletes and hooks.
+---
+
+The `orm` package maps plain structs to tables. There is no Active Record: persistence functions take an executor (`*database.DB` or `*database.Tx`), so models carry no hidden connection.
+
+## Models
+
+```go title="app/models/post.go"
+type Post struct {
+	orm.Model                    // ID, CreatedAt, UpdatedAt
+	orm.SoftDeletes              // optional: DeletedAt, Delete becomes a soft delete
+
+	Title    string             `json:"title"`
+	Body     string             `json:"body"`
+	AuthorID int64              `json:"author_id" db:"author_id"`
+	Meta     orm.JSON[PostMeta] `json:"meta"` // stored as JSON text; the value is Meta.V
+}
+```
+
+| Convention | Default | Override |
+| --- | --- | --- |
+| Table | snake_case plural of the type (`Post` → `posts`) | `Table() string` (`orm.Tabler`) |
+| Column | snake_case of the field (`AuthorID` → `author_id`) | `db:"name"`; `db:"-"` skips a field |
+| Primary key | `id` | `PrimaryKey() string` (`orm.Keyer`) |
+
+`orm.TableOf[T]()` and `orm.Columns[T]()` report what Vukem derived.
+
+## Writing
+
+```go
+post := models.Post{Title: "Hello"}
+err := orm.Create(ctx, db, &post) // sets ID, CreatedAt, UpdatedAt
+post.Title = "Edited"
+err = orm.Update(ctx, db, &post)  // bumps UpdatedAt
+err = orm.Delete(ctx, db, &post)  // soft delete when the model embeds SoftDeletes
+err = orm.Restore(ctx, db, &post)
+err = orm.ForceDelete(ctx, db, &post)
+```
+
+Unique-constraint violations return an error matching `orm.ErrConflict` (HTTP 409 when returned from a handler).
+
+Bulk writes go through a query:
+
+```go
+n, err := orm.QueryOf[models.Post](db).Where("published", false).Update(ctx, orm.Set{"archived": true})
+n, err = orm.QueryOf[models.Post](db).Where("created_at", "<", cutoff).Delete(ctx)
+```
+
+## Querying
+
+```go
+posts, err := orm.QueryOf[models.Post](db).
+	Where("published", true).                 // col = ?
+	Where("views", ">=", 100).                // allow-listed operators, including LIKE
+	WhereIn("author_id", 1, 2, 3).
+	WhereGroup(func(q orm.Query[models.Post]) orm.Query[models.Post] {
+		return q.Where("title", "LIKE", "%go%").OrWhere("body", "LIKE", "%go%")
+	}).
+	OrderBy("id", orm.Desc).
+	Limit(20).
+	Get(ctx) // []models.Post
+```
+
+| Builders | Terminals |
+| --- | --- |
+| `Select`, `Where`, `OrWhere`, `WhereIn`, `WhereNotIn`, `WhereNull`, `WhereNotNull`, `WhereBetween`, `WhereRaw`, `WhereGroup` | `Get`, `First`, `Find(id)`, `Count`, `Exists` |
+| `OrderBy(col, orm.Asc/orm.Desc)`, `Latest()`, `Limit`, `Offset` | `Pluck[V](col)`, `Each`, `Chunk`, `Paginate` |
+| `Scope(fns...)`, `WithTrashed()`, `OnlyTrashed()` | `Update(set)`, `Delete()`, `SQL()` |
+
+Column names are validated against the model, never interpolated from input; values are always bound parameters. `WhereRaw(sql, args...)` is the explicit escape hatch and checks the number of `?` placeholders.
+
+```go
+post, err := orm.QueryOf[models.Post](db).Find(ctx, id) // orm.ErrNotFound → 404 in handlers
+
+titles, err := orm.QueryOf[models.Post](db).Pluck[string](ctx, "title")
+
+for post, err := range orm.QueryOf[models.Post](db).Each(ctx) { // streams rows
+	if err != nil {
+		return err
+	}
+	index(post)
+}
+
+page, err := orm.QueryOf[models.Post](db).Latest().Paginate(ctx, c.QueryInt("page", 1), 15)
+// page.Items, page.Total, page.Page, page.PerPage, page.LastPage; JSON: {"data": [...], "total": …}
+```
+
+Reusable conditions are plain functions:
+
+```go
+func Published(q orm.Query[models.Post]) orm.Query[models.Post] { return q.Where("published", true) }
+
+orm.QueryOf[models.Post](db).Scope(Published).Get(ctx)
+```
+
+## Hooks
+
+Models can implement `BeforeCreate`, `AfterCreate`, `BeforeUpdate`, `AfterUpdate` and `BeforeDelete` (each `func(ctx context.Context) error`). An error aborts the write.
+
+```go
+func (p *Post) BeforeCreate(ctx context.Context) error {
+	p.Title = strings.TrimSpace(p.Title)
+	return nil
+}
+```
+
+Timestamps use `orm.WithClock(ctx, now)` when present, so tests can fix the time.
+
+<Callout type="warning">
+See [Relations](/docs/database/relations) for eager loading and [Factories and seeders](/docs/database/factories-seeders) for test data.
+</Callout>

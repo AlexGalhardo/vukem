@@ -1,0 +1,32 @@
+---
+title: Redis
+description: Cache, sessions, queues, a shared rate limiter, locks and pub/sub on Redis or Valkey.
+---
+
+```bash
+go get github.com/AlexGalhardo/vukem/drivers/redis
+```
+
+```go
+rc, err := redis.Open(ctx, os.Getenv("REDIS_URL")) // redis://localhost:6379/0, rediss:// for TLS
+
+app, err := vukem.New(
+	vukem.WithCacheStore(rc.CacheStore("cache:")), // also backs locks
+	vukem.WithSessionStore(rc.SessionStore("")),   // "session:" keys with TTL
+	vukem.WithQueueDriver(rc.Queue(redis.QueueOptions{})),
+	// ...
+)
+app.AddHealthCheck("redis", rc.Ping)
+```
+
+| Feature | API |
+| --- | --- |
+| Cache store | `rc.CacheStore(prefix)` implements `cache.Store`; `Flush` deletes only the prefix (`SCAN` + `DEL`) and refuses an empty one |
+| Sessions | `rc.SessionStore(prefix)` implements `session.Store` |
+| Queue | `rc.Queue(redis.QueueOptions{Prefix, Grace})`: sorted sets under `{queue}:` (one Cluster slot), atomic Lua reservation, failed jobs for `queue:failed`, `queue:retry`, `queue:forget` |
+| Rate limiting | `rc.RateLimiter("api:", 60, time.Minute)` implements `ratelimit.Limiter` with GCRA, shared by every server |
+| Locks | `cache.New(rc.CacheStore("locks:"), "").NewLock(name, ttl)` |
+| Pub/sub | `rc.Publish(ctx, channel, b)`, `msgs, err := rc.Subscribe(ctx, channels...)` |
+
+- Works with Redis 7+ and Valkey 8+; CI runs the `cachetest` and `queuetest` conformance suites on both.
+- `redis.New(client)` wraps an existing go-redis client (Cluster, Sentinel, custom options); `rc.Redis()` returns it.

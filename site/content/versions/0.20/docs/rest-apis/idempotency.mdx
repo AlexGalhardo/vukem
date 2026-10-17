@@ -1,0 +1,34 @@
+---
+title: Idempotency keys
+description: Make retried POST and PATCH requests safe with the Idempotency-Key header.
+---
+
+```go
+c, _ := app.Cache()
+r.Group("/api/v1", func(g *router.Group) {
+	g.Use(api.Idempotency(c.Store(), api.IdempotencyOptions{}))
+})
+```
+
+The first `POST` or `PATCH` carrying an `Idempotency-Key` header runs and its response is stored; a retry with the same key gets the stored response with `Idempotent-Replayed: true` instead of running again.
+
+| Situation | Answer |
+| --- | --- |
+| Same key, same request, finished | stored response, replayed |
+| Same key while the first is still running | 409 |
+| Same key, different method, URL or body | 422 (and an `idempotency.key_reused` security event) |
+| Invalid key (1–255 printable characters) | 400 |
+| Store unavailable | 503: the request is refused rather than risking a duplicate |
+
+| Option | Default |
+| --- | --- |
+| `Methods` | `POST`, `PATCH` |
+| `Required` | `false` (400 when the header is missing if `true`) |
+| `TTL` | 24h for stored responses |
+| `LockTTL` | 1 minute for in-flight requests |
+| `MaxBody` | 1 MiB fingerprinted |
+| `Scope` | the `Authorization` header |
+
+- Keys are **scoped to the caller**, so one user can never replay another's response. Set `Scope` for cookie sessions (for example to the user ID).
+- Responses with status 500 or above are not stored, so the client can retry. `Set-Cookie` is never replayed.
+- Any `cache.Store` works: memory, database or [Redis](/docs/database/redis).

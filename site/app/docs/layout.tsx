@@ -1,5 +1,5 @@
 import { Sidebar } from "@/components/sidebar";
-import { getNavGroups } from "@/lib/content";
+import { getNavGroupsByVersion } from "@/lib/content";
 
 export default function DocsLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -8,7 +8,7 @@ export default function DocsLayout({ children }: { children: React.ReactNode }) 
         aria-label="Sidebar"
         className="sticky top-(--header-h) hidden h-[calc(100dvh-var(--header-h))] w-64 shrink-0 overflow-y-auto py-8 pr-6 lg:block"
       >
-        <Sidebar groups={getNavGroups()} />
+        <Sidebar groupsByVersion={getNavGroupsByVersion()} />
       </aside>
       <div className="min-w-0 flex-1">{children}</div>
     </div>

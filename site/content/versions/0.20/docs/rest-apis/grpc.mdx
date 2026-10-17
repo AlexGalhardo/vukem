@@ -1,0 +1,79 @@
+---
+title: gRPC
+description: Serve gRPC, gRPC-Web and Connect from the app router with connect-go, with auth, validation, error mapping, health checks, reflection and code generation.
+---
+
+```bash
+go get github.com/AlexGalhardo/vukem/contrib/grpc
+```
+
+`contrib/grpc` serves [connect-go](https://connectrpc.com) services from the app router. connect-go handlers are plain `net/http`, so **gRPC, gRPC-Web and Connect** share one port, the router's middleware (request id, logging, rate limiting, auth guards) and the app; there is no separate gRPC server.
+
+```go
+func routes(r *router.Router, app *vukem.App) error {
+	opts := grpc.HandlerOptions(grpc.Options{
+		Rules: []grpc.Rule{grpc.Validate(z.Struct[greetv1.GreetRequest](z.Shape{"name": z.String().Min(1)}))},
+	})
+
+	path, h := greetv1connect.NewGreetServiceHandler(&greeter{}, opts...)
+	grpc.Mount(r, path, h).Use(grpc.Required(apiGuard), ratelimit.Middleware(limiter, ratelimit.ByToken))
+
+	grpc.Health(r, grpchealth.NewStaticChecker(greetv1connect.GreetServiceName))
+	grpc.Reflection(app, r, greetv1connect.GreetServiceName) // not in production
+
+	return nil
+}
+
+func (g *greeter) Greet(ctx context.Context, req *connect.Request[greetv1.GreetRequest]) (*connect.Response[greetv1.GreetResponse], error) {
+	user, err := auth.UserFrom[*models.User](ctx, "api")
+	if err != nil {
+		return nil, err
+	}
+	return connect.NewResponse(&greetv1.GreetResponse{Greeting: "Hello, " + user.Name}), nil
+}
+```
+
+## Mounting and middleware
+
+- `grpc.Mount(r, path, h)` registers the generated handler on a router or group and returns the route. Middleware added with `.Use` runs inside the error bridge: rejections (401, 403, 429 with `Retry-After`, 413, 503) reach the client as RPC errors with the matching code. Add `grpc.Errors()` to a group to get the same mapping for group middleware.
+- `grpc.Required(guards...)` is `auth.Required` for RPCs: `Unauthenticated` instead of a login redirect. Methods read the user with `auth.UserFrom(ctx, guard)`.
+- `grpc.HandlerOptions(grpc.Options{...})` bundles request validation (`Rules`, plus messages with a `Validate() error` method), error mapping, one `rpc` log line per call, panic recovery and a 4 MiB message limit (`MaxMessageBytes`). Your `Interceptors` run inside these.
+- Avoid `middleware.Timeout` and `Gzip` on RPC routes; use deadlines and connect-go compression.
+
+## Errors
+
+`grpc.Error(err)` maps errors to codes: `context.Canceled`/`DeadlineExceeded` as is; `z.Issues` and `*errs.ValidationError` → `InvalidArgument` with a `google.rpc.BadRequest` detail; `*errs.HTTPError` by status (400/422 `InvalidArgument`, 401 `Unauthenticated`, 403 `PermissionDenied`, 404 `NotFound`, 409 `AlreadyExists`, 429 `ResourceExhausted`, 503 `Unavailable`, …); anything else → `Internal` "internal error", with the cause only in the log.
+
+## Health, reflection and HTTP/2
+
+- `grpc.Health(r, checker)` mounts `grpc.health.v1.Health` for load balancers and probes.
+- `grpc.Reflection(app, r, services...)` mounts server reflection for `grpcurl` and `buf curl`. It publishes the whole API, so in production it registers nothing unless `GRPC_INSECURE_REFLECTION_IN_PRODUCTION=true`.
+- Native gRPC needs HTTP/2. Outside production the app server also speaks h2c, so `grpcurl -plaintext localhost:3000 list` works with `vukem serve`. In production terminate TLS at a proxy that speaks HTTP/2 to the app (`HTTP_H2C=true`), or serve TLS yourself. gRPC-Web and Connect also work over HTTP/1.1, from browsers too.
+
+## Code generation
+
+The framework never needs `protoc` itself; your app pins the generators as Go tools:
+
+```bash
+vukem make:proto Invoice   # proto/invoice/v1/invoice.proto, buf.yaml, buf.gen.yaml
+go get -tool google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.12
+go get -tool connectrpc.com/connect/cmd/protoc-gen-connect-go@v1.21.1
+vukem codegen:rpc          # gen/invoice/v1/*.pb.go and invoicev1connect/*.connect.go
+```
+
+- With buf (recommended; `go get -tool github.com/bufbuild/buf/cmd/buf@v1.74.0` or buf on `PATH`), `codegen:rpc` runs `buf generate` with the generated `buf.gen.yaml`. `buf lint` and `buf breaking` use `buf.yaml`.
+- Without buf (or with `--protoc`), it calls `protoc -I proto` with the two plugins built by `go tool`.
+- Commit the generated code; regenerate after editing a `.proto`.
+
+## Testing
+
+```go
+h, _ := app.Handler()
+srv := grpctest.NewServer(t, h) // TLS + HTTP/2; NewH2CServer for cleartext
+
+for _, p := range grpctest.Protocols() { // grpc, grpc-web, connect, connect+json
+	client := greetv1connect.NewGreetServiceClient(srv.Client, srv.URL, p.Options...)
+	res, err := client.Greet(t.Context(), connect.NewRequest(&greetv1.GreetRequest{Name: "Ada"}))
+	// ...
+}
+```

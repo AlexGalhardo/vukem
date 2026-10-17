@@ -1,0 +1,130 @@
+---
+title: REST APIs
+description: JSON APIs with resource routes, token auth, problem+json errors, CORS, rate limiting, transformers and the API starter.
+---
+
+Vukem is equally a framework for **JSON/REST APIs** and for server-rendered apps.
+
+## The API starter
+
+```bash
+vukem new shop --api   # JSON-only project: no views, htmx, sessions or CSRF
+vukem install:api      # add token auth and /api/v1 to an existing project
+```
+
+`vukem new shop --api` produces:
+
+| Area | What you get |
+| --- | --- |
+| Middleware | `vukem.APIMiddleware`: recover, request id, logging, security headers, body limit |
+| Auth | users and access tokens: `POST /api/v1/tokens` (email, password, `device_name` → `201 {token, type, expires_at}`), `GET /api/v1/me`, `DELETE /api/v1/tokens/current` |
+| Example resource | `/api/v1/posts`: public reads with filters, sorts and pagination; token-protected writes |
+| Cross-cutting | CORS from `CORS_ALLOWED_ORIGINS` (deny by default), 60 requests/minute per token or IP, problem+json errors |
+| Tests | `tests/api_tokens_test.go`, `tests/posts_test.go` |
+
+`install:api` reuses the authentication core when `install:auth` already ran, so a web app can serve pages and an API side by side (`routes.All()` lists each route file).
+
+## Routes and middleware
+
+```go title="routes/api.go"
+cors, err := middleware.CORS(middleware.CORSConfig{AllowedOrigins: []string{"https://app.example.com"}})
+if err != nil {
+	return err
+}
+
+r.UseServer(cors) // preflight OPTIONS requests have no route
+
+r.Group("/api/v1", func(g *router.Group) {
+	g.Use(middleware.JSONOnly(), ratelimit.Middleware(ratelimit.NewMemory(60, time.Minute), ratelimit.ByToken))
+
+	g.APIResource("products", products)                    // index, store, show, update, destroy
+	g.APIResource("products.reviews", reviews).Shallow()  // /products/{product}/reviews + /reviews/{review}
+
+	g.Group("", func(p *router.Group) {
+		p.Use(auth.Required(apiGuard))
+		p.Delete("/products/{product}", products.Destroy).Use(auth.Ability(apiGuard, "products:write"))
+	})
+}).Name("api.v1.")
+```
+
+- `APIResource` registers only JSON actions (no `create`/`edit` forms). `Shallow()` moves `show`/`update`/`destroy` of a nested resource to the top level; names stay the same.
+- `middleware.JSONOnly()` rejects non-JSON bodies on write methods with 415 and makes errors problem+json.
+
+## Resources (transformers)
+
+```go title="app/resources/product.go"
+// vukem make:resource Product
+type ProductJSON struct {
+	ID        int64     `json:"id"`
+	Name      string    `json:"name"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+func Product(p models.Product) ProductJSON { return ProductJSON{ID: p.ID, Name: p.Name, CreatedAt: p.CreatedAt} }
+func ProductList(ps []models.Product) []ProductJSON { return api.Map(ps, Product) }
+```
+
+Plain functions and structs keep the wire format separate from models, typed and without reflection.
+
+## Responses and errors
+
+| Helper | Status |
+| --- | --- |
+| `c.JSON(status, v)` | any |
+| `c.Created(location, v)` | 201 with `Location` |
+| `c.NoContent()` | 204 |
+| `api.Collection(c, items, fn)` / `api.Page(c, page, fn)` / `api.Cursor(c, page, fn)` | 200 with envelopes ([pagination](/docs/rest-apis/pagination)) |
+
+| Condition | Status |
+| --- | --- |
+| Malformed JSON, unknown filter/sort/field/include, bad cursor | 400 |
+| Missing or invalid token | 401 with `WWW-Authenticate: Bearer` |
+| Policy denial | 403 (404 with `authz.DenyAsNotFound`) |
+| Not found | 404 |
+| Unique violation | 409 |
+| Unsupported media type | 415 |
+| Validation | 422 with `errors` |
+| Rate limited | 429 with `Retry-After` |
+
+## Tokens
+
+```go
+tokens := auth.NewTokens(db)
+plain, tok, err := tokens.Create(ctx, user.AuthID(), "cli", []string{"posts:read"}, 30*24*time.Hour)
+// send plain to the client once; only SHA-256(secret) is stored
+```
+
+See [Authentication](/docs/security/authentication#token-guard) for the token guard, abilities and revocation.
+
+## Rate limiting
+
+```go
+limiter := ratelimit.NewMemory(60, time.Minute) // GCRA: 60 per minute, bursts up to 60
+g.Use(ratelimit.Middleware(limiter, ratelimit.ByToken)) // hashed bearer token, else client IP
+```
+
+Every response carries `RateLimit-Limit`, `RateLimit-Remaining` and `RateLimit-Reset`; an empty bucket answers 429 with `Retry-After`. A failing limiter store denies the request. Write your own `KeyFunc` (`func(*http.Request) string`; empty skips limiting) for per-user or per-route buckets.
+
+## Versioning and deprecation
+
+```go
+r.Group("/api/v1", func(g *router.Group) {
+	g.Use(api.Deprecate(since, sunset, "https://docs.example.com/migrate-to-v2"))
+	// ...
+})
+```
+
+`api.Deprecate` sets `Deprecation`, `Sunset` and `Link: rel="deprecation"` headers.
+
+## OpenAPI and API docs
+
+[Typed handlers](/docs/rest-apis/typed-handlers) (`api.Register`) bind and validate input from their types, and the same types produce an [OpenAPI 3.1 document](/docs/rest-apis/openapi) (`/openapi.json`, `vukem openapi:export`), TypeScript/Zod types (`vukem codegen:types`) and a Scalar API reference at `/docs`. Retried writes are safe with [idempotency keys](/docs/rest-apis/idempotency).
+
+## Beyond REST
+
+- [GraphQL](/docs/rest-apis/graphql) with `contrib/graphql`: schema-first, typed resolvers, batching loader, limits, persisted queries and subscriptions.
+- [gRPC](/docs/rest-apis/grpc), gRPC-Web and Connect with `contrib/grpc` on connect-go, on the same router and port.
+- Typed [TypeScript and Go clients](/docs/rest-apis/client-generation) generated from your typed handlers.
+- Server push with [SSE](/docs/digging-deeper/sse) and [broadcasting](/docs/digging-deeper/broadcasting).
+
+Any other `http.Handler` mounts with `r.Handle` and shares the middleware stacks.

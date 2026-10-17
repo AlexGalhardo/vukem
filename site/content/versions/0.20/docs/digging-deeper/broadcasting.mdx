@@ -1,0 +1,127 @@
+---
+title: WebSockets and broadcasting
+description: WebSocket handlers with origin checks and clean shutdown, and Laravel-style broadcasting over public, private and presence channels via SSE or WebSockets.
+---
+
+## WebSockets
+
+```bash
+go get github.com/AlexGalhardo/vukem/drivers/websocket
+```
+
+The driver module is built on `github.com/coder/websocket`. Core never imports drivers, so the handler is a function that takes the context:
+
+```go
+r.Get("/chat", func(c *web.Ctx) error {
+	return websocket.Handle(c, func(conn *websocket.Conn) error {
+		for {
+			var msg Message
+			if err := conn.ReadJSON(conn.Context(), &msg); err != nil {
+				return nil // client left or the app is shutting down
+			}
+			if err := conn.WriteJSON(conn.Context(), reply(msg)); err != nil {
+				return err
+			}
+		}
+	})
+})
+r.Get("/feed", websocket.Handler(feed, websocket.AllowedOrigins("app.example.com")))
+```
+
+- Entry points: `websocket.Handle(c, fn, opts...)`, `websocket.Handler(fn, opts...)` (a `web.HandlerFunc`) and `websocket.Serve(w, r, fn, opts...)` for plain handlers.
+- `Conn`: `ReadText`, `ReadJSON`, `WriteText`, `WriteJSON` (each takes a context), `Close(code, reason)`, `CloseRead(ctx)` for write-only handlers, `Subprotocol()`, and `Unwrap()` for binary or streaming I/O. One reader and one writer may run at the same time.
+- `Conn.Context()` ends when the client goes away, the peer stops answering pings, `fn` returns or the app shuts down.
+
+| Option | Default |
+| --- | --- |
+| Origin | same-origin only; `AllowedOrigins(patterns...)` opens specific hosts (`path.Match`, or `scheme://host` patterns). `"*"` or a malformed pattern refuses every upgrade; `InsecureSkipOriginCheck()` is the only way to accept any origin |
+| `ReadLimit(n)` | 32 KiB; larger messages close with 1009 |
+| `WriteTimeout(d)` | 10s per message |
+| `PingInterval(d)` / `PingTimeout(d)` | 30s / 10s (zero interval disables) |
+| `Subprotocols(...)` | none |
+
+Requests without an `Origin` header (non-browser clients) are accepted. Pongs only arrive while something reads, so write-only handlers call `conn.CloseRead(ctx)`.
+
+`fn` returning nil closes with 1000, an error with 1011. On shutdown every socket closes with 1001 "going away", so shutdown never waits on open sockets.
+
+## Broadcasting
+
+Package `broadcast` (core, stdlib only) pushes server events to browsers over named channels. The channel kind comes from the name prefix: public (`posts`), private (`private-user.42`) or presence (`presence-room.7`).
+
+```go
+b := broadcast.New(broadcast.Config{
+	Broker:     redisClient, // sse.Broker; nil = this process only
+	User:       func(ctx context.Context) (any, error) { return auth.UserFrom[*models.User](ctx, "web") },
+	Authorizer: gate, // used by PrivateGate
+})
+defer b.Close()
+
+err := b.Public("posts")
+err = b.Private("user.{id}", func(ctx context.Context, u any, p map[string]string) (bool, error) {
+	return fmt.Sprint(u.(*models.User).ID) == p["id"], nil
+})
+err = b.PrivateGate("post.{id}", "view", func(ctx context.Context, p map[string]string) (any, error) {
+	return findPost(ctx, p["id"]) // checked like c.Authorize("view", post)
+})
+err = b.Presence("room.{id}", func(ctx context.Context, u any, p map[string]string) (broadcast.Member, bool, error) {
+	user := u.(*models.User)
+	return broadcast.Member{ID: fmt.Sprint(user.ID), Info: map[string]string{"name": user.Name}}, true, nil
+})
+```
+
+<Callout type="warning">
+Every channel needs a rule, and decisions **fail closed**: no matching rule, a rule error, a missing `Config.User` or no user all deny.
+</Callout>
+
+- Patterns omit the prefix and split on `.`; `{param}` matches one segment. An invalid pattern is returned as an error at registration.
+- Channel names are 1–128 characters of `A-Z a-z 0-9 _ - = @ . :`; anything else answers 400.
+- `b.Subscribe(ctx, channels...)` authorizes every channel (all or nothing, at most 32 by default) and returns a `*Subscription`; transports are built on it.
+
+### Sending events
+
+Events implement `Channels() []string`, and optionally `BroadcastAs() string` (default: the Go type name) and `BroadcastWith() any` (default: the event as JSON).
+
+```go
+err := b.Broadcast(ctx, PostPublished{Post: p})        // every channel of the event, on every instance
+err = b.Publish(ctx, "posts", "PostPublished", payload) // without a type
+
+bus.Register(broadcast.Listener[PostPublished](b))                          // from the events bus
+bus.Register(broadcast.Queued[PostPublished](b, "broadcast.post_published")) // from a retried queue job
+```
+
+`broadcast.ListenerAsync` broadcasts in the background. Event names starting with `presence:` are reserved.
+
+### Transports
+
+```go
+r.Get("/broadcast/sse", b.SSE)                    // core
+r.Get("/broadcast/ws", websocket.Broadcast(b))   // drivers/websocket
+```
+
+Mount both behind your auth middleware: channels are authorized in the context of the request.
+
+- **SSE:** `GET /broadcast/sse?channels=posts,private-user.42`. Every channel is authorized before streaming (400/403 otherwise). Each SSE event is named after the broadcast event, with data `{"channel","event","data"}`; presence channels get `presence:here`, then `presence:joining` and `presence:leaving`.
+- **WebSocket:** JSON text messages.
+
+| Direction | Message |
+| --- | --- |
+| client → server | `{"type":"subscribe","channel":"private-user.42"}`, `{"type":"unsubscribe","channel":"…"}` |
+| server → client | `subscribed`, `unsubscribed`, `event` (`channel`, `event`, `data`), presence `here` / `joining` / `leaving` |
+| server → client | `{"type":"error","channel":"…","status":403,"message":"This channel is unauthorized."}` |
+
+```js
+const ws = new WebSocket(`wss://${location.host}/broadcast/ws`)
+ws.onopen = () => ws.send(JSON.stringify({ type: 'subscribe', channel: 'private-user.42' }))
+ws.onmessage = (e) => { const m = JSON.parse(e.data); if (m.type === 'event') console.log(m.event, m.data) }
+
+new EventSource('/broadcast/sse?channels=posts')
+  .addEventListener('PostPublished', (e) => console.log(JSON.parse(e.data)))
+```
+
+A subscription the server drops (64 events behind, or `b.Close()`) ends the stream or closes the socket with 1001; the client reconnects and subscribes again.
+
+<Callout type="info">
+Presence is tracked per instance: `joining`/`leaving` reach every instance through the broker, but `here` lists only members connected to the instance serving the client.
+</Callout>
+
+GraphQL subscriptions can read broadcast channels with the same rules: see [GraphQL](/docs/rest-apis/graphql#subscriptions).
