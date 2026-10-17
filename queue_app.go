@@ -11,6 +11,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/AlexGalhardo/vukem/database"
 	"github.com/AlexGalhardo/vukem/mail"
 	"github.com/AlexGalhardo/vukem/queue"
 )
@@ -219,21 +220,36 @@ var ErrLegacyMail = errors.New("vukem: clear-text mail job refused (QUEUE_ALLOW_
 const mailJobAD = "queue:" + MailJobKind
 
 func (a *App) enqueueMail(ctx context.Context, msg *mail.Message, opts ...queue.Option) error {
-	plain, err := json.Marshal(msg) //nolint:musttag // Go field names, as mail jobs always used
-	if err != nil {
-		return fmt.Errorf("vukem: encode queued mail: %w", err)
-	}
-
-	q, err := a.Queue()
+	q, payload, err := a.mailJob(msg)
 	if err != nil {
 		return err
 	}
 
-	return q.DispatchKind(
-		ctx,
-		MailJobKind,
-		map[string]string{"sealed": a.Crypt.Seal(plain, []byte(mailJobAD))},
-		opts...)
+	return q.DispatchKind(ctx, MailJobKind, payload, opts...)
+}
+
+func (a *App) enqueueMailTx(ctx context.Context, ex database.Executor, msg *mail.Message, opts ...queue.Option) error {
+	q, payload, err := a.mailJob(msg)
+	if err != nil {
+		return err
+	}
+
+	return q.DispatchKindTx(ctx, ex, MailJobKind, payload, opts...)
+}
+
+// mailJob seals msg into a MailJobKind payload.
+func (a *App) mailJob(msg *mail.Message) (*queue.Queue, map[string]string, error) {
+	plain, err := json.Marshal(msg) //nolint:musttag // Go field names, as mail jobs always used
+	if err != nil {
+		return nil, nil, fmt.Errorf("vukem: encode queued mail: %w", err)
+	}
+
+	q, err := a.Queue()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return q, map[string]string{"sealed": a.Crypt.Seal(plain, []byte(mailJobAD))}, nil
 }
 
 func (a *App) sendQueuedMail(ctx context.Context, p queuedMail) error {
@@ -268,7 +284,7 @@ func (a *App) sendQueuedMail(ctx context.Context, p queuedMail) error {
 		}
 
 		msg = mail.Message{}
-		if err := json.Unmarshal(plain, &msg); err != nil { //nolint:musttag // see enqueueMail
+		if err := json.Unmarshal(plain, &msg); err != nil { //nolint:musttag // see mailJob
 			return fmt.Errorf("vukem: decode queued mail: %w", err)
 		}
 	}
@@ -285,6 +301,20 @@ func (a *App) MailLater(ctx context.Context, mailable mail.Mailable, opts ...que
 	}
 
 	return m.SendLater(ctx, mailable, opts...)
+}
+
+// MailLaterTx is MailLater inside the transaction of ex: the mail is
+// queued only if the transaction commits (see mail.Mailer.SendLaterTx and
+// queue.Queue.DispatchTx).
+func (a *App) MailLaterTx(ctx context.Context, ex database.Executor, mailable mail.Mailable,
+	opts ...queue.Option,
+) error {
+	m, err := a.Mailer()
+	if err != nil {
+		return err
+	}
+
+	return m.SendLaterTx(ctx, ex, mailable, opts...)
 }
 
 // inServe reports whether serve runs a queue worker: always for memory,

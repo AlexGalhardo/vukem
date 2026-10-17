@@ -14,7 +14,9 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/AlexGalhardo/vukem/database"
 	"github.com/AlexGalhardo/vukem/internal/testutil"
+	"github.com/AlexGalhardo/vukem/mail"
 	"github.com/AlexGalhardo/vukem/queue"
 )
 
@@ -431,3 +433,56 @@ func TestQueueRunnerExitsForInlineDriver(t *testing.T) {
 	}
 }
 
+// MailLaterTx queues the mail only if the transaction commits.
+func TestMailLaterTx(t *testing.T) {
+	t.Parallel()
+
+	rollback := errors.New("rollback")
+
+	for _, conn := range []string{"database", "sync"} {
+		t.Run(conn, func(t *testing.T) {
+			t.Parallel()
+
+			app := dbQueueApp(t, map[string]string{"QUEUE_CONNECTION": conn, "MAIL_MAILER": "array"})
+			ctx := t.Context()
+
+			db, err := app.DB()
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			// SQLite has one writer connection: the queue creates its tables
+			// before a transaction holds it (serve's worker does it at boot).
+			q, err := app.Queue()
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			for _, fail := range []bool{true, false} {
+				err := db.Tx(ctx, func(tx *database.Tx) error {
+					if err := app.MailLaterTx(ctx, tx, plainMail{}); err != nil {
+						return err
+					}
+
+					if fail {
+						return rollback
+					}
+
+					return nil
+				})
+				if fail != errors.Is(err, rollback) || !fail && err != nil {
+					t.Fatalf("Tx(fail=%v) = %v", fail, err)
+				}
+			}
+
+			if err := q.Work(ctx, queue.WorkOptions{StopWhenEmpty: true}); err != nil {
+				t.Fatal(err)
+			}
+
+			m, _ := app.Mailer()
+			if sent := m.Transport().(*mail.Array).Sent(); len(sent) != 1 || sent[0].Subject != "Shipped" {
+				t.Fatalf("sent = %+v, want only the committed mail", sent)
+			}
+		})
+	}
+}
