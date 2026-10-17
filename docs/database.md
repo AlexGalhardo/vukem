@@ -132,6 +132,10 @@ err = orm.Create(ctx, db, &user)            // fills ID, timestamps
 err = orm.Update(ctx, db, &user)            // all columns (explicit)
 err = orm.Query[models.User](db).Where("id", id).Update(ctx, orm.Set{"name": "x"})
 err = orm.Delete(ctx, db, &user)            // soft delete if model opts in
+err = orm.CreateMany(ctx, db, users)        // multi-row INSERT, batched under the parameter limit
+
+// Row locks (inside a transaction; no-op on SQLite)
+n, err := orm.QueryOf[models.Number](tx).Where("id", id).LockForUpdate().First(ctx)
 
 // Transactions
 err = db.Tx(ctx, func(tx *database.Tx) error {
@@ -147,6 +151,7 @@ Inside `db.Tx`, use `tx` for every query (pass it as the `database.Executor`). S
 | Where | `Where(col, val)`, `Where(col, op, val)`, `OrWhere`, `WhereIn`, `WhereNotIn`, `WhereNull`, `WhereNotNull`, `WhereBetween`, `WhereRaw(sql, args...)`, grouped `WhereGroup(func(q))` |
 | Shape | `Select(cols...)`, `Distinct()`, `Join/LeftJoin`, `GroupBy`, `Having`, `OrderBy`, `Limit`, `Offset` |
 | Read | `Get`, `First`, `Find`, `Count`, `Exists`, `Pluck[V]`, `Each`, `Chunk(n, fn)` |
+| Lock | `LockForUpdate()`, `ForShare()`, then optional `SkipLocked()` / `NoWait()`; needs a `*database.Tx` (`orm.ErrLockOutsideTx` otherwise), no-op on SQLite |
 | Paginate | `Paginate(ctx, page, perPage)` → `Page[T]{Items, Total, Page, PerPage, LastPage}`; `CursorPaginate(ctx, cursor, perPage, dir)` → `CursorPage[T]` |
 | Scopes | `Scope(fns ...func(*Query[T]) *Query[T])` |
 | Raw | `orm.Raw[T](db, sql, args...)` scans into `T` |
@@ -257,6 +262,7 @@ var CreateUsersTable = schema.Migration{
 - `registry.go` holds `var All = []schema.Migration{...}`, appended by `make:migration` (codemod) — no `init()` registration.
 - Column types: `ID`, `BigInteger`, `Integer`, `String(n)`, `Text`, `Boolean`, `Decimal(p,s)`, `Float`, `Date`, `Timestamp`, `Timestamps`, `SoftDeletes`, `JSON`, `UUID`, `ULID`, `Enum(vals)`, `ForeignID("user_id").Constrained().CascadeOnDelete()`; modifiers `Nullable`, `Default`, `Unique`, `Index`, `Comment`.
 - `s.Table(name, fn)` alters (add/rename/drop column, indexes); SQLite table rebuild handled by the dialect where `ALTER` is unsupported.
+- `t.Check(name, expr)` adds a named CHECK constraint (in `Create` on every dialect; in `s.Table` on PostgreSQL and MySQL only, SQLite fails the migration); `t.DropCheck(name)` removes one.
 - `s.Raw(sql)` for anything else.
 - Tracking table `migrations(id, batch, ran_at)`; each migration runs in a transaction where the dialect allows DDL in transactions.
 - Commands: `migrate`, `migrate:rollback [--step N]`, `migrate:reset`, `migrate:fresh [--seed]`, `migrate:status`, `make:migration create_posts_table` (name prefix `create_`/`add_`/`alter_` picks the stub).

@@ -48,6 +48,18 @@ n, err := orm.QueryOf[models.Post](db).Where("published", false).Update(ctx, orm
 n, err = orm.QueryOf[models.Post](db).Where("created_at", "<", cutoff).Delete(ctx)
 ```
 
+`orm.CreateMany` inserts a slice with multi-row `INSERT` statements, batched under the bound-parameter limit (32766 on SQLite, 65535 on PostgreSQL and MySQL):
+
+```go
+numbers := make([]models.Number, 1000)
+for i := range numbers {
+	numbers[i] = models.Number{RaffleID: raffle.ID, Value: i + 1}
+}
+err := orm.CreateMany(ctx, db, numbers) // fills timestamps and ids
+```
+
+On `db` the batches share one transaction (all rows or none); on a `tx` they join it. `BeforeCreate` runs for every model before the first insert and `AfterCreate` after the last. Auto-increment ids are filled when every model leaves its id zero (mixing set and zero ids is an error); MySQL cannot report the ids of a multi-row insert, so there such rows are inserted one statement each.
+
 ## Querying
 
 ```go
@@ -66,6 +78,7 @@ posts, err := orm.QueryOf[models.Post](db).
 | Builders | Terminals |
 | --- | --- |
 | `Select`, `Where`, `OrWhere`, `WhereIn`, `WhereNotIn`, `WhereNull`, `WhereNotNull`, `WhereBetween`, `WhereRaw`, `WhereGroup` | `Get`, `First`, `Find(id)`, `Count`, `Exists` |
+| `LockForUpdate()`, `ForShare()`, `SkipLocked()`, `NoWait()` ([row locks](#row-locks)) | |
 | `OrderBy(col, orm.Asc/orm.Desc)`, `Latest()`, `Limit`, `Offset` | `Pluck[V](col)`, `Each`, `Chunk`, `Paginate` |
 | `Scope(fns...)`, `WithTrashed()`, `OnlyTrashed()` | `Update(set)`, `Delete()`, `SQL()` |
 
@@ -94,6 +107,34 @@ func Published(q orm.Query[models.Post]) orm.Query[models.Post] { return q.Where
 
 orm.QueryOf[models.Post](db).Scope(Published).Get(ctx)
 ```
+
+## Row locks
+
+Inside a transaction, lock the rows you read so concurrent requests cannot change them before you write:
+
+```go
+err := db.Tx(ctx, func(tx *database.Tx) error {
+	n, err := orm.QueryOf[models.Number](tx).
+		Where("raffle_id", raffleID).Where("value", value).
+		LockForUpdate(). // SELECT … FOR UPDATE
+		First(ctx)
+	if err != nil {
+		return err
+	}
+	n.Status = "reserved"
+	return orm.Update(ctx, tx, &n)
+})
+```
+
+| Builder | PostgreSQL | MySQL / MariaDB | SQLite |
+| --- | --- | --- | --- |
+| `LockForUpdate()` | `FOR UPDATE` | `FOR UPDATE` | no-op |
+| `ForShare()` | `FOR SHARE` | `LOCK IN SHARE MODE` | no-op |
+| `.SkipLocked()` / `.NoWait()` after a lock | `SKIP LOCKED` / `NOWAIT` | same (with `ForShare`, MySQL 8 only: `FOR SHARE …`) | no-op |
+
+- A locking query on `db` returns `orm.ErrLockOutsideTx`: without a transaction the lock ends with the statement. This holds on SQLite too, so code stays portable.
+- SQLite has no row locks; its write transactions (`BEGIN IMMEDIATE`) already lock the whole database, so the lock clauses are dropped.
+- `Count` and `Exists` ignore locks (PostgreSQL rejects them on aggregates), and eager-loaded relations are not locked.
 
 ## Hooks
 
