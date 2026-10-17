@@ -163,6 +163,8 @@ Column names passed as strings are validated against the model's cached column s
 
 Raw SQL shared between dialects is written once with `?` and passed through `database.Rebind(ex.Dialect(), query)`: on PostgreSQL the n-th `?` becomes `$n`, elsewhere the query is unchanged. `?` inside string literals, quoted identifiers, dollar-quoted bodies and comments is left alone, and `??` is a literal `?` on PostgreSQL (jsonb operators). `DB.ExecContext`/`QueryContext` never rebind on their own, so queries already written with `$n` keep working.
 
+The orm uses the same scanner (`internal/sqlscan`): `WhereRaw` counts placeholders with the rules `Rebind` renumbers with, so the two cannot disagree, and it rejects a fragment that ends inside a literal, identifier or comment (a trailing `--` comment too).
+
 ## UUIDs
 
 Package `uuid` (stdlib only) generates and parses RFC 9562 UUIDs for public ids:

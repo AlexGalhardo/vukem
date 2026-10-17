@@ -13,6 +13,7 @@ import (
 
 	"github.com/AlexGalhardo/vukem/database"
 	"github.com/AlexGalhardo/vukem/errs"
+	"github.com/AlexGalhardo/vukem/internal/sqlscan"
 )
 
 // ErrNotFound is returned when First/Find match no row. It matches
@@ -215,29 +216,32 @@ func (q Query[T]) WhereBetween(colName string, low, high any) Query[T] {
 }
 
 // WhereRaw adds a raw condition. It must use "?" placeholders for every
-// value; never concatenate input into sql.
+// value; never concatenate input into sql. Placeholders are found the way
+// the dialect lexes SQL (database.Rebind's rules): "?" inside literals,
+// quoted identifiers, comments and PostgreSQL dollar-quoted bodies does not
+// count, and "??" is a literal "?" on PostgreSQL. A fragment that ends
+// inside a literal, identifier or comment (including a "--" comment without
+// a newline) is rejected, since it would swallow the SQL appended after it.
 func (q Query[T]) WhereRaw(sqlFrag string, args ...any) Query[T] {
-	if n := countPlaceholders(sqlFrag); n != len(args) {
-		return q.fail(fmt.Errorf("orm: WhereRaw(%q) has %d placeholders but %d args", sqlFrag, n, len(args)))
+	dialect := ""
+	if q.ex != nil {
+		dialect = q.ex.Dialect().Name()
+	}
+
+	scan := sqlscan.Scan(dialect, sqlFrag, nil)
+	if !scan.Terminated {
+		return q.fail(
+			fmt.Errorf("orm: WhereRaw(%q) ends inside an unterminated literal, identifier or comment", sqlFrag),
+		)
+	}
+
+	if scan.Placeholders != len(args) {
+		return q.fail(
+			fmt.Errorf("orm: WhereRaw(%q) has %d placeholders but %d args", sqlFrag, scan.Placeholders, len(args)),
+		)
 	}
 
 	return q.addCond(false, "("+sqlFrag+")", args...)
-}
-
-// countPlaceholders counts "?" outside single-quoted literals.
-func countPlaceholders(s string) int {
-	n, inQuote := 0, false
-
-	for _, r := range s {
-		switch {
-		case r == '\'':
-			inQuote = !inQuote
-		case r == '?' && !inQuote:
-			n++
-		}
-	}
-
-	return n
 }
 
 // WhereGroup adds a parenthesised group built by fn.
@@ -487,31 +491,7 @@ func (q Query[T]) columnList() string {
 }
 
 // renumber converts "?" placeholders to the dialect's style.
-func renumber(sqlText string, d database.Dialect) string {
-	if d.Placeholder(1) == "?" {
-		return sqlText
-	}
-
-	var b strings.Builder
-
-	n := 0
-	inQuote := false
-
-	for _, r := range sqlText {
-		switch {
-		case r == '\'':
-			inQuote = !inQuote
-			b.WriteRune(r)
-		case r == '?' && !inQuote:
-			n++
-			b.WriteString(d.Placeholder(n))
-		default:
-			b.WriteRune(r)
-		}
-	}
-
-	return b.String()
-}
+func renumber(sqlText string, d database.Dialect) string { return database.Rebind(d, sqlText) }
 
 // SQL returns the SELECT statement and its arguments (debugging, tests).
 func (q Query[T]) SQL() (string, []any, error) {

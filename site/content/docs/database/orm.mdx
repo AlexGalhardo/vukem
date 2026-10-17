@@ -85,7 +85,7 @@ posts, err := orm.QueryOf[models.Post](db).
 | `OrderBy(col, orm.Asc/orm.Desc)`, `Latest()`, `Limit`, `Offset` | `Pluck[V](col)`, `Each`, `Chunk`, `Paginate` |
 | `Scope(fns...)`, `WithTrashed()`, `OnlyTrashed()` | `Update(set)`, `Delete()`, `SQL()` |
 
-Column names are validated against the model, never interpolated from input; values are always bound parameters. `WhereRaw(sql, args...)` is the explicit escape hatch and checks the number of `?` placeholders.
+Column names are validated against the model, never interpolated from input; values are always bound parameters. `WhereRaw(sql, args...)` is the explicit escape hatch and checks the number of `?` placeholders. It finds them the way the dialect lexes SQL, with the same rules as `database.Rebind`: `?` inside literals, quoted identifiers, comments and PostgreSQL dollar-quoted bodies does not count, and `??` is a literal `?` on PostgreSQL (jsonb operators). A fragment that ends inside a literal, identifier or comment (a trailing `--` comment too) is rejected, since it would swallow the SQL appended after it.
 
 ```go
 post, err := orm.QueryOf[models.Post](db).Find(ctx, id) // orm.ErrNotFound → 404 in handlers
