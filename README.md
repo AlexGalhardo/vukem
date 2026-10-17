@@ -17,18 +17,20 @@ Vukem is a complete Model-View-Controller (MVC) web framework for Go built on `n
 
 ## Summary
 
-- **HTTP**: `net/http`-native router with named routes, resources and groups; middleware is `func(http.Handler) http.Handler`.
-- **Validation**: Zod-style typed schemas (`z`) for every input, including files, exportable as JSON Schema, TypeScript and Zod.
-- **Database**: SQLite built in, PostgreSQL and MySQL/MariaDB driver modules, MongoDB, generic query builder, relations, encrypted columns, migrations, factories and seeders.
-- **Auth**: sessions, API tokens, JWT with JWKS and refresh tokens, TOTP two-factor (`install:auth --2fa`), social login (Google, GitHub, Apple, LinkedIn, X and any OIDC), email verification, password reset, gates and policies.
-- **APIs**: JSON resources, pagination, RFC 9457 errors, rate limiting, idempotency keys, typed handlers, OpenAPI 3.1, a Scalar API reference and generated TypeScript and Go clients.
-- **GraphQL and gRPC**: a stdlib GraphQL server with subscriptions (`contrib/graphql`) and gRPC, gRPC-Web and Connect on connect-go (`contrib/grpc`).
-- **Real time**: Server-Sent Events, WebSockets and channel broadcasting with private and presence channels.
-- **Background work**: typed queue jobs (sync, memory, database, Redis), queued mail and listeners, cron scheduler.
-- **Frontend**: HTMX, templ or Inertia (React, Vue, Svelte) starters with Vite and Tailwind CSS v4, SSR and a youch-style error page.
-- **Admin and devtools**: an HTMX admin panel generated from your models, with an audit log, and a `/_vukem` dashboard for requests, queries (with N+1 detection), jobs, mail and logs.
-- **Billing and uploads**: Stripe subscriptions (`install:billing`), streaming, resumable (tus) and direct-to-S3 uploads with virus scanning.
-- **More**: mail (SMTP, Resend), cache, storage (local, S3), events, encryption, i18n, OpenTelemetry, Telegram logging, SSRF-safe HTTP client, signed URLs and webhooks.
+| Area | What you get |
+| --- | --- |
+| **HTTP** | `net/http`-native router with named routes, resources and groups; middleware is `func(http.Handler) http.Handler`. |
+| **Validation** | Zod-style typed schemas (`z`) for every input, including files, exportable as JSON Schema, TypeScript and Zod. |
+| **Database** | SQLite built in, PostgreSQL and MySQL/MariaDB driver modules, MongoDB, generic query builder, relations, encrypted columns, migrations, factories and seeders. |
+| **Auth** | Sessions, API tokens, JWT with JWKS and refresh tokens, TOTP two-factor (`install:auth --2fa`), social login (Google, GitHub, Apple, LinkedIn, X and any OIDC), email verification, password reset, gates and policies. |
+| **APIs** | JSON resources, pagination, RFC 9457 errors, rate limiting, idempotency keys, typed handlers, OpenAPI 3.1, a Scalar API reference and generated TypeScript and Go clients. |
+| **GraphQL and gRPC** | A stdlib GraphQL server with subscriptions (`contrib/graphql`) and gRPC, gRPC-Web and Connect on connect-go (`contrib/grpc`). |
+| **Real time** | Server-Sent Events, WebSockets and channel broadcasting with private and presence channels. |
+| **Background work** | Typed queue jobs (sync, memory, database, Redis), queued mail and listeners, cron scheduler. |
+| **Frontend** | HTMX, templ or Inertia (React, Vue, Svelte) starters with Vite and Tailwind CSS v4, SSR and a youch-style error page. |
+| **Admin and devtools** | An HTMX admin panel generated from your models, with an audit log, and a `/_vukem` dashboard for requests, queries (with N+1 detection), jobs, mail and logs. |
+| **Billing and uploads** | Stripe subscriptions (`install:billing`), streaming, resumable (tus) and direct-to-S3 uploads with virus scanning. |
+| **More** | Mail (SMTP, Resend), cache, storage (local, S3), events, encryption, i18n, OpenTelemetry, Telegram logging, SSRF-safe HTTP client, signed URLs and webhooks. |
 
 ## Why Vukem
 
@@ -41,11 +43,31 @@ Vukem is a complete Model-View-Controller (MVC) web framework for Go built on `n
 
 ## Showcase
 
-Open-source reference apps built with Vukem, live in production ([details](https://vukem.dev/docs/showcase)):
+Three open-source reference apps are built with Vukem and run in production on Railway. Each one is a complete product, not a demo page: read their code to see how the pieces fit together ([details](https://vukem.dev/docs/showcase)).
 
-- [vukem-golang-quiz-htmx](https://github.com/AlexGalhardo/vukem-golang-quiz-htmx) ([live](https://quiz.vukem.dev)): HTMX 4, embedded JSON, i18n, CSP nonces, Lighthouse 100.
-- [vukem-rifa-vuejs](https://github.com/AlexGalhardo/vukem-rifa-vuejs) ([live](https://rifa.vukem.dev)): Inertia v3 + Vue, PostgreSQL, PIX with AbacatePay, a ledger, a REST API with Scalar, scheduler and queue inside `serve`.
-- [vukem-micro-mercadolivre-reactjs](https://github.com/AlexGalhardo/vukem-micro-mercadolivre-reactjs) ([live](https://marketplace.vukem.dev)): Inertia v3 + React + Base UI, PostgreSQL, Redis and MongoDB, Stripe Connect and PIX, REST, GraphQL and gRPC, OpenTelemetry.
+### Go Quiz
+
+A Go interview trainer with 130+ questions in English and Brazilian Portuguese, from very easy to very hard. You answer one question at a time, get an explanation of why each of the five alternatives is right or wrong, with sources, and track your accuracy per difficulty. There are no accounts: progress stays in your browser.
+
+- **Stack**: HTMX 4, server-rendered templates, questions embedded as JSON, Tailwind CSS v4.
+- **Shows**: i18n, dark mode, CSP nonces, rate limiting behind a proxy, Lighthouse 100.
+- **Links**: [live](https://quiz.vukem.dev) · [source](https://github.com/AlexGalhardo/vukem-golang-quiz-htmx)
+
+### Rifa
+
+A Brazilian raffle platform. Owners create raffles with 10 to 1000 numbers, generate a 10-minute payment link for each buyer, and get paid by PIX; the draw runs automatically at the end date or when every number is sold. Payments split 90% to the owner and 10% to the platform through a ledger with manual payouts.
+
+- **Stack**: Inertia v3 + Vue, PostgreSQL, Tailwind CSS v4.
+- **Shows**: email/password and Google login, PIX with AbacatePay and webhooks, scheduler and queue inside `serve`, a REST API with API keys and Scalar docs, JSON/CSV audit export, an OWASP Top 10 test suite.
+- **Links**: [live](https://rifa.vukem.dev) · [source](https://github.com/AlexGalhardo/vukem-rifa-vuejs)
+
+### Marketplace
+
+A multi-seller marketplace inspired by the big Latin American e-commerce sites. Sellers open shops and list products with images; buyers search, fill a cart, calculate freight by CEP and pay by card or PIX, and sellers receive their share through Stripe Connect.
+
+- **Stack**: Inertia v3 + React + Base UI, PostgreSQL, Redis, MongoDB, S3-compatible storage, Tailwind CSS v4.
+- **Shows**: TOTP two-factor auth, Google login, Stripe Connect and PIX, ViaCEP, REST, GraphQL and gRPC on one domain model, queues and SSE, seller webhooks, OpenTelemetry and Telegram logging.
+- **Links**: [live](https://marketplace.vukem.dev) · [source](https://github.com/AlexGalhardo/vukem-micro-mercadolivre-reactjs)
 
 ## Why MVC and not Hexagonal/Clean Architecture?
 
