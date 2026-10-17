@@ -17,20 +17,24 @@ Vukem is a complete Model-View-Controller (MVC) web framework for Go built on `n
 ## Summary
 
 - **HTTP**: `net/http`-native router with named routes, resources and groups; middleware is `func(http.Handler) http.Handler`.
-- **Validation**: Zod-style typed schemas (`z`) for every input, exportable as JSON Schema, TypeScript and Zod.
-- **Database**: SQLite built in, PostgreSQL driver module, generic query builder, relations, migrations, factories and seeders.
-- **Auth**: sessions, API tokens, social login (OAuth2/OIDC), email verification, password reset, gates and policies.
-- **APIs**: JSON resources, pagination, RFC 9457 errors, rate limiting, idempotency keys, typed handlers, OpenAPI 3.1 and a Scalar API reference.
-- **Background work**: typed queue jobs (sync, memory, database), queued mail and listeners, cron scheduler.
-- **Frontend**: HTMX-first server-rendered views, with Inertia + React on the way.
-- **More**: mail (SMTP, Resend), cache, storage, events, Telegram logging, SSRF-safe HTTP client, signed URLs and webhooks.
+- **Validation**: Zod-style typed schemas (`z`) for every input, including files, exportable as JSON Schema, TypeScript and Zod.
+- **Database**: SQLite built in, PostgreSQL and MySQL/MariaDB driver modules, MongoDB, generic query builder, relations, encrypted columns, migrations, factories and seeders.
+- **Auth**: sessions, API tokens, JWT with JWKS and refresh tokens, TOTP two-factor (`install:auth --2fa`), social login (Google, GitHub, Apple, LinkedIn, X and any OIDC), email verification, password reset, gates and policies.
+- **APIs**: JSON resources, pagination, RFC 9457 errors, rate limiting, idempotency keys, typed handlers, OpenAPI 3.1, a Scalar API reference and generated TypeScript and Go clients.
+- **GraphQL and gRPC**: a stdlib GraphQL server with subscriptions (`contrib/graphql`) and gRPC, gRPC-Web and Connect on connect-go (`contrib/grpc`).
+- **Real time**: Server-Sent Events, WebSockets and channel broadcasting with private and presence channels.
+- **Background work**: typed queue jobs (sync, memory, database, Redis), queued mail and listeners, cron scheduler.
+- **Frontend**: HTMX, templ or Inertia (React, Vue, Svelte) starters with Vite and Tailwind CSS v4, SSR and a youch-style error page.
+- **Admin and devtools**: an HTMX admin panel generated from your models, with an audit log, and a `/_vukem` dashboard for requests, queries (with N+1 detection), jobs, mail and logs.
+- **Billing and uploads**: Stripe subscriptions (`install:billing`), streaming, resumable (tus) and direct-to-S3 uploads with virus scanning.
+- **More**: mail (SMTP, Resend), cache, storage (local, S3), events, encryption, i18n, OpenTelemetry, Telegram logging, SSRF-safe HTTP client, signed URLs and webhooks.
 
 ## Why Vukem
 
 - **Standard library first.** Handlers are plain `net/http`; any `http.Handler` works.
 - **No magic.** No globals, no `init()` registration, no reflection-based dependency injection. Generators write code you own.
 - **Typed end to end.** Inputs parse into Go types, outputs are checked, and the same types produce your OpenAPI and TypeScript.
-- **Opt-in batteries.** Heavy drivers (PostgreSQL, Redis, MongoDB) are separate modules, so you only download what you use.
+- **Opt-in batteries.** Heavy drivers (PostgreSQL, MySQL, Redis, MongoDB, S3, WebSockets, OpenTelemetry) and integrations (GraphQL, gRPC, Stripe) are separate modules, so you only download what you use.
 - **Secure by default.** CSRF, security headers, Argon2id, safe SQL, fail-closed authorization, mapped to the [OWASP Top 10:2025](docs/security.md).
 - **Windows is first-class.** Pure Go, no C compiler, tested on Windows, Linux and macOS.
 
