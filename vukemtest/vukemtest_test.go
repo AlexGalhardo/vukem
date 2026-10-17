@@ -343,3 +343,18 @@ func TestGetJSONDoesNotStick(t *testing.T) {
 	c.GetJSON("/accept")
 	c.Get("/accept").AssertSee("application/json") // AcceptJSON stays
 }
+
+func TestAssertHeaderContainsAndMissing(t *testing.T) {
+	t.Parallel()
+
+	app := vukemtest.New(t, build)
+
+	app.Client(t).Get("/teapot").AssertHeaderContains("Content-Type", "text/plain").AssertHeaderMissing("X-Powered-By")
+
+	expectFailure(t, `header Content-Type = "text/plain; charset=utf-8", want it to contain "json"`, func(tb *fakeTB) {
+		app.Client(tb).Get("/teapot").AssertHeaderContains("Content-Type", "json")
+	})
+	expectFailure(t, `header Content-Type present`, func(tb *fakeTB) {
+		app.Client(tb).Get("/teapot").AssertHeaderMissing("Content-Type")
+	})
+}

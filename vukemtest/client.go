@@ -339,6 +339,29 @@ func (r *Response) AssertHeader(key, value string) *Response {
 	return r
 }
 
+// AssertHeaderContains checks that header key contains substr.
+func (r *Response) AssertHeaderContains(key, substr string) *Response {
+	r.t.Helper()
+
+	if got := r.rec.Header().Get(key); !strings.Contains(got, substr) {
+		r.fail("header %s = %q, want it to contain %q", key, got, substr)
+	}
+
+	return r
+}
+
+// AssertHeaderMissing checks that the response has no header key (for
+// example no Set-Cookie on a health probe, no Server banner).
+func (r *Response) AssertHeaderMissing(key string) *Response {
+	r.t.Helper()
+
+	if v, ok := r.rec.Header()[http.CanonicalHeaderKey(key)]; ok {
+		r.fail("header %s present (%q), want it missing", key, v)
+	}
+
+	return r
+}
+
 func (r *Response) decoded() any {
 	r.t.Helper()
 
