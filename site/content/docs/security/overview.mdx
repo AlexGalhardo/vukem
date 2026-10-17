@@ -18,7 +18,7 @@ Vukem's security defaults are a design contract. Each default lands in a phase (
 | Default | OWASP |
 | --- | --- |
 | Boot refuses a missing `APP_KEY` in production or with `APP_ENV` unset (with an explicit `development`/`test`, key-derived features fail closed on use) or a short one, `APP_DEBUG=true` in production and an invalid port | A02 |
-| `NewHTTPServer` always sets read, write, header and idle timeouts and `MaxHeaderBytes` | A02 |
+| `NewHTTPServer` always sets read, write, header and idle timeouts and `MaxHeaderBytes` (64 KiB, `HTTP_MAX_HEADER_BYTES`) | A02 |
 | `SecureHeaders`: CSP with per-request nonce, HSTS on HTTPS, `nosniff`, `X-Frame-Options: DENY`, COOP, Referrer and Permissions policies | A02 |
 | CORS deny by default; `"*"` with credentials refused at construction | A01 / A02 |
 | Static files through `os.Root`; dotfiles and directory listings never served | A01 |

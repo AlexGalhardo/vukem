@@ -14,6 +14,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -1100,6 +1101,21 @@ func TestSecurity_A02_TrustedProxiesMisconfigurationRefusesBoot(t *testing.T) {
 			name: "ipv6 prefix not a number",
 			env:  map[string]string{"RATE_LIMIT_IPV6_PREFIX": "/64"},
 			want: "RATE_LIMIT_IPV6_PREFIX",
+		},
+		{
+			name: "header limit too small",
+			env:  map[string]string{"HTTP_MAX_HEADER_BYTES": "1024"},
+			want: "HTTP_MAX_HEADER_BYTES",
+		},
+		{
+			name: "header limit above go's default",
+			env:  map[string]string{"HTTP_MAX_HEADER_BYTES": "2097152"},
+			want: "HTTP_MAX_HEADER_BYTES",
+		},
+		{
+			name: "header limit not a number",
+			env:  map[string]string{"HTTP_MAX_HEADER_BYTES": "64KiB"},
+			want: "HTTP_MAX_HEADER_BYTES",
 		},
 		// X-Forwarded-Proto from any peer would let clients claim HTTPS.
 		{
@@ -2383,4 +2399,147 @@ func devtoolsGet(t *testing.T, app *App, path string) *httptest.ResponseRecorder
 	h.ServeHTTP(rec, req)
 
 	return rec
+}
+
+// TestSecurity_A02_BuiltinErrorPagesUnderCSP renders every built-in status
+// page through DefaultMiddleware and checks it against the response's own
+// Content-Security-Policy: no style or event-handler attributes, and every
+// <style> and <script> element carries the request nonce (A30).
+func TestSecurity_A02_BuiltinErrorPagesUnderCSP(t *testing.T) {
+	t.Parallel()
+
+	routes := WithRoutes(func(r *router.Router, app *App) error {
+		r.Get("/only-get", func(c *web.Ctx) error { return c.String(200, "ok") })
+		r.Get("/forbidden", func(*web.Ctx) error { return errs.ErrForbidden })
+		r.Get("/invalid", func(*web.Ctx) error { return errs.NewValidation().Add("title", "required") })
+		r.Get("/boom", func(*web.Ctx) error { return errors.New("boom") })
+
+		return DefaultMiddleware(app, r)
+	})
+
+	nonceRe := regexp.MustCompile(`'nonce-([^']+)'`)
+	inlineAttr := regexp.MustCompile(`(?i)<[^>]+\s(style|on[a-z]+)\s*=`)
+	element := regexp.MustCompile(`(?i)<(style|script)\b[^>]*>`)
+
+	for _, env := range []string{"test", "development"} {
+		app := newTestApp(t, WithSource(testSource(map[string]string{"APP_ENV": env})), routes)
+
+		h, err := app.Handler()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		for _, tt := range []struct {
+			method, target, hx string
+			status             int
+		}{
+			{http.MethodPost, "/only-get", "", 405},
+			{http.MethodGet, "/missing", "", 404},
+			{http.MethodGet, "/forbidden", "", 403},
+			{http.MethodGet, "/invalid", "", 422},
+			{http.MethodGet, "/boom", "", 500},
+			{http.MethodGet, "/missing", "true", 404},
+		} {
+			req := httptest.NewRequestWithContext(t.Context(), tt.method, tt.target, http.NoBody)
+			req.Header.Set("Accept", "text/html")
+
+			if tt.hx != "" {
+				req.Header.Set("HX-Request", tt.hx)
+			}
+
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+
+			name := env + " " + tt.method + " " + tt.target + " hx=" + tt.hx
+			body := rec.Body.String()
+
+			m := nonceRe.FindStringSubmatch(rec.Header().Get("Content-Security-Policy"))
+			if rec.Code != tt.status || len(m) < 2 || !strings.Contains(body, "<") {
+				t.Errorf("%s = %d CSP %q, want %d with a nonce CSP and HTML", name, rec.Code,
+					rec.Header().Get("Content-Security-Policy"), tt.status)
+
+				continue
+			}
+
+			if a := inlineAttr.FindString(body); a != "" {
+				t.Errorf("%s has an inline attribute CSP blocks: %q", name, a)
+			}
+
+			for _, el := range element.FindAllString(body, -1) {
+				if !strings.Contains(el, `nonce="`+m[1]+`"`) {
+					t.Errorf("%s: %s lacks the request nonce", name, el)
+				}
+			}
+		}
+	}
+}
+
+// TestSecurity_A02_MaxHeaderBytes checks the request header cap: 64 KiB by
+// default, HTTP_MAX_HEADER_BYTES overrides it, and a larger header block
+// gets 431 from the server the app runs (A31).
+func TestSecurity_A02_MaxHeaderBytes(t *testing.T) {
+	t.Parallel()
+
+	if got := newTestApp(t).httpServer(http.NotFoundHandler()).Server.MaxHeaderBytes; got != 64<<10 {
+		t.Errorf("default MaxHeaderBytes = %d, want %d", got, 64<<10)
+	}
+
+	app := newTestApp(t, WithSource(testSource(map[string]string{"HTTP_MAX_HEADER_BYTES": "16384"})))
+
+	srv := app.httpServer(
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }),
+	)
+	if srv.Server.MaxHeaderBytes != 16384 {
+		t.Fatalf("MaxHeaderBytes = %d, want 16384", srv.Server.MaxHeaderBytes)
+	}
+
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	srv.Listener, srv.Ready = ln, nil
+	ctx, cancel := context.WithCancel(t.Context())
+	errc := make(chan error, 1)
+
+	go func() { errc <- srv.Run(ctx) }()
+
+	t.Cleanup(func() {
+		cancel()
+
+		if err := <-errc; err != nil {
+			t.Errorf("Run() = %v", err)
+		}
+	})
+
+	for _, tt := range []struct {
+		size int
+		want int
+	}{
+		{8 << 10, http.StatusNoContent},
+		{64 << 10, http.StatusRequestHeaderFieldsTooLarge},
+	} {
+		req, err := http.NewRequestWithContext(
+			t.Context(),
+			http.MethodGet,
+			"http://"+ln.Addr().String()+"/",
+			http.NoBody,
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		req.Header.Set("X-Big", strings.Repeat("a", tt.size))
+
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("GET with a %d-byte header: %v", tt.size, err)
+		}
+
+		_ = resp.Body.Close()
+
+		if resp.StatusCode != tt.want {
+			t.Errorf("GET with a %d-byte header = %d, want %d", tt.size, resp.StatusCode, tt.want)
+		}
+	}
 }

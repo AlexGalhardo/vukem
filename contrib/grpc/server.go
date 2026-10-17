@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/AlexGalhardo/vukem"
@@ -43,7 +44,18 @@ type ServerOptions struct {
 	// also sets it from GRPC_INSECURE_CLEARTEXT=true. HTTP_H2C does not
 	// count: it only concerns the main HTTP server.
 	InsecureCleartext bool
+	// MaxHeaderBytes caps request headers (gRPC metadata included), 4096
+	// to 1048576 bytes. Zero keeps vukem.NewHTTPServer's default
+	// (vukem.DefaultMaxHeaderBytes); Serve fills it from
+	// HTTP_MAX_HEADER_BYTES when that is set.
+	MaxHeaderBytes int
 }
+
+// ErrInvalidMaxHeaderBytes is returned by Server and Serve for a
+// MaxHeaderBytes (or HTTP_MAX_HEADER_BYTES) outside 4096 to 1048576.
+var ErrInvalidMaxHeaderBytes = errors.New(
+	"grpc: MaxHeaderBytes (HTTP_MAX_HEADER_BYTES) must be between 4096 and 1048576",
+)
 
 // Server returns a runner serving h, usually a router holding only the RPC
 // services (Mount, Health, Reflection), on its own address, with the
@@ -57,10 +69,18 @@ func Server(cfg *vukem.Config, addr string, h http.Handler, opts ServerOptions) 
 		return nil, ErrCleartextInProduction
 	}
 
+	if opts.MaxHeaderBytes != 0 && (opts.MaxHeaderBytes < 4<<10 || opts.MaxHeaderBytes > http.DefaultMaxHeaderBytes) {
+		return nil, ErrInvalidMaxHeaderBytes
+	}
+
 	return vukem.RunnerFunc(func(ctx context.Context) error {
 		srv := vukem.NewHTTPServer(addr, h)
 		if opts.ShutdownTimeout > 0 {
 			srv.ShutdownTimeout = opts.ShutdownTimeout
+		}
+
+		if opts.MaxHeaderBytes > 0 {
+			srv.Server.MaxHeaderBytes = opts.MaxHeaderBytes
 		}
 
 		srv.Ready = opts.Ready
@@ -116,6 +136,17 @@ func Serve(app *vukem.App, addr string, h http.Handler, opts ServerOptions) erro
 	default:
 		// A typo must not silently mean "TLS required" or "cleartext allowed".
 		return ErrInvalidInsecureCleartext
+	}
+
+	// Read from the source, not app.Config, so this module still builds
+	// against cores without Config.MaxHeaderBytes.
+	if v := app.Source.Get("HTTP_MAX_HEADER_BYTES"); v != "" && opts.MaxHeaderBytes == 0 {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return ErrInvalidMaxHeaderBytes
+		}
+
+		opts.MaxHeaderBytes = n
 	}
 
 	run, err := Server(&app.Config, addr, h, opts)

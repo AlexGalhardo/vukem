@@ -77,6 +77,7 @@ Commit `.env.example` and git-ignore `.env` and `.env.*.local`. Never commit rea
 | `HOST` | `localhost` | Listen host; `0.0.0.0` for all IPv4 interfaces, `::` for IPv6 (dual-stack on most systems) |
 | `PORT` | `3000` | Listen port, 0–65535 |
 | `SHUTDOWN_TIMEOUT` | `15s` | Graceful shutdown budget |
+| `HTTP_MAX_HEADER_BYTES` | `65536` | Cap on the request line plus headers (64 KiB; 4096–1048576); larger requests get 431 |
 | `TRUSTED_PROXIES` | empty (trust nobody) | Comma-separated CIDRs or IPs whose `X-Forwarded-For` sets `c.IP()`; an invalid entry is a boot error ([Deploy](/docs/deployment/docker-and-railway#trusted-proxies)) |
 | `CLIENT_IP_HEADER` | empty | Read the client IP from this single-IP header (e.g. `X-Real-IP`) instead of `X-Forwarded-For`, only from `TRUSTED_PROXIES` peers |
 | `RATE_LIMIT_IPV6_PREFIX` | `64` | Prefix length `ratelimit.ByIP` groups IPv6 clients by (1–128); IPv4 stays per address |
@@ -154,5 +155,5 @@ signer, err := app.DeriveKey("signed.urls", 32) // config.ErrKeyMissing instead 
 | Missing `APP_KEY` with explicit `APP_ENV=development`/`test` | Boots; key-derived features fail closed on use |
 | `APP_DEBUG=true` with `APP_ENV=production` | Boot error |
 | `PORT` out of range | Boot error |
-| Invalid `TRUSTED_PROXIES` entry; `TRUST_FORWARDED_PROTO` or `CLIENT_IP_HEADER` without `TRUSTED_PROXIES`; an invalid or list `CLIENT_IP_HEADER`; `HSTS_FORCE` without an `https://` `APP_URL`; `RATE_LIMIT_IPV6_PREFIX` outside 1–128 | Boot error |
+| Invalid `TRUSTED_PROXIES` entry; `TRUST_FORWARDED_PROTO` or `CLIENT_IP_HEADER` without `TRUSTED_PROXIES`; an invalid or list `CLIENT_IP_HEADER`; `HSTS_FORCE` without an `https://` `APP_URL`; `RATE_LIMIT_IPV6_PREFIX` outside 1–128; `HTTP_MAX_HEADER_BYTES` outside 4096–1048576 | Boot error |
 | Debug error details | Only when `Services.Debug` is set; never in production |

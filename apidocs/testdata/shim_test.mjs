@@ -27,6 +27,26 @@ function load(nonce) {
     getAttribute(name) {
       return this.attributes.has(name) ? this.attributes.get(name) : null;
     }
+    removeAttribute(name) {
+      this.attributes.delete(name);
+    }
+    // A fake parser: every data-vukem-line-vars attribute in the markup
+    // becomes a child element carrying it.
+    set innerHTML(html) {
+      this.html = html;
+      this.children = [...String(html).matchAll(/data-vukem-line-vars="([^"]*)"/g)].map(([, css]) => {
+        const el = new Element("code");
+        el.attributes.set("data-vukem-line-vars", css);
+        return el;
+      });
+    }
+    get innerHTML() {
+      return this.html;
+    }
+    querySelectorAll(sel) {
+      assert.equal(sel, "[data-vukem-line-vars]");
+      return (this.children || []).filter((el) => el.attributes.has("data-vukem-line-vars"));
+    }
   }
 
   class Document {
@@ -53,10 +73,11 @@ function load(nonce) {
     },
     requestAnimationFrame: (fn) => fn(),
   };
+  ctx.globalThis = ctx;
   vm.createContext(ctx);
   vm.runInContext(source, ctx);
 
-  return { document, attrs, observers, all };
+  return { document, attrs, observers, all, globalThis: ctx };
 }
 
 test("created style elements get the nonce, other elements do not", () => {
@@ -108,4 +129,42 @@ test("other attributes are set normally", () => {
   const { document, attrs } = load("N");
   document.createElement("div").setAttribute("class", "x");
   assert.deepEqual(attrs, [["class", "x"]]);
+});
+
+test("zod is made jitless so it never probes eval", () => {
+  const ctx = load("N");
+  assert.equal(ctx.globalThis.__zod_globalConfig.jitless, true);
+  assert.equal(load("").globalThis.__zod_globalConfig, undefined);
+});
+
+test("innerHTML moves only exact line-number variables out of style attributes", () => {
+  const { document } = load("N");
+  const el = document.createElement("div");
+  el.innerHTML = '<code class="hljs" style="--line-count: 12; --line-digits: 2;">x</code>';
+  assert.equal(el.html, '<code class="hljs" data-vukem-line-vars="--line-count: 12; --line-digits: 2;">x</code>');
+  assert.equal(el.children.length, 1);
+  assert.deepEqual(el.children[0].style.props, { "--line-count": "12", "--line-digits": "2" });
+  assert.equal(el.children[0].getAttribute("data-vukem-line-vars"), null);
+
+  const hostile = [
+    '<p style="--line-count: 1; color: red;">x</p>',
+    '<p style="--line-count: 1; background:url(/x)">x</p>',
+    '<p style="--line-count: calc(1px)">x</p>',
+    '<p style="display:none">--line-count</p>',
+  ];
+  for (const html of hostile) {
+    el.innerHTML = html;
+    assert.equal(el.html, html, html);
+  }
+
+  el.innerHTML = null;
+  assert.equal(el.html, null);
+});
+
+test("innerHTML is left alone without a nonce", () => {
+  const { document } = load("");
+  const el = document.createElement("div");
+  const html = '<code style="--line-count: 1;">x</code>';
+  el.innerHTML = html;
+  assert.equal(el.html, html);
 });

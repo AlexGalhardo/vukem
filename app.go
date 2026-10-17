@@ -1,6 +1,7 @@
 package vukem
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -76,9 +77,13 @@ type Config struct {
 	// H2C serves HTTP/2 without TLS (prior knowledge, for gRPC clients) in
 	// production too, behind a proxy that speaks h2c. It is always on
 	// outside production.
-	H2C       bool   `env:"HTTP_H2C"`
-	LogLevel  string `env:"LOG_LEVEL"  default:"info"`
-	LogFormat string `env:"LOG_FORMAT"`
+	H2C bool `env:"HTTP_H2C"`
+	// MaxHeaderBytes caps the request line plus headers the HTTP server
+	// reads (4096 to 1048576 bytes, Go's own default; outside is a boot
+	// error). Larger requests get 431.
+	MaxHeaderBytes int    `env:"HTTP_MAX_HEADER_BYTES" default:"65536"`
+	LogLevel       string `env:"LOG_LEVEL"             default:"info"`
+	LogFormat      string `env:"LOG_FORMAT"`
 	// LogDedupWindow collapses repeated identical ERROR records of the
 	// default logger into one summary per window (a Go duration; "0"
 	// disables it). Empty means 1m in production and off elsewhere.
@@ -331,8 +336,14 @@ func WithViews(fsys fs.FS) Option {
 }
 
 // WithInertia enables the Inertia adapter (app.Inertia); add
-// app.Inertia.Middleware to the routes that render pages. Version and the
-// SSR dev endpoint default to app.Vite when WithVite is given.
+// app.Inertia.Middleware to the routes that render pages. Errors on Inertia
+// requests render inertia.Config.ErrorComponent (default "Error", see
+// inertia.Inertia.ErrorPage): New installs it as
+// app.Router.Services().ErrorPage when no hook is set yet, before the
+// routes run, so routes may replace it or set it to nil to keep the HTML
+// error page. Outside production a web app warns once at boot when the
+// project has resources/js/pages but no page for that component. Version
+// and the SSR dev endpoint default to app.Vite when WithVite is given.
 func WithInertia(cfg inertia.Config) Option {
 	return func(o *options) error { o.inertia = &cfg; return nil }
 }
@@ -491,6 +502,11 @@ func New(opts ...Option) (*App, error) {
 
 	if cfg.ClientIPHeader, err = clientIPHeader(cfg.ClientIPHeader, len(proxies) > 0); err != nil {
 		return nil, err
+	}
+
+	if cfg.MaxHeaderBytes < minMaxHeaderBytes || cfg.MaxHeaderBytes > http.DefaultMaxHeaderBytes {
+		return nil, fmt.Errorf("vukem: HTTP_MAX_HEADER_BYTES %d must be between %d and %d",
+			cfg.MaxHeaderBytes, minMaxHeaderBytes, http.DefaultMaxHeaderBytes)
 	}
 
 	if cfg.RateLimitIPv6Prefix < 1 || cfg.RateLimitIPv6Prefix > 128 {
@@ -705,6 +721,19 @@ func New(opts ...Option) (*App, error) {
 
 		if app.Inertia, err = inertia.New(icfg); err != nil {
 			return nil, err
+		}
+
+		// Set only when nil, so a hook installed earlier is kept; routes run
+		// later and may replace it.
+		if app.Router.Services().ErrorPage == nil {
+			app.Router.Services().ErrorPage = app.Inertia.ErrorPage
+		}
+
+		if comp := cmp.Or(icfg.ErrorComponent, "Error"); !cfg.IsProduction() && app.Kind == KindWeb && o.fsys != nil &&
+			inertiaPageMissing(o.fsys, comp) {
+			app.Log.Warn("inertia error page not found: errors on Inertia visits will not render",
+				"component", comp, "want", inertiaPagesDir+"/"+comp+".{tsx,vue,svelte}",
+				"fix", "add the page, set inertia.Config.ErrorComponent, or set app.Router.Services().ErrorPage = nil")
 		}
 	}
 
@@ -1309,6 +1338,25 @@ type namedRunner struct {
 	runner Runner
 }
 
+// inertiaPagesDir is where the starters keep Inertia pages.
+const inertiaPagesDir = "resources/js/pages"
+
+// inertiaPageMissing reports whether fsys uses the starters' pages
+// directory but has no page for component. Other layouts are not checked.
+func inertiaPageMissing(fsys fs.FS, component string) bool {
+	if _, err := fs.Stat(fsys, inertiaPagesDir); err != nil {
+		return false
+	}
+
+	for _, ext := range []string{".tsx", ".jsx", ".vue", ".svelte", ".ts", ".js"} {
+		if _, err := fs.Stat(fsys, inertiaPagesDir+"/"+component+ext); err == nil {
+			return false
+		}
+	}
+
+	return true
+}
+
 // Server timeouts applied by NewHTTPServer. Zero timeouts are never used
 // (Slowloris protection, docs/security.md A02).
 const (
@@ -1316,8 +1364,18 @@ const (
 	DefaultReadTimeout       = 30 * time.Second
 	DefaultWriteTimeout      = 60 * time.Second
 	DefaultIdleTimeout       = 120 * time.Second
-	DefaultMaxHeaderBytes    = 1 << 20
+	// DefaultMaxHeaderBytes is 64 KiB, not Go's 1 MiB
+	// (http.DefaultMaxHeaderBytes, which is only the ceiling
+	// HTTP_MAX_HEADER_BYTES accepts): it bounds the
+	// memory each connection can make the server buffer, and is still far
+	// above what browsers send and common proxies forward (nginx 8 KiB per
+	// line, Node.js 16 KiB in total). HTTP_MAX_HEADER_BYTES overrides it.
+	DefaultMaxHeaderBytes = 64 << 10
 )
+
+// minMaxHeaderBytes is the smallest HTTP_MAX_HEADER_BYTES accepted: below
+// it ordinary browser requests with a few cookies fail.
+const minMaxHeaderBytes = 4 << 10
 
 // HTTPServer runs an *http.Server as a Runner with graceful shutdown.
 type HTTPServer struct {

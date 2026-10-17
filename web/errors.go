@@ -71,6 +71,8 @@ func WithValidationHook(ctx context.Context, hook ValidationHook) context.Contex
 //   - classic form posts with a validation error go to the validation hook
 //     (flash errors and redirect back) when one is installed;
 //   - htmx requests get an HTML fragment with the status (htmx 4 swaps 4xx);
+//   - Services.ErrorPage, when set, renders the page in its own format
+//     (an Inertia page for Inertia requests);
 //   - browsers get an HTML status page (views "errors/<status>" if present).
 //
 // 5xx details are never sent to clients unless Services.Debug is set
@@ -140,9 +142,25 @@ func DefaultErrorHandler(c *Ctx, err error) {
 		c.validationHook(verr):
 	case c.s.Debug && status >= 500 && !c.IsHTMX():
 		c.renderDebugPage(status, err)
+	case c.s.ErrorPage != nil && !c.IsHTMX() && c.s.ErrorPage(c, safeErrorPage(status, title, detail, verr)):
 	default:
 		c.renderErrorPage(status, title, detail, verr)
 	}
+}
+
+// safeErrorPage is what Services.ErrorPage receives: for 5xx only the status
+// text, even when the error wraps field errors or carries a message.
+func safeErrorPage(status int, title, detail string, verr *errs.ValidationError) ErrorPage {
+	if status >= http.StatusInternalServerError {
+		return ErrorPage{Status: status, Title: http.StatusText(status)}
+	}
+
+	e := ErrorPage{Status: status, Title: title, Detail: detail}
+	if verr != nil {
+		e.Errors = verr.Fields
+	}
+
+	return e
 }
 
 func (c *Ctx) validationHook(verr *errs.ValidationError) bool {
@@ -165,8 +183,9 @@ func logError(c *Ctx, status int, err error, level slog.Level) {
 
 var errorPage = template.Must(template.New("error").Parse(`<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>{{.Status}} {{.Title}}</title>
-<meta name="viewport" content="width=device-width, initial-scale=1"></head>
-<body style="font-family:system-ui,sans-serif;max-width:40rem;margin:4rem auto;padding:0 1rem">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style{{with .Nonce}} nonce="{{.}}"{{end}}>body{font-family:system-ui,sans-serif;max-width:40rem;margin:4rem auto;padding:0 1rem}</style></head>
+<body>
 <h1>{{.Status}} {{.Title}}</h1>{{with .Detail}}<p>{{.}}</p>{{end}}
 {{with .Errors}}<ul>{{range $field, $msgs := .}}{{range $msgs}}<li><strong>{{$field}}</strong>: {{.}}</li>{{end}}{{end}}</ul>{{end}}
 </body></html>
@@ -183,10 +202,13 @@ type errorData struct {
 	Detail string
 	Errors map[string][]string
 	Error  error
+	// Nonce is the request's CSP nonce: the built-in page's <style> carries
+	// it, so the page renders under the default nonce-only CSP.
+	Nonce string
 }
 
 func (c *Ctx) renderErrorPage(status int, title, detail string, verr *errs.ValidationError) {
-	data := errorData{Status: status, Title: title, Detail: detail}
+	data := errorData{Status: status, Title: title, Detail: detail, Nonce: CSPNonce(c.Context())}
 	if verr != nil {
 		data.Errors = verr.Fields
 	}

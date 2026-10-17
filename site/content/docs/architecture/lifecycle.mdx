@@ -214,7 +214,7 @@ type Runner interface {
 | `ReadTimeout` | 30s |
 | `WriteTimeout` | 60s |
 | `IdleTimeout` | 120s |
-| `MaxHeaderBytes` | 1 MiB |
+| `MaxHeaderBytes` | 64 KiB (`HTTP_MAX_HEADER_BYTES`) |
 | `ShutdownTimeout` | 15s drain of in-flight requests |
 
 In-flight handlers keep the app's context values but are not cancelled when shutdown starts, so they can finish. Set `Listener` to serve on an existing listener and `Ready` to receive the bound address (useful in tests with port `0`).

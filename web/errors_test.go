@@ -474,3 +474,82 @@ func TestErrorHandlerValidationHookSkipsGET(t *testing.T) {
 		}
 	}
 }
+
+func TestErrorHandlerErrorPage(t *testing.T) {
+	t.Parallel()
+
+	secret := errors.New(`pq: password authentication failed for user "app"`)
+	verr := errs.NewValidation().Add("title", "required")
+	get := func(r *http.Request) { r.Method = http.MethodGet }
+
+	tests := []struct {
+		name  string
+		err   error
+		setup func(r *http.Request)
+		debug bool
+		want  []ErrorPage
+	}{
+		{"4xx message", errs.New(404, "Record not found"), nil, false, []ErrorPage{
+			{Status: 404, Title: "Not Found", Detail: "Record not found"},
+		}},
+		{"status text", errs.ErrForbidden, nil, false, []ErrorPage{{Status: 403, Title: "Forbidden"}}},
+		{"5xx hides the cause", secret, nil, false, []ErrorPage{{Status: 500, Title: "Internal Server Error"}}},
+		{"5xx hides its message", errs.New(503, "db "+secret.Error()), nil, false, []ErrorPage{
+			{Status: 503, Title: "Service Unavailable"},
+		}},
+		{
+			"4xx hides a wrapped cause",
+			errs.Wrap(404, secret),
+			nil,
+			false,
+			[]ErrorPage{{Status: 404, Title: "Not Found"}},
+		},
+		{"field errors on a GET", verr, get, false, []ErrorPage{{
+			Status: 422, Title: "Validation failed", Detail: "1 field(s) are invalid.",
+			Errors: map[string][]string{"title": {"required"}},
+		}}},
+		{"5xx wrapping field errors hides them", errs.Wrap(500, verr), nil, false, []ErrorPage{
+			{Status: 500, Title: "Internal Server Error"},
+		}},
+		{"JSON clients get problem+json", errs.ErrNotFound, func(r *http.Request) {
+			r.Header.Set("Accept", "application/json")
+		}, false, nil},
+		{
+			"htmx gets the fragment",
+			errs.ErrNotFound,
+			func(r *http.Request) { r.Header.Set("HX-Request", "true") },
+			false,
+			nil,
+		},
+		{"debug 5xx shows the report", secret, nil, true, nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var calls []ErrorPage
+
+			s := &Services{Debug: tt.debug, DebugOut: io.Discard, ErrorPage: func(c *Ctx, e ErrorPage) bool {
+				calls = append(calls, e)
+				return c.String(e.Status, "custom") == nil
+			}}
+
+			rec, _ := runError(t, tt.err, tt.setup, s)
+
+			if diff := cmp.Diff(tt.want, calls); diff != "" {
+				t.Errorf("ErrorPage calls (-want +got):\n%s", diff)
+			}
+
+			if got := rec.Body.String() == "custom"; got != (tt.want != nil) {
+				t.Errorf("body = %q, want the hook's page: %v", rec.Body, tt.want != nil)
+			}
+		})
+	}
+
+	// A hook that writes nothing falls back to the HTML page.
+	s := &Services{ErrorPage: func(*Ctx, ErrorPage) bool { return false }}
+	if rec, _ := runError(t, errs.ErrNotFound, nil, s); !strings.Contains(rec.Body.String(), "<h1>404 Not Found</h1>") {
+		t.Errorf("fallback body = %q, want the HTML page", rec.Body)
+	}
+}

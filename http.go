@@ -645,14 +645,23 @@ func (a *App) Handler() (http.Handler, error) {
 	return a.Router.Handler()
 }
 
+// httpServer is the server httpRunner runs for h, with the app's limits.
+func (a *App) httpServer(h http.Handler) *HTTPServer {
+	srv := NewHTTPServer(a.Addr(), h)
+	srv.ShutdownTimeout = a.Config.ShutdownTimeout
+	srv.Server.MaxHeaderBytes = a.Config.MaxHeaderBytes
+	srv.Ready = a.ready
+
+	return srv
+}
+
 func (a *App) httpRunner() (Runner, error) {
 	h, err := a.Handler()
 	if err != nil {
 		return nil, err
 	}
 
-	srv := NewHTTPServer(a.Addr(), h)
-	srv.ShutdownTimeout = a.Config.ShutdownTimeout
+	srv := a.httpServer(h)
 
 	if !a.Config.IsProduction() || a.Config.H2C {
 		var p http.Protocols
@@ -660,7 +669,6 @@ func (a *App) httpRunner() (Runner, error) {
 		p.SetUnencryptedHTTP2(true)
 		srv.Server.Protocols = &p
 	}
-	srv.Ready = a.ready
 
 	return RunnerFunc(func(ctx context.Context) error {
 		a.Log.InfoContext(ctx, "http server starting", "addr", a.Addr(), "env", string(a.Config.Env))

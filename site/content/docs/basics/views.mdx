@@ -106,7 +106,7 @@ engine, err := view.New(view.Config{
 
 ## Error pages
 
-The error handler renders `errors/<status>` (for example `resources/views/errors/404.html`) when that view exists, and a minimal built-in page otherwise.
+The error handler renders `errors/<status>` (for example `resources/views/errors/404.html`) when that view exists, and a minimal built-in page otherwise. The view receives `.Status`, `.Title`, `.Detail`, `.Errors` and `.Nonce` (the request's CSP nonce, for an inline `<style nonce="{{.Nonce}}">`); the built-in pages use no inline style attributes and nonce their `<style>`, so they render under the default CSP.
 
 ## templ
 

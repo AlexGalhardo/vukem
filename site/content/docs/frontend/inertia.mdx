@@ -41,6 +41,16 @@ r.Use(app.Inertia.Middleware, shareProps(app))   // routes/web.go: Vary, version
 return inertia.RenderStatus(c, http.StatusGone, "Errors/Gone", inertia.Props{"reason": "expired"})
 ```
 
+### Error pages
+
+Errors returned by handlers on Inertia visits (a 404 "Record not found", a 403, a 500) render the `Error` page component with the props `status`, `title` and `message`, so the client shows a page instead of the raw HTML response in its modal. The starter ships `resources/js/pages/Error.tsx` (`.vue`, `.svelte`). `vukem.WithInertia` installs it (`web.Services.ErrorPage = app.Inertia.ErrorPage`, only when no hook is set yet and before your routes run), so it also covers URLs that match no route.
+
+- `message` is the error's own message for 4xx (`errs.New(404, "Record not found")`) and only the status text for 5xx: causes, SQL and paths never reach the client (CWE-209).
+- A validation error on a `GET` (which is not redirected back) also fills the `errors` prop, first message per field.
+- Full page loads keep the HTML status page, JSON clients get problem+json, and form posts with validation errors still redirect back with the errors.
+- In development a 5xx still shows the debug report (in the Inertia modal).
+- An app without the page breaks on every error of an Inertia visit (the client cannot resolve the component). Add `resources/js/pages/Error.*`, point `inertia.Config{ErrorComponent: "Errors/Show"}` at an existing page, or set `app.Router.Services().ErrorPage = nil` in your routes to keep the HTML page. In development the app logs a warning at boot when `resources/js/pages` has no page for the component.
+
 The root view `resources/views/app.html` holds the CSP nonce meta, `{{vite}}`, `{{.Head}}` in `<head>` and `{{.Inertia}}` in `<body>`. The initial page is a `<script data-page="app" type="application/json">` with `/` escaped.
 
 ## Props
