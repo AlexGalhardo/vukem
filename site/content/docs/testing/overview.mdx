@@ -100,7 +100,7 @@ go get github.com/AlexGalhardo/vukem/drivers/postgres
 docker run -d --name pg-test -p 5432:5432 -e POSTGRES_PASSWORD=secret postgres:17
 ```
 
-**2. Tell the tests where it is.** `pgtest` reads an admin URL from `TEST_DATABASE_URL` (or `POSTGRES_URL`). Its role needs the `CREATEDB` privilege; the database in the path is only used to connect.
+**2. Tell the tests where it is.** `pgtest` reads an admin URL from `TEST_DATABASE_URL` (or `POSTGRES_URL`). It must be a `postgres://` or `postgresql://` URL (keyword/value DSNs like `host=... dbname=...` are rejected), the server PostgreSQL 13 or later, and its role needs the `CREATEDB` privilege; the database in the path is only used to connect.
 
 ```bash
 # macOS / Linux
