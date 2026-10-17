@@ -87,6 +87,27 @@ func TestBundle_AddBuiltin(t *testing.T) {
 			locales: []string{"en", "pt"},
 		},
 		{
+			name:    "default locale without a catalog gets none",
+			catalog: map[string]map[string]any{"pt-BR": {}},
+			locale:  "en",
+			want:    "auth.failed",
+			locales: []string{"pt-BR"},
+		},
+		{
+			name:    "pt and pt-BR both filled",
+			catalog: map[string]map[string]any{"en": {}, "pt": {}, "pt-BR": {}},
+			locale:  "pt",
+			want:    "Essas credenciais não correspondem aos nossos registros.",
+			locales: []string{"en", "pt", "pt-BR"},
+		},
+		{
+			name:    "other regions keep English",
+			catalog: map[string]map[string]any{"en": {}, "pt-PT": {}},
+			locale:  "pt-PT",
+			want:    "These credentials do not match our records.",
+			locales: []string{"en", "pt-PT"},
+		},
+		{
 			name:    "no locale added",
 			def:     "de",
 			catalog: map[string]map[string]any{"de": {"auth.failed": "Falsche Daten."}},

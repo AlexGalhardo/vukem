@@ -49,37 +49,39 @@ func builtinCatalogs() (map[string]map[string]message, error) {
 }
 
 // AddBuiltin adds the framework's own messages, in English and Brazilian
-// Portuguese, to the locales b serves: "auth.failed",
+// Portuguese, to the catalogs b already has: "auth.failed",
 // "auth.unauthenticated", "auth.unverified", "auth.token_ability",
-// "social.*", "validation.unique" and "validation.exists". Each built-in
-// locale goes to the locale Match picks for it (pt-BR messages fill a
-// "pt" catalog), so no locale is added that b would not serve already.
-// Keys b already defines for that locale or its shorter forms are kept:
-// the app's catalog always wins. vukem.WithTranslations calls it.
+// "social.*", "validation.unique" and "validation.exists". A built-in
+// locale fills the catalog of the same locale and of its shorter forms
+// (pt-BR messages fill "pt-BR" and "pt", not "pt-PT"); no catalog is
+// created, so Locales and Match do not change. Keys b already defines for
+// that locale or its shorter forms are kept: the app's catalog always
+// wins. vukem.WithTranslations calls it.
 func (b *Bundle) AddBuiltin() error {
 	cats, err := builtinCatalogs()
 	if err != nil {
 		return err
 	}
 
-	for locale, msgs := range cats {
-		target, ok := b.Match(locale)
-		if !ok {
-			continue
-		}
+	b.mu.Lock()
+	defer b.mu.Unlock()
 
-		b.addMissing(target, msgs)
+	for locale, msgs := range cats {
+		// pt-BR fills pt-BR and pt, never pt-PT: other regions keep the
+		// English fallback rather than another region's wording.
+		for _, target := range truncations(locale) {
+			if _, ok := b.catalogs[target]; ok {
+				b.addMissing(target, msgs)
+			}
+		}
 	}
 
 	return nil
 }
 
-// addMissing adds msgs to the catalog of locale, skipping keys found in
-// locale or its shorter forms.
+// addMissing adds msgs to the existing catalog of locale, skipping keys
+// found in locale or its shorter forms. The caller holds b.mu.
 func (b *Bundle) addMissing(locale string, msgs map[string]message) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
 	chain := truncations(locale)
 
 	for key, m := range msgs {
@@ -94,10 +96,6 @@ func (b *Bundle) addMissing(locale string, msgs map[string]message) {
 
 		if defined {
 			continue
-		}
-
-		if b.catalogs[locale] == nil {
-			b.catalogs[locale] = map[string]message{}
 		}
 
 		b.catalogs[locale][key] = m
