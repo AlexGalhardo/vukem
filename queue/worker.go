@@ -24,10 +24,14 @@ type WorkOptions struct {
 	// worker keeps polling).
 	StopWhenEmpty bool
 	// StopTimeout bounds the drain once ctx is cancelled: jobs still
-	// running after it have their context cancelled and go back to the
-	// queue without using an attempt. 0 waits for them (each is still
-	// bounded by its own timeout). Jobs must honor ctx; one that ignores
-	// it still holds Work.
+	// running after it have their context cancelled. A job that then fails
+	// with that cancellation (context.Canceled or DeadlineExceeded) goes
+	// back to the queue without using an attempt, MaxFreeInterruptions
+	// times in a row; later interruptions use attempts, and other errors
+	// are retried or failed as usual. Jobs run again from the start, so
+	// they must be idempotent. 0 waits for them (each is still bounded by
+	// its own timeout). Jobs must honor ctx; one that ignores it still
+	// holds Work.
 	StopTimeout time.Duration
 }
 
@@ -113,11 +117,14 @@ func (q *Queue) Work(ctx context.Context, o WorkOptions) error {
 
 				if !take() {
 					// Over the limit: give the job back untouched.
-					_ = q.driver.Release(settleCtx, m)
+					rctx, cancel := context.WithTimeout(settleCtx, settleTimeout)
+					_ = q.driver.Release(rctx, m)
+
+					cancel()
 					return
 				}
 
-				if err := q.process(jobCtx, settleCtx, m, interrupted); err != nil {
+				if err := q.process(jobCtx, settleCtx, m, interrupted, settleTimeout); err != nil {
 					mu.Lock()
 					if firstErr == nil {
 						firstErr = err
@@ -173,6 +180,10 @@ func (q *Queue) drain(ctx context.Context, wg *sync.WaitGroup, stopTimeout time.
 	cancel()
 	<-done
 }
+
+// settleTimeout bounds each Ack, Release or Fail of a worker, so a store
+// that hangs cannot hold the worker (and the shutdown) forever.
+const settleTimeout = 10 * time.Second
 
 func sleep(ctx context.Context, d time.Duration) {
 	t := time.NewTimer(d)

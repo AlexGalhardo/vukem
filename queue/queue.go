@@ -28,6 +28,8 @@ import (
 	"log/slog"
 	"math"
 	"runtime/debug"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -423,17 +425,57 @@ func (q *Queue) message(kind string, j any, opts []Option) (*Message, handler, e
 // Process runs one reserved message and acks, releases (retry with
 // backoff) or fails it.
 func (q *Queue) Process(ctx context.Context, m *Message) error {
-	return q.process(ctx, ctx, m, nil)
+	return q.process(ctx, ctx, m, nil, 0)
 }
 
-// process runs m with runCtx and settles it with settleCtx. When
-// interrupted reports true after a failed run, the worker cancelled runCtx
-// at shutdown: the job goes back to the queue without using an attempt.
-func (q *Queue) process(runCtx, ctx context.Context, m *Message, interrupted func() bool) error {
+// MaxFreeInterruptions is how many shutdowns in a row may interrupt a job
+// without using one of its attempts (see WorkOptions.StopTimeout).
+const MaxFreeInterruptions = 3
+
+// interruptedPrefix marks LastError after a free interruption; the count
+// lives there so every driver keeps it without a schema change.
+const interruptedPrefix = "queue: interrupted by shutdown ("
+
+// interruptions returns the free interruptions recorded in lastError.
+func interruptions(lastError string) int {
+	rest, ok := strings.CutPrefix(lastError, interruptedPrefix)
+	if !ok {
+		return 0
+	}
+
+	n, _, _ := strings.Cut(rest, "/")
+	v, err := strconv.Atoi(n)
+	if err != nil {
+		return 0
+	}
+
+	return v
+}
+
+// process runs m with runCtx and settles it with ctx, each driver call
+// bounded by settleTimeout (0 = no bound). interrupted reports whether the
+// worker cancelled runCtx at shutdown: a failure caused by that cancel
+// sends the job back without using an attempt, MaxFreeInterruptions times
+// in a row.
+func (q *Queue) process(runCtx, ctx context.Context, m *Message, interrupted func() bool,
+	settleTimeout time.Duration,
+) error {
+	settle := func(fn func(context.Context, *Message) error) error {
+		if settleTimeout <= 0 {
+			return fn(ctx, m)
+		}
+
+		sctx, cancel := context.WithTimeout(ctx, settleTimeout)
+		defer cancel()
+
+		return fn(sctx, m)
+	}
+
 	q.mu.RLock()
 	h, ok := q.handlers[m.Kind]
 	q.mu.RUnlock()
 
+	free := interruptions(m.LastError)
 	m.Attempts++
 
 	var err error
@@ -450,23 +492,25 @@ func (q *Queue) process(runCtx, ctx context.Context, m *Message, interrupted fun
 	q.observe(ctx, m, finished(err), time.Since(start), err)
 
 	if err == nil {
-		return q.driver.Ack(ctx, m)
+		return settle(q.driver.Ack)
 	}
 
 	m.LastError = err.Error()
 	log := q.log.With("job", m.Kind, "id", m.ID, "attempt", m.Attempts, "err", err)
 
-	if interrupted != nil && interrupted() {
+	cancelled := errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+	if cancelled && interrupted != nil && interrupted() && free < MaxFreeInterruptions {
 		m.Attempts--
 		m.AvailableAt = q.clock().UTC()
-		log.WarnContext(ctx, "job interrupted by shutdown: released")
+		m.LastError = fmt.Sprintf("%s%d/%d): %v", interruptedPrefix, free+1, MaxFreeInterruptions, err)
+		log.WarnContext(ctx, "job interrupted by shutdown: released", "interruptions", free+1)
 
-		return q.driver.Release(ctx, m)
+		return settle(q.driver.Release)
 	}
 
 	if m.Attempts > m.MaxRetries {
 		log.ErrorContext(ctx, "job failed")
-		return q.driver.Fail(ctx, m)
+		return settle(q.driver.Fail)
 	}
 
 	backoff := defaults().backoff
@@ -477,7 +521,7 @@ func (q *Queue) process(runCtx, ctx context.Context, m *Message, interrupted fun
 	m.AvailableAt = q.clock().UTC().Add(backoff(m.Attempts))
 	log.WarnContext(ctx, "job will be retried", "at", m.AvailableAt)
 
-	return q.driver.Release(ctx, m)
+	return settle(q.driver.Release)
 }
 
 // attempt runs the handler with the message timeout, recovering panics.
