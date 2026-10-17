@@ -1,6 +1,7 @@
 package account
 
 import (
+	"encoding/base64"
 	"errors"
 
 	"github.com/AlexGalhardo/vukem/auth"
@@ -40,9 +41,9 @@ func (h *TwoFactorHandlers) Show(c *web.Ctx) error {
 			return err
 		}
 
-		// The page inserts qr as raw HTML: safe because totp.QR writes this
-		// SVG itself (numbers and path commands, no input text).
-		props["secret"], props["qr"] = tf.TwoFactorSecret.V, svg
+		// A data: URL rendered with <img>: the page never inserts raw HTML.
+		props["secret"] = tf.TwoFactorSecret.V
+		props["qr"] = "data:image/svg+xml;base64," + base64.StdEncoding.EncodeToString([]byte(svg))
 	}
 
 	return inertia.Render(c, "Auth/TwoFactor", props)

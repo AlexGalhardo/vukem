@@ -84,7 +84,7 @@ func enableTwoFactor(t *testing.T, app *vukemtest.App, c *vukemtest.Client, emai
 	qr, _ := page.Prop("qr")
 
 	s, _ := secret.(string)
-	if svg, _ := qr.(string); s == "" || !strings.HasPrefix(svg, "<svg") {
+	if src, _ := qr.(string); s == "" || !strings.HasPrefix(src, "data:image/svg+xml;base64,") {
 		t.Fatalf("secret = %v, qr = %.40v", secret, qr)
 	}
 

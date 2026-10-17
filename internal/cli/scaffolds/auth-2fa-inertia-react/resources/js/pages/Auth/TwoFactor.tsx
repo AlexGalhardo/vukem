@@ -73,8 +73,7 @@ export default function TwoFactor({ enabled, pending, secret, qr, recoveryCodes,
       ) : pending && qr ? (
         <div className="space-y-4">
           <p>Scan this QR code with your authenticator app, or enter the setup key by hand, then type the code it shows.</p>
-          {/* Raw HTML is safe here: totp.QR on the server writes this SVG itself (numbers and path commands, no user input). */}
-          <div className="w-fit" dangerouslySetInnerHTML={{ __html: qr }} />
+          <img className="w-fit" src={qr} width={200} height={200} alt="Two-factor setup QR code" />
           <p>
             Setup key: <code className="font-mono">{secret}</code>
           </p>

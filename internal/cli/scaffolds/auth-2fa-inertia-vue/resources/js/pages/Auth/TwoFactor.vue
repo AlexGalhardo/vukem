@@ -59,8 +59,7 @@ function submitDisable(): void {
   </div>
   <div v-else-if="pending && qr" class="space-y-4">
     <p>Scan this QR code with your authenticator app, or enter the setup key by hand, then type the code it shows.</p>
-    <!-- v-html is safe here: totp.QR on the server writes this SVG itself (numbers and path commands, no user input). -->
-    <div class="w-fit" v-html="qr" />
+    <img class="w-fit" :src="qr" width="200" height="200" alt="Two-factor setup QR code" />
     <p>
       Setup key: <code class="font-mono">{{ secret }}</code>
     </p>
