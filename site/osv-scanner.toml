@@ -1,0 +1,10 @@
+# The documentation site's build-time dependencies. Nothing here ships in the
+# framework or in generated apps. Remove an entry once a fixed version exists.
+
+[[IgnoredVulns]]
+id = "GHSA-vfj7-8cjw-p6xm"
+reason = "braces has no fixed release; it is a transitive build-time dependency of the docs site and only processes our own glob patterns, never user input."
+
+[[IgnoredVulns]]
+id = "GHSA-hp3w-g68c-fv3c"
+reason = "sprintf-js has no fixed release; it is a transitive build-time dependency of the docs site and never formats untrusted input."

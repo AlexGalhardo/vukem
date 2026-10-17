@@ -1,8 +1,6 @@
 module github.com/AlexGalhardo/vukem/contrib/grpc
 
-go 1.27.0
-
-toolchain go1.27.2
+go 1.27.2
 
 require (
 	connectrpc.com/connect v1.21.1

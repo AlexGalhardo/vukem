@@ -42,8 +42,7 @@ jobs:
       - name: Type-check the generated TypeScript and Zod
         working-directory: openapi/testdata
         run: |
-          npm init -y > /dev/null
-          npm i --no-save typescript@5.9.3 zod@3.25.76
+          npm ci --ignore-scripts
           npx tsc --noEmit --strict --target es2020 --module commonjs --moduleResolution node shop.types.ts shop.zod.ts
           npx tsc --noEmit --strict --target es2022 --lib es2022,dom shop.client.ts
 
