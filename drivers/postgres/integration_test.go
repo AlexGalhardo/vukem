@@ -5,6 +5,8 @@ package postgres
 import (
 	"context"
 	"os"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -12,6 +14,7 @@ import (
 	"github.com/AlexGalhardo/vukem/cache/cachetest"
 	"github.com/AlexGalhardo/vukem/database"
 	"github.com/AlexGalhardo/vukem/database/dbtest"
+	"github.com/AlexGalhardo/vukem/ratelimit"
 	"github.com/AlexGalhardo/vukem/session"
 )
 
@@ -104,6 +107,60 @@ func TestCacheStore(t *testing.T) {
 	}
 
 	cachetest.Run(t, store)
+}
+
+// Two connection pools stand for two app servers sharing one Postgres:
+// concurrent requests must never exceed the limit between them.
+func TestRateLimitWindowSharedAcrossServers(t *testing.T) {
+	ctx := t.Context()
+
+	stores := make([]*cache.Database, 2)
+
+	for i := range stores {
+		store, err := cache.NewDatabase(open(t), "dbt_ratelimit")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		stores[i] = store
+	}
+
+	db := open(t)
+	_, _ = db.ExecContext(ctx, "DROP TABLE IF EXISTS dbt_ratelimit")
+	t.Cleanup(func() { _, _ = db.ExecContext(context.Background(), "DROP TABLE IF EXISTS dbt_ratelimit") })
+
+	if err := stores[0].CreateTable(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	const limit, requests = 10, 40
+
+	var (
+		wg      sync.WaitGroup
+		allowed atomic.Int32
+		failed  atomic.Int32
+	)
+
+	for i := range requests {
+		l := ratelimit.NewWindow(stores[i%2], "login", limit, time.Hour)
+
+		wg.Go(func() {
+			res, err := l.Allow(ctx, "ip:192.0.2.1")
+			switch {
+			case err != nil:
+				failed.Add(1)
+			case res.Allowed:
+				allowed.Add(1)
+			}
+		})
+	}
+
+	wg.Wait()
+
+	if allowed.Load() != limit || failed.Load() != 0 {
+		t.Fatalf("%d concurrent requests on 2 servers, limit %d: %d allowed, %d errors",
+			requests, limit, allowed.Load(), failed.Load())
+	}
 }
 
 func TestCacheStoreUpgradesTextValueColumn(t *testing.T) {
