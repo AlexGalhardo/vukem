@@ -60,8 +60,11 @@ The starter vendors **htmx 4.0.0** at `resources/public/js/htmx.min.js`, served 
 
 ```html
 {{htmxScript (asset "js/htmx.min.js")}}
+{{vite "resources/css/app.css" "resources/js/app.ts"}}
 <!-- <script src="/js/htmx.min.js" defer nonce="…"></script> -->
 ```
+
+Keep `htmxScript` before `vite`: the htmx tag is `defer` and the Vite entry is a module script, and both run in document order, so this order makes `window.htmx` defined when `resources/js/app.ts` runs. The starter checks it in `tests/home_test.go` (`TestLayoutLoadsHTMXBeforeVite`).
 
 Starter views use no inline scripts, `hx-on`, event-handler or `style` attributes, so they run under the default CSP (`TestSecurity_A02_StarterViewsRespectCSP`). CSRF needs nothing extra for htmx: `CrossOriginProtection` checks `Sec-Fetch-Site`, and plain forms include `{{csrfField}}`.
 
@@ -209,7 +212,7 @@ Every starter ships Vite 8 + Tailwind CSS v4 (`@tailwindcss/vite`) preconfigured
 - `{{ vite "resources/css/app.css" "resources/js/app.ts" }}`:
   - `public/hot` present and `Dev` on → `<script type="module" src="{hot}/@vite/client">` + each entry (CSS entries as `<link rel="stylesheet">`); `{{ viteReactRefresh }}` emits the React Refresh preamble (empty otherwise). The hot file must hold an `http(s)` URL; it is ignored in production.
   - otherwise → reads `public/build/.vite/manifest.json` (cached in production, re-read in development) and emits `<link rel="modulepreload">` for recursive static imports, `<link rel="stylesheet">` for entry and import CSS, then `<script type="module">`, each file once across entries.
-- `{{ asset "resources/img/logo.png" }}` resolves through the dev server or the manifest when Vite knows the file, else falls back to the public path.
+- `{{ asset "resources/img/logo.png" }}` resolves through the dev server or the manifest when Vite knows the file, else falls back to the public path. Files that exist in the public directory (a vendored `js/htmx.min.js`) always use the public path, also while the dev server runs, because the app serves them and the dev server does not.
 - Every tag carries the request's CSP nonce; manifest `integrity` values (e.g. from `vite-plugin-manifest-sri`) become SRI attributes.
 - `/build/*` served with immutable cache headers.
 - `vukem serve` starts the Go app with reload and, if `vite.config.*` exists, `npm run dev` alongside.

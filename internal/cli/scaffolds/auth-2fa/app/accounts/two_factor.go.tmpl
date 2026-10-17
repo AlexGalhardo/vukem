@@ -30,17 +30,20 @@ const (
 	pendingSinceKey    = "two_factor.since"
 )
 
-var (
-	// ErrNoTwoFactorChallenge means there is no pending login, or it expired.
-	ErrNoTwoFactorChallenge = errors.New("accounts: no pending two-factor login")
+// ErrNoTwoFactorChallenge means there is no pending login, or it expired.
+var ErrNoTwoFactorChallenge = errors.New("accounts: no pending two-factor login")
 
-	errTwoFactorEnabled = errs.New(http.StatusConflict, "Two-factor authentication is already enabled.")
-	errTwoFactorOff     = errs.New(http.StatusConflict, "Two-factor authentication is not enabled.")
-)
+func (a *Accounts) errTwoFactorEnabled(ctx context.Context) error {
+	return errs.New(http.StatusConflict, a.T(ctx, "auth.two_factor.already_enabled"))
+}
+
+func (a *Accounts) errTwoFactorOff(ctx context.Context) error {
+	return errs.New(http.StatusConflict, a.T(ctx, "auth.two_factor.not_enabled"))
+}
 
 // InvalidTwoFactorCode is the validation error for a wrong code.
-func InvalidTwoFactorCode() error {
-	return errs.NewValidation().Add("code", "The code is invalid.")
+func (a *Accounts) InvalidTwoFactorCode(ctx context.Context) error {
+	return errs.NewValidation().Add("code", a.T(ctx, "auth.two_factor.invalid_code"))
 }
 
 // TwoFactor returns the two-factor state of the user.
@@ -69,7 +72,7 @@ func (a *Accounts) EnableTwoFactor(ctx context.Context, userID int64) error {
 	}
 
 	if n == 0 {
-		return errTwoFactorEnabled
+		return a.errTwoFactorEnabled(ctx)
 	}
 
 	return nil
@@ -88,9 +91,9 @@ func (a *Accounts) ConfirmTwoFactor(
 
 		switch {
 		case tf.Enabled():
-			return errTwoFactorEnabled
+			return a.errTwoFactorEnabled(ctx)
 		case !tf.Pending():
-			return errTwoFactorOff
+			return a.errTwoFactorOff(ctx)
 		}
 
 		step, valid := a.checkCode(tf, code)
@@ -165,7 +168,7 @@ func (a *Accounts) CheckTwoFactor(ctx context.Context, userID int64, code, recov
 	}
 
 	if code == "" && recovery == "" {
-		return errs.NewValidation().Add("code", "Enter the code from your authenticator app or a recovery code.")
+		return errs.NewValidation().Add("code", a.T(ctx, "auth.two_factor.code_required"))
 	}
 
 	ok, err := a.VerifyTwoFactor(ctx, userID, code, recovery)
@@ -174,7 +177,7 @@ func (a *Accounts) CheckTwoFactor(ctx context.Context, userID int64, code, recov
 	}
 
 	if !ok {
-		return InvalidTwoFactorCode()
+		return a.InvalidTwoFactorCode(ctx)
 	}
 
 	return nil
@@ -198,7 +201,7 @@ func (a *Accounts) RegenerateRecoveryCodes(ctx context.Context, userID int64) ([
 	}
 
 	if n == 0 {
-		return nil, errTwoFactorOff
+		return nil, a.errTwoFactorOff(ctx)
 	}
 
 	return plain, nil

@@ -5,8 +5,9 @@
 	<meta name="viewport" content="width=device-width, initial-scale=1">
 	<title>{{block "title" .}}Vukem{{end}}</title>
 	<meta property="csp-nonce" nonce="{{cspNonce}}">
-	{{vite "resources/css/app.css" "resources/js/app.ts"}}
+	{{/* htmx first: deferred and module scripts run in document order, so app.ts can use window.htmx. */}}
 	{{htmxScript (asset "js/htmx.min.js")}}
+	{{vite "resources/css/app.css" "resources/js/app.ts"}}
 </head>
 <body>
 	<header>

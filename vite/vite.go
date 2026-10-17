@@ -178,11 +178,18 @@ window.__vite_plugin_react_preamble_installed__ = true
 }
 
 // Asset returns the URL of a file Vite processed ("resources/img/logo.png"),
-// and false when neither the dev server nor the manifest knows it.
+// and false when neither the dev server nor the manifest knows it. While the
+// dev server runs, a file that exists in the public directory (a vendored
+// "js/htmx.min.js") also returns false: the app serves it, the dev server
+// (publicDir off in the starter plugin) does not.
 func (v *Vite) Asset(p string) (string, bool) {
 	p = strings.TrimPrefix(p, "/")
 
 	if hot, err := v.hot(); err == nil && hot != "" {
+		if v.isPublicFile(p) {
+			return "", false
+		}
+
 		return hot + "/" + p, true
 	}
 
@@ -197,6 +204,16 @@ func (v *Vite) Asset(p string) (string, bool) {
 	}
 
 	return v.url(c.File), true
+}
+
+func (v *Vite) isPublicFile(p string) bool {
+	if !fs.ValidPath(p) {
+		return false
+	}
+
+	info, err := fs.Stat(v.cfg.FS, p)
+
+	return err == nil && info.Mode().IsRegular()
 }
 
 // HotURL returns the dev server URL while it runs (Dev on and a valid hot

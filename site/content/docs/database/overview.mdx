@@ -41,6 +41,8 @@ Outside an app, `database.Open(ctx, url, database.WithConfig(cfg))` returns the 
 
 Every SQLite connection gets WAL journaling, `busy_timeout`, `foreign_keys=ON` and `BEGIN IMMEDIATE` for write transactions. Writes and transactions go to a **single-connection writer pool**, reads to a read-only reader pool, so concurrent requests do not fail with `SQLITE_BUSY`.
 
+Apps that never open a SQLite database can leave the driver out with the `vukem_nosqlite` build tag (`go build -tags vukem_nosqlite`, or `vukem_nosqlite` in the project's `.buildtags`, which `vukem new --minimal` writes). `database.Open` then refuses SQLite URLs with an error naming the tag. Tests (`vukemtest`) keep using in-memory SQLite, so run them without the tag.
+
 ## Raw SQL
 
 `*database.DB` and `*database.Tx` implement `database.Executor`:

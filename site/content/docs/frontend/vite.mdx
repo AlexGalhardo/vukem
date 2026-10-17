@@ -26,7 +26,7 @@ vukem.WithVite(resources.Public()) // or os.DirFS("resources/public"); app.Vite
 - The starter's plugin `resources/vite/vukem.js` writes `public/hot` with the dev server URL on start and deletes it on exit. The hot file must hold an `http(s)` URL and is ignored in production.
 - The manifest is cached in production and re-read in development.
 - `{{ viteReactRefresh }}` emits the React Refresh preamble while the dev server runs (empty otherwise).
-- `{{ asset "resources/img/logo.png" }}` resolves through the dev server or the manifest when Vite knows the file, else falls back to the public path.
+- `{{ asset "resources/img/logo.png" }}` resolves through the dev server or the manifest when Vite knows the file, else falls back to the public path. Files that exist in the public directory (a vendored `js/htmx.min.js`) always use the public path, also while the dev server runs, because the app serves them and the dev server does not.
 
 ## Security
 

@@ -91,11 +91,11 @@ func (h *TwoFactorHandlers) Confirm(c *web.Ctx) error {
 
 	if !ok {
 		web.SecurityEvent(c.Request(), "auth.2fa_failed", "user_id", u.AuthID(), "stage", "confirm")
-		return accounts.InvalidTwoFactorCode()
+		return h.a.InvalidTwoFactorCode(c.Context())
 	}
 
 	c.Session().Flash(recoveryCodesFlash, codes)
-	_ = c.Flash("status", "Two-factor authentication is on.")
+	_ = c.Flash("status", h.a.T(c.Context(), "auth.two_factor.enabled"))
 
 	return c.Redirect("/user/two-factor")
 }
@@ -133,14 +133,14 @@ func (h *TwoFactorHandlers) Disable(c *web.Ctx) error {
 
 	if ok, err := h.a.Hasher.Verify(u.Password, in.Password); err != nil || !ok {
 		web.SecurityEvent(c.Request(), "auth.2fa_failed", "user_id", u.AuthID(), "stage", "disable")
-		return errs.NewValidation().Add("password", "The password is incorrect.")
+		return errs.NewValidation().Add("password", h.a.T(c.Context(), "auth.two_factor.wrong_password"))
 	}
 
 	if err := h.a.DisableTwoFactor(c.Context(), u.ID); err != nil {
 		return err
 	}
 
-	_ = c.Flash("status", "Two-factor authentication is off.")
+	_ = c.Flash("status", h.a.T(c.Context(), "auth.two_factor.disabled"))
 
 	return c.Redirect("/user/two-factor")
 }
@@ -148,7 +148,7 @@ func (h *TwoFactorHandlers) Disable(c *web.Ctx) error {
 // ShowChallenge renders the code step of the login.
 func (h *TwoFactorHandlers) ShowChallenge(c *web.Ctx) error {
 	if _, _, err := h.a.PendingTwoFactor(c); err != nil {
-		return expiredChallenge(c, err)
+		return h.expiredChallenge(c, err)
 	}
 
 	return c.Render("auth/two-factor-challenge", nil)
@@ -159,7 +159,7 @@ func (h *TwoFactorHandlers) ShowChallenge(c *web.Ctx) error {
 func (h *TwoFactorHandlers) Challenge(c *web.Ctx) error {
 	u, remember, err := h.a.PendingTwoFactor(c)
 	if err != nil {
-		return expiredChallenge(c, err)
+		return h.expiredChallenge(c, err)
 	}
 
 	in, err := web.Parse(c, requests.TwoFactorChallengeSchema)
@@ -176,10 +176,12 @@ func (h *TwoFactorHandlers) Challenge(c *web.Ctx) error {
 		web.SecurityEvent(c.Request(), "auth.2fa_failed", "user_id", u.AuthID(), "stage", "challenge")
 
 		if in.Code == "" {
-			return errs.NewValidation().Add("recovery_code", "The recovery code is invalid.")
+			msg := h.a.T(c.Context(), "auth.two_factor.invalid_recovery_code")
+
+			return errs.NewValidation().Add("recovery_code", msg)
 		}
 
-		return accounts.InvalidTwoFactorCode()
+		return h.a.InvalidTwoFactorCode(c.Context())
 	}
 
 	accounts.ClearTwoFactorChallenge(c)
@@ -193,12 +195,12 @@ func (h *TwoFactorHandlers) Challenge(c *web.Ctx) error {
 	return c.Redirect(web.SafeRedirect(c.Request(), target, "/dashboard"))
 }
 
-func expiredChallenge(c *web.Ctx, err error) error {
+func (h *TwoFactorHandlers) expiredChallenge(c *web.Ctx, err error) error {
 	if !errors.Is(err, accounts.ErrNoTwoFactorChallenge) {
 		return err
 	}
 
-	_ = c.Flash("status", "Your login expired. Please log in again.")
+	_ = c.Flash("status", h.a.T(c.Context(), "auth.two_factor.login_expired"))
 
 	return c.Redirect("/login")
 }

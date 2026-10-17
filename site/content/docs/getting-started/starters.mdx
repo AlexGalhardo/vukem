@@ -12,6 +12,7 @@ vukem new blog --inertia react       # Inertia + React (also: vue, svelte)
 vukem new shop --api                 # JSON-only REST API
 vukem new blog --pm bun             # bun install instead of npm install
 vukem new blog --no-install          # skip installing frontend dependencies
+vukem new site --minimal             # HTMX without a database
 ```
 
 | Starter | Views | Frontend | Node.js |
@@ -21,7 +22,7 @@ vukem new blog --no-install          # skip installing frontend dependencies
 | Inertia | React, Vue or Svelte pages in `resources/js/pages` | Vite 8, TypeScript, Tailwind CSS v4 | required |
 | API | none | none | not used |
 
-Every starter ships SQLite, migrations, a posts CRUD example and tests that pass with `go test ./...`. `vukem new` runs `go mod tidy`, writes `APP_KEY`, installs frontend dependencies with `--pm` (default npm) when it is on `PATH` (frontend starters) and `git init`.
+Every starter except `--minimal` ships SQLite, migrations, a posts CRUD example and tests that pass with `go test ./...`. `vukem new` runs `go mod tidy`, writes `APP_KEY`, installs frontend dependencies with `--pm` (default npm) when it is on `PATH` (frontend starters) and `git init`.
 
 ## HTMX on Vite
 
@@ -64,6 +65,10 @@ vukem install:inertia --force --vue   # convert an existing HTMX starter
 ```
 
 The app gets `vukem.WithInertia(inertia.Config{})`, controllers that call `inertia.Render`, the root view `resources/views/app.html`, TypeScript pages in `resources/js/pages`, a default layout in `resources/js/layouts` and tests with `AssertInertia`. `npm run typecheck` runs `tsc` (React), `vue-tsc` or `svelte-check`. Styling is Tailwind only (`resources/css/app.css`), with dark mode driven by a `dark` class on `<html>`: `resources/js/app.ts` applies the saved choice (`localStorage.theme` = `"dark"` or `"light"`) or the system preference on load (views have no inline scripts, for the CSP), so a theme toggle only needs to flip the class and save it. `<html lang>` follows the request locale. `vukem install:auth` on an Inertia app adds `Auth/*` and `Dashboard` pages. See [Inertia](/docs/frontend/inertia).
+
+## Minimal
+
+`vukem new site --minimal` is the HTMX starter for a stateless app: the home page, layout, vendored htmx and Vite, with no `database/`, models, posts or uploads examples, and no `DATABASE_URL`. Sessions, cache, queue and rate limits keep their cookie, memory and sync defaults, which need no database. Its `.buildtags` file holds `vukem_nosqlite`, so `vukem build` and `vukem serve` leave the SQLite driver out of the binary (about 4 MB smaller); opening a SQLite database in such a build fails with an error naming the tag. A custom Dockerfile must build with `go build -tags vukem_nosqlite ./cmd/app`. Tests run with plain `go test ./...`. To add a database later, delete the tag from `.buildtags` (or configure another driver) and run `vukem install:auth` or `make:migration` as usual.
 
 ## API
 

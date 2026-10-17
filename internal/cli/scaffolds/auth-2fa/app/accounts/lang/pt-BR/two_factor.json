@@ -1,0 +1,15 @@
+{
+  "auth": {
+    "two_factor": {
+      "enabled": "A autenticação em dois fatores está ativada.",
+      "disabled": "A autenticação em dois fatores está desativada.",
+      "already_enabled": "A autenticação em dois fatores já está ativada.",
+      "not_enabled": "A autenticação em dois fatores não está ativada.",
+      "invalid_code": "O código é inválido.",
+      "code_required": "Digite o código do seu aplicativo autenticador ou um código de recuperação.",
+      "invalid_recovery_code": "O código de recuperação é inválido.",
+      "wrong_password": "A senha está incorreta.",
+      "login_expired": "Seu login expirou. Entre novamente."
+    }
+  }
+}
