@@ -3,11 +3,14 @@ package telegram
 import (
 	"context"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/google/go-cmp/cmp"
@@ -234,4 +237,92 @@ func TestSecurity_A09_TelegramSyncErrorRedactsToken(t *testing.T) {
 			t.Errorf("%s error = %v, want the token redacted", name, err)
 		}
 	}
+}
+
+// funcTransport answers requests in-process, so tests can run in synctest.
+type funcTransport func(*http.Request) (*http.Response, error)
+
+func (f funcTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func reply(status int, body string) *http.Response {
+	return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(body)), Header: http.Header{}}
+}
+
+func TestOnErrorLoggingDoesNotLoop(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		var calls atomic.Int32
+
+		var log *slog.Logger
+
+		h := NewHandler(Config{
+			BotToken: config.NewSecret("123:T"), ChatID: "-1",
+			HTTP: &http.Client{Transport: funcTransport(func(*http.Request) (*http.Response, error) {
+				if calls.Add(1) > 5 { // stop a runaway loop so the test can fail instead of hang
+					return reply(http.StatusOK, `{"ok":true}`), nil
+				}
+
+				return reply(http.StatusBadRequest, `{"ok":false,"description":"chat not found"}`), nil
+			})},
+			// The common mistake: report delivery failures through the same
+			// logger that forwards to Telegram.
+			OnError: func(err error) { log.Error("telegram delivery failed", "err", err) },
+		})
+		log = slog.New(h)
+
+		log.Error("boom")
+		synctest.Wait()
+
+		if err := h.Close(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+
+		if n := calls.Load(); n != 1 {
+			t.Errorf("API calls = %d, want 1 (the OnError record must not be forwarded again)", n)
+		}
+	})
+}
+
+func TestQueueFullOnErrorLoggingDoesNotRecurse(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		block := make(chan struct{})
+
+		var (
+			log     *slog.Logger
+			reports atomic.Int32
+		)
+
+		h := NewHandler(Config{
+			BotToken: config.NewSecret("123:T"), ChatID: "-1", QueueSize: 1,
+			HTTP: &http.Client{Transport: funcTransport(func(*http.Request) (*http.Response, error) {
+				<-block
+				return reply(http.StatusOK, `{"ok":true}`), nil
+			})},
+			// Logging the error by its text only defeats the type check;
+			// the reentrancy guard must still stop the recursion.
+			OnError: func(err error) {
+				reports.Add(1)
+				log.Error("telegram: " + err.Error())
+			},
+		})
+		log = slog.New(h)
+
+		log.Error("first") // picked up by the sender, which blocks
+		synctest.Wait()
+		log.Error("second") // fills the queue
+		log.Error("third")  // dropped: OnError logs, which is dropped again, without recursing
+
+		if n := reports.Load(); n != 1 {
+			t.Errorf("OnError calls = %d, want 1 (nested reports dropped)", n)
+		}
+
+		close(block)
+
+		if err := h.Close(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+	})
 }

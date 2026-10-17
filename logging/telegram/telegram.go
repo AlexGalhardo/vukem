@@ -29,6 +29,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -54,7 +55,8 @@ type Config struct {
 	// MinLevel filters records (default: error).
 	MinLevel slog.Level
 	// Filter, when set, forwards only the log records it returns true for
-	// (Send and Contact are never filtered).
+	// (Send and Contact are never filtered). It runs on the logging
+	// goroutine; call r.Clone() before keeping r beyond the call.
 	Filter func(ctx context.Context, r slog.Record) bool
 	// RateLimit caps the log records forwarded per RatePeriod (0: no cap);
 	// the excess is dropped and ErrRateLimited reported to OnError once per
@@ -76,6 +78,10 @@ type Config struct {
 	// MaxRetryAfter caps the wait for one retry after HTTP 429 (default 10s).
 	MaxRetryAfter time.Duration
 	// OnError is told about delivery failures (never contains the token).
+	// Calls never overlap: a report raised while OnError runs is dropped.
+	// Records logged while OnError runs, or carrying an error it was given,
+	// are not forwarded to Telegram, so logging the error through a logger
+	// that includes this handler cannot loop.
 	OnError func(error)
 	// BaseURL defaults to https://api.telegram.org (tests use a fake).
 	BaseURL string
@@ -101,6 +107,8 @@ type state struct {
 	rateMu      sync.Mutex
 	windowStart time.Time
 	windowCount int
+
+	reporting atomic.Bool
 }
 
 // Handler implements slog.Handler.
@@ -172,7 +180,11 @@ func (h *Handler) Enabled(_ context.Context, l slog.Level) bool {
 
 // Handle implements slog.Handler: it formats r and queues it.
 func (h *Handler) Handle(ctx context.Context, r slog.Record) error {
-	if !h.Enabled(ctx, r.Level) {
+	if !h.Enabled(ctx, r.Level) || h.s.reporting.Load() {
+		return nil
+	}
+
+	if reportsOwnError(h.attrs, r) {
 		return nil
 	}
 
@@ -331,7 +343,7 @@ func (s *state) allow() bool {
 	s.rateMu.Unlock()
 
 	if n == s.cfg.RateLimit+1 {
-		s.cfg.OnError(ErrRateLimited) // outside the lock: OnError may log
+		s.report(ErrRateLimited) // outside the lock: OnError may log
 	}
 
 	return n <= s.cfg.RateLimit
@@ -343,25 +355,75 @@ func (s *state) enqueue(chat, text string) {
 	}
 
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-
 	if s.closed {
+		s.mu.RUnlock()
 		return
 	}
+
+	var full bool
 
 	select {
 	case s.queue <- message{chat: chat, text: text}:
 	default:
-		s.cfg.OnError(ErrQueueFull)
+		full = true
+	}
+	s.mu.RUnlock()
+
+	// Outside the lock: OnError may log back into this handler, and a
+	// recursive RLock deadlocks behind a pending Close.
+	if full {
+		s.report(ErrQueueFull)
 	}
 }
 
 func (s *state) run() {
 	for m := range s.queue {
 		if err := s.deliver(context.Background(), m); err != nil {
-			s.cfg.OnError(err)
+			s.report(err)
 		}
 	}
+}
+
+// report calls OnError unless a report is already running, which drops
+// the nested one instead of recursing (OnError logs, the record is
+// dropped, OnError logs ...).
+func (s *state) report(err error) {
+	if !s.reporting.CompareAndSwap(false, true) {
+		return
+	}
+	defer s.reporting.Store(false)
+
+	s.cfg.OnError(&reportedError{err: err})
+}
+
+// reportedError marks errors given to OnError, so a record carrying one is
+// never forwarded (when Telegram is down that would loop). It keeps the
+// message and unwraps to the original error.
+type reportedError struct{ err error }
+
+func (e *reportedError) Error() string { return e.err.Error() }
+func (e *reportedError) Unwrap() error { return e.err }
+
+func reportsOwnError(attrs []slog.Attr, r slog.Record) bool {
+	own := func(a slog.Attr) bool {
+		err, ok := a.Value.Resolve().Any().(error)
+		_, marked := errors.AsType[*reportedError](err)
+
+		return ok && marked
+	}
+
+	if slices.ContainsFunc(attrs, own) {
+		return true
+	}
+
+	found := false
+
+	r.Attrs(func(a slog.Attr) bool {
+		found = own(a)
+		return !found
+	})
+
+	return found
 }
 
 // deliver posts m, retrying once after a 429 with a capped retry_after.
