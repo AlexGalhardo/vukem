@@ -76,9 +76,13 @@ type Config struct {
 	// H2C serves HTTP/2 without TLS (prior knowledge, for gRPC clients) in
 	// production too, behind a proxy that speaks h2c. It is always on
 	// outside production.
-	H2C       bool   `env:"HTTP_H2C"`
-	LogLevel  string `env:"LOG_LEVEL"  default:"info"`
-	LogFormat string `env:"LOG_FORMAT"`
+	H2C bool `env:"HTTP_H2C"`
+	// MaxHeaderBytes caps the request line plus headers the HTTP server
+	// reads (4096 to 1048576 bytes, Go's own default; outside is a boot
+	// error). Larger requests get 431.
+	MaxHeaderBytes int    `env:"HTTP_MAX_HEADER_BYTES" default:"65536"`
+	LogLevel       string `env:"LOG_LEVEL"             default:"info"`
+	LogFormat      string `env:"LOG_FORMAT"`
 	// LogDedupWindow collapses repeated identical ERROR records of the
 	// default logger into one summary per window (a Go duration; "0"
 	// disables it). Empty means 1m in production and off elsewhere.
@@ -494,6 +498,11 @@ func New(opts ...Option) (*App, error) {
 
 	if cfg.ClientIPHeader, err = clientIPHeader(cfg.ClientIPHeader, len(proxies) > 0); err != nil {
 		return nil, err
+	}
+
+	if cfg.MaxHeaderBytes < minMaxHeaderBytes || cfg.MaxHeaderBytes > http.DefaultMaxHeaderBytes {
+		return nil, fmt.Errorf("vukem: HTTP_MAX_HEADER_BYTES %d must be between %d and %d",
+			cfg.MaxHeaderBytes, minMaxHeaderBytes, http.DefaultMaxHeaderBytes)
 	}
 
 	if cfg.RateLimitIPv6Prefix < 1 || cfg.RateLimitIPv6Prefix > 128 {
@@ -1321,8 +1330,16 @@ const (
 	DefaultReadTimeout       = 30 * time.Second
 	DefaultWriteTimeout      = 60 * time.Second
 	DefaultIdleTimeout       = 120 * time.Second
-	DefaultMaxHeaderBytes    = 1 << 20
+	// DefaultMaxHeaderBytes is 64 KiB, not Go's 1 MiB: it bounds the
+	// memory each connection can make the server buffer, and is still far
+	// above what browsers send and common proxies forward (nginx 8 KiB per
+	// line, Node.js 16 KiB in total). HTTP_MAX_HEADER_BYTES overrides it.
+	DefaultMaxHeaderBytes = 64 << 10
 )
+
+// minMaxHeaderBytes is the smallest HTTP_MAX_HEADER_BYTES accepted: below
+// it ordinary browser requests with a few cookies fail.
+const minMaxHeaderBytes = 4 << 10
 
 // HTTPServer runs an *http.Server as a Runner with graceful shutdown.
 type HTTPServer struct {

@@ -1102,6 +1102,21 @@ func TestSecurity_A02_TrustedProxiesMisconfigurationRefusesBoot(t *testing.T) {
 			env:  map[string]string{"RATE_LIMIT_IPV6_PREFIX": "/64"},
 			want: "RATE_LIMIT_IPV6_PREFIX",
 		},
+		{
+			name: "header limit too small",
+			env:  map[string]string{"HTTP_MAX_HEADER_BYTES": "1024"},
+			want: "HTTP_MAX_HEADER_BYTES",
+		},
+		{
+			name: "header limit above go's default",
+			env:  map[string]string{"HTTP_MAX_HEADER_BYTES": "2097152"},
+			want: "HTTP_MAX_HEADER_BYTES",
+		},
+		{
+			name: "header limit not a number",
+			env:  map[string]string{"HTTP_MAX_HEADER_BYTES": "64KiB"},
+			want: "HTTP_MAX_HEADER_BYTES",
+		},
 		// X-Forwarded-Proto from any peer would let clients claim HTTPS.
 		{
 			name: "proto without proxies",
@@ -2455,6 +2470,76 @@ func TestSecurity_A02_BuiltinErrorPagesUnderCSP(t *testing.T) {
 					t.Errorf("%s: %s lacks the request nonce", name, el)
 				}
 			}
+		}
+	}
+}
+
+// TestSecurity_A02_MaxHeaderBytes checks the request header cap: 64 KiB by
+// default, HTTP_MAX_HEADER_BYTES overrides it, and a larger header block
+// gets 431 from the server the app runs (A31).
+func TestSecurity_A02_MaxHeaderBytes(t *testing.T) {
+	t.Parallel()
+
+	if got := newTestApp(t).httpServer(http.NotFoundHandler()).Server.MaxHeaderBytes; got != 64<<10 {
+		t.Errorf("default MaxHeaderBytes = %d, want %d", got, 64<<10)
+	}
+
+	app := newTestApp(t, WithSource(testSource(map[string]string{"HTTP_MAX_HEADER_BYTES": "16384"})))
+
+	srv := app.httpServer(
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }),
+	)
+	if srv.Server.MaxHeaderBytes != 16384 {
+		t.Fatalf("MaxHeaderBytes = %d, want 16384", srv.Server.MaxHeaderBytes)
+	}
+
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	srv.Listener, srv.Ready = ln, nil
+	ctx, cancel := context.WithCancel(t.Context())
+	errc := make(chan error, 1)
+
+	go func() { errc <- srv.Run(ctx) }()
+
+	t.Cleanup(func() {
+		cancel()
+
+		if err := <-errc; err != nil {
+			t.Errorf("Run() = %v", err)
+		}
+	})
+
+	for _, tt := range []struct {
+		size int
+		want int
+	}{
+		{8 << 10, http.StatusNoContent},
+		{64 << 10, http.StatusRequestHeaderFieldsTooLarge},
+	} {
+		req, err := http.NewRequestWithContext(
+			t.Context(),
+			http.MethodGet,
+			"http://"+ln.Addr().String()+"/",
+			http.NoBody,
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		req.Header.Set("X-Big", strings.Repeat("a", tt.size))
+
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("GET with a %d-byte header: %v", tt.size, err)
+		}
+
+		_ = resp.Body.Close()
+
+		if resp.StatusCode != tt.want {
+			t.Errorf("GET with a %d-byte header = %d, want %d", tt.size, resp.StatusCode, tt.want)
 		}
 	}
 }

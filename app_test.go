@@ -437,7 +437,7 @@ func TestSecurity_A02_ServerTimeouts(t *testing.T) {
 	s := NewHTTPServer(":0", http.NotFoundHandler()).Server
 
 	got := []any{s.ReadHeaderTimeout, s.ReadTimeout, s.WriteTimeout, s.IdleTimeout, s.MaxHeaderBytes}
-	want := []any{10 * time.Second, 30 * time.Second, 60 * time.Second, 120 * time.Second, 1 << 20}
+	want := []any{10 * time.Second, 30 * time.Second, 60 * time.Second, 120 * time.Second, 64 << 10}
 
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("NewHTTPServer() limits mismatch (-want +got):\n%s", diff)
