@@ -146,8 +146,10 @@ linters:
     generated: lax
     paths:
       - site/
+    # No "comments" preset: it hides revive's exported and package-comments
+    # findings, and every exported identifier needs a doc comment that
+    # starts with its name (.claude/rules/go.md, docs/v1-api-review.md).
     presets:
-      - comments
       - std-error-handling
       - common-false-positives
     rules:
@@ -160,6 +162,9 @@ linters:
       # Starter stubs are filled in by app developers.
       - path: internal/cli/starter/
         text: unused-parameter
+      # The package comment of a starter package lives in its .go.tmpl files.
+      - path: internal/cli/starter/
+        text: "package-comments: should have a package comment"
 
 issues:
   max-issues-per-linter: 0
