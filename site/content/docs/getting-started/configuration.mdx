@@ -130,7 +130,7 @@ app.Log.Info("mail", "cfg", cfg) // password logged as [redacted]
 ## `APP_KEY`
 
 - Required. `vukem key:generate` writes one to `.env` (creating it from `.env.example` when missing); `--show` prints a key instead and `--force` replaces an existing one, which makes current sessions and encrypted data unreadable. Where only the compiled app exists (Docker, CI), `./app key:generate` prints a new key without booting the app or writing any file; see [CLI](/docs/cli/overview#app_key-without-the-global-cli). In code, `config.GenerateKey()` returns 32 random bytes from `crypto/rand`, `base64:`-encoded.
-- Required in production. Outside production (`APP_ENV=development` or `test`) an app boots without it, and every key-derived feature fails closed on use: cookie sessions (`SESSION_DRIVER=cookie`, the default, so `DefaultMiddleware` is still a boot error), `app.Crypt` (nil; `Decrypt` and `SetCookie` return `crypt.ErrNoKey`, `Encrypt` panics), `app.Key.Derive` (panics), `app.DeriveKey` (returns `config.ErrKeyMissing`), encrypted ORM columns (`orm.ErrNoEncrypter`) and the maintenance bypass cookie (disabled). An API-only app with token auth and no encryption runs without a key. A malformed key is always a boot error.
+- Required in production and whenever `APP_ENV` is unset or empty. Only with an explicit `APP_ENV=development` or `test` does an app boot without it (development logs one warning), and every key-derived feature fails closed on use: cookie sessions (`SESSION_DRIVER=cookie`, the default, so `DefaultMiddleware` is still a boot error), `app.Crypt` (nil; `Decrypt` and `SetCookie` return `crypt.ErrNoKey`, `Encrypt` panics), `app.Key.Derive` (panics), `app.DeriveKey` (returns `config.ErrKeyMissing`), encrypted ORM columns (`orm.ErrNoEncrypter`) and the maintenance bypass cookie (disabled). An API-only app with token auth and no encryption runs without a key. A malformed key is always a boot error.
 - The decoded key is available as `app.Key`. Never use it directly: derive a purpose-specific key with HKDF-SHA256 so cookies, sessions and encryption never share key material.
 
 ```go
@@ -145,8 +145,8 @@ signer, err := app.DeriveKey("signed.urls", 32) // config.ErrKeyMissing instead 
 
 | Check | Behaviour |
 | --- | --- |
-| Missing `APP_KEY` in production, malformed `APP_KEY` anywhere | Boot error |
-| Missing `APP_KEY` outside production | Boots; key-derived features fail closed on use |
+| Missing `APP_KEY` in production or with `APP_ENV` unset, malformed `APP_KEY` anywhere | Boot error |
+| Missing `APP_KEY` with explicit `APP_ENV=development`/`test` | Boots; key-derived features fail closed on use |
 | `APP_DEBUG=true` with `APP_ENV=production` | Boot error |
 | `PORT` out of range | Boot error |
 | Debug error details | Only when `Services.Debug` is set; never in production |

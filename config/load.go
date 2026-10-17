@@ -51,6 +51,14 @@ func (s *Source) Get(key string) string {
 	return v
 }
 
+// EnvSet reports whether APP_ENV was given explicitly (process
+// environment, .env files or the map) with a non-empty value; Env then
+// does not fall back to development.
+func (s *Source) EnvSet() bool {
+	v, ok := s.Lookup("APP_ENV")
+	return ok && v != ""
+}
+
 // Env returns the resolved application environment.
 func (s *Source) Env() Env { return s.env }
 

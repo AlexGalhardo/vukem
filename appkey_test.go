@@ -59,6 +59,9 @@ func TestSecurity_A02_ProductionRequiresAppKey(t *testing.T) {
 		want string
 	}{
 		{name: "missing in production", env: map[string]string{"APP_ENV": "production"}, want: "APP_KEY is not set"},
+		// development is only the default: tolerating a missing key needs an explicit APP_ENV.
+		{name: "missing with APP_ENV unset", env: map[string]string{}, want: "APP_KEY is not set"},
+		{name: "missing with APP_ENV empty", env: map[string]string{"APP_ENV": ""}, want: "APP_KEY is not set"},
 		{
 			name: "malformed in development",
 			env:  map[string]string{"APP_ENV": "development", "APP_KEY": "base64:YWJj"},
@@ -208,3 +211,40 @@ func panicMessage(fn func()) (msg string) {
 }
 
 func defaultMiddleware(r *router.Router, app *App) error { return DefaultMiddleware(app, r) }
+
+func TestMissingKeyWarnsAtBoot(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+
+	if _, err := New(
+		WithSource(config.MapSource(map[string]string{"APP_ENV": "development"})),
+		WithLogOutput(&buf),
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := buf.String(); strings.Count(got, "level=WARN") != 1 || !strings.Contains(got, "APP_KEY") {
+		t.Fatalf("boot log = %q, want one WARN about APP_KEY", got)
+	}
+}
+
+func TestSourceEnvSet(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		m    map[string]string
+		want bool
+	}{
+		{name: "unset", m: map[string]string{}, want: false},
+		{name: "empty", m: map[string]string{"APP_ENV": ""}, want: false},
+		{name: "set", m: map[string]string{"APP_ENV": "development"}, want: true},
+	}
+
+	for _, tt := range tests {
+		if got := config.MapSource(tt.m).EnvSet(); got != tt.want {
+			t.Errorf("%s: EnvSet() = %v, want %v", tt.name, got, tt.want)
+		}
+	}
+}

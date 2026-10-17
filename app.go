@@ -376,7 +376,7 @@ func New(opts ...Option) (*App, error) {
 
 	cfg.Devtools = cfg.Devtools || o.devtools
 
-	key, err := checkConfig(&cfg)
+	key, err := checkConfig(&cfg, src.EnvSet())
 	if err != nil {
 		return nil, err
 	}
@@ -486,6 +486,11 @@ func New(opts ...Option) (*App, error) {
 		schedules:       o.schedules,
 		mail:            mailState{transport: o.mailTransport},
 	}
+	if key.IsZero() && cfg.Env == config.Development {
+		app.Log.Warn("APP_KEY is not set: sessions, encryption and signed URLs fail until you run `vukem key:generate`",
+			"env", string(cfg.Env))
+	}
+
 	app.Router = app.newRouter()
 	routes = app.Router
 
@@ -592,15 +597,17 @@ func New(opts ...Option) (*App, error) {
 	return app, nil
 }
 
-// checkConfig enforces secure defaults at boot (fail closed).
-func checkConfig(cfg *Config) (config.Key, error) {
+// checkConfig enforces secure defaults at boot (fail closed). envSet
+// reports whether APP_ENV was given explicitly (config.Source.EnvSet).
+func checkConfig(cfg *Config, envSet bool) (config.Key, error) {
 	var errs []error
 
-	// Outside production a missing key is allowed: every key-derived feature
-	// then fails closed (Key.Derive panics, Crypt is nil, cookie sessions
-	// refuse to start). A malformed key is always an error.
+	// A missing key is allowed only with an explicit APP_ENV=development or
+	// test (a forgotten APP_ENV in production must not boot keyless); every
+	// key-derived feature then fails closed (Key.Derive panics, Crypt is nil,
+	// cookie sessions refuse to start). A malformed key is always an error.
 	key, err := config.ParseKey(cfg.Key)
-	if err != nil && (!errors.Is(err, config.ErrKeyMissing) || cfg.IsProduction()) {
+	if err != nil && (!errors.Is(err, config.ErrKeyMissing) || !envSet || cfg.IsProduction()) {
 		errs = append(errs, err)
 	}
 
