@@ -286,7 +286,7 @@ events.Listen(app.Events, func(ctx context.Context, a security.Audit) error {
 })
 ```
 
-Pass the actor as an attribute and never pass secrets; a `config.Secret` value is logged masked.
+Pass the actor as an attribute (its id) and never pass secrets or personal data such as names, emails or documents; a `config.Secret` value is logged masked. The dispatched `security.Audit` carries the client IP, which is personal data under LGPD/GDPR: set a retention period wherever you store audit records.
 
 ## Lint guard
 

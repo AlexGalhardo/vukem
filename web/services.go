@@ -57,7 +57,9 @@ func SecurityEvent(r *http.Request, event string, attrs ...any) {
 // stable "event" attribute, method, path and request_id. It is dispatched
 // as a security.Audit, so security alerts are not mixed with routine
 // records. Pass the actor as an attribute ("actor_id", u.AuthID()); never
-// pass secrets (a config.Secret is logged masked).
+// pass secrets (a config.Secret is logged masked) or personal data such as
+// names and emails. The dispatched record carries the client IP, which is
+// personal data: stored audit records need a retention period.
 func AuditEvent(r *http.Request, event string, attrs ...any) {
 	emit(r, slog.LevelInfo, "audit event", event, attrs, func(e security.Event) any { return security.Audit(e) })
 }

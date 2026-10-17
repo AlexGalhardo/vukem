@@ -265,6 +265,68 @@ func TestRegisterSurvivesCacheOutage(t *testing.T) {
 	vukemtest.AssertDatabaseHas(t, app, "users", map[string]any{"email": "new@example.com"})
 }
 
+// Someone who signs up first with another person's address can log in to
+// the unverified account, but verifying it (the mailbox owner clicking the
+// link, signed out) ends that session, its remember-me token and its API
+// tokens: nothing opened before the address was proven survives.
+func TestVerificationEndsOtherSessions(t *testing.T) {
+	t.Parallel()
+
+	app := vukemtest.New(t, bootstrap.New)
+
+	squatter := app.Client(t)
+	squatter.PostForm("/register", signUpForm("Mallory", "vic@example.com", "correct horse battery")).
+		AssertRedirect("/register/check-email")
+	squatter.PostForm("/login", url.Values{
+		"email": {"vic@example.com"}, "password": {"correct horse battery"}, "remember": {"true"},
+	}).AssertRedirect("/dashboard")
+	squatter.Get("/email/verify").AssertOK()
+
+	userID := apiTokenFor(t, app, "vic@example.com")
+	vukemtest.AssertDatabaseHas(t, app, "remember_tokens", map[string]any{"user_id": userID})
+
+	app.Client(t).Get(link(t, app, "vic@example.com")).AssertRedirect("/login")
+
+	squatter.Get("/email/verify").AssertRedirect("/login")
+	vukemtest.AssertDatabaseMissing(t, app, "remember_tokens", map[string]any{"user_id": userID})
+	vukemtest.AssertDatabaseMissing(t, app, "access_tokens", map[string]any{"user_id": userID})
+
+	// Signed in as the account, the verifier keeps their own session.
+	owner := app.Client(t)
+	owner.PostForm("/register", signUpForm("Own", "own@example.com", "correct horse battery")).
+		AssertRedirect("/register/check-email")
+	owner.PostForm("/login", url.Values{"email": {"own@example.com"}, "password": {"correct horse battery"}}).AssertRedirect("/dashboard")
+	owner.Get(link(t, app, "own@example.com")).AssertRedirect("/dashboard")
+	owner.Get("/dashboard").AssertOK()
+}
+
+// The link carries a hash of the address: once the email changes, a link
+// sent to the old address no longer verifies the account.
+func TestVerificationLinkBoundToEmail(t *testing.T) {
+	t.Parallel()
+
+	app := vukemtest.New(t, bootstrap.New)
+	c := app.Client(t)
+
+	c.PostForm("/register", signUpForm("Ana Silva", "old@example.com", "correct horse battery")).
+		AssertRedirect("/register/check-email")
+
+	verify := link(t, app, "old@example.com")
+
+	acc, err := accounts.New(app.App)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := acc.DB.ExecContext(t.Context(), "UPDATE users SET email = "+acc.DB.Dialect().Placeholder(1)+
+		" WHERE email = "+acc.DB.Dialect().Placeholder(2), "new@example.com", "old@example.com"); err != nil {
+		t.Fatal(err)
+	}
+
+	c.Get(verify).AssertForbidden()
+	vukemtest.AssertDatabaseHas(t, app, "users", map[string]any{"email": "new@example.com", "email_verified_at": nil})
+}
+
 func TestLoginLogoutAndThrottle(t *testing.T) {
 	t.Parallel()
 

@@ -351,7 +351,7 @@ func TestSecurity_A07_SignupIsEnumerationSafe(t *testing.T) {
 
 	for _, want := range []string{
 		"return false, a.notifyExisting(ctx, existing)",
-		`c.Increment(ctx, "register:exists:"+hex.EncodeToString(sum[:]), 1, time.Hour)`,
+		`c.Increment(ctx, "register:exists:"+EmailHash(u.Email), 1, time.Hour)`,
 		"a.Mailer.SendLater(ctx, mail.AccountExists{",
 		"a.Mailer.SendLater(ctx, mail.VerifyEmail{",
 	} {
@@ -543,6 +543,77 @@ func TestSecurity_A07_SignupCacheOutageIsNoOracle(t *testing.T) {
 	if bytes.Count(body, []byte("a.log.ErrorContext(")) < 2 ||
 		bytes.Contains(body, []byte("if err != nil {\n\t\treturn err")) {
 		t.Errorf("notifyExisting returns cache errors instead of logging them:\n%s", body)
+	}
+}
+
+// Proving the address ends what was opened before it was proven: the
+// verification link (VerifyEmail) and a provider-verified social sign-in
+// that links an unverified local account both delete remember-me and API
+// tokens and bump the session version (ending every session on every
+// driver) in one transaction, then delete server-side sessions. The social
+// link also replaces the password, which may belong to whoever signed up
+// first with the address. The verification link carries a hash of the
+// address, so it stops working once the email changes. The generated
+// TestVerificationEndsOtherSessions, TestVerificationLinkBoundToEmail and
+// TestSocialLinkEndsSquatterAccess check the behaviour end to end.
+func TestSecurity_A07_ProvingTheEmailEndsSquatterAccess(t *testing.T) {
+	t.Parallel()
+
+	files := map[string][]string{
+		"scaffolds/auth-core/app/accounts/users.go.tmpl": {
+			"func (a *Accounts) VerifyEmail(ctx context.Context, u *models.User, keep string) error {",
+			"if err := a.revokeAccess(ctx, tx, u.ID); err != nil {",
+			`"DELETE FROM remember_tokens WHERE user_id = "`,
+			`"DELETE FROM access_tokens WHERE user_id = "`,
+			"return a.bumpSessionVersion(ctx, ex, userID)",
+			"return a.revokeServerSessions(ctx, u.ID, keep)",
+			`"%s/email/verify/%d?email_hash=%s", a.URL, u.ID, EmailHash(u.Email)`,
+		},
+		"scaffolds/auth-social/app/accounts/social.go.tmpl": {
+			"if !u.EmailVerified() {",
+			"a.updatePassword(ctx, tx, u.ID, rand.Text()+rand.Text())",
+			"a.revokeAccess(ctx, tx, u.ID)",
+			`a.revokeServerSessions(ctx, u.ID, "")`,
+		},
+		"scaffolds/auth-social/tests/social_test.go.tmpl": {"func TestSocialLinkEndsSquatterAccess("},
+	}
+
+	for _, kit := range []string{"auth-web", "auth-inertia"} {
+		files["scaffolds/"+kit+"/app/controllers/account/verification.go.tmpl"] = []string{
+			`subtle.ConstantTimeCompare([]byte(c.Query("email_hash")), []byte(accounts.EmailHash(u.Email))) != 1`,
+			"h.a.VerifyEmail(c.Context(), &u, keep)",
+			"h.a.Web.RefreshSession(c)",
+		}
+		files["scaffolds/"+kit+"/tests/auth_test.go.tmpl"] = []string{
+			"func TestVerificationEndsOtherSessions(",
+			"func TestVerificationLinkBoundToEmail(",
+		}
+	}
+
+	for src, wants := range files {
+		b, err := scaffoldFS.ReadFile(src)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		for _, want := range wants {
+			if !bytes.Contains(b, []byte(want)) {
+				t.Errorf("%s lacks %q", src, want)
+			}
+		}
+	}
+
+	// The link must not verify through the bare MarkVerified, which ends
+	// nothing.
+	for _, kit := range []string{"auth-web", "auth-inertia"} {
+		b, err := scaffoldFS.ReadFile("scaffolds/" + kit + "/app/controllers/account/verification.go.tmpl")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if bytes.Contains(b, []byte("h.a.MarkVerified(")) {
+			t.Errorf("%s Verify calls MarkVerified instead of VerifyEmail", kit)
+		}
 	}
 }
 
