@@ -34,7 +34,13 @@ var (
 
 client := func(app *vukem.App) (*redis.Client, error) {
 	once.Do(func() {
-		if rc, rcErr = redis.Open(context.Background(), app.Source.Get("REDIS_URL")); rcErr != nil {
+		url := app.Source.Get("REDIS_URL")
+		if url == "" {
+			rcErr = vukem.ErrUseDefault // see "Redis only when REDIS_URL is set"
+			return
+		}
+
+		if rc, rcErr = redis.Open(context.Background(), url); rcErr != nil {
 			return
 		}
 
@@ -73,7 +79,17 @@ app, err := vukem.New(
 )
 ```
 
-The last of `WithCacheStore` / `WithCacheStoreFunc` (and likewise for sessions and queues) wins; `SetSessionStore` from a provider still overrides both. A function that returns `nil, nil` is an error. A function must not call the accessor it feeds (`app.Cache()` inside `WithCacheStoreFunc`, `app.Sessions()` or `DefaultMiddleware` inside `WithSessionStoreFunc`, `app.Queue()` inside `WithQueueDriverFunc`): it runs inside that accessor's `sync.Once` and would deadlock.
+The last of `WithCacheStore` / `WithCacheStoreFunc` (and likewise for sessions and queues) wins; `SetSessionStore` from a provider still overrides both. A function that returns `nil, nil` is an error, and so is a store returned together with `vukem.ErrUseDefault`. A function must not call the accessor it feeds (`app.Cache()` inside `WithCacheStoreFunc`, `app.Sessions()` or `DefaultMiddleware` inside `WithSessionStoreFunc`, `app.Queue()` inside `WithQueueDriverFunc`): it runs inside that accessor's `sync.Once` and would deadlock.
+
+### Redis only when `REDIS_URL` is set
+
+A function returns `nil, vukem.ErrUseDefault` (directly or wrapped) to keep what the configuration chooses: `CACHE_STORE` (memory by default), `SESSION_DRIVER` (cookie sessions by default) and `QUEUE_CONNECTION` (sync by default), exactly as if the option had not been passed. With the `client` helper above, unit tests and local runs without `REDIS_URL` use those defaults, and a deploy that sets it uses Redis; the app logs which default it chose.
+
+The fallback is explicit and fails closed:
+
+- Only `ErrUseDefault` selects the default. Any other error (a malformed URL, `redis.Open` failing because the server is down) is returned by `app.Cache()`, `app.Sessions()` or `app.Queue()`, so a configured but broken Redis is a boot error, never a silent switch to per-process stores. With `redis.OpenLazy` the app boots and the `redis` health check fails readiness instead.
+- The default keeps its own `cache.Sharer` answer: falling back to the memory cache makes `OnOneServer()` tasks and `RATE_LIMIT_STORE=cache` boot errors, as with `CACHE_STORE=memory`; `CACHE_STORE=database` stays shared.
+- With `QUEUE_CONNECTION=database`, boot creates the queue tables even when a `WithQueueDriverFunc` is set, so the fallback never runs DDL on the first dispatch.
 
 | Feature | API |
 | --- | --- |
