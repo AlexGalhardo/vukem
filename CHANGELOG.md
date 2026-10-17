@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-10-17
+
+### Added
+
+- **auth:** Add owner-scoped Tokens.RevokeFor and Tokens.List
+- **webhook:** Add Standard Webhooks verifier and event dedupe
+- **inertia:** Share locale and translations with I18n middleware
+- **upload:** Cap image dimensions to stop decompression bombs
+- **auth:** Redirect unverified browsers to the verification notice
+- **cli:** Detect the JavaScript package manager from the lockfile
+- **cli:** Tailwind-only Inertia starters with class-based dark mode
+
+### Fixed
+
+- **queue:** Settle database jobs only while holding the reservation
+- **cache:** Store database cache values as BYTEA on Postgres
+- **session:** Do not create a session for read-only visits
+- **vukemtest:** Send the app's asset version from Inertia("")
+- **vukemtest:** Keep GetJSON's Accept header to that request
+- **cli:** Use a real PNG header in the starter upload test
+- **cli:** Embed starter resources when APP_ENV=production
+- **cli:** Render the 2FA QR code as an image, not raw HTML
+
+### Security
+
+- **api:** Refuse idempotency keys with an empty caller scope
+- **session:** Prune expired database sessions hourly
+- **vukemtest:** Add AssertHeaderContains and AssertHeaderMissing
+
 ## [0.21.1] - 2026-10-17
 
 ### Added
@@ -410,7 +439,8 @@ Project foundation. No framework code yet; see [PLAN.md](PLAN.md) for the roadma
 - README, MIT license, CONTRIBUTING, SECURITY and CODE_OF_CONDUCT.
 - Agent configuration: `AGENTS.md`, `CLAUDE.md`, path-scoped `.claude/rules/`, Go skills and project settings.
 
-[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.21.1...HEAD
+[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.22.0...HEAD
+[0.22.0]: https://github.com/AlexGalhardo/vukem/compare/v0.21.1...v0.22.0
 [0.21.1]: https://github.com/AlexGalhardo/vukem/compare/v0.21.0...v0.21.1
 [0.21.0]: https://github.com/AlexGalhardo/vukem/compare/v0.20.1...v0.21.0
 [0.20.1]: https://github.com/AlexGalhardo/vukem/compare/v0.20.0...v0.20.1
