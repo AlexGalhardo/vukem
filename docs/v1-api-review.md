@@ -55,12 +55,12 @@ Every exported function or method that panics on misconfiguration or misuse (as 
 | `uuid.MustParse` | invalid UUID | `uuid.Parse` | keep: `Must*` + error pair |
 | `schedule.MustParseCron` | invalid expression | `schedule.ParseCron` | keep: `Must*` + error pair |
 | `schedule.Task.Cron`, `Every`, `HourlyAt`, `DailyAt`, `WeeklyOn`, `MonthlyOn` | invalid expression, duration, time or day | `schedule.ParseCron` for expressions | keep: fluent DSL evaluated at boot; panics now documented on each method |
-| `i18n.Middleware` | `MiddlewareConfig.Validate` fails | `i18n.NewMiddleware` | **proposal B2**: the only middleware constructor that panics; `csrf.Middleware`, `middleware.CORS`, `webhook.HMAC` and `webhook.Standard` return `(middleware, error)` |
+| `i18n.Middleware` | `MiddlewareConfig.Validate` fails | itself | **B2, applied**: now returns `(middleware, error)` like `csrf.Middleware`, `middleware.CORS`, `webhook.HMAC` and `webhook.Standard`; `i18n.NewMiddleware` is a deprecated `//go:fix inline` alias |
 | `router.Router.ServeHTTP` | the routes fail to compile | `router.Router.Handler` | keep: `App` calls `Handler` at boot; documented |
 | `api.Register` | malformed `"METHOD /path"`, `ValidateResponse` on a non-struct output | none | keep: route registration panics like `http.ServeMux.Handle`; now documented |
 | `jwt.NewGuard` | `Verifier.Err()` reports a misconfiguration | `Verifier.Err` | keep: documented; the check can run before the guard is built |
 | `auth.NewSessionGuard` | `*U` implements `SessionVersioner` but `U` does not | none | keep: a type error caught at boot, documented |
-| `signed.New`, `social.New`, `signed.Signer.WithPreviousKeys`, `social.Social.WithPreviousKeys` | a key shorter than `MinKeyLen` | none | keep for v1; an additive error-returning constructor can come in a 1.x minor if apps need it (proposal B4) |
+| `signed.New`, `social.New`, `signed.Signer.WithPreviousKeys`, `social.Social.WithPreviousKeys` | a key shorter than `MinKeyLen` | none | keep for v1; an additive error-returning constructor can come in a 1.x minor if apps need it (B4, decided: keep) |
 | `config.Key.Derive` | zero key, or `n` above the HKDF limit | `App.DeriveKey` | keep: documented; `IsZero` checks first |
 | `crypt.Encrypter.Seal` | nil `Encrypter` (no `APP_KEY`) | `crypt.New` reports the missing key | keep: documented |
 | `database.Tx.AfterCommit` | `Tx` not started by `DB.Tx` | none | keep: programmer error, documented |
@@ -79,7 +79,8 @@ Rule for new API: constructors and middleware that can be misconfigured by runti
 | --- | --- | --- | --- |
 | `orm.BeforeCreater`, `orm.AfterCreater` | `v0.21.0` (`//go:fix inline`) | 5 (`v0.21.1`–`v0.25.0`) | removed in this branch |
 | `mail.WithAttachments` | `v0.21.0` (`//go:fix inline`) | 5 | removed in this branch |
-| `stripe.Client.Do` | core `v0.25.0` changelog; no `contrib/stripe` tag contains it yet (latest `contrib/stripe/v0.2.0`) | 0 | keep for now: **proposal B1** |
+| `stripe.Client.Do` | core `v0.25.0` changelog; no `contrib/stripe` tag contains it yet (latest `contrib/stripe/v0.2.0`) | 0 | **B1, applied**: removed before `contrib/stripe/v1.0.0` |
+| `i18n.NewMiddleware` | this branch (B2) | 0 | keep through `v1` (`//go:fix inline` alias of `i18n.Middleware`) |
 
 No other `Deprecated:` comment exists outside generated code. The [1.0 upgrade guide](upgrade/1.0.md) now tells apps to run `go fix ./...` on `v0.21`–`v0.25` before bumping, since the aliases are gone in `v1.0.0`.
 
@@ -90,7 +91,7 @@ Any alias still present when `v1.0.0` is tagged stays for all of `v1` ([stabilit
 `internal/tools/apicheck` already implements the gate; nothing in it needs to change for `v1.0.0`. How it works once the tags exist:
 
 1. **Before tagging:** run `task api:check -- -major v0 -head v1.0.0 -report docs/api/apidiff-v0.25.0-to-v1.0.0.md` on the release commit and check that every incompatible entry is listed in the [1.0 upgrade guide](upgrade/1.0.md). Commit the report with the release.
-2. **Tag every published module together:** `v1.0.0` for the core and `drivers/<name>/v1.0.0`, `contrib/<name>/v1.0.0` for each nested module, after their `go.mod` files require core `v1.0.0` (release order in [tooling.md](tooling.md#versioning)). A module without a `v1` tag is skipped with a `::notice`, so it is not protected until its first `v1` tag (proposal B5).
+2. **Tag every published module together:** `v1.0.0` for the core and `drivers/<name>/v1.0.0`, `contrib/<name>/v1.0.0` for each nested module, after their `go.mod` files require core `v1.0.0` (release order in [tooling.md](tooling.md#versioning)). A module without a `v1` tag is skipped with a `::notice`, so it is not protected until its first `v1` tag. Decision B5: every module, including `contrib/imaging`, `drivers/mysql` and `drivers/websocket`, gets `v1.0.0` at release time.
 3. **After tagging:** the `apidiff` job (`go run ./internal/tools/apicheck -major v1`) compares each module's working tree with its highest stable `v1.x.y` tag (pre-releases and build metadata ignored), both type-checked with `GOWORK=off`, and fails with one `::error` per incompatible identifier. The baseline moves forward automatically: each new `v1` tag becomes the comparison base, so there is no baseline file to update.
 4. **Renames** in `v1` keep the old name as a deprecated alias or wrapper with `//go:fix inline`; apidiff sees no change. Additions are always allowed.
 5. **`/v2`:** a major bump changes the module path, so the gate is run with `-major v2` for that module once `v2.0.0` exists; the CI step hard-codes `-major v1` and must be updated then.
@@ -103,17 +104,17 @@ Known limits, recorded so the owner can decide (none blocks `v1.0.0`):
 
 ## Proposed breaking changes (owner decision)
 
-None of these is applied in this branch.
+The owner decided B1, B2, B3, B4, B5 and B7; B6 is still open. B1 and B2 are applied on branch `fix/v1-breaks`; the others need no code change now.
 
-| ID | Change | Why | Cost | Recommendation |
-| --- | --- | --- | --- | --- |
-| B1 | Remove `stripe.Client.Do` (deprecated for `Call`) before `contrib/stripe/v1.0.0` | otherwise it is frozen for all of `v1` | the "two releases" rule is not met: no stripe tag ships the deprecation; apps on `Do` must run `go fix` first | remove at `v1.0.0`, after one `contrib/stripe` `v0` release that carries the deprecation |
-| B2 | `i18n.Middleware` returns `(func(http.Handler) http.Handler, error)`; `NewMiddleware` becomes a deprecated `//go:fix inline` wrapper | the only panicking middleware constructor; `csrf.Middleware` and `middleware.CORS` already return errors | breaks apps calling `i18n.Middleware` directly (in the repository: `docs/subsystems.md` and an example test; the `App` wiring does not use it) | apply before `v1.0.0` |
-| B3 | `middleware.SecureHeaders` returns an error instead of serving a stricter policy when `Validate` fails | consistency with `CORS` | breaks every app wiring it by hand; the current fail-stricter behaviour is safe | keep; no change |
-| B4 | `signed.New` and `social.New` return an error | runtime keys come from `APP_KEY` | breaks callers; `App.DeriveKey` already fails on a missing key before them | keep; add error-returning constructors in a 1.x minor only if needed (additive) |
-| B5 | Decide which nested modules get `v1.0.0`: `contrib/imaging` (`v0.1.0`), `drivers/mysql` (`v0.1.1`) and `drivers/websocket` (`v0.1.1`) have had one release | a `v1` tag freezes them | staying on `v0` leaves them outside the gate, documented as experimental | tag all modules `v1.0.0` together unless one has known API debt |
-| B6 | Add an exception list to `apicheck` for security-driven breaks | the gate has no sanctioned override | new tooling, small | add in a 1.x minor when the first case appears |
-| B7 | Merge `queue.*.SetClock` into a `queue.WithClock` option | one way to set a clock | breaks tests that call `SetClock`; owned by the queue work in progress | keep for v1 |
+| ID | Change | Why | Cost | Recommendation | Decision | Status |
+| --- | --- | --- | --- | --- | --- | --- |
+| B1 | Remove `stripe.Client.Do` (deprecated for `Call`) before `contrib/stripe/v1.0.0` | otherwise it is frozen for all of `v1` | the "two releases" rule is not met: no stripe tag ships the deprecation; apps on `Do` must run `go fix` first | remove at `v1.0.0`, after one `contrib/stripe` `v0` release that carries the deprecation | remove now, without the extra `v0` release | applied: `refactor(stripe)!` |
+| B2 | `i18n.Middleware` returns `(func(http.Handler) http.Handler, error)`; `NewMiddleware` becomes a deprecated `//go:fix inline` wrapper | the only panicking middleware constructor; `csrf.Middleware` and `middleware.CORS` already return errors | breaks apps calling `i18n.Middleware` directly (in the repository: `docs/subsystems.md` and an example test; the `App` wiring does not use it) | apply before `v1.0.0` | apply; `NewMiddleware` stays as the `go fix` path | applied: `feat(i18n)!` |
+| B3 | `middleware.SecureHeaders` returns an error instead of serving a stricter policy when `Validate` fails | consistency with `CORS` | breaks every app wiring it by hand; the current fail-stricter behaviour is safe | keep; no change | keep | no change |
+| B4 | `signed.New` and `social.New` return an error | runtime keys come from `APP_KEY` | breaks callers; `App.DeriveKey` already fails on a missing key before them | keep; add error-returning constructors in a 1.x minor only if needed (additive) | keep | no change |
+| B5 | Decide which nested modules get `v1.0.0`: `contrib/imaging` (`v0.1.0`), `drivers/mysql` (`v0.1.1`) and `drivers/websocket` (`v0.1.1`) have had one release | a `v1` tag freezes them | staying on `v0` leaves them outside the gate, documented as experimental | tag all modules `v1.0.0` together unless one has known API debt | all modules get `v1.0.0` | at release time; no tag now |
+| B6 | Add an exception list to `apicheck` for security-driven breaks | the gate has no sanctioned override | new tooling, small | add in a 1.x minor when the first case appears | open | — |
+| B7 | Merge `queue.*.SetClock` into a `queue.WithClock` option | one way to set a clock | breaks tests that call `SetClock`; owned by the queue work in progress | keep for v1 | keep | no change |
 
 ## Commits
 
@@ -121,3 +122,4 @@ None of these is applied in this branch.
 - `docs(api)`, `docs(z)`, `docs(schedule)`, `docs(orm)`: document panics.
 - `refactor(orm)!`, `refactor(mail)!`: remove the deprecated aliases; `docs(upgrade)`: migration note.
 - `build(lint)`: enforce exported doc comments with revive.
+- `refactor(stripe)!` (B1), `feat(i18n)!` (B2), `docs(api)`: owner decisions, on branch `fix/v1-breaks`.
