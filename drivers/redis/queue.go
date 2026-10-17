@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sync/atomic"
 	"time"
 
 	goredis "github.com/redis/go-redis/v9"
@@ -19,7 +20,8 @@ type QueueOptions struct {
 	// Grace is added to a job's timeout before an abandoned reservation is
 	// taken over (default 1 minute).
 	Grace time.Duration
-	// Now is the clock (default time.Now); tests set it.
+	// Now is the clock that decides when delayed and abandoned jobs are
+	// due (default time.Now); app.Queue sets the app clock (SetClock).
 	Now func() time.Time
 }
 
@@ -30,7 +32,7 @@ type Queue struct {
 	rdb    goredis.UniversalClient
 	prefix string
 	grace  time.Duration
-	now    func() time.Time
+	now    atomic.Pointer[func() time.Time]
 }
 
 // Queue returns a queue driver.
@@ -47,8 +49,22 @@ func (c *Client) Queue(o QueueOptions) *Queue {
 		o.Now = time.Now
 	}
 
-	return &Queue{rdb: c.rdb, prefix: o.Prefix, grace: o.Grace, now: o.Now}
+	q := &Queue{rdb: c.rdb, prefix: o.Prefix, grace: o.Grace}
+	q.now.Store(&o.Now)
+
+	return q
 }
+
+// SetClock replaces QueueOptions.Now; it implements queue.Clock.
+func (q *Queue) SetClock(now func() time.Time) {
+	if now == nil {
+		now = time.Now
+	}
+
+	q.now.Store(&now)
+}
+
+func (q *Queue) clock() time.Time { return (*q.now.Load())() }
 
 func (q *Queue) ready(name string) string    { return q.prefix + "q:" + name + ":ready" }
 func (q *Queue) reserved(name string) string { return q.prefix + "q:" + name + ":reserved" }
@@ -97,7 +113,7 @@ return job`)
 
 // Pop implements queue.Driver.
 func (q *Queue) Pop(ctx context.Context, queues []string) (*queue.Message, error) {
-	now := q.now().UnixMilli()
+	now := q.clock().UnixMilli()
 
 	for _, name := range queues {
 		raw, err := popScript.Run(ctx, q.rdb, []string{q.ready(name), q.reserved(name)},
@@ -153,7 +169,7 @@ func (q *Queue) Release(ctx context.Context, m *queue.Message) error {
 
 // Fail implements queue.Driver.
 func (q *Queue) Fail(ctx context.Context, m *queue.Message) error {
-	now := q.now().UTC()
+	now := q.clock().UTC()
 
 	b, err := json.Marshal(queue.FailedJob{Message: *m, FailedAt: now})
 	if err != nil {
@@ -242,7 +258,7 @@ func (q *Queue) Retry(ctx context.Context, ids ...string) (int, error) {
 		}
 
 		m := fj.Message
-		m.Attempts, m.AvailableAt = 0, q.now().UTC()
+		m.Attempts, m.AvailableAt = 0, q.clock().UTC()
 
 		if err := q.Push(ctx, &m); err != nil {
 			return n, err
