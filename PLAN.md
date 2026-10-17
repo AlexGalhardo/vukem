@@ -583,7 +583,7 @@ Applies to **every** task:
   → verify: findings tracked and closed; every **B** row has its test.
 - [ ] **B.5.5** Supply chain: cosign keyless signing of release artifacts, SBOM published, actions pinned by SHA, OpenSSF Scorecard ≥ 7.
   → verify: `cosign verify-blob` in release workflow; Scorecard badge.
-- [ ] **B.5.3** Performance baseline (router, ORM, render, full request) vs net/http, chi, echo.
+- [x] **B.5.3** Performance baseline (router, ORM, render, full request) vs net/http, chi, echo.
   → verify: `docs/benchmarks.md` committed.
 - [ ] **B.5.4** Docs completeness: every package has overview + examples; guides for each starter.
   → verify: checklist.
