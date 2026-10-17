@@ -7,6 +7,99 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-10-17
+
+### Added
+
+- **schema:** Add named CHECK constraints with Check and DropCheck
+- **orm:** Add row locks with LockForUpdate, ForShare, SkipLocked and NoWait
+- **orm:** Add CreateMany for batched multi-row inserts
+- **z:** Add FieldErrorKey for translatable refine messages
+- **z:** Add StringSchema.Preprocess to normalize before checks
+- **errs:** Add ValidationError.Append without a result
+- **vukemtest:** Add Build to assert that an app fails to build or boot
+- **vukemtest:** Add flash assertions for web and Inertia responses
+- **vukemtest:** Add AssertNoFlash and require a present flash value
+- **vukem:** Run the scheduler inside serve
+- **BREAKING:** **vukem:** Run the scheduler inside serve by default
+- **s3:** Bind presigned PUT URLs to content type and length
+- **mongo:** Add OpenLazy and document MONGO_DATABASE and authSource
+- **redis:** Add OpenLazy so the app can boot while Redis is down
+- **middleware:** Add CSPSources and ReportURI to SecureHeadersConfig
+- **vukem:** Add DefaultMiddlewareWith with CSP, stateless and bypass options
+- **auth:** Add a configurable prefix to api tokens
+- **webhook:** Add hmac, a middleware constructor that fails at boot
+- **BREAKING:** **cli:** Translate install:auth messages with en and pt-BR catalogs
+- **database:** Add the vukem_nosqlite build tag to leave SQLite out
+- **cli:** Add vukem new --minimal and project build tags
+- **session:** Store hashed ids and revoke a user's other sessions
+- **auth:** Record the session user on login
+- **cli:** End other sessions on password reset and 2fa enable
+- **database:** Add Tx.AfterCommit hooks
+- **app:** Add WithJobsFunc so job handlers reach the app
+- **mail:** Add Mailer.SendLater
+- **app:** Encrypt queued mail payloads and wire Mailer.SendLater
+- **vukem:** Add ReadyHandler, CheckHealth and per-check health timeouts
+- **vukem:** Expose Stdout, Stderr and Stdin to app commands
+- **BREAKING:** **vukem:** Boot without APP_KEY outside production and fail closed on use
+- **vukem:** Add lazy cache, session and queue store options
+- **middleware:** Honour X-Forwarded-Proto only from trusted proxies
+- **vukem:** Read TRUSTED_PROXIES and TRUST_FORWARDED_PROTO from the environment
+- **cli:** Ship a production Dockerfile and .dockerignore in every starter
+- **web:** Read the client IP from a named proxy header
+- **cli:** Build the starter image with the tags in .buildtags
+- **vukem:** Warn at boot when TRUSTED_PROXIES trusts every address
+
+### Fixed
+
+- **orm:** Make CreateMany fail closed on unordered ids and pk-only models
+- **z:** Revalidate Preprocess output and reject a nil func
+- **BREAKING:** **z:** Honor FieldError path in Custom parser errors
+- **session:** Expire store sessions by the manager clock
+- **session:** Make the store clock race-free and test Prune with it
+- **schedule:** Bound the wait for running tasks on shutdown
+- **admin:** Match % and _ literally in list search
+- **middleware:** Refuse wildcard hosts and unsafe schemes in CSPSources
+- **vukem:** Refuse SessionBypass with Stateless and document bypass matching
+- **social:** Record used oauth states in the cache store
+- **BREAKING:** **jwt:** Require audience and issuer with a remote key set
+- **social:** Stop reflecting the provider error parameter
+- **BREAKING:** **api:** Bound query page and filter value lists
+- **BREAKING:** **api:** Scope idempotency keys by the authenticated principal
+- **auth:** Keep the session when the user lookup fails
+- **auth:** Treat wrapped no-rows errors from providers as not found
+- **BREAKING:** **jwt:** Detect shared key sets by interface and fail guards at boot
+- **api:** Make idempotency scopes unambiguous across guards and prefixes
+- **api:** Keep default query limits for non-positive values
+- **vite:** Serve public files from the app while the dev server runs
+- **cli:** Load htmx before the vite entry in starter layouts
+- **cli:** Create the social user before returning it
+- **cli:** Let the app's language catalog and English subjects back auth messages
+- **session:** Never resurrect revoked sessions and harden legacy re-key
+- **auth:** Namespace the session owner by guard
+- **cli:** Flash recovery codes before revoking sessions on 2fa enable
+- **BREAKING:** **queue:** Refuse delays on sync and dispatch after commit without TxPusher
+- **cli:** Queue the password reset mail in the auth scaffold
+- **database:** Keep Tx comparable
+- **mail:** Keep Mailer comparable
+- **database:** Isolate AfterCommit hook panics and reject foreign Tx
+- **app:** Turn a WithJobsFunc panic into the Queue error
+- **BREAKING:** **app:** Refuse clear-text queued mail jobs by default
+- **vukem:** Type the readiness body and log write errors
+- **BREAKING:** **signed,social:** Refuse signing keys shorter than 32 bytes
+- **vukem:** Tolerate a missing APP_KEY only with an explicit development or test APP_ENV
+- **cli:** Derive scaffold signing keys with app.DeriveKey
+- **vukem:** Run at most one goroutine per health check
+- **vukem:** Reject nil lazy stores and detect the memory cache through any option
+- **upload:** Log presign response write errors
+- **vukem:** Bracket IPv6 hosts in the listen address
+- **web:** Return client IPs from headers in canonical form
+- **middleware:** Require one X-Forwarded-Proto line and trusted proxies
+
+### Security
+
+- **api:** State that op.security does not authenticate the route
+
 ## [0.23.0] - 2026-10-17
 
 ### Added
@@ -475,7 +568,8 @@ Project foundation. No framework code yet; see [PLAN.md](PLAN.md) for the roadma
 - README, MIT license, CONTRIBUTING, SECURITY and CODE_OF_CONDUCT.
 - Agent configuration: `AGENTS.md`, `CLAUDE.md`, path-scoped `.claude/rules/`, Go skills and project settings.
 
-[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.23.0...HEAD
+[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.24.0...HEAD
+[0.24.0]: https://github.com/AlexGalhardo/vukem/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/AlexGalhardo/vukem/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/AlexGalhardo/vukem/compare/v0.21.1...v0.22.0
 [0.21.1]: https://github.com/AlexGalhardo/vukem/compare/v0.21.0...v0.21.1
