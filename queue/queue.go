@@ -11,6 +11,11 @@
 //
 // Payloads are JSON. Drivers store messages: Sync runs jobs inline, Memory
 // keeps them in process, the database driver (and Redis) persist them.
+// [Queue.Work] runs a worker (vukem queue:work); [Fake] records
+// dispatched jobs in tests. Apps get a queue from app.Queue(), configured
+// by QUEUE_CONNECTION.
+//
+// See https://github.com/AlexGalhardo/vukem/blob/main/docs/subsystems.md#queue.
 package queue
 
 import (

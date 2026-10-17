@@ -6,6 +6,12 @@
 //	tg := telegram.NewHandler(telegram.Config{BotToken: token, ChatID: "-100123", MinLevel: slog.LevelError})
 //	log := slog.New(slog.NewMultiHandler(base, tg))
 //	defer tg.Close(ctx)
+//
+// Without a bot token and chat id the [Handler] is disabled, so apps can
+// always install it; the bot token is a config.Secret and never appears
+// in errors.
+//
+// See https://github.com/AlexGalhardo/vukem/blob/main/docs/subsystems.md#telegram-logging.
 package telegram
 
 import (

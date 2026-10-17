@@ -9,6 +9,13 @@
 //		return err
 //	}
 //	avatar := form.Files[0] // Path, Name, Type, Size, SHA256
+//
+// [Rules] say what a route accepts (a zero Rules rejects everything);
+// [Receive] parses a request, [Save] stores a file from any reader,
+// [Tus] serves resumable uploads and [Presign] / [Direct] hand out
+// direct-to-storage uploads. Files land on a storage.Disk.
+//
+// See https://github.com/AlexGalhardo/vukem/blob/main/docs/subsystems.md#uploads.
 package upload
 
 import (

@@ -9,7 +9,10 @@
 //
 // Async listeners run on a bounded goroutine pool that Shutdown drains.
 // Queued listeners (OnQueued) run as queue jobs, so they survive restarts
-// and are retried.
+// and are retried. Apps get a [Bus] in app.Events; [Fake] records
+// dispatched events in tests.
+//
+// See https://github.com/AlexGalhardo/vukem/blob/main/docs/subsystems.md#events.
 package events
 
 import (

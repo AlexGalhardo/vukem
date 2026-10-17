@@ -1,5 +1,8 @@
 // Package storagetest is the conformance suite every storage.Disk passes
-// (local and memory in core, S3 in drivers/s3).
+// (local and memory in core, S3 in drivers/s3). A new disk calls [Run]
+// and [RunTraversal] from its tests.
+//
+// See https://github.com/AlexGalhardo/vukem/blob/main/docs/subsystems.md#storage.
 package storagetest
 
 import (

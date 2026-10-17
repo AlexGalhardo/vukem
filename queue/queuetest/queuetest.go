@@ -1,6 +1,10 @@
 // Package queuetest is the conformance suite for queue drivers:
 //
 //	queuetest.Run(t, driver, queuetest.Options{Pending: driver.Pending, Advance: clock.Add})
+//
+// Memory and database run it in core, Redis in drivers/redis.
+//
+// See https://github.com/AlexGalhardo/vukem/blob/main/docs/subsystems.md#queue.
 package queuetest
 
 import (

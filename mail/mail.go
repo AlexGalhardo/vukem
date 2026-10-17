@@ -10,6 +10,11 @@
 //	func (m Welcome) Content() mail.Content { return mail.View("mail/welcome", m) }
 //
 //	err := app.Mailer().Send(ctx, Welcome{User: u})
+//
+// The app builds its [Mailer] from MAIL_* variables; [Preview] renders
+// mailables in the browser during development.
+//
+// See https://github.com/AlexGalhardo/vukem/blob/main/docs/subsystems.md#mail.
 package mail
 
 import (

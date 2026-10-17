@@ -5,6 +5,12 @@
 //	disk, err := storage.NewLocal("storage/app/public", "/storage")
 //	path, err := storage.PutUploaded(ctx, disk, fileHeader, "avatars", storage.Images(2<<20))
 //	url := disk.URL(path)
+//
+// Every disk implements [Disk]; [Clean] validates paths, [Handler] serves
+// a disk over HTTP and [TemporaryURL] signs links to private files.
+// Streaming, sniffed uploads live in package upload.
+//
+// See https://github.com/AlexGalhardo/vukem/blob/main/docs/subsystems.md#storage.
 package storage
 
 import (

@@ -5,6 +5,13 @@
 //	user, err := cache.Remember(ctx, app.Cache, "user:42", time.Hour, func(ctx context.Context) (User, error) {
 //		return orm.QueryOf[User](db).Find(ctx, 42)
 //	})
+//
+// [Cache] wraps a [Store] with a key prefix and adds Put, Forget,
+// Increment and distributed locks ([Cache.NewLock]); [Get] and [Remember]
+// decode typed values. Apps get one from app.Cache(), configured by
+// CACHE_STORE.
+//
+// See https://github.com/AlexGalhardo/vukem/blob/main/docs/subsystems.md#cache.
 package cache
 
 import (

@@ -6,7 +6,11 @@
 //	s.Func("ping", func(ctx context.Context) error { ... }).EveryFiveMinutes()
 //
 // Run it in process with Work (vukem schedule:work) or from one cron
-// entry calling RunDue every minute (vukem schedule:run).
+// entry calling RunDue every minute (vukem schedule:run). [Schedule]
+// holds the [Task] list, [Cron] parses five-field expressions, and
+// WithoutOverlapping takes a lock in the Options.Locks cache.
+//
+// See https://github.com/AlexGalhardo/vukem/blob/main/docs/subsystems.md#scheduler.
 package schedule
 
 import (

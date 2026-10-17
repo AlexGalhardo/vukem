@@ -1,5 +1,8 @@
 // Package cachetest is the conformance suite every cache.Store passes
-// (memory and database in core, Redis in drivers/redis).
+// (memory and database in core, Redis in drivers/redis). A new store
+// calls [Run] from one of its tests.
+//
+// See https://github.com/AlexGalhardo/vukem/blob/main/docs/subsystems.md#cache.
 package cachetest
 
 import (
