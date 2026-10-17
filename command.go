@@ -38,6 +38,10 @@ type Command interface {
 
 var errUsage = errors.New("usage error")
 
+// rawArgsCommand is a built-in command that parses its own arguments
+// (db:seed: the seeder flags depend on the seeders its names pick).
+type rawArgsCommand interface{ rawArgs() }
+
 // AddCommand registers commands. Call it from a provider's Register.
 func (a *App) AddCommand(cmds ...Command) {
 	a.mu.Lock()
@@ -96,6 +100,11 @@ func runCommand(ctx context.Context, app *App, name string, args []string) error
 	fset := flag.NewFlagSet(name, flag.ContinueOnError)
 	fset.SetOutput(app.stdout)
 	cmd.Flags(fset)
+
+	if _, raw := cmd.(rawArgsCommand); raw {
+		// "--" ends flag parsing, so every argument reaches Run as is.
+		args = append([]string{"--"}, args...)
+	}
 
 	if err := fset.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {

@@ -8,7 +8,8 @@
 //
 // Factories are values: State, Count, Seed and AfterCreate return copies,
 // so a base factory can be shared. Make builds values in memory; Create
-// also inserts them through orm.Create. A [Faker] seeded per factory makes
+// also inserts them through orm.Create, CreateMany in batches through
+// orm.CreateMany. A [Faker] seeded per factory makes
 // the data reproducible (Seed), which seeders and golden tests rely on.
 //
 // See https://github.com/AlexGalhardo/vukem/blob/main/docs/database.md#factories-and-seeders.
@@ -30,6 +31,7 @@ type Factory[T any] struct {
 	def    func(f *Faker) T
 	states []func(*T)
 	after  []func(ctx context.Context, ex database.Executor, m *T) error
+	locale Locale
 	count  int
 	seed   uint64
 	seeded bool
@@ -59,6 +61,14 @@ func (f Factory[T]) Seed(seed uint64) Factory[T] {
 	return f
 }
 
+// Locale makes the definition's Faker generate data in l:
+//
+//	Products.Locale(factory.LocalePTBR()).Seed(42).Count(100).Make()
+func (f Factory[T]) Locale(l Locale) Factory[T] {
+	f.locale = l
+	return f
+}
+
 // AfterCreate runs fn for every created model, inside Create; use it to
 // create related models:
 //
@@ -80,7 +90,7 @@ func (f Factory[T]) Make() []T {
 		seed = binary.LittleEndian.Uint64(b[:])
 	}
 
-	fk := NewFaker(seed)
+	fk := NewFaker(seed).WithLocale(f.locale)
 	out := make([]T, f.count)
 
 	for i := range out {
@@ -109,6 +119,47 @@ func (f Factory[T]) Create(ctx context.Context, ex database.Executor) ([]T, erro
 				return fmt.Errorf("factory: create %T: %w", items[i], err)
 			}
 
+			for _, fn := range f.after {
+				if err := fn(ctx, tx, &items[i]); err != nil {
+					return err
+				}
+			}
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return items, nil
+}
+
+// CreateMany builds Count models and inserts them with orm.CreateMany:
+// multi-row INSERTs split under the dialect's bound-parameter limit, with
+// the generated ids written back (RETURNING on PostgreSQL and SQLite, one
+// INSERT per row on MySQL). AfterCreate hooks run once every row is
+// stored, in order, inside the same transaction.
+//
+// Given a *database.DB, CreateMany opens that transaction and an insert or
+// hook error rolls back every row. Given a *database.Tx it joins it: the
+// error is returned and the caller owns the rollback (db.Tx rolls back when
+// its function returns the error).
+//
+// Prefer it to Create for seeding many rows; Create inserts one row at a
+// time and runs each model's hooks right after its insert.
+func (f Factory[T]) CreateMany(ctx context.Context, ex database.Executor) ([]T, error) {
+	items := f.Make()
+	if len(items) == 0 {
+		return items, nil
+	}
+
+	err := database.RunInTx(ctx, ex, func(tx *database.Tx) error {
+		if err := orm.CreateMany(ctx, tx, items); err != nil {
+			return fmt.Errorf("factory: create %T: %w", items[0], err)
+		}
+
+		for i := range items {
 			for _, fn := range f.after {
 				if err := fn(ctx, tx, &items[i]); err != nil {
 					return err

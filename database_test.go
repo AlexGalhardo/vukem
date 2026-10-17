@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"log/slog"
@@ -916,4 +917,311 @@ func TestStoreOptionsLastWins(t *testing.T) {
 	if _, err := app.Cache(); err != nil {
 		t.Fatalf("Cache() = %v, want the later WithCacheStore to win", err)
 	}
+}
+
+// flagSeeder records its runs and the flag values it saw.
+type flagSeeder struct {
+	name    string
+	count   bool // defines --count as well as --fresh
+	defines string
+	log     *[]string
+	fresh   bool
+	n       int
+}
+
+func (s *flagSeeder) Name() string { return s.name }
+
+func (s *flagSeeder) SeedFlags(fs *flag.FlagSet) {
+	fs.BoolVar(&s.fresh, "fresh", false, "drop the demo rows first")
+
+	if s.count {
+		fs.IntVar(&s.n, "count", 10, "rows to create")
+	}
+
+	if s.defines != "" {
+		fs.Bool(s.defines, false, "shadows a db:seed flag")
+	}
+}
+
+func (s *flagSeeder) SeedApp(context.Context, *App) error {
+	*s.log = append(*s.log, fmt.Sprintf("%s fresh=%v n=%d", s.name, s.fresh, s.n))
+	return nil
+}
+
+func TestSeedCommandSelectsSeedersAndPassesFlags(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		env     string
+		args    []string
+		want    []string
+		wantErr string // substring of the error or output; "" means success
+	}{
+		{
+			name: "all in order",
+			args: nil,
+			want: []string{"DemoCatalog fresh=false n=10", "Users fresh=false n=0", "plain"},
+		},
+		{
+			name: "positional name and flags", args: []string{"DemoCatalog", "--fresh", "--count", "3"},
+			want: []string{"DemoCatalog fresh=true n=3"},
+		},
+		{
+			name: "class flag",
+			args: []string{"--class", "DemoCatalog", "--count=5"},
+			want: []string{"DemoCatalog fresh=false n=5"},
+		},
+		{
+			name: "class then seeder flag",
+			args: []string{"--class", "DemoCatalog", "--fresh"},
+			want: []string{"DemoCatalog fresh=true n=10"},
+		},
+		{
+			name: "class among seeder flags",
+			env:  "production",
+			args: []string{"--force", "--count", "2", "--class", "DemoCatalog"},
+			want: []string{"DemoCatalog fresh=false n=2"},
+		},
+		{
+			name: "class twice",
+			args: []string{"--class=Users", "-class", "DemoCatalog"},
+			want: []string{"Users fresh=false n=0", "DemoCatalog fresh=false n=10"},
+		},
+		{
+			name: "argument order wins",
+			args: []string{"Users", "DemoCatalog"},
+			want: []string{"Users fresh=false n=0", "DemoCatalog fresh=false n=10"},
+		},
+		{
+			name: "case and Seeder suffix",
+			args: []string{"users", "plain"},
+			want: []string{"Users fresh=false n=0", "plain"},
+		},
+		{
+			name: "duplicates run once",
+			args: []string{"Users", "--class", "users"},
+			want: []string{"Users fresh=false n=0"},
+		},
+		{
+			name: "shared flag reaches every seeder",
+			args: []string{"--fresh"},
+			want: []string{"DemoCatalog fresh=true n=10", "Users fresh=true n=0", "plain"},
+		},
+		{name: "unknown seeder", args: []string{"Nope"}, wantErr: `unknown seeder "Nope"`},
+		{
+			name:    "unknown flag",
+			args:    []string{"DemoCatalog", "--bogus"},
+			wantErr: "flag provided but not defined: -bogus",
+		},
+		{
+			name:    "flag of an unselected seeder",
+			args:    []string{"Users", "--count", "3"},
+			wantErr: "flag provided but not defined: -count",
+		},
+		{
+			name:    "stray argument",
+			args:    []string{"DemoCatalog", "--fresh", "extra"},
+			wantErr: `unexpected argument "extra"`,
+		},
+		{
+			name:    "production without force",
+			env:     "production",
+			args:    []string{"DemoCatalog", "--fresh"},
+			wantErr: "without --force",
+		},
+		{
+			name: "production force after the name",
+			env:  "production",
+			args: []string{"DemoCatalog", "--fresh", "--force"},
+			want: []string{"DemoCatalog fresh=true n=10"},
+		},
+		{
+			name: "production force first",
+			env:  "production",
+			args: []string{"--force", "Users"},
+			want: []string{"Users fresh=false n=0"},
+		},
+		{name: "help", args: []string{"DemoCatalog", "-h"}, wantErr: "-count"},
+		{
+			name:    "force is never a seeder flag value",
+			env:     "production",
+			args:    []string{"DemoCatalog", "--count", "--force"},
+			wantErr: "flag needs an argument: -count",
+		},
+		{name: "class without a name", args: []string{"--class"}, wantErr: "-class needs a seeder name"},
+		{
+			name:    "class without a name in production",
+			env:     "production",
+			args:    []string{"--force", "--class"},
+			wantErr: "-class needs a seeder name",
+		},
+		{
+			name:    "empty class",
+			env:     "production",
+			args:    []string{"--force", "--class="},
+			wantErr: "-class needs a seeder name",
+		},
+		{
+			name:    "class without a name after flags",
+			args:    []string{"--fresh", "--class"},
+			wantErr: "-class needs a seeder name",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var (
+				log []string
+				out bytes.Buffer
+			)
+
+			env := tt.env
+			if env == "" {
+				env = "test"
+			}
+			getenv := func(k string) (string, bool) {
+				v, ok := map[string]string{"APP_KEY": testKey, "APP_ENV": env, "DATABASE_URL": ":memory:"}[k]
+				return v, ok
+			}
+
+			plain := NamedAppSeeder("plainSeeder", func(context.Context, *App) error {
+				log = append(log, "plain")
+				return nil
+			})
+
+			build := func(opts ...Option) (*App, error) {
+				return New(append(opts, WithLogger(discardLogger()), WithStdout(&out), WithAppSeeders(
+					&flagSeeder{name: "DemoCatalog", count: true, log: &log},
+					&flagSeeder{name: "Users", log: &log},
+					plain,
+				))...)
+			}
+
+			err := RunMain(t.Context(), append([]string{"app", "db:seed"}, tt.args...), getenv, build)
+
+			if tt.wantErr != "" {
+				if got := fmt.Sprint(
+					err,
+				) + out.String(); (err == nil && tt.name != "help") ||
+					!strings.Contains(got, tt.wantErr) {
+					t.Fatalf("db:seed %v = %v, output %q, want %q", tt.args, err, out.String(), tt.wantErr)
+				}
+
+				if len(log) != 0 {
+					t.Fatalf("db:seed %v ran %v after failing", tt.args, log)
+				}
+
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("db:seed %v = %v, output %q", tt.args, err, out.String())
+			}
+
+			if diff := cmp.Diff(tt.want, log); diff != "" {
+				t.Errorf("db:seed %v runs (-want +got):\n%s", tt.args, diff)
+			}
+		})
+	}
+}
+
+func TestSecurity_A02_SeederFlagsCannotShadowForce(t *testing.T) {
+	t.Parallel()
+
+	for _, reserved := range []string{"force", "class", "help", "h"} {
+		t.Run(reserved, func(t *testing.T) {
+			t.Parallel()
+
+			var log []string
+
+			getenv := func(k string) (string, bool) {
+				v, ok := map[string]string{"APP_KEY": testKey, "APP_ENV": "production", "DATABASE_URL": ":memory:"}[k]
+				return v, ok
+			}
+
+			build := func(opts ...Option) (*App, error) {
+				return New(append(opts, WithLogger(discardLogger()), WithStdout(io.Discard),
+					WithAppSeeders(&flagSeeder{name: "Sneaky", defines: reserved, log: &log}))...)
+			}
+
+			err := RunMain(t.Context(), []string{"app", "db:seed", "--" + reserved}, getenv, build)
+			if err == nil || len(log) != 0 {
+				t.Fatalf(
+					"db:seed with a seeder defining --%s = %v, ran %v; want an error and no run",
+					reserved,
+					err,
+					log,
+				)
+			}
+		})
+	}
+}
+
+// uncomparableSeeder is a value seeder that == would panic on.
+type uncomparableSeeder struct {
+	tags []string
+	log  *[]string
+}
+
+func (s uncomparableSeeder) Name() string { return "Tags" }
+
+func (s uncomparableSeeder) SeedApp(context.Context, *App) error {
+	*s.log = append(*s.log, "tags")
+	return nil
+}
+
+type valueFlagSeeder struct{}
+
+func (valueFlagSeeder) Name() string { return "ValueFlags" }
+
+func (s valueFlagSeeder) SeedFlags(fs *flag.FlagSet) { fs.Bool("fresh", false, "") }
+
+func (valueFlagSeeder) SeedApp(context.Context, *App) error { return nil }
+
+func TestSeedCommandSeederKinds(t *testing.T) {
+	t.Parallel()
+
+	run := func(t *testing.T, seeder AppSeeder, args ...string) (string, error) {
+		t.Helper()
+
+		var out bytes.Buffer
+
+		getenv := func(k string) (string, bool) {
+			v, ok := map[string]string{"APP_KEY": testKey, "APP_ENV": "test", "DATABASE_URL": ":memory:"}[k]
+			return v, ok
+		}
+
+		build := func(opts ...Option) (*App, error) {
+			return New(append(opts, WithLogger(discardLogger()), WithStdout(&out), WithAppSeeders(seeder))...)
+		}
+
+		err := RunMain(t.Context(), append([]string{"app", "db:seed"}, args...), getenv, build)
+
+		return out.String(), err
+	}
+
+	t.Run("uncomparable value seeder named twice", func(t *testing.T) {
+		t.Parallel()
+
+		var log []string
+
+		if out, err := run(t, uncomparableSeeder{tags: []string{"a"}, log: &log}, "Tags", "tags"); err != nil {
+			t.Fatalf("db:seed Tags tags = %v, output %q", err, out)
+		}
+
+		if diff := cmp.Diff([]string{"tags"}, log); diff != "" {
+			t.Errorf("runs (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("value receiver with flags", func(t *testing.T) {
+		t.Parallel()
+
+		if _, err := run(t, valueFlagSeeder{}); err == nil || !strings.Contains(err.Error(), "pointer") {
+			t.Fatalf("db:seed with a value FlagSeeder = %v, want a pointer receiver error", err)
+		}
+	})
 }

@@ -15,6 +15,7 @@ package dbtest
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"slices"
 	"testing"
@@ -133,13 +134,14 @@ func Run(t *testing.T, db *database.DB) {
 	run("Queue", testQueue)
 	run("BulkLocksChecks", testBulkLocksChecks)
 	run("PartialIndexRebind", testPartialIndexRebind)
+	run("AggregateTimes", testAggregateTimes)
 }
 
 func clean(ctx context.Context, t *testing.T, db *database.DB) {
 	t.Helper()
 
 	s := schema.New(ctx, db)
-	for _, table := range []string{"dbt_book_tag", "dbt_tags", "dbt_books", "dbt_authors", "dbt_tmp", "dbt_renamed", "dbt_jobs", "dbt_failed_jobs", "dbt_old_jobs", "dbt_old_failed_jobs", "dbt_numbers", "dbt_desc"} {
+	for _, table := range []string{"dbt_book_tag", "dbt_tags", "dbt_books", "dbt_authors", "dbt_tmp", "dbt_renamed", "dbt_jobs", "dbt_failed_jobs", "dbt_old_jobs", "dbt_old_failed_jobs", "dbt_numbers", "dbt_desc", "dbt_events"} {
 		if err := s.DropIfExists(table); err != nil {
 			t.Fatalf("drop %s: %v", table, err)
 		}
@@ -539,4 +541,98 @@ func testPartialIndexRebind(ctx context.Context, t *testing.T, db *database.DB) 
 	), 7).Scan(&n); err != nil || n != 2 {
 		t.Fatalf("count = %d, %v, want 2", n, err)
 	}
+}
+
+// testAggregateTimes checks that MIN/MAX/COALESCE over a timestamp column
+// scan through database.ScanTime into every time destination on every
+// dialect. SQLite reports no declared type for an aggregate, so its driver
+// hands back the stored text, which a bare Scan cannot store in a
+// time.Time.
+func testAggregateTimes(ctx context.Context, t *testing.T, db *database.DB) {
+	t.Helper()
+
+	s := schema.New(ctx, db)
+
+	if err := s.Create("dbt_events", func(t *schema.Table) {
+		t.ID()
+		t.String("name")
+		t.Timestamp("happened_at")
+		t.Timestamp("closed_at").Nullable()
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() { _ = schema.New(context.Background(), db).DropIfExists("dbt_events") })
+
+	first := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	last := time.Date(2026, 6, 7, 8, 9, 10, 0, time.UTC)
+	insert := database.Rebind(db.Dialect(), "INSERT INTO dbt_events (name, happened_at) VALUES (?, ?)")
+
+	for name, at := range map[string]time.Time{"2026-01-02": first, "zeta": last} {
+		if _, err := db.ExecContext(ctx, insert, name, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	scanRow := func(t *testing.T, query string, dest any) {
+		t.Helper()
+
+		if err := db.QueryRowContext(ctx, query).Scan(dest); err != nil {
+			t.Fatalf("%s: Scan = %v", query, err)
+		}
+	}
+
+	t.Run("time.Time", func(t *testing.T) {
+		var lo, hi time.Time
+
+		scanRow(t, "SELECT MIN(happened_at) FROM dbt_events", database.ScanTime(&lo))
+		scanRow(t, "SELECT MAX(happened_at) FROM dbt_events", database.ScanTime(&hi))
+
+		if !lo.Equal(first) || !hi.Equal(last) {
+			t.Fatalf("MIN, MAX = %v, %v, want %v, %v", lo, hi, first, last)
+		}
+	})
+
+	t.Run("pointer", func(t *testing.T) {
+		var lo, none *time.Time
+
+		scanRow(t, "SELECT COALESCE(MIN(happened_at), MAX(happened_at)) FROM dbt_events", database.ScanTime(&lo))
+		scanRow(t, "SELECT MIN(closed_at) FROM dbt_events", database.ScanTime(&none))
+
+		if lo == nil || !lo.Equal(first) || none != nil {
+			t.Fatalf("COALESCE(MIN), MIN(NULL) = %v, %v, want %v, nil", lo, none, first)
+		}
+	})
+
+	t.Run("sql.NullTime", func(t *testing.T) {
+		var lo, none sql.NullTime
+
+		scanRow(t, "SELECT MIN(happened_at) FROM dbt_events", database.ScanTime(&lo))
+		scanRow(t, "SELECT MAX(closed_at) FROM dbt_events", database.ScanTime(&none))
+
+		if !lo.Valid || !lo.Time.Equal(first) || none.Valid {
+			t.Fatalf("MIN, MAX(NULL) = %+v, %+v, want %v and invalid", lo, none, first)
+		}
+	})
+
+	t.Run("orm.NullTime", func(t *testing.T) {
+		var lo orm.NullTime
+
+		scanRow(t, "SELECT (SELECT MIN(happened_at) FROM dbt_events) AS lo", database.ScanTime(&lo.Null))
+
+		if !lo.Valid || !lo.V.Equal(first) {
+			t.Fatalf("MIN = %+v, want %v", lo, first)
+		}
+	})
+
+	t.Run("text stays text", func(t *testing.T) {
+		var lo, hi string
+
+		scanRow(t, "SELECT MIN(name) FROM dbt_events", &lo)
+		scanRow(t, "SELECT MAX(name) FROM dbt_events", &hi)
+
+		if lo != "2026-01-02" || hi != "zeta" {
+			t.Fatalf("MIN(name), MAX(name) = %q, %q, want 2026-01-02, zeta", lo, hi)
+		}
+	})
 }

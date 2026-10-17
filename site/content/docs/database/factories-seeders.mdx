@@ -25,7 +25,47 @@ withPosts := factories.User.AfterCreate(func(ctx context.Context, ex database.Ex
 ```
 
 - Factories are values: `State`, `Count`, `Seed` and `AfterCreate` return copies, so a base factory can be shared.
+- `Create` inserts one row per statement. For seeding many rows use `CreateMany`, which batches through `orm.CreateMany`:
+
+```go
+products, err := factories.Product.Seed(42).Count(2000).CreateMany(ctx, db)
+```
+
+`CreateMany` splits the rows into multi-row `INSERT`s under the dialect's bound-parameter limit and writes the generated ids back (`RETURNING` on PostgreSQL and SQLite; MySQL cannot report the ids of a multi-row insert, so there each row is its own `INSERT`). `AfterCreate` hooks run after every row is stored, in order, in the same transaction. Given a `*database.DB`, `CreateMany` opens that transaction and an insert or hook error rolls back every row; given a `*database.Tx` it joins it, returns the error and leaves the rollback to you (`db.Tx` rolls back when its function returns the error). On a local SQLite file 1000 users take 20 ms instead of 65 ms; against a networked database the gain is larger.
 - `factory.Faker` has no dependency: `Name`, `FirstName`, `LastName`, `Username`, `Email` (reserved example domains), `Word`, `Words`, `Sentence`, `Paragraph`, `Slug`, `URL`, `UUID`, `Int`, `Float`, `Bool`, `Time`, `factory.Pick(f, ...)` and `Seq()`. It uses `math/rand/v2` and must never generate secrets.
+
+### Locales and commerce data
+
+`factory.LocaleEN()` and `factory.LocalePTBR()` switch the Faker to English or Brazilian Portuguese data, embedded in the package. Seeded output stays reproducible per locale:
+
+```go title="database/factories/product_factory.go"
+var Product = factory.New(func(f *factory.Faker) models.Product {
+	return models.Product{
+		Title:       f.ProductTitle(),       // "Cadeira Ergonômica de Aço"
+		Description: f.ProductDescription(), // "Mochila Leve de Couro, ideal para o dia a dia. Envio em 24 horas."
+		Category:    f.Category(),           // "Casa e Cozinha"
+		Seller:      f.Company(),            // "Silva & Costa Comércio Ltda"
+	}
+}).Locale(factory.LocalePTBR())
+
+catalog := factories.Product.Seed(42).Count(2000).Make()
+```
+
+| Method | `LocaleEN()` | `LocalePTBR()` |
+| --- | --- | --- |
+| `Name`, `Word`, `Sentence` | English names and words | Brazilian names, Portuguese words |
+| `Company` | `Baker Logistics LLC` | `Soares & Alves Papelaria Ltda` |
+| `ProductTitle`, `ProductDescription`, `Category` | `Vintage Leather Lamp`, `Electronics` | `Luminária Vintage de Couro`, `Eletrônicos` |
+| `StreetAddress`, `City`, `State`, `PostalCode` | `2417 Sunset St`, `Georgetown`, `KY`, ZIP | `Rua Getúlio Vargas, 2417`, `Fortaleza`, `CE`, CEP |
+| `Address` (city and state match) | `2417 Sunset St, Georgetown, KY 34691` | `Rua Getúlio Vargas, 2417 - Fortaleza/CE, 34691-928` |
+
+- `f.EmailFor(name)` derives the address from a name you already generated (`ana.luiza.13120@example.com`), on the same reserved domains as `Email`.
+- `f.FakeCPF()` returns a CPF-formatted string (`867.974.402-70`) whose first check digit is always wrong: it can never be a real person's CPF, and every standard CPF validator rejects it. Seed the column directly.
+- `factory.NewFaker(seed).WithLocale(l)` builds a Faker outside a factory.
+
+<Callout type="warning">
+Without a locale the Faker is **not** English: it keeps its original data set (mostly Brazilian first names, lorem ipsum), so seeds written before locales produce the same rows. Only the methods that data set never had (`Company`, the product and address methods) use English there. Pass `factory.LocaleEN()` for consistent English data.
+</Callout>
 
 ## Seeders
 
@@ -39,12 +79,58 @@ func (PostsSeeder) Seed(ctx context.Context, db *database.DB) error {
 }
 ```
 
+### Running seeders
+
 ```bash
-vukem db:seed   # runs every seeder in vukem.WithSeeders(seeders.All()...), in order
-vukem db:wipe   # drops every table
+vukem db:seed                              # every seeder in vukem.WithSeeders(seeders.All()...), in order
+vukem db:seed DemoCatalog Users            # only these, in this order
+vukem db:seed --class DemoCatalog          # same as a name; repeatable
+vukem db:seed DemoCatalog --fresh          # flags after the names go to the seeders
+vukem db:seed DemoCatalog --fresh --force  # production
+vukem db:wipe                              # drops every table
 ```
 
-Both commands need `--force` in production. Tests call `app.Seed(ctx)`.
+A name matches the seeder's name (`Name()` or its Go type) case-insensitively, also without the `Seeder` suffix (`posts` runs `PostsSeeder`). An unknown or ambiguous name fails before any seeder runs, and so do unknown flags, stray arguments and a `--class` without a name.
+
+Both commands need `--force` in production. `--force` may come before or after the names; `db:seed` checks it after parsing everything and before the first seeder runs. Tests call `app.Seed(ctx)`, which runs every seeder with its flag defaults.
+
+### Seeder flags
+
+A seeder that takes options implements `vukem.FlagSeeder` and binds its flags to fields of a pointer receiver:
+
+```go title="database/seeders/demo_catalog.go"
+type DemoCatalog struct {
+	fresh bool
+	count int
+}
+
+func (s *DemoCatalog) SeedFlags(fs *flag.FlagSet) {
+	fs.BoolVar(&s.fresh, "fresh", false, "delete the demo catalog first")
+	fs.IntVar(&s.count, "count", 2000, "products to create")
+}
+
+func (s *DemoCatalog) SeedApp(ctx context.Context, app *vukem.App) error {
+	db, err := app.DB()
+	if err != nil {
+		return err
+	}
+
+	if s.fresh {
+		if _, err := db.ExecContext(ctx, "DELETE FROM products WHERE demo = ?", true); err != nil {
+			return err
+		}
+	}
+
+	_, err = factories.Product.Seed(42).Count(s.count).CreateMany(ctx, db)
+	return err
+}
+```
+
+```go title="bootstrap/app.go"
+vukem.WithAppSeeders(&seeders.DemoCatalog{}),
+```
+
+`vukem db:seed DemoCatalog --fresh --count 500` sets both fields; `vukem db:seed DemoCatalog -h` lists the flags. Only the flags of the seeders that run are accepted, and every seeder that defines a flag receives its value (`db:seed --fresh` reaches each seeder with a `--fresh` flag). `--force`, `--class`, `--help` and `-h` belong to `db:seed`: a seeder that defines one fails the command, so no seeder can take over the production check or hide the usage. `db:seed` always reads `--force` and `--class` as its own flags, so they cannot be values of a seeder flag (`--note --force` sets `--force` and fails because `--note` has no value). Register a seeder with flags as a pointer (`&seeders.DemoCatalog{}`): flags bound to a value would set a copy, so `db:seed` refuses a value seeder that defines flags.
 
 ### Seeders that need the app
 
