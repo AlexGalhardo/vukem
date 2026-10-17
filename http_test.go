@@ -1201,7 +1201,8 @@ func TestSecurity_A09_WarnsOnceOnProxyHeadersWithoutTrustedProxies(t *testing.T)
 		env    map[string]string
 		peer   string
 		header string
-		want   int // warnings after three requests
+		ip     string // c.IP(); default the peer host
+		want   int    // warnings after three requests
 	}{
 		{name: "railway edge", peer: "100.64.0.7:4000", header: "X-Real-IP", want: 1},
 		{name: "private peer xff", peer: "10.1.2.3:4000", header: "X-Forwarded-For", want: 1},
@@ -1214,6 +1215,7 @@ func TestSecurity_A09_WarnsOnceOnProxyHeadersWithoutTrustedProxies(t *testing.T)
 			env:    map[string]string{"TRUSTED_PROXIES": "100.64.0.0/24", "CLIENT_IP_HEADER": "X-Real-IP"},
 			peer:   "100.64.0.7:4000",
 			header: "X-Real-IP",
+			ip:     "203.0.113.9",
 		},
 		{
 			name:   "not production",
@@ -1250,9 +1252,13 @@ func TestSecurity_A09_WarnsOnceOnProxyHeadersWithoutTrustedProxies(t *testing.T)
 				}
 
 				// Without TRUSTED_PROXIES the header is never trusted, warning or not.
-				got := proxyReq(t, app, tt.peer, header).Body.String()
-				if tt.env["TRUSTED_PROXIES"] == "" && got != host {
-					t.Fatalf("IP() = %q, want peer %q", got, host)
+				want := host
+				if tt.ip != "" {
+					want = tt.ip
+				}
+
+				if got := proxyReq(t, app, tt.peer, header).Body.String(); got != want {
+					t.Fatalf("IP() = %q, want %q", got, want)
 				}
 			}
 
