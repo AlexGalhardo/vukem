@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"errors"
+	"net/http"
 	"path/filepath"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/AlexGalhardo/vukem/internal/testutil"
+	"github.com/AlexGalhardo/vukem/web"
 )
 
 func openSQLite(t *testing.T) *sql.DB {
@@ -210,5 +212,100 @@ func TestSecurity_A07_RevokeOtherSessions(t *testing.T) {
 				t.Fatalf("current session after RevokeOthers(keep \"\") = %q, want signed out", got)
 			}
 		})
+	}
+}
+
+// A request that was in flight when its session was revoked must not
+// write the row back: existing sessions are updated, never re-inserted.
+func TestSecurity_A07_RevokedSessionNotResurrected(t *testing.T) {
+	t.Parallel()
+
+	for name, store := range storesUnderTest(t) {
+		if store == nil {
+			continue // cookie sessions cannot be revoked
+		}
+
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			m, clk := newManager(t, Config{Store: store})
+			setStoreClock(store, clk.Now)
+
+			mux := http.NewServeMux()
+			mux.Handle("GET /stale", m.Middleware()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				s := web.SessionFrom(r.Context())
+				_ = s.Get("user") // loaded before the revocation
+				if err := m.RevokeOthers(r.Context(), "7", ""); err != nil {
+					t.Error(err)
+				}
+				s.Put("user", "stale write")
+				_, _ = w.Write([]byte("ok"))
+			})))
+
+			login := newClient(t, appHandler(m, &bytes.Buffer{}))
+			id := login.do("GET", "/as?u=7", nil).Body.String()
+
+			stale := newClient(t, mux)
+			stale.cookies = login.cookies
+
+			rec := stale.do("GET", "/stale", nil)
+
+			if _, found, err := store.Load(t.Context(), id); err != nil || found {
+				t.Fatalf("Load(revoked id) after a stale write = found %v, %v; want gone", found, err)
+			}
+
+			for _, ck := range rec.Result().Cookies() {
+				if ck.Name == m.CookieName() && ck.MaxAge >= 0 {
+					t.Fatalf("stale request set session cookie %v, want it cleared", ck)
+				}
+			}
+		})
+	}
+}
+
+// A legacy row deleted (revoked, logged out) between its read and its
+// re-key is not accepted.
+func TestSQLStoreLegacyRowDeletedDuringRekey(t *testing.T) {
+	t.Parallel()
+
+	db := openSQLite(t)
+	ctx := t.Context()
+
+	if _, err := db.ExecContext(ctx,
+		"CREATE TABLE sessions (id TEXT PRIMARY KEY, data TEXT NOT NULL, expires_at BIGINT NOT NULL)"); err != nil {
+		t.Fatal(err)
+	}
+
+	const legacy = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	if _, err := db.ExecContext(ctx, "INSERT INTO sessions (id, data, expires_at) VALUES (?, ?, ?)",
+		legacy, `{"v":1}`, time.Now().Add(time.Hour).Unix()); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := NewSQLStore(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateTable(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	store.beforeRekey = func() {
+		if _, err := db.ExecContext(ctx, "DELETE FROM sessions WHERE id = ?", legacy); err != nil {
+			t.Error(err)
+		}
+	}
+
+	if data, found, err := store.Load(ctx, legacy); err != nil || found {
+		t.Fatalf("Load(legacy deleted during rekey) = %s %v %v, want not found", data, found, err)
+	}
+}
+
+func setStoreClock(store Store, now func() time.Time) {
+	switch s := store.(type) {
+	case *SQLStore:
+		s.setClock(now)
+	case *MemoryStore:
+		s.setClock(now)
 	}
 }

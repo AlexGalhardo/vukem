@@ -12,7 +12,6 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -34,8 +33,12 @@ type Store interface {
 // SQLStore and MemoryStore implement it; cookie sessions cannot.
 type UserStore interface {
 	Store
-	// SaveUser is Save that also records userID ("" for a guest session).
-	SaveUser(ctx context.Context, id, userID string, data []byte, expiry time.Time) error
+	// Create stores a new session owned by userID ("" for a guest).
+	Create(ctx context.Context, id, userID string, data []byte, expiry time.Time) error
+	// Update rewrites an existing session and returns ErrSessionNotFound
+	// when it is gone (revoked, logged out, pruned): a request that was in
+	// flight during a revocation must not write the session back.
+	Update(ctx context.Context, id, userID string, data []byte, expiry time.Time) error
 	// RevokeOthers deletes every session of userID except keepID ("" keeps
 	// none).
 	RevokeOthers(ctx context.Context, userID, keepID string) error
@@ -47,6 +50,10 @@ type UserStore interface {
 var ErrRevokeUnsupported = errors.New(
 	"session: revoking sessions needs a server-side UserStore (SESSION_DRIVER=database)",
 )
+
+// ErrSessionNotFound is returned by UserStore.Update when the session no
+// longer exists.
+var ErrSessionNotFound = errors.New("session: session not found")
 
 var errNoUser = errors.New("session: RevokeOthers needs a user id")
 
@@ -98,10 +105,24 @@ func (m *MemoryStore) Save(_ context.Context, id string, data []byte, expiry tim
 	return nil
 }
 
-// SaveUser implements UserStore.
-func (m *MemoryStore) SaveUser(_ context.Context, id, userID string, data []byte, expiry time.Time) error {
+// Create implements UserStore.
+func (m *MemoryStore) Create(_ context.Context, id, userID string, data []byte, expiry time.Time) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	m.put(id, userID, data, expiry)
+
+	return nil
+}
+
+// Update implements UserStore.
+func (m *MemoryStore) Update(_ context.Context, id, userID string, data []byte, expiry time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if it, ok := m.items[id]; !ok || !m.now().Before(it.expiry) {
+		return ErrSessionNotFound
+	}
 
 	m.put(id, userID, data, expiry)
 
@@ -176,8 +197,10 @@ type SQLStore struct {
 	mysql       bool
 
 	// Queries are built once from the validated table name.
-	qCreate, qLoad, qSave, qSaveUser, qRekey, qDelete, qPrune, qRevoke string
-	qHasUser, qAddUser, qIndex                                         string
+	qCreate, qLoad, qSave, qInsert, qUpdate, qExists, qRekey, qDelete, qPrune, qRevoke string
+	qHasUser, qAddUser, qIndex                                                         string
+
+	beforeRekey func() // test hook: runs between reading and re-keying a legacy row
 }
 
 // SQLOption configures NewSQLStore.
@@ -217,9 +240,6 @@ func NewSQLStore(db *sql.DB, opts ...SQLOption) (*SQLStore, error) {
 	s.qLoad = "SELECT data FROM " + t + " WHERE id = " + p(1) + " AND expires_at > " + p(2)
 	s.qSave = "INSERT INTO " + t + " (id, data, expires_at) VALUES (" + p(1) + ", " + p(2) + ", " + p(3) + ")" +
 		" ON CONFLICT (id) DO UPDATE SET data = excluded.data, expires_at = excluded.expires_at"
-	s.qSaveUser = "INSERT INTO " + t + " (id, data, expires_at, user_id) VALUES (" +
-		p(1) + ", " + p(2) + ", " + p(3) + ", " + p(4) + ")" +
-		" ON CONFLICT (id) DO UPDATE SET data = excluded.data, expires_at = excluded.expires_at, user_id = excluded.user_id"
 	s.qIndex = "CREATE INDEX IF NOT EXISTS " + t + "_user_id ON " + t + " (user_id)"
 
 	if s.mysql {
@@ -228,12 +248,14 @@ func NewSQLStore(db *sql.DB, opts ...SQLOption) (*SQLStore, error) {
 			" user_id VARCHAR(255) NULL)"
 		s.qSave = "INSERT INTO " + t + " (id, data, expires_at) VALUES (" + p(1) + ", " + p(2) + ", " + p(3) + ")" +
 			" ON DUPLICATE KEY UPDATE data = VALUES(data), expires_at = VALUES(expires_at)"
-		s.qSaveUser = "INSERT INTO " + t + " (id, data, expires_at, user_id) VALUES (" +
-			p(1) + ", " + p(2) + ", " + p(3) + ", " + p(4) + ")" +
-			" ON DUPLICATE KEY UPDATE data = VALUES(data), expires_at = VALUES(expires_at), user_id = VALUES(user_id)"
 		s.qIndex = "CREATE INDEX " + t + "_user_id ON " + t + " (user_id)"
 	}
 
+	s.qInsert = "INSERT INTO " + t + " (id, data, expires_at, user_id) VALUES (" +
+		p(1) + ", " + p(2) + ", " + p(3) + ", " + p(4) + ")"
+	s.qUpdate = "UPDATE " + t + " SET data = " + p(1) + ", expires_at = " + p(2) + ", user_id = " + p(3) +
+		" WHERE id = " + p(4)
+	s.qExists = "SELECT 1 FROM " + t + " WHERE id = " + p(1)
 	s.qRekey = "UPDATE " + t + " SET id = " + p(1) + " WHERE id = " + p(2)
 	s.qDelete = "DELETE FROM " + t + " WHERE id = " + p(1) + " OR id = " + p(2)
 	s.qPrune = "DELETE FROM " + t + " WHERE expires_at <= " + p(1)
@@ -248,7 +270,7 @@ func NewSQLStore(db *sql.DB, opts ...SQLOption) (*SQLStore, error) {
 // the user_id column and its index to tables created by older versions.
 // It is idempotent and safe to run from several servers at boot.
 func (s *SQLStore) CreateTable(ctx context.Context) error {
-	if _, err := s.db.ExecContext(ctx, s.qCreate); err != nil {
+	if err := s.execRetry(ctx, s.qCreate); err != nil {
 		return err
 	}
 
@@ -265,6 +287,20 @@ func (s *SQLStore) CreateTable(ctx context.Context) error {
 
 // hasUserColumn reports whether selecting user_id works: the query
 // matches no row, so a missing column is the only error expected.
+// execRetry runs an idempotent DDL statement, once more after a failure:
+// two servers booting together can make PostgreSQL's CREATE ... IF NOT
+// EXISTS fail (23505, 42P07) while the other one commits, and the retry
+// then sees the object.
+func (s *SQLStore) execRetry(ctx context.Context, q string) error {
+	if _, err := s.db.ExecContext(ctx, q); err == nil {
+		return nil
+	}
+
+	_, err := s.db.ExecContext(ctx, q)
+
+	return err
+}
+
 func (s *SQLStore) hasUserColumn(ctx context.Context) bool {
 	err := s.db.QueryRowContext(ctx, s.qHasUser).Scan(new(sql.NullString))
 
@@ -285,27 +321,34 @@ func (s *SQLStore) addUserColumn(ctx context.Context) error {
 }
 
 // createUserIndex indexes user_id for RevokeOthers. MySQL has no CREATE
-// INDEX IF NOT EXISTS: it checks first and tolerates losing a boot race
-// (error 1061, duplicate key name).
+// INDEX IF NOT EXISTS: it checks first, and after a failure checks again,
+// so losing a boot race to another server is not an error.
 func (s *SQLStore) createUserIndex(ctx context.Context) error {
 	if !s.mysql {
-		_, err := s.db.ExecContext(ctx, s.qIndex)
-		return err
+		return s.execRetry(ctx, s.qIndex)
 	}
 
-	var n int
-	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM information_schema.statistics
-		WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?`, s.table, s.table+"_user_id").
-		Scan(&n); err != nil || n > 0 {
+	if ok, err := s.hasMySQLIndex(ctx); err != nil || ok {
 		return err
 	}
 
 	_, err := s.db.ExecContext(ctx, s.qIndex)
-	if err != nil && strings.Contains(err.Error(), "Error 1061") {
-		return nil
+	if err != nil {
+		if ok, _ := s.hasMySQLIndex(ctx); ok {
+			return nil
+		}
 	}
 
 	return err
+}
+
+func (s *SQLStore) hasMySQLIndex(ctx context.Context) (bool, error) {
+	var n int
+
+	err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM information_schema.statistics
+		WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?`, s.table, s.table+"_user_id").Scan(&n)
+
+	return n > 0, err
 }
 
 // digestRe matches a stored key; such a value is never accepted as a
@@ -347,11 +390,26 @@ func (s *SQLStore) Load(ctx context.Context, id string) ([]byte, bool, error) {
 		return nil, false, err
 	}
 
-	// Re-key the row so the clear id leaves the table. A concurrent load
-	// that already re-keyed it matches no row, which is fine.
+	if s.beforeRekey != nil {
+		s.beforeRekey()
+	}
+
+	// Re-key the row so the clear id leaves the table. Only the row under
+	// the hashed key counts afterwards: when the update fails (a concurrent
+	// load re-keyed it first) or matches nothing (re-keyed, or deleted by a
+	// logout or revocation in between), reload by the hashed key.
 	//nolint:gosec // G701: query built once from a validated table name; values are bound parameters
-	if _, err := s.db.ExecContext(ctx, s.qRekey, key, legacy); err != nil {
+	res, err := s.db.ExecContext(ctx, s.qRekey, key, legacy)
+	if err != nil {
+		if data, found, lerr := s.load(ctx, key); lerr == nil && found {
+			return data, true, nil
+		}
+
 		return nil, false, fmt.Errorf("session: rekey: %w", err)
+	}
+
+	if n, err := res.RowsAffected(); err != nil || n != 1 {
+		return s.load(ctx, key)
 	}
 
 	return data, true, nil
@@ -382,15 +440,52 @@ func (s *SQLStore) Save(ctx context.Context, id string, data []byte, expiry time
 	return nil
 }
 
-// SaveUser implements UserStore (upsert).
-func (s *SQLStore) SaveUser(ctx context.Context, id, userID string, data []byte, expiry time.Time) error {
-	user := sql.NullString{String: userID, Valid: userID != ""}
-
-	if _, err := s.db.ExecContext(ctx, s.qSaveUser, storageKey(id), string(data), expiry.Unix(), user); err != nil {
-		return fmt.Errorf("session: save: %w", err)
+// Create implements UserStore.
+func (s *SQLStore) Create(ctx context.Context, id, userID string, data []byte, expiry time.Time) error {
+	if _, err := s.db.ExecContext(
+		ctx,
+		s.qInsert,
+		storageKey(id),
+		string(data),
+		expiry.Unix(),
+		nullUser(userID),
+	); err != nil {
+		return fmt.Errorf("session: create: %w", err)
 	}
 
 	return nil
+}
+
+// Update implements UserStore.
+func (s *SQLStore) Update(ctx context.Context, id, userID string, data []byte, expiry time.Time) error {
+	key := storageKey(id)
+
+	res, err := s.db.ExecContext(ctx, s.qUpdate, string(data), expiry.Unix(), nullUser(userID), key)
+	if err != nil {
+		return fmt.Errorf("session: update: %w", err)
+	}
+
+	if n, err := res.RowsAffected(); err == nil && n > 0 {
+		return nil
+	}
+
+	// MySQL reports 0 affected rows when nothing changed: check the row.
+	var one int
+
+	err = s.db.QueryRowContext(ctx, s.qExists, key).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrSessionNotFound
+	}
+
+	if err != nil {
+		return fmt.Errorf("session: update: %w", err)
+	}
+
+	return nil
+}
+
+func nullUser(userID string) sql.NullString {
+	return sql.NullString{String: userID, Valid: userID != ""}
 }
 
 // Delete implements Store, also removing a not yet re-keyed legacy row.
@@ -417,6 +512,7 @@ func (s *SQLStore) RevokeOthers(ctx context.Context, userID, keepID string) erro
 	}
 
 	// With keepID "" the kept key is the digest of "", which no session has.
+	//nolint:gosec // G701: query built once from a validated table name; values are bound parameters
 	if _, err := s.db.ExecContext(ctx, s.qRevoke, userID, storageKey(keepID)); err != nil {
 		return fmt.Errorf("session: revoke: %w", err)
 	}

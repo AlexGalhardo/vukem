@@ -49,16 +49,23 @@ func (a *AuthController) Login(c *web.Ctx) error {
 
 ## Revoking a user's other sessions
 
-`auth.SessionGuard.Login` stores the user id under `web.SessionUserKey`, and server-side stores that implement `session.UserStore` (database and memory) record it with the session. After a password change or reset, or when two-factor authentication is turned on, end the user's other sessions:
+`auth.SessionGuard.Login` records the session owner under `web.SessionUserKey` as `"<guard>:<user id>"` (`guard.SessionUserID(id)`), and server-side stores that implement `session.UserStore` (database and memory) save it with the session. After a password change or reset, or when two-factor authentication is turned on, end the user's other sessions:
 
 ```go
 m, _ := app.Sessions()
-err := m.RevokeOthers(ctx, user.AuthID(), c.Session().ID()) // "" as keepID ends them all
+owner := webGuard.SessionUserID(user.AuthID())
+err := m.RevokeOthers(ctx, owner, c.Session().ID()) // "" as keepID ends them all
 ```
 
-Encrypted cookie sessions and stores without user tracking (Redis) return `session.ErrRevokeUnsupported`: there is no server-side record to delete. The `install:auth` scaffold calls it through `Accounts.RevokeOtherSessions` on password reset and 2FA enable, and ignores that error, so revocation only takes effect with `SESSION_DRIVER=database`. When one session logs in with several guards, the last login owns it.
+- **Cookie sessions cannot be revoked.** Encrypted cookie sessions (`SESSION_DRIVER=cookie`, the default) and stores without user tracking (Redis) return `session.ErrRevokeUnsupported`: there is no server-side record to delete. The `install:auth` scaffold calls `RevokeOthers` through `Accounts.RevokeOtherSessions` on password reset and 2FA enable and ignores that error, so on the cookie driver it is a no-op: use `SESSION_DRIVER=database`.
+- A request already in flight when its session is revoked does not write it back: existing sessions are updated, never re-inserted (`UserStore.Update` returns `ErrSessionNotFound`), and its cookie is cleared.
+- One session per owner: when a session logs in with several guards, the last login owns it; a session whose recorded guard has logged out is taken over by the guard still logged in on its next request.
 
-Upgrading from v0.23 or earlier: `CreateTable` (run at boot) adds the `user_id` column and its index. Existing rows keep their clear id until their first load re-keys them, or until they expire; sessions logged in before the upgrade get their user on their next authenticated request (the guard backfills `web.SessionUserKey`), and only from then on are reached by `RevokeOthers`.
+### Upgrading from v0.23 or earlier
+
+- At boot `CreateTable` runs `ALTER TABLE sessions ADD COLUMN user_id` and `CREATE INDEX sessions_user_id`: the database user needs those permissions. Servers booting together do not fail on the race.
+- Rows keep their clear id until their first load re-keys them to SHA-256, or until they expire. A miss on the hashed key costs a second lookup by clear id (two queries for unknown or expired cookies).
+- Sessions logged in before the upgrade carry no owner: `RevokeOthers` does not reach them until the owner's next authenticated request, when the guard backfills `web.SessionUserKey`; idle ones expire with `SESSION_LIFETIME`.
 
 ## Validation errors and old input
 

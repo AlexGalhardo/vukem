@@ -192,6 +192,7 @@ func (m *Manager) load(r *http.Request, s *Session) {
 		}
 
 		s.id = ck.Value
+		s.storedID = ck.Value
 	}
 
 	data, err := decode(raw)
@@ -327,7 +328,16 @@ func (m *Manager) commit(w http.ResponseWriter, r *http.Request, s *Session) {
 			s.id = newID()
 		}
 
-		if err := m.save(ctx, s, raw, expiry); err != nil {
+		err := m.save(ctx, s, raw, expiry)
+		if errors.Is(err, ErrSessionNotFound) {
+			// Revoked or logged out elsewhere while this request ran.
+			web.SecurityEvent(r, "session.invalid", "reason", "revoked during request")
+			m.clearCookie(w)
+
+			return
+		}
+
+		if err != nil {
 			m.cfg.Log.ErrorContext(ctx, "session save failed", "err", err)
 			return
 		}
@@ -358,7 +368,11 @@ func (m *Manager) save(ctx context.Context, s *Session, raw []byte, expiry time.
 
 	userID, _ := s.data[web.SessionUserKey].(string)
 
-	return us.SaveUser(ctx, s.id, userID, raw, expiry)
+	if s.id == s.storedID {
+		return us.Update(ctx, s.id, userID, raw, expiry)
+	}
+
+	return us.Create(ctx, s.id, userID, raw, expiry)
 }
 
 // RevokeOthers ends every session of userID except keepID (the current

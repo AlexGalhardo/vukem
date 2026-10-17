@@ -4,6 +4,7 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -81,7 +82,7 @@ func TestSessionStore(t *testing.T) {
 
 	exp := time.Now().Add(time.Hour)
 	for id, user := range map[string]string{"u1a": "1", "u1b": "1", "u2": "2"} {
-		if err := store.SaveUser(ctx, id, user, []byte("{}"), exp); err != nil {
+		if err := store.Create(ctx, id, user, []byte("{}"), exp); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -93,6 +94,18 @@ func TestSessionStore(t *testing.T) {
 	for id, want := range map[string]bool{"u1a": true, "u1b": false, "u2": true} {
 		if _, ok, err := store.Load(ctx, id); err != nil || ok != want {
 			t.Fatalf("Load(%s) after RevokeOthers = %v %v, want %v", id, ok, err, want)
+		}
+	}
+
+	// A revoked session is not written back; an unchanged update is not
+	// mistaken for a missing row (MySQL reports 0 affected rows).
+	if err := store.Update(ctx, "u1b", "1", []byte("{}"), exp); !errors.Is(err, session.ErrSessionNotFound) {
+		t.Fatalf("Update(revoked) = %v, want ErrSessionNotFound", err)
+	}
+
+	for range 2 {
+		if err := store.Update(ctx, "u1a", "1", []byte(`{"n":1}`), exp); err != nil {
+			t.Fatalf("Update(live) = %v", err)
 		}
 	}
 
@@ -246,5 +259,33 @@ func TestCacheStoreUpgradesTextValueColumn(t *testing.T) {
 
 	if err := store.Set(ctx, "bin", []byte{0, 0xff}, time.Minute); err != nil {
 		t.Fatalf("Set(binary) after upgrade = %v", err)
+	}
+}
+
+// Servers booting together create the sessions table and its index at the
+// same time; none of them fails.
+func TestSessionStoreConcurrentCreateTable(t *testing.T) {
+	db := open(t)
+	ctx := t.Context()
+
+	_, _ = db.ExecContext(ctx, "DROP TABLE IF EXISTS dbt_sessions_race")
+	t.Cleanup(func() { _, _ = db.ExecContext(context.Background(), "DROP TABLE IF EXISTS dbt_sessions_race") })
+
+	errs := make(chan error, 8)
+	for range 8 {
+		go func() {
+			store, err := session.NewSQLStore(db.SQL(), session.WithTable("dbt_sessions_race"),
+				session.WithDollarPlaceholders())
+			if err == nil {
+				err = store.CreateTable(ctx)
+			}
+			errs <- err
+		}()
+	}
+
+	for range 8 {
+		if err := <-errs; err != nil {
+			t.Errorf("concurrent CreateTable() = %v", err)
+		}
 	}
 }
