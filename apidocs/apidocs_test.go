@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -330,5 +331,22 @@ func TestServeCommand(t *testing.T) {
 
 	if cmd.Name() != "openapi:serve" {
 		t.Errorf("name = %q", cmd.Name())
+	}
+}
+
+// TestPageShim runs the page.js unit tests (testdata/shim_test.mjs, a fake
+// DOM) with Node.js; it is skipped where node is not installed.
+func TestPageShim(t *testing.T) {
+	t.Parallel()
+
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not installed")
+	}
+
+	out, err := exec.CommandContext(t.Context(), node, "--test", filepath.Join("testdata", "shim_test.mjs")).
+		CombinedOutput()
+	if err != nil {
+		t.Fatalf("node --test shim_test.mjs: %v\n%s", err, out)
 	}
 }

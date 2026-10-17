@@ -1,16 +1,31 @@
 // Runs before the vendored Scalar bundle on the API reference page.
 //
 // CSP: Scalar adds <style> elements and style attributes at run time. The
-// elements get this script's nonce and style attributes go through the
-// CSSOM (which CSP does not restrict), so the page keeps the app's
-// nonce-only style-src. Markup injected through innerHTML is not touched:
-// its inline styles stay blocked, except the numeric line-number variables
-// of highlighted code samples, re-applied from an allowlist.
+// elements it creates with createElement get this script's nonce, and
+// style attributes it sets with setAttribute go through the CSSOM (which
+// CSP does not restrict) when every declaration is a plain size or
+// overflow value (Scalar's scrollbar probe); anything else is left to CSP,
+// which blocks it. The page keeps the app's nonce-only style-src.
+//
+// Text from the OpenAPI document (descriptions rendered as HTML) reaches
+// the DOM through innerHTML, never through createElement or setAttribute,
+// so its <style> elements and style attributes stay blocked, except the
+// numeric line-number variables of highlighted code samples, re-applied
+// from an allowlist.
 //
 // Accessibility: fixes the axe "serious" findings Scalar's markup has
 // (scrollable endpoint list without keyboard access, "Show More" buttons
 // whose accessible name does not contain their visible text).
 (() => {
+  const sizeProps = /^(?:(?:min-|max-)?(?:width|height)|overflow(?:-x|-y)?)$/;
+  const plainValue = /^[a-z0-9.%\s-]+$/i;
+  const safeStyle = (css) =>
+    css.split(";").every((decl) => {
+      if (decl.trim() === "") return true;
+      const i = decl.indexOf(":");
+      return i > 0 && sizeProps.test(decl.slice(0, i).trim().toLowerCase()) && plainValue.test(decl.slice(i + 1));
+    });
+
   const nonce = document.currentScript && document.currentScript.nonce;
   if (nonce) {
     const createElement = Document.prototype.createElement;
@@ -22,7 +37,7 @@
 
     const setAttribute = Element.prototype.setAttribute;
     Element.prototype.setAttribute = function (name, value) {
-      if (String(name).toLowerCase() === "style" && this.style) {
+      if (String(name).toLowerCase() === "style" && this.style && safeStyle(String(value))) {
         this.style.cssText = String(value);
         return;
       }

@@ -141,7 +141,11 @@ func Register(r *router.Router, path string, cfg Config) {
 		"telemetry":        false,
 		"withDefaultFonts": false,
 		"agent":            map[string]any{"disabled": true},
-		"hideClientButton": cfg.HideClientButton,
+		// No "Generate MCP" link or developer-tools header: both point to
+		// scalar.com services.
+		"mcp":                map[string]any{"disabled": true},
+		"showDeveloperTools": "never",
+		"hideClientButton":   cfg.HideClientButton,
 	}
 
 	if cfg.Theme != "" {
