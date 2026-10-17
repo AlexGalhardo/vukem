@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"testing"
 
@@ -21,12 +22,13 @@ var (
 	betaFlag   = flags.Bool("beta", false).Describe("Beta features")
 	lockedFlag = flags.Bool("admin_two_factor", true).Lock()
 	limitFlag  = flags.Int("upload_limit_mb", 10)
+	secretish  = flags.String("home_variant", "classic")
 )
 
 func flagsApp(t *testing.T) (*vukemtest.App, *flags.Flags) {
 	t.Helper()
 
-	app := newApp(t, options{flags: []flags.AnyFlag{betaFlag, lockedFlag, limitFlag}})
+	app := newApp(t, options{flags: []flags.AnyFlag{betaFlag, lockedFlag, limitFlag, secretish}})
 
 	ff, err := app.Flags()
 	if err != nil {
@@ -155,4 +157,61 @@ func TestAdminWithoutFlagsHasNoFlagsPage(t *testing.T) {
 
 	c.Get("/admin").AssertOK().AssertDontSee("Feature flags")
 	c.Get("/admin/_flags").AssertNotFound()
+}
+
+func TestSecurity_A09_AdminFlagsRedactStringValues(t *testing.T) {
+	t.Parallel()
+
+	app, _ := flagsApp(t)
+	got := listenAudits(app)
+	c := as(t, app, "admin")
+
+	c.PostForm("/admin/_flags/home_variant", url.Values{"value": {"hunter2-campaign"}}).AssertRedirect("/admin/_flags")
+
+	logs := auditLogs(t, app)
+	if len(logs) != 1 {
+		t.Fatalf("audit log = %+v, want one entry", logs)
+	}
+
+	ch := logs[0].Changes.V["value"]
+	before, after := fmt.Sprint(ch.Before), fmt.Sprint(ch.After)
+
+	recorded := got.list()
+	if len(recorded) != 1 {
+		t.Fatalf("audit events = %+v, want one", recorded)
+	}
+
+	ev := fmt.Sprint(recorded[0].Attrs)
+	for _, s := range []string{before, after, ev} {
+		if strings.Contains(s, "hunter2") || strings.Contains(s, "classic") {
+			t.Errorf("a string flag value reached the audit trail in clear: %q", s)
+		}
+	}
+
+	if !strings.HasPrefix(after, "16 bytes, sha256:") || recorded[0].Attrs["changed"] != true {
+		t.Errorf("audit after = %q, event = %v, want the length, a SHA-256 prefix and changed=true", after, ev)
+	}
+}
+
+func TestAdminFlagsAuditFailureStillRedirects(t *testing.T) {
+	t.Parallel()
+
+	app, ff := flagsApp(t)
+	c := as(t, app, "admin")
+
+	db, err := app.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := db.ExecContext(t.Context(), "DROP TABLE "+admin.AuditTable); err != nil {
+		t.Fatal(err)
+	}
+
+	c.PostForm("/admin/_flags/beta", url.Values{"value": {"true"}}).AssertRedirect("/admin/_flags")
+	c.Get("/admin/_flags").AssertOK().AssertSee("audit log entry failed")
+
+	if !ff.Enabled(t.Context(), betaFlag) {
+		t.Error("the flag did not change")
+	}
 }

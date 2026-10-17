@@ -22,6 +22,7 @@
 		</nav>
 		<main id="main">
 			{{with flash "admin.success"}}<p class="flash" role="status">{{.}}</p>{{end}}
+			{{with flash "admin.warning"}}<p class="flash flash-warning" role="alert">{{.}}</p>{{end}}
 			{{block "content" .}}{{end}}
 		</main>
 	</div>

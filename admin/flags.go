@@ -1,7 +1,9 @@
 package admin
 
 import (
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 
@@ -13,6 +15,9 @@ import (
 
 // FlagsResource is the audit-log resource of feature flag changes.
 const FlagsResource = "_flags"
+
+// warningKey is the session flash key of the panel's warnings.
+const warningKey = "admin.warning"
 
 type flagsView struct {
 	Rows []flagRow
@@ -89,16 +94,40 @@ func (p *Panel) flagsUpdate(c *web.Ctx) error {
 	}
 
 	actor := p.actor(ctx)
-	web.AuditEvent(c.Request(), "flags.changed", "actor_id", actor, "flag", ch.Flag, "old", ch.Old, "new", ch.New)
+	before, after := auditValues(ch)
+	web.AuditEvent(c.Request(), "flags.changed", "actor_id", actor, "flag", ch.Flag,
+		"changed", ch.Old != ch.New, "old", before, "new", after)
 
+	// The store write and this row are not atomic (the store is pluggable):
+	// the flag already changed, so a failed row is logged, not undone.
 	if err := writeAudit(ctx, p.cfg.DB, &AuditLog{
 		ActorID: actor, Resource: FlagsResource, RecordID: ch.Flag, Action: ActionUpdate,
-		Changes: orm.JSON[map[string]Change]{V: map[string]Change{"value": {Before: ch.Old, After: ch.New}}},
+		Changes: orm.JSON[map[string]Change]{V: map[string]Change{"value": {Before: before, After: after}}},
 	}); err != nil {
-		return err
+		c.Log().ErrorContext(ctx, "admin: flag changed but its audit-log row failed", "actor_id", actor,
+			"flag", ch.Flag, "old", before, "new", after, "err", err)
+		_ = c.Flash(warningKey, "Flag "+ch.Flag+" saved, but the audit log entry failed; see the server log.")
+
+		return c.Redirect(p.url(FlagsResource))
 	}
 
 	_ = c.Flash(FlashKey, "Flag "+ch.Flag+" saved.")
 
 	return c.Redirect(p.url(FlagsResource))
+}
+
+// auditValues returns what logs and the audit log record of a change: the
+// values of bool and int flags, and only the length and a SHA-256 prefix of
+// string values, which may hold anything.
+func auditValues(ch flags.Change) (before, after string) {
+	if !ch.Sensitive {
+		return ch.Old, ch.New
+	}
+
+	return digest(ch.Old), digest(ch.New)
+}
+
+func digest(v string) string {
+	sum := sha256.Sum256([]byte(v))
+	return fmt.Sprintf("%d bytes, sha256:%x", len(v), sum[:4])
 }

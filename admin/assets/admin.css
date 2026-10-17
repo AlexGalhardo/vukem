@@ -214,3 +214,4 @@ td.actions a { margin-left: .6rem; }
 }
 .inline-form { display: flex; gap: .5rem; align-items: center; margin: 0; }
 .inline-form input { max-width: 14rem; }
+.flash-warning { border-color: var(--danger); color: var(--danger); }
