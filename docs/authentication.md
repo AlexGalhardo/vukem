@@ -212,7 +212,7 @@ r.Get("/auth/{provider}/callback", func(c *web.Ctx) error {
 | Options | `social.WithEndpoints(...)` (GitHub Enterprise, self-hosted GitLab, tests), `social.WithAuthParams(...)`, `Config.Scopes`, `OIDC(...).AuthParams(...)`, `social.OAuth2(name, cfg, endpoints, scopes, mapUser)` |
 | Security | redirect URL fixed in config, provider calls through a client with a 10 s timeout and 1 MiB response limit, tokens never logged |
 
-Apple, LinkedIn and X providers arrive in BETA (B.8.3). `social.Fake(name, callbackURL, user)` is a provider for tests.
+Apple (`social.Apple`, form-post callback), LinkedIn (`social.LinkedIn`) and X (`social.X`) are built in. `social.Fake(name, callbackURL, user)` is a provider for tests.
 
 ## Authorization
 

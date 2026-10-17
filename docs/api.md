@@ -222,19 +222,19 @@ api.Register(g, "POST /products", api.Op{
 ## Testing
 
 ```go
-app.Test(t).
+app.Client(t).
 	WithToken(token).
 	PostJSON("/api/v1/products", map[string]any{"name": "Pen", "price": "2.50"}).
 	AssertCreated().
 	AssertHeader("Location", "/api/v1/products/1").
 	AssertJSONPath("name", "Pen")
 
-app.Test(t).GetJSON("/api/v1/products?sort=-price").
+app.Client(t).GetJSON("/api/v1/products?sort=-price").
 	AssertOK().
 	AssertJSONCount("data", 20).
 	AssertJSONPath("meta.total", 134)
 
-app.Test(t).PostJSON("/api/v1/products", map[string]any{}).
+app.Client(t).PostJSON("/api/v1/products", map[string]any{}).
 	AssertProblem(422).
 	AssertJSONValidationErrors("name", "price")
 ```
@@ -381,7 +381,7 @@ for _, p := range grpctest.Protocols() { // grpc, grpc-web, connect, connect+jso
 
 ## Beyond REST
 
-- **SSE** for server push (planned, BETA) — [frontend.md](frontend.md#sse-beta).
+- **SSE**, WebSockets and broadcasting for server push — [frontend.md](frontend.md#sse).
 - **GraphQL**: `contrib/graphql`, a stdlib schema-first server with typed resolvers, a batching loader over the ORM, limits and persisted queries — [graphql.md](graphql.md).
 - **gRPC**, gRPC-Web and Connect on connect-go: [gRPC](#grpc).
 - **API reference UI**: `apidocs.Serve(app, r, "/docs", apidocs.Config{Theme: "purple"})` renders the document with [Scalar](https://scalar.com) ([details](#api-reference-ui)).

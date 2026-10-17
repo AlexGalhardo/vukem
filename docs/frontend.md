@@ -163,7 +163,7 @@ err = b.PrivateGate("post.{id}", "view", func(ctx context.Context, p map[string]
 })
 err = b.Presence("room.{id}", func(ctx context.Context, u any, p map[string]string) (broadcast.Member, bool, error) {
 	user := u.(*models.User)
-	return broadcast.Member{ID: user.ID, Info: map[string]string{"name": user.Name}}, true, nil
+	return broadcast.Member{ID: strconv.FormatInt(user.ID, 10), Info: map[string]string{"name": user.Name}}, true, nil
 })
 ```
 

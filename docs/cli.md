@@ -73,7 +73,7 @@ Shipped: `new --api`, `install:api`, `make:resource`, `make:factory`, `make:seed
 
 Shipped: `make:proto`, `codegen:rpc`, app: `openapi:export`, `codegen:types`, `codegen:routes`, `codegen:client`, `openapi:serve` (via `apidocs.Command()`), `queue:work`, `queue:failed`, `queue:retry`, `queue:forget`, `schedule:run`, `schedule:work`, `schedule:list` (see the table above).
 
-Planned: `install:inertia`, `ssr:start`, app: `down`/`up` (maintenance mode).
+Also shipped: `install:inertia`, `ssr:start`, `ssr:check`, `down`/`up` (maintenance mode).
 
 ## Generators and stubs
 
