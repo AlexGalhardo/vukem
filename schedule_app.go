@@ -80,6 +80,8 @@ func (a *App) Schedule() (*schedule.Schedule, error) {
 			Locks:    locks,
 			Commands: a.Call,
 			Queue:    func() (*queue.Queue, error) { return a.Queue() },
+			// Running tasks share the shutdown budget of the HTTP drain.
+			StopTimeout: a.Config.ShutdownTimeout,
 		})
 
 		// Database sessions keep expired rows until pruned.

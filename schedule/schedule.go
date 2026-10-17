@@ -41,6 +41,10 @@ type Options struct {
 	Commands func(ctx context.Context, name string, args []string) error
 	// Queue dispatches Job tasks.
 	Queue func() (*queue.Queue, error)
+	// StopTimeout is how long Work waits for running tasks once its
+	// context is cancelled before cancelling theirs (default 30s). Tasks
+	// must honor ctx; one that ignores it still holds Work.
+	StopTimeout time.Duration
 }
 
 // Schedule holds the tasks.
@@ -61,6 +65,10 @@ func New(o Options) *Schedule {
 
 	if o.Locks == nil {
 		o.Locks = cache.New(cache.NewMemory(1000), "")
+	}
+
+	if o.StopTimeout <= 0 {
+		o.StopTimeout = 30 * time.Second
 	}
 
 	return &Schedule{o: o}
@@ -305,15 +313,19 @@ func (s *Schedule) runTask(ctx context.Context, t *Task, now time.Time) (err err
 }
 
 // Work runs due tasks at the start of every minute until ctx is cancelled,
-// then waits for running tasks. now is the clock (time.Now if nil).
+// then waits for running tasks up to Options.StopTimeout and cancels their
+// context. now is the clock (time.Now if nil).
 func (s *Schedule) Work(ctx context.Context, now func() time.Time) error {
 	if now == nil {
 		now = time.Now
 	}
 
-	var wg sync.WaitGroup
+	// Running tasks outlive ctx so a shutdown does not abort them mid-way;
+	// they are cancelled only when the stop timeout expires.
+	taskCtx, cancelTasks := context.WithCancel(context.WithoutCancel(ctx))
+	defer cancelTasks()
 
-	defer wg.Wait()
+	var wg sync.WaitGroup
 
 	for {
 		next := now().Truncate(time.Minute).Add(time.Minute)
@@ -322,10 +334,31 @@ func (s *Schedule) Work(ctx context.Context, now func() time.Time) error {
 		select {
 		case <-ctx.Done():
 			timer.Stop()
+			s.drain(ctx, &wg, cancelTasks)
+
 			return nil
 		case <-timer.C:
 		}
 
-		wg.Go(func() { _ = s.RunDue(context.WithoutCancel(ctx), next) })
+		wg.Go(func() { _ = s.RunDue(taskCtx, next) })
 	}
+}
+
+func (s *Schedule) drain(ctx context.Context, wg *sync.WaitGroup, cancelTasks context.CancelFunc) {
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+
+	stop := time.NewTimer(s.o.StopTimeout)
+	defer stop.Stop()
+
+	select {
+	case <-done:
+		return
+	case <-stop.C:
+	}
+
+	s.o.Log.WarnContext(ctx, "scheduled tasks still running at shutdown: cancelling them",
+		"stop_timeout", s.o.StopTimeout)
+	cancelTasks()
+	<-done
 }

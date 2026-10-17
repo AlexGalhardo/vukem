@@ -231,3 +231,37 @@ func TestRunFailsOnBadScheduleConfig(t *testing.T) {
 		}
 	})
 }
+
+// A task still running at shutdown gets SHUTDOWN_TIMEOUT to finish, then its
+// context is cancelled and Run returns.
+func TestRunBoundsSchedulerShutdown(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		app, err := New(WithSource(testSource(map[string]string{"SHUTDOWN_TIMEOUT": "5s"})),
+			WithLogger(discardLogger()), WithoutHTTP(),
+			WithSchedule(func(s *schedule.Schedule, _ *App) {
+				s.Func("stuck", func(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }).EveryMinute()
+			}))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		ctx, cancel := context.WithCancel(t.Context())
+		done := make(chan error, 1)
+		go func() { done <- app.Run(ctx) }()
+
+		time.Sleep(time.Minute)
+		synctest.Wait()
+		cancel()
+
+		start := time.Now()
+		if err := <-done; err != nil {
+			t.Fatalf("Run() = %v", err)
+		}
+
+		if waited := time.Since(start); waited != 5*time.Second {
+			t.Fatalf("Run waited %v after cancel, want SHUTDOWN_TIMEOUT (5s)", waited)
+		}
+	})
+}
