@@ -68,7 +68,10 @@ In an app built by `vukem.New` (every starter), set them from the environment; n
 ```dotenv
 TRUSTED_PROXIES=10.0.0.0/8,192.0.2.10
 TRUST_FORWARDED_PROTO=true # X-Forwarded-Proto: https from those peers enables HSTS
+CLIENT_IP_HEADER=X-Real-IP # optional: read this single-IP header instead of X-Forwarded-For
 ```
+
+`CLIENT_IP_HEADER` (`Services.ClientIPHeader`) is for proxies that put the client address in one header of their own. It is read only from trusted peers and only when it holds exactly one IP; otherwise `c.IP()` returns the peer address. `X-Forwarded-For` is then ignored.
 
 With a router you build yourself, set the field:
 

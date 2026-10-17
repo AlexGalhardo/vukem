@@ -96,6 +96,21 @@ func TestSecurity_A02_TrustedProxiesMisconfigurationRefusesBoot(t *testing.T) {
 			env:  map[string]string{"TRUSTED_PROXIES": "10.0.0.0/8,proxy.internal"},
 			want: "proxy.internal",
 		},
+		{
+			name: "header without proxies",
+			env:  map[string]string{"CLIENT_IP_HEADER": "X-Real-IP"},
+			want: "CLIENT_IP_HEADER requires TRUSTED_PROXIES",
+		},
+		{
+			name: "invalid header name",
+			env:  map[string]string{"TRUSTED_PROXIES": "10.0.0.0/8", "CLIENT_IP_HEADER": "X Real IP"},
+			want: "CLIENT_IP_HEADER",
+		},
+		{
+			name: "list header",
+			env:  map[string]string{"TRUSTED_PROXIES": "10.0.0.0/8", "CLIENT_IP_HEADER": "x-forwarded-for"},
+			want: "CLIENT_IP_HEADER",
+		},
 		// X-Forwarded-Proto from any peer would let clients claim HTTPS.
 		{
 			name: "proto without proxies",
@@ -179,6 +194,44 @@ func TestAddrJoinsHostAndPort(t *testing.T) {
 
 			if _, _, err := net.SplitHostPort(app.Addr()); err != nil {
 				t.Fatalf("Addr() %q is not host:port: %v", app.Addr(), err)
+			}
+		})
+	}
+}
+
+func TestSecurity_A01_ClientIPHeaderFromEnv(t *testing.T) {
+	t.Parallel()
+
+	headers := map[string]string{"X-Real-IP": "203.0.113.9", "X-Forwarded-For": "198.51.100.99"}
+
+	tests := []struct {
+		name string
+		env  map[string]string
+		peer string
+		want string
+	}{
+		{
+			name: "trusted proxy",
+			env:  map[string]string{"TRUSTED_PROXIES": "10.0.0.0/8", "CLIENT_IP_HEADER": "x-real-ip"},
+			peer: "10.1.2.3:4000",
+			want: "203.0.113.9",
+		},
+		{
+			name: "spoofed by untrusted peer",
+			env:  map[string]string{"TRUSTED_PROXIES": "10.0.0.0/8", "CLIENT_IP_HEADER": "X-Real-IP"},
+			peer: "198.51.100.7:4000",
+			want: "198.51.100.7",
+		},
+		{name: "unset ignores the header", peer: "10.1.2.3:4000", want: "10.1.2.3"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			rec := proxyReq(t, proxyApp(t, tt.env), tt.peer, headers)
+			if got := rec.Body.String(); got != tt.want {
+				t.Fatalf("IP() = %q, want %q", got, tt.want)
 			}
 		})
 	}

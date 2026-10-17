@@ -468,6 +468,7 @@ func (a *App) newRouter() *router.Router {
 		ProblemBaseURL: a.Source.Get("APP_PROBLEM_BASE_URL"),
 		CheckResponses: !a.Config.IsProduction(),
 		TrustedProxies: a.proxies,
+		ClientIPHeader: a.Config.ClientIPHeader,
 	}
 
 	if debug && a.Kind == KindWeb {

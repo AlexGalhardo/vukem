@@ -8,7 +8,9 @@ import (
 	"io/fs"
 	"log/slog"
 	"net"
+	"net/http"
 	"os"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -92,6 +94,10 @@ type Config struct {
 	// TrustForwardedProto treats X-Forwarded-Proto: https from a trusted
 	// proxy as HTTPS (HSTS). It requires TRUSTED_PROXIES.
 	TrustForwardedProto bool `env:"TRUST_FORWARDED_PROTO"`
+	// ClientIPHeader names a single-IP header set by the trusted proxy
+	// (such as X-Real-IP) that c.IP() reads instead of X-Forwarded-For.
+	// It requires TRUSTED_PROXIES.
+	ClientIPHeader string `env:"CLIENT_IP_HEADER"`
 }
 
 // IsProduction reports whether APP_ENV is production.
@@ -401,6 +407,10 @@ func New(opts ...Option) (*App, error) {
 		return nil, errors.New("vukem: TRUST_FORWARDED_PROTO requires TRUSTED_PROXIES")
 	}
 
+	if cfg.ClientIPHeader, err = clientIPHeader(cfg.ClientIPHeader, len(proxies) > 0); err != nil {
+		return nil, err
+	}
+
 	enc, err := newCrypt(key, cfg.PreviousKeys)
 	if err != nil {
 		return nil, err
@@ -685,6 +695,33 @@ func parseTrustedProxies(s string) ([]*net.IPNet, error) {
 	}
 
 	return nets, nil
+}
+
+// headerToken matches an HTTP field name (RFC 9110 token).
+var headerToken = regexp.MustCompile("^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
+
+// clientIPHeader validates CLIENT_IP_HEADER and returns it canonicalized.
+// List headers are refused: their leftmost entries come from the client.
+func clientIPHeader(name string, haveProxies bool) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", nil
+	}
+
+	if !headerToken.MatchString(name) {
+		return "", fmt.Errorf("vukem: CLIENT_IP_HEADER %q is not a valid header name", name)
+	}
+
+	name = http.CanonicalHeaderKey(name)
+	if name == "X-Forwarded-For" || name == "Forwarded" {
+		return "", fmt.Errorf("vukem: CLIENT_IP_HEADER %q is a list; leave it empty to use X-Forwarded-For", name)
+	}
+
+	if !haveProxies {
+		return "", errors.New("vukem: CLIENT_IP_HEADER requires TRUSTED_PROXIES")
+	}
+
+	return name, nil
 }
 
 // newCrypt builds app.Crypt: the "crypt" key derived from APP_KEY encrypts,

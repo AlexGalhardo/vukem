@@ -72,5 +72,6 @@ func (s Secret) MarshalJSON() ([]byte, error) // "\"[redacted]\""
 | `DEVTOOLS_INSECURE_ALLOW_REMOTE` | `false` | Serve the dashboard to non-loopback clients |
 | `LOG_DEDUP_WINDOW` | `1m` in production, off elsewhere | Repeated identical ERROR records of the default logger become one `repeated` summary per window; `0` disables it ([subsystems.md](subsystems.md#logging--observability)) |
 | `TRUSTED_PROXIES` | empty (trust nobody) | Comma-separated CIDRs or IPs whose `X-Forwarded-For` sets `c.IP()` (rate limits, login throttles, logs); applied by `vukem.New` to the router's `web.Services`. An invalid entry is a boot error |
+| `CLIENT_IP_HEADER` | empty | A single-IP header set by the trusted proxy (e.g. `X-Real-IP`) that `c.IP()` reads instead of `X-Forwarded-For`, only from `TRUSTED_PROXIES` peers; requires `TRUSTED_PROXIES`, an invalid or list header name is a boot error |
 | `TRUST_FORWARDED_PROTO` | `false` | Treat `X-Forwarded-Proto: https` as HTTPS (HSTS) when the peer is in `TRUSTED_PROXIES`; a boot error without `TRUSTED_PROXIES` |
 | `HTTP_H2C` | `false` | The app server speaks HTTP/2 without TLS (prior knowledge, for gRPC clients) outside production; `true` enables it in production behind a proxy that speaks h2c ([api.md](api.md#grpc)) |

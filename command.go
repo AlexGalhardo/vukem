@@ -325,6 +325,10 @@ func trustedProxiesStatus(app *App) string {
 	}
 
 	s := strings.Join(nets, ", ")
+	if app.Config.ClientIPHeader != "" {
+		s += " (client IP from " + app.Config.ClientIPHeader + ")"
+	}
+
 	if app.Config.TrustForwardedProto {
 		s += " (X-Forwarded-Proto trusted)"
 	}
