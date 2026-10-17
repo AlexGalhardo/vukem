@@ -64,6 +64,19 @@ s.Create("raffles", func(t *schema.Table) {
 
 `t.Check(name, expr)` emits `CONSTRAINT name CHECK (expr)` inside `CREATE TABLE` on every dialect, and `ALTER TABLE … ADD CONSTRAINT` in `s.Table` on PostgreSQL and MySQL. SQLite cannot add or drop constraints on an existing table, so `Check` and `DropCheck` inside `s.Table` fail the migration there instead of skipping the rule. The expression is raw SQL written by you (never user input); prefix names with the table, since MySQL requires them to be unique per database. `DropCheck` uses `ALTER TABLE … DROP CONSTRAINT`, which needs MySQL 8.0.19+ or MariaDB 10.2+.
 
+Partial indexes cover only the rows matching an expression, e.g. one live reservation per number:
+
+```go
+s.Create("reservations", func(t *schema.Table) {
+	t.ID()
+	t.ForeignID("number_id").Constrained()
+	t.String("status")
+	t.UniqueIndex("number_id").Where("status = 'live'")
+})
+```
+
+`t.Index(cols...)` and `t.UniqueIndex(cols...)` return an `*Index`; `.Where(expr)` emits `CREATE [UNIQUE] INDEX … WHERE expr` on PostgreSQL and SQLite, in `Create` and `s.Table`. MySQL and MariaDB have no partial indexes, so `Where` fails the migration there instead of creating a full index that would reject valid rows. Like `Check`, the expression is raw SQL written by you.
+
 DDL is generated per dialect (SQLite, PostgreSQL and MySQL/MariaDB). Table and column names are validated, never taken from user input.
 
 <Callout type="warning">

@@ -265,6 +265,7 @@ var CreateUsersTable = schema.Migration{
 - Column types: `ID`, `BigInteger`, `Integer`, `String(n)`, `Text`, `Boolean`, `Decimal(p,s)`, `Float`, `Date`, `Timestamp`, `Timestamps`, `SoftDeletes`, `JSON`, `UUID`, `ULID`, `Enum(vals)`, `ForeignID("user_id").Constrained().CascadeOnDelete()`; modifiers `Nullable`, `Default`, `Unique`, `Index`, `Comment`.
 - `s.Table(name, fn)` alters (add/rename/drop column, indexes); SQLite table rebuild handled by the dialect where `ALTER` is unsupported.
 - `t.Check(name, expr)` adds a named CHECK constraint (in `Create` on every dialect; in `s.Table` on PostgreSQL and MySQL only, SQLite fails the migration); `t.DropCheck(name)` removes one (MySQL 8.0.19+ / MariaDB 10.2+).
+- `t.Index(cols...)` / `t.UniqueIndex(cols...)` return an `*Index`; `.Where(expr)` makes it partial (`CREATE [UNIQUE] INDEX … WHERE expr`) on PostgreSQL and SQLite. MySQL/MariaDB have no partial indexes, so `Where` fails the migration there instead of creating a full index.
 - `s.Raw(sql)` for anything else.
 - Tracking table `migrations(id, batch, ran_at)`; each migration runs in a transaction where the dialect allows DDL in transactions.
 - Commands: `migrate`, `migrate:rollback [--step N]`, `migrate:reset`, `migrate:fresh [--seed]`, `migrate:status`, `make:migration create_posts_table` (name prefix `create_`/`add_`/`alter_` picks the stub).
