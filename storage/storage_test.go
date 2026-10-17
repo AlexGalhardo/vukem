@@ -64,6 +64,47 @@ func TestSecurity_A01_StorageTraversal(t *testing.T) {
 	}
 }
 
+// Dot directories (.git, .secrets) are as private as dotfiles, and served
+// user content runs sandboxed so an uploaded HTML or XML file cannot
+// script the app's origin.
+func TestSecurity_A01_StorageHandlerHidesDotPaths(t *testing.T) {
+	t.Parallel()
+
+	d, _ := local(t, "/storage/")
+	ctx := t.Context()
+
+	for _, p := range []string{".git/config", "x/.secrets/key.txt", "page.html"} {
+		_ = storage.PutBytes(ctx, d, p, []byte("<script>secret</script>"))
+	}
+
+	h := http.StripPrefix("/storage", storage.Handler(d, nil))
+	get := func(target string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		r := httptest.NewRequestWithContext(ctx, http.MethodGet, target, http.NoBody)
+		h.ServeHTTP(
+			rec,
+			r.WithContext(web.WithServices(r.Context(), &web.Services{Log: slog.New(slog.DiscardHandler)})),
+		)
+
+		return rec
+	}
+
+	for _, target := range []string{"/storage/.git/config", "/storage/x/.secrets/key.txt"} {
+		if rec := get(target); rec.Code != http.StatusNotFound {
+			t.Errorf("GET %s = %d, want 404", target, rec.Code)
+		}
+	}
+
+	if rec := get("/storage/page.html"); rec.Code != 200 ||
+		!strings.HasPrefix(rec.Header().Get("Content-Security-Policy"), "sandbox") {
+		t.Errorf(
+			"GET page.html = %d CSP %q, want 200 with a sandbox policy",
+			rec.Code,
+			rec.Header().Get("Content-Security-Policy"),
+		)
+	}
+}
+
 func TestURLsAndHandler(t *testing.T) {
 	t.Parallel()
 

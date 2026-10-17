@@ -22,7 +22,8 @@ import (
 )
 
 // Handler serves a disk's files under a URL prefix (mount it with
-// http.StripPrefix). Directory listings and dotfiles are never served.
+// http.StripPrefix). Directory listings, dotfiles and files under dot
+// directories are never served; responses carry a sandbox CSP.
 // Pass a Signer to require signed URLs (private files, TemporaryURL).
 func Handler(d Disk, signer *signed.Signer) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -34,7 +35,8 @@ func Handler(d Disk, signer *signed.Signer) http.Handler {
 		}
 
 		p := strings.TrimPrefix(r.URL.Path, "/")
-		if strings.HasPrefix(path.Base(p), ".") {
+		if p == "." || strings.HasPrefix(p, ".") || strings.Contains(p, "/.") {
+			// Dot directories (.git, quarantine) are as private as dotfiles.
 			http.NotFound(w, r)
 			return
 		}
@@ -53,6 +55,10 @@ func Handler(d Disk, signer *signed.Signer) http.Handler {
 		defer f.Close()
 
 		w.Header().Set("X-Content-Type-Options", "nosniff")
+		// Stored files are often user content: an HTML or XML upload must
+		// not run script on the app's origin. Images and downloads are
+		// unaffected.
+		w.Header().Set("Content-Security-Policy", "sandbox; default-src 'none'; img-src 'self'; style-src 'unsafe-inline'")
 
 		if rs, ok := f.(io.ReadSeeker); ok {
 			http.ServeContent(w, r, path.Base(p), modTimeNow(), rs)

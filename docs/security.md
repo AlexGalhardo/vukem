@@ -24,7 +24,7 @@ What Vukem does **by default** to protect applications, mapped to the [OWASP Top
 | Query builder scopes (`Scope(ownedBy(user))`) and route-level `Authorize` make ownership checks one line | A |
 | Mass assignment impossible by construction: models are filled from explicit request structs (`Bind[T]`), never from raw maps | P |
 | CORS deny-by-default; `*` with credentials refused at boot | P |
-| Static files and uploads served through `os.Root` (no `../` traversal); dotfiles never served | P |
+| Static files and uploads served through `os.Root` (no `../` traversal); dotfiles and files under dot directories never served; `storage.Handler` responses carry a `sandbox` CSP so uploaded HTML/XML cannot script the app origin (inline PDF viewers may need a download link) (`TestSecurity_A01_StaticRejectsTraversal`, `TestSecurity_A01_StorageTraversal`, `TestSecurity_A01_StorageHandlerHidesDotPaths`) | P / B |
 | Signed URLs (HMAC, expiry) for temporary downloads and email verification | A |
 | Client IP (`c.IP()`, used by rate limits, login throttles and logs) reads `X-Forwarded-For` only from `TrustedProxies` peers, across every header line, right to left; a non-IP entry falls back to the peer address (`TestSecurity_A01_IPIgnoresSpoofedForwardedFor`) | P / B |
 | Open redirects: `web.SafeRedirect` and `c.Back` accept only relative paths and same-host URLs, and check the resulting path before and after `http.Redirect` cleans it, so `//evil.com`, `/\evil.com`, `/./\evil.com` and `https://app//evil.com` fall back (`TestSecurity_A01_SafeRedirectBlocksOpenRedirects`, `FuzzSafeRedirect`) | P / B |
