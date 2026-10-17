@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/AlexGalhardo/vukem/internal/sqlscan"
 )
@@ -49,6 +50,10 @@ func Rebind(d Dialect, query string) string {
 // Prefer it over Rebind whenever the query is built from pieces (string
 // concatenation, optional clauses), where an unbalanced quote would
 // swallow the SQL appended after it; Rebind stays for constant queries.
+//
+// The error quotes at most the first 80 bytes of the query, so a literal
+// holding a secret is not copied whole into it; the caller decides what
+// of the query, if anything, to log.
 func RebindChecked(d Dialect, query string) (string, error) {
 	var ph func(int) string
 	if d.Placeholder(1) != "?" {
@@ -57,11 +62,11 @@ func RebindChecked(d Dialect, query string) (string, error) {
 
 	r := sqlscan.Scan(d.Name(), query, ph)
 	if !r.Terminated {
-		return "", fmt.Errorf("%w: %q", ErrUnterminatedSQL, query)
+		return "", fmt.Errorf("%w: %q", ErrUnterminatedSQL, queryPrefix(query))
 	}
 
 	if r.Placeholders > 0 && r.DollarParams > 0 {
-		return "", fmt.Errorf("%w: %q", ErrMixedPlaceholders, query)
+		return "", fmt.Errorf("%w: %q", ErrMixedPlaceholders, queryPrefix(query))
 	}
 
 	if ph == nil {
@@ -69,4 +74,22 @@ func RebindChecked(d Dialect, query string) (string, error) {
 	}
 
 	return r.SQL, nil
+}
+
+// maxQueryPrefix bounds how much of a query RebindChecked's errors quote.
+const maxQueryPrefix = 80
+
+// queryPrefix returns query cut to maxQueryPrefix bytes on a rune
+// boundary, with "…" when it was cut.
+func queryPrefix(query string) string {
+	if len(query) <= maxQueryPrefix {
+		return query
+	}
+
+	end := maxQueryPrefix
+	for end > 0 && !utf8.RuneStart(query[end]) {
+		end--
+	}
+
+	return query[:end] + "…"
 }

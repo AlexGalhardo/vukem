@@ -128,11 +128,29 @@ func TestRebindChecked(t *testing.T) {
 	}
 }
 
-func TestRebindCheckedErrorNamesQuery(t *testing.T) {
+func TestRebindCheckedErrorQuotesAShortPrefix(t *testing.T) {
 	t.Parallel()
 
-	_, err := RebindChecked(Postgres, "SELECT 'oops")
-	if err == nil || !strings.Contains(err.Error(), `"SELECT 'oops"`) {
-		t.Fatalf("RebindChecked() error = %v, want it to quote the query", err)
+	tests := []struct {
+		name, query, want string
+	}{
+		{"short query whole", "SELECT 'oops", `"SELECT 'oops"`},
+		{"long query cut", "SELECT '" + strings.Repeat("a", 100), `"SELECT '` + strings.Repeat("a", 72) + `…"`},
+		{
+			"cut on a rune boundary",
+			"SELECT '" + strings.Repeat("a", 71) + "çç" + strings.Repeat("b", 20),
+			`"SELECT '` + strings.Repeat("a", 71) + `…"`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := RebindChecked(Postgres, tt.query)
+			if err == nil || !strings.HasSuffix(err.Error(), ": "+tt.want) {
+				t.Fatalf("RebindChecked(%q) error = %v, want it to end with %s", tt.query, err, tt.want)
+			}
+		})
 	}
 }
