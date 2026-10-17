@@ -9,6 +9,8 @@
 //
 // Run creates and drops its own tables (prefixed "dbt_"), so point it at a
 // throwaway database.
+//
+// See https://github.com/AlexGalhardo/vukem/blob/main/docs/database.md.
 package dbtest
 
 import (

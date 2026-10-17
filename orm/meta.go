@@ -4,6 +4,13 @@
 // can never become SQL (A05). Models are plain structs; persistence
 // functions take an Executor (*database.DB or *database.Tx), so there is no
 // Active Record handle hidden in models.
+//
+// Embed [Model] for an ID and timestamps, build reads with [QueryOf], and
+// write with [Create], [Update] and [Delete]. Relations, scopes, soft
+// deletes and encrypted columns ([Encrypted]) are declared on the struct.
+// Tables come from package schema migrations.
+//
+// See https://github.com/AlexGalhardo/vukem/blob/main/docs/database.md.
 package orm
 
 import (

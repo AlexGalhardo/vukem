@@ -2,6 +2,14 @@
 // defaults (WAL, busy timeout, foreign keys, a single-connection writer pool
 // beside a reader pool), PostgreSQL and MySQL through driver modules, and
 // transactions that roll back on error or panic.
+//
+// [Open] turns a DATABASE_URL into a [*DB]; [DB.Tx] and [RunInTx] run a
+// function in a [*Tx]. Both satisfy [Executor], the interface that the orm
+// and schema packages accept, so the same code runs inside or outside a
+// transaction. A [Manager] holds named connections. Apps get the default
+// connection, opened from configuration, with app.DB().
+//
+// See https://github.com/AlexGalhardo/vukem/blob/main/docs/database.md.
 package database
 
 import (

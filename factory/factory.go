@@ -7,7 +7,11 @@
 //	admins, err := Users.Count(3).State(func(u *models.User) { u.Role = "admin" }).Create(ctx, db)
 //
 // Factories are values: State, Count, Seed and AfterCreate return copies,
-// so a base factory can be shared.
+// so a base factory can be shared. Make builds values in memory; Create
+// also inserts them through orm.Create. A [Faker] seeded per factory makes
+// the data reproducible (Seed), which seeders and golden tests rely on.
+//
+// See https://github.com/AlexGalhardo/vukem/blob/main/docs/database.md#factories-and-seeders.
 package factory
 
 import (

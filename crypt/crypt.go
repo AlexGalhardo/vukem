@@ -15,6 +15,8 @@
 // Never pass APP_KEY directly: derive a purpose key with
 // app.Key.Derive("crypt", crypt.KeySize). Apps get a ready Encrypter in
 // app.Crypt, built from APP_KEY and APP_PREVIOUS_KEYS.
+//
+// See https://github.com/AlexGalhardo/vukem/blob/main/docs/subsystems.md#encryption.
 package crypt
 
 import (

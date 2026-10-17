@@ -12,6 +12,13 @@
 //
 //		vukemtest.AssertDatabaseHas(t, app, "posts", map[string]any{"title": "Hello"})
 //	}
+//
+// [New] returns an [App] wrapping the booted app, its handler and fakes
+// (mail through [App.Mails], social logins through [FakeSocial]); a
+// [Client] sends requests and returns a [Response] with Assert helpers;
+// [FakeClock] controls time in tests.
+//
+// See https://github.com/AlexGalhardo/vukem/blob/main/docs/testing.md.
 package vukemtest
 
 import (

@@ -17,6 +17,8 @@
 //
 // A missing key returns the key itself (reported through Options.OnMissing);
 // translating never panics.
+//
+// See https://github.com/AlexGalhardo/vukem/blob/main/docs/subsystems.md#i18n.
 package i18n
 
 import (

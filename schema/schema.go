@@ -7,6 +7,13 @@
 //		t.String("email").Unique()
 //		t.Timestamps()
 //	})
+//
+// A [Schema] builds and runs DDL on any database.Executor. A [Migration]
+// pairs Up and Down functions under a sortable ID; a [Migrator] applies
+// them (Up, Rollback, Reset, Fresh, Status) and is what vukem migrate
+// runs. Apps pass their migrations with vukem.WithMigrations.
+//
+// See https://github.com/AlexGalhardo/vukem/blob/main/docs/database.md#migrations.
 package schema
 
 import (
