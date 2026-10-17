@@ -43,7 +43,9 @@ func Open(ctx context.Context, url string) (*Client, error) {
 
 // OpenLazy is Open without the ping: a malformed url still fails, but the
 // server is only contacted on first use, so the app boots while Redis is
-// down. Call Ping from a readiness check.
+// down. Call Ping from a readiness check; go-redis retries a failed command
+// 3 times with backoff, so add dial_timeout and max_retries=-1 to url when
+// a readiness check must answer fast.
 func OpenLazy(url string) (*Client, error) {
 	opts, err := goredis.ParseURL(url)
 	if err != nil {
