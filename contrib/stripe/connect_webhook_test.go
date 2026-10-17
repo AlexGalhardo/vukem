@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -102,5 +103,54 @@ func TestSecurity_A08_StripeConnectWebhookSecrets(t *testing.T) {
 		Secrets: []string{connectSecret}, Store: cache.NewMemory(1), Bus: bus,
 	}); err != nil {
 		t.Errorf("handler with only Secrets = %v", err)
+	}
+}
+
+func TestWebhookSecretsOrder(t *testing.T) {
+	t.Parallel()
+
+	var logs bytes.Buffer
+
+	bus := events.New(slog.New(slog.DiscardHandler), 1)
+	events.Listen(bus, func(context.Context, stripe.Received) error { return nil })
+
+	h, err := stripe.WebhookHandler(stripe.WebhookConfig{
+		Secrets: []string{"whsec_first", "whsec_second"}, Store: cache.NewMemory(10), Bus: bus,
+		Now: func() time.Time { return now }, Log: slog.New(slog.NewTextHandler(&logs, nil)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name    string
+		body    []byte
+		secret  string
+		want    int
+		wantLog string
+	}{
+		{"first secret fails, second validates", payload("evt_2nd"), "whsec_second", http.StatusOK, ""},
+		{
+			"signed non-event stops the search",
+			[]byte(`{"hello":"world"}`),
+			"whsec_first",
+			http.StatusBadRequest,
+			"not an event",
+		},
+	}
+
+	for _, tt := range tests {
+		logs.Reset()
+
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/stripe/webhook", bytes.NewReader(tt.body))
+		req.Header.Set("Stripe-Signature", stripe.SignForTest(tt.body, tt.secret, now))
+
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+
+		if rec.Code != tt.want || !strings.Contains(logs.String(), tt.wantLog) ||
+			strings.Contains(logs.String(), "no matching signature") {
+			t.Errorf("%s = %d (log %q), want %d with %q", tt.name, rec.Code, logs.String(), tt.want, tt.wantLog)
+		}
 	}
 }

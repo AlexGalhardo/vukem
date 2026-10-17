@@ -2,6 +2,7 @@ package stripe_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -274,7 +275,6 @@ func TestIdempotencyKeyOnEveryPost(t *testing.T) {
 	_, _ = c.CreateLoginLink(ctx, "acct_1")
 	_, _ = c.CreateTransfer(ctx, nil)
 	_ = c.Call(ctx, http.MethodPost, "/v1/refunds", stripe.Params{"payment_intent": "pi_1"}, nil)
-	_ = c.Do(ctx, http.MethodPost, "/v1/refunds", nil, nil)
 	_, _ = c.GetAccount(ctx, "acct_1")
 
 	keys := map[string]bool{}
@@ -343,4 +343,191 @@ func TestSecurity_A03_StripeRequestHeadersValidated(t *testing.T) {
 			t.Errorf("invalid requests reached the API: %+v", f.seen)
 		}
 	})
+}
+
+func TestSecurity_A01_StripePlatformOnlyRefusesAccountScope(t *testing.T) {
+	t.Parallel()
+
+	f := newConnectAPI(t)
+	scoped := connectClient(t, f).ForAccount("acct_1")
+	platform := connectClient(t, f)
+	ctx := t.Context()
+
+	tests := map[string]func() error{
+		"CreateAccount via ForAccount": func() error {
+			_, err := scoped.CreateAccount(ctx, nil)
+			return err
+		},
+		"GetAccount via ForAccount": func() error {
+			_, err := scoped.GetAccount(ctx, "acct_1")
+			return err
+		},
+		"CreateAccountLink via ForAccount": func() error {
+			_, err := scoped.CreateAccountLink(ctx, nil)
+			return err
+		},
+		"CreateLoginLink via ForAccount": func() error {
+			_, err := scoped.CreateLoginLink(ctx, "acct_1")
+			return err
+		},
+		"CreateTransfer via ForAccount": func() error {
+			_, err := scoped.CreateTransfer(ctx, nil)
+			return err
+		},
+		"GetTransfer via ForAccount": func() error {
+			_, err := scoped.GetTransfer(ctx, "tr_1")
+			return err
+		},
+		"CreateTransfer with OnAccount": func() error {
+			_, err := platform.CreateTransfer(ctx, nil, stripe.OnAccount("acct_1"))
+			return err
+		},
+	}
+
+	for name, call := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			if err := call(); !errors.Is(err, stripe.ErrInvalidRequestOption) {
+				t.Errorf("%s = %v, want ErrInvalidRequestOption", name, err)
+			}
+		})
+	}
+
+	t.Cleanup(func() {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+
+		if len(f.seen) != 0 {
+			t.Errorf("platform-only calls with an account scope reached the API: %+v", f.seen)
+		}
+	})
+}
+
+func TestExpandedFieldsKeepID(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		body string
+		got  func([]byte) (any, error)
+		want any
+	}{
+		{
+			name: "PaymentIntent",
+			body: `{"id":"pi_1","customer":{"id":"cus_1","object":"customer"},` +
+				`"latest_charge":{"id":"ch_1"},"on_behalf_of":{"id":"acct_1"},` +
+				`"transfer_data":{"destination":{"id":"acct_2"},"amount":5}}`,
+			got: func(b []byte) (any, error) {
+				var v stripe.PaymentIntent
+				err := json.Unmarshal(b, &v)
+
+				return [5]any{
+					v.Customer,
+					v.LatestCharge,
+					v.OnBehalfOf,
+					v.TransferData.Destination,
+					v.TransferData.Amount,
+				}, err
+			},
+			want: [5]any{"cus_1", "ch_1", "acct_1", "acct_2", int64(5)},
+		},
+		{
+			name: "PaymentIntent unexpanded",
+			body: `{"id":"pi_1","customer":"cus_1","latest_charge":null,"transfer_data":null}`,
+			got: func(b []byte) (any, error) {
+				var v stripe.PaymentIntent
+				err := json.Unmarshal(b, &v)
+
+				return [3]any{v.ID, v.Customer, v.LatestCharge}, err
+			},
+			want: [3]any{"pi_1", "cus_1", ""},
+		},
+		{
+			name: "Transfer",
+			body: `{"id":"tr_1","destination":{"id":"acct_1"},"destination_payment":{"id":"py_1"},` +
+				`"source_transaction":{"id":"ch_1"}}`,
+			got: func(b []byte) (any, error) {
+				var v stripe.Transfer
+				err := json.Unmarshal(b, &v)
+
+				return [3]any{v.Destination, v.DestinationPayment, v.SourceTransaction}, err
+			},
+			want: [3]any{"acct_1", "py_1", "ch_1"},
+		},
+		{
+			name: "CheckoutSession",
+			body: `{"id":"cs_1","customer":{"id":"cus_1"},"subscription":{"id":"sub_1"},"payment_intent":{"id":"pi_1"}}`,
+			got: func(b []byte) (any, error) {
+				var v stripe.CheckoutSession
+				err := json.Unmarshal(b, &v)
+
+				return [3]any{v.Customer, v.Subscription, v.PaymentIntent}, err
+			},
+			want: [3]any{"cus_1", "sub_1", "pi_1"},
+		},
+		{
+			name: "Subscription",
+			body: `{"id":"sub_1","customer":{"id":"cus_1"}}`,
+			got: func(b []byte) (any, error) {
+				var v stripe.Subscription
+				err := json.Unmarshal(b, &v)
+
+				return v.Customer, err
+			},
+			want: "cus_1",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := tt.got([]byte(tt.body))
+			if err != nil || got != tt.want {
+				t.Errorf("Unmarshal(%s) = %v, %v, want %v", tt.body, got, err, tt.want)
+			}
+		})
+	}
+}
+
+func TestRetryKeepsCallerIdempotencyKey(t *testing.T) {
+	t.Parallel()
+
+	var (
+		mu   sync.Mutex
+		keys []string
+	)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+
+		keys = append(keys, r.Header.Get("Idempotency-Key"))
+		if len(keys) == 1 {
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusInternalServerError)
+
+			return
+		}
+
+		_, _ = w.Write([]byte(`{"id":"tr_1"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	c, err := stripe.New(key, stripe.WithBaseURL(srv.URL), stripe.WithRetries(2))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := c.CreateTransfer(t.Context(), nil, stripe.IdempotencyKey("order-9-transfer")); err != nil {
+		t.Fatalf("CreateTransfer after a 500 = %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if want := []string{"order-9-transfer", "order-9-transfer"}; !slices.Equal(keys, want) {
+		t.Errorf("Idempotency-Key per attempt = %v, want %v", keys, want)
+	}
 }

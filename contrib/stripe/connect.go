@@ -7,6 +7,9 @@ import (
 	"net/url"
 )
 
+// The methods below act on the platform account: called through ForAccount
+// or with OnAccount they fail with ErrInvalidRequestOption before sending.
+
 // Account is a Connect connected account (v1 Accounts API).
 type Account struct {
 	ID               string            `json:"id"`
@@ -62,7 +65,7 @@ type Transfer struct {
 // or the legacy type=express; add capabilities[transfers][requested]=true
 // and any data you already know.
 func (c *Client) CreateAccount(ctx context.Context, p Params, opts ...RequestOption) (Account, error) {
-	return sendOpts[Account](ctx, c, http.MethodPost, "/v1/accounts", p, opts...)
+	return sendOpts[Account](ctx, c, http.MethodPost, "/v1/accounts", p, withPlatformOnly(opts)...)
 }
 
 // GetAccount retrieves a connected account; check ChargesEnabled and
@@ -72,7 +75,7 @@ func (c *Client) GetAccount(ctx context.Context, id string, opts ...RequestOptio
 		return Account{}, fmt.Errorf("%w: account id must be an acct_ id", ErrInvalidRequestOption)
 	}
 
-	return sendOpts[Account](ctx, c, http.MethodGet, "/v1/accounts/"+url.PathEscape(id), nil, opts...)
+	return sendOpts[Account](ctx, c, http.MethodGet, "/v1/accounts/"+url.PathEscape(id), nil, withPlatformOnly(opts)...)
 }
 
 // CreateAccountLink creates an onboarding link: account, type
@@ -80,7 +83,7 @@ func (c *Client) GetAccount(ctx context.Context, id string, opts ...RequestOptio
 // Hand the URL only to the authenticated account holder inside the app;
 // refresh_url should create a new link, since each one is single-use.
 func (c *Client) CreateAccountLink(ctx context.Context, p Params, opts ...RequestOption) (AccountLink, error) {
-	return sendOpts[AccountLink](ctx, c, http.MethodPost, "/v1/account_links", p, opts...)
+	return sendOpts[AccountLink](ctx, c, http.MethodPost, "/v1/account_links", p, withPlatformOnly(opts)...)
 }
 
 // CreateLoginLink creates a single-use link to an Express account's
@@ -91,7 +94,7 @@ func (c *Client) CreateLoginLink(ctx context.Context, account string, opts ...Re
 	}
 
 	return sendOpts[LoginLink](
-		ctx, c, http.MethodPost, "/v1/accounts/"+url.PathEscape(account)+"/login_links", nil, opts...,
+		ctx, c, http.MethodPost, "/v1/accounts/"+url.PathEscape(account)+"/login_links", nil, withPlatformOnly(opts)...,
 	)
 }
 
@@ -100,10 +103,20 @@ func (c *Client) CreateLoginLink(ctx context.Context, account string, opts ...Re
 // funds before they settle, source_transaction. Pass an IdempotencyKey
 // tied to the business operation so a retried job never pays twice.
 func (c *Client) CreateTransfer(ctx context.Context, p Params, opts ...RequestOption) (Transfer, error) {
-	return sendOpts[Transfer](ctx, c, http.MethodPost, "/v1/transfers", p, opts...)
+	return sendOpts[Transfer](ctx, c, http.MethodPost, "/v1/transfers", p, withPlatformOnly(opts)...)
 }
 
 // GetTransfer retrieves a transfer.
 func (c *Client) GetTransfer(ctx context.Context, id string, opts ...RequestOption) (Transfer, error) {
-	return sendOpts[Transfer](ctx, c, http.MethodGet, "/v1/transfers/"+url.PathEscape(id), nil, opts...)
+	return sendOpts[Transfer](
+		ctx,
+		c,
+		http.MethodGet,
+		"/v1/transfers/"+url.PathEscape(id),
+		nil,
+		withPlatformOnly(opts)...)
+}
+
+func withPlatformOnly(opts []RequestOption) []RequestOption {
+	return append([]RequestOption{platformOnly}, opts...)
 }

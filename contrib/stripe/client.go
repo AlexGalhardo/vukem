@@ -113,18 +113,26 @@ func (c *Client) ForAccount(id string) *Client {
 }
 
 // ErrInvalidRequestOption is returned, before any request is sent, for a
-// Stripe-Account that is not an acct_ id or an idempotency key that is
-// longer than 255 bytes or not printable ASCII.
+// Stripe-Account that is not an acct_ id, an idempotency key that is
+// longer than 255 bytes or not printable ASCII, or a platform-only Connect
+// method (accounts, account and login links, transfers) called through
+// ForAccount or OnAccount.
 var ErrInvalidRequestOption = errors.New("stripe: invalid request option")
 
 // RequestOption tunes one request (Call and the Connect methods).
 type RequestOption func(*requestOptions)
 
 type requestOptions struct {
-	idemKey    string
-	account    string
-	accountSet bool
+	idemKey      string
+	account      string
+	accountSet   bool
+	platformOnly bool
 }
+
+// platformOnly marks endpoints the platform calls on its own account
+// (creating accounts, links, transfers): sending them as a connected
+// account would act on the wrong account, so an account scope is refused.
+func platformOnly(o *requestOptions) { o.platformOnly = true }
 
 // IdempotencyKey sets the Idempotency-Key of a POST, so retries of the same
 // business operation (e.g. "order-42-transfer") never run twice, even
@@ -134,13 +142,17 @@ func IdempotencyKey(key string) RequestOption {
 	return func(o *requestOptions) { o.idemKey = key }
 }
 
-// StripeAccount sends the request as connected account id
+// OnAccount sends the request as connected account id
 // (Stripe-Account header); it overrides ForAccount.
 func OnAccount(id string) RequestOption {
 	return func(o *requestOptions) { o.account, o.accountSet = id, true }
 }
 
 func (o requestOptions) validate() error {
+	if o.platformOnly && o.accountSet {
+		return fmt.Errorf("%w: platform-only endpoint called with a connected account scope", ErrInvalidRequestOption)
+	}
+
 	if o.accountSet && !validAccountID(o.account) {
 		return fmt.Errorf("%w: Stripe-Account must be an acct_ id", ErrInvalidRequestOption)
 	}
