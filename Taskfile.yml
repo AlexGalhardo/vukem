@@ -116,13 +116,13 @@ tasks:
       - go run ./internal/tools/release -push {{.CLI_ARGS}}
 
   release:binaries:
-    desc: "Build vukem binaries with GoReleaser in Docker; SNAPSHOT=1 builds without publishing (otherwise uploads to the release of the current tag)"
+    desc: "Build vukem binaries with GoReleaser in Docker; SNAPSHOT=1 builds without publishing (otherwise uploads to the release of the current tag; unsigned, release.yml signs)"
     cmds:
       - >-
         docker run --rm -v "{{.ROOT_DIR}}:/src" -w /src
         -e GITHUB_TOKEN="$(gh auth token)" -e GIT_CONFIG_COUNT=1
         -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0=/src
-        goreleaser/goreleaser:v2.18.2 release --clean {{if .SNAPSHOT}}--snapshot{{end}}
+        goreleaser/goreleaser:v2.18.2 release --clean --skip=sign {{if .SNAPSHOT}}--snapshot{{end}}
 
   test:linux:
     desc: Run unit tests with -race on Linux inside Docker (no local gcc needed)

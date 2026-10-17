@@ -2,7 +2,8 @@ name: release
 
 # Builds the vukem CLI binaries when a version tag is pushed. The release
 # notes are created from CHANGELOG.md by internal/tools/release; GoReleaser
-# only attaches the archives and checksums.
+# only attaches the archives, checksums, SBOMs (syft) and the cosign keyless
+# bundle of checksums.txt. Verification: docs/tooling.md#verifying-a-release.
 on:
   push:
     tags: ["v*"]
@@ -15,17 +16,29 @@ jobs:
   goreleaser:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: write # upload assets to the GitHub release
+      id-token: write # Sigstore OIDC identity for cosign and attestations
+      attestations: write # build provenance attestations
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - uses: actions/setup-go@v6
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      - uses: goreleaser/goreleaser-action@v7
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.1.3
+      - uses: anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          syft-version: v1.54.1
+      - uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
         with:
           version: "v2.18.2"
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-checksums: ./dist/checksums.txt
