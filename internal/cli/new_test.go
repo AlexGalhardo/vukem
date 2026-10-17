@@ -412,7 +412,8 @@ func TestScaffoldsDoNotReturnValueMutatedInSameStatement(t *testing.T) {
 
 	check := func(fsys fs.FS) fs.WalkDirFunc {
 		return func(p string, d fs.DirEntry, err error) error {
-			if err != nil || d.IsDir() || !(strings.HasSuffix(p, ".go") || strings.HasSuffix(p, ".go.tmpl")) {
+			isGo := strings.HasSuffix(p, ".go") || strings.HasSuffix(p, ".go.tmpl")
+			if err != nil || d.IsDir() || !isGo {
 				return err
 			}
 
@@ -423,7 +424,7 @@ func TestScaffoldsDoNotReturnValueMutatedInSameStatement(t *testing.T) {
 
 			for i, line := range strings.Split(string(b), "\n") {
 				m := ret.FindStringSubmatch(line)
-				if m != nil && regexp.MustCompile(`&`+m[1]+`\b`).MatchString(m[2]) {
+				if len(m) == 3 && regexp.MustCompile(`&`+m[1]+`\b`).MatchString(m[2]) {
 					t.Errorf("%s:%d returns %s while mutating it: %s", p, i+1, m[1], strings.TrimSpace(line))
 				}
 			}
