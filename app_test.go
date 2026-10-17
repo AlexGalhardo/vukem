@@ -6,9 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"maps"
 	"net/http"
+	"net/http/httptest"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -19,7 +22,13 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/AlexGalhardo/vukem/config"
+	"github.com/AlexGalhardo/vukem/database"
+	"github.com/AlexGalhardo/vukem/internal/testutil"
+	"github.com/AlexGalhardo/vukem/mail"
+	"github.com/AlexGalhardo/vukem/queue"
+	"github.com/AlexGalhardo/vukem/router"
 	"github.com/AlexGalhardo/vukem/sse"
+	"github.com/AlexGalhardo/vukem/web"
 )
 
 var testKey = config.GenerateKey()
@@ -541,3 +550,466 @@ func TestHTTPServerListenError(t *testing.T) {
 		t.Fatal("Run() with bad address = nil error")
 	}
 }
+
+// clientProvider opens its client in Boot, like a Mongo or S3 provider.
+type clientProvider struct {
+	client *string
+	rec    *recorder
+}
+
+func (p *clientProvider) Register(*App) error { return nil }
+
+func (p *clientProvider) Boot(context.Context, *App) error {
+	p.rec.add("boot")
+	p.client = new("connected")
+
+	return nil
+}
+
+func TestRoutesAfterBootSeeBootedServices(t *testing.T) {
+	t.Parallel()
+
+	rec := &recorder{}
+	p := &clientProvider{rec: rec}
+
+	app, err := New(WithSource(testSource(nil)), WithLogger(discardLogger()), WithProviders(p),
+		WithRoutes(func(*router.Router, *App) error { rec.add("routes"); return nil }),
+		WithRoutesAfterBoot(func(r *router.Router, _ *App) error {
+			rec.add("routes-after-boot")
+
+			if p.client == nil {
+				return errors.New("client is nil")
+			}
+
+			client := *p.client
+			r.Get("/client", func(c *web.Ctx) error { return c.String(http.StatusOK, client) }).Name("client")
+
+			return nil
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if hasRoute(app, "client") {
+		t.Fatal("after-boot route registered before Boot")
+	}
+
+	if err := app.Boot(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := app.Boot(t.Context()); err != nil { // idempotent: routes are added once
+		t.Fatal(err)
+	}
+
+	if want, got := []string{"routes", "boot", "routes-after-boot"}, rec.get(); !slices.Equal(got, want) {
+		t.Fatalf("order = %v, want %v", got, want)
+	}
+
+	h, err := app.Handler()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/client", nil))
+
+	if rr.Code != http.StatusOK || rr.Body.String() != "connected" {
+		t.Fatalf("GET /client = %d %q", rr.Code, rr.Body.String())
+	}
+}
+
+func TestRoutesAfterBootErrors(t *testing.T) {
+	t.Parallel()
+
+	failing := WithRoutesAfterBoot(func(*router.Router, *App) error { return errors.New("boom") })
+
+	app, err := New(WithSource(testSource(nil)), WithLogger(discardLogger()), failing)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := app.Boot(t.Context()); err == nil || !strings.Contains(err.Error(), "routes after boot: boom") {
+		t.Fatalf("Boot() = %v, want routes after boot error", err)
+	}
+
+	// A router compiled before Boot (here through Router.Handler) would
+	// silently miss the late routes.
+	late := WithRoutesAfterBoot(func(r *router.Router, _ *App) error {
+		r.Get("/late", func(*web.Ctx) error { return nil })
+		return nil
+	})
+
+	app, err = New(WithSource(testSource(nil)), WithLogger(discardLogger()), late)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := app.Router.Handler(); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := app.Boot(t.Context()); !errors.Is(err, ErrRoutesCompiled) {
+		t.Fatalf("Boot() after Handler() = %v, want ErrRoutesCompiled", err)
+	}
+}
+
+func TestRoutesAfterBootInWarmup(t *testing.T) {
+	t.Parallel()
+
+	p := &clientProvider{rec: &recorder{}}
+
+	app, err := New(WithSource(testSource(nil)), WithLogger(discardLogger()), WithKind(KindWarmup),
+		WithProviders(p),
+		WithRoutesAfterBoot(func(r *router.Router, _ *App) error {
+			r.Get("/client", func(*web.Ctx) error { return nil }).Name("client")
+			return nil
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Warmup never boots, yet codegen:routes needs the full route table.
+	if !hasRoute(app, "client") {
+		t.Fatal("after-boot route missing in warmup")
+	}
+
+	if got := p.rec.get(); len(got) != 0 {
+		t.Fatalf("warmup booted providers: %v", got)
+	}
+}
+
+func hasRoute(app *App, name string) bool {
+	return slices.ContainsFunc(app.Router.Routes(), func(r router.RouteInfo) bool { return r.Name == name })
+}
+
+func TestBootErrorIsSticky(t *testing.T) {
+	t.Parallel()
+
+	p := &testProvider{name: "x", rec: &recorder{}, fail: "boot"}
+
+	app, err := New(WithSource(testSource(nil)), WithLogger(discardLogger()), WithProviders(p))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	first := app.Boot(t.Context())
+	if first == nil {
+		t.Fatal("Boot() = nil, want boot error")
+	}
+
+	if again := app.Boot(t.Context()); !errors.Is(again, first) {
+		t.Fatalf("second Boot() = %v, want %v", again, first)
+	}
+
+	if got := p.rec.get(); len(got) != 2 { // register + one boot
+		t.Fatalf("provider calls = %v, want Boot once", got)
+	}
+}
+
+func TestHandlerRefusesPendingRoutesAfterBoot(t *testing.T) {
+	t.Parallel()
+
+	app, err := New(WithSource(testSource(nil)), WithLogger(discardLogger()),
+		WithRoutesAfterBoot(func(*router.Router, *App) error { return nil }))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := app.Handler(); !errors.Is(err, ErrNotBooted) {
+		t.Fatalf("Handler() before Boot = %v, want ErrNotBooted", err)
+	}
+
+	if app.Router.Compiled() {
+		t.Fatal("Handler() compiled the router while routes were pending")
+	}
+
+	if err := app.Boot(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := app.Handler(); err != nil {
+		t.Fatalf("Handler() after Boot = %v", err)
+	}
+}
+
+func TestRoutesAfterBootPanicInWarmup(t *testing.T) {
+	t.Parallel()
+
+	p := &clientProvider{rec: &recorder{}}
+
+	_, err := New(WithSource(testSource(nil)), WithLogger(discardLogger()), WithKind(KindWarmup),
+		WithProviders(p),
+		WithRoutesAfterBoot(func(r *router.Router, _ *App) error {
+			client := *p.client // nil: warmup never boots
+			r.Get("/client", func(c *web.Ctx) error { return c.String(http.StatusOK, client) })
+
+			return nil
+		}),
+	)
+	if err == nil || !strings.Contains(err.Error(), "must not use booted services during warmup") {
+		t.Fatalf("New() in warmup = %v, want warmup panic error", err)
+	}
+}
+
+func TestErrRoutesCompiledHint(t *testing.T) {
+	t.Parallel()
+
+	if msg := ErrRoutesCompiled.Error(); !strings.Contains(msg, "call Boot before Handler/Router.URL") {
+		t.Fatalf("ErrRoutesCompiled = %q, want a hint", msg)
+	}
+}
+
+type hookLog struct {
+	mu   sync.Mutex
+	name string
+	log  []string
+}
+
+func (h *hookLog) add(s string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.log = append(h.log, h.name+" "+s)
+}
+
+func (h *hookLog) ObserveQuery(_ context.Context, q database.Query) { h.add("query " + q.SQL) }
+
+func (h *hookLog) ObserveJob(_ context.Context, e queue.JobEvent) {
+	h.add("job " + e.Kind + " " + string(e.Status))
+}
+
+type hookTransport struct {
+	next mail.Transport
+	log  *hookLog
+}
+
+func (t hookTransport) Send(ctx context.Context, msg *mail.Message) error {
+	t.log.add("mail " + msg.Subject)
+	return t.next.Send(ctx, msg)
+}
+
+func instrumented(t *testing.T, logs ...*hookLog) *App {
+	t.Helper()
+
+	app := newTestApp(t,
+		WithSource(testSource(map[string]string{
+			"DATABASE_URL": "file:" + filepath.Join(testutil.TempDir(t), "i.db"),
+			"MAIL_MAILER":  "array",
+		})),
+		WithJobs(queue.Handle(func(context.Context, pingJob) error { return nil })),
+	)
+	t.Cleanup(func() { _ = app.Shutdown(context.Background()) })
+
+	for _, l := range logs {
+		err := app.Instrument(Instrumentation{
+			Queries: l,
+			Jobs:    l,
+			Mail:    func(next mail.Transport) mail.Transport { return hookTransport{next: next, log: l} },
+		})
+		if err != nil {
+			t.Fatalf("Instrument() = %v", err)
+		}
+	}
+
+	return app
+}
+
+func TestInstrumentReachesDBQueueAndMailer(t *testing.T) {
+	t.Parallel()
+
+	a, b := &hookLog{name: "a"}, &hookLog{name: "b"}
+	app := instrumented(t, a, b)
+
+	db, err := app.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := db.ExecContext(t.Context(), "SELECT 1"); err != nil {
+		t.Fatal(err)
+	}
+
+	q, err := app.Queue()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := q.Dispatch(t.Context(), pingJob{N: 1}); err != nil {
+		t.Fatal(err)
+	}
+
+	m, err := app.Mailer()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := m.Send(t.Context(), plainMail{}); err != nil {
+		t.Fatal(err)
+	}
+
+	want := map[string][]string{
+		"a": {"a query SELECT 1", "a job ping dispatched", "a job ping processed", "a mail Shipped"},
+		"b": {"b query SELECT 1", "b job ping dispatched", "b job ping processed", "b mail Shipped"},
+	}
+	got := map[string][]string{"a": a.log, "b": b.log}
+
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("hooks (-want +got):\n%s", diff)
+	}
+
+	// The last wrapper registered is the outermost transport.
+	arr, ok := m.Transport().(hookTransport).next.(hookTransport).next.(*mail.Array)
+	if !ok || len(arr.Sent()) != 1 {
+		t.Fatalf("Mailer().Transport() = %T, want hooks around *mail.Array", m.Transport())
+	}
+}
+
+func TestInstrumentAfterUseIsAnError(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		use  func(*App) error
+		in   func(*hookLog) Instrumentation
+	}{
+		{
+			name: "DB",
+			use:  func(a *App) error { _, err := a.DB(); return err },
+			in:   func(l *hookLog) Instrumentation { return Instrumentation{Queries: l} },
+		},
+		{
+			name: "Queue",
+			use:  func(a *App) error { _, err := a.Queue(); return err },
+			in:   func(l *hookLog) Instrumentation { return Instrumentation{Jobs: l} },
+		},
+		{
+			name: "Mailer",
+			use:  func(a *App) error { _, err := a.Mailer(); return err },
+			in: func(*hookLog) Instrumentation {
+				return Instrumentation{Mail: func(t mail.Transport) mail.Transport { return t }}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			app := instrumented(t)
+			if err := tt.use(app); err != nil {
+				t.Fatal(err)
+			}
+
+			if err := app.Instrument(tt.in(&hookLog{})); !errors.Is(err, ErrInstrumentTooLate) {
+				t.Fatalf("Instrument() after %s() = %v, want ErrInstrumentTooLate", tt.name, err)
+			}
+
+			// Hooks for services not built yet are still accepted.
+			if err := app.Instrument(Instrumentation{}); err != nil {
+				t.Fatalf("Instrument(empty) = %v", err)
+			}
+		})
+	}
+}
+
+type panicObserver struct{}
+
+func (panicObserver) ObserveQuery(context.Context, database.Query) { panic("observer bug") }
+
+// Devtools, WithQueryObservers and Instrument each see a query exactly
+// once, and a panicking hook does not starve the ones after it.
+func TestInstrumentQueriesWithDevtoolsAndQueryObservers(t *testing.T) {
+	t.Parallel()
+
+	option, hook := &countingObserver{}, &countingObserver{}
+
+	app, err := New(
+		WithSource(testSource(map[string]string{
+			"APP_ENV": "development", "DEVTOOLS": "true", "DATABASE_URL": ":memory:",
+		})),
+		WithLogger(discardLogger()),
+		WithQueryObservers(option),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = app.Shutdown(context.Background()) })
+
+	if err := app.Instrument(Instrumentation{Queries: panicObserver{}}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := app.Instrument(Instrumentation{Queries: hook}); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err := app.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := db.ExecContext(t.Context(), "SELECT 1"); err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{"SELECT 1"}
+	if diff := cmp.Diff(want, option.sql); diff != "" {
+		t.Errorf("WithQueryObservers observer (-want +got):\n%s", diff)
+	}
+
+	if diff := cmp.Diff(want, hook.sql); diff != "" {
+		t.Errorf("Instrument observer after a panicking one (-want +got):\n%s", diff)
+	}
+
+	if got := len(app.Devtools.Queries()); got != 1 {
+		t.Errorf("len(Devtools.Queries()) = %d, want 1", got)
+	}
+}
+
+type panicJobHook struct{}
+
+func (panicJobHook) ObserveJob(context.Context, queue.JobEvent) { panic("observer bug") }
+
+// A panicking job hook neither fails the dispatch nor starves the hooks
+// after it, and devtools still sees each step once.
+func TestInstrumentJobsPanicIsContained(t *testing.T) {
+	t.Parallel()
+
+	app := newTestApp(t,
+		WithSource(testSource(map[string]string{"APP_ENV": "development", "DEVTOOLS": "true"})),
+		WithJobs(queue.Handle(func(context.Context, pingJob) error { return nil })),
+	)
+
+	hook := &hookLog{name: "b"}
+	for _, obs := range []queue.Observer{panicJobHook{}, hook} {
+		if err := app.Instrument(Instrumentation{Jobs: obs}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	q, err := app.Queue()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := q.Dispatch(t.Context(), pingJob{N: 1}); err != nil {
+		t.Fatalf("Dispatch() = %v", err)
+	}
+
+	if diff := cmp.Diff([]string{"b job ping dispatched", "b job ping processed"}, hook.log); diff != "" {
+		t.Errorf("hook after the panicking one (-want +got):\n%s", diff)
+	}
+
+	if got := len(app.Devtools.Jobs()); got != 2 {
+		t.Errorf("len(Devtools.Jobs()) = %d, want 2", got)
+	}
+}
+
+func discardLogger() *slog.Logger { return slog.New(slog.DiscardHandler) }
+
+// emptyFS has no files, so only the process environment is used.
+type emptyFS struct{}
+
+func (emptyFS) Open(string) (fs.File, error) { return nil, fs.ErrNotExist }

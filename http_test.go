@@ -7,21 +7,38 @@ import (
 	"errors"
 	"flag"
 	"io"
+	"log/slog"
 	"maps"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"testing/fstest"
+	"testing/synctest"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
+
+	"github.com/AlexGalhardo/vukem/api"
+	"github.com/AlexGalhardo/vukem/cache"
+	"github.com/AlexGalhardo/vukem/csrf"
 	"github.com/AlexGalhardo/vukem/database"
+	"github.com/AlexGalhardo/vukem/errs"
+	"github.com/AlexGalhardo/vukem/i18n"
 	"github.com/AlexGalhardo/vukem/internal/testutil"
+	"github.com/AlexGalhardo/vukem/mail"
+	"github.com/AlexGalhardo/vukem/middleware"
+	"github.com/AlexGalhardo/vukem/queue"
 	"github.com/AlexGalhardo/vukem/router"
 	"github.com/AlexGalhardo/vukem/schedule"
 	"github.com/AlexGalhardo/vukem/schema"
 	"github.com/AlexGalhardo/vukem/web"
+	"github.com/AlexGalhardo/vukem/z"
 )
 
 func newTestApp(t *testing.T, opts ...Option) *App {
@@ -473,4 +490,1732 @@ func TestDatabaseSessionsArePrunedOnSchedule(t *testing.T) {
 			t.Fatal("session:prune scheduled for cookie sessions")
 		}
 	}
+}
+
+type healthBody struct {
+	Status string            `json:"status"`
+	Checks map[string]string `json:"checks"`
+}
+
+func serveReady(t *testing.T, app *App) (int, healthBody, *httptest.ResponseRecorder) {
+	t.Helper()
+
+	rec := httptest.NewRecorder()
+	app.ReadyHandler().
+		ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/ready", http.NoBody))
+
+	var body healthBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("ReadyHandler body %q: %v", rec.Body.String(), err)
+	}
+
+	return rec.Code, body, rec
+}
+
+func TestReadyHandler(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		checks   map[string]HealthCheck
+		wantCode int
+		want     healthBody
+	}{
+		{
+			name:     "no checks",
+			wantCode: http.StatusOK,
+			want:     healthBody{Status: "ok", Checks: map[string]string{}},
+		},
+		{
+			name:     "all healthy",
+			checks:   map[string]HealthCheck{"db": okCheck, "cache": okCheck},
+			wantCode: http.StatusOK,
+			want:     healthBody{Status: "ok", Checks: map[string]string{"db": "ok", "cache": "ok"}},
+		},
+		{
+			name: "one failing",
+			checks: map[string]HealthCheck{
+				"db":    okCheck,
+				"cache": func(context.Context) error { return errors.New("dial tcp 10.0.0.5:6379: refused") },
+			},
+			wantCode: http.StatusServiceUnavailable,
+			want:     healthBody{Status: "fail", Checks: map[string]string{"db": "ok", "cache": "fail"}},
+		},
+		{
+			name:     "panicking check",
+			checks:   map[string]HealthCheck{"boom": func(context.Context) error { panic("secret-dsn") }},
+			wantCode: http.StatusServiceUnavailable,
+			want:     healthBody{Status: "fail", Checks: map[string]string{"boom": "fail"}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			app := newTestApp(t)
+			for name, check := range tt.checks {
+				app.AddHealthCheck(name, check)
+			}
+
+			code, body, rec := serveReady(t, app)
+			if code != tt.wantCode {
+				t.Errorf("ReadyHandler status = %d, want %d", code, tt.wantCode)
+			}
+
+			if diff := cmp.Diff(tt.want, body); diff != "" {
+				t.Errorf("ReadyHandler body (-want +got):\n%s", diff)
+			}
+
+			if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+				t.Errorf("Cache-Control = %q, want no-store", got)
+			}
+
+			if got := rec.Header().Get("Content-Type"); !strings.HasPrefix(got, "application/json") {
+				t.Errorf("Content-Type = %q, want application/json", got)
+			}
+		})
+	}
+}
+
+func okCheck(context.Context) error { return nil }
+
+func TestSecurity_A10_ReadyHandlerHidesErrors(t *testing.T) {
+	t.Parallel()
+
+	app := newTestApp(t)
+	app.AddHealthCheck("db", func(context.Context) error {
+		return errors.New("postgres://admin:hunter2@10.0.0.5/app: connection refused")
+	})
+	app.AddHealthCheck("cache", func(context.Context) error { panic("redis password hunter2") })
+
+	_, _, rec := serveReady(t, app)
+	for _, leak := range []string{"hunter2", "10.0.0.5", "postgres", "refused", "redis"} {
+		if strings.Contains(rec.Body.String(), leak) {
+			t.Errorf("ReadyHandler body %q leaks %q", rec.Body.String(), leak)
+		}
+	}
+}
+
+func TestReadyHandlerPerCheckTimeout(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		app := newTestApp(t)
+		release := make(chan struct{})
+
+		// A check that ignores its context must not hang the probe.
+		app.AddHealthCheckTimeout("stuck", time.Second, func(context.Context) error {
+			<-release
+			return nil
+		})
+		app.AddHealthCheckTimeout("slow", 5*time.Second, func(ctx context.Context) error {
+			select {
+			case <-time.After(2 * time.Second):
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		})
+		app.AddHealthCheck("fast", okCheck)
+
+		start := time.Now()
+		got := app.CheckHealth(t.Context())
+		elapsed := time.Since(start)
+		close(release)
+
+		if elapsed != 2*time.Second {
+			t.Errorf("CheckHealth took %v, want 2s (checks run in parallel, stuck bounded at 1s)", elapsed)
+		}
+
+		if !errors.Is(got["stuck"], context.DeadlineExceeded) {
+			t.Errorf("CheckHealth()[stuck] = %v, want DeadlineExceeded", got["stuck"])
+		}
+
+		if got["slow"] != nil || got["fast"] != nil {
+			t.Errorf("CheckHealth() = %v, want slow and fast healthy", got)
+		}
+	})
+}
+
+func TestCheckHealthDefaultTimeout(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		app := newTestApp(t)
+		app.AddHealthCheck("hang", func(ctx context.Context) error {
+			<-ctx.Done()
+			return ctx.Err()
+		})
+
+		start := time.Now()
+		got := app.CheckHealth(t.Context())
+
+		if elapsed := time.Since(start); elapsed != DefaultHealthCheckTimeout {
+			t.Errorf("CheckHealth took %v, want %v", elapsed, DefaultHealthCheckTimeout)
+		}
+
+		if got["hang"] == nil {
+			t.Error("CheckHealth()[hang] = nil, want a timeout error")
+		}
+	})
+}
+
+func TestReadyHandlerMountedWithoutSession(t *testing.T) {
+	t.Parallel()
+
+	app := newTestApp(t, WithRoutes(func(r *router.Router, app *App) error {
+		r.Handle("GET /ready", app.ReadyHandler())
+		return DefaultMiddleware(app, r)
+	}))
+	app.AddHealthCheck("db", okCheck)
+
+	for _, target := range []string{"/ready", "/up"} {
+		rec := doReq(t, app, target)
+		if rec.Code != http.StatusOK {
+			t.Errorf("GET %s = %d, want 200", target, rec.Code)
+		}
+
+		if c := rec.Header().Get("Set-Cookie"); c != "" {
+			t.Errorf("GET %s set a cookie %q, want none (probes must not create sessions)", target, c)
+		}
+	}
+}
+
+func TestSecurity_A10_HungHealthCheckRunsOnce(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		app := newTestApp(t)
+		release := make(chan struct{})
+
+		var started atomic.Int32
+
+		app.AddHealthCheckTimeout("hung", time.Second, func(context.Context) error {
+			started.Add(1)
+			<-release
+
+			return nil
+		})
+
+		// Probes keep hitting a hung dependency: each must fail fast without
+		// piling up another goroutine behind the first.
+		for i := range 5 {
+			if err := app.CheckHealth(t.Context())["hung"]; err == nil {
+				t.Fatalf("CheckHealth() #%d [hung] = nil, want an error", i)
+			}
+		}
+
+		if got := started.Load(); got != 1 {
+			t.Fatalf("hung check started %d times, want 1", got)
+		}
+
+		close(release)
+		synctest.Wait()
+
+		if err := app.CheckHealth(t.Context())["hung"]; err != nil {
+			t.Fatalf("CheckHealth() after the hung run ended = %v, want nil", err)
+		}
+
+		if got := started.Load(); got != 2 {
+			t.Fatalf("check started %d times after recovery, want 2", got)
+		}
+	})
+}
+
+func sessionRoutes(r *router.Router) {
+	hasSession := func(c *web.Ctx) error {
+		if c.Session() == nil {
+			return c.String(http.StatusOK, "no session")
+		}
+
+		return c.String(http.StatusOK, "session")
+	}
+
+	r.Get("/page", hasSession)
+	r.Get("/webhooks/{name}", hasSession)
+	r.Post("/webhooks/{name}", hasSession)
+	r.Post("/form", hasSession)
+}
+
+func serve(t *testing.T, app *App, method, target string, crossSite bool) *httptest.ResponseRecorder {
+	t.Helper()
+
+	h, err := app.Handler()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequestWithContext(t.Context(), method, target, http.NoBody)
+	if crossSite {
+		req.Header.Set("Sec-Fetch-Site", "cross-site")
+	}
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	return rec
+}
+
+func TestDefaultMiddlewareWith(t *testing.T) {
+	t.Parallel()
+
+	app := newTestApp(t, WithRoutes(func(r *router.Router, app *App) error {
+		sessionRoutes(r)
+
+		return DefaultMiddlewareWith(app, r, MiddlewareOptions{
+			SecureHeaders: func(cfg *middleware.SecureHeadersConfig) {
+				cfg.CSPSources = map[string][]string{"script-src": {"https://plausible.io"}}
+				cfg.ReportURI = "/csp-reports"
+			},
+			SessionBypass: []string{"/webhooks/"},
+			CSRFBypass:    []string{"POST /webhooks/{name}"},
+		})
+	}))
+
+	tests := []struct {
+		method, target string
+		crossSite      bool
+		code           int
+		body           string
+	}{
+		{http.MethodGet, "/page", false, http.StatusOK, "session"},
+		{http.MethodGet, "/webhooks/stripe", false, http.StatusOK, "no session"},
+		{http.MethodPost, "/webhooks/stripe", true, http.StatusOK, "no session"},
+		{http.MethodPost, "/form", true, http.StatusForbidden, ""},
+		{http.MethodPost, "/form", false, http.StatusOK, "session"},
+	}
+
+	for _, tt := range tests {
+		rec := serve(t, app, tt.method, tt.target, tt.crossSite)
+		if rec.Code != tt.code || (tt.body != "" && rec.Body.String() != tt.body) {
+			t.Errorf("%s %s (cross-site %v) = %d %q, want %d %q",
+				tt.method, tt.target, tt.crossSite, rec.Code, rec.Body.String(), tt.code, tt.body)
+		}
+	}
+
+	rec := serve(t, app, http.MethodGet, "/page", false)
+	if csp := rec.Header().Get("Content-Security-Policy"); !strings.Contains(csp, "https://plausible.io") ||
+		!strings.Contains(csp, "report-uri /csp-reports") || !strings.Contains(csp, "'nonce-") {
+		t.Errorf("CSP = %q, want the extra script source, the report URI and the nonce", csp)
+	}
+}
+
+func TestDefaultMiddlewareWithStateless(t *testing.T) {
+	t.Parallel()
+
+	app := newTestApp(t, WithRoutes(func(r *router.Router, app *App) error {
+		sessionRoutes(r)
+
+		return DefaultMiddlewareWith(app, r, MiddlewareOptions{Stateless: true})
+	}))
+
+	if rec := serve(t, app, http.MethodGet, "/page", false); rec.Body.String() != "no session" ||
+		rec.Header().Get("Set-Cookie") != "" {
+		t.Errorf("stateless GET /page = %q (Set-Cookie %q), want no session and no cookie",
+			rec.Body.String(), rec.Header().Get("Set-Cookie"))
+	}
+
+	// CSRF protection stays on without sessions.
+	if rec := serve(t, app, http.MethodPost, "/form", true); rec.Code != http.StatusForbidden {
+		t.Errorf("stateless cross-site POST /form = %d, want 403", rec.Code)
+	}
+}
+
+func TestSecurity_A02_DefaultMiddlewareWithRefusesBadOptions(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]MiddlewareOptions{
+		"unsafe CSP source": {SecureHeaders: func(cfg *middleware.SecureHeadersConfig) {
+			cfg.CSPSources = map[string][]string{"style-src": {"'unsafe-inline'"}}
+		}},
+		"bad report URI": {SecureHeaders: func(cfg *middleware.SecureHeadersConfig) {
+			cfg.ReportURI = "javascript:alert(1)"
+		}},
+		"bad session bypass":            {SessionBypass: []string{"/{bad"}},
+		"empty session bypass":          {SessionBypass: []string{""}},
+		"stateless with session bypass": {Stateless: true, SessionBypass: []string{"/webhooks/"}},
+		"bad CSRF bypass":               {CSRFBypass: []string{"/{bad"}},
+	}
+
+	for name, opts := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			r := router.New(&web.Services{})
+			if err := DefaultMiddlewareWith(newTestApp(t), r, opts); err == nil {
+				t.Errorf("DefaultMiddlewareWith(%s) = nil, want an error", name)
+			}
+		})
+	}
+}
+
+func TestDefaultMiddlewareWithStatelessSessionFeatures(t *testing.T) {
+	t.Parallel()
+
+	app := newTestApp(t, WithRoutes(func(r *router.Router, app *App) error {
+		r.Post("/flash", func(c *web.Ctx) error {
+			if err := c.Flash("status", "saved"); err != nil {
+				return err
+			}
+
+			return c.String(http.StatusOK, "flashed")
+		})
+		r.Get("/token", func(c *web.Ctx) error { return c.String(http.StatusOK, "token="+csrf.Token(c.Context())) })
+
+		return DefaultMiddlewareWith(app, r, MiddlewareOptions{Stateless: true})
+	}))
+
+	// Flash fails closed with a 500 instead of panicking or dropping the message.
+	if rec := serve(t, app, http.MethodPost, "/flash", false); rec.Code != http.StatusInternalServerError {
+		t.Errorf("stateless POST /flash = %d %q, want 500", rec.Code, rec.Body.String())
+	}
+
+	if rec := serve(t, app, http.MethodGet, "/token", false); rec.Body.String() != "token=" {
+		t.Errorf("stateless csrf.Token = %q, want empty", rec.Body.String())
+	}
+}
+
+// TestBypassMatchesRouter checks that a bypass pattern skips exactly the
+// requests the router serves with the same pattern.
+func TestBypassMatchesRouter(t *testing.T) {
+	t.Parallel()
+
+	patterns := []string{"/webhooks/", "POST /hooks/{id}", "/exact", "api.example.com/x"}
+
+	r := router.New(&web.Services{})
+	for _, p := range patterns {
+		r.Handle(p, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(p)) }))
+	}
+
+	routed, err := r.Handler()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	skipped := false
+	mw, err := bypass(patterns, func(http.Handler) http.Handler {
+		return http.HandlerFunc(func(http.ResponseWriter, *http.Request) { skipped = false })
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	matcher := mw(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { skipped = true }))
+
+	for _, tt := range []struct{ method, target string }{
+		{http.MethodGet, "/webhooks/stripe"},
+		{http.MethodGet, "/webhooks/a/b"},
+		{http.MethodGet, "/webhooks"},
+		{http.MethodPost, "/hooks/1"},
+		{http.MethodGet, "/hooks/1"},
+		{http.MethodPost, "/hooks/1/x"},
+		{http.MethodGet, "/exact"},
+		{http.MethodGet, "/exact/"},
+		{http.MethodGet, "http://api.example.com/x"},
+		{http.MethodGet, "http://other.example.com/x"},
+		{http.MethodGet, "/x"},
+	} {
+		req := httptest.NewRequestWithContext(t.Context(), tt.method, tt.target, http.NoBody)
+
+		rec := httptest.NewRecorder()
+		routed.ServeHTTP(rec, req)
+		wantSkip := rec.Code == http.StatusOK
+
+		matcher.ServeHTTP(httptest.NewRecorder(), req)
+		if skipped != wantSkip {
+			t.Errorf("%s %s: bypassed = %v, router served the pattern = %v (%d %q)",
+				tt.method, tt.target, skipped, wantSkip, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+func TestAPIMiddlewareWith(t *testing.T) {
+	t.Parallel()
+
+	app := newTestApp(t, WithRoutes(func(r *router.Router, app *App) error {
+		r.Get("/ping", func(c *web.Ctx) error { return c.JSON(http.StatusOK, web.Map{"ok": true}) })
+
+		return APIMiddlewareWith(app, r, APIMiddlewareOptions{
+			SecureHeaders: func(cfg *middleware.SecureHeadersConfig) { cfg.ReportURI = "/csp-reports" },
+		})
+	}))
+
+	rec := serve(t, app, http.MethodGet, "/ping", false)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /ping = %d, want 200", rec.Code)
+	}
+
+	if csp := rec.Header().Get("Content-Security-Policy"); !strings.Contains(csp, "report-uri /csp-reports") ||
+		!strings.Contains(csp, "default-src 'self'") {
+		t.Errorf("CSP = %q, want the defaults plus the report URI", csp)
+	}
+
+	if got := rec.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Errorf("X-Content-Type-Options = %q, want nosniff", got)
+	}
+}
+
+func TestSecurity_A02_APIMiddlewareWithRefusesBadOptions(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]APIMiddlewareOptions{
+		"unsafe CSP source": {SecureHeaders: func(cfg *middleware.SecureHeadersConfig) {
+			cfg.CSPSources = map[string][]string{"script-src": {"'unsafe-eval'"}}
+		}},
+		"bad report URI": {SecureHeaders: func(cfg *middleware.SecureHeadersConfig) {
+			cfg.ReportURI = "javascript:alert(1)"
+		}},
+	}
+
+	for name, opts := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			r := router.New(&web.Services{})
+			if err := APIMiddlewareWith(newTestApp(t), r, opts); err == nil {
+				t.Errorf("APIMiddlewareWith(%s) = nil, want an error", name)
+			}
+		})
+	}
+}
+
+// proxyApp serves the client IP at /ip under the default middleware, with
+// env added to the test configuration.
+func proxyApp(t *testing.T, env map[string]string) *App {
+	t.Helper()
+
+	app, err := New(WithSource(testSource(env)), WithLogger(discardLogger()),
+		WithRoutes(func(r *router.Router, app *App) error {
+			r.Get("/ip", func(c *web.Ctx) error { return c.String(http.StatusOK, c.IP()) })
+			return DefaultMiddleware(app, r)
+		}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return app
+}
+
+func proxyReq(t *testing.T, app *App, peer string, header map[string]string) *httptest.ResponseRecorder {
+	t.Helper()
+
+	h, err := app.Handler()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/ip", http.NoBody)
+	req.RemoteAddr = peer
+	for k, v := range header {
+		req.Header.Set(k, v)
+	}
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	return rec
+}
+
+func TestSecurity_A01_TrustedProxiesFromEnv(t *testing.T) {
+	t.Parallel()
+
+	spoof := map[string]string{"X-Forwarded-For": "203.0.113.9"}
+
+	tests := []struct {
+		name    string
+		proxies string
+		peer    string
+		want    string
+	}{
+		// Default: nobody is trusted, so a spoofed header is ignored.
+		{name: "unset trusts nobody", peer: "10.1.2.3:4000", want: "10.1.2.3"},
+		{name: "cidr from trusted peer", proxies: "10.0.0.0/8", peer: "10.1.2.3:4000", want: "203.0.113.9"},
+		{name: "untrusted peer is ignored", proxies: "10.0.0.0/8", peer: "198.51.100.7:4000", want: "198.51.100.7"},
+		{name: "bare ip and spaces", proxies: " 192.0.2.1 , 10.0.0.0/8", peer: "192.0.2.1:4000", want: "203.0.113.9"},
+		{name: "bare ip is exact", proxies: "192.0.2.1", peer: "192.0.2.2:4000", want: "192.0.2.2"},
+		{name: "ipv6 cidr", proxies: "fd00::/8", peer: "[fd00::1]:4000", want: "203.0.113.9"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			app := proxyApp(t, map[string]string{"TRUSTED_PROXIES": tt.proxies})
+
+			rec := proxyReq(t, app, tt.peer, spoof)
+			if got := rec.Body.String(); got != tt.want {
+				t.Fatalf("IP() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSecurity_A02_TrustedProxiesMisconfigurationRefusesBoot(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		env  map[string]string
+		want string
+	}{
+		{name: "bad cidr", env: map[string]string{"TRUSTED_PROXIES": "10.0.0.0/33"}, want: "TRUSTED_PROXIES"},
+		{
+			name: "hostname",
+			env:  map[string]string{"TRUSTED_PROXIES": "10.0.0.0/8,proxy.internal"},
+			want: "proxy.internal",
+		},
+		{
+			name: "header without proxies",
+			env:  map[string]string{"CLIENT_IP_HEADER": "X-Real-IP"},
+			want: "CLIENT_IP_HEADER requires TRUSTED_PROXIES",
+		},
+		{
+			name: "invalid header name",
+			env:  map[string]string{"TRUSTED_PROXIES": "10.0.0.0/8", "CLIENT_IP_HEADER": "X Real IP"},
+			want: "CLIENT_IP_HEADER",
+		},
+		{
+			name: "list header",
+			env:  map[string]string{"TRUSTED_PROXIES": "10.0.0.0/8", "CLIENT_IP_HEADER": "x-forwarded-for"},
+			want: "CLIENT_IP_HEADER",
+		},
+		{
+			name: "forced hsts without https url",
+			env:  map[string]string{"HSTS_FORCE": "true", "APP_URL": "http://example.com"},
+			want: "HSTS_FORCE requires an https APP_URL",
+		},
+		// X-Forwarded-Proto from any peer would let clients claim HTTPS.
+		{
+			name: "proto without proxies",
+			env:  map[string]string{"TRUST_FORWARDED_PROTO": "true"},
+			want: "TRUST_FORWARDED_PROTO requires TRUSTED_PROXIES",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := New(WithSource(testSource(tt.env)), WithLogger(discardLogger()))
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("New() error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestSecurity_A02_TrustForwardedProtoOnlyFromTrustedProxies(t *testing.T) {
+	t.Parallel()
+
+	https := map[string]string{"X-Forwarded-Proto": "https"}
+
+	tests := []struct {
+		name     string
+		env      map[string]string
+		peer     string
+		wantHSTS bool
+	}{
+		{name: "off by default", env: map[string]string{"TRUSTED_PROXIES": "10.0.0.0/8"}, peer: "10.0.0.1:1"},
+		{
+			name:     "trusted proxy",
+			env:      map[string]string{"TRUSTED_PROXIES": "10.0.0.0/8", "TRUST_FORWARDED_PROTO": "true"},
+			peer:     "10.0.0.1:1",
+			wantHSTS: true,
+		},
+		{
+			name: "spoofed by a client",
+			env:  map[string]string{"TRUSTED_PROXIES": "10.0.0.0/8", "TRUST_FORWARDED_PROTO": "true"},
+			peer: "198.51.100.7:1",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			rec := proxyReq(t, proxyApp(t, tt.env), tt.peer, https)
+			if got := rec.Header().Get("Strict-Transport-Security") != ""; got != tt.wantHSTS {
+				t.Fatalf("HSTS sent = %v, want %v", got, tt.wantHSTS)
+			}
+		})
+	}
+}
+
+func TestSecurity_A02_HSTSForceFromEnv(t *testing.T) {
+	t.Parallel()
+
+	prod := map[string]string{"APP_ENV": "production", "APP_URL": "https://example.com"}
+
+	tests := []struct {
+		name     string
+		env      map[string]string
+		wantHSTS bool
+	}{
+		// Plain HTTP from the proxy, no trusted range: no HSTS by default.
+		{name: "off by default", env: prod},
+		{name: "forced in production", env: with(prod, "HSTS_FORCE", "true"), wantHSTS: true},
+		{
+			name: "not applied outside production",
+			env:  map[string]string{"APP_URL": "https://example.com", "HSTS_FORCE": "true"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			rec := proxyReq(t, proxyApp(t, tt.env), "198.51.100.7:1", nil)
+			if got := rec.Header().Get("Strict-Transport-Security") != ""; got != tt.wantHSTS {
+				t.Fatalf("HSTS sent = %v, want %v", got, tt.wantHSTS)
+			}
+		})
+	}
+}
+
+func TestHSTSForceWarnsOutsideProduction(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct {
+		env  string
+		warn bool
+	}{
+		{env: "test", warn: true},
+		{env: "production"},
+	} {
+		t.Run(tt.env, func(t *testing.T) {
+			t.Parallel()
+
+			var buf bytes.Buffer
+
+			env := map[string]string{"APP_ENV": tt.env, "APP_URL": "https://example.com", "HSTS_FORCE": "true"}
+			if _, err := New(
+				WithSource(testSource(env)),
+				WithLogger(slog.New(slog.NewTextHandler(&buf, nil))),
+			); err != nil {
+				t.Fatal(err)
+			}
+
+			if got := strings.Contains(buf.String(), "level=WARN") &&
+				strings.Contains(buf.String(), "HSTS_FORCE"); got != tt.warn {
+				t.Fatalf("warned = %v, want %v; log %q", got, tt.warn, buf.String())
+			}
+		})
+	}
+}
+
+func with(m map[string]string, k, v string) map[string]string {
+	out := maps.Clone(m)
+	out[k] = v
+
+	return out
+}
+
+func TestAddrJoinsHostAndPort(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		host string
+		want string
+	}{
+		{host: "localhost", want: "localhost:8080"},
+		{host: "0.0.0.0", want: "0.0.0.0:8080"},
+		// IPv6 hosts need brackets, or "::" becomes the invalid ":::8080".
+		{host: "::", want: "[::]:8080"},
+		{host: "[::]", want: "[::]:8080"},
+		{host: "fd12::1", want: "[fd12::1]:8080"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.host, func(t *testing.T) {
+			t.Parallel()
+
+			app := newTestApp(t, WithSource(testSource(map[string]string{"HOST": tt.host, "PORT": "8080"})))
+			if got := app.Addr(); got != tt.want {
+				t.Fatalf("Addr() = %q, want %q", got, tt.want)
+			}
+
+			if _, _, err := net.SplitHostPort(app.Addr()); err != nil {
+				t.Fatalf("Addr() %q is not host:port: %v", app.Addr(), err)
+			}
+		})
+	}
+}
+
+func TestSecurity_A01_ClientIPHeaderFromEnv(t *testing.T) {
+	t.Parallel()
+
+	headers := map[string]string{"X-Real-IP": "203.0.113.9", "X-Forwarded-For": "198.51.100.99"}
+
+	tests := []struct {
+		name string
+		env  map[string]string
+		peer string
+		want string
+	}{
+		{
+			name: "trusted proxy",
+			env:  map[string]string{"TRUSTED_PROXIES": "10.0.0.0/8", "CLIENT_IP_HEADER": "x-real-ip"},
+			peer: "10.1.2.3:4000",
+			want: "203.0.113.9",
+		},
+		{
+			name: "spoofed by untrusted peer",
+			env:  map[string]string{"TRUSTED_PROXIES": "10.0.0.0/8", "CLIENT_IP_HEADER": "X-Real-IP"},
+			peer: "198.51.100.7:4000",
+			want: "198.51.100.7",
+		},
+		{name: "unset ignores the header", peer: "10.1.2.3:4000", want: "10.1.2.3"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			rec := proxyReq(t, proxyApp(t, tt.env), tt.peer, headers)
+			if got := rec.Body.String(); got != tt.want {
+				t.Fatalf("IP() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestTrustedProxiesWarnsOnCatchAll(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct {
+		proxies string
+		warn    bool
+	}{
+		{proxies: "0.0.0.0/0", warn: true},
+		{proxies: "10.0.0.0/8, ::/0", warn: true},
+		{proxies: "10.0.0.0/8"},
+	} {
+		t.Run(tt.proxies, func(t *testing.T) {
+			t.Parallel()
+
+			var buf bytes.Buffer
+
+			_, err := New(WithSource(testSource(map[string]string{"TRUSTED_PROXIES": tt.proxies})),
+				WithLogger(slog.New(slog.NewTextHandler(&buf, nil))))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if got := strings.Contains(buf.String(), "level=WARN") &&
+				strings.Contains(buf.String(), "TRUSTED_PROXIES"); got != tt.warn {
+				t.Fatalf("warned = %v, want %v; log %q", got, tt.warn, buf.String())
+			}
+		})
+	}
+}
+
+func TestWithTranslations(t *testing.T) {
+	t.Parallel()
+
+	lang := fstest.MapFS{
+		"en.json": {Data: []byte(`{"hello": "Hello"}`)},
+		"pt.json": {Data: []byte(`{"hello": "Olá"}`)},
+	}
+	views := fstest.MapFS{"home.html": {Data: []byte(`{{/* layout: none */}}{{t "hello"}}`)}}
+
+	routes := WithRoutes(func(r *router.Router, app *App) error {
+		r.Get("/", func(c *web.Ctx) error { return c.Render("home", nil) })
+		r.Get("/go", func(c *web.Ctx) error { return c.String(http.StatusOK, i18n.T(c.Context(), "hello")) })
+
+		return DefaultMiddleware(app, r)
+	})
+
+	tests := []struct {
+		name     string
+		env      map[string]string
+		target   string
+		accept   string
+		want     string
+		wantLang string
+	}{
+		{"default", nil, "/", "", "Hello", "en"},
+		{"accept-language", nil, "/", "pt-BR,en;q=0.5", "Olá", "pt"},
+		{"query in handler", nil, "/go?lang=pt", "", "Olá", "pt"},
+		{"APP_LOCALE", map[string]string{"APP_LOCALE": "pt"}, "/", "", "Olá", "pt"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			app, err := New(WithSource(testSource(tt.env)), WithLogger(discardLogger()),
+				WithTranslations(lang), WithViews(views), routes)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if app.I18n == nil {
+				t.Fatal("App.I18n = nil, want the bundle")
+			}
+
+			h, err := app.Handler()
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, tt.target, http.NoBody)
+			if tt.accept != "" {
+				r.Header.Set("Accept-Language", tt.accept)
+			}
+
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, r)
+
+			if got := rec.Body.String(); got != tt.want {
+				t.Errorf("GET %s body = %q, want %q", tt.target, got, tt.want)
+			}
+
+			if got := rec.Header().Get("Content-Language"); got != tt.wantLang {
+				t.Errorf("GET %s Content-Language = %q, want %q", tt.target, got, tt.wantLang)
+			}
+		})
+	}
+}
+
+func TestWithTranslations_BootErrors(t *testing.T) {
+	t.Parallel()
+
+	for name, tt := range map[string]struct {
+		lang fstest.MapFS
+		env  map[string]string
+	}{
+		"broken catalog":     {fstest.MapFS{"en.json": {Data: []byte(`{`)}}, nil},
+		"invalid APP_LOCALE": {fstest.MapFS{}, map[string]string{"APP_LOCALE": "../en"}},
+	} {
+		if _, err := New(
+			WithSource(testSource(tt.env)),
+			WithLogger(discardLogger()),
+			WithTranslations(tt.lang),
+		); err == nil {
+			t.Errorf("%s: New() error = nil, want error", name)
+		}
+	}
+}
+
+// The framework's built-in messages (i18n.Bundle.AddBuiltin) translate
+// keyed errors in the request locale, under the app's own catalog.
+func TestWithTranslations_BuiltinMessages(t *testing.T) {
+	t.Parallel()
+
+	lang := fstest.MapFS{
+		"en.json": {Data: []byte(`{"auth": {"unverified": "Please verify your email first."}}`)},
+		"pt.json": {Data: []byte(`{}`)},
+	}
+
+	routes := WithRoutes(func(r *router.Router, app *App) error {
+		r.Get("/", func(*web.Ctx) error {
+			return errs.NewKey(http.StatusForbidden, "auth.unverified", "Your email address is not verified.", nil)
+		})
+
+		return DefaultMiddleware(app, r)
+	})
+
+	app, err := New(WithSource(testSource(nil)), WithLogger(discardLogger()), WithTranslations(lang), routes)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	h, err := app.Handler()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct{ lang, want string }{
+		{"pt-BR", "Seu endereço de e-mail não foi verificado."},
+		{"en", "Please verify your email first."},
+	}
+	for _, tt := range tests {
+		r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", http.NoBody)
+		r.Header.Set("Accept", "application/json")
+		r.Header.Set("Accept-Language", tt.lang)
+
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, r)
+
+		if !strings.Contains(rec.Body.String(), tt.want) {
+			t.Errorf("GET / in %s = %d %s, want detail %q", tt.lang, rec.Code, rec.Body.String(), tt.want)
+		}
+	}
+}
+
+func TestDefaultMiddlewareWithI18n(t *testing.T) {
+	t.Parallel()
+
+	lang := fstest.MapFS{
+		"en.json": {Data: []byte(`{"hello": "Hello"}`)},
+		"pt.json": {Data: []byte(`{"hello": "Olá"}`)},
+		"ru.json": {Data: []byte(`{"hello": "Привет"}`)},
+	}
+
+	app := newTestApp(t, WithTranslations(lang), WithRoutes(func(r *router.Router, app *App) error {
+		r.Get("/", func(c *web.Ctx) error { return c.String(http.StatusOK, i18n.T(c.Context(), "hello")) })
+
+		return DefaultMiddlewareWith(app, r, MiddlewareOptions{I18n: &i18n.MiddlewareConfig{
+			Order:   []i18n.Source{i18n.SourceQuery, i18n.SourceHeader},
+			Locales: []string{"en", "pt"},
+		}})
+	}))
+
+	h, err := app.Handler()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name, target, cookie, accept, want string
+	}{
+		{"cookie source off", "/", "pt", "", "Hello"},
+		{"query", "/?lang=pt", "", "", "Olá"},
+		{"disallowed query falls to header", "/?lang=ru", "", "pt", "Olá"},
+		{"disallowed header", "/", "", "ru", "Hello"},
+	}
+
+	for _, tt := range tests {
+		r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, tt.target, http.NoBody)
+		if tt.cookie != "" {
+			r.AddCookie(&http.Cookie{Name: "lang", Value: tt.cookie})
+		}
+
+		if tt.accept != "" {
+			r.Header.Set("Accept-Language", tt.accept)
+		}
+
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, r)
+
+		if got := rec.Body.String(); got != tt.want {
+			t.Errorf("%s: GET %s body = %q, want %q", tt.name, tt.target, got, tt.want)
+		}
+	}
+}
+
+func TestDefaultMiddlewareWithI18n_BootErrors(t *testing.T) {
+	t.Parallel()
+
+	lang := fstest.MapFS{"en.json": {Data: []byte(`{"hello": "Hello"}`)}}
+
+	tests := map[string]struct {
+		opts []Option
+		cfg  i18n.MiddlewareConfig
+	}{
+		"without translations": {nil, i18n.MiddlewareConfig{}},
+		"unknown source":       {[]Option{WithTranslations(lang)}, i18n.MiddlewareConfig{Order: []i18n.Source{"ip"}}},
+		"locale without catalog": {
+			[]Option{WithTranslations(lang)},
+			i18n.MiddlewareConfig{Locales: []string{"en", "de"}},
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			r := router.New(&web.Services{})
+			if err := DefaultMiddlewareWith(
+				newTestApp(t, tt.opts...),
+				r,
+				MiddlewareOptions{I18n: &tt.cfg},
+			); err == nil {
+				t.Errorf("DefaultMiddlewareWith(%s) = nil, want an error", name)
+			}
+		})
+	}
+}
+
+func TestAPIMiddlewareWithI18n(t *testing.T) {
+	t.Parallel()
+
+	lang := fstest.MapFS{
+		"en.json": {Data: []byte(`{"hello": "Hello"}`)},
+		"pt.json": {Data: []byte(`{"hello": "Olá", "validation": {"too_small": {"string": "Curto demais."}}}`)},
+	}
+
+	querySchema := z.Struct[struct {
+		Q string `json:"q"`
+	}](z.Shape{"q": z.String().Min(3)})
+
+	tests := []struct {
+		name     string
+		opts     APIMiddlewareOptions
+		target   string
+		cookie   string
+		accept   string
+		wantCode int
+		wantBody string
+		wantLang string
+	}{
+		{"query", APIMiddlewareOptions{}, "/?lang=pt&q=abc", "", "", 200, "Olá", "pt"},
+		{"header", APIMiddlewareOptions{}, "/?q=abc", "", "pt", 200, "Olá", "pt"},
+		{"cookie ignored", APIMiddlewareOptions{}, "/?q=abc", "pt", "", 200, "Hello", "en"},
+		{"localized 422", APIMiddlewareOptions{}, "/?q=a", "", "pt", 422, "Curto demais.", "pt"},
+		{
+			"custom order",
+			APIMiddlewareOptions{I18n: &i18n.MiddlewareConfig{Order: []i18n.Source{i18n.SourceCookie}}},
+			"/?lang=en&q=abc", "pt", "", 200, "Olá", "pt",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			app := newTestApp(t, WithTranslations(lang), WithRoutes(func(r *router.Router, app *App) error {
+				r.Get("/", func(c *web.Ctx) error {
+					if _, err := web.ParseQuery(c, querySchema); err != nil {
+						return err
+					}
+
+					return c.String(http.StatusOK, i18n.T(c.Context(), "hello"))
+				})
+
+				return APIMiddlewareWith(app, r, tt.opts)
+			}))
+
+			h, err := app.Handler()
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, tt.target, http.NoBody)
+			r.Header.Set("Accept", "application/json")
+
+			if tt.cookie != "" {
+				r.AddCookie(&http.Cookie{Name: "lang", Value: tt.cookie})
+			}
+
+			if tt.accept != "" {
+				r.Header.Set("Accept-Language", tt.accept)
+			}
+
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, r)
+
+			if rec.Code != tt.wantCode || !strings.Contains(rec.Body.String(), tt.wantBody) ||
+				rec.Header().Get("Content-Language") != tt.wantLang {
+				t.Errorf(
+					"GET %s = %d %q (Content-Language %q), want %d containing %q (%q)",
+					tt.target,
+					rec.Code,
+					rec.Body.String(),
+					rec.Header().Get("Content-Language"),
+					tt.wantCode,
+					tt.wantBody,
+					tt.wantLang,
+				)
+			}
+		})
+	}
+}
+
+func TestAPIMiddlewareWithI18n_BootErrors(t *testing.T) {
+	t.Parallel()
+
+	lang := fstest.MapFS{"en.json": {Data: []byte(`{"hello": "Hello"}`)}}
+
+	tests := map[string]struct {
+		opts []Option
+		cfg  i18n.MiddlewareConfig
+	}{
+		"without translations": {nil, i18n.MiddlewareConfig{}},
+		"locales without default": {
+			[]Option{WithTranslations(lang)},
+			i18n.MiddlewareConfig{Locales: []string{"pt"}},
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			r := router.New(&web.Services{})
+			if err := APIMiddlewareWith(newTestApp(t, tt.opts...), r, APIMiddlewareOptions{I18n: &tt.cfg}); err == nil {
+				t.Errorf("APIMiddlewareWith(%s) = nil, want an error", name)
+			}
+		})
+	}
+}
+
+// TestMain lets the test binary act as a fake "node" for ssr:start: with
+// VUKEM_SSR_HELPER set it appends a line to that file and exits with
+// VUKEM_SSR_EXIT.
+func TestMain(m *testing.M) {
+	if log := os.Getenv("VUKEM_SSR_HELPER"); log != "" {
+		f, err := os.OpenFile(log, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+		if err == nil {
+			_, _ = f.WriteString(strings.Join(os.Args[1:], " ") + "\n")
+			_ = f.Close()
+		}
+
+		if os.Getenv("VUKEM_SSR_EXIT") == "0" {
+			os.Exit(0)
+		}
+
+		os.Exit(3)
+	}
+
+	os.Exit(m.Run())
+}
+
+func TestSSRStartRestartsCrashedServer(t *testing.T) { //nolint:paralleltest // sets process environment
+	dir := t.TempDir()
+	bundle := filepath.Join(dir, "ssr.js")
+	runs := filepath.Join(dir, "runs.log")
+
+	if err := os.WriteFile(bundle, []byte("//"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("VUKEM_SSR_HELPER", runs)
+	t.Setenv("VUKEM_SSR_EXIT", "3")
+
+	app := newTestApp(t)
+	ctx, cancel := context.WithCancel(t.Context())
+
+	done := make(chan error, 1)
+	go func() {
+		done <- runCommand(ctx, app, "ssr:start",
+			[]string{"-bundle", bundle, "-runtime", os.Args[0], "-restart-delay", "10ms"})
+	}()
+
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		b, _ := os.ReadFile(runs)
+		if strings.Count(string(b), bundle) >= 3 {
+			break
+		}
+
+		if time.Now().After(deadline) {
+			t.Fatalf("server not restarted, runs:\n%s", b)
+		}
+
+		time.Sleep(10 * time.Millisecond) //nolint:forbidigo // waits on real child processes
+	}
+
+	cancel()
+
+	if err := <-done; err != nil {
+		t.Errorf("ssr:start after cancel = %v", err)
+	}
+
+	t.Setenv("VUKEM_SSR_EXIT", "0")
+
+	if err := runCommand(
+		t.Context(),
+		app,
+		"ssr:start",
+		[]string{"-bundle", bundle, "-runtime", os.Args[0]},
+	); err != nil {
+		t.Errorf("clean exit = %v", err)
+	}
+
+	err := runCommand(t.Context(), app, "ssr:start", []string{"-bundle", filepath.Join(dir, "missing.js")})
+	if err == nil || !strings.Contains(err.Error(), "npm run build") {
+		t.Errorf("missing bundle = %v", err)
+	}
+}
+
+func TestSSRCheck(t *testing.T) {
+	t.Parallel()
+
+	healthy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/health" {
+			http.NotFound(w, r)
+			return
+		}
+
+		_, _ = io.WriteString(w, `{"status":"OK"}`)
+	}))
+	t.Cleanup(healthy.Close)
+
+	var out bytes.Buffer
+
+	app := newTestApp(t, WithStdout(&out))
+
+	if err := runCommand(t.Context(), app, "ssr:check", []string{"-url", healthy.URL}); err != nil ||
+		!strings.Contains(out.String(), "healthy") {
+		t.Errorf("ssr:check healthy = %v %q", err, out.String())
+	}
+
+	if err := runCommand(t.Context(), app, "ssr:check", []string{"-url", "http://127.0.0.1:1"}); err == nil {
+		t.Error("ssr:check on a closed port = nil")
+	}
+}
+
+type pingOut struct {
+	Pong bool `json:"pong"`
+}
+
+func openAPIRoutes(r *router.Router, app *App) error {
+	ServeOpenAPI(app, r, "/openapi.json")
+	api.Register(r, "GET /api/ping", api.Op{Name: "ping"},
+		func(*web.Ctx, struct{}) (pingOut, error) { return pingOut{Pong: true}, nil })
+
+	return nil
+}
+
+func TestServeOpenAPI(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+
+	app := newTestApp(t, WithSource(testSource(map[string]string{
+		"APP_NAME": "Shop", "API_VERSION": "3.0.0",
+		"OPENAPI_PREFIX": "/api",
+	})), WithStdout(&out), WithRoutes(openAPIRoutes))
+
+	rec := doReq(t, app, "/openapi.json")
+	if rec.Code != 200 {
+		t.Fatalf("GET /openapi.json = %d", rec.Code)
+	}
+
+	var doc struct {
+		Info struct {
+			Title   string `json:"title"`
+			Version string `json:"version"`
+		} `json:"info"`
+		Paths map[string]any `json:"paths"`
+	}
+
+	if err := json.Unmarshal(rec.Body.Bytes(), &doc); err != nil {
+		t.Fatal(err)
+	}
+
+	if doc.Info.Title != "Shop" || doc.Info.Version != "3.0.0" || len(doc.Paths) != 1 || doc.Paths["/api/ping"] == nil {
+		t.Fatalf("doc = %+v", doc)
+	}
+
+	if err := openAPIExportCommand().Run(t.Context(), app, nil); err != nil ||
+		!strings.Contains(out.String(), `"/api/ping"`) {
+		t.Fatalf("openapi:export = %v %q", err, out.String())
+	}
+}
+
+func TestSecurity_A02_OpenAPIOffInProduction(t *testing.T) {
+	t.Parallel()
+
+	prod := map[string]string{"APP_ENV": "production"}
+
+	if rec := doReq(
+		t,
+		newTestApp(t, WithSource(testSource(prod)), WithRoutes(openAPIRoutes)),
+		"/openapi.json",
+	); rec.Code != 404 {
+		t.Fatalf("production /openapi.json = %d, want 404", rec.Code)
+	}
+
+	prod["OPENAPI_IN_PRODUCTION"] = "true"
+	if rec := doReq(
+		t,
+		newTestApp(t, WithSource(testSource(prod)), WithRoutes(openAPIRoutes)),
+		"/openapi.json",
+	); rec.Code != 200 {
+		t.Fatalf("opted-in /openapi.json = %d, want 200", rec.Code)
+	}
+}
+
+func TestCodegenTypesCommand(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+
+	build := func(opts ...Option) (*App, error) {
+		return New(append(opts, WithLogger(discardLogger()), WithStdout(&out), WithRoutes(openAPIRoutes))...)
+	}
+
+	if err := RunMain(
+		t.Context(),
+		[]string{"app", "codegen:types", "-zod"},
+		testSource(nil).Lookup,
+		build,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	if s := out.String(); !strings.Contains(s, "export type PingResponse = PingOut;") ||
+		!strings.Contains(s, "PingOutSchema") {
+		t.Fatalf("codegen:types = %q", s)
+	}
+}
+
+func TestServeOpenAPIWithPrefix(t *testing.T) {
+	t.Parallel()
+
+	routes := func(r *router.Router, app *App) error {
+		ServeOpenAPIWith(app, r, "/api/v1/openapi.json", OpenAPIOptions{PathPrefix: "/api/v1", InProduction: true})
+		ServeOpenAPI(app, r, "/openapi.json")
+		api.Register(r, "GET /api/v1/ping", api.Op{Name: "ping"},
+			func(*web.Ctx, struct{}) (pingOut, error) { return pingOut{Pong: true}, nil })
+		api.Register(r, "GET /api/v10/ping", api.Op{Name: "ping10"},
+			func(*web.Ctx, struct{}) (pingOut, error) { return pingOut{Pong: true}, nil })
+		api.Register(r, "GET /internal/stats", api.Op{Name: "stats"},
+			func(*web.Ctx, struct{}) (pingOut, error) { return pingOut{}, nil })
+
+		return nil
+	}
+
+	paths := func(t *testing.T, app *App, target string) []string {
+		t.Helper()
+
+		rec := doReq(t, app, target)
+		if rec.Code != 200 {
+			t.Fatalf("GET %s = %d, want 200", target, rec.Code)
+		}
+
+		var doc struct {
+			Paths map[string]any `json:"paths"`
+		}
+
+		if err := json.Unmarshal(rec.Body.Bytes(), &doc); err != nil {
+			t.Fatal(err)
+		}
+
+		return slices.Sorted(maps.Keys(doc.Paths))
+	}
+
+	dev := newTestApp(t, WithSource(testSource(nil)), WithRoutes(routes))
+	if got := paths(t, dev, "/api/v1/openapi.json"); !slices.Equal(got, []string{"/api/v1/ping"}) {
+		t.Errorf("prefixed document paths = %v, want [/api/v1/ping]", got)
+	}
+
+	if got := paths(t, dev, "/openapi.json"); !slices.Contains(got, "/internal/stats") {
+		t.Errorf("unprefixed document paths = %v, want every route", got)
+	}
+
+	prod := newTestApp(t, WithSource(testSource(map[string]string{"APP_ENV": "production"})), WithRoutes(routes))
+	if got := paths(t, prod, "/api/v1/openapi.json"); !slices.Equal(got, []string{"/api/v1/ping"}) {
+		t.Errorf("opted-in production document paths = %v", got)
+	}
+
+	if rec := doReq(t, prod, "/openapi.json"); rec.Code != 404 {
+		t.Errorf("production /openapi.json without opt-in = %d, want 404", rec.Code)
+	}
+}
+
+func TestRateLimitersFromConfig(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		env  map[string]string
+	}{
+		{name: "default is memory", env: nil},
+		{name: "memory", env: map[string]string{"RATE_LIMIT_STORE": "memory"}},
+		{name: "cache", env: map[string]string{"RATE_LIMIT_STORE": "cache", "CACHE_STORE": "database"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if tt.env["CACHE_STORE"] == "database" {
+				tt.env["DATABASE_URL"] = "file:" + filepath.ToSlash(filepath.Join(testutil.TempDir(t), "rl.db"))
+			}
+
+			app := newTestApp(t, WithSource(testSource(tt.env)))
+			t.Cleanup(func() { _ = app.Shutdown(context.Background()) })
+
+			limiters, err := app.RateLimiters()
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			l := limiters("api", 1, time.Minute)
+			if res, err := l.Allow(t.Context(), "ip:192.0.2.1"); err != nil || !res.Allowed {
+				t.Fatalf("first Allow() = %+v, %v", res, err)
+			}
+
+			if res, _ := l.Allow(t.Context(), "ip:192.0.2.1"); res.Allowed {
+				t.Fatal("second Allow() allowed, want limit 1")
+			}
+		})
+	}
+}
+
+// A typo in RATE_LIMIT_STORE must not quietly fall back to per-process
+// limits, which multiply the budget by the number of servers.
+func TestSecurity_A02_UnknownRateLimitStoreFails(t *testing.T) {
+	t.Parallel()
+
+	app := newTestApp(t, WithSource(testSource(map[string]string{"RATE_LIMIT_STORE": "databse"})))
+
+	if limiters, err := app.RateLimiters(); err == nil || limiters != nil {
+		t.Fatalf("RateLimiters() with RATE_LIMIT_STORE=databse = %v, %v, want an error", limiters != nil, err)
+	}
+}
+
+// RATE_LIMIT_STORE=cache over the per-process memory cache would look
+// shared while every server keeps its own budget: refuse it at boot.
+func TestSecurity_A02_RateLimitCacheNeedsSharedStore(t *testing.T) {
+	t.Parallel()
+
+	env := map[string]string{"RATE_LIMIT_STORE": "cache", "CACHE_STORE": "memory"}
+
+	app := newTestApp(t, WithSource(testSource(env)))
+	if limiters, err := app.RateLimiters(); err == nil || limiters != nil {
+		t.Fatalf("RateLimiters() with CACHE_STORE=memory = %v, %v, want an error", limiters != nil, err)
+	}
+
+	// A store set in code (Redis) is shared.
+	app = newTestApp(t, WithSource(testSource(env)), WithCacheStore(sharedStore{cache.NewMemory(0)}))
+	if _, err := app.RateLimiters(); err != nil {
+		t.Fatalf("RateLimiters() with WithCacheStore = %v", err)
+	}
+
+	// The memory store set in code, directly, lazily or wrapped, is not,
+	// nor is a store that does not declare cache.Sharer (fail closed).
+	for name, opt := range map[string]Option{
+		"eager":          WithCacheStore(cache.NewMemory(0)),
+		"lazy":           WithCacheStoreFunc(func(*App) (cache.Store, error) { return cache.NewMemory(0), nil }),
+		"wrapped":        WithCacheStore(wrappedStore{cache.NewMemory(0)}),
+		"opaque wrapped": WithCacheStore(opaqueStore{cache.NewMemory(0)}),
+	} {
+		app = newTestApp(t, WithSource(testSource(env)), opt)
+		if limiters, err := app.RateLimiters(); err == nil || limiters != nil {
+			t.Errorf("RateLimiters() with a %s memory store = %v, %v, want an error", name, limiters != nil, err)
+		}
+	}
+}
+
+// sharedStore stands for a store every server reaches (Redis).
+type sharedStore struct{ *cache.Memory }
+
+func (sharedStore) Shared() bool { return true }
+
+// opaqueStore decorates a store (metrics) without declaring cache.Sharer
+// or exposing Unwrap.
+type opaqueStore struct{ cache.Store }
+
+// wrappedStore decorates a store (metrics) and exposes it with Unwrap.
+type wrappedStore struct{ cache.Store }
+
+func (w wrappedStore) Unwrap() cache.Store { return w.Store }
+
+// Two app instances on one database (two servers) share the budget with
+// RATE_LIMIT_STORE=cache and CACHE_STORE=database.
+func TestRateLimitersShareTheDatabase(t *testing.T) {
+	t.Parallel()
+
+	env := map[string]string{
+		"RATE_LIMIT_STORE": "cache",
+		"CACHE_STORE":      "database",
+		"DATABASE_URL":     "file:" + filepath.ToSlash(filepath.Join(testutil.TempDir(t), "rl.db")),
+	}
+
+	var allowed int
+
+	for range 2 {
+		app, err := New(WithSource(testSource(env)), WithLogger(discardLogger()))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		t.Cleanup(func() { _ = app.Shutdown(context.Background()) })
+
+		limiters, err := app.RateLimiters()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		l := limiters("login", 3, time.Hour)
+
+		for range 2 {
+			res, err := l.Allow(t.Context(), "ip:192.0.2.1")
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if res.Allowed {
+				allowed++
+			}
+		}
+	}
+
+	// shortcut: a window boundary between the requests would reset the
+	// count; a 1h window makes that unlikely enough for a unit test.
+	if allowed != 3 {
+		t.Fatalf("4 requests across 2 instances, limit 3: %d allowed, want 3", allowed)
+	}
+}
+
+func TestSecurity_A02_DevtoolsRefusedInProduction(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		env  map[string]string
+		opts []Option
+	}{
+		{name: "option", env: map[string]string{"APP_ENV": "production"}, opts: []Option{WithDevtools()}},
+		{name: "env", env: map[string]string{"APP_ENV": "production", "DEVTOOLS": "true"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := New(append(tt.opts, WithSource(testSource(tt.env)), WithLogger(discardLogger()))...)
+			if err == nil || !strings.Contains(err.Error(), "devtools") {
+				t.Fatalf("New() error = %v, want a devtools boot error", err)
+			}
+		})
+	}
+
+	app, err := New(WithSource(testSource(nil)), WithLogger(discardLogger()))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if app.Devtools != nil {
+		t.Fatal("devtools enabled by default")
+	}
+
+	if rec := devtoolsGet(t, app, "/_vukem/"); rec.Code != http.StatusNotFound {
+		t.Errorf("GET /_vukem/ without devtools = %d, want 404", rec.Code)
+	}
+}
+
+type welcomeMail struct{}
+
+func (welcomeMail) Envelope() mail.Envelope {
+	return mail.Envelope{To: []string{"ada@example.com"}, Subject: "Welcome"}
+}
+
+func (welcomeMail) Content() mail.Content { return mail.HTML("<h1>Hi</h1>", "Hi") }
+
+type userSignedUp struct{}
+
+type devtoolsJob struct{}
+
+func (devtoolsJob) Kind() string { return "devtools.ping" }
+
+func TestDevtoolsRecordsAppRequest(t *testing.T) {
+	t.Parallel()
+
+	app, err := New(
+		WithSource(testSource(map[string]string{
+			"APP_ENV": "development", "DEVTOOLS": "true", "DATABASE_URL": ":memory:", "MAIL_MAILER": "array",
+		})),
+		WithLogger(discardLogger()),
+		WithJobs(queue.Handle(func(context.Context, devtoolsJob) error { return nil })),
+		WithRoutes(func(r *router.Router, app *App) error {
+			if err := DefaultMiddleware(app, r); err != nil {
+				return err
+			}
+
+			r.Get("/users", func(c *web.Ctx) error {
+				ctx := c.Context()
+
+				db, err := app.DB()
+				if err != nil {
+					return err
+				}
+
+				for i := range 4 {
+					var n int
+					if err := db.QueryRowContext(ctx, "SELECT ? + 1", i).Scan(&n); err != nil {
+						return err
+					}
+				}
+
+				app.Log.InfoContext(ctx, "listed users", "count", 4)
+
+				if err := app.Events.Dispatch(ctx, userSignedUp{}); err != nil {
+					return err
+				}
+
+				q, err := app.Queue()
+				if err != nil {
+					return err
+				}
+
+				if err := q.Dispatch(ctx, devtoolsJob{}); err != nil {
+					return err
+				}
+
+				m, err := app.Mailer()
+				if err != nil {
+					return err
+				}
+
+				if err := m.Send(ctx, welcomeMail{}); err != nil {
+					return err
+				}
+
+				return c.String(http.StatusOK, "ok")
+			}).Name("users.index")
+
+			return nil
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = app.Shutdown(context.Background()) })
+
+	if rec := devtoolsGet(t, app, "/users"); rec.Code != http.StatusOK {
+		t.Fatalf("GET /users = %d: %s", rec.Code, rec.Body)
+	}
+
+	reqs := app.Devtools.Requests()
+	if len(reqs) != 1 {
+		t.Fatalf("Requests() = %d, want 1", len(reqs))
+	}
+
+	r := reqs[0]
+	if r.Route != "users.index" || r.Queries != 4 || len(r.NPlusOne) != 1 || r.RequestID == "" {
+		t.Errorf("request = %+v", r)
+	}
+
+	pages := map[string]string{
+		"/_vukem/":                 "N+1 queries",
+		"/_vukem/requests/" + r.ID: "listed users",
+		"/_vukem/queries":          "SELECT ? &#43; ?",
+		"/_vukem/jobs":             "ping",
+		"/_vukem/events":           "vukem.userSignedUp",
+		"/_vukem/mails":            "Welcome",
+		"/_vukem/logs":             "count=4",
+		"/_vukem/routes":           "users.index",
+	}
+
+	for path, want := range pages {
+		rec := devtoolsGet(t, app, path)
+		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), want) {
+			t.Errorf("GET %s = %d, want 200 containing %q", path, rec.Code, want)
+		}
+
+		// The app's default CSP (SecureHeaders) applies and the page's
+		// only <style> carries its nonce.
+		csp := rec.Header().Get("Content-Security-Policy")
+		if !strings.Contains(csp, "style-src 'self' 'nonce-") ||
+			!strings.Contains(rec.Body.String(), `<style nonce="`) {
+			t.Errorf("GET %s CSP = %q", path, csp)
+		}
+	}
+
+	if got := len(app.Devtools.Requests()); got != 1 {
+		t.Errorf("dashboard requests were recorded: %d requests", got)
+	}
+}
+
+func devtoolsGet(t *testing.T, app *App, path string) *httptest.ResponseRecorder {
+	t.Helper()
+
+	h, err := app.Handler()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, http.NoBody)
+	req.RemoteAddr, req.Host = "127.0.0.1:50000", "localhost:3000"
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	return rec
 }
