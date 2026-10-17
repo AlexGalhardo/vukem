@@ -1,6 +1,6 @@
 # Production image: {{if .Assets}}Vite assets, {{end}}a static Go binary, a small non-root runtime.
 # Railway, Fly, Render and plain Docker build it as is:
-# https://vukem.vercel.app/docs/deployment/docker-and-railway
+# https://vukem.dev/docs/deployment/docker-and-railway
 {{- if .Assets}}
 
 FROM {{.JSImage}} AS assets

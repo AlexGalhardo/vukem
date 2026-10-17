@@ -1,6 +1,6 @@
 # Vukem documentation site
 
-The public docs at <https://vukem.vercel.app>: Next.js 16 (App Router, static generation), Tailwind CSS v4, Base UI and MDX. See [docs/site.md](../docs/site.md) for the decisions behind it.
+The public docs at <https://vukem.dev>: Next.js 16 (App Router, static generation), Tailwind CSS v4, Base UI and MDX. See [docs/site.md](../docs/site.md) for the decisions behind it.
 
 ## Run
 

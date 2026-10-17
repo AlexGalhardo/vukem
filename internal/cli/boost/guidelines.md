@@ -1,12 +1,12 @@
 ## Vukem (Go web framework)
 
-This project is a [Vukem](https://vukem.vercel.app) application: A Model-View-Controller (MVC) FullStack web framework built on `net/http` and the Go standard library.
+This project is a [Vukem](https://vukem.dev) application: A Model-View-Controller (MVC) FullStack web framework built on `net/http` and the Go standard library.
 
 ### Tools
 
 - The `vukem-boost` MCP server (`go run ./cmd/app boost:mcp`) exposes `application_info`, `list_routes`, `list_commands`, `database_schema`, `database_query` (read-only), `get_absolute_url` and `search_docs`. Use them instead of guessing routes, tables or framework APIs.
 - Skills in `.claude/skills/vukem-*` cover HTTP, validation, database, testing, frontend and the CLI.
-- Full docs in one file: <https://vukem.vercel.app/llms-full.txt>.
+- Full docs in one file: <https://vukem.dev/llms-full.txt>.
 
 ### Conventions
 

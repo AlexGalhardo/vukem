@@ -1,6 +1,6 @@
 # Documentation site
 
-The public "how to use Vukem" website lives in [`site/`](../site) and is deployed to **<https://vukem.vercel.app>**. Its layout and DX are inspired by the [Resend docs](https://resend.com/docs/introduction); its information architecture follows the Laravel and AdonisJS v7 docs.
+The public "how to use Vukem" website lives in [`site/`](../site) and is deployed to **<https://vukem.dev>**. Its layout and DX are inspired by the [Resend docs](https://resend.com/docs/introduction); its information architecture follows the Laravel and AdonisJS v7 docs.
 
 ## Decision
 
@@ -22,7 +22,7 @@ The public "how to use Vukem" website lives in [`site/`](../site) and is deploye
 | Theme | Light/dark/system toggle, persisted, no flash on load |
 | Navigation | Left sidebar grouped by category, right "On this page" table of contents, previous/next links, "Edit on GitHub" link |
 | Agents | `llms.txt` and `llms-full.txt` generated from the MDX content |
-| Hosting | Vercel project `vukem` (Root Directory `site`), production at `vukem.vercel.app`, connected to GitHub: every push to `main` deploys production, other branches get previews |
+| Hosting | Vercel project `vukem` (Root Directory `site`), production at `vukem.dev`, connected to GitHub: every push to `main` deploys production, other branches get previews |
 
 ## Layout (Resend-inspired)
 
@@ -86,4 +86,4 @@ Repo tasks: `task site:dev`, `task site:build` (part of `task ci:full`).
 
 - Editing content: change or add `site/content/docs/<category>/<page>.mdx`, then register the page in `site/content/navigation.ts`. Edit only the current docs; snapshots under `site/content/versions/` are frozen.
 - **Update cadence:** the site is updated at the end of each phase (Prototype, ALPHA, BETA) — a release cannot be tagged until `task site:build` passes and the pages for the phase's features exist.
-- Deploy: automatic on every push to `main` (Vercel GitHub integration, project `vukem`, team `galhardos-projects`, framework pinned in `site/vercel.json`). Manual deploy: `vercel link --project vukem --scope galhardos-projects` once in `site/`, then `vercel deploy --prod`. Live at <https://vukem.vercel.app>.
+- Deploy: automatic on every push to `main` (Vercel GitHub integration, project `vukem`, team `galhardos-projects`, framework pinned in `site/vercel.json`). Manual deploy: `vercel link --project vukem --scope galhardos-projects` once in `site/`, then `vercel deploy --prod`. Live at <https://vukem.dev>.

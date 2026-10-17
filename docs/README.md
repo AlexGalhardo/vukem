@@ -1,6 +1,6 @@
 # Documentation
 
-Design documents, one per area. The user guide lives at [vukem.vercel.app](https://vukem.vercel.app/docs/introduction).
+Design documents, one per area. The user guide lives at [vukem.dev](https://vukem.dev/docs/introduction).
 
 | Topic | Read |
 | --- | --- |

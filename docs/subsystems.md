@@ -228,7 +228,7 @@ The HTMX starter ships `resources/views/components/upload.html` (a `data-upload`
 
 ## Exports
 
-Package `export` (stdlib only) streams downloads row by row from any `iter.Seq2[T, error]`, such as `orm` `Query.Each`, so large exports never sit in memory. Guide: [Exports](https://vukem.vercel.app/docs/digging-deeper/exports).
+Package `export` (stdlib only) streams downloads row by row from any `iter.Seq2[T, error]`, such as `orm` `Query.Each`, so large exports never sit in memory. Guide: [Exports](https://vukem.dev/docs/digging-deeper/exports).
 
 - `export.CSV(w, r, name, header, rows, record)`, `export.JSON` (one array), `export.NDJSON` (`application/x-ndjson`), and `export.WriteCSV(w, r, name, fn)` for multi-section CSV files.
 - Attachments with `export.ContentDisposition(name)` (RFC 6266, RFC 5987 `filename*` for non-ASCII), `Cache-Control: no-store` and `nosniff`.

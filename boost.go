@@ -26,7 +26,7 @@ import (
 
 const (
 	mcpLatestVersion = "2025-06-18"
-	boostDocsURL     = "https://vukem.vercel.app/llms-full.txt"
+	boostDocsURL     = "https://vukem.dev/llms-full.txt"
 	boostMaxRows     = 100
 )
 

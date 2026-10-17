@@ -41,7 +41,7 @@ Task IDs: `<phase>.<group>.<task>` (e.g. `P.3.2`). Reference them in commit bodi
 | Subsystems (mail, cache, queue…) | [docs/subsystems.md](docs/subsystems.md) |
 | Testing | [docs/testing.md](docs/testing.md) |
 | Tooling & releases | [docs/tooling.md](docs/tooling.md) |
-| Documentation website (`site/`, vukem.vercel.app) | [docs/site.md](docs/site.md) |
+| Documentation website (`site/`, vukem.dev) | [docs/site.md](docs/site.md) |
 
 ## Definition of Done
 
@@ -280,7 +280,7 @@ Applies to **every** task:
 
 ### P.12 Release `v0.1.0` — needs: P.0–P.11
 
-- [x] **P.12.0** Documentation site (`site/`, Next.js 16 + Tailwind v4 + Base UI, Resend-like) deployed at vukem.vercel.app with pages for every Prototype feature.
+- [x] **P.12.0** Documentation site (`site/`, Next.js 16 + Tailwind v4 + Base UI, Resend-like) deployed at vukem.dev with pages for every Prototype feature.
   → verify: `task site:build` green; Ctrl+K search, theme toggle, copy + toast work; production URL serves the new pages.
 
 - [x] **P.12.1** GoReleaser config + `release.yml`.
@@ -423,7 +423,7 @@ Applies to **every** task:
 ### A.7 Release train
 
 - [x] **A.7.0** Documentation site updated with every ALPHA feature (API starter, auth, social login, relations, Postgres, mail, cache, storage, events) and redeployed.
-  → verify: `task site:build` green; pages live on vukem.vercel.app.
+  → verify: `task site:build` green; pages live on vukem.dev.
 
 - [x] **A.7.1** Each ALPHA group shipped as a minor (`v0.2.0`, `v0.3.0`…) with changelog.
   → verify: tags exist; `CHANGELOG.md` sections per release.
@@ -589,7 +589,7 @@ Applies to **every** task:
   → verify: checklist.
 
 - [x] **B.5.6** Documentation site updated with every BETA feature (OpenAPI, queue, scheduler, Inertia, Vite, Redis, Mongo, i18n, SSE, encryption, GraphQL, WebSockets/broadcasting, admin, dev dashboard, JWT, 2FA, S3, MySQL, new starters, client generation, Stripe, file uploads, Scalar API docs, gRPC) and redeployed.
-  → verify: `task site:build` green; pages live on vukem.vercel.app.
+  → verify: `task site:build` green; pages live on vukem.dev.
 
 ### BETA exit criteria
 
