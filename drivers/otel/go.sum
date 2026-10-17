@@ -1,5 +1,5 @@
-github.com/AlexGalhardo/vukem v0.24.0 h1:cifXKBa0+jd8W/W6dmbSw0NjV3SjHOaM9rS6IWxyZAg=
-github.com/AlexGalhardo/vukem v0.24.0/go.mod h1:I1SNhde10HmdHxvnDHCRf7GOQ4POIM36pFYUGPkLlFI=
+github.com/AlexGalhardo/vukem v0.25.0 h1:RFI0qgblUOov4AV9JK9Kp7m/nfOEiIsA0KCwTA0NZ/k=
+github.com/AlexGalhardo/vukem v0.25.0/go.mod h1:I1SNhde10HmdHxvnDHCRf7GOQ4POIM36pFYUGPkLlFI=
 github.com/cenkalti/backoff/v5 v5.0.3 h1:ZN+IMa753KfX5hd8vVaMixjnqRZ3y8CuJKRKj1xcsSM=
 github.com/cenkalti/backoff/v5 v5.0.3/go.mod h1:rkhZdG3JZukswDf7f0cwqPNk4K0sa+F97BxZthm/crw=
 github.com/cespare/xxhash/v2 v2.3.0 h1:UL815xU9SqsFlibzuggzjXhog7bL6oX9BbNZnL2UFvs=
