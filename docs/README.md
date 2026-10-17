@@ -14,6 +14,7 @@ Design documents, one per area. The user guide lives at [vukem.vercel.app](https
 | REST APIs, OpenAPI, API reference | [api.md](api.md) |
 | GraphQL (`contrib/graphql`) | [graphql.md](graphql.md) |
 | Security defaults (OWASP Top 10:2025) | [security.md](security.md) |
+| Security review (B.5.2, ASVS 5.0 L2) | [security-review.md](security-review.md) |
 | Databases, ORM, migrations | [database.md](database.md) |
 | Authentication and authorization | [authentication.md](authentication.md) |
 | Admin panel | [admin.md](admin.md) |

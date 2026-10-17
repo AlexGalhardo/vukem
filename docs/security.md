@@ -226,10 +226,10 @@ All configurable in `config/http.go`; API routes skip HTML-only headers.
 
 ## Verification
 
-- Every default above has a test named `TestSecurity_<Category>_<Behaviour>` (e.g. `TestSecurity_A01_StaticRejectsTraversal`), so `go test -run TestSecurity ./...` is the security regression suite.
-- Fuzz targets for parsers that see untrusted input: router patterns, `.env`, validator tags, multipart, JSON binding, cookie decoding, `crypt` tokens (`FuzzDecrypt`).
-- CI: `gosec`, `govulncheck`, CodeQL, OpenSSF Scorecard.
-- BETA gate `B.5.2`: manual security review of CSRF, sessions, auth, uploads, SQL building and headers against this document.
+- Every default above names the test that asserts it (`TestSecurity_<Category>_<Behaviour>` where the row is security-specific, e.g. `TestSecurity_A01_StaticRejectsTraversal`) or the mechanism that enforces it (lint rule, CI job, release config), so `go test -run TestSecurity ./...` is the security regression suite.
+- Fuzz targets for parsers that see untrusted input (router patterns and request paths, `.env`, JSON and form binding, multipart, tus headers, upload names, cookie sessions, JWTs, `crypt` tokens, storage paths, locale tags, webhook and Stripe signatures, GraphQL documents) run for an hour each every week ([`fuzz.yml`](../.github/workflows/fuzz.yml)).
+- CI: `gosec` (via golangci-lint), `govulncheck`, CodeQL, OpenSSF Scorecard.
+- BETA gate `B.5.2`: [security review](security-review.md) against this document and ASVS 5.0 Level 2, with findings, residual risks and fuzzing results.
 
 ## References
 
