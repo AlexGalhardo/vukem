@@ -277,7 +277,7 @@ func localeMiddleware(app *App, cfg *i18n.MiddlewareConfig, def i18n.MiddlewareC
 		def = *cfg
 	}
 
-	mw, err := i18n.NewMiddleware(app.I18n, def)
+	mw, err := i18n.Middleware(app.I18n, def)
 	if err != nil {
 		return nil, fmt.Errorf("vukem: i18n: %w", err)
 	}

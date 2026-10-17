@@ -95,7 +95,7 @@ var defaultOrder = []Source{SourceQuery, SourceCookie, SourceSession, SourceHead
 
 // Validate reports an Order with no, unknown or repeated sources, and
 // Locales that are not available in b or leave out its default locale.
-// Middleware panics and NewMiddleware fails on such a config.
+// Middleware returns it as an error for such a config.
 func (c MiddlewareConfig) Validate(b *Bundle) error {
 	if c.Order != nil && len(c.Order) == 0 {
 		return errors.New("i18n: middleware Order is empty (nil uses the default order)")
@@ -173,19 +173,8 @@ func orDefault(v, def string) string {
 // source was consulted and "Vary: Accept-Language" when the header was.
 // (A locale from the query needs no Vary: the URL is the cache key.)
 //
-// It panics, at construction, when cfg fails MiddlewareConfig.Validate;
-// NewMiddleware returns the error instead.
-func Middleware(b *Bundle, cfg MiddlewareConfig) func(http.Handler) http.Handler {
-	mw, err := NewMiddleware(b, cfg)
-	if err != nil {
-		panic(err)
-	}
-
-	return mw
-}
-
-// NewMiddleware is Middleware returning an invalid cfg as an error.
-func NewMiddleware(b *Bundle, cfg MiddlewareConfig) (func(http.Handler) http.Handler, error) {
+// It returns the MiddlewareConfig.Validate error when cfg is invalid.
+func Middleware(b *Bundle, cfg MiddlewareConfig) (func(http.Handler) http.Handler, error) {
 	if err := cfg.Validate(b); err != nil {
 		return nil, err
 	}
@@ -285,4 +274,16 @@ func resolve(
 	}
 
 	return b.Default(), vary
+}
+
+// NewMiddleware is Middleware.
+//
+// Deprecated: use Middleware, which now returns the error itself.
+//
+//go:fix inline
+func NewMiddleware(bundle *Bundle, config MiddlewareConfig) (func(http.Handler) http.Handler, error) {
+	// The parameters are not named b and cfg on purpose: with those names,
+	// go fix (Go 1.27.2) rewrote NewMiddleware(b, MiddlewareConfig{}) into
+	// Middleware(MiddlewareConfig{}, cfg).
+	return Middleware(bundle, config)
 }

@@ -29,7 +29,12 @@ func Example() {
 	fmt.Println(b.T("pt-BR", "posts.count", "count", 1))
 	fmt.Println(b.T("pt-BR", "posts.count", "count", 3))
 
-	h := i18n.Middleware(b, i18n.MiddlewareConfig{})(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+	mw, err := i18n.Middleware(b, i18n.MiddlewareConfig{})
+	if err != nil {
+		panic(err)
+	}
+
+	h := mw(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		fmt.Println(i18n.Locale(r.Context()), i18n.T(r.Context(), "posts.count", "count", 2))
 	}))
 
