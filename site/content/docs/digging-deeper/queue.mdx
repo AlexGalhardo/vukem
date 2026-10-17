@@ -30,18 +30,20 @@ func All(app *vukem.App) []queue.Registration {
 ```go
 q, err := app.Queue()
 err = q.Dispatch(ctx, jobs.SendInvoice{OrderID: 1}, queue.OnQueue("billing"), queue.Delay(5*time.Minute))
-err = q.DispatchTx(ctx, tx, jobs.SendInvoice{OrderID: 1}) // database driver: only if tx commits
+err = q.DispatchTx(ctx, tx, jobs.SendInvoice{OrderID: 1}) // only if tx commits
 ```
 
 - Payloads are JSON; `Kind()` names the handler and must stay stable across deploys. Registering a kind twice is a boot error.
 - Defaults: queue `default`, 3 retries, exponential backoff from 1s (capped at 1h), 1-minute timeout per attempt. Options on `Handle` set defaults; options on `Dispatch` override them. Backoffs: `queue.Exponential(base)`, `queue.Constant(d)`, or any `func(attempt int) time.Duration`.
 - Workers recover panics, retry with backoff and then move the job to the failed jobs with its last error. On shutdown they stop reserving and let running jobs finish.
+- `DispatchTx(ctx, tx, job)` works on every driver: the database driver inserts the job inside the transaction; `sync`, `memory`, `queue.Fake` and Redis dispatch it right after the commit (`database.Tx.AfterCommit`), and never for rolled-back work. On `sync` the job runs after the commit, so its error is logged instead of returned.
+- `sync` cannot delay a job: `Dispatch(ctx, j, queue.Delay(d))` returns `queue.ErrInlineDelay` instead of running it early. Tests that dispatch delayed jobs use `queue.NewFake()`.
 
 ## Drivers
 
 | `QUEUE_CONNECTION` | Behaviour |
 | --- | --- |
-| `sync` (default) | the job runs inside `Dispatch`; its error is returned, no retries |
+| `sync` (default) | the job runs inside `Dispatch`; its error is returned, no retries; `queue.Delay` is refused with `queue.ErrInlineDelay` |
 | `memory` | in process; `serve` runs the workers; lost on restart |
 | `database` | SQLite or Postgres tables `jobs` and `failed_jobs`, created on first use; any number of worker processes |
 | Redis | `vukem.WithQueueDriver(rc.Queue(redis.QueueOptions{}))`, see [Redis](/docs/database/redis) |
