@@ -161,6 +161,7 @@ What Vukem does **by default** to protect applications, mapped to the [OWASP Top
 | Queue payloads are JSON mapped to registered job kinds — **no reflection-based deserialization of arbitrary types** (`TestTimeoutPanicAndUnknownKind`, `TestRegisterAndDispatchErrors`) | [x] |
 | CSRF protection with `http.CrossOriginProtection` (Fetch Metadata + Origin) on all unsafe methods; webhook bypasses must be declared (`TestSecurity_A01_CrossOriginProtection`) | [x] |
 | Webhook signature verification helper (`webhook.VerifyHMAC`) (`TestSecurity_A08_WebhookMiddleware`, `FuzzVerifyHMAC`) | [x] |
+| Standard Webhooks verification with a ±5 minute timestamp window against replays (`TestSecurity_A08_StandardWebhooks`); a malformed secret is a boot error; `webhook.Dedupe` runs each event id once and fails closed when its store is down (`TestSecurity_A08_WebhookDedupe`, `TestSecurity_A04_WebhookDedupeFailsClosed`) | [x] |
 | Release artifacts with checksums, SBOM and signatures (process: `.goreleaser.yaml`, `release.yml`) | [x] |
 | Migrations tracked with checksums; a modified, already-applied migration is reported by `migrate:status` (`TestMigratorChangedAndMissing`, `TestMigrateCommands`) | [x] |
 

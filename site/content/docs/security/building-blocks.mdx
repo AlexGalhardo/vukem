@@ -37,7 +37,50 @@ ok := webhook.VerifyHMAC(secret, body, r.Header.Get("X-Signature")) // hex or ba
 sig := webhook.Sign(secret, payload)                                  // for outgoing webhooks
 ```
 
-The middleware reads at most `maxBody` bytes (413), verifies, restores the body for the handler and answers 401 otherwise.
+The middleware reads at most `maxBody` bytes (413; `0` means 1 MiB), verifies, restores the body for the handler and answers 401 otherwise. A plain body HMAC does not stop someone who captured a valid request from sending it again, so add the two pieces below.
+
+### Standard Webhooks (Svix, Resend, Clerk…)
+
+Providers that follow [Standard Webhooks](https://www.standardwebhooks.com) send `webhook-id`, `webhook-timestamp` and `webhook-signature` headers. `webhook.Standard` checks the signature over `id.timestamp.body` and refuses timestamps more than 5 minutes away, so a captured request cannot be replayed later:
+
+```go
+verify, err := webhook.Standard(cfg.WebhookSecret, webhook.StandardOptions{}) // "whsec_..." from the provider
+if err != nil {
+	return err // a malformed secret fails at boot, not on the first webhook
+}
+
+r.Post("/webhooks/resend", handle).Use(verify)
+```
+
+| Option | Default |
+| --- | --- |
+| `MaxBody` | 1 MiB |
+| `Tolerance` | 5 minutes, both directions |
+| `Now` | `time.Now` (inject a fixed clock in tests) |
+
+### Handle each event once
+
+Providers deliver **at least once**: the same event can arrive twice (timeouts, retries). `webhook.Dedupe` remembers handled event ids in any `cache.Store`:
+
+```go
+c, _ := app.Cache()
+
+r.Post("/webhooks/resend", handle).Use(
+	verify, // always verify first
+	webhook.Dedupe(c.Store(), webhook.StandardID, webhook.DedupeOptions{}),
+)
+```
+
+| Situation | Answer |
+| --- | --- |
+| First delivery | handler runs; a 2xx answer is remembered for `TTL` (72h) |
+| Redelivery of a handled event | 200 with `Webhook-Duplicate: true`, handler not run |
+| Duplicate while the first is still running | 409, the provider retries |
+| Handler answered 3xx/4xx/5xx | not remembered, so the provider's retry runs |
+| No event id | 400 |
+| Store unavailable | 503 (fail closed) |
+
+For providers with their own headers, pass a function that returns the event id, for example `func(r *http.Request) string { return r.Header.Get("X-Event-Id") }`. Use a shared store (database or Redis) when the app runs on more than one instance.
 
 ## Security events
 

@@ -1,6 +1,7 @@
-// Package webhook verifies signed incoming webhooks (HMAC-SHA256 over the
-// raw body), the scheme used by GitHub, Shopify, Resend/Svix-style
-// providers and your own integrations.
+// Package webhook verifies signed incoming webhooks: [Middleware] checks an
+// HMAC-SHA256 of the raw body (GitHub, Shopify, your own integrations),
+// [Standard] checks Standard Webhooks signatures (Svix, Resend, Clerk) with a
+// timestamp replay window, and [Dedupe] drops at-least-once redeliveries.
 //
 //	r.Post("/webhooks/github", handle).Use(webhook.Middleware("X-Hub-Signature-256", secret, 1<<20))
 //
@@ -63,9 +64,15 @@ func VerifyHMAC(secret, payload []byte, signature string) bool {
 var ErrSignature = &errs.HTTPError{Status: http.StatusUnauthorized, Message: "Invalid webhook signature."}
 
 // Middleware verifies the signature in header against the raw body (at
-// most maxBody bytes) and restores the body for the handler. Failures get
-// 401 and a "webhook.signature_invalid" security event.
+// most maxBody bytes, default 1 MiB when maxBody <= 0) and restores the body
+// for the handler. Failures get 401 and a "webhook.signature_invalid"
+// security event. It does not bound replays; use [Standard] when the
+// provider signs a timestamp, and [Dedupe] to drop redeliveries.
 func Middleware(header string, secret []byte, maxBody int64) func(http.Handler) http.Handler {
+	if maxBody <= 0 {
+		maxBody = defaultMaxBody
+	}
+
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			body, err := io.ReadAll(io.LimitReader(r.Body, maxBody+1))
