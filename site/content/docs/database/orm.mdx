@@ -58,7 +58,10 @@ for i := range numbers {
 err := orm.CreateMany(ctx, db, numbers) // fills timestamps and ids
 ```
 
-On `db` the batches share one transaction (all rows or none); on a `tx` they join it. `BeforeCreate` runs for every model before the first insert and `AfterCreate` after the last. Auto-increment ids are filled when every model leaves its id zero (mixing set and zero ids is an error); MySQL cannot report the ids of a multi-row insert, so there such rows are inserted one statement each.
+- Atomicity holds for `db` and `tx` only: on `db` the batches share one transaction (all rows or none); on a `tx` they join it. Any other `database.Executor` (a wrapper) runs the statements directly, so batches written before a failure stay written and keep their ids.
+- `BeforeCreate` runs for every model before the first insert. `AfterCreate` runs after the last, once the transaction on `db` has committed: an `AfterCreate` error there means the rows are stored and you still get the error.
+- Auto-increment ids are filled when every model leaves its id zero (mixing set and zero ids is an error). PostgreSQL and SQLite return them with `RETURNING`; they must be strictly increasing (an ascending sequence), otherwise `CreateMany` fails and rolls back instead of guessing which row got which id. MySQL cannot report the ids of a multi-row insert, so there such rows are inserted one statement each.
+- A model whose only column is its generated key is rejected; use `orm.Create`.
 
 ## Querying
 
@@ -130,7 +133,7 @@ err := db.Tx(ctx, func(tx *database.Tx) error {
 | --- | --- | --- | --- |
 | `LockForUpdate()` | `FOR UPDATE` | `FOR UPDATE` | no-op |
 | `ForShare()` | `FOR SHARE` | `LOCK IN SHARE MODE` | no-op |
-| `.SkipLocked()` / `.NoWait()` after a lock | `SKIP LOCKED` / `NOWAIT` | same (with `ForShare`, MySQL 8 only: `FOR SHARE …`) | no-op |
+| `.SkipLocked()` / `.NoWait()` after a lock | `SKIP LOCKED` / `NOWAIT` | same (with `ForShare`, MySQL 8 only: `FOR SHARE …`) | no-op (`NoWait` never fails) |
 
 - A locking query on `db` returns `orm.ErrLockOutsideTx`: without a transaction the lock ends with the statement. This holds on SQLite too, so code stays portable.
 - SQLite has no row locks; its write transactions (`BEGIN IMMEDIATE`) already lock the whole database, so the lock clauses are dropped.

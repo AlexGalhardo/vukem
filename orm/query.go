@@ -343,11 +343,14 @@ func (q Query[T]) LockForUpdate() Query[T] { q.lock = "UPDATE"; return q }
 func (q Query[T]) ForShare() Query[T] { q.lock = "SHARE"; return q }
 
 // SkipLocked makes the lock skip rows other transactions hold instead of
-// waiting (work queues). Call it after LockForUpdate or ForShare.
+// waiting (work queues). Call it after LockForUpdate or ForShare. Like the
+// lock itself it is a no-op on SQLite.
 func (q Query[T]) SkipLocked() Query[T] { return q.lockWait("SKIP LOCKED") }
 
 // NoWait makes the lock fail at once when a row is held by another
 // transaction instead of waiting. Call it after LockForUpdate or ForShare.
+// It is a no-op on SQLite, where it never fails: a second writer waits for
+// the database lock (busy timeout) instead.
 func (q Query[T]) NoWait() Query[T] { return q.lockWait("NOWAIT") }
 
 func (q Query[T]) lockWait(mode string) Query[T] {

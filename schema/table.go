@@ -259,7 +259,8 @@ func (t *Table) Check(name, expr string) {
 }
 
 // DropCheck drops a named CHECK constraint (alter only; not supported on
-// SQLite).
+// SQLite). It emits DROP CONSTRAINT, which needs MySQL 8.0.19+ or MariaDB
+// 10.2+.
 func (t *Table) DropCheck(name string) {
 	if err := checkIdent("check", name); err != nil {
 		t.fail(err)
