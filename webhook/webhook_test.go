@@ -79,3 +79,39 @@ func TestSecurity_A08_WebhookMiddleware(t *testing.T) {
 		t.Fatalf("too large = %d", code)
 	}
 }
+
+func TestSecurity_A05_WebhookHMACRefusesEmptySecretAtBoot(t *testing.T) {
+	t.Parallel()
+
+	for name, tc := range map[string]struct {
+		header string
+		secret []byte
+	}{
+		"empty secret": {"X-Signature", nil},
+		"empty header": {"", secret},
+	} {
+		if mw, err := HMAC(tc.header, tc.secret, 0); err == nil || mw != nil {
+			t.Errorf("HMAC(%s) = %v, want a boot error", name, err)
+		}
+	}
+
+	mw, err := HMAC("X-Signature", secret, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	body := `{"ok":true}`
+	h := mw(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }))
+
+	for sig, want := range map[string]int{Sign(secret, []byte(body)): http.StatusNoContent, "bad": http.StatusUnauthorized} {
+		r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/hook", strings.NewReader(body))
+		r.Header.Set("X-Signature", sig)
+
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, r)
+
+		if rec.Code != want {
+			t.Errorf("HMAC middleware with signature %q = %d, want %d", sig, rec.Code, want)
+		}
+	}
+}

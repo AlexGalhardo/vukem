@@ -3,9 +3,10 @@
 // [Standard] checks Standard Webhooks signatures (Svix, Resend, Clerk) with a
 // timestamp replay window, and [Dedupe] drops at-least-once redeliveries.
 //
-//	r.Post("/webhooks/github", handle).Use(webhook.Middleware("X-Hub-Signature-256", secret, 1<<20))
+//	verify, err := webhook.HMAC("X-Hub-Signature-256", secret, 1<<20) // error on an empty secret
+//	r.Post("/webhooks/github", handle).Use(verify)
 //
-// [Middleware] bounds the body, verifies the signature header and answers
+// [HMAC] and [Middleware] bound the body, verifies the signature header and answers
 // 401 ([ErrSignature]) on mismatch; [VerifyHMAC] and [Sign] are the
 // building blocks for custom schemes and tests.
 //
@@ -23,6 +24,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -68,11 +70,28 @@ func VerifyHMAC(secret, payload []byte, signature string) bool {
 // ErrSignature is the 401 answered for missing or wrong signatures.
 var ErrSignature = &errs.HTTPError{Status: http.StatusUnauthorized, Message: "Invalid webhook signature."}
 
+// HMAC is [Middleware] that checks its configuration first: an empty
+// header or secret (an unset environment variable) is an error at boot
+// instead of a webhook that answers 401 forever. Prefer it to Middleware.
+func HMAC(header string, secret []byte, maxBody int64) (func(http.Handler) http.Handler, error) {
+	switch {
+	case header == "":
+		return nil, errors.New("webhook: HMAC needs a signature header name")
+	case len(secret) == 0:
+		return nil, errors.New("webhook: HMAC needs a non-empty secret")
+	}
+
+	return Middleware(header, secret, maxBody), nil
+}
+
 // Middleware verifies the signature in header against the raw body (at
 // most maxBody bytes, default 1 MiB when maxBody <= 0) and restores the body
 // for the handler. Failures get 401 and a "webhook.signature_invalid"
 // security event. It does not bound replays; use [Standard] when the
 // provider signs a timestamp, and [Dedupe] to drop redeliveries.
+//
+// Middleware is the lenient form: an empty secret is not reported and
+// every request is refused. [HMAC] reports it at boot.
 func Middleware(header string, secret []byte, maxBody int64) func(http.Handler) http.Handler {
 	if maxBody <= 0 {
 		maxBody = defaultMaxBody
