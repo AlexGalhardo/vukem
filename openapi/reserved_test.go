@@ -17,9 +17,17 @@ type (
 	Date struct {
 		Day string `json:"day"`
 	}
+	HeadersInit struct {
+		Name string `json:"name"`
+	}
+	RequestInfo struct {
+		Path string `json:"path"`
+	}
 	Response struct {
-		Number Number `json:"number"`
-		Date   *Date  `json:"date"`
+		Number  Number      `json:"number"`
+		Date    *Date       `json:"date"`
+		Headers HeadersInit `json:"headers"`
+		Request RequestInfo `json:"request"`
 	}
 )
 

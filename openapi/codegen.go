@@ -193,6 +193,8 @@ func reservedTS(name string) bool {
 		"Readonly", "Record", "ReferenceError", "Reflect", "RegExp", "Request", "RequestInit", "Required",
 		"Response", "ReturnType", "Set", "String", "Symbol", "SyntaxError", "Text", "TypeError",
 		"URIError", "URL", "URLSearchParams", "Uncapitalize", "Uppercase", "WeakMap", "WeakSet", "Window",
+		"AbortController", "AbortSignal", "BodyInit", "HeadersInit", "ReadableStream", "ReadonlyArray",
+		"RequestCredentials", "RequestInfo", "RequestMode", "Uint8Array",
 		"ApiError", "ApiProblem", "Client", "ClientOptions", "RequestArgs":
 		return true
 	default:

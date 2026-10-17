@@ -4,6 +4,10 @@ export type DateType = {
   day?: string;
 };
 
+export type HeadersInitType = {
+  name?: string;
+};
+
 export type NumberType = {
   value?: number;
 };
@@ -18,9 +22,15 @@ export type Problem = {
   type?: string;
 };
 
+export type RequestInfoType = {
+  path?: string;
+};
+
 export type ResponseType = {
   date?: DateType | null;
+  headers?: HeadersInitType;
   number?: NumberType;
+  request?: RequestInfoType;
 };
 
 export type NumbersStoreBody = {

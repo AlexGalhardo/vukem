@@ -6,6 +6,10 @@ export type DateType = {
   day?: string;
 };
 
+export type HeadersInitType = {
+  name?: string;
+};
+
 export type NumberType = {
   value?: number;
 };
@@ -20,9 +24,15 @@ export type Problem = {
   type?: string;
 };
 
+export type RequestInfoType = {
+  path?: string;
+};
+
 export type ResponseType = {
   date?: DateType | null;
+  headers?: HeadersInitType;
   number?: NumberType;
+  request?: RequestInfoType;
 };
 
 export type NumbersStoreBody = {
@@ -34,6 +44,12 @@ export type NumbersStoreResponse = ResponseType;
 export const DateTypeSchema: z.ZodType<DateType> = z.lazy(() =>
   z.object({
     day: z.string().optional(),
+  }),
+);
+
+export const HeadersInitTypeSchema: z.ZodType<HeadersInitType> = z.lazy(() =>
+  z.object({
+    name: z.string().optional(),
   }),
 );
 
@@ -55,10 +71,18 @@ export const ProblemSchema: z.ZodType<Problem> = z.lazy(() =>
   }),
 );
 
+export const RequestInfoTypeSchema: z.ZodType<RequestInfoType> = z.lazy(() =>
+  z.object({
+    path: z.string().optional(),
+  }),
+);
+
 export const ResponseTypeSchema: z.ZodType<ResponseType> = z.lazy(() =>
   z.object({
     date: DateTypeSchema.nullable().optional(),
+    headers: HeadersInitTypeSchema.optional(),
     number: NumberTypeSchema.optional(),
+    request: RequestInfoTypeSchema.optional(),
   }),
 );
 
