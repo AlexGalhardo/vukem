@@ -18,6 +18,7 @@ The first `POST` or `PATCH` carrying an `Idempotency-Key` header runs and its re
 | Same key while the first is still running | 409 |
 | Same key, different method, URL or body | 422 (and an `idempotency.key_reused` security event) |
 | Invalid key (1–255 printable characters) | 400 |
+| Key sent but `Scope` is empty (no `Authorization`, no custom `Scope`) | 400 (and an `idempotency.unscoped` security event) |
 | Store unavailable | 503: the request is refused rather than risking a duplicate |
 
 | Option | Default |
@@ -29,6 +30,17 @@ The first `POST` or `PATCH` carrying an `Idempotency-Key` header runs and its re
 | `MaxBody` | 1 MiB fingerprinted |
 | `Scope` | the `Authorization` header |
 
-- Keys are **scoped to the caller**, so one user can never replay another's response. Set `Scope` for cookie sessions (for example to the user ID).
+- Keys are **scoped to the caller**, so one user can never replay another's response.
+- With cookie sessions there is no `Authorization` header, so **set `Scope`** to something that identifies the caller, such as the signed-in user ID. Without it, a request carrying a key is refused with 400 instead of sharing one scope between every visitor:
+
+```go
+api.IdempotencyOptions{
+	Scope: func(r *http.Request) string {
+		return currentUserID(r) // "" for guests: their keyed requests get 400
+	},
+}
+```
+
+- To share keys between all callers on purpose (rare), return a constant such as `"public"`.
 - Responses with status 500 or above are not stored, so the client can retry. `Set-Cookie` is never replayed.
 - Any `cache.Store` works: memory, database or [Redis](/docs/database/redis).

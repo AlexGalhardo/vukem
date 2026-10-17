@@ -30,7 +30,8 @@ type IdempotencyOptions struct {
 	MaxBody int64
 	// Scope separates callers so one cannot replay another's response.
 	// Default: the Authorization header; set it for cookie sessions (e.g.
-	// the user ID).
+	// the user ID). A request with a key whose scope is empty is refused
+	// with 400; return a constant to share keys on purpose.
 	Scope func(r *http.Request) string
 }
 
@@ -99,10 +100,23 @@ func Idempotency(store cache.Store, o IdempotencyOptions) func(http.Handler) htt
 				return
 			}
 
+			// An empty scope would let every anonymous or cookie-session caller
+			// replay each other's responses, so refuse instead of sharing it.
+			scope := o.Scope(r)
+			if scope == "" {
+				web.SecurityEvent(r, "idempotency.unscoped")
+				web.Fail(
+					w,
+					r,
+					errs.New(http.StatusBadRequest, "Idempotency-Key requires an identified caller."),
+				)
+				return
+			}
+
 			r.Body = io.NopCloser(bytes.NewReader(body))
 
 			ctx := r.Context()
-			storeKey := "idempotency:" + digest(o.Scope(r), "\x00", key)
+			storeKey := "idempotency:" + digest(scope, "\x00", key)
 			fingerprint := digest(r.Method, "\x00", r.URL.RequestURI(), "\x00", string(body))
 
 			pending, _ := json.Marshal(idemRecord{Fingerprint: fingerprint})

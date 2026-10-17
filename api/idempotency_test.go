@@ -105,6 +105,30 @@ func TestSecurity_A01_IdempotencyScopedToCaller(t *testing.T) {
 	}
 }
 
+func TestSecurity_A01_IdempotencyRefusesAnonymousScope(t *testing.T) {
+	t.Parallel()
+
+	var calls atomic.Int32
+
+	h := idemHandler(cache.NewMemory(100), &calls, api.IdempotencyOptions{})
+
+	// Two cookie-session users without Authorization would share the "" scope.
+	if rec := send(t, h, "POST", "/orders", "k", "", `{}`); rec.Code != 400 || calls.Load() != 0 {
+		t.Fatalf("empty scope = %d calls=%d, want 400 and no call", rec.Code, calls.Load())
+	}
+
+	if rec := send(t, h, "POST", "/orders", "", "", `{}`); rec.Code != 201 {
+		t.Errorf("no key and empty scope = %d, want pass-through 201", rec.Code)
+	}
+
+	shared := idemHandler(cache.NewMemory(100), &calls, api.IdempotencyOptions{
+		Scope: func(*http.Request) string { return "public" },
+	})
+	if rec := send(t, shared, "POST", "/orders", "k", "", `{}`); rec.Code != 201 {
+		t.Errorf("explicit scope = %d, want 201", rec.Code)
+	}
+}
+
 func TestIdempotencyInFlightErrorsAndRequired(t *testing.T) {
 	t.Parallel()
 
@@ -115,9 +139,9 @@ func TestIdempotencyInFlightErrorsAndRequired(t *testing.T) {
 	h := idemHandler(store, &calls, api.IdempotencyOptions{Required: true, LockTTL: time.Minute}, entered)
 
 	// Server errors are not stored: the retry runs again.
-	send(t, h, "POST", "/fail", "f", "", ``)
+	send(t, h, "POST", "/fail", "f", "Bearer t", ``)
 
-	if rec := send(t, h, "POST", "/fail", "f", "", ``); rec.Code != 500 || calls.Load() != 2 {
+	if rec := send(t, h, "POST", "/fail", "f", "Bearer t", ``); rec.Code != 500 || calls.Load() != 2 {
 		t.Fatalf("retry after 500 = %d calls=%d", rec.Code, calls.Load())
 	}
 
@@ -130,12 +154,13 @@ func TestIdempotencyInFlightErrorsAndRequired(t *testing.T) {
 
 		r := httptest.NewRequestWithContext(ctx, "POST", "/slow", http.NoBody)
 		r.Header.Set(api.IdempotencyHeader, "s")
+		r.Header.Set("Authorization", "Bearer t")
 		h.ServeHTTP(httptest.NewRecorder(), r)
 	}()
 
 	<-entered
 
-	rec := send(t, h, "POST", "/slow", "s", "", ``)
+	rec := send(t, h, "POST", "/slow", "s", "Bearer t", ``)
 
 	cancel()
 	<-done
@@ -162,7 +187,7 @@ func TestSecurity_A04_IdempotencyFailsClosed(t *testing.T) {
 
 	h := idemHandler(failingStore{}, &calls, api.IdempotencyOptions{})
 
-	if rec := send(t, h, "POST", "/orders", "k", "", `{}`); rec.Code != 503 || calls.Load() != 0 {
+	if rec := send(t, h, "POST", "/orders", "k", "Bearer t", `{}`); rec.Code != 503 || calls.Load() != 0 {
 		t.Fatalf("store down = %d calls=%d, want 503 and no call", rec.Code, calls.Load())
 	}
 }
