@@ -113,7 +113,7 @@ nonce := middleware.CSPNonce(c.Context())
 return c.HTML(http.StatusOK, `<script nonce="`+nonce+`">init()</script>`)
 ```
 
-`CSPSources` adds sources to the policy (the default or your `CSP`) without rewriting it. A `-src` directive missing from the policy starts from the `default-src` sources. `ReportURI` (an `https://` URL or a path) adds `report-uri` and `report-to` plus the matching `Reporting-Endpoints` header:
+`CSPSources` adds sources to the policy (the default or your `CSP`) without rewriting it. A fetch directive missing from the policy starts from the directive the browser would fall back to: `script-src-elem` from `script-src` (so it keeps the nonce), `worker-src` from `child-src` then `script-src`, `frame-src` from `child-src`, the others from `default-src`. `ReportURI` (an `https://` URL without credentials, or a path starting with one `/`) adds `report-uri` and `report-to` plus the matching `Reporting-Endpoints` header:
 
 ```go
 cfg := middleware.SecureHeadersConfig{
@@ -125,11 +125,13 @@ cfg := middleware.SecureHeadersConfig{
 	ReportURI: "/csp-reports",
 }
 if err := cfg.Validate(); err != nil {
-	return err // refused: 'unsafe-*', "*", static nonces, "https:"/"data:" in script directives
+	return err
 }
 ```
 
-`SecureHeaders` never fails: invalid extras are dropped (the policy stays stricter), so call `Validate` at boot (`vukem.DefaultMiddlewareWith` does). Anything weaker than the helper allows needs a full `CSP` string.
+Refused sources: `'unsafe-*'` keywords, static nonces, `*` hosts (`*`, `*:*`, `https://*`), wildcards over fewer than two labels (`*.com`), host wildcards in `default-src`, `script-src*`, `object-src`, `worker-src` and `base-uri`, and unsafe schemes. Scheme-only sources are accepted only as `https:`, `data:` or `blob:` in `img-src`/`media-src` (`https:`/`data:` in `font-src`) and `https:` or `wss:` in `connect-src`.
+
+`SecureHeaders` never fails: invalid extras are dropped (the policy stays stricter) with one warning in the log, so call `Validate` at boot (`vukem.DefaultMiddlewareWith` does). Anything weaker than the helper allows needs a full `CSP` string.
 
 Styles injected at runtime need the nonce too, since `style-src` has no `'unsafe-inline'`. The starters already handle the common cases:
 

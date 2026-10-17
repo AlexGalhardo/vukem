@@ -1,6 +1,8 @@
 package middleware
 
 import (
+	"bytes"
+	"log/slog"
 	"net/http"
 	"strings"
 	"testing"
@@ -142,6 +144,34 @@ func TestSecurity_A02_CSPSourcesRefuseUnsafe(t *testing.T) {
 		"report quote":         {ReportURI: `/csp"; script-src *`},
 		"report already in":    {CSP: "default-src 'self'; report-uri /a", ReportURI: "/b"},
 		"report-to in sources": {CSPSources: map[string][]string{"report-uri": {"/a"}}},
+		// Host wildcards (M1).
+		"any host any port":    {CSPSources: map[string][]string{"img-src": {"*:*"}}},
+		"https any host":       {CSPSources: map[string][]string{"img-src": {"https://*"}}},
+		"http any host":        {CSPSources: map[string][]string{"connect-src": {"http://*"}}},
+		"https any host port":  {CSPSources: map[string][]string{"img-src": {"https://*:*"}}},
+		"wildcard TLD":         {CSPSources: map[string][]string{"img-src": {"*.com"}}},
+		"wildcard TLD scheme":  {CSPSources: map[string][]string{"img-src": {"https://*.co"}}},
+		"inner wildcard":       {CSPSources: map[string][]string{"img-src": {"https://a.*.example.com"}}},
+		"script host wildcard": {CSPSources: map[string][]string{"script-src": {"https://*.example.com"}}},
+		"worker host wildcard": {CSPSources: map[string][]string{"worker-src": {"*.example.com"}}},
+		"empty host":           {CSPSources: map[string][]string{"img-src": {"https://"}}},
+		"backslash in source":  {CSPSources: map[string][]string{"img-src": {`https://a.example\b`}}},
+		// Report URI (M2).
+		"report backslash": {ReportURI: `/\evil.com/x`},
+		"report http":      {ReportURI: "http://reports.example.com/csp"},
+		"report userinfo":  {ReportURI: "https://user:pw@reports.example.com/csp"},
+		"report non-ASCII": {ReportURI: "/cspé"},
+		"report no host":   {ReportURI: "https:/csp"},
+		// Scheme-only sources (M3).
+		"frame-ancestors https": {CSPSources: map[string][]string{"frame-ancestors": {"https:"}}},
+		"form-action https":     {CSPSources: map[string][]string{"form-action": {"https:"}}},
+		"script-src-attr data":  {CSPSources: map[string][]string{"script-src-attr": {"data:"}}},
+		"style-src https":       {CSPSources: map[string][]string{"style-src": {"https:"}}},
+		"style-src-elem data":   {CSPSources: map[string][]string{"style-src-elem": {"data:"}}},
+		"connect-src http":      {CSPSources: map[string][]string{"connect-src": {"http:"}}},
+		"connect-src data":      {CSPSources: map[string][]string{"connect-src": {"data:"}}},
+		"connect-src blob":      {CSPSources: map[string][]string{"connect-src": {"blob:"}}},
+		"img-src javascript":    {CSPSources: map[string][]string{"img-src": {"javascript:"}}},
 	}
 
 	for name, cfg := range tests {
@@ -172,12 +202,77 @@ func TestSecurity_A02_CSPSourcesRefuseUnsafe(t *testing.T) {
 
 	valid := SecureHeadersConfig{
 		CSPSources: map[string][]string{
-			"script-src": {"https://*.example.com", "'strict-dynamic'", "'sha384-abc+/='"},
-			"img-src":    {"blob:", "https:"},
+			"script-src": {"https://cdn.example.com", "'strict-dynamic'", "'sha384-abc+/='"},
+			"img-src": {
+				"blob:",
+				"https:",
+				"data:",
+				"https://*.example.com",
+				"*.example.co.uk:443",
+				"https://a.example/x/",
+			},
+			"connect-src": {"https:", "wss://ws.example.com", "https://*.example.com:*"},
 		},
-		ReportURI: "https://reports.example.com/csp",
+		ReportURI: "https://reports.example.com/csp?x=1",
 	}
 	if err := valid.Validate(); err != nil {
 		t.Errorf("Validate(valid) = %v, want nil", err)
+	}
+}
+
+func TestSecureHeadersCSPSourcesFallback(t *testing.T) {
+	t.Parallel()
+
+	const custom = "default-src 'self'; script-src 'self' 'nonce-{nonce}'; style-src 'self' 'nonce-{nonce}'; " +
+		"child-src https://frames.example.com"
+
+	dirs, _ := cspDirectives(t, SecureHeadersConfig{
+		CSP: custom,
+		CSPSources: map[string][]string{
+			"script-src-elem": {"https://a.example.com"},
+			"style-src-attr":  {"'sha256-abc='"},
+			"worker-src":      {"https://w.example.com"},
+			"frame-src":       {"https://f.example.com"},
+			"img-src":         {"https://i.example.com"},
+		},
+	})
+
+	want := map[string]string{
+		"default-src":     "'self'",
+		"script-src":      "'self' 'nonce-N'",
+		"style-src":       "'self' 'nonce-N'",
+		"child-src":       "https://frames.example.com",
+		"script-src-elem": "'self' 'nonce-N' https://a.example.com",
+		"style-src-attr":  "'self' 'nonce-N' 'sha256-abc='",
+		"worker-src":      "https://frames.example.com https://w.example.com",
+		"frame-src":       "https://frames.example.com https://f.example.com",
+		"img-src":         "'self' https://i.example.com",
+	}
+	if diff := cmp.Diff(want, dirs); diff != "" {
+		t.Errorf("fallback directives (-want +got):\n%s", diff)
+	}
+
+	// worker-src without child-src falls back to script-src.
+	dirs, _ = cspDirectives(
+		t,
+		SecureHeadersConfig{CSPSources: map[string][]string{"worker-src": {"https://w.example.com"}}},
+	)
+	if got, want := dirs["worker-src"], "'self' 'nonce-N' https://w.example.com"; got != want {
+		t.Errorf("worker-src = %q, want %q", got, want)
+	}
+}
+
+func TestSecureHeadersLogsDroppedExtras(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&buf, nil))
+	h := withServices(SecureHeaders(SecureHeadersConfig{ReportURI: "javascript:x"})(http.HandlerFunc(ok)), log)
+
+	do(t, h, get(t, "/"))
+	do(t, h, get(t, "/"))
+
+	if n := strings.Count(buf.String(), "secure headers: invalid CSP extras dropped"); n != 1 {
+		t.Errorf("warnings = %d, want 1:\n%s", n, buf.String())
 	}
 }

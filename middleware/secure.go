@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"net/http"
 	"net/url"
@@ -14,8 +15,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
-	"unicode"
 
 	"github.com/AlexGalhardo/vukem/web"
 )
@@ -76,11 +77,13 @@ func CSPNonce(ctx context.Context) string { return web.CSPNonce(ctx) }
 
 // SecureHeaders sets security headers on every response (A02).
 func SecureHeaders(cfg SecureHeadersConfig) Middleware {
-	csp, err := cfg.policy()
-	if err != nil {
+	csp, dropped := cfg.policy()
+	if dropped != nil {
 		cfg.CSPSources, cfg.ReportURI = nil, ""
 		csp, _ = cfg.policy()
 	}
+
+	var warnOnce sync.Once
 
 	reporting := ""
 	if cfg.ReportURI != "" {
@@ -103,6 +106,14 @@ func SecureHeaders(cfg SecureHeadersConfig) Middleware {
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if dropped != nil {
+				// No logger at construction: warn once, on the first request.
+				warnOnce.Do(func() {
+					log := cmp.Or(web.ServicesFrom(r.Context()).Log, slog.Default())
+					log.WarnContext(r.Context(), "secure headers: invalid CSP extras dropped", "err", dropped)
+				})
+			}
+
 			h := w.Header()
 			h.Set("X-Content-Type-Options", "nosniff")
 			h.Set("Referrer-Policy", referrer)
@@ -163,11 +174,12 @@ func (cfg SecureHeadersConfig) policy() (string, error) {
 
 		i := slices.IndexFunc(dirs, func(d cspDirective) bool { return d.name == name })
 		if i < 0 {
-			if !strings.HasSuffix(name, "-src") {
+			chain, ok := cspFallback[name]
+			if !ok {
 				return "", fmt.Errorf("middleware: CSP directive %q is not in the policy; set CSP instead", name)
 			}
 
-			dirs = append(dirs, cspDirective{name: name, sources: defaultSources(dirs)})
+			dirs = append(dirs, cspDirective{name: name, sources: fallbackSources(dirs, chain)})
 			i = len(dirs) - 1
 		}
 
@@ -222,12 +234,35 @@ func parseCSP(csp string) []cspDirective {
 	return dirs
 }
 
-// defaultSources seeds a new fetch directive with default-src, which it
-// would otherwise fall back to; 'none' is dropped as it cannot be combined.
-func defaultSources(dirs []cspDirective) []string {
-	for _, d := range dirs {
-		if d.name == "default-src" {
-			return slices.DeleteFunc(slices.Clone(d.sources), func(s string) bool { return s == "'none'" })
+// cspFallback lists, per fetch directive, the directives a browser falls
+// back to when it is missing (CSP Level 3). A new directive starts from
+// the first one present, so it never loses the nonce or 'self' it had.
+var cspFallback = map[string][]string{
+	"script-src-elem": {"script-src", "default-src"},
+	"script-src-attr": {"script-src", "default-src"},
+	"style-src-elem":  {"style-src", "default-src"},
+	"style-src-attr":  {"style-src", "default-src"},
+	"worker-src":      {"child-src", "script-src", "default-src"},
+	"frame-src":       {"child-src", "default-src"},
+	"child-src":       {"default-src"},
+	"script-src":      {"default-src"},
+	"style-src":       {"default-src"},
+	"img-src":         {"default-src"},
+	"font-src":        {"default-src"},
+	"connect-src":     {"default-src"},
+	"media-src":       {"default-src"},
+	"manifest-src":    {"default-src"},
+	"object-src":      {"default-src"},
+}
+
+// fallbackSources copies the sources of the first directive of chain in
+// dirs; 'none' is dropped as it cannot be combined with other sources.
+func fallbackSources(dirs []cspDirective, chain []string) []string {
+	for _, name := range chain {
+		for _, d := range dirs {
+			if d.name == name {
+				return slices.DeleteFunc(slices.Clone(d.sources), func(s string) bool { return s == "'none'" })
+			}
 		}
 	}
 
@@ -237,12 +272,24 @@ func defaultSources(dirs []cspDirective) []string {
 var (
 	cspDirectiveName = regexp.MustCompile(`^[a-z][a-z-]*$`)
 	cspHash          = regexp.MustCompile(`^'sha(256|384|512)-[A-Za-z0-9+/_=-]+'$`)
-	cspScheme        = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9+.-]*:$`)
+	cspScheme        = regexp.MustCompile(`^[a-z][a-z0-9+.-]*:$`)
+	cspHost          = regexp.MustCompile(`^(\*\.)?[a-z0-9-]+(\.[a-z0-9-]+)*$`)
+	cspPort          = regexp.MustCompile(`^(\*|\d{1,5})$`)
 )
 
-// scriptDirectives run code: a scheme-only source ("https:", "data:")
-// there would allow any script.
-var scriptDirectives = []string{"default-src", "script-src", "script-src-elem", "object-src", "worker-src", "base-uri"}
+// cspSchemes lists the scheme-only sources ("https:") each directive may
+// take; any other directive refuses them, as they allow every host.
+var cspSchemes = map[string][]string{
+	"img-src":     {"https:", "data:", "blob:"},
+	"media-src":   {"https:", "data:", "blob:"},
+	"font-src":    {"https:", "data:"},
+	"connect-src": {"https:", "wss:"},
+}
+
+// scriptDirectives load or run code: host wildcards are refused there.
+var scriptDirectives = []string{
+	"default-src", "script-src", "script-src-elem", "script-src-attr", "object-src", "worker-src", "base-uri",
+}
 
 func checkCSPSources(name string, sources []string) error {
 	if !cspDirectiveName.MatchString(name) || name == "report-uri" || name == "report-to" {
@@ -253,35 +300,74 @@ func checkCSPSources(name string, sources []string) error {
 		lower := strings.ToLower(src)
 
 		switch {
-		case src == "" || strings.ContainsAny(src, ";,\"") || strings.ContainsFunc(src, spaceOrControl):
+		case src == "" || strings.ContainsAny(src, ";,\"\\") || strings.ContainsFunc(src, notPrintableASCII):
 			return fmt.Errorf("middleware: invalid CSP source %q for %s", src, name)
-		case src == "*" || strings.Contains(lower, "unsafe"):
+		case strings.Contains(lower, "unsafe"):
 			return fmt.Errorf("middleware: CSP source %s for %s is unsafe; set CSP to opt in", src, name)
-		case strings.HasPrefix(src, "'") && !cspHash.MatchString(src) &&
-			lower != "'self'" && lower != "'strict-dynamic'" && lower != "'report-sample'":
-			return fmt.Errorf("middleware: CSP source %s for %s is not allowed (nonces are per request)", src, name)
-		case cspScheme.MatchString(src) && slices.Contains(scriptDirectives, name):
-			return fmt.Errorf("middleware: scheme-only CSP source %s would allow any %s", src, name)
+		case strings.HasPrefix(src, "'"):
+			if !cspHash.MatchString(src) && lower != "'self'" && lower != "'strict-dynamic'" &&
+				lower != "'report-sample'" {
+				return fmt.Errorf("middleware: CSP source %s for %s is not allowed (nonces are per request)", src, name)
+			}
+		case cspScheme.MatchString(lower):
+			if !slices.Contains(cspSchemes[name], lower) {
+				return fmt.Errorf("middleware: scheme-only CSP source %s would allow any host in %s", src, name)
+			}
+		default:
+			if err := checkCSPHost(name, lower); err != nil {
+				return err
+			}
 		}
 	}
 
 	return nil
 }
 
-func spaceOrControl(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }
+// checkCSPHost checks a host source ([scheme://]host[:port][/path]): no
+// "*" host, wildcards only as "*." over at least two labels, and none in
+// script directives.
+func checkCSPHost(name, src string) error {
+	rest := src
+	if scheme, after, ok := strings.Cut(src, "://"); ok {
+		if !cspScheme.MatchString(scheme + ":") {
+			return fmt.Errorf("middleware: invalid CSP source %q for %s", src, name)
+		}
 
+		rest = after
+	}
+
+	hostPort, _, _ := strings.Cut(rest, "/")
+	host, port, hasPort := strings.Cut(hostPort, ":")
+
+	switch {
+	case hasPort && !cspPort.MatchString(port), !cspHost.MatchString(host):
+		return fmt.Errorf("middleware: invalid or wildcard CSP host in %q for %s", src, name)
+	case strings.HasPrefix(host, "*.") && strings.Count(host, ".") < 2:
+		return fmt.Errorf("middleware: CSP wildcard %q for %s covers a whole public suffix", src, name)
+	case strings.HasPrefix(host, "*.") && slices.Contains(scriptDirectives, name):
+		return fmt.Errorf("middleware: CSP wildcard host %q is not allowed in %s", src, name)
+	}
+
+	return nil
+}
+
+func notPrintableASCII(r rune) bool { return r <= ' ' || r > '~' }
+
+// checkReportURI accepts an https URL without credentials, or a path
+// starting with a single "/" (browsers read "\" as "/", so it is refused).
 func checkReportURI(raw string) error {
 	u, err := url.Parse(raw)
 
 	switch {
-	case err != nil || strings.ContainsAny(raw, ";,\"'") || strings.ContainsFunc(raw, spaceOrControl):
-	case (u.Scheme == "http" || u.Scheme == "https") && u.Host != "":
+	case err != nil || strings.ContainsAny(raw, ";,\"'\\") || strings.ContainsFunc(raw, notPrintableASCII):
+	case u.User != nil:
+	case u.Scheme == "https" && u.Host != "":
 		return nil
 	case u.Scheme == "" && u.Host == "" && strings.HasPrefix(raw, "/") && !strings.HasPrefix(raw, "//"):
 		return nil
 	}
 
-	return fmt.Errorf("middleware: ReportURI %q must be an http(s) URL or a path", raw)
+	return fmt.Errorf("middleware: ReportURI %q must be an https URL or a path", raw)
 }
 
 // devOrigin matches a bare http(s) origin, so a dev server URL can never
