@@ -77,10 +77,18 @@ type Mailable interface {
 	Content() Content
 }
 
-// WithAttachments is implemented by mailables that attach files.
-type WithAttachments interface {
+// Attachable is implemented by mailables that attach files.
+type Attachable interface {
 	Attachments() []Attachment
 }
+
+// WithAttachments is the pre-1.0 name of Attachable; With* names are
+// reserved for options.
+//
+// Deprecated: use Attachable.
+//
+//go:fix inline
+type WithAttachments = Attachable
 
 // Message is a rendered email ready for a Transport.
 type Message struct {
@@ -174,7 +182,7 @@ func (m *Mailer) Render(ctx context.Context, mailable Mailable) (*Message, error
 		return nil, err
 	}
 
-	if wa, ok := mailable.(WithAttachments); ok {
+	if wa, ok := mailable.(Attachable); ok {
 		msg.Attachments = wa.Attachments()
 	}
 
