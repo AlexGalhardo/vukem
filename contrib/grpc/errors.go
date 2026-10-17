@@ -31,7 +31,18 @@ const internalMessage = "internal error"
 //     Unavailable, ...) and its client-safe message;
 //   - anything else is Internal with the message "internal error", never the
 //     error text.
+//
+// Keyed HTTPErrors (errs.NewKey) keep their English fallback; use
+// [ErrorContext] to translate them into the request locale.
 func Error(err error) *connect.Error {
+	return ErrorContext(context.Background(), err)
+}
+
+// ErrorContext is [Error] with the HTTPError message translated by the
+// errs.Translator of ctx ([errs.HTTPError.LocalizedText]), so keyed errors
+// follow the request locale. Mount and HandlerOptions use it with the
+// request ctx.
+func ErrorContext(ctx context.Context, err error) *connect.Error {
 	if err == nil {
 		return nil
 	}
@@ -63,7 +74,7 @@ func Error(err error) *connect.Error {
 	}
 
 	if herr, ok := errors.AsType[*errs.HTTPError](err); ok {
-		cerr := connect.NewError(CodeOf(herr.Status), errors.New(herr.Text()))
+		cerr := connect.NewError(CodeOf(herr.Status), errors.New(herr.LocalizedText(ctx)))
 		for k, v := range herr.Headers {
 			cerr.Meta()[k] = slices.Clone(v)
 		}

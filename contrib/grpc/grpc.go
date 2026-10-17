@@ -57,7 +57,7 @@ func Errors() router.Middleware {
 
 			s := *web.ServicesFrom(r.Context())
 			s.Errors = func(c *web.Ctx, err error) {
-				cerr := Error(err)
+				cerr := ErrorContext(c.Context(), err)
 				if isServerFault(cerr.Code()) {
 					c.Log().ErrorContext(c.Context(), "rpc middleware error", "code", cerr.Code().String(), "err", err)
 				}

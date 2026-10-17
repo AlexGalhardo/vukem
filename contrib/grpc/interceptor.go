@@ -176,7 +176,7 @@ func (in *interceptor) finish(
 	start time.Time,
 	err error,
 ) *connect.Error {
-	cerr := Error(err)
+	cerr := ErrorContext(ctx, err)
 
 	code := "ok"
 	level := slog.LevelInfo

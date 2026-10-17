@@ -71,6 +71,47 @@ func TestError(t *testing.T) {
 	}
 }
 
+func TestErrorContext_LocalizesKeyedErrors(t *testing.T) {
+	t.Parallel()
+
+	tr := func(key string, params map[string]any) (string, bool) {
+		if key == "post.missing" {
+			return fmt.Sprintf("Post %v não encontrado.", params["id"]), true
+		}
+
+		return "", false
+	}
+
+	keyed := fmt.Errorf(
+		"wrap: %w",
+		errs.NewKey(http.StatusNotFound, "post.missing", "Post not found.", map[string]any{"id": 7}),
+	)
+
+	tests := map[string]struct {
+		ctx  context.Context
+		err  error
+		want string
+	}{
+		"translated":    {errs.WithTranslator(t.Context(), tr), keyed, "Post 7 não encontrado."},
+		"no translator": {t.Context(), keyed, "Post not found."},
+		"unknown key": {
+			errs.WithTranslator(t.Context(), tr),
+			errs.NewKey(http.StatusNotFound, "x.y", "Gone.", nil),
+			"Gone.",
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := ErrorContext(tt.ctx, tt.err); got.Code() == connect.CodeInternal || got.Message() != tt.want {
+				t.Errorf("ErrorContext(%v) = %v %q, want %q", tt.err, got.Code(), got.Message(), tt.want)
+			}
+		})
+	}
+}
+
 func TestSecurity_A10_GRPCConnectErrorsMasked(t *testing.T) {
 	t.Parallel()
 
