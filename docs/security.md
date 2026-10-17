@@ -1,6 +1,6 @@
 # Security
 
-What Vukem does **by default** to protect applications, mapped to the [OWASP Top 10:2025](https://top10.owasp.org/2025/), and what remains the application's responsibility. Reporting vulnerabilities in Vukem itself: [SECURITY.md](../SECURITY.md).
+What Vukem does **by default** to protect applications, mapped to the [OWASP Top 10:2025](https://top10.owasp.org/2025/), and what remains the application's responsibility. Reporting vulnerabilities in Vukem itself: [SECURITY.md](../.github/SECURITY.md).
 
 ## Principles
 

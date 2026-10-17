@@ -90,15 +90,15 @@ Vukem 1.x keeps the Go 1 compatibility promise: no breaking API changes until v2
 
 ## Contributing
 
-Thank you for considering contributing to Vukem! Read the [contribution guide](CONTRIBUTING.md) to get started.
+Thank you for considering contributing to Vukem! Read the [contribution guide](.github/CONTRIBUTING.md) to get started.
 
 ## Code of conduct
 
-To keep the community welcoming to everyone, please review and follow the [Code of Conduct](CODE_OF_CONDUCT.md).
+To keep the community welcoming to everyone, please review and follow the [Code of Conduct](.github/CODE_OF_CONDUCT.md).
 
 ## Security vulnerabilities
 
-If you discover a security vulnerability, please follow the [security policy](SECURITY.md) instead of opening a public issue.
+If you discover a security vulnerability, please follow the [security policy](.github/SECURITY.md) instead of opening a public issue.
 
 ## License
 
