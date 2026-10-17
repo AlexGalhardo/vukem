@@ -117,7 +117,9 @@ func runCommand(ctx context.Context, app *App, name string, args []string) error
 
 // isWarmupCommand reports whether a command runs in [KindWarmup]: it needs
 // only the registered routes, never live connections.
-func isWarmupCommand(name string) bool { return name == "codegen:routes" || name == "codegen:client" }
+func isWarmupCommand(name string) bool {
+	return name == "codegen:routes" || name == "codegen:client" || name == "codegen:types"
+}
 
 func printCommands(app *App) {
 	tw := tabwriter.NewWriter(app.stdout, 0, 4, 2, ' ', 0)
