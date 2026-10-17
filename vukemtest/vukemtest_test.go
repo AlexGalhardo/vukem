@@ -127,7 +127,8 @@ func TestEndToEnd(t *testing.T) {
 
 	c.PostForm("/notes", url.Values{"body": {"  Buy milk  "}}).
 		AssertRedirectRoute("notes.index").
-		AssertSessionHas("success")
+		AssertSessionHas("success").
+		AssertFlash("success", "Note saved.")
 
 	vukemtest.AssertDatabaseHas(t, app, "notes", map[string]any{"body": "Buy milk"})
 	vukemtest.AssertDatabaseCount(t, app, "notes", 1)
@@ -261,6 +262,10 @@ func TestAssertionsReportFailures(t *testing.T) {
 		`session has "success"`: func(tb *fakeTB) {
 			app.Client(tb).PostForm("/notes", url.Values{"body": {"long enough"}}).AssertSessionMissing("success")
 		},
+		`flash "success" = "Note saved.", want "x"`: func(tb *fakeTB) {
+			app.Client(tb).PostForm("/notes", url.Values{"body": {"long enough"}}).AssertFlash("success", "x")
+		},
+		`no flash "success"`:          func(tb *fakeTB) { app.Client(tb).Get("/notes").AssertFlash("success", "Note saved.") },
 		`no flashed validation error`: func(tb *fakeTB) { app.Client(tb).Get("/notes").AssertSessionHasErrors("body") },
 		"no row in notes":             func(tb *fakeTB) { vukemtest.AssertDatabaseHas(tb, app, "notes", map[string]any{"body": "ghost"}) },
 		"want none":                   func(tb *fakeTB) { vukemtest.AssertDatabaseMissing(tb, app, "migrations", nil) },

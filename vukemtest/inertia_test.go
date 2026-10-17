@@ -2,6 +2,7 @@ package vukemtest_test
 
 import (
 	"context"
+	"net/url"
 	"testing"
 	"testing/fstest"
 
@@ -35,6 +36,10 @@ func buildInertiaWith(cfg inertia.Config, opts ...vukem.Option) (*vukem.App, err
 					"stats":   inertia.Optional(func(context.Context) (any, error) { return 1, nil }),
 				})
 			}).Name("posts.index")
+			r.Post("/posts", func(c *web.Ctx) error {
+				inertia.Flash(c, "status", "Post saved.")
+				return c.RedirectRoute("posts.index")
+			})
 
 			return nil
 		}),
@@ -107,4 +112,44 @@ func TestInertiaClientUsesAppVersion(t *testing.T) {
 
 	app.Client(t).Inertia("").Get("/posts").AssertOK().AssertInertia("Posts/Index")
 	app.Client(t).Inertia("stale").Get("/posts").AssertStatus(409)
+}
+
+func TestAssertFlash(t *testing.T) {
+	t.Parallel()
+
+	t.Run("inertia", func(t *testing.T) {
+		t.Parallel()
+
+		app := vukemtest.New(t, buildInertia)
+		c := app.Client(t).Inertia("")
+
+		// Before the redirect is followed the flash sits in the session...
+		c.PostJSON("/posts", map[string]any{}).AssertRedirect("/posts").AssertFlash("status", "Post saved.")
+		// ...then the next page carries it in page.flash.
+		c.Get("/posts").AssertFlash("status", "Post saved.").
+			AssertInertia("Posts/Index").FlashEquals("status", "Post saved.")
+		c.Get("/posts").AssertInertia("Posts/Index").MissingFlash("status")
+
+		expectFailure(t, `flash "status" = "Post saved.", want "nope"`, func(tb *fakeTB) {
+			app.Client(tb).Inertia("").PostJSON("/posts", map[string]any{}).AssertFlash("status", "nope")
+		})
+		expectFailure(t, `no flash "status"`, func(tb *fakeTB) {
+			app.Client(tb).Inertia("").Get("/posts").AssertFlash("status", "x")
+		})
+		expectFailure(t, `flash "status" missing`, func(tb *fakeTB) {
+			app.Client(tb).Inertia("").Get("/posts").AssertInertia("Posts/Index").FlashEquals("status", "x")
+		})
+	})
+
+	for _, driver := range []string{"cookie", "memory", "database"} {
+		t.Run("html/"+driver, func(t *testing.T) {
+			t.Parallel()
+
+			app := vukemtest.New(t, buildInertia, vukemtest.Options{Env: map[string]string{"SESSION_DRIVER": driver}})
+			c := app.Client(t)
+
+			c.PostForm("/posts", url.Values{}).AssertFlash("status", "Post saved.")
+			c.Get("/posts").AssertFlash("status", "Post saved.")
+		})
+	}
 }
