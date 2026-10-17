@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/AlexGalhardo/vukem/csrf"
 	"github.com/AlexGalhardo/vukem/middleware"
 	"github.com/AlexGalhardo/vukem/router"
 	"github.com/AlexGalhardo/vukem/web"
@@ -120,9 +121,10 @@ func TestSecurity_A02_DefaultMiddlewareWithRefusesBadOptions(t *testing.T) {
 		"bad report URI": {SecureHeaders: func(cfg *middleware.SecureHeadersConfig) {
 			cfg.ReportURI = "javascript:alert(1)"
 		}},
-		"bad session bypass":   {SessionBypass: []string{"/{bad"}},
-		"empty session bypass": {SessionBypass: []string{""}},
-		"bad CSRF bypass":      {CSRFBypass: []string{"/{bad"}},
+		"bad session bypass":            {SessionBypass: []string{"/{bad"}},
+		"empty session bypass":          {SessionBypass: []string{""}},
+		"stateless with session bypass": {Stateless: true, SessionBypass: []string{"/webhooks/"}},
+		"bad CSRF bypass":               {CSRFBypass: []string{"/{bad"}},
 	}
 
 	for name, opts := range tests {
@@ -134,5 +136,85 @@ func TestSecurity_A02_DefaultMiddlewareWithRefusesBadOptions(t *testing.T) {
 				t.Errorf("DefaultMiddlewareWith(%s) = nil, want an error", name)
 			}
 		})
+	}
+}
+
+func TestDefaultMiddlewareWithStatelessSessionFeatures(t *testing.T) {
+	t.Parallel()
+
+	app := newTestApp(t, WithRoutes(func(r *router.Router, app *App) error {
+		r.Post("/flash", func(c *web.Ctx) error {
+			if err := c.Flash("status", "saved"); err != nil {
+				return err
+			}
+
+			return c.String(http.StatusOK, "flashed")
+		})
+		r.Get("/token", func(c *web.Ctx) error { return c.String(http.StatusOK, "token="+csrf.Token(c.Context())) })
+
+		return DefaultMiddlewareWith(app, r, MiddlewareOptions{Stateless: true})
+	}))
+
+	// Flash fails closed with a 500 instead of panicking or dropping the message.
+	if rec := serve(t, app, http.MethodPost, "/flash", false); rec.Code != http.StatusInternalServerError {
+		t.Errorf("stateless POST /flash = %d %q, want 500", rec.Code, rec.Body.String())
+	}
+
+	if rec := serve(t, app, http.MethodGet, "/token", false); rec.Body.String() != "token=" {
+		t.Errorf("stateless csrf.Token = %q, want empty", rec.Body.String())
+	}
+}
+
+// TestBypassMatchesRouter checks that a bypass pattern skips exactly the
+// requests the router serves with the same pattern.
+func TestBypassMatchesRouter(t *testing.T) {
+	t.Parallel()
+
+	patterns := []string{"/webhooks/", "POST /hooks/{id}", "/exact", "api.example.com/x"}
+
+	r := router.New(&web.Services{})
+	for _, p := range patterns {
+		r.Handle(p, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(p)) }))
+	}
+
+	routed, err := r.Handler()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	skipped := false
+	mw, err := bypass(patterns, func(http.Handler) http.Handler {
+		return http.HandlerFunc(func(http.ResponseWriter, *http.Request) { skipped = false })
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	matcher := mw(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { skipped = true }))
+
+	for _, tt := range []struct{ method, target string }{
+		{http.MethodGet, "/webhooks/stripe"},
+		{http.MethodGet, "/webhooks/a/b"},
+		{http.MethodGet, "/webhooks"},
+		{http.MethodPost, "/hooks/1"},
+		{http.MethodGet, "/hooks/1"},
+		{http.MethodPost, "/hooks/1/x"},
+		{http.MethodGet, "/exact"},
+		{http.MethodGet, "/exact/"},
+		{http.MethodGet, "http://api.example.com/x"},
+		{http.MethodGet, "http://other.example.com/x"},
+		{http.MethodGet, "/x"},
+	} {
+		req := httptest.NewRequestWithContext(t.Context(), tt.method, tt.target, http.NoBody)
+
+		rec := httptest.NewRecorder()
+		routed.ServeHTTP(rec, req)
+		wantSkip := rec.Code == http.StatusOK
+
+		matcher.ServeHTTP(httptest.NewRecorder(), req)
+		if skipped != wantSkip {
+			t.Errorf("%s %s: bypassed = %v, router served the pattern = %v (%d %q)",
+				tt.method, tt.target, skipped, wantSkip, rec.Code, rec.Body.String())
+		}
 	}
 }

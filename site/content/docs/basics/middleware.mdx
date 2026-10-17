@@ -169,9 +169,9 @@ err := vukem.DefaultMiddlewareWith(app, r, vukem.MiddlewareOptions{
 | Option | Effect |
 | --- | --- |
 | `SecureHeaders` | Edits the `SecureHeadersConfig` (`CSPSources`, `ReportURI`, `TrustForwardedProto`, ...). An invalid result fails at boot. |
-| `Stateless` | No session middleware at all, for cookieless apps. CSRF protection stays on. |
-| `SessionBypass` | `ServeMux` patterns served without sessions. |
-| `CSRFBypass` | `ServeMux` patterns exempt from CSRF checks; each one is logged at boot. Protect them another way (signatures). |
+| `Stateless` | No session middleware at all, for cookieless apps. CSRF protection stays on as `Origin`/`Sec-Fetch-Site` checks only: `csrfToken`/`csrfField` render empty, and session features (`c.Flash`, session login) return an error. |
+| `SessionBypass` | `ServeMux` patterns served without sessions. A pattern ending in `/` (`/webhooks/`) covers its whole subtree; `POST /hooks/{id}` matches one method and path. Refused together with `Stateless`. |
+| `CSRFBypass` | `ServeMux` patterns (same matching) exempt from CSRF checks; each one is logged at boot. Protect them another way (signatures). |
 
 Maintenance mode, the body limit and CSRF for every other route stay on: the options only add sources or skip what you list.
 

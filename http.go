@@ -216,18 +216,27 @@ type MiddlewareOptions struct {
 	// The result is validated at boot.
 	SecureHeaders func(cfg *middleware.SecureHeadersConfig)
 	// Stateless installs no session middleware (cookieless apps). CSRF
-	// protection stays on.
+	// protection stays on as Origin/Sec-Fetch-Site checks only: there is no
+	// session token, so csrfToken and csrfField render empty, and session
+	// features (Flash, session auth) fail with an error.
 	Stateless bool
-	// SessionBypass lists ServeMux patterns ("/webhooks/", "POST /hooks/{id}")
-	// served without sessions.
+	// SessionBypass lists ServeMux patterns served without sessions. As in
+	// ServeMux, a pattern ending in "/" ("/webhooks/") covers its whole
+	// subtree; "POST /hooks/{id}" matches one method and path. It cannot be
+	// combined with Stateless.
 	SessionBypass []string
-	// CSRFBypass lists ServeMux patterns exempt from CSRF checks (signed
-	// webhooks). Each bypass is logged at boot.
+	// CSRFBypass lists ServeMux patterns (same matching as SessionBypass)
+	// exempt from CSRF checks, e.g. signed webhooks. Each bypass is logged
+	// at boot.
 	CSRFBypass []string
 }
 
 // DefaultMiddlewareWith installs the DefaultMiddleware stacks with opts.
 func DefaultMiddlewareWith(app *App, r *router.Router, opts MiddlewareOptions) error {
+	if opts.Stateless && len(opts.SessionBypass) > 0 {
+		return errors.New("vukem: SessionBypass has no effect with Stateless (no sessions anywhere)")
+	}
+
 	secure := secureHeadersConfig(app)
 	if opts.SecureHeaders != nil {
 		opts.SecureHeaders(&secure)
