@@ -6,6 +6,7 @@ import (
 	"errors"
 	"maps"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -330,6 +331,103 @@ func TestQueueFollowsAppClock(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// serve works every persistent queue unless QUEUE_IN_SERVE=false, always
+// works the memory queue (no other process sees it) and never sync.
+func TestServeQueueWorkerSelection(t *testing.T) {
+	t.Parallel()
+
+	for name, tt := range map[string]struct {
+		env    map[string]string
+		kind   Kind
+		custom bool
+		want   bool
+	}{
+		"sync":                    {},
+		"sync opted in":           {env: map[string]string{"QUEUE_IN_SERVE": "true"}},
+		"memory":                  {env: map[string]string{"QUEUE_CONNECTION": "memory"}, want: true},
+		"memory ignores opt-out":  {env: map[string]string{"QUEUE_CONNECTION": "memory", "QUEUE_IN_SERVE": "false"}, want: true},
+		"database":                {env: map[string]string{"QUEUE_CONNECTION": "database"}, want: true},
+		"database opted out":      {env: map[string]string{"QUEUE_CONNECTION": "database", "QUEUE_IN_SERVE": "false"}},
+		"database console":        {env: map[string]string{"QUEUE_CONNECTION": "database"}, kind: KindConsole},
+		"custom driver (redis)":   {custom: true, want: true},
+		"custom driver opted out": {env: map[string]string{"QUEUE_IN_SERVE": "false"}, custom: true},
+		"memory console never":    {env: map[string]string{"QUEUE_CONNECTION": "memory"}, kind: KindConsole},
+		"custom driver test kind": {custom: true, kind: KindTest},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			kind := tt.kind
+			if kind == "" {
+				kind = KindWeb
+			}
+
+			opts := []Option{WithSource(testSource(tt.env)), WithKind(kind)}
+			if tt.custom {
+				opts = append(opts, WithQueueDriver(queue.NewMemory()))
+			}
+
+			app := newTestApp(t, opts...)
+
+			got := slices.ContainsFunc(app.runners, func(r namedRunner) bool { return r.name == "queue" })
+			if got != tt.want {
+				t.Fatalf("queue runner in serve = %v, want %v", got, tt.want)
+			}
+		})
+	}
+
+	if _, err := New(WithSource(testSource(map[string]string{"QUEUE_IN_SERVE": "maybe"}))); err == nil ||
+		!strings.Contains(err.Error(), "QUEUE_IN_SERVE") {
+		t.Fatalf("New(QUEUE_IN_SERVE=maybe) = %v, want an error", err)
+	}
+}
+
+// A single serve process runs jobs queued in the database (queued mail on
+// a one-service deploy) and stops its worker on shutdown.
+func TestRunWorksDatabaseQueueInServe(t *testing.T) {
+	t.Parallel()
+
+	done := make(chan int, 1)
+	app := dbQueueApp(t, nil, WithoutHTTP(),
+		WithJobs(queue.Handle(func(_ context.Context, j pingJob) error { done <- j.N; return nil })))
+
+	q, err := app.Queue()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := q.Dispatch(t.Context(), pingJob{N: 9}); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	stopped := make(chan error, 1)
+
+	go func() { stopped <- app.Run(ctx) }()
+
+	if n := <-done; n != 9 {
+		t.Fatalf("job = %d, want 9", n)
+	}
+
+	cancel()
+
+	if err := <-stopped; err != nil {
+		t.Fatalf("Run() = %v, want nil", err)
+	}
+}
+
+// A custom driver that runs jobs inline needs no worker: the runner exits
+// and serve keeps running.
+func TestQueueRunnerExitsForInlineDriver(t *testing.T) {
+	t.Parallel()
+
+	app := newTestApp(t, WithQueueDriver(queue.Sync{}))
+
+	if err := app.queueRunner(QueueConfig{}).Run(t.Context()); err != nil {
+		t.Fatalf("queueRunner(sync).Run() = %v, want nil", err)
 	}
 }
 

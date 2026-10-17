@@ -64,6 +64,13 @@ type QueueConfig struct {
 	// Table and FailedTable are the database driver's tables.
 	Table       string `env:"QUEUE_TABLE"        default:"jobs"`
 	FailedTable string `env:"QUEUE_FAILED_TABLE" default:"failed_jobs"`
+	// InServe runs a queue worker inside serve for the database driver
+	// and custom drivers (Redis). Set it to false when dedicated
+	// queue:work processes run the jobs instead; leaving it on next to
+	// them is safe (reservations are atomic), it only adds workers. The
+	// memory queue is always worked inside serve: no other process sees
+	// its jobs.
+	InServe bool `env:"QUEUE_IN_SERVE" default:"true"`
 	// AllowLegacyMail sends clear-text mail jobs queued before v0.24.0
 	// (an upgrade window: drain the queue before upgrading, or set it
 	// until the old jobs are gone). Off, they fail.
@@ -280,7 +287,26 @@ func (a *App) MailLater(ctx context.Context, mailable mail.Mailable, opts ...que
 	return m.SendLater(ctx, mailable, opts...)
 }
 
-// queueRunner works the in-memory queue inside the web process.
+// inServe reports whether serve runs a queue worker: always for memory,
+// otherwise unless QUEUE_IN_SERVE=false, never for sync (jobs run inside
+// Dispatch). custom is a driver set with WithQueueDriver(Func).
+func (c QueueConfig) inServe(custom bool) bool {
+	switch {
+	case custom:
+		return c.InServe
+	case c.Connection == "memory":
+		return true
+	case c.Connection == "sync":
+		return false
+	default:
+		return c.InServe
+	}
+}
+
+// queueRunner works the queue inside the web process, so a
+// single-process deploy still runs queued mail and jobs. It exits at once
+// when the driver runs jobs inline (a custom sync driver). On shutdown,
+// running jobs get SHUTDOWN_TIMEOUT before their context is cancelled.
 func (a *App) queueRunner(cfg QueueConfig) Runner {
 	return RunnerFunc(func(ctx context.Context) error {
 		q, err := a.Queue()
@@ -288,7 +314,21 @@ func (a *App) queueRunner(cfg QueueConfig) Runner {
 			return err
 		}
 
-		return q.Work(ctx, queue.WorkOptions{Queues: cfg.QueueNames(), Concurrency: cfg.Concurrency})
+		if in, ok := q.Driver().(queue.Inline); ok && in.Inline() {
+			return nil
+		}
+
+		if cfg.Connection != "memory" {
+			a.Log.InfoContext(ctx,
+				"queue worker running inside serve; set QUEUE_IN_SERVE=false if only queue:work should run jobs",
+				"queues", cfg.QueueNames(), "concurrency", cfg.Concurrency)
+		}
+
+		return q.Work(ctx, queue.WorkOptions{
+			Queues:      cfg.QueueNames(),
+			Concurrency: cfg.Concurrency,
+			StopTimeout: a.Config.ShutdownTimeout,
+		})
 	})
 }
 
@@ -311,7 +351,7 @@ func queueWorkCommand() Command {
 
 	return CommandFunc{
 		CommandName: "queue:work",
-		Desc:        "Process queued jobs until stopped (Ctrl+C drains running jobs)",
+		Desc:        "Process queued jobs until stopped (Ctrl+C drains running jobs within SHUTDOWN_TIMEOUT)",
 		DefineFlags: func(fs *flag.FlagSet) {
 			queues = fs.String("queue", "", "queues in priority order (default QUEUE_NAMES)")
 			concurrency = fs.Int("concurrency", 0, "parallel workers (default QUEUE_CONCURRENCY)")
@@ -343,6 +383,7 @@ func queueWorkCommand() Command {
 				Concurrency:   cfg.Concurrency,
 				Sleep:         *sleep,
 				StopWhenEmpty: *empty,
+				StopTimeout:   app.Config.ShutdownTimeout,
 			}
 			if *once {
 				o.MaxJobs, o.Concurrency, o.StopWhenEmpty = 1, 1, true

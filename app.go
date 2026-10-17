@@ -622,7 +622,7 @@ func New(opts ...Option) (*App, error) {
 		return nil, err
 	}
 
-	if qcfg.Connection == "memory" && app.Kind == KindWeb {
+	if app.Kind == KindWeb && qcfg.inServe(o.queueDriver != nil || o.queueFunc != nil) {
 		app.AddRunner("queue", app.queueRunner(qcfg))
 	}
 
