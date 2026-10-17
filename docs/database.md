@@ -101,6 +101,7 @@ PRAGMA temp_store = MEMORY;
 - Two pools: a **writer** with `SetMaxOpenConns(1)` and a **reader** pool. The query builder routes `SELECT` to the reader and everything else (and all transactions) to the writer.
 - Write transactions use `BEGIN IMMEDIATE` to avoid `SQLITE_BUSY` upgrades.
 - Tests use `file::memory:?cache=shared` or a file in `t.TempDir()`.
+- Known SQLite quirk: an unknown double-quoted identifier is read as a string literal, so `t.Index("misspelled")` in a migration creates a useless index on a constant instead of failing. Postgres and MySQL reject it; run the migrations of apps that deploy on them against that database in CI (`TEST_DATABASE_URL`).
 
 ## Query builder
 
