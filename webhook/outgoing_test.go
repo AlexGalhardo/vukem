@@ -753,3 +753,26 @@ func TestSenderNoRetries(t *testing.T) {
 		t.Fatalf("messages = %+v, want one with MaxRetries 0", m)
 	}
 }
+
+func TestDeliveryLogFunc(t *testing.T) {
+	t.Parallel()
+
+	var got webhook.Attempt
+
+	boom := errors.New("boom")
+
+	var l webhook.DeliveryLog = webhook.DeliveryLogFunc(func(_ context.Context, a webhook.Attempt) error {
+		got = a
+		return boom
+	})
+
+	want := webhook.Attempt{Endpoint: "seller-1", EventID: "msg_1", Error: webhook.AttemptTimeout}
+
+	if err := l.Record(t.Context(), want); !errors.Is(err, boom) {
+		t.Errorf("Record() = %v, want %v", err, boom)
+	}
+
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("attempt passed to func (-want +got):\n%s", diff)
+	}
+}
