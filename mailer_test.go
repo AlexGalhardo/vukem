@@ -1,7 +1,9 @@
 package vukem
 
 import (
+	"bytes"
 	"fmt"
+	"log/slog"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -134,3 +136,34 @@ func typeName(v any) string {
 }
 
 func fmtType(v any) string { return fmt.Sprintf("%T", v) }
+
+func TestMailerMailtrapSandboxInProductionWarns(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct {
+		env  map[string]string
+		warn bool
+	}{
+		{map[string]string{"APP_ENV": "production", "MAILTRAP_INBOX_ID": "4242"}, true},
+		{map[string]string{"APP_ENV": "production"}, false},
+		{map[string]string{"MAILTRAP_INBOX_ID": "4242"}, false},
+	} {
+		tt.env["MAIL_MAILER"] = "mailtrap"
+		tt.env["MAILTRAP_API_TOKEN"] = "mt_x"
+
+		var logs bytes.Buffer
+
+		app, err := New(WithSource(testSource(tt.env)), WithLogger(slog.New(slog.NewTextHandler(&logs, nil))))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if _, err := app.Mailer(); err != nil {
+			t.Fatalf("Mailer(%v) = %v", tt.env, err)
+		}
+
+		if got := strings.Contains(logs.String(), "Mailtrap sandbox"); got != tt.warn {
+			t.Errorf("Mailer(%v) warned = %v, want %v; logs:\n%s", tt.env, got, tt.warn, logs.String())
+		}
+	}
+}

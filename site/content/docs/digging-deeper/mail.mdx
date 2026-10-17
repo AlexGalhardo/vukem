@@ -50,11 +50,11 @@ MAIL_FROM="App <hello@your-verified-domain.com>"
 ```
 
 - Without `MAILTRAP_INBOX_ID` mail goes to `https://send.api.mailtrap.io/api/send` (transactional stream); the sender domain must be verified in Mailtrap.
-- With `MAILTRAP_INBOX_ID` it goes to `https://sandbox.api.mailtrap.io/api/send/{inbox}`, for staging. Use a token that can access that inbox.
+- With `MAILTRAP_INBOX_ID` it goes to `https://sandbox.api.mailtrap.io/api/send/{inbox}`, for staging. Use a token that can access that inbox. With `APP_ENV=production` the app logs a warning at boot, since recipients receive nothing.
 - A `category` tag becomes Mailtrap's `category`; other tags are sent as `custom_variables` (they show up in webhooks and logs).
 - Mailtrap accepts a single reply-to address; more than one is an error rather than a silently dropped address.
 - The API has no idempotency key, so a 5xx answered after delivery can send twice when retried.
-- Errors are `*mail.MailtrapError` with the HTTP status and Mailtrap's `errors` list; `Retryable()` is true for 429 and 5xx.
+- Errors are `*mail.MailtrapError` with the HTTP status and Mailtrap's `errors` list (or its `message` when the shape differs), at most 5 one-line items of 200 characters. They never carry the message body or the token but may contain addresses quoted by the API. `Retryable()` is true for 429 and 5xx; a 2xx answering `success: false` is a non-retryable error.
 
 ## Security
 

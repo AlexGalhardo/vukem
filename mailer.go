@@ -112,6 +112,13 @@ func (a *App) mailTransport(cfg MailConfig) (mail.Transport, error) {
 			return nil, errors.New("vukem: MAILTRAP_INBOX_ID must be a positive sandbox inbox id")
 		}
 
+		// Staging also runs APP_ENV=production, so a sandbox inbox is allowed
+		// but never silent.
+		if cfg.MailtrapInboxID > 0 && a.Config.IsProduction() {
+			a.Log.Warn("mail goes to the Mailtrap sandbox; recipients receive nothing",
+				"mailer", "mailtrap", "inbox_id", cfg.MailtrapInboxID)
+		}
+
 		return mail.NewMailtrap(mail.MailtrapConfig{APIToken: cfg.MailtrapAPIToken, InboxID: cfg.MailtrapInboxID}), nil
 	default:
 		return nil, fmt.Errorf("vukem: unknown MAIL_MAILER %q", cfg.Mailer)

@@ -396,3 +396,107 @@ func TestSecurity_A09_MailtrapTokenRedacted(t *testing.T) {
 		t.Fatalf("closed port Send() = %v, want an error without the token", err)
 	}
 }
+
+func TestMailtrapErrorShapes(t *testing.T) {
+	t.Parallel()
+
+	long := strings.Repeat("x", 300)
+
+	tests := []struct {
+		name   string
+		status int
+		resp   string
+		want   []string
+	}{
+		{
+			"errors object",
+			http.StatusUnprocessableEntity,
+			`{"errors":{"from":["is invalid"]}}`,
+			[]string{`{"from":["is invalid"]}`},
+		},
+		{
+			"message field",
+			http.StatusForbidden,
+			`{"message":"Sending domain not allowed"}`,
+			[]string{"Sending domain not allowed"},
+		},
+		{"error field", http.StatusUnauthorized, `{"error":"Incorrect API token"}`, []string{"Incorrect API token"}},
+		{"raw body", http.StatusBadGateway, "bad\r\ngateway", []string{"bad  gateway"}},
+		{
+			"capped", http.StatusBadRequest,
+			`{"errors":["a\nb","2","3","4","5","6","` + long + `"]}`,
+			[]string{"a b", "2", "3", "4", "5"},
+		},
+		{"long item", http.StatusBadRequest, `{"errors":["` + long + `"]}`, []string{strings.Repeat("x", 200)}},
+		{
+			"success false on 200",
+			http.StatusOK,
+			`{"success":false,"errors":["Recipient blocked"]}`,
+			[]string{"Recipient blocked"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			srv, got := mailtrapServer(t, tt.status, nil, tt.resp)
+
+			tr := NewMailtrap(
+				MailtrapConfig{APIToken: config.NewSecret("mt_token"), BaseURL: srv.URL, MaxBackoff: time.Millisecond},
+			)
+			err := tr.Send(
+				t.Context(),
+				&Message{From: "<a@example.com>", To: []string{"<b@example.com>"}, Subject: "s", Text: "t"},
+			)
+
+			me, ok := errors.AsType[*MailtrapError](err)
+			if !ok || me.Status != tt.status {
+				t.Fatalf("Send() = %v, want *MailtrapError %d", err, tt.status)
+			}
+
+			if diff := cmp.Diff(tt.want, me.Errors); diff != "" {
+				t.Errorf("Errors mismatch (-want +got):\n%s", diff)
+			}
+
+			if strings.ContainsAny(err.Error(), "\r\n") {
+				t.Errorf("Error() = %q, want no line breaks", err.Error())
+			}
+
+			if tt.status == http.StatusOK && (me.Retryable() || len(got()) != 1) {
+				t.Errorf("success:false retryable=%v calls=%d, want false and 1", me.Retryable(), len(got()))
+			}
+		})
+	}
+}
+
+func TestMailtrapErrorStringSanitized(t *testing.T) {
+	t.Parallel()
+
+	e := &MailtrapError{Status: 400, Errors: []string{"a\r\nb", "2", "3", "4", "5", "6", strings.Repeat("y", 300)}}
+	if got, want := e.Error(), "mail: mailtrap 400: a  b; 2; 3; 4; 5"; got != want {
+		t.Errorf("Error() = %q, want %q", got, want)
+	}
+}
+
+func TestMailtrapDoesNotFollowRedirects(t *testing.T) {
+	t.Parallel()
+
+	var hits atomic.Int32
+
+	target := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) { hits.Add(1) }))
+	defer target.Close()
+
+	srv, _ := mailtrapServer(t, http.StatusTemporaryRedirect, map[string]string{"Location": target.URL}, "")
+
+	err := NewMailtrap(MailtrapConfig{APIToken: config.NewSecret("t"), BaseURL: srv.URL}).
+		Send(t.Context(), &Message{From: "<a@example.com>", To: []string{"<b@example.com>"}, Subject: "s", Text: "t"})
+
+	if me, ok := errors.AsType[*MailtrapError](err); !ok || me.Status != http.StatusTemporaryRedirect {
+		t.Fatalf("Send() = %v, want *MailtrapError 307", err)
+	}
+
+	if hits.Load() != 0 {
+		t.Fatalf("redirect followed %d times, want 0 (the token would go to the new host)", hits.Load())
+	}
+}

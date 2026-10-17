@@ -31,13 +31,18 @@ type MailtrapConfig struct {
 	// BaseURL defaults to https://send.api.mailtrap.io, or
 	// https://sandbox.api.mailtrap.io with InboxID (tests use a fake).
 	BaseURL string
-	// HTTP is the client (10s timeout by default).
+	// HTTP is the client (10s timeout and no redirects by default).
 	HTTP *http.Client
 	// MaxRetries for 429 and 5xx responses (default 2).
 	MaxRetries int
 	// MaxBackoff caps waits between retries, including Retry-After (default 5s).
 	MaxBackoff time.Duration
 }
+
+const (
+	mailtrapMaxErrors   = 5
+	mailtrapMaxErrorLen = 200
+)
 
 // Mailtrap sends through the Mailtrap Email API over HTTPS, for hosts
 // that block outbound SMTP. The API has no idempotency key, so a retried
@@ -57,7 +62,12 @@ func NewMailtrap(cfg MailtrapConfig) *Mailtrap {
 	}
 
 	if cfg.HTTP == nil {
-		cfg.HTTP = &http.Client{Timeout: 10 * time.Second}
+		// A redirected API POST is never expected; following it would resend
+		// the token and the message somewhere else.
+		cfg.HTTP = &http.Client{
+			Timeout:       10 * time.Second,
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+		}
 	}
 
 	if cfg.MaxRetries == 0 {
@@ -72,19 +82,38 @@ func NewMailtrap(cfg MailtrapConfig) *Mailtrap {
 }
 
 // MailtrapError is an error answered by the Mailtrap API. It never
-// contains the API token or the message body.
+// carries the API token or the message body; Errors may contain
+// addresses quoted by the API.
 type MailtrapError struct {
 	Status int
 	Errors []string
 }
 
-// Error returns the status and the errors Mailtrap listed.
+// Error returns the status and the first errors Mailtrap listed, on one line.
 func (e *MailtrapError) Error() string {
-	if len(e.Errors) == 0 {
+	errs := sanitizeMailtrapErrors(e.Errors)
+	if len(errs) == 0 {
 		return fmt.Sprintf("mail: mailtrap %d %s", e.Status, http.StatusText(e.Status))
 	}
 
-	return fmt.Sprintf("mail: mailtrap %d: %s", e.Status, strings.Join(e.Errors, "; "))
+	return fmt.Sprintf("mail: mailtrap %d: %s", e.Status, strings.Join(errs, "; "))
+}
+
+// sanitizeMailtrapErrors keeps upstream text short and on one line, so it
+// cannot forge log lines or flood them.
+func sanitizeMailtrapErrors(errs []string) []string {
+	var out []string
+
+	for _, e := range errs[:min(len(errs), mailtrapMaxErrors)] {
+		e = strings.NewReplacer("\r", " ", "\n", " ").Replace(e)
+		if r := []rune(e); len(r) > mailtrapMaxErrorLen {
+			e = string(r[:mailtrapMaxErrorLen])
+		}
+
+		out = append(out, e)
+	}
+
+	return out
 }
 
 // Retryable reports whether the request may succeed later.
@@ -286,25 +315,57 @@ func (m *Mailtrap) post(ctx context.Context, body []byte) (time.Duration, error)
 
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+	var apiErr struct {
+		Success *bool           `json:"success"`
+		Errors  json.RawMessage `json:"errors"`
+		Message string          `json:"message"`
+		Error   string          `json:"error"`
+	}
+
+	jsonErr := json.Unmarshal(data, &apiErr)
+
+	ok := resp.StatusCode >= 200 && resp.StatusCode < 300
+	if ok && (apiErr.Success == nil || *apiErr.Success) {
 		return 0, nil
 	}
 
-	var apiErr struct {
-		Errors []string `json:"errors"`
+	errs := mailtrapErrorList(apiErr.Errors, apiErr.Message, apiErr.Error)
+	if len(errs) == 0 && jsonErr != nil && len(bytes.TrimSpace(data)) > 0 {
+		errs = []string{string(bytes.TrimSpace(data))}
 	}
-
-	_ = json.Unmarshal(data, &apiErr)
 
 	// Upstream text is untrusted: never let it echo the token back.
-	for i, e := range apiErr.Errors {
-		apiErr.Errors[i] = strings.ReplaceAll(e, token, "[redacted]")
+	for i, e := range errs {
+		errs[i] = strings.ReplaceAll(e, token, "[redacted]")
 	}
+
+	errs = sanitizeMailtrapErrors(errs)
 
 	wait := time.Duration(0)
 	if s, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil && s > 0 {
 		wait = time.Duration(s) * time.Second
 	}
 
-	return wait, &MailtrapError{Status: resp.StatusCode, Errors: apiErr.Errors}
+	return wait, &MailtrapError{Status: resp.StatusCode, Errors: errs}
+}
+
+// mailtrapErrorList reads the documented errors array and falls back to
+// other shapes rather than dropping the reason.
+func mailtrapErrorList(raw json.RawMessage, message, errField string) []string {
+	var list []string
+	if json.Unmarshal(raw, &list) == nil && len(list) > 0 {
+		return list
+	}
+
+	if s := string(bytes.TrimSpace(raw)); s != "" && s != "null" && s != "[]" {
+		return []string{s}
+	}
+
+	for _, s := range []string{message, errField} {
+		if s != "" {
+			return []string{s}
+		}
+	}
+
+	return nil
 }
