@@ -101,6 +101,14 @@ func TestQueueCommandsOnDatabase(t *testing.T) {
 
 	dbURL := "file:" + filepath.Join(testutil.TempDir(t), "queue.db")
 
+	// Each run is a new app, like separate processes. With the wall clock a
+	// job stamped by one run is not yet due in the next one if the clock
+	// stepped back in between (time sync), and -stop-when-empty then exits
+	// leaving it queued. One fixed app clock makes every queued job due in
+	// every later run.
+	fixed := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+	clock := WithClock(func() time.Time { return fixed })
+
 	var ran atomic.Int32
 
 	jobs := WithJobs(queue.Handle(func(_ context.Context, j flakyJob) error {
@@ -124,7 +132,7 @@ func TestQueueCommandsOnDatabase(t *testing.T) {
 		}
 
 		build := func(opts ...Option) (*App, error) {
-			app, err := New(append(opts, WithLogger(discardLogger()), WithStdout(&out), jobs)...)
+			app, err := New(append(opts, WithLogger(discardLogger()), WithStdout(&out), jobs, clock)...)
 			if err != nil {
 				return nil, err
 			}
