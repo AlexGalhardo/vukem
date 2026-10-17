@@ -50,7 +50,7 @@ vukem codegen:types -o resources/js/api.ts        # TypeScript types
 vukem codegen:types -zod -o resources/js/api.ts   # plus Zod 4 schemas (zod 4.0+)
 ```
 
-You get one type per component schema plus `<Operation>Body`, `<Operation>Query` and `<Operation>Response` for every named operation, and, with `-zod`, Zod 4 validators: `<Name>Schema` per component and `<Operation>BodySchema` per JSON request body (inline bodies included). CI type-checks the golden output with `tsc --strict`.
+You get one type per component schema plus `<Operation>Body`, `<Operation>Query` and `<Operation>Response` for every named operation, and, with `-zod`, Zod 4 validators: `<Name>Schema` per component and `<Operation>BodySchema` per JSON request body (inline bodies included). A component whose name would shadow a TypeScript or DOM global, or a name the generated client declares (`Number`, `String`, `Object`, `Date`, `Error`, `Promise`, `Record`, `Array`, `Response`, `Request`, `URL`, `Client`, ...), gets a `Type` suffix: a Go type `Number` becomes `NumberType` (Zod: `NumberTypeSchema`). CI type-checks the golden output with `tsc --strict`.
 
 Any `z` schema also exports on its own: `z.JSONSchema(schema)` returns JSON Schema 2020-12 (types, required keys, lengths, ranges, formats, patterns, enums, defaults, descriptions; `Refine`/`Custom` logic cannot be expressed).
 

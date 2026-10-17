@@ -38,7 +38,7 @@ func TypeScript(d *Document, zod bool) (string, error) {
 	names := sortedKeys(schemas)
 
 	for _, name := range names {
-		fmt.Fprintf(&b, "export type %s = %s;\n\n", tsName(name), tsType(asMap(schemas[name]), ""))
+		fmt.Fprintf(&b, "export type %s = %s;\n\n", componentName(name), tsType(asMap(schemas[name]), ""))
 	}
 
 	ops := operations(doc)
@@ -49,7 +49,7 @@ func TypeScript(d *Document, zod bool) (string, error) {
 		// regardless of declaration order.
 		for _, name := range names {
 			fmt.Fprintf(&b, "export const %sSchema: z.ZodType<%s> = z.lazy(() =>\n  %s,\n);\n\n",
-				tsName(name), tsName(name), zodType(asMap(schemas[name]), "  "))
+				componentName(name), componentName(name), zodType(asMap(schemas[name]), "  "))
 		}
 
 		for _, o := range ops {
@@ -166,7 +166,39 @@ func tsName(s string) string {
 	return out
 }
 
-func refName(ref string) string { return tsName(ref[strings.LastIndexByte(ref, '/')+1:]) }
+func refName(ref string) string { return componentName(ref[strings.LastIndexByte(ref, '/')+1:]) }
+
+// componentName is the TypeScript name of a component schema: tsName plus
+// a "Type" suffix when that would shadow a global the generated code (or
+// the code importing it) relies on, so a Go type Number becomes NumberType
+// and its Zod schema NumberTypeSchema.
+func componentName(name string) string {
+	n := tsName(name)
+	if reservedTS(n) {
+		n += "Type"
+	}
+
+	return n
+}
+
+// reservedTS reports TypeScript/JavaScript globals, standard utility types,
+// fetch/DOM types and the names the generated client declares.
+func reservedTS(name string) bool {
+	switch name {
+	case "Array", "ArrayBuffer", "ArrayLike", "Awaited", "BigInt", "Blob", "Boolean", "Capitalize",
+		"DataView", "Date", "Document", "Element", "Error", "Event", "EvalError", "Exclude", "Extract",
+		"File", "FormData", "Function", "Headers", "Infinity", "InstanceType", "Intl", "Iterator",
+		"JSON", "Lowercase", "Map", "Math", "NaN", "Node", "NonNullable", "Number", "Object", "Omit",
+		"Parameters", "Partial", "Pick", "Promise", "PromiseLike", "PropertyKey", "Proxy", "RangeError",
+		"Readonly", "Record", "ReferenceError", "Reflect", "RegExp", "Request", "RequestInit", "Required",
+		"Response", "ReturnType", "Set", "String", "Symbol", "SyntaxError", "Text", "TypeError",
+		"URIError", "URL", "URLSearchParams", "Uncapitalize", "Uppercase", "WeakMap", "WeakSet", "Window",
+		"ApiError", "ApiProblem", "Client", "ClientOptions", "RequestArgs":
+		return true
+	default:
+		return false
+	}
+}
 
 var identRe = regexp.MustCompile(`^[A-Za-z_$][A-Za-z0-9_$]*$`)
 
