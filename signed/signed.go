@@ -7,7 +7,7 @@
 //		return err
 //	}
 //
-//	s := signed.New(key)
+//	s := signed.New(key).WithPreviousKeys(app.DerivePreviousKeys("signed.urls", 32)...)
 //	link, _ := s.Sign(appURL+"/email/verify/42", time.Hour)
 //	r.Get("/email/verify/{id}", verify).Use(s.Middleware())
 //
@@ -38,15 +38,41 @@ var (
 	ErrExpired = &errs.HTTPError{Status: http.StatusForbidden, Message: "This link has expired."}
 )
 
-// Signer signs and verifies URLs with one key.
+// Signer signs URLs with one key and verifies them with that key or any
+// previous key (APP_KEY rotation, see WithPreviousKeys).
 type Signer struct {
-	key []byte
-	now func() time.Time
+	key      []byte
+	previous [][]byte
+	now      func() time.Time
 }
 
 // New returns a Signer; derive key from APP_KEY (app.DeriveKey). It
 // panics when key is shorter than MinKeyLen.
 func New(key []byte) *Signer {
+	checkKey(key)
+
+	return &Signer{key: key, now: time.Now}
+}
+
+// MinKeyLen is the minimum signing key length; New panics below it.
+const MinKeyLen = 32
+
+// WithPreviousKeys makes s also accept links signed with keys (derive them
+// with app.DerivePreviousKeys, from APP_PREVIOUS_KEYS), so links sent
+// before an APP_KEY rotation keep working until the old key is removed.
+// Sign always uses the current key. Call it before s is used; it panics
+// when a key is shorter than MinKeyLen, like New.
+func (s *Signer) WithPreviousKeys(keys ...[]byte) *Signer {
+	for _, k := range keys {
+		checkKey(k)
+	}
+
+	s.previous = append(s.previous, keys...)
+
+	return s
+}
+
+func checkKey(key []byte) {
 	if len(key) < MinKeyLen {
 		// An empty or short HMAC key makes every link forgeable.
 		panic(
@@ -57,12 +83,7 @@ func New(key []byte) *Signer {
 			),
 		)
 	}
-
-	return &Signer{key: key, now: time.Now}
 }
-
-// MinKeyLen is the minimum signing key length; New panics below it.
-const MinKeyLen = 32
 
 // Sign adds "expires" (Unix seconds; ttl 0 means no expiry) and
 // "signature" query parameters to rawURL. Only the path and query are
@@ -100,8 +121,7 @@ func (s *Signer) Verify(r *http.Request) error {
 
 	q.Del("signature")
 
-	want := s.sign(r.URL.EscapedPath(), q.Encode())
-	if !hmac.Equal([]byte(sig), []byte(want)) {
+	if !s.valid(sig, r.URL.EscapedPath(), q.Encode()) {
 		return ErrInvalid
 	}
 
@@ -139,8 +159,26 @@ func (s *Signer) Middleware() func(http.Handler) http.Handler {
 	}
 }
 
-func (s *Signer) sign(path, query string) string {
-	m := hmac.New(sha256.New, s.key)
+// valid reports whether sig matches path and query under the current or a
+// previous key, each compared in constant time.
+func (s *Signer) valid(sig, path, query string) bool {
+	if hmac.Equal([]byte(sig), []byte(mac(s.key, path, query))) {
+		return true
+	}
+
+	for _, k := range s.previous {
+		if hmac.Equal([]byte(sig), []byte(mac(k, path, query))) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func (s *Signer) sign(path, query string) string { return mac(s.key, path, query) }
+
+func mac(key []byte, path, query string) string {
+	m := hmac.New(sha256.New, key)
 	m.Write([]byte(path + "?" + query))
 
 	return base64.RawURLEncoding.EncodeToString(m.Sum(nil))

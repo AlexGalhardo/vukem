@@ -63,7 +63,10 @@ type Config struct {
 	URL   string        `env:"APP_URL"   default:"http://localhost:3000"`
 	Key   config.Secret `env:"APP_KEY"`
 	// PreviousKeys are former APP_KEY values (comma-separated, same format)
-	// that still decrypt app.Crypt tokens after a key rotation.
+	// that still open what they sealed or signed after a key rotation:
+	// app.Crypt tokens (encrypted cookies and columns, queued mail), cookie
+	// sessions, the maintenance bypass and, through DerivePreviousKeys,
+	// signed URLs and social login state. New values always use APP_KEY.
 	PreviousKeys    config.Secret `env:"APP_PREVIOUS_KEYS"`
 	Host            string        `env:"HOST"              default:"localhost"`
 	Port            int           `env:"PORT"              default:"3000"`
@@ -161,6 +164,8 @@ type App struct {
 	sessOnce  sync.Once
 	sessions  *session.Manager
 	sessStore session.Store
+	// previous are the decoded APP_PREVIOUS_KEYS (DerivePreviousKeys).
+	previous []config.Key
 	// sessStoreFunc builds sessStore on first use (WithSessionStoreFunc).
 	sessStoreFunc func(*App) (session.Store, error)
 	// sessPruner is the session store when it keeps expired rows (database).
@@ -468,7 +473,12 @@ func New(opts ...Option) (*App, error) {
 		return nil, err
 	}
 
-	enc, err := newCrypt(key, cfg.PreviousKeys)
+	previous, err := parsePreviousKeys(cfg.PreviousKeys)
+	if err != nil {
+		return nil, err
+	}
+
+	enc, err := newCrypt(key, previous)
 	if err != nil {
 		return nil, err
 	}
@@ -547,6 +557,7 @@ func New(opts ...Option) (*App, error) {
 		Source:    src,
 		Key:       key,
 		Crypt:     enc,
+		previous:  previous,
 		Log:       logger,
 		Kind:      o.kind,
 		providers: o.providers,
@@ -812,11 +823,10 @@ func clientIPHeader(name string, haveProxies bool) (string, error) {
 	return name, nil
 }
 
-// newCrypt builds app.Crypt: the "crypt" key derived from APP_KEY encrypts,
-// keys derived from APP_PREVIOUS_KEYS only decrypt. A malformed previous key
-// is a boot error. Without APP_KEY it returns nil (see crypt.ErrNoKey).
-func newCrypt(key config.Key, previous config.Secret) (*crypt.Encrypter, error) {
-	var old [][]byte
+// parsePreviousKeys decodes APP_PREVIOUS_KEYS (comma-separated APP_KEY
+// values; blanks are skipped). A malformed entry is a boot error.
+func parsePreviousKeys(previous config.Secret) ([]config.Key, error) {
+	var keys []config.Key
 
 	for i, s := range strings.Split(previous.Reveal(), ",") {
 		if s = strings.TrimSpace(s); s == "" {
@@ -828,14 +838,34 @@ func newCrypt(key config.Key, previous config.Secret) (*crypt.Encrypter, error) 
 			return nil, fmt.Errorf("vukem: APP_PREVIOUS_KEYS entry %d: %w", i+1, err)
 		}
 
-		old = append(old, k.Derive("crypt", crypt.KeySize))
+		keys = append(keys, k)
 	}
 
+	return keys, nil
+}
+
+// newCrypt builds app.Crypt: the "crypt" key derived from APP_KEY encrypts,
+// keys derived from APP_PREVIOUS_KEYS only decrypt. Without APP_KEY it
+// returns nil (see crypt.ErrNoKey).
+func newCrypt(key config.Key, previous []config.Key) (*crypt.Encrypter, error) {
 	if key.IsZero() {
 		return nil, nil
 	}
 
-	return crypt.New(key.Derive("crypt", crypt.KeySize), old...)
+	return crypt.New(key.Derive("crypt", crypt.KeySize), derivePrevious(previous, "crypt", crypt.KeySize)...)
+}
+
+func derivePrevious(previous []config.Key, purpose string, n int) [][]byte {
+	if len(previous) == 0 {
+		return nil
+	}
+
+	out := make([][]byte, len(previous))
+	for i, k := range previous {
+		out[i] = k.Derive(purpose, n)
+	}
+
+	return out
 }
 
 // logLevel is LOG_LEVEL (default info), lowered to debug by APP_DEBUG.
@@ -913,6 +943,16 @@ func (a *App) DeriveKey(purpose string, n int) ([]byte, error) {
 	}
 
 	return a.Key.Derive(purpose, n), nil
+}
+
+// DerivePreviousKeys returns the n-byte keys for purpose derived from each
+// APP_PREVIOUS_KEYS entry, in order, or nil when none is set. Pass them to
+// the verify-only side of a key-derived feature (signed.Signer and
+// social.Social WithPreviousKeys) so values written before an APP_KEY
+// rotation keep working until the old key is removed. They must never sign
+// or encrypt.
+func (a *App) DerivePreviousKeys(purpose string, n int) [][]byte {
+	return derivePrevious(a.previous, purpose, n)
 }
 
 // Now returns the current time from the app clock (see WithClock).

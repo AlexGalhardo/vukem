@@ -37,6 +37,11 @@ type Config struct {
 	// CookieKey is the 32-byte AES-256-GCM key for cookie sessions; derive
 	// it from APP_KEY: app.Key.Derive("session.cookie", 32).
 	CookieKey []byte
+	// PreviousCookieKeys still open cookie sessions sealed before an
+	// APP_KEY rotation (derive them from APP_PREVIOUS_KEYS with
+	// app.DerivePreviousKeys); such a session is re-sealed with CookieKey on
+	// that request. Each must be 32 bytes.
+	PreviousCookieKeys [][]byte
 	// Production enables boot-time checks (Secure must be true).
 	Production bool
 	// Now is the clock (tests); defaults to time.Now. When set, New hands
@@ -120,7 +125,13 @@ func New(cfg Config) (*Manager, error) {
 			return nil, errors.New("session: cookie sessions need a 32-byte CookieKey (derive it from APP_KEY)")
 		}
 
-		s, err := newSealer(cfg.CookieKey)
+		for _, k := range cfg.PreviousCookieKeys {
+			if len(k) != 32 {
+				return nil, errors.New("session: every PreviousCookieKeys entry must be 32 bytes")
+			}
+		}
+
+		s, err := newSealer(cfg.CookieKey, cfg.PreviousCookieKeys...)
 		if err != nil {
 			return nil, err
 		}
@@ -170,10 +181,13 @@ func (m *Manager) load(r *http.Request, s *Session) {
 		return
 	}
 
-	var raw []byte
+	var (
+		raw   []byte
+		stale bool // sealed with a previous key: re-seal on this response
+	)
 
 	if m.sealer != nil {
-		raw, err = m.sealer.open(m.name, ck.Value)
+		raw, stale, err = m.sealer.open(m.name, ck.Value)
 		if err != nil {
 			web.SecurityEvent(r, "session.invalid", "reason", "cookie authentication failed")
 			return
@@ -221,6 +235,7 @@ func (m *Manager) load(r *http.Request, s *Session) {
 	}
 
 	s.data = data
+	s.dirty = s.dirty || stale
 }
 
 // Peek decodes the session carried by cookies, as the next request would

@@ -14,7 +14,7 @@
 //	s := social.New(key,
 //		social.GitHub(social.Config{ClientID: id, ClientSecret: secret, RedirectURL: url}),
 //		social.Google(googleCfg),
-//	)
+//	).WithPreviousKeys(app.DerivePreviousKeys("social.state", 32)...)
 //	r.Get("/auth/{provider}/redirect", func(c *web.Ctx) error { return s.Redirect(c, c.Param("provider")) })
 //	r.Get("/auth/{provider}/callback", func(c *web.Ctx) error {
 //		u, err := s.User(c, c.Param("provider"))
@@ -119,6 +119,7 @@ var (
 // Social is the set of configured providers.
 type Social struct {
 	key       []byte
+	previous  [][]byte
 	providers map[string]Provider
 	// HTTP is the client for provider calls (timeouts by default).
 	HTTP *http.Client
@@ -148,15 +149,7 @@ const MinKeyLen = 32
 // from APP_KEY: app.DeriveKey("social.state", 32)). It panics when key is
 // shorter than MinKeyLen: an empty or short HMAC key makes states forgeable.
 func New(key []byte, providers ...Provider) *Social {
-	if len(key) < MinKeyLen {
-		panic(
-			fmt.Sprintf(
-				"social: key must be at least %d bytes, got %d (derive it with app.DeriveKey)",
-				MinKeyLen,
-				len(key),
-			),
-		)
-	}
+	checkKey(key)
 
 	s := &Social{
 		key:       key,
@@ -172,6 +165,33 @@ func New(key []byte, providers ...Provider) *Social {
 	}
 
 	return s
+}
+
+// WithPreviousKeys makes s also accept state cookies signed with keys
+// (derive them with app.DerivePreviousKeys, from APP_PREVIOUS_KEYS), so a
+// sign-in started just before an APP_KEY rotation can finish. New state is
+// always signed with the current key. Call it before s is used; it panics
+// when a key is shorter than MinKeyLen, like New.
+func (s *Social) WithPreviousKeys(keys ...[]byte) *Social {
+	for _, k := range keys {
+		checkKey(k)
+	}
+
+	s.previous = append(s.previous, keys...)
+
+	return s
+}
+
+func checkKey(key []byte) {
+	if len(key) < MinKeyLen {
+		panic(
+			fmt.Sprintf(
+				"social: key must be at least %d bytes, got %d (derive it with app.DeriveKey)",
+				MinKeyLen,
+				len(key),
+			),
+		)
+	}
 }
 
 // Provider returns a configured provider.
@@ -416,7 +436,7 @@ func (s *Social) seal(st statePayload) string {
 	b, _ := json.Marshal(st) //nolint:errchkjson // plain struct of strings and ints
 	body := base64.RawURLEncoding.EncodeToString(b)
 
-	return body + "." + base64.RawURLEncoding.EncodeToString(s.mac(body))
+	return body + "." + base64.RawURLEncoding.EncodeToString(mac(s.key, body))
 }
 
 func (s *Social) open(raw string) (statePayload, bool) {
@@ -428,7 +448,7 @@ func (s *Social) open(raw string) (statePayload, bool) {
 	}
 
 	got, err := base64.RawURLEncoding.DecodeString(sig)
-	if err != nil || !hmac.Equal(got, s.mac(body)) {
+	if err != nil || !s.validMAC(got, body) {
 		return st, false
 	}
 
@@ -440,8 +460,24 @@ func (s *Social) open(raw string) (statePayload, bool) {
 	return st, true
 }
 
-func (s *Social) mac(body string) []byte {
-	m := hmac.New(sha256.New, s.key)
+// validMAC compares sig with the MAC of body under the current and each
+// previous key, in constant time.
+func (s *Social) validMAC(sig []byte, body string) bool {
+	if hmac.Equal(sig, mac(s.key, body)) {
+		return true
+	}
+
+	for _, k := range s.previous {
+		if hmac.Equal(sig, mac(k, body)) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func mac(key []byte, body string) []byte {
+	m := hmac.New(sha256.New, key)
 	m.Write([]byte(body))
 
 	return m.Sum(nil)

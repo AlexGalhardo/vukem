@@ -143,7 +143,7 @@ sessionKey := app.Key.Derive("session", 32) // HKDF info "vukem:session"
 signer, err := app.DeriveKey("signed.urls", 32) // config.ErrKeyMissing instead of a panic
 ```
 
-`APP_PREVIOUS_KEYS` lists former keys (comma-separated, same `base64:` format) so encrypted cookies and columns survive a rotation; see [Encryption](/docs/security/encryption#key-rotation).
+`APP_PREVIOUS_KEYS` lists former keys (comma-separated, same `base64:` format). They only open or verify what they sealed or signed (encrypted cookies and columns, queued mail, cookie sessions, the maintenance bypass, and signed URLs and social state through `app.DerivePreviousKeys`); everything new uses `APP_KEY`. `vukem key:rotate` moves the current key there and writes a new one; see [Encryption](/docs/security/encryption#key-rotation).
 
 ## Secure defaults
 

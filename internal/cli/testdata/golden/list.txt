@@ -17,6 +17,7 @@ Usage:
   boost:install                Add agent guidelines, skills and the vukem-boost MCP server
  key
   key:generate                 Write a new APP_KEY to .env
+  key:rotate                   Replace APP_KEY in .env and keep the old one in APP_PREVIOUS_KEYS
  
   down                         Put the app in maintenance mode (503; --secret or --with-secret to bypass)
   up                           Bring the app out of maintenance mode

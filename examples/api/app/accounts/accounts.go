@@ -65,8 +65,9 @@ func New(app *vukem.App) (*Accounts, error) {
 
 	return &Accounts{
 		DB: db, Mailer: mailer, Users: users, Web: web, Tokens: tokens, Hasher: hasher,
-		API:       auth.NewTokenGuard("api", users, tokens),
-		Signer:    signed.New(signingKey),
+		API: auth.NewTokenGuard("api", users, tokens),
+		// Links signed before an APP_KEY rotation verify until the old key leaves APP_PREVIOUS_KEYS.
+		Signer:    signed.New(signingKey).WithPreviousKeys(app.DerivePreviousKeys("signed.urls", 32)...),
 		URL:       strings.TrimSuffix(app.Config.URL, "/"),
 		ResetTTL:  time.Hour,
 		VerifyTTL: time.Hour,

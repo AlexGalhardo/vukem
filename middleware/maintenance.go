@@ -68,6 +68,10 @@ type MaintenanceConfig struct {
 	// Key signs bypass cookies (derive it from APP_KEY). Without a key the
 	// secret bypass is disabled: an unkeyed HMAC would be forgeable.
 	Key []byte
+	// PreviousKeys still accept bypass cookies signed before an APP_KEY
+	// rotation (derive them from APP_PREVIOUS_KEYS); such a cookie is
+	// re-issued under Key.
+	PreviousKeys [][]byte
 	// Except lists paths always served (default "/up").
 	Except []string
 	// Secure marks the bypass cookie Secure (production, HTTPS).
@@ -102,21 +106,23 @@ func Maintenance(cfg MaintenanceConfig) Middleware {
 			if m.SecretHash != "" && len(cfg.Key) > 0 {
 				token := bypassToken(cfg.Key, m.SecretHash)
 
-				if c, err := r.Cookie(MaintenanceCookie); err == nil && hmac.Equal([]byte(c.Value), []byte(token)) {
-					next.ServeHTTP(w, r)
-					return
+				if c, err := r.Cookie(MaintenanceCookie); err == nil {
+					if hmac.Equal([]byte(c.Value), []byte(token)) {
+						next.ServeHTTP(w, r)
+						return
+					}
+
+					if previousBypass(cfg.PreviousKeys, m.SecretHash, c.Value) {
+						setBypassCookie(w, token, cfg.Secure)
+						next.ServeHTTP(w, r)
+
+						return
+					}
 				}
 
 				sum := sha256.Sum256([]byte(strings.TrimPrefix(r.URL.Path, "/"))) // "" for "*" targets
 				if hmac.Equal([]byte(hex.EncodeToString(sum[:])), []byte(m.SecretHash)) {
-					// Secure follows cfg.Secure: off for plain-HTTP development.
-					http.SetCookie(
-						w,
-						&http.Cookie{ //nolint:gosec // G124: HttpOnly and SameSite set; Secure per environment
-							Name: MaintenanceCookie, Value: token, Path: "/", HttpOnly: true,
-							Secure: cfg.Secure, SameSite: http.SameSiteLaxMode, MaxAge: 12 * 3600,
-						},
-					)
+					setBypassCookie(w, token, cfg.Secure)
 					http.Redirect(w, r, "/", http.StatusSeeOther)
 
 					return
@@ -147,6 +153,30 @@ func readMaintenance(file string) (MaintenanceState, bool) {
 	}
 
 	return m, true
+}
+
+// setBypassCookie grants the bypass; Secure follows cfg.Secure (off for
+// plain-HTTP development).
+func setBypassCookie(w http.ResponseWriter, token string, secure bool) {
+	http.SetCookie(
+		w,
+		&http.Cookie{ //nolint:gosec // G124: HttpOnly and SameSite set; Secure per environment
+			Name: MaintenanceCookie, Value: token, Path: "/", HttpOnly: true,
+			Secure: secure, SameSite: http.SameSiteLaxMode, MaxAge: 12 * 3600,
+		},
+	)
+}
+
+// previousBypass reports whether value is a bypass token signed with one of
+// keys (empty keys are skipped: an unkeyed HMAC would be forgeable).
+func previousBypass(keys [][]byte, secretHash, value string) bool {
+	for _, k := range keys {
+		if len(k) > 0 && hmac.Equal([]byte(value), []byte(bypassToken(k, secretHash))) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func bypassToken(key []byte, secretHash string) string {

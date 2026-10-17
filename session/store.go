@@ -642,23 +642,35 @@ const maxCookieSize = 4000
 // ErrCookieTooLarge is returned when cookie session data exceeds 4 KB.
 var ErrCookieTooLarge = errors.New("session: cookie session data exceeds 4 KB; use a server-side store")
 
-// sealer encrypts and authenticates cookie payloads with AES-256-GCM.
+// sealer encrypts and authenticates cookie payloads with AES-256-GCM. It
+// seals with aead and also opens payloads sealed with previous keys.
 type sealer struct {
-	aead cipher.AEAD
+	aead     cipher.AEAD
+	previous []cipher.AEAD
 }
 
-func newSealer(key []byte) (*sealer, error) {
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, fmt.Errorf("session: cookie key: %w", err)
+func newSealer(key []byte, previous ...[]byte) (*sealer, error) {
+	s := &sealer{}
+
+	for i, k := range append([][]byte{key}, previous...) {
+		block, err := aes.NewCipher(k)
+		if err != nil {
+			return nil, fmt.Errorf("session: cookie key %d: %w", i, err)
+		}
+
+		aead, err := cipher.NewGCM(block)
+		if err != nil {
+			return nil, err
+		}
+
+		if i == 0 {
+			s.aead = aead
+		} else {
+			s.previous = append(s.previous, aead)
+		}
 	}
 
-	aead, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, err
-	}
-
-	return &sealer{aead: aead}, nil
+	return s, nil
 }
 
 // seal returns base64url(nonce || ciphertext). name is authenticated as
@@ -672,20 +684,29 @@ func (s *sealer) seal(name string, plain []byte) string {
 	return base64.RawURLEncoding.EncodeToString(out)
 }
 
-func (s *sealer) open(name, value string) ([]byte, error) {
+// open decrypts value; stale reports that a previous key opened it, so the
+// caller re-seals it with the current key. Cookies carry no key id, so a
+// previous key is tried only after the current one fails (GCM rejects a
+// wrong key through its tag, never with garbage plaintext).
+func (s *sealer) open(name, value string) (plain []byte, stale bool, err error) {
 	raw, err := base64.RawURLEncoding.DecodeString(value)
 	if err != nil || len(raw) < s.aead.NonceSize() {
-		return nil, errors.New("session: malformed cookie")
+		return nil, false, errors.New("session: malformed cookie")
 	}
 
 	n := s.aead.NonceSize()
 
-	plain, err := s.aead.Open(nil, raw[:n], raw[n:], []byte(name))
-	if err != nil {
-		return nil, errors.New("session: cookie authentication failed")
+	if plain, err := s.aead.Open(nil, raw[:n], raw[n:], []byte(name)); err == nil {
+		return plain, false, nil
 	}
 
-	return plain, nil
+	for _, aead := range s.previous {
+		if plain, err := aead.Open(nil, raw[:n], raw[n:], []byte(name)); err == nil {
+			return plain, true, nil
+		}
+	}
+
+	return nil, false, errors.New("session: cookie authentication failed")
 }
 
 // storeClock is a store's time source: time.Now until session.New hands it the

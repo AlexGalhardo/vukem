@@ -1,6 +1,8 @@
 package middleware
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -177,4 +179,67 @@ func TestSecurity_A01_MaintenanceBypassNeedsKey(t *testing.T) {
 		t.Fatalf("GET /<secret> without a key = %d, Set-Cookie %q, want 503 and no cookie",
 			rec.Code, rec.Header().Get("Set-Cookie"))
 	}
+}
+
+func TestSecurity_A04_MaintenanceBypassKeyRotation(t *testing.T) {
+	t.Parallel()
+
+	file := filepath.Join(t.TempDir(), "down")
+	oldKey := []byte(strings.Repeat("o", 32))
+	newKey := []byte(strings.Repeat("n", 32))
+
+	if err := WriteMaintenance(file, MaintenanceState{Secret: "let-me-in"}); err != nil {
+		t.Fatal(err)
+	}
+
+	handler := func(cfg MaintenanceConfig) http.Handler {
+		cfg.File = file
+		s := &web.Services{Log: slog.New(slog.DiscardHandler)}
+		mw := Maintenance(cfg)
+
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			mw(http.HandlerFunc(ok)).ServeHTTP(w, r.WithContext(web.WithServices(r.Context(), s)))
+		})
+	}
+
+	withCookies := func(cs []*http.Cookie) func(*http.Request) {
+		return func(r *http.Request) {
+			for _, c := range cs {
+				r.AddCookie(c)
+			}
+		}
+	}
+
+	old := mget(t, handler(MaintenanceConfig{Key: oldKey}), "/let-me-in", nil).Result().Cookies()
+	rotated := handler(MaintenanceConfig{Key: newKey, PreviousKeys: [][]byte{nil, oldKey}})
+	dropped := handler(MaintenanceConfig{Key: newKey})
+
+	rec := mget(t, rotated, "/posts", withCookies(old))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("bypass cookie signed with a previous key = %d, want 200", rec.Code)
+	}
+
+	reissued := rec.Result().Cookies()
+	if len(reissued) != 1 || reissued[0].Value == old[0].Value || !reissued[0].HttpOnly {
+		t.Fatalf("re-issued bypass cookie = %+v, want one HttpOnly cookie under the current key", reissued)
+	}
+
+	if code := mget(t, dropped, "/posts", withCookies(reissued)).Code; code != http.StatusOK {
+		t.Errorf("re-issued cookie with the current key only = %d, want 200", code)
+	}
+
+	if code := mget(t, dropped, "/posts", withCookies(old)).Code; code != http.StatusServiceUnavailable {
+		t.Errorf("old cookie after the previous key is removed = %d, want 503", code)
+	}
+
+	// An empty previous key never accepts an unkeyed HMAC.
+	unkeyed := []*http.Cookie{{Name: MaintenanceCookie, Value: bypassToken(nil, sha256Hex("let-me-in"))}}
+	if code := mget(t, rotated, "/posts", withCookies(unkeyed)).Code; code != http.StatusServiceUnavailable {
+		t.Errorf("unkeyed bypass cookie = %d, want 503", code)
+	}
+}
+
+func sha256Hex(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:])
 }
