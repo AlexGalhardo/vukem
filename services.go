@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -253,6 +254,9 @@ type TelegramConfig struct {
 	Log bool `env:"TELEGRAM_LOG" default:"true"`
 	// RateLimit caps forwarded log records per minute (0: no cap).
 	RateLimit int `env:"TELEGRAM_RATE_LIMIT"`
+	// APIURL is the Bot API base URL, for a self-hosted Bot API server or
+	// a fake in tests. It must be https outside development and test.
+	APIURL string `env:"TELEGRAM_API_URL" default:"https://api.telegram.org"`
 }
 
 // WithTelegram adjusts the Telegram handler config after it is read from
@@ -260,6 +264,26 @@ type TelegramConfig struct {
 // effect unless TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are set.
 func WithTelegram(fn func(cfg *telegram.Config)) Option {
 	return func(o *options) error { o.telegram = append(o.telegram, fn); return nil }
+}
+
+// telegramAPIURL validates TELEGRAM_API_URL and drops a trailing slash.
+// The bot token is sent in the request path, so the URL must be https
+// outside development and test; errors never echo the value.
+func telegramAPIURL(raw string, env config.Env) (string, error) {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" ||
+		u.ForceQuery {
+		return "", errors.New("vukem: TELEGRAM_API_URL must be an http(s) URL without credentials, query or fragment")
+	}
+
+	switch {
+	case u.Scheme == "https":
+	case u.Scheme == "http" && (env == config.Development || env == config.Test):
+	default:
+		return "", errors.New("vukem: TELEGRAM_API_URL must use https (http only in development and test)")
+	}
+
+	return strings.TrimRight(raw, "/"), nil
 }
 
 // telegramHandler returns the Telegram handler when the bot token and chat
@@ -288,9 +312,15 @@ func telegramHandler(
 		return nil, false, fmt.Errorf("vukem: TELEGRAM_RATE_LIMIT must be >= 0, got %d", tc.RateLimit)
 	}
 
+	baseURL, err := telegramAPIURL(tc.APIURL, cfg.Env)
+	if err != nil {
+		return nil, false, err
+	}
+
 	tg := telegram.Config{
 		BotToken: tc.BotToken, ChatID: tc.ChatID, MinLevel: level, ThreadID: tc.ThreadID,
 		AppName: cfg.Name, Env: string(cfg.Env), RateLimit: tc.RateLimit, RatePeriod: time.Minute,
+		BaseURL: baseURL,
 	}
 
 	for _, fn := range configure {

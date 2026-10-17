@@ -115,6 +115,7 @@ What Vukem does **by default** to protect applications, mapped to the [OWASP Top
 | `config.Secret` redacts secrets in logs, JSON and `%v` (`TestSecurity_A04_SecretRedaction`) | [x] |
 | Queued mail (`mailer.SendLater`, `app.MailLater`): the rendered message is stored in the job sealed with `app.Crypt` (additional data binds it to the mail job), so reset links, tokens and addresses never sit in the jobs tables, `queue:failed` output or logs in clear text; a tampered payload fails the job instead of sending (`TestSecurity_A04_QueuedMailPayloadIsEncrypted`); clear-text mail jobs are refused unless `QUEUE_ALLOW_LEGACY_MAIL=true` (upgrade window, warning per job) (`TestSecurity_A04_PlaintextMailJobRefusedByDefault`). Known limit: the additional data is fixed, so write access to the jobs table allows replaying a sealed mail | [x] |
 | `drivers/s3` refuses a plain `http://` endpoint unless `S3_INSECURE_HTTP=true` (local S3-compatible server only) (`TestSecurity_A04_S3RequiresTLS`) | [x] |
+| `TELEGRAM_API_URL` must be https outside development and test (the bot token travels in the request path), without credentials, query or fragment; a bad value fails boot and the error never echoes it (`TestSecurity_A04_TelegramAPIURLRequiresHTTPS`) | [x] |
 
 ### A05:2025 — Injection
 

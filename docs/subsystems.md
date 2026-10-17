@@ -40,6 +40,7 @@ TELEGRAM_MIN_LEVEL=error           # debug, info, warn, error
 TELEGRAM_THREAD_ID=42              # optional forum topic
 TELEGRAM_LOG=true                  # false: no log forwarding, app.Telegram only for Send/Contact
 TELEGRAM_RATE_LIMIT=20             # optional cap on forwarded log records per minute (0: none)
+TELEGRAM_API_URL=https://api.telegram.org  # optional: self-hosted Bot API server or a fake; https outside development/test
 ```
 
 ```go
@@ -69,7 +70,7 @@ defer tg.Close(ctx)
 | Format | Telegram HTML: emoji and level, app name, environment, UTC time, then the message and attributes (groups dotted, error chains as "caused by") in a `<pre>` block; all content escaped; truncated to 4096 characters without cutting tags or entities |
 | Reliability | bounded queue (`QueueSize`, drops and reports when full), per-request `Timeout`, one retry after HTTP 429 honouring `retry_after` capped by `MaxRetryAfter`, `OnError` (never reentrant; records logged from it or carrying its error are not forwarded, so it may log through the app logger), drained by `app.Shutdown`; `SendSync` / `ContactSync` skip the queue and return the error (bounded by `Timeout` per request and by ctx) |
 | Log forwarding | on by default for records at `MinLevel`+; `TELEGRAM_LOG=false` turns it off; `Filter` and `RateLimit`/`RatePeriod` (`TELEGRAM_RATE_LIMIT` per minute, `ErrRateLimited` reported once per window) narrow it; `vukem.WithTelegram` edits the config in code |
-| Security | token held as `config.Secret`; request errors are redacted, also from `SendSync`/`ContactSync` (`TestSecurity_A09_TelegramTokenRedacted`, `TestSecurity_A09_TelegramSyncErrorRedactsToken`); `vukem about` shows only on/off; disabled when token or chat is missing |
+| Security | token held as `config.Secret`; request errors are redacted, also from `SendSync`/`ContactSync` (`TestSecurity_A09_TelegramTokenRedacted`, `TestSecurity_A09_TelegramSyncErrorRedactsToken`); `vukem about` shows only on/off; disabled when token or chat is missing; `TELEGRAM_API_URL` (default `https://api.telegram.org`, the token travels in its path) must be https outside development and test, without credentials, query or fragment, and a bad value fails boot without echoing it (`TestSecurity_A04_TelegramAPIURLRequiresHTTPS`); `WithTelegram` setting `BaseURL` still wins |
 
 ## Mail
 
