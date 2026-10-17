@@ -37,14 +37,21 @@ type Options struct {
 	// service network). Use sparingly.
 	Allow []netip.Prefix
 	// WrapTransport, when set, wraps the client's transport (tracing,
-	// metrics; drivers/otel's Transport fits). The address check runs in
-	// the dialer below it, so a wrapper that delegates to the transport it
-	// is given cannot reach blocked addresses.
+	// metrics; drivers/otel's Transport fits). It must delegate every
+	// request to the transport it is given: the address check runs in that
+	// transport's dialer, so a delegating wrapper cannot reach blocked
+	// addresses. A wrapper returning nil makes every request fail with
+	// ErrNilTransport (http.Client would otherwise use
+	// http.DefaultTransport, which has no address check).
 	WrapTransport func(http.RoundTripper) http.RoundTripper
 }
 
 // ErrBlockedAddress is returned when the destination is an internal address.
 var ErrBlockedAddress = errors.New("httpclient: destination address is not allowed")
+
+// ErrNilTransport is returned by every request of a client whose
+// Options.WrapTransport returned nil.
+var ErrNilTransport = errors.New("httpclient: Options.WrapTransport returned a nil transport")
 
 // ErrBodyTooLarge is returned by reads past Options.MaxBody.
 var ErrBodyTooLarge = errors.New("httpclient: response body too large")
@@ -134,7 +141,9 @@ func Safe(o Options) *http.Client {
 
 	var rt http.RoundTripper = &limitTransport{rt: transport, max: o.MaxBody}
 	if o.WrapTransport != nil {
-		rt = o.WrapTransport(rt)
+		if rt = o.WrapTransport(rt); rt == nil {
+			rt = nilTransport{}
+		}
 	}
 
 	return &http.Client{
@@ -152,6 +161,16 @@ func Safe(o Options) *http.Client {
 			return nil
 		},
 	}
+}
+
+type nilTransport struct{}
+
+func (nilTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.Body != nil {
+		_ = req.Body.Close()
+	}
+
+	return nil, ErrNilTransport
 }
 
 type limitTransport struct {

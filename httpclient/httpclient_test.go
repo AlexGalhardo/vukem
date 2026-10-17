@@ -227,6 +227,12 @@ func TestSecurity_A01_SSRFWrappedTransport(t *testing.T) {
 		t.Fatalf("wrapped Get(loopback) = %v, want ErrBlockedAddress", err)
 	}
 
+	if err := fetch(func() (*http.Response, error) {
+		return Safe(Options{WrapTransport: wrap}).Get("http://10.0.0.1/")
+	}); !errors.Is(err, ErrBlockedAddress) {
+		t.Fatalf("wrapped Get(private) = %v, want ErrBlockedAddress", err)
+	}
+
 	resp, err := Safe(Options{WrapTransport: wrap, Allow: []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}}).
 		Get(srv.URL)
 	if err != nil {
@@ -235,7 +241,24 @@ func TestSecurity_A01_SSRFWrappedTransport(t *testing.T) {
 
 	_ = resp.Body.Close()
 
-	if calls != 2 {
-		t.Fatalf("WrapTransport round trips = %d, want 2", calls)
+	if calls != 3 {
+		t.Fatalf("WrapTransport round trips = %d, want 3", calls)
+	}
+}
+
+func TestSecurity_A01_SSRFNilWrapTransportFailsClosed(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer srv.Close()
+
+	// A nil transport would make http.Client fall back to
+	// http.DefaultTransport, which has no address check.
+	c := Safe(Options{WrapTransport: func(http.RoundTripper) http.RoundTripper { return nil }})
+
+	if err := fetch(func() (*http.Response, error) { return c.Get(srv.URL) }); !errors.Is(err, ErrNilTransport) {
+		t.Fatalf("Get(loopback) with a nil-returning wrapper = %v, want ErrNilTransport", err)
 	}
 }
