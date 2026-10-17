@@ -299,7 +299,7 @@ Applies to **every** task:
 - [x] Zero third-party deps in core except `modernc.org/sqlite` and `golang.org/x/crypto`.
 - [x] CI green on the full matrix; `govulncheck` clean.
 - [x] Router benchmark: < 1 µs/op and ≤ 2 allocs for a static route on CI hardware (documented baseline).
-- [ ] `go test -run TestSecurity ./...` covers every **P** row of [docs/security.md](docs/security.md); `gosec` and `govulncheck` clean.
+- [ ] `go test -run TestSecurity ./...` covers every Prototype default of [docs/security.md](docs/security.md) (each row names its test or enforcing mechanism); `gosec` and `govulncheck` clean.
 
 ---
 
@@ -437,7 +437,7 @@ Applies to **every** task:
 - [x] ORM + schema conformance suite green on SQLite and Postgres.
 - [x] Mail, cache, storage, events, rate limiting each have a fake and docs.
 - [x] Core deps still within the allowlist; Postgres pulled only via `drivers/postgres`.
-- [ ] Every **A** row of [docs/security.md](docs/security.md) has its `TestSecurity_*` test.
+- [ ] Every ALPHA default of [docs/security.md](docs/security.md) has its `TestSecurity_*` test or enforcing mechanism.
 - [x] Coverage gates hold; integration CI green.
 
 ---
@@ -580,7 +580,7 @@ Applies to **every** task:
 - [x] **B.5.1** Public API review: every exported identifier justified; remove/rename before freeze; `//go:fix inline` for renamed APIs.
   → verify: `apidiff` report reviewed and committed under `docs/api/`.
 - [ ] **B.5.2** Security review against [docs/security.md](docs/security.md) (OWASP Top 10:2025, ASVS L2 checklist for CSRF, sessions, auth, uploads, SQL building, headers) + fuzzing campaign (≥ 1h per fuzz target).
-  → verify: findings tracked and closed; every **B** row has its test.
+  → verify: findings tracked and closed; every BETA default of docs/security.md is checked (`[x]`) and names its test.
 - [ ] **B.5.5** Supply chain: cosign keyless signing of release artifacts, SBOM published, actions pinned by SHA, OpenSSF Scorecard ≥ 7.
   → verify: `cosign verify-blob` in release workflow; Scorecard badge.
 - [x] **B.5.3** Performance baseline (router, ORM, render, full request) vs net/http, chi, echo.
