@@ -5,7 +5,7 @@ How the framework itself is tested, and the testing toolkit it ships to apps. De
 ## Policy (framework)
 
 - **Every exported feature has tests.** A PR adding a feature without tests is not merged.
-- **Coverage gate:** ≥ 80% per package in core (measured on `ubuntu/stable`), ≥ 90% for `router`, `validate` (package `z`), `session`, `orm`, `schema`, `auth`, `config`. `go run ./internal/tools/covergate coverage.out` checks it (also in `task cover`); `cmd/`, `internal/` and the conformance helpers (`cachetest`, `queuetest`, `storagetest`, `dbtest`) are exempt.
+- **Coverage gate:** ≥ 80% per package in core (measured on `ubuntu/stable`), ≥ 90% for `router`, `validate` (package `z`), `session`, `orm`, `schema`, `auth`, `config`. `go run ./internal/tools/covergate coverage.out` checks it (also in `task cover`); `cmd/`, `internal/` and the conformance helpers (`cachetest`, `queuetest`, `storagetest`, `dbtest`, `sessiontest`) are exempt.
 - **Race detector** on in CI (`-race`); Windows contributors may run without it locally (needs cgo).
 - **No network, no Docker** in unit tests. Integration tests are behind `//go:build integration`.
 - **Assertions:** stdlib `testing` + `github.com/google/go-cmp/cmp`. No testify in core.

@@ -103,6 +103,7 @@ func TestExcluded(t *testing.T) {
 		"": false, "router": false, "auth/jwt": false, "vukemtest": false, "cmdline": false,
 		"cmd": true, "cmd/vukem": true, "internal/tools/release": true,
 		"cache/cachetest": true, "queue/queuetest": true, "storage/storagetest": true, "database/dbtest": true,
+		"session/sessiontest": true,
 	}
 
 	for pkg, want := range tests {
