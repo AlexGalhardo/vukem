@@ -446,6 +446,10 @@ func (q Query[T]) SQL() (string, []any, error) {
 // Get returns every matching row.
 func (q Query[T]) Get(ctx context.Context) ([]T, error) {
 	var out []T
+	if q.limit > 0 {
+		// Bounded so a huge Limit with few rows does not over-allocate.
+		out = make([]T, 0, min(q.limit, 256))
+	}
 
 	for v, err := range q.Each(ctx) {
 		if err != nil {
@@ -672,22 +676,31 @@ func (m *meta) scanner(rows *sql.Rows, enc database.Encrypter) (func(*sql.Rows, 
 
 	idx := make([][]int, len(cols))
 	encrypted := make([]bool, len(cols))
+	anyEncrypted := false
 
 	for i, c := range cols {
 		if f, ok := m.byColumn[c]; ok {
 			idx[i] = f.index
 			encrypted[i] = reflect.PointerTo(f.typ).Implements(reflect.TypeFor[opener]())
+			anyEncrypted = anyEncrypted || encrypted[i]
 		}
 	}
 
-	return func(rows *sql.Rows, v reflect.Value) error {
-		dest := make([]any, len(cols))
-		tokens := make([]sql.NullString, len(cols))
+	// Rows are scanned one at a time and Scan keeps no reference to its
+	// destinations, so the buffers are shared by every row of the query.
+	dest := make([]any, len(cols))
+	ignored := new(any)
 
+	var tokens []sql.NullString
+	if anyEncrypted {
+		tokens = make([]sql.NullString, len(cols))
+	}
+
+	return func(rows *sql.Rows, v reflect.Value) error {
 		for i, index := range idx {
 			switch {
 			case index == nil:
-				dest[i] = new(any)
+				dest[i] = ignored
 			case encrypted[i]:
 				dest[i] = &tokens[i]
 			default:

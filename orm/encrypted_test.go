@@ -260,3 +260,39 @@ func TestEncryptedJSONAndNull(t *testing.T) {
 		t.Fatalf("Find(NULL columns) = %+v, %v, want zero values", got, err)
 	}
 }
+
+// TestEncryptedManyRows checks that the scan buffers shared across rows
+// never leak one row's ciphertext or NULL into another.
+func TestEncryptedManyRows(t *testing.T) {
+	t.Parallel()
+
+	db := openCustomers(t, filepath.Join(t.TempDir(), "app.db"),
+		database.WithEncrypter(newEncrypter(t, cryptKey(1))))
+	ctx := t.Context()
+
+	want := []string{"4111", "", "5500"}
+	for i, card := range want {
+		c := Customer{Name: "c" + strings.Repeat("x", i), Card: Encrypted[string]{V: card}}
+		if err := Create(ctx, db, &c); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if _, err := db.ExecContext(ctx, "UPDATE customers SET card = NULL WHERE name = 'cx'"); err != nil {
+		t.Fatal(err)
+	}
+
+	all, err := QueryOf[Customer](db).OrderBy("id", Asc).Limit(10).Get(ctx)
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+
+	got := make([]string, 0, len(all))
+	for _, c := range all {
+		got = append(got, c.Card.V)
+	}
+
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("Get() cards mismatch (-want +got):\n%s", diff)
+	}
+}

@@ -89,27 +89,27 @@ CREATE TABLE cats (code TEXT PRIMARY KEY, name TEXT NOT NULL);
 CREATE TABLE hooked (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TIMESTAMP, updated_at TIMESTAMP, name TEXT);
 `
 
-func setup(t *testing.T) (*database.DB, context.Context) {
-	t.Helper()
+func setup(tb testing.TB) (*database.DB, context.Context) {
+	tb.Helper()
 
-	db, err := database.Open(t.Context(), ":memory:")
+	db, err := database.Open(tb.Context(), ":memory:")
 	if err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
-	t.Cleanup(func() { _ = db.Close() })
+	tb.Cleanup(func() { _ = db.Close() })
 
 	for stmt := range strings.SplitSeq(ddl, ";") {
 		if strings.TrimSpace(stmt) == "" {
 			continue
 		}
-		if _, err := db.ExecContext(t.Context(), stmt); err != nil {
-			t.Fatal(err)
+		if _, err := db.ExecContext(tb.Context(), stmt); err != nil {
+			tb.Fatal(err)
 		}
 	}
 
 	fixed := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 
-	return db, WithClock(t.Context(), func() time.Time { return fixed })
+	return db, WithClock(tb.Context(), func() time.Time { return fixed })
 }
 
 func seedUsers(ctx context.Context, t *testing.T, db *database.DB) []User {
