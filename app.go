@@ -206,6 +206,7 @@ type options struct {
 	schedules     []func(*schedule.Schedule, *App)
 	drivers       []database.Driver
 	stdout        io.Writer
+	stderr        io.Writer // key:generate diagnostics; tests set it directly
 	stdin         io.Reader
 	ready         chan<- string
 	noHTTP        bool

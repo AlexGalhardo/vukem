@@ -89,7 +89,9 @@ export APP_KEY="$(./app key:generate)" # use it in the current shell
 docker run --rm my-app key:generate    # with ENTRYPOINT ["/app"]
 ```
 
-Store the printed value in your secret manager or deployment environment. `vukem key:generate` (global CLI) is the one that writes `.env`.
+Only the key goes to stdout; errors and `-h` output go to stderr, so a typo never ends up inside `APP_KEY`. Store the printed value in your secret manager or deployment environment. `vukem key:generate` (global CLI) is the one that writes `.env`.
+
+The built-in `key:generate` always wins over an app command registered with the same name, because it runs before the app is built.
 
 ## `vukem serve`
 
