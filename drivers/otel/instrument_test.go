@@ -164,6 +164,13 @@ func TestObserver_Query(t *testing.T) {
 			wantErr:   true,
 		},
 		{name: "no keyword", q: database.Query{SQL: "-- comment"}, spanName: "db", wantAttrs: map[string]string{}},
+		{
+			name:      "db system",
+			opts:      []otel.Option{otel.WithDBSystem("postgresql")},
+			q:         database.Query{SQL: "UPDATE t SET a = $1"},
+			spanName:  "UPDATE",
+			wantAttrs: map[string]string{"db.operation.name": "UPDATE", "db.system.name": "postgresql"},
+		},
 	}
 
 	for _, tt := range tests {

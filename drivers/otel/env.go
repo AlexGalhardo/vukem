@@ -1,6 +1,7 @@
 package otel
 
 import (
+	"errors"
 	"fmt"
 	"net/url"
 	"strconv"
@@ -14,7 +15,9 @@ import (
 
 // The provider reads OTEL_* settings from app.Source (process environment
 // and .env files) and passes them to the exporter explicitly: the OTLP
-// exporter would otherwise read only the process environment.
+// exporter would otherwise read only the process environment. Errors name
+// the variable, never its value (headers carry API keys, and the others
+// may be pasted next to them).
 
 // signalValue returns OTEL_EXPORTER_OTLP_<SIGNAL>_<name>, else
 // OTEL_EXPORTER_OTLP_<name>, and the key it came from.
@@ -47,7 +50,7 @@ func traceExporterOptions(getenv func(string) string) ([]otlptracehttp.Option, e
 	if key, v := signalValue(getenv, "TRACES", "TIMEOUT"); v != "" {
 		ms, err := strconv.Atoi(v)
 		if err != nil || ms <= 0 {
-			return nil, fmt.Errorf("otel: %s must be a positive number of milliseconds, got %q", key, v)
+			return nil, fmt.Errorf("otel: %s must be a positive number of milliseconds", key)
 		}
 
 		opts = append(opts, otlptracehttp.WithTimeout(time.Duration(ms)*time.Millisecond))
@@ -60,7 +63,7 @@ func traceExporterOptions(getenv func(string) string) ([]otlptracehttp.Option, e
 		case "none":
 			opts = append(opts, otlptracehttp.WithCompression(otlptracehttp.NoCompression))
 		default:
-			return nil, fmt.Errorf("otel: %s must be gzip or none, got %q", key, v)
+			return nil, fmt.Errorf("otel: %s must be gzip or none", key)
 		}
 	}
 
@@ -136,7 +139,7 @@ func samplerFromEnv(getenv func(string) string) (sdktrace.Sampler, error) {
 
 		r, err := strconv.ParseFloat(arg, 64)
 		if err != nil || r < 0 || r > 1 {
-			return 0, fmt.Errorf("otel: OTEL_TRACES_SAMPLER_ARG must be a ratio between 0 and 1, got %q", arg)
+			return 0, errors.New("otel: OTEL_TRACES_SAMPLER_ARG must be a ratio between 0 and 1")
 		}
 
 		return r, nil
@@ -163,6 +166,9 @@ func samplerFromEnv(getenv func(string) string) (sdktrace.Sampler, error) {
 
 		return sdktrace.ParentBased(sdktrace.TraceIDRatioBased(r)), nil
 	default:
-		return nil, fmt.Errorf("otel: unknown OTEL_TRACES_SAMPLER %q", name)
+		return nil, errors.New(
+			"otel: unknown OTEL_TRACES_SAMPLER (always_on, always_off, traceidratio, parentbased_always_on, " +
+				"parentbased_always_off or parentbased_traceidratio)",
+		)
 	}
 }

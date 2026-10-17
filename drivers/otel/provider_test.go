@@ -10,14 +10,20 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	otelglobal "go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	metricnoop "go.opentelemetry.io/otel/metric/noop"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	tracenoop "go.opentelemetry.io/otel/trace/noop"
 
 	"github.com/AlexGalhardo/vukem"
 	"github.com/AlexGalhardo/vukem/config"
@@ -329,6 +335,16 @@ func TestProvider_InstrumentsDatabaseQueueMailAndHTTP(t *testing.T) {
 	var names []string
 	for _, s := range exp.GetSpans() {
 		names = append(names, s.Name)
+
+		if s.Name == "SELECT" {
+			if got := attribute.NewSet(s.Attributes...); got.HasValue("db.system.name") {
+				if v, _ := got.Value("db.system.name"); v.AsString() != "sqlite" {
+					t.Errorf("SELECT db.system.name = %q, want sqlite (from DATABASE_URL)", v.AsString())
+				}
+			} else {
+				t.Error("SELECT span has no db.system.name")
+			}
+		}
 	}
 
 	slices.Sort(names)
@@ -482,7 +498,7 @@ func TestSecurity_A09_OTelBadSettingsDoNotEchoHeaders(t *testing.T) {
 		{
 			name:    "sampler",
 			env:     map[string]string{"OTEL_TRACES_SAMPLER": "sometimes"},
-			wantErr: `unknown OTEL_TRACES_SAMPLER "sometimes"`,
+			wantErr: "unknown OTEL_TRACES_SAMPLER",
 		},
 		{
 			name:    "sampler arg",
@@ -510,6 +526,12 @@ func TestSecurity_A09_OTelBadSettingsDoNotEchoHeaders(t *testing.T) {
 			if strings.Contains(err.Error(), secret) {
 				t.Fatalf("New() error = %v, echoes the header value", err)
 			}
+
+			for k, v := range tt.env {
+				if k != "OTEL_EXPORTER_OTLP_ENDPOINT" && strings.Contains(err.Error(), strconv.Quote(v)) {
+					t.Errorf("New() error = %v, echoes the %s value", err, k)
+				}
+			}
 		})
 	}
 }
@@ -522,15 +544,66 @@ func TestProvider_InstrumentAfterDBUseFails(t *testing.T) {
 		return err
 	})
 
+	exp := &shutdownExporter{InMemoryExporter: tracetest.NewInMemoryExporter()}
+	reader := sdkmetric.NewManualReader()
+
 	_, err := vukem.New(
 		vukem.WithSource(config.MapSource(map[string]string{
 			"APP_KEY": config.GenerateKey(), "APP_ENV": "development", "DATABASE_URL": ":memory:",
 		})),
 		vukem.WithLogger(slog.New(slog.DiscardHandler)),
-		vukem.WithProviders(early, otel.New(otel.Config{Exporter: tracetest.NewInMemoryExporter()})),
+		vukem.WithProviders(early, otel.New(otel.Config{Exporter: exp, MetricReader: reader})),
 	)
 
 	if !errors.Is(err, vukem.ErrInstrumentTooLate) {
 		t.Fatalf("New() = %v, want ErrInstrumentTooLate", err)
+	}
+
+	// The failed Register must not leak the batcher and reader.
+	if !exp.shut.Load() {
+		t.Error("span exporter not shut down after a failed Register")
+	}
+
+	if err := reader.Collect(t.Context(), &metricdata.ResourceMetrics{}); !errors.Is(err, sdkmetric.ErrReaderShutdown) {
+		t.Errorf("reader.Collect() = %v, want ErrReaderShutdown", err)
+	}
+}
+
+type shutdownExporter struct {
+	*tracetest.InMemoryExporter
+
+	shut atomic.Bool
+}
+
+func (e *shutdownExporter) Shutdown(ctx context.Context) error {
+	e.shut.Store(true)
+	return e.InMemoryExporter.Shutdown(ctx)
+}
+
+// TestProvider_GlobalInstallsOnlyRealProviders is not parallel: it
+// changes the OpenTelemetry globals.
+func TestProvider_GlobalInstallsOnlyRealProviders(t *testing.T) {
+	existing := sdktrace.NewTracerProvider()
+	t.Cleanup(func() { _ = existing.Shutdown(context.Background()) })
+
+	otelglobal.SetTracerProvider(existing)
+	t.Cleanup(func() { otelglobal.SetTracerProvider(tracenoop.NewTracerProvider()) })
+	t.Cleanup(func() { otelglobal.SetMeterProvider(metricnoop.NewMeterProvider()) })
+
+	p := otel.New(otel.Config{MetricReader: sdkmetric.NewManualReader(), Global: true})
+
+	app, err := newApp(t, nil, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() { _ = app.Shutdown(context.Background()) })
+
+	if otelglobal.GetTracerProvider() != existing {
+		t.Error("Global replaced the global TracerProvider with a no-op (tracing is off)")
+	}
+
+	if otelglobal.GetMeterProvider() != p.MeterProvider() {
+		t.Error("Global did not install the MeterProvider")
 	}
 }

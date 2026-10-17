@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	otelglobal "go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -45,9 +46,14 @@ type Config struct {
 	MetricReader sdkmetric.Reader
 	// QueryText records the SQL text on database spans (see WithQueryText).
 	QueryText bool
-	// Global also installs the TracerProvider, MeterProvider and
-	// propagator as the OpenTelemetry globals, for libraries instrumented
-	// through them.
+	// DBSystem is db.system.name on database spans and metrics (see
+	// WithDBSystem). It defaults to the system of DATABASE_URL's scheme
+	// (postgresql, mysql, mariadb, sqlite); unknown schemes leave it unset.
+	DBSystem string
+	// Global also installs the TracerProvider (with the propagator) and
+	// the MeterProvider as the OpenTelemetry globals, for libraries
+	// instrumented through them. Only providers that are on are installed:
+	// a disabled signal never replaces an existing global with a no-op.
 	Global bool
 }
 
@@ -128,9 +134,10 @@ func (p *Provider) Register(app *vukem.App) error {
 		return err
 	}
 
+	var sampler sdktrace.Sampler
+
 	if exp != nil {
-		sampler := p.cfg.Sampler
-		if sampler == nil {
+		if sampler = p.cfg.Sampler; sampler == nil {
 			if sampler, err = samplerFromEnv(getenv); err != nil {
 				return err
 			}
@@ -139,38 +146,64 @@ func (p *Provider) Register(app *vukem.App) error {
 		if sampler == nil {
 			sampler = sdktrace.ParentBased(sdktrace.AlwaysSample())
 		}
+	}
 
+	opts := []Option{}
+	if p.cfg.QueryText {
+		opts = append(opts, WithQueryText())
+	}
+
+	if sys := p.cfg.DBSystem; sys != "" {
+		opts = append(opts, WithDBSystem(sys))
+	} else if sys := dbSystemOf(getenv("DATABASE_URL")); sys != "" {
+		opts = append(opts, WithDBSystem(sys))
+	}
+
+	// Side effects on the app (hooks, logger, globals, middleware) come
+	// after everything that can fail; the SDK providers start goroutines,
+	// so a failed Register shuts them down.
+	if exp != nil {
 		p.tp = sdktrace.NewTracerProvider(
 			sdktrace.WithBatcher(exp),
 			sdktrace.WithResource(res),
 			sdktrace.WithSampler(sampler),
 		)
-
-		// Loggers taken from app.Log after Register (request logging,
-		// web.Ctx.Log, queue, mail) carry the trace and span ids of the
-		// record's context.
-		app.Log = slog.New(LogHandler(app.Log.Handler()))
-		app.Router.Services().Log = app.Log
 	}
 
 	if p.cfg.MetricReader != nil {
 		p.mp = sdkmetric.NewMeterProvider(sdkmetric.WithReader(p.cfg.MetricReader), sdkmetric.WithResource(res))
 	}
 
-	if p.cfg.Global {
-		otelglobal.SetTracerProvider(p.TracerProvider())
-		otelglobal.SetMeterProvider(p.MeterProvider())
-		otelglobal.SetTextMapPropagator(DefaultPropagator())
-	}
+	opts = append(opts, WithMeterProvider(p.MeterProvider()))
+	ob := NewObserver(p.TracerProvider(), opts...)
 
-	opts := []Option{WithMeterProvider(p.MeterProvider())}
-	if p.cfg.QueryText {
-		opts = append(opts, WithQueryText())
-	}
+	// A hook that cannot be attached is a boot error rather than a warning:
+	// the fix (list otel.New first in WithProviders) is immediate, and a
+	// silently partial trace is harder to notice than a failed boot.
+	if err := app.Instrument(ob.Instrumentation()); err != nil {
+		_ = p.Shutdown(context.Background(), app)
+		p.tp, p.mp = nil, nil
 
-	p.ob = NewObserver(p.TracerProvider(), opts...)
-	if err := app.Instrument(p.ob.Instrumentation()); err != nil {
 		return fmt.Errorf("otel: %w", err)
+	}
+
+	p.ob = ob
+
+	if p.tp != nil {
+		// Loggers taken from app.Log after Register (request logging,
+		// web.Ctx.Log, queue, mail) carry the trace and span ids of the
+		// record's context.
+		app.Log = slog.New(LogHandler(app.Log.Handler()))
+		app.Router.Services().Log = app.Log
+
+		if p.cfg.Global {
+			otelglobal.SetTracerProvider(p.tp)
+			otelglobal.SetTextMapPropagator(DefaultPropagator())
+		}
+	}
+
+	if p.mp != nil && p.cfg.Global {
+		otelglobal.SetMeterProvider(p.mp)
 	}
 
 	mw := Middleware(p.TracerProvider(), opts...)
@@ -178,6 +211,30 @@ func (p *Provider) Register(app *vukem.App) error {
 	app.Router.Use(mw)
 
 	return nil
+}
+
+// dbSystemOf maps a DATABASE_URL to db.system.name, following the schemes
+// of the core SQLite driver and drivers/postgres and drivers/mysql.
+func dbSystemOf(rawURL string) string {
+	if rawURL == ":memory:" || strings.HasPrefix(rawURL, "file:") || strings.HasPrefix(rawURL, "sqlite:") {
+		return "sqlite"
+	}
+
+	scheme, _, ok := strings.Cut(rawURL, "://")
+	if !ok {
+		return ""
+	}
+
+	switch scheme {
+	case "postgres", "postgresql":
+		return "postgresql"
+	case "mysql":
+		return "mysql"
+	case "mariadb":
+		return "mariadb"
+	default:
+		return ""
+	}
 }
 
 // traceExporter builds the OTLP/HTTP exporter from app.Source; it returns
@@ -229,9 +286,22 @@ func (p *Provider) resource(app *vukem.App) (*resource.Resource, error) {
 	return resource.NewWithAttributes(semconv.SchemaURL, attrs...), nil
 }
 
+// shutdownTimeout bounds Shutdown when ctx has no deadline, so an
+// unreachable collector cannot hang the process.
+const shutdownTimeout = 10 * time.Second
+
 // Shutdown implements vukem.Shutdowner: it exports pending spans and
-// metrics.
+// metrics. App.Run calls it after the runners (HTTP server, queue worker)
+// have drained, within SHUTDOWN_TIMEOUT, so the last requests and jobs are
+// exported; without a deadline on ctx it gives up after 10s.
 func (p *Provider) Shutdown(ctx context.Context, _ *vukem.App) error {
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+
+		ctx, cancel = context.WithTimeout(ctx, shutdownTimeout)
+		defer cancel()
+	}
+
 	var errs []error
 
 	if p.tp != nil {

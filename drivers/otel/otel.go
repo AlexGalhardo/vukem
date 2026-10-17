@@ -46,6 +46,7 @@ type options struct {
 	meter      metric.MeterProvider
 	queryText  bool
 	inject     bool
+	dbSystem   string
 }
 
 // WithPropagator replaces the default W3C TraceContext + Baggage propagator

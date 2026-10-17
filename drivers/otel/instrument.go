@@ -55,6 +55,13 @@ func WithQueryText() Option {
 	return func(o *options) { o.queryText = true }
 }
 
+// WithDBSystem sets db.system.name ("postgresql", "mysql", "sqlite"...)
+// on database spans and metrics. The Provider derives it from
+// DATABASE_URL.
+func WithDBSystem(name string) Option {
+	return func(o *options) { o.dbSystem = name }
+}
+
 // WithClientPropagation makes Transport inject the trace context (and
 // baggage, with the default propagator) into outgoing requests. It is off
 // by default: requests to third parties would receive trace ids and any
@@ -155,6 +162,10 @@ func (ob *Observer) ObserveQuery(ctx context.Context, q database.Query) {
 	op := operationOf(q.SQL)
 
 	attrs := []attribute.KeyValue{}
+	if ob.o.dbSystem != "" {
+		attrs = append(attrs, semconv.DBSystemNameKey.String(ob.o.dbSystem))
+	}
+
 	if op != "" {
 		attrs = append(attrs, semconv.DBOperationName(op))
 	}
