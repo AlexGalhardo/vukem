@@ -270,7 +270,8 @@ func TestCommands(t *testing.T) {
 		t.Fatalf("about = %v %q", err, out.String())
 	}
 
-	if err := run("about", "-json"); err != nil || !strings.Contains(out.String(), `"Environment":"test"`) {
+	if err := run("about", "-json"); err != nil || !strings.Contains(out.String(), `"Environment":"test"`) ||
+		!strings.Contains(out.String(), `"Trusted proxies":"none"`) {
 		t.Fatalf("about -json = %v %q", err, out.String())
 	}
 

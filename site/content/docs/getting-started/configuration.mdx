@@ -77,6 +77,8 @@ Commit `.env.example` and git-ignore `.env` and `.env.*.local`. Never commit rea
 | `HOST` | `localhost` | Listen host |
 | `PORT` | `3000` | Listen port, 0–65535 |
 | `SHUTDOWN_TIMEOUT` | `15s` | Graceful shutdown budget |
+| `TRUSTED_PROXIES` | empty (trust nobody) | Comma-separated CIDRs or IPs whose `X-Forwarded-For` sets `c.IP()`; an invalid entry is a boot error ([Deploy](/docs/deployment/docker-and-railway#trusted-proxies)) |
+| `TRUST_FORWARDED_PROTO` | `false` | Treat `X-Forwarded-Proto: https` from a trusted proxy as HTTPS (HSTS); requires `TRUSTED_PROXIES` |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 | `LOG_FORMAT` | `text` (`json` in production) | `text` or `json` |
 | `LOG_DEDUP_WINDOW` | `1m` in production, off elsewhere | Repeated identical errors become one `repeated` summary per window; `0` disables it |
@@ -149,4 +151,5 @@ signer, err := app.DeriveKey("signed.urls", 32) // config.ErrKeyMissing instead 
 | Missing `APP_KEY` with explicit `APP_ENV=development`/`test` | Boots; key-derived features fail closed on use |
 | `APP_DEBUG=true` with `APP_ENV=production` | Boot error |
 | `PORT` out of range | Boot error |
+| Invalid `TRUSTED_PROXIES` entry, or `TRUST_FORWARDED_PROTO` without `TRUSTED_PROXIES` | Boot error |
 | Debug error details | Only when `Services.Debug` is set; never in production |

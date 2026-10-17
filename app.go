@@ -7,6 +7,7 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"net"
 	"os"
 	"slices"
 	"strings"
@@ -83,6 +84,13 @@ type Config struct {
 	// clients (containers, remote VMs). Anyone who reaches the app then
 	// sees its requests, queries, logs and mail.
 	DevtoolsInsecureAllowRemote bool `env:"DEVTOOLS_INSECURE_ALLOW_REMOTE"`
+	// TrustedProxies lists the proxies (comma-separated CIDRs or IPs) whose
+	// X-Forwarded-For is honoured by c.IP(). Empty trusts nobody; an
+	// invalid entry is a boot error.
+	TrustedProxies string `env:"TRUSTED_PROXIES"`
+	// TrustForwardedProto treats X-Forwarded-Proto: https from a trusted
+	// proxy as HTTPS (HSTS). It requires TRUSTED_PROXIES.
+	TrustForwardedProto bool `env:"TRUST_FORWARDED_PROTO"`
 }
 
 // IsProduction reports whether APP_ENV is production.
@@ -174,6 +182,8 @@ type App struct {
 	queueErr  error
 
 	now func() time.Time
+	// proxies is the parsed TRUSTED_PROXIES.
+	proxies []*net.IPNet
 
 	dbOnce     sync.Once
 	db         *database.DB
@@ -381,6 +391,15 @@ func New(opts ...Option) (*App, error) {
 		return nil, err
 	}
 
+	proxies, err := parseTrustedProxies(cfg.TrustedProxies)
+	if err != nil {
+		return nil, err
+	}
+
+	if cfg.TrustForwardedProto && len(proxies) == 0 {
+		return nil, errors.New("vukem: TRUST_FORWARDED_PROTO requires TRUSTED_PROXIES")
+	}
+
 	enc, err := newCrypt(key, cfg.PreviousKeys)
 	if err != nil {
 		return nil, err
@@ -471,6 +490,7 @@ func New(opts ...Option) (*App, error) {
 		noHTTP:    o.noHTTP,
 		drivers:   o.drivers,
 		now:       now,
+		proxies:   proxies,
 
 		migrations:  o.migrations,
 		seeders:     o.seeders,
@@ -631,6 +651,39 @@ func checkConfig(cfg *Config, envSet bool) (config.Key, error) {
 	}
 
 	return key, errors.Join(errs...)
+}
+
+// parseTrustedProxies parses TRUSTED_PROXIES: comma-separated CIDRs or
+// bare IPs (a single host). Empty entries are skipped; anything else that
+// does not parse refuses the boot, since a dropped entry would silently
+// change which client IPs rate limits and logs see.
+func parseTrustedProxies(s string) ([]*net.IPNet, error) {
+	var nets []*net.IPNet
+
+	for entry := range strings.SplitSeq(s, ",") {
+		if entry = strings.TrimSpace(entry); entry == "" {
+			continue
+		}
+
+		if _, n, err := net.ParseCIDR(entry); err == nil {
+			nets = append(nets, n)
+			continue
+		}
+
+		ip := net.ParseIP(entry)
+		if ip == nil {
+			return nil, fmt.Errorf("vukem: TRUSTED_PROXIES entry %q is not an IP or CIDR", entry)
+		}
+
+		bits := 128
+		if ip4 := ip.To4(); ip4 != nil {
+			ip, bits = ip4, 32
+		}
+
+		nets = append(nets, &net.IPNet{IP: ip, Mask: net.CIDRMask(bits, bits)})
+	}
+
+	return nets, nil
 }
 
 // newCrypt builds app.Crypt: the "crypt" key derived from APP_KEY encrypts,

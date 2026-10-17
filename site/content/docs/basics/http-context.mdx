@@ -63,6 +63,15 @@ r := router.New(services)
 
 `c.IP()` returns the direct peer address unless that peer is listed in `TrustedProxies`. Only then is `X-Forwarded-For` read, right to left, skipping trusted hops, so clients cannot spoof their address.
 
+In an app built by `vukem.New` (every starter), set them from the environment; nobody is trusted by default and an invalid entry stops the boot:
+
+```dotenv
+TRUSTED_PROXIES=10.0.0.0/8,192.0.2.10
+TRUST_FORWARDED_PROTO=true # X-Forwarded-Proto: https from those peers enables HSTS
+```
+
+With a router you build yourself, set the field:
+
 ```go
 _, lb, _ := net.ParseCIDR("10.0.0.0/8")
 services.TrustedProxies = []*net.IPNet{lb}

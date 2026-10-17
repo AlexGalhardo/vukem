@@ -26,6 +26,7 @@ What Vukem does **by default** to protect applications, mapped to the [OWASP Top
 | Signed URLs (HMAC, expiry) for temporary downloads and email verification (`TestSecurity_A01_SignedURLTampering`) | [x] |
 | `signed.New` and `social.New` panic on a key shorter than 32 bytes, so an empty key (e.g. an ignored `app.DeriveKey` error) never produces forgeable HMACs (`TestSecurity_A04_SignedRefusesWeakKeys`, `TestSecurity_A04_SocialRefusesWeakKeys`) | [x] |
 | Client IP (`c.IP()`, used by rate limits, login throttles and logs) reads `X-Forwarded-For` only from `TrustedProxies` peers, across every header line, right to left; a non-IP entry falls back to the peer address (`TestSecurity_A01_IPIgnoresSpoofedForwardedFor`) | [x] |
+| `TRUSTED_PROXIES` (comma-separated CIDRs or IPs) is the only source of trusted proxies in apps built by `vukem.New`; unset trusts nobody, so a spoofed `X-Forwarded-For` from any peer is ignored (`TestSecurity_A01_TrustedProxiesFromEnv`) | [x] |
 | Open redirects: `web.SafeRedirect` and `c.Back` accept only relative paths and same-host URLs, and check the resulting path before and after `http.Redirect` cleans it, so `//evil.com`, `/\evil.com`, `/./\evil.com` and `https://app//evil.com` fall back (`TestSecurity_A01_SafeRedirectBlocksOpenRedirects`, `FuzzSafeRedirect`) | [x] |
 | The devtools dashboard (`/_vukem`) answers only a loopback peer with a loopback `Host` and no proxy headers (which also defeats DNS rebinding); others get a plain 404. `DEVTOOLS_INSECURE_ALLOW_REMOTE=true` lifts the check (`TestSecurity_A01_DevtoolsLoopbackOnly`) | [x] |
 | **SSRF:** `httpclient.Safe()` dialer rejects loopback, private, link-local and metadata (`169.254.169.254`) addresses after DNS resolution, including IPv6 forms that embed or translate IPv4 (IPv4-mapped, -compatible and -translated, NAT64, 6to4, Teredo), ignores proxy environment variables, limits redirects and re-checks each hop; it is the client for app features that fetch user-supplied URLs (the framework itself fetches none) (`TestSecurity_A01_SSRFAddresses`, `TestSecurity_A01_SSRFLoopbackAndRedirect`) | [x] |
@@ -46,6 +47,7 @@ What Vukem does **by default** to protect applications, mapped to the [OWASP Top
 | Default | Check |
 | --- | --- |
 | Boot refuses: a missing `APP_KEY` in production or when `APP_ENV` is unset/empty (only an explicit `development`/`test` tolerates it), a short or malformed one anywhere (`TestSecurity_A02_ProductionRequiresAppKey`), an `APP_ENV` other than `development`, `test` or `production` (a typo would skip every production check), `APP_DEBUG=true` with `APP_ENV=production`, CORS wildcard + credentials, cookies without `Secure` in production (`TestSecurity_A02_BootRefusesMisconfiguration`, `TestSecurity_A01_CORS`, `TestSecurity_A02_ConfigChecks`) | [x] |
+| An invalid `TRUSTED_PROXIES` entry, or `TRUST_FORWARDED_PROTO=true` without `TRUSTED_PROXIES`, refuses the boot (`TestSecurity_A02_TrustedProxiesMisconfigurationRefusesBoot`); `X-Forwarded-Proto: https` turns on HSTS only from a trusted peer (`TestSecurity_A02_TrustForwardedProtoOnlyFromTrustedProxies`, `TestSecurity_A02_ForwardedProtoOnlyFromTrustedProxies`) | [x] |
 | `http.Server` always has `ReadHeaderTimeout`, `ReadTimeout`, `WriteTimeout`, `IdleTimeout`, `MaxHeaderBytes` (`TestSecurity_A02_ServerTimeouts`) | [x] |
 | Security headers middleware on by default: `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `X-Frame-Options: DENY` + CSP `frame-ancestors 'none'`, `Cross-Origin-Opener-Policy: same-origin`, `Strict-Transport-Security` (HTTPS only, configurable) (`TestSecurity_A02_SecureHeaders`, `TestPageWorksUnderTheDefaultSecureHeaders`) | [x] |
 | Content-Security-Policy builder with per-request nonces (`{{ cspNonce }}`), starter ships a strict policy; Vite tags get the nonce (`TestSecurity_A02_ViteTagsCarryNonce`) | [x] |
@@ -70,7 +72,7 @@ What Vukem does **by default** to protect applications, mapped to the [OWASP Top
 | GraphQL (`contrib/graphql`): in production the explorer page is not registered and `__schema` / `__type` introspection is rejected unless `InsecureExplorerInProduction` / `InsecureIntrospectionInProduction` opt in; the explorer is embedded (no CDN) and runs under its own nonce CSP (`TestSecurity_A02_GraphQLExplorerOffInProduction`) | [x] |
 | gRPC server reflection (`grpc.Reflection`, `contrib/grpc`) is not served in production unless `GRPC_INSECURE_REFLECTION_IN_PRODUCTION=true` (`TestSecurity_A02_GRPCReflectionOffInProduction`) | [x] |
 
-**App responsibility:** terminate TLS (or run behind a proxy that does), set `APP_URL` to the `https` origin, configure trusted proxies.
+**App responsibility:** terminate TLS (or run behind a proxy that does), set `APP_URL` to the `https` origin, set `TRUSTED_PROXIES` to the proxy's network (and `TRUST_FORWARDED_PROTO=true` when it terminates TLS).
 
 ### A03:2025 — Software Supply Chain Failures
 
