@@ -250,17 +250,10 @@ type pruner interface {
 // storePruner finds the pruner in s, looking through stores that wrap
 // another one (metrics, tracing) and expose it with Unwrap.
 func storePruner(s cache.Store) (pruner, bool) {
-	for s != nil {
-		if p, ok := s.(pruner); ok {
+	for l := range cache.Layers(s) {
+		if p, ok := l.(pruner); ok {
 			return p, true
 		}
-
-		u, ok := s.(interface{ Unwrap() cache.Store })
-		if !ok {
-			return nil, false
-		}
-
-		s = u.Unwrap()
 	}
 
 	return nil, false

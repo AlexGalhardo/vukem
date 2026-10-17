@@ -106,6 +106,11 @@ type wrapped struct{ cache.Store }
 
 func (w wrapped) Unwrap() cache.Store { return w.Store }
 
+// selfWrapped unwraps to itself; storePruner must not loop on it.
+type selfWrapped struct{ cache.Store }
+
+func (s *selfWrapped) Unwrap() cache.Store { return s }
+
 // A store wrapped for metrics or tracing still gets pruned when it
 // exposes the store underneath with Unwrap.
 func TestStorePrunerUnwraps(t *testing.T) {
@@ -122,6 +127,7 @@ func TestStorePrunerUnwraps(t *testing.T) {
 		"wrapped twice":  {store: wrapped{wrapped{db}}, want: true},
 		"memory":         {store: cache.NewMemory(0), want: false},
 		"wrapped memory": {store: wrapped{cache.NewMemory(0)}, want: false},
+		"self reference": {store: &selfWrapped{Store: cache.NewMemory(0)}, want: false},
 	} {
 		if _, ok := storePruner(tt.store); ok != tt.want {
 			t.Errorf("%s: storePruner() = %v, want %v", name, ok, tt.want)

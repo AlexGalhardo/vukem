@@ -1,7 +1,10 @@
 package cache_test
 
 import (
+	"fmt"
 	"testing"
+
+	"github.com/google/go-cmp/cmp"
 
 	"github.com/AlexGalhardo/vukem/cache"
 )
@@ -77,5 +80,69 @@ func TestSecurity_A02_UnknownCacheStoreIsNotShared(t *testing.T) {
 		if cache.Shared(st) {
 			t.Errorf("Shared(%s) = true, want false (undeclared stores fail closed)", name)
 		}
+	}
+}
+
+// selfWrapper unwraps to itself, a broken decorator that would loop.
+type selfWrapper struct{ cache.Store }
+
+func (s *selfWrapper) Unwrap() cache.Store { return s }
+
+// deep wraps st n times with Unwrap.
+func deep(st cache.Store, n int) cache.Store {
+	for range n {
+		st = unwrapper{st}
+	}
+
+	return st
+}
+
+// Unwrap chains are followed for a bounded number of hops: a store that
+// unwraps to itself, or one buried deeper than the limit, is not shared.
+func TestSharedBoundsUnwrap(t *testing.T) {
+	t.Parallel()
+
+	_, db := openSQLiteStore(t)
+
+	for name, tt := range map[string]struct {
+		store cache.Store
+		want  bool
+	}{
+		"self reference": {store: &selfWrapper{Store: db}, want: false},
+		"31 hops":        {store: deep(db, 31), want: true},
+		"40 hops":        {store: deep(db, 40), want: false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := cache.Shared(tt.store); got != tt.want {
+				t.Errorf("Shared(%s) = %v, want %v", name, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLayers(t *testing.T) {
+	t.Parallel()
+
+	mem := cache.NewMemory(0)
+
+	var got []string
+	for st := range cache.Layers(unwrapper{opaque{mem}}) {
+		got = append(got, fmt.Sprintf("%T", st))
+	}
+
+	want := []string{"cache_test.unwrapper", "cache_test.opaque"}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("Layers() (-want +got):\n%s", diff)
+	}
+
+	n := 0
+	for range cache.Layers(&selfWrapper{Store: mem}) {
+		n++
+	}
+
+	if n != cache.MaxUnwrap {
+		t.Errorf("Layers(self reference) yielded %d stores, want %d", n, cache.MaxUnwrap)
 	}
 }
