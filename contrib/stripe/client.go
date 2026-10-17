@@ -170,8 +170,21 @@ func (o requestOptions) validate() error {
 	return nil
 }
 
-func validAccountID(id string) bool {
-	rest, ok := strings.CutPrefix(id, "acct_")
+func validAccountID(id string) bool { return validID(id, "acct_") }
+
+// validID reports whether id is one of prefixes followed by 1-255
+// alphanumerics, the shape of every Stripe object id, so an id can never
+// add path segments, a query or a header.
+func validID(id string, prefixes ...string) bool {
+	var rest string
+
+	ok := false
+	for _, p := range prefixes {
+		if rest, ok = strings.CutPrefix(id, p); ok {
+			break
+		}
+	}
+
 	if !ok || rest == "" || len(rest) > 255 {
 		return false
 	}
@@ -183,6 +196,29 @@ func validAccountID(id string) bool {
 	}
 
 	return true
+}
+
+// validPath accepts an API path: /v1/ or /v2/, no dot segments (also
+// percent-encoded), query, fragment, backslash or control characters. The
+// path is appended to the base URL, so anything else could reach another
+// endpoint or host with the API key.
+func validPath(path string) error {
+	if !strings.HasPrefix(path, "/v1/") && !strings.HasPrefix(path, "/v2/") {
+		return fmt.Errorf("%w: path must start with /v1/ or /v2/", ErrInvalidRequestOption)
+	}
+
+	lower := strings.ToLower(path)
+	if strings.Contains(path, "..") || strings.Contains(lower, "%2e") || strings.ContainsAny(path, "?#\\") {
+		return fmt.Errorf("%w: path must not contain dot segments, a query or a fragment", ErrInvalidRequestOption)
+	}
+
+	for i := range len(path) {
+		if b := path[i]; b < 0x21 || b == 0x7f {
+			return fmt.Errorf("%w: path must not contain spaces or control characters", ErrInvalidRequestOption)
+		}
+	}
+
+	return nil
 }
 
 // Call sends any request (Connect endpoints, refunds, ...) and decodes the
@@ -211,6 +247,10 @@ func (c *Client) call(ctx context.Context, method, path string, p Params, out an
 	}
 
 	if err := o.validate(); err != nil {
+		return err
+	}
+
+	if err := validPath(path); err != nil {
 		return err
 	}
 
@@ -356,10 +396,12 @@ func (e *Error) Error() string {
 	return s
 }
 
-// Is matches errors of the same Type and Code (ErrCardDeclined, ...).
+// Is matches errors of the same Type and Code (ErrCardDeclined, ...) and,
+// when the target sets one, the same Status (ErrNotFound).
 func (e *Error) Is(target error) bool {
 	t, ok := target.(*Error)
-	return ok && t.Type == e.Type && (t.Code == "" || t.Code == e.Code)
+
+	return ok && t.Type == e.Type && (t.Code == "" || t.Code == e.Code) && (t.Status == 0 || t.Status == e.Status)
 }
 
 // Sentinel errors to test with errors.Is.
@@ -368,6 +410,8 @@ var (
 	ErrInvalid      = &Error{Type: "invalid_request_error"}
 	ErrRateLimited  = &Error{Type: "rate_limit_error"}
 	ErrAuth         = &Error{Type: "authentication_error"}
+	// ErrNotFound is a 404: v1 code resource_missing, v2 code not_found.
+	ErrNotFound = &Error{Type: "invalid_request_error", Status: http.StatusNotFound}
 )
 
 func parseError(res *http.Response, b []byte) *Error {
@@ -375,28 +419,53 @@ func parseError(res *http.Response, b []byte) *Error {
 		Error *Error `json:"error"`
 	}
 
-	e := &Error{Type: "api_error", Message: http.StatusText(res.StatusCode)}
+	e := &Error{Message: http.StatusText(res.StatusCode)}
 	if json.Unmarshal(b, &env) == nil && env.Error != nil {
 		e = env.Error
 	}
 
 	e.Status = res.StatusCode
 	e.RequestID = res.Header.Get("Request-Id")
-
-	if res.StatusCode == http.StatusTooManyRequests && e.Type == "" {
-		e.Type = "rate_limit_error"
-	}
+	e.Type = errorType(e.Type, res.StatusCode)
 
 	return e
+}
+
+// errorType normalizes a v1 or v2 error type so the sentinels match both.
+// API v2 reuses the v1 envelope but names its rate limit type "rate_limit",
+// answers missing fields with code invalid_fields and no type, and may add
+// types; an empty or unknown type falls back to the HTTP status, as the
+// official SDKs do.
+func errorType(typ string, status int) string {
+	switch typ {
+	case "api_error", "card_error", "idempotency_error", "invalid_request_error",
+		"rate_limit_error", "authentication_error", "temporary_session_expired":
+		return typ
+	case "rate_limit":
+		return "rate_limit_error"
+	}
+
+	switch status {
+	case http.StatusBadRequest, http.StatusNotFound:
+		return "invalid_request_error"
+	case http.StatusUnauthorized:
+		return "authentication_error"
+	case http.StatusPaymentRequired:
+		return "card_error"
+	case http.StatusTooManyRequests:
+		return "rate_limit_error"
+	default:
+		return "api_error"
+	}
 }
 
 // encodeBody encodes p for the request: a query string on GET (v2 reads
 // arrays as include[0]=a, the same bracket syntax as v1), JSON for API v2
 // writes (v2 rejects form bodies) and a form for v1 writes. It returns the
-// Content-Type ("" on GET).
+// Content-Type ("" on GET and on a DELETE without params, which has no body).
 func encodeBody(method string, v2 bool, p Params) (body, contentType string, err error) {
 	switch {
-	case method == http.MethodGet:
+	case method == http.MethodGet, method == http.MethodDelete && len(p) == 0:
 		return encodeParams(p), "", nil
 	case v2:
 		if p == nil {

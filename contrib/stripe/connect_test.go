@@ -339,6 +339,22 @@ func TestSecurity_A03_StripeRequestHeadersValidated(t *testing.T) {
 			_, err := c.CreateTransferReversal(t.Context(), "", nil)
 			return err
 		},
+		"refund id that is not a refund": func() error {
+			_, err := c.GetRefund(t.Context(), "re_1/../../v1/balance")
+			return err
+		},
+		"transfer id that is not a transfer": func() error {
+			_, err := c.GetTransfer(t.Context(), "cus_1")
+			return err
+		},
+		"reversal of a non-transfer": func() error {
+			_, err := c.CreateTransferReversal(t.Context(), "py_1", nil)
+			return err
+		},
+		"reversal id that is not a reversal": func() error {
+			_, err := c.GetTransferReversal(t.Context(), "tr_1", "re_1")
+			return err
+		},
 	}
 
 	for name, call := range tests {

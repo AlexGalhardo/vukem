@@ -176,9 +176,10 @@ func (c *Client) UpdateAccountV2(ctx context.Context, id string, p Params, opts 
 // CreateAccountLinkV2 creates an Accounts v2 onboarding link (POST
 // /v2/core/account_links): account and use_case with type
 // "account_onboarding" (or "account_update") and the matching object
-// holding refresh_url, return_url and, on API versions that take it, the
-// configurations to onboard. Each link is single-use: refresh_url should
-// create a new one, and the URL goes only to the signed-in account holder.
+// holding refresh_url, return_url and configurations (e.g. ["merchant",
+// "recipient"]): required on the pinned APIVersion, removed by Stripe in
+// 2026-09-30.endive. Each link is single-use: refresh_url should create a
+// new one, and the URL goes only to the signed-in account holder.
 func (c *Client) CreateAccountLinkV2(ctx context.Context, p Params, opts ...RequestOption) (AccountLinkV2, error) {
 	return sendOpts[AccountLinkV2](ctx, c, http.MethodPost, "/v2/core/account_links", p, withPlatformOnly(opts)...)
 }

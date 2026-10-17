@@ -381,3 +381,169 @@ func TestTransferReversals(t *testing.T) {
 		t.Errorf("GetTransferReversal request = %+v", got)
 	}
 }
+
+func TestErrorMapping(t *testing.T) {
+	t.Parallel()
+
+	// Envelopes as the Stripe SDKs parse them: v2 keeps {"error":{type,code,message}}
+	// but adds the types rate_limit and temporary_session_expired, and answers
+	// missing fields with code invalid_fields and no type.
+	tests := []struct {
+		name     string
+		status   int
+		body     string
+		want     []error
+		wantType string
+		wantCode string
+	}{
+		{
+			name: "v2 invalid request", status: 400,
+			body: `{"error":{"type":"invalid_request_error","code":"accounts_v2_access_blocked",` +
+				`"message":"Accounts v2 is not enabled for your merchant."}}`,
+			want: []error{stripe.ErrInvalid}, wantType: "invalid_request_error", wantCode: "accounts_v2_access_blocked",
+		},
+		{
+			name: "v2 missing fields without a type", status: 400,
+			body: `{"error":{"code":"invalid_fields","message":"Missing required field: use_case."}}`,
+			want: []error{stripe.ErrInvalid}, wantType: "invalid_request_error", wantCode: "invalid_fields",
+		},
+		{
+			name: "v2 rate_limit type", status: 429,
+			body: `{"error":{"type":"rate_limit","code":"account_rate_limit_exceeded","message":"Too many updates."}}`,
+			want: []error{stripe.ErrRateLimited}, wantType: "rate_limit_error", wantCode: "account_rate_limit_exceeded",
+		},
+		{
+			name:   "v2 not found",
+			status: 404,
+			body:   `{"error":{"code":"not_found","message":"The resource wasn't found."}}`,
+			want: []error{
+				stripe.ErrNotFound,
+				stripe.ErrInvalid,
+			},
+			wantType: "invalid_request_error",
+			wantCode: "not_found",
+		},
+		{
+			name:   "v1 resource missing",
+			status: 404,
+			body:   `{"error":{"type":"invalid_request_error","code":"resource_missing","param":"id"}}`,
+			want: []error{
+				stripe.ErrNotFound,
+				stripe.ErrInvalid,
+			},
+			wantType: "invalid_request_error",
+			wantCode: "resource_missing",
+		},
+		{
+			name:     "idempotency error keeps its type",
+			status:   409,
+			body:     `{"error":{"type":"idempotency_error","code":"idempotency_error","message":"Different parameters."}}`,
+			wantType: "idempotency_error",
+			wantCode: "idempotency_error",
+		},
+		{
+			name: "temporary session expired keeps its type", status: 401,
+			body:     `{"error":{"type":"temporary_session_expired","code":"temporary_session_expired"}}`,
+			wantType: "temporary_session_expired", wantCode: "temporary_session_expired",
+		},
+		{
+			name: "unknown type falls back to the status", status: 401,
+			body: `{"error":{"type":"some_future_type","message":"Invalid API Key provided."}}`,
+			want: []error{stripe.ErrAuth}, wantType: "authentication_error",
+		},
+		{
+			name: "no envelope 401", status: 401, body: `unauthorized`,
+			want: []error{stripe.ErrAuth}, wantType: "authentication_error",
+		},
+		{
+			name: "no envelope 429", status: 429, body: ``,
+			want: []error{stripe.ErrRateLimited}, wantType: "rate_limit_error",
+		},
+		{
+			name: "no envelope 500", status: 500, body: `oops`,
+			wantType: "api_error",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(tt.status)
+				_, _ = w.Write([]byte(tt.body))
+			}))
+			t.Cleanup(srv.Close)
+
+			c, err := stripe.New(key, stripe.WithBaseURL(srv.URL), stripe.WithRetries(0))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			err = c.Call(t.Context(), http.MethodGet, "/v2/core/accounts/acct_1", nil, nil)
+
+			var apiErr *stripe.Error
+			if !errors.As(err, &apiErr) {
+				t.Fatalf("Call = %v, want *stripe.Error", err)
+			}
+
+			if apiErr.Type != tt.wantType || apiErr.Code != tt.wantCode || apiErr.Status != tt.status {
+				t.Errorf("error = %+v, want type %q code %q status %d", apiErr, tt.wantType, tt.wantCode, tt.status)
+			}
+
+			for _, w := range tt.want {
+				if !errors.Is(err, w) {
+					t.Errorf("errors.Is(%v, %v) = false", err, w)
+				}
+			}
+
+			if tt.status != 404 && errors.Is(err, stripe.ErrNotFound) {
+				t.Errorf("errors.Is(%v, ErrNotFound) = true for status %d", err, tt.status)
+			}
+		})
+	}
+}
+
+func TestDeleteWithoutParamsSendsNoBody(t *testing.T) {
+	t.Parallel()
+
+	f := newV2API(t)
+	c := v2Client(t, f)
+
+	for _, path := range []string{"/v2/core/event_destinations/ed_1", "/v1/customers/cus_1"} {
+		_ = c.Call(t.Context(), http.MethodDelete, path, nil, nil)
+
+		if got := f.last(t); got.Body != "" || got.ContentType != "" {
+			t.Errorf("DELETE %s body %q content type %q, want none", path, got.Body, got.ContentType)
+		}
+	}
+}
+
+func TestSecurity_A03_StripeCallPathValidated(t *testing.T) {
+	t.Parallel()
+
+	f := newV2API(t)
+	c := v2Client(t, f)
+
+	bad := []string{
+		"", "v1/refunds", "/v3/x", "//evil.example/v1/x", "@evil.example/v1/x", "/v1/../v2/core/accounts",
+		"/v1/customers/..", "/v1/customers?limit=1", "/v1/customers#x", `/v1/customers\cus_1`,
+		"/v1/customers/%2e%2e", "/v1/customers/cus_1\r\nX: y",
+	}
+	for _, path := range bad {
+		if err := c.Call(t.Context(), http.MethodGet, path, nil, nil); !errors.Is(err, stripe.ErrInvalidRequestOption) {
+			t.Errorf("Call(%q) = %v, want ErrInvalidRequestOption", path, err)
+		}
+	}
+
+	if _, err := c.GetCustomer(t.Context(), ".."); !errors.Is(err, stripe.ErrInvalidRequestOption) {
+		t.Errorf(`GetCustomer("..") = %v, want ErrInvalidRequestOption`, err)
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if len(f.seen) != 0 {
+		t.Errorf("invalid paths reached the API: %+v", f.seen)
+	}
+}

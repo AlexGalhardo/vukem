@@ -53,10 +53,11 @@ func (c *Client) CreateRefund(ctx context.Context, p Params, opts ...RequestOpti
 	return sendOpts[Refund](ctx, c, http.MethodPost, "/v1/refunds", p, opts...)
 }
 
-// GetRefund retrieves a refund.
+// GetRefund retrieves a refund (re_, or pyr_ for the refund of a
+// connected account's transfer payment).
 func (c *Client) GetRefund(ctx context.Context, id string, opts ...RequestOption) (Refund, error) {
-	if id == "" {
-		return Refund{}, fmt.Errorf("%w: empty refund id", ErrInvalidRequestOption)
+	if !validID(id, "re_", "pyr_") {
+		return Refund{}, fmt.Errorf("%w: refund id must be a re_ or pyr_ id", ErrInvalidRequestOption)
 	}
 
 	return sendOpts[Refund](ctx, c, http.MethodGet, "/v1/refunds/"+url.PathEscape(id), nil, opts...)
@@ -73,8 +74,8 @@ func (c *Client) CreateTransferReversal(
 	p Params,
 	opts ...RequestOption,
 ) (TransferReversal, error) {
-	if transfer == "" {
-		return TransferReversal{}, fmt.Errorf("%w: empty transfer id", ErrInvalidRequestOption)
+	if !validID(transfer, "tr_") {
+		return TransferReversal{}, fmt.Errorf("%w: transfer id must be a tr_ id", ErrInvalidRequestOption)
 	}
 
 	return sendOpts[TransferReversal](ctx, c, http.MethodPost,
@@ -88,8 +89,8 @@ func (c *Client) GetTransferReversal(
 	transfer, id string,
 	opts ...RequestOption,
 ) (TransferReversal, error) {
-	if transfer == "" || id == "" {
-		return TransferReversal{}, fmt.Errorf("%w: empty transfer or reversal id", ErrInvalidRequestOption)
+	if !validID(transfer, "tr_") || !validID(id, "trr_") {
+		return TransferReversal{}, fmt.Errorf("%w: ids must be a tr_ and a trr_ id", ErrInvalidRequestOption)
 	}
 
 	return sendOpts[TransferReversal](ctx, c, http.MethodGet,
