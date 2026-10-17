@@ -31,6 +31,8 @@ func FuzzSessionCookie(f *testing.F) {
 	f.Add("x", []byte(`{"user":{"nested":[1,2,3]},"_created":9e999}`))
 
 	get := func(t *testing.T, value string) *httptest.ResponseRecorder {
+		t.Helper()
+
 		r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/get", http.NoBody)
 		r.AddCookie(&http.Cookie{Name: m.CookieName(), Value: value})
 

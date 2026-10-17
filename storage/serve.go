@@ -58,7 +58,8 @@ func Handler(d Disk, signer *signed.Signer) http.Handler {
 		// Stored files are often user content: an HTML or XML upload must
 		// not run script on the app's origin. Images and downloads are
 		// unaffected.
-		w.Header().Set("Content-Security-Policy", "sandbox; default-src 'none'; img-src 'self'; style-src 'unsafe-inline'")
+		w.Header().
+			Set("Content-Security-Policy", "sandbox; default-src 'none'; img-src 'self'; style-src 'unsafe-inline'")
 
 		if rs, ok := f.(io.ReadSeeker); ok {
 			http.ServeContent(w, r, path.Base(p), modTimeNow(), rs)
