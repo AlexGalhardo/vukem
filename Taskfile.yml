@@ -5,6 +5,8 @@ version: "3"
 vars:
   # Every Go module in the repository (drivers and contrib modules are added as they land).
   MODULES: ". drivers/postgres drivers/mysql drivers/redis drivers/mongo drivers/otel drivers/s3 drivers/websocket contrib/stripe contrib/graphql contrib/grpc"
+  # Same pin as the apidiff job in .github/workflows/ci.yml (x/exp has no tags).
+  APIDIFF_VERSION: v0.0.0-20261014143641-f0251eb4aa3e
 
 tasks:
   default:
@@ -92,6 +94,12 @@ tasks:
     desc: Scan for known vulnerabilities
     cmds:
       - go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+
+  api:check:
+    desc: Fail on incompatible API changes since the latest v1 tags (apidiff); pass -- -major v0 -report file.md for a report
+    cmds:
+      - go install golang.org/x/exp/cmd/apidiff@{{.APIDIFF_VERSION}}
+      - go run ./internal/tools/apicheck {{.CLI_ARGS}}
 
   tidy:
     desc: Tidy every module
