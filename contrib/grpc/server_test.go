@@ -272,3 +272,92 @@ func TestSecurity_A02_GRPCServerCleartextInProductionNeedsOptIn(t *testing.T) {
 		t.Errorf("Server(production, InsecureCleartext) = %v, want nil", err)
 	}
 }
+
+// headerStatus sends one HTTP/1.1 request with a size-byte header to addr.
+func headerStatus(t *testing.T, addr string, size int) int {
+	t.Helper()
+
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+addr+"/", http.NoBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req.Header.Set("X-Big", strings.Repeat("a", size))
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET with a %d-byte header: %v", size, err)
+	}
+
+	_ = resp.Body.Close()
+
+	return resp.StatusCode
+}
+
+// The header cap follows ServerOptions.MaxHeaderBytes, and Serve fills it
+// from HTTP_MAX_HEADER_BYTES, so operators can raise it for large gRPC
+// metadata.
+func TestServer_MaxHeaderBytes(t *testing.T) {
+	t.Parallel()
+
+	big := 96 << 10
+
+	ready := make(chan string, 1)
+	addr, _ := startServer(t, mustServer(t, "127.0.0.1:0", grpc.ServerOptions{Ready: ready, MaxHeaderBytes: 16 << 10}),
+		ready)
+
+	if got := headerStatus(t, addr, big); got != http.StatusRequestHeaderFieldsTooLarge {
+		t.Errorf("MaxHeaderBytes 16 KiB, %d-byte header = %d, want 431", big, got)
+	}
+
+	ready = make(chan string, 1)
+	addr, _ = startServer(t, mustServer(t, "127.0.0.1:0", grpc.ServerOptions{Ready: ready, MaxHeaderBytes: 128 << 10}),
+		ready)
+
+	if got := headerStatus(t, addr, big); got == http.StatusRequestHeaderFieldsTooLarge {
+		t.Errorf("MaxHeaderBytes 128 KiB, %d-byte header = 431, want it accepted", big)
+	}
+
+	app := newApp(t, map[string]string{
+		"APP_KEY": config.GenerateKey(), "APP_ENV": "development", "PORT": "0", "HTTP_MAX_HEADER_BYTES": "131072",
+	})
+
+	ready = make(chan string, 1)
+	if err := grpc.Serve(app, "127.0.0.1:0", rpcRouter(), grpc.ServerOptions{Ready: ready}); err != nil {
+		t.Fatalf("Serve() error = %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+
+	go func() { done <- app.Run(ctx) }()
+
+	if got := headerStatus(t, <-ready, big); got == http.StatusRequestHeaderFieldsTooLarge {
+		t.Errorf("HTTP_MAX_HEADER_BYTES=131072, %d-byte header = 431, want it accepted", big)
+	}
+
+	cancel()
+
+	if err := <-done; err != nil {
+		t.Errorf("App.Run() = %v", err)
+	}
+}
+
+func TestServe_InvalidMaxHeaderBytes(t *testing.T) {
+	t.Parallel()
+
+	// Core refuses these values at boot; the check here covers an app whose
+	// source was built another way, so a typo never means "no limit".
+	app := newApp(t, map[string]string{"APP_KEY": config.GenerateKey(), "APP_ENV": "development"})
+
+	for _, opts := range []grpc.ServerOptions{{MaxHeaderBytes: 100}, {MaxHeaderBytes: 2 << 20}} {
+		if err := grpc.Serve(app, "127.0.0.1:0", rpcRouter(), opts); !errors.Is(err, grpc.ErrInvalidMaxHeaderBytes) {
+			t.Errorf("Serve(MaxHeaderBytes %d) = %v, want ErrInvalidMaxHeaderBytes", opts.MaxHeaderBytes, err)
+		}
+
+		if _, err := grpc.Server(&vukem.Config{Env: config.Development}, ":0", rpcRouter(), opts); !errors.Is(
+			err, grpc.ErrInvalidMaxHeaderBytes) {
+			t.Errorf("Server(MaxHeaderBytes %d) = %v, want ErrInvalidMaxHeaderBytes", opts.MaxHeaderBytes, err)
+		}
+	}
+}
