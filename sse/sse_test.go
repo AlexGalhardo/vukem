@@ -4,9 +4,11 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -337,5 +339,138 @@ func TestHubStreamEndsOnClose(t *testing.T) {
 
 	if _, err := io.ReadAll(res.Body); err != nil && !errors.Is(err, io.EOF) {
 		t.Errorf("read after close = %v", err)
+	}
+}
+
+// countingBroker tracks live broker subscriptions; a subscription ends when
+// its context is cancelled, as with drivers/redis.
+type countingBroker struct {
+	mu     sync.Mutex
+	total  int
+	active map[string]int
+	subs   map[string][]chan []byte
+}
+
+func (b *countingBroker) Publish(_ context.Context, channel string, payload []byte) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	for _, ch := range b.subs[channel] {
+		ch <- payload
+	}
+
+	return nil
+}
+
+func (b *countingBroker) Subscribe(ctx context.Context, channels ...string) (<-chan []byte, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if b.active == nil {
+		b.active, b.subs = map[string]int{}, map[string][]chan []byte{}
+	}
+
+	ch := make(chan []byte, 8)
+	for _, c := range channels {
+		b.total++
+		b.active[c]++
+		b.subs[c] = append(b.subs[c], ch)
+	}
+
+	context.AfterFunc(ctx, func() {
+		b.mu.Lock()
+		defer b.mu.Unlock()
+
+		for _, c := range channels {
+			b.active[c]--
+			if b.active[c] == 0 {
+				delete(b.active, c)
+			}
+
+			b.subs[c] = slices.DeleteFunc(b.subs[c], func(x chan []byte) bool { return x == ch })
+		}
+
+		close(ch)
+	})
+
+	return ch, nil
+}
+
+func (b *countingBroker) counts() (total, active int) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	return b.total, len(b.active)
+}
+
+func TestHubReleasesBrokerSubscriptions(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		leave func(cancel context.CancelFunc, stop func())
+	}{
+		{"unsubscribe", func(_ context.CancelFunc, stop func()) { stop() }},
+		{"context cancel", func(cancel context.CancelFunc, _ func()) { cancel() }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			// synctest fails the test if any goroutine is still blocked when
+			// the bubble ends, so it doubles as the goroutine-leak check.
+			synctest.Test(t, func(t *testing.T) {
+				broker := &countingBroker{}
+				hub := sse.NewHub(broker)
+				defer hub.Close()
+
+				const users = 50
+				for i := range users {
+					ctx, cancel := context.WithCancel(t.Context())
+					topic := fmt.Sprintf("user:%d", i)
+					_, stopA := hub.Subscribe(ctx, topic)
+					_, stopB := hub.Subscribe(t.Context(), topic)
+
+					synctest.Wait()
+
+					if _, active := broker.counts(); active != 1 {
+						t.Fatalf("active broker subscriptions with 2 local subscribers = %d, want 1", active)
+					}
+
+					stopB()
+					tt.leave(cancel, stopA)
+					cancel()
+				}
+
+				synctest.Wait()
+
+				total, active := broker.counts()
+				if total != users || active != 0 {
+					t.Errorf("broker subscriptions total, active = %d, %d, want %d, 0", total, active, users)
+				}
+
+				// A topic that emptied out subscribes again on the next subscriber.
+				ch, stop := hub.Subscribe(t.Context(), "user:0")
+				defer stop()
+
+				synctest.Wait()
+
+				if err := hub.Publish(t.Context(), "user:0", sse.Event{Data: "again"}); err != nil {
+					t.Fatal(err)
+				}
+
+				synctest.Wait()
+
+				select {
+				case ev := <-ch:
+					if ev.Data != "again" {
+						t.Errorf("event after resubscribe = %+v", ev)
+					}
+				default:
+					t.Error("event after resubscribe not delivered")
+				}
+			})
+		})
 	}
 }

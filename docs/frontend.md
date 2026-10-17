@@ -115,7 +115,7 @@ Invalid input from a classic form post → the validation hook flashes the error
 
 `c.SSE(func(s *sse.Stream) error { return s.Send("message", html) })` (or `sse.Serve(w, r, fn)` in plain handlers) streams `text/event-stream`: every event is flushed through `http.ResponseController`, the server's `WriteTimeout` is lifted for the stream, a `: ping` comment goes out every 15s (`sse.Heartbeat(d)`), and `Stream.Context()` ends on client disconnect, when `fn` returns, or when the app shuts down (the HTTP server signals open streams so shutdown never waits on them). `s.SendJSON`, `s.SendEvent(sse.Event{ID, Event, Data, Retry})` and `s.LastEventID()` cover reconnects; field values lose CR/LF so input cannot forge fields.
 
-`sse.NewHub(broker)` fans events out by topic: `hub.Publish(ctx, "posts", ev)` and `hub.Stream(s, "posts")`. With a nil broker it works within one process; pass the `drivers/redis` client to reach every instance. Slow subscribers that fall 64 events behind are dropped (the browser reconnects). Pairs with htmx `hx-sse`.
+`sse.NewHub(broker)` fans events out by topic: `hub.Publish(ctx, "posts", ev)` and `hub.Stream(s, "posts")`. With a nil broker it works within one process; pass the `drivers/redis` client to reach every instance. A topic holds one broker subscription while it has local subscribers and releases it when the last one leaves (a custom `Broker` must end the subscription when the `Subscribe` ctx is done). Slow subscribers that fall 64 events behind are dropped (the browser reconnects). Pairs with htmx `hx-sse`.
 
 ### WebSockets
 
