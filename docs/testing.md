@@ -5,7 +5,7 @@ How the framework itself is tested, and the testing toolkit it ships to apps. De
 ## Policy (framework)
 
 - **Every exported feature has tests.** A PR adding a feature without tests is not merged.
-- **Coverage gate:** ≥ 80% per package in core (measured on `ubuntu/stable`), ≥ 90% for `router`, `validate`, `session`, `orm`, `schema`, `auth`, `config`.
+- **Coverage gate:** ≥ 80% per package in core (measured on `ubuntu/stable`), ≥ 90% for `router`, `validate` (package `z`), `session`, `orm`, `schema`, `auth`, `config`. `go run ./internal/tools/covergate coverage.out` checks it (also in `task cover`); `cmd/`, `internal/` and the conformance helpers (`cachetest`, `queuetest`, `storagetest`, `dbtest`) are exempt.
 - **Race detector** on in CI (`-race`); Windows contributors may run without it locally (needs cgo).
 - **No network, no Docker** in unit tests. Integration tests are behind `//go:build integration`.
 - **Assertions:** stdlib `testing` + `github.com/google/go-cmp/cmp`. No testify in core.
@@ -107,4 +107,4 @@ clock.Advance(24 * time.Hour)
 | unit | `ubuntu`, `windows`, `macos` × Go `stable` (`oldstable` joins once Go 1.28 ships, since 1.27 is the minimum) |
 | integration | `ubuntu` + services `postgres:17`, `mysql:8.4`, `mariadb:11.8`, `redis:7`, `mongo:8` |
 | e2e | `ubuntu`, `windows`, `macos` × `stable` |
-| coverage | `ubuntu/stable` → Codecov, gate enforced by script |
+| coverage | `ubuntu/stable` → Codecov, gate enforced by `internal/tools/covergate` |

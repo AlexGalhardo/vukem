@@ -76,10 +76,11 @@ tasks:
       - cd internal/bench && go test -run '^$' -bench . -benchmem -count {{.COUNT}} .
 
   cover:
-    desc: Write coverage.out and print the total
+    desc: Write coverage.out, print the total and check the per-package gates
     cmds:
       - go test -count=1 -coverprofile=coverage.out ./...
       - go tool cover -func=coverage.out
+      - go run ./internal/tools/covergate coverage.out
 
   vet:
     desc: Run go vet and preview go fix modernizations
