@@ -9,7 +9,7 @@ description: Encrypted cookie, memory and database session stores with flash mes
 
 | Variable | Default | Notes |
 | --- | --- | --- |
-| `SESSION_DRIVER` | `cookie` | `cookie` (data encrypted in the cookie) or `memory` |
+| `SESSION_DRIVER` | `cookie` | `cookie` (data encrypted in the cookie), `memory` or `database` (the app database); Redis is installed with `vukem.WithSessionStore` from [`drivers/redis`](/docs/database/redis), which takes precedence |
 | `SESSION_LIFETIME` | `24h` | Absolute lifetime |
 | `SESSION_IDLE_TIMEOUT` | `2h` | Expires after inactivity |
 | `SESSION_COOKIE` | `vukem_session` | Cookie name |
@@ -63,7 +63,7 @@ err = webGuard.RefreshSession(c)
 ```
 
 - Fail closed: an unreadable recorded version counts as stale. A session logged in before the user type had a version carries none, which counts as `0`: it lasts until the first bump.
-- A bump ends sessions at their next request; it does not delete server-side records (they expire) and does not touch remember-me or API tokens, which the scaffold deletes on reset.
+- A bump ends sessions at their next request; it does not delete server-side records (they expire). Remember-me tokens are bound to the version they were issued under, so a remember cookie issued before the bump no longer signs in; `RefreshSession` issues the current device a new one. API tokens are not affected (the scaffold deletes them on reset).
 
 ### Server-side revocation
 

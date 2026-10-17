@@ -85,7 +85,7 @@ user, err := auth.User[models.User](c, "web") // in handlers behind Required
 
 - `Attempt` checks the password in constant time; unknown users still cost a hash verification and get the same 422 error. Failures emit the `auth.login_failed` security event.
 - `Login` regenerates the session id (fixation) and stores the user id, also under `web.SessionUserKey` so `session.Manager.RevokeOthers` can end the user's other sessions ([Sessions](/docs/basics/sessions)); `Logout` invalidates the session and deletes the remember-me token.
-- Users implementing `auth.SessionVersioner` have their session version recorded on login; once the user's version changes, older sessions are signed out on every driver. `RefreshSession(c)` keeps the current session across a bump.
+- Users implementing `auth.SessionVersioner` have their session version recorded on login; once the user's version changes, older sessions are signed out on every driver. `RefreshSession(c)` keeps the current session across a bump. Remember-me tokens are bound to the version too: a bump also ends remember-me logins, and `RefreshSession` re-issues the current device's token.
 - Remember-me cookies hold `<id>.<secret>`; only `SHA-256(secret)` is stored, and tokens rotate on every use.
 - Stale hashes (bcrypt, weaker argon2 parameters) are upgraded on login.
 - `Validate(c, creds)` checks credentials without logging in (token issuance).
