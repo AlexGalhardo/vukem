@@ -113,6 +113,33 @@ nonce := middleware.CSPNonce(c.Context())
 return c.HTML(http.StatusOK, `<script nonce="`+nonce+`">init()</script>`)
 ```
 
+`CSPSources` adds sources to the policy (the default or your `CSP`) without rewriting it. A fetch directive missing from the policy starts from the directive the browser would fall back to: `script-src-elem` from `script-src` (so it keeps the nonce), `worker-src` from `child-src` then `script-src`, `frame-src` from `child-src`, the others from `default-src`. `ReportURI` (an `https://` URL without credentials, or a path starting with one `/`) adds `report-uri` and `report-to` plus the matching `Reporting-Endpoints` header:
+
+```go
+cfg := middleware.SecureHeadersConfig{
+	CSPSources: map[string][]string{
+		"script-src":  {"https://plausible.io"},
+		"connect-src": {"https://plausible.io"},
+		"frame-src":   {"https://www.youtube-nocookie.com"}, // becomes 'self' https://www.youtube-nocookie.com
+	},
+	ReportURI: "/csp-reports",
+}
+if err := cfg.Validate(); err != nil {
+	return err
+}
+```
+
+Refused sources: `'unsafe-*'` keywords, static nonces, `*` hosts (`*`, `*:*`, `https://*`), wildcards over fewer than two labels (`*.com`), host wildcards in `default-src`, `script-src*`, `object-src`, `worker-src` and `base-uri`, and unsafe schemes. Scheme-only sources are accepted only as `https:`, `data:` or `blob:` in `img-src`/`media-src` (`https:`/`data:` in `font-src`) and `https:` or `wss:` in `connect-src`.
+
+`SecureHeaders` never fails: invalid extras are dropped (the policy stays stricter) with one warning in the log, so call `Validate` at boot (`vukem.DefaultMiddlewareWith` does). Anything weaker than the helper allows needs a full `CSP` string.
+
+Styles injected at runtime need the nonce too, since `style-src` has no `'unsafe-inline'`. The starters already handle the common cases:
+
+- **Inertia progress bar:** `createInertiaApp({ nonce })` reads it from `<meta property="csp-nonce">` (the scaffolds do this).
+- **htmx 4 indicator:** injected as a constructed stylesheet, which the CSP does not block. On htmx 2, set `htmx.config.inlineStyleNonce` or `includeIndicatorStyles: false`.
+- **A library that injects a fixed `<style>` and accepts no nonce:** add its hash, e.g. `CSPSources: {"style-src": {"'sha256-…'"}}` (the browser console prints the hash it expects).
+- `style="…"` attributes in server-rendered HTML stay blocked; use classes. Setting `el.style.x` from JavaScript is not affected.
+
 ## Default stack
 
 `vukem.DefaultMiddleware(app, r)`, called by the starter's `routes.Web`, installs:
@@ -121,6 +148,32 @@ return c.HTML(http.StatusOK, `<script nonce="`+nonce+`">init()</script>`)
 | --- | --- |
 | Server | `Recover`, `RequestID`, `Logger`, `SecureHeaders`, `MethodOverride` |
 | Router | `BodyLimit(web.DefaultMaxBody)`, sessions, CSRF (`CSRF_TRUSTED_ORIGINS` adds trusted origins) |
+
+`vukem.DefaultMiddlewareWith(app, r, opts)` installs the same stack with options; the zero `vukem.MiddlewareOptions` is `DefaultMiddleware`:
+
+```go
+err := vukem.DefaultMiddlewareWith(app, r, vukem.MiddlewareOptions{
+	// Runs after the defaults (Vite dev server) are set; validated at boot.
+	SecureHeaders: func(cfg *middleware.SecureHeadersConfig) {
+		cfg.CSPSources = map[string][]string{
+			"script-src":  {"https://plausible.io"},
+			"connect-src": {"https://plausible.io"},
+		}
+		cfg.ReportURI = "/csp-reports"
+	},
+	SessionBypass: []string{"/webhooks/"},             // no session (no cookie) on these routes
+	CSRFBypass:    []string{"POST /webhooks/{name}"},  // signed webhooks; logged at boot
+})
+```
+
+| Option | Effect |
+| --- | --- |
+| `SecureHeaders` | Edits the `SecureHeadersConfig` (`CSPSources`, `ReportURI`, `TrustForwardedProto`, ...). An invalid result fails at boot. |
+| `Stateless` | No session middleware at all, for cookieless apps. CSRF protection stays on as `Origin`/`Sec-Fetch-Site` checks only: `csrfToken`/`csrfField` render empty, and session features (`c.Flash`, session login) return an error. |
+| `SessionBypass` | `ServeMux` patterns served without sessions. A pattern ending in `/` (`/webhooks/`) covers its whole subtree; `POST /hooks/{id}` matches one method and path. Refused together with `Stateless`. |
+| `CSRFBypass` | `ServeMux` patterns (same matching) exempt from CSRF checks; each one is logged at boot. Protect them another way (signatures). |
+
+Maintenance mode, the body limit and CSRF for every other route stay on: the options only add sources or skip what you list.
 
 ## Generating middleware
 

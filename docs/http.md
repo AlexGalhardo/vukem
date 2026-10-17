@@ -83,6 +83,8 @@ Signature: `func(http.Handler) http.Handler`. Three stacks:
 
 `vukem make:middleware` generates the function and registers it as named middleware in `bootstrap/middleware.go`.
 
+`vukem.DefaultMiddleware(app, r)` installs the default stacks; `vukem.DefaultMiddlewareWith(app, r, vukem.MiddlewareOptions{...})` adjusts them without rebuilding the stack by hand: `SecureHeaders` edits the `SecureHeadersConfig` (`CSPSources`, `ReportURI`; validated at boot), `Stateless` drops sessions (CSRF then relies on `Origin`/`Sec-Fetch-Site` only; `csrfToken` renders empty), and `SessionBypass` / `CSRFBypass` take `ServeMux` patterns (a trailing `/` covers the subtree) served without sessions or CSRF checks (CSRF bypasses are logged at boot). The zero options equal `DefaultMiddleware`.
+
 ## Validation
 
 Validation is done by the `z` package — Zod-style typed schemas. Full reference: [validation.md](validation.md).

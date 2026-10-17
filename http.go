@@ -203,19 +203,47 @@ func secureHeadersConfig(app *App) middleware.SecureHeadersConfig {
 //
 // It returns configuration errors (insecure production cookies, bad
 // origins) so they fail at boot. Starters call it from bootstrap.
+// DefaultMiddlewareWith customizes the stack.
 func DefaultMiddleware(app *App, r *router.Router) error {
-	r.UseServer(
-		middleware.Recover(),
-		middleware.RequestID(),
-		middleware.Maintenance(maintenanceConfig(app)),
-		middleware.Logger(app.Log),
-		middleware.SecureHeaders(secureHeadersConfig(app)),
-		middleware.MethodOverride(),
-	)
+	return DefaultMiddlewareWith(app, r, MiddlewareOptions{})
+}
 
-	sessions, err := app.Sessions()
-	if err != nil {
-		return err
+// MiddlewareOptions customizes DefaultMiddlewareWith. The zero value
+// installs the same stack as DefaultMiddleware.
+type MiddlewareOptions struct {
+	// SecureHeaders adjusts the SecureHeaders config after Vukem's defaults
+	// (the Vite dev server) are set, e.g. to add CSPSources or a ReportURI.
+	// The result is validated at boot.
+	SecureHeaders func(cfg *middleware.SecureHeadersConfig)
+	// Stateless installs no session middleware (cookieless apps). CSRF
+	// protection stays on as Origin/Sec-Fetch-Site checks only: there is no
+	// session token, so csrfToken and csrfField render empty, and session
+	// features (Flash, session auth) fail with an error.
+	Stateless bool
+	// SessionBypass lists ServeMux patterns served without sessions. As in
+	// ServeMux, a pattern ending in "/" ("/webhooks/") covers its whole
+	// subtree; "POST /hooks/{id}" matches one method and path. It cannot be
+	// combined with Stateless.
+	SessionBypass []string
+	// CSRFBypass lists ServeMux patterns (same matching as SessionBypass)
+	// exempt from CSRF checks, e.g. signed webhooks. Each bypass is logged
+	// at boot.
+	CSRFBypass []string
+}
+
+// DefaultMiddlewareWith installs the DefaultMiddleware stacks with opts.
+func DefaultMiddlewareWith(app *App, r *router.Router, opts MiddlewareOptions) error {
+	if opts.Stateless && len(opts.SessionBypass) > 0 {
+		return errors.New("vukem: SessionBypass has no effect with Stateless (no sessions anywhere)")
+	}
+
+	secure := secureHeadersConfig(app)
+	if opts.SecureHeaders != nil {
+		opts.SecureHeaders(&secure)
+	}
+
+	if err := secure.Validate(); err != nil {
+		return fmt.Errorf("vukem: secure headers: %w", err)
 	}
 
 	var origins []string
@@ -225,16 +253,92 @@ func DefaultMiddleware(app *App, r *router.Router) error {
 		}
 	}
 
-	csrfMW, err := csrf.Middleware(csrf.Config{TrustedOrigins: origins})
+	csrfMW, err := csrf.Middleware(csrf.Config{TrustedOrigins: origins, BypassPatterns: opts.CSRFBypass})
 	if err != nil {
 		return err
 	}
 
-	r.Use(middleware.BodyLimit(web.DefaultMaxBody), sessions.Middleware(), csrfMW)
+	for _, p := range opts.CSRFBypass {
+		app.Log.Warn("csrf bypass", "pattern", p)
+	}
+
+	routerMW := []router.Middleware{middleware.BodyLimit(web.DefaultMaxBody)}
+
+	if !opts.Stateless {
+		sessions, err := app.Sessions()
+		if err != nil {
+			return err
+		}
+
+		sessMW, err := bypass(opts.SessionBypass, sessions.Middleware())
+		if err != nil {
+			return fmt.Errorf("vukem: session bypass: %w", err)
+		}
+
+		routerMW = append(routerMW, sessMW)
+	}
+
+	r.UseServer(
+		middleware.Recover(),
+		middleware.RequestID(),
+		middleware.Maintenance(maintenanceConfig(app)),
+		middleware.Logger(app.Log),
+		middleware.SecureHeaders(secure),
+		middleware.MethodOverride(),
+	)
+
+	r.Use(append(routerMW, csrfMW)...)
 
 	if app.I18n != nil {
 		r.Use(i18n.Middleware(app.I18n, i18n.MiddlewareConfig{}))
 	}
+
+	return nil
+}
+
+// bypassMark is the handler registered for bypass patterns; comparing it
+// tells a real match from ServeMux's redirect and 405 handlers.
+type bypassMark struct{}
+
+func (*bypassMark) ServeHTTP(http.ResponseWriter, *http.Request) {}
+
+// bypass skips mw for requests matching one of the ServeMux patterns.
+func bypass(patterns []string, mw router.Middleware) (router.Middleware, error) {
+	if len(patterns) == 0 {
+		return mw, nil
+	}
+
+	mux, mark := http.NewServeMux(), &bypassMark{}
+	for _, p := range patterns {
+		if err := handlePattern(mux, p, mark); err != nil {
+			return nil, err
+		}
+	}
+
+	return func(next http.Handler) http.Handler {
+		wrapped := mw(next)
+
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if h, _ := mux.Handler(r); h == http.Handler(mark) {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			wrapped.ServeHTTP(w, r)
+		})
+	}, nil
+}
+
+// handlePattern turns ServeMux's panic on a bad or duplicate pattern into
+// an error.
+func handlePattern(mux *http.ServeMux, pattern string, h http.Handler) (err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			err = fmt.Errorf("pattern %q: %v", pattern, p)
+		}
+	}()
+
+	mux.Handle(pattern, h)
 
 	return nil
 }

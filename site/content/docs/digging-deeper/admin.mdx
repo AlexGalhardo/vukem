@@ -56,7 +56,7 @@ The gate defines `admin.AbilityAdmin` (every page) and `admin.AbilityAudit` (the
 | --- | --- |
 | `Slug(s)`, `Labels(singular, plural)`, `Label(col, text)` | URL segment and UI names |
 | `List(cols...)`, `Column(label, func(T) string)` | list columns; computed columns (escaped) |
-| `Search(cols...)` | search over string columns (`LIKE`, `ILIKE` on Postgres, bound parameters) |
+| `Search(cols...)` | search over string columns (`LIKE`, `ILIKE` on Postgres, bound parameters; `%` and `_` in the text match literally) |
 | `Sortable(cols...)`, `Filter(col, options...)`, `PerPage(n)` | sorting, exact-match filters, page size (default 20, max 200) |
 | `Hidden(cols...)`, `ReadOnly(cols...)`, `Sensitive(cols...)` | never shown; shown but never written; secret columns |
 | `Input(key, kind)` | override a form control |
