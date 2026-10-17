@@ -54,6 +54,10 @@ type QueueConfig struct {
 	// Table and FailedTable are the database driver's tables.
 	Table       string `env:"QUEUE_TABLE"        default:"jobs"`
 	FailedTable string `env:"QUEUE_FAILED_TABLE" default:"failed_jobs"`
+	// AllowLegacyMail sends clear-text mail jobs queued before v0.24.0
+	// (an upgrade window: drain the queue before upgrading, or set it
+	// until the old jobs are gone). Off, they fail.
+	AllowLegacyMail bool `env:"QUEUE_ALLOW_LEGACY_MAIL"`
 }
 
 // QueueNames returns Queues as a list.
@@ -162,12 +166,19 @@ func (a *App) databaseQueue(cfg QueueConfig) (*queue.Database, error) {
 // queuedMail is the payload of a MailJobKind job: the rendered message,
 // encrypted with app.Crypt so bodies (reset links, tokens) and addresses
 // never sit in the jobs tables, queue:failed output or logs in clear text.
-// Message is the clear-text payload of jobs queued before v0.24.0.
+// Message is the clear-text payload of jobs queued before v0.24.0, refused
+// unless QUEUE_ALLOW_LEGACY_MAIL=true. The additional data is fixed, so
+// someone with write access to the jobs table can replay a sealed mail;
+// that access already allows far worse.
 type queuedMail struct {
 	Sealed string `json:"sealed,omitempty"`
 
 	mail.Message
 }
+
+// ErrLegacyMail fails a clear-text mail job when QUEUE_ALLOW_LEGACY_MAIL
+// is off.
+var ErrLegacyMail = errors.New("vukem: clear-text mail job refused (QUEUE_ALLOW_LEGACY_MAIL is off)")
 
 // mailJobAD binds sealed mail payloads to the mail job.
 const mailJobAD = "queue:" + MailJobKind
@@ -197,7 +208,25 @@ func (a *App) sendQueuedMail(ctx context.Context, p queuedMail) error {
 	}
 
 	msg := p.Message
-	if p.Sealed != "" {
+	if p.Sealed == "" {
+		cfg, err := configLoad[QueueConfig](a)
+		if err != nil {
+			return err
+		}
+
+		if !cfg.AllowLegacyMail {
+			a.Log.WarnContext(
+				ctx,
+				"clear-text mail job refused (set QUEUE_ALLOW_LEGACY_MAIL=true to drain jobs queued before v0.24.0)",
+			)
+			return ErrLegacyMail
+		}
+
+		a.Log.WarnContext(
+			ctx,
+			"clear-text mail job sent (QUEUE_ALLOW_LEGACY_MAIL=true; unset it once old jobs are drained)",
+		)
+	} else {
 		plain, err := a.Crypt.Open(p.Sealed, []byte(mailJobAD))
 		if err != nil {
 			return fmt.Errorf("vukem: open queued mail: %w", err)
