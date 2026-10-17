@@ -35,6 +35,20 @@ type AppSeederFunc func(ctx context.Context, app *App) error
 // SeedApp implements AppSeeder.
 func (f AppSeederFunc) SeedApp(ctx context.Context, app *App) error { return f(ctx, app) }
 
+// NamedAppSeeder returns an AppSeeder printed and reported as name (by
+// db:seed and in errors) instead of its Go type, which is the same for
+// every AppSeederFunc.
+func NamedAppSeeder(name string, fn AppSeederFunc) AppSeeder { return namedAppSeeder{name, fn} }
+
+type namedAppSeeder struct {
+	name string
+	fn   AppSeederFunc
+}
+
+func (n namedAppSeeder) SeedApp(ctx context.Context, app *App) error { return n.fn(ctx, app) }
+
+func (n namedAppSeeder) Name() string { return n.name }
+
 // dbSeeder runs a Seeder as an AppSeeder, so both kinds share one ordered
 // list.
 type dbSeeder struct{ s Seeder }
@@ -81,10 +95,16 @@ func (a *App) Seed(ctx context.Context) error {
 	return nil
 }
 
+// seederName is the seeder's Name() when it has one (Seeder or
+// AppSeeder), else its type name.
 func seederName(s AppSeeder) string {
 	var v any = s
 	if d, ok := s.(dbSeeder); ok {
 		v = d.s
+	}
+
+	if n, ok := v.(interface{ Name() string }); ok {
+		return n.Name()
 	}
 
 	name := fmt.Sprintf("%T", v)

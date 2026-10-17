@@ -290,7 +290,7 @@ withPosts := factories.User.AfterCreate(func(ctx context.Context, ex database.Ex
 
 - `factory.Faker` (no dependency): `Name`, `FirstName`, `LastName`, `Username`, `Email` (reserved example domains), `Word(s)`, `Sentence`, `Paragraph`, `Slug`, `URL`, `UUID`, `Int`, `Float`, `Bool`, `Time`, `factory.Pick(f, ...)`, `Seq()`. It uses `math/rand/v2` and must never generate secrets.
 - Factories are values: `State`, `Count`, `Seed`, `AfterCreate` return copies.
-- Seeders implement `vukem.Seeder` (`Seed(ctx, db) error`); `vukem make:seeder Users` creates one and registers it in `database/seeders/registry.go`, which the app passes to `vukem.WithSeeders(seeders.All()...)`. `vukem db:seed` runs them in order; tests call `app.Seed(ctx)`. Seeders that need config, the logger or provider services implement `vukem.AppSeeder` (`SeedApp(ctx, app) error`, or `vukem.AppSeederFunc`) and are passed to `vukem.WithAppSeeders`; both kinds run in one list in option order, after `db:seed` booted the app.
+- Seeders implement `vukem.Seeder` (`Seed(ctx, db) error`); `vukem make:seeder Users` creates one and registers it in `database/seeders/registry.go`, which the app passes to `vukem.WithSeeders(seeders.All()...)`. `vukem db:seed` runs them in order; tests call `app.Seed(ctx)`. Seeders that need config, the logger or provider services implement `vukem.AppSeeder` (`SeedApp(ctx, app) error`, or `vukem.AppSeederFunc`) and are passed to `vukem.WithAppSeeders`; both kinds run in one list in option order, after `db:seed` booted the app. A seeder's `Name() string`, if any, names it in output and errors; `vukem.NamedAppSeeder(name, fn)` names a function.
 - `vukem db:wipe` drops every table. Both commands need `--force` in production.
 
 ## Database validation rules

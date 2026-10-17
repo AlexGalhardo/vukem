@@ -179,3 +179,28 @@ func TestAppSeedersReachTheApp(t *testing.T) {
 		t.Fatalf("failing app seeder = %v", err)
 	}
 }
+
+func TestSeederNames(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		s    AppSeeder
+		want string
+	}{
+		{dbSeeder{notesSeeder{}}, "notesSeeder"},
+		{AppSeederFunc(func(context.Context, *App) error { return nil }), "AppSeederFunc"},
+		{NamedAppSeeder("DemoShop", func(context.Context, *App) error { return nil }), "DemoShop"},
+		{dbSeeder{namedSeeder{}}, "Users"},
+	}
+
+	for _, tt := range tests {
+		if got := seederName(tt.s); got != tt.want {
+			t.Errorf("seederName(%T) = %q, want %q", tt.s, got, tt.want)
+		}
+	}
+}
+
+type namedSeeder struct{}
+
+func (namedSeeder) Seed(context.Context, *database.DB) error { return nil }
+func (namedSeeder) Name() string                             { return "Users" }

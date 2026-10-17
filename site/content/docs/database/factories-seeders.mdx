@@ -52,7 +52,7 @@ A `Seeder` only gets the database. A seeder that reads configuration, logs, or u
 
 ```go title="database/seeders/users_seeder.go"
 func Users() vukem.AppSeeder {
-	return vukem.AppSeederFunc(func(ctx context.Context, app *vukem.App) error {
+	return vukem.NamedAppSeeder("Users", func(ctx context.Context, app *vukem.App) error {
 		if app.Config.IsProduction() {
 			return errors.New("demo users are not seeded in production")
 		}
@@ -75,7 +75,7 @@ vukem.WithSeeders(seeders.All()...),
 vukem.WithAppSeeders(seeders.Users()),
 ```
 
-Both kinds run in one list, in option order. `db:seed` boots the app before seeding, so services providers open in `Boot` are ready; call `app.Boot(ctx)` before `app.Seed(ctx)` when you seed from your own code. A provider's service can be handed to the seeder when `bootstrap` builds both (`seeders.Media(mediaProvider)`).
+Both kinds run in one list, in option order. `db:seed` prints `Seeded: <name>` and errors read `seed <name>: ...`, where the name is the seeder's `Name() string` method when it has one, else its Go type (`AppSeederFunc` for every function); `vukem.NamedAppSeeder("Users", fn)` gives a function a name. `db:seed` boots the app before seeding, so services providers open in `Boot` are ready; call `app.Boot(ctx)` before `app.Seed(ctx)` when you seed from your own code. A provider's service can be handed to the seeder when `bootstrap` builds both (`seeders.Media(mediaProvider)`).
 
 ## Database validation rules
 
