@@ -355,6 +355,41 @@ func TestAbsoluteLifetimeAndTouch(t *testing.T) {
 	}
 }
 
+func TestReadOnlyVisitDoesNotCreateSession(t *testing.T) {
+	t.Parallel()
+
+	// Health probes and anonymous page views read the session (CSRF, auth,
+	// flash) but store nothing: they must not create a cookie or a row.
+	for name, store := range storesUnderTest(t) {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			m, _ := newManager(t, Config{Store: store})
+			c := newClient(t, appHandler(m, &bytes.Buffer{}))
+
+			if rec := c.do("GET", "/get", nil); len(rec.Result().Cookies()) != 0 {
+				t.Fatalf("read-only visit set cookies %v", rec.Result().Cookies())
+			}
+
+			if sq, ok := store.(*SQLStore); ok {
+				var n int
+				if err := sq.db.QueryRowContext(t.Context(), "SELECT count(*) FROM sessions").Scan(&n); err != nil {
+					t.Fatal(err)
+				}
+
+				if n != 0 {
+					t.Fatalf("sessions rows = %d after a read-only visit, want 0", n)
+				}
+			}
+
+			// Writing still creates the session.
+			if rec := c.do("GET", "/put?v=ana", nil); len(rec.Result().Cookies()) == 0 {
+				t.Fatal("write did not create a session")
+			}
+		})
+	}
+}
+
 func TestUntouchedSessionWritesNothing(t *testing.T) {
 	t.Parallel()
 

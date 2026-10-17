@@ -256,6 +256,13 @@ func (m *Manager) commit(w http.ResponseWriter, r *http.Request, s *Session) {
 		return // never used during this request
 	}
 
+	// A fresh session that was only read (health probes, anonymous views,
+	// CSRF or auth checks) has nothing worth a cookie or a store row.
+	if _, existed := s.data[keyCreated]; !existed && s.oldID == "" && !s.dirty && !s.hasFlash() &&
+		len(userKeys(s.data)) == 0 {
+		return
+	}
+
 	now := m.cfg.Now()
 	last, hasLast := unixOf(s.data[keyLast])
 

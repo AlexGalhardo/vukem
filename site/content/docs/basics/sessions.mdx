@@ -60,6 +60,6 @@ In views use `{{error "title"}}`, `{{errors}}` and `{{old "title"}}`. Password f
 
 ## Behaviour
 
-- Lazy: nothing is read or written unless the handler uses the session; an untouched session writes no cookie.
+- Lazy: nothing is read or written unless the handler uses the session; an untouched session writes no cookie. A new visitor whose session is only read (health probes, anonymous pages, auth or CSRF checks) also gets no cookie and no store row: the session is created on the first write (`Put`, `Flash`, login).
 - Idle and absolute timeouts; the idle timestamp is refreshed at most once a minute.
 - Cookies are `HttpOnly`, `SameSite=Lax`, `Secure` per `SESSION_SECURE`. Cookie session data over 4 KB is not saved and is logged as an error (`session.ErrCookieTooLarge`); switch to a server-side store.
