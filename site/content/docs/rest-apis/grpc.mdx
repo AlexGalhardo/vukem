@@ -50,6 +50,25 @@ func (g *greeter) Greet(ctx context.Context, req *connect.Request[greetv1.GreetR
 - `grpc.Reflection(app, r, services...)` mounts server reflection for `grpcurl` and `buf curl`. It publishes the whole API, so in production it registers nothing unless `GRPC_INSECURE_REFLECTION_IN_PRODUCTION=true`.
 - Native gRPC needs HTTP/2. Outside production the app server also speaks h2c, so `grpcurl -plaintext localhost:3000 list` works with `vukem serve`. In production terminate TLS at a proxy that speaks HTTP/2 to the app (`HTTP_H2C=true`), or serve TLS yourself. gRPC-Web and Connect also work over HTTP/1.1, from browsers too.
 
+## Own port
+
+`grpc.Serve(app, addr, h, grpc.ServerOptions{TLS: cfg})` adds a `grpc` runner serving `h` on its own address (for example `GRPC_PORT`); it starts and stops with the app and drains in-flight RPCs within `SHUTDOWN_TIMEOUT`. Build `h` as a router holding only the RPC services, so RPC paths stay off the HTTP port:
+
+```go
+rpc := router.New(app.Router.Services())
+if err := vukem.APIMiddleware(app, rpc); err != nil {
+	return err
+}
+
+path, h := greetv1connect.NewGreetServiceHandler(svc, grpc.HandlerOptions(grpc.Options{Log: app.Log})...)
+grpc.Mount(rpc, path, h).Use(grpc.Required(apiGuard))
+
+return grpc.Serve(app, ":"+app.Source.Get("GRPC_PORT"), rpc, grpc.ServerOptions{})
+```
+
+- With `TLS` set the port speaks HTTP/2 and HTTP/1.1 over TLS; without it, h2c and HTTP/1.1. In production a cleartext port is refused (`grpc.ErrCleartextInProduction`) unless `HTTP_H2C=true`.
+- `grpc.Server(addr, h, opts)` is the same server as a plain `vukem.Runner`. Both use the secure timeouts of `vukem.NewHTTPServer` (60s write timeout), so long-lived streams need a server of their own.
+
 ## Code generation
 
 The framework never needs `protoc` itself; your app pins the generators as Go tools:
