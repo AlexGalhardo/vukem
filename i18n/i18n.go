@@ -255,6 +255,11 @@ func (b *Bundle) Has(locale, key string) bool {
 // (pt-Hant-BR → pt-Hant → pt), then any locale of the same language
 // (pt → pt-BR). Invalid tags never match.
 func (b *Bundle) Match(tag string) (string, bool) {
+	return b.match(tag, func(string) bool { return true })
+}
+
+// match is Match restricted to the locales allow accepts.
+func (b *Bundle) match(tag string, allow func(string) bool) (string, bool) {
 	canon, ok := Canonical(tag)
 	if !ok {
 		return "", false
@@ -265,7 +270,7 @@ func (b *Bundle) Match(tag string) (string, bool) {
 
 	available := func(l string) bool {
 		_, ok := b.catalogs[l]
-		return ok || l == b.def
+		return (ok || l == b.def) && allow(l)
 	}
 
 	for _, l := range truncations(canon) {
@@ -276,7 +281,7 @@ func (b *Bundle) Match(tag string) (string, bool) {
 
 	lang := baseLanguage(canon)
 	for _, l := range slices.Sorted(maps.Keys(b.catalogs)) {
-		if baseLanguage(l) == lang {
+		if baseLanguage(l) == lang && allow(l) {
 			return l, true
 		}
 	}

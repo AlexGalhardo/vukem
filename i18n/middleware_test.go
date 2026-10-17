@@ -102,6 +102,31 @@ func TestMiddleware_Resolution(t *testing.T) {
 			cfg:  MiddlewareConfig{Query: "-"},
 			want: result{"ru", "Hello, Ana!", "ru", []string{"Accept-Language"}},
 		},
+		{
+			name: "header before query", target: "/?lang=ru", accept: "pt",
+			cfg:  MiddlewareConfig{Order: []Source{SourceHeader, SourceQuery}},
+			want: result{"pt", "Olá, Ana!", "pt", []string{"Accept-Language"}},
+		},
+		{
+			name: "sources left out are off", target: "/", cookie: "pt", session: "ru", accept: "pt",
+			cfg:  MiddlewareConfig{Order: []Source{SourceQuery}},
+			want: result{"en", "Hello, Ana!", "en", nil},
+		},
+		{
+			name: "session before cookie", target: "/", cookie: "pt", session: "ru",
+			cfg:  MiddlewareConfig{Order: []Source{SourceSession, SourceCookie}},
+			want: result{"ru", "Hello, Ana!", "ru", nil},
+		},
+		{
+			name: "locales skip a disallowed query", target: "/?lang=ru", accept: "pt-BR",
+			cfg:  MiddlewareConfig{Locales: []string{"en", "pt"}},
+			want: result{"pt", "Olá, Ana!", "pt", []string{"Accept-Language"}},
+		},
+		{
+			name: "locales match the same language", target: "/", accept: "pt",
+			cfg:  MiddlewareConfig{Locales: []string{"en", "pt-BR"}},
+			want: result{"pt-BR", "Olá, Ana!", "pt-BR", []string{"Accept-Language"}},
+		},
 	}
 
 	for _, tt := range tests {
@@ -124,6 +149,40 @@ func TestMiddleware_Resolution(t *testing.T) {
 
 			if diff := cmp.Diff(tt.want, serve(t, b, tt.cfg, r)); diff != "" {
 				t.Errorf("Middleware (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestMiddlewareConfig_Validate(t *testing.T) {
+	t.Parallel()
+
+	b := loadTest(t, Options{})
+
+	tests := []struct {
+		name    string
+		cfg     MiddlewareConfig
+		wantErr bool
+	}{
+		{name: "zero value", cfg: MiddlewareConfig{}},
+		{name: "order and locales", cfg: MiddlewareConfig{
+			Order:   []Source{SourceHeader, SourceQuery},
+			Locales: []string{"en", "pt-br"},
+		}},
+		{name: "empty order", cfg: MiddlewareConfig{Order: []Source{}}, wantErr: true},
+		{name: "unknown source", cfg: MiddlewareConfig{Order: []Source{"ip"}}, wantErr: true},
+		{name: "duplicate source", cfg: MiddlewareConfig{Order: []Source{SourceQuery, SourceQuery}}, wantErr: true},
+		{name: "invalid locale", cfg: MiddlewareConfig{Locales: []string{"en", "../x"}}, wantErr: true},
+		{name: "locale without catalog", cfg: MiddlewareConfig{Locales: []string{"en", "de"}}, wantErr: true},
+		{name: "locales without default", cfg: MiddlewareConfig{Locales: []string{"pt"}}, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if err := tt.cfg.Validate(b); (err != nil) != tt.wantErr {
+				t.Errorf("Validate() = %v, want error %t", err, tt.wantErr)
 			}
 		})
 	}
