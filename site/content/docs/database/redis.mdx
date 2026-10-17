@@ -35,7 +35,11 @@ var (
 client := func(app *vukem.App) (*redis.Client, error) {
 	once.Do(func() {
 		url := app.Source.Get("REDIS_URL")
-		if url == "" {
+		switch {
+		case url == "" && app.Config.IsProduction():
+			rcErr = errors.New("REDIS_URL is required in production")
+			return
+		case url == "":
 			rcErr = vukem.ErrUseDefault // see "Redis only when REDIS_URL is set"
 			return
 		}
@@ -87,9 +91,11 @@ A function returns `nil, vukem.ErrUseDefault` (directly or wrapped) to keep what
 
 The fallback is explicit and fails closed:
 
-- Only `ErrUseDefault` selects the default. Any other error (a malformed URL, `redis.Open` failing because the server is down) is returned by `app.Cache()`, `app.Sessions()` or `app.Queue()`, so a configured but broken Redis is a boot error, never a silent switch to per-process stores. With `redis.OpenLazy` the app boots and the `redis` health check fails readiness instead.
+- Only `ErrUseDefault` itself, or a chain of single `%w` wraps of it, selects the default. Any other error (a malformed URL, `redis.Open` failing because the server is down), including one joined with the sentinel (`errors.Join`, several `%w`), is returned by `app.Cache()`, `app.Sessions()` or `app.Queue()`, so a configured but broken Redis is a boot error, never a silent switch to per-process stores. With `redis.OpenLazy` the app boots and the `redis` health check fails readiness instead.
 - The default keeps its own `cache.Sharer` answer: falling back to the memory cache makes `OnOneServer()` tasks and `RATE_LIMIT_STORE=cache` boot errors, as with `CACHE_STORE=memory`; `CACHE_STORE=database` stays shared.
-- With `QUEUE_CONNECTION=database`, boot creates the queue tables even when a `WithQueueDriverFunc` is set, so the fallback never runs DDL on the first dispatch.
+- With `QUEUE_CONNECTION=database`, boot runs the `WithQueueDriverFunc` function (once; the first `app.Queue()` reuses its answer) and creates the queue tables only when it falls back, so a Redis queue adds no database access at boot and the fallback never runs DDL on the first dispatch. Its error is then a boot error.
+
+**Production risk.** A missing or misspelled `REDIS_URL` also returns `ErrUseDefault`, and the app then runs on per-process stores: memory cache, sync queue, cookie sessions. The fallback is logged at `WARN` in production (`INFO` elsewhere), but the app still starts. Return `ErrUseDefault` only outside production, as the helper above does, so a production deploy without `REDIS_URL` fails at boot instead.
 
 | Feature | API |
 | --- | --- |
