@@ -239,7 +239,8 @@ func defaults() options {
 
 // Dispatch enqueues j. Options override the handler's defaults for this
 // dispatch. With an Inline driver the job runs now and its error is
-// returned.
+// returned; Inline drivers cannot delay jobs, so Delay returns
+// ErrInlineDelay there.
 func (q *Queue) Dispatch(ctx context.Context, j Job, opts ...Option) error {
 	return q.DispatchKind(ctx, j.Kind(), j, opts...)
 }
@@ -251,7 +252,35 @@ func (q *Queue) DispatchKind(ctx context.Context, kind string, payload any, opts
 		return err
 	}
 
-	if in, ok := q.driver.(Inline); ok && in.Inline() {
+	return q.send(ctx, m, h)
+}
+
+// ErrInlineDelay is returned when a delayed job is dispatched to an Inline
+// driver (Sync): running it now would run it early, so it is refused.
+var ErrInlineDelay = errors.New(
+	"queue: the sync driver cannot delay jobs (use QUEUE_CONNECTION=memory or database, or queue.Fake in tests)",
+)
+
+func (q *Queue) inline() bool {
+	in, ok := q.driver.(Inline)
+	return ok && in.Inline()
+}
+
+// check refuses what the driver cannot honour before anything is stored.
+func (q *Queue) check(m *Message) error {
+	if q.inline() && m.AvailableAt.After(m.CreatedAt) {
+		return fmt.Errorf("%w: %s", ErrInlineDelay, m.Kind)
+	}
+
+	return nil
+}
+
+func (q *Queue) send(ctx context.Context, m *Message, h handler) error {
+	if err := q.check(m); err != nil {
+		return err
+	}
+
+	if q.inline() {
 		q.observe(ctx, m, JobDispatched, 0, nil)
 
 		start := time.Now()
@@ -261,7 +290,7 @@ func (q *Queue) DispatchKind(ctx context.Context, kind string, payload any, opts
 		return err
 	}
 
-	err = q.driver.Push(ctx, m)
+	err := q.driver.Push(ctx, m)
 	if err == nil {
 		q.observe(ctx, m, JobDispatched, 0, nil)
 	}
@@ -269,30 +298,55 @@ func (q *Queue) DispatchKind(ctx context.Context, kind string, payload any, opts
 	return err
 }
 
-// ErrNoTx is returned by DispatchTx when the driver cannot enqueue inside
-// a transaction.
+// ErrNoTx is returned by DispatchTx when ex is neither a *database.DB nor
+// a *database.Tx and the driver cannot enqueue inside a transaction.
 var ErrNoTx = errors.New("queue: driver does not support DispatchTx")
 
-// DispatchTx enqueues j inside the transaction of ex: the job exists only
-// if the transaction commits, so it never runs for rolled-back work and is
+// DispatchTx enqueues j with the transaction of ex: the job exists only if
+// the transaction commits, so it never runs for rolled-back work and is
 // never lost for committed work.
+//
+// Drivers with transactional storage (Database) insert the job inside the
+// transaction. Other drivers (Sync, Memory, Fake) dispatch it right after
+// the commit (database.Tx.AfterCommit): Sync runs it then, and since the
+// caller already returned, a handler error is logged instead of returned.
+// Errors known up front (unknown kind, ErrInlineDelay) are returned inside
+// the transaction. With a *database.DB (no open transaction) the job is
+// dispatched now.
 func (q *Queue) DispatchTx(ctx context.Context, ex database.Executor, j Job, opts ...Option) error {
-	tp, ok := q.driver.(TxPusher)
-	if !ok {
-		return ErrNoTx
-	}
-
-	m, _, err := q.message(j.Kind(), j, opts)
+	m, h, err := q.message(j.Kind(), j, opts)
 	if err != nil {
 		return err
 	}
 
-	err = tp.PushTx(ctx, ex, m)
-	if err == nil {
-		q.observe(ctx, m, JobDispatched, 0, nil)
+	if tp, ok := q.driver.(TxPusher); ok {
+		err = tp.PushTx(ctx, ex, m)
+		if err == nil {
+			q.observe(ctx, m, JobDispatched, 0, nil)
+		}
+
+		return err
 	}
 
-	return err
+	switch e := ex.(type) {
+	case *database.Tx:
+		if err := q.check(m); err != nil {
+			return err
+		}
+
+		e.AfterCommit(func(ctx context.Context) {
+			// The work is committed: a cancelled request must not drop its job.
+			if err := q.send(context.WithoutCancel(ctx), m, h); err != nil {
+				q.log.ErrorContext(ctx, "job dispatched after commit failed", "job", m.Kind, "id", m.ID, "err", err)
+			}
+		})
+
+		return nil
+	case *database.DB:
+		return q.send(ctx, m, h)
+	default:
+		return ErrNoTx
+	}
 }
 
 // Message builds the stored message for j (drivers with their own
@@ -401,7 +455,9 @@ func newID() string {
 }
 
 // Sync runs jobs inline during Dispatch (development, tests, simple apps).
-// Delays and retries do not apply: the handler's error goes to the caller.
+// Retries do not apply (the handler's error goes to the caller) and delayed
+// jobs are refused with ErrInlineDelay; DispatchTx runs the job after the
+// transaction commits.
 type Sync struct{}
 
 // Inline implements Inline.
