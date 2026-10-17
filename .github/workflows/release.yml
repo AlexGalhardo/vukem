@@ -40,5 +40,16 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        id: attest
         with:
           subject-checksums: ./dist/checksums.txt
+      # Also attach the provenance bundle to the release, so tools that read
+      # release assets (OpenSSF Scorecard) see it next to the archives.
+      - name: Upload the provenance bundle
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BUNDLE: ${{ steps.attest.outputs.bundle-path }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          cp "$BUNDLE" vukem.intoto.jsonl
+          gh release upload "$TAG" vukem.intoto.jsonl --clobber --repo "$GITHUB_REPOSITORY"
