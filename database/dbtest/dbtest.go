@@ -26,13 +26,13 @@ import (
 	"github.com/AlexGalhardo/vukem/schema"
 )
 
-// Meta is a JSON column payload.
-type Meta struct {
+// meta is a JSON column payload.
+type meta struct {
 	Tags []string `json:"tags"`
 }
 
-// Author is the main conformance model.
-type Author struct {
+// author is the main conformance model.
+type author struct {
 	orm.Model
 	orm.SoftDeletes
 
@@ -40,17 +40,17 @@ type Author struct {
 	Email  *string
 	Active bool
 	Score  float64
-	Meta   orm.JSON[Meta]
+	Meta   orm.JSON[meta]
 
-	Books     orm.HasMany[Book] `json:"books,omitzero"`
-	FirstBook orm.HasOne[Book]  `json:"first_book,omitzero" orm:"fk:author_id"`
+	Books     orm.HasMany[book] `json:"books,omitzero"`
+	FirstBook orm.HasOne[book]  `json:"first_book,omitzero" orm:"fk:author_id"`
 }
 
 // Table implements orm.Tabler.
-func (Author) Table() string { return "dbt_authors" }
+func (author) Table() string { return "dbt_authors" }
 
-// Book belongs to an author (foreign key with cascade).
-type Book struct {
+// book belongs to an author (foreign key with cascade).
+type book struct {
 	orm.Model
 
 	AuthorID  int64
@@ -58,12 +58,12 @@ type Book struct {
 	Pages     int
 	Published *time.Time
 
-	Author orm.BelongsTo[Author] `json:"author,omitzero"`
-	Tags   orm.ManyToMany[Tag]   `json:"tags,omitzero"   orm:"pivot:dbt_book_tag"`
+	Author orm.BelongsTo[author] `json:"author,omitzero"`
+	Tags   orm.ManyToMany[tag]   `json:"tags,omitzero"   orm:"pivot:dbt_book_tag"`
 }
 
 // Table implements orm.Tabler.
-func (Book) Table() string { return "dbt_books" }
+func (book) Table() string { return "dbt_books" }
 
 var migrations = []schema.Migration{
 	{
@@ -194,13 +194,13 @@ func testORM(ctx context.Context, t *testing.T, db *database.DB) {
 	ctx = orm.WithClock(ctx, func() time.Time { return fixed })
 
 	email := "ana@example.com"
-	authors := []Author{
+	authors := []author{
 		{
 			Name:   "Ana",
 			Email:  &email,
 			Active: true,
 			Score:  9.5,
-			Meta:   orm.JSON[Meta]{V: Meta{Tags: []string{"go", "sql"}}},
+			Meta:   orm.JSON[meta]{V: meta{Tags: []string{"go", "sql"}}},
 		},
 		{Name: "Bob", Score: 7},
 		{Name: "Cid", Active: true, Score: 8.25},
@@ -217,7 +217,7 @@ func testORM(ctx context.Context, t *testing.T, db *database.DB) {
 	}
 
 	// Round trip of every column type.
-	got, err := orm.QueryOf[Author](db).Find(ctx, authors[0].ID)
+	got, err := orm.QueryOf[author](db).Find(ctx, authors[0].ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -227,12 +227,12 @@ func testORM(ctx context.Context, t *testing.T, db *database.DB) {
 		t.Fatalf("round trip = %+v", got)
 	}
 
-	if bob, _ := orm.QueryOf[Author](db).Where("name", "Bob").First(ctx); bob.Email != nil || bob.Active {
+	if bob, _ := orm.QueryOf[author](db).Where("name", "Bob").First(ctx); bob.Email != nil || bob.Active {
 		t.Fatalf("nullable/default columns = %+v", bob)
 	}
 
 	// Queries.
-	count := func(q orm.Query[Author]) int64 {
+	count := func(q orm.Query[author]) int64 {
 		t.Helper()
 
 		n, err := q.Count(ctx)
@@ -243,9 +243,9 @@ func testORM(ctx context.Context, t *testing.T, db *database.DB) {
 		return n
 	}
 
-	base := orm.QueryOf[Author](db)
+	base := orm.QueryOf[author](db)
 	checks := map[string]struct {
-		q    orm.Query[Author]
+		q    orm.Query[author]
 		want int64
 	}{
 		"where bool": {base.Where("active", true), 2},
@@ -258,7 +258,7 @@ func testORM(ctx context.Context, t *testing.T, db *database.DB) {
 		"like":       {base.Where("name", "LIKE", "%i%"), 1},
 		"or group": {
 			base.WhereGroup(
-				func(g orm.Query[Author]) orm.Query[Author] { return g.Where("name", "Bob").OrWhere("name", "Cid") },
+				func(g orm.Query[author]) orm.Query[author] { return g.Where("name", "Bob").OrWhere("name", "Cid") },
 			),
 			2,
 		},
@@ -303,7 +303,7 @@ func testORM(ctx context.Context, t *testing.T, db *database.DB) {
 	}
 
 	// Unique violation → 409.
-	dup := Author{Name: "Ana"}
+	dup := author{Name: "Ana"}
 	if err := orm.Create(ctx, db, &dup); !errors.Is(err, orm.ErrConflict) || errs.Status(err) != 409 {
 		t.Fatalf("duplicate = %v", err)
 	}
@@ -324,20 +324,20 @@ func testORM(ctx context.Context, t *testing.T, db *database.DB) {
 
 	// Foreign keys cascade; soft deletes hide rows.
 	published := fixed.Add(-time.Hour)
-	book := Book{AuthorID: authors[1].ID, Title: "Go", Pages: 300, Published: &published}
+	created := book{AuthorID: authors[1].ID, Title: "Go", Pages: 300, Published: &published}
 
-	if err := orm.Create(ctx, db, &book); err != nil {
+	if err := orm.Create(ctx, db, &created); err != nil {
 		t.Fatal(err)
 	}
 
-	if b, err := orm.QueryOf[Book](
+	if b, err := orm.QueryOf[book](
 		db,
-	).Find(ctx, book.ID); err != nil || b.Published == nil ||
+	).Find(ctx, created.ID); err != nil || b.Published == nil ||
 		!b.Published.Equal(published) {
 		t.Fatalf("book = %+v %v", b, err)
 	}
 
-	orphan := Book{AuthorID: 999_999, Title: "Orphan"}
+	orphan := book{AuthorID: 999_999, Title: "Orphan"}
 	if err := orm.Create(ctx, db, &orphan); err == nil {
 		t.Fatal("foreign key not enforced")
 	}
@@ -363,7 +363,7 @@ func testORM(ctx context.Context, t *testing.T, db *database.DB) {
 		t.Fatal(err)
 	}
 
-	if n, _ := orm.QueryOf[Book](db).Count(ctx); n != 0 {
+	if n, _ := orm.QueryOf[book](db).Count(ctx); n != 0 {
 		t.Fatalf("books after cascade = %d", n)
 	}
 
@@ -382,7 +382,7 @@ func testTransactions(ctx context.Context, t *testing.T, db *database.DB) {
 	boom := errors.New("boom")
 
 	err := db.Tx(ctx, func(tx *database.Tx) error {
-		a := Author{Name: "InTx"}
+		a := author{Name: "InTx"}
 		if err := orm.Create(ctx, tx, &a); err != nil {
 			return err
 		}
@@ -393,13 +393,13 @@ func testTransactions(ctx context.Context, t *testing.T, db *database.DB) {
 		t.Fatalf("Tx error = %v", err)
 	}
 
-	if n, _ := orm.QueryOf[Author](db).Where("name", "InTx").Count(ctx); n != 0 {
+	if n, _ := orm.QueryOf[author](db).Where("name", "InTx").Count(ctx); n != 0 {
 		t.Fatal("rolled back insert is visible")
 	}
 
 	err = db.Tx(ctx, func(tx *database.Tx) error {
 		return database.RunInTx(ctx, tx, func(inner *database.Tx) error {
-			a := Author{Name: "Committed"}
+			a := author{Name: "Committed"}
 			return orm.Create(ctx, inner, &a)
 		})
 	})
@@ -407,7 +407,7 @@ func testTransactions(ctx context.Context, t *testing.T, db *database.DB) {
 		t.Fatal(err)
 	}
 
-	if n, _ := orm.QueryOf[Author](db).Where("name", "Committed").Count(ctx); n != 1 {
+	if n, _ := orm.QueryOf[author](db).Where("name", "Committed").Count(ctx); n != 1 {
 		t.Fatal("committed insert missing")
 	}
 
@@ -415,13 +415,13 @@ func testTransactions(ctx context.Context, t *testing.T, db *database.DB) {
 		defer func() { _ = recover() }()
 
 		_ = db.Tx(ctx, func(tx *database.Tx) error {
-			a := Author{Name: "Panicked"}
+			a := author{Name: "Panicked"}
 			_ = orm.Create(ctx, tx, &a)
 			panic("boom")
 		})
 	}()
 
-	if n, _ := orm.QueryOf[Author](db).Where("name", "Panicked").Count(ctx); n != 0 {
+	if n, _ := orm.QueryOf[author](db).Where("name", "Panicked").Count(ctx); n != 0 {
 		t.Fatal("insert before panic is visible")
 	}
 }

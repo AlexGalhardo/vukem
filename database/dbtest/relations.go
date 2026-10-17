@@ -13,15 +13,15 @@ import (
 	"github.com/AlexGalhardo/vukem/schema"
 )
 
-// Tag relates to books through the dbt_book_tag pivot table.
-type Tag struct {
+// tag relates to books through the dbt_book_tag pivot table.
+type tag struct {
 	orm.Model
 
 	Name string `json:"name"`
 }
 
 // Table implements orm.Tabler.
-func (Tag) Table() string { return "dbt_tags" }
+func (tag) Table() string { return "dbt_tags" }
 
 var tagsMigration = schema.Migration{
 	ID: "dbt_3_tags",
@@ -79,17 +79,17 @@ func create[T any](ctx context.Context, t *testing.T, db *database.DB, items []T
 func testRelations(ctx context.Context, t *testing.T, db *database.DB) {
 	t.Helper()
 
-	authors := []Author{{Name: "Rel A"}, {Name: "Rel B"}, {Name: "Rel C"}}
+	authors := []author{{Name: "Rel A"}, {Name: "Rel B"}, {Name: "Rel C"}}
 	create(ctx, t, db, authors)
 
-	books := []Book{
+	books := []book{
 		{AuthorID: authors[0].ID, Title: "A1"},
 		{AuthorID: authors[0].ID, Title: "A2"},
 		{AuthorID: authors[1].ID, Title: "B1"},
 	}
 	create(ctx, t, db, books)
 
-	tags := []Tag{{Name: "go"}, {Name: "sql"}, {Name: "web"}}
+	tags := []tag{{Name: "go"}, {Name: "sql"}, {Name: "web"}}
 	create(ctx, t, db, tags)
 
 	// Pivot writes: duplicates are skipped, Sync replaces, Detach clears.
@@ -109,7 +109,7 @@ func testRelations(ctx context.Context, t *testing.T, db *database.DB) {
 	testBelongsToAndPivot(ctx, t, db, books)
 
 	// Strict mode: relations are never loaded lazily.
-	plain, err := orm.QueryOf[Book](db).Find(ctx, books[0].ID)
+	plain, err := orm.QueryOf[book](db).Find(ctx, books[0].ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +119,7 @@ func testRelations(ctx context.Context, t *testing.T, db *database.DB) {
 	}
 
 	// JSON includes loaded relations only.
-	withAuthor, err := orm.QueryOf[Book](db).With("Author").Find(ctx, books[0].ID)
+	withAuthor, err := orm.QueryOf[book](db).With("Author").Find(ctx, books[0].ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +154,7 @@ func testRelations(ctx context.Context, t *testing.T, db *database.DB) {
 		t.Fatal(err)
 	}
 
-	b, err := orm.QueryOf[Book](db).With("Author").Find(ctx, books[2].ID)
+	b, err := orm.QueryOf[book](db).With("Author").Find(ctx, books[2].ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +163,7 @@ func testRelations(ctx context.Context, t *testing.T, db *database.DB) {
 		t.Fatalf("soft-deleted owner loaded: %v %v", a, err)
 	}
 
-	if _, err := orm.QueryOf[Book](db).With("Nope").Get(ctx); err == nil {
+	if _, err := orm.QueryOf[book](db).With("Nope").Get(ctx); err == nil {
 		t.Fatal("unknown relation accepted")
 	}
 
@@ -171,12 +171,12 @@ func testRelations(ctx context.Context, t *testing.T, db *database.DB) {
 		t.Fatal("Attach on a has-many relation accepted")
 	}
 
-	if err := orm.Attach(ctx, db, &Book{}, "Tags", 1); err == nil {
+	if err := orm.Attach(ctx, db, &book{}, "Tags", 1); err == nil {
 		t.Fatal("Attach on an unsaved model accepted")
 	}
 }
 
-func titles(bs []Book) []string {
+func titles(bs []book) []string {
 	out := make([]string, len(bs))
 	for i := range bs {
 		out[i] = bs[i].Title
@@ -191,7 +191,7 @@ func testHasMany(ctx context.Context, t *testing.T, db *database.DB) {
 
 	c := &counter{DB: db}
 
-	got, err := orm.QueryOf[Author](c).WhereIn("name", "Rel A", "Rel B", "Rel C").OrderBy("id", orm.Asc).
+	got, err := orm.QueryOf[author](c).WhereIn("name", "Rel A", "Rel B", "Rel C").OrderBy("id", orm.Asc).
 		With("Books", "FirstBook").Get(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -214,12 +214,12 @@ func testHasMany(ctx context.Context, t *testing.T, db *database.DB) {
 
 // testBelongsToAndPivot: books + belongs-to (1) + many-to-many (pivot,
 // then tags) cost 4 queries.
-func testBelongsToAndPivot(ctx context.Context, t *testing.T, db *database.DB, books []Book) {
+func testBelongsToAndPivot(ctx context.Context, t *testing.T, db *database.DB, books []book) {
 	t.Helper()
 
 	c := &counter{DB: db}
 
-	bs, err := orm.QueryOf[Book](c).WhereIn("id", books[0].ID, books[1].ID, books[2].ID).OrderBy("id", orm.Asc).
+	bs, err := orm.QueryOf[book](c).WhereIn("id", books[0].ID, books[1].ID, books[2].ID).OrderBy("id", orm.Asc).
 		With("Author", "Tags").Get(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -229,7 +229,7 @@ func testBelongsToAndPivot(ctx context.Context, t *testing.T, db *database.DB, b
 		t.Errorf("queries for books + belongs-to + many-to-many = %d, want 4", c.n)
 	}
 
-	tagNames := func(b Book) []string {
+	tagNames := func(b book) []string {
 		ts, err := b.Tags.Get()
 		if err != nil {
 			t.Fatal(err)
