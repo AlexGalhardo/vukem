@@ -4,6 +4,10 @@
 // version pinned, idempotency keys on every POST, retries on 429/5xx and
 // typed errors; webhooks verify Stripe-Signature, process each event once
 // and dispatch it to an events.Bus.
+//
+// See https://github.com/AlexGalhardo/vukem/blob/main/docs/subsystems.md
+// for the client and https://github.com/AlexGalhardo/vukem/blob/main/docs/billing.md
+// for the subscriptions that vukem install:billing builds on it.
 package stripe
 
 import (

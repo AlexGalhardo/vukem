@@ -15,6 +15,8 @@
 // Endpoints must use https; a plain http endpoint (local MinIO) is refused
 // unless Config.InsecureHTTP is set. Credentials are config.Secret values
 // and never appear in errors, logs or fmt output.
+//
+// See https://github.com/AlexGalhardo/vukem/blob/main/docs/subsystems.md.
 package s3
 
 import (

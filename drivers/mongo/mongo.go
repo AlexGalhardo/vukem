@@ -8,6 +8,8 @@
 //
 // Never pass decoded request JSON as a filter: operators such as $where or
 // $ne would come from the client. Build filters from validated fields.
+//
+// See https://github.com/AlexGalhardo/vukem/blob/main/docs/database.md.
 package mongo
 
 import (

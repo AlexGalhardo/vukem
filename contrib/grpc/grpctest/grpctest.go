@@ -8,6 +8,8 @@
 //		client := greetv1connect.NewGreetServiceClient(srv.Client, srv.URL, p.Options...)
 //		...
 //	}
+//
+// See https://github.com/AlexGalhardo/vukem/blob/main/docs/api.md.
 package grpctest
 
 import (

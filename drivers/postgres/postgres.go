@@ -3,6 +3,12 @@
 //
 //	vukem.New(vukem.WithDatabaseDrivers(postgres.Driver()))
 //	// DATABASE_URL=postgres://user:pass@localhost:5432/app?sslmode=disable
+//
+// [Driver] is the only API: once it is registered, everything built on the
+// database package (ORM, schema builder, migrations, database-backed
+// stores) speaks the PostgreSQL dialect.
+//
+// See https://github.com/AlexGalhardo/vukem/blob/main/docs/database.md.
 package postgres
 
 import (

@@ -4,6 +4,12 @@
 //
 //	vukem.New(vukem.WithDatabaseDrivers(mysql.Driver()))
 //	// DATABASE_URL=mysql://user:pass@localhost:3306/app
+//
+// [Driver] registers the dialect with the database package; [DSN]
+// translates the URL into a go-sql-driver data source name with UTC
+// times, utf8mb4 and verified TLS for every non-loopback host.
+//
+// See https://github.com/AlexGalhardo/vukem/blob/main/docs/database.md.
 package mysql
 
 import (

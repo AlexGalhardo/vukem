@@ -9,6 +9,8 @@
 // or, with a TracerProvider of your own:
 //
 //	r.UseServer(otel.Middleware(tp))
+//
+// See https://github.com/AlexGalhardo/vukem/blob/main/docs/subsystems.md.
 package otel
 
 import (

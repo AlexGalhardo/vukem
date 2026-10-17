@@ -14,6 +14,10 @@
 //	})
 //
 // or, for a route that only upgrades, r.Get("/chat", websocket.Handler(chat)).
+// [Broadcast] serves package broadcast channels over the same connection
+// type.
+//
+// See https://github.com/AlexGalhardo/vukem/blob/main/docs/frontend.md.
 package websocket
 
 import (

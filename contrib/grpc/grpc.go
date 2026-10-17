@@ -10,7 +10,11 @@
 // Mount makes every Vukem error written by route middleware (401 from a
 // guard, 429 from the rate limiter) a protocol error with the matching
 // code, and HandlerOptions maps the errors returned by RPC methods the same
-// way (Error).
+// way (Error). [Health] and [Reflection] add the standard health and
+// reflection services, and package grpctest calls a service over every
+// protocol in tests.
+//
+// See https://github.com/AlexGalhardo/vukem/blob/main/docs/api.md.
 package grpc
 
 import (

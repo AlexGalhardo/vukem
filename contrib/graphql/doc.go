@@ -26,4 +26,6 @@
 // [FromBroadcast] for broadcast channels) and are served by [ServeWS]
 // (graphql-ws protocol over any WebSocket connection, e.g.
 // drivers/websocket) or by [Schema.Handler] as server-sent events.
+//
+// See https://github.com/AlexGalhardo/vukem/blob/main/docs/graphql.md.
 package graphql

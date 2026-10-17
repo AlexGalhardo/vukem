@@ -6,6 +6,8 @@
 //	queue.New(c.Queue(redis.QueueOptions{}), log)
 //
 // Locks for the scheduler and cache.Cache.NewLock work on the cache store.
+//
+// See https://github.com/AlexGalhardo/vukem/blob/main/docs/subsystems.md.
 package redis
 
 import (
