@@ -567,6 +567,7 @@ func (a *App) newRouter() *router.Router {
 		CheckResponses: !a.Config.IsProduction(),
 		TrustedProxies: a.proxies,
 		ClientIPHeader: a.Config.ClientIPHeader,
+		IPv6Prefix:     a.Config.RateLimitIPv6Prefix,
 	}
 
 	if debug && a.Kind == KindWeb {

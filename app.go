@@ -110,6 +110,10 @@ type Config struct {
 	// (such as X-Real-IP) that c.IP() reads instead of X-Forwarded-For.
 	// It requires TRUSTED_PROXIES.
 	ClientIPHeader string `env:"CLIENT_IP_HEADER"`
+	// RateLimitIPv6Prefix is the prefix length ratelimit.ByIP groups IPv6
+	// clients by (1-128): one client usually owns a whole /64 and can
+	// rotate addresses inside it. IPv4 keys stay per address.
+	RateLimitIPv6Prefix int `env:"RATE_LIMIT_IPV6_PREFIX" default:"64"`
 }
 
 // IsProduction reports whether APP_ENV is production.
@@ -472,6 +476,10 @@ func New(opts ...Option) (*App, error) {
 
 	if cfg.ClientIPHeader, err = clientIPHeader(cfg.ClientIPHeader, len(proxies) > 0); err != nil {
 		return nil, err
+	}
+
+	if cfg.RateLimitIPv6Prefix < 1 || cfg.RateLimitIPv6Prefix > 128 {
+		return nil, fmt.Errorf("vukem: RATE_LIMIT_IPV6_PREFIX %d must be between 1 and 128", cfg.RateLimitIPv6Prefix)
 	}
 
 	previous, err := parsePreviousKeys(cfg.PreviousKeys)

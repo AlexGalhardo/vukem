@@ -190,3 +190,59 @@ func TestKeys(t *testing.T) {
 		t.Fatalf("ByToken = %q (token must be hashed)", got)
 	}
 }
+
+func TestSecurity_A06_ByIPGroupsIPv6ByPrefix(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		prefix int // web.Services.IPv6Prefix; 0 is the default /64
+		peer   string
+		want   string
+	}{
+		{name: "ipv4 unchanged", peer: "203.0.113.5:1", want: "ip:203.0.113.5"},
+		{name: "ipv4-mapped is ipv4", peer: "[::ffff:203.0.113.5]:1", want: "ip:203.0.113.5"},
+		{name: "ipv6 default /64", peer: "[2001:db8:1:2:aaaa::1]:1", want: "ip:2001:db8:1:2::/64"},
+		{name: "same /64 other host", peer: "[2001:db8:1:2:bbbb:cccc:dddd:eeee]:1", want: "ip:2001:db8:1:2::/64"},
+		{name: "other /64", peer: "[2001:db8:1:3::1]:1", want: "ip:2001:db8:1:3::/64"},
+		{name: "zone dropped", peer: "[fe80::1%eth0]:1", want: "ip:fe80::/64"},
+		{name: "configured /48", prefix: 48, peer: "[2001:db8:1:2::1]:1", want: "ip:2001:db8:1::/48"},
+		{name: "configured /128", prefix: 128, peer: "[2001:db8::1]:1", want: "ip:2001:db8::1/128"},
+		{name: "prefix ignores ipv4", prefix: 48, peer: "203.0.113.5:1", want: "ip:203.0.113.5"},
+		{name: "unparsable kept", peer: "pipe", want: "ip:pipe"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", http.NoBody)
+			r.RemoteAddr = tt.peer
+			r = r.WithContext(web.WithServices(r.Context(), &web.Services{IPv6Prefix: tt.prefix}))
+
+			if got := ByIP(r); got != tt.want {
+				t.Fatalf("ByIP = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSecurity_A06_RateLimitIPv6RotationSharesBucket(t *testing.T) {
+	t.Parallel()
+
+	ok := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	h := Middleware(NewMemory(2, time.Minute), ByIP)(ok)
+
+	codes := make([]int, 0, 3)
+
+	for i := range 3 {
+		r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", http.NoBody)
+		r.Header.Set("Accept", "application/json")
+		r.RemoteAddr = "[2001:db8:1:2::" + strconv.Itoa(i+1) + "]:1234"
+		codes = append(codes, serve(h, r).Code)
+	}
+
+	if codes[2] != http.StatusTooManyRequests {
+		t.Fatalf("codes = %v: rotating addresses inside one /64 escaped the limit", codes)
+	}
+}
