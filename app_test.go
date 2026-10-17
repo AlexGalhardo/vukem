@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/fstest"
 	"testing/synctest"
 	"time"
 
@@ -23,6 +24,7 @@ import (
 
 	"github.com/AlexGalhardo/vukem/config"
 	"github.com/AlexGalhardo/vukem/database"
+	"github.com/AlexGalhardo/vukem/inertia"
 	"github.com/AlexGalhardo/vukem/internal/testutil"
 	"github.com/AlexGalhardo/vukem/mail"
 	"github.com/AlexGalhardo/vukem/queue"
@@ -1013,3 +1015,93 @@ func discardLogger() *slog.Logger { return slog.New(slog.DiscardHandler) }
 type emptyFS struct{}
 
 func (emptyFS) Open(string) (fs.File, error) { return nil, fs.ErrNotExist }
+
+// An app that uses the starter layout (resources/js/pages) but has no page
+// for the Inertia error component gets one warning at boot outside
+// production: errors on Inertia visits would fail to render on the client.
+func TestWithInertiaWarnsWithoutErrorPage(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		env       string
+		files     fstest.MapFS
+		component string
+		warn      bool
+	}{
+		{"missing", "development", fstest.MapFS{"resources/js/pages/Home.tsx": {}}, "", true},
+		{"react", "development", fstest.MapFS{"resources/js/pages/Error.tsx": {}}, "", false},
+		{"vue", "development", fstest.MapFS{"resources/js/pages/Error.vue": {}}, "", false},
+		{"svelte", "development", fstest.MapFS{"resources/js/pages/Error.svelte": {}}, "", false},
+		{
+			"custom component",
+			"development",
+			fstest.MapFS{"resources/js/pages/Errors/Show.tsx": {}},
+			"Errors/Show",
+			false,
+		},
+		{
+			"custom component missing",
+			"development",
+			fstest.MapFS{"resources/js/pages/Error.tsx": {}},
+			"Errors/Show",
+			true,
+		},
+		{"other layout", "development", fstest.MapFS{"web/src/App.tsx": {}}, "", false},
+		{"production", "production", fstest.MapFS{"resources/js/pages/Home.tsx": {}}, "", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			getenv := func(k string) (string, bool) {
+				v, ok := map[string]string{"APP_KEY": testKey, "APP_ENV": tt.env}[k]
+				return v, ok
+			}
+
+			var buf bytes.Buffer
+
+			if _, err := New(WithEnv(tt.files, getenv), WithLogOutput(&buf),
+				WithInertia(inertia.Config{ErrorComponent: tt.component})); err != nil {
+				t.Fatal(err)
+			}
+
+			if got := strings.Count(
+				buf.String(),
+				"inertia error page not found",
+			); got != map[bool]int{true: 1}[tt.warn] {
+				t.Errorf("warnings = %d, want warn=%v; log:\n%s", got, tt.warn, buf.String())
+			}
+		})
+	}
+}
+
+// WithInertia installs its ErrorPage before the routes run, so an app's own
+// hook set there replaces it.
+func TestWithInertiaErrorPageOrder(t *testing.T) {
+	t.Parallel()
+
+	called := false
+	own := func(*web.Ctx, web.ErrorPage) bool { called = true; return false }
+
+	app, err := New(WithSource(testSource(nil)), WithLogger(discardLogger()), WithInertia(inertia.Config{}),
+		WithRoutes(func(r *router.Router, _ *App) error {
+			if r.Services().ErrorPage == nil {
+				t.Error("WithInertia did not install ErrorPage before the routes")
+			}
+
+			r.Services().ErrorPage = own
+
+			return nil
+		}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	app.Router.Services().ErrorPage(nil, web.ErrorPage{})
+
+	if !called {
+		t.Error("the app's own ErrorPage hook was replaced")
+	}
+}

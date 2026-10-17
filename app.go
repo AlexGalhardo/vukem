@@ -1,6 +1,7 @@
 package vukem
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -337,9 +338,12 @@ func WithViews(fsys fs.FS) Option {
 // WithInertia enables the Inertia adapter (app.Inertia); add
 // app.Inertia.Middleware to the routes that render pages. Errors on Inertia
 // requests render inertia.Config.ErrorComponent (default "Error", see
-// inertia.Inertia.ErrorPage); set app.Router.Services().ErrorPage to nil
-// to keep the HTML error page. Version and the SSR dev endpoint default to
-// app.Vite when WithVite is given.
+// inertia.Inertia.ErrorPage): New installs it as
+// app.Router.Services().ErrorPage when no hook is set yet, before the
+// routes run, so routes may replace it or set it to nil to keep the HTML
+// error page. Outside production a web app warns once at boot when the
+// project has resources/js/pages but no page for that component. Version
+// and the SSR dev endpoint default to app.Vite when WithVite is given.
 func WithInertia(cfg inertia.Config) Option {
 	return func(o *options) error { o.inertia = &cfg; return nil }
 }
@@ -719,7 +723,18 @@ func New(opts ...Option) (*App, error) {
 			return nil, err
 		}
 
-		app.Router.Services().ErrorPage = app.Inertia.ErrorPage
+		// Set only when nil, so a hook installed earlier is kept; routes run
+		// later and may replace it.
+		if app.Router.Services().ErrorPage == nil {
+			app.Router.Services().ErrorPage = app.Inertia.ErrorPage
+		}
+
+		if comp := cmp.Or(icfg.ErrorComponent, "Error"); !cfg.IsProduction() && app.Kind == KindWeb && o.fsys != nil &&
+			inertiaPageMissing(o.fsys, comp) {
+			app.Log.Warn("inertia error page not found: errors on Inertia visits will not render",
+				"component", comp, "want", inertiaPagesDir+"/"+comp+".{tsx,vue,svelte}",
+				"fix", "add the page, set inertia.Config.ErrorComponent, or set app.Router.Services().ErrorPage = nil")
+		}
 	}
 
 	if o.views != nil {
@@ -1321,6 +1336,25 @@ func (f RunnerFunc) Run(ctx context.Context) error { return f(ctx) }
 type namedRunner struct {
 	name   string
 	runner Runner
+}
+
+// inertiaPagesDir is where the starters keep Inertia pages.
+const inertiaPagesDir = "resources/js/pages"
+
+// inertiaPageMissing reports whether fsys uses the starters' pages
+// directory but has no page for component. Other layouts are not checked.
+func inertiaPageMissing(fsys fs.FS, component string) bool {
+	if _, err := fs.Stat(fsys, inertiaPagesDir); err != nil {
+		return false
+	}
+
+	for _, ext := range []string{".tsx", ".jsx", ".vue", ".svelte", ".ts", ".js"} {
+		if _, err := fs.Stat(fsys, inertiaPagesDir+"/"+component+ext); err == nil {
+			return false
+		}
+	}
+
+	return true
 }
 
 // Server timeouts applied by NewHTTPServer. Zero timeouts are never used
