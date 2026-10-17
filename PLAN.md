@@ -581,7 +581,7 @@ Applies to **every** task:
   → verify: `apidiff` report reviewed and committed under `docs/api/`.
 - [x] **B.5.2** Security review against [docs/security.md](docs/security.md) (OWASP Top 10:2025, ASVS L2 checklist for CSRF, sessions, auth, uploads, SQL building, headers) + fuzzing campaign (≥ 1h per fuzz target).
   → verify: findings tracked and closed; every BETA default of docs/security.md is checked (`[x]`) and names its test.
-- [ ] **B.5.5** Supply chain: cosign keyless signing of release artifacts, SBOM published, actions pinned by SHA, OpenSSF Scorecard ≥ 7.
+- [x] **B.5.5** Supply chain: cosign keyless signing of release artifacts, SBOM published, actions pinned by SHA, OpenSSF Scorecard ≥ 7.
   → verify: `cosign verify-blob` in release workflow; Scorecard badge.
 - [x] **B.5.3** Performance baseline (router, ORM, render, full request) vs net/http, chi, echo.
   → verify: `docs/benchmarks.md` committed.
