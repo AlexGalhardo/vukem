@@ -171,6 +171,9 @@ type App struct {
 	// Telegram is the Telegram log handler when TELEGRAM_* is set (nil
 	// otherwise); use it for Contact and Send.
 	Telegram *telegram.Handler
+	// telegramLogs reports whether log records are forwarded to Telegram
+	// (TELEGRAM_LOG).
+	telegramLogs bool
 
 	// Events is the application event bus (WithListeners registers listeners).
 	Events *events.Bus
@@ -589,6 +592,7 @@ func New(opts ...Option) (*App, error) {
 
 	if tg != nil {
 		app.Telegram = tg
+		app.telegramLogs = tgLogs
 		app.OnShutdown(tg.Close)
 	}
 

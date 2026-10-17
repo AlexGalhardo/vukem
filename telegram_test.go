@@ -131,3 +131,34 @@ func TestTelegramLogForwarding(t *testing.T) {
 		})
 	}
 }
+
+func TestTelegramStatusShowsLogForwarding(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		log  string
+		want string
+	}{
+		{"true", "on (token [redacted])"},
+		{"false", "on (token [redacted], log forwarding off)"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.log, func(t *testing.T) {
+			t.Parallel()
+
+			app, err := New(WithSource(testSource(map[string]string{
+				"TELEGRAM_BOT_TOKEN": "123:T", "TELEGRAM_CHAT_ID": "-1", "TELEGRAM_LOG": tt.log,
+			})), WithLogger(discardLogger()))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			t.Cleanup(func() { _ = app.Shutdown(context.Background()) })
+
+			if got := telegramStatus(app); got != tt.want {
+				t.Errorf("telegramStatus(TELEGRAM_LOG=%s) = %q, want %q", tt.log, got, tt.want)
+			}
+		})
+	}
+}
