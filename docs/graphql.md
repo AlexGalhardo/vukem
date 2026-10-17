@@ -129,7 +129,7 @@ Every error carries `message`, `locations`, `path` and `extensions.code`:
 | anything else, any 5xx, leaf serialization failures | `INTERNAL_SERVER_ERROR` | `Internal server error` (the real text only with `graphql.WithDebug(true)`; logged with `graphql.WithLogger`) |
 | `*graphql.Error` (`graphql.NewError(msg, ext)`) | as given | as given |
 
-Errors implementing `Extensions() map[string]any` add their own keys. Request errors use `GRAPHQL_PARSE_FAILED`, `GRAPHQL_VALIDATION_FAILED`, `BAD_USER_INPUT` (variables) and `OPERATION_RESOLUTION_FAILURE`.
+Errors implementing `Extensions() map[string]any` add their own keys. A `*graphql.Error` and an `Extender`'s keys reach clients as written, whatever their status: they are the app's explicit choice, so never put internals in them. Request errors use `GRAPHQL_PARSE_FAILED`, `GRAPHQL_VALIDATION_FAILED`, `BAD_USER_INPUT` (variables) and `OPERATION_RESOLUTION_FAILURE`.
 
 ## Batching (N+1)
 
