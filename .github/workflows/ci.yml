@@ -59,8 +59,8 @@ jobs:
         working-directory: openapi/testdata
         run: |
           npm ci --ignore-scripts
-          npx tsc --noEmit --strict --target es2020 --module commonjs --moduleResolution node shop.types.ts shop.zod.ts
-          npx tsc --noEmit --strict --target es2022 --lib es2022,dom shop.client.ts
+          npx tsc --noEmit --strict --target es2020 --module esnext --moduleResolution bundler shop.types.ts shop.zod.ts reserved.zod.ts
+          npx tsc --noEmit --strict --target es2022 --lib es2022,dom shop.client.ts reserved.client.ts
 
   markdown:
     name: Lint (Markdown)

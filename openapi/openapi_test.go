@@ -6,6 +6,8 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -176,5 +178,52 @@ func TestTypeScriptGolden(t *testing.T) {
 		if diff := cmp.Diff(string(bytes.ReplaceAll(want, []byte("\r\n"), []byte("\n"))), got); diff != "" {
 			t.Errorf("%s (-want +got):\n%s", tc.file, diff)
 		}
+	}
+}
+
+func TestTypeScriptZod4(t *testing.T) {
+	t.Parallel()
+
+	got, err := openapi.TypeScript(openapi.Generate(routes(), openapi.Info{PathPrefix: "/api"}), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tt := range []struct {
+		snippet string
+		want    bool
+	}{
+		{"z.ZodTypeDef", false},         // removed in zod 4
+		{"z.string().datetime(", false}, // deprecated string method in zod 4
+		{"z.iso.datetime({ offset: true })", true},
+		{"export const ProductsStoreBodySchema: z.ZodType<ProductsStoreBody> =", true}, // inline body
+	} {
+		if strings.Contains(got, tt.snippet) != tt.want {
+			t.Errorf("TypeScript(zod) contains %q = %v, want %v", tt.snippet, !tt.want, tt.want)
+		}
+	}
+}
+
+func TestSchemasRequiredString(t *testing.T) {
+	t.Parallel()
+
+	type in struct {
+		Name  string  `json:"name"  validate:"required"`
+		Code  string  `json:"code"  validate:"required,min=3"`
+		Zero  string  `json:"zero"  validate:"required,min=0"`
+		Note  *string `json:"note"  validate:"required"`
+		Plain string  `json:"plain"`
+	}
+
+	props := openapi.NewSchemas().Object(reflect.TypeFor[in](), nil)["properties"].(map[string]any)
+
+	got := map[string]any{}
+	for k, v := range props {
+		got[k] = v.(openapi.Schema)["minLength"]
+	}
+
+	want := map[string]any{"name": 1, "code": 3, "zero": 1, "note": 1, "plain": nil}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("minLength (-want +got):\n%s", diff)
 	}
 }

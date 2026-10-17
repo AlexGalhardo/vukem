@@ -786,3 +786,46 @@ func FuzzParse(f *testing.F) {
 		_, _ = ParseJSON(strings.NewReader(data), For[tagged]())
 	})
 }
+
+func TestFromTagsRequiredList(t *testing.T) {
+	t.Parallel()
+
+	type list struct {
+		Data []int `json:"data" validate:"required"`
+		IDs  []int `json:"ids"  validate:"required,min=1"`
+	}
+
+	tests := []struct {
+		name string
+		in   map[string]any
+		want []string
+	}{
+		{"empty lists", map[string]any{"data": []any{}, "ids": []any{1}}, nil},
+		{"min=1 rejects empty", map[string]any{"data": []any{}, "ids": []any{}}, []string{"ids:too_small"}},
+		{"missing", map[string]any{}, []string{"data:required", "ids:required"}},
+		{"null", map[string]any{"data": nil, "ids": nil}, []string{"data:required", "ids:required"}},
+	}
+
+	s := For[list]()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := s.Parse(tt.in)
+
+			var got []string
+			if err != nil {
+				got = codes(issuesOf(t, err))
+			}
+
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("Parse(%v) issues (-want +got):\n%s", tt.in, diff)
+			}
+		})
+	}
+
+	js := JSONSchema(s)
+	if _, ok := js["properties"].(map[string]any)["data"].(map[string]any)["minItems"]; ok {
+		t.Errorf("JSONSchema(required list) has minItems: %v", js)
+	}
+}

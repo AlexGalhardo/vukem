@@ -187,7 +187,7 @@ var LoginSchema = z.FromTags[Login]() // panics at boot on unknown rules or type
 
 `web.Bind[T]` uses `z.For[T]()`: the tag-derived schema, built once per type and memoized (no mutable registry). For hand-written schemas call `web.Parse(c, schema)`.
 
-Supported rules: `required`, `min=N`, `max=N`, `len=N`, `email`, `url`, `uuid`, `ulid`, `alpha`, `alphanum`, `numeric`, `oneof=a b`, `regex=…` (last), `startswith=`, `endswith=`, `contains=`, `trim`, `lowercase`, `positive`, `unique`, `dive` (following rules apply to slice elements). `required` on a string means non-empty. Pointer fields are optional and nullable.
+Supported rules: `required`, `min=N`, `max=N`, `len=N`, `email`, `url`, `uuid`, `ulid`, `alpha`, `alphanum`, `numeric`, `oneof=a b`, `regex=…` (last), `startswith=`, `endswith=`, `contains=`, `trim`, `lowercase`, `positive`, `unique`, `dive` (following rules apply to slice elements). `required` on a string means non-empty; on a list it means present and not null (an empty list passes, as with OpenAPI `required`), so use `min=1` for a non-empty list. Pointer fields are optional and nullable.
 
 ## Typed boundaries
 

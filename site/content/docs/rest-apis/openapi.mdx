@@ -18,6 +18,8 @@ func API(r *router.Router, app *vukem.App) error {
 vukem openapi:export > openapi.json
 ```
 
+`openapi:export` and `codegen:types` build the app in warmup mode: no provider `Boot`, no database connection, `APP_KEY` optional. A warmup app never boots or serves (`Boot` and `Run` return `vukem.ErrWarmupRun`), so never expose its router from a custom `main`.
+
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `APP_NAME` | `Vukem` | `info.title` |
@@ -26,6 +28,7 @@ vukem openapi:export > openapi.json
 | `OPENAPI_IN_PRODUCTION` | `false` | serve `/openapi.json` and `/docs` in production |
 
 - [Typed handlers](/docs/rest-apis/typed-handlers) are described from their types: `json` tags give property names, `validate` rules give constraints (`required`, `min`/`max`/`len`, `email`, `url`, `uuid`, `oneof`, `regex`, `positive`, `unique`, `dive`…), and a `doc:"..."` tag becomes the description.
+- `required` lists the key in `required`. On a string it also emits `minLength: 1`, since an empty string is rejected; on a list it emits no `minItems`, since an empty list passes (tag `min=1` when items are needed).
 - Named structs become `components/schemas`; `orm` relations and `orm.NullTime` map to their JSON shape; errors reference shared `Problem` and `ValidationError` responses; `Op.Security` names become security requirements (`bearer` is predefined).
 - Plain routes get a generic entry; hide one with `.Doc(openapi.Skip{})`.
 - `app.OpenAPI()` returns the document, and `openapi.Generate(r.Routes(), openapi.Info{...})` builds one directly. CI validates a golden document with Redocly.
@@ -46,10 +49,10 @@ app.Client(t).GetJSON("/api/v1/products").AssertOK().AssertMatchesOpenAPI()
 
 ```bash
 vukem codegen:types -o resources/js/api.ts        # TypeScript types
-vukem codegen:types -zod -o resources/js/api.ts   # plus Zod schemas (zod 3.25+)
+vukem codegen:types -zod -o resources/js/api.ts   # plus Zod 4 schemas (zod 4.0+)
 ```
 
-You get one type per component schema plus `<Operation>Body`, `<Operation>Query` and `<Operation>Response` for every named operation, and `<Name>Schema` Zod validators with `-zod`. CI type-checks the golden output with `tsc --strict`.
+You get one type per component schema plus `<Operation>Body`, `<Operation>Query` and `<Operation>Response` for every named operation, and, with `-zod`, Zod 4 validators: `<Name>Schema` per component and `<Operation>BodySchema` per JSON request body (inline bodies included). The command builds the app in warmup mode: no provider `Boot`, so no database connection, and `APP_KEY` may be unset (routes that need the key at build time still fail closed), so CI can run it without secrets. A component whose name would shadow a TypeScript or DOM global, or a name the generated client declares (`Number`, `String`, `Object`, `Date`, `Error`, `Promise`, `Record`, `Array`, `Response`, `Request`, `URL`, `Client`, ...), gets a `Type` suffix: a Go type `Number` becomes `NumberType` (Zod: `NumberTypeSchema`). If two generated names still collide (a `Number` and a `NumberType` schema, a component named like an operation type such as `<Op>Body` or `<Op>Params`, or two operation names that map to the same identifier), `codegen:types` and `codegen:client` fail with an error naming the duplicate instead of emitting code that does not compile. CI type-checks the golden output with `tsc --strict`.
 
 Any `z` schema also exports on its own: `z.JSONSchema(schema)` returns JSON Schema 2020-12 (types, required keys, lengths, ranges, formats, patterns, enums, defaults, descriptions; `Refine`/`Custom` logic cannot be expressed).
 

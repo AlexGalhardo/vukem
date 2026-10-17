@@ -138,3 +138,62 @@ func TestRegisterRejectsBadPattern(t *testing.T) {
 		return struct{}{}, errors.New("unreachable")
 	})
 }
+
+type checkedJSON struct {
+	Status string `json:"status" validate:"required,oneof=open closed"`
+	Data   []int  `json:"data"   validate:"required"`
+}
+
+func TestRegisterValidateResponse(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		check    bool // web.Services.CheckResponses
+		validate bool // Op.ValidateResponse
+		out      checkedJSON
+		status   int
+	}{
+		{"valid", true, true, checkedJSON{Status: "open", Data: []int{}}, 200},
+		{"mismatch fails loudly", true, true, checkedJSON{Status: "secret-value", Data: []int{}}, 500},
+		{"nil list is null", true, true, checkedJSON{Status: "open"}, 500},
+		{"production skips the check", false, true, checkedJSON{Status: "secret-value"}, 200},
+		{"not opted in", true, false, checkedJSON{Status: "secret-value"}, 200},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			r := router.New(&web.Services{CheckResponses: tt.check})
+			api.Register(r, "GET /checked", api.Op{ValidateResponse: tt.validate},
+				func(*web.Ctx, struct{}) (checkedJSON, error) { return tt.out, nil })
+
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequestWithContext(t.Context(), "GET", "/checked", nil)
+			req.Header.Set("Accept", "application/json")
+			r.ServeHTTP(rec, req)
+
+			if rec.Code != tt.status {
+				t.Fatalf("GET /checked = %d %s, want %d", rec.Code, rec.Body, tt.status)
+			}
+
+			if tt.status == 500 && strings.Contains(rec.Body.String(), "secret-value") {
+				t.Errorf("500 body leaks the response: %s", rec.Body)
+			}
+		})
+	}
+}
+
+func TestRegisterValidateResponseNeedsStruct(t *testing.T) {
+	t.Parallel()
+
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("no panic")
+		}
+	}()
+
+	api.Register(router.New(nil), "GET /list", api.Op{ValidateResponse: true},
+		func(*web.Ctx, struct{}) ([]checkedJSON, error) { return nil, nil })
+}

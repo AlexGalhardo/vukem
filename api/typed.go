@@ -28,6 +28,14 @@ type Op struct {
 	// (e.g. "bearer"). It is documentation only and does not authenticate
 	// the route: add auth.Required (and auth.Ability) to the route or group.
 	Security []string
+	// ValidateResponse checks the output against its `validate` tags
+	// (z.For[Out]) before writing it, when web.Services.CheckResponses is
+	// on: the app sets it whenever APP_ENV is not production, so a staging
+	// deployment with APP_ENV=development or test runs the check too. A
+	// mismatch is a server bug: it is logged and answered with a generic 500
+	// instead of sending data that breaks the documented contract. Out must
+	// be a struct; Register panics otherwise.
+	ValidateResponse bool
 }
 
 // Operation is attached to every typed route (router.RouteInfo.Doc) so
@@ -51,7 +59,8 @@ var paramRe = regexp.MustCompile(`\{([A-Za-z_][A-Za-z0-9_]*)(?:\.{3})?\}`) //nol
 // Register adds a typed handler. The input is built from the query string,
 // the JSON or form body and the path parameters (which win), and validated
 // with In's `validate` tags (422 with field errors). The output is written
-// as JSON. GET, HEAD and DELETE ignore the body. Pattern is "METHOD /path".
+// as JSON, checked first when Op.ValidateResponse is set. GET, HEAD and
+// DELETE ignore the body. Pattern is "METHOD /path".
 //
 //	api.Register(g, "POST /products", api.Op{Name: "products.store"},
 //		func(c *web.Ctx, in StoreProduct) (ProductJSON, error) { ... })
@@ -72,6 +81,15 @@ func Register[In, Out any](g Registrar, pattern string, op Op, fn func(*web.Ctx,
 	var schema z.Schema[In]
 	if !noInput {
 		schema = z.For[In]() // panics at boot on bad tags
+	}
+
+	var outSchema z.Schema[Out]
+	if op.ValidateResponse && !noOutput {
+		if outType.Kind() != reflect.Struct {
+			panic(fmt.Sprintf("api: Register %q: ValidateResponse needs a struct output, got %s", pattern, outType))
+		}
+
+		outSchema = z.For[Out]() // panics at boot on bad tags
 	}
 
 	// GET, HEAD and DELETE read the query string only.
@@ -118,6 +136,10 @@ func Register[In, Out any](g Registrar, pattern string, op Op, fn func(*web.Ctx,
 
 		if status == http.StatusNoContent {
 			return c.NoContent()
+		}
+
+		if outSchema != nil {
+			return web.JSONWith(c, status, outSchema, out)
 		}
 
 		return c.JSON(status, out)

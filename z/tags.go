@@ -20,9 +20,11 @@ import (
 // Rules: required, min=N, max=N, len=N, email, url, uuid, ulid, alpha,
 // alphanum, numeric, oneof=a b c, regex=PATTERN (last rule), startswith=,
 // endswith=, contains=, positive, unique, dive (rules after it apply to
-// slice elements). Fields without "required" are optional; pointers are
-// optional and nullable; nested structs are parsed recursively. It panics
-// on unknown rules or bad arguments, so mistakes surface at boot.
+// slice elements). Fields without "required" are optional; "required" on a
+// string means non-empty, on a list present and not null (use min=1 for a
+// non-empty list); pointers are optional and nullable; nested structs are
+// parsed recursively. It panics on unknown rules or bad arguments, so
+// mistakes surface at boot.
 func FromTags[T any]() StructSchema[T] {
 	return StructSchema[T]{core: tagCore(reflect.TypeFor[T](), 0)}
 }
@@ -206,10 +208,8 @@ func schemaForType(t reflect.Type, raw []string, depth int) (AnySchema, error) {
 			}
 		}
 
-		if rs.required {
-			s = s.NonEmpty()
-		}
-
+		// required means present and not null, as in OpenAPI; an empty list
+		// passes. Non-empty lists use min=1.
 		if optional {
 			s = s.Optional()
 		}

@@ -48,7 +48,9 @@ const (
 	KindTest    Kind = "test"
 	// KindWarmup builds the app (config, Register, routes) but never runs
 	// providers' Boot or Shutdown, so no connection is opened. Commands that
-	// only read the route table (codegen:routes, codegen:client) run in it.
+	// only read the route table (codegen:routes, codegen:client,
+	// codegen:types, openapi:export) run in it, and it tolerates a missing
+	// APP_KEY. Boot and Run return ErrWarmupRun; never expose its Router.
 	KindWarmup Kind = "warmup"
 )
 
@@ -438,7 +440,7 @@ func New(opts ...Option) (*App, error) {
 
 	cfg.Devtools = cfg.Devtools || o.devtools
 
-	key, err := checkConfig(&cfg, src.EnvSet())
+	key, err := checkConfig(&cfg, src.EnvSet(), o.kind == KindWarmup)
 	if err != nil {
 		return nil, err
 	}
@@ -702,16 +704,22 @@ func New(opts ...Option) (*App, error) {
 }
 
 // checkConfig enforces secure defaults at boot (fail closed). envSet
-// reports whether APP_ENV was given explicitly (config.Source.EnvSet).
-func checkConfig(cfg *Config, envSet bool) (config.Key, error) {
+// reports whether APP_ENV was given explicitly (config.Source.EnvSet);
+// warmup whether the app is built in KindWarmup.
+func checkConfig(cfg *Config, envSet, warmup bool) (config.Key, error) {
 	var errs []error
 
 	// A missing key is allowed only with an explicit APP_ENV=development or
 	// test (a forgotten APP_ENV in production must not boot keyless); every
 	// key-derived feature then fails closed (Key.Derive panics, Crypt is nil,
-	// cookie sessions refuse to start). A malformed key is always an error.
+	// cookie sessions refuse to start). A warmup app (codegen) never boots
+	// providers or serves, so it tolerates a missing key in any env; routes
+	// that need the key at build time still fail closed. A malformed key is
+	// always an error.
 	key, err := config.ParseKey(cfg.Key)
-	if err != nil && (!errors.Is(err, config.ErrKeyMissing) || !envSet || cfg.IsProduction()) {
+	keyOptional := warmup || (envSet && !cfg.IsProduction())
+
+	if err != nil && (!errors.Is(err, config.ErrKeyMissing) || !keyOptional) {
 		errs = append(errs, err)
 	}
 
@@ -929,8 +937,13 @@ func (a *App) OnShutdown(fn func(context.Context) error) {
 
 // Boot runs every provider's Boot hook once, in order, then the
 // WithRoutesAfterBoot functions. Boot is not retryable: later calls return
-// the first call's error (nil after a successful boot).
+// the first call's error (nil after a successful boot). A KindWarmup app
+// never boots: Boot returns [ErrWarmupRun].
 func (a *App) Boot(ctx context.Context) error {
+	if a.Kind == KindWarmup {
+		return ErrWarmupRun
+	}
+
 	a.bootMu.Lock()
 	defer a.bootMu.Unlock()
 
@@ -1016,6 +1029,11 @@ func (a *App) pendingBootRoutes() bool {
 
 	return len(a.bootRoutes) > 0
 }
+
+// ErrWarmupRun is returned by Boot (and so Run) on a KindWarmup app: it is
+// built only to read its routes and may lack APP_KEY, so it never opens
+// connections or serves. Never expose a warmup app's Router or Handler.
+var ErrWarmupRun = errors.New("vukem: a warmup app cannot boot or run")
 
 // Run boots the app, starts every runner and blocks until ctx is cancelled
 // or a runner fails; then it shuts everything down gracefully within
