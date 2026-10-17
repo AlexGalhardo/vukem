@@ -415,6 +415,13 @@ func (q *Queue) message(kind string, j any, opts []Option) (*Message, handler, e
 // Process runs one reserved message and acks, releases (retry with
 // backoff) or fails it.
 func (q *Queue) Process(ctx context.Context, m *Message) error {
+	return q.process(ctx, ctx, m, nil)
+}
+
+// process runs m with runCtx and settles it with settleCtx. When
+// interrupted reports true after a failed run, the worker cancelled runCtx
+// at shutdown: the job goes back to the queue without using an attempt.
+func (q *Queue) process(runCtx, ctx context.Context, m *Message, interrupted func() bool) error {
 	q.mu.RLock()
 	h, ok := q.handlers[m.Kind]
 	q.mu.RUnlock()
@@ -429,7 +436,7 @@ func (q *Queue) Process(ctx context.Context, m *Message) error {
 		err = fmt.Errorf("%w: %q", ErrUnknownKind, m.Kind)
 		m.MaxRetries = 0
 	} else {
-		err = q.attempt(ctx, h, m)
+		err = q.attempt(runCtx, h, m)
 	}
 
 	q.observe(ctx, m, finished(err), time.Since(start), err)
@@ -440,6 +447,14 @@ func (q *Queue) Process(ctx context.Context, m *Message) error {
 
 	m.LastError = err.Error()
 	log := q.log.With("job", m.Kind, "id", m.ID, "attempt", m.Attempts, "err", err)
+
+	if interrupted != nil && interrupted() {
+		m.Attempts--
+		m.AvailableAt = q.clock().UTC()
+		log.WarnContext(ctx, "job interrupted by shutdown: released")
+
+		return q.driver.Release(ctx, m)
+	}
 
 	if m.Attempts > m.MaxRetries {
 		log.ErrorContext(ctx, "job failed")
