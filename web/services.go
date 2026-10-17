@@ -46,9 +46,29 @@ func Fail(w http.ResponseWriter, r *http.Request, err error) {
 }
 
 // SecurityEvent logs a security-relevant event at WARN with a stable
-// "event" attribute (docs/security.md, A09).
+// "event" attribute (docs/security.md, A09) and dispatches it as a
+// security.Event.
 func SecurityEvent(r *http.Request, event string, attrs ...any) {
-	log := ServicesFrom(r.Context()).Log
+	emit(r, slog.LevelWarn, "security event", event, attrs, func(e security.Event) any { return e })
+}
+
+// AuditEvent logs a routine audit record (an admin recorded a payout,
+// changed a role) at INFO with the same envelope as SecurityEvent: a
+// stable "event" attribute, method, path and request_id. It is dispatched
+// as a security.Audit, so security alerts are not mixed with routine
+// records. Pass the actor as an attribute ("actor_id", u.AuthID()); never
+// pass secrets (a config.Secret is logged masked) or personal data such as
+// names and emails. The dispatched record carries the client IP, which is
+// personal data: stored audit records need a retention period.
+func AuditEvent(r *http.Request, event string, attrs ...any) {
+	emit(r, slog.LevelInfo, "audit event", event, attrs, func(e security.Event) any { return security.Audit(e) })
+}
+
+// emit logs event at level and dispatches as(event) on the app's bus.
+func emit(r *http.Request, level slog.Level, msg, event string, attrs []any, as func(security.Event) any) {
+	s := ServicesFrom(r.Context())
+
+	log := s.Log
 	if log == nil {
 		log = slog.Default()
 	}
@@ -58,24 +78,26 @@ func SecurityEvent(r *http.Request, event string, attrs ...any) {
 		base = append(base, "request_id", id)
 	}
 
-	log.WarnContext(r.Context(), "security event", append(base, attrs...)...)
+	log.Log(r.Context(), level, msg, append(base, attrs...)...)
 
-	if d := ServicesFrom(r.Context()).Events; d != nil {
-		e := security.Event{
-			Name: event, At: time.Now().UTC(), Method: r.Method, Path: r.URL.Path,
-			IP: NewCtx(nil, r, ServicesFrom(r.Context())).IP(), RequestID: RequestID(r.Context()),
-			Attrs: map[string]any{},
-		}
+	if s.Events == nil {
+		return
+	}
 
-		for i := 0; i+1 < len(attrs); i += 2 {
-			if k, ok := attrs[i].(string); ok {
-				e.Attrs[k] = attrs[i+1]
-			}
-		}
+	e := security.Event{
+		Name: event, At: time.Now().UTC(), Method: r.Method, Path: r.URL.Path,
+		IP: NewCtx(nil, r, s).IP(), RequestID: RequestID(r.Context()),
+		Attrs: map[string]any{},
+	}
 
-		if err := d.Dispatch(r.Context(), e); err != nil {
-			log.ErrorContext(r.Context(), "security event listener failed", "event", event, "err", err)
+	for i := 0; i+1 < len(attrs); i += 2 {
+		if k, ok := attrs[i].(string); ok {
+			e.Attrs[k] = attrs[i+1]
 		}
+	}
+
+	if err := s.Events.Dispatch(r.Context(), as(e)); err != nil {
+		log.ErrorContext(r.Context(), msg+" listener failed", "event", event, "err", err)
 	}
 }
 

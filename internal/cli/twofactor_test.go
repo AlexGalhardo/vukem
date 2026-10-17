@@ -134,7 +134,7 @@ func TestSecurity_A07_TwoFactorScaffoldDefaults(t *testing.T) {
 		},
 		"scaffolds/auth-2fa/routes/two_factor.go.tmpl": {
 			"h.Challenge).Use(auth.Guest(acc.Web), challenge)",
-			"h.Confirm).Name(\"two-factor.confirm\").Use(required, confirm)",
+			"h.Confirm).Name(\"two-factor.confirm\").Use(required, verified, confirm)",
 		},
 	}
 
@@ -324,6 +324,296 @@ func TestSecurity_A07_PasswordResetAnswersAlike(t *testing.T) {
 			if !bytes.Contains(test, []byte(want)) {
 				t.Errorf("%s password reset test lacks %q", kit, want)
 			}
+		}
+	}
+}
+
+// Sign-up answers alike for new and existing emails: no validation error,
+// no login before verification, the same redirect, and on both paths a
+// password hash plus one queued mail (verification, or a notice to the
+// owner limited to one per hour per address); the verification link works
+// signed out and refuses another signed-in user. The generated
+// TestRegisterDoesNotRevealAccounts checks the behaviour in
+// TestNewProjectEndToEnd / TestNewInertiaProjectEndToEnd.
+func TestSecurity_A07_SignupIsEnumerationSafe(t *testing.T) {
+	t.Parallel()
+
+	users, err := scaffoldFS.ReadFile("scaffolds/auth-core/app/accounts/users.go.tmpl")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	hash := bytes.Index(users, []byte("h, err := a.Hasher.Make(in.Password)"))
+	lookup := bytes.Index(users, []byte(`Where("email", email).First(ctx)`))
+
+	if hash < 0 || lookup < 0 || hash > lookup {
+		t.Errorf("Register hashes at %d and looks the email up at %d: both paths must hash first", hash, lookup)
+	}
+
+	for _, want := range []string{
+		"return false, a.notifyExisting(ctx, existing)",
+		`c.Increment(ctx, "register:exists:"+EmailHash(u.Email), 1, time.Hour)`,
+		"a.Mailer.SendLater(ctx, mail.AccountExists{",
+		"a.Mailer.SendLater(ctx, mail.VerifyEmail{",
+	} {
+		if !bytes.Contains(users, []byte(want)) {
+			t.Errorf("users.go lacks %q", want)
+		}
+	}
+
+	if bytes.Contains(users, []byte("orm.Unique[models.User]")) {
+		t.Error("Register still rejects existing emails with a validation error")
+	}
+
+	for _, kit := range []string{"auth-web", "auth-inertia"} {
+		ctrl, err := scaffoldFS.ReadFile("scaffolds/" + kit + "/app/controllers/account/account.go.tmpl")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		start := bytes.Index(ctrl, []byte("func (h *Handlers) Register("))
+		end := bytes.Index(ctrl[start:], []byte("\n}\n"))
+
+		if start < 0 || end < 0 {
+			t.Fatalf("%s: no Register handler", kit)
+		}
+
+		register := ctrl[start : start+end]
+		if bytes.Contains(register, []byte("Web.Login(")) ||
+			!bytes.Contains(register, []byte(`c.Redirect("/register/check-email")`)) {
+			t.Errorf("%s Register logs in or does not redirect to /register/check-email:\n%s", kit, register)
+		}
+
+		routes, err := scaffoldFS.ReadFile("scaffolds/" + kit + "/routes/auth.go.tmpl")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		for _, want := range []string{
+			`r.Get("/register/check-email", h.CheckEmail).Name("register.check").Use(guest)`,
+			`r.Get("/email/verify/{id}", h.Verify).Name("verification.verify").Use(acc.Signer.Middleware())`,
+		} {
+			if !bytes.Contains(routes, []byte(want)) {
+				t.Errorf("%s routes lack %q", kit, want)
+			}
+		}
+
+		verify, err := scaffoldFS.ReadFile("scaffolds/" + kit + "/app/controllers/account/verification.go.tmpl")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if !bytes.Contains(verify, []byte("signedIn && current.ID != u.ID")) {
+			t.Errorf("%s Verify does not refuse another signed-in user", kit)
+		}
+
+		test, err := scaffoldFS.ReadFile("scaffolds/" + kit + "/tests/auth_test.go.tmpl")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if !bytes.Contains(test, []byte("func TestRegisterDoesNotRevealAccounts(")) {
+			t.Errorf("%s lacks the generated TestRegisterDoesNotRevealAccounts", kit)
+		}
+	}
+}
+
+// Pages behind a login also need a verified email, so an account someone
+// pre-registered with another person's address is useless until that
+// person verifies it (and a password reset then ends the squatter's
+// sessions): the dashboard, 2FA settings, billing and the admin panel
+// (admin by email) require auth.Verified, and API tokens are not issued to
+// unverified users. The generated TestUnverifiedUsersSeeTheNotice and
+// TestAPITokenNeedsVerifiedEmail check the behaviour end to end.
+func TestSecurity_A07_AuthScaffoldRequiresVerifiedEmail(t *testing.T) {
+	t.Parallel()
+
+	files := map[string][]string{
+		"scaffolds/auth-web/routes/auth.go.tmpl": {
+			"verified := auth.Verified(acc.Web)",
+			`r.Get("/dashboard", h.Dashboard).Name("dashboard").Use(required, verified)`,
+		},
+		"scaffolds/auth-inertia/routes/auth.go.tmpl": {
+			"verified := auth.Verified(acc.Web)",
+			`r.Get("/dashboard", h.Dashboard).Name("dashboard").Use(required, verified)`,
+		},
+		"scaffolds/auth-2fa/routes/two_factor.go.tmpl":       {"verified := auth.Verified(acc.Web)"},
+		"scaffolds/billing/routes/billing.go.tmpl":           {"verified := auth.Verified(acc.Web)"},
+		"scaffolds/admin/app/admin/admin.go.tmpl":            {"u.EmailVerified()"},
+		"scaffolds/api/app/controllers/apiv1/tokens.go.tmpl": {"if !u.EmailVerified() {"},
+		"scaffolds/auth-web/tests/auth_test.go.tmpl":         {"func TestUnverifiedUsersSeeTheNotice("},
+		"scaffolds/auth-inertia/tests/auth_test.go.tmpl":     {"func TestUnverifiedUsersSeeTheNotice("},
+		"scaffolds/api/tests/api_tokens_test.go.tmpl":        {"func TestAPITokenNeedsVerifiedEmail("},
+	}
+
+	for src, wants := range files {
+		b, err := scaffoldFS.ReadFile(src)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		for _, want := range wants {
+			if !bytes.Contains(b, []byte(want)) {
+				t.Errorf("%s lacks %q", src, want)
+			}
+		}
+	}
+
+	// Every signed-in route of the 2FA and billing scaffolds needs it.
+	for _, src := range []string{"scaffolds/auth-2fa/routes/two_factor.go.tmpl", "scaffolds/billing/routes/billing.go.tmpl"} {
+		b, err := scaffoldFS.ReadFile(src)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		for line := range strings.Lines(string(b)) {
+			if strings.Contains(line, "Use(required") && !strings.Contains(line, "Use(required, verified") {
+				t.Errorf("%s: route without auth.Verified: %s", src, strings.TrimSpace(line))
+			}
+		}
+	}
+}
+
+// POST /register is limited per IP and per address (a hash of it, so the
+// limiter store holds no emails), through app.RateLimiters so
+// RATE_LIMIT_STORE=cache shares the budget. The limit counts requests, not
+// accounts, so new and existing addresses hit it alike (generated
+// TestRegisterThrottle).
+func TestSecurity_A07_SignupRateLimited(t *testing.T) {
+	t.Parallel()
+
+	for _, kit := range []string{"auth-web", "auth-inertia"} {
+		routes, err := scaffoldFS.ReadFile("scaffolds/" + kit + "/routes/auth.go.tmpl")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		for _, want := range []string{
+			`limiters("register", `,
+			`limiters("register.email", `,
+			`r.Post("/register", h.Register).Use(guest, signupIP, signupEmail)`,
+		} {
+			if !bytes.Contains(routes, []byte(want)) {
+				t.Errorf("%s routes lack %q", kit, want)
+			}
+		}
+
+		ctrl, err := scaffoldFS.ReadFile("scaffolds/" + kit + "/app/controllers/account/account.go.tmpl")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if !bytes.Contains(ctrl, []byte("sha256.Sum256([]byte(loginEmail(r)))")) {
+			t.Errorf("%s RegisterThrottleKey does not hash the address", kit)
+		}
+
+		test, err := scaffoldFS.ReadFile("scaffolds/" + kit + "/tests/auth_test.go.tmpl")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		for _, want := range []string{"func TestRegisterThrottle(", "func TestRegisterSurvivesCacheOutage("} {
+			if !bytes.Contains(test, []byte(want)) {
+				t.Errorf("%s lacks the generated %s", kit, want)
+			}
+		}
+	}
+}
+
+// A failing cache on the existing-email path must not answer differently
+// from the new-email path: the notice is skipped and the error logged,
+// never returned (generated TestRegisterSurvivesCacheOutage).
+func TestSecurity_A07_SignupCacheOutageIsNoOracle(t *testing.T) {
+	t.Parallel()
+
+	users, err := scaffoldFS.ReadFile("scaffolds/auth-core/app/accounts/users.go.tmpl")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	start := bytes.Index(users, []byte("func (a *Accounts) notifyExisting("))
+	if start < 0 {
+		t.Fatal("no notifyExisting")
+	}
+
+	body, _, ok := bytes.Cut(users[start:], []byte("\n}\n"))
+	if !ok {
+		t.Fatal("notifyExisting has no end")
+	}
+
+	if bytes.Count(body, []byte("a.log.ErrorContext(")) < 2 ||
+		bytes.Contains(body, []byte("if err != nil {\n\t\treturn err")) {
+		t.Errorf("notifyExisting returns cache errors instead of logging them:\n%s", body)
+	}
+}
+
+// Proving the address ends what was opened before it was proven: the
+// verification link (VerifyEmail) and a provider-verified social sign-in
+// that links an unverified local account both delete remember-me and API
+// tokens and bump the session version (ending every session on every
+// driver) in one transaction, then delete server-side sessions. The social
+// link also replaces the password, which may belong to whoever signed up
+// first with the address. The verification link carries a hash of the
+// address, so it stops working once the email changes. The generated
+// TestVerificationEndsOtherSessions, TestVerificationLinkBoundToEmail and
+// TestSocialLinkEndsSquatterAccess check the behaviour end to end.
+func TestSecurity_A07_ProvingTheEmailEndsSquatterAccess(t *testing.T) {
+	t.Parallel()
+
+	files := map[string][]string{
+		"scaffolds/auth-core/app/accounts/users.go.tmpl": {
+			"func (a *Accounts) VerifyEmail(ctx context.Context, u *models.User, keep string) error {",
+			"if err := a.revokeAccess(ctx, tx, u.ID); err != nil {",
+			`"DELETE FROM remember_tokens WHERE user_id = "`,
+			`"DELETE FROM access_tokens WHERE user_id = "`,
+			"return a.bumpSessionVersion(ctx, ex, userID)",
+			"return a.revokeServerSessions(ctx, u.ID, keep)",
+			`"%s/email/verify/%d?email_hash=%s", a.URL, u.ID, EmailHash(u.Email)`,
+		},
+		"scaffolds/auth-social/app/accounts/social.go.tmpl": {
+			"if !u.EmailVerified() {",
+			"a.updatePassword(ctx, tx, u.ID, rand.Text()+rand.Text())",
+			"a.revokeAccess(ctx, tx, u.ID)",
+			`a.revokeServerSessions(ctx, u.ID, "")`,
+		},
+		"scaffolds/auth-social/tests/social_test.go.tmpl": {"func TestSocialLinkEndsSquatterAccess("},
+	}
+
+	for _, kit := range []string{"auth-web", "auth-inertia"} {
+		files["scaffolds/"+kit+"/app/controllers/account/verification.go.tmpl"] = []string{
+			`subtle.ConstantTimeCompare([]byte(c.Query("email_hash")), []byte(accounts.EmailHash(u.Email))) != 1`,
+			"h.a.VerifyEmail(c.Context(), &u, keep)",
+			"h.a.Web.RefreshSession(c)",
+		}
+		files["scaffolds/"+kit+"/tests/auth_test.go.tmpl"] = []string{
+			"func TestVerificationEndsOtherSessions(",
+			"func TestVerificationLinkBoundToEmail(",
+		}
+	}
+
+	for src, wants := range files {
+		b, err := scaffoldFS.ReadFile(src)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		for _, want := range wants {
+			if !bytes.Contains(b, []byte(want)) {
+				t.Errorf("%s lacks %q", src, want)
+			}
+		}
+	}
+
+	// The link must not verify through the bare MarkVerified, which ends
+	// nothing.
+	for _, kit := range []string{"auth-web", "auth-inertia"} {
+		b, err := scaffoldFS.ReadFile("scaffolds/" + kit + "/app/controllers/account/verification.go.tmpl")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if bytes.Contains(b, []byte("h.a.MarkVerified(")) {
+			t.Errorf("%s Verify calls MarkVerified instead of VerifyEmail", kit)
 		}
 	}
 }

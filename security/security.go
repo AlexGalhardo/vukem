@@ -25,3 +25,12 @@ type Event struct {
 	RequestID string         `json:"request_id,omitempty"`
 	Attrs     map[string]any `json:"attrs,omitempty"`
 }
+
+// Audit describes one routine audit record emitted through web.AuditEvent
+// (a payout recorded, a role granted). It has the fields of [Event] but is
+// a distinct type, so listeners alerting on Event never see audit records:
+//
+//	events.Listen(app.Events, func(ctx context.Context, a security.Audit) error { ... })
+//
+// Attrs never contain secrets.
+type Audit Event

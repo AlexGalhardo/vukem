@@ -111,7 +111,10 @@ func (a *Accounts) FindOrCreateFromSocial(ctx context.Context, su social.User) (
 		return models.User{}, errs.New(422, a.T(ctx, "auth.social.no_email", "provider", su.Provider))
 	}
 
-	var u models.User
+	var (
+		u        models.User
+		squatted bool
+	)
 
 	err = a.DB.Tx(ctx, func(tx *database.Tx) error {
 		existing, err := orm.QueryOf[models.User](tx).Where("email", email).First(ctx)
@@ -119,6 +122,23 @@ func (a *Accounts) FindOrCreateFromSocial(ctx context.Context, su social.User) (
 		switch {
 		case err == nil && su.EmailVerified:
 			u = existing
+
+			// The provider proves the address; the local account was never
+			// verified, so its password, sessions and tokens may belong to
+			// someone who signed up first with it. End them all, like a
+			// password reset: the owner signs in with the provider or resets.
+			if !u.EmailVerified() {
+				if err := a.updatePassword(ctx, tx, u.ID, rand.Text()+rand.Text()); err != nil {
+					return err
+				}
+
+				if err := a.revokeAccess(ctx, tx, u.ID); err != nil {
+					return err
+				}
+
+				u.SessionVersion++
+				squatted = true
+			}
 		case err == nil:
 			// An unverified email must never take over an existing account.
 			return errs.New(409, a.T(ctx, "auth.social.email_taken"))
@@ -138,8 +158,12 @@ func (a *Accounts) FindOrCreateFromSocial(ctx context.Context, su social.User) (
 
 		return orm.Create(ctx, tx, &models.SocialAccount{UserID: u.ID, Provider: su.Provider, ProviderID: su.ID})
 	})
+	if err != nil || !squatted {
+		return u, err
+	}
 
-	return u, err
+	// After the commit: the session store may share SQLite's one writer.
+	return u, a.revokeServerSessions(ctx, u.ID, "")
 }
 
 func (a *Accounts) createSocialUser(ctx context.Context, tx database.Executor, su social.User, email string) (models.User, error) {

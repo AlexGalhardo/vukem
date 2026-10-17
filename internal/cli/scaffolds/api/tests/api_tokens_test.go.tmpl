@@ -2,6 +2,7 @@ package tests
 
 import (
 	"testing"
+	"time"
 
 	"github.com/AlexGalhardo/vukem/orm"
 	"github.com/AlexGalhardo/vukem/vukemtest"
@@ -11,8 +12,8 @@ import (
 	"{{.Module}}/bootstrap"
 )
 
-// apiUser creates a user directly and returns a token for it.
-func apiUser(t *testing.T, app *vukemtest.App, email string) string {
+// createAPIUser creates a user directly, with a verified email or not.
+func createAPIUser(t *testing.T, app *vukemtest.App, email string, verified bool) {
 	t.Helper()
 
 	acc, err := accounts.New(app.App)
@@ -26,9 +27,18 @@ func apiUser(t *testing.T, app *vukemtest.App, email string) string {
 	}
 
 	u := models.User{Name: "API User", Email: email, Password: h}
+	u.EmailVerifiedAt.V, u.EmailVerifiedAt.Valid = time.Now().UTC(), verified
+
 	if err := orm.Create(t.Context(), acc.DB, &u); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// apiUser creates a verified user directly and returns a token for it.
+func apiUser(t *testing.T, app *vukemtest.App, email string) string {
+	t.Helper()
+
+	createAPIUser(t, app, email, true)
 
 	r := app.Client(t).PostJSON("/api/v1/tokens", map[string]any{
 		"email": email, "password": "correct horse battery", "device_name": "cli",
@@ -38,6 +48,20 @@ func apiUser(t *testing.T, app *vukemtest.App, email string) string {
 	s, _ := tok.(string)
 
 	return s
+}
+
+// A token is a login: an unverified address may belong to someone else,
+// so the right password is not enough.
+func TestAPITokenNeedsVerifiedEmail(t *testing.T) {
+	t.Parallel()
+
+	app := vukemtest.New(t, bootstrap.New)
+	createAPIUser(t, app, "squatter@example.com", false)
+
+	app.Client(t).PostJSON("/api/v1/tokens", map[string]any{
+		"email": "squatter@example.com", "password": "correct horse battery", "device_name": "cli",
+	}).AssertForbidden()
+	vukemtest.AssertDatabaseCount(t, app, "access_tokens", 0)
 }
 
 func TestTokenLifecycle(t *testing.T) {

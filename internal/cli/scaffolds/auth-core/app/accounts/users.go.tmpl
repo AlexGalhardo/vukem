@@ -2,7 +2,11 @@ package accounts
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -14,37 +18,135 @@ import (
 	"{{.Module}}/app/requests"
 )
 
-// Register creates a user (unique email, hashed password) and sends the
-// verification email.
-func (a *Accounts) Register(ctx context.Context, in requests.Register) (models.User, error) {
-	email := strings.ToLower(in.Email)
-
-	if err := orm.Validate(ctx, a.DB, orm.Unique[models.User]("email", email)); err != nil {
-		return models.User{}, err
-	}
+// Register signs in.Email up without revealing whether it already has an
+// account: the caller always answers "check your email" and never logs in.
+// A new address gets the account and a verification mail; an existing one
+// gets a notice ("sign in or reset your password", at most one per hour
+// per address) and nothing is created or changed. Both paths hash the
+// password and queue one mail, so they take about the same time. It
+// reports whether an account was created.
+func (a *Accounts) Register(ctx context.Context, in requests.Register) (bool, error) {
+	email := strings.ToLower(strings.TrimSpace(in.Email))
 
 	h, err := a.Hasher.Make(in.Password)
 	if err != nil {
-		return models.User{}, err
+		return false, err
+	}
+
+	existing, err := orm.QueryOf[models.User](a.DB).Where("email", email).First(ctx)
+	if err == nil {
+		return false, a.notifyExisting(ctx, existing)
+	}
+
+	if !errors.Is(err, orm.ErrNotFound) {
+		return false, err
 	}
 
 	u := models.User{Name: in.Name, Email: email, Password: h}
 	if err := orm.Create(ctx, a.DB, &u); err != nil {
-		return models.User{}, err
+		// A concurrent sign-up with the same email won the unique index.
+		if existing, findErr := orm.QueryOf[models.User](a.DB).Where("email", email).First(ctx); findErr == nil {
+			return false, a.notifyExisting(ctx, existing)
+		}
+
+		return false, err
 	}
 
-	return u, a.SendVerification(ctx, u)
+	return true, a.SendVerification(ctx, u)
+}
+
+// notifyExisting tells the owner of an existing account that someone tried
+// to sign up with it, at most once per hour per address, so the form cannot
+// be used to flood a mailbox. The cache key holds a hash, not the address.
+// A cache error skips the notice and is logged: returning it would answer
+// differently from the new-email path and reveal the account.
+func (a *Accounts) notifyExisting(ctx context.Context, u models.User) error {
+	c, err := a.cache()
+	if err != nil {
+		a.log.ErrorContext(ctx, "register: account-exists notice skipped", "err", err)
+		return nil
+	}
+
+	n, err := c.Increment(ctx, "register:exists:"+EmailHash(u.Email), 1, time.Hour)
+	if err != nil {
+		a.log.ErrorContext(ctx, "register: account-exists notice skipped", "err", err)
+		return nil
+	}
+
+	if n > 1 {
+		return nil
+	}
+
+	return a.Mailer.SendLater(ctx, mail.AccountExists{
+		User: u, LoginLink: a.URL + "/login", ResetLink: a.URL + "/forgot-password",
+		Subject: a.T(ctx, "auth.mail.account_exists_subject"),
+	})
+}
+
+// EmailHash returns the hex SHA-256 of the normalized email: cache and
+// rate-limit keys hold it instead of the address, and verification links
+// carry it so they stop working once the address changes.
+func EmailHash(email string) string {
+	sum := sha256.Sum256([]byte(strings.ToLower(strings.TrimSpace(email))))
+	return hex.EncodeToString(sum[:])
 }
 
 // SendVerification emails a signed link that verifies u's address. The
 // mail is queued (SendLater), so sign-up does not wait for the mail server.
+// The link carries EmailHash(u.Email), so it is void once the email changes.
 func (a *Accounts) SendVerification(ctx context.Context, u models.User) error {
-	link, err := a.Signer.Sign(fmt.Sprintf("%s/email/verify/%d", a.URL, u.ID), a.VerifyTTL)
+	link, err := a.Signer.Sign(fmt.Sprintf("%s/email/verify/%d?email_hash=%s", a.URL, u.ID, EmailHash(u.Email)), a.VerifyTTL)
 	if err != nil {
 		return err
 	}
 
 	return a.Mailer.SendLater(ctx, mail.VerifyEmail{User: u, Link: link, Subject: a.T(ctx, "auth.mail.verify_subject")})
+}
+
+// VerifyEmail marks u verified from the signed link and ends every way into
+// the account opened before the address was proven: remember-me and API
+// tokens are deleted and the session version bumped (ending every session
+// on every driver) in one transaction, then server-side sessions other
+// than keep are deleted. Someone who signed up first with another person's
+// address loses the sessions and tokens they opened. With keep set (the
+// verifier is signed in as u), call a.Web.RefreshSession(c) afterwards so
+// the current session survives the bump.
+func (a *Accounts) VerifyEmail(ctx context.Context, u *models.User, keep string) error {
+	if u.EmailVerified() {
+		return nil
+	}
+
+	err := a.DB.Tx(ctx, func(tx *database.Tx) error {
+		if err := a.revokeAccess(ctx, tx, u.ID); err != nil {
+			return err
+		}
+
+		return a.MarkVerified(ctx, tx, u)
+	})
+	if err != nil {
+		return err
+	}
+
+	u.SessionVersion++
+
+	// After the commit: the session store may share SQLite's one writer.
+	return a.revokeServerSessions(ctx, u.ID, keep)
+}
+
+// revokeAccess deletes userID's remember-me and API tokens and bumps its
+// session version, using ex (a.DB or the transaction in progress).
+func (a *Accounts) revokeAccess(ctx context.Context, ex database.Executor, userID int64) error {
+	id := strconv.FormatInt(userID, 10)
+
+	if _, err := ex.ExecContext(ctx, "DELETE FROM remember_tokens WHERE user_id = "+ex.Dialect().Placeholder(1), id); err != nil {
+		return err
+	}
+
+	if _, err := ex.ExecContext(ctx, "DELETE FROM access_tokens WHERE user_id = "+ex.Dialect().Placeholder(1), id); err != nil {
+		return err
+	}
+
+	return a.bumpSessionVersion(ctx, ex, userID)
 }
 
 // MarkVerified sets email_verified_at using ex (a.DB, or the transaction

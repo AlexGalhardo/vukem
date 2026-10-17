@@ -39,6 +39,39 @@ func TestSocialSignUpAndLogin(t *testing.T) {
 	app.Client(t).Get("/auth/myspace/redirect").AssertNotFound()
 }
 
+// Someone signs up first with the victim's address and keeps a session,
+// a remember-me token and an API token. When the victim signs in with a
+// provider that verified the address, the account is linked and every one
+// of those ways in ends, password included.
+func TestSocialLinkEndsSquatterAccess(t *testing.T) {
+	t.Parallel()
+
+	victim := social.User{ID: "gh-9", Email: "vic@example.com", EmailVerified: true, Name: "Vic"}
+	app := vukemtest.New(t, bootstrap.New, vukemtest.Options{Env: vukemtest.FakeSocial(victim)})
+
+	squatter := app.Client(t)
+	squatter.PostForm("/register", url.Values{
+		"name": {"Mallory"}, "email": {"vic@example.com"},
+		"password": {"correct horse battery"}, "password_confirmation": {"correct horse battery"},
+	}).AssertRedirect("/register/check-email")
+	squatter.PostForm("/login", url.Values{
+		"email": {"vic@example.com"}, "password": {"correct horse battery"}, "remember": {"true"},
+	}).AssertRedirect("/dashboard")
+
+	userID := apiTokenFor(t, app, "vic@example.com")
+
+	c := app.Client(t)
+	signIn(t, c, "{{.FirstProvider}}").AssertRedirect("/dashboard")
+	c.Get("/dashboard").AssertOK()
+
+	squatter.Get("/email/verify").AssertRedirect("/login")
+	vukemtest.AssertDatabaseMissing(t, app, "remember_tokens", map[string]any{"user_id": userID})
+	vukemtest.AssertDatabaseMissing(t, app, "access_tokens", map[string]any{"user_id": userID})
+	app.Client(t).WithHeader("Referer", "/login").PostForm("/login", url.Values{
+		"email": {"vic@example.com"}, "password": {"correct horse battery"},
+	}).AssertSessionHasErrors("email")
+}
+
 func TestSocialDoesNotTakeOverUnverifiedEmails(t *testing.T) {
 	t.Parallel()
 

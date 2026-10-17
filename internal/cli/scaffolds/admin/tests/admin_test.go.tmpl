@@ -2,6 +2,7 @@ package tests
 
 import (
 	"testing"
+	"time"
 
 	"github.com/AlexGalhardo/vukem/orm"
 	"github.com/AlexGalhardo/vukem/vukemtest"
@@ -19,9 +20,17 @@ func newAdminApp(t *testing.T) *vukemtest.App {
 	return vukemtest.New(t, bootstrap.New, vukemtest.Options{Env: map[string]string{"ADMIN_EMAILS": adminEmail}})
 }
 
-// adminClient creates a user with email and returns a same-origin browser
-// client logged in as that user.
+// adminClient creates a user with a verified email and returns a
+// same-origin browser client logged in as that user.
 func adminClient(t *testing.T, app *vukemtest.App, email string) *vukemtest.Client {
+	t.Helper()
+
+	return clientFor(t, app, email, true)
+}
+
+// clientFor creates a user with email (verified or not) and returns a
+// same-origin browser client logged in as that user.
+func clientFor(t *testing.T, app *vukemtest.App, email string, verified bool) *vukemtest.Client {
 	t.Helper()
 
 	db, err := app.DB()
@@ -30,6 +39,8 @@ func adminClient(t *testing.T, app *vukemtest.App, email string) *vukemtest.Clie
 	}
 
 	u := models.User{Name: "Test", Email: email, Password: "unused"}
+	u.EmailVerifiedAt.V, u.EmailVerifiedAt.Valid = time.Now().UTC(), verified
+
 	if err := orm.Create(t.Context(), db, &u); err != nil {
 		t.Fatal(err)
 	}
@@ -48,4 +59,8 @@ func TestAdminPanelAccess(t *testing.T) {
 	c := adminClient(t, app, adminEmail)
 	c.Get("/admin").AssertOK().AssertSee("Dashboard")
 	c.Get("/admin/_audit").AssertOK().AssertSee("Audit log")
+
+	// An unverified account with an admin's address is not an admin: anyone
+	// can sign up first with an address they do not own.
+	clientFor(t, newAdminApp(t), adminEmail, false).Get("/admin").AssertForbidden()
 }

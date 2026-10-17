@@ -5,6 +5,8 @@ package account
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -43,6 +45,18 @@ func LoginAccountThrottleKey(r *http.Request) string {
 	}
 
 	return "login-account:" + loginEmail(r)
+}
+
+// RegisterThrottleKey limits sign-ups per address. It keys on a hash of
+// the normalized email, so the limiter store holds no addresses.
+func RegisterThrottleKey(r *http.Request) string {
+	if r.Method != http.MethodPost {
+		return ""
+	}
+
+	sum := sha256.Sum256([]byte(loginEmail(r)))
+
+	return "register:" + hex.EncodeToString(sum[:])
 }
 
 // loginEmail normalizes the email like LoginSchema (trimmed, lower case),
@@ -91,24 +105,24 @@ func (h *Handlers) Login(c *web.Ctx) error {
 // ShowRegister renders the registration page.
 func (*Handlers) ShowRegister(c *web.Ctx) error { return inertia.Render(c, "Auth/Register", nil) }
 
-// Register creates the account, logs in and asks for email verification.
+// Register answers the same for new and existing emails (no account
+// enumeration) and does not log in: the user is asked to check the inbox,
+// where the verification link (or an "account exists" notice) waits.
 func (h *Handlers) Register(c *web.Ctx) error {
 	in, err := web.Parse(c, requests.RegisterSchema)
 	if err != nil {
 		return err
 	}
 
-	u, err := h.a.Register(c.Context(), in)
-	if err != nil {
+	if _, err := h.a.Register(c.Context(), in); err != nil {
 		return err
 	}
 
-	if err := h.a.Web.Login(c, u); err != nil {
-		return err
-	}
-
-	return c.Redirect("/email/verify")
+	return c.Redirect("/register/check-email")
 }
+
+// CheckEmail is the page shown after every sign-up attempt.
+func (*Handlers) CheckEmail(c *web.Ctx) error { return inertia.Render(c, "Auth/CheckEmail", nil) }
 
 // Logout signs the user out and rotates the history encryption key.
 func (h *Handlers) Logout(c *web.Ctx) error {

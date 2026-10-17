@@ -73,7 +73,7 @@ func recoveryCodes(t *testing.T, c *vukemtest.Client) []string {
 func enableTwoFactor(t *testing.T, app *vukemtest.App, c *vukemtest.Client, email string) (string, []string) {
 	t.Helper()
 
-	register(t, c, email)
+	register(t, app, c, email)
 
 	c.Get("/user/two-factor").AssertInertia("Auth/TwoFactor").PropEquals("enabled", false).PropEquals("pending", false)
 	c.PostJSON("/user/two-factor", nil).AssertRedirect("/user/two-factor")
@@ -204,7 +204,7 @@ func TestTwoFactorThrottle(t *testing.T) {
 
 	// Confirming a new setup is limited too.
 	c := app.Client(t).Inertia("")
-	register(t, c, "dan2fa@example.com")
+	register(t, app, c, "dan2fa@example.com")
 	c.PostJSON("/user/two-factor", nil).AssertRedirect("/user/two-factor")
 
 	for range 5 {
