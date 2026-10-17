@@ -2,6 +2,8 @@ module github.com/AlexGalhardo/vukem/drivers/websocket
 
 go 1.27.0
 
+toolchain go1.27.2
+
 require (
 	github.com/AlexGalhardo/vukem v0.19.0
 	github.com/coder/websocket v1.8.15

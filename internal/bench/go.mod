@@ -2,6 +2,8 @@ module github.com/AlexGalhardo/vukem/internal/bench
 
 go 1.27.0
 
+toolchain go1.27.2
+
 require (
 	github.com/AlexGalhardo/vukem v0.0.0
 	github.com/go-chi/chi/v5 v5.5.0

@@ -2,6 +2,8 @@ module github.com/AlexGalhardo/vukem/drivers/mysql
 
 go 1.27.0
 
+toolchain go1.27.2
+
 require (
 	github.com/AlexGalhardo/vukem v0.19.0
 	github.com/go-sql-driver/mysql v1.10.1
