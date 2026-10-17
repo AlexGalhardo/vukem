@@ -52,6 +52,8 @@ APP_ENV=production ./bin/app
 
 On `SIGINT` or `SIGTERM` the HTTP server stops accepting connections, drains in-flight requests, then runs shutdown hooks and providers in reverse order within `SHUTDOWN_TIMEOUT`. Pair it with your process manager's stop timeout.
 
+The same process runs the [scheduler](/docs/digging-deeper/scheduler#running-it) when tasks exist (including the hourly `session:prune` with `SESSION_DRIVER=database`), so one service is enough. With several replicas, or a separate `./bin/app schedule:work` process, set `SCHEDULE_IN_SERVE=false` on the web replicas so run-once tasks are not fired by every replica (see [Several replicas](/docs/digging-deeper/scheduler#several-replicas)).
+
 ## Behind a reverse proxy
 
 Terminate TLS at the proxy (Caddy, nginx, a load balancer) and tell Vukem which proxies to trust:
@@ -73,3 +75,4 @@ r.UseServer(middleware.SecureHeaders(middleware.SecureHeadersConfig{
 - Trusted proxies configured; HSTS enabled behind TLS.
 - Logs shipped as JSON to durable storage, with alerts on security events.
 - `govulncheck ./...` in CI.
+- Scheduler: in `serve` by default; `SCHEDULE_IN_SERVE=false` when a single `schedule:work` process runs it (required for run-once tasks with several replicas).

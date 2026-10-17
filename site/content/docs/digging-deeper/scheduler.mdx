@@ -36,6 +36,10 @@ Cron expressions support `*`, values, ranges, steps (`*/15`, `10-50/20`), lists,
 
 ## Running it
 
+`serve` (the app binary's default command, and `vukem serve` in development) runs the scheduler in process next to the HTTP server, so a single-process deploy (one Railway, Fly or Render service) still runs your tasks and the built-in hourly `session:prune` (`SESSION_DRIVER=database`) and `cache:prune` (`CACHE_STORE=database`). The scheduler ticks at the start of every minute, starts only when tasks exist, and stops with the server: on `SIGINT`/`SIGTERM` it stops ticking and waits for running tasks before shutdown hooks run.
+
+To run the schedule in its own process instead, set `SCHEDULE_IN_SERVE=false` on the web process and run one of:
+
 ```bash
 vukem schedule:work    # in process: ticks at the start of every minute
 vukem schedule:list    # each task and its next run
@@ -46,5 +50,14 @@ Or one crontab entry calling `schedule:run` every minute:
 ```text
 * * * * * cd /srv/app && ./app schedule:run
 ```
+
+### Several replicas
+
+Every process that runs the scheduler (each `serve` replica with the default `SCHEDULE_IN_SERVE=true`, plus any `schedule:work`) fires every due task. There is no leader election:
+
+- A task without `WithoutOverlapping()` runs once per replica each time it is due.
+- `WithoutOverlapping()` only skips a run while another one still holds the lock. With the default in-memory cache each replica has its own locks, so it protects nothing across replicas. With a shared store (`CACHE_STORE=database` or Redis) a replica skips the task while another is still running it, but a short task that finishes before the next replica checks can still run again in the same minute.
+
+The built-in prune tasks are idempotent, so running them on every replica is safe. For tasks that must run exactly once per schedule (emails, charges, draws), set `SCHEDULE_IN_SERVE=false` on the web replicas and run a single `schedule:work` process.
 
 Tasks due at the same minute run concurrently; failures and panics are logged and do not stop the others. Command tasks run in the same process through `app.Call`.
