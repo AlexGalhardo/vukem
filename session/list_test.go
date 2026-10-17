@@ -225,3 +225,31 @@ func TestRevokeCurrentSessionByHandle(t *testing.T) {
 		t.Fatalf("sessions after revoking the current one = %+v, want none", left)
 	}
 }
+
+// Control and format runes (escape sequences, bidi overrides) are dropped
+// from the recorded user agent, so a crafted header cannot spoof the
+// session list or a terminal that prints it.
+func TestRecordClientStripsControlRunes(t *testing.T) {
+	t.Parallel()
+
+	m, _ := newManager(t, Config{Store: NewMemoryStore(), RecordClient: true})
+	h := appHandler(m, &bytes.Buffer{})
+
+	id := loginFrom(
+		t,
+		h,
+		newClient(t, h),
+		"7",
+		"Evil\x1b[31m"+string(rune(0x202e))+"Agent\t/1.0\x00",
+		"203.0.113.77:5000",
+	)
+
+	got, err := m.UserSessions(t.Context(), "7", id)
+	if err != nil || len(got) != 1 {
+		t.Fatalf("UserSessions() = %+v, %v", got, err)
+	}
+
+	if want := "Evil[31mAgent/1.0"; got[0].UserAgent != want {
+		t.Fatalf("recorded user agent = %q, want %q", got[0].UserAgent, want)
+	}
+}

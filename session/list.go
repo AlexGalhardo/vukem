@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/AlexGalhardo/vukem/web"
@@ -57,7 +58,9 @@ type Info struct {
 	// ExpiresAt is when the session ends unless it is used again.
 	ExpiresAt time.Time
 	// UserAgent and IP are recorded at login only with Config.RecordClient;
-	// IP keeps the network part only (IPv4 /24, IPv6 /48).
+	// IP keeps the network part only (IPv4 /24, IPv6 /48). UserAgent comes
+	// from the client: control and format runes are removed, but escape it
+	// when rendering (html/template does).
 	UserAgent, IP string
 	// Current is true for the session of the currentID given to
 	// UserSessions.
@@ -190,7 +193,7 @@ func (m *Manager) recordClient(w http.ResponseWriter, r *http.Request, s *Sessio
 		return
 	}
 
-	s.data[keyClientUA] = truncateUTF8(r.UserAgent(), maxUserAgent)
+	s.data[keyClientUA] = truncateUTF8(stripControl(r.UserAgent()), maxUserAgent)
 	s.data[keyClientIP] = maskIP(web.NewCtx(w, r, web.ServicesFrom(r.Context())).IP())
 }
 
@@ -215,6 +218,18 @@ func maskIP(ip string) string {
 	}
 
 	return p.Addr().String()
+}
+
+// stripControl drops control and format runes (escape sequences, bidi
+// overrides, zero-width characters) from a client-supplied string.
+func stripControl(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			return -1
+		}
+
+		return r
+	}, s)
 }
 
 func truncateUTF8(s string, n int) string {
