@@ -3,6 +3,12 @@
 // providers and your own integrations.
 //
 //	r.Post("/webhooks/github", handle).Use(webhook.Middleware("X-Hub-Signature-256", secret, 1<<20))
+//
+// [Middleware] bounds the body, verifies the signature header and answers
+// 401 ([ErrSignature]) on mismatch; [VerifyHMAC] and [Sign] are the
+// building blocks for custom schemes and tests.
+//
+// See https://github.com/AlexGalhardo/vukem/blob/main/docs/security.md.
 package webhook
 
 import (

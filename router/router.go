@@ -8,6 +8,14 @@
 //
 // Middleware has the standard signature func(http.Handler) http.Handler, so
 // any net/http middleware works.
+//
+// [New] returns a [Router]; Get, Post, Group and Resource register
+// [Route] values whose handlers are web.HandlerFunc, and [Router.Handler]
+// compiles them into an http.Handler. Apps receive the router in
+// vukem.WithRoutes and reach named routes through [Router.URL] or the
+// "route" template function.
+//
+// See https://github.com/AlexGalhardo/vukem/blob/main/docs/http.md.
 package router
 
 import (

@@ -6,6 +6,11 @@
 //		if e.Name == "auth.login_failed" { ... }
 //		return nil
 //	})
+//
+// Handlers and middleware emit events through web.SecurityEvent; each one
+// is logged and, when the app has an event bus, dispatched as an [Event].
+//
+// See https://github.com/AlexGalhardo/vukem/blob/main/docs/security.md.
 package security
 
 import "time"

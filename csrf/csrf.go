@@ -2,6 +2,13 @@
 // forgery using Go's http.CrossOriginProtection (Fetch Metadata and Origin
 // checks, no tokens needed in modern browsers), with an optional
 // session-token fallback for clients that send neither header.
+//
+// [Middleware] is installed by vukem.DefaultMiddleware; [Config] lists
+// trusted origins and explicit bypasses (webhooks). With the fallback on,
+// forms carry [Token] in the [FieldName] field (the csrfField template
+// function) or the [HeaderName] header.
+//
+// See https://github.com/AlexGalhardo/vukem/blob/main/docs/http.md.
 package csrf
 
 import (

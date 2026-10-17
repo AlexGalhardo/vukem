@@ -10,6 +10,14 @@
 //
 // Schemas are immutable values: every modifier returns a new schema, so a
 // schema can be shared by any number of goroutines.
+//
+// Parse returns every problem at once as [Issues] (see [AsIssues]), which
+// web.Parse turns into a 422 response. Builders cover strings, numbers,
+// booleans, times, enums, files, slices, maps and [Struct] (or [FromTags]
+// from `validate` tags); [JSONSchema] exports a schema for the OpenAPI
+// document.
+//
+// See https://github.com/AlexGalhardo/vukem/blob/main/docs/validation.md.
 package z
 
 import (

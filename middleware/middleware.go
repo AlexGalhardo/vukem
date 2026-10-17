@@ -2,6 +2,13 @@
 // constructor returns a func(http.Handler) http.Handler, so they compose with
 // any other middleware. Errors are rendered through web.Fail, which uses the
 // router's error handler (problem+json, HTML or htmx fragments).
+//
+// The set covers [Recover], [RequestID], [Logger], [Timeout], [BodyLimit],
+// [MethodOverride], [JSONOnly], [SecureHeaders] (CSP with nonces, HSTS),
+// [CORS], [Gzip], [Static] and [Maintenance]. vukem.DefaultMiddleware
+// installs the secure web stack; vukem.APIMiddleware the API one.
+//
+// See https://github.com/AlexGalhardo/vukem/blob/main/docs/http.md.
 package middleware
 
 import (

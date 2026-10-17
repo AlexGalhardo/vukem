@@ -4,6 +4,13 @@
 // A handler has the signature func(*Ctx) error. Returning an error hands it
 // to the error handler, which renders the right response for the client
 // (HTML, redirect with flashed errors, HTMX fragment or problem+json).
+//
+// [Parse], [ParseQuery] and [Bind] turn request input into typed values
+// through z schemas; [Services] carries the shared dependencies (URL
+// generator, view renderer, logger, authorizer) the router hands to every
+// [Ctx].
+//
+// See https://github.com/AlexGalhardo/vukem/blob/main/docs/http.md.
 package web
 
 import (

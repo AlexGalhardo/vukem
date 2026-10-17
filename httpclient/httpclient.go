@@ -5,6 +5,12 @@
 // time, so DNS rebinding and redirects to internal hosts are blocked too.
 //
 //	resp, err := httpclient.Safe(httpclient.Options{}).Get(userURL)
+//
+// [Options] bound the timeout, redirects and body size and may allow extra
+// prefixes; blocked destinations fail with [ErrBlockedAddress]. [Get] is
+// the one-call form and [Allowed] the address check itself.
+//
+// See https://github.com/AlexGalhardo/vukem/blob/main/docs/security.md.
 package httpclient
 
 import (

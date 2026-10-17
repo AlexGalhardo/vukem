@@ -1,6 +1,14 @@
 // Package session provides server-side and cookie sessions with flash
 // messages, old input, regeneration (anti-fixation) and idle/absolute
 // timeouts. Sessions are loaded lazily and written only when modified.
+//
+// A [Manager] built by [New] wraps handlers with [Manager.Middleware];
+// handlers reach the [Session] through web.Ctx.Session. Data lives in an
+// AES-GCM encrypted cookie by default, or server-side in a [Store]:
+// [MemoryStore], [SQLStore] or drivers/redis. Apps get a manager from
+// app.Sessions(), configured by SESSION_* variables.
+//
+// See https://github.com/AlexGalhardo/vukem/blob/main/docs/http.md.
 package session
 
 import (

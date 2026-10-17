@@ -1,6 +1,13 @@
 // Package errs defines the error values handlers return. A central handler
 // (see package web) turns them into HTML pages, redirects with flashed
 // errors, HTMX fragments or RFC 9457 problem details.
+//
+// [HTTPError] pairs a status with a client-safe message and an internal
+// cause that is logged, never shown; sentinels such as [ErrNotFound] and
+// [ErrForbidden] cover the common cases. [ValidationError] carries field
+// messages (422), and [Status] maps any error to its HTTP status.
+//
+// See https://github.com/AlexGalhardo/vukem/blob/main/docs/http.md.
 package errs
 
 import (

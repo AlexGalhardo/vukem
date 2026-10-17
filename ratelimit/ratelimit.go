@@ -1,6 +1,13 @@
 // Package ratelimit limits requests per key (token, user, IP) with GCRA, a
 // smooth token bucket that needs one timestamp per key. The memory store
 // fits one process; drivers/redis provides a shared one (BETA).
+//
+// [Middleware] applies a [Limiter] ([NewMemory] or the Redis one) to a
+// route, keyed by a [KeyFunc] such as [ByIP] or [ByToken]; it sets the
+// RateLimit-* headers, answers 429 with Retry-After and denies when the
+// limiter fails.
+//
+// See https://github.com/AlexGalhardo/vukem/blob/main/docs/subsystems.md.
 package ratelimit
 
 import (

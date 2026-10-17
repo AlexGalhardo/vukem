@@ -5,6 +5,11 @@
 //	s := signed.New(app.Key.Derive("signed.urls", 32))
 //	link, _ := s.Sign(appURL+"/email/verify/42", time.Hour)
 //	r.Get("/email/verify/{id}", verify).Use(s.Middleware())
+//
+// [Signer.Verify] checks a request in constant time and returns [ErrInvalid]
+// or [ErrExpired]; [Signer.Middleware] answers 403 for both.
+//
+// See https://github.com/AlexGalhardo/vukem/blob/main/docs/security.md.
 package signed
 
 import (
