@@ -8,8 +8,12 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
+
+	"github.com/AlexGalhardo/vukem/database"
 	"github.com/AlexGalhardo/vukem/internal/testutil"
 	"github.com/AlexGalhardo/vukem/schema"
 )
@@ -152,5 +156,56 @@ func TestAppDBUsesCrypt(t *testing.T) {
 
 	if db.Encrypter() != app.Crypt {
 		t.Fatalf("DB().Encrypter() = %v, want app.Crypt", db.Encrypter())
+	}
+}
+
+type countingObserver struct {
+	mu  sync.Mutex
+	sql []string
+}
+
+func (o *countingObserver) ObserveQuery(_ context.Context, q database.Query) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	o.sql = append(o.sql, q.SQL)
+}
+
+func TestAppDBQueryObserversKeepDevtools(t *testing.T) {
+	t.Parallel()
+
+	tracing := &countingObserver{}
+
+	app, err := New(
+		WithSource(testSource(map[string]string{
+			"APP_ENV": "development", "DEVTOOLS": "true", "DATABASE_URL": ":memory:",
+		})),
+		WithLogger(discardLogger()),
+		WithQueryObservers(tracing, nil),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = app.Shutdown(context.Background()) })
+
+	db, err := app.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := db.ExecContext(t.Context(), "SELECT 1"); err != nil {
+		t.Fatal(err)
+	}
+
+	if diff := cmp.Diff([]string{"SELECT 1"}, tracing.sql); diff != "" {
+		t.Errorf("tracing observer (-want +got):\n%s", diff)
+	}
+
+	if app.Devtools == nil {
+		t.Fatal("devtools not enabled")
+	}
+
+	if got := len(app.Devtools.Queries()); got != 1 {
+		t.Errorf("len(Devtools.Queries()) = %d, want 1", got)
 	}
 }

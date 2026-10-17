@@ -63,6 +63,16 @@ rows, err := db.QueryContext(ctx, q, authorID, "published") // $1, $2 on Postgre
 
 `Rebind` leaves `?` inside string literals, quoted identifiers, dollar-quoted bodies and comments alone. On PostgreSQL `??` is a literal `?`, for jsonb operators (`data ?? 'key'`). `ExecContext` and `QueryContext` never rebind on their own, so queries already written with `$n` keep working.
 
+## Query observers
+
+A `database.QueryObserver` sees every statement run through a `DB` and its transactions (SQL, duration, error; `Args` hold user data, so never log them). Add one to `app.DB()` with an option; it runs next to devtools instead of replacing it:
+
+```go
+app, err := vukem.New(vukem.WithQueryObservers(sqlTracer))
+```
+
+On a `DB` you open yourself, pass `database.WithQueryObserver` once per observer or call `db.AddQueryObserver` before sharing the `DB`. `db.SetQueryObserver` replaces every observer.
+
 ## Transactions
 
 ```go

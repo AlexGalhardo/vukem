@@ -30,14 +30,51 @@ type QueryObserver interface {
 }
 
 // WithQueryObserver reports every statement to obs (development tooling
-// such as devtools). Without it the hot path costs one nil check.
+// such as devtools, tracing). It can be passed several times: every
+// observer is notified, in the order given. Without one the hot path costs
+// one nil check.
 func WithQueryObserver(obs QueryObserver) Option {
-	return func(o *openOptions) { o.obs = obs }
+	return func(o *openOptions) { o.obs = chainObservers(o.obs, obs) }
 }
 
-// SetQueryObserver sets the observer of a DB built with FromSQL or Open
-// (call it before the DB is shared between goroutines).
+// SetQueryObserver replaces every observer of a DB built with FromSQL or
+// Open with obs (nil removes them). Call it before the DB is shared between
+// goroutines; AddQueryObserver keeps the existing ones.
 func (db *DB) SetQueryObserver(obs QueryObserver) { db.obs = obs }
+
+// AddQueryObserver adds obs after the DB's current observers (devtools
+// installed by App.DB keeps working next to a tracing observer). Call it
+// before the DB is shared between goroutines.
+func (db *DB) AddQueryObserver(obs QueryObserver) { db.obs = chainObservers(db.obs, obs) }
+
+// queryObservers notifies each observer in order.
+type queryObservers []QueryObserver
+
+func (obs queryObservers) ObserveQuery(ctx context.Context, q Query) {
+	for _, o := range obs {
+		o.ObserveQuery(ctx, q)
+	}
+}
+
+// chainObservers returns cur followed by next, skipping nils, without
+// nesting fan-outs.
+func chainObservers(cur, next QueryObserver) QueryObserver {
+	switch {
+	case next == nil:
+		return cur
+	case cur == nil:
+		return next
+	}
+
+	var out queryObservers
+	if multi, ok := cur.(queryObservers); ok {
+		out = append(out, multi...)
+	} else {
+		out = append(out, cur)
+	}
+
+	return append(out, next)
+}
 
 func observeRows(
 	ctx context.Context, obs QueryObserver,

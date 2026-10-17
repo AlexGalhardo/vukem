@@ -209,6 +209,7 @@ type App struct {
 	db         *database.DB
 	dbErr      error
 	drivers    []database.Driver
+	queryObs   []database.QueryObserver
 	migrations []schema.Migration
 	seeders    []AppSeeder
 
@@ -255,6 +256,7 @@ type options struct {
 	sessionFunc   func(*App) (session.Store, error)
 	schedules     []func(*schedule.Schedule, *App)
 	drivers       []database.Driver
+	queryObs      []database.QueryObserver
 	stdout        io.Writer
 	stderr        io.Writer
 	stdin         io.Reader
@@ -551,6 +553,7 @@ func New(opts ...Option) (*App, error) {
 		ready:     o.ready,
 		noHTTP:    o.noHTTP,
 		drivers:   o.drivers,
+		queryObs:  o.queryObs,
 		now:       now,
 		proxies:   proxies,
 

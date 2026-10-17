@@ -27,6 +27,7 @@ type Database struct {
 
 - `database.Manager` holds named connections (`app.DB.Conn("analytics")`); the default one is `app.DB.Default()`.
 - Each connection is a `*database.DB` wrapping `*sql.DB` plus its `Dialect`; `db.SQL()` exposes the raw `*sql.DB` (sqlc, other libraries).
+- Query observers (`database.QueryObserver`) see every statement run through a `DB` or its transactions (SQL, args, duration, error). `database.WithQueryObserver` can be passed several times and `db.AddQueryObserver` appends: all of them are notified in order. `db.SetQueryObserver` replaces them all. `vukem.WithQueryObservers(obs...)` adds observers to `app.DB()` next to devtools.
 - Postgres and MySQL register their dialect when the user imports `drivers/postgres` or `drivers/mysql` and passes `postgres.Driver()` / `mysql.Driver()` to the database provider — explicit, no `init()`.
 
 ### PostgreSQL

@@ -90,3 +90,72 @@ func TestQueryObserverSeesDBAndTxStatements(t *testing.T) {
 		t.Errorf("errors (-want +got):\n%s", diff)
 	}
 }
+
+func TestQueryObserversFanOut(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		opts  func(a, b, c *queryLog) []Option
+		after func(db *DB, a, b, c *queryLog)
+		want  [3]int
+	}{
+		{
+			name: "every WithQueryObserver is notified",
+			opts: func(a, b, _ *queryLog) []Option { return []Option{WithQueryObserver(a), WithQueryObserver(b)} },
+			want: [3]int{2, 2, 0},
+		},
+		{
+			name:  "AddQueryObserver keeps the existing ones",
+			opts:  func(a, _, _ *queryLog) []Option { return []Option{WithQueryObserver(a)} },
+			after: func(db *DB, _, b, c *queryLog) { db.AddQueryObserver(b); db.AddQueryObserver(c) },
+			want:  [3]int{2, 2, 2},
+		},
+		{
+			name:  "SetQueryObserver replaces them all",
+			opts:  func(a, b, _ *queryLog) []Option { return []Option{WithQueryObserver(a), WithQueryObserver(b)} },
+			after: func(db *DB, _, _, c *queryLog) { db.SetQueryObserver(c) },
+			want:  [3]int{0, 0, 2},
+		},
+		{
+			name:  "nil observers are ignored",
+			opts:  func(a, _, _ *queryLog) []Option { return []Option{WithQueryObserver(nil), WithQueryObserver(a)} },
+			after: func(db *DB, _, _, _ *queryLog) { db.AddQueryObserver(nil) },
+			want:  [3]int{2, 0, 0},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			a, b, c := &queryLog{}, &queryLog{}, &queryLog{}
+
+			db, err := Open(t.Context(), ":memory:", tt.opts(a, b, c)...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = db.Close() })
+
+			if tt.after != nil {
+				tt.after(db, a, b, c)
+			}
+
+			if _, err := db.ExecContext(t.Context(), "SELECT 1"); err != nil {
+				t.Fatal(err)
+			}
+
+			if err := db.Tx(t.Context(), func(tx *Tx) error {
+				_, err := tx.ExecContext(t.Context(), "SELECT 2")
+				return err
+			}); err != nil {
+				t.Fatal(err)
+			}
+
+			got := [3]int{len(a.got), len(b.got), len(c.got)}
+			if got != tt.want {
+				t.Fatalf("observed counts = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

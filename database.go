@@ -33,6 +33,13 @@ func WithDatabaseDrivers(drivers ...database.Driver) Option {
 	return func(o *options) error { o.drivers = append(o.drivers, drivers...); return nil }
 }
 
+// WithQueryObservers reports every statement run through DB() (and its
+// transactions) to each observer, e.g. a tracing exporter. They run after
+// devtools' observer when devtools is on, so neither replaces the other.
+func WithQueryObservers(obs ...database.QueryObserver) Option {
+	return func(o *options) error { o.queryObs = append(o.queryObs, obs...); return nil }
+}
+
 // DB opens the default database from DATABASE_URL on first use, with
 // app.Crypt as its encrypter (orm.Encrypted columns), adds a "db" health
 // check and closes it on shutdown.
@@ -59,6 +66,10 @@ func (a *App) DB() (*database.DB, error) {
 
 		if a.Devtools != nil {
 			opts = append(opts, database.WithQueryObserver(a.Devtools))
+		}
+
+		for _, obs := range a.queryObs {
+			opts = append(opts, database.WithQueryObserver(obs))
 		}
 
 		db, err := database.Open(context.Background(), cfg.URL, opts...)
