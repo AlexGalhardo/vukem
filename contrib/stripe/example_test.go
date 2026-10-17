@@ -34,3 +34,35 @@ func Example() {
 	// r.Handle("POST /stripe/webhook", handler) outside CSRF protection.
 	// Output:
 }
+
+// Connect Express: onboard a seller, then charge with a platform fee.
+// (No Output line: examples that call Stripe are compiled, not run.)
+func Example_connect() {
+	ctx := context.Background()
+	client, _ := stripe.New("rk_test_xxxxxxxxxxxxxxxx")
+
+	acct, _ := client.CreateAccount(ctx, stripe.Params{
+		"controller": stripe.Params{
+			"stripe_dashboard": stripe.Params{"type": "express"},
+			"fees":             stripe.Params{"payer": "application"},
+			"losses":           stripe.Params{"payments": "application"},
+		},
+		"capabilities": stripe.Params{"transfers": stripe.Params{"requested": true}},
+	}, stripe.IdempotencyKey("seller-7-account"))
+
+	link, _ := client.CreateAccountLink(ctx, stripe.Params{
+		"account": acct.ID, "type": "account_onboarding",
+		"refresh_url": "https://app.example.com/connect/refresh",
+		"return_url":  "https://app.example.com/connect/return",
+	})
+	fmt.Println(link.URL) // redirect the signed-in seller here
+
+	// Destination charge: the seller receives 10.00 minus the 1.00 fee.
+	_, _ = client.CreatePaymentIntent(ctx, stripe.Params{
+		"amount": 1000, "currency": "usd", "application_fee_amount": 100,
+		"transfer_data": stripe.Params{"destination": acct.ID},
+	}, "order-42")
+
+	// Reads on the connected account itself send Stripe-Account.
+	_, _ = client.ForAccount(acct.ID).GetPaymentIntent(ctx, "pi_123")
+}

@@ -62,7 +62,9 @@ type PortalSession struct {
 	URL string `json:"url"`
 }
 
-// PaymentIntent is a PaymentIntent.
+// PaymentIntent is a PaymentIntent. For a destination charge pass
+// application_fee_amount and transfer_data[destination] (and on_behalf_of
+// when the connected account is the merchant of record).
 type PaymentIntent struct {
 	ID           string            `json:"id"`
 	Amount       int64             `json:"amount"`
@@ -71,6 +73,16 @@ type PaymentIntent struct {
 	ClientSecret string            `json:"client_secret"`
 	Customer     string            `json:"customer"`
 	Metadata     map[string]string `json:"metadata"`
+	// ApplicationFeeAmount is the platform's fee (Connect), in the smallest
+	// currency unit.
+	ApplicationFeeAmount int64  `json:"application_fee_amount"`
+	OnBehalfOf           string `json:"on_behalf_of"`
+	TransferData         struct {
+		Destination string `json:"destination"`
+		Amount      int64  `json:"amount"`
+	} `json:"transfer_data"`
+	TransferGroup string `json:"transfer_group"`
+	LatestCharge  string `json:"latest_charge"`
 }
 
 // CreateCustomer creates a customer.
@@ -145,13 +157,18 @@ func (c *Client) Do(ctx context.Context, method, path string, p Params, out any)
 		out = &json.RawMessage{}
 	}
 
-	return c.call(ctx, method, path, p, "", out)
+	return c.call(ctx, method, path, p, out)
 }
 
 // send calls path and decodes the response into a new T.
 func send[T any](ctx context.Context, c *Client, method, path string, p Params, idemKey string) (T, error) {
+	return sendOpts[T](ctx, c, method, path, p, IdempotencyKey(idemKey))
+}
+
+// sendOpts is send with request options.
+func sendOpts[T any](ctx context.Context, c *Client, method, path string, p Params, opts ...RequestOption) (T, error) {
 	var out T
-	err := c.call(ctx, method, path, p, idemKey, &out)
+	err := c.call(ctx, method, path, p, &out, opts...)
 
 	return out, err
 }

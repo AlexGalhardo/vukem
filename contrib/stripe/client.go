@@ -1,8 +1,10 @@
 // Package stripe is a Stripe API client and webhook receiver built on the
 // standard library (no stripe-go): customers, Checkout Sessions,
-// subscriptions, Billing Portal sessions and PaymentIntents with the API
-// version pinned, idempotency keys on every POST, retries on 429/5xx and
-// typed errors; webhooks verify Stripe-Signature, process each event once
+// subscriptions, Billing Portal sessions, PaymentIntents and Connect
+// (Express accounts, onboarding and login links, transfers, the
+// Stripe-Account header) with the API version pinned, idempotency keys on
+// every POST, retries on 429/5xx and typed errors; webhooks verify
+// Stripe-Signature (platform and Connect secrets), process each event once
 // and dispatch it to an events.Bus.
 //
 // See https://github.com/AlexGalhardo/vukem/blob/main/docs/subsystems.md
@@ -36,6 +38,10 @@ type Client struct {
 	http    *http.Client
 	retries int
 	sleep   func(context.Context, time.Duration) error
+	// account is the connected account ForAccount acts as; asAccount tells
+	// ForAccount("") (a caller bug, rejected) from the platform client.
+	account   string
+	asAccount bool
 }
 
 // Option configures a Client.
@@ -95,23 +101,119 @@ func sleepCtx(ctx context.Context, d time.Duration) error {
 	}
 }
 
+// ForAccount returns a copy of the client that sends every request as the
+// connected account id (Stripe-Account: acct_...), for direct charges and
+// reads on that account. An invalid id fails each call with
+// ErrInvalidRequestOption before anything is sent.
+func (c *Client) ForAccount(id string) *Client {
+	cp := *c
+	cp.account, cp.asAccount = id, true
+
+	return &cp
+}
+
+// ErrInvalidRequestOption is returned, before any request is sent, for a
+// Stripe-Account that is not an acct_ id or an idempotency key that is
+// longer than 255 bytes or not printable ASCII.
+var ErrInvalidRequestOption = errors.New("stripe: invalid request option")
+
+// RequestOption tunes one request (Call and the Connect methods).
+type RequestOption func(*requestOptions)
+
+type requestOptions struct {
+	idemKey    string
+	account    string
+	accountSet bool
+}
+
+// IdempotencyKey sets the Idempotency-Key of a POST, so retries of the same
+// business operation (e.g. "order-42-transfer") never run twice, even
+// across processes. Without it (or with "") every POST gets a random key
+// that only protects the client's own retries. GETs never send one.
+func IdempotencyKey(key string) RequestOption {
+	return func(o *requestOptions) { o.idemKey = key }
+}
+
+// StripeAccount sends the request as connected account id
+// (Stripe-Account header); it overrides ForAccount.
+func OnAccount(id string) RequestOption {
+	return func(o *requestOptions) { o.account, o.accountSet = id, true }
+}
+
+func (o requestOptions) validate() error {
+	if o.accountSet && !validAccountID(o.account) {
+		return fmt.Errorf("%w: Stripe-Account must be an acct_ id", ErrInvalidRequestOption)
+	}
+
+	if len(o.idemKey) > 255 {
+		return fmt.Errorf("%w: idempotency key longer than 255 bytes", ErrInvalidRequestOption)
+	}
+
+	for i := range len(o.idemKey) {
+		if b := o.idemKey[i]; b < 0x21 || b > 0x7e {
+			return fmt.Errorf("%w: idempotency key must be printable ASCII", ErrInvalidRequestOption)
+		}
+	}
+
+	return nil
+}
+
+func validAccountID(id string) bool {
+	rest, ok := strings.CutPrefix(id, "acct_")
+	if !ok || rest == "" || len(rest) > 255 {
+		return false
+	}
+
+	for _, r := range rest {
+		if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') {
+			return false
+		}
+	}
+
+	return true
+}
+
+// Call sends any request (Connect endpoints, refunds, ...) and decodes the
+// JSON response into out (a struct, *json.RawMessage or nil to discard).
+// POSTs carry an Idempotency-Key: IdempotencyKey's, or a generated one.
+func (c *Client) Call(ctx context.Context, method, path string, p Params, out any, opts ...RequestOption) error {
+	if out == nil {
+		out = &json.RawMessage{}
+	}
+
+	return c.call(ctx, method, path, p, out, opts...)
+}
+
 // Params are request parameters; nested maps and slices are form-encoded
 // the Stripe way (a[b][0]=c).
 type Params map[string]any
 
 // call sends a request and decodes the JSON response into out. POSTs carry
-// an Idempotency-Key (generated unless key is set) so retries are safe.
-func (c *Client) call(ctx context.Context, method, path string, p Params, idemKey string, out any) error {
+// an Idempotency-Key (generated unless one is set) so retries are safe.
+func (c *Client) call(ctx context.Context, method, path string, p Params, out any, opts ...RequestOption) error {
+	o := requestOptions{account: c.account, accountSet: c.asAccount}
+	for _, opt := range opts {
+		opt(&o)
+	}
+
+	if err := o.validate(); err != nil {
+		return err
+	}
+
 	body := encodeParams(p)
 
-	if method == http.MethodPost && idemKey == "" {
-		idemKey = rand.Text()
+	idemKey := ""
+	if method == http.MethodPost {
+		idemKey = o.idemKey
+		if idemKey == "" {
+			idemKey = rand.Text()
+		}
 	}
 
 	var lastErr error
 
 	for attempt := 0; ; attempt++ {
-		retry, wait, err := c.do(ctx, method, path, body, idemKey, out)
+		retry, wait, err := c.do(ctx, method, path, body, idemKey, o.account, out)
 		if err == nil {
 			return nil
 		}
@@ -134,7 +236,7 @@ func (c *Client) call(ctx context.Context, method, path string, p Params, idemKe
 
 func (c *Client) do(
 	ctx context.Context,
-	method, path, body, idemKey string,
+	method, path, body, idemKey, account string,
 	out any,
 ) (retry bool, wait time.Duration, err error) {
 	target := c.baseURL + path
@@ -162,6 +264,10 @@ func (c *Client) do(
 
 	if idemKey != "" {
 		req.Header.Set("Idempotency-Key", idemKey)
+	}
+
+	if account != "" {
+		req.Header.Set("Stripe-Account", account)
 	}
 
 	res, err := c.http.Do(req)
