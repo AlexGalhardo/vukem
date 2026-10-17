@@ -1,0 +1,146 @@
+---
+title: Rate limiting
+description: Limit requests per IP, token or user with ratelimit.Middleware, and share the budget between servers through the database or Redis with RATE_LIMIT_STORE.
+---
+
+A rate limiter answers one question per request: *may this client make another request right now?* It protects logins against password guessing, mail endpoints against spam and APIs against clients that hammer them. Vukem counts requests per **key** (an IP, a hashed token, an email), lets them through while the key has budget left and answers `429 Too Many Requests` once it runs out.
+
+## Quick start
+
+```go title="routes/api.go"
+func API(r *router.Router, app *vukem.App) error {
+	limiters, err := app.RateLimiters() // store chosen by RATE_LIMIT_STORE
+	if err != nil {
+		return err
+	}
+
+	perIP := ratelimit.Middleware(limiters("api.ip", 120, time.Minute), ratelimit.ByIP)
+
+	r.Group("/api/v1", func(g *router.Group) {
+		g.Use(perIP)
+		// ...
+	})
+
+	return nil
+}
+```
+
+`limiters(name, limit, window)` returns a `ratelimit.Limiter` that allows `limit` requests per `window` for each key. The **name** keeps budgets apart: `"login"` and `"api.ip"` count separately even when both key by IP. The `install:auth`, `install:auth --2fa` and `install:api` scaffolds already limit logins, password-reset mails, two-factor codes and token issuance this way.
+
+## What clients see
+
+Every limited response carries the [RateLimit headers](https://datatracker.ietf.org/doc/draft-ietf-httpapi-ratelimit-headers/):
+
+| Header | Meaning |
+| --- | --- |
+| `RateLimit-Limit` | requests allowed per window |
+| `RateLimit-Remaining` | requests left now |
+| `RateLimit-Reset` | seconds until the budget is full again |
+| `Retry-After` | on `429` only: seconds until the next request is allowed |
+
+The `429` body is the usual error format (problem+json for API clients), and each denial is logged as the `ratelimit.exceeded` [security event](/docs/security/building-blocks).
+
+## Choosing a store
+
+A limiter is only as good as the place where it counts. With the default memory store each server counts on its own, so three servers behind a load balancer give a client three times the budget.
+
+| `RATE_LIMIT_STORE` | Counts in | Algorithm | Use it when |
+| --- | --- | --- | --- |
+| `memory` (default) | the process | GCRA: a smooth token bucket, bursts up to `limit` | one server, development, tests |
+| `cache` | `app.Cache()` | fixed windows on an atomic `Increment` | several servers sharing a SQL database (`CACHE_STORE=database`) or Redis |
+
+To share limits between servers on one database (SQLite, PostgreSQL or MySQL), set two variables; no code changes:
+
+```bash title=".env"
+CACHE_STORE=database      # cache rows in the "cache" table, created at boot
+RATE_LIMIT_STORE=cache    # limiters count in that cache
+```
+
+Every server reading the same `DATABASE_URL` now shares one budget per key. The counter increments lock their row, so concurrent requests on different servers never read the same count.
+
+<Callout type="warning">
+Fixed windows are aligned to the clock (`12:00:00`–`12:01:00`, then `12:01:00`–`12:02:00`). A client can spend its whole budget at the end of one window and again at the start of the next: up to 2 × `limit` within a short span. That is fine for login throttles and abuse protection; when bursts must stay within `limit` across servers, use the Redis GCRA limiter below.
+</Callout>
+
+### Redis
+
+With Redis, give the app cache a Redis store and `RATE_LIMIT_STORE=cache` uses it, or use the Redis GCRA limiter directly for smooth limits:
+
+```go
+rc, err := redis.Open(ctx, os.Getenv("REDIS_URL"))
+// ...
+app, err := vukem.New(vukem.WithCacheStore(rc.CacheStore("cache:"))) // RATE_LIMIT_STORE=cache counts in Redis
+
+limiter := rc.RateLimiter("api:", 60, time.Minute) // GCRA shared by every server
+g.Use(ratelimit.Middleware(limiter, ratelimit.ByToken))
+```
+
+See [Redis](/docs/database/redis) for the driver.
+
+## Keys
+
+The second argument of `ratelimit.Middleware` picks the bucket for a request:
+
+| Key | Buckets by | Use it for |
+| --- | --- | --- |
+| `ratelimit.ByIP` (also when `nil`) | client IP, honouring trusted proxies | public routes, logins, sign-ups |
+| `ratelimit.ByToken` | SHA-256 of the bearer token, else the IP | routes **behind** `auth.Required` |
+| your own `KeyFunc` | anything: user id, email + IP, tenant | per-user or per-account limits |
+
+```go
+// One budget per email and IP on the login form; without an email, the IP.
+byEmail := func(r *http.Request) string {
+	email := strings.ToLower(strings.TrimSpace(r.PostFormValue("email")))
+	if email == "" {
+		return ratelimit.ByIP(r)
+	}
+
+	return "login:" + email + "|" + ratelimit.ByIP(r)
+}
+
+r.Post("/login", h.Login).Use(ratelimit.Middleware(limiters("login", 5, time.Minute), byEmail))
+```
+
+A `KeyFunc` returning `""` skips limiting for that request. Normalize what you key by (trim, lower-case), or `Alice@x.com` and `alice@x.com ` get separate budgets.
+
+<Callout type="danger">
+Do not limit by `ByToken` before the token is verified: a client sending a made-up token on every request would get a fresh bucket each time. The API scaffold limits by IP first and by token only after `auth.Required`.
+</Callout>
+
+## Failure behaviour
+
+Rate limiting is a security control, so it **fails closed**: when the store cannot answer (database down, Redis unreachable), the request is denied with `503 Service Unavailable` instead of passing unlimited. The client never sees the store error.
+
+An unknown `RATE_LIMIT_STORE` value (a typo such as `databse`) makes `app.RateLimiters()` return an error, so the app does not boot with per-process limits you did not ask for.
+
+## Without the app
+
+The limiters are plain values, usable in any `net/http` program:
+
+```go
+l := ratelimit.NewMemory(5, time.Minute)                       // GCRA, one process
+l := ratelimit.NewWindow(cacheStore, "login", 5, time.Minute)  // any cache.Store or *cache.Cache
+l := myLimiter                                                  // anything implementing ratelimit.Limiter
+
+http.Handle("/login", ratelimit.Middleware(l, ratelimit.ByIP)(loginHandler))
+```
+
+`NewWindow` takes a `ratelimit.Counter`: anything with an `Increment(ctx, key, delta, ttl)` that is atomic across the servers sharing it. Keys are stored as `ratelimit:<name>:<key>:<window start>` (keys longer than 64 bytes are hashed) and expire after one window. The database cache keeps expired rows until pruned: the app schedules `cache:prune` hourly, so run the scheduler (`schedule:work`, or `schedule:run` from cron), or call `Prune` on your `cache.Database` yourself.
+
+## Options
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `RATE_LIMIT_STORE` | `memory` | `memory` (per process, GCRA) or `cache` (shared through `app.Cache()`, fixed windows) |
+| `CACHE_STORE` | `memory` | with `RATE_LIMIT_STORE=cache`: `database` shares limits through the SQL database |
+| `CACHE_TABLE` | `cache` | table of the database cache store |
+| `CACHE_PREFIX` | `vukem:` | prefix of every cache key, rate limit counters included |
+
+| API | Description |
+| --- | --- |
+| `app.RateLimiters() (ratelimit.Factory, error)` | limiter factory for the configured store |
+| `ratelimit.Factory` | `func(name string, limit int, window time.Duration) ratelimit.Limiter` |
+| `ratelimit.Middleware(l, key)` | applies a limiter to routes; `key` defaults to `ByIP` |
+| `ratelimit.NewMemory(limit, window)` | in-process GCRA limiter |
+| `ratelimit.NewWindow(counter, name, limit, window)` | fixed-window limiter over a shared counter |
+| `ratelimit.Limiter` | `Allow(ctx, key) (ratelimit.Result, error)`: implement it for a custom store |

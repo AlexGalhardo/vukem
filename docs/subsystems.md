@@ -112,7 +112,7 @@ if ok, _ := lock.TryAcquire(ctx); ok {
 ```
 
 - Values are JSON. `Remember` runs `fn` once for concurrent misses of a key in the process (singleflight) and never caches errors.
-- Stores implement `cache.Store` (`Get`, `Set`, atomic `Add`, `Delete`, owner-checked `DeleteIf`, `Increment`, `Flush`): `cache.NewMemory(maxEntries)` (LRU + TTL) and `cache.NewDatabase(db, table)` (SQLite/Postgres upserts; `Prune` removes expired rows). Redis comes with `drivers/redis` ([Redis](#redis)). `cache/cachetest.Run` is the conformance suite, run on memory, SQLite and Postgres.
+- Stores implement `cache.Store` (`Get`, `Set`, atomic `Add`, `Delete`, owner-checked `DeleteIf`, `Increment`, `Flush`): `cache.NewMemory(maxEntries)` (LRU + TTL) and `cache.NewDatabase(db, table)` (SQLite, Postgres and MySQL upserts; `Increment` locks the row, so concurrent servers never read the same count; `Prune` removes expired rows and the app schedules `cache:prune` hourly). Redis comes with `drivers/redis` ([Redis](#redis)). `cache/cachetest.Run` is the conformance suite (concurrent `Increment` included), run on memory, SQLite, Postgres, MySQL, MariaDB and Redis.
 
 ## Storage
 
@@ -231,11 +231,20 @@ err := app.Events.Dispatch(ctx, events.OrderShipped{OrderID: 42})
 ## Rate limiting
 
 ```go
-login := ratelimit.Middleware(ratelimit.NewMemory(5, time.Minute), account.LoginThrottleKey)
+limiters, err := app.RateLimiters() // RATE_LIMIT_STORE=memory (default) or cache
+login := ratelimit.Middleware(limiters("login", 5, time.Minute), account.LoginThrottleKey)
 r.Post("/login", h.Login).Use(login)
 ```
 
-GCRA limiter keyed by `ratelimit.ByIP` (default), `ByToken` (after `auth.Required` only) or your own `KeyFunc`; responses include `RateLimit-*` headers, `429` adds `Retry-After`; a failing store denies. `install:auth` throttles logins per email and IP by default. Redis store in BETA.
+Limiters are keyed by `ratelimit.ByIP` (default), `ByToken` (after `auth.Required` only) or your own `KeyFunc`; responses include `RateLimit-*` headers, `429` adds `Retry-After`; a failing store denies. `install:auth` and `install:api` throttle logins, mails and tokens by default, through `app.RateLimiters()`.
+
+| Store | Algorithm | Shared by servers |
+| --- | --- | --- |
+| `ratelimit.NewMemory(limit, window)` (`RATE_LIMIT_STORE=memory`) | GCRA, bursts up to `limit` | no |
+| `ratelimit.NewWindow(counter, name, limit, window)` (`RATE_LIMIT_STORE=cache`) | fixed window on `Increment`; up to 2×`limit` around a window boundary | yes, with `CACHE_STORE=database` (SQLite, PostgreSQL, MySQL) or a Redis cache store |
+| `rc.RateLimiter(prefix, limit, window)` ([Redis](#redis)) | GCRA in a Lua script | yes |
+
+GCRA needs compare-and-set, which `cache.Store` lacks, so the store-agnostic limiter uses fixed windows: correct with an atomic `Increment` alone (`cache.Database.Increment` locks the row, so concurrent servers never read the same count).
 
 ## Queue
 

@@ -70,6 +70,7 @@ export const navigation: NavCategory[] = [
       "jwt",
       "two-factor",
       "authorization",
+      "rate-limiting",
       "encryption",
       "building-blocks",
     ],

@@ -99,11 +99,11 @@ See [Authentication](/docs/security/authentication#token-guard) for the token gu
 ## Rate limiting
 
 ```go
-limiter := ratelimit.NewMemory(60, time.Minute) // GCRA: 60 per minute, bursts up to 60
-g.Use(ratelimit.Middleware(limiter, ratelimit.ByToken)) // hashed bearer token, else client IP
+limiters, err := app.RateLimiters() // RATE_LIMIT_STORE=memory (default) or cache (shared by servers)
+g.Use(ratelimit.Middleware(limiters("api.token", 60, time.Minute), ratelimit.ByToken)) // after auth.Required
 ```
 
-Every response carries `RateLimit-Limit`, `RateLimit-Remaining` and `RateLimit-Reset`; an empty bucket answers 429 with `Retry-After`. A failing limiter store denies the request. Write your own `KeyFunc` (`func(*http.Request) string`; empty skips limiting) for per-user or per-route buckets.
+Every response carries `RateLimit-Limit`, `RateLimit-Remaining` and `RateLimit-Reset`; an empty bucket answers 429 with `Retry-After`. A failing limiter store denies the request. Stores, keys and options are in [Rate limiting](/docs/security/rate-limiting).
 
 ## Versioning and deprecation
 
