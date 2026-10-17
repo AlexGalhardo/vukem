@@ -30,14 +30,24 @@ func maxParams(d database.Dialect) int {
 // timestamps and runs BeforeCreate on every model first, then AfterCreate
 // once every row is stored.
 //
-// On a *database.DB the batches run in one transaction, so either every
-// row is stored or none is; on a *database.Tx they join it and the caller
-// commits or rolls back.
+// Atomicity holds only for *database.DB and *database.Tx: on a DB the
+// batches run in one transaction, so either every row is stored or none
+// is; on a Tx they join it and the caller commits or rolls back. Any other
+// executor (a wrapper) runs the statements directly, so batches written
+// before a failure stay written and keep their ids.
+//
+// AfterCreate runs after that transaction commits (a hook writing through
+// the DB would otherwise deadlock on SQLite's single writer), so on a DB an
+// AfterCreate error means the rows are stored and the caller still gets
+// the error.
 //
 // Auto-increment ids are written back when every model has a zero id (or
 // every model sets its own; mixing both is an error). PostgreSQL and
-// SQLite return them with RETURNING; MySQL cannot report the ids of a
-// multi-row insert reliably, so there each row is its own INSERT.
+// SQLite return them with RETURNING, in VALUES order; the ids must be
+// strictly increasing (an ascending sequence), otherwise CreateMany fails
+// instead of guessing which row got which id. MySQL cannot report the ids
+// of a multi-row insert reliably, so there each row is its own INSERT. A
+// model with no column besides its generated key is rejected.
 func CreateMany[T any](ctx context.Context, ex database.Executor, models []T) error {
 	return createMany(ctx, ex, models, maxParams(ex.Dialect()))
 }
@@ -73,6 +83,10 @@ func createMany[T any](ctx context.Context, ex database.Executor, models []T, li
 		}
 	}
 
+	if len(fields) == 0 {
+		return fmt.Errorf("orm: CreateMany %s: no columns to insert besides the generated key", m.table)
+	}
+
 	insert := func(ex database.Executor) error {
 		if genID && ex.Dialect().Name() == "mysql" {
 			for i := range models {
@@ -96,9 +110,9 @@ func createMany[T any](ctx context.Context, ex database.Executor, models []T, li
 	}
 
 	if err := inTx(ctx, ex, insert); err != nil {
-		if genID {
-			// The rows were rolled back (or will be): do not leave ids that
-			// point at nothing.
+		// Only a transaction started here is surely rolled back; elsewhere
+		// written rows may persist, so their ids stay.
+		if _, own := ex.(*database.DB); own && genID {
 			for i := range models {
 				pk := reflect.ValueOf(&models[i]).Elem().FieldByIndex(m.byColumn[m.pk].index)
 				pk.SetZero()
@@ -203,14 +217,30 @@ func insertBatch[T any](
 		return fmt.Errorf("orm: insert %s: got %d ids for %d rows", m.table, len(ids), len(batch))
 	}
 
-	// Neither PostgreSQL nor SQLite promises RETURNING order, but both
-	// assign generated keys in VALUES order, so the sorted ids line up
-	// with the batch.
-	slices.Sort(ids)
+	// RETURNING follows VALUES order in practice on PostgreSQL and SQLite,
+	// but neither promises it; strictly increasing ids from an ascending
+	// sequence confirm the pairing, anything else fails closed.
+	if err := checkIncreasing(ids); err != nil {
+		return fmt.Errorf("orm: insert %s: %w", m.table, err)
+	}
 
 	for i := range batch {
 		if err := setID(reflect.ValueOf(&batch[i]).Elem().FieldByIndex(m.byColumn[m.pk].index), ids[i]); err != nil {
 			return fmt.Errorf("orm: insert %s: %w", m.table, err)
+		}
+	}
+
+	return nil
+}
+
+func checkIncreasing(ids []int64) error {
+	for i := 1; i < len(ids); i++ {
+		if ids[i] <= ids[i-1] {
+			return fmt.Errorf(
+				"generated ids %d then %d are not increasing; cannot match them to rows",
+				ids[i-1],
+				ids[i],
+			)
 		}
 	}
 

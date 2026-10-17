@@ -245,3 +245,67 @@ func (r *recordEx) QueryContext(_ context.Context, q string, _ ...any) (*sql.Row
 	r.queries = append(r.queries, q)
 	return nil, errors.New("fake")
 }
+
+// pkOnly has nothing to insert but its generated key.
+type pkOnly struct {
+	ID int64
+}
+
+func (pkOnly) Table() string { return "pk_only" }
+
+func TestCreateManyPrimaryKeyOnly(t *testing.T) {
+	t.Parallel()
+
+	db, ctx := setup(t)
+
+	err := CreateMany(ctx, db, []pkOnly{{}, {}})
+	if err == nil || !strings.Contains(err.Error(), "no columns") {
+		t.Fatalf("CreateMany(pk-only) = %v, want a no-columns error", err)
+	}
+}
+
+func TestCreateManyWrapperKeepsWrittenIDs(t *testing.T) {
+	t.Parallel()
+
+	db, ctx := setup(t)
+	users := newUsers(6)
+	users[5].Email = users[0].Email // fails in the third batch
+
+	// A wrapper is not a *DB or *Tx: no transaction, earlier batches stay.
+	err := createMany(ctx, &countingEx{Executor: db}, users, 14)
+	if !errors.Is(err, ErrConflict) {
+		t.Fatalf("CreateMany(duplicate) = %v, want ErrConflict", err)
+	}
+
+	for i, u := range users {
+		if written := i < 4; written != (u.ID != 0) {
+			t.Fatalf("users[%d].ID = %d, want set only for the 4 written rows", i, u.ID)
+		}
+	}
+
+	if n, _ := QueryOf[User](db).Count(ctx); n != 4 {
+		t.Fatalf("rows = %d, want 4", n)
+	}
+}
+
+func TestCheckIncreasing(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		ids []int64
+		ok  bool
+	}{
+		{[]int64{1, 2, 3}, true},
+		{[]int64{5, 9, 10}, true},
+		{[]int64{7}, true},
+		{[]int64{3, 2, 1}, false},
+		{[]int64{1, 1, 2}, false},
+		{[]int64{1, 3, 2}, false},
+	}
+
+	for _, tt := range tests {
+		if err := checkIncreasing(tt.ids); (err == nil) != tt.ok {
+			t.Errorf("checkIncreasing(%v) = %v, want ok %v", tt.ids, err, tt.ok)
+		}
+	}
+}
