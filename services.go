@@ -13,6 +13,7 @@ import (
 	"github.com/AlexGalhardo/vukem/cache"
 	"github.com/AlexGalhardo/vukem/config"
 	"github.com/AlexGalhardo/vukem/events"
+	"github.com/AlexGalhardo/vukem/flags"
 	"github.com/AlexGalhardo/vukem/logging/telegram"
 	"github.com/AlexGalhardo/vukem/mail"
 	"github.com/AlexGalhardo/vukem/session"
@@ -186,6 +187,53 @@ func isUseDefault(err error) bool {
 	}
 
 	return false
+}
+
+// WithFlags registers the application's feature flags (app.Flags). Invalid
+// or duplicate names, bad FLAG_<NAME> values, FLAG_<NAME> for a locked flag
+// and FLAG_ keys in .env files that name no flag stop New.
+func WithFlags(list ...flags.AnyFlag) Option {
+	return func(o *options) error { o.flags = append(o.flags, list...); return nil }
+}
+
+func checkFlags(list []flags.AnyFlag, src *config.Source) error {
+	if len(list) == 0 {
+		return nil
+	}
+
+	_, err := flags.New(flags.Config{Flags: list, Env: src})
+
+	return err
+}
+
+// Flags returns the feature flags registered with WithFlags, built on first
+// use: stored values live in the feature_flags table of DB() (vukem
+// install:flags), cached in Cache() for flags.DefaultTTL. Without
+// registered flags it touches neither the database nor the cache.
+func (a *App) Flags() (*flags.Flags, error) {
+	a.flagsOnce.Do(func() {
+		cfg := flags.Config{Flags: a.flagDefs, Env: a.Source, Log: a.Log}
+
+		if len(a.flagDefs) > 0 {
+			db, err := a.DB()
+			if err != nil {
+				a.flagsErr = err
+				return
+			}
+
+			c, err := a.Cache()
+			if err != nil {
+				a.flagsErr = err
+				return
+			}
+
+			cfg.Store, cfg.Cache = flags.NewDatabaseStore(db, a.now), c
+		}
+
+		a.ff, a.flagsErr = flags.New(cfg)
+	})
+
+	return a.ff, a.flagsErr
 }
 
 // MailConfig is read from MAIL_* (and SMTP_* / RESEND_* / MAILTRAP_*) variables.
