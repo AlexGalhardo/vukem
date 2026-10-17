@@ -1,0 +1,45 @@
+name: Vulnerabilities (weekly)
+
+# Advisories land after code ships: re-scan every module weekly even when
+# nothing was pushed (docs/security.md, supply chain).
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  govulncheck:
+    name: govulncheck (${{ matrix.module }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module:
+          - .
+          - drivers/mongo
+          - drivers/mysql
+          - drivers/otel
+          - drivers/postgres
+          - drivers/redis
+          - drivers/s3
+          - drivers/websocket
+          - contrib/graphql
+          - contrib/grpc
+          - contrib/stripe
+          - examples/api
+          - examples/blog
+          - examples/saas
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: "**/go.sum"
+      - name: govulncheck
+        working-directory: ${{ matrix.module }}
+        env:
+          GOWORK: "off"
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...

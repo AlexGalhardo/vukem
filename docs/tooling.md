@@ -29,7 +29,7 @@ gopls: enable `"formatting.gofumpt": true` so editor and CI agree.
 - `golangci-lint run ./...` — `default: standard` plus correctness (errorlint, bodyclose, sqlclosecheck, rowserrcheck, contextcheck, noctx, nilerr, exhaustive, forcetypeassert, musttag), security (gosec), style (revive, gocritic, misspell, unconvert, unparam, usestdlibvars, intrange, perfsprint, nolintlint, godot, sloglint, modernize, copyloopvar), tests (usetesting, thelper, tparallel), and **depguard** (core must not import drivers or non-allowlisted modules).
 - `nolint` requires a specific linter and an explanation.
 - `go vet ./...` and `go fix -diff ./...` (modernizers) run in CI.
-- `govulncheck ./...` in CI and weekly cron.
+- `govulncheck ./...` in CI, in the pre-push hook and in the weekly `vuln.yml` cron (every module).
 - Multi-module: `task lint` loops over every module; CI runs one job per module with `GOWORK=off`.
 
 ## Markdown
@@ -42,7 +42,7 @@ gopls: enable `"formatting.gofumpt": true` so editor and CI agree.
 | --- | --- |
 | `pre-commit` | `golangci-lint fmt` on staged `.go` (re-staged), `golangci-lint run --new-from-rev=HEAD`, `go mod tidy -diff`, `markdownlint-cli2` on staged `.md` |
 | `commit-msg` | `go run ./internal/tools/commitlint {1}` |
-| `pre-push` | `go vet ./...` (tests, race, govulncheck and the OS matrix run in GitHub Actions) |
+| `pre-push` | `go vet ./...`, `govulncheck ./...` (tests, race and the OS matrix run in GitHub Actions) |
 
 Install with `task hooks` (`lefthook install`). Personal overrides go in `lefthook-local.yml` (git-ignored).
 
@@ -116,6 +116,7 @@ Spec: <https://www.conventionalcommits.org/en/v1.0.0/>. Enforced by the in-repo 
 | Workflow | Trigger | Jobs |
 | --- | --- | --- |
 | `ci.yml` | push to `main`, PRs | lint (per module), unit matrix, integration (services), e2e, markdownlint, govulncheck, coverage gate, `apidiff` ([API compatibility](#api-compatibility)) |
+| `vuln.yml` | weekly, manual | govulncheck on the core and every module (`drivers/*`, `contrib/*`, `examples/*`) with `GOWORK=off` |
 | `pr-title.yml` | PR opened/edited | semantic PR title |
 | `release.yml` | tag `v*` | GoReleaser binaries, SBOMs, cosign keyless signature, build provenance |
 | `codeql.yml` | push, weekly | CodeQL Go |
