@@ -71,7 +71,7 @@ A `database.QueryObserver` sees every statement run through a `DB` and its trans
 app, err := vukem.New(vukem.WithQueryObservers(sqlTracer))
 ```
 
-On a `DB` you open yourself, pass `database.WithQueryObserver` once per observer or call `db.AddQueryObserver` before sharing the `DB`. `db.SetQueryObserver` replaces every observer.
+On a `DB` you open yourself, pass `database.WithQueryObserver` once per observer or call `db.AddQueryObserver` before sharing the `DB`. `db.SetQueryObserver` replaces every observer. A panicking observer is logged and skipped, so it never fails the query or stops the other observers.
 
 ## Transactions
 

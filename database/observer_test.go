@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 
@@ -158,4 +160,102 @@ func TestQueryObserversFanOut(t *testing.T) {
 			}
 		})
 	}
+}
+
+type panicObserver struct{}
+
+func (panicObserver) ObserveQuery(context.Context, Query) { panic("observer bug") }
+
+func TestQueryObserverPanicIsContained(t *testing.T) {
+	t.Parallel()
+
+	var logs strings.Builder
+
+	after := &queryLog{}
+
+	db, err := Open(t.Context(), ":memory:",
+		WithConfig(Config{Log: slog.New(slog.NewTextHandler(&lockedWriter{w: &logs}, nil))}),
+		WithQueryObserver(panicObserver{}), WithQueryObserver(after))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	ctx := t.Context()
+
+	rows, err := db.QueryContext(ctx, "SELECT 1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	defer rows.Close()
+
+	if !rows.Next() {
+		t.Fatal("QueryContext rows empty after a panicking observer")
+	}
+
+	for rows.Next() {
+	}
+
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	var n int
+	if err := db.QueryRowContext(ctx, "SELECT 2").Scan(&n); err != nil || n != 2 {
+		t.Fatalf("QueryRowContext = %d, %v, want 2", n, err)
+	}
+
+	if _, err := db.ExecContext(ctx, "SELECT 3"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := db.Tx(ctx, func(tx *Tx) error {
+		_, err := tx.ExecContext(ctx, "SELECT 4")
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if diff := cmp.Diff([]string{"SELECT 1", "SELECT 2", "SELECT 3", "SELECT 4"}, after.got); diff != "" {
+		t.Errorf("observer after the panicking one (-want +got):\n%s", diff)
+	}
+
+	if got := logs.String(); strings.Count(got, "query observer panicked") != 4 || strings.Contains(got, "SELECT") {
+		t.Errorf("logs = %q, want 4 panic records without SQL", got)
+	}
+}
+
+func TestTypedNilQueryObserverIsIgnored(t *testing.T) {
+	t.Parallel()
+
+	var typedNil *queryLog
+
+	db, err := Open(t.Context(), ":memory:", WithQueryObserver(typedNil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	db.AddQueryObserver(typedNil)
+
+	if _, err := db.ExecContext(t.Context(), "SELECT 1"); err != nil {
+		t.Fatal(err)
+	}
+
+	if db.obs != nil {
+		t.Fatalf("db.obs = %#v, want nil", db.obs)
+	}
+}
+
+type lockedWriter struct {
+	mu sync.Mutex
+	w  *strings.Builder
+}
+
+func (l *lockedWriter) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	return l.w.Write(p)
 }

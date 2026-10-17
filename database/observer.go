@@ -3,6 +3,9 @@ package database
 import (
 	"context"
 	"database/sql"
+	"fmt"
+	"log/slog"
+	"reflect"
 	"time"
 )
 
@@ -38,9 +41,10 @@ func WithQueryObserver(obs QueryObserver) Option {
 }
 
 // SetQueryObserver replaces every observer of a DB built with FromSQL or
-// Open with obs (nil removes them). Call it before the DB is shared between
-// goroutines; AddQueryObserver keeps the existing ones.
-func (db *DB) SetQueryObserver(obs QueryObserver) { db.obs = obs }
+// Open with obs (nil, or a typed nil pointer, removes them). Call it before
+// the DB is shared between goroutines; AddQueryObserver keeps the existing
+// ones.
+func (db *DB) SetQueryObserver(obs QueryObserver) { db.obs = chainObservers(nil, obs) }
 
 // AddQueryObserver adds obs after the DB's current observers (devtools
 // installed by App.DB keeps working next to a tracing observer). Call it
@@ -56,11 +60,11 @@ func (obs queryObservers) ObserveQuery(ctx context.Context, q Query) {
 	}
 }
 
-// chainObservers returns cur followed by next, skipping nils, without
-// nesting fan-outs.
+// chainObservers returns cur followed by next, skipping nils (typed nil
+// pointers too, whose methods would panic), without nesting fan-outs.
 func chainObservers(cur, next QueryObserver) QueryObserver {
 	switch {
-	case next == nil:
+	case isNil(next):
 		return cur
 	case cur == nil:
 		return next
@@ -76,8 +80,53 @@ func chainObservers(cur, next QueryObserver) QueryObserver {
 	return append(out, next)
 }
 
+func isNil(obs QueryObserver) bool {
+	if obs == nil {
+		return true
+	}
+
+	v := reflect.ValueOf(obs)
+	switch v.Kind() {
+	case reflect.Pointer, reflect.Map, reflect.Slice, reflect.Func, reflect.Chan, reflect.Interface:
+		return v.IsNil()
+	default:
+		return false
+	}
+}
+
+// notify reports q to every observer. A panicking observer is logged and
+// skipped: it must not fail the statement (or leak the rows of a query
+// that already ran), and the observers after it still run.
+func notify(ctx context.Context, log *slog.Logger, obs QueryObserver, q Query) {
+	if multi, ok := obs.(queryObservers); ok {
+		for _, o := range multi {
+			notifyOne(ctx, log, o, q)
+		}
+
+		return
+	}
+
+	notifyOne(ctx, log, obs, q)
+}
+
+func notifyOne(ctx context.Context, log *slog.Logger, obs QueryObserver, q Query) {
+	defer func() {
+		if p := recover(); p != nil {
+			if log == nil {
+				log = slog.Default()
+			}
+
+			// Neither the SQL nor the args: they may hold user data.
+			log.ErrorContext(ctx, "database: query observer panicked",
+				"observer", fmt.Sprintf("%T", obs), "panic", fmt.Sprint(p))
+		}
+	}()
+
+	obs.ObserveQuery(ctx, q)
+}
+
 func observeRows(
-	ctx context.Context, obs QueryObserver,
+	ctx context.Context, log *slog.Logger, obs QueryObserver,
 	run func(context.Context, string, ...any) (*sql.Rows, error), query string, args []any,
 ) (*sql.Rows, error) {
 	if obs == nil {
@@ -86,13 +135,13 @@ func observeRows(
 
 	start := time.Now()
 	rows, err := run(ctx, query, args...)
-	obs.ObserveQuery(ctx, Query{SQL: query, Args: args, Duration: time.Since(start), Err: err})
+	notify(ctx, log, obs, Query{SQL: query, Args: args, Duration: time.Since(start), Err: err})
 
 	return rows, err
 }
 
 func observeRow(
-	ctx context.Context, obs QueryObserver,
+	ctx context.Context, log *slog.Logger, obs QueryObserver,
 	run func(context.Context, string, ...any) *sql.Row, query string, args []any,
 ) *sql.Row {
 	if obs == nil {
@@ -101,7 +150,7 @@ func observeRow(
 
 	start := time.Now()
 	row := run(ctx, query, args...)
-	obs.ObserveQuery(ctx, Query{SQL: query, Args: args, Duration: time.Since(start), Err: row.Err()})
+	notify(ctx, log, obs, Query{SQL: query, Args: args, Duration: time.Since(start), Err: row.Err()})
 
 	return row
 }

@@ -343,14 +343,14 @@ func (db *DB) ExecContext(ctx context.Context, query string, args ...any) (sql.R
 
 	start := time.Now()
 	res, err := db.writer.ExecContext(ctx, query, args...)
-	db.obs.ObserveQuery(ctx, Query{SQL: query, Args: args, Duration: time.Since(start), Err: err})
+	notify(ctx, db.log, db.obs, Query{SQL: query, Args: args, Duration: time.Since(start), Err: err})
 
 	return res, err
 }
 
 // QueryContext runs a query on the reader pool.
 func (db *DB) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
-	return observeRows(ctx, db.obs, db.reader.QueryContext, query, args)
+	return observeRows(ctx, db.log, db.obs, db.reader.QueryContext, query, args)
 }
 
 // QueryRowContext runs a single-row query on the reader pool, except for
@@ -361,7 +361,7 @@ func (db *DB) QueryRowContext(ctx context.Context, query string, args ...any) *s
 		pool = db.writer
 	}
 
-	return observeRow(ctx, db.obs, pool.QueryRowContext, query, args)
+	return observeRow(ctx, db.log, db.obs, pool.QueryRowContext, query, args)
 }
 
 // Ping checks connectivity (used by health checks).
@@ -436,19 +436,19 @@ func (tx *Tx) ExecContext(ctx context.Context, query string, args ...any) (sql.R
 
 	start := time.Now()
 	res, err := tx.tx.ExecContext(ctx, query, args...)
-	tx.obs.ObserveQuery(ctx, Query{SQL: query, Args: args, Duration: time.Since(start), Err: err})
+	notify(ctx, tx.log, tx.obs, Query{SQL: query, Args: args, Duration: time.Since(start), Err: err})
 
 	return res, err
 }
 
 // QueryContext implements Executor.
 func (tx *Tx) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
-	return observeRows(ctx, tx.obs, tx.tx.QueryContext, query, args)
+	return observeRows(ctx, tx.log, tx.obs, tx.tx.QueryContext, query, args)
 }
 
 // QueryRowContext implements Executor.
 func (tx *Tx) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
-	return observeRow(ctx, tx.obs, tx.tx.QueryRowContext, query, args)
+	return observeRow(ctx, tx.log, tx.obs, tx.tx.QueryRowContext, query, args)
 }
 
 // SQL returns the underlying *sql.Tx.
