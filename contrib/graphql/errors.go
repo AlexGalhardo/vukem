@@ -108,13 +108,17 @@ func fromResolverError(ctx context.Context, err error, debug bool) *Error {
 
 	out := &Error{Extensions: map[string]any{}, cause: err}
 
+	// A 5xx wins over the issues it wraps: errs.Wrap(500, issues) carries
+	// internal data, not field errors the client should fix (CWE-209).
+	server := isServerStatus(err)
+
 	switch {
-	case isIssues(err):
+	case !server && isIssues(err):
 		is, _ := z.AsIssues(err)
 		out.Message = "Invalid input"
 		out.Extensions["code"] = CodeBadUserInput
 		out.Extensions["fields"] = is.Fields()
-	case isValidation(err):
+	case !server && isValidation(err):
 		ve, _ := errors.AsType[*errs.ValidationError](err)
 		out.Message = "Invalid input"
 		out.Extensions["code"] = CodeBadUserInput
@@ -140,6 +144,20 @@ func fromResolverError(ctx context.Context, err error, debug bool) *Error {
 	}
 
 	return out
+}
+
+// isServerStatus reports whether err's *errs.HTTPError (or, without one,
+// its errs.StatusCoder) has a 5xx status.
+func isServerStatus(err error) bool {
+	if he, ok := errors.AsType[*errs.HTTPError](err); ok {
+		return he.Status >= http.StatusInternalServerError
+	}
+
+	if sc, ok := errors.AsType[errs.StatusCoder](err); ok {
+		return sc.HTTPStatus() >= http.StatusInternalServerError
+	}
+
+	return false
 }
 
 func isIssues(err error) bool {

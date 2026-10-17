@@ -18,6 +18,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/AlexGalhardo/vukem/errs"
+	"github.com/AlexGalhardo/vukem/z"
 )
 
 var update = flag.Bool("update", false, "rewrite golden files")
@@ -699,6 +700,37 @@ func TestExecute_LocalizesKeyedErrors(t *testing.T) {
 			resp := s.Execute(tt.ctx, Request{Query: `{ post }`})
 			if len(resp.Errors) != 1 || resp.Errors[0].Message != tt.want || resp.Errors[0].Code() != CodeNotFound {
 				t.Errorf("Execute errors = %v, want one %s %q", resp.Errors, CodeNotFound, tt.want)
+			}
+		})
+	}
+}
+
+func TestSecurity_A10_GraphQLServerHTTPErrorsMasked(t *testing.T) {
+	t.Parallel()
+
+	leaky := func(string, map[string]any) (string, bool) { return "dsn postgres://app:hunter2@db", true }
+	ctx := errs.WithTranslator(t.Context(), leaky)
+
+	secret := errors.New("db: password=hunter2")
+	_, issues := z.Struct[struct {
+		Name string `json:"name"`
+	}](z.Shape{"name": z.String().Refine(func(string) error { return secret })}).Parse(map[string]any{"name": "x"})
+
+	tests := map[string]error{
+		"500 message":      errs.New(http.StatusInternalServerError, "query failed: password=hunter2"),
+		"503 keyed":        errs.NewKey(http.StatusServiceUnavailable, "db.down", "redis hunter2 down", nil),
+		"500 wraps issues": errs.Wrap(http.StatusInternalServerError, issues),
+		"500 wraps fields": errs.Wrap(http.StatusInternalServerError, errs.NewValidation().Add("name", "hunter2")),
+	}
+
+	for name, err := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			ge := fromResolverError(ctx, err, false)
+			if ge.Message != internalMessage || ge.Code() != CodeInternal || ge.Extensions["fields"] != nil {
+				t.Errorf("fromResolverError(%v) = %q %s %v, want %q %s without fields",
+					err, ge.Message, ge.Code(), ge.Extensions, internalMessage, CodeInternal)
 			}
 		})
 	}
