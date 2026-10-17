@@ -3,6 +3,8 @@ package vukem
 import (
 	"bytes"
 	"encoding/json"
+	"maps"
+	"slices"
 	"strings"
 	"testing"
 
@@ -104,5 +106,57 @@ func TestCodegenTypesCommand(t *testing.T) {
 	if s := out.String(); !strings.Contains(s, "export type PingResponse = PingOut;") ||
 		!strings.Contains(s, "PingOutSchema") {
 		t.Fatalf("codegen:types = %q", s)
+	}
+}
+
+func TestServeOpenAPIWithPrefix(t *testing.T) {
+	t.Parallel()
+
+	routes := func(r *router.Router, app *App) error {
+		ServeOpenAPIWith(app, r, "/api/v1/openapi.json", OpenAPIOptions{PathPrefix: "/api/v1", InProduction: true})
+		ServeOpenAPI(app, r, "/openapi.json")
+		api.Register(r, "GET /api/v1/ping", api.Op{Name: "ping"},
+			func(*web.Ctx, struct{}) (pingOut, error) { return pingOut{Pong: true}, nil })
+		api.Register(r, "GET /internal/stats", api.Op{Name: "stats"},
+			func(*web.Ctx, struct{}) (pingOut, error) { return pingOut{}, nil })
+
+		return nil
+	}
+
+	paths := func(t *testing.T, app *App, target string) []string {
+		t.Helper()
+
+		rec := doReq(t, app, target)
+		if rec.Code != 200 {
+			t.Fatalf("GET %s = %d, want 200", target, rec.Code)
+		}
+
+		var doc struct {
+			Paths map[string]any `json:"paths"`
+		}
+
+		if err := json.Unmarshal(rec.Body.Bytes(), &doc); err != nil {
+			t.Fatal(err)
+		}
+
+		return slices.Sorted(maps.Keys(doc.Paths))
+	}
+
+	dev := newTestApp(t, WithSource(testSource(nil)), WithRoutes(routes))
+	if got := paths(t, dev, "/api/v1/openapi.json"); !slices.Equal(got, []string{"/api/v1/ping"}) {
+		t.Errorf("prefixed document paths = %v, want [/api/v1/ping]", got)
+	}
+
+	if got := paths(t, dev, "/openapi.json"); !slices.Contains(got, "/internal/stats") {
+		t.Errorf("unprefixed document paths = %v, want every route", got)
+	}
+
+	prod := newTestApp(t, WithSource(testSource(map[string]string{"APP_ENV": "production"})), WithRoutes(routes))
+	if got := paths(t, prod, "/api/v1/openapi.json"); !slices.Equal(got, []string{"/api/v1/ping"}) {
+		t.Errorf("opted-in production document paths = %v", got)
+	}
+
+	if rec := doReq(t, prod, "/openapi.json"); rec.Code != 404 {
+		t.Errorf("production /openapi.json without opt-in = %d, want 404", rec.Code)
 	}
 }
