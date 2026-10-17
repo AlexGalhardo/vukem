@@ -225,3 +225,58 @@ func TestSecurity_A07_AuthScaffoldDefaults(t *testing.T) {
 		}
 	}
 }
+
+// Changing credentials ends the user's other sessions: a password reset
+// ends all of them and enabling 2FA all but the current one (generated
+// TestPasswordResetEndsOtherSessions, run by TestNewProjectEndToEnd). The
+// login still regenerates the session id.
+func TestSecurity_A07_AuthScaffoldRevokesOtherSessions(t *testing.T) {
+	t.Parallel()
+
+	revoke2FA := "h.a.RevokeOtherSessions(c.Context(), u.ID, c.Session().ID())"
+	files := map[string][]string{
+		"scaffolds/auth-core/app/accounts/accounts.go.tmpl": {
+			"m.RevokeOthers(ctx, a.Web.SessionUserID(strconv.FormatInt(userID, 10)), keep)",
+			"sessions:  app.Sessions,",
+		},
+		"scaffolds/auth-core/app/accounts/passwords.go.tmpl": {
+			`return u, a.RevokeOtherSessions(ctx, u.ID, "")`,
+		},
+		"scaffolds/auth-web/tests/sessions_test.go.tmpl": {
+			`"SESSION_DRIVER": "database"`,
+			`c.Get("/login").AssertOK() // signed out`,
+		},
+	}
+
+	for src, wants := range files {
+		b, err := scaffoldFS.ReadFile(src)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		for _, want := range wants {
+			if !bytes.Contains(b, []byte(want)) {
+				t.Errorf("%s lacks %q", src, want)
+			}
+		}
+	}
+
+	// Enabling 2FA flashes the one-time recovery codes before revoking, and
+	// a revocation failure is logged instead of failing the request.
+	for _, src := range []string{
+		"scaffolds/auth-2fa-web/app/controllers/account/two_factor.go.tmpl",
+		"scaffolds/auth-2fa-inertia/app/controllers/account/two_factor.go.tmpl",
+	} {
+		b, err := scaffoldFS.ReadFile(src)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		flash := bytes.Index(b, []byte("c.Session().Flash(recoveryCodesFlash, codes)"))
+		revoke := bytes.Index(b, []byte("if err := "+revoke2FA+"; err != nil {\n\t\tweb.SecurityEvent("))
+
+		if flash < 0 || revoke < 0 || flash > revoke {
+			t.Errorf("%s: recovery codes flashed at %d, revocation with logged failure at %d", src, flash, revoke)
+		}
+	}
+}

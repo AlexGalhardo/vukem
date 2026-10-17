@@ -40,6 +40,7 @@ type Session struct {
 	dirty       bool
 	regenerated bool
 	oldID       string
+	storedID    string // id the session was loaded under (server-side stores)
 	destroyed   bool
 }
 

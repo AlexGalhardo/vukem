@@ -54,6 +54,28 @@ func (f *faultyStore) Save(ctx context.Context, id string, data []byte, expiry t
 	return f.MemoryStore.Save(ctx, id, data, expiry)
 }
 
+func (f *faultyStore) Create(ctx context.Context, id, userID string, data []byte, expiry time.Time) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if f.saveErr != nil {
+		return f.saveErr
+	}
+
+	return f.MemoryStore.Create(ctx, id, userID, data, expiry)
+}
+
+func (f *faultyStore) Update(ctx context.Context, id, userID string, data []byte, expiry time.Time) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if f.saveErr != nil {
+		return f.saveErr
+	}
+
+	return f.MemoryStore.Update(ctx, id, userID, data, expiry)
+}
+
 func (f *faultyStore) Delete(ctx context.Context, id string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()

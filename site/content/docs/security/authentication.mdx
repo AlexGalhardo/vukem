@@ -12,6 +12,9 @@ vukem migrate
 
 `install:auth` copies **code you own** into the project and registers its migrations and routes:
 
+> A password reset and turning on 2FA end the user's other sessions only with server-side sessions: set `SESSION_DRIVER=database`. With the default encrypted cookie driver there is nothing to revoke, and `Accounts.RevokeOtherSessions` does nothing ([Sessions](/docs/basics/sessions#revoking-a-users-other-sessions)).
+
+
 ```text
 app/models/user.go                          User (AuthID, AuthPassword, EmailVerified)
 app/accounts/{accounts,users,passwords}.go  guards, registration, verification, password resets
@@ -24,6 +27,7 @@ resources/views/auth/*.html, resources/views/mail/*.html
 routes/auth.go                              appended to routes.All()
 tests/auth_test.go                          the whole flow
 tests/auth_messages_test.go                 every message translated
+tests/sessions_test.go                      a password reset ends the user's other sessions
 ```
 
 | Flow | Behaviour |
@@ -31,7 +35,7 @@ tests/auth_messages_test.go                 every message translated
 | Register | unique email (case-insensitive), argon2id hash, login, verification email |
 | Login | remember-me, intended URL, **5 attempts per minute per email + IP**, the same error for unknown users |
 | Email verification | signed link (HMAC, 1 hour), must match the logged-in user; resend limited to 3 per minute |
-| Forgot / reset password | the same answer for unknown emails; random token stored as SHA-256, 1 hour, single use; reset logs out remembered sessions |
+| Forgot / reset password | the same answer for unknown emails; random token stored as SHA-256, 1 hour, single use; reset ends every session (with `SESSION_DRIVER=database`), remembered session and API token |
 | Logout | session invalidated, remember-me token deleted |
 
 Flash messages, controller errors and mail subjects go through `accounts.T(ctx, key)`, with English and Brazilian Portuguese catalogs in `app/accounts/lang/<locale>/*.json` (keys `auth.*`; `--2fa` and `--social` add `two_factor.json` and `social.json`). `T` uses the request locale that `i18n.Middleware` resolves when the app uses `vukem.WithTranslations`, and English otherwise. A key in the app's own catalog for that locale or its language (`resources/lang/pt-BR.json`, then `pt.json`) wins, so the app can reword a message or add a locale without editing the scaffold. Field messages of the `z` schemas in `app/requests` and the views stay in English. `tests/auth_messages_test.go` checks that every key exists in every locale. Mailables built without a `Subject` keep the English one.
@@ -78,7 +82,7 @@ user, err := auth.User[models.User](c, "web") // in handlers behind Required
 ```
 
 - `Attempt` checks the password in constant time; unknown users still cost a hash verification and get the same 422 error. Failures emit the `auth.login_failed` security event.
-- `Login` regenerates the session id (fixation) and stores the user id; `Logout` invalidates the session and deletes the remember-me token.
+- `Login` regenerates the session id (fixation) and stores the user id, also under `web.SessionUserKey` so `session.Manager.RevokeOthers` can end the user's other sessions ([Sessions](/docs/basics/sessions)); `Logout` invalidates the session and deletes the remember-me token.
 - Remember-me cookies hold `<id>.<secret>`; only `SHA-256(secret)` is stored, and tokens rotate on every use.
 - Stale hashes (bcrypt, weaker argon2 parameters) are upgraded on login.
 - `Validate(c, creds)` checks credentials without logging in (token issuance).

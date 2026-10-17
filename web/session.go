@@ -37,6 +37,9 @@ const (
 	OldInputKey = "_old"
 	ErrorsKey   = "_errors"
 	TokenKey    = "_token"
+	// SessionUserKey holds the id of the logged-in user (auth guards set it
+	// on login) so server-side stores can revoke a user's sessions.
+	SessionUserKey = "_user_id"
 )
 
 type sessionKey struct{}
