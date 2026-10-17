@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"errors"
 	"net/http"
 
@@ -21,13 +22,15 @@ func ctxOf(w http.ResponseWriter, r *http.Request) *web.Ctx {
 // is involved); browsers are redirected to the route named "login", and the
 // intended URL is remembered for GET requests. When every guard is an
 // [APIGuard] (token and JWT guards), nobody is redirected: the 401 is always
-// problem+json, whatever the Accept header or session cookie says.
+// problem+json, whatever the Accept header or session cookie says; the
+// same holds for any guards under [ProblemJSON].
 func Required(guards ...Checker) func(http.Handler) http.Handler {
-	apiOnly := allAPI(guards)
+	allAPIGuards := allAPI(guards)
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			c := ctxOf(w, r)
+			apiOnly := allAPIGuards || isProblemJSON(r.Context())
 
 			for _, g := range guards {
 				if ec, ok := g.(errChecker); ok {
@@ -74,6 +77,8 @@ func Required(guards ...Checker) func(http.Handler) http.Handler {
 // APIGuard is a guard for API clients that authenticate every request with
 // a credential they carry (TokenGuard, jwt.Guard). Required and Ability
 // answer problem+json and never redirect when their guards are APIGuards.
+// A custom guard opts in by implementing APIOnly; for a route group that
+// mixes in a session guard or custom middleware, use [ProblemJSON].
 type APIGuard interface {
 	Checker
 	// APIOnly marks the guard; it is never called.
@@ -100,9 +105,61 @@ func fail(c *web.Ctx, apiOnly bool, err error) {
 		return
 	}
 
+	jsonCtx(c, web.ServicesFrom(c.Context())).HandleError(err)
+}
+
+// jsonCtx returns a copy of c whose request accepts only JSON, served by s.
+func jsonCtx(c *web.Ctx, s *web.Services) *web.Ctx {
 	r := c.Request().Clone(c.Context())
 	r.Header.Set("Accept", "application/json")
-	ctxOf(c.Writer(), r).HandleError(err)
+
+	jc := web.NewCtx(c.Writer(), r, s)
+	jc.SetRouteName(c.RouteName())
+
+	return jc
+}
+
+type problemJSONKey struct{}
+
+func isProblemJSON(ctx context.Context) bool {
+	on, _ := ctx.Value(problemJSONKey{}).(bool)
+	return on
+}
+
+// ProblemJSON is route-group middleware for APIs whose authentication is
+// not only [APIGuard]s: a session fallback next to a token guard, or a
+// custom authenticator or scope check. Mount it before them (g.Use(
+// auth.ProblemJSON, auth.Required(api, web))): below it, Required,
+// Ability and Verified never redirect to the login or verification pages,
+// and every 401 and 403 that middleware renders (the auth middleware, or
+// custom middleware rejecting through web.Fail or web.ServicesFrom) is an
+// RFC 9457 problem+json, whatever the Accept header says, like the
+// built-in API guards. Only the error path sees the forced Accept: other
+// statuses and the handlers keep negotiating with the client's header.
+// Handler errors go through the router's error handler as usual; an API
+// handler that returns a 401 or 403 should answer JSON itself.
+func ProblemJSON(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		orig := web.ServicesFrom(r.Context())
+
+		handle := orig.Errors
+		if handle == nil {
+			handle = web.DefaultErrorHandler
+		}
+
+		s := *orig
+		s.Errors = func(c *web.Ctx, err error) {
+			if st := errs.Status(err); (st == http.StatusUnauthorized || st == http.StatusForbidden) &&
+				!c.WantsJSON() {
+				c = jsonCtx(c, orig)
+			}
+
+			handle(c, err)
+		}
+
+		ctx := context.WithValue(web.WithServices(r.Context(), &s), problemJSONKey{}, true)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
 }
 
 // errChecker is a guard that reports why authentication failed.
@@ -163,8 +220,8 @@ type Verifiable interface {
 // Verified requires the user authenticated by guard to have a verified
 // email. Signed-in browsers without one are redirected to the route named
 // "verification.notice" when the app has it (the install:auth scaffold
-// does); JSON clients, and apps without that route, get 403. Place it
-// after Required.
+// does); JSON clients, routes under [ProblemJSON] and apps without that
+// route get 403. Place it after Required.
 func Verified(guard Checker) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -180,7 +237,7 @@ func Verified(guard Checker) func(http.Handler) http.Handler {
 				return
 			}
 
-			if !c.WantsJSON() && hasSession(c) {
+			if !c.WantsJSON() && !isProblemJSON(r.Context()) && hasSession(c) {
 				if u, err := c.URL("verification.notice"); err == nil {
 					_ = c.Redirect(u)
 					return
@@ -193,14 +250,15 @@ func Verified(guard Checker) func(http.Handler) http.Handler {
 }
 
 // Ability requires the request's access token (from guard) to grant every
-// ability; 403 otherwise (problem+json when guard is an [APIGuard]). Place
-// it after Required.
+// ability; 403 otherwise (problem+json when guard is an [APIGuard] or the
+// route is under [ProblemJSON]). Place it after Required.
 func Ability(guard Checker, abilities ...string) func(http.Handler) http.Handler {
-	apiOnly := allAPI([]Checker{guard})
+	apiGuard := allAPI([]Checker{guard})
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			c := ctxOf(w, r)
+			apiOnly := apiGuard || isProblemJSON(r.Context())
 
 			if !guard.Check(c) {
 				fail(c, apiOnly, ErrUnauthenticated)

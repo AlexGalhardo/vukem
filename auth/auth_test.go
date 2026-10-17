@@ -19,6 +19,7 @@ import (
 	"github.com/AlexGalhardo/vukem/auth"
 	"github.com/AlexGalhardo/vukem/auth/hash"
 	"github.com/AlexGalhardo/vukem/database"
+	"github.com/AlexGalhardo/vukem/errs"
 	"github.com/AlexGalhardo/vukem/orm"
 	"github.com/AlexGalhardo/vukem/router"
 	"github.com/AlexGalhardo/vukem/schema"
@@ -205,6 +206,29 @@ func newApp(t *testing.T, hasher hash.Hasher, extra ...vukem.Option) *testApp {
 						Use(auth.Ability(ta.api, "posts:read"))
 					g.Delete("/posts", func(c *web.Ctx) error { return c.NoContent() }).
 						Use(auth.Ability(ta.api, "posts:delete"))
+				})
+
+				// /papi mixes a session fallback with tokens and custom
+				// middleware; auth.ProblemJSON makes every 401/403 a problem.
+				r.Group("/papi", func(g *router.Group) {
+					g.Use(auth.ProblemJSON, auth.Required(ta.api, ta.web))
+					g.Get("/me", func(c *web.Ctx) error { return c.String(200, c.Header("Accept")) })
+					g.Get("/verified", func(c *web.Ctx) error { return c.NoContent() }).
+						Use(auth.Verified(ta.web))
+					g.Delete("/posts", func(c *web.Ctx) error { return c.NoContent() }).
+						Use(auth.Ability(ta.web, "posts:delete"))
+					g.Get("/scope", func(c *web.Ctx) error { return c.NoContent() }).
+						Use(func(http.Handler) http.Handler {
+							return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+								web.Fail(w, r, errs.New(http.StatusForbidden, "This key lacks the admin scope."))
+							})
+						})
+					g.Get("/conflict", func(c *web.Ctx) error { return c.NoContent() }).
+						Use(func(http.Handler) http.Handler {
+							return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+								web.Fail(w, r, errs.New(http.StatusConflict, "Busy."))
+							})
+						})
 				})
 
 				r.Group("/api", func(g *router.Group) {
@@ -604,6 +628,66 @@ func TestTokenOnlyRoutesAnswerProblemJSON(t *testing.T) {
 
 	// A session guard in the list keeps the browser redirect.
 	ta.Client(t).WithHeader("Accept", "text/html").Get("/dashboard").AssertRedirect("/login")
+}
+
+// Routes under auth.ProblemJSON answer every 401 and 403 as problem+json,
+// even with a session guard in the list (no redirect to the login page) and
+// from custom middleware rejecting through web.Fail. Other errors and the
+// handlers keep negotiating with the client's Accept header.
+func TestProblemJSONGroupForcesAuthFailures(t *testing.T) {
+	t.Parallel()
+
+	ta := newApp(t, hash.Fake())
+	unverified := ta.user(t, "uma@example.com", "pw", false)
+	verified := ta.user(t, "ana@example.com", "pw", true)
+
+	html := "text/html,application/xhtml+xml"
+	tests := []struct {
+		name   string
+		client *vukemtest.Client
+		path   string
+		status int
+	}{
+		{"guest browser", ta.Client(t).WithHeader("Accept", html), "/papi/me", http.StatusUnauthorized},
+		{"guest without Accept", ta.Client(t), "/papi/me", http.StatusUnauthorized},
+		{
+			"unverified browser", ta.Client(t).ActingAs("web", unverified).WithHeader("Accept", html),
+			"/papi/verified", http.StatusForbidden,
+		},
+		{
+			"session without token ability", ta.Client(t).ActingAs("web", verified).WithHeader("Accept", html),
+			"/papi/posts", http.StatusForbidden,
+		},
+		{
+			"custom middleware", ta.Client(t).ActingAs("web", verified).WithHeader("Accept", html),
+			"/papi/scope", http.StatusForbidden,
+		},
+	}
+
+	// The clients report through t, so the cases run without subtests.
+	for _, tt := range tests {
+		method := http.MethodGet
+		if tt.path == "/papi/posts" {
+			method = http.MethodDelete
+		}
+
+		res := tt.client.Do(method, tt.path, nil, "")
+		if res.Status() != tt.status || res.Header("Location") != "" ||
+			!strings.HasPrefix(res.Header("Content-Type"), "application/problem+json") {
+			t.Errorf("%s: %s %s = %d %v, want %d problem+json", tt.name, method, tt.path, res.Status(),
+				res.Recorder().Header(), tt.status)
+		}
+	}
+
+	// Only auth failures are forced: other errors still negotiate.
+	res := ta.Client(t).ActingAs("web", verified).WithHeader("Accept", html).Get("/papi/conflict")
+	if res.Status() != http.StatusConflict ||
+		strings.HasPrefix(res.Header("Content-Type"), "application/problem+json") {
+		t.Errorf("GET /papi/conflict = %d %q, want 409 negotiated as HTML", res.Status(), res.Header("Content-Type"))
+	}
+
+	// Authenticated handlers still see the client's Accept header.
+	ta.Client(t).ActingAs("web", verified).WithHeader("Accept", html).Get("/papi/me").AssertOK().AssertSee("text/html")
 }
 
 func TestTokensUseTheirClock(t *testing.T) {

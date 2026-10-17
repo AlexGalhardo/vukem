@@ -98,6 +98,7 @@ Standard library only. `jwt.Sign(key, jwt.Claims{Subject, Issuer, Audience, Expi
 | `auth.Guest(guards...)` | sends logged-in users to the route named `home` |
 | `auth.Verified(guard)` | 403 unless the user implements `EmailVerified() bool` and returns true |
 | `auth.Ability(guard, abilities...)` | 403 unless the token grants every ability (`authz.denied` event); problem+json for an `auth.APIGuard` |
+| `auth.ProblemJSON` | route-group setting for APIs that are not only `auth.APIGuard`s (a session fallback, a custom authenticator or scope check): mount it first (`g.Use(auth.ProblemJSON, auth.Required(apiGuard, webGuard))`). Below it `Required`, `Ability` and `Verified` never redirect, and every 401 and 403 rendered by middleware (theirs, or yours through `web.Fail`) is RFC 9457 problem+json whatever `Accept` says, like the built-in API guards. Other statuses and handlers keep negotiating; a custom guard can instead implement `auth.APIGuard` (`APIOnly()`) |
 
 ### Testing
 

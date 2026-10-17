@@ -124,6 +124,7 @@ Set `tokens.Prefix` (the `install:auth` scaffold uses `vk_`; pick one specific t
 | `auth.Guest(guards...)` | sends logged-in users to the route named `home` |
 | `auth.Verified(guard)` | passes when the user's `EmailVerified()` is true; otherwise browsers are redirected to the route named `verification.notice` (created by `install:auth`) and JSON clients, or apps without that route, get 403 |
 | `auth.Ability(guard, abilities...)` | 403 unless the token grants every ability (problem+json for an `auth.APIGuard`) |
+| `auth.ProblemJSON` | route-group setting for APIs that are not only `auth.APIGuard`s (a session fallback, a custom authenticator or scope check): mount it first (`g.Use(auth.ProblemJSON, auth.Required(apiGuard, webGuard))`). Below it `Required`, `Ability` and `Verified` never redirect, and every 401 and 403 rendered by middleware (theirs, or yours through `web.Fail`) is RFC 9457 problem+json whatever `Accept` says, like the built-in API guards. Other statuses and handlers keep negotiating; a custom guard can instead implement `auth.APIGuard` (`APIOnly()`) |
 
 ## Hashing
 
