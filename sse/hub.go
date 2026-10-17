@@ -3,8 +3,10 @@ package sse
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
+	"time"
 )
 
 // Broker carries events between app instances; *redis.Client from
@@ -43,10 +45,18 @@ type sub struct {
 	detach func() bool
 }
 
-// relay is the broker subscription of one topic; cancel ends it.
+// relay is the broker subscription of one topic; cancel ends it. ready
+// closes once the subscription is up or has failed (err).
 type relay struct {
 	cancel context.CancelFunc
+	ready  chan struct{}
+	err    error
 }
+
+// brokerSubscribeTimeout bounds how long Subscribe waits for the broker.
+const brokerSubscribeTimeout = 10 * time.Second
+
+var errSubscribeTimeout = errors.New("sse: broker subscribe timed out")
 
 // NewHub returns a hub; broker may be nil for a single instance.
 func NewHub(broker Broker) *Hub {
@@ -91,7 +101,10 @@ func (h *Hub) Subscribe(ctx context.Context, topics ...string) (<-chan Event, fu
 		r     *relay
 	}
 
-	var start []pending
+	var (
+		start []pending
+		wait  []*relay
+	)
 
 	for _, t := range topics {
 		if h.subs[t] == nil {
@@ -100,11 +113,19 @@ func (h *Hub) Subscribe(ctx context.Context, topics ...string) (<-chan Event, fu
 
 		h.subs[t][s] = struct{}{}
 
-		if h.broker != nil && h.relays[t] == nil {
-			rctx, cancel := context.WithCancel(h.ctx)
-			h.relays[t] = &relay{cancel: cancel}
-			start = append(start, pending{t, rctx, h.relays[t]})
+		if h.broker == nil {
+			continue
 		}
+
+		r := h.relays[t]
+		if r == nil {
+			rctx, cancel := context.WithCancel(h.ctx)
+			r = &relay{cancel: cancel, ready: make(chan struct{})}
+			h.relays[t] = r
+			start = append(start, pending{t, rctx, r})
+		}
+
+		wait = append(wait, r)
 	}
 
 	// AfterFunc spawns no goroutine until ctx ends, so an unsubscribed
@@ -112,22 +133,58 @@ func (h *Hub) Subscribe(ctx context.Context, topics ...string) (<-chan Event, fu
 	s.detach = context.AfterFunc(ctx, func() { h.remove(s) })
 	h.mu.Unlock()
 
-	// Subscribe to the broker before returning so a Publish right after
-	// Subscribe reaches this instance.
 	for _, p := range start {
 		h.relay(p.ctx, p.topic, p.r)
+	}
+
+	// Every subscriber, not only the one that started a relay, waits for it:
+	// a Publish right after Subscribe must reach this instance.
+	for _, r := range wait {
+		<-r.ready
+
+		if r.err != nil {
+			// Fail closed: never leave a stream on a topic that receives
+			// nothing. The client reconnects and the next Subscribe retries.
+			h.remove(s)
+			break
+		}
 	}
 
 	return s.ch, func() { h.remove(s) }
 }
 
-// relay subscribes to the broker channel of topic and forwards its
-// messages to local subscribers until r is cancelled (the topic emptied or
-// the hub closed).
+// relay subscribes to the broker channel of topic, waiting at most
+// brokerSubscribeTimeout, then forwards its messages to local subscribers
+// until r is cancelled (the topic emptied or the hub closed).
 func (h *Hub) relay(ctx context.Context, topic string, r *relay) {
-	msgs, err := h.broker.Subscribe(ctx, channel(topic))
-	if err != nil {
-		// Forget the relay so the next subscriber of topic retries.
+	type result struct {
+		msgs <-chan []byte
+		err  error
+	}
+
+	done := make(chan result, 1)
+
+	// The subscription lives as long as ctx, so the wait is bounded with a
+	// timer rather than a deadline on ctx.
+	go func() {
+		msgs, err := h.broker.Subscribe(ctx, channel(topic))
+		done <- result{msgs, err}
+	}()
+
+	timer := time.NewTimer(brokerSubscribeTimeout)
+	defer timer.Stop()
+
+	var res result
+
+	select {
+	case res = <-done:
+	case <-timer.C:
+		res.err = errSubscribeTimeout
+	}
+
+	if res.err != nil {
+		// Forget the relay so the next subscriber of topic retries; cancel
+		// also ends a subscription that succeeds after the timeout.
 		h.mu.Lock()
 		if h.relays[topic] == r {
 			delete(h.relays, topic)
@@ -135,18 +192,34 @@ func (h *Hub) relay(ctx context.Context, topic string, r *relay) {
 		h.mu.Unlock()
 		r.cancel()
 
+		r.err = fmt.Errorf("sse: subscribe %q: %w", topic, res.err)
+		close(r.ready)
+
 		return
 	}
 
-	go h.forward(topic, msgs)
+	close(r.ready)
+
+	go h.forward(topic, r, res.msgs)
 }
 
-func (h *Hub) forward(topic string, msgs <-chan []byte) {
+func (h *Hub) forward(topic string, r *relay, msgs <-chan []byte) {
 	for b := range msgs {
 		var ev Event
 		if json.Unmarshal(b, &ev) == nil {
-			h.deliver(topic, ev)
+			h.deliverFrom(topic, r, ev)
 		}
+	}
+}
+
+// deliverFrom delivers ev only while r is the topic's current relay, so a
+// relay being torn down never duplicates events of its replacement.
+func (h *Hub) deliverFrom(topic string, r *relay, ev Event) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	if h.relays[topic] == r {
+		h.deliverLocked(topic, ev)
 	}
 }
 
@@ -154,6 +227,10 @@ func (h *Hub) deliver(topic string, ev Event) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
+	h.deliverLocked(topic, ev)
+}
+
+func (h *Hub) deliverLocked(topic string, ev Event) {
 	for s := range h.subs[topic] {
 		select {
 		case s.ch <- ev:
@@ -183,8 +260,8 @@ func (h *Hub) removeLocked(s *sub) {
 			delete(h.subs, t)
 
 			if r := h.relays[t]; r != nil {
-				r.cancel()
 				delete(h.relays, t)
+				r.cancel()
 			}
 		}
 	}

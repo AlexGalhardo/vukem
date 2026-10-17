@@ -48,7 +48,7 @@ r.Get("/posts/stream", func(c *web.Ctx) error {
 
 Subscribers that fall 64 events behind are dropped; the browser reconnects on its own.
 
-With a broker, each topic holds one broker subscription while it has local subscribers on this instance; it is released when the last one leaves, so per-user topics (`user:42`) do not pile up Redis subscriptions. A custom `sse.Broker` must close its channel and end the subscription when the `Subscribe` context is done.
+With a broker, each topic holds one broker subscription while it has local subscribers on this instance; it is released when the last one leaves, so per-user topics (`user:42`) do not pile up Redis subscriptions. `hub.Subscribe` returns once the topic's broker subscription is up (at most 10 seconds), so a publish right after it reaches the stream; if the broker fails or does not answer in time, the stream's channel is closed (the browser reconnects and the next subscriber retries). A custom `sse.Broker` must close its channel and end the subscription when the `Subscribe` context is done.
 
 ## With htmx
 
