@@ -129,14 +129,25 @@ const DefaultIPv6Prefix = 64
 // apps), because a client owning a /64 can pick a new address per request.
 func ByIP(r *http.Request) string {
 	s := web.ServicesFrom(r.Context())
-	return "ip:" + ipKey(web.NewCtx(nil, r, s).IP(), s.IPv6Prefix)
+	return "ip:" + IPKey(web.NewCtx(nil, r, s).IP(), s.IPv6Prefix)
 }
 
-// ipKey returns ip, or its network when it is IPv6. A value that is not an
-// IP is returned as is: it is still one stable key per peer.
-func ipKey(ip string, bits int) string {
+// IPKey returns the per-client part of an IP rate-limit key: an IPv4
+// address as is (IPv4-mapped IPv6 unmapped), an IPv6 address as its
+// network of prefix bits ("2001:db8:1:2::/64"); a prefix outside 1-128
+// means [DefaultIPv6Prefix]. A value that is not an IP is returned as is:
+// it is still one stable key per peer. Custom KeyFuncs that combine the
+// client IP with other parts (email, user) use it, or [ByIP], so IPv6
+// clients cannot rotate addresses inside their /64.
+func IPKey(ip string, prefix int) string {
 	addr, err := netip.ParseAddr(ip)
 	if err != nil {
+		return ip
+	}
+
+	// ParseAddr accepts only the canonical dotted form for IPv4, so ip
+	// is already the key.
+	if addr.Is4() {
 		return ip
 	}
 
@@ -145,7 +156,8 @@ func ipKey(ip string, bits int) string {
 		return addr.String()
 	}
 
-	if bits <= 0 || bits > 128 {
+	bits := prefix
+	if bits < 1 || bits > 128 {
 		bits = DefaultIPv6Prefix
 	}
 

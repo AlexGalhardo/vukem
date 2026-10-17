@@ -246,3 +246,35 @@ func TestSecurity_A06_RateLimitIPv6RotationSharesBucket(t *testing.T) {
 		t.Fatalf("codes = %v: rotating addresses inside one /64 escaped the limit", codes)
 	}
 }
+
+func TestIPKey(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		ip     string
+		prefix int
+		want   string
+	}{
+		{ip: "203.0.113.5", prefix: 64, want: "203.0.113.5"},
+		{ip: "::ffff:203.0.113.5", prefix: 64, want: "203.0.113.5"},
+		{ip: "2001:db8:1:2:3::4", prefix: 64, want: "2001:db8:1:2::/64"},
+		{ip: "2001:db8:1:2:3::4", prefix: 1, want: "::/1"},
+		{ip: "ffff:db8::1", prefix: 1, want: "8000::/1"},
+		{ip: "2001:db8:1:2:3::4", prefix: 0, want: "2001:db8:1:2::/64"},
+		{ip: "2001:db8:1:2:3::4", prefix: 129, want: "2001:db8:1:2::/64"},
+		{ip: "2001:db8:1:2:3::4", prefix: -1, want: "2001:db8:1:2::/64"},
+		{ip: "not-an-ip", prefix: 64, want: "not-an-ip"},
+	}
+
+	for _, tt := range tests {
+		if got := IPKey(tt.ip, tt.prefix); got != tt.want {
+			t.Errorf("IPKey(%q, %d) = %q, want %q", tt.ip, tt.prefix, got, tt.want)
+		}
+	}
+}
+
+func TestIPKeyIPv4DoesNotAllocate(t *testing.T) {
+	if n := testing.AllocsPerRun(100, func() { _ = IPKey("203.0.113.5", 64) }); n != 0 {
+		t.Fatalf("IPKey(ipv4) allocates %v times", n)
+	}
+}

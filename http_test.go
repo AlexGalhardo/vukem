@@ -1125,10 +1125,11 @@ func TestSecurity_A06_RateLimitIPv6PrefixFromEnv(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name string
-		env  map[string]string
-		peer string
-		want string
+		name   string
+		env    map[string]string
+		peer   string
+		header string // X-Real-IP; default 2001:db8:5:6:7::8
+		want   string
 	}{
 		{name: "default /64", peer: "[2001:db8:1:2::9]:1", want: "ip:2001:db8:1:2::/64"},
 		{
@@ -1149,6 +1150,19 @@ func TestSecurity_A06_RateLimitIPv6PrefixFromEnv(t *testing.T) {
 			peer: "100.64.0.3:1",
 			want: "ip:2001:db8:5:6::/64",
 		},
+		{
+			name:   "proxy header ipv4-mapped",
+			env:    map[string]string{"TRUSTED_PROXIES": "100.64.0.0/24", "CLIENT_IP_HEADER": "X-Real-IP"},
+			peer:   "100.64.0.3:1",
+			header: "::ffff:203.0.113.9",
+			want:   "ip:203.0.113.9",
+		},
+		{
+			name: "env /1",
+			env:  map[string]string{"RATE_LIMIT_IPV6_PREFIX": "1"},
+			peer: "[2001:db8:1:2::9]:1",
+			want: "ip:::/1",
+		},
 	}
 
 	for _, tt := range tests {
@@ -1164,7 +1178,12 @@ func TestSecurity_A06_RateLimitIPv6PrefixFromEnv(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			rec := proxyReq(t, app, tt.peer, map[string]string{"X-Real-IP": "2001:db8:5:6:7::8"})
+			header := tt.header
+			if header == "" {
+				header = "2001:db8:5:6:7::8"
+			}
+
+			rec := proxyReq(t, app, tt.peer, map[string]string{"X-Real-IP": header})
 			if got := rec.Body.String(); got != tt.want {
 				t.Fatalf("ByIP = %q, want %q", got, tt.want)
 			}
