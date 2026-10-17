@@ -262,6 +262,24 @@ func TestNewProjectEndToEnd(t *testing.T) {
 		t.Fatalf("install:api = %d\n%s%s", code, out, errOut)
 	}
 
+	// install:billing adds Stripe subscriptions against the local
+	// contrib/stripe; its generated tests run against a fake Stripe API.
+	if code, out, errOut := vukem(t, project, "install:billing"); code != 0 ||
+		!strings.Contains(out, "created routes/billing.go") ||
+		!strings.Contains(out, "created resources/views/billing/show.html") ||
+		!strings.Contains(out, "updated routes/registry.go") {
+		t.Fatalf("install:billing = %d\n%s%s", code, out, errOut)
+	}
+
+	if mod := read(t, project, "go.mod"); !strings.Contains(mod, stripeModule+" v0.0.0") {
+		t.Errorf("go.mod does not require contrib/stripe:\n%s", mod)
+	}
+
+	if env := read(t, project, ".env.example"); !strings.Contains(env, "STRIPE_KEY=\n") ||
+		!strings.Contains(env, "STRIPE_WEBHOOK_SECRET=\n") || !strings.Contains(env, "STRIPE_PRICE_PRO=\n") {
+		t.Errorf(".env.example = %q", env)
+	}
+
 	cmd = exec.CommandContext(t.Context(), "go", "test", "./...")
 	cmd.Dir = project
 	cmd.Env = append(os.Environ(), "GOWORK=off")

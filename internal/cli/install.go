@@ -195,6 +195,7 @@ func scaffoldData(env *Env) (map[string]string, error) {
 		"TS2":    now.Add(time.Second).Format("20060102150405"),
 		"TS3":    now.Add(2 * time.Second).Format("20060102150405"),
 		"TS4":    now.Add(3 * time.Second).Format("20060102150405"),
+		"TS5":    now.Add(4 * time.Second).Format("20060102150405"),
 	}, nil
 }
 
@@ -294,8 +295,9 @@ func installScaffold(env *Env, name string, data map[string]string, force bool) 
 		}
 
 		rel := strings.TrimPrefix(p, root+"/")
-		rel = strings.NewReplacer("TS1", data["TS1"], "TS2", data["TS2"], "TS3", data["TS3"], "TS4", data["TS4"]).
-			Replace(rel)
+		rel = strings.NewReplacer(
+			"TS1", data["TS1"], "TS2", data["TS2"], "TS3", data["TS3"], "TS4", data["TS4"], "TS5", data["TS5"],
+		).Replace(rel)
 
 		content, err := scaffoldFS.ReadFile(p)
 		if err != nil {

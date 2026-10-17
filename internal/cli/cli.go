@@ -56,6 +56,7 @@ func commands() []command {
 		{"version", "", "Print the vukem version", nil},
 		{"install:auth", "", "Add login, registration, password reset and email verification", installAuth},
 		{"install:api", "", "Add API tokens, /api/v1 routes, CORS and rate limiting", installAPI},
+		{"install:billing", "", "Add Stripe subscriptions: plans, Checkout, Billing Portal, webhooks", installBilling},
 		{
 			"install:inertia",
 			"",

@@ -17,6 +17,7 @@ Design documents, one per area. The user guide lives at [vukem.vercel.app](https
 | Views, HTMX, SSE, WebSockets, broadcasting, Inertia, Vite | [frontend.md](frontend.md) |
 | CLI | [cli.md](cli.md) |
 | Mail, cache, queue, scheduler and more | [subsystems.md](subsystems.md) |
+| Stripe subscriptions (`install:billing`) | [billing.md](billing.md) |
 | Development dashboard (`/_vukem`) | [devtools.md](devtools.md) |
 | Testing | [testing.md](testing.md) |
 | Tooling and releases | [tooling.md](tooling.md) |

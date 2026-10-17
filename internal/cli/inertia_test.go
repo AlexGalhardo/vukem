@@ -85,6 +85,12 @@ func TestNewInertiaProjectEndToEnd(t *testing.T) {
 				t.Error("install:auth on an Inertia app wrote HTMX auth views")
 			}
 
+			if code, out, errOut := vukem(t, project, "install:billing"); code != 0 ||
+				!strings.Contains(out, "created resources/js/pages/Billing.") ||
+				strings.Contains(out, "resources/views/billing") {
+				t.Fatalf("install:billing = %d\n%s%s", code, out, errOut)
+			}
+
 			run("go", "test", "./...")
 
 			if _, err := exec.LookPath(npm()); err != nil {

@@ -1,0 +1,29 @@
+{{define "title"}}Billing{{end}}
+{{define "content"}}
+<h1>Billing</h1>
+{{with flash "status"}}<p class="flash" role="status">{{.}}</p>{{end}}
+{{if .Checkout}}<p role="status">Thanks! Your subscription starts as soon as Stripe confirms the payment.</p>{{end}}
+{{with .Subscription}}
+<p>Your plan: <strong>{{.Plan}}</strong> ({{.Status}}){{if .CurrentPeriodEnd}}{{if .CancelAtPeriodEnd}}, ends on {{.CurrentPeriodEnd}}{{else}}, renews on {{.CurrentPeriodEnd}}{{end}}{{end}}.</p>
+<form method="post" action="{{route "billing.portal"}}">
+	{{csrfField}}
+	<button type="submit">Manage billing</button>
+</form>
+{{else}}
+<p>You have no subscription yet.</p>
+{{end}}
+{{if not .Subscribed}}
+<h2>Plans</h2>
+<ul>
+	{{range .Plans}}
+	<li>
+		<form method="post" action="/billing/checkout/{{.Name}}">
+			{{csrfField}}
+			<button type="submit">Subscribe to {{.Label}}</button>
+		</form>
+	</li>
+	{{end}}
+</ul>
+{{end}}
+<p><a href="{{route "dashboard"}}">Back to the dashboard</a></p>
+{{end}}
