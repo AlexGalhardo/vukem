@@ -3,7 +3,7 @@ package middleware
 import (
 	"bufio"
 	"compress/gzip"
-	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"strings"
@@ -43,10 +43,11 @@ func Gzip() Middleware {
 type gzipWriter struct {
 	http.ResponseWriter
 
-	status  int
-	buf     []byte
-	decided bool
-	gz      *gzip.Writer
+	status   int
+	buf      []byte
+	decided  bool
+	hijacked bool
+	gz       *gzip.Writer
 }
 
 func (g *gzipWriter) WriteHeader(code int) {
@@ -130,6 +131,17 @@ func (g *gzipWriter) decide() error {
 }
 
 func (g *gzipWriter) finish() {
+	if g.hijacked {
+		// The connection belongs to the handler now: writing the status
+		// or the gzip trailer would hit it.
+		if g.gz != nil {
+			gzipPool.Put(g.gz)
+			g.gz = nil
+		}
+
+		return
+	}
+
 	if !g.decided && g.status != 0 {
 		_ = g.decide()
 	}
@@ -154,13 +166,17 @@ func (g *gzipWriter) Flush() {
 	_ = http.NewResponseController(g.ResponseWriter).Flush()
 }
 
-// Hijack supports websocket upgrades through the middleware.
+// Hijack supports websocket upgrades and aborted streams through the
+// middleware, also when the writer below is a wrapper with Unwrap.
 func (g *gzipWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	if h, ok := g.ResponseWriter.(http.Hijacker); ok {
-		return h.Hijack()
+	conn, rw, err := http.NewResponseController(g.ResponseWriter).Hijack()
+	if err != nil {
+		return nil, nil, fmt.Errorf("middleware: hijack: %w", err)
 	}
 
-	return nil, nil, errors.New("middleware: hijacking not supported")
+	g.hijacked = true
+
+	return conn, rw, nil
 }
 
 // Unwrap supports http.ResponseController.

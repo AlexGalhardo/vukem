@@ -483,7 +483,7 @@ func TestFileAndDownload(t *testing.T) {
 		t.Fatal(err)
 	}
 	if rec.Body.String() != "hello" ||
-		!strings.Contains(rec.Header().Get("Content-Disposition"), `filename=report.txt`) {
+		!strings.Contains(rec.Header().Get("Content-Disposition"), `filename="report.txt"`) {
 		t.Fatalf("Download() = %q %q", rec.Body.String(), rec.Header().Get("Content-Disposition"))
 	}
 
