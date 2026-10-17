@@ -114,6 +114,11 @@ func appHandler(m *Manager, logs *bytes.Buffer) http.Handler {
 		c.Session().Put("user", "admin")
 		return c.String(200, c.Session().ID())
 	})
+	handle("GET /as", func(c *web.Ctx) error {
+		c.Session().Regenerate()
+		c.Session().Put(web.SessionUserKey, c.Query("u"))
+		return c.String(200, c.Session().ID())
+	})
 	handle("GET /id", func(c *web.Ctx) error { return c.String(200, c.Session().ID()) })
 	handle("GET /logout", func(c *web.Ctx) error {
 		c.Session().Invalidate()

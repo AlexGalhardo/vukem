@@ -21,7 +21,7 @@ description: Encrypted cookie, memory and database session stores with flash mes
 | --- | --- | --- |
 | Cookie | `session` | AES-256-GCM with a key derived from `APP_KEY` (HKDF); tampered cookies are rejected and logged as `session.invalid` |
 | Memory | `session.NewMemoryStore()` | Tests and development |
-| Database | `SESSION_DRIVER=database`, or `session.NewSQLStore(db, opts...)` | `sessions` table in the app database (SQLite, PostgreSQL, MySQL), created at boot. Expired rows are deleted by `session:prune`, which the app schedules hourly; `serve` runs the scheduler in process (unless `SCHEDULE_IN_SERVE=false`, then run `schedule:work` or `schedule:run` from cron) |
+| Database | `SESSION_DRIVER=database`, or `session.NewSQLStore(db, opts...)` | `sessions` table in the app database (SQLite, PostgreSQL, MySQL), created at boot. Rows are keyed by SHA-256 of the session id, so the table holds no usable cookie, and carry the user id for `RevokeOthers`. Expired rows are deleted by `session:prune`, which the app schedules hourly; `serve` runs the scheduler in process (unless `SCHEDULE_IN_SERVE=false`, then run `schedule:work` or `schedule:run` from cron) |
 | Redis | [`drivers/redis`](/docs/database/redis) | `vukem.WithSessionStore(rc.SessionStore(""))` |
 
 ## Usage
@@ -46,6 +46,19 @@ func (a *AuthController) Login(c *web.Ctx) error {
 | `Invalidate()` | Clear everything and issue a new id: call on logout |
 
 `c.Flash(key, v)` returns an error when no session middleware is installed; `c.FlashValue(key)` reads a flashed value.
+
+## Revoking a user's other sessions
+
+`auth.SessionGuard.Login` stores the user id under `web.SessionUserKey`, and server-side stores that implement `session.UserStore` (database and memory) record it with the session. After a password change or reset, or when two-factor authentication is turned on, end the user's other sessions:
+
+```go
+m, _ := app.Sessions()
+err := m.RevokeOthers(ctx, user.AuthID(), c.Session().ID()) // "" as keepID ends them all
+```
+
+Encrypted cookie sessions and stores without user tracking (Redis) return `session.ErrRevokeUnsupported`: there is no server-side record to delete. The `install:auth` scaffold calls it through `Accounts.RevokeOtherSessions` on password reset and 2FA enable, and ignores that error, so revocation only takes effect with `SESSION_DRIVER=database`. When one session logs in with several guards, the last login owns it.
+
+Upgrading from v0.23 or earlier: `CreateTable` (run at boot) adds the `user_id` column and its index. Existing rows keep their clear id until their first load re-keys them, or until they expire; sessions logged in before the upgrade get their user on their next authenticated request (the guard backfills `web.SessionUserKey`), and only from then on are reached by `RevokeOthers`.
 
 ## Validation errors and old input
 

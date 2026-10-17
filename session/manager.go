@@ -327,7 +327,7 @@ func (m *Manager) commit(w http.ResponseWriter, r *http.Request, s *Session) {
 			s.id = newID()
 		}
 
-		if err := m.cfg.Store.Save(ctx, s.id, raw, expiry); err != nil {
+		if err := m.save(ctx, s, raw, expiry); err != nil {
 			m.cfg.Log.ErrorContext(ctx, "session save failed", "err", err)
 			return
 		}
@@ -347,6 +347,33 @@ func (m *Manager) commit(w http.ResponseWriter, r *http.Request, s *Session) {
 		HttpOnly: true,
 		SameSite: m.cfg.SameSite,
 	})
+}
+
+// save writes the session, with its user when the store records one.
+func (m *Manager) save(ctx context.Context, s *Session, raw []byte, expiry time.Time) error {
+	us, ok := m.cfg.Store.(UserStore)
+	if !ok {
+		return m.cfg.Store.Save(ctx, s.id, raw, expiry)
+	}
+
+	userID, _ := s.data[web.SessionUserKey].(string)
+
+	return us.SaveUser(ctx, s.id, userID, raw, expiry)
+}
+
+// RevokeOthers ends every session of userID except keepID (the current
+// session id, or "" to end them all): call it after a password change or
+// reset and when two-factor authentication is turned on. Sessions belong to
+// the user stored under web.SessionUserKey, which auth guards set on login.
+// It returns ErrRevokeUnsupported for cookie sessions and stores that are
+// not a UserStore.
+func (m *Manager) RevokeOthers(ctx context.Context, userID, keepID string) error {
+	us, ok := m.cfg.Store.(UserStore)
+	if !ok {
+		return ErrRevokeUnsupported
+	}
+
+	return us.RevokeOthers(ctx, userID, keepID)
 }
 
 func (m *Manager) clearCookie(w http.ResponseWriter) {

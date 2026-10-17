@@ -53,8 +53,47 @@ func TestSessionStore(t *testing.T) {
 	_, _ = db.ExecContext(ctx, "DROP TABLE IF EXISTS dbt_sessions")
 	t.Cleanup(func() { _, _ = db.ExecContext(t.Context(), "DROP TABLE IF EXISTS dbt_sessions") })
 
-	if err := store.CreateTable(ctx); err != nil {
+	// The pre-v0.24 layout (clear ids, no user_id) is upgraded in place.
+	if _, err := db.ExecContext(
+		ctx,
+		"CREATE TABLE dbt_sessions (id TEXT PRIMARY KEY, data TEXT NOT NULL, expires_at BIGINT NOT NULL)",
+	); err != nil {
 		t.Fatal(err)
+	}
+
+	const legacy = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	if _, err := db.ExecContext(ctx, "INSERT INTO dbt_sessions (id, data, expires_at) VALUES ($1, $2, $3)",
+		legacy, `{"l":1}`, time.Now().Add(time.Hour).Unix()); err != nil {
+		t.Fatal(err)
+	}
+
+	for range 2 { // idempotent
+		if err := store.CreateTable(ctx); err != nil {
+			t.Fatalf("CreateTable() on legacy table = %v", err)
+		}
+	}
+
+	for range 2 { // the first load re-keys the row
+		if data, ok, err := store.Load(ctx, legacy); err != nil || !ok || string(data) != `{"l":1}` {
+			t.Fatalf("Load(legacy) = %q %v %v", data, ok, err)
+		}
+	}
+
+	exp := time.Now().Add(time.Hour)
+	for id, user := range map[string]string{"u1a": "1", "u1b": "1", "u2": "2"} {
+		if err := store.SaveUser(ctx, id, user, []byte("{}"), exp); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := store.RevokeOthers(ctx, "1", "u1a"); err != nil {
+		t.Fatal(err)
+	}
+
+	for id, want := range map[string]bool{"u1a": true, "u1b": false, "u2": true} {
+		if _, ok, err := store.Load(ctx, id); err != nil || ok != want {
+			t.Fatalf("Load(%s) after RevokeOthers = %v %v, want %v", id, ok, err, want)
+		}
 	}
 
 	if err := store.Save(ctx, "s1", []byte(`{"a":1}`), time.Now().Add(time.Hour)); err != nil {
