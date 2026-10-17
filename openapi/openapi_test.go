@@ -6,6 +6,7 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -175,6 +176,29 @@ func TestTypeScriptGolden(t *testing.T) {
 
 		if diff := cmp.Diff(string(bytes.ReplaceAll(want, []byte("\r\n"), []byte("\n"))), got); diff != "" {
 			t.Errorf("%s (-want +got):\n%s", tc.file, diff)
+		}
+	}
+}
+
+func TestTypeScriptZod4(t *testing.T) {
+	t.Parallel()
+
+	got, err := openapi.TypeScript(openapi.Generate(routes(), openapi.Info{PathPrefix: "/api"}), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tt := range []struct {
+		snippet string
+		want    bool
+	}{
+		{"z.ZodTypeDef", false},         // removed in zod 4
+		{"z.string().datetime(", false}, // deprecated string method in zod 4
+		{"z.iso.datetime({ offset: true })", true},
+		{"export const ProductsStoreBodySchema: z.ZodType<ProductsStoreBody> =", true}, // inline body
+	} {
+		if strings.Contains(got, tt.snippet) != tt.want {
+			t.Errorf("TypeScript(zod) contains %q = %v, want %v", tt.snippet, !tt.want, tt.want)
 		}
 	}
 }
