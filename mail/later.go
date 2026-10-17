@@ -18,7 +18,7 @@ var ErrNoQueue = errors.New("mail: SendLater needs a queue (use app.Mailer or Ma
 
 // SetEnqueue sets how SendLater queues messages. Call it before the mailer
 // is used; app.Mailer sets it.
-func (m *Mailer) SetEnqueue(fn Enqueue) { m.enqueue = fn }
+func (m *Mailer) SetEnqueue(fn Enqueue) { m.enqueue = &fn }
 
 // SendLater renders mailable now (so rendering errors reach the caller)
 // and sends it from a queue job, retried with the queue's backoff. The
@@ -26,7 +26,7 @@ func (m *Mailer) SetEnqueue(fn Enqueue) { m.enqueue = fn }
 // by it send once. opts select the queue, delay or retries of this mail.
 // With QUEUE_CONNECTION=sync the job runs during the call.
 func (m *Mailer) SendLater(ctx context.Context, mailable Mailable, opts ...queue.Option) error {
-	if m.enqueue == nil {
+	if m.enqueue == nil || *m.enqueue == nil {
 		return ErrNoQueue
 	}
 
@@ -35,5 +35,5 @@ func (m *Mailer) SendLater(ctx context.Context, mailable Mailable, opts ...queue
 		return err
 	}
 
-	return m.enqueue(ctx, msg, opts...)
+	return (*m.enqueue)(ctx, msg, opts...)
 }
