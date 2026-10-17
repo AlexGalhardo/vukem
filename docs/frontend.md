@@ -209,7 +209,7 @@ Every starter ships Vite 8 + Tailwind CSS v4 (`@tailwindcss/vite`) preconfigured
 - `{{ vite "resources/css/app.css" "resources/js/app.ts" }}`:
   - `public/hot` present and `Dev` on → `<script type="module" src="{hot}/@vite/client">` + each entry (CSS entries as `<link rel="stylesheet">`); `{{ viteReactRefresh }}` emits the React Refresh preamble (empty otherwise). The hot file must hold an `http(s)` URL; it is ignored in production.
   - otherwise → reads `public/build/.vite/manifest.json` (cached in production, re-read in development) and emits `<link rel="modulepreload">` for recursive static imports, `<link rel="stylesheet">` for entry and import CSS, then `<script type="module">`, each file once across entries.
-- `{{ asset "resources/img/logo.png" }}` resolves through the dev server or the manifest when Vite knows the file, else falls back to the public path.
+- `{{ asset "resources/img/logo.png" }}` resolves through the dev server or the manifest when Vite knows the file, else falls back to the public path. Files that exist in the public directory (a vendored `js/htmx.min.js`) always use the public path, also while the dev server runs, because the app serves them and the dev server does not.
 - Every tag carries the request's CSP nonce; manifest `integrity` values (e.g. from `vite-plugin-manifest-sri`) become SRI attributes.
 - `/build/*` served with immutable cache headers.
 - `vukem serve` starts the Go app with reload and, if `vite.config.*` exists, `npm run dev` alongside.

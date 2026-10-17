@@ -50,6 +50,15 @@ func devFS() fstest.MapFS {
 	return fsys
 }
 
+// devPublicFS is a dev public directory that also holds a vendored file the
+// app serves itself; the dev server does not serve the public dir.
+func devPublicFS() fstest.MapFS {
+	fsys := devFS()
+	fsys["js/htmx.min.js"] = &fstest.MapFile{Data: []byte("htmx")}
+
+	return fsys
+}
+
 func newVite(t *testing.T, cfg vite.Config) *vite.Vite {
 	t.Helper()
 
@@ -187,6 +196,8 @@ func TestAsset(t *testing.T) {
 			"http://localhost:5173/resources/img/logo.png",
 			true,
 		},
+		{"dev server, public file", vite.Config{FS: devPublicFS(), Dev: true}, "js/htmx.min.js", "", false},
+		{"dev server, public file with slash", vite.Config{FS: devPublicFS(), Dev: true}, "/js/htmx.min.js", "", false},
 	}
 
 	for _, tt := range tests {
