@@ -1,0 +1,15 @@
+{
+  "auth": {
+    "two_factor": {
+      "enabled": "Two-factor authentication is on.",
+      "disabled": "Two-factor authentication is off.",
+      "already_enabled": "Two-factor authentication is already enabled.",
+      "not_enabled": "Two-factor authentication is not enabled.",
+      "invalid_code": "The code is invalid.",
+      "code_required": "Enter the code from your authenticator app or a recovery code.",
+      "invalid_recovery_code": "The recovery code is invalid.",
+      "wrong_password": "The password is incorrect.",
+      "login_expired": "Your login expired. Please log in again."
+    }
+  }
+}

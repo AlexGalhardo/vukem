@@ -109,6 +109,7 @@ Standard library only. `jwt.Sign(key, jwt.Claims{Subject, Issuer, Audience, Expi
 ```text
 app/models/user.go                         User (AuthID, AuthPassword, EmailVerified)
 app/accounts/{accounts,users,passwords}.go guards, registration, verification, password resets
+app/accounts/{messages.go,lang/}          auth messages in en and pt-BR (accounts.T)
 app/controllers/account/*.go               login, register, logout, forgot/reset password, verification, dashboard
 app/requests/auth.go                       z schemas (password ≥ 12 characters, confirmation)
 app/mail/auth.go                           VerifyEmail and ResetPassword mailables
@@ -116,6 +117,7 @@ database/migrations/*_create_users_table.go, *_create_auth_tables.go (remember, 
 resources/views/auth/*.html, resources/views/mail/{verify_email,reset_password}.html
 routes/auth.go                             appended to routes.All()
 tests/auth_test.go                         the whole flow, run by go test
+tests/auth_messages_test.go                every message translated
 ```
 
 | Flow | Behaviour |
@@ -125,6 +127,8 @@ tests/auth_test.go                         the whole flow, run by go test
 | Email verification | signed link (`signed` package, HMAC + 1 hour expiry), must match the logged-in user; resend limited to 3 per minute |
 | Forgot / reset password | same answer for unknown emails; random token stored as SHA-256, 1 hour, single use; reset logs out remembered sessions |
 | Logout | session invalidated, remember-me token deleted |
+
+Flash messages, controller errors and mail subjects go through `accounts.T(ctx, key)`, with English and Brazilian Portuguese catalogs in `app/accounts/lang/<locale>/*.json` (keys `auth.*`; `--2fa` and `--social` add `two_factor.json` and `social.json`). `T` uses the request locale that `i18n.Middleware` resolves when the app uses `vukem.WithTranslations`, and English otherwise. A key in the app's own catalog for that locale (`resources/lang/pt-BR.json`) wins, so the app can reword a message or add a locale without editing the scaffold. Field messages of the `z` schemas in `app/requests` and the views stay in English. `tests/auth_messages_test.go` checks that every key exists in every locale.
 
 Existing projects created before `routes.All()` get the exact lines to add printed instead. `--force` overwrites existing files.
 

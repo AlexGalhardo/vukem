@@ -11,6 +11,7 @@ import (
 	"github.com/AlexGalhardo/vukem/auth"
 	"github.com/AlexGalhardo/vukem/auth/hash"
 	"github.com/AlexGalhardo/vukem/database"
+	"github.com/AlexGalhardo/vukem/i18n"
 	"github.com/AlexGalhardo/vukem/mail"
 	"github.com/AlexGalhardo/vukem/signed"
 
@@ -27,6 +28,8 @@ type Accounts struct {
 	Tokens *auth.Tokens
 	Hasher hash.Hasher
 	Signer *signed.Signer
+	// Messages holds the auth messages of lang/ (see T).
+	Messages *i18n.Bundle
 	// URL is the public base URL used in emails (APP_URL).
 	URL string
 	// ResetTTL is how long password reset links work.
@@ -53,6 +56,11 @@ func New(app *vukem.App) (*Accounts, error) {
 		hasher = hash.Fake() // fast hashing keeps tests quick
 	}
 
+	messages, err := loadMessages()
+	if err != nil {
+		return nil, err
+	}
+
 	users := auth.NewORMProvider[models.User](db)
 	tokens := auth.NewTokens(db)
 
@@ -63,6 +71,7 @@ func New(app *vukem.App) (*Accounts, error) {
 		DB: db, Mailer: mailer, Users: users, Web: web, Tokens: tokens, Hasher: hasher,
 		API:       auth.NewTokenGuard("api", users, tokens),
 		Signer:    signed.New(app.Key.Derive("signed.urls", 32)),
+		Messages:  messages,
 		URL:       strings.TrimSuffix(app.Config.URL, "/"),
 		ResetTTL:  time.Hour,
 		VerifyTTL: time.Hour,

@@ -1,0 +1,61 @@
+package tests
+
+import (
+	"testing"
+
+	"github.com/AlexGalhardo/vukem/i18n"
+	"github.com/AlexGalhardo/vukem/vukemtest"
+
+	"{{.Module}}/app/accounts"
+	"{{.Module}}/bootstrap"
+)
+
+// Every auth message (app/accounts/lang) exists in every locale, and
+// accounts.T follows the request locale, preferring the app's own catalog.
+func TestAuthMessages(t *testing.T) {
+	t.Parallel()
+
+	app := vukemtest.New(t, bootstrap.New)
+
+	acc, err := accounts.New(app.App)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	locales := acc.Messages.Locales()
+	if len(locales) < 2 {
+		t.Fatalf("auth message locales = %v, want en and pt-BR at least", locales)
+	}
+
+	for _, l := range locales {
+		for key := range acc.Messages.Messages(l) { // includes the English fallback
+			if !acc.Messages.Has(l, key) || !acc.Messages.Has("en", key) {
+				t.Errorf("auth message %q is missing in %s or en", key, l)
+			}
+		}
+	}
+
+	const key = "auth.password_reset"
+
+	en := acc.T(t.Context(), key)
+	if en == key {
+		t.Fatalf("T(%q) returned the key", key)
+	}
+
+	if pt := acc.T(i18n.WithLocale(t.Context(), "pt-BR"), key); pt == en || pt == key {
+		t.Errorf("T(%q) in pt-BR = %q, want a translation", key, pt)
+	}
+
+	own, err := i18n.New(i18n.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := own.Add("en", map[string]any{key: "Done."}); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := acc.T(i18n.WithBundle(t.Context(), own), key); got != "Done." {
+		t.Errorf("T(%q) with the app's catalog = %q, want %q", key, got, "Done.")
+	}
+}
