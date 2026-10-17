@@ -2,6 +2,7 @@ package redis
 
 import (
 	"testing"
+	"time"
 
 	goredis "github.com/redis/go-redis/v9"
 
@@ -68,5 +69,21 @@ func TestOpenLazy(t *testing.T) {
 
 	if err := c.Ping(t.Context()); err == nil {
 		t.Error("Ping without a server = nil, want an error")
+	}
+}
+
+// app.Queue sets the app clock on drivers implementing queue.Clock (core
+// v0.25.0), so delays follow WithClock on Redis too.
+func TestQueueSetClock(t *testing.T) {
+	t.Parallel()
+
+	fixed := time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC)
+
+	var q interface{ SetClock(now func() time.Time) } = (&Client{}).Queue(QueueOptions{})
+
+	q.SetClock(func() time.Time { return fixed })
+
+	if got := q.(*Queue).clock(); !got.Equal(fixed) {
+		t.Fatalf("clock() = %v, want %v", got, fixed)
 	}
 }

@@ -140,11 +140,11 @@ Because the header Railway documents is `X-Real-IP`, the matching setting is `CL
 
 ### Scheduler and queue workers
 
-The web service's `serve` command (the image's default) also runs the [scheduler](/docs/digging-deeper/scheduler) in process (`SCHEDULE_IN_SERVE=true` by default), so a single service runs your scheduled tasks and the built-in prune tasks: no second service is needed.
+The web service's `serve` command (the image's default) also runs the [scheduler](/docs/digging-deeper/scheduler) (`SCHEDULE_IN_SERVE=true` by default) and a [queue worker](/docs/digging-deeper/queue#running-workers) for the memory, database and Redis queues (`QUEUE_IN_SERVE=true` by default) in process, so a single service runs your scheduled tasks, the built-in prune tasks and queued jobs (mail included): no second service is needed.
 
-Run the scheduler as its own service only when tasks must fire exactly once across several web replicas: set `SCHEDULE_IN_SERVE=false` on the web service, then add a second service from the same repository with the start command `/app/app schedule:work` (**Settings → Deploy → Custom Start Command**; it replaces the image's `ENTRYPOINT`) and the same variables; it needs no domain or healthcheck. Railway's cron schedules run at most every 5 minutes ([cron jobs](https://docs.railway.com/cron-jobs)), so they cannot replace `schedule:run` every minute.
+Run the scheduler as its own service only when tasks must fire exactly once across several web replicas and cannot use `OnOneServer()` with a shared cache: set `SCHEDULE_IN_SERVE=false` on the web service, then add a second service from the same repository with the start command `/app/app schedule:work` (**Settings → Deploy → Custom Start Command**; it replaces the image's `ENTRYPOINT`) and the same variables; it needs no domain or healthcheck. Railway's cron schedules run at most every 5 minutes ([cron jobs](https://docs.railway.com/cron-jobs)), so they cannot replace `schedule:run` every minute.
 
-Queues: the in-memory queue runs inside `serve`. For a database or Redis queue, see the [queue page](/docs/digging-deeper/queue) for how its worker runs; a separate worker service uses the start command `/app/app queue:work` the same way.
+A dedicated worker service uses the start command `/app/app queue:work` the same way. `QUEUE_IN_SERVE=false` on the web service is optional then: extra workers are safe (each job is reserved by one worker), they only add load to the web service.
 
 ### Volumes
 

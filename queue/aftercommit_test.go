@@ -152,3 +152,49 @@ func TestDispatchTxAfterCommitErrors(t *testing.T) {
 		t.Errorf("DispatchTx(nil executor) = %v, want ErrNoTx", err)
 	}
 }
+
+// DispatchKindTx ties a framework job (queued mail) to the transaction
+// like DispatchTx: inserted with it on the database driver.
+func TestDispatchKindTx(t *testing.T) {
+	t.Parallel()
+
+	db := openSQLite(t)
+	ctx := t.Context()
+
+	d, err := queue.NewDatabase(db, queue.DatabaseOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := d.CreateTables(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	q := newQueue(t, d, queue.HandleKind("app.mail", func(context.Context, map[string]string) error { return nil }))
+	rollback := errors.New("rollback")
+
+	for _, fail := range []bool{true, false} {
+		err := db.Tx(ctx, func(tx *database.Tx) error {
+			if err := q.DispatchKindTx(ctx, tx, "app.mail", map[string]string{"to": "ana"}); err != nil {
+				return err
+			}
+
+			if fail {
+				return rollback
+			}
+
+			return nil
+		})
+		if fail != errors.Is(err, rollback) || !fail && err != nil {
+			t.Fatalf("Tx(fail=%v) = %v", fail, err)
+		}
+	}
+
+	if n, err := d.Pending(ctx); err != nil || n != 1 {
+		t.Fatalf("Pending() = %d, %v; want only the committed job", n, err)
+	}
+
+	if err := q.DispatchKindTx(ctx, db, "missing", nil); !errors.Is(err, queue.ErrUnknownKind) {
+		t.Fatalf("DispatchKindTx(unknown kind) = %v, want ErrUnknownKind", err)
+	}
+}

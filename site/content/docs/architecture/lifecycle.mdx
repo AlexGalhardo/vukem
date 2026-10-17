@@ -24,7 +24,7 @@ Providers implementing `Booter` run `Boot(ctx, app)` in order. Boot may use serv
 The HTTP handler is compiled from the router, then every runner starts in its own goroutine. `Run` blocks until the context is cancelled (for example by `SIGTERM`) or a runner fails.
 </Step>
 <Step title="Shutdown">
-Runners stop and are awaited: the HTTP server drains requests and the scheduler gives running tasks up to `SHUTDOWN_TIMEOUT`, then cancels their `ctx` (a runner or task that ignores `ctx` is waited for without limit). Then `OnShutdown` hooks and providers' `Shutdown` run in **reverse** order, within a fresh `SHUTDOWN_TIMEOUT`.
+Runners stop and are awaited: the HTTP server drains requests, and the scheduler and the queue worker give running tasks and jobs up to `SHUTDOWN_TIMEOUT`, then cancel their `ctx`. `Run` waits for the runners `SHUTDOWN_TIMEOUT` plus three seconds; one still running then (it ignores `ctx`) is logged and left behind. Then `OnShutdown` hooks and providers' `Shutdown` run in **reverse** order, within a fresh `SHUTDOWN_TIMEOUT`.
 </Step>
 </Steps>
 

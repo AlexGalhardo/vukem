@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"maps"
 	"net/http"
 	"slices"
@@ -370,6 +371,53 @@ func TestRunReturnsRunnerError(t *testing.T) {
 		if !stopped {
 			t.Fatal("other runner was not stopped")
 		}
+	})
+}
+
+// A runner that ignores ctx cannot hold shutdown forever: Run waits
+// SHUTDOWN_TIMEOUT plus a three-second grace, logs it and shuts the app down.
+func TestRunBoundsRunnersIgnoringContext(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		rec := &recorder{}
+		release := make(chan struct{})
+
+		var logs bytes.Buffer
+
+		app, err := New(WithSource(testSource(map[string]string{"SHUTDOWN_TIMEOUT": "5s"})),
+			WithProviders(&testProvider{name: "p", rec: rec}), WithoutHTTP(),
+			WithLogger(slog.New(slog.NewTextHandler(&logs, nil))),
+			WithRunner("stuck", RunnerFunc(func(context.Context) error { <-release; return nil })))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		ctx, cancel := context.WithCancel(t.Context())
+		done := make(chan error, 1)
+		go func() { done <- app.Run(ctx) }()
+
+		synctest.Wait()
+		cancel()
+
+		start := time.Now()
+		if err := <-done; err != nil {
+			t.Fatalf("Run() = %v, want nil", err)
+		}
+
+		if waited := time.Since(start); waited != 8*time.Second {
+			t.Fatalf("Run waited %v after cancel, want SHUTDOWN_TIMEOUT + 3s (8s)", waited)
+		}
+
+		if got := rec.get(); !slices.Contains(got, "shutdown:p") {
+			t.Fatalf("providers not shut down: %v", got)
+		}
+
+		if !strings.Contains(logs.String(), "runners still running") || !strings.Contains(logs.String(), "stuck") {
+			t.Fatalf("log = %q, want the stuck runner named", logs.String())
+		}
+
+		close(release)
 	})
 }
 

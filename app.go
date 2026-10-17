@@ -7,6 +7,7 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"maps"
 	"net"
 	"net/http"
 	"os"
@@ -200,6 +201,8 @@ type App struct {
 	queueOnce sync.Once
 	queue     *queue.Queue
 	queueErr  error
+	// queueDB is the database queue driver Boot prepared (tables created).
+	queueDB *queue.Database
 
 	now func() time.Time
 	// proxies is the parsed TRUSTED_PROXIES.
@@ -622,7 +625,7 @@ func New(opts ...Option) (*App, error) {
 		return nil, err
 	}
 
-	if qcfg.Connection == "memory" && app.Kind == KindWeb {
+	if app.Kind == KindWeb && qcfg.inServe(o.queueDriver != nil || o.queueFunc != nil) {
 		app.AddRunner("queue", app.queueRunner(qcfg))
 	}
 
@@ -965,6 +968,10 @@ func (a *App) Boot(ctx context.Context) error {
 }
 
 func (a *App) boot(ctx context.Context) error {
+	if err := a.prepareDatabaseQueue(ctx); err != nil {
+		return err
+	}
+
 	for _, p := range a.providers {
 		b, ok := p.(Booter)
 		if !ok || !runsIn(p, a.Kind) {
@@ -1040,7 +1047,10 @@ var ErrWarmupRun = errors.New("vukem: a warmup app cannot boot or run")
 
 // Run boots the app, starts every runner and blocks until ctx is cancelled
 // or a runner fails; then it shuts everything down gracefully within
-// SHUTDOWN_TIMEOUT. A cancelled ctx is a clean exit (nil error).
+// SHUTDOWN_TIMEOUT. A cancelled ctx is a clean exit (nil error). Runners
+// that have not returned SHUTDOWN_TIMEOUT (plus three seconds) after the
+// cancel are logged and left behind: shutdown hooks and providers run
+// anyway, so one runner ignoring ctx cannot hold the process forever.
 func (a *App) Run(ctx context.Context) error {
 	if err := a.Boot(ctx); err != nil {
 		return err
@@ -1066,17 +1076,30 @@ func (a *App) Run(ctx context.Context) error {
 		wg       sync.WaitGroup
 		errMu    sync.Mutex
 		firstErr error
+		running  = map[string]int{}
 	)
+
+	for _, r := range runners {
+		running[r.name]++
+	}
 
 	for _, r := range runners {
 		wg.Go(func() {
 			err := r.runner.Run(runCtx)
+
+			errMu.Lock()
+			defer errMu.Unlock()
+
+			running[r.name]--
+			if running[r.name] == 0 {
+				delete(running, r.name)
+			}
+
 			if err != nil && !errors.Is(err, context.Canceled) {
-				errMu.Lock()
 				if firstErr == nil {
 					firstErr = fmt.Errorf("vukem: runner %s: %w", r.name, err)
 				}
-				errMu.Unlock()
+
 				cancel(err)
 			}
 		})
@@ -1087,12 +1110,45 @@ func (a *App) Run(ctx context.Context) error {
 
 	// Runners observe runCtx and stop on their own; wait for them first.
 	cancel(nil)
-	wg.Wait()
+
+	if !waitTimeout(&wg, a.Config.ShutdownTimeout+runnerGrace) {
+		errMu.Lock()
+		stuck := slices.Sorted(maps.Keys(running))
+		errMu.Unlock()
+
+		a.Log.ErrorContext(ctx, "runners still running after SHUTDOWN_TIMEOUT: shutting down without them",
+			"runners", stuck, "shutdown_timeout", a.Config.ShutdownTimeout)
+	}
 
 	shutCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), a.Config.ShutdownTimeout)
 	defer stop()
 
-	return errors.Join(firstErr, a.Shutdown(shutCtx))
+	errMu.Lock()
+	runErr := firstErr
+	errMu.Unlock()
+
+	return errors.Join(runErr, a.Shutdown(shutCtx))
+}
+
+// runnerGrace lets runners that stop at SHUTDOWN_TIMEOUT themselves (the
+// HTTP drain, the scheduler, the queue worker) return before Run stops
+// waiting for them.
+const runnerGrace = 3 * time.Second
+
+// waitTimeout waits for wg up to d and reports whether it finished.
+func waitTimeout(wg *sync.WaitGroup, d time.Duration) bool {
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+
+	t := time.NewTimer(d)
+	defer t.Stop()
+
+	select {
+	case <-done:
+		return true
+	case <-t.C:
+		return false
+	}
 }
 
 // Shutdown runs shutdown hooks and providers' Shutdown in reverse order.

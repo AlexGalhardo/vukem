@@ -363,3 +363,30 @@ func TestFakeRecordsDispatchedJobs(t *testing.T) {
 		t.Errorf("jobs run (-want +got):\n%s", diff)
 	}
 }
+
+// A worker that stops when the queue is empty cannot tell "empty" from a
+// store error, so it returns the error instead of exiting cleanly with
+// jobs still queued (queue:work -once / -stop-when-empty exit non-zero).
+func TestWorkStopWhenEmptyReturnsReserveErrors(t *testing.T) {
+	t.Parallel()
+
+	for name, o := range map[string]queue.WorkOptions{
+		"stop when empty": {StopWhenEmpty: true, Concurrency: 2},
+		"once":            {StopWhenEmpty: true, MaxJobs: 1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			d := &faultyDriver{Memory: queue.NewMemory(), popErrs: 1}
+			q := newQueue(t, d, queue.Handle(func(context.Context, sendInvoice) error { return nil }))
+
+			if err := q.Dispatch(t.Context(), sendInvoice{OrderID: 1}); err != nil {
+				t.Fatal(err)
+			}
+
+			if err := q.Work(t.Context(), o); err == nil || !strings.Contains(err.Error(), "connection reset") {
+				t.Fatalf("Work() = %v, want the reserve error", err)
+			}
+		})
+	}
+}

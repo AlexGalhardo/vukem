@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/AlexGalhardo/vukem/database"
 	"github.com/AlexGalhardo/vukem/queue"
 )
 
@@ -58,3 +59,38 @@ type badMail struct{}
 
 func (badMail) Envelope() Envelope { return Envelope{Subject: "nobody"} }
 func (badMail) Content() Content   { return Text("x") }
+
+func TestSendLaterTx(t *testing.T) {
+	t.Parallel()
+
+	m := New(NewArray(), "App <app@example.com>", nil)
+	ex := database.FromSQL(nil, database.SQLite)
+
+	if err := m.SendLaterTx(t.Context(), ex, note{}); !errors.Is(err, ErrNoQueue) {
+		t.Fatalf("SendLaterTx() without a queue = %v, want ErrNoQueue", err)
+	}
+
+	var (
+		gotEx  database.Executor
+		queued []*Message
+	)
+
+	m.SetEnqueueTx(func(_ context.Context, e database.Executor, msg *Message, _ ...queue.Option) error {
+		gotEx = e
+		queued = append(queued, msg)
+
+		return nil
+	})
+
+	if err := m.SendLaterTx(t.Context(), ex, note{}); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(queued) != 1 || gotEx != ex || queued[0].Text != "hello" {
+		t.Fatalf("queued %d with executor %v, want the rendered message with the caller's executor", len(queued), gotEx)
+	}
+
+	if err := m.SendLaterTx(t.Context(), ex, badMail{}); err == nil || len(queued) != 1 {
+		t.Error("SendLaterTx() queued a mail without recipients")
+	}
+}

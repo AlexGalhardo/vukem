@@ -11,6 +11,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/AlexGalhardo/vukem/database"
 	"github.com/AlexGalhardo/vukem/mail"
 	"github.com/AlexGalhardo/vukem/queue"
 )
@@ -64,6 +65,13 @@ type QueueConfig struct {
 	// Table and FailedTable are the database driver's tables.
 	Table       string `env:"QUEUE_TABLE"        default:"jobs"`
 	FailedTable string `env:"QUEUE_FAILED_TABLE" default:"failed_jobs"`
+	// InServe runs a queue worker inside serve for the database driver
+	// and custom drivers (Redis). Set it to false when dedicated
+	// queue:work processes run the jobs instead; leaving it on next to
+	// them is safe (reservations are atomic), it only adds workers. The
+	// memory queue is always worked inside serve: no other process sees
+	// its jobs.
+	InServe bool `env:"QUEUE_IN_SERVE" default:"true"`
 	// AllowLegacyMail sends clear-text mail jobs queued before v0.24.0
 	// (an upgrade window: drain the queue before upgrading, or set it
 	// until the old jobs are gone). Off, they fail.
@@ -111,7 +119,7 @@ func (a *App) Queue() (*queue.Queue, error) {
 		case cfg.Connection == "memory":
 			d = queue.NewMemory()
 		case cfg.Connection == "database":
-			if d, err = a.databaseQueue(cfg); err != nil {
+			if d, err = a.databaseQueueDriver(cfg); err != nil {
 				a.queueErr = err
 				return
 			}
@@ -120,7 +128,15 @@ func (a *App) Queue() (*queue.Queue, error) {
 			return
 		}
 
+		// Delays and retries follow the app clock (WithClock, vukemtest fake
+		// clocks) on every driver that reads one, custom drivers included.
+		if c, ok := d.(queue.Clock); ok {
+			c.SetClock(a.now)
+		}
+
 		q := queue.New(d, a.Log)
+		q.SetClock(a.now)
+
 		if a.Devtools != nil {
 			q.SetObserver(a.Devtools)
 		}
@@ -162,7 +178,48 @@ func (a *App) jobRegistrations() (regs []queue.Registration, err error) {
 	return regs, nil
 }
 
-func (a *App) databaseQueue(cfg QueueConfig) (*queue.Database, error) {
+// prepareDatabaseQueue creates the database queue tables at Boot, so the
+// first app.Queue() never runs DDL: called inside a transaction on SQLite,
+// whose single writer connection the transaction holds, it would block
+// until the timeout and fail.
+func (a *App) prepareDatabaseQueue(ctx context.Context) error {
+	if a.queueDriver != nil || a.queueDriverFunc != nil {
+		return nil
+	}
+
+	cfg, err := configLoad[QueueConfig](a)
+	if err != nil || cfg.Connection != "database" {
+		return err
+	}
+
+	d, err := a.databaseQueue(ctx, cfg)
+	if err != nil {
+		return fmt.Errorf("vukem: QUEUE_CONNECTION=database: create the queue tables at boot "+
+			"(database unreachable or not writable?): %w", err)
+	}
+
+	a.mu.Lock()
+	a.queueDB = d
+	a.mu.Unlock()
+
+	return nil
+}
+
+// databaseQueueDriver returns the driver Boot prepared, or builds it when
+// the app was not booted.
+func (a *App) databaseQueueDriver(cfg QueueConfig) (*queue.Database, error) {
+	a.mu.Lock()
+	d := a.queueDB
+	a.mu.Unlock()
+
+	if d != nil {
+		return d, nil
+	}
+
+	return a.databaseQueue(context.Background(), cfg)
+}
+
+func (a *App) databaseQueue(ctx context.Context, cfg QueueConfig) (*queue.Database, error) {
 	db, err := a.DB()
 	if err != nil {
 		return nil, err
@@ -173,7 +230,7 @@ func (a *App) databaseQueue(cfg QueueConfig) (*queue.Database, error) {
 		return nil, err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	defer cancel()
 
 	if err := d.CreateTables(ctx); err != nil {
@@ -204,21 +261,36 @@ var ErrLegacyMail = errors.New("vukem: clear-text mail job refused (QUEUE_ALLOW_
 const mailJobAD = "queue:" + MailJobKind
 
 func (a *App) enqueueMail(ctx context.Context, msg *mail.Message, opts ...queue.Option) error {
-	plain, err := json.Marshal(msg) //nolint:musttag // Go field names, as mail jobs always used
-	if err != nil {
-		return fmt.Errorf("vukem: encode queued mail: %w", err)
-	}
-
-	q, err := a.Queue()
+	q, payload, err := a.mailJob(msg)
 	if err != nil {
 		return err
 	}
 
-	return q.DispatchKind(
-		ctx,
-		MailJobKind,
-		map[string]string{"sealed": a.Crypt.Seal(plain, []byte(mailJobAD))},
-		opts...)
+	return q.DispatchKind(ctx, MailJobKind, payload, opts...)
+}
+
+func (a *App) enqueueMailTx(ctx context.Context, ex database.Executor, msg *mail.Message, opts ...queue.Option) error {
+	q, payload, err := a.mailJob(msg)
+	if err != nil {
+		return err
+	}
+
+	return q.DispatchKindTx(ctx, ex, MailJobKind, payload, opts...)
+}
+
+// mailJob seals msg into a MailJobKind payload.
+func (a *App) mailJob(msg *mail.Message) (*queue.Queue, map[string]string, error) {
+	plain, err := json.Marshal(msg) //nolint:musttag // Go field names, as mail jobs always used
+	if err != nil {
+		return nil, nil, fmt.Errorf("vukem: encode queued mail: %w", err)
+	}
+
+	q, err := a.Queue()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return q, map[string]string{"sealed": a.Crypt.Seal(plain, []byte(mailJobAD))}, nil
 }
 
 func (a *App) sendQueuedMail(ctx context.Context, p queuedMail) error {
@@ -253,7 +325,7 @@ func (a *App) sendQueuedMail(ctx context.Context, p queuedMail) error {
 		}
 
 		msg = mail.Message{}
-		if err := json.Unmarshal(plain, &msg); err != nil { //nolint:musttag // see enqueueMail
+		if err := json.Unmarshal(plain, &msg); err != nil { //nolint:musttag // see mailJob
 			return fmt.Errorf("vukem: decode queued mail: %w", err)
 		}
 	}
@@ -272,7 +344,40 @@ func (a *App) MailLater(ctx context.Context, mailable mail.Mailable, opts ...que
 	return m.SendLater(ctx, mailable, opts...)
 }
 
-// queueRunner works the in-memory queue inside the web process.
+// MailLaterTx is MailLater inside the transaction of ex: the mail is
+// queued only if the transaction commits (see mail.Mailer.SendLaterTx and
+// queue.Queue.DispatchTx).
+func (a *App) MailLaterTx(ctx context.Context, ex database.Executor, mailable mail.Mailable,
+	opts ...queue.Option,
+) error {
+	m, err := a.Mailer()
+	if err != nil {
+		return err
+	}
+
+	return m.SendLaterTx(ctx, ex, mailable, opts...)
+}
+
+// inServe reports whether serve runs a queue worker: always for memory,
+// otherwise unless QUEUE_IN_SERVE=false, never for sync (jobs run inside
+// Dispatch). custom is a driver set with WithQueueDriver(Func).
+func (c QueueConfig) inServe(custom bool) bool {
+	switch {
+	case custom:
+		return c.InServe
+	case c.Connection == "memory":
+		return true
+	case c.Connection == "sync":
+		return false
+	default:
+		return c.InServe
+	}
+}
+
+// queueRunner works the queue inside the web process, so a
+// single-process deploy still runs queued mail and jobs. It exits at once
+// when the driver runs jobs inline (a custom sync driver). On shutdown,
+// running jobs get SHUTDOWN_TIMEOUT before their context is cancelled.
 func (a *App) queueRunner(cfg QueueConfig) Runner {
 	return RunnerFunc(func(ctx context.Context) error {
 		q, err := a.Queue()
@@ -280,7 +385,21 @@ func (a *App) queueRunner(cfg QueueConfig) Runner {
 			return err
 		}
 
-		return q.Work(ctx, queue.WorkOptions{Queues: cfg.QueueNames(), Concurrency: cfg.Concurrency})
+		if in, ok := q.Driver().(queue.Inline); ok && in.Inline() {
+			return nil
+		}
+
+		if cfg.Connection != "memory" {
+			a.Log.InfoContext(ctx,
+				"queue worker running inside serve; set QUEUE_IN_SERVE=false if only queue:work should run jobs",
+				"queues", cfg.QueueNames(), "concurrency", cfg.Concurrency)
+		}
+
+		return q.Work(ctx, queue.WorkOptions{
+			Queues:      cfg.QueueNames(),
+			Concurrency: cfg.Concurrency,
+			StopTimeout: a.Config.ShutdownTimeout,
+		})
 	})
 }
 
@@ -303,7 +422,7 @@ func queueWorkCommand() Command {
 
 	return CommandFunc{
 		CommandName: "queue:work",
-		Desc:        "Process queued jobs until stopped (Ctrl+C drains running jobs)",
+		Desc:        "Process queued jobs until stopped (Ctrl+C drains running jobs within SHUTDOWN_TIMEOUT)",
 		DefineFlags: func(fs *flag.FlagSet) {
 			queues = fs.String("queue", "", "queues in priority order (default QUEUE_NAMES)")
 			concurrency = fs.Int("concurrency", 0, "parallel workers (default QUEUE_CONCURRENCY)")
@@ -335,6 +454,7 @@ func queueWorkCommand() Command {
 				Concurrency:   cfg.Concurrency,
 				Sleep:         *sleep,
 				StopWhenEmpty: *empty,
+				StopTimeout:   app.Config.ShutdownTimeout,
 			}
 			if *once {
 				o.MaxJobs, o.Concurrency, o.StopWhenEmpty = 1, 1, true

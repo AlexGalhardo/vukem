@@ -2,7 +2,9 @@ package queue
 
 import (
 	"context"
+	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -17,13 +19,26 @@ type WorkOptions struct {
 	// MaxJobs stops after processing this many jobs (0 = no limit), e.g.
 	// for "queue:work --once".
 	MaxJobs int
-	// StopWhenEmpty returns when no job is available.
+	// StopWhenEmpty returns when no job is available. A reserve error then
+	// ends Work with that error (without it, the error is logged and the
+	// worker keeps polling).
 	StopWhenEmpty bool
+	// StopTimeout bounds the drain once ctx is cancelled: jobs still
+	// running after it have their context cancelled. A job that then fails
+	// with that cancellation (context.Canceled or DeadlineExceeded) goes
+	// back to the queue without using an attempt, MaxFreeInterruptions
+	// times in a row; later interruptions use attempts, and other errors
+	// are retried or failed as usual. Jobs run again from the start, so
+	// they must be idempotent. 0 waits for them (each is still bounded by
+	// its own timeout). Jobs must honor ctx; one that ignores it still
+	// holds Work.
+	StopTimeout time.Duration
 }
 
 // Work processes jobs until ctx is cancelled. On cancellation it stops
 // reserving new jobs and waits for running ones (graceful drain): they
-// keep a context that is not cancelled but bounded by their timeout.
+// keep a context that is not cancelled, bounded by their timeout and by
+// StopTimeout.
 func (q *Queue) Work(ctx context.Context, o WorkOptions) error {
 	if len(o.Queues) == 0 {
 		o.Queues = []string{"default"}
@@ -42,7 +57,16 @@ func (q *Queue) Work(ctx context.Context, o WorkOptions) error {
 		firstErr error
 	)
 
-	jobCtx := context.WithoutCancel(ctx)
+	// Running jobs outlive ctx so a shutdown does not abort them mid-way;
+	// settling always uses a context that is never cancelled.
+	settleCtx := context.WithoutCancel(ctx)
+	jobCtx, cancelJobs := context.WithCancel(settleCtx)
+
+	defer cancelJobs()
+
+	var stopping atomic.Bool
+
+	interrupted := func() bool { return stopping.Load() && jobCtx.Err() != nil }
 
 	take := func() bool {
 		mu.Lock()
@@ -67,6 +91,18 @@ func (q *Queue) Work(ctx context.Context, o WorkOptions) error {
 					}
 
 					q.log.ErrorContext(ctx, "queue: reserve job", "err", err)
+
+					// A store error is not an empty queue: report it rather
+					// than exiting cleanly with jobs left behind.
+					if o.StopWhenEmpty {
+						mu.Lock()
+						if firstErr == nil {
+							firstErr = fmt.Errorf("queue: reserve job: %w", err)
+						}
+						mu.Unlock()
+
+						return
+					}
 				}
 
 				if m == nil {
@@ -81,11 +117,14 @@ func (q *Queue) Work(ctx context.Context, o WorkOptions) error {
 
 				if !take() {
 					// Over the limit: give the job back untouched.
-					_ = q.driver.Release(jobCtx, m)
+					rctx, cancel := context.WithTimeout(settleCtx, settleTimeout)
+					_ = q.driver.Release(rctx, m)
+
+					cancel()
 					return
 				}
 
-				if err := q.Process(jobCtx, m); err != nil {
+				if err := q.process(jobCtx, settleCtx, m, interrupted, settleTimeout); err != nil {
 					mu.Lock()
 					if firstErr == nil {
 						firstErr = err
@@ -106,10 +145,45 @@ func (q *Queue) Work(ctx context.Context, o WorkOptions) error {
 		})
 	}
 
-	wg.Wait()
+	q.drain(ctx, &wg, o.StopTimeout, func() { stopping.Store(true); cancelJobs() })
 
 	return firstErr
 }
+
+// drain waits for the workers; once ctx is cancelled it gives running jobs
+// stopTimeout (0 = no limit) before calling cancel.
+func (q *Queue) drain(ctx context.Context, wg *sync.WaitGroup, stopTimeout time.Duration, cancel func()) {
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+
+	select {
+	case <-done:
+		return
+	case <-ctx.Done():
+	}
+
+	if stopTimeout <= 0 {
+		<-done
+		return
+	}
+
+	stop := time.NewTimer(stopTimeout)
+	defer stop.Stop()
+
+	select {
+	case <-done:
+		return
+	case <-stop.C:
+	}
+
+	q.log.WarnContext(ctx, "queue jobs still running at shutdown: cancelling them", "stop_timeout", stopTimeout)
+	cancel()
+	<-done
+}
+
+// settleTimeout bounds each Ack, Release or Fail of a worker, so a store
+// that hangs cannot hold the worker (and the shutdown) forever.
+const settleTimeout = 10 * time.Second
 
 func sleep(ctx context.Context, d time.Duration) {
 	t := time.NewTimer(d)

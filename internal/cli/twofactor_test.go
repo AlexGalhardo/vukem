@@ -326,3 +326,19 @@ func TestSecurity_A07_PasswordResetAnswersAlike(t *testing.T) {
 		}
 	}
 }
+
+// The verification mail is queued like the reset mail, so registering does
+// not wait for the mail server (and a slow server cannot time out sign-up).
+func TestVerificationMailIsQueued(t *testing.T) {
+	t.Parallel()
+
+	src, err := scaffoldFS.ReadFile("scaffolds/auth-core/app/accounts/users.go.tmpl")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !bytes.Contains(src, []byte("a.Mailer.SendLater(ctx, mail.VerifyEmail{")) ||
+		bytes.Contains(src, []byte("a.Mailer.Send(ctx, mail.VerifyEmail{")) {
+		t.Error("SendVerification does not queue the verification mail")
+	}
+}

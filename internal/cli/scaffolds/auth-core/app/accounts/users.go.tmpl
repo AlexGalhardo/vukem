@@ -36,14 +36,15 @@ func (a *Accounts) Register(ctx context.Context, in requests.Register) (models.U
 	return u, a.SendVerification(ctx, u)
 }
 
-// SendVerification emails a signed link that verifies u's address.
+// SendVerification emails a signed link that verifies u's address. The
+// mail is queued (SendLater), so sign-up does not wait for the mail server.
 func (a *Accounts) SendVerification(ctx context.Context, u models.User) error {
 	link, err := a.Signer.Sign(fmt.Sprintf("%s/email/verify/%d", a.URL, u.ID), a.VerifyTTL)
 	if err != nil {
 		return err
 	}
 
-	return a.Mailer.Send(ctx, mail.VerifyEmail{User: u, Link: link, Subject: a.T(ctx, "auth.mail.verify_subject")})
+	return a.Mailer.SendLater(ctx, mail.VerifyEmail{User: u, Link: link, Subject: a.T(ctx, "auth.mail.verify_subject")})
 }
 
 // MarkVerified sets email_verified_at using ex (a.DB, or the transaction

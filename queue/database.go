@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/AlexGalhardo/vukem/database"
@@ -24,7 +25,7 @@ type Database struct {
 	jobs   string
 	failed string
 	grace  time.Duration
-	now    func() time.Time
+	now    atomic.Pointer[func() time.Time]
 	// reserved maps each *Message handed out by Pop to its reserved_at,
 	// so a worker that ran past its timeout cannot settle the job after
 	// another worker re-reserved it.
@@ -40,7 +41,8 @@ type DatabaseOptions struct {
 	// Grace is added to a job's timeout before an abandoned reservation is
 	// taken over (default 1 minute).
 	Grace time.Duration
-	// Now is the clock (default time.Now); tests set it.
+	// Now is the clock that decides when delayed and abandoned jobs are
+	// due (default time.Now); app.Queue passes the app clock.
 	Now func() time.Time
 }
 
@@ -71,8 +73,22 @@ func NewDatabase(db *database.DB, o DatabaseOptions) (*Database, error) {
 		o.Now = time.Now
 	}
 
-	return &Database{db: db, jobs: o.Table, failed: o.FailedTable, grace: o.Grace, now: o.Now}, nil
+	d := &Database{db: db, jobs: o.Table, failed: o.FailedTable, grace: o.Grace}
+	d.now.Store(&o.Now)
+
+	return d, nil
 }
+
+// SetClock replaces DatabaseOptions.Now; it implements Clock.
+func (d *Database) SetClock(now func() time.Time) {
+	if now == nil {
+		now = time.Now
+	}
+
+	d.now.Store(&now)
+}
+
+func (d *Database) clock() time.Time { return (*d.now.Load())() }
 
 // q renders sqlText with table names ({j}, {f}) and dialect placeholders.
 func (d *Database) q(dl database.Dialect, sqlText string) string {
@@ -193,7 +209,7 @@ func (d *Database) Pop(ctx context.Context, queues []string) (*Message, error) {
 		ORDER BY available_at, created_at, id LIMIT 1`+lock+`)
 		RETURNING `+jobColumns)
 
-	now := ms(d.now())
+	now := ms(d.clock())
 
 	for _, name := range queues {
 		m, err := scanMessage(d.db.QueryRowContext(ctx, stmt, now, name, now, d.grace.Milliseconds(), now))
@@ -222,7 +238,7 @@ func (d *Database) popMySQL(ctx context.Context, dl database.Dialect, queues []s
 		ORDER BY available_at, created_at, id LIMIT 1 FOR UPDATE SKIP LOCKED`)
 	upd := d.q(dl, `UPDATE {j} SET reserved_at = ? WHERE id = ?`)
 
-	now := ms(d.now())
+	now := ms(d.clock())
 
 	for _, name := range queues {
 		var m *Message
@@ -337,7 +353,7 @@ func (d *Database) Fail(ctx context.Context, m *Message) error {
 		_, err := tx.ExecContext(ctx, d.q(tx.Dialect(), `INSERT INTO {f} (`+jobColumns+`, failed_at)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
 			m.ID, m.Queue, m.Kind, string(m.Payload), m.Attempts, m.MaxRetries, m.Timeout.Milliseconds(),
-			ms(m.AvailableAt), ms(m.CreatedAt), m.LastError, ms(d.now()))
+			ms(m.AvailableAt), ms(m.CreatedAt), m.LastError, ms(d.clock()))
 
 		return err
 	})
@@ -375,7 +391,7 @@ func (d *Database) Retry(ctx context.Context, ids ...string) (int, error) {
 
 	err := d.db.Tx(ctx, func(tx *database.Tx) error {
 		where, args := idFilter(ids)
-		now := ms(d.now())
+		now := ms(d.clock())
 
 		res, err := tx.ExecContext(ctx, d.q(tx.Dialect(), `INSERT INTO {j} (`+jobColumns+`)
 			SELECT id, queue, kind, payload, 0, max_retries, timeout_ms, ?, created_at, last_error FROM {f}`+where),

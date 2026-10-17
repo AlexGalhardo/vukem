@@ -130,8 +130,9 @@ type Mailer struct {
 	from      string
 	transport Transport
 	views     web.Renderer
-	// A pointer keeps Mailer comparable, as it was before SendLater.
-	enqueue *Enqueue
+	// Pointers keep Mailer comparable, as it was before SendLater.
+	enqueue   *Enqueue
+	enqueueTx *EnqueueTx
 }
 
 // New returns a Mailer sending from the default from address through t.
