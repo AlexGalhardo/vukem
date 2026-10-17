@@ -97,6 +97,9 @@ var (
 		Message: "The sign-in attempt expired or is invalid. Please try again.",
 	}
 	ErrAccessDenied = &errs.HTTPError{Status: http.StatusForbidden, Message: "Sign-in was cancelled."}
+	// ErrProvider is returned when the provider answers with an error other
+	// than access_denied; the provider's code is logged, not shown.
+	ErrProvider = &errs.HTTPError{Status: http.StatusBadRequest, Message: "Sign-in failed. Please try again."}
 )
 
 // Social is the set of configured providers.
@@ -244,7 +247,13 @@ func (s *Social) User(c *web.Ctx, provider string) (User, error) {
 			return User{}, ErrAccessDenied
 		}
 
-		return User{}, errs.New(http.StatusBadRequest, "Sign-in failed: "+e+".")
+		// The error parameter is attacker-controlled (a crafted callback
+		// link), so it is logged, sanitized, and never shown to the user.
+		if log := web.ServicesFrom(c.Context()).Log; log != nil {
+			log.WarnContext(c.Context(), "social: provider error", "provider", provider, "error", errorCode(e))
+		}
+
+		return User{}, ErrProvider
 	}
 
 	code := param("code")
@@ -269,6 +278,20 @@ func (s *Social) User(c *web.Ctx, provider string) (User, error) {
 	}
 
 	return u, nil
+}
+
+// errorCode keeps an RFC 6749 error code loggable: at most 64 characters
+// from [a-z0-9_.-], anything else replaced by "?".
+func errorCode(e string) string {
+	e = e[:min(len(e), 64)]
+
+	return strings.Map(func(r rune) rune {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '_' || r == '.' || r == '-' {
+			return r
+		}
+
+		return '?'
+	}, e)
 }
 
 // formPost reports whether p answers with response_mode=form_post.

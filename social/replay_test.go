@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -71,5 +72,20 @@ func TestSecurity_A04_SocialStateStoreFailsClosed(t *testing.T) {
 	_, err := flow(t, s, f, "github", nil)
 	if err == nil || errs.Status(err) != http.StatusServiceUnavailable {
 		t.Fatalf("callback with store down = %v (status %d), want 503", err, errs.Status(err))
+	}
+}
+
+func TestSecurity_A03_SocialProviderErrorNotReflected(t *testing.T) {
+	t.Parallel()
+
+	f := newFakeServer(t)
+	f.profile = map[string]any{"id": 1.0, "login": "ana"}
+	s := New(testKey, GitHub(cfg(), WithEndpoints(oauthEndpoints(f))))
+
+	const injected = "Your account is locked, call +1 555 0100"
+
+	_, err := flow(t, s, f, "github", func(q url.Values, _ *http.Cookie) { q.Set("error", injected) })
+	if errs.Status(err) != http.StatusBadRequest || strings.Contains(err.Error(), "555") {
+		t.Fatalf("User() with a provider error = %v, want a fixed 400 message", err)
 	}
 }

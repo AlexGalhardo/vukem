@@ -211,7 +211,7 @@ r.Get("/auth/{provider}/callback", func(c *web.Ctx) error {
 | Email trust | `EmailVerified` only when the provider vouches: GitHub primary verified address, GitLab `confirmed_at`, Discord `verified`, OIDC `email_verified` (Microsoft: `xms_edov`). Link accounts by `(Provider, ID)`, by email only when verified |
 | Stateless | `s.UserFromToken(ctx, "google", accessToken)` for API/SPA flows (profile/userinfo endpoint) |
 | Options | `social.WithEndpoints(...)` (GitHub Enterprise, self-hosted GitLab, tests), `social.WithAuthParams(...)`, `Config.Scopes`, `OIDC(...).AuthParams(...)`, `social.OAuth2(name, cfg, endpoints, scopes, mapUser)` |
-| Security | redirect URL fixed in config, provider calls through a client with a 10 s timeout and 1 MiB response limit, tokens never logged |
+| Security | a provider `error` other than `access_denied` answers `social.ErrProvider` (400, fixed message) and logs the sanitized code, so a crafted callback link cannot put text on the page (`TestSecurity_A03_SocialProviderErrorNotReflected`); redirect URL fixed in config, provider calls through a client with a 10 s timeout and 1 MiB response limit, tokens never logged |
 
 Apple (`social.Apple`, form-post callback), LinkedIn (`social.LinkedIn`) and X (`social.X`) are built in. `social.Fake(name, callbackURL, user)` is a provider for tests.
 
