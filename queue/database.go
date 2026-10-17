@@ -30,6 +30,8 @@ type Database struct {
 	// so a worker that ran past its timeout cannot settle the job after
 	// another worker re-reserved it.
 	reserved sync.Map
+	// seq is the last value handed out by nextSeq.
+	seq atomic.Int64
 }
 
 // DatabaseOptions name the tables.
@@ -115,6 +117,30 @@ func (d *Database) q(dl database.Dialect, sqlText string) string {
 
 const jobColumns = `id, queue, kind, payload, attempts, max_retries, timeout_ms, available_at, created_at, last_error`
 
+// popOrder is FIFO: seq breaks ties between jobs available and created in
+// the same millisecond; id only matters for rows of the same seq (rows
+// that predate the column, a Retry batch).
+const popOrder = ` ORDER BY available_at, created_at, seq, id`
+
+// seqColumn is the tiebreaker the jobs table gained in v0.26.0;
+// CreateTables adds it to older tables.
+const seqColumn = `seq BIGINT NOT NULL DEFAULT 0`
+
+// nextSeq returns a value greater than any it returned before, seeded by
+// the wall clock: jobs pushed by one process in the same millisecond pop
+// in push order, and jobs from several processes interleave roughly by
+// real time.
+func (d *Database) nextSeq() int64 {
+	for {
+		last := d.seq.Load()
+
+		next := max(last+1, time.Now().UnixNano())
+		if d.seq.CompareAndSwap(last, next) {
+			return next
+		}
+	}
+}
+
 // CreateTables creates the jobs and failed jobs tables if missing.
 func (d *Database) CreateTables(ctx context.Context) error {
 	dl := d.db.Dialect()
@@ -128,13 +154,36 @@ func (d *Database) CreateTables(ctx context.Context) error {
 		last_error TEXT NOT NULL DEFAULT ''`
 
 	for _, stmt := range []string{
-		`CREATE TABLE IF NOT EXISTS {j} (` + cols + `, reserved_at BIGINT NOT NULL DEFAULT 0)`,
+		`CREATE TABLE IF NOT EXISTS {j} (` + cols + `, reserved_at BIGINT NOT NULL DEFAULT 0, ` + seqColumn + `)`,
 		`CREATE INDEX IF NOT EXISTS ` + dl.Quote(d.jobs+"_queue_available") + ` ON {j} (queue, available_at)`,
 		`CREATE TABLE IF NOT EXISTS {f} (` + cols + `, failed_at BIGINT NOT NULL)`,
 	} {
 		if _, err := d.db.ExecContext(ctx, d.q(dl, stmt)); err != nil {
 			return fmt.Errorf("queue: create tables: %w", err)
 		}
+	}
+
+	return d.ensureSeq(ctx, dl)
+}
+
+// ensureSeq adds the seq column to a jobs table created before it existed.
+// MySQL and SQLite have no ADD COLUMN IF NOT EXISTS, so it probes first;
+// when two processes boot at once and the ALTER loses the race, the
+// second probe sees the column and the error is dropped.
+func (d *Database) ensureSeq(ctx context.Context, dl database.Dialect) error {
+	probe := d.q(dl, `SELECT seq FROM {j} WHERE 1 = 0`)
+
+	has := func() bool { // no rows when the column exists, an error when it does not
+		var v int64
+		return errors.Is(d.db.QueryRowContext(ctx, probe).Scan(&v), sql.ErrNoRows)
+	}
+
+	if has() {
+		return nil
+	}
+
+	if _, err := d.db.ExecContext(ctx, d.q(dl, `ALTER TABLE {j} ADD COLUMN `+seqColumn)); err != nil && !has() {
+		return fmt.Errorf("queue: add seq column: %w", err)
 	}
 
 	return nil
@@ -150,7 +199,7 @@ func (d *Database) createMySQLTables(ctx context.Context, dl database.Dialect) e
 		last_error LONGTEXT NOT NULL`
 
 	for _, stmt := range []string{
-		`CREATE TABLE IF NOT EXISTS {j} (` + cols + `, reserved_at BIGINT NOT NULL DEFAULT 0, INDEX ` +
+		`CREATE TABLE IF NOT EXISTS {j} (` + cols + `, reserved_at BIGINT NOT NULL DEFAULT 0, ` + seqColumn + `, INDEX ` +
 			dl.Quote(d.jobs+"_queue_available") + ` (queue, available_at))`,
 		`CREATE TABLE IF NOT EXISTS {f} (` + cols + `, failed_at BIGINT NOT NULL)`,
 	} {
@@ -159,7 +208,7 @@ func (d *Database) createMySQLTables(ctx context.Context, dl database.Dialect) e
 		}
 	}
 
-	return nil
+	return d.ensureSeq(ctx, dl)
 }
 
 func ms(t time.Time) int64 { return t.UnixMilli() }
@@ -174,7 +223,7 @@ func (d *Database) Push(ctx context.Context, m *Message) error { return d.PushTx
 func (d *Database) PushTx(ctx context.Context, ex database.Executor, m *Message) error {
 	_, err := ex.ExecContext(
 		ctx,
-		d.q(ex.Dialect(), `INSERT INTO {j} (`+jobColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+		d.q(ex.Dialect(), `INSERT INTO {j} (`+jobColumns+`, seq) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
 		m.ID,
 		m.Queue,
 		m.Kind,
@@ -185,6 +234,7 @@ func (d *Database) PushTx(ctx context.Context, ex database.Executor, m *Message)
 		ms(m.AvailableAt),
 		ms(m.CreatedAt),
 		m.LastError,
+		d.nextSeq(),
 	)
 
 	return err
@@ -206,7 +256,7 @@ func (d *Database) Pop(ctx context.Context, queues []string) (*Message, error) {
 	stmt := d.q(dl, `UPDATE {j} SET reserved_at = ? WHERE id = (
 		SELECT id FROM {j} WHERE queue = ? AND available_at <= ?
 			AND (reserved_at = 0 OR reserved_at + timeout_ms + ? <= ?)
-		ORDER BY available_at, created_at, id LIMIT 1`+lock+`)
+		`+popOrder+` LIMIT 1`+lock+`)
 		RETURNING `+jobColumns)
 
 	now := ms(d.clock())
@@ -235,7 +285,7 @@ func (d *Database) Pop(ctx context.Context, queues []string) (*Message, error) {
 func (d *Database) popMySQL(ctx context.Context, dl database.Dialect, queues []string) (*Message, error) {
 	sel := d.q(dl, `SELECT `+jobColumns+` FROM {j} WHERE queue = ? AND available_at <= ?
 			AND (reserved_at = 0 OR reserved_at + timeout_ms + ? <= ?)
-		ORDER BY available_at, created_at, id LIMIT 1 FOR UPDATE SKIP LOCKED`)
+		`+popOrder+` LIMIT 1 FOR UPDATE SKIP LOCKED`)
 	upd := d.q(dl, `UPDATE {j} SET reserved_at = ? WHERE id = ?`)
 
 	now := ms(d.clock())
@@ -393,9 +443,9 @@ func (d *Database) Retry(ctx context.Context, ids ...string) (int, error) {
 		where, args := idFilter(ids)
 		now := ms(d.clock())
 
-		res, err := tx.ExecContext(ctx, d.q(tx.Dialect(), `INSERT INTO {j} (`+jobColumns+`)
-			SELECT id, queue, kind, payload, 0, max_retries, timeout_ms, ?, created_at, last_error FROM {f}`+where),
-			append([]any{now}, args...)...)
+		res, err := tx.ExecContext(ctx, d.q(tx.Dialect(), `INSERT INTO {j} (`+jobColumns+`, seq)
+			SELECT id, queue, kind, payload, 0, max_retries, timeout_ms, ?, created_at, last_error, ? FROM {f}`+where),
+			append([]any{now, d.nextSeq()}, args...)...)
 		if err != nil {
 			return err
 		}

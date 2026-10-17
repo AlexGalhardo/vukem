@@ -39,7 +39,7 @@ err = q.DispatchTx(ctx, tx, jobs.SendInvoice{OrderID: 1}) // only if tx commits
 - Delays, retry backoff and the database and Redis drivers' availability checks use the app clock (`vukem.WithClock`, the fake clock of `vukemtest`), so advancing a fake clock makes delayed jobs due. `app.Queue()` sets it on every driver implementing `queue.Clock` (`SetClock`); `queue.Queue.SetClock` sets it outside the app.
 - `DispatchTx(ctx, tx, job)` works on every driver: the database driver inserts the job inside the transaction; `sync`, `memory`, `queue.Fake` and Redis dispatch it right after the commit (`database.Tx.AfterCommit`), and never for rolled-back work. On `sync` the job runs after the commit, so its error is logged instead of returned.
 - `queue:work -once` and `-stop-when-empty` exit with an error when the store fails (instead of treating it as an empty queue); a long-running worker logs the error and keeps polling.
-- Jobs dispatched in the same millisecond have no guaranteed order on the database driver (ties break on the random job id).
+- On the database driver, jobs dispatched in the same millisecond pop in dispatch order within one process (a `seq` column, seeded by the wall clock, breaks the tie); jobs from several processes in the same millisecond interleave roughly by real time. `CreateTables` (run at boot) adds `seq` to tables created by older releases; a jobs table you create with your own migration needs `seq BIGINT NOT NULL DEFAULT 0`.
 - `sync` cannot delay a job: `Dispatch(ctx, j, queue.Delay(d))` returns `queue.ErrInlineDelay` instead of running it early. Tests that dispatch delayed jobs use `queue.NewFake()`.
 
 ## Drivers
