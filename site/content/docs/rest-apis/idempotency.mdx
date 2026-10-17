@@ -29,7 +29,7 @@ The first `POST` or `PATCH` carrying an `Idempotency-Key` header runs and its re
 | `TTL` | 24h for stored responses |
 | `LockTTL` | 1 minute for in-flight requests |
 | `MaxBody` | 1 MiB fingerprinted |
-| `Scope` | the authenticated user (`auth.Principal`: guard and user id), else a SHA-256 of the `Authorization` header |
+| `Scope` | the authenticated user (`auth.Principal`: guard and user id, length-prefixed), else a SHA-256 of the `Authorization` header with any `auth.Tokens` prefix removed, so one token keeps one scope under any prefix |
 
 - Keys are **scoped to the caller**, so one user can never replay another's response.
 - Put `Idempotency` **after** `auth.Required` (or `auth.Optional`): the scope is then the authenticated user, the same across token rotation, and a revoked token is refused before any replay. In front of auth only a hash of the `Authorization` header is available, and a revoked token could still replay its stored responses until they expire.

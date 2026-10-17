@@ -142,25 +142,29 @@ type userKey struct{ guard string }
 
 type principalKey struct{}
 
+type principal struct{ guard, id string }
+
 // cache stores the user for this request in c's context, and the
 // principal Principal reports (cleared when u is nil, on logout).
 func cache(c *web.Ctx, guard string, u any) {
 	ctx := context.WithValue(c.Context(), userKey{guard}, u)
 
-	p := ""
+	var p principal
 	if a, ok := u.(Authenticatable); ok {
-		p = guard + ":" + a.AuthID()
+		p = principal{guard: guard, id: a.AuthID()}
 	}
 
 	c.SetRequest(c.Request().WithContext(context.WithValue(ctx, principalKey{}, p)))
 }
 
-// Principal returns "<guard>:<user id>" for the user most recently
+// Principal returns the guard and user id of the user most recently
 // authenticated on this request by any guard, for code that must key data
-// by caller without knowing the guard (api.Idempotency).
-func Principal(ctx context.Context) (string, bool) {
-	p, _ := ctx.Value(principalKey{}).(string)
-	return p, p != ""
+// by caller without knowing the guard (api.Idempotency). Combine the two
+// unambiguously (length-prefixed or hashed): either may contain any
+// character.
+func Principal(ctx context.Context) (guard, id string, ok bool) {
+	p, _ := ctx.Value(principalKey{}).(principal)
+	return p.guard, p.id, p.id != ""
 }
 
 func cached[U any](c *web.Ctx, guard string) (U, bool) {

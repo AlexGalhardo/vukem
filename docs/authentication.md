@@ -58,7 +58,7 @@ user, err := auth.User[models.User](c, "web") // in handlers behind Required
 
 ## Guards
 
-Every guard that authenticates a request also records `auth.Principal(ctx)` (`"<guard>:<user id>"`, cleared on logout), for code that keys data by caller without knowing the guard, such as `api.Idempotency`.
+Every guard that authenticates a request also records `auth.Principal(ctx)` (`guard, id, ok`; cleared on logout; combine guard and id length-prefixed or hashed, since either may contain any character), for code that keys data by caller without knowing the guard, such as `api.Idempotency`.
 
 ### Session guard (`web`)
 
