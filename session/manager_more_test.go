@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/AlexGalhardo/vukem/errs"
+	"github.com/AlexGalhardo/vukem/internal/testutil"
 	"github.com/AlexGalhardo/vukem/web"
 )
 
@@ -387,7 +388,7 @@ func TestMemoryStoreSaveEvictsExpired(t *testing.T) {
 func TestSQLStoreErrorsOnClosedDB(t *testing.T) {
 	t.Parallel()
 
-	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "c.db"))
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(testutil.TempDir(t), "c.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

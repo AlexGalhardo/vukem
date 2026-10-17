@@ -16,6 +16,7 @@ import (
 	"testing/fstest"
 
 	"github.com/AlexGalhardo/vukem/database"
+	"github.com/AlexGalhardo/vukem/internal/testutil"
 	"github.com/AlexGalhardo/vukem/router"
 	"github.com/AlexGalhardo/vukem/schema"
 	"github.com/AlexGalhardo/vukem/web"
@@ -338,7 +339,7 @@ func TestWithViews(t *testing.T) {
 func TestSessionDrivers(t *testing.T) {
 	t.Parallel()
 
-	dbURL := "file:" + filepath.ToSlash(filepath.Join(t.TempDir(), "s.db"))
+	dbURL := "file:" + filepath.ToSlash(filepath.Join(testutil.TempDir(t), "s.db"))
 
 	for driver, wantErr := range map[string]bool{"cookie": false, "memory": false, "database": false, "redis": true} {
 		app, err := New(WithSource(testSource(map[string]string{"SESSION_DRIVER": driver, "DATABASE_URL": dbURL})),

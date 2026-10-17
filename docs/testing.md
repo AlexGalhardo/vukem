@@ -10,6 +10,7 @@ How the framework itself is tested, and the testing toolkit it ships to apps. De
 - **No network, no Docker** in unit tests. Integration tests are behind `//go:build integration`.
 - **Assertions:** stdlib `testing` + `github.com/google/go-cmp/cmp`. No testify in core.
 - Tests use `t.Context()`, `t.TempDir()`, `t.Setenv` only where unavoidable (prefer injected `getenv`), `t.Parallel()` where safe.
+- SQLite files go in `testutil.TempDir(t)` (`internal/testutil`), not `t.TempDir()`: on Windows, Defender and the indexer briefly hold just-written files, so removing the directory can fail with "directory is not empty"; the helper retries the removal for a few seconds. Close the database in a `t.Cleanup` registered after the directory is created.
 
 ## Test types
 

@@ -10,6 +10,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/AlexGalhardo/vukem/database"
+	"github.com/AlexGalhardo/vukem/internal/testutil"
 )
 
 func usersPosts(s *Schema) error {
@@ -191,7 +192,7 @@ func TestMySQLDDL(t *testing.T) {
 func openDB(t *testing.T) *database.DB {
 	t.Helper()
 
-	db, err := database.Open(t.Context(), "file:"+filepath.Join(t.TempDir(), "m.db"))
+	db, err := database.Open(t.Context(), "file:"+filepath.Join(testutil.TempDir(t), "m.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

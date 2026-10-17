@@ -17,6 +17,7 @@ import (
 	_ "modernc.org/sqlite" // SQLite driver for SQLStore tests
 
 	"github.com/AlexGalhardo/vukem/errs"
+	"github.com/AlexGalhardo/vukem/internal/testutil"
 	"github.com/AlexGalhardo/vukem/web"
 )
 
@@ -154,7 +155,7 @@ func newManager(t *testing.T, cfg Config) (*Manager, *clock) {
 func storesUnderTest(t *testing.T) map[string]Store {
 	t.Helper()
 
-	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "s.db"))
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(testutil.TempDir(t), "s.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -480,7 +481,7 @@ func TestSessionAPI(t *testing.T) {
 func TestSQLStoreTableValidationAndPrune(t *testing.T) {
 	t.Parallel()
 
-	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "p.db"))
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(testutil.TempDir(t), "p.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

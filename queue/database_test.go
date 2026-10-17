@@ -13,6 +13,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/AlexGalhardo/vukem/database"
+	"github.com/AlexGalhardo/vukem/internal/testutil"
 	"github.com/AlexGalhardo/vukem/queue"
 	"github.com/AlexGalhardo/vukem/queue/queuetest"
 )
@@ -20,7 +21,7 @@ import (
 func openSQLite(t *testing.T) *database.DB {
 	t.Helper()
 
-	db, err := database.Open(t.Context(), "file:"+filepath.Join(t.TempDir(), "q.db"))
+	db, err := database.Open(t.Context(), "file:"+filepath.Join(testutil.TempDir(t), "q.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

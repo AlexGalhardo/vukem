@@ -11,6 +11,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/AlexGalhardo/vukem/internal/testutil"
 	"github.com/AlexGalhardo/vukem/queue"
 )
 
@@ -96,7 +97,7 @@ func (flakyJob) Kind() string { return "flaky" }
 func TestQueueCommandsOnDatabase(t *testing.T) {
 	t.Parallel()
 
-	dbURL := "file:" + filepath.Join(t.TempDir(), "queue.db")
+	dbURL := "file:" + filepath.Join(testutil.TempDir(t), "queue.db")
 
 	var ran atomic.Int32
 

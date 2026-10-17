@@ -13,6 +13,7 @@ import (
 
 	"github.com/AlexGalhardo/vukem/crypt"
 	"github.com/AlexGalhardo/vukem/database"
+	"github.com/AlexGalhardo/vukem/internal/testutil"
 )
 
 type Profile struct {
@@ -78,7 +79,7 @@ func TestSecurity_A04_EncryptedColumnStoresNoPlaintext(t *testing.T) {
 	t.Parallel()
 
 	enc := newEncrypter(t, cryptKey(1))
-	db := openCustomers(t, filepath.Join(t.TempDir(), "app.db"), database.WithEncrypter(enc))
+	db := openCustomers(t, filepath.Join(testutil.TempDir(t), "app.db"), database.WithEncrypter(enc))
 	ctx := t.Context()
 
 	c := Customer{
@@ -131,7 +132,7 @@ func TestSecurity_A04_EncryptedColumnStoresNoPlaintext(t *testing.T) {
 func TestSecurity_A04_EncryptedColumnKeyRotation(t *testing.T) {
 	t.Parallel()
 
-	path := filepath.Join(t.TempDir(), "app.db")
+	path := filepath.Join(testutil.TempDir(t), "app.db")
 	oldKey, newKey := cryptKey(1), cryptKey(2)
 	ctx := t.Context()
 
@@ -167,7 +168,7 @@ func TestSecurity_A04_EncryptedColumnKeyRotation(t *testing.T) {
 func TestSecurity_A04_EncryptedColumnFailsClosed(t *testing.T) {
 	t.Parallel()
 
-	path := filepath.Join(t.TempDir(), "app.db")
+	path := filepath.Join(testutil.TempDir(t), "app.db")
 	ctx := t.Context()
 	enc := newEncrypter(t, cryptKey(1))
 	withKey := openCustomers(t, path, database.WithEncrypter(enc))
@@ -241,7 +242,7 @@ func TestEncryptedJSONAndNull(t *testing.T) {
 	}
 
 	enc := newEncrypter(t, cryptKey(1))
-	db := openCustomers(t, filepath.Join(t.TempDir(), "app.db"), database.WithEncrypter(enc))
+	db := openCustomers(t, filepath.Join(testutil.TempDir(t), "app.db"), database.WithEncrypter(enc))
 
 	res, err := db.ExecContext(
 		t.Context(),
@@ -266,7 +267,7 @@ func TestEncryptedJSONAndNull(t *testing.T) {
 func TestEncryptedManyRows(t *testing.T) {
 	t.Parallel()
 
-	db := openCustomers(t, filepath.Join(t.TempDir(), "app.db"),
+	db := openCustomers(t, filepath.Join(testutil.TempDir(t), "app.db"),
 		database.WithEncrypter(newEncrypter(t, cryptKey(1))))
 	ctx := t.Context()
 

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/AlexGalhardo/vukem/database"
+	"github.com/AlexGalhardo/vukem/internal/testutil"
 )
 
 func TestSQLiteConformance(t *testing.T) {
@@ -12,7 +13,7 @@ func TestSQLiteConformance(t *testing.T) {
 
 	for name, url := range map[string]string{
 		"memory": ":memory:",
-		"file":   "file:" + filepath.ToSlash(filepath.Join(t.TempDir(), "conformance.db")),
+		"file":   "file:" + filepath.ToSlash(filepath.Join(testutil.TempDir(t), "conformance.db")),
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()

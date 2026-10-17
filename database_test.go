@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/AlexGalhardo/vukem/internal/testutil"
 	"github.com/AlexGalhardo/vukem/schema"
 )
 
@@ -24,7 +25,7 @@ var appMigrations = []schema.Migration{{
 func TestMigrateCommands(t *testing.T) {
 	t.Parallel()
 
-	dbURL := "file:" + filepath.Join(t.TempDir(), "app.db")
+	dbURL := "file:" + filepath.Join(testutil.TempDir(t), "app.db")
 
 	run := func(env string, args ...string) (string, error) {
 		var out bytes.Buffer
@@ -82,7 +83,7 @@ func TestSecurity_A02_DestructiveCommandsNeedForce(t *testing.T) {
 		t.Run(cmd, func(t *testing.T) {
 			t.Parallel()
 
-			dbURL := "file:" + filepath.Join(t.TempDir(), "app.db")
+			dbURL := "file:" + filepath.Join(testutil.TempDir(t), "app.db")
 			getenv := func(k string) (string, bool) {
 				v, ok := map[string]string{"APP_KEY": testKey, "APP_ENV": "production", "DATABASE_URL": dbURL}[k]
 				return v, ok
@@ -105,7 +106,7 @@ func TestDBHealthCheckAndBadURL(t *testing.T) {
 
 	app := newTestApp(
 		t,
-		WithSource(testSource(map[string]string{"DATABASE_URL": "file:" + filepath.Join(t.TempDir(), "h.db")})),
+		WithSource(testSource(map[string]string{"DATABASE_URL": "file:" + filepath.Join(testutil.TempDir(t), "h.db")})),
 	)
 
 	db, err := app.DB()
@@ -140,7 +141,7 @@ func TestAppDBUsesCrypt(t *testing.T) {
 
 	app := newTestApp(
 		t,
-		WithSource(testSource(map[string]string{"DATABASE_URL": "file:" + filepath.Join(t.TempDir(), "c.db")})),
+		WithSource(testSource(map[string]string{"DATABASE_URL": "file:" + filepath.Join(testutil.TempDir(t), "c.db")})),
 	)
 	t.Cleanup(func() { _ = app.Shutdown(context.Background()) })
 

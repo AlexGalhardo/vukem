@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/AlexGalhardo/vukem/database"
+	"github.com/AlexGalhardo/vukem/internal/testutil"
 	"github.com/AlexGalhardo/vukem/schema"
 )
 
@@ -27,7 +28,7 @@ func (s notesSeeder) Seed(ctx context.Context, db *database.DB) error {
 func TestSeedAndWipeCommands(t *testing.T) {
 	t.Parallel()
 
-	dbURL := "file:" + filepath.Join(t.TempDir(), "app.db")
+	dbURL := "file:" + filepath.Join(testutil.TempDir(t), "app.db")
 	failing := SeederFunc(func(context.Context, *database.DB) error { return errors.New("boom") })
 
 	run := func(env string, seeders []Seeder, args ...string) (string, error) {

@@ -9,6 +9,7 @@ import (
 
 	"github.com/AlexGalhardo/vukem/cache"
 	"github.com/AlexGalhardo/vukem/events"
+	"github.com/AlexGalhardo/vukem/internal/testutil"
 	"github.com/AlexGalhardo/vukem/router"
 	"github.com/AlexGalhardo/vukem/security"
 	"github.com/AlexGalhardo/vukem/web"
@@ -19,7 +20,7 @@ type orderPlaced struct{ ID int }
 func TestCacheFromConfig(t *testing.T) {
 	t.Parallel()
 
-	dbURL := "file:" + filepath.ToSlash(filepath.Join(t.TempDir(), "c.db"))
+	dbURL := "file:" + filepath.ToSlash(filepath.Join(testutil.TempDir(t), "c.db"))
 
 	for store, wantErr := range map[string]bool{"memory": false, "database": false, "redis": true} {
 		app, err := New(WithSource(testSource(map[string]string{"CACHE_STORE": store, "DATABASE_URL": dbURL})),

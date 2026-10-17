@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/AlexGalhardo/vukem/internal/testutil"
 	"github.com/AlexGalhardo/vukem/router"
 	"github.com/AlexGalhardo/vukem/web"
 )
@@ -40,7 +41,7 @@ func mcpSession(t *testing.T, docsURL string, lines ...string) map[int]rpcReply 
 
 	var out bytes.Buffer
 
-	dsn := "file:" + filepath.ToSlash(filepath.Join(t.TempDir(), "boost.sqlite"))
+	dsn := "file:" + filepath.ToSlash(filepath.Join(testutil.TempDir(t), "boost.sqlite"))
 	app := newTestApp(t,
 		WithSource(testSource(map[string]string{"DATABASE_URL": dsn, "APP_URL": "https://shop.test"})),
 		WithStdin(strings.NewReader(strings.Join(lines, "\n")+"\n")), WithStdout(&out),

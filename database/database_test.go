@@ -7,12 +7,14 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/AlexGalhardo/vukem/internal/testutil"
 )
 
 func openTemp(t *testing.T) *DB {
 	t.Helper()
 
-	db, err := Open(t.Context(), "file:"+filepath.Join(t.TempDir(), "app.db"))
+	db, err := Open(t.Context(), "file:"+filepath.Join(testutil.TempDir(t), "app.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -213,7 +215,7 @@ func TestOpenErrorsAndDialects(t *testing.T) {
 
 	db, err := Open(
 		t.Context(),
-		"sqlite:"+filepath.Join(t.TempDir(), "c.db"),
+		"sqlite:"+filepath.Join(testutil.TempDir(t), "c.db"),
 		WithConfig(Config{MaxOpen: 3, MaxIdle: 2}),
 	)
 	if err != nil {
