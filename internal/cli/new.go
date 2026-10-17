@@ -49,6 +49,7 @@ func newProject(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 	apiOnly := set.Bool("api", false, "JSON API starter: tokens, /api/v1, no views or sessions")
 	inertiaFW := set.String("inertia", "", "Inertia starter with react, vue or svelte")
 	templ := set.Bool("templ", false, "HTMX starter with templ components instead of html/template views")
+	minimal := set.Bool("minimal", false, "HTMX starter without a database: no posts, uploads or migrations, no SQLite")
 	noInstall := set.Bool("no-install", false, "skip installing frontend dependencies")
 	pmFlag := set.String("pm", "", "JavaScript package manager: npm, bun, pnpm or yarn (default npm)")
 
@@ -67,8 +68,12 @@ func newProject(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 			return fmt.Errorf("%s already exists", name)
 		}
 
-		st, err := chooseStack(env, *apiOnly, *templ, *inertiaFW)
-		if err != nil {
+		st := stack{kind: "minimal"}
+		if *minimal {
+			if *apiOnly || *templ || *inertiaFW != "" {
+				return usagef("--minimal is an HTMX starter: drop --api, --templ and --inertia")
+			}
+		} else if st, err = chooseStack(env, *apiOnly, *templ, *inertiaFW); err != nil {
 			return err
 		}
 
@@ -100,6 +105,10 @@ func newProject(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 			}
 		case "templ":
 			if err := applyTempl(&project); err != nil {
+				return err
+			}
+		case "minimal":
+			if err := makeMinimalStarter(&project); err != nil {
 				return err
 			}
 		}
@@ -154,10 +163,16 @@ func newProject(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 			desc = "Inertia + " + st.framework + ", Tailwind, SQLite"
 		case "templ":
 			desc = "htmx " + htmxVersion + ", templ, Tailwind, SQLite"
+		case "minimal":
+			desc = "htmx " + htmxVersion + ", Tailwind, no database"
 		}
 
-		fmt.Fprintf(env.Stdout, "\nCreated %s (%s). Next:\n\n  cd %s\n  vukem migrate\n  vukem serve\n\n",
-			name, desc, name)
+		migrate := "  vukem migrate\n"
+		if st.kind == "minimal" {
+			migrate = ""
+		}
+
+		fmt.Fprintf(env.Stdout, "\nCreated %s (%s). Next:\n\n  cd %s\n%s  vukem serve\n\n", name, desc, name, migrate)
 
 		return nil
 	}

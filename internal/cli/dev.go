@@ -9,10 +9,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // cacheDir holds binaries built by delegation and serve; generated projects
@@ -107,10 +109,55 @@ func goBuild(ctx context.Context, env *Env, out string, extra ...string) error {
 		return err
 	}
 
+	tags, err := projectBuildTags(env)
+	if err != nil {
+		return err
+	}
+
 	args := append([]string{"build"}, extra...)
+	if tags != "" {
+		args = append(args, "-tags", tags)
+	}
+
 	args = append(args, "-o", out, "./cmd/app")
 
 	return tool(ctx, env, "go", args...)
+}
+
+// buildTagsFile lists Go build tags (one per line or comma-separated, "#"
+// comments) that every vukem build of the app passes to go build; the
+// minimal starter writes vukem_nosqlite there.
+const buildTagsFile = ".buildtags"
+
+var buildTag = regexp.MustCompile(`^[A-Za-z0-9_.]+$`)
+
+// projectBuildTags reads buildTagsFile and returns the tags joined with
+// commas, or "" when the file does not exist.
+func projectBuildTags(env *Env) (string, error) {
+	b, err := os.ReadFile(env.path(buildTagsFile))
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", nil
+	}
+
+	if err != nil {
+		return "", err
+	}
+
+	var tags []string
+
+	for line := range strings.Lines(string(b)) {
+		line, _, _ = strings.Cut(line, "#")
+
+		for _, tag := range strings.FieldsFunc(line, func(r rune) bool { return r == ',' || unicode.IsSpace(r) }) {
+			if !buildTag.MatchString(tag) {
+				return "", fmt.Errorf("%s: invalid build tag %q", buildTagsFile, tag)
+			}
+
+			tags = append(tags, tag)
+		}
+	}
+
+	return strings.Join(tags, ","), nil
 }
 
 func (env *Env) dirOrDot() string {
