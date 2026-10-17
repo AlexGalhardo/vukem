@@ -1364,7 +1364,9 @@ const (
 	DefaultReadTimeout       = 30 * time.Second
 	DefaultWriteTimeout      = 60 * time.Second
 	DefaultIdleTimeout       = 120 * time.Second
-	// DefaultMaxHeaderBytes is 64 KiB, not Go's 1 MiB: it bounds the
+	// DefaultMaxHeaderBytes is 64 KiB, not Go's 1 MiB
+	// (http.DefaultMaxHeaderBytes, which is only the ceiling
+	// HTTP_MAX_HEADER_BYTES accepts): it bounds the
 	// memory each connection can make the server buffer, and is still far
 	// above what browsers send and common proxies forward (nginx 8 KiB per
 	// line, Node.js 16 KiB in total). HTTP_MAX_HEADER_BYTES overrides it.
