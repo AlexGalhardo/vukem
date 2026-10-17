@@ -6,8 +6,10 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"log/slog"
 	"maps"
 	"net/http"
+	"net/netip"
 	"os"
 	"os/exec"
 	"slices"
@@ -575,9 +577,66 @@ func (a *App) newRouter() *router.Router {
 	}
 
 	r := router.New(services)
+	if a.Config.IsProduction() && len(a.proxies) == 0 {
+		r.UseServer(untrustedProxyWarning(a.Log))
+	}
 	r.Get("/up", a.healthHandler).Name("health")
 
 	return r
+}
+
+// untrustedProxyWarning logs once when a request from a private, CGNAT or
+// loopback peer carries X-Forwarded-For or X-Real-IP while TRUSTED_PROXIES
+// is empty: the app most likely runs behind a proxy, so c.IP() is the
+// proxy's address and every client shares one per-IP rate-limit bucket.
+// The headers are only detected, never trusted.
+func untrustedProxyWarning(log *slog.Logger) func(http.Handler) http.Handler {
+	var warned atomic.Bool
+
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if !warned.Load() {
+				header := ""
+
+				switch {
+				case r.Header.Get("X-Forwarded-For") != "":
+					header = "X-Forwarded-For"
+				case r.Header.Get("X-Real-IP") != "":
+					header = "X-Real-IP"
+				}
+
+				if header != "" && internalPeer(r.RemoteAddr) && warned.CompareAndSwap(false, true) {
+					log.WarnContext(
+						r.Context(),
+						"requests from a proxy carry "+header+" but TRUSTED_PROXIES is empty: "+
+							"c.IP() is the proxy address and every client shares one rate-limit bucket; "+
+							"set TRUSTED_PROXIES (and CLIENT_IP_HEADER) to the proxy's network",
+						"peer",
+						r.RemoteAddr,
+						"header",
+						header,
+					)
+				}
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// internalPeer reports whether addr (host:port) is a private, CGNAT or
+// loopback address, where reverse proxies usually connect from.
+func internalPeer(addr string) bool {
+	ap, err := netip.ParseAddrPort(addr)
+	if err != nil {
+		return false
+	}
+
+	ip := ap.Addr().Unmap()
+	// 100.64.0.0/10 (RFC 6598 shared space, Railway's edge) is not IsPrivate.
+	cgnat := ip.Is4() && ip.As4()[0] == 100 && ip.As4()[1]&0xc0 == 64
+
+	return ip.IsPrivate() || ip.IsLoopback() || cgnat
 }
 
 // Handler returns the compiled HTTP handler. It fails with ErrNotBooted

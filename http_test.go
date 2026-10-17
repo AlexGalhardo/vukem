@@ -1172,6 +1172,78 @@ func TestSecurity_A06_RateLimitIPv6PrefixFromEnv(t *testing.T) {
 	}
 }
 
+func TestSecurity_A09_WarnsOnceOnProxyHeadersWithoutTrustedProxies(t *testing.T) {
+	t.Parallel()
+
+	const warning = "every client shares one rate-limit bucket"
+
+	tests := []struct {
+		name   string
+		env    map[string]string
+		peer   string
+		header string
+		want   int // warnings after three requests
+	}{
+		{name: "railway edge", peer: "100.64.0.7:4000", header: "X-Real-IP", want: 1},
+		{name: "private peer xff", peer: "10.1.2.3:4000", header: "X-Forwarded-For", want: 1},
+		{name: "loopback peer", peer: "127.0.0.1:4000", header: "X-Forwarded-For", want: 1},
+		{name: "ula peer", peer: "[fd00::1]:4000", header: "X-Real-IP", want: 1},
+		{name: "public peer", peer: "198.51.100.7:4000", header: "X-Forwarded-For"},
+		{name: "no header", peer: "100.64.0.7:4000"},
+		{
+			name:   "proxies set",
+			env:    map[string]string{"TRUSTED_PROXIES": "100.64.0.0/24", "CLIENT_IP_HEADER": "X-Real-IP"},
+			peer:   "100.64.0.7:4000",
+			header: "X-Real-IP",
+		},
+		{
+			name:   "not production",
+			env:    map[string]string{"APP_ENV": "test"},
+			peer:   "100.64.0.7:4000",
+			header: "X-Real-IP",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			env := map[string]string{"APP_ENV": "production", "APP_URL": "https://example.com"}
+			maps.Copy(env, tt.env)
+
+			var buf bytes.Buffer
+
+			app, err := New(WithSource(testSource(env)), WithLogger(slog.New(slog.NewTextHandler(&buf, nil))),
+				WithRoutes(func(r *router.Router, _ *App) error {
+					r.Get("/ip", func(c *web.Ctx) error { return c.String(http.StatusOK, c.IP()) })
+					return nil
+				}))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			host, _, _ := net.SplitHostPort(tt.peer)
+
+			for range 3 {
+				header := map[string]string{}
+				if tt.header != "" {
+					header[tt.header] = "203.0.113.9"
+				}
+
+				// Without TRUSTED_PROXIES the header is never trusted, warning or not.
+				got := proxyReq(t, app, tt.peer, header).Body.String()
+				if tt.env["TRUSTED_PROXIES"] == "" && got != host {
+					t.Fatalf("IP() = %q, want peer %q", got, host)
+				}
+			}
+
+			if got := strings.Count(buf.String(), warning); got != tt.want {
+				t.Fatalf("warnings = %d, want %d; log %q", got, tt.want, buf.String())
+			}
+		})
+	}
+}
+
 func TestSecurity_A02_TrustForwardedProtoOnlyFromTrustedProxies(t *testing.T) {
 	t.Parallel()
 
