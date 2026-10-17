@@ -20,11 +20,17 @@ func TwoFactor(r *router.Router, app *vukem.App) error {
 		return err
 	}
 
+	// RATE_LIMIT_STORE=cache shares the limits between servers (CACHE_STORE=database or Redis).
+	limiters, err := app.RateLimiters()
+	if err != nil {
+		return err
+	}
+
 	h := account.NewTwoFactor(acc, app.Config.Name)
 	required := auth.Required(acc.Web)
 	// 5 codes per minute per user and IP: 6-digit codes cannot be guessed.
-	challenge := ratelimit.Middleware(ratelimit.NewMemory(5, time.Minute), account.TwoFactorThrottleKey)
-	confirm := ratelimit.Middleware(ratelimit.NewMemory(5, time.Minute), account.TwoFactorThrottleKey)
+	challenge := ratelimit.Middleware(limiters("two-factor.challenge", 5, time.Minute), account.TwoFactorThrottleKey)
+	confirm := ratelimit.Middleware(limiters("two-factor.confirm", 5, time.Minute), account.TwoFactorThrottleKey)
 
 	r.Get("/user/two-factor", h.Show).Name("two-factor.show").Use(required)
 	r.Post("/user/two-factor", h.Enable).Name("two-factor.enable").Use(required)

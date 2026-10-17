@@ -20,12 +20,18 @@ func Auth(r *router.Router, app *vukem.App) error {
 		return err
 	}
 
+	// RATE_LIMIT_STORE=cache shares the limits between servers (CACHE_STORE=database or Redis).
+	limiters, err := app.RateLimiters()
+	if err != nil {
+		return err
+	}
+
 	h := account.New(acc)
 	guest := auth.Guest(acc.Web)
 	required := auth.Required(acc.Web)
-	throttle := ratelimit.Middleware(ratelimit.NewMemory(5, time.Minute), account.LoginThrottleKey)
-	perAccount := ratelimit.Middleware(ratelimit.NewMemory(20, 10*time.Minute), account.LoginAccountThrottleKey)
-	mails := ratelimit.Middleware(ratelimit.NewMemory(3, time.Minute), ratelimit.ByIP)
+	throttle := ratelimit.Middleware(limiters("login", 5, time.Minute), account.LoginThrottleKey)
+	perAccount := ratelimit.Middleware(limiters("login.account", 20, 10*time.Minute), account.LoginAccountThrottleKey)
+	mails := ratelimit.Middleware(limiters("mails", 3, time.Minute), ratelimit.ByIP)
 
 	r.Get("/login", h.ShowLogin).Name("login").Use(guest)
 	r.Post("/login", h.Login).Use(guest, throttle, perAccount)
