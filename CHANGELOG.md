@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-10-17
+
+### Added
+
+- **site:** Version the docs per minor with a header switcher
+- **examples:** Add the JSON API example with typed task routes
+- **examples:** Add the SaaS example with Inertia, auth and billing
+
+### Changed
+
+- **BREAKING:** **dbtest:** Unexport the conformance fixture models
+
+### Deprecated
+
+- **orm:** Rename create hook interfaces to BeforeCreator and AfterCreator
+- **mail:** Rename WithAttachments to Attachable
+
+### Fixed
+
+- **web:** Reject same-host redirects to scheme-relative paths
+- **graphql:** Bound introspection selections
+- **graphql:** Mask 4xx errors that wrap a cause
+- **web:** Read every X-Forwarded-For line in Ctx.IP
+- **middleware:** Parse the media type before treating a body as JSON
+- **httpclient:** Block IPv6 ranges that embed IPv4 addresses
+- **grpc:** Hide the text of server-fault connect errors
+- **BREAKING:** **app:** Refuse to boot with an unknown APP_ENV
+- **BREAKING:** **ratelimit:** Key by client IP unless a verified token is available
+- **cli:** Require the second factor for generated API tokens
+- **cli:** Normalize login throttle keys and revoke tokens on reset
+- **upload:** Verify only keys that Presign could have issued
+- **upload:** Strip format characters from sanitized file names
+- **upload:** Count nameless multipart parts toward the limits
+- **middleware:** Handle an empty path in the maintenance bypass check
+- **mail:** Reject attachment content types with line breaks
+- **auth:** Consume remember-me tokens atomically
+
+### Security
+
+- **web:** Add package overviews and examples for the http core
+- **repo:** Publish the 1.x stability policy, release cadence and upgrade guides
+- **repo:** Rename the agent security rules to secure-coding.md
+- **BREAKING:** **hash:** Replace DefaultArgon2 var with DefaultArgon2Params
+- **repo:** Add fuzz targets for untrusted-input parsers
+- **web:** Check the cleaned redirect path in SafeRedirect
+- **storage:** Hide dot directories and sandbox served files
+- **repo:** Name the test or mechanism behind every security default
+- **security:** Record the B.5.2 security review
+
 ## [0.20.1] - 2026-10-17
 
 ### Changed
@@ -346,7 +395,8 @@ Project foundation. No framework code yet; see [PLAN.md](PLAN.md) for the roadma
 - README, MIT license, CONTRIBUTING, SECURITY and CODE_OF_CONDUCT.
 - Agent configuration: `AGENTS.md`, `CLAUDE.md`, path-scoped `.claude/rules/`, Go skills and project settings.
 
-[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.20.1...HEAD
+[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.21.0...HEAD
+[0.21.0]: https://github.com/AlexGalhardo/vukem/compare/v0.20.1...v0.21.0
 [0.20.1]: https://github.com/AlexGalhardo/vukem/compare/v0.20.0...v0.20.1
 [0.20.0]: https://github.com/AlexGalhardo/vukem/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/AlexGalhardo/vukem/compare/v0.18.0...v0.19.0
