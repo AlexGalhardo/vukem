@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/AlexGalhardo/vukem/errs"
 	"github.com/AlexGalhardo/vukem/storage"
+	"github.com/AlexGalhardo/vukem/z"
 )
 
 type tusEnv struct {
@@ -99,10 +101,11 @@ func newTus(t *testing.T, mutate func(*TusConfig)) *tusEnv {
 	return env
 }
 
-// tusRes is the part of a response the tests check (the body is drained).
+// tusRes is the part of a response the tests check.
 type tusRes struct {
 	StatusCode int
 	Header     http.Header
+	Body       string
 }
 
 func (e *tusEnv) do(t *testing.T, method, target string, body io.Reader, headers map[string]string) tusRes {
@@ -129,11 +132,11 @@ func (e *tusEnv) do(t *testing.T, method, target string, body io.Reader, headers
 		t.Fatal(err)
 	}
 
-	_, _ = io.Copy(io.Discard, res.Body)
+	b, _ := io.ReadAll(res.Body)
 	_ = res.Body.Close()
 	<-e.done
 
-	return tusRes{StatusCode: res.StatusCode, Header: res.Header}
+	return tusRes{StatusCode: res.StatusCode, Header: res.Header, Body: string(b)}
 }
 
 func (e *tusEnv) create(t *testing.T, length int, filename string) string {
@@ -304,6 +307,54 @@ func TestTusCompletionValidatesContent(t *testing.T) {
 
 	if res := env.do(t, http.MethodHead, loc, nil, nil); res.StatusCode != http.StatusNotFound {
 		t.Errorf("HEAD after rejected completion = %d, want 404", res.StatusCode)
+	}
+}
+
+// z validation errors from Authorize and OnComplete are 422s: a
+// z.FieldError message reaches the client, a plain Refine error does not.
+func TestTusZValidationErrors(t *testing.T) {
+	t.Parallel()
+
+	_, refineErr := z.String().Refine(func(string) error { return errors.New("db: 10.0.0.5") }).Parse("x")
+
+	tests := []struct {
+		name     string
+		mutate   func(*TusConfig)
+		wantBody string
+	}{
+		{"authorize field error", func(cfg *TusConfig) {
+			cfg.Authorize = func(*http.Request) error { return z.FieldError("project", "Unknown project.") }
+		}, "Unprocessable Entity"}, // Authorize errors never carry text
+		{"complete field error", func(cfg *TusConfig) {
+			cfg.OnComplete = func(context.Context, TusInfo, func() (io.ReadCloser, error)) error {
+				return z.FieldError("file", "The file is not a PNG image.")
+			}
+		}, "The file is not a PNG image."},
+		{"complete plain refine error", func(cfg *TusConfig) {
+			cfg.OnComplete = func(context.Context, TusInfo, func() (io.ReadCloser, error)) error { return refineErr }
+		}, "The value field is invalid."},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			env := newTus(t, tt.mutate)
+
+			var res tusRes
+			if tt.name == "authorize field error" {
+				res = env.do(t, http.MethodPost, "/files/", nil, map[string]string{"Upload-Length": "1"})
+			} else {
+				loc := env.create(t, 1, "a.png")
+				res = env.do(t, http.MethodPatch, loc, strings.NewReader("x"),
+					map[string]string{"Content-Type": "application/offset+octet-stream", "Upload-Offset": "0"})
+			}
+
+			if res.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(res.Body, tt.wantBody) ||
+				strings.Contains(res.Body, "10.0.0.5") {
+				t.Errorf("status = %d body %q, want 422 with %q", res.StatusCode, res.Body, tt.wantBody)
+			}
+		})
 	}
 }
 

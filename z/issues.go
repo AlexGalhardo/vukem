@@ -24,6 +24,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net/http"
 	"regexp"
 	"slices"
 	"strings"
@@ -56,11 +57,17 @@ type Issue struct {
 	Message string `json:"message"`
 	// Key is the message key Message was built from ("required",
 	// "too_small.string", "string.email"...), or the key given to
-	// FieldErrorKey; empty for other custom messages (Message overrides,
-	// Refine and Custom errors). Localize uses it.
+	// FieldErrorKey, or "invalid" for a Refine or Custom error that is not a
+	// FieldError; empty for other custom messages (Message overrides,
+	// FieldError). Localize uses it.
 	Key string `json:"-"`
 	// Params holds the values used by the message, e.g. {"min": 3}.
 	Params map[string]any `json:"params,omitempty"`
+	// Err is the error a Refine callback or Custom parser returned when it
+	// was not a FieldError: its text may be internal (a database error), so
+	// Message is the generic "invalid" message and Err is for server logs
+	// only. Return FieldError or FieldErrorKey for a client-facing message.
+	Err error `json:"-"`
 }
 
 // Issues is the error returned by Parse. It lists every issue found, not
@@ -108,12 +115,25 @@ func (is Issues) First(path string) string {
 	return ""
 }
 
-// AsIssues extracts Issues from err.
-func AsIssues(err error) (Issues, bool) {
-	var is Issues
-	ok := errors.As(err, &is)
+// HTTPStatus reports 422, so errs.Status and the web error handler treat
+// Issues returned from a handler as a validation error.
+func (is Issues) HTTPStatus() int { return http.StatusUnprocessableEntity }
 
-	return is, ok
+// AsIssues extracts Issues from err. An error from [FieldError] or
+// [FieldErrorKey] yields its single issue.
+func AsIssues(err error) (Issues, bool) {
+	if is, ok := errors.AsType[Issues](err); ok {
+		return is, true
+	}
+
+	if _, ok := errors.AsType[*fieldError](err); ok {
+		var c pctx
+		c.addErr("", err)
+
+		return c.issues, true
+	}
+
+	return nil, false
 }
 
 // FieldError returns an error for Refine callbacks that points at a field
@@ -142,7 +162,16 @@ type fieldError struct {
 
 func (e *fieldError) Error() string { return e.path + ": " + e.message }
 
+// HTTPStatus reports 422: a FieldError returned from a handler (not only
+// from Refine) is a validation error.
+func (*fieldError) HTTPStatus() int { return http.StatusUnprocessableEntity }
+
+// keyInvalid is the message key of Refine and Custom errors that are not a
+// FieldError.
+const keyInvalid = "invalid"
+
 var defaultMessages = map[string]string{
+	keyInvalid:           "The {field} field is invalid.",
 	CodeRequired:         "The {field} field is required.",
 	CodeInvalidType:      "The {field} field must be {expected}.",
 	CodeInvalidEnum:      "The selected {field} is invalid.",

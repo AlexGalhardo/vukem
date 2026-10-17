@@ -1,9 +1,13 @@
 package z
 
 import (
+	"errors"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 )
 
 type localizeInput struct {
@@ -29,7 +33,12 @@ func TestIssues_Key(t *testing.T) {
 		{"format", String().Email(), "nope", []string{"string.email"}},
 		{"positive", Int().Positive(), 0, []string{"too_small.positive"}},
 		{"override clears key", String().Min(3).Message(CodeTooSmall, "short"), "ab", []string{""}},
-		{"refine is custom", String().Refine(func(string) error { return stringError("bad") }), "x", []string{""}},
+		{
+			"plain refine error is generic",
+			String().Refine(func(string) error { return stringError("bad") }),
+			"x",
+			[]string{"invalid"},
+		},
 		{
 			"tags", For[localizeInput](),
 			map[string]any{"name": "", "age": 0, "email": "x", "tags": []any{"a", "b"}},
@@ -277,7 +286,13 @@ func TestCustom_FieldError(t *testing.T) {
 			FieldErrorKey("sub", "", "bad", nil),
 			Issues{{Path: "sub", Code: CodeCustom, Message: "bad"}},
 		},
-		{"plain error", stringError("plain"), Issues{{Code: CodeCustom, Message: "plain"}}},
+		{
+			"plain error is generic",
+			stringError("plain"),
+			Issues{
+				{Code: CodeCustom, Key: "invalid", Message: "The value field is invalid.", Err: stringError("plain")},
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -287,8 +302,126 @@ func TestCustom_FieldError(t *testing.T) {
 			_, err := Custom(func(any) (string, error) { return "", tt.err }).Parse("x")
 
 			got, _ := AsIssues(err)
-			if diff := cmp.Diff(tt.want, got); diff != "" {
+			if diff := cmp.Diff([]Issue(tt.want), []Issue(got), cmpopts.EquateErrors()); diff != "" {
 				t.Errorf("Custom.Parse issues (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestAsIssues_FieldError(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		err  error
+		want Issues
+	}{
+		{
+			"plain",
+			FieldError("email", "Already taken."),
+			Issues{{Path: "email", Code: CodeCustom, Message: "Already taken."}},
+		},
+		{
+			"keyed", FieldErrorKey("password_confirmation", "confirmed", "The {field} field does not match {other}.",
+				map[string]any{"other": "password"}),
+			Issues{{
+				Path:    "password_confirmation",
+				Code:    CodeCustom,
+				Key:     "confirmed",
+				Message: "The password confirmation field does not match password.",
+				Params:  map[string]any{"other": "password"},
+			}},
+		},
+		{
+			"wrapped", fmt.Errorf("checkout: %w", FieldError("qty", "Out of stock.")),
+			Issues{{Path: "qty", Code: CodeCustom, Message: "Out of stock."}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, ok := AsIssues(tt.err)
+			if !ok {
+				t.Fatalf("AsIssues(%v) ok = false, want true", tt.err)
+			}
+
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("AsIssues (-want +got):\n%s", diff)
+			}
+
+			if sc, ok := errors.AsType[interface {
+				error
+				HTTPStatus() int
+			}](tt.err); !ok || sc.HTTPStatus() != 422 {
+				t.Errorf("HTTPStatus of %v = missing or not 422", tt.err)
+			}
+		})
+	}
+
+	if _, ok := AsIssues(errors.New("boom")); ok {
+		t.Error("AsIssues(plain error) ok = true, want false")
+	}
+
+	if got := (Issues{}).HTTPStatus(); got != 422 {
+		t.Errorf("Issues.HTTPStatus() = %d, want 422", got)
+	}
+}
+
+func TestSecurity_A10_RefineErrorTextNotLeaked(t *testing.T) {
+	t.Parallel()
+
+	secret := errors.New("db: connection refused to 10.0.0.5")
+
+	tests := []struct {
+		name  string
+		parse func() error
+		want  Issues
+	}{
+		{
+			"refine",
+			func() error {
+				_, err := Struct[struct {
+					Name string `json:"name"`
+				}](Shape{"name": String().Refine(func(string) error { return secret })}).Parse(map[string]any{"name": "x"})
+
+				return err
+			},
+			Issues{
+				{Path: "name", Code: CodeCustom, Key: "invalid", Message: "The name field is invalid.", Err: secret},
+			},
+		},
+		{
+			"custom parser", func() error {
+				_, err := Custom(func(any) (string, error) { return "", secret }).Parse("x")
+				return err
+			},
+			Issues{{Code: CodeCustom, Key: "invalid", Message: "The value field is invalid.", Err: secret}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := tt.parse()
+
+			got, ok := AsIssues(err)
+			if !ok {
+				t.Fatalf("Parse error = %v, want Issues", err)
+			}
+
+			if diff := cmp.Diff([]Issue(tt.want), []Issue(got), cmpopts.EquateErrors()); diff != "" {
+				t.Errorf("issues (-want +got):\n%s", diff)
+			}
+
+			loc := got.Localize(func(key string) (string, bool) {
+				return "O campo {field} é inválido.", key == "invalid"
+			})
+			if loc[0].Message == got[0].Message || strings.Contains(err.Error(), "10.0.0.5") {
+				t.Errorf("Localize = %q, Error() = %q; want a translated message and no raw text", loc[0].Message, err)
 			}
 		})
 	}

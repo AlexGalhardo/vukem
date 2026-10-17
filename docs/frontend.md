@@ -228,7 +228,7 @@ r.Use(in.Middleware) // Vary, version check, 302→303, fragment redirects
 // Root view (resources/views/app.html): {{.Head}} in <head>, {{.Inertia}} in <body>.
 ```
 
-`inertia.Share(c.Context(), key, value)` adds per-request shared props (`Config.Shared` holds global ones); `inertia.Location(c, url)` forces a full visit; `inertia.PreserveFragment(c)` before a redirect keeps the URL fragment. Prop values of type `func(context.Context) (any, error)` resolve lazily.
+`inertia.Share(c.Context(), key, value)` adds per-request shared props (`Config.Shared` holds global ones); `inertia.Location(c, url)` forces a full visit; `inertia.PreserveFragment(c)` before a redirect keeps the URL fragment; `inertia.RenderStatus(c, status, component, props)` renders a page with a 2xx/4xx/5xx status (error pages; 204, 205, 304, 1xx, 3xx and 409 are refused). Prop values of type `func(context.Context) (any, error)` resolve lazily.
 
 ```go
 return inertia.Render(c, "Posts/Index", inertia.Props{

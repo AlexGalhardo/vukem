@@ -225,6 +225,20 @@ var errNoMiddleware = errs.Wrap(http.StatusInternalServerError,
 // Render responds with the page component and props: JSON for Inertia
 // requests, the root view otherwise.
 func Render(c *web.Ctx, component string, props Props) error {
+	return RenderStatus(c, http.StatusOK, component, props)
+}
+
+// RenderStatus is Render with an HTTP status, for error pages (404, 410,
+// 503) or a 422 page. The Inertia client renders any response carrying
+// X-Inertia as a page, whatever its status. Statuses without a body (1xx,
+// 204, 205, 304), redirects and 409 (the protocol's version and location
+// responses) are refused with an error.
+func RenderStatus(c *web.Ctx, status int, component string, props Props) error {
+	if !pageStatus(status) {
+		return errs.Wrap(http.StatusInternalServerError,
+			fmt.Errorf("inertia: RenderStatus cannot answer status %d", status))
+	}
+
 	st := stateFrom(c.Context())
 	if st == nil {
 		return errNoMiddleware
@@ -237,11 +251,12 @@ func Render(c *web.Ctx, component string, props Props) error {
 
 	if IsInertia(c.Request()) {
 		c.SetHeader(HeaderInertia, "true")
-		return c.JSON(http.StatusOK, p)
+		return c.JSON(status, p)
 	}
 
 	if head, body, ok := st.in.serverRender(c, st, p); ok {
-		return c.Render(st.in.cfg.RootView, RootData{Page: p, Inertia: trustedHTML(body), Head: trustedHTML(head)})
+		return c.Render(st.in.cfg.RootView,
+			RootData{Page: p, Inertia: trustedHTML(body), Head: trustedHTML(head)}, web.WithStatus(status))
 	}
 
 	script, err := pageScript(p)
@@ -251,7 +266,18 @@ func Render(c *web.Ctx, component string, props Props) error {
 
 	html := script + `<div id="` + st.in.cfg.RootID + `"></div>`
 
-	return c.Render(st.in.cfg.RootView, RootData{Page: p, Inertia: trustedHTML(html)})
+	return c.Render(st.in.cfg.RootView, RootData{Page: p, Inertia: trustedHTML(html)}, web.WithStatus(status))
+}
+
+func pageStatus(code int) bool {
+	switch {
+	case code == http.StatusNoContent, code == http.StatusResetContent, code == http.StatusConflict:
+		return false
+	case code >= 200 && code < 300, code >= 400 && code < 600:
+		return true
+	default:
+		return false
+	}
 }
 
 func (st *state) page(c *web.Ctx, component string, props Props) (*Page, error) {

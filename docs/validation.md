@@ -87,7 +87,7 @@ Modifiers on every schema:
 | `Optional()` | key may be absent; target must be a pointer, or the zero value is kept |
 | `Nullable()` | `null` accepted (pointer target) |
 | `Default(v)` | value used when absent |
-| `Refine(fn)` | custom check on the parsed value; return `z.FieldError` / `z.FieldErrorKey` to target a field |
+| `Refine(fn)` | custom check on the parsed value; return `z.FieldError` / `z.FieldErrorKey` to target a field (other errors get a generic message) |
 | `Transform(fn)` | map the parsed value (same type), after the checks |
 | `Message(code, msg)` | override a message |
 | `Describe(text)` | description for OpenAPI/TypeScript |
@@ -131,7 +131,7 @@ Issues are collected for the whole input (not first-error-only). The web error h
 
 ## Translated messages
 
-Every built-in message has a key, `Issue.Key`: the detailed key when there is one (`too_small.string`, `string.email`, `too_small.positive`), else the code (`required`, `invalid_enum`). Custom messages (`Message` overrides, plain `Refine`/`Custom` errors, `z.FieldError`) have no key and are never translated; return `z.FieldErrorKey` instead to make them translatable.
+Every built-in message has a key, `Issue.Key`: the detailed key when there is one (`too_small.string`, `string.email`, `too_small.positive`), else the code (`required`, `invalid_enum`). Custom messages (`Message` overrides, `z.FieldError`) have no key and are never translated (plain `Refine`/`Custom` errors get the generic key `invalid`); return `z.FieldErrorKey` instead to make them translatable.
 
 `Issues.Localize(lookup)` rebuilds messages from translated templates: it tries `lookup(Key)`, then `lookup(Code)`, and replaces `{field}` with `lookup("attributes.<last path segment>")` when present (else the humanized name). Untranslated issues keep their English message.
 
@@ -167,6 +167,18 @@ Refine callbacks (and `Custom` parsers) make their messages translatable with `z
     "confirmed": "A {field} não confere.",
     "attributes": { "password_confirmation": "confirmação de senha" }
   }
+}
+```
+
+A handler can also return `z.FieldError`, `z.FieldErrorKey` or `z.Issues` directly (wrapped with `%w` too), for checks that need the database or other services: the default error handler treats them like `*errs.ValidationError`, so the client gets a 422 with field errors (problem+json for JSON clients; with sessions, classic and Inertia form posts flash the errors and redirect back; an HTML page otherwise, and always for `GET`/`HEAD`, which never redirect back), localized when the i18n middleware runs. `z.AsIssues` returns the single issue of a `FieldError`, and `errs.Status` reports 422 for both. These 422s are logged at Info.
+
+When the data being validated is not client input (a database row, an upstream API response), wrap the error so it is not reported to the client as its own mistake: `return errs.Wrap(http.StatusInternalServerError, err)` answers a plain 500 with no field errors.
+
+Return `z.FieldError` or `z.FieldErrorKey` from `Refine` and `Custom` for any message meant for the client. Any other error fails closed: the issue gets the generic message "The {field} field is invalid." (key `invalid`, so `validation.invalid` translates it), its text stays in `Issue.Err`, and `web.Parse`/the error handler log it at Warn. Before v0.25 the raw `err.Error()` text was the message.
+
+```go
+if taken {
+	return z.FieldErrorKey("email", "unique", "The {field} has already been taken.", nil)
 }
 ```
 

@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 
 	"github.com/AlexGalhardo/vukem/errs"
@@ -24,7 +25,7 @@ func Parse[T any](c *Ctx, schema z.Schema[T]) (T, error) {
 		return zero, err
 	}
 
-	return parseWith(c.Context(), schema, input)
+	return parseWith(c.Context(), c.Log(), schema, input)
 }
 
 // Bind parses the request input into T using the schema derived from T's
@@ -33,7 +34,7 @@ func Bind[T any](c *Ctx) (T, error) { return Parse(c, z.For[T]()) }
 
 // ParseQuery parses only the query string.
 func ParseQuery[T any](c *Ctx, schema z.Schema[T]) (T, error) {
-	return parseWith(c.Context(), schema, c.QueryInput())
+	return parseWith(c.Context(), c.Log(), schema, c.QueryInput())
 }
 
 // ParseParams parses the named path parameters ({id}, {slug}...).
@@ -45,7 +46,7 @@ func ParseParams[T any](c *Ctx, schema z.Schema[T], names ...string) (T, error) 
 		}
 	}
 
-	v, err := parseWith(c.Context(), schema, input)
+	v, err := parseWith(c.Context(), c.Log(), schema, input)
 
 	// Malformed path parameters name no resource.
 	if _, invalid := err.(*errs.ValidationError); invalid { //nolint:errorlint // returned unwrapped by parseWith
@@ -59,24 +60,50 @@ func ParseParams[T any](c *Ctx, schema z.Schema[T], names ...string) (T, error) 
 // become a 422 ValidationError). Messages stay in English: it has no
 // request context to localize them (see WithIssueLocalizer).
 func ParseInput[T any](schema z.Schema[T], input map[string]any) (T, error) {
-	return parseWith(context.Background(), schema, input)
+	return parseWith(context.Background(), nil, schema, input)
 }
 
-func parseWith[T any](ctx context.Context, schema z.Schema[T], input any) (T, error) {
+func parseWith[T any](ctx context.Context, log *slog.Logger, schema z.Schema[T], input any) (T, error) {
 	v, err := schema.Parse(input)
 	if err == nil {
 		return v, nil
 	}
 
-	if is, ok := z.AsIssues(err); ok {
-		if localize := IssueLocalizer(ctx); localize != nil {
-			is = localize(is)
-		}
-
-		return v, &errs.ValidationError{Fields: is.Fields()}
+	if verr := issuesValidation(ctx, log, err); verr != nil {
+		return v, verr
 	}
 
 	return v, err
+}
+
+// issuesValidation turns z Issues (or a z.FieldError) in err into a
+// localized *errs.ValidationError, or returns nil. Errors wrapped with
+// another status (errs.Wrap(500, issues) for internal data) stay as they
+// are. The raw errors of plain Refine/Custom failures go to log (nil: not
+// logged), never to the client.
+func issuesValidation(ctx context.Context, log *slog.Logger, err error) *errs.ValidationError {
+	if errs.Status(err) != http.StatusUnprocessableEntity {
+		return nil
+	}
+
+	is, ok := z.AsIssues(err)
+	if !ok {
+		return nil
+	}
+
+	if log != nil {
+		for _, i := range is {
+			if i.Err != nil {
+				log.WarnContext(ctx, "validation callback error hidden from the client", "path", i.Path, "err", i.Err)
+			}
+		}
+	}
+
+	if localize := IssueLocalizer(ctx); localize != nil {
+		is = localize(is)
+	}
+
+	return &errs.ValidationError{Fields: is.Fields()}
 }
 
 // JSONWith writes v as JSON after checking it against schema when

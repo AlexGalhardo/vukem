@@ -205,17 +205,81 @@ type SessionConfig struct {
 // id, logging and security headers on the server; the body limit on
 // routes. There are no sessions or CSRF: API clients authenticate with
 // tokens (see auth.TokenGuard), and CORS is configured by the routes.
+// APIMiddlewareWith customizes the stack.
 func APIMiddleware(app *App, r *router.Router) error {
+	return APIMiddlewareWith(app, r, APIMiddlewareOptions{})
+}
+
+// APIMiddlewareOptions customizes APIMiddlewareWith. The zero value
+// installs the same stack as APIMiddleware.
+type APIMiddlewareOptions struct {
+	// SecureHeaders adjusts the SecureHeaders config after Vukem's defaults
+	// are set, e.g. to add CSPSources or a ReportURI. The result is
+	// validated at boot.
+	SecureHeaders func(cfg *middleware.SecureHeadersConfig)
+	// I18n configures the locale resolver installed when WithTranslations
+	// was given. Nil resolves from the query and Accept-Language only (API
+	// clients send no cookies or sessions). Validated at boot; needs
+	// WithTranslations.
+	I18n *i18n.MiddlewareConfig
+}
+
+// APIMiddlewareWith installs the APIMiddleware stack with opts, plus the
+// i18n locale resolver when WithTranslations was given, so 422 messages
+// follow the request locale.
+func APIMiddlewareWith(app *App, r *router.Router, opts APIMiddlewareOptions) error {
+	localeMW, err := localeMiddleware(app, opts.I18n,
+		i18n.MiddlewareConfig{Order: []i18n.Source{i18n.SourceQuery, i18n.SourceHeader}})
+	if err != nil {
+		return err
+	}
+
+	secure := secureHeadersConfig(app)
+	if opts.SecureHeaders != nil {
+		opts.SecureHeaders(&secure)
+	}
+
+	if err := secure.Validate(); err != nil {
+		return fmt.Errorf("vukem: secure headers: %w", err)
+	}
+
 	r.UseServer(
 		middleware.Recover(),
 		middleware.RequestID(),
 		middleware.Maintenance(maintenanceConfig(app)),
 		middleware.Logger(app.Log),
-		middleware.SecureHeaders(secureHeadersConfig(app)),
+		middleware.SecureHeaders(secure),
 	)
 	r.Use(middleware.BodyLimit(web.DefaultMaxBody))
 
+	if localeMW != nil {
+		r.Use(localeMW)
+	}
+
 	return nil
+}
+
+// localeMiddleware builds the i18n resolver from cfg (def when nil); it is
+// nil without WithTranslations, where a cfg is an error.
+func localeMiddleware(app *App, cfg *i18n.MiddlewareConfig, def i18n.MiddlewareConfig) (router.Middleware, error) {
+	if app.I18n == nil {
+		if cfg != nil {
+			return nil, errors.New("vukem: i18n middleware options have no effect without WithTranslations")
+		}
+
+		return nil, nil
+	}
+
+	if cfg != nil {
+		def = *cfg
+	}
+
+	mw, err := i18n.NewMiddleware(app.I18n, def)
+	if err != nil {
+		return nil, fmt.Errorf("vukem: i18n: %w", err)
+	}
+
+	return mw, nil
 }
 
 // Sessions returns the session manager, building it from SESSION_* on
@@ -350,12 +414,22 @@ type MiddlewareOptions struct {
 	// exempt from CSRF checks, e.g. signed webhooks. Each bypass is logged
 	// at boot.
 	CSRFBypass []string
+	// I18n configures the locale resolver installed when WithTranslations
+	// was given (nil: i18n.MiddlewareConfig defaults), e.g. its sources and
+	// their order, or the selectable locales. It is validated at boot and
+	// needs WithTranslations.
+	I18n *i18n.MiddlewareConfig
 }
 
 // DefaultMiddlewareWith installs the DefaultMiddleware stacks with opts.
 func DefaultMiddlewareWith(app *App, r *router.Router, opts MiddlewareOptions) error {
 	if opts.Stateless && len(opts.SessionBypass) > 0 {
 		return errors.New("vukem: SessionBypass has no effect with Stateless (no sessions anywhere)")
+	}
+
+	localeMW, err := localeMiddleware(app, opts.I18n, i18n.MiddlewareConfig{})
+	if err != nil {
+		return err
 	}
 
 	secure := secureHeadersConfig(app)
@@ -410,8 +484,8 @@ func DefaultMiddlewareWith(app *App, r *router.Router, opts MiddlewareOptions) e
 
 	r.Use(append(routerMW, csrfMW)...)
 
-	if app.I18n != nil {
-		r.Use(i18n.Middleware(app.I18n, i18n.MiddlewareConfig{}))
+	if localeMW != nil {
+		r.Use(localeMW)
 	}
 
 	return nil

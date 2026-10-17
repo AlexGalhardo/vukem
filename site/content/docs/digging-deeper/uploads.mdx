@@ -53,7 +53,7 @@ app.OnShutdown(func(context.Context) error { return tus.Close() })
 
 - `POST` checks `Upload-Length` and `Upload-Metadata` and answers 201 with a random `Location`; `HEAD` returns the offset; `PATCH` needs `Tus-Resumable: 1.0.0`, `Content-Type: application/offset+octet-stream` and the current `Upload-Offset`, and appends the body as it streams. An interrupted request keeps what arrived. Concurrent `PATCH`es on one upload get 423.
 - The upload id is the capability, so `Authorize` is required (boot error when nil; return `nil` explicitly to allow everyone).
-- Abandoned uploads expire after `Expiry` (24h); schedule `tus.Cleanup(ctx)` to delete them. When the last byte arrives `OnComplete` runs; its error goes to the client (422 for validation) and the partial data is deleted either way.
+- Abandoned uploads expire after `Expiry` (24h); schedule `tus.Cleanup(ctx)` to delete them. When the last byte arrives `OnComplete` runs; its error goes to the client (422 for validation) and the partial data is deleted either way. Validation means `*errs.ValidationError`, `z.FieldError` or `z.Issues` (the first message is the response text; a plain `Refine` error reads "The value field is invalid."); an `Authorize` error keeps its 4xx status (422 for z errors, anything else 403) but never its text.
 
 ## Direct-to-S3 uploads
 

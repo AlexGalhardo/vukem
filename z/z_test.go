@@ -529,7 +529,7 @@ func TestCustomAndParseJSON(t *testing.T) {
 		return []byte(s), nil
 	})
 
-	if _, err := hex.Parse("abc"); err == nil || issuesOf(t, err)[0].Message != "must have an even length" {
+	if _, err := hex.Parse("abc"); err == nil || issuesOf(t, err)[0].Err.Error() != "must have an even length" {
 		t.Fatalf("custom = %v", err)
 	}
 	if got, err := hex.Optional().Parse(nil); err != nil || got != nil {

@@ -35,6 +35,12 @@ vukem.WithInertia(inertia.Config{})              // bootstrap/app.go → app.Ine
 r.Use(app.Inertia.Middleware, shareProps(app))   // routes/web.go: Vary, version check, 302→303, fragment redirects
 ```
 
+`inertia.RenderStatus(c, status, component, props)` renders a page with another status, such as a 404, 410 or 503 error page: the Inertia client shows any response carrying `X-Inertia` as a page. Do not call `c.Status` before `Render`, which commits the headers. Statuses without a body (1xx, 204, 205, 304), redirects and 409 (reserved by the protocol) return an error.
+
+```go
+return inertia.RenderStatus(c, http.StatusGone, "Errors/Gone", inertia.Props{"reason": "expired"})
+```
+
 The root view `resources/views/app.html` holds the CSP nonce meta, `{{vite}}`, `{{.Head}}` in `<head>` and `{{.Inertia}}` in `<body>`. The initial page is a `<script data-page="app" type="application/json">` with `/` escaped.
 
 ## Props

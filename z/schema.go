@@ -42,11 +42,20 @@ func (c *pctx) add(path, code string, msg string, params map[string]any) {
 }
 
 // addErr records the error a Refine callback or Custom parser returned at
-// path, honoring FieldError and FieldErrorKey.
+// path, honoring FieldError and FieldErrorKey; any other error gets the
+// generic "invalid" message and is kept in Issue.Err.
 func (c *pctx) addErr(path string, err error) {
 	fe, ok := errors.AsType[*fieldError](err)
 	if !ok {
-		c.add(path, CodeCustom, err.Error(), nil)
+		// Fail closed: the text of an arbitrary error may be internal.
+		c.issues = append(c.issues, Issue{
+			Path:    path,
+			Code:    CodeCustom,
+			Key:     keyInvalid,
+			Message: render(defaultMessages[keyInvalid], path, nil),
+			Err:     err,
+		})
+
 		return
 	}
 

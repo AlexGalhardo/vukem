@@ -56,7 +56,18 @@ b.T("pt-BR", "posts.count", "count", 3)                 // a Bundle directly
 4. `Accept-Language` (q-values, at most 16 entries)
 5. the default locale
 
-Candidates must be valid tags matching an available catalog (exact, shorter form, then same language); invalid input is ignored. The middleware stores the bundle and locale in the context (`i18n.Locale`, `i18n.WithLocale`, `i18n.BundleFrom`), sets `Content-Language`, and adds `Vary: Accept-Language` when the header was consulted. Rename or disable (`"-"`) the sources with `Query`, `Cookie` and `SessionKey`. To remember a user's choice, set the cookie or session value yourself.
+Candidates must be valid tags matching an available catalog (exact, shorter form, then same language); invalid input is ignored. The middleware stores the bundle and locale in the context (`i18n.Locale`, `i18n.WithLocale`, `i18n.BundleFrom`), sets `Content-Language`, and adds `Vary: Cookie` when the cookie or session was consulted and `Vary: Accept-Language` when the header was (a locale from the query needs no `Vary`: the URL is the cache key). Rename or disable (`"-"`) the sources with `Query`, `Cookie` and `SessionKey`. To remember a user's choice, set the cookie or session value yourself.
+
+`Order` picks the sources and their order (a source left out is off), and `Locales` limits the locales a request can select (it must include the default, which stays the fallback). `cfg.Validate(bundle)` reports unknown or repeated sources and locales without a catalog. An invalid config fails closed: `i18n.NewMiddleware` returns the error and `i18n.Middleware` panics at construction. `vukem.DefaultMiddlewareWith` takes the config as `MiddlewareOptions.I18n` (and `APIMiddlewareWith` as `APIMiddlewareOptions.I18n`) and returns the error at boot:
+
+```go
+err := vukem.DefaultMiddlewareWith(app, r, vukem.MiddlewareOptions{
+	I18n: &i18n.MiddlewareConfig{
+		Order:   []i18n.Source{i18n.SourceQuery, i18n.SourceHeader}, // no cookie, no session
+		Locales: []string{"en", "pt-BR"},
+	},
+})
+```
 
 ## Validation messages
 
