@@ -189,7 +189,11 @@ func (w *limitWalker) multiplier(f *field) int {
 		}
 
 		if n, ok := toInt(v); ok && n > 1 {
-			return int(min(n, 1<<20))
+			if n > 1<<20 {
+				return 1 << 20
+			}
+
+			return int(n)
 		}
 	}
 

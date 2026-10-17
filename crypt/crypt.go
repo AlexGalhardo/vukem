@@ -27,6 +27,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"math"
 )
 
 // KeySize is the required key length in bytes (AES-256).
@@ -95,7 +96,13 @@ func keyID(raw []byte) [keyIDSize]byte {
 func (e *Encrypter) Seal(plaintext, ad []byte) string {
 	k := e.keys[0]
 
-	out := make([]byte, headerSize, headerSize+nonceSize+len(plaintext)+tagSize)
+	// The capacity is only a hint: skip it rather than overflow on huge inputs.
+	size := headerSize + nonceSize + tagSize
+	if len(plaintext) <= math.MaxInt-size {
+		size += len(plaintext)
+	}
+
+	out := make([]byte, headerSize, size)
 	out[0] = version
 	copy(out[1:], k.id[:])
 
