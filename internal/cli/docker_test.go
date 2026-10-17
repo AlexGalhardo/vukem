@@ -42,6 +42,7 @@ func TestWriteDocker(t *testing.T) {
 			kind: "inertia",
 			pm:   "bun",
 			want: []string{
+				// bun.lock* also matches the older binary bun.lockb.
 				"FROM oven/bun:1.4.3-alpine AS assets", "COPY package.json bun.lock* ./",
 				"RUN bun install --frozen-lockfile", "RUN bun run build",
 			},

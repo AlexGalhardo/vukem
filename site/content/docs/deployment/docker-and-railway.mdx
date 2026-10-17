@@ -35,7 +35,7 @@ curl -i http://localhost:3000/up
 
 The image's entry point is the app binary, so any command runs the same way: `docker run --rm -e APP_KEY=... blog migrate`, `... blog route:list`, `... blog about`. `/up` answers `200` while the app is up; `/up?checks=1` also runs the health checks of providers (database, Redis, MongoDB).
 
-The default `DATABASE_URL` is SQLite in `storage/` (`/app/storage` in the image). Mount a volume there to keep it across restarts, or use PostgreSQL.
+The default `DATABASE_URL` is SQLite in `storage/` (`/app/storage` in the image). Mount a volume there to keep it across restarts, or use PostgreSQL. The app runs as uid `10001`, so the mount must be writable by it: a new named volume (`-v blog-storage:/app/storage`) copies the ownership of the image's `/app/storage`, but a bind mount or a volume created elsewhere keeps its owner, often root. Then `chown -R 10001:10001` the directory on the host, or run the container with `--user 0` (less isolation).
 
 ## Configure production
 
@@ -132,7 +132,7 @@ The web service runs only the HTTP server (and the in-memory queue). Run the sch
 
 ### Volumes
 
-For SQLite or local uploads, attach a volume at `/app/storage`. The image runs as a non-root user and Railway volumes are mounted as root, so set `RAILWAY_RUN_UID=0` on the service ([volumes](https://docs.railway.com/volumes/reference)). Migrations then have to run in the app container, because pre-deploy commands get no volume: set the start command to `/bin/sh -c "/app/app migrate && exec /app/app"` (Railway runs start commands in exec form, without a shell, and they replace the image's `ENTRYPOINT`: [start command](https://docs.railway.com/deployments/start-command)).
+For SQLite or local uploads, attach a volume at `/app/storage`. Railway documents that images running as a non-root UID have permission issues on volumes and that `RAILWAY_RUN_UID=0` fixes them ([volumes](https://docs.railway.com/volumes/reference)); the starter image runs as uid `10001`, so set that variable on the service. It runs the app as root inside the container. Migrations then have to run in the app container, because pre-deploy commands get no volume: set the start command to `/bin/sh -c "/app/app migrate && exec /app/app"` (Railway runs start commands in exec form, without a shell, and they replace the image's `ENTRYPOINT`: [start command](https://docs.railway.com/deployments/start-command)).
 
 <Callout>
 Railway's Config as Code files (`railway.json`, `railway.toml`) are deprecated: new services cannot opt into them and existing files stop being read on 2026-12-01 ([Config as Code](https://docs.railway.com/reference/config-as-code)). Starters therefore ship no `railway.json`; set the healthcheck, pre-deploy command and restart policy in the service settings, or in Railway's [Infrastructure as Code](https://docs.railway.com/infrastructure-as-code) file (`healthcheck: "/up"`, `preDeploy: "/app/app migrate"`).

@@ -42,6 +42,7 @@ func writeDocker(dir, kind string, pm jsPM) error {
 
 	switch pm.name {
 	case "bun":
+		// The Dockerfile copies "bun.lock*", which also matches the binary bun.lockb.
 		d.JSImage, d.Lockfile, d.Install = bunImage, "bun.lock", "bun install --frozen-lockfile"
 	case "pnpm":
 		d.Corepack, d.Lockfile, d.Install = true, "pnpm-lock.yaml", "pnpm install --frozen-lockfile"
