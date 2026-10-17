@@ -40,15 +40,26 @@ type Tokens struct {
 	// to 32 letters, digits or underscores and ends with "_". Tokens issued
 	// without it, or under an earlier prefix, stay valid.
 	Prefix string
+	// Now is the clock for issue, expiry and last-use times (default
+	// time.Now). Set it to app.Now so a fake clock (vukem.WithClock,
+	// vukemtest.Options.Clock) drives token expiry.
+	Now func() time.Time
 
 	ex    database.Executor
 	table string
-	now   func() time.Time
 }
 
 // NewTokens uses the access_tokens table.
 func NewTokens(ex database.Executor) *Tokens {
-	return &Tokens{ex: ex, table: "access_tokens", now: time.Now}
+	return &Tokens{ex: ex, table: "access_tokens", Now: time.Now}
+}
+
+func (t *Tokens) now() time.Time {
+	if t.Now == nil {
+		return time.Now()
+	}
+
+	return t.Now()
 }
 
 func (t *Tokens) q(sqlText string) string {
@@ -255,6 +266,9 @@ func NewTokenGuard[U Authenticatable](name string, p UserProvider[U], tokens *To
 
 // Name implements Checker.
 func (g *TokenGuard[U]) Name() string { return g.name }
+
+// APIOnly implements APIGuard.
+func (*TokenGuard[U]) APIOnly() {}
 
 type tokenKey struct{ guard string }
 

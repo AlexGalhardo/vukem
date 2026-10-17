@@ -1,7 +1,8 @@
 // Package apidocs serves an API reference for the app's OpenAPI document
 // with Scalar (https://scalar.com). The Scalar bundle is vendored and
-// embedded (no CDN), telemetry and remote fonts are off, and the page is
-// not served in production unless OPENAPI_IN_PRODUCTION=true.
+// embedded (no CDN), telemetry and remote fonts are off, the page runs
+// under a nonce-only CSP (no 'unsafe-inline'), and it is not served in
+// production unless OPENAPI_IN_PRODUCTION=true or Config.InProduction.
 //
 //	vukem.ServeOpenAPI(app, r, "/openapi.json")
 //	apidocs.Serve(app, r, "/docs", apidocs.Config{})
@@ -11,7 +12,9 @@ package apidocs
 
 import (
 	"context"
+	"crypto/sha256"
 	_ "embed"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"html/template"
@@ -36,10 +39,22 @@ const ScalarSHA256 = "f98a66f9d9613398fd6eb58be8f25594d7e8861e71ea11bca94d67ae9f
 //go:embed scalar/standalone.js
 var scalarJS []byte
 
-// CSP is the page's Content-Security-Policy. It matches the default policy
-// except style-src, which allows inline styles because Scalar injects its
-// stylesheet at run time without a nonce.
-const CSP = "default-src 'self'; script-src 'self' 'nonce-{nonce}'; style-src 'self' 'unsafe-inline'; " +
+// pageJS runs before Scalar: it nonces Scalar's run-time styles and fixes
+// its axe findings (see the file).
+//
+//go:embed page.js
+var pageJS []byte
+
+// pageCSS gives the default theme AA text contrast.
+//
+//go:embed page.css
+var pageCSS string
+
+// CSP is the page's Content-Security-Policy: the default policy
+// (middleware.DefaultCSP) plus data: fonts. Styles stay nonce-only: the
+// page passes the nonce to Scalar, which injects its stylesheet at run
+// time.
+const CSP = "default-src 'self'; script-src 'self' 'nonce-{nonce}'; style-src 'self' 'nonce-{nonce}'; " +
 	"img-src 'self' data:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; " +
 	"frame-ancestors 'none'; form-action 'self'"
 
@@ -60,6 +75,11 @@ type Config struct {
 	Authentication map[string]any
 	// HideClientButton hides the "Test request" client.
 	HideClientButton bool
+	// InProduction makes Serve register the page in production too, for a
+	// public API (OPENAPI_IN_PRODUCTION=true does it for every page and
+	// document). Serve the document with vukem.ServeOpenAPIWith and
+	// InProduction as well.
+	InProduction bool
 }
 
 var page = template.Must(template.New("docs").Parse(`<!doctype html>
@@ -68,21 +88,26 @@ var page = template.Must(template.New("docs").Parse(`<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
+<meta property="csp-nonce" content="{{.Nonce}}">
 <title>{{.Title}}</title>
+{{with .CSS}}<style nonce="{{$.Nonce}}">{{.}}</style>
+{{end -}}
 </head>
 <body>
 <div id="app"></div>
+<script src="{{.PageJS}}" nonce="{{.Nonce}}"></script>
 <script src="{{.Script}}" nonce="{{.Nonce}}"></script>
 <script nonce="{{.Nonce}}">Scalar.createApiReference("#app", {{.Options}})</script>
 </body>
 </html>
 `))
 
-// Serve registers GET path (the page) and GET path/scalar.js (the bundle).
+// Serve registers GET path (the page), GET path/scalar.js (the bundle)
+// and GET path/page.js (the CSP and accessibility shim).
 // In production it registers nothing and returns false unless
-// OPENAPI_IN_PRODUCTION=true.
+// OPENAPI_IN_PRODUCTION=true or cfg.InProduction.
 func Serve(app *vukem.App, r *router.Router, path string, cfg Config) bool {
-	if app.Config.IsProduction() && !app.Config.OpenAPIInProduction {
+	if app.Config.IsProduction() && !app.Config.OpenAPIInProduction && !cfg.InProduction {
 		return false
 	}
 
@@ -100,6 +125,8 @@ func Serve(app *vukem.App, r *router.Router, path string, cfg Config) bool {
 func Register(r *router.Router, path string, cfg Config) {
 	path = strings.TrimSuffix(path, "/")
 	script := path + "/scalar.js?v=" + ScalarVersion
+	sum := sha256.Sum256(pageJS)
+	pageScript := path + "/page.js?v=" + hex.EncodeToString(sum[:4])
 
 	if cfg.SpecURL == "" {
 		cfg.SpecURL = "/openapi.json"
@@ -114,7 +141,11 @@ func Register(r *router.Router, path string, cfg Config) {
 		"telemetry":        false,
 		"withDefaultFonts": false,
 		"agent":            map[string]any{"disabled": true},
-		"hideClientButton": cfg.HideClientButton,
+		// No "Generate MCP" link or developer-tools header: both point to
+		// scalar.com services.
+		"mcp":                map[string]any{"disabled": true},
+		"showDeveloperTools": "never",
+		"hideClientButton":   cfg.HideClientButton,
 	}
 
 	if cfg.Theme != "" {
@@ -129,6 +160,13 @@ func Register(r *router.Router, path string, cfg Config) {
 		options["authentication"] = cfg.Authentication
 	}
 
+	// Scalar's default theme fails AA contrast; other themes are the app's
+	// choice and keep their colors.
+	var css template.CSS
+	if cfg.Theme == "" || cfg.Theme == "default" {
+		css = template.CSS(pageCSS) //nolint:gosec // embedded constant, not user input
+	}
+
 	r.Get(path, func(c *web.Ctx) error {
 		nonce := middleware.CSPNonce(c.Context())
 		if nonce != "" {
@@ -139,7 +177,8 @@ func Register(r *router.Router, path string, cfg Config) {
 		c.Writer().Header().Set("Cache-Control", "no-store")
 
 		return page.Execute(c.Writer(), map[string]any{
-			"Title": cfg.Title, "Script": script, "Nonce": nonce, "Options": options,
+			"Title": cfg.Title, "Script": script, "Nonce": nonce, "Options": options, "CSS": css,
+			"PageJS": pageScript,
 		})
 	}).Name("apidocs").Doc(openapi.Skip{})
 
@@ -151,6 +190,15 @@ func Register(r *router.Router, path string, cfg Config) {
 
 		return err
 	}).Name("apidocs.script").Doc(openapi.Skip{})
+
+	r.Get(path+"/page.js", func(c *web.Ctx) error {
+		h := c.Writer().Header()
+		h.Set("Content-Type", "text/javascript; charset=utf-8")
+		h.Set("Cache-Control", "public, max-age=31536000, immutable")
+		_, err := c.Writer().Write(pageJS)
+
+		return err
+	}).Name("apidocs.page").Doc(openapi.Skip{})
 }
 
 // Command returns "openapi:serve": it serves the document and the

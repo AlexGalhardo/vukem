@@ -174,6 +174,15 @@ func newApp(t *testing.T, hasher hash.Hasher, extra ...vukem.Option) *testApp {
 				r.Get("/email/verify", func(c *web.Ctx) error { return c.String(200, "check your inbox") }).
 					Name("verification.notice")
 
+				r.Group("/v1", func(g *router.Group) {
+					g.Use(auth.Required(ta.api))
+					g.Get("/me", func(c *web.Ctx) error { return c.NoContent() })
+					g.Get("/accept", func(c *web.Ctx) error { return c.String(200, c.Header("Accept")) }).
+						Use(auth.Ability(ta.api, "posts:read"))
+					g.Delete("/posts", func(c *web.Ctx) error { return c.NoContent() }).
+						Use(auth.Ability(ta.api, "posts:delete"))
+				})
+
 				r.Group("/api", func(g *router.Group) {
 					g.Use(auth.Required(ta.api, ta.web))
 					g.Get("/me", func(c *web.Ctx) error {
@@ -528,6 +537,72 @@ func TestTokensAndAbilities(t *testing.T) {
 
 	if found, err := ta.tokens.Find(ctx, another); err != nil || found.LastUsedAt == nil || found.Can("x") {
 		t.Fatalf("Find = %+v %v", found, err)
+	}
+}
+
+func TestTokenOnlyRoutesAnswerProblemJSON(t *testing.T) {
+	t.Parallel()
+
+	ta := newApp(t, hash.Fake())
+	u := ta.user(t, "ana@example.com", "pw", true)
+
+	plain, _, err := ta.tokens.Create(t.Context(), u.AuthID(), "cli", []string{"posts:read"}, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := map[string]*vukemtest.Client{
+		"browser with a session":   ta.Client(t).ActingAs("web", u).WithHeader("Accept", "text/html"),
+		"browser without a cookie": ta.Client(t).WithHeader("Accept", "text/html,application/xhtml+xml"),
+		"no Accept header":         ta.Client(t),
+	}
+
+	// The clients report through t, so the cases run without subtests.
+	for name, c := range tests {
+		res := c.Get("/v1/me")
+		if res.Status() != http.StatusUnauthorized || res.Header("Location") != "" ||
+			!strings.Contains(res.Header("WWW-Authenticate"), "Bearer") ||
+			!strings.HasPrefix(res.Header("Content-Type"), "application/problem+json") {
+			t.Errorf("%s: GET /v1/me = %d %v, want 401 problem+json with WWW-Authenticate", name, res.Status(),
+				res.Recorder().Header())
+		}
+	}
+
+	// A token without the ability gets a 403 problem, also from a browser.
+	res := ta.Client(t).WithHeader("Accept", "text/html").WithToken(plain).Delete("/v1/posts").AssertForbidden()
+	if ct := res.Header("Content-Type"); !strings.HasPrefix(ct, "application/problem+json") {
+		t.Errorf("DELETE /v1/posts Content-Type = %q, want application/problem+json", ct)
+	}
+
+	// Only errors are forced to JSON: an authenticated handler still sees
+	// the client's Accept header and can negotiate.
+	ta.Client(t).WithHeader("Accept", "text/html").WithToken(plain).Get("/v1/accept").AssertOK().AssertSee("text/html")
+
+	// A session guard in the list keeps the browser redirect.
+	ta.Client(t).WithHeader("Accept", "text/html").Get("/dashboard").AssertRedirect("/login")
+}
+
+func TestTokensUseTheirClock(t *testing.T) {
+	t.Parallel()
+
+	ta := newApp(t, hash.Fake())
+	u := ta.user(t, "ana@example.com", "pw", true)
+	ctx := t.Context()
+	now := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
+	ta.tokens.Now = func() time.Time { return now }
+
+	plain, tok, err := ta.tokens.Create(ctx, u.AuthID(), "cli", nil, time.Hour)
+	if err != nil || tok.ExpiresAt == nil || !tok.ExpiresAt.Equal(now.Add(time.Hour)) {
+		t.Fatalf("Create = %+v %v, want expiry %v", tok, err, now.Add(time.Hour))
+	}
+
+	if found, err := ta.tokens.Find(ctx, plain); err != nil || found.LastUsedAt == nil || !found.LastUsedAt.Equal(now) {
+		t.Fatalf("Find = %+v %v, want last use %v", found, err, now)
+	}
+
+	now = now.Add(time.Hour)
+	if _, err := ta.tokens.Find(ctx, plain); err == nil {
+		t.Fatal("Find after the clock passed expires_at = nil error, want rejected")
 	}
 }
 

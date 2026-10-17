@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"encoding/json"
 	"flag"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -225,5 +227,27 @@ func TestSchemasRequiredString(t *testing.T) {
 	want := map[string]any{"name": 1, "code": 3, "zero": 1, "note": 1, "plain": nil}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("minLength (-want +got):\n%s", diff)
+	}
+}
+
+func TestPathPrefixMatchesWholeSegments(t *testing.T) {
+	t.Parallel()
+
+	r := router.New(nil)
+	for _, p := range []string{"/api/v1", "/api/v1/ping", "/api/v10/ping", "/api/v1x"} {
+		r.Get(p, func(c *web.Ctx) error { return c.NoContent() })
+	}
+
+	if _, err := r.Handler(); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, prefix := range []string{"/api/v1", "/api/v1/"} {
+		doc := openapi.Generate(r.Routes(), openapi.Info{PathPrefix: prefix})
+		got := slices.Sorted(maps.Keys(doc.Paths))
+
+		if diff := cmp.Diff([]string{"/api/v1", "/api/v1/ping"}, got); diff != "" {
+			t.Errorf("Generate(PathPrefix %q) paths (-want +got):\n%s", prefix, diff)
+		}
 	}
 }

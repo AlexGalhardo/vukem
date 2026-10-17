@@ -19,8 +19,12 @@ func ctxOf(w http.ResponseWriter, r *http.Request) *web.Ctx {
 // Required lets the request through when any guard authenticates it. JSON
 // and API clients get 401 (with WWW-Authenticate: Bearer when a token guard
 // is involved); browsers are redirected to the route named "login", and the
-// intended URL is remembered for GET requests.
+// intended URL is remembered for GET requests. When every guard is an
+// [APIGuard] (token and JWT guards), nobody is redirected: the 401 is always
+// problem+json, whatever the Accept header or session cookie says.
 func Required(guards ...Checker) func(http.Handler) http.Handler {
+	apiOnly := allAPI(guards)
+
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			c := ctxOf(w, r)
@@ -35,7 +39,7 @@ func Required(guards ...Checker) func(http.Handler) http.Handler {
 
 					// Fail closed without treating the caller as a guest.
 					if !errors.Is(err, ErrUnauthenticated) {
-						c.HandleError(err)
+						fail(c, apiOnly, err)
 						return
 					}
 
@@ -48,10 +52,8 @@ func Required(guards ...Checker) func(http.Handler) http.Handler {
 				}
 			}
 
-			if c.WantsJSON() || !hasSession(c) {
-				err := ErrUnauthenticated.WithHeader("WWW-Authenticate", `Bearer realm="api"`)
-				c.HandleError(err)
-
+			if apiOnly || c.WantsJSON() || !hasSession(c) {
+				fail(c, apiOnly, ErrUnauthenticated.WithHeader("WWW-Authenticate", `Bearer realm="api"`))
 				return
 			}
 
@@ -67,6 +69,40 @@ func Required(guards ...Checker) func(http.Handler) http.Handler {
 			_ = c.Redirect(target)
 		})
 	}
+}
+
+// APIGuard is a guard for API clients that authenticate every request with
+// a credential they carry (TokenGuard, jwt.Guard). Required and Ability
+// answer problem+json and never redirect when their guards are APIGuards.
+type APIGuard interface {
+	Checker
+	// APIOnly marks the guard; it is never called.
+	APIOnly()
+}
+
+func allAPI(guards []Checker) bool {
+	for _, g := range guards {
+		if _, ok := g.(APIGuard); !ok {
+			return false
+		}
+	}
+
+	return len(guards) > 0
+}
+
+// fail renders err; for API guards always as problem+json, because API
+// routes must not answer HTML when a browser (or a client sending Accept:
+// text/html) calls them. Only the error path sees the forced Accept: the
+// next handler keeps the client's header.
+func fail(c *web.Ctx, apiOnly bool, err error) {
+	if !apiOnly || c.WantsJSON() {
+		c.HandleError(err)
+		return
+	}
+
+	r := c.Request().Clone(c.Context())
+	r.Header.Set("Accept", "application/json")
+	ctxOf(c.Writer(), r).HandleError(err)
 }
 
 // errChecker is a guard that reports why authentication failed.
@@ -157,21 +193,24 @@ func Verified(guard Checker) func(http.Handler) http.Handler {
 }
 
 // Ability requires the request's access token (from guard) to grant every
-// ability; 403 otherwise. Place it after Required.
+// ability; 403 otherwise (problem+json when guard is an [APIGuard]). Place
+// it after Required.
 func Ability(guard Checker, abilities ...string) func(http.Handler) http.Handler {
+	apiOnly := allAPI([]Checker{guard})
+
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			c := ctxOf(w, r)
 
 			if !guard.Check(c) {
-				c.HandleError(ErrUnauthenticated)
+				fail(c, apiOnly, ErrUnauthenticated)
 				return
 			}
 
 			for _, a := range abilities {
 				if !TokenCan(c, guard.Name(), a) {
 					web.SecurityEvent(c.Request(), "authz.denied", "ability", a)
-					c.HandleError(
+					fail(c, apiOnly,
 						errs.NewKey(
 							http.StatusForbidden,
 							"auth.token_ability",

@@ -120,4 +120,4 @@ APP_ENV=production APP_DEBUG=false APP_URL=https://api.example.com ./bin/app mig
 APP_ENV=production APP_DEBUG=false APP_URL=https://api.example.com ./bin/app
 ```
 
-Set a unique `APP_KEY`, `DATABASE_URL` and `CORS_ALLOWED_ORIGINS`; terminate TLS at a reverse proxy. The OpenAPI document and API reference are not served in production unless `OPENAPI_IN_PRODUCTION=true`. More in the [HTMX guide](htmx.md#build-and-deploy) and [security.md](../security.md).
+Set a unique `APP_KEY`, `DATABASE_URL` and `CORS_ALLOWED_ORIGINS`; terminate TLS at a reverse proxy. The OpenAPI document and API reference are not served in production unless `OPENAPI_IN_PRODUCTION=true`, or per route with `vukem.ServeOpenAPIWith(..., vukem.OpenAPIOptions{InProduction: true})` and `apidocs.Config{InProduction: true}` for a public API. More in the [HTMX guide](htmx.md#build-and-deploy) and [security.md](../security.md).

@@ -32,6 +32,10 @@ func NewGuard[U auth.Authenticatable](name string, v *Verifier, p auth.UserProvi
 // Name implements auth.Checker.
 func (g *Guard[U]) Name() string { return g.name }
 
+// APIOnly implements auth.APIGuard: auth.Required answers 401
+// problem+json and never redirects to a login page.
+func (*Guard[U]) APIOnly() {}
+
 // Check implements auth.Checker.
 func (g *Guard[U]) Check(c *web.Ctx) bool {
 	_, err := g.User(c)

@@ -216,7 +216,7 @@ api.Register(g, "POST /products", api.Op{
 - `Op.ValidateResponse: true` checks the output against its `validate` tags (`z.For[Out]`, Out must be a struct) before writing it, when `web.Services.CheckResponses` is on, like `web.JSONWith`. The app turns it on whenever `APP_ENV` is not `production` (`development` or `test`), so a staging deployment that runs with `APP_ENV=development` also checks, and answers 500 on a mismatch; only `APP_ENV=production` skips it. A mismatch is logged and answered with a generic 500, so contract drift fails loudly.
 - Each typed route carries an `api.Operation` (`router.RouteInfo.Doc`) with its method, full path, params and input/output types for the generators below.
 - Request schema from the input struct (`json` + `validate` tags), response schema from the output type, errors from the problem catalogue.
-- `vukem.ServeOpenAPI(app, r, "/openapi.json")` serves the document (not registered in production unless `OPENAPI_IN_PRODUCTION=true`); `vukem openapi:export > openapi.json` prints it (warmup mode, like `codegen:types`: no database, `APP_KEY` optional). Title is `APP_NAME`, version `API_VERSION`, and `OPENAPI_PREFIX=/api` keeps only API routes.
+- `vukem.ServeOpenAPI(app, r, "/openapi.json")` serves the document (not registered in production unless `OPENAPI_IN_PRODUCTION=true`); `vukem openapi:export > openapi.json` prints it (warmup mode, like `codegen:types`: no database, `APP_KEY` optional). Title is `APP_NAME`, version `API_VERSION`, and `OPENAPI_PREFIX=/api` keeps only API routes. `vukem.ServeOpenAPIWith(app, r, path, vukem.OpenAPIOptions{PathPrefix, InProduction})` serves a document per prefix (whole path segments: `/api/v1` excludes `/api/v10`; one per API version) with its own production opt-in; its route is unnamed.
 - Schemas come from `json` tags (names, `-`) and `validate` rules (`required`, `min`/`max`/`len`, `email`, `url`, `uuid`, `oneof`, `regex`, `positive`, `unique`, `dive`...); a `doc:"..."` tag becomes the description. `required` marks the key as required; on a string it also emits `minLength: 1` (z rejects an empty string), on a list it does not emit `minItems` (an empty list passes; use `min=1`). Named structs become `components/schemas`, `orm` relations and `NullTime` map to their JSON shape, errors reference the shared `Problem` and `ValidationError` responses, and `Op.Security` names (`bearer` is predefined) become security requirements.
 - `openapi.Generate(routes, openapi.Info{...})` builds the document directly; `.Doc(openapi.Skip{})` hides a route. CI validates a golden document with Redocly.
 - Plain `HandlerFunc` routes still work; they appear in the document with a generic schema unless described with `api.Doc(...)`.
@@ -252,8 +252,17 @@ apidocs.Serve(app, r, "/docs", apidocs.Config{
 ```
 
 - The Scalar bundle (`@scalar/api-reference` 1.72.3, MIT) is vendored in `apidocs/scalar`, embedded and pinned by SHA-256 (`apidocs.ScalarSHA256`, checked in tests): no CDN, telemetry, remote fonts or AI agent.
-- The page uses the request's CSP nonce for its scripts and a page-specific policy that only adds `style-src 'unsafe-inline'` (Scalar injects its styles at run time); `connect-src 'self'` keeps "try it" requests on your origin.
-- Like `/openapi.json`, it is not registered in production unless `OPENAPI_IN_PRODUCTION=true`. The `apidocs` package (about 4 MB) is linked only when imported.
+- The page runs under the app's nonce-only CSP (no `'unsafe-inline'`): it passes the request nonce to Scalar (a `csp-nonce` meta and a small `page.js` shim that nonces the `<style>` elements Scalar creates and applies the plain size/overflow style attributes it sets through the CSSOM; any other style attribute is left to CSP, which blocks it). HTML from the OpenAPI document (descriptions) never gets the nonce: its `<style>` elements and style attributes stay blocked. Scalar's "Generate MCP" link and developer-tools header (both scalar.com services) are off. Its policy is `apidocs.CSP`, the default one plus `data:` fonts; `connect-src 'self'` keeps "try it" requests on your origin. Inline styles inside HTML that Scalar injects (code highlighting) stay blocked, except the numeric line-number variables, which the shim re-applies.
+- Accessibility: the default theme gets AA text colors (muted text, HTTP method labels) and the shim makes the scrollable endpoint list keyboard-focusable and puts the visible text into the "Show More" buttons' accessible names, so the page passes axe serious checks in light and dark mode (checked by hand with axe-core 4.10; `TestDefaultThemeColorsMeetAA` keeps the colors at 4.5:1). Other themes keep their own colors.
+- Like `/openapi.json`, it is not registered in production unless `OPENAPI_IN_PRODUCTION=true` or `Config.InProduction` (one page only). For a public, versioned API serve its document and page explicitly:
+
+```go
+vukem.ServeOpenAPIWith(app, r, "/api/v1/openapi.json",
+	vukem.OpenAPIOptions{PathPrefix: "/api/v1", InProduction: true})
+apidocs.Serve(app, r, "/api/docs", apidocs.Config{SpecURL: "/api/v1/openapi.json", InProduction: true})
+```
+
+- The `apidocs` package (about 4 MB) is linked only when imported.
 - `apidocs.Command()` adds `vukem openapi:serve [-addr localhost:8081]` to preview the reference locally.
 
 ### Types for clients

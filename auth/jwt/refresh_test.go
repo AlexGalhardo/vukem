@@ -235,4 +235,16 @@ func TestGuard(t *testing.T) {
 			t.Errorf("%s = %d %v", name, rec.Code, rec.Header())
 		}
 	}
+
+	// A browser gets the same problem+json, never an HTML page.
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/me", http.NoBody)
+	req.Header.Set("Accept", "text/html")
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized ||
+		!strings.HasPrefix(rec.Header().Get("Content-Type"), "application/problem+json") {
+		t.Errorf("browser = %d %q, want 401 application/problem+json", rec.Code, rec.Header().Get("Content-Type"))
+	}
 }

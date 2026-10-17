@@ -27,6 +27,8 @@ vukem openapi:export > openapi.json
 | `OPENAPI_PREFIX` | empty | keep only routes under it, e.g. `/api` |
 | `OPENAPI_IN_PRODUCTION` | `false` | serve `/openapi.json` and `/docs` in production |
 
+`vukem.ServeOpenAPIWith(app, r, "/api/v1/openapi.json", vukem.OpenAPIOptions{PathPrefix: "/api/v1", InProduction: true})` sets the prefix in code and opts one document into production; `OPENAPI_PREFIX` stays the default for `ServeOpenAPI`.
+
 - [Typed handlers](/docs/rest-apis/typed-handlers) are described from their types: `json` tags give property names, `validate` rules give constraints (`required`, `min`/`max`/`len`, `email`, `url`, `uuid`, `oneof`, `regex`, `positive`, `unique`, `dive`…), and a `doc:"..."` tag becomes the description.
 - `required` lists the key in `required`. On a string it also emits `minLength: 1`, since an empty string is rejected; on a list it emits no `minItems`, since an empty list passes (tag `min=1` when items are needed).
 - Named structs become `components/schemas`; `orm` relations and `orm.NullTime` map to their JSON shape; errors reference shared `Problem` and `ValidationError` responses; `Op.Security` names become security requirements (`bearer` is predefined).
@@ -68,6 +70,13 @@ apidocs.Serve(app, r, "/docs", apidocs.Config{
 ```
 
 - The [Scalar](https://scalar.com) bundle (`@scalar/api-reference` 1.72.3, MIT) is vendored, embedded and pinned by SHA-256: no CDN, no telemetry, no remote fonts, no AI agent.
-- The page uses the request's CSP nonce for its scripts; its policy only adds `style-src 'unsafe-inline'` (Scalar injects styles at run time), and `connect-src 'self'` keeps "try it" requests on your origin.
-- Like `/openapi.json`, it is not registered in production unless `OPENAPI_IN_PRODUCTION=true`.
+- The page runs under the app's nonce-only CSP (no `'unsafe-inline'`): it passes the request nonce to Scalar (a `csp-nonce` meta and a small `page.js` shim that nonces the `<style>` elements Scalar creates and applies the plain size/overflow style attributes it sets through the CSSOM; any other style attribute is left to CSP, which blocks it). HTML from the OpenAPI document (descriptions) never gets the nonce: its `<style>` elements and style attributes stay blocked. Scalar's "Generate MCP" link and developer-tools header (both scalar.com services) are off. Its policy is `apidocs.CSP`, the default one plus `data:` fonts; `connect-src 'self'` keeps "try it" requests on your origin. Inline styles inside HTML that Scalar injects (code highlighting) stay blocked, except the numeric line-number variables, which the shim re-applies.
+- Accessibility: the default theme gets AA text colors (muted text, HTTP method labels) and the shim makes the scrollable endpoint list keyboard-focusable and puts the visible text into the "Show More" buttons' accessible names, so the page passes axe serious checks in light and dark mode (checked by hand with axe-core 4.10; `TestDefaultThemeColorsMeetAA` keeps the colors at 4.5:1). Other themes keep their own colors.
+- Like `/openapi.json`, it is not registered in production unless `OPENAPI_IN_PRODUCTION=true` or `Config.InProduction` (one page only). For a public, versioned API serve its document and page explicitly:
+
+```go
+vukem.ServeOpenAPIWith(app, r, "/api/v1/openapi.json",
+	vukem.OpenAPIOptions{PathPrefix: "/api/v1", InProduction: true})
+apidocs.Serve(app, r, "/api/docs", apidocs.Config{SpecURL: "/api/v1/openapi.json", InProduction: true})
+```
 - The `apidocs` package (about 4 MB) is linked only when you import it. Add `apidocs.Command()` to your commands for `vukem openapi:serve [-addr localhost:8081]`, a local preview.

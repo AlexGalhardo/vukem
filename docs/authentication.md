@@ -34,7 +34,9 @@ type UserProvider[U Authenticatable] interface {
 // routes/web.go
 users := auth.NewORMProvider[models.User](db)
 webGuard := auth.NewSessionGuard("web", users, hash.Default(), auth.NewRememberStore(db))
-apiGuard := auth.NewTokenGuard("api", users, auth.NewTokens(db))
+tokens := auth.NewTokens(db)
+tokens.Now = app.Now // the app clock (vukem.WithClock) drives token expiry
+apiGuard := auth.NewTokenGuard("api", users, tokens)
 
 r.Post("/login", func(c *web.Ctx) error {
 	in, err := web.Parse(c, requests.LoginSchema)
@@ -88,10 +90,10 @@ Standard library only. `jwt.Sign(key, jwt.Claims{Subject, Issuer, Audience, Expi
 
 | Middleware | Effect |
 | --- | --- |
-| `auth.Required(guards...)` | first guard that authenticates wins; JSON clients get 401 with `WWW-Authenticate: Bearer`, browsers a redirect to the route named `login` (intended GET URL kept in the session under `auth.IntendedKey`) |
+| `auth.Required(guards...)` | first guard that authenticates wins; JSON clients get 401 with `WWW-Authenticate: Bearer`, browsers a redirect to the route named `login` (intended GET URL kept in the session under `auth.IntendedKey`). When every guard is an `auth.APIGuard` (token and JWT guards), nobody is redirected: the 401 is always problem+json, whatever `Accept` or the session cookie says |
 | `auth.Guest(guards...)` | sends logged-in users to the route named `home` |
 | `auth.Verified(guard)` | 403 unless the user implements `EmailVerified() bool` and returns true |
-| `auth.Ability(guard, abilities...)` | 403 unless the token grants every ability (`authz.denied` event) |
+| `auth.Ability(guard, abilities...)` | 403 unless the token grants every ability (`authz.denied` event); problem+json for an `auth.APIGuard` |
 
 ### Testing
 
