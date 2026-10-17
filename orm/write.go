@@ -19,12 +19,12 @@ import (
 // Model hooks: implement them on *T to run code around writes. Returning an
 // error aborts the write.
 type (
-	// BeforeCreater runs before INSERT.
-	BeforeCreater interface {
+	// BeforeCreator runs before INSERT.
+	BeforeCreator interface {
 		BeforeCreate(ctx context.Context) error
 	}
-	// AfterCreater runs after INSERT.
-	AfterCreater interface {
+	// AfterCreator runs after INSERT.
+	AfterCreator interface {
 		AfterCreate(ctx context.Context) error
 	}
 	// BeforeUpdater runs before UPDATE.
@@ -40,6 +40,20 @@ type (
 		BeforeDelete(ctx context.Context) error
 	}
 )
+
+// BeforeCreater is the pre-1.0 spelling of BeforeCreator.
+//
+// Deprecated: use BeforeCreator.
+//
+//go:fix inline
+type BeforeCreater = BeforeCreator
+
+// AfterCreater is the pre-1.0 spelling of AfterCreator.
+//
+// Deprecated: use AfterCreator.
+//
+//go:fix inline
+type AfterCreater = AfterCreator
 
 // now is the clock used for timestamps; tests replace it via WithClock.
 type clockKey struct{}
@@ -69,7 +83,7 @@ func hook[I any](ctx context.Context, v any, call func(I, context.Context) error
 func Create[T any](ctx context.Context, ex database.Executor, model *T) error {
 	m := metaOf[T]()
 
-	if err := hook(ctx, model, BeforeCreater.BeforeCreate); err != nil {
+	if err := hook(ctx, model, BeforeCreator.BeforeCreate); err != nil {
 		return err
 	}
 
@@ -122,7 +136,7 @@ func Create[T any](ctx context.Context, ex database.Executor, model *T) error {
 		}
 	}
 
-	return hook(ctx, model, AfterCreater.AfterCreate)
+	return hook(ctx, model, AfterCreator.AfterCreate)
 }
 
 func insertLastID(ctx context.Context, ex database.Executor, q string, args []any, pk reflect.Value) error {
