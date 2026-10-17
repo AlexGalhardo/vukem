@@ -42,7 +42,20 @@ app := vukemtest.New(t, bootstrap.New, vukemtest.Options{
 clock.Advance(3 * time.Hour) // e.g. expire the idle session timeout
 ```
 
+The fake clock drives every session driver: cookie expiry and the expiry checks of the `memory` and `database` stores both follow it, so a clock fixed in the past keeps sessions alive. The client's cookie jar never checks `Expires`; a cookie is dropped only when the response deletes it.
+
 The returned `*vukemtest.App` embeds `*vukem.App` (`app.DB()`, `app.Config`…) and adds `Client`, `Handler` and `RefreshDatabase(t)` (drop everything and migrate again).
+
+`vukemtest.New` fails the test on a build, boot or migration error. To check that a bad configuration fails closed, use `vukemtest.Build`: same defaults, but it returns the error.
+
+```go
+_, err := vukemtest.Build(t, bootstrap.New, vukemtest.Options{
+	Env: map[string]string{"SESSION_DRIVER": "bogus"},
+})
+if err == nil {
+	t.Fatal("app booted with an unknown session driver")
+}
+```
 
 ## The client
 
@@ -65,6 +78,7 @@ Assertions chain and, on failure, print the request, status, headers and body.
 | APIs | `AssertProblem(status)` (RFC 9457), `AssertJSONValidationErrors(fields...)` |
 | htmx | `AssertHXTrigger(event)` |
 | Session | `AssertSessionHas`, `AssertSessionMissing`, `AssertSessionHasErrors(fields...)`, `Session()` |
+| Flash | `AssertFlash(key, v)`, `AssertNoFlash(key)`: `c.Flash` or `inertia.Flash` data, in the session after a redirect or in an Inertia page's `flash` object (the key must be present, so `AssertFlash(key, nil)` does not match a missing value) |
 | Raw | `Status()`, `Body()`, `Header(key)`, `Recorder()` |
 
 ```go

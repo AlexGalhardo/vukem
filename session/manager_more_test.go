@@ -79,7 +79,7 @@ func newFaultyManager(t *testing.T) (*Manager, *faultyStore, *bytes.Buffer) {
 
 	st := &faultyStore{MemoryStore: NewMemoryStore(), raw: map[string][]byte{}}
 	m, clk := newManager(t, Config{Store: st, Log: slog.New(slog.NewTextHandler(&logs, nil))})
-	st.now = clk.Now // expiries come from the manager clock
+	st.setClock(clk.Now) // expiries come from the manager clock
 
 	return m, st, &logs
 }
@@ -230,7 +230,7 @@ func TestCookiesStartsASession(t *testing.T) {
 
 			m, clk := newManager(t, Config{Store: store})
 			if mem != nil {
-				mem.now = clk.Now
+				mem.setClock(clk.Now)
 			}
 
 			cks := m.Cookies(t.Context(), map[string]any{"user": "ana"})
@@ -374,7 +374,7 @@ func TestMemoryStoreSaveEvictsExpired(t *testing.T) {
 
 	clk := &clock{t: time.Unix(1000, 0)}
 	s := NewMemoryStore()
-	s.now = clk.Now
+	s.setClock(clk.Now)
 
 	_ = s.Save(t.Context(), "old", []byte("x"), clk.Now().Add(time.Second))
 	clk.Advance(time.Minute)
@@ -409,5 +409,94 @@ func TestSQLStoreErrorsOnClosedDB(t *testing.T) {
 		if err := call(); err == nil || !strings.Contains(err.Error(), "session: "+name) {
 			t.Errorf("%s on closed DB = %v, want session: %s error", name, err, name)
 		}
+	}
+}
+
+// Stores must use the manager's clock: with a fake clock in the past, an
+// expiry of "fake now + 1h" is already in the past on the wall clock.
+func TestStoresUseManagerClock(t *testing.T) {
+	t.Parallel()
+
+	past := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(testutil.TempDir(t), "clock.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() { _ = db.Close() })
+
+	sqlStore, err := NewSQLStore(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := sqlStore.CreateTable(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	for name, st := range map[string]Store{"memory": NewMemoryStore(), "sql": sqlStore} {
+		if _, err := New(Config{Store: st, Now: func() time.Time { return past }}); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := st.Save(t.Context(), "id", []byte("{}"), past.Add(time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+
+		if _, ok, err := st.Load(t.Context(), "id"); !ok || err != nil {
+			t.Errorf("%s: Load(unexpired by the manager clock) = %v, %v, want found", name, ok, err)
+		}
+	}
+
+	// Prune deletes only what is expired by the manager clock.
+	if err := sqlStore.Save(t.Context(), "old", []byte("{}"), past.Add(-time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+
+	if n, err := sqlStore.Prune(t.Context()); n != 1 || err != nil {
+		t.Errorf("Prune() = %d, %v, want 1, nil", n, err)
+	}
+
+	if _, ok, _ := sqlStore.Load(t.Context(), "id"); !ok {
+		t.Error("Prune() deleted a session unexpired by the manager clock")
+	}
+}
+
+// A store shared by managers (or pruned while serving) must not race on
+// its clock; run with -race.
+func TestStoreClockIsRaceFree(t *testing.T) {
+	t.Parallel()
+
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(testutil.TempDir(t), "race.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() { _ = db.Close() })
+
+	sqlStore, err := NewSQLStore(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := sqlStore.CreateTable(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, st := range []Store{NewMemoryStore(), sqlStore} {
+		var wg sync.WaitGroup
+
+		for range 4 {
+			wg.Go(func() {
+				if _, err := New(Config{Store: st, Now: time.Now}); err != nil {
+					t.Error(err)
+				}
+
+				_, _, _ = st.Load(t.Context(), "id")
+			})
+		}
+
+		wg.Wait()
 	}
 }

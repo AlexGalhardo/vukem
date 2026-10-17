@@ -109,7 +109,7 @@ app.Client(t).HTMX().Get("/posts?q=Hello").AssertOK().AssertFragment()
 vukemtest.AssertDatabaseHas(t, app, "posts", map[string]any{"title": "Hello"})
 ```
 
-See [testing.md](../testing.md#toolkit-for-apps-testing-package-imported-as-vukemtest).
+See [testing.md](../testing.md#toolkit-for-apps-package-vukemtest).
 
 ## Build and deploy
 

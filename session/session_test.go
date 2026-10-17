@@ -181,10 +181,10 @@ func TestSessionLifecycleAllStores(t *testing.T) {
 
 			m, clk := newManager(t, Config{Store: store})
 			if sq, ok := store.(*SQLStore); ok {
-				sq.now = clk.Now
+				sq.setClock(clk.Now)
 			}
 			if ms, ok := store.(*MemoryStore); ok {
-				ms.now = clk.Now
+				ms.setClock(clk.Now)
 			}
 
 			c := newClient(t, appHandler(m, &bytes.Buffer{}))
@@ -229,7 +229,7 @@ func TestSecurity_A07_SessionRegeneratedOnLogin(t *testing.T) {
 
 	store := NewMemoryStore()
 	m, clk := newManager(t, Config{Store: store})
-	store.now = clk.Now
+	store.setClock(clk.Now)
 	c := newClient(t, appHandler(m, &bytes.Buffer{}))
 
 	c.do("GET", "/put?v=guest", nil)
@@ -287,7 +287,7 @@ func TestSecurity_A07_SessionInvalidatedOnLogout(t *testing.T) {
 
 	store := NewMemoryStore()
 	m, clk := newManager(t, Config{Store: store})
-	store.now = clk.Now
+	store.setClock(clk.Now)
 	c := newClient(t, appHandler(m, &bytes.Buffer{}))
 
 	c.do("GET", "/login", nil)
@@ -574,7 +574,7 @@ func TestMemoryStoreExpiry(t *testing.T) {
 
 	clk := &clock{t: time.Unix(1000, 0)}
 	s := NewMemoryStore()
-	s.now = clk.Now
+	s.setClock(clk.Now)
 
 	_ = s.Save(t.Context(), "a", []byte("x"), clk.Now().Add(time.Second))
 	clk.Advance(2 * time.Second)

@@ -3,6 +3,7 @@ package vukemtest
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 	"regexp"
@@ -43,11 +44,28 @@ var pageScript = regexp.MustCompile(`<script data-page="[^"]*" type="application
 func (r *Response) AssertInertia(component string) *InertiaPage {
 	r.t.Helper()
 
+	page, err := r.inertiaPage()
+	if err != nil {
+		r.fail("not an Inertia response: %v", err)
+	}
+
+	if got := page["component"]; got != component {
+		r.fail("component = %q, want %q", got, component)
+	}
+
+	return &InertiaPage{t: r.t, page: page}
+}
+
+var errNoPage = errors.New("no page object")
+
+// inertiaPage decodes the page object of an Inertia visit (JSON body) or a
+// first visit (embedded in the HTML).
+func (r *Response) inertiaPage() (map[string]any, error) {
 	body := r.rec.Body.Bytes()
 	if r.rec.Header().Get("X-Inertia") != "true" {
 		m := pageScript.FindSubmatch(body)
 		if m == nil {
-			r.fail("not an Inertia response")
+			return nil, errNoPage
 		}
 
 		body = m[1]
@@ -58,14 +76,10 @@ func (r *Response) AssertInertia(component string) *InertiaPage {
 
 	var page map[string]any
 	if err := dec.Decode(&page); err != nil {
-		r.fail("not an Inertia response: %v", err)
+		return nil, err
 	}
 
-	if got := page["component"]; got != component {
-		r.fail("component = %q, want %q", got, component)
-	}
-
-	return &InertiaPage{t: r.t, page: page}
+	return page, nil
 }
 
 // Page returns the decoded page object.
@@ -175,4 +189,37 @@ func show(v any) string {
 	}
 
 	return string(b)
+}
+
+// FlashEquals asserts that the page's flash object (inertia.Flash) has key
+// equal to want, compared like PropEquals. It reads only page.flash; use
+// Response.AssertFlash to also find flash data still in the session.
+func (p *InertiaPage) FlashEquals(key string, want any) *InertiaPage {
+	p.t.Helper()
+
+	f, _ := p.page["flash"].(map[string]any)
+
+	got, ok := f[key]
+	if !ok {
+		p.t.Fatalf("flash %q missing", key)
+	}
+
+	if !sameJSON(got, want) {
+		p.t.Fatalf("flash %q = %s, want %s", key, show(got), show(want))
+	}
+
+	return p
+}
+
+// MissingFlash asserts that the page's flash object has no key. It reads
+// only page.flash; Response.AssertNoFlash also checks the session.
+func (p *InertiaPage) MissingFlash(key string) *InertiaPage {
+	p.t.Helper()
+
+	f, _ := p.page["flash"].(map[string]any)
+	if _, ok := f[key]; ok {
+		p.t.Fatalf("flash %q present", key)
+	}
+
+	return p
 }

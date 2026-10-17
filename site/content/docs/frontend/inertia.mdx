@@ -181,4 +181,12 @@ app.Client(t).Inertia("").Get("/posts").
 	PropEquals("filters.q", "go")
 ```
 
+Flash data (`inertia.Flash`) lives in `page.flash`, not in props. `FlashEquals(key, v)` / `MissingFlash(key)` on the page read only `page.flash`. `AssertFlash(key, v)` / `AssertNoFlash(key)` on any response also look in the session, so they work before the redirect is followed:
+
+```go
+c := app.Client(t).Inertia("")
+c.PostJSON("/posts", form).AssertRedirect("/posts").AssertFlash("status", "Post saved.")
+c.Get("/posts").AssertInertia("Posts/Index").FlashEquals("status", "Post saved.")
+```
+
 Works on first visits (HTML) and Inertia visits (JSON). `Inertia("")` sends the app's current asset version, so tests keep passing after `bun run build`; pass any other value (`Inertia("stale")`) to test the 409 version-mismatch reload. `Inertia(version)` also sends the Inertia `Accept` header, so `PostJSON` behaves like a form submission.

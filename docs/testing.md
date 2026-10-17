@@ -26,43 +26,61 @@ How the framework itself is tested, and the testing toolkit it ships to apps. De
 
 Time-dependent code (sessions, rate limits, queues, scheduler) is tested with `testing/synctest` instead of sleeps.
 
-## Toolkit for apps (`testing/` package, imported as `vukemtest`)
+## Toolkit for apps (package `vukemtest`)
 
 ### HTTP client
 
 ```go
 func TestCreatePost(t *testing.T) {
-	app := vukemtest.New(t, bootstrap.New)            // boots app with APP_ENV=test, in-memory SQLite, migrations run
-	user := vukemtest.Create(t, app, factories.User)  // ALPHA
+	app := vukemtest.New(t, bootstrap.New) // APP_ENV=test, private in-memory SQLite, migrations run
 
-	app.Test(t).
-		ActingAs(user).
+	db, err := app.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	user, err := factories.User.CreateOne(t.Context(), db) // a factory.Factory[models.User]
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	app.Client(t).
+		ActingAs("web", user). // user implements AuthID() string
 		PostForm("/posts", url.Values{"title": {"Hello"}, "body": {"World"}}).
 		AssertRedirectRoute("posts.index").
-		AssertSessionHas("success")
+		AssertFlash("success", "Post created.")
 
 	vukemtest.AssertDatabaseHas(t, app, "posts", map[string]any{"title": "Hello"})
 }
 ```
 
+`vukemtest.New` fails the test on any build, boot or migration error. `vukemtest.Build(t, build, opts...)` applies the same test defaults and returns `(*vukemtest.App, error)` instead, so a test can assert that a bad configuration fails closed (`errors.Is` works on the wrapped error).
+
+Each `app.Client(t)` keeps its own cookie jar between requests. Assertions are methods on the returned `*vukemtest.Response` and chain.
+
 | Group | Methods |
 | --- | --- |
-| Requests | `Get`, `Post`, `PostJSON`, `PostForm`, `Put`, `Patch`, `Delete`, `WithHeader`, `WithCookie`, `WithSession`, `ActingAs(user, guard...)`, `HTMX()` (sets htmx headers), `Inertia()` |
-| Status | `AssertOK`, `AssertCreated`, `AssertNoContent`, `AssertStatus(n)`, `AssertNotFound`, `AssertForbidden`, `AssertUnprocessable` |
-| Redirects | `AssertRedirect(url)`, `AssertRedirectRoute(name, params...)` |
-| Body | `AssertSee(text)`, `AssertDontSee`, `AssertJSON(v)`, `AssertJSONPath("data.title", "x")`, `AssertHeader` |
-| Session | `AssertSessionHas`, `AssertSessionHasErrors("title")`, `AssertValid`, `AssertInvalid("title")` |
-| HTMX | `AssertHXTrigger("post-created")`, `AssertFragment("post-list")` |
-| Inertia | `AssertInertia(component)` with prop assertions |
+| Requests | `Get`, `GetJSON`, `PostForm`, `PostJSON`, `PutJSON`, `PatchJSON`, `Delete`, `Do(method, target, body, contentType)` |
+| Client state | `WithHeader`, `WithToken`, `WithCookie`, `CookieValue`, `AcceptJSON()`, `ActingAs(guard, user)`, `HTMX()` (htmx headers), `Inertia(version)` |
+| Status | `AssertStatus(n)`, `AssertOK`, `AssertCreated`, `AssertNoContent`, `AssertNotFound`, `AssertForbidden`, `AssertUnauthorized`, `AssertUnprocessable` |
+| Redirects | `AssertRedirect(url)` (3xx or `HX-Location`), `AssertRedirectRoute(name, params...)` |
+| Body and headers | `AssertSee(text)`, `AssertDontSee`, `AssertHeader`, `AssertHeaderContains`, `AssertHeaderMissing` |
+| JSON and APIs | `AssertJSON(v)`, `AssertJSONPath("data.title", "x")`, `AssertJSONCount(path, n)`, `JSONPath(path)`, `AssertProblem(status)`, `AssertJSONValidationErrors(fields...)`, `AssertMatchesOpenAPI()` |
+| Session | `AssertSessionHas`, `AssertSessionMissing`, `AssertSessionHasErrors("title")`, `Session()` |
+| Flash | `AssertFlash(key, v)`, `AssertNoFlash(key)` (web and Inertia flash, session or page) |
+| HTMX | `AssertHXTrigger("post-created")`, `AssertFragment()` (no `<html>` document) |
+| Inertia | `AssertInertia(component)` returns an `InertiaPage`: `HasProp(path, count...)`, `MissingProp`, `PropEquals`, `Prop`, `Page`, `FlashEquals`, `MissingFlash` (these two read only `page.flash`) |
+| Raw | `Status()`, `Body()`, `Header(key)`, `Recorder()` |
 
 Requests run in-process via `httptest` (no ports). Each assertion failure prints the request, status, headers and a trimmed body.
 
 ### Database
 
-- Default test connection: SQLite in memory (one database per test via unique `file:<test>?mode=memory&cache=shared` name), migrations applied once per package and cloned, or a fresh migrate when cheaper.
-- `vukemtest.RefreshDatabase(t, app)` wraps the test in a transaction rolled back in `t.Cleanup` (Postgres/SQLite).
+- Default test connection: SQLite in memory, one private database per `vukemtest.New` call (unique `file:<test>_<random>?mode=memory&cache=shared` name), with the registered migrations run on it (`Options.SkipMigrations` turns that off). Isolation comes from the private database, not from transactions.
+- `app.RefreshDatabase(t)` (a method on `*vukemtest.App`) drops every table and runs the migrations again (`Migrator.Fresh`), for a test that needs a clean database mid-way. There is no per-test transaction wrapper: the app's handlers run their own transactions on the shared pool, and SQLite's single writer connection would deadlock on a held outer transaction.
 - Postgres: `pgtest.Database(t, adminURL)` (module `drivers/postgres`, package `pgtest`) creates an empty `pgtest_<random>` database per test from an admin URL (`TEST_DATABASE_URL`, then `POSTGRES_URL`), returns its URL for `vukemtest.Options.Env["DATABASE_URL"]` and drops it in `t.Cleanup` after terminating its connections. An unreachable server fails the test; apps opt in with `testing.Short`, an env check or a build tag.
-- Assertions: `AssertDatabaseHas`, `AssertDatabaseMissing`, `AssertDatabaseCount`, `AssertSoftDeleted`.
+- Assertions: `vukemtest.AssertDatabaseHas(t, app, table, where)`, `AssertDatabaseMissing`, `AssertDatabaseCount(t, app, table, n)`. A soft-deleted row is asserted with `AssertDatabaseMissing(t, app, "posts", map[string]any{"id": id, "deleted_at": nil})`.
+- Factories: `factory.New(def)` with `Make`/`MakeOne` (no database) and `Create`/`CreateOne(ctx, db)` (see [database.md](database.md)).
 
 ### Fakes
 
@@ -99,7 +117,7 @@ clock.Advance(24 * time.Hour)
 | Rate limiting | `ratelimit.NewMemory(limit, window)` | drive time with `testing/synctest` |
 | Social login | `social.Fake(name, callback, user)` | with `vukemtest.FakeSocial` |
 | Password hashing | `hash.Fake()` | fast parameters |
-| Clock | `vukemtest.NewFakeClock(t0)` | `Now`, `Advance`, `Set`; pass `clock.Now` as `vukemtest.Options.Clock` |
+| Clock | `vukemtest.NewFakeClock(t0)` | `Now`, `Advance`, `Set`; pass `clock.Now` as `vukemtest.Options.Clock`; sessions (cookie, `memory`, `database`) expire by it |
 
 ## CI matrix
 

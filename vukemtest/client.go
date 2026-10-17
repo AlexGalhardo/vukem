@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -621,4 +622,81 @@ func (r *Response) AssertSessionHasErrors(fields ...string) *Response {
 	}
 
 	return r
+}
+
+// inertiaFlashKey is the session key under which inertia.Flash keeps data
+// until a page renders it.
+const inertiaFlashKey = "_inertia_flash"
+
+// AssertFlash asserts that key was flashed with a value equal to want
+// (compared by JSON encoding). It finds web flash data (c.Flash) and
+// inertia.Flash data, either still in the session after a redirect or
+// rendered in the "flash" object of an Inertia page. The key must be
+// present: want nil matches a flashed nil, not a missing value.
+// InertiaPage.FlashEquals reads only the page's flash object.
+func (r *Response) AssertFlash(key string, want any) *Response {
+	r.t.Helper()
+
+	got, ok := r.flash(key)
+	if !ok {
+		r.fail("no flash %q", key)
+	}
+
+	if !sameJSON(got, want) {
+		r.fail("flash %q = %s, want %s", key, show(got), show(want))
+	}
+
+	return r
+}
+
+// AssertNoFlash asserts that key is not flashed, neither in the session
+// nor in an Inertia page's flash object.
+func (r *Response) AssertNoFlash(key string) *Response {
+	r.t.Helper()
+
+	if got, ok := r.flash(key); ok {
+		r.fail("flash %q present (%s), want none", key, show(got))
+	}
+
+	return r
+}
+
+func (r *Response) flash(key string) (any, bool) {
+	r.t.Helper()
+
+	if page, err := r.inertiaPage(); err == nil {
+		if f, ok := page["flash"].(map[string]any); ok {
+			if v, ok := f[key]; ok {
+				return v, true
+			}
+		}
+	}
+
+	s := r.Session()
+
+	if f, ok := s[inertiaFlashKey].(map[string]any); ok {
+		if v, ok := f[key]; ok {
+			return v, true
+		}
+	}
+
+	// A plain session value is not a flash: the key must be listed as
+	// flashed (new on this request, or carried to the next one).
+	for _, list := range []string{"_flash.old", "_flash.new"} {
+		var listed bool
+
+		switch keys := s[list].(type) {
+		case []any:
+			listed = slices.Contains(keys, any(key))
+		case []string:
+			listed = slices.Contains(keys, key)
+		}
+
+		// A listed key whose value was pulled is not a flash anymore.
+		if v, ok := s[key]; listed && ok {
+			return v, true
+		}
+	}
+
+	return nil, false
 }

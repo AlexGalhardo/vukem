@@ -24,6 +24,7 @@ package vukemtest
 import (
 	"context"
 	"crypto/rand"
+	"fmt"
 	"io"
 	"maps"
 	"net/http"
@@ -65,8 +66,23 @@ var nonWord = regexp.MustCompile(`\W+`)
 // New builds the app with build (usually bootstrap.New) in the test
 // environment: APP_ENV=test, a random APP_KEY, a private in-memory SQLite
 // database, no HTTP listener. Registered migrations run, and the app shuts
-// down in t.Cleanup.
+// down in t.Cleanup. Any build, boot or migration error fails the test; use
+// [Build] to assert on it instead.
 func New(tb testing.TB, build vukem.BuildFunc, opts ...Options) *App {
+	tb.Helper()
+
+	app, err := Build(tb, build, opts...)
+	if err != nil {
+		tb.Fatalf("%v", err)
+	}
+
+	return app
+}
+
+// Build is [New] returning the build, boot, migration or route error
+// instead of failing the test, so a test can check that a bad
+// configuration fails closed. It applies the same test defaults.
+func Build(tb testing.TB, build vukem.BuildFunc, opts ...Options) (*App, error) {
 	tb.Helper()
 
 	var o Options
@@ -100,32 +116,32 @@ func New(tb testing.TB, build vukem.BuildFunc, opts ...Options) *App {
 
 	app, err := build(append(appOpts, o.AppOptions...)...)
 	if err != nil {
-		tb.Fatalf("vukemtest: build app: %v", err)
+		return nil, fmt.Errorf("vukemtest: build app: %w", err)
 	}
 
 	tb.Cleanup(func() { _ = app.Shutdown(context.Background()) })
 
 	if err := app.Boot(tb.Context()); err != nil {
-		tb.Fatalf("vukemtest: boot: %v", err)
+		return nil, fmt.Errorf("vukemtest: boot: %w", err)
 	}
 
 	if !o.SkipMigrations {
 		m, err := app.Migrator()
 		if err != nil {
-			tb.Fatalf("vukemtest: open database: %v", err)
+			return nil, fmt.Errorf("vukemtest: open database: %w", err)
 		}
 
 		if _, err := m.Up(tb.Context()); err != nil {
-			tb.Fatalf("vukemtest: migrate: %v", err)
+			return nil, fmt.Errorf("vukemtest: migrate: %w", err)
 		}
 	}
 
 	h, err := app.Handler()
 	if err != nil {
-		tb.Fatalf("vukemtest: routes: %v", err)
+		return nil, fmt.Errorf("vukemtest: routes: %w", err)
 	}
 
-	return &App{App: app, t: tb, handler: h}
+	return &App{App: app, t: tb, handler: h}, nil
 }
 
 // Mails returns the in-memory mail transport (MAIL_MAILER=array, the

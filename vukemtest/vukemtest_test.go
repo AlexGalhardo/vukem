@@ -110,6 +110,12 @@ func build(opts ...vukem.Option) (*vukem.App, error) {
 			})
 
 			r.Get("/secret", func(*web.Ctx) error { return errs.ErrForbidden })
+			r.Get("/flash-pulled", func(c *web.Ctx) error {
+				_ = c.Flash("gone", "x")
+				c.Session().Pull("gone") // still listed as flashed, value removed
+
+				return c.NoContent()
+			})
 			r.Get("/teapot", func(c *web.Ctx) error { return c.String(418, "tea") })
 			r.Get("/accept", func(c *web.Ctx) error { return c.String(200, c.Header("Accept")) })
 			r.Delete("/notes", func(c *web.Ctx) error { return c.NoContent() })
@@ -127,7 +133,8 @@ func TestEndToEnd(t *testing.T) {
 
 	c.PostForm("/notes", url.Values{"body": {"  Buy milk  "}}).
 		AssertRedirectRoute("notes.index").
-		AssertSessionHas("success")
+		AssertSessionHas("success").
+		AssertFlash("success", "Note saved.")
 
 	vukemtest.AssertDatabaseHas(t, app, "notes", map[string]any{"body": "Buy milk"})
 	vukemtest.AssertDatabaseCount(t, app, "notes", 1)
@@ -261,6 +268,10 @@ func TestAssertionsReportFailures(t *testing.T) {
 		`session has "success"`: func(tb *fakeTB) {
 			app.Client(tb).PostForm("/notes", url.Values{"body": {"long enough"}}).AssertSessionMissing("success")
 		},
+		`flash "success" = "Note saved.", want "x"`: func(tb *fakeTB) {
+			app.Client(tb).PostForm("/notes", url.Values{"body": {"long enough"}}).AssertFlash("success", "x")
+		},
+		`no flash "success"`:          func(tb *fakeTB) { app.Client(tb).Get("/notes").AssertFlash("success", "Note saved.") },
 		`no flashed validation error`: func(tb *fakeTB) { app.Client(tb).Get("/notes").AssertSessionHasErrors("body") },
 		"no row in notes":             func(tb *fakeTB) { vukemtest.AssertDatabaseHas(tb, app, "notes", map[string]any{"body": "ghost"}) },
 		"want none":                   func(tb *fakeTB) { vukemtest.AssertDatabaseMissing(tb, app, "migrations", nil) },
@@ -356,5 +367,76 @@ func TestAssertHeaderContainsAndMissing(t *testing.T) {
 	})
 	expectFailure(t, `header Content-Type present`, func(tb *fakeTB) {
 		app.Client(tb).Get("/teapot").AssertHeaderMissing("Content-Type")
+	})
+}
+
+func TestBuildReturnsErrors(t *testing.T) {
+	t.Parallel()
+
+	errBad := errors.New("bad config")
+
+	cases := map[string]struct {
+		build vukem.BuildFunc
+		opts  vukemtest.Options
+		want  string
+	}{
+		"build": {
+			build: func(...vukem.Option) (*vukem.App, error) { return nil, errBad },
+			want:  "vukemtest: build app: bad config",
+		},
+		"database": {
+			build: build,
+			opts:  vukemtest.Options{Env: map[string]string{"DATABASE_URL": "nope://x"}},
+			want:  `no driver for "nope" URLs`,
+		},
+		"session driver": {
+			build: build,
+			opts:  vukemtest.Options{Env: map[string]string{"SESSION_DRIVER": "bogus"}},
+			want:  `unknown SESSION_DRIVER "bogus"`,
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			app, err := vukemtest.Build(t, tc.build, tc.opts)
+			if err == nil || app != nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Build() = %v, %v, want nil, error containing %q", app, err, tc.want)
+			}
+		})
+	}
+
+	if _, err := vukemtest.Build(
+		t,
+		func(...vukem.Option) (*vukem.App, error) { return nil, errBad },
+	); !errors.Is(
+		err,
+		errBad,
+	) {
+		t.Errorf("Build() error = %v, want it to wrap %v", err, errBad)
+	}
+
+	app, err := vukemtest.Build(t, build)
+	if err != nil {
+		t.Fatalf("Build(valid) error = %v", err)
+	}
+
+	app.Client(t).Get("/notes").AssertOK()
+}
+
+func TestAssertFlashNeedsPresence(t *testing.T) {
+	t.Parallel()
+
+	app := vukemtest.New(t, build)
+
+	app.Client(t).Get("/flash-pulled").AssertNoFlash("gone")
+	app.Client(t).PostForm("/notes", url.Values{"body": {"long enough"}}).AssertNoFlash("other")
+
+	expectFailure(t, `no flash "gone"`, func(tb *fakeTB) {
+		app.Client(tb).Get("/flash-pulled").AssertFlash("gone", nil)
+	})
+	expectFailure(t, `flash "success" present ("Note saved."), want none`, func(tb *fakeTB) {
+		app.Client(tb).PostForm("/notes", url.Values{"body": {"long enough"}}).AssertNoFlash("success")
 	})
 }
