@@ -261,6 +261,43 @@ func TestJSONOnly(t *testing.T) {
 	}
 }
 
+// A CORS-simple request (no preflight) can only send text/plain, form or
+// multipart bodies: none of them may pass as JSON, whatever parameters
+// they carry.
+func TestSecurity_A05_JSONOnlyRejectsSimpleContentTypes(t *testing.T) {
+	t.Parallel()
+
+	h := withServices(JSONOnly()(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, "ok")
+	})), slog.New(slog.DiscardHandler))
+
+	tests := map[string]int{
+		"text/plain; x=+json":                 415,
+		"text/plain;charset=application/json": 415,
+		"application/jsonp":                   415,
+		"application/json":                    200,
+		"application/json; charset=utf-8":     200,
+		"application/merge-patch+json":        200,
+		"APPLICATION/JSON":                    200,
+	}
+
+	for ct, want := range tests {
+		r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/", strings.NewReader(`{}`))
+		r.Header.Set("Content-Type", ct)
+
+		if rec := do(t, h, r); rec.Code != want {
+			t.Errorf("JSONOnly(Content-Type %q) = %d, want %d", ct, rec.Code, want)
+		}
+	}
+
+	r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/", strings.NewReader(`{}`))
+	r.Header.Set("Content-Type", "text/plain; x=+json")
+
+	if web.NewCtx(httptest.NewRecorder(), r, nil).IsJSON() {
+		t.Error("IsJSON(text/plain; x=+json) = true, want false")
+	}
+}
+
 func TestSecurity_A01_CORS(t *testing.T) {
 	t.Parallel()
 

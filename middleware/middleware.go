@@ -215,8 +215,7 @@ func JSONOnly() Middleware {
 
 			hasBody := r.ContentLength > 0 || len(r.TransferEncoding) > 0
 			if hasBody && r.Method != http.MethodGet && r.Method != http.MethodHead {
-				ct := r.Header.Get("Content-Type")
-				if !strings.HasPrefix(ct, "application/json") && !strings.Contains(ct, "+json") {
+				if !web.IsJSONMediaType(r.Header.Get("Content-Type")) {
 					web.Fail(w, r, errs.ErrUnsupportedMediaType)
 					return
 				}

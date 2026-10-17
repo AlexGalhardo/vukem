@@ -112,6 +112,7 @@ What Vukem does **by default** to protect applications, mapped to the [OWASP Top
 | API query conventions (`filter`, `sort`, `include`, `fields`) are **allowlists**; unknown values → 400 | A |
 | Admin list `sort`, `filter[...]` and search only reach SQL for allowlisted columns (unknown ones are ignored) and values are bound parameters (`TestSecurity_A05_AdminSortAndSearchAllowlisted`) | B |
 | `html/template` contextual auto-escaping for HTML, attributes, JS and URLs; `template.HTML` usage flagged in review | P |
+| JSON request detection (`middleware.JSONOnly`, `c.IsJSON`) parses the media type: only `application/json` and `application/*+json` count, so a CORS-simple `text/plain; x=+json` body cannot pass as JSON without a preflight (`TestSecurity_A05_JSONOnlyRejectsSimpleContentTypes`) | B |
 | JSON responses via `encoding/json` (escapes `<`, `>`, `&`); Inertia page data escapes `/` inside `<script>` | P / B |
 | Mail headers built with `net/mail` (no header injection); file names sanitised | A |
 | No shell execution in the framework; `os/exec` usage in CLI generators never passes user input through a shell | P |

@@ -17,6 +17,7 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"mime"
 	"net"
 	"net/http"
 	"slices"
@@ -187,8 +188,19 @@ func (c *Ctx) SetHeader(name, value string) { c.w.Header().Set(name, value) }
 
 // IsJSON reports whether the request body is JSON.
 func (c *Ctx) IsJSON() bool {
-	ct := c.r.Header.Get("Content-Type")
-	return strings.HasPrefix(ct, "application/json") || strings.Contains(ct, "+json")
+	return IsJSONMediaType(c.r.Header.Get("Content-Type"))
+}
+
+// IsJSONMediaType reports whether a Content-Type value is application/json
+// or an application/*+json type. Parameters are ignored, so a CORS-simple
+// "text/plain; x=+json" body is never taken for JSON.
+func IsJSONMediaType(contentType string) bool {
+	mt, _, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		return false
+	}
+
+	return mt == "application/json" || strings.HasPrefix(mt, "application/") && strings.HasSuffix(mt, "+json")
 }
 
 // WantsJSON reports whether the client prefers a JSON response: it accepts
