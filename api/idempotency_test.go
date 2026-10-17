@@ -252,7 +252,14 @@ func TestSecurity_A01_IdempotencyScopeHasNoSeparatorCollisions(t *testing.T) {
 	send(t, asGuard("a", "b:c", h), "POST", "/orders", "k", "", `{}`)
 
 	if calls.Load() != 2 {
-		t.Fatalf("guard %q user %q and guard %q user %q share a scope (calls = %d)", "a:b", "c", "a", "b:c", calls.Load())
+		t.Fatalf(
+			"guard %q user %q and guard %q user %q share a scope (calls = %d)",
+			"a:b",
+			"c",
+			"a",
+			"b:c",
+			calls.Load(),
+		)
 	}
 }
 

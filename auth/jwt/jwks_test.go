@@ -206,7 +206,9 @@ func TestSecurity_A07_RemoteJWKSRequiresAudienceAndIssuer(t *testing.T) {
 // loggingKeys is a custom KeySet that forwards to a remote one.
 type loggingKeys struct{ *jwt.RemoteJWKS }
 
-func (l loggingKeys) Key(ctx context.Context, kid string) (jwt.Key, error) { return l.RemoteJWKS.Key(ctx, kid) }
+func (l loggingKeys) Key(ctx context.Context, kid string) (jwt.Key, error) {
+	return l.RemoteJWKS.Key(ctx, kid)
+}
 
 func assertGuardPanics(t *testing.T, v *jwt.Verifier) {
 	t.Helper()

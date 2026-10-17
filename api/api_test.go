@@ -355,7 +355,13 @@ func TestQueryLimitsDefaultWhenNotPositive(t *testing.T) {
 
 	for _, n := range []int{0, -1} {
 		handler := func(c *web.Ctx) error {
-			if _, err := Query(c, orm.QueryOf[Product](db), Filters("category"), MaxPage(n), MaxFilterValues(n)); err != nil {
+			if _, err := Query(
+				c,
+				orm.QueryOf[Product](db),
+				Filters("category"),
+				MaxPage(n),
+				MaxFilterValues(n),
+			); err != nil {
 				return err
 			}
 

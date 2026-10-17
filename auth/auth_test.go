@@ -127,7 +127,12 @@ func newApp(t *testing.T, hasher hash.Hasher) *testApp {
 
 				users := auth.NewORMProvider[User](db)
 				ta.tokens = auth.NewTokens(db)
-				ta.web = auth.NewSessionGuard("web", flakyUsers{users, &ta.down, &ta.gone}, hasher, auth.NewRememberStore(db))
+				ta.web = auth.NewSessionGuard(
+					"web",
+					flakyUsers{users, &ta.down, &ta.gone},
+					hasher,
+					auth.NewRememberStore(db),
+				)
 				ta.web.InsecureCookies = true
 				ta.api = auth.NewTokenGuard("api", users, ta.tokens)
 
