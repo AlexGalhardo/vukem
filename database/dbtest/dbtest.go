@@ -116,6 +116,7 @@ func Run(t *testing.T, db *database.DB) {
 	t.Run("SchemaAlter", func(t *testing.T) { testAlter(ctx, t, db) })
 	t.Run("Queue", func(t *testing.T) { testQueue(ctx, t, db) })
 	t.Run("BulkLocksChecks", func(t *testing.T) { testBulkLocksChecks(ctx, t, db) })
+	t.Run("PartialIndexRebind", func(t *testing.T) { testPartialIndexRebind(ctx, t, db) })
 }
 
 func clean(ctx context.Context, t *testing.T, db *database.DB) {
@@ -470,5 +471,56 @@ func testAlter(ctx context.Context, t *testing.T, db *database.DB) {
 
 	if err := s.Drop("dbt_renamed"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// testPartialIndexRebind checks Index(...).Where on the dialects that have
+// partial indexes (MySQL must refuse it) and runs the inserts through
+// database.Rebind, including a "?" inside a string literal.
+func testPartialIndexRebind(ctx context.Context, t *testing.T, db *database.DB) {
+	t.Helper()
+
+	s := schema.New(ctx, db)
+
+	err := s.Create("dbt_reservations", func(t *schema.Table) {
+		t.ID()
+		t.Integer("number_id")
+		t.String("status", 20)
+		t.UniqueIndex("number_id").Where("status = 'live'")
+	})
+	if db.Dialect().Name() == "mysql" {
+		if err == nil {
+			_ = s.DropIfExists("dbt_reservations")
+			t.Fatal("mysql accepted a partial index")
+		}
+
+		return
+	}
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() { _ = s.DropIfExists("dbt_reservations") })
+
+	insert := database.Rebind(db.Dialect(),
+		"INSERT INTO dbt_reservations (number_id, status) VALUES (?, CASE WHEN ? THEN 'live' ELSE 'gone?' END)")
+
+	for _, live := range []bool{false, false, true} {
+		if _, err := db.ExecContext(ctx, insert, 7, live); err != nil {
+			t.Fatalf("insert live=%v: %v", live, err)
+		}
+	}
+
+	if _, err := db.ExecContext(ctx, insert, 7, true); err == nil {
+		t.Fatal("second live reservation accepted; partial unique index missing")
+	}
+
+	var n int
+	if err := db.QueryRowContext(ctx, database.Rebind(
+		db.Dialect(),
+		"SELECT COUNT(*) FROM dbt_reservations WHERE status = 'gone?' AND number_id = ?",
+	), 7).Scan(&n); err != nil || n != 2 {
+		t.Fatalf("count = %d, %v, want 2", n, err)
 	}
 }
