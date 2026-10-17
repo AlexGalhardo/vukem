@@ -2,10 +2,12 @@ package tests
 
 import (
 	"bytes"
+	"encoding/json"
 	"mime/multipart"
 	"net/http"
-	"os"
-	"path/filepath"
+	"path"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/AlexGalhardo/vukem/vukemtest"
@@ -34,11 +36,29 @@ func uploadForm(t *testing.T, filename, content string) (*bytes.Buffer, string) 
 	return &body, mw.FormDataContentType()
 }
 
+// uploadedFiles lists the stored upload names through the JSON index.
+func uploadedFiles(t *testing.T, app *vukemtest.App) []string {
+	t.Helper()
+
+	var got struct {
+		Data []string `json:"data"`
+	}
+
+	res := app.Client(t).AcceptJSON().Get("/uploads").AssertOK()
+	if err := json.Unmarshal([]byte(res.Body()), &got); err != nil {
+		t.Fatalf("GET /uploads body = %q: %v", res.Body(), err)
+	}
+
+	return got.Data
+}
+
 func TestUploads(t *testing.T) {
 	t.Parallel()
 
-	dir := t.TempDir()
-	app := vukemtest.New(t, bootstrap.New, vukemtest.Options{Env: map[string]string{"UPLOADS_DIR": dir}})
+	// An in-memory disk keeps the test off the filesystem: on Windows,
+	// antivirus filters briefly recreate just-deleted files, so removing a
+	// t.TempDir that held uploads can fail with "directory is not empty".
+	app := vukemtest.New(t, bootstrap.New, vukemtest.Options{Env: map[string]string{"UPLOADS_DISK": "memory"}})
 
 	app.Client(t).Get("/uploads").AssertOK().AssertSee("No uploads yet").AssertSee("data-upload")
 
@@ -49,8 +69,8 @@ func TestUploads(t *testing.T) {
 		AssertSee(".png").
 		AssertDontSee("photo.png")
 
-	stored, _ := filepath.Glob(filepath.Join(dir, "images", "*.png"))
-	if len(stored) != 1 {
+	stored := uploadedFiles(t, app)
+	if len(stored) != 1 || path.Ext(stored[0]) != ".png" || stored[0] == "photo.png" {
 		t.Fatalf("stored files = %v, want one random .png", stored)
 	}
 
@@ -58,7 +78,29 @@ func TestUploads(t *testing.T) {
 	body, ct = uploadForm(t, "evil.png", "<html><script>alert(1)</script></html>")
 	app.Client(t).AcceptJSON().Do(http.MethodPost, "/uploads", body, ct).AssertJSONValidationErrors("images")
 
-	if entries, _ := os.ReadDir(filepath.Join(dir, "images")); len(entries) != 1 {
-		t.Errorf("rejected upload left files: %v", entries)
+	if got := uploadedFiles(t, app); !slices.Equal(got, stored) {
+		t.Errorf("after a rejected upload, files = %v, want %v", got, stored)
+	}
+}
+
+// An unknown disk, or a memory disk in production (uploads vanish on
+// restart), fails the boot instead of silently picking a default.
+func TestUploadsDiskConfig(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]map[string]string{
+		"unknown disk":         {"UPLOADS_DISK": "ftp"},
+		"memory in production": {"UPLOADS_DISK": "memory", "APP_ENV": "production"},
+	}
+
+	for name, env := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := vukemtest.Build(t, bootstrap.New, vukemtest.Options{Env: env})
+			if err == nil || !strings.Contains(err.Error(), "UPLOADS_DISK") {
+				t.Errorf("Build(%v) error = %v, want an UPLOADS_DISK error", env, err)
+			}
+		})
 	}
 }
