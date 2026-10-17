@@ -32,6 +32,10 @@ Please include:
 | Initial assessment | 7 days |
 | Fix released for confirmed issues | 30 days, faster for critical issues |
 
+## Disclosure policy
+
+Vukem follows coordinated vulnerability disclosure. We confirm the vulnerability, agree on a disclosure timeline with the reporter (90 days at most from the report), prepare the fix privately in a [temporary private fork](https://docs.github.com/en/code-security/security-advisories/working-with-repository-security-advisories/collaborating-in-a-temporary-private-fork-to-resolve-a-repository-security-vulnerability), and publish the advisory, a CVE when one applies, and the patched release together. Please keep the vulnerability private until the advisory is public.
+
 Fixes are published as GitHub Security Advisories, which also feed the [Go vulnerability database](https://pkg.go.dev/vuln/) so `govulncheck` users are notified. Reporters are credited unless they prefer otherwise.
 
 ## Verifying release artifacts
