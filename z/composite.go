@@ -134,7 +134,8 @@ func (s SliceSchema) Optional() SliceSchema { s.o = s.o.clone(); s.o.optional = 
 // Nullable allows null.
 func (s SliceSchema) Nullable() SliceSchema { s.o = s.o.clone(); s.o.nullable = true; return s }
 
-// Default uses v (a slice of the element type) when the key is absent.
+// Default uses v (a slice of the element type) when the key is absent. It
+// panics when v has another type.
 func (s SliceSchema) Default(v any) SliceSchema {
 	if reflect.TypeOf(v) != s.GoType() {
 		panic(fmt.Sprintf("z: Slice default must be %s, got %T", s.GoType(), v))

@@ -28,6 +28,7 @@ gopls: enable `"formatting.gofumpt": true` so editor and CI agree.
 - `golangci-lint fmt` — formatters: **gofumpt**, **gci** (std / third-party / `github.com/AlexGalhardo/vukem`), **golines** (120 cols, tab-len 4).
 - `golangci-lint run ./...` — `default: standard` plus correctness (errorlint, bodyclose, sqlclosecheck, rowserrcheck, contextcheck, noctx, nilerr, exhaustive, forcetypeassert, musttag), security (gosec), style (revive, gocritic, misspell, unconvert, unparam, usestdlibvars, intrange, perfsprint, nolintlint, godot, sloglint, modernize, copyloopvar), tests (usetesting, thelper, tparallel), and **depguard** (core must not import drivers or non-allowlisted modules).
 - `nolint` requires a specific linter and an explanation.
+- revive's `exported` and `package-comments` rules are enforced (no `comments` exclusion preset): every exported identifier needs a doc comment starting with its name.
 - `go vet ./...` and `go fix -diff ./...` (modernizers) run in CI.
 - `govulncheck ./...` in CI, in the pre-push hook and in the weekly `vuln.yml` cron (every module).
 - Multi-module: `task lint` loops over every module; CI runs one job per module with `GOWORK=off`.
@@ -157,6 +158,14 @@ The 1.x [stability policy](stability.md) is enforced by the `apidiff` job in `ci
 - The job needs the tags: it checks out with `fetch-depth: 0`. `apidiff` comes from `golang.org/x/exp`, which has no releases, so it is pinned to an exact pseudo-version (`APIDIFF_VERSION` in `Taskfile.yml`, same value in `ci.yml`) and installed with `go install`, never added to a `go.mod`.
 
 Locally, `task api:check` installs the pinned `apidiff` and runs the gate. `-major v0` compares with the latest `v0` tags instead, and `-report file.md` writes every compatible and incompatible change grouped by package without failing: the pre-freeze review in [docs/api/](api/review.md) was produced with `task api:check -- -major v0 -head v1.0.0 -report docs/api/apidiff-v0.20.1-to-v1.0.0.md`.
+
+### The v1 baseline
+
+There is no baseline file: the latest stable `v1` tag of each module is the baseline, so every new tag moves it forward. When `v1.0.0` is cut ([v1.0 API review](v1-api-review.md#the-v1-gate)):
+
+1. On the release commit, `task api:check -- -major v0 -head v1.0.0 -report docs/api/apidiff-v0.25.0-to-v1.0.0.md` (base: the last `v0` tag) lists what changed since the last `v0`; every incompatible entry must be in the [1.0 upgrade guide](upgrade/1.0.md). Commit the report.
+2. Tag the core `v1.0.0` and every published nested module `drivers/<name>/v1.0.0` / `contrib/<name>/v1.0.0` (after their `go.mod` requires core `v1.0.0`). A module left on `v0` stays outside the gate until its first `v1` tag.
+3. From then on the `apidiff` job fails any incompatible change. A security fix that must break an API (allowed by the [stability policy](stability.md#what-is-not-covered)) is merged by an admin over the failed check, with the reason in the PR and under **Security** in the changelog. A `/v2` module needs the CI step switched to `-major v2` for that module.
 
 ## Task runner
 

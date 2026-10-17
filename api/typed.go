@@ -60,7 +60,9 @@ var paramRe = regexp.MustCompile(`\{([A-Za-z_][A-Za-z0-9_]*)(?:\.{3})?\}`) //nol
 // the JSON or form body and the path parameters (which win), and validated
 // with In's `validate` tags (422 with field errors). The output is written
 // as JSON, checked first when Op.ValidateResponse is set. GET, HEAD and
-// DELETE ignore the body. Pattern is "METHOD /path".
+// DELETE ignore the body. Pattern is "METHOD /path". It panics on a
+// malformed pattern or when Op.ValidateResponse is set for a non-struct
+// Out, so mistakes surface at boot.
 //
 //	api.Register(g, "POST /products", api.Op{Name: "products.store"},
 //		func(c *web.Ctx, in StoreProduct) (ProductJSON, error) { ... })

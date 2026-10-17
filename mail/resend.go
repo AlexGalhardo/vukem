@@ -62,6 +62,7 @@ type ResendError struct {
 	Message string
 }
 
+// Error returns the status, Resend error name and message.
 func (e *ResendError) Error() string {
 	return fmt.Sprintf("mail: resend %d %s: %s", e.Status, e.Name, e.Message)
 }

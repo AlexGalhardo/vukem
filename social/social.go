@@ -94,10 +94,10 @@ type Provider interface {
 	User(ctx context.Context, h *http.Client, tok Token, nonce string) (User, error)
 }
 
-// Errors returned by the callback, mapped to HTTP statuses.
+// Errors returned by the callback, mapped to HTTP statuses. Their Key
+// ("social.*") translates the message in the request locale
+// (errs.HTTPError.LocalizedText).
 var (
-	// Their Key ("social.*") translates the message in the request locale
-	// (errs.HTTPError.LocalizedText).
 	ErrUnknownProvider = &errs.HTTPError{
 		Status: http.StatusNotFound, Message: "Unknown sign-in provider.", Key: "social.unknown_provider",
 	}

@@ -96,14 +96,6 @@ type Attachable interface {
 	Attachments() []Attachment
 }
 
-// WithAttachments is the pre-1.0 name of Attachable; With* names are
-// reserved for options.
-//
-// Deprecated: use Attachable.
-//
-//go:fix inline
-type WithAttachments = Attachable
-
 // Message is a rendered email ready for a Transport.
 type Message struct {
 	// ID identifies the message (Message-ID, Resend idempotency key).

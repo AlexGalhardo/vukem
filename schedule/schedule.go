@@ -143,7 +143,8 @@ func (t *Task) Cron(expr string) *Task {
 }
 
 // Every runs the task every d, aligned to the clock (d must be a whole
-// number of minutes dividing an hour or a day, e.g. 5m, 15m, 2h).
+// number of minutes dividing an hour or a day, e.g. 5m, 15m, 2h). It
+// panics on any other d.
 func (t *Task) Every(d time.Duration) *Task {
 	m := int(d / time.Minute)
 
@@ -168,13 +169,15 @@ func (t *Task) EveryFiveMinutes() *Task { return t.Cron("*/5 * * * *") }
 // Hourly runs the task at the start of every hour.
 func (t *Task) Hourly() *Task { return t.Cron("0 * * * *") }
 
-// HourlyAt runs the task every hour at minute.
+// HourlyAt runs the task every hour at minute; it panics unless minute is
+// in 0-59.
 func (t *Task) HourlyAt(minute int) *Task { return t.Cron(strconv.Itoa(minute) + " * * * *") }
 
 // Daily runs the task at midnight.
 func (t *Task) Daily() *Task { return t.Cron("0 0 * * *") }
 
-// DailyAt runs the task every day at "HH:MM".
+// DailyAt runs the task every day at "HH:MM"; it panics on a malformed
+// time.
 func (t *Task) DailyAt(hhmm string) *Task {
 	h, m := clock(hhmm)
 	return t.Cron(m + " " + h + " * * *")
@@ -186,13 +189,15 @@ func (t *Task) Weekdays() *Task {
 	return t.Cron(f[0] + " " + f[1] + " " + f[2] + " " + f[3] + " 1-5")
 }
 
-// WeeklyOn runs the task on weekday (0 = Sunday) at "HH:MM".
+// WeeklyOn runs the task on weekday (0 = Sunday) at "HH:MM"; it panics on
+// a malformed time or weekday.
 func (t *Task) WeeklyOn(weekday time.Weekday, hhmm string) *Task {
 	h, m := clock(hhmm)
 	return t.Cron(m + " " + h + " * * " + strconv.Itoa(int(weekday)))
 }
 
-// MonthlyOn runs the task on day of the month at "HH:MM".
+// MonthlyOn runs the task on day of the month at "HH:MM"; it panics on a
+// malformed time or a day outside 1-31.
 func (t *Task) MonthlyOn(day int, hhmm string) *Task {
 	h, m := clock(hhmm)
 	return t.Cron(m + " " + h + " " + strconv.Itoa(day) + " * *")

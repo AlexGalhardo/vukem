@@ -32,7 +32,8 @@ func FromTags[T any]() StructSchema[T] {
 // tagCache memoizes FromTags per type for For; values are immutable schemas.
 var tagCache sync.Map //nolint:gochecknoglobals // memoization of immutable values only
 
-// For returns the tag-derived schema for T, built once and cached.
+// For returns the tag-derived schema for T, built once and cached. It
+// panics like FromTags.
 func For[T any]() StructSchema[T] {
 	rt := reflect.TypeFor[T]()
 	if v, ok := tagCache.Load(rt); ok {

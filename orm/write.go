@@ -41,20 +41,6 @@ type (
 	}
 )
 
-// BeforeCreater is the pre-1.0 spelling of BeforeCreator.
-//
-// Deprecated: use BeforeCreator.
-//
-//go:fix inline
-type BeforeCreater = BeforeCreator
-
-// AfterCreater is the pre-1.0 spelling of AfterCreator.
-//
-// Deprecated: use AfterCreator.
-//
-//go:fix inline
-type AfterCreater = AfterCreator
-
 // now is the clock used for timestamps; tests replace it via WithClock.
 type clockKey struct{}
 
