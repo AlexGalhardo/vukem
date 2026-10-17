@@ -521,7 +521,7 @@ Applies to **every** task:
   → verify: conformance suite (memory, Redis); unauthorized subscribe denied.
 - [x] **B.6.3** `contrib/graphql` module: SDL parser, executor (queries, mutations, variables, fragments, introspection), typed resolvers, batching loader over the ORM, depth/complexity limits, persisted queries, errors with extensions.
   → verify: spec-derived parser/executor tests; fuzzed parser; depth-limit test; N+1 avoided (query-count assertion).
-- [ ] **B.6.4** GraphQL subscriptions over WebSockets (graphql-ws protocol) using `broadcast`.
+- [x] **B.6.4** GraphQL subscriptions over WebSockets (graphql-ws protocol) using `broadcast`.
   → verify: subscription e2e test.
 
 ### B.7 Admin panel & dev dashboard
