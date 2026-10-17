@@ -170,6 +170,14 @@ Refine callbacks (and `Custom` parsers) make their messages translatable with `z
 }
 ```
 
+A handler can also return `z.FieldError`, `z.FieldErrorKey` or `z.Issues` directly (wrapped with `%w` too), for checks that need the database or other services: the default error handler treats them like `*errs.ValidationError`, so the client gets a 422 with field errors (problem+json for JSON clients; with sessions, classic and Inertia form posts flash the errors and redirect back; an HTML page otherwise), localized when the i18n middleware runs. `z.AsIssues` returns the single issue of a `FieldError`, and `errs.Status` reports 422 for both.
+
+```go
+if taken {
+	return z.FieldErrorKey("email", "unique", "The {field} has already been taken.", nil)
+}
+```
+
 A `Custom` parser that returns `z.FieldError` or `z.FieldErrorKey` reports the issue at the sub-path with the bare message, like `Refine` (before v0.24 it was one issue at the schema path reading `path: msg`).
 
 Placeholders are the issue `Params` (`{min}`, `{max}`, `{len}`, `{options}`…). `{expected}` in `invalid_type` is English text (`a string`); translate the whole message instead of reusing it.

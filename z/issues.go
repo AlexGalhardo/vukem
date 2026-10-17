@@ -24,6 +24,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net/http"
 	"regexp"
 	"slices"
 	"strings"
@@ -108,12 +109,25 @@ func (is Issues) First(path string) string {
 	return ""
 }
 
-// AsIssues extracts Issues from err.
-func AsIssues(err error) (Issues, bool) {
-	var is Issues
-	ok := errors.As(err, &is)
+// HTTPStatus reports 422, so errs.Status and the web error handler treat
+// Issues returned from a handler as a validation error.
+func (is Issues) HTTPStatus() int { return http.StatusUnprocessableEntity }
 
-	return is, ok
+// AsIssues extracts Issues from err. An error from [FieldError] or
+// [FieldErrorKey] yields its single issue.
+func AsIssues(err error) (Issues, bool) {
+	if is, ok := errors.AsType[Issues](err); ok {
+		return is, true
+	}
+
+	if _, ok := errors.AsType[*fieldError](err); ok {
+		var c pctx
+		c.addErr("", err)
+
+		return c.issues, true
+	}
+
+	return nil, false
 }
 
 // FieldError returns an error for Refine callbacks that points at a field
@@ -141,6 +155,10 @@ type fieldError struct {
 }
 
 func (e *fieldError) Error() string { return e.path + ": " + e.message }
+
+// HTTPStatus reports 422: a FieldError returned from a handler (not only
+// from Refine) is a validation error.
+func (*fieldError) HTTPStatus() int { return http.StatusUnprocessableEntity }
 
 var defaultMessages = map[string]string{
 	CodeRequired:         "The {field} field is required.",

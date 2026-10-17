@@ -1,6 +1,8 @@
 package z
 
 import (
+	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -291,5 +293,66 @@ func TestCustom_FieldError(t *testing.T) {
 				t.Errorf("Custom.Parse issues (-want +got):\n%s", diff)
 			}
 		})
+	}
+}
+
+func TestAsIssues_FieldError(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		err  error
+		want Issues
+	}{
+		{
+			"plain",
+			FieldError("email", "Already taken."),
+			Issues{{Path: "email", Code: CodeCustom, Message: "Already taken."}},
+		},
+		{
+			"keyed", FieldErrorKey("password_confirmation", "confirmed", "The {field} field does not match {other}.",
+				map[string]any{"other": "password"}),
+			Issues{{
+				Path:    "password_confirmation",
+				Code:    CodeCustom,
+				Key:     "confirmed",
+				Message: "The password confirmation field does not match password.",
+				Params:  map[string]any{"other": "password"},
+			}},
+		},
+		{
+			"wrapped", fmt.Errorf("checkout: %w", FieldError("qty", "Out of stock.")),
+			Issues{{Path: "qty", Code: CodeCustom, Message: "Out of stock."}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, ok := AsIssues(tt.err)
+			if !ok {
+				t.Fatalf("AsIssues(%v) ok = false, want true", tt.err)
+			}
+
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("AsIssues (-want +got):\n%s", diff)
+			}
+
+			if sc, ok := errors.AsType[interface {
+				error
+				HTTPStatus() int
+			}](tt.err); !ok || sc.HTTPStatus() != 422 {
+				t.Errorf("HTTPStatus of %v = missing or not 422", tt.err)
+			}
+		})
+	}
+
+	if _, ok := AsIssues(errors.New("boom")); ok {
+		t.Error("AsIssues(plain error) ok = true, want false")
+	}
+
+	if got := (Issues{}).HTTPStatus(); got != 422 {
+		t.Errorf("Issues.HTTPStatus() = %d, want 422", got)
 	}
 }

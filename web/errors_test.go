@@ -13,7 +13,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
+
 	"github.com/AlexGalhardo/vukem/errs"
+	"github.com/AlexGalhardo/vukem/z"
 )
 
 type fakeViews map[string]string
@@ -284,4 +287,102 @@ func TestErrorHandlerTranslatesKeyedErrors(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestErrorHandlerZValidationErrors(t *testing.T) {
+	t.Parallel()
+
+	_, issuesErr := z.Struct[struct {
+		Title string `json:"title"`
+	}](z.Shape{"title": z.String().Min(3)}).Parse(map[string]any{"title": "ab"})
+
+	jsonReq := func(r *http.Request) { r.Header.Set("Accept", "application/json") }
+	localized := func(r *http.Request) {
+		jsonReq(r)
+		*r = *r.WithContext(WithIssueLocalizer(r.Context(), func(is z.Issues) z.Issues {
+			for i := range is {
+				if is[i].Key == "taken" {
+					is[i].Message = "já usado"
+				}
+			}
+
+			return is
+		}))
+	}
+
+	tests := []struct {
+		name  string
+		err   error
+		setup func(r *http.Request)
+		want  map[string][]string
+	}{
+		{
+			"field error", z.FieldError("email", "Already taken."), jsonReq,
+			map[string][]string{"email": {"Already taken."}},
+		},
+		{
+			"wrapped field error", fmt.Errorf("checkout: %w", z.FieldError("items.0.qty", "Out of stock.")), jsonReq,
+			map[string][]string{"items.0.qty": {"Out of stock."}},
+		},
+		{
+			"keyed field error is localized",
+			z.FieldErrorKey("email", "taken", "The {field} is taken.", nil),
+			localized,
+			map[string][]string{"email": {"já usado"}},
+		},
+		{
+			"issues from Parse", issuesErr, jsonReq,
+			map[string][]string{"title": {"The title field must be at least 3 characters."}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			rec, _ := runError(t, tt.err, tt.setup, nil)
+			if rec.Code != http.StatusUnprocessableEntity {
+				t.Fatalf("status = %d, want 422 (body %q)", rec.Code, rec.Body.String())
+			}
+
+			var p Problem
+			if err := json.Unmarshal(rec.Body.Bytes(), &p); err != nil {
+				t.Fatal(err)
+			}
+
+			if diff := cmp.Diff(tt.want, p.Errors); diff != "" {
+				t.Errorf("problem errors (-want +got):\n%s", diff)
+			}
+		})
+	}
+
+	t.Run("html page", func(t *testing.T) {
+		t.Parallel()
+
+		rec, _ := runError(t, z.FieldError("email", "Already taken."), nil, nil)
+		if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "Already taken.") {
+			t.Fatalf("HTML page = %d %q", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("validation hook", func(t *testing.T) {
+		t.Parallel()
+
+		var got *errs.ValidationError
+
+		hook := ValidationHook(func(c *Ctx, v *errs.ValidationError) bool {
+			got = v
+			_ = c.Redirect("/form")
+
+			return true
+		})
+
+		rec, _ := runError(t, z.FieldError("email", "Already taken."), func(r *http.Request) {
+			*r = *r.WithContext(WithValidationHook(r.Context(), hook))
+		}, nil)
+
+		if rec.Code != http.StatusSeeOther || got == nil || got.First("email") != "Already taken." {
+			t.Fatalf("hook = %v, status %d; want the field error and a redirect", got, rec.Code)
+		}
+	})
 }

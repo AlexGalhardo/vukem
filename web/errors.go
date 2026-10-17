@@ -66,7 +66,8 @@ func WithValidationHook(ctx context.Context, hook ValidationHook) context.Contex
 }
 
 // DefaultErrorHandler renders err according to the client:
-//   - JSON clients get RFC 9457 problem+json (422 includes field errors);
+//   - JSON clients get RFC 9457 problem+json (422 includes field errors;
+//     z.Issues and z.FieldError errors count as validation errors);
 //   - classic form posts with a validation error go to the validation hook
 //     (flash errors and redirect back) when one is installed;
 //   - htmx requests get an HTML fragment with the status (htmx 4 swaps 4xx);
@@ -78,6 +79,9 @@ func DefaultErrorHandler(c *Ctx, err error) {
 	status := errs.Status(err)
 	he, _ := errors.AsType[*errs.HTTPError](err)
 	verr, _ := errors.AsType[*errs.ValidationError](err)
+	if verr == nil {
+		verr = issuesValidation(c.Context(), err) // z.FieldError or Issues returned by the handler
+	}
 
 	logError(c, status, err)
 

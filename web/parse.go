@@ -68,15 +68,26 @@ func parseWith[T any](ctx context.Context, schema z.Schema[T], input any) (T, er
 		return v, nil
 	}
 
-	if is, ok := z.AsIssues(err); ok {
-		if localize := IssueLocalizer(ctx); localize != nil {
-			is = localize(is)
-		}
-
-		return v, &errs.ValidationError{Fields: is.Fields()}
+	if verr := issuesValidation(ctx, err); verr != nil {
+		return v, verr
 	}
 
 	return v, err
+}
+
+// issuesValidation turns z Issues (or a z.FieldError) in err into a
+// localized *errs.ValidationError, or returns nil.
+func issuesValidation(ctx context.Context, err error) *errs.ValidationError {
+	is, ok := z.AsIssues(err)
+	if !ok {
+		return nil
+	}
+
+	if localize := IssueLocalizer(ctx); localize != nil {
+		is = localize(is)
+	}
+
+	return &errs.ValidationError{Fields: is.Fields()}
 }
 
 // JSONWith writes v as JSON after checking it against schema when
