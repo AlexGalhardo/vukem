@@ -41,7 +41,7 @@ func idemHandler(
 	}))
 }
 
-func send(t *testing.T, h http.Handler, method, path, key, auth, body string) *httptest.ResponseRecorder {
+func send(t *testing.T, h http.Handler, method, path, key, authorization, body string) *httptest.ResponseRecorder {
 	t.Helper()
 
 	rec := httptest.NewRecorder()
@@ -51,7 +51,7 @@ func send(t *testing.T, h http.Handler, method, path, key, auth, body string) *h
 		r.Header.Set(api.IdempotencyHeader, key)
 	}
 
-	r.Header.Set("Authorization", auth)
+	r.Header.Set("Authorization", authorization)
 	h.ServeHTTP(rec, r)
 
 	return rec
