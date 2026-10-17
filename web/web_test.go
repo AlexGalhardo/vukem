@@ -133,6 +133,9 @@ func TestSecurity_A01_IPIgnoresSpoofedForwardedFor(t *testing.T) {
 		// the client's first line win.
 		{name: "two header lines", remote: "10.0.0.1:1", xff: "6.6.6.6\n9.9.9.9", trusted: true, want: "9.9.9.9"},
 		{name: "not an ip", remote: "10.0.0.1:1", xff: "6.6.6.6, evil", trusted: true, want: "10.0.0.1"},
+		// Rate-limit keys must not differ by spelling of the same address.
+		{name: "ipv4-mapped", remote: "10.0.0.1:1", xff: "::ffff:9.9.9.9", trusted: true, want: "9.9.9.9"},
+		{name: "ipv6 case", remote: "10.0.0.1:1", xff: "2001:DB8::0:7", trusted: true, want: "2001:db8::7"},
 	}
 
 	for _, tt := range tests {
@@ -172,7 +175,8 @@ func TestSecurity_A01_ClientIPHeaderOnlyFromTrustedProxies(t *testing.T) {
 		want         string
 	}{
 		{name: "trusted proxy", remote: "10.0.0.1:1", header: []string{"9.9.9.9"}, want: "9.9.9.9"},
-		{name: "ipv6 client", remote: "10.0.0.1:1", header: []string{" 2001:db8::7 "}, want: "2001:db8::7"},
+		{name: "ipv6 client", remote: "10.0.0.1:1", header: []string{" 2001:DB8::0:7 "}, want: "2001:db8::7"},
+		{name: "ipv4-mapped", remote: "10.0.0.1:1", header: []string{"::ffff:9.9.9.9"}, want: "9.9.9.9"},
 		// A client that reaches the app directly cannot pick its own IP.
 		{
 			name:   "spoofed by untrusted peer",

@@ -20,6 +20,7 @@ import (
 	"mime"
 	"net"
 	"net/http"
+	"net/netip"
 	"slices"
 	"strconv"
 	"strings"
@@ -242,8 +243,8 @@ func (c *Ctx) IP() string {
 			return host
 		}
 
-		ip := strings.TrimSpace(vals[0])
-		if net.ParseIP(ip) == nil {
+		ip, ok := canonicalIP(vals[0])
+		if !ok {
 			return host
 		}
 
@@ -261,8 +262,8 @@ func (c *Ctx) IP() string {
 	// IP means the chain cannot be trusted, so the peer address is used.
 	parts := strings.Split(fwd, ",")
 	for _, p := range slices.Backward(parts) {
-		ip := strings.TrimSpace(p)
-		if net.ParseIP(ip) == nil {
+		ip, ok := canonicalIP(p)
+		if !ok {
 			return host
 		}
 
@@ -271,7 +272,21 @@ func (c *Ctx) IP() string {
 		}
 	}
 
-	return strings.TrimSpace(parts[0])
+	ip, _ := canonicalIP(parts[0])
+
+	return ip
+}
+
+// canonicalIP parses s and returns it in one spelling (IPv4-mapped IPv6
+// unmapped, IPv6 lowercased and compressed), so rate-limit keys for the
+// same client never differ.
+func canonicalIP(s string) (string, bool) {
+	addr, err := netip.ParseAddr(strings.TrimSpace(s))
+	if err != nil {
+		return "", false
+	}
+
+	return addr.Unmap().String(), true
 }
 
 func (c *Ctx) trusted(host string) bool {
