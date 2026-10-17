@@ -140,7 +140,7 @@ users := graphql.NewLoader(graphql.ByKey(orm.QueryOf[User](db), "id", func(u *Us
 postsByUser := graphql.NewLoader(graphql.GroupByKey(orm.QueryOf[Post](db), "user_id", func(p *Post) int64 { return p.UserID }))
 ```
 
-`ByKey` (belongs-to) and `GroupByKey` (has-many) run one `WhereIn` query per batch: 20 posts with their authors and the authors' posts cost 3 queries instead of 41 (asserted by `TestLoaderAvoidsNPlusOne`). `MaxBatch(n)` splits batches; `BatchWait(d)` (default 10ms) only bounds the wait when resolvers block on something other than a loader. `LoadMany` batches its keys; outside `Execute` a load calls `fetch` directly.
+`ByKey` (belongs-to) and `GroupByKey` (has-many) run one `WhereIn` query per batch: 20 posts with their authors and the authors' posts cost 3 queries instead of 41 (asserted by `TestLoaderAvoidsNPlusOne`). `MaxBatch(n)` splits batches; `BatchWait(d)` (default 10ms) is the fallback when resolvers block on something other than a loader (a mutex, a channel): a pending batch is sent once the operation made no progress for `d`, so slow siblings that keep reaching their loads on a busy machine still share one batch; `BatchWait(0)` disables it. `LoadMany` batches its keys; outside `Execute` a load calls `fetch` directly.
 
 ## Limits
 

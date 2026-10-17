@@ -10,6 +10,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 
@@ -90,9 +92,10 @@ type User { id: ID! name: String! posts: [Post!]! }
 func blogSchema(t *testing.T, db *countingDB) *graphql.Schema {
 	t.Helper()
 
-	// BatchWait(0): only the resolution tick dispatches batches. The 10ms
-	// fallback timer would split them when a loaded machine delays the
-	// sibling resolvers, making the query count depend on wall time.
+	// BatchWait(0): only the resolution tick dispatches batches. The
+	// fallback timer fires after 10ms without progress, which a stalled
+	// test process can still produce, making the query count depend on
+	// wall time.
 	users := graphql.NewLoader(graphql.ByKey(orm.QueryOf[User](db), "id", func(u *User) int64 { return u.ID }),
 		graphql.BatchWait(0))
 	postsByUser := graphql.NewLoader(graphql.GroupByKey(orm.QueryOf[Post](db).OrderBy("id", orm.Asc), "user_id",
@@ -317,5 +320,110 @@ func TestLoaderUntrackedGoroutines(t *testing.T) {
 	resp := s.Execute(t.Context(), graphql.Request{Query: `{ sum }`})
 	if got := string(resp.Data); got != `{"sum":60}` {
 		t.Errorf("Execute = %s %v, want {\"sum\":60}", got, resp.Errors)
+	}
+}
+
+type Item struct {
+	ID int `json:"id"`
+}
+
+// TestLoaderBatchWaitWaitsForProgress models a loaded machine: sibling
+// resolvers reach Load one by one, 6ms apart, so the whole round takes
+// longer than BatchWait. While siblings keep making progress the fallback
+// timer must not split the batch; the resolution tick sends it once.
+func TestLoaderBatchWaitWaitsForProgress(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		var batches [][]int
+
+		l := graphql.NewLoader(func(_ context.Context, keys []int) (map[int]string, error) {
+			batches = append(batches, slices.Sorted(slices.Values(keys)))
+
+			out := map[int]string{}
+			for _, k := range keys {
+				out[k] = fmt.Sprint("v", k)
+			}
+
+			return out, nil
+		})
+
+		s, err := graphql.New(`type Query { items: [Item!]! } type Item { id: Int! v: String! }`,
+			graphql.Query("items", func(context.Context, graphql.NoArgs) ([]Item, error) {
+				return []Item{{0}, {1}, {2}, {3}, {4}}, nil
+			}),
+			graphql.Field("Item", "v", func(ctx context.Context, it *Item, _ graphql.NoArgs) (string, error) {
+				time.Sleep(time.Duration(it.ID) * 6 * time.Millisecond)
+				return l.Load(ctx, it.ID)
+			}),
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		resp := s.Execute(t.Context(), graphql.Request{Query: `{ items { v } }`})
+		if len(resp.Errors) > 0 {
+			t.Fatalf("Execute errors = %v", resp.Errors)
+		}
+
+		if diff := cmp.Diff([][]int{{0, 1, 2, 3, 4}}, batches); diff != "" {
+			t.Errorf("batches mismatch (-want +got):\n%s", diff)
+		}
+	})
+}
+
+// TestLoaderBatchWaitFallback: a resolver blocked on something other than
+// a loader holds back the resolution tick, so the pending batch is sent
+// once the operation made no progress for BatchWait.
+func TestLoaderBatchWaitFallback(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name string
+		opts []graphql.LoaderOption
+		want time.Duration
+	}{
+		{"default", nil, graphql.DefaultBatchWait},
+		{"custom", []graphql.LoaderOption{graphql.BatchWait(25 * time.Millisecond)}, 25 * time.Millisecond},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			synctest.Test(t, func(t *testing.T) {
+				start := time.Now()
+				gate := make(chan struct{})
+
+				var sentAfter time.Duration
+
+				l := graphql.NewLoader(func(_ context.Context, keys []int) (map[int]int, error) {
+					sentAfter = time.Since(start)
+					close(gate)
+
+					return map[int]int{keys[0]: 7}, nil
+				}, tc.opts...)
+
+				s, err := graphql.New(`type Query { blocked: Int loaded: Int }`,
+					graphql.Query("blocked", func(context.Context, graphql.NoArgs) (int, error) {
+						<-gate
+						return 1, nil
+					}),
+					graphql.Query("loaded", func(ctx context.Context, _ graphql.NoArgs) (int, error) {
+						return l.Load(ctx, 1)
+					}),
+				)
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				resp := s.Execute(t.Context(), graphql.Request{Query: `{ blocked loaded }`})
+				if got := string(resp.Data); got != `{"blocked":1,"loaded":7}` {
+					t.Errorf("Execute = %s %v, want {\"blocked\":1,\"loaded\":7}", got, resp.Errors)
+				}
+
+				if sentAfter != tc.want {
+					t.Errorf("batch sent after %v, want %v", sentAfter, tc.want)
+				}
+			})
+		})
 	}
 }

@@ -37,9 +37,13 @@ type loaderConfig struct {
 // MaxBatch splits batches larger than n keys (default: unlimited).
 func MaxBatch(n int) LoaderOption { return func(c *loaderConfig) { c.maxBatch = n } }
 
-// BatchWait bounds how long a key waits for the resolution tick before
-// its batch is sent anyway (default 10ms). It only matters when resolvers
-// block on something other than a loader (a mutex, their own goroutines).
+// BatchWait is the fallback for when the resolution tick never comes:
+// a pending batch is sent anyway once the operation has made no progress
+// (no resolver started, finished or called a loader) for d (default 10ms).
+// It only matters when resolvers block on something other than a loader
+// (a mutex, a channel, their own goroutines); slow siblings that keep
+// making progress, as on a loaded machine, do not split the batch.
+// 0 disables the fallback.
 func BatchWait(d time.Duration) LoaderOption { return func(c *loaderConfig) { c.wait = d } }
 
 // DefaultBatchWait is the default BatchWait.
@@ -180,17 +184,39 @@ func (st *loaderState[K, V]) add(ctx context.Context, sc *requestScope, key K) {
 		sc.dirty = append(sc.dirty, st)
 
 		if st.l.wait > 0 {
-			st.timer = time.AfterFunc(st.l.wait, func() {
-				sc.mu.Lock()
-				st.flushLocked(ctx, sc)
-				sc.mu.Unlock()
-			})
+			st.armLocked(ctx, sc, st.l.wait)
 		}
 	}
 
 	if st.l.maxBatch > 0 && len(st.pending) >= st.l.maxBatch {
 		st.flushLocked(ctx, sc)
 	}
+}
+
+// armLocked starts the fallback timer; called with sc.mu held. When it
+// fires it flushes only if the scope made no progress for a whole wait,
+// otherwise it re-arms for the rest of it: a timer measured from the
+// first key would split batches whenever siblings are merely slow to be
+// scheduled.
+func (st *loaderState[K, V]) armLocked(ctx context.Context, sc *requestScope, d time.Duration) {
+	var t *time.Timer
+
+	t = time.AfterFunc(d, func() {
+		sc.mu.Lock()
+		defer sc.mu.Unlock()
+
+		if st.timer != t { // flushed (and maybe re-armed) meanwhile
+			return
+		}
+
+		if idle := time.Since(sc.lastProgress); idle < st.l.wait {
+			st.armLocked(ctx, sc, st.l.wait-idle)
+			return
+		}
+
+		st.flushLocked(ctx, sc)
+	})
+	st.timer = t
 }
 
 // flushLocked starts batches for the pending keys; idempotent.
