@@ -26,6 +26,8 @@ func TestScanTime(t *testing.T) {
 		{"offset", "2026-01-02 00:04:05.6-03:00", minus3},
 		{"T separator", "2026-01-02T03:04:05.6+00:00", utc},
 		{"RFC 3339 Z", "2026-01-02T03:04:05.6Z", utc},
+		{"space and Z", "2026-01-02 03:04:05.6Z", utc},
+		{"space and compact offset", "2026-01-02 00:04:05.6-03:00", minus3},
 		{"no zone is UTC", "2026-01-02 03:04:05.6", utc},
 		{"bytes", []byte("2026-01-02 03:04:05.6"), utc},
 		{"minutes", "2026-01-02 03:04", time.Date(2026, 1, 2, 3, 4, 0, 0, time.UTC)},
@@ -92,7 +94,7 @@ func TestScanTimeNULL(t *testing.T) {
 func TestScanTimeRejects(t *testing.T) {
 	t.Parallel()
 
-	for _, src := range []any{"tomorrow", "2026-13-01", "", int64(1767323045), 1.5, true} {
+	for _, src := range []any{"03:04:05", "tomorrow", "2026-13-01", "", int64(1767323045), 1.5, true} {
 		var got time.Time
 		if err := ScanTime(&got).Scan(src); err == nil {
 			t.Errorf("Scan(%#v) = %v, nil error, want an error", src, got)

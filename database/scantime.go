@@ -16,10 +16,11 @@ type TimeDest interface {
 // sqliteTimeLayouts are the text forms the SQLite driver writes (its
 // default is time.Time.String) and SQLite's date functions return
 // (formats 1 to 7 of https://www.sqlite.org/lang_datefunc.html), plus
-// RFC 3339 with "Z". Text without a zone is UTC.
+// RFC 3339 and its space-separated form, with "Z" or an offset. Text
+// without a zone is UTC.
 var sqliteTimeLayouts = [...]string{
 	"2006-01-02 15:04:05.999999999 -0700 MST",
-	"2006-01-02 15:04:05.999999999-07:00",
+	"2006-01-02 15:04:05.999999999Z07:00",
 	"2006-01-02T15:04:05.999999999-07:00",
 	time.RFC3339Nano,
 	"2006-01-02 15:04:05.999999999",
@@ -38,10 +39,18 @@ var sqliteTimeLayouts = [...]string{
 //	err := db.QueryRowContext(ctx, "SELECT MIN(created_at) FROM orders").
 //		Scan(database.ScanTime(&oldest))
 //
+// For an orm.NullTime field pass its embedded sql.Null:
+//
+//	var closed orm.NullTime
+//	err := row.Scan(database.ScanTime(&closed.Null))
+//
 // A time.Time value (PostgreSQL, MySQL with parseTime, plain SQLite
 // columns) is stored as is; NULL clears a pointer or a nullable
 // destination and is an error for a plain time.Time, as in database/sql.
-// Text that is not one of SQLite's timestamp forms is an error.
+// Text with an offset comes back in a fixed zone of that offset and text
+// without one in UTC, so compare with time.Time.Equal, not ==. Time-only
+// text ("15:04:05"), unix timestamps stored as integers and any other text
+// are errors.
 func ScanTime[D TimeDest](dest D) sql.Scanner { return timeScanner[D]{dest} }
 
 type timeScanner[D TimeDest] struct{ dest D }
