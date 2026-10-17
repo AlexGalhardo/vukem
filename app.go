@@ -531,6 +531,13 @@ func checkConfig(cfg *Config) (config.Key, error) {
 		errs = append(errs, err)
 	}
 
+	// Any other value would silently skip every production check below.
+	switch cfg.Env {
+	case config.Development, config.Test, config.Production:
+	default:
+		errs = append(errs, fmt.Errorf("vukem: APP_ENV %q must be development, test or production", cfg.Env))
+	}
+
 	if cfg.IsProduction() && cfg.Debug {
 		errs = append(errs, errors.New("vukem: APP_DEBUG must be false when APP_ENV=production"))
 	}

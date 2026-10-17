@@ -45,7 +45,7 @@ What Vukem does **by default** to protect applications, mapped to the [OWASP Top
 
 | Default | Phase |
 | --- | --- |
-| Boot refuses: missing/short `APP_KEY`, `APP_DEBUG=true` with `APP_ENV=production`, CORS wildcard + credentials, cookies without `Secure` in production | P |
+| Boot refuses: missing/short `APP_KEY`, an `APP_ENV` other than `development`, `test` or `production` (a typo would skip every production check), `APP_DEBUG=true` with `APP_ENV=production`, CORS wildcard + credentials, cookies without `Secure` in production (`TestSecurity_A02_BootRefusesMisconfiguration`, `TestSecurity_A01_CORS`, `TestSecurity_A02_ConfigChecks`) | P |
 | `http.Server` always has `ReadHeaderTimeout`, `ReadTimeout`, `WriteTimeout`, `IdleTimeout`, `MaxHeaderBytes` | P |
 | Security headers middleware on by default: `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `X-Frame-Options: DENY` + CSP `frame-ancestors 'none'`, `Cross-Origin-Opener-Policy: same-origin`, `Strict-Transport-Security` (HTTPS only, configurable) | P |
 | Content-Security-Policy builder with per-request nonces (`{{ cspNonce }}`), starter ships a strict policy; Vite tags get the nonce (`TestSecurity_A02_ViteTagsCarryNonce`) | P / B |

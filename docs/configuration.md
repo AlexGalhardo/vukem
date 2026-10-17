@@ -62,6 +62,7 @@ func (s Secret) MarshalJSON() ([]byte, error) // "\"[redacted]\""
 
 | Setting | Default | Notes |
 | --- | --- | --- |
+| `APP_ENV` | `development` | Must be `development`, `test` or `production` (anything else is a boot error) |
 | `APP_DEBUG` | `false` | Debug error page only when true **and** env ≠ production |
 | Cookies | `HttpOnly`, `Secure` (unless `APP_ENV=development`), `SameSite=Lax` | Session cookie uses `__Host-` prefix over HTTPS |
 | CORS | deny all | Explicit origins required |

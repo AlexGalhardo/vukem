@@ -169,6 +169,10 @@ func TestSecurity_A02_BootRefusesMisconfiguration(t *testing.T) {
 			want: "APP_DEBUG must be false",
 		},
 		{name: "bad port", src: testSource(map[string]string{"PORT": "70000"}), want: "out of range"},
+		// A typo must not silently drop the production checks (fail closed).
+		{name: "unknown env", src: testSource(map[string]string{"APP_ENV": "prod"}), want: "APP_ENV"},
+		{name: "env with space", src: testSource(map[string]string{"APP_ENV": "production "}), want: "APP_ENV"},
+		{name: "env case", src: testSource(map[string]string{"APP_ENV": "Production"}), want: "APP_ENV"},
 		{name: "unparsable value", src: testSource(map[string]string{"PORT": "x"}), want: "PORT"},
 	}
 
