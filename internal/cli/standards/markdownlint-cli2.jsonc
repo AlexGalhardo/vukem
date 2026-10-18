@@ -1,0 +1,21 @@
+{
+  "$schema": "https://raw.githubusercontent.com/DavidAnson/markdownlint-cli2/main/schema/markdownlint-cli2-config-schema.json",
+  "config": {
+    "default": true,
+    "MD003": { "style": "atx" },
+    "MD004": { "style": "dash" },
+    "MD007": { "indent": 2 },
+    // Go fences contain hard tabs (.editorconfig).
+    "MD010": { "code_blocks": false, "ignore_code_languages": ["go"] },
+    // Long lines are fine in prose and tables.
+    "MD013": false,
+    // Keep a Changelog repeats "### Added" under each release.
+    "MD024": { "siblings_only": true },
+    "MD033": { "allowed_elements": ["details", "summary", "br", "img", "kbd"] },
+    "MD046": { "style": "fenced" },
+    // Table column alignment is not enforced.
+    "MD060": false
+  },
+  "globs": ["**/*.md"],
+  "ignores": ["**/node_modules/**", "**/testdata/**"]
+}

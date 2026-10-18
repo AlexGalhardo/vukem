@@ -1,0 +1,19 @@
+#!/bin/sh
+# Formatting and vet before every commit, on the staged Go files only.
+# Installed by `vukem new --standards`; bypass with `git commit --no-verify`.
+set -eu
+
+staged=$(git diff --cached --name-only --diff-filter=ACM -- '*.go')
+if [ -z "$staged" ]; then
+	exit 0
+fi
+
+# shellcheck disable=SC2086 # the file list has to split into arguments
+unformatted=$(gofmt -l $staged)
+if [ -n "$unformatted" ]; then
+	echo "pre-commit: gofmt -w these files, then stage them again:" >&2
+	echo "$unformatted" >&2
+	exit 1
+fi
+
+go vet ./...

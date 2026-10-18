@@ -144,20 +144,48 @@ vukem new blog --inertia react --pm bun
 | `--pm` | string | `npm` | JavaScript package manager: `npm`, `bun`, `pnpm` or `yarn` |
 | `--no-install` | bool | `false` | Skip installing the frontend dependencies |
 | `--framework` | string | none | Path to a local Vukem checkout to use instead of a release |
+| `--standards` | bool | `false` | markdownlint and a `lint:md` script, `CHANGELOG.md` with `.config/cliff.toml`, Conventional Commits git hooks, a SemVer version ([project standards](#project-standards)) |
+| `--license` | string | none | `mit`: `LICENSE`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md` and `SECURITY.md` |
+| `--ci` | bool | `false` | `.github/workflows/ci.yml` and `.github/dependabot.yml` |
+| `--deploy` | string | none | `railway`: `.railway/railway.ts` ([Railway](/docs/deployment/docker-and-railway#deploy-on-railway)) |
+| `--docker` | bool | `false` | `compose.yaml` running the app, PostgreSQL and a mail catcher ([local stack](/docs/deployment/docker-and-railway#the-local-stack-with-compose)) |
 
-Rules: the name must start with a letter and contain only letters, digits, `-`, `_` and `.`. The folder must not exist. `--api`, `--templ` and `--inertia` are exclusive (`usage error: choose one of --api, --templ or --inertia`), and `--minimal` refuses all three.
+Rules: the name must start with a letter and contain only letters, digits, `-`, `_` and `.`. The folder must not exist. `--api`, `--templ` and `--inertia` are exclusive (`usage error: choose one of --api, --templ or --inertia`), and `--minimal` refuses all three. `--license` and `--deploy` take one value each and are checked before anything is written (`usage error: --deploy must be railway, not "fly"`).
 
 What happens, in order:
 
 1. The starter files are written (`gitignore` becomes `.gitignore`), then reshaped for the chosen stack. See [Starters](/docs/starters) for what each stack contains.
 2. A production `Dockerfile` and `.dockerignore` are written for the stack and package manager ([Docker and Railway](/docs/deployment/docker-and-railway)).
-3. The framework is required: the release that matches your CLI version, or `latest` for a `devel` build. With `--framework`, a `replace` directive points at your checkout instead.
-4. [`govulncheck`](https://go.dev/doc/tutorial/govulncheck) is pinned as a [Go tool](https://go.dev/doc/modules/managing-dependencies#tools) (`go tool govulncheck ./...`). The templ stack also pins templ and generates the components.
-5. `go mod tidy` runs, and a new `APP_KEY` is written to `.env` (copied from `.env.example`).
-6. `git init` runs when Git is installed; a failure only warns.
-7. Every stack except `--api` installs the frontend dependencies. A missing package manager or a failed install only warns, since the Go app runs without built assets in development.
+3. `.editorconfig` and `.gitattributes` are written, plus whatever the [project standards](#project-standards) flags asked for.
+4. The framework is required: the release that matches your CLI version, or `latest` for a `devel` build. With `--framework`, a `replace` directive points at your checkout instead.
+5. [`govulncheck`](https://go.dev/doc/tutorial/govulncheck) is pinned as a [Go tool](https://go.dev/doc/modules/managing-dependencies#tools) (`go tool govulncheck ./...`). The templ stack also pins templ and generates the components.
+6. `go mod tidy` runs, and a new `APP_KEY` is written to `.env` (copied from `.env.example`).
+7. `git init` runs when Git is installed; a failure only warns. With `--standards` it then sets `core.hooksPath` to `.githooks`, so the hooks work in that clone without a hook manager.
+8. Every stack except `--api` installs the frontend dependencies. A missing package manager or a failed install only warns, since the Go app runs without built assets in development.
 
 `--minimal` also writes a `.buildtags` file containing `vukem_nosqlite`, which leaves the SQLite driver out of every build ([build tags](#build-tags)).
+
+Then it prints the next steps: `.env`, the database choice, migrations, tests, the mail setup that verification and reset emails need, `vukem serve` and the deploy, each with the page that explains it. `README.md` lists every documentation section.
+
+#### Project standards
+
+Every project gets two files nobody has to decide about: `.editorconfig` (tabs of width 4, spaces for YAML, Markdown and JavaScript) and `.gitattributes` (LF everywhere, Windows clones included). Both only describe the indentation and line endings the starter already uses.
+
+Everything else is a decision, so it is a flag. A scaffold that writes a licence, a CI pipeline and a platform configuration nobody asked for is its own kind of mess.
+
+| Flag | Writes | Choose it when |
+| --- | --- | --- |
+| `--standards` | `.markdownlint-cli2.jsonc` and a `lint:md` script (with `markdownlint-cli2` pinned in `package.json`, which an `--api` project gets for this), `CHANGELOG.md` ([Keep a Changelog](https://keepachangelog.com/en/1.1.0/) with `[Unreleased]`), `.config/cliff.toml`, `.githooks/commit-msg` and `.githooks/pre-commit`, and `"version": "0.1.0"` | the repository is maintained: reviewed commits, a changelog and tagged [SemVer](https://semver.org/spec/v2.0.0.html) releases |
+| `--license mit` | `LICENSE`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md` | you are publishing it. The copyright holder comes from `--module` when it is a `github.com/owner/repo` path |
+| `--ci` | `.github/workflows/ci.yml` (gofmt, `go vet`, `go test -race`, `go tool govulncheck`, `docker build`, and markdownlint with `--standards`) and `.github/dependabot.yml` | GitHub is the gate. Third-party actions are pinned to a commit SHA, `checkout` runs with `persist-credentials: false`, and each job declares the narrowest `permissions` |
+| `--deploy railway` | `.railway/railway.ts` | Railway is the target |
+| `--docker` | `compose.yaml` and its `.env` block | you want PostgreSQL and a mail catcher locally without installing either |
+
+The git hooks need no Node and no hook manager: `commit-msg` checks the [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) header with the shell Git already runs, and `pre-commit` runs `gofmt` and `go vet` on the staged Go files. In a clone that `vukem new` did not make, enable them once:
+
+```bash
+git config core.hooksPath .githooks
+```
 
 ### `vukem serve`
 

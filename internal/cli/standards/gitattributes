@@ -1,0 +1,10 @@
+# Without this, a Windows clone checks every file out with CRLF and the
+# end_of_line = lf in .editorconfig becomes a lie.
+* text=auto eol=lf
+*.{bat,cmd,ps1} text eol=crlf
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff2 binary
+go.sum linguist-generated
+resources/public/js/*.min.js -text linguist-vendored

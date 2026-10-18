@@ -1,0 +1,33 @@
+
+## Project standards
+
+| File | What it does |
+| --- | --- |
+| `.editorconfig` | tabs of width 4, spaces where the format needs them (YAML, Markdown, JavaScript) |
+| `.gitattributes` | LF in the repository and in every working copy, Windows included |
+{{- if .Standards}}
+| `.markdownlint-cli2.jsonc` | Markdown rules; run them with `npm run lint:md` |
+| `CHANGELOG.md` | [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), generated from the commits by `git cliff --config .config/cliff.toml` |
+| `.githooks/` | a `commit-msg` hook that enforces [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) and a `pre-commit` hook that runs `gofmt` and `go vet` |
+{{- end}}
+{{- if .License}}
+| `LICENSE` | the {{.License}} license |
+| `CONTRIBUTING.md` | how to set up, test and commit |
+| `CODE_OF_CONDUCT.md` | the Contributor Covenant |
+| `SECURITY.md` | how to report a vulnerability |
+{{- end}}
+{{- if .CI}}
+| `.github/workflows/ci.yml` | format, vet, test, `govulncheck` and the image build on every push |
+| `.github/dependabot.yml` | weekly dependency and action updates, with Conventional Commits titles |
+{{- end}}
+{{- if .Docker}}
+| `compose.yaml` | the local stack: the app{{if .Database}}, PostgreSQL{{end}} and a mail catcher (`docker compose up --build`) |
+{{- end}}
+{{- if .Deploy}}
+| `.railway/railway.ts` | the [Railway](https://docs.railway.com/infrastructure-as-code) services, database, healthcheck and proxy settings |
+{{- end}}
+{{- if .Standards}}
+
+Releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html): tag
+them `vMAJOR.MINOR.PATCH` and regenerate the changelog from the commits.
+{{- end}}

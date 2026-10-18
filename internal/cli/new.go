@@ -52,6 +52,13 @@ func newProject(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 	minimal := set.Bool("minimal", false, "HTMX starter without a database: no posts, uploads or migrations, no SQLite")
 	noInstall := set.Bool("no-install", false, "skip installing frontend dependencies")
 	pmFlag := set.String("pm", "", "JavaScript package manager: npm, bun, pnpm or yarn (default npm)")
+	standards := set.Bool("standards", false,
+		"markdownlint and a lint:md script, a Keep a Changelog CHANGELOG.md with cliff.toml, "+
+			"Conventional Commits git hooks and a SemVer version")
+	license := set.String("license", "", "write LICENSE, CONTRIBUTING.md, CODE_OF_CONDUCT.md and SECURITY.md (mit)")
+	ciFlag := set.Bool("ci", false, "GitHub Actions CI workflow (format, vet, test, govulncheck, image) and Dependabot")
+	deploy := set.String("deploy", "", "platform deploy configuration: railway (.railway/railway.ts)")
+	compose := set.Bool("docker", false, "compose.yaml running the app, PostgreSQL and a mail catcher locally")
 
 	return func(ctx context.Context, env *Env, args []string) error {
 		name, err := oneArg(args, "project name")
@@ -61,6 +68,17 @@ func newProject(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 
 		if !projectName.MatchString(name) {
 			return usagef("invalid project name %q (letters, digits, '-', '_' and '.')", name)
+		}
+
+		std := standardsOpts{
+			standards: *standards,
+			license:   strings.ToLower(strings.TrimSpace(*license)),
+			ci:        *ciFlag,
+			deploy:    strings.ToLower(strings.TrimSpace(*deploy)),
+			docker:    *compose,
+		}
+		if err := checkStandards(std); err != nil {
+			return err
 		}
 
 		dir := env.path(name)
@@ -117,6 +135,12 @@ func newProject(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 			return err
 		}
 
+		// Before writeAppKey: it copies .env.example to .env, so the
+		// Compose block has to be in place already.
+		if err := writeStandards(&project, newStandardsData(data, st.kind, std, env.Now().Year()), std); err != nil {
+			return err
+		}
+
 		if err := requireFramework(ctx, &project, *framework); err != nil {
 			return err
 		}
@@ -151,6 +175,8 @@ func newProject(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 
 			if out, err := cmd.CombinedOutput(); err != nil {
 				fmt.Fprintf(env.Stderr, "git init failed (continuing): %v\n%s", err, out)
+			} else {
+				installHooksPath(ctx, &project)
 			}
 		}
 
@@ -171,12 +197,7 @@ func newProject(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 			desc = "htmx " + htmxVersion + ", Tailwind, no database"
 		}
 
-		migrate := "  vukem migrate\n"
-		if st.kind == "minimal" {
-			migrate = ""
-		}
-
-		fmt.Fprintf(env.Stdout, "\nCreated %s (%s). Next:\n\n  cd %s\n%s  vukem serve\n\n", name, desc, name, migrate)
+		fmt.Fprint(env.Stdout, nextSteps(name, desc, st.kind, std))
 
 		return nil
 	}
