@@ -881,8 +881,30 @@ func ssrCheckCommand() Command {
 	}
 }
 
+// WithOpenAPI makes App.OpenAPI (and so /openapi.json, openapi:export,
+// codegen:types, codegen:client and vukemtest.AssertMatchesOpenAPI) build
+// the document from info, which is where an app declares its description
+// and its security schemes: Build rejects any scheme an operation names
+// (api.Op.Security) that the document does not declare, and only "bearer"
+// is predefined.
+//
+//	vukem.WithOpenAPI(openapi.Info{
+//		Description: "Shop API",
+//		SecuritySchemes: map[string]openapi.Schema{
+//			"apiKey": {"type": "apiKey", "in": "header", "name": "X-API-Key"},
+//		},
+//	})
+//
+// An empty Title, Version or Servers keeps the configured value (APP_NAME,
+// API_VERSION, APP_URL); an empty PathPrefix keeps OPENAPI_PREFIX, and the
+// prefix of ServeOpenAPIWith wins over both.
+func WithOpenAPI(info openapi.Info) Option {
+	return func(o *options) error { o.openAPI = &info; return nil }
+}
+
 // OpenAPI returns the OpenAPI 3.1 document of the app's routes (title
-// APP_NAME, version API_VERSION, filtered by OPENAPI_PREFIX).
+// APP_NAME, version API_VERSION, filtered by OPENAPI_PREFIX, with the
+// description and security schemes of WithOpenAPI).
 func (a *App) OpenAPI() (*openapi.Document, error) {
 	return a.openAPI(a.Config.OpenAPIPrefix)
 }
@@ -892,12 +914,28 @@ func (a *App) openAPI(prefix string) (*openapi.Document, error) {
 		return nil, err
 	}
 
-	return openapi.Build(a.Router.Routes(), openapi.Info{
-		Title:      a.Config.Name,
-		Version:    a.Config.APIVersion,
-		Servers:    []string{a.Config.URL},
-		PathPrefix: prefix,
-	})
+	info := openapi.Info{}
+	if a.openAPIInfo != nil {
+		info = *a.openAPIInfo
+	}
+
+	if info.Title == "" {
+		info.Title = a.Config.Name
+	}
+
+	if info.Version == "" {
+		info.Version = a.Config.APIVersion
+	}
+
+	if len(info.Servers) == 0 {
+		info.Servers = []string{a.Config.URL}
+	}
+
+	if prefix != "" {
+		info.PathPrefix = prefix
+	}
+
+	return openapi.Build(a.Router.Routes(), info)
 }
 
 // OpenAPIOptions tunes [ServeOpenAPIWith].

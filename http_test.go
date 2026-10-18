@@ -29,6 +29,7 @@ import (
 
 	"github.com/AlexGalhardo/vukem/api"
 	"github.com/AlexGalhardo/vukem/cache"
+	"github.com/AlexGalhardo/vukem/config"
 	"github.com/AlexGalhardo/vukem/csrf"
 	"github.com/AlexGalhardo/vukem/database"
 	"github.com/AlexGalhardo/vukem/errs"
@@ -36,6 +37,7 @@ import (
 	"github.com/AlexGalhardo/vukem/internal/testutil"
 	"github.com/AlexGalhardo/vukem/mail"
 	"github.com/AlexGalhardo/vukem/middleware"
+	"github.com/AlexGalhardo/vukem/openapi"
 	"github.com/AlexGalhardo/vukem/queue"
 	"github.com/AlexGalhardo/vukem/ratelimit"
 	"github.com/AlexGalhardo/vukem/router"
@@ -2766,5 +2768,72 @@ func TestHandleRoutesAreLogged(t *testing.T) {
 	if log := buf.String(); !strings.Contains(log, "msg=request") || !strings.Contains(log, "path=/raw") ||
 		!strings.Contains(log, "status=418") {
 		t.Errorf("log = %q, want a request line for /raw", log)
+	}
+}
+
+func apiKeyRoutes(r *router.Router, app *App) error {
+	ServeOpenAPI(app, r, "/openapi.json")
+	api.Register(r, "GET /api/keys", api.Op{Name: "keys.index", Security: []string{"apiKey"}},
+		func(*web.Ctx, struct{}) (pingOut, error) { return pingOut{}, nil })
+
+	return nil
+}
+
+func TestWithOpenAPI(t *testing.T) {
+	t.Parallel()
+
+	src := func() *config.Source {
+		return testSource(map[string]string{
+			"APP_NAME": "Shop", "API_VERSION": "3.0.0", "OPENAPI_PREFIX": "/api",
+		})
+	}
+
+	bare := newTestApp(t, WithSource(src()), WithRoutes(apiKeyRoutes))
+	if _, err := bare.OpenAPI(); !errors.Is(err, openapi.ErrUnknownSecurityScheme) {
+		t.Fatalf("OpenAPI() without WithOpenAPI = %v, want ErrUnknownSecurityScheme", err)
+	}
+
+	app := newTestApp(t, WithSource(src()), WithRoutes(apiKeyRoutes), WithOpenAPI(openapi.Info{
+		Description: "Shop API",
+		SecuritySchemes: map[string]openapi.Schema{
+			"apiKey": {"type": "apiKey", "in": "header", "name": "X-API-Key"},
+		},
+	}))
+
+	doc, err := app.OpenAPI()
+	if err != nil {
+		t.Fatalf("OpenAPI() with WithOpenAPI = %v", err)
+	}
+
+	if doc.Info.Title != "Shop" || doc.Info.Version != "3.0.0" || doc.Info.Description != "Shop API" {
+		t.Errorf("info = %+v, want the config title and version with the supplied description", doc.Info)
+	}
+
+	if got := doc.Components.SecuritySchemes["apiKey"]["name"]; got != "X-API-Key" {
+		t.Errorf("securitySchemes = %v, want the apiKey header scheme", doc.Components.SecuritySchemes)
+	}
+
+	if len(doc.Paths) != 1 || doc.Paths["/api/keys"] == nil {
+		t.Errorf("paths = %v, want OPENAPI_PREFIX still applied", slices.Sorted(maps.Keys(doc.Paths)))
+	}
+
+	// Title, Version and Servers override the configuration when set.
+	over := newTestApp(t, WithSource(src()), WithRoutes(apiKeyRoutes), WithOpenAPI(openapi.Info{
+		Title:   "Public API",
+		Version: "9.9.9",
+		Servers: []string{"https://api.example"},
+		SecuritySchemes: map[string]openapi.Schema{
+			"apiKey": {"type": "apiKey", "in": "header", "name": "X-API-Key"},
+		},
+	}))
+
+	doc, err = over.OpenAPI()
+	if err != nil {
+		t.Fatalf("OpenAPI() = %v", err)
+	}
+
+	if doc.Info.Title != "Public API" || doc.Info.Version != "9.9.9" ||
+		len(doc.Servers) != 1 || doc.Servers[0].URL != "https://api.example" {
+		t.Errorf("info = %+v, servers = %+v, want the supplied values", doc.Info, doc.Servers)
 	}
 }
