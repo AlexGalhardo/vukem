@@ -1,0 +1,146 @@
+---
+title: Showcase
+description: Três aplicações de referência open source construídas com o Vukem, no ar em produção, e os recursos do framework que cada uma demonstra.
+---
+
+Depois do tutorial, a melhor forma de aprender um framework é ler uma aplicação real que o usa. Estas três aplicações são construídas e mantidas junto com o Vukem. Cada uma é open source e roda no Railway, então você pode ler o código que está por trás de uma URL no ar. Elas também são a forma como o Vukem é testado no mundo real: o retorno delas orienta a maior parte das versões.
+
+Você vai aprender:
+
+- qual aplicação de referência ler para o tipo de projeto que você está construindo
+- quais recursos do Vukem cada aplicação demonstra, com links para as páginas deles
+- como rodar uma delas no seu computador
+
+## Escolha uma
+
+Escolha a aplicação mais parecida com o que você está construindo e leia-a ao lado desta documentação. Se você está começando, comece pelo Quiz: ele não tem banco de dados e cabe em uma tarde.
+
+| App | Frontend | Dados | Melhor para aprender |
+| --- | --- | --- | --- |
+| [Quiz](#quiz-htmx) | HTMX 4, `html/template` | JSON embutido | Apps renderizadas no servidor, i18n, uma CSP rígida |
+| [Rifa](#rifa-inertia-e-vue) | Inertia v3 + Vue | PostgreSQL | Pagamentos, um livro-razão, uma API REST pública, trabalho em segundo plano |
+| [Marketplace](#marketplace-inertia-e-react) | Inertia v3 + React + Base UI | PostgreSQL, Redis, MongoDB | Apps com vários bancos, REST + GraphQL + gRPC, pagamentos de marketplace, tracing |
+
+As três seguem a organização descrita em [Estrutura de diretórios](/docs/directory-structure): comece a leitura por `bootstrap/app.go` para ver tudo o que a app conecta, depois `routes/` para ver cada URL, e então os controllers para onde elas apontam.
+
+## Quiz (HTMX)
+
+<CardGroup cols="2">
+<Card title="App no ar" href="https://quiz.vukem.dev" icon="rocket">
+quiz.vukem.dev
+</Card>
+<Card title="Código-fonte" href="https://github.com/AlexGalhardo/vukem-golang-quiz-htmx" icon="code">
+AlexGalhardo/vukem-golang-quiz-htmx
+</Card>
+</CardGroup>
+
+Um jogo de perguntas sobre Go sem banco de dados: as perguntas vão dentro do binário como JSON embutido. Pequeno o bastante para ler em uma tarde.
+
+O que ele demonstra:
+
+- **HTMX 4** com views `html/template` renderizadas no servidor e atualizações parciais ([HTMX](/docs/frontend/htmx)).
+- **Conteúdo embutido**: dados e assets compilados em um único binário ([Binário único](/docs/deployment/single-binary)).
+- **Localização** com catálogos JSON e a função de view `t` ([Localização](/docs/digging-deeper/localization)).
+- **Uma CSP rígida, baseada em nonce**, sem `'unsafe-inline'` ([CSP e cabeçalhos de segurança](/docs/security/security-headers)).
+- **Desempenho e acessibilidade**: nota 100 no Lighthouse.
+
+## Rifa (Inertia e Vue)
+
+<CardGroup cols="2">
+<Card title="App no ar" href="https://rifa.vukem.dev" icon="rocket">
+rifa.vukem.dev
+</Card>
+<Card title="Código-fonte" href="https://github.com/AlexGalhardo/vukem-rifa-vuejs" icon="code">
+AlexGalhardo/vukem-rifa-vuejs
+</Card>
+</CardGroup>
+
+Uma plataforma de rifas em que os usuários compram números e pagam com PIX.
+
+O que ela demonstra:
+
+- **Inertia v3 com Vue**: páginas, formulários e erros de validação ([Inertia](/docs/frontend/inertia)).
+- **PostgreSQL** com o ORM e migrations ([Banco de dados](/docs/database/overview)).
+- **Pagamentos PIX pela AbacatePay**, com [webhooks](/docs/digging-deeper/webhooks) verificados e sem duplicidade.
+- **Um livro-razão** (ledger) que registra cada movimentação de dinheiro de uma rifa.
+- **Uma API REST pública** com handlers tipados, OpenAPI e a referência **Scalar** ([OpenAPI](/docs/rest-apis/openapi)), protegida por [tokens de API](/docs/security/api-tokens).
+- **Trabalho em segundo plano em um único serviço**: o [agendador](/docs/digging-deeper/scheduler) e a [fila](/docs/digging-deeper/queue) rodam dentro do `serve`.
+
+## Marketplace (Inertia e React)
+
+<CardGroup cols="2">
+<Card title="App no ar" href="https://marketplace.vukem.dev" icon="rocket">
+marketplace.vukem.dev
+</Card>
+<Card title="Código-fonte" href="https://github.com/AlexGalhardo/vukem-micro-mercadolivre-reactjs" icon="code">
+AlexGalhardo/vukem-micro-mercadolivre-reactjs
+</Card>
+</CardGroup>
+
+Um pequeno marketplace no estilo Mercado Livre: vendedores anunciam produtos, compradores pagam, vendedores recebem. É a maior das três.
+
+O que ele demonstra:
+
+- **Inertia v3 com React** e a biblioteca de componentes **Base UI** ([Inertia](/docs/frontend/inertia)).
+- **Três bancos de dados em uma app**: PostgreSQL para os dados principais, [Redis](/docs/database/redis) para sessões, cache, filas e rate limits, [MongoDB](/docs/database/mongodb) para documentos de auditoria, telemetria e histórico.
+- **Pagamentos com Stripe Connect e PIX**, com repasses aos vendedores ([Stripe Connect](/docs/digging-deeper/billing#stripe-connect-marketplaces)).
+- **Três estilos de API** sobre os mesmos serviços: REST, [GraphQL](/docs/rest-apis/graphql) e [gRPC](/docs/rest-apis/grpc).
+- **Tracing** com [OpenTelemetry](/docs/digging-deeper/opentelemetry).
+
+## Rodando uma localmente
+
+O README de cada repositório lista os requisitos exatos. O fluxo habitual:
+
+<Steps>
+<Step title="Clone o repositório">
+
+```bash
+git clone https://github.com/AlexGalhardo/vukem-golang-quiz-htmx
+cd vukem-golang-quiz-htmx
+```
+
+</Step>
+<Step title="Crie o .env com uma chave">
+
+```bash
+vukem key:generate
+```
+
+Quando o `.env` não existe, esse comando copia o `.env.example` para `.env` e escreve um `APP_KEY` novo. Preencha os outros valores que o README pede.
+
+</Step>
+<Step title="Suba os bancos de dados (Rifa e Marketplace)">
+
+```bash
+docker compose up -d
+vukem migrate
+```
+
+Cada um desses repositórios tem um `compose.yaml` que sobe os bancos dele. O Quiz não tem banco de dados, então pule este passo.
+
+</Step>
+<Step title="Rode a app">
+
+```bash
+vukem serve
+```
+
+Abra [http://localhost:3000](http://localhost:3000).
+
+</Step>
+</Steps>
+
+<Callout type="tip">
+Construiu algo com o Vukem? Abra um pull request que o adicione a esta página.
+</Callout>
+
+## Próximos passos
+
+<CardGroup cols="2">
+<Card title="Ciclo de vida da aplicação" href="/docs/architecture/lifecycle" icon="layers">
+Como uma app inicia, roda e desliga.
+</Card>
+<Card title="Rotas" href="/docs/basics/routing" icon="route">
+Verbos, grupos, rotas nomeadas e resource controllers.
+</Card>
+</CardGroup>

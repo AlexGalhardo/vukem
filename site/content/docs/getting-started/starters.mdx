@@ -1,59 +1,99 @@
 ---
 title: Starters
-description: Pick a stack for vukem new — HTMX, HTMX with templ, Inertia with React, Vue or Svelte, or a JSON API — all on Vite and Tailwind CSS v4.
+description: Pick a stack for vukem new — HTMX, HTMX with templ, Inertia with React, Vue or Svelte, a JSON API, or a minimal app without a database.
 ---
 
-`vukem new` renders one of five starters. On a terminal without a stack flag it asks which one you want; in scripts pass the flag.
+A <Term tip="A ready-made project that vukem new copies into a new folder: routes, controllers, views, migrations and tests that already work together.">starter</Term> is the project `vukem new` writes for you. Every starter is a working app with tests, so you start from something that runs instead of an empty folder. This page compares them and shows what each one contains.
+
+You will learn:
+
+- the five starters and how to choose between them
+- the flags that select a starter and its package manager
+- what every starter shares: SQLite, an example CRUD, tests and a `Dockerfile`
+- what is special about HTMX on Vite, templ, Inertia, Minimal and API
+- which add-ons you may install on top later
+
+## The idea
+
+Choosing a starter is like choosing the kind of house before you build. All of them have the same foundations (routing, validation, the database layer, sessions, tests). They differ in **who draws the pages**:
+
+- **On the server** (HTMX, templ): Go renders the HTML. The browser receives finished pages. [htmx](https://htmx.org) swaps parts of the page without a full reload.
+- **In the browser** (Inertia): a React, Vue or Svelte component draws the page. Go sends it the data as JSON, but you still write classic controllers and routes, with no separate API.
+- **Nobody** (API): the app answers only JSON, for a mobile app, another server or a separate frontend.
+
+If you are new to web development, pick the default **HTMX** starter: it has the fewest moving parts and every page is a plain HTML template.
+
+## Quick start
 
 ```bash
-vukem new blog                       # HTMX + html/template (default)
-vukem new blog --templ               # HTMX + templ components
-vukem new blog --inertia react       # Inertia + React (also: vue, svelte)
-vukem new shop --api                 # JSON-only REST API
-vukem new blog --pm bun             # bun install instead of npm install
-vukem new blog --no-install          # skip installing frontend dependencies
-vukem new site --minimal             # HTMX without a database
+vukem new blog                  # HTMX + html/template (default)
+vukem new blog --templ          # HTMX + templ components
+vukem new blog --inertia react  # Inertia + React (also: vue, svelte)
+vukem new shop --api            # JSON-only REST API
+vukem new site --minimal        # HTMX without a database
+vukem new blog --pm bun         # bun install instead of npm install
+vukem new blog --no-install     # skip installing frontend dependencies
 ```
 
-| Starter | Views | Frontend | Node.js |
-| --- | --- | --- | --- |
-| HTMX (default) | `html/template` in `resources/views` | htmx 4 (vendored), Vite 8, Tailwind CSS v4 | for Vite builds |
-| HTMX + templ | templ components in `resources/views` (package `views`) | same as HTMX | for Vite builds |
-| Inertia | React, Vue or Svelte pages in `resources/js/pages` | Vite 8, TypeScript, Tailwind CSS v4 | required |
-| API | none | none | not used |
+On a terminal without a stack flag, `vukem new` asks which stack you want; in scripts and CI it picks HTMX. Only one of `--api`, `--templ` and `--inertia` may be given, and `--minimal` cannot be combined with any of them:
 
-Every starter except `--minimal` ships SQLite, migrations, a posts CRUD example and tests that pass with `go test ./...`. `vukem new` runs `go mod tidy`, writes `APP_KEY`, installs frontend dependencies with `--pm` (default npm) when it is on `PATH` (frontend starters) and `git init`.
+```text
+usage error: --minimal is an HTMX starter: drop --api, --templ and --inertia
+```
 
-Every starter also ships a production `Dockerfile` (Vite assets with the chosen package manager, a static Go binary built with the tags in `.buildtags`, a non-root Alpine runtime with `APP_ENV=production` and `HOST=0.0.0.0`) and a `.dockerignore` that keeps `.env` files, `node_modules` and `storage/` out of the image. Railway and other platforms build it without extra configuration: see [Docker and Railway](/docs/deployment/docker-and-railway).
+## Comparison
+
+| Starter | Flag | Pages drawn by | Views live in | Frontend build | Node.js or Bun |
+| --- | --- | --- | --- | --- | --- |
+| HTMX (default) | none | Go, `html/template` | `resources/views/*.html` | htmx 4 (vendored), Vite 8, Tailwind CSS v4 | for Vite builds only |
+| HTMX + templ | `--templ` | Go, [templ](https://templ.guide) components | `resources/views/*.templ` (package `views`) | same as HTMX | for Vite builds only |
+| Inertia | `--inertia react\|vue\|svelte` | React, Vue or Svelte | `resources/js/pages` | Vite 8, TypeScript, Tailwind CSS v4 | required |
+| Minimal | `--minimal` | Go, `html/template` | `resources/views` | same as HTMX | for Vite builds only |
+| API | `--api` | none (JSON) | none | none | not used |
+
+### What every starter shares
+
+- **SQLite, migrations and an example CRUD** of posts, backed by the pure-Go driver, with a factory and a seeder (all but Minimal).
+- **Tests** that pass with `go test ./...` on a fresh project, without Node.js.
+- **A fresh `APP_KEY`** in `.env`, copied from `.env.example`.
+- **A production `Dockerfile`** and a `.dockerignore`. Web starters build the Vite assets with the chosen package manager in a first stage; every starter then builds a static Go binary with the tags in `.buildtags` and runs it as a non-root user on Alpine with `APP_ENV=production`, `HOST=0.0.0.0`, `PORT=3000` and `LOG_FORMAT=json`. The `.dockerignore` keeps `.env` files, `node_modules` and `storage/` out of the image. Railway and other platforms build it as is: see [Docker and Railway](/docs/deployment/docker-and-railway).
+- **`govulncheck`** as a Go tool: `go tool govulncheck ./...` checks your dependencies.
+
+The package manager comes from `--pm` (`npm`, `bun`, `pnpm` or `yarn`; default `npm`). Later commands such as `vukem serve` and `vukem build` detect it from the lockfile (`bun.lock`, `pnpm-lock.yaml`, `yarn.lock`, `package-lock.json`), and fall back to npm.
 
 ## HTMX on Vite
 
-The default starter vendors **htmx 4.0.0** (served by the static middleware, SHA-256 pinned), and builds CSS and scripts with Vite 8 and Tailwind CSS v4 (`@tailwindcss/vite`):
+The default starter renders pages with Go's [`html/template`](https://pkg.go.dev/html/template), which escapes every value so user input cannot inject HTML. It vendors **htmx 4.0.0** at `resources/public/js/htmx.min.js` (pinned by its SHA-256 in the CLI's tests), served by the static middleware, and builds CSS and scripts with Vite 8 and Tailwind CSS v4 (`@tailwindcss/vite`):
 
 ```text
 package.json, vite.config.ts
-resources/css/app.css       @import "tailwindcss" + starter styles in @layer base
-resources/js/app.ts
-resources/vite/vukem.js     hot-file plugin (writes public/hot while the dev server runs)
+resources/css/app.css       @import "tailwindcss" + starter styles
+resources/js/app.ts         the page script
+resources/vite/vukem.js     writes public/hot while the dev server runs
 resources/public/build/     vite build output, embedded in the binary
 ```
 
-The layout loads assets with `{{ vite "resources/css/app.css" "resources/js/app.ts" }}` ([Vite](/docs/frontend/vite)). Without a dev server or a build, the tag renders an HTML comment in development, so Go tests never need Node. Starter views have no inline scripts or handlers and run under the default CSP. See [HTMX](/docs/frontend/htmx) for the request and response helpers.
+The layout loads assets with `{{ vite "resources/css/app.css" "resources/js/app.ts" }}` ([Vite](/docs/frontend/vite)). Without a dev server or a build, the tag renders an HTML comment in development (`<!-- vite: no dev server and no build; run npm run dev -->`), so Go tests never need Node. Starter views have no inline scripts or event handlers, so they run under the default Content Security Policy. See [HTMX](/docs/frontend/htmx) for the request and response helpers.
+
+Besides the posts CRUD, this starter has an uploads example (`/uploads`).
 
 ## templ
 
-`vukem new app --templ` is the HTMX starter with the same pages and tests written as [templ](https://templ.guide) components:
+`vukem new app --templ` is the HTMX starter with the same pages and tests written as [templ](https://templ.guide) components. templ turns `.templ` files into Go code, so a typo in a view is a compile error instead of a runtime error.
 
-- templ is pinned as a Go tool (`tool` line in `go.mod`); run it with `go tool templ generate`.
+- templ is pinned as a Go tool (a `tool` line in `go.mod`); run it with `go tool templ generate`.
 - The generated `*_templ.go` files are committed, so `go build` and `go test` work without running templ.
-- `vukem serve` runs `go tool templ generate` before every build when `.templ` files exist and watches them; `vukem build` generates before `vite build`.
+- `vukem serve` runs `go tool templ generate` before every build when `.templ` files exist, and watches them; `vukem build` generates before the Vite build.
 - `resources/views/helpers.go` wraps the context helpers (`route`, `asset`, `viteTags`, `script`, `flash`, `old`, `fieldError`, `csrfField`). Scripts go through helpers that add the CSP nonce, so components contain no raw `<script>` tags.
 
-```go
-return c.View(views.PostsIndex(posts), web.Partial(views.PostList(posts)))
+```go title="app/controllers/post_controller.go"
+return c.View(
+	views.PostsIndex(posts),
+	web.Partial(views.PostList(posts)),
+)
 ```
 
-`web.Partial` renders the fragment for htmx partial requests and the page otherwise. Components read request data through `web.FlashFrom(ctx, key)`, `web.OldInput(ctx, field)`, `web.ErrorsFrom(ctx)`, `csrf.Token(ctx)` and `middleware.CSPNonce(ctx)`.
+`web.Partial` renders only the fragment for htmx partial requests and the full page otherwise. Components read request data through `web.FlashFrom(ctx, key)`, `web.OldInput(ctx, field)`, `web.ErrorsFrom(ctx)`, `csrf.Token(ctx)` and `middleware.CSPNonce(ctx)`.
 
 <Callout type="info">
 `vukem install:auth` writes `html/template` pages and refuses templ projects for now.
@@ -61,30 +101,65 @@ return c.View(views.PostsIndex(posts), web.Partial(views.PostList(posts)))
 
 ## Inertia (React, Vue, Svelte)
 
+[Inertia](https://inertiajs.com) lets you write pages as React, Vue or Svelte components while keeping server-side routing and controllers: a controller calls `inertia.Render` with a component name and its props, and the browser draws it.
+
 ```bash
 vukem new app --inertia react         # or vue, svelte
 vukem install:inertia --force --vue   # convert an existing HTMX starter
 ```
 
-The app gets `vukem.WithInertia(inertia.Config{})`, controllers that call `inertia.Render`, the root view `resources/views/app.html`, TypeScript pages in `resources/js/pages`, a default layout in `resources/js/layouts` and tests with `AssertInertia`. `npm run typecheck` runs `tsc` (React), `vue-tsc` or `svelte-check`. Styling is Tailwind only (`resources/css/app.css`), with dark mode driven by a `dark` class on `<html>`: `resources/js/app.ts` applies the saved choice (`localStorage.theme` = `"dark"` or `"light"`) or the system preference on load (views have no inline scripts, for the CSP), so a theme toggle only needs to flip the class and save it. `<html lang>` follows the request locale. `vukem install:auth` on an Inertia app adds `Auth/*` and `Dashboard` pages. See [Inertia](/docs/frontend/inertia).
+The app gets:
+
+- `vukem.WithInertia(inertia.Config{})` in `bootstrap/app.go` and controllers that call `inertia.Render`;
+- the root view `resources/views/app.html`, TypeScript pages in `resources/js/pages` (including an `Error` page for error responses), a default layout in `resources/js/layouts` and shared components in `resources/js/components`;
+- tests that use `AssertInertia`;
+- `npm run typecheck`, which runs `tsc` (React), `vue-tsc` (Vue) or `svelte-check` (Svelte).
+
+Styling is Tailwind only (`resources/css/app.css`), with dark mode driven by a `dark` class on `<html>`. `resources/js/app.tsx` (or `app.ts`) applies the saved choice (`localStorage.theme` = `"dark"` or `"light"`) or the system preference on load, so a theme toggle only needs to flip the class and save it. Views have no inline scripts, for the CSP. `<html lang>` follows the request locale. `vukem install:auth` on an Inertia app adds `Auth/*` and `Dashboard` pages. See [Inertia](/docs/frontend/inertia).
 
 ## Minimal
 
-`vukem new site --minimal` is the HTMX starter for a stateless app: the home page, layout, vendored htmx and Vite, with no `database/`, models, posts or uploads examples, and no `DATABASE_URL`. Sessions, cache, queue and rate limits keep their cookie, memory and sync defaults, which need no database. Its `.buildtags` file holds `vukem_nosqlite`, so `vukem build` and `vukem serve` leave the SQLite driver out of the binary (about 4 MB smaller); opening a SQLite database in such a build fails with an error naming the tag. The starter `Dockerfile` reads `.buildtags` too, so the image is built with the same tags; a hand-written Dockerfile must pass them (`go build -tags vukem_nosqlite ./cmd/app`). Tests run with plain `go test ./...`. To add a database later, delete the tag from `.buildtags` (or configure another driver) and run `vukem install:auth` or `make:migration` as usual.
+`vukem new site --minimal` is the HTMX starter for a stateless app: the home page, layout, vendored htmx and Vite, with no `database/`, models, posts or uploads, and no `DATABASE_URL`. Sessions, cache, queue and rate limits keep their cookie, memory and sync defaults, which need no database.
+
+Its `.buildtags` file holds `vukem_nosqlite`, so `vukem build` and `vukem serve` leave the SQLite driver out of the binary (about 4 MB smaller). Opening a SQLite database in such a build fails with an error naming the tag. The starter `Dockerfile` reads `.buildtags` too; a hand-written Dockerfile must pass the tags itself (`go build -tags vukem_nosqlite ./cmd/app`). Tests run with plain `go test ./...`.
+
+To add a database later, delete the tag from `.buildtags` (or configure another driver) and run `vukem install:auth` or `vukem make:migration` as usual.
 
 ## API
 
-`vukem new shop --api` is a JSON-only app: `/api/v1` routes, token guard, CORS, rate limiting and problem+json errors, no views or Node. See [REST APIs](/docs/rest-apis/overview).
+`vukem new shop --api` is a JSON-only app with no views, sessions or Node.js:
+
+- `/api/v1` routes in `routes/api.go` and `routes/posts.go`, behind `middleware.JSONOnly()`;
+- API tokens: `POST /api/v1/tokens` issues one, `GET /api/v1/me` and `DELETE /api/v1/tokens/current` need it;
+- a posts resource that anyone may read and only token holders may change;
+- CORS from `CORS_ALLOWED_ORIGINS` (comma-separated; empty allows no origin) and rate limits: 120 requests a minute per IP, 60 per token, 5 token requests a minute per IP;
+- problem+json errors and tests for tokens and posts.
+
+See [REST APIs](/docs/rest-apis/overview) and [API tokens](/docs/security/api-tokens).
 
 ## Add-ons
 
-These scaffolds work on top of any web starter:
+These scaffolds work on top of a starter, at any time:
 
 | Command | Adds |
 | --- | --- |
 | `vukem install:auth [--social …] [--2fa]` | [Authentication](/docs/security/authentication), [social login](/docs/security/social-login), [two-factor](/docs/security/two-factor) |
-| `vukem install:admin` | [Admin panel](/docs/digging-deeper/admin) at `/admin` |
+| `vukem install:admin` | [Admin panel](/docs/digging-deeper/admin) at `/admin` (needs `install:auth`) |
 | `vukem install:flags` | [Feature flags](/docs/digging-deeper/feature-flags), toggled in the admin panel |
 | `vukem install:billing` | [Stripe subscriptions](/docs/digging-deeper/billing) |
-| `vukem install:api` | Token-authenticated `/api/v1` routes |
+| `vukem install:api` | Token-authenticated `/api/v1` routes, CORS and rate limiting |
+| `vukem install:inertia --force --react\|--vue\|--svelte` | Turns the HTMX starter into Inertia |
 | `vukem boost:install` | Guidelines, skills and an MCP server for AI coding agents |
+
+The [CLI reference](/docs/cli/overview#installers) lists every flag.
+
+## Next steps
+
+<CardGroup cols="2">
+<Card title="Your first app" href="/docs/first-app" icon="rocket">
+Build a to-do list on the HTMX starter, from `vukem new` to a tested CRUD page.
+</Card>
+<Card title="Directory structure" href="/docs/directory-structure" icon="layers">
+Every folder and file a starter creates.
+</Card>
+</CardGroup>

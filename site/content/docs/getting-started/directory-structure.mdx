@@ -1,76 +1,241 @@
 ---
 title: Directory structure
-description: The layout of an application created by vukem new, and how the framework module is organised.
+description: The layout of an application created by vukem new, what each file does, and how the framework module is organised.
 ---
+
+A Vukem project is an ordinary Go module with a conventional layout. Knowing where things live lets you find any file in seconds, and lets the generators put new files in the right place. This page walks through the HTMX starter folder by folder, then maps the framework's own packages.
+
+You will learn:
+
+- what every folder and file of a new project is for
+- how the app is wired together in `bootstrap/` with plain Go code
+- how generators register what they create, and what happens when they cannot
+- which folders are generated or git-ignored
+- which framework package to import for each feature
+
+## The idea
+
+Think of a project as a house. `cmd/app` is the front door: the program starts there. `bootstrap/` is the fuse box: it connects every room. `routes/` is the floor plan, `app/` holds the rooms where the work happens, `database/` is the basement, `resources/` the decoration, and `tests/` the inspector who checks that everything works.
+
+Nothing is wired by magic. If a controller, migration or provider is used, a line of Go code you can read lists it.
 
 ## An application
 
-`vukem new blog` generates:
+`vukem new todo` (the HTMX starter) creates:
 
 ```text
-blog/
-├── cmd/app/main.go            func main() { os.Exit(vukem.Main(bootstrap.New)) }
+todo/
+├── cmd/app/main.go          the program: vukem.Main(bootstrap.New)
 ├── bootstrap/
-│   ├── app.go                 New(opts...): providers, migrations, seeders, listeners, jobs, schedule, views, routes
-│   ├── providers.go           func Providers() []vukem.Provider   (make:provider appends)
-│   └── commands.go            func Commands() []vukem.Command     (make:command appends)
+│   ├── app.go               New(opts...): wires the whole app
+│   ├── providers.go         Providers(): make:provider appends
+│   └── commands.go          Commands(): make:command appends
 ├── routes/
-│   ├── web.go                 func Web(r *router.Router, app *vukem.App) error
-│   └── schedule.go            func Schedule(s *schedule.Schedule, app *vukem.App)
+│   ├── web.go               Web(r, app): the browser routes
+│   ├── registry.go          All(): route files, install:* appends
+│   └── schedule.go          Schedule(s, app): scheduled tasks
 ├── app/
-│   ├── controllers/           Home, PostController
-│   ├── jobs/                  queued jobs + registry.go (make:job appends)
-│   ├── listeners/             event listeners + registry.go (make:listener appends)
-│   ├── models/                Post (orm.Model)
-│   └── requests/              input structs and z schemas
-├── database/migrations/       timestamped migrations + registry.go (make:migration appends)
+│   ├── controllers/         Home, PostController, UploadController
+│   ├── models/              Post (embeds orm.Model)
+│   ├── requests/            input structs and their z schemas
+│   ├── jobs/registry.go     queued jobs: make:job appends
+│   └── listeners/registry.go  event listeners: make:listener appends
+├── database/
+│   ├── migrations/          timestamped migrations + registry.go
+│   ├── factories/           fake data for tests (post_factory.go)
+│   └── seeders/             db:seed data + registry.go
 ├── resources/
-│   ├── resources.go           embeds views and public; disk files in development
-│   ├── views/                 layouts/, partials/, posts/, home.html
-│   └── public/                css/app.css, js/htmx.min.js (htmx 4.0.0, vendored)
-├── storage/                   SQLite database and local data (git-ignored)
-├── tests/                     home_test.go, posts_test.go (vukemtest)
-├── .env.example               copied to .env with a fresh APP_KEY
-├── Dockerfile                 production image (see Deployment)
-├── .dockerignore              keeps .env, node_modules and storage/ out of the image
-└── go.mod
+│   ├── resources.go         embeds views/ and public/
+│   ├── views/               layouts/, partials/, components/,
+│   │                        posts/, uploads/, home.html
+│   ├── public/              js/htmx.min.js, robots.txt, build/
+│   ├── css/app.css          Tailwind entry point
+│   ├── js/app.ts            page script
+│   └── vite/                the Vite hot-file plugin
+├── storage/                 SQLite database, local files (ignored)
+├── tests/                   home, posts and uploads tests
+├── .env, .env.example       configuration (.env is ignored)
+├── Dockerfile, .dockerignore  the production image
+├── package.json, vite.config.ts  the frontend build
+├── README.md
+└── go.mod, go.sum
 ```
 
-Everything is wired in code you own: `bootstrap/app.go` lists the providers, migrations, views and routes. Generators edit `bootstrap/providers.go`, `bootstrap/commands.go` and `database/migrations/registry.go` with AST-based codemods; there is no `init()` registration and no reflection-based discovery. If you restructure those files, generators print the line to add by hand instead.
+### `cmd/app`
 
-`vukem` keeps its build cache in `.vukem/` and production builds in `bin/`; both are git-ignored.
+```go title="cmd/app/main.go"
+package main
+
+import (
+	"os"
+
+	vukem "github.com/AlexGalhardo/vukem"
+
+	"example.com/todo/bootstrap"
+)
+
+func main() { os.Exit(vukem.Main(bootstrap.New)) }
+```
+
+The whole program is one line. `vukem.Main` loads the configuration, handles `Ctrl+C`, and runs `serve` or the app command in the first argument (`migrate`, `route:list`, …). The `vukem` CLI builds this program to run app commands; in production you run the binary directly. See [Application lifecycle](/docs/architecture/lifecycle#creating-the-app).
+
+### `bootstrap/`
+
+`bootstrap.New` is the one place that lists everything the app uses. `cmd/app` calls it, and so do the tests:
+
+```go title="bootstrap/app.go"
+func New(opts ...vukem.Option) (*vukem.App, error) {
+	base := []vukem.Option{
+		vukem.WithProviders(Providers()...),
+		vukem.WithMigrations(migrations.All()),
+		vukem.WithSeeders(seeders.All()...),
+		vukem.WithListeners(listeners.All()...),
+		vukem.WithJobsFunc(jobs.All),
+		vukem.WithSchedule(routes.Schedule),
+		vukem.WithViews(resources.Views()),
+		vukem.WithVite(resources.Public()),
+	}
+
+	for _, fn := range routes.All() {
+		base = append(base, vukem.WithRoutes(fn))
+	}
+
+	app, err := vukem.New(append(base, opts...)...)
+	if err != nil {
+		return nil, err
+	}
+
+	app.AddCommand(Commands()...)
+
+	return app, nil
+}
+```
+
+The `opts` from the caller come **last**, so `vukem.Main` and `vukemtest.New` can override what they need (where configuration comes from, which kind of run this is).
+
+### `routes/`
+
+- `web.go` installs `vukem.DefaultMiddleware`, serves `resources/public` at `/`, opens the database with `app.DB()` and registers the routes. It is where you add `r.Resource("tasks", …)` in [Your first app](/docs/first-app).
+- `registry.go` lists the route files in order. `install:auth`, `install:api` and other installers append their own (`routes/auth.go`, `routes/api.go`).
+- `schedule.go` declares scheduled tasks ([Scheduler](/docs/digging-deeper/scheduler)).
+
+### `app/`
+
+Your application code, one package per kind of thing: `controllers` (handlers grouped by resource), `models` (database rows), `requests` (validated input), `jobs` and `listeners`. Generators add more folders when you need them: `app/mail`, `app/events`, `app/policies`, `app/middleware`, `app/resources`, `app/commands`, `app/providers`.
+
+### `database/`
+
+- `migrations/`: one file per schema change, named `YYYYMMDDHHMMSS_description.go`, plus `registry.go`, whose `All()` returns them in order.
+- `factories/`: builders of fake models for tests and seeders ([Factories and seeders](/docs/database/factories-seeders)).
+- `seeders/`: data that `vukem db:seed` inserts, listed in `seeders/registry.go`.
+
+### `resources/`
+
+Everything that is not Go code: HTML views, CSS, scripts and public files. `resources.go` embeds `views/` and `public/` into the binary with [`go:embed`](https://pkg.go.dev/embed), so production needs no files next to it:
+
+```go title="resources/resources.go"
+//go:embed views all:public
+var embedded embed.FS
+```
+
+During development, the files **on disk** are used instead, so a template edit shows up on refresh. With `APP_ENV=production` in the process environment, the embedded copy is always used, even when a `resources/` folder exists next to the binary.
+
+### `storage/` and `tests/`
+
+`storage/` holds the SQLite file (`storage/database.sqlite`, from `DATABASE_URL`) and local uploads. Everything in it except `.gitkeep` is git-ignored. `tests/` holds integration tests that build the real app with `vukemtest` ([Testing](/docs/testing/overview)).
+
+### Generated and ignored folders
+
+| Path | Created by | In Git |
+| --- | --- | --- |
+| `.vukem/` | The CLI: cached app builds for app commands and `vukem serve` | No |
+| `bin/` | `vukem build` (the production binary) | No |
+| `node_modules/` | npm, bun, pnpm or yarn | No |
+| `resources/public/build/` | `vite build` | No (the image builds its own) |
+| `resources/public/hot` | The Vite dev server, while it runs | No |
+| `storage/*` | The app (database, files) | No, except `.gitkeep` |
+
+## How generators wire code
+
+Registration is plain Go: a function returns a slice, and the generator appends one element to it. For example, after `vukem make:migration create_tags_table`:
+
+```go title="database/migrations/registry.go"
+func All() []schema.Migration {
+	return []schema.Migration{
+		m20260101000000CreatePostsTable(),
+		m20261018003311CreateTasksTable(),
+		m20261018101500CreateTagsTable(),
+	}
+}
+```
+
+| File | Function | Appended by |
+| --- | --- | --- |
+| `bootstrap/providers.go` | `Providers()` | `make:provider` |
+| `bootstrap/commands.go` | `Commands()` | `make:command` |
+| `database/migrations/registry.go` | `All()` | `make:migration`, `make:model -m` |
+| `database/seeders/registry.go` | `All()` | `make:seeder` |
+| `app/jobs/registry.go` | `All()` | `make:job` |
+| `app/listeners/registry.go` | `All()` | `make:listener` |
+| `app/policies/registry.go` | `All()` | `make:policy` |
+| `routes/registry.go` | `All()` | `install:*` |
+
+The generators edit these files through the Go syntax tree (not with text search), add the imports they need, and never add the same element twice. If you restructure one of these functions so its `return []T{…}` shape is gone, the generator does not guess: it prints the line to add by hand. There is no `init()` registration and no reflection-based discovery. See [CLI](/docs/cli/overview#generators).
 
 ## The framework
 
-The module `github.com/AlexGalhardo/vukem` is split into small, single-purpose packages. The request context package is named `web` so it never shadows the conventional `ctx context.Context` variable.
+The module `github.com/AlexGalhardo/vukem` is split into small, single-purpose packages. You import only the ones you use. The request context package is named `web` so it never shadows the conventional `ctx context.Context` variable.
 
 | Package | Purpose |
 | --- | --- |
 | `vukem` (root) | `App`, options, providers, runners, commands, `DefaultMiddleware`, `Main` |
 | `config` | `.env` loader, `Load[T]`, `Secret`, `APP_KEY` |
 | `router` | ServeMux wrapper: groups, names, resources, URL generation |
-| `web` | `*web.Ctx`: input, responses, redirects, rendering, error handler |
+| `web` | `*web.Ctx`: input, responses, redirects, rendering, the error handler |
 | `errs` | `HTTPError`, `ValidationError`, sentinel errors |
-| `middleware` | recover, request id, logger, CORS, static, secure headers, gzip… |
-| `z` | Zod-style schemas |
-| `session`, `csrf` | sessions with flash and old input; cross-origin protection |
-| `database`, `orm`, `schema` | SQLite connections, generic query builder, migrations |
+| `middleware` | Recover, request id, logger, CORS, static files, secure headers, gzip… |
+| `z` | Zod-style validation schemas |
+| `session`, `csrf` | Sessions with flash messages and old input; cross-origin protection |
+| `database`, `orm`, `schema` | Connections (SQLite built in), the generic query builder, migrations |
 | `view`, `htmx` | `html/template` engine; htmx 4 request and response helpers |
-| `vukemtest` | in-process test client and database assertions |
-| `cmd/vukem` | the CLI |
+| `vukemtest` | In-process test client and database assertions |
+| `cmd/vukem` | The CLI |
 
 | More packages | Purpose |
 | --- | --- |
 | `api`, `ratelimit` | REST envelopes, query conventions, typed handlers, idempotency keys, deprecation headers; GCRA rate limiting |
 | `openapi`, `apidocs` | OpenAPI 3.1 generation and validation, TypeScript/Zod codegen, Scalar API reference |
-| `queue`, `queue/queuetest`, `schedule` | typed jobs and drivers, driver conformance suite, cron scheduler |
-| `auth`, `auth/hash`, `authz`, `social`, `signed` | guards and tokens, password hashing, gates and policies, social login, signed URLs |
-| `mail`, `cache`, `storage`, `events`, `logging/telegram` | mail transports, cache stores, disks, typed events, Telegram logging |
-| `factory`, `database/dbtest` | model factories, dialect conformance suite |
-| `httpclient`, `webhook`, `security` | SSRF-safe client, webhook signatures, security events |
-| `vite`, `inertia` | Vite asset tags; Inertia v3 adapter |
-| `crypt`, `i18n`, `sse`, `broadcast`, `upload`, `uuid` | encryption, translations, server-sent events, realtime channels, streaming and resumable uploads, UUID v4/v7 |
-| `admin`, `devtools` | admin panel; development dashboard |
-| `auth/jwt`, `auth/totp` | JWT guard and refresh tokens; TOTP two-factor |
-| `drivers/postgres`, `drivers/mysql`, `drivers/redis`, `drivers/mongo`, `drivers/s3`, `drivers/websocket`, `drivers/otel` (separate modules) | PostgreSQL, MySQL/MariaDB, Redis/Valkey, MongoDB, S3, WebSockets, OpenTelemetry |
-| `contrib/graphql`, `contrib/grpc`, `contrib/stripe` (separate modules) | GraphQL server, gRPC on connect-go, Stripe client |
+| `queue`, `queue/queuetest`, `schedule` | Typed jobs and drivers, the driver conformance suite, the cron scheduler |
+| `auth`, `auth/hash`, `auth/jwt`, `auth/totp` | Guards and tokens, password hashing, JWT and refresh tokens, TOTP two-factor |
+| `authz`, `social`, `signed` | Gates and policies, social login, signed URLs |
+| `mail`, `cache`, `storage`, `events` | Mail transports, cache stores, disks, typed events |
+| `logging`, `logging/telegram` | Repeated-error deduplication, Telegram logging |
+| `factory`, `database/dbtest` | Model factories, the dialect conformance suite |
+| `httpclient`, `webhook`, `security` | SSRF-safe HTTP client, webhook signatures, security events |
+| `vite`, `inertia` | Vite asset tags; the Inertia v3 adapter |
+| `crypt`, `i18n`, `sse`, `broadcast` | Encryption, translations, server-sent events, realtime channels |
+| `upload`, `export`, `uuid`, `flags` | Streaming and resumable uploads, CSV/JSON/NDJSON downloads, UUID v4/v7, feature flags |
+| `admin`, `devtools` | Admin panel; development dashboard |
+
+Some integrations are **separate modules**, so their dependencies are downloaded only when you `go get` them:
+
+| Module | Purpose |
+| --- | --- |
+| `drivers/postgres`, `drivers/mysql` | PostgreSQL, MySQL and MariaDB |
+| `drivers/redis`, `drivers/mongo` | Redis/Valkey, MongoDB |
+| `drivers/s3`, `drivers/websocket`, `drivers/otel` | S3 storage, WebSockets, OpenTelemetry |
+| `contrib/graphql`, `contrib/grpc` | GraphQL server, gRPC on connect-go |
+| `contrib/stripe`, `contrib/imaging` | Stripe client, image thumbnails |
+
+Each package has its reference on [pkg.go.dev](https://pkg.go.dev/github.com/AlexGalhardo/vukem).
+
+## Next steps
+
+<CardGroup cols="2">
+<Card title="Showcase" href="/docs/showcase" icon="rocket">
+Three open-source apps that use this layout in production.
+</Card>
+<Card title="Application lifecycle" href="/docs/architecture/lifecycle" icon="layers">
+What `bootstrap.New` and `vukem.Main` do at run time.
+</Card>
+</CardGroup>

@@ -1,0 +1,336 @@
+---
+title: Configuração
+description: Configuração tipada carregada de variáveis de ambiente e arquivos .env, com segredos que nunca chegam aos logs e verificações na inicialização que falham de forma segura.
+---
+
+Seu app precisa de ajustes que mudam entre o seu notebook e a produção: a porta, o endereço do banco de dados, uma senha de e-mail. O Vukem lê esses valores de **variáveis de ambiente** e de arquivos `.env`, uma única vez, quando o app inicia, e os carrega em structs Go tipadas. Um valor errado impede o app de iniciar, com uma mensagem clara, em vez de falhar mais tarde no meio de uma requisição.
+
+Você vai aprender:
+
+- como os arquivos `.env` e o ambiente real se combinam, e qual deles vence
+- toda a sintaxe que o parser de `.env` entende
+- cada ajuste central, seu valor padrão e sua verificação na inicialização
+- como carregar suas próprias configurações tipadas com `config.Load`
+- como `config.Secret` mantém senhas fora dos logs
+- o que é o `APP_KEY`, e como criá-lo e rotacioná-lo
+
+## A ideia
+
+Um arquivo `.env` é uma lista de linhas `KEY=value`, como o painel de configurações de um jogo: o jogo (seu código) continua o mesmo, e você muda o painel em cada computador. Você faz commit de um painel de exemplo (`.env.example`) e mantém o verdadeiro (`.env`, com as senhas reais) fora do Git.
+
+O Vukem não tem buscas por string como `config("app.name")` espalhadas pelo código. Em vez disso, cada parte do app declara uma struct com [struct tags](/docs/prerequisites#struct-tags) que dão nome às suas variáveis, e os valores são convertidos e verificados quando o app inicia:
+
+```go
+type Config struct {
+	Name string `env:"APP_NAME" default:"Vukem"`
+	Port int    `env:"PORT"     default:"3000"`
+}
+```
+
+Se `PORT=abc`, o app não inicia, e o erro nomeia a variável e o campo: `config: PORT (Port): invalid integer "abc"`.
+
+## Início rápido
+
+<Steps>
+<Step title="Veja o .env gerado">
+
+`vukem new` cria o `.env` a partir do `.env.example` e preenche o `APP_KEY`:
+
+```dotenv title=".env"
+APP_NAME=todo
+APP_ENV=development
+APP_KEY=base64:...
+# Former APP_KEY values, comma-separated: they still decrypt after a rotation.
+APP_PREVIOUS_KEYS=
+APP_DEBUG=true
+PORT=3000
+DATABASE_URL=file:storage/database.sqlite
+```
+
+</Step>
+<Step title="Mude um valor">
+
+Defina `PORT=4000` no `.env` e rode `vukem serve`. O app agora escuta em `localhost:4000`. O `vukem serve` também observa o `.env`, então reinicia sozinho quando você salva.
+
+</Step>
+<Step title="Sobrescreva para uma execução">
+
+O ambiente real vence todos os arquivos:
+
+```bash
+PORT=5000 go run ./cmd/app
+```
+
+No Windows PowerShell: `$env:PORT=5000; go run ./cmd/app`.
+
+</Step>
+</Steps>
+
+## De onde vêm os valores
+
+`vukem.New` lê os arquivos do diretório de trabalho e os junta com o ambiente do processo. Para uma chave definida em vários lugares, vence a que estiver **mais acima** nesta lista:
+
+1. O ambiente real do processo
+2. `.env.<APP_ENV>.local`
+3. `.env.local` (ignorado quando `APP_ENV=test`, para que os testes sejam reproduzíveis)
+4. `.env.<APP_ENV>`
+5. `.env`
+
+O próprio `APP_ENV` é lido primeiro, do ambiente ou do `.env`, para saber quais arquivos `.env.<APP_ENV>` carregar. Arquivos ausentes são ignorados. Um `APP_ENV` não definido ou vazio significa `development`, e o valor é convertido para minúsculas.
+
+<CodeGroup>
+
+```dotenv title=".env.example"
+APP_NAME=Blog
+APP_ENV=development
+APP_KEY=
+APP_URL=http://localhost:3000
+```
+
+```dotenv title=".env.production"
+APP_URL=https://blog.example.com
+LOG_FORMAT=json
+```
+
+```dotenv title=".env.local"
+# Only on your machine; never committed.
+MAIL_PASSWORD=sk_test_...
+```
+
+</CodeGroup>
+
+<Callout type="tip">
+Faça commit do `.env.example` e mantenha `.env`, `.env.local` e `.env.*.local` fora do Git (o `.gitignore` do starter já ignora `.env` e `.env.*.local`). Nunca faça commit de segredos reais.
+</Callout>
+
+## Sintaxe do `.env`
+
+O pacote `config` traz seu próprio parser de `.env`, pequeno e feito só com a biblioteca padrão:
+
+```dotenv title=".env"
+# A comment line
+APP_NAME=Blog
+export LOG_LEVEL=debug
+
+# ${VAR} or $VAR refers to another value
+ASSET_URL=${APP_URL}/build
+
+# Double quotes: \n escapes, and values may span lines
+GREETING="Hello\nWorld"
+
+# Single quotes: the value is taken literally, no ${VAR}
+PATTERN='${NOT_EXPANDED}'
+
+# Read the value from a file (Docker and Kubernetes secrets)
+DB_PASSWORD=@file:/run/secrets/db
+```
+
+| Sintaxe | Significado |
+| --- | --- |
+| `KEY=value` | Um valor simples. `export KEY=value` também é aceito |
+| `# …` | Um comentário |
+| `${OTHER}` ou `$OTHER` | O valor de `OTHER`, vindo do ambiente ou dos arquivos. Um nome desconhecido vira string vazia; `\$` é um `$` literal |
+| `"…"` | Aspas duplas: escapes `\n` funcionam, e o valor pode continuar nas linhas seguintes |
+| `'…'` | Aspas simples: o texto é literal, nada é expandido |
+| `@file:/path` | O conteúdo desse arquivo, sem a quebra de linha final. O `@` deixa intactos DSNs do SQLite como `file:storage/app.db` |
+
+Uma linha com chave inválida interrompe a inicialização indicando o arquivo e o número da linha, por exemplo `config: .env: line 3: invalid key "1BAD"`.
+
+## Ajustes centrais
+
+`vukem.New` carrega estes valores em `app.Config` (um `vukem.Config`):
+
+| Variável | Padrão | O que faz |
+| --- | --- | --- |
+| `APP_NAME` | `Vukem` | O nome do app, mostrado em logs, e-mails e páginas |
+| `APP_ENV` | `development` | `development`, `production` ou `test`; qualquer outro valor é erro na inicialização |
+| `APP_DEBUG` | `false` | Mostra detalhes de erro e a página de debug. Deve ser `false` quando `APP_ENV=production` |
+| `APP_URL` | `http://localhost:3000` | A origem pública do app, usada em URLs absolutas |
+| `APP_KEY` | nenhum | A chave secreta. Veja [`APP_KEY`](#app_key) |
+| `APP_PREVIOUS_KEYS` | vazio | Chaves antigas, separadas por vírgula, mantidas depois de uma rotação |
+| `HOST` | `localhost` | Endereço de escuta. `0.0.0.0` escuta em todas as interfaces IPv4, `::` em IPv6 (dual-stack na maioria dos sistemas) |
+| `PORT` | `3000` | Porta de escuta, 0–65535. `0` escolhe uma porta livre |
+| `SHUTDOWN_TIMEOUT` | `15s` | Quanto tempo um desligamento gracioso pode levar ([ciclo de vida](/docs/architecture/lifecycle#shutdown)) |
+| `HTTP_H2C` | `false` | Serve HTTP/2 sem TLS em produção, atrás de um proxy que fala h2c (para clientes gRPC). Sempre ativo fora de produção |
+| `HTTP_MAX_HEADER_BYTES` | `65536` | Limite da linha de requisição mais cabeçalhos (64 KiB; 4096–1048576). Requisições maiores recebem `431` |
+| `TRUSTED_PROXIES` | vazio | CIDRs ou IPs, separados por vírgula, cujo `X-Forwarded-For` define `c.IP()`. Vazio não confia em ninguém ([Deploy](/docs/deployment/docker-and-railway#trusted-proxies)) |
+| `CLIENT_IP_HEADER` | vazio | Lê o IP do cliente deste cabeçalho de IP único (como `X-Real-IP`) em vez de `X-Forwarded-For`, só de peers em `TRUSTED_PROXIES` |
+| `TRUST_FORWARDED_PROTO` | `false` | Trata `X-Forwarded-Proto: https` de um proxy confiável como HTTPS (para HSTS). Exige `TRUSTED_PROXIES` |
+| `HSTS_FORCE` | `false` | Envia HSTS em toda resposta em produção quando não dá para confiar na faixa de IPs do proxy TLS ([prós e contras](/docs/deployment/docker-and-railway#hsts-without-a-trusted-range)). Exige um `APP_URL` `https://` em todo ambiente; aplicado só em produção, com um aviso na inicialização nos demais |
+| `RATE_LIMIT_IPV6_PREFIX` | `64` | Tamanho do prefixo pelo qual `ratelimit.ByIP` agrupa clientes IPv6 (1–128); IPv4 continua por endereço |
+| `LOG_LEVEL` | `info` | `debug`, `info`, `warn` ou `error` |
+| `LOG_FORMAT` | `text` (`json` em produção) | `text` ou `json` |
+| `LOG_DEDUP_WINDOW` | `1m` em produção, desligado nos demais | Erros idênticos repetidos viram um único resumo por janela; `0` desliga |
+| `API_VERSION` | `1.0.0` | `info.version` do documento [OpenAPI](/docs/rest-apis/openapi) |
+| `OPENAPI_PREFIX` | vazio | Mantém no documento OpenAPI só as rotas sob este prefixo (como `/api`) |
+| `OPENAPI_IN_PRODUCTION` | `false` | Serve `/openapi.json` também em produção |
+| `DEVTOOLS` | `false` | Ativa o [painel de desenvolvimento](/docs/digging-deeper/devtools) em `/_vukem`; recusado em produção |
+| `DEVTOOLS_INSECURE_ALLOW_REMOTE` | `false` | Serve o painel para clientes fora do loopback (containers, VMs remotas). Qualquer um que alcance o app passa a ver suas requisições, consultas, logs e e-mails |
+
+Outras partes do Vukem leem suas próprias variáveis do mesmo jeito. Cada página as lista:
+
+| Área | Variáveis começam com | Página |
+| --- | --- | --- |
+| Banco de dados | `DATABASE_URL`, `DB_MAX_OPEN`, `DB_MAX_IDLE` | [Banco de dados](/docs/database/overview) |
+| Sessões | `SESSION_` | [Sessões](/docs/basics/sessions) |
+| CSRF | `CSRF_TRUSTED_ORIGINS` | [CSRF](/docs/basics/csrf) |
+| Cache | `CACHE_` | [Cache](/docs/digging-deeper/cache) |
+| Fila e agendador | `QUEUE_`, `SCHEDULE_` | [Filas](/docs/digging-deeper/queue), [Agendador](/docs/digging-deeper/scheduler) |
+| E-mail | `MAIL_`, `SMTP_` | [E-mail](/docs/digging-deeper/mail) |
+| Rate limiting | `RATE_LIMIT_STORE` | [Rate limiting](/docs/security/rate-limiting) |
+
+## Suas próprias configurações
+
+Carregue sua própria struct com a função genérica `config.Load[T]`. Cada campo nomeia sua variável com uma tag `env` e pode ter um `default`:
+
+```go title="app/settings/mail.go"
+package settings
+
+import (
+	"time"
+
+	vukem "github.com/AlexGalhardo/vukem"
+	"github.com/AlexGalhardo/vukem/config"
+)
+
+type Mail struct {
+	Host     string        `env:"MAIL_HOST"     default:"localhost"`
+	Port     int           `env:"MAIL_PORT"     default:"1025"`
+	From     string        `env:"MAIL_FROM"`
+	Password config.Secret `env:"MAIL_PASSWORD"`
+	Timeout  time.Duration `env:"MAIL_TIMEOUT"  default:"10s"`
+	// A comma-separated list: "a@example.com, b@example.com".
+	Cc []string `env:"MAIL_CC"`
+}
+
+func LoadMail(app *vukem.App) (Mail, error) {
+	return config.Load[Mail](app.Source)
+}
+```
+
+Como os campos são preenchidos:
+
+- Uma variável não definida **ou vazia** usa a tag `default`; sem default, o campo fica com seu [valor zero](/docs/prerequisites#structs-e-métodos).
+- Tipos suportados: `string`, `bool`, todos os tamanhos de int, uint e float, `time.Duration` (`10s`, `1m30s`), `[]string` (separado por vírgula, sem os espaços em volta), `*url.URL`, `config.Secret` e qualquer tipo que implemente [`encoding.TextUnmarshaler`](https://pkg.go.dev/encoding#TextUnmarshaler).
+- Um `bool` aceita o que [`strconv.ParseBool`](https://pkg.go.dev/strconv#ParseBool) aceita: `1`, `t`, `true`, `0`, `f`, `false` (maiúsculas ou minúsculas).
+- Um campo struct aninhado **sem** tag `env` é preenchido recursivamente, então você pode agrupar configurações.
+- Campos não exportados são ignorados.
+- Todos os erros de conversão são coletados e retornados juntos, um por linha:
+
+```text
+config: MAIL_PORT (Port): invalid integer "abc"
+config: MAIL_TIMEOUT (Timeout): time: invalid duration "ten"
+```
+
+`config.Fill(&dst, src)` faz o mesmo com uma struct que você já tem. `app.Source.Get("KEY")` lê um único valor bruto (vazio quando não definido), e `app.Source.Lookup("KEY")` também diz se ele foi definido.
+
+## Segredos
+
+`config.Secret` guarda um valor sensível. Toda forma de imprimi-lo mostra `[redacted]`: `fmt` (`%v`, `%s`, `%+v`, `%#v`), `encoding/json`, `encoding.TextMarshaler` e `log/slog`. Só `Reveal()` retorna o valor real.
+
+```go
+mail, err := LoadMail(app)
+if err != nil {
+	return err
+}
+
+fmt.Println(mail.Password)          // [redacted]
+app.Log.Info("mail", "cfg", mail)   // ... Password:[redacted] ...
+dial(mail.Host, mail.Password.Reveal())
+```
+
+Chame `Reveal()` só no ponto exato em que o valor é usado, para que uma linha de log ou uma mensagem de erro nunca o vaze.
+
+## `APP_KEY`
+
+O `APP_KEY` é o segredo mestre do app. O Vukem deriva dele as chaves dos cookies criptografados, das sessões, das colunas criptografadas, das URLs assinadas e do bypass do modo de manutenção.
+
+- **Crie** com `vukem key:generate`, que grava uma chave no `.env` (criando o `.env` a partir do `.env.example` quando ele não existe). Ele se recusa a substituir uma chave existente, a menos que você passe `--force`; `--show` imprime uma chave em vez de gravá-la. Onde só existe o app compilado (Docker, CI), `./app key:generate` imprime uma nova chave sem inicializar o app nem gravar arquivo; veja [CLI](/docs/cli/overview#app_key-without-the-global-cli). No código, `config.GenerateKey()` retorna 32 bytes aleatórios de `crypto/rand`, codificados com `base64:`.
+- **Formato**: pelo menos 32 bytes (`config.MinKeyLen`), normalmente escritos como `base64:` mais os bytes codificados. O prefixo `base64:` é opcional. Uma chave malformada é sempre erro na inicialização.
+- **Quando é obrigatória**: em produção, e sempre que `APP_ENV` não estiver definido ou estiver vazio. Só um `APP_ENV=development` ou `test` explícito inicia sem ela (em development, com um aviso no log). Aí toda funcionalidade que precisa da chave falha de forma segura quando usada: sessões em cookie (`SESSION_DRIVER=cookie`, o padrão, então `DefaultMiddleware` ainda dá erro na inicialização), `app.Crypt` (nil; `Decrypt` e `SetCookie` retornam `crypt.ErrNoKey`, `Encrypt` entra em panic), `app.Key.Derive` (panic), `app.DeriveKey` (retorna `config.ErrKeyMissing`), colunas criptografadas do ORM (`orm.ErrNoEncrypter`) e o cookie de bypass do modo de manutenção (desativado). Um app só de API, com autenticação por token e sem criptografia, roda sem chave.
+- **Nunca use a chave diretamente.** Derive uma chave por finalidade com HKDF-SHA256, para que cookies, sessões e criptografia nunca compartilhem material de chave:
+
+```go
+// HKDF info "vukem:session"; panics without a key.
+sessionKey := app.Key.Derive("session", 32)
+
+// Returns config.ErrKeyMissing instead of panicking.
+signer, err := app.DeriveKey("signed.urls", 32)
+```
+
+`APP_PREVIOUS_KEYS` lista chaves antigas (separadas por vírgula, mesmo formato). Elas só abrem ou verificam o que elas mesmas selaram ou assinaram: cookies e colunas criptografados, e-mails na fila, sessões em cookie, o bypass do modo de manutenção, e URLs assinadas e o estado do login social via `app.DerivePreviousKeys`. Tudo o que é novo usa o `APP_KEY`. `vukem key:rotate` move a chave atual para lá e grava uma nova; veja [Criptografia](/docs/security/encryption#key-rotation).
+
+<Callout type="warning" title="Substituir o APP_KEY desloga todo mundo">
+`vukem key:generate --force` joga a chave antiga fora: as sessões atuais e os dados criptografados ficam ilegíveis. Para trocar uma chave com segurança, use `vukem key:rotate`.
+</Callout>
+
+## Verificações na inicialização
+
+O Vukem se recusa a iniciar com uma configuração errada ou insegura:
+
+| Verificação | Resultado |
+| --- | --- |
+| Um valor que não converte (`PORT=abc`) | Erro na inicialização nomeando a variável e o campo; todos os erros de conversão aparecem juntos |
+| `APP_KEY` ausente em produção ou com `APP_ENV` não definido; `APP_KEY` malformado em qualquer ambiente | Erro na inicialização (`config: APP_KEY is not set …`) |
+| `APP_KEY` ausente com `APP_ENV=development` ou `test` explícito | Inicia; funcionalidades que dependem da chave falham de forma segura quando usadas |
+| `APP_ENV` diferente de `development`, `test`, `production` | Erro na inicialização |
+| `APP_DEBUG=true` ou `DEVTOOLS=true` com `APP_ENV=production` | Erro na inicialização |
+| `PORT` fora de 0–65535 | Erro na inicialização |
+| Entrada inválida em `TRUSTED_PROXIES`; `TRUST_FORWARDED_PROTO` ou `CLIENT_IP_HEADER` sem `TRUSTED_PROXIES`; um `CLIENT_IP_HEADER` inválido ou com lista de valores | Erro na inicialização |
+| `HSTS_FORCE` sem um `APP_URL` `https://`; `RATE_LIMIT_IPV6_PREFIX` fora de 1–128; `HTTP_MAX_HEADER_BYTES` fora de 4096–1048576 | Erro na inicialização |
+| `TRUSTED_PROXIES` que confia em qualquer endereço (`0.0.0.0/0`) | Inicia com um aviso |
+| Detalhes de erro de debug | Só com `APP_DEBUG` ligado; nunca em produção |
+
+As verificações da chave, do `APP_ENV`, do debug, do devtools e da porta são relatadas juntas; as verificações depois delas param no primeiro problema.
+
+## Segurança
+
+- Segredos ficam no ambiente ou em referências `@file:`, nunca no código nem num arquivo commitado. O `Dockerfile` de produção não define segredos: passe-os quando o container iniciar.
+- Declare segredos como `config.Secret` para que sejam ocultados em todo lugar.
+- Em produção, mantenha `APP_DEBUG=false` (obrigatório) e defina `APP_URL` com sua origem `https://`.
+
+Veja [Segurança](/docs/security/overview) para a lista completa de padrões.
+
+## Testes
+
+Os testes nunca leem seus arquivos `.env`. `vukemtest.New` monta o app a partir de um mapa fixo: `APP_ENV=test`, um `APP_KEY` aleatório, um `DATABASE_URL` SQLite privado em memória, `SESSION_DRIVER=cookie` e `MAIL_MAILER=array`. Adicione ou sobrescreva valores com `Options.Env`:
+
+```go title="tests/mail_test.go"
+app := vukemtest.New(t, bootstrap.New, vukemtest.Options{
+	Env: map[string]string{"MAIL_FROM": "Todo <todo@example.com>"},
+})
+```
+
+Para testar código de configuração isoladamente, monte uma source a partir de um mapa em vez de chamar `os.Setenv`:
+
+```go
+src := config.MapSource(map[string]string{
+	"APP_KEY": config.GenerateKey(),
+	"APP_ENV": "test",
+})
+
+app, err := vukem.New(vukem.WithSource(src))
+```
+
+`vukem.WithEnv(fsys, getenv)` carrega arquivos `.env` de qualquer `fs.FS` (por exemplo um [`fstest.MapFS`](https://pkg.go.dev/testing/fstest#MapFS)) com um `getenv` personalizado.
+
+## Erros comuns
+
+**Usar aspas simples e esperar `${VAR}`.** `ASSET_URL='${APP_URL}/build'` fica literalmente `${APP_URL}/build`. Use aspas duplas ou nenhuma aspa.
+
+**Esquecer o `APP_ENV` em produção.** Sem `APP_ENV`, o app roda como `development`, mas mesmo assim se recusa a iniciar sem `APP_KEY`, justamente para que um servidor de produção com uma variável faltando nunca inicie sem chave. Defina `APP_ENV=production` no servidor (o `Dockerfile` do starter já faz isso).
+
+**Ler `os.Getenv` diretamente.** Isso ignora os arquivos `.env` e as verificações tipadas. Use `config.Load[T](app.Source)` ou `app.Source.Get`.
+
+## Próximos passos
+
+<CardGroup cols="2">
+<Card title="Estrutura de diretórios" href="/docs/directory-structure" icon="layers">
+Onde fica cada arquivo de um projeto.
+</Card>
+<Card title="Ciclo de vida da aplicação" href="/docs/architecture/lifecycle" icon="zap">
+O que acontece entre `vukem.New` e o desligamento.
+</Card>
+</CardGroup>
+
+Referência do pacote: [`config` no pkg.go.dev](https://pkg.go.dev/github.com/AlexGalhardo/vukem/config).

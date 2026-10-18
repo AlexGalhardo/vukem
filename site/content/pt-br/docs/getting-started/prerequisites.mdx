@@ -1,0 +1,503 @@
+---
+title: Pré-requisitos
+description: As ferramentas que você instala antes de usar o Vukem e um guia de 15 minutos dos conceitos de Go em que o resto da documentação se apoia.
+---
+
+Antes de criar sua primeira app Vukem, você precisa de algumas ferramentas no computador e de um pouco de Go. Esta página lista as ferramentas e depois ensina o Go necessário para ler todas as outras páginas, um programa pequeno de cada vez.
+
+Você vai aprender:
+
+- quais programas instalar e quais são opcionais
+- como o código Go se organiza em pacotes e módulos
+- como as funções Go informam erros, e por que os handlers do Vukem retornam `error`
+- o que são structs, métodos, interfaces e ponteiros
+- o que `context.Context`, goroutines, struct tags e generics fazem em uma app Vukem
+
+## Do que você precisa
+
+| Ferramenta | Versão | Usada para |
+| --- | --- | --- |
+| [Go](https://go.dev/dl/) | **1.27.2** ou mais nova | Tudo. O `go.mod` do Vukem declara `go 1.27.2` |
+| Um terminal | qualquer | Rodar os comandos `go` e `vukem`: o Terminal no macOS, qualquer shell no Linux, o Windows Terminal (PowerShell) no Windows |
+| Um editor de código | qualquer | Escrever código. O [VS Code](https://code.visualstudio.com) com a [extensão de Go](https://go.dev/doc/editors) ou o [GoLand](https://www.jetbrains.com/go/) entendem Go sem configuração extra |
+| [Git](https://git-scm.com) | qualquer | Opcional. Quando o `git` está no seu `PATH`, o `vukem new` roda `git init` no projeto novo |
+| [Docker](https://docs.docker.com/get-docker/) | qualquer | Opcional. Para rodar PostgreSQL, Redis ou MongoDB localmente e para gerar a imagem de produção |
+| [Node.js](https://nodejs.org) ou [Bun](https://bun.sh) | uma LTS atual | Só para o build com Vite + Tailwind dos starters web e para o Inertia. Não é necessário para o `go test`, e nunca para o starter `--api` |
+
+O Vukem roda no **Windows 11/10**, no Linux e no macOS. O banco de dados padrão, SQLite, usa o driver em Go puro [`modernc.org/sqlite`](https://pkg.go.dev/modernc.org/sqlite), então você **não** precisa de um compilador C.
+
+<Steps>
+<Step title="Instale o Go">
+
+Baixe o instalador do seu sistema em [go.dev/dl](https://go.dev/dl/) e siga o [guia de instalação](https://go.dev/doc/install). Depois abra um terminal **novo** e confira a versão:
+
+```bash
+go version
+```
+
+```text
+go version go1.27.2 windows/amd64
+```
+
+Qualquer versão a partir da `go1.27.2` funciona. A última parte (`windows/amd64`, `linux/arm64`, `darwin/arm64`…) é o seu sistema e o seu processador.
+
+</Step>
+<Step title="Veja onde o Go instala programas">
+
+O `go install` coloca os programas na pasta `bin` do seu <Term tip="A pasta onde o Go guarda os módulos baixados e os programas instalados. Por padrão é a pasta go dentro da sua pasta pessoal.">GOPATH</Term>. Mostre qual é:
+
+```bash
+go env GOPATH
+```
+
+Essa pasta mais `/bin` (por exemplo `C:\Users\you\go\bin` ou `/home/you/go/bin`) precisa estar no seu `PATH`; caso contrário, o terminal não vai encontrar o `vukem` depois que você instalá-lo. O instalador do Go normalmente já faz isso por você.
+
+</Step>
+<Step title="Opcional: Node.js ou Bun">
+
+Instale o Node.js (que traz o `npm`) ou o Bun só se você pretende usar o build com Vite de um starter web ou o Inertia. Você pode instalar depois: os testes Go de um starter passam sem ele.
+
+</Step>
+</Steps>
+
+## Go em 15 minutos
+
+A documentação explica cada recurso do Vukem do zero, mas parte do princípio de que você consegue ler Go básico. Este guia cobre exatamente os conceitos de Go que a documentação usa. Cada seção traz um programa completo: salve-o como `main.go` em uma pasta vazia e rode com `go run .` (depois de `go mod init example.com/primer`, veja a primeira seção).
+
+Para uma introdução mais longa e interativa, faça o [Tour of Go](https://go.dev/tour) (no navegador, sem instalar nada). Para o estilo que programadores Go experientes seguem, leia o [Effective Go](https://go.dev/doc/effective_go).
+
+### Pacotes e módulos
+
+O código Go vive em **pacotes**. Um pacote é uma pasta de arquivos `.go` que começam todos com a mesma linha `package`. O pacote chamado `main` é especial: ele gera um programa, e a função `main` dele é onde o programa começa.
+
+Um **módulo** é um projeto inteiro: uma pasta com um arquivo `go.mod` que dá nome ao módulo e lista os outros módulos de que ele depende. A sua app Vukem é um módulo, e o próprio Vukem é outro (`github.com/AlexGalhardo/vukem`).
+
+```bash
+mkdir primer
+cd primer
+go mod init example.com/primer
+```
+
+```go title="main.go"
+package main
+
+import (
+	"fmt"
+	"strings"
+)
+
+func main() {
+	fmt.Println(strings.ToUpper("hello, gopher"))
+}
+```
+
+```bash
+go run .
+```
+
+```text
+HELLO, GOPHER
+```
+
+- `import` traz outros pacotes. `fmt` e `strings` vêm da [biblioteca padrão](https://pkg.go.dev/std); os pacotes do Vukem são importados pelo caminho completo, como `github.com/AlexGalhardo/vukem/web`.
+- Você usa um nome importado com o prefixo do pacote: `strings.ToUpper`.
+- Um nome que começa com **letra maiúscula** (`ToUpper`, `Println`) é **exportado**: outros pacotes podem usá-lo. Um nome em minúscula é privado do seu pacote. É por isso que os tipos do Vukem se chamam `web.Ctx` e `orm.Model`.
+
+Saiba mais: [How to write Go code](https://go.dev/doc/code), [Tutorial: create a module](https://go.dev/doc/tutorial/create-module).
+
+### Funções e erros
+
+Funções Go podem retornar vários valores. Por convenção, uma função que pode falhar retorna o resultado **e** um `error` como último valor. Quando o erro é `nil` (o "nada" do Go), deu tudo certo. Você confere logo em seguida com `if err != nil`.
+
+```go title="main.go"
+package main
+
+import (
+	"errors"
+	"fmt"
+	"strconv"
+)
+
+var ErrTooYoung = errors.New("too young")
+
+// parseAge returns two values: the age and an error.
+func parseAge(s string) (int, error) {
+	age, err := strconv.Atoi(s)
+	if err != nil {
+		return 0, fmt.Errorf("parse age %q: %w", s, err)
+	}
+
+	if age < 10 {
+		return 0, ErrTooYoung
+	}
+
+	return age, nil
+}
+
+func main() {
+	for _, in := range []string{"12", "abc", "7"} {
+		age, err := parseAge(in)
+		if errors.Is(err, ErrTooYoung) {
+			fmt.Println(in, "-> come back later")
+			continue
+		}
+
+		if err != nil {
+			fmt.Println(in, "->", err)
+			continue
+		}
+
+		fmt.Println(in, "-> age", age)
+	}
+}
+```
+
+```text
+12 -> age 12
+abc -> parse age "abc": strconv.Atoi: parsing "abc": invalid syntax
+7 -> come back later
+```
+
+- `:=` declara uma variável e dá a ela um valor em um passo só; o Go descobre o tipo.
+- `fmt.Errorf` com `%w` **embrulha** (wrap) um erro: acrescenta contexto e guarda o erro original dentro.
+- `errors.Is` procura, dentro dos erros embrulhados, um erro específico, chamado <Term tip="Um valor de erro declarado no pacote, que quem chama compara com errors.Is, como orm.ErrNotFound.">erro sentinela</Term>.
+
+**No Vukem:** todo handler tem a forma `func(c *web.Ctx) error`. Em vez de escrever a página de erro você mesmo, você faz `return err`, e o handler de erros central do Vukem escolhe a resposta: `orm.ErrNotFound` vira 404, um erro de validação vira 422 ou um redirecionamento de volta com as mensagens. Veja [Tratamento de erros](/docs/basics/error-handling).
+
+Saiba mais: [Errors no Tour](https://go.dev/tour/methods/19), [Working with errors in Go 1.13](https://go.dev/blog/go1.13-errors).
+
+### Structs e métodos
+
+Uma **struct** agrupa campos com nome em um tipo só, como um formulário com caixas etiquetadas. Um **método** é uma função ligada a um tipo; a parte entre parênteses antes do nome, `(t Task)`, é o <Term tip="O valor sobre o qual o método é chamado. Em func (t Task) Label(), t é o receiver.">receiver</Term>.
+
+```go title="main.go"
+package main
+
+import "fmt"
+
+type Task struct {
+	Title string
+	Done  bool
+}
+
+// Label is a method: a function attached to Task.
+func (t Task) Label() string {
+	if t.Done {
+		return "[x] " + t.Title
+	}
+
+	return "[ ] " + t.Title
+}
+
+func main() {
+	t := Task{Title: "Learn Go"}
+	fmt.Println(t.Label())
+}
+```
+
+```text
+[ ] Learn Go
+```
+
+Os campos que você omite recebem o seu <Term tip="O valor que uma variável tem antes de você atribuir algo: 0 para números, false para bool, string vazia para string, nil para ponteiros, slices, maps e interfaces.">valor zero</Term>: aqui `Done` é `false`.
+
+Uma struct pode **embutir** (embed) outro tipo escrevendo só o nome dele. Os campos embutidos passam a pertencer à struct de fora também. Os models do Vukem embutem `orm.Model`, que traz os campos `ID`, `CreatedAt` e `UpdatedAt`:
+
+```go title="app/models/task.go"
+type Task struct {
+	orm.Model
+
+	Title string `json:"title"`
+	Done  bool   `json:"done"`
+}
+```
+
+**No Vukem:** controllers são structs, e as actions deles são métodos: `func (tc *TaskController) Index(c *web.Ctx) error`.
+
+Saiba mais: [Structs no Tour](https://go.dev/tour/moretypes/2), [Methods no Tour](https://go.dev/tour/methods/1), [Embedding](https://go.dev/doc/effective_go#embedding).
+
+### Interfaces
+
+Uma **interface** lista métodos. Qualquer tipo que tenha esses métodos satisfaz a interface automaticamente; você nunca escreve "implements". Interfaces permitem que uma função aceite tipos muito diferentes, desde que eles saibam fazer o mesmo trabalho.
+
+```go title="main.go"
+package main
+
+import "fmt"
+
+// Greeter is any type that has a Greet method.
+type Greeter interface {
+	Greet() string
+}
+
+type English struct{}
+
+func (English) Greet() string { return "Hello" }
+
+type Portuguese struct{}
+
+func (Portuguese) Greet() string { return "Olá" }
+
+func welcome(g Greeter) {
+	fmt.Println(g.Greet() + ", gopher!")
+}
+
+func main() {
+	welcome(English{})
+	welcome(Portuguese{})
+}
+```
+
+```text
+Hello, gopher!
+Olá, gopher!
+```
+
+**No Vukem:** o próprio `error` é uma interface (qualquer tipo com um método `Error() string`). Um provider é qualquer tipo com um método `Register(app *vukem.App) error`, e o `r.Resource` registra só as actions que o seu controller tem: um controller sem método `Show` não ganha rota de show. A interface padrão [`http.Handler`](https://pkg.go.dev/net/http#Handler) é o motivo pelo qual qualquer código `net/http` funciona dentro do Vukem.
+
+Saiba mais: [Interfaces no Tour](https://go.dev/tour/methods/9), [Interfaces no Effective Go](https://go.dev/doc/effective_go#interfaces).
+
+### Ponteiros
+
+O Go passa valores **copiando-os**. Um <Term tip="Um valor que guarda o endereço de memória de outro valor. *Task é um ponteiro para uma Task; &t pega o endereço de t.">ponteiro</Term> permite que uma função altere o valor de quem chamou em vez de uma cópia. `*Task` significa "ponteiro para uma Task", e `&t` significa "o endereço de `t`".
+
+```go title="main.go"
+package main
+
+import "fmt"
+
+type Task struct {
+	Title string
+	Done  bool
+}
+
+// finishCopy gets a copy: the caller's task does not change.
+func finishCopy(t Task) { t.Done = true }
+
+// finish gets a pointer (*Task): it changes the caller's task.
+func finish(t *Task) { t.Done = true }
+
+func main() {
+	t := Task{Title: "Learn pointers"}
+
+	finishCopy(t)
+	fmt.Println("after finishCopy:", t.Done)
+
+	finish(&t)
+	fmt.Println("after finish:", t.Done)
+}
+```
+
+```text
+after finishCopy: false
+after finish: true
+```
+
+**No Vukem:** você passa `&task` para `orm.Create(ctx, db, &task)` para que o ORM possa preencher o novo `ID` e os timestamps. Os handlers recebem `*web.Ctx`, um ponteiro, porque todos os helpers trabalham sobre a mesma requisição. Um ponteiro que não aponta para nada é `nil`; usá-lo causa um panic, e é por isso que as funções do Vukem conferem as entradas e retornam erros.
+
+Saiba mais: [Pointers no Tour](https://go.dev/tour/moretypes/1).
+
+### `context.Context`
+
+Um [`context.Context`](https://pkg.go.dev/context) viaja junto com um trabalho e carrega o **prazo** (deadline) e o sinal de **cancelamento** dele. Quando o navegador fecha a aba, ou o servidor está desligando, o contexto é cancelado, e um código bem-comportado para mais cedo em vez de desperdiçar tempo.
+
+```go title="main.go"
+package main
+
+import (
+	"context"
+	"fmt"
+	"time"
+)
+
+// slowWork stops early when ctx is cancelled.
+func slowWork(ctx context.Context) error {
+	select {
+	case <-time.After(2 * time.Second):
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func main() {
+	ctx, cancel := context.WithTimeout(
+		context.Background(),
+		100*time.Millisecond,
+	)
+	defer cancel()
+
+	fmt.Println(slowWork(ctx))
+}
+```
+
+```text
+context deadline exceeded
+```
+
+- Por convenção, o contexto é o **primeiro** parâmetro e se chama `ctx`.
+- `defer cancel()` executa `cancel` quando `main` retorna, para liberar os recursos.
+
+**No Vukem:** `c.Context()` retorna o contexto da requisição. Passe-o para toda chamada ao banco (`orm.QueryOf[models.Task](db).Get(c.Context())`) para que a consulta pare quando o cliente for embora. Providers, runners e commands também recebem um `ctx`. O pacote de requisição do Vukem se chama `web`, e não `context`, para nunca conflitar com `ctx context.Context`.
+
+Saiba mais: [Go Concurrency Patterns: Context](https://go.dev/blog/context).
+
+### Goroutines, rapidamente
+
+Uma **goroutine** é uma função que roda ao mesmo tempo que o resto do programa. Você inicia uma com a palavra-chave `go`, ou com [`sync.WaitGroup.Go`](https://pkg.go.dev/sync#WaitGroup.Go), que também permite esperar por ela.
+
+```go title="main.go"
+package main
+
+import (
+	"fmt"
+	"sync"
+)
+
+func main() {
+	var wg sync.WaitGroup
+
+	for i := 1; i <= 3; i++ {
+		// wg.Go starts a goroutine and tracks it.
+		wg.Go(func() {
+			fmt.Println("worker", i, "done")
+		})
+	}
+
+	// Wait blocks until every goroutine has finished.
+	wg.Wait()
+	fmt.Println("all done")
+}
+```
+
+```text
+worker 3 done
+worker 1 done
+worker 2 done
+all done
+```
+
+As três linhas `worker` podem sair em qualquer ordem: as goroutines rodam de forma independente.
+
+**No Vukem:** você raramente inicia goroutines por conta própria. O servidor HTTP do Go já roda cada requisição na sua própria goroutine, e o `app.Run` inicia cada <Term tip="Uma parte da app que roda por muito tempo, como o servidor HTTP, o worker da fila ou o agendador.">runner</Term> na sua. Como muitas requisições rodam ao mesmo tempo, nunca guarde dados de uma requisição em uma variável compartilhada; guarde-os na requisição (`c`) ou no banco de dados.
+
+Saiba mais: [Concurrency no Tour](https://go.dev/tour/concurrency/1), [Share memory by communicating](https://go.dev/doc/effective_go#sharing).
+
+### Struct tags
+
+Uma **struct tag** é uma pequena string depois de um campo, entre crases. O Go a ignora, mas os pacotes a leem com [`reflect`](https://pkg.go.dev/reflect#StructTag) para saber como tratar o campo.
+
+```go title="main.go"
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+)
+
+type Task struct {
+	Title string `json:"title"`
+	Done  bool   `json:"done"`
+	notes string // unexported: encoding/json skips it
+}
+
+func main() {
+	out, err := json.Marshal(Task{Title: "Read the tour"})
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Println(string(out))
+}
+```
+
+```text
+{"title":"Read the tour","done":false}
+```
+
+**No Vukem:** tags aparecem em todo lugar. `json:"title"` dá o nome do campo no JSON, `form:"title"` dá o nome dele em um formulário HTML, e `env:"MAIL_HOST" default:"localhost"` diz ao `config.Load` qual variável de ambiente preenche o campo ([Configuração](/docs/configuration)).
+
+Saiba mais: [`encoding/json`](https://pkg.go.dev/encoding/json#Marshal), [Struct types na especificação](https://go.dev/ref/spec#Struct_types).
+
+### Generics, rapidamente
+
+**Generics** permitem que uma função ou um tipo funcione com muitos tipos. O tipo vai entre colchetes: `First[T any]` significa "para qualquer tipo `T`".
+
+```go title="main.go"
+package main
+
+import "fmt"
+
+// First returns the first item of any slice, and false when empty.
+func First[T any](items []T) (T, bool) {
+	var zero T
+	if len(items) == 0 {
+		return zero, false
+	}
+
+	return items[0], true
+}
+
+func main() {
+	n, ok := First([]int{7, 8, 9})
+	fmt.Println(n, ok)
+
+	s, ok := First([]string{})
+	fmt.Printf("%q %v\n", s, ok)
+}
+```
+
+```text
+7 true
+"" false
+```
+
+**No Vukem:** generics dão resultados tipados sem conversões. `orm.QueryOf[models.Task](db)` monta uma consulta cujo `Get` retorna `[]models.Task`, `web.Parse(c, requests.TaskSchema)` retorna um `requests.Task`, e `config.Load[Mail](src)` retorna um `Mail`.
+
+Saiba mais: [Tutorial: getting started with generics](https://go.dev/doc/tutorial/generics), [Generics no Tour](https://go.dev/tour/generics/1).
+
+## Cola rápida
+
+| Você vê na documentação | Significa |
+| --- | --- |
+| `package controllers` | Este arquivo pertence ao pacote `controllers` (a pasta dele) |
+| `func (tc *TaskController) Index(c *web.Ctx) error` | Um método de `*TaskController` que recebe um `*web.Ctx` e pode falhar |
+| `if err != nil { return err }` | Pare e entregue o erro a quem chamou (em um handler: ao Vukem) |
+| `orm.Model` dentro de uma struct | Embedding: a struct ganha `ID`, `CreatedAt`, `UpdatedAt` |
+| `` `json:"title" form:"title"` `` | Struct tags que dão o nome do campo no JSON e nos formulários |
+| `&task` / `*Task` | O endereço de `task` / um ponteiro para uma `Task` |
+| `c.Context()`, `ctx context.Context` | O prazo e o sinal de cancelamento da requisição |
+| `orm.QueryOf[models.Task]` | Uma chamada genérica: a consulta retorna valores `models.Task` |
+
+## Erros comuns
+
+**Ignorar um erro.** O Go permite descartar um erro retornado com `_`, mas aí as falhas desaparecem em silêncio.
+
+```go
+// Wrong: if the insert fails, nobody finds out.
+_ = orm.Create(c.Context(), db, &task)
+
+// Right: return it, and Vukem renders a 500 and logs the cause.
+if err := orm.Create(c.Context(), db, &task); err != nil {
+	return err
+}
+```
+
+**Passar um valor onde se espera um ponteiro.** O `orm.Create` precisa escrever o novo `ID` de volta na sua struct, então precisa do endereço dela. Passar `task` em vez de `&task` não compila:
+
+```text
+in call to orm.Create, type models.Task of task does not match *T (cannot infer T)
+```
+
+**Um import ou uma variável sem uso.** O Go se recusa a compilar código que importa um pacote ou declara uma variável que nunca usa: `"strings" imported and not used`. Apague a linha ou use o nome.
+
+## Próximos passos
+
+<CardGroup cols="2">
+<Card title="Instalação" href="/docs/installation" icon="terminal">
+Instale a CLI `vukem` e crie seu primeiro projeto.
+</Card>
+<Card title="A Tour of Go" href="https://go.dev/tour" icon="book">
+O curso interativo oficial de Go, no navegador.
+</Card>
+</CardGroup>

@@ -1,0 +1,254 @@
+---
+title: Instalação
+description: Instale a CLI vukem, crie um projeto a partir de um starter, rode o app e rode os testes.
+---
+
+O Vukem vem com uma ferramenta de linha de comando, `vukem`, que cria projetos, gera código e roda o seu app enquanto você desenvolve. Nesta página você instala a CLI, cria um projeto e abre o app no navegador.
+
+Você vai aprender:
+
+- como instalar a CLI `vukem` com `go install`
+- o que o `vukem new` faz, passo a passo
+- como criar o banco de dados, iniciar o servidor de desenvolvimento e rodar os testes
+- todas as flags do `vukem new`
+- como adicionar o Vukem a um projeto sem a CLI
+
+Antes de começar, instale o Go 1.27.2 ou mais recente (veja [Pré-requisitos](/docs/prerequisites)).
+
+## A ideia
+
+A CLI `vukem` é uma ajudante, não um runtime. Pense nela como uma caixa de ferramentas ao lado da bancada: ela monta o esqueleto do projeto, escreve arquivos quando você pede e inicia o app para você. O app em si é um programa Go comum em `cmd/app`. Você pode compilá-lo e rodá-lo com comandos `go` normais, e ele nunca precisa da CLI em produção.
+
+Quando você digita um comando que a CLI não conhece, como `vukem migrate` ou `vukem route:list`, ela compila o seu app (em `.vukem/bin/`, só quando o código mudou) e repassa o comando para ele. Esses são os <Term tip="Comandos que rodam dentro do app compilado, então enxergam a configuração, o banco de dados e as rotas dele: migrate, route:list, about e os seus próprios.">comandos do app</Term>.
+
+## Início rápido
+
+<Steps>
+<Step title="Instale a CLI">
+
+```bash
+go install github.com/AlexGalhardo/vukem/cmd/vukem@latest
+vukem version
+```
+
+```text
+vukem v0.27.0
+```
+
+O `go install` baixa o módulo, compila o programa `cmd/vukem` e coloca o binário em `$(go env GOPATH)/bin` (`%USERPROFILE%\go\bin` no Windows). Essa pasta precisa estar no seu `PATH`. Para instalar uma versão exata em vez da mais nova, escreva a versão: `@v0.27.0`.
+
+</Step>
+<Step title="Crie um projeto">
+
+```bash
+vukem new blog --module example.com/blog
+```
+
+Em um terminal, o `vukem new` primeiro pergunta qual stack você quer (aperte Enter para HTMX, o padrão):
+
+```text
+Which stack?
+  1) HTMX + Tailwind (server-rendered views) (default)
+  2) HTMX + templ + Tailwind (type-checked components)
+  3) Inertia + Tailwind (React, Vue or Svelte)
+  4) JSON API (tokens, /api/v1)
+>
+```
+
+Passe `--templ`, `--inertia react` ou `--api` para pular a pergunta ([Starters](/docs/starters) compara as opções). Ao terminar, ele mostra os próximos comandos:
+
+```text
+APP_KEY written to .env
+
+Created blog (htmx 4.0.0, Tailwind, SQLite). Next:
+
+  cd blog
+  vukem migrate
+  vukem serve
+```
+
+</Step>
+<Step title="Crie o banco de dados">
+
+```bash
+cd blog
+vukem migrate
+```
+
+```text
+Migrated: 20260101000000_create_posts_table
+```
+
+Isso cria o arquivo SQLite `storage/database.sqlite` e a tabela `posts` do blog de exemplo.
+
+</Step>
+<Step title="Inicie o servidor de desenvolvimento">
+
+```bash
+vukem serve
+```
+
+```text
+level=INFO msg="http server starting" addr=localhost:3000 env=development
+```
+
+Abra [http://localhost:3000](http://localhost:3000) e clique em **Posts**. Aperte `Ctrl+C` para parar.
+
+</Step>
+<Step title="Rode os testes">
+
+Em um segundo terminal, dentro de `blog`:
+
+```bash
+go test ./...
+```
+
+```text
+ok  	example.com/blog/tests	1.098s
+```
+
+O starter já vem com testes da página inicial, do CRUD de posts e dos uploads. Eles usam um banco de dados em memória, então nunca tocam em `storage/database.sqlite`.
+
+</Step>
+</Steps>
+
+## O que o `vukem new` faz
+
+O `vukem new <name>` executa estes passos em ordem e para no primeiro que falhar:
+
+1. **Confere o nome.** Ele precisa começar com uma letra e ter só letras, dígitos, `-`, `_` e `.`. A pasta ainda não pode existir (senão: `blog already exists`).
+2. **Escolhe a stack**: pela flag, pela pergunta no terminal, ou HTMX quando não há terminal (scripts, CI).
+3. **Escreve os arquivos do starter**, já com o nome do projeto e o caminho do módulo preenchidos.
+4. **Escreve um `Dockerfile` e um `.dockerignore`** para a stack escolhida ([Docker e Railway](/docs/deployment/docker-and-railway)).
+5. **Adiciona o Vukem como dependência**: `go get github.com/AlexGalhardo/vukem@<version>`, onde `<version>` é a versão da sua CLI (`latest` para um build de desenvolvimento da CLI). Com `--framework <dir>`, ele adiciona uma diretiva `replace` apontando para a sua cópia local.
+6. **Adiciona o `govulncheck`** como ferramenta Go (`tool golang.org/x/vuln/cmd/govulncheck` no `go.mod`), para que `go tool govulncheck ./...` verifique vulnerabilidades conhecidas nas suas dependências. O starter templ também adiciona o templ como ferramenta.
+7. **Roda `go mod tidy`** (e `go tool templ generate` no templ).
+8. **Escreve a `APP_KEY`**: copia `.env.example` para `.env` e coloca nele uma chave aleatória nova.
+9. **Roda `git init`** quando o `git` está no seu `PATH`. Uma falha só mostra um aviso.
+10. **Instala as dependências de frontend** com o gerenciador de pacotes do `--pm` (npm por padrão), em todo starter exceto `--api`. Se esse programa não estiver instalado, ele mostra o comando para rodar depois e segue em frente: o app Go funciona sem os assets compilados em desenvolvimento.
+
+### Flags do `vukem new`
+
+| Flag | Padrão | O que faz |
+| --- | --- | --- |
+| `--module <path>` | o nome do projeto | Caminho do módulo Go escrito no `go.mod`, como `example.com/blog` ou `github.com/you/blog` |
+| `--api` | desligada | [Starter de API JSON](/docs/starters#api): tokens, `/api/v1`, sem views nem Node |
+| `--templ` | desligada | [Starter HTMX com componentes templ](/docs/starters#templ) em vez de `html/template` |
+| `--inertia <react\|vue\|svelte>` | nenhum | [Starter Inertia](/docs/starters#inertia-react-vue-svelte) com esse frontend |
+| `--minimal` | desligada | [Starter HTMX sem banco de dados](/docs/starters#minimal); não pode ser combinada com as três flags acima |
+| `--pm <npm\|bun\|pnpm\|yarn>` | `npm` | Gerenciador de pacotes JavaScript da instalação e do `Dockerfile` |
+| `--no-install` | desligada | Pula a instalação das dependências de frontend |
+| `--framework <dir>` | nenhum | Usa uma cópia local do Vukem por meio de uma diretiva `replace` em vez de uma versão publicada (para desenvolver o framework) |
+
+As flags podem vir antes ou depois do nome: `vukem new blog --api` e `vukem new --api blog` fazem a mesma coisa. Só uma entre `--api`, `--templ` e `--inertia` pode ser usada (senão: `choose one of --api, --templ or --inertia`).
+
+## Rodando o app sem a CLI
+
+O `vukem serve` é uma conveniência para o desenvolvimento. Por baixo dos panos, ele faz três coisas:
+
+- inicia o servidor de desenvolvimento do Vite (`npm run dev`, ou o seu gerenciador de pacotes) quando o projeto tem um `vite.config.ts`; `vukem serve --no-vite` pula essa parte;
+- compila `cmd/app` em `.vukem/serve/` e o executa;
+- confere os arquivos Go e o `.env` a cada 500 ms (`--poll` muda o intervalo) e recompila e reinicia o app quando algum muda. Um build com erro mantém a versão anterior rodando. Os templates recarregam ao atualizar a página, sem reiniciar.
+
+O mesmo app roda com Go puro:
+
+```bash
+go run ./cmd/app             # serve, the default command
+go run ./cmd/app migrate     # any app command
+```
+
+Para produção, o `vukem build` roda o build do Vite (quando o projeto tem um) e compila um binário pequeno em `bin/app` (`bin\app.exe` no Windows); `-o <path>` muda o destino. Veja [Binário único](/docs/deployment/single-binary).
+
+## Sem a CLI
+
+O Vukem é um módulo Go comum, então você pode adicioná-lo a qualquer módulo:
+
+```bash
+go get github.com/AlexGalhardo/vukem@latest
+```
+
+Um app completo em um único arquivo:
+
+```go title="cmd/app/main.go"
+package main
+
+import (
+	"net/http"
+	"os"
+
+	vukem "github.com/AlexGalhardo/vukem"
+	"github.com/AlexGalhardo/vukem/router"
+	"github.com/AlexGalhardo/vukem/web"
+)
+
+func routes(r *router.Router, app *vukem.App) error {
+	if err := vukem.DefaultMiddleware(app, r); err != nil {
+		return err
+	}
+
+	r.Get("/", func(c *web.Ctx) error {
+		return c.String(http.StatusOK, "Hello from Vukem")
+	}).Name("home")
+
+	return nil
+}
+
+func build(opts ...vukem.Option) (*vukem.App, error) {
+	return vukem.New(append(opts, vukem.WithRoutes(routes))...)
+}
+
+func main() { os.Exit(vukem.Main(build)) }
+```
+
+- `build` é a receita do app. O `vukem.Main` a chama com as próprias opções (onde fica o `.env`, que tipo de execução é esta), e os testes a chamam com as deles.
+- O `vukem.Main` carrega o `.env` e o ambiente do processo, para de forma limpa com `Ctrl+C` (`SIGINT`) e `SIGTERM`, e roda o `serve` ou o [comando do app](/docs/cli/overview#app-commands) passado como primeiro argumento. Ele sai com `0` em caso de sucesso, `1` em caso de falha e `2` em erro de uso.
+- O `vukem.DefaultMiddleware` instala a pilha recomendada: recover, request id, logs, cabeçalhos de segurança, method override, limite de corpo, sessões e proteção CSRF.
+
+O Vukem se recusa a iniciar sem uma `APP_KEY`, a não ser que `APP_ENV` seja explicitamente `development` ou `test`. Crie o `.env` com uma chave e depois rode o app:
+
+```bash
+vukem key:generate
+go run ./cmd/app
+```
+
+```text
+APP_KEY written to .env
+level=INFO msg="http server starting" addr=localhost:3000 env=development
+```
+
+Sem a CLI, `go run ./cmd/app key:generate` mostra uma chave nova que você mesmo pode colar no `.env`.
+
+## Erros comuns
+
+**O `vukem` não é encontrado depois do `go install`.** O terminal diz `vukem: command not found` (bash) ou `The term 'vukem' is not recognized` (PowerShell). Adicione ao seu `PATH` a pasta mostrada por `go env GOPATH`, mais `/bin`, e abra um terminal novo.
+
+**Iniciar um app sem chave.** Sem `APP_KEY` e sem `APP_ENV`, o app para na inicialização com:
+
+```text
+config: APP_KEY is not set (run `vukem key:generate`)
+```
+
+Rode `vukem key:generate` na pasta do projeto. Ele se recusa a substituir uma chave existente, a não ser que você passe `--force`, porque uma chave nova torna ilegíveis as sessões atuais e os dados criptografados.
+
+**Rodar comandos do app fora de um projeto.** `vukem migrate` em uma pasta sem `cmd/app` sai com o código `2`:
+
+```text
+usage error: unknown command "migrate" (app commands need a Vukem project with cmd/app)
+Run 'vukem list' for the available commands.
+```
+
+Entre na pasta do projeto com `cd` antes.
+
+## Próximos passos
+
+<CardGroup cols="2">
+<Card title="Starters" href="/docs/starters" icon="boxes">
+Compare HTMX, templ, Inertia e o starter de API JSON.
+</Card>
+<Card title="Seu primeiro app" href="/docs/first-app" icon="rocket">
+Construa uma lista de tarefas com um formulário, validação, uma migration e um teste.
+</Card>
+<Card title="CLI" href="/docs/cli/overview" icon="terminal">
+Todos os comandos `vukem` e os arquivos que eles geram.
+</Card>
+</CardGroup>

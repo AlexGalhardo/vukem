@@ -3,79 +3,132 @@ title: Introdução
 description: O Vukem traz a produtividade do Laravel e do AdonisJS para o Go idiomático, sobre net/http e a biblioteca padrão.
 ---
 
-O Vukem é um framework web para **APIs REST e aplicações full-stack**: rotas, validação, um ORM com migrations, autenticação, recursos JSON com erros no formato problem+json, views com HTMX em primeiro lugar ou Inertia com React, Vue ou Svelte, GraphQL, gRPC e canais em tempo real, tudo controlado por uma única CLI.
+O Vukem é um framework web para a [linguagem de programação Go](https://go.dev). Ele ajuda você a construir **sites, APIs REST e aplicações full-stack** sem ligar cada peça na mão: rotas, validação, uma camada de banco de dados com migrations, autenticação, views, jobs em segundo plano, testes e uma ferramenta de linha de comando que gera código para você.
+
+Você vai aprender:
+
+- o que um framework web faz e o que o Vukem acrescenta ao Go
+- as ideias que moldam o Vukem (biblioteca padrão em primeiro lugar, sem mágica, tipado de ponta a ponta)
+- como é um handler do Vukem
+- quais recursos já estão disponíveis
+- para onde ir depois, de acordo com o que você já sabe
+
+## O que um framework web faz
+
+Quando você abre uma página no navegador, ele envia uma **requisição** (request) para um servidor ("me dê `/tasks`"). O servidor executa algum código e devolve uma **resposta** (response): uma página HTML, um JSON, uma imagem. Um framework web é o conjunto de ferramentas que torna agradável escrever esse código do servidor.
+
+Pense em um restaurante. O cliente (o navegador) faz o pedido pelo cardápio. O garçom (o <Term tip="A parte do framework que olha a URL e o método da requisição e decide qual função vai respondê-la.">router</Term>) leva o pedido ao cozinheiro certo. O cozinheiro (o seu <Term tip="Uma função que recebe uma requisição e escreve uma resposta. No Vukem ela tem a forma func(c *web.Ctx) error.">handler</Term>) prepara o prato. A segurança na porta (o <Term tip="Código que roda antes e depois dos handlers, em toda requisição ou em um grupo de rotas: logs, sessões, cabeçalhos de segurança.">middleware</Term>) confere todo mundo que entra.
+
+O Go já traz a cozinha básica na biblioteca padrão: o pacote [`net/http`](https://pkg.go.dev/net/http) sabe escutar requisições e enviar respostas. O Vukem mantém essa cozinha e acrescenta o resto do restaurante:
+
+| Você precisa… | A biblioteca padrão do Go oferece | O Vukem acrescenta |
+| --- | --- | --- |
+| Ligar URLs a código | Padrões do `http.ServeMux` | Rotas nomeadas, grupos, resource controllers, geração de URLs |
+| Ler e conferir a entrada | `r.FormValue`, `encoding/json` | `web.Parse` com schemas `z` no estilo Zod e erros por campo |
+| Falar com um banco de dados | `database/sql` | Conexões, um ORM genérico, migrations, factories, seeders |
+| Renderizar páginas | `html/template` | Layouts, partials, fragmentos htmx, assets do Vite, Inertia |
+| Manter usuários logados | Cookies | Sessões, proteção CSRF, guards, tokens de API, 2FA |
+| Executar coisas depois | Goroutines | Filas, um agendador, eventos |
+| Testar tudo isso | `net/http/httptest` | `vukemtest`: um cliente em processo com asserções fluentes |
 
 ## Por que o Vukem
 
-- **Biblioteca padrão em primeiro lugar.** Handlers e middlewares são `net/http` puro. Qualquer `http.Handler` funciona.
-- **Sem mágica.** Sem variáveis globais, sem registro via `init()`, sem injeção de dependência baseada em reflection. Os geradores escrevem código que é seu.
-- **Tipado de ponta a ponta.** Structs de configuração tipadas, rotas nomeadas verificadas na inicialização e schemas no estilo Zod (`z`) que convertem toda entrada em tipos Go.
-- **Tudo incluído, mas opcional.** SQLite já vem pronto; PostgreSQL, MySQL, Redis, MongoDB, S3 e WebSockets são módulos de driver separados, então você só baixa o que usa.
-- **APIs como cidadãs de primeira classe.** Problem details da RFC 9457, grupos de rotas só com JSON, CORS e limite de tamanho do corpo já vêm embutidos.
-- **Seguro por padrão.** Cabeçalhos de segurança com nonces de CSP, CORS que nega tudo por padrão, arquivos estáticos protegidos contra path traversal e verificações na inicialização que falham de forma segura, tudo mapeado para o [OWASP Top 10:2025](/docs/security/overview).
+- **Biblioteca padrão em primeiro lugar.** Handlers e middlewares são `net/http` puro. Qualquer `http.Handler` funciona dentro de uma app Vukem, e uma app Vukem é um `http.Handler`.
+- **Sem mágica.** Sem variáveis globais, sem registro via `init()`, sem injeção de dependência baseada em reflection. Os geradores escrevem arquivos Go comuns, que são seus e que você consegue ler.
+- **Tipado de ponta a ponta.** A configuração é carregada em structs tipadas. As rotas nomeadas são verificadas quando a app inicia. Toda entrada é convertida em tipos Go por um schema `z` antes de chegar ao seu código.
+- **Tudo incluído, mas opcional.** O SQLite funciona de imediato com um driver em Go puro (sem compilador C). PostgreSQL, MySQL, Redis, MongoDB, S3 e WebSockets ficam em módulos de driver separados, então você só baixa o que usa.
+- **APIs como cidadãs de primeira classe.** Os erros viram problem details da [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457), e grupos de rotas só com JSON, CORS e limites de tamanho do corpo já vêm embutidos.
+- **Seguro por padrão.** Cabeçalhos de segurança com nonces de CSP, CORS que nega tudo por padrão, arquivos estáticos protegidos contra path traversal e verificações na inicialização que falham de forma segura, mapeados para o [OWASP Top 10:2025](/docs/security/overview).
+
+<Quote source="https://go.dev/doc/effective_go" author="Effective Go" title="go.dev/doc/effective_go">
+A straightforward translation of a C++ or Java program into Go is unlikely to produce a satisfactory result.
+</Quote>
+
+Em outras palavras: traduzir um programa C++ ou Java diretamente para Go dificilmente dá um bom resultado. O Vukem segue esse conselho: ele empresta a produtividade do [Laravel](https://laravel.com) e do [AdonisJS](https://adonisjs.com), mas o código que você escreve é Go idiomático.
 
 ## Um gostinho
 
-Um handler é uma função que recebe um `*web.Ctx` e retorna um `error`. Os erros retornados vão para um handler central, que gera a resposta certa para cada cliente.
+Um handler é uma função que recebe um `*web.Ctx` (a requisição e a resposta, juntas) e retorna um `error`. Quando ele retorna um erro, um handler de erros central o transforma na resposta certa para quem pediu: uma página HTML para um navegador, um redirecionamento com os erros do formulário guardados na sessão, ou problem+json para um cliente de API.
 
-```go title="routes.go"
-func Routes(r *router.Router, posts *controllers.PostController) {
-	r.Get("/", func(c *web.Ctx) error {
-		return c.String(http.StatusOK, "Hello from Vukem")
-	}).Name("home")
-
-	r.Group("/admin", func(g *router.Group) {
-		g.Resource("posts", posts) // posts.index, posts.store, posts.show…
-	}).Name("admin.")
-}
-
-func (p *PostController) Show(c *web.Ctx) error {
-	id, err := c.ParamInt("post") // id não numérico → 404
+```go title="app/controllers/task_controller.go"
+// Edit shows the edit form: GET /tasks/{task}/edit.
+func (tc *TaskController) Edit(c *web.Ctx) error {
+	// A non-numeric id such as /tasks/abc/edit becomes 404.
+	id, err := c.ParamInt("task")
 	if err != nil {
 		return err
 	}
 
-	post, ok := p.store.Find(id)
-	if !ok {
-		return errs.ErrNotFound // página HTML ou problem+json, conforme a negociação de conteúdo
+	// orm.ErrNotFound also becomes 404, by content negotiation.
+	task, err := orm.QueryOf[models.Task](tc.db).Find(c.Context(), id)
+	if err != nil {
+		return err
 	}
 
-	return c.JSON(http.StatusOK, post)
+	return c.Render("tasks/edit", task)
 }
 ```
 
+```go title="routes/web.go"
+// One line registers index, store, edit, update and destroy
+// routes, named tasks.index, tasks.store, and so on.
+r.Resource("tasks", controllers.NewTaskController(db))
+```
+
+Você vai construir exatamente esse controller, passo a passo, em [Sua primeira app](/docs/first-app).
+
+<Callout type="info">
+Não se preocupe se `*web.Ctx`, `error` ou `[models.Task]` parecerem estranhos. A página [Pré-requisitos](/docs/prerequisites) explica cada conceito de Go que a documentação usa, com programas pequenos que você pode executar.
+</Callout>
+
 ## O que já funciona
 
-As fases Prototype (`v0.1`) e ALPHA (`v0.2`–`v0.13`) estão concluídas, e todos os recursos da BETA já foram entregues (`v0.14`–`v0.20`); a BETA está em estabilização antes da `v1.0.0`.
+O Vukem está na versão `v0.27.0`. As fases Prototype (`v0.1`) e ALPHA (`v0.2`–`v0.13`) estão concluídas, e todos os recursos da fase BETA já foram lançados (`v0.14`–`v0.20`); a BETA está em estabilização antes do `v1.0.0`.
 
 | Área | Status |
 | --- | --- |
-| Configuração, ciclo de vida da aplicação, router, `*web.Ctx`, middlewares, erros problem+json | Disponível |
-| Validação com `z`, sessões, CSRF, views com `html/template`, helpers para htmx 4 | Disponível |
-| SQLite e [PostgreSQL](/docs/database/overview#postgresql), ORM genérico, [relacionamentos](/docs/database/relations), migrations, [factories e seeders](/docs/database/factories-seeders) | Disponível |
-| [Kit para REST](/docs/rest-apis/overview): `vukem new --api`, `install:api`, [paginação e convenções de query](/docs/rest-apis/pagination), rate limiting, CORS | Disponível |
+| Configuração, [ciclo de vida da aplicação](/docs/architecture/lifecycle), [router](/docs/basics/routing), [`*web.Ctx`](/docs/basics/http-context), [middleware](/docs/basics/middleware), [erros](/docs/basics/error-handling) em problem+json | Disponível |
+| [Validação](/docs/basics/validation) com `z`, [sessões](/docs/basics/sessions), [CSRF](/docs/basics/csrf), [views](/docs/basics/views) com `html/template`, helpers para [htmx 4](/docs/frontend/htmx) | Disponível |
+| SQLite e [PostgreSQL](/docs/database/overview#postgresql), [ORM](/docs/database/orm) genérico, [relações](/docs/database/relations), [migrations](/docs/database/migrations), [factories e seeders](/docs/database/factories-seeders) | Disponível |
+| [Kit REST](/docs/rest-apis/overview): `vukem new --api`, `install:api`, [paginação e convenções de query](/docs/rest-apis/pagination), [rate limiting](/docs/security/rate-limiting), CORS | Disponível |
 | [Autenticação](/docs/security/authentication) (guards de sessão e de token, `install:auth`), [login social](/docs/security/social-login), [autorização](/docs/security/authorization) | Disponível |
-| [E-mail](/docs/digging-deeper/mail) (SMTP, Resend), [cache](/docs/digging-deeper/cache), [armazenamento](/docs/digging-deeper/storage), [eventos](/docs/digging-deeper/events), [logs no Telegram](/docs/digging-deeper/telegram-logging) | Disponível |
+| [E-mail](/docs/digging-deeper/mail) (SMTP, Resend), [cache](/docs/digging-deeper/cache), [storage](/docs/digging-deeper/storage), [eventos](/docs/digging-deeper/events), [logs no Telegram](/docs/digging-deeper/telegram-logging) | Disponível |
 | [Blocos de segurança](/docs/security/building-blocks): cliente protegido contra SSRF, URLs assinadas, assinaturas de webhook, eventos de segurança | Disponível |
-| `vukemtest` e a [CLI `vukem`](/docs/cli/overview) | Disponível |
+| [`vukemtest`](/docs/testing/overview) e a [CLI `vukem`](/docs/cli/overview) | Disponível |
 | [Handlers tipados](/docs/rest-apis/typed-handlers), [OpenAPI 3.1, tipos TypeScript/Zod e a referência de API Scalar](/docs/rest-apis/openapi), [chaves de idempotência](/docs/rest-apis/idempotency) | Disponível |
-| [Filas](/docs/digging-deeper/queue) (sync, memória, banco de dados, Redis), [agendamento de tarefas](/docs/digging-deeper/scheduler), [Redis](/docs/database/redis), [MongoDB](/docs/database/mongodb) | Disponível |
-| [Starters](/docs/starters): HTMX com [Vite](/docs/frontend/vite) + Tailwind CSS v4, templ, [Inertia](/docs/frontend/inertia) (React, Vue, Svelte), API | Disponível |
+| [Filas](/docs/digging-deeper/queue) (sync, memory, database, Redis), [agendamento de tarefas](/docs/digging-deeper/scheduler), [Redis](/docs/database/redis), [MongoDB](/docs/database/mongodb) | Disponível |
+| [Starters](/docs/starters): HTMX sobre [Vite](/docs/frontend/vite) + Tailwind CSS v4, templ, [Inertia](/docs/frontend/inertia) (React, Vue, Svelte), API | Disponível |
 | [Localização](/docs/digging-deeper/localization), [server-sent events](/docs/digging-deeper/sse), [criptografia](/docs/security/encryption), [MySQL/MariaDB](/docs/database/overview#mysql-and-mariadb), [S3](/docs/digging-deeper/storage#s3), [upload de arquivos](/docs/digging-deeper/uploads) (streaming, tus, direto para o bucket) | Disponível |
 | [GraphQL](/docs/rest-apis/graphql), [WebSockets e broadcasting](/docs/digging-deeper/broadcasting), [gRPC](/docs/rest-apis/grpc) (connect-go), [clientes de API tipados](/docs/rest-apis/client-generation) | Disponível |
-| [Painel administrativo](/docs/digging-deeper/admin), [painel de desenvolvimento](/docs/digging-deeper/devtools), [JWT](/docs/security/jwt), [autenticação em dois fatores](/docs/security/two-factor), [cobrança com Stripe](/docs/digging-deeper/billing) | Disponível |
+| [Painel admin](/docs/digging-deeper/admin), [painel de desenvolvimento](/docs/digging-deeper/devtools), [JWT](/docs/security/jwt), [autenticação em dois fatores](/docs/security/two-factor), [cobrança com Stripe](/docs/digging-deeper/billing) | Disponível |
+
+## Veja em produção
+
+Três aplicações open source construídas com o Vukem estão no ar: um quiz com HTMX, uma plataforma de rifas com Inertia e Vue, e um marketplace com Inertia e React. A página [Showcase](/docs/showcase) traz o link de cada uma e lista os recursos que ela demonstra.
+
+## Como ler esta documentação
+
+As páginas de **Primeiros passos** formam um caminho. Na primeira vez, leia na ordem:
+
+1. [Pré-requisitos](/docs/prerequisites): as ferramentas para instalar e um guia de Go em 15 minutos.
+2. [Instalação](/docs/installation): instale a CLI `vukem` e crie um projeto.
+3. [Starters](/docs/starters): escolha HTMX, templ, Inertia ou uma API JSON.
+4. [Sua primeira app](/docs/first-app): construa uma lista de tarefas com formulário, validação, uma migration e um teste.
+5. [Configuração](/docs/configuration) e [Estrutura de diretórios](/docs/directory-structure): onde ficam as configurações e os arquivos.
+
+Depois disso, a barra lateral funciona como referência: abra a página do recurso de que você precisa.
 
 ## Próximos passos
 
 <CardGroup cols="2">
-<Card title="Instalação" href="/docs/installation" icon="terminal">
-Instale a CLI e crie um projeto com `vukem new`.
+<Card title="Pré-requisitos" href="/docs/prerequisites" icon="book">
+O que instalar e o Go de que você precisa para acompanhar a documentação.
 </Card>
-<Card title="Rotas" href="/docs/basics/routing" icon="route">
-Verbos HTTP, grupos, rotas nomeadas e resource controllers.
+<Card title="Instalação" href="/docs/installation" icon="terminal">
+Já sabe Go? Instale a CLI e rode `vukem new`.
 </Card>
 <Card title="Ciclo de vida da aplicação" href="/docs/architecture/lifecycle" icon="layers">
-Providers, runners e desligamento gracioso.
+Como uma app inicia, atende requisições e desliga.
 </Card>
 <Card title="Segurança" href="/docs/security/overview" icon="shield">
 Padrões seguros mapeados para o OWASP Top 10:2025.

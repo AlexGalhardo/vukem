@@ -1,126 +1,606 @@
 ---
 title: Your first app
-description: Tour the starter's example CRUD, then add a model, migration and controller of your own with the generators.
+description: Build a to-do list step by step, from vukem new to a working CRUD page with validation, a migration and tests.
 ---
 
-`vukem new` gives you a working blog: a `PostController` with forms, validation, flash messages and htmx fragments on SQLite, covered by tests. This page walks through it and then adds a second resource.
+In this tutorial you build a small **to-do list**: a page that lists tasks, a form that adds one, an edit page that renames it or marks it done, and a delete button. On the way you write a migration, a model, a validated request, a controller, two views, the routes and two tests, and you run all of it.
 
-## The example CRUD
+You will learn:
 
-```go title="routes/web.go"
-func Web(r *router.Router, app *vukem.App) error {
-	if err := vukem.DefaultMiddleware(app, r); err != nil {
-		return err
-	}
+- how to create a project with `vukem new` and generate files with `make:*` commands
+- how a migration creates a database table, and how a model maps its rows
+- how a `z` schema validates form input and sends errors back to the form
+- how a resource controller and `r.Resource` turn seven actions into routes
+- how to test the whole flow with `vukemtest`
 
-	r.UseServer(middleware.StaticFS(resources.Public(), middleware.StaticConfig{Prefix: "/"}))
+The tutorial takes about 30 minutes. You need Go 1.27.2 or newer and the `vukem` CLI ([Installation](/docs/installation)). Node.js is **not** needed. If any Go syntax looks new, keep the [Go primer](/docs/prerequisites#go-in-15-minutes) open in another tab.
 
-	db, err := app.DB()
-	if err != nil {
-		return err
-	}
+## The idea
 
-	r.Get("/", controllers.Home).Name("home")
-	r.Resource("posts", controllers.NewPostController(db)) // posts.index, posts.store, posts.show…
+Every feature of a web app follows the same path. Think of a library: you ask the desk for a book (the **request**), the librarian looks in the catalogue (the **router**), walks to the right shelf (the **controller**), checks your card (the **validation**), takes the book from the shelves (the **database**), and hands it to you in a nice cover (the **view**).
 
-	return nil
-}
-```
+For the to-do list, the pieces are:
 
-```go title="app/controllers/post_controller.go"
-func (pc *PostController) Store(c *web.Ctx) error {
-	in, err := web.Parse(c, requests.PostSchema) // invalid → flash errors + redirect back
-	if err != nil {
-		return err
-	}
+| Piece | File | Job |
+| --- | --- | --- |
+| <Term tip="A Go function that changes the database schema, such as creating a table. Each one has an Up and a Down function and runs once.">Migration</Term> | `database/migrations/…_create_tasks_table.go` | Creates the `tasks` table |
+| <Term tip="A Go struct whose fields match the columns of a table. The ORM reads rows into it and writes it back.">Model</Term> | `app/models/task.go` | One row of `tasks` as a Go struct |
+| Request | `app/requests/task.go` | The form fields and their rules |
+| <Term tip="A struct whose methods (actions) answer the requests of one resource: Index, Create, Store, Show, Edit, Update and Destroy.">Controller</Term> | `app/controllers/task_controller.go` | Reads input, talks to the database, picks the response |
+| Views | `resources/views/tasks/*.html` | The HTML pages |
+| Routes | `routes/web.go` | Maps URLs to controller actions |
+| Test | `tests/task_test.go` | Proves it all works |
 
-	post := models.Post{Title: in.Title, Body: in.Body}
-	if err := orm.Create(c.Context(), pc.db, &post); err != nil {
-		return err
-	}
+And these are the routes you will end up with:
 
-	_ = c.Flash("success", "Post created.")
+| Method | URL | Action | Route name | What it does |
+| --- | --- | --- | --- | --- |
+| `GET` | `/tasks` | `Index` | `tasks.index` | List the tasks and show the new-task form |
+| `POST` | `/tasks` | `Store` | `tasks.store` | Validate and save a new task |
+| `GET` | `/tasks/{task}/edit` | `Edit` | `tasks.edit` | Show the edit form |
+| `PUT`, `PATCH` | `/tasks/{task}` | `Update` | `tasks.update` | Validate and save changes |
+| `DELETE` | `/tasks/{task}` | `Destroy` | `tasks.destroy` | Delete the task |
 
-	return c.RedirectRoute("posts.show", "post", post.ID)
-}
-```
-
-```go title="app/requests/post.go"
-var PostSchema = z.Struct[Post](z.Shape{
-	"title": z.String().Trim().Min(3).Max(120),
-	"body":  z.String().Trim().Max(10_000),
-})
-```
-
-The index page has a search box that asks for only the `post-list` block, and delete buttons that remove the row in place:
-
-```go
-return c.Render("posts/index", map[string]any{"Posts": posts, "Search": c.Query("q")}, web.Block("post-list"))
-```
-
-```html title="resources/views/posts/index.html"
-<input type="search" name="q" hx-get="{{route "posts.index"}}"
-	hx-trigger="input changed delay:300ms, search" hx-target="#post-list">
-
-{{block "post-list" .}}
-<ul id="post-list">
-	{{range .Posts}}
-	<li>
-		<a href="{{route "posts.show" "post" .ID}}">{{.Title}}</a>
-		<button hx-delete="{{route "posts.destroy" "post" .ID}}" hx-target="closest li" hx-swap="outerHTML">Delete</button>
-	</li>
-	{{end}}
-</ul>
-{{end}}
-```
-
-## Add a resource
+## Build it
 
 <Steps>
-<Step title="Generate a model, migration and controller">
+<Step title="Create the project">
 
 ```bash
-vukem make:model Comment -m -c
+vukem new todo --module example.com/todo
+cd todo
+vukem migrate
 ```
 
-Creates `app/models/comment.go`, `database/migrations/<timestamp>_create_comments_table.go` (registered in `migrations.All()`) and a resource `app/controllers/comment_controller.go`.
+Press Enter at the stack question to keep HTMX. `vukem migrate` creates `storage/database.sqlite` and runs the starter's posts migration:
+
+```text
+Migrated: 20260101000000_create_posts_table
+```
+
+The starter already contains a posts CRUD. You leave it alone and build tasks next to it, so you can compare your code with the starter's `app/controllers/post_controller.go` at any point.
 
 </Step>
-<Step title="Add columns">
+<Step title="Generate the model, migration and controller">
 
-```go title="database/migrations/20261016120000_create_comments_table.go"
-return s.Create("comments", func(t *schema.Table) {
-	t.ID()
-	t.ForeignID("post_id").Constrained().CascadeOnDelete()
-	t.Text("body")
-	t.Timestamps()
-})
+```bash
+vukem make:model Task -m -c
 ```
+
+```text
+created app/models/task.go
+created database/migrations/20261018003311_create_tasks_table.go
+updated database/migrations/registry.go
+created app/controllers/task_controller.go
+```
+
+- `-m` adds a migration, `-c` a resource controller (and `-f` would add a [factory](/docs/database/factories-seeders)).
+- The number in the migration name is the current date and time (`YYYYMMDDHHMMSS`), so yours differs. It keeps migrations in the order you wrote them.
+- `registry.go` is the list of every migration. The generator added the new one to it for you; there is no hidden registration.
+
+</Step>
+<Step title="Describe the table">
+
+Open the generated migration and add two columns between `t.ID()` and `t.Timestamps()`:
+
+```go title="database/migrations/20261018003311_create_tasks_table.go"
+package migrations
+
+import "github.com/AlexGalhardo/vukem/schema"
+
+func m20261018003311CreateTasksTable() schema.Migration {
+	return schema.Migration{
+		ID: "20261018003311_create_tasks_table",
+		Up: func(s *schema.Schema) error {
+			return s.Create("tasks", func(t *schema.Table) {
+				t.ID()
+				t.String("title")
+				t.Boolean("done").Default(false)
+				t.Timestamps()
+			})
+		},
+		Down: func(s *schema.Schema) error {
+			return s.DropIfExists("tasks")
+		},
+	}
+}
+```
+
+- `Up` runs when you migrate, `Down` when you roll back.
+- `t.ID()` is an auto-increment primary key `id`. `t.Timestamps()` adds `created_at` and `updated_at`.
+- `t.String("title")` is a short text column. `t.Boolean("done").Default(false)` is a true/false column that starts as `false`.
+
+Run it:
 
 ```bash
 vukem migrate
 ```
 
+```text
+Migrated: 20261018003311_create_tasks_table
+```
+
+`vukem migrate:status` shows every migration and whether it ran. See [Migrations](/docs/database/migrations) for every column type.
+
 </Step>
-<Step title="Route it">
+<Step title="Fill in the model">
+
+The generated model only embeds `orm.Model`. Add one field per column:
+
+```go title="app/models/task.go"
+package models
+
+import "github.com/AlexGalhardo/vukem/orm"
+
+// Task is a row of the tasks table.
+type Task struct {
+	orm.Model
+
+	Title string `json:"title"`
+	Done  bool   `json:"done"`
+}
+```
+
+`orm.Model` brings `ID`, `CreatedAt` and `UpdatedAt`. The ORM maps each field to the column with the same name in `snake_case` (`Title` → `title`), and the table is the plural of the type (`Task` → `tasks`). The `json` tags name the fields when the task is sent as JSON. See [ORM](/docs/database/orm).
+
+</Step>
+<Step title="Validate the input">
+
+User input must never reach the database unchecked. Generate a request:
+
+```bash
+vukem make:request Task
+```
+
+```text
+created app/requests/task.go
+```
+
+Replace its contents with the fields of the form and their rules:
+
+```go title="app/requests/task.go"
+package requests
+
+import "github.com/AlexGalhardo/vukem/z"
+
+// Task is the input of the new-task and edit forms.
+type Task struct {
+	Title string `json:"title" form:"title"`
+	Done  bool   `json:"done"  form:"done"`
+}
+
+// TaskSchema validates Task. An unchecked checkbox is not sent at
+// all, so "done" defaults to false.
+var TaskSchema = z.Struct[Task](z.Shape{
+	"title": z.String().Trim().Min(3).Max(120),
+	"done":  z.Bool().Default(false),
+})
+```
+
+- `z.String().Trim().Min(3).Max(120)`: remove spaces around the value, then require 3 to 120 characters.
+- `z.Bool()` accepts `true`/`false`, `1`/`0`, `on`/`off` and `yes`/`no`. A checked HTML checkbox sends `on`.
+- The `form` tag names the HTML field, the `json` tag the JSON field, so the same request works for both.
+
+See [Validation](/docs/basics/validation) for every rule.
+
+</Step>
+<Step title="Write the controller">
+
+The generated controller has seven placeholder actions. Replace the whole file:
+
+```go title="app/controllers/task_controller.go"
+package controllers
+
+import (
+	"net/http"
+
+	"github.com/AlexGalhardo/vukem/database"
+	"github.com/AlexGalhardo/vukem/orm"
+	"github.com/AlexGalhardo/vukem/web"
+
+	"example.com/todo/app/models"
+	"example.com/todo/app/requests"
+)
+
+// TaskController lists, creates, edits and deletes tasks.
+type TaskController struct {
+	db *database.DB
+}
+
+// NewTaskController returns a TaskController that uses db.
+func NewTaskController(db *database.DB) *TaskController {
+	return &TaskController{db: db}
+}
+
+// Index lists the tasks, newest first: GET /tasks.
+func (tc *TaskController) Index(c *web.Ctx) error {
+	tasks, err := orm.QueryOf[models.Task](tc.db).
+		OrderBy("id", orm.Desc).
+		Get(c.Context())
+	if err != nil {
+		return err
+	}
+
+	return c.Render("tasks/index", map[string]any{"Tasks": tasks})
+}
+
+// Store validates and saves a new task: POST /tasks.
+func (tc *TaskController) Store(c *web.Ctx) error {
+	in, err := web.Parse(c, requests.TaskSchema)
+	if err != nil {
+		return err
+	}
+
+	task := models.Task{Title: in.Title, Done: in.Done}
+	if err := orm.Create(c.Context(), tc.db, &task); err != nil {
+		return err
+	}
+
+	_ = c.Flash("success", "Task added.")
+
+	return c.RedirectRoute("tasks.index")
+}
+
+// Edit shows the edit form: GET /tasks/{task}/edit.
+func (tc *TaskController) Edit(c *web.Ctx) error {
+	task, err := tc.find(c)
+	if err != nil {
+		return err
+	}
+
+	return c.Render("tasks/edit", task)
+}
+
+// Update validates and saves changes: PUT/PATCH /tasks/{task}.
+func (tc *TaskController) Update(c *web.Ctx) error {
+	task, err := tc.find(c)
+	if err != nil {
+		return err
+	}
+
+	in, err := web.Parse(c, requests.TaskSchema)
+	if err != nil {
+		return err
+	}
+
+	task.Title, task.Done = in.Title, in.Done
+	if err := orm.Update(c.Context(), tc.db, &task); err != nil {
+		return err
+	}
+
+	_ = c.Flash("success", "Task updated.")
+
+	return c.RedirectRoute("tasks.index")
+}
+
+// Destroy deletes a task: DELETE /tasks/{task}.
+func (tc *TaskController) Destroy(c *web.Ctx) error {
+	task, err := tc.find(c)
+	if err != nil {
+		return err
+	}
+
+	if err := orm.Delete(c.Context(), tc.db, &task); err != nil {
+		return err
+	}
+
+	// htmx swaps the row out with this empty body.
+	if c.IsHTMX() {
+		return c.String(http.StatusOK, "")
+	}
+
+	_ = c.Flash("success", "Task deleted.")
+
+	return c.RedirectRoute("tasks.index")
+}
+
+// find loads the task in the URL, or fails with 404 Not Found.
+func (tc *TaskController) find(c *web.Ctx) (models.Task, error) {
+	id, err := c.ParamInt("task")
+	if err != nil {
+		return models.Task{}, err
+	}
+
+	return orm.QueryOf[models.Task](tc.db).Find(c.Context(), id)
+}
+```
+
+What each piece does:
+
+- **`db *database.DB`** is the database connection. The controller receives it in `NewTaskController` instead of reaching for a global variable, which keeps it easy to test.
+- **`orm.QueryOf[models.Task](tc.db)`** starts a typed query: `Get` returns `[]models.Task`, `Find` returns one `models.Task` or `orm.ErrNotFound`.
+- **`web.Parse`** reads the form (or JSON) body and runs the schema. On invalid input it returns a validation error, and you return it unchanged. For a browser form, Vukem then redirects back to the form with the messages and the old input in the session.
+- **`c.Flash`** stores a one-time message for the next page. `c.RedirectRoute("tasks.index")` sends the browser to the URL of that route name (`303 See Other` after a `POST`).
+- **`c.ParamInt("task")`** reads `{task}` from the URL. A non-numeric value such as `/tasks/abc/edit` is a 404, and so is an id that does not exist.
+- There is no `Create` or `Show` action: the list page holds the new-task form, and a task has nothing more to show. `r.Resource` registers only the actions the controller has.
+
+</Step>
+<Step title="Write the views">
+
+Views are Go [`html/template`](https://pkg.go.dev/html/template) files. Each page defines a `title` and a `content` block, and the layout `resources/views/layouts/app.html` wraps them. Create the list page:
+
+```html title="resources/views/tasks/index.html"
+{{define "title"}}Tasks{{end}}
+{{define "content"}}
+<h1>Tasks</h1>
+
+<form method="post" action="{{route "tasks.store"}}">
+	{{csrfField}}
+	<label>New task
+		<input name="title" value="{{old "title"}}" required
+			{{with error "title"}}aria-invalid="true"{{end}}>
+	</label>
+	{{with error "title"}}<p class="error">{{.}}</p>{{end}}
+	<button type="submit">Add</button>
+</form>
+
+<ul class="list">
+	{{range .Tasks}}
+	<li>
+		{{if .Done}}<s>{{.Title}}</s>{{else}}{{.Title}}{{end}}
+		<a href="{{route "tasks.edit" "task" .ID}}">Edit</a>
+		<button type="button" class="link danger"
+			hx-delete="{{route "tasks.destroy" "task" .ID}}"
+			hx-target="closest li" hx-swap="outerHTML"
+			hx-confirm="Delete this task?">Delete</button>
+	</li>
+	{{else}}
+	<li class="empty">Nothing to do.</li>
+	{{end}}
+</ul>
+{{end}}
+```
+
+And the edit page:
+
+```html title="resources/views/tasks/edit.html"
+{{define "title"}}Edit task{{end}}
+{{define "content"}}
+<h1>Edit task</h1>
+<form method="post" action="{{route "tasks.update" "task" .ID}}">
+	{{csrfField}}
+	<input type="hidden" name="_method" value="PUT">
+	<label>Title
+		<input name="title" value="{{or (old "title") .Title}}" required>
+	</label>
+	{{with error "title"}}<p class="error">{{.}}</p>{{end}}
+	<label>
+		<input type="checkbox" name="done" {{if .Done}}checked{{end}}>
+		Done
+	</label>
+	<button type="submit">Save</button>
+</form>
+{{end}}
+```
+
+The view helpers come from Vukem:
+
+| Helper | What it does |
+| --- | --- |
+| `route "tasks.edit" "task" .ID` | Builds the URL of a named route: `/tasks/1/edit` |
+| `csrfField` | A hidden `_token` input for CSRF protection |
+| `old "title"` | The value the user typed before a failed validation |
+| `error "title"` | The first validation message for that field, or nothing |
+
+HTML forms only send `GET` and `POST`. The hidden `_method` field tells Vukem's method-override middleware to treat the `POST` as a `PUT`. The delete button uses htmx's `hx-delete` to send a real `DELETE` request and remove the row in place.
+
+Finally, add a link to the navigation in `resources/views/layouts/app.html`:
+
+```html title="resources/views/layouts/app.html"
+<nav>
+	<a href="{{route "posts.index"}}">Posts</a>
+	<a href="{{route "tasks.index"}}">Tasks</a>
+	<a href="{{route "uploads.index"}}">Uploads</a>
+</nav>
+```
+
+</Step>
+<Step title="Register the routes">
+
+Open `routes/web.go` and add one line after the posts resource:
 
 ```go title="routes/web.go"
-r.Resource("comments", controllers.NewCommentController())
+r.Get("/", controllers.Home).Name("home")
+r.Resource("posts", controllers.NewPostController(db))
+r.Resource("tasks", controllers.NewTaskController(db))
 ```
+
+`db` is the connection the file already opens with `app.DB()`. Check the result:
 
 ```bash
 vukem route:list
 ```
 
+```text
+METHOD  PATH                NAME           MIDDLEWARE
+GET     /tasks              tasks.index    middleware.BodyLimit, …
+POST    /tasks              tasks.store    middleware.BodyLimit, …
+GET     /tasks/{task}/edit  tasks.edit     middleware.BodyLimit, …
+PUT     /tasks/{task}       tasks.update   middleware.BodyLimit, …
+PATCH   /tasks/{task}                      middleware.BodyLimit, …
+DELETE  /tasks/{task}       tasks.destroy  middleware.BodyLimit, …
+```
+
+The real output also lists the posts and uploads routes and the full middleware chain (body limit, sessions, CSRF). `PATCH` has no name because it shares `tasks.update` with `PUT`. See [Routing](/docs/basics/routing).
+
+</Step>
+<Step title="Run it">
+
+```bash
+vukem serve
+```
+
+Open [http://localhost:3000/tasks](http://localhost:3000/tasks):
+
+1. Type `Buy milk` and press **Add**. The page reloads with "Task added." and the task in the list.
+2. Type `x` and press **Add**. The page comes back with "The title field must be at least 3 characters." under the field, and nothing is saved.
+3. Click **Edit**, tick **Done** and save. The title is crossed out.
+4. Click **Delete** and confirm. The row disappears without a reload.
+
+The terminal logs each request:
+
+```text
+level=INFO msg=request method=POST path=/tasks status=303 duration=35.2ms …
+```
+
+`vukem serve` restarts the app when you save a `.go` file. Template changes show up on refresh.
+
+<Callout type="tip">
+The same controller answers JSON. Try `curl -H "Accept: application/json" -d "title=x" http://localhost:3000/tasks` and you get a `422` problem+json body with `"errors":{"title":["The title field must be at least 3 characters."]}`.
+</Callout>
+
 </Step>
 <Step title="Test it">
 
+Generate a test file:
+
 ```bash
-vukem make:test Comment   # tests/comment_test.go using vukemtest
-go test ./...
+vukem make:test Task
 ```
+
+```text
+created tests/task_test.go
+```
+
+Replace it with two tests: one walks through the whole CRUD, the other checks validation.
+
+```go title="tests/task_test.go"
+package tests
+
+import (
+	"net/url"
+	"testing"
+
+	"github.com/AlexGalhardo/vukem/vukemtest"
+
+	"example.com/todo/bootstrap"
+)
+
+func TestTasksCRUD(t *testing.T) {
+	t.Parallel()
+
+	app := vukemtest.New(t, bootstrap.New)
+	c := app.Client(t)
+
+	c.PostForm("/tasks", url.Values{"title": {"Buy milk"}}).
+		AssertRedirect("/tasks").
+		AssertSessionHas("success")
+
+	vukemtest.AssertDatabaseHas(t, app, "tasks", map[string]any{
+		"title": "Buy milk",
+		"done":  false,
+	})
+
+	c.Get("/tasks").AssertOK().AssertSee("Buy milk")
+
+	c.PostForm("/tasks/1", url.Values{
+		"_method": {"PUT"},
+		"title":   {"Buy oat milk"},
+		"done":    {"on"},
+	}).AssertRedirect("/tasks")
+
+	vukemtest.AssertDatabaseHas(t, app, "tasks", map[string]any{
+		"title": "Buy oat milk",
+		"done":  true,
+	})
+
+	c.HTMX().Delete("/tasks/1").AssertOK()
+	vukemtest.AssertDatabaseCount(t, app, "tasks", 0)
+}
+
+func TestTasksValidation(t *testing.T) {
+	t.Parallel()
+
+	app := vukemtest.New(t, bootstrap.New)
+
+	app.Client(t).WithHeader("Referer", "/tasks").
+		PostForm("/tasks", url.Values{"title": {"x"}}).
+		AssertRedirect("/tasks").
+		AssertSessionHasErrors("title")
+
+	vukemtest.AssertDatabaseCount(t, app, "tasks", 0)
+}
+```
+
+```bash
+go test ./tests -run Tasks -v
+```
+
+```text
+=== RUN   TestTasksCRUD
+=== PAUSE TestTasksCRUD
+=== RUN   TestTasksValidation
+=== PAUSE TestTasksValidation
+=== CONT  TestTasksCRUD
+=== CONT  TestTasksValidation
+--- PASS: TestTasksValidation (0.03s)
+--- PASS: TestTasksCRUD (0.03s)
+PASS
+ok  	example.com/todo/tests	0.918s
+```
+
+`vukemtest.New` builds your app with `bootstrap.New` in the test environment: `APP_ENV=test`, a random `APP_KEY`, a private in-memory SQLite database and no network port. It runs every migration first, so each test starts with empty tables, and `t.Parallel()` is safe. `app.Client(t)` sends requests straight to the app's handler and keeps cookies between calls, like a browser. See [Testing](/docs/testing/overview).
 
 </Step>
 </Steps>
 
-See [Directory structure](/docs/directory-structure) for everything the starter contains and [CLI](/docs/cli/overview) for every generator.
+## What happens under the hood
+
+Follow one request, the invalid `POST /tasks` with `title=x`, from start to end:
+
+1. Go's HTTP server accepts the connection and runs the request in its own goroutine.
+2. The **server middleware** runs: recover from panics, give the request an id, log it, add security headers, and turn `_method=PUT` into `PUT` when present.
+3. The **router** matches `POST /tasks` to `tasks.store`. Then the **router middleware** runs: the 10 MiB body limit, the session and the CSRF check.
+4. `TaskController.Store` calls `web.Parse`. The schema trims `x`, finds it shorter than 3 characters and returns an `*errs.ValidationError` with the message for `title`.
+5. `Store` returns that error. The central error handler sees a validation error on a browser `POST`, so it flashes the errors and the old input to the session and redirects back to the page the form came from, with `303 See Other`.
+6. The browser follows the redirect to `GET /tasks`. `Index` renders the page, and `old "title"` and `error "title"` read the flashed values, once.
+
+With `Accept: application/json` in step 5, the same error becomes a `422` problem+json response instead, and with htmx it becomes an HTML fragment. You wrote none of that code. See [Error handling](/docs/basics/error-handling) and the [request lifecycle](/docs/architecture/lifecycle#request-lifecycle).
+
+## Common mistakes
+
+**Forgetting to migrate.** If you skip `vukem migrate` after writing the migration, `/tasks` answers `500`, and the log says:
+
+```text
+orm: query tasks: SQL logic error: no such table: tasks (1)
+```
+
+Run `vukem migrate`. Tests are not affected: `vukemtest.New` migrates its own in-memory database.
+
+**A wrong route name in a view.** Route names are checked when the template runs. A typo such as `{{route "task.store"}}` renders a `500`, with this error (one line in the log):
+
+```text
+template: tasks/index:5:30: executing "content" at <route "task.store">:
+error calling route: router: no route named "task.store"
+```
+
+Run `vukem route:list` and copy the exact name.
+
+**A parameter name that does not match the route.** `r.Resource("tasks", …)` names the parameter after the singular resource: `{task}`. `c.ParamInt("id")` finds nothing there and every edit, update and delete answers `404`.
+
+```go
+// Wrong: the route has {task}, not {id}.
+id, err := c.ParamInt("id")
+
+// Right
+id, err := c.ParamInt("task")
+```
+
+**Saving the request struct directly.** `requests.Task` is the shape of the form; `models.Task` is the row. Copy the fields you accept (`Title`, `Done`) from one to the other, as `Store` and `Update` do, so a client can never set columns it should not, such as `id` or `created_at`.
+
+## Next steps
+
+<CardGroup cols="2">
+<Card title="Configuration" href="/docs/configuration" icon="code">
+Environment variables, `.env` files and typed config.
+</Card>
+<Card title="Directory structure" href="/docs/directory-structure" icon="layers">
+Where every file of the project lives, and why.
+</Card>
+<Card title="Validation" href="/docs/basics/validation" icon="shield">
+Every `z` rule, custom messages and nested input.
+</Card>
+<Card title="Database" href="/docs/database/orm" icon="database">
+Queries, relations, factories and seeders.
+</Card>
+</CardGroup>

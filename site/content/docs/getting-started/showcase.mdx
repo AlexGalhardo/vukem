@@ -3,15 +3,25 @@ title: Showcase
 description: Three open-source reference apps built with Vukem, live in production, and which framework features each one demonstrates.
 ---
 
-These apps are built and maintained alongside the framework. Each one is open source and deployed on Railway, so you can read the code that runs behind a live URL. They are also how Vukem is tested in the real world: their feedback drives most releases.
+The best way to learn a framework after the tutorial is to read a real app that uses it. These three apps are built and maintained alongside Vukem. Each one is open source and deployed on Railway, so you can read the code that runs behind a live URL. They are also how Vukem is tested in the real world: their feedback drives most releases.
 
-Pick the one closest to what you are building and read it next to these docs.
+You will learn:
+
+- which reference app to read for the kind of project you are building
+- which Vukem features each app demonstrates, with links to their pages
+- how to run one of them on your computer
+
+## Pick one
+
+Pick the app closest to what you are building and read it next to these docs. Start with the Quiz if you are new: it has no database and fits in an afternoon.
 
 | App | Frontend | Data | Best for learning |
 | --- | --- | --- | --- |
-| [Quiz](#quiz-htmx) | HTMX 4, `html/template` | embedded JSON | server-rendered apps, i18n, a strict CSP |
-| [Rifa](#rifa-inertia-and-vue) | Inertia v3 + Vue | PostgreSQL | payments, a ledger, a public REST API, background work |
-| [Marketplace](#marketplace-inertia-and-react) | Inertia v3 + React + Base UI | PostgreSQL, Redis, MongoDB | multi-database apps, REST + GraphQL + gRPC, marketplace payments, tracing |
+| [Quiz](#quiz-htmx) | HTMX 4, `html/template` | Embedded JSON | Server-rendered apps, i18n, a strict CSP |
+| [Rifa](#rifa-inertia-and-vue) | Inertia v3 + Vue | PostgreSQL | Payments, a ledger, a public REST API, background work |
+| [Marketplace](#marketplace-inertia-and-react) | Inertia v3 + React + Base UI | PostgreSQL, Redis, MongoDB | Multi-database apps, REST + GraphQL + gRPC, marketplace payments, tracing |
+
+All three follow the layout described in [Directory structure](/docs/directory-structure): start reading at `bootstrap/app.go` to see everything the app wires, then `routes/` to see every URL, then the controllers they point to.
 
 ## Quiz (HTMX)
 
@@ -45,7 +55,7 @@ AlexGalhardo/vukem-rifa-vuejs
 </Card>
 </CardGroup>
 
-A raffle platform ("rifa" in Portuguese) where users buy numbers and pay with PIX.
+A raffle platform ("rifa" in Portuguese) where users buy numbers and pay with PIX, Brazil's instant payment system.
 
 What it demonstrates:
 
@@ -79,17 +89,58 @@ What it demonstrates:
 
 ## Running one locally
 
-Each repository's README lists its requirements. The usual flow:
+Each repository's README lists its exact requirements. The usual flow:
+
+<Steps>
+<Step title="Clone it">
 
 ```bash
 git clone https://github.com/AlexGalhardo/vukem-golang-quiz-htmx
 cd vukem-golang-quiz-htmx
-cp .env.example .env   # then fill in the values
+```
+
+</Step>
+<Step title="Create .env with a key">
+
+```bash
+vukem key:generate
+```
+
+When `.env` is missing, this copies `.env.example` to `.env` and writes a fresh `APP_KEY`. Fill in the other values the README asks for.
+
+</Step>
+<Step title="Start the databases (Rifa and Marketplace)">
+
+```bash
+docker compose up -d
+vukem migrate
+```
+
+Each of those repositories has a `compose.yaml` that starts its databases. The Quiz has no database, so skip this step.
+
+</Step>
+<Step title="Run it">
+
+```bash
 vukem serve
 ```
 
-The Rifa and Marketplace apps need their databases: start them with the `compose.yaml` in each repository (`docker compose up -d`) before `vukem serve`.
+Open [http://localhost:3000](http://localhost:3000).
+
+</Step>
+</Steps>
 
 <Callout type="tip">
 Built something with Vukem? Open a pull request that adds it to this page.
 </Callout>
+
+## Next steps
+
+<CardGroup cols="2">
+<Card title="Application lifecycle" href="/docs/architecture/lifecycle" icon="layers">
+How an app boots, runs and shuts down.
+</Card>
+<Card title="Routing" href="/docs/basics/routing" icon="route">
+Verbs, groups, named routes and resource controllers.
+</Card>
+</CardGroup>
