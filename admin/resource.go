@@ -46,16 +46,22 @@ var (
 
 	// sensitiveRe flags columns that hold secrets by name; json:"-" fields
 	// are sensitive too. Sensitive columns are never shown, searched,
-	// sorted, filtered or written to the audit log. Short words are matched
-	// as whole snake_case segments or at the end of the name ("api_token",
-	// "authtoken", not "footprint"), so a "tokens_used" counter stays
-	// visible while "refresh_tokens" does not.
-	sensitiveRe = regexp.MustCompile(
-		`(?i)(password|passwd|secret|api_?key|private_?key|recovery|(^|_)(token|otp|totp)(_|$)|(tokens?|otp)$)`,
+	// sorted, filtered or written to the audit log. It matches anywhere in
+	// the name (fail closed); nonSecretRe exempts only known counters.
+	sensitiveRe = regexp.MustCompile(`(?i)(password|passwd|secret|token|api_?key|private_?key|recovery|otp|totp)`)
+
+	// nonSecretRe lists names that contain a secret word but hold counts:
+	// token usage counters and "footprint" (which contains "otp").
+	nonSecretRe = regexp.MustCompile(
+		`(?i)^(tokens_(used|count|total|remaining|limit)|max_tokens(_[a-z0-9_]+)?|[a-z0-9_]*_token_count|[a-z0-9_]*footprint[a-z0-9_]*)$`,
 	)
 
 	protected = []string{"created_at", "updated_at", "deleted_at"}
 )
+
+func sensitiveName(col string) bool {
+	return sensitiveRe.MatchString(col) && !nonSecretRe.MatchString(col)
+}
 
 type column struct {
 	name  string
@@ -139,7 +145,7 @@ func NewResource[T, I any](schema z.StructSchema[I]) *Resource[T] {
 	for _, f := range orm.FieldsOf[T]() {
 		r.columns = append(r.columns, column{name: f.Column, label: humanize(f.Column), index: f.Index, typ: f.Type})
 
-		if name, _, _ := strings.Cut(f.Tag.Get("json"), ","); name == "-" || sensitiveRe.MatchString(f.Column) {
+		if name, _, _ := strings.Cut(f.Tag.Get("json"), ","); name == "-" || sensitiveName(f.Column) {
 			r.sensitive[f.Column] = true
 		}
 	}
