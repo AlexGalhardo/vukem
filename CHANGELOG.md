@@ -7,6 +7,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.27.0] - 2026-10-18
+
+### Added
+
+- **site:** Add a changelog page linked from the header ([6381fa5](https://github.com/AlexGalhardo/vukem/commit/6381fa54f1e32d24214cb9771f99f061833bec1d))
+- **auth:** Add ProblemJSON so every API auth failure is problem+json ([0c183cf](https://github.com/AlexGalhardo/vukem/commit/0c183cffb6bb517ed042e39f92182fd281af9a87))
+- **vukem:** Warn once when proxy headers arrive without TRUSTED_PROXIES ([06ee06a](https://github.com/AlexGalhardo/vukem/commit/06ee06af672db9fbd8be209e67346634a8c3c1e1))
+- **ratelimit:** Export IPKey and group throttle keys by it ([b0e40f5](https://github.com/AlexGalhardo/vukem/commit/b0e40f5fda2e0737f1bd92ce0ec4f395cb63af99))
+- **vukem:** Let lazy store funcs fall back with ErrUseDefault ([7c2b800](https://github.com/AlexGalhardo/vukem/commit/7c2b800ab912d9fdcd487559bd0e9fabab4f1d6f))
+- **telegram:** Read the Bot API base URL from TELEGRAM_API_URL ([eaab1b3](https://github.com/AlexGalhardo/vukem/commit/eaab1b31f25a3595eade4aa3542be295cba01aba))
+- **fixinline:** Check every go:fix inline wrapper against go fix ([8655ddb](https://github.com/AlexGalhardo/vukem/commit/8655ddb02d03de9f3ad7d5e28e47058e0f772269))
+- **database:** Add ScanTime for timestamps SQLite returns as text ([7198679](https://github.com/AlexGalhardo/vukem/commit/71986795b4354c23b7db8e276bf9a6b8faa10c54))
+- **factory:** Add en and pt-BR locales with commerce and address data ([9c5bf18](https://github.com/AlexGalhardo/vukem/commit/9c5bf1846f977a1bbfac5f420183b344de016d37))
+- **factory:** Add CreateMany to insert factory models in batches ([7dc730b](https://github.com/AlexGalhardo/vukem/commit/7dc730b096d0e0bd2ddec38037780dac80133d9e))
+- **vukem:** Select seeders and pass seeder flags in db:seed ([4312444](https://github.com/AlexGalhardo/vukem/commit/4312444177bb3306a65b034e0450b2c772d0301d))
+- **flags:** Add typed feature flags with a cached database store ([30031c3](https://github.com/AlexGalhardo/vukem/commit/30031c30e1e7e99e38caface134669155f21dbf9))
+- **vukem:** Register feature flags with WithFlags and build them with app.Flags ([ffed272](https://github.com/AlexGalhardo/vukem/commit/ffed272372bd74904f01f8d0e8f7d9c8e233f544))
+- **admin:** Add a feature flags page with audit events ([041c0f5](https://github.com/AlexGalhardo/vukem/commit/041c0f55291c0dffabae0dede7f7df16d0bcf2f0))
+- **cli:** Add install:flags and wire feature flags into the admin scaffold ([f70d6b0](https://github.com/AlexGalhardo/vukem/commit/f70d6b01f2c95dfa10c45a0d0b6b93f952d07bdd))
+- **web:** Let a frontend adapter render the error page ([358087f](https://github.com/AlexGalhardo/vukem/commit/358087f1fe9fa73cc9edb4f2261600be83647795))
+- **cli:** Ship an Error page in the Inertia starters ([f9c00a7](https://github.com/AlexGalhardo/vukem/commit/f9c00a72b6f05e24a37cd433de5a51a243cfc4e5))
+- **BREAKING:** **vukem:** Cap request headers at 64 KiB with HTTP_MAX_HEADER_BYTES ([320b89b](https://github.com/AlexGalhardo/vukem/commit/320b89be73e9cd1ad313e73cc1c7b0766ac44c52))
+- **grpc:** Let operators raise the gRPC port's header cap ([7db5602](https://github.com/AlexGalhardo/vukem/commit/7db560293d1f3e88f4f9a381d094972247d9348d))
+- **vukem:** Keep an existing ErrorPage hook and warn without an Error page ([0ab65c5](https://github.com/AlexGalhardo/vukem/commit/0ab65c57551b735bc8d72401eb20379362d61530))
+
+### Changed
+
+- **vukem:** Group the root package files by theme ([a90f9c8](https://github.com/AlexGalhardo/vukem/commit/a90f9c8ec7a8c808461b93fadaf2c5442336925f))
+- **factory:** Replace NewFakerWithLocale with Faker.WithLocale ([fe297b4](https://github.com/AlexGalhardo/vukem/commit/fe297b4299ec6e54cc8140349f39c61112f62913))
+- **flags:** Type scopes, version cached values and describe flags with Info ([5593d07](https://github.com/AlexGalhardo/vukem/commit/5593d07e5986c9fcbd238014c641e7325dc88083))
+- **web:** Pass error pages to the hook as a web.ErrorPage struct ([b34be2b](https://github.com/AlexGalhardo/vukem/commit/b34be2ba350482fdaabf81542669680a021b95b4))
+
+### Fixed
+
+- **BREAKING:** **cli:** Require the account's login to verify an email address ([37da4e1](https://github.com/AlexGalhardo/vukem/commit/37da4e1d2e6303532e51cfa15b615d8d34c5ed1f))
+- **cli:** Send expired verification links to the resend page ([379620d](https://github.com/AlexGalhardo/vukem/commit/379620d73fd2946e615531915f91ab475ae6e1fe))
+- **BREAKING:** **ratelimit:** Key IPv6 clients by their /64 in ByIP ([6f66901](https://github.com/AlexGalhardo/vukem/commit/6f669013544e68563821c75d18e4894219204755))
+- **vukem:** Harden the ErrUseDefault fallback of lazy store funcs ([9ac99f1](https://github.com/AlexGalhardo/vukem/commit/9ac99f1e715645f4f116ec51b3f235d28824170d))
+- **BREAKING:** **grpc:** Give the gRPC port its own cleartext opt-in ([91cf1f5](https://github.com/AlexGalhardo/vukem/commit/91cf1f51e1023db020a26a64ee3f5b4758c01bba))
+- **BREAKING:** **otel:** Export metrics to the generic OTLP endpoint by default ([4cb0b8e](https://github.com/AlexGalhardo/vukem/commit/4cb0b8ee7d784700f01817bf5be32f1970761ffc))
+- **apicheck:** Reject trailing braces and foreign-major exception versions ([4156585](https://github.com/AlexGalhardo/vukem/commit/4156585c74fffc3fc9e1c55cee2f3ad1a95ad99a))
+- **orm:** Scan text timestamps into time fields on SQLite ([fc0eac7](https://github.com/AlexGalhardo/vukem/commit/fc0eac7566a8cef023edae3bbe270b78885c8c6d))
+- **vukem:** Fail closed on db:seed --class without a name ([4de9aa6](https://github.com/AlexGalhardo/vukem/commit/4de9aa6fbdc0240e96f0dd24a663f7441e50eeec))
+- **database:** Accept space-separated RFC 3339 text in ScanTime ([ea2ef1c](https://github.com/AlexGalhardo/vukem/commit/ea2ef1ce909a6c44a45940ad8b33e420d5977c62))
+- **flags:** Match FLAG_ keys exactly when checking for unknown flags ([7895fad](https://github.com/AlexGalhardo/vukem/commit/7895fad477c248c3e908ae65768a4037f85032a6))
+- **vukem:** Refuse FLAG_ keys in .env when no flag is registered ([c5c2697](https://github.com/AlexGalhardo/vukem/commit/c5c2697c301d870e968b1fc812c3ab621e5a278c))
+- **admin:** Redact string flag values and survive a failed audit row ([52881da](https://github.com/AlexGalhardo/vukem/commit/52881da8b956fa78c94f411e357035008e9eb5d6))
+- **cli:** Make install:flags safe to re-run ([7bbcbf6](https://github.com/AlexGalhardo/vukem/commit/7bbcbf699e2ede3d8ec245f97c6e922d64484370))
+- **apidocs:** Load the API reference with zero CSP violations ([770263f](https://github.com/AlexGalhardo/vukem/commit/770263f159dd3581d2a816ce2fa46d79bfc5143f))
+
+### Security
+
+- **repo:** Move the community health files into .github ([49c22b0](https://github.com/AlexGalhardo/vukem/commit/49c22b0a9651ccfe96b8d70af3a97d27be5e143a))
+- **apicheck:** Add a versioned exception list for security-driven breaks ([e4542e7](https://github.com/AlexGalhardo/vukem/commit/e4542e77a98365f88b2b64cab05d797417d3664f))
+- **BREAKING:** **inertia:** Render an Error page for errors on Inertia requests ([d9d3876](https://github.com/AlexGalhardo/vukem/commit/d9d3876dfaa2a448aa5c86a922edd61de86f20dc))
+- **web:** Render the built-in status pages under the default CSP ([83fcc01](https://github.com/AlexGalhardo/vukem/commit/83fcc0158e8f445fc285fe482a63fe652a17dbbe))
+
 ## [0.26.0] - 2026-10-17
 
 ### Added
@@ -757,7 +814,8 @@ Project foundation. No framework code yet; see [PLAN.md](PLAN.md) for the roadma
 - README, MIT license, CONTRIBUTING, SECURITY and CODE_OF_CONDUCT.
 - Agent configuration: `AGENTS.md`, `CLAUDE.md`, path-scoped `.claude/rules/`, Go skills and project settings.
 
-[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.26.0...HEAD
+[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.27.0...HEAD
+[0.27.0]: https://github.com/AlexGalhardo/vukem/compare/v0.26.0...v0.27.0
 [0.26.0]: https://github.com/AlexGalhardo/vukem/compare/v0.25.0...v0.26.0
 [0.25.0]: https://github.com/AlexGalhardo/vukem/compare/v0.24.0...v0.25.0
 [0.24.0]: https://github.com/AlexGalhardo/vukem/compare/v0.23.0...v0.24.0
