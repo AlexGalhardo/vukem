@@ -21,12 +21,15 @@ import (
 //
 // Rules, grouped by the field kind they apply to:
 //
-//	any:    required, omitempty (accepted and ignored), dive (the rules
-//	        after it apply to slice elements)
+//	any:    required, dive (the rules after it apply to slice elements)
 //	string: min=N, max=N, len=N, email, url, uuid, ulid, alpha, alphanum,
 //	        numeric, oneof=a b c, regex=PATTERN (last rule), startswith=,
-//	        endswith=, contains=, trim, lowercase
-//	number: min=N, max=N, positive
+//	        endswith=, contains=, trim, lowercase, omitempty (skips the
+//	        rules above when the value is empty, so "omitempty,oneof=a b"
+//	        accepts "a", "b" and ""), default=V (used when the key is
+//	        absent, or empty with omitempty; it also reaches the OpenAPI
+//	        document)
+//	number: min=N, max=N, positive, default=V
 //	list:   min=N, max=N, len=N, unique
 //
 // Fields without "required" are optional; "required" on a string means
@@ -84,7 +87,8 @@ type tagRule struct {
 func tagRules() []tagRule {
 	return []tagRule{
 		{name: "required", scopes: []tagScope{scopeAny}},
-		{name: "omitempty", scopes: []tagScope{scopeAny}},
+		{name: "omitempty", scopes: []tagScope{scopeString}},
+		{name: "default", arg: "1", scopes: []tagScope{scopeString, scopeNumber}},
 		{name: "dive", scopes: []tagScope{scopeAny}},
 		{name: "min", arg: "1", scopes: []tagScope{scopeString, scopeNumber, scopeList}},
 		{name: "max", arg: "5", scopes: []tagScope{scopeString, scopeNumber, scopeList}},
@@ -196,9 +200,33 @@ func splitRules(tag string) []string {
 }
 
 type ruleSet struct {
-	required bool
-	rules    []string // rules for this value
-	dive     []string // rules for slice elements
+	required  bool
+	omitEmpty bool
+	rules     []string // rules for this value
+	dive      []string // rules for slice elements
+}
+
+// coherent refuses rule combinations that contradict each other. Picking
+// one silently is how "omitempty" came to be accepted and ignored, which
+// made an optional enum reject the empty value it was written for (A111).
+func (rs ruleSet) coherent() error {
+	if !rs.required {
+		return nil
+	}
+
+	for _, r := range rs.rules {
+		if name, _, _ := strings.Cut(r, "="); name == "default" {
+			return errors.New(`"required" and "default" contradict each other: ` +
+				`required means the caller must provide the value, a default means they need not`)
+		}
+	}
+
+	if rs.omitEmpty {
+		return errors.New(`"required" and "omitempty" contradict each other: ` +
+			`required rejects the empty value, omitempty accepts it`)
+	}
+
+	return nil
 }
 
 func parseRules(rules []string) ruleSet {
@@ -213,6 +241,7 @@ func parseRules(rules []string) ruleSet {
 		case "required":
 			rs.required = true
 		case "omitempty":
+			rs.omitEmpty = true
 		case "dive":
 			rs.dive = rules[i+1:]
 			return rs
@@ -226,6 +255,10 @@ func parseRules(rules []string) ruleSet {
 
 func schemaForType(t reflect.Type, raw []string, depth int) (AnySchema, error) {
 	rs := parseRules(raw)
+	if err := rs.coherent(); err != nil {
+		return nil, err
+	}
+
 	nullable := false
 
 	if t.Kind() == reflect.Pointer {
@@ -288,6 +321,18 @@ func schemaForType(t reflect.Type, raw []string, depth int) (AnySchema, error) {
 		return s, nil
 	case t.Kind() == reflect.String:
 		return stringFromRules(t, rs, optional, nullable)
+	case rs.omitEmpty:
+		// Refused rather than ignored. "omitempty" has an unambiguous
+		// meaning only where the empty value is not itself a datum people
+		// bound: on a number it would make "omitempty,min=1" accept 0, and
+		// on a slice "omitempty,min=1" accept the empty list, which is the
+		// opposite of what the tag says. Accepting it silently is how an
+		// optional enum came to be rejected in the first place (A111).
+		return nil, fmt.Errorf(
+			"rule \"omitempty\" applies to a string, not %s "+
+				"(it skips the later rules when the value is empty; drop it, or use a pointer for an absent value)",
+			t,
+		)
 	case t.Kind() == reflect.Bool:
 		if err := noRules(rs.rules); err != nil {
 			return nil, err
@@ -377,8 +422,14 @@ func isNumberKind(k reflect.Kind) bool {
 func stringFromRules(t reflect.Type, rs ruleSet, optional, nullable bool) (AnySchema, error) {
 	s := String()
 
+	var def *string
+
 	if rs.required {
 		s = s.required()
+	}
+
+	if rs.omitEmpty {
+		s = s.OmitEmpty()
 	}
 
 	for _, r := range rs.rules {
@@ -415,6 +466,8 @@ func stringFromRules(t reflect.Type, rs ruleSet, optional, nullable bool) (AnySc
 			s = s.Numeric()
 		case "oneof":
 			s = s.OneOf(strings.Fields(arg)...)
+		case "default":
+			def = &arg
 		case "regex":
 			re, err := regexp.Compile(arg)
 			if err != nil {
@@ -443,6 +496,17 @@ func stringFromRules(t reflect.Type, rs ruleSet, optional, nullable bool) (AnySc
 
 	if nullable {
 		s = s.Nullable()
+	}
+
+	// A default is returned for every absent key without being parsed, so
+	// one the field's own rules refuse would pass silently forever. Checked
+	// here, where it is a boot error naming the rule it breaks.
+	if def != nil {
+		if err := s.Check(*def); err != nil {
+			return nil, fmt.Errorf("default %q does not satisfy this field's own rules: %w", *def, err)
+		}
+
+		s = s.Default(*def)
 	}
 
 	if t != reflect.TypeFor[string]() {
@@ -480,6 +544,8 @@ func numberFromRules(t reflect.Type, rs ruleSet, optional bool) (AnySchema, erro
 	positive := false
 	kw := map[string]any{}
 
+	var def *float64
+
 	for _, r := range rs.rules {
 		name, arg, _ := strings.Cut(r, "=")
 
@@ -502,12 +568,45 @@ func numberFromRules(t reflect.Type, rs ruleSet, optional bool) (AnySchema, erro
 		case "positive":
 			positive = true
 			kw["exclusiveMinimum"] = 0
+		case "default":
+			n, err := strconv.ParseFloat(arg, 64)
+			if err != nil {
+				return nil, fmt.Errorf("rule %q needs a number", r)
+			}
+
+			// Not re-validated: a default outside the field's own bounds
+			// would be returned for every absent key and fail nothing.
+			def = &n
+			kw["default"] = n
 		default:
 			return nil, unknownRuleError(r, scopeNumber)
 		}
 	}
 
-	return numberAny{t: t, bounds: bounds, positive: positive, opt: optional, kw: kw}, nil
+	if def != nil {
+		if positive && *def <= 0 {
+			return nil, fmt.Errorf("default %v does not satisfy \"positive\"", *def)
+		}
+
+		for _, b := range bounds {
+			if err := b(*def); err != nil {
+				return nil, fmt.Errorf("default %v does not satisfy this field's own bounds: %w", *def, err)
+			}
+		}
+	}
+
+	return numberAny{t: t, bounds: bounds, positive: positive, opt: optional, def: def, kw: kw}, nil
+}
+
+// numberOpts carries the tag's optionality and default into the typed
+// schema the parse runs on.
+func numberOpts[N int64 | uint64 | float64](optional bool, def *float64) opts[N] {
+	o := opts[N]{optional: optional}
+	if def != nil {
+		o.hasDef, o.def = true, N(*def)
+	}
+
+	return o
 }
 
 type boundError struct {
@@ -523,7 +622,9 @@ type numberAny struct {
 	bounds   []func(float64) error
 	positive bool
 	opt      bool
-	kw       map[string]any
+	// def is the "default=V" value, used when the key is absent.
+	def *float64
+	kw  map[string]any
 }
 
 func (n numberAny) GoType() reflect.Type { return n.t }
@@ -534,11 +635,11 @@ func (n numberAny) parseAny(c *pctx, path string, in any, present bool) (any, bo
 
 	switch n.t.Kind() {
 	case reflect.Float32, reflect.Float64:
-		s = NumberSchema[float64]{o: opts[float64]{optional: n.opt}}
+		s = NumberSchema[float64]{o: numberOpts[float64](n.opt, n.def)}
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		s = NumberSchema[uint64]{o: opts[uint64]{optional: n.opt}}
+		s = NumberSchema[uint64]{o: numberOpts[uint64](n.opt, n.def)}
 	default:
-		s = NumberSchema[int64]{o: opts[int64]{optional: n.opt}}
+		s = NumberSchema[int64]{o: numberOpts[int64](n.opt, n.def)}
 	}
 
 	v, set, ok := s.parseAny(c, path, in, present)

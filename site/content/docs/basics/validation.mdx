@@ -531,9 +531,28 @@ var LoginSchema = z.FromTags[Login]()
 | `positive` | numbers | Greater than 0 |
 | `unique` | lists | No duplicates |
 | `dive` | lists | Rules after it apply to each element |
-| `omitempty` | all | Accepted and ignored |
+| `omitempty` | strings | Skips the rules above when the value is empty (after `trim`), as `OmitEmpty` |
 
 Fields without `required` are optional. Pointer fields are optional and nullable. Nested structs are parsed with their own tags. An unknown rule or a bad argument panics at boot (`unknown rule "mn" for a string`), and `json:"-"` fields are skipped.
+
+### An optional enum
+
+`oneof` alone rejects `""`, so a select the user may leave blank needs `omitempty` as well:
+
+```go title="app/requests/conversion.go"
+type Options struct {
+	Mode    string `json:"mode"    validate:"omitempty,oneof=fast slow"`
+	Profile string `json:"profile" validate:"omitempty,min=3,max=8"`
+}
+```
+
+`""` passes both fields; `"bogus"` and `"xy"` are still refused. The empty case reaches the [OpenAPI document](/docs/rest-apis/openapi) too — the enum gains `""`, and a constrained string becomes `anyOf` with the empty one — so a generated client does not reject a value the server accepts.
+
+<Callout type="warning" title="omitempty applies to strings only">
+On a number or a list, "empty" is the zero value, and skipping the rules for it would make `validate:"omitempty,min=1"` accept `0` and the empty list — the opposite of what the tag says. Writing it there is a boot error naming the type, not a silently ignored rule. For a value that may be **absent** rather than empty, use a pointer.
+
+`omitempty` used to be accepted and ignored on every kind, so `validate:"omitempty,oneof=fast slow"` compiled and then refused `""`. `Optional()` did not help either: it governs an absent key, and a browser form sends an empty value, not an absent one.
+</Callout>
 
 ## Typed boundaries
 

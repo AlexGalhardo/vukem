@@ -48,7 +48,45 @@ func (o *opts[T]) decorate(m map[string]any, typ string) map[string]any {
 	return m
 }
 
-func (s StringSchema) jsonSchema() map[string]any { return s.o.decorate(map[string]any{}, "string") }
+func (s StringSchema) jsonSchema() map[string]any {
+	m := s.o.decorate(map[string]any{}, "string")
+	if !s.omitEmpty {
+		return m
+	}
+
+	// OmitEmpty accepts "" as well, and a generated client that does not
+	// know rejects a value the server takes (the disagreement A106 is
+	// about). An enum simply gains the empty option, which keeps the
+	// generated type a readable union; anything else becomes a choice
+	// between the constrained string and the empty one.
+	if enum, ok := m["enum"].([]string); ok {
+		if !slices.Contains(enum, "") {
+			m["enum"] = append(slices.Clone(enum), "")
+		}
+
+		return m
+	}
+
+	if !constrainsAString(m) {
+		return m
+	}
+
+	return map[string]any{"anyOf": []any{m, map[string]any{"enum": []string{""}}}}
+}
+
+// constrainsAString reports whether m says more than "a string", so the
+// empty case has to be described separately.
+func constrainsAString(m map[string]any) bool {
+	for k := range m {
+		switch k {
+		case "type", "description", "default", "examples", "example":
+		default:
+			return true
+		}
+	}
+
+	return false
+}
 
 func (s NumberSchema[N]) jsonSchema() map[string]any {
 	return s.o.decorate(map[string]any{}, numberType(s.GoType()))

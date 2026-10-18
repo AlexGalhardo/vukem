@@ -204,7 +204,7 @@ Supported rules, by the field kind they apply to:
 | Rule | Applies to | Meaning |
 | --- | --- | --- |
 | `required` | any kind | the key must be present and not null |
-| `omitempty` | any kind | accepted and ignored (fields are optional unless `required`) |
+| `omitempty` | string | `OmitEmpty()`: skips every other rule when the value is empty after the pre-steps, so `omitempty,oneof=a b` accepts `a`, `b` and `""`. On any other kind it is a boot error, because skipping the rules for a zero number or an empty list would make `omitempty,min=1` accept `0` and `[]` |
 | `dive` | any kind | the rules after it apply to the slice elements |
 | `min=N` | string, number, list | minimum length, value or element count |
 | `max=N` | string, number, list | maximum length, value or element count |
@@ -224,6 +224,7 @@ Supported rules, by the field kind they apply to:
 | `trim` | string | `Trim()`, a pre-step: the value is trimmed before the checks run |
 | `lowercase` | string | `ToLower()`, a pre-step, like `trim` |
 | `positive` | number | value > 0 |
+| `default=V` | string, number | `Default(V)`: used when the key is absent, or empty with `omitempty`; it also reaches the OpenAPI document. Never re-validated, so a value outside the field's own rules is a boot error. Contradicts `required` |
 | `unique` | list | `Unique()` |
 
 A bool, a `time.Time` and a nested struct take no rule but `required`; any other rule on them is a boot panic, as is an unknown rule or a bad argument. `required` on a string means non-empty; on a list it means present and not null (an empty list passes, as with OpenAPI `required`), so use `min=1` for a non-empty list. Pointer fields are optional and nullable.

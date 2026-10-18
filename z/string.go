@@ -19,6 +19,10 @@ type StringSchema struct {
 	o      opts[string]
 	pre    []func(string) string
 	checks []strCheck
+	// omitEmpty skips the checks when the value is empty after the
+	// pre-steps, so an optional enum or a bounded optional string can be
+	// described in one schema.
+	omitEmpty bool
 }
 
 // String returns a schema for string values. The empty string is a valid
@@ -78,6 +82,18 @@ func (s StringSchema) core(c *pctx, path string, in any) (string, bool) {
 	if len(s.pre) > 0 && !safeText(v) {
 		s.o.issue(c, path, CodeInvalidString, "string.utf8", nil)
 		return "", false
+	}
+
+	// After the pre-steps, so a form field holding only spaces is empty
+	// once Trim ran, and before the checks, which is the whole point. A
+	// default replaces the empty value, which is the line of Go this
+	// removes: if o.Format == "" { o.Format = "png" }.
+	if s.omitEmpty && v == "" {
+		if s.o.hasDef {
+			return s.o.def, true
+		}
+
+		return v, true
 	}
 
 	before := len(c.issues)
@@ -263,6 +279,24 @@ func (s StringSchema) OneOf(values ...string) StringSchema {
 			o.issue(c, path, CodeInvalidEnum, CodeInvalidEnum, map[string]any{"options": values})
 		}
 	})
+}
+
+// OmitEmpty accepts the empty string, skipping every check after the
+// pre-steps (Trim, ToLower, Preprocess). It is how an optional enum is
+// written — OneOf alone rejects "" — and it is what the "omitempty"
+// validate tag maps to.
+//
+// It is not Optional: Optional governs an **absent** key, while this
+// governs a **present but empty** value, and a browser form sends the
+// second, not the first. A field that may be either takes both.
+//
+// Transform and Refine still run, so a normalisation step sees the empty
+// value; return nil from Refine for it when that is intended.
+func (s StringSchema) OmitEmpty() StringSchema {
+	s.o = s.o.clone()
+	s.omitEmpty = true
+
+	return s
 }
 
 // Optional allows the key to be absent (the zero value is used).
