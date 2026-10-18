@@ -412,7 +412,7 @@ The payload travels inside the job as JSON, so insignificant whitespace may be c
 | 410 Gone | `http_status` | no; `OnGone` runs (its error is logged, not retried) |
 | 3xx | `http_status` | no; redirects are never followed, because the signed body would go elsewhere |
 | any other status | `http_status` | yes |
-| `Endpoint` returned `ErrEndpointDisabled` | not recorded | no, dropped and logged at INFO |
+| `Endpoint` returned `ErrEndpointDisabled` | `disabled` | no, dropped and logged at INFO |
 | `Endpoint` returned another error | not recorded | yes |
 | bad URL (not https, no host, has credentials) or bad secret | `invalid` | yes, so a fixed endpoint still gets the event |
 | invalid delivery id | `invalid` | no |
@@ -509,7 +509,7 @@ The sender calls `Record` from concurrent workers, with a context that outlives 
 | `InsecureAllowHTTP` | `bool` | `false` | Allow `http://` endpoints; tests only |
 | `InsecureAllow` | `[]netip.Prefix` | none | Internal ranges deliveries may reach (`127.0.0.0/8` for `httptest`); tests only |
 
-Constants: `webhook.DeliverKind` is the job kind; `AttemptBlockedAddress`, `AttemptTimeout`, `AttemptRefused`, `AttemptTLS`, `AttemptNetwork`, `AttemptHTTPStatus` and `AttemptInvalid` are the error categories.
+Constants: `webhook.DeliverKind` is the job kind; `AttemptBlockedAddress`, `AttemptTimeout`, `AttemptRefused`, `AttemptTLS`, `AttemptNetwork`, `AttemptHTTPStatus`, `AttemptInvalid` and `AttemptDisabled` are the error categories.
 
 ## Security
 

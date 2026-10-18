@@ -393,16 +393,22 @@ func TestSenderSkipsDisabledEndpoint(t *testing.T) {
 	rc := &receiver{statuses: []int{http.StatusNoContent}}
 	srv := rc.server(t)
 
+	log := &memLog{}
 	s := newSender(t, webhook.SenderOptions{
 		Endpoint: func(context.Context, string) (webhook.Endpoint, error) {
 			return webhook.Endpoint{URL: srv.URL, Secret: testSecret}, webhook.ErrEndpointDisabled
 		},
-		InsecureAllowHTTP: true, InsecureAllow: loopback,
+		Log: log, InsecureAllowHTTP: true, InsecureAllow: loopback,
 	})
 
 	err := s.Deliver(t.Context(), webhook.Delivery{ID: "msg_1", Endpoint: "seller-1", Payload: json.RawMessage(`{}`)})
 	if err != nil || len(rc.ids) != 0 {
 		t.Fatalf("Deliver(disabled) = %v with %d requests, want nil and none", err, len(rc.ids))
+	}
+
+	a := log.all()
+	if len(a) != 1 || a[0].Error != webhook.AttemptDisabled || a[0].EventID != "msg_1" || a[0].Endpoint != "seller-1" {
+		t.Fatalf("attempts = %+v, want one disabled attempt for msg_1", a)
 	}
 }
 

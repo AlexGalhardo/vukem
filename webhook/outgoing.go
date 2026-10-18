@@ -236,6 +236,9 @@ func (s *Sender) Deliver(ctx context.Context, d Delivery) error {
 
 	ep, err := s.o.Endpoint(ctx, d.Endpoint)
 	if errors.Is(err, ErrEndpointDisabled) {
+		// Recorded so the endpoint owner sees why the event never arrived.
+		a.Error = AttemptDisabled
+		s.record(ctx, a)
 		s.o.Logger.InfoContext(ctx, "webhook: endpoint disabled, delivery dropped", "endpoint", d.Endpoint, "id", d.ID)
 		return nil
 	}
@@ -369,6 +372,9 @@ const (
 	AttemptHTTPStatus = "http_status"
 	// AttemptInvalid means an invalid delivery id, endpoint URL or secret.
 	AttemptInvalid = "invalid"
+	// AttemptDisabled means the endpoint was disabled (ErrEndpointDisabled)
+	// and the delivery was dropped without a request.
+	AttemptDisabled = "disabled"
 )
 
 const (
