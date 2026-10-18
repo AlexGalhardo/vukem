@@ -3,8 +3,10 @@ import type { MDXComponents } from "mdx/types";
 import { Callout } from "@/components/mdx/callout";
 import { Card, CardGroup } from "@/components/mdx/card";
 import { CodeBlock } from "@/components/mdx/code-block";
+import { Quote } from "@/components/mdx/quote";
 import { Step, Steps } from "@/components/mdx/steps";
 import { CodeGroup, Tab, Tabs } from "@/components/mdx/tabs";
+import { Term } from "@/components/mdx/term";
 import { defaultLocale, localizeHref, type Locale } from "@/lib/i18n";
 import { currentVersion, versionHref, type DocVersion } from "@/lib/versions";
 
@@ -67,10 +69,12 @@ export const mdxComponents: MDXComponents = {
   CardGroup,
   CodeBlock,
   CodeGroup,
+  Quote,
   Step,
   Steps,
   Tab,
   Tabs,
+  Term,
 };
 
 /**

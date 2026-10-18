@@ -29,13 +29,24 @@ const STYLES = {
 
 export type CalloutType = keyof typeof STYLES;
 
-export function Callout({ type = "info", children }: { type?: CalloutType; children: React.ReactNode }) {
+export function Callout({
+  type = "info",
+  title,
+  children,
+}: {
+  type?: CalloutType;
+  title?: string;
+  children: React.ReactNode;
+}): React.ReactElement {
   const s = STYLES[type] ?? STYLES.info;
   const Icon = s.icon;
   return (
-    <aside role="note" aria-label={s.label} className={`flex gap-3 rounded-xl border px-4 py-3 text-sm leading-relaxed ${s.box}`}>
+    <aside role="note" aria-label={title ?? s.label} className={`flex gap-3 rounded-xl border px-4 py-3 text-sm leading-relaxed ${s.box}`}>
       <Icon aria-hidden className={`mt-1 size-4 shrink-0 ${s.tone}`} />
-      <div className="min-w-0 text-fg/85 [&_p]:m-0 [&>*+*]:mt-2">{children}</div>
+      <div className="min-w-0 text-fg/85 [&_p]:m-0 [&>*+*]:mt-2">
+        {title ? <p className={`font-semibold ${s.tone}`}>{title}</p> : null}
+        {children}
+      </div>
     </aside>
   );
 }

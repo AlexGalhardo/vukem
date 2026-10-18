@@ -88,10 +88,18 @@ body {
   background: transparent !important;
   margin: 0;
   padding: 1rem 1.125rem;
-  overflow-x: auto;
   font-size: 0.8125rem;
   line-height: 1.7;
   tab-size: 4;
+}
+
+/* Code never scrolls sideways: long lines wrap (indentation is kept). */
+.shiki,
+.prose pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: normal;
+  overflow-x: visible;
 }
 
 .shiki code {
@@ -204,9 +212,38 @@ body {
 }
 
 .prose blockquote {
-  border-left: 2px solid var(--border-strong);
-  padding-left: 1rem;
-  font-style: italic;
+  border-left: 3px solid var(--border-strong);
+  padding: 0.125rem 0 0.125rem 1rem;
+  color: var(--muted);
+}
+
+.prose blockquote > * + * {
+  margin-top: 0.75rem;
+}
+
+.prose .quote blockquote {
+  margin: 0;
+}
+
+.prose .quote figcaption {
+  margin-top: 0.5rem;
+  padding-left: calc(1rem + 3px);
+  font-size: 0.8125rem;
+  color: var(--faint);
+}
+
+.prose .term {
+  color: var(--fg);
+  text-decoration: underline dotted;
+  text-decoration-color: var(--faint);
+  text-underline-offset: 0.2em;
+  cursor: help;
+  border-radius: 0.125rem;
+}
+
+.prose .term:hover,
+.prose .term[data-popup-open] {
+  text-decoration-color: var(--accent);
 }
 
 .prose hr {
