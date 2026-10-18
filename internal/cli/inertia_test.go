@@ -98,6 +98,12 @@ func TestNewInertiaProjectEndToEnd(t *testing.T) {
 
 			run("go", "test", "./...")
 
+			// The Go the three frontends generate is the same; linting one
+			// of them covers the inertia and auth-inertia scaffolds.
+			if st.name == "react" {
+				requireGeneratedLint(t, project, "example.com/app")
+			}
+
 			if _, err := exec.LookPath(npm()); err != nil {
 				t.Log("npm not found: skipping npm install, type check and vite build")
 				return

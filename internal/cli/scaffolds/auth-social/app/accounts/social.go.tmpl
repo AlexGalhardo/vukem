@@ -66,7 +66,10 @@ func NewSocial(app *vukem.App, names ...string) (*social.Social, error) {
 			}
 
 			p, err := social.Apple(social.AppleConfig{
-				Config: cfg, TeamID: app.Source.Get(env + "TEAM_ID"), KeyID: app.Source.Get(env + "KEY_ID"), PrivateKey: key,
+				Config:     cfg,
+				TeamID:     app.Source.Get(env + "TEAM_ID"),
+				KeyID:      app.Source.Get(env + "KEY_ID"),
+				PrivateKey: key,
 			})
 			if err != nil {
 				app.Log.Warn("social: Sign in with Apple disabled", "err", err)
@@ -95,7 +98,9 @@ func NewSocial(app *vukem.App, names ...string) (*social.Social, error) {
 // FindOrCreateFromSocial returns the user linked to su, linking by email
 // only when the provider verified it, or creating a new user.
 func (a *Accounts) FindOrCreateFromSocial(ctx context.Context, su social.User) (models.User, error) {
-	link, err := orm.QueryOf[models.SocialAccount](a.DB).Where("provider", su.Provider).Where("provider_id", su.ID).First(ctx)
+	links := orm.QueryOf[models.SocialAccount](a.DB).Where("provider", su.Provider)
+
+	link, err := links.Where("provider_id", su.ID).First(ctx)
 	if err == nil {
 		return orm.QueryOf[models.User](a.DB).Find(ctx, link.UserID)
 	}
@@ -164,7 +169,12 @@ func (a *Accounts) FindOrCreateFromSocial(ctx context.Context, su social.User) (
 	return u, a.revokeServerSessions(ctx, u.ID, "")
 }
 
-func (a *Accounts) createSocialUser(ctx context.Context, tx database.Executor, su social.User, email string) (models.User, error) {
+func (a *Accounts) createSocialUser(
+	ctx context.Context,
+	tx database.Executor,
+	su social.User,
+	email string,
+) (models.User, error) {
 	name := su.Name
 	if name == "" {
 		name = su.Nickname

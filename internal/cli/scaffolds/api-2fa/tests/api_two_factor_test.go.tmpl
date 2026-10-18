@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"maps"
 	"testing"
 	"time"
 
@@ -25,7 +26,7 @@ func TestAPITokenRequiresTwoFactor(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h, err := acc.Hasher.Make("correct horse battery")
+	h, err := acc.Hasher.Make(testPassword)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,10 +58,8 @@ func TestAPITokenRequiresTwoFactor(t *testing.T) {
 	}
 
 	issue := func(extra map[string]any) *vukemtest.Response {
-		body := map[string]any{"email": u.Email, "password": "correct horse battery", "device_name": "cli"}
-		for k, v := range extra {
-			body[k] = v
-		}
+		body := map[string]any{"email": u.Email, "password": testPassword, "device_name": "cli"}
+		maps.Copy(body, extra)
 
 		return app.Client(t).PostJSON("/api/v1/tokens", body)
 	}

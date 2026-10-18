@@ -56,7 +56,9 @@ func API(r *router.Router, app *vukem.App) error {
 
 		g.Group("", func(p *router.Group) {
 			p.Use(auth.Required(acc.API), perToken)
-			p.Get("/me", h.Me).Name("me")
+			// Every route states the ability it needs (app/controllers/apiv1/abilities.go);
+			// revoking the key the request came with is self-service, not extra authority.
+			p.Get("/me", h.Me).Name("me").Use(auth.Ability(acc.API, apiv1.AbilityRead))
 			p.Delete("/tokens/current", h.Revoke).Name("tokens.destroy")
 		})
 	}).Name("api.v1.")

@@ -112,6 +112,24 @@ func read(t *testing.T, dir, rel string) string {
 	return string(b)
 }
 
+// requireFile fails unless rel exists inside dir.
+func requireFile(t *testing.T, dir, rel string) {
+	t.Helper()
+
+	if _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(rel))); err != nil {
+		t.Errorf("%s: %v", rel, err)
+	}
+}
+
+// requireNoFile fails when rel exists inside dir.
+func requireNoFile(t *testing.T, dir, rel string) {
+	t.Helper()
+
+	if _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(rel))); err == nil {
+		t.Errorf("%s exists, want it absent", rel)
+	}
+}
+
 func TestListHelpVersion(t *testing.T) {
 	t.Parallel()
 

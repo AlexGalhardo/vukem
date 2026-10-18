@@ -29,6 +29,10 @@ type issueInput struct {
 	Email      string `json:"email"`
 	Password   string `json:"password"`
 	DeviceName string `json:"device_name"`
+	// Abilities are the abilities the caller asks the key to carry, out of
+	// Abilities(). Omitting them grants none: a key never carries more
+	// authority than the request asked for.
+	Abilities []string `json:"abilities"`
 	// Code or RecoveryCode is required for users with two-factor
 	// authentication (vukem install:auth --2fa).
 	Code         string `json:"code"`
@@ -36,9 +40,13 @@ type issueInput struct {
 }
 
 var issueSchema = z.Struct[issueInput](z.Shape{
-	"email":         z.String().Trim().Email(),
-	"password":      z.String().Min(1),
-	"device_name":   z.String().Trim().Min(1).Max(100),
+	"email":       z.String().Trim().Email(),
+	"password":    z.String().Min(1),
+	"device_name": z.String().Trim().Min(1).Max(100),
+	"abilities": z.Slice(z.String().Trim().OneOf(Abilities()...)).
+		Max(len(Abilities())).
+		Unique().
+		Optional(),
 	"code":          z.String().Trim().Max(16).Optional(),
 	"recovery_code": z.String().Trim().Max(32).Optional(),
 })
@@ -61,12 +69,19 @@ func (h *Tokens) Issue(c *web.Ctx) error {
 		return errs.NewKey(http.StatusForbidden, "auth.unverified", "Your email address is not verified.", nil)
 	}
 
-	plain, tok, err := h.a.Tokens.Create(c.Context(), u.AuthID(), in.DeviceName, []string{"*"}, h.TTL)
+	// Only what the request asked for: no wildcard, so a route gated on a
+	// new ability refuses every key issued before it.
+	plain, tok, err := h.a.Tokens.Create(c.Context(), u.AuthID(), in.DeviceName, in.Abilities, h.TTL)
 	if err != nil {
 		return err
 	}
 
-	return c.JSON(http.StatusCreated, map[string]any{"token": plain, "type": "Bearer", "expires_at": tok.ExpiresAt})
+	return c.JSON(http.StatusCreated, map[string]any{
+		"token":      plain,
+		"type":       "Bearer",
+		"abilities":  tok.Abilities,
+		"expires_at": tok.ExpiresAt,
+	})
 }
 
 // Me returns the authenticated user: GET /api/v1/me.

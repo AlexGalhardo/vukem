@@ -8,6 +8,7 @@ import (
 	"github.com/AlexGalhardo/vukem/vukemtest"
 
 	"{{.Module}}/app/accounts"
+	"{{.Module}}/app/controllers/apiv1"
 	"{{.Module}}/app/models"
 	"{{.Module}}/bootstrap"
 )
@@ -21,7 +22,7 @@ func createAPIUser(t *testing.T, app *vukemtest.App, email string, verified bool
 		t.Fatal(err)
 	}
 
-	h, err := acc.Hasher.Make("correct horse battery")
+	h, err := acc.Hasher.Make(testPassword)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,15 +35,20 @@ func createAPIUser(t *testing.T, app *vukemtest.App, email string, verified bool
 	}
 }
 
-// apiUser creates a verified user directly and returns a token for it.
-func apiUser(t *testing.T, app *vukemtest.App, email string) string {
+// apiToken creates a verified user directly and returns a token carrying
+// abilities. With none, the key is issued with no abilities at all: the
+// endpoint grants only what the request asks for.
+func apiToken(t *testing.T, app *vukemtest.App, email string, abilities ...string) string {
 	t.Helper()
 
 	createAPIUser(t, app, email, true)
 
-	r := app.Client(t).PostJSON("/api/v1/tokens", map[string]any{
-		"email": email, "password": "correct horse battery", "device_name": "cli",
-	}).AssertCreated().AssertJSONPath("type", "Bearer")
+	body := map[string]any{"email": email, "password": testPassword, "device_name": "cli"}
+	if len(abilities) > 0 {
+		body["abilities"] = abilities
+	}
+
+	r := app.Client(t).PostJSON("/api/v1/tokens", body).AssertCreated().AssertJSONPath("type", "Bearer")
 
 	tok, _ := r.JSONPath("token")
 	s, _ := tok.(string)
@@ -59,7 +65,7 @@ func TestAPITokenNeedsVerifiedEmail(t *testing.T) {
 	createAPIUser(t, app, "squatter@example.com", false)
 
 	app.Client(t).PostJSON("/api/v1/tokens", map[string]any{
-		"email": "squatter@example.com", "password": "correct horse battery", "device_name": "cli",
+		"email": "squatter@example.com", "password": testPassword, "device_name": "cli",
 	}).AssertForbidden()
 	vukemtest.AssertDatabaseCount(t, app, "access_tokens", 0)
 }
@@ -68,7 +74,7 @@ func TestTokenLifecycle(t *testing.T) {
 	t.Parallel()
 
 	app := vukemtest.New(t, bootstrap.New)
-	token := apiUser(t, app, "dev@example.com")
+	token := apiToken(t, app, "dev@example.com", apiv1.AbilityRead)
 
 	api := app.Client(t).WithToken(token)
 	api.GetJSON("/api/v1/me").AssertOK().AssertJSONPath("email", "dev@example.com")
@@ -80,4 +86,33 @@ func TestTokenLifecycle(t *testing.T) {
 
 	api.Delete("/api/v1/tokens/current").AssertNoContent()
 	app.Client(t).WithToken(token).GetJSON("/api/v1/me").AssertUnauthorized()
+}
+
+// Secure by default: a key carries only the abilities the request asked
+// for, so one issued without AbilityRead cannot read. Add an ability to
+// apiv1.Abilities, gate a route on it, and every existing key is refused.
+func TestAPITokenWithoutAbilityIsRefused(t *testing.T) {
+	t.Parallel()
+
+	app := vukemtest.New(t, bootstrap.New)
+	token := apiToken(t, app, "narrow@example.com")
+
+	app.Client(t).WithToken(token).GetJSON("/api/v1/me").AssertForbidden()
+}
+
+// An ability the app does not define is refused, wildcards included.
+func TestAPITokenRejectsUnknownAbility(t *testing.T) {
+	t.Parallel()
+
+	app := vukemtest.New(t, bootstrap.New)
+	createAPIUser(t, app, "wide@example.com", true)
+
+	for _, ability := range []string{"*", "admin"} {
+		app.Client(t).PostJSON("/api/v1/tokens", map[string]any{
+			"email": "wide@example.com", "password": testPassword,
+			"device_name": "cli", "abilities": []string{ability},
+		}).AssertUnprocessable()
+	}
+
+	vukemtest.AssertDatabaseCount(t, app, "access_tokens", 0)
 }

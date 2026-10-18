@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"io/fs"
@@ -9,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -231,6 +233,15 @@ func TestNewProjectEndToEnd(t *testing.T) {
 		t.Fatalf("second install:auth = %d %s", code, errOut)
 	}
 
+	// Without --locales the default locale is the only catalog written.
+	requireFile(t, project, "app/accounts/lang/en/auth.json")
+	requireNoFile(t, project, "app/accounts/lang/pt-BR")
+
+	if code, _, errOut := vukem(t, project, "install:auth", "--locales", "fr"); code != 2 ||
+		!strings.Contains(errOut, "no auth message catalog") {
+		t.Fatalf("install:auth --locales fr = %d %s", code, errOut)
+	}
+
 	if code, out, errOut := vukem(
 		t,
 		project,
@@ -242,6 +253,11 @@ func TestNewProjectEndToEnd(t *testing.T) {
 		strings.Contains(out, "created routes/auth.go") {
 		t.Fatalf("install:auth --social = %d\n%s%s", code, out, errOut)
 	}
+
+	// A later generator writes catalogs only for the locales the project
+	// has: it never re-adds one the developer removed (A79).
+	requireFile(t, project, "app/accounts/lang/en/social.json")
+	requireNoFile(t, project, "app/accounts/lang/pt-BR")
 
 	// --2fa on a project with install:auth adds only two-factor
 	// authentication, and makes social sign-in ask for the code too.
@@ -350,6 +366,72 @@ func TestNewProjectEndToEnd(t *testing.T) {
 	if code != 0 || !strings.Contains(out, "posts.index") {
 		t.Fatalf("vukem route:list = %d\n%s%s", code, out, errOut)
 	}
+
+	requireGeneratedLint(t, project, "example.com/blog")
+}
+
+// lintMu keeps the generated-project lint runs off each other's back: they
+// are the slowest step of the parallel end-to-end tests, and running them
+// at once only thrashes the machine.
+var lintMu sync.Mutex
+
+// generatedLintConfig turns this repository's .golangci.yml into the
+// config an app would use. Three things are repository-internal and
+// nothing else is touched: gofumpt's module-path and gci's prefix name
+// this module (an app names its own), and depguard holds the
+// module-boundary and dependency-allowlist rules of this repository, which
+// an app does not share (docs/architecture.md#module-boundaries).
+func generatedLintConfig(cfg []byte, module string) []byte {
+	cfg = bytes.ReplaceAll(cfg, []byte("module-path: "+frameworkModule), []byte("module-path: "+module))
+	cfg = bytes.ReplaceAll(cfg, []byte("prefix("+frameworkModule+")"), []byte("prefix("+module+")"))
+
+	return bytes.ReplaceAll(cfg, []byte("\n    - depguard\n"), []byte("\n"))
+}
+
+// requireGeneratedLint runs this repository's own golangci-lint over a
+// generated project, so generated code cannot drift from the bar the
+// framework holds itself to (the linters are the repository's, unchanged).
+func requireGeneratedLint(t *testing.T, project, module string) {
+	t.Helper()
+
+	bin, err := exec.LookPath("golangci-lint")
+	if err != nil {
+		t.Log("golangci-lint not found: skipping the generated-code lint")
+		return
+	}
+
+	repo, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := os.ReadFile(filepath.Join(repo, ".golangci.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dst := filepath.Join(project, ".golangci.yml")
+	if err := os.WriteFile(dst, generatedLintConfig(cfg, module), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	lintMu.Lock()
+	defer lintMu.Unlock()
+
+	// --allow-parallel-runners: lintMu already serializes these runs, and
+	// without it a golangci-lint running elsewhere (an editor, a hook)
+	// fails the test with "parallel golangci-lint is running".
+	cmd := exec.CommandContext(t.Context(), bin, "run", "--allow-parallel-runners", "./...")
+	cmd.Dir = project
+	cmd.Env = append(os.Environ(), "GOWORK=off")
+
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Errorf("golangci-lint on the generated project: %v\n%s", err, out)
+	}
+
+	if err := os.Remove(dst); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // requireGovulncheckTool fails unless the generated go.mod pins govulncheck
@@ -431,6 +513,8 @@ func TestNewAPIProjectEndToEnd(t *testing.T) {
 		!strings.Contains(out, "api.v1.tokens.store") {
 		t.Fatalf("route:list = %d\n%s%s", code, out, errOut)
 	}
+
+	requireGeneratedLint(t, project, "example.com/shop")
 }
 
 // A generated `return u, orm.Create(ctx, tx, &u)` leaves unspecified whether

@@ -566,13 +566,33 @@ func makeJob(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 		expr := "queue.Handle(Handle" + d.Name + ")"
 		if d.App {
 			expr = "queue.Handle(Handle" + d.Name + "(app))"
+
+			if err := nameJobsApp(env, reg); err != nil {
+				return err
+			}
 		}
 
 		return register(env, "app/jobs/registry.go", "All", expr, "github.com/AlexGalhardo/vukem/queue")
 	}
 }
 
-var jobsTakeApp = regexp.MustCompile(`func All\(app \*vukem\.App\)`)
+// jobsTakeApp matches the starter's All signature, whose parameter is "_"
+// while the list is empty (an unused one fails revive's unused-parameter).
+var jobsTakeApp = regexp.MustCompile(`func All\((?:app|_) \*vukem\.App\)`)
+
+var jobsUnusedApp = []byte("func All(_ *vukem.App)")
+
+// nameJobsApp names the All parameter "app" before the first registration
+// that is built from it; reg is the registry as read above.
+func nameJobsApp(env *Env, reg []byte) error {
+	if !bytes.Contains(reg, jobsUnusedApp) {
+		return nil
+	}
+
+	out := bytes.Replace(reg, jobsUnusedApp, []byte("func All(app *vukem.App)"), 1)
+
+	return writeFile(env.path(filepath.Join("app", "jobs", "registry.go")), out)
+}
 
 func makeTest(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 	return simple(set, "test name", "test.go.tmpl", "tests/%s_test.go", "Test")

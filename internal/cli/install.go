@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -31,6 +32,12 @@ func installAuth(set *flag.FlagSet) func(context.Context, *Env, []string) error 
 	force := set.Bool("force", false, "overwrite existing files")
 	socialList := set.String("social", "", "also add social login: "+strings.Join(socialProviders, ","))
 	twoFactor := set.Bool("2fa", false, "also add two-factor authentication (TOTP)")
+	localeList := set.String(
+		"locales",
+		"",
+		"message catalogs to write, comma separated (default: the project's, else "+defaultLocale+
+			"); "+defaultLocale+" is always written, it is the bundle's fallback",
+	)
 
 	return func(ctx context.Context, env *Env, _ []string) error {
 		if hasTempl(env) {
@@ -42,8 +49,17 @@ func installAuth(set *flag.FlagSet) func(context.Context, *Env, []string) error 
 			return err
 		}
 
+		requested, err := parseLocales(*localeList)
+		if err != nil {
+			return err
+		}
+
 		data, err := scaffoldData(env)
 		if err != nil {
+			return err
+		}
+
+		if err := resolveLocales(env, requested, data); err != nil {
 			return err
 		}
 
@@ -136,6 +152,10 @@ func installAPI(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 			return err
 		}
 
+		if err := resolveLocales(env, nil, data); err != nil {
+			return err
+		}
+
 		regs, err := installCore(env, data, *force)
 		if err != nil {
 			return err
@@ -192,6 +212,130 @@ func parseProviders(list string) ([]string, error) {
 	}
 
 	return providers, nil
+}
+
+// defaultLocale is the locale the generated auth bundle falls back to. It
+// is always written: without it every message would answer with its key.
+const defaultLocale = "en"
+
+// localeKey holds the resolved locale set in the scaffold data, as a
+// comma-separated list. installScaffold refuses to write a catalog without
+// it, so a new generator cannot ship locales nobody asked for.
+const localeKey = "LocaleList"
+
+// localePath matches a message catalog inside a scaffold,
+// app/accounts/lang/<locale>/auth.json.
+var localePath = regexp.MustCompile(`(?:^|/)lang/([^/]+)/[^/]+$`)
+
+// availableLocales lists the locales the scaffolds ship catalogs for.
+func availableLocales() []string {
+	var out []string
+
+	_ = fs.WalkDir(scaffoldFS, "scaffolds", func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+
+		if m := localePath.FindStringSubmatch(p); len(m) == 2 && !slices.Contains(out, m[1]) {
+			out = append(out, m[1])
+		}
+
+		return nil
+	})
+
+	slices.Sort(out)
+
+	return out
+}
+
+// parseLocales validates the --locales list. An unknown locale is a usage
+// error rather than a silently missing catalog, and the default locale is
+// always part of the result.
+func parseLocales(list string) ([]string, error) {
+	available := availableLocales()
+
+	var out []string
+
+	for l := range strings.SplitSeq(list, ",") {
+		if l = strings.TrimSpace(l); l == "" {
+			continue
+		}
+
+		if !slices.Contains(available, l) {
+			return nil, usagef(
+				"no auth message catalog for locale %q (one of %s); translate the generated catalog instead",
+				l,
+				strings.Join(available, ", "),
+			)
+		}
+
+		if !slices.Contains(out, l) {
+			out = append(out, l)
+		}
+	}
+
+	if len(out) > 0 && !slices.Contains(out, defaultLocale) {
+		out = append([]string{defaultLocale}, out...)
+	}
+
+	return out, nil
+}
+
+// projectLocales lists the locales the project already has catalogs for.
+func projectLocales(env *Env) ([]string, error) {
+	entries, err := os.ReadDir(env.path(filepath.Join("app", "accounts", "lang")))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	var out []string
+
+	for _, e := range entries {
+		if e.IsDir() {
+			out = append(out, e.Name())
+		}
+	}
+
+	return out, nil
+}
+
+// resolveLocales records in data which message catalogs the generators may
+// write: the requested set, else the ones the project already has, else
+// the default locale alone. Taking the project's own set is what makes a
+// second run idempotent — a locale the developer deleted is never written
+// again by a later install:auth --social or --2fa.
+func resolveLocales(env *Env, requested []string, data map[string]string) error {
+	locales := requested
+
+	if len(locales) == 0 {
+		have, err := projectLocales(env)
+		if err != nil {
+			return err
+		}
+
+		locales = have
+	}
+
+	if len(locales) == 0 {
+		locales = []string{defaultLocale}
+	}
+
+	slices.Sort(locales)
+
+	quoted := make([]string, len(locales))
+	for i, l := range locales {
+		quoted[i] = strconv.Quote(l)
+	}
+
+	data[localeKey] = strings.Join(locales, ",")
+	// Locales is the list the generated message test asserts against.
+	data["Locales"] = strings.Join(quoted, ", ")
+
+	return nil
 }
 
 func scaffoldData(env *Env) (map[string]string, error) {
@@ -303,12 +447,25 @@ func installScaffold(env *Env, name string, data map[string]string, force bool) 
 
 	var files []file
 
+	locales, wanted := data[localeKey]
+
 	err := fs.WalkDir(scaffoldFS, root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return err
 		}
 
 		rel := strings.TrimPrefix(p, root+"/")
+
+		if m := localePath.FindStringSubmatch(rel); len(m) == 2 {
+			if !wanted {
+				return fmt.Errorf("scaffold %s writes %s without a resolved locale set", name, rel)
+			}
+
+			if !slices.Contains(strings.Split(locales, ","), m[1]) {
+				return nil
+			}
+		}
+
 		rel = strings.NewReplacer(
 			"TS1", data["TS1"], "TS2", data["TS2"], "TS3", data["TS3"], "TS4", data["TS4"], "TS5", data["TS5"],
 		).Replace(rel)

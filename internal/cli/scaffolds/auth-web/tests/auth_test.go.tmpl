@@ -21,6 +21,13 @@ import (
 	"{{.Module}}/bootstrap"
 )
 
+// Passwords other than testPassword: otherPassword signs up throwaway
+// accounts, newPassword is the one a reset or a change moves to.
+const (
+	otherPassword = "another long password"
+	newPassword   = "a brand new password"
+)
+
 var linkRe = regexp.MustCompile(`https?://[^\s)"]+`)
 
 // link extracts the first URL from the last mail sent to email.
@@ -54,10 +61,10 @@ func signUpForm(name, email, password string) url.Values {
 func register(t *testing.T, app *vukemtest.App, c *vukemtest.Client, email string) {
 	t.Helper()
 
-	c.PostForm("/register", signUpForm("Ana Silva", email, "correct horse battery")).
+	c.PostForm("/register", signUpForm("Ana Silva", email, testPassword)).
 		AssertRedirect("/register/check-email")
 	verifyEmail(t, app, email)
-	c.PostForm("/login", url.Values{"email": {email}, "password": {"correct horse battery"}}).
+	c.PostForm("/login", url.Values{"email": {email}, "password": {testPassword}}).
 		AssertRedirect("/dashboard")
 }
 
@@ -88,7 +95,7 @@ func TestRegisterAndVerifyEmail(t *testing.T) {
 
 	c.Get("/dashboard").AssertRedirect("/login")
 
-	c.PostForm("/register", signUpForm("Ana Silva", "ana@example.com", "correct horse battery")).
+	c.PostForm("/register", signUpForm("Ana Silva", "ana@example.com", testPassword)).
 		AssertRedirect("/register/check-email")
 	c.Get("/register/check-email").AssertOK().AssertSee("Check your email")
 	c.Get("/dashboard").AssertRedirect("/login") // sign-up does not log in
@@ -106,7 +113,7 @@ func TestRegisterAndVerifyEmail(t *testing.T) {
 	// as the intended URL and verifies once the login comes back to it.
 	c.Get(verify).AssertRedirect("/login")
 	vukemtest.AssertDatabaseHas(t, app, "users", map[string]any{"email": "ana@example.com", "email_verified_at": nil})
-	c.PostForm("/login", url.Values{"email": {"ana@example.com"}, "password": {"correct horse battery"}}).
+	c.PostForm("/login", url.Values{"email": {"ana@example.com"}, "password": {testPassword}}).
 		AssertRedirect(verify)
 	c.Get(verify + "x").AssertForbidden() // tampered signature
 	c.Get(verify).AssertRedirect("/dashboard")
@@ -150,7 +157,7 @@ func TestRegisterDoesNotRevealAccounts(t *testing.T) {
 		before := mailJobs()
 
 		c := app.Client(t).WithHeader("Referer", "/register")
-		c.PostForm("/register", signUpForm("Mallory", tc.email, "another long password")).
+		c.PostForm("/register", signUpForm("Mallory", tc.email, otherPassword)).
 			AssertRedirect("/register/check-email").
 			AssertSessionMissing("_errors")
 		c.Get("/dashboard").AssertRedirect("/login")
@@ -162,7 +169,7 @@ func TestRegisterDoesNotRevealAccounts(t *testing.T) {
 
 	vukemtest.AssertDatabaseCount(t, app, "users", 2)
 	vukemtest.AssertDatabaseHas(t, app, "users", map[string]any{"email": "ana@example.com", "name": "Ana Silva"})
-	app.Client(t).PostForm("/login", url.Values{"email": {"ana@example.com"}, "password": {"correct horse battery"}}).
+	app.Client(t).PostForm("/login", url.Values{"email": {"ana@example.com"}, "password": {testPassword}}).
 		AssertRedirect("/dashboard")
 }
 
@@ -175,9 +182,9 @@ func TestUnverifiedUsersSeeTheNotice(t *testing.T) {
 	app := vukemtest.New(t, bootstrap.New)
 	c := app.Client(t)
 
-	c.PostForm("/register", signUpForm("Uma", "uma@example.com", "correct horse battery")).
+	c.PostForm("/register", signUpForm("Uma", "uma@example.com", testPassword)).
 		AssertRedirect("/register/check-email")
-	c.PostForm("/login", url.Values{"email": {"uma@example.com"}, "password": {"correct horse battery"}}).
+	c.PostForm("/login", url.Values{"email": {"uma@example.com"}, "password": {testPassword}}).
 		AssertRedirect("/dashboard")
 	c.Get("/dashboard").AssertRedirect("/email/verify")
 	c.Get("/email/verify").AssertOK().AssertSee("uma@example.com")
@@ -200,7 +207,7 @@ func TestRegisterThrottle(t *testing.T) {
 		c := app.Client(t)
 
 		for i := range 30 {
-			res := c.PostForm("/register", signUpForm("Mallory", email(i), "another long password"))
+			res := c.PostForm("/register", signUpForm("Mallory", email(i), otherPassword))
 			if res.Status() == http.StatusTooManyRequests {
 				return i
 			}
@@ -224,7 +231,8 @@ func TestRegisterThrottle(t *testing.T) {
 		t.Errorf("an existing address is limited after %d sign-ups, a new one after %d", known, unknown)
 	}
 
-	perIP := attempts(t, vukemtest.New(t, bootstrap.New), func(i int) string { return fmt.Sprintf("user%d@example.com", i) })
+	fresh := func(i int) string { return fmt.Sprintf("user%d@example.com", i) }
+	perIP := attempts(t, vukemtest.New(t, bootstrap.New), fresh)
 	if perIP <= unknown {
 		t.Errorf("the IP limit (%d) is not above the address limit (%d)", perIP, unknown)
 	}
@@ -258,7 +266,7 @@ func TestRegisterSurvivesCacheOutage(t *testing.T) {
 	} {
 		before := len(fake.Messages())
 
-		app.Client(t).PostForm("/register", signUpForm("Mallory", tc.email, "another long password")).
+		app.Client(t).PostForm("/register", signUpForm("Mallory", tc.email, otherPassword)).
 			AssertRedirect("/register/check-email")
 
 		if got := len(fake.Messages()) - before; got != tc.jobs {
@@ -281,10 +289,11 @@ func TestVerificationEndsOtherSessions(t *testing.T) {
 	app := vukemtest.New(t, bootstrap.New)
 
 	squatter := app.Client(t)
-	squatter.PostForm("/register", signUpForm("Mallory", "vic@example.com", "correct horse battery")).
+	squatter.PostForm("/register", signUpForm("Mallory", "vic@example.com", testPassword)).
 		AssertRedirect("/register/check-email")
-	squatter.PostForm("/login", url.Values{"email": {"vic@example.com"}, "password": {"correct horse battery"}, "remember": {"true"}}).
-		AssertRedirect("/dashboard")
+	squatter.PostForm("/login", url.Values{
+		"email": {"vic@example.com"}, "password": {testPassword}, "remember": {"true"},
+	}).AssertRedirect("/dashboard")
 	squatter.Get("/email/verify").AssertOK()
 
 	userID := apiTokenFor(t, app, "vic@example.com")
@@ -300,7 +309,7 @@ func TestVerificationEndsOtherSessions(t *testing.T) {
 	// Signed in as the account, the link verifies it and ends the rest.
 	device := app.Client(t)
 	device.Get(verify).AssertRedirect("/login")
-	device.PostForm("/login", url.Values{"email": {"vic@example.com"}, "password": {"correct horse battery"}}).
+	device.PostForm("/login", url.Values{"email": {"vic@example.com"}, "password": {testPassword}}).
 		AssertRedirect(verify)
 	device.Get(verify).AssertRedirect("/dashboard")
 	device.Get("/dashboard").AssertOK()
@@ -321,7 +330,7 @@ func TestExpiredVerificationLinkOffersANewOne(t *testing.T) {
 	app := vukemtest.New(t, bootstrap.New)
 	c := app.Client(t)
 
-	c.PostForm("/register", signUpForm("Ana Silva", "exp@example.com", "correct horse battery")).
+	c.PostForm("/register", signUpForm("Ana Silva", "exp@example.com", testPassword)).
 		AssertRedirect("/register/check-email")
 
 	acc, err := accounts.New(app.App)
@@ -353,7 +362,7 @@ func TestExpiredVerificationLinkOffersANewOne(t *testing.T) {
 	expired = parsed.RequestURI()
 
 	c.Get(expired).AssertRedirect("/login")
-	c.PostForm("/login", url.Values{"email": {"exp@example.com"}, "password": {"correct horse battery"}}).
+	c.PostForm("/login", url.Values{"email": {"exp@example.com"}, "password": {testPassword}}).
 		AssertRedirect(expired)
 	c.Get(expired).AssertRedirect("/email/verify")
 	c.Get("/email/verify").AssertOK().AssertSee("expired")
@@ -370,7 +379,7 @@ func TestVerifiedLinkKeepsOtherSessions(t *testing.T) {
 	register(t, app, c, "done@example.com")
 
 	other := app.Client(t)
-	other.PostForm("/login", url.Values{"email": {"done@example.com"}, "password": {"correct horse battery"}}).
+	other.PostForm("/login", url.Values{"email": {"done@example.com"}, "password": {testPassword}}).
 		AssertRedirect("/dashboard")
 
 	c.Get(link(t, app, "done@example.com")).AssertRedirect("/dashboard")
@@ -386,7 +395,7 @@ func TestVerificationLinkBoundToEmail(t *testing.T) {
 	app := vukemtest.New(t, bootstrap.New)
 	c := app.Client(t)
 
-	c.PostForm("/register", signUpForm("Ana Silva", "old@example.com", "correct horse battery")).
+	c.PostForm("/register", signUpForm("Ana Silva", "old@example.com", testPassword)).
 		AssertRedirect("/register/check-email")
 
 	verify := link(t, app, "old@example.com")
@@ -402,7 +411,7 @@ func TestVerificationLinkBoundToEmail(t *testing.T) {
 	}
 
 	c.Get(verify).AssertRedirect("/login")
-	c.PostForm("/login", url.Values{"email": {"new@example.com"}, "password": {"correct horse battery"}}).
+	c.PostForm("/login", url.Values{"email": {"new@example.com"}, "password": {testPassword}}).
 		AssertRedirect(verify)
 	c.Get(verify).AssertForbidden()
 	vukemtest.AssertDatabaseHas(t, app, "users", map[string]any{"email": "new@example.com", "email_verified_at": nil})
@@ -415,10 +424,11 @@ func TestLoginLogoutAndThrottle(t *testing.T) {
 	register(t, app, app.Client(t), "bob@example.com")
 
 	c := app.Client(t)
-	c.WithHeader("Referer", "/login").PostForm("/login", url.Values{"email": {"bob@example.com"}, "password": {"wrong"}}).
+	c.WithHeader("Referer", "/login").
+		PostForm("/login", url.Values{"email": {"bob@example.com"}, "password": {"wrong"}}).
 		AssertSessionHasErrors("email")
 
-	c.PostForm("/login", url.Values{"email": {"bob@example.com"}, "password": {"correct horse battery"}}).
+	c.PostForm("/login", url.Values{"email": {"bob@example.com"}, "password": {testPassword}}).
 		AssertRedirect("/dashboard")
 	c.Get("/login").AssertRedirect("/")
 	c.PostForm("/logout", nil).AssertRedirect("/")
@@ -463,7 +473,7 @@ func TestPasswordReset(t *testing.T) {
 
 	form := url.Values{
 		"token": {token}, "email": {"cid@example.com"},
-		"password": {"a brand new password"}, "password_confirmation": {"a brand new password"},
+		"password": {newPassword}, "password_confirmation": {newPassword},
 	}
 
 	userID := apiTokenFor(t, app, "cid@example.com")
@@ -479,7 +489,7 @@ func TestPasswordReset(t *testing.T) {
 	// Single use.
 	c.WithHeader("Referer", reset).PostForm("/reset-password", form).AssertSessionHasErrors("email")
 
-	c.PostForm("/login", url.Values{"email": {"cid@example.com"}, "password": {"a brand new password"}}).
+	c.PostForm("/login", url.Values{"email": {"cid@example.com"}, "password": {newPassword}}).
 		AssertRedirect("/dashboard")
 }
 
@@ -498,7 +508,9 @@ func apiTokenFor(t *testing.T, app *vukemtest.App, email string) string {
 		t.Fatal(err)
 	}
 
-	if _, _, err := acc.Tokens.Create(t.Context(), u.AuthID(), "cli", []string{"*"}, time.Hour); err != nil {
+	// No abilities: the test only needs the key to exist, and a key never
+	// carries authority nobody asked for.
+	if _, _, err := acc.Tokens.Create(t.Context(), u.AuthID(), "cli", nil, time.Hour); err != nil {
 		t.Fatal(err)
 	}
 

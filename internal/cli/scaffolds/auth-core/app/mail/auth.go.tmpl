@@ -52,7 +52,10 @@ type AccountExists struct {
 
 // Envelope implements mail.Mailable.
 func (m AccountExists) Envelope() mail.Envelope {
-	return mail.Envelope{To: []string{m.User.Email}, Subject: cmp.Or(m.Subject, "Someone tried to sign up with your email")}
+	return mail.Envelope{
+		To:      []string{m.User.Email},
+		Subject: cmp.Or(m.Subject, "Someone tried to sign up with your email"),
+	}
 }
 
 // Content implements mail.Mailable.

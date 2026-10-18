@@ -160,12 +160,6 @@ linters:
           - forcetypeassert
           - gosec
           - noctx
-      # Starter stubs are filled in by app developers.
-      - path: internal/cli/starter/
-        text: unused-parameter
-      # The package comment of a starter package lives in its .go.tmpl files.
-      - path: internal/cli/starter/
-        text: "package-comments: should have a package comment"
 
 issues:
   max-issues-per-linter: 0

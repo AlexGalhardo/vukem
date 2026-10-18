@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/AlexGalhardo/vukem/i18n"
@@ -11,8 +12,18 @@ import (
 	"{{.Module}}/bootstrap"
 )
 
-// Every auth message (app/accounts/lang) exists in every locale, and
-// accounts.T follows the request locale, preferring the app's own catalog.
+// wantLocales are the locales install:auth wrote catalogs for
+// (vukem install:auth --locales). Change it whenever you add or remove a
+// catalog in app/accounts/lang: it is the only place that lists them.
+var wantLocales = []string{ {{.Locales}} }
+
+// fallbackLocale is the locale accounts.loadMessages falls back to; every
+// message must exist in it.
+const fallbackLocale = "en"
+
+// Every auth message (app/accounts/lang) exists in every locale the app
+// ships, and accounts.T follows the request locale, preferring the app's
+// own catalog.
 func TestAuthMessages(t *testing.T) {
 	t.Parallel()
 
@@ -24,14 +35,16 @@ func TestAuthMessages(t *testing.T) {
 	}
 
 	locales := acc.Messages.Locales()
-	if len(locales) < 2 {
-		t.Fatalf("auth message locales = %v, want en and pt-BR at least", locales)
+
+	sorted := slices.Sorted(slices.Values(locales))
+	if !slices.Equal(sorted, wantLocales) {
+		t.Fatalf("auth message locales = %v, want %v", sorted, wantLocales)
 	}
 
 	for _, l := range locales {
 		for key := range acc.Messages.Messages(l) { // includes the English fallback
-			if !acc.Messages.Has(l, key) || !acc.Messages.Has("en", key) {
-				t.Errorf("auth message %q is missing in %s or en", key, l)
+			if !acc.Messages.Has(l, key) || !acc.Messages.Has(fallbackLocale, key) {
+				t.Errorf("auth message %q is missing in %s or %s", key, l, fallbackLocale)
 			}
 		}
 	}
@@ -43,8 +56,16 @@ func TestAuthMessages(t *testing.T) {
 		t.Fatalf("T(%q) returned the key", key)
 	}
 
-	if pt := acc.T(i18n.WithLocale(t.Context(), "pt-BR"), key); pt == en || pt == key {
-		t.Errorf("T(%q) in pt-BR = %q, want a translation", key, pt)
+	// Every locale besides the fallback translates, instead of echoing
+	// English. Driven by wantLocales, so removing a catalog is one edit.
+	for _, l := range wantLocales {
+		if l == fallbackLocale {
+			continue
+		}
+
+		if got := acc.T(i18n.WithLocale(t.Context(), l), key); got == en || got == key {
+			t.Errorf("T(%q) in %s = %q, want a translation", key, l, got)
+		}
 	}
 
 	own, err := i18n.New(i18n.Options{})
