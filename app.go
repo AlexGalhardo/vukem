@@ -32,6 +32,7 @@ import (
 	"github.com/AlexGalhardo/vukem/logging"
 	"github.com/AlexGalhardo/vukem/logging/telegram"
 	"github.com/AlexGalhardo/vukem/mail"
+	"github.com/AlexGalhardo/vukem/openapi"
 	"github.com/AlexGalhardo/vukem/queue"
 	"github.com/AlexGalhardo/vukem/ratelimit"
 	"github.com/AlexGalhardo/vukem/router"
@@ -220,6 +221,9 @@ type App struct {
 	cacheStoreFunc  func(*App) (cache.Store, error)
 	// rateLimiters replaces the RATE_LIMIT_STORE factory (WithRateLimiters).
 	rateLimiters ratelimit.Factory
+	// openAPIInfo is the document base App.OpenAPI builds from
+	// (WithOpenAPI); nil falls back to the configuration alone.
+	openAPIInfo  *openapi.Info
 	schedules    []func(*schedule.Schedule, *App)
 	scheduleOnce sync.Once
 	schedule     *schedule.Schedule
@@ -326,6 +330,7 @@ type options struct {
 	cacheFunc     func(*App) (cache.Store, error)
 	sessionFunc   func(*App) (session.Store, error)
 	rateLimiters  ratelimit.Factory
+	openAPI       *openapi.Info
 	eventsFake    *events.Fake
 	schedules     []func(*schedule.Schedule, *App)
 	drivers       []database.Driver
@@ -660,6 +665,7 @@ func New(opts ...Option) (*App, error) {
 		queueDriverFunc: o.queueFunc,
 		cacheStoreFunc:  o.cacheFunc,
 		rateLimiters:    o.rateLimiters,
+		openAPIInfo:     o.openAPI,
 		sessStoreFunc:   o.sessionFunc,
 		schedules:       o.schedules,
 		mail:            mailState{transport: o.mailTransport},

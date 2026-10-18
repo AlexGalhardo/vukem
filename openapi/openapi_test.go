@@ -359,3 +359,224 @@ func TestBuildRejectsDuplicateOperationIDs(t *testing.T) {
 		t.Fatalf("Build(one version) error = %v", err)
 	}
 }
+
+type lookupProduct struct {
+	ID    int64  `json:"id"    validate:"required,positive" doc:"Product identifier" example:"42"`
+	Trace string `json:"trace"                              doc:"Caller trace id"    example:"abc-123"`
+}
+
+// lookupParams builds the parameters of a route whose path parameter and
+// query parameter both carry a doc and an example tag.
+func lookupParams(t *testing.T) map[string]openapi.Parameter {
+	t.Helper()
+
+	r := router.New(nil)
+	api.Register(r, "GET /products/{id}", api.Op{Name: "products.show"},
+		func(*web.Ctx, lookupProduct) (page, error) { return page{}, nil })
+
+	if _, err := r.Handler(); err != nil {
+		t.Fatal(err)
+	}
+
+	doc, err := openapi.Build(r.Routes(), openapi.Info{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	params := map[string]openapi.Parameter{}
+	for _, p := range doc.Paths["/products/{id}"]["get"].Parameters {
+		params[p.Name] = p
+	}
+
+	return params
+}
+
+func TestPathParameterDescriptionFromDocTag(t *testing.T) {
+	t.Parallel()
+
+	params := lookupParams(t)
+	if got := params["id"].Description; got != "Product identifier" {
+		t.Errorf("path parameter id description = %q, want the doc tag", got)
+	}
+
+	if got := params["trace"].Description; got != "Caller trace id" {
+		t.Errorf("query parameter trace description = %q, want the doc tag", got)
+	}
+}
+
+func TestParameterExampleFromTag(t *testing.T) {
+	t.Parallel()
+
+	params := lookupParams(t)
+	if got := params["id"].Example; got != int64(42) {
+		t.Errorf("path parameter id example = %#v, want int64(42)", got)
+	}
+
+	if got := params["trace"].Example; got != "abc-123" {
+		t.Errorf("query parameter trace example = %#v, want \"abc-123\"", got)
+	}
+}
+
+type exampleAuthor struct {
+	Name string `json:"name"`
+}
+
+type exampleBody struct {
+	Name   string        `json:"name"   validate:"required" doc:"Display name" example:"Widget"`
+	Price  float64       `json:"price"                                         example:"9.99"`
+	Active bool          `json:"active"                                        example:"true"`
+	Count  int           `json:"count"                                         example:"7"`
+	Tags   []string      `json:"tags"                                          example:"[\"new\",\"sale\"]"`
+	Author exampleAuthor `json:"author"                     doc:"Owner"        example:"{\"name\":\"ACME\"}"`
+}
+
+func TestBodyExamplesFromTags(t *testing.T) {
+	t.Parallel()
+
+	r := router.New(nil)
+	api.Register(r, "POST /products", api.Op{Name: "products.create"},
+		func(*web.Ctx, exampleBody) (page, error) { return page{}, nil })
+
+	if _, err := r.Handler(); err != nil {
+		t.Fatal(err)
+	}
+
+	doc, err := openapi.Build(r.Routes(), openapi.Info{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	body := doc.Paths["/products"]["post"].RequestBody
+	if body == nil {
+		t.Fatal("POST /products has no request body")
+	}
+
+	want := `{
+		"type": "object",
+		"required": ["name"],
+		"properties": {
+			"name":   {"type": "string", "minLength": 1, "description": "Display name", "examples": ["Widget"]},
+			"price":  {"type": "number", "format": "double", "examples": [9.99]},
+			"active": {"type": "boolean", "examples": [true]},
+			"count":  {"type": "integer", "examples": [7]},
+			"tags":   {"type": "array", "items": {"type": "string"}, "examples": [["new", "sale"]]},
+			"author": {
+				"allOf":       [{"$ref": "#/components/schemas/exampleAuthor"}],
+				"description": "Owner",
+				"examples":    [{"name": "ACME"}]
+			}
+		}
+	}`
+	if diff := cmp.Diff(asAny(t, want), asAny(t, body.Content["application/json"].Schema)); diff != "" {
+		t.Errorf("request schema (-want +got):\n%s", diff)
+	}
+}
+
+// asAny normalises a JSON string or a marshalable value into plain
+// any-typed JSON, so expectations can be written as literal JSON.
+func asAny(t *testing.T, v any) any {
+	t.Helper()
+
+	raw, ok := v.(string)
+	if !ok {
+		b, err := json.Marshal(v)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		raw = string(b)
+	}
+
+	var out any
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		t.Fatal(err)
+	}
+
+	return out
+}
+
+func TestMediaTypeAndParameterCarryExamples(t *testing.T) {
+	t.Parallel()
+
+	resp := openapi.Response{
+		Description: "Created",
+		Content: map[string]openapi.MediaType{"application/json": {
+			Schema:  openapi.Schema{"type": "object"},
+			Example: map[string]any{"ok": true},
+			Examples: map[string]openapi.Example{"rejected": {
+				Summary:     "Rejected",
+				Description: "the gateway refused the charge",
+				Value:       map[string]any{"ok": false},
+			}},
+		}},
+	}
+
+	wantResp := `{
+		"description": "Created",
+		"content": {"application/json": {
+			"schema":   {"type": "object"},
+			"example":  {"ok": true},
+			"examples": {"rejected": {
+				"summary":     "Rejected",
+				"description": "the gateway refused the charge",
+				"value":       {"ok": false}
+			}}
+		}}
+	}`
+	if diff := cmp.Diff(asAny(t, wantResp), asAny(t, resp)); diff != "" {
+		t.Errorf("response (-want +got):\n%s", diff)
+	}
+
+	param := openapi.Parameter{
+		Name: "id", In: "path", Required: true, Schema: openapi.Schema{"type": "string"},
+		Example:  "p_42",
+		Examples: map[string]openapi.Example{"legacy": {Value: "42"}},
+	}
+
+	wantParam := `{
+		"name": "id", "in": "path", "required": true, "schema": {"type": "string"},
+		"example": "p_42", "examples": {"legacy": {"value": "42"}}
+	}`
+	if diff := cmp.Diff(asAny(t, wantParam), asAny(t, param)); diff != "" {
+		t.Errorf("parameter (-want +got):\n%s", diff)
+	}
+}
+
+func TestBuildRejectsPrefixMatchingNoRoute(t *testing.T) {
+	t.Parallel()
+
+	r := router.New(nil)
+	r.Get("/api/v1/ping", func(c *web.Ctx) error { return c.NoContent() })
+
+	if _, err := r.Handler(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Git Bash rewrites OPENAPI_PREFIX=/api/v1 into an absolute Windows path.
+	_, err := openapi.Build(r.Routes(), openapi.Info{PathPrefix: "C:/Program Files/Git/api/v1"})
+	if !errors.Is(err, openapi.ErrEmptyDocument) {
+		t.Fatalf("Build(prefix matching no route) error = %v, want ErrEmptyDocument", err)
+	}
+
+	if _, err := openapi.Build(r.Routes(), openapi.Info{PathPrefix: "/api/v1"}); err != nil {
+		t.Fatalf("Build(matching prefix) error = %v", err)
+	}
+
+	empty := router.New(nil)
+	if _, err := empty.Handler(); err != nil {
+		t.Fatal(err)
+	}
+
+	doc, err := openapi.Build(empty.Routes(), openapi.Info{PathPrefix: "/api"})
+	if err != nil || len(doc.Paths) != 0 {
+		t.Fatalf("Build(router with no routes) = %v, %v, want an empty document and no error", doc, err)
+	}
+
+	defer func() {
+		if recover() == nil {
+			t.Error("Generate(prefix matching no route) did not panic")
+		}
+	}()
+
+	openapi.Generate(r.Routes(), openapi.Info{PathPrefix: "/nope"})
+}

@@ -87,6 +87,12 @@ type Parameter struct {
 	Required    bool   `json:"required,omitempty"`
 	Description string `json:"description,omitempty"`
 	Schema      Schema `json:"schema"`
+	// Example is a single example value, from the field's `example` tag
+	// when the generator built this parameter.
+	Example any `json:"example,omitempty"`
+	// Examples are named alternatives; OpenAPI ignores Example when it is
+	// set.
+	Examples map[string]Example `json:"examples,omitempty"`
 }
 
 // RequestBody is an operation's body.
@@ -98,6 +104,19 @@ type RequestBody struct {
 // MediaType wraps a schema for one content type.
 type MediaType struct {
 	Schema Schema `json:"schema"`
+	// Example is a single example value for this content type.
+	Example any `json:"example,omitempty"`
+	// Examples are named alternatives, so two responses that share one
+	// component schema can still show different payloads; OpenAPI ignores
+	// Example when it is set.
+	Examples map[string]Example `json:"examples,omitempty"`
+}
+
+// Example is one named example value (an OpenAPI Example Object).
+type Example struct {
+	Summary     string `json:"summary,omitempty"`
+	Description string `json:"description,omitempty"`
+	Value       any    `json:"value,omitempty"`
 }
 
 // Response is a response or a $ref to a shared one.
@@ -117,6 +136,13 @@ var (
 // nor declared in Info.SecuritySchemes.
 var ErrUnknownSecurityScheme = errors.New("openapi: unknown security scheme")
 
+// ErrEmptyDocument is returned by Build when Info.PathPrefix is set and
+// filters out every route: the resulting document has no paths, which
+// looks exactly like a broken app, and the usual cause is a mistyped or
+// shell-rewritten prefix. A router with no documentable route at all is
+// still an empty document and no error.
+var ErrEmptyDocument = errors.New("openapi: path prefix matches no route")
+
 // ErrDuplicateOperationID is returned by Build when two routes in the
 // document share an operationId: the route's own name, so groups that
 // reuse a local name (api.v1.index and api.v2.index) collide, and the
@@ -125,7 +151,7 @@ var ErrDuplicateOperationID = errors.New("openapi: duplicate operationId")
 
 // Generate builds the document for routes (router.Routes()). It panics on
 // the errors Build returns (duplicate operationIds, an undeclared security
-// scheme): they are
+// scheme, a path prefix matching no route): they are
 // programming errors that should surface at boot or in a test.
 func Generate(routes []router.RouteInfo, info Info) *Document {
 	doc, err := Build(routes, info)
@@ -167,11 +193,14 @@ func Build(routes []router.RouteInfo, info Info) (*Document, error) {
 
 	usedSchemes := map[string]bool{}
 	idOwner := map[string]string{} // operationId → route that took it
+	documentable := 0              // routes the prefix could have kept
 
 	for _, rt := range routes {
 		if _, skip := rt.Doc.(Skip); skip || rt.Method == "" || rt.Method == "ANY" {
 			continue
 		}
+
+		documentable++
 
 		path := oaPath(rt.Path)
 		if !underPrefix(path, info.PathPrefix) {
@@ -210,6 +239,11 @@ func Build(routes []router.RouteInfo, info Info) (*Document, error) {
 		}
 
 		doc.Paths[path][method] = op
+	}
+
+	if len(doc.Paths) == 0 && documentable > 0 && info.PathPrefix != "" {
+		return nil, fmt.Errorf("%w %q: none of the %d documentable routes is under it "+
+			"(check Info.PathPrefix / OPENAPI_PREFIX)", ErrEmptyDocument, info.PathPrefix, documentable)
 	}
 
 	problem := s.For(reflect.TypeFor[web.Problem]())
@@ -287,12 +321,14 @@ func pathParams(s *Schemas, path string, types map[string]Field) []Parameter {
 	var out []Parameter
 
 	for _, m := range paramRe.FindAllStringSubmatch(path, -1) {
-		sc := Schema{"type": "string"}
+		p := Parameter{Name: m[1], In: "path", Required: true, Schema: Schema{"type": "string"}}
 		if f, ok := types[m[1]]; ok {
-			sc = s.of(f.Type, f.Rules)
+			p.Schema = s.of(f.Type, f.Rules)
+			p.Description = f.Doc
+			p.Example = f.ExampleValue()
 		}
 
-		out = append(out, Parameter{Name: m[1], In: "path", Required: true, Schema: sc})
+		out = append(out, p)
 	}
 
 	return out
@@ -338,7 +374,8 @@ func typedOperation(s *Schemas, t *api.Operation) *Operation {
 				}
 
 				op.Parameters = append(op.Parameters, Parameter{
-					Name: f.Key, In: "query", Required: f.Required, Description: f.Doc, Schema: s.of(f.Type, f.Rules),
+					Name: f.Key, In: "query", Required: f.Required, Description: f.Doc,
+					Schema: s.of(f.Type, f.Rules), Example: f.ExampleValue(),
 				})
 			}
 		} else {

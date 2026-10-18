@@ -203,6 +203,10 @@ func (s *Schemas) Object(t reflect.Type, skip map[string]bool) Schema {
 			sc = withDescription(sc, f.Doc)
 		}
 
+		if v := f.ExampleValue(); v != nil {
+			sc = withExamples(sc, v)
+		}
+
 		props[f.Key] = sc
 
 		if f.Required {
@@ -228,6 +232,18 @@ func withDescription(sc Schema, doc string) Schema {
 	return sc
 }
 
+// withExamples sets the JSON-Schema examples keyword, wrapping a $ref the
+// way withDescription does: keywords beside a $ref are ignored.
+func withExamples(sc Schema, v any) Schema {
+	if _, ok := sc["$ref"]; ok {
+		return Schema{"allOf": []any{sc}, "examples": []any{v}}
+	}
+
+	sc["examples"] = []any{v}
+
+	return sc
+}
+
 // Field is one JSON property of a struct.
 type Field struct {
 	Key      string
@@ -235,10 +251,62 @@ type Field struct {
 	Rules    []string
 	Required bool
 	Doc      string
+	// Example is the raw `example` struct tag; ExampleValue decodes it.
+	Example string
+}
+
+// ExampleValue decodes the field's `example` tag into a value of the
+// field's JSON type, so the document shows 7 rather than "7". A composite
+// field (slice, map, struct) takes JSON; anything that does not decode
+// stays the raw string. It returns nil when there is no tag.
+func (f Field) ExampleValue() any {
+	if f.Example == "" {
+		return nil
+	}
+
+	t := f.Type
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+
+	// A type with its own text form (time.Time, a UUID) marshals as a
+	// string whatever its Go kind is.
+	if t.Kind() == reflect.String || t == timeType ||
+		t.Implements(textType) || reflect.PointerTo(t).Implements(textType) {
+		return f.Example
+	}
+
+	switch t.Kind() {
+	case reflect.Bool:
+		if v, err := strconv.ParseBool(f.Example); err == nil {
+			return v
+		}
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		if v, err := strconv.ParseInt(f.Example, 10, 64); err == nil {
+			return v
+		}
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		if v, err := strconv.ParseUint(f.Example, 10, 64); err == nil {
+			return v
+		}
+	case reflect.Float32, reflect.Float64:
+		if v, err := strconv.ParseFloat(f.Example, 64); err == nil {
+			return v
+		}
+	case reflect.Slice, reflect.Array, reflect.Map, reflect.Struct, reflect.Interface:
+		var v any
+		if err := json.Unmarshal([]byte(f.Example), &v); err == nil {
+			return v
+		}
+	default: // a kind with no JSON form of its own keeps the raw tag
+	}
+
+	return f.Example
 }
 
 // Fields lists the JSON properties of struct t (embedded structs are
-// flattened, `json:"-"` is skipped), with their validate rules.
+// flattened, `json:"-"` is skipped), with their validate rules, their
+// `doc` description and their raw `example` tag.
 func Fields(t reflect.Type) []Field {
 	var out []Field
 
@@ -264,7 +332,8 @@ func Fields(t reflect.Type) []Field {
 		value, _ := splitDive(rules)
 
 		out = append(out, Field{
-			Key: key, Type: f.Type, Rules: rules, Required: has(value, "required"), Doc: f.Tag.Get("doc"),
+			Key: key, Type: f.Type, Rules: rules, Required: has(value, "required"),
+			Doc: f.Tag.Get("doc"), Example: f.Tag.Get("example"),
 		})
 	}
 
