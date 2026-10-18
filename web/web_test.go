@@ -1,6 +1,7 @@
 package web
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -261,7 +262,23 @@ func TestResponses(t *testing.T) {
 			name:       "status chain",
 			do:         func(c *Ctx) error { return c.Status(418).JSON(200, 1) },
 			wantStatus: 418,
+			wantCT:     "application/json",
 			wantBody:   "1",
+		},
+		{
+			name:       "status then view",
+			do:         func(c *Ctx) error { return c.Status(http.StatusGone).View(textView("gone")) },
+			wantStatus: http.StatusGone, wantCT: "text/html; charset=utf-8", wantBody: "gone",
+		},
+		{
+			name: "status then header",
+			do: func(c *Ctx) error {
+				c.Status(http.StatusCreated)
+				c.SetHeader("Location", "/posts/1")
+				return c.JSON(200, Map{"id": 1})
+			},
+			wantStatus: 201, wantCT: "application/json", wantBody: `{"id":1}`,
+			wantHeader: [2]string{"Location", "/posts/1"},
 		},
 		{
 			name: "blob", do: func(c *Ctx) error { return c.Blob(200, "image/png", []byte{1}) },
@@ -290,14 +307,16 @@ func TestResponses(t *testing.T) {
 			if rec.Code != tt.wantStatus {
 				t.Errorf("status = %d, want %d", rec.Code, tt.wantStatus)
 			}
-			if tt.wantCT != "" && rec.Header().Get("Content-Type") != tt.wantCT {
-				t.Errorf("Content-Type = %q, want %q", rec.Header().Get("Content-Type"), tt.wantCT)
+			// Result() holds the headers as sent, not later mutations.
+			sent := rec.Result().Header
+			if tt.wantCT != "" && sent.Get("Content-Type") != tt.wantCT {
+				t.Errorf("Content-Type = %q, want %q", sent.Get("Content-Type"), tt.wantCT)
 			}
 			if got := strings.TrimSpace(rec.Body.String()); got != tt.wantBody {
 				t.Errorf("body = %q, want %q", got, tt.wantBody)
 			}
-			if tt.wantHeader[0] != "" && rec.Header().Get(tt.wantHeader[0]) != tt.wantHeader[1] {
-				t.Errorf("header %s = %q", tt.wantHeader[0], rec.Header().Get(tt.wantHeader[0]))
+			if tt.wantHeader[0] != "" && sent.Get(tt.wantHeader[0]) != tt.wantHeader[1] {
+				t.Errorf("header %s = %q", tt.wantHeader[0], sent.Get(tt.wantHeader[0]))
 			}
 			if !c.Writer().Written() || c.Writer().Status() != tt.wantStatus {
 				t.Errorf("writer state = %v %d", c.Writer().Written(), c.Writer().Status())
@@ -924,5 +943,194 @@ func TestSecurity_A02_IsHTTPSTrustsOnlyProxies(t *testing.T) {
 	tls := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "https://example.com/", http.NoBody)
 	if c, _ := newCtx(t, tls, nil); !c.IsHTTPS() {
 		t.Error("IsHTTPS = false on a TLS connection")
+	}
+}
+
+func TestStatusWithoutBody(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		h    HandlerFunc
+		want int
+	}{
+		{name: "status alone is sent", h: func(c *Ctx) error { c.Status(http.StatusAccepted); return nil }, want: 202},
+		{
+			name: "an error replaces the pending status",
+			h:    func(c *Ctx) error { c.Status(http.StatusCreated); return errs.New(http.StatusConflict, "taken") },
+			want: http.StatusConflict,
+		},
+		{name: "no status is 200", h: func(*Ctx) error { return nil }, want: 200},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			c, rec := newCtx(t, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/x", http.NoBody), nil)
+			c.Serve(tt.h)
+
+			if rec.Code != tt.want {
+				t.Fatalf("Serve() status = %d, want %d", rec.Code, tt.want)
+			}
+		})
+	}
+}
+
+func TestBindJSONRejectsUnknownFields(t *testing.T) {
+	t.Parallel()
+
+	type comment struct {
+		Author string `json:"author"`
+		Meta   struct {
+			Lang string `json:"lang"`
+		} `json:"meta"`
+	}
+
+	tests := []struct {
+		name, body string
+		wantField  string
+	}{
+		{name: "known fields", body: `{"author":"Ana","meta":{"lang":"en"}}`},
+		{name: "unknown top-level field", body: `{"author":"Ana","role":"admin"}`, wantField: "role"},
+		{name: "unknown nested field", body: `{"meta":{"lang":"en","x":1}}`, wantField: "x"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			r := httptest.NewRequestWithContext(t.Context(), "POST", "/", strings.NewReader(tt.body))
+			r.Header.Set("Content-Type", "application/json")
+			c, _ := newCtx(t, r, nil)
+
+			var in comment
+			err := c.BindJSON(&in)
+
+			if tt.wantField == "" {
+				if err != nil {
+					t.Fatalf("BindJSON() = %v, want nil", err)
+				}
+				return
+			}
+
+			verr, ok := errors.AsType[*errs.ValidationError](err)
+			if !ok || errs.Status(err) != http.StatusUnprocessableEntity {
+				t.Fatalf("BindJSON() = %v (status %d), want a 422 validation error", err, errs.Status(err))
+			}
+			if len(verr.Fields[tt.wantField]) == 0 {
+				t.Fatalf("BindJSON() fields = %v, want an error for %q", verr.Fields, tt.wantField)
+			}
+		})
+	}
+}
+
+func TestFormFileOnNonMultipart(t *testing.T) {
+	t.Parallel()
+
+	for _, ct := range []string{"application/x-www-form-urlencoded", "application/json", ""} {
+		t.Run(ct, func(t *testing.T) {
+			t.Parallel()
+
+			r := httptest.NewRequestWithContext(t.Context(), "POST", "/", strings.NewReader("a=1"))
+			if ct != "" {
+				r.Header.Set("Content-Type", ct)
+			}
+			c, _ := newCtx(t, r, nil)
+
+			_, _, err := c.FormFile("avatar")
+			if st := errs.Status(err); st != http.StatusUnprocessableEntity {
+				t.Fatalf("FormFile() = %v (status %d), want 422", err, st)
+			}
+		})
+	}
+}
+
+func TestStatusPendingRules(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		h        HandlerFunc
+		want     int
+		location string
+	}{
+		{name: "replaces the default 200", h: func(c *Ctx) error { return c.Status(201).JSON(200, 1) }, want: 201},
+		{name: "explicit status wins", h: func(c *Ctx) error { return c.Status(201).JSON(202, 1) }, want: 202},
+		{name: "no content wins", h: func(c *Ctx) error { return c.Status(201).NoContent() }, want: 204},
+		{
+			name: "redirect wins", h: func(c *Ctx) error { return c.Status(201).Redirect("/next") },
+			want: http.StatusFound, location: "/next",
+		},
+		{
+			name: "flush sends the pending status once",
+			h: func(c *Ctx) error {
+				c.Status(http.StatusAccepted)
+				if err := http.NewResponseController(c.Writer()).Flush(); err != nil {
+					return err
+				}
+				_, err := c.Writer().Write([]byte("x"))
+				return err
+			},
+			want: http.StatusAccepted,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			c, rec := newCtx(t, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/x", http.NoBody), nil)
+			c.Serve(tt.h)
+
+			if rec.Code != tt.want || c.Writer().Status() != tt.want {
+				t.Fatalf("status = %d (recorded %d), want %d", rec.Code, c.Writer().Status(), tt.want)
+			}
+			if tt.location != "" && rec.Header().Get("Location") != tt.location {
+				t.Fatalf("Location = %q, want %q", rec.Header().Get("Location"), tt.location)
+			}
+		})
+	}
+}
+
+// hijackRecorder is a ResponseRecorder that can be hijacked.
+type hijackRecorder struct {
+	*httptest.ResponseRecorder
+
+	hijacked    bool
+	headerCalls int
+}
+
+func (h *hijackRecorder) WriteHeader(code int) {
+	h.headerCalls++
+	h.ResponseRecorder.WriteHeader(code)
+}
+
+func (h *hijackRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	h.hijacked = true
+	return nil, nil, nil
+}
+
+func TestResponseWriterHijack(t *testing.T) {
+	t.Parallel()
+
+	rec := &hijackRecorder{ResponseRecorder: httptest.NewRecorder()}
+	r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/ws", http.NoBody)
+	c := NewCtx(rec, r, &Services{Log: slog.New(slog.DiscardHandler)})
+
+	c.Serve(func(c *Ctx) error {
+		c.Status(http.StatusCreated)
+		_, _, err := http.NewResponseController(c.Writer()).Hijack()
+		return err
+	})
+
+	if !rec.hijacked {
+		t.Fatal("Hijack did not reach the underlying writer")
+	}
+	if rec.headerCalls != 0 {
+		t.Fatalf("WriteHeader called %d times on a hijacked connection, want 0", rec.headerCalls)
+	}
+	if !c.Writer().Written() {
+		t.Fatal("Written() = false after Hijack; Serve would write on a hijacked connection")
 	}
 }

@@ -182,7 +182,7 @@ return inertia.RenderStatus(c, http.StatusGone, "Errors/Gone",
 	inertia.Props{"reason": "expired"})
 ```
 
-`RenderStatus` accepts `2xx`, `4xx` and `5xx`, except `204`, `205` and `409`. Those, `1xx` and `3xx` fail with `inertia: RenderStatus cannot answer status 204`, because they have no body or mean something else in the protocol. Do not call `c.Status` before `Render`: it commits the headers.
+`RenderStatus` accepts `2xx`, `4xx` and `5xx`, except `204`, `205` and `409`. Those, `1xx` and `3xx` fail with `inertia: RenderStatus cannot answer status 204`, because they have no body or mean something else in the protocol. Prefer `RenderStatus` over `c.Status` followed by `Render`: `c.Status` replaces the status without this check.
 
 Every page object carries these fields. Most are filled for you by the prop types below:
 

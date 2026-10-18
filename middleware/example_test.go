@@ -2,11 +2,13 @@ package middleware_test
 
 import (
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 
 	"github.com/AlexGalhardo/vukem/middleware"
+	"github.com/AlexGalhardo/vukem/web"
 )
 
 func Example() {
@@ -34,13 +36,23 @@ func Example() {
 }
 
 func ExampleBodyLimit() {
-	h := middleware.BodyLimit(16)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusNoContent)
+	h := middleware.BodyLimit(16)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c := web.NewCtx(w, r, &web.Services{Log: slog.New(slog.DiscardHandler)})
+
+		var v map[string]any
+		if err := c.BindJSON(&v); err != nil {
+			c.HandleError(err)
+			return
+		}
+
+		_ = c.NoContent()
 	}))
 
-	// A declared Content-Length over the limit is refused before the
-	// handler runs; undeclared bodies are cut off while reading.
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(strings.Repeat("x", 64)))
+	// Reading a body over the limit fails with 413. A declared
+	// Content-Length over it fails on the first read, before any byte is
+	// consumed; undeclared bodies are cut off while reading.
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"a":"`+strings.Repeat("x", 64)+`"}`))
+	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	fmt.Println(rec.Code)

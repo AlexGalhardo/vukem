@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -20,6 +21,7 @@ import (
 	"testing/fstest"
 	"time"
 
+	"github.com/AlexGalhardo/vukem/errs"
 	"github.com/AlexGalhardo/vukem/web"
 )
 
@@ -265,6 +267,66 @@ func TestSecurity_A06_BodyLimit(t *testing.T) {
 	}
 }
 
+// TestSecurity_A06_BodyLimitInnermostWins reproduces A66: a router-wide BodyLimit is a
+// default that a route's own BodyLimit (or web.LimitBody from upload/tus)
+// may raise or lower, including for a declared Content-Length.
+func TestSecurity_A06_BodyLimitInnermostWins(t *testing.T) {
+	t.Parallel()
+
+	read := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, err := io.ReadAll(r.Body); err != nil {
+			if _, tooLarge := errors.AsType[*http.MaxBytesError](err); tooLarge {
+				err = errs.ErrRequestTooLarge
+			}
+			web.Fail(w, r, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+	limitBody := func(n int64) Middleware {
+		return func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				next.ServeHTTP(w, web.LimitBody(w, r, n))
+			})
+		}
+	}
+
+	tests := []struct {
+		name   string
+		h      http.Handler
+		length int64
+		want   int
+	}{
+		{name: "route raises", h: BodyLimit(10)(BodyLimit(100)(read)), length: 50, want: 204},
+		{name: "route raises chunked", h: BodyLimit(10)(BodyLimit(100)(read)), length: -1, want: 204},
+		{name: "LimitBody raises", h: BodyLimit(10)(limitBody(100)(read)), length: 50, want: 204},
+		{name: "route lowers", h: BodyLimit(100)(BodyLimit(10)(read)), length: 50, want: 413},
+		{name: "route lowers chunked", h: BodyLimit(100)(BodyLimit(10)(read)), length: -1, want: 413},
+		{name: "raised still capped", h: BodyLimit(10)(BodyLimit(20)(read)), length: 50, want: 413},
+		{name: "outer only", h: BodyLimit(10)(read), length: 50, want: 413},
+		{name: "outer only chunked", h: BodyLimit(10)(read), length: -1, want: 413},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			h := withServices(tt.h, slog.New(slog.DiscardHandler))
+			r := httptest.NewRequestWithContext(
+				t.Context(),
+				http.MethodPost,
+				"/",
+				strings.NewReader(strings.Repeat("x", 50)),
+			)
+			r.ContentLength = tt.length
+
+			if rec := do(t, h, r); rec.Code != tt.want {
+				t.Fatalf("status = %d, want %d (%s)", rec.Code, tt.want, rec.Body.String())
+			}
+		})
+	}
+}
+
 func TestMethodOverride(t *testing.T) {
 	t.Parallel()
 
@@ -294,6 +356,51 @@ func TestMethodOverride(t *testing.T) {
 
 		if method != tt.want {
 			t.Errorf("%s %s _method=%s → %s, want %s", tt.method, tt.ct, tt.override, method, tt.want)
+		}
+	}
+}
+
+func TestSecurity_A06_MethodOverrideKeepsTighterLimit(t *testing.T) {
+	t.Parallel()
+
+	var (
+		method string
+		limit  int64
+	)
+	h := BodyLimit(64)(MethodOverride()(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		method = r.Method
+		limit, _ = web.BodyLimitOf(r)
+	})))
+
+	body := url.Values{"_method": {"DELETE"}, "pad": {strings.Repeat("x", 200)}}.Encode()
+	r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/", strings.NewReader(body))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	do(t, h, r)
+
+	if method != http.MethodPost || limit != 64 {
+		t.Fatalf("MethodOverride under BodyLimit(64): method %s, limit %d; want POST and 64", method, limit)
+	}
+}
+
+func TestPanicAfterStatusIs500(t *testing.T) {
+	t.Parallel()
+
+	log := slog.New(slog.DiscardHandler)
+	panics := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		web.NewCtx(w, r, web.ServicesFrom(r.Context())).Serve(func(c *web.Ctx) error {
+			c.Status(http.StatusCreated)
+			panic("boom")
+		})
+	})
+
+	stacks := map[string]http.Handler{
+		"recover outside logger": Recover()(Logger(log)(panics)),
+		"recover inside logger":  Logger(log)(Recover()(panics)),
+	}
+
+	for name, h := range stacks {
+		if rec := do(t, withServices(h, log), get(t, "/")); rec.Code != http.StatusInternalServerError {
+			t.Errorf("%s: status = %d, want 500", name, rec.Code)
 		}
 	}
 }
@@ -501,6 +608,89 @@ func TestStaticFSWithPrefix(t *testing.T) {
 	}
 	if rec := do(t, h, get(t, "/logo.svg")); rec.Code != 404 {
 		t.Fatalf("unprefixed = %d", rec.Code)
+	}
+}
+
+func TestStaticCacheControl(t *testing.T) {
+	t.Parallel()
+
+	files := []string{
+		"img/hero-mountains.jpg", "img/background-image.png", "docs/report-20240101.pdf",
+		"js/app-3f9a1c2bde.js", "js/index-BkS3pZ8_.js", "css/app.4f2a9c1e.css", "css/app.css",
+	}
+	fsys := fstest.MapFS{}
+	for _, f := range files {
+		fsys[f] = &fstest.MapFile{Data: []byte(f)}
+	}
+
+	h := StaticFS(fsys, StaticConfig{})(http.NotFoundHandler())
+
+	const (
+		immutable   = "public, max-age=31536000, immutable"
+		revalidated = "public, max-age=0, must-revalidate"
+	)
+
+	tests := []struct{ path, want string }{
+		{"/img/hero-mountains.jpg", revalidated},
+		{"/img/background-image.png", revalidated},
+		{"/docs/report-20240101.pdf", revalidated},
+		{"/css/app.css", revalidated},
+		{"/js/app-3f9a1c2bde.js", immutable},
+		{"/js/index-BkS3pZ8_.js", immutable},
+		{"/css/app.4f2a9c1e.css", immutable},
+	}
+
+	for _, tt := range tests {
+		if got := do(t, h, get(t, tt.path)).Header().Get("Cache-Control"); got != tt.want {
+			t.Errorf("GET %s Cache-Control = %q, want %q", tt.path, got, tt.want)
+		}
+	}
+}
+
+func TestStaticEmbeddedETag(t *testing.T) {
+	t.Parallel()
+
+	// fstest.MapFS, like embed.FS, reports a zero ModTime.
+	fsys := fstest.MapFS{"app.css": {Data: []byte("body{}")}}
+	h := StaticFS(fsys, StaticConfig{})(http.NotFoundHandler())
+
+	first := do(t, h, get(t, "/app.css"))
+	etag := first.Header().Get("ETag")
+	if first.Code != 200 || etag == "" {
+		t.Fatalf("GET /app.css = %d, ETag %q, want 200 with an ETag", first.Code, etag)
+	}
+
+	r := get(t, "/app.css")
+	r.Header.Set("If-None-Match", etag)
+	if rec := do(t, h, r); rec.Code != http.StatusNotModified {
+		t.Fatalf("GET /app.css with If-None-Match = %d, want 304", rec.Code)
+	}
+
+	fsys["app.css"] = &fstest.MapFile{Data: []byte("body{color:red}")}
+	r = get(t, "/app.css")
+	r.Header.Set("If-None-Match", etag)
+	if rec := do(t, h, r); rec.Code != http.StatusOK || rec.Header().Get("ETag") == etag {
+		t.Fatalf("changed file = %d, ETag %q, want 200 with a new ETag", rec.Code, rec.Header().Get("ETag"))
+	}
+}
+
+func TestStaticDiskFileHasLastModified(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.css"), []byte("a"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = root.Close() })
+
+	rec := do(t, Static(root, StaticConfig{})(http.NotFoundHandler()), get(t, "/a.css"))
+	if rec.Header().Get("Last-Modified") == "" {
+		t.Fatal("disk file served without Last-Modified")
 	}
 }
 

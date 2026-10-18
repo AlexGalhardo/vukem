@@ -134,13 +134,13 @@ type ValidationError struct { Fields map[string][]string }
 - `errs.NewKey(status, key, fallback, params)` gives an `*HTTPError` a message key: the error handler shows `HTTPError.LocalizedText(ctx)`, translated by the request's `errs.Translator` (installed by `i18n.Middleware`, see [i18n](subsystems.md#i18n)), with `Message` as the English fallback. `errs.Translate(ctx, key, fallback, params)` does the same for any message built with a context.
 - `NewValidation().Add(field, msg)` returns the `*ValidationError` for chaining (`return errs.NewValidation().Add(...)`); `Append(field, msg)` has no result, for statements that errcheck would otherwise flag.
 
-- Handlers return errors; `errs.Handler` maps them:
+- Handlers return errors; `web.DefaultErrorHandler` (or `Services.Errors`, a `web.ErrorHandler`, when set) maps them:
   - `*ValidationError` → see the validation table above.
   - `*HTTPError` / sentinels → status page (`resources/views/errors/<status>.html`, which receives `.Nonce` for a nonce'd `<style>`) or problem+json. The built-in status pages have no inline style attributes and nonce their `<style>`, so they render under the default CSP.
-  - `orm.ErrNoRows` → 404.
+  - `orm.ErrNotFound` (an `*errs.HTTPError`, returned by `First`/`Find` for no row) → 404.
   - anything else → 500, logged with request id; debug page in development.
 - Content negotiation: `Accept: application/json` or `/api` routes → RFC 9457 problem details; HTMX → fragment/status; `Services.ErrorPage` (a `web.ErrorPageFunc` taking a client-safe `web.ErrorPage{Status, Title, Detail, Errors}`; Inertia requests with `vukem.WithInertia`: the `Error` page component); otherwise HTML.
-- Custom renderers per error type: `h.Render[*MyErr](func(c *Ctx, e *MyErr) error {...})`.
+- Custom handling per error type: set `Services.Errors` to a `web.ErrorHandler`, match your types with `errors.AsType[*MyErr](err)`, and call `web.DefaultErrorHandler(c, err)` for the rest.
 - Panics are recovered by `middleware.Recover` and converted to 500.
 
 ### Debug error page
@@ -151,6 +151,6 @@ Stacks come from `errs.New`, `errs.Wrap`, `errs.WithStack(err)` (for errors from
 
 ## Static files and uploads
 
-- `public/` served by `middleware.Static` with `http.FileServerFS` over an `os.Root`; hashed assets get `Cache-Control: public, max-age=31536000, immutable`.
-- Request bodies limited by `http.MaxBytesReader` (configurable per route: a route's `middleware.BodyLimit` or `upload.Rules.MaxSize` replaces the router-wide 10 MiB default).
+- `public/` served by `middleware.Static` with `http.FileServerFS` over an `os.Root`; `/build/` and fingerprinted names (a hex or Vite-style hash segment, not any long word) get `Cache-Control: public, max-age=31536000, immutable`; other files revalidate through `Last-Modified`, or a content-hash `ETag` for embedded files.
+- Request bodies limited by `http.MaxBytesReader` (configurable per route: a route's `middleware.BodyLimit` or `upload.Rules.MaxSize` replaces the router-wide 10 MiB default, raising or lowering it; the limit is checked when the body is read, against the innermost limit).
 - Uploads stored through `storage/` (ALPHA) using `os.Root` to prevent path traversal; filenames randomised by default. Streaming, resumable and direct uploads: [subsystems.md#uploads](subsystems.md#uploads).

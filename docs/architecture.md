@@ -182,7 +182,7 @@ net/http server
           └─ router middleware stack  (matched routes: session, csrf, auth init)
               └─ group / route middleware (named, with options)
                   └─ handler func(c *Ctx) error
-                      └─ error? → errs.Handler → HTML | redirect+flash | 422 fragment | problem+json
+                      └─ error? → web.DefaultErrorHandler → HTML | redirect+flash | 422 fragment | problem+json
 ```
 
 Three middleware stacks (AdonisJS model): **server**, **router**, **named**. All have the signature `func(http.Handler) http.Handler`.

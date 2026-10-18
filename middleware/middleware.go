@@ -165,15 +165,19 @@ func Timeout(d time.Duration) Middleware {
 	}
 }
 
-// BodyLimit caps request bodies at n bytes; larger bodies fail with 413.
+// BodyLimit caps request bodies at n bytes; reading a larger body fails
+// with *http.MaxBytesError, which the web helpers (Input, BindJSON, Parse,
+// uploads) answer with 413. A declared Content-Length over the limit fails
+// on the first read, before any byte is consumed.
+//
+// A later BodyLimit, web.LimitBody or upload.Rules.MaxSize on the same
+// request replaces the limit instead of nesting under it, so the
+// router-wide default set by vukem.DefaultMiddleware can be raised or
+// lowered per route. The check runs when the body is read, against the
+// innermost limit: a handler that never reads the body gets no 413.
 func BodyLimit(n int64) Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.ContentLength > n {
-				web.Fail(w, r, errs.ErrRequestTooLarge)
-				return
-			}
-
 			next.ServeHTTP(w, web.LimitBody(w, r, n))
 		})
 	}
@@ -196,7 +200,12 @@ func MethodOverride() Middleware {
 				if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
 					m = r.URL.Query().Get("_method")
 				} else {
-					r = web.LimitBody(w, r, web.DefaultMaxBody)
+					// Keep a limit set earlier (BodyLimit as server middleware):
+					// replacing it with the default would let the form parse
+					// read far more than the app allows.
+					if _, limited := web.BodyLimitOf(r); !limited {
+						r = web.LimitBody(w, r, web.DefaultMaxBody)
+					}
 					m = r.PostFormValue("_method")
 				}
 

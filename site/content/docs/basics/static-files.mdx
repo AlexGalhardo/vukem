@@ -155,13 +155,18 @@ The middleware picks one of two `Cache-Control` values:
 | Path starts with one of `ImmutablePrefixes` (default `/build/`), **or** the name looks fingerprinted | `public, max-age=31536000, immutable` | Keep it for a year and never ask again |
 | Everything else | `public, max-age=0, must-revalidate` | Ask the server every time; a `304` keeps the download small |
 
-A <Term tip="A file name that contains a hash of the file's content, such as app-3f9a1c2b.js. When the content changes, the name changes, so an old cached copy is never used by mistake.">fingerprinted</Term> name is detected by the pattern `[.-]` + 8 or more letters, digits, `_` or `-` + `.extension` at the end of the path: `app-3f9a1c2b.js`, `logo.4b1f9e0c.svg`. The [Vite](/docs/frontend/vite) build writes fingerprinted files to `resources/public/build/`, which is also the default immutable prefix.
+A <Term tip="A file name that contains a hash of the file's content, such as app-3f9a1c2b.js. When the content changes, the name changes, so an old cached copy is never used by mistake.">fingerprinted</Term> name has a hash in its last `-` or `.` segment before the extension. The rules are strict, because a wrong guess keeps a changing file in browsers for a year:
 
-<Callout type="warning" title="Long names look fingerprinted">
-The check only looks at the shape of the name. `/img/hero-mountains.jpg` matches (`-mountains` is 9 characters), so browsers keep it for a year even if you replace the file. Name hand-made files without a long `-word` or `.word` suffix (`/img/hero_mountains.jpg`), or put them through the Vite build.
-</Callout>
+| Last segment | Example | Fingerprinted |
+| --- | --- | --- |
+| 8 or more lowercase hex characters, with a digit and a letter | `app-3f9a1c2b.js`, `logo.4b1f9e0c.svg` | yes |
+| exactly 8 letters, digits or `_`, with a digit, an upper and a lower case letter (Vite's default) | `index-BkS3pZ8_.js` | yes |
+| a word | `hero-mountains.jpg` | no |
+| only digits | `report-20240101.pdf` | no |
 
-Files embedded in the binary have no modification time, so they get no `Last-Modified` header and never a `304`: a browser downloads a non-fingerprinted embedded file again on each visit. Fingerprinting your CSS and JavaScript through Vite avoids this.
+A hash that misses these rules (Vite's `index-DiwrgTda.js`, without a digit) only loses the long cache: the file is revalidated instead. The [Vite](/docs/frontend/vite) build writes its files to `resources/public/build/`, which is the default immutable prefix anyway.
+
+Revalidation is cheap. Files on disk carry `Last-Modified`. Files embedded in the binary have no modification time, so the middleware sends an `ETag` instead: a hash of the content, computed on the first request and kept in memory. The browser sends it back in `If-None-Match`, and an unchanged file answers `304 Not Modified` with no body.
 
 ## Configuration
 

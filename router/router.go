@@ -163,7 +163,9 @@ func (r *Router) Any(path string, h web.HandlerFunc) *Route { return r.root.Any(
 // start with a method ("GET /metrics").
 func (r *Router) Handle(pattern string, h http.Handler) *Route { return r.root.Handle(pattern, h) }
 
-// Group creates a route group under prefix.
+// Group creates a route group under prefix. Inside it, g.Get("/", h)
+// serves prefix+"/" exactly (ServeMux redirects the bare prefix there)
+// and g.Get("", h) serves the bare prefix; neither is a catch-all.
 func (r *Router) Group(prefix string, fn func(g *Group)) *Group { return r.root.Group(prefix, fn) }
 
 // Resource registers the actions ctrl implements (see Indexer, Storer, ...).
@@ -438,17 +440,48 @@ func funcName(mw Middleware) string {
 		return "middleware@" + strconv.FormatUint(uint64(pc), 16)
 	}
 
-	name := fn.Name()
-	// "github.com/x/y/middleware.Recover.func1" → "middleware.Recover"
+	return cleanFuncName(fn.Name())
+}
+
+// cleanFuncName drops the import path and the suffixes the compiler gives
+// closures and method values: "github.com/x/y/middleware.Recover.func1",
+// "middleware.Recover.1" (inlined closures) and "(*T).M-fm" become
+// "middleware.Recover" and "(*T).M".
+func cleanFuncName(name string) string {
 	if i := strings.LastIndexByte(name, '/'); i >= 0 {
 		name = name[i+1:]
 	}
+
+	name = strings.TrimSuffix(name, "-fm")
 
 	if i := strings.Index(name, ".func"); i >= 0 {
 		name = name[:i]
 	}
 
-	return name
+	for {
+		i := strings.LastIndexByte(name, '.')
+		if i < 0 || !closureSuffix(name[i+1:]) || !strings.Contains(name[:i], ".") {
+			return name
+		}
+
+		name = name[:i]
+	}
+}
+
+// closureSuffix reports a compiler-made name segment: "1", "gowrap2".
+func closureSuffix(seg string) bool {
+	seg = strings.TrimPrefix(seg, "gowrap")
+	if seg == "" {
+		return false
+	}
+
+	for _, r := range seg {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+
+	return true
 }
 
 func (r *Router) adapt(h web.HandlerFunc, rt *Route) http.Handler {

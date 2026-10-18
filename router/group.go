@@ -57,7 +57,7 @@ func (g *Group) namePrefix() string {
 	return b.String()
 }
 
-// Group creates a nested group.
+// Group creates a nested group (see Router.Group for "/" and "").
 func (g *Group) Group(prefix string, fn func(g *Group)) *Group {
 	child := &Group{router: g.router, parent: g, prefix: cleanPrefix(prefix)}
 	if fn != nil {
@@ -82,11 +82,13 @@ func (g *Group) add(method, path string, h http.Handler, hf web.HandlerFunc) *Ro
 		full = "/"
 	}
 
-	// "/" means the root page only (Laravel semantics). In ServeMux syntax
-	// "/" is a catch-all, so handler routes use "/{$}". Handle keeps raw
-	// ServeMux semantics for mounting sub-trees.
-	if full == "/" && hf != nil {
-		full = "/{$}"
+	// "/" means the root page only (Laravel semantics), in a group too:
+	// "/admin/" serves "/admin/" and nothing below it. In ServeMux syntax a
+	// trailing "/" is a catch-all, so handler routes add "{$}" (ServeMux
+	// still redirects "/admin" to "/admin/"). Handle keeps raw ServeMux
+	// semantics for mounting sub-trees.
+	if hf != nil && (path == "/" || full == "/") {
+		full += "{$}"
 	}
 
 	rt := &Route{method: method, path: full, group: g}

@@ -97,3 +97,33 @@ func TestJSONSchemaUnknown(t *testing.T) {
 		t.Errorf("JSONSchema(custom) = %v, want {}", got)
 	}
 }
+
+func TestJSONSchemaNullableIsNotRequired(t *testing.T) {
+	t.Parallel()
+
+	type in struct {
+		Name string  `json:"name"`
+		Bio  *string `json:"bio"`
+		Role *string `json:"role"`
+	}
+
+	s := z.Struct[in](z.Shape{
+		"name": z.String(),
+		"bio":  z.String().Nullable(),
+		"role": z.Enum("admin", "user").Nullable(),
+	})
+
+	// The parser accepts a Nullable key that is absent, so the schema must
+	// not require it (the schema may be looser than the server, never
+	// stricter).
+	for _, body := range []map[string]any{{"name": "Ana"}, {"name": "Ana", "bio": nil, "role": nil}} {
+		if _, err := s.Parse(body); err != nil {
+			t.Fatalf("Parse(%v) = %v, want nil", body, err)
+		}
+	}
+
+	got := z.JSONSchema(s)["required"]
+	if diff := cmp.Diff([]string{"name"}, got); diff != "" {
+		t.Fatalf("required mismatch (-want +got):\n%s", diff)
+	}
+}

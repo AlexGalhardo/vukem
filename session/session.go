@@ -42,6 +42,7 @@ type Session struct {
 	oldID       string
 	storedID    string // id the session was loaded under (server-side stores)
 	destroyed   bool
+	cookie      bool // data lives in the cookie: there is no id to expose
 }
 
 func newSession(id string, data map[string]any) *Session {
@@ -61,11 +62,18 @@ func (s *Session) ensure() {
 	}
 }
 
-// ID returns the session id ("" until the session is saved for cookie
-// sessions).
+// ID returns the server-side session id: the store key, also listed by
+// session devices and revocation. A new session has an id only once saved
+// (after the response); Regenerate and Invalidate issue a new one at once.
+// Cookie sessions (no Store) keep their data in the encrypted cookie and
+// have no id: ID is always "" for them, Regenerate included.
 func (s *Session) ID() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if s.cookie {
+		return ""
+	}
 
 	s.ensure()
 

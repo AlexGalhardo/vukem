@@ -156,7 +156,7 @@ func newID() string { return rand.Text() }
 func (m *Manager) Middleware() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			sess := &Session{}
+			sess := &Session{cookie: m.sealer != nil}
 			sess.load = func(s *Session) { m.load(r, s) }
 
 			ctx := web.WithSession(r.Context(), sess)

@@ -107,8 +107,15 @@ func Webhooks(r *router.Router, app *vukem.App) error {
 ```go title="app/controllers/resend_webhook.go"
 package controllers
 
-import "github.com/AlexGalhardo/vukem/web"
+import (
+	"encoding/json"
+	"net/http"
 
+	"github.com/AlexGalhardo/vukem/errs"
+	"github.com/AlexGalhardo/vukem/web"
+)
+
+// resendEvent keeps only the fields this app reads.
 type resendEvent struct {
 	Type string `json:"type"`
 	Data struct {
@@ -118,9 +125,12 @@ type resendEvent struct {
 
 // ResendWebhook runs only for a verified, first-time event.
 func ResendWebhook(c *web.Ctx) error {
+	// Providers add fields over time: decode leniently instead of with
+	// c.BindJSON, which rejects unknown fields with 422.
 	var ev resendEvent
-	if err := c.BindJSON(&ev); err != nil {
-		return err
+	err := json.NewDecoder(c.Request().Body).Decode(&ev)
+	if err != nil {
+		return errs.Wrap(http.StatusBadRequest, err)
 	}
 
 	switch ev.Type {
@@ -170,7 +180,7 @@ A correct delivery gets `204 No Content`. The same delivery again gets `200` wit
 2. Requires a non-empty `webhook-id` and a positive numeric timestamp.
 3. Refuses a timestamp more than `Tolerance` (5 minutes) away from now, in the past **or** the future.
 4. Computes the HMAC over `<id>.<timestamp>.<body>` and compares it with each `v1,` value in `webhook-signature`. The header may hold several, separated by spaces, which is how providers rotate secrets; one match is enough. Other versions (`v1a,…`) are skipped.
-5. Puts the body back, so your handler can read it again with `c.BindJSON`.
+5. Puts the body back, so your handler can read it again (decode it leniently: `c.BindJSON` rejects the fields your struct leaves out).
 
 Any failure answers 401 `Invalid webhook signature.` and logs a `webhook.signature_invalid` [security event](/docs/security/building-blocks#security-events) at WARN.
 

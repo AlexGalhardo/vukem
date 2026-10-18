@@ -444,6 +444,13 @@ type MiddlewareOptions struct {
 	// exempt from CSRF checks, e.g. signed webhooks. Each bypass is logged
 	// at boot.
 	CSRFBypass []string
+	// CSRFTokenFallback also requires the session's CSRF token (the
+	// csrfField template function, or the X-CSRF-Token header) on unsafe
+	// requests that carry the session cookie but neither Sec-Fetch-Site nor
+	// Origin, i.e. browsers too old for CrossOriginProtection (see
+	// csrf.Config.TokenFallback). It needs sessions: combined with
+	// Stateless it is a boot error.
+	CSRFTokenFallback bool
 	// I18n configures the locale resolver installed when WithTranslations
 	// was given (nil: i18n.MiddlewareConfig defaults), e.g. its sources and
 	// their order, or the selectable locales. It is validated at boot and
@@ -455,6 +462,10 @@ type MiddlewareOptions struct {
 func DefaultMiddlewareWith(app *App, r *router.Router, opts MiddlewareOptions) error {
 	if opts.Stateless && len(opts.SessionBypass) > 0 {
 		return errors.New("vukem: SessionBypass has no effect with Stateless (no sessions anywhere)")
+	}
+
+	if opts.Stateless && opts.CSRFTokenFallback {
+		return errors.New("vukem: CSRFTokenFallback needs sessions; it cannot be combined with Stateless")
 	}
 
 	localeMW, err := localeMiddleware(app, opts.I18n, i18n.MiddlewareConfig{})
@@ -478,15 +489,7 @@ func DefaultMiddlewareWith(app *App, r *router.Router, opts MiddlewareOptions) e
 		}
 	}
 
-	csrfMW, err := csrf.Middleware(csrf.Config{TrustedOrigins: origins, BypassPatterns: opts.CSRFBypass})
-	if err != nil {
-		return err
-	}
-
-	for _, p := range opts.CSRFBypass {
-		app.Log.Warn("csrf bypass", "pattern", p)
-	}
-
+	csrfCfg := csrf.Config{TrustedOrigins: origins, BypassPatterns: opts.CSRFBypass}
 	routerMW := []router.Middleware{middleware.BodyLimit(web.DefaultMaxBody)}
 
 	if !opts.Stateless {
@@ -501,6 +504,17 @@ func DefaultMiddlewareWith(app *App, r *router.Router, opts MiddlewareOptions) e
 		}
 
 		routerMW = append(routerMW, sessMW)
+		csrfCfg.TokenFallback = opts.CSRFTokenFallback
+		csrfCfg.SessionCookie = sessions.CookieName()
+	}
+
+	csrfMW, err := csrf.Middleware(csrfCfg)
+	if err != nil {
+		return err
+	}
+
+	for _, p := range opts.CSRFBypass {
+		app.Log.Warn("csrf bypass", "pattern", p)
 	}
 
 	r.UseServer(append(serverMiddleware(app, secure, maintenanceConfig(app)), middleware.MethodOverride())...)

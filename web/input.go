@@ -39,7 +39,7 @@ func (c *Ctx) Input() (map[string]any, error) {
 		return out, nil
 	case c.IsJSON():
 		var body map[string]any
-		if err := c.decodeJSON(&body); err != nil {
+		if err := c.decodeJSON(&body, false); err != nil {
 			return nil, err
 		}
 
@@ -89,24 +89,27 @@ func fileInput(f *multipart.Form) map[string]any {
 // QueryInput returns the query string as a generic map (see Input).
 func (c *Ctx) QueryInput() map[string]any { return FormToMap(c.r.URL.Query()) }
 
-// BindJSON decodes the JSON body into v, rejecting unknown fields, trailing
-// data and bodies over the size limit.
+// BindJSON decodes the JSON body into v, rejecting unknown fields (422
+// with a field error per key, for struct targets), trailing data and
+// bodies over the size limit.
 func (c *Ctx) BindJSON(v any) error {
 	if !c.IsJSON() {
 		return errs.ErrUnsupportedMediaType
 	}
 
-	return c.decodeJSON(v)
+	return c.decodeJSON(v, true)
 }
 
-// FormFile returns an uploaded file.
+// FormFile returns an uploaded file. A missing file, or a request that is
+// not multipart/form-data (a form without enctype, a JSON body), is a 422
+// validation error on name.
 func (c *Ctx) FormFile(name string) (multipart.File, *multipart.FileHeader, error) {
 	if err := c.parseForm(); err != nil {
 		return nil, nil, err
 	}
 
 	f, h, err := c.r.FormFile(name)
-	if errors.Is(err, http.ErrMissingFile) {
+	if errors.Is(err, http.ErrMissingFile) || errors.Is(err, http.ErrNotMultipart) {
 		return nil, nil, errs.NewValidation().Add(name, "The file is required.")
 	}
 
@@ -133,15 +136,40 @@ type bodyLimit struct {
 // handlers do not apply DefaultMaxBody on top. Body-limit middleware uses
 // it. Called again on the same request, the new limit replaces the old
 // one, so a route can raise or lower the router-wide default.
+//
+// A declared Content-Length above n fails on the first read, before any
+// byte is consumed, with an *http.MaxBytesError; undeclared (chunked)
+// bodies fail once they cross n.
 func LimitBody(w http.ResponseWriter, r *http.Request, n int64) *http.Request {
 	orig := r.Body
 	if prev, ok := r.Context().Value(bodyLimitKey{}).(bodyLimit); ok {
 		orig = prev.body
 	}
 
-	r.Body = http.MaxBytesReader(w, orig, n)
+	r.Body = &limitedBody{ReadCloser: http.MaxBytesReader(w, orig, n), declared: r.ContentLength, n: n}
 
 	return r.WithContext(context.WithValue(r.Context(), bodyLimitKey{}, bodyLimit{n: n, body: orig}))
+}
+
+// limitedBody refuses a declared Content-Length over the limit without
+// reading it. The check is lazy so the innermost LimitBody decides: a
+// router-wide default must not reject a body a route allows (A66).
+// declared is r.ContentLength when LimitBody ran (net/http does not change
+// it later); the *http.MaxBytesError is built here, not by MaxBytesReader,
+// so the connection is not marked to close, and net/http closes it anyway
+// when a large unread body is left after the handler.
+type limitedBody struct {
+	io.ReadCloser
+
+	declared, n int64
+}
+
+func (b *limitedBody) Read(p []byte) (int, error) {
+	if b.declared > b.n {
+		return 0, &http.MaxBytesError{Limit: b.n}
+	}
+
+	return b.ReadCloser.Read(p)
 }
 
 // BodyLimitOf returns the body limit set by LimitBody, if any.
@@ -156,13 +184,21 @@ func (c *Ctx) limitBody() {
 	}
 }
 
-func (c *Ctx) decodeJSON(v any) error {
+func (c *Ctx) decodeJSON(v any, strict bool) error {
 	c.limitBody()
 
 	dec := json.NewDecoder(c.r.Body)
 	dec.UseNumber()
 
+	if strict {
+		dec.DisallowUnknownFields()
+	}
+
 	if err := dec.Decode(v); err != nil {
+		if field, ok := unknownField(err); ok {
+			return errs.NewValidation().Add(field, "The field is not allowed.")
+		}
+
 		return bodyError(err)
 	}
 
@@ -194,6 +230,19 @@ func (c *Ctx) parseForm() error {
 	}
 
 	return nil
+}
+
+// unknownField reads the key out of the error DisallowUnknownFields
+// returns: encoding/json has no typed error for it.
+func unknownField(err error) (string, bool) {
+	rest, ok := strings.CutPrefix(err.Error(), "json: unknown field ")
+	if !ok {
+		return "", false
+	}
+
+	field, uerr := strconv.Unquote(rest)
+
+	return field, uerr == nil && field != ""
 }
 
 func isForm(r *http.Request) bool {

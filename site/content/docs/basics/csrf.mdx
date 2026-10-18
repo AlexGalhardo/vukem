@@ -145,40 +145,22 @@ Patterns use [`http.ServeMux` syntax](https://pkg.go.dev/net/http#hdr-Patterns-S
 
 ## The token fallback
 
-Some clients send neither header but do keep cookies: very old browsers, some embedded web views. With `TokenFallback`, a request that is unsafe, has **no** `Sec-Fetch-Site` and **no** `Origin`, runs with a session in its context and carries a cookie, must also carry the session's CSRF token, or it is rejected with `reason=token mismatch`. Clients without cookies (API clients, curl) are not affected.
+Some clients send neither header but do keep cookies: very old browsers, some embedded web views. With `TokenFallback`, a request that is unsafe, has **no** `Sec-Fetch-Site` and **no** `Origin`, runs with a session in its context and carries the session cookie (`csrf.Config.SessionCookie`; any cookie when it is empty), must also carry the session's CSRF token, or it is rejected with `reason=token mismatch`. Clients without the session cookie (API clients, curl) are not affected.
 
 The token is read from the `X-CSRF-Token` header (`csrf.HeaderName`) or the `_token` form field (`csrf.FieldName`) and compared in [constant time](https://pkg.go.dev/crypto/subtle#ConstantTimeCompare), so its value cannot be guessed byte by byte.
 
-`DefaultMiddleware` does not turn the fallback on. Add a second CSRF middleware with the fallback after it, so it runs after the session middleware. This second middleware runs the origin checks again, so give it the **same** trusted origins and bypass patterns, or it rejects what the first one allowed:
+`DefaultMiddleware` leaves the fallback off. Turn it on with `MiddlewareOptions.CSRFTokenFallback`; the session cookie name comes from your session config:
 
 ```go title="routes/web.go"
-bypass := []string{"POST /webhooks/"}
-
 err := vukem.DefaultMiddlewareWith(app, r, vukem.MiddlewareOptions{
-	CSRFBypass: bypass,
+	CSRFTokenFallback: true,
 })
 if err != nil {
 	return err
 }
-
-var origins []string
-env := app.Source.Get("CSRF_TRUSTED_ORIGINS")
-for o := range strings.SplitSeq(env, ",") {
-	if o = strings.TrimSpace(o); o != "" {
-		origins = append(origins, o)
-	}
-}
-
-fallback, err := csrf.Middleware(csrf.Config{
-	TrustedOrigins: origins,
-	BypassPatterns: bypass,
-	TokenFallback:  true,
-})
-if err != nil {
-	return err
-}
-r.Use(fallback)
 ```
+
+`CSRFTokenFallback` needs sessions: together with `Stateless` it fails the boot with `vukem: CSRFTokenFallback needs sessions; it cannot be combined with Stateless`. A stack of your own uses `csrf.Middleware(csrf.Config{TokenFallback: true, SessionCookie: sessions.CookieName()})` after the session middleware.
 
 ### Sending the token
 
@@ -204,7 +186,9 @@ htmx sends the header on every request when you set it once on the body:
 | `MiddlewareOptions.CSRFBypass` | `[]string` | `nil` | ServeMux patterns exempt from checks |
 | `csrf.Config.TrustedOrigins` | `[]string` | `nil` | Same as the variable, for your own stack |
 | `csrf.Config.BypassPatterns` | `[]string` | `nil` | Same as `CSRFBypass` |
+| `MiddlewareOptions.CSRFTokenFallback` | `bool` | `false` | Turn on the token fallback in the default stack |
 | `csrf.Config.TokenFallback` | `bool` | `false` | Require the session token from clients without origin headers |
+| `csrf.Config.SessionCookie` | `string` | `""` | The session cookie name that triggers the fallback; empty means any cookie |
 
 `vukem.APIMiddleware`, for JSON-only apps, installs no CSRF middleware: API clients authenticate with tokens in headers, which a browser never adds by itself.
 
@@ -246,7 +230,7 @@ func TestCrossSitePostIsBlocked(t *testing.T) {
 
 **Changing data in a `GET` route.** `r.Get("/posts/{post}/delete", ...)` is never checked. Use `r.Delete` and a form with `_method`.
 
-**Expecting the fallback from `DefaultMiddleware`.** It is off. Add a second `csrf.Middleware` with `TokenFallback: true` (and the same origins and bypasses) with `r.Use` after `DefaultMiddleware`.
+**Expecting the fallback from `DefaultMiddleware`.** It is off. Set `MiddlewareOptions.CSRFTokenFallback: true`.
 
 ## Next steps
 

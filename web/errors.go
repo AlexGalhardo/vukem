@@ -144,7 +144,7 @@ func DefaultErrorHandler(c *Ctx, err error) {
 		c.renderDebugPage(status, err)
 	case c.s.ErrorPage != nil && !c.IsHTMX() && c.s.ErrorPage(c, safeErrorPage(status, title, detail, verr)):
 	default:
-		c.renderErrorPage(status, title, detail, verr)
+		c.renderErrorPage(status, title, detail, verr, err)
 	}
 }
 
@@ -201,16 +201,22 @@ type errorData struct {
 	Title  string
 	Detail string
 	Errors map[string][]string
-	Error  error
+	// Error is the handler's error, set only when Services.Debug is on:
+	// it may hold SQL, paths or secrets (CWE-209).
+	Error error
 	// Nonce is the request's CSP nonce: the built-in page's <style> carries
 	// it, so the page renders under the default nonce-only CSP.
 	Nonce string
 }
 
-func (c *Ctx) renderErrorPage(status int, title, detail string, verr *errs.ValidationError) {
+func (c *Ctx) renderErrorPage(status int, title, detail string, verr *errs.ValidationError, err error) {
 	data := errorData{Status: status, Title: title, Detail: detail, Nonce: CSPNonce(c.Context())}
 	if verr != nil {
 		data.Errors = verr.Fields
+	}
+
+	if c.s.Debug {
+		data.Error = err
 	}
 
 	c.w.Header().Set("Content-Type", "text/html; charset=utf-8")

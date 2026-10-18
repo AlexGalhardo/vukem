@@ -281,6 +281,7 @@ For browsers, the handler renders the view `errors/<status>` when your [view eng
 | `.Detail` | The client-safe detail (empty for 5xx outside debug) |
 | `.Errors` | Field errors (`map[string][]string`) for a validation error, else `nil` |
 | `.Nonce` | The request's CSP nonce, for an inline `<style nonce="{{.Nonce}}">` |
+| `.Error` | The handler's `error`, only when `Services.Debug` is on (`APP_DEBUG`); `nil` otherwise, because it may hold SQL, paths or secrets |
 
 The built-in pages use no inline `style` attributes and nonce their `<style>`, so they render under the default [Content Security Policy](/docs/security/security-headers). A view that fails to render is logged as `render error page`; the status is already sent.
 

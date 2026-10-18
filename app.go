@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"html/template"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -267,6 +268,7 @@ type options struct {
 	routes        []func(r *router.Router, app *App) error
 	bootRoutes    []func(r *router.Router, app *App) error
 	views         fs.FS
+	viewFuncs     template.FuncMap
 	vite          fs.FS
 	inertia       *inertia.Config
 	lang          fs.FS
@@ -333,6 +335,33 @@ var ErrNotBooted = errors.New("vukem: routes after boot are pending; call Boot b
 // or an embed.FS). Views reload on every request outside production.
 func WithViews(fsys fs.FS) Option {
 	return func(o *options) error { o.views = fsys; return nil }
+}
+
+// WithViewFuncs adds template functions to the WithViews engine
+// (view.Config.Funcs), for helpers such as money or date formatting. Calls
+// accumulate. A name given twice, a nil function, a built-in's name
+// ("route", "csrfField", "cspNonce"...) or a missing WithViews is a boot
+// error.
+func WithViewFuncs(funcs template.FuncMap) Option {
+	return func(o *options) error {
+		if o.viewFuncs == nil {
+			o.viewFuncs = template.FuncMap{}
+		}
+
+		for name, fn := range funcs {
+			if fn == nil {
+				return fmt.Errorf("vukem: WithViewFuncs: %q is nil", name)
+			}
+
+			if _, dup := o.viewFuncs[name]; dup {
+				return fmt.Errorf("vukem: WithViewFuncs: %q given twice", name)
+			}
+
+			o.viewFuncs[name] = fn
+		}
+
+		return nil
+	}
 }
 
 // WithInertia enables the Inertia adapter (app.Inertia); add
@@ -744,9 +773,14 @@ func New(opts ...Option) (*App, error) {
 		}
 	}
 
+	if o.views == nil && len(o.viewFuncs) > 0 {
+		return nil, errors.New("vukem: WithViewFuncs needs WithViews")
+	}
+
 	if o.views != nil {
 		engine, err := view.New(view.Config{
 			FS: o.views, Reload: !cfg.IsProduction(), URLs: app.Router, Vite: app.Vite, I18n: app.I18n,
+			Funcs: o.viewFuncs,
 		})
 		if err != nil {
 			return nil, err

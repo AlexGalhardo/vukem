@@ -40,6 +40,11 @@ type Config struct {
 	// neither Sec-Fetch-Site nor Origin but do carry a session (old
 	// browsers). API clients without sessions are unaffected.
 	TokenFallback bool
+	// SessionCookie is the session cookie name (session.Manager.CookieName)
+	// that marks a request as carrying a session for TokenFallback. Empty,
+	// any non-empty cookie counts, which also asks API clients holding
+	// unrelated cookies for a token.
+	SessionCookie string
 }
 
 // Middleware returns CSRF middleware for the router stack (after session
@@ -67,7 +72,7 @@ func Middleware(cfg Config) (func(http.Handler) http.Handler, error) {
 	return func(next http.Handler) http.Handler {
 		inner := next
 		if cfg.TokenFallback {
-			inner = tokenFallback(next)
+			inner = tokenFallback(next, cfg.SessionCookie)
 		}
 
 		return cop.Handler(inner)
@@ -96,7 +101,7 @@ func safeMethod(m string) bool {
 	return m == http.MethodGet || m == http.MethodHead || m == http.MethodOptions
 }
 
-func tokenFallback(next http.Handler) http.Handler {
+func tokenFallback(next http.Handler, cookieName string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if safeMethod(r.Method) || r.Header.Get("Sec-Fetch-Site") != "" || r.Header.Get("Origin") != "" {
 			next.ServeHTTP(w, r)
@@ -104,7 +109,7 @@ func tokenFallback(next http.Handler) http.Handler {
 		}
 
 		sess := web.SessionFrom(r.Context())
-		if sess == nil || !hasSessionCookie(r) {
+		if sess == nil || !hasSessionCookie(r, cookieName) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -125,7 +130,14 @@ func tokenFallback(next http.Handler) http.Handler {
 	})
 }
 
-func hasSessionCookie(r *http.Request) bool {
+// hasSessionCookie reports a session cookie: the named one, or any cookie
+// when the name is unknown (fail closed: the token is then required).
+func hasSessionCookie(r *http.Request, name string) bool {
+	if name != "" {
+		c, err := r.Cookie(name)
+		return err == nil && c.Value != ""
+	}
+
 	for _, c := range r.Cookies() {
 		if c.Value != "" {
 			return true

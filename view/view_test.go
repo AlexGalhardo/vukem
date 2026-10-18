@@ -3,6 +3,7 @@ package view
 import (
 	"bytes"
 	"context"
+	"html/template"
 	"io"
 	"log/slog"
 	"net/http"
@@ -293,4 +294,24 @@ type component string
 func (c component) Render(_ context.Context, w io.Writer) error {
 	_, err := io.WriteString(w, string(c))
 	return err
+}
+
+func TestSecurity_A03_CustomFuncsCannotReplaceBuiltins(t *testing.T) {
+	t.Parallel()
+
+	fsys := fstest.MapFS{"home.html": {Data: []byte(`{{shout "hi"}}`)}}
+
+	for _, name := range []string{"csrfField", "cspNonce", "htmxScript", "errors", "route", "asset"} {
+		_, err := New(Config{FS: fsys, Funcs: template.FuncMap{
+			"shout": strings.ToUpper,
+			name:    func() string { return "" },
+		}})
+		if err == nil || !strings.Contains(err.Error(), name) {
+			t.Errorf("New(Funcs %q) = %v, want an error naming the built-in", name, err)
+		}
+	}
+
+	if _, err := New(Config{FS: fsys, Funcs: template.FuncMap{"shout": strings.ToUpper}}); err != nil {
+		t.Fatalf("New(custom func) = %v", err)
+	}
 }
