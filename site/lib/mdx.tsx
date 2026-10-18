@@ -1,8 +1,6 @@
 import { evaluate } from "@mdx-js/mdx";
 import * as runtime from "react/jsx-runtime";
-import remarkGfm from "remark-gfm";
-import rehypeSlug from "rehype-slug";
-import remarkCodeBlocks from "@/lib/remark-code-blocks";
+import { rehypePlugins, remarkPlugins } from "@/lib/mdx-plugins";
 import { mdxComponentsFor } from "@/components/mdx";
 import type { Locale } from "@/lib/i18n";
 import type { DocVersion } from "@/lib/versions";
@@ -13,8 +11,8 @@ export async function renderMdx(body: string, source: string, version: DocVersio
     const { default: Content } = await evaluate(body, {
       ...runtime,
       development: false,
-      remarkPlugins: [remarkGfm, remarkCodeBlocks],
-      rehypePlugins: [rehypeSlug],
+      remarkPlugins,
+      rehypePlugins,
     });
     return <Content components={mdxComponentsFor(version, locale)} />;
   } catch (err) {

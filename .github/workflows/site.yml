@@ -32,4 +32,5 @@ jobs:
           cache-dependency-path: site/package-lock.json
       - run: npm ci
       - run: npm run lint
+      - run: npm run check:mdx
       - run: npm run build
