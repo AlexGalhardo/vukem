@@ -2030,6 +2030,25 @@ func TestCodegenTypesCommand(t *testing.T) {
 	}
 }
 
+func TestCodegenTypesCommand_CreatesDirectories(t *testing.T) {
+	t.Parallel()
+
+	target := filepath.Join(t.TempDir(), "resources", "js", "types.ts")
+	build := func(opts ...Option) (*App, error) {
+		return New(append(opts, WithLogger(discardLogger()), WithRoutes(openAPIRoutes))...)
+	}
+
+	if err := RunMain(
+		t.Context(), []string{"app", "codegen:types", "-o", target}, testSource(nil).Lookup, build,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	if b, err := os.ReadFile(target); err != nil || !strings.Contains(string(b), "PingResponse") {
+		t.Fatalf("codegen:types -o %s wrote %q, %v", target, b, err)
+	}
+}
+
 func TestServeOpenAPIWithPrefix(t *testing.T) {
 	t.Parallel()
 

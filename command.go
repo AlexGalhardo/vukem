@@ -11,6 +11,7 @@ import (
 	"maps"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"strconv"
@@ -269,6 +270,10 @@ func codegenTypesCommand() Command {
 			if *out == "" {
 				_, err = io.WriteString(app.stdout, ts)
 				return err
+			}
+
+			if err := os.MkdirAll(filepath.Dir(*out), 0o750); err != nil {
+				return fmt.Errorf("codegen:types: %w", err)
 			}
 
 			return os.WriteFile(*out, []byte(ts), 0o600)
