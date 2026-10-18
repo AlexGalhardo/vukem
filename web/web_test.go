@@ -1069,7 +1069,7 @@ func TestStatusPendingRules(t *testing.T) {
 				if err := http.NewResponseController(c.Writer()).Flush(); err != nil {
 					return err
 				}
-				_, err := c.Writer().Write([]byte("x"))
+				_, err := c.Writer().WriteString("x")
 				return err
 			},
 			want: http.StatusAccepted,
