@@ -124,7 +124,8 @@ type UploadRules struct {
 	// MaxSize in bytes (required).
 	MaxSize int64
 	// Types are allowed MIME types, detected from the content (not the
-	// client's Content-Type or file name).
+	// client's Content-Type or file name) (required: an empty list is a
+	// configuration error, never "any type").
 	Types []string
 }
 
@@ -146,6 +147,10 @@ func PutUploaded(ctx context.Context, d Disk, fh *multipart.FileHeader, dir stri
 		return "", errors.New("storage: UploadRules.MaxSize is required")
 	}
 
+	if len(rules.Types) == 0 {
+		return "", errors.New("storage: UploadRules.Types is required")
+	}
+
 	if fh.Size > rules.MaxSize {
 		return "", errs.NewValidation().
 			Add("file", fmt.Sprintf("The file may not be larger than %d KB.", rules.MaxSize/1024))
@@ -162,7 +167,7 @@ func PutUploaded(ctx context.Context, d Disk, fh *multipart.FileHeader, dir stri
 	head = head[:n]
 
 	ct := http.DetectContentType(head)
-	if len(rules.Types) > 0 && !slices.Contains(rules.Types, ct) {
+	if !slices.Contains(rules.Types, ct) {
 		return "", errs.NewValidation().Add("file", "This file type is not allowed.")
 	}
 

@@ -183,7 +183,7 @@ link, err := storage.TemporaryURL(signer, "/files", "invoices/42.pdf", 15*time.M
 ```
 
 - `storage.Disk`: `Put` (atomic rename on local disks, through a hidden `.name.tmp-…` file that `List` and `Handler` skip), `Open`, `Exists`, `Delete`, `List`, `URL`; helpers `storage.Get` and `storage.PutBytes`. Disks: `NewLocal` and `NewMemory` (tests); S3 in `drivers/s3` ([S3](#s3)). `storage/storagetest` holds the conformance and traversal suites (`TestSecurity_A01_StorageTraversal`).
-- `PutUploaded` never uses the client's file name: random name, extension from the type detected in the content (`http.DetectContentType`), size checked from the header and again while copying, 422 for disallowed types or sizes.
+- `PutUploaded` never uses the client's file name: random name, extension from the type detected in the content (`http.DetectContentType`), size checked from the header and again while copying, 422 for disallowed types or sizes. `UploadRules.Types` is required: an empty list is an error, not "any type" (`TestSecurity_A05_PutUploadedRequiresTypes`).
 - `Handler` never serves dotfiles or directories, sends the file's real modification time as `Last-Modified` (none when the disk cannot report it) so `If-Modified-Since` answers 304, sends `X-Content-Type-Options: nosniff`, and with a `signed.Signer` only answers signed, unexpired URLs.
 - Decision: instead of `storage:link` (a symlink, which needs extra privileges on Windows), public files are served by `storage.Handler` from the disk itself.
 

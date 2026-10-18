@@ -251,13 +251,13 @@ func TestPutUploaded(t *testing.T) {
 		t.Fatal("missing MaxSize accepted")
 	}
 
-	// Without a type allowlist unknown content gets .bin.
+	// Allowed types outside the extension table get .bin.
 	if p, err := storage.PutUploaded(
 		ctx,
 		d,
 		upload(t, "x.dat", []byte{0x00, 0x01, 0x02}),
 		"",
-		storage.UploadRules{MaxSize: 10},
+		storage.UploadRules{MaxSize: 10, Types: []string{"application/octet-stream"}},
 	); err != nil ||
 		!strings.HasSuffix(p, ".bin") {
 		t.Fatalf("binary = %q %v", p, err)
@@ -269,6 +269,26 @@ func TestPutUploaded(t *testing.T) {
 
 	if _, err := storage.PutUploaded(ctx, d, fh, "", storage.Images(64)); errs.Status(err) != 422 {
 		t.Fatalf("under-reported size = %v", err)
+	}
+}
+
+// PutUploaded without a type allowlist is a configuration error, not
+// "accept anything": an empty Types must never store an HTML or script
+// upload (fail closed).
+func TestSecurity_A05_PutUploadedRequiresTypes(t *testing.T) {
+	t.Parallel()
+
+	d := storage.NewMemory("")
+
+	_, err := storage.PutUploaded(
+		t.Context(), d, upload(t, "x.html", []byte("<html><script>1</script>")), "", storage.UploadRules{MaxSize: 1024},
+	)
+	if err == nil {
+		t.Fatal("PutUploaded(empty Types) = nil error, want a configuration error")
+	}
+
+	if all, _ := d.List(t.Context(), ""); len(all) != 0 {
+		t.Errorf("PutUploaded(empty Types) stored %v", all)
 	}
 }
 

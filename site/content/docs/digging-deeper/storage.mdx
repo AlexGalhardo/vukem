@@ -289,10 +289,10 @@ func (ac *AvatarController) Store(c *web.Ctx) error {
 
 Step by step:
 
-1. `rules.MaxSize` must be positive, or the call fails (a programming error, 500).
+1. `rules.MaxSize` must be positive and `rules.Types` must not be empty, or the call fails (a programming error, 500). There is no "any type" setting: list the types you accept.
 2. If the size the browser declared is larger than `MaxSize`, it answers 422 "The file may not be larger than N KB.".
-3. It reads the first 512 bytes and detects the type from the **content** with [`http.DetectContentType`](https://pkg.go.dev/net/http#DetectContentType). The browser's `Content-Type` and the file name are ignored. A type not in `rules.Types` answers 422 "This file type is not allowed.". An empty `Types` list allows every type.
-4. It picks the extension from the detected type (`.jpg`, `.png`, `.gif`, `.webp`, `.pdf`, `.txt`, otherwise `.bin`) and a random lower-case name. The client's file name is never used.
+3. It reads the first 512 bytes and detects the type from the **content** with [`http.DetectContentType`](https://pkg.go.dev/net/http#DetectContentType). The browser's `Content-Type` and the file name are ignored. A type not in `rules.Types` answers 422 "This file type is not allowed.".
+4. It picks the extension from the detected type (`.jpg`, `.png`, `.gif`, `.webp`, `.pdf`, `.txt`, otherwise `.bin`, for example for an allowed `application/octet-stream`) and a random lower-case name. The client's file name is never used.
 5. It copies the file while counting bytes. If the real file is bigger than `MaxSize` (a client that lied about the size), the write stops and answers 422 "The file is too large.".
 
 | Rules | Allows |
