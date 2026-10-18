@@ -2,6 +2,7 @@
   import { Link, usePage } from "@inertiajs/svelte";
   import type { Snippet } from "svelte";
 
+  import { demoInstalled, demoLink } from "../demo";
   import type { SharedProps } from "../types";
 
   let { children }: { children: Snippet } = $props();
@@ -16,7 +17,9 @@
 <header class="flex items-center justify-between border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
   <Link href="/" class="font-bold">{page.props.appName}</Link>
   <nav class="flex items-center gap-4">
-    <Link href="/posts" class={link}>Posts</Link>
+    {#if demoInstalled}
+      <Link href={demoLink.href} class={link}>{demoLink.label}</Link>
+    {/if}
     {#if auth?.user}
       <Link href="/dashboard" class={link}>{auth.user.name}</Link>
       <Link href="/logout" method="post" as="button" class={link}>Log out</Link>

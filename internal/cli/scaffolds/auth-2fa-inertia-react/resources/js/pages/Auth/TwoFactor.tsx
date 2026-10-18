@@ -2,6 +2,7 @@ import { Head, Link, useForm } from "@inertiajs/react";
 import type { FormEvent } from "react";
 
 import Field from "../../components/Field";
+import PasswordField from "../../components/PasswordField";
 
 interface Props {
   enabled: boolean;
@@ -58,13 +59,12 @@ export default function TwoFactor({ enabled, pending, secret, qr, recoveryCodes,
             <p>You have {recoveryCodesLeft} recovery codes left.</p>
           )}
           <form onSubmit={submitRegenerate} className="space-y-4">
-            <Field
+            <PasswordField
               label="Current password"
-              type="password"
+              name="password"
               autoComplete="current-password"
-              required
               value={regenerate.data.password}
-              onChange={(e) => regenerate.setData("password", e.target.value)}
+              onChange={(value) => regenerate.setData("password", value)}
               error={regenerate.errors.password}
             />
             <button type="submit" disabled={regenerate.processing} className={button}>
@@ -73,13 +73,12 @@ export default function TwoFactor({ enabled, pending, secret, qr, recoveryCodes,
           </form>
           <h2 className="pt-4 text-xl font-semibold">Turn off</h2>
           <form onSubmit={submitDisable} className="space-y-4">
-            <Field
+            <PasswordField
               label="Current password"
-              type="password"
+              name="password"
               autoComplete="current-password"
-              required
               value={disable.data.password}
-              onChange={(e) => disable.setData("password", e.target.value)}
+              onChange={(value) => disable.setData("password", value)}
               error={disable.errors.password}
             />
             <button type="submit" disabled={disable.processing} className={button}>

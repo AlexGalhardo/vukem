@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { Head, Link } from "@inertiajs/vue3";
+
+import { demoInstalled, demoLink } from "../demo";
 </script>
 
 <template>
@@ -10,7 +12,8 @@ import { Head, Link } from "@inertiajs/vue3";
       Go on the server, Vue with Inertia in the browser, Tailwind for the styles.
     </p>
     <Link
-      href="/posts"
+      v-if="demoInstalled"
+      :href="demoLink.href"
       class="mt-6 inline-block rounded-md bg-indigo-600 px-4 py-2 font-medium text-white hover:bg-indigo-500"
     >
       See the posts

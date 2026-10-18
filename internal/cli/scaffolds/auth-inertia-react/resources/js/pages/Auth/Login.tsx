@@ -2,6 +2,7 @@ import { Head, Link, useForm } from "@inertiajs/react";
 import type { FormEvent } from "react";
 
 import Field from "../../components/Field";
+import PasswordField from "../../components/PasswordField";
 
 export default function Login() {
   const form = useForm({ email: "", password: "", remember: false });
@@ -25,13 +26,14 @@ export default function Login() {
           onChange={(e) => form.setData("email", e.target.value)}
           error={form.errors.email}
         />
-        <Field
+        {/* No rule checklist here: logging in must not advertise the policy,
+            and an existing password may predate the current rules. */}
+        <PasswordField
           label="Password"
-          type="password"
+          name="password"
           autoComplete="current-password"
-          required
           value={form.data.password}
-          onChange={(e) => form.setData("password", e.target.value)}
+          onChange={(value) => form.setData("password", value)}
           error={form.errors.password}
         />
         <label className="flex items-center gap-2">
