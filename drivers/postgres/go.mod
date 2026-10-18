@@ -3,7 +3,7 @@ module github.com/AlexGalhardo/vukem/drivers/postgres
 go 1.27.2
 
 require (
-	github.com/AlexGalhardo/vukem v0.20.0
+	github.com/AlexGalhardo/vukem v0.29.0
 	github.com/jackc/pgx/v5 v5.11.0
 )
 
