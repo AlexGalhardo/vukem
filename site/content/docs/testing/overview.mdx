@@ -307,7 +307,7 @@ These methods change the client itself and return it, so they apply to **every f
 | `WithSession(values)` | Adds values to the client's session |
 | `CookieValue(name) string` | Reads a cookie from the jar (`""` when absent); this one changes nothing |
 
-`GetJSON` is the only exception: it sets `Accept` for one request and then puts the old value back. `PostJSON`, `PutJSON` and `PatchJSON` set `Accept: application/json` when the client has no `Accept` header yet, and that header then **stays** on the client.
+The request helpers change nothing either. `GetJSON` sends `Accept: application/json` for one request and then puts the old value back. `PostJSON`, `PutJSON` and `PatchJSON` send `Accept: application/json` for that request only when the client has no `Accept` header of its own; one set with `AcceptJSON()`, `Inertia(version)` or `WithHeader` is kept.
 
 ```go title="tests/posts_test.go"
 c := app.Client(t)
@@ -445,7 +445,7 @@ The 404 body that passes looks like this:
 | Method | Passes when |
 | --- | --- |
 | `AssertFragment()` | The body does not contain `<html` (any case): the app sent a piece of a page, not a whole document |
-| `AssertHXTrigger(event)` | `HX-Trigger` is a JSON object with the key `event`, or, when it is not JSON, equals `event` exactly |
+| `AssertHXTrigger(event)` | `HX-Trigger` is a JSON object with the key `event`, or, when it is not JSON, a comma-separated list of names (`saved, refresh`) that includes `event` |
 
 ```go title="tests/posts_test.go"
 app.Client(t).HTMX().
@@ -472,8 +472,8 @@ app.Client(t).HTMX().
 
 | Method | Passes when |
 | --- | --- |
-| `AssertSessionHas(key)` | The session holds `key` with a value that is not `nil` (flash values included) |
-| `AssertSessionMissing(key)` | `key` is absent or `nil` |
+| `AssertSessionHas(key)` | The session holds `key`, even with a `nil` value (flash values included) |
+| `AssertSessionMissing(key)` | `key` is absent; a key stored with a `nil` value is not absent |
 | `AssertSessionHasErrors(fields...)` | Validation errors were flashed for every field (under the `_errors` key) |
 
 When a form fails [validation](/docs/basics/validation), the controller redirects back to the page in `Referer` with the errors in the session:
@@ -804,10 +804,10 @@ invoices := queue.Dispatched[jobs.SendInvoice](jobs)
 | --- | --- | --- |
 | [Mail](/docs/digging-deeper/mail) | `mail.NewArray()` (the default in tests, via `MAIL_MAILER=array`) | `app.Mails()` or your own value: `Sent()`, `SentTo(addr)`, `Reset()`; each `mail.Message` has `To`, `Subject`, `HTML`, `Text`… |
 | [Queue](/docs/digging-deeper/queue) | `queue.NewFake()` with `vukem.WithQueueDriver` | `queue.Dispatched[J](fake)` returns the jobs of type `J`, decoded, in order; `Messages()` the raw ones. The fake stores jobs like the memory driver, so `q.Work(ctx, queue.WorkOptions{StopWhenEmpty: true})` runs them |
-| [Events](/docs/digging-deeper/events) | `events.NewFake()` | Pass it to code that takes an `events.Dispatcher`; `events.Dispatched[E](fake)` returns the events of type `E` |
+| [Events](/docs/digging-deeper/events) | `events.NewFake()` with `vukem.WithEventsFake` | `app.Events` records every dispatch instead of running listeners; `events.Dispatched[E](fake)` returns the events of type `E`. Code that takes an `events.Dispatcher` can also get the fake directly |
 | [Cache](/docs/digging-deeper/cache) | `cache.NewMemory(maxEntries)` with `vukem.WithCacheStore` | LRU with TTL; `0` means 10,000 entries |
-| [Storage](/docs/digging-deeper/storage) | `storage.NewMemory(base)` | An in-memory disk; `base` prefixes URLs (`""` keeps files private) |
-| [Rate limiting](/docs/security/rate-limiting) | `ratelimit.NewMemory(limit, window)` | `limit` requests per `window` for each key |
+| [Storage](/docs/digging-deeper/storage) | `storage.NewMemory(base)` | An in-memory disk; `base` prefixes URLs (`""` keeps files private). The app has no disk service: the starter's upload controller switches to it with `UPLOADS_DISK=memory` in `Options.Env` |
+| [Rate limiting](/docs/security/rate-limiting) | `vukem.WithRateLimiters(factory)` | `app.RateLimiters()` returns your `ratelimit.Factory` instead of the `RATE_LIMIT_STORE` one: an always-allow limiter, or `ratelimit.NewMemory(limit, window)` with tight limits |
 | [Social login](/docs/security/social-login) | `social.Fake(name, callbackURL, user)` | Or `vukemtest.FakeSocial(user)` in scaffolded apps |
 | Passwords | `hash.Fake()` (package `auth/hash`) | A fast argon2id hasher; never in production |
 | Sessions | `vukem.WithSessionStore(store)` | Any `session.Store`; `SESSION_DRIVER` in `Options.Env` also works |
@@ -898,7 +898,7 @@ if rec.Code != http.StatusOK {
 
 ## Common mistakes
 
-**Reusing a client after `HTMX()`, `AcceptJSON()` or `PostJSON`.** These change the client for every later request.
+**Reusing a client after `HTMX()` or `AcceptJSON()`.** These change the client for every later request.
 
 ```go
 // Wrong: the second request is still an htmx request.

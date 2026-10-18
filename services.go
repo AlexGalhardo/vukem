@@ -26,6 +26,21 @@ func WithListeners(regs ...events.Registration) Option {
 	return func(o *options) error { o.listeners = append(o.listeners, regs...); return nil }
 }
 
+// WithEventsFake makes App.Events record every dispatched event in f
+// instead of running listeners (tests): assert with events.Dispatched.
+// See events.Bus.RecordTo.
+func WithEventsFake(f *events.Fake) Option {
+	return func(o *options) error {
+		if f == nil {
+			return errors.New("vukem: WithEventsFake needs a non-nil *events.Fake")
+		}
+
+		o.eventsFake = f
+
+		return nil
+	}
+}
+
 // WithCacheStore replaces the store chosen by CACHE_STORE (e.g. Redis:
 // vukem.WithCacheStore(redisClient.CacheStore("cache:"))). The last of
 // WithCacheStore and WithCacheStoreFunc wins.

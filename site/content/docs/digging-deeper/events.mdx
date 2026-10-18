@@ -334,6 +334,8 @@ func TestShipDispatches(t *testing.T) {
 
 `appevents` is an [import alias](https://go.dev/ref/spec#Import_declarations) for `example.com/shop/app/events`, needed because the file also imports Vukem's `events` package. The fake records events and runs no listener. `events.Dispatched[E](fake)` returns the recorded events of type `E`, in order.
 
+**Record what a request dispatches** without running listeners: pass the fake to the app with `vukem.WithEventsFake(fake)` in `vukemtest.Options.AppOptions`. `app.Events` then records every dispatch in the fake (sync, async and queued listeners are all skipped), so `events.Dispatched[E](fake)` works after a request.
+
 **Test the whole flow** through the app with [`vukemtest`](/docs/testing/overview): send the request, then assert on what the listeners did (rows written, mail sent to `app.Mails`). Async listeners may still be running when the request returns; prefer synchronous or queued listeners for behaviour a test must observe.
 
 ## Common mistakes

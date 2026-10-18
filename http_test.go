@@ -2595,3 +2595,42 @@ func TestSecurity_A05_MaintenanceResponseCarriesSecurityHeaders(t *testing.T) {
 		}
 	}
 }
+
+type allowAll struct{}
+
+func (allowAll) Allow(context.Context, string) (ratelimit.Result, error) {
+	return ratelimit.Result{Allowed: true, Limit: 1, Remaining: 1}, nil
+}
+
+func TestWithRateLimiters(t *testing.T) {
+	t.Parallel()
+
+	var names []string
+
+	app := newTestApp(t,
+		WithSource(testSource(map[string]string{"RATE_LIMIT_STORE": "cache"})),
+		WithRateLimiters(func(name string, _ int, _ time.Duration) ratelimit.Limiter {
+			names = append(names, name)
+			return allowAll{}
+		}),
+	)
+
+	limiters, err := app.RateLimiters()
+	if err != nil {
+		t.Fatalf("RateLimiters() = %v, want the injected factory", err)
+	}
+
+	for range 3 {
+		if res, err := limiters("login", 1, time.Minute).Allow(t.Context(), "k"); err != nil || !res.Allowed {
+			t.Fatalf("Allow() = %+v, %v, want allowed", res, err)
+		}
+	}
+
+	if diff := cmp.Diff([]string{"login", "login", "login"}, names); diff != "" {
+		t.Errorf("factory calls (-want +got):\n%s", diff)
+	}
+
+	if _, err := New(WithSource(testSource(nil)), WithoutHTTP(), WithRateLimiters(nil)); err == nil {
+		t.Error("New(WithRateLimiters(nil)) = nil error, want an error")
+	}
+}

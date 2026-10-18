@@ -456,6 +456,18 @@ func TestLoginThrottle(t *testing.T) {
 }
 ```
 
+To change the limits a whole app uses in a test (lift them, or make them tight), pass `vukem.WithRateLimiters(factory)` in `vukemtest.Options.AppOptions`: `app.RateLimiters()` then returns your `ratelimit.Factory` instead of the one `RATE_LIMIT_STORE` chooses.
+
+```go title="tests/login_limit_test.go"
+app := vukemtest.New(t, bootstrap.New, vukemtest.Options{
+	AppOptions: []vukem.Option{
+		vukem.WithRateLimiters(func(_ string, _ int, window time.Duration) ratelimit.Limiter {
+			return ratelimit.NewMemory(1, window)
+		}),
+	},
+})
+```
+
 To test a limiter in isolation, call `Allow` directly:
 
 ```go title="app/limits/limits_test.go"

@@ -305,7 +305,7 @@ login := ratelimit.Middleware(limiters("login", 5, time.Minute), account.LoginTh
 r.Post("/login", h.Login).Use(login)
 ```
 
-Limiters are keyed by `ratelimit.ByIP` (default), `ByToken` (after `auth.Required` only) or your own `KeyFunc`; responses include `RateLimit-*` headers, `429` adds `Retry-After`; a failing store denies. `install:auth` and `install:api` throttle logins, mails and tokens by default, through `app.RateLimiters()`.
+Limiters are keyed by `ratelimit.ByIP` (default), `ByToken` (after `auth.Required` only) or your own `KeyFunc`; responses include `RateLimit-*` headers, `429` adds `Retry-After`; a failing store denies. `install:auth` and `install:api` throttle logins, mails and tokens by default, through `app.RateLimiters()`. `vukem.WithRateLimiters(factory)` replaces the `RATE_LIMIT_STORE` factory (a limiter of your own, or a fake in tests).
 
 | Store | Algorithm | Shared by servers |
 | --- | --- | --- |

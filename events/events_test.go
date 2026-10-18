@@ -137,3 +137,46 @@ func TestFake(t *testing.T) {
 		t.Fatal("Dispatched by type")
 	}
 }
+
+func TestBusRecordTo(t *testing.T) {
+	t.Parallel()
+
+	b := New(nil, 0)
+
+	var ran int
+
+	b.Register(
+		On(func(context.Context, userRegistered) error { ran++; return nil }),
+		OnAsync(func(context.Context, userRegistered) error { ran++; return nil }),
+	)
+
+	f := NewFake()
+	b.RecordTo(f)
+
+	if err := b.Dispatch(t.Context(), userRegistered{Email: "x@y.z"}); err != nil {
+		t.Fatalf("Dispatch() = %v, want nil", err)
+	}
+
+	if err := b.Shutdown(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	if ran != 0 {
+		t.Errorf("listeners ran %d times while recording, want 0", ran)
+	}
+
+	if got := Dispatched[userRegistered](f); len(got) != 1 || got[0].Email != "x@y.z" {
+		t.Fatalf("Dispatched = %v, want the dispatched event", got)
+	}
+
+	b2 := New(nil, 0)
+	b2.Register(On(func(context.Context, userRegistered) error { ran++; return nil }))
+	b2.RecordTo(f)
+	b2.RecordTo(nil)
+
+	_ = b2.Dispatch(t.Context(), userRegistered{})
+
+	if ran != 1 {
+		t.Errorf("listener after RecordTo(nil) ran %d times, want 1", ran)
+	}
+}

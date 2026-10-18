@@ -32,6 +32,7 @@ import (
 	"github.com/AlexGalhardo/vukem/logging/telegram"
 	"github.com/AlexGalhardo/vukem/mail"
 	"github.com/AlexGalhardo/vukem/queue"
+	"github.com/AlexGalhardo/vukem/ratelimit"
 	"github.com/AlexGalhardo/vukem/router"
 	"github.com/AlexGalhardo/vukem/schedule"
 	"github.com/AlexGalhardo/vukem/schema"
@@ -214,10 +215,12 @@ type App struct {
 	// WithCacheStoreFunc).
 	queueDriverFunc func(*App) (queue.Driver, error)
 	cacheStoreFunc  func(*App) (cache.Store, error)
-	schedules       []func(*schedule.Schedule, *App)
-	scheduleOnce    sync.Once
-	schedule        *schedule.Schedule
-	scheduleErr     error
+	// rateLimiters replaces the RATE_LIMIT_STORE factory (WithRateLimiters).
+	rateLimiters ratelimit.Factory
+	schedules    []func(*schedule.Schedule, *App)
+	scheduleOnce sync.Once
+	schedule     *schedule.Schedule
+	scheduleErr  error
 
 	queueOnce sync.Once
 	queue     *queue.Queue
@@ -283,6 +286,8 @@ type options struct {
 	queueFunc     func(*App) (queue.Driver, error)
 	cacheFunc     func(*App) (cache.Store, error)
 	sessionFunc   func(*App) (session.Store, error)
+	rateLimiters  ratelimit.Factory
+	eventsFake    *events.Fake
 	schedules     []func(*schedule.Schedule, *App)
 	drivers       []database.Driver
 	queryObs      []database.QueryObserver
@@ -623,6 +628,7 @@ func New(opts ...Option) (*App, error) {
 
 		queueDriverFunc: o.queueFunc,
 		cacheStoreFunc:  o.cacheFunc,
+		rateLimiters:    o.rateLimiters,
 		sessStoreFunc:   o.sessionFunc,
 		schedules:       o.schedules,
 		mail:            mailState{transport: o.mailTransport},
@@ -666,6 +672,10 @@ func New(opts ...Option) (*App, error) {
 
 	app.Events = events.New(app.Log, 0)
 	app.Events.Register(o.listeners...)
+
+	if o.eventsFake != nil {
+		app.Events.RecordTo(o.eventsFake)
+	}
 
 	if dt != nil {
 		app.Events.SetObserver(dt)
