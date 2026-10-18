@@ -26,11 +26,18 @@ type HandlerConfig struct {
 	// Persisted enables persisted queries (nil: off; a request carrying a
 	// persistedQuery extension gets PERSISTED_QUERY_NOT_SUPPORTED).
 	Persisted *PersistedQueries
-	// DisableIntrospection rejects __schema and __type (__typename stays).
+	// Introspection allows __schema and __type. They are rejected by
+	// default (__typename stays): the schema maps the whole API surface.
+	// Serve turns it on outside production.
+	Introspection bool
+	// DisableIntrospection rejects __schema and __type even when
+	// Introspection is set (Serve in development).
 	DisableIntrospection bool
 	// DisableGET accepts POST only.
 	DisableGET bool
 }
+
+func (c HandlerConfig) introspection() bool { return c.Introspection && !c.DisableIntrospection }
 
 // Handler serves GraphQL over HTTP: POST with an application/json body,
 // and GET with query parameters for query operations only (mutations
@@ -122,7 +129,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	p, errs := h.s.prepare(req, !h.cfg.DisableIntrospection)
+	p, errs := h.s.prepare(req, h.cfg.introspection())
 	if errs != nil {
 		writeResult(w, media, requestStatus(media), &Response{Errors: errs})
 		return

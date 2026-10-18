@@ -45,7 +45,7 @@ func (h *handler) serveSSE(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	p, errs := h.s.prepare(req, !h.cfg.DisableIntrospection)
+	p, errs := h.s.prepare(req, h.cfg.introspection())
 	if errs != nil {
 		writeResult(w, mediaJSON, http.StatusBadRequest, &Response{Errors: errs})
 		return
