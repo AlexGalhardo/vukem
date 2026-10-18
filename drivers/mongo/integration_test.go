@@ -142,6 +142,11 @@ func TestCollection(t *testing.T) {
 		t.Fatalf("DeleteMany = %d %v", n, err)
 	}
 
+	// No match is an empty slice (JSON []), not nil (JSON null).
+	if none, err := users.All(ctx, bson.D{}); err != nil || none == nil || len(none) != 0 {
+		t.Fatalf("All(no match) = %#v %v, want []user{}", none, err)
+	}
+
 	if users.Raw() == nil || m.Raw() == nil || m.Ping(ctx) != nil {
 		t.Fatal("accessors or health check")
 	}

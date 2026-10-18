@@ -2,9 +2,14 @@ package mongo
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
+
+	"go.mongodb.org/mongo-driver/v2/mongo"
 )
 
 func TestOpenErrors(t *testing.T) {
@@ -83,5 +88,25 @@ func TestOpenLazyPingReportsReadiness(t *testing.T) {
 
 	if err := m.Ping(t.Context()); err == nil {
 		t.Error("Ping without a server = nil, want an error")
+	}
+}
+
+// ErrNotFound answers 404 when a handler returns it, like orm.ErrNotFound:
+// vukem's errs.Status reads HTTPStatus() from errors that cannot import it.
+func TestErrNotFoundIs404(t *testing.T) {
+	t.Parallel()
+
+	err := fmt.Errorf("load user: %w", ErrNotFound)
+
+	sc, ok := errors.AsType[interface {
+		error
+		HTTPStatus() int
+	}](err)
+	if !ok || sc.HTTPStatus() != http.StatusNotFound {
+		t.Fatalf("HTTPStatus(%v) = %v, want 404", err, sc)
+	}
+
+	if !errors.Is(err, ErrNotFound) || !errors.Is(err, mongo.ErrNoDocuments) {
+		t.Fatalf("errors.Is(%v, ErrNotFound / mongo.ErrNoDocuments) = false", err)
 	}
 }
