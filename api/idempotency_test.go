@@ -364,3 +364,32 @@ func TestSecurity_A01_IdempotencyReplayKeepsPerRequestHeaders(t *testing.T) {
 		t.Fatalf("ReplayHeaders = %v, want only X-Debug-Token replayed", again.Header())
 	}
 }
+
+func TestSecurity_A01_IdempotencyNeverReplaysCredentialHeaders(t *testing.T) {
+	t.Parallel()
+
+	inner := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		for _, h := range []string{"Set-Cookie", "Authorization", "Proxy-Authenticate", "WWW-Authenticate", "ETag"} {
+			w.Header().Set(h, "first")
+		}
+
+		w.WriteHeader(http.StatusCreated)
+	})
+
+	h := api.Idempotency(cache.NewMemory(100), api.IdempotencyOptions{ReplayHeaders: []string{
+		"set-cookie", "authorization", "proxy-authenticate", "www-authenticate", "etag",
+	}})(inner)
+
+	send(t, h, "POST", "/orders", "k1", "Bearer a", `{}`)
+	again := send(t, h, "POST", "/orders", "k1", "Bearer a", `{}`)
+
+	for _, name := range []string{"Set-Cookie", "Authorization", "Proxy-Authenticate", "WWW-Authenticate"} {
+		if v := again.Header().Get(name); v != "" {
+			t.Errorf("replay sent %s = %q, want it never replayed", name, v)
+		}
+	}
+
+	if again.Header().Get("ETag") != "first" {
+		t.Errorf("replay ETag = %q, want the listed header replayed", again.Header().Get("ETag"))
+	}
+}

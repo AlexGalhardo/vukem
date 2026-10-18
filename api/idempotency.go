@@ -39,10 +39,12 @@ type IdempotencyOptions struct {
 	// Content-Type. Default: the headers describing the stored
 	// representation (Content-Language, Content-Disposition,
 	// Content-Location, Location, ETag, Last-Modified, Link); a non-nil list
-	// replaces it and Set-Cookie is never replayed. Every other header is
-	// written fresh by the middleware of the repeat request (X-Request-ID,
-	// RateLimit-*, security headers) or dropped, so a replay never carries
-	// the first request's per-request values or its Set-Cookie.
+	// replaces it. Set-Cookie, Authorization, Proxy-Authorization,
+	// Proxy-Authenticate and WWW-Authenticate are never replayed, even when
+	// listed. Every other header is written fresh by the middleware of the
+	// repeat request (X-Request-ID, RateLimit-*, security headers) or
+	// dropped, so a replay never carries the first request's per-request
+	// values or credentials.
 	ReplayHeaders []string
 	// Scope separates callers so one cannot replay another's response.
 	// Default: the authenticated principal (auth.Principal: guard and user
@@ -100,7 +102,7 @@ func Idempotency(store cache.Store, o IdempotencyOptions) func(http.Handler) htt
 	}
 
 	for _, h := range o.ReplayHeaders {
-		if h = http.CanonicalHeaderKey(h); h != "Set-Cookie" && !slices.Contains(replayed, h) {
+		if h = http.CanonicalHeaderKey(h); !neverReplayed(h) && !slices.Contains(replayed, h) {
 			replayed = append(replayed, h)
 		}
 	}
@@ -186,6 +188,17 @@ func Idempotency(store cache.Store, o IdempotencyOptions) func(http.Handler) htt
 			}
 		})
 	}
+}
+
+// neverReplayed reports headers that carry credentials or challenges of
+// the first request: a replay must not hand them to another retry.
+func neverReplayed(h string) bool {
+	switch h {
+	case "Set-Cookie", "Authorization", "Proxy-Authenticate", "Proxy-Authorization", "Www-Authenticate":
+		return true
+	}
+
+	return false
 }
 
 // pick copies the listed headers of h.
