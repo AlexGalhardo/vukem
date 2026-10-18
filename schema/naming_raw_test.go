@@ -70,7 +70,8 @@ func TestRawRebindsPlaceholders(t *testing.T) {
 	}{
 		{
 			"postgres with args", database.Postgres,
-			"UPDATE users SET role = ? WHERE note <> '?' AND id = ?", []any{"admin", 1},
+			"UPDATE users SET role = ? WHERE note <> '?' AND id = ?",
+			[]any{"admin", 1},
 			"UPDATE users SET role = $1 WHERE note <> '?' AND id = $2",
 		},
 		{
@@ -81,12 +82,14 @@ func TestRawRebindsPlaceholders(t *testing.T) {
 		},
 		{
 			"postgres numbered", database.Postgres,
-			"UPDATE users SET role = $1", []any{"admin"},
+			"UPDATE users SET role = $1",
+			[]any{"admin"},
 			"UPDATE users SET role = $1",
 		},
 		{
 			"mysql", database.MySQL,
-			"UPDATE users SET role = ?", []any{"admin"},
+			"UPDATE users SET role = ?",
+			[]any{"admin"},
 			"UPDATE users SET role = ?",
 		},
 	}
