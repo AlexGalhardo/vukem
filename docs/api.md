@@ -222,6 +222,18 @@ api.Register(g, "POST /products", api.Op{
 ```
 
 - Input: query string, JSON/form body (not for GET, HEAD, DELETE) and path parameters, which win over body fields; validated with the input struct's `validate` tags (422 with field errors, localized with the request locale like `web.Parse`). `struct{}` means no input.
+- `api.RegisterWith(g, pattern, op, schema, fn)` validates the input with a `z.Schema[In]` of your own instead of the input struct's `validate` tags, for the rules tags cannot express: a bound computed from a value (`z.Slice(z.String()).Max(len(abilities.All()))`) or a cross-field `z.Refine`. Everything else is `api.Register` (binding order, 422 with field errors, output handling); a nil schema panics at boot. The OpenAPI document is still generated from the input and output types, so the custom schema is invisible to it and the document is byte-identical to the one `api.Register` would produce (`TestRegisterWithKeepsTagDerivedOpenAPI`): keep the static rules in the `validate` tags and let the schema add only what they cannot say, otherwise the document under-describes what the route enforces.
+
+```go
+schema := z.Struct[requests.CreateKey](z.Shape{
+	"name":      z.String().Min(1).Max(20),
+	"abilities": z.Slice(z.String().OneOf(abilities.All()...)).Min(1).Max(len(abilities.All())),
+}).Refine(requests.CheckKey)
+
+api.RegisterWith(g, "POST /keys", api.Op{Name: "keys.store"}, schema,
+	func(c *web.Ctx, in requests.CreateKey) (resources.KeyJSON, error) { ... })
+```
+
 - Output: JSON with `Op.Status`, or 201 for POST, 204 when the output type is `struct{}`, 200 otherwise. Errors returned by the handler go through the normal problem+json path.
 - `Op.ValidateResponse: true` checks the output against its `validate` tags (`z.For[Out]`, Out must be a struct) before writing it, when `web.Services.CheckResponses` is on, like `web.JSONWith`. The app turns it on whenever `APP_ENV` is not `production` (`development` or `test`), so a staging deployment that runs with `APP_ENV=development` also checks, and answers 500 on a mismatch; only `APP_ENV=production` skips it. A mismatch is logged and answered with a generic 500, so contract drift fails loudly.
 - Each typed route carries an `api.Operation` (`router.RouteInfo.Doc`) with its method, full path, params and input/output types for the generators below.
