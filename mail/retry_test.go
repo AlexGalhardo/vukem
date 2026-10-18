@@ -1,11 +1,14 @@
 package mail
 
 import (
+	"errors"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/AlexGalhardo/vukem/config"
 )
@@ -34,8 +37,70 @@ func (f *flakyTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	}, nil
 }
 
+var errDialRefused = &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connection refused")}
+
 func retryMessage() *Message {
 	return &Message{ID: "m1", From: "<a@example.com>", To: []string{"<b@example.com>"}, Subject: "s", Text: "t"}
+}
+
+// Network errors get the same bounded retries as 429/5xx. Resend sends an
+// Idempotency-Key, so any network error is retried; Mailtrap has none, so
+// only failures to connect (the request never left) are retried there.
+func TestTransportsRetryNetworkErrors(t *testing.T) {
+	t.Parallel()
+
+	reset := errors.New("read: connection reset by peer")
+
+	tests := []struct {
+		name      string
+		err       error
+		fails     int32
+		mailtrap  bool
+		wantCalls int32
+		wantErr   bool
+	}{
+		{name: "resend dial", err: errDialRefused, fails: 2, wantCalls: 3},
+		{name: "resend reset", err: reset, fails: 1, wantCalls: 2},
+		{name: "resend gives up", err: errDialRefused, fails: 9, wantCalls: 3, wantErr: true},
+		{name: "mailtrap dial", err: errDialRefused, fails: 2, mailtrap: true, wantCalls: 3},
+		{name: "mailtrap reset is not retried", err: reset, fails: 1, mailtrap: true, wantCalls: 1, wantErr: true},
+		{name: "mailtrap gives up", err: errDialRefused, fails: 9, mailtrap: true, wantCalls: 3, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			ft := &flakyTransport{fails: tt.fails, err: tt.err}
+			client := &http.Client{Transport: ft}
+
+			var tr Transport = NewResend(ResendConfig{
+				APIKey: config.NewSecret(
+					"k",
+				),
+				BaseURL:    "http://resend.test",
+				HTTP:       client,
+				MaxBackoff: time.Millisecond,
+			})
+			if tt.mailtrap {
+				tr = NewMailtrap(MailtrapConfig{
+					APIToken: config.NewSecret("k"), BaseURL: "http://mailtrap.test", HTTP: client,
+					MaxBackoff: time.Millisecond,
+				})
+			}
+
+			err := tr.Send(t.Context(), retryMessage())
+			if (err != nil) != tt.wantErr || ft.calls.Load() != tt.wantCalls {
+				t.Errorf(
+					"Send() = %v after %d calls, want error %v after %d",
+					err,
+					ft.calls.Load(),
+					tt.wantErr,
+					tt.wantCalls,
+				)
+			}
+		})
+	}
 }
 
 // Tags are checked once for every transport, before anything is sent.
@@ -56,7 +121,10 @@ func TestRenderValidatesTags(t *testing.T) {
 		}
 	}
 
-	if err := m.Send(t.Context(), raw{Envelope{To: []string{"a@b.co"}, Tags: map[string]string{"kind": "a b"}}, Text("x")}); err != nil {
+	if err := m.Send(
+		t.Context(),
+		raw{Envelope{To: []string{"a@b.co"}, Tags: map[string]string{"kind": "a b"}}, Text("x")},
+	); err != nil {
 		t.Errorf("Send(valid tag) = %v", err)
 	}
 }
@@ -67,7 +135,9 @@ func TestResendRejectsInvalidTagsBeforeSending(t *testing.T) {
 	t.Parallel()
 
 	ft := &flakyTransport{}
-	tr := NewResend(ResendConfig{APIKey: config.NewSecret("k"), BaseURL: "http://resend.test", HTTP: &http.Client{Transport: ft}})
+	tr := NewResend(
+		ResendConfig{APIKey: config.NewSecret("k"), BaseURL: "http://resend.test", HTTP: &http.Client{Transport: ft}},
+	)
 
 	msg := retryMessage()
 	msg.Tags = map[string]string{"kind": "order paid"}

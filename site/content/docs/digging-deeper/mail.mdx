@@ -341,7 +341,7 @@ Each send is one `POST https://api.resend.com/emails` with a JSON body.
 - Attachments are sent base64-encoded with their `content_type` and `content_id`.
 - Each tag becomes a Resend tag `{name, value}`. Resend accepts only ASCII letters, digits, `_` and `-` (at most 256 characters), so the transport refuses any other tag before the request: `mail: resend tag "kind": names and values take only ASCII letters, digits, _ and -`. The error is not retried.
 - The message `ID` goes in the `Idempotency-Key` header. When a retry repeats a request Resend already accepted, Resend does not send the email twice.
-- A `429` or `5xx` answer is retried up to 2 times. The wait is the `Retry-After` header when present, otherwise 200 ms, then 400 ms, and never more than 5 seconds. A network error (DNS, connection refused) is returned at once, without a retry.
+- A `429` or `5xx` answer and a network error (DNS, connection refused, a connection reset, a timeout) are retried up to 2 times. The wait is the `Retry-After` header when present, otherwise 200 ms, then 400 ms, and never more than 5 seconds. The idempotency key makes a retry safe even when the first request reached Resend. A cancelled `ctx` stops at once.
 - An error answer becomes a `*mail.ResendError` with `Status`, `Name` and `Message`, for example `mail: resend 422 validation_error: Invalid from field.`. Its `Retryable()` method is true for 429 and 5xx.
 - Each request has a 10-second timeout.
 
@@ -371,6 +371,7 @@ How the message maps to the API:
 - Attachments get `disposition: attachment`; inline ones get `disposition: inline` and their `content_id`.
 - The tag named `category` becomes Mailtrap's `category`. Every other tag goes into `custom_variables`, which show up in Mailtrap logs and webhooks.
 - `429` and `5xx` answers are retried exactly like Resend (2 retries, `Retry-After` honoured, 5-second cap). Mailtrap has no idempotency key, so a `5xx` that arrives after Mailtrap already delivered the email can make a retry send it twice.
+- Of the network errors, only a failed connection (DNS, connection refused) is retried, with the same backoff: the request never left. A connection that breaks after the request was sent (a reset, a timeout) is returned at once, because Mailtrap may already have delivered the email.
 - A `2xx` answer whose body says `"success": false` is an error, and it is not retried.
 - Errors are `*mail.MailtrapError` with `Status` and `Errors`, for example `mail: mailtrap 401: Unauthorized`. At most 5 errors of 200 characters each are kept, on one line, so an upstream message cannot forge or flood log lines. The token is replaced by `[redacted]` if Mailtrap echoes it; addresses that Mailtrap quotes may remain.
 - Redirects are never followed, because following one would send your token and the email to another server.

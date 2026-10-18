@@ -5,9 +5,12 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -22,7 +25,7 @@ type ResendConfig struct {
 	BaseURL string
 	// HTTP is the client (10s timeout by default).
 	HTTP *http.Client
-	// MaxRetries for 429 and 5xx responses (default 2).
+	// MaxRetries for 429 and 5xx responses and network errors (default 2).
 	MaxRetries int
 	// MaxBackoff caps waits between retries, including Retry-After (default 5s).
 	MaxBackoff time.Duration
@@ -98,7 +101,8 @@ type resendEmail struct {
 	Tags        []resendTag        `json:"tags,omitempty"`
 }
 
-// Send implements Transport, retrying 429 and 5xx with backoff.
+// Send implements Transport, retrying 429, 5xx and network errors with
+// backoff.
 func (r *Resend) Send(ctx context.Context, msg *Message) error {
 	if err := resendTags(msg.Tags); err != nil {
 		return err
@@ -120,7 +124,11 @@ func (r *Resend) Send(ctx context.Context, msg *Message) error {
 		last = err
 
 		re, ok := err.(*ResendError) //nolint:errorlint // post returns *ResendError unwrapped
-		if !ok || !re.Retryable() || attempt == r.cfg.MaxRetries {
+		failed, _ := roundTripFailed(ctx, err)
+		// The Idempotency-Key makes a resent request safe even when the
+		// first one reached Resend before the connection broke.
+		retry := ok && re.Retryable() || failed
+		if !retry || attempt == r.cfg.MaxRetries {
 			return err
 		}
 
@@ -153,6 +161,23 @@ func resendTags(tags map[string]string) error {
 	}
 
 	return nil
+}
+
+// roundTripFailed reports whether err is a request that got no HTTP answer
+// (failed) and whether it surely never reached the server (notSent: the
+// connection could not be made). A cancelled ctx is neither.
+func roundTripFailed(ctx context.Context, err error) (failed, notSent bool) {
+	if ctx.Err() != nil {
+		return false, false
+	}
+
+	if _, ok := errors.AsType[*url.Error](err); !ok {
+		return false, false
+	}
+
+	op, ok := errors.AsType[*net.OpError](err)
+
+	return true, ok && op.Op == "dial"
 }
 
 func (r *Resend) payload(msg *Message) resendEmail {
