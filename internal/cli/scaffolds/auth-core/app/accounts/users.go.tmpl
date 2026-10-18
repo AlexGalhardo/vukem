@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/AlexGalhardo/vukem/auth"
 	"github.com/AlexGalhardo/vukem/database"
 	"github.com/AlexGalhardo/vukem/orm"
 
@@ -104,8 +105,8 @@ func (a *Accounts) SendVerification(ctx context.Context, u models.User) error {
 }
 
 // VerifyEmail marks u verified from the signed link and ends every way into
-// the account opened before the address was proven: remember-me and API
-// tokens are deleted and the session version bumped (ending every session
+// the account opened before the address was proven: remember-me tokens are
+// deleted, API tokens revoked and the session version bumped (ending every session
 // on every driver) in one transaction, then server-side sessions other
 // than keep are deleted. Someone who signed up first with another person's
 // address loses the sessions and tokens they opened. With keep set (the
@@ -133,8 +134,9 @@ func (a *Accounts) VerifyEmail(ctx context.Context, u *models.User, keep string)
 	return a.revokeServerSessions(ctx, u.ID, keep)
 }
 
-// revokeAccess deletes userID's remember-me and API tokens and bumps its
-// session version, using ex (a.DB or the transaction in progress).
+// revokeAccess deletes userID's remember-me tokens, revokes its API tokens
+// and bumps its session version, using ex (a.DB or the transaction in
+// progress).
 func (a *Accounts) revokeAccess(ctx context.Context, ex database.Executor, userID int64) error {
 	id := strconv.FormatInt(userID, 10)
 
@@ -142,7 +144,12 @@ func (a *Accounts) revokeAccess(ctx context.Context, ex database.Executor, userI
 		return err
 	}
 
-	if _, err := ex.ExecContext(ctx, "DELETE FROM access_tokens WHERE user_id = "+ex.Dialect().Placeholder(1), id); err != nil {
+	// Revoked, not deleted: the tokens stay listed with revoked_at.
+	tokens := auth.NewTokens(ex)
+	tokens.Now = a.Tokens.Now
+	tokens.Log = a.Tokens.Log
+
+	if err := tokens.RevokeAll(ctx, id); err != nil {
 		return err
 	}
 

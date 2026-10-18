@@ -274,7 +274,7 @@ err := webGuard.RefreshSession(c)
 - A stale session is invalidated whole: data, owner and every guard's login.
 - Declare `AuthSessionVersion` on the **value** receiver when the guard holds values (`SessionGuard[models.User]`). `NewSessionGuard` panics when only the pointer implements it, since the version would never be checked.
 - It fails closed: an unreadable recorded version counts as stale. A session logged in before the user type had a version carries none, which counts as `0`, so it lasts until the first bump.
-- A bump ends sessions at their next request; it does not delete server-side records (they expire). Remember-me tokens are bound to the version they were issued under, so an older remember cookie no longer signs in; `RefreshSession` gives the current device a new one. API tokens are not affected (the scaffold deletes them on reset).
+- A bump ends sessions at their next request; it does not delete server-side records (they expire). Remember-me tokens are bound to the version they were issued under, so an older remember cookie no longer signs in; `RefreshSession` gives the current device a new one. API tokens are not affected (the scaffold revokes them on reset).
 
 ### Server-side revocation
 

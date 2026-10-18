@@ -199,9 +199,12 @@ func TestSecurity_A07_AuthScaffoldDefaults(t *testing.T) {
 		"scaffolds/auth-core/app/accounts/passwords.go.tmpl": {
 			"subtle.ConstantTimeCompare([]byte(stored), []byte(digest(token)))",
 			"a.expired(created, a.ResetTTL)",
+			"if err := a.revokeAccess(ctx, tx, u.ID); err != nil {",
+		},
+		"scaffolds/auth-core/app/accounts/users.go.tmpl": {
 			"DELETE FROM remember_tokens WHERE user_id",
-			"tokens := auth.NewTokens(tx)",
-			"tokens.RevokeAll(ctx, u.AuthID())",
+			"tokens := auth.NewTokens(ex)",
+			"tokens.RevokeAll(ctx, id)",
 		},
 		"scaffolds/auth-web/app/controllers/account/account.go.tmpl": {
 			"strings.ToLower(strings.TrimSpace(r.PostFormValue(\"email\")))",
@@ -250,7 +253,7 @@ func TestSecurity_A07_AuthScaffoldRevokesOtherSessions(t *testing.T) {
 			"sessions:  app.Sessions,",
 		},
 		"scaffolds/auth-core/app/accounts/passwords.go.tmpl": {
-			"if err := a.bumpSessionVersion(ctx, tx, u.ID); err != nil {",
+			"if err := a.revokeAccess(ctx, tx, u.ID); err != nil {",
 			`return u, a.revokeServerSessions(ctx, u.ID, "")`,
 		},
 		"scaffolds/auth-core/app/models/user.go.tmpl": {
@@ -570,7 +573,7 @@ func TestSecurity_A07_ProvingTheEmailEndsSquatterAccess(t *testing.T) {
 			"func (a *Accounts) VerifyEmail(ctx context.Context, u *models.User, keep string) error {",
 			"if err := a.revokeAccess(ctx, tx, u.ID); err != nil {",
 			`"DELETE FROM remember_tokens WHERE user_id = "`,
-			`"DELETE FROM access_tokens WHERE user_id = "`,
+			"tokens.RevokeAll(ctx, id)",
 			"return a.bumpSessionVersion(ctx, ex, userID)",
 			"return a.revokeServerSessions(ctx, u.ID, keep)",
 			`"%s/email/verify/%d?email_hash=%s", a.URL, u.ID, EmailHash(u.Email)`,
@@ -606,6 +609,23 @@ func TestSecurity_A07_ProvingTheEmailEndsSquatterAccess(t *testing.T) {
 			if !bytes.Contains(b, []byte(want)) {
 				t.Errorf("%s lacks %q", src, want)
 			}
+		}
+	}
+
+	// API tokens are revoked (kept with revoked_at for the audit trail),
+	// never deleted, like on a password reset.
+	for _, src := range []string{
+		"scaffolds/auth-core/app/accounts/users.go.tmpl",
+		"scaffolds/auth-core/app/accounts/passwords.go.tmpl",
+		"scaffolds/auth-social/app/accounts/social.go.tmpl",
+	} {
+		b, err := scaffoldFS.ReadFile(src)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if bytes.Contains(b, []byte("DELETE FROM access_tokens")) {
+			t.Errorf("%s deletes access_tokens instead of revoking them", src)
 		}
 	}
 

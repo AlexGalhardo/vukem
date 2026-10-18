@@ -353,7 +353,7 @@ Also:
 
 - Serve the API over HTTPS only: a bearer token is a password in a header.
 - Add a secret-scanning pattern for your prefix, for example `vk_[A-Z2-7]{26}\.[A-Z2-7]{26}`, to [GitHub custom patterns](https://docs.github.com/en/code-security/secret-scanning/using-advanced-secret-scanning-and-push-protection-features/custom-patterns/defining-custom-patterns-for-secret-scanning) or [gitleaks](https://github.com/gitleaks/gitleaks).
-- Verifying an email address deletes the account's API tokens, and a password reset revokes them, so tokens opened before either do not survive.
+- Verifying an email address, a provider-verified social sign-in that links the account, and a password reset all revoke the account's API tokens (the rows stay with `revoked_at`), so tokens opened before them do not survive.
 
 ## Testing
 
