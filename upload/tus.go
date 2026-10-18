@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"net/http"
 	"os"
 	"strconv"
@@ -393,6 +394,11 @@ func (h *TusHandler) patch(w http.ResponseWriter, r *http.Request, id string) {
 	if info.Offset == info.Length {
 		if err := h.complete(r.Context(), info); err != nil {
 			status := errs.Status(err)
+			if status >= http.StatusInternalServerError {
+				logger(r.Context()).ErrorContext(r.Context(), "upload: tus completion failed",
+					"id", info.ID, "status", status, "err", err)
+			}
+
 			tusError(w, status, clientMessage(err, status))
 
 			return
@@ -400,6 +406,15 @@ func (h *TusHandler) patch(w http.ResponseWriter, r *http.Request, id string) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// logger is the request's logger (web.Services) or slog.Default.
+func logger(ctx context.Context) *slog.Logger {
+	if log := web.ServicesFrom(ctx).Log; log != nil {
+		return log
+	}
+
+	return slog.Default()
 }
 
 func (h *TusHandler) complete(ctx context.Context, info TusInfo) error {

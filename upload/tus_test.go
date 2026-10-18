@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/AlexGalhardo/vukem/errs"
 	"github.com/AlexGalhardo/vukem/storage"
+	"github.com/AlexGalhardo/vukem/web"
 	"github.com/AlexGalhardo/vukem/z"
 )
 
@@ -30,6 +32,27 @@ type tusEnv struct {
 	info   TusInfo
 	stored File
 	now    time.Time
+	log    lockedBuffer // the request logger's output
+}
+
+// lockedBuffer is a bytes.Buffer safe for the server and test goroutines.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	return b.buf.String()
 }
 
 func newTus(t *testing.T, mutate func(*TusConfig)) *tusEnv {
@@ -89,8 +112,9 @@ func newTus(t *testing.T, mutate func(*TusConfig)) *tusEnv {
 	t.Cleanup(func() { _ = h.Close() })
 
 	mux := http.NewServeMux()
+	svc := &web.Services{Log: slog.New(slog.NewTextHandler(&env.log, nil))}
 	mux.Handle("/files/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.ServeHTTP(w, r)
+		h.ServeHTTP(w, r.WithContext(web.WithServices(r.Context(), svc)))
 		env.done <- r.Method
 	}))
 
@@ -417,4 +441,28 @@ func TestTusConfigIsValidatedAtBoot(t *testing.T) {
 	}
 
 	_ = h.Close()
+}
+
+// An OnComplete failure that is not the client's fault answers a bare 500
+// and logs the cause, which the client never sees.
+func TestTusCompletionErrorIsLogged(t *testing.T) {
+	t.Parallel()
+
+	env := newTus(t, func(cfg *TusConfig) {
+		cfg.OnComplete = func(context.Context, TusInfo, func() (io.ReadCloser, error)) error {
+			return errors.New("insert upload: connection refused")
+		}
+	})
+
+	loc := env.create(t, 1, "a.png")
+	res := env.do(t, http.MethodPatch, loc, strings.NewReader("x"),
+		map[string]string{"Content-Type": "application/offset+octet-stream", "Upload-Offset": "0"})
+
+	if res.StatusCode != http.StatusInternalServerError || strings.Contains(res.Body, "connection refused") {
+		t.Errorf("PATCH = %d %q, want a bare 500", res.StatusCode, res.Body)
+	}
+
+	if log := env.log.String(); !strings.Contains(log, "insert upload: connection refused") {
+		t.Errorf("log = %q, want the OnComplete error", log)
+	}
 }

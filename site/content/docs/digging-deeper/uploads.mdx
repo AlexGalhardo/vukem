@@ -258,7 +258,7 @@ With a scanner, the flow changes:
 2. The scanner reads it.
 3. Clean: the file is copied to its final path under `Dir` and the quarantined copy is deleted.
 4. Infected (an error wrapping `upload.ErrInfected`): the file is deleted and the request fails with 422.
-5. Any other scanner error (clamd is down, a timeout): the file is deleted and the request fails with 503 and `Retry-After: 60`. A scan that could not run never lets a file through.
+5. Any other scanner error (clamd is down, a timeout): the file is deleted and the request fails with 503 and `Retry-After: 60`. A scan that could not run never lets a file through. The returned `*errs.HTTPError` keeps the scanner error as its cause (`errors.Is` works on it), so the error log shows why; the client only gets the message above.
 
 `upload.ClamAV(addr)` returns an `*upload.ClamAVScanner` that streams the file to [clamd](https://docs.clamav.net/manual/Usage/Scanning.html#clamd) with its `INSTREAM` command over TCP:
 
@@ -372,6 +372,8 @@ PATCH /uploads/tus/ris… Upload-Offset: 10
 - A validation error (`*errs.ValidationError`, a `z.FieldError` or `z.Issues`): the client gets 422 and the first message as the body, such as "The file extension does not match its content.". A plain `Refine` error reads "The value field is invalid.".
 - An `*errs.HTTPError`: its status and its client-safe text.
 - Any other error: 500 "Internal Server Error".
+
+A status of 500 or more (a plain error, a scanner outage) is also logged at `ERROR` as `upload: tus completion failed` with the upload `id` and the full error, through the request's logger. The client never sees the cause.
 
 `info.Filename()` returns the `filename` metadata the client sent. It is untrusted: pass it to `Save`, which checks its extension and sanitizes it. `info.Metadata` holds every metadata pair; `ID`, `Length`, `Created` and `Expires` describe the upload.
 
