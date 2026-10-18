@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -20,6 +21,7 @@ import (
 	"testing/fstest"
 	"time"
 
+	"github.com/AlexGalhardo/vukem/errs"
 	"github.com/AlexGalhardo/vukem/web"
 )
 
@@ -256,6 +258,66 @@ func TestSecurity_A06_BodyLimit(t *testing.T) {
 			r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/", strings.NewReader(tt.body))
 			r.Header.Set("Content-Type", "application/json")
 			r.Header.Set("Accept", "application/json")
+			r.ContentLength = tt.length
+
+			if rec := do(t, h, r); rec.Code != tt.want {
+				t.Fatalf("status = %d, want %d (%s)", rec.Code, tt.want, rec.Body.String())
+			}
+		})
+	}
+}
+
+// TestSecurity_A06_BodyLimitInnermostWins reproduces A66: a router-wide BodyLimit is a
+// default that a route's own BodyLimit (or web.LimitBody from upload/tus)
+// may raise or lower, including for a declared Content-Length.
+func TestSecurity_A06_BodyLimitInnermostWins(t *testing.T) {
+	t.Parallel()
+
+	read := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, err := io.ReadAll(r.Body); err != nil {
+			if _, tooLarge := errors.AsType[*http.MaxBytesError](err); tooLarge {
+				err = errs.ErrRequestTooLarge
+			}
+			web.Fail(w, r, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+	limitBody := func(n int64) Middleware {
+		return func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				next.ServeHTTP(w, web.LimitBody(w, r, n))
+			})
+		}
+	}
+
+	tests := []struct {
+		name   string
+		h      http.Handler
+		length int64
+		want   int
+	}{
+		{name: "route raises", h: BodyLimit(10)(BodyLimit(100)(read)), length: 50, want: 204},
+		{name: "route raises chunked", h: BodyLimit(10)(BodyLimit(100)(read)), length: -1, want: 204},
+		{name: "LimitBody raises", h: BodyLimit(10)(limitBody(100)(read)), length: 50, want: 204},
+		{name: "route lowers", h: BodyLimit(100)(BodyLimit(10)(read)), length: 50, want: 413},
+		{name: "route lowers chunked", h: BodyLimit(100)(BodyLimit(10)(read)), length: -1, want: 413},
+		{name: "raised still capped", h: BodyLimit(10)(BodyLimit(20)(read)), length: 50, want: 413},
+		{name: "outer only", h: BodyLimit(10)(read), length: 50, want: 413},
+		{name: "outer only chunked", h: BodyLimit(10)(read), length: -1, want: 413},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			h := withServices(tt.h, slog.New(slog.DiscardHandler))
+			r := httptest.NewRequestWithContext(
+				t.Context(),
+				http.MethodPost,
+				"/",
+				strings.NewReader(strings.Repeat("x", 50)),
+			)
 			r.ContentLength = tt.length
 
 			if rec := do(t, h, r); rec.Code != tt.want {

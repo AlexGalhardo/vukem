@@ -237,10 +237,17 @@ r.Resource("posts.comments", comments).
 
 What happens with an oversized body:
 
-1. If the client declared a `Content-Length` above the limit, `BodyLimit` answers `413 Request Entity Too Large` before your handler runs.
-2. Otherwise the body is read through [`http.MaxBytesReader`](https://pkg.go.dev/net/http#MaxBytesReader). Reading past the limit fails, and `c.Input()` or `c.BindJSON` return `errs.ErrRequestTooLarge` (413).
+1. If the client declared a `Content-Length` above the limit, the first read of the body fails before any byte is consumed, and `c.Input()`, `c.BindJSON` or `web.Parse` return `errs.ErrRequestTooLarge` (413).
+2. Otherwise the body is read through [`http.MaxBytesReader`](https://pkg.go.dev/net/http#MaxBytesReader). Reading past the limit fails with the same 413.
 
-A later `BodyLimit` (on a route) **replaces** the reading limit of an earlier one instead of nesting under it, so lowering always works. Raising above the router-wide 10 MiB does not work for requests that declare their size, which is almost all of them: the router-level `BodyLimit` refuses them first. Middleware and packages may set a limit themselves with `web.LimitBody(w, r, n)`, and read the current one with `web.BodyLimitOf(r)`.
+A later `BodyLimit` (on a group or route) **replaces** the limit of an earlier one instead of nesting under it, so a route may lower the router-wide 10 MiB or raise it:
+
+```go title="routes/web.go"
+// Video uploads may reach 200 MiB; every other route keeps 10 MiB.
+r.Post("/videos", videos.Store).Use(middleware.BodyLimit(200 << 20))
+```
+
+The check happens when the body is read, against the innermost limit, so the router-wide default never refuses a body a route allows. Middleware and packages may set a limit themselves with `web.LimitBody(w, r, n)` (the `upload` package does, from `upload.Rules.MaxSize`), and read the current one with `web.BodyLimitOf(r)`.
 
 ## Configuration
 
@@ -311,7 +318,7 @@ curl -H "Content-Type: application/json" \
 
 **Expecting numbers from a form.** `{"stars": "5"}` is a string in form input. Let the schema convert it (`z.Int()`), instead of a type assertion that panics.
 
-**A 413 on uploads above 10 MiB.** The router-wide limit refuses them before your route runs. Keep uploads under the limit, or send large files with [resumable uploads](/docs/digging-deeper/uploads#resumable-uploads-tus) in chunks.
+**A 413 on uploads above 10 MiB.** The route still has the router-wide default. Raise it on the upload route with `middleware.BodyLimit(n)` or `upload.Rules.MaxSize`; very large files are better sent with [resumable uploads](/docs/digging-deeper/uploads#resumable-uploads-tus) in chunks.
 
 ## Next steps
 

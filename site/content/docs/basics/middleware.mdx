@@ -426,9 +426,9 @@ r.Get("/reports/{year}", reports.Show).
 
 ### BodyLimit
 
-`BodyLimit(n)` caps the request body at `n` bytes. A request that declares a larger `Content-Length` is refused at once with `413 Request Entity Too Large`, before the rest of the chain runs; a body that turns out larger while being read fails with 413 too. Every body reader in `web` already applies `web.DefaultMaxBody` (10 MiB) when no limit was set, and the default stack installs `BodyLimit(web.DefaultMaxBody)` on the router.
+`BodyLimit(n)` caps the request body at `n` bytes. When the handler reads a larger body, the read fails and the `web` helpers (`c.Input()`, `c.BindJSON`, `web.Parse`, uploads) answer `413 Request Entity Too Large`. A request that declares a larger `Content-Length` fails on the first read, before any byte is consumed; a body without a declared size fails once it crosses the limit. Every body reader in `web` already applies `web.DefaultMaxBody` (10 MiB) when no limit was set, and the default stack installs `BodyLimit(web.DefaultMaxBody)` on the router.
 
-A second `BodyLimit` further down the chain (on a group or route) replaces the reading limit instead of nesting under it. Lowering works in every case. Raising does not, in practice: the router-level `BodyLimit` runs first and already refuses any request whose `Content-Length` is above 10 MiB, which is what browsers and most clients send. See [Requests](/docs/basics/requests#body-size-limits).
+A second `BodyLimit` further down the chain (on a group or route), `web.LimitBody` and `upload.Rules.MaxSize` **replace** the limit instead of nesting under it, so a route can lower the router-wide 10 MiB or raise it (for an upload route). The check runs when the body is read, against the innermost limit; a handler that never reads the body gets no 413. See [Requests](/docs/basics/requests#body-size-limits).
 
 ### JSONOnly
 

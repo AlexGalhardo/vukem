@@ -152,5 +152,5 @@ Stacks come from `errs.New`, `errs.Wrap`, `errs.WithStack(err)` (for errors from
 ## Static files and uploads
 
 - `public/` served by `middleware.Static` with `http.FileServerFS` over an `os.Root`; hashed assets get `Cache-Control: public, max-age=31536000, immutable`.
-- Request bodies limited by `http.MaxBytesReader` (configurable per route: a route's `middleware.BodyLimit` or `upload.Rules.MaxSize` replaces the router-wide 10 MiB default).
+- Request bodies limited by `http.MaxBytesReader` (configurable per route: a route's `middleware.BodyLimit` or `upload.Rules.MaxSize` replaces the router-wide 10 MiB default, raising or lowering it; the limit is checked when the body is read, against the innermost limit).
 - Uploads stored through `storage/` (ALPHA) using `os.Root` to prevent path traversal; filenames randomised by default. Streaming, resumable and direct uploads: [subsystems.md#uploads](subsystems.md#uploads).

@@ -133,15 +133,36 @@ type bodyLimit struct {
 // handlers do not apply DefaultMaxBody on top. Body-limit middleware uses
 // it. Called again on the same request, the new limit replaces the old
 // one, so a route can raise or lower the router-wide default.
+//
+// A declared Content-Length above n fails on the first read, before any
+// byte is consumed, with an *http.MaxBytesError; undeclared (chunked)
+// bodies fail once they cross n.
 func LimitBody(w http.ResponseWriter, r *http.Request, n int64) *http.Request {
 	orig := r.Body
 	if prev, ok := r.Context().Value(bodyLimitKey{}).(bodyLimit); ok {
 		orig = prev.body
 	}
 
-	r.Body = http.MaxBytesReader(w, orig, n)
+	r.Body = &limitedBody{ReadCloser: http.MaxBytesReader(w, orig, n), declared: r.ContentLength, n: n}
 
 	return r.WithContext(context.WithValue(r.Context(), bodyLimitKey{}, bodyLimit{n: n, body: orig}))
+}
+
+// limitedBody refuses a declared Content-Length over the limit without
+// reading it. The check is lazy so the innermost LimitBody decides: a
+// router-wide default must not reject a body a route allows (A66).
+type limitedBody struct {
+	io.ReadCloser
+
+	declared, n int64
+}
+
+func (b *limitedBody) Read(p []byte) (int, error) {
+	if b.declared > b.n {
+		return 0, &http.MaxBytesError{Limit: b.n}
+	}
+
+	return b.ReadCloser.Read(p)
 }
 
 // BodyLimitOf returns the body limit set by LimitBody, if any.
