@@ -41,7 +41,7 @@ func TestStarterREADMEDocumentationLinks(t *testing.T) {
 func TestNextStepsCoversTheHandover(t *testing.T) {
 	t.Parallel()
 
-	out := nextSteps("blog", "htmx, Tailwind, SQLite", "htmx", standardsOpts{docker: true})
+	out := nextSteps("blog", "htmx, Tailwind, SQLite", "htmx", standardsOpts{docker: true}, pmByName["bun"], true)
 
 	for _, want := range []string{
 		".env", docs + "/configuration",
@@ -57,7 +57,38 @@ func TestNextStepsCoversTheHandover(t *testing.T) {
 	}
 
 	// A database-less project has nothing to migrate.
-	if out := nextSteps("blog", "no database", "minimal", standardsOpts{}); strings.Contains(out, "vukem migrate") {
+	out = nextSteps("blog", "no database", "minimal", standardsOpts{}, pmByName["bun"], true)
+	if strings.Contains(out, "vukem migrate") {
 		t.Errorf("--minimal next steps mention migrate:\n%s", out)
+	}
+}
+
+// --docker with --no-install (or without the package manager on PATH)
+// leaves the project without a lockfile, and the image's assets stage
+// installs from one. The handover has to name the command that writes it,
+// before the step that tells the reader to build the image.
+func TestNextStepsNameTheInstallTheImageNeeds(t *testing.T) {
+	t.Parallel()
+
+	out := nextSteps("blog", "htmx, Tailwind, SQLite", "htmx", standardsOpts{docker: true}, pmByName["npm"], false)
+
+	install, compose := strings.Index(out, "npm install"), strings.Index(out, "docker compose up")
+	if install < 0 {
+		t.Fatalf("next steps do not name the install the image needs:\n%s", out)
+	}
+
+	if compose < 0 || install > compose {
+		t.Errorf("the install step does not come before the image build:\n%s", out)
+	}
+
+	// With a lockfile there is nothing to say, and an API project builds no
+	// assets at all.
+	for _, out := range []string{
+		nextSteps("blog", "htmx", "htmx", standardsOpts{docker: true}, pmByName["npm"], true),
+		nextSteps("shop", "JSON API", "api", standardsOpts{docker: true}, pmByName["npm"], false),
+	} {
+		if strings.Contains(out, "npm install") {
+			t.Errorf("next steps ask for an install that is not needed:\n%s", out)
+		}
 	}
 }

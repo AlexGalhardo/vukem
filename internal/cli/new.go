@@ -197,7 +197,7 @@ func newProject(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 			desc = "htmx " + htmxVersion + ", Tailwind, no database"
 		}
 
-		fmt.Fprint(env.Stdout, nextSteps(name, desc, st.kind, std))
+		fmt.Fprint(env.Stdout, nextSteps(name, desc, st.kind, std, pm, hasLockfile(dir)))
 
 		return nil
 	}

@@ -139,7 +139,7 @@ The `Dockerfile` is a [multi-stage build](https://docs.docker.com/build/building
 
 | Stage | Base image | What it does |
 | --- | --- | --- |
-| `assets` (not in `--api` projects) | `node:24.22.0-alpine3.24`, or `oven/bun:1.4.3-alpine` with `--pm bun` | copies `package.json` and the lockfile, installs from the lockfile, copies the project and runs the `build` script (`vite build`) |
+| `assets` (not in `--api` projects) | `node:24.22.0-alpine3.24`, or `oven/bun:1.4.3-alpine` with `--pm bun` | copies `package.json` and the lockfile, refuses to continue without the lockfile, installs from it, copies the project and runs the `build` script (`vite build`) |
 | `build` | `golang:1.27.2-alpine3.24` | `go mod download`, `go tool templ generate` in `--templ` projects, copies `resources/public/build` from `assets`, then builds `./cmd/app` with `CGO_ENABLED=0 -trimpath -ldflags="-s -w"` and the tags in `.buildtags` |
 | runtime | `alpine:3.24.2` | installs `ca-certificates` and `tzdata`, adds a non-root `app` user (uid `10001`), creates a writable `/app/storage`, copies the binary to `/app/app` |
 
@@ -152,7 +152,22 @@ The base image and the install command come from the package manager the project
 | `pnpm` | `node:24.22.0-alpine3.24` | `pnpm-lock.yaml` | `pnpm install --frozen-lockfile`, after `corepack enable` |
 | `yarn` | `node:24.22.0-alpine3.24` | `yarn.lock` | `yarn install --frozen-lockfile`, after `corepack enable` |
 
-`vukem new` picks it in this order: the `--pm` flag, then the lockfile already in the directory, then the first of `bun`, `npm`, `pnpm` and `yarn` installed on your machine. The same choice installs your dependencies and writes the `Dockerfile`, so the two always agree. Every install command above refuses to resolve versions the lockfile does not pin, which is why a missing lockfile fails the build instead of shipping untracked versions.
+`vukem new` picks it in this order: the `--pm` flag, then the lockfile already in the directory, then the first of `bun`, `npm`, `pnpm` and `yarn` installed on your machine. The same choice installs your dependencies and writes the `Dockerfile`, so the two always agree.
+
+The lockfile is a required build input, and the `assets` stage checks for it before installing:
+
+```dockerfile title="Dockerfile"
+COPY package.json package-lock.json* ./
+RUN if ! ls package-lock.json* >/dev/null 2>&1; then \
+		echo "package-lock.json not found: run 'npm install', commit it, then build again" >&2; \
+		exit 1; \
+	fi \
+	&& npm ci --no-audit --no-fund
+```
+
+The check is there because the package managers disagree. Without a lockfile, `npm ci` fails with `EUSAGE` and `pnpm install --frozen-lockfile` with `ERR_PNPM_NO_LOCKFILE`, but `bun install --frozen-lockfile` and `yarn install --frozen-lockfile` install anyway and resolve whatever versions are current, without saying so. The silent half is the one that hurts: the image you ship no longer matches the versions you tested. The check makes every package manager stop the same way, and name the command that fixes it.
+
+This is why `vukem new --no-install` and `--docker` together give you a project whose image cannot be built yet: there is no lockfile. Run the install the post-install steps name, commit the lockfile, and build.
 
 The choice is written into the `Dockerfile` once, when the project is generated. If you switch package manager later — delete `package-lock.json` and run `bun install`, say — edit the `assets` stage to match.
 
@@ -175,7 +190,7 @@ Under the hood:
 | `/resources/public/hot`, `/resources/public/build/` | the Vite dev-server marker and local builds; the image builds its own assets |
 
 <Callout type="warning" title="Two things break the build">
-Commit the lockfile the `assets` stage names, and keep it the one that stage installs from: it fails on a missing lockfile (``npm error The `npm ci` command can only install with an existing package-lock.json``), which is what happens when the project moves to another package manager and the stage is not updated with it. A project made with `vukem new --framework <path>` points `go.mod` at a local checkout through a `replace` directive; remove it with `go get github.com/AlexGalhardo/vukem@<version>` before you build an image.
+Commit the lockfile the `assets` stage names, and keep it the one that stage installs from: it fails on a missing lockfile (`package-lock.json not found: run 'npm install', commit it, then build again`), which is what happens after `vukem new --no-install` and when the project moves to another package manager without the stage moving with it. A project made with `vukem new --framework <path>` points `go.mod` at a local checkout through a `replace` directive; remove it with `go get github.com/AlexGalhardo/vukem@<version>` before you build an image.
 </Callout>
 
 ### Storage and volumes

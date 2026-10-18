@@ -27,29 +27,34 @@ type dockerData struct {
 	Corepack bool // pnpm and yarn come from Node's corepack
 	Lockfile string
 	Install  string
-	Build    string
+	// ByHand is the command the developer runs to write the lockfile the
+	// image installs from.
+	ByHand string
+	Build  string
 }
 
 // writeDocker writes the production Dockerfile and .dockerignore for a
 // starter of kind built with pm.
 func writeDocker(dir, kind string, pm jsPM) error {
 	d := dockerData{
-		Assets:  kind != "api",
-		Templ:   kind == "templ",
-		JSImage: nodeImage,
-		Build:   pm.name + " run build",
+		Assets:   kind != "api",
+		Templ:    kind == "templ",
+		JSImage:  nodeImage,
+		Lockfile: pm.lockfile,
+		ByHand:   pm.install(),
+		Build:    pm.name + " run build",
 	}
 
 	switch pm.name {
 	case "bun":
 		// The Dockerfile copies "bun.lock*", which also matches the binary bun.lockb.
-		d.JSImage, d.Lockfile, d.Install = bunImage, "bun.lock", "bun install --frozen-lockfile"
+		d.JSImage, d.Install = bunImage, "bun install --frozen-lockfile"
 	case "pnpm":
-		d.Corepack, d.Lockfile, d.Install = true, "pnpm-lock.yaml", "pnpm install --frozen-lockfile"
+		d.Corepack, d.Install = true, "pnpm install --frozen-lockfile"
 	case "yarn":
-		d.Corepack, d.Lockfile, d.Install = true, "yarn.lock", "yarn install --frozen-lockfile"
+		d.Corepack, d.Install = true, "yarn install --frozen-lockfile"
 	default:
-		d.Lockfile, d.Install = "package-lock.json", "npm ci --no-audit --no-fund"
+		d.Install = "npm ci --no-audit --no-fund"
 	}
 
 	src, err := dockerFS.ReadFile("docker/Dockerfile.tmpl")

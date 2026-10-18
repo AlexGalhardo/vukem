@@ -13,6 +13,9 @@ import (
 type jsPM struct {
 	name        string
 	installArgs []string
+	// lockfile is the file this manager writes and the generated Docker
+	// image installs from.
+	lockfile string
 	// exec runs a package binary (vite) without a package.json script.
 	exec []string
 	// cmdShim: on Windows the binary is a .cmd shim (npm, pnpm, yarn), not
@@ -24,12 +27,25 @@ var pmByName = map[string]jsPM{ //nolint:gochecknoglobals // read-only lookup ta
 	"npm": {
 		name:        "npm",
 		installArgs: []string{"install", "--no-audit", "--no-fund"},
+		lockfile:    "package-lock.json",
 		exec:        []string{"exec", "--"},
 		cmdShim:     true,
 	},
-	"bun":  {name: "bun", installArgs: []string{"install"}, exec: []string{"x"}},
-	"pnpm": {name: "pnpm", installArgs: []string{"install"}, exec: []string{"exec"}, cmdShim: true},
-	"yarn": {name: "yarn", installArgs: []string{"install"}, exec: []string{"exec"}, cmdShim: true},
+	"bun": {name: "bun", installArgs: []string{"install"}, lockfile: "bun.lock", exec: []string{"x"}},
+	"pnpm": {
+		name:        "pnpm",
+		installArgs: []string{"install"},
+		lockfile:    "pnpm-lock.yaml",
+		exec:        []string{"exec"},
+		cmdShim:     true,
+	},
+	"yarn": {
+		name:        "yarn",
+		installArgs: []string{"install"},
+		lockfile:    "yarn.lock",
+		exec:        []string{"exec"},
+		cmdShim:     true,
+	},
 }
 
 // lockfiles map each lockfile to its package manager, checked in order.
@@ -60,6 +76,17 @@ func (p jsPM) binary() string {
 
 // install is the command line users should run by hand.
 func (p jsPM) install() string { return p.name + " install" }
+
+// hasLockfile reports whether dir holds a lockfile of any supported
+// package manager. The generated Docker image installs from one, so
+// without it the assets stage has nothing reproducible to install.
+func hasLockfile(dir string) bool {
+	return slices.ContainsFunc(lockfiles, func(l struct{ file, pm string }) bool {
+		_, err := os.Stat(filepath.Join(dir, l.file))
+
+		return err == nil
+	})
+}
 
 // packageManager picks the package manager for the project in dir: the
 // explicit choice (--pm), else the one whose lockfile is in dir, else the

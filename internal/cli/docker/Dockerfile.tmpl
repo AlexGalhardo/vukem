@@ -9,7 +9,16 @@ WORKDIR /src
 RUN corepack enable
 {{- end}}
 COPY package.json {{.Lockfile}}* ./
-RUN {{.Install}}
+# The lockfile is a required build input: the image installs exactly the
+# versions the repository tracks. Without one npm and pnpm refuse, while bun
+# and yarn resolve fresh versions and say nothing, so the requirement is
+# stated here and is the same for every package manager. Generate it with
+# "{{.ByHand}}" and commit it; .dockerignore must not exclude it.
+RUN if ! ls {{.Lockfile}}* >/dev/null 2>&1; then \
+		echo "{{.Lockfile}} not found: run '{{.ByHand}}', commit it, then build again" >&2; \
+		exit 1; \
+	fi \
+	&& {{.Install}}
 COPY . .
 RUN {{.Build}}
 {{- end}}
