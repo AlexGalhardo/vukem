@@ -131,10 +131,7 @@ func installAuth(set *flag.FlagSet) func(context.Context, *Env, []string) error 
 			return err
 		}
 
-		fmt.Fprint(env.Stdout, "\nAuthentication installed. Next:\n\n"+
-			"  vukem migrate\n"+
-			"  set MAIL_MAILER (smtp, resend or mailtrap) and APP_URL so verification and reset emails work\n"+
-			"  go test ./tests/...\n\n")
+		fmt.Fprint(env.Stdout, authInstalled())
 
 		if *twoFactor {
 			fmt.Fprint(env.Stdout, "Two-factor authentication: users turn it on at /user/two-factor.\n\n")
@@ -185,6 +182,24 @@ func installAPI(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 
 		return nil
 	}
+}
+
+// authInstalled is the install:auth handover. It names --locales because
+// the generated catalogs are English-only by default (A79): a second
+// language nobody asked for is a file the app has to maintain or delete,
+// and the generated message test asserts whatever locales exist, so a
+// deleted catalog would break it. The flag is the only way to discover
+// that the i18n example exists at all.
+func authInstalled() string {
+	return "\nAuthentication installed. Next:\n\n" +
+		"  vukem migrate\n" +
+		"  set MAIL_MAILER (smtp, resend or mailtrap) and APP_URL so verification and reset emails work\n" +
+		"  go test ./tests/...\n\n" +
+		"Messages are generated for " + defaultLocale + " only. For a translated app, ask for the\n" +
+		"catalogs up front -- install:auth --locales " + strings.Join(availableLocales(), ",") + " -- and a later\n" +
+		"install:auth writes catalogs only for the locales the project already has, so\n" +
+		"one you delete is never put back.\n" +
+		"  https://vukem.dev/docs/digging-deeper/localization\n\n"
 }
 
 // apiInstalled is the install:api handover. It spells out the ability
@@ -549,6 +564,26 @@ func installScaffold(env *Env, name string, data map[string]string, force bool) 
 		}
 
 		fmt.Fprintln(env.Stdout, "created", f.rel)
+	}
+
+	// After the loop, so a doc.go the scaffold ships is already on disk and
+	// keeps its own wording. A scaffold is the first to create a package in
+	// any project that does not ship it — a hand-rolled one, or a starter
+	// whose demo and its doc.go were deleted — and the package comment
+	// never rides on a generated file (the same rule as the generators).
+	seen := map[string]bool{}
+
+	for _, f := range files {
+		dir := path.Dir(f.rel)
+		if !strings.HasSuffix(f.rel, ".go") || seen[dir] {
+			continue
+		}
+
+		seen[dir] = true
+
+		if err := ensurePackageDoc(env, dir); err != nil {
+			return err
+		}
 	}
 
 	return nil

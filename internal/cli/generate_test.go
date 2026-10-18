@@ -42,13 +42,14 @@ func TestMakeListenerRejectsAsyncQueuedBeforeWriting(t *testing.T) {
 	}
 }
 
-// Starters ship no app/policies/registry.go: make:policy creates it.
+// Starters ship no app/policies/registry.go: make:policy creates it, and
+// the testdata project does not ship one either, so this is the real path.
 func TestMakePolicyCreatesRegistry(t *testing.T) {
 	t.Parallel()
 
 	dir := project(t)
-	if err := os.Remove(filepath.Join(dir, "app", "policies", "registry.go")); err != nil {
-		t.Fatal(err)
+	if fileExists(t, dir, "app/policies/registry.go") {
+		t.Fatal("the testdata project ships app/policies/registry.go; this test would prove nothing")
 	}
 
 	code, out, errOut := vukem(t, dir, "make:policy", "Post")
@@ -113,39 +114,63 @@ func TestMakeModelWritesNothingOnClash(t *testing.T) {
 	}
 }
 
-// Generated code is the first Go a developer reads in a new project, so the
-// make:* stubs are held to the same .golangci.yml as the framework itself:
-// a fresh app reporting findings nobody wrote teaches that the bar is
-// optional. Mirrors the gate TestNewProjectEndToEnd puts on vukem new and
-// the installers (A76, same class of defect in the make:* generators).
+// Generated code is the first Go a developer reads in a new project, so
+// what the generators write is held to the same .golangci.yml as the
+// framework itself: a fresh app reporting findings nobody wrote teaches
+// that the bar is optional. Mirrors the gate TestNewProjectEndToEnd puts on
+// vukem new plus the installers run in sequence (A76).
+//
+// One case per path, each in its own project, because the paths cannot be
+// combined: install:auth writes app/models/user.go, which make:model User
+// also writes. The single-step install:auth --social=google is here on its
+// own because it resolves the locale set for a project that has no catalogs
+// yet, and that is the path a lint regression came back on (A79).
 func TestGeneratedStubsPassRepositoryLint(t *testing.T) {
 	t.Parallel()
 	requireGo(t)
 
-	dir := project(t)
+	for _, tc := range []struct {
+		name string
+		run  func(t *testing.T, dir string)
+	}{
+		{"make", runGenerators},
+		{"install:auth --social", func(t *testing.T, dir string) {
+			t.Helper()
 
-	repoSum, err := os.ReadFile(filepath.Join("..", "..", "go.sum"))
-	if err != nil {
-		t.Fatal(err)
+			if code, out, errOut := vukem(t, dir, "install:auth", "--social=google"); code != 0 {
+				t.Fatalf("install:auth --social=google = %d\n%s%s", code, out, errOut)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			dir := project(t)
+
+			repoSum, err := os.ReadFile(filepath.Join("..", "..", "go.sum"))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if err := os.WriteFile(filepath.Join(dir, "go.sum"), repoSum, 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			tc.run(t, dir)
+
+			// golangci-lint typechecks the project, so its dependencies
+			// must resolve before it runs.
+			tidy := exec.CommandContext(t.Context(), "go", "mod", "tidy")
+			tidy.Dir = dir
+			tidy.Env = append(os.Environ(), "GOWORK=off", "GOFLAGS=-mod=mod")
+
+			if out, err := tidy.CombinedOutput(); err != nil {
+				t.Fatalf("go mod tidy: %v\n%s", err, out)
+			}
+
+			requireGeneratedLint(t, dir, "example.com/blog")
+		})
 	}
-
-	if err := os.WriteFile(filepath.Join(dir, "go.sum"), repoSum, 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	runGenerators(t, dir)
-
-	// golangci-lint typechecks the project, so its dependencies must
-	// resolve before it runs.
-	tidy := exec.CommandContext(t.Context(), "go", "mod", "tidy")
-	tidy.Dir = dir
-	tidy.Env = append(os.Environ(), "GOWORK=off", "GOFLAGS=-mod=mod")
-
-	if out, err := tidy.CombinedOutput(); err != nil {
-		t.Fatalf("go mod tidy: %v\n%s", err, out)
-	}
-
-	requireGeneratedLint(t, dir, "example.com/blog")
 }
 
 // A package comment the generators already wrote is enough: an installer

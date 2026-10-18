@@ -161,3 +161,29 @@ func TestInstallAPIHandoverExplainsAbilities(t *testing.T) {
 		t.Errorf("the handover mentions the wildcard ability:\n%s", msg)
 	}
 }
+
+// A79: install:auth generates one message catalog, the default locale, so
+// an English-only app gets no dead files. The second language is then
+// opt-in, and the handover has to name the flag -- a worked i18n example
+// nobody can find is the same as not shipping one.
+func TestInstallAuthHandoverNamesTheLocaleFlag(t *testing.T) {
+	t.Parallel()
+
+	msg := authInstalled()
+
+	if !strings.Contains(msg, "--locales") {
+		t.Errorf("the install:auth handover does not name --locales:\n%s", msg)
+	}
+
+	// Every locale the scaffolds can generate is offered, so adding a
+	// catalog without the handover fails here.
+	for _, l := range availableLocales() {
+		if !strings.Contains(msg, l) {
+			t.Errorf("the handover does not offer the %q catalog:\n%s", l, msg)
+		}
+	}
+
+	if !strings.Contains(msg, "/docs/digging-deeper/localization") {
+		t.Errorf("the handover does not link the localization docs:\n%s", msg)
+	}
+}
