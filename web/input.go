@@ -154,6 +154,10 @@ func LimitBody(w http.ResponseWriter, r *http.Request, n int64) *http.Request {
 // limitedBody refuses a declared Content-Length over the limit without
 // reading it. The check is lazy so the innermost LimitBody decides: a
 // router-wide default must not reject a body a route allows (A66).
+// declared is r.ContentLength when LimitBody ran (net/http does not change
+// it later); the *http.MaxBytesError is built here, not by MaxBytesReader,
+// so the connection is not marked to close, and net/http closes it anyway
+// when a large unread body is left after the handler.
 type limitedBody struct {
 	io.ReadCloser
 
