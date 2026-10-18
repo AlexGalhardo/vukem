@@ -271,3 +271,66 @@ routes["posts.store"].method;                       // "POST"
 ```
 
 Params are required and typed per route (`string | number`), encoded with `encodeURIComponent` (each segment of a `{name...}` wildcard, keeping `/`); the optional second object becomes the query string (`null`/`undefined` values skipped). Regenerate after changing routes and commit the file.
+
+### The demo resource's links
+
+The starter ships an example Posts CRUD. Its links live with it: `resources/js/demo.ts` globs
+`resources/js/pages/Posts/*`, and the layout's navigation entry and the home page call to action
+render only while those pages exist. Deleting `resources/js/pages/Posts/`, `components/PostForm.*`
+and the demo's Go route therefore removes the links too, with no file left pointing at a route that
+is gone and nothing to edit by hand.
+
+### Password fields in the auth pages
+
+`vukem install:auth` on an Inertia + React app generates `resources/js/components/PasswordField.tsx`
+and `resources/js/lib/password-policy.ts`. Every password input is a `PasswordField`: a show/hide
+toggle sits inside the field, and the register and reset pages also check the server's rules as the
+user types, so the first feedback is not a round trip.
+
+`lib/password-policy.ts` mirrors `app/requests/auth.go`, where `RegisterSchema` and
+`ResetPasswordSchema` validate the password with `z.String().Min(12).Max(256)` and compare it with
+`password_confirmation` in their `Refine`. Nothing in the toolchain ties the two files together, so
+**change the policy in both in the same commit**. Two rules keep the mirror honest:
+
+- `checkPassword` holds the server's rules and nothing else. A rule the server does not enforce does
+  not belong there: a form that refuses a password the API would have taken is worse than no hint.
+- Everything else is advice. `passwordAdvice` rates length and character variety and is rendered
+  apart from the checklist, labelled as advice, and never gates the form.
+- Lengths are counted in Unicode code points (`Array.from(value).length`), because
+  `z.String().Min`/`.Max` count runes. JavaScript's `String.length` counts UTF-16 code units and
+  would call a six-character astral-plane password twelve characters long — accepted in the browser,
+  rejected by the server. The inputs carry no `minLength` attribute for the same reason.
+
+The toggle is a real `<button type="button">` with an `aria-label` that follows its state and
+`aria-pressed` carrying it, so it is reachable by keyboard. The label is bound with `htmlFor`
+instead of wrapping the input: a `<label>` that encloses both the input and the button folds the
+button's text into the field's accessible name, and the field announces as "Password Show password".
+Visibility lives in component state only, so a revealed password is hidden again on the next mount.
+
+The login page gets the toggle but no checklist: signing in must not advertise the policy, and an
+existing password may predate it.
+
+### Email templates (and React Email)
+
+Emails are rendered by the Go process, not by Node. A `mail.Mailable` returns
+`mail.View("mail/verify_email", m)`, and the `Mailer` renders `resources/views/mail/*.html` with the
+app's `html/template` engine at send time — including inside `queue:work`, since `SendLater` renders
+before queueing. Subjects come from the locale catalog through `a.T(ctx, "auth.mail.verify_subject")`.
+
+**[React Email](https://react.email/) is not offered as a scaffold option, by decision.** It renders
+JSX in Node, and wiring it in costs more than it returns:
+
+- Rendering at send time puts a Node runtime wherever mail is sent — `vukem serve`, `vukem queue:work`,
+  the Docker image and CI — in an app whose server is one Go binary and whose SSR is off by default.
+  `mail.Preview`, the `log` transport and the `Array` test transport would all need it too.
+- Rendering at build time to static HTML only works for templates with no dynamic structure. The
+  generated templates interpolate (`.Link`, `.User.Name`), so a build step would have to emit Go
+  template actions out of JSX — `{"{{.Link}}"}` in the source, no type safety for the one thing that
+  matters, and silent breakage the first time anyone writes a loop or a conditional.
+- It has no access to the request locale, so localized subjects and bodies would need a second path.
+
+Use it as a design-time tool instead, which costs nothing: compose the email in React Email, export
+the HTML once, paste it into `resources/views/mail/<name>.html` and replace the sample values with
+the template's actions. If a team really does want JSX rendered per send, the seam already exists —
+a `Mailable` may return `mail.HTML(htmlBody, text)`, so it can call a rendering service of its own
+without the framework taking on Node.
