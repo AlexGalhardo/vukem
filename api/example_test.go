@@ -9,11 +9,16 @@ import (
 	"github.com/AlexGalhardo/vukem/api"
 	"github.com/AlexGalhardo/vukem/router"
 	"github.com/AlexGalhardo/vukem/web"
+	"github.com/AlexGalhardo/vukem/z"
 )
 
 type exStoreProduct struct {
 	Name  string `json:"name"  validate:"required"`
 	Price int    `json:"price" validate:"min=1"`
+}
+
+type exSubscribe struct {
+	Plans []string `json:"plans"`
 }
 
 type exProductJSON struct {
@@ -49,4 +54,32 @@ func ExampleCollection() {
 
 	fmt.Println(rec.Code, strings.TrimSpace(rec.Body.String()))
 	// Output: 200 {"data":[{"id":0,"name":"Mug"},{"id":0,"name":"Cap"}]}
+}
+
+func ExampleRegisterWith() {
+	// The allowlist is a runtime value, so `validate:"max=..."` cannot say it.
+	plans := []string{"free", "pro"}
+	schema := z.Struct[exSubscribe](z.Shape{
+		"plans": z.Slice(z.String().OneOf(plans...)).Min(1).Max(len(plans)),
+	}).Refine(func(s exSubscribe) error {
+		if len(s.Plans) == 2 && s.Plans[0] == s.Plans[1] {
+			return z.FieldError("plans", "plans must differ")
+		}
+
+		return nil
+	})
+
+	r := router.New(nil)
+	api.RegisterWith(r, "POST /subscriptions", api.Op{Name: "subscriptions.store"}, schema,
+		func(_ *web.Ctx, in exSubscribe) (exProductJSON, error) {
+			return exProductJSON{ID: 1, Name: strings.Join(in.Plans, ",")}, nil
+		})
+
+	req := httptest.NewRequest(http.MethodPost, "/subscriptions", strings.NewReader(`{"plans":["free","pro"]}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	fmt.Println(rec.Code, strings.TrimSpace(rec.Body.String()))
+	// Output: 201 {"id":1,"name":"free,pro"}
 }

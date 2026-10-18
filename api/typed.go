@@ -66,10 +66,61 @@ var paramRe = regexp.MustCompile(`\{([A-Za-z_][A-Za-z0-9_]*)(?:\.{3})?\}`) //nol
 //
 //	api.Register(g, "POST /products", api.Op{Name: "products.store"},
 //		func(c *web.Ctx, in StoreProduct) (ProductJSON, error) { ... })
+//
+// Use [RegisterWith] when the input needs a rule `validate` tags cannot
+// express.
 func Register[In, Out any](g Registrar, pattern string, op Op, fn func(*web.Ctx, In) (Out, error)) *router.Route {
+	return register("Register", g, pattern, op, nil, fn)
+}
+
+// RegisterWith adds a typed handler that validates its input with schema
+// instead of In's `validate` tags, for the rules tags cannot express: a
+// bound computed from a value (z.Slice(z.String()).Max(len(allowed))) or a
+// cross-field z.Refine. Everything else is [Register]: the same binding
+// order (query string, body, path parameters, which win), the same 422 with
+// field errors, the same output handling. It panics on a nil schema, so the
+// mistake surfaces at boot.
+//
+// The OpenAPI document is generated from In and Out (their `json`,
+// `validate` and `doc` tags), so schema never reaches it: the document
+// describes exactly what [Register] would have documented. Keep the static
+// rules in the tags and let schema add only what they cannot say, or the
+// document under-describes what the route enforces.
+//
+//	schema := z.Struct[CreateKey](z.Shape{
+//		"name":      z.String().Min(1).Max(20),
+//		"abilities": z.Slice(z.String()).Min(1).Max(len(abilities.All())),
+//	}).Refine(checkKey)
+//	api.RegisterWith(g, "POST /keys", api.Op{Name: "keys.store"}, schema,
+//		func(c *web.Ctx, in CreateKey) (KeyJSON, error) { ... })
+func RegisterWith[In, Out any](
+	g Registrar,
+	pattern string,
+	op Op,
+	schema z.Schema[In],
+	fn func(*web.Ctx, In) (Out, error),
+) *router.Route {
+	if schema == nil {
+		panic(fmt.Sprintf("api: RegisterWith %q needs a schema; Register derives one from In's tags", pattern))
+	}
+
+	return register("RegisterWith", g, pattern, op, schema, fn)
+}
+
+// register backs Register and RegisterWith: a nil schema is derived from
+// In's tags, and stays nil when In has no fields (no input to bind). who
+// names the caller, so a boot panic points at the function the app called.
+func register[In, Out any](
+	who string,
+	g Registrar,
+	pattern string,
+	op Op,
+	schema z.Schema[In],
+	fn func(*web.Ctx, In) (Out, error),
+) *router.Route {
 	method, path, ok := strings.Cut(pattern, " ")
 	if !ok || method == "" || !strings.HasPrefix(path, "/") {
-		panic(fmt.Sprintf("api: Register pattern %q must be \"METHOD /path\"", pattern))
+		panic(fmt.Sprintf("api: %s pattern %q must be \"METHOD /path\"", who, pattern))
 	}
 
 	method = strings.ToUpper(method)
@@ -80,15 +131,14 @@ func Register[In, Out any](g Registrar, pattern string, op Op, fn func(*web.Ctx,
 	noInput := inType.Kind() == reflect.Struct && inType.NumField() == 0
 	noOutput := outType.Kind() == reflect.Struct && outType.NumField() == 0
 
-	var schema z.Schema[In]
-	if !noInput {
+	if schema == nil && !noInput {
 		schema = z.For[In]() // panics at boot on bad tags
 	}
 
 	var outSchema z.Schema[Out]
 	if op.ValidateResponse && !noOutput {
 		if outType.Kind() != reflect.Struct {
-			panic(fmt.Sprintf("api: Register %q: ValidateResponse needs a struct output, got %s", pattern, outType))
+			panic(fmt.Sprintf("api: %s %q: ValidateResponse needs a struct output, got %s", who, pattern, outType))
 		}
 
 		outSchema = z.For[Out]() // panics at boot on bad tags
@@ -111,7 +161,7 @@ func Register[In, Out any](g Registrar, pattern string, op Op, fn func(*web.Ctx,
 	h := func(c *web.Ctx) error {
 		var in In
 
-		if !noInput {
+		if schema != nil {
 			input := c.QueryInput()
 			if bodyless {
 				input = maps.Clone(input)
