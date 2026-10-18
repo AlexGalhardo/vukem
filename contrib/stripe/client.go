@@ -488,17 +488,26 @@ func encodeBody(method string, v2 bool, p Params) (body, contentType string, err
 
 // encodeParams form-encodes p with Stripe's bracket syntax, keys sorted:
 // maps become a[k], slices a[0], at any depth. A value it cannot encode
-// (a struct, func or channel) is an error rather than a guessed string.
+// (a struct, func, channel, NaN or Inf) is an error rather than a guessed
+// string.
 func encodeParams(p Params) (string, error) {
 	v := url.Values{}
-	if err := flatten(v, "", reflect.ValueOf(map[string]any(p))); err != nil {
+	if err := flatten(v, "", reflect.ValueOf(map[string]any(p)), 0); err != nil {
 		return "", err
 	}
 
 	return v.Encode(), nil
 }
 
-func flatten(v url.Values, prefix string, x reflect.Value) error {
+// maxParamDepth bounds nesting so a cyclic map is an error, not unbounded
+// recursion: each level grows the key, so memory grows quadratically.
+const maxParamDepth = 32
+
+func flatten(v url.Values, prefix string, x reflect.Value, depth int) error {
+	if depth > maxParamDepth {
+		return fmt.Errorf("param %q: nested deeper than %d levels", prefix, maxParamDepth)
+	}
+
 	for x.IsValid() && x.Kind() == reflect.Interface && !x.IsNil() {
 		x = x.Elem()
 	}
@@ -517,7 +526,7 @@ func flatten(v url.Values, prefix string, x reflect.Value) error {
 
 	switch x.Kind() {
 	case reflect.Pointer:
-		return flatten(v, prefix, x.Elem())
+		return flatten(v, prefix, x.Elem(), depth+1)
 	case reflect.Map:
 		if x.Type().Key().Kind() != reflect.String {
 			return fmt.Errorf("param %q: unsupported map key type %s", prefix, x.Type().Key())
@@ -529,13 +538,18 @@ func flatten(v url.Values, prefix string, x reflect.Value) error {
 				key = prefix + "[" + key + "]"
 			}
 
-			if err := flatten(v, key, it.Value()); err != nil {
+			if err := flatten(v, key, it.Value(), depth+1); err != nil {
 				return err
 			}
 		}
 	case reflect.Slice, reflect.Array:
+		if x.Kind() == reflect.Slice && x.Type().Elem().Kind() == reflect.Uint8 {
+			v.Set(prefix, string(x.Bytes()))
+			return nil
+		}
+
 		for i := range x.Len() {
-			if err := flatten(v, prefix+"["+strconv.Itoa(i)+"]", x.Index(i)); err != nil {
+			if err := flatten(v, prefix+"["+strconv.Itoa(i)+"]", x.Index(i), depth+1); err != nil {
 				return err
 			}
 		}
@@ -548,6 +562,10 @@ func flatten(v url.Values, prefix string, x reflect.Value) error {
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
 		v.Set(prefix, strconv.FormatUint(x.Uint(), 10))
 	case reflect.Float32, reflect.Float64:
+		if f := x.Float(); math.IsNaN(f) || math.IsInf(f, 0) {
+			return fmt.Errorf("param %q: %v is not a number Stripe accepts", prefix, f)
+		}
+
 		v.Set(prefix, strconv.FormatFloat(x.Float(), 'f', -1, x.Type().Bits()))
 	default:
 		return fmt.Errorf("param %q: unsupported type %s", prefix, x.Type())

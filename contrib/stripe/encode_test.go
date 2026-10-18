@@ -1,6 +1,7 @@
 package stripe
 
 import (
+	"math"
 	"net/url"
 	"strings"
 	"testing"
@@ -70,6 +71,11 @@ func TestEncodeParams(t *testing.T) {
 			want: url.Values{"amount": {"990"}, "counts[a]": {"1"}, "big": {"1000000000000000000000"}, "ptr": {"p"}},
 		},
 		{
+			name: "bytes are sent as a string",
+			in:   Params{"description": []byte("hello")},
+			want: url.Values{"description": {"hello"}},
+		},
+		{
 			name: "nil is omitted",
 			in:   Params{"skip": nil, "nilptr": (*time.Time)(nil), "keep": "x"},
 			want: url.Values{"keep": {"x"}},
@@ -97,21 +103,34 @@ func TestEncodeParams(t *testing.T) {
 	}
 }
 
-func TestEncodeParamsRefusesUnknownTypes(t *testing.T) {
+func TestSecurity_A04_StripeParamsRefuseUnencodable(t *testing.T) {
 	t.Parallel()
 
 	type custom struct{ A int }
 
-	for _, p := range []Params{
-		{"bad": custom{A: 1}},
-		{"bad": []custom{{A: 1}}},
-		{"bad": map[int]string{1: "a"}},
-		{"bad": func() {}},
-		{"nested": []map[string]any{{"bad": []custom{{A: 1}}}}},
+	cycle := map[string]any{}
+	cycle["self"] = cycle
+
+	deep := Params{}
+	for range 40 {
+		deep = Params{"d": deep}
+	}
+
+	// Named cases: printing a cyclic map with %v would never end.
+	for name, p := range map[string]Params{
+		"struct":           {"bad": custom{A: 1}},
+		"slice of structs": {"bad": []custom{{A: 1}}},
+		"int map keys":     {"bad": map[int]string{1: "a"}},
+		"func":             {"bad": func() {}},
+		"nested struct":    {"nested": []map[string]any{{"bad": []custom{{A: 1}}}}},
+		"cycle":            {"cycle": cycle},
+		"too deep":         {"deep": deep},
+		"NaN":              {"nan": math.NaN()},
+		"+Inf":             {"inf": math.Inf(1)},
+		"-Inf in a slice":  {"neginf": []float64{math.Inf(-1)}},
 	} {
-		_, err := encodeParams(p)
-		if err == nil || !strings.Contains(err.Error(), "unsupported") {
-			t.Errorf("encodeParams(%v) = %v, want an unsupported type error", p, err)
+		if _, err := encodeParams(p); err == nil || !strings.Contains(err.Error(), "param") {
+			t.Errorf("encodeParams(%s) = %v, want a param error", name, err)
 		}
 	}
 }
