@@ -632,4 +632,4 @@ Applies to **every** task:
 - [ ] Stability policy published; API frozen (apidiff gate in CI against `v1.0.0`).
 - [ ] vukem-golang-quiz-htmx/ running on 1.0 in production.
 - [ ] vukem-rifa-vuejs/ running on 1.0 in production.
-- [ ] vukem-micro-mercadolivre-reactjs/ running on 1.0 in production.
+- [ ] vukem-marketplace-reactjs/ running on 1.0 in production.

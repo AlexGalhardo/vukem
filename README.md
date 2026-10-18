@@ -67,7 +67,7 @@ A multi-seller marketplace inspired by the big Latin American e-commerce sites. 
 
 - **Stack**: Inertia v3 + React + Base UI, PostgreSQL, Redis, MongoDB, S3-compatible storage, Tailwind CSS v4.
 - **Shows**: TOTP two-factor auth, Google login, Stripe Connect and PIX, ViaCEP, REST, GraphQL and gRPC on one domain model, queues and SSE, seller webhooks, OpenTelemetry and Telegram logging.
-- **Links**: [live](https://marketplace.vukem.dev) · [source](https://github.com/AlexGalhardo/vukem-micro-mercadolivre-reactjs)
+- **Links**: [live](https://marketplace.vukem.dev) · [source](https://github.com/AlexGalhardo/vukem-marketplace-reactjs)
 
 ## Why MVC and not Hexagonal/Clean Architecture?
 
