@@ -21,7 +21,8 @@ func (exPostPolicy) Update(_ context.Context, u *exUser, p *exPost) bool {
 }
 
 func Example() {
-	// In an app the resolver is auth.UserFrom[*models.User](ctx, "web").
+	// In an app the resolver reads auth.UserFrom[models.User](ctx, "web")
+	// (the session guard stores the user by value) and returns &u.
 	gate := authz.New(func(context.Context) (*exUser, error) { return &exUser{ID: 1}, nil })
 	gate.Define("edit-settings", func(_ context.Context, u *exUser) bool { return u.Admin })
 	if err := gate.Register(authz.For[*exPost](exPostPolicy{})); err != nil {

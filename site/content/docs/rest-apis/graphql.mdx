@@ -693,7 +693,7 @@ What Vukem does by default:
 
 What stays your job:
 
-- **Authentication and authorization.** Put `auth.Required` or `auth.Optional` on the group that holds the endpoint, then read the user in resolvers with `auth.UserFrom[*models.User](ctx, "api")` and return `errs.New(403, ...)` for denials. Over WebSocket, authenticate in `OnConnect`.
+- **Authentication and authorization.** Put `auth.Required` or `auth.Optional` on the group that holds the endpoint, then read the user in resolvers with `auth.UserFrom[models.User](ctx, "api")` (guards store the user by value) and return `errs.New(403, ...)` for denials. Over WebSocket, authenticate in `OnConnect`.
 - **The SDL decides what clients can read.** Case-insensitive matching makes `Password` with `json:"pw"` answer a `password` field if the SDL declares one. Keep secrets out of the SDL, or tag them `json:"-"`.
 - **Messages you choose are public.** `graphql.NewError`, `Extender` keys and `Validate()` errors reach clients as written.
 - **Rate limiting.** One request can hold many fields; add [rate limiting](/docs/security/rate-limiting) to the route. Use the allowlist for first-party clients in production.

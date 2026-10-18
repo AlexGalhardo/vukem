@@ -57,7 +57,7 @@ func New() (*broadcast.Server, error) {
 	b := broadcast.New(broadcast.Config{
 		// User tells private and presence rules who is asking.
 		User: func(ctx context.Context) (any, error) {
-			return auth.UserFrom[*models.User](ctx, "web")
+			return auth.UserFrom[models.User](ctx, "web")
 		},
 	})
 
@@ -65,7 +65,7 @@ func New() (*broadcast.Server, error) {
 	err := b.Private("user.{id}", func(
 		_ context.Context, u any, p map[string]string,
 	) (bool, error) {
-		id := strconv.FormatInt(u.(*models.User).ID, 10)
+		id := strconv.FormatInt(u.(models.User).ID, 10)
 		return id == p["id"], nil
 	})
 
@@ -208,7 +208,7 @@ if err := b.Public("products.{id}"); err != nil {
 
 `Private(pattern, fn)` calls `fn(ctx, user, params)` with the value `Config.User` returned and the pattern parameters. Return `true` to allow. Returning `false` answers 403; returning an error also answers 403 and keeps the error for your logs.
 
-The user is an `any` (Go's empty interface, see [the tour](https://go.dev/tour/methods/14)), so you convert it with a [type assertion](https://go.dev/tour/methods/15) such as `u.(*models.User)`. Vukem never calls a private or presence rule without a user: when `Config.User` is `nil`, returns an error, or returns a nil value, the request is denied before your rule runs.
+The user is an `any` (Go's empty interface, see [the tour](https://go.dev/tour/methods/14)), so you convert it with a [type assertion](https://go.dev/tour/methods/15) such as `u.(models.User)` (the session guard stores the user by value). Vukem never calls a private or presence rule without a user: when `Config.User` is `nil`, returns an error, or returns a nil value, the request is denied before your rule runs.
 
 ### Private channels through a gate
 
@@ -233,7 +233,7 @@ A presence rule returns a `broadcast.Member` instead of a boolean. `Member.ID` i
 err = b.Presence("support.{room}", func(
 	_ context.Context, u any, _ map[string]string,
 ) (broadcast.Member, bool, error) {
-	user := u.(*models.User)
+	user := u.(models.User)
 	return broadcast.Member{
 		ID:   strconv.FormatInt(user.ID, 10),
 		Info: map[string]string{"name": user.Name},

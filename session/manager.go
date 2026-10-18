@@ -35,7 +35,8 @@ type Config struct {
 	// cookie (CookieKey required).
 	Store Store
 	// CookieKey is the 32-byte AES-256-GCM key for cookie sessions; derive
-	// it from APP_KEY: app.Key.Derive("session.cookie", 32).
+	// it from APP_KEY with the purpose vukem.New uses:
+	// app.DeriveKey("SESSION_DRIVER=cookie", 32).
 	CookieKey []byte
 	// PreviousCookieKeys still open cookie sessions sealed before an
 	// APP_KEY rotation (derive them from APP_PREVIOUS_KEYS with

@@ -152,20 +152,20 @@ Package `broadcast` (core, stdlib only) pushes server events to browsers over na
 ```go
 b := broadcast.New(broadcast.Config{
 	Broker:     redisClient, // sse.Broker; nil = this process only
-	User:       func(ctx context.Context) (any, error) { return auth.UserFrom[*models.User](ctx, "web") },
+	User:       func(ctx context.Context) (any, error) { return auth.UserFrom[models.User](ctx, "web") },
 	Authorizer: gate, // for PrivateGate (web.Authorizer, e.g. *authz.Gate)
 })
 defer b.Close()
 
 err := b.Public("posts")                     // undeclared public channels are denied
 err = b.Private("user.{id}", func(ctx context.Context, u any, p map[string]string) (bool, error) {
-	return u.(*models.User).ID == p["id"], nil
+	return u.(models.User).AuthID() == p["id"], nil
 })
 err = b.PrivateGate("post.{id}", "view", func(ctx context.Context, p map[string]string) (any, error) {
 	return models.Posts.Find(ctx, db, p["id"]) // c.Authorize("view", post) semantics
 })
 err = b.Presence("room.{id}", func(ctx context.Context, u any, p map[string]string) (broadcast.Member, bool, error) {
-	user := u.(*models.User)
+	user := u.(models.User)
 	return broadcast.Member{ID: strconv.FormatInt(user.ID, 10), Info: map[string]string{"name": user.Name}}, true, nil
 })
 ```

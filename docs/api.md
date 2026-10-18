@@ -340,7 +340,7 @@ func routes(r *router.Router, app *vukem.App) error {
 }
 
 func (g *greeter) Greet(ctx context.Context, req *connect.Request[greetv1.GreetRequest]) (*connect.Response[greetv1.GreetResponse], error) {
-	user, err := auth.UserFrom[*models.User](ctx, "api")
+	user, err := auth.UserFrom[models.User](ctx, "api")
 	if err != nil {
 		return nil, err
 	}

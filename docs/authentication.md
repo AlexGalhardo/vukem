@@ -249,7 +249,8 @@ Package `authz`, generic over your user type. Decisions **fail closed**: an abil
 
 ```go
 gate := authz.New(func(ctx context.Context) (*models.User, error) {
-	return auth.UserFrom[*models.User](ctx, "web") // who is asking
+	u, err := auth.UserFrom[models.User](ctx, "web") // who is asking; the session guard stores a value
+	return &u, err
 })
 
 gate.Define("edit-settings", func(ctx context.Context, u *models.User) bool { return u.Role == "admin" })
