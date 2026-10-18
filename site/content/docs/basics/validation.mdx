@@ -1,156 +1,627 @@
 ---
 title: Validation
-description: The z package parses untrusted input into typed Go values with Zod-style schemas, and checks outgoing data with the same contract.
+description: Turn untrusted form, JSON, query and route input into typed Go values with z schemas, and check outgoing data against the same contract.
 ---
 
-<Callout type="info">
-Import `github.com/AlexGalhardo/vukem/z`.
-</Callout>
+Everything a visitor sends you is untrusted: a form can be missing fields, a JSON body can carry a number where you expected text, a query string can hold anything at all. The `z` package (import `github.com/AlexGalhardo/vukem/z`) describes what valid input looks like as a **schema**, then turns raw input into a typed Go value or a list of every problem it found. Vukem's error handler turns that list into the right answer for each client: a redirect back to the form, an htmx fragment or a JSON error.
 
-`z` is a Zod-inspired schema library: build a schema once, then **parse untrusted input into a typed Go value** or **check outgoing data** against the same contract.
+You will learn:
 
-## A taste
+- what a schema is and why Vukem parses input instead of only checking it;
+- every schema builder (strings, numbers, booleans, times, enums, files, lists, maps, structs) and its rules;
+- how absent, `null` and empty values behave with `Optional`, `Nullable` and `Default`;
+- how to write cross-field and database checks with `Refine`, `FieldError` and `FieldErrorKey`;
+- what the client receives when validation fails, and how to translate the messages;
+- the struct-tag shorthand, response checks and how to test all of it.
+
+## The idea
+
+Think of a schema as the bouncer at the door of a party. The bouncer has a list: "a name of at least 3 letters, an age that is a whole number, a ticket that is `vip` or `regular`". Everyone who comes in is checked against the list. People who pass are let in **with a badge** that says exactly who they are. People who fail are told every reason at once, not one reason per try.
+
+In code, the "badge" is a Go [struct](https://go.dev/tour/moretypes/2) with real types. Before the check you have a `map[string]any` of strings and numbers you cannot trust; after the check you have a `StorePost` with a `string` title and a `[]string` of tags. This approach is often called <Term tip="Instead of checking data and then using the raw value, you convert it into a typed value once, at the edge of the program. After that, the type proves the data is valid.">parse, don't validate</Term>.
+
+| Step | What you have | Who does it |
+| --- | --- | --- |
+| 1. The request arrives | Raw bytes: a form, JSON or a query string | The browser or API client |
+| 2. Decode | A `map[string]any` (`c.Input()`) | `web.Parse` |
+| 3. Parse with the schema | A typed value **or** `z.Issues` | `z` |
+| 4. Answer | Your handler continues, or the error handler answers 422 | Vukem |
+
+Three Go ideas show up on this page:
+
+- **Generics.** `z.Struct[StorePost]` and `web.Parse[T]` use [type parameters](https://go.dev/tour/generics/1), so the result is a `StorePost`, not an `any` you must cast.
+- **Struct tags.** The text in backquotes after a field (`` `json:"title"` ``) is a [struct tag](https://go.dev/ref/spec#Struct_types). Vukem reads `json`, `form` and `query` tags to match input keys to fields.
+- **Errors are values.** `Parse` returns an [`error`](https://go.dev/tour/methods/19); you return it from the handler and Vukem decides the response. Read [Error handling](/docs/basics/error-handling) for how.
+
+## Quick start
+
+The blog lets readers comment on a post. Here is the whole path from form to saved comment.
+
+<Steps>
+<Step title="Describe the input">
+
+Create a request type and its schema. One file per resource keeps them easy to find.
+
+```go title="app/requests/comment.go"
+package requests
+
+import "github.com/AlexGalhardo/vukem/z"
+
+// StoreComment is the input of the comment form.
+type StoreComment struct {
+	Author string `json:"author" form:"author"`
+	Body   string `json:"body"   form:"body"`
+}
+
+// StoreCommentSchema validates StoreComment.
+var StoreCommentSchema = z.Struct[StoreComment](z.Shape{
+	"author": z.String().Trim().Min(2).Max(60),
+	"body":   z.String().Trim().Min(3).Max(500),
+})
+```
+
+The schema is a package-level variable: it is built once at boot and shared by every request.
+
+</Step>
+<Step title="Parse in the handler">
+
+```go title="app/controllers/comment_controller.go"
+func (cc *CommentController) Store(c *web.Ctx) error {
+	postID, err := c.ParamInt("post")
+	if err != nil {
+		return err
+	}
+
+	in, err := web.Parse(c, requests.StoreCommentSchema)
+	if err != nil {
+		// Invalid input: Vukem answers 422 (or redirects back).
+		return err
+	}
+
+	// in is a requests.StoreComment with trimmed, checked fields.
+	comment := models.Comment{
+		PostID: postID,
+		Author: in.Author,
+		Body:   in.Body,
+	}
+	if err := orm.Create(c.Context(), cc.db, &comment); err != nil {
+		return err
+	}
+
+	_ = c.Flash("success", "Thanks for your comment.")
+
+	return c.RedirectRoute("posts.show", "post", postID)
+}
+```
+
+</Step>
+<Step title="Register the route">
+
+```go title="routes/web.go"
+r.Resource("posts.comments", controllers.NewCommentController(db))
+```
+
+`POST /posts/{post}/comments` now runs `Store`. Its route name is `posts.comments.store`.
+
+</Step>
+<Step title="Send bad input and look at the answer">
+
+```bash
+curl -s -X POST localhost:3000/posts/7/comments \
+  -H "Accept: application/json" \
+  -H "Content-Type: application/json" \
+  -d '{"author":"A","body":"hi"}'
+```
+
+```json title="422 Unprocessable Entity"
+{
+  "type": "about:blank",
+  "title": "Validation failed",
+  "status": 422,
+  "detail": "2 field(s) are invalid.",
+  "instance": "/posts/7/comments",
+  "request_id": "Q2V5ZGVtbzEyMzQ1Ng",
+  "errors": {
+    "author": ["The author field must be at least 2 characters."],
+    "body": ["The body field must be at least 3 characters."]
+  }
+}
+```
+
+A browser posting the same form gets a redirect back to the post page instead, with the messages and the typed text kept for the next page ([see below](#what-the-client-receives)).
+
+</Step>
+</Steps>
+
+## Building schemas
+
+Every builder is a function that returns a schema. Rules are methods you chain. Each method returns a **new** schema and leaves the old one untouched, so schemas are <Term tip="A value that never changes after it is created. Many goroutines may read it at the same time without locks.">immutable</Term> and safe to share between [goroutines](https://go.dev/tour/concurrency/1).
+
+```go
+base := z.String().Trim()
+title := base.Min(3)  // base still has no Min rule
+slug := base.ToLower().Regex(slugRe)
+```
+
+### Strings
+
+`z.String()` produces a `string`. The empty string `""` **is** a valid string: add `Min(1)` (or `NonEmpty()`) when a value is required.
+
+| Method | What it does | Issue code (message key) |
+| --- | --- | --- |
+| `Min(n)`, `Max(n)`, `Len(n)` | At least, at most, exactly `n` characters, counted as [runes](https://go.dev/blog/strings), so `"é"` is 1 | `too_small` (`too_small.string`), `too_big` (`too_big.string`), `exact.string` |
+| `NonEmpty()` | Same as `Min(1)` | `too_small` |
+| `Email()` | A bare address (`ann@example.com`); a display name (`Ann <ann@example.com>`) is rejected, and the domain must contain a dot | `invalid_string` (`string.email`) |
+| `URL()` | An absolute `http` or `https` URL with a host | `string.url` |
+| `UUID()`, `ULID()` | A canonical UUID, or a 26-character ULID | `string.uuid`, `string.ulid` |
+| `Alpha()`, `Alphanum()` | Letters only; letters and digits only (any language: `ção` passes) | `string.alpha`, `string.alphanum` |
+| `Numeric()` | A decimal number written as text: `-12`, `3.50` | `string.numeric` |
+| `Regex(re)` | Must match the [`*regexp.Regexp`](https://pkg.go.dev/regexp) | `string.regex` |
+| `StartsWith(s)`, `EndsWith(s)`, `Includes(s)` | Must start with, end with or contain `s` | `string.starts_with`, `string.ends_with`, `string.includes` |
+| `OneOf(values...)` | Must equal one of the values (see also `Enum`) | `invalid_enum` |
+| `Trim()` | Removes spaces, tabs and newlines at both ends **before** the checks | — |
+| `ToLower()`, `ToUpper()` | Changes the case **before** the checks | — |
+| `Preprocess(fn)` | Runs your `func(string) string` **before** the checks; panics at boot when `fn` is `nil` | — |
+| `Transform(fn)` | Runs your `func(string) string` **after** the checks | — |
+
+Every string schema also rejects invalid UTF-8 and control characters other than tab, newline and carriage return (a NUL byte, an escape sequence), with the code `invalid_string` and the message "The body field must be valid text.". It checks again after `Preprocess`, so your function cannot sneak those characters back in.
+
+### Numbers
+
+| Builder | Go type |
+| --- | --- |
+| `z.Int()`, `z.Int32()`, `z.Int64()` | `int`, `int32`, `int64` |
+| `z.Uint()`, `z.Uint64()` | `uint`, `uint64` |
+| `z.Float()`, `z.Float32()` | `float64`, `float32` |
+| `z.NumberOf[T]()` | Any numeric type, including your own (`type Cents int64`) |
+
+Rules: `Min(n)`, `Max(n)`, `Positive()` (greater than 0), `NonNegative()` (0 or more), `MultipleOf(m)` (code `not_multiple_of`) and `Transform(fn)`. Integer schemas reject fractions (`3.5`) and values that do not fit the type (`300` for an 8-bit integer); float schemas reject `NaN` and infinity. Both report `invalid_type`, with "must be an integer" or "must be a number".
+
+### Booleans, times and enums
+
+- **`z.Bool()`** accepts `true` and `false`. From text (forms, query strings) it also accepts `1`/`0`, `on`/`off` and `yes`/`no`, in any case. An unchecked checkbox sends **nothing**, so give checkboxes `Default(false)`.
+- **`z.Time()`** produces a [`time.Time`](https://pkg.go.dev/time#Time). By default it accepts RFC 3339 (`2026-10-17T10:30:00Z`), the HTML `datetime-local` format (`2026-10-17T10:30`, with or without seconds) and a plain date (`2026-10-17`). Values without a time zone are read as UTC. `Layouts(...)` replaces the list of [layouts](https://pkg.go.dev/time#pkg-constants); `After(t)` and `Before(t)` are strict (equal fails). A string that matches no layout gets the code `invalid_date`.
+- **`z.Enum("draft", "published")`** accepts one of a fixed list and produces a `string`. **`z.EnumOf(StatusDraft, StatusPublished)`** does the same for a named string type. Both panic at boot when the list is empty; `Values()` returns the list.
+
+### Lists, maps and files
+
+- **`z.Slice(elem)`** produces `[]E`, where `E` is the type of `elem`. Rules: `Min(n)`, `Max(n)`, `Len(n)`, `NonEmpty()`, `Unique()` (code `not_unique`). Each element is parsed with `elem`, so errors point at `tags.2`. From a form, a single value becomes a one-item list. `Default(v)` panics at boot when `v` is not a slice of the element type.
+- **`z.Map(value)`** produces `map[string]V` from a JSON object, with `Min(n)` and `Max(n)` keys.
+- **`z.File()`** validates an uploaded file (`*multipart.FileHeader`) from a multipart form: `MaxSize(bytes)`, `Types("image/png", "image/jpeg")` and `Extensions(".png", "jpg")`. The type is detected from the first 512 bytes of the file, never taken from the client's `Content-Type`. See [Uploads](/docs/digging-deeper/uploads) for large or streamed files.
 
 ```go title="app/requests/post.go"
+var cover = z.File().
+	MaxSize(2 << 20).
+	Types("image/png", "image/jpeg").
+	Optional()
+```
+
+### Structs
+
+`z.Struct[T](z.Shape{...})` maps input keys to the fields of `T`. A key matches a field by its `json`, `form` or `query` tag, then by the field name, then by the lower-case field name.
+
+```go title="app/requests/post.go"
+package requests
+
+import (
+	"time"
+
+	"github.com/AlexGalhardo/vukem/z"
+)
+
+// StorePost is the input of the "new post" form and API.
 type StorePost struct {
 	Title       string     `json:"title"`
 	Body        string     `json:"body"`
 	Tags        []string   `json:"tags"`
 	Status      string     `json:"status"`
+	Pinned      bool       `json:"pinned"`
 	PublishedAt *time.Time `json:"published_at"`
 }
 
+var tag = z.String().Trim().ToLower().Alphanum()
+
 var StorePostSchema = z.Struct[StorePost](z.Shape{
-	"title":        z.String().Trim().Min(3).Max(255),
-	"body":         z.String().Min(1),
-	"tags":         z.Slice(z.String().Trim().ToLower().Alphanum()).Max(5).Default([]string{}),
-	"status":       z.Enum("draft", "published").Default("draft"),
+	"title":  z.String().Trim().Min(3).Max(120),
+	"body":   z.String().Trim().Min(1),
+	"tags":   z.Slice(tag).Max(5).Unique().Default([]string{}),
+	"status": z.Enum("draft", "published").Default("draft"),
+	"pinned": z.Bool().Default(false),
+	// A pointer field stays nil when the key is absent.
 	"published_at": z.Time().Optional(),
-}).Refine(func(p StorePost) error {
-	if p.Status == "published" && p.PublishedAt == nil {
-		return z.FieldError("published_at", "required when status is published")
-	}
-	return nil
 })
 ```
 
-```go
-// In a handler: decode + parse + validate; failures become 422.
-in, err := web.Parse(c, requests.StorePostSchema) // in is requests.StorePost
-if err != nil {
-	return err
-}
-```
+Under the hood:
 
-## Schemas
+- `z.Struct` checks the shape **when it is built**: a key with no matching field, or a schema whose type does not fit the field, panics with a message such as `z: requests.StorePost has no field for key "titel"`. Because the schema is a package variable, that panic happens at boot, not in front of a user.
+- A schema may fill a pointer field (`z.Time()` into `*time.Time`) or a named type of the same kind (`z.String()` into `type Status string`).
+- Keys in the input that are not in the shape are **ignored**. `Strict()` turns them into errors with the code `unrecognized_keys` ("The evil field is not allowed.").
+- When anything fails, `Parse` returns the zero value of `T` and the issues. You never get a half-filled struct.
+- `Keys()` lists the shape keys and `Field(key)` returns the struct field a key fills (the admin panel uses both).
 
-| Constructor | Go type | Checks and transforms |
-| --- | --- | --- |
-| `z.String()` | `string` | `Min`, `Max`, `Len`, `NonEmpty`, `Email`, `URL`, `UUID`, `ULID`, `Regex`, `Alpha`, `Alphanum`, `Numeric`, `StartsWith`, `EndsWith`, `Includes`, `OneOf`; `Trim`, `ToLower`, `ToUpper`, `Preprocess(fn)`; invalid UTF-8 and control characters rejected |
-| `z.Int()`, `z.Int32()`, `z.Int64()`, `z.Uint()`, `z.Uint64()`, `z.NumberOf[T]()` | integers | `Min`, `Max`, `Positive`, `NonNegative`, `MultipleOf`; fractions and overflow rejected |
-| `z.Float()`, `z.Float32()` | floats | `Min`, `Max`, `Positive`; NaN and ±Inf rejected |
-| `z.Bool()` | `bool` | — |
-| `z.Time()` | `time.Time` | `After`, `Before`, `Layouts(...)` (default RFC 3339, `datetime-local`, date) |
-| `z.Enum(vals...)`, `z.EnumOf[T](vals...)` | `string` or a named string type | membership |
-| `z.Slice(elem)` | `[]E` | `Min`, `Max`, `Len`, `NonEmpty`, `Unique` |
-| `z.Map(val)` | `map[string]V` | `Min`, `Max` |
-| `z.Struct[T](z.Shape{...})` | `T` | field schemas; `Strict()` rejects unknown keys |
-| `z.Custom[T](fn)` | `T` | user parser |
+### Custom parsers
 
-Every schema supports `Optional()`, `Nullable()`, `Default(v)`, `Refine(fn)`, `Transform(fn)`, `Message(code, msg)` and `Describe(text)`. Schemas are immutable values, safe to share across goroutines.
-
-A parse runs in this order: coercion and type check, then string pre-steps (`Trim`, `ToLower`, `ToUpper`, `Preprocess`, in declaration order), then checks (`Min`, `Regex`, `Email`…), then `Transform`, then `Refine`. Normalize with `Preprocess` when the checks must see the normalized value:
+`z.Custom[T](fn)` hands the raw value to your function. Use it for formats the builders do not cover.
 
 ```go
-z.String().Preprocess(digitsOnly).Regex(e164) // Regex sees "11987654321"
-z.String().Transform(digitsOnly).Regex(e164)  // Regex sees the raw input
+type Slug string
+
+var slugSchema = z.Custom(func(in any) (Slug, error) {
+	s, ok := in.(string)
+	if !ok || !slugRe.MatchString(s) {
+		return "", z.FieldErrorKey(
+			"", "slug", "The {field} is not a slug.", nil,
+		)
+	}
+	return Slug(s), nil
+})
 ```
 
-The output of the pre-steps is checked again for invalid UTF-8 and control characters, and `Preprocess(nil)` panics. JSON Schema and OpenAPI keywords (`pattern`, `minLength`…) describe the normalized value, after `Trim`/`ToLower`/`Preprocess`, not the raw input.
+## Absent, null and empty values
+
+A field can be missing from the input, sent as JSON `null`, or sent as an empty string by a form. Three modifiers decide what happens:
+
+| Input | No modifier | `Optional()` or `Nullable()` | `Default(v)` |
+| --- | --- | --- | --- |
+| Key absent | `required` issue | zero value | `v` |
+| JSON `null` | `required` issue | zero value | `v` (zero value when also `Nullable`) |
+| `""` for a string | valid `""` | valid `""` | valid `""` |
+| `""` for a number, bool, time, enum, file or custom | `required` issue | zero value | `v` |
+
+The last row exists because an HTML form sends every field, even the ones the visitor left blank: an empty "age" box arrives as `age=`, and Vukem treats it as "not given".
+
+When parsing, `Optional` and `Nullable` accept the same inputs. They differ in the exported [JSON Schema](#typed-boundaries): `Optional` (and `Default`) remove the key from `required`, while `Nullable` adds `null` to the allowed types. Use `Optional` for "may be left out" and `Nullable` for "may be sent as `null`". The "zero value" is Go's [zero value](https://go.dev/tour/basics/12) for the type (`""`, `0`, `false`); a pointer field stays `nil`.
+
+Not every builder has every modifier:
+
+| Builder | `Optional` | `Nullable` | `Default` | `Refine` | `Transform` | `Message` | `Describe` |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `String` | yes | yes | yes | yes | yes | yes | yes |
+| `Int`, `Float`… | yes | yes | yes | yes | yes | yes | yes |
+| `Bool`, `Time`, `Enum` | yes | yes | yes | yes | — | yes | yes |
+| `Slice` | yes | yes | yes | — | — | yes | yes |
+| `Map` | yes | yes | — | — | — | — | — |
+| `Struct` | yes | yes | — | yes | yes | — | yes |
+| `File` | yes | — | — | yes | — | yes | yes |
+| `Custom` | yes | — | — | — | — | — | — |
+
+## What happens inside `Parse`
+
+For one value, a parse runs these steps in order. It stops at the first step that fails for that value, but keeps going with the other fields, so you get every problem in one answer.
+
+<Steps>
+<Step title="Absent, null or empty">
+The table above decides whether the value is required, defaulted or skipped.
+</Step>
+<Step title="Type check and coercion">
+The value must have the right shape. Text from forms is converted only when no information is lost (see [Coercion](#coercion)).
+</Step>
+<Step title="Pre-steps (strings)">
+`Trim`, `ToLower`, `ToUpper` and `Preprocess` run in the order you wrote them.
+</Step>
+<Step title="Checks">
+`Min`, `Max`, `Email`, `Regex`… all run, and each failure is a separate issue.
+</Step>
+<Step title="Transform, then Refine">
+`Transform` changes the checked value; `Refine` callbacks see the transformed value. For a struct, `Refine` runs only when **every field passed**.
+</Step>
+</Steps>
+
+The order matters when you normalize input. Use `Preprocess` when the checks must see the cleaned value:
+
+```go
+// The Regex sees "11987654321".
+z.String().Preprocess(digitsOnly).Regex(e164)
+
+// The Regex sees "(11) 98765-4321", then Transform cleans it.
+z.String().Transform(digitsOnly).Regex(e164)
+```
 
 ## Coercion
 
-Forms, query strings and route params arrive as strings; schemas coerce only where it is lossless: numeric strings to `Int`/`Float`, `"on"`/`"1"`/`"true"` to `Bool`, RFC 3339 strings to `Time`, repeated keys to slices and bracketed keys to structs.
+JSON keeps its types: numbers stay numbers, `true` stays a boolean. Forms, query strings and route parameters are always text. Schemas convert text only when it is lossless:
 
-## Errors
-
-`Parse` returns `z.Issues`, collected for the whole input. Each issue has a dotted `Path` (`tags.2`, `author.email`), a stable `Code` (`required`, `invalid_type`, `too_small`, `too_big`, `invalid_string`, `invalid_enum`, `custom`), a `Message` and `Params`. The error handler converts them to an `*errs.ValidationError`:
-
-| Request | Response |
+| Schema | Also accepts |
 | --- | --- |
-| HTML form (session middleware installed) | redirect back (`Back`) with errors and old input flashed; read them with `c.Errors()` / `c.Old(field)` or `{{error "title"}}` / `{{old "title"}}` in views |
-| htmx | `422` HTML error fragment (htmx 4 swaps 4xx responses) |
-| JSON / API | `422` `application/problem+json` with an `errors` map |
+| Numbers | `"42"`, `" 3.5 "` (spaces trimmed); `"3.5"` fails for an integer |
+| `Bool` | `"true"`, `"1"`, `"on"`, `"yes"` and their opposites |
+| `Time` | Text in one of the layouts |
+| `Slice` | One string (`tags=go`) as a one-item list |
+| `String` | Nothing: a JSON number `42` fails with "must be a string" |
 
-Password fields, `_token` and `_method` are never flashed as old input.
+`c.Input()` builds the map from a form like this: repeated keys (`tags=go&tags=web`) and `[]` keys (`tags[]=go`) become lists, bracketed keys nest (`author[email]=…` becomes `{"author": {"email": …}}`), and keys `0..n-1` become a list (`items[0][name]=…`). Keys nested deeper than 16 levels, or with unbalanced brackets, are dropped. The body is merged **over** the query string, so a body field wins over a query field with the same name.
 
-## Translated refinements
+`Check` (for outgoing data, below) never converts text: a `"42"` in a response is a string, not a number.
 
-Built-in messages are translated from `validation.*` catalog keys (see [localization](/docs/digging-deeper/localization)). A `Refine` callback makes its message translatable by returning `z.FieldErrorKey(path, key, fallback, params)` instead of `z.FieldError`; `fallback` is the English message, used when the locale has no `validation.<key>`. With an empty `key`, `FieldErrorKey` behaves like `z.FieldError`. Placeholder names in `fallback` and in catalog templates are lower snake_case (`{field}`, `{other_field}`); other braces are left as is. Messages are plain text: escaping is the renderer's job (`html/template` does it in views).
+## Cross-field and custom rules
 
-```go
-.Refine(func(r Register) error {
-	if r.Password != r.PasswordConfirmation {
-		return z.FieldErrorKey("password_confirmation", "confirmed", "The {field} does not match.", nil)
+`Refine` adds your own check. It receives the parsed value and returns `nil` or an error.
+
+```go title="app/requests/post.go"
+var StorePostSchema = z.Struct[StorePost](z.Shape{
+	// ...fields as above...
+}).Refine(func(p StorePost) error {
+	if p.Status == "published" && p.PublishedAt == nil {
+		return z.FieldErrorKey(
+			"published_at",
+			"required_when_published",
+			"Pick a publish date for a published post.",
+			nil,
+		)
 	}
 	return nil
 })
 ```
+
+What you return decides what the client sees:
+
+| Return | Issue path | Message | Translatable |
+| --- | --- | --- | --- |
+| `z.FieldError(path, msg)` | `path`, relative to the refined value | `msg`, as is | no |
+| `z.FieldErrorKey(path, key, fallback, params)` | `path` (`""` for the value itself) | `fallback` with `{field}` and `params` filled | yes, from `validation.<key>` |
+| Any other error | the value's path | "The `{field}` field is invalid." | yes (`validation.invalid`) |
+
+The third row **fails closed**: the text of an arbitrary error might be internal ("connection refused to 10.0.0.5"), so it never reaches the client. It is kept in `Issue.Err` and `web.Parse` logs it at Warn as `validation callback error hidden from the client`. Before v0.25 the raw text was shown.
+
+### Checks that need the database
+
+A schema has no database. For rules such as "this slug is already taken", parse first, then check, and **return** a field error from the handler:
+
+```go title="app/controllers/post_controller.go"
+taken, err := orm.QueryOf[models.Post](pc.db).
+	Where("slug", "=", in.Slug).
+	Exists(c.Context())
+if err != nil {
+	return err
+}
+if taken {
+	return z.FieldErrorKey(
+		"slug", "unique", "The {field} has already been taken.", nil,
+	)
+}
+```
+
+The error handler treats `z.FieldError`, `z.FieldErrorKey` and `z.Issues` like any validation failure (422, redirect back with sessions), also when wrapped with `fmt.Errorf("...: %w", err)`. It logs them at Info, since a 422 that did not come from `web.Parse` may hide a bug.
+
+When the data you validate is **not** client input (a row from your database, an upstream API), a failure is your bug, not the client's. Wrap it so the client sees a plain 500 with no field errors:
+
+```go
+if _, err := z.ParseJSON(resp.Body, upstreamSchema); err != nil {
+	return errs.Wrap(http.StatusInternalServerError, err)
+}
+```
+
+## Errors in detail
+
+`Parse` returns `z.Issues`, a list of `z.Issue`. It implements `error`, and its text lists every issue: `z: body: The body field must be at least 3 characters.; title: …`.
+
+| Field | Example | Meaning |
+| --- | --- | --- |
+| `Path` | `tags.2`, `author.email`, `""` | Dotted path to the value; list items use their index |
+| `Code` | `too_small` | Stable code for programs (table below) |
+| `Message` | "The title field must be at least 3 characters." | Text for people |
+| `Key` | `too_small.string` | The message key used for translation (not sent as JSON) |
+| `Params` | `{"min": 3}` | Values used in the message |
+| `Err` | the error `Refine` returned | Server-side only, never shown |
+
+Codes: `required`, `invalid_type`, `too_small`, `too_big`, `invalid_string`, `invalid_enum`, `unrecognized_keys`, `not_multiple_of`, `invalid_date`, `not_unique`, `invalid_file` and `custom`. Each has a `z.Code…` constant (`z.CodeTooSmall`).
+
+Helpers:
+
+- `z.AsIssues(err)` extracts the issues from any error, including a single `FieldError`.
+- `issues.Fields()` groups messages by path (`map[string][]string`), the shape of the `errors` member in a 422. An issue on the root value goes under the key `_`.
+- `issues.First("title")` returns the first message for one path.
+- `issues.HTTPStatus()` is 422, so `errs.Status(issues)` is 422 too.
+
+### Changing a message
+
+`Message(code, text)` replaces the message for one code, or for a detailed key, on one schema. The text may use placeholders: `{field}` (the humanized field name, `published_at` → "published at") and the issue's params (`{min}`, `{max}`, `{len}`, `{multiple}`…).
+
+```go
+z.String().Min(3).Message("too_small", "Give it at least {min} letters.")
+```
+
+A message set this way is never translated. Use catalog keys (below) when your app speaks several languages.
+
+## What the client receives
+
+You never format these answers yourself. When `web.Parse` fails, the error handler picks a response by client:
+
+| Request | Response |
+| --- | --- |
+| HTML form post, with the session middleware | `303 See Other` back to the `Referer` (same origin only, else `/`), with the errors and the submitted input flashed |
+| htmx (`HX-Request: true`) | `422` with an HTML fragment listing the errors |
+| JSON client (`Accept: application/json`) | `422` `application/problem+json` with the `errors` map |
+| `GET` or `HEAD` request | `422` error page: these never redirect back, since the previous page may be this one |
+
+After the redirect, the form page reads what was flashed:
+
+```html title="resources/views/posts/show.html"
+<form method="post"
+	action="{{route "posts.comments.store" "post" .ID}}">
+	{{csrfField}}
+	<input name="author" value="{{old "author"}}">
+	{{with error "author"}}<p class="error">{{.}}</p>{{end}}
+	<textarea name="body">{{old "body"}}</textarea>
+	{{with error "body"}}<p class="error">{{.}}</p>{{end}}
+	<button>Comment</button>
+</form>
+```
+
+In Go, `c.Errors()` returns all flashed messages and `c.Old("author")` one old value (dotted paths for nested fields). Fields whose name contains `password` (in any case), `_token` and `_method` are never flashed. [Sessions](/docs/basics/sessions#validation-errors-and-old-input) and [Error handling](/docs/basics/error-handling#content-negotiation) show the rest of the flow.
+
+## Translated messages
+
+Every built-in message has a key, and the [i18n middleware](/docs/digging-deeper/localization#validation-messages) looks it up as `validation.<key>` in the request's language, then as `validation.<code>`. `{field}` becomes `validation.attributes.<name>` when your catalog has it.
 
 ```json title="resources/lang/pt-BR.json"
 {
   "validation": {
-    "confirmed": "A {field} não confere.",
-    "attributes": { "password_confirmation": "confirmação de senha" }
+    "too_small": {
+      "string": "O campo {field} deve ter pelo menos {min} caracteres."
+    },
+    "required_when_published": "Escolha uma data para publicar.",
+    "attributes": { "published_at": "data de publicação" }
   }
 }
 ```
 
-A handler can also return `z.FieldError`, `z.FieldErrorKey` or `z.Issues` directly (wrapped with `%w` too), for checks that need the database or other services: the default error handler treats them like `*errs.ValidationError`, so the client gets a 422 with field errors (problem+json for JSON clients; with sessions, classic and Inertia form posts flash the errors and redirect back; an HTML page otherwise, and always for `GET`/`HEAD`, which never redirect back), localized when the i18n middleware runs. `z.AsIssues` returns the single issue of a `FieldError`, and `errs.Status` reports 422 for both. These 422s are logged at Info.
+Rules to remember:
 
-When the data being validated is not client input (a database row, an upstream API response), wrap the error so it is not reported to the client as its own mistake: `return errs.Wrap(http.StatusInternalServerError, err)` answers a plain 500 with no field errors.
-
-Return `z.FieldError` or `z.FieldErrorKey` from `Refine` and `Custom` for any message meant for the client. Any other error fails closed: the issue gets the generic message `The {field} field is invalid.` (key `invalid`, so `validation.invalid` translates it), its text stays in `Issue.Err`, and `web.Parse`/the error handler log it at Warn. Before v0.25 the raw `err.Error()` text was the message.
-
-```go
-if taken {
-	return z.FieldErrorKey("email", "unique", "The {field} has already been taken.", nil)
-}
-```
+- `FieldErrorKey`'s `fallback` is the English message, used when a language has no `validation.<key>`. With an empty `key` it behaves like `FieldError`.
+- Placeholder names are lower snake case (`{field}`, `{other_field}`); other braces are left as they are.
+- Messages are plain text. Escaping is the renderer's job, and `html/template` does it in views.
+- `web.ParseInput(schema, m)` validates a map you built yourself. It has no request, so its messages stay in English.
 
 ## Struct-tag shorthand
 
-```go
+For simple inputs you may skip the shape and write the rules in a `validate` tag:
+
+```go title="app/requests/login.go"
 type Login struct {
 	Email    string `json:"email"    validate:"required,email"`
 	Password string `json:"password" validate:"required,min=12"`
 }
 
-var LoginSchema = z.FromTags[Login]() // panics at boot on unknown rules
+var LoginSchema = z.FromTags[Login]()
 ```
 
-`web.Bind[T](c)` uses the tag schema for `T` (built once and cached by `z.For[T]()`).
+`web.Bind[Login](c)` does the same in one call, using `z.For[Login]()`, which builds the tag schema once and caches it.
 
-`required` on a string means non-empty. On a list it means present and not null, as with OpenAPI `required`: an empty list passes, so use `min=1` when the list must have items.
+| Rule | Applies to | Meaning |
+| --- | --- | --- |
+| `required` | all | Strings: not empty. Lists: present and not `null` (an empty list passes; add `min=1`). Others: present |
+| `min=N`, `max=N` | strings, numbers, lists | Length, value or item count |
+| `len=N` | strings, lists | Exact length or count |
+| `email`, `url`, `uuid`, `ulid`, `alpha`, `alphanum`, `numeric` | strings | As the string methods |
+| `oneof=a b c` | strings | One of the space-separated values |
+| `startswith=x`, `endswith=x`, `contains=x` | strings | As the string methods |
+| `regex=PATTERN` | strings | Must be the **last** rule, so the pattern may contain commas |
+| `trim`, `lowercase` | strings | Pre-steps, as `Trim` and `ToLower` |
+| `positive` | numbers | Greater than 0 |
+| `unique` | lists | No duplicates |
+| `dive` | lists | Rules after it apply to each element |
+| `omitempty` | all | Accepted and ignored |
+
+Fields without `required` are optional. Pointer fields are optional and nullable. Nested structs are parsed with their own tags. An unknown rule or a bad argument panics at boot (`unknown rule "mn" for a string`), and `json:"-"` fields are skipped.
 
 ## Typed boundaries
 
-| Boundary | API |
+| Where the data comes from or goes | API |
 | --- | --- |
-| Body (JSON, form, multipart) | `web.Parse(c, schema)`, `web.Bind[T](c)` |
-| Query string | `web.ParseQuery(c, schema)` |
-| Route params | `web.ParseParams(c, schema, "id")` — invalid params answer 404 |
-| Outgoing JSON | `web.JSONWith(c, status, schema, v)` — outside production a contract violation is logged and answered with 500 |
-| Any reader | `z.ParseJSON(r, schema)` |
+| Body: JSON, urlencoded or multipart form (merged over the query string) | `web.Parse(c, schema)`, `web.Bind[T](c)` |
+| Query string only | `web.ParseQuery(c, schema)` |
+| Route parameters | `web.ParseParams(c, schema, "post")`: invalid parameters answer **404**, since a malformed id names no resource |
+| A map you assembled | `web.ParseInput(schema, m)` |
+| Any `io.Reader` of JSON (an upstream API) | `z.ParseJSON(r, schema)`: invalid JSON is one `invalid_type` issue, "The value must be valid JSON." |
+| A value you already have | `schema.Parse(v)` or, for typed values, `schema.Check(v)` |
+| Outgoing JSON | `web.JSONWith(c, status, schema, v)` |
 
-```json title="422 response"
-{
-  "type": "about:blank",
-  "title": "Validation failed",
-  "status": 422,
-  "detail": "1 field(s) are invalid.",
-  "instance": "/posts",
-  "request_id": "Q2V5…",
-  "errors": { "title": ["The title field must be at least 3 characters."] }
+`web.JSONWith` checks the value you are about to send when `Services.CheckResponses` is on, which the app does outside production. A mismatch is a server bug: it is answered with a 500 (and logged) instead of sending data that breaks your API contract. In production the check is skipped.
+
+`z.JSONSchema(schema)` exports a [JSON Schema 2020-12](https://json-schema.org/draft/2020-12) document for the [OpenAPI](/docs/rest-apis/openapi) generator: types, required keys, lengths, ranges, formats, patterns, enums, defaults and `Describe` texts. `Refine`, `Transform` and `Custom` logic cannot be expressed, so the server may reject values the schema allows, never the reverse. `Describe(text)` sets the description.
+
+## Configuration
+
+Validation itself has no settings. These limits apply to the input it reads:
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| `web.DefaultMaxBody` | 10 MiB | Body limit of `c.Input()` and `web.Parse` when no middleware set a smaller one; larger bodies answer **413** |
+| Multipart memory | 8 MiB | Uploads above this spill to temporary files |
+| Form key depth | 16 | Deeper bracket keys are dropped |
+| `APP_PROBLEM_BASE_URL` | empty | Makes the 422 problem `type` `<base>/validation` instead of `about:blank` |
+
+Malformed bodies never reach the schema: an empty JSON body answers 400 "Request body is empty.", broken JSON 400 "Malformed JSON at position 12.", a non-object JSON body 400 "Request body has the wrong JSON type.", and two JSON values 400 "Request body must contain a single JSON value.".
+
+## Security
+
+- Parse at the edge: handlers should never read `c.FormValue` for data they store. A typed value means every field went through a rule.
+- Strings reject invalid UTF-8 and control characters by default, so log lines and terminals cannot be spoofed with escape codes.
+- Errors from `Refine` and `Custom` fail closed, so database or network messages never leak to the client.
+- Validation is not escaping. A valid comment may still contain `<script>`: `html/template` escapes it when you render it ([Views](/docs/basics/views)).
+- Password fields are never flashed back into the session. See the [security overview](/docs/security/overview).
+
+## Testing
+
+`vukemtest` sends requests through the whole stack, so a test sees exactly what a browser or API client sees.
+
+```go title="tests/comments_test.go"
+func TestCommentValidation(t *testing.T) {
+	app := vukemtest.New(t, bootstrap.New)
+	client := app.Client(t)
+
+	// A browser form goes back with the errors flashed.
+	client.PostForm("/posts/1/comments", url.Values{
+		"author": {"A"},
+		"body":   {"hi"},
+	}).AssertSessionHasErrors("author", "body")
+
+	// A JSON client gets a 422 problem with the same fields.
+	client.PostJSON("/posts/1/comments", map[string]any{
+		"author": "Ann",
+	}).AssertJSONValidationErrors("body")
 }
 ```
+
+Schemas are plain values, so you may also test them without HTTP:
+
+```go title="app/requests/post_test.go"
+func TestPublishedNeedsDate(t *testing.T) {
+	_, err := requests.StorePostSchema.Parse(map[string]any{
+		"title":  "Hello",
+		"body":   "World",
+		"status": "published",
+	})
+
+	is, ok := z.AsIssues(err)
+	if !ok || is.First("published_at") == "" {
+		t.Fatalf("want a published_at issue, got %v", err)
+	}
+}
+```
+
+## Common mistakes
+
+**Expecting `""` to fail a required string.** The empty string is a valid string.
+
+```go
+// Wrong: an empty title passes.
+"title": z.String(),
+// Right.
+"title": z.String().Trim().Min(1),
+```
+
+**Expecting the `Refine` message while fields still fail.** A struct's `Refine` runs only after every field passed. The client first sees "The title field must be at least 3 characters." and only on the next try "Pick a publish date for a published post.".
+
+**Returning a plain error for the client.** `return errors.New("slug taken")` from `Refine` shows "The slug field is invalid." Return `z.FieldErrorKey("slug", "unique", "…", nil)` instead.
+
+**A key the struct does not have.** `"titel": z.String()` panics at boot:
+
+```text
+panic: z: requests.StorePost has no field for key "titel" (match json/form tag or field name)
+```
+
+**A checkbox without a default.** An unchecked box sends nothing, so `z.Bool()` reports "The pinned field is required.". Use `z.Bool().Default(false)`.
+
+**Validating a database row as client input.** A failure answers 422 with field errors the user cannot fix. Wrap it: `errs.Wrap(http.StatusInternalServerError, err)`.
+
+## Next steps
+
+<CardGroup cols="2">
+<Card title="Error handling" href="/docs/basics/error-handling" icon="shield">
+How the 422, the redirect and the problem JSON are rendered.
+</Card>
+<Card title="Sessions" href="/docs/basics/sessions" icon="layers">
+Flash messages, old input and the validation hook.
+</Card>
+<Card title="Localization" href="/docs/digging-deeper/localization" icon="book">
+Translate validation messages per request.
+</Card>
+<Card title="OpenAPI" href="/docs/rest-apis/openapi" icon="code">
+Publish your schemas as an API contract.
+</Card>
+</CardGroup>
+
+Package reference: [z](https://pkg.go.dev/github.com/AlexGalhardo/vukem/z) and [web](https://pkg.go.dev/github.com/AlexGalhardo/vukem/web).

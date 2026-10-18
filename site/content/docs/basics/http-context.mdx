@@ -1,93 +1,426 @@
 ---
 title: HTTP context
-description: The *web.Ctx passed to every handler wraps the request and response with typed helpers.
+description: The *web.Ctx every handler receives, what each of its helpers returns, the shared services behind it, and how c.IP() decides who the client is.
 ---
 
-Every handler receives a `*web.Ctx` and returns an `error`:
+Every handler in Vukem receives one argument, `c *web.Ctx`, and returns an `error`. `c` is the toolbox for one request: it reads the URL, headers and body, writes the response, builds links to named routes and reaches shared services such as the logger. This page walks through the whole toolbox using the blog's posts.
+
+You will learn:
+
+- what happens when a handler returns an error, and when it returns `nil`;
+- every helper for reading the request, and what it returns in edge cases;
+- the rules that keep `c` safe: one request, one goroutine;
+- what `*web.Services` holds and who fills it;
+- how `c.IP()` finds the real client behind a proxy.
+
+## The idea
+
+Go's standard library hands a handler two values: an [`http.ResponseWriter`](https://pkg.go.dev/net/http#ResponseWriter) to write the answer and an [`*http.Request`](https://pkg.go.dev/net/http#Request) with everything the client sent. They do everything, but at a low level: reading a number from the URL, or answering JSON with the right header, takes several lines each time.
+
+`*web.Ctx` wraps both and adds short, safe helpers. Think of it as a backpack the request carries through your code: the request inside, a pen to write the answer, and a map (the route names) to point to other pages.
 
 ```go
 type HandlerFunc func(c *Ctx) error
 ```
 
-`*web.Ctx` wraps `http.ResponseWriter` and `*http.Request`. It is per request: it must not be used after the handler returns or from other goroutines.
+The `error` result follows Go's habit of [returning errors as values](https://go.dev/blog/errors-are-values) instead of throwing exceptions. You return the problem; Vukem decides how to show it.
 
-## Request
+## Quick start
+
+<Steps>
+<Step title="Write a handler">
+
+The blog wants a "share" endpoint that tells a client how to link to a post:
+
+```go title="app/controllers/share.go"
+package controllers
+
+import (
+	"net/http"
+
+	"github.com/AlexGalhardo/vukem/web"
+)
+
+// Share describes how to link to a post: GET /posts/{post}/share.
+func Share(c *web.Ctx) error {
+	id, err := c.ParamInt("post")
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, web.Map{
+		"post":  id,
+		"url":   c.MustURL("posts.show", "post", id),
+		"ref":   c.Query("ref"),
+		"page":  c.QueryInt("page", 1),
+		"route": c.RouteName(),
+		"ip":    c.IP(),
+		"json":  c.WantsJSON(),
+	})
+}
+```
+
+`web.Map` is short for `map[string]any`, handy for JSON and template data.
+
+</Step>
+<Step title="Register it">
+
+```go title="routes/web.go"
+r.Get("/posts/{post}/share", controllers.Share).Name("posts.share")
+```
+
+</Step>
+<Step title="Call it">
+
+```bash
+curl "http://localhost:3000/posts/1/share?ref=mail&page=x"
+```
+
+```json
+{"ip":"127.0.0.1","json":false,"page":1,"post":1,
+"ref":"mail","route":"posts.share","url":"/posts/1"}
+```
+
+`page=x` is not a number, so `QueryInt` returned the default `1`. Now try a post id that is not a number:
+
+```bash
+curl -i http://localhost:3000/posts/abc/share \
+  -H "Accept: application/json"
+```
+
+```text
+HTTP/1.1 404 Not Found
+Content-Type: application/problem+json
+
+{"type":"about:blank","title":"Not Found","status":404,
+"instance":"/posts/abc/share","request_id":"6GSXUURXI53R6B5UIHIU7TN2NO"}
+```
+
+`c.ParamInt` returned an error, the handler returned it, and the error handler turned it into a 404.
+
+</Step>
+</Steps>
+
+## What happens to the returned error
+
+The router runs your handler through `c.Serve(h)`. When the handler returns:
+
+| The handler returns | Vukem does |
+| --- | --- |
+| `nil` | Nothing more. Whatever you wrote is the response. If you wrote nothing, the client gets an empty `200 OK` |
+| an error, nothing written yet | Calls the error handler (`Services.Errors`, or `web.DefaultErrorHandler`), which picks the status from the error and renders HTML, an htmx fragment, a redirect back with errors, or problem+json |
+| an error, response already written | Logs the error only. The status line is gone, so nothing safe can be added |
+
+The status comes from the error: `errs.ErrNotFound` is 404, a `*errs.ValidationError` is 422, any unknown error is 500. Details of 5xx errors never reach the client unless debug mode is on. [Error handling](/docs/basics/error-handling) covers the error types and pages.
+
+That last row is why you should finish all the work that can fail **before** writing anything: load, validate, save, then answer.
+
+`c.HandleError(err)` calls the error handler directly, for the rare case where you must render an error and keep going.
+
+## Rules of the context
+
+- **One request.** A `Ctx` belongs to the request that created it. Do not keep it after the handler returns.
+- **One goroutine.** Do not pass `c` to a [goroutine](https://go.dev/tour/concurrency/1). The response may already be finished, and `Ctx` is not safe for concurrent use. Copy the values you need first, and use a [queued job](/docs/digging-deeper/queue) for real background work.
+- **The context ends with the request.** `c.Context()` is cancelled when the client disconnects or a [timeout](/docs/basics/middleware#timeout) expires. Pass it to database queries and HTTP calls so they stop too. Go's [`context` package](https://pkg.go.dev/context) explains cancellation.
+
+```go
+// Wrong: c is used after the handler returned.
+go func() { c.Log().Info("viewed", "post", c.Param("post")) }()
+
+// Right: copy what the goroutine needs.
+post := c.Param("post")
+log := c.Log()
+go func() { log.Info("viewed", "post", post) }()
+```
+
+## Reading the request
+
+| Method | Returns | Edge cases |
+| --- | --- | --- |
+| `c.Request()` | The `*http.Request` | |
+| `c.SetRequest(r)` | Replaces it, for example after `r.WithContext(...)` | |
+| `c.Context()` | The request's `context.Context` | Cancelled when the request ends |
+| `c.Method()` | `"GET"`, `"POST"`… | After [method override](/docs/basics/middleware#methodoverride), the overridden method |
+| `c.Path()` | The URL path, such as `/posts/1/share` | No query string |
+| `c.Param(name)` | A path parameter (`{post}`), URL-decoded | `""` when the pattern has no such name |
+| `c.ParamInt(name)` | The parameter as `int64` | Not a valid integer: `0` and `errs.ErrNotFound` |
+| `c.Query(name)` | The first value of a query parameter | `""` when absent |
+| `c.QueryInt(name, def)` | The value as `int` | `def` when absent or not a number |
+| `c.QueryBool(name)` | `true` for `1`, `t`, `T`, `true`, `TRUE`, `True` | Anything else, including `yes` and `on`, is `false` |
+| `c.Header(name)` | A request header (any case: `c.Header("x-request-id")` works) | `""` when absent |
+| `c.Cookie(name)` | A cookie value | `""` when absent |
+| `c.IP()` | The client IP | See [Trusted proxies](#trusted-proxies) |
+| `c.RouteName()` | The full name of the matched route | `""` for unnamed routes and for `router.Adapt` handlers |
+
+`c.QueryBool` follows [`strconv.ParseBool`](https://pkg.go.dev/strconv#ParseBool). The body (forms, JSON, files) has its own page: [Requests](/docs/basics/requests).
+
+### Asking about the request
+
+| Method | True when |
+| --- | --- |
+| `c.IsJSON()` | The request **body** is JSON: `Content-Type` is `application/json` or `application/*+json` |
+| `c.WantsJSON()` | The client prefers a JSON **answer** (rules below) |
+| `c.IsHTMX()` | The request was sent by htmx (`HX-Request: true`) |
+| `c.IsPartial()` | htmx asked for a fragment rather than a full page |
+
+`WantsJSON` decides between HTML and JSON in handlers and in the error handler:
+
+| `Accept` header | Body | `WantsJSON()` |
+| --- | --- | --- |
+| `application/json` | any | `true` |
+| `application/problem+json` | any | `true` (contains `json`) |
+| `text/html,application/xhtml+xml,...` (browsers) | any | `false` |
+| `application/json, text/html` | any | `false` (also accepts HTML) |
+| empty or `*/*` | `Content-Type: application/json` | `true` |
+| empty or `*/*` | form or none | `false` |
+
+`web.IsJSONMediaType(contentType)` is the check behind `IsJSON`. It ignores parameters, so `text/plain; x=+json` is never JSON.
+
+## Writing the response
+
+The response helpers have their own page, [Responses](/docs/basics/responses). In short:
+
+| Method | Writes |
+| --- | --- |
+| `c.String`, `c.HTML`, `c.JSON`, `c.Blob`, `c.Stream` | A body with a status and `Content-Type` |
+| `c.Created`, `c.Accepted`, `c.NoContent`, `c.Problem` | API shortcuts |
+| `c.Redirect`, `c.RedirectStatus`, `c.RedirectRoute`, `c.Back` | Redirects |
+| `c.File`, `c.Download` | Files |
+| `c.Render`, `c.Fragment`, `c.View` | [Views](/docs/basics/views) |
+| `c.SSE` | [Server-sent events](/docs/digging-deeper/sse) |
+| `c.SetHeader`, `c.SetCookie` | Headers and cookies |
+
+`c.Writer()` returns the `*web.ResponseWriter` underneath. It records what was sent:
 
 | Method | Returns |
 | --- | --- |
-| `Request()`, `SetRequest(r)` | The underlying `*http.Request` |
-| `Context()` | The request `context.Context` |
-| `Method()`, `Path()` | Request method and path |
-| `Param(name)` | Path parameter (`{name}` in the pattern) |
-| `ParamInt(name)` | Path parameter as `int64`, or a 404 error when not numeric |
-| `Query(name)` | Query string value |
-| `QueryInt(name, def)` | Query value as `int`, or `def` when absent or invalid |
-| `QueryBool(name)` | `true` for `1`, `t`, `true`… |
-| `Header(name)`, `Cookie(name)` | Request header, cookie value (`""` when absent) |
-| `IP()` | Client IP; `X-Forwarded-For` honoured only from trusted proxies |
-| `IsJSON()` | The request body is JSON |
-| `WantsJSON()` | The client prefers a JSON response |
-| `IsHTMX()` | The request was made by htmx (`HX-Request: true`) |
-| `RouteName()` | Name of the matched route |
+| `Status()` | The status written, or `0` before anything was written |
+| `Written()` | Whether the status line was sent |
+| `Size()` | Body bytes written |
+| `Unwrap()` | The original writer, so [`http.ResponseController`](https://pkg.go.dev/net/http#ResponseController) can flush, hijack or set deadlines |
 
-## Response
+Once the status is written, a second `WriteHeader` is ignored.
 
-| Method | Purpose |
+## Links to named routes
+
+| Method | Returns |
 | --- | --- |
-| `Writer()` | The `*web.ResponseWriter` (records status, size, whether it was written; supports `http.ResponseController`) |
-| `SetHeader(name, value)`, `SetCookie(ck)` | Response headers and cookies |
-| `Status(code)` | Sets the status; chainable |
-| `String`, `HTML`, `JSON`, `Blob`, `Stream` | Bodies, see [Responses](/docs/basics/responses) |
-| `Redirect`, `RedirectRoute`, `Back` | Redirects |
-| `Problem(status, title, detail)` | RFC 9457 problem details |
+| `c.URL(name, params...)` | `(string, error)`; errors for an unknown name or wrong parameters |
+| `c.MustURL(name, params...)` | The URL, or `"#"` after logging `url generation failed` |
+| `c.RedirectRoute(name, params...)` | Redirects to the route |
+
+```go
+// "/posts/42", built from the route name, not typed by hand.
+link := c.MustURL("posts.show", "post", 42)
+```
+
+Without a URL generator (a `web.Services` built by hand with no router), `c.URL` returns a 500 error, `web: no URL generator configured`. [Routing](/docs/basics/routing#named-routes-and-url-generation) lists every URL error.
+
+## Logging
+
+`c.Log()` returns the app's [`*slog.Logger`](https://pkg.go.dev/log/slog), or `slog.Default()` when none is set. Use the `...Context` methods, so log handlers can read the request context:
+
+```go
+c.Log().InfoContext(c.Context(), "comment added",
+	"post_id", post.ID,
+	"comment_id", comment.ID,
+)
+```
+
+For security-relevant events, use `web.SecurityEvent` and `web.AuditEvent`; see [Middleware](/docs/basics/middleware#logging-security-and-audit-events).
 
 ## Services
 
-The router owns one `*web.Services` value shared by every `Ctx`:
+Some things are the same for every request: the logger, the view engine, the error handler. The router keeps them in one `*web.Services` value and hands it to every `Ctx`. Read it with `c.Services()`; middleware reads it with `web.ServicesFrom(r.Context())`.
 
-```go
+| Field | Type | Filled by the app with |
+| --- | --- | --- |
+| `URLs` | `web.URLGenerator` | The router itself |
+| `Views` | `web.Renderer` | The view engine from `vukem.WithViews` |
+| `Errors` | `web.ErrorHandler` | Nothing: `nil` means `web.DefaultErrorHandler`. Set your own to [customize errors](/docs/basics/error-handling) |
+| `Log` | `*slog.Logger` | `app.Log` |
+| `Debug` | `bool` | `APP_DEBUG=true`, never in production: detailed 5xx pages |
+| `DebugOut` | `io.Writer` | `os.Stderr` in debug mode when serving: a colored report of each 5xx |
+| `TrustedProxies` | `[]*net.IPNet` | `TRUSTED_PROXIES` |
+| `ClientIPHeader` | `string` | `CLIENT_IP_HEADER` |
+| `IPv6Prefix` | `int` | `RATE_LIMIT_IPV6_PREFIX` (default 64; values outside 1–128 mean 64) |
+| `ProblemBaseURL` | `string` | `APP_PROBLEM_BASE_URL`: the `type` of validation problems becomes `<base>/validation` |
+| `CheckResponses` | `bool` | `true` outside production: `web.JSONWith` checks outgoing JSON |
+| `Events` | `web.EventDispatcher` | `app.Events`: receives security and audit events |
+| `Authorizer` | `web.Authorizer` | Nothing by default. You set it: `r.Services().Authorizer = gate`. Without one, `c.Authorize` denies everything |
+| `ErrorPage` | `web.ErrorPageFunc` | The Inertia adapter, with `vukem.WithInertia` |
+
+With a router you build yourself, you fill the fields:
+
+```go title="main.go"
 services := &web.Services{
-	Log:            app.Log,
-	Debug:          app.Config.Debug,          // detailed 5xx messages, never in production
-	TrustedProxies: proxies,                   // []*net.IPNet for IP()
+	Log:            slog.Default(),
 	ProblemBaseURL: "https://example.com/problems",
-	// Errors: custom web.ErrorHandler; Views: a web.Renderer; URLs: set by the router
 }
 
 r := router.New(services)
 ```
 
-`c.Services()` returns them and `c.Log()` returns the request logger.
+Change `Services` only while registering routes. Requests read it concurrently, so writing it while the server runs is a data race.
 
 ## Trusted proxies
 
-`c.IP()` returns the direct peer address unless that peer is listed in `TrustedProxies`. Only then is `X-Forwarded-For` read, right to left, skipping trusted hops, so clients cannot spoof their address.
+In production your app usually sits behind a <Term tip="A server that receives the visitor's request first (a load balancer, a CDN, Railway's edge) and forwards it to your app.">reverse proxy</Term>. The connection your app sees then comes from the proxy, not from the visitor. Proxies add the visitor's address to the `X-Forwarded-For` header, but any client can send that header too, so it can only be believed when it comes **from a proxy you trust**.
 
-In an app built by `vukem.New` (every starter), set them from the environment; nobody is trusted by default and an invalid entry stops the boot:
+`c.IP()` works like this:
 
-```dotenv
+1. Take the address of the direct connection (`RemoteAddr`).
+2. If that address is **not** in `TrustedProxies`, return it. The headers are ignored.
+3. If `ClientIPHeader` is set (for example `X-Real-IP`), return its value when the header appears exactly once and holds one valid IP; otherwise return the connection address.
+4. Otherwise read every `X-Forwarded-For` line, joined, from **right to left**. Skip addresses of trusted proxies. Return the first untrusted address. If an entry is not a valid IP, the chain cannot be trusted: return the connection address.
+
+Results are canonical: IPv4-mapped IPv6 is unmapped, and IPv6 is lowercase and compressed, so rate-limit keys for one client never differ.
+
+With `TRUSTED_PROXIES=10.0.0.0/8`:
+
+| Connection from | `X-Forwarded-For` | `c.IP()` |
+| --- | --- | --- |
+| `198.51.100.1` (not trusted) | `203.0.113.7` | `198.51.100.1` |
+| `10.0.0.5` | `203.0.113.7, 10.0.0.9` | `203.0.113.7` |
+| `10.0.0.5` | `1.2.3.4, 10.1.1.1` | `1.2.3.4` |
+| `10.0.0.5` | `10.1.1.1` (every hop trusted) | `10.1.1.1` |
+
+Set the proxies in `.env`. Nobody is trusted by default:
+
+```dotenv title=".env"
+# Comma-separated CIDRs or single IPs of your proxies.
 TRUSTED_PROXIES=10.0.0.0/8,192.0.2.10
-TRUST_FORWARDED_PROTO=true # X-Forwarded-Proto: https from those peers enables HSTS
-CLIENT_IP_HEADER=X-Real-IP # optional: read this single-IP header instead of X-Forwarded-For
+
+# Optional: a single-IP header your proxy sets. Needs TRUSTED_PROXIES.
+CLIENT_IP_HEADER=X-Real-IP
 ```
 
-`CLIENT_IP_HEADER` (`Services.ClientIPHeader`) is for proxies that put the client address in one header of their own. It is read only from trusted peers and only when it holds exactly one IP; otherwise `c.IP()` returns the peer address. `X-Forwarded-For` is then ignored.
+`vukem.New` checks these at boot. An invalid entry in `TRUSTED_PROXIES` stops the app with `vukem: TRUSTED_PROXIES entry "x" is not an IP or CIDR`. `CLIENT_IP_HEADER` without `TRUSTED_PROXIES` fails with `vukem: CLIENT_IP_HEADER requires TRUSTED_PROXIES`; naming `X-Forwarded-For` or `Forwarded` there is refused because those are lists. In production with an empty `TRUSTED_PROXIES`, the app logs one warning the first time a request from a private, CGNAT or loopback address carries `X-Forwarded-For` or `X-Real-IP`: you are probably behind a proxy, and every visitor shares one rate-limit bucket.
 
-With a router you build yourself, set the field:
+## Values in the request context
 
-```go
-_, lb, _ := net.ParseCIDR("10.0.0.0/8")
-services.TrustedProxies = []*net.IPNet{lb}
-```
+Middleware stores per-request values in `c.Context()`. Read them with these functions (each takes a `context.Context`):
 
-## Sessions, views and htmx
+| Function | Returns | Stored by |
+| --- | --- | --- |
+| `web.RequestID(ctx)` | The request id, or `""` | [`RequestID`](/docs/basics/middleware#requestid) |
+| `web.CSPNonce(ctx)` | The CSP nonce, or `""` | [`SecureHeaders`](/docs/security/security-headers) |
+| `web.SessionFrom(ctx)` | The `web.Session`, or `nil` | [Sessions](/docs/basics/sessions) |
+| `web.FlashFrom(ctx, key)`, `web.OldInput(ctx, field)`, `web.ErrorsFrom(ctx)` | Flashed data | Sessions |
+| `web.ServicesFrom(ctx)` | The router's services, or an empty value | The router |
+| `web.BodyLimitOf(r)` | The body limit and whether one was set (takes the request) | [`BodyLimit`](/docs/basics/middleware#bodylimit) |
 
-| Helper | See |
+## Sessions, views, htmx and auth
+
+| Helper | Page |
 | --- | --- |
 | `c.Session()`, `c.Flash(key, v)`, `c.FlashValue(key)`, `c.Old(field)`, `c.Errors()` | [Sessions](/docs/basics/sessions) |
 | `c.Render(name, data, opts...)`, `c.Fragment(name, block, data)`, `c.View(v)` | [Views](/docs/basics/views) |
-| `c.IsHTMX()`, `c.IsPartial()`, `c.HTMX()` | [HTMX](/docs/frontend/htmx) |
+| `c.HTMX()`, `c.IsHTMX()`, `c.IsPartial()` | [HTMX](/docs/frontend/htmx) |
+| `c.Authorize(ability, subject)` | [Authorization](/docs/security/authorization) |
+| `auth.User[U](c, guard)` | [Authentication](/docs/security/authentication) |
 
-<Callout type="warning">
-`c.Authorize(ability, subject)` checks [authorization](/docs/security/authorization); `auth.User[U](c, guard)` returns the [authenticated user](/docs/security/authentication).
-</Callout>
+`c.Flash` returns a 500 error when the session middleware is not installed (for example with `Stateless: true`): `500 Internal Server Error: web: no session (add session middleware to the router stack)`.
+
+## Configuration
+
+| Variable | Default | Effect on the context |
+| --- | --- | --- |
+| `TRUSTED_PROXIES` | empty | Proxies whose forwarding headers `c.IP()` believes |
+| `CLIENT_IP_HEADER` | empty | A single-IP header read instead of `X-Forwarded-For` |
+| `RATE_LIMIT_IPV6_PREFIX` | `64` | How per-IP keys group IPv6 clients |
+| `APP_DEBUG` | `false` | Detailed 5xx pages (ignored in production) |
+| `APP_PROBLEM_BASE_URL` | empty | Base of the problem `type` for validation errors |
+
+## Security
+
+- `c.IP()` trusts nobody by default; set `TRUSTED_PROXIES` to your proxy's range, never to `0.0.0.0/0`.
+- `c.ParamInt` answers 404 for malformed ids, so bad input never reaches the database as a 500.
+- Values from `c.Query`, `c.Header` and `c.Cookie` are raw client input. Validate them (see [Validation](/docs/basics/validation)) and never print them with `c.HTML`.
+- 5xx details stay in the logs unless debug mode is on, and `APP_DEBUG=true` with `APP_ENV=production` stops the boot (`vukem: APP_DEBUG must be false when APP_ENV=production`).
+
+## Testing
+
+Handlers are plain functions, so you may test them without booting the app. Build a router with the routes the handler links to, and send a request through it with [`httptest`](https://pkg.go.dev/net/http/httptest):
+
+```go title="app/controllers/share_test.go"
+package controllers_test
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/AlexGalhardo/vukem/router"
+
+	"blog/app/controllers"
+)
+
+func TestShare(t *testing.T) {
+	r := router.New(nil)
+	r.Get("/posts/{post}", controllers.Share).Name("posts.show")
+	r.Get("/posts/{post}/share", controllers.Share).Name("posts.share")
+
+	h, err := r.Handler()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(
+		http.MethodGet, "/posts/42/share?ref=mail", nil,
+	)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+
+	body := rec.Body.String()
+	if !strings.Contains(body, `"url":"/posts/42"`) {
+		t.Errorf("body = %s", body)
+	}
+}
+```
+
+For a handler that needs nothing from the router, `web.NewCtx(w, r, services)` builds a context directly; `nil` services are replaced by an empty value. To test with the database and middleware, use `vukemtest` as shown in [Controllers](/docs/basics/controllers#testing).
+
+## Common mistakes
+
+**Writing, then returning an error.** The client already received a `200`; the error only reaches the log.
+
+```go
+// Wrong: the JSON is sent even if saving fails.
+_ = c.JSON(http.StatusOK, post)
+return orm.Update(c.Context(), pc.db, &post)
+
+// Right: save first, answer last.
+if err := orm.Update(c.Context(), pc.db, &post); err != nil {
+	return err
+}
+return c.JSON(http.StatusOK, post)
+```
+
+**Every visitor has the proxy's IP.** Behind a load balancer with an empty `TRUSTED_PROXIES`, `c.IP()` returns the balancer's address, and the production log says `requests from a proxy carry X-Forwarded-For but TRUSTED_PROXIES is empty`. Set `TRUSTED_PROXIES` to the proxy's network.
+
+**Reading a number with `c.Query`.** `c.Query("page")` is a string. Use `c.QueryInt("page", 1)` for a default, or `web.ParseQuery` with a schema when bad input should be a 422.
+
+**Using `c` in a goroutine.** See [Rules of the context](#rules-of-the-context).
+
+## Next steps
+
+<CardGroup cols="2">
+<Card title="Requests" href="/docs/basics/requests" icon="route">
+Forms, JSON, files and body limits.
+</Card>
+<Card title="Responses" href="/docs/basics/responses" icon="code">
+Every way to answer a request.
+</Card>
+<Card title="Error handling" href="/docs/basics/error-handling" icon="shield">
+What the error handler does with your errors.
+</Card>
+<Card title="Package reference" href="https://pkg.go.dev/github.com/AlexGalhardo/vukem/web" icon="book">
+Every exported identifier of `web`.
+</Card>
+</CardGroup>

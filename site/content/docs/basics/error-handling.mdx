@@ -1,136 +1,481 @@
 ---
 title: Error handling
-description: Handlers return errors; one central handler negotiates HTML pages, htmx fragments or RFC 9457 problem details.
+description: Handlers return errors and one central handler answers each client in its format, from HTML pages and htmx fragments to RFC 9457 problem details, Inertia error pages and a debug page in development.
 ---
 
-Handlers never write partial error responses. They return an `error`, and the error handler renders the right response for the client, logs it and keeps internals out of client output.
+Things go wrong in every app: a post that does not exist, a visitor who may not edit it, a database that stops answering. In Vukem a handler never writes an error page by hand. It **returns** an `error`, and one central error handler decides the status, the format (HTML, htmx fragment, JSON, Inertia page), what the client may see and what goes to the logs.
 
-```go
-func (p *PostController) Show(c *web.Ctx) error {
-	post, err := p.posts.Find(c.Context(), c.Param("post"))
-	if errors.Is(err, store.ErrMissing) {
-		return errs.ErrNotFound
-	}
+You will learn:
+
+- how a returned error becomes a response, step by step;
+- the `errs` package: `HTTPError`, the sentinel errors, `ValidationError` and `Status`;
+- how the handler picks a format for browsers, htmx, Inertia and JSON clients;
+- how to design your own error pages, including the `ErrorPage` hook added in v0.27;
+- how panics, database errors and the debug page fit in;
+- how to test error responses and avoid the usual mistakes.
+
+## The idea
+
+Picture a restaurant. The cook (your handler) does not walk to the table to apologize when the soup is gone: they put a note on the counter that says "no soup". The waiter (the error handler) reads the note and tells each guest in the right way. A guest who reads braille gets braille, a phone order gets a phone call. The cook writes **one** note; the waiter knows **every** way to deliver it.
+
+In Go, [errors are ordinary values](https://go.dev/blog/errors-are-values) of the [`error`](https://go.dev/tour/methods/19) interface. A Vukem handler has the signature `func(c *web.Ctx) error`. When it returns a non-nil error, the router calls the error handler:
+
+| Step | What happens |
+| --- | --- |
+| 1 | Your handler returns `errs.ErrNotFound` (or any error) |
+| 2 | `errs.Status(err)` finds the status: 404 |
+| 3 | The error is logged with method, path, status and request id |
+| 4 | The handler looks at the request: JSON client? htmx? form post? browser? |
+| 5 | It writes a problem JSON, a fragment, a redirect or an HTML page |
+
+Errors can wrap other errors with [`fmt.Errorf("...: %w", err)`](https://pkg.go.dev/fmt#Errorf), and the standard [`errors.Is` and `errors.As`](https://go.dev/blog/go1.13-errors) look through the wrapping. Vukem relies on both, so you may wrap freely.
+
+## Quick start
+
+<Steps>
+<Step title="Return an error from a handler">
+
+The blog shows one post. A post that does not exist should answer 404.
+
+```go title="app/controllers/post_controller.go"
+func (pc *PostController) Show(c *web.Ctx) error {
+	id, err := c.ParamInt("post")
 	if err != nil {
-		return fmt.Errorf("find post: %w", err) // 500, cause logged, never shown
+		// A non-numeric id is already a 404.
+		return err
 	}
-	return c.JSON(http.StatusOK, post)
+
+	post, err := orm.QueryOf[models.Post](pc.db).Find(c.Context(), id)
+	if err != nil {
+		// orm.ErrNotFound answers 404; other errors answer 500.
+		return fmt.Errorf("show post %d: %w", id, err)
+	}
+
+	return c.Render("posts/show", post)
 }
 ```
+
+</Step>
+<Step title="Ask as an API client">
+
+```bash
+curl -s -H "Accept: application/json" localhost:3000/posts/999
+```
+
+```json title="404 Not Found"
+{
+  "type": "about:blank",
+  "title": "Not Found",
+  "status": 404,
+  "detail": "Record not found.",
+  "instance": "/posts/999",
+  "request_id": "fJ3kq0aZ7mQ1"
+}
+```
+
+</Step>
+<Step title="Give browsers a nicer page">
+
+Create a view named after the status. It renders inside your layout like any page.
+
+```html title="resources/views/errors/404.html"
+{{define "title"}}Not found{{end}}
+{{define "content"}}
+<h1>We could not find that page</h1>
+<p>{{with .Detail}}{{.}}{{else}}It may have been deleted.{{end}}</p>
+<a href="{{route "posts.index"}}">Back to all posts</a>
+{{end}}
+```
+
+Open `http://localhost:3000/posts/999` in the browser: you see your page with status 404.
+
+</Step>
+</Steps>
 
 ## The `errs` package
 
+Import `github.com/AlexGalhardo/vukem/errs`. It defines the errors handlers return; the `web` package turns them into responses.
+
 ### `HTTPError`
+
+An `*errs.HTTPError` pairs a status with a message that is **safe** to show and a cause that is **not**.
 
 ```go
 type HTTPError struct {
-	Status  int         // HTTP status
-	Message string      // safe to show to clients; empty means the status text
-	Err     error       // internal cause: logged, never shown
-	Headers http.Header // added to the response (Allow, Retry-After…)
-	Key     string         // i18n key translating Message per request (errs.NewKey)
-	Params  map[string]any // {name} placeholders of Key
+	// Status is the HTTP status code.
+	Status int
+	// Message is shown to clients; empty means the status text.
+	Message string
+	// Err is the internal cause: logged, never shown.
+	Err error
+	// Headers are added to the response (Retry-After, Allow...).
+	Headers http.Header
+	// Key translates Message per request (see NewKey).
+	Key string
+	// Params fill the {name} placeholders of Key.
+	Params map[string]any
 }
-
-errs.New(http.StatusConflict, "That slug is taken.")
-errs.NewKey(http.StatusConflict, "posts.slug_taken", "That slug is taken.", nil) // translated in the request locale
-errs.Wrap(http.StatusBadGateway, err)
-errs.ErrTooManyRequests.WithHeader("Retry-After", "30")
 ```
+
+| Constructor | Use it when | Example |
+| --- | --- | --- |
+| `errs.New(status, message)` | You have a message for the client | `errs.New(409, "That slug is taken.")` |
+| `errs.NewKey(status, key, message, params)` | The message must follow the visitor's language; `message` is the English fallback | `errs.NewKey(409, "posts.slug_taken", "That slug is taken.", nil)` |
+| `errs.Wrap(status, err)` | You want a status but the cause is internal | `errs.Wrap(502, err)` for a failed upstream call |
+| `e.WithHeader(key, value)` | The response needs a header; returns a **copy** | `errs.ErrTooManyRequests.WithHeader("Retry-After", "30")` |
+
+Methods: `Text()` returns `Message` or, when it is empty, the status text ("Not Found"). `LocalizedText(ctx)` translates `Key` with the request's translator, falling back to `Text()`. `Error()` is for logs and includes the cause: `409 That slug is taken.` or `502 Bad Gateway: dial tcp: timeout`. `Unwrap()` returns `Err`, so `errors.Is(err, context.DeadlineExceeded)` still works through a wrapped error.
+
+`errs.Translate(ctx, key, fallback, params)` does the same lookup for any text, and `errs.WithTranslator` / `errs.TranslatorFrom` store and read the translator. The [i18n middleware](/docs/digging-deeper/localization#framework-messages) installs one per request.
 
 ### Sentinel errors
 
-`ErrBadRequest` (400), `ErrUnauthorized` (401), `ErrForbidden` (403), `ErrNotFound` (404), `ErrMethodNotAllowed` (405), `ErrConflict` (409), `ErrPreconditionFailed` (412), `ErrRequestTooLarge` (413), `ErrUnsupportedMediaType` (415), `ErrUnprocessable` (422), `ErrTooManyRequests` (429), `ErrInternal` (500).
+<Term tip="A package-level error value you compare against, such as io.EOF. The name comes from 'sentinel value', a special value that signals a condition.">Sentinel errors</Term> cover the common statuses. They have no message, so the client sees the status text.
 
-`errors.Is` matches any `*HTTPError` with the same status, even when wrapped or re-created with a cause:
+| Error | Status |
+| --- | --- |
+| `errs.ErrBadRequest` | 400 |
+| `errs.ErrUnauthorized` | 401 |
+| `errs.ErrForbidden` | 403 |
+| `errs.ErrNotFound` | 404 |
+| `errs.ErrMethodNotAllowed` | 405 |
+| `errs.ErrConflict` | 409 |
+| `errs.ErrPreconditionFailed` | 412 |
+| `errs.ErrRequestTooLarge` | 413 |
+| `errs.ErrUnsupportedMediaType` | 415 |
+| `errs.ErrUnprocessable` | 422 |
+| `errs.ErrTooManyRequests` | 429 |
+| `errs.ErrInternal` | 500 |
+
+`errors.Is(err, target)` matches an `*HTTPError` with the same status when the target has no message, even when `err` is wrapped or carries a cause. A target **with** a message also needs the same message:
 
 ```go
-errors.Is(errs.Wrap(404, sql.ErrNoRows), errs.ErrNotFound) // true
+errors.Is(errs.Wrap(404, sql.ErrNoRows), errs.ErrNotFound)      // true
+errors.Is(errs.New(404, "Post not found."), errs.ErrNotFound)   // true
+errors.Is(errs.ErrNotFound, errs.New(404, "Post not found."))   // false
 ```
 
 ### `ValidationError`
 
+`*errs.ValidationError` holds messages per field and always answers 422. `web.Parse` builds one from [z](/docs/basics/validation) issues; you may build one yourself.
+
 ```go
 verr := errs.NewValidation().
-	Add("email", "The email is invalid.").
-	Add("password", "The password must be at least 12 characters.")
+	Add("title", "The title is too short.").
+	Add("body", "Write something first.")
 
-verr.First("email") // "The email is invalid."
+verr.First("title") // "The title is too short."
 verr.Empty()        // false
-return verr         // 422
+return verr
 ```
 
-`Add` returns the error for chaining, so errcheck flags it as a bare statement. Use `Append` (no result) when collecting messages in a loop or conditional:
+`Add` returns the error so you can chain it, which makes linters flag a bare `verr.Add(...)` statement as an unchecked error. Use `Append` (no result) in loops and conditions:
 
 ```go
 verr := errs.NewValidation()
-if locked {
-	verr.Append("price", "The price cannot change after the first sale.")
+if post.Locked {
+	verr.Append("title", "A locked post cannot be renamed.")
 }
 if !verr.Empty() {
 	return verr
 }
 ```
 
+`Fields` is the `map[string][]string` behind it. `Error()` lists the fields in order: `validation failed: body: Write something first., title: …`.
+
 ### Status mapping
 
-`errs.Status(err)` returns the status of an `*HTTPError`, 422 for a `*ValidationError`, the status of any error implementing `errs.StatusCoder` (`HTTPStatus() int`), and 500 otherwise.
+`errs.Status(err)` returns, looking through wrapping:
+
+1. the `Status` of an `*HTTPError`;
+2. 422 for a `*ValidationError`;
+3. `HTTPStatus()` of an error that implements `errs.StatusCoder` (`z.Issues`, `z.FieldError` and `orm.ErrConflict` do);
+4. 500 for anything else.
+
+`errs.StatusCoder` lets your own packages carry a status without importing `errs`:
+
+```go title="app/billing/errors.go"
+type PaymentRequiredError struct{ Plan string }
+
+func (e *PaymentRequiredError) Error() string {
+	return "payment required for plan " + e.Plan
+}
+
+// HTTPStatus implements errs.StatusCoder.
+func (*PaymentRequiredError) HTTPStatus() int { return 402 }
+```
+
+A plain error, such as the one your database driver returns, is a 500. Wrap it with context (`fmt.Errorf("load comments: %w", err)`): the client still sees only "Internal Server Error", while the log line tells you where it came from.
 
 ## Content negotiation
 
-`web.DefaultErrorHandler` renders by client:
+`web.DefaultErrorHandler` renders every error. It goes through these steps in order:
 
-| Client | Response |
-| --- | --- |
-| Wants JSON (`Accept` has JSON and not HTML, or a JSON body with no preference) | `application/problem+json`; 422 includes the `errors` map |
-| Classic form post with a validation error | Validation hook: flash errors and redirect back (installed by the session package); `GET`/`HEAD` requests get the 422 page instead |
-| htmx (`HX-Request: true`) | HTML fragment with the status (htmx 4 swaps 4xx) |
-| Inertia (`X-Inertia: true`, with `vukem.WithInertia`) | The `Error` page component with the props `status`, `title` and `message` (status text only for 5xx; `errors` for a 4xx validation error) |
-| Browser | HTML page: the view `errors/<status>` when a `Renderer` has it, else a built-in page |
+<Steps>
+<Step title="Status and logging">
+It computes `errs.Status(err)` and logs `request error` with `status`, `method`, `path`, `err` and `request_id`. 5xx errors log at Error, `z` field errors returned by a handler at Info, everything else at Debug.
+</Step>
+<Step title="Already written?">
+When the handler already sent headers or body, nothing safe is left to do: the error is only logged.
+</Step>
+<Step title="Headers">
+The `Headers` of an `*HTTPError` are added (for example `Retry-After`).
+</Step>
+<Step title="Pick the format">
+The first matching row of the table below wins.
+</Step>
+</Steps>
 
-```json title="404 problem+json"
+| Order | Request | Response |
+| --- | --- | --- |
+| 1 | JSON client | `application/problem+json`; a 422 includes the `errors` map |
+| 2 | A validation error on a form post (not `GET`/`HEAD`, not htmx), with the session middleware | The validation hook flashes the errors and old input and redirects back (`303`) |
+| 3 | A 5xx with `APP_DEBUG=true`, not htmx | The [debug page](#the-debug-page) |
+| 4 | `Services.ErrorPage` is set and writes a response (not htmx) | Your hook's response, such as an Inertia error page |
+| 5 | htmx (`HX-Request: true`) | An HTML fragment with the status |
+| 6 | Anything else | The view `errors/<status>` when it exists, else a built-in HTML page |
+
+A request is a **JSON client** when its `Accept` header mentions `json` and not `text/html`, or when it has no `Accept` (or `*/*`) and sends a JSON body. `c.WantsJSON()` gives the same answer in your handlers.
+
+### What the client sees
+
+| Error | `title` | `detail` |
+| --- | --- | --- |
+| 4xx `*HTTPError` with a message | Status text ("Conflict") | The message, translated from `Key` when there is one |
+| 4xx without a message (sentinels) | Status text | empty |
+| Validation error | "Validation failed" | "2 field(s) are invalid." |
+| Any 5xx | Status text | empty, unless `APP_DEBUG=true` (then the error text) |
+
+A `detail` equal to the `title` is dropped. HTML responses carry `Cache-Control: no-store`.
+
+```json title="409 problem+json"
 {
   "type": "about:blank",
-  "title": "Not Found",
-  "status": 404,
-  "instance": "/api/posts/99",
-  "request_id": "fJ3k…"
+  "title": "Conflict",
+  "status": 409,
+  "detail": "That slug is taken.",
+  "instance": "/posts",
+  "request_id": "fJ3kq0aZ7mQ1"
 }
 ```
 
-`Services.ProblemBaseURL` prefixes the validation problem `type` URI (`<base>/validation`); otherwise it is `about:blank`.
+The format is [RFC 9457 problem details](https://www.rfc-editor.org/rfc/rfc9457). `type` is `about:blank`, except for validation errors when `APP_PROBLEM_BASE_URL` is set: then it is `<base>/validation`. `instance` is the request path and `request_id` the id from the [request id middleware](/docs/basics/middleware).
 
-## What clients see
+The htmx fragment is one line of HTML, wrapped here to fit. htmx 4 swaps 4xx responses into the target, so the visitor sees it where the content would have gone:
 
-- 4xx: the `HTTPError` message, translated from its `Key` in the request locale when the app uses [localization](/docs/digging-deeper/localization#framework-messages).
-- 5xx: only the status text, unless `Services.Debug` is set (never in production).
-- Every error is logged with method, path, status and request id: 5xx at `ERROR`, the rest at `DEBUG`.
-- If the response was already written, the error is only logged.
+```html
+<div class="error" role="alert" data-status="422">
+<strong>Validation failed</strong> 2 field(s) are invalid.
+<ul><li data-field="title">The title field must be at least 3
+characters.</li></ul></div>
+```
 
-## Custom handler
+## Custom error pages
+
+For browsers, the handler renders the view `errors/<status>` when your [view engine](/docs/basics/views) has it, for example `resources/views/errors/404.html` or `errors/500.html`. A status without a view gets a small built-in page. The view renders inside your default layout, like a page, and receives:
+
+| Field | Value |
+| --- | --- |
+| `.Status` | The status code, `404` |
+| `.Title` | The status text, or "Validation failed" |
+| `.Detail` | The client-safe detail (empty for 5xx outside debug) |
+| `.Errors` | Field errors (`map[string][]string`) for a validation error, else `nil` |
+| `.Nonce` | The request's CSP nonce, for an inline `<style nonce="{{.Nonce}}">` |
+
+The built-in pages use no inline `style` attributes and nonce their `<style>`, so they render under the default [Content Security Policy](/docs/security/security-headers). A view that fails to render is logged as `render error page`; the status is already sent.
+
+## The `ErrorPage` hook
+
+Some frontends cannot show an HTML error page. An [Inertia](/docs/frontend/inertia) visit expects a JSON page object, so a raw HTML 404 would appear inside a modal. Since v0.27, `web.Services.ErrorPage` lets a frontend adapter draw the page in its own format.
 
 ```go
-services := &web.Services{
-	Errors: func(c *web.Ctx, err error) {
-		if errors.Is(err, billing.ErrPaymentRequired) {
-			_ = c.Problem(http.StatusPaymentRequired, "Payment required", "Upgrade your plan.")
-			return
-		}
-		web.DefaultErrorHandler(c, err)
-	},
+type ErrorPageFunc func(c *web.Ctx, e web.ErrorPage) bool
+
+type ErrorPage struct {
+	Status int
+	Title  string
+	Detail string
+	Errors map[string][]string
 }
 ```
 
-Middleware renders errors with the same handler through `web.Fail(w, r, err)`.
+The hook returns `true` when it wrote a response, or `false` to fall back to the HTML page. What it receives is already **client-safe**: for any 5xx, `Title` is the status text and `Detail` and `Errors` are empty, even when the error carried a message, so a hook cannot leak a cause by mistake.
 
-## Panics
+It runs at step 4 of the [table above](#content-negotiation), so it never sees JSON clients, htmx requests, validation redirects or the debug page.
 
-`middleware.Recover()` converts panics to 500 responses through the error handler and logs the stack trace server-side only.
+### Inertia apps
 
-## Database errors
+`vukem.WithInertia` installs `app.Inertia.ErrorPage` as the hook when `vukem.New` runs, **only if no hook is set yet**. For Inertia requests it renders the page component `inertia.Config.ErrorComponent` (default `"Error"`) with the props `status`, `title` and `message` (the detail, or the title when the detail is empty), plus your shared props. A 4xx validation error becomes the `errors` prop (first message per field). Full page loads keep the HTML page.
 
-`orm.ErrNotFound` (returned by `First` and `Find`) matches `errs.ErrNotFound`, so returning it answers 404. Unique-constraint violations are wrapped in `orm.ErrConflict` and answer 409.
+Outside production, a web app warns once at boot when `resources/js/pages` has no page for that component:
 
-## Debug error page
+```text
+WARN inertia error page not found: errors on Inertia visits will not render
+component=Error want=resources/js/pages/Error.{tsx,vue,svelte}
+fix="add the page, set inertia.Config.ErrorComponent, or set app.Router.Services().ErrorPage = nil"
+```
 
-With `APP_DEBUG=true` outside production, 5xx errors in a browser render a debug page: the error message and root type, the `Unwrap` chain, the stack with source snippets (app frames open, framework and standard library frames collapsed), the request (method, URL, route, request id, headers with `Authorization`, `Cookie` and token headers redacted) and the Go version. Stacks come from recovered panics and from errors created with `errs.New`, `Wrap` or `WithStack`. JSON clients keep getting problem+json (with the error text as `detail`) and htmx gets the fragment. `vukem serve` prints the same report in colour on stderr. The page never renders in production.
+The Inertia starters ship an `Error` page. To keep the HTML page instead, set the hook to `nil` in your routes.
+
+### Your own hook
+
+Routes run after `vukem.New`, so they may replace the hook. This one answers a plain-text page to a command-line tool that asks for `text/plain`:
+
+```go title="routes/web.go"
+services := r.Services()
+html := services.ErrorPage
+
+services.ErrorPage = func(c *web.Ctx, e web.ErrorPage) bool {
+	accept := c.Request().Header.Get("Accept")
+	if !strings.HasPrefix(accept, "text/plain") {
+		// Let the previous hook (or the HTML page) answer.
+		return html != nil && html(c, e)
+	}
+
+	text := fmt.Sprintf("%d %s\n%s\n", e.Status, e.Title, e.Detail)
+	return c.String(e.Status, text) == nil
+}
+```
+
+## Replacing the error handler
+
+`Services.Errors` replaces `web.DefaultErrorHandler` for the whole router. Handle the errors you care about and hand the rest back:
+
+```go title="routes/web.go"
+r.Services().Errors = func(c *web.Ctx, err error) {
+	if pe, ok := errors.AsType[*billing.PaymentRequiredError](err); ok {
+		detail := "Upgrade to the " + pe.Plan + " plan."
+		_ = c.Problem(http.StatusPaymentRequired, "Payment required", detail)
+		return
+	}
+
+	web.DefaultErrorHandler(c, err)
+}
+```
+
+`c.Problem(status, title, detail)` writes a problem JSON with `type`, `instance` and `request_id` filled in. [`errors.AsType`](https://pkg.go.dev/errors#AsType) is the generic form of `errors.As`.
+
+Middleware has no handler to return from. It calls `web.Fail(w, r, err)`, which renders through the same error handler, so a 401 from an auth middleware looks like a 401 from a handler:
+
+```go title="app/middleware/require_editor.go"
+func RequireEditor(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !isEditor(r) {
+			web.Fail(w, r, errs.ErrForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+```
+
+## Panics, database errors and unknown routes
+
+- **Panics.** `middleware.Recover()` (installed by `vukem.DefaultMiddleware`) turns a [panic](https://go.dev/blog/defer-panic-and-recover) into a 500 through the error handler. It logs `panic recovered` with the stack trace on the server only. `http.ErrAbortHandler` is re-panicked, as `net/http` expects.
+- **Not found rows.** `orm.ErrNotFound`, returned by `First` and `Find`, is an `*HTTPError` with status 404 and the message "Record not found.", so `errors.Is(err, errs.ErrNotFound)` is true and returning it answers 404.
+- **Unique violations.** Writes that break a unique constraint return an error wrapping `orm.ErrConflict`, which answers 409 with no detail. Check it with `errors.Is(err, orm.ErrConflict)` to show a friendlier message.
+- **Unknown routes and methods.** The router answers 404, or 405 with an `Allow` header, through the same handler ([Routing](/docs/basics/routing#404-and-405)).
+- **Bad bodies.** Malformed JSON and oversized bodies answer 400 and 413 with a message ([Validation](/docs/basics/validation#configuration)).
+
+## The debug page
+
+With `APP_DEBUG=true` and `APP_ENV` other than `production`, a 5xx in a browser renders a detailed page instead of the error view:
+
+- the error message and the type of its root cause;
+- the chain of wrapped errors (`Unwrap`), outermost first;
+- the stack trace with source code around each line: your app's frames open, framework and standard library frames collapsed;
+- the request: method, URL, route name, request id, headers (with `Authorization`, `Proxy-Authorization`, `Cookie`, `Set-Cookie`, `X-Api-Key`, `X-Auth-Token`, `X-Csrf-Token` and `X-Xsrf-Token` redacted) and the Go version.
+
+Stacks come from recovered panics and from errors created with `errs.New`, `errs.NewKey` or `errs.Wrap`. For an error from another package, call `errs.WithStack(err)` where you receive it; `errs.Stack(err)` returns the stack closest to the origin. Sentinels declared as package variables carry no stack.
+
+JSON clients keep getting problem JSON, now with the error text as `detail`, and htmx gets the fragment. `vukem serve` also prints the report in colour on stderr. The page carries the CSP nonce.
+
+<Callout type="warning" title="Never in production">
+`APP_DEBUG=true` with `APP_ENV=production` fails at boot (`vukem: APP_DEBUG must be false when APP_ENV=production`). The debug page shows source code and error texts that may contain secrets.
+</Callout>
+
+## Configuration
+
+| Name | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `APP_DEBUG` | bool | `false` | Debug page, error text in 5xx `detail`, colour report on stderr; ignored in production |
+| `APP_ENV` | string | — | `production` disables debug output |
+| `APP_PROBLEM_BASE_URL` | URL | empty | Validation problem `type` becomes `<base>/validation` |
+| `Services.Errors` | `web.ErrorHandler` | `nil` | Replaces `web.DefaultErrorHandler` |
+| `Services.ErrorPage` | `web.ErrorPageFunc` | `nil` (Inertia's with `WithInertia`) | Renders the error page in another format |
+| `Services.Views` | `web.Renderer` | the view engine | Source of `errors/<status>` views |
+| `inertia.Config.ErrorComponent` | string | `"Error"` | Page component for Inertia errors |
+
+## Security
+
+- **No internals for clients.** 5xx responses show only the status text, `Err` causes are logged and never shown, and the `ErrorPage` hook gets a sanitized description ([CWE-209](https://cwe.mitre.org/data/definitions/209.html), A10 in the [security overview](/docs/security/overview)).
+- **Messages are yours.** Whatever you put in `errs.New(status, message)` for a 4xx is sent as is. Never put ids of other users, SQL or file paths there.
+- **Not found beats forbidden** when existence itself is secret: answer `errs.ErrNotFound` for another user's draft post instead of 403.
+- **Debug is off in production**, enforced at boot.
+- **Logs keep the details.** Each error line has the request id, which the client also gets, so a user can quote it in a support request.
+
+## Testing
+
+```go title="tests/posts_errors_test.go"
+func TestPostErrors(t *testing.T) {
+	app := vukemtest.New(t, bootstrap.New)
+	client := app.Client(t)
+
+	// A browser gets the HTML page.
+	client.Get("/posts/999").
+		AssertNotFound().
+		AssertSee("We could not find that page")
+
+	// An API client gets problem+json.
+	client.GetJSON("/posts/999").
+		AssertProblem(http.StatusNotFound).
+		AssertJSONPath("detail", "Record not found.")
+
+	// htmx gets a fragment.
+	client.HTMX().Get("/posts/999").
+		AssertStatus(http.StatusNotFound).
+		AssertSee(`role="alert"`)
+}
+```
+
+`errs.Status` and `errors.Is` are pure functions, so unit tests of your services may assert on errors directly: `if !errors.Is(err, errs.ErrForbidden) { t.Fatal(err) }`.
+
+## Common mistakes
+
+**Writing a response and then returning an error.** The error handler sees the response is already written and only logs.
+
+```go
+// Wrong: the client gets "oops" with status 200.
+_ = c.String(http.StatusOK, "oops")
+return errs.ErrForbidden
+
+// Right: return the error only.
+return errs.ErrForbidden
+```
+
+**Putting the cause in the message.** `errs.New(500, err.Error())` is pointless (5xx messages are hidden) and `errs.New(400, err.Error())` leaks internals. Use `errs.Wrap(status, err)` and a fixed message when the client needs one.
+
+**Comparing errors with `==`.** `err == errs.ErrNotFound` is false for `fmt.Errorf("find: %w", errs.ErrNotFound)`. Use `errors.Is`.
+
+**Expecting `ErrorPage` for JSON or htmx.** The hook only runs for requests that would get the HTML page.
+
+**Forgetting the Inertia `Error` page.** Inertia visits show nothing useful, and the boot log says `inertia error page not found`. Add `resources/js/pages/Error.tsx` (or `.vue`, `.svelte`) or set the hook to `nil`.
+
+## Next steps
+
+<CardGroup cols="2">
+<Card title="Validation" href="/docs/basics/validation" icon="shield">
+Where 422 errors come from.
+</Card>
+<Card title="Views" href="/docs/basics/views" icon="layers">
+Layouts for your error pages.
+</Card>
+<Card title="Inertia" href="/docs/frontend/inertia" icon="zap">
+The Inertia error page component.
+</Card>
+<Card title="Testing" href="/docs/testing/overview" icon="code">
+Every response assertion.
+</Card>
+</CardGroup>
+
+Package reference: [errs](https://pkg.go.dev/github.com/AlexGalhardo/vukem/errs) and [web](https://pkg.go.dev/github.com/AlexGalhardo/vukem/web).

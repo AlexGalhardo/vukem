@@ -1,113 +1,395 @@
 ---
 title: Views
-description: Server-rendered HTML with html/template, layouts, partials, fragments for htmx, request-aware helpers and optional templ support.
+description: Render HTML on the server with html/template, layouts, partials and blocks for htmx, request-aware helpers for routes, assets, CSRF, flash and old input, or templ components.
 ---
 
-Views use Go's `html/template`, which escapes HTML, attributes, JavaScript and URLs by context. Enable the engine with `vukem.WithViews(fsys)`:
+A view is an HTML file with holes in it: "the post title goes here", "repeat this for each comment". Your handler fills the holes with data and Vukem sends the finished page. Vukem uses Go's own [`html/template`](https://pkg.go.dev/html/template), which escapes every value for the place it appears in, so a comment that contains `<script>` is shown as text instead of running.
 
-```go title="bootstrap/app.go"
-vukem.WithViews(resources.Views()) // disk in development, embed.FS in the binary
+You will learn:
+
+- how the template language works: actions, pipelines, `range`, `with` and `if`;
+- how the `resources/views` folder is organized into pages, layouts, partials and components;
+- how to render a page, a page with a different status, or one block for htmx;
+- every template function Vukem adds (`route`, `asset`, `csrfField`, `old`, `error`, `flash`…);
+- how views reload in development, fail fast at boot, and how to use templ instead;
+- how to test what a page renders.
+
+## The idea
+
+A view is like a printed form with blank lines. The layout is the letterhead (logo, menu, footer) that every letter shares; the page is the body of one letter; a partial is a paragraph you reuse in several letters. At request time, Vukem stacks them and writes in the data.
+
+```text
+layouts/app.html      <html>…<header>…</header>
+                        {{block "content" .}}{{end}}   ← the page goes here
+                      …</html>
+posts/show.html         {{define "content"}}<h1>{{.Title}}</h1>…{{end}}
+partials/comment.html   <li>{{.Author}}: {{.Body}}</li>
 ```
 
-Outside production every render re-parses the views, so edits show up on refresh. Syntax errors in any view fail `vukem.New` at boot.
+The template language in one table (the [`text/template` docs](https://pkg.go.dev/text/template) have the full grammar):
 
-## Directory layout
+| Syntax | Meaning |
+| --- | --- |
+| `{{.Title}}` | The `Title` field (or map key) of the current data, called "dot" |
+| `{{.Post.Title}}` | A nested field |
+| `{{range .Comments}}…{{else}}…{{end}}` | Repeat for each item (dot becomes the item); `else` when the list is empty |
+| `{{with .Author}}…{{end}}` | Run only when the value is not empty, with dot set to it |
+| `{{if .Published}}…{{else}}…{{end}}` | A condition |
+| `{{template "partials/comment" .}}` | Include another template, passing data |
+| `{{define "content"}}…{{end}}` | Name a piece of a page |
+| `{{block "post-list" .}}…{{end}}` | Define **and** render a piece in place |
+| `{{route "posts.show" "post" .ID}}` | Call a function with arguments |
+| `{{.Title \| printf "%q"}}` | A pipeline: the value is the last argument of the next function |
+| `{{/* a comment */}}` | Ignored |
+
+`html/template` understands where each value lands (HTML text, an attribute, a URL, JavaScript or CSS) and escapes it for that place. This is called <Term tip="Escaping that depends on the surrounding code: the same value is encoded differently inside an HTML attribute, a URL or a script.">contextual escaping</Term>.
+
+## Quick start
+
+Show one post with its comments.
+
+<Steps>
+<Step title="Turn on the engine">
+
+The starter already does this in `bootstrap/app.go`:
+
+```go title="bootstrap/app.go"
+vukem.WithViews(resources.Views()),
+```
+
+`resources.Views()` reads `resources/views` from disk during development and the copy embedded in the binary in production (`APP_ENV=production`).
+
+</Step>
+<Step title="Write a partial for one comment">
+
+```html title="resources/views/partials/comment.html"
+<li class="comment">
+	<strong>{{.Author}}</strong>
+	<p>{{.Body}}</p>
+</li>
+```
+
+</Step>
+<Step title="Write the page">
+
+```html title="resources/views/posts/show.html"
+{{define "title"}}{{.Post.Title}}{{end}}
+{{define "content"}}
+<article>
+	<h1>{{.Post.Title}}</h1>
+	<p>{{.Post.Body}}</p>
+</article>
+
+<h2>Comments</h2>
+<ul>
+	{{range .Comments}}
+	{{template "partials/comment" .}}
+	{{else}}
+	<li class="empty">No comments yet.</li>
+	{{end}}
+</ul>
+{{end}}
+```
+
+</Step>
+<Step title="Render it from the handler">
+
+```go title="app/controllers/post_controller.go"
+func (pc *PostController) Show(c *web.Ctx) error {
+	post, err := pc.find(c)
+	if err != nil {
+		return err
+	}
+
+	comments, err := orm.QueryOf[models.Comment](pc.db).
+		Where("post_id", "=", post.ID).
+		Get(c.Context())
+	if err != nil {
+		return err
+	}
+
+	return c.Render("posts/show", web.Map{
+		"Post":     post,
+		"Comments": comments,
+	})
+}
+```
+
+`web.Map` is a shorter name for `map[string]any`.
+
+</Step>
+<Step title="Open the page">
+
+Open `http://localhost:3000/posts/1`. The page renders inside `layouts/app.html`. Edit `posts/show.html`, refresh, and the change shows up without restarting.
+
+</Step>
+</Steps>
+
+## The views folder
 
 ```text
 resources/views/
-├── layouts/app.html          the default layout
-├── partials/post-fields.html shared: {{template "partials/post-fields" .}}
-├── components/alert.html     shared, by convention for reusable widgets
-├── home.html                 page "home"
-└── posts/index.html          page "posts/index"
+├── layouts/
+│   ├── app.html          the default layout
+│   └── admin.html        another layout
+├── partials/
+│   ├── comment.html      {{template "partials/comment" .}}
+│   └── post-fields.html
+├── components/
+│   └── alert.html        reusable widgets, by convention
+├── errors/
+│   └── 404.html          the 404 page (see Error handling)
+├── home.html             page "home"
+└── posts/
+    ├── index.html        page "posts/index"
+    └── show.html         page "posts/show"
 ```
 
-`layouts/`, `partials/` and `components/` are shared by every page. Any other `.html` file is a page named by its path without the extension. Each page is parsed into its own template set, so block names never collide between pages.
+- Files under `layouts/`, `partials/` and `components/` are **shared**: every page can use them. Their template name is their path without `.html`: `partials/comment`.
+- Every other `.html` file is a **page**, named by its path without `.html`.
+- Each page gets its own copy of the shared templates. Two pages may both `{{define "content"}}` without colliding.
+- Only `.html` files are read; other files in the folder are ignored.
 
-## Layouts and blocks
+### Layouts
+
+A page renders inside `layouts/app.html` by default. The layout calls the page's pieces with `{{block}}`, which also gives a default:
 
 ```html title="resources/views/layouts/app.html"
 <!doctype html>
-<html lang="en">
+<html lang="{{locale}}">
 <head>
-	<title>{{block "title" .}}Vukem{{end}}</title>
-	<link rel="stylesheet" href="{{asset "css/app.css"}}">
+	<meta charset="utf-8">
+	<title>{{block "title" .}}My blog{{end}}</title>
 	{{htmxScript (asset "js/htmx.min.js")}}
+	{{vite "resources/css/app.css" "resources/js/app.ts"}}
 </head>
 <body>
+	<nav><a href="{{route "posts.index"}}">Posts</a></nav>
 	{{with flash "success"}}<p class="flash">{{.}}</p>{{end}}
 	{{block "content" .}}{{end}}
 </body>
 </html>
 ```
 
-```html title="resources/views/posts/show.html"
-{{define "title"}}{{.Title}}{{end}}
-{{define "content"}}
-<h1>{{.Title}}</h1>
-<p>{{.Body}}</p>
-{{end}}
-```
+A page picks another layout, or none, with a comment on its **first line**:
 
-Pages render inside `layouts/app.html`. A page picks another layout, or none, with a comment on its first line:
-
-```html
+```html title="resources/views/admin/dashboard.html"
 {{/* layout: admin */}}
-{{/* layout: none */}}
+{{define "content"}}<h1>Dashboard</h1>{{end}}
 ```
 
-An unknown layout name is a boot error.
+```html title="resources/views/posts/print.html"
+{{/* layout: none */}}
+<!doctype html>
+<html lang="en">
+<body><h1>{{.Title}}</h1><p>{{.Body}}</p></body>
+</html>
+```
+
+Under the hood:
+
+- With a layout, Vukem executes the **layout**, which pulls in the page's `define`s. Text in the page **outside** any `define` is ignored. With `layout: none`, the whole page file is the output.
+- A layout comment naming a missing layout fails the boot: `view: admin/dashboard.html uses unknown layout "admin"`. When `layouts/app.html` itself does not exist, pages without a comment render standalone.
+- Layout names may use letters, digits, `_`, `-` and `/`.
+
+### Partials and components
+
+`{{template "partials/comment" .}}` passes one value. To pass several, build a map with `dict`:
+
+```html title="resources/views/components/alert.html"
+<div class="alert alert-{{.Type}}" role="alert">{{.Text}}</div>
+```
+
+```html title="resources/views/posts/show.html"
+{{template "components/alert" dict
+	"Type" "info"
+	"Text" "Comments are moderated."}}
+```
+
+An action may span several lines, as here. `dict` takes key/value pairs; an odd number of arguments or a non-string key fails the render (`view: dict needs key/value pairs`).
 
 ## Rendering
 
-```go
-return c.Render("posts/show", post)                                  // 200, full page
-return c.Render("posts/index", data, web.Block("post-list"))          // block for htmx partial requests
-return c.Fragment("posts/index", "post-list", data)                   // always just the block
-return c.Render("posts/create", nil, web.WithStatus(http.StatusUnprocessableEntity))
-```
+All rendering methods are on `*web.Ctx`.
 
-Rendering is buffered: a template error never leaves a half-written page, it goes to the error handler instead. `web.Block` adds `Vary: HX-Request`. See [HTMX](/docs/frontend/htmx).
+| Call | Response |
+| --- | --- |
+| `c.Render("posts/show", data)` | The full page with status 200 |
+| `c.Render("posts/create", data, web.WithStatus(422))` | The page with another status |
+| `c.Render("posts/index", data, web.Block("post-list"))` | Only the `post-list` block for htmx partial requests, the full page otherwise |
+| `c.Fragment("posts/index", "post-list", data)` | Always only the block, without the layout |
+| `c.View(component, opts...)` | A [templ](#templ) component, or any `web.View` |
+
+What happens inside `c.Render`:
+
+1. With no view engine it returns a 500 (`web: no view engine configured`).
+2. It renders into a **buffer** first. A template error (a missing field, a `route` with a wrong name) becomes a 500 through the [error handler](/docs/basics/error-handling) instead of half a page.
+3. It writes the buffer with `Content-Type: text/html; charset=utf-8`.
+
+`web.Block(name)` also sets `Vary: HX-Request`, so caches keep the page and the fragment apart. A request is an htmx **partial** request when it has `HX-Request: true`, `HX-Request-Type` is not `full` and it is not a history restore; boosted navigation and back/forward re-fetches get the full page. An unknown block fails with `view: "posts/index" has no block "post-list"`. See [HTMX](/docs/frontend/htmx#rendering-fragments).
 
 ## Template functions
 
-| Function | Output |
-| --- | --- |
-| `route "posts.show" "post" .ID` | URL of a named route |
-| `asset "css/app.css"` | `/css/app.css` (prefix configurable) |
-| `csrfField`, `csrfToken` | CSRF hidden input or token ([CSRF](/docs/basics/csrf)) |
-| `cspNonce` | The request's CSP nonce, for inline `<script nonce>` / `<style nonce>` |
-| `htmxScript "/js/htmx.min.js"` | `<script src defer nonce>` with the request's nonce |
-| `old "title"` | Previous input after a failed validation (dotted paths for nested fields) |
-| `error "title"`, `errors` | First error of a field, or all field errors |
-| `flash "success"` | A flashed session value |
-| `json .` | Value encoded as JSON, safe inside `<script>` |
-| `dict "Key" v ...` | A map, to pass several values to a partial |
-| `vite "resources/js/app.ts"`, `viteReactRefresh` | [Vite](/docs/frontend/vite) dev server or manifest tags |
-| `t "key" "name" v`, `locale` | [Translations](/docs/digging-deeper/localization) and the request's locale |
+Vukem adds these functions to every view. Request-scoped ones read the session, the CSP nonce and the locale from the request; without a session they return empty values.
 
-Request-scoped functions read the session and nonce from the request context; without a session they return empty values. Add your own with `view.Config.Funcs` when building a `view.Engine` yourself.
+| Function | Example | Output |
+| --- | --- | --- |
+| `route` | `{{route "posts.show" "post" .ID}}` | `/posts/7`; an unknown name or missing parameter fails the render |
+| `asset` | `{{asset "css/app.css"}}` | `/css/app.css`; a file processed by [Vite](/docs/frontend/vite) resolves to its built URL |
+| `vite` | `{{vite "resources/js/app.ts"}}` | Script and style tags for the Vite dev server or the build manifest, with the nonce; fails without Vite |
+| `viteReactRefresh` | `{{viteReactRefresh}}` | The React refresh preamble in development; empty otherwise |
+| `htmxScript` | `{{htmxScript (asset "js/htmx.min.js")}}` | `<script src="…" defer nonce="…"></script>` |
+| `cspNonce` | `<script nonce="{{cspNonce}}">` | The request's CSP nonce ([security headers](/docs/security/security-headers)) |
+| `csrfField` | `{{csrfField}}` | `<input type="hidden" name="_token" value="…">` ([CSRF](/docs/basics/csrf)) |
+| `csrfToken` | `{{csrfToken}}` | The CSRF token text |
+| `old` | `{{old "title"}}` | The value typed before a failed validation; dotted paths for nested fields; the first item of a list |
+| `error` | `{{error "title"}}` | The first validation message of a field, or `""` |
+| `errors` | `{{range $f, $m := errors}}` | All validation messages, `map[string][]string` |
+| `flash` | `{{with flash "success"}}{{.}}{{end}}` | A value flashed by the previous request |
+| `json` | `<script>const post = {{json .Post}};</script>` | The value as JSON, safe inside `<script>` |
+| `dict` | `{{template "x" dict "A" 1}}` | A `map[string]any` |
+| `t` | `{{t "posts.title"}}`, `{{t "greeting" "name" .Name}}` | A [translation](/docs/digging-deeper/localization#translating-in-views); the key itself when there is no bundle |
+| `locale` | `<html lang="{{locale}}">` | The request's locale, else the bundle's default |
+| `can` | `{{if can "update" .Post}}` | Whether the current user may do it ([authorization](/docs/security/authorization#templates)); `false` without an authorizer |
 
-`can` checks [authorization](/docs/security/authorization#templates).
+`csrfField` and `csrfToken` create the token on first use, which writes the session: a page with a form always sets the session cookie.
 
-## The engine directly
+## The engine
 
-```go
+`vukem.WithViews(fsys)` builds a `*view.Engine` at boot and installs it as the router's renderer (`app.Views`):
+
+- It **parses every view at boot**. A syntax error in any file fails `vukem.New`, with the file name in the message (`view: parse posts/show.html: …`).
+- Outside production it **re-parses on every render**, so edits show up on refresh. A syntax error you introduce while the app runs answers that request with a 500. In production views are parsed once.
+
+You may build an engine yourself with `view.New`, for example to add your own functions:
+
+```go title="app/providers/view_provider.go"
 engine, err := view.New(view.Config{
-	FS:          os.DirFS("resources/views"),
-	Reload:      true,
-	URLs:        app.Router,           // for the route function
-	AssetPrefix: "/static",
-	Funcs:       template.FuncMap{"upper": strings.ToUpper},
+	FS:     resources.Views(),
+	Reload: !app.Config.IsProduction(),
+	URLs:   app.Router,
+	Funcs: template.FuncMap{
+		"excerpt": func(s string) string {
+			if len(s) <= 140 {
+				return s
+			}
+			return s[:140] + "…"
+		},
+	},
 })
+if err != nil {
+	return err
+}
+app.Router.Services().Views = engine
 ```
 
-`*view.Engine` implements `web.Renderer` (`Render`, `RenderBlock`, `Has`) and lists pages with `Names()`.
+Templates that use a custom function fail to parse without it, so do not combine such views with `vukem.WithViews`: build the engine with your functions instead. Your functions are added after the built-in ones, so a function with the same name replaces the built-in.
 
-## Error pages
+| `view.Config` field | Default | What it does |
+| --- | --- | --- |
+| `FS` | required | The views ([`fs.FS`](https://pkg.go.dev/io/fs#FS)); `view.New` fails without it |
+| `Ext` | `.html` | File extension of views |
+| `DefaultLayout` | `app` | Layout for pages without a comment; ignored when the file does not exist |
+| `Reload` | `false` | Re-parse on every render |
+| `Funcs` | none | Extra template functions |
+| `URLs` | none | Resolves `route` (the router); without it `route` fails |
+| `AssetPrefix` | `/` | Prefix of `asset` |
+| `Vite` | none | Backs `vite`, `viteReactRefresh` and Vite-aware `asset` |
+| `I18n` | none | Bundle for `t` and `locale`; else the bundle in the request context |
 
-The error handler renders `errors/<status>` (for example `resources/views/errors/404.html`) when that view exists, and a minimal built-in page otherwise. The view receives `.Status`, `.Title`, `.Detail`, `.Errors` and `.Nonce` (the request's CSP nonce, for an inline `<style nonce="{{.Nonce}}">`); the built-in pages use no inline style attributes and nonce their `<style>`, so they render under the default CSP.
+`*view.Engine` implements `web.Renderer` (`Render`, `RenderBlock`, `Has`) and lists page names with `Names()`.
 
 ## templ
 
-[templ](https://templ.guide) components satisfy `web.View` (`Render(ctx, w) error`), so `c.View(components.PostList(posts))` renders them. templ is supported, not bundled.
+[templ](https://templ.guide) compiles components to Go functions with type-checked parameters. A templ component has a `Render(ctx, w) error` method, so it satisfies `web.View`:
+
+```go title="app/controllers/post_controller.go"
+return c.View(views.PostShow(post, comments))
+```
+
+`web.Partial(v)` is the templ version of `web.Block`: htmx partial requests get `v`, others the full component, with `Vary: HX-Request`.
+
+```go
+return c.View(
+	views.PostsIndex(posts),
+	web.Partial(views.PostList(posts)),
+)
+```
+
+Rendering is buffered like `c.Render`. Inside components, read request data with `web.FlashFrom(ctx, key)`, `web.OldInput(ctx, field)`, `web.ErrorsFrom(ctx)`, `csrf.Token(ctx)` and `web.CSPNonce(ctx)`. templ is supported, not bundled; `vukem new blog --templ` creates a starter that uses it.
+
+## Security
+
+- **Escaping is automatic.** `{{.Body}}` is escaped for its context: HTML text, attribute, URL (`javascript:` URLs become `#ZgotmplZ`), JavaScript and CSS.
+- **Do not turn it off by accident.** Converting a string to `template.HTML`, `template.JS` or `template.URL` in Go tells the engine "this is safe". Only do it for markup you built from escaped parts.
+- **Inline scripts need the nonce.** The default Content Security Policy only runs scripts that carry the request's nonce: use `htmxScript`, `vite` or `nonce="{{cspNonce}}"`.
+- **Error pages render under the CSP** too; see [Error handling](/docs/basics/error-handling#custom-error-pages).
+- **Forms carry `csrfField`** so they keep working with the CSRF token fallback.
+
+## Testing
+
+```go title="tests/posts_test.go"
+func TestShowPostRendersComments(t *testing.T) {
+	app := vukemtest.New(t, bootstrap.New)
+	// ...create a post and a comment with factories...
+
+	app.Client(t).Get("/posts/1").
+		AssertOK().
+		AssertHeader("Content-Type", "text/html; charset=utf-8").
+		AssertSee("Comments").
+		AssertSee("Nice post!")
+}
+
+func TestSearchReturnsOnlyTheList(t *testing.T) {
+	app := vukemtest.New(t, bootstrap.New)
+
+	app.Client(t).HTMX().Get("/posts?q=go").
+		AssertFragment().
+		AssertDontSee("<html")
+}
+```
+
+`AssertSee` looks for the text as it appears in the HTML, so search for `&amp;` when the page shows `&`. To test a view without the app, build a `view.Engine` over an [`fstest.MapFS`](https://pkg.go.dev/testing/fstest#MapFS) and call `engine.Render(ctx, &buf, "posts/show", data)`.
+
+## Common mistakes
+
+**Content outside `define`.** With a layout, only the `define` blocks are used:
+
+```html
+<!-- Wrong: this heading never appears. -->
+<h1>{{.Post.Title}}</h1>
+<!-- Right. -->
+{{define "content"}}<h1>{{.Post.Title}}</h1>{{end}}
+```
+
+**Forgetting the dot when including.** `{{template "partials/comment"}}` passes no data, so the partial sees `nil`. Write `{{template "partials/comment" .}}`.
+
+**A field that does not exist.** `{{.Titel}}` on a struct fails the render and the visitor gets a 500. The log shows where:
+
+```text
+view: render layouts/app: template: posts/show:2:6: executing "content"
+at <.Titel>: can't evaluate field Titel in type models.Post
+```
+
+**The layout comment not on the first line.** `{{/* layout: admin */}}` after other content is a plain comment, and the page uses the default layout.
+
+**Expecting `Block` for every htmx request.** Boosted links (`hx-boost`) and history restores get the full page by design.
+
+## Next steps
+
+<CardGroup cols="2">
+<Card title="HTMX" href="/docs/frontend/htmx" icon="zap">
+Fragments and partial updates.
+</Card>
+<Card title="Vite" href="/docs/frontend/vite" icon="rocket">
+CSS and JavaScript with a build step.
+</Card>
+<Card title="Error handling" href="/docs/basics/error-handling" icon="shield">
+Custom error pages.
+</Card>
+<Card title="Localization" href="/docs/digging-deeper/localization" icon="book">
+Translate your views.
+</Card>
+</CardGroup>
+
+Package reference: [view](https://pkg.go.dev/github.com/AlexGalhardo/vukem/view) and [web](https://pkg.go.dev/github.com/AlexGalhardo/vukem/web).

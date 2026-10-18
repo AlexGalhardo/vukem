@@ -1,88 +1,359 @@
 ---
 title: Responses
-description: Write text, HTML, JSON, files and redirects from handlers, with safe redirect helpers.
+description: Answer requests with text, HTML, JSON, files, CSV and redirects, set headers and cookies, and skip work with ETags and conditional requests.
 ---
 
-## Bodies
+A handler's job ends with an answer: the blog post as JSON for the mobile app, a redirect after a comment form, a CSV file for the author. `*web.Ctx` has one helper for each kind of answer, and each one sets the status and the `Content-Type` for you.
 
-```go
-c.String(http.StatusOK, "pong")
-c.HTML(http.StatusOK, "<h1>Trusted markup only</h1>")
-c.JSON(http.StatusOK, web.Map{"ok": true})
-c.Blob(http.StatusOK, "image/png", png)
-c.Stream(http.StatusOK, "text/csv", reader)
-c.NoContent() // 204
-```
+You will learn how to:
 
-<Callout type="danger">
-`c.HTML` writes a trusted string as-is. Never pass user input: render views with `html/template` for contextual escaping.
-</Callout>
+- write text, HTML and JSON bodies, and the API shortcuts for 201, 202 and 204;
+- send problem details for errors you build yourself;
+- redirect safely, including after form posts and from htmx;
+- serve and download files, and stream any reader;
+- set headers and cookies, and answer `304 Not Modified` with ETags.
 
-Every body helper takes the status code, sets `Content-Type` and writes the body. Once the status line is sent it cannot change, which is why handlers should return errors instead of writing partial responses.
+## The idea
 
-## JSON helpers for APIs
+An HTTP response has three parts, sent in this order:
 
-| Helper | Status | Notes |
-| --- | --- | --- |
-| `c.JSON(status, v)` | any | `encoding/json` |
-| `c.Created(location, v)` | 201 | Sets `Location` when non-empty |
-| `c.Accepted(v)` | 202 | Async work |
-| `c.NoContent()` | 204 | |
-| `c.Problem(status, title, detail)` | 4xx/5xx | `application/problem+json` (RFC 9457) |
+1. the **status line**: `HTTP/1.1 200 OK`;
+2. the **headers**: `Content-Type: application/json`, `Location: /posts/1`…;
+3. the **body**: the JSON, the HTML page, the file.
 
-```go
-func (p *ProductController) Store(c *web.Ctx) error {
-	product := p.create(c)
-	return c.Created(c.MustURL("products.show", "product", product.ID), product)
-}
-```
+Think of posting a letter. You write the address on the envelope (status and headers), then the letter (body). Once the envelope is in the mailbox, you cannot change the address. HTTP works the same way: as soon as the first byte of the body leaves, the status and headers are final.
 
-## Redirects
+That is why Vukem's helpers take the status as their first argument, set the headers, and write the body in one call. It is also why your handler should finish everything that can fail **before** answering (see [HTTP context](/docs/basics/http-context#what-happens-to-the-returned-error)). Go's [`net/http` status constants](https://pkg.go.dev/net/http#pkg-constants) such as `http.StatusOK` and `http.StatusCreated` name every code; MDN keeps a readable [list of status codes](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Status).
 
-```go
-return c.Redirect("/posts")                     // 302 for GET/HEAD, 303 after POST/PUT/…
-return c.RedirectStatus(http.StatusMovedPermanently, "/new")
-return c.RedirectRoute("posts.show", "post", 42)
-return c.Back("/")                              // same-origin Referer, else fallback
-```
+## Quick start
 
-- After unsafe methods `Redirect` uses **303 See Other**, so the browser follows with `GET`.
-- htmx requests receive `HX-Location` (navigation without a full reload) instead of a 3xx.
-- `Back` ignores off-site referers (open-redirect protection). `web.SafeRedirect(r, target, fallback)` applies the same check to any user-supplied target, such as a `?next=` parameter.
+<Steps>
+<Step title="Answer JSON">
 
-## Files
-
-```go
-assets := os.DirFS("storage/reports")
-
-return c.File(assets, "2026/q3.pdf")                       // Range and If-Modified-Since
-return c.Download(assets, "2026/q3.pdf", "Q3 report.pdf")  // Content-Disposition: attachment
-```
-
-Missing files and directories return 404, without a `Content-Disposition` header. The download name is sanitized like [export file names](/docs/digging-deeper/exports#headers-and-file-names): only its last path element is kept, control and bidi characters are removed, and non-ASCII names get an RFC 5987 `filename*`. An empty name uses the file's own name. Open user-controlled paths through an `os.Root` (`root.FS()`) so `..` cannot escape the directory.
-
-## Headers and cookies
-
-```go
-c.SetHeader("Cache-Control", "no-store")
-c.SetCookie(&http.Cookie{Name: "theme", Value: "dark", Path: "/", HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode})
-```
-
-## Conditional requests
-
-```go
+```go title="app/controllers/post_controller.go"
 func (pc *PostController) Show(c *web.Ctx) error {
 	post, err := pc.find(c)
 	if err != nil {
 		return err
 	}
 
-	etag, err := web.ETagOf(post) // strong ETag from the JSON encoding
+	return c.JSON(http.StatusOK, post)
+}
+```
+
+```bash
+curl -i http://localhost:3000/posts/1 -H "Accept: application/json"
+```
+
+```text
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{"id":1,"created_at":"2026-10-18T00:43:29.4799372Z",
+"updated_at":"2026-10-18T00:43:29.4799372Z",
+"title":"Hello Vukem","body":"First"}
+```
+
+</Step>
+<Step title="Redirect after a form">
+
+```go title="app/controllers/comment_controller.go"
+_ = c.Flash("success", "Comment added.")
+
+return c.RedirectRoute("posts.show", "post", post.ID)
+```
+
+```bash
+curl -i http://localhost:3000/posts/1/comments \
+  -d "author=Bob" -d "body=Hi"
+```
+
+```text
+HTTP/1.1 303 See Other
+Location: /posts/1
+Set-Cookie: vukem_session=...
+```
+
+The browser follows the `Location` with a `GET`, and the flash message travels in the session cookie.
+
+</Step>
+</Steps>
+
+## Text and HTML
+
+| Helper | `Content-Type` |
+| --- | --- |
+| `c.String(status, s)` | `text/plain; charset=utf-8` |
+| `c.HTML(status, html)` | `text/html; charset=utf-8` |
+
+```go
+return c.String(http.StatusOK, "pong")
+```
+
+<Callout type="danger" title="c.HTML writes the string as is">
+`c.HTML` does not escape anything. Passing a comment's text to it lets a visitor inject scripts into your page (cross-site scripting). Use it only for markup you wrote; render user content with [views](/docs/basics/views), which escape it for you.
+</Callout>
+
+## JSON
+
+`c.JSON(status, v)` encodes `v` with [`encoding/json`](https://pkg.go.dev/encoding/json), sets `Content-Type: application/json` and writes it. Encoding happens **before** anything is written, so a value that cannot be encoded (a channel, a function) returns `web: encode json: ...` and the client gets a clean 500 instead of half a document.
+
+The struct tags on your models (`json:"title"`) decide the key names; fields without tags use the Go field name, and unexported fields are skipped. `web.Map` (`map[string]any`) is handy for small ad-hoc objects:
+
+```go
+return c.JSON(http.StatusOK, web.Map{"data": comments})
+```
+
+### API shortcuts
+
+| Helper | Status | Notes |
+| --- | --- | --- |
+| `c.Created(location, v)` | `201 Created` | Sets `Location` when `location` is not empty, then JSON |
+| `c.Accepted(v)` | `202 Accepted` | JSON; for work that continues in the background |
+| `c.NoContent()` | `204 No Content` | No body, no `Content-Type` |
+
+```go title="app/controllers/comment_controller.go"
+url := c.MustURL("posts.comments.show", "comment", comment.ID)
+
+return c.Created(url, comment)
+```
+
+### Checked JSON
+
+`web.JSONWith(c, status, schema, v)` checks `v` against a `z` schema before sending it, when `Services.CheckResponses` is on (outside production in every app). A mismatch is a bug in your code: it answers 500 and logs the problem instead of sending data that breaks your API contract. See [Validation](/docs/basics/validation#every-boundary).
+
+### Problem details
+
+Errors you return are rendered for you by the [error handler](/docs/basics/error-handling). When you want to build an error response yourself, `c.Problem(status, title, detail)` writes an [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457) document with `Content-Type: application/problem+json`:
+
+```go
+return c.Problem(http.StatusConflict, "", "This slug is already taken.")
+```
+
+```json
+{"type":"about:blank","title":"Conflict","status":409,
+"detail":"This slug is already taken.","instance":"/posts"}
+```
+
+| Field | Filled with |
+| --- | --- |
+| `type` | `about:blank` |
+| `title` | Your title, or the status text when empty |
+| `status` | The status |
+| `detail` | Your detail, left out when empty |
+| `instance` | The request path |
+| `request_id` | The request id, when the [`RequestID` middleware](/docs/basics/middleware#requestid) ran |
+
+`c.Problem` always answers JSON. Returning an error such as `errs.New(http.StatusConflict, "This slug is already taken.")` is usually better: browsers then get an HTML page instead.
+
+## Setting the status
+
+Pass the status to the helper that writes the body. `c.Status(code)` exists, but it sends the status line **immediately**:
+
+<Callout type="warning" title="Do not chain c.Status with a body helper">
+`c.Status(201).JSON(200, v)` answers `201` but loses the `Content-Type` header, because the headers were already sent by `Status`; the client receives `text/plain`. Write `c.JSON(http.StatusCreated, v)` instead. Use `c.Status(code)` alone only for answers without a body.
+</Callout>
+
+After the status is written, later status codes are ignored. `c.Writer().Status()` tells you which one went out.
+
+## Raw bytes and streams
+
+| Helper | Writes |
+| --- | --- |
+| `c.Blob(status, contentType, b)` | A `[]byte` with the content type you give |
+| `c.Stream(status, contentType, r)` | Everything read from an [`io.Reader`](https://pkg.go.dev/io#Reader), copied as it is read |
+
+The blog lets authors download the comments of a post as CSV:
+
+```go title="app/controllers/export.go"
+package controllers
+
+import (
+	"bytes"
+	"encoding/csv"
+	"net/http"
+	"strconv"
+
+	"github.com/AlexGalhardo/vukem/orm"
+	"github.com/AlexGalhardo/vukem/web"
+
+	"blog/app/models"
+)
+
+// Export sends the comments of a post as CSV:
+// GET /posts/{post}/comments/export.
+func (cc *CommentController) Export(c *web.Ctx) error {
+	post, err := cc.post(c)
 	if err != nil {
 		return err
 	}
 
-	if c.NotModified(etag, post.UpdatedAt) { // sets ETag/Last-Modified, writes 304 when fresh
+	comments, err := orm.QueryOf[models.Comment](cc.db).
+		Where("post_id", post.ID).
+		Get(c.Context())
+	if err != nil {
+		return err
+	}
+
+	var buf bytes.Buffer
+	w := csv.NewWriter(&buf)
+	_ = w.Write([]string{"id", "author", "body"})
+
+	for _, cm := range comments {
+		id := strconv.FormatInt(cm.ID, 10)
+		_ = w.Write([]string{id, cm.Author, cm.Body})
+	}
+
+	w.Flush()
+	if err := w.Error(); err != nil {
+		return err
+	}
+
+	c.SetHeader("Content-Disposition", `attachment; filename="comments.csv"`)
+
+	return c.Blob(http.StatusOK, "text/csv; charset=utf-8", buf.Bytes())
+}
+```
+
+```go title="routes/web.go"
+r.Get("/posts/{post}/comments/export", comments.Export).
+	Name("posts.comments.export")
+```
+
+```text
+HTTP/1.1 200 OK
+Content-Disposition: attachment; filename="comments.csv"
+Content-Type: text/csv; charset=utf-8
+
+id,author,body
+1,Ana,Nice post!
+2,Bob,Hi
+```
+
+Building the CSV in memory first means a database error still becomes a proper error page. For very large exports, `c.Stream` sends rows as they are read, at the price that an error halfway through can only be logged. The [`export` package](/docs/digging-deeper/exports) streams CSV and XLSX with safe file names for you.
+
+## Redirects
+
+| Helper | Status | Use it for |
+| --- | --- | --- |
+| `c.Redirect(target)` | `302 Found` for `GET`/`HEAD`, `303 See Other` for every other method | The usual redirect |
+| `c.RedirectStatus(status, target)` | the one you give (`301`, `307`, `308`…) | Permanent moves, method-preserving redirects |
+| `c.RedirectRoute(name, params...)` | as `Redirect` | A named route; returns the URL error if the route is unknown |
+| `c.Back(fallback)` | as `Redirect` | The previous page (the `Referer`), when it is on your site |
+
+```go
+// After POST /posts/1/comments: 303, the browser follows with GET.
+return c.RedirectRoute("posts.show", "post", 1)
+
+// The blog moved its old URLs for good.
+return c.RedirectStatus(http.StatusMovedPermanently, "/posts")
+```
+
+Why `303` after a form? A `302` after `POST` may make some clients repeat the `POST`. `303 See Other` always means "now `GET` this URL", so refreshing the page never submits the comment twice.
+
+### htmx requests
+
+When the request comes from htmx (`HX-Request: true`), every redirect helper answers `200 OK` with an `HX-Location` header instead of a 3xx. htmx then loads the target without a full page reload. A history-restore request (`HX-History-Restore-Request: true`) gets a normal redirect. See [HTMX](/docs/frontend/htmx).
+
+### Safe redirects
+
+Redirecting to a URL taken from the request (`?next=`, the `Referer`) is dangerous: an attacker could send your users to a look-alike site. This is called an [open redirect](https://cheatsheetseries.owasp.org/cheatsheets/Unvalidated_Redirects_and_Forwards_Cheat_Sheet.html). `c.Back` already protects you, and `web.SafeRedirect(r, target, fallback)` applies the same check to any target:
+
+```go title="app/controllers/session_controller.go"
+next := web.SafeRedirect(c.Request(), c.Query("next"), "/posts")
+
+return c.Redirect(next)
+```
+
+For a request to `http://example.com/...`:
+
+| `target` | Result |
+| --- | --- |
+| `/posts` | `/posts` |
+| `https://example.com/x?y=1` (same host) | `/x?y=1` |
+| `https://evil.com/` | fallback |
+| `//evil.com` (scheme-relative) | fallback |
+| `/\evil.com` (browsers read `\` as `/`) | fallback |
+| `posts` (not absolute) | fallback |
+| empty | fallback |
+
+## Files
+
+| Helper | Does |
+| --- | --- |
+| `c.File(fsys, name)` | Serves a file from any [`fs.FS`](https://pkg.go.dev/io/fs#FS) |
+| `c.Download(fsys, name, filename)` | The same, as an attachment saved as `filename` |
+
+```go title="app/controllers/post_controller.go"
+// The covers directory, opened once at boot. os.Root refuses
+// paths that leave it, such as "../.env".
+covers, err := os.OpenRoot("storage/covers")
+if err != nil {
+	return err
+}
+```
+
+```go
+return c.File(covers.FS(), "42.webp")
+
+return c.Download(covers.FS(), "42.webp", "Hello Vukem cover.webp")
+```
+
+Under the hood:
+
+- A missing file or a directory returns `errs.ErrNotFound` (404).
+- When the opened file can seek (files on disk, `embed.FS`), [`http.ServeContent`](https://pkg.go.dev/net/http#ServeContent) answers: it sets `Content-Type` from the extension, `Last-Modified`, `Accept-Ranges`, and handles `Range` and `If-Modified-Since`, so videos can be scrubbed and unchanged files answer 304.
+- Otherwise the file is read whole and sent with `c.Blob`, its type taken from the extension or sniffed from the content.
+- `Download` sets `Content-Disposition` only after the file opened, so a 404 page is never saved as an attachment. An empty `filename` uses the file's own name.
+
+The download name is sanitized: only its last path element is kept, control and bidi characters are removed, and a non-ASCII name gets an RFC 5987 `filename*` next to an ASCII fallback:
+
+```text
+Content-Disposition: attachment; filename="Relat_rio Q3.pdf";
+  filename*=UTF-8''Relat%C3%B3rio%20Q3.pdf
+```
+
+Open user-controlled paths through [`os.Root`](https://pkg.go.dev/os#Root) (`root.FS()`) so `..` and symlinks cannot escape the directory. Files a whole site needs (CSS, images) belong in [static files](/docs/basics/static-files) instead.
+
+## Headers and cookies
+
+```go
+c.SetHeader("Cache-Control", "no-store")
+
+c.SetCookie(&http.Cookie{
+	Name:     "theme",
+	Value:    "dark",
+	Path:     "/",
+	MaxAge:   365 * 24 * 60 * 60,
+	HttpOnly: true,
+	Secure:   true,
+	SameSite: http.SameSiteLaxMode,
+})
+```
+
+- `c.SetHeader` replaces a header; `c.Writer().Header().Add(name, value)` adds another value.
+- Set headers and cookies **before** the body helper. Afterwards they are silently dropped.
+- `HttpOnly` hides the cookie from JavaScript, `Secure` sends it over HTTPS only, `SameSite=Lax` keeps it off most cross-site requests. Keep all three unless you have a reason. Session data belongs in the [session](/docs/basics/sessions), which is encrypted, not in your own cookies.
+
+## Conditional requests
+
+A mobile app that refreshes a post every minute downloads the same JSON again and again. With an <Term tip="A short fingerprint of a response's content. If the content changes, the fingerprint changes.">ETag</Term>, the app sends the fingerprint it already has, and the server answers `304 Not Modified` with no body when nothing changed.
+
+```go title="app/controllers/post_controller.go"
+func (pc *PostController) Show(c *web.Ctx) error {
+	post, err := pc.find(c)
+	if err != nil {
+		return err
+	}
+
+	etag, err := web.ETagOf(post)
+	if err != nil {
+		return err
+	}
+
+	// Sets ETag and Last-Modified; writes 304 when the
+	// client's copy is current.
+	if c.NotModified(etag, post.UpdatedAt) {
 		return nil
 	}
 
@@ -90,9 +361,138 @@ func (pc *PostController) Show(c *web.Ctx) error {
 }
 ```
 
-For optimistic concurrency on writes, `c.CheckIfMatch(currentETag)` returns `errs.ErrPreconditionFailed` (412) when the client's `If-Match` does not match.
+```bash
+curl -i http://localhost:3000/posts/1 -H "Accept: application/json" \
+  -H 'If-None-Match: "wuu3hShX87jekeZY5bmmjA"'
+```
 
-## Views and checked JSON
+```text
+HTTP/1.1 304 Not Modified
+Etag: "wuu3hShX87jekeZY5bmmjA"
+Last-Modified: Sun, 18 Oct 2026 00:43:29 GMT
+```
 
-- `c.Render`, `c.Fragment` and `c.View` render HTML: see [Views](/docs/basics/views).
-- `web.JSONWith(c, status, schema, v)` checks outgoing JSON against a `z` schema: see [Validation](/docs/basics/validation#typed-boundaries).
+| Function | Does |
+| --- | --- |
+| `web.ETagOf(v)` | A strong ETag: the first 16 bytes of the SHA-256 of `v`'s JSON encoding (or of the bytes, for a `[]byte` or `string`), base64url, in quotes |
+| `c.NotModified(etag, lastModified)` | Sets `ETag` (when not empty) and `Last-Modified` (when not zero). For `GET` and `HEAD` only, reports whether the client's copy is current and then writes `304` |
+| `c.CheckIfMatch(current)` | For writes: returns `errs.ErrPreconditionFailed` (412) when the client sent `If-Match` and it does not match `current` |
+
+How `NotModified` decides:
+
+1. Other methods than `GET` and `HEAD` are never "not modified".
+2. When the client sent `If-None-Match`, it wins: fresh when one of the listed tags matches (`W/` prefixes are ignored) or the header is `*`.
+3. Otherwise, when it sent `If-Modified-Since` and `lastModified` is set: fresh when the content did not change after that time, compared to the second.
+
+When it returns `true`, the 304 is already written: return `nil` without writing a body.
+
+`CheckIfMatch` protects against lost updates. Two authors open the same post; the first saves; the second's `PUT` still carries the old ETag in `If-Match`, gets 412, and must reload first. A missing `If-Match`, or `If-Match: *`, passes. Weak tags (`W/"..."`) never match, as RFC 9110 requires for `If-Match`.
+
+## Views, fragments and streams
+
+| Helper | Page |
+| --- | --- |
+| `c.Render(name, data, opts...)`, `c.Fragment(name, block, data)`, `c.View(v)` | [Views](/docs/basics/views) |
+| `c.HTMX()` response headers (`HX-Trigger`, `HX-Retarget`…) | [HTMX](/docs/frontend/htmx) |
+| `c.SSE(fn)` | [Server-sent events](/docs/digging-deeper/sse) |
+
+`c.Render` and `c.View` render into a buffer first, so a template error becomes a clean 500 instead of a half-written page.
+
+## Configuration
+
+Responses have no settings in `.env`. The defaults to know:
+
+| Helper | `Content-Type` | Status |
+| --- | --- | --- |
+| `String` | `text/plain; charset=utf-8` | yours |
+| `HTML`, `Render`, `View` | `text/html; charset=utf-8` | yours (`web.WithStatus` for views, default 200) |
+| `JSON`, `Created`, `Accepted` | `application/json` | yours, 201, 202 |
+| `Problem` | `application/problem+json` | yours |
+| `NoContent` | none | 204 |
+| `Redirect` | set by `http.Redirect` | 302 or 303 (200 with `HX-Location` for htmx) |
+
+## Security
+
+- **Escaping is your job only with `c.HTML`**; views escape for you.
+- **Redirect targets from users go through `web.SafeRedirect`** (`c.Back` does it already).
+- **File paths from users go through `os.Root`**, and download names are sanitized for you.
+- The default stack adds `X-Content-Type-Options: nosniff` and a strict Content-Security-Policy to every response; see [Security headers](/docs/security/security-headers).
+
+## Testing
+
+```go title="tests/responses_test.go"
+package tests
+
+import (
+	"testing"
+
+	"github.com/AlexGalhardo/vukem/vukemtest"
+
+	"blog/bootstrap"
+)
+
+func TestPostResponses(t *testing.T) {
+	t.Parallel()
+
+	app := vukemtest.New(t, bootstrap.New)
+	api := app.Client(t).AcceptJSON()
+
+	api.PostJSON("/posts", map[string]any{"title": "Hello"}).
+		AssertCreated().
+		AssertHeader("Location", "/posts/1")
+
+	etag := api.GetJSON("/posts/1").AssertOK().Header("ETag")
+
+	api.WithHeader("If-None-Match", etag).
+		GetJSON("/posts/1").
+		AssertStatus(304)
+
+	api.GetJSON("/posts/99").AssertProblem(404)
+
+	app.Client(t).Get("/posts/1/comments/export").
+		AssertOK().
+		AssertHeader("Content-Type", "text/csv; charset=utf-8").
+		AssertSee("id,author,body")
+
+	api.Delete("/posts/1").AssertNoContent()
+}
+```
+
+`AssertRedirect(location)`, `AssertRedirectRoute(name, params...)`, `AssertJSONPath(path, want)` and `AssertHeaderMissing(name)` cover the other helpers. See [Testing](/docs/testing/overview).
+
+## Common mistakes
+
+**A comment rendered with `c.HTML`.**
+
+```go
+// Wrong: a comment containing <script> runs in every reader's browser.
+return c.HTML(http.StatusOK, "<p>"+comment.Body+"</p>")
+
+// Right: the view escapes Body.
+return c.Render("comments/show", comment)
+```
+
+**Headers after the body.** `c.SetHeader("Cache-Control", "no-store")` after `c.JSON(...)` has no effect: the headers were sent with the first byte.
+
+**Writing after `NotModified` returned `true`.** The 304 is already sent; a `c.JSON` afterwards is ignored. Return `nil`.
+
+**Redirecting to `?next=` directly.** `c.Redirect(c.Query("next"))` is an open redirect. Wrap it in `web.SafeRedirect`.
+
+**Chaining `c.Status`.** See [Setting the status](#setting-the-status).
+
+## Next steps
+
+<CardGroup cols="2">
+<Card title="Error handling" href="/docs/basics/error-handling" icon="shield">
+How returned errors become pages and problem details.
+</Card>
+<Card title="Views" href="/docs/basics/views" icon="layers">
+Render HTML with templates.
+</Card>
+<Card title="Exports" href="/docs/digging-deeper/exports" icon="boxes">
+Stream CSV and XLSX files.
+</Card>
+<Card title="Package reference" href="https://pkg.go.dev/github.com/AlexGalhardo/vukem/web" icon="book">
+Every exported identifier of `web`.
+</Card>
+</CardGroup>

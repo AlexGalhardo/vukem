@@ -1,63 +1,277 @@
 ---
 title: Static files
-description: Serve public assets through os.Root with traversal protection and long-lived caching for fingerprinted files.
+description: Serve CSS, JavaScript, images and other public assets from disk or from the binary, with traversal protection and long-lived caching for fingerprinted files.
 ---
 
-`middleware.Static` serves files from a directory when they exist and passes every other request on to the router.
+Your blog needs files that never change per request: a stylesheet, the htmx script, a logo, `robots.txt`. These are **static files**. Vukem serves them with `middleware.Static` and `middleware.StaticFS`, which look for a file matching the URL and hand every other request to your routes. They also stop visitors from reading files outside the folder, hide dotfiles such as `.env`, and set cache headers so browsers do not download the same file twice.
 
-```go
-root, err := os.OpenRoot("public")
-if err != nil {
-	return err // directory missing
-}
-app.OnShutdown(func(context.Context) error { return root.Close() }) // the caller owns root
+You will learn:
 
-r.UseServer(middleware.Static(root, middleware.StaticConfig{}))
+- where public files live in a Vukem app and how the URL maps to a file;
+- the difference between `Static` (a folder on disk) and `StaticFS` (any file system, including files embedded in the binary);
+- which requests pass through to your routes and why;
+- how the cache headers are chosen, and how to fingerprint files;
+- what the middleware protects against, and what belongs in storage instead.
+
+## The idea
+
+Think of a library's open shelf. Anyone may walk up and take a book from the shelf (a static file). If the book is not on the shelf, you ask the librarian at the desk (your router and handlers). The shelf has rules: you cannot walk into the staff room through the shelf (`../`), and the boxes marked "private" (dotfiles) are never on display.
+
+| URL | File (with `Prefix: "/"`) | Who answers |
+| --- | --- | --- |
+| `/css/app.css` | `resources/public/css/app.css` | Static middleware |
+| `/js/htmx.min.js` | `resources/public/js/htmx.min.js` | Static middleware |
+| `/robots.txt` | `resources/public/robots.txt` | Static middleware |
+| `/posts` | no such file | Your router |
+| `/.env` | dotfile, never served | Your router (404) |
+
+Two Go types do the work. An [`fs.FS`](https://pkg.go.dev/io/fs#FS) is any read-only file system: a folder (`os.DirFS`), files compiled into the program ([`embed.FS`](https://pkg.go.dev/embed)) or a test map. An [`os.Root`](https://pkg.go.dev/os#Root) is a folder opened so that no path can leave it, not even through `..` or a symbolic link.
+
+## Quick start
+
+A new app already serves `resources/public` at the site root. Here is the wiring and a quick check.
+
+<Steps>
+<Step title="Put a file in the public folder">
+
+```css title="resources/public/css/blog.css"
+.post-title { font-size: 2rem; }
 ```
 
-Register it as **server** middleware so files are served without a matching route.
+</Step>
+<Step title="See how the starter serves the folder">
 
-## Safety
+```go title="routes/web.go"
+func Web(r *router.Router, app *vukem.App) error {
+	if err := vukem.DefaultMiddleware(app, r); err != nil {
+		return err
+	}
 
-- Files are opened through an `os.Root`, so `..` segments and symlinks cannot escape the directory.
-- Dotfiles (`.env`, `.git/…`) and any path with a dot segment are never served.
-- Directory listings are never served.
+	r.UseServer(middleware.StaticFS(
+		resources.Public(),
+		middleware.StaticConfig{Prefix: "/"},
+	))
+
+	// ...your routes...
+	return nil
+}
+```
+
+`r.UseServer` registers **server** middleware: it runs for every request, before the router looks for a route. Route middleware (`r.Use`) only runs when a route matched, and no route matches `/css/blog.css`. See [Middleware](/docs/basics/middleware).
+
+</Step>
+<Step title="Link it from the layout">
+
+```html title="resources/views/layouts/app.html"
+<link rel="stylesheet" href="{{asset "css/blog.css"}}">
+```
+
+The `asset` view function builds `/css/blog.css` ([Views](/docs/basics/views#template-functions)).
+
+</Step>
+<Step title="Request it">
+
+```bash
+curl -sI localhost:3000/css/blog.css
+```
+
+```text
+HTTP/1.1 200 OK
+Cache-Control: public, max-age=0, must-revalidate
+Content-Type: text/css; charset=utf-8
+Last-Modified: Sat, 17 Oct 2026 21:40:00 GMT
+```
+
+</Step>
+</Steps>
+
+## `Static` and `StaticFS`
+
+Both return a `middleware.Middleware` (a `func(http.Handler) http.Handler`) and take a `middleware.StaticConfig`.
+
+| Function | Serves from | Use it for |
+| --- | --- | --- |
+| `middleware.Static(root *os.Root, cfg)` | A folder opened with `os.OpenRoot` | A folder on disk that you open yourself |
+| `middleware.StaticFS(fsys fs.FS, cfg)` | Any `fs.FS` | Embedded files, `os.DirFS`, `resources.Public()` |
+
+`Static(root, cfg)` is `StaticFS(root.FS(), cfg)`. With `Static` you own the `*os.Root` and must close it when the app stops:
+
+```go title="routes/web.go"
+root, err := os.OpenRoot("storage/public")
+if err != nil {
+	// The folder does not exist: fail at boot.
+	return err
+}
+app.OnShutdown(func(context.Context) error { return root.Close() })
+
+r.UseServer(middleware.Static(root, middleware.StaticConfig{
+	Prefix: "/files",
+}))
+```
+
+### Files on disk in development, in the binary in production
+
+The starter's `resources` package decides where `resources.Public()` reads from:
+
+```go title="resources/resources.go"
+// all: keeps build/.vite/manifest.json (a dot directory) in the binary.
+//
+//go:embed views all:public
+var embedded embed.FS
+
+// Public returns the static assets served at /.
+func Public() fs.FS { return dirOrEmbedded("public") }
+```
+
+- With `APP_ENV=production` in the process environment, it always uses the **embedded** copy, compiled into the binary by the [`//go:embed`](https://pkg.go.dev/embed) directive.
+- Otherwise it uses `resources/public` on disk when that folder exists, so a changed file shows up on refresh, and falls back to the embedded copy.
+
+Embedding means you deploy one file with no `public/` folder next to it ([Single binary](/docs/deployment/single-binary)). The `all:` prefix keeps files whose names start with `.` or `_` in the binary; the Static middleware still refuses to serve them.
+
+## Which requests are served
+
+For each request the middleware checks, in order, and hands the request to the next handler (your routes) at the first "no":
+
+1. Is the method `GET` or `HEAD`? A `POST /css/app.css` goes to your routes.
+2. Does the path start with the prefix, and is something left after it?
+3. Is every path segment free of a leading dot? `/.env`, `/.git/config` and `/build/.vite/manifest.json` are refused.
+4. Is the cleaned path valid for [`fs.ValidPath`](https://pkg.go.dev/io/fs#ValidPath)?
+5. Does a **file** exist at that path? A directory is not a file, so `/` and `/css/` go to your routes.
+
+Only then does it set `Cache-Control` and hand the request to [`http.FileServerFS`](https://pkg.go.dev/net/http#FileServerFS), which:
+
+- picks the `Content-Type` from the extension (or by sniffing the content);
+- answers `Range` requests with `206 Partial Content` (video seeking, resumed downloads);
+- sends `Last-Modified` and answers `If-Modified-Since` with `304 Not Modified` when the file has a modification time.
+
+Directory listings are never shown and `index.html` is never served for a folder. A request for a path ending in `/index.html` gets a `301` redirect to the folder (a `net/http` rule), and the folder then goes to your routes. Give your home page a route instead.
 
 ## Caching
 
-| Files | `Cache-Control` |
-| --- | --- |
-| Under `/build/` (default `ImmutablePrefixes`) or fingerprinted names such as `app-3f9a1c2b.js` | `public, max-age=31536000, immutable` |
-| Everything else | `public, max-age=0, must-revalidate` |
+The middleware picks one of two `Cache-Control` values:
 
-`http.FileServerFS` handles `Range`, `If-Modified-Since` and content types.
+| File | `Cache-Control` | Meaning |
+| --- | --- | --- |
+| Path starts with one of `ImmutablePrefixes` (default `/build/`), **or** the name looks fingerprinted | `public, max-age=31536000, immutable` | Keep it for a year and never ask again |
+| Everything else | `public, max-age=0, must-revalidate` | Ask the server every time; a `304` keeps the download small |
 
-## Options
+A <Term tip="A file name that contains a hash of the file's content, such as app-3f9a1c2b.js. When the content changes, the name changes, so an old cached copy is never used by mistake.">fingerprinted</Term> name is detected by the pattern `[.-]` + 8 or more letters, digits, `_` or `-` + `.extension` at the end of the path: `app-3f9a1c2b.js`, `logo.4b1f9e0c.svg`. The [Vite](/docs/frontend/vite) build writes fingerprinted files to `resources/public/build/`, which is also the default immutable prefix.
+
+<Callout type="warning" title="Long names look fingerprinted">
+The check only looks at the shape of the name. `/img/hero-mountains.jpg` matches (`-mountains` is 9 characters), so browsers keep it for a year even if you replace the file. Name hand-made files without a long `-word` or `.word` suffix (`/img/hero_mountains.jpg`), or put them through the Vite build.
+</Callout>
+
+Files embedded in the binary have no modification time, so they get no `Last-Modified` header and never a `304`: a browser downloads a non-fingerprinted embedded file again on each visit. Fingerprinting your CSS and JavaScript through Vite avoids this.
+
+## Configuration
+
+`middleware.StaticConfig` has two fields:
+
+| Field | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `Prefix` | `string` | `""` (the root, same as `"/"`) | URL prefix. `"/assets"` serves `/assets/logo.svg` from `logo.svg`; leading and trailing slashes are optional |
+| `ImmutablePrefixes` | `[]string` | `[]string{"/build/"}` when `nil` | URL path prefixes (including `Prefix`) that get the one-year cache. An empty, non-nil slice turns the default off |
+
+With a prefix, set the immutable prefix to match, because it is compared with the full URL path:
 
 ```go
 middleware.StaticConfig{
-	Prefix:            "/assets",                // serve /assets/logo.svg from public/logo.svg
+	Prefix:            "/assets",
 	ImmutablePrefixes: []string{"/assets/build/"},
 }
 ```
 
-## Embedded assets
+There are no environment variables. `APP_ENV=production` only changes where `resources.Public()` reads from.
 
-`middleware.StaticFS` serves any `fs.FS`, such as an `embed.FS`, to ship a single binary. The starter does this with `resources.Public()`, which uses `resources/public` on disk during development and the embedded copy otherwise:
+## Security
 
-```go
-//go:embed public
-var publicFS embed.FS
+What the middleware does for you:
 
-sub, err := fs.Sub(publicFS, "public")
-if err != nil {
-	return err
+- **No path traversal.** `/css/../../.env` never leaves the folder: `..` segments, absolute paths and symbolic links pointing outside an `os.Root` are rejected (A01 in the [security overview](/docs/security/overview)).
+- **No dotfiles.** Any segment starting with `.` is refused, which hides `.env`, `.git/` and Vite's `.vite/manifest.json`.
+- **No listings.** Folders are never listed.
+- **Read-only.** Only `GET` and `HEAD` are served.
+
+What stays your job:
+
+- Everything in `resources/public` is public. Never put secrets, backups or source maps you want private there.
+- User uploads do not belong there either.
+
+<Callout type="warning" title="Uploads go to storage">
+Files from users need random names, content-sniffed types and often access control or signed URLs. Use the [`storage`](/docs/digging-deeper/storage) package and [Uploads](/docs/digging-deeper/uploads), not the public folder.
+</Callout>
+
+## Testing
+
+The test client goes through the server middleware, so static files answer like in a browser:
+
+```go title="tests/static_test.go"
+func TestStaticFiles(t *testing.T) {
+	app := vukemtest.New(t, bootstrap.New)
+	client := app.Client(t)
+
+	client.Get("/robots.txt").
+		AssertOK().
+		AssertHeader("Cache-Control", "public, max-age=0, must-revalidate")
+
+	// Dotfiles fall through to the router, which has no such route.
+	client.Get("/.env").AssertNotFound()
 }
-r.UseServer(middleware.StaticFS(sub, middleware.StaticConfig{}))
 ```
 
-## Uploads
+To test a middleware setup on its own, serve an in-memory file system with [`fstest.MapFS`](https://pkg.go.dev/testing/fstest#MapFS) and `httptest`:
 
-<Callout type="warning">
-User uploads and private files belong to the [`storage`](/docs/digging-deeper/storage) package (random names, content-sniffed types, signed URLs).
-</Callout>
+```go title="app/http/static_test.go"
+func TestBuildIsImmutable(t *testing.T) {
+	fsys := fstest.MapFS{"build/app-3f9a1c2b.js": {Data: []byte("x")}}
+	h := middleware.StaticFS(fsys, middleware.StaticConfig{})(
+		http.NotFoundHandler(),
+	)
+
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest("GET", "/build/app-3f9a1c2b.js", nil))
+
+	want := "public, max-age=31536000, immutable"
+	if got := w.Header().Get("Cache-Control"); got != want {
+		t.Fatalf("Cache-Control = %q, want %q", got, want)
+	}
+}
+```
+
+## Common mistakes
+
+**Registering it as route middleware.** Route middleware only runs for matched routes, and no route matches `/css/app.css`, so every asset answers 404.
+
+```go
+// Wrong.
+r.Use(middleware.StaticFS(resources.Public(), middleware.StaticConfig{}))
+// Right.
+r.UseServer(middleware.StaticFS(resources.Public(), middleware.StaticConfig{}))
+```
+
+**Expecting `index.html` for a folder.** `GET /docs/` goes to your routes, and `GET /docs/index.html` redirects to `/docs/`. Add a route that renders the page.
+
+**A prefix with the default immutable prefix.** With `Prefix: "/assets"`, `/assets/build/app.js` does not start with `/build/`. Set `ImmutablePrefixes: []string{"/assets/build/"}`.
+
+**Forgetting to close the root.** `middleware.Static` does not close the `*os.Root` you pass. Register `root.Close` with `app.OnShutdown`.
+
+**Linking a file without the prefix.** With `Prefix: "/assets"`, `/logo.svg` goes to your routes. Write the full path (`/assets/logo.svg`); the `asset` function of the app's view engine builds root paths.
+
+## Next steps
+
+<CardGroup cols="2">
+<Card title="Views" href="/docs/basics/views" icon="layers">
+Link assets with the `asset` function.
+</Card>
+<Card title="Vite" href="/docs/frontend/vite" icon="zap">
+Fingerprinted CSS and JavaScript builds.
+</Card>
+<Card title="Uploads" href="/docs/digging-deeper/uploads" icon="boxes">
+Files your users send.
+</Card>
+<Card title="Single binary" href="/docs/deployment/single-binary" icon="rocket">
+Ship assets inside the executable.
+</Card>
+</CardGroup>
+
+Package reference: [middleware](https://pkg.go.dev/github.com/AlexGalhardo/vukem/middleware).

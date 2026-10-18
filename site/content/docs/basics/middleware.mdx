@@ -1,192 +1,644 @@
 ---
 title: Middleware
-description: Standard func(http.Handler) http.Handler middleware in three stacks, plus Vukem's built-in middleware.
+description: Run code before and after your handlers with standard func(http.Handler) http.Handler middleware, in three stacks, plus every built-in middleware Vukem ships.
 ---
 
-Middleware has the standard signature, so any `net/http` middleware works with Vukem:
+Some work must happen on many requests: give each one an id, log it, add security headers, refuse a visitor who is not an admin. Writing that code in every handler would be repetitive, and one forgotten copy is a bug. Middleware runs it once, around the handlers, in a fixed order.
+
+You will learn how to:
+
+- write your own middleware, stop a request with an error and pass values to the handler;
+- choose the right stack (server, router, group or route) and predict the order things run in;
+- use each built-in middleware and its options;
+- customize the default stack installed by every starter;
+- test middleware on its own and inside the app.
+
+## The idea
+
+Picture the security checks at an airport. Every passenger walks through the same layers in the same order: ticket check, passport, scanner. Any layer may send a passenger back. Only those who pass every layer reach the plane. On the way back, they walk through the layers in reverse.
+
+Middleware is one of those layers. In Go, a layer is a function that receives the next [`http.Handler`](https://pkg.go.dev/net/http#Handler) and returns a new one that wraps it:
 
 ```go
 type Middleware = func(http.Handler) http.Handler
 ```
 
-## Three stacks
+This is the standard shape used across the Go ecosystem, so any `net/http` middleware works with Vukem, and Vukem's middleware works with any `net/http` server. `router.Middleware` and `middleware.Middleware` are both aliases of this type.
 
-| Stack | Registered with | Runs |
-| --- | --- | --- |
-| **Server** | `r.UseServer(mw...)` | Every request, even when no route matches (404s, static files, CORS preflight) |
-| **Router** | `r.Use(mw...)` | Only when a route matches |
-| **Route / group** | `g.Use(mw...)`, `route.Use(mw...)`, `resource.Use(mw...)` | Only for the routes it is attached to |
+The wrapping relies on [closures](https://go.dev/tour/moretypes/25): the inner function remembers `next` (and any options) after the outer one returns.
 
-```go
-r := router.New(services)
+## Quick start
 
-r.UseServer(
-	middleware.Recover(),
-	middleware.RequestID(),
-	middleware.Logger(app.Log),
-	middleware.SecureHeaders(middleware.SecureHeadersConfig{}),
-	middleware.MethodOverride(),
-	static,
-)
+The blog has an `/admin` area. Only requests with the right token may enter.
 
-r.Use(middleware.Timeout(30 * time.Second))
+<Steps>
+<Step title="Generate the middleware">
 
-r.Group("/api", func(g *router.Group) {
-	g.Use(middleware.JSONOnly(), middleware.BodyLimit(1<<20))
-	g.APIResource("posts", posts)
-})
+```bash
+vukem make:middleware RequireAdmin
 ```
 
-The order is outermost first: server stack, then router stack, then each enclosing group from the outside in, then the route's own middleware.
+```text
+created app/middleware/require_admin.go
+```
 
-## Writing middleware
+The generated file lets every request through:
 
-```go
-func requireAdmin(next http.Handler) http.Handler {
+```go title="app/middleware/require_admin.go"
+package middleware
+
+import "net/http"
+
+// RequireAdmin wraps handlers; register it with r.Use, group.Use or route.Use.
+func RequireAdmin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !isAdmin(r) {
-			web.Fail(w, r, errs.ErrForbidden) // rendered by the error handler
-			return
-		}
 		next.ServeHTTP(w, r)
 	})
 }
 ```
 
-`web.Fail(w, r, err)` renders an error with the same format as handlers (HTML page, htmx fragment or problem+json). `web.SecurityEvent(r, "authz.denied", ...)` logs a security event at `WARN` with a stable `event` attribute. `web.AuditEvent(r, "payout.recorded", ...)` logs a routine audit record at `INFO` with the same envelope.
+</Step>
+<Step title="Check the token">
+
+Replace it with a version that takes the token as an option and refuses wrong ones:
+
+```go title="app/middleware/require_admin.go"
+package middleware
+
+import (
+	"crypto/subtle"
+	"net/http"
+
+	"github.com/AlexGalhardo/vukem/errs"
+	"github.com/AlexGalhardo/vukem/web"
+)
+
+// RequireAdmin lets a request through only when it sends
+// "Authorization: Bearer <token>".
+func RequireAdmin(token string) func(http.Handler) http.Handler {
+	want := []byte("Bearer " + token)
+
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			got := []byte(r.Header.Get("Authorization"))
+
+			// ConstantTimeCompare takes the same time for every
+			// wrong guess, so timing does not leak the token.
+			if token == "" || subtle.ConstantTimeCompare(got, want) != 1 {
+				web.SecurityEvent(r, "admin.denied")
+				web.Fail(w, r, errs.ErrUnauthorized)
+
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+```
+
+An empty token refuses everyone, so a missing setting never opens the door.
+
+</Step>
+<Step title="Attach it to the admin group">
+
+```go title="routes/web.go"
+r.Group("/admin", func(g *router.Group) {
+	g.Use(appmw.RequireAdmin(app.Source.Get("ADMIN_TOKEN")))
+
+	g.Get("/stats", func(c *web.Ctx) error {
+		return c.JSON(http.StatusOK, web.Map{"posts": 0})
+	}).Name("stats")
+}).Name("admin.")
+```
+
+Import the package with an alias, `appmw "blog/app/middleware"` (your module name instead of `blog`), because Vukem's own package is also called `middleware`. Add `ADMIN_TOKEN=change-me` to `.env`.
+
+</Step>
+<Step title="Try it">
+
+```bash
+curl -i http://localhost:3000/admin/stats -H "Accept: application/json"
+```
+
+```text
+HTTP/1.1 401 Unauthorized
+Content-Type: application/problem+json
+X-Request-Id: HPDFQRWLYE5M4TAKXYOYXQ4PZJ
+
+{"type":"about:blank","title":"Unauthorized","status":401,
+"instance":"/admin/stats","request_id":"HPDFQRWLYE5M4TAKXYOYXQ4PZJ"}
+```
+
+With `-H "Authorization: Bearer change-me"` the answer is `200 OK` and `{"posts":0}`. The server log shows the refusal:
+
+```text
+level=WARN msg="security event" event=admin.denied method=GET
+path=/admin/stats request_id=HPDFQRWLYE5M4TAKXYOYXQ4PZJ
+```
+
+</Step>
+</Steps>
+
+## Writing middleware
+
+Every middleware has the same skeleton. Code before `next.ServeHTTP` runs on the way in; code after it runs on the way out:
+
+```go title="app/middleware/timing.go"
+package middleware
+
+import (
+	"log/slog"
+	"net/http"
+	"time"
+)
+
+// Timing logs how long the rest of the chain took.
+func Timing(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+
+		next.ServeHTTP(w, r)
+
+		slog.InfoContext(r.Context(), "timing",
+			"path", r.URL.Path,
+			"took", time.Since(start),
+		)
+	})
+}
+```
+
+Three shapes cover almost every case:
+
+| Shape | Signature | Register with |
+| --- | --- | --- |
+| Plain | `func Timing(next http.Handler) http.Handler` | `r.Use(appmw.Timing)` |
+| With options | `func RequireAdmin(token string) func(http.Handler) http.Handler` | `g.Use(appmw.RequireAdmin(token))` |
+| Can fail at boot | `func CORS(cfg CORSConfig) (Middleware, error)` | check `err`, then `r.UseServer(cors)` |
+
+There is no registry of named middleware: you pass the function itself.
+
+### Stopping a request
+
+To refuse a request, write the response and **do not** call `next`. `web.Fail(w, r, err)` writes it through the same [error handler](/docs/basics/error-handling) handlers use, so the client gets the right format: an HTML page for browsers, an HTML fragment for htmx, or `application/problem+json` for JSON clients.
+
+```go
+if !allowed {
+	web.Fail(w, r, errs.ErrForbidden)
+	return
+}
+```
+
+Forgetting the `return` is a classic bug: the request is refused **and** then served.
+
+`web.Fail` finds the error handler through `web.ServicesFrom(r.Context())`. The router stores its `*web.Services` in the request context before the first middleware runs, so this works in every stack.
+
+### Passing values to the handler
+
+A middleware may compute something the handler needs. Store it in the request's [`context.Context`](https://pkg.go.dev/context) and pass the new request on. Use an unexported key type, so no other package can read or overwrite your value:
+
+```go title="app/middleware/require_admin.go"
+// adminKey is the context key RequireAdmin stores its mark under.
+type adminKey struct{}
+
+// IsAdmin reports whether RequireAdmin let this request through.
+func IsAdmin(ctx context.Context) bool {
+	ok, _ := ctx.Value(adminKey{}).(bool)
+	return ok
+}
+```
+
+In `RequireAdmin`, replace `next.ServeHTTP(w, r)` with:
+
+```go
+ctx := context.WithValue(r.Context(), adminKey{}, true)
+next.ServeHTTP(w, r.WithContext(ctx))
+```
+
+The handler reads it with `appmw.IsAdmin(c.Context())`. Go's [context documentation](https://pkg.go.dev/context#WithValue) explains why keys should have their own type.
+
+### Logging security and audit events
+
+| Function | Level | Use it for |
+| --- | --- | --- |
+| `web.SecurityEvent(r, event, attrs...)` | `WARN` | Something an attacker may be doing: denied access, a bad signature. Dispatched as a `security.Event` |
+| `web.AuditEvent(r, event, attrs...)` | `INFO` | Routine records: an admin deleted a post, changed a role. Dispatched as a `security.Audit` |
+
+Both log with a stable `event` attribute plus `method`, `path` and `request_id`, and send the event to `Services.Events` when the app has an event bus, so listeners may alert or store it. Attributes are name/value pairs:
+
+```go
+web.AuditEvent(r, "post.deleted", "post_id", post.ID, "actor_id", u.ID)
+```
+
+Never pass secrets, names or emails as attributes. The dispatched event carries the client IP, which is personal data: stored audit records need a retention period.
+
+## The three stacks
+
+Some middleware must see every request, even those that match no route. Some only makes sense for real routes. Vukem keeps them in separate stacks:
+
+| Stack | Registered with | Runs for |
+| --- | --- | --- |
+| **Server** | `r.UseServer(mw...)` | Every request, before routing: 404s, 405s, static files and CORS preflights included |
+| **Router** | `r.Use(mw...)` | Every request that matches a route |
+| **Group** | `g.Use(mw...)` | Every route of the group and of its nested groups |
+| **Route** | `route.Use(mw...)`, `resource.Use(mw...)` | Only the routes it is attached to |
+
+Choose the server stack when the middleware must run before the router decides anything: recovering from panics, request ids, logging, security headers, method override, CORS, static files, maintenance mode. Choose the router, group or route stack for everything that only matters to real pages: sessions, CSRF, authentication, body limits per area.
+
+### The order of execution
+
+The chain is built from the outside in:
+
+1. server middleware, in the order you registered it;
+2. router middleware, in order;
+3. group middleware, from the outermost group to the innermost;
+4. route middleware, in order;
+5. the handler.
+
+The response then travels back out in reverse. With one middleware per level that prints "enter" and "leave":
+
+```text
+enter server
+enter router
+enter group
+enter route
+handler
+leave route
+leave group
+leave router
+leave server
+```
+
+Under the hood:
+
+- Middleware is wrapped around each route when the router [compiles](/docs/basics/routing#compiling-and-checking-routes). That is why `g.Use` covers routes registered before it, and why `r.Use` called after the routes still applies to them.
+- Middleware added after compiling has no effect.
+- Within a group, middleware runs in the order of the `Use` calls, wherever they are.
+- `vukem route:list` shows each route's router, group and route middleware, so you can check the order. Server middleware is not listed, because it is not tied to a route.
 
 ## Built-in middleware
 
-| Middleware | Purpose |
+All of them live in `github.com/AlexGalhardo/vukem/middleware`.
+
+| Middleware | Stack | Does |
+| --- | --- | --- |
+| `Recover()` | server | Turns a panic into a 500 |
+| `RequestID()` | server | Gives each request an id |
+| `Logger(log)` | server | Logs one line per request |
+| `Maintenance(cfg)` | server | Answers 503 during `vukem down` |
+| `SecureHeaders(cfg)` | server | Security headers and the Content-Security-Policy |
+| `MethodOverride()` | server | `PUT`, `PATCH`, `DELETE` from HTML forms |
+| `CORS(cfg)` | server | Cross-origin requests, deny by default |
+| `Static(root, cfg)`, `StaticFS(fsys, cfg)` | server | Serves files; see [Static files](/docs/basics/static-files) |
+| `Gzip()` | any | Compresses text responses |
+| `Timeout(d)` | any | A deadline on the request context |
+| `BodyLimit(n)` | router, group, route | Caps the request body size |
+| `JSONOnly()` | group, route | JSON-only API areas |
+
+### Recover
+
+A <Term tip="A run-time error that stops the current function, like dividing by zero or reading past the end of a slice. See go.dev/blog/defer-panic-and-recover.">panic</Term> in a handler would otherwise close the connection without an answer. `Recover()` catches it, logs `panic recovered` at `ERROR` with the stack trace and the request id, and answers `500 Internal Server Error` through the error handler. The client never sees the panic message or the stack. `http.ErrAbortHandler` is panicked again on purpose, because `net/http` uses it to abort a response. Register it first, so it covers everything after it. Go's [defer, panic and recover](https://go.dev/blog/defer-panic-and-recover) post explains the mechanism.
+
+### RequestID
+
+`RequestID()` reads the incoming `X-Request-ID` header (`middleware.RequestIDHeader`). It reuses the value only when it has 1 to 128 characters, all letters, digits, `-`, `_` or `.`; otherwise it generates a random one, so a client cannot inject text into your logs. The id is stored in the context (read it with `web.RequestID(ctx)`), echoed in the response header, added to every error log line and to problem+json bodies as `request_id`. When a user reports an error, ask for this id.
+
+### Logger
+
+`Logger(log)` writes one structured [`log/slog`](https://pkg.go.dev/log/slog) line per request, after the response:
+
+| Attribute | Content |
 | --- | --- |
-| `Recover()` | Converts panics to 500 through the error handler; the stack trace is logged server-side only. `http.ErrAbortHandler` is re-raised. |
-| `RequestID()` | Reuses a well-formed incoming `X-Request-ID` (max 128 safe characters) or generates one; stores it in the context and echoes it in the response. |
-| `Logger(log)` | One structured `slog` line per request: method, path, status, duration, bytes, request id, `peer` (the `RemoteAddr` host) and `ip` (the client resolved through `TRUSTED_PROXIES`, as `c.IP()`). 5xx at `ERROR`, 4xx at `WARN`. |
-| `Timeout(d)` | Sets a deadline on the request context. |
-| `BodyLimit(n)` | Caps request bodies at `n` bytes; larger bodies fail with 413. |
-| `MethodOverride()` | Lets HTML forms send `PUT`, `PATCH` and `DELETE` via a hidden `_method` field on `POST`. Register it as server middleware so routing sees the new method. |
-| `JSONOnly()` | Write requests must send JSON (415 otherwise) and errors render as problem+json. |
-| `CORS(cfg)` | Cross-origin resource sharing, deny by default. |
-| `SecureHeaders(cfg)` | Security headers and a nonce-based Content-Security-Policy. |
-| `Static(root, cfg)` / `StaticFS(fsys, cfg)` | Serves files from an `*os.Root` or any `fs.FS`. See [Static files](/docs/basics/static-files). |
-| `Gzip()` | Compresses text-like responses of 1 KiB or more for clients that accept gzip. |
+| `method`, `path` | The request |
+| `status` | The status sent (200 when the handler wrote nothing) |
+| `duration` | Time spent in the rest of the chain |
+| `bytes` | Body bytes written |
+| `request_id` | From `RequestID` (register `RequestID` before `Logger`) |
+| `peer` | The address of the direct connection (`RemoteAddr` host) |
+| `ip` | The client IP as `c.IP()` sees it, through [trusted proxies](/docs/basics/http-context#trusted-proxies) |
+
+5xx responses log at `ERROR`, 4xx at `WARN`, the rest at `INFO`.
+
+### Maintenance
+
+`Maintenance(cfg)` answers every request with `503 Service Unavailable` ("We are doing some maintenance. Please come back soon.") while the state file written by [`vukem down`](/docs/cli/overview#vukem-down-and-vukem-up) exists. It reads the file on each request, so `vukem down` and `vukem up` take effect without a restart. The 503 uses your `errors/503` view or problem+json, and carries `Retry-After` when `vukem down --retry` set one.
+
+| `MaintenanceConfig` field | Default | Meaning |
+| --- | --- | --- |
+| `File` | `storage/framework/down` (`middleware.DefaultMaintenanceFile`) | The state file |
+| `Key` | none | Signs the bypass cookie. Without a key the secret bypass is off |
+| `PreviousKeys` | none | Keys whose cookies are still accepted after an `APP_KEY` rotation, then re-issued under `Key` |
+| `Except` | `["/up"]` | Paths always served, compared exactly |
+| `Secure` | `false` | Marks the bypass cookie `Secure` |
+
+With `vukem down --secret` (or `--with-secret`), visiting `/<secret>` sets the `vukem_maintenance` cookie (HttpOnly, SameSite=Lax, 12 hours) and redirects to `/`, so you can check the site before reopening it. A state file that cannot be read or parsed keeps the app **down**: the middleware fails closed. `middleware.WriteMaintenance(file, state)` writes the file from Go. The default stack installs this middleware with a key derived from `APP_KEY`.
+
+### SecureHeaders
+
+`SecureHeaders(cfg)` adds `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Cross-Origin-Opener-Policy`, `Permissions-Policy`, HSTS on HTTPS requests, and a strict Content-Security-Policy with a fresh nonce per request. Read the nonce with `middleware.CSPNonce(ctx)` (`{{ cspNonce }}` in views). The default stack installs it, already tuned by `TRUSTED_PROXIES`, `TRUST_FORWARDED_PROTO` and `HSTS_FORCE`.
+
+| `SecureHeadersConfig` field | Default |
+| --- | --- |
+| `CSP` | `middleware.DefaultCSP`; `{nonce}` is replaced per request; `"-"` disables the header |
+| `CSPSources` | none; extra sources per directive, unsafe ones refused |
+| `ReportURI` | none; adds `report-uri`, `report-to` and `Reporting-Endpoints` |
+| `HSTSMaxAge` | two years; negative disables HSTS |
+| `HSTSForce` | `false`; HSTS on every response |
+| `TrustForwardedProto`, `TrustedProxies` | `false`, none; honour `X-Forwarded-Proto: https` from these peers |
+| `FrameOptions` | `DENY`; `"-"` disables it |
+| `ReferrerPolicy` | `strict-origin-when-cross-origin` |
+| `PermissionsPolicy` | `camera=(), microphone=(), geolocation=()` |
+| `DevServer` | none; allows the Vite dev server (set by the app outside production) |
+
+`SecureHeaders` never fails: invalid `CSPSources` or `ReportURI` values are dropped (the policy stays stricter) with one warning in the log. Call `cfg.Validate()` at boot to turn them into an error; the default stack does. [Security headers](/docs/security/security-headers) explains every header, the CSP rules and how to add a source.
+
+### MethodOverride
+
+HTML forms can only send `GET` and `POST`. `MethodOverride()` turns a `POST` with a `_method` field of `PUT`, `PATCH` or `DELETE` (any case) into that method:
+
+```html title="resources/views/posts/edit.html"
+<form method="post" action="/posts/42">
+  <input type="hidden" name="_method" value="PUT">
+  {{ csrfField }}
+  <input name="title" value="Hello Vukem">
+  <button>Save</button>
+</form>
+```
+
+- It acts only on `POST` with a urlencoded or multipart body. Other values of `_method` are ignored.
+- For urlencoded bodies it reads the field from the body, under the 10 MiB default limit.
+- For multipart forms it reads `_method` from the **query string** (`action="/posts/42?_method=PUT"`), so large uploads are not read into memory before your handler streams them.
+- Register it as **server** middleware: routing has to see the new method. In the router stack it would run after the route was chosen.
 
 ### CORS
 
-```go
+Browsers block a page on `https://app.example.com` from reading your API on `https://api.example.com` unless the API allows it with [CORS headers](https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/CORS). `CORS(cfg)` sends them for the origins you list and nothing else:
+
+```go title="routes/api.go"
 cors, err := middleware.CORS(middleware.CORSConfig{
 	AllowedOrigins:   []string{"https://app.example.com"},
 	AllowCredentials: true,
 	MaxAge:           10 * time.Minute,
 })
 if err != nil {
-	return err // "*" with credentials is refused at boot
+	return err
 }
+
 r.UseServer(cors)
 ```
 
-The zero `CORSConfig` allows no cross-origin requests. Defaults: methods `GET, HEAD, POST, PUT, PATCH, DELETE`; headers `Accept, Authorization, Content-Type, X-Requested-With, X-CSRF-Token`. Register it as **server** middleware so preflight requests are answered before routing.
+| `CORSConfig` field | Default | Meaning |
+| --- | --- | --- |
+| `AllowedOrigins` | none (no cross-origin access) | Exact origins such as `https://app.example.com`, or `"*"` |
+| `AllowedMethods` | `GET, HEAD, POST, PUT, PATCH, DELETE` | Answered to preflights |
+| `AllowedHeaders` | `Accept, Authorization, Content-Type, X-Requested-With, X-CSRF-Token` | Answered to preflights |
+| `ExposedHeaders` | none | Response headers the page may read |
+| `AllowCredentials` | `false` | Allows cookies and `Authorization` |
+| `MaxAge` | `0` (no cache header) | How long browsers cache a preflight |
 
-### Secure headers and CSP nonces
+What happens on each request:
 
-```go
-r.UseServer(middleware.SecureHeaders(middleware.SecureHeadersConfig{
-	HSTSMaxAge:          365 * 24 * time.Hour,
-	TrustForwardedProto: true,    // only behind a trusted proxy
-	TrustedProxies:      proxies, // []*net.IPNet: honour X-Forwarded-Proto only from these peers
-}))
+1. `Vary: Origin` is always added, so caches keep separate copies per origin.
+2. No `Origin` header, or an origin not in the list: the request goes on **without** CORS headers, and the browser blocks the page from reading the answer.
+3. An allowed origin: `Access-Control-Allow-Origin` is set (to `*` with the wildcard, else to the origin), plus `Access-Control-Allow-Credentials: true` when enabled.
+4. A preflight (`OPTIONS` with `Access-Control-Request-Method`) is answered right away with `204 No Content` and the allowed methods, headers and max age. Your routes never see it.
+
+`"*"` together with `AllowCredentials` is refused: `CORS` returns `middleware: CORS cannot allow credentials with origin "*"`. Register CORS in the **server** stack; in the router stack a preflight to a path without an `OPTIONS` route would get a 405 first.
+
+### Gzip
+
+`Gzip()` compresses responses for clients that send `Accept-Encoding: gzip`. It always adds `Vary: Accept-Encoding`, and passes the response through unchanged when:
+
+- the body is smaller than 1 KiB, or the request is `HEAD` or carries `Range`;
+- the response already has a `Content-Encoding`, or its status is 1xx, 204, 206 or 304;
+- the content type is not text-like (only `text/*` and types containing `json`, `javascript`, `xml` or `svg` are compressed), or it is `text/event-stream`.
+
+It supports flushing and hijacking, so streaming responses and WebSocket upgrades keep working. Images and archives are already compressed; compressing them again wastes CPU.
+
+### Timeout
+
+`Timeout(d)` gives the request context a deadline. It does **not** interrupt your handler: code must watch the context. Database queries, HTTP clients and `select` on `c.Context().Done()` stop when the deadline passes; a handler that returns `ctx.Err()` then answers `500` and logs `context deadline exceeded`. Go's [context package](https://pkg.go.dev/context#WithTimeout) describes deadlines.
+
+```go title="routes/web.go"
+r.Get("/reports/{year}", reports.Show).
+	Use(middleware.Timeout(30 * time.Second))
 ```
 
-`X-Forwarded-Proto` counts only as a single header line saying `https`. `SecureHeadersConfig.Validate()` (called by `DefaultMiddleware` at boot) refuses `TrustForwardedProto` without `TrustedProxies`; without that check, an empty list trusts the header from any peer. `DefaultMiddleware` and `APIMiddleware` already install `SecureHeaders`; there, set `TRUST_FORWARDED_PROTO=true` and `TRUSTED_PROXIES` instead of adding a second one. When the proxy's range cannot be trusted, `HSTSForce: true` (`HSTS_FORCE=true`) sends HSTS on every response instead; see [HSTS without a trusted range](/docs/deployment/docker-and-railway#hsts-without-a-trusted-range) for the trade-offs.
+### BodyLimit
 
-| Header | Default |
+`BodyLimit(n)` caps the request body at `n` bytes. A request that declares a larger `Content-Length` is refused at once with `413 Request Entity Too Large`, before the rest of the chain runs; a body that turns out larger while being read fails with 413 too. Every body reader in `web` already applies `web.DefaultMaxBody` (10 MiB) when no limit was set, and the default stack installs `BodyLimit(web.DefaultMaxBody)` on the router.
+
+A second `BodyLimit` further down the chain (on a group or route) replaces the reading limit instead of nesting under it. Lowering works in every case. Raising does not, in practice: the router-level `BodyLimit` runs first and already refuses any request whose `Content-Length` is above 10 MiB, which is what browsers and most clients send. See [Requests](/docs/basics/requests#body-size-limits).
+
+### JSONOnly
+
+`JSONOnly()` turns a group into a JSON-only area:
+
+- a request with no `Accept`, or `Accept: */*`, is treated as `Accept: application/json`, so errors render as problem+json;
+- a request with a body (other than `GET` or `HEAD`) must send `Content-Type: application/json` or a `+json` type; anything else gets `415 Unsupported Media Type`.
+
+```go title="routes/api.go"
+r.Group("/api", func(g *router.Group) {
+	g.Use(middleware.JSONOnly(), middleware.BodyLimit(1<<20))
+	g.APIResource("posts", posts)
+})
+```
+
+## The default stack
+
+Every starter calls `vukem.DefaultMiddleware(app, r)` at the top of `routes/web.go`. It installs:
+
+| Stack | Middleware, in order |
 | --- | --- |
-| `Content-Security-Policy` | `middleware.DefaultCSP` with a fresh nonce per request |
-| `Strict-Transport-Security` | `max-age=63072000; includeSubDomains` on HTTPS requests |
-| `X-Content-Type-Options` | `nosniff` |
-| `X-Frame-Options` | `DENY` |
-| `Referrer-Policy` | `strict-origin-when-cross-origin` |
-| `Cross-Origin-Opener-Policy` | `same-origin` |
-| `Permissions-Policy` | `camera=(), microphone=(), geolocation=()` |
+| Server | `Recover`, `RequestID`, `Maintenance`, `Logger`, `SecureHeaders`, `MethodOverride` |
+| Router | `BodyLimit(web.DefaultMaxBody)`, sessions, CSRF, then the locale resolver when the app uses `vukem.WithTranslations` |
 
-`CSP` accepts a custom policy where `{nonce}` is replaced per request; `"-"` disables the header (same for `FrameOptions`). A negative `HSTSMaxAge` disables HSTS. Read the nonce with `middleware.CSPNonce(r.Context())` and add it to inline scripts and styles:
+It returns configuration errors, such as invalid `CSRF_TRUSTED_ORIGINS` or an insecure session setup, so they stop the boot. Two more pieces come from the app itself: in production with an empty `TRUSTED_PROXIES`, a server middleware logs one warning when requests look like they come through a proxy; and the [devtools dashboard](/docs/digging-deeper/devtools), when enabled, adds its recorder as the outermost server middleware.
 
-```go
-nonce := middleware.CSPNonce(c.Context())
-return c.HTML(http.StatusOK, `<script nonce="`+nonce+`">init()</script>`)
-```
+Middleware you add afterwards runs **after** the defaults in the same stack. The starter adds static files that way:
 
-`CSPSources` adds sources to the policy (the default or your `CSP`) without rewriting it. A fetch directive missing from the policy starts from the directive the browser would fall back to: `script-src-elem` from `script-src` (so it keeps the nonce), `worker-src` from `child-src` then `script-src`, `frame-src` from `child-src`, the others from `default-src`. `ReportURI` (an `https://` URL without credentials, or a path starting with one `/`) adds `report-uri` and `report-to` plus the matching `Reporting-Endpoints` header:
-
-```go
-cfg := middleware.SecureHeadersConfig{
-	CSPSources: map[string][]string{
-		"script-src":  {"https://plausible.io"},
-		"connect-src": {"https://plausible.io"},
-		"frame-src":   {"https://www.youtube-nocookie.com"}, // becomes 'self' https://www.youtube-nocookie.com
-	},
-	ReportURI: "/csp-reports",
-}
-if err := cfg.Validate(); err != nil {
+```go title="routes/web.go"
+if err := vukem.DefaultMiddleware(app, r); err != nil {
 	return err
 }
+
+r.UseServer(middleware.StaticFS(
+	resources.Public(),
+	middleware.StaticConfig{Prefix: "/"},
+))
 ```
 
-Refused sources: `'unsafe-*'` keywords, static nonces, `*` hosts (`*`, `*:*`, `https://*`), wildcards over fewer than two labels (`*.com`), host wildcards in `default-src`, `script-src*`, `object-src`, `worker-src` and `base-uri`, and unsafe schemes. Scheme-only sources are accepted only as `https:`, `data:` or `blob:` in `img-src`/`media-src` (`https:`/`data:` in `font-src`) and `https:` or `wss:` in `connect-src`.
+### Customizing it
 
-`SecureHeaders` never fails: invalid extras are dropped (the policy stays stricter) with one warning in the log, so call `Validate` at boot (`vukem.DefaultMiddlewareWith` does). Anything weaker than the helper allows needs a full `CSP` string.
+`vukem.DefaultMiddlewareWith(app, r, opts)` installs the same stack with options. The zero `vukem.MiddlewareOptions` is `DefaultMiddleware`:
 
-Styles injected at runtime need the nonce too, since `style-src` has no `'unsafe-inline'`. The starters already handle the common cases:
-
-- **Inertia progress bar:** `createInertiaApp({ nonce })` reads it from `<meta property="csp-nonce">` (the scaffolds do this).
-- **htmx 4 indicator:** injected as a constructed stylesheet, which the CSP does not block. On htmx 2, set `htmx.config.inlineStyleNonce` or `includeIndicatorStyles: false`.
-- **A library that injects a fixed `<style>` and accepts no nonce:** add its hash, e.g. `CSPSources: {"style-src": {"'sha256-…'"}}` (the browser console prints the hash it expects).
-- `style="…"` attributes in server-rendered HTML stay blocked; use classes. Setting `el.style.x` from JavaScript is not affected.
-
-## Default stack
-
-`vukem.DefaultMiddleware(app, r)`, called by the starter's `routes.Web`, installs:
-
-| Stack | Middleware |
-| --- | --- |
-| Server | `Recover`, `RequestID`, `Logger`, `SecureHeaders`, `MethodOverride` |
-| Router | `BodyLimit(web.DefaultMaxBody)`, sessions, CSRF (`CSRF_TRUSTED_ORIGINS` adds trusted origins) |
-
-`vukem.DefaultMiddlewareWith(app, r, opts)` installs the same stack with options; the zero `vukem.MiddlewareOptions` is `DefaultMiddleware`:
-
-```go
+```go title="routes/web.go"
 err := vukem.DefaultMiddlewareWith(app, r, vukem.MiddlewareOptions{
-	// Runs after the defaults (Vite dev server) are set; validated at boot.
 	SecureHeaders: func(cfg *middleware.SecureHeadersConfig) {
 		cfg.CSPSources = map[string][]string{
 			"script-src":  {"https://plausible.io"},
 			"connect-src": {"https://plausible.io"},
 		}
-		cfg.ReportURI = "/csp-reports"
 	},
-	SessionBypass: []string{"/webhooks/"},             // no session (no cookie) on these routes
-	CSRFBypass:    []string{"POST /webhooks/{name}"},  // signed webhooks; logged at boot
+	// Webhooks carry no session cookie and are signed instead.
+	SessionBypass: []string{"/webhooks/"},
+	CSRFBypass:    []string{"POST /webhooks/{name}"},
 })
+if err != nil {
+	return err
+}
 ```
 
 | Option | Effect |
 | --- | --- |
-| `SecureHeaders` | Edits the `SecureHeadersConfig` (`CSPSources`, `ReportURI`, `TrustForwardedProto`, ...). An invalid result fails at boot. |
-| `Stateless` | No session middleware at all, for cookieless apps. CSRF protection stays on as `Origin`/`Sec-Fetch-Site` checks only: `csrfToken`/`csrfField` render empty, and session features (`c.Flash`, session login) return an error. |
-| `SessionBypass` | `ServeMux` patterns served without sessions. A pattern ending in `/` (`/webhooks/`) covers its whole subtree; `POST /hooks/{id}` matches one method and path. Refused together with `Stateless`. |
-| `CSRFBypass` | `ServeMux` patterns (same matching) exempt from CSRF checks; each one is logged at boot. Protect them another way (signatures). |
-| `I18n` | `*i18n.MiddlewareConfig` for the locale resolver installed by `WithTranslations` (nil: defaults): sources and their order (`Order`), the selectable `Locales`, parameter and cookie names. Validated at boot; refused without `WithTranslations`. See [Localization](/docs/digging-deeper/localization#locale-resolution). |
+| `SecureHeaders` | Edits the `SecureHeadersConfig` after Vukem's defaults (the Vite dev server) are set. The result is validated; an invalid one stops the boot |
+| `Stateless` | No session middleware. CSRF stays on as `Origin`/`Sec-Fetch-Site` checks only, `csrfToken`/`csrfField` render empty, and session features (`c.Flash`, session login) return an error |
+| `SessionBypass` | ServeMux patterns served without sessions. `/webhooks/` covers its whole subtree; `POST /hooks/{id}` one method and path. Refused together with `Stateless` (`vukem: SessionBypass has no effect with Stateless (no sessions anywhere)`) |
+| `CSRFBypass` | ServeMux patterns exempt from CSRF checks, each logged at boot as `csrf bypass`. Protect them another way, such as [webhook signatures](/docs/digging-deeper/webhooks) |
+| `I18n` | `*i18n.MiddlewareConfig` for the locale resolver; needs `vukem.WithTranslations`. See [Localization](/docs/digging-deeper/localization#locale-resolution) |
 
 Maintenance mode, the body limit and CSRF for every other route stay on: the options only add sources or skip what you list.
 
-## Generating middleware
+### The API stack
 
-```bash
-vukem make:middleware RequireAdmin   # app/middleware/require_admin.go
+JSON-only apps call `vukem.APIMiddleware(app, r)` instead. It has no sessions, CSRF or method override, because API clients authenticate with tokens:
+
+| Stack | Middleware, in order |
+| --- | --- |
+| Server | `Recover`, `RequestID`, `Maintenance`, `Logger`, `SecureHeaders` |
+| Router | `BodyLimit(web.DefaultMaxBody)`, then the locale resolver (from `?lang=` and `Accept-Language` only) with `WithTranslations` |
+
+`vukem.APIMiddlewareWith(app, r, vukem.APIMiddlewareOptions{...})` accepts the `SecureHeaders` and `I18n` options above. Add CORS yourself when browsers on other origins call the API.
+
+### Middleware from other packages
+
+| Middleware | Page |
+| --- | --- |
+| `auth.Required`, `auth.Optional`, `auth.Guest`, `auth.Verified`, `auth.Ability` | [Authentication](/docs/security/authentication#middleware) |
+| `ratelimit.Middleware(limiter, key)` | [Rate limiting](/docs/security/rate-limiting) |
+| `signed.Signer.Middleware()` | [Signed URLs](/docs/security/signed-urls) |
+| `webhook.Middleware` | [Webhooks](/docs/digging-deeper/webhooks) |
+| `csrf.Middleware` | [CSRF](/docs/basics/csrf) |
+| `session.Manager.Middleware` | [Sessions](/docs/basics/sessions) |
+
+## Configuration
+
+Middleware has no settings of its own in `.env`; the default stack reads these:
+
+| Variable | Default | Used by |
+| --- | --- | --- |
+| `APP_KEY` | required | Signs the maintenance bypass cookie and the session cookie |
+| `TRUSTED_PROXIES` | empty (trust nobody) | `Logger`'s `ip`, `SecureHeaders` (with `TRUST_FORWARDED_PROTO`) |
+| `TRUST_FORWARDED_PROTO` | `false` | `SecureHeaders`: HSTS behind a TLS proxy; needs `TRUSTED_PROXIES` |
+| `HSTS_FORCE` | `false` | `SecureHeaders`: HSTS on every response, production only |
+| `CSRF_TRUSTED_ORIGINS` | empty | CSRF: extra origins allowed to post (comma-separated) |
+| `SESSION_*` | see [Sessions](/docs/basics/sessions) | The session middleware |
+
+## Security
+
+- **Fail closed.** `Maintenance` stays down on an unreadable file, `CORS` allows nothing by default and refuses `"*"` with credentials, `SecureHeaders` drops invalid sources instead of weakening the policy.
+- **No leaks.** `Recover` and the error handler never send panic messages or stack traces to clients outside debug mode.
+- **Untrusted input in logs.** `RequestID` only reuses safe ids; `Logger` reports the proxy-resolved `ip` next to the raw `peer`.
+- **Your job:** authentication and authorization middleware on private routes, and CORS only for origins you trust. See the [security overview](/docs/security/overview).
+
+## Testing
+
+Middleware is a function from handler to handler, so a unit test needs only [`net/http/httptest`](https://pkg.go.dev/net/http/httptest):
+
+```go title="app/middleware/require_admin_test.go"
+package middleware_test
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	appmw "blog/app/middleware"
+)
+
+func TestRequireAdmin(t *testing.T) {
+	ok := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})
+	h := appmw.RequireAdmin("s3cret")(ok)
+
+	tests := []struct {
+		name, header string
+		want         int
+	}{
+		{"no header", "", http.StatusUnauthorized},
+		{"wrong token", "Bearer nope", http.StatusUnauthorized},
+		{"right token", "Bearer s3cret", http.StatusOK},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/admin/stats", nil)
+			req.Header.Set("Authorization", tt.header)
+
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+
+			if rec.Code != tt.want {
+				t.Errorf("status = %d, want %d", rec.Code, tt.want)
+			}
+		})
+	}
+}
 ```
 
-The generated `func RequireAdmin(next http.Handler) http.Handler` is plain Go: attach it with `r.Use`, `g.Use` or `route.Use`. There is no named-middleware registry.
+Inside the app, `vukemtest` runs the whole stack. `Options.Env` sets the token for this test only:
 
-<Callout type="warning">
-Auth middleware (`auth.Required`, `auth.Optional`, `auth.Guest`, `auth.Verified`, `auth.Ability`) is described in [Authentication](/docs/security/authentication#middleware); `ratelimit.Middleware(limiter, key)` in [Rate limiting](/docs/security/rate-limiting); `signed.Signer.Middleware()` and `webhook.Middleware` in [Security building blocks](/docs/security/building-blocks). JSON-only apps use `vukem.APIMiddleware(app, r)`: the default stack without sessions or CSRF. `vukem.APIMiddlewareWith(app, r, vukem.APIMiddlewareOptions{SecureHeaders: ..., I18n: ...})` edits its `SecureHeadersConfig` and locale resolver the same way (validated at boot); there are no session or CSRF bypasses because that stack has neither. With `WithTranslations`, `APIMiddleware` resolves the locale from `?lang=` and `Accept-Language` (no cookie or session), so 422 messages are localized and carry `Content-Language`.
-</Callout>
+```go title="tests/admin_test.go"
+func TestAdminNeedsToken(t *testing.T) {
+	t.Parallel()
+
+	app := vukemtest.New(t, bootstrap.New, vukemtest.Options{
+		Env: map[string]string{"ADMIN_TOKEN": "s3cret"},
+	})
+	api := app.Client(t).AcceptJSON()
+
+	api.GetJSON("/admin/stats").AssertUnauthorized()
+
+	api.WithHeader("Authorization", "Bearer s3cret").
+		GetJSON("/admin/stats").
+		AssertOK()
+}
+```
+
+See [Testing](/docs/testing/overview).
+
+## Common mistakes
+
+**Method override in the router stack.** Routing already picked the `POST` route, so the form gets `405 Method Not Allowed`.
+
+```go
+// Wrong
+r.Use(middleware.MethodOverride())
+
+// Right
+r.UseServer(middleware.MethodOverride())
+```
+
+**CORS in the router stack.** Preflight requests (`OPTIONS`) to paths that have no `OPTIONS` route get `405` and the browser reports a CORS error. Use `r.UseServer(cors)`.
+
+**No `return` after `web.Fail`.** The client receives the error page, and the handler still runs (and may change data).
+
+**A wildcard origin with cookies.** `middleware.CORS` returns `middleware: CORS cannot allow credentials with origin "*"`. List the exact origins instead.
+
+**Expecting `Timeout` to stop a busy loop.** It only cancels the context. Pass `c.Context()` to queries and clients, and check `ctx.Done()` in long loops.
+
+## Next steps
+
+<CardGroup cols="2">
+<Card title="Controllers" href="/docs/basics/controllers" icon="boxes">
+Organize the handlers your middleware protects.
+</Card>
+<Card title="Security headers" href="/docs/security/security-headers" icon="shield">
+The CSP, HSTS and every header in depth.
+</Card>
+<Card title="Authentication" href="/docs/security/authentication" icon="lock">
+Login, guards and the auth middleware.
+</Card>
+<Card title="Package reference" href="https://pkg.go.dev/github.com/AlexGalhardo/vukem/middleware" icon="book">
+Every exported identifier of `middleware`.
+</Card>
+</CardGroup>

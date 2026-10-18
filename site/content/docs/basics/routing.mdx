@@ -1,137 +1,560 @@
 ---
 title: Routing
-description: A thin layer over http.ServeMux with groups, named routes, URL generation and resource controllers.
+description: Map URLs and HTTP methods to handlers with named routes, groups, resource routes and URL generation, on top of Go's http.ServeMux.
 ---
 
-The `router` package collects route definitions, compiles groups and prefixes into Go 1.22+ `http.ServeMux` patterns at boot, and keeps a name → route table for URL generation.
+Every request that reaches your app carries a method (`GET`, `POST`…) and a path (`/posts/42`). Routing is how you tell Vukem which function answers each pair. This page builds the routes of a small blog with posts and comments, one step at a time.
 
-## Basic routes
+You will learn how to:
 
-```go
-r := router.New(nil) // or router.New(&web.Services{...})
+- register routes for each HTTP method and read values from the URL;
+- name routes and build URLs from those names instead of typing paths;
+- share a prefix, a name and middleware across routes with groups;
+- generate the seven RESTful routes of a controller with one line;
+- understand what happens when no route matches, and how to catch mistakes at boot.
 
-r.Get("/", home)                    // GET (also answers HEAD)
-r.Post("/posts", storePost)
-r.Put("/posts/{id}", updatePost)
-r.Patch("/posts/{id}", updatePost)
-r.Delete("/posts/{id}", deletePost)
-r.Options("/posts", options)
-r.Match([]string{"GET", "POST"}, "/search", search)
-r.Any("/webhook", webhook)          // every method
+## The idea
 
-h, err := r.Handler() // compile once at boot
+Think of the router as the front desk of a hotel. A guest says "room 42, please" and the desk sends them to the right door. The router reads "`GET /posts/42`" and sends the request to the right <Term tip="A function that receives the request and writes the response. In Vukem its type is web.HandlerFunc: func(c *web.Ctx) error.">handler</Term>.
+
+| Request | Route pattern | Handler |
+| --- | --- | --- |
+| `GET /` | `/` | `controllers.Home` |
+| `GET /posts` | `/posts` | `posts.Index` |
+| `GET /posts/42` | `/posts/{post}` | `posts.Show` |
+| `POST /posts/42/comments` | `/posts/{post}/comments` | `comments.Store` |
+
+Vukem does not reinvent matching. Under the hood it uses [`http.ServeMux`](https://pkg.go.dev/net/http#ServeMux) from Go's standard library, which learned methods and wildcards in Go 1.22 (the Go blog explains it in [Routing enhancements](https://go.dev/blog/routing-enhancements)). Vukem adds what ServeMux lacks: route names, groups, resource routes, nicer 404 and 405 pages, and checks that run before your server starts.
+
+A handler is a plain Go function. In Go, [functions are values](https://go.dev/tour/moretypes/24): you can pass them to other functions, which is exactly what `r.Get("/", handler)` does.
+
+## Quick start
+
+<Steps>
+<Step title="Open the routes file">
+
+Every starter registers its routes in `routes/web.go`. The function `Web` receives the router `r` and the app. Add an "about" page:
+
+```go title="routes/web.go"
+r.Get("/", controllers.Home).Name("home")
+
+r.Get("/about", func(c *web.Ctx) error {
+	return c.String(http.StatusOK, "A blog about Go.")
+}).Name("about")
 ```
 
-Handlers have the signature `func(c *web.Ctx) error`. `r.Get("/", h)` matches only the root page (Laravel semantics): the router registers it as `/{$}`, since a bare `/` in ServeMux is a catch-all.
+Add `"net/http"` and `"github.com/AlexGalhardo/vukem/web"` to the imports if they are not there yet.
+
+</Step>
+<Step title="Start the server">
+
+```bash
+vukem serve
+```
+
+</Step>
+<Step title="Call the route">
+
+```bash
+curl -i http://localhost:3000/about
+```
+
+```text
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+
+A blog about Go.
+```
+
+</Step>
+<Step title="List every route">
+
+```bash
+vukem route:list
+```
+
+```text
+METHOD  PATH    NAME    MIDDLEWARE
+GET     /up     health  middleware.BodyLimit, ...
+GET     /{$}    home    middleware.BodyLimit, ...
+GET     /about  about   middleware.BodyLimit, ...
+```
+
+`/up` is registered by Vukem itself: it is the health check that load balancers call. `/` shows up as `/{$}`; the next section explains why.
+
+</Step>
+</Steps>
+
+## Where routes live
+
+Routes are plain Go code, registered when the app is built:
+
+```go title="routes/registry.go"
+package routes
+
+import (
+	"github.com/AlexGalhardo/vukem"
+	"github.com/AlexGalhardo/vukem/router"
+)
+
+// All lists the route files, in order.
+func All() []func(r *router.Router, app *vukem.App) error {
+	return []func(r *router.Router, app *vukem.App) error{
+		Web,
+	}
+}
+```
+
+`bootstrap/app.go` passes each function to `vukem.WithRoutes`. `vukem.New` calls them in order, after every provider's `Register`, so a route file may use the services providers added. If a route file returns an error, `vukem.New` stops and returns it. Routes that need a client opened in a provider's `Boot` go in `vukem.WithRoutesAfterBoot` instead; see [the application lifecycle](/docs/architecture/lifecycle).
+
+You may also use the `router` package on its own, without an app:
+
+```go title="main.go"
+package main
+
+import (
+	"log"
+	"net/http"
+
+	"github.com/AlexGalhardo/vukem/router"
+	"github.com/AlexGalhardo/vukem/web"
+)
+
+func main() {
+	// nil services: logging falls back to slog.Default().
+	r := router.New(nil)
+
+	r.Get("/", func(c *web.Ctx) error {
+		return c.String(http.StatusOK, "Welcome to the blog")
+	})
+
+	h, err := r.Handler()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	log.Fatal(http.ListenAndServe(":3000", h))
+}
+```
+
+`router.New(services)` takes the shared [`*web.Services`](/docs/basics/http-context#services) every handler can reach. When you pass `nil`, it creates an empty one. When `services.URLs` is empty, the router installs itself there, so `c.URL(...)` works in handlers.
+
+## Defining routes
+
+There is one method per HTTP verb. Each returns a `*router.Route` you can name or give middleware.
+
+| Method | Registers | Notes |
+| --- | --- | --- |
+| `r.Get(path, h)` | `GET` | Also answers `HEAD` (ServeMux does this for every `GET` pattern) |
+| `r.Post(path, h)` | `POST` | |
+| `r.Put(path, h)` | `PUT` | |
+| `r.Patch(path, h)` | `PATCH` | |
+| `r.Delete(path, h)` | `DELETE` | |
+| `r.Options(path, h)` | `OPTIONS` | |
+| `r.Match(methods, path, h)` | one route per method | Methods are upper-cased (`"get"` works); returns `[]*router.Route` |
+| `r.Any(path, h)` | every method | `vukem route:list` shows its method as `ANY` |
+
+```go title="routes/web.go"
+posts := controllers.NewPostController(db)
+
+r.Get("/posts", posts.Index).Name("posts.index")
+r.Post("/posts", posts.Store).Name("posts.store")
+r.Get("/posts/{post}", posts.Show).Name("posts.show")
+r.Put("/posts/{post}", posts.Update).Name("posts.update")
+r.Delete("/posts/{post}", posts.Destroy).Name("posts.destroy")
+
+// One handler for two methods, e.g. a search form that may GET or POST.
+r.Match([]string{"GET", "POST"}, "/search", posts.Index)
+```
+
+`posts.Index` is a [method value](https://go.dev/ref/spec#Method_values): a method bound to the `posts` value, usable anywhere a function is expected. [Controllers](/docs/basics/controllers) explains the pattern.
+
+### The root route
+
+`r.Get("/", h)` matches **only** the home page. In ServeMux syntax a bare `/` would match every path (it is a prefix), so Vukem registers it as `/{$}`, where `{$}` means "the path ends here". That is why `route:list` prints `/{$}`.
+
+Inside a group the rule is different, and it surprises people:
+
+| You write | Pattern registered | Matches |
+| --- | --- | --- |
+| `r.Get("/", h)` | `GET /{$}` | only `/` |
+| `r.Get("", h)` | `GET /{$}` | only `/` |
+| `g.Get("", h)` in group `/admin` | `GET /admin` | only `/admin` |
+| `g.Get("/", h)` in group `/admin` | `GET /admin/` | `/admin/` **and every path below it**, such as `/admin/anything` |
+
+<Callout type="warning" title="Trailing slash in groups">
+Inside a group, `g.Get("/", h)` registers a ServeMux prefix pattern: it answers `/admin/anything` instead of a 404, and `/admin` redirects to `/admin/`. Write `g.Get("", h)` for the group's own page.
+</Callout>
 
 ## Route parameters
 
-Patterns use ServeMux syntax:
+A segment in braces is a wildcard. Its value is available in the handler:
 
-| Pattern | Matches | Read with |
-| --- | --- | --- |
-| `/posts/{id}` | one segment | `c.Param("id")`, `c.ParamInt("id")` |
-| `/files/{path...}` | the rest of the path | `c.Param("path")` |
-| `/exact/{$}` | only `/exact/` | — |
+| Pattern | Matches | Does not match | Read with |
+| --- | --- | --- | --- |
+| `/posts/{post}` | `/posts/42`, `/posts/hello` | `/posts`, `/posts/42/edit` | `c.Param("post")` |
+| `/files/{path...}` | `/files/a`, `/files/2026/q3.pdf` | | `c.Param("path")` → `2026/q3.pdf` |
+| `/posts/{$}` | `/posts/` only | `/posts/42` | |
 
-```go
-r.Get("/posts/{id}", func(c *web.Ctx) error {
-	id, err := c.ParamInt("id") // int64; a non-numeric id returns 404
+```go title="app/controllers/post_controller.go"
+func (pc *PostController) Show(c *web.Ctx) error {
+	// "42" in /posts/42 becomes the int64 42. A value that is not
+	// a number, such as /posts/abc, returns errs.ErrNotFound (404).
+	id, err := c.ParamInt("post")
 	if err != nil {
 		return err
 	}
-	return c.JSON(http.StatusOK, web.Map{"id": id})
-})
+
+	post, err := orm.QueryOf[models.Post](pc.db).Find(c.Context(), id)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, post)
+}
 ```
+
+Rules that come from ServeMux:
+
+- A wildcard fills a **whole segment**. `/posts/{id}.json` is not a valid pattern; use `/posts/{id}` and a query parameter, or a separate route.
+- `{name...}` must be the last segment. It captures the rest of the path, slashes included.
+- Values are already URL-decoded: `/posts/hello%20world` gives `hello world`.
+- When two patterns could match, the **more specific** one wins. `/posts/create` beats `/posts/{post}`, so the order you register them in does not matter. Two patterns that are equally specific are a [build error](#compiling-and-checking-routes).
+
+`c.Param` returns `""` for a name the pattern does not have. To validate several parameters with a schema, use `web.ParseParams` (see [Requests](/docs/basics/requests#typed-input)).
 
 ## Named routes and URL generation
 
-```go
-r.Get("/posts/{id}", showPost).Name("posts.show")
+Typing `"/posts/" + id` everywhere breaks the day you rename the path. Give the route a name instead and ask the router for its URL:
 
-u, err := r.URL("posts.show", "id", 42) // "/posts/42"
+```go title="routes/web.go"
+r.Get("/posts/{post}", posts.Show).Name("posts.show")
 ```
 
-Parameters are name/value pairs. A missing or unknown parameter is an error, and values are path-escaped (`{path...}` keeps its slashes). Inside handlers use `c.URL(...)`, `c.MustURL(...)` (returns `#` and logs on error) or `c.RedirectRoute(...)`.
+```go
+u, err := r.URL("posts.show", "post", 42)
+// u == "/posts/42", err == nil
+```
 
-Duplicate names are reported by `r.Handler()` at boot, not at request time.
+Parameters come as name/value pairs: `"post", 42`. Values are formatted with `fmt.Sprint` and path-escaped (`"a b"` becomes `a%20b`). A `{path...}` value keeps its slashes and escapes each segment.
+
+`URL` returns an error instead of a wrong link:
+
+| Call | Error |
+| --- | --- |
+| `r.URL("nope")` | `router: no route named "nope"` |
+| `r.URL("posts.show")` | `router: URL("posts.show") missing param "post"` |
+| `r.URL("posts.show", "post", 1, "x", 2)` | `router: URL("posts.show") unknown param "x"` |
+| `r.URL("posts.show", "post")` | `router: URL("posts.show") needs name/value pairs` |
+
+In handlers and templates you rarely call `r.URL` yourself:
+
+| Helper | Use it for |
+| --- | --- |
+| `c.URL(name, params...)` | Same as `r.URL`, returns `(string, error)` |
+| `c.MustURL(name, params...)` | Returns the URL, or `"#"` and logs the error. Handy where the route is known to exist |
+| `c.RedirectRoute(name, params...)` | Redirects to the route (see [Responses](/docs/basics/responses#redirects)) |
+| `{{ route "posts.show" "post" .ID }}` | The same in [views](/docs/basics/views) |
+
+Calling `r.URL` compiles the router (see [below](#compiling-and-checking-routes)), so routes added after the first call are ignored.
+
+`rt.FullName()` returns a route's name with its group prefixes, and `rt.Path()` returns its full pattern path.
 
 ## Groups
 
-Groups share a path prefix, a name prefix and middleware. They nest.
+Groups share three things among their routes: a path prefix, a name prefix and middleware. The blog keeps its back office under `/admin`:
 
-```go
+```go title="routes/web.go"
 r.Group("/admin", func(g *router.Group) {
-	g.Use(requireAdmin)
+	g.Use(appmw.RequireAdmin(app.Source.Get("ADMIN_TOKEN")))
 
-	g.Get("/dashboard", dashboard).Name("dashboard") // admin.dashboard
+	// GET /admin/stats, named "admin.stats".
+	g.Get("/stats", admin.Stats).Name("stats")
 
 	g.Group("/reports", func(rg *router.Group) {
-		rg.Get("/{year}", report).Name("reports.show") // admin.reports.show
-	})
+		// GET /admin/reports/{year}, named "admin.reports.show".
+		rg.Get("/{year}", admin.Report).Name("show")
+	}).Name("reports.")
 }).Name("admin.")
 ```
 
-Group middleware applies to every route of the group, including routes registered before the `Use` call and routes in nested groups. Route-level middleware is added with `.Use(...)` on the route:
+What happens under the hood:
 
-```go
-r.Post("/upload", upload).Use(middleware.BodyLimit(50 << 20))
+- **Prefixes add up.** A group's prefix is cleaned: a missing leading `/` is added and a trailing `/` removed, so `"admin"`, `"/admin"` and `"/admin/"` are the same.
+- **Name prefixes add up too**, and they are applied when the router compiles. That is why `.Name("admin.")` may come after the function: the inner routes still get it. Include the dot yourself.
+- **Group middleware covers every route of the group**, including routes registered before the `g.Use` call and routes of nested groups. Outer groups run first. The full order is on the [Middleware](/docs/basics/middleware#the-order-of-execution) page.
+- `fn` may be `nil`: `r.Group("/admin", nil)` returns an empty group you fill later with `g.Get(...)`.
+
+A group has the same route methods as the router: `Get`, `Post`, `Put`, `Patch`, `Delete`, `Options`, `Match`, `Any`, `Handle`, `Group`, `Resource` and `APIResource`.
+
+### Middleware on one route
+
+`Use` on a route adds middleware to that route only. It runs after the router and group middleware:
+
+```go title="routes/web.go"
+// Covers may be large: allow 20 MiB on this route only.
+r.Post("/posts/{post}/cover", posts.UploadCover).
+	Name("posts.cover").
+	Use(middleware.BodyLimit(20 << 20))
 ```
 
-## Mounting any `http.Handler`
+## Resource routes
 
-```go
-r.Handle("GET /metrics", promhttp.Handler())
-r.Handle("/legacy/", http.StripPrefix("/legacy", legacyMux)) // raw ServeMux semantics
+Most blog pages follow the same shape: list posts, show one, a form to create one, save it, and so on. `Resource` registers all of these routes from one controller:
+
+```go title="routes/web.go"
+r.Resource("posts", posts)
 ```
 
-Adapters convert between the two worlds: `router.Adapt(h, services)` turns a `web.HandlerFunc` into an `http.Handler`, and `router.Wrap(h)` turns an `http.Handler` into a `web.HandlerFunc`.
+The router checks which methods the controller has, through small Go [interfaces](https://go.dev/tour/methods/9), and registers only those:
 
-## Resource controllers
-
-`Resource` registers only the actions a controller implements, detected through one-method interfaces:
-
-| Interface | Method | Route | Name |
+| Controller method | Interface | Route | Name |
 | --- | --- | --- | --- |
-| `router.Indexer` | `Index` | `GET /posts` | `posts.index` |
-| `router.Creator` | `Create` | `GET /posts/create` | `posts.create` |
-| `router.Storer` | `Store` | `POST /posts` | `posts.store` |
-| `router.Shower` | `Show` | `GET /posts/{post}` | `posts.show` |
-| `router.Editor` | `Edit` | `GET /posts/{post}/edit` | `posts.edit` |
-| `router.Updater` | `Update` | `PUT` and `PATCH /posts/{post}` | `posts.update` |
-| `router.Destroyer` | `Destroy` | `DELETE /posts/{post}` | `posts.destroy` |
+| `Index` | `router.Indexer` | `GET /posts` | `posts.index` |
+| `Create` | `router.Creator` | `GET /posts/create` | `posts.create` |
+| `Store` | `router.Storer` | `POST /posts` | `posts.store` |
+| `Show` | `router.Shower` | `GET /posts/{post}` | `posts.show` |
+| `Edit` | `router.Editor` | `GET /posts/{post}/edit` | `posts.edit` |
+| `Update` | `router.Updater` | `PUT /posts/{post}` and `PATCH /posts/{post}` | `posts.update` (the `PATCH` route has no name) |
+| `Destroy` | `router.Destroyer` | `DELETE /posts/{post}` | `posts.destroy` |
 
-```go
-r.Resource("posts", posts)                    // all implemented actions
-r.APIResource("products", products)           // no create/edit form routes
-r.Resource("photos", photos).Only("index", "show")
-r.Resource("tags", tags).Except("destroy").Use(requireAdmin)
-r.Resource("posts.comments", comments)        // /posts/{post}/comments/{comment}
+Each method must have the handler signature `func(c *web.Ctx) error`. A method with another signature is not routed, and no error tells you so.
+
+### The parameter name
+
+The member parameter is the singular of the last segment, with a few English rules:
+
+| Segment | Parameter |
+| --- | --- |
+| `posts` | `{post}` |
+| `categories` | `{category}` |
+| `boxes`, `classes`, `dishes`, `matches` | `{box}`, `{class}`, `{dish}`, `{match}` |
+| `news` | `{new}` (ends in `s`; pick another name or register routes by hand) |
+| `staff` | `{staff}` (unchanged) |
+
+Read it with `c.Param("post")` or `c.ParamInt("post")`.
+
+### APIs, subsets and middleware
+
+```go title="routes/web.go"
+// JSON API: no Create and Edit form routes, even if the controller
+// has those methods.
+r.APIResource("posts", posts)
+
+// Keep only some actions...
+r.Resource("posts", posts).Only("index", "show")
+
+// ...or drop some.
+r.Resource("posts", posts).Except("destroy")
+
+// Middleware for every remaining action of this resource.
+r.Resource("posts", posts).Except("destroy").Use(requireLogin)
 ```
 
-The member parameter is the singular of the segment (`posts` → `{post}`, `categories` → `{category}`). See [Controllers](/docs/basics/controllers).
+`Only` and `Except` take action names (`"index"`, `"create"`, `"store"`, `"show"`, `"edit"`, `"update"`, `"destroy"`) and remove the other routes from the router. Call them **before** `Use`, so the middleware lands only on the routes that stay.
 
-## 404 and 405
+Because removed routes are really gone, you may register the same resource twice with different middleware. Readers browse freely; writers must sign in:
 
-Unmatched requests go through the error handler instead of ServeMux's plain text: `404 Not Found`, or `405 Method Not Allowed` with an `Allow` header listing the methods the path accepts. JSON clients receive `application/problem+json`.
+```go title="routes/web.go"
+r.Resource("posts", posts).Only("index", "show").Use(optionalLogin)
+r.Resource("posts", posts).Except("index", "show").Use(requireLogin)
+```
 
-## Build errors
+### Nested resources
 
-`r.Handler()` compiles the routes once and returns an error for:
+Comments belong to a post. A dot in the name nests the resource:
 
-- conflicting patterns (the message names both routes);
-- invalid patterns;
-- duplicate route names.
+```go title="routes/web.go"
+comments := controllers.NewCommentController(db)
 
-Call it at boot so misconfiguration fails before the server listens. `Router.ServeHTTP` compiles lazily and panics on a build error.
+r.Resource("posts.comments", comments).
+	Only("index", "store", "show", "destroy")
+```
 
-## Listing routes
+| Route | Name |
+| --- | --- |
+| `GET /posts/{post}/comments` | `posts.comments.index` |
+| `POST /posts/{post}/comments` | `posts.comments.store` |
+| `GET /posts/{post}/comments/{comment}` | `posts.comments.show` |
+| `DELETE /posts/{post}/comments/{comment}` | `posts.comments.destroy` |
 
-`r.Routes()` returns method, path, name and middleware for every route, in registration order. It powers `vukem route:list` (`--json` for machine-readable output).
+A comment id is unique on its own, so `/posts/1/comments/7` repeats information. `Shallow()` moves the member routes (`show`, `edit`, `update`, `destroy`) to the top level and keeps the names:
 
-```go
-for _, rt := range r.Routes() {
-	fmt.Println(rt.Method, rt.Path, rt.Name, rt.Middleware)
+```go title="routes/web.go"
+r.Resource("posts.comments", comments).
+	Only("index", "store", "show", "destroy").
+	Shallow()
+```
+
+| Route | Name |
+| --- | --- |
+| `GET /posts/{post}/comments` | `posts.comments.index` |
+| `POST /posts/{post}/comments` | `posts.comments.store` |
+| `GET /comments/{comment}` | `posts.comments.show` |
+| `DELETE /comments/{comment}` | `posts.comments.destroy` |
+
+`Shallow()` does nothing on a resource that is not nested. Inside a group, the group prefix stays: in group `/api`, shallow routes are `/api/comments/{comment}`.
+
+## Mounting plain handlers
+
+Some libraries hand you a standard [`http.Handler`](https://pkg.go.dev/net/http#Handler), such as a metrics endpoint or another router. `Handle` mounts it as is:
+
+```go title="routes/web.go"
+// A method prefix limits the route to GET (and HEAD).
+r.Handle("GET /metrics", metricsHandler)
+
+// No method: every method. A trailing slash mounts a whole subtree.
+r.Handle("/legacy/", http.StripPrefix("/legacy", legacyMux))
+```
+
+The pattern uses raw ServeMux syntax: unlike `r.Get`, a trailing `/` keeps its prefix meaning here. Group prefixes and middleware still apply.
+
+Two adapters convert between the worlds:
+
+| Function | Converts |
+| --- | --- |
+| `router.Adapt(h, services)` | A `web.HandlerFunc` into an `http.Handler` with its own `*web.Ctx` (errors go to the error handler; `c.RouteName()` is empty) |
+| `router.Wrap(h)` | An `http.Handler` into a `web.HandlerFunc` that always returns `nil` |
+
+## When nothing matches
+
+ServeMux answers unknown paths with plain text. Vukem sends them through the [error handler](/docs/basics/error-handling) instead, so they look like the rest of your app:
+
+| Situation | Status | Extra |
+| --- | --- | --- |
+| No route has this path | `404 Not Found` | |
+| The path exists, but not for this method | `405 Method Not Allowed` | `Allow` header listing the methods the path accepts |
+
+Browsers get an HTML page (your `errors/404` view when it exists). JSON clients get [problem details](https://www.rfc-editor.org/rfc/rfc9457):
+
+```bash
+curl -i -X DELETE http://localhost:3000/posts -H "Accept: application/json"
+```
+
+```text
+HTTP/1.1 405 Method Not Allowed
+Allow: GET, HEAD, POST
+Content-Type: application/problem+json
+
+{"type":"about:blank","title":"Method Not Allowed","status":405,
+"instance":"/posts"}
+```
+
+The router finds the allowed methods by trying `GET`, `HEAD`, `POST`, `PUT`, `PATCH`, `DELETE` and `OPTIONS` against the path. Server middleware (static files, CORS) runs before this step, so a file in `public/` is served even though no route matches it.
+
+## Compiling and checking routes
+
+Registering a route only records it. The router turns the records into a real ServeMux once, the first time one of these runs:
+
+- `r.Handler()` (the app calls it when the server starts);
+- `r.URL(...)`;
+- the first request through `r.ServeHTTP`.
+
+At that moment it wraps each handler in its middleware and checks the whole table. These mistakes are reported as errors:
+
+| Mistake | Error text |
+| --- | --- |
+| Two routes with the same full name | `router: duplicate route name "x" (GET /a and GET /b)` |
+| Two patterns that match the same requests | `router: GET /posts/{slug}: pattern "GET /posts/{slug}" ... conflicts with pattern "GET /posts/{id}" ... (conflicts with GET /posts/{id} [posts.show])` |
+| A broken pattern | `router: GET /posts/{id: parsing "GET /posts/{id": at offset 11: bad wildcard segment (must end with '}')` |
+
+`vukem serve` and `vukemtest.New` call `Handler()` at boot, so these errors stop the app before it accepts traffic. `r.ServeHTTP` panics on them instead, because it cannot return an error; call `r.Handler()` yourself when you use the router directly.
+
+Compiling happens once. Routes added afterwards are **ignored** (they answer 404). `r.Compiled()` reports whether compiling already happened.
+
+`rt.Doc(v)` attaches documentation to a route, such as an `api.Operation`. The [OpenAPI generator](/docs/rest-apis/openapi) reads it back.
+
+### Listing routes
+
+`r.Routes()` returns one `router.RouteInfo` per route, in registration order:
+
+| Field | Content |
+| --- | --- |
+| `Method` | `GET`, `POST`…, or `ANY` for `Any` and method-less `Handle` |
+| `Path` | The full pattern, group prefixes included |
+| `Name` | The full name, or `""` |
+| `Middleware` | Function names of the router, group and route middleware (server middleware is not listed) |
+| `Doc` | The value given to `Doc` |
+
+The `vukem route:list` command prints the same table; `vukem route:list --json` prints it as JSON for scripts.
+
+## Security
+
+- **Patterns are exact.** A route answers only the method and path you wrote. `GET` routes also answer `HEAD`, which never has a body.
+- **Ids that are not numbers name nothing.** `c.ParamInt` turns `/posts/abc` into a 404, not a 500 or a database error.
+- **Generated URLs are escaped.** `r.URL` path-escapes every value, so a title with `/` or `?` cannot change the target route.
+- Routing is not authorization. Protect routes with middleware (see [Authentication](/docs/security/authentication#middleware)) and check ownership in the handler (see [Authorization](/docs/security/authorization)).
+
+## Testing
+
+`vukemtest` boots the whole app and sends requests in memory. Test that routes exist, answer the right status and use the right names:
+
+```go title="tests/routes_test.go"
+package tests
+
+import (
+	"testing"
+
+	"github.com/AlexGalhardo/vukem/vukemtest"
+
+	"blog/bootstrap"
+)
+
+func TestRoutes(t *testing.T) {
+	t.Parallel()
+
+	app := vukemtest.New(t, bootstrap.New)
+	c := app.Client(t)
+
+	c.Get("/").AssertOK()
+	c.Get("/posts/abc").AssertNotFound()
+
+	c.Delete("/posts").
+		AssertStatus(405).
+		AssertHeader("Allow", "GET, HEAD, POST")
+
+	u, err := app.Router.URL("posts.comments.show", "comment", 7)
+	if err != nil || u != "/comments/7" {
+		t.Fatalf("URL = %q, %v", u, err)
+	}
 }
-// GET /tags/{tag} tags.show [main.requireAdmin]
 ```
+
+Replace `blog` with your module name from `go.mod`. `AssertRedirectRoute(name, params...)` checks that a response redirects to a named route. See [Testing](/docs/testing/overview).
+
+## Common mistakes
+
+**A group page that answers every path.**
+
+```go
+// Wrong: also answers /admin/anything.
+g.Get("/", admin.Dashboard)
+
+// Right: answers /admin only.
+g.Get("", admin.Dashboard)
+```
+
+**The same name twice.** Boot fails with `router: duplicate route name "posts.show" (GET /posts/{post} and GET /articles/{post})`. Give each route its own name.
+
+**Two wildcards in the same place.** `/posts/{id}` and `/posts/{slug}` match the same requests, so boot fails with `... matches the same requests as GET /posts/{id}`. Keep one pattern and decide inside the handler, or use different paths (`/posts/by-slug/{slug}`).
+
+**Adding routes after the server started.** They are silently ignored and answer 404. Register every route in a route file, before `Handler()` runs.
+
+**HTML forms that send `PUT` or `DELETE`.** Browsers only send `GET` and `POST`. Add a hidden `_method` field and install `middleware.MethodOverride()` as server middleware (the default stack does). See [Middleware](/docs/basics/middleware#built-in-middleware).
+
+## Next steps
+
+<CardGroup cols="2">
+<Card title="Middleware" href="/docs/basics/middleware" icon="layers">
+Run code before and after your handlers.
+</Card>
+<Card title="Controllers" href="/docs/basics/controllers" icon="boxes">
+Group the handlers of posts and comments in structs.
+</Card>
+<Card title="HTTP context" href="/docs/basics/http-context" icon="code">
+Everything a handler can do with `*web.Ctx`.
+</Card>
+<Card title="Package reference" href="https://pkg.go.dev/github.com/AlexGalhardo/vukem/router" icon="book">
+Every exported identifier of `router`.
+</Card>
+</CardGroup>

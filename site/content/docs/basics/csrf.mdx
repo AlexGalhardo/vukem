@@ -1,48 +1,268 @@
 ---
 title: CSRF protection
-description: Cross-site request forgery protection with Go's CrossOriginProtection, plus an optional session token fallback.
+description: Block cross-site request forgery with Go's CrossOriginProtection, trusted origins and explicit bypasses, plus an optional session token for clients that send no origin headers.
 ---
 
-`vukem.DefaultMiddleware` installs `csrf.Middleware` on the router stack. Nothing else is needed for forms or htmx in modern browsers.
+A <Term tip="Cross-Site Request Forgery: another website makes your logged-in browser send a request to this site, so it runs with your cookies without you knowing.">CSRF</Term> attack tricks a visitor's browser into sending a request to your app from another site. If the visitor is logged in to your blog, a page on `evil.example` could post a form to `/posts/7` with `_method=DELETE`, and the browser would attach the session cookie. Vukem blocks these requests by default, without tokens in modern browsers, using the headers browsers already send.
 
-## How it works
+You will learn:
 
-- `http.CrossOriginProtection` rejects cross-origin unsafe requests (`POST`, `PUT`, `PATCH`, `DELETE`) using the `Sec-Fetch-Site` and `Origin` headers. Requests without either header (curl, server-to-server API clients) pass.
-- Rejections answer **403** through the error handler and log a `csrf.rejected` security event.
-- The session cookie uses `SameSite=Lax` as a second layer.
+- how a CSRF attack works and why cookies make it possible;
+- how `http.CrossOriginProtection` tells same-site requests from cross-site ones;
+- what `vukem.DefaultMiddleware` installs and what it rejects;
+- how to allow other origins and exempt webhooks;
+- when to turn on the token fallback, and how forms and htmx carry the token;
+- how to test it and read the errors.
 
-## Configuration
+## The idea
 
-```go
-mw, err := csrf.Middleware(csrf.Config{
-	TrustedOrigins: []string{"https://admin.example.com"}, // other origins allowed to post
-	BypassPatterns: []string{"POST /webhooks/stripe"},      // ServeMux patterns exempt (webhooks)
-	TokenFallback:  true,                                   // see below
-})
-if err != nil {
-	return err // invalid origins or patterns fail at boot
-}
-r.Use(mw)
-```
+Imagine a bank that accepts any letter signed with your stamp. Someone steals nothing: they write a letter "pay 100 to me", and trick you into stamping it while you think you are stamping your own. The bank needs to know **who wrote the letter**, not only whose stamp it carries.
 
-With `DefaultMiddleware`, trusted origins come from `CSRF_TRUSTED_ORIGINS` (comma-separated).
+Your session cookie is the stamp: the browser adds it to every request to your site, whoever started the request. Modern browsers also send headers that say who wrote the letter:
 
-## Token fallback
+| Header | Sent by | Example values |
+| --- | --- | --- |
+| [`Sec-Fetch-Site`](https://developer.mozilla.org/docs/Web/HTTP/Headers/Sec-Fetch-Site) | All current browsers | `same-origin` (your own page), `none` (typed in the address bar), `same-site`, `cross-site` |
+| [`Origin`](https://developer.mozilla.org/docs/Web/HTTP/Headers/Origin) | Browsers on `POST` and `fetch` | `https://blog.example.com` |
 
-With `TokenFallback`, unsafe requests that carry **neither** `Sec-Fetch-Site` nor `Origin` but do carry a session cookie (old browsers) must present the session token, either in the `_token` form field or the `X-CSRF-Token` header. Comparison is constant-time. Register it after the session middleware.
+Go 1.25 added [`http.CrossOriginProtection`](https://pkg.go.dev/net/http#CrossOriginProtection), which reads these headers. Vukem's `csrf` package wraps it, connects it to the error handler and security log, and adds an optional token for old clients. The [OWASP CSRF cheat sheet](https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html) describes the same approach under "Fetch Metadata".
 
-Forms in the starter always include the field, so they keep working with the fallback on:
+## Quick start
+
+Nothing to install: `vukem.DefaultMiddleware` puts `csrf.Middleware` on the router stack.
+
+<Steps>
+<Step title="Write a normal form">
 
 ```html title="resources/views/posts/create.html"
+{{define "content"}}
 <form method="post" action="{{route "posts.store"}}">
 	{{csrfField}}
 	<input name="title">
 	<button>Save</button>
 </form>
+{{end}}
 ```
+
+`{{csrfField}}` is only needed for the [token fallback](#the-token-fallback), but the starter forms include it so they keep working when you turn the fallback on.
+
+</Step>
+<Step title="Post from your own site">
+
+The browser sends `Sec-Fetch-Site: same-origin`, and the post goes through.
+
+</Step>
+<Step title="Pretend to be another site">
+
+```bash
+curl -si -X POST localhost:3000/posts \
+  -H "Sec-Fetch-Site: cross-site" \
+  -H "Accept: application/json" \
+  -d "title=pwned" | head -n 1
+```
+
+```text
+HTTP/1.1 403 Forbidden
+```
+
+```json title="403 problem+json"
+{
+  "type": "about:blank",
+  "title": "Forbidden",
+  "status": 403,
+  "detail": "Cross-site request blocked.",
+  "instance": "/posts"
+}
+```
+
+The server log shows `security event event=csrf.rejected reason=cross-origin sec_fetch_site=cross-site`.
+
+</Step>
+</Steps>
+
+## How a request is checked
+
+`GET`, `HEAD` and `OPTIONS` requests always pass: they must not change anything, so keep state changes in `POST`, `PUT`, `PATCH` and `DELETE` routes ([Routing](/docs/basics/routing)). For the other methods `http.CrossOriginProtection` decides:
+
+| The request has | Result |
+| --- | --- |
+| A path matching a bypass pattern | Allowed |
+| An `Origin` in the trusted origins | Allowed |
+| `Sec-Fetch-Site: same-origin` or `none` | Allowed |
+| `Sec-Fetch-Site` with any other value (`cross-site`, `same-site`) | **Rejected** |
+| No `Sec-Fetch-Site`, and an `Origin` whose host equals the `Host` header | Allowed |
+| No `Sec-Fetch-Site`, and an `Origin` from another host | **Rejected** |
+| Neither header | Allowed (curl, server-to-server clients, very old browsers) |
+
+`same-site` is rejected on purpose: `blog.example.com` and `shop.example.com` are the same site but different origins, and one should not post to the other unless you trust it.
+
+A rejection calls `web.Fail` with a 403 `"Cross-site request blocked."`, so the client gets the [usual error format](/docs/basics/error-handling#content-negotiation) (problem JSON, htmx fragment or HTML page). It also logs a `csrf.rejected` [security event](/docs/security/overview) at Warn, with `reason`, `origin` and `sec_fetch_site`, and dispatches it to your event listeners.
+
+The session cookie's `SameSite=Lax` flag is a second, independent layer: browsers do not attach it to cross-site `POST` requests at all ([Sessions](/docs/basics/sessions#security)).
+
+### Forms with `PUT`, `PATCH` and `DELETE`
+
+HTML forms only send `GET` and `POST`. `middleware.MethodOverride` (also in `DefaultMiddleware`) turns a `POST` with `_method=DELETE` into a `DELETE` before routing; for multipart forms it reads `?_method=` from the action URL. The CSRF check sees an unsafe method either way.
+
+```html title="resources/views/posts/show.html"
+<form method="post" action="{{route "posts.destroy" "post" .ID}}">
+	{{csrfField}}
+	<input type="hidden" name="_method" value="DELETE">
+	<button>Delete post</button>
+</form>
+```
+
+## Trusted origins and bypasses
+
+### Allowing another origin
+
+When your admin panel at `https://admin.example.com` posts to the blog API, list it in `CSRF_TRUSTED_ORIGINS` (comma-separated, spaces trimmed):
+
+```bash title=".env"
+CSRF_TRUSTED_ORIGINS=https://admin.example.com,https://staff.example.com
+```
+
+Each origin must be `scheme://host` with an optional port, and nothing else. A bad value fails the boot:
+
+```text
+csrf: trusted origin "admin.example.com": invalid origin "admin.example.com": scheme is required
+```
+
+### Exempting webhooks
+
+Payment providers and other services post to your webhooks from their servers. They usually send no `Origin` (and pass anyway), but some send one. Exempt those routes explicitly, and verify their signature instead ([Webhooks](/docs/digging-deeper/webhooks)):
+
+```go title="routes/web.go"
+err := vukem.DefaultMiddlewareWith(app, r, vukem.MiddlewareOptions{
+	CSRFBypass: []string{"POST /webhooks/"},
+})
+if err != nil {
+	return err
+}
+```
+
+Patterns use [`http.ServeMux` syntax](https://pkg.go.dev/net/http#hdr-Patterns-ServeMux): `"POST /webhooks/"` covers every path under `/webhooks/` for `POST`, `"POST /hooks/{id}"` one route. An invalid pattern fails the boot, and every bypass is logged at boot as `csrf bypass pattern=...`, so they are never silent.
+
+## The token fallback
+
+Some clients send neither header but do keep cookies: very old browsers, some embedded web views. With `TokenFallback`, a request that is unsafe, has **no** `Sec-Fetch-Site` and **no** `Origin`, runs with a session in its context and carries a cookie, must also carry the session's CSRF token, or it is rejected with `reason=token mismatch`. Clients without cookies (API clients, curl) are not affected.
+
+The token is read from the `X-CSRF-Token` header (`csrf.HeaderName`) or the `_token` form field (`csrf.FieldName`) and compared in [constant time](https://pkg.go.dev/crypto/subtle#ConstantTimeCompare), so its value cannot be guessed byte by byte.
+
+`DefaultMiddleware` does not turn the fallback on. Add a second CSRF middleware with the fallback after it, so it runs after the session middleware. This second middleware runs the origin checks again, so give it the **same** trusted origins and bypass patterns, or it rejects what the first one allowed:
+
+```go title="routes/web.go"
+bypass := []string{"POST /webhooks/"}
+
+err := vukem.DefaultMiddlewareWith(app, r, vukem.MiddlewareOptions{
+	CSRFBypass: bypass,
+})
+if err != nil {
+	return err
+}
+
+var origins []string
+env := app.Source.Get("CSRF_TRUSTED_ORIGINS")
+for o := range strings.SplitSeq(env, ",") {
+	if o = strings.TrimSpace(o); o != "" {
+		origins = append(origins, o)
+	}
+}
+
+fallback, err := csrf.Middleware(csrf.Config{
+	TrustedOrigins: origins,
+	BypassPatterns: bypass,
+	TokenFallback:  true,
+})
+if err != nil {
+	return err
+}
+r.Use(fallback)
+```
+
+### Sending the token
 
 | Helper | Output |
 | --- | --- |
-| `{{csrfField}}` | `<input type="hidden" name="_token" value="…">` |
-| `{{csrfToken}}` | The token string, e.g. for `hx-headers` |
-| `csrf.Token(ctx)` | The token in Go code (`""` without a session) |
+| `{{csrfField}}` | `<input type="hidden" name="_token" value="...">` |
+| `{{csrfToken}}` | The token text, for a header |
+| `csrf.Token(ctx)` | The token in Go code; `""` when there is no session |
+
+The token is 26 random characters stored in the session under `_token`. It is created the first time a helper asks for it, which writes the session (so a page with a form always sets the session cookie). Without a session, for example with `MiddlewareOptions{Stateless: true}`, the helpers render empty.
+
+htmx sends the header on every request when you set it once on the body:
+
+```html title="resources/views/layouts/app.html"
+<body hx-headers:inherited='{"X-CSRF-Token": "{{csrfToken}}"}'>
+```
+
+## Configuration
+
+| Name | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `CSRF_TRUSTED_ORIGINS` | comma-separated origins | empty | Other origins allowed to send unsafe requests |
+| `MiddlewareOptions.CSRFBypass` | `[]string` | `nil` | ServeMux patterns exempt from checks |
+| `csrf.Config.TrustedOrigins` | `[]string` | `nil` | Same as the variable, for your own stack |
+| `csrf.Config.BypassPatterns` | `[]string` | `nil` | Same as `CSRFBypass` |
+| `csrf.Config.TokenFallback` | `bool` | `false` | Require the session token from clients without origin headers |
+
+`vukem.APIMiddleware`, for JSON-only apps, installs no CSRF middleware: API clients authenticate with tokens in headers, which a browser never adds by itself.
+
+## Security
+
+- Protection is **on by default** for every route under `DefaultMiddleware`, and fails at boot on bad origins or patterns.
+- Every rejection and every bypass is logged.
+- It protects requests that use cookies. Endpoints that accept a bearer token are not exposed to CSRF, since another site cannot make the browser add the header.
+- It does not replace authorization: a same-origin request still needs `c.Authorize` ([Authorization](/docs/security/authorization)).
+- Never change state in a `GET` handler. A link or an image tag on another site can trigger a `GET`, and no CSRF check applies.
+
+## Testing
+
+The `vukemtest` client sends no `Sec-Fetch-Site` or `Origin`, like curl, so form posts pass. Add the header to test a rejection:
+
+```go title="tests/csrf_test.go"
+func TestCrossSitePostIsBlocked(t *testing.T) {
+	app := vukemtest.New(t, bootstrap.New)
+
+	app.Client(t).
+		WithHeader("Sec-Fetch-Site", "cross-site").
+		AcceptJSON().
+		PostForm("/posts", url.Values{"title": {"pwned"}}).
+		AssertForbidden().
+		AssertJSONPath("detail", "Cross-site request blocked.")
+
+	vukemtest.AssertDatabaseMissing(t, app, "posts",
+		map[string]any{"title": "pwned"})
+}
+```
+
+## Common mistakes
+
+**A trusted origin without a scheme.** `CSRF_TRUSTED_ORIGINS=admin.example.com` fails the boot with `scheme is required`. Write `https://admin.example.com`.
+
+**A subdomain posting without being trusted.** `shop.example.com` posting to `blog.example.com` sends `Sec-Fetch-Site: same-site` and gets a 403. Add the origin to `CSRF_TRUSTED_ORIGINS`.
+
+**Bypassing CSRF instead of fixing the client.** A bypass turns the check off for every caller of that route. Use it only for routes that verify a signature.
+
+**Changing data in a `GET` route.** `r.Get("/posts/{post}/delete", ...)` is never checked. Use `r.Delete` and a form with `_method`.
+
+**Expecting the fallback from `DefaultMiddleware`.** It is off. Add a second `csrf.Middleware` with `TokenFallback: true` (and the same origins and bypasses) with `r.Use` after `DefaultMiddleware`.
+
+## Next steps
+
+<CardGroup cols="2">
+<Card title="Sessions" href="/docs/basics/sessions" icon="layers">
+Where the token and the cookie live.
+</Card>
+<Card title="Security overview" href="/docs/security/overview" icon="shield">
+Every default and what stays your job.
+</Card>
+<Card title="Webhooks" href="/docs/digging-deeper/webhooks" icon="zap">
+Signed requests from other servers.
+</Card>
+<Card title="HTMX" href="/docs/frontend/htmx" icon="code">
+Forms and requests without page reloads.
+</Card>
+</CardGroup>
+
+Package reference: [csrf](https://pkg.go.dev/github.com/AlexGalhardo/vukem/csrf).

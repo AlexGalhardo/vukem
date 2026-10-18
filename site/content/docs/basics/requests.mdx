@@ -1,69 +1,331 @@
 ---
-title: Requests and input
-description: Read JSON, forms, multipart uploads and query strings safely, with body limits applied by default.
+title: Requests
+description: Read the query string, JSON bodies, HTML forms and uploaded files safely, turn them into typed values, and understand the body size limits applied by default.
 ---
 
-## Generic input
+When a reader posts a comment on the blog, the browser sends the author and the text in the request **body**. A mobile app sends the same data as JSON. A search link carries `?q=go` in the **query string**. This page shows how to read all of them, what Vukem does with each format, and which limits protect your app from oversized or malformed input.
 
-`c.Input()` merges the request body (JSON object, urlencoded or multipart form) over the query string into a `map[string]any`, ready for schema parsing:
+You will learn how to:
 
-```go
-in, err := c.Input()
-if err != nil {
-	return err // 400 malformed JSON, 413 too large…
-}
+- read any input as one map with `c.Input()`, and know exactly how forms and JSON are converted;
+- decode JSON into a struct with `c.BindJSON`;
+- read single form values and uploaded files;
+- validate input into typed values in one step;
+- control how large a body may be, and recognise every error a bad body produces.
+
+## The idea
+
+A request can carry data in three places:
+
+| Place | Example | Read with |
+| --- | --- | --- |
+| The path | `/posts/42/comments` | `c.Param("post")`, see [HTTP context](/docs/basics/http-context#reading-the-request) |
+| The query string | `/posts?q=go&page=2` | `c.Query`, `c.QueryInt`, `c.QueryInput()` |
+| The body | the fields of a form, a JSON document, a file | `c.Input()`, `c.BindJSON`, `c.FormValue`, `c.FormFile` |
+
+The body comes in different formats. The client says which one in the `Content-Type` header:
+
+| `Content-Type` | Sent by | Looks like |
+| --- | --- | --- |
+| `application/x-www-form-urlencoded` | a normal HTML `<form method="post">` | `author=Ana&body=Nice+post%21` |
+| `multipart/form-data` | a form with `enctype="multipart/form-data"`, needed for files | parts separated by a boundary |
+| `application/json` (or `application/*+json`) | JavaScript `fetch`, mobile apps, `curl -H` | `{"author":"Ana","body":"Nice post!"}` |
+
+Body data is **untrusted**: anyone can send anything, of any size. Vukem limits the size of every body it reads, refuses malformed JSON with a clear 400, and leaves the rules about what is valid to your schemas. MDN's [Sending form data](https://developer.mozilla.org/en-US/docs/Learn_web_development/Extensions/Forms/Sending_and_retrieving_form_data) explains the formats in more depth.
+
+## Quick start
+
+A small "echo" route shows what `c.Input()` gives you. Use it while learning, then delete it.
+
+<Steps>
+<Step title="Add the route">
+
+```go title="routes/web.go"
+r.Post("/debug/input", func(c *web.Ctx) error {
+	in, err := c.Input()
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, in)
+})
 ```
 
-- JSON keeps its types; numbers are `json.Number`.
-- Form values are strings; repeated keys and `tags[]` become lists.
-- Bracketed keys nest: `author[email]=a@b.c` becomes `{"author": {"email": "a@b.c"}}`, and `items[0][name]=x` becomes a list of objects.
-- Nesting deeper than 16 levels is ignored.
+</Step>
+<Step title="Send a form">
 
-`c.QueryInput()` does the same for the query string only, and `web.FormToMap(values)` converts any `url.Values`.
+```bash
+curl "http://localhost:3000/debug/input?page=2" \
+  -d "author=Ana" -d "body=Nice post!" \
+  -d "tags[]=go" -d "tags[]=web" -d "meta[lang]=en"
+```
 
-## JSON bodies
+```json
+{"author":"Ana","body":"Nice post!","meta":{"lang":"en"},
+"page":"2","tags":["go","web"]}
+```
 
-```go
+`curl -d` sends `application/x-www-form-urlencoded`, like a browser form. The query parameter `page` is merged in, `tags[]` became a list and `meta[lang]` a nested object.
+
+</Step>
+<Step title="Send JSON">
+
+```bash
+curl "http://localhost:3000/debug/input?page=2&author=query" \
+  -H "Content-Type: application/json" \
+  -d '{"author":"Ana","stars":5,"meta":{"lang":"en"}}'
+```
+
+```json
+{"author":"Ana","meta":{"lang":"en"},"page":"2","stars":5}
+```
+
+The body's `author` replaced the query's, and `stars` kept its number type.
+
+</Step>
+</Steps>
+
+## Reading any input: `c.Input()`
+
+`c.Input()` returns `(map[string]any, error)`. It is what `web.Parse` and `web.Bind` read before validating, so its rules are worth knowing.
+
+What it does, step by step:
+
+1. Converts the query string into a map (rules below).
+2. Looks at the body:
+   - no body: returns the query map;
+   - `Content-Type` is JSON: decodes a JSON **object** and copies its keys over the query map;
+   - urlencoded or multipart form: parses the form, converts it like the query, copies it over, then adds uploaded files;
+   - any other type (`text/plain`, `application/xml`…): the body is **ignored** and only the query is returned.
+3. Applies the [body size limit](#body-size-limits) to whatever it reads.
+
+Because of step 2, a body field always wins over a query parameter with the same name.
+
+### JSON rules
+
+- The top level must be an object. `[1,2]` or `"text"` fails with `400` and `Request body has the wrong JSON type.`
+- Values keep their JSON types: strings, booleans, `nil`, nested maps and lists.
+- Numbers become [`json.Number`](https://pkg.go.dev/encoding/json#Number), a string type that holds the exact digits. Schemas convert it to `int64` or `float64` without losing precision on large ids.
+
+### Form and query rules
+
+Form values are always **strings**: HTML has no number type. The shape comes from the field names:
+
+| Field names sent | Becomes |
+| --- | --- |
+| `author=Ana` | `{"author": "Ana"}` |
+| `tag=go&tag=web` (repeated) | `{"tag": ["go", "web"]}` |
+| `tags[]=go` (one value, `[]` suffix) | `{"tags": ["go"]}` |
+| `meta[lang]=en` | `{"meta": {"lang": "en"}}` |
+| `items[0][name]=a&items[1][name]=b` | `{"items": [{"name": "a"}, {"name": "b"}]}` |
+| `items[0]=a&items[2]=c` (gap) | `{"items": {"0": "a", "2": "c"}}` (stays a map) |
+| `bad[=1` (unbalanced brackets) | dropped |
+| more than 16 levels of brackets | dropped |
+
+A map becomes a list only when its keys are exactly `0`, `1`, … `n-1`. The depth limit stops a crafted field name from building a huge nested structure.
+
+`c.QueryInput()` returns the query string alone with the same rules, and `web.FormToMap(values)` converts any [`url.Values`](https://pkg.go.dev/net/url#Values).
+
+### Files in the input
+
+For multipart forms, each file field is added as a [`*multipart.FileHeader`](https://pkg.go.dev/mime/multipart#FileHeader): one file under its name, several files (or a `name[]` field) as a list. The `z.File` schema validates them; see [Validation](/docs/basics/validation#lists-maps-and-files). Up to 8 MiB of a multipart body is kept in memory; the rest goes to temporary files on disk.
+
+## JSON into a struct: `c.BindJSON`
+
+When a handler only accepts JSON and you want a Go struct without a schema, decode the body directly:
+
+```go title="app/controllers/comment_controller.go"
 var in struct {
-	Title string `json:"title"`
-	Body  string `json:"body"`
+	Author string `json:"author"`
+	Body   string `json:"body"`
 }
+
 if err := c.BindJSON(&in); err != nil {
 	return err
 }
 ```
 
-`BindJSON` requires a JSON content type (415 otherwise), and rejects trailing data and bodies over the size limit. Malformed JSON returns a 400 that names the byte offset.
+The `json:"author"` parts are [struct tags](https://go.dev/ref/spec#Struct_types): they tell [`encoding/json`](https://pkg.go.dev/encoding/json) which JSON key fills each field.
 
-## Forms and uploads
+| Body sent | Result |
+| --- | --- |
+| no JSON `Content-Type` | `415 Unsupported Media Type` |
+| `{"author":"Ana","body":"Hi"}` | `nil`, `in` is filled |
+| `{"author":"Ana","extra":1}` | `nil`: unknown keys are ignored |
+| empty | `400`, `Request body is empty.` |
+| `{"author" "Ana"}` | `400`, `Malformed JSON at position 11.` |
+| `{"author":` (cut short) | `400` with no detail (`unexpected EOF` is logged) |
+| `{"author": 5}` | `400`, `Request body has the wrong JSON type.` |
+| `{"a":1} {"b":2}` | `400`, `Request body must contain a single JSON value.` |
+| larger than the limit | `413 Request Entity Too Large` |
+
+Numbers decode as `json.Number` when the target is `any`. The internal cause of each 400 is logged, never sent to the client.
+
+`BindJSON` does not validate: an empty `author` passes. Prefer [typed input](#typed-input) for anything you save.
+
+## Form values and files
+
+`c.FormValue(name)` returns one value from the form body or, when the body does not have it, from the query string. It returns `""` when the field is absent, and it ignores body parsing errors (an oversized or broken body also gives `""`), so use it for optional, non-critical values only.
 
 ```go
-title := c.FormValue("title") // form or query value
-
-file, header, err := c.FormFile("avatar")
-if err != nil {
-	return err // missing file → 422 with a field error
-}
-defer file.Close()
+// "" when the field is missing; the form body wins over ?draft=.
+draft := c.FormValue("draft") == "1"
 ```
 
-Multipart bodies keep up to 8 MiB in memory before spilling to disk.
+`c.FormFile(name)` returns the first uploaded file of a field:
+
+```go title="app/controllers/post_controller.go"
+file, header, err := c.FormFile("cover")
+if err != nil {
+	// A missing file is a 422 with the field error
+	// "The file is required."
+	return err
+}
+defer file.Close()
+
+c.Log().InfoContext(c.Context(), "cover received",
+	"name", header.Filename,
+	"size", header.Size,
+)
+```
+
+`header.Filename` comes from the client: never use it as a path on disk. `c.FormFile` reads the whole form first (8 MiB in memory, the rest in temporary files). On a request that is not multipart, it returns the standard library's `request Content-Type isn't multipart/form-data` error, which the error handler answers as a 500; make sure the form has `enctype="multipart/form-data"`.
+
+For real uploads, use the [`upload` package](/docs/digging-deeper/uploads). It streams files to storage part by part, checks their real type and size, and cleans up on errors. Do not call `c.Input()`, `c.FormValue()` or `c.FormFile()` before `upload.Receive`: they would read the body first.
+
+## Typed input
+
+Reading a map and checking each field by hand is long and error-prone. A schema describes the input once, and one call reads, converts and validates it:
+
+```go title="app/controllers/comment_controller.go"
+in, err := web.Parse(c, requests.CommentSchema)
+if err != nil {
+	return err
+}
+// in is a requests.Comment with a trimmed Author and Body.
+```
+
+| Function | Reads | Invalid input becomes |
+| --- | --- | --- |
+| `web.Parse(c, schema)` | `c.Input()`: body over query | `*errs.ValidationError` (422) |
+| `web.Bind[T](c)` | `c.Input()`, with a schema built from `T`'s `validate` struct tags | `*errs.ValidationError` (422) |
+| `web.ParseQuery(c, schema)` | the query string only | `*errs.ValidationError` (422) |
+| `web.ParseParams(c, schema, names...)` | the named path parameters | `errs.ErrNotFound` (404): a malformed id names no resource |
+| `web.ParseInput(schema, input)` | a map you built yourself | `*errs.ValidationError`, messages always in English |
+
+Returned from a handler, a `*errs.ValidationError` answers JSON clients with a 422 problem listing each field, sends htmx requests an error fragment, and redirects HTML form posts back with the errors and the old input in the session. The messages follow the request's locale when the app has translations. Schemas, coercion and messages are explained in [Validation](/docs/basics/validation).
 
 ## Body size limits
 
-Every body read applies `web.DefaultMaxBody` (10 MiB) unless middleware set a smaller limit. Oversized bodies fail with **413**.
+Without a limit, one client could send a 10 GB body and fill your memory or disk. Vukem caps every body it reads.
 
-```go
-r.Post("/upload", upload).Use(middleware.BodyLimit(50 << 20)) // per route
-r.Group("/api", func(g *router.Group) {
-	g.Use(middleware.BodyLimit(1 << 20))                      // per group
-})
+| Limit | Value | Applies to |
+| --- | --- | --- |
+| `web.DefaultMaxBody` | 10 MiB | `c.Input()`, `c.BindJSON`, `c.FormValue`, `c.FormFile`, `web.Parse`, `MethodOverride`, when no limit was set before |
+| `middleware.BodyLimit(n)` | your choice | every request through that stack, group or route |
+| multipart memory | 8 MiB | the part of a multipart form kept in RAM; the rest spills to temporary files |
+
+The default stack installs `BodyLimit(web.DefaultMaxBody)` on the router, so every route starts at 10 MiB. Lower it where bodies are small:
+
+```go title="routes/web.go"
+// Comments are short: refuse anything over 64 KiB.
+r.Resource("posts.comments", comments).
+	Only("index", "store", "show", "destroy").
+	Shallow().
+	Use(middleware.BodyLimit(64 << 10))
 ```
 
-## Typed binding
+What happens with an oversized body:
 
-`web.Bind[T](c)`, `web.Parse(c, schema)`, `web.ParseQuery` and `web.ParseParams` decode and validate input into Go types in one step. Invalid input becomes an `*errs.ValidationError`: JSON clients get 422 problem+json, form posts are redirected back with errors and old input flashed. See [Validation](/docs/basics/validation).
+1. If the client declared a `Content-Length` above the limit, `BodyLimit` answers `413 Request Entity Too Large` before your handler runs.
+2. Otherwise the body is read through [`http.MaxBytesReader`](https://pkg.go.dev/net/http#MaxBytesReader). Reading past the limit fails, and `c.Input()` or `c.BindJSON` return `errs.ErrRequestTooLarge` (413).
 
-```go
-in, err := web.Bind[requests.StorePost](c) // typed requests.StorePost or 422
+A later `BodyLimit` (on a route) **replaces** the reading limit of an earlier one instead of nesting under it, so lowering always works. Raising above the router-wide 10 MiB does not work for requests that declare their size, which is almost all of them: the router-level `BodyLimit` refuses them first. Middleware and packages may set a limit themselves with `web.LimitBody(w, r, n)`, and read the current one with `web.BodyLimitOf(r)`.
+
+## Configuration
+
+These limits are constants, not environment variables:
+
+| Name | Value | Meaning |
+| --- | --- | --- |
+| `web.DefaultMaxBody` | `10 << 20` (10 MiB) | Default body limit |
+| multipart memory | 8 MiB | RAM for multipart forms before temporary files |
+| form nesting depth | 16 | Deeper bracketed keys are dropped |
+
+## Security
+
+- **Sizes are capped by default**, and oversized bodies fail with 413 before they fill memory.
+- **Malformed input fails closed**: bad JSON is a 400, never a half-filled struct passed to your code.
+- **Error details stay private**: the client sees a short message such as `Malformed JSON at position 11.`; the decoder's full error goes to the log.
+- **Your job**: validate every field with a schema, never trust `header.Filename` or the declared `Content-Type` of a file, and use the `upload` package for files you store. See the [security overview](/docs/security/overview).
+
+## Testing
+
+The `vukemtest` client sends forms and JSON with the right `Content-Type` for you:
+
+```go title="tests/comments_test.go"
+func TestCommentInput(t *testing.T) {
+	t.Parallel()
+
+	app := vukemtest.New(t, bootstrap.New)
+	api := app.Client(t).AcceptJSON()
+
+	api.PostJSON("/posts", map[string]any{"title": "Hello"}).
+		AssertCreated()
+
+	// JSON body: field errors come back as a 422 problem.
+	api.PostJSON("/posts/1/comments", map[string]any{"author": "A"}).
+		AssertJSONValidationErrors("author", "body")
+
+	// Form body: the browser is redirected back with the errors.
+	app.Client(t).
+		WithHeader("Referer", "/posts/1").
+		PostForm("/posts/1/comments", url.Values{"author": {"A"}}).
+		AssertRedirect("/posts/1").
+		AssertSessionHasErrors("author", "body")
+}
 ```
+
+`c.Do(method, target, body, contentType)` sends any other body, for example a raw string to test malformed JSON. See [Testing](/docs/testing/overview).
+
+## Common mistakes
+
+**JSON without a JSON `Content-Type`.** The body is not read as JSON. `curl -d` labels it as a form, so the whole JSON text becomes one odd field name; with `text/plain` the body is ignored. Either way every field looks missing and validation reports them all as required.
+
+```bash
+# Wrong: curl -d sends a form content type, so this JSON is read as a form.
+curl -d '{"author":"Ana"}' http://localhost:3000/posts/1/comments
+
+# The wrong call answers (with Accept: application/json):
+# 422 {"title":"Validation failed",...,"errors":{
+#   "author":["The author field is required."],
+#   "body":["The body field is required."]}}
+
+# Right
+curl -H "Content-Type: application/json" \
+  -d '{"author":"Ana","body":"Hi"}' \
+  http://localhost:3000/posts/1/comments
+```
+
+**Reading the body twice.** A body is a stream: once read, it is gone. `c.BindJSON` after `c.Input()` fails with `400 Request body is empty.` Read once, with one function.
+
+**Expecting numbers from a form.** `{"stars": "5"}` is a string in form input. Let the schema convert it (`z.Int()`), instead of a type assertion that panics.
+
+**A 413 on uploads above 10 MiB.** The router-wide limit refuses them before your route runs. Keep uploads under the limit, or send large files with [resumable uploads](/docs/digging-deeper/uploads#resumable-uploads-tus) in chunks.
+
+## Next steps
+
+<CardGroup cols="2">
+<Card title="Validation" href="/docs/basics/validation" icon="shield">
+Schemas, coercion and error messages.
+</Card>
+<Card title="Responses" href="/docs/basics/responses" icon="code">
+Answer with JSON, HTML, files and redirects.
+</Card>
+<Card title="Uploads" href="/docs/digging-deeper/uploads" icon="boxes">
+Stream files to storage safely.
+</Card>
+<Card title="Package reference" href="https://pkg.go.dev/github.com/AlexGalhardo/vukem/web" icon="book">
+Every exported identifier of `web`.
+</Card>
+</CardGroup>

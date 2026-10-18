@@ -1,133 +1,414 @@
 ---
 title: Sessions
-description: Encrypted cookie, memory and database session stores with flash messages and old input.
+description: Remember a visitor between requests with encrypted cookie, memory, database or Redis sessions, flash messages, old input, and tools to list and revoke a user's sessions.
 ---
 
-`vukem.DefaultMiddleware` installs the session middleware on the router stack; `app.Sessions()` builds the `*session.Manager` from `SESSION_*` variables.
+HTTP has no memory: every request arrives alone, and the server does not know it came from the same browser as the last one. A **session** gives your app that memory. Vukem keeps a small bag of values per visitor (who is logged in, a "post saved" message, the form a visitor just typed) and finds it again on the next request through a cookie.
 
-## Configuration
+You will learn:
 
-| Variable | Default | Notes |
+- how a session cookie connects requests, and where the data lives (cookie, memory, database, Redis);
+- how to read and write values, flash a message for the next page and keep old form input;
+- when to call `Regenerate` and `Invalidate`, and why;
+- how timeouts, lazy loading and cookie flags work under the hood;
+- how to end a user's other sessions and list their active sessions;
+- every `SESSION_*` variable, and how to test sessions.
+
+## The idea
+
+Think of a cloakroom at a theatre. You hand in your coat and get a numbered ticket. Later you show the ticket and get the same coat back. The ticket is the **session cookie**; the coat is the **session data**.
+
+Vukem has two kinds of cloakroom:
+
+| Kind | The ticket (cookie) holds | The coat (data) lives in |
 | --- | --- | --- |
-| `SESSION_DRIVER` | `cookie` | `cookie` (data encrypted in the cookie), `memory` or `database` (the app database); Redis is installed with `vukem.WithSessionStore` from [`drivers/redis`](/docs/database/redis), which takes precedence |
-| `SESSION_LIFETIME` | `24h` | Absolute lifetime |
-| `SESSION_IDLE_TIMEOUT` | `2h` | Expires after inactivity |
-| `SESSION_COOKIE` | `vukem_session` | Cookie name |
-| `SESSION_SECURE` | `auto` | `auto` = secure in production or when `APP_URL` is `https://` |
-| `SESSION_RECORD_CLIENT` | `false` | Keep the user agent and client network with each logged-in server-side session, for the [active sessions list](#listing-a-users-sessions) |
+| Encrypted cookie (default) | The data itself, encrypted and signed | The browser |
+| Server-side store | A random id | Memory, your database or Redis |
 
-## Stores
+With an encrypted cookie the browser carries the coat, sealed in a box only the server can open: the visitor cannot read or change it. With a server-side store the browser only carries the ticket number, which makes it possible to list and delete sessions from the server.
 
-| Store | Package | Notes |
-| --- | --- | --- |
-| Cookie | `session` | AES-256-GCM with a key derived from `APP_KEY` (HKDF); tampered cookies are rejected and logged as `session.invalid` |
-| Memory | `session.NewMemoryStore()` | Tests and development |
-| Database | `SESSION_DRIVER=database`, or `session.NewSQLStore(db, opts...)` | `sessions` table in the app database (SQLite, PostgreSQL, MySQL), created at boot. Rows are keyed by SHA-256 of the session id, so the table holds no usable cookie, and carry the user id for `RevokeOthers` and `UserSessions`. Expired rows are deleted by `session:prune`, which the app schedules hourly; `serve` runs the scheduler in process (unless `SCHEDULE_IN_SERVE=false`, then run `schedule:work` or `schedule:run` from cron) |
-| Redis | [`drivers/redis`](/docs/database/redis) | `vukem.WithSessionStore(rc.SessionStore(""))`; records the owner of each session, so revoking and listing work as on the database store |
+Go concepts on this page: the session travels in the request's [`context.Context`](https://pkg.go.dev/context), values are stored as [JSON](https://pkg.go.dev/encoding/json), and the encryption is [AES-256-GCM](https://pkg.go.dev/crypto/cipher#NewGCM).
 
-## Usage
+## Quick start
 
-```go
-func (a *AuthController) Login(c *web.Ctx) error {
-	// …verify credentials…
-	s := c.Session()
-	s.Regenerate()             // new id, keep data: prevents session fixation
-	s.Put("user_id", user.ID)
-	_ = c.Flash("success", "Welcome back!")
+`vukem.DefaultMiddleware` already installs the session middleware on the router stack. You only use it.
 
-	return c.RedirectRoute("dashboard")
+<Steps>
+<Step title="Flash a message after saving a post">
+
+```go title="app/controllers/post_controller.go"
+func (pc *PostController) Store(c *web.Ctx) error {
+	in, err := web.Parse(c, requests.StorePostSchema)
+	if err != nil {
+		return err
+	}
+
+	post := models.Post{Title: in.Title, Body: in.Body}
+	if err := orm.Create(c.Context(), pc.db, &post); err != nil {
+		return err
+	}
+
+	// Shown on the next page only, then gone.
+	_ = c.Flash("success", "Post created.")
+
+	return c.RedirectRoute("posts.show", "post", post.ID)
 }
 ```
 
-| Method | Meaning |
+</Step>
+<Step title="Show it in the layout">
+
+```html title="resources/views/layouts/app.html"
+{{with flash "success"}}
+<p class="flash" role="status">{{.}}</p>
+{{end}}
+```
+
+</Step>
+<Step title="Remember something longer">
+
+The blog remembers the name a reader used for their last comment, so the comment form is pre-filled next time:
+
+```go title="app/controllers/comment_controller.go"
+c.Session().Put("comment_author", in.Author)
+```
+
+```go title="app/controllers/post_controller.go"
+author, _ := c.Session().Get("comment_author").(string)
+```
+
+</Step>
+<Step title="Look at the cookie">
+
+```bash
+curl -si -X POST localhost:3000/posts \
+  -d "title=Hello&body=World" | grep -i set-cookie
+```
+
+```text
+Set-Cookie: vukem_session=AbC...; Path=/; Expires=...; Max-Age=7200;
+ HttpOnly; SameSite=Lax
+```
+
+Over HTTPS (or in production) the cookie is `Secure` and named `__Host-vukem_session`.
+
+</Step>
+</Steps>
+
+## Reading and writing values
+
+`c.Session()` returns the request's session as a `web.Session`, or `nil` when no session middleware runs on that route.
+
+| Method | What it does |
 | --- | --- |
-| `Get(key)`, `Put(key, v)`, `Forget(keys...)`, `Pull(key)` | Read, write, remove, read-and-remove (values must be JSON-compatible) |
-| `Flash(key, v)` | Available on the next request only |
-| `Regenerate()` | New id, same data: call on login and privilege changes |
-| `Invalidate()` | Clear everything and issue a new id: call on logout |
+| `Get(key)` | Returns the value, or `nil` |
+| `Put(key, v)` | Stores `v` for this and later requests |
+| `Forget(keys...)` | Removes keys |
+| `Pull(key)` | Returns the value and removes it |
+| `Flash(key, v)` | Stores `v` for the **next** request only |
+| `Regenerate()` | New session id, same data |
+| `Invalidate()` | Clears all data and issues a new id |
+| `ID()` | The session id (meaningful for server-side stores) |
 
-`c.Flash(key, v)` returns an error when no session middleware is installed; `c.FlashValue(key)` reads a flashed value.
+The concrete type, `*session.Session`, also has `GetString(key)`, `GetInt64(key)`, `Has(key)`, `All()` (a copy of your values, internal keys removed) and `Reflash()` (keep the current flash values one request longer). Reach them with a type assertion:
 
-## Revoking a user's other sessions
+```go
+if s, ok := c.Session().(*session.Session); ok {
+	views, _ := s.GetInt64("posts_viewed")
+	s.Put("posts_viewed", views+1)
+}
+```
 
-There are two mechanisms, and the `install:auth` scaffold uses both on password reset (every session) and when two-factor authentication is turned on (every session but the current one), through `Accounts.RevokeOtherSessions`.
+### Values are stored as JSON
+
+Values must be JSON-compatible, and they come back as JSON decoded them: a number comes back as a [`json.Number`](https://pkg.go.dev/encoding/json#Number), a struct as `map[string]any`. That is why `GetInt64` exists:
+
+```go
+s.Put("last_post_id", int64(7))
+// Next request:
+s.Get("last_post_id")   // json.Number("7"), not int64(7)
+s.GetInt64("last_post_id") // 7, true
+```
+
+Store ids and small values, not whole models. Load the model again from the database.
+
+### Flash messages
+
+A flash value lives for exactly one more request. It is perfect for "Post created." after a redirect. `c.Flash(key, v)` is the handler shortcut; it returns an error (a 500 when returned) when no session middleware is installed. `c.FlashValue(key)` reads a flashed value in Go, and the `flash` view function reads it in templates.
+
+Under the hood, `Flash` marks the key as new. When the response is saved, keys flashed by the **previous** request are removed and this request's keys move to "previous". A flashed value is also visible to `Get` in the request that set it.
+
+## Validation errors and old input
+
+When a form post fails [validation](/docs/basics/validation), the error handler calls the session's **validation hook**. It:
+
+1. flashes the field errors under `_errors`;
+2. flashes the submitted form fields under `_old`, except fields whose name contains `password` (in any case), `_token` and `_method`;
+3. redirects back to the `Referer` when it is on the same site, else to `/`.
+
+On the next request:
+
+```go
+c.Errors()          // map[string][]string
+c.Old("title")      // the title the visitor typed
+c.Old("author.email") // nested fields use dots
+```
+
+In views use `{{error "title"}}` (first message), `{{errors}}` (all) and `{{old "title"}}`. Only urlencoded and multipart forms are kept as old input; JSON clients get a 422 JSON answer instead of a redirect. Templ components read the same data with `web.OldInput(ctx, field)`, `web.ErrorsFrom(ctx)` and `web.FlashFrom(ctx, key)`.
+
+## Login, logout and session fixation
+
+A <Term tip="An attack where someone gives you a session id they know (for example in a link), waits for you to log in with it, then uses the same id to act as you.">session fixation</Term> attack works only if the session id stays the same before and after login. So:
+
+```go title="app/controllers/auth_controller.go"
+// After checking the password:
+s := c.Session()
+s.Regenerate()
+s.Put("user_id", user.ID)
+
+// On logout:
+c.Session().Invalidate()
+```
+
+- `Regenerate()` issues a new id and keeps the data. Call it on login and on any privilege change. With a server-side store the old record is deleted.
+- `Invalidate()` clears everything and issues a new id. When nothing is left, the response clears the cookie.
+
+The [authentication](/docs/security/authentication) guards call these for you; call them yourself only for hand-written logins.
+
+## Stores
+
+| Store | How to choose it | Notes |
+| --- | --- | --- |
+| Encrypted cookie | `SESSION_DRIVER=cookie` (default) | AES-256-GCM with a key derived from `APP_KEY` (HKDF). Tampered cookies are rejected and logged as `session.invalid`. Limit: about 4 KB |
+| Memory | `SESSION_DRIVER=memory`, or `session.NewMemoryStore()` | Lost on restart and not shared between servers: development and tests |
+| Database | `SESSION_DRIVER=database`, or `session.NewSQLStore(db, opts...)` | A `sessions` table in the app database (SQLite, PostgreSQL, MySQL), created at boot |
+| Redis | `vukem.WithSessionStore(rc.SessionStore(""))` from [`drivers/redis`](/docs/database/redis) | Shared between servers, records owners |
+| Your own | `vukem.WithSessionStore(s)`, `vukem.WithSessionStoreFunc(fn)` or `app.SetSessionStore(s)` | Any `session.Store` |
+
+A store set in code wins over `SESSION_DRIVER`. `WithSessionStoreFunc(fn)` builds the store on the first `app.Sessions()` call (at boot, through `DefaultMiddleware`), after configuration is loaded, so `fn` may read `REDIS_URL`. `fn` may return `vukem.ErrUseDefault` to keep the `SESSION_DRIVER` store; any other error, or a `nil` store, fails the boot. `app.SetSessionStore`, called from a provider's `Register`, takes precedence over both.
+
+### The database store
+
+- Rows are keyed by `hex(SHA-256(session id))`, never the cookie value, so reading the table (a backup, a replica) yields no usable cookie.
+- Each row records the owner (`user_id`), used by revocation and listing below.
+- `session.NewSQLStore` takes `session.WithDollarPlaceholders()` for PostgreSQL, `session.WithMySQL()` for MySQL/MariaDB and `session.WithTable(name)`; `SESSION_DRIVER=database` picks them for you.
+- `CreateTable` is idempotent and safe when several servers boot together.
+- Expired rows are deleted by the `session:prune` command, which the app schedules hourly. `vukem serve` runs the scheduler in process unless `SCHEDULE_IN_SERVE=false`; then run `vukem schedule:work`, or `schedule:run` from cron.
+
+### Your own store
+
+A store implements `session.Store`:
+
+```go
+type Store interface {
+	Load(ctx context.Context, id string) (data []byte, found bool, err error)
+	Save(ctx context.Context, id string, data []byte, expiry time.Time) error
+	Delete(ctx context.Context, id string) error
+}
+```
+
+Add `session.UserStore` (`Create`, `Update`, `RevokeOthers`) to support revocation, and `session.ListStore` (`ListUser`, `DeleteUserKey`) to support listing. `Update` must return `session.ErrSessionNotFound` when the session is gone.
+
+## What happens on each request
+
+<Steps>
+<Step title="Lazy load">
+The middleware puts an empty session in the context. Nothing is read until your code, a view function or a guard touches it.
+</Step>
+<Step title="Load and check">
+On first use it reads the cookie: it decrypts it, or loads the id from the store (ids must look like 26 base32 characters). An invalid cookie starts a fresh session and logs a `session.invalid` security event. A session past its idle timeout or absolute lifetime also starts fresh, and its old store record is deleted.
+</Step>
+<Step title="Save before the first byte">
+Right before the response writes its headers, the session is saved if it changed, and `Set-Cookie` is added.
+</Step>
+</Steps>
+
+Details that matter:
+
+- An untouched session writes nothing. A **new** visitor whose session was only read (health checks, anonymous pages, CSRF and auth checks) also gets no cookie and no store row: the session is created by the first write (`Put`, `Flash`, a login, or a `csrfField` in a form).
+- The idle timestamp is refreshed at most once a minute, so a busy reader does not rewrite the store on every click.
+- The cookie expires at the earlier of "now + idle timeout" and "creation + lifetime".
+- Cookie data larger than 4 KB is **not saved**; the app logs `session not saved` with `session.ErrCookieTooLarge`. Switch to a server-side store for larger sessions.
+- A request already in flight when its session is revoked does not write it back: the store answers `ErrSessionNotFound` and the cookie is cleared.
+- After an `APP_KEY` rotation, cookies sealed with a key in `APP_PREVIOUS_KEYS` still open, and are re-sealed with the new key on that request.
+
+## Configuration
+
+`app.Sessions()` builds the `*session.Manager` from these variables:
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `SESSION_DRIVER` | `cookie` | `cookie`, `memory` or `database`. Any other value fails the boot (`unknown SESSION_DRIVER`) |
+| `SESSION_LIFETIME` | `24h` | Absolute lifetime, a [Go duration](https://pkg.go.dev/time#ParseDuration) |
+| `SESSION_IDLE_TIMEOUT` | `2h` | Ends the session after this much inactivity |
+| `SESSION_COOKIE` | `vukem_session` | Cookie name; `__Host-` is added when the cookie is `Secure` |
+| `SESSION_SECURE` | `auto` | `auto`: `Secure` in production or when `APP_URL` starts with `https://`. `true` or `1`: always. Anything else: never |
+| `SESSION_RECORD_CLIENT` | `false` | Record the user agent and network of logged-in sessions for the [sessions list](#listing-a-users-sessions) |
+
+`session.Config`, for a manager you build with `session.New`, adds `Path` (default `/`), `Domain` (default: host only), `SameSite` (default `Lax`), `Store`, `CookieKey` (32 bytes, required without a store), `PreviousCookieKeys`, `Production`, `Now` (a clock for tests) and `Log`.
+
+Boot errors protect you from unsafe settings: `session: cookies must be Secure in production (serve over HTTPS)`, `session: SameSite=None requires Secure`, and `session: cookie sessions need a 32-byte CookieKey (derive it from APP_KEY)`.
+
+To run some routes **without** sessions, such as webhooks, pass `vukem.MiddlewareOptions{SessionBypass: []string{"/webhooks/"}}` to `vukem.DefaultMiddlewareWith`. `Stateless: true` removes sessions from the whole app; `c.Flash` and session logins then fail with an error.
+
+## Ending a user's other sessions
+
+After a password reset, or when two-factor authentication is turned on, every other browser logged in as that user should be signed out. Vukem has two tools, and the `install:auth` scaffold uses both through `Accounts.RevokeOtherSessions`.
 
 ### Session version (every driver)
 
-A user type that implements `auth.SessionVersioner` (`AuthSessionVersion() int64`, a `session_version` column in the scaffold) has its version recorded in the session on login. `SessionGuard` loads the user on every request anyway, so comparing costs nothing: a session whose recorded version differs from the user's is signed out (`auth.session_revoked` security event). Bump the version to end every session of the user on every driver, encrypted cookies included:
+A user type that implements `auth.SessionVersioner` (`AuthSessionVersion() int64`, a `session_version` column in the scaffold) has its version recorded in the session on login. `SessionGuard` loads the user on every request anyway, so comparing costs nothing: a session whose recorded version differs from the user's is signed out, with an `auth.session_revoked` security event. Bump the version to end every session of the user on every driver, encrypted cookies included:
 
 ```go
-_, err := db.ExecContext(ctx, "UPDATE users SET session_version = session_version + 1 WHERE id = ?", id)
-// keep the current session signed in (2FA turned on), after the bump:
-err = webGuard.RefreshSession(c)
+const bump = "UPDATE users SET session_version = session_version + 1 " +
+	"WHERE id = ?"
+
+if _, err := db.ExecContext(ctx, bump, id); err != nil {
+	return err
+}
+
+// Keep the current browser signed in (2FA turned on):
+err := webGuard.RefreshSession(c)
 ```
 
-- A stale session is invalidated whole (data, owner and every guard's login), not just signed out of the guard.
-- Declare `AuthSessionVersion` on the value receiver when the guard holds values (`SessionGuard[models.User]`): `NewSessionGuard` panics when only the pointer implements it, since the version would never be checked.
-- Fail closed: an unreadable recorded version counts as stale. A session logged in before the user type had a version carries none, which counts as `0`: it lasts until the first bump.
-- A bump ends sessions at their next request; it does not delete server-side records (they expire). Remember-me tokens are bound to the version they were issued under, so a remember cookie issued before the bump no longer signs in; `RefreshSession` issues the current device a new one. API tokens are not affected (the scaffold deletes them on reset).
+- A stale session is invalidated whole: data, owner and every guard's login.
+- Declare `AuthSessionVersion` on the **value** receiver when the guard holds values (`SessionGuard[models.User]`). `NewSessionGuard` panics when only the pointer implements it, since the version would never be checked.
+- It fails closed: an unreadable recorded version counts as stale. A session logged in before the user type had a version carries none, which counts as `0`, so it lasts until the first bump.
+- A bump ends sessions at their next request; it does not delete server-side records (they expire). Remember-me tokens are bound to the version they were issued under, so an older remember cookie no longer signs in; `RefreshSession` gives the current device a new one. API tokens are not affected (the scaffold deletes them on reset).
 
 ### Server-side revocation
 
-`auth.SessionGuard.Login` records the session owner under `web.SessionUserKey` as `"<guard>:<user id>"` (`guard.SessionUserID(id)`), and server-side stores that implement `session.UserStore` (database, memory and Redis) save it with the session. `RevokeOthers` deletes the records at once:
+`auth.SessionGuard.Login` records the owner under `web.SessionUserKey` as `"<guard>:<user id>"` (`guard.SessionUserID(id)`), and stores that implement `session.UserStore` (database, memory, Redis) save it with the session. `RevokeOthers` deletes the records at once:
 
 ```go
-m, _ := app.Sessions()
+m, err := app.Sessions()
+if err != nil {
+	return err
+}
+
 owner := webGuard.SessionUserID(user.AuthID())
-err := m.RevokeOthers(ctx, owner, c.Session().ID()) // "" as keepID ends them all
+
+// "" instead of the current id ends them all.
+err = m.RevokeOthers(ctx, owner, c.Session().ID())
 ```
 
-- Encrypted cookie sessions (`SESSION_DRIVER=cookie`, the default) and stores without user tracking return `session.ErrRevokeUnsupported`: there is no server-side record to delete. Use the session version for them.
-- A request already in flight when its session is revoked does not write it back: existing sessions are updated, never re-inserted (`UserStore.Update` returns `ErrSessionNotFound`), and its cookie is cleared.
-- One session per owner: when a session logs in with several guards, the last login owns it; a session whose recorded guard has logged out is taken over by the guard still logged in on its next request.
+- Cookie sessions (the default) and stores without user tracking return `session.ErrRevokeUnsupported`: there is no server-side record to delete. Use the session version for them.
+- One session has one owner: when a session logs in with several guards, the last login owns it; a session whose recorded guard logged out is taken over by the guard still logged in, on its next request.
 
 ### Adopting session versions in an existing app
 
 Apps generated by `install:auth` before v0.25 have no `users.session_version` column. Before adding `AuthSessionVersion` to the user model, add a migration:
 
-```go
-s.Table("users", func(t *schema.Table) { t.BigInteger("session_version").Default(0) })
+```go title="database/migrations/add_session_version.go"
+s.Table("users", func(t *schema.Table) {
+	t.BigInteger("session_version").Default(0)
+})
 ```
 
-then bump it where credentials change (copy `bumpSessionVersion`, the `remember_tokens` cleanup and the `RefreshSession` call from a freshly generated app). Existing sessions and remember-me tokens count as version `0` and keep working until the first bump.
+Then bump it where credentials change (copy `bumpSessionVersion`, the `remember_tokens` cleanup and the `RefreshSession` call from a freshly generated app). Existing sessions and remember-me tokens count as version `0` and keep working until the first bump.
 
 ### Upgrading from v0.23 or earlier
 
 - At boot `CreateTable` runs `ALTER TABLE sessions ADD COLUMN user_id` and `CREATE INDEX sessions_user_id`: the database user needs those permissions. Servers booting together do not fail on the race.
-- Rows keep their clear id until their first load re-keys them to SHA-256, or until they expire. A miss on the hashed key costs a second lookup by clear id (two queries for unknown or expired cookies).
-- Sessions logged in before the upgrade carry no owner: `RevokeOthers` does not reach them until the owner's next authenticated request, when the guard backfills `web.SessionUserKey`; idle ones expire with `SESSION_LIFETIME`.
+- Rows keep their clear id until their first load re-keys them to SHA-256, or until they expire. A miss on the hashed key costs a second lookup by clear id.
+- Sessions logged in before the upgrade carry no owner: `RevokeOthers` does not reach them until the owner's next authenticated request, when the guard fills in `web.SessionUserKey`; idle ones expire with `SESSION_LIFETIME`.
 
 ## Listing a user's sessions
 
-Stores that implement `session.ListStore` (database, memory and Redis) list the sessions of an owner for an "active sessions" page, and end one of them:
+Stores that implement `session.ListStore` (database, memory, Redis) can power an "active sessions" page where a user ends sessions on other devices:
 
-```go
-infos, err := m.UserSessions(ctx, owner, c.Session().ID()) // most recently used first
-for _, s := range infos {
-	// s.Handle, s.CreatedAt, s.LastSeenAt (to the minute), s.ExpiresAt, s.UserAgent, s.IP, s.Current
+```go title="app/controllers/account_controller.go"
+owner := webGuard.SessionUserID(user.AuthID())
+
+// Most recently used first.
+infos, err := m.UserSessions(ctx, owner, c.Session().ID())
+if err != nil {
+	return err
 }
 
-err = m.RevokeSession(ctx, owner, handle) // from a form: ErrSessionNotFound unless owner has that session
+// From the form: ErrSessionNotFound unless owner has it.
+err = m.RevokeSession(ctx, owner, c.FormValue("handle"))
 ```
 
-- The handle is the first 16 hex digits of a hash of the stored key: it can be shown in a page and posted back, but it neither loads a session nor names a row of the sessions table. `RevokeSession` only ends sessions of the owner given, so take the owner from the logged-in user, never from the form.
-- `UserAgent` and `IP` are empty unless `SESSION_RECORD_CLIENT=true` (`session.Config.RecordClient`): both are personal data. When on, they are recorded when a logged-in session is created (the login), the user agent capped at 256 bytes and the IP truncated to its network (IPv4 `/24`, IPv6 `/48`), from `c.IP()` (so `TRUSTED_PROXIES` applies); control and format runes (escape sequences, bidi overrides) are removed from the user agent. It is still client input: render it escaped (`html/template` does). Mention both in your privacy notice.
-- Cookie sessions return `session.ErrListUnsupported`: the server never sees the other browsers' cookies.
-- On Redis, `UserSessions`, `RevokeSession` and `RevokeOthers` read each of the user's sessions with a few commands (three per session, one round trip each): fine for the handful of sessions a user has, and kept unpipelined so every command touches one key on Redis Cluster.
+Each `session.Info` has `Handle`, `CreatedAt`, `LastSeenAt` (to the minute), `ExpiresAt`, `UserAgent`, `IP` and `Current` (true for the caller's own session).
 
-## Validation errors and old input
+- The handle is the first 16 hex digits of a hash of the stored key. It may be shown and posted back, but it neither loads a session nor names a row. `RevokeSession` only ends sessions of the owner given, so take the owner from the logged-in user, **never** from the form.
+- `UserAgent` and `IP` are empty unless `SESSION_RECORD_CLIENT=true`, since both are personal data. When on, they are recorded when a logged-in session is created: the user agent capped at 256 bytes with control and format characters removed, the IP cut to its network (IPv4 `/24`, IPv6 `/48`), read with `c.IP()` so `TRUSTED_PROXIES` applies. The user agent is still client input: render it escaped (`html/template` does). Mention both in your privacy notice.
+- Cookie sessions return `session.ErrListUnsupported`: the server never sees other browsers' cookies.
+- On Redis, `UserSessions`, `RevokeSession` and `RevokeOthers` read each of the user's sessions with a few commands (three per session, one round trip each). That suits the handful of sessions a user has, and keeps every command on one key for Redis Cluster.
 
-When a form post fails validation, the session's validation hook flashes the field errors and the submitted input, then redirects back. On the next request:
+## Security
 
-```go
-c.Errors()       // map[string][]string
-c.Old("title")   // previous value; dotted paths for nested fields ("author.email")
+What Vukem does by default:
+
+- Cookies are `HttpOnly` (no JavaScript access), `SameSite=Lax` (not sent on cross-site posts) and `Secure` in production, where a non-secure setting fails the boot.
+- Secure cookies get the `__Host-` prefix, which browsers only accept from the same host, over HTTPS, with `Path=/`.
+- Cookie data is encrypted and authenticated, so visitors can neither read nor forge it. Server-side ids are 26 random characters, stored hashed.
+- Idle and absolute timeouts limit how long a stolen cookie works.
+- Password fields are never flashed as old input.
+
+What stays your job: call `Regenerate` on hand-written logins, keep secrets out of cookie sessions (they are encrypted, but they leave your server), and revoke sessions when credentials change. See the [security overview](/docs/security/overview).
+
+<Callout type="warning" title="APP_KEY decrypts every cookie session">
+Anyone with `APP_KEY` can read and forge cookie sessions. Keep it secret, and rotate it through `APP_PREVIOUS_KEYS` so open sessions survive the change.
+</Callout>
+
+## Testing
+
+The `vukemtest` client keeps cookies between requests like a browser, and can read the session the next request would see:
+
+```go title="tests/posts_test.go"
+func TestCreatePostFlashes(t *testing.T) {
+	app := vukemtest.New(t, bootstrap.New)
+	client := app.Client(t)
+
+	client.PostForm("/posts", url.Values{
+		"title": {"Hello"},
+		"body":  {"World"},
+	}).
+		AssertRedirectRoute("posts.show", "post", 1).
+		AssertFlash("success", "Post created.")
+}
+
+func TestCommentFormRemembersAuthor(t *testing.T) {
+	app := vukemtest.New(t, bootstrap.New)
+
+	app.Client(t).
+		WithSession(map[string]any{"comment_author": "Ann"}).
+		Get("/posts/1").
+		AssertSee(`value="Ann"`)
+}
 ```
 
-In views use `{{error "title"}}`, `{{errors}}` and `{{old "title"}}`. Password fields, `_token` and `_method` are never flashed.
+Other helpers: `AssertSessionHas(key)`, `AssertSessionMissing(key)`, `AssertNoFlash(key)`, `AssertSessionHasErrors(fields...)`, `Response.Session()` and `Client.ActingAs(guard, user)` to start logged in. See [Testing](/docs/testing/overview#sessions-flash-messages-and-logins).
 
-## Behaviour
+## Common mistakes
 
-- Lazy: nothing is read or written unless the handler uses the session; an untouched session writes no cookie. A new visitor whose session is only read (health probes, anonymous pages, auth or CSRF checks) also gets no cookie and no store row: the session is created on the first write (`Put`, `Flash`, login).
-- Idle and absolute timeouts; the idle timestamp is refreshed at most once a minute.
-- Cookies are `HttpOnly`, `SameSite=Lax`, `Secure` per `SESSION_SECURE`. Cookie session data over 4 KB is not saved and is logged as an error (`session.ErrCookieTooLarge`); switch to a server-side store.
+**Using the session on a route without the middleware.** `c.Session()` is `nil`, so `c.Session().Put(...)` panics, and `c.Flash` returns `web: no session (add session middleware to the router stack)`. Check `SessionBypass`, `Stateless` and API route groups.
+
+**Expecting an `int64` back.** `s.Get("last_post_id").(int64)` fails after a redirect, because the value came back as `json.Number`. Use `GetInt64`.
+
+**Storing too much in a cookie session.** The page works until the session grows past 4 KB, then changes silently stop being saved and the log shows `session not saved`. Store ids, or use `SESSION_DRIVER=database`.
+
+**Forgetting `Regenerate` on login.** The visitor keeps the id they had before logging in, which allows session fixation.
+
+**Revoking cookie sessions on the server.** `RevokeOthers` returns `session.ErrRevokeUnsupported` with `SESSION_DRIVER=cookie`. Bump the session version instead.
+
+## Next steps
+
+<CardGroup cols="2">
+<Card title="CSRF protection" href="/docs/basics/csrf" icon="shield">
+How forms stay safe, with or without tokens.
+</Card>
+<Card title="Authentication" href="/docs/security/authentication" icon="lock">
+Session guards, remember-me and logins.
+</Card>
+<Card title="Views" href="/docs/basics/views" icon="layers">
+`flash`, `old` and `error` in templates.
+</Card>
+<Card title="Redis" href="/docs/database/redis" icon="database">
+A session store shared between servers.
+</Card>
+</CardGroup>
+
+Package reference: [session](https://pkg.go.dev/github.com/AlexGalhardo/vukem/session).

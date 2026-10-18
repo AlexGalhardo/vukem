@@ -1,98 +1,553 @@
 ---
 title: Controllers
-description: Group related handlers in plain structs that receive their dependencies through constructors.
+description: Group related handlers in plain Go structs that receive their dependencies through a constructor, and let the router wire their RESTful routes.
 ---
 
-A controller is an ordinary struct whose methods are `web.HandlerFunc`s. There is no base class and no container: dependencies come in through the constructor.
+A blog quickly grows a dozen handlers: list posts, show one, save one, add a comment, delete a comment. Writing them all as loose functions in `routes/web.go` gets messy, and each one needs the database. A controller groups the handlers of one topic in a struct that holds what they share.
 
-```go title="app/controllers/post.go"
+You will learn how to:
+
+- write a controller as a plain struct with a constructor;
+- register its methods as routes, by hand or with `Resource`;
+- build a nested controller for the comments of a post;
+- answer HTML and JSON from the same action;
+- generate controllers with the CLI and test them.
+
+## The idea
+
+Think of a controller as a drawer labelled "comments". Everything about comments goes in that drawer: the functions that answer requests (called **actions**) and the tools they need, such as the database. When you open the drawer, you find all of it in one place.
+
+In Go, the drawer is a [struct](https://go.dev/tour/moretypes/2) and the actions are [methods](https://go.dev/tour/methods/1) on it. There is nothing special about it:
+
+- no base class to extend and no interface to implement;
+- no container that builds it for you: you call its constructor yourself and pass what it needs (this is called <Term tip="Giving an object the things it depends on from the outside, through its constructor, instead of letting it fetch them from global variables.">dependency injection</Term>);
+- each action has the normal handler signature `func(c *web.Ctx) error`.
+
+Because the dependencies come in through the constructor, a test can build a controller with a test database, and you can read the constructor to know everything a controller touches.
+
+## Quick start
+
+<Steps>
+<Step title="Generate the controller">
+
+```bash
+vukem make:controller Comment --resource
+```
+
+```text
+created app/controllers/comment_controller.go
+```
+
+The file has a struct, a constructor and the seven resource actions, each answering a placeholder text.
+
+</Step>
+<Step title="Register it">
+
+```go title="routes/web.go"
+r.Resource("posts.comments", controllers.NewCommentController())
+```
+
+</Step>
+<Step title="See the routes">
+
+```bash
+vukem route:list
+```
+
+```text
+GET     /posts/{post}/comments                 posts.comments.index
+GET     /posts/{post}/comments/create          posts.comments.create
+POST    /posts/{post}/comments                 posts.comments.store
+GET     /posts/{post}/comments/{comment}       posts.comments.show
+GET     /posts/{post}/comments/{comment}/edit  posts.comments.edit
+PUT     /posts/{post}/comments/{comment}       posts.comments.update
+PATCH   /posts/{post}/comments/{comment}
+DELETE  /posts/{post}/comments/{comment}       posts.comments.destroy
+```
+
+(The `MIDDLEWARE` column is left out here.) One line registered every action the controller has. The rest of this page fills them in and trims the routes to the four comments need.
+
+</Step>
+</Steps>
+
+## Anatomy of a controller
+
+Every starter ships a `PostController`. Here is its skeleton:
+
+```go title="app/controllers/post_controller.go"
+package controllers
+
+import (
+	"net/http"
+
+	"github.com/AlexGalhardo/vukem/database"
+	"github.com/AlexGalhardo/vukem/orm"
+	"github.com/AlexGalhardo/vukem/web"
+
+	"blog/app/models"
+)
+
+// PostController handles the blog posts.
 type PostController struct {
-	log   *slog.Logger
-	posts *store.Posts
+	db *database.DB
 }
 
-func NewPost(app *vukem.App, posts *store.Posts) *PostController {
-	return &PostController{log: app.Log, posts: posts}
+// NewPostController returns a PostController using db.
+func NewPostController(db *database.DB) *PostController {
+	return &PostController{db: db}
 }
 
-func (p *PostController) Index(c *web.Ctx) error {
-	return c.JSON(http.StatusOK, p.posts.All())
-}
-
-func (p *PostController) Show(c *web.Ctx) error {
-	id, err := c.ParamInt("post")
+// Show displays one post: GET /posts/{post}.
+func (pc *PostController) Show(c *web.Ctx) error {
+	post, err := pc.find(c)
 	if err != nil {
 		return err
 	}
 
-	post, ok := p.posts.Find(id)
-	if !ok {
-		return errs.ErrNotFound
+	return c.Render("posts/show", post)
+}
+
+// find loads the post named in the URL, or fails with 404.
+func (pc *PostController) find(c *web.Ctx) (models.Post, error) {
+	id, err := c.ParamInt("post")
+	if err != nil {
+		return models.Post{}, err
 	}
 
-	return c.JSON(http.StatusOK, post)
+	return orm.QueryOf[models.Post](pc.db).Find(c.Context(), id)
 }
 ```
 
-## Registering methods
+Read it top to bottom:
 
-Method values are handlers, so they register like any function:
+1. **The struct** lists the dependencies. Here, one database handle. Fields are lower-case, so only the controller's own methods see them.
+2. **The constructor** `NewPostController` is a normal function. It is the only way to get a working controller, so nobody forgets a dependency.
+3. **Actions** are exported methods with the handler signature. The receiver `pc *PostController` is a [pointer](https://go.dev/tour/moretypes/1), so every action shares the same struct instead of a copy.
+4. **Helpers** such as `find` are unexported methods. They keep actions short, and since they do not have the handler signature, the router never exposes them.
+5. **Errors are returned**, never written. `c.ParamInt` returns a 404 for `/posts/abc`, and `Find` returns a 404 when the row does not exist. The [error handler](/docs/basics/error-handling) turns them into the right page or JSON.
 
-```go
-posts := controllers.NewPost(app, store)
+Replace `blog` in the import path with your module name from `go.mod`.
+
+<Callout type="warning" title="No per-request state in fields">
+One controller value serves every request, concurrently, from many [goroutines](https://go.dev/tour/concurrency/1). Never store request data (the current user, the post being edited) in a struct field: two requests would overwrite each other. Keep it in local variables, or in the request context.
+</Callout>
+
+## Registering actions
+
+Methods are [method values](https://go.dev/ref/spec#Method_values): `posts.Show` is a function bound to the `posts` value, so it registers like any handler:
+
+```go title="routes/web.go"
+db, err := app.DB()
+if err != nil {
+	return err
+}
+
+posts := controllers.NewPostController(db)
 
 r.Get("/posts", posts.Index).Name("posts.index")
 r.Get("/posts/{post}", posts.Show).Name("posts.show")
 ```
 
+A page with no dependencies does not need a struct. The starter's home page is a plain function:
+
+```go title="app/controllers/home.go"
+// Home renders the welcome page.
+func Home(c *web.Ctx) error { return c.Render("home", nil) }
+```
+
+```go title="routes/web.go"
+r.Get("/", controllers.Home).Name("home")
+```
+
 ## Resource controllers
 
-Implement any subset of `Index`, `Create`, `Store`, `Show`, `Edit`, `Update` and `Destroy`, then let the router wire the RESTful routes:
+Most controllers manage one kind of thing with the same seven actions. Give the controller methods with these names and let `Resource` register the routes:
 
-```go
-r.Resource("posts", posts)        // HTML app: includes create and edit form routes
-r.APIResource("products", products) // JSON API: no create/edit
+| Action | Route | What it usually does |
+| --- | --- | --- |
+| `Index` | `GET /posts` | Lists posts |
+| `Create` | `GET /posts/create` | Shows the empty form |
+| `Store` | `POST /posts` | Validates the form and saves a new post |
+| `Show` | `GET /posts/{post}` | Shows one post |
+| `Edit` | `GET /posts/{post}/edit` | Shows the form filled with the post |
+| `Update` | `PUT` and `PATCH /posts/{post}` | Validates and saves changes |
+| `Destroy` | `DELETE /posts/{post}` | Deletes the post |
+
+```go title="routes/web.go"
+// HTML app: all seven actions the controller has.
+r.Resource("posts", posts)
+
+// JSON API: no Create and Edit form routes.
+r.APIResource("posts", posts)
 ```
 
-Only implemented methods are routed, detected through one-method interfaces (`router.Indexer`, `router.Storer`…). The full table is in [Routing](/docs/basics/routing#resource-controllers).
+The router detects each action through a one-method interface (`router.Indexer`, `router.Creator`, `router.Storer`, `router.Shower`, `router.Editor`, `router.Updater`, `router.Destroyer`). A controller may implement any subset: one without `Destroy` has no delete route. [Routing](/docs/basics/routing#resource-routes) covers route names, `Only`, `Except`, `Use` and the parameter name rules.
 
-<Tabs>
-<Tab title="Create">
+HTML forms cannot send `PUT` or `DELETE`. The edit form posts a hidden `_method` field, which [`MethodOverride`](/docs/basics/middleware#methodoverride) turns into the real method before routing.
 
-```go
-func (p *PostController) Create(c *web.Ctx) error {
-	return c.HTML(http.StatusOK, newPostForm) // GET /posts/create
+## A nested controller
+
+Comments belong to posts, so their URLs include the post: `/posts/42/comments`. Register the controller as a nested, shallow resource:
+
+```go title="routes/web.go"
+comments := controllers.NewCommentController(db)
+
+r.Resource("posts.comments", comments).
+	Only("index", "store", "show", "destroy").
+	Shallow()
+```
+
+| Route | Action |
+| --- | --- |
+| `GET /posts/{post}/comments` | `Index` |
+| `POST /posts/{post}/comments` | `Store` |
+| `GET /comments/{comment}` | `Show` |
+| `DELETE /comments/{comment}` | `Destroy` |
+
+The comment model and its validation rules:
+
+```go title="app/models/comment.go"
+package models
+
+import "github.com/AlexGalhardo/vukem/orm"
+
+// Comment is a row of the comments table.
+type Comment struct {
+	orm.Model
+
+	PostID int64  `json:"post_id"`
+	Author string `json:"author"`
+	Body   string `json:"body"`
 }
 ```
 
-</Tab>
-<Tab title="Update">
+```go title="app/requests/comment.go"
+package requests
 
-```go
-func (p *PostController) Update(c *web.Ctx) error {
-	// PUT and PATCH /posts/{post}; HTML forms use _method=PUT
-	return c.Redirect("/posts/" + c.Param("post"))
+import "github.com/AlexGalhardo/vukem/z"
+
+// Comment is the input of the comment form.
+type Comment struct {
+	Author string `json:"author" form:"author"`
+	Body   string `json:"body"   form:"body"`
+}
+
+// CommentSchema validates Comment.
+var CommentSchema = z.Struct[Comment](z.Shape{
+	"author": z.String().Trim().Min(2).Max(60),
+	"body":   z.String().Trim().Min(1).Max(2000),
+})
+```
+
+The controller reads `{post}` on the collection routes and `{comment}` on the member routes:
+
+```go title="app/controllers/comment_controller.go"
+package controllers
+
+import (
+	"net/http"
+
+	"github.com/AlexGalhardo/vukem/database"
+	"github.com/AlexGalhardo/vukem/orm"
+	"github.com/AlexGalhardo/vukem/web"
+
+	"blog/app/models"
+	"blog/app/requests"
+)
+
+// CommentController handles the comments of a post.
+type CommentController struct {
+	db *database.DB
+}
+
+// NewCommentController returns a CommentController using db.
+func NewCommentController(db *database.DB) *CommentController {
+	return &CommentController{db: db}
+}
+
+// Index lists the comments of one post: GET /posts/{post}/comments.
+func (cc *CommentController) Index(c *web.Ctx) error {
+	post, err := cc.post(c)
+	if err != nil {
+		return err
+	}
+
+	comments, err := orm.QueryOf[models.Comment](cc.db).
+		Where("post_id", post.ID).
+		OrderBy("id", orm.Asc).
+		Get(c.Context())
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, web.Map{"data": comments})
+}
+
+// Store adds a comment to a post: POST /posts/{post}/comments.
+func (cc *CommentController) Store(c *web.Ctx) error {
+	post, err := cc.post(c)
+	if err != nil {
+		return err
+	}
+
+	in, err := web.Parse(c, requests.CommentSchema)
+	if err != nil {
+		return err
+	}
+
+	comment := models.Comment{
+		PostID: post.ID,
+		Author: in.Author,
+		Body:   in.Body,
+	}
+	if err := orm.Create(c.Context(), cc.db, &comment); err != nil {
+		return err
+	}
+
+	if c.WantsJSON() {
+		url := c.MustURL("posts.comments.show", "comment", comment.ID)
+		return c.Created(url, comment)
+	}
+
+	_ = c.Flash("success", "Comment added.")
+
+	return c.RedirectRoute("posts.show", "post", post.ID)
+}
+
+// Show returns one comment: GET /comments/{comment}.
+func (cc *CommentController) Show(c *web.Ctx) error {
+	id, err := c.ParamInt("comment")
+	if err != nil {
+		return err
+	}
+
+	comment, err := orm.QueryOf[models.Comment](cc.db).
+		Find(c.Context(), id)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, comment)
+}
+
+// Destroy deletes a comment: DELETE /comments/{comment}.
+func (cc *CommentController) Destroy(c *web.Ctx) error {
+	id, err := c.ParamInt("comment")
+	if err != nil {
+		return err
+	}
+
+	comment, err := orm.QueryOf[models.Comment](cc.db).
+		Find(c.Context(), id)
+	if err != nil {
+		return err
+	}
+
+	if err := orm.Delete(c.Context(), cc.db, &comment); err != nil {
+		return err
+	}
+
+	return c.NoContent()
+}
+
+// post loads the post named by {post}, or fails with 404.
+func (cc *CommentController) post(c *web.Ctx) (models.Post, error) {
+	id, err := c.ParamInt("post")
+	if err != nil {
+		return models.Post{}, err
+	}
+
+	return orm.QueryOf[models.Post](cc.db).Find(c.Context(), id)
 }
 ```
 
-</Tab>
-<Tab title="Destroy">
+What happens on `POST /posts/42/comments`:
 
-```go
-func (p *PostController) Destroy(c *web.Ctx) error {
-	return c.NoContent() // DELETE /posts/{post}
-}
-```
-
-</Tab>
-</Tabs>
-
-## Generator
+1. `cc.post` reads `42` from the URL and loads the post. No post 42 means a 404, and the comment is never saved.
+2. `web.Parse` reads the form or JSON body and checks it against `CommentSchema`. Invalid input returns a validation error: a 422 with field errors for JSON clients, or a redirect back with the errors and old input for HTML forms. See [Validation](/docs/basics/validation).
+3. The comment is saved.
+4. A JSON client gets `201 Created` with a `Location` header pointing at the new comment. A browser gets a flash message and a redirect to the post.
 
 ```bash
-vukem make:controller Post             # struct, constructor and an Index action
-vukem make:controller Post --resource  # the seven resource actions
-vukem make:controller Photo --api      # the five JSON actions (no Create/Edit forms)
+curl -i -X POST http://localhost:3000/posts/1/comments \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json" \
+  -d '{"author":"Ana","body":"Nice post!"}'
 ```
 
-Files go to `app/controllers/<name>_controller.go`; a trailing `Controller` in the name is optional. See [CLI](/docs/cli/overview).
+```text
+HTTP/1.1 201 Created
+Content-Type: application/json
+Location: /comments/1
+
+{"id":1,"created_at":"2026-10-18T00:43:29.4799372Z",
+"updated_at":"2026-10-18T00:43:29.4799372Z","post_id":1,
+"author":"Ana","body":"Nice post!"}
+```
+
+## HTML and JSON from one action
+
+The same blog may serve browsers and a mobile app. Instead of two controllers, branch on what the client asked for:
+
+```go title="app/controllers/post_controller.go"
+func (pc *PostController) Show(c *web.Ctx) error {
+	post, err := pc.find(c)
+	if err != nil {
+		return err
+	}
+
+	if c.WantsJSON() {
+		return c.JSON(http.StatusOK, post)
+	}
+
+	return c.Render("posts/show", post)
+}
+```
+
+`c.WantsJSON()` is true when the `Accept` header asks for JSON and not HTML, or when the client sent a JSON body without saying what it accepts. Errors need no branch: the error handler already picks HTML or problem+json. See [HTTP context](/docs/basics/http-context#asking-about-the-request).
+
+## Where dependencies come from
+
+Build controllers in your route file, where the app is at hand:
+
+| Dependency | Get it with |
+| --- | --- |
+| SQL database | `app.DB()` |
+| Logger | `app.Log` (or `c.Log()` inside an action) |
+| Cache | `app.Cache()` |
+| Storage disk | see [Storage](/docs/digging-deeper/storage) |
+| Mailer, queue, events | see their pages under Digging deeper |
+| Settings from `.env` | `app.Source.Get("NAME")` |
+
+```go title="routes/web.go"
+db, err := app.DB()
+if err != nil {
+	return err
+}
+
+posts := controllers.NewPostController(db)
+comments := controllers.NewCommentController(db)
+```
+
+Route files run while the app is built, **before** providers boot. A client that a provider only opens in its `Boot` method (a MongoDB or S3 client, for example) is not ready yet. Register the routes of controllers that need such a client with `vukem.WithRoutesAfterBoot`; [the application lifecycle](/docs/architecture/lifecycle) shows how.
+
+## Generating controllers
+
+```bash
+vukem make:controller Post             # struct, constructor, Index
+vukem make:controller Post --resource  # the seven resource actions
+vukem make:controller Post --api       # five JSON actions
+vukem make:controller Post --force     # overwrite an existing file
+```
+
+| Flag | Actions generated | Placeholder answers |
+| --- | --- | --- |
+| none | `Index` | Text with the controller name |
+| `--resource` | `Index`, `Create`, `Store`, `Show`, `Edit`, `Update`, `Destroy` | Text, and redirects after `Store`, `Update` and `Destroy` |
+| `--api` | `Index`, `Store`, `Show`, `Update`, `Destroy` | JSON; `Show` reads the id with `c.ParamInt`; `Destroy` answers `204` |
+
+The name is converted for you: `Post`, `post` and `PostController` all produce the struct `PostController`, the constructor `NewPostController()` and the file `app/controllers/post_controller.go`. A two-word name such as `BlogPost` produces `blog_post_controller.go` and reads its parameter as `{blog_post}`; rename it to match your route. The command refuses to overwrite an existing file unless you pass `--force`. The generated constructor takes no arguments: add the dependencies you need. All commands are listed in [CLI](/docs/cli/overview).
+
+## Security
+
+- **Authorize inside actions.** Middleware checks that a user is signed in; only the action knows which post is being edited. Call `c.Authorize("update", &post)` before changing it. See [Authorization](/docs/security/authorization).
+- **Validate every input** with `web.Parse` or `web.Bind` before using it; never trust `c.FormValue` for data you save.
+- **Load child records through their parent** when ownership matters. `CommentController.Store` loads the post first, so a comment cannot point to a post that does not exist.
+- Keep the fields of a controller read-only after the constructor, so concurrent requests stay safe.
+
+## Testing
+
+`vukemtest` builds the whole app with an in-memory database, runs the migrations and sends requests without a network:
+
+```go title="tests/comments_test.go"
+package tests
+
+import (
+	"net/url"
+	"testing"
+
+	"github.com/AlexGalhardo/vukem/vukemtest"
+
+	"blog/bootstrap"
+)
+
+func TestComments(t *testing.T) {
+	t.Parallel()
+
+	app := vukemtest.New(t, bootstrap.New)
+	api := app.Client(t).AcceptJSON()
+
+	api.PostJSON("/posts", map[string]any{"title": "Hello"}).
+		AssertCreated()
+
+	api.PostJSON("/posts/1/comments", map[string]any{
+		"author": "Ana",
+		"body":   "Nice post!",
+	}).
+		AssertCreated().
+		AssertHeader("Location", "/comments/1").
+		AssertJSONPath("post_id", 1)
+
+	api.GetJSON("/posts/1/comments").AssertOK().
+		AssertJSONCount("data", 1)
+	api.GetJSON("/posts/99/comments").AssertProblem(404)
+	api.PostJSON("/posts/1/comments", map[string]any{"author": "A"}).
+		AssertJSONValidationErrors("author", "body")
+
+	app.Client(t).
+		PostForm("/posts/1/comments", url.Values{
+			"author": {"Bob"},
+			"body":   {"Hi"},
+		}).
+		AssertRedirect("/posts/1").
+		AssertSessionHas("success")
+
+	api.Delete("/comments/1").AssertNoContent()
+	vukemtest.AssertDatabaseCount(t, app, "comments", 1)
+}
+```
+
+```bash
+go test ./tests/ -run TestComments
+```
+
+```text
+ok  	blog/tests	0.812s
+```
+
+`vukem make:test` generates a test file to start from. See [Testing](/docs/testing/overview).
+
+## Common mistakes
+
+**Passing the struct instead of a pointer.** With pointer receivers, only `*PostController` has the action methods. `Resource` then finds no action and registers **no routes**, without an error.
+
+```go
+// Wrong: no routes at all.
+r.Resource("posts", controllers.PostController{})
+
+// Right: the constructor returns a pointer.
+r.Resource("posts", controllers.NewPostController(db))
+```
+
+**Reading the wrong parameter.** A resource names its parameter after the resource: `{post}`, `{comment}`. `c.ParamInt("id")` reads a parameter that does not exist, gets `""` and answers 404 for every post.
+
+**An action with the wrong signature.** `func (pc *PostController) Index(c *web.Ctx)` (no `error`) does not match `router.Indexer`, so `GET /posts` is not registered and answers 404 or 405.
+
+**Storing the request in the controller.** A field such as `pc.current = post` is shared by every request at once. `go test -race` reports it as a data race; the fix is a local variable.
+
+## Next steps
+
+<CardGroup cols="2">
+<Card title="HTTP context" href="/docs/basics/http-context" icon="code">
+Everything `c *web.Ctx` gives your actions.
+</Card>
+<Card title="Requests" href="/docs/basics/requests" icon="route">
+Read forms, JSON and files safely.
+</Card>
+<Card title="Validation" href="/docs/basics/validation" icon="shield">
+Schemas for `web.Parse` and `web.Bind`.
+</Card>
+<Card title="Database" href="/docs/database/orm" icon="database">
+The `orm` queries used above.
+</Card>
+</CardGroup>
