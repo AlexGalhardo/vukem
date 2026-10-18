@@ -134,7 +134,7 @@ Under the hood:
 | `/resources/public/hot`, `/resources/public/build/` | the Vite dev-server marker and local builds; the image builds its own assets |
 
 <Callout type="warning" title="Two things break the build">
-Commit the lockfile the `assets` stage names, and keep it the one that stage installs from: it fails on a missing lockfile (`npm error The 'npm ci' command can only install with an existing package-lock.json`), which is what happens when the project moves to another package manager and the stage is not updated with it. A project made with `vukem new --framework <path>` points `go.mod` at a local checkout through a `replace` directive; remove it with `go get github.com/AlexGalhardo/vukem@<version>` before you build an image.
+Commit the lockfile the `assets` stage names, and keep it the one that stage installs from: it fails on a missing lockfile (``npm error The `npm ci` command can only install with an existing package-lock.json``), which is what happens when the project moves to another package manager and the stage is not updated with it. A project made with `vukem new --framework <path>` points `go.mod` at a local checkout through a `replace` directive; remove it with `go get github.com/AlexGalhardo/vukem@<version>` before you build an image.
 </Callout>
 
 ### Storage and volumes
