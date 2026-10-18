@@ -81,6 +81,7 @@ npm install
 npm run dev        # http://localhost:3000
 npm run build      # must pass before every release
 npm run lint
+npm run check:mdx  # every .mdx under content/; or: npm run check:mdx -- content/docs/basics/routing.mdx
 ```
 
 Repo tasks: `task site:dev`, `task site:build` (part of `task ci:full`).

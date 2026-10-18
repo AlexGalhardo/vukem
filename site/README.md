@@ -10,6 +10,7 @@ npm install
 npm run dev     # http://localhost:3000
 npm run build   # static build of every page; must pass before a release
 npm run lint
+npm run check:mdx   # compile MDX, check components, /docs links and code line length (add -- <files> to narrow)
 npm run last-updated   # refresh content/last-updated.json (needs full git history)
 ```
 

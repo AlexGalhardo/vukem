@@ -76,17 +76,34 @@ Reference pages (CLI, configuration lists) replace 3–5 with complete tables, o
 
 ## Components
 
-| Component | Use it for |
-| --- | --- |
-| `<Callout type="info">` | A note that helps but is not required |
-| `<Callout type="tip">` | A shortcut or a better way |
-| `<Callout type="warning">` | Data loss, security risk or a breaking behaviour — nothing else |
-| `<Steps>` / `<Step title="…">` | Any ordered procedure (quick starts, tutorials, upgrades) |
-| `<Tabs>` / `<CodeGroup>` | The same thing in alternatives (React/Vue/Svelte, PostgreSQL/MySQL/SQLite) |
-| `<CardGroup>` / `<Card>` | "Next steps" and category landing grids |
-| `<Term tip="…">` | A tooltip that defines a term on first use |
-| Tables | Options, environment variables, mappings (HTTP verb → route → handler), comparisons |
-| `>` blockquote | Quoting a specification, an RFC or the Go docs — always with the source link |
+Every component below is registered in `site/components/mdx/index.tsx`; `npm run check:mdx` fails on any other capitalised tag.
+
+| Component | Props | Use it for |
+| --- | --- | --- |
+| ` ```go title="routes/web.go" ` | `title` in the fence meta (or a bare first word: ` ```go routes/web.go `) | Every code block that is a file: the header shows the path instead of the language. Lines wrap, never scroll; the copy button copies the original text |
+| `<Callout type="info">` | `type`: `info` (default), `tip`, `warning`, `danger`; optional `title` | A note that helps but is not required |
+| `<Callout type="tip">` | as above | A shortcut or a better way |
+| `<Callout type="warning" title="…">` | as above | Data loss, security risk or a breaking behaviour — nothing else |
+| `<Steps>` / `<Step title="…">` | `title` on each step | Any ordered procedure (quick starts, tutorials, upgrades) |
+| `<Tabs>` / `<Tab title="…">` | `title` on each tab | The same thing in alternatives (React/Vue/Svelte, PostgreSQL/MySQL/SQLite) |
+| `<CodeGroup>` | none; wrap fenced code blocks, each tab is labelled by the block's `title` (or language) | The same snippet in alternative files or languages |
+| `<CardGroup cols="2">` / `<Card title="…" href="/docs/…">` | `cols`: `1`, `2` (default), `3`; `title`, optional `href` and `icon` (`book`, `boxes`, `code`, `database`, `layers`, `lock`, `rocket`, `route`, `shield`, `terminal`, `zap`) | "Next steps" and category landing grids |
+| `<Term tip="…">word</Term>` | `tip`: the definition, plain text | Defining a term on its first use on a page. Opens on hover, keyboard focus and tap; dotted underline |
+| `> quote` | — | A short quotation; Markdown blockquotes render as a citation (left border, muted text). Put the source link on the next line |
+| `<Quote source="https://…" author="…" title="…">` | `source` (URL, required), `author` and `title` (link text, default: the URL's host and path) optional | Quoting a specification, an RFC or the Go docs with a linked source line |
+| Tables | — | Options, environment variables, mappings (HTTP verb → route → handler), comparisons. Wide tables scroll inside their frame, never the page |
+
+Example:
+
+````mdx
+A <Term tip="A function that receives the request and writes the response.">handler</Term> answers each request.
+
+<Callout type="warning" title="Breaking">A bare `/` matches every path in ServeMux.</Callout>
+
+<Quote source="https://pkg.go.dev/net/http#hdr-Patterns-ServeMux" author="The Go standard library" title="net/http: Patterns">
+A pattern that ends in a slash matches every path that begins with that prefix.
+</Quote>
+````
 
 Keep callouts rare: at most three per page, one sentence or two each.
 
@@ -101,7 +118,7 @@ Keep callouts rare: at most three per page, one sentence or two each.
 
 1. Change the code and its design doc under `docs/` in the same branch.
 2. Update every site page that mentions the feature (search `site/content` for its names) — options, defaults, examples, upgrade notes.
-3. Validate: `npm run check:mdx -- <files>` for a quick MDX compile, then `npm run lint` and `npm run build` in `site/`.
+3. Validate: `npm run check:mdx -- <files>` (seconds; compiles the MDX with the site's plugins, rejects unregistered components, `/docs/...` links without a page and bare `{placeholders}`, warns on code lines over 100 characters), then `npm run lint` and `npm run build` in `site/`.
 4. Look at the changed pages in a browser in light and dark mode, desktop and mobile.
 5. The `Site` workflow builds the site on every PR and push; Vercel deploys `main`.
 
