@@ -174,7 +174,7 @@ vukem serve
 
 Under the hood:
 
-- **What it watches.** Files ending in `.go` or `.templ`, plus `go.mod`, `go.sum` and `.env`. It skips hidden folders and `node_modules`, `vendor`, `storage`, `bin`, `dist`, `public` and `tmp`. Generated `*_templ.go` files are ignored, so a templ change rebuilds once.
+- **What it watches.** Files ending in `.go` or `.templ`, plus `go.mod`, `go.sum`, `.buildtags` and `.env`. It skips hidden folders and `node_modules`, `vendor`, `storage`, `bin`, `dist`, `public` and `tmp`. Generated `*_templ.go` files are ignored, so a templ change rebuilds once.
 - **Polling.** It compares modification times every `--poll` interval. No file-system notification library is involved, so it behaves the same on Windows, macOS and Linux.
 - **templ.** When `.templ` files exist, `go tool templ generate` runs before each build.
 - **Safe swaps.** It builds to `.vukem/serve/app-next`, stops the old process, then renames the new file into place. That works on Windows, where a running `.exe` cannot be overwritten.
@@ -551,7 +551,7 @@ vukem openapi:export > openapi.json
 vukem send-reports
 ```
 
-`vukem` builds `cmd/app` into `.vukem/bin/app` and runs it with the same arguments, input and output. It rebuilds only when a `.go`, `.templ`, `go.mod` or `go.sum` file is newer than the binary, so repeated commands start at once. Outside a project you get `unknown command "migrate" (app commands need a Vukem project with cmd/app)`. Running the binary yourself works too: `go run ./cmd/app migrate`.
+`vukem` builds `cmd/app` into `.vukem/bin/app` and runs it with the same arguments, input and output. It rebuilds only when a `.go`, `.templ`, `go.mod`, `go.sum` or `.buildtags` file is newer than the binary, so repeated commands start at once. A rebuild runs `templ generate` first in templ projects, like `vukem serve`. Outside a project you get `unknown command "migrate" (app commands need a Vukem project with cmd/app)`. Running the binary yourself works too: `go run ./cmd/app migrate`.
 
 Unlike the global CLI, app commands use the plain `flag` package, so **flags go before positional arguments**. `db:seed` is the exception: it reads seeder names first, then flags (`db:seed UsersSeeder -force`), because the flags it accepts depend on the seeders you name.
 

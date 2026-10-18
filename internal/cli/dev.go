@@ -33,7 +33,7 @@ func exe(name string) string {
 var skipDirs = []string{".git", cacheDir, "node_modules", "vendor", "storage", "bin", "dist", "public", "tmp"}
 
 // sourcesModTime returns the newest modification time of the Go and templ
-// sources (and go.mod/go.sum) of the project.
+// sources (and go.mod, go.sum and .buildtags) of the project.
 func sourcesModTime(dir string) (time.Time, error) {
 	var newest time.Time
 
@@ -61,8 +61,9 @@ func walkSources(dir string, fn func(path string, info fs.FileInfo)) error {
 		}
 
 		name := d.Name()
+		// .buildtags changes what go build compiles, so it is a source too.
 		if strings.HasSuffix(name, ".go") || strings.HasSuffix(name, ".templ") || name == "go.mod" ||
-			name == "go.sum" {
+			name == "go.sum" || p == filepath.Join(dir, buildTagsFile) {
 			info, err := d.Info()
 			if err != nil {
 				return err
@@ -91,6 +92,14 @@ func appBinary(ctx context.Context, env *Env) (string, error) {
 
 	if info, err := os.Stat(bin); err == nil && info.ModTime().After(newest) {
 		return bin, nil
+	}
+
+	// Same steps as vukem dev: stale *_templ.go files would compile the
+	// previous components.
+	if hasTempl(env) {
+		if err := templGenerate(ctx, env); err != nil {
+			return "", err
+		}
 	}
 
 	if err := goBuild(ctx, env, bin); err != nil {
