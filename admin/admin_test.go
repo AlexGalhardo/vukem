@@ -3,6 +3,8 @@ package admin_test
 import (
 	"io/fs"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -235,5 +237,37 @@ func TestAdminSearchEscapesWildcards(t *testing.T) {
 	for _, tt := range tests {
 		c.Get("/admin/posts?" + url.Values{"q": {tt.q}}.Encode()).
 			AssertOK().AssertSee(tt.see).AssertDontSee(tt.dontSee).AssertSee("1 record")
+	}
+}
+
+// TestTemplatesListedInDocs keeps the overridable template list in
+// docs/admin.md and on the site in step with the embedded templates.
+func TestTemplatesListedInDocs(t *testing.T) {
+	t.Parallel()
+
+	var names []string
+
+	err := fs.WalkDir(admin.Templates(), ".", func(p string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			names = append(names, p)
+		}
+
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, doc := range []string{"../docs/admin.md", "../site/content/docs/digging-deeper/admin.mdx"} {
+		data, err := os.ReadFile(filepath.FromSlash(doc))
+		if err != nil {
+			t.Fatalf("read %s: %v", doc, err)
+		}
+
+		for _, name := range names {
+			if !strings.Contains(string(data), "`"+name+"`") {
+				t.Errorf("%s does not list the overridable template %s", doc, name)
+			}
+		}
 	}
 }

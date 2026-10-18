@@ -50,7 +50,7 @@ return panel.Mount(r)
 | `Prefix` | `/admin` | URL prefix |
 | `Ability` | `admin` | Gate ability required on every page |
 | `Title` | `Admin` | Header text |
-| `Views` | embedded | `fs.FS` overriding templates by path (`layouts/admin.html`, `index.html`, `show.html`, `form.html`, `delete.html`, `dashboard.html`, `audit.html`, `partials/pager.html`); `admin.Templates()` returns the originals to copy |
+| `Views` | embedded | `fs.FS` overriding templates by path (`layouts/admin.html`, `index.html`, `show.html`, `form.html`, `delete.html`, `dashboard.html`, `audit.html`, `flags.html`, `partials/pager.html`); `admin.Templates()` returns the originals to copy |
 
 ## Resources
 

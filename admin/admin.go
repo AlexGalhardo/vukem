@@ -94,7 +94,7 @@ type Config struct {
 	Title string
 	// Views overrides embedded templates by path: layouts/admin.html,
 	// index.html, show.html, form.html, delete.html, dashboard.html,
-	// audit.html, flags.html.
+	// audit.html, flags.html, partials/pager.html.
 	Views fs.FS
 	// Flags adds a page at <Prefix>/_flags to change the global value of
 	// the registered feature flags (app.Flags()); it needs the
