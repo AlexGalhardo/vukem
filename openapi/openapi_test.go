@@ -359,3 +359,47 @@ func TestBuildRejectsDuplicateOperationIDs(t *testing.T) {
 		t.Fatalf("Build(one version) error = %v", err)
 	}
 }
+
+type lookupProduct struct {
+	ID    int64  `json:"id"    validate:"required,positive" doc:"Product identifier"`
+	Trace string `json:"trace"                              doc:"Caller trace id"`
+}
+
+// lookupParams builds the parameters of a route whose path parameter and
+// query parameter both carry a doc tag.
+func lookupParams(t *testing.T) map[string]openapi.Parameter {
+	t.Helper()
+
+	r := router.New(nil)
+	api.Register(r, "GET /products/{id}", api.Op{Name: "products.show"},
+		func(*web.Ctx, lookupProduct) (page, error) { return page{}, nil })
+
+	if _, err := r.Handler(); err != nil {
+		t.Fatal(err)
+	}
+
+	doc, err := openapi.Build(r.Routes(), openapi.Info{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	params := map[string]openapi.Parameter{}
+	for _, p := range doc.Paths["/products/{id}"]["get"].Parameters {
+		params[p.Name] = p
+	}
+
+	return params
+}
+
+func TestPathParameterDescriptionFromDocTag(t *testing.T) {
+	t.Parallel()
+
+	params := lookupParams(t)
+	if got := params["id"].Description; got != "Product identifier" {
+		t.Errorf("path parameter id description = %q, want the doc tag", got)
+	}
+
+	if got := params["trace"].Description; got != "Caller trace id" {
+		t.Errorf("query parameter trace description = %q, want the doc tag", got)
+	}
+}

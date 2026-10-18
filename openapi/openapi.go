@@ -287,12 +287,13 @@ func pathParams(s *Schemas, path string, types map[string]Field) []Parameter {
 	var out []Parameter
 
 	for _, m := range paramRe.FindAllStringSubmatch(path, -1) {
-		sc := Schema{"type": "string"}
+		p := Parameter{Name: m[1], In: "path", Required: true, Schema: Schema{"type": "string"}}
 		if f, ok := types[m[1]]; ok {
-			sc = s.of(f.Type, f.Rules)
+			p.Schema = s.of(f.Type, f.Rules)
+			p.Description = f.Doc
 		}
 
-		out = append(out, Parameter{Name: m[1], In: "path", Required: true, Schema: sc})
+		out = append(out, p)
 	}
 
 	return out
