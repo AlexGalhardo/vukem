@@ -1,293 +1,495 @@
 ---
 title: Security building blocks
-description: SSRF-safe HTTP client, signed URLs, incoming and outgoing webhooks, security events and the crypto-randomness lint rule.
+description: Reference for Vukem's small security tools - the SSRF-safe HTTP client, webhook signatures and deduplication, signed outgoing webhooks, security and audit events, and the crypto-randomness lint rule.
 ---
+
+Some security problems show up in many features: fetching a URL a user typed, checking that a webhook really came from Stripe, sending your own webhooks, being alerted when someone attacks the login form. Vukem ships one small, tested tool for each, so you do not have to get the details right again in every feature. This page is the **reference** for those tools; the guided tour of webhooks lives on [Webhooks](/docs/digging-deeper/webhooks).
+
+You will learn:
+
+- how to fetch user-supplied URLs without letting them reach your internal network (SSRF);
+- how to verify incoming webhooks (HMAC and Standard Webhooks) and drop duplicates;
+- how outgoing webhooks are signed, retried and kept away from internal addresses;
+- which security events Vukem emits and how to alert on them;
+- how audit events differ from security events;
+- what the `crypto-randomness` lint rule enforces.
+
+## The idea
+
+Think of a toolbox next to the front door. Each tool solves one recurring job, and each one is built to **fail closed**: when it cannot be sure, it says no.
+
+| Job | Tool | Threat it handles |
+| --- | --- | --- |
+| Fetch a URL a user gave you | `httpclient.Safe` | <Term tip="Server-Side Request Forgery: an attacker makes your server send a request to a place only your server can reach, such as the cloud metadata service or an internal database.">SSRF</Term> ([A01](https://owasp.org/Top10/2025/A01_2025-Broken_Access_Control/)) |
+| Prove a link was not changed | `signed.Signer` | tampered ids ([Signed URLs](/docs/security/signed-urls)) |
+| Prove a webhook came from the provider | `webhook.HMAC`, `webhook.Standard` | forged or replayed requests ([A08](https://owasp.org/Top10/2025/A08_2025-Software_or_Data_Integrity_Failures/)) |
+| Handle each webhook event once | `webhook.Dedupe` | double processing of retries |
+| Send your own webhooks | `webhook.Sender` | SSRF through user URLs, unsigned or plaintext deliveries |
+| Know when you are attacked | `security.Event` | silent attacks ([A09](https://owasp.org/Top10/2025/A09_2025-Security_Logging_and_Alerting_Failures/)) |
+| Keep a trail of routine actions | `security.Audit` | "who did this?" with no answer |
+
+The running example is the blog again: it shows a preview card for links in posts, receives bounce webhooks from its mail provider, and tells each author's own integration when a comment arrives.
+
+## Quick start: a safe link preview
+
+<Steps>
+<Step title="1. Use the safe client">
+
+```go title="app/previews/previews.go"
+package previews
+
+import (
+	"context"
+	"io"
+	"net/http"
+	"time"
+
+	"github.com/AlexGalhardo/vukem/httpclient"
+)
+
+var client = httpclient.Safe(httpclient.Options{
+	Timeout: 5 * time.Second,
+	MaxBody: 1 << 20,
+})
+
+// Fetch downloads at most 1 MiB of the page at rawURL.
+func Fetch(ctx context.Context, rawURL string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(
+		ctx, http.MethodGet, rawURL, http.NoBody,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	return io.ReadAll(resp.Body)
+}
+```
+
+</Step>
+<Step title="2. Try an internal address">
+
+```go
+_, err := previews.Fetch(ctx, "http://169.254.169.254/latest/meta-data/")
+fmt.Println(errors.Is(err, httpclient.ErrBlockedAddress))
+```
+
+```text
+true
+```
+
+The cloud metadata service, which holds the server's credentials on most clouds, is refused before a single byte is sent.
+
+</Step>
+</Steps>
 
 ## SSRF-safe HTTP client
 
-Use `httpclient.Safe` for every outbound request to a URL a user controls (webhooks, link previews, avatars by URL):
+When a user can choose a URL your server fetches (link previews, avatars by URL, webhook endpoints, imports), they can also choose `http://localhost:6379` or `http://10.0.0.5/admin`: places the internet cannot reach but your server can. The [OWASP SSRF cheat sheet](https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html) explains the attack.
 
-```go
-client := httpclient.Safe(httpclient.Options{Timeout: 5 * time.Second, MaxBody: 2 << 20})
-resp, err := client.Get(userURL)
-// or: resp, err := httpclient.Get(ctx, userURL)
-```
+`httpclient.Safe(opts)` returns a normal [`*http.Client`](https://pkg.go.dev/net/http#Client) that:
 
-- Only public addresses: loopback, private, link-local (cloud metadata `169.254.169.254`), CGNAT, multicast and reserved ranges are refused, also as IPv4-mapped IPv6.
-- The check runs on the resolved IP at connect time, so DNS rebinding and redirects to internal hosts fail too.
-- `http`/`https` only, at most 5 redirects, no proxy, timeouts, and bodies over `MaxBody` fail. `Options.Allow` adds trusted prefixes.
+- checks the **resolved IP address of every connection** in the dialer's `Control` hook, so DNS tricks (a public name that resolves to `127.0.0.1`, or <Term tip="An attacker's DNS answers with a public IP when you check it and an internal one when you connect.">DNS rebinding</Term>) and redirects to internal hosts fail too;
+- refuses anything but `http` and `https`, in the first request and in every redirect;
+- ignores proxy environment variables (`HTTP_PROXY`), since a proxy would hide the real destination;
+- follows at most `MaxRedirects` redirects;
+- bounds the whole request with `Timeout` and the body with `MaxBody`.
+
+### What is blocked
+
+| Range | What it is |
+| --- | --- |
+| loopback (`127.0.0.0/8`, `::1`), unspecified (`0.0.0.0/8`, `::`) | the server itself |
+| private (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `fc00::/7`) | internal networks |
+| link-local (`169.254.0.0/16`, `fe80::/10`) | cloud metadata (`169.254.169.254`) |
+| CGNAT `100.64.0.0/10`, `192.0.0.0/24`, `198.18.0.0/15`, `192.88.99.0/24` | carrier and special-purpose ranges |
+| documentation (`192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24`, `2001:db8::/32`) | never routable |
+| multicast and reserved (`224.0.0.0/4`, `240.0.0.0/4`, `255.255.255.255`, `ff00::/8`, `100::/64`) | not unicast hosts |
+| IPv6 forms that embed IPv4: IPv4-mapped and -compatible, IPv4-translated, NAT64 (`64:ff9b::/96`, `64:ff9b:1::/48`), 6to4 (`2002::/16`), Teredo (`2001::/32`), site-local (`fec0::/10`) | a gateway may route them to internal IPv4 hosts |
+
+An IPv4-mapped address such as `::ffff:127.0.0.1` is checked as `127.0.0.1`.
+
+### Options
+
+| Option | Default | What it does |
+| --- | --- | --- |
+| `Timeout` | 10s | bounds the whole request, the dial, the TLS handshake and the wait for headers |
+| `MaxBody` | 10 MiB | a larger `Content-Length` fails at once; reads past it fail with `httpclient.ErrBodyTooLarge` |
+| `MaxRedirects` | 5 | more fail with `httpclient: stopped after 5 redirects` |
+| `Allow` | none | extra `netip.Prefix` ranges that may be reached, such as an internal service network; use sparingly |
+| `WrapTransport` | none | wraps the transport (tracing, metrics); the address check stays inside, so a delegating wrapper cannot bypass it |
+
+Errors:
+
+| Error | When |
+| --- | --- |
+| `httpclient.ErrBlockedAddress` | the destination resolved to a blocked address |
+| `httpclient.ErrBodyTooLarge` | the body is larger than `MaxBody` |
+| `httpclient.ErrNilTransport` | `WrapTransport` returned `nil`; every request fails instead of falling back to `http.DefaultTransport`, which has no address check |
+| `httpclient: scheme "file" refused` | a scheme other than `http` or `https` |
+
+`httpclient.Get(ctx, url)` is `Safe(Options{})` plus a GET in one call. `httpclient.Allowed(ip, allow)` is the address check itself, if you need it elsewhere. The framework itself fetches no user-supplied URLs; `webhook.Sender` and your own features use this client.
 
 ## Signed URLs
 
-```go
-key, err := app.DeriveKey("signed.urls", 32) // config.ErrKeyMissing without APP_KEY
-if err != nil {
-	return err
-}
-
-signer := signed.New(key). // panics on a key shorter than 32 bytes
-	WithPreviousKeys(app.DerivePreviousKeys("signed.urls", 32)...) // APP_KEY rotation
-link, err := signer.Sign(appURL+"/unsubscribe/42", 7*24*time.Hour) // adds expires and signature
-
-r.Get("/unsubscribe/{id}", unsubscribe).Use(signer.Middleware()) // 403 when tampered or expired
-```
-
-The signature covers path and query (HMAC-SHA256), is checked in constant time and works behind proxies. `storage.TemporaryURL` builds on it.
+`signed.New(key)` signs links with HMAC-SHA256 and an expiry, verifies them in constant time, and answers 403 through its middleware. It has its own page: [Signed URLs](/docs/security/signed-urls).
 
 ## Webhook signatures
 
-```go
-verify, err := webhook.HMAC("X-Hub-Signature-256", secret, 1<<20) // error at boot on an empty secret
+Anyone on the internet may `POST` to your webhook URL. Before trusting a request, check its signature: an HMAC of the body with a secret only you and the provider know.
+
+### HMAC of the body (GitHub, Shopify, your own)
+
+```go title="routes/webhooks.go"
+// An empty header or secret is a boot error, not a webhook that
+// answers 401 forever.
+verify, err := webhook.HMAC(
+	"X-Hub-Signature-256",
+	[]byte(os.Getenv("GITHUB_WEBHOOK_SECRET")),
+	1<<20,
+)
 if err != nil {
 	return err
 }
 
-r.Post("/webhooks/github", handle).Use(verify)
-
-ok := webhook.VerifyHMAC(secret, body, r.Header.Get("X-Signature")) // hex or base64, optional "sha256=" prefix
-sig := webhook.Sign(secret, payload)                                  // for outgoing webhooks
+r.Post("/webhooks/github", handleGitHub).Use(verify)
 ```
 
-`webhook.Middleware(header, secret, maxBody)` is the lenient form: with an empty secret it reports nothing and refuses every request, so prefer `webhook.HMAC`. The middleware reads at most `maxBody` bytes (413; `0` means 1 MiB), verifies, restores the body for the handler and answers 401 otherwise. A plain body HMAC does not stop someone who captured a valid request from sending it again, so add the two pieces below.
+What the middleware does on each request:
 
-### Standard Webhooks (Svix, Resend, Clerk…)
+1. reads at most `maxBody` bytes of the body (`0` or less means 1 MiB); a larger body answers 413;
+2. verifies the header value against the HMAC-SHA256 of the raw body;
+3. on a mismatch answers `401 Invalid webhook signature.` (`webhook.ErrSignature`) and logs the `webhook.signature_invalid` security event;
+4. otherwise restores the body, so your handler reads it as usual.
 
-Providers that follow [Standard Webhooks](https://www.standardwebhooks.com) send `webhook-id`, `webhook-timestamp` and `webhook-signature` headers. `webhook.Standard` checks the signature over `id.timestamp.body` and refuses timestamps more than 5 minutes away, so a captured request cannot be replayed later:
+| Function | Description |
+| --- | --- |
+| `webhook.HMAC(header, secret, maxBody) (mw, error)` | the middleware; refuses an empty header or secret at boot. Prefer it |
+| `webhook.Middleware(header, secret, maxBody)` | the lenient form: with an empty secret it reports nothing and refuses every request |
+| `webhook.VerifyHMAC(secret, payload, signature) bool` | the check alone; the signature may be hex or base64, with or without a `sha256=` prefix; constant time |
+| `webhook.Sign(secret, payload) string` | the hex HMAC-SHA256, for tests and simple outgoing schemes |
 
-```go
-verify, err := webhook.Standard(cfg.WebhookSecret, webhook.StandardOptions{}) // "whsec_..." from the provider
+A body HMAC does **not** stop someone who captured a valid request from sending it again later. Use Standard Webhooks when the provider signs a timestamp, and `Dedupe` against redeliveries.
+
+### Standard Webhooks (Svix, Resend, Clerk)
+
+Providers that follow [Standard Webhooks](https://www.standardwebhooks.com) send `webhook-id`, `webhook-timestamp` and `webhook-signature`. The signature covers `id.timestamp.body`, and the timestamp must be recent, so a captured request cannot be replayed next week:
+
+```go title="routes/webhooks.go"
+// "whsec_..." from the provider's dashboard (the prefix is optional).
+verify, err := webhook.Standard(
+	os.Getenv("RESEND_WEBHOOK_SECRET"),
+	webhook.StandardOptions{},
+)
 if err != nil {
-	return err // a malformed secret fails at boot, not on the first webhook
+	// webhook: Standard secret must be base64, optionally prefixed
+	// with whsec_
+	return err
 }
 
-r.Post("/webhooks/resend", handle).Use(verify)
+r.Post("/webhooks/resend", handleBounce).Use(verify)
 ```
 
-| Option | Default |
-| --- | --- |
-| `MaxBody` | 1 MiB |
-| `Tolerance` | 5 minutes, both directions |
-| `Now` | `time.Now` (inject a fixed clock in tests) |
+`webhook-signature` may carry several `v1,<base64>` values (during a provider's secret rotation); one match is enough. Body size and the 401 answer work as for `HMAC`.
+
+| `StandardOptions` field | Default | What it does |
+| --- | --- | --- |
+| `MaxBody` | 1 MiB | bounds the body (413 above) |
+| `Tolerance` | 5 minutes | how far `webhook-timestamp` may be from now, in either direction |
+| `Now` | `time.Now` | the clock; inject a fixed one in tests |
+
+`webhook.SignStandard(secret, id, at, body)` returns the `webhook-signature` value (`v1,<base64>`) a delivery would carry, for tests.
 
 ### Handle each event once
 
-Providers deliver **at least once**: the same event can arrive twice (timeouts, retries). `webhook.Dedupe` remembers handled event ids in any `cache.Store`:
+Providers deliver **at least once**: after a timeout they retry, so the same event can arrive twice. `webhook.Dedupe` remembers handled event ids in any [`cache.Store`](/docs/digging-deeper/cache):
 
-```go
-c, _ := app.Cache()
+```go title="routes/webhooks.go"
+c, err := app.Cache()
+if err != nil {
+	return err
+}
 
-r.Post("/webhooks/resend", handle).Use(
-	verify, // always verify first
+r.Post("/webhooks/resend", handleBounce).Use(
+	// Always verify first.
+	verify,
 	webhook.Dedupe(c.Store(), webhook.StandardID, webhook.DedupeOptions{}),
 )
 ```
 
 | Situation | Answer |
 | --- | --- |
-| First delivery | handler runs; a 2xx answer is remembered for `TTL` (72h) |
-| Redelivery of a handled event | 200 with `Webhook-Duplicate: true`, handler not run |
-| Duplicate while the first is still running | 409, the provider retries |
-| Handler answered 3xx/4xx/5xx | not remembered, so the provider's retry runs |
-| No event id | 400 |
-| Store unavailable | 503 (fail closed) |
+| first delivery | the handler runs; a status below 300 is remembered for `TTL` |
+| redelivery of a handled event | `200` with `Webhook-Duplicate: true`; the handler does not run |
+| duplicate while the first is still running | `409 This webhook event is being processed.`; the provider retries |
+| the handler answered 3xx, 4xx or 5xx | forgotten, so the provider's retry runs |
+| no event id | `400 Missing webhook event id.` |
+| store unavailable | `503 Webhook store unavailable.` (fail closed) |
 
-For providers with their own headers, pass a function that returns the event id, for example `func(r *http.Request) string { return r.Header.Get("X-Event-Id") }`. Use a shared store (database or Redis) when the app runs on more than one instance.
+| `DedupeOptions` field | Default | What it does |
+| --- | --- | --- |
+| `TTL` | 72h | how long a handled id is remembered (longer than providers' retry windows) |
+| `LockTTL` | 1 minute | bounds a delivery that is still running |
+
+`webhook.StandardID` reads the `webhook-id` header. For providers with their own header, pass a function: `func(r *http.Request) string { return r.Header.Get("X-Event-Id") }`. Use a shared store (database or Redis) when the app runs on more than one server.
 
 ## Outgoing webhooks
 
-Sometimes **your** app is the provider: a marketplace tells each seller "order.paid" at a URL the seller typed in. `webhook.Sender` does the hard parts:
+Sometimes **your** app is the provider: the blog tells each author's integration "comment.created" at a URL the author typed in. `webhook.Sender` handles the hard parts. The step-by-step setup is on [Webhooks](/docs/digging-deeper/webhooks); this section lists every option and outcome.
 
-- it signs every request with the [Standard Webhooks](https://www.standardwebhooks.com) scheme, so receivers can verify it with `webhook.Standard` (or any Standard Webhooks library);
-- it sends from a **queue job**, so a slow or broken seller never slows down your request handler, and failed attempts are retried with exponential backoff;
-- it sends through `httpclient.Safe`, so a seller cannot make your server call `http://169.254.169.254` or `http://localhost:6379`.
+- Every attempt is signed with the Standard Webhooks scheme (`webhook-id`, `webhook-timestamp`, `webhook-signature`), so receivers verify it with `webhook.Standard` or any Standard Webhooks library.
+- Deliveries run from a **queue job** (kind `webhook.deliver`), so a slow endpoint never slows a request handler.
+- Requests go through `httpclient.Safe`, so an author cannot make your server call `http://169.254.169.254`.
+- The job stores the endpoint **id**, never its URL or secret; `Endpoint` looks both up on every attempt, so a changed URL or a rotated secret applies to pending retries.
 
-### 1. Give each endpoint a secret
-
-When a seller registers their URL, generate a secret, store both and show the secret once:
-
-```go
-secret, err := webhook.NewSecret() // "whsec_" + 32 random bytes in base64
+```go title="app/integrations/webhooks.go"
+secret, err := webhook.NewSecret() // "whsec_" + 32 random bytes
 if err != nil {
 	return err
 }
-
-_, err = db.ExecContext(ctx,
-	`INSERT INTO seller_webhooks (seller_id, url, secret) VALUES (?, ?, ?)`, sellerID, url, secret)
-```
-
-Store the secret as you would any credential (for example as an `orm.Encrypted[string]` column).
-
-### 2. Create the sender and register its job
-
-The sender looks the endpoint up **by id** on every attempt. The queue only stores that id, never the URL or the secret, and a URL or secret changed by the seller applies to pending retries too.
-
-```go
-deliveries, err := webhook.NewSQLDeliveryLog(db, "") // table "webhook_deliveries"
-if err != nil {
-	return err
-}
-
-if err := deliveries.CreateTable(ctx); err != nil {
-	return err
-}
+// Store url and secret with the author; show the secret once.
 
 sender, err := webhook.NewSender(webhook.SenderOptions{
 	Endpoint: func(ctx context.Context, id string) (webhook.Endpoint, error) {
-		var ep webhook.Endpoint
-		var active bool
-
-		err := db.QueryRowContext(ctx,
-			`SELECT url, secret, active FROM seller_webhooks WHERE seller_id = ?`, id).Scan(&ep.URL, &ep.Secret, &active)
-		if errors.Is(err, sql.ErrNoRows) || (err == nil && !active) {
-			return ep, webhook.ErrEndpointDisabled // drop the delivery, no retries
-		}
-
-		return ep, err // other errors are retried
-	},
-	Log: deliveries,
-	OnGone: func(ctx context.Context, id string) error { // the seller answered 410 Gone
-		_, err := db.ExecContext(ctx, `UPDATE seller_webhooks SET active = false WHERE seller_id = ?`, id)
-		return err
+		// Look up the author's URL and secret by id.
+		return integrations.Endpoint(ctx, db, id)
 	},
 })
 if err != nil {
 	return err
 }
 
-q, err := app.Queue()
-if err != nil {
-	return err
-}
-
-if err := q.Register(sender.Job()); err != nil {
-	return err
-}
-```
-
-`SQLDeliveryLog` owns its schema (only the table name is configurable). If you already have a deliveries table, implement `webhook.DeliveryLog` instead and map each `Attempt` (endpoint id, event id, status, duration, error category, time; never the URL, secret or payload) onto your columns. `Record` runs after every attempt from concurrent workers; its error is logged and never retries the delivery:
-
-```go
-Log: webhook.DeliveryLogFunc(func(ctx context.Context, a webhook.Attempt) error {
-	_, err := db.ExecContext(ctx,
-		`INSERT INTO seller_webhook_deliveries (seller_id, message_id, http_status, failure, created_at)
-		 VALUES (?, ?, ?, ?, ?)`, a.Endpoint, a.EventID, a.Status, a.Error, a.At)
-	return err
-}),
-```
-
-### 3. Send an event
-
-```go
-payload, err := json.Marshal(map[string]any{
-	"type": "order.paid",
-	"data": map[string]any{"order_id": order.ID, "total": order.Total},
-})
-if err != nil {
-	return err
-}
-
+// Register sender.Job() with the queue, then:
 err = sender.Send(ctx, q, webhook.Delivery{
-	ID:       "order_paid_" + strconv.FormatInt(order.ID, 10), // optional: "msg_<random>" when empty; no dots or spaces, at most 255 bytes
-	Endpoint: strconv.FormatInt(order.SellerID, 10),
+	Endpoint: strconv.FormatInt(author.ID, 10),
 	Payload:  payload,
 })
 ```
 
-`Send` only enqueues; a worker (`vukem queue:work`, or `serve` with the memory driver) makes the HTTP call. The same `webhook-id` is sent on every retry, so the seller can drop duplicates (with `webhook.Dedupe` if they use Vukem too). The payload is stored in the job as JSON, so insignificant whitespace may be removed before sending; the signature always covers the exact bytes sent.
+| `SenderOptions` field | Default | What it does |
+| --- | --- | --- |
+| `Endpoint` | required | looks up `webhook.Endpoint{URL, Secret}` by id at each attempt; return `webhook.ErrEndpointDisabled` to drop deliveries; other errors are retried |
+| `Log` | none | a `webhook.DeliveryLog` that records every attempt (`webhook.SQLDeliveryLog`, or `webhook.DeliveryLogFunc` for your own table) |
+| `OnGone` | none | runs when an endpoint answers `410 Gone`, for example to disable it |
+| `Logger` | `slog.Default()` | delivery outcomes, without URLs, secrets or payloads |
+| `Timeout` | 15s | bounds one HTTP attempt |
+| `Retries` | 8 | retries after a failure; a negative value means none |
+| `Backoff` | exponential from 30s, capped at 1h | delay before retry n: 30s, 1m, 2m … about two hours in total |
+| `Now` | `time.Now` | the `webhook-timestamp` clock |
+| `InsecureAllowHTTP` | `false` | permits `http://` endpoints; tests and local tools only |
+| `InsecureAllow` | none | internal prefixes deliveries may reach (an `httptest` server on `127.0.0.0/8`); tests only |
+
+| `webhook.Delivery` field | What it is |
+| --- | --- |
+| `ID` | the `webhook-id`, the same on every retry so receivers can drop duplicates; `Send` generates `msg_<random>` when empty; no dots or spaces, at most 255 bytes |
+| `Endpoint` | the id passed to `SenderOptions.Endpoint` |
+| `Payload` | the JSON body; stored in the job, so insignificant whitespace may be compacted, and the signature covers the bytes actually sent |
 
 ### What happens on each attempt
 
-| Seller's answer | Result |
+| Endpoint's answer | Result |
 | --- | --- |
-| `2xx` | delivered, done |
-| `410 Gone` | not retried; `OnGone` runs (disable the endpoint there) |
-| `3xx` | not retried: redirects are not followed, because they would send the signed body elsewhere |
-| any other status, a timeout or a connection error | retried after 30s, 1m, 2m, 4m … (capped at 1h), 8 retries, then the job lands in `queue:failed` |
-| URL resolves to a loopback, private or metadata address | refused before connecting (`httpclient.ErrBlockedAddress`), retried, then failed |
+| `2xx` | delivered |
+| `410 Gone` | not retried; `OnGone` runs (its error is logged, the delivery still is not retried) |
+| `3xx` | not retried: redirects are not followed, since they would send the signed body elsewhere |
+| any other status, a timeout or a connection error | retried with backoff, then the job lands in `queue:failed` |
+| URL resolves to a blocked address | refused before connecting, retried, then failed |
 | `http://` URL, `user:password@` in the URL, missing or malformed secret | refused (nothing is sent unsigned or in plaintext), retried, then failed |
 | `Endpoint` returns `webhook.ErrEndpointDisabled` | dropped without a request |
-| `Delivery.ID` empty or invalid when the job runs | dropped (recorded as `invalid`); retrying cannot fix it |
-| `OnGone` returns an error | logged; the delivery is still not retried, so make `OnGone` reliable |
+| `Delivery.ID` invalid when the job runs | dropped, recorded as `invalid` |
 
-Each attempt is recorded in the log: endpoint id, event id, status, duration, time and an error **category** (`blocked_address`, `timeout`, `refused`, `tls`, `network`, `http_status`, `invalid`, or empty on success). The category is safe to show the endpoint owner; the full error (resolved address, TLS details) stays in your server log. Show a seller their last attempts (at most 1000) with:
+`sender.Deliver(ctx, d)` makes one attempt and returns an error only when the queue would retry it; use it in tests.
 
-```go
-attempts, err := deliveries.Recent(ctx, sellerID, 20) // newest first
-```
+Each attempt is a `webhook.Attempt`: endpoint id, event id, HTTP status (0 when no response arrived), duration, time and an error **category** that is safe to show the endpoint owner:
 
-Logs and errors name the endpoint id and event id only: never the URL (it may carry tokens), the secret or the payload.
-
-| Option | Default |
+| Category | Meaning |
 | --- | --- |
-| `Timeout` | 15s per HTTP attempt |
-| `Retries` | 8 (`-1` for no retries) |
-| `Backoff` | `queue.Exponential(30 * time.Second)` |
-| `Logger` | `slog.Default()` |
-| `Now` | `time.Now` (the `webhook-timestamp` clock) |
-| `InsecureAllowHTTP`, `InsecureAllow` | off; tests only (see below) |
+| `""` | success |
+| `blocked_address` | the URL resolved to an internal address |
+| `timeout` | timed out or cancelled |
+| `refused` | connection refused |
+| `tls` | TLS handshake or certificate check failed |
+| `network` | any other transport error (DNS, reset) |
+| `http_status` | a non-2xx answer |
+| `invalid` | invalid delivery id, endpoint URL or secret |
 
-### The receiving side
-
-A seller using Vukem verifies your deliveries with the middleware above:
-
-```go
-verify, err := webhook.Standard(sellerSecret, webhook.StandardOptions{})
-if err != nil {
-	return err
-}
-
-r.Post("/webhooks/marketplace", handleOrderPaid).Use(verify)
-```
-
-To sign a request by hand (in another language's test, for example), `webhook.SignStandard(secret, id, time.Now(), body)` returns the `webhook-signature` value.
-
-### Testing deliveries
-
-`httptest` servers listen on `127.0.0.1` over plain HTTP, which the sender refuses by default. Opt in explicitly, in tests only:
-
-```go
-srv := httptest.NewServer(verify(handler))
-
-sender, err := webhook.NewSender(webhook.SenderOptions{
-	Endpoint:          func(context.Context, string) (webhook.Endpoint, error) { return webhook.Endpoint{URL: srv.URL, Secret: secret}, nil },
-	InsecureAllowHTTP: true,
-	InsecureAllow:     []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")},
-})
-
-err = sender.Deliver(ctx, webhook.Delivery{ID: "msg_1", Endpoint: "seller-1", Payload: []byte(`{"type":"order.paid"}`)})
-```
-
-`Deliver` makes one attempt and returns an error when the queue would retry it. To test the dispatch instead, use `queue.NewFake()` and `queue.Dispatched`.
+`webhook.NewSQLDeliveryLog(db, table)` (default table `webhook_deliveries`) stores attempts on SQLite, PostgreSQL or MySQL; `CreateTable` creates it with an `(endpoint, attempted_at)` index, and `Recent(ctx, endpoint, limit)` returns the latest 1 to 1000 attempts, newest first. Errors longer than 1000 bytes are cut. `Record` is called after every attempt from concurrent workers, with a 5-second context; its error is logged and never retries a delivery.
 
 ## Security events
 
-Every `web.SecurityEvent` (failed logins, `authz.denied`, CSRF rejections, rate limits, bad signatures, rejected tokens) is logged at `WARN` and dispatched as a `security.Event` on the app event bus:
+Every security-relevant decision in Vukem calls `web.SecurityEvent`. Each event is logged at `WARN` with a stable `event` attribute, plus `method`, `path` and `request_id`, and dispatched as a `security.Event` on `app.Events`, so you can alert on it:
 
-```go
-events.Listen(app.Events, func(ctx context.Context, e security.Event) error {
-	if e.Name == "auth.login_failed" {
-		app.Telegram.Send(ctx, "Failed login from "+html.EscapeString(e.IP))
-	}
-	return nil
-})
+| Event | Emitted when |
+| --- | --- |
+| `auth.login_failed` | a login attempt failed |
+| `auth.remember_rejected` | a remember-me cookie was refused |
+| `auth.session_revoked` | a session ended because the user's session version changed |
+| `authz.denied` | `c.Authorize` denied ([Authorization](/docs/security/authorization)) |
+| `csrf.rejected` | a cross-origin unsafe request was refused |
+| `ratelimit.exceeded` | a client hit a rate limit ([Rate limiting](/docs/security/rate-limiting)) |
+| `session.invalid` | a session cookie could not be opened |
+| `token.rejected` | an API token was refused |
+| `jwt.rejected` | a JWT was refused |
+| `url.signature_invalid` | a signed URL was tampered with |
+| `webhook.signature_invalid` | an incoming webhook signature did not match |
+| `social.state_mismatch`, `social.state_replayed` | a social login callback with a wrong or reused state |
+| `broadcast.denied` | a broadcast channel subscription was refused |
+| `idempotency.key_reused`, `idempotency.unscoped` | an idempotency key was misused |
+| `flags.locked_write` | a write to a locked feature flag was refused |
+| `auth.2fa_failed` | a two-factor code was wrong (`install:auth --2fa` scaffold) |
+
+```go title="app/listeners/alerts.go"
+events.Listen(app.Events,
+	func(ctx context.Context, e security.Event) error {
+		if e.Name != "auth.login_failed" {
+			return nil
+		}
+
+		return alerts.Notify(ctx, "Failed login from "+e.IP)
+	},
+)
 ```
 
-`security.Event` carries `Name`, `At`, `Method`, `Path`, `IP`, `RequestID` and `Attrs` (never secrets).
+`security.Event` has `Name`, `At` (UTC), `Method`, `Path`, `IP` (the client IP from `c.IP()`), `RequestID` and `Attrs`. Attributes never contain secrets; an attribute that is a `config.Secret` is logged masked.
+
+`events.Listen` runs the listener **synchronously**, inside the request that raised the event. A slow alert (an HTTP call) then slows the response; use `events.ListenAsync` for those. A listener error is logged as `security event listener failed` and does not change the response.
+
+Emit your own from a handler with `web.SecurityEvent(c.Request(), "billing.card_declined_burst", "user_id", u.AuthID())`.
 
 ## Audit events
 
-Routine records that are not attacks (an admin recorded a payout, a role was granted) go through `web.AuditEvent` instead, so they do not drown the security alerts. It logs at `INFO` with message `audit event` and the same envelope (`event`, `method`, `path`, `request_id`), and dispatches a `security.Audit` (the fields of `security.Event`, a distinct type):
+Routine records that are not attacks ("an admin recorded a payout", "a role was granted") go through `web.AuditEvent` instead, so they do not drown the security alerts. It logs at `INFO` with message `audit event` and the same envelope (`event`, `method`, `path`, `request_id`), and dispatches a `security.Audit`: the fields of `security.Event`, but a distinct type, so a listener for `security.Event` never sees audit records.
 
-```go
-web.AuditEvent(c.Request(), "payout.recorded", "actor_id", admin.AuthID(), "payout_id", p.ID)
-
-events.Listen(app.Events, func(ctx context.Context, a security.Audit) error {
-	return auditLog.Append(ctx, a.Name, a.Attrs)
-})
+```go title="app/controllers/admin/payouts.go"
+web.AuditEvent(c.Request(), "payout.recorded",
+	"actor_id", admin.AuthID(), "payout_id", p.ID)
 ```
 
-Pass the actor as an attribute (its id) and never pass secrets or personal data such as names, emails or documents; a `config.Secret` value is logged masked. The dispatched `security.Audit` carries the client IP, which is personal data under LGPD/GDPR: set a retention period wherever you store audit records.
+```go title="app/listeners/audit.go"
+events.Listen(app.Events,
+	func(ctx context.Context, a security.Audit) error {
+		return auditLog.Append(ctx, a.Name, a.Attrs)
+	},
+)
+```
+
+Pass the actor as an attribute (its id). Never pass secrets or personal data such as names, emails or document numbers. The dispatched `security.Audit` carries the client IP, which is personal data under LGPD and GDPR: set a retention period wherever you store audit records.
 
 ## Lint guard
 
-The `crypto-randomness` depguard rule makes `math/rand` a lint error in `auth`, `session`, `csrf`, `signed`, `social`, `webhook`, `config` and `uuid`.
+Security code must take randomness from [`crypto/rand`](https://pkg.go.dev/crypto/rand), never from [`math/rand`](https://pkg.go.dev/math/rand), whose output can be predicted. The framework's `.golangci.yml` has a `crypto-randomness` depguard rule that makes importing `math/rand` or `math/rand/v2` a lint error in `auth`, `session`, `csrf`, `signed`, `crypt`, `social`, `webhook`, `config` and `uuid`. It guards Vukem's own code; in your app, use `crypto/rand` (for example [`rand.Text()`](https://pkg.go.dev/crypto/rand#Text)) for tokens, codes and secrets.
+
+## Security
+
+What Vukem does for you:
+
+- `httpclient.Safe` checks every resolved address, including IPv6 forms that embed IPv4 (`TestSecurity_A01_SSRFAddresses`, `TestSecurity_A01_SSRFLoopbackAndRedirect`).
+- Webhook checks are constant time, refuse empty secrets at boot, bound the body, and `Dedupe` fails closed (`TestSecurity_A08_WebhookMiddleware`, `TestSecurity_A08_StandardWebhooks`, `TestSecurity_A04_WebhookDedupeFailsClosed`).
+- Outgoing webhooks are always signed, HTTPS-only, never follow redirects, and keep URLs, secrets and payloads out of logs (`TestSecurity_A01_OutgoingWebhookSSRF`, `TestSecurity_A09_OutgoingWebhookLogsNoSecrets`).
+- Security events have stable names, so alerts keep working across versions (`TestSecurity_A09_SecurityEventsAtWarn`).
+
+What stays your job:
+
+- Use `httpclient.Safe` for **every** request to a URL a user controls, and keep `Allow` empty unless you must reach one internal service.
+- Store webhook secrets as credentials (for example in an `orm.Encrypted[string]` column).
+- Ship logs to durable storage and alert on the security events.
+
+## Testing
+
+`httptest` servers listen on `127.0.0.1` over plain HTTP, which `webhook.Sender` refuses. Opt in, in tests only:
+
+```go title="app/integrations/webhooks_test.go"
+func TestCommentWebhookIsSigned(t *testing.T) {
+	secret, err := webhook.NewSecret()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	verify, err := webhook.Standard(secret, webhook.StandardOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := make(chan struct{}, 1)
+	srv := httptest.NewServer(verify(http.HandlerFunc(
+		func(w http.ResponseWriter, _ *http.Request) {
+			got <- struct{}{}
+		},
+	)))
+	defer srv.Close()
+
+	sender, err := webhook.NewSender(webhook.SenderOptions{
+		Endpoint: func(context.Context, string) (webhook.Endpoint, error) {
+			return webhook.Endpoint{URL: srv.URL, Secret: secret}, nil
+		},
+		InsecureAllowHTTP: true,
+		InsecureAllow: []netip.Prefix{
+			netip.MustParsePrefix("127.0.0.0/8"),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = sender.Deliver(t.Context(), webhook.Delivery{
+		ID:       "msg_1",
+		Endpoint: "author-1",
+		Payload:  []byte(`{"type":"comment.created"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	<-got
+}
+```
+
+To test a security-event listener, dispatch an event on a bus yourself, or drive the real request (a wrong password, a tampered link) with `vukemtest` and assert on what your listener recorded.
+
+## Common mistakes
+
+**Fetching user URLs with `http.Get`.**
+
+```go
+// Wrong: reaches localhost, the metadata service, internal hosts.
+resp, err := http.Get(userURL)
+
+// Right: only public addresses, bounded time and size.
+resp, err := httpclient.Get(ctx, userURL)
+```
+
+**Deduplicating before verifying.**
+
+```go
+// Wrong: forged requests fill the dedupe store with fake ids.
+r.Post("/webhooks/resend", h).Use(dedupe, verify)
+
+// Right: verify first, then dedupe.
+r.Post("/webhooks/resend", h).Use(verify, dedupe)
+```
+
+**A webhook secret that is empty in production.** `webhook.Middleware` with an empty secret answers `401 Invalid webhook signature.` to every request forever. `webhook.HMAC` fails at boot instead: `webhook: HMAC needs a non-empty secret`.
+
+**A slow synchronous alert.** `events.Listen` runs in the request. An alert that calls Slack with a 10-second timeout makes a failed login take 10 seconds; use `events.ListenAsync`.
+
+## Next steps
+
+<CardGroup cols="2">
+<Card title="Webhooks" href="/docs/digging-deeper/webhooks" icon="route">
+The step-by-step guide for receiving and sending webhooks.
+</Card>
+<Card title="Events" href="/docs/digging-deeper/events" icon="zap">
+Listeners, async listeners and testing the event bus.
+</Card>
+<Card title="Security overview" href="/docs/security/overview" icon="shield">
+Every default mapped to the OWASP Top 10:2025.
+</Card>
+<Card title="webhook on pkg.go.dev" href="https://pkg.go.dev/github.com/AlexGalhardo/vukem/webhook" icon="book">
+The package reference (also `httpclient` and `security`).
+</Card>
+</CardGroup>

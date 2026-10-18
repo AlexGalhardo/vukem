@@ -1,116 +1,221 @@
 ---
 title: API tokens
-description: Issue, check, list and revoke opaque bearer tokens for API clients with auth.Tokens and the token guard, step by step.
+description: Issue, check, scope, list, revoke and prune opaque bearer tokens for API clients with auth.Tokens and the token guard, or scaffold the whole API with install:api.
 ---
 
-An API token is a long random string a client sends on every request in the `Authorization: Bearer <token>` header. Unlike a session cookie it works from scripts, mobile apps and other servers. Vukem's tokens are **opaque**: the token itself means nothing, the server looks it up. That makes them easy to revoke, which is the main difference from [JWTs](/docs/security/jwt).
+Scripts, mobile apps and other servers cannot click a login form or keep a cookie jar. They send a **token** instead: a long random string in the `Authorization: Bearer ...` header of every request. Vukem's `auth.Tokens` issues and checks these tokens, and `vukem install:api` writes a complete token API into your project.
+
+You will learn:
+
+- how a token looks, how it is stored, and why a database leak does not leak usable tokens;
+- how to scaffold the API, or wire the token guard by hand;
+- how abilities (scopes) limit what each token may do;
+- how to build a "My API tokens" page with listing, revoking and pruning;
+- which attacks the defaults stop, and the mistakes to avoid.
+
+## The idea
+
+A token is like a hotel key card. The card itself holds no name: the front desk's computer knows which room it opens and until when. If you lose it, the desk cancels that one card and every other guest keeps theirs. That lookup is what makes Vukem's tokens **opaque**, and what makes them easy to revoke, unlike [JWTs](/docs/security/jwt).
 
 | | Opaque tokens (`auth.Tokens`) | JWT (`auth/jwt`) |
 | --- | --- | --- |
 | Checked by | a database lookup | a signature, no lookup |
-| Revoke one token | mark its row revoked, effective immediately | wait for expiry, or keep a deny list |
-| Best for | your own API and its clients, personal access tokens | tokens issued by an identity provider, many services |
+| Revoke one token | mark its row revoked, effective at once | wait for expiry, or keep a deny list |
+| Best for | your own API and its clients, personal access tokens | tokens from an identity provider, many services |
 
-## How a token looks and is stored
+The header format comes from [RFC 6750](https://www.rfc-editor.org/rfc/rfc6750), the bearer token standard: "bearer" means whoever holds the token may use it, like cash.
+
+### How a token looks and is stored
 
 ```text
-vk_<id>.<secret>
+vk_GJ4XL2MF7AQZ3P5NY6WKCTRB2E.R7MN2QX4ZK5TJWP3AY6L7BHC2D
 ```
 
-- `vk_` is an optional **prefix** (`Tokens.Prefix`) that lets secret scanners recognise leaked tokens.
-- `<id>` finds the row; `<secret>` proves the caller knows the token. Both come from `crypto/rand`.
-- Only `SHA-256(secret)` is stored, in the `access_tokens` table. A database leak does not leak usable tokens, and the comparison is constant time.
-- `last_used_at` is updated at most once a minute, so busy clients do not write on every request.
-- Revoking sets `revoked_at`; the row stays so the user (and an audit) can see when a token was revoked. A revoked token is refused exactly like a wrong one: it pays for the same hash comparison first. `Prune` deletes old revoked and expired rows, never a token that is still live.
+- `vk_` is an optional **prefix** (`Tokens.Prefix`) that lets secret scanners recognise a leaked token.
+- The part before the dot is the token **id**: it finds the row. The part after is the **secret**: it proves the caller knows the token. Both come from [`crypto/rand.Text`](https://pkg.go.dev/crypto/rand#Text) (26 base32 characters each).
+- Only `SHA-256(secret)` is stored, in the `access_tokens` table. A stolen database holds no usable token, and the comparison is constant time ([`crypto/subtle`](https://pkg.go.dev/crypto/subtle#ConstantTimeCompare)).
+- The plain token exists only in the response to `Create`: show it once.
 
-## Step by step
+The `access_tokens` table:
 
-The fastest path is the scaffold, which writes everything below as code you own:
+| Column | Holds |
+| --- | --- |
+| `id` | the token id (primary key) |
+| `user_id` | the owner |
+| `name` | a label, such as the device name |
+| `hash` | `SHA-256` of the secret |
+| `abilities` | JSON list of abilities |
+| `last_used_at` | updated at most once a minute, so busy clients do not write on every request |
+| `expires_at` | `NULL` for a token that never expires |
+| `revoked_at` | set when revoked; the row stays for the audit trail |
+| `created_at` | when it was issued |
 
-```bash
-vukem install:api   # or: vukem new shop --api
-vukem migrate       # creates access_tokens
-```
-
-To understand (or hand-wire) what it does, follow these steps.
+## Quick start with the scaffold
 
 <Steps>
-<Step title="1. Create the token store and the guard">
+<Step title="1. Install the API">
+
+```bash
+vukem install:api   # or start a project with: vukem new shop --api
+vukem migrate       # creates access_tokens (and the auth tables)
+```
+
+`install:api` also installs the auth core (users, `accounts.New`), adds `CORS_ALLOWED_ORIGINS` to `.env.example`, and registers:
+
+| Method | Path | Name | What it does |
+| --- | --- | --- | --- |
+| POST | `/api/v1/tokens` | `api.v1.tokens.store` | exchange email + password for a 30-day token |
+| GET | `/api/v1/me` | `api.v1.me` | the token's user |
+| DELETE | `/api/v1/tokens/current` | `api.v1.tokens.destroy` | revoke the token of this request |
+
+</Step>
+<Step title="2. Get a token">
+
+```bash
+curl -s -X POST localhost:3000/api/v1/tokens \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"ada@example.com",
+       "password":"correct horse battery",
+       "device_name":"cli"}'
+```
+
+```json
+{
+  "expires_at": "2026-11-16T09:00:00Z",
+  "token": "vk_GJ4XL2MF7AQZ3P5NY6WKCTRB2E.R7MN2QX4ZK5TJWP3AY6L7BHC2D",
+  "type": "Bearer"
+}
+```
+
+A wrong password answers `422` on `email`; an unverified email answers `403` (`auth.unverified`), since an unverified address may belong to someone else. With [two-factor authentication](/docs/security/two-factor) installed, users who turned it on must also send `code` (or `recovery_code`), or they get `422`.
+
+</Step>
+<Step title="3. Use it">
+
+```bash
+curl -s localhost:3000/api/v1/me \
+  -H 'Authorization: Bearer vk_GJ4XL2...'
+# {"id":1,"name":"Ada","email":"ada@example.com",...}
+
+curl -s -X DELETE localhost:3000/api/v1/tokens/current \
+  -H 'Authorization: Bearer vk_GJ4XL2...'
+# 204 No Content
+```
+
+A missing, wrong, expired or revoked token answers `401` problem+json with `WWW-Authenticate: Bearer realm="api"`.
+
+</Step>
+</Steps>
+
+## Wiring it by hand
+
+The scaffold writes this code into your project. Reading it explains each piece.
+
+### 1. The token store and the guard
 
 ```go title="app/accounts/accounts.go"
 users := auth.NewORMProvider[models.User](db)
 
 tokens := auth.NewTokens(db) // the access_tokens table
-tokens.Prefix = "vk_"        // pick a prefix specific to your app, e.g. "shop_"
+// Pick a prefix specific to your app, such as "blog_".
+tokens.Prefix = "vk_"
+// A fake app clock (vukem.WithClock) also drives expiry.
+tokens.Now = app.Now
+tokens.Log = app.Log
 
-apiGuard := auth.NewTokenGuard("api", users, tokens) // reads "Authorization: Bearer ..."
+// Reads "Authorization: Bearer ...".
+apiGuard := auth.NewTokenGuard("api", users, tokens)
 ```
+
+| Field | Default | What it does |
+| --- | --- | --- |
+| `Prefix` | none | starts every new token; up to 32 letters, digits or underscores ending in `_`, or `Create` fails. Tokens issued without it, or under an earlier prefix, keep working |
+| `Now` | `time.Now` | clock for issue, expiry and last-use times |
+| `Log` | `slog.Default()` | receives the one-time hint about a missing `revoked_at` column |
 
 The guard name (`"api"`) is how handlers and middleware refer to it.
 
-</Step>
-<Step title="2. Let clients exchange a password for a token">
+### 2. Issuing tokens
 
 ```go title="app/controllers/apiv1/tokens.go"
-type issueInput struct {
-	Email      string `json:"email"`
-	Password   string `json:"password"`
-	DeviceName string `json:"device_name"`
-}
-
-var issueSchema = z.Struct[issueInput](z.Shape{
-	"email":       z.String().Trim().Email(),
-	"password":    z.String().Min(1),
-	"device_name": z.String().Trim().Min(1).Max(100),
-})
-
 func (h *Tokens) Issue(c *web.Ctx) error {
 	in, err := web.Parse(c, issueSchema)
 	if err != nil {
 		return err // 422 with field errors
 	}
 
+	creds := map[string]string{
+		"email":    strings.ToLower(in.Email),
+		"password": in.Password,
+	}
+
 	// Checks the password without starting a session.
-	u, err := h.a.Web.Validate(c, map[string]string{"email": strings.ToLower(in.Email), "password": in.Password})
+	u, err := h.a.Web.Validate(c, creds)
 	if err != nil {
 		return err
 	}
 
-	plain, tok, err := h.a.Tokens.Create(c.Context(), u.AuthID(), in.DeviceName, []string{"*"}, 30*24*time.Hour)
+	// A token is a login: an unverified address may belong to
+	// someone else.
+	if !u.EmailVerified() {
+		return errs.NewKey(http.StatusForbidden, "auth.unverified",
+			"Your email address is not verified.", nil)
+	}
+
+	plain, tok, err := h.a.Tokens.Create(
+		c.Context(),
+		u.AuthID(),
+		in.DeviceName,
+		[]string{"*"},
+		h.TTL, // 30 days
+	)
 	if err != nil {
 		return err
 	}
 
 	// The plain token is shown once; it cannot be read back later.
-	return c.JSON(http.StatusCreated, map[string]any{"token": plain, "type": "Bearer", "expires_at": tok.ExpiresAt})
+	return c.JSON(http.StatusCreated, map[string]any{
+		"token":      plain,
+		"type":       "Bearer",
+		"expires_at": tok.ExpiresAt,
+	})
 }
 ```
 
-</Step>
-<Step title="3. Protect routes with the guard">
+`Create(ctx, userID, name, abilities, ttl)` returns the plain token and a `Token` (`ID`, `UserID`, `Name`, `Abilities`, `LastUsedAt`, `ExpiresAt`, `RevokedAt`; never the secret). A `ttl` of `0` means the token **never expires** and stays valid until revoked.
+
+`Validate` gives the same `422` and takes the same time for unknown users and wrong passwords, like the login form ([Authentication](/docs/security/authentication)).
+
+### 3. Protecting the routes
 
 ```go title="routes/api.go"
-issue := ratelimit.Middleware(limiters("tokens.issue", 5, time.Minute), ratelimit.ByIP)
-perToken := ratelimit.Middleware(limiters("api.token", 60, time.Minute), ratelimit.ByToken)
+// Tokens are trusted as a rate-limit key only after
+// auth.Required has verified them, so the IP limit runs first.
+perIP := ratelimit.Middleware(
+	limiters("api.ip", 120, time.Minute), ratelimit.ByIP)
+perToken := ratelimit.Middleware(
+	limiters("api.token", 60, time.Minute), ratelimit.ByToken)
+issue := ratelimit.Middleware(
+	limiters("api.tokens", 5, time.Minute), ratelimit.ByIP)
 
 r.Group("/api/v1", func(g *router.Group) {
-	g.Use(middleware.JSONOnly(), perToken)
-	g.Post("/tokens", h.Issue).Name("tokens.store").Use(issue) // password guessing is throttled
+	g.Use(middleware.JSONOnly(), perIP)
+	g.Post("/tokens", h.Issue).Name("tokens.store").Use(issue)
 
 	g.Group("", func(p *router.Group) {
-		p.Use(auth.Required(apiGuard)) // 401 problem+json without a valid token
+		p.Use(auth.Required(acc.API), perToken)
 		p.Get("/me", h.Me).Name("me")
-		p.Delete("/tokens/current", h.Revoke).Name("tokens.destroy")
+		p.Delete("/tokens/current", h.Revoke).
+			Name("tokens.destroy")
 	})
 }).Name("api.v1.")
 ```
 
-`limiters` is `app.RateLimiters()`; see [Rate limiting](/docs/security/rate-limiting).
+`limiters` is `app.RateLimiters()`; see [Rate limiting](/docs/security/rate-limiting). `ratelimit.ByToken` hashes the token before using it as a key. The scaffold also mounts CORS for the origins in `CORS_ALLOWED_ORIGINS`, so browser clients on other origins may call the API.
 
-</Step>
-<Step title="4. Read the user and the token in a handler">
+### 4. Reading the user and the token
 
-```go
+```go title="app/controllers/apiv1/tokens.go"
 func (*Tokens) Me(c *web.Ctx) error {
 	u, err := auth.User[models.User](c, "api")
 	if err != nil {
@@ -121,7 +226,8 @@ func (*Tokens) Me(c *web.Ctx) error {
 }
 
 func (h *Tokens) Revoke(c *web.Ctx) error {
-	tok, ok := auth.CurrentToken(c, "api") // the token of this request
+	// The token of this request.
+	tok, ok := auth.CurrentToken(c, "api")
 	if !ok {
 		return auth.ErrUnauthenticated
 	}
@@ -134,102 +240,175 @@ func (h *Tokens) Revoke(c *web.Ctx) error {
 }
 ```
 
-</Step>
-<Step title="5. Try it">
+### What the guard checks on each request
 
-```bash
-curl -s -X POST localhost:3000/api/v1/tokens \
-  -H 'Content-Type: application/json' \
-  -d '{"email":"ada@example.com","password":"secret-password","device_name":"cli"}'
-# {"token":"vk_....","type":"Bearer","expires_at":"..."}
+1. Reads the `Authorization` header; it must start with `Bearer ` (that exact spelling).
+2. Splits id and secret at the dot and drops everything up to the last `_` of the id (the current prefix, an earlier one, or none), then loads the row. An unknown id is compared against a placeholder digest, so it takes the same time.
+3. Compares `SHA-256(secret)` in constant time. **Only then** checks expiry and revocation, so every token pays for the same comparison.
+4. Updates `last_used_at` if the last update is over a minute old.
+5. Loads the user with `ByID`.
 
-curl -s localhost:3000/api/v1/me -H 'Authorization: Bearer vk_....'
-curl -s -X DELETE localhost:3000/api/v1/tokens/current -H 'Authorization: Bearer vk_....'
-```
-
-</Step>
-</Steps>
+A missing, unknown, wrong, expired or revoked token gives `401` and the `token.rejected` security event. A failing store (database down, a missing `revoked_at` column, a user lookup error other than "not found") gives `503`, so an outage is never reported as bad credentials.
 
 ## Abilities (scopes)
 
 Each token carries a list of abilities. `"*"` grants everything; anything else is a string you define, such as `posts:read`.
 
 ```go
-plain, _, err := tokens.Create(ctx, user.AuthID(), "reporting", []string{"posts:read"}, 90*24*time.Hour)
+plain, _, err := tokens.Create(ctx, user.AuthID(), "reporting",
+	[]string{"posts:read"}, 90*24*time.Hour)
 ```
 
-```go
+```go title="routes/api.go"
 // Route level: 403 unless the token grants every listed ability.
-p.Get("/posts", posts.Index).Use(auth.Ability(apiGuard, "posts:read"))
+p.Get("/posts", posts.Index).
+	Use(auth.Ability(acc.API, "posts:read"))
+```
 
+```go title="app/controllers/apiv1/posts.go"
 // Handler level.
 if !auth.TokenCan(c, "api", "posts:write") {
 	return errs.ErrForbidden
 }
 ```
 
-Abilities limit what a **token** may do; they do not replace [authorization](/docs/security/authorization) of what the **user** may do. Check both.
+| Function | Answers |
+| --- | --- |
+| `auth.Ability(guard, abilities...)` | middleware: `403` problem+json (and the `authz.denied` event) unless the token grants **every** ability; place it after `Required` |
+| `auth.TokenCan(c, guard, ability)` | `true` when the request's token grants it |
+| `token.Can(ability)` | the same on a `Token` value |
+
+Abilities limit what a **token** may do; they do not replace [authorization](/docs/security/authorization) of what the **user** may do. A `posts:write` token still must not edit another author's post. Check both.
 
 ## A "My API tokens" page
 
-```go
-list, err := tokens.List(ctx, user.AuthID()) // newest first, revoked ones too (RevokedAt set), never the secrets
+```go title="app/controllers/account/tokens.go"
+// Newest first, revoked ones too (RevokedAt set), never the secrets.
+list, err := h.a.Tokens.List(ctx, user.AuthID())
 
-revoked, err := tokens.RevokeFor(ctx, user.AuthID(), c.Param("id"))
+// The id comes from a form: revoke only the user's own live token.
+revoked, err := h.a.Tokens.RevokeFor(ctx, user.AuthID(), c.Param("id"))
 if err != nil {
 	return err
 }
 if !revoked {
-	return errs.ErrNotFound // not this user's live token: do not reveal that it exists
+	// Not this user's live token: do not reveal that it exists.
+	return errs.ErrNotFound
 }
 
-err = tokens.RevokeAll(ctx, user.AuthID()) // e.g. after a password change
+// Sign out every client, e.g. after a password change.
+err = h.a.Tokens.RevokeAll(ctx, user.AuthID())
 ```
 
-Revoked tokens stay listed until you delete them. Run `Prune` from a [scheduled task](/docs/digging-deeper/scheduler) to keep the table small:
+| Method | What it does |
+| --- | --- |
+| `List(ctx, userID)` | the user's tokens, newest first, revoked ones included |
+| `RevokeFor(ctx, userID, id)` | revokes only if the token belongs to the user and is live; `false` for another user's, unknown or already revoked token |
+| `Revoke(ctx, id)` | revokes by id **without** an owner check: only for the token of this request |
+| `RevokeAll(ctx, userID)` | revokes every live token of the user |
+| `Find(ctx, plain)` | validates a plain token and returns it (what the guard uses) |
+| `Prune(ctx, cutoff)` | deletes rows revoked or expired before `cutoff`, and returns how many |
 
-```go
+Revoking sets `revoked_at` and keeps the row; a second revoke keeps the first time. Revoked rows stay listed until `Prune` deletes them. Run it from a [scheduled task](/docs/digging-deeper/scheduler):
+
+```go title="app/schedule.go"
 // Deletes tokens revoked or expired more than 90 days ago.
 n, err := tokens.Prune(ctx, app.Now().AddDate(0, 0, -90))
 ```
 
+Expiry is compared with the earlier of `cutoff` and now, so a cutoff in the future never deletes a live token.
+
 ## Upgrading a table created before v0.26.0
 
-Older `install:auth` scaffolds created `access_tokens` without `revoked_at`. Until the column exists every token is refused with `503 Service Unavailable` (the lookup fails, and a failed check denies), revoking deletes the row instead (the safe side), and one error naming `auth.TokensRevokedAtMigration` is logged. The same 503 answers any other store failure, such as the database being down; only a missing, wrong, expired or revoked token gets 401. Add the shipped migration to your list; it skips a table that already has the column:
+Older `install:auth` scaffolds created `access_tokens` without `revoked_at`. Until the column exists:
+
+- every token is refused with `503 Service Unavailable` (the lookup fails, and a failed check denies);
+- `Revoke`, `RevokeFor` and `RevokeAll` delete rows instead (the safe side), also inside a transaction;
+- one error naming `auth.TokensRevokedAtMigration` is logged.
+
+Add the shipped migration; it skips a table that already has the column, and its `Down` is a no-op:
 
 ```go title="database/migrations/20261101000000_access_tokens_revoked_at.go"
 func m20261101000000AccessTokensRevokedAt() schema.Migration {
-	return auth.TokensRevokedAtMigration("20261101000000_access_tokens_revoked_at")
+	return auth.TokensRevokedAtMigration(
+		"20261101000000_access_tokens_revoked_at",
+	)
 }
 ```
 
-Register it in your migrations list like the others, then run `vukem migrate`. A project created with the current `install:auth` already has the column; the migration is then a no-op. The `examples/*` apps in the repository ship this migration.
+Register it in your migrations list like the others and run `vukem migrate`. Projects created with the current scaffold already have the column.
+
+## Security
+
+| Threat | Defence | Learn more |
+| --- | --- | --- |
+| A leaked database | only `SHA-256` of each secret is stored | [password storage](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html) |
+| A token leaked in Git or a log | a recognisable prefix for secret scanners; tokens never logged | [secrets management](https://cheatsheetseries.owasp.org/cheatsheets/Secrets_Management_Cheat_Sheet.html) |
+| Password guessing on the issue endpoint | 5 per minute per IP; same 422 for every failure | [OWASP A07](https://owasp.org/Top10/2025/A07_2025-Authentication_Failures/) |
+| Revoking someone else's token by guessing ids | `RevokeFor` checks the owner | [IDOR](https://cheatsheetseries.owasp.org/cheatsheets/Insecure_Direct_Object_Reference_Prevention_Cheat_Sheet.html) |
+| Timing attacks on the secret | constant-time comparison; same work for unknown, expired and revoked tokens | [OWASP A04](https://owasp.org/Top10/2025/A04_2025-Cryptographic_Failures/) |
+| A token outliving a password reset | the reset revokes every token of the user | [REST security](https://cheatsheetseries.owasp.org/cheatsheets/REST_Security_Cheat_Sheet.html) |
+
+Also:
+
+- Serve the API over HTTPS only: a bearer token is a password in a header.
+- Add a secret-scanning pattern for your prefix, for example `vk_[A-Z2-7]{26}\.[A-Z2-7]{26}`, to [GitHub custom patterns](https://docs.github.com/en/code-security/secret-scanning/using-advanced-secret-scanning-and-push-protection-features/custom-patterns/defining-custom-patterns-for-secret-scanning) or [gitleaks](https://github.com/gitleaks/gitleaks).
+- Verifying an email address deletes the account's API tokens, and a password reset revokes them, so tokens opened before either do not survive.
 
 ## Testing
 
-```go
-plain, _, err := tokens.Create(ctx, user.AuthID(), "test", []string{"*"}, time.Hour)
-if err != nil {
-	t.Fatal(err)
-}
+```go title="tests/api_tokens_test.go"
+func TestMe(t *testing.T) {
+	app := vukemtest.New(t, bootstrap.New)
+	user := createVerifiedUser(t, app)
 
-app.Client(t).WithToken(plain).GetJSON("/api/v1/me").AssertOK()
+	db, err := app.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	plain, _, err := auth.NewTokens(db).Create(t.Context(), user.AuthID(),
+		"test", []string{"*"}, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	app.Client(t).WithToken(plain).GetJSON("/api/v1/me").AssertOK()
+	app.Client(t).GetJSON("/api/v1/me").AssertUnauthorized()
+}
 ```
 
-## Pitfalls
+`createVerifiedUser` stands for your own helper. The generated `tests/api_tokens_test.go` covers issuing, revoking and the unverified-email `403`.
 
-- **`ttl` 0 never expires.** `Create(ctx, id, name, abilities, 0)` returns a token valid until revoked. Pass a lifetime unless you mean it (the scaffold uses 30 days).
-- **Session guard first on mixed routes.** `auth.Required(webGuard, apiGuard)`, not the reverse: `Required` stops at a guard that fails with 503, so with the token guard first a browser with a valid session and a stray `Bearer` header gets 503 while the token store is down.
-- **Revoked tokens are listed.** `List` returns them with `RevokedAt` set; filter them out (or show them greyed out) on a "My API tokens" page.
-- **`Revoke` has no owner check.** Use it only for the token of the current request (`auth.CurrentToken`). When the id comes from a form or URL, use `RevokeFor`, or one user can revoke another's tokens by guessing ids.
-- **The plain token is gone after `Create`.** Show it once and tell the user to copy it; there is no way to read it back.
-- **Changing `Prefix` is safe.** Tokens issued without a prefix, or under an earlier one, keep working.
-- **Put `api.Idempotency` after `auth.Required`.** Its scope is then the user, not the token string; see [Idempotency keys](/docs/rest-apis/idempotency).
+## Common mistakes
 
-## Security notes
+**`ttl` 0 never expires.** `Create(ctx, id, name, abilities, 0)` returns a token valid until revoked. Pass a lifetime unless you mean it.
 
-- Serve the API over HTTPS only: a bearer token is a password in a header.
-- Throttle the issuing endpoint by IP (the scaffold allows 5 per minute) and the API by token (`ratelimit.ByToken` hashes the token before using it as a key).
-- Add a secret-scanning pattern for your prefix, for example `vk_[A-Z2-7]{26}\.[A-Z2-7]{26}`, to GitHub push protection or gitleaks.
-- Rejected tokens are logged as [security events](/docs/security/building-blocks#security-events) and never written to logs in clear.
-- Revoke every token on password reset; the `install:auth` reset flow already does, with `Tokens.RevokeAll` inside the reset transaction.
+**`Revoke` with an id from a form.** `Revoke` has no owner check, so one user can revoke another's tokens by guessing ids. Use `RevokeFor` and answer `404` when it returns `false`.
+
+**Token guard first on mixed routes.** Wrong: `auth.Required(apiGuard, webGuard)`. `Required` stops at a guard that fails with `503`, so a browser with a valid session and a stray `Bearer` header gets `503` while the token store is down. Right: `auth.Required(webGuard, apiGuard)`.
+
+**`bearer` in lower case.** The guard reads `Authorization: Bearer ...` exactly; `bearer vk_...` answers `401`.
+
+**Showing revoked tokens as active.** `List` returns them with `RevokedAt` set; filter them out or grey them out.
+
+**`api.Idempotency` before `auth.Required`.** Put it after, so its scope is the user, not the token string; see [Idempotency keys](/docs/rest-apis/idempotency).
+
+## Next steps
+
+<CardGroup cols="2">
+<Card title="Rate limiting" href="/docs/security/rate-limiting" icon="zap">
+Tune the per-IP and per-token limits.
+</Card>
+<Card title="JWT" href="/docs/security/jwt" icon="code">
+Signed tokens for identity providers and many services.
+</Card>
+<Card title="Authorization" href="/docs/security/authorization" icon="shield">
+Check what the user behind a token may do.
+</Card>
+<Card title="REST APIs" href="/docs/rest-apis/overview" icon="route">
+Resources, pagination and problem details.
+</Card>
+</CardGroup>
+
+Package reference: [`auth`](https://pkg.go.dev/github.com/AlexGalhardo/vukem/auth).

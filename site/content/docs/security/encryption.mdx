@@ -1,88 +1,452 @@
 ---
 title: Encryption
-description: AES-256-GCM encryption derived from APP_KEY, with key rotation, encrypted cookies and encrypted ORM columns.
+description: Encrypt values, cookies and database columns with AES-256-GCM keys derived from APP_KEY, bind each value to its purpose, and rotate APP_KEY with APP_PREVIOUS_KEYS and vukem key:rotate.
 ---
 
-Package `crypt` (stdlib only). `app.Crypt` is built at boot from a key derived with HKDF from `APP_KEY`, plus keys derived from `APP_PREVIOUS_KEYS`. Outside production an app may boot without `APP_KEY`; `app.Crypt` is then nil and fails closed (`crypt.ErrNoKey` from `Decrypt` and `SetCookie`, a panic from `Encrypt`).
+Some data must be stored, but nobody who reads the storage should understand it: a user's two-factor secret, an API key for a partner service, a private note. **Encryption** turns that data into unreadable text that only your app can turn back. Vukem builds an encrypter for you at boot, `app.Crypt`, from your `APP_KEY`, and uses it for encrypted cookies, encrypted database columns and queued mail.
 
-```go
-token := app.Crypt.EncryptString("4111 1111 1111 1111")
-plain, err := app.Crypt.DecryptString(token) // crypt.ErrInvalid on any failure
+You will learn:
 
-// Additional data binds a token to its purpose; Open needs the same bytes.
-token = app.Crypt.Seal(payload, []byte("invoice:42"))
-payload, err = app.Crypt.Open(token, []byte("invoice:42"))
-```
+- what `APP_KEY` is, how to create it, and how Vukem turns it into many keys;
+- how to encrypt and decrypt a value, and what a token looks like inside;
+- why additional data matters, and how it stops a value from being moved;
+- how to store encrypted cookies and encrypted ORM columns;
+- how to rotate `APP_KEY` without losing data (`APP_PREVIOUS_KEYS`, `vukem key:rotate`);
+- what happens when the key is missing, wrong or leaked.
 
-- AES-256-GCM with a random 96-bit nonce per token; keys are 32 bytes (`crypt.New(current, previous...)`).
-- A token is unpadded base64url of `version | key id | nonce | ciphertext | tag`. The key id selects the key; the header is authenticated with the additional data.
-- Every failure (malformed, tampered, unknown key, other additional data) returns `crypt.ErrInvalid`, without telling which.
+## The idea
 
-## Key rotation
+Think of a safe with a combination lock. You put a letter in, spin the dial, and anyone may carry the safe around without reading the letter. The combination is your **key**. Vukem's safe also has a tamper seal: if anybody drills into it and changes the letter, opening it fails instead of handing you a forged letter.
+
+That "seal" is what <Term tip="Authenticated Encryption with Associated Data: encryption that also detects any change to the ciphertext, and can bind extra, unencrypted context (the associated data) to it.">AEAD</Term> encryption gives you. Vukem uses AES-256-GCM from Go's [`crypto/aes`](https://pkg.go.dev/crypto/aes) and [`crypto/cipher`](https://pkg.go.dev/crypto/cipher): AES with a 256-bit key, in GCM mode, which both hides the data and detects changes.
+
+### One `APP_KEY`, many keys
+
+Using one key for everything is dangerous: a weakness in one feature would expose all of them. So `APP_KEY` is never used directly. Vukem derives a separate key for each **purpose** with [HKDF](https://pkg.go.dev/crypto/hkdf) (SHA-256, info `"vukem:" + purpose`):
+
+| Purpose | Used by |
+| --- | --- |
+| `crypt` | `app.Crypt`: encrypted cookies, `orm.Encrypted` columns, queued mail |
+| `SESSION_DRIVER=cookie` | cookie sessions (with their CSRF token and flash data) |
+| `maintenance` | the maintenance mode bypass cookie |
+| `signed.urls` | [signed URLs](/docs/security/signed-urls) in the `install:auth` scaffold |
+| `social.state` | the [social login](/docs/security/social-login) state cookie |
+
+Derive your own with `app.DeriveKey("my-purpose", 32)`. Knowing one derived key tells an attacker nothing about the others or about `APP_KEY`.
+
+Weak or missing encryption of sensitive data is [A04 Cryptographic Failures](https://owasp.org/Top10/2025/A04_2025-Cryptographic_Failures/) in the OWASP Top 10:2025. The [Cryptographic Storage](https://cheatsheetseries.owasp.org/cheatsheets/Cryptographic_Storage_Cheat_Sheet.html) and [Key Management](https://cheatsheetseries.owasp.org/cheatsheets/Key_Management_Cheat_Sheet.html) cheat sheets explain the rules Vukem follows: standard algorithms only, random nonces, separate keys per purpose, and a rotation plan.
+
+<Callout type="warning" title="Passwords are hashed, not encrypted">
+Never encrypt a password: anyone with the key could read every password. Vukem hashes passwords with argon2id (see [Authentication](/docs/security/authentication)). Encrypt only data you need to read back.
+</Callout>
+
+The running example: the blog lets each author connect their newsletter provider, so it stores the author's provider API key encrypted.
+
+## Quick start
+
+<Steps>
+<Step title="1. Create APP_KEY">
 
 ```bash
-# .env
-APP_KEY=base64:new…
-APP_PREVIOUS_KEYS=base64:old…,base64:older…
+vukem key:generate
 ```
 
-Previous keys only open or verify; everything new is sealed or signed with `APP_KEY`. A malformed entry is a boot error. They cover every feature keyed by `APP_KEY`:
-
-- `app.Crypt`: encrypted cookies, `orm.Encrypted` columns and queued mail payloads.
-- Cookie sessions, with the CSRF token and flash data they carry: re-sealed with the new key on the next request that reads them.
-- The maintenance bypass cookie: re-issued under the new key.
-- Signed URLs and social login state, when the app passes its previous keys (the `install:auth` scaffolds do):
-
-```go
-signer := signed.New(key).WithPreviousKeys(app.DerivePreviousKeys("signed.urls", 32)...)
-s := social.New(key, providers...).WithPreviousKeys(app.DerivePreviousKeys("social.state", 32)...)
+```text
+APP_KEY written to .env
 ```
 
-Remember-me, API and refresh tokens are stored as hashes, and JWT keys are configured separately, so they do not depend on `APP_KEY`.
+```bash title=".env"
+APP_KEY=base64:2Wq2...32 random bytes in base64...=
+```
 
-```go
-if app.Crypt.NeedsRotation(token) { // sealed with a previous key
-	token, err = app.Crypt.Rotate(token, []byte("invoice:42"))
+</Step>
+<Step title="2. Encrypt and decrypt">
+
+```go title="app/authors/newsletter.go"
+// The token is safe to store in a TEXT column or a cookie.
+token := app.Crypt.EncryptString("sk_test_...")
+
+plain, err := app.Crypt.DecryptString(token)
+if err != nil {
+	// crypt.ErrInvalid: tampered, wrong key, or not a token.
+	return err
 }
 ```
 
-To rotate:
+</Step>
+<Step title="3. See it">
 
-1. Locally, run `vukem key:rotate`: it writes a new `APP_KEY` to `.env` and moves the old one to the front of `APP_PREVIOUS_KEYS` (no key is printed). In production, generate a key (`vukem key:generate --show` or `./app key:generate`), set `APP_PREVIOUS_KEYS=<old key>` and `APP_KEY=<new key>` in the secret store, and deploy every instance with both.
-2. Wait for what the old key signed to expire: `SESSION_LIFETIME`, the TTL of signed links already sent (links without a TTL stop working), queued and failed mail jobs, 12 hours for maintenance bypass cookies. Re-save rows with encrypted columns (each save re-seals them) and re-seal other stored tokens with `NeedsRotation` / `Rotate`.
-3. Remove the old key. Anything still sealed with it fails closed: the session is empty, signed links answer 403, mail jobs fail and encrypted columns return `crypt.ErrInvalid`.
+```text
+token: ASfNg2KlC0m4Ttn1Up7v... (base64url, 51 characters for 5 bytes)
+plain: sk_test_...
+```
 
-A previous key still verifies sessions and signed URLs, so whoever holds it can forge them during the window. After a leak, re-encrypt stored data in a short maintenance window that has the leaked key, then drop it at once instead of keeping it in `APP_PREVIOUS_KEYS`.
+Encrypting the same text twice gives two different tokens, because each one gets a fresh random nonce.
+
+</Step>
+</Steps>
+
+## `APP_KEY`
+
+`APP_KEY` is a secret of at least 32 random bytes, written as `base64:` followed by standard base64. The prefix is optional. Every app needs its own.
+
+| Command | What it does |
+| --- | --- |
+| `vukem key:generate` | writes a new key to `.env` (copying `.env.example` first when `.env` is missing); refuses to replace an existing key |
+| `vukem key:generate --force` | replaces the existing key; sessions and encrypted data become unreadable |
+| `vukem key:generate --show` | prints a key without writing anything |
+| `./app key:generate` | the same from your built binary: prints only the key, so `APP_KEY=$(./app key:generate)` is safe; it never writes `.env` |
+| `vukem key:rotate` | replaces the key and keeps the old one in `APP_PREVIOUS_KEYS` ([below](#key-rotation)) |
+
+What happens at boot:
+
+| Situation | Result |
+| --- | --- |
+| a valid key | `app.Crypt` and every key-derived feature work |
+| no key, `APP_ENV=production` or `APP_ENV` unset | boot error: ``config: APP_KEY is not set (run `vukem key:generate`)`` |
+| no key, `APP_ENV=development` or `test` | boots with the warning ``APP_KEY is not set: sessions, encryption and signed URLs fail until you run `vukem key:generate` ``; every key-derived feature then **fails closed** |
+| not valid base64 | boot error: `config: APP_KEY is not valid base64` |
+| shorter than 32 bytes | boot error: `config: APP_KEY must be at least 32 bytes, got 16` |
+
+"Fails closed" without a key means nothing is ever derived from empty key material: `app.Crypt` is `nil` and returns `crypt.ErrNoKey` (or panics on `Encrypt`), `app.DeriveKey` returns `config.ErrKeyMissing`, cookie sessions refuse to start, and encrypted columns return `orm.ErrNoEncrypter`.
+
+## Encrypting and decrypting
+
+`app.Crypt` is a `*crypt.Encrypter`, safe for concurrent use by many goroutines.
+
+| Method | Use it for |
+| --- | --- |
+| `EncryptString(s) string` / `DecryptString(token) (string, error)` | text |
+| `Encrypt(b []byte) string` / `Decrypt(token) ([]byte, error)` | bytes |
+| `Seal(plaintext, ad []byte) string` / `Open(token, ad []byte) ([]byte, error)` | values bound to a purpose (below) |
+| `NeedsRotation(token) bool` / `Rotate(token, ad) (string, error)` | re-sealing with the current key |
+| `SetCookie(w, r, cookie) error` / `Cookie(r, name) (string, error)` | encrypted cookies |
+
+`Encrypt`, `Decrypt`, `EncryptString` and `DecryptString` are `Seal` and `Open` without additional data.
+
+### What is inside a token
+
+A token is unpadded [base64url](https://pkg.go.dev/encoding/base64#RawURLEncoding), safe in cookies, URLs and database columns. Decoded, it is:
+
+```text
+version (1 byte) | key id (4) | nonce (12) | ciphertext | tag (16)
+```
+
+| Part | Purpose |
+| --- | --- |
+| version | `1` today; lets the format change later |
+| key id | a truncated SHA-256 of the key, so `Open` picks the right key without trying each one; it reveals nothing about the key |
+| nonce | 12 random bytes from `crypto/rand`, new for every token (`cipher.NewGCMWithRandomNonce`) |
+| ciphertext | the encrypted data, as long as the plaintext |
+| tag | the 16-byte seal: any change to version, key id, nonce, ciphertext or additional data breaks it |
+
+So a token is 33 bytes longer than its plaintext before base64, about 44 characters plus 4/3 of the plaintext length.
+
+### Errors
+
+Every failure to open a token returns the same `crypt.ErrInvalid` (`crypt: invalid or tampered ciphertext`): malformed base64, a wrong version, a too-short token, a changed byte, a key that is not configured, other additional data. The causes are deliberately not told apart, so an attacker who sends crafted tokens learns nothing. A `nil` encrypter returns `crypt.ErrNoKey`.
+
+## Additional data: one value, one place
+
+Encryption hides a value, but on its own it does not stop someone from **moving** it. Suppose the blog stores two encrypted columns, `newsletter_key` and `public_note`, and the app shows `public_note` on the author's profile. An attacker with database access copies the `newsletter_key` ciphertext into `public_note`, and the app decrypts and displays the secret.
+
+<Term tip="Data that is not encrypted or stored in the token but is checked when it is opened: opening fails unless the caller passes exactly the same bytes.">Additional data</Term> prevents that. You pass it to `Seal`, and `Open` succeeds only with the same bytes:
+
+```go title="app/authors/newsletter.go"
+ad := []byte("authors.newsletter_key:" + strconv.FormatInt(a.ID, 10))
+
+token := app.Crypt.Seal([]byte(apiKey), ad)
+
+// Opening with other additional data fails with crypt.ErrInvalid.
+plain, err := app.Crypt.Open(token, ad)
+```
+
+Vukem already does this for you:
+
+| Feature | Additional data |
+| --- | --- |
+| encrypted cookies | `cookie:<name>`: a value cannot move to another cookie |
+| `orm.Encrypted` columns | `orm:<table>.<column>`: a value cannot move to another column or table |
+| queued mail | fixed per mail job kind |
+
+Including the row id, as above, also stops a value from moving to another row; `orm.Encrypted` does not include it.
 
 ## Encrypted cookies
 
-```go
-err := app.Crypt.SetCookie(w, r, http.Cookie{Name: "cart", Value: "3", Path: "/"})
-cart, err := app.Crypt.Cookie(r, "cart") // http.ErrNoCookie or crypt.ErrInvalid
+```go title="app/controllers/cart_controller.go"
+err := app.Crypt.SetCookie(w, r, http.Cookie{
+	Name:  "cart",
+	Value: "3 items",
+	Path:  "/",
+})
+
+// http.ErrNoCookie when absent, crypt.ErrInvalid when tampered with.
+cart, err := app.Crypt.Cookie(r, "cart")
 ```
 
-The cookie name is the additional data. `SetCookie` always sets `HttpOnly`, defaults `SameSite` to Lax, adds `Secure` when the request came over TLS (set it yourself behind a TLS-terminating proxy), refuses `SameSite=None` without `Secure`, and refuses values over 4 KB (`crypt.ErrCookieTooLarge`).
+`SetCookie` encrypts the value with the cookie name as additional data and picks secure defaults:
+
+- `HttpOnly` is always set, so page scripts cannot read the cookie.
+- `SameSite` defaults to `Lax` when you leave it empty.
+- `Secure` is added when the request arrived over TLS. Behind a TLS-terminating proxy the app sees plain HTTP, so set `Secure: true` yourself.
+- `SameSite=None` without `Secure` is refused: `crypt: SameSite=None cookies must be Secure`.
+- An encrypted value over 4000 bytes is refused with `crypt.ErrCookieTooLarge`; keep large data on the server.
+- An invalid cookie (bad name) is refused with the reason. On every error nothing is written.
+
+With a `nil` encrypter (no `APP_KEY`), both methods return `crypt.ErrNoKey`.
 
 ## Encrypted columns
 
-`orm.Encrypted[T]` stores `T` as JSON encrypted with the connection's encrypter. `app.DB()` passes `app.Crypt`; elsewhere use `database.Open(ctx, url, database.WithEncrypter(enc))`.
+`orm.Encrypted[T]` stores a value of any type `T` as JSON encrypted with the connection's encrypter. `app.DB()` gives the connection `app.Crypt`; elsewhere pass it with `database.Open(ctx, url, database.WithEncrypter(enc))`.
 
-```go
-type Patient struct {
+```go title="app/models/author.go"
+type Author struct {
 	orm.Model
-	Name      string
-	Diagnosis orm.Encrypted[string] `json:"-"` // TEXT column
-}
 
-p := Patient{Name: "Ada", Diagnosis: orm.Encrypted[string]{V: "flu"}}
-err := orm.Create(ctx, db, &p)                       // stores ciphertext
-got, err := orm.QueryOf[Patient](db).Find(ctx, p.ID) // got.Diagnosis.V == "flu"
+	Name string `json:"name"`
+	// TEXT column; never sent in JSON responses.
+	NewsletterKey orm.Encrypted[string] `json:"-"`
+}
 ```
 
-- Sealed on `Create`, `Update` and `Query.Update`; opened by queries, eager loads and `Pluck`. The additional data is `orm:<table>.<column>`, so a ciphertext copied to another column or table is rejected; renaming the table or column needs a re-encryption.
-- **Fails closed:** without an encrypter, writes and reads return `orm.ErrNoEncrypter` and nothing is stored. Passing an `Encrypted` value to `database/sql` directly is an error, so plaintext never reaches the database by accident.
-- Saving a model re-encrypts every encrypted column with the current key.
-- Not queryable: encryption is randomized, so `Where("diagnosis", …)` cannot match. NULL reads as the zero value.
-- JSON encoding uses the plain value; tag the field `json:"-"` to keep it out of API responses.
+```go title="app/authors/newsletter.go"
+a := models.Author{
+	Name:          "Ana",
+	NewsletterKey: orm.Encrypted[string]{V: "sk_test_..."},
+}
+
+// Stores ciphertext, never the plain key.
+if err := orm.Create(ctx, db, &a); err != nil {
+	return err
+}
+
+got, err := orm.QueryOf[models.Author](db).Find(ctx, a.ID)
+// got.NewsletterKey.V == "sk_test_..."
+```
+
+How it behaves:
+
+- **Sealed on write** (`Create`, `Update`, `Query.Update`), **opened on read** (queries, eager loads, `Pluck`).
+- The additional data is `orm:<table>.<column>`, so a ciphertext copied to another column or table is rejected. Renaming the table or the column therefore needs a re-encryption.
+- **Fails closed:** without an encrypter, writes and reads return `orm.ErrNoEncrypter` (`orm: encrypted columns need an encrypter (database.WithEncrypter)`) and nothing is stored. Passing an `Encrypted` value to `database/sql` directly is an error too, so plaintext never reaches the database by accident.
+- Each save re-encrypts every encrypted column of the model with the **current** key.
+- **Not searchable:** encryption is randomized, so `Where("newsletter_key", ...)` cannot match. `NULL` reads as the zero value.
+- **JSON shows the plain value.** `MarshalJSON` encodes `V`, so tag the field `json:"-"` to keep it out of API responses.
 
 [Two-factor authentication](/docs/security/two-factor) stores its secrets and recovery codes in encrypted columns.
+
+## Key rotation
+
+Rotate `APP_KEY` on a schedule, when someone with access leaves, or after a leak. Rotation must not lose data, so it happens in stages: the **new** key seals and signs everything new, while **previous** keys only open and verify what already exists.
+
+```bash title=".env"
+APP_KEY=base64:new...
+APP_PREVIOUS_KEYS=base64:old...,base64:older...
+```
+
+`APP_PREVIOUS_KEYS` is a comma-separated list in the `APP_KEY` format; blank entries are skipped, and a malformed entry is a boot error (`vukem: APP_PREVIOUS_KEYS entry 2: config: APP_KEY is not valid base64`). It covers every `APP_KEY`-derived feature:
+
+| Feature | During the overlap |
+| --- | --- |
+| `app.Crypt` (cookies, `orm.Encrypted`, queued mail) | old tokens open; `NeedsRotation` reports them |
+| cookie sessions, with their CSRF token and flash data | open, and are re-sealed with the new key on the next request that reads them |
+| maintenance bypass cookie | accepted, and re-issued under the new key |
+| signed URLs and social login state | verify when the app passes `app.DerivePreviousKeys(purpose, 32)` to `WithPreviousKeys` (the `install:auth` scaffolds do) |
+
+```go title="app/accounts/accounts.go"
+signer := signed.New(signingKey).
+	WithPreviousKeys(app.DerivePreviousKeys("signed.urls", 32)...)
+
+logins := social.New(stateKey, providers...).
+	WithPreviousKeys(app.DerivePreviousKeys("social.state", 32)...)
+```
+
+Remember-me tokens, API tokens and refresh tokens are stored as hashes, and JWT keys are configured separately, so they do not depend on `APP_KEY`.
+
+<Steps>
+<Step title="1. Rotate">
+
+Locally:
+
+```bash
+vukem key:rotate
+```
+
+```text
+APP_KEY rotated in .env; the old key is now first in APP_PREVIOUS_KEYS.
+Restart the app. Remove the old key from APP_PREVIOUS_KEYS once the
+sessions and links it signed have expired and encrypted columns are
+re-saved (docs/security.md#key-rotation).
+```
+
+`key:rotate` writes `.env` atomically (a crash never leaves it half written), keeps comments, `export` and CRLF line endings, never prints a key, and refuses to run when `.env` or `APP_KEY` is missing, or when `APP_KEY` or an entry already in `APP_PREVIOUS_KEYS` is invalid. With more than three previous keys it warns that each one can still forge sessions and signed links.
+
+In production, generate a key (`vukem key:generate --show` or `./app key:generate`), set `APP_PREVIOUS_KEYS=<old APP_KEY>` and `APP_KEY=<new key>` in your secret store, and deploy **every** instance with both. An instance with only the old key cannot open what the others now write.
+
+</Step>
+<Step title="2. Wait for the overlap window">
+
+Wait for the longest lifetime of what the old key sealed or signed:
+
+- `SESSION_LIFETIME` (cookie sessions not used since the rotation are not re-sealed);
+- the TTL of signed links already sent (links signed without a TTL never expire, so they will stop working);
+- queued and failed mail jobs;
+- 12 hours for maintenance bypass cookies;
+- the `MaxAge` of your encrypted cookies.
+
+</Step>
+<Step title="3. Re-seal stored data">
+
+Re-save rows with `orm.Encrypted` columns (each save re-seals every encrypted column). Re-seal other stored tokens:
+
+```go title="app/authors/rotate.go"
+if app.Crypt.NeedsRotation(token) {
+	token, err = app.Crypt.Rotate(token, ad)
+	if err != nil {
+		return err
+	}
+	// ... store the new token.
+}
+```
+
+`NeedsRotation` only reads the key id: it reports a well-formed token sealed with a key other than the current one, without opening it. `Rotate` opens the token with `ad` and seals it again with the current key.
+
+</Step>
+<Step title="4. Remove the old key">
+
+Delete it from `APP_PREVIOUS_KEYS`. Whatever is still sealed with it fails closed: the session is empty (the user is signed out), signed links answer 403, mail jobs fail instead of sending, and encrypted columns return `crypt.ErrInvalid`.
+
+</Step>
+</Steps>
+
+<Callout type="warning" title="After a leak">
+A previous key still verifies cookie sessions and signed URLs, so whoever holds it can forge them for the whole overlap window. After a leak, do not keep the leaked key in `APP_PREVIOUS_KEYS` in production: accept that sessions and links are invalidated, and re-encrypt stored data in a short maintenance window (or a one-off job) that has the leaked key, then drop it.
+</Callout>
+
+## Using `crypt` directly
+
+Outside an app, build an encrypter yourself. Every key must be exactly `crypt.KeySize` (32) bytes; derive it rather than using `APP_KEY` itself:
+
+```go title="cmd/reseal/main.go"
+current := appKey.Derive("crypt", crypt.KeySize)
+old := oldKey.Derive("crypt", crypt.KeySize)
+
+// Seals with current; also opens tokens sealed with old.
+enc, err := crypt.New(current, old)
+if err != nil {
+	// crypt: key 1 must be 32 bytes, got 16
+	return err
+}
+```
+
+`appKey` and `oldKey` are `config.Key` values from `config.ParseKey`.
+
+## Configuration
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `APP_KEY` | none (required in production) | the root key, `base64:` + at least 32 bytes |
+| `APP_PREVIOUS_KEYS` | empty | former keys, comma-separated; open and verify only |
+
+| API | Description |
+| --- | --- |
+| `app.Crypt *crypt.Encrypter` | the app's encrypter; `nil` without `APP_KEY` |
+| `app.DeriveKey(purpose, n) ([]byte, error)` | a key for your own purpose; `config.ErrKeyMissing` without `APP_KEY` |
+| `app.DerivePreviousKeys(purpose, n) [][]byte` | the same purpose from each previous key; verify-only |
+| `crypt.New(current, previous...)` | an encrypter; every key 32 bytes |
+| `crypt.KeySize` | `32` |
+| `crypt.ErrInvalid`, `crypt.ErrNoKey`, `crypt.ErrCookieTooLarge` | the errors above |
+| `orm.Encrypted[T]`, `orm.ErrNoEncrypter`, `database.WithEncrypter` | encrypted columns |
+| `config.GenerateKey()`, `config.ParseKey(secret)` | create and parse `APP_KEY` values |
+
+## Security
+
+What Vukem does for you:
+
+- Uses standard-library AES-256-GCM with a random nonce per token; no custom algorithms.
+- Derives a separate key per purpose with HKDF; `APP_KEY` itself never encrypts anything (`TestSecurity_A04_AppCryptUsesDerivedKey`).
+- Detects tampering and wrong additional data (`TestSecurity_A04_TamperingRejected`, `TestSecurity_A04_AssociatedDataMismatchRejected`).
+- Fails closed without a key, and refuses to boot without one in production (`TestSecurity_A04_MissingKeyFailsClosed`, `TestSecurity_A02_ProductionRequiresAppKey`).
+- Rotates end to end through `APP_PREVIOUS_KEYS` (`TestSecurity_A04_KeyRotationEndToEnd`).
+
+What stays your job:
+
+- Keep `APP_KEY` out of git (the starter's `.gitignore` excludes `.env`) and in your platform's secret store.
+- Rotate after anyone with access leaves, and follow the leak procedure above.
+- Hash passwords; encrypt only what you must read back.
+- Encryption does not replace [authorization](/docs/security/authorization): the app decrypts for whoever it serves.
+
+## Testing
+
+`vukemtest.New` gives each test app a random `APP_KEY`, so `app.Crypt` works in tests and no real key is needed:
+
+```go title="tests/newsletter_key_test.go"
+func TestNewsletterKeyIsStoredEncrypted(t *testing.T) {
+	app := vukemtest.New(t, bootstrap.New)
+	db, err := app.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	a := models.Author{
+		Name:          "Ana",
+		NewsletterKey: orm.Encrypted[string]{V: "sk_test_123"},
+	}
+	if err := orm.Create(t.Context(), db, &a); err != nil {
+		t.Fatal(err)
+	}
+
+	// The raw column must not contain the plain key.
+	vukemtest.AssertDatabaseMissing(t, app, "authors",
+		map[string]any{"newsletter_key": "sk_test_123"})
+}
+```
+
+For pure `crypt` code, build an encrypter from a fixed test key: `crypt.New(bytes.Repeat([]byte{1}, crypt.KeySize))`.
+
+## Common mistakes
+
+**Using `APP_KEY` directly as an encryption key.**
+
+```go
+// Wrong: one key for every purpose.
+enc, err := crypt.New(rawAppKeyBytes)
+
+// Right: app.Crypt, or a key derived for this purpose.
+key, err := app.DeriveKey("partner.tokens", crypt.KeySize)
+```
+
+**Changing `APP_KEY` without `APP_PREVIOUS_KEYS`.** Everyone is signed out, signed links answer 403, and every encrypted column fails with `crypt: invalid or tampered ciphertext`. Use `vukem key:rotate`, or put the old key in `APP_PREVIOUS_KEYS` before you deploy the new one.
+
+**Opening with different additional data.**
+
+```go
+token := app.Crypt.Seal(b, []byte("invoice:total"))
+
+// Wrong: crypt: invalid or tampered ciphertext.
+_, err := app.Crypt.Open(token, []byte("invoice:discount"))
+
+// Right: exactly the bytes used to seal.
+plain, err := app.Crypt.Open(token, []byte("invoice:total"))
+```
+
+**Searching an encrypted column.** `Where("newsletter_key", "=", v)` never matches. Store a separate keyed hash (for example an HMAC with `app.DeriveKey`) if you must look rows up by the value.
+
+**Exposing an encrypted field in JSON.** Without `json:"-"`, `orm.Encrypted` serializes the plain value into API responses.
+
+## Next steps
+
+<CardGroup cols="2">
+<Card title="Signed URLs" href="/docs/security/signed-urls" icon="lock">
+Links that cannot be changed, with the same key rotation.
+</Card>
+<Card title="Sessions" href="/docs/basics/sessions" icon="layers">
+Cookie sessions sealed with a key derived from `APP_KEY`.
+</Card>
+<Card title="Configuration" href="/docs/configuration" icon="code">
+`.env` files, `config.Secret` and the other core settings.
+</Card>
+<Card title="crypt on pkg.go.dev" href="https://pkg.go.dev/github.com/AlexGalhardo/vukem/crypt" icon="book">
+The package reference.
+</Card>
+</CardGroup>

@@ -1,70 +1,120 @@
 ---
 title: Signed URLs
-description: Build links that cannot be tampered with and expire on their own, for unsubscribe links, email verification and temporary downloads, with the signed package.
+description: Build links that cannot be changed and expire on their own, for unsubscribe links, email verification and temporary downloads, with the signed package and APP_KEY rotation.
 ---
 
-A signed URL is a normal link with two extra query parameters: `expires` (a Unix time) and `signature` (an HMAC-SHA256 of the path and query, keyed from `APP_KEY`). The server can then trust the link's contents **without a database lookup**: if someone changes `/unsubscribe/42` to `/unsubscribe/43`, the signature no longer matches and the request gets 403.
+Some links must work without a login and still be impossible to forge: "unsubscribe from this newsletter", "verify your email", "download your invoice for the next 10 minutes". A **signed URL** is a normal link with two extra query parameters, `expires` and `signature`. The server can trust everything in the link **without a database lookup**: if anyone changes `/unsubscribe/42` to `/unsubscribe/43`, the signature no longer matches and the request gets 403.
 
-Use them for links you send by email or hand to another system: unsubscribe, email verification, "download your export", a private file for the next 10 minutes.
+You will learn:
 
-## Step by step
+- what a signature is and what exactly it covers;
+- how to sign a link and protect a route in four steps;
+- what happens with expired, tampered and reordered links;
+- how links keep working through an `APP_KEY` rotation;
+- how to hand out temporary file downloads;
+- how to test signed routes.
+
+## The idea
+
+Think of a letter sealed with wax and your personal stamp. Anyone may read the letter, but nobody can change a word without breaking the seal, and nobody else owns your stamp. A signed URL works the same way: the link is readable, but the `signature` parameter is a seal computed from the link's path and query with a secret only your server knows.
+
+The seal is an <Term tip="Hash-based Message Authentication Code: a short code computed from a message and a secret key. Without the key you cannot compute it; change one letter of the message and the code changes completely.">HMAC</Term>-SHA256, from Go's [`crypto/hmac`](https://pkg.go.dev/crypto/hmac) and [`crypto/sha256`](https://pkg.go.dev/crypto/sha256) packages. The secret is derived from `APP_KEY`.
+
+```text
+https://example.com/unsubscribe/42?expires=1792287515&list=weekly
+  &signature=TTxeu_2AKOE5FE2sWed6EYhZwuzhdRad5RfRHfEkno4
+```
+
+| Part | Signed? | Why |
+| --- | --- | --- |
+| path (`/unsubscribe/42`) | yes | the id cannot be changed |
+| query (`list=weekly`, `expires=...`) | yes | neither the data nor the expiry can be changed |
+| scheme and host (`https://example.com`) | no | the link keeps working behind a proxy or on another host name of the same app |
+| fragment (`#top`) | no | browsers never send it to the server |
+
+Without signed links, an app either trusts ids in the URL (anyone may unsubscribe anyone: [A01 Broken Access Control](https://owasp.org/Top10/2025/A01_2025-Broken_Access_Control/)) or stores a random token per link in the database. Signing proves the link is untouched, which OWASP files under integrity ([A08 Software or Data Integrity Failures](https://owasp.org/Top10/2025/A08_2025-Software_or_Data_Integrity_Failures/)).
+
+This page builds one example: the blog's weekly newsletter, whose emails carry a one-click unsubscribe link.
+
+## Quick start
 
 <Steps>
-<Step title="1. Derive a key and create a signer at boot">
+<Step title="1. Create the signer at boot">
 
 ```go title="app/links/links.go"
+package links
+
+import (
+	"github.com/AlexGalhardo/vukem"
+	"github.com/AlexGalhardo/vukem/signed"
+)
+
+// NewSigner signs and verifies the app's links.
 func NewSigner(app *vukem.App) (*signed.Signer, error) {
-	key, err := app.DeriveKey("signed.urls", 32) // config.ErrKeyMissing without APP_KEY
+	// config.ErrKeyMissing when the app booted without APP_KEY.
+	key, err := app.DeriveKey("signed.urls", 32)
 	if err != nil {
 		return nil, err
 	}
 
-	// Links signed before an APP_KEY rotation verify until the old key
-	// leaves APP_PREVIOUS_KEYS; new links always use APP_KEY.
+	// Links signed before an APP_KEY rotation keep verifying until the
+	// old key leaves APP_PREVIOUS_KEYS. New links use APP_KEY.
 	previous := app.DerivePreviousKeys("signed.urls", 32)
 
-	return signed.New(key).WithPreviousKeys(previous...), nil // panics on a key shorter than 32 bytes
+	return signed.New(key).WithPreviousKeys(previous...), nil
 }
 ```
 
-`DeriveKey` turns `APP_KEY` into a separate key per **purpose** string, so a signature made for links can never be reused as, say, an encryption key.
+`DeriveKey` turns `APP_KEY` into a separate key per **purpose** string with [HKDF](https://pkg.go.dev/crypto/hkdf), so a key made for links can never be confused with an encryption key. The `install:auth` scaffold already builds this signer as `acc.Signer`.
 
 </Step>
-<Step title="2. Protect the route with the signer's middleware">
+<Step title="2. Protect the route">
 
 ```go title="routes/web.go"
-r.Get("/unsubscribe/{id}", newsletter.Unsubscribe).
+signer, err := links.NewSigner(app)
+if err != nil {
+	return err
+}
+
+r.Get("/unsubscribe/{id}", news.Unsubscribe).
 	Name("newsletter.unsubscribe").
-	Use(signer.Middleware()) // 403 when the signature is missing, wrong or expired
+	Use(signer.Middleware())
 ```
 
-</Step>
-<Step title="3. Sign the link when you send it">
+`signer.Middleware()` answers 403 when the signature is missing, wrong or expired; the handler only runs for valid links.
 
-```go
+</Step>
+<Step title="3. Sign the link when you send the email">
+
+```go title="app/newsletter/newsletter.go"
 link, err := signer.Sign(
-	fmt.Sprintf("%s/unsubscribe/%d", appURL, user.ID),
-	7*24*time.Hour, // valid for one week
+	fmt.Sprintf("%s/unsubscribe/%d", app.Config.URL, sub.ID),
+	30*24*time.Hour,
 )
 if err != nil {
 	return err
 }
-// https://example.com/unsubscribe/42?expires=1767225600&signature=9vT0...
 ```
 
-`appURL` is `app.Config.URL` (`APP_URL`). Only the path and query are signed, so the same link works behind a proxy or on another host name of the same app.
+```text
+https://example.com/unsubscribe/42?expires=1792287515
+  &signature=TTxeu_2AKOE5FE2sWed6EYhZwuzhdRad5RfRHfEkno4
+```
+
+`app.Config.URL` is `APP_URL`. The second argument is the lifetime: 30 days here.
 
 </Step>
-<Step title="4. Handle the request as usual">
+<Step title="4. Handle the request">
 
-```go
-func (h *Newsletter) Unsubscribe(c *web.Ctx) error {
-	id, err := c.ParamInt("id") // safe to trust: the signature covered it
+```go title="app/controllers/newsletter_controller.go"
+func (n *Newsletter) Unsubscribe(c *web.Ctx) error {
+	// Safe to trust: the signature covered the id.
+	id, err := c.ParamInt("id")
 	if err != nil {
 		return err
 	}
 
-	if err := h.subs.Unsubscribe(c.Context(), id); err != nil {
+	if err := n.subs.Unsubscribe(c.Context(), id); err != nil {
 		return err
 	}
 
@@ -72,56 +122,213 @@ func (h *Newsletter) Unsubscribe(c *web.Ctx) error {
 }
 ```
 
+Change `42` to `43` in the browser and the answer is:
+
+```text
+HTTP/1.1 403 Forbidden
+
+403 Forbidden
+Invalid signature.
+```
+
 </Step>
 </Steps>
 
-## Checking by hand
+## How a link is signed
 
-`signer.Verify(r)` returns `nil`, `signed.ErrInvalid` or `signed.ErrExpired` (both 403 `errs.HTTPError` values), for when you want a friendly page instead of a bare 403:
+`signer.Sign(rawURL, ttl)`:
+
+1. parses `rawURL` with [`net/url`](https://pkg.go.dev/net/url) (a parse error is the only error it returns);
+2. removes any `signature` parameter already in it;
+3. sets `expires` to now + `ttl` in Unix seconds, or removes `expires` when `ttl` is 0 (the link never expires);
+4. encodes the query with its keys **sorted** (`url.Values.Encode`);
+5. computes the HMAC over `path + "?" + query` and appends it, base64url without padding, as `signature`.
+
+`rawURL` may be absolute (`https://example.com/x`) or a path (`/x`); either way only the path and query are signed.
+
+## How a request is checked
+
+`signer.Verify(r)` (which the middleware calls):
+
+1. reads `signature`; missing → `signed.ErrInvalid`;
+2. re-encodes the rest of the query with sorted keys, so parameter **order** does not matter;
+3. compares the expected HMAC under the current key, then under each previous key, with [`hmac.Equal`](https://pkg.go.dev/crypto/hmac#Equal) in constant time; no match → `signed.ErrInvalid`;
+4. if `expires` is present: not a number → `ErrInvalid`; now later than `expires` → `signed.ErrExpired`.
+
+| Request | Result |
+| --- | --- |
+| the link as signed | `nil` |
+| same parameters in another order | `nil` |
+| path or any value changed | `ErrInvalid` (403 `Invalid signature.`) |
+| a parameter added, for example `&utm_source=mail` | `ErrInvalid` |
+| `expires` removed or edited | `ErrInvalid`: `expires` is part of the signed query |
+| valid signature, past `expires` | `ErrExpired` (403 `This link has expired.`) |
+| no `signature` | `ErrInvalid` |
+
+The signature is checked before the expiry, so an attacker cannot learn anything from editing `expires`.
+
+`signer.Middleware()` sends both errors through the [error handler](/docs/basics/error-handling): an HTML page for browsers, `application/problem+json` for API clients. A bad signature also logs the `url.signature_invalid` [security event](/docs/security/building-blocks#security-events); an expired link does not, because it is normal.
+
+## A friendly page for expired links
+
+An expired unsubscribe link should offer a new one, not a bare 403. Skip the middleware and call `Verify` yourself:
+
+```go title="app/controllers/newsletter_controller.go"
+func (n *Newsletter) Unsubscribe(c *web.Ctx) error {
+	err := n.signer.Verify(c.Request())
+
+	switch {
+	case errors.Is(err, signed.ErrExpired):
+		// Offer to send a fresh link.
+		return c.Render("newsletter/link-expired", nil)
+	case err != nil:
+		return err
+	}
+
+	// ... unsubscribe as before.
+	return c.Render("newsletter/unsubscribed", nil)
+}
+```
+
+`signed.ErrInvalid` and `signed.ErrExpired` are `*errs.HTTPError` values with status 403, so returning them renders the 403 page. Calling `Verify` directly does not log the security event; log it with `web.SecurityEvent(c.Request(), "url.signature_invalid")` if you want the alert.
+
+## Key rotation
+
+Rotating `APP_KEY` would break every link already in someone's inbox. `WithPreviousKeys` prevents that: links signed with an old key still verify, while new links are always signed with the current key.
 
 ```go
-if err := signer.Verify(c.Request()); errors.Is(err, signed.ErrExpired) {
-	return c.Render("links/expired", nil) // offer to send a new link
-} else if err != nil {
+signer := signed.New(key).
+	WithPreviousKeys(app.DerivePreviousKeys("signed.urls", 32)...)
+```
+
+- `app.DerivePreviousKeys(purpose, n)` derives one key per entry of `APP_PREVIOUS_KEYS` (nil when it is empty).
+- Call `WithPreviousKeys` once, at boot, before the signer is used. It may be called several times; keys add up.
+- Remove the old key once the longest-lived link signed with it has expired. Links signed **without** a TTL never expire, so they stop working when their key is removed.
+
+The whole procedure is on [Encryption: key rotation](/docs/security/encryption#key-rotation).
+
+## Temporary file downloads
+
+`storage.TemporaryURL` signs a link to a file on a disk, and `storage.Handler(disk, signer)` serves it only with a valid signature:
+
+```go title="routes/web.go"
+private := storage.Handler(invoices, signer)
+r.Handle("/files/", http.StripPrefix("/files", private))
+```
+
+```go title="app/controllers/invoice_controller.go"
+link, err := storage.TemporaryURL(
+	signer, "/files", "invoices/2026-10.pdf", 10*time.Minute,
+)
+```
+
+The handler checks the signature of the original URL (before `StripPrefix` removed the prefix). See [Storage](/docs/digging-deeper/storage).
+
+## Configuration
+
+There are no environment variables of its own; the key comes from `APP_KEY` and `APP_PREVIOUS_KEYS`.
+
+| API | Description |
+| --- | --- |
+| `signed.New(key []byte) *Signer` | a signer; panics when `key` is shorter than 32 bytes |
+| `signed.MinKeyLen` | `32` |
+| `(*Signer).WithPreviousKeys(keys ...[]byte) *Signer` | also accept links signed with these keys; panics on a short key |
+| `(*Signer).Sign(rawURL string, ttl time.Duration) (string, error)` | adds `expires` (unless `ttl` is 0) and `signature` |
+| `(*Signer).Verify(r *http.Request) error` | `nil`, `ErrInvalid` or `ErrExpired` |
+| `(*Signer).Middleware()` | 403 for invalid or expired links, plus the security event |
+| `signed.ErrInvalid` | 403 `Invalid signature.` |
+| `signed.ErrExpired` | 403 `This link has expired.` |
+| `storage.TemporaryURL(signer, prefix, path, ttl)` | a signed link to a file served by `storage.Handler` |
+
+The panic message for a short key is `signed: key must be at least 32 bytes, got 0 (derive it with app.DeriveKey)`. It exists so that an ignored `DeriveKey` error (an empty key) can never produce forgeable signatures.
+
+## Security
+
+What Vukem does for you:
+
+- Signs path and query with HMAC-SHA256 and compares in constant time, so timing reveals nothing (`TestSecurity_A01_SignedURLTampering`).
+- Refuses keys shorter than 32 bytes, current or previous (`TestSecurity_A04_SignedRefusesWeakKeys`).
+- Keeps old links valid through a key rotation only while you keep the old key (`TestSecurity_A04_SignedURLKeyRotation`).
+
+What stays your job:
+
+- **A signed link is a bearer credential.** Whoever holds it may use it until it expires. It proves the link came from you, not who clicks it. For actions on an account, also require the signed-in user, as the `install:auth` email verification does with `auth.Required`.
+- **Make the action safe to repeat.** Links get clicked twice, and mail scanners open links before the user does. For destructive actions, show a confirmation page with a `POST` form instead of acting on the `GET`.
+- **Give each app its own `APP_KEY`.** The host is not signed, so two apps sharing a key accept each other's links for the same path.
+- **Prefer short lifetimes.** A leaked link with a 10-minute TTL is a small problem; one without a TTL is a permanent one.
+
+## Testing
+
+Sign with the same key the app uses. `vukemtest.New` gives every test app a random `APP_KEY`, and the test app embeds `*vukem.App`, so `links.NewSigner(app.App)` builds the same signer:
+
+```go title="tests/newsletter_test.go"
+func TestUnsubscribeNeedsASignedLink(t *testing.T) {
+	app := vukemtest.New(t, bootstrap.New)
+
+	signer, err := links.NewSigner(app.App)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	link, err := signer.Sign("/unsubscribe/42", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	app.Client(t).Get(link).AssertOK()
+
+	// Unsigned and tampered links are refused.
+	app.Client(t).Get("/unsubscribe/42").AssertForbidden()
+	tampered := strings.Replace(link, "/42", "/43", 1)
+	app.Client(t).Get(tampered).AssertForbidden()
+}
+```
+
+The signer reads the system clock (`time.Now`), not the app clock, so a `vukemtest.FakeClock` does not expire links. To test your expired-link page, sign with `time.Second`, wait two seconds, and request the link: `Verify` returns `signed.ErrExpired`.
+
+## Common mistakes
+
+**Passing a TTL of 0 by accident.**
+
+```go
+// Wrong: this link never expires.
+link, err := signer.Sign(url, 0)
+
+// Right: always give a lifetime unless permanence is the point.
+link, err := signer.Sign(url, 7*24*time.Hour)
+```
+
+**Letting the mail service rewrite links.** Click tracking that appends `?utm_source=...` changes the query, and the link answers `403 Invalid signature.`. Turn off link rewriting for these emails.
+
+**Ignoring the key error.**
+
+```go
+// Wrong: an empty key panics at boot ("got 0").
+key, _ := app.DeriveKey("signed.urls", 32)
+signer := signed.New(key)
+
+// Right: return the error (config.ErrKeyMissing without APP_KEY).
+key, err := app.DeriveKey("signed.urls", 32)
+if err != nil {
 	return err
 }
 ```
 
-The middleware logs an `url.signature_invalid` [security event](/docs/security/building-blocks#security-events) for tampered links (not for expired ones).
+**Building the signer per request.** Create it once at boot and pass it to the handlers that need it; it is safe for concurrent use.
 
-## Temporary file downloads
+## Next steps
 
-`storage.TemporaryURL` builds on the same signer to hand out private files for a limited time:
-
-```go
-link, err := storage.TemporaryURL(signer, "/files", "invoices/2026-10.pdf", 10*time.Minute)
-```
-
-See [Storage](/docs/digging-deeper/storage) for serving the disk with `storage.Handler(disk, signer)`.
-
-## Testing
-
-```go
-link, err := signer.Sign("http://localhost/unsubscribe/42", time.Hour)
-if err != nil {
-	t.Fatal(err)
-}
-
-u, _ := url.Parse(link)
-app.Client(t).Get(u.RequestURI()).AssertOK()
-app.Client(t).Get("/unsubscribe/42").AssertStatus(http.StatusForbidden) // unsigned
-```
-
-## Pitfalls
-
-- **`ttl` 0 means the link never expires.** Always pass a lifetime unless a permanent link is the point (and even then, prefer a long one).
-- **Any change to the query breaks the link.** Tracking parameters added by an email service (`?utm_source=…`) invalidate the signature. Disable link rewriting for these emails, or put the tracking somewhere else.
-- **Rotating `APP_KEY` invalidates every link already sent.** Plan rotations, or keep links short-lived.
-- **The host is not signed.** Two apps that share an `APP_KEY` accept each other's links for the same path. Give each app its own key.
-- **Do not build the signer per request.** Create it once at boot and pass it to the handlers that need it.
-
-## Security notes
-
-- A signed URL is a **bearer credential**: whoever has the link can use it until it expires. It proves the link came from you, not who is clicking it. For actions on an account (email verification in the `install:auth` scaffold), also require the logged-in user, as the scaffold does with `auth.Required`.
-- Make the action safe to repeat: links get clicked twice, and email scanners open links before the user does. For destructive actions, show a confirmation page with a `POST` form instead of acting on the `GET`.
-- The signature is checked in constant time, and `signed.New` refuses keys shorter than 32 bytes.
+<CardGroup cols="2">
+<Card title="Encryption" href="/docs/security/encryption" icon="lock">
+`APP_KEY`, `APP_PREVIOUS_KEYS` and the full key rotation procedure.
+</Card>
+<Card title="Storage" href="/docs/digging-deeper/storage" icon="database">
+Disks, private files and `storage.Handler`.
+</Card>
+<Card title="Mail" href="/docs/digging-deeper/mail" icon="code">
+Send the emails that carry your signed links.
+</Card>
+<Card title="signed on pkg.go.dev" href="https://pkg.go.dev/github.com/AlexGalhardo/vukem/signed" icon="book">
+The package reference.
+</Card>
+</CardGroup>

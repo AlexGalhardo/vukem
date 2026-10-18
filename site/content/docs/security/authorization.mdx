@@ -1,63 +1,473 @@
 ---
 title: Authorization
-description: Gates and policies that fail closed, c.Authorize, the can template function and make:policy.
+description: Decide what a signed-in user may do with gates and policies that fail closed, check them with c.Authorize and the can template function, and generate policies with make:policy.
 ---
 
-Package `authz` is generic over your user type. Decisions **fail closed**: an ability or policy that was never registered denies (403), and the cause is logged.
+Authentication answers *who are you?*. Authorization answers the next question: *are you allowed to do this?* Ana may edit her own blog post but not Bruno's; only an admin may open the settings page. Package `authz` lets you write each of those rules once, in one place, and check it from any handler or template with one line.
 
-## Gates
+You will learn:
 
-```go
-gate := authz.New(func(ctx context.Context) (*models.User, error) {
-	return auth.UserFrom[*models.User](ctx, "web") // who is asking
-})
+- the difference between a **gate ability** and a **policy**;
+- how to register a gate and connect it to your routes;
+- how `c.Authorize` turns a decision into a 401, 403 or 404 response;
+- how to hide links in templates with `can`;
+- why unknown rules always deny, and what that protects you from;
+- how to test your rules with `vukemtest`.
 
-gate.Define("edit-settings", func(ctx context.Context, u *models.User) bool { return u.Role == "admin" })
-gate.DefineResult("see-billing", func(ctx context.Context, u *models.User) authz.Result { return authz.DenyAsNotFound() })
+## The idea
 
-r.Services().Authorizer = gate // enables c.Authorize and {{can}}
+Picture a building with a security desk. The guard at the desk (the **gate**) has a binder of rules. Some rules are about the person only: "staff may enter the server room". Others are about the person *and a thing*: "you may open a locker only if it has your name on it". When a rule is missing from the binder, the guard says **no**. That last part matters most.
 
-if err := c.Authorize("edit-settings", nil); err != nil {
-	return err // 401 without a user, 403 denied, 404 for DenyAsNotFound
-}
+In Vukem:
+
+| Concept | What it decides | Example | Registered with |
+| --- | --- | --- | --- |
+| Gate ability | something about the user alone | `"edit-settings"`: is the user an admin? | `gate.Define` / `gate.DefineResult` |
+| Policy | an action on one Go type | `"update"` on a `*models.Post`: is the user its author? | `gate.Register(authz.For[*models.Post](...))` |
+| `Before` hook | runs before every check | super-admins may do anything | `gate.Before` |
+
+The threat this protects against is the number one item of the [OWASP Top 10:2025, A01 Broken Access Control](https://owasp.org/Top10/2025/A01_2025-Broken_Access_Control/): a user changes `/posts/12/edit` to `/posts/13/edit` and edits somebody else's post. The application knew who they were, but never asked whether *this* post was theirs. OWASP calls this an <Term tip="Insecure Direct Object Reference: the app trusts an id from the URL or the form without checking that the user may use that record.">IDOR</Term>; read the [IDOR prevention cheat sheet](https://cheatsheetseries.owasp.org/cheatsheets/Insecure_Direct_Object_Reference_Prevention_Cheat_Sheet.html) and the [Authorization cheat sheet](https://cheatsheetseries.owasp.org/cheatsheets/Authorization_Cheat_Sheet.html) for the general rules.
+
+`authz.Gate` is a [generic](https://go.dev/doc/tutorial/generics) type: `authz.Gate[*models.User]` knows your user type, so a rule receives a `*models.User` instead of an `any` you would have to convert. Rules also receive a [`context.Context`](https://pkg.go.dev/context), the request's context, so they may query the database with the request's deadline.
+
+This page builds one example: the blog of the [first app](/docs/first-app), with posts written by users. Everyone may read posts, signed-in users may write them, and only the author may change or delete a post.
+
+## Quick start
+
+<Steps>
+<Step title="1. Generate a policy">
+
+```bash
+vukem make:policy Post
 ```
 
-## Policies
+```text
+created app/policies/post_policy.go
+```
+
+The command writes `app/policies/post_policy.go` with `View`, `Create`, `Update` and `Delete` methods, and appends `authz.For[*models.Post](PostPolicy{})` to the `All` function in `app/policies/registry.go` (it creates that file when it is missing). The generated `Update` and `Delete` deny everyone until you write the rule.
+
+</Step>
+<Step title="2. Write the rules">
 
 ```go title="app/policies/post_policy.go"
-// vukem make:policy Post
+package policies
+
+import (
+	"context"
+
+	"github.com/AlexGalhardo/vukem/authz"
+
+	"example.com/blog/app/models"
+)
+
+// PostPolicy decides what users may do with models.Post.
 type PostPolicy struct{}
 
-func (PostPolicy) Update(ctx context.Context, u *models.User, p *models.Post) authz.Result {
-	if u.ID == p.UserID {
+// Create lets any signed-in user write a post.
+func (PostPolicy) Create(_ context.Context, u *models.User) bool {
+	return u.ID > 0
+}
+
+// Update lets only the author change a post.
+func (PostPolicy) Update(
+	_ context.Context, u *models.User, p *models.Post,
+) authz.Result {
+	if p.UserID == u.ID {
 		return authz.Allow()
 	}
 
-	return authz.DenyAsNotFound()
+	return authz.Deny("Only the author can change this post.")
 }
 
-func (PostPolicy) Create(ctx context.Context, u *models.User) bool { return u.EmailVerified() } // type-level ability
+// Delete follows the same rule as Update.
+func (p PostPolicy) Delete(
+	ctx context.Context, u *models.User, post *models.Post,
+) authz.Result {
+	return p.Update(ctx, u, post)
+}
 ```
 
-```go
-// app/policies/registry.go (make:policy appends)
-func All() []authz.Policy { return []authz.Policy{authz.For[*models.Post](PostPolicy{})} }
+</Step>
+<Step title="3. Create the gate and register it">
 
-if err := gate.Register(policies.All()...); err != nil { // signatures are checked at boot
+```go title="routes/web.go"
+// The gate reads the user that the "web" session guard loaded.
+gate := authz.New(func(ctx context.Context) (*models.User, error) {
+	u, err := auth.UserFrom[models.User](ctx, "web")
+	return &u, err
+})
+
+// Register checks every policy method signature now, at boot.
+if err := gate.Register(policies.All()...); err != nil {
 	return err
 }
 
-if err := c.Authorize("update", post); err != nil { return err }
-if err := c.Authorize("create", (*models.Post)(nil)); err != nil { return err }
+// c.Authorize and the "can" template function use this gate.
+r.Services().Authorizer = gate
 ```
 
-- Policies are found by the subject's Go type; ability names map to methods (`"update"` → `Update`) returning `authz.Result` (`Allow`, `Deny(msg)`, `DenyAsNotFound`) or `bool`.
-- `gate.Before(func(ctx, u, ability) *authz.Result)` decides first (super-admins). `gate.Allows(ctx, u, ability, subject)` works outside requests.
-- Denials through `c.Authorize` emit the `authz.denied` security event. Without an `Authorizer` every check denies.
+</Step>
+<Step title="4. Check the rule in the handler">
+
+```go title="app/controllers/post_controller.go"
+func (pc *PostController) Update(c *web.Ctx) error {
+	post, err := pc.find(c)
+	if err != nil {
+		return err
+	}
+
+	// 403 for other users, 401 when nobody is signed in.
+	if err := c.Authorize("update", &post); err != nil {
+		return err
+	}
+
+	// ... validate and save the post.
+	return c.RedirectRoute("posts.show", "post", post.ID)
+}
+```
+
+</Step>
+<Step title="5. Try it">
+
+Sign in as Bruno and send the edit form of Ana's post. The response is:
+
+```text
+HTTP/1.1 403 Forbidden
+
+403 Forbidden
+Only the author can change this post.
+```
+
+The log shows one security event:
+
+```text
+level=WARN msg="security event" event=authz.denied
+  method=PUT path=/posts/12 ability=update status=403
+```
+
+</Step>
+</Steps>
+
+## Gate abilities
+
+A gate ability is a named rule that only looks at the user. The examples below assume you added a `Role string` field (and column) to `models.User`; the scaffolded model has none. `Define` takes a function that returns `bool`:
+
+```go title="routes/web.go"
+gate.Define("edit-settings",
+	func(_ context.Context, u *models.User) bool {
+		return u.Role == "admin"
+	},
+)
+```
+
+`true` allows; `false` is the same as `authz.Deny()`. When you need a custom message or a 404, use `DefineResult`, whose function returns an `authz.Result`:
+
+```go title="routes/web.go"
+gate.DefineResult("see-billing",
+	func(_ context.Context, u *models.User) authz.Result {
+		if u.Role == "owner" {
+			return authz.Allow()
+		}
+
+		// Hide that the billing page exists at all.
+		return authz.DenyAsNotFound()
+	},
+)
+```
+
+Check a gate ability with a `nil` subject:
+
+```go
+if err := c.Authorize("edit-settings", nil); err != nil {
+	return err
+}
+```
+
+Defining the same name twice replaces the first rule.
+
+## Policies
+
+A policy is a Go type whose **methods** are the abilities for one subject type. `authz.For[T](policy)` binds the policy to the subject type `T`, usually a pointer to a model such as `*models.Post`.
+
+When you call `c.Authorize("update", post)`, the gate:
+
+1. looks at the Go type of `post` (with [`reflect`](https://pkg.go.dev/reflect)), here `*models.Post`;
+2. finds the policy registered for that type;
+3. turns the ability name into a method name and calls it: `"update"` → `Update`, `"viewAny"` → `ViewAny`.
+
+### Method shapes
+
+`Register` accepts two shapes of method. Both take the context and the user type of the gate (`U`, here `*models.User`) and return either `authz.Result` or `bool`:
+
+| Shape | Called by | Use it for |
+| --- | --- | --- |
+| `Update(ctx, u *models.User, p *models.Post) authz.Result` | `c.Authorize("update", post)` | actions on one record |
+| `Create(ctx, u *models.User) bool` | `c.Authorize("create", (*models.Post)(nil))` | actions on the type, with no record yet |
+
+The second shape has no subject, but `Authorize` still needs to know which policy to use. A typed nil pointer, `(*models.Post)(nil)`, carries the type without a value. See [nil in the Go spec](https://go.dev/ref/spec#The_zero_value) for why a nil pointer still has a type.
+
+Methods with any other signature are ignored, so a policy may have helper methods. A method whose third parameter is a different type than `T` is an error.
+
+### What `Register` checks at boot
+
+`Register` validates every policy before the app serves a request, so a typo fails at boot instead of silently denying in production:
+
+| Mistake | Error returned by `Register` |
+| --- | --- |
+| A method takes another subject type | `authz: policies.PostPolicy.Update takes *models.Comment, policy is for *models.Post` |
+| The policy has no method with a valid shape (for example the user parameter is `models.User` instead of `*models.User`) | `authz: policies.PostPolicy has no policy methods for *models.User` |
+
+Registering a second policy for the same type replaces the first one.
+
+## Results: allow, deny or hide
+
+An `authz.Result` is the decision of one rule:
+
+| Constructor | Status through `c.Authorize` | Body message |
+| --- | --- | --- |
+| `authz.Allow()` | none: `nil` error | — |
+| `authz.Deny()` | 403 | `This action is unauthorized.` (`authz.ErrForbidden`) |
+| `authz.Deny("Only the author can change this post.")` | 403 | your message |
+| `authz.DenyAsNotFound()` | 404 | `Not Found.` |
+
+`result.Allowed()` reports whether a `Result` allows.
+
+<Callout type="tip" title="When to answer 404">
+Return `DenyAsNotFound()` when the existence of a record is itself a secret: a draft post, another tenant's invoice. A 403 tells an attacker "this id exists, you just cannot have it"; a 404 tells them nothing.
+</Callout>
+
+## `c.Authorize` under the hood
+
+`c.Authorize(ability, subject)` asks `Services.Authorizer` (your gate) and returns an error you return from the handler. The [error handler](/docs/basics/error-handling) then renders it as an HTML page or as `application/problem+json` for API clients. Step by step:
+
+1. **No `Authorizer` configured?** Deny with 403 (fail closed). The cause in the logs is `web: no Authorizer configured`.
+2. **Resolve the user** with the function you passed to `authz.New`. If it returns an error (nobody signed in), the answer is `authz.ErrNoUser`: 401 `Unauthenticated.`
+3. **Run the `Before` hooks** in the order you added them. The first one that returns a non-nil `*authz.Result` decides, and the rule is not called.
+4. **Find the rule.** With a `nil` subject, the named ability; otherwise the policy for the subject's type, then its method.
+5. **No rule found?** Deny with 403. This is the fail-closed rule explained below.
+6. **Call the rule** and turn its `Result` into `nil`, 403 or 404.
+7. **Any denial** (401, 403 or 404) is logged as the `authz.denied` [security event](/docs/security/building-blocks#security-events) with the `ability` and `status` attributes.
+
+`Authorize` is safe for concurrent use: the gate guards its rules with a [`sync.RWMutex`](https://pkg.go.dev/sync#RWMutex). Register rules at boot anyway, before requests arrive.
+
+### Fail closed
+
+These all deny with 403, never allow:
+
+```go
+// An ability nobody defined.
+c.Authorize("launch-missiles", nil)
+
+// A type without a registered policy.
+c.Authorize("update", &models.Comment{ID: 1})
+
+// A policy without an Archive method.
+c.Authorize("archive", &post)
+
+// A value instead of the registered pointer type.
+c.Authorize("update", post)
+```
+
+The response says only `403 Forbidden`; the reason stays in the server log at `DEBUG` level as the error cause, for example `authz: no rule registered: policy for models.Post`. A forgotten rule therefore locks a feature instead of opening it, which is the [fail-closed principle](/docs/security/overview) the whole framework follows.
+
+## Super-admins with `Before`
+
+A `Before` hook runs before every check, for every ability:
+
+```go title="routes/web.go"
+gate.Before(func(
+	_ context.Context, u *models.User, ability string,
+) *authz.Result {
+	if u.Role == "super-admin" {
+		allow := authz.Allow()
+		return &allow
+	}
+
+	// nil: no opinion, let the normal rule decide.
+	return nil
+})
+```
+
+Returning `nil` means "no opinion". Returning a result decides, **even for abilities that were never registered**: the hook runs before the fail-closed lookup. Keep `Before` hooks short and obvious, because they bypass every policy.
+
+## Checking outside a request
+
+`c.Authorize` reads the user from the request. In a queue job, a CLI command or a test you already have the user, so ask the gate directly:
+
+| Method | Returns | Use it when |
+| --- | --- | --- |
+| `gate.Allows(ctx, u, ability, subject)` | `bool` | you only need yes or no |
+| `gate.Check(ctx, u, ability, subject)` | `(authz.Result, error)` | you want the result; the error is non-nil when no rule is registered (the result then denies) |
+| `gate.Authorize(ctx, ability, subject)` | `error` (401, 403, 404) | the user is in `ctx`; this is what `c.Authorize` calls |
+
+```go
+if !gate.Allows(ctx, &author, "update", &post) {
+	return errors.New("author can no longer edit this post")
+}
+```
+
+These methods do not log the `authz.denied` event; only `c.Authorize` does.
 
 ## Templates
 
-```html
-{{if can "update" .Post}}<a href="{{route "posts.edit" "post" .Post.ID}}">Edit</a>{{end}}
-{{if can "edit-settings"}}<a href="/settings">Settings</a>{{end}}
+The `can` template function asks the same gate, so a link only shows when the action would be allowed:
+
+```html title="resources/views/posts/show.html"
+{{if can "update" .}}
+	<a href="{{route "posts.edit" "post" .ID}}">Edit</a>
+{{end}}
+{{if can "edit-settings"}}
+	<a href="/settings">Settings</a>
+{{end}}
 ```
+
+- `can "ability" subject` calls `Authorize`; with one argument the subject is `nil` (a gate ability).
+- It returns `false` when no `Authorizer` is configured, when nobody is signed in, and for any denial. It never logs a security event.
+- Hiding a link is a convenience, not protection: a user can still type the URL. Always call `c.Authorize` in the handler too.
+
+<Callout type="warning" title="Pass the registered type">
+The subject must have the exact Go type the policy was registered for. Render the show page with `c.Render("posts/show", &post)`, not `post`. Inside `{{range .Posts}}` over a `[]models.Post`, each `.` is a `models.Post` value, so `can "delete" .` is always `false`; pass a `[]*models.Post` to the view instead.
+</Callout>
+
+## Configuration
+
+`authz` has no environment variables. Everything is code:
+
+| API | Description |
+| --- | --- |
+| `authz.New[U](user func(ctx) (U, error)) *Gate[U]` | creates a gate; `user` resolves the current user from the request context |
+| `gate.Define(name, func(ctx, U) bool)` | registers a gate ability |
+| `gate.DefineResult(name, func(ctx, U) authz.Result)` | registers a gate ability that may return a message or a 404 |
+| `gate.Before(func(ctx, U, ability) *authz.Result)` | adds a hook that runs before every check |
+| `authz.For[T](policy any) authz.Policy` | binds a policy to subject type `T` |
+| `gate.Register(policies ...authz.Policy) error` | validates and adds policies |
+| `gate.Check`, `gate.Allows`, `gate.Authorize` | decide (see [Checking outside a request](#checking-outside-a-request)) |
+| `authz.Allow()`, `authz.Deny(msg...)`, `authz.DenyAsNotFound()` | build a `Result` |
+| `authz.ErrForbidden`, `authz.ErrNoUser` | the default 403 and the 401 errors |
+| `web.Services.Authorizer` | the `web.Authorizer` interface behind `c.Authorize` and `can`; any type with `Authorize(ctx, ability, subject) error` fits |
+| `vukem make:policy <Name>` | generates a policy and registers it in `app/policies/registry.go` |
+
+The user function must read the user with the type your guard stores. The session guard of the `install:auth` scaffold stores a `models.User` value, so the resolver reads `auth.UserFrom[models.User]` and returns its address. Reading `auth.UserFrom[*models.User]` would never match, and every check would answer 401.
+
+## Security
+
+What Vukem does for you:
+
+- Unknown abilities, unknown policies, unknown methods and a missing `Authorizer` deny (`TestSecurity_A01_UnregisteredPolicyDenies`).
+- Policy signatures are checked at boot, so a broken rule is a boot error.
+- `DenyAsNotFound` hides whether a record exists.
+- Every denial through `c.Authorize` is a `authz.denied` security event you can alert on.
+
+What stays your job:
+
+- **Call `Authorize` in every handler that touches owned data**, including `Edit` (which only shows a form) and API handlers. A route behind `auth.Required` only proves the user signed in.
+- **Scope list queries.** `Authorize` checks one record. An index page must still query only the records the user may see, for example `Where("user_id", "=", u.ID)`.
+- **Load the record before checking.** Check the post you loaded from the database, never a struct built from form values: the form may lie about `UserID`.
+
+See [docs/security.md](https://github.com/AlexGalhardo/vukem/blob/main/docs/security.md) for the full A01 checklist.
+
+## Testing
+
+Test the rules through HTTP, as a real user would hit them. `ActingAs` signs the test client in without the login form:
+
+```go title="tests/posts_test.go"
+func TestOnlyTheAuthorEditsAPost(t *testing.T) {
+	app := vukemtest.New(t, bootstrap.New)
+	db, err := app.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ana := models.User{Name: "Ana", Email: "ana@example.com"}
+	bruno := models.User{Name: "Bruno", Email: "bruno@example.com"}
+	for _, u := range []*models.User{&ana, &bruno} {
+		if err := orm.Create(t.Context(), db, u); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	post := models.Post{UserID: ana.ID, Title: "Hello", Body: "..."}
+	if err := orm.Create(t.Context(), db, &post); err != nil {
+		t.Fatal(err)
+	}
+
+	edit := fmt.Sprintf("/posts/%d/edit", post.ID)
+
+	app.Client(t).ActingAs("web", ana).Get(edit).AssertOK()
+	app.Client(t).ActingAs("web", bruno).Get(edit).AssertForbidden()
+}
+```
+
+Unit-test a policy without HTTP with `gate.Allows`:
+
+```go title="app/policies/post_policy_test.go"
+func TestPostPolicy(t *testing.T) {
+	gate := authz.New(func(context.Context) (*models.User, error) {
+		return nil, errors.New("not used")
+	})
+	if err := gate.Register(policies.All()...); err != nil {
+		t.Fatal(err)
+	}
+
+	// ID lives in the embedded orm.Model.
+	ana := &models.User{Model: orm.Model{ID: 1}}
+	post := &models.Post{UserID: 1}
+
+	if !gate.Allows(t.Context(), ana, "update", post) {
+		t.Fatal("the author must be able to update")
+	}
+
+	bruno := &models.User{Model: orm.Model{ID: 2}}
+	if gate.Allows(t.Context(), bruno, "update", post) {
+		t.Fatal("another user must not update")
+	}
+}
+```
+
+## Common mistakes
+
+**Checking a value instead of the pointer.** The policy is registered for `*models.Post`:
+
+```go
+// Wrong: models.Post has no policy, so this always answers 403.
+err := c.Authorize("update", post)
+
+// Right: the pointer type the policy was registered for.
+err := c.Authorize("update", &post)
+```
+
+The log shows `authz: no rule registered: policy for models.Post`.
+
+**Forgetting to set the `Authorizer`.** Without `r.Services().Authorizer = gate`, every `c.Authorize` answers `403 Forbidden` and every `can` is `false`. The log cause is `web: no Authorizer configured`.
+
+**Ignoring the `Register` error.**
+
+```go
+// Wrong: a typo in a policy silently denies everything.
+_ = gate.Register(policies.All()...)
+
+// Right: the app refuses to boot with the reason.
+if err := gate.Register(policies.All()...); err != nil {
+	return err
+}
+```
+
+**Trusting the hidden link.** `{{if can "update" .}}` hides the Edit button, but the `PUT /posts/12` route still needs `c.Authorize("update", &post)`.
+
+## Next steps
+
+<CardGroup cols="2">
+<Card title="Authentication" href="/docs/security/authentication" icon="lock">
+Guards, sessions and `auth.Required`: who the user is, before you ask what they may do.
+</Card>
+<Card title="Admin panel" href="/docs/digging-deeper/admin" icon="layers">
+The admin panel authorizes every action with a gate and policies.
+</Card>
+<Card title="Rate limiting" href="/docs/security/rate-limiting" icon="shield">
+Limit how often a user may try, on top of what they may do.
+</Card>
+<Card title="authz on pkg.go.dev" href="https://pkg.go.dev/github.com/AlexGalhardo/vukem/authz" icon="book">
+The package reference.
+</Card>
+</CardGroup>

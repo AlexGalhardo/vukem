@@ -1,44 +1,272 @@
 ---
 title: Rate limiting
-description: Limit requests per IP, token or user with ratelimit.Middleware, and share the budget between servers through the database or Redis with RATE_LIMIT_STORE.
+description: Limit how many requests a client may send with ratelimit.Middleware, key the budget by IP (IPv6 by /64), token or account, read the real client IP behind a proxy, and share budgets between servers with RATE_LIMIT_STORE.
 ---
 
-A rate limiter answers one question per request: *may this client make another request right now?* It protects logins against password guessing, mail endpoints against spam and APIs against clients that hammer them. Vukem counts requests per **key** (an IP, a hashed token, an email), lets them through while the key has budget left and answers `429 Too Many Requests` once it runs out.
+A rate limiter answers one question per request: *may this client send another request right now?* It stops a bot from trying a million passwords on your login form, a script from sending a thousand "reset your password" emails, and one API client from using all of your server. Vukem counts requests per **key** (an IP address, a token, an email), lets them through while the key has budget left, and answers `429 Too Many Requests` once the budget runs out.
+
+You will learn:
+
+- how a rate limiter works, and which attacks it slows down;
+- how to limit a route in two lines with `ratelimit.Middleware`;
+- how keys work: per IP, per token, per account, and why IPv6 is grouped by `/64`;
+- how Vukem finds the real client IP behind a proxy (`TRUSTED_PROXIES`, `CLIENT_IP_HEADER`);
+- how to share one budget across several servers with `RATE_LIMIT_STORE`;
+- why a broken store denies requests instead of letting them through.
+
+## The idea
+
+Think of a ticket machine at a museum door. Each visitor group (a **key**) receives a fixed number of tickets per hour (the **limit** per **window**). Every request uses one ticket. When the group has no tickets left, the guard says "come back in 40 seconds" (`429` with `Retry-After: 40`). The tickets refill over time.
+
+| Word | Meaning | Example |
+| --- | --- | --- |
+| key | who is counted | `ip:203.0.113.5`, `login:ana@example.com:ip:203.0.113.5` |
+| limit | requests allowed per window | `5` |
+| window | the time the limit covers | `time.Minute` |
+| name | keeps budgets of different limiters apart | `"login"`, `"api.ip"` |
+| store | where the counts live | process memory, the database, Redis |
+
+Rate limiting does not stop an attack. It makes the attack slow and expensive. Five password guesses per minute turn a million guesses into almost four hundred years. OWASP lists the threats it slows down:
+
+- [credential stuffing and brute force](https://cheatsheetseries.owasp.org/cheatsheets/Credential_Stuffing_Prevention_Cheat_Sheet.html) against logins ([A07 Authentication Failures](https://owasp.org/Top10/2025/A07_2025-Authentication_Failures/));
+- [denial of service](https://cheatsheetseries.owasp.org/cheatsheets/Denial_of_Service_Cheat_Sheet.html) through expensive endpoints, and abuse of features such as email sending ([A06 Insecure Design](https://owasp.org/Top10/2025/A06_2025-Insecure_Design/)).
+
+This page uses one example: the blog's login form, which should accept five attempts per minute for each email and IP, and its JSON API.
 
 ## Quick start
 
-```go title="routes/api.go"
-func API(r *router.Router, app *vukem.App) error {
-	limiters, err := app.RateLimiters() // store chosen by RATE_LIMIT_STORE
+<Steps>
+<Step title="1. Build the limiters and wrap the route">
+
+```go title="routes/auth.go"
+func Auth(r *router.Router, app *vukem.App) error {
+	// The store comes from RATE_LIMIT_STORE (memory by default).
+	limiters, err := app.RateLimiters()
 	if err != nil {
 		return err
 	}
 
-	perIP := ratelimit.Middleware(limiters("api.ip", 120, time.Minute), ratelimit.ByIP)
+	// 5 login attempts per minute for each client IP.
+	throttle := ratelimit.Middleware(
+		limiters("login", 5, time.Minute),
+		ratelimit.ByIP,
+	)
 
-	r.Group("/api/v1", func(g *router.Group) {
-		g.Use(perIP)
-		// ...
-	})
+	r.Post("/login", login).Name("login.store").Use(throttle)
 
 	return nil
 }
 ```
 
-`limiters(name, limit, window)` returns a `ratelimit.Limiter` that allows `limit` requests per `window` for each key. The **name** keeps budgets apart: `"login"` and `"api.ip"` count separately even when both key by IP. The `install:auth`, `install:auth --2fa` and `install:api` scaffolds already limit logins, password-reset mails, two-factor codes and token issuance this way.
+`app.RateLimiters()` returns a `ratelimit.Factory`: a function `limiters(name, limit, window)` that builds a `ratelimit.Limiter`. `ratelimit.Middleware(limiter, key)` turns it into a [middleware](/docs/basics/middleware).
+
+</Step>
+<Step title="2. Send six requests">
+
+```bash
+for i in 1 2 3 4 5 6; do
+  curl -s -o /dev/null -w "%{http_code}\n" \
+    -H "Accept: application/json" \
+    -X POST http://localhost:3000/login
+done
+```
+
+```text
+422
+422
+422
+422
+422
+429
+```
+
+The first five requests reach the login handler, which rejects the empty form with `422`. The sixth never reaches it.
+
+</Step>
+<Step title="3. Read the answer">
+
+```text
+HTTP/1.1 429 Too Many Requests
+Content-Type: application/problem+json
+RateLimit-Limit: 5
+RateLimit-Remaining: 0
+RateLimit-Reset: 60
+Retry-After: 12
+
+{"type":"about:blank","title":"Too Many Requests","status":429,
+ "detail":"Too many requests.","instance":"/login"}
+```
+
+Browsers that ask for HTML get the HTML error page with the same status. The log shows one `ratelimit.exceeded` security event:
+
+```text
+level=WARN msg="security event" event=ratelimit.exceeded
+  method=POST path=/login key_kind=ip
+```
+
+</Step>
+</Steps>
+
+The `install:auth`, `install:auth --2fa` and `install:api` scaffolds already limit logins, sign-ups, password-reset mails, two-factor codes and token issuance this way.
 
 ## What clients see
 
-Every limited response carries the [RateLimit headers](https://datatracker.ietf.org/doc/draft-ietf-httpapi-ratelimit-headers/):
+`ratelimit.Middleware` sets the [RateLimit header fields](https://datatracker.ietf.org/doc/draft-ietf-httpapi-ratelimit-headers/) on every response that went through the limiter, allowed or not:
 
 | Header | Meaning |
 | --- | --- |
 | `RateLimit-Limit` | requests allowed per window |
-| `RateLimit-Remaining` | requests left now |
+| `RateLimit-Remaining` | requests left right now |
 | `RateLimit-Reset` | seconds until the budget is full again |
 | `Retry-After` | on `429` only: seconds until the next request is allowed |
 
-The `429` body is the usual error format (problem+json for API clients), and each denial is logged as the `ratelimit.exceeded` [security event](/docs/security/building-blocks).
+Seconds are rounded **up**, so a client that waits exactly `Retry-After` seconds is never too early. The `429` body is the usual [error response](/docs/basics/error-handling): `application/problem+json` for API clients, an HTML page for browsers, with the detail `Too many requests.`.
+
+Each `429` logs the `ratelimit.exceeded` [security event](/docs/security/building-blocks#security-events). Its `key_kind` attribute is the part of the key before the first `:` (`ip`, `token`, `login`), never the key itself, so emails and tokens stay out of the logs.
+
+## Keys
+
+The second argument of `ratelimit.Middleware` is a `ratelimit.KeyFunc`: `func(r *http.Request) string`. It picks the bucket a request counts in.
+
+| Key | Buckets by | Key looks like | Use it for |
+| --- | --- | --- | --- |
+| `ratelimit.ByIP` (also when you pass `nil`) | client IP; IPv6 by network | `ip:203.0.113.5`, `ip:2001:db8:1:2::/64` | public routes, logins, sign-ups |
+| `ratelimit.ByToken` | the bearer token, hashed; the IP when there is none | `token:3f1a...` | routes **behind** `auth.Required` |
+| your own `KeyFunc` | anything: user id, email and IP, tenant | `login:ana@example.com:ip:203.0.113.5` | per-user or per-account limits |
+
+`ByToken` hashes the token with [SHA-256](https://pkg.go.dev/crypto/sha256) and keeps 16 bytes, so the raw token never sits in the store.
+
+### Your own key
+
+The login form should count attempts per email **and** IP, so one attacker cannot lock Ana out from another network:
+
+```go title="app/controllers/account/account.go"
+// LoginThrottleKey keys login attempts by the normalized email and the
+// client IP, grouped like ByIP.
+func LoginThrottleKey(r *http.Request) string {
+	email := strings.ToLower(strings.TrimSpace(r.PostFormValue("email")))
+
+	return "login:" + email + ":" + ratelimit.ByIP(r)
+}
+```
+
+```go title="routes/auth.go"
+throttle := ratelimit.Middleware(
+	limiters("login", 5, time.Minute),
+	account.LoginThrottleKey,
+)
+```
+
+Rules for a custom key:
+
+- **Normalize what you key by.** Trim and lower-case an email, or `Ana@Example.com` and `ana@example.com ` get separate budgets.
+- **Embed `ratelimit.ByIP(r)`** (or `ratelimit.IPKey(ip, prefix)`) instead of `c.IP()`, so IPv6 clients are grouped the same way as everywhere else.
+- **Return `""` to skip limiting** for that request. The middleware then calls the next handler without counting. The scaffold's keys return `""` for anything but `POST`, so showing the login form never costs an attempt.
+- **Prefix the key** (`login:`, `2fa:`): the prefix becomes the `key_kind` in the security event.
+
+<Callout type="warning" title="Do not trust a token you have not verified">
+`ByToken` before `auth.Required` gives a fresh bucket to every made-up token: an attacker sends `Bearer 1`, `Bearer 2`, `Bearer 3` and is never limited. Limit by IP first, and by token only after the token was verified. The `install:api` scaffold does exactly that.
+</Callout>
+
+```go title="routes/api.go"
+perIP := ratelimit.Middleware(
+	limiters("api.ip", 120, time.Minute),
+	ratelimit.ByIP,
+)
+perToken := ratelimit.Middleware(
+	limiters("api.token", 60, time.Minute),
+	ratelimit.ByToken,
+)
+
+r.Group("/api/v1", func(g *router.Group) {
+	// Order matters: IP limit, then authentication, then token limit.
+	g.Use(perIP, auth.Required(acc.API), perToken)
+	g.Get("/posts", posts.Index)
+})
+```
+
+## IPv6: one client, one `/64`
+
+An IPv4 address usually belongs to one home or one office. IPv6 is different: an internet provider typically gives each customer a whole `/64` network, which is 18 quintillion addresses. A client can pick a new address for every request. If the key were the full address, every request would get a fresh bucket and the limit would never apply.
+
+So `ByIP` keys IPv6 clients by their **network prefix**:
+
+| Client IP | `ByIP` key (default `/64`) | With `RATE_LIMIT_IPV6_PREFIX=48` |
+| --- | --- | --- |
+| `203.0.113.5` | `ip:203.0.113.5` | `ip:203.0.113.5` |
+| `::ffff:203.0.113.5` (IPv4-mapped) | `ip:203.0.113.5` | `ip:203.0.113.5` |
+| `2001:db8:abcd:12:1:2:3:4` | `ip:2001:db8:abcd:12::/64` | `ip:2001:db8:abcd::/48` |
+| `fe80::1%eth0` (with a zone) | `ip:fe80::/64` | `ip:fe80::/48` |
+
+- IPv4 addresses always count per address, whatever the prefix.
+- An IPv4-mapped IPv6 address (`::ffff:a.b.c.d`) counts as the IPv4 address, so both spellings share a bucket.
+- The prefix comes from `RATE_LIMIT_IPV6_PREFIX` (default `64`, range `1`–`128`). `48` is stricter (one key per site), `128` keys each address. A value outside 1–128 refuses the boot: `vukem: RATE_LIMIT_IPV6_PREFIX 0 must be between 1 and 128`.
+- Outside an app (a plain `web.Services`), `IPv6Prefix` of `0` means `/64`.
+
+`ratelimit.IPKey(ip, prefix)` is the function behind `ByIP`, for keys you build yourself. It returns an IPv4 address as is, an IPv6 address as its network (`2001:db8:1:2::/64`), and a value that is not an IP unchanged. A prefix outside 1–128 means `ratelimit.DefaultIPv6Prefix` (64).
+
+```go
+key := "2fa:" + userID + ":" + ratelimit.IPKey(c.IP(), 64)
+```
+
+This changed in v0.27.0: before, `ByIP` keyed every IPv6 address separately. If you need the old behaviour, set `RATE_LIMIT_IPV6_PREFIX=128`.
+
+## The client IP behind a proxy
+
+Every IP key starts from `c.IP()`. Getting it right matters: if the app reads the wrong address, either every visitor shares one bucket or every attacker picks their own.
+
+When your app runs behind a reverse proxy (nginx, a load balancer, Railway, Fly), the TCP connection comes from the **proxy**, not from the visitor. The proxy writes the visitor's address in a header, usually `X-Forwarded-For`. But any client can send that header too, so the app must only believe it when it came from a proxy it trusts.
+
+### How `c.IP()` decides
+
+1. Take the peer address of the TCP connection (`r.RemoteAddr`).
+2. If the peer is **not** in `TRUSTED_PROXIES`, return the peer. Headers are ignored.
+3. If `CLIENT_IP_HEADER` is set (for example `X-Real-IP`), return its value when the request has exactly **one** line of it holding one valid IP; otherwise return the peer.
+4. Otherwise join every `X-Forwarded-For` line and walk the list **right to left**, skipping trusted proxies. The first untrusted address is the client.
+5. If an entry is not an IP, the chain cannot be trusted: return the peer.
+
+Addresses from headers come back in one canonical spelling (IPv4-mapped unmapped, IPv6 lower-case and compressed), so `2001:DB8::1` and `2001:db8::1` cannot get two buckets.
+
+Why right to left? Each proxy **appends** the address it saw. The left part of the list is whatever the client sent, so it may be fake; the right part was written by your own proxies.
+
+```text
+X-Forwarded-For: 6.6.6.6, 198.51.100.7, 10.0.0.2
+                 ^ forged  ^ real client ^ your proxy (trusted, skipped)
+```
+
+### Configure it
+
+```bash title=".env"
+# The proxy's network: comma-separated CIDRs or single IPs.
+TRUSTED_PROXIES=10.0.0.0/8
+
+# Optional: a single-IP header your proxy sets, instead of
+# X-Forwarded-For.
+CLIENT_IP_HEADER=X-Real-IP
+```
+
+| Setting | Behaviour |
+| --- | --- |
+| `TRUSTED_PROXIES` unset (default) | trusts nobody: `c.IP()` is always the peer address |
+| `TRUSTED_PROXIES` with an invalid entry | boot error: `vukem: TRUSTED_PROXIES entry "10.0.0" is not an IP or CIDR` |
+| a `/0` entry (`0.0.0.0/0`, `::/0`) | boots, with a warning: `TRUSTED_PROXIES trusts every address: any client can set its own c.IP(); trust only the proxy's network` |
+| `CLIENT_IP_HEADER` without `TRUSTED_PROXIES` | boot error: `vukem: CLIENT_IP_HEADER requires TRUSTED_PROXIES` |
+| `CLIENT_IP_HEADER=X-Forwarded-For` or `Forwarded` | boot error: these are lists whose left entries come from the client |
+| `CLIENT_IP_HEADER` with an invalid name | boot error: `vukem: CLIENT_IP_HEADER "X Real" is not a valid header name` |
+
+### The warning you may see in production
+
+With `APP_ENV=production` and `TRUSTED_PROXIES` empty, Vukem watches for the typical sign of a forgotten proxy setting: a request from a private, CGNAT (`100.64.0.0/10`) or loopback peer that carries `X-Forwarded-For` or `X-Real-IP`. The first time it sees one, it logs once per process (added in v0.27.0):
+
+```text
+level=WARN msg="requests from a proxy carry X-Forwarded-For but
+  TRUSTED_PROXIES is empty: c.IP() is the proxy address and every
+  client shares one rate-limit bucket; set TRUSTED_PROXIES (and
+  CLIENT_IP_HEADER) to the proxy's network" peer=10.0.0.2:41234
+  header=X-Forwarded-For
+```
+
+It means every visitor currently has the proxy's IP, so one bucket is shared by everybody: one attacker can lock all users out of the login form. The header is only detected, never trusted. See [Docker and Railway](/docs/deployment/docker-and-railway) for the values of common platforms.
 
 ## Choosing a store
 
@@ -46,21 +274,38 @@ A limiter is only as good as the place where it counts. With the default memory 
 
 | `RATE_LIMIT_STORE` | Counts in | Algorithm | Use it when |
 | --- | --- | --- | --- |
-| `memory` (default) | the process | GCRA: a smooth token bucket, bursts up to `limit` | one server, development, tests |
+| `memory` (default) | the process | <Term tip="Generic Cell Rate Algorithm: a token bucket that stores one timestamp per key and refills smoothly, one request every window/limit.">GCRA</Term>, bursts up to `limit` | one server, development, tests |
 | `cache` | `app.Cache()` | fixed windows on an atomic `Increment` | several servers sharing a SQL database (`CACHE_STORE=database`) or Redis |
+
+### Memory (GCRA)
+
+The memory limiter refills smoothly. With `limit` 5 per minute, one new request is allowed every 12 seconds, and up to 5 may come at once after a quiet minute. That is why, in the quick start, the `429` says `Retry-After: 12` (the next slot) while `RateLimit-Reset` is 60 (the time until all five slots are back). It keeps one timestamp per key and drops keys whose bucket is full again every 1024 calls, so memory stays bounded.
+
+### Shared through the database
 
 To share limits between servers on one database (SQLite, PostgreSQL or MySQL), set two variables; no code changes:
 
 ```bash title=".env"
-CACHE_STORE=database      # cache rows in the "cache" table, created at boot
-RATE_LIMIT_STORE=cache    # limiters count in that cache
+# Cache rows in the "cache" table, created at boot.
+CACHE_STORE=database
+# Limiters count in that cache.
+RATE_LIMIT_STORE=cache
 ```
 
 Every server reading the same `DATABASE_URL` now shares one budget per key. Each count is one atomic upsert on the key's row, so concurrent requests on different servers never read the same count.
 
-`RATE_LIMIT_STORE=cache` with the default `CACHE_STORE=memory` is a boot error: that cache lives in each process, so the limits would look shared while every server kept its own budget.
+`RATE_LIMIT_STORE=cache` over a cache that is not shared refuses the boot:
 
-### What it costs
+```text
+vukem: RATE_LIMIT_STORE=cache needs a cache shared by every server
+(CACHE_STORE=database or vukem.WithCacheStore with Redis; a custom
+store or wrapper must implement cache.Sharer); the memory cache keeps
+one budget per process
+```
+
+That covers the default `CACHE_STORE=memory`, a `cache.Memory` passed with `vukem.WithCacheStore`, and any custom store or wrapper that does not declare itself shared (see [shared stores](/docs/digging-deeper/cache)). Otherwise the limits would look shared while every server kept its own budget.
+
+#### What it costs
 
 Each request through a limiter costs one statement on the database:
 
@@ -69,94 +314,209 @@ Each request through a limiter costs one statement on the database:
 | PostgreSQL, SQLite | one `INSERT ... ON CONFLICT DO UPDATE ... RETURNING` |
 | MySQL, MariaDB | one `INSERT ... ON DUPLICATE KEY UPDATE` and one `SELECT` in a transaction |
 
-A route behind two limiters (per IP and per account on login) pays it twice. Requests for the same key queue on its row lock, which is what keeps the count exact; requests for different keys do not wait on each other. A deadlock or serialization failure is retried once, then the request is denied (`503`). Expired windows stay as rows until `cache:prune` (scheduled hourly, see [Without the app](#without-the-app)) deletes them through an index on `expires_at`, in batches of 1000. When rate-limited traffic is heavy enough for these writes to matter, move the counters to Redis.
+A route behind two limiters (per IP and per account on login) pays it twice. Requests for the same key queue on its row lock, which is what keeps the count exact; requests for different keys do not wait for each other. A deadlock or serialization failure is retried once, then the request is denied (`503`). Expired windows stay as rows until `cache:prune` (scheduled hourly) deletes them in batches of 1000. When rate-limited traffic is heavy enough for these writes to matter, move the counters to Redis.
 
-<Callout type="warning">
-Fixed windows are aligned to the clock (`12:00:00`–`12:01:00`, then `12:01:00`–`12:02:00`). A client can spend its whole budget at the end of one window and again at the start of the next: up to 2 × `limit` within a short span. That is fine for login throttles and abuse protection; when bursts must stay within `limit` across servers, use the Redis GCRA limiter below.
-</Callout>
+#### Fixed windows
+
+Windows are aligned to the clock (`12:00:00`–`12:01:00`, then `12:01:00`–`12:02:00`). A client may spend its whole budget at the end of one window and again at the start of the next: up to 2 × `limit` within a short time. That is fine for login throttles and abuse protection. When bursts must stay within `limit` across servers, use the Redis GCRA limiter below. Denied requests count too, so a client that keeps hammering stays limited until the window ends.
 
 ### Redis
 
-With Redis, give the app cache a Redis store and `RATE_LIMIT_STORE=cache` uses it, or use the Redis GCRA limiter directly for smooth limits:
+With the [Redis driver](/docs/database/redis), give the app cache a Redis store and `RATE_LIMIT_STORE=cache` counts there, or use the Redis GCRA limiter directly for smooth limits shared by every server:
 
-```go
+```go title="bootstrap/app.go"
 rc, err := redis.Open(ctx, os.Getenv("REDIS_URL"))
-// ...
-app, err := vukem.New(vukem.WithCacheStore(rc.CacheStore("cache:"))) // RATE_LIMIT_STORE=cache counts in Redis
+if err != nil {
+	return nil, err
+}
 
-limiter := rc.RateLimiter("api:", 60, time.Minute) // GCRA shared by every server
+// RATE_LIMIT_STORE=cache now counts in Redis.
+app, err := vukem.New(vukem.WithCacheStore(rc.CacheStore("cache:")))
+```
+
+```go title="routes/api.go"
+// GCRA in Redis; keys under "api:" (default prefix "ratelimit:").
+limiter := rc.RateLimiter("api:", 60, time.Minute)
+
 g.Use(ratelimit.Middleware(limiter, ratelimit.ByToken))
 ```
 
-See [Redis](/docs/database/redis) for the driver.
-
-## Keys
-
-The second argument of `ratelimit.Middleware` picks the bucket for a request:
-
-| Key | Buckets by | Use it for |
-| --- | --- | --- |
-| `ratelimit.ByIP` (also when `nil`) | client IP, honouring trusted proxies; IPv6 by `/64` | public routes, logins, sign-ups |
-| `ratelimit.ByToken` | SHA-256 of the bearer token, else the IP | routes **behind** `auth.Required` |
-| your own `KeyFunc` | anything: user id, email + IP, tenant | per-user or per-account limits |
-
-```go
-// One budget per email and IP on the login form; without an email, the IP.
-byEmail := func(r *http.Request) string {
-	email := strings.ToLower(strings.TrimSpace(r.PostFormValue("email")))
-	if email == "" {
-		return ratelimit.ByIP(r)
-	}
-
-	return "login:" + email + "|" + ratelimit.ByIP(r)
-}
-
-r.Post("/login", h.Login).Use(ratelimit.Middleware(limiters("login", 5, time.Minute), byEmail))
-```
-
-`ByIP` keys IPv4 clients per address and IPv6 clients per network: an IPv6 client usually owns a whole `/64` and can pick a new address for every request, so a per-address key would give it a fresh bucket each time. The prefix is `/64` by default and set with `RATE_LIMIT_IPV6_PREFIX` (1–128; `48` is stricter, `128` keys each address). IPv4-mapped IPv6 (`::ffff:203.0.113.5`) counts as IPv4. Keys that combine the IP with something else, like `byEmail` above, should embed `ratelimit.ByIP(r)` (or `ratelimit.IPKey(ip, prefix)`) rather than `c.IP()`, so they group IPv6 the same way. Behind a proxy, set `TRUSTED_PROXIES` first, or every client shares the proxy's bucket (see [Docker & Railway](/docs/deployment/docker-and-railway#trusted-proxies)).
-
-A `KeyFunc` returning `""` skips limiting for that request. Normalize what you key by (trim, lower-case), or `Alice@x.com` and `alice@x.com ` get separate budgets.
-
-<Callout type="danger">
-Do not limit by `ByToken` before the token is verified: a client sending a made-up token on every request would get a fresh bucket each time. The API scaffold limits by IP first and by token only after `auth.Required`.
-</Callout>
-
 ## Failure behaviour
 
-Rate limiting is a security control, so it **fails closed**: when the store cannot answer (database down, Redis unreachable), the request is denied with `503 Service Unavailable` instead of passing unlimited. The client never sees the store error.
+Rate limiting is a security control, so it **fails closed**. When the store cannot answer (database down, Redis unreachable), `Limiter.Allow` returns an error and the middleware answers `503 Service Unavailable` instead of letting the request through unlimited. The client never sees the store error; it is logged with the request.
 
-An unknown `RATE_LIMIT_STORE` value (a typo such as `databse`), or `cache` over a cache that is not shared (the memory cache, or a custom store or wrapper that does not declare `cache.Sharer`, see [shared stores](/docs/digging-deeper/cache#shared-stores)), makes `app.RateLimiters()` return an error, so the app does not boot with per-process limits you did not ask for. A limiter name outside 1–64 of `A-Z a-z 0-9 . _ -` denies every request.
+At boot:
+
+- An unknown `RATE_LIMIT_STORE` (a typo such as `databse`) makes `app.RateLimiters()` return `vukem: unknown RATE_LIMIT_STORE "databse" (memory or cache)`.
+- `cache` over a cache that is not shared is an error too (above).
+
+At request time, a limiter name outside 1–64 characters of `A-Z a-z 0-9 . _ -` makes every `Allow` of a window limiter fail, so the route answers 503 instead of mixing budgets: `ratelimit: invalid limiter name "log in" (1-64 of A-Z a-z 0-9 . _ -)`.
 
 ## Without the app
 
 The limiters are plain values, usable in any `net/http` program:
 
-```go
-l := ratelimit.NewMemory(5, time.Minute)                       // GCRA, one process
-l := ratelimit.NewWindow(cacheStore, "login", 5, time.Minute)  // any cache.Store or *cache.Cache
-l := myLimiter                                                  // anything implementing ratelimit.Limiter
+```go title="main.go"
+package main
 
-http.Handle("/login", ratelimit.Middleware(l, ratelimit.ByIP)(loginHandler))
+import (
+	"net/http"
+	"time"
+
+	"github.com/AlexGalhardo/vukem/ratelimit"
+)
+
+func main() {
+	// GCRA in this process: 5 requests per minute per key.
+	limiter := ratelimit.NewMemory(5, time.Minute)
+
+	login := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	http.Handle(
+		"POST /login",
+		ratelimit.Middleware(limiter, ratelimit.ByIP)(login),
+	)
+	_ = http.ListenAndServe(":3000", nil)
+}
 ```
 
-`NewWindow` takes a `ratelimit.Counter`: anything with an `Increment(ctx, key, delta, ttl)` that is atomic across the servers sharing it. Keys are stored as `ratelimit:<name>:<SHA-256 of key>:<window start>` and expire after one window: hashing every key keeps request data (emails, separators, control bytes) out of the store and stops one key from forging another's bucket. The database cache keeps expired rows until pruned: every app with `CACHE_STORE=database` schedules `cache:prune` hourly (also through a store that wraps it and exposes it with `Unwrap() cache.Store`), which `serve` runs through its in-process scheduler (with `SCHEDULE_IN_SERVE=false`, run `schedule:work` or `schedule:run` from cron instead), or call `Prune` on your `cache.Database` yourself.
+`ratelimit.NewWindow(counter, name, limit, window)` builds the fixed-window limiter over any `ratelimit.Counter`: something with `Increment(ctx, key, delta, ttl) (int64, error)` that is atomic across the servers sharing it, such as a `cache.Store` or a `*cache.Cache`. Keys are stored as `ratelimit:<name>:<SHA-256 of key>:<window start>` and expire after one full window. Hashing every key keeps request data (emails, separators, control bytes) out of the store and stops one key from forging another's bucket. A `limit` below 1 counts as 1, and a window below one second counts as one second.
 
-## Options
+Implement `ratelimit.Limiter` (one method, `Allow(ctx, key) (ratelimit.Result, error)`) to count anywhere else. `ratelimit.Result` has `Allowed`, `Limit`, `Remaining`, `ResetAfter` and `RetryAfter`.
 
-| Option | Default | Description |
-| --- | --- | --- |
-| `RATE_LIMIT_STORE` | `memory` | `memory` (per process, GCRA) or `cache` (shared through `app.Cache()`, fixed windows) |
-| `RATE_LIMIT_IPV6_PREFIX` | `64` | prefix length `ByIP` groups IPv6 clients by (1–128) |
-| `CACHE_STORE` | `memory` | with `RATE_LIMIT_STORE=cache`: `database` shares limits through the SQL database (required unless a Redis store is set with `vukem.WithCacheStore`) |
-| `CACHE_TABLE` | `cache` | table of the database cache store |
-| `CACHE_PREFIX` | `vukem:` | prefix of every cache key, rate limit counters included |
+## Configuration
+
+| Variable | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `RATE_LIMIT_STORE` | string | `memory` | `memory` (per process, GCRA) or `cache` (shared through `app.Cache()`, fixed windows) |
+| `RATE_LIMIT_IPV6_PREFIX` | int | `64` | prefix length `ByIP` groups IPv6 clients by (1–128; outside is a boot error) |
+| `TRUSTED_PROXIES` | CIDRs/IPs | empty | proxies whose `X-Forwarded-For` (or `CLIENT_IP_HEADER`) `c.IP()` believes |
+| `CLIENT_IP_HEADER` | header name | empty | single-IP header (`X-Real-IP`) read instead of `X-Forwarded-For`; needs `TRUSTED_PROXIES` |
+| `CACHE_STORE` | string | `memory` | with `RATE_LIMIT_STORE=cache`: `database` shares limits through the SQL database |
+| `CACHE_TABLE` | string | `cache` | table of the database cache store |
+| `CACHE_PREFIX` | string | `vukem:` | prefix of every cache key, rate-limit counters included |
 
 | API | Description |
 | --- | --- |
 | `app.RateLimiters() (ratelimit.Factory, error)` | limiter factory for the configured store |
 | `ratelimit.Factory` | `func(name string, limit int, window time.Duration) ratelimit.Limiter` |
 | `ratelimit.Middleware(l, key)` | applies a limiter to routes; `key` defaults to `ByIP` |
+| `ratelimit.ByIP`, `ratelimit.ByToken` | built-in `KeyFunc`s |
+| `ratelimit.IPKey(ip, prefix)` | the per-client part of an IP key |
+| `ratelimit.DefaultIPv6Prefix` | `64` |
 | `ratelimit.NewMemory(limit, window)` | in-process GCRA limiter |
 | `ratelimit.NewWindow(counter, name, limit, window)` | fixed-window limiter over a shared counter |
-| `ratelimit.Limiter` | `Allow(ctx, key) (ratelimit.Result, error)`: implement it for a custom store |
+| `web.Services.TrustedProxies`, `ClientIPHeader`, `IPv6Prefix` | the same settings for routers built without `vukem.New` |
+
+## Security
+
+What Vukem does for you:
+
+- Fails closed: a store error is a 503, never an unlimited request (`TestSecurity_A06_RateLimitMiddlewareFailsClosed`).
+- Groups IPv6 by `/64` so address rotation does not escape the limit (`TestSecurity_A06_RateLimitIPv6RotationSharesBucket`).
+- Ignores `X-Forwarded-For` from untrusted peers, so a client cannot choose its own bucket (`TestSecurity_A01_IPIgnoresSpoofedForwardedFor`).
+- Hashes every stored key, so keys cannot collide or leak (`TestSecurity_A07_RateLimitKeysDoNotCollide`).
+- Refuses to boot with a store that only looks shared.
+
+What stays your job:
+
+- Set `TRUSTED_PROXIES` in production behind a proxy.
+- Limit every endpoint that sends mail, checks a secret or costs money.
+- Limit by IP **and** by account on logins: per IP alone lets a botnet guess one password per IP; per account alone lets one attacker lock a user out.
+
+## Testing
+
+`vukemtest` sends requests in process from the peer `192.0.2.1`, so all requests of one test share one IP bucket. The limiter of each test app is new, so tests do not leak budgets into each other.
+
+```go title="tests/auth_test.go"
+func TestLoginThrottle(t *testing.T) {
+	app := vukemtest.New(t, bootstrap.New)
+	client := app.Client(t)
+
+	// Spaces and case are normalized: still the same bucket.
+	for _, email := range []string{
+		"ana@example.com",
+		" ana@example.com",
+		"ANA@example.com",
+		"ana@example.com ",
+		"Ana@Example.com",
+	} {
+		client.PostForm("/login", url.Values{
+			"email":    {email},
+			"password": {"guess"},
+		})
+	}
+
+	client.PostForm("/login", url.Values{
+		"email":    {"ana@example.com"},
+		"password": {"guess"},
+	}).AssertStatus(http.StatusTooManyRequests)
+}
+```
+
+To test a limiter in isolation, call `Allow` directly:
+
+```go title="app/limits/limits_test.go"
+func TestFivePerMinute(t *testing.T) {
+	l := ratelimit.NewMemory(5, time.Minute)
+
+	for i := range 6 {
+		res, err := l.Allow(t.Context(), "ip:203.0.113.5")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if want := i < 5; res.Allowed != want {
+			t.Fatalf("request %d: allowed = %v", i+1, res.Allowed)
+		}
+	}
+}
+```
+
+## Common mistakes
+
+**Forgetting `TRUSTED_PROXIES` behind a proxy.** Every client has the proxy's IP and shares one bucket; a single attacker locks everyone out. Look for the `TRUSTED_PROXIES is empty` warning in the production log.
+
+**Trusting every address.**
+
+```bash title=".env"
+# Wrong: any client may now set its own c.IP().
+TRUSTED_PROXIES=0.0.0.0/0
+
+# Right: only the proxy's network.
+TRUSTED_PROXIES=10.0.0.0/8
+```
+
+**Keying a custom limit by the raw peer address.**
+
+```go
+// Wrong: RemoteAddr carries the port (a new one per connection),
+// ignores TRUSTED_PROXIES and keys IPv6 per address.
+return "login:" + email + ":" + r.RemoteAddr
+
+// Right: grouped like every other IP key.
+return "login:" + email + ":" + ratelimit.ByIP(r)
+```
+
+**Sharing limits through the memory cache.** `CACHE_STORE=memory` with `RATE_LIMIT_STORE=cache` refuses the boot with `RATE_LIMIT_STORE=cache needs a cache shared by every server`. Set `CACHE_STORE=database` or use Redis.
+
+**Reusing one name for two limits.** `limiters("login", 5, time.Minute)` and `limiters("login", 100, time.Hour)` count in the same buckets in the shared store. Give each limit its own name.
+
+## Next steps
+
+<CardGroup cols="2">
+<Card title="Authentication" href="/docs/security/authentication" icon="lock">
+The login flow these throttles protect.
+</Card>
+<Card title="Cache" href="/docs/digging-deeper/cache" icon="database">
+Stores, `cache.Sharer` and the database cache behind `RATE_LIMIT_STORE=cache`.
+</Card>
+<Card title="Docker and Railway" href="/docs/deployment/docker-and-railway" icon="rocket">
+`TRUSTED_PROXIES` values for common platforms.
+</Card>
+<Card title="ratelimit on pkg.go.dev" href="https://pkg.go.dev/github.com/AlexGalhardo/vukem/ratelimit" icon="book">
+The package reference.
+</Card>
+</CardGroup>

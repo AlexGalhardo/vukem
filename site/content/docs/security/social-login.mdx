@@ -1,74 +1,358 @@
 ---
 title: Social login
-description: Sign in with GitHub, Google, GitLab, Discord, Microsoft or any OAuth2/OIDC provider, with PKCE and verified ID tokens.
+description: Let users sign in with GitHub, Google, GitLab, Discord, Microsoft, LinkedIn, X, Apple or any OAuth2/OIDC provider, with PKCE, single-use state and verified ID tokens.
 ---
 
-## With the scaffold
+Social login lets a user click "Sign in with GitHub" instead of creating one more password. The provider (GitHub, Google...) checks who they are and tells your app. Package `social` implements the whole exchange with the standard library only, and `vukem install:auth --social` writes the routes and account linking for you.
+
+You will learn:
+
+- how the OAuth2 "authorization code" dance works, in plain words;
+- how to add providers with the scaffold, and how to wire them by hand;
+- how Vukem stops forged callbacks, replays and account takeover;
+- how accounts are linked by provider id and verified email;
+- how to test sign-in without calling a real provider.
+
+## The idea
+
+Think of a hotel that trusts a passport office. Instead of checking your identity itself, the hotel sends you to the passport office with a numbered ticket. The office checks you and sends you back with a stamped slip. The hotel compares the slip with the ticket it gave you, and only then hands you a room key.
+
+| Hotel | OAuth2 / OIDC | Vukem |
+| --- | --- | --- |
+| The numbered ticket | `state` (plus a PKCE verifier and an OIDC nonce) | stored in a signed, short-lived cookie |
+| Going to the office | the redirect to the provider | `s.Redirect(c, "github")` |
+| The stamped slip | the authorization `code` | arrives at your callback URL |
+| Trading the slip for the passport details | the token exchange and profile call | `s.User(c, "github")` |
+| The room key | your app's session | `webGuard.Login(c, user)` |
+
+[OAuth 2.0](https://www.rfc-editor.org/rfc/rfc6749) is the protocol for the dance. [OpenID Connect](https://openid.net/specs/openid-connect-core-1_0.html) (OIDC) adds a signed <Term tip="A JSON Web Token in which the provider states who the user is; your app checks its signature with the provider's public keys.">ID token</Term> on top. <Term tip="Proof Key for Code Exchange: the app sends a hash of a secret at the start and the secret itself at the end, so a stolen code is useless to anyone else.">PKCE</Term> ([RFC 7636](https://www.rfc-editor.org/rfc/rfc7636)) makes a stolen `code` worthless.
+
+Built-in providers:
+
+| Constructor | Kind | Email trusted when |
+| --- | --- | --- |
+| `social.GitHub(cfg, opts...)` | OAuth2 (scopes `read:user`, `user:email`) | the primary address is verified on GitHub |
+| `social.GitLab(cfg, opts...)` | OAuth2 | `confirmed_at` is set |
+| `social.Discord(cfg, opts...)` | OAuth2 (scopes `identify`, `email`) | Discord's `verified` is true |
+| `social.X(cfg, opts...)` | OAuth2 + PKCE, Basic auth at the token endpoint | never: X shares no email |
+| `social.Google(cfg)` | OIDC | `email_verified` |
+| `social.Microsoft(tenant, cfg)` | OIDC (Entra ID); tenant `common`, `organizations`, `consumers` or an id | the `xms_edov` claim is true |
+| `social.LinkedIn(cfg)` | OIDC (scopes `openid`, `profile`, `email`) | `email_verified` |
+| `social.Apple(appleCfg)` | OIDC with a form-post callback; returns `(*OIDCProvider, error)` | `email_verified` |
+| `social.OIDC(name, issuer, cfg)` | any OIDC issuer (Okta, Keycloak, Auth0...) | `email_verified` |
+| `social.OAuth2(name, cfg, ep, scopes, mapUser)` | any OAuth2 server; you map the profile | what your `mapUser` sets |
+
+## Quick start with the scaffold
+
+<Steps>
+<Step title="1. Register an OAuth app at the provider">
+
+On GitHub: *Settings → Developer settings → OAuth Apps → New OAuth App*. Use this callback URL (the scaffold builds it from `APP_URL`):
+
+```text
+https://blog.example.com/auth/github/callback
+```
+
+</Step>
+<Step title="2. Scaffold the routes">
 
 ```bash
 vukem install:auth --social github,google
+vukem migrate
 ```
 
-This adds `/auth/{provider}/redirect` and `/auth/{provider}/callback`, the `social_accounts` model and migration (unique provider + provider id), provider setup from `SOCIAL_<NAME>_CLIENT_ID` and `SOCIAL_<NAME>_CLIENT_SECRET` (also appended to `.env.example`), and account linking:
+Accepted names: `github`, `gitlab`, `discord`, `google`, `microsoft`, `linkedin`, `x`, `apple`. The command also works on a project that already ran `install:auth`. It adds:
 
-- an existing link signs in;
-- an email the provider verified links to the existing account; when that local account was never verified, its password is replaced with a random one and its sessions, remember-me and API tokens end (like a password reset), since they may belong to whoever signed up first with the address;
-- an **unverified** email matching an account is refused with 409, so a provider account cannot take over a password account;
-- after the sign-in, the callback goes back to the page that asked for the login (the intended URL, such as an email verification link, which needs the account's login), or to `/dashboard`;
-- otherwise a new user is created.
+```text
+routes/social.go              /auth/{provider}/redirect
+                              and /auth/{provider}/callback
+app/accounts/social.go        NewSocial, FindOrCreateFromSocial
+app/models/social_account.go  SocialAccount
+database/migrations/*_create_social_accounts_table.go
+app/accounts/lang/*/social.json
+tests/social_test.go
+```
 
-It also works on projects that already ran `install:auth`.
+The `social_accounts` table has a unique index on provider + provider id.
 
-## The `social` package
+</Step>
+<Step title="3. Add the credentials">
 
-```go
-key, err := app.DeriveKey("social.state", 32) // config.ErrKeyMissing without APP_KEY
+```bash title=".env"
+SOCIAL_GITHUB_CLIENT_ID=Iv1.abc123
+SOCIAL_GITHUB_CLIENT_SECRET=...
+SOCIAL_GOOGLE_CLIENT_ID=123.apps.googleusercontent.com
+SOCIAL_GOOGLE_CLIENT_SECRET=...
+CACHE_STORE=database
+```
+
+The variable names are also appended to `.env.example`. A provider without a client id is skipped, so `/auth/google/redirect` answers `404` until you set it.
+
+</Step>
+<Step title="4. Add a button">
+
+```html title="resources/views/auth/login.html"
+<a href="/auth/github/redirect">Sign in with GitHub</a>
+```
+
+</Step>
+</Steps>
+
+## What happens on each request
+
+### The redirect
+
+`GET /auth/github/redirect` (guests only, through `auth.Guest`) calls `s.Redirect(c, "github")`, which:
+
+1. creates a random `state`, PKCE verifier and nonce;
+2. seals them, with the provider name and an expiry, in the cookie `social_github`: HMAC-signed, `HttpOnly`, `SameSite=Lax`, `Secure` unless `InsecureCookies`, valid for 10 minutes (`StateTTL`);
+3. redirects (`302`) to the provider with the state and the S256 PKCE challenge. An [htmx](/docs/frontend/htmx) request gets `HX-Redirect` instead, so the browser makes a full navigation.
+
+An unknown provider name answers `404` (`social.ErrUnknownProvider`).
+
+### The callback
+
+`GET /auth/github/callback` calls `s.User(c, "github")`, which checks everything before trusting anything:
+
+| Step | On failure |
+| --- | --- |
+| The cookie is cleared at once: it works once, whatever happens next | |
+| The cookie signature, provider name and expiry are checked, and its state is compared in constant time with the `state` parameter | `400` `social.ErrState`, event `social.state_mismatch` |
+| The state is recorded as used (in `s.States`, or process memory) | a store error: `503`; a state seen before: `400`, event `social.state_replayed` |
+| A provider `error` parameter: `access_denied` (the user clicked Cancel) | `403` `social.ErrAccessDenied` |
+| Any other provider `error` | `400` `social.ErrProvider` with a fixed message; the sanitized code is logged, never shown |
+| No `code` parameter | `400` `social.ErrState` |
+| The code is exchanged with the PKCE verifier; the profile (or the ID token) is loaded and checked | `502 Bad Gateway` |
+
+The error messages have keys (`social.state`, `social.denied`, `social.failed`, `social.unknown_provider`), so they are [translated](/docs/digging-deeper/localization) in the request locale.
+
+Then the scaffold's callback links the account, logs the user in with `acc.Web.Login`, and goes back to the intended URL (such as an email verification link, which needs the login) or `/dashboard`. With [2FA](/docs/security/two-factor) installed, users who turned it on stop at the code step first.
+
+### Linking accounts
+
+`FindOrCreateFromSocial` decides which local user the provider account belongs to:
+
+| Case | Result |
+| --- | --- |
+| A `social_accounts` row for this provider and provider id exists | sign in as its user |
+| The provider gave no email | `422` (`auth.social.no_email`) |
+| A user with this email exists **and** the provider verified the email | link and sign in. If the local account was never verified, its password is replaced with a random one and its sessions, remember-me and API tokens end, like a password reset |
+| A user with this email exists and the provider did **not** verify it | `409` (`auth.social.email_taken`) |
+| No user with this email | create one with a random, unusable password; it is verified if the provider verified the email |
+
+**Why the 409?** Some providers let anyone type any address without proving it. Linking on an unverified email would let an attacker create a provider account with *your* address and take over your password account ([OWASP OAuth2 cheat sheet](https://cheatsheetseries.owasp.org/cheatsheets/OAuth2_Cheat_Sheet.html)).
+
+**Why end the old sessions?** An unverified local account may have been created by someone who signed up first with the address (account squatting). Once the provider proves the address, whatever that person opened must close.
+
+<Callout type="warning" title="X and the scaffold">
+X never shares an email, and the scaffold's `FindOrCreateFromSocial` needs one to create or link a user, so with `--social x` new X sign-ins answer `422` until you change that function to create users keyed by provider id.
+</Callout>
+
+## The `social` package by hand
+
+```go title="app/accounts/social.go"
+key, err := app.DeriveKey("social.state", 32)
 if err != nil {
+	// config.ErrKeyMissing without APP_KEY.
 	return err
 }
 
-s := social.New(key, // panics on a key shorter than 32 bytes
-	social.GitHub(social.Config{ClientID: id, ClientSecret: secret, RedirectURL: "https://app.test/auth/github/callback"}),
-	social.Google(googleCfg),                  // OpenID Connect
-	social.Microsoft("common", microsoftCfg),  // OpenID Connect (Entra ID)
-	social.GitLab(gitlabCfg), social.Discord(discordCfg),
-	social.OIDC("okta", "https://example.okta.com", oktaCfg), // any OIDC issuer
-).WithPreviousKeys(app.DerivePreviousKeys("social.state", 32)...) // APP_KEY rotation
-
-r.Get("/auth/{provider}/redirect", func(c *web.Ctx) error {
-	return s.Redirect(c, c.Param("provider")) // 404 for unknown providers
+gh := social.GitHub(social.Config{
+	ClientID:     app.Source.Get("SOCIAL_GITHUB_CLIENT_ID"),
+	ClientSecret: app.Source.Get("SOCIAL_GITHUB_CLIENT_SECRET"),
+	RedirectURL:  "https://blog.example.com/auth/github/callback",
 })
+
+okta := social.OIDC(
+	"okta",
+	"https://example.okta.com",
+	oktaCfg,
+)
+
+// New panics on a key shorter than 32 bytes (social.MinKeyLen).
+s := social.New(key, gh, social.Google(googleCfg), okta).
+	WithPreviousKeys(app.DerivePreviousKeys("social.state", 32)...)
+
+c, err := app.Cache()
+if err != nil {
+	return err
+}
+// Used states are shared by every replica and survive restarts.
+s.States = c.Store()
+```
+
+```go title="routes/social.go"
+r.Get("/auth/{provider}/redirect", func(c *web.Ctx) error {
+	return s.Redirect(c, c.Param("provider"))
+}).Use(auth.Guest(webGuard))
 
 r.Get("/auth/{provider}/callback", func(c *web.Ctx) error {
 	u, err := s.User(c, c.Param("provider"))
 	if err != nil {
-		return err // 400 bad or expired state, 403 cancelled, 502 provider failure
+		return err
 	}
-	// u.Provider, u.ID, u.Email, u.EmailVerified, u.Name, u.Nickname, u.AvatarURL, u.Token
-	return nil
+
+	user, err := acc.FindOrCreateFromSocial(c.Context(), u)
+	if err != nil {
+		return err
+	}
+
+	if err := webGuard.Login(c, user); err != nil {
+		return err
+	}
+
+	return c.Redirect("/dashboard")
 })
 ```
 
-| Feature | Detail |
+The callback returns a `social.User`:
+
+| Field | Meaning |
 | --- | --- |
-| Flow | Authorization Code + PKCE (S256) for every provider; htmx requests get `HX-Redirect` |
-| State | state, PKCE verifier and nonce in a 10-minute, HMAC-signed, `HttpOnly`, `SameSite=Lax` cookie; compared in constant time; used states are remembered, so a replayed callback fails. Set `s.States` to the cache store (`c, _ := app.Cache(); s.States = c.Store()`, done by `install:auth --social`) so this holds across replicas and restarts. In production use a persistent, shared store (`CACHE_STORE=database` or Redis): the memory store evicts entries past `CACHE_MAX_ENTRIES`, and an evicted state could be replayed until its cookie expires; a store error refuses the callback (503) |
-| OIDC | discovery, JWKS cache (refreshed once for unknown key ids), RS256/ES256 only, checks of `iss`, `aud`/`azp`, `exp`/`iat` (1 minute leeway) and `nonce` |
-| Email trust | `EmailVerified` only when the provider vouches: GitHub primary verified address, GitLab `confirmed_at`, Discord `verified`, OIDC `email_verified` (Microsoft `xms_edov`) |
-| Stateless | `s.UserFromToken(ctx, "google", accessToken)` for API/SPA flows |
-| Options | `social.WithEndpoints` (GitHub Enterprise, self-hosted GitLab), `social.WithAuthParams`, `Config.Scopes`, `social.OAuth2(...)` for any OAuth2 server |
+| `Provider`, `ID` | the provider name and the user's id there; link accounts by this pair |
+| `Email`, `EmailVerified` | the address and whether the provider vouches for it; link by email only when `EmailVerified` |
+| `Name`, `Nickname`, `AvatarURL` | profile data |
+| `Token` | `Access`, `Refresh`, `Expiry`, `Scopes` (and the `IDToken`, never serialised) |
+| `Raw` | the provider's profile or claims as decoded JSON |
+
+`WithPreviousKeys` lets a sign-in started just before an [APP_KEY rotation](/docs/security/encryption) finish; new state is always signed with the current key. Call it before the first request.
+
+Other methods: `s.Names()` lists the configured providers, `s.Provider(name)` returns one, and `s.Use(p)` adds or replaces a provider (tests swap in fakes).
+
+### OIDC: verifying the ID token
+
+For OIDC providers, `s.User` reads the issuer's discovery document and verifies the ID token:
+
+- the signature, with keys from the provider's JWKS (cached, refreshed once for an unknown key id), **RS256 or ES256 only** (never `none` or HMAC), RSA keys of at least 2048 bits;
+- `iss` (Microsoft's `{tenantid}` template included), `aud` / `azp`, `exp` and `iat` with one minute of leeway, and the `nonce` from the state cookie.
+
+Every failure wraps `social.ErrIDToken` and answers `502`.
+
+### Stateless sign-in for SPAs and mobile apps
+
+When a mobile app or SPA already holds the user's access token from the provider:
+
+```go
+u, err := s.UserFromToken(ctx, "google", accessToken)
+```
+
+This calls the profile or userinfo endpoint. There is no ID token in this mode, so the result is only as trustworthy as the token you received.
+
+### Options
+
+| Option | Use |
+| --- | --- |
+| `Config.Scopes` | replace the provider's default scopes |
+| `social.WithEndpoints(social.Endpoints{Auth, Token, API})` | GitHub Enterprise, self-hosted GitLab, tests (OAuth2 providers) |
+| `social.WithAuthParams(url.Values)` | extra authorization parameters (`prompt=consent`) for OAuth2 providers |
+| `oidcProvider.AuthParams(map)` | the same for OIDC providers (`prompt=select_account`) |
+| `s.HTTP` | the client for provider calls (10-second timeout; responses capped at 1 MiB) |
+| `s.StateTTL` | time allowed between redirect and callback (10 minutes) |
+| `s.InsecureCookies` | drops `Secure` on the state cookie; plain-HTTP development only |
+| `s.States` | where used states are recorded; `nil` keeps them in process memory |
+
+## Sign in with Apple
+
+```go
+apple, err := social.Apple(social.AppleConfig{
+	Config:     social.Config{ClientID: servicesID, RedirectURL: cb},
+	TeamID:     teamID,
+	KeyID:      keyID,
+	PrivateKey: p8, // the .p8 PEM from the Apple developer account
+})
+```
+
+Apple has no static client secret: Vukem signs one (an ES256 JWT, cached for an hour) with your `.p8` key, so `Config.ClientSecret` is unused. Apple answers with `response_mode=form_post`, a cross-site `POST` from `appleid.apple.com`:
+
+- register `POST` on the callback route (the scaffold does);
+- serve the app over HTTPS: the state cookie becomes `SameSite=None; Secure`, and `Redirect` answers `500` ("needs HTTPS") when `InsecureCookies` is on;
+- add `https://appleid.apple.com` to `CSRF_TRUSTED_ORIGINS`.
+
+Apple sends the user's name only on the first sign-in. The scaffold reads `SOCIAL_APPLE_CLIENT_ID`, `SOCIAL_APPLE_TEAM_ID`, `SOCIAL_APPLE_KEY_ID` and `SOCIAL_APPLE_PRIVATE_KEY_PATH`; an unreadable key disables Apple with a warning in the log. See [Apple's documentation](https://developer.apple.com/sign-in-with-apple/).
+
+## Configuration
+
+| Variable | What it does |
+| --- | --- |
+| `SOCIAL_<NAME>_CLIENT_ID` | the provider's client id; without it the provider is skipped |
+| `SOCIAL_<NAME>_CLIENT_SECRET` | the provider's client secret |
+| `SOCIAL_APPLE_TEAM_ID`, `SOCIAL_APPLE_KEY_ID`, `SOCIAL_APPLE_PRIVATE_KEY_PATH` | Sign in with Apple |
+| `APP_URL` | base of every callback URL: `APP_URL/auth/<name>/callback` |
+| `APP_KEY`, `APP_PREVIOUS_KEYS` | sign the state cookie |
+| `CACHE_STORE` | `database` or Redis in production, for `s.States` |
+| `CSRF_TRUSTED_ORIGINS` | add `https://appleid.apple.com` for Apple |
+
+## Security
+
+| Threat | Defence |
+| --- | --- |
+| Login CSRF: an attacker makes your browser finish *their* sign-in | random `state` in a signed cookie, compared in constant time |
+| A stolen or intercepted `code` | PKCE (S256) on every provider |
+| A replayed callback URL | the cookie is cleared and the state recorded as used |
+| A forged ID token, or one issued to another app | signature, `iss`, `aud`, `exp`, `nonce` checks; RS256/ES256 only |
+| Account takeover through an unverified provider email | link by email only when the provider verified it; otherwise `409` |
+| Text injected through the callback's `error` parameter | logged sanitized, answered with a fixed message |
+| A callback URL pointing to an attacker's site | `RedirectURL` comes from configuration, never from the request |
+
+<Callout type="warning" title="Use a shared state store in production">
+The memory cache store evicts entries past `CACHE_MAX_ENTRIES`, and an evicted state could be replayed until its cookie expires. Use `CACHE_STORE=database` or Redis whenever the app runs in production or on more than one replica.
+</Callout>
+
+Provider access tokens are never logged.
 
 ## Testing
 
-```go
-user := social.User{ID: "gh-1", Email: "ana@example.com", EmailVerified: true, Name: "Ana"}
-app := vukemtest.New(t, bootstrap.New, vukemtest.Options{Env: vukemtest.FakeSocial(user)})
+`social.Fake(name, callbackURL, user)` is a provider without network calls: its authorization URL points straight back to your callback, so tests exercise the real state cookie, callback and linking code. In apps scaffolded with `--social`, `vukemtest.FakeSocial` turns it on through the environment (test apps only):
+
+```go title="tests/social_test.go"
+func TestGitHubSignIn(t *testing.T) {
+	user := social.User{
+		ID:            "gh-1",
+		Email:         "ada@example.com",
+		EmailVerified: true,
+		Name:          "Ada",
+	}
+
+	app := vukemtest.New(t, bootstrap.New, vukemtest.Options{
+		Env: vukemtest.FakeSocial(user),
+	})
+
+	c := app.Client(t)
+
+	// The fake provider sends the browser straight to the callback.
+	r := c.Get("/auth/github/redirect")
+	c.Get(r.Header("Location")).AssertRedirect("/dashboard")
+
+	c.Get("/dashboard").AssertOK().AssertSee("Ada")
+	vukemtest.AssertDatabaseHas(t, app, "social_accounts",
+		map[string]any{"provider": "github", "provider_id": "gh-1"})
+}
 ```
 
-`social.Fake(name, callbackURL, user)` is a provider without network calls; `vukemtest.FakeSocial` enables it in scaffolded test apps only.
+The generated `tests/social_test.go` also covers the squatting and 409 cases; read it for the full flow.
 
-## Apple, LinkedIn and X
+## Common mistakes
 
-`social.LinkedIn(cfg)` (OIDC), `social.X(cfg)` (OAuth 2.0 + PKCE; X returns no email) and `social.Apple(social.AppleConfig{Config, TeamID, KeyID, PrivateKey})`. `vukem install:auth --social apple,linkedin,x` wires all three.
+**Linking by email when it is not verified.** Wrong: `Where("email", u.Email)` without checking `u.EmailVerified`. Right: link by `(Provider, ID)`, and by email only when `EmailVerified` is true.
 
-Sign in with Apple signs its client secret (an ES256 JWT, cached for an hour) with the `.p8` key and answers with `response_mode=form_post`: the callback is a cross-site `POST` from `appleid.apple.com`. Register `POST` on the callback route, serve the app over HTTPS, and add `https://appleid.apple.com` to `CSRF_TRUSTED_ORIGINS`. Apple sends the user's name only on the first sign-in. It reads `SOCIAL_APPLE_CLIENT_ID`, `SOCIAL_APPLE_TEAM_ID`, `SOCIAL_APPLE_KEY_ID` and `SOCIAL_APPLE_PRIVATE_KEY_PATH`.
+**A redirect URL that does not match.** The provider answers with its own error page ("redirect_uri mismatch"). The URL you register must be exactly `APP_URL/auth/<name>/callback`, scheme and port included.
+
+**A short key.** `social.New([]byte("secret"))` panics at boot: an HMAC key under 32 bytes makes states forgeable. Derive it with `app.DeriveKey("social.state", 32)`.
+
+**Apple over plain HTTP.** `Redirect` answers `500` with "Sign in with apple needs HTTPS.". Use an HTTPS tunnel in development.
+
+## Next steps
+
+<CardGroup cols="2">
+<Card title="Authentication" href="/docs/security/authentication" icon="lock">
+The session guard and the rest of the account flows.
+</Card>
+<Card title="Two-factor authentication" href="/docs/security/two-factor" icon="shield">
+Make social sign-in stop at a code step too.
+</Card>
+<Card title="JWT" href="/docs/security/jwt" icon="code">
+Verify tokens from an identity provider in your API.
+</Card>
+</CardGroup>
+
+Package reference: [`social`](https://pkg.go.dev/github.com/AlexGalhardo/vukem/social).

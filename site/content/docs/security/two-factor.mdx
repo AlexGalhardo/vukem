@@ -1,138 +1,263 @@
 ---
 title: Two-factor authentication
-description: TOTP two-factor authentication (RFC 6238) with QR enrolment, hashed recovery codes, replay protection and throttling, scaffolded by install:auth --2fa.
+description: Add TOTP two-factor authentication (RFC 6238) with QR enrolment, hashed single-use recovery codes, replay protection and throttling, scaffolded by install:auth --2fa or built with the auth/totp package.
 ---
 
-Two-factor authentication (2FA) asks for something the user **has** (a phone with an authenticator app) on top of something they **know** (the password). A stolen or reused password is then not enough to sign in. Vukem implements TOTP: the app and the server share a secret and both compute a 6-digit code from it and the current time, every 30 seconds.
+Two-factor authentication (2FA) asks for something the user **has**, a phone with an authenticator app, on top of something they **know**, the password. A stolen, guessed or reused password is then not enough to sign in. `vukem install:auth --2fa` adds the whole flow to your app, and the `auth/totp` package gives you the building blocks.
 
-```bash
-vukem install:auth --2fa   # also works on a project that already ran install:auth
-vukem migrate
-```
+You will learn:
 
-The scaffold adds Fortify-style TOTP two-factor authentication on top of `auth/totp` (RFC 6238: SHA-1, 6 digits, 30 seconds, the authenticator-app defaults), for the HTMX starter and the Inertia React, Vue and Svelte starters:
+- how time-based one-time codes work, and which attacks they stop;
+- how to install 2FA, enable it as a user and sign in with a code;
+- what each scaffolded route does, step by step, and why;
+- how to use `auth/totp` directly, including recovery codes and QR codes;
+- how to test 2FA without a phone.
 
-```text
-app/models/two_factor.go                 TwoFactor: the 2FA columns of users
-app/accounts/two_factor.go               enable, confirm, verify, recovery codes, disable, pending login
-app/controllers/account/two_factor*.go   settings page and login challenge
-app/requests/two_factor.go               code, challenge and password confirmation schemas
-database/migrations/*_add_two_factor_columns.go
-resources/views/auth/two-factor*.html    or resources/js/pages/Auth/TwoFactor*.{tsx,vue,svelte}
-routes/two_factor.go                     appended to routes.All()
-tests/two_factor_test.go                 the whole flow
-```
+## The idea
 
-It also patches your `Login` handler so a correct password leads to the challenge, links the settings page from the dashboard, and makes [social sign-in](/docs/security/social-login) stop at the challenge too. If `Login` was rewritten by hand, the command fails before writing anything and prints the change to make, so 2FA is never installed without being enforced.
+Imagine you and a friend each own an identical, magic clock that shows a new six-digit number every 30 seconds. Nobody else has the clock. When your friend calls and says the number on the clock, you know it is them. A thief who learned their name and password still cannot say the number.
 
-## Flows
+That is <Term tip="Time-based One-Time Password: a code computed from a shared secret and the current time, defined in RFC 6238.">TOTP</Term> ([RFC 6238](https://www.rfc-editor.org/rfc/rfc6238)):
 
-| Flow | Behaviour |
-| --- | --- |
-| Storage | the secret and the recovery code hashes are [encrypted columns](/docs/security/encryption#encrypted-columns) keyed from `APP_KEY`; `TwoFactor` is its own model, so the secret never reaches `User` or shared props |
-| Enable (`/user/two-factor`) | a new secret, shown as a QR code (inline SVG of the `otpauth://` URI, issuer `APP_NAME`) and a setup key. A confirmed setup is never replaced (409) |
-| Confirm | 2FA is on only after a valid code; 8 recovery codes are then shown **once** (only hashes are stored); every other session of the user ends on every session driver (`Accounts.RevokeOtherSessions` bumps the session version, then `Web.RefreshSession` keeps the current one) |
-| Recovery codes | regenerating invalidates the old ones; the page shows how many are left |
-| Disable | needs the current password |
-| Login | a correct password for a user with 2FA does **not** log in: the session id is regenerated, the pending login is stored for 5 minutes and the browser goes to `/two-factor-challenge` |
-| Challenge | an app code or a recovery code (consumed) logs in with the remember-me choice and goes to the intended URL |
-| Replay | a code whose time step is at or before the last accepted one is refused, including the confirmation code; concurrent requests with the same code have one winner |
-| Throttling | challenge, confirm and disable: **5 per minute per user + IP** (429 with `Retry-After`) |
-| Events | failed codes and passwords log the `auth.2fa_failed` security event |
+1. At enrolment the server creates a random **secret** and shows it as a QR code. The authenticator app (Google Authenticator, 1Password, Aegis...) stores it.
+2. Every 30 seconds, both sides compute `HMAC-SHA1(secret, current time step)` and turn it into six digits.
+3. At login the server compares the user's code with its own.
 
-## The `totp` package
+The defaults are the ones every authenticator app expects: SHA-1, 6 digits, 30-second steps.
 
-```go
-secret, err := totp.GenerateSecret()                       // base32
-uri := totp.URI("Vukem", user.Email, secret, totp.Options{}) // otpauth://totp/...
-svg, err := totp.QR(uri, 200)                                // inline SVG
+| Attack | How 2FA helps | Learn more |
+| --- | --- | --- |
+| Credential stuffing (passwords leaked from another site) | the password alone is useless | [OWASP MFA cheat sheet](https://cheatsheetseries.owasp.org/cheatsheets/Multifactor_Authentication_Cheat_Sheet.html) |
+| Phished or guessed password | the attacker also needs the phone | [OWASP A07](https://owasp.org/Top10/2025/A07_2025-Authentication_Failures/) |
+| A code seen over the user's shoulder | each code works once | replay protection, below |
+| Guessing six digits | 5 tries per minute | throttling, below |
 
-step, ok := totp.Validate(secret, code, time.Now(), lastStep, totp.Options{}) // store step on success
-plain, hashes, err := totp.RecoveryCodes(8)                  // show plain once, store hashes
-remaining, ok := totp.UseRecoveryCode(input, hashes)
-code, err := totp.Code(secret, time.Now(), totp.Options{})   // in tests
-```
-
-`totp.QR` (and `totp.QRMatrix` for other renderers) encodes any text in byte mode at error correction level M, versions 1 to 40: up to 2331 bytes, enough for long `otpauth://` URIs and PIX BR Codes. Longer text returns `totp.ErrTooLong`.
-
-The QR SVG is written by `totp.QR` itself from server data, which is why the scaffold may insert it as raw HTML. Never do that with user input.
-
-In the Inertia starters the scaffold sends the QR code to the page as a `data:image/svg+xml;base64,…` URL rendered with a plain `<img>`, so no raw HTML is injected into React, Vue or Svelte.
-
-## Step by step
+## Quick start
 
 <Steps>
 <Step title="1. Install and migrate">
 
 ```bash
-vukem install:auth --2fa
-vukem migrate        # adds the two-factor columns to users
-go test ./tests/...  # the scaffold's tests cover the whole flow
+vukem install:auth --2fa   # also on a project that already ran install:auth
+vukem migrate              # adds the two-factor columns to users
+go test ./tests/...        # the generated tests cover the whole flow
 ```
 
 </Step>
 <Step title="2. Enable it as a user">
 
-1. Sign in and open `/user/two-factor`.
+1. Sign in as `ada@example.com` and open `/user/two-factor` (linked from the dashboard).
 2. Click **Enable**: a QR code and a setup key appear.
-3. Scan the QR code with an authenticator app (Google Authenticator, 1Password, Aegis…).
+3. Scan the QR code with an authenticator app, or type the setup key.
 4. Type the 6-digit code to **confirm**. 2FA is on only after this step.
-5. Save the 8 recovery codes shown once, in a password manager.
+5. Save the 8 recovery codes, shown once, in a password manager.
 
 </Step>
 <Step title="3. Sign in with a code">
 
-Sign out and sign in again. After the password you land on `/two-factor-challenge`; type the current code from the app, or one recovery code if the phone is lost.
+Sign out and sign in again. After the password you land on `/two-factor-challenge`. Type the current code from the app, or one recovery code if the phone is lost.
 
 </Step>
-<Step title="4. Test it without a phone">
+</Steps>
 
-`totp.Code` computes the code the app would show, so tests can drive the whole flow:
+The scaffold works with the HTMX starter and the Inertia React, Vue and Svelte starters. It writes:
 
-```go
+```text
+app/models/two_factor.go               TwoFactor: the 2FA columns of users
+app/accounts/two_factor.go             enable, confirm, verify, recovery
+                                       codes, disable, pending login
+app/controllers/account/two_factor*.go settings page and login challenge
+app/requests/two_factor.go             code, challenge and password schemas
+app/accounts/lang/*/two_factor.json    messages in en and pt-BR
+database/migrations/*_add_two_factor_columns.go
+resources/views/auth/two-factor*.html  (or resources/js/pages/Auth/
+                                       TwoFactor*.tsx, .vue, .svelte)
+routes/two_factor.go                   added to routes.All()
+tests/two_factor_test.go               the whole flow
+```
+
+It also **patches code you already have**:
+
+- your `Login` handler: `Attempt` becomes `Validate`, then the challenge, then `Login`;
+- the dashboard, to link the settings page;
+- `routes/social.go`, when it exists (before or after `--2fa`), so [social sign-in](/docs/security/social-login) stops at the challenge too;
+- the API token endpoint from `install:api` (whichever was installed first), so `POST /api/v1/tokens` needs a code too.
+
+If your `Login` was rewritten by hand and the patch does not match, the command **fails before writing anything** and prints the change to make. 2FA is never installed without being enforced.
+
+## The scaffolded flow, step by step
+
+| Method | Path | Name | Middleware |
+| --- | --- | --- | --- |
+| GET | `/user/two-factor` | `two-factor.show` | required, verified |
+| POST | `/user/two-factor` | `two-factor.enable` | required, verified |
+| POST | `/user/two-factor/confirm` | `two-factor.confirm` | required, verified, 5/min per user + IP |
+| POST | `/user/two-factor/recovery-codes` | `two-factor.recovery-codes` | required, verified |
+| POST | `/user/two-factor/disable` | `two-factor.disable` | required, verified, 5/min per user + IP |
+| GET | `/two-factor-challenge` | `two-factor.login` | guest |
+| POST | `/two-factor-challenge` | | guest, 5/min per user + IP |
+
+Confirm and disable share one budget (`two-factor.confirm`); the challenge has its own. Over the limit the answer is `429` with `Retry-After`.
+
+### Where the secret lives
+
+`TwoFactor` is its own model over the `users` table, so the secret never reaches `User`, its JSON, or the `auth.user` prop of Inertia pages.
+
+| Column | Type | Holds |
+| --- | --- | --- |
+| `two_factor_secret` | `orm.Encrypted[string]` | the TOTP secret, encrypted with a key from `APP_KEY` |
+| `two_factor_recovery_codes` | `orm.Encrypted[[]string]` | SHA-256 hashes of the recovery codes, encrypted too |
+| `two_factor_confirmed_at` | nullable time | set when 2FA is on |
+| `two_factor_last_step` | integer | the time step of the last accepted code |
+
+See [Encryption](/docs/security/encryption) for `orm.Encrypted` and key rotation.
+
+### Enable and confirm
+
+1. **Enable** stores a new secret waiting for confirmation (a pending secret is replaced). A **confirmed** setup is never replaced: that answers `409` (`auth.two_factor.already_enabled`), because replacing it would switch 2FA off without the password check of Disable.
+2. The settings page shows the QR code of the `otpauth://` URI (issuer `APP_NAME`, account = the user's email) and the secret as a setup key.
+3. **Confirm** turns 2FA on only after a valid code. A wrong code answers `422` and logs `auth.2fa_failed` with `stage=confirm`. A code at or before the last accepted step is refused, the confirmation code included.
+4. Eight recovery codes (`ABCDE-FGHIJ`) are flashed in the encrypted session and shown **once**; only their hashes are stored.
+5. Every **other** session of the user ends, on every session driver (`Accounts.RevokeOtherSessions` bumps the session version), and `Web.RefreshSession` keeps the current one. A session an attacker opened before enrolment does not survive it.
+
+### Login with a code
+
+1. The patched `Login` checks the password with `Validate`.
+2. For a user with confirmed 2FA it does **not** log in. `StartTwoFactorChallenge` regenerates the session id, stores the pending user id, the remember-me choice and the time, and redirects to `/two-factor-challenge`.
+3. The pending login expires after 5 minutes (`accounts.TwoFactorChallengeTTL`); after that the challenge redirects to `/login` with `auth.two_factor.login_expired`.
+4. The user sends `code` (from the app) or `recovery_code`. One of the two is required.
+5. On success the pending login is cleared, `Web.Login` signs the user in with the remember-me choice, and the browser goes to the intended URL or `/dashboard`. Social sign-ins use "remember me" off.
+6. On failure: `422` on `code` (or `recovery_code`), and `auth.2fa_failed` with `stage=challenge`.
+
+### Replay protection
+
+**The attack:** someone sees a code on the user's screen, or intercepts it, and uses it within its 30 seconds.
+
+Each accepted code stores its time step in `two_factor_last_step`. A code whose step is at or before that number is refused, so each code works once. The check runs inside a transaction that first writes the user's row, which takes the row lock: two requests with the same code run one after the other, and only the first wins.
+
+### Recovery codes
+
+A recovery code replaces an app code when the phone is lost. Each one works once: using it removes its hash, and the settings page shows how many are left. **Regenerate** (`POST /user/two-factor/recovery-codes`) replaces them all; the old ones stop working and the new ones are shown once. With 2FA off it answers `409` (`auth.two_factor.not_enabled`).
+
+### Disable
+
+Disabling needs the current password. A wrong password answers `422` on `password` and logs `auth.2fa_failed` with `stage=disable`. Success clears the secret, the recovery codes, the confirmation time and the last step.
+
+### API tokens
+
+With `install:api`, `POST /api/v1/tokens` takes two more optional fields, `code` and `recovery_code`. Users without 2FA are not affected. Users with 2FA who send neither get `422` on `code` (`auth.two_factor.code_required`); a wrong one gets `422` too. A password alone never yields a token.
+
+### QR codes in the Inertia starters
+
+In the HTMX starter the SVG is inserted with `template.HTML`. That is safe only because `totp.QR` writes the SVG itself from server data (numbers and path commands, no input text); never do that with user input. In the Inertia starters the QR code goes to the page as a `data:image/svg+xml;base64,...` URL rendered with a plain `<img>`, so no raw HTML is injected into React, Vue or Svelte.
+
+## The `totp` package
+
+Use it to build 2FA yourself, or to understand what the scaffold calls.
+
+```go title="app/accounts/two_factor.go"
+// Enrolment: a 160-bit secret, base32 encoded.
+secret, err := totp.GenerateSecret()
+if err != nil {
+	return err
+}
+
+uri := totp.URI("Blog", "ada@example.com", secret, totp.Options{})
+// otpauth://totp/Blog:ada@example.com?algorithm=SHA1&digits=6
+//   &issuer=Blog&period=30&secret=WFRWUF6ZSUZWM2IB...
+
+svg, err := totp.QR(uri, 200) // an inline SVG, 200 pixels wide
+```
+
+Store the secret encrypted, show the QR code, and keep 2FA off until the first valid code:
+
+```go title="app/accounts/two_factor.go"
+step, ok := totp.Validate(
+	secret,
+	input,          // what the user typed
+	time.Now(),
+	tf.TwoFactorLastStep,
+	totp.Options{},
+)
+if !ok {
+	// Count the failure for throttling, then answer 422.
+	return a.InvalidTwoFactorCode(ctx)
+}
+
+// Store the step in the same update that logs the user in,
+// or the same code works again.
+tf.TwoFactorLastStep = step
+```
+
+| Function | What it does |
+| --- | --- |
+| `GenerateSecret()` | a new 160-bit secret, base32 encoded |
+| `URI(issuer, account, secret, opts)` | the `otpauth://` URI apps import |
+| `QR(text, size)` | an SVG QR code of any text, with a 4-module quiet zone, scaled to `size` pixels |
+| `QRMatrix(text)` | the raw module matrix (`true` = dark), for other renderers |
+| `Code(secret, t, opts)` | the code at time `t` (tests, or sending codes another way) |
+| `Validate(secret, code, now, lastStep, opts)` | accepts the previous, current and next step (clock skew), refuses steps at or before `lastStep`, and returns the matched step |
+| `RecoveryCodes(n)` | `n` codes like `PHKFK-N45WI` to show once, and their SHA-256 hashes to store |
+| `UseRecoveryCode(code, hashes)` | reports a match and returns the hashes left (store them); matching ignores letter case |
+
+`totp.Options` has `Algorithm` (`totp.SHA1`, `totp.SHA256`, `totp.SHA512`), `Digits` and `Period`. Zero values mean SHA-1, 6 digits and 30 seconds. Change them only if your users' apps support it; many apps ignore anything else.
+
+`QR` and `QRMatrix` encode text in byte mode at error correction level M, versions 1 to 40: up to 2331 bytes, enough for long `otpauth://` URIs and PIX BR Codes. Longer text returns `totp.ErrTooLong`.
+
+## Configuration
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| `accounts.TwoFactorChallengeTTL` | 5 minutes | how long the code step stays open after the password |
+| `accounts.RecoveryCodeCount` | 8 | recovery codes per user |
+| issuer in the QR code | `APP_NAME` | the name shown in the authenticator app |
+| `APP_KEY` | | encrypts the secret and the recovery code hashes |
+| `RATE_LIMIT_STORE` | `memory` | `cache` shares the 5-per-minute limits between servers |
+
+## Testing
+
+`totp.Code` computes the code the app would show, so tests drive the whole flow without a phone:
+
+```go title="tests/two_factor_test.go"
 code, err := totp.Code(secret, time.Now(), totp.Options{})
 if err != nil {
 	t.Fatal(err)
 }
 
-client.PostForm("/two-factor-challenge", url.Values{"code": {code}}).AssertRedirect("/dashboard")
+c.PostForm("/two-factor-challenge", url.Values{"code": {code}}).
+	AssertRedirect("/dashboard")
 ```
 
-A code is accepted only once (replay protection), so a test that signs in twice needs the code of a **later** time step: `totp.Code(secret, time.Now().Add(30*time.Second), totp.Options{})`.
+A code is accepted only once, so a test that signs in twice needs the code of a **later** step: `totp.Code(secret, time.Now().Add(30*time.Second), totp.Options{})`. The generated `tests/two_factor_test.go` shows how to read the secret from the settings page and covers throttling, recovery codes and disabling.
 
-</Step>
-</Steps>
+## Common mistakes
 
-## Using `totp` without the scaffold
+**A server clock that drifts.** TOTP depends on time. A server more than about 30 seconds off makes every code fail with "The code is invalid"; keep NTP on (containers use the host clock).
 
-```go
-// Enrolment: generate and store the secret (encrypted), show the QR code.
-secret, err := totp.GenerateSecret()
-uri := totp.URI(app.Config.Name, user.Email, secret, totp.Options{})
-svg, err := totp.QR(uri, 200)
+**Not storing the step.** Without saving the returned step as `lastStep`, the same code works again for up to 90 seconds (the previous, current and next steps).
 
-// Confirmation and login: validate, then store the step to block replays.
-step, ok := totp.Validate(secret, input, time.Now(), tf.TwoFactorLastStep, totp.Options{})
-if !ok {
-	return errs.ErrUnprocessable // and count the failure for throttling
-}
-tf.TwoFactorLastStep = step // models.TwoFactor in the scaffold; save it in the same update that logs the user in
-```
+**Turning 2FA on before confirmation.** Enable it only after a valid code, or a user who scanned nothing is locked out. The scaffold does this.
 
-`Validate` accepts the previous and the next 30-second step as well, for clock skew between the phone and the server.
+**A custom `Login` without the challenge.** If you rewrite login later, keep the "password OK, then challenge" step, or 2FA is silently skipped. Keep the generated tests: they fail when that happens.
 
-## Pitfalls
+**Raw HTML from user input.** The QR SVG may be inserted unescaped only because `totp.QR` wrote it. Never wrap user text in `template.HTML`.
 
-- **Server clock.** TOTP depends on the time. A server more than about 30 seconds off makes every code fail; keep NTP on (containers use the host clock).
-- **Not storing the step.** Without saving the returned step as `lastStep`, the same code works again for up to 90 seconds.
-- **Turning 2FA on before confirmation.** Only enable it after a valid code, or a user who scanned nothing is locked out. The scaffold does this.
-- **Losing recovery codes.** They are shown once and stored as hashes only. Offer regeneration (it invalidates the old ones) from the settings page.
-- **A custom `Login` handler.** The scaffold patches the default one; if you rewrite login later, keep the "password OK → challenge" step, or 2FA is silently skipped.
+<Callout type="info">
+Regenerating recovery codes does not ask for the password in the scaffold. If you want that extra step, parse `requests.ConfirmPasswordSchema` in `RegenerateRecoveryCodes`, as `Disable` does.
+</Callout>
 
-## Security notes
+## Next steps
 
-- The secret is a credential: the scaffold stores it in an [encrypted column](/docs/security/encryption#encrypted-columns) keyed from `APP_KEY`, in its own model so it never reaches JSON responses or Inertia props.
-- Throttle every endpoint that accepts a code (the scaffold allows 5 per minute per user and IP): six digits are guessable without a limit.
-- Disabling 2FA and regenerating recovery codes require the current password.
-- Confirming 2FA ends the user's other sessions (with `SESSION_DRIVER=database`), so a session opened by an attacker before enrolment does not survive it.
-- Failed codes are logged as the `auth.2fa_failed` [security event](/docs/security/building-blocks#security-events).
+<CardGroup cols="2">
+<Card title="Authentication" href="/docs/security/authentication" icon="lock">
+The login flow that 2FA plugs into.
+</Card>
+<Card title="Encryption" href="/docs/security/encryption" icon="shield">
+How the secret is encrypted, and key rotation.
+</Card>
+<Card title="Rate limiting" href="/docs/security/rate-limiting" icon="zap">
+The limits behind the 5-per-minute budget.
+</Card>
+</CardGroup>
+
+Package reference: [`auth/totp`](https://pkg.go.dev/github.com/AlexGalhardo/vukem/auth/totp).

@@ -1,143 +1,449 @@
 ---
 title: Authentication
-description: Session and access-token guards, argon2id hashing, remember-me, auth middleware and the install:auth scaffold.
+description: Sign users up, in and out with guards, user providers and argon2id password hashing, or scaffold the whole reviewed flow with install:auth.
 ---
 
-## Quick start
+Authentication answers one question: **who is making this request?** Vukem answers it with guards (one for browsers, one for API clients), a user provider that loads users from your database, and a password hasher. The `vukem install:auth` command writes a complete, tested sign-up, login, email verification and password reset flow into your project, as code you own and can change.
 
-```bash
-vukem install:auth   # login, registration, email verification, password reset, tests
-vukem migrate
-```
+You will learn:
 
-`install:auth` copies **code you own** into the project and registers its migrations and routes:
+- what guards, user providers and hashers are, and how they fit together;
+- how to scaffold login, sign-up, email verification and password reset;
+- which attacks each step of those flows stops, and why they behave the way they do;
+- how to wire a session guard by hand and protect routes with middleware;
+- how passwords are hashed and how to test signed-in pages.
 
-> A password reset and turning on 2FA end the user's other sessions on every session driver: `Accounts.RevokeOtherSessions` bumps `users.session_version`, which signs out encrypted cookie sessions too, and deletes server-side records ([Sessions](/docs/basics/sessions#revoking-a-users-other-sessions)).
+## The idea
 
+Picture the entrance of an office building. A **guard** at the door checks each visitor's badge. The guard does not know everyone by heart: they look the badge up in the **staff list**. When a new employee joins, their secret PIN is not written down; only a **scrambled fingerprint** of it is kept, so a stolen staff list reveals no PINs.
 
-```text
-app/models/user.go                          User (AuthID, AuthPassword, AuthSessionVersion, EmailVerified)
-app/accounts/{accounts,users,passwords}.go  guards, registration, verification, password resets
-app/accounts/{messages.go,lang/}            auth messages in en and pt-BR (accounts.T)
-app/controllers/account/*.go                login, register, logout, forgot/reset password, verification, dashboard
-app/requests/auth.go                        z schemas (password at least 12 characters, confirmation)
-app/mail/auth.go                            VerifyEmail, ResetPassword and AccountExists mailables
-database/migrations/*                       users, remember tokens, access tokens, password resets
-resources/views/auth/*.html, resources/views/mail/*.html
-routes/auth.go                              appended to routes.All()
-tests/auth_test.go                          the whole flow
-tests/auth_messages_test.go                 every message translated
-tests/sessions_test.go                      a password reset ends the user's other sessions
-```
+| Office | Vukem | Job |
+| --- | --- | --- |
+| The guard | a <Term tip="A value that decides whether a request comes from a signed-in user, and which one.">guard</Term> | *how* a request proves who it is: a session cookie (`SessionGuard`) or a bearer token (`TokenGuard`, the JWT guard) |
+| The staff list | a user provider | *where* users come from: your `users` table through the ORM (`ORMProvider`) |
+| The scrambled PIN | a hasher | turns a password into a one-way hash and checks it later (`hash.Default()`, argon2id) |
 
-| Flow | Behaviour |
-| --- | --- |
-| Register | the same answer for new and existing emails (redirect to `/register/check-email`, no validation error, **no login**): a new email gets the account and a verification mail; an existing one gets a "someone tried to sign up" notice (`AccountExists`, at most one per hour per address through the cache, keyed by a hash of the address) and nothing is created or changed. Both paths hash the password with argon2id and queue one mail (`SendLater`), so the timing does not reveal accounts either. A cache error on that path skips the notice and is logged, never returned, so an outage does not reveal accounts either. Sign-up is limited to 10 per 10 minutes per IP and 5 per hour per address (keyed by a SHA-256 of the address, through `app.RateLimiters`, so `RATE_LIMIT_STORE=cache` shares it); the limit counts requests, not accounts, so it answers 429 alike for new and existing addresses. The per-address limit can keep a specific address from signing up for an hour (anyone can spend its budget), without revealing whether it has an account |
-| Login | remember-me, intended URL, **5 attempts per minute per email + IP**, the same error for unknown users. Signed-in pages (dashboard, 2FA settings, billing, admin panel) also need a verified email (`auth.Verified`): an unverified login lands on the verification notice, so an account someone pre-registered with another person's address is useless until that person verifies it (and a password reset then ends the squatter's sessions). `POST /api/v1/tokens` answers 403 to unverified users, and `install:admin` admins need a verified `ADMIN_EMAILS` address |
-| Email verification | signed link (HMAC, 1 hour) that needs the login of its account: signed out, it leads to `/login`, which comes back to the link (also after a 2FA challenge or a social sign-in) and verifies it; signed in as another account it answers 403. The signature is checked after the login, so a link that expired meanwhile leads to the verification notice with an "expired, send a new one" message (`auth.verification_expired`), and a tampered one is a 403 with the `url.signature_invalid` event; opening the link of an already verified account goes to the dashboard without ending any session. Resend (signed in) limited to 3 per minute. Whoever merely owns the mailbox cannot verify an account someone else created with the address: without that account's password the link verifies nothing, the squatter's account stays unverified and useless, and the owner's own sign-up attempt gets the "sign in or reset your password" notice, whose reset ends the squatter's access. The link carries a SHA-256 of the address (`email_hash`) and is void once the email changes. Verifying ends every other session (session version bump), remember-me token and API token of the account; the verifier keeps their session (`RefreshSession`) |
-| Forgot / reset password | the same answer for unknown emails; random token stored as SHA-256, 1 hour, single use; reset ends every session (with `SESSION_DRIVER=database`), remembered session and API token |
-| Logout | session invalidated, remember-me token deleted |
+Your user model plugs in by implementing a small [interface](https://go.dev/tour/methods/9). In Go, a type implements an interface by having its methods; there is no `implements` keyword.
 
-Since sign-up never says "this email is taken", a user who forgot they have an account learns it from the notice mail, which links to the login and password reset pages. The trade-off: a sign-up form that cannot tell users their email is taken, and a mail queue that must work (`QUEUE_CONNECTION=database` in production). Apps that ran `install:auth` before v0.26.0 keep the old flow (409 for a taken email, login before verification) until they port `Register`, `Verify`, `routes/auth.go` and the new `AccountExists` mail, or re-run `install:auth --force` (and `install:admin` / `install:billing` / `install:api` for their verified-email checks). The `examples/` apps pin an older vukem and keep the old flow. Apps that ran `install:auth` before v0.27.0 verify the link signed out; to require the login, re-run `install:auth --force` (or port `Verify` in `app/controllers/account/verification.go`, the `verification.verify` route in `routes/auth.go`, which now uses `required` instead of the signature middleware, the new `auth.verification_expired` message, the social callback's intended-URL redirect in `routes/social.go`, and the generated tests).
-
-Flash messages, controller errors and mail subjects go through `accounts.T(ctx, key)`, with English and Brazilian Portuguese catalogs in `app/accounts/lang/<locale>/*.json` (keys `auth.*`; `--2fa` and `--social` add `two_factor.json` and `social.json`). `T` uses the request locale that `i18n.Middleware` resolves when the app uses `vukem.WithTranslations`, and English otherwise. A key in the app's own catalog for that locale or its language (`resources/lang/pt-BR.json`, then `pt.json`) wins, so the app can reword a message or add a locale without editing the scaffold. Field messages of the `z` schemas in `app/requests` and the views stay in English. Errors from the framework itself (failed login, unverified email, missing token ability, social sign-in, `orm.Unique`) carry their own keys and are translated by the built-in catalogs ([Localization](/docs/digging-deeper/localization#framework-messages)); the login error stays the same for unknown users and wrong passwords in every locale. `tests/auth_messages_test.go` checks that every key exists in every locale. Mailables built without a `Subject` keep the English one.
-
-The reset link mail is queued (`mailer.SendLater`), so the forgot-password answer does not wait for the mail server and its timing does not tell known emails from unknown ones. That needs a real queue: set `QUEUE_CONNECTION=database` in production (`memory` also answers fast, but a restart loses queued reset mails, so users may need to ask again); with the default `sync` the mail is still sent during the request.
-
-## Concepts
-
-```go
+```go title="github.com/AlexGalhardo/vukem/auth"
 type Authenticatable interface {
-	AuthID() string       // primary key as a string
-	AuthPassword() string // stored hash
+	// AuthID is the user's primary key as a string.
+	AuthID() string
+	// AuthPassword is the stored password hash.
+	AuthPassword() string
 }
 
 type UserProvider[U Authenticatable] interface {
 	ByID(ctx context.Context, id string) (U, error)
-	ByCredentials(ctx context.Context, creds map[string]string) (U, error) // never checks the password
+	// ByCredentials never checks the password; the guard does.
+	ByCredentials(
+		ctx context.Context,
+		creds map[string]string,
+	) (U, error)
 }
 ```
 
-`auth.NewORMProvider[models.User](db)` looks users up by primary key and by every credential except `password`, and stores rehashed passwords.
+`UserProvider[U Authenticatable]` uses [generics](https://go.dev/tour/generics/1): `U` is your own user type, so `auth.User[models.User](c, "web")` hands you a `models.User`, not an untyped value. The `ctx` argument is a [`context.Context`](https://pkg.go.dev/context) that carries the request's deadline and cancellation down to the database.
 
-## Session guard
+Three optional interfaces add features when your model has them:
 
-```go
+| Interface | Method | Enables |
+| --- | --- | --- |
+| `auth.Verifiable` | `EmailVerified() bool` | the `auth.Verified` middleware |
+| `auth.SessionVersioner` | `AuthSessionVersion() int64` | ending every session of a user at once (password reset, 2FA on) |
+| `auth.PasswordUpdater[U]` (on the provider) | `UpdatePassword(ctx, u, hash)` | upgrading old password hashes on login |
+
+## Quick start
+
+<Steps>
+<Step title="1. Scaffold the flows">
+
+```bash
+vukem install:auth
+```
+
+The command copies the files below into your project, registers their migrations and routes, and runs `go mod tidy`. Use `--force` to overwrite files that already exist, `--social github,google` to add [social login](/docs/security/social-login) and `--2fa` to add [two-factor authentication](/docs/security/two-factor).
+
+```text
+app/models/user.go            User model
+app/accounts/accounts.go      guards, tokens, session revocation
+app/accounts/users.go         sign-up and email verification
+app/accounts/passwords.go     password reset
+app/accounts/messages.go      accounts.T, translated messages
+app/accounts/lang/            en and pt-BR catalogs
+app/controllers/account/      login, sign-up, logout, reset,
+                              verification, dashboard handlers
+app/requests/auth.go          z validation schemas
+app/mail/auth.go              VerifyEmail, ResetPassword,
+                              AccountExists mails
+database/migrations/          users, remember_tokens,
+                              access_tokens, password_resets
+resources/views/auth/         the pages
+resources/views/mail/         the mail templates
+routes/auth.go                the routes, added to routes.All()
+tests/auth_test.go            the whole flow
+tests/auth_messages_test.go   every message translated
+tests/password_reset_test.go  reset rules
+tests/sessions_test.go        a reset ends other sessions
+```
+
+Projects created before `routes.All()` existed get the exact lines to add printed instead.
+
+</Step>
+<Step title="2. Create the tables">
+
+```bash
+vukem migrate
+```
+
+</Step>
+<Step title="3. Use a real queue for mail">
+
+```bash title=".env"
+QUEUE_CONNECTION=database
+```
+
+Every auth mail is queued (`SendLater`). With the default `sync` driver the mail is sent during the request, so the response time could tell an attacker whether an email has an account. `memory` answers fast too, but a restart loses queued mails.
+
+</Step>
+<Step title="4. Run the generated tests">
+
+```bash
+go test ./tests/...
+```
+
+</Step>
+</Steps>
+
+Start the app, open `/register`, sign up as `ada@example.com`, click the link in the mail (in development, look at the [devtools](/docs/digging-deeper/devtools) mail preview) and you land on `/dashboard`.
+
+The routes the scaffold registers:
+
+| Method | Path | Name | Middleware |
+| --- | --- | --- | --- |
+| GET | `/login` | `login` | guest |
+| POST | `/login` | | guest, 5/min per email + IP, 20 per 10 min per email |
+| GET | `/register` | `register` | guest |
+| POST | `/register` | | guest, 10 per 10 min per IP, 5/hour per email |
+| GET | `/register/check-email` | `register.check` | guest |
+| POST | `/logout` | `logout` | required |
+| GET | `/forgot-password` | `password.request` | guest |
+| POST | `/forgot-password` | `password.email` | guest, mails: 3/min per IP |
+| GET | `/reset-password/{token}` | `password.reset` | guest |
+| POST | `/reset-password` | `password.update` | guest |
+| GET | `/email/verify` | `verification.notice` | required |
+| GET | `/email/verify/{id}` | `verification.verify` | required |
+| POST | `/email/verification-notification` | `verification.send` | required, mails: 3/min per IP |
+| GET | `/dashboard` | `dashboard` | required, verified |
+
+The limits use `app.RateLimiters()`, so `RATE_LIMIT_STORE=cache` shares them between servers ([Rate limiting](/docs/security/rate-limiting)). The two routes marked "mails" share one budget. Over a limit the client gets `429 Too Many Requests` with `Retry-After`.
+
+## The scaffolded flows, step by step
+
+Each flow is written to stop a specific attack. Knowing the attack explains the behaviour that may otherwise look odd.
+
+### Sign-up never says "this email is taken"
+
+**The attack: account enumeration.** If the form answers "email already registered", anyone can type a list of addresses and learn who uses your app. That list feeds phishing and password-guessing attacks ([OWASP testing guide](https://owasp.org/www-project-web-security-testing-guide/latest/4-Web_Application_Security_Testing/03-Identity_Management_Testing/04-Testing_for_Account_Enumeration_and_Guessable_User_Account)).
+
+`POST /register` therefore answers the same way for new and existing addresses: a redirect to `/register/check-email`, no validation error, and **no login**.
+
+- A **new** address gets the account and a verification mail.
+- An **existing** address gets a notice mail instead ("someone tried to sign up with your address; sign in or reset your password", the `AccountExists` mailable), and nothing is created or changed. The notice goes out at most once per hour per address (a cache counter keyed by a SHA-256 of the address, never the address itself), so the form cannot flood a mailbox.
+- Both paths hash the password with argon2id and queue exactly one mail, so they take about the same time.
+- If the cache fails on the existing-address path, the notice is skipped and the error logged, never returned: an error page would reveal the account.
+- The rate limits (10 per 10 minutes per IP, 5 per hour per address hash) count requests, not accounts, so they answer `429` alike for new and existing addresses.
+
+The validation rules live in `app/requests/auth.go`: a name of 2 to 100 characters, an email of at most 255, a password of **12 to 256** characters, and a matching confirmation.
+
+The trade-off: a user who forgot they have an account learns it from the notice mail (which links to `/login` and `/forgot-password`), not from the form.
+
+<Callout type="info">
+The per-address limit means anyone can spend an address's budget and keep it from signing up for an hour. It still reveals nothing about whether the address has an account.
+</Callout>
+
+### Signed-in pages need a verified email
+
+**The attack: account pre-registration (squatting).** Someone signs up with *your* address before you do, sets a password they know, and waits for you to start using the account.
+
+The scaffold blocks that in three ways:
+
+1. Signed-in pages (the dashboard, and the 2FA settings, billing and admin pages added by other installers) use `auth.Verified`. An unverified login lands on the verification notice, so the squatter's account is useless.
+2. `POST /api/v1/tokens` (from `install:api`) answers `403` with `auth.unverified` to unverified users, and `install:admin` admins need a verified `ADMIN_EMAILS` address.
+3. When the real owner tries to sign up, they get the "sign in or reset your password" notice. A password reset then ends every session the squatter opened.
+
+### Email verification needs the account's login
+
+The verification mail holds a <Term tip="A URL with an HMAC signature and an expiry time; changing any part of it breaks the signature.">signed link</Term> to `/email/verify/{id}?email_hash=...` that works for one hour (`Accounts.VerifyTTL`). It is signed with a key derived from `APP_KEY` ([Signed URLs](/docs/security/signed-urls)).
+
+Since v0.27.0 the route runs `auth.Required`, so **opening the link needs the login of the account it verifies**:
+
+| Situation | What happens |
+| --- | --- |
+| Signed out | redirect to `/login`; the link is kept as the intended URL, and the login (also after a 2FA challenge or a social sign-in) comes back to it |
+| Signed in as that account | the signature is checked, the address is verified, the dashboard opens |
+| Signed in as another account | `403` (`auth.verification_wrong_account`) |
+| The link expired meanwhile | back to the notice with "expired, send a new one" (`auth.verification_expired`) |
+| The link was tampered with | `403` and the `url.signature_invalid` security event |
+| The email changed since the link was sent | `403`: the link carries a SHA-256 of the address (`email_hash`) |
+| Already verified | straight to the dashboard; no session ends |
+
+Why the login? Owning the mailbox is not enough: if a squatter created the account, the real owner clicking the link would otherwise verify the squatter's account. Without that account's password the link verifies nothing.
+
+Verifying **ends every other way into the account** opened before the address was proven: other sessions (by bumping `users.session_version`), remember-me tokens and API tokens. The person who just verified keeps their session (`RefreshSession`). Resending the mail (signed in) shares the mail budget of 3 per minute per IP with the reset form.
+
+### Login: same error, same time, limited guesses
+
+**The attacks: password guessing, credential stuffing and timing leaks.** Robots try common passwords or pairs leaked from other sites ([credential stuffing](https://cheatsheetseries.owasp.org/cheatsheets/Credential_Stuffing_Prevention_Cheat_Sheet.html)), and a login that answers faster for unknown emails reveals which ones exist.
+
+- `Attempt` gives the same `422` error on the `email` field ("These credentials do not match our records.", key `auth.failed`) for an unknown email and a wrong password, in every locale.
+- An unknown email still costs a full hash check against a dummy hash, so both failures take the same time.
+- Each failure logs the `auth.login_failed` security event.
+- Attempts are limited to **5 per minute per email + IP** and **20 per 10 minutes per email from any IP**. The email is trimmed and lower-cased first, so `" Ada@Example.com"` opens no new bucket.
+- After success the user goes to the intended URL (checked by `web.SafeRedirect`, so it cannot point to another site) or `/dashboard`.
+- "Remember me" issues a long-lived cookie (see [Remember-me](#remember-me)).
+
+### Password reset: single use, short-lived, ends every session
+
+**The attacks: reset-link theft and lingering access.** A reset link in an old mail, or a link guessed by brute force, must not work forever; and whoever stole the old password must lose access once it changes ([OWASP forgot password cheat sheet](https://cheatsheetseries.owasp.org/cheatsheets/Forgot_Password_Cheat_Sheet.html)).
+
+- `POST /forgot-password` answers alike for known and unknown emails ("If the email exists..."), and the mail is queued, so timing reveals nothing.
+- The token comes from [`crypto/rand.Text`](https://pkg.go.dev/crypto/rand#Text); only its SHA-256 is stored in `password_resets`, one row per email (a new request replaces the old link).
+- It works for one hour (`Accounts.ResetTTL`) and once: the row is deleted in the same transaction that changes the password, so two concurrent resets with one token have a single winner. An invalid, expired or used token gives a `422` on `email` (`auth.reset_invalid`).
+- The reset ends **every** session on every session driver (it bumps `session_version` and deletes server-side sessions), deletes remember-me tokens and revokes every API token (`Tokens.RevokeAll`, so the tokens stay listed with `revoked_at`).
+
+If you add a "change password" form, call `Accounts.RevokeOtherSessions(ctx, userID, c.Session().ID())` and then `Web.RefreshSession(c)`, so the current session stays and the others end.
+
+### Logout
+
+`POST /logout` invalidates the session (new id, no data) and deletes the request's remember-me token. It is a `POST`, so a link or image on another site cannot sign your users out; [CSRF](/docs/basics/csrf) protection covers it.
+
+### Messages and translations
+
+Flash messages, controller errors and mail subjects go through `accounts.T(ctx, key)`. The catalogs live in `app/accounts/lang/<locale>/*.json` (keys `auth.*`; `--2fa` and `--social` add `two_factor.json` and `social.json`), in English and Brazilian Portuguese.
+
+- `T` uses the request locale that `i18n.Middleware` resolves when the app uses `vukem.WithTranslations`, and English otherwise.
+- A key in the app's own catalog wins (`resources/lang/pt-BR.json`, then `pt.json`), so you may reword a message or add a locale without editing the scaffold.
+- Field messages of the `z` schemas and the views stay in English.
+- Errors from the framework itself (failed login, unverified email, missing token ability, social sign-in, `orm.Unique`) carry their own keys and are translated by the built-in catalogs ([Localization](/docs/digging-deeper/localization)).
+- `tests/auth_messages_test.go` checks that every key exists in every locale. Mailables built without a `Subject` keep the English one.
+
+### Upgrading an older scaffold
+
+The scaffold is your code, so upgrading Vukem does not change it. Two releases changed the flows:
+
+- **Before v0.26.0**, sign-up answered `409` for a taken email and logged the user in before verification. Port `Register`, `Verify`, `routes/auth.go` and the `AccountExists` mail, or re-run `install:auth --force` (and `install:admin`, `install:billing`, `install:api` for their verified-email checks).
+- **Before v0.27.0**, the verification link worked signed out. Re-run `install:auth --force`, or port `Verify` in `app/controllers/account/verification.go`, the `verification.verify` route (now `required` instead of the signature middleware), the `auth.verification_expired` message, the social callback's intended-URL redirect in `routes/social.go`, and the generated tests. The [upgrade guide](https://github.com/AlexGalhardo/vukem/blob/main/docs/upgrade/1.0.md) has the details.
+
+The `examples/` apps in the repository pin an older Vukem and keep the old flow.
+
+## The session guard
+
+The scaffold's `accounts.New` builds the guards for you. This section shows what it does, so you can wire a guard by hand or change one.
+
+```go title="app/accounts/accounts.go"
 users := auth.NewORMProvider[models.User](db)
-webGuard := auth.NewSessionGuard("web", users, hash.Default(), auth.NewRememberStore(db))
 
-r.Post("/login", func(c *web.Ctx) error {
+web := auth.NewSessionGuard(
+	"web",                      // the guard's name
+	users,                      // where users come from
+	hash.Default(),             // argon2id
+	auth.NewRememberStore(db),  // nil turns remember-me off
+)
+```
+
+`NewORMProvider[models.User](db)` loads users by primary key (`ByID`) and by every credential except `password` (`ByCredentials`); column names are validated against the model, so a form field cannot inject SQL. Its `PasswordColumn` field (default `password`) receives upgraded hashes.
+
+### Attempt, Validate, Login and Logout
+
+```go title="app/controllers/account/account.go"
+func (h *Handlers) Login(c *web.Ctx) error {
 	in, err := web.Parse(c, requests.LoginSchema)
 	if err != nil {
 		return err
 	}
 
-	creds := map[string]string{"email": in.Email, "password": in.Password}
-	if _, err := webGuard.Attempt(c, creds, auth.Remember(in.Remember)); err != nil {
-		return err // 422 on "email": "These credentials do not match our records."
+	creds := map[string]string{
+		"email":    strings.ToLower(in.Email),
+		"password": in.Password,
 	}
 
-	return c.Redirect("/dashboard")
-})
+	// 422 on "email" when the credentials do not match.
+	_, err = h.a.Web.Attempt(c, creds, auth.Remember(in.Remember))
+	if err != nil {
+		return err
+	}
 
-r.Get("/dashboard", dashboard).Use(auth.Required(webGuard))
+	target, _ := c.Session().Pull(auth.IntendedKey).(string)
 
-user, err := auth.User[models.User](c, "web") // in handlers behind Required
+	return c.Redirect(
+		web.SafeRedirect(c.Request(), target, "/dashboard"),
+	)
+}
 ```
 
-- `Attempt` checks the password in constant time; unknown users still cost a hash verification and get the same 422 error. Failures emit the `auth.login_failed` security event.
-- `Login` regenerates the session id (fixation) and stores the user id, also under `web.SessionUserKey` so `session.Manager.RevokeOthers` can end the user's other sessions ([Sessions](/docs/basics/sessions)); `Logout` invalidates the session and deletes the remember-me token.
-- Users implementing `auth.SessionVersioner` have their session version recorded on login; once the user's version changes, older sessions are signed out on every driver. `RefreshSession(c)` keeps the current session across a bump. Remember-me tokens are bound to the version too: a bump also ends remember-me logins, and `RefreshSession` re-issues the current device's token.
-- Remember-me cookies hold `<id>.<secret>`; only `SHA-256(secret)` is stored, and tokens rotate on every use.
-- Stale hashes (bcrypt, weaker argon2 parameters) are upgraded on login.
-- `Validate(c, creds)` checks credentials without logging in (token issuance).
+| Method | What it does |
+| --- | --- |
+| `Attempt(c, creds, opts...)` | finds the user with `ByCredentials`, checks `creds["password"]` in constant time, then calls `Login`. Failure: the same 422 for unknown users and wrong passwords, reported on `IdentifierField` |
+| `Validate(c, creds)` | the same check without logging in (API token issuance, the 2FA step). A stale hash is still upgraded |
+| `Login(c, u, opts...)` | regenerates the session id against [session fixation](https://owasp.org/www-community/attacks/Session_fixation), stores the user id under `auth_web`, and the owner `"web:<id>"` under `web.SessionUserKey` so [Sessions](/docs/basics/sessions) can list and revoke the user's sessions |
+| `Logout(c)` | clears the session (new id, no data) and deletes the request's remember-me token |
+| `User(c)` | the signed-in user, cached for the request, or `auth.ErrUnauthenticated` (401) |
+| `Check(c)` | `true` when the session (or a remember-me cookie) names a user |
+| `RefreshSession(c)` | reloads the user, records its current session version in this session and re-issues the device's remember-me token |
+| `SessionUserID(id)` | the owner string `"<guard>:<id>"` to pass to `session.Manager.RevokeOthers` |
 
-## Token guard
+`auth.Remember(true)` is a `LoginOption` for `Attempt` and `Login`. In handlers behind `auth.Required`, read the user with `auth.User[models.User](c, "web")`; outside a `*web.Ctx` (an authorization gate, a view function) use `auth.UserFrom[models.User](ctx, "web")`.
 
-```go
-tokens := auth.NewTokens(db)
-tokens.Now = app.Now // the app clock (vukem.WithClock) drives expiry and last use
-apiGuard := auth.NewTokenGuard("api", users, tokens)
+### Ending every session at once
 
-plain, tok, err := tokens.Create(ctx, user.AuthID(), "cli", []string{"posts:read"}, 30*24*time.Hour)
-list, err := tokens.List(ctx, user.AuthID())               // for a "My API keys" page; revoked ones have RevokedAt set; never the secrets
-revoked, err := tokens.RevokeFor(ctx, user.AuthID(), id)  // id from a form: only revokes the user's own live token
-err = tokens.Revoke(ctx, tok.ID)                          // no owner check: only for the token of this request
-err = tokens.RevokeAll(ctx, user.AuthID())                // e.g. after a password change
-n, err := tokens.Prune(ctx, app.Now().AddDate(0, 0, -90)) // delete rows revoked or expired 90+ days ago (never live ones)
+Your model implements `auth.SessionVersioner` with a `session_version` column. The guard records the version at login and signs out any session whose version no longer matches the user's, on **every** session driver (encrypted cookie sessions included, which have no server record to delete). Bumping the number ends them all; it costs nothing per request, since the guard loads the user anyway.
 
-if auth.TokenCan(c, "api", "posts:read") { /* ... */ } // "*" grants everything
+```go title="app/models/user.go"
+// Sessions logged in with another version are signed out.
+func (u User) AuthSessionVersion() int64 {
+	return u.SessionVersion
+}
 ```
 
-A `ttl` of `0` in `tokens.Create` means the token never expires (valid until revoked); the `install:api` scaffold issues 30-day tokens. Opaque tokens `<prefix><id>.<secret>` from `crypto/rand`; only the SHA-256 of the secret is stored, compared in constant time; `last_used_at` is updated at most once a minute. Revoking sets `revoked_at` instead of deleting the row, so a "My API keys" page and an audit can still see the token; a revoked token is refused like a wrong one. Tables created before v0.26.0 need the `revoked_at` column: add `auth.TokensRevokedAtMigration("<timestamp>_access_tokens_revoked_at")` to your migrations (until then every token is refused with 503 and revoking deletes the row).
+Declare it on the value receiver `(u User)`, not `(u *User)`: `NewSessionGuard` panics when only the pointer type implements it, because the check would silently never run. Apps that adopt it later add a `session_version BIGINT DEFAULT 0` column first ([Sessions](/docs/basics/sessions)).
 
-Set `tokens.Prefix` (the `install:auth` scaffold uses `vk_`; pick one specific to your app) so new tokens are easy to spot: add a custom secret-scanning pattern such as `vk_[A-Z2-7]{26}\.[A-Z2-7]{26}` to GitHub or gitleaks. Tokens issued without a prefix, or under an earlier one, keep working.
+`Accounts.RevokeOtherSessions(ctx, userID, keep)` bumps the version, deletes remember-me tokens and deletes server-side sessions except `keep`. With `keep` set, call `Web.RefreshSession(c)` afterwards so the current session survives the bump.
 
-> When a token id comes from the request (a "Revoke" button), always use `RevokeFor`: it revokes the token only if it belongs to the signed-in user and is still live, and returns `false` otherwise, so answer 404. For signed tokens from an identity provider, use the [JWT guard](/docs/security/jwt); for TOTP, see [two-factor authentication](/docs/security/two-factor).
+### Remember-me
 
-## Middleware
+| Detail | Value |
+| --- | --- |
+| Cookie | `remember_<guard>` (`remember_web`), `HttpOnly`, `SameSite=Lax`, `Secure` unless `InsecureCookies` |
+| Content | `<id>.<secret>`; only `SHA-256(secret)` is stored, in `remember_tokens` |
+| Lifetime | 30 days (`RememberFor`) |
+| Use | single use: every use rotates it, even under concurrent replays |
+| Bound to | the session version: a password reset or 2FA enable also ends remember-me logins |
+
+A rejected remember cookie logs `auth.remember_rejected`; a session ended by a version change logs `auth.session_revoked`.
+
+### When the database is down
+
+`ByID` must report a missing user as `auth.ErrUserNotFound` (or wrap `orm.ErrNotFound` or `sql.ErrNoRows`). The guard then forgets the session. Any **other** error (the database is down) makes `auth.Required` answer `503` and keeps the session, so an outage neither logs everyone out nor treats them as guests. A custom provider that returns a generic error for "not found" leaves a deleted user's session failing with 503 instead of logging out.
+
+## Protecting routes with middleware
 
 | Middleware | Effect |
 | --- | --- |
-| `auth.Required(guards...)` | first guard that authenticates wins; JSON clients get 401 with `WWW-Authenticate: Bearer`, browsers a redirect to the route named `login` (intended URL kept). When every guard is an `auth.APIGuard` (token and JWT guards), the 401 is always problem+json, never a redirect; the same under `auth.ProblemJSON`, which must be mounted before `Required`. A guard whose store fails answers 503 and stops the list, so put the session guard before the token guard on mixed routes: `auth.Required(webGuard, apiGuard)` |
-| `auth.Optional(guards...)` | authenticates when possible, never blocks (pages that show more to members) |
-| `auth.Guest(guards...)` | sends logged-in users to the route named `home` |
-| `auth.Verified(guard)` | passes when the user's `EmailVerified()` is true; otherwise browsers are redirected to the route named `verification.notice` (created by `install:auth`) and JSON clients, or apps without that route, get 403 |
-| `auth.Ability(guard, abilities...)` | 403 unless the token grants every ability (problem+json for an `auth.APIGuard`) |
-| `auth.ProblemJSON` | route-group setting for APIs that are not only `auth.APIGuard`s (a session fallback, a custom authenticator or scope check): mount it first (`g.Use(auth.ProblemJSON, auth.Required(apiGuard, webGuard))`). Below it `Required`, `Ability` and `Verified` never redirect, and every 401 and 403 rendered by middleware (theirs, or yours through `web.Fail`) is RFC 9457 problem+json whatever `Accept` says, like the built-in API guards. Middleware mounted before it is not affected, so `Required` ahead of it still redirects. The forcing covers any 401/403 from middleware below it, not only authentication (a CSRF or rate-limit 403 too). Other statuses and handlers keep negotiating; a custom guard can instead implement `auth.APIGuard` (`APIOnly()`) |
+| `auth.Required(guards...)` | lets the request through when any guard authenticates it, trying them in order |
+| `auth.Optional(guards...)` | authenticates when possible and never blocks: pages that show more to members |
+| `auth.Guest(guards...)` | sends signed-in users to the route named `home` (or `/`): login and sign-up pages |
+| `auth.Verified(guard)` | requires `EmailVerified()`: browsers go to the route named `verification.notice` when it exists, JSON clients (and apps without that route) get `403`. Place it after `Required` |
+| `auth.Ability(guard, abilities...)` | `403` unless the request's token grants every ability; see [API tokens](/docs/security/api-tokens) |
+| `auth.ProblemJSON` | forces RFC 9457 problem+json errors on a route group; see below |
 
-## Hashing
+What `auth.Required` does when nobody is signed in:
 
-| Driver | Defaults | Notes |
+- **API guards only** (`TokenGuard`, the [JWT guard](/docs/security/jwt), or any guard implementing `auth.APIGuard`): always `401` problem+json with `WWW-Authenticate: Bearer realm="api"`, whatever `Accept` says. Nobody is redirected.
+- **Clients that want JSON, or routes without the session middleware**: `401` with the same header.
+- **Browsers**: a redirect to the route named `login` (or `/login`). For `GET` requests that are not htmx requests, the URL is kept under `auth.IntendedKey` so the login can come back to it.
+- **A guard whose store fails** (`503`): the list stops there, without trying the next guard. On routes that accept a session and a token, list the session guard first: `auth.Required(webGuard, apiGuard)`.
+
+`auth.ProblemJSON` is for API groups that are not only API guards (a session fallback, a custom check). Mount it **first**: `g.Use(auth.ProblemJSON, auth.Required(apiGuard, webGuard))`. Below it, `Required`, `Ability` and `Verified` never redirect, and every 401 and 403 that middleware renders (theirs, or yours through `web.Fail`) is problem+json, a CSRF or rate-limit 403 included. Middleware mounted before it is not affected, and handlers keep negotiating with the client's `Accept` header.
+
+Every guard that authenticates a request also records `auth.Principal(ctx)` (guard name, user id, ok), for code that keys data by caller without knowing the guard, such as `api.Idempotency`. Combine the two values length-prefixed or hashed, since either may contain any character.
+
+## Password hashing
+
+A password must never be stored as written. Vukem stores a slow, salted, one-way hash, so a stolen database does not reveal passwords and each guess costs the attacker real computing time ([OWASP password storage cheat sheet](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html)).
+
+| Constructor | Algorithm | Notes |
 | --- | --- | --- |
-| argon2id (default) | m=64 MiB, t=1, p=4, 16-byte salt, 32-byte key | PHC string `$argon2id$v=19$m=…,t=…,p=…$salt$hash` |
-| bcrypt | your cost (12 recommended) | inputs over 72 bytes are rejected, never truncated |
+| `hash.Default()` | argon2id, m=64 MiB, t=1, p=4, 16-byte salt, 32-byte key | the OWASP recommendation ([RFC 9106](https://www.rfc-editor.org/rfc/rfc9106)) |
+| `hash.Argon2id(p)` | argon2id with your parameters | start from `hash.DefaultArgon2Params()`, which returns a copy |
+| `hash.Bcrypt(cost)` | bcrypt, cost 4 to 31 (12 is a good default) | inputs over 72 bytes fail with `hash.ErrPasswordTooLong` instead of being silently truncated |
+| `hash.Fake()` | fast argon2id | tests only; the scaffold uses it when `app.Kind == vukem.KindTest` |
 
-`hash.Default()`, `hash.Argon2id(params)` (start from `hash.DefaultArgon2Params()`), `hash.Bcrypt(cost)`, `hash.Fake()` for tests. `hash.Verify` reads both formats.
+Every `Hasher` has `Make(password)`, `Verify(hash, password)` and `NeedsRehash(hash)`. The package-level `hash.Verify` reads both formats; anything else gives `hash.ErrUnknownFormat`. An argon2id hash is a self-describing PHC string:
+
+```text
+$argon2id$v=19$m=65536,t=1,p=4$t5MujQfI67zBSxy+ZK96NQ$gvUmrB9...
+```
+
+When `NeedsRehash` is true after a successful login (a bcrypt hash from an old system, or weaker argon2 parameters) and the provider implements `PasswordUpdater`, the guard stores a fresh hash. A database moves from bcrypt to argon2id one login at a time.
+
+## Configuration
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| `SessionGuard.IdentifierField` | `email` | the form field that carries the login error |
+| `SessionGuard.RememberFor` | 30 days | remember-me cookie lifetime |
+| `SessionGuard.InsecureCookies` | `false` | drops `Secure` on the remember-me cookie; the scaffold sets it only outside production with a non-`https` `APP_URL` |
+| `ORMProvider.PasswordColumn` | `password` | column that receives upgraded hashes |
+| `Accounts.ResetTTL` | 1 hour | password reset link lifetime |
+| `Accounts.VerifyTTL` | 1 hour | verification link lifetime |
+| `Accounts.URL` | `APP_URL` | base URL in mails |
+| `QUEUE_CONNECTION` | `sync` | set `database` in production, so mails are sent outside the request |
+| `RATE_LIMIT_STORE` | `memory` | `cache` shares the scaffold's limits between servers |
+| `SESSION_DRIVER` | `cookie` | where sessions live ([Sessions](/docs/basics/sessions)) |
+
+## Security
+
+| Threat | Defence | Learn more |
+| --- | --- | --- |
+| Password guessing, credential stuffing | rate limits per email + IP and per account; 12-character minimum | [OWASP authentication](https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html) |
+| Account enumeration | same answer and timing for sign-up, login and reset | [OWASP A07](https://owasp.org/Top10/2025/A07_2025-Authentication_Failures/) |
+| Stolen database | argon2id passwords; hashed reset, remember-me and API tokens | [password storage](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html) |
+| Session fixation and hijacking | new session id on login; `HttpOnly`, `Secure`, `SameSite` cookies; session versions | [session management](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html) |
+| Account squatting | verified email required; verification needs the login; proving the email ends older access | [OWASP A07](https://owasp.org/Top10/2025/A07_2025-Authentication_Failures/) |
+| Open redirect after login | `web.SafeRedirect` keeps the intended URL on your site | [OWASP A01](https://owasp.org/Top10/2025/A01_2025-Broken_Access_Control/) |
+
+What stays your job: serve the app over HTTPS, keep the queue running, and call `RevokeOtherSessions` from any new form that changes credentials. The full list is on the [Security overview](/docs/security/overview).
 
 ## Testing
 
-```go
-app.Client(t).ActingAs("web", user).Get("/dashboard").AssertOK() // stores what Login stores, session version included
-app.Client(t).WithToken(plain).GetJSON("/api/v1/me").AssertOK()
+`vukemtest` clients can skip the login form:
+
+```go title="tests/dashboard_test.go"
+func TestDashboard(t *testing.T) {
+	app := vukemtest.New(t, bootstrap.New)
+	user := createVerifiedUser(t, app)
+
+	// Stores what Login stores, the session version included.
+	app.Client(t).
+		ActingAs("web", user).
+		Get("/dashboard").
+		AssertOK()
+
+	// Guests are sent to the login page.
+	app.Client(t).Get("/dashboard").AssertRedirect("/login")
+}
 ```
+
+`createVerifiedUser` stands for your own helper (a [factory](/docs/database/factories-seeders)). `.WithSession(values)` adds other session values, and `.WithToken(plain)` sends a bearer token. `auth.SessionValues(guard, user)` returns the values `Login` stores, for custom test setups. The generated `tests/auth_test.go` covers every flow on this page; read it as an example.
+
+## Common mistakes
+
+**Building your own "email taken" message.** Wrong: returning `409 Conflict` from `Register` when the email exists. Right: keep the scaffold's single answer; the owner learns it from the notice mail.
+
+**A custom `ByID` that hides "not found".** Wrong: `return User{}, errors.New("no user")`. Every request of a deleted user then fails with `503 Service Unavailable` instead of logging out. Right: `return User{}, auth.ErrUserNotFound`.
+
+**A pointer receiver on `AuthSessionVersion`.** Wrong: `func (u *User) AuthSessionVersion() int64`. The app panics at boot when it builds the guard. Right: `func (u User) AuthSessionVersion() int64`.
+
+**Token guard before session guard on mixed routes.** Wrong: `auth.Required(apiGuard, webGuard)`. A browser with a valid session and a stray `Bearer` header gets `503` while the token store is down. Right: `auth.Required(webGuard, apiGuard)`.
+
+**Leaving `QUEUE_CONNECTION=sync` in production.** Sign-up and reset then take longer for existing accounts (they send a mail inline), which reveals them. Right: `QUEUE_CONNECTION=database`.
+
+## Next steps
+
+<CardGroup cols="2">
+<Card title="API tokens" href="/docs/security/api-tokens" icon="code">
+Bearer tokens for scripts, mobile apps and other servers.
+</Card>
+<Card title="Two-factor authentication" href="/docs/security/two-factor" icon="lock">
+Add an authenticator-app code on top of the password.
+</Card>
+<Card title="Social login" href="/docs/security/social-login" icon="rocket">
+Sign in with GitHub, Google and other providers.
+</Card>
+<Card title="Authorization" href="/docs/security/authorization" icon="shield">
+Decide what a signed-in user may do.
+</Card>
+</CardGroup>
+
+Package reference: [`auth`](https://pkg.go.dev/github.com/AlexGalhardo/vukem/auth), [`auth/hash`](https://pkg.go.dev/github.com/AlexGalhardo/vukem/auth/hash).

@@ -1,78 +1,159 @@
 ---
 title: CSP and security headers
-description: What each security header does, how the nonce-based Content-Security-Policy works, and how to add analytics, embeds, Inertia and violation reports without weakening it.
+description: What each security header Vukem sends does and which attack it blocks, how the per-request CSP nonce works, how to add analytics or embeds without weakening the policy, HSTS behind a proxy and the request header size limit.
 ---
 
-Browsers enforce a set of response headers that block whole classes of attacks: cross-site scripting (XSS), clickjacking, MIME sniffing and downgrade to HTTP. `vukem.DefaultMiddleware` and `vukem.APIMiddleware` install `middleware.SecureHeaders` on every response, so a new app is already protected. This page explains what you get and how to change it safely.
+Some of the most useful security code in your app is not in your app at all: it runs in the visitor's browser. A few response headers tell the browser "run only the scripts I list", "never show this page inside another site's frame", "always use HTTPS from now on". `vukem.DefaultMiddleware` and `vukem.APIMiddleware` install `middleware.SecureHeaders`, which sends them on every response, so a new app is protected before you write a line. This page explains each header, the attack it blocks, and how to change the defaults safely.
 
-## What every response carries
+You will learn:
 
-| Header | Default | Blocks |
+- which headers every response carries and what each one blocks;
+- how the nonce-based Content-Security-Policy works, and how to mark your own inline scripts;
+- how to allow an analytics script, a video embed or a library's style without opening the policy;
+- how to collect CSP violation reports;
+- when HSTS is sent, and how to make it work behind a TLS proxy;
+- how big a request's headers may be (`HTTP_MAX_HEADER_BYTES`).
+
+## The idea
+
+Think of the browser as a bodyguard who follows written instructions. Your server hands over a card with every page: "only let in scripts from my house", "do not let anyone put this page in a picture frame". The bodyguard enforces it even if an attacker managed to slip something into the page.
+
+| Attack, in plain words | Header that blocks it | Read more |
 | --- | --- | --- |
-| `Content-Security-Policy` | `middleware.DefaultCSP` with a fresh nonce per request | injected scripts and styles (XSS), loading from unknown origins, framing (`frame-ancestors 'none'`) |
-| `Strict-Transport-Security` | `max-age=63072000; includeSubDomains`, on HTTPS requests only | later visits over plain HTTP |
-| `X-Content-Type-Options` | `nosniff` | a file served as text being run as a script |
-| `X-Frame-Options` | `DENY` | clickjacking in old browsers |
-| `Referrer-Policy` | `strict-origin-when-cross-origin` | full URLs (with tokens in the query) leaking to other sites |
-| `Cross-Origin-Opener-Policy` | `same-origin` | other windows holding a reference to yours |
-| `Permissions-Policy` | `camera=(), microphone=(), geolocation=()` | embedded content asking for devices |
+| <Term tip="Cross-site scripting: an attacker gets their JavaScript into your page (for example through a comment), and it runs with the visitor's session.">XSS</Term>: injected JavaScript runs in your page | `Content-Security-Policy` | [XSS prevention](https://cheatsheetseries.owasp.org/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.html), [CSP](https://cheatsheetseries.owasp.org/cheatsheets/Content_Security_Policy_Cheat_Sheet.html) |
+| <Term tip="Another site shows your page invisibly inside a frame and tricks the visitor into clicking your buttons.">Clickjacking</Term>: your page inside an invisible frame | `X-Frame-Options`, CSP `frame-ancestors` | [Clickjacking defense](https://cheatsheetseries.owasp.org/cheatsheets/Clickjacking_Defense_Cheat_Sheet.html) |
+| Downgrade: a network attacker serves the plain-HTTP version | `Strict-Transport-Security` | [HSTS](https://cheatsheetseries.owasp.org/cheatsheets/HTTP_Strict_Transport_Security_Cheat_Sheet.html) |
+| MIME sniffing: an uploaded `.txt` is run as a script | `X-Content-Type-Options` | [HTTP headers](https://cheatsheetseries.owasp.org/cheatsheets/HTTP_Headers_Cheat_Sheet.html) |
+| Leaking full URLs (with tokens) to other sites | `Referrer-Policy` | [HTTP headers](https://cheatsheetseries.owasp.org/cheatsheets/HTTP_Headers_Cheat_Sheet.html) |
+| Another window keeps a handle on yours | `Cross-Origin-Opener-Policy` | [HTTP headers](https://cheatsheetseries.owasp.org/cheatsheets/HTTP_Headers_Cheat_Sheet.html) |
+| An embedded page asks for the camera | `Permissions-Policy` | [HTTP headers](https://cheatsheetseries.owasp.org/cheatsheets/HTTP_Headers_Cheat_Sheet.html) |
 
-See them yourself:
+Missing or weak security headers are part of [A02 Security Misconfiguration](https://owasp.org/Top10/2025/A02_2025-Security_Misconfiguration/) in the OWASP Top 10:2025.
 
-```bash
-curl -sI http://localhost:3000/ | grep -iE 'content-security|x-frame|referrer|permissions|nosniff|cross-origin'
-```
+The running example on this page is the blog's layout: you add an inline config script, the Plausible analytics script and a YouTube embed, without weakening the policy.
 
-## How the CSP works
-
-The default policy is:
-
-```text
-default-src 'self'; script-src 'self' 'nonce-{nonce}'; style-src 'self' 'nonce-{nonce}';
-img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self';
-frame-ancestors 'none'; form-action 'self'
-```
-
-- Files from your own origin (`'self'`) load normally: the Vite bundle, images, fonts.
-- An **inline** `<script>` or `<style>` runs only if it carries the request's **nonce**, a random value that changes on every response. An attacker who injects `<script>` into a page cannot know it.
-- There is no `'unsafe-inline'` and no `'unsafe-eval'`.
+## Quick start
 
 <Steps>
-<Step title="1. Put the nonce on inline tags">
+<Step title="1. Look at the headers">
 
-In `html/template` views, use the `cspNonce` function:
+```bash
+curl -sI http://localhost:3000/
+```
+
+```text
+HTTP/1.1 200 OK
+Content-Security-Policy: default-src 'self'; script-src 'self'
+  'nonce-d5z5FjDYSjWzSivlYUjoJw'; style-src 'self'
+  'nonce-d5z5FjDYSjWzSivlYUjoJw'; img-src 'self' data:;
+  font-src 'self'; connect-src 'self'; object-src 'none';
+  base-uri 'self'; frame-ancestors 'none'; form-action 'self'
+Cross-Origin-Opener-Policy: same-origin
+Permissions-Policy: camera=(), microphone=(), geolocation=()
+Referrer-Policy: strict-origin-when-cross-origin
+X-Content-Type-Options: nosniff
+X-Frame-Options: DENY
+```
+
+The header is one line; it is wrapped here to fit. The nonce changes on every request.
+
+</Step>
+<Step title="2. Mark your inline script with the nonce">
 
 ```html title="resources/views/layouts/app.html"
 <script nonce="{{cspNonce}}">
-	window.appConfig = {{json .Config}};
+	window.blog = {{json .Config}};
 </script>
 ```
 
-The `vite` function already adds the nonce to the tags it writes. In Go code, read it with `middleware.CSPNonce(c.Context())`.
+`cspNonce` is a [template function](/docs/basics/views) that returns this request's nonce. Without the attribute, the browser refuses the script and prints `Refused to execute inline script because it violates the following Content Security Policy directive: "script-src 'self' 'nonce-...'"` in the console.
 
 </Step>
-<Step title="2. Move inline event handlers and style attributes into files">
+<Step title="3. Reload and check the console">
 
-These are blocked and no nonce can unblock them:
-
-```html
-<button onclick="save()">Save</button>   <!-- blocked: use addEventListener in a .ts file -->
-<div style="color: red">…</div>          <!-- blocked: use a class -->
-```
-
-Setting `el.style.color` from JavaScript is allowed.
-
-</Step>
-<Step title="3. Open the browser console">
-
-Every blocked resource is reported as `Refused to load …` or `Refused to execute inline script …`, with the directive that blocked it. Fix the page, or add the source as shown below.
+The script runs, and the console has no CSP errors. Every refused resource shows up there with the directive that blocked it, which is how you find what still needs fixing.
 
 </Step>
 </Steps>
 
-## Adding a source (analytics, embeds, CDNs)
+## What every response carries
 
-Do not rewrite the policy to add one origin. `CSPSources` adds sources to named directives and keeps the rest of the policy and the nonce:
+| Header | Default | Change it with |
+| --- | --- | --- |
+| `Content-Security-Policy` | `middleware.DefaultCSP` with a fresh nonce per request | `CSP`, `CSPSources`, `ReportURI` |
+| `Strict-Transport-Security` | `max-age=63072000; includeSubDomains` (two years), on HTTPS requests only | `HSTSMaxAge`, `HSTSForce`, `TRUST_FORWARDED_PROTO` |
+| `X-Content-Type-Options` | `nosniff` | always sent |
+| `X-Frame-Options` | `DENY` | `FrameOptions` (`"-"` removes it) |
+| `Referrer-Policy` | `strict-origin-when-cross-origin` | `ReferrerPolicy` |
+| `Cross-Origin-Opener-Policy` | `same-origin` | always sent |
+| `Permissions-Policy` | `camera=(), microphone=(), geolocation=()` | `PermissionsPolicy` |
+| `Reporting-Endpoints` | not sent | sent with `ReportURI` |
+
+Both default stacks install `SecureHeaders` as a server middleware, so it covers every route, including 404 and 405 answers. `APIMiddleware` sends the same headers as `DefaultMiddleware`. Responses written by middleware that runs **before** it do not get them: maintenance mode's `503` page is one example.
+
+## How the CSP works
+
+The default policy, `middleware.DefaultCSP`, is:
+
+```text
+default-src 'self';
+script-src 'self' 'nonce-{nonce}';
+style-src 'self' 'nonce-{nonce}';
+img-src 'self' data:;
+font-src 'self';
+connect-src 'self';
+object-src 'none';
+base-uri 'self';
+frame-ancestors 'none';
+form-action 'self'
+```
+
+Read it as a list of rules, one per kind of resource:
+
+| Directive | Allows | So that |
+| --- | --- | --- |
+| `default-src 'self'` | anything from your own origin, for every type not listed | unknown types fall back to the strictest rule |
+| `script-src 'self' 'nonce-…'` | your own `.js` files, and inline scripts that carry the nonce | an injected `<script>` cannot run |
+| `style-src 'self' 'nonce-…'` | your own `.css` files, and inline styles that carry the nonce | an injected `<style>` cannot restyle the page |
+| `img-src 'self' data:` | your images and `data:` URLs | |
+| `object-src 'none'` | no plugins (`<object>`, `<embed>`) | an old attack path stays closed |
+| `base-uri 'self'` | `<base href>` only to your origin | an injected `<base>` cannot redirect relative URLs |
+| `frame-ancestors 'none'` | nobody may frame your pages | clickjacking fails |
+| `form-action 'self'` | forms only post to your origin | an injected form cannot send passwords elsewhere |
+
+There is no `'unsafe-inline'`, no `'unsafe-eval'` and no `*`.
+
+### The nonce
+
+A <Term tip="Number used once: a random value that is valid for one response only.">nonce</Term> is 16 bytes from [`crypto/rand`](https://pkg.go.dev/crypto/rand), encoded as base64url (no characters that need HTML escaping). `SecureHeaders` makes a new one for every request, puts it in the `Content-Security-Policy` header, and stores it in the request [context](https://pkg.go.dev/context) so the page can print it. An attacker who injects `<script>` into the page cannot know the value, because it did not exist before the response.
+
+You can read it in three places:
+
+| Where | How |
+| --- | --- |
+| `html/template` views | `{{cspNonce}}` |
+| Go code | `middleware.CSPNonce(c.Context())` (`""` when `SecureHeaders` did not run) |
+| Tags Vukem writes | `vite`, `viteReactRefresh` and `htmxScript` add it for you |
+
+The Inertia starters print `<meta property="csp-nonce" nonce="{{cspNonce}}">` in the root view and pass that nonce to `createInertiaApp({ nonce })`, so Inertia's progress bar styles are allowed.
+
+### What no nonce can unblock
+
+Inline event handlers and `style` attributes are blocked by this policy, and a nonce cannot be attached to them:
+
+```html
+<!-- Blocked: move the handler to a .ts file with addEventListener. -->
+<button onclick="save()">Save</button>
+
+<!-- Blocked: use a CSS class instead. -->
+<div style="color: red">Draft</div>
+```
+
+Setting `element.style.color` from a script file is allowed: the policy controls markup, not the [CSSOM](https://developer.mozilla.org/en-US/docs/Web/API/CSS_Object_Model).
+
+## Adding a source
+
+The blog wants Plausible analytics and a YouTube embed. Do not rewrite the whole policy for that. `CSPSources` adds sources to named directives and keeps the rest of the policy, including the nonce:
 
 ```go title="routes/web.go"
 err := vukem.DefaultMiddlewareWith(app, r, vukem.MiddlewareOptions{
@@ -80,50 +161,94 @@ err := vukem.DefaultMiddlewareWith(app, r, vukem.MiddlewareOptions{
 		cfg.CSPSources = map[string][]string{
 			"script-src":  {"https://plausible.io"},
 			"connect-src": {"https://plausible.io"},
-			"frame-src":   {"https://www.youtube-nocookie.com"}, // starts from default-src: 'self' + this
+			"frame-src":   {"https://www.youtube-nocookie.com"},
 		}
 	},
 })
 if err != nil {
-	return err // an unsafe or malformed source fails the boot
+	// An unsafe or malformed source stops the boot here.
+	return err
 }
 ```
 
-`CSPSources` refuses anything that would make the policy unsafe: `'unsafe-*'` keywords, static nonces, `*` hosts, wildcards over fewer than two labels (`*.com`), host wildcards in script directives, and broad schemes outside the few directives where they are harmless (`https:`/`data:`/`blob:` for images and media, `https:`/`wss:` for `connect-src`). If you truly need one of those, write a full `CSP` string; that makes the weakening visible in code review.
+The resulting policy ends with `... script-src 'self' 'nonce-…' https://plausible.io; ... frame-src 'self' https://www.youtube-nocookie.com`.
 
-## A library that injects a fixed `<style>`
+### New directives start from their fallback
 
-Some component libraries insert a `<style>` tag at runtime without a nonce. Allow exactly that style with its hash, which the browser console prints in the error message:
+`frame-src` is not in the default policy. A browser that finds no `frame-src` uses `child-src`, then `default-src`. `CSPSources` copies the sources of that fallback first, so the new directive keeps what it had (`'self'` here, or the nonce for `script-src-elem`), then adds yours. `'none'` is dropped from the copy because it cannot be combined with other sources.
 
-```go
+| New directive | Starts from the first present of |
+| --- | --- |
+| `script-src-elem`, `script-src-attr` | `script-src`, `default-src` |
+| `style-src-elem`, `style-src-attr` | `style-src`, `default-src` |
+| `worker-src` | `child-src`, `script-src`, `default-src` |
+| `frame-src` | `child-src`, `default-src` |
+| `child-src`, `script-src`, `style-src`, `img-src`, `font-src`, `connect-src`, `media-src`, `manifest-src`, `object-src` | `default-src` |
+
+Any other directive missing from the policy (for example `sandbox`) is an error: `CSP directive "sandbox" is not in the policy; set CSP instead`.
+
+### What `CSPSources` refuses
+
+Every source that would make the policy weaker is refused, with an error that names it:
+
+| Source | Why | Error |
+| --- | --- | --- |
+| `'unsafe-inline'`, `'unsafe-eval'`, `'unsafe-hashes'`… | re-opens XSS | `CSP source 'unsafe-inline' for script-src is unsafe; set CSP to opt in` |
+| `'nonce-abc'` | a fixed nonce is no nonce | `... is not allowed (nonces are per request)` |
+| `*`, `*:*`, `https://*` | allows every host | `invalid or wildcard CSP host in "*" for img-src` |
+| `*.com` | a wildcard over a whole public suffix | `CSP wildcard "*.com" for img-src covers a whole public suffix` |
+| `*.example.com` in `default-src`, `script-src`, `script-src-elem`, `script-src-attr`, `object-src`, `worker-src`, `base-uri` | any subdomain could serve code | `CSP wildcard host "*.example.com" is not allowed in script-src` |
+| `https:` in `script-src` | a scheme alone allows every host | `scheme-only CSP source https: would allow any host in script-src` |
+| a value with `;`, `,`, `"`, `\`, spaces or non-ASCII | could inject another directive | `invalid CSP source ...` |
+| `report-uri` or `report-to` as a key | use `ReportURI` | `invalid CSP directive "report-uri" in CSPSources` |
+
+Scheme-only sources are accepted only where they are harmless: `https:`, `data:` and `blob:` in `img-src` and `media-src`; `https:` and `data:` in `font-src`; `https:` and `wss:` in `connect-src`. Keywords allowed besides hashes are `'self'`, `'strict-dynamic'` and `'report-sample'`.
+
+When you truly need one of the refused sources, write a full `CSP` string instead. That makes the weakening visible in code review.
+
+### A library that injects a fixed `<style>`
+
+Some component libraries insert a `<style>` at runtime without a nonce. Allow exactly that style by its hash, which the browser console prints in the error message:
+
+```go title="routes/web.go"
 cfg.CSPSources = map[string][]string{
-	"style-src": {"'sha256-…'"},
+	"style-src": {"'sha256-...'"},
 }
 ```
 
-## Inertia, htmx and Vite
+Hashes may be `'sha256-…'`, `'sha384-…'` or `'sha512-…'`.
 
-- **Inertia:** the root view has `<meta property="csp-nonce" nonce="{{cspNonce}}">`, and the starters pass that nonce to `createInertiaApp({ nonce })`, so the progress bar's styles are allowed.
-- **htmx 4:** its indicator styles use a constructed stylesheet, which the CSP does not block.
-- **Vite in development:** while the dev server runs (outside production only) its origin and its `ws://` form are added to the policy automatically, so hot reload works.
+## A custom policy
+
+`CSP` replaces the whole policy. `{nonce}` in it is replaced by the request's nonce; `"-"` removes the header:
+
+```go title="routes/web.go"
+cfg.CSP = "default-src 'self'; script-src 'self' 'nonce-{nonce}'; " +
+	"frame-ancestors https://partner.example.com"
+```
+
+A custom `CSP` is not checked: it is your explicit choice. `CSPSources` and `ReportURI` still apply on top of it, and with `CSP: "-"` they are an error (`CSPSources and ReportURI need a Content-Security-Policy (CSP is "-")`).
 
 ## Collecting violation reports
 
-Before tightening a policy in production, collect what it would block:
+Before tightening a policy in production, collect what it blocks:
 
-```go
-cfg.ReportURI = "/csp-reports" // or an https:// URL of a reporting service
+```go title="routes/web.go"
+// A path on this app, or an https:// URL of a reporting service.
+cfg.ReportURI = "/csp-reports"
 ```
 
-This adds `report-uri` and `report-to` to the policy and a `Reporting-Endpoints` header. The browser then `POST`s a JSON report for every violation. Vukem does not ship a receiver: handle the route yourself, limit its body size and rate, and never trust the contents (anyone can post to it).
+This adds `report-uri /csp-reports; report-to csp-endpoint` to the policy and a `Reporting-Endpoints: csp-endpoint="/csp-reports"` header. The browser then `POST`s a JSON report for every violation.
 
-```go
-limiters, err := app.RateLimiters()
-if err != nil {
-	return err
-}
+`ReportURI` must be an `https` URL without user or password, or a path that starts with a single `/`. Anything else (an `http://` URL, `//host`, a `\`, quotes, spaces) is refused: `ReportURI "http://x.example/r" must be an https URL or a path`. A policy that already has `report-uri` or `report-to` is an error too.
 
-reports := ratelimit.Middleware(limiters("csp.reports", 30, time.Minute), ratelimit.ByIP)
+Vukem does not ship a receiver. Handle the route yourself, bound its body and rate, and never trust the contents: anyone may post to it.
+
+```go title="routes/web.go"
+reports := ratelimit.Middleware(
+	limiters("csp.reports", 30, time.Minute),
+	ratelimit.ByIP,
+)
 
 r.Post("/csp-reports", func(c *web.Ctx) error {
 	body, err := io.ReadAll(io.LimitReader(c.Request().Body, 16<<10))
@@ -131,45 +256,192 @@ r.Post("/csp-reports", func(c *web.Ctx) error {
 		return err
 	}
 
-	c.Log().WarnContext(c.Context(), "csp violation", "report", string(body))
+	c.Log().WarnContext(c.Context(), "csp violation",
+		"report", string(body))
 
 	return c.NoContent()
 }).Use(reports)
 ```
 
-Browsers send reports without a CSRF token. If your CSRF settings reject them, add the route to `CSRFBypass` (it only stores text, so the bypass is harmless) and to `SessionBypass` so reports do not create sessions.
+Browsers send reports without a CSRF token. Add the route to `CSRFBypass` (it only stores text) and to `SessionBypass`, so reports do not create sessions:
 
-## HTTPS behind a proxy (HSTS)
-
-HSTS is only sent on HTTPS requests. Behind a TLS-terminating proxy (Railway, Fly, a load balancer), the app sees plain HTTP, so tell it which proxies to believe:
-
-```bash title=".env"
-TRUST_FORWARDED_PROTO=true
-TRUSTED_PROXIES=10.0.0.0/8   # the proxy's address range
+```go title="routes/web.go"
+vukem.MiddlewareOptions{
+	CSRFBypass:    []string{"POST /csp-reports"},
+	SessionBypass: []string{"POST /csp-reports"},
+}
 ```
 
-`TRUST_FORWARDED_PROTO=true` without `TRUSTED_PROXIES` refuses the boot: any client could otherwise claim HTTPS. When the proxy's address range is unknown, `HSTS_FORCE=true` (`SecureHeadersConfig.HSTSForce`) sends HSTS on every response in production instead; it needs an `https://` `APP_URL` and has trade-offs described in [HSTS without a trusted range](/docs/deployment/docker-and-railway#hsts-without-a-trusted-range). See [Middleware](/docs/basics/middleware#secure-headers-and-csp-nonces) and [Docker and Railway](/docs/deployment/docker-and-railway).
+## HTTPS and HSTS
 
-## Other options
+`Strict-Transport-Security` tells the browser: "for the next two years, only ever talk to this host over HTTPS". After one visit, typing `http://` or clicking an old link goes straight to HTTPS, so a network attacker on café Wi-Fi cannot serve a fake plain-HTTP page. Browsers ignore the header when it arrives over plain HTTP ([RFC 6797, section 8.1](https://www.rfc-editor.org/rfc/rfc6797#section-8.1)), so Vukem only sends it when the request is HTTPS.
 
-| `SecureHeadersConfig` field | Effect |
+`SecureHeaders` treats a request as HTTPS when one of these holds:
+
+1. the connection itself is TLS (`r.TLS != nil`); or
+2. `TrustForwardedProto` is on, the request has exactly **one** `X-Forwarded-Proto: https` line, and the direct peer is in `TrustedProxies`; or
+3. `HSTSForce` is on.
+
+### Behind a TLS proxy
+
+Most deployments terminate TLS at a proxy (Railway, Fly, a load balancer). The app then sees plain HTTP, and the proxy says "this was HTTPS" in `X-Forwarded-Proto`. Tell the app which proxies to believe:
+
+```bash title=".env"
+TRUSTED_PROXIES=10.0.0.0/8
+TRUST_FORWARDED_PROTO=true
+```
+
+`TRUST_FORWARDED_PROTO=true` without `TRUSTED_PROXIES` refuses the boot (`vukem: TRUST_FORWARDED_PROTO requires TRUSTED_PROXIES`): any client could otherwise claim HTTPS. A second `X-Forwarded-Proto` line is ignored, since it may have come from the client. The same `TRUSTED_PROXIES` decides the client IP; see [Rate limiting](/docs/security/rate-limiting#the-client-ip-behind-a-proxy).
+
+### When the proxy's range is unknown
+
+Some platforms do not publish the address range their proxies connect from. `HSTS_FORCE=true` (`SecureHeadersConfig.HSTSForce`) then sends HSTS on every response that reaches `SecureHeaders`, without checking each request. It asserts that the public origin is HTTPS-only.
+
+| Rule | What happens |
 | --- | --- |
-| `CSP` | a full custom policy; `{nonce}` is replaced per request; `"-"` disables the header |
-| `HSTSMaxAge` | HSTS lifetime; negative disables it |
-| `HSTSForce` | HSTS on every response, for a TLS proxy whose range cannot be trusted (`HSTS_FORCE`) |
-| `FrameOptions` | defaults to `DENY`; `"-"` disables it |
-| `ReferrerPolicy`, `PermissionsPolicy` | replace the defaults |
-| `CSPSources`, `ReportURI` | as above |
+| `APP_URL` is not `https://` | boot error in every environment: `vukem: HSTS_FORCE requires an https APP_URL` |
+| `APP_ENV` is not `production` | boots, but HSTS is not forced, with the warning `HSTS_FORCE is ignored outside production: HSTS is not forced` (a pinned HSTS on `localhost` breaks every other local app) |
+| `HSTSMaxAge` negative (HSTS disabled) | `Validate` error: `middleware: HSTSForce needs HSTS (HSTSMaxAge is negative)` |
 
-## Pitfalls
+See [Docker and Railway](/docs/deployment/docker-and-railway) for the trade-offs on each platform.
 
-- **Do not add a second `SecureHeaders`.** The default stacks already install it; change it with `DefaultMiddlewareWith` instead.
-- **A static nonce is no nonce.** Never hard-code `'nonce-abc'`: `CSPSources` refuses it, and in a custom `CSP` it would let any injected script run.
-- **Nonces and caching.** A page that embeds the nonce must not be served from a shared cache (CDN) to other users, or their nonce will not match the header.
-- **`SecureHeaders` never fails at runtime.** Invalid extras are dropped with one warning (the policy stays stricter). `DefaultMiddlewareWith` validates at boot; when you build the config yourself, call `cfg.Validate()`.
+### Lifetime
 
-## Security notes
+`HSTSMaxAge` sets the lifetime; zero means two years (`max-age=63072000`), a negative value disables the header. `includeSubDomains` is always added, so every subdomain must serve HTTPS too. Vukem never adds `preload`.
 
-- The CSP is a second line of defence. `html/template` escaping is still what prevents XSS; never pass user input through `template.HTML`.
-- Keep `frame-ancestors 'none'` unless a page really has to be embedded, and then list the embedding origins explicitly with a custom `CSP`.
-- The defaults are covered by `TestSecurity_A02_*` tests; see [Security overview](/docs/security/overview).
+## Request header size
+
+Each request's request line and headers are capped at **64 KiB** (`vukem.DefaultMaxHeaderBytes`). Go's own default is 1 MiB; a smaller cap means less memory per connection an attacker can make the server hold, and it is still far above what browsers send and what nginx (8 KiB per line) or Node.js (16 KiB in total) accept. A larger request gets `431 Request Header Fields Too Large`.
+
+```bash title=".env"
+# 4096 to 1048576 bytes; anything else refuses the boot.
+HTTP_MAX_HEADER_BYTES=131072
+```
+
+Outside that range the boot fails with `vukem: HTTP_MAX_HEADER_BYTES 1024 must be between 4096 and 1048576`. This default was introduced in v0.27.0 (Go's 1 MiB before); raise it only if a client legitimately sends very large cookies or tokens.
+
+## Configuration
+
+`SecureHeadersConfig` fields, set through `MiddlewareOptions.SecureHeaders` (or `APIMiddlewareOptions.SecureHeaders`):
+
+| Field | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `CSP` | `string` | `DefaultCSP` | full policy; `{nonce}` is replaced per request; `"-"` removes the header |
+| `CSPSources` | `map[string][]string` | none | sources added per directive (rules above) |
+| `ReportURI` | `string` | none | `https` URL or path for violation reports |
+| `HSTSMaxAge` | `time.Duration` | two years | HSTS lifetime; negative disables HSTS |
+| `HSTSForce` | `bool` | `false` | HSTS on every response (set by `HSTS_FORCE` in production) |
+| `TrustForwardedProto` | `bool` | `false` | believe `X-Forwarded-Proto: https` (set by `TRUST_FORWARDED_PROTO`) |
+| `TrustedProxies` | `[]*net.IPNet` | none | peers whose `X-Forwarded-Proto` counts (set from `TRUSTED_PROXIES`) |
+| `FrameOptions` | `string` | `DENY` | `X-Frame-Options`; `"-"` removes it |
+| `ReferrerPolicy` | `string` | `strict-origin-when-cross-origin` | `Referrer-Policy` |
+| `PermissionsPolicy` | `string` | `camera=(), microphone=(), geolocation=()` | `Permissions-Policy` |
+| `DevServer` | `func() string` | the Vite hot URL outside production | allows that origin (and its `ws://` form) in `script-src`, `style-src`, `img-src`, `font-src`, `connect-src` |
+
+Environment variables:
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `TRUSTED_PROXIES` | empty | proxy networks (CIDRs or IPs) |
+| `TRUST_FORWARDED_PROTO` | `false` | HSTS from `X-Forwarded-Proto: https`; needs `TRUSTED_PROXIES` |
+| `HSTS_FORCE` | `false` | HSTS on every response in production; needs an `https` `APP_URL` |
+| `HTTP_MAX_HEADER_BYTES` | `65536` | header size cap, 4096–1048576 |
+
+`DefaultMiddlewareWith` and `APIMiddlewareWith` call `cfg.Validate()` after your function runs, so a bad option is a boot error. `SecureHeaders` itself never fails at runtime: when you build the config by hand and skip `Validate`, invalid `CSPSources` and `ReportURI` are dropped (the policy stays stricter, never weaker) and one warning is logged: `secure headers: invalid CSP extras dropped`.
+
+## Security
+
+What Vukem does for you:
+
+- Sends every header above by default, with a nonce-only CSP (`TestSecurity_A02_SecureHeaders`, `TestSecurity_A02_DefaultCSPNonceOnly`).
+- Refuses unsafe CSP extras at boot (`TestSecurity_A02_CSPSourcesRefuseUnsafe`).
+- Renders its own error and debug pages under the default CSP (`TestSecurity_A02_BuiltinErrorPagesUnderCSP`).
+- Believes `X-Forwarded-Proto` only from trusted peers (`TestSecurity_A02_TrustForwardedProtoOnlyFromTrustedProxies`).
+- Allows the Vite dev server only outside production, and only as a bare `http(s)://host:port` origin.
+
+What stays your job:
+
+- The CSP is a second line of defence. `html/template` escaping is what prevents XSS; never pass user input through `template.HTML`.
+- Keep `frame-ancestors 'none'` unless a page must be embedded, then list the embedding origins in a custom `CSP`.
+- Terminate TLS, set `APP_URL` to the `https` origin, and set `TRUSTED_PROXIES` and `TRUST_FORWARDED_PROTO` behind a proxy.
+
+See [docs/security.md](https://github.com/AlexGalhardo/vukem/blob/main/docs/security.md) for the full A02 checklist.
+
+## Testing
+
+Assert the headers through the test client:
+
+```go title="tests/headers_test.go"
+func TestHomeSendsSecurityHeaders(t *testing.T) {
+	app := vukemtest.New(t, bootstrap.New)
+
+	app.Client(t).Get("/").
+		AssertOK().
+		AssertHeader("X-Frame-Options", "DENY").
+		AssertHeaderContains(
+			"Content-Security-Policy",
+			"script-src 'self' 'nonce-",
+		).
+		AssertHeaderContains(
+			"Content-Security-Policy",
+			"https://plausible.io",
+		)
+}
+```
+
+The test client sends plain HTTP, so `Strict-Transport-Security` is absent there; assert it with `AssertHeaderMissing`. Test a config built by hand with `cfg.Validate()`:
+
+```go title="app/headers/headers_test.go"
+func TestCSPSourcesAreSafe(t *testing.T) {
+	cfg := middleware.SecureHeadersConfig{
+		CSPSources: map[string][]string{
+			"script-src": {"https://plausible.io"},
+		},
+	}
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}
+```
+
+## Common mistakes
+
+**Adding a second `SecureHeaders`.** The default stacks already install it. A second one overwrites every header the first one set, so the `CSPSources`, `ReportURI` and HSTS settings of the stack are lost:
+
+```go
+// Wrong: replaces the policy of the default stack.
+r.UseServer(middleware.SecureHeaders(middleware.SecureHeadersConfig{}))
+
+// Right: change the one the stack installs.
+err := vukem.DefaultMiddlewareWith(app, r, vukem.MiddlewareOptions{
+	SecureHeaders: func(cfg *middleware.SecureHeadersConfig) {
+		cfg.CSPSources = map[string][]string{
+			"img-src": {"https://images.example.com"},
+		}
+	},
+})
+```
+
+**Hard-coding a nonce.** `'nonce-abc'` in `CSPSources` is refused with `nonces are per request`. In a custom `CSP` it would let any injected script with that attribute run.
+
+**Caching a page that embeds the nonce.** A page served from a shared cache (CDN) to other visitors carries a nonce that no longer matches their header, so its inline scripts are refused. Do not cache those pages publicly.
+
+**`TRUST_FORWARDED_PROTO` without `TRUSTED_PROXIES`.** The boot fails with `vukem: TRUST_FORWARDED_PROTO requires TRUSTED_PROXIES`. Add the proxy's network.
+
+## Next steps
+
+<CardGroup cols="2">
+<Card title="Middleware" href="/docs/basics/middleware" icon="layers">
+Where `SecureHeaders` sits in the default stacks.
+</Card>
+<Card title="Vite" href="/docs/frontend/vite" icon="zap">
+Script and style tags that carry the nonce.
+</Card>
+<Card title="Docker and Railway" href="/docs/deployment/docker-and-railway" icon="rocket">
+`TRUSTED_PROXIES`, `TRUST_FORWARDED_PROTO` and `HSTS_FORCE` on real platforms.
+</Card>
+<Card title="middleware on pkg.go.dev" href="https://pkg.go.dev/github.com/AlexGalhardo/vukem/middleware" icon="book">
+The package reference.
+</Card>
+</CardGroup>

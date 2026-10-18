@@ -1,106 +1,255 @@
 ---
 title: Security overview
-description: What Vukem does by default to protect applications, mapped to the OWASP Top 10:2025, and what remains your responsibility.
+description: What Vukem does by default to protect your application, the attacks each default stops (mapped to the OWASP Top 10:2025), and what stays your job.
 ---
 
-Vukem's security defaults are a design contract. Each default lands in a phase (**P** = Prototype, **A** = ALPHA, **B** = BETA) and is not "done" until a test named `TestSecurity_<Category>_<Behaviour>` asserts it. Report vulnerabilities in Vukem itself through the repository's [security policy](https://github.com/AlexGalhardo/vukem/blob/main/.github/SECURITY.md).
+Every website is attacked, usually by robots that try the same tricks on millions of sites every day. Vukem ships with its doors locked: the safe behaviour is the default, and loosening it takes a deliberate, visible step. This page explains those defaults, the attacks they stop in plain words, and the part only you can do.
 
-## Principles
+You will learn:
 
-1. **Secure by default, explicit to loosen.** Unsafe behaviour needs an opt-out with a visible name (`InsecureSkipX`), never a missing opt-in.
-2. **Fail closed.** If a check cannot be performed (store down, key missing, policy not registered), the request is denied.
-3. **Refuse to boot when misconfigured.** Missing `APP_KEY` in production, debug in production, wildcard CORS with credentials: boot error, not a warning.
-4. **Standard library crypto only.** `crypto/*` and `golang.org/x/crypto`; no custom algorithms.
-5. **Small dependency surface** so supply-chain risk stays auditable.
+- the five principles behind every security decision in Vukem;
+- the most common attacks on web apps, in plain words, with links to [OWASP](https://owasp.org/Top10/2025/);
+- which default protects you from each one, category by category;
+- how to run the framework's own security tests;
+- what remains your responsibility in production.
 
-## Implemented today
+## The idea
 
-| Default | OWASP |
-| --- | --- |
-| Boot refuses a missing `APP_KEY` in production or with `APP_ENV` unset (with an explicit `development`/`test`, key-derived features fail closed on use) or a short one, `APP_DEBUG=true` in production and an invalid port | A02 |
-| `NewHTTPServer` always sets read, write, header and idle timeouts and `MaxHeaderBytes` (64 KiB, `HTTP_MAX_HEADER_BYTES`) | A02 |
-| `SecureHeaders`: CSP with per-request nonce, HSTS on HTTPS, `nosniff`, `X-Frame-Options: DENY`, COOP, Referrer and Permissions policies | A02 |
-| CORS deny by default; `"*"` with credentials refused at construction | A01 / A02 |
-| Static files through `os.Root`; dotfiles and directory listings never served | A01 |
-| `c.Back` and `web.SafeRedirect` ignore off-site targets (open redirect) | A01 |
-| `c.IP()` honours `X-Forwarded-For` only from trusted proxies | A01 |
-| `config.Secret` redacts secrets in `fmt`, JSON, text and `slog` | A04 |
-| `APP_KEY` sub-keys derived with HKDF-SHA256 per purpose | A04 |
-| Request bodies capped (10 MiB default, `BodyLimit` per route); JSON trailing data rejected | A06 |
-| Request ids validated (safe characters, max 128) before logging | A09 |
-| Structured `slog` request logs; `web.SecurityEvent` logs security events at `WARN`, `web.AuditEvent` routine audit records at `INFO` | A09 |
-| Central error handler; 5xx details never sent to clients unless debug | A10 |
-| `Recover` converts panics to 500 and logs stacks server-side only | A10 |
+Think of your app as a house. A careless builder hands you a house with every door open and a note saying "remember to lock up". A careful builder hands you a house with every door locked, and gives you the keys for the doors you decide to open. Vukem is the careful builder.
 
-## OWASP Top 10:2025 mapping
+<Term tip="The Open Worldwide Application Security Project: a non-profit that publishes free guides about web security.">OWASP</Term> keeps a list of the ten most common kinds of security failures in web applications, the [OWASP Top 10](https://owasp.org/Top10/2025/). This page uses its 2025 edition (A01 to A10) as a checklist.
 
-### A01 Broken Access Control (includes SSRF)
+Vukem follows five principles:
+
+1. **Secure by default, explicit to loosen.** Unsafe behaviour needs an opt-out with a visible name (`InsecureSkipAudience`, `InsecureCookies`, `AddInsecureBypassPattern`), never a missing opt-in. Searching your code for `Insecure` shows every door you opened.
+2. **Fail closed.** If a check cannot run (the database is down, a key is missing, a policy was never registered), the request is denied. A broken lock keeps the door shut.
+3. **Refuse to boot when misconfigured.** A missing `APP_KEY` in production, debug mode in production, or wildcard CORS with credentials stop the app at start-up with an error, not a warning in a log nobody reads.
+4. **Standard library crypto only.** Vukem uses Go's [`crypto`](https://pkg.go.dev/crypto) packages and `golang.org/x/crypto`; it never invents its own algorithms.
+5. **Small dependency surface.** Fewer third-party packages means fewer places for a supply-chain attack to hide.
+
+<Quote source="https://www.schneier.com/essays/archives/2000/04/the_process_of_secur.html" author="Bruce Schneier" title="The Process of Security">
+Security is a process, not a product.
+</Quote>
+
+Report vulnerabilities in Vukem itself through the repository's [security policy](https://github.com/AlexGalhardo/vukem/blob/main/.github/SECURITY.md), never in a public issue.
+
+## Quick start: a secure baseline
+
+<Steps>
+<Step title="1. Generate an APP_KEY">
+
+`APP_KEY` is the master secret. Vukem derives every other key from it (cookies, encrypted columns, signed links, social login state).
+
+```bash
+vukem key:generate
+```
+
+The command writes a random key to `.env`. In production, store it in your host's secret manager, never in Git.
+
+</Step>
+<Step title="2. Say that you are in production">
+
+```bash title=".env.production"
+APP_ENV=production
+APP_DEBUG=false
+APP_URL=https://blog.example.com
+APP_KEY=base64:...
+```
+
+With `APP_ENV=production` the app refuses to boot without a long enough `APP_KEY` (at least 32 bytes) or with `APP_DEBUG=true`.
+
+</Step>
+<Step title="3. Add the reviewed sign-in flows">
+
+```bash
+vukem install:auth
+vukem migrate
+```
+
+You get login, sign-up, email verification and password reset with throttling, generic error messages and their tests. See [Authentication](/docs/security/authentication).
+
+</Step>
+<Step title="4. Look for unprotected routes">
+
+```bash
+vukem route:list
+```
+
+Routes are public unless a middleware such as `auth.Required` protects them. The list shows the middleware of every route, so a forgotten one stands out.
+
+</Step>
+<Step title="5. Run the security tests">
+
+```bash
+go test -run TestSecurity ./...
+```
+
+In the Vukem repository, every security default has a test named `TestSecurity_<Category>_<Behaviour>`, so this one command is the framework's security regression suite.
+
+</Step>
+</Steps>
+
+## Defaults you get today
+
+| Default | Stops | OWASP |
+| --- | --- | --- |
+| Boot refuses a missing or short `APP_KEY` in production (or with `APP_ENV` unset), `APP_DEBUG=true` in production, and an invalid port. With an explicit `development` or `test` env, features that need the key fail closed when used | running with guessable secrets or with debug pages that leak code | A02 |
+| `NewHTTPServer` always sets read, write, header and idle timeouts and `MaxHeaderBytes` (64 KiB, `HTTP_MAX_HEADER_BYTES`) | slow clients that hold connections open until the server runs out of them | A02 |
+| `SecureHeaders`: CSP with a per-request nonce, HSTS on HTTPS, `nosniff`, `X-Frame-Options: DENY`, COOP, Referrer and Permissions policies | injected scripts, clickjacking, protocol downgrade | A02 |
+| CORS denies by default; `"*"` with credentials is refused at construction | other websites reading your API with your users' cookies | A01 / A02 |
+| Static files are served through [`os.Root`](https://pkg.go.dev/os#Root); dotfiles and directory listings never | `../../etc/passwd` style path traversal, leaked `.env` files | A01 |
+| `c.Back` and `web.SafeRedirect` ignore off-site targets | open redirects that send users to a phishing site | A01 |
+| `c.IP()` trusts `X-Forwarded-For` only from `TRUSTED_PROXIES` | clients faking their IP to dodge rate limits | A01 |
+| `config.Secret` redacts secrets in `fmt`, JSON, text and `slog` output | keys leaking into logs | A04 |
+| `APP_KEY` sub-keys are derived per purpose with HKDF-SHA256 | one leaked sub-key unlocking everything | A04 |
+| Request bodies are capped (10 MiB default, `BodyLimit` per route); trailing data after JSON is rejected | memory exhaustion with huge uploads | A06 |
+| Request ids are validated (safe characters, at most 128) before logging | log injection | A09 |
+| Structured `slog` logs; `web.SecurityEvent` writes security events at `WARN`, `web.AuditEvent` audit records at `INFO` | attacks going unnoticed | A09 |
+| A central error handler; 5xx details reach clients only in debug | stack traces revealing internals | A10 |
+| `Recover` turns panics into a 500 and logs the stack server-side only | one bad request crashing the server | A10 |
+
+## The OWASP Top 10:2025, in plain words
+
+Each category below starts with the attack in one or two sentences, then lists what Vukem does about it. The phase column says when the default landed: **P** = Prototype, **A** = ALPHA, **B** = BETA.
+
+### A01 Broken Access Control
+
+Someone reaches data or actions that are not theirs: changing `/posts/7/edit` to `/posts/8/edit` and editing another author's post, or making your server fetch an internal address for them (SSRF). [Read more on OWASP](https://owasp.org/Top10/2025/A01_2025-Broken_Access_Control/).
 
 | Default | Phase |
 | --- | --- |
 | Routes are public unless wrapped in `auth.Required()`; `route:list` shows the middleware of every route | P / A |
-| Unregistered policy = deny; `DenyAsNotFound()` against IDOR enumeration | A |
-| Mass assignment impossible: models filled from explicit request structs | P |
+| An ability or policy that was never registered denies; `DenyAsNotFound()` answers 404 so attackers cannot probe which ids exist ([IDOR](https://cheatsheetseries.owasp.org/cheatsheets/Insecure_Direct_Object_Reference_Prevention_Cheat_Sheet.html)) | A |
+| Mass assignment is impossible: models are filled from explicit request structs, never from raw maps | P |
 | CORS deny-by-default; `*` with credentials refused | P |
 | Static files and uploads through `os.Root`; dotfiles never served | P |
-| Signed URLs (HMAC, expiry) | A |
-| SSRF: `httpclient.Safe()` rejects loopback, private, link-local and metadata addresses after DNS resolution | A |
+| [Signed URLs](/docs/security/signed-urls) with HMAC and expiry | A |
+| `httpclient.Safe()` rejects loopback, private, link-local and cloud-metadata addresses after DNS resolution (SSRF) | A |
 
 ### A02 Security Misconfiguration
+
+The code is fine but a setting is wrong: debug pages on in production, a default password, a missing header. [Read more](https://owasp.org/Top10/2025/A02_2025-Security_Misconfiguration/).
 
 | Default | Phase |
 | --- | --- |
 | Boot refuses insecure configuration | P |
 | Server timeouts always set | P |
-| Security headers on by default; strict CSP with nonces | P / B |
+| [Security headers](/docs/security/security-headers) on by default; strict CSP with nonces | P / B |
 | Debug details only in development | P |
-| `vukem about` prints effective security settings, secrets redacted | P |
-| Destructive commands require `--force` in production | P |
+| `vukem about` prints the effective security settings, secrets redacted | P |
+| Destructive commands need `--force` in production | P |
 
 ### A03 Software Supply Chain Failures
 
-Core depends only on the standard library and an allowlist; `go.sum` verification; `govulncheck` in CI, pre-push and weekly; Dependabot; releases with checksums and SBOM, signatures in BETA; `depguard` blocks non-allowlisted imports.
+A package you depend on (or one of its dependencies) is malicious or vulnerable. [Read more](https://owasp.org/Top10/2025/A03_2025-Software_Supply_Chain_Failures/).
+
+The core depends only on the standard library and a short allowlist; `depguard` blocks imports outside it. `go.sum` verifies every module, `govulncheck` runs in CI, before each push and weekly, Dependabot proposes updates, and releases ship checksums and an SBOM (signatures in BETA).
 
 ### A04 Cryptographic Failures
 
-argon2id passwords (A); `crypto/rand` only; AES-256-GCM cookies with HKDF keys (P); hashed API tokens (A); constant-time comparisons; key rotation (B); `config.Secret` redaction (P).
+Secrets stored or sent in a form someone can read or guess: plain-text passwords, weak random numbers, home-made encryption. [Read more](https://owasp.org/Top10/2025/A04_2025-Cryptographic_Failures/).
+
+- Passwords hashed with argon2id (A); see [Authentication](/docs/security/authentication).
+- Random values only from `crypto/rand`; `math/rand` is a lint error in security packages.
+- AES-256-GCM cookies with HKDF keys (P); [encryption](/docs/security/encryption) with key rotation (B).
+- API tokens, remember-me tokens and reset tokens stored as SHA-256 hashes (A).
+- Constant-time comparisons with [`crypto/subtle`](https://pkg.go.dev/crypto/subtle#ConstantTimeCompare), so response time leaks nothing.
 
 ### A05 Injection
 
-Bound parameters only, identifiers validated against model metadata (P); allowlisted API query conventions (A); `html/template` auto-escaping (P); `encoding/json` escaping; no shell execution with user input; invalid UTF-8 and control characters rejected by the validator (P).
+User input is treated as code: SQL injection, HTML that runs scripts (XSS), mail header injection. [Read more](https://owasp.org/Top10/2025/A05_2025-Injection/).
+
+Queries use bound parameters only, and identifiers are validated against model metadata (P). API query conventions are allowlisted (A). [`html/template`](https://pkg.go.dev/html/template) escapes output (P), `encoding/json` escapes JSON, the framework never runs a shell with user input, and the validator rejects invalid UTF-8 and control characters (P).
 
 ### A06 Insecure Design
 
-Reviewed auth flows from `install:auth` / `install:api` (A); rate limits on login, reset and token issuance (A); body size limits on every route (P); transactions with rollback on error or panic (P).
+The flow itself is flawed, even with perfect code: a password reset link that never expires, a login form without a limit on guesses. [Read more](https://owasp.org/Top10/2025/A06_2025-Insecure_Design/).
+
+The `install:auth` and `install:api` flows are reviewed and tested (A). Login, sign-up, password reset and token issuance are [rate limited](/docs/security/rate-limiting) (A). Every route has a body limit (P), and `db.Tx` rolls back on error or panic (P).
 
 ### A07 Authentication Failures
 
-Session id regenerated on login; cookies `HttpOnly`, `Secure`, `SameSite=Lax`, `__Host-`; idle and absolute timeouts (P); timing-safe credential checks, generic messages, throttling, token expiry and abilities (A).
+Attackers sign in as someone else: they guess passwords, reuse passwords leaked from other sites (credential stuffing), steal a session cookie, or learn which emails have accounts. [Read more](https://owasp.org/Top10/2025/A07_2025-Authentication_Failures/).
+
+| Default | Phase |
+| --- | --- |
+| The session id changes on login ([session fixation](https://owasp.org/www-community/attacks/Session_fixation)); cookies are `HttpOnly`, `Secure`, `SameSite=Lax` and `__Host-` over HTTPS; idle and absolute timeouts | P |
+| Login takes the same time and gives the same error for unknown users and wrong passwords | A |
+| Sign-up and password reset answer alike for new and existing emails | A |
+| Login throttled per email + IP and per account | A |
+| Tokens expire, carry abilities and can be revoked | A |
+| [Two-factor authentication](/docs/security/two-factor), [social login](/docs/security/social-login) with PKCE | A |
 
 ### A08 Software or Data Integrity Failures
 
-Signed and encrypted cookies (P); CSRF with `http.CrossOriginProtection` (P); signed URLs and webhook signature helper (A); queue payloads never deserialised by reflection (B); migrations tracked with checksums (P).
+Data is changed on the way, or a request is forged from another site (CSRF). [Read more](https://owasp.org/Top10/2025/A08_2025-Software_or_Data_Integrity_Failures/).
+
+Cookies are signed and encrypted (P). [CSRF](/docs/basics/csrf) protection uses Go's `http.CrossOriginProtection` (P). Signed URLs and a webhook signature helper exist (A). Queue payloads are never decoded by reflection into arbitrary types (B), and migrations are tracked with checksums (P).
 
 ### A09 Security Logging and Alerting Failures
 
-Structured request logs with request id (P); stable security events such as `auth.login_failed`, `csrf.rejected`, `ratelimit.exceeded` (P / A); secrets and `Authorization`/`Cookie` headers never logged (P); `slog` attribute encoding prevents log injection (P).
+An attack happens and nobody notices. [Read more](https://owasp.org/Top10/2025/A09_2025-Security_Logging_and_Alerting_Failures/).
+
+Request logs are structured and carry a request id (P). Security events have stable names such as `auth.login_failed`, `csrf.rejected` and `ratelimit.exceeded` (P / A), and you can listen to them for alerts ([security events](/docs/security/building-blocks)). Secrets and the `Authorization` and `Cookie` headers are never logged, and `slog` attribute encoding prevents log injection (P).
 
 ### A10 Mishandling of Exceptional Conditions
 
-Central error handler (P); `Recover` middleware (P); fail closed on authorization, session and CSRF errors (P / A); RFC 9457 problems without internals (P); explicit 400/422 instead of silent zero values (P); timeouts and rate limits against resource exhaustion (P / A).
+Something unexpected happens (a timeout, a panic, a full disk) and the app either crashes or fails open. [Read more](https://owasp.org/Top10/2025/A10_2025-Mishandling_of_Exceptional_Conditions/).
 
-## Your responsibility
+A central error handler (P) and the `Recover` middleware (P) catch every failure. Authorization, session and CSRF errors fail closed (P / A). Errors are [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457) problem documents without internals (P). Bad input gets an explicit 400 or 422 instead of silent zero values (P), and timeouts and rate limits protect against resource exhaustion (P / A).
 
-- Terminate TLS (or run behind a proxy that does), set `APP_URL` to the `https` origin and set `TRUSTED_PROXIES` (plus `TRUST_FORWARDED_PROTO=true` behind a TLS-terminating proxy).
-- Authorize every handler that touches owned data and scope queries by tenant or user.
-- Keep running `govulncheck`, review dependency updates and protect CI secrets.
-- Ship logs to durable storage and alert on security events.
+## Configuration
+
+The environment variables that change your app's security posture:
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `APP_ENV` | `development` | `production` turns on the strict boot checks |
+| `APP_DEBUG` | `false` | shows error details; refused in production |
+| `APP_KEY` | none | master secret, at least 32 bytes; every derived key depends on it |
+| `APP_PREVIOUS_KEYS` | none | old keys still accepted during a [key rotation](/docs/security/encryption) |
+| `APP_URL` | `http://localhost:3000` | public origin; an `https://` URL turns on secure cookies in the scaffolds |
+| `TRUSTED_PROXIES` | none | proxies allowed to set `X-Forwarded-For` |
+| `TRUST_FORWARDED_PROTO` | `false` | trust `X-Forwarded-Proto` from those proxies (TLS ends at the proxy) |
+| `HTTP_MAX_HEADER_BYTES` | 64 KiB | largest request header block |
+| `CSRF_TRUSTED_ORIGINS` | none | other origins allowed to post forms (Sign in with Apple) |
+| `SESSION_DRIVER` | `cookie` | where sessions live; see [Sessions](/docs/basics/sessions) |
+| `RATE_LIMIT_STORE` | `memory` | `cache` shares limits between servers |
+| `CACHE_STORE` | `memory` | `database` or Redis for shared, persistent state |
+| `QUEUE_CONNECTION` | `sync` | `database` in production, so auth mails do not reveal accounts by timing |
+
+## What stays your job
+
+Vukem locks the doors it controls. These doors are yours:
+
+- **TLS.** Terminate HTTPS (or run behind a proxy that does), set `APP_URL` to the `https` origin, and set `TRUSTED_PROXIES` (plus `TRUST_FORWARDED_PROTO=true` behind a TLS-terminating proxy).
+- **Authorization.** Check every handler that touches owned data, and scope queries by user or tenant. See [Authorization](/docs/security/authorization).
+- **Dependencies.** Keep running `govulncheck`, review dependency updates, and protect your CI secrets.
+- **Monitoring.** Ship logs to durable storage and alert on security events.
+
+The Go team's [security best practices](https://go.dev/doc/security/best-practices) are a good companion checklist.
+
+## Common mistakes
+
+**Disabling a check to make an error go away.** Wrong: setting `InsecureCookies = true` in production because login "does not work". Right: serve the app over HTTPS and set `APP_URL=https://...`. The `Insecure` name is there to make you stop and think.
+
+**Forgetting a middleware.** Wrong: `r.Get("/admin", admin.Index)`. Right: `r.Get("/admin", admin.Index).Use(auth.Required(webGuard))`. Run `vukem route:list` before every release.
+
+**Committing `.env`.** A key in Git history is a leaked key. Rotate it with `vukem key:rotate` and follow the drain steps on the [Encryption](/docs/security/encryption) page.
+
+## Next steps
 
 <CardGroup cols="2">
-<Card title="Middleware" href="/docs/basics/middleware#secure-headers-and-csp-nonces" icon="shield">
-Secure headers, CORS and body limits.
-</Card>
 <Card title="Authentication" href="/docs/security/authentication" icon="lock">
-Guards, hashing, tokens and install:auth.
+Guards, password hashing, sign-up and login with install:auth.
+</Card>
+<Card title="Authorization" href="/docs/security/authorization" icon="shield">
+Gates and policies: who may do what.
+</Card>
+<Card title="Rate limiting" href="/docs/security/rate-limiting" icon="zap">
+Slow down password guessing and abuse.
+</Card>
+<Card title="Security headers" href="/docs/security/security-headers" icon="layers">
+CSP, HSTS and the other defaults.
 </Card>
 </CardGroup>

@@ -1,66 +1,371 @@
 ---
 title: JWT
-description: A stdlib JWT guard with HS256, RS256, ES256 and EdDSA, an algorithm allowlist, key rotation and JWKS, and refresh tokens with reuse detection.
+description: Sign and verify JSON Web Tokens with the standard library (HS256, RS256, ES256, EdDSA), protect API routes with the JWT guard, rotate keys, trust an identity provider's JWKS and rotate refresh tokens with reuse detection.
 ---
 
-Package `auth/jwt` uses only the standard library. Use it when tokens come from an identity provider or must be verified without a database lookup; for first-party APIs the opaque [token guard](/docs/security/authentication#token-guard) is simpler.
+A JSON Web Token (JWT) is a signed note that says "this request comes from user 42, until 10:15". Your server can check the signature without a database lookup, which is why identity providers (Auth0, Okta, Keycloak, Google) and multi-service systems use them. Package `auth/jwt` signs and verifies JWTs with Go's standard library only, protects routes with a guard, and adds rotating refresh tokens.
 
-## Signing
+You will learn:
 
-```go
-key := jwt.HS256("2026-10", secret) // ≥ 32 bytes; also jwt.RS256(kid, rsaKey), jwt.ES256(kid, p256Key), jwt.EdDSA(kid, ed25519Key)
+- what a JWT is made of, and when to pick it over opaque [API tokens](/docs/security/api-tokens);
+- how to sign tokens and verify them with strict rules;
+- how to protect routes with `jwt.NewGuard` and read the claims;
+- how to rotate your keys and trust an identity provider's JWKS;
+- how refresh tokens with reuse detection catch stolen tokens.
+
+## The idea
+
+A JWT is like a festival wristband. The organiser stamps it once at the entrance; every stage checks the stamp and the date printed on it, without phoning the entrance. That is fast, but it has a cost: a wristband cannot be taken back before its date. So wristbands are made **short-lived**, and a separate, revocable ticket (the refresh token) lets you get a new one.
+
+A token has three parts separated by dots, each [base64url](https://pkg.go.dev/encoding/base64#RawURLEncoding)-encoded:
+
+```text
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6IjIwMjYtMTAifQ
+.eyJhdWQiOiJhcGkiLCJleHAiOjE3OTIyODQ2MzYsInN1YiI6IjQyIn0
+.hNm0ws_Kjs7Zs1spQFc9XnZ5tsZf77-E6XcvEP7to0o
+```
+
+| Part | Holds | Example |
+| --- | --- | --- |
+| Header | the algorithm (`alg`), type and key id (`kid`) | `{"alg":"HS256","typ":"JWT","kid":"2026-10"}` |
+| Payload | the <Term tip="Statements inside a JWT, such as who the user is (sub) and when the token expires (exp).">claims</Term> | `{"sub":"42","aud":"api","exp":1792284636}` |
+| Signature | proof that nobody changed the first two parts | bytes made with the key |
+
+The payload is **encoded, not encrypted**: anyone holding the token can read it. Never put secrets in a JWT. The format is defined in [RFC 7519](https://www.rfc-editor.org/rfc/rfc7519), and [RFC 8725](https://www.rfc-editor.org/rfc/rfc8725) lists the best practices this package follows.
+
+| | Opaque tokens (`auth.Tokens`) | JWT (`auth/jwt`) |
+| --- | --- | --- |
+| Checked by | a database lookup | a signature, no lookup |
+| Revoke one token | immediately | not possible before `exp`: keep them short |
+| Best for | your own API and its clients | tokens from an identity provider, many services |
+
+If you only serve your own clients, the [API tokens](/docs/security/api-tokens) page is the simpler choice.
+
+## Quick start
+
+Our running example: the blog's mobile app signs in and calls `/api/me` with a 15-minute JWT.
+
+<Steps>
+<Step title="1. Create a key">
+
+```bash
+openssl rand -base64 32
+```
+
+Store the output as `JWT_SECRET` in your secret manager. HS256 secrets must be at least 32 bytes.
+
+</Step>
+<Step title="2. Sign a token after login">
+
+```go title="app/controllers/apiv1/sessions.go"
+key := jwt.HS256("2026-10", []byte(app.Source.Get("JWT_SECRET")))
 
 token, err := jwt.Sign(key, jwt.Claims{
 	Subject:   user.AuthID(),
-	Issuer:    "https://app.example.com",
+	Issuer:    "https://blog.example.com",
 	Audience:  []string{"api"},
+	IssuedAt:  time.Now(),
 	ExpiresAt: time.Now().Add(15 * time.Minute),
 })
+if err != nil {
+	return err
+}
 ```
 
-RSA keys need at least 2048 bits. `Claims` also has `NotBefore`, `IssuedAt`, `ID` and `Extra` for custom claims.
+`"2026-10"` is the key id, written into the `kid` header so you can [rotate keys](#rotating-your-keys) later.
 
-## Verifying
+</Step>
+<Step title="3. Protect routes with the guard">
 
-```go
-verifier := jwt.NewVerifier(jwt.StaticKeys(current, previous), jwt.VerifyOptions{
-	Issuer:   "https://app.example.com",
+```go title="routes/api.go"
+verifier := jwt.NewVerifier(jwt.StaticKeys(key), jwt.VerifyOptions{
+	Issuer:   "https://blog.example.com",
 	Audience: "api",
 })
 
-guard := jwt.NewGuard[models.User]("api", verifier, users) // an auth.Checker
+// users is auth.NewORMProvider[models.User](db).
+guard := jwt.NewGuard[models.User]("jwt", verifier, users)
+
 r.Group("/api", func(g *router.Group) {
 	g.Use(auth.Required(guard))
+
 	g.Get("/me", func(c *web.Ctx) error {
-		claims, _ := jwt.ClaimsFrom(c, "api")
-		return c.JSON(http.StatusOK, claims)
+		u, err := auth.User[models.User](c, "jwt")
+		if err != nil {
+			return err
+		}
+
+		claims, _ := jwt.ClaimsFrom(c, "jwt")
+
+		return c.JSON(http.StatusOK, map[string]any{
+			"name":       u.Name,
+			"expires_at": claims.ExpiresAt,
+		})
 	})
 })
 ```
 
-- The header `alg` must be in `VerifyOptions.Algorithms` (default: all four) **and** equal the algorithm of the key chosen by `kid`, so HMAC-with-a-public-key confusion and `none` are impossible.
-- `exp` is required by default (`AllowMissingExpiry` opts out); `nbf` and `iat` are checked with 30s leeway (`Leeway`); `iss` and `aud` match exactly.
-- Duplicate JSON members and tokens over 8 KiB are rejected. Every failure wraps `jwt.ErrInvalid`, and rejected tokens emit the `jwt.rejected` security event.
+</Step>
+<Step title="4. Call it">
 
-### Key sets
+```bash
+curl -s https://blog.example.com/api/me \
+  -H "Authorization: Bearer eyJhbGciOi..."
+# {"expires_at":"2026-10-17T10:15:00Z","name":"Ada"}
+```
+
+Without a valid token the answer is `401` problem+json with `WWW-Authenticate: Bearer realm="api"`.
+
+</Step>
+</Steps>
+
+## Signing
+
+`jwt.Sign(key, claims)` returns the compact token. Pick a key constructor for your algorithm:
+
+| Constructor | Algorithm | Requirement |
+| --- | --- | --- |
+| `jwt.HS256(kid, secret)` | HMAC-SHA256: one shared secret signs and verifies | secret of at least 32 bytes |
+| `jwt.RS256(kid, rsaKey)` | RSA PKCS#1 v1.5 SHA-256 | RSA key of at least 2048 bits |
+| `jwt.ES256(kid, p256Key)` | ECDSA on the P-256 curve | an `*ecdsa.PrivateKey` on P-256 |
+| `jwt.EdDSA(kid, ed25519Key)` | Ed25519 | an `ed25519.PrivateKey` |
+
+A key that breaks its requirement fails at `Sign`, for example `jwt: HS256 key "short" is shorter than 32 bytes`. Each `jwt.Key` is bound to exactly one algorithm (`Alg`); `Private` signs and `Public` verifies, so a verify-only key has no `Private`.
+
+Use HS256 when the same service signs and verifies. Use RS256, ES256 or EdDSA when other services must verify without being able to sign: they only get the public key.
+
+`jwt.Claims` holds the registered claims plus your own:
+
+| Field | Claim | Meaning |
+| --- | --- | --- |
+| `Subject` | `sub` | who the token is about (the user id); the guard loads this user |
+| `Issuer` | `iss` | who made the token |
+| `Audience` | `aud` | who the token is for |
+| `ExpiresAt` | `exp` | after this, the token is refused |
+| `NotBefore` | `nbf` | before this, the token is refused |
+| `IssuedAt` | `iat` | when it was made (`Sign` does not fill it for you) |
+| `ID` | `jti` | a unique id, for your own deny lists |
+| `Extra` | anything else | custom claims, as decoded JSON values |
+
+## Verifying
+
+`jwt.NewVerifier(keys, opts)` returns a `*jwt.Verifier`; `verifier.Verify(ctx, token)` returns the claims or an error. The rules, all on by default:
+
+- **The algorithm is tied to the key.** The header's `alg` must be in `VerifyOptions.Algorithms` (default: all four) **and** equal the algorithm of the key chosen by `kid`. The classic attacks, `alg: none` and "HMAC signed with the RSA public key", are therefore impossible ([OWASP JWT cheat sheet](https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_Cheat_Sheet.html)).
+- **`exp` is required.** A token without it is refused (`jwt: invalid token: no exp claim`) unless `AllowMissingExpiry` is set.
+- **Time claims allow a little clock skew.** `exp`, `nbf` and `iat` are checked with 30 seconds of `Leeway`.
+- **`iss` and `aud` match exactly** when you set `Issuer` and `Audience`.
+- **Malformed tokens are refused**: duplicate JSON members, and tokens over 8 KiB.
+
+Every failure wraps `jwt.ErrInvalid`; check it with [`errors.Is`](https://pkg.go.dev/errors#Is). The wrapped detail (such as `audience [api]`) is for your logs and never reaches clients.
+
+| Option | Default | What it does |
+| --- | --- | --- |
+| `Algorithms` | all four | allowed `alg` values; each key still accepts only its own |
+| `Issuer` | none | required `iss`; mandatory with a `RemoteJWKS` |
+| `Audience` | none | required value in `aud`; mandatory with a `RemoteJWKS` |
+| `Leeway` | 30s | tolerated clock skew |
+| `AllowMissingExpiry` | `false` | accept tokens without `exp` |
+| `InsecureSkipAudience` | `false` | with a `RemoteJWKS`, accept any `aud`. Dangerous: tokens the provider issued to other apps pass |
+| `InsecureSkipIssuer` | `false` | with a `RemoteJWKS`, accept any `iss`. Dangerous: tokens of other tenants pass |
+| `Now` | `time.Now` | the clock, for tests |
+
+## The JWT guard
+
+`jwt.NewGuard[U](name, verifier, provider)` reads `Authorization: Bearer <jwt>`, verifies the token and loads the user named by `sub` with the provider's `ByID`.
+
+- It implements `auth.Checker` and `auth.APIGuard`, so `auth.Required(guard)` answers `401` problem+json and never redirects to a login page.
+- `auth.User[U](c, name)` returns the user; `jwt.ClaimsFrom(c, name)` returns the claims.
+- A rejected token logs the `jwt.rejected` security event. A token whose `sub` matches no user is a `401` too.
+- `auth.Ability` does not apply: JWTs have no Vukem abilities. Check your own claims from `Extra`, or use [authorization](/docs/security/authorization) policies.
+
+## Key sets
+
+A verifier finds keys by `kid` through a `jwt.KeySet`:
 
 | Key set | Use |
 | --- | --- |
-| `jwt.StaticKeys(current, previous...)` | your own keys, with rotation by `kid` |
-| `&jwt.RemoteJWKS{URL: issuer + "/.well-known/jwks.json"}` | an identity provider's keys: cached, refetched on an unknown `kid` at most once a minute, refreshed hourly. Needs `VerifyOptions.Audience` and `Issuer` (the provider signs tokens for every client with the same keys); without them `jwt.NewGuard` panics at boot, `verifier.Err()` says why and every token is refused. Custom key sets wrapping it implement `jwt.SharedKeySet` (embedding `*jwt.RemoteJWKS` does). `InsecureSkipAudience` / `InsecureSkipIssuer` opt out, dangerously |
-| `jwt.PublicJWKS(keys...)` | builds your own JWKS document to publish (HMAC keys are never included) |
+| `jwt.StaticKeys(current, previous...)` | your own keys. A token without `kid` is accepted only when the set has one key |
+| `&jwt.RemoteJWKS{URL: ...}` | an identity provider's public keys, fetched from its JWKS URL |
+| your own type | anything with `Key(ctx, kid) (jwt.Key, error)` |
+
+### Rotating your keys
+
+<Steps>
+<Step title="1. Add the new key next to the old one">
+
+```go
+old := jwt.HS256("2026-10", oldSecret)
+next := jwt.HS256("2027-01", newSecret)
+
+verifier := jwt.NewVerifier(jwt.StaticKeys(next, old), opts)
+```
+
+Sign new tokens with `next`; tokens signed with `old` still verify through their `kid`.
+
+</Step>
+<Step title="2. Wait one token lifetime, then drop the old key">
+
+After 15 minutes (your `ExpiresAt`), no valid token uses `old` any more.
+
+</Step>
+</Steps>
+
+### Trusting an identity provider
+
+```go title="routes/api.go"
+keys := &jwt.RemoteJWKS{
+	URL: "https://example.okta.com/oauth2/default/v1/keys",
+}
+
+verifier := jwt.NewVerifier(keys, jwt.VerifyOptions{
+	Issuer:   "https://example.okta.com/oauth2/default",
+	Audience: "api://blog",
+})
+```
+
+| Field | Default | What it does |
+| --- | --- | --- |
+| `URL` | | the provider's JWKS document |
+| `Client` | 10-second timeout | the HTTP client |
+| `MaxAge` | 1 hour | the cache is refreshed after this long |
+| `MinRefresh` | 1 minute | an unknown `kid` refetches at most this often, so tokens with random kids cannot hammer the provider |
+| `Now` | `time.Now` | the clock |
+
+A provider signs tokens for **all** of its customers with the same keys. Without `Audience` and `Issuer`, a token it issued to someone else's app would pass. So a verifier over a `RemoteJWKS` without them is misconfigured: `verifier.Err()` says which is missing (`jwt: a shared key set (RemoteJWKS) needs VerifyOptions.Audience`), `jwt.NewGuard` panics at boot, and every `Verify` fails. A custom key set that wraps a `RemoteJWKS` gets the same check by implementing `jwt.SharedKeySet` (`SharedKeys() bool`); embedding `*jwt.RemoteJWKS` does it for you.
+
+### Publishing your public keys
+
+When other services verify your RS256, ES256 or EdDSA tokens, serve your JWKS:
+
+```go title="routes/api.go"
+set, err := jwt.PublicJWKS(signingKey)
+if err != nil {
+	return err
+}
+
+r.Get("/.well-known/jwks.json", func(c *web.Ctx) error {
+	return c.JSON(http.StatusOK, set)
+})
+```
+
+HMAC keys are never included: their secret must not be published. `jwt.JWK.Key()` converts a published key back into a verification key and refuses symmetric ones.
 
 ## Refresh tokens
 
-```go
-refresh := jwt.NewRefreshTokens(db) // migration: jwt.RefreshTokensMigration("<timestamp>_create_refresh_tokens_table")
+Short access tokens need a way to get new ones without asking for the password every 15 minutes. A refresh token is that way. In Vukem it is an **opaque**, revocable token stored in the database, not a JWT.
 
-plain, err := refresh.Issue(ctx, user.AuthID())  // starts a token family
-userID, next, err := refresh.Rotate(ctx, plain)   // consumes it, returns the user id and a new token
-if errors.Is(err, jwt.ErrRefreshReused) { /* the whole family was revoked */ }
-
-err = refresh.Revoke(ctx, plain)      // logout
-err = refresh.RevokeUser(ctx, userID) // password change
+```go title="app/accounts/accounts.go"
+refresh := jwt.NewRefreshTokens(db)
+refresh.TTL = 30 * 24 * time.Hour // the default
 ```
 
-Refresh tokens are opaque; only their SHA-256 is stored. Rotation is atomic, so concurrent rotations have exactly one winner. Presenting a consumed token returns `jwt.ErrRefreshReused` and revokes the whole family.
+Add the table with the shipped migration, registered like your others:
+
+```go title="database/migrations/20261017000000_create_refresh_tokens.go"
+func m20261017000000CreateRefreshTokens() schema.Migration {
+	return jwt.RefreshTokensMigration(
+		"20261017000000_create_refresh_tokens_table",
+	)
+}
+```
+
+| Method | What it does |
+| --- | --- |
+| `Issue(ctx, userID)` | starts a new token **family** and returns the plain token (at login) |
+| `Rotate(ctx, plain)` | consumes the token and returns its user id and a new token of the same family |
+| `Revoke(ctx, plain)` | ends the family (logout); unknown tokens are ignored |
+| `RevokeUser(ctx, userID)` | ends every refresh token of the user (password change) |
+
+```go title="app/controllers/apiv1/sessions.go"
+func (h *Sessions) Refresh(c *web.Ctx) error {
+	in, err := web.Parse(c, refreshSchema)
+	if err != nil {
+		return err
+	}
+
+	userID, next, err := h.refresh.Rotate(c.Context(), in.Token)
+	if errors.Is(err, jwt.ErrRefreshReused) {
+		// A stolen copy was used: the whole family is revoked.
+		return auth.ErrUnauthenticated
+	}
+	if err != nil {
+		return auth.ErrUnauthenticated
+	}
+
+	access, err := h.sign(userID)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, map[string]string{
+		"access_token":  access,
+		"refresh_token": next,
+	})
+}
+```
+
+**How reuse detection works.** Each `Rotate` marks the presented token as used. If anyone presents a used token again, one of its copies was stolen: either the thief or the real app is now holding an old token. `Rotate` returns `jwt.ErrRefreshReused` and revokes the **whole family**, so both must sign in again. Only `SHA-256` of each token is stored, and rotation is atomic: concurrent rotations of one token have exactly one winner. Unknown, expired or revoked tokens give `jwt.ErrInvalid`.
+
+## Security
+
+| Threat | Defence |
+| --- | --- |
+| `alg: none`, algorithm confusion | each key accepts one algorithm; `alg` must match it |
+| A token issued to another app | `Audience` and `Issuer` checks, mandatory with a provider's JWKS |
+| A token that never dies | `exp` required; keep access tokens short (minutes) |
+| A stolen refresh token | rotation on every use, family revoked on reuse |
+| Huge or ambiguous tokens | 8 KiB limit; duplicate JSON members rejected |
+| A weak key | HS256 at least 32 bytes, RSA at least 2048 bits |
+
+Tokens are bearer credentials: send them only over HTTPS. Do not keep them in `localStorage` in browsers if you can use a session cookie instead; any injected script can read `localStorage`.
+
+## Testing
+
+```go title="tests/api_jwt_test.go"
+func TestMeWithJWT(t *testing.T) {
+	app := vukemtest.New(t, bootstrap.New)
+	user := createVerifiedUser(t, app)
+
+	token, err := jwt.Sign(testKey, jwt.Claims{
+		Subject:   user.AuthID(),
+		Issuer:    "https://blog.example.com",
+		Audience:  []string{"api"},
+		ExpiresAt: time.Now().Add(time.Minute),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	app.Client(t).WithToken(token).GetJSON("/api/me").AssertOK()
+	app.Client(t).GetJSON("/api/me").AssertStatus(401)
+}
+```
+
+`testKey` is the key your app builds in tests, and `createVerifiedUser` your own helper. Set `VerifyOptions.Now` and `RefreshTokens.Now` to a fixed clock to test expiry without waiting.
+
+## Common mistakes
+
+**A `RemoteJWKS` without an audience.** The app panics at boot when it builds the guard; `verifier.Err()` says `jwt: a shared key set (RemoteJWKS) needs VerifyOptions.Audience`. Set `Audience` (and `Issuer`) to the values the provider puts in your tokens.
+
+**Long-lived access tokens.** A 30-day JWT cannot be revoked for 30 days. Use minutes, and refresh tokens for the rest.
+
+**Secrets in claims.** Anyone can decode the payload. Put ids in it, never passwords, emails you must hide, or keys.
+
+**Signing with the verify-only key.** A key built from a JWKS has no `Private` part and cannot sign.
+
+## Next steps
+
+<CardGroup cols="2">
+<Card title="API tokens" href="/docs/security/api-tokens" icon="code">
+Revocable opaque tokens for your own API.
+</Card>
+<Card title="Authentication" href="/docs/security/authentication" icon="lock">
+Guards, providers and the middleware they share.
+</Card>
+<Card title="Social login" href="/docs/security/social-login" icon="rocket">
+Sign users in with an OIDC provider.
+</Card>
+</CardGroup>
+
+Package reference: [`auth/jwt`](https://pkg.go.dev/github.com/AlexGalhardo/vukem/auth/jwt).
