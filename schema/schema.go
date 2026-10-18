@@ -55,8 +55,27 @@ func recorder(d database.Dialect) (*Schema, *[]string) {
 	return &Schema{ctx: context.Background(), d: d, record: &stmts}, &stmts
 }
 
+// Record returns the statements up generates for dialect d without
+// running them: the SQL [Migrator.Checksum] hashes, so a migration can be
+// reviewed or diffed against DDL written elsewhere. Queries are not run
+// while recording, so [Schema.HasTable] and [Schema.HasColumn] report
+// false and up records the statements for an empty database.
+func Record(d database.Dialect, up func(s *Schema) error) ([]string, error) {
+	rec, stmts := recorder(d)
+	if err := up(rec); err != nil {
+		return nil, err
+	}
+
+	return *stmts, nil
+}
+
 // Dialect returns the dialect name ("sqlite", "postgres", "mysql").
 func (s *Schema) Dialect() string { return s.d.Name() }
+
+// SQLDialect returns the dialect the Schema builds DDL for, so a package
+// can render one set of statements for both a migration and a non-migration
+// path, such as a store's boot-time CREATE TABLE IF NOT EXISTS.
+func (s *Schema) SQLDialect() database.Dialect { return s.d }
 
 func (s *Schema) exec(stmt string, args ...any) error {
 	if s.record != nil {
