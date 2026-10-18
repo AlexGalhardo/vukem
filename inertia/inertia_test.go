@@ -150,6 +150,22 @@ func TestInitialVisitHTML(t *testing.T) {
 	}
 }
 
+// The client finds the page script by data-page="<id>" and mounts on
+// #<id>, so a custom RootID must name both.
+func TestInitialVisitCustomRootID(t *testing.T) {
+	t.Parallel()
+
+	cfg := baseConfig()
+	cfg.RootID = "root"
+
+	body := newHarness(t, cfg, eventRoutes).do(t, http.MethodGet, "/events/80", nil).Body.String()
+
+	if !strings.Contains(body, `<script data-page="root" type="application/json">`) ||
+		!strings.Contains(body, `</script><div id="root"></div>`) || strings.Contains(body, `"app"`) {
+		t.Errorf("body = %s, want data-page and mount id \"root\"", body)
+	}
+}
+
 func TestInertiaVisitJSON(t *testing.T) {
 	t.Parallel()
 

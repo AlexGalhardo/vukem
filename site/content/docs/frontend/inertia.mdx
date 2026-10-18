@@ -151,7 +151,7 @@ The root view is a normal `html/template` view. It receives `inertia.RootData`:
 
 | `RootData` field | Contains |
 | --- | --- |
-| `.Inertia` | `<script data-page="app" type="application/json">` with the page object, then `<div id="app"></div>` (or the SSR body) |
+| `.Inertia` | `<script data-page="app" type="application/json">` with the page object, then `<div id="app"></div>` (or the SSR body); both use `RootID` |
 | `.Head` | Server-rendered `<head>` tags with SSR, empty otherwise |
 | `.Page` | The `*inertia.Page` itself, for custom root views |
 
@@ -477,7 +477,7 @@ On a first visit, the adapter POSTs the page object to the Node SSR server and p
 | `inertia.Config` field | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `RootView` | `string` | `"app"` | View rendered on first visits |
-| `RootID` | `string` | `"app"` | Id of the mount element; quotes, `<`, `>`, `&` and spaces are rejected |
+| `RootID` | `string` | `"app"` | Id of the mount element and `data-page` name of the page script; set the same `id` in `createInertiaApp`. Quotes, `<`, `>`, `&` and spaces are rejected |
 | `Version` | `func() string` | `app.Vite.Version` with `WithVite`, else none | Current asset version |
 | `Shared` | `inertia.Props` | none | Props added to every page |
 | `EncryptHistory` | `bool` | `false` | Encrypt history state on every page |

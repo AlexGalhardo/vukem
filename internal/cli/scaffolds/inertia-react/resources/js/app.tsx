@@ -15,6 +15,8 @@ try {
 
 // The @inertiajs/vite plugin resolves pages from ./pages and mounts the app.
 // The nonce lets the progress bar styles through the CSP.
+// It mounts on #app, the default inertia.Config.RootID; when you change
+// RootID, pass the same value here as `id`.
 createInertiaApp({
   layout: () => AppLayout,
   nonce: document.querySelector<HTMLMetaElement>('meta[property="csp-nonce"]')?.nonce,

@@ -60,7 +60,9 @@ type Config struct {
 	// RootView is the view rendered on full page visits (default "app").
 	// It receives RootData.
 	RootView string
-	// RootID is the id of the element the client mounts on (default "app").
+	// RootID is the id of the element the client mounts on and the
+	// data-page name of the page script (default "app"). It must match the
+	// client's createInertiaApp({ id }).
 	RootID string
 	// Version returns the current asset version, for example vite's
 	// manifest hash. nil means "" (no versioning).
@@ -266,7 +268,7 @@ func RenderStatus(c *web.Ctx, status int, component string, props Props) error {
 			RootData{Page: p, Inertia: trustedHTML(body), Head: trustedHTML(head)}, web.WithStatus(status))
 	}
 
-	script, err := pageScript(p)
+	script, err := pageScript(p, st.in.cfg.RootID)
 	if err != nil {
 		return err
 	}
@@ -363,9 +365,10 @@ func validationErrors(c *web.Ctx) map[string]any {
 	return out
 }
 
-// pageScript returns the page object as a JSON script element. Slashes are
-// escaped so prop data can never close the element (</script>).
-func pageScript(p *Page) (string, error) {
+// pageScript returns the page object as a JSON script element named after
+// the mount id, which is where the client looks for it. Slashes are escaped
+// so prop data can never close the element (</script>).
+func pageScript(p *Page, id string) (string, error) {
 	b, err := json.Marshal(p)
 	if err != nil {
 		return "", fmt.Errorf("inertia: encode page: %w", err)
@@ -373,7 +376,7 @@ func pageScript(p *Page) (string, error) {
 
 	b = bytes.ReplaceAll(b, []byte("/"), []byte(`\/`))
 
-	return `<script data-page="app" type="application/json">` + string(b) + `</script>`, nil
+	return `<script data-page="` + id + `" type="application/json">` + string(b) + `</script>`, nil
 }
 
 func absoluteURL(r *http.Request) string {
