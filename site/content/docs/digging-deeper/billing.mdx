@@ -297,7 +297,7 @@ cs, err := sc.CreateCheckoutSession(ctx, stripe.Params{
 })
 ```
 
-The client sends `line_items[0][price]=price_pdf_pack&line_items[0][quantity]=1&…`. Any map with string keys (`stripe.Params`, `map[string]any`, `map[string]string`, ...) and any slice (`[]stripe.Params`, `[]map[string]any`, `[]string`, `[]int`, `[]any`, ...) is encoded at any depth, together with strings, booleans, numbers (named types such as `type Cents int64` too; floats without exponent) and `fmt.Stringer` values. A `nil` value, also a nil pointer, is left out. Anything else (a struct, a func, a map with non-string keys) fails the call with `stripe: encode <path>: param "<key>": unsupported type ...` before any request is sent.
+The client sends `line_items[0][price]=price_pdf_pack&line_items[0][quantity]=1&…`. Any map with string keys (`stripe.Params`, `map[string]any`, `map[string]string`, ...) and any slice (`[]stripe.Params`, `[]map[string]any`, `[]string`, `[]int`, `[]any`, ...) is encoded at any depth, together with strings, booleans, numbers (named types such as `type Cents int64` too; floats without exponent) and `fmt.Stringer` values. A `nil` value, also a nil pointer, is left out. A `[]byte` is sent as a string. Anything else (a struct, a func, a map with non-string keys, NaN or ±Inf, nesting deeper than 32 levels such as a cyclic map) fails the call with `stripe: encode <path>: param "<key>": unsupported type ...` before any request is sent.
 
 API v2 paths (`/v2/...`) send the params as JSON instead; there, a `nil` value becomes JSON `null`.
 
