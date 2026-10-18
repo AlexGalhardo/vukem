@@ -17,7 +17,7 @@ What Vukem does **by default** to protect applications, mapped to the [OWASP Top
 | Default | Check |
 | --- | --- |
 | Routes are public unless wrapped in `auth.Required()`; `vukem route:list` shows the middleware of every route so unprotected routes are visible (`TestRoutesListsMiddlewareNames`, `TestCommands` (route:list)) | [x] |
-| Policies resolved by Go type; **unregistered policy = deny** (fail closed), not allow (`TestSecurity_A01_UnregisteredPolicyDenies`) | [x] |
+| Policies resolved by Go type; **unregistered policy = deny** (fail closed), not allow (`TestSecurity_A01_UnregisteredPolicyDenies`); a `T` value with no policy of its own uses the `*T` policy on a copy, never any other type's (`TestValueSubjectUsesPointerPolicy`) | [x] |
 | `DenyAsNotFound()` to avoid leaking resource existence (IDOR enumeration) (`TestGatesAndPolicies`) | [x] |
 | Query builder scopes (`Scope(ownedBy(user))`) and route-level `Authorize` make ownership checks one line (`TestCtxAuthorizeAndTemplateCan`, `TestAuthorize`) | [x] |
 | Mass assignment impossible by construction: models are filled from explicit request structs (`Bind[T]`), never from raw maps (`TestBindFromTags`, `TestSecurity_A01_AdminMassAssignment`) | [x] |

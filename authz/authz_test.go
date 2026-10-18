@@ -156,7 +156,8 @@ func TestSecurity_A01_UnregisteredPolicyDenies(t *testing.T) {
 		"unknown ability":       func() error { return g.Authorize(as(ana), "launch-missiles", nil) },
 		"unregistered policy":   func() error { return g.Authorize(as(ana), "update", &Comment{ID: 1}) },
 		"unknown policy method": func() error { return g.Authorize(as(ana), "archive", &Post{UserID: 1}) },
-		"value instead of ptr":  func() error { return g.Authorize(as(ana), "update", Post{UserID: 1}) },
+		"unregistered value":    func() error { return g.Authorize(as(ana), "update", Comment{ID: 1}) },
+		"value, unknown method": func() error { return g.Authorize(as(ana), "archive", Post{UserID: 1}) },
 	} {
 		err := check()
 		if statusOf(err) != 403 || !errors.Is(err, errUnregistered) {
@@ -250,5 +251,59 @@ func TestCtxAuthorizeAndTemplateCan(t *testing.T) {
 
 	if got := render(context.Background()); got != "read-only|" {
 		t.Fatalf("no services = %q", got)
+	}
+}
+
+// A value subject (a range over []Post in a template) resolves the policy
+// registered for *Post with a copy, so "can" works in loops.
+func TestValueSubjectUsesPointerPolicy(t *testing.T) {
+	t.Parallel()
+
+	g := gate()
+	ctx := as(&User{ID: 1})
+
+	tests := []struct {
+		name    string
+		ability string
+		subject any
+		want    bool
+	}{
+		{"value owner", "update", Post{ID: 1, UserID: 1}, true},
+		{"value other", "update", Post{ID: 2, UserID: 9}, false},
+		{"pointer owner", "update", &Post{ID: 1, UserID: 1}, true},
+		{"value without policy", "update", Comment{ID: 1}, false},
+		{"value unknown ability", "publish", Post{ID: 1, UserID: 1}, false},
+	}
+
+	for _, tt := range tests {
+		if got := g.Allows(ctx, &User{ID: 1}, tt.ability, tt.subject); got != tt.want {
+			t.Errorf("%s: Allows = %v, want %v", tt.name, got, tt.want)
+		}
+
+		if got := g.Authorize(ctx, tt.ability, tt.subject) == nil; got != tt.want {
+			t.Errorf("%s: Authorize allowed = %v, want %v", tt.name, got, tt.want)
+		}
+	}
+
+	engine, err := view.New(view.Config{FS: fstest.MapFS{"list.html": {Data: []byte(
+		`{{range .}}{{.ID}}:{{if can "update" .}}edit{{else}}-{{end}} {{end}}`)}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var b bytes.Buffer
+
+	s := &web.Services{Authorizer: g}
+	if err := engine.Render(
+		web.WithServices(ctx, s),
+		&b,
+		"list",
+		[]Post{{ID: 1, UserID: 1}, {ID: 2, UserID: 9}},
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := b.String(); got != "1:edit 2:- " {
+		t.Errorf("range over []Post = %q, want %q", got, "1:edit 2:- ")
 	}
 }
