@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.29.0] - 2026-10-18
+
+### Added
+
+- **site:** Serve sitemap.xml and robots.txt for search engines ([0b09352](https://github.com/AlexGalhardo/vukem/commit/0b093525435b23bc01ae1710f5c366705aa94a83))
+- **cli:** Add -prefix to openapi:export and the codegen generators ([9062d20](https://github.com/AlexGalhardo/vukem/commit/9062d20f2fe76801c6f5a71cb69aace07b6d2156))
+- **api:** Add RegisterWith for a caller-supplied input schema ([bbc07c4](https://github.com/AlexGalhardo/vukem/commit/bbc07c492c99d4e458b5d759f73448704738b2e2))
+- **ulid:** Add a monotonic ULID generator with Valid and TimeOf ([f71f287](https://github.com/AlexGalhardo/vukem/commit/f71f2871131a03f8ca283d3c5c7bdf387a451b58))
+- **auth:** Accept the token from extra headers, with Vary ([3604e4c](https://github.com/AlexGalhardo/vukem/commit/3604e4cadbd5a20c5123dfb35182f35ed13e194f))
+- **queue:** Let a handler report a permanent failure and see its attempt ([6d90e21](https://github.com/AlexGalhardo/vukem/commit/6d90e2108d75da85d2683da9d08ac5c20fd87b00))
+- **postgres:** Add an sse.Broker on LISTEN/NOTIFY ([f6ce304](https://github.com/AlexGalhardo/vukem/commit/f6ce30445d5f540ad94c5799c3fd82e9fb525745))
+- **openapi:** Carry examples in schemas, parameters and media types ([cb9fff1](https://github.com/AlexGalhardo/vukem/commit/cb9fff130d082149c2039903ba8ae3261b15ae6e))
+- **openapi:** Reject a path prefix that matches no route ([0ab4aaf](https://github.com/AlexGalhardo/vukem/commit/0ab4aafca6945bdd9451b6a2577e8610d4387054))
+- **schema:** Expose a Schema's dialect and record a migration's SQL ([ad353df](https://github.com/AlexGalhardo/vukem/commit/ad353df62b29369ddf0a2872c403239f2e06058c))
+- **queue:** Ship the queue tables as a registrable migration ([ddfe2fd](https://github.com/AlexGalhardo/vukem/commit/ddfe2fd82e31c5cf191b9857f3971b342fdd1906))
+- **session:** Ship the sessions table as a registrable migration ([f5ae66b](https://github.com/AlexGalhardo/vukem/commit/f5ae66bffaba13ba173aa3a6346483df348c2ba3))
+- **cache:** Ship the cache table as a registrable migration ([4430efb](https://github.com/AlexGalhardo/vukem/commit/4430efbab4a037972e0bb4a5010fa0e3454a9b5a))
+- **webhook:** Ship the delivery log table as a registrable migration ([38fdf2c](https://github.com/AlexGalhardo/vukem/commit/38fdf2c9d407cca140bcae0ffe76136584f72c24))
+- **schema:** Add stores.Migrations for the tables vukem owns ([0408641](https://github.com/AlexGalhardo/vukem/commit/0408641fdb3e59acb5f0b5e7463dcf12aedb6477))
+- **ui:** Give the generated password fields a toggle and live rule checks ([e5b876c](https://github.com/AlexGalhardo/vukem/commit/e5b876c71c279da6e78e899d562daf528db5ad69))
+- **cli:** Choose the auth message catalogs with install:auth --locales ([6ca182d](https://github.com/AlexGalhardo/vukem/commit/6ca182d73058d35064dad0592879f7d74b7221be))
+
+### Changed
+
+- **auth:** Read the listed token owner from its row ([da63a05](https://github.com/AlexGalhardo/vukem/commit/da63a052d666caf5391ccda5fe94d85a1765fd7c))
+- **cli:** Keep starter package comments in a doc.go ([264fb46](https://github.com/AlexGalhardo/vukem/commit/264fb4632487316fc75463466b270a7c694a765c))
+
+### Fixed
+
+- **apidocs:** Give Scalar's caption labels and combobox field accessible markup ([082ab73](https://github.com/AlexGalhardo/vukem/commit/082ab7382fd2e5f266455aaa7ee651090376f6f5))
+- **release:** Match changelog headings literally and refuse an empty body ([89a19bb](https://github.com/AlexGalhardo/vukem/commit/89a19bbfe76b5c92de6e3e335e37f205e244e821))
+- **openapi:** Describe path parameters from their doc tag ([174cdb3](https://github.com/AlexGalhardo/vukem/commit/174cdb3b8d79eb822bfe34eb3fbd99af95125e45))
+- **cli:** Pin install:billing to contrib/stripe v0.4.0 ([9b51f70](https://github.com/AlexGalhardo/vukem/commit/9b51f704e920778ac263d66dd729b52a9904ef7d))
+- **cli:** Keep the demo resource's links inside the demo ([c3eb298](https://github.com/AlexGalhardo/vukem/commit/c3eb29863ee7f261fe569f45b607cf4606046e7c))
+- **cli:** Generate the Dockerfile for the package manager the project uses ([3e3c92c](https://github.com/AlexGalhardo/vukem/commit/3e3c92cff2681ae4284bab05cb7a3ee11b180528))
+- **docker:** Give the starter image a mailer so its commands can run ([04b9c2b](https://github.com/AlexGalhardo/vukem/commit/04b9c2b60a9a52d13145e8c34b51bd6ae6809d37))
+- **cli:** Make a fresh scaffold pass the repository's golangci-lint ([d76e7b7](https://github.com/AlexGalhardo/vukem/commit/d76e7b7be278ff36eb5df8dffdf68c107ec40cf0))
+- **cli:** Scope the API keys install:api mints instead of granting "*" ([7791277](https://github.com/AlexGalhardo/vukem/commit/77912775a7fff83c92e96d010279067d5e855f56))
+- **cli:** Commit the generated git hooks with the executable bit ([be9ceea](https://github.com/AlexGalhardo/vukem/commit/be9ceea5bbf7f7298a7dbb0d8915d2822ca54756))
+
+### Security
+
+- **vukem:** Add WithOpenAPI so an app owns its document info ([697c8a0](https://github.com/AlexGalhardo/vukem/commit/697c8a0f24e6c9de1430d4186be96377d67af6d8))
+- **cli:** Scaffold the project standards behind flags on vukem new ([68e6763](https://github.com/AlexGalhardo/vukem/commit/68e6763e72d36dc433a1d6608f39e460f756d82a))
+- **cli:** Point a new project at the documentation it needs next ([bc09220](https://github.com/AlexGalhardo/vukem/commit/bc092204b4cf314400c11a8a449cd442893b6564))
+
 ## [0.28.0] - 2026-10-18
 
 ### Added
@@ -917,7 +963,8 @@ Project foundation. No framework code yet; see [PLAN.md](PLAN.md) for the roadma
 - README, MIT license, CONTRIBUTING, SECURITY and CODE_OF_CONDUCT.
 - Agent configuration: `AGENTS.md`, `CLAUDE.md`, path-scoped `.claude/rules/`, Go skills and project settings.
 
-[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.28.0...HEAD
+[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.29.0...HEAD
+[0.29.0]: https://github.com/AlexGalhardo/vukem/compare/v0.28.0...v0.29.0
 [0.28.0]: https://github.com/AlexGalhardo/vukem/compare/v0.27.0...v0.28.0
 [0.27.0]: https://github.com/AlexGalhardo/vukem/compare/v0.26.0...v0.27.0
 [0.26.0]: https://github.com/AlexGalhardo/vukem/compare/v0.25.0...v0.26.0
