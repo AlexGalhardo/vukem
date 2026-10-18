@@ -360,6 +360,28 @@ func TestMethodOverride(t *testing.T) {
 	}
 }
 
+func TestSecurity_A06_MethodOverrideKeepsTighterLimit(t *testing.T) {
+	t.Parallel()
+
+	var (
+		method string
+		limit  int64
+	)
+	h := BodyLimit(64)(MethodOverride()(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		method = r.Method
+		limit, _ = web.BodyLimitOf(r)
+	})))
+
+	body := url.Values{"_method": {"DELETE"}, "pad": {strings.Repeat("x", 200)}}.Encode()
+	r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/", strings.NewReader(body))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	do(t, h, r)
+
+	if method != http.MethodPost || limit != 64 {
+		t.Fatalf("MethodOverride under BodyLimit(64): method %s, limit %d; want POST and 64", method, limit)
+	}
+}
+
 func TestJSONOnly(t *testing.T) {
 	t.Parallel()
 

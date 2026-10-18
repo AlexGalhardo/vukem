@@ -200,7 +200,12 @@ func MethodOverride() Middleware {
 				if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
 					m = r.URL.Query().Get("_method")
 				} else {
-					r = web.LimitBody(w, r, web.DefaultMaxBody)
+					// Keep a limit set earlier (BodyLimit as server middleware):
+					// replacing it with the default would let the form parse
+					// read far more than the app allows.
+					if _, limited := web.BodyLimitOf(r); !limited {
+						r = web.LimitBody(w, r, web.DefaultMaxBody)
+					}
 					m = r.PostFormValue("_method")
 				}
 
