@@ -20,8 +20,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"reflect"
 	"runtime"
+	"runtime/debug"
 	"slices"
 	"strings"
 	"sync"
@@ -238,10 +240,19 @@ func (b *Bus) run(ctx context.Context, ls []listener, getQueue func() (Enqueuer,
 func (b *Bus) runSync(ctx context.Context, l listener, event any) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			b.log.ErrorContext(ctx, "listener panicked",
-				"event", fmt.Sprintf("%T", event), "listener", l.name, "panic", r)
+			// The HTTP server aborts a response with this panic; keep it one.
+			if r == http.ErrAbortHandler { //nolint:errorlint // recover() value, not a wrapped error
+				panic(r)
+			}
 
-			err = fmt.Errorf("panic: %v", r)
+			b.log.ErrorContext(ctx, "listener panicked",
+				"event", fmt.Sprintf("%T", event), "listener", l.name, "panic", r, "stack", string(debug.Stack()))
+
+			if e, ok := r.(error); ok {
+				err = fmt.Errorf("panic: %w", e)
+			} else {
+				err = fmt.Errorf("panic: %v", r)
+			}
 		}
 	}()
 
