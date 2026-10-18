@@ -227,6 +227,15 @@ func TestNewProjectEndToEnd(t *testing.T) {
 		t.Fatalf("second install:auth = %d %s", code, errOut)
 	}
 
+	// Without --locales the default locale is the only catalog written.
+	requireFile(t, project, "app/accounts/lang/en/auth.json")
+	requireNoFile(t, project, "app/accounts/lang/pt-BR")
+
+	if code, _, errOut := vukem(t, project, "install:auth", "--locales", "fr"); code != 2 ||
+		!strings.Contains(errOut, "no auth message catalog") {
+		t.Fatalf("install:auth --locales fr = %d %s", code, errOut)
+	}
+
 	if code, out, errOut := vukem(
 		t,
 		project,
@@ -238,6 +247,11 @@ func TestNewProjectEndToEnd(t *testing.T) {
 		strings.Contains(out, "created routes/auth.go") {
 		t.Fatalf("install:auth --social = %d\n%s%s", code, out, errOut)
 	}
+
+	// A later generator writes catalogs only for the locales the project
+	// has: it never re-adds one the developer removed (A79).
+	requireFile(t, project, "app/accounts/lang/en/social.json")
+	requireNoFile(t, project, "app/accounts/lang/pt-BR")
 
 	// --2fa on a project with install:auth adds only two-factor
 	// authentication, and makes social sign-in ask for the code too.

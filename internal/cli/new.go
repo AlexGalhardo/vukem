@@ -333,6 +333,10 @@ func makeAPIStarter(env *Env, sd starterData) error {
 
 	data["Name"], data["Module"] = sd.Name, sd.Module
 
+	if err := resolveLocales(env, nil, data); err != nil {
+		return err
+	}
+
 	for _, name := range []string{"api-starter", "auth-core", "api"} {
 		if err := installScaffold(env, name, data, true); err != nil {
 			return err

@@ -13,7 +13,9 @@ import (
 )
 
 // lang/<locale>/*.json hold the "auth.*" messages; install:auth --2fa and
-// --social add their own files next to auth.json.
+// --social add their own files next to auth.json. install:auth --locales
+// chooses the locales; a later install only writes the ones already here,
+// so a locale deleted from this folder stays deleted.
 //
 //go:embed lang
 var catalogs embed.FS
