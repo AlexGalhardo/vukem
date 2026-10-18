@@ -86,6 +86,7 @@ type testApp struct {
 
 	web    *auth.SessionGuard[User]
 	api    *auth.TokenGuard[User]
+	key    *auth.TokenGuard[User]
 	tokens *auth.Tokens
 	hasher hash.Hasher
 	// down makes the session guard's user lookups fail like a database
@@ -142,6 +143,9 @@ func newApp(t *testing.T, hasher hash.Hasher, extra ...vukem.Option) *testApp {
 				)
 				ta.web.InsecureCookies = true
 				ta.api = auth.NewTokenGuard("api", users, ta.tokens)
+				// A second token guard wired the way an app that wants the
+				// X-API-Key convention does.
+				ta.key = auth.NewTokenGuard("key", users, ta.tokens).WithTokenHeaders("X-API-Key")
 
 				r.Get("/", func(c *web.Ctx) error { return c.String(200, "home") }).Name("home")
 				r.Get("/login", func(c *web.Ctx) error { return c.String(200, "login form") }).Name("login").
@@ -235,6 +239,19 @@ func newApp(t *testing.T, hasher hash.Hasher, extra ...vukem.Option) *testApp {
 				r.Get("/papi-late", func(c *web.Ctx) error { return c.NoContent() }).
 					Use(auth.Required(ta.api, ta.web), auth.ProblemJSON)
 
+				// /keyapi takes the token from X-API-Key as well.
+				r.Group("/keyapi", func(g *router.Group) {
+					g.Use(auth.Required(ta.key))
+					g.Get("/me", func(c *web.Ctx) error {
+						u, err := auth.User[User](c, "key")
+						if err != nil {
+							return err
+						}
+
+						return c.String(200, u.Email)
+					})
+				})
+
 				r.Group("/api", func(g *router.Group) {
 					g.Use(auth.Required(ta.api, ta.web))
 					g.Get("/me", func(c *web.Ctx) error {
@@ -274,6 +291,18 @@ func str(v any) string {
 	}
 
 	return ""
+}
+
+// mustDB is DB without the error check, for tests that cannot run without it.
+func (ta *testApp) mustDB(t *testing.T) *database.DB {
+	t.Helper()
+
+	db, err := ta.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return db
 }
 
 func (ta *testApp) user(t *testing.T, email, password string, verified bool) User {
@@ -589,6 +618,39 @@ func TestTokensAndAbilities(t *testing.T) {
 
 	if found, err := ta.tokens.Find(ctx, another); err != nil || found.LastUsedAt == nil || found.Can("x") {
 		t.Fatalf("Find = %+v %v", found, err)
+	}
+}
+
+// TestTokensListReportsTheOwner locks the owner of every listed token: the
+// response of an app that lists a caller's keys renders it, so an empty
+// Token.UserID would reach clients.
+func TestTokensListReportsTheOwner(t *testing.T) {
+	t.Parallel()
+
+	ta := newApp(t, hash.Fake())
+	ana := ta.user(t, "ana@example.com", "pw", true)
+	bob := ta.user(t, "bob@example.com", "pw", true)
+	ctx := t.Context()
+
+	for _, name := range []string{"cli", "ci"} {
+		if _, _, err := ta.tokens.Create(ctx, ana.AuthID(), name, nil, time.Hour); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if _, _, err := ta.tokens.Create(ctx, bob.AuthID(), "bob-cli", nil, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	list, err := ta.tokens.List(ctx, ana.AuthID())
+	if err != nil || len(list) != 2 {
+		t.Fatalf("List(ana) = %+v, %v, want 2 tokens", list, err)
+	}
+
+	for _, tok := range list {
+		if tok.UserID != ana.AuthID() {
+			t.Errorf("List(ana) token %s UserID = %q, want %q", tok.ID, tok.UserID, ana.AuthID())
+		}
 	}
 }
 
