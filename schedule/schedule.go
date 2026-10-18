@@ -335,8 +335,17 @@ func (s *Schedule) RunDue(ctx context.Context, now time.Time) error {
 	return errors.Join(errs...)
 }
 
+// runTask runs one occurrence of t and logs its outcome, lock errors
+// included: Work drops RunDue's result, so a failure that is only returned
+// would skip the task silently.
 func (s *Schedule) runTask(ctx context.Context, t *Task, now time.Time) (err error) {
 	log := s.o.Log.With("task", t.name)
+
+	defer func() {
+		if err != nil {
+			log.ErrorContext(ctx, "scheduled task failed", "err", err)
+		}
+	}()
 
 	if t.oneHost {
 		if !cache.Shared(s.o.Locks.Store()) {
@@ -373,15 +382,17 @@ func (s *Schedule) runTask(ctx context.Context, t *Task, now time.Time) (err err
 		defer func() { _ = lock.Release(context.WithoutCancel(ctx)) }()
 	}
 
+	// took measures the run itself; now is the occurrence's minute, which
+	// can be well before the call (schedule:run, a late tick).
+	start := time.Now()
+
 	defer func() {
 		if p := recover(); p != nil {
 			err = fmt.Errorf("panic: %v", p)
 		}
 
-		if err != nil {
-			log.ErrorContext(ctx, "scheduled task failed", "err", err)
-		} else {
-			log.InfoContext(ctx, "scheduled task done", "took", time.Since(now).Round(time.Millisecond))
+		if err == nil {
+			log.InfoContext(ctx, "scheduled task done", "took", time.Since(start).Round(time.Millisecond))
 		}
 	}()
 
@@ -416,6 +427,7 @@ func (s *Schedule) Work(ctx context.Context, now func() time.Time) error {
 		case <-timer.C:
 		}
 
+		// runTask logs every failure; the joined error adds nothing here.
 		wg.Go(func() { _ = s.RunDue(taskCtx, next) })
 	}
 }
