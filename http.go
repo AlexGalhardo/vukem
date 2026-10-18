@@ -214,9 +214,10 @@ type SessionConfig struct {
 }
 
 // APIMiddleware installs the stack of JSON-only apps: recover, request
-// id, logging and security headers on the server; the body limit on
-// routes. There are no sessions or CSRF: API clients authenticate with
-// tokens (see auth.TokenGuard), and CORS is configured by the routes.
+// id, security headers (the same set as DefaultMiddleware), maintenance
+// mode and logging on the server; the body limit on routes. There are no
+// sessions or CSRF: API clients authenticate with tokens (see
+// auth.TokenGuard), and CORS is configured by the routes.
 // APIMiddlewareWith customizes the stack.
 func APIMiddleware(app *App, r *router.Router) error {
 	return APIMiddlewareWith(app, r, APIMiddlewareOptions{})
@@ -255,13 +256,7 @@ func APIMiddlewareWith(app *App, r *router.Router, opts APIMiddlewareOptions) er
 		return fmt.Errorf("vukem: secure headers: %w", err)
 	}
 
-	r.UseServer(
-		middleware.Recover(),
-		middleware.RequestID(),
-		middleware.Maintenance(maintenanceConfig(app)),
-		middleware.Logger(app.Log),
-		middleware.SecureHeaders(secure),
-	)
+	r.UseServer(serverMiddleware(app, secure, maintenanceConfig(app))...)
 	r.Use(middleware.BodyLimit(web.DefaultMaxBody))
 
 	if localeMW != nil {
@@ -378,6 +373,22 @@ func maintenanceConfig(app *App) middleware.MaintenanceConfig {
 	}
 }
 
+// serverMiddleware is the server stack DefaultMiddleware and APIMiddleware
+// share. SecureHeaders runs before Maintenance, so the maintenance 503 (and
+// its bypass redirect) carries the security headers like every other
+// response; Maintenance keeps its place ahead of Logger.
+func serverMiddleware(
+	app *App, secure middleware.SecureHeadersConfig, maint middleware.MaintenanceConfig,
+) []router.Middleware {
+	return []router.Middleware{
+		middleware.Recover(),
+		middleware.RequestID(),
+		middleware.SecureHeaders(secure),
+		middleware.Maintenance(maint),
+		middleware.Logger(app.Log),
+	}
+}
+
 // secureHeadersConfig honours X-Forwarded-Proto from TRUSTED_PROXIES when
 // TRUST_FORWARDED_PROTO is set, forces HSTS in production with HSTS_FORCE,
 // and allows the Vite dev server in the CSP while it runs (app.Vite only
@@ -399,7 +410,8 @@ func secureHeadersConfig(app *App) middleware.SecureHeadersConfig {
 }
 
 // DefaultMiddleware installs Vukem's recommended stacks on r:
-//   - server: Recover, RequestID, Logger, SecureHeaders, MethodOverride;
+//   - server: Recover, RequestID, SecureHeaders, Maintenance, Logger,
+//     MethodOverride;
 //   - router: BodyLimit(10 MiB), sessions, CSRF (CrossOriginProtection,
 //     trusted origins from CSRF_TRUSTED_ORIGINS), and the i18n locale
 //     resolver when WithTranslations was given.
@@ -491,14 +503,7 @@ func DefaultMiddlewareWith(app *App, r *router.Router, opts MiddlewareOptions) e
 		routerMW = append(routerMW, sessMW)
 	}
 
-	r.UseServer(
-		middleware.Recover(),
-		middleware.RequestID(),
-		middleware.Maintenance(maintenanceConfig(app)),
-		middleware.Logger(app.Log),
-		middleware.SecureHeaders(secure),
-		middleware.MethodOverride(),
-	)
+	r.UseServer(append(serverMiddleware(app, secure, maintenanceConfig(app)), middleware.MethodOverride())...)
 
 	r.Use(append(routerMW, csrfMW)...)
 

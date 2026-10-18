@@ -450,7 +450,7 @@ Every starter calls `vukem.DefaultMiddleware(app, r)` at the top of `routes/web.
 
 | Stack | Middleware, in order |
 | --- | --- |
-| Server | `Recover`, `RequestID`, `Maintenance`, `Logger`, `SecureHeaders`, `MethodOverride` |
+| Server | `Recover`, `RequestID`, `SecureHeaders`, `Maintenance`, `Logger`, `MethodOverride` |
 | Router | `BodyLimit(web.DefaultMaxBody)`, sessions, CSRF, then the locale resolver when the app uses `vukem.WithTranslations` |
 
 It returns configuration errors, such as invalid `CSRF_TRUSTED_ORIGINS` or an insecure session setup, so they stop the boot. Two more pieces come from the app itself: in production with an empty `TRUSTED_PROXIES`, a server middleware logs one warning when requests look like they come through a proxy; and the [devtools dashboard](/docs/digging-deeper/devtools), when enabled, adds its recorder as the outermost server middleware.
@@ -505,7 +505,7 @@ JSON-only apps call `vukem.APIMiddleware(app, r)` instead. It has no sessions, C
 
 | Stack | Middleware, in order |
 | --- | --- |
-| Server | `Recover`, `RequestID`, `Maintenance`, `Logger`, `SecureHeaders` |
+| Server | `Recover`, `RequestID`, `SecureHeaders`, `Maintenance`, `Logger` |
 | Router | `BodyLimit(web.DefaultMaxBody)`, then the locale resolver (from `?lang=` and `Accept-Language` only) with `WithTranslations` |
 
 `vukem.APIMiddlewareWith(app, r, vukem.APIMiddlewareOptions{...})` accepts the `SecureHeaders` and `I18n` options above. Add CORS yourself when browsers on other origins call the API.

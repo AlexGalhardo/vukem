@@ -272,7 +272,7 @@ A previous key still verifies cookie sessions and signed URLs, so whoever holds 
 | `Cross-Origin-Opener-Policy` | `same-origin` |
 | `Permissions-Policy` | `camera=(), microphone=(), geolocation=()` |
 
-All configurable in `config/http.go`; API routes skip HTML-only headers.
+All configurable in `config/http.go` (`MiddlewareOptions.SecureHeaders`, `APIMiddlewareOptions.SecureHeaders`). The API stack (`vukem.APIMiddleware`) sends the same set, CSP included: on a JSON response the CSP and `X-Frame-Options` are inert, and they protect any HTML an API route might return. `SecureHeaders` runs before `Maintenance` on both stacks, so the maintenance 503 carries these headers too (`TestSecurity_A05_MaintenanceResponseCarriesSecurityHeaders`).
 
 ## Building blocks
 
