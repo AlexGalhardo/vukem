@@ -19,9 +19,11 @@
 // global config is jitless; the probe is a script-src violation, so the
 // config is set first.
 //
-// Accessibility: fixes the axe "serious" findings Scalar's markup has
-// (scrollable endpoint list without keyboard access, "Show More" buttons
-// whose accessible name does not contain their visible text).
+// Accessibility: fixes the findings Scalar's markup has (a scrollable
+// endpoint list without keyboard access, "Show More" buttons whose
+// accessible name does not contain their visible text, intro-card captions
+// marked up as a <label> that labels nothing, and the combobox filter field
+// of a dropdown that passes no label).
 (() => {
   const sizeProps = /^(?:(?:min-|max-)?(?:width|height)|overflow(?:-x|-y)?)$/;
   const plainValue = /^[a-z0-9.%\s-]+$/i;
@@ -96,6 +98,12 @@
     }
   }
 
+  // An element has an accessible name from its own markup. Scalar's
+  // combobox field is an <input>, so a placeholder names it too.
+  const named = (el) =>
+    ["aria-label", "aria-labelledby", "title", "placeholder"].some((a) => (el.getAttribute(a) || "").trim() !== "") ||
+    (el.labels && el.labels.length > 0);
+
   const fix = () => {
     for (const el of document.querySelectorAll(".endpoints:not([tabindex])")) {
       el.tabIndex = 0;
@@ -106,6 +114,33 @@
       if (text && !label.toLowerCase().startsWith(text.toLowerCase())) {
         b.setAttribute("aria-label", text + ": " + label);
       }
+    }
+    // Scalar's intro cards caption their value with a <label> that has no
+    // "for" and wraps no control (ServerSelector renders "Server" that way),
+    // which is what DevTools reports as "No label associated with a form
+    // field". A caption is a <span>, so retag it and keep everything else.
+    // The caption is a hoisted static node Vue never patches; if a Scalar
+    // version re-inserts the original, the observer below retags it again.
+    for (const label of document.querySelectorAll("label:not([for])")) {
+      if (label.control) continue;
+
+      const span = document.createElement("span");
+      for (const name of label.getAttributeNames()) {
+        // A style attribute goes through the CSSOM: setAttribute would hand
+        // CSP an inline style the page's policy blocks.
+        if (name !== "style") span.setAttribute(name, label.getAttribute(name));
+      }
+      if (label.style.cssText) span.style.cssText = label.style.cssText;
+      span.append(...label.childNodes);
+      label.replaceWith(span);
+    }
+    // Scalar names its combobox filter field only when the component that
+    // opens it passes inputLabel: the client picker and the search modal do,
+    // the auth-scheme selector does not, leaving a role="combobox" input
+    // with no accessible name. The page is served as lang="en", so the
+    // fallback is English like the rest of the shim.
+    for (const el of document.querySelectorAll('input[role="combobox"]')) {
+      if (!named(el)) el.setAttribute("aria-label", "Search");
     }
   };
 

@@ -53,10 +53,20 @@ func chromePath() string {
 
 var consoleCSP = regexp.MustCompile(`(?i).*(content security policy|refused to|violates the following).*`)
 
+var (
+	labelEl = regexp.MustCompile(`(?s)<label([^>]*)>(.*?)</label>`)
+	// The elements a <label> can label.
+	labelableEl = regexp.MustCompile(`(?i)<(?:button|input|meter|output|progress|select|textarea)[\s/>]`)
+	// Scalar's server card captions its value with a <label>; page.js
+	// retags it, so the <span> is proof the card rendered and was fixed.
+	serverCaption = regexp.MustCompile(`(?s)<span[^>]*>\s*Server\s*</span>`)
+)
+
 // TestBrowser_APIDocsNoCSPViolations loads the page in headless Chromium
 // under the app's default secure headers and fails on any CSP violation
-// the console reports (A13). It is skipped without a Chromium-based
-// browser (set VUKEM_CHROME to point at one) and with -short.
+// the console reports (A13), and on any <label> left labelling nothing
+// (A95). It is skipped without a Chromium-based browser (set VUKEM_CHROME
+// to point at one) and with -short.
 func TestBrowser_APIDocsNoCSPViolations(t *testing.T) {
 	if testing.Short() {
 		t.Skip("browser test")
@@ -112,6 +122,21 @@ func TestBrowser_APIDocsNoCSPViolations(t *testing.T) {
 		t.Errorf("code samples lack their line-number variables:\n%.4000s", bodyOf(dom))
 	default:
 		t.Logf("code samples not rendered within the time budget on %s; line-number check skipped", runtime.GOOS)
+	}
+
+	// page.js retagged Scalar's caption labels, so no <label> is left that
+	// neither names a form field nor wraps one — the markup DevTools reports
+	// as "No label associated with a form field".
+	for _, m := range labelEl.FindAllSubmatch(dom, -1) {
+		if bytes.Contains(m[1], []byte(" for=")) || labelableEl.Match(m[2]) {
+			continue
+		}
+
+		t.Errorf("<label> that labels no form field: %s", m[0])
+	}
+
+	if !serverCaption.Match(dom) {
+		t.Errorf("the server card's caption is not a retagged <span>:\n%.4000s", bodyOf(dom))
 	}
 
 	if v := consoleCSP.FindAllString(stderr.String(), -1); len(v) > 0 {
