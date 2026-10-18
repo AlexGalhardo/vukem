@@ -215,6 +215,61 @@ func TestFailedCommandsNeedAStore(t *testing.T) {
 	}
 }
 
+// queue:work and the failed-job commands run in their own process: with the
+// sync driver there is nothing to work, and the memory driver's jobs live
+// in the serving process. Both answer with a message naming the setting
+// instead of polling forever or printing an empty list.
+func TestQueueCommandsExplainInProcessDrivers(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		conn    string
+		cmd     func() Command
+		want    string
+		noStore bool
+	}{
+		{conn: "sync", cmd: queueWorkCommand, want: "QUEUE_CONNECTION=sync runs jobs during Dispatch"},
+		{conn: "sync", cmd: queueFailedCommand, want: "QUEUE_CONNECTION=sync", noStore: true},
+		{conn: "memory", cmd: queueFailedCommand, want: "QUEUE_CONNECTION=memory", noStore: true},
+		{
+			conn:    "memory",
+			cmd:     func() Command { return queueRetryCommand("queue:retry") },
+			want:    "QUEUE_CONNECTION=memory",
+			noStore: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.conn+" "+tt.cmd().Name(), func(t *testing.T) {
+			t.Parallel()
+
+			app := newTestApp(t, WithSource(testSource(map[string]string{"QUEUE_CONNECTION": tt.conn})))
+
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+
+			cmd := tt.cmd()
+			fs := flag.NewFlagSet(cmd.Name(), flag.ContinueOnError)
+			cmd.Flags(fs)
+
+			err := cmd.Run(ctx, app, []string{"all"})
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf(
+					"%s with QUEUE_CONNECTION=%s = %v, want an error containing %q",
+					cmd.Name(),
+					tt.conn,
+					err,
+					tt.want,
+				)
+			}
+
+			if tt.noStore && !errors.Is(err, ErrNoFailedStore) {
+				t.Errorf("error %v does not wrap ErrNoFailedStore", err)
+			}
+		})
+	}
+}
+
 // WithJobsFunc builds handlers from the app, so they reach its database,
 // clock and other services without globals.
 func TestWithJobsFuncReachesTheApp(t *testing.T) {

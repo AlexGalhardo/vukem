@@ -477,6 +477,10 @@ func queueWorkCommand() Command {
 				return err
 			}
 
+			if _, ok := q.Driver().(queue.Sync); ok {
+				return errSyncWork
+			}
+
 			o := queue.WorkOptions{
 				Queues:        cfg.QueueNames(),
 				Concurrency:   cfg.Concurrency,
@@ -499,18 +503,31 @@ func queueWorkCommand() Command {
 // do not keep failed jobs.
 var ErrNoFailedStore = errors.New("vukem: the queue driver does not keep failed jobs (use QUEUE_CONNECTION=database)")
 
+// errSyncWork stops queue:work on the sync driver, which would otherwise
+// poll an always-empty queue forever.
+var errSyncWork = errors.New("vukem: QUEUE_CONNECTION=sync runs jobs during Dispatch, " +
+	"so queue:work has nothing to process (use QUEUE_CONNECTION=database for a separate worker)")
+
 func failedStore(app *App) (queue.FailedStore, error) {
 	q, err := app.Queue()
 	if err != nil {
 		return nil, err
 	}
 
-	fs, ok := q.Driver().(queue.FailedStore)
-	if !ok {
+	switch d := q.Driver().(type) {
+	case queue.FailedStore:
+		return d, nil
+	case *queue.Memory:
+		// Its failed jobs live in the serving process; a command runs in
+		// its own process and would always print an empty list.
+		return nil, fmt.Errorf("vukem: the memory queue (QUEUE_CONNECTION=memory) keeps failed jobs "+
+			"inside the process that ran them, out of reach of this command: %w", ErrNoFailedStore)
+	case queue.Sync:
+		return nil, fmt.Errorf("vukem: QUEUE_CONNECTION=sync returns job errors to Dispatch "+
+			"and keeps no failed jobs: %w", ErrNoFailedStore)
+	default:
 		return nil, ErrNoFailedStore
 	}
-
-	return fs, nil
 }
 
 func queueFailedCommand() Command {

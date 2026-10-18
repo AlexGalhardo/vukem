@@ -329,6 +329,8 @@ vukem queue:work -sleep 5s
 
 Queues are **strict priority**: each time a worker looks for a job it tries the first queue, then the second, and so on. While `high` always has jobs, `default` waits.
 
+`queue:work` needs a driver another process can see (`database`, Redis). On `sync` it exits at once with `vukem: QUEUE_CONNECTION=sync runs jobs during Dispatch, so queue:work has nothing to process (use QUEUE_CONNECTION=database for a separate worker)` instead of polling an empty queue forever. On `memory` it starts but only sees jobs dispatched inside its own process.
+
 With `-once` or `-stop-when-empty`, a store error ends the command with that error, so a CI step or cron job cannot mistake a broken database for an empty queue. A long-running worker logs the error (`queue: reserve job`) and keeps polling.
 
 Leaving the in-serve worker on next to `queue:work` processes is safe: reservations are atomic, so it only adds workers (and their load) to the web process. On SQLite every worker shares the single writer connection, so keep `QUEUE_CONCURRENCY` low there.
@@ -366,7 +368,7 @@ ID        QUEUE    KIND          ATTEMPTS  FAILED AT             ERROR
 - `queue:retry` puts jobs back on their queue with attempts reset to 0, available now. It prints `2 failed job(s) re-queued`.
 - `queue:forget` deletes them and prints `2 failed job(s) deleted`.
 - Both need IDs or `all`; nothing else fails with `queue:retry needs job IDs or "all"`.
-- On `sync` and `memory` the commands fail with `vukem: the queue driver does not keep failed jobs (use QUEUE_CONNECTION=database)`.
+- On `sync` and `memory` the commands fail with an error that names the setting and wraps `vukem.ErrNoFailedStore`: `sync` keeps no failed jobs (the error goes back to `Dispatch`), and `memory` keeps them inside the serving process, out of reach of a command. A custom driver without `queue.FailedStore` fails with `vukem: the queue driver does not keep failed jobs (use QUEUE_CONNECTION=database)`.
 
 ## Time and clocks
 
