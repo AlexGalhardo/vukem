@@ -247,6 +247,7 @@ form, err := upload.Receive(c, disk, rules) // form.Values, form.Files[i].Path/N
 
 - `Receive` reads `r.MultipartReader()` part by part and streams each file to the `storage.Disk` (a 64 MiB upload allocates about 100 KiB). `Rules` bound the file size, the whole request (`MaxSize`, default `MaxFiles*MaxFileSize + 1 MiB`; it replaces the router-wide body limit for that route), the file count, and field count/size. Sizes fail with 413, types/extensions/count with 422; on any error every file already written is deleted.
 - Type checks: `http.DetectContentType` on the first 512 bytes must be in `Types`, and the client's extension must be one of those known for that type (`upload.Extensions("image/jpeg")` → `.jpg`, `.jpeg`), plus `Extensions` when set. The client's `Content-Type` is ignored. Stored names are random with the canonical extension; the sanitized client name (`upload.SanitizeName`) is metadata only.
+- **`Rules.Types` is only as strong as the detector, and says so.** Detection is `http.DetectContentType`, whose vocabulary is narrow: `image/avif`, `image/heic`, `image/heif`, `image/jxl` and `image/tiff` are **not** in it (measured on Go 1.27.2 — the detector answers `application/octet-stream` for all five). A rule naming one of them used to be accepted and then match nothing, so the application believed it accepted AVIF and accepted none. Those types are now an `upload.ErrUndetectableType` configuration error listing `upload.DetectableTypes()`. The escape hatch is explicit: `application/octet-stream` **is** detectable (it is what the detector says when it cannot tell), so a service handling AVIF or TIFF allows that and checks the type itself with a real sniffer. Doing it deliberately is the point; a rule that quietly matches nothing is not.
 - `upload.Save(ctx, disk, rules, field, filename, r)` applies the same checks to any reader (finished tus uploads, imports).
 - Scanning: with `Rules.Scanner`, files are written to `QuarantineDir/.<random>` (dot-named, so `storage.Handler` never serves them), scanned, then copied to `Dir` and the quarantined copy deleted. `ErrInfected` → deleted + 422; a scanner error → deleted + 503 (fail closed), with the scanner error kept as the `*errs.HTTPError` cause for the log. `upload.ClamAV(addr)` speaks clamd's `INSTREAM` over TCP with per-operation timeouts.
 - Nothing may read the body before `Receive`: `middleware.MethodOverride` leaves multipart bodies unread (multipart forms put `_method` in the query string) and handlers must not call `c.Input()`/`c.FormFile()` first.
@@ -277,6 +278,38 @@ app.OnShutdown(func(context.Context) error { return tus.Close() })
 Direct-to-storage uploads skip the app server: `upload.Presigner` (`PresignPut(ctx, key, contentType, maxSize, ttl)`) is an interface you implement for your storage provider; wrap `drivers/s3`'s `PresignPutWith(key, ttl, s3.PresignPutOptions{ContentType: contentType, ContentLength: maxSize})` and return `Content-Type` in `headers`, so the bucket enforces the type and size; plain `PresignPut(key, expires)` signs only the host. Despite its name, `Direct` passes the client's declared `size` (already checked against `Rules.MaxFileSize`) as `maxSize`, which is what a signed `Content-Length` needs: it is an exact size, so a wrapper that signed `Rules.MaxFileSize` would reject every smaller file with 403. The client must send exactly the size it declared. `upload.Direct(DirectConfig{Presigner, Rules, Authorize})` answers `POST {"filename","content_type","size"}` with `{"key","url","method":"PUT","headers","expires_at"}` after checking the declared type, extension and size, under a random key in `Rules.Dir` (TTL 15 minutes, at most 1 hour). The declared type cannot be trusted, so call `upload.Verify(ctx, disk, key, rules)` when the client reports the upload done: it sniffs the stored object and deletes it when it breaks the rules.
 
 The HTMX starter ships `resources/views/components/upload.html` (a `data-upload` form with a `<progress>`) and a `/uploads` demo page. `resources/js/app.ts` swaps htmx 4's `fetch` for `XMLHttpRequest` on those forms (`htmx:before:request`) to report upload progress; no inline scripts, so the CSP holds. The demo stores files under `UPLOADS_DIR` (default `storage/app/uploads`); `UPLOADS_DISK=memory` swaps in `storage.NewMemory` for tests (refused in production), so the generated `TestUploads` never writes to the filesystem: on Windows, antivirus filters briefly recreate just-deleted files, which can make `t.TempDir` cleanup fail with "directory is not empty". Use a memory disk the same way in your own upload tests. Validate files received through `c.Input()` with [`z.File()`](validation.md#schemas).
+
+## Archives
+
+```go
+entries, err := archive.Zip(readerAt, size, archive.Policy{
+	MaxEntries: 512, MaxTotalSize: 64 << 20, MaxEntrySize: 8 << 20,
+})
+// entries[i].Key is safe to use as an identifier; Open() is bounded by Size.
+```
+
+`archive.Zip` reads the central directory under a policy and returns entries whose names are already safe keys. Every application that accepts a user-supplied archive needs the same defences, and getting any one wrong is a vulnerability rather than a bug, so they are here:
+
+| Defence | What it does |
+| --- | --- |
+| entry count | `MaxEntries`, checked before anything is read |
+| declared size | `MaxEntrySize` and `MaxTotalSize`, read from the **central directory**, so a bomb is refused on its claim rather than by inflating it |
+| no paths | `Zip` takes no path of any kind and returns a key, so an entry name can never be an argument to a file operation (`TestSecurity_A01_ArchiveTakesNoPath` pins the signature) |
+| name length and shape | `MaxNameLength`, plus a refusal for control characters and direction-changing runes — the name does not reach a path, but it does reach the metadata and from there a consumer's asset loader |
+| key collisions | two entries resolving to one key are refused |
+| bounded reads | `Entry.Open` is held to the declared size, so the declared total bounds what the archive can ever yield |
+
+The collision one is the finding's own argument, and it is the one that **corrupts instead of failing**: `walk/frame.png` and `jump/frame.png` collapse to one key once the directory is dropped, so an app writes both frames under one name while its metadata describes one — every later frame off by one, a wrong result delivered as a correct one.
+
+An escaping raw name (`../../etc/passwd`, an absolute path, a drive letter) is refused before `Policy.Key` sees it. The default `Key` is `path.Base`, which would quietly turn that into the perfectly valid key `passwd`: safe to use, an archive that should never have been accepted, and nothing in the log to say so.
+
+What stays with the application is the per-entry content rule: what a frame may contain, how big an image may be, which types are acceptable. Errors (`ErrPolicy`, `ErrTooManyEntries`, `ErrTooLarge`, `ErrNameTooLong`, `ErrUnsafeName`, `ErrDuplicateKey`) never carry the raw entry name, which is attacker-controlled text a naive handler would put in a response body.
+
+## Media types an app produces
+
+`mediatype.Extension("image/avif")` → `.avif`, `mediatype.Label("image/avif")` → `AVIF image`, `mediatype.ByExtension(".avif")` → `image/avif`. This is the other direction from `upload.Extensions`: what to call a file the application **generated** and hands back as a download, independent of what any detector can recognise.
+
+It is deliberately **not** a set of types an application accepts, and it is built so it cannot be used as one — three lookups, no exported list, no iterator, no `Known` predicate, pinned by `TestNoExportedListToMistakeForAnInputAllowlist`. An input policy is per application and is often the only thing keeping a vulnerable decoder unreachable: an app may rely on "no tool here accepts XML input", and a shared list that grew a type would take that argument away with no edit to the app. Validate input with `upload.Rules` or a detector of your own.
 
 ## Exports
 
