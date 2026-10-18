@@ -392,7 +392,7 @@ posts, err := orm.QueryOf[models.Post](db).
 | `Exists(ctx)` | `bool` | |
 | `Pluck[V](ctx, col)` | `[]V` | One column of every row |
 | `Each(ctx)` | an iterator | Streams rows without loading them all |
-| `Chunk(ctx, size, fn)` | `error` | Calls `fn` with batches of `size` rows |
+| `Chunk(ctx, size, fn)` | `error` | Calls `fn` with batches of `size` rows, in primary key order |
 | `SQL()` | `(string, []any, error)` | The `SELECT` it would run, for debugging and tests |
 
 `orm.ErrNotFound` answers **404** when a handler returns it, so a show page needs no extra check:
@@ -437,7 +437,7 @@ for post, err := range orm.QueryOf[models.Post](db).Each(ctx) {
 }
 ```
 
-`Chunk` orders by primary key and pages with `LIMIT`/`OFFSET`; returning an error from `fn` stops it. Because it uses offsets, deleting rows of the same query inside `fn` makes it skip rows; use `Each` or `CursorPaginate` for that. `Each` does not eager load relations.
+`Chunk` walks the rows by primary key: each batch is `WHERE id > <last id> ORDER BY id LIMIT size`, so `fn` may delete or update the rows it receives and no row is skipped. Returning an error from `fn` stops it. The key order is fixed, so a query with its own `OrderBy`, `Limit` or `Offset`, or a `Select` without the primary key, fails with `orm: Chunk orders and pages by the primary key; remove OrderBy, Limit and Offset` or `orm: Chunk needs id in the selected columns`; use `Each` with `OrderBy` to stream in another order. `Each` does not eager load relations.
 
 `SQL()` shows exactly what will run:
 
@@ -458,7 +458,7 @@ ORDER BY "id" DESC LIMIT 10
 
 ## Pagination
 
-`Paginate(ctx, page, perPage)` returns one page and the total count. `page` is 1-based; values below 1 become 1.
+`Paginate(ctx, page, perPage)` returns one page and the total count. `page` is 1-based; values below 1 become 1. `perPage` is clamped to 1..`orm.DefaultMaxPerPage` (100), and the page reports the value it used.
 
 ```go
 page, err := orm.QueryOf[models.Post](db).
@@ -486,9 +486,16 @@ page, err := orm.QueryOf[models.Post](db).
 
 [Pagination](/docs/rest-apis/pagination) shows both in an API with links.
 
-<Callout type="warning" title="Cap perPage yourself">
-Neither method limits `perPage`. If you read it from the query string, clamp it (`min(perPage, 100)`), or one request for a million rows can exhaust the server's memory.
-</Callout>
+Both methods cap `perPage` at `orm.DefaultMaxPerPage` (100), so a `?per_page=1000000` read from the query string cannot load a whole table. A page that really needs more rows raises the bound for that query with `MaxPerPage`:
+
+```go
+page, err := orm.QueryOf[models.Post](db).
+	MaxPerPage(500).
+	Paginate(ctx, 1, c.QueryInt("per_page", 50))
+// per_page above 500 is lowered to 500
+```
+
+`MaxPerPage(0)` or below is a query error. `api.Query` raises the bound to its own `api.PerPage` maximum for you.
 
 ## Bulk updates and deletes
 
@@ -711,13 +718,13 @@ if err != nil {
 | Modifier | What it does |
 | --- | --- |
 | `.Ignore(id)` | Skips the row with that primary key: an update keeps its own email |
-| `.Field(name)` | Reports the error under `name` instead of the column |
+| `.Field(name)` | Reports the error under `name` instead of the column, and names it in the built-in message |
 | `.Message(msg)` | Replaces the message; it is used as is, never translated |
 
 - Empty values (`nil`, `""`, zero numbers, nil or zero pointers) are skipped: required-ness belongs to the schema.
 - Every rule runs, and all failures come back together in one `*errs.ValidationError`. A database error stops at once and is returned as is.
 - The column is validated against the model, so input never chooses a column.
-- The built-in messages are `The email has already been taken.` and `The selected id is invalid.`. They follow the request locale through the keys `validation.unique` and `validation.exists`, with the column name translated by `validation.attributes.<column>`; see [Localization](/docs/digging-deeper/localization).
+- The built-in messages are `The email has already been taken.` and `The selected id is invalid.`, naming the field: the column, or the `.Field` name when set (`Exists[models.Tag]("id", in.TagID).Field("tag_id")` fails with `The selected tag_id is invalid.`). They follow the request locale through the keys `validation.unique` and `validation.exists`, with the field name translated by `validation.attributes.<field>`; see [Localization](/docs/digging-deeper/localization).
 
 A JSON client receives a 422 [problem details](https://www.rfc-editor.org/rfc/rfc9457) body:
 
@@ -741,7 +748,7 @@ A JSON client receives a 422 [problem details](https://www.rfc-editor.org/rfc/rf
 - **`WhereRaw` is the only door for raw SQL in the builder.** It checks placeholder counts and unterminated fragments, but it cannot tell whether you concatenated input into the fragment. Never do.
 - **Mass assignment.** Do not decode a request body straight into a model: a client could send `"user_id"` or `"views"`. Parse into a request struct with `z`, then copy the fields you allow.
 - **Encrypted columns fail closed** and are bound to their table and column.
-- **`perPage` is unbounded**: clamp it.
+- **`perPage` is capped** at 100 by default (`MaxPerPage` changes it per query), so one request cannot load a whole table.
 - **Sequential ids** reveal how many rows exist; expose a `uuid.NewV7()` instead when that matters.
 
 ## Testing

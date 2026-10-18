@@ -238,7 +238,7 @@ t.ForeignID("post_id").Constrained().CascadeOnDelete()
 // FOREIGN KEY (post_id) REFERENCES posts (id) ON DELETE CASCADE
 ```
 
-- Without an argument, `Constrained()` guesses the table by removing `_id` and appending `s`: `post_id` → `posts`, `user_id` → `users`. It does not know irregular plurals, so `category_id` would point to `categorys`: write `Constrained("categories")`.
+- Without an argument, `Constrained()` takes the column name without `_id` and pluralises it the way the ORM names model tables: `post_id` → `posts`, `category_id` → `categories`, `address_id` → `addresses`. When the table has another name, pass it: `Constrained("people")`.
 - An `ON DELETE` action before `Constrained()` fails: `schema: post_id: call Constrained() before an ON DELETE action`.
 - SQLite enforces foreign keys because Vukem turns on `PRAGMA foreign_keys` for every connection.
 
@@ -349,7 +349,16 @@ Up: func(s *schema.Schema) error {
 },
 ```
 
-`s.Raw` sends the statement exactly as written and does not rewrite placeholders: `?` arguments work on SQLite and MySQL, PostgreSQL needs `$1`. For a migration that must run on every dialect, use constant SQL as above or branch on `s.Dialect()`. Only the statement text goes into the checksum, not the arguments.
+With arguments, write `?` placeholders: `s.Raw` rewrites them for the dialect (`$1`, `$2` on PostgreSQL) with `database.RebindChecked`, so the same data migration runs on SQLite, MySQL and PostgreSQL:
+
+```go
+Up: func(s *schema.Schema) error {
+	return s.Raw("UPDATE posts SET status = ? WHERE status = ?",
+		"draft", "")
+},
+```
+
+A statement that mixes `?` with `$1`, or ends inside a string literal, fails with `database: query mixes ? placeholders with $n parameters` or `database: query ends inside an unterminated literal, identifier or comment`. Without arguments the statement runs exactly as written, so PostgreSQL's jsonb `?` operator in DDL keeps working. Only the statement text, as written, goes into the checksum, not the arguments.
 
 ## Running migrations
 
@@ -492,8 +501,6 @@ t.ForeignID("post_id").CascadeOnDelete().Constrained()
 // Right
 t.ForeignID("post_id").Constrained().CascadeOnDelete()
 ```
-
-**Relying on `Constrained()` for irregular plurals.** `t.ForeignID("category_id").Constrained()` references `categorys`; pass `Constrained("categories")`.
 
 **A `Down` that does not undo `Up`.** `rollback` then leaves the schema in a state no migration describes. Test `Reset` followed by `Up`, as above.
 
