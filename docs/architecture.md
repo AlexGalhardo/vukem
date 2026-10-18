@@ -194,6 +194,19 @@ Three middleware stacks (AdonisJS model): **server**, **router**, **named**. All
 - Work that must outlive the request uses `context.WithoutCancel` and is tracked by the app so shutdown can drain it.
 - The `http.Server` always sets `ReadHeaderTimeout`, `ReadTimeout`, `WriteTimeout`, `IdleTimeout`.
 
+### Sizing work to the container's CPU quota
+
+Go 1.25 and later derive `GOMAXPROCS` from the cgroup CPU quota, so a Go worker pool scaled from `runtime.GOMAXPROCS(0)` is already right in a container. It is the **wrong** number for a pool outside the Go runtime — ffmpeg's `-threads`, SVT-AV1's `lp`, `VIPS_CONCURRENCY` — because it rounds the quota up and never drops below 2. Measured on Go 1.27.2 under Docker on a 16-core host:
+
+| `--cpus` | `GOMAXPROCS` | `cpu.Limit()` | `cpu.Count()` |
+| --- | --- | --- | --- |
+| 0.5 | 2 | 0.5 | 1 |
+| 1.5 | 2 | 1.5 | 1 |
+| 2 | 2 | 2 | 2 |
+| 4.5 | 5 | 4.5 | 4 |
+
+`cpu.Count()` is the quota rounded **down**, at least 1, or `runtime.NumCPU()` when there is no quota; `cpu.Limit()` gives the fraction. Rounding down is deliberate: a thread past the quota is throttled rather than faster, and it still counts against `RLIMIT_NPROC` — an encoder that cannot start its threads can exit having written nothing, with a message naming no cause. Only Linux has cgroups; elsewhere `Limit` reports no quota and `Count` falls back to the machine's CPUs.
+
 ## Error model
 
 See [http.md](http.md#errors). Summary: handlers return `error`; sentinel errors for conditions, typed errors for data; `errors.Is`/`errors.AsType`; the central handler negotiates the response format.
