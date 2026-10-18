@@ -293,7 +293,7 @@ func All() []events.Registration { return []events.Registration{events.OnAsync(N
 err := app.Events.Dispatch(ctx, events.OrderShipped{OrderID: 42})
 ```
 
-- Typed by generics: `events.On(fn)` infers the event type from the function. Synchronous listeners run in registration order and the first error stops the chain and is returned; async ones (`OnAsync`) run on a bounded pool with a context detached from the request, log their errors and panics, and are drained by `app.Shutdown`.
+- Typed by generics: `events.On(fn)` infers the event type from the function. Synchronous listeners run in registration order and the first error stops the chain and is returned (a panic is recovered, logged as `listener panicked` and returned as an error); listeners are named by their function (`listeners.SendWelcome`) or, when queued, their job kind; async ones (`OnAsync`) run on a bounded pool with a context detached from the request, log their errors and panics, and are drained by `app.Shutdown`.
 - Tests: `events.NewFake()` records dispatches; `events.Dispatched[OrderShipped](fake)`.
 - Queued listeners: `events.OnQueued("kind", fn)` enqueues the event and runs `fn` in a queue worker (see [Queue](#queue)).
 

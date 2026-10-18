@@ -176,7 +176,9 @@ An event with no listeners is fine: `Dispatch` returns `nil`. Keep events small 
 
 So order matters when you mix kinds: an async listener registered **before** a failing synchronous one has already started; one registered **after** it never starts.
 
-A panic in a synchronous listener is not recovered by the bus: it travels up to the caller like any Go [panic](https://go.dev/blog/defer-panic-and-recover). In an HTTP handler the recovery middleware turns it into a 500 response.
+A [panic](https://go.dev/blog/defer-panic-and-recover) in a synchronous listener is recovered by the bus: it is logged at `ERROR` as `listener panicked` (with the event type, the listener name and the panic value) and `Dispatch` returns it as `events: <event type> listener <name>: panic: <value>`. Later listeners do not run, as with any error. A panic therefore never crashes a queue worker or a command that dispatches.
+
+A listener's `<name>` is its package-qualified function name, such as `listeners.NotifyCustomer` or `listeners.(*Mailer).Send`; a closure reads like `routes.Register.func1`. A queued listener is named by its job kind.
 
 After `app.Shutdown` began, `Dispatch` returns `events.ErrClosed` without running anything.
 
@@ -353,12 +355,8 @@ app.Events.Dispatch(ctx, events.OrderShipped{OrderID: 42})
 **Ignoring the error of Dispatch.** A failing synchronous listener stops the chain, and the error is the only sign:
 
 ```text
-events: events.OrderShipped listener
-func(context.Context, events.OrderShipped) error:
-stock row missing
+events: events.OrderShipped listener listeners.NotifyCustomer: stock row missing
 ```
-
-The real message is one line; it is wrapped here to fit. The "name" of a listener is its Go function type, not its function name.
 
 **Async for work that must happen.** An email sent from `OnAsync` is lost when the deploy restarts the server mid-send. Use `OnQueued`, which retries and survives restarts with a persistent queue.
 
