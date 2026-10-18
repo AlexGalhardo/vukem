@@ -164,7 +164,7 @@ MAIL_MAILER=mailtrap
 APP_KEY=@file:/run/secrets/app_key
 ```
 
-The `@file:` prefix reads the value from a file and trims the trailing newline. It works for values written in `.env` files only: a process environment variable set to `@file:...` is used as the literal text.
+The `@file:` prefix reads the value from a file and trims the trailing newline. It works in `.env` files and in the process environment alike, so `docker run -e APP_KEY=@file:/run/secrets/app_key` or a Kubernetes secret volume works without a `.env` file. Only a regular file of at most 1 MiB is read; a missing file, a directory or a device stops the boot with `config: read APP_KEY: ...`.
 
 | Variable | Default | What it does |
 | --- | --- | --- |
@@ -346,7 +346,7 @@ APP_ENV=production ./bin/app
 
 **The deploy kills requests mid-flight.** The process manager's stop timeout is shorter than the drain. Raise it above twice `SHUTDOWN_TIMEOUT` plus 3 seconds.
 
-**A secret file path shows up as the value.** `APP_KEY=@file:...` set in the process environment is not resolved; the boot fails with `config: APP_KEY is not valid base64`. Put the `@file:` line in a `.env` file, or export the key itself.
+**The boot fails with `config: read APP_KEY`.** The file an `@file:` reference names is missing or unreadable in the container: check the secret mount path and that the process user can read it.
 
 ## Next steps
 

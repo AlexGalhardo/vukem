@@ -1127,3 +1127,44 @@ func TestWithInertiaErrorPageOrder(t *testing.T) {
 		t.Error("the app's own ErrorPage hook was replaced")
 	}
 }
+
+// Docker/Kubernetes secrets: APP_KEY=@file:<path> in the process
+// environment is read from the file; a path that is not a regular file
+// (a directory, a device) stops the boot.
+func TestSecurity_A02_ProcessEnvFileSecrets(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	secret := filepath.Join(dir, "app_key")
+
+	if err := os.WriteFile(secret, []byte(testKey+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	boot := func(keyRef string) (*App, error) {
+		getenv := func(k string) (string, bool) {
+			v, ok := map[string]string{"APP_KEY": keyRef, "APP_ENV": "production"}[k]
+			return v, ok
+		}
+
+		return New(WithEnv(emptyFS{}, getenv), WithLogOutput(io.Discard))
+	}
+
+	app, err := boot("@file:" + secret)
+	if err != nil {
+		t.Fatalf("New(APP_KEY=@file:<secret>) = %v, want the key read from the file", err)
+	}
+
+	if app.Key.IsZero() {
+		t.Error("APP_KEY not loaded from the file")
+	}
+
+	for name, ref := range map[string]string{
+		"directory": "@file:" + dir,
+		"missing":   "@file:" + filepath.Join(dir, "nope"),
+	} {
+		if _, err := boot(ref); err == nil || !strings.Contains(err.Error(), "APP_KEY") {
+			t.Errorf("New(APP_KEY=%s) = %v, want an APP_KEY error", name, err)
+		}
+	}
+}

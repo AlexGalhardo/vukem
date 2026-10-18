@@ -16,6 +16,18 @@ type Lookuper interface {
 	Lookup(key string) (string, bool)
 }
 
+// lookup reads key from src, with the error of an unreadable "@file:"
+// process variable when src is a *Source.
+func lookup(src Lookuper, key string) (string, bool, error) {
+	if s, ok := src.(*Source); ok {
+		return s.lookupErr(key)
+	}
+
+	v, ok := src.Lookup(key)
+
+	return v, ok, nil
+}
+
 // Load returns a T filled from src. See [Fill].
 func Load[T any](src Lookuper) (T, error) {
 	var v T
@@ -71,7 +83,12 @@ func fillStruct(v reflect.Value, src Lookuper, errs *[]error) {
 			continue
 		}
 
-		raw, ok := src.Lookup(key)
+		raw, ok, err := lookup(src, key)
+		if err != nil {
+			*errs = append(*errs, err)
+			continue
+		}
+
 		if !ok || raw == "" {
 			def, hasDef := f.Tag.Lookup("default")
 			if !hasDef {

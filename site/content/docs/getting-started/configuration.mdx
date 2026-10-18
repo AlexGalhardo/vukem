@@ -132,7 +132,7 @@ DB_PASSWORD=@file:/run/secrets/db
 | `${OTHER}` or `$OTHER` | The value of `OTHER`, from the environment or the files. An unknown name becomes an empty string; `\$` is a literal `$` |
 | `"…"` | Double quotes: `\n` escapes work, and the value may continue on the next lines |
 | `'…'` | Single quotes: the text is literal, nothing is expanded |
-| `@file:/path` | The contents of that file, without the trailing newline. The `@` keeps SQLite DSNs such as `file:storage/app.db` untouched |
+| `@file:/path` | The contents of that file, without the trailing newline; also works for a process environment variable (`APP_KEY=@file:/run/secrets/app_key`). The file must be a regular file of at most 1 MiB; an unreadable one stops the boot. The `@` keeps SQLite DSNs such as `file:storage/app.db` untouched |
 
 A line with an invalid key stops the boot with the file and line number, for example `config: .env: line 3: invalid key "1BAD"`.
 

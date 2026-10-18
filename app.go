@@ -254,6 +254,29 @@ type App struct {
 	shutdown bool
 }
 
+// readConfigFile reads the file an "@file:" configuration value names
+// (Docker/Kubernetes secrets). Only regular files are read, and at most
+// one byte past config's 1 MiB cap, so a reference to a device or FIFO
+// (/dev/zero, /dev/stdin) cannot block or exhaust memory at boot.
+func readConfigFile(name string) ([]byte, error) {
+	f, err := os.Open(name) //nolint:gosec // G304: the path comes from the operator's own configuration
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", name)
+	}
+
+	return io.ReadAll(io.LimitReader(f, 1<<20+1))
+}
+
 // Option configures New.
 type Option func(*options) error
 
@@ -468,7 +491,7 @@ func New(opts ...Option) (*App, error) {
 
 		readFile := o.readFile
 		if readFile == nil {
-			readFile = os.ReadFile
+			readFile = readConfigFile
 		}
 
 		var err error

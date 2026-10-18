@@ -165,3 +165,88 @@ func TestMapSource(t *testing.T) {
 		t.Errorf("Keys() mismatch (-want +got):\n%s", diff)
 	}
 }
+
+// Docker and Kubernetes pass secrets as files: a process variable set to
+// "@file:<path>" is read like a .env value.
+func TestLoadSourceResolvesFileRefsInProcessEnv(t *testing.T) {
+	t.Parallel()
+
+	fsys := fstest.MapFS{".env": {Data: []byte("PASS=from-dotenv\n")}}
+
+	var reads int
+
+	readFile := func(name string) ([]byte, error) {
+		reads++
+
+		if name == "/run/secrets/db" {
+			return []byte("s3cret\r\n"), nil
+		}
+
+		return nil, fs.ErrNotExist
+	}
+
+	getenv := fakeEnv(map[string]string{"PASS": "@file:/run/secrets/db", "ONLY_ENV": "@file:/run/secrets/db"})
+
+	src, err := LoadSource(fsys, getenv, readFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, key := range []string{"PASS", "ONLY_ENV", "ONLY_ENV"} {
+		if got, ok := src.Lookup(key); !ok || got != "s3cret" {
+			t.Errorf("Lookup(%q) = %q, %v, want \"s3cret\", true", key, got, ok)
+		}
+	}
+
+	if reads != 2 {
+		t.Errorf("readFile called %d times, want 2 (once per key)", reads)
+	}
+}
+
+// A process secret that cannot be read must stop the app, not fall back
+// to a default or an empty value.
+func TestSecurity_A02_ProcessEnvFileRefFailsClosed(t *testing.T) {
+	t.Parallel()
+
+	type cfg struct {
+		Pass Secret `env:"DB_PASS" default:"fallback"`
+	}
+
+	tests := map[string]struct {
+		value    string
+		readFile func(string) ([]byte, error)
+		want     string
+	}{
+		"missing file": {
+			value:    "@file:/run/secrets/nope",
+			readFile: func(string) ([]byte, error) { return nil, fs.ErrNotExist },
+			want:     "DB_PASS",
+		},
+		"references disabled": {value: "@file:/run/secrets/db", want: "file references are disabled"},
+		"empty path": {
+			value:    "@file:",
+			readFile: func(string) ([]byte, error) { return []byte("x"), nil },
+			want:     "empty path",
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			src, err := LoadSource(fstest.MapFS{}, fakeEnv(map[string]string{"DB_PASS": tt.value}), tt.readFile)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			got, err := Load[cfg](src)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("Load() = %+v, %v, want an error containing %q", got, err, tt.want)
+			}
+
+			if v, _ := src.Lookup("DB_PASS"); v != "" {
+				t.Errorf("Lookup(DB_PASS) = %q, want \"\" (never the reference or a default)", v)
+			}
+		})
+	}
+}
