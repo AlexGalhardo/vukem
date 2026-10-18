@@ -517,7 +517,9 @@ func apiTokenFor(t *testing.T, app *vukemtest.App, email string) string {
 		t.Fatal(err)
 	}
 
-	if _, _, err := acc.Tokens.Create(t.Context(), u.AuthID(), "cli", []string{"*"}, time.Hour); err != nil {
+	// No abilities: the test only needs the key to exist, and a key never
+	// carries authority nobody asked for.
+	if _, _, err := acc.Tokens.Create(t.Context(), u.AuthID(), "cli", nil, time.Hour); err != nil {
 		t.Fatal(err)
 	}
 

@@ -5,6 +5,7 @@ import (
 
 	"github.com/AlexGalhardo/vukem/vukemtest"
 
+	"{{.Module}}/app/controllers/apiv1"
 	"{{.Module}}/bootstrap"
 )
 
@@ -12,7 +13,7 @@ func TestPostsAPI(t *testing.T) {
 	t.Parallel()
 
 	app := vukemtest.New(t, bootstrap.New)
-	token := apiUser(t, app, "writer@example.com")
+	token := apiToken(t, app, "writer@example.com", apiv1.AbilityWrite)
 	writer := app.Client(t).WithToken(token)
 
 	writer.PostJSON("/api/v1/posts", map[string]any{"title": "Hello API", "body": "First."}).
@@ -33,8 +34,11 @@ func TestPostsAPI(t *testing.T) {
 	reader.GetJSON("/api/v1/posts?sort=password").AssertStatus(400)
 	reader.GetJSON("/api/v1/posts/99").AssertProblem(404)
 
-	// Writes need a token.
+	// Writes need a token, and a token that was granted AbilityWrite.
 	reader.PostJSON("/api/v1/posts", map[string]any{"title": "Nope"}).AssertUnauthorized()
+
+	readOnly := app.Client(t).WithToken(apiToken(t, app, "reader@example.com", apiv1.AbilityRead))
+	readOnly.PostJSON("/api/v1/posts", map[string]any{"title": "Nope"}).AssertForbidden()
 
 	writer.PatchJSON("/api/v1/posts/1", map[string]any{"title": "Edited"}).AssertOK().AssertJSONPath("title", "Edited")
 	writer.Delete("/api/v1/posts/1").AssertNoContent()

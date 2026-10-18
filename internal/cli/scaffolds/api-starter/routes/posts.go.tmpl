@@ -30,7 +30,9 @@ func Posts(r *router.Router, app *vukem.App) error {
 		g.Get("/posts/{post}", posts.Show).Name("posts.show")
 
 		g.Group("", func(w *router.Group) {
-			w.Use(auth.Required(acc.API))
+			// A token writes only when it was issued with AbilityWrite
+			// (app/controllers/apiv1/abilities.go).
+			w.Use(auth.Required(acc.API), auth.Ability(acc.API, apiv1.AbilityWrite))
 			w.Post("/posts", posts.Store).Name("posts.store")
 			w.Patch("/posts/{post}", posts.Update).Name("posts.update")
 			w.Delete("/posts/{post}", posts.Destroy).Name("posts.destroy")
