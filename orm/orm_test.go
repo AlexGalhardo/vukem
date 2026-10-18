@@ -707,3 +707,41 @@ func FuzzWhereColumn(f *testing.F) {
 		}
 	})
 }
+
+// Chunk walks by primary key (keyset), so a callback that deletes or
+// updates the rows it was given does not make it skip the next ones.
+func TestChunkSurvivesDeletesInCallback(t *testing.T) {
+	t.Parallel()
+
+	db, ctx := setup(t)
+	seedUsers(ctx, t, db)
+
+	var seen []string
+	err := QueryOf[User](db).Where("age", ">", 0).Chunk(ctx, 2, func(us []User) error {
+		for i := range us {
+			seen = append(seen, us[i].Name)
+			if err := Delete(ctx, db, &us[i]); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if diff := cmp.Diff([]string{"Ana", "Bob", "Cid", "Dea"}, seen); diff != "" {
+		t.Fatalf("Chunk visited (-want +got):\n%s", diff)
+	}
+
+	if err := QueryOf[User](db).OrderBy("name", Asc).Chunk(ctx, 2, func([]User) error { return nil }); err == nil {
+		t.Fatal("Chunk with a custom OrderBy = nil, want error")
+	}
+
+	seedUsers(ctx, t, db)
+
+	err = QueryOf[User](db).Select("name").Chunk(ctx, 2, func([]User) error { return nil })
+	if err == nil {
+		t.Fatal("Chunk without the primary key selected = nil, want error")
+	}
+}

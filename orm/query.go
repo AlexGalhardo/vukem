@@ -729,20 +729,40 @@ func (q Query[T]) Pluck[V any](ctx context.Context, colName string) ([]V, error)
 }
 
 // Chunk processes rows in batches of size ordered by primary key; fn may
-// stop early by returning an error.
+// stop early by returning an error. Batches are read by keyset (primary
+// key greater than the last one seen), not OFFSET, so fn may delete or
+// update the rows it receives without making Chunk skip rows. The query
+// must not have its own OrderBy, Limit or Offset.
 func (q Query[T]) Chunk(ctx context.Context, size int, fn func([]T) error) error {
 	if size <= 0 {
 		return errors.New("orm: chunk size must be positive")
 	}
 
-	for page := 0; ; page++ {
-		batch, err := q.OrderBy(q.m.pk, Asc).Limit(size).Offset(page * size).Get(ctx)
+	if len(q.orders) > 0 || q.limit >= 0 || q.offset > 0 {
+		return errors.New("orm: Chunk orders and pages by the primary key; remove OrderBy, Limit and Offset")
+	}
+
+	pkIndex := q.m.byColumn[q.m.pk].index
+	next := q
+
+	for {
+		batch, err := next.OrderBy(q.m.pk, Asc).Limit(size).Get(ctx)
 		if err != nil {
 			return err
 		}
 
 		if len(batch) == 0 {
 			return nil
+		}
+
+		if len(batch) == size {
+			last := reflect.ValueOf(&batch[size-1]).Elem().FieldByIndex(pkIndex)
+			if last.IsZero() {
+				// A Select without the key would read the same batch forever.
+				return fmt.Errorf("orm: Chunk needs %s in the selected columns", q.m.pk)
+			}
+
+			next = q.Where(q.m.pk, ">", last.Interface())
 		}
 
 		if err := fn(batch); err != nil {
