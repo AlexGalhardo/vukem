@@ -134,13 +134,13 @@ type ValidationError struct { Fields map[string][]string }
 - `errs.NewKey(status, key, fallback, params)` gives an `*HTTPError` a message key: the error handler shows `HTTPError.LocalizedText(ctx)`, translated by the request's `errs.Translator` (installed by `i18n.Middleware`, see [i18n](subsystems.md#i18n)), with `Message` as the English fallback. `errs.Translate(ctx, key, fallback, params)` does the same for any message built with a context.
 - `NewValidation().Add(field, msg)` returns the `*ValidationError` for chaining (`return errs.NewValidation().Add(...)`); `Append(field, msg)` has no result, for statements that errcheck would otherwise flag.
 
-- Handlers return errors; `errs.Handler` maps them:
+- Handlers return errors; `web.DefaultErrorHandler` (or `Services.Errors`, a `web.ErrorHandler`, when set) maps them:
   - `*ValidationError` → see the validation table above.
   - `*HTTPError` / sentinels → status page (`resources/views/errors/<status>.html`, which receives `.Nonce` for a nonce'd `<style>`) or problem+json. The built-in status pages have no inline style attributes and nonce their `<style>`, so they render under the default CSP.
-  - `orm.ErrNoRows` → 404.
+  - `orm.ErrNotFound` (an `*errs.HTTPError`, returned by `First`/`Find` for no row) → 404.
   - anything else → 500, logged with request id; debug page in development.
 - Content negotiation: `Accept: application/json` or `/api` routes → RFC 9457 problem details; HTMX → fragment/status; `Services.ErrorPage` (a `web.ErrorPageFunc` taking a client-safe `web.ErrorPage{Status, Title, Detail, Errors}`; Inertia requests with `vukem.WithInertia`: the `Error` page component); otherwise HTML.
-- Custom renderers per error type: `h.Render[*MyErr](func(c *Ctx, e *MyErr) error {...})`.
+- Custom handling per error type: set `Services.Errors` to a `web.ErrorHandler`, match your types with `errors.AsType[*MyErr](err)`, and call `web.DefaultErrorHandler(c, err)` for the rest.
 - Panics are recovered by `middleware.Recover` and converted to 500.
 
 ### Debug error page
