@@ -376,10 +376,11 @@ Every generator takes `--force` (overwrite an existing file) and exactly one nam
 
 ### Rules every generator follows
 
-- **No silent overwrite.** An existing file fails with `<path> already exists (use --force to overwrite)`.
+- **No silent overwrite.** An existing file fails with `<path> already exists (use --force to overwrite)`. Generators that write several files (`make:model -m -f -c`) check them all first, so a clash writes nothing.
 - **Optional suffixes.** A conventional suffix is stripped from the name: `PostController`, `BillingProvider`, `SendReportsCommand`, `PostSeeder`, `PostPolicy`, `WelcomeMail`, `PostPublishedEvent`, `NotifyListener`, `SendDigestJob`, `PostResource`, `PostFactory`, `PostsTest` and `BlogService` (for `make:proto`) all work.
 - **Needs `go.mod`.** Generators read the module path from `go.mod`; outside a project you get `no go.mod here: run vukem inside a project`.
 - **Registration edits the syntax tree.** The CLI parses the registry file with Go's [`go/parser`](https://pkg.go.dev/go/parser), finds the slice the function returns, appends the new entry and its import, and formats the file. Running it twice registers once.
+- **Missing policies registry.** Starters ship no `app/policies/registry.go`; the first `make:policy` creates it with an empty `All()`. The policy takes `*models.User`: without one (no `install:auth` yet), the CLI prints a note.
 - **Manual fallback.** If you restructured the file (or it does not exist), the file is still created and the CLI prints the line to add:
 
 ```text
@@ -469,7 +470,7 @@ A listener's registration depends on its flag:
 | `... --async` | `events.OnAsync(NotifyFollowers)` |
 | `... --queued` | `events.OnQueued("notify_followers", NotifyFollowers)` |
 
-`--async` and `--queued` together fail with `usage error: --async and --queued are exclusive`. See [Events](/docs/digging-deeper/events).
+`--async` and `--queued` together fail with `usage error: --async and --queued are exclusive`, before any file is written. See [Events](/docs/digging-deeper/events).
 
 `make:job` registers `queue.Handle(HandleSendDigest(app))` when `app/jobs/registry.go` declares `func All(app *vukem.App)`, so the handler can use your app's services; older registries get `queue.Handle(HandleSendDigest)`. See [Queues](/docs/digging-deeper/queue).
 
