@@ -1,57 +1,448 @@
 ---
 title: Client generation
-description: Generate a dependency-free TypeScript client or a stdlib-only Go client from the OpenAPI document of your typed handlers.
+description: Generate a dependency-free TypeScript client or a stdlib-only Go client from the OpenAPI document of your typed handlers, with one typed method per operation.
 ---
 
-`vukem codegen:client` turns the [OpenAPI document](/docs/rest-apis/openapi) of the [typed routes](/docs/rest-apis/typed-handlers) into a typed client. It boots the app in warmup mode, so no database or other connection is opened.
+Calling an API by hand means typing URLs, remembering which fields a body takes and parsing errors yourself — and every typo is found at run time. A **generated client** turns each operation of your API into a typed function: `api.tasksStore({ body: { title: "Buy milk" } })` in TypeScript, `c.TasksStore(ctx, body)` in Go. The compiler then checks every call against the server's real contract.
+
+`vukem codegen:client` writes that client from the [OpenAPI document](/docs/rest-apis/openapi) of your [typed handlers](/docs/rest-apis/typed-handlers). The TypeScript client has no dependencies; the Go client uses only the standard library.
+
+You will learn:
+
+- How to generate a TypeScript or Go client, and where the files go.
+- What each generated method looks like, and how its arguments map to path, query and body.
+- How errors arrive as `ApiError` (TypeScript) or `*Error` (Go), with the problem details parsed.
+- How to keep the client in sync with the server in CI.
+
+## The idea
+
+A generated client is a **phrasebook** for your API. Instead of building sentences word by word in a foreign language (raw HTTP), you pick the phrase you need and fill in the blanks ("I would like to create a task called ___"). The phrasebook is printed from the API itself, so every phrase is one the server understands.
+
+It works in three steps:
+
+1. Your typed routes describe their inputs and outputs (`api.Register`).
+2. Vukem builds the OpenAPI document from them (`app.OpenAPI()`).
+3. `codegen:client` turns every operation with an `operationId` into one method.
+
+The running example is the task list API of the [REST APIs overview](/docs/rest-apis/overview); its Go client lives in [`examples/api/internal/apiclient`](https://github.com/AlexGalhardo/vukem/tree/main/examples/api/internal/apiclient).
+
+## Quick start
+
+<Steps>
+<Step title="Name your operations">
+
+Only operations with a name get a method. The name becomes the method name in camelCase (TypeScript) or PascalCase (Go):
+
+```go title="routes/tasks.go"
+api.Register(g, "POST /tasks", api.Op{
+	Name:    "tasks.store",
+	Summary: "Create a task",
+}, tasks.Store)
+```
+
+</Step>
+<Step title="Generate the client">
+
+<CodeGroup>
+
+```bash title="TypeScript"
+vukem codegen:client
+# writes resources/js/api.ts
+```
+
+```bash title="Go"
+vukem codegen:client -lang go
+# writes internal/apiclient/client.go
+```
+
+</CodeGroup>
+
+</Step>
+<Step title="Call the API">
+
+<CodeGroup>
+
+```ts title="resources/js/tasks.ts"
+import { createClient } from "./api";
+
+const api = createClient({
+  headers: () => ({ Authorization: `Bearer ${token}` }),
+});
+
+const task = await api.tasksStore({ body: { title: "Buy milk" } });
+console.log(task.id, task.status);
+```
+
+```go title="cmd/cli/main.go"
+c := apiclient.New("https://tasks.example.com")
+c.Header = func(r *http.Request) {
+	r.Header.Set("Authorization", "Bearer "+token)
+}
+
+task, err := c.TasksStore(ctx, apiclient.TasksStoreBody{
+	Title: "Buy milk",
+})
+if err != nil {
+	return err
+}
+
+fmt.Println(task.ID, task.Status)
+```
+
+</CodeGroup>
+
+</Step>
+<Step title="Commit the output">
+
+Generated files are source code: commit them, and run the command again after changing routes.
+
+</Step>
+</Steps>
+
+## The command
 
 ```bash
-vukem codegen:client                               # TypeScript → resources/js/api.ts
-vukem codegen:client -lang go -package apiclient   # Go → internal/apiclient/client.go
-vukem codegen:client -lang go -o -                 # print to stdout
+vukem codegen:client [-lang ts|go] [-o file] [-package name]
 ```
 
-Regenerate after changing routes and commit the output. Only operations with a name (`api.Op{Name: "products.store"}`) get a method.
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `-lang` | `ts` | `ts` for TypeScript, `go` for Go; anything else fails with `codegen:client: unknown -lang "rust" (want ts or go)` |
+| `-o` | `resources/js/api.ts` (ts) or `internal/apiclient/client.go` (go) | the file to write; `-` prints to stdout. Missing directories are created |
+| `-package` | `apiclient` | the Go package name (`-lang go` only). An invalid name fails with `openapi: invalid Go package name "api-client"` |
 
-## TypeScript
+```bash
+# Print the Go client instead of writing it.
+vukem codegen:client -lang go -o -
 
-The client contains the [`codegen:types`](/docs/rest-apis/openapi#types-for-clients) types, `<Op>Params` for path parameters and `createClient`. It has no dependencies and runs in browsers and Node 18+.
+# A Go client in its own package and folder.
+vukem codegen:client -lang go -package taskclient -o pkg/taskclient/client.go
+```
 
-```ts
-import { ApiError, createClient } from "./api";
+Like `openapi:export` and `codegen:types`, the command builds the app in **warmup** mode: providers do not `Boot`, so no database or other connection is opened and `APP_KEY` may be unset. CI can run it without secrets. The document is filtered by `OPENAPI_PREFIX` when it is set.
 
-const api = createClient({ baseUrl: "", headers: () => ({ Authorization: `Bearer ${token}` }) });
-const product = await api.productsStore({ params: { shop: 1 }, body: { name: "Lamp" } });
+Which operations get a method:
+
+- **Typed routes with `Op.Name`**: a fully typed method. Their `operationId` is `Op.Name` as written (`tasks.store` → `tasksStore` / `TasksStore`).
+- **Named plain routes** (`g.Get(...).Name("me")`): a method too, but the document knows nothing about their input or output, so it sends no body and returns `unknown` (TypeScript) or only an `error` (Go). Their `operationId` is the full route name with the group prefix (`api.v1.me` → `apiV1Me` / `APIV1Me`). Convert them to `api.Register` to type them.
+- **Unnamed routes** and routes marked `.Doc(openapi.Skip{})`: no method.
+
+## TypeScript client
+
+The generated file starts with the same types as [`codegen:types`](/docs/rest-apis/openapi) (without Zod), then adds:
+
+| Declaration | What it is |
+| --- | --- |
+| `<Op>Params` | the path parameters of an operation (`TasksUpdateParams = { task: number }`) |
+| `ApiProblem` | an RFC 9457 problem details document |
+| `ApiError` | the error thrown for every non-2xx response |
+| `ClientOptions` | the options of `createClient` |
+| `Client` | an interface with one method per operation, with a doc comment `METHOD /path: summary` (and `@deprecated` when the operation is) |
+| `createClient(options)` | returns a `Client` |
+
+It needs only `fetch`, `Headers` and `URLSearchParams`, so it runs in every modern browser and in Node 18+, with no package to install.
+
+### Methods and arguments
+
+Each method takes **one** argument object, `{ params, query, body }`, holding only the parts the operation has (the generator writes each signature on one line; it is wrapped here for reading):
+
+```ts title="resources/js/api.ts"
+export interface Client {
+  /**
+   * DELETE /api/v1/tasks/{task}: Delete a task
+   */
+  tasksDestroy(args: {
+    params: TasksDestroyParams;
+  }): Promise<TasksDestroyResponse>;
+
+  /**
+   * POST /api/v1/tasks: Create a task
+   */
+  tasksStore(args: {
+    body: TasksStoreBody;
+  }): Promise<TasksStoreResponse>;
+
+  /**
+   * PUT /api/v1/tasks/{task}: Replace a task
+   */
+  tasksUpdate(args: {
+    params: TasksUpdateParams;
+    body: TasksUpdateBody;
+  }): Promise<TasksUpdateResponse>;
+}
+```
+
+- `params` is required whenever the path has parameters. `query` is required only when one of its parameters is required. `body` is required when the request body is. When nothing in the argument is required, the whole argument is optional (`tasksIndex()` works).
+- Path parameters are URL-encoded with `encodeURIComponent`. A missing one throws `api: missing path param task` before any request is sent.
+- Query values that are `undefined` or `null` are skipped; arrays repeat the key (`?tags=a&tags=b`).
+- A `body` is sent as JSON with `Content-Type: application/json`.
+- The result type is the first 2xx response (`void` for `204`); operations without a documented 2xx response return `Promise<unknown>`.
+
+### Options
+
+```ts title="resources/js/client.ts"
+import { createClient } from "./api";
+
+export const api = createClient({
+  // "" (the default) keeps requests on the page's origin.
+  baseUrl: "https://tasks.example.com",
+  // Called before every request, so a refreshed token is used.
+  headers: async () => ({ Authorization: `Bearer ${await getToken()}` }),
+  // Cookies only for the same origin (the default).
+  credentials: "same-origin",
+});
+```
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `baseUrl` | `""` | prefixes every path; trailing slashes are trimmed |
+| `fetch` | `globalThis.fetch` | a replacement `fetch` (tests, SSR, retries) |
+| `headers` | none | a `HeadersInit` object, or a function (sync or async) called per request |
+| `credentials` | `"same-origin"` | the `fetch` credentials mode |
+
+`Accept: application/json` is sent unless your headers set another `Accept`.
+
+### Responses and errors
+
+A `204` resolves to `undefined`. A body whose `Content-Type` mentions `json` is parsed as JSON; any other body is returned as text. Every non-2xx response throws `ApiError`:
+
+```ts title="resources/js/tasks.ts"
+import { ApiError } from "./api";
 
 try {
-  await api.productsStore({ params: { shop: 1 }, body: { name: "x" } });
+  await api.tasksStore({ body: { title: "x" } });
 } catch (err) {
-  if (err instanceof ApiError && err.status === 422) console.log(err.errors.name);
+  if (err instanceof ApiError && err.status === 422) {
+    // { title: ["The title field must be at least 3 characters."] }
+    console.log(err.errors);
+  } else {
+    throw err;
+  }
 }
 ```
 
-- One async method per operation, camelCase (`products.store` → `productsStore`). Its argument `{ params, query, body }` holds only what the operation takes, and each part is required only when the operation requires it.
-- Path parameters are URL-encoded; query values skip `undefined`/`null` and repeat arrays (`?tags=a&tags=b`); bodies are JSON.
-- Options: `baseUrl` (default `""`, the page's origin), `fetch` (default `globalThis.fetch`), `headers` (an object or a per-request function), `credentials` (default `"same-origin"`).
-- Any non-2xx response throws `ApiError` with `status`, the parsed RFC 9457 `problem` and `errors` (field → messages on 422).
+| `ApiError` member | Value |
+| --- | --- |
+| `status` | the HTTP status |
+| `problem` | the parsed `ApiProblem` (`type`, `title`, `status`, `detail`, `instance`, `request_id`, `errors`), or `undefined` when the body was not a JSON object |
+| `errors` | `problem.errors` (field → messages on a `422`), or `{}` |
+| `message` | `problem.detail`, else `problem.title`, else `HTTP <status>` |
+| `name` | `"ApiError"` |
 
-## Go
+A network failure is not an `ApiError`: `fetch` rejects with its own `TypeError`.
 
-```go
-c := apiclient.New("https://shop.example")
-c.Header = func(r *http.Request) { r.Header.Set("Authorization", "Bearer "+token) }
+## Go client
 
-p, err := c.ProductsStore(ctx, 1, apiclient.ProductsStoreBody{Name: "Lamp"})
-if apiErr, ok := errors.AsType[*apiclient.Error](err); ok && apiErr.Status == 422 {
-	fmt.Println(apiErr.Problem.Errors["name"])
+The Go output is gofmt'd and imports only the standard library:
+
+```go title="internal/apiclient/client.go"
+// Code generated by vukem codegen:client. DO NOT EDIT.
+
+// Package apiclient is a typed client for the tasks API (1.0.0).
+package apiclient
+
+// Client calls the API.
+type Client struct {
+	// BaseURL prefixes every path, e.g. "https://api.example.com".
+	BaseURL string
+	// HTTP sends the requests; nil uses http.DefaultClient.
+	HTTP *http.Client
+	// Header, when set, is called on every request (tokens, tracing).
+	Header func(*http.Request)
+}
+
+// New returns a client for baseURL.
+func New(baseURL string) *Client
+```
+
+### Methods
+
+Each method takes a [`context.Context`](https://pkg.go.dev/context) first (cancel it to abort the request), then the path parameters as typed arguments in path order, then the query struct, then the body:
+
+```go title="internal/apiclient/client.go"
+func (c *Client) TasksIndex(
+	ctx context.Context, query TasksIndexQuery,
+) (TaskPageJSON, error)
+
+func (c *Client) TasksStore(
+	ctx context.Context, body TasksStoreBody,
+) (TaskJSON, error)
+
+func (c *Client) TasksUpdate(
+	ctx context.Context, task int64, body TasksUpdateBody,
+) (TaskJSON, error)
+
+// Operations without a response body return only an error.
+func (c *Client) TasksDestroy(ctx context.Context, task int64) error
+```
+
+Every request sends `Accept: application/json` (and `Content-Type: application/json` with a body), then calls `Header`, so `Header` may override both. Deprecated operations carry a `// Deprecated:` comment, which gopls and staticcheck flag at every call.
+
+### Types
+
+| Schema | Go |
+| --- | --- |
+| object | a struct with `json` tags; optional fields get `omitempty` |
+| optional or nullable scalar or struct | a pointer (`*string`, `*int64`, `*Meta`) |
+| `additionalProperties` | a `map[string]T` |
+| string enum | a named string type with one constant per value (`TaskJSONStatusTodo`) |
+| `date-time` string | `time.Time` |
+| integer / number | `int64` / `float64` |
+| union (`anyOf`) | `json.RawMessage` |
+| inline body, query, response | `<Op>Body`, `<Op>Query`, `<Op>Response` |
+
+```go title="internal/apiclient/client.go"
+type TasksStoreBodyStatus string
+
+// TasksStoreBodyStatus values.
+const (
+	TasksStoreBodyStatusTodo  TasksStoreBodyStatus = "todo"
+	TasksStoreBodyStatusDoing TasksStoreBodyStatus = "doing"
+	TasksStoreBodyStatusDone  TasksStoreBodyStatus = "done"
+)
+
+type TasksStoreBody struct {
+	Status *TasksStoreBodyStatus `json:"status,omitempty"`
+	// What to do
+	Title string `json:"title"`
 }
 ```
 
-- The output is gofmt'd and uses only the standard library.
-- Schemas become Go types: objects are structs with `json` tags (`omitempty` on optional fields), optional or nullable values are pointers, string enums are named types with constants, `date-time` is `time.Time`, integers `int64`, numbers `float64`, unions `json.RawMessage`. Inline schemas become `<Op>Body`, `<Op>Query` and `<Op>Response`.
-- `Client{BaseURL, HTTP, Header}`: `HTTP` defaults to `http.DefaultClient`; `Header` runs on every request. Methods take `ctx`, the path parameters, then the query struct and the body; operations without a response body return only `error`.
-- Any non-2xx response returns `*apiclient.Error{Status, Problem}`.
+A `doc` tag on the Go side becomes a comment on the generated field. Pointers let you tell "not sent" from "sent as zero": set `Status` with a variable or a small helper, because Go cannot take the address of a constant.
 
-A round-trip test runs the generated Go client against a live app, and CI type-checks the TypeScript client with `tsc --strict`.
+### Errors
 
-For typed URLs of named web routes (not API calls), see [`codegen:routes`](/docs/frontend/inertia#typed-routes). For gRPC clients, see [gRPC](/docs/rest-apis/grpc#code-generation).
+Any non-2xx response returns an `*apiclient.Error`. Its `Problem` is filled when the body is a problem document (the first 1 MiB is read); otherwise it stays empty:
+
+```go title="cmd/cli/main.go"
+_, err := c.TasksStore(ctx, apiclient.TasksStoreBody{Title: "x"})
+
+if apiErr, ok := errors.AsType[*apiclient.Error](err); ok {
+	// 422 Unprocessable Entity
+	fmt.Println(apiErr.Status)
+	// [The title field must be at least 3 characters.]
+	fmt.Println(apiErr.Problem.Errors["title"])
+}
+```
+
+`apiErr.Error()` reads `apiclient: 422 Unprocessable Entity: 1 field(s) are invalid.`. Network and decoding failures are ordinary wrapped errors such as `apiclient: POST /api/v1/tasks: dial tcp …`. [`errors.AsType`](https://pkg.go.dev/errors#AsType) is the generic form of `errors.As`.
+
+## Keeping the client current
+
+A stale client compiles but calls an API that no longer exists. Catch drift with a test that regenerates the client in memory and compares it with the committed file — this is the test of the example app:
+
+```go title="tests/client_test.go"
+func TestGeneratedClientIsCurrent(t *testing.T) {
+	// The document title comes from APP_NAME, as in .env.example.
+	app := vukemtest.New(t, bootstrap.New, vukemtest.Options{
+		Env: map[string]string{"APP_NAME": "tasks"},
+	})
+
+	doc, err := app.OpenAPI()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want, err := openapi.GoClient(doc, "apiclient")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	path := filepath.Join("..", "internal", "apiclient", "client.go")
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Git on Windows may check the file out with CRLF.
+	if strings.ReplaceAll(string(got), "\r\n", "\n") != string(want) {
+		t.Fatal("client.go is stale: run vukem codegen:client -lang go")
+	}
+}
+```
+
+For TypeScript, compare `openapi.TypeScriptClient(doc)` with `resources/js/api.ts` the same way, and type-check it with `tsc --strict` in CI. The framework's own CI keeps golden clients (`openapi/testdata/shop.client.ts` and `shop.client.go`), runs the generated Go client against a live app, and type-checks the TypeScript one with `tsc --strict`.
+
+## Name collisions
+
+If an operation or schema name would produce an identifier that is already declared (for example a Go type named like `TasksStoreBody`, or two operations whose names map to the same method), generation fails with an error naming the duplicate instead of writing code that does not compile. Schema names that shadow JavaScript or DOM globals (`Number`, `Response`, `URL`, `Client`, …) get a `Type` suffix. The full rules are in [OpenAPI: types for clients](/docs/rest-apis/openapi).
+
+## Security
+
+- The client sends whatever `headers` / `Header` returns: keep tokens out of source code and out of `baseUrl`.
+- `credentials` defaults to `"same-origin"`, so the browser does not attach cookies to another origin's API unless you opt in.
+- The Go client limits error bodies to 1 MiB, so a misbehaving server cannot make it buffer an endless error.
+- Generation runs without secrets (warmup mode). More in the [Security overview](/docs/security/overview).
+
+## Testing
+
+The example app runs its Go client against the real handler with `httptest`:
+
+```go title="tests/client_test.go"
+func TestGeneratedClientRoundTrip(t *testing.T) {
+	app := vukemtest.New(t, bootstrap.New)
+	token := apiUser(t, app, "client@example.com")
+
+	srv := httptest.NewServer(app.Handler())
+	t.Cleanup(srv.Close)
+
+	c := apiclient.New(srv.URL)
+	c.Header = func(r *http.Request) {
+		r.Header.Set("Authorization", "Bearer "+token)
+	}
+
+	created, err := c.TasksStore(t.Context(), apiclient.TasksStoreBody{
+		Title: "From the Go client",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if created.Status != apiclient.TaskJSONStatusTodo {
+		t.Errorf("Status = %q, want todo", created.Status)
+	}
+}
+```
+
+In TypeScript tests, pass a fake `fetch` to `createClient({ fetch })` instead of mocking globals.
+
+## Common mistakes
+
+**A route without a name.** It gets no method. Add `Name` to `api.Op` (or `.Name(…)` to a plain route).
+
+**Calling a plain route's method and expecting data.**
+
+```go title="Wrong"
+// The plain route is documented without a response body,
+// so the method has nothing to decode: it returns only error.
+err := c.APIV1Me(ctx)
+```
+
+```go title="Right"
+// Register /me with api.Register and an output type,
+// regenerate, and the method returns the user.
+me, err := c.Me(ctx)
+```
+
+**Forgetting to regenerate.** The drift test above fails with `client.go is stale: run vukem codegen:client -lang go`.
+
+**Sharing a default output file.** `codegen:types` without `-o` prints to stdout, but `codegen:client` writes `resources/js/api.ts` by default. Running both into the same file overwrites one with the other: pick separate paths, or use only the client (it contains the types).
+
+## Next steps
+
+<CardGroup cols="2">
+<Card title="OpenAPI" href="/docs/rest-apis/openapi" icon="book">
+The document the clients are generated from.
+</Card>
+<Card title="Typed handlers" href="/docs/rest-apis/typed-handlers" icon="route">
+Name and type every operation.
+</Card>
+<Card title="Inertia typed routes" href="/docs/frontend/inertia" icon="layers">
+`codegen:routes` for typed URLs of named web routes.
+</Card>
+<Card title="gRPC" href="/docs/rest-apis/grpc" icon="zap">
+Generated clients for RPC services.
+</Card>
+</CardGroup>
+
+Package reference: [pkg.go.dev/github.com/AlexGalhardo/vukem/openapi](https://pkg.go.dev/github.com/AlexGalhardo/vukem/openapi).

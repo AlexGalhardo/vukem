@@ -1,141 +1,303 @@
 ---
 title: Idempotency keys
-description: Make retried POST and PATCH requests safe with the Idempotency-Key header.
+description: Make retried POST and PATCH requests safe — the Idempotency-Key header runs a request once and replays its stored response to every retry.
 ---
 
-Networks fail. A mobile client sends `POST /orders`, the server creates the order, and the response is lost on the way back. The client cannot tell whether the order exists, so it retries, and the customer is charged twice. An **idempotency key** fixes this: the client sends a unique `Idempotency-Key` header with the request and **the same key on every retry**; the server runs the request once and replays the stored answer to the retries.
+Networks fail. A phone sends `POST /api/v1/tasks`, the server creates the task, and the answer is lost in a tunnel. The app cannot tell whether the task exists, so it retries — and the user now has two identical tasks. For a task list that is annoying; for a payment it charges the customer twice.
 
-```go
-c, _ := app.Cache()
-r.Group("/api/v1", func(g *router.Group) {
-	g.Use(auth.Required(apiGuard)) // first, so the scope is the authenticated user
-	g.Use(api.Idempotency(c.Store(), api.IdempotencyOptions{}))
-})
-```
+An **idempotency key** fixes this. The client generates a unique key for one operation and sends it in the `Idempotency-Key` header, **the same key on every retry**. The server runs the request once, stores the answer, and replays that stored answer to each retry instead of running it again. `api.Idempotency` is that middleware.
 
-The first `POST` or `PATCH` carrying an `Idempotency-Key` header runs and its response is stored; a retry with the same key gets the stored response with `Idempotent-Replayed: true` instead of running again.
+You will learn:
 
-| Situation | Answer |
-| --- | --- |
-| Same key, same request, finished | stored response, replayed |
-| Same key while the first is still running | 409 |
-| Same key, different method, URL or body | 422 (and an `idempotency.key_reused` security event) |
-| Invalid key (1–255 printable characters) | 400 |
-| Key sent but `Scope` is empty (no authenticated user, no `Authorization`, no custom `Scope`) | 400 (and an `idempotency.unscoped` security event) |
-| Store unavailable | 503: the request is refused rather than risking a duplicate |
+- What "idempotent" means and why `POST` needs help.
+- How to install `api.Idempotency` and send keys from a client.
+- Every answer the middleware can give (replay, `409`, `422`, `400`, `413`, `503`) and why.
+- How keys are scoped to the caller, and why the middleware belongs after authentication.
+- Which store to use, and the edge cases of timeouts and failures.
 
-| Option | Default |
-| --- | --- |
-| `Methods` | `POST`, `PATCH` |
-| `Required` | `false` (400 when the header is missing if `true`) |
-| `TTL` | 24h for stored responses |
-| `LockTTL` | 1 minute for in-flight requests |
-| `MaxBody` | 1 MiB fingerprinted |
-| `Scope` | the authenticated user (`auth.Principal`: guard and user id, length-prefixed), else a SHA-256 of the `Authorization` header with any `auth.Tokens` prefix removed, so one token keeps one scope under any prefix |
+## The idea
 
-- Keys are **scoped to the caller**, so one user can never replay another's response.
-- Put `Idempotency` **after** `auth.Required` (or `auth.Optional`): the scope is then the authenticated user, the same across token rotation, and a revoked token is refused before any replay. In front of auth only a hash of the `Authorization` header is available, and a revoked token could still replay its stored responses until they expire.
-- Cookie sessions behind `auth.Required` are scoped by user too. For guests or a custom identity, **set `Scope`** to something that identifies the caller. Without it, a request carrying a key is refused with 400 instead of sharing one scope between every visitor:
+An operation is <Term tip="Doing it twice has the same effect as doing it once.">idempotent</Term> when repeating it changes nothing more. `GET /tasks/7` and `DELETE /tasks/7` are idempotent by nature: reading twice or deleting twice leaves the same state ([RFC 9110, section 9.2.2](https://www.rfc-editor.org/rfc/rfc9110#section-9.2.2)). `POST /tasks` is not: each call creates another task.
 
-```go
-api.IdempotencyOptions{
-	Scope: func(r *http.Request) string {
-		return currentUserID(r) // "" for guests: their keyed requests get 400
-	},
-}
-```
+Think of a **cloakroom ticket**. You hand over your coat and get ticket 42. If you come back and say "ticket 42", the attendant gives you the same coat; they do not hang up a new one. And if someone else shows up with a ticket 42 from a different cloakroom, it does not open your locker. The idempotency key is the ticket; the stored response is the coat; the **scope** (who you are) is the cloakroom.
 
-- To share keys between all callers on purpose (rare), return a constant such as `"public"`.
-- Responses with status 500 or above are not stored, so the client can retry. `Set-Cookie` is never replayed.
-- Any `cache.Store` works: memory, database or [Redis](/docs/database/redis).
+<Quote source="https://www.rfc-editor.org/rfc/rfc9110#section-9.2.2" author="RFC 9110" title="HTTP Semantics, section 9.2.2">
+A request method is considered "idempotent" if the intended effect on the server of multiple identical requests with that method is the same as the effect for a single such request.
+</Quote>
 
-## Step by step
+The `Idempotency-Key` header itself is being standardized by the IETF ([draft-ietf-httpapi-idempotency-key-header](https://datatracker.ietf.org/doc/draft-ietf-httpapi-idempotency-key-header/)); Vukem follows its behaviour for replays and conflicts.
+
+The running example is the task list API of the [REST APIs overview](/docs/rest-apis/overview).
+
+## Quick start
 
 <Steps>
-<Step title="1. Install the middleware after authentication">
+<Step title="Install the middleware after authentication">
 
-```go title="routes/api.go"
-c, err := app.Cache() // CACHE_STORE=database or Redis when several servers run
+```go title="routes/tasks.go"
+// CACHE_STORE=database or Redis when several servers run.
+store, err := app.Cache()
 if err != nil {
 	return err
 }
 
 r.Group("/api/v1", func(g *router.Group) {
-	g.Use(auth.Required(apiGuard))
-	g.Use(api.Idempotency(c.Store(), api.IdempotencyOptions{}))
+	g.Use(auth.Required(acc.API))
+	g.Use(api.Idempotency(store.Store(), api.IdempotencyOptions{}))
 
-	g.Post("/orders", orders.Store).Name("orders.store")
-})
+	api.Register(g, "POST /tasks", api.Op{Name: "tasks.store"}, tasks.Store)
+}).Name("api.v1.")
 ```
 
 </Step>
-<Step title="2. Send a key from the client">
+<Step title="Send a key">
 
 ```bash
-KEY=$(uuidgen)   # one new key per logical operation
+# One new key per logical operation.
+KEY=$(uuidgen)
 
-curl -s -X POST localhost:3000/api/v1/orders   -H "Authorization: Bearer $TOKEN" -H "Idempotency-Key: $KEY"   -H 'Content-Type: application/json' -d '{"product_id": 7, "quantity": 1}'
-# 201 Created, the order runs
+curl -si -X POST localhost:3000/api/v1/tasks \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Idempotency-Key: $KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"title":"Buy milk"}'
+```
 
-curl -si -X POST localhost:3000/api/v1/orders   -H "Authorization: Bearer $TOKEN" -H "Idempotency-Key: $KEY"   -H 'Content-Type: application/json' -d '{"product_id": 7, "quantity": 1}'
-# 201 Created again, with "Idempotent-Replayed: true": no second order
+```http
+HTTP/1.1 201 Created
+Content-Type: application/json
+
+{"id":46,"title":"Buy milk","status":"todo"}
 ```
 
 </Step>
-<Step title="3. Retry with the same key in your client">
+<Step title="Retry with the same key">
 
-```ts
-async function createOrder(body: unknown, token: string) {
-	const key = crypto.randomUUID() // created once, before the first attempt
-	for (let attempt = 0; attempt < 3; attempt++) {
-		try {
-			const res = await fetch("/api/v1/orders", {
-				method: "POST",
-				headers: { Authorization: `Bearer ${token}`, "Idempotency-Key": key, "Content-Type": "application/json" },
-				body: JSON.stringify(body),
-			})
-			if (res.status !== 409 && res.status < 500) return res // 409: the first attempt is still running
-		} catch {
-			// network error: retry with the same key
-		}
-		await new Promise((r) => setTimeout(r, 500 * 2 ** attempt))
-	}
-	throw new Error("order failed")
-}
+Run the same command again:
+
+```http
+HTTP/1.1 201 Created
+Content-Type: application/json
+Idempotent-Replayed: true
+
+{"id":46,"title":"Buy milk","status":"todo"}
 ```
 
-</Step>
-<Step title="4. Make the key mandatory where duplicates are expensive">
-
-```go
-g.Post("/payments", payments.Store).Use(api.Idempotency(c.Store(), api.IdempotencyOptions{Required: true}))
-```
-
-Requests without the header now get 400 instead of running unprotected.
+The same task comes back — id `46` again — with `Idempotent-Replayed: true`, and no second task was created.
 
 </Step>
 </Steps>
 
-## Testing
+## What happens to a request
 
-```go
-client := app.Client(t).WithToken(plain).WithHeader("Idempotency-Key", "order-1")
+`api.Idempotency(store, opts)` is a plain `func(http.Handler) http.Handler` middleware. For each request it walks these steps, in order:
 
-client.PostJSON("/api/v1/orders", body).AssertCreated()
-client.PostJSON("/api/v1/orders", body).AssertCreated().AssertHeader("Idempotent-Replayed", "true")
+1. **Is it guarded?** Only methods in `Methods` (default `POST` and `PATCH`) are. A request without the header passes straight through, unless `Required` is set.
+2. **Is the key valid?** 1 to 255 visible ASCII characters (`!` to `~`; no spaces). Otherwise `400`.
+3. **Read the body**, up to `MaxBody` (1 MiB). A larger body is refused with `413`, so this limit also caps the request size of guarded routes.
+4. **Find the scope**, the identity of the caller (see below). An empty scope is refused with `400`.
+5. **Fingerprint the request**: a SHA-256 of the method, the URL path and query, and the body. Headers are not part of it.
+6. **Claim the key** in the store with an atomic "add if absent" (`store.Add`), marked "in flight" for `LockTTL` (1 minute).
+   - Claimed: your handler runs. A response below `500` is stored for `TTL` (24 hours); a `5xx` deletes the claim so the client may retry.
+   - Already taken: the stored record decides the answer — replay it, `409` while it is still in flight, or `422` when the fingerprint differs.
+
+The store key is a SHA-256 of the scope and the key, so neither the key nor the caller's identity is stored in clear.
+
+## Every answer
+
+| Situation | Status | `detail` |
+| --- | --- | --- |
+| First request with this key | your handler's answer | — |
+| Same key, same request, finished | the stored status, body and headers, plus `Idempotent-Replayed: true` | — |
+| Same key while the first is still running | `409` | `A request with this Idempotency-Key is being processed.` |
+| Same key, different method, URL or body | `422` | `This Idempotency-Key was used for a different request.` |
+| Invalid key, or missing key with `Required: true` | `400` | `A valid Idempotency-Key header (1-255 printable characters) is required.` |
+| Key sent, but the scope is empty | `400` | `Idempotency-Key requires an identified caller.` |
+| Body larger than `MaxBody` | `413` | — |
+| Store unavailable | `503` | `Idempotency store unavailable.` |
+
+The `422` also logs a security event `idempotency.key_reused`, and the empty-scope `400` an `idempotency.unscoped` event, both at `WARN` level, for alerting.
+
+Two details of replays:
+
+- `Set-Cookie` is never stored or replayed, so a session cookie of the first response cannot leak into a later one.
+- A replay copies the **other** headers of the original response, including those that middleware running before `Idempotency` had set on it (for example `X-Request-ID` or `RateLimit-Remaining`). They describe the original request, not the retry.
+
+## Scope: whose key is it?
+
+Keys are **scoped to the caller**: the same key from two users names two different operations, so one user can never replay — or read — another user's stored response by guessing a key. The default `Scope` is:
+
+1. **The authenticated user**, when an auth middleware ran before `Idempotency`: `auth.Principal` gives the guard name and the user id, combined length-prefixed so `("a:b", "c")` and `("a", "b:c")` never collide. The scope stays the same when the user rotates tokens.
+2. Otherwise **a SHA-256 of the `Authorization` header**. For `auth.Tokens` bearer tokens the configurable prefix is removed first, so one token keeps one scope whatever prefix it was issued under.
+3. Otherwise **empty**, and a request that carries a key is refused with `400` instead of sharing one scope between every anonymous visitor.
+
+<Callout type="warning" title="Install it after auth.Required">
+In front of authentication only the hash of the `Authorization` header is known. A revoked token could then still replay its stored responses until they expire. After `auth.Required`, the token is checked first and the scope is the user.
+</Callout>
+
+Cookie sessions behind `auth.Required` are scoped by user too. For guests or a custom identity, set `Scope`:
+
+```go title="routes/orders.go"
+api.Idempotency(store.Store(), api.IdempotencyOptions{
+	Scope: func(r *http.Request) string {
+		// "" for guests: their keyed requests get 400.
+		return deviceID(r)
+	},
+})
 ```
 
-## Pitfalls
+To share keys between all callers on purpose (rare: a public, anonymous endpoint), return a constant such as `"public"`.
 
-- **A new key per retry defeats the purpose.** Generate the key once per operation, before the first attempt, and reuse it for every retry.
-- **The same key for a different request** gets 422. A key identifies one operation (method, URL and body), not a session.
-- **The memory store with several servers.** A retry that lands on another server runs again. Use `CACHE_STORE=database` or Redis.
-- **`TTL` shorter than your clients' retry window.** After `TTL` (24h by default) the key is forgotten and a late retry runs again.
-- **Handlers that take longer than `LockTTL`** (1 minute): after it, a retry is no longer answered 409 and may run concurrently. Raise `LockTTL` for slow endpoints, or move the work to a queue.
-- **5xx responses are not stored**, so the client can retry them. Make sure a handler that failed half-way can run again safely (use a transaction).
+## Options
 
-## Security notes
+| Field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `Methods` | `[]string` | `POST`, `PATCH` | the guarded methods; other requests pass through |
+| `Required` | `bool` | `false` | answer `400` when a guarded request has no key |
+| `TTL` | `time.Duration` | 24h | how long a finished response is kept for replays |
+| `LockTTL` | `time.Duration` | 1 minute | how long a request counts as "in flight" |
+| `MaxBody` | `int64` | 1 MiB | the largest body that is fingerprinted; larger bodies get `413` |
+| `Scope` | `func(*http.Request) string` | the principal, else a hash of `Authorization` | separates callers |
 
-- Keys are scoped to the caller, so one user can never read another user's stored response by guessing a key.
-- If the cache store is unavailable the request is refused with 503 (fail closed) rather than risking a duplicate charge.
-- Stored responses live in the cache store: they can include personal data from the response body. Use a store you trust with that data, and keep `TTL` no longer than needed. `Set-Cookie` is never stored or replayed.
+Zero or negative values keep the default. `api.IdempotencyHeader` is the header name, `"Idempotency-Key"`.
+
+Make the key mandatory where a duplicate is expensive:
+
+```go title="routes/payments.go"
+g.Post("/payments", payments.Store).Use(api.Idempotency(
+	store.Store(),
+	api.IdempotencyOptions{Required: true},
+))
+```
+
+## Stores
+
+Any [`cache.Store`](/docs/digging-deeper/cache) works: the in-memory store, the database store or [Redis](/docs/database/redis). `app.Cache()` builds the one selected by `CACHE_STORE`, and `.Store()` returns its backend.
+
+- **One server**: the memory store is enough.
+- **Several servers**: use `CACHE_STORE=database` or Redis. With the memory store, a retry that lands on another server finds no key and runs again.
+- Claims rely on `Add` being atomic, which every built-in store guarantees.
+
+## A client that retries correctly
+
+The key must be created **once per operation, before the first attempt**, and reused for every retry. A new key per attempt defeats the purpose.
+
+```ts title="resources/js/tasks.ts"
+export async function createTask(title: string, token: string) {
+  // Created once, before the first attempt.
+  const key = crypto.randomUUID();
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const res = await fetch("/api/v1/tasks", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Idempotency-Key": key,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ title }),
+      });
+
+      // 409: the first attempt is still running; wait and retry.
+      if (res.status !== 409 && res.status < 500) {
+        return res;
+      }
+    } catch {
+      // A network error: retry with the same key.
+    }
+
+    await new Promise((r) => setTimeout(r, 500 * 2 ** attempt));
+  }
+
+  throw new Error("createTask failed");
+}
+```
+
+The delay doubles each time (500 ms, 1 s, 2 s), a common backoff pattern. [`crypto.randomUUID`](https://developer.mozilla.org/en-US/docs/Web/API/Crypto/randomUUID) makes a random key; in Go, [`crypto/rand.Text`](https://pkg.go.dev/crypto/rand#Text) does the same.
+
+## Edge cases
+
+- **Handlers slower than `LockTTL`.** After one minute the claim expires; a retry is no longer answered `409` and may run at the same time as the first. Raise `LockTTL` for slow endpoints, or move the work to a [queue](/docs/digging-deeper/queue) and answer `202`.
+- **A handler that panics.** The claim is not released, so retries get `409` until `LockTTL` passes, then run again.
+- **5xx responses** are not stored, so the client may retry them. Make sure a handler that failed half-way can run again safely (use a transaction).
+- **The store fails after the handler ran.** The response is sent, the error is logged (`idempotency: store response`), and the claim expires after `LockTTL`: a later retry runs again.
+- **`TTL` shorter than your clients' retry window.** After `TTL` the key is forgotten and a late retry runs again.
+- **The same key on another URL** is a different request: it gets `422`.
+
+## Security
+
+- Keys are scoped to the caller, and the store holds only hashes of scope and key (`TestSecurity_A01_IdempotencyScopedToCaller`, `TestSecurity_A01_IdempotencyScopedToPrincipal`).
+- A key without an identified caller is refused, never shared (`TestSecurity_A01_IdempotencyRefusesAnonymousScope`).
+- If the store is unavailable the request is refused with `503` — **fail closed** — rather than risking a duplicate charge (`TestSecurity_A04_IdempotencyFailsClosed`).
+- Stored responses live in the cache store and may contain personal data from the response body. Use a store you trust with that data, and keep `TTL` no longer than needed. More in the [Security overview](/docs/security/overview).
+
+## Testing
+
+```go title="tests/tasks_test.go"
+func TestCreateTaskIsIdempotent(t *testing.T) {
+	app := vukemtest.New(t, bootstrap.New)
+	client := app.Client(t).
+		WithToken(apiUser(t, app, "ada@example.com")).
+		WithHeader("Idempotency-Key", "task-1")
+	body := map[string]any{"title": "Buy milk"}
+
+	client.PostJSON("/api/v1/tasks", body).AssertCreated()
+
+	client.PostJSON("/api/v1/tasks", body).
+		AssertCreated().
+		AssertHeader("Idempotent-Replayed", "true")
+
+	vukemtest.AssertDatabaseCount(t, app, "tasks", 1)
+
+	client.PostJSON("/api/v1/tasks", map[string]any{"title": "Other"}).
+		AssertProblem(422)
+}
+```
+
+`WithHeader` sets the header for every later request of that client. See [Testing](/docs/testing/overview).
+
+## Common mistakes
+
+**A new key per retry.**
+
+```ts title="Wrong"
+for (let i = 0; i < 3; i++) {
+  // Every attempt looks like a new operation.
+  await send({ "Idempotency-Key": crypto.randomUUID() });
+}
+```
+
+```ts title="Right"
+const key = crypto.randomUUID();
+for (let i = 0; i < 3; i++) {
+  await send({ "Idempotency-Key": key });
+}
+```
+
+**Reusing a key for a different request.** A key identifies one operation (method, URL and body), not a session: the second, different request gets `422` with `This Idempotency-Key was used for a different request.`
+
+**Installing it before authentication**, or on a public route without `Scope`: keyed requests from anonymous callers get `400` with `Idempotency-Key requires an identified caller.`
+
+**A key with a space** (`"order 1"`) gets `400`: keys must be visible ASCII characters only.
+
+**The memory store behind a load balancer.** Retries that reach another server run again. Use `CACHE_STORE=database` or Redis.
+
+## Next steps
+
+<CardGroup cols="2">
+<Card title="Cache" href="/docs/digging-deeper/cache" icon="database">
+The stores `Idempotency` keeps its records in.
+</Card>
+<Card title="Queues" href="/docs/digging-deeper/queue" icon="zap">
+Move slow work out of the request.
+</Card>
+<Card title="Billing" href="/docs/digging-deeper/billing" icon="shield">
+Payments, where duplicates cost money.
+</Card>
+<Card title="Typed handlers" href="/docs/rest-apis/typed-handlers" icon="code">
+The routes you protect.
+</Card>
+</CardGroup>
+
+Package reference: [pkg.go.dev/github.com/AlexGalhardo/vukem/api#Idempotency](https://pkg.go.dev/github.com/AlexGalhardo/vukem/api#Idempotency).

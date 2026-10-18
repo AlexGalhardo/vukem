@@ -1,21 +1,53 @@
 ---
 title: Pagination and query conventions
-description: Offset and cursor envelopes, and allowlisted filter, sort, fields and include parameters that answer 400 for anything unknown.
+description: Answer list endpoints in pages — offset and cursor envelopes, plus allowlisted filter, sort, fields and include parameters that reject anything unknown with a 400.
 ---
 
-## Query conventions
+A list endpoint should never send a client ten thousand rows at once. **Pagination** cuts a list into pages, and **query conventions** let the client ask for exactly the slice it wants — "only the tasks that are done, newest first, 20 per page" — with the same parameter names on every endpoint.
 
-```go title="app/controllers/apiv1/products.go"
-func (p *Products) Index(c *web.Ctx) error {
-	req, err := api.Query(c, orm.QueryOf[models.Product](p.db),
-		api.Filters("category", "in_stock"),        // ?filter[category]=books,toys&filter[in_stock]=true
-		api.Sorts("name", "price", "-created_at"),  // ?sort=-price,name  (default: last listed)
-		api.Fields("id", "name", "price"),          // ?fields=id,name
-		api.Includes("reviews"),                    // ?include=reviews → req.Includes
-		api.PerPage(20, 100),                       // ?page=2&per_page=50 (capped at 100)
+Vukem gives you both in the `api` package: `api.Query` reads `?filter`, `?sort`, `?fields`, `?include`, `?page`, `?per_page` and `?cursor` from the URL and applies them to an ORM query, and `api.Page`, `api.Cursor` and `api.Collection` write the JSON envelope.
+
+You will learn:
+
+- The difference between offset pages and cursor pages, and when to use each.
+- How to allowlist filters, sorts, fields and includes, and why anything else is a `400`.
+- The exact JSON envelopes Vukem writes, links included.
+- The limits that stop a request from overloading the database.
+- How pagination works inside a typed handler.
+
+## The idea
+
+Picture a long book. There are two ways to tell a friend where to continue reading:
+
+- **"Go to page 7."** That is **offset pagination**: skip 6 × 20 rows, then read 20. It is simple, shows a total ("page 7 of 23") and lets the client jump anywhere. But the database still walks past every skipped row, and if someone inserts a row at the top while you read, every page shifts by one.
+- **"Continue after the bookmark."** That is **cursor (keyset) pagination**: the server hands back a bookmark — the last id it sent — and the next request asks for rows _after_ it. No row is skipped twice, there is no `COUNT`, and deep pages are as fast as the first. You cannot jump to page 7, though.
+
+| | Offset (`?page=`) | Cursor (`?cursor=`) |
+| --- | --- | --- |
+| Shows a total | yes (`meta.total`, `meta.last_page`) | no |
+| Jump to any page | yes | no, only "next" |
+| Cost of deep pages | grows with the offset | constant |
+| Stable while rows are inserted | no | yes |
+| Order | any allowlisted sort | the primary key only |
+| Use it for | admin tables, search results | feeds, sync jobs, infinite scroll |
+
+The running example is the task list API from the [REST APIs overview](/docs/rest-apis/overview): `GET /api/v1/tasks` lists the caller's tasks.
+
+## Quick start
+
+<Steps>
+<Step title="Write the list handler">
+
+```go title="app/controllers/apiv1/tasks.go"
+func (t *Tasks) Index(c *web.Ctx) error {
+	req, err := api.Query(c, orm.QueryOf[models.Task](t.db),
+		api.Filters("status"),
+		api.Sorts("title", "created_at", "-id"),
+		api.PerPage(20, 100),
 	)
 	if err != nil {
-		return err // 400 problem+json
+		// An unknown column is a 400 problem+json.
+		return err
 	}
 
 	page, err := req.Paginate(c.Context())
@@ -23,50 +55,390 @@ func (p *Products) Index(c *web.Ctx) error {
 		return err
 	}
 
-	return api.Page(c, page, resources.Product)
+	return api.Page(c, page, resources.Task)
 }
 ```
 
-- Every column is an **allowlist**. An unknown filter, sort, field or include answers 400 listing the allowed values; input never chooses a column freely.
-- `?page` is capped by `api.MaxPage(n)` (default 1000) and each `filter[col]` list by `api.MaxFilterValues(n)` (default 100); above either, 400. Use `?cursor` for deep lists.
-- Filter values are always bound parameters. Comma-separated values become `IN`; `true`/`false` become booleans.
-- `req.Includes` lists the requested relations; pass them to `Query.With` (see [relations](/docs/database/relations)).
+</Step>
+<Step title="Register the route">
+
+```go title="routes/api.go"
+r.Group("/api/v1", func(g *router.Group) {
+	g.Get("/tasks", tasks.Index).Name("tasks.index")
+}).Name("api.v1.")
+```
+
+</Step>
+<Step title="Ask for a page">
+
+```bash
+curl -s 'localhost:3000/api/v1/tasks?filter[status]=todo&per_page=2&page=2'
+```
+
+```json
+{
+  "data": [
+    { "id": 37, "title": "Task 37", "status": "todo" },
+    { "id": 34, "title": "Task 34", "status": "todo" }
+  ],
+  "meta": { "page": 2, "per_page": 2, "total": 15, "last_page": 8 },
+  "links": {
+    "self": "/api/v1/tasks?filter%5Bstatus%5D=todo&page=2&per_page=2",
+    "next": "/api/v1/tasks?filter%5Bstatus%5D=todo&page=3&per_page=2",
+    "prev": "/api/v1/tasks?filter%5Bstatus%5D=todo&page=1&per_page=2"
+  }
+}
+```
+
+</Step>
+</Steps>
+
+`curl` needs the URL in single quotes because `[` and `]` mean something to the shell. No `?sort` was sent, so the default (`-id`, the last entry of `api.Sorts`) applies. The links keep every parameter of the request, re-encoded (`[` becomes `%5B`) and sorted by name.
+
+## Query conventions
+
+`api.Query[T](c, q, opts...)` takes the request, an `orm.Query[T]` and a list of options. Each option **allowlists** one convention: a column or relation that is not in the list cannot be used, whatever the URL says. This is the most important rule of the page — request input never chooses a column freely, so a client can neither sort by `password_hash` nor probe columns you did not mean to expose.
+
+```go title="app/controllers/apiv1/tasks.go"
+req, err := api.Query(c, orm.QueryOf[models.Task](t.db),
+	// ?filter[status]=todo,done&filter[done]=true
+	api.Filters("status", "done"),
+	// ?sort=-created_at,title (default: the last entry)
+	api.Sorts("title", "created_at", "-id"),
+	// ?fields=id,title
+	api.Fields("id", "title", "status"),
+	// ?include=user
+	api.Includes("user"),
+	// ?page=2&per_page=50 (default 20, capped at 100)
+	api.PerPage(20, 100),
+	// ?page above 500 is a 400
+	api.MaxPage(500),
+	// at most 20 values in one filter
+	api.MaxFilterValues(20),
+)
+```
+
+`api.Query` returns an `api.Request[T]`:
+
+| Field | Type | What it holds |
+| --- | --- | --- |
+| `Query` | `orm.Query[T]` | your query with the filters, sorts and fields applied |
+| `Page` | `int` | the requested page, at least 1 |
+| `PerPage` | `int` | the page size, between 1 and the maximum |
+| `Cursor` | `string` | the raw `?cursor=` value (empty for the first page) |
+| `Includes` | `[]string` | the allowlisted relations the client asked for |
+
+`req.Paginate(ctx)` runs `req.Query.Paginate(ctx, req.Page, req.PerPage)` for you.
+
+### Filters
+
+`api.Filters(cols...)` allows `?filter[col]=value`.
+
+- One value adds `WHERE col = ?`. Comma-separated values add `WHERE col IN (?, ?, …)`.
+- Exactly `true` or `false` become Go booleans (so SQLite, which stores booleans as `0`/`1`, matches). Every other value is passed as a string.
+- Values are always **bound parameters**, never pasted into the SQL, so a value cannot inject SQL ([OWASP: SQL injection](https://owasp.org/www-community/attacks/SQL_Injection)).
+- If the same filter appears twice in the URL, the last one wins.
+
+### Sorts
+
+`api.Sorts(cols...)` allows `?sort=col,-col`. A leading `-` means descending.
+
+- The **last entry** is the default sort, used when the URL has no `?sort`. In `api.Sorts("title", "created_at", "-id")` the default is newest id first.
+- Listing a column in either direction allows both: `"-id"` also allows `?sort=id`.
+- `?sort=` replaces the default completely; several columns sort in order (`?sort=status,-id`).
+- Without `api.Sorts` no sort is applied and any `?sort` is a `400`.
+
+### Fields
+
+`api.Fields(cols...)` allows `?fields=id,title`: the query selects only those columns (`Select`). This saves work in the database, but your transformer still writes every property of its struct. Columns that were not selected keep Go's [zero value](https://go.dev/ref/spec#The_zero_value):
+
+```json
+{ "id": 45, "title": "Task 45", "status": "" }
+```
+
+Use `omitempty` (or `omitzero`) [JSON tags](https://pkg.go.dev/encoding/json#Marshal) on the transformer's fields when clients should not see the empty ones.
+
+### Includes
+
+`api.Includes(rels...)` allows `?include=user,comments` and fills `req.Includes` with what the client asked for. It does **not** load anything by itself: your handler decides how to load each relation. `orm.Query.With` takes the relation's **Go field name** (`"User"`), so map the public names:
+
+```go title="app/controllers/apiv1/tasks.go"
+// Public include name → orm relation field.
+var taskRelations = map[string]string{"user": "User"}
+
+q := req.Query
+for _, name := range req.Includes {
+	q = q.With(taskRelations[name])
+}
+
+page, err := q.Paginate(c.Context(), req.Page, req.PerPage)
+```
+
+In the transformer, read a relation only when it was loaded: `m.User.Loaded()` reports it, and `m.User.Get()` returns `orm.ErrNotLoaded` otherwise. See [Relations](/docs/database/relations).
+
+### Page size and limits
+
+| Parameter | Rule |
+| --- | --- |
+| `?page` | missing, `0`, negative or not a number → `1`; above `MaxPage` → `400` |
+| `?per_page` | missing or not a number → the default; below 1 → `1`; above the maximum → the maximum (capped, no error) |
+| `?filter[col]` | more comma-separated values than `MaxFilterValues` → `400` |
+
+`api.MaxPage(n)` defaults to `api.DefaultMaxPage` (1000) and `api.MaxFilterValues(n)` to `api.DefaultMaxFilterValues` (100). Both ignore `n <= 0` and keep the default. `api.PerPage(def, max)` defaults to 20 and 100. These bounds exist because `OFFSET 10000000` still makes the database walk ten million rows, and a filter with ten thousand values binds ten thousand parameters: a cheap request should not cost you an expensive query. For deep lists, use a cursor.
 
 ## Offset pages
 
+`api.Page(c, page, fn)` answers `200` with an `api.Envelope` built from an `orm.Page[T]`; `fn` is the transformer that turns each model into its wire format.
+
 ```json
 {
-  "data": [{ "id": 1, "name": "Keyboard" }],
-  "meta": { "page": 1, "per_page": 20, "total": 134, "last_page": 7 },
-  "links": { "self": "/api/v1/products?page=1", "next": "/api/v1/products?page=2", "prev": null }
+  "data": [{ "id": 45, "title": "Task 45", "status": "todo" }],
+  "meta": { "page": 1, "per_page": 10, "total": 45, "last_page": 5 },
+  "links": {
+    "self": "/api/v1/tasks?page=1&per_page=10",
+    "next": "/api/v1/tasks?page=2&per_page=10",
+    "prev": null
+  }
 }
 ```
 
-`api.Page(c, page, fn)` builds it from `orm.Page[T]` (`query.Paginate(ctx, page, perPage)`); `fn` is the resource transformer.
+How the links are built:
+
+- `self` is the current path and query with `page` set to the current page.
+- `next` is `null` on the last page (when `page >= last_page`).
+- `prev` is `null` on page 1. Past the end it points to the last real page: `?page=99` of a 5-page list answers an empty `data`, `next: null` and `prev: "…?page=5…"`, so a client that went too far can find its way back.
+- Links are relative (path and query, no host): the client already knows the host it called.
 
 ## Cursor pages
 
-Keyset pagination needs no `COUNT` and stays stable while rows are inserted:
+For a cursor page, call `CursorPaginate` on the refined query and answer with `api.Cursor`:
 
-```go
-page, err := req.Query.CursorPaginate(c.Context(), req.Cursor, req.PerPage, orm.Asc)
-if err != nil {
-	return err // a tampered cursor is a 400
+```go title="app/controllers/apiv1/feed.go"
+func (f *Feed) Index(c *web.Ctx) error {
+	req, err := api.Query(c, orm.QueryOf[models.Task](f.db),
+		api.Filters("status"),
+		api.PerPage(20, 100),
+	)
+	if err != nil {
+		return err
+	}
+
+	page, err := req.Query.CursorPaginate(
+		c.Context(), req.Cursor, req.PerPage, orm.Asc,
+	)
+	if err != nil {
+		// A tampered cursor is a 400.
+		return err
+	}
+
+	return api.Cursor(c, page, resources.Task)
 }
-
-return api.Cursor(c, page, resources.Product)
 ```
 
 ```json
 {
-  "data": [{ "id": 21, "name": "Mouse" }],
-  "meta": { "per_page": 20, "next_cursor": "MjE" },
-  "links": { "self": "/api/v1/products", "next": "/api/v1/products?cursor=MjE", "prev": null }
+  "data": [
+    { "id": 1, "title": "Task 01", "status": "doing" },
+    { "id": 2, "title": "Task 02", "status": "done" }
+  ],
+  "meta": { "per_page": 2, "next_cursor": "Mg" },
+  "links": {
+    "self": "/api/v1/feed?per_page=2",
+    "next": "/api/v1/feed?cursor=Mg&per_page=2",
+    "prev": null
+  }
 }
 ```
 
-The cursor orders by the primary key, so the query must not have its own `OrderBy`. `links.next` is `null` on the last page.
+- Pass `""` for the first page and `meta.next_cursor` for the next one. On the last page `next_cursor` is absent and `links.next` is `null`.
+- The cursor is an opaque string (an encoded primary key). A client must send it back unchanged; anything that does not decode answers `400` with `"detail": "Invalid pagination cursor."`.
+- `orm.Asc` walks from the oldest id up, `orm.Desc` from the newest down.
+- `links.self` is the request URI as received; `links.prev` is always `null`, because a keyset cursor only moves forward.
+
+<Callout type="warning" title="No api.Sorts on cursor endpoints">
+The keyset order is the primary key. `api.Sorts` always applies an `OrderBy` (its last entry is the default), and `CursorPaginate` then fails with `orm: CursorPaginate orders by the primary key; remove OrderBy`: the client gets a `500`.
+</Callout>
 
 ## Plain collections
 
-`api.Collection(c, items, fn)` answers `{"data": [...]}` without meta or links. Single resources have no envelope.
+When a list is small and bounded (the five statuses of a task, a user's two API tokens), skip pagination: `api.Collection(c, items, fn)` answers `{"data": [...]}` without `meta` or `links`.
+
+```json
+{ "data": [{ "id": 1, "title": "Task 01", "status": "doing" }] }
+```
+
+Single resources have no envelope at all: `c.JSON(200, resources.Task(t))` writes the object itself.
+
+## The envelope types
+
+The envelopes are plain [generic](https://go.dev/doc/tutorial/generics) structs in the `api` package, so you may build one yourself:
+
+```go
+type Envelope[R any] struct {
+	Data  []R    `json:"data"`
+	Meta  *Meta  `json:"meta,omitempty"`
+	Links *Links `json:"links,omitempty"`
+}
+
+type Meta struct {
+	Page       int    `json:"page,omitempty"`
+	PerPage    int    `json:"per_page"`
+	Total      *int64 `json:"total,omitempty"`
+	LastPage   int    `json:"last_page,omitempty"`
+	NextCursor string `json:"next_cursor,omitempty"`
+}
+
+type Links struct {
+	Self string  `json:"self"`
+	Next *string `json:"next"`
+	Prev *string `json:"prev"`
+}
+```
+
+`Next` and `Prev` are pointers so that "no page" encodes as `null` instead of `""`. `Total` is a pointer so `0` still appears on an empty offset page.
+
+### Inside a typed handler
+
+A [typed handler](/docs/rest-apis/typed-handlers) returns a value instead of writing the response, so it cannot call `api.Page`. Return your own struct that embeds `api.Meta` — the [OpenAPI document](/docs/rest-apis/openapi) then describes the envelope too. This is how the example app lists tasks:
+
+```go title="app/resources/task.go"
+// TaskPageJSON is one page of tasks: data plus pagination meta.
+type TaskPageJSON struct {
+	Data []TaskJSON `json:"data" validate:"required"`
+	Meta api.Meta   `json:"meta" validate:"required"`
+}
+
+// TaskPage transforms an offset page of models.
+func TaskPage(p orm.Page[models.Task]) TaskPageJSON {
+	total := p.Total
+
+	return TaskPageJSON{
+		Data: api.Map(p.Items, Task),
+		Meta: api.Meta{
+			Page:     p.Page,
+			PerPage:  p.PerPage,
+			Total:    &total,
+			LastPage: p.LastPage,
+		},
+	}
+}
+```
+
+```go title="app/controllers/apiv1/tasks.go"
+func (t *Tasks) Index(
+	c *web.Ctx, in requests.ListTasks,
+) (resources.TaskPageJSON, error) {
+	q := orm.QueryOf[models.Task](t.db)
+	if in.Status != "" {
+		q = q.Where("status", in.Status)
+	}
+
+	req, err := api.Query(c, q,
+		api.Sorts("title", "created_at", "-id"),
+		api.PerPage(20, 100),
+	)
+	if err != nil {
+		return resources.TaskPageJSON{}, err
+	}
+
+	page, err := req.Paginate(c.Context())
+	if err != nil {
+		return resources.TaskPageJSON{}, err
+	}
+
+	return resources.TaskPage(page), nil
+}
+```
+
+`requests.ListTasks` declares `status`, `sort`, `page` and `per_page` with `validate` tags, so they are validated and documented; `api.Query` still reads the URL itself and enforces the allowlist.
+
+## Errors
+
+Every rejection is a `400` problem+json whose `detail` names what is allowed:
+
+| Request | `detail` |
+| --- | --- |
+| `?sort=status` | `Unknown sort "status". Allowed: title, created_at, -id.` |
+| `?filter[owner]=1` | `Unknown filter "owner". Allowed: status.` |
+| `?include=user` without `api.Includes` | `Unknown include "user". Allowed: none.` |
+| `?fields=secret` | `Unknown field "secret". Allowed: id, title, status.` |
+| `?page=1001` | `Query parameter page must be at most 1000.` |
+| `?filter[status]=` with 101 values | `Query parameter filter[status] accepts at most 100 values.` |
+| `?cursor=garbage` | `Invalid pagination cursor.` |
+
+```json
+{
+  "type": "about:blank",
+  "title": "Bad Request",
+  "status": 400,
+  "detail": "Unknown sort \"status\". Allowed: title, created_at, -id.",
+  "instance": "/api/v1/tasks"
+}
+```
+
+## Security
+
+- **Allowlists, always.** Filters, sorts, fields and includes accept only the names you list (`TestSecurity_A05_QueryConventionsRejectUnknownColumns`), and filter values are bound parameters.
+- **Bounded work.** `MaxPage`, `MaxFilterValues` and the `per_page` cap stop one request from making the database skip millions of rows or bind thousands of parameters (`TestSecurity_A04_QueryBoundsPageAndFilterLists`).
+- **Your job:** scope the base query to the caller before `api.Query` (`Where("user_id", u.ID)`), so pages never mix users' rows, and keep private columns out of `api.Fields`. More in the [Security overview](/docs/security/overview).
+
+## Testing
+
+```go title="tests/tasks_test.go"
+func TestListTasks(t *testing.T) {
+	app := vukemtest.New(t, bootstrap.New)
+	token := apiUser(t, app, "ada@example.com")
+	client := app.Client(t).WithToken(token)
+
+	client.GetJSON("/api/v1/tasks?per_page=2").
+		AssertOK().
+		AssertJSONCount("data", 2).
+		AssertJSONPath("meta.per_page", 2)
+
+	client.GetJSON("/api/v1/tasks?sort=password").
+		AssertProblem(400)
+}
+```
+
+`AssertJSONCount(path, n)` counts the items of an array; `AssertJSONPath` reads nested keys with dots. See [Testing](/docs/testing/overview).
+
+## Common mistakes
+
+**Using `api.Sorts` with a cursor.** The client gets a `500` and the log says `orm: CursorPaginate orders by the primary key; remove OrderBy`. Drop `api.Sorts` on cursor endpoints.
+
+**Passing include names straight to `With`.**
+
+```go title="Wrong"
+// "user" is not a Go field name: the query fails with
+// orm: Task has no relation "user" (a 500).
+q = q.With(req.Includes...)
+```
+
+```go title="Right"
+for _, name := range req.Includes {
+	q = q.With(taskRelations[name])
+}
+```
+
+**Expecting `?fields` to remove properties.** It only narrows the `SELECT`; add `omitempty` to the transformer's fields.
+
+**Forgetting quotes in the shell.** `curl localhost:3000/api/v1/tasks?filter[status]=done` may fail with `no matches found` in zsh. Quote the URL.
+
+## Next steps
+
+<CardGroup cols="2">
+<Card title="Typed handlers" href="/docs/rest-apis/typed-handlers" icon="code">
+Validated input structs and typed outputs.
+</Card>
+<Card title="ORM" href="/docs/database/orm" icon="database">
+Queries, `Paginate` and `CursorPaginate`.
+</Card>
+<Card title="Relations" href="/docs/database/relations" icon="layers">
+Eager loading with `With`.
+</Card>
+<Card title="OpenAPI" href="/docs/rest-apis/openapi" icon="book">
+Describe the envelopes in your API document.
+</Card>
+</CardGroup>
+
+Package reference: [pkg.go.dev/github.com/AlexGalhardo/vukem/api](https://pkg.go.dev/github.com/AlexGalhardo/vukem/api).

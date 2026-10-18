@@ -1,103 +1,559 @@
 ---
 title: gRPC
-description: Serve gRPC, gRPC-Web and Connect from the app router with connect-go, with auth, validation, error mapping, health checks, reflection and code generation.
+description: Serve gRPC, gRPC-Web and Connect from the Vukem router with contrib/grpc and connect-go — auth guards, validation, error mapping, health checks, reflection, a dedicated port and code generation.
 ---
+
+REST sends JSON over HTTP and leaves the contract to documentation. **gRPC** goes the other way: you describe your service in a `.proto` file, a generator writes typed Go code for the server and the client, and messages travel as compact binary [Protocol Buffers](https://protobuf.dev). It is a good fit for service-to-service traffic, mobile apps and streaming.
+
+`contrib/grpc` serves gRPC services from the same Vukem app, router and port as your HTTP routes. It is built on [connect-go](https://connectrpc.com/docs/go/getting-started), whose handlers are plain `net/http` handlers, so one service answers **three protocols** at once — gRPC, gRPC-Web and Connect — and shares your middleware: request ids, logging, rate limiting and auth guards.
+
+You will learn:
+
+- What gRPC, Protocol Buffers and connect-go are, and how they fit into a Vukem app.
+- How to write a `.proto` file, generate code and mount the service.
+- How auth, validation and errors work for RPCs, and which code each error becomes.
+- How to add health checks and reflection, and serve RPCs on their own port.
+- How to test a service over every protocol.
+
+## The idea
+
+A gRPC service is like a **phone switchboard with a printed directory**. The directory (the `.proto` file) lists every extension (method), what you must say when you call (the request message) and what you will hear back (the response message). Both sides print their phones from the same directory, so nobody dials a number that does not exist.
+
+| Word | Meaning |
+| --- | --- |
+| <Term tip="A language-neutral way to describe structured data and encode it as compact binary.">Protocol Buffers</Term> | the message format, described in `.proto` files ([language guide](https://protobuf.dev/programming-guides/proto3/)) |
+| service | a group of methods (`rpc`s) in a `.proto` file |
+| unary RPC | one request, one response |
+| streaming RPC | a stream of messages in one or both directions |
+| gRPC | the original protocol; needs HTTP/2 ([grpc.io](https://grpc.io/docs/what-is-grpc/introduction/)) |
+| gRPC-Web | a variant browsers can speak over HTTP/1.1 |
+| Connect | connect-go's own protocol: plain HTTP POSTs with binary or JSON bodies, `curl`-friendly |
+| metadata | gRPC's name for request and response headers |
+
+connect-go generates an `http.Handler` per service. Because a Vukem router mounts any `http.Handler`, the service lives next to your REST routes — no second server, no `google.golang.org/grpc` runtime.
+
+The running example is a **task service** for the task list app of the [REST APIs overview](/docs/rest-apis/overview): `GetTask` returns one task, and a streaming `WatchTasks` sends tasks as they change.
+
+## Quick start
+
+<Steps>
+<Step title="Install the module and the generators">
 
 ```bash
 go get github.com/AlexGalhardo/vukem/contrib/grpc
+go get -tool google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.12
+go get -tool connectrpc.com/connect/cmd/protoc-gen-connect-go@v1.21.1
 ```
 
-`contrib/grpc` serves [connect-go](https://connectrpc.com) services from the app router. connect-go handlers are plain `net/http`, so **gRPC, gRPC-Web and Connect** share one port, the router's middleware (request id, logging, rate limiting, auth guards) and the app; there is no separate gRPC server.
+`go get -tool` records the generators as [tool dependencies](https://go.dev/doc/modules/managing-dependencies#tools) in your `go.mod`, pinned to the versions `contrib/grpc` is tested with; nothing is installed globally.
 
-```go
-func routes(r *router.Router, app *vukem.App) error {
-	opts := grpc.HandlerOptions(grpc.Options{
-		Rules: []grpc.Rule{grpc.Validate(z.Struct[greetv1.GreetRequest](z.Shape{"name": z.String().Min(1)}))},
-	})
+</Step>
+<Step title="Create the service definition">
 
-	path, h := greetv1connect.NewGreetServiceHandler(&greeter{}, opts...)
-	grpc.Mount(r, path, h).Use(grpc.Required(apiGuard), ratelimit.Middleware(limiter, ratelimit.ByToken))
+```bash
+vukem make:proto Task
+```
 
-	grpc.Health(r, grpchealth.NewStaticChecker(greetv1connect.GreetServiceName))
-	grpc.Reflection(app, r, greetv1connect.GreetServiceName) // not in production
+This writes `proto/task/v1/task.proto`, plus `buf.yaml` and `buf.gen.yaml` when they do not exist yet (`-force` overwrites an existing `.proto`):
+
+```protobuf title="proto/task/v1/task.proto"
+syntax = "proto3";
+
+package task.v1;
+
+option go_package = "example.com/tasks/gen/task/v1;taskv1";
+
+// TaskService is served by contrib/grpc (gRPC, gRPC-Web and Connect).
+service TaskService {
+  // GetTask returns one Task.
+  rpc GetTask(GetTaskRequest) returns (GetTaskResponse) {}
+}
+
+message GetTaskRequest {
+  int64 id = 1;
+}
+
+message GetTaskResponse {
+  int64 id = 1;
+  string name = 2;
+}
+```
+
+</Step>
+<Step title="Generate the Go code">
+
+```bash
+vukem codegen:rpc
+```
+
+You get `gen/task/v1/task.pb.go` (the messages) and `gen/task/v1/taskv1connect/task.connect.go` (the service interface, `NewTaskServiceHandler`, `NewTaskServiceClient` and the `TaskServiceName` constant `"task.v1.TaskService"`). Commit them like any source.
+
+</Step>
+<Step title="Implement and mount the service">
+
+```go title="app/rpc/tasks.go"
+package rpc
+
+import (
+	"context"
+
+	"connectrpc.com/connect"
+	"github.com/AlexGalhardo/vukem/database"
+	"github.com/AlexGalhardo/vukem/orm"
+
+	taskv1 "example.com/tasks/gen/task/v1"
+	"example.com/tasks/gen/task/v1/taskv1connect"
+	"example.com/tasks/app/models"
+)
+
+// Tasks implements taskv1connect.TaskServiceHandler.
+type Tasks struct {
+	taskv1connect.UnimplementedTaskServiceHandler
+
+	DB *database.DB
+}
+
+func (t *Tasks) GetTask(
+	ctx context.Context,
+	req *connect.Request[taskv1.GetTaskRequest],
+) (*connect.Response[taskv1.GetTaskResponse], error) {
+	task, err := orm.QueryOf[models.Task](t.DB).
+		Find(ctx, req.Msg.GetId())
+	if err != nil {
+		// orm.ErrNotFound reaches the client as NotFound.
+		return nil, err
+	}
+
+	return connect.NewResponse(&taskv1.GetTaskResponse{
+		Id:   task.ID,
+		Name: task.Title,
+	}), nil
+}
+```
+
+```go title="routes/rpc.go"
+package routes
+
+import (
+	"github.com/AlexGalhardo/vukem"
+	"github.com/AlexGalhardo/vukem/contrib/grpc"
+	"github.com/AlexGalhardo/vukem/router"
+
+	"example.com/tasks/app/rpc"
+	"example.com/tasks/gen/task/v1/taskv1connect"
+)
+
+func RPC(r *router.Router, app *vukem.App) error {
+	db, err := app.DB()
+	if err != nil {
+		return err
+	}
+
+	opts := grpc.HandlerOptions(grpc.Options{})
+	path, h := taskv1connect.NewTaskServiceHandler(
+		&rpc.Tasks{DB: db}, opts...,
+	)
+	grpc.Mount(r, path, h)
 
 	return nil
 }
+```
 
-func (g *greeter) Greet(ctx context.Context, req *connect.Request[greetv1.GreetRequest]) (*connect.Response[greetv1.GreetResponse], error) {
-	user, err := auth.UserFrom[*models.User](ctx, "api")
-	if err != nil {
-		return nil, err
-	}
-	return connect.NewResponse(&greetv1.GreetResponse{Greeting: "Hello, " + user.Name}), nil
+Add `RPC` to `routes.All()`.
+
+</Step>
+<Step title="Call it">
+
+```bash
+vukem serve
+
+# The Connect protocol is plain HTTP + JSON.
+curl -s localhost:3000/task.v1.TaskService/GetTask \
+  -H 'Content-Type: application/json' -d '{"id": 1}'
+```
+
+```json
+{ "id": "1", "name": "Buy milk" }
+```
+
+Protobuf's JSON mapping writes 64-bit integers as strings, so `id` is `"1"`. A missing task answers `{"code":"not_found","message":"Record not found."}` with HTTP status `404`.
+
+</Step>
+</Steps>
+
+## Mounting, auth and middleware
+
+`grpc.Mount(r, path, h)` registers the generated handler on a router or a group (anything with `Handle`, the `grpc.Mounter` interface) at the path connect-go returned (`/task.v1.TaskService/`), and returns the `*router.Route`. Middleware added with `.Use` on that route runs **inside the protocol error bridge**, so anything it rejects reaches the client as an RPC error with the matching code instead of an HTML page or a problem+json body:
+
+```go title="routes/rpc.go"
+limiter := ratelimit.Middleware(
+	ratelimit.NewMemory(60, time.Minute),
+	ratelimit.ByToken,
+)
+
+grpc.Mount(r, path, h).Use(grpc.Required(acc.API), limiter)
+```
+
+| Middleware rejects with | The client sees |
+| --- | --- |
+| `401` (a guard) | `unauthenticated: Unauthenticated.` |
+| `403` | `permission_denied` |
+| `413` (body limit) | `resource_exhausted` |
+| `429` (rate limit) | `resource_exhausted: Too many requests.` with a `Retry-After` metadata entry |
+| `503` (a failing store) | `unavailable: internal error` |
+
+- **`grpc.Required(guards...)`** is `auth.Required` for RPCs: the request passes when any guard authenticates it, and gets `Unauthenticated` otherwise — never a login redirect, even in apps with sessions. `auth.Optional` works as is.
+- Methods read the user from the context with `auth.UserFrom`:
+
+```go title="app/rpc/tasks.go"
+user, err := auth.UserFrom[models.User](ctx, "api")
+if err != nil {
+	return nil, err
 }
 ```
 
-## Mounting and middleware
+- **`grpc.Errors()`** is the bridge `Mount` installs. Router and group middleware run **outside** it and keep the app's error handler; add `g.Use(grpc.Errors())` before them on a group whose middleware should answer RPC clients the same way. Requests that are not RPCs (a browser on the same group) still get the normal error handler.
+- `Mount` gives connect-go a `Flush` that reaches the connection through every middleware writer, so streams work behind middleware that wraps the response. Avoid `middleware.Timeout` and `middleware.Gzip` on RPC routes; use deadlines and connect-go compression instead.
 
-- `grpc.Mount(r, path, h)` registers the generated handler on a router or group and returns the route. Middleware added with `.Use` runs inside the error bridge: rejections (401, 403, 429 with `Retry-After`, 413, 503) reach the client as RPC errors with the matching code. Add `grpc.Errors()` to a group to get the same mapping for group middleware.
-- `grpc.Required(guards...)` is `auth.Required` for RPCs: `Unauthenticated` instead of a login redirect. Methods read the user with `auth.UserFrom(ctx, guard)`.
-- `grpc.HandlerOptions(grpc.Options{...})` bundles request validation (`Rules`, plus messages with a `Validate() error` method), error mapping, one `rpc` log line per call, panic recovery and a 4 MiB message limit (`MaxMessageBytes`). Your `Interceptors` run inside these.
-- Avoid `middleware.Timeout` and `Gzip` on RPC routes; use deadlines and connect-go compression.
+## Handler options: validation, logging, limits
+
+`grpc.HandlerOptions(grpc.Options{...})` returns the connect-go `[]connect.HandlerOption` that bridge a service to Vukem. Pass them to the generated `New…Handler`, and append your own options to the slice if you need more.
+
+| `grpc.Options` field | Default | What it does |
+| --- | --- | --- |
+| `Log` | the router's logger | receives one `rpc` line per call |
+| `Rules` | none | validate request messages before the method runs |
+| `MaxMessageBytes` | `grpc.DefaultMaxMessageBytes` (4 MiB) | larger request messages get `ResourceExhausted` |
+| `Interceptors` | none | your [connect interceptors](https://connectrpc.com/docs/go/interceptors); they run inside Vukem's, so they see validated requests and their errors are mapped too |
+
+The options install, in order: Vukem's interceptor (validation, error mapping and logging), your interceptors, panic recovery (the client gets `Internal: internal error`, the log gets the panic and the stack) and `connect.WithReadMaxBytes`.
+
+The log line has the procedure, protocol, code, duration and request id. Errors that the client sees as a generic message are logged at `ERROR` with the cause:
+
+```text
+level=INFO msg=rpc procedure=/task.v1.TaskService/GetTask
+  protocol=connect duration=1.149ms request_id=01J… code=ok
+```
+
+### Validating requests
+
+`grpc.Validate(schema)` builds a `grpc.Rule` that checks every request message of one type — unary calls and each message of a stream — before your method runs:
+
+```go title="routes/rpc.go"
+opts := grpc.HandlerOptions(grpc.Options{
+	Rules: []grpc.Rule{
+		grpc.Validate(z.Struct[taskv1.GetTaskRequest](z.Shape{
+			"id": z.Int64().Positive(),
+		})),
+	},
+})
+```
+
+Keys are the message's Go JSON names, which `protoc-gen-go` sets to the proto field names. The message is encoded with `encoding/json` and parsed with the schema, so a proto3 field left at its zero value is **absent** (`omitempty`): `{}` fails with `The id field is required.`, `{"id": -3}` with `The id field must be greater than 0.`. A failure is `InvalidArgument` with the message `invalid request` and a [`google.rpc.BadRequest`](https://pkg.go.dev/google.golang.org/genproto/googleapis/rpc/errdetails#BadRequest) detail holding one field violation per message:
+
+```text
+invalid_argument: invalid request
+  violation: field=id description="The id field must be greater than 0."
+```
+
+Messages with a `Validate() error` method (written by hand or generated) are checked too, after the rules. How their error is mapped:
+
+| `Validate()` returns | The client sees |
+| --- | --- |
+| `z.Issues` or `*errs.ValidationError` | `InvalidArgument` with field violations |
+| a per-field error with `Field()` and `Reason()` ([protoc-gen-validate](https://github.com/bufbuild/protoc-gen-validate)) | `InvalidArgument` with its text |
+| a `*connect.Error` | that error |
+| anything else (a failed uniqueness query, a 5xx) | mapped like a handler error: masked as `Internal: internal error` and logged |
+
+For other validators, such as [protovalidate](https://github.com/bufbuild/protovalidate), return `connect.NewError(connect.CodeInvalidArgument, err)` from `Validate()` yourself.
 
 ## Errors
 
-`grpc.Error(err)` maps errors to codes: `context.Canceled`/`DeadlineExceeded` as is; `z.Issues` and `*errs.ValidationError` → `InvalidArgument` with a `google.rpc.BadRequest` detail; `*errs.HTTPError` by status (400/422 `InvalidArgument`, 401 `Unauthenticated`, 403 `PermissionDenied`, 404 `NotFound`, 409 `AlreadyExists`, 429 `ResourceExhausted`, 503 `Unavailable`, …), with "internal error" as the message for any 5xx (the cause is logged, and only `Retry-After` becomes metadata); anything else → `Internal` "internal error", with the cause only in the log. A `*connect.Error` you return with a non-server-fault code keeps its text, so keep internals out of it. `Validate() error` gives `InvalidArgument` only for `z.Issues`, `*errs.ValidationError` and `Field()`/`Reason()` errors (protoc-gen-validate); other errors are masked and logged like handler errors. `grpc.ErrorContext(ctx, err)` also translates keyed errors (`errs.NewKey`) into the request locale; `Mount` and `HandlerOptions` use it.
+Every error a method (or middleware behind `Mount`) returns goes through `grpc.ErrorContext(ctx, err)`, which turns it into the `*connect.Error` the client receives. The rule of thumb: **client mistakes keep their message, server faults never show their text**.
 
-## Health, reflection and HTTP/2
+| Error | Code | Message |
+| --- | --- | --- |
+| a `*connect.Error` with a client code | as is | as is |
+| a `*connect.Error` with `Internal`, `Unknown`, `DataLoss` or `Unavailable` | as is | `internal error` |
+| `context.Canceled` / `context.DeadlineExceeded` | `Canceled` / `DeadlineExceeded` | `request canceled` / `deadline exceeded` |
+| `z.Issues`, `*errs.ValidationError` | `InvalidArgument` | `invalid request`, with a `BadRequest` detail |
+| `*errs.HTTPError` below 500 | `grpc.CodeOf(status)` | its client-safe message; its headers become metadata |
+| `*errs.HTTPError` from 500 up | `grpc.CodeOf(status)` | `internal error`; only `Retry-After` becomes metadata |
+| another `errs.StatusCoder` | `grpc.CodeOf(status)` | the HTTP status text below 500, `internal error` from 500 up |
+| anything else | `Internal` | `internal error` |
 
-- `grpc.Health(r, checker)` mounts `grpc.health.v1.Health` for load balancers and probes.
-- `grpc.Reflection(app, r, services...)` mounts server reflection for `grpcurl` and `buf curl`. It publishes the whole API, so in production it registers nothing unless `GRPC_INSECURE_REFLECTION_IN_PRODUCTION=true`.
-- Native gRPC needs HTTP/2. Outside production the app server also speaks h2c, so `grpcurl -plaintext localhost:3000 list` works with `vukem serve`. In production terminate TLS at a proxy that speaks HTTP/2 to the app (`HTTP_H2C=true`), or serve TLS yourself. gRPC-Web and Connect also work over HTTP/1.1, from browsers too.
+A 5xx wins over the `z.Issues` it wraps (`errs.Wrap(500, issues)` carries internal data, not field errors). `grpc.Error(err)` is the same without a context; `ErrorContext` also translates keyed errors (`errs.NewKey`) with the request's `errs.Translator`, so RPC errors follow the request locale. `Mount`, `Errors()` and `HandlerOptions` always use the context form.
 
-## Own port
+<Callout type="warning" title="Your connect.Error text is public">
+A `*connect.Error` you return with a client code (`InvalidArgument`, `NotFound`, …) reaches the client word for word: that text is your explicit choice. Never put internals in it.
+</Callout>
 
-`grpc.Serve(app, addr, h, grpc.ServerOptions{TLS: cfg})` adds a `grpc` runner serving `h` on its own address (for example `GRPC_PORT`); it starts and stops with the app and drains in-flight RPCs within `SHUTDOWN_TIMEOUT`. Build `h` as a router holding only the RPC services, so RPC paths stay off the HTTP port:
+`grpc.CodeOf(status)` maps HTTP statuses to RPC codes:
 
-```go
-rpc := router.New(app.Router.Services())
-if err := vukem.APIMiddleware(app, rpc); err != nil {
-	return err
-}
+| HTTP status | RPC code |
+| --- | --- |
+| `400`, `415`, `422` | `InvalidArgument` |
+| `401` | `Unauthenticated` |
+| `403` | `PermissionDenied` |
+| `404`, `410` | `NotFound` |
+| `405`, `501` | `Unimplemented` |
+| `408`, `504` | `DeadlineExceeded` |
+| `409` | `AlreadyExists` |
+| `412`, `428` | `FailedPrecondition` |
+| `413`, `429` | `ResourceExhausted` |
+| `499` (client closed request) | `Canceled` |
+| `503` | `Unavailable` |
+| any other 4xx | `FailedPrecondition` |
+| any other status | `Internal` |
 
-// MaxMessageBytes sets connect.WithReadMaxBytes (4 MiB by default).
-opts := grpc.HandlerOptions(grpc.Options{Log: app.Log, MaxMessageBytes: 1 << 20})
-path, h := greetv1connect.NewGreetServiceHandler(svc, opts...)
-grpc.Mount(rpc, path, h).Use(grpc.Required(apiGuard), ratelimit.Middleware(limiter, ratelimit.ByToken))
+## Health checks and reflection
 
-return grpc.Serve(app, ":"+app.Source.Get("GRPC_PORT"), rpc, grpc.ServerOptions{})
+```go title="routes/rpc.go"
+grpc.Health(r, grpchealth.NewStaticChecker(
+	taskv1connect.TaskServiceName,
+))
+
+// Registers nothing in production (see below).
+grpc.Reflection(app, r, taskv1connect.TaskServiceName)
 ```
 
-- With `TLS` set the port speaks HTTP/2 and HTTP/1.1 over TLS; without it, h2c and HTTP/1.1. In production a cleartext port is refused (`grpc.ErrCleartextInProduction`) unless `GRPC_INSECURE_CLEARTEXT=true` (or `ServerOptions.InsecureCleartext`), for a private network or a proxy that terminates TLS and speaks h2c; other values than `true`/`false` fail boot. `HTTP_H2C` only concerns the main HTTP server.
-- Request headers, gRPC metadata included, are capped at 64 KiB like the HTTP server. `HTTP_MAX_HEADER_BYTES` (read by `grpc.Serve`) or `ServerOptions.MaxHeaderBytes` raises it up to 1 MiB for large metadata; other values fail with `grpc.ErrInvalidMaxHeaderBytes`.
-- On Railway the public HTTP domain talks HTTP/1.1 to the app, so native gRPC needs a TCP proxy, which forwards raw bytes: serve TLS yourself (`ServerOptions.TLS`). Between services of one project, private networking (`<service>.railway.internal:<port>`) carries cleartext gRPC with `GRPC_INSECURE_CLEARTEXT=true`.
-- The port does **not** inherit the HTTP router's middleware (rate limiting, headers, body limits, guards): install them on `h` as above. `vukem.APIMiddleware` adds recover, request id, logging, headers and a body limit; `HandlerOptions` caps messages with `connect.WithReadMaxBytes` (4 MiB unless `MaxMessageBytes` says otherwise). The server bounds headers and timeouts, not bodies.
-- `grpc.Server(&app.Config, addr, h, opts)` is the same server as a plain `vukem.Runner`, with the same production rule (a nil config counts as production). Both use the secure timeouts of `vukem.NewHTTPServer` (60s write timeout), so long-lived streams need a server of their own.
+- **`grpc.Health(r, checker, opts...)`** mounts the standard `grpc.health.v1.Health` service ([grpchealth](https://pkg.go.dev/connectrpc.com/grpchealth)) for load balancers, Kubernetes probes and `grpc-health-probe`. `grpchealth.NewStaticChecker(names...)` reports the listed services as serving; implement `grpchealth.Checker` to report real state (a database ping, for example). It returns the route, so `.Use` works.
+- **`grpc.Reflection(app, r, services...)`** mounts server reflection `v1` and `v1alpha` ([grpcreflect](https://pkg.go.dev/connectrpc.com/grpcreflect)), so [`grpcurl`](https://github.com/fullstorydev/grpcurl) and `buf curl` can list and call your services without the `.proto` files. Reflection publishes your whole API surface, so in production it registers nothing and returns `false` unless `GRPC_INSECURE_REFLECTION_IN_PRODUCTION=true`.
+
+```bash
+grpcurl -plaintext localhost:3000 list
+grpcurl -plaintext -d '{"id": 1}' \
+  localhost:3000 task.v1.TaskService/GetTask
+```
+
+## HTTP/2 and a dedicated port
+
+Native gRPC needs **HTTP/2**; gRPC-Web and Connect also work over HTTP/1.1, from browsers too (same origin, or with CORS on the route).
+
+- **Outside production** `vukem serve` speaks HTTP/2 without TLS (<Term tip="HTTP/2 cleartext with prior knowledge: the client starts speaking HTTP/2 directly, without TLS.">h2c</Term>) next to HTTP/1.1, so `grpcurl -plaintext localhost:3000 list` works out of the box.
+- **In production** the main server speaks h2c only with `HTTP_H2C=true`, for a proxy that speaks HTTP/2 to the app. Otherwise terminate TLS at a proxy that speaks HTTP/2, or serve TLS yourself.
+
+### Serving RPCs on their own port
+
+`grpc.Serve(app, addr, h, opts)` adds a runner named `grpc` that serves `h` on its own address next to the HTTP server; it starts and stops with the app and drains in-flight RPCs on shutdown. Call it from a provider's `Register` or `Boot`, and give it a router that holds **only** the RPC services, so RPC paths stay off the HTTP port:
+
+```go title="app/providers/rpc.go"
+// RPCProvider serves the RPC services on GRPC_PORT.
+type RPCProvider struct {
+	tasks   *rpc.Tasks
+	guard   auth.Checker
+	limiter router.Middleware
+}
+
+func (p *RPCProvider) Boot(_ context.Context, app *vukem.App) error {
+	rpcRouter := router.New(app.Router.Services())
+	if err := vukem.APIMiddleware(app, rpcRouter); err != nil {
+		return err
+	}
+
+	// MaxMessageBytes sets connect.WithReadMaxBytes.
+	opts := grpc.HandlerOptions(grpc.Options{
+		Log:             app.Log,
+		MaxMessageBytes: 1 << 20,
+	})
+	path, h := taskv1connect.NewTaskServiceHandler(p.tasks, opts...)
+	grpc.Mount(rpcRouter, path, h).
+		Use(grpc.Required(p.guard), p.limiter)
+	grpc.Health(rpcRouter, grpchealth.NewStaticChecker(
+		taskv1connect.TaskServiceName,
+	))
+
+	addr := ":" + app.Source.Get("GRPC_PORT")
+
+	return grpc.Serve(app, addr, rpcRouter, grpc.ServerOptions{})
+}
+```
+
+The separate port does **not** inherit the HTTP router's middleware: rate limiting, security headers, body limits and guards apply only if `h` installs them, as above. `vukem.APIMiddleware` adds recover, request id, logging, security headers and a body limit; `HandlerOptions` caps message size. The server itself bounds headers and timeouts, not bodies.
+
+| `grpc.ServerOptions` field | Default | Meaning |
+| --- | --- | --- |
+| `TLS` | `nil` | a `*tls.Config`: serve HTTP/2 and HTTP/1.1 over TLS (`NextProtos` defaults to `h2`, `http/1.1`). `nil` serves h2c and HTTP/1.1 |
+| `ShutdownTimeout` | `SHUTDOWN_TIMEOUT` (15s) for `Serve`, 15s for `Server` | the graceful drain of in-flight RPCs |
+| `Ready` | `nil` | a channel that receives the bound address once listening (`":0"` picks a free port) |
+| `InsecureCleartext` | `false` | allow a server without TLS in production |
+| `MaxHeaderBytes` | `vukem.DefaultMaxHeaderBytes` (64 KiB) | caps request headers, gRPC metadata included; 4096 to 1048576 |
+
+The rules `Serve` enforces at boot:
+
+- **No cleartext in production.** Without `TLS`, `Serve` fails with `grpc.ErrCleartextInProduction` — `grpc: cleartext gRPC server in production: set ServerOptions.TLS, or GRPC_INSECURE_CLEARTEXT=true on a private network or behind a proxy that terminates TLS and speaks h2c` — unless `GRPC_INSECURE_CLEARTEXT=true` or `ServerOptions.InsecureCleartext`. Use that only on a private network, or behind a proxy that terminates TLS and speaks h2c to the port.
+- **`GRPC_INSECURE_CLEARTEXT` must be `true` or `false`** (or unset). Any other value — a typo such as `yes` — fails with `grpc.ErrInvalidInsecureCleartext`: `grpc: GRPC_INSECURE_CLEARTEXT must be true or false`, so a typo never silently means "TLS required" or "cleartext allowed".
+- **Header cap.** `Serve` reads `HTTP_MAX_HEADER_BYTES` when `ServerOptions.MaxHeaderBytes` is zero. A value that is not a number, or outside 4096–1048576, fails with `grpc.ErrInvalidMaxHeaderBytes`: `grpc: MaxHeaderBytes (HTTP_MAX_HEADER_BYTES) must be between 4096 and 1048576`.
+- `HTTP_H2C` concerns only the main HTTP server; it does not open or change the gRPC port.
+
+`grpc.Server(&app.Config, addr, h, opts)` returns the same server as a plain `vukem.Runner` without adding it, with the same production rule; a `nil` config counts as production. Both use the timeouts of `vukem.NewHTTPServer` (10s to read headers, 30s to read the request, 60s to write the response, 120s idle), so **long-lived streams** need a server of their own built from `vukem.NewHTTPServer` with longer timeouts.
+
+### Deploying on Railway
+
+Railway's public HTTP domain terminates TLS and talks HTTP/1.1 to the app, so only Connect and gRPC-Web reach the HTTP port that way. For native gRPC from outside, put the port behind a TCP proxy and serve TLS yourself (`ServerOptions.TLS`): the TCP proxy forwards raw bytes and terminates no TLS, so a cleartext port there would be open to the internet. Between services of one project, private networking (`<service>.railway.internal:<port>`) may carry cleartext gRPC with `GRPC_INSECURE_CLEARTEXT=true` and no public exposure. See [Docker and Railway](/docs/deployment/docker-and-railway).
 
 ## Code generation
 
-The framework never needs `protoc` itself; your app pins the generators as Go tools:
+The framework never needs `protoc` itself; `vukem codegen:rpc` runs the generators that your `go.mod` pins as Go tools.
 
 ```bash
-vukem make:proto Invoice   # proto/invoice/v1/invoice.proto, buf.yaml, buf.gen.yaml
-go get -tool google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.12
-go get -tool connectrpc.com/connect/cmd/protoc-gen-connect-go@v1.21.1
-vukem codegen:rpc          # gen/invoice/v1/*.pb.go and invoicev1connect/*.connect.go
+vukem codegen:rpc [-proto proto] [-out gen] [--protoc]
 ```
 
-- With buf (recommended; `go get -tool github.com/bufbuild/buf/cmd/buf@v1.74.0` or buf on `PATH`), `codegen:rpc` runs `buf generate` with the generated `buf.gen.yaml`. `buf lint` and `buf breaking` use `buf.yaml`.
-- Without buf (or with `--protoc`), it calls `protoc -I proto` with the two plugins built by `go tool`.
-- Commit the generated code; regenerate after editing a `.proto`.
+It picks a backend in this order:
+
+1. **buf** (recommended), when `buf.gen.yaml` exists and `--protoc` is not set: `go tool buf generate` if buf is a tool of your module (`go get -tool github.com/bufbuild/buf/cmd/buf@v1.74.0`), else `buf generate` from your `PATH`.
+2. **protoc** otherwise: `protoc -I <proto>` on every `.proto` file under `-proto` (default `proto`), with both plugins built by `go tool -n`, writing `paths=source_relative` output to `-out` (default `gen`). `-proto` and `-out` apply only to this mode; buf reads `buf.gen.yaml`.
+
+```yaml title="buf.gen.yaml"
+# Generated by vukem make:proto; `vukem codegen:rpc` runs it (buf generate).
+version: v2
+plugins:
+  - local: ["go", "tool", "protoc-gen-go"]
+    out: gen
+    opt: paths=source_relative
+  - local: ["go", "tool", "protoc-gen-connect-go"]
+    out: gen
+    opt: paths=source_relative
+```
+
+`buf.yaml` declares the `proto` module, the `STANDARD` lint rules and `FILE` breaking-change rules, so `buf lint` and `buf breaking` work as they are. Errors you may see:
+
+| Situation | Message |
+| --- | --- |
+| a generator is not a Go tool | `codegen:rpc runs the code generators as Go tools; add them with:` followed by the `go get -tool` lines |
+| neither buf nor protoc found | `codegen:rpc needs buf or protoc: go get -tool github.com/bufbuild/buf/cmd/buf@v1.74.0 (or install buf or protoc)` |
+| no `.proto` files (protoc mode) | `codegen:rpc: no .proto files in proto (vukem make:proto creates one)` |
+
+### Adding a streaming method
+
+Edit the `.proto`, regenerate, and implement the new method:
+
+```protobuf title="proto/task/v1/task.proto"
+service TaskService {
+  rpc GetTask(GetTaskRequest) returns (GetTaskResponse) {}
+  // WatchTasks streams tasks of one status.
+  rpc WatchTasks(WatchTasksRequest) returns (stream GetTaskResponse) {}
+}
+
+message WatchTasksRequest {
+  string status = 1;
+}
+```
+
+```go title="app/rpc/tasks.go"
+func (t *Tasks) WatchTasks(
+	ctx context.Context,
+	req *connect.Request[taskv1.WatchTasksRequest],
+	stream *connect.ServerStream[taskv1.GetTaskResponse],
+) error {
+	tasks, err := orm.QueryOf[models.Task](t.DB).
+		Where("status", req.Msg.GetStatus()).
+		Get(ctx)
+	if err != nil {
+		return err
+	}
+
+	for _, task := range tasks {
+		err := stream.Send(&taskv1.GetTaskResponse{
+			Id:   task.ID,
+			Name: task.Title,
+		})
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+```
+
+Every `Send` is flushed to the client right away. Streams longer than the server's write timeout (60s) are cut: serve them from a server with longer timeouts.
+
+## Configuration
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `GRPC_INSECURE_CLEARTEXT` | unset | `true` allows a cleartext `grpc.Serve` port in production; anything but `true`/`false` fails boot |
+| `GRPC_INSECURE_REFLECTION_IN_PRODUCTION` | unset | `true` registers reflection in production |
+| `HTTP_MAX_HEADER_BYTES` | `65536` | header cap of the main server, and of `grpc.Serve` when `MaxHeaderBytes` is zero (4096–1048576) |
+| `HTTP_H2C` | `false` | h2c on the main HTTP server in production (always on outside production) |
+| `SHUTDOWN_TIMEOUT` | `15s` | the drain time of `grpc.Serve` when `ShutdownTimeout` is zero |
+| `GRPC_PORT` | — | not read by the module; the example above reads it for its own address |
+
+The module's constants name the first two: `grpc.InsecureCleartextEnv` and `grpc.InsecureReflectionInProductionEnv`.
+
+## Security
+
+What `contrib/grpc` does by default:
+
+- Unexpected errors and panics reach the client as `internal error`; the cause and stack go only to the log ([CWE-209](https://cwe.mitre.org/data/definitions/209.html)).
+- Request messages are capped at 4 MiB, request headers at 64 KiB.
+- Reflection is off in production; a dedicated port refuses cleartext in production; ambiguous environment values fail boot.
+- Guards answer `Unauthenticated`, never a redirect.
+
+What stays your job: protect every service with `grpc.Required` (a mounted service is public otherwise), rate-limit it, install middleware on a dedicated port's router, choose TLS for anything that crosses an untrusted network, and keep internals out of the `connect.Error` messages you write. More in the [Security overview](/docs/security/overview).
 
 ## Testing
 
-```go
-h, _ := app.Handler()
-srv := grpctest.NewServer(t, h) // TLS + HTTP/2; NewH2CServer for cleartext
+`contrib/grpc/grpctest` runs your app's handler on an in-process HTTP/2 server and lists the client options of each protocol, so one table-driven test covers them all:
 
-for _, p := range grpctest.Protocols() { // grpc, grpc-web, connect, connect+json
-	client := greetv1connect.NewGreetServiceClient(srv.Client, srv.URL, p.Options...)
-	res, err := client.Greet(t.Context(), connect.NewRequest(&greetv1.GreetRequest{Name: "Ada"}))
-	// ...
+```go title="tests/rpc_test.go"
+func TestGetTask(t *testing.T) {
+	app := vukemtest.New(t, bootstrap.New)
+
+	// TLS + HTTP/2, as in production; NewH2CServer for cleartext.
+	srv := grpctest.NewServer(t, app.Handler())
+
+	// grpc, grpc-web, connect and connect+json
+	for _, p := range grpctest.Protocols() {
+		t.Run(p.Name, func(t *testing.T) {
+			client := taskv1connect.NewTaskServiceClient(
+				srv.Client, srv.URL, p.Options...,
+			)
+
+			_, err := client.GetTask(t.Context(), connect.NewRequest(
+				&taskv1.GetTaskRequest{Id: 999},
+			))
+			if connect.CodeOf(err) != connect.CodeNotFound {
+				t.Fatalf("GetTask(999) = %v, want not_found", err)
+			}
+		})
+	}
 }
 ```
+
+- `grpctest.NewServer(tb, h)` serves `h` over TLS with HTTP/2; its `Client` trusts the test certificate. `grpctest.NewH2CServer(tb, h)` serves h2c, as `vukem serve` does in development. Both close when the test ends.
+- `grpctest.Protocols()` returns `grpc`, `grpc-web`, `connect` (binary) and `connect+json`, each a `Protocol{Name, Options}`.
+- For a route behind `grpc.Required`, set the header on the request: `req.Header().Set("Authorization", "Bearer "+token)`.
+
+## Common mistakes
+
+**Forgetting the auth middleware.** A mounted service is public. Mount it with `.Use(grpc.Required(acc.API))`.
+
+**Group middleware without the bridge.** A guard on the group (not on the route) answers an RPC client with a problem+json body, or a login redirect in an app with sessions. The client can only guess a code from the HTTP status, and loses the message and metadata such as `Retry-After`. Put the guard on the route returned by `Mount`, or add `grpc.Errors()` first on the group.
+
+**A typo in `GRPC_INSECURE_CLEARTEXT`.** `GRPC_INSECURE_CLEARTEXT=yes` stops boot with `grpc: GRPC_INSECURE_CLEARTEXT must be true or false`.
+
+**Validating a zero field as present.** In proto3, `id = 0` is not sent, so `z.Int64().Min(0)` still fails with `The id field is required.` Make the key optional (`z.Int64().Optional()`) when zero is a valid value.
+
+**Expecting reflection in production.** `grpcurl … list` reports that the server does not support the reflection API, because `grpc.Reflection` registered nothing. Ship the `.proto` files to your clients, or set `GRPC_INSECURE_REFLECTION_IN_PRODUCTION=true` knowingly.
+
+## Next steps
+
+<CardGroup cols="2">
+<Card title="API tokens" href="/docs/security/api-tokens" icon="lock">
+The token guard behind `grpc.Required`.
+</Card>
+<Card title="Rate limiting" href="/docs/security/rate-limiting" icon="shield">
+Limit RPC callers per token or IP.
+</Card>
+<Card title="Docker and Railway" href="/docs/deployment/docker-and-railway" icon="rocket">
+Ports, TLS and private networking.
+</Card>
+<Card title="GraphQL" href="/docs/rest-apis/graphql" icon="layers">
+Another way beyond REST.
+</Card>
+</CardGroup>
+
+Package references: [contrib/grpc](https://pkg.go.dev/github.com/AlexGalhardo/vukem/contrib/grpc), [grpctest](https://pkg.go.dev/github.com/AlexGalhardo/vukem/contrib/grpc/grpctest), [connect-go](https://pkg.go.dev/connectrpc.com/connect).

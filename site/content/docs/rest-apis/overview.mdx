@@ -1,130 +1,462 @@
 ---
 title: REST APIs
-description: JSON APIs with resource routes, token auth, problem+json errors, CORS, rate limiting, transformers and the API starter.
+description: Build JSON APIs with Vukem — the API starter, resource routes, transformers, problem+json errors, tokens, CORS, rate limiting and versioning.
 ---
 
-Vukem is equally a framework for **JSON/REST APIs** and for server-rendered apps.
+A **REST API** lets other programs — a mobile app, a single-page frontend, a partner's server — talk to your application by sending HTTP requests and reading JSON answers. Vukem is built for that just as much as for server-rendered pages: one command gives you a JSON-only project with token login, consistent errors, pagination, rate limiting and CORS already wired.
 
-## The API starter
+This page is the map of the APIs category. Every section links to the page that goes deeper.
+
+You will learn:
+
+- What a REST API is, in plain words, and how Vukem maps it to routes and handlers.
+- How to start a JSON-only project with `vukem new --api` and what it contains.
+- How to register resource routes, shape responses with transformers and answer errors as problem+json.
+- How tokens, CORS, rate limiting and versioning fit together.
+- Which page to read next for pagination, typed handlers, OpenAPI, clients, idempotency, GraphQL and gRPC.
+
+## The idea
+
+Think of a REST API as a **library counter**. The library has collections of things (books, members, loans). You never walk into the storage room yourself: you hand the librarian a slip that says _what_ you want ("the book with id 7") and _what to do_ ("lend it to me"), and you get a slip back with the answer and a short status ("done", "not found", "you are not a member").
+
+In HTTP terms:
+
+- The collections are **resources**, named by URLs such as `/api/v1/tasks` and `/api/v1/tasks/7`.
+- The action is the **HTTP method**: `GET` reads, `POST` creates, `PUT`/`PATCH` change, `DELETE` removes ([MDN: HTTP request methods](https://developer.mozilla.org/en-US/docs/Web/HTTP/Methods)).
+- The short answer is the **status code**: `200 OK`, `201 Created`, `404 Not Found`, `422 Unprocessable Content` ([RFC 9110, section 15](https://www.rfc-editor.org/rfc/rfc9110#section-15)).
+- The body is **JSON**, which Go reads and writes with the standard [`encoding/json`](https://pkg.go.dev/encoding/json) package.
+
+The running example on this page, and on most pages of this category, is a small **task list API**: every user owns tasks with a title and a status (`todo`, `doing` or `done`). It is the same app as [`examples/api`](https://github.com/AlexGalhardo/vukem/tree/main/examples/api) in the repository, which CI runs.
+
+| Method | Path | Action | Answer |
+| --- | --- | --- | --- |
+| `GET` | `/api/v1/tasks` | list your tasks | `200` with a page of tasks |
+| `POST` | `/api/v1/tasks` | create a task | `201` with the new task |
+| `GET` | `/api/v1/tasks/{task}` | show one task | `200` or `404` |
+| `PUT` | `/api/v1/tasks/{task}` | replace a task | `200` or `422` |
+| `DELETE` | `/api/v1/tasks/{task}` | delete a task | `204`, no body |
+
+<Callout type="info">
+REST is a style, not a standard. Vukem follows the common conventions above: plural nouns in URLs, methods for actions, a version prefix (`/api/v1`) and JSON everywhere.
+</Callout>
+
+## Quick start
+
+<Steps>
+<Step title="Create a JSON-only project">
 
 ```bash
-vukem new shop --api   # JSON-only project: no views, htmx, sessions or CSRF
-vukem install:api      # add token auth and /api/v1 to an existing project
+vukem new tasks --api
+cd tasks
+vukem migrate
+vukem serve
 ```
 
-`vukem new shop --api` produces:
+`--api` writes the JSON starter: no views, no htmx, no sessions and no <Term tip="Cross-Site Request Forgery: a trick that makes a logged-in browser send a request the user did not intend. Token APIs are not exposed to it, so the API starter has no CSRF tokens.">CSRF</Term> protection, because API clients send a token instead of a cookie.
+
+</Step>
+<Step title="Create a user">
+
+The API has no sign-up page. Add a small command for it (the [JSON API tutorial](https://github.com/AlexGalhardo/vukem/blob/main/docs/tutorials/json-api.md) shows the whole file), then pipe the password in so it stays out of your shell history:
+
+```bash
+echo "correct horse battery" | vukem user:create -name Ada ada@example.com
+```
+
+```text
+created user 1 <ada@example.com>
+```
+
+</Step>
+<Step title="Exchange the password for a token">
+
+```bash
+curl -s -X POST localhost:3000/api/v1/tokens \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"ada@example.com",
+       "password":"correct horse battery",
+       "device_name":"curl"}'
+```
+
+```json
+{
+  "expires_at": "2026-11-16T09:29:28Z",
+  "token": "<id>.<secret>",
+  "type": "Bearer"
+}
+```
+
+</Step>
+<Step title="Call a protected route">
+
+```bash
+TOKEN='<id>.<secret>'
+curl -s localhost:3000/api/v1/me -H "Authorization: Bearer $TOKEN"
+```
+
+The answer is the user as JSON. Without the header you get `401` with a problem+json body and `WWW-Authenticate: Bearer`.
+
+</Step>
+</Steps>
+
+## What the API starter contains
+
+`vukem new <name> --api` produces this project. `vukem install:api` adds the same token routes to an existing web app, and reuses the authentication core when `vukem install:auth` already ran, so one app may serve pages and an API side by side (`routes.All()` lists each route file in order).
 
 | Area | What you get |
 | --- | --- |
-| Middleware | `vukem.APIMiddleware`: recover, request id, logging, security headers, body limit |
-| Auth | users and access tokens: `POST /api/v1/tokens` (email, password, `device_name` → `201 {token, type, expires_at}`), `GET /api/v1/me`, `DELETE /api/v1/tokens/current` |
+| Middleware | `vukem.APIMiddleware`: recover, request id, logging, security headers and a body limit. No sessions or CSRF. With `WithTranslations`, it also resolves the locale from `?lang=` and `Accept-Language`, so `422` messages follow it. `vukem.APIMiddlewareWith` takes `APIMiddlewareOptions` (`SecureHeaders` to adjust the security headers, `I18n` for the locale resolver) |
+| Auth | Users and opaque access tokens: `POST /api/v1/tokens` (email, password, `device_name` → `201` with `token`, `type`, `expires_at`; 5 requests per minute per IP), `GET /api/v1/me`, `DELETE /api/v1/tokens/current` |
 | Example resource | `/api/v1/posts`: public reads with filters, sorts and pagination; token-protected writes |
-| Cross-cutting | CORS from `CORS_ALLOWED_ORIGINS` (deny by default), 60 requests/minute per token or IP, problem+json errors |
+| Cross-cutting | CORS from `CORS_ALLOWED_ORIGINS` (deny by default), 60 requests per minute per token, problem+json errors |
+| Wire format | `app/resources` transformers (`vukem make:resource`) |
 | Tests | `tests/api_tokens_test.go`, `tests/posts_test.go` |
 
-`install:api` reuses the authentication core when `install:auth` already ran, so a web app can serve pages and an API side by side (`routes.All()` lists each route file).
+Tokens issued by the starter expire after 30 days. Only a hash of the secret is stored, so the plain token is shown to the client once.
 
 ## Routes and middleware
 
+You register an API like any other routes, inside a group with the version prefix. The order of `Use` calls is the order the layers run in.
+
 ```go title="routes/api.go"
-cors, err := middleware.CORS(middleware.CORSConfig{AllowedOrigins: []string{"https://app.example.com"}})
+package routes
+
+import (
+	"time"
+
+	"github.com/AlexGalhardo/vukem"
+	"github.com/AlexGalhardo/vukem/auth"
+	"github.com/AlexGalhardo/vukem/middleware"
+	"github.com/AlexGalhardo/vukem/ratelimit"
+	"github.com/AlexGalhardo/vukem/router"
+
+	"example.com/tasks/app/accounts"
+	"example.com/tasks/app/controllers/apiv1"
+)
+
+func API(r *router.Router, app *vukem.App) error {
+	acc, err := accounts.New(app)
+	if err != nil {
+		return err
+	}
+
+	db, err := app.DB()
+	if err != nil {
+		return err
+	}
+
+	cors, err := middleware.CORS(middleware.CORSConfig{
+		AllowedOrigins: []string{"https://app.example.com"},
+		MaxAge:         time.Hour,
+	})
+	if err != nil {
+		return err
+	}
+
+	// Preflight OPTIONS requests have no route, so CORS
+	// must run on the server, before routing.
+	r.UseServer(cors)
+
+	tasks := apiv1.NewTasks(db)
+	perToken := ratelimit.Middleware(
+		ratelimit.NewMemory(60, time.Minute),
+		ratelimit.ByToken,
+	)
+
+	r.Group("/api/v1", func(g *router.Group) {
+		g.Use(middleware.JSONOnly(), auth.Required(acc.API), perToken)
+
+		// index, store, show, update and destroy
+		g.APIResource("tasks", tasks)
+	}).Name("api.v1.")
+
+	return nil
+}
+```
+
+What each piece does:
+
+- `middleware.CORS` returns an error for an insecure configuration (`"*"` together with `AllowCredentials`), so a mistake stops the app at boot instead of in production. The zero value allows no cross-origin request at all.
+- `middleware.JSONOnly()` answers `415 Unsupported Media Type` when a write request (`POST`, `PUT`, `PATCH`) does not send JSON, and makes every error of the group render as problem+json.
+- `g.APIResource("tasks", tasks)` registers the five JSON actions of a controller: `Index`, `Store`, `Show`, `Update` (for both `PUT` and `PATCH`) and `Destroy`. Unlike `Resource`, it has no `create`/`edit` form pages. Routes are named `api.v1.tasks.index`, `api.v1.tasks.store` and so on.
+- Nested resources use a dot: `g.APIResource("tasks.comments", comments)` serves `/tasks/{task}/comments`. `.Shallow()` moves `show`, `update` and `destroy` to `/comments/{comment}`, because a comment id is unique on its own; the route names stay the same.
+
+`accounts.New(app)` lives in the starter's `app/accounts` package; its `API` field is the token guard (an `*auth.TokenGuard[models.User]`). See [API tokens](/docs/security/api-tokens) for how the guard is built.
+
+## Resources (transformers)
+
+Your database models should not be your API. A model may gain a `password_hash` column tomorrow, and you do not want it to appear in every JSON answer by accident. A **transformer** is a plain function that turns a model into the exact shape the API promises.
+
+```bash
+vukem make:resource Task
+```
+
+```go title="app/resources/task.go"
+package resources
+
+import (
+	"time"
+
+	"github.com/AlexGalhardo/vukem/api"
+
+	"example.com/tasks/app/models"
+)
+
+// TaskJSON is the wire format of models.Task.
+type TaskJSON struct {
+	ID        int64     `json:"id"`
+	Title     string    `json:"title"`
+	Status    string    `json:"status"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// Task transforms one model.
+func Task(m models.Task) TaskJSON {
+	return TaskJSON{
+		ID:        m.ID,
+		Title:     m.Title,
+		Status:    m.Status,
+		CreatedAt: m.CreatedAt,
+	}
+}
+
+// TaskList transforms a slice of models.
+func TaskList(ms []models.Task) []TaskJSON {
+	return api.Map(ms, Task)
+}
+```
+
+The text between backticks after each field is a <Term tip="A string attached to a struct field that packages read with reflection. encoding/json reads the json key to name the property.">struct tag</Term>: `json:"created_at"` tells `encoding/json` to call the property `created_at` ([Go spec: struct types](https://go.dev/ref/spec#Struct_types)). `api.Map(items, fn)` is a small [generic](https://go.dev/doc/tutorial/generics) helper: it calls `fn` on every item and returns the new slice. Plain functions keep the wire format typed, testable and free of reflection.
+
+## Responses and errors
+
+A handler answers with one of the `web.Ctx` helpers. Single resources have **no envelope**: the JSON body is the object itself. Lists use the envelopes described in [Pagination](/docs/rest-apis/pagination).
+
+```go title="app/controllers/apiv1/tasks.go"
+func (t *Tasks) Show(c *web.Ctx) error {
+	// A non-numeric {task} is a 404: it names no resource.
+	id, err := c.ParamInt("task")
+	if err != nil {
+		return err
+	}
+
+	task, err := orm.QueryOf[models.Task](t.db).Find(c.Context(), id)
+	if err != nil {
+		// orm.ErrNotFound becomes a 404 problem+json.
+		return err
+	}
+
+	return c.JSON(http.StatusOK, resources.Task(task))
+}
+
+func (t *Tasks) Store(c *web.Ctx) error {
+	in, err := web.Bind[requests.StoreTask](c)
+	if err != nil {
+		// Validation failures become a 422 with field errors.
+		return err
+	}
+
+	task := models.Task{Title: in.Title, Status: "todo"}
+	if err := orm.Create(c.Context(), t.db, &task); err != nil {
+		return err
+	}
+
+	// Name/value pairs fill the {task} wildcard.
+	location, err := c.URL("api.v1.tasks.show", "task", task.ID)
+	if err != nil {
+		return err
+	}
+
+	return c.Created(location, resources.Task(task))
+}
+```
+
+The real starter scopes every query to the authenticated user (`Where("user_id", u.ID)`), so another user's task is a `404`; it is left out here to keep the example short.
+
+| Helper | Status | Notes |
+| --- | --- | --- |
+| `c.JSON(status, v)` | any | writes `v` with `encoding/json` |
+| `c.Created(location, v)` | `201` | also sets the `Location` header |
+| `c.Accepted(v)` | `202` | work was queued, not done yet |
+| `c.NoContent()` | `204` | no body |
+| `c.Problem(status, title, detail)` | any | an `application/problem+json` body |
+| `api.Collection`, `api.Page`, `api.Cursor` | `200` | list envelopes ([pagination](/docs/rest-apis/pagination)) |
+
+When a handler returns an error, Vukem writes an [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457) **problem details** document instead. The shape is always the same, so clients need one error parser:
+
+```json
+{
+  "type": "about:blank",
+  "title": "Validation failed",
+  "status": 422,
+  "detail": "1 field(s) are invalid.",
+  "instance": "/api/v1/tasks",
+  "errors": {
+    "title": ["The title field must be at least 3 characters."]
+  }
+}
+```
+
+`request_id` is added when the request id middleware ran, and `APP_PROBLEM_BASE_URL` (empty by default, which means `about:blank`) sets the `type` of validation problems to `<base>/validation`. The full rules are in [Error handling](/docs/basics/error-handling).
+
+| Condition | Status |
+| --- | --- |
+| Malformed JSON, unknown filter/sort/field/include, bad cursor | `400` |
+| Missing or invalid token | `401` with `WWW-Authenticate: Bearer` |
+| Policy denial | `403` (or `404` with `authz.DenyAsNotFound`) |
+| Record not found (`orm.ErrNotFound`) | `404` |
+| Method not allowed | `405` with an `Allow` header |
+| Unique constraint violation (`orm.ErrConflict`) | `409` |
+| Body too large | `413` |
+| Body is not JSON on a `JSONOnly` group | `415` |
+| Validation | `422` with `errors` |
+| Rate limited | `429` with `Retry-After` |
+| Anything unexpected | `500`, without internals unless `APP_DEBUG=true` |
+
+## Tokens, CORS and rate limiting
+
+**Tokens.** The starter issues opaque bearer tokens. You may create one from your own code too:
+
+```go title="app/accounts/tokens.go"
+tokens := auth.NewTokens(db)
+
+plain, tok, err := tokens.Create(
+	ctx,
+	user.AuthID(),
+	"cli",
+	[]string{"tasks:write"},
+	30*24*time.Hour,
+)
+// Send plain to the client once: only a SHA-256 of the
+// secret is stored. A ttl of 0 never expires.
+```
+
+`auth.Ability(guard, "tasks:write")` after `auth.Required` answers `403` when the token lacks the ability. Details: [API tokens](/docs/security/api-tokens) and [Authentication](/docs/security/authentication).
+
+**CORS.** Browsers block a page on `https://app.example.com` from reading your API on another origin unless the API says it is allowed ([MDN: CORS](https://developer.mozilla.org/en-US/docs/Web/HTTP/CORS)). `middleware.CORSConfig` has `AllowedOrigins`, `AllowedMethods` (default `GET`, `HEAD`, `POST`, `PUT`, `PATCH`, `DELETE`), `AllowedHeaders` (default `Accept`, `Authorization`, `Content-Type`, `X-Requested-With`, `X-CSRF-Token`), `ExposedHeaders`, `AllowCredentials` and `MaxAge`.
+
+**Rate limiting.** `app.RateLimiters()` picks the store from `RATE_LIMIT_STORE` (`memory` by default, or `cache` to share counters between servers), so switching needs no code change:
+
+```go title="routes/api.go"
+limiters, err := app.RateLimiters()
 if err != nil {
 	return err
 }
 
-r.UseServer(cors) // preflight OPTIONS requests have no route
-
-r.Group("/api/v1", func(g *router.Group) {
-	g.Use(middleware.JSONOnly(), ratelimit.Middleware(ratelimit.NewMemory(60, time.Minute), ratelimit.ByToken))
-
-	g.APIResource("products", products)                    // index, store, show, update, destroy
-	g.APIResource("products.reviews", reviews).Shallow()  // /products/{product}/reviews + /reviews/{review}
-
-	g.Group("", func(p *router.Group) {
-		p.Use(auth.Required(apiGuard))
-		p.Delete("/products/{product}", products.Destroy).Use(auth.Ability(apiGuard, "products:write"))
-	})
-}).Name("api.v1.")
+// After auth.Required: only verified tokens get a bucket.
+g.Use(ratelimit.Middleware(
+	limiters("api.token", 60, time.Minute),
+	ratelimit.ByToken,
+))
 ```
 
-- `APIResource` registers only JSON actions (no `create`/`edit` forms). `Shallow()` moves `show`/`update`/`destroy` of a nested resource to the top level; names stay the same.
-- `middleware.JSONOnly()` rejects non-JSON bodies on write methods with 415 and makes errors problem+json.
-
-## Resources (transformers)
-
-```go title="app/resources/product.go"
-// vukem make:resource Product
-type ProductJSON struct {
-	ID        int64     `json:"id"`
-	Name      string    `json:"name"`
-	CreatedAt time.Time `json:"created_at"`
-}
-
-func Product(p models.Product) ProductJSON { return ProductJSON{ID: p.ID, Name: p.Name, CreatedAt: p.CreatedAt} }
-func ProductList(ps []models.Product) []ProductJSON { return api.Map(ps, Product) }
-```
-
-Plain functions and structs keep the wire format separate from models, typed and without reflection.
-
-## Responses and errors
-
-| Helper | Status |
-| --- | --- |
-| `c.JSON(status, v)` | any |
-| `c.Created(location, v)` | 201 with `Location` |
-| `c.NoContent()` | 204 |
-| `api.Collection(c, items, fn)` / `api.Page(c, page, fn)` / `api.Cursor(c, page, fn)` | 200 with envelopes ([pagination](/docs/rest-apis/pagination)) |
-
-| Condition | Status |
-| --- | --- |
-| Malformed JSON, unknown filter/sort/field/include, bad cursor | 400 |
-| Missing or invalid token | 401 with `WWW-Authenticate: Bearer` |
-| Policy denial | 403 (404 with `authz.DenyAsNotFound`) |
-| Not found | 404 |
-| Unique violation | 409 |
-| Unsupported media type | 415 |
-| Validation | 422 with `errors` |
-| Rate limited | 429 with `Retry-After` |
-
-## Tokens
-
-```go
-tokens := auth.NewTokens(db)
-plain, tok, err := tokens.Create(ctx, user.AuthID(), "cli", []string{"posts:read"}, 30*24*time.Hour)
-// send plain to the client once; only SHA-256(secret) is stored
-```
-
-See [Authentication](/docs/security/authentication#token-guard) for the token guard, abilities and revocation.
-
-## Rate limiting
-
-```go
-limiters, err := app.RateLimiters() // RATE_LIMIT_STORE=memory (default) or cache (shared by servers)
-g.Use(ratelimit.Middleware(limiters("api.token", 60, time.Minute), ratelimit.ByToken)) // after auth.Required
-```
-
-Every response carries `RateLimit-Limit`, `RateLimit-Remaining` and `RateLimit-Reset`; an empty bucket answers 429 with `Retry-After`. A failing limiter store denies the request. Stores, keys and options are in [Rate limiting](/docs/security/rate-limiting).
+Every response carries `RateLimit-Limit`, `RateLimit-Remaining` and `RateLimit-Reset`; an empty bucket answers `429` with `Retry-After`. A failing limiter store denies the request with `503`. Use `ratelimit.ByToken` only after `auth.Required`: before the token is verified, a client inventing tokens would get a fresh bucket each time. Stores, keys and options are in [Rate limiting](/docs/security/rate-limiting).
 
 ## Versioning and deprecation
 
-```go
+Put each version under its own prefix (`/api/v1`, `/api/v2`) with a route group, so both run side by side. When v1 is on its way out, tell clients in every response:
+
+```go title="routes/api.go"
+since := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+sunset := time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)
+
 r.Group("/api/v1", func(g *router.Group) {
-	g.Use(api.Deprecate(since, sunset, "https://docs.example.com/migrate-to-v2"))
+	g.Use(api.Deprecate(
+		since,
+		sunset,
+		"https://example.com/v2",
+	))
 	// ...
 })
 ```
 
-`api.Deprecate` sets `Deprecation`, `Sunset` and `Link: rel="deprecation"` headers.
+```http
+Deprecation: @1767225600
+Sunset: Fri, 01 Jan 2027 00:00:00 GMT
+Link: <https://example.com/v2>; rel="deprecation"; type="text/html"
+```
 
-## OpenAPI and API docs
+`Deprecation` is the Unix time of `since` ([RFC 9745](https://www.rfc-editor.org/rfc/rfc9745)); `Sunset` is the date the version stops working ([RFC 8594](https://www.rfc-editor.org/rfc/rfc8594)), omitted when `sunset` is the zero `time.Time`; the `Link` header is omitted when the link is empty.
 
-[Typed handlers](/docs/rest-apis/typed-handlers) (`api.Register`) bind and validate input from their types, and the same types produce an [OpenAPI 3.1 document](/docs/rest-apis/openapi) (`/openapi.json`, `vukem openapi:export`), TypeScript/Zod types (`vukem codegen:types`) and a Scalar API reference at `/docs`. Retried writes are safe with [idempotency keys](/docs/rest-apis/idempotency).
+## Security
 
-## Beyond REST
+What Vukem does by default:
 
-- [GraphQL](/docs/rest-apis/graphql) with `contrib/graphql`: schema-first, typed resolvers, batching loader, limits, persisted queries and subscriptions.
-- [gRPC](/docs/rest-apis/grpc), gRPC-Web and Connect with `contrib/grpc` on connect-go, on the same router and port.
-- Typed [TypeScript and Go clients](/docs/rest-apis/client-generation) generated from your typed handlers.
-- Server push with [SSE](/docs/digging-deeper/sse) and [broadcasting](/docs/digging-deeper/broadcasting).
+- CORS denies every cross-origin request until you list origins, and refuses `"*"` with credentials at boot.
+- Tokens are opaque and only their hash is stored; `401` answers never redirect API clients to a login page.
+- Query conventions are allowlists: a request can never choose a column you did not list ([Pagination](/docs/rest-apis/pagination)).
+- `500` answers hide the error text unless `APP_DEBUG=true`; the cause goes to the log.
 
-Any other `http.Handler` mounts with `r.Handle` and shares the middleware stacks.
+What stays your job: scope every query to the caller (another user's task should be a `404`, not a `403` that confirms it exists), choose token abilities and lifetimes, rate-limit expensive endpoints, and keep secrets out of transformers. The checklist is in the [Security overview](/docs/security/overview).
+
+## Testing
+
+`vukemtest` boots the app with an in-memory database and sends requests in process:
+
+```go title="tests/tasks_test.go"
+func TestCreateTask(t *testing.T) {
+	app := vukemtest.New(t, bootstrap.New)
+	token := apiUser(t, app, "ada@example.com")
+
+	app.Client(t).
+		WithToken(token).
+		PostJSON("/api/v1/tasks", map[string]any{"title": "Buy milk"}).
+		AssertCreated().
+		AssertJSONPath("title", "Buy milk")
+
+	app.Client(t).
+		WithToken(token).
+		PostJSON("/api/v1/tasks", map[string]any{"title": "x"}).
+		AssertJSONValidationErrors("title")
+}
+```
+
+`apiUser` is a helper of the example app that creates a user and returns a token. `AssertProblem(status)` checks the status and the `application/problem+json` content type; `AssertMatchesOpenAPI()` checks the body against the [OpenAPI document](/docs/rest-apis/openapi). More in [Testing](/docs/testing/overview).
+
+## Common mistakes
+
+**Returning the model instead of a transformer.**
+
+```go title="Wrong"
+// Every column, including future ones, is now public.
+return c.JSON(http.StatusOK, task)
+```
+
+```go title="Right"
+return c.JSON(http.StatusOK, resources.Task(task))
+```
+
+**Registering CORS on a group.** A preflight `OPTIONS` request matches no route, so group middleware never runs and the browser reports `No 'Access-Control-Allow-Origin' header is present`. Register it with `r.UseServer(cors)`.
+
+**Rate limiting by token before authentication.**
+
+```go title="Wrong"
+g.Use(perToken, auth.Required(guard))
+```
+
+```go title="Right"
+g.Use(auth.Required(guard), perToken)
+```
+
+**Posting a form to a `JSONOnly` group.** The answer is `415` with `"title": "Unsupported Media Type"`. Send `Content-Type: application/json`.
+
+## Next steps
+
+<CardGroup cols="2">
+<Card title="Pagination" href="/docs/rest-apis/pagination" icon="layers">
+Offset and cursor envelopes, filters, sorts, fields and includes.
+</Card>
+<Card title="Typed handlers" href="/docs/rest-apis/typed-handlers" icon="code">
+Handlers that receive a validated struct and return a typed value.
+</Card>
+<Card title="OpenAPI" href="/docs/rest-apis/openapi" icon="book">
+A document and an API reference generated from your types.
+</Card>
+<Card title="Idempotency keys" href="/docs/rest-apis/idempotency" icon="shield">
+Make retried POST and PATCH requests safe.
+</Card>
+</CardGroup>
+
+Beyond REST: [GraphQL](/docs/rest-apis/graphql) with `contrib/graphql`, [gRPC](/docs/rest-apis/grpc) with `contrib/grpc`, and server push with [SSE](/docs/digging-deeper/sse) and [broadcasting](/docs/digging-deeper/broadcasting). Any other `http.Handler` mounts with `r.Handle` and shares the middleware stacks.
+
+Package reference: [pkg.go.dev/github.com/AlexGalhardo/vukem/api](https://pkg.go.dev/github.com/AlexGalhardo/vukem/api).

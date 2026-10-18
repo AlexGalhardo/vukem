@@ -1,82 +1,446 @@
 ---
 title: OpenAPI and API reference
-description: Generate an OpenAPI 3.1 document from your routes, check responses against it, export TypeScript/Zod types and serve a Scalar API reference.
+description: Generate an OpenAPI 3.1 document from your typed routes, serve and export it, check responses against it, emit TypeScript and Zod types, and serve a Scalar API reference.
 ---
 
-## The document
+An API is only as useful as its documentation. **OpenAPI** is the standard way to describe an HTTP API in one JSON file: every path, every parameter, every body and every response, in a format that tools understand. Vukem writes that file for you from the same Go types your [typed handlers](/docs/rest-apis/typed-handlers) use, so it is never out of date — no annotations, no comments to keep in sync.
 
-```go
-func API(r *router.Router, app *vukem.App) error {
+You will learn:
+
+- What an OpenAPI document is and how Vukem builds one from your routes.
+- How Go types and `validate` tags become JSON Schema.
+- How to serve the document, export it, and filter it per API version.
+- How to check real responses against it in tests.
+- How to generate TypeScript and Zod types, and serve an interactive API reference with Scalar.
+
+## The idea
+
+An OpenAPI document is the **menu of a restaurant**. It lists every dish (operation), what you may ask for with it (parameters and body), and what arrives at the table (responses). The kitchen (your Go code) cooks; the menu describes. If the menu is printed from the kitchen's own recipes, it can never promise a dish the kitchen does not make.
+
+That is what Vukem does. `api.Register` records each route's input and output types; `openapi.Generate` reads them and writes:
+
+- The document format, [OpenAPI 3.1](https://spec.openapis.org/oas/v3.1.0).
+- Schemas in [JSON Schema 2020-12](https://json-schema.org/draft/2020-12), the vocabulary OpenAPI 3.1 uses for data shapes.
+- Constraints from the same `validate` tags the server enforces, so the document says what the server actually accepts.
+
+Go's [`reflect`](https://pkg.go.dev/reflect) package is how the generator looks at your struct fields and tags at run time; you never call it yourself.
+
+The running example is the task list API of the [REST APIs overview](/docs/rest-apis/overview).
+
+## Quick start
+
+<Steps>
+<Step title="Serve the document and the reference">
+
+```go title="routes/tasks.go"
+package routes
+
+import (
+	"github.com/AlexGalhardo/vukem"
+	"github.com/AlexGalhardo/vukem/apidocs"
+	"github.com/AlexGalhardo/vukem/router"
+)
+
+func Docs(r *router.Router, app *vukem.App) error {
+	// Neither route is registered in production
+	// unless OPENAPI_IN_PRODUCTION=true.
 	vukem.ServeOpenAPI(app, r, "/openapi.json")
-	apidocs.Serve(app, r, "/docs", apidocs.Config{Theme: "purple"})
-	// api.Register(...) routes
+	apidocs.Serve(app, r, "/docs", apidocs.Config{})
+
 	return nil
 }
 ```
+
+Add `Docs` to `routes.All()`.
+
+</Step>
+<Step title="Start the app and fetch the document">
+
+```bash
+vukem serve
+curl -s localhost:3000/openapi.json
+```
+
+```json
+{
+  "openapi": "3.1.0",
+  "info": { "title": "tasks", "version": "1.0.0" },
+  "servers": [{ "url": "http://localhost:3000" }],
+  "paths": {
+    "/api/v1/tasks": {
+      "post": {
+        "operationId": "tasks.store",
+        "summary": "Create a task",
+        "tags": ["tasks"],
+        "requestBody": { "required": true, "content": { "…": "…" } },
+        "responses": {
+          "201": { "description": "Created", "content": { "…": "…" } },
+          "401": { "$ref": "#/components/responses/Problem" },
+          "422": { "$ref": "#/components/responses/ValidationError" },
+          "default": { "$ref": "#/components/responses/Problem" }
+        },
+        "security": [{ "bearer": [] }]
+      }
+    }
+  }
+}
+```
+
+</Step>
+<Step title="Open the reference">
+
+Open `http://localhost:3000/docs` in a browser: every operation, its schemas and a "Test request" button.
+
+</Step>
+<Step title="Export the document for CI or a client">
 
 ```bash
 vukem openapi:export > openapi.json
 ```
 
-`openapi:export` and `codegen:types` build the app in warmup mode: no provider `Boot`, no database connection, `APP_KEY` optional. A warmup app never boots or serves (`Boot` and `Run` return `vukem.ErrWarmupRun`), so never expose its router from a custom `main`.
+</Step>
+</Steps>
 
-| Variable | Default | Meaning |
+## How types become schemas
+
+Each field of a struct becomes a property. Its **name** comes from the `json` tag, its **type** from the Go type, its **constraints** from the `validate` tag, and its **description** from a `doc` tag:
+
+```go title="app/requests/task.go"
+type StoreTask struct {
+	Title  string `json:"title"  validate:"required,min=3,max=120" doc:"What to do"`
+	Status string `json:"status" validate:"oneof=todo doing done"`
+}
+```
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "title": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 120,
+      "description": "What to do"
+    },
+    "status": { "type": "string", "enum": ["todo", "doing", "done"] }
+  },
+  "required": ["title"]
+}
+```
+
+### Go types
+
+| Go type | JSON Schema |
+| --- | --- |
+| `string` | `"type": "string"` |
+| `bool` | `"type": "boolean"` |
+| `int`, `int8`, `int16` | `"type": "integer"` |
+| `int32`, `int64` | `"type": "integer"` with `format` `int32` / `int64` |
+| `uint…` | as above, plus `"minimum": 0` |
+| `float32`, `float64` | `"type": "number"` with `format` `float` / `double` |
+| `[]byte` | `"type": "string"`, `"contentEncoding": "base64"` |
+| `[]T`, `[N]T` | `"type": "array"` with `items` |
+| `map[string]T` | `"type": "object"` with `additionalProperties` |
+| `time.Time` | `"type": "string"`, `"format": "date-time"` |
+| `orm.NullTime` | `"type": ["string", "null"]`, `"format": "date-time"` |
+| `*T` | the schema of `T` with `"null"` added to its type (or `anyOf` with `null` for a named struct) |
+| a named struct | `"$ref": "#/components/schemas/<Name>"` |
+| an anonymous struct | an inline object |
+| `orm.BelongsTo[T]`, `HasOne[T]`, `HasMany[T]`, `ManyToMany[T]` | the related type, nullable (it is `null` when not loaded) |
+| `json.RawMessage`, a type with `MarshalJSON` | `{}` (any value) |
+| a non-string type with `MarshalText` | `"type": "string"` |
+
+- Embedded structs are flattened into their parent, as `encoding/json` does. Unexported fields and fields tagged `json:"-"` are skipped. A field without a `json` tag uses its Go name.
+- Named structs are collected once in `components/schemas`, so recursive types work. Two types with the same name from different packages become `<Name>` and `<pkg>.<Name>` (then `<pkg>.<Name>2`, …).
+
+### Validation rules
+
+| `validate` rule | JSON Schema |
+| --- | --- |
+| `required` | the key is listed in `required`; on a string also `"minLength": 1` |
+| `min=n`, `max=n`, `len=n` on a string | `minLength`, `maxLength` (both for `len`) |
+| `min=n`, `max=n`, `len=n` on a list | `minItems`, `maxItems` |
+| `min=n`, `max=n` on a number | `minimum`, `maximum` |
+| `positive` | `"exclusiveMinimum": 0` |
+| `unique` on a list | `"uniqueItems": true` |
+| `email`, `url`, `uuid` | `format` `email`, `uri`, `uuid` |
+| `ulid`, `alpha`, `alphanum`, `numeric` | a `pattern` |
+| `oneof=a b c` | `"enum": ["a", "b", "c"]` |
+| `regex=…`, `startswith=…`, `endswith=…`, `contains=…` | a `pattern` |
+| `dive` | the rules after it apply to each item (`items` or `additionalProperties`) |
+
+Two details are deliberate:
+
+- `required` on a string also emits `minLength: 1`, because the server rejects an empty string for a required field.
+- `required` on a list emits **no** `minItems`: an empty list passes. Add `min=1` when the list needs items.
+
+## How operations are built
+
+For each typed route, the generator writes one operation:
+
+- **`operationId`** is `Op.Name`; **`summary`** is `Op.Summary` (or the name); `description`, `tags` and `deprecated` come from `Op` too.
+- **Path parameters** are `required`, typed from the input field of the same name (`{task}` with `Task int64` is an `int64` integer). A path without a matching field is a `string`.
+- **`GET`, `HEAD` and `DELETE`**: the other input fields become **query parameters**, with their `doc` as description.
+- **Other methods**: the other input fields become a required `application/json` **request body**.
+- **Responses**: the success status with the output schema (no content for `204` or `struct{}`), `422` → `ValidationError` when the route has input, `401` → `Problem` when `Op.Security` is set, and `default` → `Problem` for everything else. Both shared responses use the `Problem` schema: `type`, `title`, `status`, `detail`, `instance`, `request_id` and `errors`.
+- **Security**: each `Op.Security` name becomes a requirement and a scheme in `components/securitySchemes`.
+
+Plain `web.HandlerFunc` routes appear too, with a generic entry: `operationId` and `summary` are the full route name, group prefix included (`api.v1.me`, while a typed route's `operationId` is its bare `Op.Name`), there is no `operationId` when the route has no name, path parameters are strings, and the only response is a `default` without content. A route is left out when it is marked `.Doc(openapi.Skip{})`, or when it has no method (an `ANY`/`Handle` route).
+
+```go title="routes/api.go"
+// Internal health route: not part of the public API.
+g.Get("/internal/stats", stats.Show).Doc(openapi.Skip{})
+```
+
+Paths are converted from `ServeMux` syntax: `{$}` is dropped, and a multi-segment wildcard `{path...}` is documented as a single `{path}` segment, because OpenAPI cannot express "the rest of the path".
+
+## Serving and exporting
+
+| Call | Route | Production |
 | --- | --- | --- |
-| `APP_NAME` | `Vukem` | `info.title` |
-| `API_VERSION` | `1.0.0` | `info.version` |
-| `OPENAPI_PREFIX` | empty | keep only routes under it, e.g. `/api` |
-| `OPENAPI_IN_PRODUCTION` | `false` | serve `/openapi.json` and `/docs` in production |
+| `vukem.ServeOpenAPI(app, r, "/openapi.json")` | `GET`, named `openapi` | only with `OPENAPI_IN_PRODUCTION=true` |
+| `vukem.ServeOpenAPIWith(app, r, path, opts)` | `GET`, unnamed | with `OPENAPI_IN_PRODUCTION=true` or `opts.InProduction` |
+| `app.OpenAPI()` | — | returns the `*openapi.Document` |
+| `vukem openapi:export` | — | prints the document as indented JSON |
 
-`vukem.ServeOpenAPIWith(app, r, "/api/v1/openapi.json", vukem.OpenAPIOptions{PathPrefix: "/api/v1", InProduction: true})` sets the prefix in code and opts one document into production; `OPENAPI_PREFIX` stays the default for `ServeOpenAPI`.
+In production the serve functions register nothing and return `nil`: the document maps your whole API surface, so publishing it is a decision you make explicitly. The document is built on each request from the router's routes; both routes skip themselves with `openapi.Skip`.
 
-- [Typed handlers](/docs/rest-apis/typed-handlers) are described from their types: `json` tags give property names, `validate` rules give constraints (`required`, `min`/`max`/`len`, `email`, `url`, `uuid`, `oneof`, `regex`, `positive`, `unique`, `dive`…), and a `doc:"..."` tag becomes the description.
-- `required` lists the key in `required`. On a string it also emits `minLength: 1`, since an empty string is rejected; on a list it emits no `minItems`, since an empty list passes (tag `min=1` when items are needed).
-- Named structs become `components/schemas`; `orm` relations and `orm.NullTime` map to their JSON shape; errors reference shared `Problem` and `ValidationError` responses; `Op.Security` names become security requirements (`bearer` is predefined).
-- Plain routes get a generic entry; hide one with `.Doc(openapi.Skip{})`.
-- `app.OpenAPI()` returns the document, and `openapi.Generate(r.Routes(), openapi.Info{...})` builds one directly. CI validates a golden document with Redocly.
+The document comes from the app config:
 
-<Callout type="info">
-OpenAPI cannot express a multi-segment `{path...}` wildcard, so it is documented as a single `{path}` segment.
-</Callout>
+| Field | Source |
+| --- | --- |
+| `info.title` | `APP_NAME` (default `Vukem`) |
+| `info.version` | `API_VERSION` (default `1.0.0`) |
+| `servers[0].url` | `APP_URL` (default `http://localhost:3000`) |
+| path filter | `OPENAPI_PREFIX` (empty: every route) |
+
+### One document per API version
+
+`ServeOpenAPIWith` takes `vukem.OpenAPIOptions`: `PathPrefix` (default `OPENAPI_PREFIX`) and `InProduction`. Prefixes match whole path segments — `/api/v1` keeps `/api/v1` and `/api/v1/…` but not `/api/v10` — so each version gets its own document:
+
+```go title="routes/docs.go"
+vukem.ServeOpenAPIWith(app, r, "/api/v1/openapi.json",
+	vukem.OpenAPIOptions{PathPrefix: "/api/v1", InProduction: true})
+vukem.ServeOpenAPIWith(app, r, "/api/v2/openapi.json",
+	vukem.OpenAPIOptions{PathPrefix: "/api/v2", InProduction: true})
+```
+
+The routes are unnamed so several documents can coexist; name them with `.Name(…)` if you need to.
+
+### Exporting without secrets
+
+`vukem openapi:export > openapi.json` builds the app in **warmup** mode, like `codegen:types` and `codegen:client`: providers do not `Boot`, so no database or other connection is opened, and `APP_KEY` may be unset. CI can run it without secrets. Two consequences:
+
+- Route registration must not use services that only `Boot` sets. If a route function registered with `WithRoutesAfterBoot` panics in warmup, the command fails with `vukem: routes after boot panicked: … (route registration must not use booted services during warmup; check app.Kind == vukem.KindWarmup)`.
+- A warmup app never boots or serves: `Boot` and `Run` return `vukem.ErrWarmupRun`. Never expose its router from a custom `main`.
+
+### Building a document in code
+
+`openapi.Generate(routes, info)` builds a document from any router — useful in tests or a custom command:
+
+```go title="cmd/openapi/main.go"
+doc := openapi.Generate(r.Routes(), openapi.Info{
+	Title:       "Tasks",
+	Version:     "2.1.0",
+	Description: "Manage your tasks.",
+	Servers:     []string{"https://api.example.com"},
+	PathPrefix:  "/api/v1",
+	SecuritySchemes: map[string]openapi.Schema{
+		"apiKey": {"type": "apiKey", "in": "header", "name": "X-API-Key"},
+	},
+})
+```
+
+`Title` defaults to `API` and `Version` to `1.0.0`. `SecuritySchemes` adds or replaces schemes; `bearer` (an HTTP bearer token) is predefined. A name in `Op.Security` that has no scheme is documented as an HTTP bearer scheme. `openapi.NewSchemas()`, `Schemas.For`, `Schemas.Object` and `openapi.Fields` expose the type-to-schema mapping for your own generators.
 
 ## Checking responses in tests
 
-```go
-app.Client(t).GetJSON("/api/v1/products").AssertOK().AssertMatchesOpenAPI()
+The document is also a test oracle. `AssertMatchesOpenAPI()` finds the operation for the request's method and path, then checks the body against the schema of the response status (or the `default` response):
+
+```go title="tests/tasks_test.go"
+app.Client(t).
+	WithToken(token).
+	GetJSON("/api/v1/tasks/1").
+	AssertOK().
+	AssertMatchesOpenAPI()
 ```
 
-`AssertMatchesOpenAPI` finds the operation for the request path and checks the body against the schema of the response status (or the default problem response). Outside tests, `doc.ValidateResponse(method, path, status, body)` does the same.
+A mismatch fails the test with the JSON path of the problem, for example `response does not match the OpenAPI document: $.status: lost is not one of [todo doing done]`. Outside tests, `doc.ValidateResponse(method, path, status, body)` does the same and returns an error (`openapi.ErrNoOperation` when no operation matches; `HEAD` is checked as `GET`).
+
+It supports the JSON Schema subset the generator emits: types, `$ref`, `anyOf`/`allOf`, `required`, lengths, ranges, `pattern`, `enum`, `uniqueItems` and `date-time`.
 
 ## Types for clients
 
 ```bash
-vukem codegen:types -o resources/js/api.ts        # TypeScript types
-vukem codegen:types -zod -o resources/js/api.ts   # plus Zod 4 schemas (zod 4.0+)
+# TypeScript types to stdout
+vukem codegen:types
+
+# Written to a file, with Zod 4 validators
+vukem codegen:types -zod -o resources/js/api.ts
 ```
 
-You get one type per component schema plus `<Operation>Body`, `<Operation>Query` and `<Operation>Response` for every named operation, and, with `-zod`, Zod 4 validators: `<Name>Schema` per component and `<Operation>BodySchema` per JSON request body (inline bodies included). The command builds the app in warmup mode: no provider `Boot`, so no database connection, and `APP_KEY` may be unset (routes that need the key at build time still fail closed), so CI can run it without secrets. A component whose name would shadow a TypeScript or DOM global, or a name the generated client declares (`Number`, `String`, `Object`, `Date`, `Error`, `Promise`, `Record`, `Array`, `Response`, `Request`, `URL`, `Client`, ...), gets a `Type` suffix: a Go type `Number` becomes `NumberType` (Zod: `NumberTypeSchema`). If two generated names still collide (a `Number` and a `NumberType` schema, a component named like an operation type such as `<Op>Body` or `<Op>Params`, or two operation names that map to the same identifier), `codegen:types` and `codegen:client` fail with an error naming the duplicate instead of emitting code that does not compile. CI type-checks the golden output with `tsc --strict`.
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `-o` | stdout | the file to write |
+| `-zod` | off | also emit [Zod](https://zod.dev) 4 schemas (needs `zod` 4.0 or newer) |
 
-Any `z` schema also exports on its own: `z.JSONSchema(schema)` returns JSON Schema 2020-12 (types, required keys, lengths, ranges, formats, patterns, enums, defaults, descriptions; `Refine`/`Custom` logic cannot be expressed).
+You get one type per component schema, plus `<Op>Body`, `<Op>Query` and `<Op>Response` for every operation with an `operationId` (`tasks.store` → `TasksStoreBody`). `<Op>Response` is the first 2xx response (`void` without content). With `-zod`, `<Name>Schema` validates each component and `<Op>BodySchema` each JSON request body, inline ones included:
+
+```ts title="resources/js/api.ts"
+// Code generated by vukem codegen:types. DO NOT EDIT.
+
+import * as z from "zod";
+
+export type TaskJSON = {
+  id: number;
+  status: "todo" | "doing" | "done";
+  title: string;
+};
+
+export type TasksStoreBody = {
+  status?: "todo" | "doing" | "done";
+  title: string;
+};
+
+export const TasksStoreBodySchema: z.ZodType<TasksStoreBody> = z.object({
+  status: z.union([z.literal("todo"), z.literal("doing"), z.literal("done")]).optional(),
+  title: z.string().min(3).max(120),
+});
+```
+
+The excerpt is shown exactly as generated, long lines included. Regenerate the file after changing routes instead of editing it.
+
+Naming rules:
+
+- A component whose name would shadow a TypeScript, JavaScript or DOM global, or a name the generated client declares (`Number`, `String`, `Object`, `Date`, `Error`, `Promise`, `Record`, `Array`, `Response`, `Request`, `URL`, `Client`, `ApiError`, …), gets a `Type` suffix: a Go type `Number` becomes `NumberType` (Zod: `NumberTypeSchema`).
+- If two generated names still collide (a `Number` and a `NumberType` schema, a component named like an operation type such as `TasksStoreBody`, or two operation names that map to the same identifier), the command fails instead of writing code that does not compile: `openapi: generated TypeScript declares TasksStoreBody more than once: a schema or operation name collides with another one (or with its Type-suffixed form); rename the Go type or the operation`.
+
+Any `z` schema also exports on its own: `z.JSONSchema(schema)` returns JSON Schema 2020-12 (types, required keys, lengths, ranges, formats, patterns, enums, defaults, descriptions). `Refine`, `Transform` and `Custom` logic cannot be expressed and is omitted, so the server may reject a value the schema allows, never the reverse.
+
+For a full client with one function per operation, see [Client generation](/docs/rest-apis/client-generation).
 
 ## API reference with Scalar
 
-```go
+`apidocs.Serve` renders the document with [Scalar](https://scalar.com), an interactive reference where readers browse operations and send test requests:
+
+```go title="routes/docs.go"
 apidocs.Serve(app, r, "/docs", apidocs.Config{
-	SpecURL:        "/openapi.json",
-	Theme:          "purple",
-	Layout:         "modern",
-	Authentication: map[string]any{"preferredSecurityScheme": "bearer"},
+	SpecURL: "/openapi.json",
+	Theme:   "purple",
+	Layout:  "modern",
+	Authentication: map[string]any{
+		"preferredSecurityScheme": "bearer",
+	},
 })
 ```
 
-- The [Scalar](https://scalar.com) bundle (`@scalar/api-reference` 1.72.3, MIT) is vendored, embedded and pinned by SHA-256: no CDN, no telemetry, no remote fonts, no AI agent.
-- The page runs under the app's nonce-only CSP (no `'unsafe-inline'`): it passes the request nonce to Scalar (a `csp-nonce` meta and a small `page.js` shim that nonces the `<style>` elements Scalar creates and applies the plain size/overflow style attributes it sets through the CSSOM; any other style attribute is left to CSP, which blocks it). HTML from the OpenAPI document (descriptions) never gets the nonce: its `<style>` elements and style attributes stay blocked. Scalar's "Generate MCP" link and developer-tools header (both scalar.com services) are off. Its policy is `apidocs.CSP`, the default one plus `data:` fonts; `connect-src 'self'` keeps "try it" requests on your origin. Inline styles inside HTML that Scalar injects (code highlighting) stay blocked, except an attribute that is exactly the numeric line-number variables (`--line-count`/`--line-digits`): the shim moves it out of the markup before parsing and applies it through the CSSOM, so CSP never sees it. The shim assumes the page's CSP has no `require-trusted-types-for` (the rewritten markup is a plain string; `apidocs.CSP` has none). The shim also sets Zod's `jitless` flag, so Scalar's bundled Zod never probes `eval` (a `script-src` violation). The page loads with zero CSP console errors (`TestBrowser_APIDocsNoCSPViolations`, headless Chromium, skipped without one or with `-short`; `VUKEM_CHROME` points at a browser).
-- Accessibility: the default theme gets AA text colors (muted text, HTTP method labels) and the shim makes the scrollable endpoint list keyboard-focusable and puts the visible text into the "Show More" buttons' accessible names, so the page passes axe serious checks in light and dark mode (checked by hand with axe-core 4.10; `TestDefaultThemeColorsMeetAA` keeps the colors at 4.5:1). Other themes keep their own colors.
-- Like `/openapi.json`, it is not registered in production unless `OPENAPI_IN_PRODUCTION=true` or `Config.InProduction` (one page only). For a public, versioned API serve its document and page explicitly:
+| `apidocs.Config` field | Default | Meaning |
+| --- | --- | --- |
+| `SpecURL` | `/openapi.json` | where the page loads the document from |
+| `Title` | `APP_NAME + " API"` | the page title |
+| `Theme` | Scalar's default (with AA contrast fixes) | `default`, `alternate`, `moon`, `purple`, `solarized`, `bluePlanet`, `saturn`, `kepler`, `mars`, `deepSpace`, `laserwave`, `none` |
+| `Layout` | `modern` | or `classic` |
+| `Authentication` | none | Scalar's `authentication` option, e.g. the preferred scheme. Never put a real secret here: the page is public wherever it is served |
+| `HideClientButton` | `false` | hide the "Test request" client |
+| `InProduction` | `false` | register the page in production too |
 
-```go
+`Serve` registers three `GET` routes: the page at `path` (named `apidocs`), `path/scalar.js` (`apidocs.script`) and `path/page.js` (`apidocs.page`); all three are skipped in the document. Because the names are fixed, one router holds one reference page. It returns `false` and registers nothing in production unless `OPENAPI_IN_PRODUCTION=true` or `Config.InProduction`. `apidocs.Register(r, path, cfg)` adds the routes without that check, for apps that gate them another way (its default title is `API Reference`).
+
+What the page does for you:
+
+- **No third parties.** The Scalar bundle (`@scalar/api-reference` 1.72.3, MIT; `apidocs.ScalarVersion`) is vendored, embedded and pinned by SHA-256 (`apidocs.ScalarSHA256`, checked by the tests). There is no CDN, telemetry, remote font or AI agent, and Scalar's "Generate MCP" link and developer-tools header (both scalar.com services) are off. The scripts are served with a one-year immutable cache; the page with `Cache-Control: no-store` and `robots: noindex`.
+- **Strict CSP.** The page runs under a nonce-only Content Security Policy, `apidocs.CSP` (the default policy plus `data:` fonts). `connect-src 'self'` keeps "Test request" calls on your own origin. A small shim, `page.js`, passes the request nonce to the styles Scalar creates; HTML that comes from your document's descriptions never gets the nonce, so its inline styles stay blocked. The page loads with zero CSP errors in headless Chromium (`TestBrowser_APIDocsNoCSPViolations`).
+- **Accessible by default.** The default theme gets AA text contrast (4.5:1), the endpoint list is keyboard-focusable and the "Show More" buttons have accessible names. Other themes keep their own colors.
+- **Small binary unless used.** The `apidocs` package (about 4 MB) is linked only when you import it.
+
+For a public, versioned API, serve the document and the page explicitly:
+
+```go title="routes/docs.go"
 vukem.ServeOpenAPIWith(app, r, "/api/v1/openapi.json",
 	vukem.OpenAPIOptions{PathPrefix: "/api/v1", InProduction: true})
-apidocs.Serve(app, r, "/api/docs", apidocs.Config{SpecURL: "/api/v1/openapi.json", InProduction: true})
+apidocs.Serve(app, r, "/api/docs", apidocs.Config{
+	SpecURL:      "/api/v1/openapi.json",
+	InProduction: true,
+})
 ```
-- The `apidocs` package (about 4 MB) is linked only when you import it. Add `apidocs.Command()` to your commands for `vukem openapi:serve [-addr localhost:8081]`, a local preview.
+
+### Previewing locally
+
+Add `apidocs.Command()` to your commands for `vukem openapi:serve`, which serves the document and the reference on their own port, whatever `APP_ENV` says:
+
+```go title="bootstrap/commands.go"
+func Commands() []vukem.Command {
+	return []vukem.Command{
+		commands.CreateUser(),
+		apidocs.Command(),
+	}
+}
+```
+
+```bash
+vukem openapi:serve -addr localhost:8081
+```
+
+The reference is at `http://localhost:8081/` and the document at `/openapi.json`. `-addr` defaults to `localhost:8081`; `Ctrl+C` stops it.
+
+## Configuration
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `APP_NAME` | `Vukem` | `info.title`, and the reference page title (`<name> API`) |
+| `API_VERSION` | `1.0.0` | `info.version` |
+| `APP_URL` | `http://localhost:3000` | `servers[0].url` |
+| `OPENAPI_PREFIX` | empty | keep only routes under it (e.g. `/api`); default `PathPrefix` of `ServeOpenAPIWith` |
+| `OPENAPI_IN_PRODUCTION` | `false` | serve every document and reference page in production |
+
+## Security
+
+- The document and the reference are **off in production** by default: they map every route, parameter and schema, which helps an attacker as much as a partner.
+- Publishing is per document (`InProduction`) or global (`OPENAPI_IN_PRODUCTION=true`). Use a prefix so internal routes stay out, and `.Doc(openapi.Skip{})` for any route that must not appear.
+- `Op.Security` documents authentication; it does not enforce it.
+- The reference runs under a strict CSP with no third-party requests. `Config.Authentication` is visible to anyone who opens the page.
+
+More in the [Security overview](/docs/security/overview).
+
+## Testing
+
+- `AssertMatchesOpenAPI()` on every API test keeps responses and document in step.
+- A golden test catches unintended contract changes: export the document in CI and compare it with the committed `openapi.json`; the framework's own CI also validates its golden document with [Redocly](https://redocly.com/docs/cli/).
+- `doc.ValidateResponse` works in any test, `vukemtest` or not.
+
+## Common mistakes
+
+**Calling `AssertMatchesOpenAPI` on a plain handler.** Plain routes document only a `default` response without content, so any JSON body fails: `openapi: GET /api/v1/tasks 200 documents no body`. Register the route with `api.Register`, or skip the assertion.
+
+**Expecting the document in production.** `curl https://api.example.com/openapi.json` answers `404`. Set `InProduction: true` on that document, or `OPENAPI_IN_PRODUCTION=true`.
+
+**A required list that must not be empty.**
+
+```go title="Wrong"
+Tags []string `json:"tags" validate:"required"`
+```
+
+```go title="Right"
+Tags []string `json:"tags" validate:"required,min=1"`
+```
+
+**Using booted services while registering routes.** `vukem openapi:export` fails in warmup. Read connections inside handlers, not in the route function.
+
+## Next steps
+
+<CardGroup cols="2">
+<Card title="Client generation" href="/docs/rest-apis/client-generation" icon="code">
+TypeScript and Go clients from this document.
+</Card>
+<Card title="Typed handlers" href="/docs/rest-apis/typed-handlers" icon="route">
+The routes the document describes.
+</Card>
+<Card title="Validation" href="/docs/basics/validation" icon="shield">
+Every rule a `validate` tag accepts.
+</Card>
+<Card title="Testing" href="/docs/testing/overview" icon="terminal">
+The test client and its assertions.
+</Card>
+</CardGroup>
+
+Package references: [openapi](https://pkg.go.dev/github.com/AlexGalhardo/vukem/openapi), [apidocs](https://pkg.go.dev/github.com/AlexGalhardo/vukem/apidocs).

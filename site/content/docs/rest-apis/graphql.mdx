@@ -1,151 +1,808 @@
 ---
 title: GraphQL
-description: A stdlib, schema-first GraphQL server with typed resolvers, a batching loader over the ORM, limits, persisted queries and subscriptions over WebSockets or SSE.
+description: A schema-first GraphQL server on the standard library, with typed resolvers, a batching loader, cost limits, persisted queries and subscriptions over WebSocket or SSE.
 ---
+
+A REST API gives every resource its own URL, and the server decides what each response contains. GraphQL turns that around: the API has **one** endpoint, and the client sends a small query that says exactly which fields it wants. A product page that needs a product, its price and its last three reviews gets all of it in one request, with nothing extra.
+
+Vukem ships GraphQL as a separate module, `contrib/graphql`. It has its own lexer, parser, validator and executor written on the Go standard library, following the [GraphQL specification](https://spec.graphql.org/October2021/) (October 2021 edition). It does not use gqlgen or graphql-go, and core Vukem never imports it.
+
+You will learn:
+
+- how a schema, resolvers and the Go types behind them fit together;
+- how arguments are decoded and validated, and how errors reach the client;
+- how a loader turns 41 database queries into 3 (the N+1 problem);
+- how to serve GraphQL over HTTP, with persisted queries and an explorer page;
+- how subscriptions push live events over WebSocket or server-sent events;
+- which limits protect your server, and how to test it all.
+
+## The idea
+
+Think of a restaurant. A REST API is a set menu: you order "dish number 4" and get whatever is on that plate. GraphQL is ordering à la carte: you list the exact items you want, and the kitchen brings only those.
+
+Three pieces make that work:
+
+| Piece | What it is | In Vukem |
+| --- | --- | --- |
+| Schema | The menu: every type, field and argument the API offers, written in <Term tip="Schema Definition Language: the text format GraphQL uses to describe types, like type Product { name: String! }.">SDL</Term> | A Go string passed to `graphql.New` |
+| Resolver | The cook for one field: a function that produces its value | A typed Go function bound with `graphql.Query`, `graphql.Mutation`, `graphql.Field` or `graphql.Subscription` |
+| Operation | The order: a `query` (read), `mutation` (write) or `subscription` (live events) | Sent by the client as JSON over HTTP or WebSocket |
+
+Resolvers are plain Go functions that take a [`context.Context`](https://pkg.go.dev/context) and return a value and an [`error`](https://go.dev/tour/methods/19). The binding functions are [generic](https://go.dev/tour/generics/1): Go reads the argument and result types from your function, so the server knows how to decode the arguments and how to serialize the result without any code generation.
+
+<Quote source="https://spec.graphql.org/October2021/#sec-Overview" author="GraphQL specification" title="GraphQL, October 2021: Overview">
+GraphQL is a query language designed to build client applications by providing an intuitive and flexible syntax and system for describing their data requirements and interactions.
+</Quote>
+
+## Quick start
+
+The running example on this page is a small shop: products, their reviews, a mutation that adds a review and a subscription that announces new ones.
+
+<Steps>
+<Step title="1. Add the module">
 
 ```bash
 go get github.com/AlexGalhardo/vukem/contrib/graphql
 ```
 
-`contrib/graphql` is a separate module with its own lexer, parser, validator and executor following the GraphQL specification (October 2021), with no gqlgen or graphql-go.
+</Step>
+<Step title="2. Write the schema and the resolvers">
 
-## Schema and resolvers
+```go title="app/graph/schema.go"
+package graph
 
-The schema is SDL; resolvers are typed Go functions bound to its fields, checked against the SDL at boot.
+import (
+	"context"
+	"net/http"
 
-```go
+	"github.com/AlexGalhardo/vukem/contrib/graphql"
+	"github.com/AlexGalhardo/vukem/errs"
+)
+
 const sdl = `
-type Query { post(id: ID!): Post  posts(first: Int = 20): [Post!]! }
-type Mutation { createPost(input: NewPost!): Post! }
-type Post { id: ID! title: String! author: User! }
-type User { id: ID! name: String! posts: [Post!]! }
-input NewPost { title: String! }
+type Query {
+  products: [Product!]!
+  product(id: ID!): Product
+}
+
+type Product {
+  id: ID!
+  name: String!
+  priceCents: Int!
+}
 `
 
-type PostArgs struct {
+type Product struct {
+	ID         int64  `json:"id"`
+	Name       string `json:"name"`
+	PriceCents int    `json:"price_cents"`
+}
+
+// ProductArgs holds the arguments of Query.product. ID values
+// arrive as strings, so the ",string" option turns "1" into 1.
+type ProductArgs struct {
 	ID int64 `json:"id,string"`
 }
 
-schema, err := graphql.New(sdl,
-	graphql.Query("post", func(ctx context.Context, a PostArgs) (Post, error) {
-		return orm.QueryOf[Post](app.DB()).Find(ctx, a.ID)
-	}),
-	graphql.Mutation("createPost", createPost),
-	graphql.Field("Post", "author", func(ctx context.Context, p *Post, _ graphql.NoArgs) (*User, error) {
-		return users.Load(ctx, p.UserID)
-	}, graphql.Cost(2)),
+var catalog = []Product{
+	{ID: 1, Name: "Lamp", PriceCents: 1999},
+	{ID: 2, Name: "Mug", PriceCents: 899},
+}
+
+func New() (*graphql.Schema, error) {
+	return graphql.New(sdl,
+		graphql.Query("products", listProducts),
+		graphql.Query("product", findProduct),
+	)
+}
+
+func listProducts(
+	_ context.Context, _ graphql.NoArgs,
+) ([]Product, error) {
+	return catalog, nil
+}
+
+func findProduct(
+	_ context.Context, a ProductArgs,
+) (*Product, error) {
+	for _, p := range catalog {
+		if p.ID == a.ID {
+			return &p, nil
+		}
+	}
+
+	return nil, errs.New(http.StatusNotFound, "Product not found.")
+}
+```
+
+`Product` has no resolver for `id`, `name` or `priceCents`: unbound fields read the Go struct. `priceCents` finds `PriceCents` even though its `json` tag is `price_cents` (more on that [below](#reading-fields-without-a-resolver)).
+
+</Step>
+<Step title="3. Mount the endpoint">
+
+```go title="routes/api.go"
+package routes
+
+import (
+	"github.com/AlexGalhardo/vukem"
+	"github.com/AlexGalhardo/vukem/contrib/graphql"
+	"github.com/AlexGalhardo/vukem/router"
+
+	"shop/app/graph"
+)
+
+func API(r *router.Router, app *vukem.App) error {
+	schema, err := graph.New()
+	if err != nil {
+		// A schema that does not match its resolvers fails at boot.
+		return err
+	}
+
+	graphql.Serve(app, r, "/graphql", schema, graphql.Config{})
+
+	return nil
+}
+```
+
+</Step>
+<Step title="4. Send a query">
+
+```bash
+curl -s localhost:3000/graphql \
+  -H 'Content-Type: application/json' \
+  -d '{"query":"{ product(id: \"1\") { name priceCents } }"}'
+```
+
+```json
+{"data":{"product":{"name":"Lamp","priceCents":1999}}}
+```
+
+Outside production, open `http://localhost:3000/graphql/explorer` to write queries in the browser with a schema browser next to them.
+
+</Step>
+</Steps>
+
+## Schema and resolvers
+
+`graphql.New(sdl, options...)` parses the SDL, applies the options and checks every binding against the schema. It returns an immutable `*graphql.Schema` that is safe for concurrent use. Everything that can be wrong is wrong **at boot**, not on the first request:
+
+| Mistake | Error returned by `graphql.New` |
+| --- | --- |
+| A root field (`Query`, `Mutation`, `Subscription`) without a resolver | `graphql: Query.products has no resolver (bind it with graphql.Query/Mutation/Field)` |
+| A binding to a field the SDL does not declare | `graphql: binding Query.nothere: no such field in the schema` |
+| A Go argument the field does not declare | `graphql: binding Query.a: Go argument "y" is not an argument of the field` |
+| `graphql.Scalar("Int", ...)` | `graphql: Scalar("Int"): built-in scalars cannot be replaced` |
+| SDL syntax errors, unknown types, an object that does not implement its interface | a message naming the problem |
+
+The SDL may use descriptions, `extend type`, `@deprecated`, `@specifiedBy` and your own directive definitions.
+
+### Binding resolvers
+
+| Function | Binds | Resolver signature |
+| --- | --- | --- |
+| `graphql.Query[A, O](field, fn, opts...)` | a field of `Query` | `func(ctx, args A) (O, error)` |
+| `graphql.Mutation[A, O](field, fn, opts...)` | a field of `Mutation` | `func(ctx, args A) (O, error)` |
+| `graphql.Field[P, A, O](type, field, fn, opts...)` | any field of an object type | `func(ctx, parent P, args A) (O, error)` |
+| `graphql.Subscription[A, O](field, fn, opts...)` | a field of `Subscription` | `func(ctx, args A) (<-chan O, error)` |
+
+- `P` is the **parent**: the value the parent field's resolver returned. `T` and `*T` convert both ways, so a `Product` parent works with a `*Product` resolver.
+- `O` is serialized according to the client's selection set. A nil Go slice becomes an empty list.
+- The only field option is `graphql.Cost(n)`, the field's weight in the [complexity limit](#configuration-and-security) (default 1).
+
+Add a `reviews` field to `Product` with its own resolver:
+
+```go title="app/graph/schema.go"
+const sdl = `
+type Query {
+  products(first: Int = 20): [Product!]!
+  product(id: ID!): Product
+}
+
+type Mutation {
+  createReview(input: NewReview!): Review!
+}
+
+type Product {
+  id: ID!
+  name: String!
+  priceCents: Int!
+  reviews: [Review!]!
+}
+
+type Review {
+  id: ID!
+  rating: Int!
+  body: String!
+}
+
+input NewReview {
+  productId: ID!
+  rating: Int!
+  body: String!
+}
+`
+
+graphql.Field("Product", "reviews",
+	func(
+		ctx context.Context, p *Product, _ graphql.NoArgs,
+	) ([]*Review, error) {
+		return reviewsByProduct.Load(ctx, p.ID)
+	},
+	// Each review list costs more than a plain field.
+	graphql.Cost(2),
 )
 ```
 
-- `Field[P, A, O](type, field, fn, opts...)`, `Query[A, O]` and `Mutation[A, O]`. `P` is the parent value; `A` is decoded from the arguments through `json` tags and checked with `validate` tags and a `Validate() error` method; `O` is serialized per the selection set.
-- A Go argument the field does not declare, a binding to an unknown field and a root field without a resolver are boot errors.
-- Unbound fields read the parent: a map key, or a struct field by `json` name (`json:"-"` hides it), falling back to a case-insensitive Go name, tagged or not (`PriceCents` with `json:"price_cents"` also answers `priceCents`). An exact `json` name wins over another field's Go name. Folding makes a json-renamed field reachable by its Go name too (`Password json:"pw"` answers `password`) whenever the schema declares that field: what clients can read is decided by the SDL, so keep secrets out of it or hide them with `json:"-"`.
-- Scalars: `Int` (32-bit, checked), `Float`, `String`, `Boolean`, `ID`; custom ones with `graphql.Scalar("DateTime", graphql.ScalarFuncs{Serialize, Parse})`. Interfaces and unions resolve through `graphql.ResolveType`, a `GraphQLTypename()` method or `graphql.Object[T]("Type")`.
+`reviewsByProduct` is a [loader](#batching-with-a-loader); it keeps the reviews of 20 products down to one query.
 
-## Execution
+### Arguments and validation
 
-- Query fields with resolvers run concurrently with their siblings, and list items concurrently; output keeps document order. Mutation root fields run one after another. `graphql.WithoutConcurrency()` resolves serially (resolvers sharing one transaction).
-- Null propagation follows the spec. Panics in resolvers are recovered as internal errors.
+The arguments type `A` may be:
 
-### Errors
+- `graphql.NoArgs` (or any empty struct) for fields without arguments;
+- `map[string]any` to receive the coerced arguments as they are;
+- a struct whose fields carry [`json` tags](https://pkg.go.dev/encoding/json#Marshal). Any other type is a boot error: `args type ... must be a struct, map[string]any or graphql.NoArgs`.
 
-Every error carries `message`, `locations`, `path` and `extensions.code`:
+The server first coerces the arguments against the SDL (types, non-null, defaults, enums). Then it encodes them as JSON and decodes them into your struct, so every `json` tag option works: `json:"id,string"` reads an `ID` into an `int64`. Finally it runs the checks:
 
-| Resolver error | `code` |
-| --- | --- |
-| `errs.HTTPError` 401 / 403 / 404 / 409 / 429 | `UNAUTHENTICATED` / `FORBIDDEN` / `NOT_FOUND` / `CONFLICT` / `TOO_MANY_REQUESTS` |
-| 400 / 422, `*errs.ValidationError`, `z.Issues` | `BAD_USER_INPUT` (with `fields`) |
-| anything else | `INTERNAL_SERVER_ERROR`, message `Internal server error` (real text only with `graphql.WithDebug(true)`) |
-| `graphql.NewError(msg, ext)` | as given |
+1. `validate` tags, with the same rules as [validation](/docs/basics/validation) (package `z`);
+2. a `Validate() error` method on the struct, when it has one.
 
-Keyed errors (`errs.NewKey`) get their message translated by the request's `errs.Translator` (`HTTPError.LocalizedText`).
+```go title="app/graph/reviews.go"
+type NewReviewInput struct {
+	ProductID int64  `json:"productId,string"`
+	Rating    int    `json:"rating" validate:"min=1,max=5"`
+	Body      string `json:"body"   validate:"required,max=500"`
+}
 
-## Batching (N+1)
-
-```go
-users := graphql.NewLoader(graphql.ByKey(orm.QueryOf[User](db), "id", func(u *User) int64 { return u.ID }))
-postsByUser := graphql.NewLoader(graphql.GroupByKey(orm.QueryOf[Post](db), "user_id", func(p *Post) int64 { return p.UserID }))
+// The validate tag on Input makes the nested rules run too.
+type CreateReviewArgs struct {
+	Input NewReviewInput `json:"input" validate:"required"`
+}
 ```
 
-Loads from sibling resolvers are queued until every resolver of the operation is waiting, then sent as one `WhereIn` query: 20 posts with their authors and the authors' posts cost 3 queries instead of 41. `MaxBatch(n)` splits batches; the cache lives for one operation.
+A review with `rating: 9` and an empty body answers:
 
-## Limits
+```json
+{
+  "errors": [{
+    "message": "Invalid input",
+    "locations": [{ "line": 1, "column": 12 }],
+    "path": ["createReview"],
+    "extensions": {
+      "code": "BAD_USER_INPUT",
+      "fields": {
+        "input.body": ["The body field is required."],
+        "input.rating": ["The rating field must not be greater than 5."]
+      }
+    }
+  }],
+  "data": null
+}
+```
 
-| Limit | Default |
-| --- | --- |
-| Depth (`MaxDepth`) | 12 |
-| Complexity (`MaxComplexity`; field cost via `graphql.Cost(n)`, multiplied by `first`/`last`/`limit`) | 1000 |
-| Aliases (`MaxAliases`) | 30 |
-| Lexer tokens (`MaxTokens`) | 10000 |
-| POST body (`HandlerConfig.MaxBodyBytes`) | 1 MiB |
+`data` is `null` because `createReview` returns `Review!` (non-null): when a non-null field fails, the error travels up to the nearest field that may be null, as the [specification](https://spec.graphql.org/October2021/#sec-Handling-Field-Errors) requires.
 
-Change them with `graphql.WithLimits(graphql.Limits{…})`. Exceeding a limit returns `QUERY_LIMIT_EXCEEDED` before any resolver runs.
+<Callout type="warning" title="Nested rules need a tag on the outer field">
+The struct is checked only when one of its **top-level** fields has a `validate` tag. Without `validate:"required"` on `Input` above, the rules on `rating` and `body` never run and `rating: 9` is accepted.
+</Callout>
 
-## HTTP
+An error returned by `Validate()` becomes `BAD_USER_INPUT`. Its text reaches the client as written (unless it is a `z.Issues` or `*errs.ValidationError`, which keep their `fields`), so write it for the client.
 
-```go
-graphql.Serve(app, r, "/graphql", schema, graphql.Config{
-	HandlerConfig: graphql.HandlerConfig{Persisted: &graphql.PersistedQueries{
-		Store: graphql.NewAllowlist(clientQueries...), AllowlistOnly: app.Config.IsProduction(),
-	}},
+### Reading fields without a resolver
+
+A field with no binding reads the parent value:
+
+- a `map[string]any` (or any map with string keys): the key with the field's name;
+- a struct: the field whose `json` name matches exactly, else a field whose **Go name** matches case-insensitively, tagged or not. `ID` answers `id`, and `PriceCents` with `json:"price_cents"` answers `priceCents`. An exact `json` name wins over another field's Go name.
+- `json:"-"` hides a field completely. A nil pointer parent gives `null`.
+
+If nothing matches, the field fails with `INTERNAL_SERVER_ERROR` and the log says `no field "secret" on Go type ... (bind a resolver or add a json tag)`.
+
+### Scalars, interfaces and unions
+
+The built-in scalars follow the specification:
+
+| Scalar | Input | Output |
+| --- | --- | --- |
+| `Int` | 32-bit signed integer; larger values are rejected | the same range is checked on output |
+| `Float` | finite number | finite number |
+| `String` | string | string |
+| `Boolean` | `true` / `false` | boolean |
+| `ID` | string or integer | always a string (`1` becomes `"1"`) |
+
+A custom scalar is declared in the SDL (`scalar DateTime`) and bound with `graphql.Scalar`. Each function may be nil, which passes the value through unchanged; an unbound custom scalar passes everything through.
+
+```go title="app/graph/scalars.go"
+graphql.Scalar("DateTime", graphql.ScalarFuncs{
+	// Serialize turns a resolver value into a JSON value.
+	Serialize: func(v any) (any, error) {
+		t, ok := v.(time.Time)
+		if !ok {
+			return nil, fmt.Errorf("DateTime: got %T", v)
+		}
+
+		return t.Format(time.RFC3339), nil
+	},
+	// Parse receives nil, bool, int64, float64, string,
+	// []any or map[string]any and returns what resolvers get.
+	Parse: func(v any) (any, error) {
+		s, _ := v.(string)
+		return time.Parse(time.RFC3339, s)
+	},
 })
 ```
 
-- POST `application/json` and GET for queries (a mutation over GET is 405). Batched array bodies are rejected. Responses are `application/graphql-response+json` when accepted, and `Cache-Control: no-store`.
-- Outside production an explorer page is served at `/graphql/explorer` (embedded, no CDN, own CSP). In production the explorer is off and introspection is rejected unless you opt in with `InsecureExplorerInProduction` / `InsecureIntrospectionInProduction`.
-- **Persisted queries:** automatic persisted queries (hash verified before storing; `NewMemoryStore(n)` or `NewCacheStore(app.Cache, ttl)`), or an allowlist (`AllowlistOnly: true`) where only listed documents run and a missing store rejects everything.
+For an `interface` or `union` field, the server must learn which object type each value is. It tries, in order:
 
-## Subscriptions
+1. `graphql.ResolveType("SearchResult", func(v any) string { ... })`, which returns the object type name;
+2. a `GraphQLTypename() string` method on the value (the `graphql.Typenamer` interface);
+3. a mapping from `graphql.Object[Product]("Product")`, which maps the Go type (and its pointer) to an object type;
+4. a `"__typename"` key in a map value.
 
-A subscription field is bound to a resolver that returns a channel; each value is one response.
+### Execution order
 
-```go
-// SDL: type Subscription { postCreated: Post!  countdown(from: Int!): Int! }
-graphql.Subscription("countdown", func(ctx context.Context, a CountArgs) (<-chan int, error) {
+- Query fields that have a resolver run **concurrently** with their siblings, each in its own [goroutine](https://go.dev/tour/concurrency/1). Items of a list run concurrently too. The response keeps document order.
+- Mutation root fields run **one after another**, in document order, so `mutation { a b }` never runs `b` before `a` finishes.
+- `graphql.WithoutConcurrency()` resolves every field serially. Use it when resolvers share something that is not safe for concurrent use, such as one `*sql.Tx`.
+- A panic in a resolver is recovered and reported as an internal error.
+- `schema.Execute(ctx, graphql.Request{Query, OperationName, Variables})` runs an operation without HTTP (tests, jobs). It allows introspection and rejects subscriptions with `BAD_REQUEST`; use `schema.Subscribe` for those.
+
+## Errors and batching
+
+### How errors reach the client
+
+Every error in the `errors` list has `message`, `locations`, `path` and `extensions.code`. The code depends on what the resolver returned:
+
+| Resolver returned | `extensions.code` | `message` |
+| --- | --- | --- |
+| `errs.New(401, ...)` | `UNAUTHENTICATED` | your message |
+| `errs.New(403, ...)` | `FORBIDDEN` | your message |
+| `errs.New(404, ...)` | `NOT_FOUND` | your message |
+| `errs.New(409, ...)` | `CONFLICT` | your message |
+| `errs.New(429, ...)` | `TOO_MANY_REQUESTS` | your message |
+| `errs.New(400 or 422, ...)`, `*errs.ValidationError`, `z.Issues` | `BAD_USER_INPUT` (with `fields` for validation) | your message, or `Invalid input` |
+| another 4xx, e.g. `errs.New(412, ...)` | the status text in capitals: `PRECONDITION_FAILED` | your message |
+| any 5xx, a plain `errors.New`, a failed leaf serialization | `INTERNAL_SERVER_ERROR` | `Internal server error` |
+| `graphql.NewError(msg, extensions)` | as given | as given |
+
+- Keyed errors (`errs.NewKey`) are translated with the request's translator (`HTTPError.LocalizedText`), so the message follows the request locale.
+- A 5xx error wins over the field issues it wraps: `errs.Wrap(500, issues)` is internal data, not input the client should fix.
+- An error type with an `Extensions() map[string]any` method (the `graphql.Extender` interface) adds its own keys over the derived `code`.
+- `graphql.WithDebug(true)` shows the real text of internal errors. Never enable it in production.
+- `graphql.WithLogger(app.Log)` logs internal errors and panics with their cause (the default logger discards them).
+
+Errors raised before execution use their own codes: `GRAPHQL_PARSE_FAILED` (syntax), `GRAPHQL_VALIDATION_FAILED` (unknown fields, wrong argument types), `BAD_USER_INPUT` (bad variables), `OPERATION_RESOLUTION_FAILURE` (unknown `operationName`), `QUERY_LIMIT_EXCEEDED`, `BAD_REQUEST` and the `PERSISTED_QUERY_*` codes. Each code is a constant (`graphql.CodeNotFound`, `graphql.CodeLimitExceeded`, ...). For these errors the response has **no** `data` key.
+
+### Batching with a loader
+
+Ask for 20 products with their reviews, and a naive `reviews` resolver runs one query per product: 1 query for the list plus 20 for reviews. This is the <Term tip="Loading a list with one query, then running one more query for each item in it: N items cost N+1 queries.">N+1 problem</Term>. A loader (the "dataloader" pattern) collects the keys asked by sibling resolvers and fetches them in **one** call.
+
+```go title="app/graph/loaders.go"
+type Review struct {
+	ID        int64  `json:"id"`
+	ProductID int64  `json:"product_id"`
+	Rating    int    `json:"rating"`
+	Body      string `json:"body"`
+}
+
+func reviewKey(r *Review) int64 { return r.ProductID }
+
+// Defined once, next to the schema. Each operation gets
+// its own cache, so results never leak between requests.
+func newLoaders(db database.Executor) *graphql.Loader[int64, []*Review] {
+	q := orm.QueryOf[Review](db)
+
+	return graphql.NewLoader(
+		graphql.GroupByKey(q, "product_id", reviewKey),
+		graphql.MaxBatch(500),
+	)
+}
+```
+
+| Function | Use it for | Query |
+| --- | --- | --- |
+| `graphql.ByKey(q, col, key)` | one row per key (belongs-to, has-one): a review's product | `q.WhereIn(col, keys...)`; missing keys give `nil` |
+| `graphql.GroupByKey(q, col, key)` | many rows per key (has-many): a product's reviews | `q.WhereIn(col, keys...)`; keys without rows give an empty slice |
+| your own `graphql.BatchFunc[K, V]` | any other source (an HTTP API, Redis) | `func(ctx, keys []K) (map[K]V, error)` |
+
+- `loader.Load(ctx, key)` returns one value; `loader.LoadMany(ctx, keys)` loads several in one batch, in the order of `keys`.
+- In a `BatchFunc`, a key missing from the returned map resolves to the zero value (nil for pointers) without an error. An error fails every key of the batch.
+- The batch is sent when every resolver of the operation is waiting (the "resolution tick"), not after a timer. 20 products with their reviews and the reviewers cost 3 queries instead of 41.
+- `graphql.MaxBatch(n)` splits batches larger than `n` keys (default: unlimited).
+- `graphql.BatchWait(d)` (default `graphql.DefaultBatchWait`, 10ms) is a fallback for resolvers that block on something other than a loader (a mutex, a channel): a pending batch is sent once the operation made no progress for `d`, and at the latest `10×d` after its first key. `BatchWait(0)` disables it.
+- With `WithoutConcurrency()`, a loader batches only the keys requested before the first load waits.
+- Outside an operation (no request scope in `ctx`), `Load` calls the fetch function directly.
+
+## Transports: HTTP, WebSocket and SSE
+
+### The HTTP endpoint
+
+`graphql.Serve(app, r, "/graphql", schema, cfg)` mounts the endpoint on a router or group for `GET` and `POST`, named `graphql`, hidden from the [OpenAPI document](/docs/rest-apis/openapi). Under it, `schema.Handler(cfg.HandlerConfig)` is a plain `http.Handler` you can also mount yourself. It follows [GraphQL over HTTP](https://graphql.github.io/graphql-over-http/draft/):
+
+| Request | Result |
+| --- | --- |
+| `POST` with `Content-Type: application/json` and a body `{"query", "operationName", "variables", "extensions"}` | runs the operation |
+| `POST` with another content type | 415, `Content-Type must be application/json.` |
+| `POST` body over `MaxBodyBytes` (1 MiB) | 413, `Request body too large.` |
+| `POST` with a JSON array (a batch) | 400, `Batched requests are not supported.` |
+| `GET ?query=...&variables=...&operationName=...&extensions=...` | runs **queries only** |
+| `GET` with a mutation | 405 with `Allow: POST`: `Can only perform a mutation operation from a POST request.` |
+| any other method, or `GET` with `DisableGET` | 405 with an `Allow` header |
+| an `Accept` header with neither JSON type | 406 |
+
+Mutations never run over `GET`, so a link or an `<img>` tag cannot change state. Every response has `Cache-Control: no-store`.
+
+The response media type depends on `Accept`. With `application/graphql-response+json`, request errors (parse, validation, variables) answer **400**. With `application/json`, a missing `Accept` or `*/*`, they answer **200**, as older clients expect. Execution errors (a resolver failed) always answer 200 with `errors` beside `data`.
+
+`graphql.Serve` also mounts an explorer page at `/graphql/explorer` (named `graphql.explorer`), **outside production only**. It is embedded (no CDN), runs under its own policy `graphql.ExplorerCSP` with the request's CSP nonce, and reads the schema through introspection. `graphql.Explorer(endpoint)` returns the page as a handler if you want to mount it yourself.
+
+### Persisted queries
+
+A persisted query is a document the server already knows by its hash: the client sends a short hash instead of the full query. Vukem supports two modes through `HandlerConfig.Persisted`:
+
+<Tabs>
+<Tab title="Automatic (APQ)">
+
+[Automatic persisted queries](https://www.apollographql.com/docs/apollo-server/performance/apq) save bandwidth. The client sends only `{"extensions":{"persistedQuery":{"version":1,"sha256Hash":"..."}}}`. If the server does not know the hash, it answers `PERSISTED_QUERY_NOT_FOUND`; the client resends the full query with the hash, the server checks that the SHA-256 matches (else `provided sha does not match query`) and stores it.
+
+```go title="routes/api.go"
+store, err := app.Cache()
+if err != nil {
+	return err
+}
+
+graphql.Serve(app, r, "/graphql", schema, graphql.Config{
+	HandlerConfig: graphql.HandlerConfig{
+		Persisted: &graphql.PersistedQueries{
+			// Shared by every server; 0 keeps entries forever.
+			Store: graphql.NewCacheStore(store, 24*time.Hour),
+		},
+	},
+})
+```
+
+Without `Store`, a `graphql.NewMemoryStore(0)` keeps the last `graphql.DefaultPersistedEntries` (1000) documents of this process, evicting the oldest first.
+
+</Tab>
+<Tab title="Allowlist">
+
+An allowlist is a security control: **only** the documents your own clients ship can run, and nothing is ever registered. Build it from those documents with `graphql.NewAllowlist`:
+
+```go title="routes/api.go"
+graphql.Serve(app, r, "/graphql", schema, graphql.Config{
+	HandlerConfig: graphql.HandlerConfig{
+		Persisted: &graphql.PersistedQueries{
+			Store:         graphql.NewAllowlist(clientQueries...),
+			AllowlistOnly: app.Config.IsProduction(),
+		},
+	},
+})
+```
+
+Any other document answers `PERSISTED_QUERY_REQUIRED` with `Only persisted queries from the allowlist are accepted.`; an unknown hash answers `This persisted query is not in the allowlist.` With `AllowlistOnly` and no `Store`, the allowlist is empty and every request is rejected (fail closed).
+
+</Tab>
+</Tabs>
+
+- `graphql.Hash(query)` is the id of a document: the lowercase hex SHA-256 of its exact text.
+- A `QueryStore` is any type with `Get(ctx, hash)` and `Put(ctx, hash, query)`. A store error rejects the request with `INTERNAL_SERVER_ERROR`.
+- With `Persisted` nil, a request carrying a `persistedQuery` extension gets `PERSISTED_QUERY_NOT_SUPPORTED`.
+
+### Subscriptions
+
+A subscription field is bound to a resolver that returns a [channel](https://go.dev/tour/concurrency/2). Each value received from the channel is one event: the server completes it against the client's selection set and sends one response per event.
+
+```go title="app/graph/subscriptions.go"
+// SDL: type Subscription { countdown(from: Int!): Int! }
+type CountdownArgs struct {
+	From int `json:"from" validate:"min=1,max=60"`
+}
+
+func countdown(
+	ctx context.Context, a CountdownArgs,
+) (<-chan int, error) {
 	ch := make(chan int)
+
 	go func() {
-		defer close(ch) // closing completes the subscription
+		// Closing the channel completes the subscription.
+		defer close(ch)
+
 		for i := a.From; i > 0; i-- {
 			select {
 			case ch <- i:
+			// The client unsubscribed or disconnected.
 			case <-ctx.Done():
 				return
 			}
 		}
 	}()
+
 	return ch, nil
-}),
-graphql.Subscription("postCreated", graphql.FromBroadcast[graphql.NoArgs, Post](b,
-	func(context.Context, graphql.NoArgs) ([]string, error) { return []string{"posts"}, nil },
-	"post.created")),
+}
 ```
 
-`FromBroadcast` subscribes to [broadcast channels](/docs/digging-deeper/broadcasting#broadcasting) with the same public/private/presence rules: a denied channel fails the subscription with `FORBIDDEN`.
+- The resolver **owns** the channel: it closes it to end the stream and must stop sending once `ctx` is done.
+- An error from the resolver is a field error of the single response (`next` with `errors`, then `complete`). A 403 `errs.HTTPError` becomes `FORBIDDEN`.
+- Every field of the `Subscription` type needs a binding, or `graphql.New` fails.
+
+For live events from the rest of the app, `graphql.FromBroadcast` feeds a subscription from [broadcast channels](/docs/digging-deeper/broadcasting):
+
+```go title="app/graph/subscriptions.go"
+// SDL: type Subscription { reviewAdded: Review! }
+func reviewChannels(
+	context.Context, graphql.NoArgs,
+) ([]string, error) {
+	return []string{"reviews"}, nil
+}
+
+graphql.Subscription("reviewAdded",
+	graphql.FromBroadcast[graphql.NoArgs, Review](
+		b, reviewChannels, "review.added",
+	),
+)
+```
+
+The `createReview` mutation then calls `b.Publish(ctx, "reviews", "review.added", review)`, and every subscriber, on every server when the broadcast server has a broker, gets the review.
+
+- The channels are subscribed with `b.Subscribe` in the subscription's context, so the public, private and presence rules of `b` apply and **fail closed**: a denied channel fails the subscription with `FORBIDDEN`.
+- Message data is decoded from JSON into `O` (`broadcast.Message` receives the message as is). Data that does not decode is dropped.
+- With event names, only those events are delivered; presence notifications are skipped unless you list them.
+
+`schema.Subscribe(ctx, req)` is the transport-free form: it returns an [`iter.Seq`](https://pkg.go.dev/iter) of responses, or a nil stream and the error response when the request fails before the stream starts. Cancel `ctx` to stop it.
 
 ### WebSocket (graphql-ws)
 
-```go
-r.Get("/graphql/ws", websocket.Handler(func(c *websocket.Conn) error {
-	return graphql.ServeWS(schema, c, graphql.WSConfig{
-		OnConnect: func(ctx context.Context, payload map[string]any) (context.Context, error) {
-			return authenticate(ctx, payload["token"]) // error → close 4403
-		},
+`graphql.ServeWS` speaks the [`graphql-transport-ws`](https://github.com/enisdenjo/graphql-ws/blob/master/PROTOCOL.md) protocol (`graphql.WSProtocol`), the one used by the `graphql-ws` client in Apollo Client, urql and Relay. It runs on any connection that satisfies the small `graphql.WSConn` interface; the `*Conn` of [`drivers/websocket`](/docs/digging-deeper/broadcasting) does, with no adapter.
+
+```go title="routes/api.go"
+r.Get("/graphql/ws", websocket.Handler(
+	func(c *websocket.Conn) error {
+		return graphql.ServeWS(schema, c, graphql.WSConfig{
+			OnConnect: authenticate,
+			// The same value as HandlerConfig.Persisted, so the
+			// allowlist covers both transports.
+			Persisted: persisted,
+		})
+	},
+	websocket.Subprotocols(graphql.WSProtocol),
+))
+```
+
+```ts title="resources/js/graphql.ts"
+import { createClient } from "graphql-ws";
+
+const client = createClient({
+  url: `wss://${location.host}/graphql/ws`,
+  connectionParams: { token },
+});
+
+client.subscribe(
+  { query: "subscription { reviewAdded { id rating body } }" },
+  { next: console.log, error: console.error, complete: () => {} },
+);
+```
+
+The driver checks the `Origin` before the upgrade and caps message sizes. `ServeWS` adds the protocol rules:
+
+| Event | What happens |
+| --- | --- |
+| no `connection_init` within `InitTimeout` (10s) | close `4408` |
+| `OnConnect(ctx, payload)` returns an error | close `4403 Forbidden` |
+| a second `connection_init` | close `4429` |
+| `subscribe` before the server's `connection_ack` | close `4401 Unauthorized` |
+| `subscribe` with an id that is already running | close `4409` |
+| more than `MaxSubscriptions` (32) running operations | an `error` message with `TOO_MANY_REQUESTS` |
+| parse, validation, variable, limit or persisted-query errors | an `error` message with the GraphQL errors |
+| invalid JSON, an unknown message type, a missing id | close `4400` |
+| wrong subprotocol | close `4406` |
+| a response that cannot be encoded | close `4500` |
+| client `complete` | the operation's context is cancelled; the id can be reused |
+| `ping` | answered with `pong` |
+
+`OnConnect` receives the upgrade request's context and the `connection_init` payload, and returns the context every operation of that connection runs in: put the authenticated user there. Without `OnConnect`, the upgrade request's context is used (cookie sessions). Queries and mutations sent over the socket get one `next` and a `complete`. Introspection is rejected over the socket unless `WSConfig.Introspection` is true. `ServeWS` answers protocol violations on the socket and returns nil.
+
+### Server-sent events (graphql-sse)
+
+A `POST` to the HTTP endpoint whose `Accept` includes `text/event-stream` is answered in the [graphql-sse](https://github.com/enisdenjo/graphql-sse/blob/master/PROTOCOL.md) "distinct connections" mode: one `next` event per result (its data is the response JSON), then a `complete` event. Request errors are a JSON response with 400 before the stream opens. Subscriptions over `GET` and the "single connection" mode are not supported.
+
+## Configuration and security
+
+### Limits
+
+A single GraphQL document can ask for a huge amount of work (`products(first: 100000) { reviews { ... } }`). Limits are checked after validation and **before any resolver runs**:
+
+| Limit | Default | What it counts |
+| --- | --- | --- |
+| `MaxDepth` | 12 (`graphql.DefaultMaxDepth`) | the deepest field nesting, leaf fields included |
+| `MaxComplexity` | 1000 (`graphql.DefaultMaxComplexity`) | the sum of field costs; a field with a `first`, `last` or `limit` argument multiplies the cost of its selection by that value |
+| `MaxAliases` | 30 (`graphql.DefaultMaxAliases`) | aliased fields |
+| `MaxTokens` | 10000 (`graphql.DefaultMaxTokens`) | lexer tokens in the document |
+
+```go title="app/graph/schema.go"
+graphql.New(sdl,
+	graphql.WithLimits(graphql.Limits{
+		MaxDepth:      8,
+		MaxComplexity: 500,
+		// 0 keeps the default; a negative value disables a limit.
+		MaxAliases: 0,
+	}),
+	// ...bindings
+)
+```
+
+`{ products(first: 2000) { reviews { id } } }` costs `1 + 2000 × 2 = 4001` and answers:
+
+```json
+{
+  "errors": [{
+    "message": "Query complexity 4001 exceeds the maximum of 1000.",
+    "locations": [{ "line": 1, "column": 1 }],
+    "extensions": {
+      "code": "QUERY_LIMIT_EXCEEDED",
+      "limit": "complexity",
+      "max": 1000,
+      "value": 4001
+    }
+  }]
+}
+```
+
+- The multiplier reads a literal or a variable. An argument left out (so its SDL default applies) multiplies by 1.
+- `@skip` and `@include` are not evaluated when measuring: the cost is an upper bound.
+- Introspection has its own depth bound (16) and a cap of 200000 resolved fields, so the standard `graphql.IntrospectionQuery` always fits; its aliases and complexity still count.
+
+### Every option
+
+| Option | Default | Effect |
+| --- | --- | --- |
+| `graphql.WithLimits(graphql.Limits{...})` | see above | operation limits |
+| `graphql.WithDebug(bool)` | `false` | show internal error text to clients |
+| `graphql.WithLogger(*slog.Logger)` | discard | log internal errors and panics |
+| `graphql.WithoutConcurrency()` | concurrent | resolve every field serially |
+| `graphql.Scalar(name, graphql.ScalarFuncs{Serialize, Parse})` | pass-through | custom scalar conversion |
+| `graphql.ResolveType(name, fn)` | — | object type of interface/union values |
+| `graphql.Object[T](name)` | — | map a Go type to an object type |
+| `graphql.Cost(n)` (field option) | 1 | field cost in the complexity sum |
+| `HandlerConfig.MaxBodyBytes` | 1 MiB (`graphql.DefaultMaxBodyBytes`) | `POST` body limit |
+| `HandlerConfig.Persisted` | nil (off) | persisted queries |
+| `HandlerConfig.DisableIntrospection` | `false` | reject `__schema` and `__type` (`__typename` still works) |
+| `HandlerConfig.DisableGET` | `false` | accept `POST` only |
+| `Config.DisableExplorer` | `false` | no explorer page, even in development |
+| `Config.InsecureExplorerInProduction` | `false` | serve the explorer in production |
+| `Config.InsecureIntrospectionInProduction` | `false` | allow introspection in production |
+| `WSConfig.OnConnect` | nil (upgrade context) | authenticate `connection_init` |
+| `WSConfig.InitTimeout` | 10s (`graphql.DefaultWSInitTimeout`) | wait for `connection_init` |
+| `WSConfig.MaxSubscriptions` | 32 (`graphql.DefaultWSMaxSubscriptions`) | operations at once per socket |
+| `WSConfig.Persisted` | nil | persisted queries over the socket |
+| `WSConfig.Introspection` | `false` | allow introspection over the socket |
+| `graphql.MaxBatch(n)` (loader) | unlimited | split large batches |
+| `graphql.BatchWait(d)` (loader) | 10ms | fallback batch timer |
+
+The module reads no environment variables. Production is detected from `APP_ENV` through `app.Config.IsProduction()`.
+
+### Security
+
+What Vukem does by default:
+
+- **Production hides the schema.** `graphql.Serve` rejects introspection in production (`GraphQL introspection is not allowed, but the query contained __schema or __type.`) and does not register the explorer. Plain `schema.Handler` does not know the environment: set `DisableIntrospection` yourself there.
+- **Internal errors are masked** as `Internal server error` ([CWE-209](https://cwe.mitre.org/data/definitions/209.html)); the cause goes only to `WithLogger`.
+- **State never changes over GET**, and batched array bodies are refused.
+- **Cost is bounded** by depth, complexity, alias, token and body limits.
+- **Persisted query hashes are verified**, and the allowlist fails closed.
+
+What stays your job:
+
+- **Authentication and authorization.** Put `auth.Required` or `auth.Optional` on the group that holds the endpoint, then read the user in resolvers with `auth.UserFrom[*models.User](ctx, "api")` and return `errs.New(403, ...)` for denials. Over WebSocket, authenticate in `OnConnect`.
+- **The SDL decides what clients can read.** Case-insensitive matching makes `Password` with `json:"pw"` answer a `password` field if the SDL declares one. Keep secrets out of the SDL, or tag them `json:"-"`.
+- **Messages you choose are public.** `graphql.NewError`, `Extender` keys and `Validate()` errors reach clients as written.
+- **Rate limiting.** One request can hold many fields; add [rate limiting](/docs/security/rate-limiting) to the route. Use the allowlist for first-party clients in production.
+
+See the [security overview](/docs/security/overview) and the [OWASP GraphQL cheat sheet](https://cheatsheetseries.owasp.org/cheatsheets/GraphQL_Cheat_Sheet.html).
+
+## Testing and common mistakes
+
+### Testing
+
+Test resolvers without HTTP through `schema.Execute`:
+
+```go title="app/graph/schema_test.go"
+func TestProduct(t *testing.T) {
+	schema, err := graph.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resp := schema.Execute(t.Context(), graphql.Request{
+		Query:     `query ($id: ID!) { product(id: $id) { name } }`,
+		Variables: map[string]any{"id": "1"},
 	})
-}, websocket.Subprotocols(graphql.WSProtocol)))
+
+	if len(resp.Errors) > 0 {
+		t.Fatalf("errors: %v", resp.Errors)
+	}
+
+	want := `{"product":{"name":"Lamp"}}`
+	if string(resp.Data) != want {
+		t.Fatalf("data = %s, want %s", resp.Data, want)
+	}
+}
 ```
 
-`ServeWS` speaks the `graphql-transport-ws` protocol, compatible with the `graphql-ws` client (Apollo, urql, Relay). `connection_init` must arrive within 10s; at most 32 operations run per socket. Introspection is rejected over the socket unless `WSConfig.Introspection` is set.
+Test the whole endpoint, middleware included, with the [test client](/docs/testing/overview):
 
-```js
-import { createClient } from 'graphql-ws'
-const client = createClient({ url: `wss://${location.host}/graphql/ws`, connectionParams: { token } })
-client.subscribe({ query: 'subscription { postCreated { id title } }' }, { next: console.log, error: console.error, complete: () => {} })
+```go title="tests/graphql_test.go"
+func TestGraphQLProducts(t *testing.T) {
+	app := vukemtest.New(t, bootstrap.New)
+
+	app.Client(t).
+		PostJSON("/graphql", map[string]any{
+			"query": "{ products { name } }",
+		}).
+		AssertOK().
+		AssertJSONPath("data.products.0.name", "Lamp")
+}
 ```
 
-### SSE (graphql-sse)
+`resp.Errors[i].Code()` returns `extensions.code`, so a test can assert `graphql.CodeNotFound` without comparing messages.
 
-A POST to the endpoint that accepts `text/event-stream` is answered in graphql-sse "distinct connections" mode: one `next` event per result, then `complete`.
+### Common mistakes
 
-<Callout type="info">
-Not implemented: `@defer` / `@stream`, and graphql-sse "single connection" mode. The explorer is a small built-in page, not GraphiQL.
+**Validate tags only on nested fields.** The rules never run:
+
+```go title="wrong"
+type CreateReviewArgs struct {
+	Input NewReviewInput `json:"input"`
+}
+```
+
+```go title="right"
+type CreateReviewArgs struct {
+	Input NewReviewInput `json:"input" validate:"required"`
+}
+```
+
+**An `ID` argument into an `int64` without `,string`.** IDs arrive as strings, so decoding fails with `BAD_USER_INPUT` and `Invalid arguments: id must be int64`:
+
+```go title="wrong"
+type ProductArgs struct {
+	ID int64 `json:"id"`
+}
+```
+
+```go title="right"
+type ProductArgs struct {
+	ID int64 `json:"id,string"`
+}
+```
+
+**A schema field with no Go field.** `Product.secret` in the SDL with nothing on the struct answers `Internal server error`; with `WithLogger` the log shows `no field "secret" on Go type graph.Product (bind a resolver or add a json tag)`. Bind a resolver or add the field.
+
+**A mutation sent as GET.** It answers 405 with `Can only perform a mutation operation from a POST request.` Send mutations as `POST`.
+
+**Expecting the SDL default to count.** `products(first: Int = 20)` queried as `products { ... }` costs as one item in the complexity sum. Give list fields a `Cost`, or make clients pass `first`.
+
+**A resolver that ignores `ctx.Done()`.** A subscription goroutine that keeps sending after the client left blocks forever. Always `select` on `ctx.Done()` and close the channel when you finish.
+
+<Callout type="info" title="Not implemented">
+`@defer` / `@stream` incremental delivery and the graphql-sse "single connection" mode are not supported. The explorer is a small built-in page, not GraphiQL; any GraphQL IDE can point at the endpoint in development.
 </Callout>
+
+## Next steps
+
+<CardGroup cols="2">
+<Card title="REST APIs" href="/docs/rest-apis/overview" icon="route">
+Resource routes, tokens, CORS and problem+json beside GraphQL.
+</Card>
+<Card title="Broadcasting" href="/docs/digging-deeper/broadcasting" icon="zap">
+Channels and rules behind `FromBroadcast` subscriptions.
+</Card>
+<Card title="Relations" href="/docs/database/relations" icon="database">
+The ORM queries that loaders batch.
+</Card>
+<Card title="gRPC" href="/docs/rest-apis/grpc" icon="layers">
+Typed RPC services on the same router and port.
+</Card>
+</CardGroup>
+
+Package reference: [pkg.go.dev/github.com/AlexGalhardo/vukem/contrib/graphql](https://pkg.go.dev/github.com/AlexGalhardo/vukem/contrib/graphql).

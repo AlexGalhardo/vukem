@@ -1,66 +1,355 @@
 ---
 title: Typed handlers
-description: api.Register binds and validates the input struct, writes the output as JSON and describes the route for OpenAPI.
+description: api.Register turns a function that takes a validated input struct and returns a typed value into a route — bound, validated, encoded as JSON and described for OpenAPI.
 ---
 
-```go
-type StoreProduct struct {
-	ShopID int64   `json:"shop"  validate:"required,positive"`
-	Name   string  `json:"name"  validate:"required,max=80" doc:"Display name"`
-	Price  float64 `json:"price" validate:"min=0"`
+A plain Vukem handler receives the request context and writes the response itself: it parses the body, validates it, picks a status code and encodes JSON. A **typed handler** moves all of that out of your code. You write a function that takes an input struct and returns an output value; `api.Register` binds and validates the input, runs your function, writes the output as JSON with the right status, and records the input and output types so the [OpenAPI document](/docs/rest-apis/openapi) and [generated clients](/docs/rest-apis/client-generation) describe the route exactly.
+
+You will learn:
+
+- How `api.Register` builds the input from the query string, the body and the path.
+- Which status code a typed route answers with, and how to change it.
+- How validation errors, malformed bodies and handler errors reach the client.
+- How to check your own responses against their contract with `ValidateResponse`.
+- What metadata every typed route carries for generators.
+
+## The idea
+
+A typed handler is like a **vending machine with labelled slots**. The slot only accepts the coins it was built for (the input struct and its rules); a wrong coin comes straight back with a note saying why (a `422`), and the machine never opens. If the coins are right, you get exactly the product on the label (the output type), and the label is printed in the catalogue for everyone to read (the OpenAPI document).
+
+Go makes this possible with two language features:
+
+- **[Generics](https://go.dev/doc/tutorial/generics).** `api.Register[In, Out]` is one function that works for any input type `In` and output type `Out`. Go infers both from your handler, so you never write them out.
+- **[Struct tags](https://go.dev/ref/spec#Struct_types).** The `json:"title"` tag names a property and the `validate:"required,min=3"` tag lists its rules. The same tags drive binding, validation and the OpenAPI schema, so the three can never disagree.
+
+The running example is the task list API from the [REST APIs overview](/docs/rest-apis/overview), the same code as [`examples/api`](https://github.com/AlexGalhardo/vukem/tree/main/examples/api).
+
+## Quick start
+
+<Steps>
+<Step title="Describe the input">
+
+```go title="app/requests/task.go"
+package requests
+
+// StoreTask is the body of POST /api/v1/tasks.
+type StoreTask struct {
+	Title  string `json:"title"  validate:"required,min=3,max=120"`
+	Status string `json:"status" validate:"oneof=todo doing done"`
 }
-
-r.Group("/api/v1/shops/{shop}", func(g *router.Group) {
-	g.Use(auth.Required(apiGuard)) // Op.Security only documents the scheme
-
-	api.Register(g, "POST /products", api.Op{
-		Name:     "products.store",
-		Summary:  "Create a product",
-		Tags:     []string{"products"},
-		Security: []string{"bearer"},
-	}, func(c *web.Ctx, in StoreProduct) (resources.Product, error) {
-		p := models.Product{ShopID: in.ShopID, Name: in.Name, Price: in.Price}
-		if err := orm.Create(c.Context(), db, &p); err != nil {
-			return resources.Product{}, err
-		}
-
-		return resources.FromProduct(p), nil
-	})
-})
 ```
 
-## Input
+</Step>
+<Step title="Write the handler">
 
-- The input is built from the query string, the JSON or form body and the path parameters, in that order; **path parameters win** over body fields of the same name (a body cannot change `{shop}`).
-- `GET`, `HEAD` and `DELETE` read only the query string.
-- It is validated with the input struct's `validate` tags (the same rules as `web.Bind`); failures answer 422 with field errors, malformed JSON answers 400.
-- Use `struct{}` as the input type when there is none.
+The handler receives the request context and an already validated `StoreTask`, and returns the wire format (a transformer result) or an error:
 
-## Output
+```go title="app/controllers/apiv1/tasks.go"
+func (t *Tasks) Store(
+	c *web.Ctx, in requests.StoreTask,
+) (resources.TaskJSON, error) {
+	task := models.Task{Title: in.Title, Status: in.Status}
+	if task.Status == "" {
+		task.Status = models.TaskTodo
+	}
+
+	if err := orm.Create(c.Context(), t.db, &task); err != nil {
+		return resources.TaskJSON{}, err
+	}
+
+	return resources.Task(task), nil
+}
+```
+
+</Step>
+<Step title="Register the route">
+
+```go title="routes/tasks.go"
+r.Group("/api/v1", func(g *router.Group) {
+	g.Use(middleware.JSONOnly(), auth.Required(acc.API))
+
+	api.Register(g, "POST /tasks", api.Op{
+		Name:     "tasks.store",
+		Summary:  "Create a task",
+		Tags:     []string{"tasks"},
+		Security: []string{"bearer"},
+	}, tasks.Store)
+}).Name("api.v1.")
+```
+
+</Step>
+<Step title="Call it">
+
+```bash
+curl -s -X POST localhost:3000/api/v1/tasks \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"title":"Buy milk"}'
+```
+
+```json
+{ "id": 46, "title": "Buy milk", "status": "todo" }
+```
+
+The status is `201 Created`, because the route is a `POST`. Send `{"title":"no","status":"later"}` instead and the handler never runs:
+
+```json
+{
+  "type": "about:blank",
+  "title": "Validation failed",
+  "status": 422,
+  "detail": "2 field(s) are invalid.",
+  "instance": "/api/v1/tasks",
+  "errors": {
+    "status": ["The selected status is invalid."],
+    "title": ["The title field must be at least 3 characters."]
+  }
+}
+```
+
+</Step>
+</Steps>
+
+## Registering a route
+
+```go
+func Register[In, Out any](
+	g Registrar,
+	pattern string,
+	op Op,
+	fn func(*web.Ctx, In) (Out, error),
+) *router.Route
+```
+
+- `g` is a `*router.Router` or a `*router.Group` (anything with `Match`, the `api.Registrar` interface). Group prefixes, names and middleware apply as for any route.
+- `pattern` is `"METHOD /path"`, for example `"PUT /tasks/{task}"`. The method may be lower case (it is upper-cased); the path must start with `/` and uses the same [`ServeMux` wildcards](https://pkg.go.dev/net/http#hdr-Patterns-ServeMux) as other routes, `{name...}` included.
+- `fn` may be a function literal or a method value such as `tasks.Store`.
+- The returned `*router.Route` accepts more middleware, for example `.Use(auth.Ability(acc.API, "tasks:write"))`.
+
+`Register` checks everything it can at **boot**, so a mistake stops `vukem serve` instead of failing on the first request. It panics when:
+
+| Mistake | Panic message |
+| --- | --- |
+| The pattern has no method | `api: Register pattern "/tasks" must be "METHOD /path"` |
+| A `validate` tag has an unknown rule | `z: …X: unknown rule "nope" for a string` |
+| `ValidateResponse` with a non-struct output | `api: Register "GET /list": ValidateResponse needs a struct output, got []main.Out` |
+
+## The input
+
+Before your function runs, Vukem assembles a map of input values from three sources, in this order — each later source **overwrites** keys of the earlier ones:
+
+1. **The query string** (`?status=doing`).
+2. **The body**, except for `GET`, `HEAD` and `DELETE`, which read only the query string:
+   - `application/json` (and any `application/*+json`): a single JSON object.
+   - `application/x-www-form-urlencoded` and `multipart/form-data`: form fields, `tags[]=x` lists, and uploaded files for `z.File` fields ([uploads](/docs/digging-deeper/uploads)).
+   - Any other content type: the body is ignored.
+3. **The path parameters** of the route, group prefixes included (`{task}`).
+
+Then the map is parsed into `In` with the schema built from its `validate` tags — the same rules as [`web.Bind`](/docs/basics/validation).
+
+Path parameters always win, so a body cannot change which record the URL names:
+
+```go title="app/requests/task.go"
+// UpdateTask is the body of PUT /api/v1/tasks/{task}.
+type UpdateTask struct {
+	Task   int64  `json:"task"   validate:"required,positive"`
+	Title  string `json:"title"  validate:"required,min=3,max=120"`
+	Status string `json:"status" validate:"required,oneof=todo doing done"`
+}
+```
+
+```bash
+curl -s -X PUT localhost:3000/api/v1/tasks/7 \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"task":99,"title":"Walk dog","status":"done"}'
+```
+
+`in.Task` is `7`: the path value replaced the `99` from the body.
+
+Details that matter:
+
+- **No input.** Use `struct{}` as `In`. Nothing is read or validated, not even the query string.
+- **Unknown keys are ignored.** `{"title":"Buy milk","extra":1}` succeeds; `extra` is dropped. (`c.BindJSON` rejects unknown fields; typed handlers do not.)
+- **Path parameters are validated like any field.** `DELETE /tasks/abc` answers `422` with `"task": ["The task field must be an integer."]`, not `404`.
+- **Types are converted.** Query, form and path values are strings; the schema turns `"7"` into the `int64` your field expects.
+- **Body size.** The app's body limit applies; a larger body answers `413`.
+
+### Errors before your function runs
+
+| Request | Status | `detail` |
+| --- | --- | --- |
+| `{"title": 1,}` (invalid JSON) | `400` | `Malformed JSON at position 13.` |
+| `[1,2]` (not an object) | `400` | `Request body has the wrong JSON type.` |
+| empty body with `Content-Type: application/json` | `400` | `Request body is empty.` |
+| `{"title": 5}` | `422` | `errors.title`: `The title field must be a string.` |
+| `{"title":"Walk","tags":["a","bb","cc","dd"]}` with `validate:"max=3,dive,min=2"` | `422` | `errors.tags` and `errors["tags.0"]` |
+
+<Callout type="info">
+Validation messages of typed handlers are always in English. `web.Bind` and `web.Parse` translate them with the request locale; typed handlers validate through `web.ParseInput`, which has no request context to localize with.
+</Callout>
+
+## The output
+
+Your function returns `(Out, error)`.
+
+- A non-nil **error** goes through the normal [error handling](/docs/basics/error-handling): `orm.ErrNotFound` is a `404`, `errs.New(409, "…")` a `409`, an unexpected error a `500` with its text only in the log.
+- Otherwise `Out` is written as JSON with the status below.
 
 | Case | Status |
 | --- | --- |
-| `Op.Status` set | that status |
-| output type is `struct{}` | 204, no body |
-| `POST` | 201 |
-| otherwise | 200 |
+| `Op.Status` is set | that status |
+| `Out` is `struct{}` | `204 No Content`, no body |
+| the method is `POST` | `201 Created` |
+| anything else | `200 OK` |
 
-Errors returned by the handler go through the normal [problem+json](/docs/basics/error-handling) path.
+When the status is `204`, the output value is not written even if `Out` has fields. A `201` from a typed handler has no `Location` header; if clients need one, write a plain handler with `c.Created`.
 
-### Response validation
+```go title="app/controllers/apiv1/tasks.go"
+// Destroy deletes a task: struct{} output means 204.
+func (t *Tasks) Destroy(
+	c *web.Ctx, in requests.TaskID,
+) (struct{}, error) {
+	task, err := t.find(c, in.Task)
+	if err != nil {
+		return struct{}{}, err
+	}
 
-Set `Op.ValidateResponse: true` to check the output against its `validate` tags before it is written (the output type must be a struct, otherwise `Register` panics at boot):
-
-```go
-api.Register(g, "GET /tasks", api.Op{Name: "tasks.index", ValidateResponse: true}, tasks.Index)
+	return struct{}{}, orm.Delete(c.Context(), t.db, &task)
+}
 ```
 
-The check runs when `web.Services.CheckResponses` is on (the same switch as `web.JSONWith`). The app turns it on whenever `APP_ENV` is not `production`, that is `development` or `test`: a staging deployment that runs with `APP_ENV=development` checks too and answers 500 on a mismatch. A mismatch is a server bug: it is logged and answered with a generic 500 instead of sending data that breaks the documented contract. In production the output is written without the check.
+## Checking responses
 
-A list field tagged `validate:"required"` must be present and not `null` (a nil slice fails), but may be empty; use `min=1` when it needs items.
+The output type is a promise: "a task always has an id, a title and one of three statuses". `Op.ValidateResponse: true` checks that promise before the response leaves the server, using the output struct's own `validate` tags:
+
+```go title="app/resources/task.go"
+type TaskJSON struct {
+	ID     int64  `json:"id"     validate:"required"`
+	Title  string `json:"title"  validate:"required"`
+	Status string `json:"status" validate:"required,oneof=todo doing done"`
+}
+```
+
+```go title="routes/tasks.go"
+api.Register(g, "GET /tasks/{task}", api.Op{
+	Name:             "tasks.show",
+	ValidateResponse: true,
+}, tasks.Show)
+```
+
+If a bug returns `Status: "lost"`, the client receives a plain `500` and the log explains it (one line, wrapped here):
+
+```text
+level=ERROR msg="request error" status=500 method=GET
+  path=/api/v1/tasks/7
+  err="500 Internal Server Error: z: status: The selected status is invalid."
+```
+
+Under the hood:
+
+- The check runs only when `web.Services.CheckResponses` is on. The app turns it on whenever `APP_ENV` is **not** `production` — so in `development` and `test`, and also in a staging deployment that runs with `APP_ENV=development`. With `APP_ENV=production` the output is written without the check.
+- A mismatch is a server bug, never the client's fault: it is logged and answered with a generic `500` instead of sending data that breaks the documented contract. Your tests catch the drift before production does.
+- `Out` must be a struct (`Register` panics otherwise). A `struct{}` output is never checked.
+- A list field tagged `validate:"required"` must be present and not `null` — a `nil` slice fails — but may be empty. Use `min=1` when it needs items.
 
 ## Route metadata
 
-`Op.Name` names the route (and becomes the OpenAPI `operationId`). Every typed route carries an `*api.Operation` with its method, full path (group prefixes included), path parameters and input/output types, readable from `router.RouteInfo.Doc`. That is what the [OpenAPI generator](/docs/rest-apis/openapi) uses; plain `web.HandlerFunc` routes keep working beside typed ones.
+`Op` describes the operation for the router and the OpenAPI document:
 
-`Op.Security` only declares the security scheme in the OpenAPI document; it does not authenticate anything. Protect the route or its group with `auth.Required` (and `auth.Ability` for token abilities).
+| Field | Type | Effect |
+| --- | --- | --- |
+| `Name` | `string` | the route name, and the OpenAPI `operationId`; clients get one method per named operation |
+| `Summary` | `string` | a one-line title (defaults to `Name` in the document) |
+| `Description` | `string` | longer Markdown text in the document |
+| `Tags` | `[]string` | groups operations in the API reference |
+| `Status` | `int` | the success status (see the table above) |
+| `Deprecated` | `bool` | marks the operation deprecated in the document and in generated clients |
+| `Security` | `[]string` | security schemes the document declares (`"bearer"` is predefined) |
+| `ValidateResponse` | `bool` | check the output before writing it |
+
+The group's name prefix applies to the **route** name as usual: inside `.Name("api.v1.")` you reverse the route with `c.URL("api.v1.tasks.store")`. The OpenAPI `operationId` is `Op.Name` as you wrote it (`tasks.store`), so generated clients get `tasksStore`, not `apiV1TasksStore`.
+
+<Callout type="warning" title="Security is documentation only">
+`Op.Security` adds a security requirement to the OpenAPI document. It does not authenticate anything. Protect the route or its group with `auth.Required` (and `auth.Ability` for token abilities).
+</Callout>
+
+Every typed route also carries an `*api.Operation`, readable from `router.RouteInfo.Doc`:
+
+```go
+type Operation struct {
+	api.Op
+	Method string       // "POST"
+	Path   string       // "/api/v1/tasks", group prefixes included
+	Params []string     // path parameter names, in order
+	In     reflect.Type // the input struct
+	Out    reflect.Type // the output type
+}
+```
+
+That is what [`openapi.Generate`](/docs/rest-apis/openapi) reads. Plain `web.HandlerFunc` routes keep working beside typed ones; they appear in the document with a generic entry.
+
+## Security
+
+- Input is validated before your code runs, and path parameters cannot be overridden by the body.
+- Unknown body keys are dropped, so a client cannot set a field you did not declare (no mass assignment through extra keys).
+- Handler errors are answered as problem+json; unexpected errors never show their text in production.
+- What stays your job: authentication and authorization (`Op.Security` does not do it), scoping queries to the caller, and keeping secrets out of output types. See the [Security overview](/docs/security/overview).
+
+## Testing
+
+```go title="tests/tasks_test.go"
+func TestStoreTask(t *testing.T) {
+	app := vukemtest.New(t, bootstrap.New)
+	client := app.Client(t).
+		WithToken(apiUser(t, app, "ada@example.com"))
+
+	client.PostJSON("/api/v1/tasks", map[string]any{"title": "Buy milk"}).
+		AssertCreated().
+		AssertJSONPath("status", "todo").
+		AssertMatchesOpenAPI()
+
+	client.PostJSON("/api/v1/tasks", map[string]any{"title": "x"}).
+		AssertJSONValidationErrors("title")
+}
+```
+
+Tests run with `APP_ENV=test`, so `ValidateResponse` checks are on, and `AssertMatchesOpenAPI()` checks the body against the [generated document](/docs/rest-apis/openapi). See [Testing](/docs/testing/overview).
+
+## Common mistakes
+
+**Forgetting the method in the pattern.**
+
+```go title="Wrong"
+// panic: api: Register pattern "/tasks" must be "METHOD /path"
+api.Register(g, "/tasks", api.Op{Name: "tasks.index"}, tasks.Index)
+```
+
+```go title="Right"
+api.Register(g, "GET /tasks", api.Op{Name: "tasks.index"}, tasks.Index)
+```
+
+**Expecting `Op.Security` to protect the route.** Without `auth.Required` the route is public, whatever the document says.
+
+**Reading a body on `DELETE`.** `GET`, `HEAD` and `DELETE` read only the query string; a field sent in a `DELETE` body is missing, and a `required` rule answers `422` with `The … field is required.` Move the value to the path or the query.
+
+**Sending a form or text body by accident.** A `text/plain` body is ignored, so every required field reports `is required`. Send `Content-Type: application/json`.
+
+## Next steps
+
+<CardGroup cols="2">
+<Card title="OpenAPI" href="/docs/rest-apis/openapi" icon="book">
+Turn typed routes into an OpenAPI 3.1 document and an API reference.
+</Card>
+<Card title="Client generation" href="/docs/rest-apis/client-generation" icon="code">
+Typed TypeScript and Go clients from the same types.
+</Card>
+<Card title="Validation" href="/docs/basics/validation" icon="shield">
+Every rule you can put in a `validate` tag.
+</Card>
+<Card title="Pagination" href="/docs/rest-apis/pagination" icon="layers">
+Paginated lists inside a typed handler.
+</Card>
+</CardGroup>
+
+Package reference: [pkg.go.dev/github.com/AlexGalhardo/vukem/api](https://pkg.go.dev/github.com/AlexGalhardo/vukem/api).
