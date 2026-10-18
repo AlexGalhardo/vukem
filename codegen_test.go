@@ -381,3 +381,129 @@ func TestSecurity_A02_WarmupToleratesOnlyAMissingKey(t *testing.T) {
 		t.Errorf("New(console) without APP_KEY = %v, want ErrKeyMissing", err)
 	}
 }
+
+// openAPIMixedRoutes registers an API route next to a server-rendered page
+// route, like an app that serves both an HTTP API and Inertia pages.
+func openAPIMixedRoutes(r *router.Router, app *App) error {
+	if err := openAPIRoutes(r, app); err != nil {
+		return err
+	}
+
+	r.Get("/dashboard", func(c *web.Ctx) error { return c.String(200, "dashboard") }).Name("dashboard")
+
+	return nil
+}
+
+func runOpenAPICommand(t *testing.T, env map[string]string, args ...string) (string, error) {
+	t.Helper()
+
+	var out bytes.Buffer
+
+	build := func(opts ...Option) (*App, error) {
+		return New(append(opts,
+			WithLogger(discardLogger()), WithStdout(&out), WithRoutes(openAPIMixedRoutes))...)
+	}
+
+	err := RunMain(t.Context(), append([]string{"app"}, args...), testSource(env).Lookup, build)
+
+	return out.String(), err
+}
+
+func TestOpenAPICommands_PrefixFlag(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		env     map[string]string
+		args    []string
+		want    []string
+		notWant []string
+	}{
+		{
+			name: "client without a prefix keeps page routes",
+			args: []string{"codegen:client", "-o", "-"},
+			want: []string{"ping(", "dashboard("},
+		},
+		{
+			name:    "client scoped to the api",
+			args:    []string{"codegen:client", "-prefix", "/api", "-o", "-"},
+			want:    []string{"ping("},
+			notWant: []string{"dashboard("},
+		},
+		{
+			name:    "go client scoped to the api",
+			args:    []string{"codegen:client", "-lang", "go", "-prefix", "/api", "-o", "-"},
+			want:    []string{"func (c *Client) Ping("},
+			notWant: []string{"Dashboard("},
+		},
+		{
+			name:    "types scoped to the api",
+			args:    []string{"codegen:types", "-prefix", "/api"},
+			want:    []string{"PingResponse"},
+			notWant: []string{"Dashboard"},
+		},
+		{
+			name:    "export scoped to the api",
+			args:    []string{"openapi:export", "-prefix", "/api"},
+			want:    []string{`"/api/ping"`},
+			notWant: []string{`"/dashboard"`},
+		},
+		{
+			name:    "export falls back to OPENAPI_PREFIX",
+			env:     map[string]string{"OPENAPI_PREFIX": "/api"},
+			args:    []string{"openapi:export"},
+			want:    []string{`"/api/ping"`},
+			notWant: []string{`"/dashboard"`},
+		},
+		{
+			name:    "the flag overrides OPENAPI_PREFIX",
+			env:     map[string]string{"OPENAPI_PREFIX": "/dashboard"},
+			args:    []string{"openapi:export", "-prefix", "/api"},
+			want:    []string{`"/api/ping"`},
+			notWant: []string{`"/dashboard"`},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := runOpenAPICommand(t, tt.env, tt.args...)
+			if err != nil {
+				t.Fatalf("%v: %v", tt.args, err)
+			}
+
+			for _, w := range tt.want {
+				if !strings.Contains(got, w) {
+					t.Errorf("%v output lacks %q:\n%s", tt.args, w, got)
+				}
+			}
+
+			for _, w := range tt.notWant {
+				if strings.Contains(got, w) {
+					t.Errorf("%v output has %q, want it filtered out:\n%s", tt.args, w, got)
+				}
+			}
+		})
+	}
+}
+
+// TestOpenAPIExport_RunWithoutFlags guards the -prefix plumbing against a Run
+// called without Flags, as TestServeOpenAPI does: the unset flag must read as
+// "fall back to OPENAPI_PREFIX", not dereference a nil pointer.
+func TestOpenAPIExport_RunWithoutFlags(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+
+	app := newTestApp(t, WithSource(testSource(map[string]string{"OPENAPI_PREFIX": "/api"})),
+		WithStdout(&out), WithRoutes(openAPIMixedRoutes))
+
+	if err := openAPIExportCommand().Run(t.Context(), app, nil); err != nil {
+		t.Fatalf("openapi:export = %v", err)
+	}
+
+	if got := out.String(); !strings.Contains(got, `"/api/ping"`) || strings.Contains(got, `"/dashboard"`) {
+		t.Errorf("openapi:export without flags = %s", got)
+	}
+}

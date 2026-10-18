@@ -173,7 +173,33 @@ const (
 	defaultClientGo = "internal/apiclient/client.go"
 )
 
+// openAPIPrefixUsage documents the -prefix flag of every command that builds
+// the OpenAPI document, so they stay worded alike.
+const openAPIPrefixUsage = `keep only routes under this path prefix, e.g. "/api" (default OPENAPI_PREFIX)`
+
+// openAPIPrefixFlag defines the shared -prefix flag on fs, writing into p. It
+// binds an existing variable rather than returning a pointer so the zero value
+// ("fall back to OPENAPI_PREFIX") also holds for a Command whose Run is called
+// without Flags, instead of dereferencing a nil pointer.
+func openAPIPrefixFlag(fs *flag.FlagSet, p *string) {
+	fs.StringVar(p, "prefix", "", openAPIPrefixUsage)
+}
+
+// openAPIDocument builds the app's OpenAPI document scoped to prefix. An
+// explicit prefix overrides Config.OpenAPIPrefix (OPENAPI_PREFIX) and an empty
+// one falls back to it, the precedence [OpenAPIOptions.PathPrefix] already has:
+// one rule for the flag, the option and the environment variable.
+func openAPIDocument(app *App, prefix string) (*openapi.Document, error) {
+	if prefix == "" {
+		return app.OpenAPI()
+	}
+
+	return app.openAPI(prefix)
+}
+
 func codegenClientCommand() Command {
+	var prefix string
+
 	var lang, out, pkg *string
 
 	return CommandFunc{
@@ -184,9 +210,10 @@ func codegenClientCommand() Command {
 			out = fs.String("o", "", `write to this file ("-" for stdout; default `+
 				defaultClientTS+" or "+defaultClientGo+")")
 			pkg = fs.String("package", "apiclient", "Go package name (-lang go)")
+			openAPIPrefixFlag(fs, &prefix)
 		},
 		Fn: func(_ context.Context, app *App, _ []string) error {
-			doc, err := app.OpenAPI()
+			doc, err := openAPIDocument(app, prefix)
 			if err != nil {
 				return err
 			}
