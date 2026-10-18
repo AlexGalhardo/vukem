@@ -385,6 +385,8 @@ func (c *Ctx) MustURL(name string, params ...any) string {
 
 // HandleError passes err to the error handler.
 func (c *Ctx) HandleError(err error) {
+	c.w.pending = 0 // the error's status wins over Ctx.Status
+
 	if c.s.Errors != nil {
 		c.s.Errors(c, err)
 		return
@@ -394,8 +396,14 @@ func (c *Ctx) HandleError(err error) {
 }
 
 // Serve runs h with c and routes a returned error to the error handler.
+// A status set with Status and not yet sent is sent when h returns nil.
 func (c *Ctx) Serve(h HandlerFunc) {
 	if err := h(c); err != nil {
 		c.HandleError(err)
+		return
+	}
+
+	if !c.w.written && c.w.pending != 0 {
+		c.w.WriteHeader(c.w.pending)
 	}
 }

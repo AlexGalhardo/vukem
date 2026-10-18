@@ -261,7 +261,23 @@ func TestResponses(t *testing.T) {
 			name:       "status chain",
 			do:         func(c *Ctx) error { return c.Status(418).JSON(200, 1) },
 			wantStatus: 418,
+			wantCT:     "application/json",
 			wantBody:   "1",
+		},
+		{
+			name:       "status then view",
+			do:         func(c *Ctx) error { return c.Status(http.StatusGone).View(textView("gone")) },
+			wantStatus: http.StatusGone, wantCT: "text/html; charset=utf-8", wantBody: "gone",
+		},
+		{
+			name: "status then header",
+			do: func(c *Ctx) error {
+				c.Status(http.StatusCreated)
+				c.SetHeader("Location", "/posts/1")
+				return c.JSON(200, Map{"id": 1})
+			},
+			wantStatus: 201, wantCT: "application/json", wantBody: `{"id":1}`,
+			wantHeader: [2]string{"Location", "/posts/1"},
 		},
 		{
 			name: "blob", do: func(c *Ctx) error { return c.Blob(200, "image/png", []byte{1}) },
@@ -290,14 +306,16 @@ func TestResponses(t *testing.T) {
 			if rec.Code != tt.wantStatus {
 				t.Errorf("status = %d, want %d", rec.Code, tt.wantStatus)
 			}
-			if tt.wantCT != "" && rec.Header().Get("Content-Type") != tt.wantCT {
-				t.Errorf("Content-Type = %q, want %q", rec.Header().Get("Content-Type"), tt.wantCT)
+			// Result() holds the headers as sent, not later mutations.
+			sent := rec.Result().Header
+			if tt.wantCT != "" && sent.Get("Content-Type") != tt.wantCT {
+				t.Errorf("Content-Type = %q, want %q", sent.Get("Content-Type"), tt.wantCT)
 			}
 			if got := strings.TrimSpace(rec.Body.String()); got != tt.wantBody {
 				t.Errorf("body = %q, want %q", got, tt.wantBody)
 			}
-			if tt.wantHeader[0] != "" && rec.Header().Get(tt.wantHeader[0]) != tt.wantHeader[1] {
-				t.Errorf("header %s = %q", tt.wantHeader[0], rec.Header().Get(tt.wantHeader[0]))
+			if tt.wantHeader[0] != "" && sent.Get(tt.wantHeader[0]) != tt.wantHeader[1] {
+				t.Errorf("header %s = %q", tt.wantHeader[0], sent.Get(tt.wantHeader[0]))
 			}
 			if !c.Writer().Written() || c.Writer().Status() != tt.wantStatus {
 				t.Errorf("writer state = %v %d", c.Writer().Written(), c.Writer().Status())
@@ -924,5 +942,36 @@ func TestSecurity_A02_IsHTTPSTrustsOnlyProxies(t *testing.T) {
 	tls := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "https://example.com/", http.NoBody)
 	if c, _ := newCtx(t, tls, nil); !c.IsHTTPS() {
 		t.Error("IsHTTPS = false on a TLS connection")
+	}
+}
+
+func TestStatusWithoutBody(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		h    HandlerFunc
+		want int
+	}{
+		{name: "status alone is sent", h: func(c *Ctx) error { c.Status(http.StatusAccepted); return nil }, want: 202},
+		{
+			name: "an error replaces the pending status",
+			h:    func(c *Ctx) error { c.Status(http.StatusCreated); return errs.New(http.StatusConflict, "taken") },
+			want: http.StatusConflict,
+		},
+		{name: "no status is 200", h: func(*Ctx) error { return nil }, want: 200},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			c, rec := newCtx(t, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/x", http.NoBody), nil)
+			c.Serve(tt.h)
+
+			if rec.Code != tt.want {
+				t.Fatalf("Serve() status = %d, want %d", rec.Code, tt.want)
+			}
+		})
 	}
 }

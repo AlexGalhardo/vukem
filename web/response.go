@@ -23,14 +23,20 @@ type ResponseWriter struct {
 	http.ResponseWriter
 
 	status  int
+	pending int // set by Ctx.Status, sent by the next WriteHeader
 	written bool
 	size    int64
 }
 
-// WriteHeader records and writes the status.
+// WriteHeader records and writes the status. A status set earlier with
+// Ctx.Status replaces code.
 func (w *ResponseWriter) WriteHeader(code int) {
 	if w.written {
 		return
+	}
+
+	if w.pending != 0 {
+		code = w.pending
 	}
 
 	w.status = code
@@ -75,10 +81,14 @@ func (w *ResponseWriter) Size() int64 { return w.size }
 // Unwrap supports http.ResponseController.
 func (w *ResponseWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
-// Status sets the status to send with the next body write. Chain it:
-// c.Status(201).JSON(v) is equivalent to c.JSON(201, v).
+// Status sets the response status without sending it: the next helper
+// that writes the response (JSON, Render, View, inertia.Render...) sends
+// it with its headers, in place of its own status. c.Status(201).JSON(200, v)
+// answers 201 with Content-Type application/json. A handler that returns
+// nil without writing sends the status alone; a returned error replaces
+// it with the error's status.
 func (c *Ctx) Status(code int) *Ctx {
-	c.w.WriteHeader(code)
+	c.w.pending = code
 	return c
 }
 

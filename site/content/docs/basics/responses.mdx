@@ -148,11 +148,14 @@ return c.Problem(http.StatusConflict, "", "This slug is already taken.")
 
 ## Setting the status
 
-Pass the status to the helper that writes the body. `c.Status(code)` exists, but it sends the status line **immediately**:
+Pass the status to the helper that writes the body: `c.JSON(http.StatusCreated, v)`. `c.Status(code)` is the other way: it sets the status without sending it, and the next helper that writes the response sends it with its own headers, in place of its own status argument.
 
-<Callout type="warning" title="Do not chain c.Status with a body helper">
-`c.Status(201).JSON(200, v)` answers `201` but loses the `Content-Type` header, because the headers were already sent by `Status`; the client receives `text/plain`. Write `c.JSON(http.StatusCreated, v)` instead. Use `c.Status(code)` alone only for answers without a body.
-</Callout>
+```go title="app/controllers/post_controller.go"
+// 201 with Content-Type: application/json
+return c.Status(http.StatusCreated).JSON(http.StatusOK, post)
+```
+
+This is handy with helpers that take no status, such as `c.View` or `inertia.Render`. A handler that calls `c.Status(code)` and returns `nil` without writing sends the status alone. A handler that returns an error gets the error's status instead.
 
 After the status is written, later status codes are ignored. `c.Writer().Status()` tells you which one went out.
 
@@ -477,8 +480,6 @@ return c.Render("comments/show", comment)
 **Writing after `NotModified` returned `true`.** The 304 is already sent; a `c.JSON` afterwards is ignored. Return `nil`.
 
 **Redirecting to `?next=` directly.** `c.Redirect(c.Query("next"))` is an open redirect. Wrap it in `web.SafeRedirect`.
-
-**Chaining `c.Status`.** See [Setting the status](#setting-the-status).
 
 ## Next steps
 
