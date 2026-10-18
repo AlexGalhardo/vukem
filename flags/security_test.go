@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/google/go-cmp/cmp"
@@ -173,5 +174,35 @@ func TestSecurity_A01_FlagsExposeOnlyAllowlist(t *testing.T) {
 
 	if got := f.Expose(t.Context()); len(got) != 0 {
 		t.Errorf("Expose() without an allowlist = %v, want nothing", got)
+	}
+}
+
+// A FLAG_ override whose @file: secret cannot be read is an error, not an
+// unset variable: a locked flag must not boot as if nobody tried to
+// override it, and an unlocked one must not silently keep its default.
+func TestSecurity_A02_FlagFileRefReadErrorFailsClosed(t *testing.T) {
+	t.Parallel()
+
+	for _, key := range []string{"FLAG_ADMIN_TWO_FACTOR", "FLAG_UPLOAD_LIMIT_MB"} {
+		getenv := func(k string) (string, bool) {
+			if k == key {
+				return "@file:/run/secrets/missing", true
+			}
+
+			return "", false
+		}
+		missing := func(string) ([]byte, error) { return nil, errors.New("no such file") }
+
+		src, err := config.LoadSource(fstest.MapFS{}, getenv, missing)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if _, err := flags.New(
+			flags.Config{Flags: all(), Env: src},
+		); err == nil ||
+			!strings.Contains(err.Error(), key) {
+			t.Errorf("New() with %s=@file:<missing> = %v, want an error naming %s", key, err, key)
+		}
 	}
 }

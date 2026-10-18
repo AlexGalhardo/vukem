@@ -16,9 +16,11 @@ type Lookuper interface {
 	Lookup(key string) (string, bool)
 }
 
-// lookup reads key from src, with the error of an unreadable "@file:"
-// process variable when src is a *Source.
-func lookup(src Lookuper, key string) (string, bool, error) {
+// LookupErr reads key from src like Lookup, and also returns the error of
+// an "@file:" process variable whose file cannot be read when src is a
+// *Source (Lookup then reports the key set and empty). Code that reads
+// configuration outside Load and Fill uses it to fail closed.
+func LookupErr(src Lookuper, key string) (string, bool, error) {
 	if s, ok := src.(*Source); ok {
 		return s.lookupErr(key)
 	}
@@ -83,7 +85,7 @@ func fillStruct(v reflect.Value, src Lookuper, errs *[]error) {
 			continue
 		}
 
-		raw, ok, err := lookup(src, key)
+		raw, ok, err := LookupErr(src, key)
 		if err != nil {
 			*errs = append(*errs, err)
 			continue
