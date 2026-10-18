@@ -174,6 +174,10 @@ func TestNewProjectEndToEnd(t *testing.T) {
 		"--framework",
 		repo,
 		"--no-install",
+		// This test drives npm itself, so it pins the project to npm instead
+		// of letting the scaffold pick what this machine has.
+		"--pm",
+		"npm",
 	)
 	if code != 0 {
 		t.Fatalf("vukem new = %d\n%s%s", code, out, errOut)
@@ -314,7 +318,10 @@ func TestNewProjectEndToEnd(t *testing.T) {
 		t.Fatalf("tests after install:auth: %v\n%s", err, out)
 	}
 
-	if code, _, errOut := vukem(t, project, "build"); code != 1 || !strings.Contains(errOut, "npm install") {
+	// The advice names whichever package manager this machine has, so the
+	// assertion is on the refusal, not on the manager.
+	if code, _, errOut := vukem(t, project, "build"); code != 1 ||
+		!strings.Contains(errOut, "frontend dependencies missing") {
 		t.Fatalf("vukem build without node_modules = %d %s", code, errOut)
 	}
 

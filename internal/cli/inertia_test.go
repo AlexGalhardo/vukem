@@ -32,8 +32,9 @@ func TestNewInertiaProjectEndToEnd(t *testing.T) {
 
 			dir := t.TempDir()
 
+			// --pm npm: this test drives npm itself, so the project must be an npm one.
 			code, out, errOut := vukem(t, dir, "new", "app", "--inertia", st.name, "--module", "example.com/app",
-				"--framework", repo, "--no-install")
+				"--framework", repo, "--no-install", "--pm", "npm")
 			if code != 0 {
 				t.Fatalf("vukem new --inertia %s = %d\n%s%s", st.name, code, out, errOut)
 			}

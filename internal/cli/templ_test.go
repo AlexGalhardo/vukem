@@ -90,8 +90,9 @@ func TestNewTemplProjectEndToEnd(t *testing.T) {
 
 	dir := t.TempDir()
 
+	// --pm npm: this test drives npm itself, so the project must be an npm one.
 	code, out, errOut := vukem(t, dir, "new", "app", "--templ", "--module", "example.com/app", "--framework", repo,
-		"--no-install")
+		"--no-install", "--pm", "npm")
 	if code != 0 {
 		t.Fatalf("vukem new --templ = %d\n%s%s", code, out, errOut)
 	}
@@ -147,7 +148,10 @@ func TestNewTemplProjectEndToEnd(t *testing.T) {
 		t.Errorf("install:auth on a templ project = %d %s", code, errOut)
 	}
 
-	if code, _, errOut := vukem(t, project, "build"); code != 1 || !strings.Contains(errOut, "npm install") {
+	// The advice names whichever package manager this machine has, so the
+	// assertion is on the refusal, not on the manager.
+	if code, _, errOut := vukem(t, project, "build"); code != 1 ||
+		!strings.Contains(errOut, "frontend dependencies missing") {
 		t.Fatalf("vukem build without node_modules = %d %s", code, errOut)
 	}
 
