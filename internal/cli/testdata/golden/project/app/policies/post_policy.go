@@ -9,25 +9,26 @@ import (
 )
 
 // PostPolicy decides what users may do with models.Post. Ability
-// names map to methods: c.Authorize("update", post) calls Update.
+// names map to methods: c.Authorize("update", post) calls Update. Name
+// the parameters (ctx, u, m) with the first decision that reads them.
 type PostPolicy struct{}
 
 // View allows reading a post.
-func (PostPolicy) View(ctx context.Context, u *models.User, m *models.Post) bool {
+func (PostPolicy) View(_ context.Context, _ *models.User, _ *models.Post) bool {
 	return true
 }
 
 // Create allows creating posts: c.Authorize("create", (*models.Post)(nil)).
-func (PostPolicy) Create(ctx context.Context, u *models.User) bool {
+func (PostPolicy) Create(_ context.Context, _ *models.User) bool {
 	return true
 }
 
 // Update allows changing a post.
-func (PostPolicy) Update(ctx context.Context, u *models.User, m *models.Post) authz.Result {
+func (PostPolicy) Update(_ context.Context, _ *models.User, _ *models.Post) authz.Result {
 	return authz.Deny()
 }
 
 // Delete allows deleting a post.
-func (PostPolicy) Delete(ctx context.Context, u *models.User, m *models.Post) authz.Result {
+func (PostPolicy) Delete(_ context.Context, _ *models.User, _ *models.Post) authz.Result {
 	return authz.Deny()
 }

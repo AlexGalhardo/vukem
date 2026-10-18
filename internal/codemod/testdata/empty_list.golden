@@ -1,8 +1,9 @@
 package bootstrap
 
 import (
-	"example.com/blog/app/commands"
 	vukem "github.com/AlexGalhardo/vukem"
+
+	"example.com/blog/app/commands"
 )
 
 // Commands lists the application commands.

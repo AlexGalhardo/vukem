@@ -15,16 +15,19 @@ func {{.Func}}() schema.Migration {
 		Down: func(s *schema.Schema) error { return s.DropIfExists("{{.Table}}") },
 {{- else if .Alter}}
 		Up: func(s *schema.Schema) error {
-			return s.Table("{{.Table}}", func(t *schema.Table) {
+			// Name it t and add the change: t.String("slug").Nullable().
+			return s.Table("{{.Table}}", func(_ *schema.Table) {
 			})
 		},
 		Down: func(s *schema.Schema) error {
-			return s.Table("{{.Table}}", func(t *schema.Table) {
+			// Name it t and undo the change: t.DropColumn("slug").
+			return s.Table("{{.Table}}", func(_ *schema.Table) {
 			})
 		},
 {{- else}}
-		Up:   func(s *schema.Schema) error { return nil },
-		Down: func(s *schema.Schema) error { return nil },
+		// Name the parameter s with the first statement you write.
+		Up:   func(_ *schema.Schema) error { return nil },
+		Down: func(_ *schema.Schema) error { return nil },
 {{- end}}
 	}
 }

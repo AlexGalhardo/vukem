@@ -7,7 +7,8 @@ import (
 )
 
 // Comment builds models.Comment with fake data:
-// factories.Comment.Count(10).Create(ctx, db).
-var Comment = factory.New(func(f *factory.Faker) models.Comment {
+// factories.Comment.Count(10).Create(ctx, db). Name the parameter f with
+// the first fake field (f.Name(), f.Email(), f.Sentence()).
+var Comment = factory.New(func(_ *factory.Faker) models.Comment {
 	return models.Comment{}
 })

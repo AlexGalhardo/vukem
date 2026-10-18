@@ -86,6 +86,8 @@ Also shipped: `install:inertia`, `ssr:start`, `ssr:check`, `down`/`up` (maintena
 - Flags may follow the name: `vukem make:model Post -m -c`.
 - Generated Go files are passed through `go/format` before writing.
 - Generators refuse to overwrite existing files without `--force`.
+- Generated code passes this repository's own `.golangci.yml`: a stub whose body is a placeholder names its parameters `_` and says in the doc comment which name to give each one, the way `routes/schedule.go` does.
+- A package a generator is the first to create gets its package comment in its own `doc.go`, never on the generated file: deleting that file is the first thing a real app does, and it would take `revive`'s `package-comments` with it. An installer shipping a `doc.go` for the same package keeps the one that is already there.
 - `make:migration` picks the stub from the name: `create_<table>_table` creates the table, `add_x_to_<table>_table` / `alter_<table>_table` alter it, anything else is blank.
 
 ## Codemods
@@ -93,6 +95,7 @@ Also shipped: `install:inertia`, `ssr:start`, `ssr:check`, `down`/`up` (maintena
 Registration happens by editing Go source, not by reflection or `init()`:
 
 - `internal/codemod` parses the target file with `go/parser`, finds the slice literal returned by a known function (`bootstrap.Providers()`, `bootstrap.Commands()`, `migrations.All()`), inserts the element and imports at the AST positions, and runs `go/format`. Running it twice changes nothing.
+- An added import lands in the `gci` group it belongs to — standard library, another module, then the project's own packages — because `go/format` sorts within a group but never moves an import between groups.
 - If the marker is not found (user restructured the file), the generator prints the exact snippet to add manually instead of failing silently.
 - Every codemod has golden-file tests.
 

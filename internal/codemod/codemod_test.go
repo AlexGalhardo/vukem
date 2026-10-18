@@ -17,6 +17,8 @@ var update = flag.Bool("update", false, "rewrite golden files")
 func TestAppendToReturnGolden(t *testing.T) {
 	t.Parallel()
 
+	const local = "example.com/blog"
+
 	tests := []struct {
 		name, fn, expr string
 		imports        []string
@@ -27,6 +29,12 @@ func TestAppendToReturnGolden(t *testing.T) {
 		{"single_import", "Providers", "providers.Mail{}", []string{"example.com/blog/app/providers"}},
 		{"no_imports", "Providers", "providers.Mail{}", []string{"example.com/blog/app/providers"}},
 		{"already_present", "Providers", "providers.Mail{ }", []string{"example.com/blog/app/providers"}},
+		// An existing block already split into gci's groups keeps them:
+		// each added import joins its own group instead of starting a new
+		// one at the end of the block.
+		{"grouped_block", "All", "authz.For[*models.Comment](CommentPolicy{})", []string{
+			"github.com/AlexGalhardo/vukem/events", "example.com/blog/app/requests",
+		}},
 	}
 
 	for _, tt := range tests {
@@ -38,7 +46,7 @@ func TestAppendToReturnGolden(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			got, err := AppendToReturn(src, tt.fn, tt.expr, tt.imports...)
+			got, err := AppendToReturn(src, tt.fn, tt.expr, local, tt.imports...)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -59,7 +67,7 @@ func TestAppendToReturnGolden(t *testing.T) {
 				t.Fatalf("AppendToReturn (-want +got):\n%s", diff)
 			}
 
-			again, err := AppendToReturn(got, tt.fn, tt.expr, tt.imports...)
+			again, err := AppendToReturn(got, tt.fn, tt.expr, local, tt.imports...)
 			if err != nil || !bytes.Equal(again, got) {
 				t.Fatalf("second run is not idempotent:\n%s", again)
 			}
@@ -75,20 +83,20 @@ func TestAppendToReturnErrors(t *testing.T) {
 	)
 
 	for _, fn := range []string{"Providers", "All", "Missing"} {
-		if _, err := AppendToReturn(src, fn, "1"); !errors.Is(err, ErrMarkerNotFound) {
+		if _, err := AppendToReturn(src, fn, "1", ""); !errors.Is(err, ErrMarkerNotFound) {
 			t.Errorf("AppendToReturn(%s) = %v, want ErrMarkerNotFound", fn, err)
 		}
 	}
 
-	if _, err := AppendToReturn([]byte("package p\nfunc F() []int { return []int{"), "F", "1"); err == nil {
+	if _, err := AppendToReturn([]byte("package p\nfunc F() []int { return []int{"), "F", "1", ""); err == nil {
 		t.Error("broken source accepted")
 	}
 
-	if _, err := AppendToReturn(src, "F", "1 +"); err == nil {
+	if _, err := AppendToReturn(src, "F", "1 +", ""); err == nil {
 		t.Error("broken expression accepted")
 	}
 
-	if _, err := AppendToReturn([]byte("package p\nfunc F() []int { return []int{} }\n"), "F", "}{"); err == nil {
+	if _, err := AppendToReturn([]byte("package p\nfunc F() []int { return []int{} }\n"), "F", "}{", ""); err == nil {
 		t.Error("expression breaking the file accepted")
 	}
 }

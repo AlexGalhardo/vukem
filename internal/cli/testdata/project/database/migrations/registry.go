@@ -1,3 +1,4 @@
+// Package migrations holds the schema migrations.
 package migrations
 
 import "github.com/AlexGalhardo/vukem/schema"

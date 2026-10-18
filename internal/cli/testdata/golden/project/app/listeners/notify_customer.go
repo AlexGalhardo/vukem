@@ -6,7 +6,8 @@ import (
 	"example.com/blog/app/events"
 )
 
-// NotifyCustomer handles events.OrderShipped.
-func NotifyCustomer(ctx context.Context, e events.OrderShipped) error {
+// NotifyCustomer handles events.OrderShipped. Name the parameters (ctx, e) with
+// the first one the body uses.
+func NotifyCustomer(_ context.Context, _ events.OrderShipped) error {
 	return nil
 }

@@ -7,12 +7,13 @@ import (
 	vukem "github.com/AlexGalhardo/vukem"
 )
 
-// SendReports is the "send-reports" command: vukem send-reports.
+// SendReports is the "send-reports" command: vukem send-reports. Name the ctx
+// parameter with the first call that needs it; anything doing I/O does.
 func SendReports() vukem.Command {
 	return vukem.CommandFunc{
 		CommandName: "send-reports",
 		Desc:        "Describe what send-reports does",
-		Fn: func(ctx context.Context, app *vukem.App, args []string) error {
+		Fn: func(_ context.Context, app *vukem.App, args []string) error {
 			fmt.Fprintln(app.Stdout(), "send-reports ran with", args)
 			return nil
 		},

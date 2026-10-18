@@ -1,8 +1,9 @@
 package policies
 
 import (
-	"example.com/blog/app/models"
 	"github.com/AlexGalhardo/vukem/authz"
+
+	"example.com/blog/app/models"
 )
 
 // All lists the policies registered on the gate; make:policy appends here.

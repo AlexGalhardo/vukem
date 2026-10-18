@@ -6,7 +6,8 @@ import (
 	"example.com/blog/app/events"
 )
 
-// UpdateStock handles events.OrderShipped.
-func UpdateStock(ctx context.Context, e events.OrderShipped) error {
+// UpdateStock handles events.OrderShipped. Name the parameters (ctx, e) with
+// the first one the body uses.
+func UpdateStock(_ context.Context, _ events.OrderShipped) error {
 	return nil
 }

@@ -6,7 +6,8 @@ import (
 	"{{.Module}}/app/events"
 )
 
-// {{.Name}} handles events.{{.Event}}.
-func {{.Name}}(ctx context.Context, e events.{{.Event}}) error {
+// {{.Name}} handles events.{{.Event}}. Name the parameters (ctx, e) with
+// the first one the body uses.
+func {{.Name}}(_ context.Context, _ events.{{.Event}}) error {
 	return nil
 }

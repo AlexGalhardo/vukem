@@ -1,8 +1,9 @@
 package bootstrap
 
 import (
-	"example.com/blog/app/providers"
 	vukem "github.com/AlexGalhardo/vukem"
+
+	"example.com/blog/app/providers"
 )
 
 // Providers lists the application providers; vukem make:provider appends here.
