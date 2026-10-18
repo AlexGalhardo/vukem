@@ -236,34 +236,96 @@ func makeModel(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 			return err
 		}
 
-		if err := generate(env, "model.go.tmpl", "app/models/"+d.Snake+".go", d, *force); err != nil {
+		// Every file is rendered and checked before the first write, so a
+		// clash on the last one leaves nothing half-generated.
+		var files []plannedFile
+
+		add := func(stub, rel string, data stubData) error {
+			out, err := renderStub(env, stub, data)
+			files = append(files, plannedFile{rel: rel, content: out})
+
 			return err
 		}
 
+		if err := add("model.go.tmpl", "app/models/"+d.Snake+".go", d); err != nil {
+			return err
+		}
+
+		var mig stubData
+
 		if *migration {
-			if err := newMigration(env, "create_"+d.Plural+"_table", *force); err != nil {
+			if mig, err = migrationData(env, "create_"+d.Plural+"_table"); err != nil {
+				return err
+			}
+
+			if err := add("migration.go.tmpl", migrationPath(mig), mig); err != nil {
 				return err
 			}
 		}
 
 		if *factory {
-			if err := generate(
-				env,
-				"factory.go.tmpl",
-				"database/factories/"+d.Snake+"_factory.go",
-				d,
-				*force,
-			); err != nil {
+			if err := add("factory.go.tmpl", "database/factories/"+d.Snake+"_factory.go", d); err != nil {
 				return err
 			}
 		}
 
 		if *ctrl {
-			return controller(env, d.Name, true, false, *force)
+			c := d
+			c.Resource = true
+
+			if err := add("controller.go.tmpl", "app/controllers/"+d.Snake+"_controller.go", c); err != nil {
+				return err
+			}
+		}
+
+		if err := createAll(env, files, *force); err != nil {
+			return err
+		}
+
+		if *migration {
+			return register(env, "database/migrations/registry.go", "All", mig.Func+"()")
 		}
 
 		return nil
 	}
+}
+
+// plannedFile is a rendered file a generator is about to create.
+type plannedFile struct {
+	rel     string
+	content []byte
+}
+
+// createAll writes files only when none of them exists (unless force);
+// if a write fails, the files it already created are removed again.
+func createAll(env *Env, files []plannedFile, force bool) error {
+	if !force {
+		for _, f := range files {
+			if exists(env, filepath.FromSlash(f.rel)) {
+				return fmt.Errorf("%s already exists (use --force to overwrite)", f.rel)
+			}
+		}
+	}
+
+	var created []string
+
+	for _, f := range files {
+		isNew := !exists(env, filepath.FromSlash(f.rel))
+
+		if err := create(env, f.rel, f.content, force); err != nil {
+			for _, rel := range created {
+				_ = os.Remove(env.path(filepath.FromSlash(rel)))
+			}
+
+			return err
+		}
+
+		if isNew {
+			created = append(created, f.rel)
+		}
+	}
+
+	return nil
 }
 
 var (
@@ -285,9 +347,22 @@ func makeMigration(set *flag.FlagSet) func(context.Context, *Env, []string) erro
 }
 
 func newMigration(env *Env, name string, force bool) error {
-	d, err := newStubData(env, name)
+	d, err := migrationData(env, name)
 	if err != nil {
 		return err
+	}
+
+	if err := generate(env, "migration.go.tmpl", migrationPath(d), d, force); err != nil {
+		return err
+	}
+
+	return register(env, "database/migrations/registry.go", "All", d.Func+"()")
+}
+
+func migrationData(env *Env, name string) (stubData, error) {
+	d, err := newStubData(env, name)
+	if err != nil {
+		return stubData{}, err
 	}
 
 	d.Timestamp = env.Now().UTC().Format("20060102150405")
@@ -300,12 +375,10 @@ func newMigration(env *Env, name string, force bool) error {
 		d.Alter, d.Table = true, m[1]
 	}
 
-	if err := generate(env, "migration.go.tmpl", "database/migrations/"+d.ID+".go", d, force); err != nil {
-		return err
-	}
-
-	return register(env, "database/migrations/registry.go", "All", d.Func+"()")
+	return d, nil
 }
+
+func migrationPath(d stubData) string { return "database/migrations/" + d.ID + ".go" }
 
 func makeMiddleware(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 	return simple(set, "middleware name", "middleware.go.tmpl", "app/middleware/%s.go", "")
@@ -353,10 +426,48 @@ func makePolicy(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 			return err
 		}
 
+		// Starters ship no policies registry: create the empty one the
+		// docs describe, then append to it like any other registry.
+		if !exists(env, filepath.Join("app", "policies", "registry.go")) {
+			if err := create(env, "app/policies/registry.go", []byte(policiesRegistry), false); err != nil {
+				return err
+			}
+		}
+
+		if !hasUserModel(env) {
+			fmt.Fprintln(env.Stdout, "note: the policy takes *models.User, which app/models does not define yet; "+
+				"run vukem install:auth or change the user type")
+		}
+
 		return register(env, "app/policies/registry.go", "All",
 			"authz.For[*models."+d.Name+"]("+d.Name+"Policy{})",
 			"github.com/AlexGalhardo/vukem/authz", d.Module+"/app/models")
 	}
+}
+
+const policiesRegistry = `package policies
+
+import "github.com/AlexGalhardo/vukem/authz"
+
+// All lists the policies registered on the gate; make:policy appends here.
+func All() []authz.Policy {
+	return []authz.Policy{}
+}
+`
+
+var userModel = regexp.MustCompile(`(?m)^type User struct`)
+
+// hasUserModel reports whether app/models declares the User type the
+// policy stub takes.
+func hasUserModel(env *Env) bool {
+	files, _ := filepath.Glob(env.path(filepath.Join("app", "models", "*.go")))
+	for _, f := range files {
+		if b, err := os.ReadFile(f); err == nil && userModel.Match(b) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func makeMail(set *flag.FlagSet) func(context.Context, *Env, []string) error {
@@ -401,6 +512,10 @@ func makeListener(set *flag.FlagSet) func(context.Context, *Env, []string) error
 			return usagef("--event is required")
 		}
 
+		if *async && *queued {
+			return usagef("--async and --queued are exclusive")
+		}
+
 		d, err := newStubData(env, className(name, "Listener"))
 		if err != nil {
 			return err
@@ -415,8 +530,6 @@ func makeListener(set *flag.FlagSet) func(context.Context, *Env, []string) error
 		expr := "events.On(" + d.Name + ")"
 
 		switch {
-		case *async && *queued:
-			return usagef("--async and --queued are exclusive")
 		case *async:
 			expr = "events.OnAsync(" + d.Name + ")"
 		case *queued:

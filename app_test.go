@@ -1127,3 +1127,81 @@ func TestWithInertiaErrorPageOrder(t *testing.T) {
 		t.Error("the app's own ErrorPage hook was replaced")
 	}
 }
+
+// Docker/Kubernetes secrets: APP_KEY=@file:<path> in the process
+// environment is read from the file; a path that is not a regular file
+// (a directory, a device) stops the boot.
+func TestSecurity_A02_ProcessEnvFileSecrets(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	secret := filepath.Join(dir, "app_key")
+
+	if err := os.WriteFile(secret, []byte(testKey+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	boot := func(keyRef string) (*App, error) {
+		getenv := func(k string) (string, bool) {
+			v, ok := map[string]string{"APP_KEY": keyRef, "APP_ENV": "production"}[k]
+			return v, ok
+		}
+
+		return New(WithEnv(emptyFS{}, getenv), WithLogOutput(io.Discard))
+	}
+
+	app, err := boot("@file:" + secret)
+	if err != nil {
+		t.Fatalf("New(APP_KEY=@file:<secret>) = %v, want the key read from the file", err)
+	}
+
+	if app.Key.IsZero() {
+		t.Error("APP_KEY not loaded from the file")
+	}
+
+	for name, ref := range map[string]string{
+		"directory": "@file:" + dir,
+		"missing":   "@file:" + filepath.Join(dir, "nope"),
+	} {
+		if _, err := boot(ref); err == nil || !strings.Contains(err.Error(), "APP_KEY") {
+			t.Errorf("New(APP_KEY=%s) = %v, want an APP_KEY error", name, err)
+		}
+	}
+}
+
+// Boot reports every configuration problem at once, not just the first.
+func TestNewReportsAllConfigErrors(t *testing.T) {
+	t.Parallel()
+
+	env := map[string]string{
+		"APP_ENV":                "production",
+		"APP_DEBUG":              "true",
+		"HSTS_FORCE":             "true",
+		"APP_URL":                "http://example.com",
+		"RATE_LIMIT_IPV6_PREFIX": "0",
+		"TRUSTED_PROXIES":        "not-an-ip",
+		"TRUST_FORWARDED_PROTO":  "true",
+		"HTTP_MAX_HEADER_BYTES":  "1",
+		"APP_PREVIOUS_KEYS":      "short",
+	}
+
+	_, err := New(WithSource(testSource(env)), WithLogOutput(io.Discard))
+	if err == nil {
+		t.Fatal("New() = nil error, want the configuration errors")
+	}
+
+	for _, want := range []string{
+		"APP_DEBUG", "HSTS_FORCE", "RATE_LIMIT_IPV6_PREFIX", "TRUSTED_PROXIES", "HTTP_MAX_HEADER_BYTES",
+		"APP_PREVIOUS_KEYS",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("New() error = %q, want it to mention %s", err, want)
+		}
+	}
+
+	// A TRUSTED_PROXIES that does not parse is reported once, not also as
+	// "TRUST_FORWARDED_PROTO requires TRUSTED_PROXIES".
+	if strings.Contains(err.Error(), "TRUST_FORWARDED_PROTO requires") {
+		t.Errorf("New() error = %q, want no follow-up error from the unparsed TRUSTED_PROXIES", err)
+	}
+}

@@ -32,6 +32,10 @@ import (
 type Config struct {
 	// ServiceName overrides OTEL_SERVICE_NAME, which defaults to APP_NAME.
 	ServiceName string
+	// ServiceVersion overrides OTEL_SERVICE_VERSION (the service.version
+	// resource attribute, e.g. the release tag); unset means none, unless
+	// OTEL_RESOURCE_ATTRIBUTES has one.
+	ServiceVersion string
 	// Exporter replaces the OTLP/HTTP exporter (tests, other backends).
 	// When nil, OTEL_EXPORTER_OTLP_TRACES_ENDPOINT or
 	// OTEL_EXPORTER_OTLP_ENDPOINT selects the collector; with neither set
@@ -275,7 +279,8 @@ func traceExporter(getenv func(string) string) (sdktrace.SpanExporter, error) {
 
 // resource is OTEL_RESOURCE_ATTRIBUTES over the deployment environment,
 // with service.name from Config, OTEL_SERVICE_NAME, the attributes, then
-// APP_NAME.
+// APP_NAME, and service.version from Config, OTEL_SERVICE_VERSION, then
+// the attributes.
 func (p *Provider) resource(app *vukem.App) (*resource.Resource, error) {
 	extra, err := resourceAttributes(app.Source.Get)
 	if err != nil {
@@ -294,6 +299,15 @@ func (p *Provider) resource(app *vukem.App) (*resource.Resource, error) {
 
 	if name != "" {
 		attrs = append(attrs, semconv.ServiceName(name))
+	}
+
+	version := p.cfg.ServiceVersion
+	if version == "" {
+		version = app.Source.Get("OTEL_SERVICE_VERSION")
+	}
+
+	if version != "" {
+		attrs = append(attrs, semconv.ServiceVersion(version))
 	}
 
 	// Later attributes win on duplicate keys.

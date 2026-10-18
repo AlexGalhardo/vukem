@@ -33,7 +33,7 @@ func exe(name string) string {
 var skipDirs = []string{".git", cacheDir, "node_modules", "vendor", "storage", "bin", "dist", "public", "tmp"}
 
 // sourcesModTime returns the newest modification time of the Go and templ
-// sources (and go.mod/go.sum) of the project.
+// sources (and go.mod, go.sum and .buildtags) of the project.
 func sourcesModTime(dir string) (time.Time, error) {
 	var newest time.Time
 
@@ -61,8 +61,9 @@ func walkSources(dir string, fn func(path string, info fs.FileInfo)) error {
 		}
 
 		name := d.Name()
+		// .buildtags changes what go build compiles, so it is a source too.
 		if strings.HasSuffix(name, ".go") || strings.HasSuffix(name, ".templ") || name == "go.mod" ||
-			name == "go.sum" {
+			name == "go.sum" || p == filepath.Join(dir, buildTagsFile) {
 			info, err := d.Info()
 			if err != nil {
 				return err
@@ -93,6 +94,14 @@ func appBinary(ctx context.Context, env *Env) (string, error) {
 		return bin, nil
 	}
 
+	// Same steps as vukem dev: stale *_templ.go files would compile the
+	// previous components.
+	if hasTempl(env) {
+		if err := templGenerate(ctx, env); err != nil {
+			return "", err
+		}
+	}
+
 	if err := goBuild(ctx, env, bin); err != nil {
 		return "", err
 	}
@@ -101,6 +110,11 @@ func appBinary(ctx context.Context, env *Env) (string, error) {
 }
 
 func goBuild(ctx context.Context, env *Env, out string, extra ...string) error {
+	return goBuildEnv(ctx, env, out, nil, extra...)
+}
+
+// goBuildEnv is goBuild with extra environment variables for go build.
+func goBuildEnv(ctx context.Context, env *Env, out string, environ []string, extra ...string) error {
 	if !filepath.IsAbs(out) {
 		out = env.path(out)
 	}
@@ -121,7 +135,18 @@ func goBuild(ctx context.Context, env *Env, out string, extra ...string) error {
 
 	args = append(args, "-o", out, "./cmd/app")
 
-	return tool(ctx, env, "go", args...)
+	return toolEnv(ctx, env, environ, "go", args...)
+}
+
+// releaseBuildEnv is the environment of vukem build: CGO_ENABLED=0, like
+// the generated Dockerfile, so a local build links the same way as the
+// image; a CGO_ENABLED the developer set explicitly is kept.
+func releaseBuildEnv(env *Env) []string {
+	if _, ok := env.Getenv("CGO_ENABLED"); ok {
+		return nil
+	}
+
+	return []string{"CGO_ENABLED=0"}
 }
 
 // buildTagsFile lists Go build tags (one per line or comma-separated, "#"
@@ -218,7 +243,7 @@ func buildCmd(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 			}
 		}
 
-		if err := goBuild(ctx, env, *out, "-trimpath", "-ldflags=-s -w"); err != nil {
+		if err := goBuildEnv(ctx, env, *out, releaseBuildEnv(env), "-trimpath", "-ldflags=-s -w"); err != nil {
 			return err
 		}
 

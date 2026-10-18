@@ -123,6 +123,7 @@ type Bus struct {
 	queue     func() (Enqueuer, error)
 	closed    bool
 	obs       Observer
+	fake      *Fake
 }
 
 // SetQueue sets how queued listeners reach the queue (called lazily on
@@ -175,6 +176,17 @@ func (b *Bus) Register(regs ...Registration) {
 	}
 }
 
+// RecordTo makes Dispatch record every event in f instead of running the
+// listeners (sync, async and queued), for tests that assert what was
+// dispatched; read them with Dispatched. RecordTo(nil) restores normal
+// dispatch.
+func (b *Bus) RecordTo(f *Fake) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	b.fake = f
+}
+
 // Listen registers a synchronous listener for E.
 func Listen[E any](b *Bus, fn func(ctx context.Context, e E) error) { b.Register(On(fn)) }
 
@@ -193,10 +205,15 @@ func (b *Bus) Dispatch(ctx context.Context, event any) error {
 	closed := b.closed
 	getQueue := b.queue
 	obs := b.obs
+	fake := b.fake
 	b.mu.RUnlock()
 
 	if closed {
 		return ErrClosed
+	}
+
+	if fake != nil {
+		return fake.Dispatch(ctx, event)
 	}
 
 	if obs == nil {

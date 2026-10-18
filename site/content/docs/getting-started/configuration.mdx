@@ -132,13 +132,13 @@ DB_PASSWORD=@file:/run/secrets/db
 | `${OTHER}` or `$OTHER` | The value of `OTHER`, from the environment or the files. An unknown name becomes an empty string; `\$` is a literal `$` |
 | `"…"` | Double quotes: `\n` escapes work, and the value may continue on the next lines |
 | `'…'` | Single quotes: the text is literal, nothing is expanded |
-| `@file:/path` | The contents of that file, without the trailing newline. The `@` keeps SQLite DSNs such as `file:storage/app.db` untouched |
+| `@file:/path` | The contents of that file, without the trailing newline; also works for a process environment variable (`APP_KEY=@file:/run/secrets/app_key`). The file must be a regular file of at most 1 MiB; an unreadable one stops the boot. The `@` keeps SQLite DSNs such as `file:storage/app.db` untouched; write `@@file:` for a literal value that starts with `@file:` |
 
 A line with an invalid key stops the boot with the file and line number, for example `config: .env: line 3: invalid key "1BAD"`.
 
 ## Core settings
 
-`vukem.New` loads these into `app.Config` (a `vukem.Config`):
+`vukem.New` loads these into `app.Config` (a `vukem.Config`). It checks them all before it fails, so a misconfigured deploy reports every invalid setting in one error (one per line), not just the first:
 
 | Variable | Default | What it does |
 | --- | --- | --- |
@@ -285,6 +285,7 @@ The key, `APP_ENV`, debug, devtools and port checks are reported together; the c
 
 ## Security
 
+- Configuration is trusted input. `@file:` works for every variable the app reads, follows symlinks and resolves a relative path against the process working directory, so anyone who can set an environment variable can make the app read a file the process can read. Keep the environment and `.env` files writable only by the operator.
 - Secrets belong in the environment or in `@file:` references, never in the code or in a committed file. The production `Dockerfile` sets no secrets: pass them when the container starts.
 - Type secrets as `config.Secret` so they are redacted everywhere.
 - In production, keep `APP_DEBUG=false` (enforced) and set `APP_URL` to your `https://` origin.

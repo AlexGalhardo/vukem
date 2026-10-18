@@ -111,10 +111,10 @@ clock.Advance(24 * time.Hour)
 | --- | --- | --- |
 | Mail | `mail.NewArray()` | `Sent()`, `SentTo(addr)`, `Reset()` |
 | Queue | `queue.NewFake()` | `queue.Dispatched[J](fake)`; `Work(ctx, WorkOptions{StopWhenEmpty: true})` runs jobs |
-| Events | `events.NewFake()` (an `events.Dispatcher`) | `events.Dispatched[E](fake)` |
+| Events | `events.NewFake()` with `vukem.WithEventsFake` (or as an `events.Dispatcher`) | `App.Events` records instead of running listeners; `events.Dispatched[E](fake)` |
 | Cache | `cache.NewMemory(n)` | LRU + TTL, same `cache.Store` contract (`cache/cachetest`) |
-| Storage | `storage.NewMemory(base)` | same `storage.Disk` contract (`storage/storagetest`) |
-| Rate limiting | `ratelimit.NewMemory(limit, window)` | drive time with `testing/synctest` |
+| Storage | `storage.NewMemory(base)` | same `storage.Disk` contract (`storage/storagetest`); the app has no disk service, the starter uses `UPLOADS_DISK=memory` |
+| Rate limiting | `vukem.WithRateLimiters(factory)` (e.g. over `ratelimit.NewMemory`) | replaces the `RATE_LIMIT_STORE` factory; drive time with `testing/synctest` |
 | Social login | `social.Fake(name, callback, user)` | with `vukemtest.FakeSocial` |
 | Password hashing | `hash.Fake()` | fast parameters |
 | Clock | `vukemtest.NewFakeClock(t0)` | `Now`, `Advance`, `Set`; pass `clock.Now` as `vukemtest.Options.Clock`; sessions (cookie, `memory`, `database`) expire by it |

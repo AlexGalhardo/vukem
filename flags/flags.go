@@ -323,7 +323,12 @@ func New(cfg Config) (*Flags, error) {
 			continue
 		}
 
-		raw, ok := cfg.Env.Lookup(envKey(d.name))
+		raw, ok, err := config.LookupErr(cfg.Env, envKey(d.name))
+		if err != nil {
+			errs = append(errs, fmt.Errorf("flags: %s: %w", envKey(d.name), err))
+			continue
+		}
+
 		if !ok || raw == "" {
 			continue
 		}

@@ -957,6 +957,22 @@ type RateLimitConfig struct {
 	Store string `env:"RATE_LIMIT_STORE" default:"memory"`
 }
 
+// WithRateLimiters makes App.RateLimiters return f instead of the factory
+// RATE_LIMIT_STORE chooses: a shared limiter of your own in production, or
+// a fake in tests (an always-allow limiter, or ratelimit.NewMemory with
+// tight limits). f must not be nil.
+func WithRateLimiters(f ratelimit.Factory) Option {
+	return func(o *options) error {
+		if f == nil {
+			return errors.New("vukem: WithRateLimiters needs a non-nil ratelimit.Factory")
+		}
+
+		o.rateLimiters = f
+
+		return nil
+	}
+}
+
 // RateLimiters returns a factory for the limiters routes use, chosen by
 // RATE_LIMIT_STORE, so switching to a shared store needs no code change:
 //
@@ -966,8 +982,13 @@ type RateLimitConfig struct {
 // An unknown store is an error, not a silent fallback to memory, and so
 // is RATE_LIMIT_STORE=cache over a store [cache.Shared] does not report
 // as shared (the per-process memory cache, or a custom store or wrapper
-// that does not declare cache.Sharer).
+// that does not declare cache.Sharer). WithRateLimiters replaces the
+// factory.
 func (a *App) RateLimiters() (ratelimit.Factory, error) {
+	if a.rateLimiters != nil {
+		return a.rateLimiters, nil
+	}
+
 	cfg, err := configLoad[RateLimitConfig](a)
 	if err != nil {
 		return nil, err

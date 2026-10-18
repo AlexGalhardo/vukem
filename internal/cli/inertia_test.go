@@ -152,3 +152,39 @@ func TestInstallInertiaUsage(t *testing.T) {
 		t.Errorf("without --force = %d %q", code, errOut)
 	}
 }
+
+// A bootstrap/app.go that cannot be patched fails before any HTMX file is
+// deleted.
+func TestInstallInertiaKeepsFilesWhenAppCannotBePatched(t *testing.T) {
+	t.Parallel()
+
+	dir := project(t)
+	page := filepath.Join(dir, "resources", "views", "home.html")
+
+	if err := os.MkdirAll(filepath.Dir(page), 0o750); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(page, []byte("<h1>home</h1>"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	before := read(t, dir, "bootstrap/app.go")
+
+	code, _, errOut := vukem(t, dir, "install:inertia", "--force", "--no-install")
+	if code != 1 || !strings.Contains(errOut, "WithVite") {
+		t.Fatalf("install:inertia without WithVite = %d %q, want the patch error", code, errOut)
+	}
+
+	if _, err := os.Stat(page); err != nil {
+		t.Errorf("resources/views/home.html: %v, want it kept", err)
+	}
+
+	if read(t, dir, "bootstrap/app.go") != before {
+		t.Error("bootstrap/app.go changed, want it untouched")
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, "resources", "js", "pages")); err == nil {
+		t.Error("Inertia pages written, want nothing written")
+	}
+}

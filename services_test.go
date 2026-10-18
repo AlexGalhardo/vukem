@@ -758,3 +758,29 @@ func TestBootFailsOnBrokenMailConfig(t *testing.T) {
 		})
 	}
 }
+
+type signedUp struct{ Email string }
+
+func TestWithEventsFakeRecordsInsteadOfRunning(t *testing.T) {
+	t.Parallel()
+
+	var ran bool
+
+	f := events.NewFake()
+	app := newTestApp(t,
+		WithListeners(events.On(func(context.Context, signedUp) error { ran = true; return nil })),
+		WithEventsFake(f),
+	)
+
+	if err := app.Events.Dispatch(t.Context(), signedUp{Email: "a@b.c"}); err != nil {
+		t.Fatalf("Dispatch() = %v", err)
+	}
+
+	if ran {
+		t.Error("listener ran under WithEventsFake, want it skipped")
+	}
+
+	if got := events.Dispatched[signedUp](f); len(got) != 1 || got[0].Email != "a@b.c" {
+		t.Fatalf("Dispatched = %v, want one signedUp", got)
+	}
+}

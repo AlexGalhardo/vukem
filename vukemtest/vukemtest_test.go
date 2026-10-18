@@ -119,7 +119,19 @@ func build(opts ...vukem.Option) (*vukem.App, error) {
 				return c.NoContent()
 			})
 			r.Get("/teapot", func(c *web.Ctx) error { return c.String(418, "tea") })
-			r.Get("/accept", func(c *web.Ctx) error { return c.String(200, c.Header("Accept")) })
+			accept := func(c *web.Ctx) error { return c.String(200, c.Header("Accept")) }
+			r.Get("/accept", accept)
+			r.Post("/accept", accept)
+			r.Put("/accept", accept)
+			r.Patch("/accept", accept)
+			r.Get("/hx-list", func(c *web.Ctx) error {
+				c.SetHeader("HX-Trigger", "first, second-event")
+				return c.NoContent()
+			})
+			r.Get("/session-nil", func(c *web.Ctx) error {
+				c.Session().Put("empty", nil)
+				return c.NoContent()
+			})
 			r.Delete("/notes", func(c *web.Ctx) error { return c.NoContent() })
 
 			return nil
@@ -475,4 +487,57 @@ func TestActingAsWithSession(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSendJSONDoesNotStick(t *testing.T) {
+	t.Parallel()
+
+	app := vukemtest.New(t, build)
+
+	sends := map[string]func(c *vukemtest.Client) *vukemtest.Response{
+		"PostJSON":  func(c *vukemtest.Client) *vukemtest.Response { return c.PostJSON("/accept", map[string]any{}) },
+		"PutJSON":   func(c *vukemtest.Client) *vukemtest.Response { return c.PutJSON("/accept", map[string]any{}) },
+		"PatchJSON": func(c *vukemtest.Client) *vukemtest.Response { return c.PatchJSON("/accept", map[string]any{}) },
+	}
+
+	for name, send := range sends {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			c := app.Client(t)
+			send(c).AssertSee("application/json")
+
+			if got := c.Get("/accept").Body(); strings.Contains(got, "application/json") {
+				t.Errorf("Accept after %s = %q, want the client's default", name, got)
+			}
+
+			c.WithHeader("Accept", "text/html")
+			send(c).AssertSee("text/html")
+			c.Get("/accept").AssertSee("text/html")
+		})
+	}
+}
+
+func TestAssertHXTriggerCommaList(t *testing.T) {
+	t.Parallel()
+
+	app := vukemtest.New(t, build)
+
+	app.Client(t).Get("/hx-list").AssertHXTrigger("first").AssertHXTrigger("second-event")
+
+	expectFailure(t, `does not include "second"`, func(tb *fakeTB) {
+		app.Client(tb).Get("/hx-list").AssertHXTrigger("second")
+	})
+}
+
+func TestSessionAssertionsSeeStoredNil(t *testing.T) {
+	t.Parallel()
+
+	app := vukemtest.New(t, build)
+
+	app.Client(t).Get("/session-nil").AssertSessionHas("empty").AssertSessionMissing("other")
+
+	expectFailure(t, `session has "empty"`, func(tb *fakeTB) {
+		app.Client(tb).Get("/session-nil").AssertSessionMissing("empty")
+	})
 }

@@ -336,16 +336,18 @@ Every setting is read through `app.Source`, so a value in `.env` works like one 
 | `OTEL_EXPORTER_OTLP_COMPRESSION` | SDK default | `gzip` or `none` |
 | `OTEL_TRACES_SAMPLER` / `_ARG` | `parentbased_always_on` | see [Sampling](#sampling) |
 | `OTEL_SERVICE_NAME` | `APP_NAME` | the `service.name` resource attribute |
+| `OTEL_SERVICE_VERSION` | unset | the `service.version` resource attribute, such as the release tag |
 | `OTEL_RESOURCE_ATTRIBUTES` | unset | extra `key=value` resource attributes |
 | `OTEL_SDK_DISABLED` | `false` | `true` (any case) turns traces and metrics off |
 
 `HEADERS`, `TIMEOUT` and `COMPRESSION` also have per-signal versions, such as `OTEL_EXPORTER_OTLP_TRACES_HEADERS` or `OTEL_EXPORTER_OTLP_METRICS_TIMEOUT`, which win over the generic ones.
 
-Every span and metric carries the same resource: `deployment.environment.name` from `APP_ENV`, the `OTEL_RESOURCE_ATTRIBUTES`, and `service.name` from `Config.ServiceName`, else `OTEL_SERVICE_NAME`, else `service.name` in the attributes, else `APP_NAME`.
+Every span and metric carries the same resource: `deployment.environment.name` from `APP_ENV`, the `OTEL_RESOURCE_ATTRIBUTES`, and `service.name` from `Config.ServiceName`, else `OTEL_SERVICE_NAME`, else `service.name` in the attributes, else `APP_NAME`; and `service.version` from `Config.ServiceVersion`, else `OTEL_SERVICE_VERSION`, else `service.version` in the attributes.
 
 | `otel.Config` field | Default | What it does |
 | --- | --- | --- |
 | `ServiceName` | from the variables | overrides `service.name` |
+| `ServiceVersion` | from the variables | overrides `service.version` |
 | `Exporter` | OTLP/HTTP | any `sdktrace.SpanExporter`; set, it turns traces on without an endpoint |
 | `Sampler` | from `OTEL_TRACES_SAMPLER` | any `sdktrace.Sampler` |
 | `MetricReader` | from the variables | any `sdkmetric.Reader`; set, it turns metrics on |

@@ -123,6 +123,13 @@ func applyInertia(env *Env, framework string) error {
 		return usagef("this project already uses Inertia")
 	}
 
+	// Patch bootstrap/app.go in memory first: a file the CLI cannot patch
+	// must fail before any HTMX page is deleted.
+	patched, err := patchInertiaApp(src)
+	if err != nil {
+		return err
+	}
+
 	for _, rel := range inertiaReplaced {
 		if err := os.RemoveAll(env.path(filepath.FromSlash(rel))); err != nil {
 			return err
@@ -140,18 +147,29 @@ func applyInertia(env *Env, framework string) error {
 		}
 	}
 
+	return writeFile(app, patched)
+}
+
+// patchInertiaApp adds vukem.WithInertia after vukem.WithVite in the
+// source of bootstrap/app.go, with its import.
+func patchInertiaApp(src []byte) ([]byte, error) {
 	src = bytes.Replace(src, []byte("\t\tvukem.WithVite(resources.Public()),\n"),
 		[]byte("\t\tvukem.WithVite(resources.Public()),\n\t\tvukem.WithInertia(inertia.Config{}),\n"), 1)
 	src = bytes.Replace(src, []byte("vukem \"github.com/AlexGalhardo/vukem\"\n"),
 		[]byte("vukem \"github.com/AlexGalhardo/vukem\"\n\t\"github.com/AlexGalhardo/vukem/inertia\"\n"), 1)
 
 	if !bytes.Contains(src, []byte("vukem.WithInertia(")) {
-		return errors.New("bootstrap/app.go: no vukem.WithVite(resources.Public()) line to add Inertia after")
+		return nil, errors.New("bootstrap/app.go: no vukem.WithVite(resources.Public()) line to add Inertia after")
 	}
 
-	if src, err = format.Source(src); err != nil {
-		return fmt.Errorf("bootstrap/app.go: %w", err)
+	if !bytes.Contains(src, []byte(`"github.com/AlexGalhardo/vukem/inertia"`)) {
+		return nil, errors.New(`bootstrap/app.go: no vukem "github.com/AlexGalhardo/vukem" import to add inertia after`)
 	}
 
-	return writeFile(app, src)
+	out, err := format.Source(src)
+	if err != nil {
+		return nil, fmt.Errorf("bootstrap/app.go: %w", err)
+	}
+
+	return out, nil
 }

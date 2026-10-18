@@ -72,6 +72,7 @@ func TestProvider_ExportsSpanPerRequestOnShutdown(t *testing.T) {
 		env     map[string]string
 		cfg     otel.Config
 		service string
+		version string
 	}{
 		{name: "APP_NAME by default", service: "Shop"},
 		{name: "OTEL_SERVICE_NAME wins", env: map[string]string{"OTEL_SERVICE_NAME": "shop-api"}, service: "shop-api"},
@@ -92,6 +93,27 @@ func TestProvider_ExportsSpanPerRequestOnShutdown(t *testing.T) {
 				"OTEL_SERVICE_NAME": "shop-api", "OTEL_RESOURCE_ATTRIBUTES": "service.name=from-attrs",
 			},
 			service: "shop-api",
+		},
+		{
+			name:    "OTEL_SERVICE_VERSION",
+			env:     map[string]string{"OTEL_SERVICE_VERSION": "1.4.2"},
+			service: "Shop",
+			version: "1.4.2",
+		},
+		{
+			name: "OTEL_SERVICE_VERSION over OTEL_RESOURCE_ATTRIBUTES",
+			env: map[string]string{
+				"OTEL_SERVICE_VERSION": "1.4.2", "OTEL_RESOURCE_ATTRIBUTES": "service.version=0.1",
+			},
+			service: "Shop",
+			version: "1.4.2",
+		},
+		{
+			name:    "Config version wins",
+			env:     map[string]string{"OTEL_SERVICE_VERSION": "1.4.2"},
+			cfg:     otel.Config{ServiceVersion: "2.0.0"},
+			service: "Shop",
+			version: "2.0.0",
 		},
 	}
 
@@ -138,6 +160,10 @@ func TestProvider_ExportsSpanPerRequestOnShutdown(t *testing.T) {
 
 				if got["service.name"] != tt.service || got["deployment.environment.name"] != "development" {
 					t.Errorf("resource = %v, want service.name %s in development", got, tt.service)
+				}
+
+				if got["service.version"] != tt.version {
+					t.Errorf("resource service.version = %q, want %q", got["service.version"], tt.version)
 				}
 			}
 		})

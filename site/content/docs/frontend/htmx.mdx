@@ -329,7 +329,7 @@ func TestPostSearch(t *testing.T) {
 | Assertion | Checks |
 | --- | --- |
 | `AssertFragment()` | the body has no `<html` tag |
-| `AssertHXTrigger(event)` | `HX-Trigger` fires `event` (JSON object or plain name) |
+| `AssertHXTrigger(event)` | `HX-Trigger` fires `event` (JSON object, plain name or comma-separated list) |
 | `AssertRedirect(path)` | a `3xx` `Location` or an `HX-Location` to `path` |
 | `AssertHeader(key, value)` | any other header, such as `HX-Push-Url` |
 

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 )
@@ -170,5 +171,64 @@ func TestNewTemplProjectEndToEnd(t *testing.T) {
 		"resources/js/app.ts",
 	) {
 		t.Errorf("manifest lacks resources/js/app.ts:\n%s", m)
+	}
+}
+
+// App commands rebuild the binary like vukem dev does: templ components
+// are generated first (here the project has no templ tool, so the
+// rebuild fails instead of compiling stale components).
+func TestDelegateGeneratesTempl(t *testing.T) {
+	t.Parallel()
+	requireGo(t)
+
+	dir := stdlibApp(t, echoApp)
+	if err := os.WriteFile(
+		filepath.Join(dir, "cmd", "app", "page.templ"),
+		[]byte("package main\n"),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	code, out, errOut := vukem(t, dir, "migrate")
+	if code == 0 || strings.Contains(out, "app: migrate") || !strings.Contains(errOut, "templ") {
+		t.Fatalf("delegate with .templ and no templ tool = %d %q %q, want templ generate to run and fail",
+			code, out, errOut)
+	}
+}
+
+// .buildtags changes what go build compiles, so it counts as a source.
+func TestBuildTagsFileIsASource(t *testing.T) {
+	t.Parallel()
+
+	dir := project(t)
+
+	a, err := takeSnapshot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	before, err := sourcesModTime(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	p := filepath.Join(dir, buildTagsFile)
+	if err := os.WriteFile(p, []byte("vukem_nosqlite\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	future := before.Add(time.Hour)
+	if err := os.Chtimes(p, future, future); err != nil {
+		t.Fatal(err)
+	}
+
+	b, _ := takeSnapshot(dir)
+	if !a.changed(b) {
+		t.Error("snapshot unchanged after writing .buildtags, want a rebuild")
+	}
+
+	if after, _ := sourcesModTime(dir); !after.Equal(future) {
+		t.Errorf("sourcesModTime() = %v, want the .buildtags time %v", after, future)
 	}
 }

@@ -91,12 +91,13 @@ Content-Type: application/json
 1. Checks that `cmd/app` exists, otherwise it fails with `no cmd/app in this directory: run vukem inside a Vukem project`.
 2. In a templ project, runs `go tool templ generate`.
 3. When `vite.config.ts`, `vite.config.js` or `vite.config.mjs` exists, runs `vite build` through your package manager (`npm exec -- vite build`, `bun x vite build`, `pnpm exec vite build` or `yarn exec vite build`). It fails with `frontend dependencies missing: run npm install first` (or your package manager's install command) when `node_modules` is missing.
-4. Runs `go build -trimpath -ldflags=-s -w -o bin/app ./cmd/app`, adding `-tags` from `.buildtags` when that file exists.
+4. Runs `go build -trimpath -ldflags=-s -w -o bin/app ./cmd/app` with `CGO_ENABLED=0`, adding `-tags` from `.buildtags` when that file exists.
 
 | Flag | Default | What it does |
 | --- | --- | --- |
 | `-trimpath` | always | removes your machine's file paths from the binary |
 | `-ldflags=-s -w` | always | drops the symbol table and debug information, so the file is smaller |
+| `CGO_ENABLED=0` | unless you set `CGO_ENABLED` yourself | a static binary without C code, linked like the production `Dockerfile` builds it |
 | `-tags` | from `.buildtags` | Go [build tags](https://pkg.go.dev/cmd/go#hdr-Build_constraints): one per line or comma-separated, `#` starts a comment; `--minimal` projects list `vukem_nosqlite` |
 | `-o` | `bin/app` (`bin\app.exe` on Windows) | the output path |
 
@@ -139,13 +140,13 @@ The `all:` prefix matters. By default `//go:embed` skips files and folders whose
 
 | Situation | Files used |
 | --- | --- |
-| `APP_ENV=production` in the process environment | always the embedded files |
+| `APP_ENV=production` (in the process environment or `.env`) | always the embedded files |
 | otherwise, a `resources/views` (or `resources/public`) folder exists in the working directory | the files on disk, so template edits show up on refresh |
 | otherwise | the embedded files |
 
 `bootstrap/app.go` passes them to `vukem.WithViews(resources.Views())` and `vukem.WithVite(resources.Public())`, and `routes/web.go` serves the public files with `middleware.StaticFS`. You add nothing.
 
-`resources` checks the real process environment with [`os.Getenv`](https://pkg.go.dev/os#Getenv), not `.env` files. If `APP_ENV=production` is only in a `.env` file and a `resources/` folder sits next to the binary, the app serves those files from disk instead of the embedded ones. Set `APP_ENV` in the environment of the process.
+`resources` reads `APP_ENV` from the same places the app does: the process environment first, then `.env`. `APP_ENV` cannot come from `.env.production`, since that file is chosen by `APP_ENV` itself, and `resources` does not read `@file:` references: an `APP_ENV=@file:...` is not seen as production there, so set `APP_ENV` as plain text.
 
 ## Configure production
 
@@ -164,7 +165,7 @@ MAIL_MAILER=mailtrap
 APP_KEY=@file:/run/secrets/app_key
 ```
 
-The `@file:` prefix reads the value from a file and trims the trailing newline. It works for values written in `.env` files only: a process environment variable set to `@file:...` is used as the literal text.
+The `@file:` prefix reads the value from a file and trims the trailing newline. It works in `.env` files and in the process environment alike, so `docker run -e APP_KEY=@file:/run/secrets/app_key` or a Kubernetes secret volume works without a `.env` file. Only a regular file of at most 1 MiB is read; a missing file, a directory or a device stops the boot with `config: read APP_KEY: ...`.
 
 | Variable | Default | What it does |
 | --- | --- | --- |
@@ -333,20 +334,13 @@ WantedBy=multi-user.target
 
 **Pages render without styles.** You ran `go build` before `vite build`, so `resources/public/build` was empty. Run `vukem build`, which builds the assets first.
 
-**Template changes on the server take effect without a rebuild.** `APP_ENV=production` is only in `.env.production`, so `resources` reads the `resources/` folder on disk. Set it in the process environment:
-
-```bash
-# Wrong: the resources package does not read .env files.
-./bin/app
-# Right:
-APP_ENV=production ./bin/app
-```
+**Template changes on the server take effect without a rebuild.** `APP_ENV=production` is only in `.env.production`, which the app never reads to choose its environment, so it runs as development and `resources` reads the `resources/` folder on disk. Put `APP_ENV=production` in `.env` or in the process environment (`APP_ENV=production ./bin/app`).
 
 **The app is unreachable from another machine.** `HOST` defaults to `localhost`. Set `HOST=0.0.0.0`, or keep `127.0.0.1` behind a proxy on the same machine.
 
 **The deploy kills requests mid-flight.** The process manager's stop timeout is shorter than the drain. Raise it above twice `SHUTDOWN_TIMEOUT` plus 3 seconds.
 
-**A secret file path shows up as the value.** `APP_KEY=@file:...` set in the process environment is not resolved; the boot fails with `config: APP_KEY is not valid base64`. Put the `@file:` line in a `.env` file, or export the key itself.
+**The boot fails with `config: read APP_KEY`.** The file an `@file:` reference names is missing or unreadable in the container: check the secret mount path and that the process user can read it.
 
 ## Next steps
 

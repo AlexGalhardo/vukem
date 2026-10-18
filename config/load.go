@@ -7,6 +7,7 @@ import (
 	"maps"
 	"slices"
 	"strings"
+	"sync"
 )
 
 // Env is the application environment (APP_ENV).
@@ -19,30 +20,125 @@ const (
 	Test        Env = "test"
 )
 
-// filePrefix marks a value read from a file (Docker/Kubernetes secrets).
+// filePrefix marks a value read from a file (Docker/Kubernetes secrets);
+// "@@file:" escapes a literal value that starts with "@file:".
 // It is "@file:" rather than "file:" so SQLite DSNs such as
 // "file:storage/app.db" stay untouched.
 const filePrefix = "@file:"
 
+// maxFileRef caps a file read through "@file:": secrets are small, and a
+// reference to a large or endless file must not be loaded into memory.
+const maxFileRef = 1 << 20
+
 // Source is a resolved set of configuration values.
 type Source struct {
-	values map[string]string
-	env    Env
-	getenv func(string) (string, bool)
+	values   map[string]string
+	env      Env
+	getenv   func(string) (string, bool)
+	readFile func(string) ([]byte, error)
+
+	mu sync.Mutex
+	// refs caches process variables resolved through "@file:", keyed by
+	// variable name; raw is the variable's value when it was read.
+	refs map[string]fileRef
+}
+
+type fileRef struct {
+	raw, value string
+	err        error
 }
 
 // Lookup returns the value for key and whether it is set. The process
-// environment wins over .env files.
+// environment wins over .env files. A process variable set to
+// "@file:<path>" is read from that file (Docker/Kubernetes secrets), like
+// a .env value; when the file cannot be read, Lookup reports the key set
+// with an empty value, and Load and Fill return the error.
 func (s *Source) Lookup(key string) (string, bool) {
+	v, ok, _ := s.lookupErr(key)
+	return v, ok
+}
+
+// lookupErr is Lookup with the error of an unreadable "@file:" process
+// variable; Fill uses it so a missing secret fails closed.
+func (s *Source) lookupErr(key string) (string, bool, error) {
 	if s.getenv != nil {
 		if v, ok := s.getenv(key); ok {
-			return v, true
+			if lit, ok := escapedFileRef(v); ok {
+				return lit, true, nil
+			}
+
+			if !strings.HasPrefix(v, filePrefix) {
+				return v, true, nil
+			}
+
+			v, err := s.resolveEnvRef(key, v)
+
+			return v, true, err
 		}
 	}
 
 	v, ok := s.values[key]
 
-	return v, ok
+	return v, ok, nil
+}
+
+// resolveEnvRef reads the file a process variable points at, once per
+// key and value.
+func (s *Source) resolveEnvRef(key, raw string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if r, ok := s.refs[key]; ok && r.raw == raw {
+		return r.value, r.err
+	}
+
+	v, err := readFileRef(key, raw, s.readFile)
+	if err != nil {
+		v = ""
+	}
+
+	if s.refs == nil {
+		s.refs = map[string]fileRef{}
+	}
+
+	s.refs[key] = fileRef{raw: raw, value: v, err: err}
+
+	return v, err
+}
+
+// escapedFileRef reports whether v escapes a literal "@file:" value: one
+// extra leading "@" ("@@file:x" is the text "@file:x", "@@@file:x" is
+// "@@file:x"), and returns v without that "@".
+func escapedFileRef(v string) (string, bool) {
+	if strings.HasPrefix(v, "@@") && strings.HasPrefix(strings.TrimLeft(v, "@"), "file:") {
+		return v[1:], true
+	}
+
+	return "", false
+}
+
+// readFileRef returns the content of the file an "@file:<path>" value
+// names, without trailing newlines.
+func readFileRef(key, v string, readFile func(string) ([]byte, error)) (string, error) {
+	if readFile == nil {
+		return "", fmt.Errorf("config: %s uses %q but file references are disabled", key, filePrefix)
+	}
+
+	name := strings.TrimPrefix(v, filePrefix)
+	if strings.TrimSpace(name) == "" || strings.ContainsRune(name, 0) {
+		return "", fmt.Errorf("config: %s: %q needs a file path (empty path or NUL byte)", key, filePrefix)
+	}
+
+	data, err := readFile(name)
+	if err != nil {
+		return "", fmt.Errorf("config: read %s: %w", key, err)
+	}
+
+	if len(data) > maxFileRef {
+		return "", fmt.Errorf("config: read %s: file is larger than %d bytes", key, maxFileRef)
+	}
+
+	return strings.TrimRight(string(data), "\r\n"), nil
 }
 
 // Get returns the value for key or "" when unset.
@@ -77,7 +173,9 @@ func MapSource(m map[string]string) *Source {
 
 // LoadSource reads .env files from fsys and merges them with the process
 // environment provided by getenv (use os.LookupEnv in production code).
-// readFile resolves "@file:" values; nil disables them.
+// readFile resolves "@file:" values, in .env files and in the process
+// environment; nil disables them. A referenced file must hold at most
+// 1 MiB.
 func LoadSource(
 	fsys fs.FS,
 	getenv func(string) (string, bool),
@@ -145,23 +243,19 @@ func LoadSource(
 			v = expand(v, lookup)
 		}
 
-		if strings.HasPrefix(v, filePrefix) {
-			if readFile == nil {
-				return nil, fmt.Errorf("config: %s uses %q but file references are disabled", k, filePrefix)
+		if lit, ok := escapedFileRef(v); ok {
+			v = lit
+		} else if strings.HasPrefix(v, filePrefix) {
+			var err error
+			if v, err = readFileRef(k, v, readFile); err != nil {
+				return nil, err
 			}
-
-			data, err := readFile(strings.TrimPrefix(v, filePrefix))
-			if err != nil {
-				return nil, fmt.Errorf("config: read %s: %w", k, err)
-			}
-
-			v = strings.TrimRight(string(data), "\r\n")
 		}
 
 		values[k] = v
 	}
 
-	return &Source{values: values, env: env, getenv: getenv}, nil
+	return &Source{values: values, env: env, getenv: getenv, readFile: readFile}, nil
 }
 
 func readEnvFile(fsys fs.FS, name string) ([]Entry, error) {

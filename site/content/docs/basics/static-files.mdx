@@ -123,7 +123,7 @@ var embedded embed.FS
 func Public() fs.FS { return dirOrEmbedded("public") }
 ```
 
-- With `APP_ENV=production` in the process environment, it always uses the **embedded** copy, compiled into the binary by the [`//go:embed`](https://pkg.go.dev/embed) directive.
+- With `APP_ENV=production` (in the process environment or `.env`), it always uses the **embedded** copy, compiled into the binary by the [`//go:embed`](https://pkg.go.dev/embed) directive.
 - Otherwise it uses `resources/public` on disk when that folder exists, so a changed file shows up on refresh, and falls back to the embedded copy.
 
 Embedding means you deploy one file with no `public/` folder next to it ([Single binary](/docs/deployment/single-binary)). The `all:` prefix keeps files whose names start with `.` or `_` in the binary; the Static middleware still refuses to serve them.

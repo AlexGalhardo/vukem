@@ -1,11 +1,14 @@
 // Package resources holds the email views, embedded in the binary; during
-// development the files on disk are used so edits show up immediately.
+// development the files on disk are used so edits show up immediately
+// (never with APP_ENV=production, in the process environment or .env).
 package resources
 
 import (
 	"embed"
 	"io/fs"
 	"os"
+
+	"github.com/AlexGalhardo/vukem/config"
 )
 
 //go:embed views
@@ -13,14 +16,33 @@ var embedded embed.FS
 
 // Views returns the html/template views (emails).
 func Views() fs.FS {
+	if production() {
+		return embeddedViews()
+	}
+
 	if info, err := os.Stat("resources/views"); err == nil && info.IsDir() {
 		return os.DirFS("resources/views")
 	}
 
+	return embeddedViews()
+}
+
+func embeddedViews() fs.FS {
 	sub, err := fs.Sub(embedded, "views")
 	if err != nil {
 		panic(err) // unreachable: the directory is embedded above
 	}
 
 	return sub
+}
+
+// production reports whether the app runs with APP_ENV=production, read
+// from the same places the app reads it: the process environment, then
+// .env. When .env cannot be parsed it answers true, so the embedded files
+// are used (the app itself refuses to boot then). @file: references are
+// not read here: only APP_ENV matters.
+func production() bool {
+	src, err := config.LoadSource(os.DirFS("."), os.LookupEnv, func(string) ([]byte, error) { return nil, nil })
+
+	return err != nil || src.Env() == config.Production
 }

@@ -33,6 +33,7 @@ import (
 	"github.com/AlexGalhardo/vukem/logging/telegram"
 	"github.com/AlexGalhardo/vukem/mail"
 	"github.com/AlexGalhardo/vukem/queue"
+	"github.com/AlexGalhardo/vukem/ratelimit"
 	"github.com/AlexGalhardo/vukem/router"
 	"github.com/AlexGalhardo/vukem/schedule"
 	"github.com/AlexGalhardo/vukem/schema"
@@ -217,10 +218,12 @@ type App struct {
 	// WithCacheStoreFunc).
 	queueDriverFunc func(*App) (queue.Driver, error)
 	cacheStoreFunc  func(*App) (cache.Store, error)
-	schedules       []func(*schedule.Schedule, *App)
-	scheduleOnce    sync.Once
-	schedule        *schedule.Schedule
-	scheduleErr     error
+	// rateLimiters replaces the RATE_LIMIT_STORE factory (WithRateLimiters).
+	rateLimiters ratelimit.Factory
+	schedules    []func(*schedule.Schedule, *App)
+	scheduleOnce sync.Once
+	schedule     *schedule.Schedule
+	scheduleErr  error
 
 	queueOnce sync.Once
 	queue     *queue.Queue
@@ -252,6 +255,41 @@ type App struct {
 	bootMu   sync.Mutex
 	bootErr  error
 	shutdown bool
+}
+
+// readConfigFile reads the file an "@file:" configuration value names
+// (Docker/Kubernetes secrets; symlinks are followed, a relative path is
+// resolved against the working directory). Only regular files are read:
+// the path is checked with os.Stat before it is opened, because opening a
+// FIFO or a terminal (/dev/stdin, a named pipe) blocks; the opened file
+// must be the one checked (os.SameFile), and at most one byte past
+// config's 1 MiB cap is read, so /dev/zero cannot exhaust memory.
+func readConfigFile(name string) ([]byte, error) {
+	info, err := os.Stat(name)
+	if err != nil {
+		return nil, err
+	}
+
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", name)
+	}
+
+	f, err := os.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	opened, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+
+	if !os.SameFile(info, opened) {
+		return nil, fmt.Errorf("%s changed while it was opened", name)
+	}
+
+	return io.ReadAll(io.LimitReader(f, 1<<20+1))
 }
 
 // Option configures New.
@@ -287,6 +325,8 @@ type options struct {
 	queueFunc     func(*App) (queue.Driver, error)
 	cacheFunc     func(*App) (cache.Store, error)
 	sessionFunc   func(*App) (session.Store, error)
+	rateLimiters  ratelimit.Factory
+	eventsFake    *events.Fake
 	schedules     []func(*schedule.Schedule, *App)
 	drivers       []database.Driver
 	queryObs      []database.QueryObserver
@@ -494,7 +534,7 @@ func New(opts ...Option) (*App, error) {
 
 		readFile := o.readFile
 		if readFile == nil {
-			readFile = os.ReadFile
+			readFile = readConfigFile
 		}
 
 		var err error
@@ -510,42 +550,7 @@ func New(opts ...Option) (*App, error) {
 
 	cfg.Devtools = cfg.Devtools || o.devtools
 
-	if err := checkFlags(o.flags, src); err != nil {
-		return nil, err
-	}
-
-	key, err := checkConfig(&cfg, src.EnvSet(), o.kind == KindWarmup)
-	if err != nil {
-		return nil, err
-	}
-
-	proxies, err := parseTrustedProxies(cfg.TrustedProxies)
-	if err != nil {
-		return nil, err
-	}
-
-	if cfg.TrustForwardedProto && len(proxies) == 0 {
-		return nil, errors.New("vukem: TRUST_FORWARDED_PROTO requires TRUSTED_PROXIES")
-	}
-
-	if cfg.HSTSForce && !strings.HasPrefix(cfg.URL, "https://") {
-		return nil, errors.New("vukem: HSTS_FORCE requires an https APP_URL")
-	}
-
-	if cfg.ClientIPHeader, err = clientIPHeader(cfg.ClientIPHeader, len(proxies) > 0); err != nil {
-		return nil, err
-	}
-
-	if cfg.MaxHeaderBytes < minMaxHeaderBytes || cfg.MaxHeaderBytes > http.DefaultMaxHeaderBytes {
-		return nil, fmt.Errorf("vukem: HTTP_MAX_HEADER_BYTES %d must be between %d and %d",
-			cfg.MaxHeaderBytes, minMaxHeaderBytes, http.DefaultMaxHeaderBytes)
-	}
-
-	if cfg.RateLimitIPv6Prefix < 1 || cfg.RateLimitIPv6Prefix > 128 {
-		return nil, fmt.Errorf("vukem: RATE_LIMIT_IPV6_PREFIX %d must be between 1 and 128", cfg.RateLimitIPv6Prefix)
-	}
-
-	previous, err := parsePreviousKeys(cfg.PreviousKeys)
+	key, proxies, previous, err := checkBootConfig(&cfg, src, &o)
 	if err != nil {
 		return nil, err
 	}
@@ -654,6 +659,7 @@ func New(opts ...Option) (*App, error) {
 
 		queueDriverFunc: o.queueFunc,
 		cacheStoreFunc:  o.cacheFunc,
+		rateLimiters:    o.rateLimiters,
 		sessStoreFunc:   o.sessionFunc,
 		schedules:       o.schedules,
 		mail:            mailState{transport: o.mailTransport},
@@ -698,6 +704,10 @@ func New(opts ...Option) (*App, error) {
 
 	app.Events = events.New(app.Log, 0)
 	app.Events.Register(o.listeners...)
+
+	if o.eventsFake != nil {
+		app.Events.RecordTo(o.eventsFake)
+	}
 
 	if dt != nil {
 		app.Events.SetObserver(dt)
@@ -817,6 +827,66 @@ func New(opts ...Option) (*App, error) {
 	}
 
 	return app, nil
+}
+
+// checkBootConfig runs every boot check on the loaded configuration and
+// returns all failures together (errors.Join), so a misconfigured deploy
+// shows each problem at once. It also normalizes cfg.ClientIPHeader.
+func checkBootConfig(
+	cfg *Config,
+	src *config.Source,
+	o *options,
+) (config.Key, []*net.IPNet, []config.Key, error) {
+	var errs []error
+
+	if err := checkFlags(o.flags, src); err != nil {
+		errs = append(errs, err)
+	}
+
+	key, err := checkConfig(cfg, src.EnvSet(), o.kind == KindWarmup)
+	if err != nil {
+		errs = append(errs, err)
+	}
+
+	proxies, err := parseTrustedProxies(cfg.TrustedProxies)
+	if err != nil {
+		errs = append(errs, err)
+	} else {
+		// Checked only when TRUSTED_PROXIES parsed: an invalid entry is
+		// already reported above.
+		if cfg.TrustForwardedProto && len(proxies) == 0 {
+			errs = append(errs, errors.New("vukem: TRUST_FORWARDED_PROTO requires TRUSTED_PROXIES"))
+		}
+
+		if cfg.ClientIPHeader, err = clientIPHeader(cfg.ClientIPHeader, len(proxies) > 0); err != nil {
+			errs = append(errs, err)
+		}
+	}
+
+	if cfg.HSTSForce && !strings.HasPrefix(cfg.URL, "https://") {
+		errs = append(errs, errors.New("vukem: HSTS_FORCE requires an https APP_URL"))
+	}
+
+	if cfg.MaxHeaderBytes < minMaxHeaderBytes || cfg.MaxHeaderBytes > http.DefaultMaxHeaderBytes {
+		errs = append(errs, fmt.Errorf("vukem: HTTP_MAX_HEADER_BYTES %d must be between %d and %d",
+			cfg.MaxHeaderBytes, minMaxHeaderBytes, http.DefaultMaxHeaderBytes))
+	}
+
+	if cfg.RateLimitIPv6Prefix < 1 || cfg.RateLimitIPv6Prefix > 128 {
+		errs = append(errs, fmt.Errorf("vukem: RATE_LIMIT_IPV6_PREFIX %d must be between 1 and 128",
+			cfg.RateLimitIPv6Prefix))
+	}
+
+	previous, err := parsePreviousKeys(cfg.PreviousKeys)
+	if err != nil {
+		errs = append(errs, err)
+	}
+
+	if err := errors.Join(errs...); err != nil {
+		return config.Key{}, nil, nil, err
+	}
+
+	return key, proxies, previous, nil
 }
 
 // checkConfig enforces secure defaults at boot (fail closed). envSet
