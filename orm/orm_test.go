@@ -745,3 +745,55 @@ func TestChunkSurvivesDeletesInCallback(t *testing.T) {
 		t.Fatal("Chunk without the primary key selected = nil, want error")
 	}
 }
+
+// The keyset condition must bind to the whole user filter: with an OR,
+// "a OR b AND id > ?" would re-read the rows matching a forever.
+func TestChunkWithOrWhere(t *testing.T) {
+	t.Parallel()
+
+	db, ctx := setup(t)
+	seedUsers(ctx, t, db)
+
+	var names []string
+	err := QueryOf[User](db).Where("age", "<", 20).OrWhere("age", ">", 40).Chunk(ctx, 1, func(us []User) error {
+		if len(names) > 4 {
+			return errors.New("chunk did not advance")
+		}
+
+		names = append(names, us[0].Name)
+
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if diff := cmp.Diff([]string{"Bob", "Cid"}, names); diff != "" {
+		t.Fatalf("Chunk visited (-want +got):\n%s", diff)
+	}
+
+	posts := []Post{{UserID: 1, Title: "a"}, {UserID: 2, Title: "b"}, {UserID: 3, Title: "c"}}
+	for i := range posts {
+		if err := Create(ctx, db, &posts[i]); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var titles []string
+	err = QueryOf[Post](db).Where("user_id", 1).OrWhere("user_id", 3).Chunk(ctx, 1, func(ps []Post) error {
+		if len(titles) > 4 {
+			return errors.New("chunk did not advance")
+		}
+
+		titles = append(titles, ps[0].Title)
+
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if diff := cmp.Diff([]string{"a", "c"}, titles); diff != "" {
+		t.Fatalf("soft-delete Chunk visited (-want +got):\n%s", diff)
+	}
+}
