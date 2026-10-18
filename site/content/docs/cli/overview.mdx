@@ -1,118 +1,671 @@
 ---
 title: The vukem CLI
-description: Create projects, generate code, run the dev server, build binaries and run app commands such as migrate with one command.
+description: Every vukem command and flag — create projects, generate code, run the dev server, build binaries and run app commands such as migrate.
 ---
+
+`vukem` is the command you type in the terminal to work on a Vukem project. It creates new projects, writes boilerplate files for you, runs the app while you code and builds the final binary. Instead of copying a controller from an old project and renaming everything by hand, you run `vukem make:controller Post` and get a correct, formatted file.
+
+This page is the reference: every command, every flag, its default and what it writes to disk. All examples build the same **blog** project.
+
+You will learn:
+
+- How the global `vukem` command and your app's own binary split the work
+- How flags, help and exit codes work for every command
+- What `new`, `serve`, `build` and the `install:*` commands do, step by step
+- Which file each `make:*` generator writes and where it registers it
+- How to customise the generated code with your own stubs
+- Which commands run *inside* your app (`migrate`, `route:list`, `queue:work`)
+
+## The idea: two binaries
+
+Think of a car workshop. The **mechanic's toolbox** (`vukem`) can build, open and tune any car, but it does not drive. The **car's own dashboard** (your app binary) knows its engine, its fuel and its passengers. Vukem has both:
+
+| Binary | Installed by | Knows your app? | Commands |
+| --- | --- | --- | --- |
+| `vukem` (global) | `go install` | No: it only reads and writes files | `new`, `serve`, `build`, `version`, `install:*`, `boost:install`, `key:*`, `down`, `up`, `make:*`, `codegen:rpc` |
+| App binary (`cmd/app`) | Built from your project | Yes: it boots your app | `serve` (default), `migrate*`, `db:*`, `route:list`, `queue:*`, `schedule:*`, `openapi:export`, `codegen:types`, `codegen:routes`, `codegen:client`, `about`, `key:generate`, your own commands |
+
+The global CLI never imports your code. When it needs Go, it runs the standard toolchain (`go build`, `go mod tidy`, `go get`). When you type a command it does not own, it **delegates** it: it builds `cmd/app` and runs it with the same arguments. That is why `vukem migrate` works from the project root, like `php artisan migrate` in Laravel.
+
+<Callout type="info">
+Each command and its flags are read with Go's standard [`flag`](https://pkg.go.dev/flag) package. A flag may be written with one or two dashes: `-force` and `--force` are the same flag.
+</Callout>
+
+## Quick start
+
+<Steps>
+<Step title="Install the CLI">
+
+You need Go installed (see [Installation](/docs/installation)). [`go install`](https://go.dev/ref/mod#go-install) compiles the command and puts it in `$(go env GOPATH)/bin`, which should be on your `PATH`.
 
 ```bash
 go install github.com/AlexGalhardo/vukem/cmd/vukem@latest
+vukem version
+```
+
+```text
+vukem v0.27.0
+```
+
+</Step>
+<Step title="List the commands">
+
+`vukem list` (or `vukem` with no arguments) prints every command, grouped by namespace:
+
+```bash
 vukem list
 ```
 
-`vukem` works on files and shells out to the standard Go toolchain; it never imports your code. Commands it does not know are handed to your app binary, so `vukem migrate` works like `php artisan migrate`.
+```text
+Vukem v0.27.0
 
-## Commands
+Usage:
+  vukem <command> [flags] [args]
 
-| Command | Description |
+  new <name>                   Create a project from the HTMX + SQLite starter
+  serve                        Run the app (HTTP, scheduler) and restart ...
+  build                        Build assets (Vite) and a production binary ...
+  version                      Print the vukem version
+ install
+  install:auth                 Add login, registration, password reset ...
+  ...
+Other commands (migrate, route:list, about, your own) run in the app: ...
+```
+
+</Step>
+<Step title="Create the blog and run it">
+
+```bash
+vukem new blog
+cd blog
+vukem migrate
+vukem serve
+```
+
+`vukem migrate` is an app command: `vukem` builds your app and runs its `migrate`. Open `http://localhost:3000`.
+
+</Step>
+<Step title="Generate code">
+
+```bash
+vukem make:model Comment -m -f
+```
+
+```text
+created app/models/comment.go
+created database/migrations/20260101120000_create_comments_table.go
+updated database/migrations/registry.go
+created database/factories/comment_factory.go
+```
+
+</Step>
+</Steps>
+
+## How every command reads its input
+
+These rules apply to all commands of the global CLI.
+
+- **Help.** `vukem help <command>` and `vukem <command> -h` print the usage line, the description and every flag with its default. `vukem list`, `vukem help`, `vukem -h` and `vukem --help` print the command list.
+- **Version.** `vukem version`, `vukem --version` and `vukem -v` print the version. A binary built from a checkout prints `devel`.
+- **Flags anywhere.** Flags may come before or after the arguments: `vukem make:model Comment -m -c` equals `vukem make:model -m -c Comment`. A flag that takes a value takes the next word (`--event PostPublished`) or the text after `=` (`--event=PostPublished`).
+- **`--` stops flags.** Everything after `--` is an argument, even if it starts with a dash.
+- **One flag per dash.** Boolean flags do not combine: write `-m -f -c`, not `-mfc`.
+- **Names.** Generators accept any casing (`blog_post`, `blog-post`, `BlogPost`) and turn it into the right form for each place: `BlogPost` for the Go type, `blog_post` for the file name.
+
+### Exit codes
+
+The [exit code](https://pkg.go.dev/os#Exit) tells scripts and CI whether a command worked:
+
+| Code | Meaning | Example |
+| --- | --- | --- |
+| `0` | Success | The file was created |
+| `1` | Failure; the message starts with `error:` | `error: app/models/post.go already exists (use --force to overwrite)` |
+| `2` | Usage error: unknown command, missing argument, bad flag | `usage error: --event is required` |
+
+A usage error also prints `Run 'vukem list' for the available commands.` A delegated app command returns its own exit code unchanged.
+
+## Project commands
+
+### `vukem new`
+
+`vukem new <name>` creates a project in a new folder from the starter embedded in the CLI. Without a stack flag, on a terminal, it asks which stack you want; without a terminal (CI, scripts) it picks HTMX.
+
+```bash
+vukem new blog --inertia react --pm bun
+```
+
+| Flag | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `--module` | string | the project name | Go [module path](https://go.dev/ref/mod#module-path) written to `go.mod` (`github.com/you/blog`) |
+| `--api` | bool | `false` | JSON API starter: tokens, `/api/v1`, no views or sessions |
+| `--templ` | bool | `false` | HTMX starter with [templ](https://templ.guide) components instead of `html/template` views |
+| `--inertia` | string | none | Inertia starter with `react`, `vue` or `svelte` |
+| `--minimal` | bool | `false` | HTMX starter without a database: no posts, uploads, migrations or SQLite driver |
+| `--pm` | string | `npm` | JavaScript package manager: `npm`, `bun`, `pnpm` or `yarn` |
+| `--no-install` | bool | `false` | Skip installing the frontend dependencies |
+| `--framework` | string | none | Path to a local Vukem checkout to use instead of a release |
+
+Rules: the name must start with a letter and contain only letters, digits, `-`, `_` and `.`. The folder must not exist. `--api`, `--templ` and `--inertia` are exclusive (`usage error: choose one of --api, --templ or --inertia`), and `--minimal` refuses all three.
+
+What happens, in order:
+
+1. The starter files are written (`gitignore` becomes `.gitignore`), then reshaped for the chosen stack. See [Starters](/docs/starters) for what each stack contains.
+2. A production `Dockerfile` and `.dockerignore` are written for the stack and package manager ([Docker and Railway](/docs/deployment/docker-and-railway)).
+3. The framework is required: the release that matches your CLI version, or `latest` for a `devel` build. With `--framework`, a `replace` directive points at your checkout instead.
+4. [`govulncheck`](https://go.dev/doc/tutorial/govulncheck) is pinned as a [Go tool](https://go.dev/doc/modules/managing-dependencies#tools) (`go tool govulncheck ./...`). The templ stack also pins templ and generates the components.
+5. `go mod tidy` runs, and a new `APP_KEY` is written to `.env` (copied from `.env.example`).
+6. `git init` runs when Git is installed; a failure only warns.
+7. Every stack except `--api` installs the frontend dependencies. A missing package manager or a failed install only warns, since the Go app runs without built assets in development.
+
+`--minimal` also writes a `.buildtags` file containing `vukem_nosqlite`, which leaves the SQLite driver out of every build ([build tags](#build-tags)).
+
+### `vukem serve`
+
+`vukem serve` runs your app while you code. It builds `cmd/app`, starts it, and rebuilds and restarts it when a source file changes.
+
+```bash
+vukem serve
+```
+
+| Flag | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `--poll` | duration | `500ms` | How often to check the files for changes ([duration format](https://pkg.go.dev/time#ParseDuration): `1s`, `250ms`) |
+| `--no-vite` | bool | `false` | Do not start the Vite dev server |
+
+Under the hood:
+
+- **What it watches.** Files ending in `.go` or `.templ`, plus `go.mod`, `go.sum` and `.env`. It skips hidden folders and `node_modules`, `vendor`, `storage`, `bin`, `dist`, `public` and `tmp`. Generated `*_templ.go` files are ignored, so a templ change rebuilds once.
+- **Polling.** It compares modification times every `--poll` interval. No file-system notification library is involved, so it behaves the same on Windows, macOS and Linux.
+- **templ.** When `.templ` files exist, `go tool templ generate` runs before each build.
+- **Safe swaps.** It builds to `.vukem/serve/app-next`, stops the old process, then renames the new file into place. That works on Windows, where a running `.exe` cannot be overwritten.
+- **Broken code.** A failed build prints the compiler errors (`vukem serve: build failed, keeping the previous version`) and the old version keeps answering.
+- **Templates.** Views reload inside the app on every request in development, so editing an HTML template needs no rebuild.
+- **Vite.** When `vite.config.ts`, `.js` or `.mjs` exists, `<pm> run dev` runs alongside. On exit, `resources/public/hot` is removed so pages do not point at a dead dev server.
+
+<Callout type="warning" title="No graceful shutdown in development">
+`serve` kills the old process before starting the new one; it does not wait for running requests or jobs. Use it for development only.
+</Callout>
+
+### `vukem build`
+
+`vukem build` produces the production binary.
+
+```bash
+vukem build -o bin/blog
+```
+
+| Flag | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `-o` | string | `bin/app` (`bin\app.exe` on Windows) | Output path of the binary |
+
+Steps:
+
+1. `go tool templ generate` when `.templ` files exist.
+2. When a `vite.config.*` exists: it checks `node_modules` exists (`frontend dependencies missing: run npm install first`), then runs `vite build` through the package manager (`npm exec -- vite build`, `bun x vite build`, `pnpm exec vite build` or `yarn exec vite build`).
+3. `go build -trimpath -ldflags="-s -w"` of `./cmd/app`, plus the [build tags](#build-tags). `-trimpath` removes your local paths from the binary; `-s -w` drops debug symbols to make it smaller.
+
+It prints `built bin/blog`. See [Single binary](/docs/deployment/single-binary) for what the binary embeds.
+
+### Package manager detection
+
+`serve`, `build`, `install:inertia` and `install:billing` pick the package manager from the lockfile in the project, checked in this order:
+
+| Lockfile | Package manager |
 | --- | --- |
-| `vukem new <name> [--api \| --templ \| --inertia react\|vue\|svelte] [--module path] [--pm npm\|bun\|pnpm\|yarn] [--no-install] [--framework dir]` | Create a project from a [starter](/docs/starters) (prompts for the stack on a terminal); run `go mod tidy`, write `APP_KEY`, install frontend dependencies with `--pm` (default `npm`), `git init` |
-| `vukem install:auth [--social github,google,…] [--2fa]` | Add login, registration, email verification and password reset ([Authentication](/docs/security/authentication)), optionally social login and [two-factor](/docs/security/two-factor) |
-| `vukem install:inertia --force [--react\|--vue\|--svelte]` | Turn the HTMX starter into an [Inertia](/docs/frontend/inertia) app |
-| `vukem install:admin`, `vukem make:admin-resource <Model>` | [Admin panel](/docs/digging-deeper/admin) and its resources |
-| `vukem install:flags` | [Feature flags](/docs/digging-deeper/feature-flags): definitions, table and registration |
-| `vukem install:billing` | [Stripe subscriptions](/docs/digging-deeper/billing) (needs `install:auth`) |
-| `vukem make:proto <Name>`, `vukem codegen:rpc [--protoc]` | [gRPC](/docs/rest-apis/grpc#code-generation) service skeleton and code generation |
-| `vukem down [--secret s]`, `vukem up` | Maintenance mode: 503 with `Retry-After`; `/<secret>` sets a signed bypass cookie |
-| `vukem boost:install` | Guidelines, skills and the `boost:mcp` MCP server for AI coding agents |
-| `vukem install:api` | Add API tokens, `/api/v1`, CORS and rate limiting ([REST APIs](/docs/rest-apis/overview)) |
-| `vukem serve [--poll 500ms] [--no-vite]` | Build and run `cmd/app`; rebuild and restart when `.go`, `.templ`, `go.mod`, `go.sum` or `.env` change |
-| `vukem build [-o bin/app]` | `go tool templ generate` when `.templ` files exist, `vite build` when a `vite.config.*` exists, then `go build -trimpath -ldflags="-s -w"` |
-| `vukem key:generate [--show] [--force]` | Write `APP_KEY` to `.env` (created from `.env.example` when missing) |
-| `vukem key:rotate` | Write a new `APP_KEY` to `.env` and move the old one to the front of `APP_PREVIOUS_KEYS` ([key rotation](/docs/security/encryption#key-rotation)) |
-| `vukem version` | Print the CLI version |
-| `vukem list`, `vukem help <command>` | List commands, or show one command's flags |
+| `bun.lock`, `bun.lockb` | Bun |
+| `pnpm-lock.yaml` | pnpm |
+| `yarn.lock` | Yarn |
+| `package-lock.json` or none | npm |
 
-Flags may come before or after arguments: `vukem make:model Post -m -c` equals `vukem make:model -m -c Post`.
+There is nothing to configure: run `bun install` once and the CLI follows. `vukem new` uses `--pm` instead, because a new project has no lockfile yet.
+
+### Build tags
+
+A `.buildtags` file at the project root lists [Go build tags](https://pkg.go.dev/cmd/go#hdr-Build_constraints), one per line or comma-separated, with `#` comments. Every build the CLI runs (`build`, `serve` and delegated app commands) passes them as `go build -tags`.
+
+```text title=".buildtags"
+# Leave the SQLite driver out of the binary.
+vukem_nosqlite
+```
+
+A tag may contain only letters, digits, `_` and `.`; anything else fails with `.buildtags: invalid build tag "..."`.
+
+## Installers
+
+The `install:*` commands copy **your own code** into the project: routes, controllers, pages, migrations and tests that you are free to edit. They are not hidden library calls. Each one checks every destination first, so nothing is written when a file already exists, unless you pass `--force`. Then it registers the new parts, appends the new keys to `.env.example` and runs `go mod tidy`.
+
+| Command | Flags | Adds | Read more |
+| --- | --- | --- | --- |
+| `install:auth` | `--social`, `--2fa`, `--force` | Login, registration, email verification, password reset | [Authentication](/docs/security/authentication) |
+| `install:api` | `--force` | API tokens, `/api/v1`, CORS, rate limiting | [REST APIs](/docs/rest-apis/overview) |
+| `install:admin` | `--force` | Admin panel at `/admin` | [Admin](/docs/digging-deeper/admin) |
+| `install:flags` | `--force` | Feature flags | [Feature flags](/docs/digging-deeper/feature-flags) |
+| `install:billing` | `--force` | Stripe subscriptions | [Billing](/docs/digging-deeper/billing) |
+| `install:inertia` | `--react`, `--vue`, `--svelte`, `--force`, `--no-install` | Inertia pages instead of HTMX | [Inertia](/docs/frontend/inertia) |
+| `boost:install` | none | Guidelines and an MCP server for AI coding agents | [below](#vukem-boostinstall) |
+
+### `vukem install:auth`
+
+| Flag | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `--social` | string | none | Also add [social login](/docs/security/social-login) for a comma-separated list: `github`, `gitlab`, `discord`, `google`, `microsoft`, `linkedin`, `x`, `apple` |
+| `--2fa` | bool | `false` | Also add [two-factor authentication](/docs/security/two-factor) (TOTP) |
+| `--force` | bool | `false` | Overwrite existing files |
+
+- It writes the shared core (users, accounts, tokens, mails) once; `app/accounts/accounts.go` marks it as installed.
+- Pages follow your frontend: `html/template` pages for HTMX, or React, Vue or Svelte pages when `package.json` lists an Inertia adapter.
+- Run it again with only `--social` or `--2fa` on a project that has auth: it adds that part and leaves the rest alone.
+- `--social` appends `SOCIAL_<NAME>_CLIENT_ID` and `SOCIAL_<NAME>_CLIENT_SECRET` to `.env.example`; Apple gets `SOCIAL_APPLE_CLIENT_ID`, `SOCIAL_APPLE_TEAM_ID`, `SOCIAL_APPLE_KEY_ID` and `SOCIAL_APPLE_PRIVATE_KEY_PATH`.
+- A templ project is refused: `install:auth writes html/template pages; templ projects are not supported yet`.
+
+### `vukem install:api`
+
+Adds `POST /api/v1/tokens`, `GET /api/v1/me` and `DELETE /api/v1/tokens/current`, the auth core when missing, and `CORS_ALLOWED_ORIGINS` in `.env.example`. With two-factor authentication installed, issuing a token also asks for the code. Flag: `--force`.
+
+### `vukem install:admin`
+
+Needs `install:auth` (`app/accounts/accounts.go`) and a web project (`routes/web.go`). It adds `routes/admin.go`, `app/admin/`, an audit-log migration, a test, and `ADMIN_EMAILS` in `.env.example`. Flag: `--force`. Next, run `vukem make:admin-resource Post` for each model.
+
+### `vukem install:flags`
+
+Needs `bootstrap/app.go` and `database/migrations/registry.go` (flag values live in the database, so `--minimal` projects are refused). It writes `app/features/features.go`, a `create_feature_flags_table` migration, and adds `vukem.WithFlags(features.All()...)` to `bootstrap/app.go`.
+
+| Flag | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `--force` | bool | `false` | Rewrite the feature flags migration in place |
+
+It is safe to re-run: `app/features/features.go` holds your flags and is **never** overwritten, not even with `--force` (it prints `kept app/features/features.go`). An existing feature flags migration is reused instead of adding a second one.
+
+### `vukem install:billing`
+
+Needs `install:auth` first (`install:billing bills the users of install:auth: run vukem install:auth first`). It writes the plans config, billing migration, Checkout and Billing Portal routes, the `POST /stripe/webhook` handler and tests, for HTMX or Inertia. It appends `STRIPE_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_BASIC` and `STRIPE_PRICE_PRO` to `.env.example`, and requires `github.com/AlexGalhardo/vukem/contrib/stripe` `v0.1.0` (a `replace` to your checkout when the framework itself is replaced). Flag: `--force`.
+
+### `vukem install:inertia`
+
+Turns an HTMX starter into an Inertia app. It **deletes** the HTMX pages, layouts, partials, components, upload demo and `resources/js/app.ts`, writes the Inertia pages, controllers and tests, adds `vukem.WithInertia(inertia.Config{})` after `vukem.WithVite(...)` in `bootstrap/app.go`, runs `go mod tidy` and installs the frontend dependencies.
+
+| Flag | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `--force` | bool | `false` | Required: confirms the HTMX pages, controllers and tests are replaced |
+| `--react` | bool | `true` when none is set | React pages |
+| `--vue` | bool | `false` | Vue pages |
+| `--svelte` | bool | `false` | Svelte pages |
+| `--no-install` | bool | `false` | Skip installing frontend dependencies |
+
+A project that already calls `WithInertia` is refused (`this project already uses Inertia`). Commit your work before running it.
+
+### `vukem boost:install`
+
+Prepares the project for AI coding agents, in the style of Laravel Boost. It takes no flags and is safe to re-run.
+
+- Writes Vukem guidelines into `AGENTS.md` between `<!-- vukem-boost:start -->` and `<!-- vukem-boost:end -->`; text outside the markers is kept.
+- Adds `@AGENTS.md` to `CLAUDE.md` and writes skills to `.claude/skills/vukem-*` (CLI, database, frontend, HTTP, testing, validation).
+- Registers the `vukem-boost` MCP server (`go run ./cmd/app boost:mcp`) in `.mcp.json`, and in `.cursor/mcp.json` and `.vscode/mcp.json` when those folders exist.
+
+Every JSON file is checked before anything is written, so a broken one stops it: `.mcp.json is not valid JSON (fix or remove it first)`.
+
+## Keys and maintenance mode
+
+### `vukem key:generate`
+
+Writes a new random `APP_KEY` to `.env`. If `.env` is missing, it starts from `.env.example`. The key signs sessions and encrypts data ([Encryption](/docs/security/encryption)).
+
+| Flag | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `--show` | bool | `false` | Print the key instead of writing `.env` |
+| `--force` | bool | `false` | Replace an existing non-empty `APP_KEY` |
+
+Without `--force`, an existing key stops it: `APP_KEY is already set in .env (use --force to replace it; existing sessions and encrypted data become unreadable)`.
+
+### `vukem key:rotate`
+
+Writes a new `APP_KEY` and moves the old one to the front of `APP_PREVIOUS_KEYS`, so old sessions and encrypted values still open ([key rotation](/docs/security/encryption)). It takes no flags or arguments and never prints a key.
+
+- It refuses a missing `.env`, an empty `APP_KEY`, and any malformed current or previous key, since a bad previous key would stop the app from booting.
+- It keeps `export`, indentation, inline comments and CRLF line endings.
+- It writes through a synced temporary file, then renames it, so a crash never leaves a half-written `.env`. A symlinked `.env` stays a symlink.
+- It warns on stderr when more than 3 previous keys remain: each one can still forge sessions and signed links.
+
+### `vukem down` and `vukem up`
+
+`vukem down` puts the app in maintenance mode by writing `storage/framework/down`. The `middleware.Maintenance` middleware then answers every request with `503 Service Unavailable`, using the `errors/503` view or a problem+json body; `/up` keeps answering for health checks. `vukem up` deletes the file. A running app picks up both without a restart.
+
+| Flag | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `--secret` | string | none | Visitors of `/<secret>` get a signed bypass cookie and see the live site |
+| `--with-secret` | bool | `false` | Generate a random secret and print the bypass path |
+| `--retry` | duration | none | `Retry-After` sent with the 503, such as `60s` |
+
+```bash
+vukem down --with-secret --retry 60s
+```
+
+```text
+The application is in maintenance mode (vukem up brings it back).
+Bypass: open /<secret> once to get a cookie that lets you in.
+```
+
+The secret is stored hashed. An unreadable state file keeps the app down rather than up.
 
 ## Generators
 
-| Command | Creates |
-| --- | --- |
-| `make:controller <Name> [--resource] [--api]` | `app/controllers/<name>_controller.go`: an `Index` action, the 7 resource actions, or the 5 JSON actions |
-| `make:model <Name> [-m] [-f] [-c]` | `app/models/<name>.go`; `-m` a `create_<table>_table` migration, `-f` a factory in `database/factories/`, `-c` a resource controller |
-| `make:migration <name>` | `database/migrations/<timestamp>_<name>.go`, appended to `migrations.All()` |
-| `make:middleware <Name>` | `app/middleware/<name>.go` with a `func(http.Handler) http.Handler` |
-| `make:request <Name>` | `app/requests/<name>.go`: input struct and `z.For` schema |
-| `make:command <Name>` | `app/commands/<name>.go`, appended to `bootstrap.Commands()` |
-| `make:provider <Name>` | `app/providers/<name>_provider.go`, appended to `bootstrap.Providers()` |
-| `make:test <Name>` | `tests/<name>_test.go` using `vukemtest` |
-| `make:resource <Name>` | `app/resources/<name>.go`: JSON transformer and `api.Map` list helper |
-| `make:factory <Name>` | `database/factories/<name>_factory.go` with `factory.New` |
-| `make:seeder <Name>` | `database/seeders/<name>_seeder.go`, appended to `seeders.All()` |
-| `make:policy <Name>` | `app/policies/<name>_policy.go`, appended to `policies.All()` |
-| `make:mail <Name>` | `app/mail/<name>.go` and `resources/views/mail/<name>.html` |
-| `make:event <Name>` | `app/events/<name>.go` |
-| `make:listener <Name> --event <Event> [--async\|--queued]` | `app/listeners/<name>.go`, appended to `listeners.All()` (`--queued` runs it as a queue job) |
-| `make:job <Name>` | `app/jobs/<name>.go` (job type, `Kind`, handler built from the app), appended to `jobs.All(app)` |
+Each `make:*` command renders a template, formats Go output with [`go/format`](https://pkg.go.dev/go/format) (like `gofmt`), and writes the file. Many also **register** the new code by appending it to a list your app reads at startup.
 
-- Generated Go is `gofmt`ed. Existing files are never overwritten without `--force`.
-- Conventional suffixes are optional: `PostController`, `BillingProvider` and `SendReportsCommand` work as names.
-- Registration edits the target file through its AST and adds imports; running a generator twice does not register twice. If the file was restructured, the generator prints the line to add by hand.
+| Command | Writes | Registers in |
+| --- | --- | --- |
+| `make:controller <Name>` | `app/controllers/<name>_controller.go` | — |
+| `make:model <Name>` | `app/models/<name>.go` | — |
+| `make:migration <name>` | `database/migrations/<timestamp>_<name>.go` | `All()` in `database/migrations/registry.go` |
+| `make:middleware <Name>` | `app/middleware/<name>.go` | — (you add it with `r.Use`) |
+| `make:request <Name>` | `app/requests/<name>.go` | — |
+| `make:command <Name>` | `app/commands/<name>.go` | `Commands()` in `bootstrap/commands.go` |
+| `make:provider <Name>` | `app/providers/<name>_provider.go` | `Providers()` in `bootstrap/providers.go` |
+| `make:resource <Name>` | `app/resources/<name>.go` | — |
+| `make:factory <Name>` | `database/factories/<name>_factory.go` | — |
+| `make:seeder <Name>` | `database/seeders/<name>_seeder.go` | `All()` in `database/seeders/registry.go` |
+| `make:event <Name>` | `app/events/<name>.go` | — |
+| `make:listener <Name>` | `app/listeners/<name>.go` | `All()` in `app/listeners/registry.go` |
+| `make:job <Name>` | `app/jobs/<name>.go` | `All()` in `app/jobs/registry.go` |
+| `make:mail <Name>` | `app/mail/<name>.go` and `resources/views/mail/<name>.html` | — |
+| `make:policy <Name>` | `app/policies/<name>_policy.go` | `All()` in `app/policies/registry.go` |
+| `make:admin-resource <Model>` | `app/admin/<model>.go` and `tests/admin_<model>_test.go` | `Resources()` and `Policies()` in `app/admin/registry.go` |
+| `make:test <Name>` | `tests/<name>_test.go` | — |
+| `make:proto <Name>` | `proto/<name>/v1/<name>.proto` | — ([gRPC](#grpc-code-generation)) |
+
+Every generator takes `--force` (overwrite an existing file) and exactly one name.
+
+### Rules every generator follows
+
+- **No silent overwrite.** An existing file fails with `<path> already exists (use --force to overwrite)`.
+- **Optional suffixes.** A conventional suffix is stripped from the name: `PostController`, `BillingProvider`, `SendReportsCommand`, `PostSeeder`, `PostPolicy`, `WelcomeMail`, `PostPublishedEvent`, `NotifyListener`, `SendDigestJob`, `PostResource`, `PostFactory`, `PostsTest` and `BlogService` (for `make:proto`) all work.
+- **Needs `go.mod`.** Generators read the module path from `go.mod`; outside a project you get `no go.mod here: run vukem inside a project`.
+- **Registration edits the syntax tree.** The CLI parses the registry file with Go's [`go/parser`](https://pkg.go.dev/go/parser), finds the slice the function returns, appends the new entry and its import, and formats the file. Running it twice registers once.
+- **Manual fallback.** If you restructured the file (or it does not exist), the file is still created and the CLI prints the line to add:
+
+```text
+could not update app/policies/registry.go automatically; add this to All():
+
+	authz.For[*models.Post](PostPolicy{}),
+```
+
+### Generator flags
+
+Only these generators have flags besides `--force`:
+
+| Command | Flag | Type | Default | What it does |
+| --- | --- | --- | --- | --- |
+| `make:controller` | `--resource` | bool | `false` | The seven resource actions: `Index`, `Create`, `Store`, `Show`, `Edit`, `Update`, `Destroy` |
+| `make:controller` | `--api` | bool | `false` | The five JSON actions: `Index`, `Store`, `Show`, `Update`, `Destroy` |
+| `make:model` | `-m` | bool | `false` | Also create a `create_<table>_table` migration |
+| `make:model` | `-f` | bool | `false` | Also create a factory |
+| `make:model` | `-c` | bool | `false` | Also create a resource controller (seven actions) |
+| `make:listener` | `--event` | string | none | Required: the event type it handles |
+| `make:listener` | `--async` | bool | `false` | Run in the background; errors are logged |
+| `make:listener` | `--queued` | bool | `false` | Run as a queue job: retried, survives restarts |
+| `make:proto` | `--force` | bool | `false` | Overwrite only the `.proto`; `buf.yaml` and `buf.gen.yaml` are never replaced |
+
+Without `--resource` or `--api`, a controller gets one `Index` action.
+
+### Examples from the blog
+
+A middleware is a plain `func(http.Handler) http.Handler`, the standard [`net/http`](https://pkg.go.dev/net/http#Handler) shape:
+
+```bash
+vukem make:middleware EnsureAdmin
+```
+
+```go title="app/middleware/ensure_admin.go"
+package middleware
+
+import "net/http"
+
+// EnsureAdmin wraps handlers; register it with r.Use, group.Use or
+// route.Use.
+func EnsureAdmin(next http.Handler) http.Handler {
+	return http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			next.ServeHTTP(w, r)
+		},
+	)
+}
+```
+
+A command is created **and** registered:
+
+```bash
+vukem make:command SendReports
+```
+
+```text
+created app/commands/send_reports.go
+updated bootstrap/commands.go
+```
+
+```go title="bootstrap/commands.go"
+package bootstrap
+
+import (
+	"blog/app/commands"
+
+	vukem "github.com/AlexGalhardo/vukem"
+)
+
+// Commands lists the application commands; vukem make:command appends
+// here.
+func Commands() []vukem.Command {
+	return []vukem.Command{
+		commands.SendReports(),
+	}
+}
+```
+
+Now `vukem send-reports` runs it. See [Application lifecycle](/docs/architecture/lifecycle) for how commands run.
+
+A listener's registration depends on its flag:
+
+| Command | Line added to `All()` |
+| --- | --- |
+| `make:listener NotifyFollowers --event PostPublished` | `events.On(NotifyFollowers)` |
+| `... --async` | `events.OnAsync(NotifyFollowers)` |
+| `... --queued` | `events.OnQueued("notify_followers", NotifyFollowers)` |
+
+`--async` and `--queued` together fail with `usage error: --async and --queued are exclusive`. See [Events](/docs/digging-deeper/events).
+
+`make:job` registers `queue.Handle(HandleSendDigest(app))` when `app/jobs/registry.go` declares `func All(app *vukem.App)`, so the handler can use your app's services; older registries get `queue.Handle(HandleSendDigest)`. See [Queues](/docs/digging-deeper/queue).
+
+`make:admin-resource` needs the admin panel (`app/admin/registry.go`) and an existing `type <Model> struct` in `app/models`. When `app/requests` declares `var <Model>Schema`, the resource validates its forms with it.
+
+### Migration names choose the template
+
+`make:migration` turns the name into snake case and picks a body from its shape:
+
+| Name | Body |
+| --- | --- |
+| `create_comments_table` | `s.Create("comments", ...)` with `t.ID()` and `t.Timestamps()`; `Down` drops the table |
+| `add_slug_to_posts_table`, `remove_x_from_posts_table`, `index_x_on_posts_table`, `alter_posts_table`, `change_posts_table`, `update_posts_table` | `s.Table("posts", ...)` in `Up` and `Down`, empty for you to fill |
+| anything else | `Up` and `Down` that return `nil` |
+
+The file name and ID use the UTC time: `20260101120000_add_slug_to_posts_table`. The function is `m20260101120000AddSlugToPostsTable()`. See [Migrations](/docs/database/migrations).
 
 ### Custom stubs
 
-Stubs are `text/template` files embedded in the CLI. Put a file with the same name in your project's `stubs/` directory to override one (`controller.go.tmpl`, `model.go.tmpl`, `migration.go.tmpl`, `middleware.go.tmpl`, `request.go.tmpl`, `command.go.tmpl`, `provider.go.tmpl`, `factory.go.tmpl`, `seeder.go.tmpl`, `resource.go.tmpl`, `policy.go.tmpl`, `mail.go.tmpl`, `mail.html.tmpl`, `event.go.tmpl`, `listener.go.tmpl`, `job.go.tmpl`, `test.go.tmpl`). Available data: `.Name` (Pascal), `.Snake`, `.Kebab`, `.Camel`, `.Plural`, `.Module`, and `.Table`, `.Timestamp`, `.ID`, `.Func`, `.Resource`, `.API` where relevant. Unknown keys are errors.
+The templates are [`text/template`](https://pkg.go.dev/text/template) files embedded in the CLI. To change what a generator writes, put a file with the same name in your project's `stubs/` folder; it wins over the embedded one.
+
+| Stub | Used by |
+| --- | --- |
+| `controller.go.tmpl`, `model.go.tmpl`, `migration.go.tmpl`, `middleware.go.tmpl`, `request.go.tmpl` | The matching `make:*` |
+| `command.go.tmpl`, `provider.go.tmpl`, `resource.go.tmpl`, `factory.go.tmpl`, `seeder.go.tmpl` | The matching `make:*` |
+| `event.go.tmpl`, `listener.go.tmpl`, `job.go.tmpl`, `policy.go.tmpl`, `test.go.tmpl` | The matching `make:*` |
+| `mail.go.tmpl`, `mail.html.tmpl` | `make:mail` |
+| `admin_resource.go.tmpl`, `admin_resource_test.go.tmpl` | `make:admin-resource` |
+| `service.proto.tmpl`, `buf.yaml.tmpl`, `buf.gen.yaml.tmpl` | `make:proto` |
+
+The data a stub can read, for the name `BlogPost`:
+
+| Field | Value | Set for |
+| --- | --- | --- |
+| `.Name` | `BlogPost` | all |
+| `.Snake` | `blog_post` | all |
+| `.Kebab` | `blog-post` | all |
+| `.Camel` | `blogPost` | all |
+| `.Plural` | `blog_posts` | all |
+| `.Module` | `blog` (from `go.mod`) | all |
+| `.Table`, `.Timestamp`, `.ID`, `.Func`, `.Create`, `.Alter` | table, time, ID, function name, kind | migrations |
+| `.Resource`, `.API` | which actions | controllers |
+| `.Event` | `PostPublished` | listeners |
+| `.App` | the registry takes the app | jobs |
+| `.Slug`, `.HasRequest` | URL segment, schema exists | admin resources |
+| `.GoPkg`, `.ProtobufVersion`, `.ConnectVersion` | `blogpostv1`, plugin versions | proto |
+
+A field the data does not have is an error (`missingkey=error`), not an empty string. A `.go.tmpl` stub that produces invalid Go fails with `stub <name> produced invalid Go`. The `install:*` scaffolds are not stubs and cannot be overridden. There is no command yet to copy the embedded stubs; take them from `internal/cli/stubs` in the Vukem repository.
+
+## gRPC code generation
+
+`vukem make:proto Blog` writes `proto/blog/v1/blog.proto` (package `blog.v1`, one `GetBlog` RPC), plus `buf.yaml` and `buf.gen.yaml` when they do not exist yet. It then prints the `go get -tool` lines for the code generators.
+
+`vukem codegen:rpc` turns the `.proto` files into Go and connect-go code:
+
+| Flag | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `--protoc` | bool | `false` | Use `protoc` even when `buf.gen.yaml` exists |
+| `-proto` | string | `proto` | Folder of the `.proto` files (protoc mode) |
+| `-out` | string | `gen` | Output folder (protoc mode) |
+
+1. It refuses to run until `protoc-gen-go` and `protoc-gen-connect-go` are `tool` lines in `go.mod`, and prints the `go get -tool` commands to add them.
+2. With `buf.gen.yaml`: `go tool buf generate` when buf is a tool of the module, else `buf generate` from your `PATH`.
+3. Otherwise `protoc` with the plugins from `go tool -n`, `paths=source_relative`.
+
+See [gRPC](/docs/rest-apis/grpc) for the full workflow.
 
 ## App commands
 
-Any other command runs inside your application:
+Any command the global CLI does not own runs inside your app:
 
 ```bash
 vukem migrate
 vukem migrate:status --json
 vukem route:list
-vukem queue:work
-vukem schedule:list
+vukem queue:work --queue high,default
 vukem openapi:export > openapi.json
-vukem about
-vukem reports:send --dry-run   # your own command
+vukem send-reports
 ```
 
-`vukem` builds `cmd/app` into `.vukem/bin/app` and runs it with the same arguments. The binary is rebuilt only when a `.go`, `go.mod` or `go.sum` file is newer, so repeated commands start instantly. Built-in app commands: `migrate`, `migrate:rollback`, `migrate:reset`, `migrate:fresh`, `migrate:status`, [`db:seed`](/docs/database/factories-seeders#running-seeders), `db:wipe`, `route:list`, `about`, `key:generate`, [`queue:work`, `queue:failed`, `queue:retry`, `queue:forget`](/docs/digging-deeper/queue#commands), [`schedule:run`, `schedule:work`, `schedule:list`](/docs/digging-deeper/scheduler#running-it), [`openapi:export`, `codegen:types`](/docs/rest-apis/openapi), [`codegen:client`](/docs/rest-apis/client-generation), [`codegen:routes`](/docs/frontend/inertia#typed-routes), [`ssr:start`, `ssr:check`](/docs/frontend/inertia#server-side-rendering), `boost:mcp` and `openapi:serve` (when you add `apidocs.Command()`). Destructive commands need `--force` in production. Add your own with `vukem make:command` (see [Application lifecycle](/docs/architecture/lifecycle#commands)).
+`vukem` builds `cmd/app` into `.vukem/bin/app` and runs it with the same arguments, input and output. It rebuilds only when a `.go`, `.templ`, `go.mod` or `go.sum` file is newer than the binary, so repeated commands start at once. Outside a project you get `unknown command "migrate" (app commands need a Vukem project with cmd/app)`. Running the binary yourself works too: `go run ./cmd/app migrate`.
 
-Running the binary directly works too: `go run ./cmd/app migrate`.
+Unlike the global CLI, app commands use the plain `flag` package, so **flags go before positional arguments**. `db:seed` is the exception: it reads seeder names first, then flags (`db:seed UsersSeeder -force`), because the flags it accepts depend on the seeders you name.
+
+| Command | Flags | What it does |
+| --- | --- | --- |
+| `serve` | none | Runs the HTTP server and scheduler; the default when no command is given |
+| `about` | `-json` | Shows application, environment and security settings, secrets redacted |
+| `migrate` | none | Runs pending migrations |
+| `migrate:rollback` | `-step N` | Rolls back the last batch, or the last N migrations |
+| `migrate:reset` | `-force` | Rolls back every migration |
+| `migrate:fresh` | `-force` | Drops all tables and re-runs every migration |
+| `migrate:status` | `-json` | Shows which migrations ran |
+| `db:seed` | `-class Name` (repeatable), `-force` | Runs every seeder, or the named ones in order ([Seeders](/docs/database/factories-seeders)) |
+| `db:wipe` | `-force` | Drops every table |
+| `route:list` | `-json` | Lists the registered routes |
+| `queue:work` | `-queue`, `-concurrency`, `-sleep 1s`, `-once`, `-stop-when-empty` | Processes jobs until stopped ([Queues](/docs/digging-deeper/queue)) |
+| `queue:failed` | `-json` | Lists failed jobs |
+| `queue:retry` | IDs or `all` | Re-queues failed jobs |
+| `queue:forget` | IDs or `all` | Deletes failed jobs |
+| `schedule:run` | none | Runs the tasks due now; call it every minute from cron ([Scheduler](/docs/digging-deeper/scheduler)) |
+| `schedule:work` | none | Runs the scheduler in the foreground |
+| `schedule:list` | none | Lists the tasks and their next run |
+| `cache:prune` | none | Deletes expired database cache entries |
+| `session:prune` | none | Deletes expired database sessions |
+| `openapi:export` | none | Prints the OpenAPI 3.1 document ([OpenAPI](/docs/rest-apis/openapi)) |
+| `codegen:types` | `-zod`, `-o file` | TypeScript types, plus Zod schemas with `-zod` |
+| `codegen:client` | `-lang ts\|go`, `-o file`, `-package apiclient` | A typed API client ([Client generation](/docs/rest-apis/client-generation)) |
+| `codegen:routes` | `-o resources/js/routes.ts` | Typed frontend routes ([Inertia](/docs/frontend/inertia)) |
+| `ssr:start` | `-bundle`, `-runtime node`, `-restart-delay 1s` | Runs the Inertia SSR server and restarts it on crash |
+| `ssr:check` | `-url http://127.0.0.1:13714` | Exits 1 unless the SSR server answers `/health` |
+| `boost:mcp` | none | The MCP server for coding agents, over stdio |
+| `key:generate` | none | Prints a new `APP_KEY`; never writes `.env` |
+| `openapi:serve` | `-addr` | Previews the API reference; only when you register `apidocs.Command()` |
+
+`-o -` prints a codegen result to stdout. `openapi:export` and the three `codegen:*` commands run in **warmup** mode: they register routes but open no database and boot no provider, so `APP_KEY` is optional. Destructive commands (`migrate:reset`, `migrate:fresh`, `db:seed`, `db:wipe`) need `-force` when `APP_ENV=production`. Add your own with `vukem make:command`.
 
 ### `APP_KEY` without the global CLI
 
-Docker images and CI runners usually ship only your compiled binary, not `vukem`. The app's own `key:generate` **prints** a new key and never touches `.env`; it also works before any `APP_KEY` exists, since it runs without booting the app:
+Docker images and CI runners usually ship only your compiled binary. Its own `key:generate` **prints** a key and never touches `.env`. It runs before the app boots, so it works even when no `APP_KEY` exists yet:
 
 ```bash
-./app key:generate                    # base64:...
-export APP_KEY="$(./app key:generate)" # use it in the current shell
-docker run --rm my-app key:generate    # with ENTRYPOINT ["/app"]
+./app key:generate
+export APP_KEY="$(./app key:generate)"
+docker run --rm my-app key:generate
 ```
 
-Only the key goes to stdout; errors and `-h` output go to stderr, so a typo never ends up inside `APP_KEY`. Store the printed value in your secret manager or deployment environment. `vukem key:generate` (global CLI) is the one that writes `.env`.
+Only the key goes to stdout; errors and help go to stderr, so a typo never ends up inside `APP_KEY`. The built-in `key:generate` always wins over an app command with the same name. Note the difference: `vukem key:generate` (the global CLI) writes `.env`, but `vukem` never delegates that name, so use the binary directly to print a key.
 
-The built-in `key:generate` always wins over an app command registered with the same name, because it runs before the app is built.
+## Common mistakes
 
-## `vukem serve`
+**Running a project command outside the project.**
 
-- Builds to a separate file and swaps it in after the old process stops, so it works on Windows where a running `.exe` cannot be overwritten.
-- A failed build prints the compiler errors and keeps the previous version running.
-- Views reload inside the app on every request in development; editing a template needs no rebuild.
-- When a `vite.config.*` exists, `<pm> run dev` runs alongside (disable with `--no-vite`).
-- **Package manager:** `serve`, `build` and `install:inertia` use the one whose lockfile is in the project (`bun.lock` → Bun, `pnpm-lock.yaml` → pnpm, `yarn.lock` → Yarn), else npm. No configuration needed: run `bun install` once and the CLI follows.
+```bash
+# Wrong: in your home folder
+vukem serve
+```
 
-## Exit codes
+```text
+error: no cmd/app in this directory: run vukem inside a Vukem project
+```
 
-| Code | Meaning |
-| --- | --- |
-| `0` | Success |
-| `1` | Failure (the error is printed) |
-| `2` | Usage error: unknown command, missing argument, bad flag |
+Right: `cd blog` first. The same goes for generators (`no go.mod here`).
 
-A delegated app command's exit code is passed through unchanged.
+**Expecting a generator to replace your file.**
 
-<Callout type="info">
-Planned: `stub:publish` (copy the embedded stubs into `stubs/`).
-</Callout>
+```bash
+# Wrong: post.go already exists
+vukem make:model Post
+```
+
+```text
+error: app/models/post.go already exists (use --force to overwrite)
+```
+
+Right: pick a new name, or pass `--force` once you have committed your changes.
+
+**Forgetting the event of a listener.**
+
+```bash
+# Wrong
+vukem make:listener NotifyFollowers
+# Right
+vukem make:listener NotifyFollowers --event PostPublished
+```
+
+The first prints `usage error: --event is required` and exits with code 2.
+
+**Wiping a production database by accident.**
+
+```bash
+# With APP_ENV=production
+vukem migrate:fresh
+```
+
+```text
+refusing to run a destructive command in production without --force
+```
+
+Right: check you are on the server you mean, then run `vukem migrate:fresh -force`. The same guard protects `migrate:reset`, `db:seed` and `db:wipe`.
+
+## Next steps
+
+<CardGroup cols="2">
+<Card title="Directory structure" href="/docs/directory-structure" icon="boxes">
+Where each generated file lives and why.
+</Card>
+<Card title="Application lifecycle" href="/docs/architecture/lifecycle" icon="layers">
+How the app binary boots and runs commands.
+</Card>
+<Card title="Migrations" href="/docs/database/migrations" icon="database">
+Fill the migrations `make:migration` writes.
+</Card>
+<Card title="Single binary" href="/docs/deployment/single-binary" icon="rocket">
+Ship what `vukem build` produces.
+</Card>
+</CardGroup>
+
+Source: [`internal/cli`](https://github.com/AlexGalhardo/vukem/tree/main/internal/cli) and [`cmd/vukem`](https://pkg.go.dev/github.com/AlexGalhardo/vukem/cmd/vukem).

@@ -1,213 +1,588 @@
 ---
 title: Inertia
-description: Build single-page React, Vue or Svelte apps with server-side routing and controllers through Vukem's Inertia v3 adapter.
+description: Build React, Vue or Svelte pages driven by Go routes and controllers with Vukem's Inertia v3 adapter, from props and forms to error pages, asset versioning and SSR.
 ---
 
-Vukem ships its own Inertia v3 adapter in the `inertia` package, with starters for React, Vue and Svelte.
+[Inertia](https://inertiajs.com/) lets you write your pages as React, Vue or Svelte components while routing, controllers, validation and sessions stay in Go. There is no separate API to design: a controller returns a component name and its data, and Inertia's client turns links and forms into fast page swaps. Vukem ships its own adapter for the [Inertia v3 protocol](https://inertiajs.com/docs/v3/core-concepts/the-protocol) in the `inertia` package, plus starters for all three frameworks.
 
-```bash
-vukem new app --inertia react         # or vue, svelte
-vukem install:inertia --force --react # turn an HTMX starter into an Inertia app
-vukem serve                           # Go app with reload + npm run dev
+You will learn:
+
+- how one Go handler answers both the first page load and later Inertia visits;
+- how to send props, and how to make them lazy, deferred, merged or cached;
+- how forms, validation errors, redirects and flash messages flow;
+- how errors become an `Error` page component instead of a raw HTML modal;
+- how asset versioning, history encryption, Precognition and SSR work;
+- how to test pages with `vukemtest`.
+
+## The idea
+
+Picture a theatre. The **stage** (your React, Vue or Svelte app) loads once. After that, each scene change only needs a note from the director: "show the `Posts/Index` scene, with these props". Inertia is the note-passing system, and your Go controller is the director.
+
+| Visit | Request | Your handler returns | The browser gets |
+| --- | --- | --- | --- |
+| First (typed URL, refresh) | plain `GET /posts` | `inertia.Render(c, "Posts/Index", props)` | the root HTML view with the page object inside |
+| Later (an Inertia `<Link>`, a form) | `GET /posts` with `X-Inertia: true` | the same call | the page object as JSON |
+
+The **page object** is a small JSON document:
+
+```json
+{
+  "component": "Posts/Index",
+  "props": { "posts": [{ "id": 1, "title": "Hello" }], "errors": {} },
+  "url": "/posts",
+  "version": "6f1c2a..."
+}
 ```
 
-## Rendering pages
+The client loads `resources/js/pages/Posts/Index.tsx` and renders it with `props`. Your handler never needs to know which kind of visit it is answering.
 
-```go
-func (p *PostController) Index(c *web.Ctx) error {
-	posts, err := p.posts.All(c.Context())
+## Quick start
+
+<Steps>
+<Step title="Create an Inertia app">
+
+```bash
+vukem new blog --inertia react
+cd blog
+vukem serve
+```
+
+Use `vue` or `svelte` for the other frameworks. To convert an existing HTMX starter, run `vukem install:inertia --force --react` (or `--vue`, `--svelte`) inside it.
+
+</Step>
+<Step title="See what the starter wired">
+
+```go title="bootstrap/app.go"
+vukem.WithInertia(inertia.Config{}),
+```
+
+```go title="routes/web.go"
+r.Use(app.Inertia.Middleware, shareProps(app))
+```
+
+`vukem.WithInertia` builds the adapter as `app.Inertia`. The middleware must run on every route that renders a page.
+
+</Step>
+<Step title="Render a page from a controller">
+
+```go title="app/controllers/post_controller.go"
+func (pc *PostController) Index(c *web.Ctx) error {
+	q := orm.QueryOf[models.Post](pc.db).OrderBy("id", orm.Desc)
+	if search := c.Query("q"); search != "" {
+		q = q.Where("title", "LIKE", "%"+search+"%")
+	}
+
+	posts, err := q.Get(c.Context())
 	if err != nil {
 		return err
 	}
 
 	return inertia.Render(c, "Posts/Index", inertia.Props{
 		"posts":   posts,
-		"filters": inertia.Optional(func(ctx context.Context) (any, error) { return loadFilters(ctx) }),
-		"stats":   inertia.Defer(statsFn).Group("sidebar"),
+		"filters": map[string]string{"q": c.Query("q")},
 	})
 }
 ```
 
-The starter wires it for you:
+</Step>
+<Step title="Write the component">
 
-```go
-vukem.WithInertia(inertia.Config{})              // bootstrap/app.go → app.Inertia
-r.Use(app.Inertia.Middleware, shareProps(app))   // routes/web.go: Vary, version check, 302→303, fragment redirects
+The component name is a path under `resources/js/pages`, without the extension.
+
+```tsx title="resources/js/pages/Posts/Index.tsx"
+import { Head, Link } from "@inertiajs/react";
+
+import type { Post } from "../../types";
+
+interface Props {
+  posts: Post[];
+  filters: { q: string };
+}
+
+export default function Index({ posts }: Props) {
+  return (
+    <>
+      <Head title="Posts" />
+      <ul>
+        {posts.map((post) => (
+          <li key={post.id}>
+            <Link href={`/posts/${post.id}`}>{post.title}</Link>
+          </li>
+        ))}
+      </ul>
+    </>
+  );
+}
 ```
 
-`inertia.RenderStatus(c, status, component, props)` renders a page with another status, such as a 404, 410 or 503 error page: the Inertia client shows any response carrying `X-Inertia` as a page. Do not call `c.Status` before `Render`, which commits the headers. Statuses without a body (1xx, 204, 205, 304), redirects and 409 (reserved by the protocol) return an error.
+Open `http://localhost:3000/posts`, then click a post: the second page arrives as JSON, with no full reload.
 
-```go
-return inertia.RenderStatus(c, http.StatusGone, "Errors/Gone", inertia.Props{"reason": "expired"})
+</Step>
+</Steps>
+
+## The pieces of an Inertia app
+
+| File | Role |
+| --- | --- |
+| `resources/views/app.html` | The root view: CSP nonce meta, `{{vite ...}}`, `{{.Head}}` and `{{.Inertia}}` |
+| `resources/js/app.tsx` (`.ts` for Vue and Svelte) | Creates the Inertia app with a default layout and the CSP nonce |
+| `resources/js/pages/` | One component per page; `Error.tsx` renders errors |
+| `resources/js/layouts/AppLayout.tsx` | The default layout (header, flash message) |
+| `resources/js/types.ts` | TypeScript shapes of the props the controllers send |
+| `vite.config.ts` | Vite with Tailwind, the framework plugin, `@inertiajs/vite` and the Vukem plugin |
+
+The root view is a normal `html/template` view. It receives `inertia.RootData`:
+
+```html title="resources/views/app.html"
+{{/* layout: none */}}<!doctype html>
+<html lang="{{or locale "en"}}">
+<head>
+	<meta charset="utf-8">
+	<meta property="csp-nonce" nonce="{{cspNonce}}">
+	{{viteReactRefresh}}
+	{{vite "resources/css/app.css" "resources/js/app.tsx"}}
+	{{.Head}}
+</head>
+<body>
+	{{.Inertia}}
+</body>
+</html>
 ```
 
-### Error pages
+| `RootData` field | Contains |
+| --- | --- |
+| `.Inertia` | `<script data-page="app" type="application/json">` with the page object, then `<div id="app"></div>` (or the SSR body) |
+| `.Head` | Server-rendered `<head>` tags with SSR, empty otherwise |
+| `.Page` | The `*inertia.Page` itself, for custom root views |
 
-Errors returned by handlers on Inertia visits (a 404 "Record not found", a 403, a 500) render the `Error` page component with the props `status`, `title` and `message`, so the client shows a page instead of the raw HTML response in its modal. The starter ships `resources/js/pages/Error.tsx` (`.vue`, `.svelte`). `vukem.WithInertia` installs it (`web.Services.ErrorPage = app.Inertia.ErrorPage`, only when no hook is set yet and before your routes run), so it also covers URLs that match no route.
+Inside the script every `/` is escaped as `\/`, so a prop holding `</script>` can never close the element early.
 
-- `message` is the error's own message for 4xx (`errs.New(404, "Record not found")`) and only the status text for 5xx: causes, SQL and paths never reach the client (CWE-209).
-- A validation error on a `GET` (which is not redirected back) also fills the `errors` prop, first message per field.
-- Full page loads keep the HTML status page, JSON clients get problem+json, and form posts with validation errors still redirect back with the errors.
-- In development a 5xx still shows the debug report (in the Inertia modal).
-- An app without the page breaks on every error of an Inertia visit (the client cannot resolve the component). Add `resources/js/pages/Error.*`, point `inertia.Config{ErrorComponent: "Errors/Show"}` at an existing page, or set `app.Router.Services().ErrorPage = nil` in your routes to keep the HTML page. In development the app logs a warning at boot when `resources/js/pages` has no page for the component.
+`npm run typecheck` checks the pages: `tsc` for React (TypeScript 7), `vue-tsc` for Vue and `svelte-check` for Svelte (both on TypeScript 6.0 until their checkers support 7).
 
-The root view `resources/views/app.html` holds the CSP nonce meta, `{{vite}}`, `{{.Head}}` in `<head>` and `{{.Inertia}}` in `<body>`. The initial page is a `<script data-page="app" type="application/json">` with `/` escaped.
+## What the middleware does
+
+`app.Inertia.Middleware` is standard `func(http.Handler) http.Handler` middleware. On every request it:
+
+1. adds `Vary: X-Inertia`, so caches keep the HTML and the JSON answers apart;
+2. stores per-request state, so `Share`, `EncryptHistory` and `DisableSSR` work later;
+3. checks the asset version on Inertia `GET` requests (see [Asset versioning](#asset-versioning));
+4. rewrites redirects for Inertia requests:
+   - `302` after `PUT`, `PATCH` or `DELETE` becomes `303 See Other`, so the browser follows with `GET` instead of repeating the method;
+   - a redirect to a URL with a `#fragment` becomes `409` with `X-Inertia-Redirect`, because browsers drop the fragment on a `fetch` redirect (prefetch requests keep the plain redirect);
+5. keeps Inertia flash data alive across a redirect that renders no page.
+
+`inertia.Render` without the middleware on the route fails with `inertia: Render needs inertia Middleware on the route` (a `500`).
+
+## Rendering pages
+
+`inertia.Render(c, component, props)` answers `200`. `inertia.RenderStatus(c, status, component, props)` answers another status, for a `404`, `410` or `503` page of your own. The Inertia client shows any response that carries `X-Inertia: true` as a page, whatever its status:
+
+```go title="app/controllers/post_controller.go"
+return inertia.RenderStatus(c, http.StatusGone, "Errors/Gone",
+	inertia.Props{"reason": "expired"})
+```
+
+`RenderStatus` accepts `2xx`, `4xx` and `5xx`, except `204`, `205` and `409`. Those, `1xx` and `3xx` fail with `inertia: RenderStatus cannot answer status 204`, because they have no body or mean something else in the protocol. Do not call `c.Status` before `Render`: it commits the headers.
+
+Every page object carries these fields. Most are filled for you by the prop types below:
+
+| Field | Filled by |
+| --- | --- |
+| `component`, `props`, `url`, `version` | `Render` (`props.errors` is always present) |
+| `sharedProps` | the top-level names of shared props |
+| `deferredProps`, `rescuedProps` | `Defer`, `Rescue` |
+| `mergeProps`, `prependProps`, `deepMergeProps`, `matchPropsOn`, `scrollProps` | `Merge`, `DeepMerge`, `Scroll` and their methods |
+| `onceProps` | `Once` |
+| `flash` | `inertia.Flash` |
+| `encryptHistory`, `clearHistory`, `preserveFragment` | `EncryptHistory`, `ClearHistory`, `PreserveFragment` |
 
 ## Props
 
-| Prop | Behaviour |
-| --- | --- |
-| plain value or `func(ctx) (any, error)` | always sent; functions resolve lazily |
-| `Optional(v)` | only when a partial reload asks for it |
-| `Always(v)` | even when a partial reload excludes it |
-| `Defer(v).Group(g).Rescue()` | loaded after the first render, grouped; `Rescue` keeps the page alive if it fails |
-| `Merge(v)` with `.Append(paths...)` / `.Prepend(paths...)` / `.MatchOn(fields...)`, `DeepMerge(v)` | merged into the client's current value |
-| `Once(v).As(key).Fresh().Until(t)` | sent once and remembered by the client |
-| `Scroll(v, meta)`, `ScrollPage(orm.Page)`, `ScrollCursor(orm.CursorPage, name)` | infinite scrolling |
+`inertia.Props` is a `map[string]any`. Any value that [`encoding/json`](https://pkg.go.dev/encoding/json) can encode works: structs, slices, maps, numbers.
 
-Modifiers chain (`Defer(v).Merge()`, `Merge(v).Once()`). Nested maps resolve recursively, top-level `"a.b"` keys unpack, and partial reloads filter by dotted path (`only`, `except`, `reset`).
+### Lazy values
 
-Shared props: `inertia.Config.Shared` for global ones, `inertia.Share(c.Context(), key, value)` per request. The starters share the auth user and flash messages.
+A value of type `func(context.Context) (any, error)` is a **closure** that runs only when the prop is actually sent. This matters for partial reloads, where most props are skipped:
 
-## Translations (i18n)
-
-`inertia.I18n` sends the [i18n](/docs/digging-deeper/localization) catalog to your components, so Vue and React use the same JSON files as the server:
-
-```go
-locale, err := i18n.Middleware(bundle, i18n.MiddlewareConfig{}) // resolves the locale (cookie, ?lang=, Accept-Language)
-if err != nil {
-	return err
-}
-
-r.Use(
-	locale,
-	in.Middleware,
-	inertia.I18n("ui.", "nav."), // only keys under ui.* and nav.* reach the browser
-)
+```go title="app/controllers/post_controller.go"
+"stats": func(ctx context.Context) (any, error) {
+	return pc.stats(ctx)
+},
 ```
 
-Every page then gets three props:
+An error from the closure fails the whole response, unless the prop is wrapped with `.Rescue()`. A closure may also return one of the prop types below.
 
-| Prop | Example | Notes |
+### Prop types
+
+| Constructor | First visit | Partial reload |
 | --- | --- | --- |
-| `locale` | `"pt-BR"` | the locale resolved for this request |
-| `locales` | `["en", "pt-BR"]` | for a language switcher |
-| `messages` | `{"nav.home": "Início"}` | flat keys, with fallback to the default locale; plural messages are objects (`{"one": "...", "other": "..."}`) |
+| plain value | sent | sent only when requested |
+| `inertia.Optional(v)` | **not** sent | sent only when requested |
+| `inertia.Always(v)` | sent | **always** sent, even when excluded |
+| `inertia.Defer(v)` | not sent; listed in `deferredProps` | the client fetches it right after the page loads |
+| `inertia.Merge(v)` | sent | the client appends it to what it has |
+| `inertia.DeepMerge(v)` | sent | the client merges it deeply |
+| `inertia.Once(v)` | sent once | skipped while the client already has it |
+| `inertia.Scroll(v, meta)` | sent | merged for infinite scrolling |
 
-`messages` is a once prop keyed by locale: the browser downloads the catalog on the first visit and again only when the locale changes.
+A <Term tip="A follow-up Inertia request that asks the server for only some props of the same component, for example router.reload({ only: ['stats'] }).">partial reload</Term> is a visit to the same component with `X-Inertia-Partial-Component` and `X-Inertia-Partial-Data` (or `-Except`) headers.
 
-A small helper is enough on the client. It fills `{name}` placeholders and picks plural forms with `Intl.PluralRules`, like the server's `i18n.T`:
+### Modifiers
 
-```ts
-// resources/js/lib/i18n.ts
-type Message = string | Record<string, string>
+Every constructor returns a `*inertia.Prop`, and its methods refine it. Each method returns the same prop, so they chain:
 
-export function translate(
-	messages: Record<string, Message>,
-	locale: string,
-	key: string,
-	params: Record<string, string | number> = {},
-): string {
-	let msg = messages[key]
-	if (msg === undefined) return key
-	if (typeof msg !== "string") {
-		const n = Number(params.count)
-		msg = (n === 0 && msg.zero) || msg[new Intl.PluralRules(locale).select(n)] || msg.other || key
-	}
-	return msg.replace(/\{(\w+)\}/g, (m, k) => (k in params ? String(params[k]) : m))
-}
-```
-
-```vue
-<!-- Vue -->
-<script setup lang="ts">
-import { usePage } from "@inertiajs/vue3"
-import { translate } from "@/lib/i18n"
-
-const page = usePage()
-const t = (key: string, params = {}) => translate(page.props.messages, page.props.locale, key, params)
-</script>
-
-<template><a href="/">{{ t("nav.home") }}</a></template>
-```
-
-```tsx
-// React
-import { usePage } from "@inertiajs/react"
-import { translate } from "@/lib/i18n"
-
-export function useT() {
-	const { messages, locale } = usePage().props as { messages: Record<string, string>; locale: string }
-	return (key: string, params = {}) => translate(messages, locale, key, params)
-}
-```
-
-To switch language, link to any page with `?lang=pt-BR` (or set the locale cookie) and the next visit carries the new catalog.
-
-## Requests and redirects
-
-| Area | Support |
+| Method | Effect |
 | --- | --- |
-| Version | hash of the Vite manifest; a GET with an old version gets 409 + `X-Inertia-Location` |
-| Partial reloads | `Partial-Component`, `Partial-Data`, `Partial-Except`, `X-Inertia-Reset`, error bags, prefetch (`Purpose: prefetch`) |
-| Redirects | 302 → 303 after PUT/PATCH/DELETE; `inertia.Location(c, url)` forces a full visit (409 for external URLs); `inertia.PreserveFragment(c)` keeps the URL fragment |
-| Validation | errors flashed and `303` back, surfaced as `props.errors` |
-| Flash | `inertia.Flash(c, key, value)` fills `page.flash` once; survives redirects, not consumed by prefetch |
-| History | `Config.EncryptHistory` (needs a secure context) or `inertia.EncryptHistory(ctx, bool)` per page; `inertia.ClearHistory(c)` on logout |
+| `.Group(name)` | Deferred props of the same group load in one request (default group `"default"`) |
+| `.Defer(group)` | Turns a plain prop deferred, in `group` |
+| `.Rescue()` | If resolving fails, omit the prop, list it in `rescuedProps` and log the error, instead of failing the page |
+| `.Merge()` | Append at the root |
+| `.Append(paths...)` | Append, at the root or at nested paths (`"data"`) |
+| `.Prepend(paths...)` | Prepend, at the root or at nested paths |
+| `.DeepMerge()` | Deep merge |
+| `.MatchOn(fields...)` | Fields (`"id"`, `"data.id"`) that identify merged items, so the client updates them in place |
+| `.Once()` | Make the prop a once prop |
+| `.As(key)` | Remember a once prop under `key`, to share it between pages |
+| `.Fresh()` | Send a once prop even when the client has it |
+| `.Until(t)` | Expire a once prop at `t`; the client refreshes it afterwards |
+| `.Wrapper(key)` | Name of a scroll prop's item array (default `"data"`) |
 
-### Precognition
-
-```go
-r.Post("/users", inertia.Precognitive(schema, h))
+```go title="app/controllers/post_controller.go"
+return inertia.Render(c, "Posts/Index", inertia.Props{
+	"posts": posts,
+	"stats": inertia.Defer(pc.statsFn).Group("sidebar").Rescue(),
+	"tags":  inertia.Optional(pc.tagsFn),
+	"categories": inertia.Once(categories).
+		Until(time.Now().Add(time.Hour)),
+})
 ```
 
-`Precognition: true` requests only validate: 204 with `Precognition-Success`, or 422 `{message, errors}` filtered by `Precognition-Validate-Only`. `Vary: Precognition` is always set.
+On the first visit the client receives `posts` and `categories`, sees `"deferredProps": {"sidebar": ["stats"]}`, and fetches `stats` in a second request.
+
+### Infinite scroll
+
+`inertia.ScrollPage(page)` wraps an [`orm.Page`](/docs/rest-apis/pagination) and fills the meta for you (page name `"page"`, previous and next page numbers). `inertia.ScrollCursor(page, "cursor")` does the same for an `orm.CursorPage`. `inertia.Scroll(v, inertia.ScrollMeta{...})` takes the meta by hand: `PageName`, `PreviousPage`, `NextPage` and `CurrentPage`. When the client sends `X-Inertia-Infinite-Scroll-Merge-Intent: prepend`, items are prepended instead of appended.
+
+### Nested props and dotted keys
+
+- Nested `map[string]any` and `inertia.Props` values resolve recursively, so a closure or a prop type inside them works.
+- A top-level key with dots unpacks: `"user.name": "Ana"` becomes `{"user": {"name": "Ana"}}`.
+- Partial reloads filter by dotted path: `only: ["user.name"]` sends just that leaf. The client may also send `X-Inertia-Reset` to stop merging a prop.
+
+## Shared props
+
+Some props belong on every page: the app name, the logged-in user. Share them instead of repeating them in each controller.
+
+- `inertia.Config{Shared: inertia.Props{...}}` holds global ones.
+- `inertia.Share(ctx, key, value)` adds one for the current request, from middleware or a handler, before `Render`.
+
+Page props win over shared props with the same name. The starter's `shareProps` middleware shares the app name:
+
+```go title="routes/web.go"
+func shareProps(app *vukem.App) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(
+			func(w http.ResponseWriter, r *http.Request) {
+				inertia.Share(r.Context(), "appName", app.Config.Name)
+				next.ServeHTTP(w, r)
+			})
+	}
+}
+```
+
+`vukem install:auth` adds `auth.user`. Translations are shared with `inertia.I18n`; see [Inertia and i18n](/docs/frontend/inertia-i18n).
+
+## Forms, validation and flash
+
+Inertia forms send JSON. Your handler parses and validates them like any other request:
+
+```go title="app/controllers/post_controller.go"
+func (pc *PostController) Store(c *web.Ctx) error {
+	in, err := web.Parse(c, requests.PostSchema)
+	if err != nil {
+		return err
+	}
+
+	post := models.Post{Title: in.Title, Body: in.Body}
+	if err := orm.Create(c.Context(), pc.db, &post); err != nil {
+		return err
+	}
+
+	inertia.Flash(c, "success", "Post created.")
+
+	return c.RedirectRoute("posts.show", "post", post.ID)
+}
+```
+
+What happens on invalid input:
+
+1. `web.Parse` returns a validation error.
+2. Because the request is a `POST` (not `GET`) and not htmx, the session's validation hook flashes the errors and old input, and redirects back to the `Referer` (`303`).
+3. The next page's `props.errors` holds the **first message per field**: `{"title": "The title field must be at least 3 characters."}`.
+4. With an `X-Inertia-Error-Bag: createPost` header (`useForm` sets it when you name an error bag), errors are nested: `{"createPost": {"title": "..."}}`.
+
+**Flash data.** `inertia.Flash(c, key, value)` fills the next page's `flash` object, kept out of the client's history state. It survives a redirect, and a prefetch request (`Purpose: prefetch`) reads it without consuming it, so the real visit still shows it. The starter's layout shows `page.flash.success`.
+
+**Redirect helpers.**
+
+| Call | Does |
+| --- | --- |
+| `c.Redirect(url)`, `c.RedirectRoute(name, ...)` | A normal redirect (`303` after unsafe methods) |
+| `c.Back(fallback)` | Back to a same-origin `Referer`, else `fallback` |
+| `inertia.Location(c, url)` | A **full page load**: `409` with `X-Inertia-Location` for Inertia requests, a plain redirect otherwise. Use it for external URLs and non-Inertia pages |
+| `inertia.PreserveFragment(c)` | Keep the current URL's `#fragment` across the redirect that follows |
+
+## Error pages
+
+Before v0.27, an error on an Inertia visit sent an HTML page, and the client showed it inside a modal. Now Vukem renders a page component instead.
+
+When a handler returns an error on an Inertia request (`X-Inertia: true`), the error handler renders `Config.ErrorComponent` (default `"Error"`) with these props:
+
+| Prop | Value |
+| --- | --- |
+| `status` | the HTTP status, such as `404` |
+| `title` | the status text, such as `"Not Found"` (`"Validation failed"` for validation errors) |
+| `message` | for `4xx`, the error's own message (`errs.New(404, "Post not found")` gives `"Post not found"`), else the title; for `5xx`, **only** the status text |
+| `errors` | for a `4xx` validation error that is not redirected back (a `GET`), the first message per field |
+
+The shared props are included too, so the layout still has `appName`. The response carries `Vary: X-Inertia` and `Cache-Control: no-store`.
+
+```json
+{
+  "component": "Error",
+  "props": {
+    "appName": "Blog", "errors": {},
+    "status": 404, "title": "Not Found", "message": "Post not found"
+  },
+  "url": "/posts/99"
+}
+```
+
+The starters ship `resources/js/pages/Error.tsx` (`.vue`, `.svelte`):
+
+```tsx title="resources/js/pages/Error.tsx"
+import { Head, Link } from "@inertiajs/react";
+
+export default function ErrorPage({
+  status,
+  message,
+}: {
+  status: number;
+  message: string;
+}) {
+  return (
+    <>
+      <Head title={`${status} ${message}`} />
+      <p>{status}</p>
+      <h1>{message}</h1>
+      <Link href="/">Back to the home page</Link>
+    </>
+  );
+}
+```
+
+Under the hood: `web.DefaultErrorHandler` calls the `web.Services.ErrorPage` hook with a client-safe `web.ErrorPage` (`Status`, `Title`, `Detail`, `Errors`). `vukem.WithInertia` sets that hook to `app.Inertia.ErrorPage`, only when no hook is set yet, and before your routes run. Because it is a service and not route middleware, it also covers URLs that match no route.
+
+What keeps its old behaviour:
+
+- **Full page loads** (no `X-Inertia`) get the HTML status page, or your `errors/<status>` view.
+- **JSON clients** get `application/problem+json`.
+- **Form posts with validation errors** still redirect back with the errors.
+- **htmx requests** get the htmx error fragment.
+- **In development**, a `5xx` shows the debug report (inside the Inertia modal), so you see the stack trace.
+- If the shared props fail to resolve or encode, the HTML page is sent and the failure is logged.
+
+You may change it:
+
+- `inertia.Config{ErrorComponent: "Errors/Show"}` points at another page.
+- `app.Router.Services().ErrorPage = nil` in your routes keeps the HTML page.
+
+<Callout type="warning" title="Missing Error page">
+An app without the component breaks every error on an Inertia visit: the client cannot resolve the page. Outside production, a web app with `resources/js/pages` but no matching `.tsx`, `.jsx`, `.vue`, `.svelte`, `.ts` or `.js` file logs `inertia error page not found` once at boot.
+</Callout>
+
+## Asset versioning
+
+After a deploy, an open tab still runs the old JavaScript. Inertia fixes this with an **asset version**: a string that changes with every build.
+
+1. `vukem.WithInertia` uses `app.Vite.Version` (a hash of the Vite manifest) when you set no `Config.Version`. Without Vite or a build it is `""`.
+2. Every page object carries `version`, and the client sends it back as `X-Inertia-Version`.
+3. On an Inertia `GET` whose version differs, the middleware answers **`409 Conflict`** with `X-Inertia-Location` (the absolute URL of the request) and the current `X-Inertia-Version`. It keeps the session's flash data for the next request.
+4. The client reacts to the `409` with a full page load, which fetches the new assets.
+
+Only `GET` requests are checked, so a form submission is never lost to a version change.
+
+## History encryption
+
+The browser keeps each page's props in its history, so the Back button can show them without a request. On a shared computer that is a privacy risk after logout.
+
+- `inertia.Config{EncryptHistory: true}` encrypts every page's history state on the client. It needs a [secure context](https://developer.mozilla.org/docs/Web/Security/Secure_Contexts) (HTTPS or `localhost`).
+- `inertia.EncryptHistory(ctx, on)` turns it on or off for one page, overriding the config.
+- `inertia.ClearHistory(c)` makes the next rendered page (after the redirect) rotate the encryption key, so old entries become unreadable. Call it on logout; `install:auth` does.
+
+## Precognition
+
+Precognition is live validation: the form asks the server "would this be valid?" while the user types, without saving anything.
+
+```go title="routes/web.go"
+posts := controllers.NewPostController(db)
+
+r.Resource("posts", posts).Except("store")
+r.Post("/posts", inertia.Precognitive(requests.PostSchema, posts.Store)).
+	Name("posts.store")
+```
+
+`Except("store")` keeps the resource from registering `POST /posts` a second time.
+
+| Request | Answer |
+| --- | --- |
+| `Precognition: true`, valid input | `204` with `Precognition: true` and `Precognition-Success: true`; the handler does not run |
+| `Precognition: true`, invalid input | `422` with `{"message": "...", "errors": {"title": ["..."]}}` |
+| `Precognition-Validate-Only: title,body` | the same, with only those fields (and their nested `title.*` paths) |
+| no `Precognition` header | the wrapped handler runs and parses the input itself |
+
+`Vary: Precognition` is always set. An error that is not a validation error is returned as usual.
 
 ## Server-side rendering
 
-```go
-inertia.Config{SSR: &inertia.SSRConfig{Bundle: "bootstrap/ssr/ssr.js"}}
+With SSR, the server sends the rendered HTML in the first response, so the page shows before JavaScript loads and search engines see content. It is **off** by default.
+
+```go title="bootstrap/app.go"
+vukem.WithInertia(inertia.Config{
+	SSR: &inertia.SSRConfig{Bundle: "bootstrap/ssr/ssr.js"},
+}),
 ```
 
-- Pages are POSTed to the Node SSR server (`/render`, default `127.0.0.1:13714`, 3s timeout). Any failure **falls back to client-side rendering** and is reported to `OnFailure` (a warning log by default).
-- In development the Vite plugin endpoint (`{hot}/__inertia_ssr`) is used.
-- `Except` path prefixes and `inertia.DisableSSR(ctx)` skip SSR per request.
-- `vukem ssr:start` runs `node bootstrap/ssr/ssr.js` and restarts it when it crashes; `vukem ssr:check` probes `/health`.
+On a first visit, the adapter POSTs the page object to the Node SSR server and puts the returned `head` and `body` in `.Head` and `.Inertia`. **Any** failure (server down, timeout, render error, empty body) falls back to client-side rendering, so SSR can never take a page down.
 
-SSR is off by default.
+| `SSRConfig` field | Default | Meaning |
+| --- | --- | --- |
+| `URL` | `inertia.DefaultSSRURL` (`http://127.0.0.1:13714`) | Production SSR server; pages go to `URL + "/render"` |
+| `HotURL` | `app.Vite.HotURL` (set by `WithInertia`) | While the dev server runs, renders go to `<hot>/__inertia_ssr` |
+| `Bundle` | `""` | When set, SSR is skipped while this file is missing (before the first build) |
+| `Timeout` | `3s` | Bounds each render and health check |
+| `Except` | none | Path prefixes always rendered on the client |
+| `Client` | an `http.Client` with `Timeout` | Sends the requests |
+| `OnFailure` | a warning log | Receives an `inertia.SSRError` for each failed render |
+
+`inertia.SSRError` has `Error`, `Type` (`"connection"`, `"render"`, `"browser-api"` or `"component-resolution"`), `Hint`, `BrowserAPI`, `Stack`, `SourceLocation`, `Component` and `URL`.
+
+- `inertia.DisableSSR(ctx)` renders one request on the client.
+- `app.Inertia.SSRHealthy(ctx)` checks the server's `/health` endpoint.
+- `vukem ssr:start` runs `node bootstrap/ssr/ssr.js` and restarts it after a crash (flags `-bundle`, `-runtime`, `-restart-delay`, default `1s`).
+- `vukem ssr:check` probes `/health` (flag `-url`) and exits with an error if it does not answer `200`.
+
+## Configuration
+
+| `inertia.Config` field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `RootView` | `string` | `"app"` | View rendered on first visits |
+| `RootID` | `string` | `"app"` | Id of the mount element; quotes, `<`, `>`, `&` and spaces are rejected |
+| `Version` | `func() string` | `app.Vite.Version` with `WithVite`, else none | Current asset version |
+| `Shared` | `inertia.Props` | none | Props added to every page |
+| `EncryptHistory` | `bool` | `false` | Encrypt history state on every page |
+| `SSR` | `*inertia.SSRConfig` | `nil` (off) | Server-side rendering |
+| `ErrorComponent` | `string` | `"Error"` | Page rendered for errors on Inertia visits |
+
+Other helpers: `inertia.IsInertia(r)` and `inertia.IsPrefetch(r)` read the request, `app.Inertia.Version()` returns the current version, and the protocol header names are exported as constants (`inertia.HeaderInertia`, `inertia.HeaderVersion`, `inertia.HeaderLocation`, ...).
 
 ## Typed routes
 
-```bash
-vukem codegen:routes            # resources/js/routes.ts (-o file, -o - for stdout)
+`vukem codegen:routes` writes `resources/js/routes.ts` with every **named** route, so components build URLs with type checks instead of string concatenation:
+
+```ts title="resources/js/pages/Posts/Index.tsx"
+import { route } from "../../routes";
+
+route("posts.show", { post: 7 }); // "/posts/7"
+route("posts.index"); // routes without params take no object
 ```
 
-```ts
-import { route, routes, type RouteName } from "./routes";
+Params are required and typed per route, encoded with `encodeURIComponent`. An optional second object becomes the query string. `-o file` writes elsewhere and `-o -` prints to stdout. The command builds the app in warmup mode (no `Boot`, no database connection), so register routes in `Register` or `WithRoutes`. Regenerate after changing routes and commit the file.
 
-route("posts.show", { id: 7 });                     // "/posts/7"
-route("files.show", { path: "a b/c" }, { page: 2 }); // "/files/a%20b/c?page=2"
-routes["posts.store"].method;                       // "POST"
-```
+## Security
 
-The command boots the app in warmup mode (config and route definitions, no `Boot`, no connections) and writes only named routes. Params are typed per route; regenerate after changing routes and commit the file. For typed API calls, see [client generation](/docs/rest-apis/client-generation).
+What Vukem does by default:
+
+- The page object script escapes `/`, so prop data cannot break out of the `<script>` element.
+- `5xx` error pages carry only the status text: causes, SQL and file paths never reach the client ([CWE-209](https://cwe.mitre.org/data/definitions/209.html)).
+- Error pages and Inertia JSON vary on `X-Inertia`; error pages are `no-store`.
+- The starter passes the CSP nonce to `createInertiaApp`, so the progress bar styles run under the default CSP.
+- CSRF protection applies to Inertia requests like any other: `CrossOriginProtection` checks `Sec-Fetch-Site`.
+
+What stays your job:
+
+- **Every prop is public.** Anything you put in props is in the page source or the JSON. Never send password hashes, tokens or other users' data; shape props explicitly.
+- Authorize every controller action. A component that hides a button does not stop the request.
+- Use `inertia.ClearHistory` on logout, and consider `EncryptHistory` for apps with sensitive pages.
+
+See [Security](/docs/security/overview).
 
 ## Testing
 
-```go
-app.Client(t).Inertia("").Get("/posts").
-	AssertInertia("Posts/Index").
-	HasProp("posts", 3).
-	MissingProp("stats").
-	PropEquals("filters.q", "go")
+`Client.Inertia(version)` sends `X-Inertia: true`, an HTML `Accept` header, `X-Requested-With` and `X-Inertia-Version`. An empty version means the app's current version, so tests keep passing after a build:
+
+```go title="tests/posts_test.go"
+func TestPostsIndex(t *testing.T) {
+	t.Parallel()
+
+	app := vukemtest.New(t, bootstrap.New)
+	c := app.Client(t).Inertia("")
+
+	c.PostJSON("/posts", map[string]any{"title": "Hello Vukem"}).
+		AssertRedirect("/posts/1").
+		AssertFlash("success", "Post created.")
+
+	c.Get("/posts/1").
+		AssertInertia("Posts/Show").
+		PropEquals("post.title", "Hello Vukem").
+		FlashEquals("success", "Post created.")
+
+	c.Get("/posts?q=nothing").
+		AssertInertia("Posts/Index").
+		HasProp("posts", 0).
+		PropEquals("filters.q", "nothing")
+}
 ```
 
-Flash data (`inertia.Flash`) lives in `page.flash`, not in props. `FlashEquals(key, v)` / `MissingFlash(key)` on the page read only `page.flash`. `AssertFlash(key, v)` / `AssertNoFlash(key)` on any response also look in the session, so they work before the redirect is followed:
+| Method | Checks |
+| --- | --- |
+| `AssertInertia(component)` | the response renders `component`, as JSON or inside a first-visit HTML page; returns an `*InertiaPage` |
+| `HasProp(path)`, `HasProp(path, n)` | the dotted path exists (and is a list or object of `n` items) |
+| `MissingProp(path)` | the path does not exist |
+| `PropEquals(path, want)` | the value equals `want`, compared after a JSON round trip |
+| `FlashEquals(key, want)`, `MissingFlash(key)` | the page's `flash` object only |
+| `Prop(path)`, `Page()` | the raw value, for your own checks |
+| `AssertFlash(key, want)`, `AssertNoFlash(key)` | on any response: the page's `flash` **or** the session, so they work before the redirect is followed |
+
+`Inertia("stale")` tests the `409` version reload: `c.Get("/posts").AssertStatus(409)`. The [Testing](/docs/testing/overview) page covers the rest of the client.
+
+## Common mistakes
+
+**No middleware on the route.**
 
 ```go
-c := app.Client(t).Inertia("")
-c.PostJSON("/posts", form).AssertRedirect("/posts").AssertFlash("status", "Post saved.")
-c.Get("/posts").AssertInertia("Posts/Index").FlashEquals("status", "Post saved.")
+// Wrong: Render fails with
+// "inertia: Render needs inertia Middleware on the route".
+r.Get("/posts", posts.Index)
+
+// Right: the middleware runs before every page route.
+r.Use(app.Inertia.Middleware)
+r.Get("/posts", posts.Index)
 ```
 
-Works on first visits (HTML) and Inertia visits (JSON). `Inertia("")` sends the app's current asset version, so tests keep passing after `bun run build`; pass any other value (`Inertia("stale")`) to test the 409 version-mismatch reload. `Inertia(version)` also sends the Inertia `Accept` header, so `PostJSON` behaves like a form submission.
+**Redirecting to another site with `c.Redirect`.** The Inertia client follows redirects with `fetch` and cannot load a foreign page. Use `inertia.Location(c, "https://example.com/pay")`.
+
+**Calling `RenderStatus` with `204`.** It fails with `inertia: RenderStatus cannot answer status 204`. To answer "no content", use `c.NoContent()` without Inertia.
+
+**Deleting `Error.tsx`.** Errors on Inertia visits then render nothing. Keep the page, or set `ErrorComponent` or `ErrorPage = nil` as shown above.
+
+## Next steps
+
+<CardGroup cols="2">
+<Card title="Inertia and i18n" href="/docs/frontend/inertia-i18n" icon="book">Translate pages from the server's catalogs.</Card>
+<Card title="Vite" href="/docs/frontend/vite" icon="zap">Asset tags, the dev server and the build.</Card>
+<Card title="Validation" href="/docs/basics/validation" icon="shield">Schemas behind `web.Parse` and Precognition.</Card>
+<Card title="Authentication" href="/docs/security/authentication" icon="lock">`install:auth` pages for Inertia apps.</Card>
+</CardGroup>
+
+Package reference: [pkg.go.dev/github.com/AlexGalhardo/vukem/inertia](https://pkg.go.dev/github.com/AlexGalhardo/vukem/inertia).

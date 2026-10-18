@@ -1,48 +1,331 @@
 ---
 title: Vite
-description: Asset tags for the Vite dev server and production manifest, with CSP nonces, SRI, React Refresh and immutable caching.
+description: Load CSS and JavaScript built by Vite, from the dev server while you work and from the build manifest in production, with CSP nonces, SRI and long-lived caching.
 ---
 
-Every starter ships Vite 8 and Tailwind CSS v4 preconfigured. The Go side is the `vite` package, enabled with `vukem.WithVite`:
+[Vite](https://vite.dev/) is the tool that turns your CSS and TypeScript into files a browser can load, and reloads the page while you edit them. Every Vukem starter except the API one ships Vite 8 and [Tailwind CSS v4](https://tailwindcss.com/) preconfigured. The Go side is the `vite` package: it writes the right `<script>` and `<link>` tags into your pages, both in development and in production.
+
+You will learn:
+
+- how the "hot file" and the build manifest decide which tags you get;
+- what the `vite`, `viteReactRefresh` and `asset` view functions render;
+- how assets are embedded, versioned and cached in production;
+- how CSP nonces and Subresource Integrity protect the tags;
+- how to use Vite from templ components and plain handlers.
+
+## The idea
+
+Your browser cannot load `resources/js/app.ts` directly: it needs JavaScript, and in production it should get small, fingerprinted files. Vite does that work, but the Go app must know **where** the files are at any moment.
+
+Think of a restaurant menu. While the kitchen is open (development), the waiter sends you straight to the chef: the Vite dev server. When the restaurant closes for the night (production), you order from a printed menu: the manifest that `vite build` wrote. Vukem checks which situation it is in on every page.
+
+| Situation | What `{{vite ...}}` renders |
+| --- | --- |
+| Not production, and `resources/public/hot` exists | Tags that load `@vite/client` and each entry from the dev server |
+| Otherwise, a build exists | Tags read from `resources/public/build/.vite/manifest.json` |
+| No dev server, no build, not production | An HTML comment, so `go test` works without Node |
+| No dev server, no build, production | An error: the page fails to render |
+
+This is the "hot file" model from [Laravel's Vite integration](https://laravel.com/docs/vite). The hot file is a one-line text file holding the dev server URL, such as `http://localhost:5173`.
+
+## Quick start
+
+<Steps>
+<Step title="Create an app">
+
+```bash
+vukem new blog
+cd blog
+```
+
+`vukem new` installs the frontend dependencies for you, with npm unless you pass `--pm bun`, `pnpm` or `yarn`. Run the install by hand if you passed `--no-install`.
+
+</Step>
+<Step title="Enable Vite in the bootstrap">
+
+The starter already does this. `resources.Public()` is the public directory: files on disk in development, the embedded copy in the binary.
 
 ```go title="bootstrap/app.go"
-vukem.WithVite(resources.Public()) // or os.DirFS("resources/public"); app.Vite
+base := []vukem.Option{
+	// ...providers, migrations, seeders...
+	vukem.WithViews(resources.Views()),
+	vukem.WithVite(resources.Public()),
+}
 ```
+
+</Step>
+<Step title="Load the entries in the layout">
 
 ```html title="resources/views/layouts/app.html"
-<meta property="csp-nonce" content="{{cspNonce}}">
-{{ vite "resources/css/app.css" "resources/js/app.ts" }}
+<meta property="csp-nonce" nonce="{{cspNonce}}">
+{{htmxScript (asset "js/htmx.min.js")}}
+{{vite "resources/css/app.css" "resources/js/app.ts"}}
 ```
 
-## Dev server and manifest
+</Step>
+<Step title="Run the app">
 
-| Situation | `vite` renders |
+```bash
+vukem serve
+```
+
+`vukem serve` starts the Go app with reload **and** `npm run dev`. The page source now shows:
+
+```html
+<script type="module" src="http://localhost:5173/@vite/client"
+  nonce="..."></script>
+<link rel="stylesheet" href="http://localhost:5173/resources/css/app.css"
+  nonce="...">
+<script type="module" src="http://localhost:5173/resources/js/app.ts"
+  nonce="..."></script>
+```
+
+Edit `resources/css/app.css` and the browser updates without a reload.
+
+</Step>
+</Steps>
+
+## The files the starter ships
+
+| File | Role |
 | --- | --- |
-| `public/hot` exists and the app is not in production | `<script type="module" src="{hot}/@vite/client">` plus each entry (CSS entries as `<link rel="stylesheet">`) |
-| otherwise | tags read from `public/build/.vite/manifest.json`: `modulepreload` links for recursive static imports, stylesheets for entry and imported CSS, then the module script; each file once across entries |
-| neither, in development | an HTML comment, so Go tests need no Node |
-| neither, in production | an error |
+| `package.json` | `dev` (`vite`) and `build` (`vite build`) scripts; pinned `vite`, `tailwindcss` and `@tailwindcss/vite` |
+| `vite.config.ts` | Loads the Tailwind plugin and the Vukem plugin with the two entries |
+| `resources/vite/vukem.js` | The Vukem Vite plugin (your code: edit it freely) |
+| `resources/css/app.css` | `@import "tailwindcss"` plus the starter styles |
+| `resources/js/app.ts` | Your scripts (the HTMX starter puts the upload progress code here) |
 
-- The starter's plugin `resources/vite/vukem.js` writes `public/hot` with the dev server URL on start and deletes it on exit. The hot file must hold an `http(s)` URL and is ignored in production.
-- The manifest is cached in production and re-read in development.
-- `{{ viteReactRefresh }}` emits the React Refresh preamble while the dev server runs (empty otherwise).
-- `{{ asset "resources/img/logo.png" }}` resolves through the dev server or the manifest when Vite knows the file, else falls back to the public path. Files that exist in the public directory (a vendored `js/htmx.min.js`) always use the public path, also while the dev server runs, because the app serves them and the dev server does not.
+```ts title="vite.config.ts"
+import tailwindcss from "@tailwindcss/vite";
+import { defineConfig } from "vite";
+
+import vukem from "./resources/vite/vukem.js";
+
+export default defineConfig({
+  plugins: [
+    tailwindcss(),
+    vukem({ input: ["resources/css/app.css", "resources/js/app.ts"] }),
+  ],
+});
+```
+
+The plugin takes three options:
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `input` | required | Entry files (a string or an array) |
+| `publicDir` | `"resources/public"` | The directory the Go app serves |
+| `buildDir` | `"build"` | The build folder inside `publicDir`, also the URL prefix |
+
+What the plugin does:
+
+- On `vite build` it writes to `resources/public/build`, with `manifest: true` and `base: "/build/"`, and empties the folder first.
+- On `vite` (dev) it writes `resources/public/hot` with the server URL once the server listens, and deletes it on exit (`SIGINT`, `SIGTERM`, `SIGHUP`).
+- It turns Vite's own `publicDir` off. The Go app serves `resources/public`; the dev server does not.
+- It rewrites asset URLs inside CSS and JS to point at the dev server.
+
+`vukem serve` also deletes a stale hot file when the dev server exits. On Windows a killed process cannot clean up, and a stale file would point every page at a dead server.
+
+## The view functions
+
+### `vite`
+
+`{{vite "entry" ...}}` takes one or more entries. An entry is the **source path** of the file, the same string as in `input`: `"resources/js/app.ts"`, not `"/build/assets/app-3f9a.js"`.
+
+From the manifest it renders, in this order:
+
+1. a `<link rel="modulepreload">` for every chunk the entries import **statically**, followed recursively (dynamic `import()` chunks are not preloaded);
+2. a `<link rel="stylesheet">` for the CSS of each entry and its imports;
+3. a `<link rel="stylesheet">` or `<script type="module">` for each entry itself.
+
+Each file appears **once**, even when two entries share a chunk. A CSS entry (`.css`, `.scss`, `.sass`, `.less`, `.styl`, `.stylus`, `.pcss`, `.postcss`) becomes a stylesheet, anything else a module script. An entry missing from the manifest is an error: `vite: entry "resources/js/admin.ts" not in manifest`.
+
+A production page looks like this:
+
+```html
+<link rel="modulepreload" href="/build/assets/vendor-2.js" nonce="...">
+<link rel="stylesheet" href="/build/assets/app-7.css" nonce="...">
+<script type="module" src="/build/assets/app-1.js" nonce="..."></script>
+```
+
+### `viteReactRefresh`
+
+`{{viteReactRefresh}}` renders the [React Refresh](https://github.com/vitejs/vite-plugin-react) preamble while the dev server runs, and nothing otherwise. Place it **before** `{{vite ...}}` in React apps; the Inertia React starter does.
+
+### `asset`
+
+`{{asset "resources/img/logo.png"}}` returns a URL for a file:
+
+1. While the dev server runs, files Vite processes resolve to the dev server (`http://localhost:5173/resources/img/logo.png`).
+2. With a build, files listed in the manifest resolve to their fingerprinted name (`/build/assets/logo-8.png`).
+3. Anything else falls back to the public path (`/resources/img/logo.png`).
+
+A file that exists in the public directory, such as the vendored `js/htmx.min.js`, always uses the public path (`/js/htmx.min.js`), even while the dev server runs. The app serves that file; the dev server does not.
+
+## Production
+
+`vukem build` runs `vite build` and then `go build`, so the binary contains the assets:
+
+```bash
+vukem build
+# built bin/app
+```
+
+Step by step:
+
+1. If the project has `.templ` files, it runs `go tool templ generate`.
+2. If it has a `vite.config.ts`, `.js` or `.mjs`, it checks for `node_modules` and stops with `frontend dependencies missing: run npm install first` when it is missing.
+3. It runs `vite build` through your package manager (`npm exec -- vite build`, `bun x vite build`, `pnpm exec` or `yarn exec`, chosen from the lockfile: `bun.lock`, `bun.lockb`, `pnpm-lock.yaml`, `yarn.lock`, `package-lock.json`, else npm).
+4. It runs `go build -trimpath -ldflags="-s -w"` into `bin/app` (`-o` changes the path).
+
+`resources/resources.go` embeds the output with `//go:embed views all:public`. The `all:` prefix matters: without it Go skips dot directories, and `build/.vite/manifest.json` would be missing from the binary. See [`embed`](https://pkg.go.dev/embed) for the rules.
+
+With `APP_ENV=production` in the process environment, `resources.Public()` always uses the embedded files, even when a `resources/` directory sits next to the binary.
+
+What changes in production:
+
+- The hot file is **ignored**, so a stray `hot` file cannot point users at a dev server.
+- The manifest is read once and cached. Outside production it is re-read on every call, so a rebuild shows up without a restart.
+- `vukem.WithVite` sets `Dev` to "not production" (`APP_ENV`).
+
+### Caching
+
+The static middleware serves files under `/build/` with `Cache-Control: public, max-age=31536000, immutable`. Fingerprinted names (such as `app-3f9a1c2b.js`) get the same header anywhere. Every other file gets `public, max-age=0, must-revalidate`. Because each build changes the file names, browsers keep old files forever and still pick up new builds at once.
+
+Dot segments are never served, so `/build/.vite/manifest.json` answers `404`.
+
+### The asset version
+
+`app.Vite.Version()` returns a hash of the manifest (32 hex characters) that changes with every build, or `""` without a manifest. [Inertia](/docs/frontend/inertia) uses it as its asset version, so open tabs reload after a deploy.
 
 ## Security
 
-- Every tag carries the request's CSP nonce. Outside production the CSP allows the running dev server (`SecureHeadersConfig.DevServer`), and the `csp-nonce` meta lets Vite give its injected styles the nonce.
-- Manifest `integrity` values (for example from `vite-plugin-manifest-sri`) become SRI attributes.
-- `/build/*` is served with immutable cache headers.
+- **CSP nonces.** Every tag carries the request's nonce, so the scripts run under the default nonce-only Content-Security-Policy. The `<meta property="csp-nonce" nonce="...">` tag lets Vite add the same nonce to the `<style>` tags it injects in development.
+- **Dev server in the CSP.** Outside production, while the hot file exists, Vukem adds the dev server origin to `script-src`, `style-src`, `img-src`, `font-src` and `connect-src` (plus its `ws://` form for hot reload). In production this never happens.
+- **Hot file validation.** The hot file must hold a bare `http` or `https` URL. Anything else (quotes, `<`, `>`, spaces, another scheme) fails with `vite: hot file holds "...", want an http(s) URL`, so the file cannot inject markup or CSP directives.
+- **Subresource Integrity.** When a manifest chunk has an `integrity` value (a plugin such as `vite-plugin-manifest-sri` adds them), the tag gets an `integrity="sha384-..."` attribute. The browser then refuses a file that was changed after the build.
+
+See [Security headers](/docs/security/security-headers) for the CSP itself.
 
 ## templ and plain handlers
 
-Components and handlers without the view engine use the instance in the context: `r.Use(app.Vite.Middleware())`, then `vite.FromContext(ctx).Tags(nonce, entries...)`. The [templ starter](/docs/starters#templ) wraps it in a `viteTags` helper.
+The view functions read Vite from the view engine. Components that render without it, such as [templ](https://templ.guide/) components, read it from the request [context](https://pkg.go.dev/context):
 
-## Commands
-
-```bash
-vukem serve   # Go app with reload, plus npm run dev when vite.config.* exists (--no-vite to skip)
-vukem build   # vite build into resources/public/build, then go build with the assets embedded
+```go title="routes/web.go"
+r.Use(app.Vite.Middleware())
 ```
 
-`vukem build` refuses to run without `node_modules`; run `npm install` first.
+`Middleware` stores `app.Vite` in every request context. A component then calls `vite.FromContext(ctx)`, which returns the `*vite.Vite` or `nil`:
+
+```go title="resources/views/helpers.go"
+func viteTags(entries ...string) templ.Component {
+	return templ.ComponentFunc(
+		func(ctx context.Context, w io.Writer) error {
+			v := vite.FromContext(ctx)
+			if v == nil {
+				return errors.New("views: no Vite in the context")
+			}
+
+			nonce := middleware.CSPNonce(ctx)
+
+			tags, err := v.Tags(nonce, entries...)
+			if err != nil {
+				return err
+			}
+
+			_, err = io.WriteString(w, string(tags))
+
+			return err
+		})
+}
+```
+
+The [templ starter](/docs/starters) ships this helper. `vite.NewContext(ctx, v)` stores a `*vite.Vite` in a context by hand.
+
+## Configuration
+
+`vukem.WithVite(fsys)` builds the instance for you. Build one yourself with `vite.New(vite.Config{...})`; it fails with `vite: Config.FS is required` without `FS`.
+
+| `vite.Config` field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `FS` | `fs.FS` | required | The public directory holding `hot` and the build folder |
+| `Dev` | `bool` | `false` | Honour the hot file and re-read the manifest on every call |
+| `BuildDir` | `string` | `"build"` | Build folder inside `FS` and URL prefix of built files |
+
+| `*vite.Vite` method | Returns |
+| --- | --- |
+| `Tags(nonce, entries...)` | The tags for `entries` (`template.HTML`) or an error |
+| `ReactRefresh(nonce)` | The React Refresh preamble, or `""` without a dev server |
+| `Asset(path)` | The URL of a file Vite knows, and `false` otherwise |
+| `HotURL()` | The dev server URL, or `""` (production, no hot file, invalid file) |
+| `Version()` | The manifest hash, or `""` |
+| `Middleware()` | Middleware that stores the instance in the request context |
+
+`vukem serve --no-vite` starts only the Go app, for when you run `npm run dev` in another terminal.
+
+## Testing
+
+You do not need Node to test pages. Without a dev server and a build, `{{vite ...}}` renders `<!-- vite: no dev server and no build; run npm run dev -->` outside production, and the page renders normally. The HTMX starter's `TestLayoutLoadsHTMXBeforeVite` relies on this.
+
+To test the `vite` package itself, give it an in-memory file system with [`testing/fstest`](https://pkg.go.dev/testing/fstest):
+
+```go title="vite_test.go"
+func TestTags(t *testing.T) {
+	public := fstest.MapFS{
+		"build/.vite/manifest.json": {Data: []byte(`{
+  "resources/js/app.ts": {"file": "assets/app-1.js", "isEntry": true}
+}`)},
+	}
+
+	v, err := vite.New(vite.Config{FS: public})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tags, err := v.Tags("n0nce", "resources/js/app.ts")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := `<script type="module" src="/build/assets/app-1.js"` +
+		` nonce="n0nce"></script>` + "\n"
+	if string(tags) != want {
+		t.Errorf("Tags() = %q, want %q", tags, want)
+	}
+}
+```
+
+## Common mistakes
+
+**Running `vukem build` before installing dependencies.**
+
+```text
+frontend dependencies missing: run npm install first
+```
+
+Run the install command it names, then build again.
+
+**Deploying without a build.** In production, a missing manifest makes every page that calls `{{vite}}` fail with `vite: read manifest (run vite build): open build/.vite/manifest.json: file does not exist`. Build with `vukem build` (or run `vite build` in your Dockerfile) before `go build`.
+
+**Passing the built file name.**
+
+```html
+<!-- Wrong: a build path is not a manifest key. -->
+{{vite "/build/assets/app-1.js"}}
+
+<!-- Right: the source path, as in vite.config.ts. -->
+{{vite "resources/js/app.ts"}}
+```
+
+**Embedding without `all:`.** `//go:embed public` drops `public/build/.vite`, so the binary has assets but no manifest, and production pages fail as above.
+
+## Next steps
+
+<CardGroup cols="2">
+<Card title="HTMX" href="/docs/frontend/htmx" icon="zap">Server-rendered pages that update in place.</Card>
+<Card title="Inertia" href="/docs/frontend/inertia" icon="layers">React, Vue or Svelte pages driven by Go.</Card>
+<Card title="Single binary" href="/docs/deployment/single-binary" icon="rocket">Ship the app and its assets as one file.</Card>
+<Card title="CLI" href="/docs/cli/overview" icon="terminal">Every flag of `vukem serve` and `vukem build`.</Card>
+</CardGroup>
+
+Package reference: [pkg.go.dev/github.com/AlexGalhardo/vukem/vite](https://pkg.go.dev/github.com/AlexGalhardo/vukem/vite).

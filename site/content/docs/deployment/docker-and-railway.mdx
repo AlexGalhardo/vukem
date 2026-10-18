@@ -1,95 +1,252 @@
 ---
 title: Docker and Railway
-description: Build the starter's Dockerfile, run it anywhere, and deploy it on Railway with Postgres, Redis or MongoDB, a healthcheck and trusted proxies.
+description: Build the starter's Dockerfile, run it anywhere, configure production through the environment and deploy it on Railway with a database, a healthcheck, trusted proxies, HTTP mail and tracing.
 ---
 
-Every project made by `vukem new` has a production `Dockerfile` and a `.dockerignore` at its root. The image is the same everywhere: plain Docker, Railway, Fly or Render.
+Every project made by `vukem new` ships a production `Dockerfile` and a `.dockerignore` at its root. You build one image and run it unchanged on plain Docker, Railway, Fly or Render. This page walks through that image, every environment variable that matters in production, and a complete Railway deploy of a blog called `blog`.
 
-## The starter image
+You will learn:
 
-The `Dockerfile` has up to three stages:
+- what each stage of the starter's `Dockerfile` does, and why the final image holds a single file;
+- how to build, run and health-check the image on your own machine;
+- which environment variables configure production, and which mistakes stop the app at boot;
+- how trusted proxies give you the real client IP behind a load balancer;
+- how to deploy on Railway with PostgreSQL, a healthcheck, migrations, HTTP mail and tracing.
 
-| Stage | Image | What it does |
-| --- | --- | --- |
-| `assets` (not in `--api` projects) | `node:24.22.0-alpine3.24`, or `oven/bun:1.4.3-alpine` with `--pm bun` | installs dependencies from the lockfile (`npm ci`, `bun install --frozen-lockfile`, `pnpm`/`yarn` through corepack) and runs `vite build` |
-| `build` | `golang:1.27.2-alpine3.24` | `go mod download`, `templ generate` in `--templ` projects, copies `resources/public/build` from `assets`, then `CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -tags <.buildtags> ./cmd/app` (the same tags as `vukem build`; `--minimal` apps leave SQLite out with `vukem_nosqlite`) |
-| runtime | `alpine:3.24.2` | the binary at `/app/app`, CA certificates and time zones, a non-root `app` user (uid 10001), a writable `/app/storage` |
+## The idea
 
-The runtime sets `APP_ENV=production`, `HOST=0.0.0.0` (the default `localhost` is unreachable from outside a container), `PORT=3000` and `LOG_FORMAT=json`. Views and assets are embedded in the binary, so the image holds one file. `.dockerignore` keeps `.env` and `.env.*`, `node_modules`, `.git`, `bin/` and `storage/` out of the build context: secrets reach the container through its environment only.
+A <Term tip="A read-only bundle of files and settings: your program plus everything it needs to run.">container image</Term> is like a lunch box packed at home. Everything the app needs goes inside once, and wherever you open it (your laptop, a server, a cloud platform), you get the same lunch. A <Term tip="A running copy of an image, isolated from other processes on the same machine.">container</Term> is the lunch box opened and in use.
 
-<Callout type="warning">
-Commit the lockfile (`package-lock.json`, `bun.lock`, `pnpm-lock.yaml` or `yarn.lock`): the image installs from it and fails without it. A project created with `vukem new --framework <path>` points `go.mod` at a local checkout with a `replace` directive; remove it (`go get github.com/AlexGalhardo/vukem@<version>`) before building an image.
-</Callout>
+Go fits this well. The [`go build`](https://pkg.go.dev/cmd/go#hdr-Compile_packages_and_dependencies) command turns your whole program into one executable file, and Vukem's starter puts the HTML views and the CSS and JavaScript inside that file with [`//go:embed`](https://pkg.go.dev/embed). So the final image only needs that one file, plus the certificates and time zone data every Go program wants.
 
-## Run it with Docker
+The app never reads secrets from the image. It reads them from the <Term tip="Named text values (KEY=value) that the operating system gives a process when it starts.">environment</Term> of the running container, which the platform fills in. The same image therefore runs in staging and in production with different settings.
+
+| Where | What it holds |
+| --- | --- |
+| The image (built once) | the compiled binary with views and assets embedded |
+| The environment (per deploy) | `APP_KEY`, `APP_URL`, `DATABASE_URL`, mail and proxy settings |
+| A volume (optional) | files that must survive restarts: SQLite, local uploads |
+
+## Quick start
+
+<Steps>
+<Step title="Build the image">
+
+From the project root (the folder with `go.mod` and `Dockerfile`):
 
 ```bash
 docker build -t blog .
-docker run --rm blog key:generate            # prints a new APP_KEY
-docker run -d -p 3000:3000 \
+```
+
+The first build downloads the base images and Go modules; later builds reuse cached layers.
+
+</Step>
+<Step title="Generate an application key">
+
+```bash
+docker run --rm blog key:generate
+```
+
+```text
+base64:3q2+7w...Zm9vYmFy=
+```
+
+The command prints only the key, so `APP_KEY=$(docker run --rm blog key:generate)` is safe to capture. It needs no configuration: it runs before the app is built.
+
+</Step>
+<Step title="Run the container">
+
+```bash
+docker run -d --name blog -p 3000:3000 \
   -e APP_KEY=base64:... \
   -e APP_URL=https://blog.example.com \
+  -e MAIL_MAILER=log \
   blog
+```
+
+`-p 3000:3000` publishes the container's port 3000 on your machine. `MAIL_MAILER` is required in production as soon as the app sends mail; `log` writes messages to the log instead of sending them.
+
+</Step>
+<Step title="Check that it is alive">
+
+```bash
 curl -i http://localhost:3000/up
 ```
 
-The image's entry point is the app binary, so any command runs the same way: `docker run --rm -e APP_KEY=... blog migrate`, `... blog route:list`, `... blog about`. `/up` answers `200` while the app is up; `/up?checks=1` also runs the health checks of providers (database, Redis, MongoDB).
+```text
+HTTP/1.1 200 OK
+Content-Type: application/json
 
-The default `DATABASE_URL` is SQLite in `storage/` (`/app/storage` in the image). Mount a volume there to keep it across restarts, or use PostgreSQL. The app runs as uid `10001`, so the mount must be writable by it: a new named volume (`-v blog-storage:/app/storage`) copies the ownership of the image's `/app/storage`, but a bind mount or a volume created elsewhere keeps its owner, often root. Then `chown -R 10001:10001` the directory on the host, or run the container with `--user 0` (less isolation).
+{"status":"ok"}
+```
+
+</Step>
+</Steps>
+
+The image's entry point is the app binary, so the default command is `serve` and any other command runs the same way:
+
+```bash
+docker run --rm -e APP_KEY=base64:... blog migrate
+docker run --rm -e APP_KEY=base64:... blog route:list
+docker run --rm -e APP_KEY=base64:... blog about
+```
+
+`about` prints the resolved configuration, including the trusted proxies, which makes it a quick way to check a deploy's settings. The binary exits with code `0` on success, `1` on an error (printed to stderr) and `2` on a usage error.
+
+## What the Dockerfile does
+
+The `Dockerfile` is a [multi-stage build](https://docs.docker.com/build/building/multi-stage/): each `FROM` starts a new stage, and only the last one becomes the image you run. The earlier stages are the kitchen; the last one is the plate.
+
+| Stage | Base image | What it does |
+| --- | --- | --- |
+| `assets` (not in `--api` projects) | `node:24.22.0-alpine3.24`, or `oven/bun:1.4.3-alpine` with `--pm bun` | copies `package.json` and the lockfile, installs from the lockfile, copies the project and runs the `build` script (`vite build`) |
+| `build` | `golang:1.27.2-alpine3.24` | `go mod download`, `go tool templ generate` in `--templ` projects, copies `resources/public/build` from `assets`, then builds `./cmd/app` with `CGO_ENABLED=0 -trimpath -ldflags="-s -w"` and the tags in `.buildtags` |
+| runtime | `alpine:3.24.2` | installs `ca-certificates` and `tzdata`, adds a non-root `app` user (uid `10001`), creates a writable `/app/storage`, copies the binary to `/app/app` |
+
+The install command depends on the package manager you chose with `vukem new --pm`:
+
+| `--pm` | Lockfile | Install command |
+| --- | --- | --- |
+| `npm` (default) | `package-lock.json` | `npm ci --no-audit --no-fund` |
+| `bun` | `bun.lock` (also matches `bun.lockb`) | `bun install --frozen-lockfile` |
+| `pnpm` | `pnpm-lock.yaml` | `pnpm install --frozen-lockfile`, after `corepack enable` |
+| `yarn` | `yarn.lock` | `yarn install --frozen-lockfile`, after `corepack enable` |
+
+Under the hood:
+
+- **Static binary.** `CGO_ENABLED=0` builds a binary with no C dependencies, so it runs on the small Alpine base. SQLite uses the pure-Go `modernc.org/sqlite` driver, so it still works.
+- **Smaller binary.** `-trimpath` removes your machine's paths from the binary; `-ldflags="-s -w"` drops debug symbols.
+- **Build tags.** `.buildtags` lists Go [build tags](https://pkg.go.dev/cmd/go#hdr-Build_constraints), one per line or comma-separated, with `#` comments. `vukem build` reads the same file, so local and image builds match. `--minimal` projects put `vukem_nosqlite` there to leave SQLite out.
+- **Runtime defaults.** The last stage sets `APP_ENV=production`, `HOST=0.0.0.0`, `PORT=3000` and `LOG_FORMAT=json`, then `EXPOSE 3000` and `ENTRYPOINT ["/app/app"]`. `HOST=0.0.0.0` matters: the app's default `localhost` only accepts connections from inside the container.
+- **Embedded files.** With `APP_ENV=production` in the process environment, the starter's `resources` package always serves the embedded views and assets, so the image needs no `resources/` folder.
+
+`.dockerignore` keeps these out of the build context, the files Docker sends to the builder:
+
+| Ignored | Why |
+| --- | --- |
+| `.env`, `.env.*` | secrets reach the container through its environment, never the image |
+| `.git/`, `.vukem/`, `/bin/`, `node_modules/` | version control, local tools and build output |
+| `storage/` | local SQLite files and uploads |
+| `/resources/public/hot`, `/resources/public/build/` | the Vite dev-server marker and local builds; the image builds its own assets |
+
+<Callout type="warning" title="Two things break the build">
+Commit the lockfile: the `assets` stage installs from it and fails without it. A project made with `vukem new --framework <path>` points `go.mod` at a local checkout through a `replace` directive; remove it with `go get github.com/AlexGalhardo/vukem@<version>` before you build an image.
+</Callout>
+
+### Storage and volumes
+
+The default `DATABASE_URL` is `file:storage/database.sqlite`, which is `/app/storage/database.sqlite` inside the image. A container's own files vanish when it is replaced, so mount a [volume](https://docs.docker.com/engine/storage/volumes/) there to keep SQLite or local uploads, or use PostgreSQL.
+
+The app runs as uid `10001`, so the mount must be writable by that user:
+
+- A new named volume (`-v blog-storage:/app/storage`) copies the ownership of the image's `/app/storage`, so it works as is.
+- A bind mount, or a volume created elsewhere, keeps its own owner, often root. Run `chown -R 10001:10001` on the host directory, or start the container with `--user 0` (root inside the container, less isolation).
 
 ## Configure production
 
-| Variable | Value |
-| --- | --- |
-| `APP_KEY` | **Required**, from `vukem key:generate --show` or `docker run --rm <image> key:generate`. Keep it stable: changing it invalidates sessions and encrypted data |
-| `APP_URL` | the public `https://` origin |
-| `APP_ENV` | `production` (set by the image) |
-| `HOST`, `PORT` | `0.0.0.0` and `3000` (set by the image; platforms such as Railway inject their own `PORT`) |
-| `DATABASE_URL` | SQLite by default, `postgres://...` with the [PostgreSQL driver](/docs/database/overview#postgresql) |
-| `TRUSTED_PROXIES` | the proxy networks in front of the app, see [below](#trusted-proxies) |
-| `TRUST_FORWARDED_PROTO` | `true` behind a proxy that terminates TLS (sends HSTS) |
-| `HSTS_FORCE` | `true` only when the TLS proxy's range cannot be trusted, see [HSTS without a trusted range](#hsts-without-a-trusted-range) |
-| `SHUTDOWN_TIMEOUT` | shorter than the platform's stop timeout (default `15s`) |
+Vukem reads its settings from the process environment first, then from `.env` files. The image ignores `.env` files, so in a container every setting comes from the environment. [Configuration](/docs/configuration) explains the loading order.
 
-The app refuses to boot with a missing or short `APP_KEY`, `APP_DEBUG=true` in production, an invalid `TRUSTED_PROXIES` entry, or `HSTS_FORCE=true` without an `https://` `APP_URL`, so a misconfigured deploy fails its healthcheck instead of serving.
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `APP_KEY` | none | **Required in production.** `base64:` plus at least 32 random bytes; signs and encrypts sessions, cookies, signed URLs and queued mail. Changing it invalidates them; rotate with `APP_PREVIOUS_KEYS` |
+| `APP_URL` | `http://localhost:3000` | the public origin, such as `https://blog.example.com` |
+| `APP_ENV` | `development` (`production` in the image) | `development`, `test` or `production`; anything else stops the boot |
+| `APP_DEBUG` | `false` | must stay `false` in production |
+| `HOST` | `localhost` (`0.0.0.0` in the image) | the address the HTTP server listens on |
+| `PORT` | `3000` | the listening port; platforms inject their own |
+| `SHUTDOWN_TIMEOUT` | `15s` | how long in-flight requests, jobs and scheduled tasks get to finish on stop |
+| `LOG_FORMAT` | `json` in production, `text` elsewhere | log output format |
+| `LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error` |
+| `LOG_DEDUP_WINDOW` | `1m` in production, off elsewhere | collapses repeated identical errors into one summary; `0` turns it off |
+| `DATABASE_URL` | `file:storage/database.sqlite` | the database; `postgres://...` needs the [PostgreSQL driver](/docs/database/overview) |
+| `TRUSTED_PROXIES` | empty (trust nobody) | comma-separated CIDRs or IPs of your proxies, see [trusted proxies](#trusted-proxies) |
+| `CLIENT_IP_HEADER` | empty | a one-IP header the trusted proxy sets, such as `X-Real-IP`, read instead of `X-Forwarded-For` |
+| `TRUST_FORWARDED_PROTO` | `false` | trusts `X-Forwarded-Proto: https` from trusted proxies, which turns on HSTS |
+| `HSTS_FORCE` | `false` | sends HSTS on every production response, see [HSTS without a trusted range](#hsts-without-a-trusted-range) |
+| `HTTP_MAX_HEADER_BYTES` | `65536` (64 KiB) | caps the request line plus headers; from `4096` to `1048576` |
+| `HTTP_H2C` | `false` | serves HTTP/2 without TLS in production too (always on elsewhere), for a proxy that speaks h2c |
+| `MAIL_MAILER` | `log` outside production, none in production | `smtp`, `resend`, `mailtrap` or `log`; see [mail on Railway](#mail-on-railway) |
+| `SCHEDULE_IN_SERVE` | `true` | runs the scheduler inside `serve` |
+| `QUEUE_IN_SERVE` | `true` | runs a queue worker inside `serve` |
+
+### Request header limit
+
+Each connection may make the server hold the whole request line and headers in memory. Vukem caps them at 64 KiB instead of Go's 1 MiB. That is far above what browsers send and what common proxies forward (nginx allows 8 KiB per line, Node.js 16 KiB in total). A larger request gets `431 Request Header Fields Too Large` from Go's [`http.Server`](https://pkg.go.dev/net/http#Server), which also allows a few KiB of buffer slack on top of the limit. Raise `HTTP_MAX_HEADER_BYTES` only if large cookies or tokens legitimately exceed it.
+
+The server also never runs without timeouts, which protects against clients that send a request very slowly:
+
+| Timeout | Value |
+| --- | --- |
+| reading the headers | 10s |
+| reading the whole request | 30s |
+| writing the response | 60s |
+| idle keep-alive connection | 120s |
+
+### What stops the boot
+
+Vukem refuses to start with an unsafe configuration, so a bad deploy fails its healthcheck instead of serving. The process prints the error and exits with code `1`:
+
+| Mistake | Error |
+| --- | --- |
+| no `APP_KEY` in production | ``config: APP_KEY is not set (run `vukem key:generate`)`` |
+| a short key | `config: APP_KEY must be at least 32 bytes, got 16` |
+| debug in production | `vukem: APP_DEBUG must be false when APP_ENV=production` |
+| a typo in `APP_ENV` | `vukem: APP_ENV "prod" must be development, test or production` |
+| a bad proxy entry | `vukem: TRUSTED_PROXIES entry "railway" is not an IP or CIDR` |
+| proxy settings without proxies | `vukem: CLIENT_IP_HEADER requires TRUSTED_PROXIES` (same for `TRUST_FORWARDED_PROTO`) |
+| a list header | `vukem: CLIENT_IP_HEADER "X-Forwarded-For" is a list; leave it empty to use X-Forwarded-For` |
+| HSTS without HTTPS | `vukem: HSTS_FORCE requires an https APP_URL` |
+| header limit out of range | `vukem: HTTP_MAX_HEADER_BYTES 1024 must be between 4096 and 1048576` |
+
+Mail settings are checked when the app first builds its mailer, on the first send. With `APP_ENV=production` and no `MAIL_MAILER`, that send fails with `vukem: set MAIL_MAILER in production (smtp, resend, mailtrap or log)`, never a silent loss of mail.
 
 ## Trusted proxies
 
-Behind a load balancer or a platform edge, the direct peer of every request is the proxy. `c.IP()` (rate limits, login throttles, logs) returns that peer unless it is trusted; only then is `X-Forwarded-For` read, right to left, skipping trusted hops. Nobody is trusted by default.
+On a platform, your app rarely talks to the visitor directly. A <Term tip="A server that receives requests from the internet and forwards them to your app.">reverse proxy</Term> sits in front, like a receptionist who passes notes to you. Every note seems to come from the receptionist. The real sender's name is written on the note, in a header such as `X-Forwarded-For` or `X-Real-IP`.
 
-```dotenv
-TRUSTED_PROXIES=10.0.0.0/8,192.0.2.10   # CIDRs or single IPs, comma-separated
-TRUST_FORWARDED_PROTO=true              # X-Forwarded-Proto: https from those peers enables HSTS
-CLIENT_IP_HEADER=X-Real-IP              # optional: one-IP header set by the proxy, instead of X-Forwarded-For
+`c.IP()` (used by rate limits, login throttles and logs) returns the direct peer's address unless that peer is in `TRUSTED_PROXIES`. Nobody is trusted by default, because anyone can write a fake name on a note. When the peer is trusted:
+
+- With `CLIENT_IP_HEADER` set, `c.IP()` reads that header. It must arrive as exactly one header line holding one valid IP; anything else falls back to the peer address.
+- Without it, `c.IP()` joins every `X-Forwarded-For` line and walks the list from right to left, skipping trusted proxies. The first untrusted address is the client. An entry that is not an IP makes the chain untrustworthy, so the peer address is used.
+
+```dotenv title=".env.production"
+# CIDRs or single IPs, comma-separated.
+TRUSTED_PROXIES=10.0.0.0/8,192.0.2.10
+# X-Forwarded-Proto: https from those peers turns on HSTS.
+TRUST_FORWARDED_PROTO=true
+# Optional: a one-IP header the proxy sets.
+CLIENT_IP_HEADER=X-Real-IP
 ```
 
-`vukem.New` applies them to the router and to the default `SecureHeaders`; `vukem about` prints the result. With `CLIENT_IP_HEADER`, `c.IP()` reads that header instead of `X-Forwarded-For`, still only from trusted peers, and only when it holds exactly one IP (anything else falls back to the peer address). An entry that is neither an IP nor a CIDR, an invalid or list header name, or `TRUST_FORWARDED_PROTO` / `CLIENT_IP_HEADER` without `TRUSTED_PROXIES` stops the boot. Trust only the networks your proxy connects from: a trusted peer can claim any client address.
+`vukem.New` applies these to the router and to the `SecureHeaders` middleware that `DefaultMiddleware` installs, so you add nothing in code. A bare IP means a single host (`/32` for IPv4, `/128` for IPv6). Addresses are normalized (an IPv4-mapped IPv6 address becomes plain IPv4), so the same client always gets the same rate-limit key.
 
-In production, when `TRUSTED_PROXIES` is empty and a request from a private, CGNAT (`100.64.0.0/10`) or loopback peer carries `X-Forwarded-For` or `X-Real-IP`, the app logs one warning per process, containing `every client shares one rate-limit bucket`. The header is still ignored; set `TRUSTED_PROXIES` to silence it.
+In production, when `TRUSTED_PROXIES` is empty and a request from a private, CGNAT (`100.64.0.0/10`) or loopback peer carries `X-Forwarded-For` or `X-Real-IP`, the app logs one warning per process. Its text contains `every client shares one rate-limit bucket`. The header is still ignored; setting `TRUSTED_PROXIES` silences it.
 
-Each request log line from `middleware.Logger` carries both addresses: `peer` is the direct connection (the `r.RemoteAddr` host, the proxy when there is one) and `ip` is the client resolved through `TRUSTED_PROXIES` (what `c.IP()` returns). Before trusting a range, read `peer` from a few requests; once the range is trusted, `ip` should show the real client while `peer` stays the proxy. Client IPs are personal data under LGPD/GDPR: set the log retention or anonymization of your log drain accordingly.
+Each request log line from `middleware.Logger` carries both addresses: `peer` is the direct connection (the proxy, when there is one) and `ip` is what `c.IP()` returns. Before you trust a range, read `peer` from a few requests. Once it is trusted, `ip` should show real clients while `peer` stays the proxy. Client IPs are personal data under LGPD and GDPR, so set your log retention accordingly.
 
 ### HSTS without a trusted range
 
-`Strict-Transport-Security` is sent only on requests the app knows were HTTPS: TLS on the app itself, or `X-Forwarded-Proto: https` from a `TRUSTED_PROXIES` peer with `TRUST_FORWARDED_PROTO=true`. When the TLS proxy's range is unknown, neither holds and HSTS is never sent. `HSTS_FORCE=true` sends it on every response instead. It is validated in every environment (a boot error unless `APP_URL` is `https://`) and applied only with `APP_ENV=production`, so localhost is never pinned (elsewhere it logs a warning at boot). Responses from middleware that runs before `SecureHeaders`, such as the maintenance 503, do not carry it. It is off by default. Trade-offs:
+[HSTS](https://developer.mozilla.org/docs/Web/HTTP/Headers/Strict-Transport-Security) tells browsers to use HTTPS for your domain from now on. Vukem sends `Strict-Transport-Security` only on requests it knows were HTTPS: TLS on the app itself, or `X-Forwarded-Proto: https` from a trusted peer with `TRUST_FORWARDED_PROTO=true`. When you cannot know the proxy's range, neither holds and HSTS is never sent.
 
-- It asserts that the public origin is HTTPS-only instead of checking each request. Browsers ignore HSTS received over plain HTTP ([RFC 6797 section 8.1](https://www.rfc-editor.org/rfc/rfc6797#section-8.1)), so a client that reaches the app over HTTP around the proxy gains or loses nothing.
-- The header is `max-age=63072000; includeSubDomains` (two years): every subdomain of the `APP_URL` host must serve HTTPS too, and turning it off later does not unpin browsers that already saw it until `max-age` expires.
-- Prefer `TRUSTED_PROXIES` plus `TRUST_FORWARDED_PROTO=true` whenever the range is known: it also fixes `c.IP()`, which `HSTS_FORCE` does not touch.
+`HSTS_FORCE=true` sends it on every response that reaches `SecureHeaders` instead. It is validated in every environment (a boot error unless `APP_URL` starts with `https://`) but applied only with `APP_ENV=production`, so `localhost` is never pinned; elsewhere it logs a warning at boot. Responses from middleware that runs before `SecureHeaders`, such as the maintenance 503, do not carry it. Trade-offs:
+
+- It asserts that the public origin is HTTPS-only instead of checking each request. Browsers ignore HSTS received over plain HTTP ([RFC 6797, section 8.1](https://www.rfc-editor.org/rfc/rfc6797#section-8.1)), so a client that reaches the app over HTTP around the proxy gains or loses nothing.
+- The header is `max-age=63072000; includeSubDomains` (two years). Every subdomain of the `APP_URL` host must serve HTTPS too, and turning it off later does not unpin browsers until `max-age` expires.
+- Prefer `TRUSTED_PROXIES` plus `TRUST_FORWARDED_PROTO=true` when you know the range: it also fixes `c.IP()`, which `HSTS_FORCE` does not touch.
 
 ## Deploy on Railway
 
-Railway builds a service with the `Dockerfile` at the root of its source directory as soon as it finds one ([Dockerfiles](https://docs.railway.com/builds/dockerfiles)), so the starter needs no build configuration.
+[Railway](https://railway.com) builds a service with the `Dockerfile` at the root of its source directory as soon as it finds one ([Dockerfiles](https://docs.railway.com/builds/dockerfiles)), so the starter needs no build configuration.
 
 <Steps>
 <Step title="Create the project and the app service">
 
-In a new Railway project, add a service from your GitHub repository (or run `railway up` from the project directory). The build log shows `Using detected Dockerfile!`.
+In a new Railway project, add a service from your GitHub repository, or run `railway up` from the project directory. The build log shows `Using detected Dockerfile!`.
 
 </Step>
 <Step title="Add the databases you use">
 
-Add PostgreSQL, Redis or MongoDB from **+ New → Database**. Each runs as its own service and exposes connection variables that other services reference with `${{ServiceName.VARIABLE}}` ([variables](https://docs.railway.com/reference/variables)):
+Add PostgreSQL, Redis or MongoDB from **+ New → Database**. Each runs as its own service and exposes variables that other services reference as `${{ServiceName.VARIABLE}}` ([variables](https://docs.railway.com/reference/variables)):
 
 | Database | Variables Railway exposes | In the app service |
 | --- | --- | --- |
@@ -97,37 +254,63 @@ Add PostgreSQL, Redis or MongoDB from **+ New → Database**. Each runs as its o
 | Redis | `REDIS_URL`, `REDISHOST`, `REDISPORT`, `REDISUSER`, `REDISPASSWORD` | `REDIS_URL=${{Redis.REDIS_URL}}` |
 | MongoDB | `MONGO_URL`, `MONGOHOST`, `MONGOPORT`, `MONGOUSER`, `MONGOPASSWORD` | `MONGO_URL=${{MongoDB.MONGO_URL}}` |
 
-The namespace is the database service's name as shown in the canvas; rename the reference if you renamed the service. PostgreSQL needs `drivers/postgres` registered with `vukem.WithDatabaseDrivers(postgres.Driver())`; Redis and MongoDB are opened by your code from `REDIS_URL` and `MONGO_URL` ([Redis](/docs/database/redis), [MongoDB](/docs/database/mongodb)). If `MONGO_URL` has no database in its path, pass the name: `mongo.Open(ctx, os.Getenv("MONGO_URL"), "app")`.
+The namespace is the database service's name on the canvas; change the reference if you renamed the service. Redis and MongoDB are opened by your code ([Redis](/docs/database/redis), [MongoDB](/docs/database/mongodb)). Railway's `MONGO_URL` has no database in its path, so pass the name: `mongo.Open(ctx, os.Getenv("MONGO_URL"), "blog")`.
+
+PostgreSQL needs its driver registered. Add it to the options in `bootstrap/app.go`:
+
+```go title="bootstrap/app.go"
+import "github.com/AlexGalhardo/vukem/drivers/postgres"
+
+// Inside New, in the base options:
+base := []vukem.Option{
+	vukem.WithDatabaseDrivers(postgres.Driver()),
+	vukem.WithProviders(Providers()...),
+	// ... the other options stay as they are.
+}
+```
+
+`DATABASE_URL` then selects the driver by its `postgres://` scheme.
 
 </Step>
 <Step title="Set the app variables">
 
-In the app service's **Variables**:
+In the app service's **Variables** tab:
 
 ```dotenv
-APP_KEY=base64:...                         # vukem key:generate --show
-APP_URL=https://blog.up.railway.app         # the domain from Settings → Networking
+# Generate it with: vukem key:generate --show
+APP_KEY=base64:...
+# The domain from Settings → Networking.
+APP_URL=https://blog.up.railway.app
 DATABASE_URL=${{Postgres.DATABASE_URL}}
-TRUSTED_PROXIES=100.64.0.0/24               # Railway's edge, see below
+# Railway's edge, see "Trusted proxies on Railway".
+TRUSTED_PROXIES=100.64.0.0/24
 CLIENT_IP_HEADER=X-Real-IP
 TRUST_FORWARDED_PROTO=true
+# Railway blocks SMTP on some plans; Mailtrap uses HTTPS.
+MAIL_MAILER=mailtrap
+MAILTRAP_API_TOKEN=...
+MAIL_FROM="Blog <hello@example.com>"
 ```
 
-Do not set `PORT`: Railway injects it and the app listens on it ([healthchecks](https://docs.railway.com/reference/healthchecks)). Generate a public domain under **Settings → Networking**. [Trusted proxies on Railway](#trusted-proxies-on-railway) explains the last three and how to check them.
+Do not set `PORT`: Railway injects it and the app listens on it. Generate a public domain under **Settings → Networking**.
 
 </Step>
 <Step title="Healthcheck, migrations and restarts">
 
 Under **Settings → Deploy**:
 
-- **Healthcheck Path**: `/up`. Railway calls it with the host `healthcheck.railway.app` and switches traffic to the new deployment only after a `2xx`; it does not monitor the endpoint once the deployment is live.
-- **Pre-deploy Command**: `/app/app migrate`. It runs in a separate container with the service's variables and private network, but without volumes ([pre-deploy command](https://docs.railway.com/deployments/pre-deploy-command)), so use it with PostgreSQL, not with SQLite on a volume.
-- **Restart Policy**: `On Failure` with a few retries, so a crash restarts the container while a boot error (bad configuration) does not loop forever.
+- **Healthcheck Path**: `/up`. Railway calls it with the host `healthcheck.railway.app` and switches traffic to the new deployment only after a `2xx`. It does not monitor the endpoint once the deployment is live ([healthchecks](https://docs.railway.com/reference/healthchecks)).
+- **Pre-deploy Command**: `/app/app migrate`. It runs in a separate container with the service's variables and private network, but without volumes ([pre-deploy command](https://docs.railway.com/deployments/pre-deploy-command)). Use it with PostgreSQL, not with SQLite on a volume.
+- **Restart Policy**: `On Failure` with a few retries. A crash restarts the container, while a boot error (bad configuration) does not loop forever.
 
 </Step>
-<Step title="Deploy">
+<Step title="Deploy and check">
 
-Push to the connected branch (or `railway up`). Check `https://<domain>/up`, then `/up?checks=1` for the database checks.
+Push to the connected branch, or run `railway up`. Open `https://blog.up.railway.app/up`, then `/up?checks=1` to run the database checks as well:
+
+```json
+{"status":"ok","checks":{"db":"ok"}}
+```
 
 </Step>
 </Steps>
@@ -142,27 +325,121 @@ CLIENT_IP_HEADER=X-Real-IP
 TRUST_FORWARDED_PROTO=true
 ```
 
-The observed peer is `100.64.0.x` (the `peer` field of the request log) and Railway sets `X-Real-IP` to the client's address; confirm both in your own logs. Without these values `c.IP()` is the edge address, so per-IP rate limits and login throttles put every client in one bucket, and the app logs the warning [above](#trusted-proxies) on the first proxied request.
+On Railway deployments the observed peer is `100.64.0.x` (the `peer` field of the request log), and Railway sets `X-Real-IP` to the client's address. Without these values `c.IP()` is the edge address, so per-IP rate limits and login throttles put every client in one bucket, and the app logs the warning from [trusted proxies](#trusted-proxies) on the first proxied request.
 
-What Railway documents about its HTTP edge ([public networking specs and limits](https://docs.railway.com/networking/public-networking/specs-and-limits)): all public traffic is HTTPS (TLS 1.2+), `X-Forwarded-Proto` is always `https`, `X-Real-IP` carries the client's remote IP and `X-Forwarded-Host` the original host. It does **not** document `X-Forwarded-For` or the range its edge connects from, so `100.64.0.0/24` is observed, not promised:
+Railway documents its HTTP edge in [public networking specs and limits](https://docs.railway.com/networking/public-networking/specs-and-limits): all public traffic is HTTPS (TLS 1.2+), `X-Forwarded-Proto` is always `https`, `X-Real-IP` carries the client's remote IP and `X-Forwarded-Host` the original host. It does **not** document `X-Forwarded-For` or the range its edge connects from, so `100.64.0.0/24` is observed, not promised:
 
-- **Check it on your deployment.** Read `peer` from a few request log lines; with the values above, `ip` should show the real client while `peer` stays in `100.64.0.x`. Re-check after Railway changes its edge.
-- **Outside the range, limits get stricter, never spoofable.** The recommended `/24` is narrower than the `100.64.0.0/10` the warning checks: if the edge later connects from elsewhere in that space, `c.IP()` falls back to the edge address (one shared bucket again) and the warning returns. Widen `TRUSTED_PROXIES` only to a range you observed.
-- **Without a trusted range, still send HSTS.** Every public request on Railway is HTTPS, so with `TRUSTED_PROXIES` unset set `HSTS_FORCE=true` ([HSTS without a trusted range](#hsts-without-a-trusted-range)).
-- **Never trust `0.0.0.0/0` or all of `100.64.0.0/10`.** Any client, or another service on the project's private network, could then send its own `X-Real-IP` and choose its `c.IP()`.
+- **Check it on your deployment.** Read `peer` from a few request log lines; `ip` should show the real client while `peer` stays in `100.64.0.x`. Check again after Railway changes its edge.
+- **Outside the range, limits get stricter, never spoofable.** The `/24` is narrower than the `100.64.0.0/10` the warning checks. If the edge later connects from elsewhere, `c.IP()` falls back to the edge address and the warning returns. Widen `TRUSTED_PROXIES` only to a range you observed.
+- **Without a trusted range, still send HSTS.** Every public request on Railway is HTTPS, so with `TRUSTED_PROXIES` unset, set `HSTS_FORCE=true`.
+
+<Callout type="warning" title="Never trust everyone">
+Do not set `TRUSTED_PROXIES` to `0.0.0.0/0` or to all of `100.64.0.0/10`. Any client, or another service on the project's private network, could then send its own `X-Real-IP` and pick its `c.IP()`, escaping rate limits.
+</Callout>
+
+### Mail on Railway
+
+Railway disables outbound SMTP on the Free, Trial and Hobby plans; SMTP is available on Pro and above ([outbound networking](https://docs.railway.com/networking/outbound-networking#email-delivery)). With `MAIL_MAILER=smtp` on those plans, every send fails with a dial timeout. Use an HTTP transport instead, which talks to the mail provider over HTTPS on port 443:
+
+| `MAIL_MAILER` | Required variables | Notes |
+| --- | --- | --- |
+| `mailtrap` | `MAILTRAP_API_TOKEN` | `MAILTRAP_INBOX_ID` sends to an Email Sandbox inbox instead of real recipients (for staging; production logs a warning at first use) |
+| `resend` | `RESEND_API_KEY` | the sender domain must be verified in Resend |
+
+A missing token fails the first send with `vukem: MAIL_MAILER=mailtrap needs MAILTRAP_API_TOKEN`. The [mail page](/docs/digging-deeper/mail) covers both transports in depth.
+
+### OpenTelemetry on Railway
+
+When you turn on tracing for a service, Railway injects the standard `OTEL_*` variables on the next deploy: the exporter endpoint, protocol and headers for its receiver, and `OTEL_SERVICE_NAME` ([tracing](https://docs.railway.com/observability/tracing)). The [OpenTelemetry provider](/docs/digging-deeper/opentelemetry) (`drivers/otel`) reads them, so you configure nothing for traces.
+
+Railway's receiver accepts traces only. As the OpenTelemetry spec says, the generic `OTEL_EXPORTER_OTLP_ENDPOINT` also turns on metrics (sent to `/v1/metrics`), and those uploads would fail. Turn metrics off on the app service:
+
+```dotenv
+OTEL_METRICS_EXPORTER=none
+```
+
+Traces keep flowing. Any value other than `otlp` or `none` stops the boot with `otel: OTEL_METRICS_EXPORTER must be otlp or none`.
 
 ### Scheduler and queue workers
 
-The web service's `serve` command (the image's default) also runs the [scheduler](/docs/digging-deeper/scheduler) (`SCHEDULE_IN_SERVE=true` by default) and a [queue worker](/docs/digging-deeper/queue#running-workers) for the memory, database and Redis queues (`QUEUE_IN_SERVE=true` by default) in process, so a single service runs your scheduled tasks, the built-in prune tasks and queued jobs (mail included): no second service is needed.
+The image's default command, `serve`, also runs the [scheduler](/docs/digging-deeper/scheduler) (`SCHEDULE_IN_SERVE=true`) and a [queue worker](/docs/digging-deeper/queue) for the memory, database and Redis queues (`QUEUE_IN_SERVE=true`) in the same process. One service therefore runs your scheduled tasks, the built-in prune tasks and queued jobs, mail included.
 
-Run the scheduler as its own service only when tasks must fire exactly once across several web replicas and cannot use `OnOneServer()` with a shared cache: set `SCHEDULE_IN_SERVE=false` on the web service, then add a second service from the same repository with the start command `/app/app schedule:work` (**Settings → Deploy → Custom Start Command**; it replaces the image's `ENTRYPOINT`) and the same variables; it needs no domain or healthcheck. Railway's cron schedules run at most every 5 minutes ([cron jobs](https://docs.railway.com/cron-jobs)), so they cannot replace `schedule:run` every minute.
+Run the scheduler as its own service only when tasks must fire exactly once across several web replicas and cannot use `OnOneServer()` with a shared cache:
 
-A dedicated worker service uses the start command `/app/app queue:work` the same way. `QUEUE_IN_SERVE=false` on the web service is optional then: extra workers are safe (each job is reserved by one worker), they only add load to the web service.
+1. Set `SCHEDULE_IN_SERVE=false` on the web service.
+2. Add a second service from the same repository with the same variables.
+3. Set its **Settings → Deploy → Custom Start Command** to `/app/app schedule:work`. A start command replaces the image's `ENTRYPOINT`. It needs no domain or healthcheck.
+
+Railway's own cron schedules run at most every 5 minutes ([cron jobs](https://docs.railway.com/cron-jobs)), so they cannot replace a per-minute `schedule:run`.
+
+A dedicated worker service uses `/app/app queue:work` the same way. `QUEUE_IN_SERVE=false` on the web service is optional then: extra workers are safe, because each job is reserved by one worker.
 
 ### Volumes
 
-For SQLite or local uploads, attach a volume at `/app/storage`. Railway documents that images running as a non-root UID have permission issues on volumes and that `RAILWAY_RUN_UID=0` fixes them ([volumes](https://docs.railway.com/volumes/reference)); the starter image runs as uid `10001`, so set that variable on the service. It runs the app as root inside the container. Migrations then have to run in the app container, because pre-deploy commands get no volume: set the start command to `/bin/sh -c "/app/app migrate && exec /app/app"` (Railway runs start commands in exec form, without a shell, and they replace the image's `ENTRYPOINT`: [start command](https://docs.railway.com/deployments/start-command)).
+For SQLite or local uploads, attach a volume at `/app/storage`. Railway documents that images running as a non-root UID have permission problems on volumes, fixed by `RAILWAY_RUN_UID=0` ([volumes](https://docs.railway.com/volumes/reference)). The starter runs as uid `10001`, so set that variable; the app then runs as root inside the container.
 
-<Callout>
-Railway's Config as Code files (`railway.json`, `railway.toml`) are deprecated: new services cannot opt into them and existing files stop being read on 2026-12-01 ([Config as Code](https://docs.railway.com/reference/config-as-code)). Starters therefore ship no `railway.json`; set the healthcheck, pre-deploy command and restart policy in the service settings, or in Railway's [Infrastructure as Code](https://docs.railway.com/infrastructure-as-code) file (`healthcheck: "/up"`, `preDeploy: "/app/app migrate"`).
-</Callout>
+Pre-deploy commands get no volume, so migrations have to run in the app container. Railway runs start commands without a shell ([start command](https://docs.railway.com/deployments/start-command)), so call one explicitly:
+
+```bash
+/bin/sh -c "/app/app migrate && exec /app/app"
+```
+
+`exec` replaces the shell with the app, so the app receives Railway's stop signal and shuts down gracefully.
+
+### Config as Code
+
+Railway's Config as Code files (`railway.json`, `railway.toml`) are deprecated: new services cannot opt into them, and existing files stop being read on 2026-12-01 ([Config as Code](https://docs.railway.com/config-as-code)). Starters therefore ship no `railway.json`. Set the healthcheck, pre-deploy command and restart policy in the service settings, or in Railway's [Infrastructure as Code](https://docs.railway.com/infrastructure-as-code) file `.railway/railway.ts`:
+
+```ts title=".railway/railway.ts"
+const blog = service("blog", {
+  healthcheck: "/up",
+  preDeploy: "/app/app migrate",
+})
+```
+
+## Security
+
+What Vukem does for you in this setup:
+
+- The image runs as a non-root user and holds no secrets; `.dockerignore` keeps `.env` files out of it.
+- The boot refuses a missing or short `APP_KEY`, debug mode, an unknown `APP_ENV` and invalid proxy or HSTS settings.
+- Proxy headers are ignored unless the direct peer is trusted, and the app warns when it looks misconfigured behind a proxy.
+- The HTTP server always has timeouts and a 64 KiB header cap.
+
+What stays your job: keeping `APP_KEY` and API tokens in the platform's secret variables, trusting only proxy ranges you observed, shipping JSON logs to durable storage with alerts, and running `govulncheck ./...` in CI. The [security overview](/docs/security/overview) lists every default.
+
+## Common mistakes
+
+**The app is unreachable from outside the container.** You built your own image and kept the default host.
+
+```dockerfile
+# Wrong: listens only inside the container.
+ENV APP_ENV=production
+# Right: listens on every interface.
+ENV APP_ENV=production HOST=0.0.0.0
+```
+
+**Every visitor shares one rate limit.** The log shows `requests from a proxy carry X-Real-IP but TRUSTED_PROXIES is empty`. Set `TRUSTED_PROXIES` and `CLIENT_IP_HEADER` as in [trusted proxies on Railway](#trusted-proxies-on-railway).
+
+**Mail times out on Railway.** `MAIL_MAILER=smtp` on a plan without SMTP fails with a dial timeout. Switch to `MAIL_MAILER=mailtrap` or `resend`.
+
+**Tracing logs export errors.** Railway's receiver rejects metrics; set `OTEL_METRICS_EXPORTER=none`.
+
+**SQLite is empty after every deploy.** Without a volume, `/app/storage` lives inside the replaced container. Attach a volume at `/app/storage` or move to PostgreSQL.
+
+## Next steps
+
+<CardGroup cols="2">
+<Card title="Single binary" href="/docs/deployment/single-binary" icon="rocket">
+Run the app without Docker, behind your own reverse proxy.
+</Card>
+<Card title="Configuration" href="/docs/configuration" icon="layers">
+How `.env` files and the environment are loaded.
+</Card>
+<Card title="OpenTelemetry" href="/docs/digging-deeper/opentelemetry" icon="zap">
+Traces and metrics for your deployed app.
+</Card>
+<Card title="Security overview" href="/docs/security/overview" icon="shield">
+Every secure default, and what is left to you.
+</Card>
+</CardGroup>

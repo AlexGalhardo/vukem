@@ -1,84 +1,366 @@
 ---
 title: Single binary
-description: Build one static Go binary with embedded assets and run it behind a TLS-terminating proxy with graceful shutdown.
+description: Build one static Go binary with embedded views and assets, configure it for production and run it behind a TLS-terminating reverse proxy with health checks and graceful shutdown.
 ---
 
-A Vukem app compiles to a single executable. With `embed`, views and public assets ship inside it, so a deployment is one file plus its environment.
+A Vukem app compiles to a single executable file. The views, CSS and JavaScript ship inside it, so a deployment is one file plus its environment. This page builds the blog from the starter into `bin/app`, runs it on a server behind a reverse proxy, and shows what happens when it starts, answers health checks and stops.
 
-## Build
+You will learn:
+
+- how `vukem build` (or plain `go build`) produces a static binary, and how to cross-compile it;
+- how embedded views and assets work, and the one environment variable that switches them on;
+- how to configure production and keep secrets out of the binary;
+- what graceful shutdown does, step by step, and how long it may take;
+- how to expose liveness and readiness health checks;
+- how to put the app behind Caddy or nginx with trusted proxies.
+
+## The idea
+
+Many languages deploy a folder: the source code, an interpreter and a pile of packages. Go deploys a single file. The [`go build`](https://pkg.go.dev/cmd/go#hdr-Compile_packages_and_dependencies) command compiles your code and every package it imports into one native executable, like baking all the ingredients into one cake instead of carrying them in separate bags.
+
+Vukem adds the last ingredients, your templates and static files, with the [`embed`](https://pkg.go.dev/embed) package. A `//go:embed` comment above a variable tells the compiler to copy files into the binary at build time. At run time the program reads them from memory as an [`fs.FS`](https://pkg.go.dev/io/fs#FS), the same interface it uses for files on disk.
+
+| On the server | What it is |
+| --- | --- |
+| `bin/app` | the compiled program, with `resources/views` and `resources/public` inside |
+| the environment | `APP_ENV`, `APP_KEY`, `APP_URL`, `DATABASE_URL` and other settings |
+| `storage/` | SQLite files and local uploads, when you use them |
+
+## Quick start
+
+<Steps>
+<Step title="Build the binary">
+
+From the project root:
 
 ```bash
-CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o bin/app ./cmd/app
+vukem build
 ```
 
-SQLite uses the pure-Go `modernc.org/sqlite` driver, so no cgo toolchain is needed and cross-compiling is a matter of `GOOS`/`GOARCH`.
+```text
+built bin/app
+```
 
-`vukem build` does this for you: it runs `npx vite build` when a `vite.config.*` exists, then `go build -trimpath -ldflags="-s -w" -o bin/app ./cmd/app` (`-o` changes the output). The starter embeds `resources/views` and `resources/public` with `//go:embed`, so the binary is self-contained.
+On Windows the file is `bin\app.exe`. `-o` changes the output path: `vukem build -o dist/blog`.
 
-## Embedded assets
+</Step>
+<Step title="Generate a key">
 
-The starter's `resources` package embeds `resources/views` and `resources/public` (including Vite's `build/` output) and `bootstrap` serves them; nothing else is needed. With `APP_ENV=production` the embedded files are always used, even when a `resources/` directory sits next to the binary. Run `vite build` before `go build` (as `vukem build` does) or the binary embeds no CSS and JavaScript.
+```bash
+./bin/app key:generate
+```
+
+```text
+base64:3q2+7w...Zm9vYmFy=
+```
+
+</Step>
+<Step title="Run it in production mode">
+
+```bash
+APP_ENV=production \
+APP_KEY=base64:... \
+APP_URL=https://blog.example.com \
+MAIL_MAILER=log \
+./bin/app
+```
+
+The default command is `serve`, which starts the HTTP server on `localhost:3000`.
+
+</Step>
+<Step title="Check that it is alive">
+
+```bash
+curl -i http://localhost:3000/up
+```
+
+```text
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{"status":"ok"}
+```
+
+</Step>
+</Steps>
+
+## Building the binary
+
+`vukem build` runs these steps in order, and stops at the first failure:
+
+1. Checks that `cmd/app` exists, otherwise it fails with `no cmd/app in this directory: run vukem inside a Vukem project`.
+2. In a templ project, runs `go tool templ generate`.
+3. When `vite.config.ts`, `vite.config.js` or `vite.config.mjs` exists, runs `vite build` through your package manager (`npm exec -- vite build`, `bun x vite build`, `pnpm exec vite build` or `yarn exec vite build`). It fails with `frontend dependencies missing: run npm install first` (or your package manager's install command) when `node_modules` is missing.
+4. Runs `go build -trimpath -ldflags=-s -w -o bin/app ./cmd/app`, adding `-tags` from `.buildtags` when that file exists.
+
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `-trimpath` | always | removes your machine's file paths from the binary |
+| `-ldflags=-s -w` | always | drops the symbol table and debug information, so the file is smaller |
+| `-tags` | from `.buildtags` | Go [build tags](https://pkg.go.dev/cmd/go#hdr-Build_constraints): one per line or comma-separated, `#` starts a comment; `--minimal` projects list `vukem_nosqlite` |
+| `-o` | `bin/app` (`bin\app.exe` on Windows) | the output path |
+
+### Static builds and cross-compiling
+
+SQLite uses the pure-Go `modernc.org/sqlite` driver, so the app needs no C compiler. Set `CGO_ENABLED=0` to get a fully static binary that runs on any Linux machine of the same architecture, even a minimal one such as Alpine. `vukem build` does not set it for you; the starter's `Dockerfile` does.
+
+To build for another system, set [`GOOS` and `GOARCH`](https://go.dev/doc/install/source#environment). This builds a Linux binary on a Mac or Windows laptop:
+
+```bash
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 vukem build -o bin/app-linux
+```
+
+Without `vukem`, the same build is:
+
+```bash
+npm run build
+CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" \
+  -o bin/app ./cmd/app
+```
+
+<Callout type="warning" title="Build the assets first">
+`go build` embeds whatever is in `resources/public` at that moment. If you skip `vite build`, the binary ships without CSS and JavaScript, and pages render unstyled. `vukem build` runs both in the right order.
+</Callout>
+
+## Embedded views and assets
+
+The starter's `resources` package embeds two folders:
+
+```go title="resources/resources.go"
+// all: keeps build/.vite/manifest.json (a dot directory) in the binary.
+//
+//go:embed views all:public
+var embedded embed.FS
+```
+
+The `all:` prefix matters. By default `//go:embed` skips files and folders whose names start with `.` or `_`, and Vite writes its manifest to `public/build/.vite/manifest.json`. Without `all:`, the app could not find its hashed asset names.
+
+`resources.Views()` and `resources.Public()` decide where to read from each time the app starts:
+
+| Situation | Files used |
+| --- | --- |
+| `APP_ENV=production` in the process environment | always the embedded files |
+| otherwise, a `resources/views` (or `resources/public`) folder exists in the working directory | the files on disk, so template edits show up on refresh |
+| otherwise | the embedded files |
+
+`bootstrap/app.go` passes them to `vukem.WithViews(resources.Views())` and `vukem.WithVite(resources.Public())`, and `routes/web.go` serves the public files with `middleware.StaticFS`. You add nothing.
+
+`resources` checks the real process environment with [`os.Getenv`](https://pkg.go.dev/os#Getenv), not `.env` files. If `APP_ENV=production` is only in a `.env` file and a `resources/` folder sits next to the binary, the app serves those files from disk instead of the embedded ones. Set `APP_ENV` in the environment of the process.
 
 ## Configure production
 
+The app reads `.env`, then `.env.<APP_ENV>`, `.env.local` and `.env.<APP_ENV>.local` from its working directory; the process environment wins over all of them. [Configuration](/docs/configuration) covers the full syntax.
+
 ```dotenv title=".env.production"
-APP_ENV=production
 APP_DEBUG=false
-APP_URL=https://example.com
-HOST=0.0.0.0           # the default, localhost, is unreachable from other machines and containers
+APP_URL=https://blog.example.com
+# localhost is unreachable from other machines and containers.
+HOST=0.0.0.0
 PORT=3000
 LOG_FORMAT=json
 SHUTDOWN_TIMEOUT=20s
+MAIL_MAILER=mailtrap
+# Read from a file, for Docker or Kubernetes secrets.
+APP_KEY=@file:/run/secrets/app_key
 ```
 
-Provide `APP_KEY` through the environment or a secret file (`APP_KEY=@file:/run/secrets/app_key`). The app refuses to boot with `APP_DEBUG=true` in production.
+The `@file:` prefix reads the value from a file and trims the trailing newline. It works for values written in `.env` files only: a process environment variable set to `@file:...` is used as the literal text.
 
-## Run
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `APP_ENV` | `development` | `production` turns on every production check and the embedded files |
+| `APP_KEY` | none | required in production; `base64:` plus at least 32 bytes |
+| `APP_URL` | `http://localhost:3000` | the public `https://` origin |
+| `HOST` | `localhost` | the listening address; `0.0.0.0` for every IPv4 interface |
+| `PORT` | `3000` | the listening port (`0` to `65535`) |
+| `SHUTDOWN_TIMEOUT` | `15s` | the drain time on stop, a Go [duration](https://pkg.go.dev/time#ParseDuration) |
+| `HTTP_MAX_HEADER_BYTES` | `65536` | request line plus headers limit, `4096` to `1048576`; larger requests get `431` |
+| `HTTP_H2C` | `false` | HTTP/2 without TLS in production, for a proxy that speaks h2c |
+| `LOG_FORMAT` | `json` in production | `json` or `text` |
+| `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 
-```bash
-APP_ENV=production ./bin/app
+[Docker and Railway](/docs/deployment/docker-and-railway#configure-production) lists the rest (proxies, HSTS, mail, scheduler) and the exact error the app prints for each misconfiguration. The most common one: with `APP_ENV=production`, `APP_DEBUG=true` stops the boot with `vukem: APP_DEBUG must be false when APP_ENV=production`.
+
+## Graceful shutdown
+
+When you deploy a new version, the old process gets a stop signal. A graceful shutdown lets it finish what it is doing, like a shop that locks the front door at closing time but still serves the customers already inside.
+
+`vukem.Main` listens for `SIGINT` (Ctrl+C) and `SIGTERM` through [`signal.NotifyContext`](https://pkg.go.dev/os/signal#NotifyContext). When one arrives:
+
+<Steps>
+<Step title="Stop taking new work">
+
+The app logs `shutting down` and cancels the context every runner observes. The HTTP server stops accepting connections. [Server-sent event](/docs/digging-deeper/sse) streams end at once, since they would never finish by themselves.
+
+</Step>
+<Step title="Finish in-flight work">
+
+In-flight requests keep running; their context is not cancelled, so a handler can finish its database write. The HTTP drain, running scheduled tasks and queue jobs each get up to `SHUTDOWN_TIMEOUT`. Tasks and jobs still running then are cancelled through their `ctx`, and interrupted jobs go back to the queue.
+
+</Step>
+<Step title="Leave stuck runners behind">
+
+The app waits for the runners up to `SHUTDOWN_TIMEOUT` plus a 3-second grace. A runner that ignores its `ctx` is logged as `runners still running after SHUTDOWN_TIMEOUT: shutting down without them`.
+
+</Step>
+<Step title="Close resources">
+
+Hooks registered with `app.OnShutdown` run in reverse registration order, then each provider's `Shutdown` in reverse provider order. They share a fresh `SHUTDOWN_TIMEOUT` deadline.
+
+</Step>
+</Steps>
+
+The worst case is therefore about twice `SHUTDOWN_TIMEOUT` plus 3 seconds. Set your process manager's stop timeout above that (with the default `15s`, at least 35 seconds), or it kills the process mid-drain.
+
+```go title="bootstrap/app.go"
+// After vukem.New succeeds, inside New:
+app.OnShutdown(func(ctx context.Context) error {
+	app.Log.InfoContext(ctx, "flushing metrics")
+	return nil
+})
 ```
 
-On `SIGINT` or `SIGTERM` the HTTP server stops accepting connections and drains in-flight requests while running scheduled tasks and queue jobs finish, each within `SHUTDOWN_TIMEOUT` (those still running are then cancelled through their `ctx`; interrupted jobs go back to the queue). A runner that ignores `ctx` is logged and left behind three seconds later. Shutdown hooks and providers then run in reverse order with their own `SHUTDOWN_TIMEOUT`, so set your process manager's stop timeout to at least twice `SHUTDOWN_TIMEOUT` plus a few seconds.
+### Background work in the same process
 
-The same process runs the [scheduler](/docs/digging-deeper/scheduler#running-it) when tasks exist (including the hourly `session:prune` with `SESSION_DRIVER=database`) and a [queue worker](/docs/digging-deeper/queue#running-workers) for the memory, database and Redis queues, so one service is enough. With several replicas, or a separate `./bin/app schedule:work` process, set `SCHEDULE_IN_SERVE=false` on the web replicas so run-once tasks are not fired by every replica (see [Several replicas](/docs/digging-deeper/scheduler#several-replicas)).
+`serve` also runs the [scheduler](/docs/digging-deeper/scheduler) when tasks exist (including the hourly `session:prune` with `SESSION_DRIVER=database`) and a [queue worker](/docs/digging-deeper/queue) for the memory, database and Redis queues. One process is enough. With several replicas, or a separate `./bin/app schedule:work` process, set `SCHEDULE_IN_SERVE=false` on the web replicas so run-once tasks do not fire on every replica, or use `OnOneServer()` with a shared cache. `QUEUE_IN_SERVE=false` stops the in-process worker when only `queue:work` processes should run jobs.
 
 ## Health checks
 
-`GET /up` is the liveness probe: it answers `200 {"status":"ok"}` once the app booted, without touching a dependency or creating a session. Use it as the container healthcheck.
+Platforms and load balancers ask two questions:
 
-For readiness, register a check per dependency and mount `app.ReadyHandler()` where the platform expects it:
+| Probe | Question | Vukem endpoint |
+| --- | --- | --- |
+| <Term tip="A check that the process is running and able to answer at all.">liveness</Term> | is the process alive? | `GET /up` |
+| <Term tip="A check that the dependencies the app needs, such as the database, respond.">readiness</Term> | can it serve real traffic? | `GET /up?checks=1` or your own `ReadyHandler` route |
 
-```go
-app.AddHealthCheck("redis", rc.Ping)                              // 3s timeout
-app.AddHealthCheckTimeout("search", 500*time.Millisecond, search.Ping)
+`GET /up` answers `200 {"status":"ok"}` once the app booted, without touching a dependency or creating a session. Use it as the container or load balancer healthcheck: a slow database should not make the platform restart a healthy process.
+
+For readiness, register one check per dependency. A check is a `vukem.HealthCheck`, a `func(ctx context.Context) error` that returns `nil` when healthy:
+
+```go title="routes/web.go"
+// Inside Web, after DefaultMiddleware:
+app.AddHealthCheck("redis", rdb.Ping)
+app.AddHealthCheckTimeout(
+	"search",
+	500*time.Millisecond,
+	searchClient.Ping,
+)
 
 r.Handle("GET /ready", app.ReadyHandler())
 ```
 
-`app.DB()` registers a `db` check by itself. The handler runs every check in parallel, each bounded by its own timeout (a check that ignores its context is abandoned at the deadline), and answers `200` or `503` with `{"status":"ok"|"fail","checks":{"db":"ok","redis":"fail"}}` and `Cache-Control: no-store`. Errors are logged, never returned to the client. `GET /up?checks=1` gives the same answer; `app.CheckHealth(ctx)` returns the raw errors for a custom endpoint.
+```bash
+curl -i http://localhost:3000/ready
+```
+
+```text
+HTTP/1.1 503 Service Unavailable
+Cache-Control: no-store
+Content-Type: application/json
+
+{"status":"fail","checks":{"db":"ok","redis":"fail","search":"ok"}}
+```
+
+Under the hood:
+
+- `app.DB()` registers a `db` check by itself, so the starter reports its database without code.
+- Every check runs in parallel, bounded by its own timeout: `vukem.DefaultHealthCheckTimeout` (3 seconds) for `AddHealthCheck`, or the duration you pass to `AddHealthCheckTimeout` (zero or negative means the default).
+- A check that ignores its context is abandoned at the deadline. While that abandoned run is still going, the next probe fails the check at once instead of starting another goroutine, so a hung dependency never piles up goroutines. A panic in a check counts as a failure.
+- A check with the same name replaces the earlier one.
+- The answer is `200` when all pass and `503` when any fails. Errors are logged as `health check failed` with the check name; they never reach the client, because they may contain hosts or credentials.
+- `app.CheckHealth(ctx)` returns the raw `map[string]error` for a custom endpoint.
 
 ## Behind a reverse proxy
 
-Terminate TLS at the proxy (Caddy, nginx, a load balancer) and tell Vukem which proxies to trust through the environment:
+Do not expose the app's port to the internet directly. Put a <Term tip="A server that receives requests from the internet and forwards them to your app.">reverse proxy</Term> such as [Caddy](https://caddyserver.com/docs/quick-starts/reverse-proxy) or [nginx](https://nginx.org/en/docs/http/ngx_http_proxy_module.html) in front. It terminates TLS (gets and renews the certificate, speaks HTTPS) and forwards plain HTTP to the app.
 
-```dotenv
-TRUSTED_PROXIES=10.0.0.0/8     # CIDRs or IPs, comma-separated; nobody is trusted by default
-TRUST_FORWARDED_PROTO=true     # send HSTS when a trusted proxy says the request was HTTPS
+```text title="Caddyfile"
+blog.example.com {
+	reverse_proxy 127.0.0.1:3000
+}
 ```
 
-`vukem.New` applies them to the router's `web.Services` and to the `SecureHeaders` that `DefaultMiddleware` already installs, so do not build another `web.Services` or add a second `SecureHeaders`. An invalid entry stops the boot. Details: [trusted proxies](/docs/deployment/docker-and-railway#trusted-proxies).
+Caddy connects from the same machine, so trust loopback. It sends `X-Forwarded-For` and `X-Forwarded-Proto`:
 
-## Containers and platforms
+```dotenv title=".env.production"
+HOST=127.0.0.1
+TRUSTED_PROXIES=127.0.0.1,::1
+TRUST_FORWARDED_PROTO=true
+```
 
-Every starter ships a `Dockerfile`; see [Docker and Railway](/docs/deployment/docker-and-railway) for the image, the variables and a step-by-step Railway deploy.
+With `HOST=127.0.0.1`, only the proxy on the same machine can reach the app. `vukem.New` applies the proxy settings to the router and to the `SecureHeaders` middleware that `DefaultMiddleware` installs, so do not build another `web.Services` or add a second `SecureHeaders`. An invalid entry stops the boot. [Trusted proxies](/docs/deployment/docker-and-railway#trusted-proxies) explains how `c.IP()` reads the headers, `CLIENT_IP_HEADER` and HSTS.
+
+### A systemd service
+
+On a Linux server, [systemd](https://www.freedesktop.org/software/systemd/man/latest/systemd.service.html) starts the app at boot, restarts it on a crash and sends `SIGTERM` on stop:
+
+```ini title="/etc/systemd/system/blog.service"
+[Unit]
+Description=Blog
+After=network.target
+
+[Service]
+User=blog
+WorkingDirectory=/srv/blog
+Environment=APP_ENV=production
+EnvironmentFile=/srv/blog/secrets.env
+ExecStart=/srv/blog/bin/app
+Restart=on-failure
+# Above 2 x SHUTDOWN_TIMEOUT + 3s (default 15s).
+TimeoutStopSec=40
+
+[Install]
+WantedBy=multi-user.target
+```
+
+`Environment=APP_ENV=production` puts `APP_ENV` in the process environment, so the embedded files are used. `WorkingDirectory` is where the app looks for `.env` files and `storage/`.
 
 ## Checklist
 
-- `APP_ENV=production`, `APP_DEBUG=false`, a unique `APP_KEY`.
-- `APP_URL` set to the `https` origin.
-- `TRUSTED_PROXIES` set to the proxy's network; `TRUST_FORWARDED_PROTO=true` behind TLS (HSTS).
+- `APP_ENV=production` in the process environment, `APP_DEBUG=false`, a unique `APP_KEY` kept in a secret store.
+- `APP_URL` set to the `https://` origin.
+- `TRUSTED_PROXIES` set to the proxy's network, and `TRUST_FORWARDED_PROTO=true` behind TLS (HSTS).
+- `MAIL_MAILER` chosen explicitly.
+- `vite build` run before `go build` (`vukem build` does both).
+- The process manager's stop timeout above twice `SHUTDOWN_TIMEOUT` plus 3 seconds.
+- Liveness on `/up`; readiness on `/up?checks=1` or a `ReadyHandler` route.
 - Logs shipped as JSON to durable storage, with alerts on security events.
 - `govulncheck ./...` in CI.
-- Scheduler: in `serve` by default; `SCHEDULE_IN_SERVE=false` when a single `schedule:work` process runs it, or `OnOneServer()` with a shared cache for run-once tasks with several replicas.
-- Queue: `serve` works the database queue by default; `QUEUE_IN_SERVE=false` when only `queue:work` processes should run jobs.
+- Scheduler: in `serve` by default; `SCHEDULE_IN_SERVE=false` when a single `schedule:work` process runs it.
+- Queue: `serve` works the database and Redis queues by default; `QUEUE_IN_SERVE=false` when only `queue:work` processes should run jobs.
+
+## Common mistakes
+
+**Pages render without styles.** You ran `go build` before `vite build`, so `resources/public/build` was empty. Run `vukem build`, which builds the assets first.
+
+**Template changes on the server take effect without a rebuild.** `APP_ENV=production` is only in `.env.production`, so `resources` reads the `resources/` folder on disk. Set it in the process environment:
+
+```bash
+# Wrong: the resources package does not read .env files.
+./bin/app
+# Right:
+APP_ENV=production ./bin/app
+```
+
+**The app is unreachable from another machine.** `HOST` defaults to `localhost`. Set `HOST=0.0.0.0`, or keep `127.0.0.1` behind a proxy on the same machine.
+
+**The deploy kills requests mid-flight.** The process manager's stop timeout is shorter than the drain. Raise it above twice `SHUTDOWN_TIMEOUT` plus 3 seconds.
+
+**A secret file path shows up as the value.** `APP_KEY=@file:...` set in the process environment is not resolved; the boot fails with `config: APP_KEY is not valid base64`. Put the `@file:` line in a `.env` file, or export the key itself.
+
+## Next steps
+
+<CardGroup cols="2">
+<Card title="Docker and Railway" href="/docs/deployment/docker-and-railway" icon="rocket">
+The starter's image, every production variable and a Railway deploy.
+</Card>
+<Card title="Configuration" href="/docs/configuration" icon="layers">
+How `.env` files and the environment are loaded.
+</Card>
+<Card title="Scheduler" href="/docs/digging-deeper/scheduler" icon="zap">
+Scheduled tasks inside `serve` or a dedicated process.
+</Card>
+<Card title="Security overview" href="/docs/security/overview" icon="shield">
+Every secure default, and what is left to you.
+</Card>
+</CardGroup>

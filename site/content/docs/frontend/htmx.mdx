@@ -1,88 +1,366 @@
 ---
 title: HTMX
-description: HTMX-first server rendering with htmx 4 request and response helpers, fragments, multi-target partials and a vendored, checksum-pinned htmx.
+description: Build interactive pages with HTML from the server, using htmx 4, fragment rendering, response headers and multi-target updates.
 ---
 
-The starter vendors **htmx 4.0.0** at `resources/public/js/htmx.min.js`, served by the static middleware, so **no Node or CDN is required**. The file's SHA-256 is pinned in the CLI and checked by a test; upgrading means replacing the file and the hash together.
+[htmx](https://four.htmx.org/) lets any HTML element send a request and swap the HTML it gets back into the page. You keep writing Go handlers and HTML views, and the page still updates without a full reload. Vukem's default starter is built on **htmx 4**, and the `htmx` package plus a few `web.Ctx` methods cover the whole protocol.
 
-The layout loads it with the request's CSP nonce:
+You will learn:
 
-```html title="resources/views/layouts/app.html"
-{{htmxScript (asset "js/htmx.min.js")}}
-{{vite "resources/css/app.css" "resources/js/app.ts"}}
-<!-- <script src="/js/htmx.min.js" defer nonce="…"></script> -->
+- how htmx and the server talk to each other through `HX-*` headers;
+- how to render a whole page or one fragment from the same handler;
+- how to steer the browser from Go (events, redirects, history, retargeting);
+- how to update several parts of the page with one response;
+- what errors and validation failures look like on htmx requests;
+- how to test all of it with `vukemtest`.
+
+## The idea
+
+A classic web page is like ordering a full meal every time you want more salt. With htmx you ask the kitchen for the salt only: the browser sends a small request, the server answers with a small piece of HTML, and htmx puts it in the right place.
+
+htmx and the server agree on a set of HTTP headers. The browser sends `HX-*` request headers to say "I am htmx, and this is what I want". The server may answer with `HX-*` response headers to say "fire this event", "go to this URL" or "put this somewhere else".
+
+| Step | Who | What happens |
+| --- | --- | --- |
+| 1 | Browser | The user types in a search box with `hx-get="/posts"` |
+| 2 | htmx | Sends `GET /posts?q=go` with `HX-Request: true` |
+| 3 | Your handler | Sees an htmx request and renders only the list |
+| 4 | htmx | Swaps the returned `<ul>` into `hx-target` |
+
+There is no JSON and no client-side state: the HTML **is** the state. The [htmx documentation](https://four.htmx.org/docs/) covers the attributes (`hx-get`, `hx-target`, `hx-swap`, `hx-trigger`); this page covers the Go side.
+
+<Callout type="info">
+Vukem targets htmx **4**. Its headers and defaults differ from htmx 1 and 2 (for example `HX-Request-Type` and the `<hx-partial>` element). Read the [htmx 4 header reference](https://four.htmx.org/reference/headers/) rather than older tutorials.
+</Callout>
+
+## Quick start
+
+The HTMX starter already ships a live search on the posts page. Here is how it works, piece by piece.
+
+<Steps>
+<Step title="Create an app">
+
+```bash
+vukem new blog
+cd blog
+vukem serve
 ```
 
-Keep `htmxScript` before `vite`: the htmx tag is `defer` and the Vite entry is a module script, and both run in document order, so this order makes `window.htmx` defined when `resources/js/app.ts` runs. The starter checks it in `tests/home_test.go` (`TestLayoutLoadsHTMXBeforeVite`).
+Open `http://localhost:3000/posts`. The search box filters posts as you type.
 
-Starter views use no inline scripts, `hx-on`, event-handler or `style` attributes, so they run under the default Content-Security-Policy. CSRF needs no extra setup: `CrossOriginProtection` checks `Sec-Fetch-Site`, which browsers send with htmx requests.
+</Step>
+<Step title="The view marks the fragment with a block">
 
-## Request helpers
+The list sits inside `{{block "post-list" .}}`. A <Term tip="A named piece of an html/template file that can be rendered on its own.">block</Term> is both rendered as part of the page and addressable by name.
 
-| Helper | Meaning |
-| --- | --- |
-| `c.IsHTMX()`, `htmx.Is(r)` | `HX-Request: true` |
-| `c.IsPartial()`, `htmx.IsPartial(r)` | htmx request that is not `HX-Request-Type: full` nor a history restore: render a fragment |
-| `htmx.IsBoosted(r)` | `HX-Boosted: true` |
-| `htmx.IsHistoryRestore(r)` | `HX-History-Restore-Request`: must render the full page |
-| `htmx.CurrentURL(r)` | `HX-Current-URL` |
-| `htmx.Source(r)`, `htmx.Target(r)` | `HX-Source` / `HX-Target` parsed into `htmx.Element{Tag, ID}` |
+```html title="resources/views/posts/index.html"
+{{define "content"}}
+<input type="search" name="q" value="{{.Search}}"
+	hx-get="{{route "posts.index"}}"
+	hx-trigger="input changed delay:300ms, search"
+	hx-target="#post-list">
 
-## Rendering blocks
+{{block "post-list" .}}
+<ul id="post-list" class="list">
+	{{range .Posts}}
+	<li><a href="{{route "posts.show" "post" .ID}}">{{.Title}}</a></li>
+	{{else}}
+	<li class="empty">No posts yet.</li>
+	{{end}}
+</ul>
+{{end}}
+{{end}}
+```
 
-```go
+</Step>
+<Step title="The handler names the block">
+
+```go title="app/controllers/post_controller.go"
 func (pc *PostController) Index(c *web.Ctx) error {
-	posts, err := orm.QueryOf[models.Post](pc.db).Latest().Get(c.Context())
+	q := orm.QueryOf[models.Post](pc.db).OrderBy("id", orm.Desc)
+	if search := c.Query("q"); search != "" {
+		q = q.Where("title", "LIKE", "%"+search+"%")
+	}
+
+	posts, err := q.Get(c.Context())
 	if err != nil {
 		return err
 	}
 
-	return c.Render("posts/index", map[string]any{"Posts": posts}, web.Block("post-list"))
+	data := map[string]any{"Posts": posts, "Search": c.Query("q")}
+
+	return c.Render("posts/index", data, web.Block("post-list"))
 }
 ```
 
-`web.Block` renders only that `{{block}}` for partial htmx requests and the full page otherwise; `Vary: HX-Request` is always set so caches keep both. `c.Fragment(name, block, data)` always renders just the block.
+</Step>
+<Step title="See both answers">
 
-## Response helpers
+```bash
+curl -s localhost:3000/posts | head -n 3
+# <!doctype html>
+# <html lang="en">
+# <head>
 
-`c.HTMX()` returns a chainable `*htmx.Response` that sets response headers:
+curl -s -H "HX-Request: true" "localhost:3000/posts?q=go"
+# <ul id="post-list" class="list">
+#   <li><a href="/posts/1">Go is fun</a></li>
+# </ul>
+```
 
-```go
+The same URL returns the full page to a browser and only the list to htmx.
+
+</Step>
+</Steps>
+
+## Loading htmx
+
+The starter **vendors** htmx 4.0.0 at `resources/public/js/htmx.min.js`. The static middleware serves it, so you need no CDN and no Node to run htmx. The file's SHA-256 is pinned in the CLI (`internal/cli/new.go`) and a test checks it, so a tampered file fails the build. To upgrade, replace the file and its hash together.
+
+The layout loads it with the `htmxScript` view function:
+
+```html title="resources/views/layouts/app.html"
+<meta property="csp-nonce" nonce="{{cspNonce}}">
+{{htmxScript (asset "js/htmx.min.js")}}
+{{vite "resources/css/app.css" "resources/js/app.ts"}}
+```
+
+`htmxScript` renders `<script src="/js/htmx.min.js" defer nonce="...">`. The nonce is the request's <Term tip="A random value the server puts in the Content-Security-Policy header and on each allowed script tag. Scripts without it do not run.">CSP nonce</Term>, so htmx runs under the default Content-Security-Policy.
+
+**Order matters.** Keep `htmxScript` before `vite`. A `defer` script and a module script both run in document order, so this order makes `window.htmx` exist when `resources/js/app.ts` runs. The starter's `TestLayoutLoadsHTMXBeforeVite` (in `tests/home_test.go`) fails if someone swaps them.
+
+The [templ starter](/docs/starters) does the same with its `script` and `viteTags` helpers in `resources/views/helpers.go`.
+
+## Reading the request
+
+htmx describes every request in headers. Vukem reads them for you:
+
+| Helper | Returns `true` / the value when |
+| --- | --- |
+| `c.IsHTMX()`, `htmx.Is(r)` | `HX-Request` is exactly `true` |
+| `c.IsPartial()`, `htmx.IsPartial(r)` | htmx sent it, `HX-Request-Type` is not `full`, and it is not a history restore |
+| `htmx.IsBoosted(r)` | `HX-Boosted` is `true` (a link or form with `hx-boost`) |
+| `htmx.IsHistoryRestore(r)` | `HX-History-Restore-Request` is `true` |
+| `htmx.CurrentURL(r)` | the `HX-Current-URL` value: the browser URL when the request started |
+| `htmx.Source(r)` | `HX-Source` parsed into `htmx.Element` |
+| `htmx.Target(r)` | `HX-Target` parsed into `htmx.Element` |
+
+`htmx.Element` has two fields, `Tag` and `ID`. htmx sends them as `tag#id`, so `button#delete-1` becomes `Element{Tag: "button", ID: "delete-1"}`. A value without `#` fills only `Tag`.
+
+```go title="app/controllers/post_controller.go"
+if htmx.Target(c.Request()).ID == "sidebar" {
+	return c.Fragment("posts/index", "sidebar-list", data)
+}
+```
+
+**Why "partial" and not just "htmx"?** Not every htmx request wants a fragment. A body swap, a boosted navigation (`HX-Request-Type: full`) and a history restore all replace the whole page, so they need the whole page. htmx 4 keeps no local history cache: when the user presses Back, it fetches the page again with `HX-History-Restore-Request: true`, and you must send the full document. `IsPartial` answers the question you actually care about.
+
+The header names are exported as constants (`htmx.HeaderRequest`, `htmx.HeaderRequestType`, `htmx.HeaderCurrentURL`, `htmx.HeaderSource`, `htmx.HeaderTarget`, `htmx.HeaderBoosted`, `htmx.HeaderHistoryRestore`) if you need them in middleware.
+
+## Rendering fragments
+
+You have three ways to render a fragment, one per view style.
+
+| Call | Partial htmx request | Any other request |
+| --- | --- | --- |
+| `c.Render(name, data, web.Block("post-list"))` | only the `post-list` block | the whole page |
+| `c.Fragment(name, "post-list", data)` | only the block | only the block |
+| `c.View(page, web.Partial(fragment))` | the `fragment` component | the `page` component |
+
+`web.Partial` is the [templ](https://templ.guide/) version of `web.Block`. The templ starter's index handler uses it:
+
+```go title="app/controllers/post_controller.go"
+return c.View(
+	views.PostsIndex(posts, c.Query("q")),
+	web.Partial(views.PostList(posts)),
+)
+```
+
+Under the hood:
+
+- All three set `Vary: HX-Request`, so a cache (a CDN, the browser) stores the page and the fragment as two different answers for the same URL.
+- Output is buffered. A template error becomes a clean `500` instead of half a page.
+- `web.WithStatus(code)` changes the status (default `200`), for example `web.WithStatus(http.StatusCreated)`.
+- `c.Fragment` ignores the request type. Use it for endpoints that only ever serve htmx.
+
+## Steering the browser
+
+`c.HTMX()` returns a `*htmx.Response` that writes response headers. Every method returns the same value, so calls chain:
+
+```go title="app/controllers/post_controller.go"
 c.HTMX().
-	Trigger("post-created", map[string]any{"id": post.ID}). // merged into one HX-Trigger JSON object
+	Trigger("post-created", map[string]any{"id": post.ID}).
 	PushURL(c.MustURL("posts.show", "post", post.ID)).
 	Retarget("#flash").
 	Reswap("innerHTML")
 ```
 
-| Method | Header |
-| --- | --- |
-| `Trigger(event, detail)` | `HX-Trigger` (several calls merge) |
-| `Location(path)`, `LocationWith(htmx.LocationOptions{…})` | `HX-Location` (string or object with target, swap, select, values, headers) |
-| `Redirect(url)` | `HX-Redirect` (full page load) |
-| `Refresh()` | `HX-Refresh: true` |
-| `PushURL(url)`, `ReplaceURL(url)` | `HX-Push-Url`, `HX-Replace-Url` |
-| `Retarget(sel)`, `Reswap(style)`, `Reselect(sel)` | `HX-Retarget`, `HX-Reswap`, `HX-Reselect` |
+| Method | Header it sets | What the browser does |
+| --- | --- | --- |
+| `Trigger(event, detail)` | `HX-Trigger` | Fires `event` with `detail` (any JSON value, `nil` allowed) |
+| `Location(path)` | `HX-Location` | Navigates to `path` without a full reload |
+| `LocationWith(htmx.LocationOptions{...})` | `HX-Location` (JSON object) | Same, with a target, swap, select, values or headers |
+| `Redirect(url)` | `HX-Redirect` | A full page load to `url` |
+| `Refresh()` | `HX-Refresh: true` | Reloads the page |
+| `PushURL(url)` | `HX-Push-Url` | Adds `url` to the browser history |
+| `ReplaceURL(url)` | `HX-Replace-Url` | Replaces the current history entry |
+| `Retarget(selector)` | `HX-Retarget` | Swaps into another element (CSS selector) |
+| `Reswap(style)` | `HX-Reswap` | Uses another swap style (`innerHTML`, `outerMorph`, ...) |
+| `Reselect(selector)` | `HX-Reselect` | Uses only part of the response (CSS selector) |
 
-`c.Redirect` already answers htmx requests with `HX-Location` (navigation without a full reload) and other clients with a 302/303.
+Details worth knowing:
+
+- Several `Trigger` calls **merge** into one JSON object. `Trigger("a", nil)` then `Trigger("b", 1)` sends `{"a":null,"b":1}`. Calling `Trigger` twice with the same event keeps the last detail.
+- `htmx.LocationOptions` has `Path` (required), `Target`, `Swap`, `Select`, `Values` (`map[string]any`) and `Header` (`map[string]string`, sent as `headers`). Empty fields are left out of the JSON.
+- `c.HTMX()` also adds `Vary: HX-Request`. Outside a handler, `htmx.NewResponse(w)` does the same for any `http.ResponseWriter`.
+- Set headers **before** you write the body. Headers sent after `c.Render` returns are lost, as with any [`http.ResponseWriter`](https://pkg.go.dev/net/http#ResponseWriter).
+
+### Redirects
+
+You rarely need `Location` by hand. `c.Redirect`, `c.RedirectRoute` and `c.Back` already know about htmx:
+
+| Request | Answer |
+| --- | --- |
+| htmx (not a history restore) | `200` with `HX-Location: <target>`: htmx navigates without a full reload |
+| `GET` or `HEAD` from a browser | `302 Found` |
+| any other method from a browser | `303 See Other`, so the browser follows with `GET` |
+
+`c.RedirectStatus(status, target)` picks the status for browsers and still answers htmx with `HX-Location`.
 
 ## Several targets in one response
 
-```go
-html := htmx.Partial("#post-list", "beforeend", rowHTML) + htmx.OOB("post-count", "", countHTML)
+Sometimes one action changes two places: you add a post, and both the list and the "3 posts" counter change. Two helpers build the markup for this:
+
+- `htmx.Partial(target, swap, content)` wraps `content` in htmx 4's `<hx-partial>` element. An empty `swap` leaves the attribute out, so htmx uses its default.
+- `htmx.OOB(id, swap, content)` wraps `content` in a `<div id="..." hx-swap-oob="...">` for an <Term tip="Out-of-band: htmx swaps the element into the page element with the same id, wherever it is.">out-of-band</Term> swap. An empty `swap` means `true`.
+
+```go title="app/controllers/post_controller.go"
+func (pc *PostController) quickAdd(
+	c *web.Ctx, row template.HTML, count int,
+) error {
+	label := template.HTML(
+		template.HTMLEscapeString(fmt.Sprintf("%d posts", count)),
+	)
+
+	html := htmx.Partial("#post-list", "beforeend", row) +
+		htmx.OOB("post-count", "", label)
+
+	return c.HTML(http.StatusOK, string(html))
+}
 ```
 
-- `htmx.Partial(target, swap, content)` wraps content in htmx 4's `<hx-partial hx-target hx-swap>`.
-- `htmx.OOB(id, swap, content)` renders an `hx-swap-oob` element (swap defaults to `true`).
+The response body is:
 
-Attribute values are escaped; `content` must be HTML you rendered (for example from a view), never raw user input.
+```html
+<hx-partial hx-target="#post-list" hx-swap="beforeend"><li>...</li></hx-partial>
+<div id="post-count" hx-swap-oob="true">3 posts</div>
+```
+
+Both helpers escape the attribute values (`target`, `id`, `swap`), but they do **not** escape `content`. It is typed [`template.HTML`](https://pkg.go.dev/html/template#HTML) on purpose: pass HTML you rendered from a view, never raw user input.
 
 ## Errors and validation
 
-- Errors returned to htmx requests render as an HTML fragment with the real status; htmx 4 swaps 4xx and 5xx responses by default.
-- Validation errors on htmx requests answer **422** with that fragment. Classic (non-htmx) form posts are redirected back with errors and old input flashed instead.
-- Deleting in place: return an empty `200` (`c.String(http.StatusOK, "")`) and use `hx-swap="outerHTML"` on the row, as the starter's `Destroy` does.
+When a handler returns an error, Vukem's error handler answers htmx in HTML with the real status code. htmx 4 swaps `4xx` and `5xx` responses into the target by default, so the user sees the message where the content would have gone.
 
-## Server-sent events
+| Situation | Status | Body |
+| --- | --- | --- |
+| `errs.New(404, "Post not found")` | `404` | `<div class="error" role="alert" data-status="404"><strong>Not Found</strong> Post not found</div>` |
+| Validation failed | `422` | the same `div`, title `Validation failed`, plus one `<li data-field="title">` per message |
+| Any other error | `500` | the `div` with `Internal Server Error` only |
 
-`c.SSE(func(s *sse.Stream) error { … })` streams events that pair with htmx `hx-sse`; see [Server-sent events](/docs/digging-deeper/sse). For file inputs with a progress bar, see [File uploads](/docs/digging-deeper/uploads#htmx-progress-component).
+For example, posting a one-letter title from an htmx form returns:
+
+```html
+<div class="error" role="alert" data-status="422">
+<strong>Validation failed</strong> 1 field(s) are invalid.
+<ul><li data-field="title">...</li></ul></div>
+```
+
+Compare that with the other kinds of clients:
+
+- A **classic form post** (no htmx) with invalid input is redirected back (`303`), with the errors and old input flashed to the session. The form reads them with `{{error "title"}}` and `{{old "title"}}`.
+- A **JSON client** gets `application/problem+json` (see [Error handling](/docs/basics/error-handling)).
+- htmx error fragments carry `Cache-Control: no-store`. They never go through a custom `ErrorPage` hook (such as the Inertia error page), and the development debug page is skipped, so a `5xx` still answers with a fragment.
+
+**Deleting in place.** The starter's delete button uses `hx-target="closest li"` and `hx-swap="outerHTML"`. The handler answers an empty `200` so htmx replaces the row with nothing:
+
+```go title="app/controllers/post_controller.go"
+switch {
+case c.WantsJSON():
+	return c.NoContent()
+case c.IsHTMX():
+	return c.String(http.StatusOK, "")
+}
+```
+
+Do not answer `204` here: htmx does not swap a `204 No Content`, so the row would stay on the page.
+
+## Security
+
+What Vukem does for you:
+
+- **CSP.** The starter's views contain no inline scripts, no `hx-on` attributes, no `on*` event handlers and no `style` attributes, so they run under the default nonce-based Content-Security-Policy. A test (`TestSecurity_A02_StarterViewsRespectCSP`) checks every view. Put behaviour in `resources/js/app.ts` instead of `hx-on`.
+- **CSRF.** htmx requests need no token. `CrossOriginProtection` checks the `Sec-Fetch-Site` header that browsers send with every `fetch`, including htmx's. Plain forms still include `{{csrfField}}`. See [CSRF](/docs/basics/csrf).
+- **Escaping.** `html/template` escapes your data, and `htmx.Partial` / `htmx.OOB` escape their attributes.
+
+What stays your job:
+
+- Never pass user input as `content` to `htmx.Partial`, `htmx.OOB` or `c.HTML`.
+- Authorize every htmx endpoint like any other route. An `HX-Request` header proves nothing: anyone can send it with `curl`.
+
+## Testing
+
+`vukemtest` speaks htmx. `Client.HTMX()` sends `HX-Request: true` and `HX-Request-Type: partial` on the following requests:
+
+```go title="tests/posts_test.go"
+func TestPostSearch(t *testing.T) {
+	t.Parallel()
+
+	app := vukemtest.New(t, bootstrap.New)
+
+	app.Client(t).HTMX().
+		Get("/posts?q=nothing").
+		AssertOK().
+		AssertFragment().
+		AssertDontSee("Hello Vukem")
+}
+```
+
+| Assertion | Checks |
+| --- | --- |
+| `AssertFragment()` | the body has no `<html` tag |
+| `AssertHXTrigger(event)` | `HX-Trigger` fires `event` (JSON object or plain name) |
+| `AssertRedirect(path)` | a `3xx` `Location` or an `HX-Location` to `path` |
+| `AssertHeader(key, value)` | any other header, such as `HX-Push-Url` |
+
+See [Testing](/docs/testing/overview) for the full client.
+
+## Common mistakes
+
+**Rendering the page for every htmx request.**
+
+```go
+// Wrong: the search box receives a whole <html> document
+// and nests it inside #post-list.
+return c.Render("posts/index", data)
+
+// Right: only the block for partial requests.
+return c.Render("posts/index", data, web.Block("post-list"))
+```
+
+**Using `c.IsHTMX()` to choose a fragment.** A boosted link or a Back button press is an htmx request that needs the full page. Use `c.IsPartial()` (or `web.Block`, which uses it).
+
+**Loading htmx after the Vite entry.** `resources/js/app.ts` then runs before htmx, and any code in it that touches the `htmx` global fails with `ReferenceError: htmx is not defined`. Keep `htmxScript` first.
+
+**Inline handlers.** `hx-on:click="..."` or `onclick="..."` is blocked by the CSP. The browser console shows `Refused to execute inline event handler because it violates the following Content Security Policy directive`. Move the code to `resources/js/app.ts`.
+
+## Next steps
+
+<CardGroup cols="2">
+<Card title="Views" href="/docs/basics/views" icon="layers">Layouts, blocks and every template function.</Card>
+<Card title="Vite" href="/docs/frontend/vite" icon="zap">How CSS and JavaScript reach the page.</Card>
+<Card title="Server-sent events" href="/docs/digging-deeper/sse" icon="route">Push HTML to htmx with `hx-sse`.</Card>
+<Card title="File uploads" href="/docs/digging-deeper/uploads" icon="boxes">Upload forms with an htmx progress bar.</Card>
+</CardGroup>
+
+Package reference: [pkg.go.dev/github.com/AlexGalhardo/vukem/htmx](https://pkg.go.dev/github.com/AlexGalhardo/vukem/htmx).

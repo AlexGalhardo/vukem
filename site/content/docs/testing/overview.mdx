@@ -1,134 +1,732 @@
 ---
 title: Testing
-description: Boot the app per test with an isolated in-memory database, drive it with a fluent in-process client, and assert on responses, sessions and rows.
+description: Boot your real app in every test with a private in-memory database, drive it with an in-process HTTP client, and assert on responses, sessions, flash messages, Inertia pages, rows, mail and jobs.
 ---
 
-The `vukemtest` package boots your real application, `bootstrap.New`, in the test environment and sends requests in-process: no port, no network.
+A test is a small program that uses your app and checks that it behaves the way you expect. The `vukemtest` package boots **your real application** (the same `bootstrap.New` that `vukem serve` runs) inside a Go test, gives it a fresh empty database, and sends it HTTP requests without opening a port. You then check the answer with short, chainable assertions such as `AssertOK()` or `AssertSee("Hello")`.
+
+You will learn:
+
+- how `vukemtest.New` prepares an app for one test, and every option it takes;
+- how the test client sends requests and keeps cookies like a browser;
+- every assertion on responses, JSON, redirects, sessions, flash messages, htmx and Inertia;
+- how to check rows in the database, on SQLite or on a real PostgreSQL;
+- how to replace mail, queues, events, cache, time and logins with fakes.
+
+Every example on this page tests the **blog** that `vukem new` creates: a `PostController` with a form at `/posts/create`, a list at `/posts`, a page at `/posts/{post}` and a JSON API on the same URLs.
+
+## The idea
+
+Think of a flight simulator. A pilot practises in a cockpit that has the same buttons as the real plane, but nothing leaves the ground and nobody gets hurt when something goes wrong. `vukemtest` is a simulator for your app: the routes, middleware, controllers, validation and database code are the real ones, but the requests never touch the network and the database disappears when the test ends.
+
+Go has testing built in. A test is a function whose name starts with `Test`, lives in a file that ends in `_test.go`, and receives a `*testing.T`. You run it with `go test`. If you have never written one, read the [Add a test](https://go.dev/doc/tutorial/add-a-test) tutorial and skim the [`testing` package](https://pkg.go.dev/testing) first.
 
 ```go title="tests/posts_test.go"
-func TestCreatePost(t *testing.T) {
+func TestPostsIndex(t *testing.T) {
+	app := vukemtest.New(t, bootstrap.New)
+
+	app.Client(t).Get("/posts").AssertOK()
+}
+```
+
+Under the hood, three pieces work together:
+
+| Piece | Type | What it does |
+| --- | --- | --- |
+| `vukemtest.New(t, bootstrap.New)` | `*vukemtest.App` | Builds, boots and migrates the app for this test only, and shuts it down when the test ends |
+| `app.Client(t)` | `*vukemtest.Client` | A fake browser: sends requests and keeps cookies between them |
+| `.Get("/posts")` | `*vukemtest.Response` | The recorded answer; every `Assert…` method checks something about it and returns it again, so calls chain |
+
+The requests go through Go's [`net/http/httptest`](https://pkg.go.dev/net/http/httptest) package: the client builds an `*http.Request`, hands it straight to your app's <Term tip="The http.Handler that wraps every route and middleware of the app.">compiled handler</Term>, and records the answer in an `httptest.ResponseRecorder`. No port is opened, so hundreds of tests can run at the same time.
+
+## Quick start
+
+<Steps>
+<Step title="Generate a test file">
+
+```bash
+vukem make:test Post
+```
+
+```text
+created tests/post_test.go
+```
+
+The generator removes a trailing `Test` from the name (`PostTest` also gives `post_test.go`) and refuses to overwrite an existing file unless you pass `--force`.
+
+</Step>
+<Step title="Look at what it wrote">
+
+```go title="tests/post_test.go"
+package tests
+
+import (
+	"testing"
+
+	"github.com/AlexGalhardo/vukem/vukemtest"
+
+	"example.com/blog/bootstrap"
+)
+
+func TestPost(t *testing.T) {
 	t.Parallel()
 
 	app := vukemtest.New(t, bootstrap.New)
 
-	app.Client(t).
-		PostForm("/posts", url.Values{"title": {"Hello"}, "body": {"World"}}).
-		AssertRedirect("/posts/1").
-		AssertSessionHas("success")
-
-	vukemtest.AssertDatabaseHas(t, app, "posts", map[string]any{"title": "Hello"})
+	app.Client(t).Get("/up").AssertOK()
 }
 ```
 
-## `vukemtest.New`
+`t.Parallel()` lets this test run at the same time as others. That is safe because every `vukemtest.New` call gets its own database.
 
-`vukemtest.New(t, build, opts...)`:
+</Step>
+<Step title="Test the create form">
 
-- sets `APP_ENV=test`, a random `APP_KEY` and cookie sessions;
-- points `DATABASE_URL` at a **private in-memory SQLite database** per test, so parallel tests never share rows;
-- does not start the HTTP listener and discards logs;
-- boots providers, runs the registered migrations and shuts the app down in `t.Cleanup`.
+Replace the body of the test with a real scenario: send the form, follow the redirect, check the page and the row.
+
+```go title="tests/post_test.go"
+package tests
+
+import (
+	"net/url"
+	"testing"
+
+	"github.com/AlexGalhardo/vukem/vukemtest"
+
+	"example.com/blog/bootstrap"
+)
+
+func TestCreatePost(t *testing.T) {
+	t.Parallel()
+
+	app := vukemtest.New(t, bootstrap.New)
+	c := app.Client(t)
+
+	form := url.Values{
+		"title": {"Hello Vukem"},
+		"body":  {"First post."},
+	}
+
+	c.PostForm("/posts", form).
+		AssertRedirectRoute("posts.show", "post", 1).
+		AssertFlash("success", "Post created.")
+
+	c.Get("/posts/1").
+		AssertOK().
+		AssertSee("Hello Vukem").
+		AssertSee("Post created.")
+
+	vukemtest.AssertDatabaseHas(t, app, "posts", map[string]any{
+		"title": "Hello Vukem",
+	})
+}
+```
+
+</Step>
+<Step title="Run it">
+
+```bash
+go test ./tests -run TestCreatePost -v
+```
+
+```text
+=== RUN   TestCreatePost
+=== PAUSE TestCreatePost
+=== CONT  TestCreatePost
+--- PASS: TestCreatePost (0.04s)
+PASS
+ok      example.com/blog/tests  0.512s
+```
+
+Run the whole suite with `go test ./...`. Add `-race` to turn on Go's [race detector](https://go.dev/doc/articles/race_detector) (it needs cgo, so it may not work on every Windows machine).
+
+</Step>
+</Steps>
+
+When an assertion fails, the test stops and prints what it expected, the request, the status, every response header (sorted) and the first 2,000 bytes of the body (longer bodies end with `…`):
+
+```text
+--- FAIL: TestCreatePost (0.03s)
+    post_test.go:31: body does not contain "Hello Vukem"
+
+        GET /posts/1 → 200
+        Content-Type: text/html; charset=utf-8
+        X-Content-Type-Options: nosniff
+        X-Frame-Options: DENY
+
+        <!doctype html><html lang="en">…
+```
+
+## Booting the app
+
+### What `vukemtest.New` does
 
 ```go
-clock := vukemtest.NewFakeClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+func New(tb testing.TB, build vukem.BuildFunc, opts ...Options) *App
+```
+
+`build` is any function with the signature of `vukem.New` (a `vukem.BuildFunc`); in an app it is `bootstrap.New`. Step by step, `New`:
+
+1. Prepares the test configuration below, then copies `Options.Env` over it (your values win).
+2. Calls `build` with these options first and `Options.AppOptions` last, so your options can override them:
+   - `vukem.WithSource` with the configuration map (no `.env` file and no real environment variables are read);
+   - `vukem.WithKind(vukem.KindTest)`;
+   - `vukem.WithoutHTTP()` (no listener, no port);
+   - `vukem.WithLogOutput(io.Discard)` and `vukem.WithStdout(io.Discard)` (quiet logs);
+   - `vukem.WithClock(Options.Clock)` when you set a clock.
+3. Registers `app.Shutdown` in [`t.Cleanup`](https://pkg.go.dev/testing#T.Cleanup), so the app closes when the test ends, even if it fails.
+4. Calls `app.Boot` (providers start, with `t.Context()`).
+5. Runs every registered migration on the empty database, unless `Options.SkipMigrations` is `true`.
+6. Compiles the routes into the handler the client will call.
+
+| Configuration value | Test value | Why |
+| --- | --- | --- |
+| `APP_ENV` | `test` | Code can check that it runs in a test |
+| `APP_KEY` | a new random key per test | Encryption, signed cookies and CSRF work without a real secret |
+| `DATABASE_URL` | `file:<TestName>_<8 random chars>?mode=memory&cache=shared` | A private SQLite database that lives in memory; non-word characters of the test name become `_` |
+| `SESSION_DRIVER` | `cookie` | Sessions need no table or server |
+| `MAIL_MAILER` | `array` | Mail is kept in memory, never sent |
+
+<Callout type="info">
+Isolation comes from the private database, not from transactions. Two tests, or two `vukemtest.New` calls in the same test, never see each other's rows.
+</Callout>
+
+If anything fails (build, boot, migration or routes), `New` stops the test with `t.Fatalf` and one of these messages:
+
+| Message starts with | Failed step |
+| --- | --- |
+| `vukemtest: build app:` | `build` returned an error (bad configuration, unknown driver) |
+| `vukemtest: boot:` | a provider failed in `Boot` |
+| `vukemtest: open database:` | the database could not be opened for the migrator |
+| `vukemtest: migrate:` | a migration failed |
+| `vukemtest: routes:` | the handler could not be compiled |
+
+### Options
+
+`New` takes at most one `vukemtest.Options` value; only the first is read.
+
+```go title="tests/clock_test.go"
+clock := vukemtest.NewFakeClock(
+	time.Date(2026, 1, 1, 9, 0, 0, 0, time.UTC),
+)
 
 app := vukemtest.New(t, bootstrap.New, vukemtest.Options{
-	Env:            map[string]string{"MAIL_FROM": "test@example.com"},
-	Clock:          clock.Now,          // app.Now() and sessions use the fake clock
+	Env: map[string]string{
+		"APP_NAME":  "Blog",
+		"MAIL_FROM": "blog@example.com",
+	},
+	Clock:          clock.Now,
 	SkipMigrations: false,
-	AppOptions:     []vukem.Option{},   // extra options passed to build
+	AppOptions:     []vukem.Option{vukem.WithDevtools()},
 })
-
-clock.Advance(3 * time.Hour) // e.g. expire the idle session timeout
 ```
 
-The fake clock drives every session driver: cookie expiry and the expiry checks of the `memory` and `database` stores both follow it, so a clock fixed in the past keeps sessions alive. The client's cookie jar never checks `Expires`; a cookie is dropped only when the response deletes it.
+| Field | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `Env` | `map[string]string` | `nil` | Adds or overrides configuration values, including the test defaults above |
+| `Clock` | `func() time.Time` | real time | Replaces the app clock (`app.Now()`, sessions); pass `clock.Now` from a [`FakeClock`](#time) |
+| `SkipMigrations` | `bool` | `false` | Leaves the database empty: no migration runs |
+| `AppOptions` | `[]vukem.Option` | `nil` | Extra options passed to `build` after the test ones, such as fakes |
 
-The returned `*vukemtest.App` embeds `*vukem.App` (`app.DB()`, `app.Config`…) and adds `Client`, `Handler` and `RefreshDatabase(t)` (drop everything and migrate again).
+### Testing that a bad configuration fails: `vukemtest.Build`
 
-`vukemtest.New` fails the test on a build, boot or migration error. To check that a bad configuration fails closed, use `vukemtest.Build`: same defaults, but it returns the error.
+`New` fails the test on any error, which is what you want almost always. To check that your app **refuses** a bad setting (it "fails closed"), use `Build`. It applies the same defaults and returns the error instead. The error wraps the original one, so [`errors.Is`](https://pkg.go.dev/errors#Is) works on it.
 
-```go
-_, err := vukemtest.Build(t, bootstrap.New, vukemtest.Options{
-	Env: map[string]string{"SESSION_DRIVER": "bogus"},
-})
-if err == nil {
-	t.Fatal("app booted with an unknown session driver")
+```go title="tests/config_test.go"
+func TestUnknownSessionDriverFails(t *testing.T) {
+	t.Parallel()
+
+	_, err := vukemtest.Build(t, bootstrap.New, vukemtest.Options{
+		Env: map[string]string{"SESSION_DRIVER": "bogus"},
+	})
+	if err == nil {
+		t.Fatal("app booted with an unknown session driver")
+	}
+
+	// vukemtest: build app: ... unknown SESSION_DRIVER "bogus"
+	t.Log(err)
 }
 ```
+
+### The `App` value
+
+`*vukemtest.App` embeds `*vukem.App`, so everything on the real app works: `app.DB()`, `app.Config`, `app.Router`, `app.Queue()`, `app.Now()`, `app.Seed(ctx)`. It adds:
+
+| Method | What it does |
+| --- | --- |
+| `Client(t) *Client` | A new client with an empty cookie jar |
+| `Handler() http.Handler` | The compiled handler, for plain `httptest` code |
+| `RefreshDatabase(t)` | Drops every table and runs the migrations again (`Migrator.Fresh`) |
+| `Mails() *mail.Array` | The in-memory mail transport; fails the test if the transport is not a `*mail.Array` |
+
+`RefreshDatabase` is for a test that needs a clean database half-way through. There is no "wrap each test in a transaction" helper on purpose: your handlers open their own transactions, and SQLite allows one writer at a time, so a transaction held by the test would block them forever.
 
 ## The client
 
-Each `app.Client(t)` has its own cookie jar, like a browser, so sessions and flash messages carry over between its requests.
+`app.Client(t)` returns a fake browser. Each client has its **own cookie jar**: cookies the app sets (the session, the CSRF cookie, "remember me") are sent back on the next request from the same client, so you stay logged in and flash messages reach the next page. Two clients never share cookies, which is how you test two different visitors.
 
-| Requests | Options |
+### Sending requests
+
+| Method | Sends | Body and headers |
+| --- | --- | --- |
+| `Get(target)` | `GET` | no body |
+| `GetJSON(target)` | `GET` | `Accept: application/json` for this one request only |
+| `Delete(target)` | `DELETE` | no body |
+| `PostForm(target, url.Values)` | `POST` | urlencoded form, `Content-Type: application/x-www-form-urlencoded` |
+| `PostJSON(target, v)` | `POST` | `v` encoded with [`encoding/json`](https://pkg.go.dev/encoding/json), `Content-Type: application/json` |
+| `PutJSON(target, v)` | `PUT` | as `PostJSON` |
+| `PatchJSON(target, v)` | `PATCH` | as `PostJSON` |
+| `Do(method, target, body, contentType)` | any | `body` is an [`io.Reader`](https://pkg.go.dev/io#Reader) (`nil` means empty); `Content-Type` is set only when `contentType` is not `""` |
+
+`target` is a path with an optional query string (`"/posts?q=go"`). The request host is `example.com`, and the request context is `t.Context()`, so it is cancelled when the test ends. If `v` cannot be encoded as JSON, the test fails with `vukemtest: encode body: …`.
+
+HTML forms can only send `GET` and `POST`. To test an update or a delete from a form, send the `_method` field, as the browser form does:
+
+```go title="tests/posts_test.go"
+app.Client(t).
+	PostForm("/posts/1", url.Values{
+		"_method": {"PUT"},
+		"title":   {"Edited"},
+	}).
+	AssertRedirect("/posts/1")
+```
+
+### Setting up the client
+
+These methods change the client itself and return it, so they apply to **every following request** of that client.
+
+| Method | Effect |
 | --- | --- |
-| `Get`, `GetJSON`, `Delete`, `PostForm(url, values)`, `PostJSON`, `PutJSON`, `PatchJSON`, `Do(method, url, body, contentType)` | `WithHeader`, `WithToken` (Bearer), `WithCookie`, `AcceptJSON()`, `HTMX()` (partial htmx request) |
+| `WithHeader(key, value)` | Sets a request header |
+| `WithToken(token)` | Sends `Authorization: Bearer <token>` (an [API token](/docs/security/api-tokens) or a [JWT](/docs/security/jwt)) |
+| `WithCookie(name, value)` | Adds a cookie to the jar |
+| `AcceptJSON()` | Sends `Accept: application/json`, so controllers that check `c.WantsJSON()` answer with JSON |
+| `HTMX()` | Sends `HX-Request: true` and `HX-Request-Type: partial`, like an [htmx](/docs/frontend/htmx) request |
+| `Inertia(version)` | Sends the [Inertia](/docs/frontend/inertia) headers (see [Inertia pages](#inertia-pages)) |
+| `ActingAs(guard, user)` | Logs the client in (see [Logged-in users](#logged-in-users)) |
+| `WithSession(values)` | Adds values to the client's session |
+| `CookieValue(name) string` | Reads a cookie from the jar (`""` when absent); this one changes nothing |
 
-## Assertions
+`GetJSON` is the only exception: it sets `Accept` for one request and then puts the old value back. `PostJSON`, `PutJSON` and `PatchJSON` set `Accept: application/json` when the client has no `Accept` header yet, and that header then **stays** on the client.
 
-Assertions chain and, on failure, print the request, status, headers and body.
+```go title="tests/posts_test.go"
+c := app.Client(t)
 
-| Group | Methods |
+// Only this request is an htmx request...
+app.Client(t).HTMX().Get("/posts?q=go").AssertFragment()
+
+// ...because HTMX() changed a different client. This one still
+// asks for full pages.
+c.Get("/posts").AssertSee("<html")
+```
+
+### How the cookie jar works
+
+- After each response, every `Set-Cookie` is stored by name. A cookie the app deletes (`Max-Age` zero or negative) is removed.
+- Every cookie in the jar is sent on every request, whatever its `Path` or `Domain`.
+- The jar never checks `Expires`. A cookie disappears only when a response deletes it. To test expiry, move the [fake clock](#time) forward instead: the session code checks its own timestamps.
+
+## Asserting on responses
+
+Every assertion is a method on `*vukemtest.Response`. It returns the same response, so you may chain as many as you like. The first one that fails stops the test.
+
+### Status codes
+
+| Method | Passes when the status is |
 | --- | --- |
-| Status | `AssertStatus(n)`, `AssertOK`, `AssertCreated`, `AssertNoContent`, `AssertNotFound`, `AssertForbidden`, `AssertUnauthorized`, `AssertUnprocessable` |
-| Redirects | `AssertRedirect(path)` (3xx or `HX-Location`), `AssertRedirectRoute(name, params...)` |
-| Body and headers | `AssertSee`, `AssertDontSee`, `AssertHeader`, `AssertFragment` (no `<html>` document) |
-| JSON | `AssertJSON(v)`, `AssertJSONPath("data.0.title", v)`, `AssertJSONCount(path, n)`, `JSONPath(path)` |
-| APIs | `AssertProblem(status)` (RFC 9457), `AssertJSONValidationErrors(fields...)` |
-| htmx | `AssertHXTrigger(event)` |
-| Session | `AssertSessionHas`, `AssertSessionMissing`, `AssertSessionHasErrors(fields...)`, `Session()` |
-| Flash | `AssertFlash(key, v)`, `AssertNoFlash(key)`: `c.Flash` or `inertia.Flash` data, in the session after a redirect or in an Inertia page's `flash` object (the key must be present, so `AssertFlash(key, nil)` does not match a missing value) |
-| Raw | `Status()`, `Body()`, `Header(key)`, `Recorder()` |
+| `AssertStatus(code)` | `code` (use the [`net/http` constants](https://pkg.go.dev/net/http#pkg-constants), such as `http.StatusTeapot`) |
+| `AssertOK()` | 200 |
+| `AssertCreated()` | 201 |
+| `AssertNoContent()` | 204 |
+| `AssertUnauthorized()` | 401 |
+| `AssertForbidden()` | 403 |
+| `AssertNotFound()` | 404 |
+| `AssertUnprocessable()` | 422 |
 
-```go
-api := app.Client(t).WithToken(token)
+Failure: `status = 404, want 200`.
 
-api.PostJSON("/api/posts", map[string]any{"title": ""}).
+### Redirects
+
+| Method | Passes when |
+| --- | --- |
+| `AssertRedirect(location)` | The response has an `HX-Location` header equal to `location` (any status), or it is a 3xx whose `Location` header equals `location` |
+| `AssertRedirectRoute(name, params...)` | Same, with the URL built from a [named route](/docs/basics/routing); `params` are name/value pairs (`"post", 1`) |
+
+The comparison is exact text: `"/posts/1"` does not match `"/posts/1?tab=comments"` or `"https://example.com/posts/1"`. The client does **not** follow redirects; send the next request yourself.
+
+```go title="tests/posts_test.go"
+c.PostForm("/posts", form).
+	AssertStatus(http.StatusSeeOther).
+	AssertRedirectRoute("posts.show", "post", 1)
+```
+
+Failures: `status = 200, want a redirect`, `redirect to "/posts/2", want "/posts/1"`, and, for an unknown route name or missing parameter, the router's error prefixed by `vukemtest:`.
+
+### Body and headers
+
+| Method | Passes when |
+| --- | --- |
+| `AssertSee(text)` | The raw body contains `text` (case-sensitive) |
+| `AssertDontSee(text)` | The raw body does not contain `text` |
+| `AssertHeader(key, value)` | The first value of header `key` equals `value`; a missing header reads as `""` |
+| `AssertHeaderContains(key, substr)` | The header value contains `substr` |
+| `AssertHeaderMissing(key)` | The header is not set at all (an empty value still counts as set) |
+
+`AssertSee` reads the body as the browser receives it, **after** HTML escaping. A post titled `Tom & Jerry` appears as `Tom &amp; Jerry` in the HTML.
+
+```go title="tests/home_test.go"
+app.Client(t).Get("/up").
+	AssertOK().
+	AssertHeaderMissing("Set-Cookie").
+	AssertHeader("X-Frame-Options", "DENY")
+```
+
+### JSON
+
+The body is decoded once (numbers kept exact with [`json.Decoder.UseNumber`](https://pkg.go.dev/encoding/json#Decoder.UseNumber)) and reused by every JSON assertion. If it is not JSON, the test fails with `body is not JSON: …`.
+
+A <Term tip="A string of keys and indexes separated by dots that points inside a JSON document.">JSON path</Term> walks the document: object keys by name, array items by index. `"data.0.title"` means "the `title` of the first item of `data`". The empty path `""` means the whole document.
+
+| Method | Passes when |
+| --- | --- |
+| `AssertJSON(want)` | The whole body equals `want` |
+| `AssertJSONPath(path, want)` | The value at `path` exists and equals `want` |
+| `AssertJSONCount(path, n)` | The array or object at `path` has `n` entries (anything else counts as `-1`) |
+| `JSONPath(path) (any, bool)` | Returns the value and whether it exists; asserts nothing |
+
+Values are compared by their JSON encoding, so `1`, `int64(1)` and `json.Number("1")` are equal, map key order does not matter, and a Go struct matches the object it encodes to. `AssertJSON` checks the **whole** body: an extra field makes it fail.
+
+```go title="tests/posts_api_test.go"
+api := app.Client(t).AcceptJSON()
+
+api.PostJSON("/posts", map[string]any{
+	"title": "From the API",
+	"body":  "JSON",
+}).
+	AssertCreated().
+	AssertHeader("Location", "/posts/1").
+	AssertJSONPath("title", "From the API")
+
+api.GetJSON("/posts").AssertOK().AssertJSONCount("data", 1)
+api.GetJSON("/posts/1").AssertJSONPath("id", 1)
+```
+
+### API errors
+
+Vukem answers API errors as [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457) problem details (`application/problem+json`). Two assertions check them:
+
+| Method | Passes when |
+| --- | --- |
+| `AssertProblem(status)` | The status is `status`, `Content-Type` is exactly `application/problem+json`, and the body's `status` field equals `status` |
+| `AssertJSONValidationErrors(fields...)` | `AssertProblem(422)` passes and the body's `errors` object has a key for every field |
+| `AssertMatchesOpenAPI()` | The response matches the schema of the request's operation in the app's [OpenAPI](/docs/rest-apis/openapi) document (`app.OpenAPI()`), or the default problem response |
+
+```go title="tests/posts_api_test.go"
+api.PostJSON("/posts", map[string]any{"title": "x"}).
 	AssertJSONValidationErrors("title")
 
-api.GetJSON("/api/posts/99").AssertProblem(http.StatusNotFound)
-
-app.Client(t).HTMX().Get("/posts?q=go").AssertOK().AssertFragment()
+api.GetJSON("/posts/99").AssertProblem(http.StatusNotFound)
 ```
 
-## Database assertions
+The 404 body that passes looks like this:
+
+```json
+{
+  "type": "about:blank",
+  "title": "Not Found",
+  "status": 404,
+  "instance": "/posts/99",
+  "request_id": "SBK3JBI5IJNPAROAELCEJW76XJ"
+}
+```
+
+### htmx
+
+| Method | Passes when |
+| --- | --- |
+| `AssertFragment()` | The body does not contain `<html` (any case): the app sent a piece of a page, not a whole document |
+| `AssertHXTrigger(event)` | `HX-Trigger` is a JSON object with the key `event`, or, when it is not JSON, equals `event` exactly |
+
+```go title="tests/posts_test.go"
+app.Client(t).HTMX().
+	Get("/posts?q=nothing").
+	AssertOK().
+	AssertFragment().
+	AssertDontSee("Hello Vukem")
+```
+
+### Raw access
+
+| Method | Returns |
+| --- | --- |
+| `Status() int` | The status code |
+| `Body() string` | The whole body |
+| `Header(key) string` | The first value of a response header |
+| `Recorder() *httptest.ResponseRecorder` | The raw recorder, for anything else |
+
+## Sessions, flash messages and logins
+
+### Reading the session
+
+`resp.Session()` returns the session data the **next** request of this client would see, decoded from the cookie jar. It works with every session driver (`cookie`, `memory`, `database`). Next to your own keys you will see internal ones such as `_created`, `_last` and `_flash.old`.
+
+| Method | Passes when |
+| --- | --- |
+| `AssertSessionHas(key)` | The session holds `key` with a value that is not `nil` (flash values included) |
+| `AssertSessionMissing(key)` | `key` is absent or `nil` |
+| `AssertSessionHasErrors(fields...)` | Validation errors were flashed for every field (under the `_errors` key) |
+
+When a form fails [validation](/docs/basics/validation), the controller redirects back to the page in `Referer` with the errors in the session:
+
+```go title="tests/posts_test.go"
+app.Client(t).
+	WithHeader("Referer", "/posts/create").
+	PostForm("/posts", url.Values{"title": {"x"}}).
+	AssertRedirect("/posts/create").
+	AssertSessionHasErrors("title")
+
+vukemtest.AssertDatabaseCount(t, app, "posts", 0)
+```
+
+### Flash messages
+
+A <Term tip="A session value that lives for exactly one more request, used for messages such as 'Post created.' after a redirect.">flash message</Term> is set before a redirect and shown on the next page. `AssertFlash` finds it wherever it is:
+
+- `c.Flash` data still in the session after the redirect;
+- `inertia.Flash` data still in the session;
+- the `flash` object of an Inertia page that already rendered it.
+
+| Method | Passes when |
+| --- | --- |
+| `AssertFlash(key, want)` | `key` was flashed and its value equals `want` (compared by JSON encoding) |
+| `AssertNoFlash(key)` | `key` is not flashed anywhere |
+
+The key must really be a flash. A normal session value with the same name does not count, and `AssertFlash(key, nil)` does not match a missing key: it matches only a flashed `nil`. Failures: `no flash "success"`, `flash "success" = "Post created.", want "Saved"`, `flash "success" present ("Post created."), want none`.
+
+```go title="tests/posts_test.go"
+c := app.Client(t)
+
+c.PostForm("/posts", form).AssertFlash("success", "Post created.")
+
+// The show page reads the flash, so it is gone afterwards.
+c.Get("/posts/1").AssertSee("Post created.")
+c.Get("/posts/1").AssertNoFlash("success")
+```
+
+A flash is removed only when a request **uses** the session (Vukem loads sessions lazily). A route that never reads the session, such as a JSON endpoint without auth, leaves the flash in place for the next one.
+
+### Logged-in users
+
+Going through the login form in every test is slow and repeats the same steps. `ActingAs` puts the client straight into a logged-in state:
 
 ```go
-vukemtest.AssertDatabaseHas(t, app, "posts", map[string]any{"title": "Hello", "deleted_at": nil}) // nil → IS NULL
-vukemtest.AssertDatabaseMissing(t, app, "posts", map[string]any{"title": "Spam"})
-vukemtest.AssertDatabaseCount(t, app, "posts", 1)
+func (c *Client) ActingAs(
+	guard string,
+	user interface{ AuthID() string },
+) *Client
 ```
 
-## Testing against PostgreSQL
+`guard` is the name of the session guard (`"web"` in apps scaffolded with `vukem install:auth`). `user` is any value with an `AuthID() string` method, such as the generated `models.User`. The session receives exactly what `auth.SessionGuard.Login` stores (from `auth.SessionValues`): the user id, the session owner and, when the user implements `auth.SessionVersioner`, its session version, so "log out other devices" checks pass.
 
-The in-memory SQLite database is fast and needs nothing installed, but an app that relies on PostgreSQL features (`jsonb`, `ILIKE`, arrays, `RETURNING` quirks) should run its tests on PostgreSQL too. The `pgtest` package, shipped with the Postgres driver, gives **each test its own empty database** and drops it when the test ends:
+`WithSession(values)` adds any other values. Both start a new session (as a real login would) and keep the values the client's session already holds, in either order.
+
+```go title="tests/dashboard_test.go"
+db, err := app.DB()
+if err != nil {
+	t.Fatal(err)
+}
+
+user, err := factories.User.CreateOne(t.Context(), db)
+if err != nil {
+	t.Fatal(err)
+}
+
+app.Client(t).
+	ActingAs("web", user).
+	WithSession(map[string]any{"beta": true}).
+	Get("/dashboard").
+	AssertOK()
+```
+
+For API routes, send a token with `WithToken(plain)` instead.
+
+For [social login](/docs/security/social-login), `vukemtest.FakeSocial(user)` returns `Options.Env` entries (`SOCIAL_FAKE_ID`, `SOCIAL_FAKE_EMAIL`, `SOCIAL_FAKE_NAME`, `SOCIAL_FAKE_EMAIL_VERIFIED`). Apps scaffolded with `vukem install:auth --social` then sign that user in through a fake provider, in test apps only:
+
+```go title="tests/social_test.go"
+user := social.User{
+	ID:            "gh-1",
+	Email:         "user@example.com",
+	EmailVerified: true,
+	Name:          "Lia",
+}
+
+app := vukemtest.New(t, bootstrap.New, vukemtest.Options{
+	Env: vukemtest.FakeSocial(user),
+})
+```
+
+## Inertia pages
+
+An [Inertia](/docs/frontend/inertia) app answers with a <Term tip="A JSON object with the component name, its props, the URL and the asset version.">page object</Term> instead of HTML. `Inertia(version)` makes the client act like the Inertia front end: it sends `X-Inertia: true`, `X-Requested-With: XMLHttpRequest`, `Accept: text/html, application/xhtml+xml` and `X-Inertia-Version: <version>`.
+
+- `""` sends the app's current asset version (`app.Inertia.Version()`), so tests keep passing after a Vite build.
+- Any other value tests the version mismatch: the app answers `409` and the browser would reload the page.
+- Because `Accept` is no longer empty, `PostJSON` then acts like an Inertia form submission, not an API call.
+
+`AssertInertia(component)` checks that the response renders `component`, either as JSON (an Inertia visit) or embedded in the HTML of a first visit, and returns an `*InertiaPage`:
+
+| Method | What it does |
+| --- | --- |
+| `HasProp(path, count...)` | The prop exists; with `count`, it is a list or object of that size |
+| `MissingProp(path)` | The prop does not exist (an optional prop that was not requested) |
+| `PropEquals(path, want)` | The prop equals `want` after a JSON round trip |
+| `Prop(path) (any, bool)` | Returns the prop and whether it exists |
+| `Page() map[string]any` | The whole decoded page object |
+| `FlashEquals(key, want)` | The page's `flash` object has `key` equal to `want` |
+| `MissingFlash(key)` | The page's `flash` object has no `key` |
+
+`FlashEquals` and `MissingFlash` read only `page.flash`. Use `AssertFlash` on the response to also find flash data still in the session.
+
+```go title="tests/posts_inertia_test.go"
+c := app.Client(t).Inertia("")
+
+c.PostJSON("/posts", map[string]any{"title": "Hello Vukem"}).
+	AssertRedirect("/posts/1").
+	AssertFlash("success", "Post created.")
+
+c.Get("/posts/1").
+	AssertInertia("Posts/Show").
+	PropEquals("post.title", "Hello Vukem").
+	FlashEquals("success", "Post created.")
+
+c.Get("/posts?q=nothing").
+	AssertInertia("Posts/Index").
+	HasProp("posts", 0).
+	PropEquals("filters.q", "nothing").
+	MissingProp("stats").
+	MissingFlash("success")
+
+app.Client(t).Inertia("stale").Get("/posts").AssertStatus(409)
+```
+
+Errors render the built-in `Error` component, so you can test them too:
+
+```go title="tests/posts_inertia_test.go"
+app.Client(t).Inertia("").Get("/missing").
+	AssertStatus(404).
+	AssertInertia("Error").
+	PropEquals("status", 404).
+	PropEquals("message", "Not Found")
+```
+
+## The database
+
+### Database assertions
+
+These are plain functions, not response methods, because they check the database itself.
+
+| Function | Passes when |
+| --- | --- |
+| `AssertDatabaseHas(t, app, table, where)` | At least one row of `table` matches every column in `where` |
+| `AssertDatabaseMissing(t, app, table, where)` | No row matches (with an empty `where`, the table must be empty) |
+| `AssertDatabaseCount(t, app, table, n)` | `table` has exactly `n` rows (`n` is an `int64`) |
+
+`where` is a `map[string]any` of column → value. Each entry becomes `column = ?`; a `nil` value becomes `column IS NULL`. Table and column names must look like identifiers (letters, digits and `_`, not starting with a digit); anything else fails with `vukemtest: invalid table "…"` or `invalid column "…"`, so a test can never inject SQL.
+
+```go title="tests/posts_test.go"
+vukemtest.AssertDatabaseHas(t, app, "posts", map[string]any{
+	"title": "Hello Vukem",
+})
+
+// A soft-deleted post has a deleted_at value, so it is "missing"
+// from the rows where deleted_at IS NULL.
+vukemtest.AssertDatabaseMissing(t, app, "posts", map[string]any{
+	"id":         1,
+	"deleted_at": nil,
+})
+
+vukemtest.AssertDatabaseCount(t, app, "posts", 0)
+```
+
+Failures: `vukemtest: no row in posts matches map[title:Hello Vukem]`, `vukemtest: 1 row(s) in posts match map[…], want none`, `vukemtest: posts has 2 rows, want 0`.
+
+### Factories and seeders
+
+Create rows with your [factories](/docs/database/factories-seeders), or run every seeder with `app.Seed`:
+
+```go title="tests/posts_test.go"
+func TestPostsSeederAndFactory(t *testing.T) {
+	t.Parallel()
+
+	app := vukemtest.New(t, bootstrap.New)
+	if err := app.Seed(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	vukemtest.AssertDatabaseCount(t, app, "posts", 10)
+
+	db, err := app.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	post, err := factories.Post.
+		State(func(p *models.Post) { p.Title = "Pinned" }).
+		CreateOne(t.Context(), db)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	id := strconv.FormatInt(post.ID, 10)
+	app.Client(t).Get("/posts/" + id).AssertSee("Pinned")
+}
+```
+
+### Testing against PostgreSQL
+
+In-memory SQLite is fast and needs nothing installed. An app that relies on PostgreSQL features (`jsonb`, `ILIKE`, arrays) should also run its tests on PostgreSQL. The `pgtest` package, in the PostgreSQL driver module, gives **each test its own empty database**:
 
 ```bash
 go get github.com/AlexGalhardo/vukem/drivers/postgres
 ```
 
-**1. Start a server.** Any PostgreSQL works; locally, Docker is the quickest:
+<Steps>
+<Step title="Start a server">
+
+Any PostgreSQL 13 or later works. Locally, Docker is quickest:
 
 ```bash
-docker run -d --name pg-test -p 5432:5432 -e POSTGRES_PASSWORD=secret postgres:17
+docker run -d --name pg-test -p 5432:5432 \
+  -e POSTGRES_PASSWORD=secret postgres:17
 ```
 
-**2. Tell the tests where it is.** `pgtest` reads an admin URL from `TEST_DATABASE_URL` (or `POSTGRES_URL`). It must be a `postgres://` or `postgresql://` URL (keyword/value DSNs like `host=... dbname=...` are rejected), the server PostgreSQL 13 or later, and its role needs the `CREATEDB` privilege; the database in the path is only used to connect.
+</Step>
+<Step title="Point the tests at it">
 
-```bash
-# macOS / Linux
-export TEST_DATABASE_URL="postgres://postgres:secret@localhost:5432/postgres?sslmode=disable"
+`pgtest` reads an admin URL from `TEST_DATABASE_URL`, then `POSTGRES_URL`. It must be a `postgres://` or `postgresql://` URL (keyword/value strings such as `host=... dbname=...` are rejected), and its role needs the `CREATEDB` privilege. The database named in the URL is used only to connect.
+
+<CodeGroup>
+
+```bash macOS / Linux
+export TEST_DATABASE_URL="postgres://postgres:secret@localhost:5432/\
+postgres?sslmode=disable"
 ```
 
-```powershell
-# Windows PowerShell
-$env:TEST_DATABASE_URL = "postgres://postgres:secret@localhost:5432/postgres?sslmode=disable"
+```powershell Windows PowerShell
+$env:TEST_DATABASE_URL = `
+  "postgres://postgres:secret@localhost:5432/postgres?sslmode=disable"
 ```
 
-**3. Pass the database to `vukemtest.New`.** `pgtest.Database(t, "")` creates `pgtest_<random>`, returns its URL and drops it in `t.Cleanup`:
+</CodeGroup>
+
+</Step>
+<Step title="Pass the database to vukemtest.New">
+
+`pgtest.Database(t, "")` creates `pgtest_<random>`, returns its URL and drops it in `t.Cleanup` after closing any connection left open. Pass a URL instead of `""` to skip the environment variables.
 
 ```go title="tests/posts_postgres_test.go"
+package tests
+
 import (
 	"net/url"
 	"testing"
@@ -141,61 +739,227 @@ import (
 	"example.com/blog/bootstrap"
 )
 
-func TestCreatePost_Postgres(t *testing.T) {
-	t.Parallel() // safe: every test gets its own database
+func TestCreatePostPostgres(t *testing.T) {
+	// Safe: every test gets its own database.
+	t.Parallel()
+
+	dbURL := pgtest.Database(t, "")
 
 	app := vukemtest.New(t, bootstrap.New, vukemtest.Options{
-		Env: map[string]string{"DATABASE_URL": pgtest.Database(t, "")},
-		// Only needed if bootstrap.New does not register the driver already.
-		AppOptions: []vukem.Option{vukem.WithDatabaseDrivers(postgres.Driver())},
+		Env: map[string]string{"DATABASE_URL": dbURL},
+		// Only needed when bootstrap.New does not register it.
+		AppOptions: []vukem.Option{
+			vukem.WithDatabaseDrivers(postgres.Driver()),
+		},
 	})
 
 	app.Client(t).
-		PostForm("/posts", url.Values{"title": {"Hello"}, "body": {"World"}}).
+		PostForm("/posts", url.Values{"title": {"Hello Vukem"}}).
 		AssertRedirect("/posts/1")
 
-	vukemtest.AssertDatabaseHas(t, app, "posts", map[string]any{"title": "Hello"})
+	vukemtest.AssertDatabaseHas(t, app, "posts", map[string]any{
+		"title": "Hello Vukem",
+	})
 }
 ```
 
-Migrations run on the fresh database exactly as they do on SQLite. Call `pgtest.Database` **before** `vukemtest.New`: cleanups run in reverse order, so the app closes its connections before the database is dropped (any connection left open is terminated first).
+</Step>
+</Steps>
 
-When no URL is set or the server is unreachable, the test **fails** with a message saying so, rather than silently passing. To keep `go test ./...` green on machines without PostgreSQL, opt in explicitly:
+Call `pgtest.Database` **before** `vukemtest.New`. Cleanups run in reverse order, so the app closes its connections first and the database is dropped last.
 
-```go
-func TestCreatePost_Postgres(t *testing.T) {
-	if testing.Short() || os.Getenv("TEST_DATABASE_URL") == "" {
-		t.Skip("set TEST_DATABASE_URL to run PostgreSQL tests")
-	}
-	// ...
+When no URL is set or the server is down, the test **fails** with a message saying so; it never passes silently. To keep `go test ./...` green on machines without PostgreSQL, opt in with [`testing.Short`](https://pkg.go.dev/testing#Short), an environment check, or a [build constraint](https://pkg.go.dev/cmd/go#hdr-Build_constraints):
+
+```go title="tests/posts_postgres_test.go"
+if testing.Short() || os.Getenv("TEST_DATABASE_URL") == "" {
+	t.Skip("set TEST_DATABASE_URL to run PostgreSQL tests")
 }
 ```
 
-Or put Postgres tests behind a build tag (`//go:build integration` at the top of the file) and run them with `go test -tags integration ./...`. In CI, start PostgreSQL as a service container and set `TEST_DATABASE_URL` in the job environment.
+With `//go:build integration` on the first line of the file, run those tests with `go test -tags integration ./...`. In CI, start PostgreSQL as a service container and set `TEST_DATABASE_URL` in the job.
 
-## Generating tests
+## Fakes and time
 
-```bash
-vukem make:test Comment   # tests/comment_test.go
+A <Term tip="A stand-in for a real service that records what your code asked it to do, so the test can check it.">fake</Term> replaces a service such as mail or the queue. Vukem has no global state to patch: you pass fakes to the app instance through the same `vukem.With…` options production code uses, in `Options.AppOptions`.
+
+```go title="tests/invoices_test.go"
+outbox := mail.NewArray()
+jobs := queue.NewFake()
+
+app := vukemtest.New(t, bootstrap.New, vukemtest.Options{
+	AppOptions: []vukem.Option{
+		vukem.WithMailTransport(outbox),
+		vukem.WithQueueDriver(jobs),
+		vukem.WithCacheStore(cache.NewMemory(1000)),
+	},
+})
+
+// ... send requests that mail and queue things ...
+
+sent := outbox.SentTo("user@example.com")
+invoices := queue.Dispatched[jobs.SendInvoice](jobs)
 ```
 
-## Plain `httptest`
+| Service | Fake | How you use it |
+| --- | --- | --- |
+| [Mail](/docs/digging-deeper/mail) | `mail.NewArray()` (the default in tests, via `MAIL_MAILER=array`) | `app.Mails()` or your own value: `Sent()`, `SentTo(addr)`, `Reset()`; each `mail.Message` has `To`, `Subject`, `HTML`, `Text`… |
+| [Queue](/docs/digging-deeper/queue) | `queue.NewFake()` with `vukem.WithQueueDriver` | `queue.Dispatched[J](fake)` returns the jobs of type `J`, decoded, in order; `Messages()` the raw ones. The fake stores jobs like the memory driver, so `q.Work(ctx, queue.WorkOptions{StopWhenEmpty: true})` runs them |
+| [Events](/docs/digging-deeper/events) | `events.NewFake()` | Pass it to code that takes an `events.Dispatcher`; `events.Dispatched[E](fake)` returns the events of type `E` |
+| [Cache](/docs/digging-deeper/cache) | `cache.NewMemory(maxEntries)` with `vukem.WithCacheStore` | LRU with TTL; `0` means 10,000 entries |
+| [Storage](/docs/digging-deeper/storage) | `storage.NewMemory(base)` | An in-memory disk; `base` prefixes URLs (`""` keeps files private) |
+| [Rate limiting](/docs/security/rate-limiting) | `ratelimit.NewMemory(limit, window)` | `limit` requests per `window` for each key |
+| [Social login](/docs/security/social-login) | `social.Fake(name, callbackURL, user)` | Or `vukemtest.FakeSocial(user)` in scaffolded apps |
+| Passwords | `hash.Fake()` (package `auth/hash`) | A fast argon2id hasher; never in production |
+| Sessions | `vukem.WithSessionStore(store)` | Any `session.Store`; `SESSION_DRIVER` in `Options.Env` also works |
 
-Handlers are `net/http` handlers, so `httptest` works too: `h, err := app.Handler()` then `h.ServeHTTP(rec, req)`. Time-dependent code without an app can use `testing/synctest`.
+The scaffolded mail test pulls a link out of the last message:
 
-## Authentication, mail and data
+```go title="tests/auth_test.go"
+sent := app.Mails().SentTo("user@example.com")
+if len(sent) == 0 {
+	t.Fatal("no mail sent to user@example.com")
+}
+
+link := linkRe.FindString(sent[len(sent)-1].Text)
+```
+
+### Time
+
+Code that depends on the clock (session timeouts, "posted 3 hours ago", trial periods) needs a clock you control. `vukemtest.FakeClock` stands still until you move it:
+
+| Function or method | What it does |
+| --- | --- |
+| `NewFakeClock(start)` | A clock fixed at `start` |
+| `Now() time.Time` | The current fake time; pass the method value `clock.Now` as `Options.Clock` |
+| `Advance(d)` | Moves the clock forward by `d` |
+| `Set(t)` | Moves the clock to `t` |
+
+All three methods are safe to call from several goroutines.
+
+```go title="tests/session_test.go"
+func TestIdleSessionExpires(t *testing.T) {
+	t.Parallel()
+
+	clock := vukemtest.NewFakeClock(
+		time.Date(2026, 1, 1, 9, 0, 0, 0, time.UTC),
+	)
+	app := vukemtest.New(t, bootstrap.New, vukemtest.Options{
+		Clock: clock.Now,
+	})
+
+	c := app.Client(t).WithSession(map[string]any{"theme": "dark"})
+	c.Get("/posts").AssertOK()
+
+	// Longer than SESSION_IDLE_TIMEOUT (default 2h): the next
+	// request starts an empty session.
+	clock.Advance(3 * time.Hour)
+	c.Get("/posts").AssertSessionMissing("theme")
+}
+```
+
+The fake clock drives every session driver: cookie expiry and the expiry checks of the `memory` and `database` stores all follow it. A clock fixed in the past therefore keeps sessions alive. For code that sleeps or uses timers without an app (rate limits, retries), use Go's [`testing/synctest`](https://pkg.go.dev/testing/synctest) instead, which runs a goroutine "bubble" on a fake clock.
+
+### Plain `httptest`
+
+Vukem handlers are ordinary `net/http` handlers, so the standard tools work too:
+
+```go title="tests/raw_test.go"
+rec := httptest.NewRecorder()
+req := httptest.NewRequest(http.MethodGet, "/up", nil)
+
+app.Handler().ServeHTTP(rec, req)
+
+if rec.Code != http.StatusOK {
+	t.Fatalf("GET /up = %d", rec.Code)
+}
+```
+
+## Configuration
+
+`vukemtest` reads no environment variables of its own; it sets these for the app (override any of them with `Options.Env`):
+
+| Variable | Value in tests | Notes |
+| --- | --- | --- |
+| `APP_ENV` | `test` | |
+| `APP_KEY` | random per call | From `config.GenerateKey()` |
+| `DATABASE_URL` | private in-memory SQLite | Set it to a `pgtest.Database` URL for PostgreSQL |
+| `SESSION_DRIVER` | `cookie` | `memory` and `database` also work |
+| `MAIL_MAILER` | `array` | Required by `app.Mails()` unless you pass `vukem.WithMailTransport(mail.NewArray())` |
+
+`pgtest` reads `TEST_DATABASE_URL`, then `POSTGRES_URL`, when you call `pgtest.Database(t, "")`.
+
+## Security
+
+- Tests run the same middleware as production: [CSRF](/docs/basics/csrf) protection, [security headers](/docs/security/security-headers), sessions and auth guards. A test that passes shows the protections are in place, not bypassed.
+- The test `APP_KEY` is random and thrown away, so never copy values signed or encrypted in a test into fixtures.
+- `ActingAs` and `FakeSocial` work only inside tests: the fake social provider is wired up for the test kind only, and `ActingAs` writes the session cookie in the client's jar, not through a route.
+- Database assertions accept identifiers only, so a table name built from test data cannot inject SQL.
+- See the [security overview](/docs/security/overview) for what Vukem does by default.
+
+## Common mistakes
+
+**Reusing a client after `HTMX()`, `AcceptJSON()` or `PostJSON`.** These change the client for every later request.
 
 ```go
-app.Client(t).ActingAs("web", user).Get("/dashboard").AssertOK()   // logged in on the session guard
-app.Client(t).ActingAs("web", user).WithSession(map[string]any{"stamp": s}) // extra session values
-app.Client(t).WithToken(plain).GetJSON("/api/v1/me").AssertOK()   // bearer token
-
-app.Mails().SentTo("ana@example.com")  // MAIL_MAILER=array in tests
-
-posts, err := factories.Post.Count(3).Create(t.Context(), db)
-err = app.Seed(t.Context())
+// Wrong: the second request is still an htmx request.
+c.HTMX().Get("/posts?q=go").AssertFragment()
+c.Get("/posts").AssertSee("<html")
 ```
 
-- `vukemtest.FakeSocial(user)` returns `Options.Env` entries that sign in through a fake provider in apps scaffolded with `install:auth --social`.
-- `vukemtest.App.CookieValue(name)` reads the client's cookie jar.
-- See [Factories and seeders](/docs/database/factories-seeders) and [Events](/docs/digging-deeper/events#testing) for `events.NewFake()`.
+```text
+body does not contain "<html"
+```
+
+```go
+// Right: a fresh client for each kind of visitor.
+app.Client(t).HTMX().Get("/posts?q=go").AssertFragment()
+app.Client(t).Get("/posts").AssertSee("<html")
+```
+
+**Expecting the client to follow redirects.**
+
+```go
+// Wrong: the POST answers 303, not the page.
+c.PostForm("/posts", form).AssertOK()
+```
+
+```text
+status = 303, want 200
+```
+
+```go
+// Right: check the redirect, then visit it.
+c.PostForm("/posts", form).AssertRedirect("/posts/1")
+c.Get("/posts/1").AssertOK()
+```
+
+**Checking for a flash with `AssertSessionMissing` after the next page.** A flash lives for one more request that uses the session; use `AssertNoFlash`, which knows flash keys from normal session values.
+
+**Expecting `AssertFlash(key, nil)` to mean "not flashed".**
+
+```text
+no flash "success"
+```
+
+Use `AssertNoFlash("success")`.
+
+**Calling `pgtest.Database` after `vukemtest.New`.** The database is then dropped while the app still holds connections. Call it first.
+
+## Next steps
+
+<CardGroup cols="2">
+<Card title="Factories and seeders" href="/docs/database/factories-seeders" icon="database">
+Fill the test database with realistic rows.
+</Card>
+<Card title="Validation" href="/docs/basics/validation" icon="shield">
+The rules behind `AssertSessionHasErrors` and `AssertJSONValidationErrors`.
+</Card>
+<Card title="Inertia" href="/docs/frontend/inertia" icon="layers">
+Pages, props and flash data you assert with `AssertInertia`.
+</Card>
+<Card title="CLI" href="/docs/cli/overview" icon="terminal">
+`vukem make:test` and every other generator.
+</Card>
+</CardGroup>
+
+Package reference: [pkg.go.dev/github.com/AlexGalhardo/vukem/vukemtest](https://pkg.go.dev/github.com/AlexGalhardo/vukem/vukemtest) and [pgtest](https://pkg.go.dev/github.com/AlexGalhardo/vukem/drivers/postgres/pgtest).
