@@ -195,12 +195,23 @@ func TestNewProjectEndToEnd(t *testing.T) {
 
 	requireGovulncheckTool(t, project)
 
+	// APP_ENV=production in .env (not the process) must keep the
+	// embedded views even with a resources/ folder on disk.
+	envTest := filepath.Join(project, "resources", "env_test.go")
+	if err := os.WriteFile(envTest, []byte(resourcesEnvTest), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
 	cmd := exec.CommandContext(t.Context(), "go", "test", "./...")
 	cmd.Dir = project
 	cmd.Env = append(os.Environ(), "GOWORK=off")
 
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("starter tests: %v\n%s", err, out)
+	}
+
+	if err := os.Remove(envTest); err != nil {
+		t.Fatal(err)
 	}
 
 	if code, out, errOut := vukem(
@@ -452,3 +463,36 @@ func TestScaffoldsDoNotReturnValueMutatedInSameStatement(t *testing.T) {
 		}
 	}
 }
+
+const resourcesEnvTest = `package resources
+
+import (
+	"io/fs"
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func TestDotEnvProductionUsesEmbeddedViews(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "resources", "views"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Chdir(dir)
+	t.Setenv("APP_ENV", "")
+	_ = os.Unsetenv("APP_ENV")
+
+	if _, err := fs.Stat(Views(), "home.html"); err == nil {
+		t.Fatal("development: Views() has home.html, want the empty resources/views on disk")
+	}
+
+	if err := os.WriteFile(".env", []byte("APP_ENV=production"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := fs.Stat(Views(), "home.html"); err != nil {
+		t.Fatalf("APP_ENV=production in .env: %v, want the embedded views", err)
+	}
+}
+`

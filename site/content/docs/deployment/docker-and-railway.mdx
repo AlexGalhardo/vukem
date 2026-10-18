@@ -118,7 +118,7 @@ Under the hood:
 - **Smaller binary.** `-trimpath` removes your machine's paths from the binary; `-ldflags="-s -w"` drops debug symbols.
 - **Build tags.** `.buildtags` lists Go [build tags](https://pkg.go.dev/cmd/go#hdr-Build_constraints), one per line or comma-separated, with `#` comments. `vukem build` reads the same file, so local and image builds match. `--minimal` projects put `vukem_nosqlite` there to leave SQLite out.
 - **Runtime defaults.** The last stage sets `APP_ENV=production`, `HOST=0.0.0.0`, `PORT=3000` and `LOG_FORMAT=json`, then `EXPOSE 3000` and `ENTRYPOINT ["/app/app"]`. `HOST=0.0.0.0` matters: the app's default `localhost` only accepts connections from inside the container.
-- **Embedded files.** With `APP_ENV=production` in the process environment, the starter's `resources` package always serves the embedded views and assets, so the image needs no `resources/` folder.
+- **Embedded files.** With `APP_ENV=production` (in the process environment or `.env`), the starter's `resources` package always serves the embedded views and assets, so the image needs no `resources/` folder.
 
 `.dockerignore` keeps these out of the build context, the files Docker sends to the builder:
 

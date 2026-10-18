@@ -139,13 +139,13 @@ The `all:` prefix matters. By default `//go:embed` skips files and folders whose
 
 | Situation | Files used |
 | --- | --- |
-| `APP_ENV=production` in the process environment | always the embedded files |
+| `APP_ENV=production` (in the process environment or `.env`) | always the embedded files |
 | otherwise, a `resources/views` (or `resources/public`) folder exists in the working directory | the files on disk, so template edits show up on refresh |
 | otherwise | the embedded files |
 
 `bootstrap/app.go` passes them to `vukem.WithViews(resources.Views())` and `vukem.WithVite(resources.Public())`, and `routes/web.go` serves the public files with `middleware.StaticFS`. You add nothing.
 
-`resources` checks the real process environment with [`os.Getenv`](https://pkg.go.dev/os#Getenv), not `.env` files. If `APP_ENV=production` is only in a `.env` file and a `resources/` folder sits next to the binary, the app serves those files from disk instead of the embedded ones. Set `APP_ENV` in the environment of the process.
+`resources` reads `APP_ENV` from the same places the app does: the process environment first, then `.env`. `APP_ENV` cannot come from `.env.production`, since that file is chosen by `APP_ENV` itself.
 
 ## Configure production
 
@@ -333,14 +333,7 @@ WantedBy=multi-user.target
 
 **Pages render without styles.** You ran `go build` before `vite build`, so `resources/public/build` was empty. Run `vukem build`, which builds the assets first.
 
-**Template changes on the server take effect without a rebuild.** `APP_ENV=production` is only in `.env.production`, so `resources` reads the `resources/` folder on disk. Set it in the process environment:
-
-```bash
-# Wrong: the resources package does not read .env files.
-./bin/app
-# Right:
-APP_ENV=production ./bin/app
-```
+**Template changes on the server take effect without a rebuild.** `APP_ENV=production` is only in `.env.production`, which the app never reads to choose its environment, so it runs as development and `resources` reads the `resources/` folder on disk. Put `APP_ENV=production` in `.env` or in the process environment (`APP_ENV=production ./bin/app`).
 
 **The app is unreachable from another machine.** `HOST` defaults to `localhost`. Set `HOST=0.0.0.0`, or keep `127.0.0.1` behind a proxy on the same machine.
 

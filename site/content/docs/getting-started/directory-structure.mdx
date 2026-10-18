@@ -138,7 +138,7 @@ Everything that is not Go code: HTML views, CSS, scripts and public files. `reso
 var embedded embed.FS
 ```
 
-During development, the files **on disk** are used instead, so a template edit shows up on refresh. With `APP_ENV=production` in the process environment, the embedded copy is always used, even when a `resources/` folder exists next to the binary.
+During development, the files **on disk** are used instead, so a template edit shows up on refresh. With `APP_ENV=production` (in the process environment or `.env`), the embedded copy is always used, even when a `resources/` folder exists next to the binary.
 
 ### `storage/` and `tests/`
 
