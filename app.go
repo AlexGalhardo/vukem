@@ -259,7 +259,7 @@ type App struct {
 // one byte past config's 1 MiB cap, so a reference to a device or FIFO
 // (/dev/zero, /dev/stdin) cannot block or exhaust memory at boot.
 func readConfigFile(name string) ([]byte, error) {
-	f, err := os.Open(name) //nolint:gosec // G304: the path comes from the operator's own configuration
+	f, err := os.Open(name)
 	if err != nil {
 		return nil, err
 	}

@@ -462,7 +462,7 @@ var userModel = regexp.MustCompile(`(?m)^type User struct`)
 func hasUserModel(env *Env) bool {
 	files, _ := filepath.Glob(env.path(filepath.Join("app", "models", "*.go")))
 	for _, f := range files {
-		if b, err := os.ReadFile(f); err == nil && userModel.Match(b) { //nolint:gosec // G304: project files
+		if b, err := os.ReadFile(f); err == nil && userModel.Match(b) {
 			return true
 		}
 	}
