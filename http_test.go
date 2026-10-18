@@ -824,6 +824,51 @@ func TestDefaultMiddlewareWithStateless(t *testing.T) {
 	}
 }
 
+func TestSecurity_A01_DefaultMiddlewareWithCSRFTokenFallback(t *testing.T) {
+	t.Parallel()
+
+	for _, fallback := range []bool{false, true} {
+		app := newTestApp(t, WithRoutes(func(r *router.Router, app *App) error {
+			sessionRoutes(r)
+
+			return DefaultMiddlewareWith(app, r, MiddlewareOptions{CSRFTokenFallback: fallback})
+		}))
+
+		sessions, err := app.Sessions()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		h, err := app.Handler()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// Old browsers send neither Sec-Fetch-Site nor Origin.
+		post := func(cookie string) int {
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/form", http.NoBody)
+			req.AddCookie(&http.Cookie{Name: cookie, Value: "x"})
+
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+
+			return rec.Code
+		}
+
+		wantSession := http.StatusOK
+		if fallback {
+			wantSession = http.StatusForbidden
+		}
+
+		if got := post(sessions.CookieName()); got != wantSession {
+			t.Errorf("fallback %v: POST with the session cookie = %d, want %d", fallback, got, wantSession)
+		}
+		if got := post("theme"); got != http.StatusOK {
+			t.Errorf("fallback %v: POST with an unrelated cookie = %d, want 200", fallback, got)
+		}
+	}
+}
+
 func TestSecurity_A02_DefaultMiddlewareWithRefusesBadOptions(t *testing.T) {
 	t.Parallel()
 
@@ -837,6 +882,7 @@ func TestSecurity_A02_DefaultMiddlewareWithRefusesBadOptions(t *testing.T) {
 		"bad session bypass":            {SessionBypass: []string{"/{bad"}},
 		"empty session bypass":          {SessionBypass: []string{""}},
 		"stateless with session bypass": {Stateless: true, SessionBypass: []string{"/webhooks/"}},
+		"stateless with token fallback": {Stateless: true, CSRFTokenFallback: true},
 		"bad CSRF bypass":               {CSRFBypass: []string{"/{bad"}},
 	}
 
