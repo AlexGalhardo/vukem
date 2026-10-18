@@ -7,6 +7,109 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.28.0] - 2026-10-18
+
+### Added
+
+- **site:** Wrap code blocks and add Term and Quote components ([7328830](https://github.com/AlexGalhardo/vukem/commit/732883055ac6886d29ee8402dc99ee4bc2d1b0e7))
+- **signed:** Add Signer.WithClock for the app clock ([b1fc8b0](https://github.com/AlexGalhardo/vukem/commit/b1fc8b05e87efe7f98c3680e706a354429703489))
+- **api:** Eager-load includes and add a cursor-aware Request.CursorPaginate ([ab96f97](https://github.com/AlexGalhardo/vukem/commit/ab96f97a3383d5eaaade9692eade4d91d382da6d))
+- **apidocs:** Configurable route names for several references ([751431c](https://github.com/AlexGalhardo/vukem/commit/751431c48669737249c59057f5b8bf0abdf38176))
+- **vukem:** Add MiddlewareOptions.CSRFTokenFallback ([656bc11](https://github.com/AlexGalhardo/vukem/commit/656bc116e2e0e29f5d0e39d6ab6f4e59906016a6))
+- **vukem:** Add WithViewFuncs for custom template functions ([f5d6d4f](https://github.com/AlexGalhardo/vukem/commit/f5d6d4f264d446b34cbf2b250921b1a48a16ad6e))
+- **vukem:** Add WithEventsFake and WithRateLimiters options ([f3f7efc](https://github.com/AlexGalhardo/vukem/commit/f3f7efc13d29d9bd0eb5a791c76d89fbb830da2e))
+- **BREAKING:** **config:** Resolve @file: secrets in the process environment ([ea204d2](https://github.com/AlexGalhardo/vukem/commit/ea204d2720f2a5d801a2e3f9427aacfb1158a155))
+- **otel:** Read OTEL_SERVICE_VERSION into service.version ([5c32abe](https://github.com/AlexGalhardo/vukem/commit/5c32abe4a330033e2a56cb157dc871c854917a47))
+- **config:** Escape a literal @file: value as @@file: ([46a7c04](https://github.com/AlexGalhardo/vukem/commit/46a7c042bdf1b28ccdfeeea50c36437f59a9d05f))
+
+### Fixed
+
+- **site:** Fit the header on 390px phones ([cbc14fe](https://github.com/AlexGalhardo/vukem/commit/cbc14fe6370334da7ec33006552f0411bab80356))
+- **cli:** Ignore .env.local in new projects ([4a47421](https://github.com/AlexGalhardo/vukem/commit/4a4742175bb709fae738faf5b69472fa3d2d54ca))
+- **site:** Fit code blocks and steps on phones ([d077dac](https://github.com/AlexGalhardo/vukem/commit/d077daced6c57a440141988f08f9926ceed31fd8))
+- **authz:** Let T values use the policy registered for *T ([242e495](https://github.com/AlexGalhardo/vukem/commit/242e495ea2eba45cb7f48c4b35fdd89bc7322b38))
+- **inertia:** Name the page script after Config.RootID ([6c57955](https://github.com/AlexGalhardo/vukem/commit/6c579559183b711a941bda8a535455b63c8ba64c))
+- **inertia:** Keep X-Inertia-Location on https behind a trusted proxy ([a43acd6](https://github.com/AlexGalhardo/vukem/commit/a43acd620ec1b02ce715ce2068a0cb42166d8e30))
+- **app:** Warn about a missing Inertia error page without WithEnv ([e8b6990](https://github.com/AlexGalhardo/vukem/commit/e8b6990cb701ab7736be04f1ff14315c6bfe9de6))
+- **authz:** Document the shallow copy for value subjects and test fallback edges ([a0ab556](https://github.com/AlexGalhardo/vukem/commit/a0ab556cd822daf0c9d50f1c63484330093d552f))
+- **schema:** Pluralise Constrained() targets like the orm ([0605a43](https://github.com/AlexGalhardo/vukem/commit/0605a43d2d4aec4f16f88856a24a043b3d7f849d))
+- **schema:** Rebind ? placeholders in Raw for the dialect ([43c7aa0](https://github.com/AlexGalhardo/vukem/commit/43c7aa0321d8ab05115ee93fb1dfb19dd0f71090))
+- **orm:** Name the Field() name in built-in rule messages ([46745cd](https://github.com/AlexGalhardo/vukem/commit/46745cdf576eb8b446b50eaf36f2207c0e220c38))
+- **BREAKING:** **orm:** Read Chunk batches by keyset instead of OFFSET ([7e8b6ce](https://github.com/AlexGalhardo/vukem/commit/7e8b6ceb4d1988b96305df012684c9e4371264b6))
+- **BREAKING:** **orm:** Cap Paginate and CursorPaginate per page at 100 ([9f0bedf](https://github.com/AlexGalhardo/vukem/commit/9f0bedf0b8428b3713d24906a0a69b18061cdaf6))
+- **mongo:** Answer 404 for ErrNotFound and return [] from All ([2f02c82](https://github.com/AlexGalhardo/vukem/commit/2f02c82f24b5c6b9a4704fedb39e830f68fbd67b))
+- **orm:** Group OR filters in keyset Chunk and check the selected key up front ([56659b5](https://github.com/AlexGalhardo/vukem/commit/56659b5289ebef64ea9ebb365197eb83dc542117))
+- **auth:** Match the Bearer scheme case-insensitively ([a7f1ed1](https://github.com/AlexGalhardo/vukem/commit/a7f1ed10647765d8176ea3629aad94871624f0eb))
+- **jwt:** Answer key set and user store outages with 503 ([2d5e1b4](https://github.com/AlexGalhardo/vukem/commit/2d5e1b459796087e7561f788c5811c05985985f0))
+- **cli:** Revoke API tokens instead of deleting them on email proof ([e75382d](https://github.com/AlexGalhardo/vukem/commit/e75382de917a75b3f3c08adcd2cae92e0997ca5b))
+- **cli:** Require the password and a rate limit to regenerate 2fa recovery codes ([4d78c0a](https://github.com/AlexGalhardo/vukem/commit/4d78c0a79ba7a3ea259287eeeec23e386b7a5687))
+- **BREAKING:** **cli:** Refuse install:auth --social x ([694b6ae](https://github.com/AlexGalhardo/vukem/commit/694b6ae730db4104a1e2a989c5a3c49a3c143b38))
+- **upload:** Accept Verify keys for types outside the extension table ([7658d96](https://github.com/AlexGalhardo/vukem/commit/7658d96b0b38dccdc4f649cdb1c7ddedb3892231))
+- **storage:** Send the real Last-Modified and hide local temporary files ([d031b68](https://github.com/AlexGalhardo/vukem/commit/d031b68854a69b6ca81324af832af102f93afdf0))
+- **BREAKING:** **storage:** Require UploadRules.Types in PutUploaded ([d30d7aa](https://github.com/AlexGalhardo/vukem/commit/d30d7aa7aa5be28743392949b6cf46e8482976e0))
+- **schedule:** Log lock errors and measure took from the task start ([fb039f7](https://github.com/AlexGalhardo/vukem/commit/fb039f78651a215ef7ef880803764a8e0731b11b))
+- **upload:** Keep scanner causes and log tus completion failures ([709123d](https://github.com/AlexGalhardo/vukem/commit/709123db21ee8c983b082bbf4462e3fa29e2ec81))
+- **events:** Name listeners by function and recover sync panics ([eeb50d5](https://github.com/AlexGalhardo/vukem/commit/eeb50d5ad9ec60625384b6a1beef0e9579622808))
+- **vukem:** Explain queue commands on in-process queue drivers ([ff78253](https://github.com/AlexGalhardo/vukem/commit/ff782534c257e6e8741eddff820a44c828103f26))
+- **BREAKING:** **mail:** Validate tags for every transport ([938c891](https://github.com/AlexGalhardo/vukem/commit/938c891e82d8d5ff44eb4123a68965d6ae579634))
+- **mail:** Retry network errors in the Resend and Mailtrap transports ([78da6ed](https://github.com/AlexGalhardo/vukem/commit/78da6ede6ceb2ce0bea1bfdfad91e069d082a2a8))
+- **BREAKING:** **vukem:** Fail boot on a mail transport that cannot send ([a74ee8d](https://github.com/AlexGalhardo/vukem/commit/a74ee8df9283ede7df01f9e59a7093796521019e))
+- **events:** Re-panic http.ErrAbortHandler and wrap error panics from sync listeners ([01ee89d](https://github.com/AlexGalhardo/vukem/commit/01ee89de3f457d6ddc79f0cc24adc322b780137c))
+- **api:** Parse typed handler input with the request context and logger ([0958e16](https://github.com/AlexGalhardo/vukem/commit/0958e16a119deba1b2bbb8459d234f50591f915f))
+- **BREAKING:** **api:** Replay only representation headers on idempotent repeats ([1925d67](https://github.com/AlexGalhardo/vukem/commit/1925d67ce25830ac5d09b52f066e38422953746b))
+- **cli:** Create the output directory of codegen:types -o ([eee86eb](https://github.com/AlexGalhardo/vukem/commit/eee86ebab6aeb904caa018956ab1130ec5955873))
+- **graphql:** Cost page-size arguments by their SDL default when omitted ([903c041](https://github.com/AlexGalhardo/vukem/commit/903c041c172a9db7d7a7544c3716689b39a72bc1))
+- **BREAKING:** **graphql:** Reject introspection in Handler unless opted in ([03d0326](https://github.com/AlexGalhardo/vukem/commit/03d032646f9dc8da289baaa573a7a8681de6c068))
+- **BREAKING:** **graphql:** Validate nested inputs, mask Validate errors, check fields at build ([3625e30](https://github.com/AlexGalhardo/vukem/commit/3625e302f695ea6fc14d662d91b0261de86a70c1))
+- **openapi:** Reject duplicate operationIds ([beb0ac6](https://github.com/AlexGalhardo/vukem/commit/beb0ac63ebc33545e6d21347d02ac1839ca3dc53))
+- **api:** Never replay credential headers on idempotent repeats ([4282e95](https://github.com/AlexGalhardo/vukem/commit/4282e9541393e5e2795e26e7867a090b78cf0371))
+- **BREAKING:** **middleware:** Let a route raise the router-wide body limit ([bd64d69](https://github.com/AlexGalhardo/vukem/commit/bd64d69fceacbd04e3c98a738ab5132c33aa25f0))
+- **web:** Send the c.Status code with the next writer's headers ([daefe5c](https://github.com/AlexGalhardo/vukem/commit/daefe5c5867cb83204af5cf47fcb6000ac4b5c5b))
+- **BREAKING:** **web:** Reject unknown JSON fields in BindJSON as documented ([1387d1b](https://github.com/AlexGalhardo/vukem/commit/1387d1baf6a82d7c89cf10ef2b8fc9a590feb603))
+- **web:** Answer 422 when FormFile reads a non-multipart request ([c6243d2](https://github.com/AlexGalhardo/vukem/commit/c6243d2995e2254846e599e2d8611350bafbb582))
+- **BREAKING:** **router:** Make a group's "/" route exact like the root route ([e6f8e5c](https://github.com/AlexGalhardo/vukem/commit/e6f8e5cc2e8258c1cb5f122144c8ece6a9342d67))
+- **router:** Strip inlined-closure suffixes from middleware names ([46edb46](https://github.com/AlexGalhardo/vukem/commit/46edb46e2d25b25d0ea4a624b86d9385e619d2be))
+- **middleware:** Detect fingerprints strictly and add ETags to embedded files ([d11e4dd](https://github.com/AlexGalhardo/vukem/commit/d11e4ddf93a76b58605b7a38ade494b0eb3f6463))
+- **csrf:** Trigger the token fallback on the session cookie only ([b24352c](https://github.com/AlexGalhardo/vukem/commit/b24352c638fae03a63d787fb9ba9437afd549231))
+- **web:** Pass the error to error views in debug mode ([067a370](https://github.com/AlexGalhardo/vukem/commit/067a3705c039275b6d91013c1a096328e1c7e626))
+- **session:** Report no id for cookie sessions, even after Regenerate ([4bbb51e](https://github.com/AlexGalhardo/vukem/commit/4bbb51e3432909a92d50cd11bcfea5bca58c6e7f))
+- **z:** Use the singular in default messages for a count of 1 ([a1b5717](https://github.com/AlexGalhardo/vukem/commit/a1b5717cf65cadca04ec42374a61a937486d187c))
+- **z:** Leave Nullable-only keys out of the JSON Schema required list ([004e63f](https://github.com/AlexGalhardo/vukem/commit/004e63f5e33f5223b2fe31b379f543599a197012))
+- **middleware:** Keep an earlier body limit in MethodOverride ([ab1b31b](https://github.com/AlexGalhardo/vukem/commit/ab1b31b38b118bf36ca5f928e98e858d84cd9cdf))
+- **web:** Apply a pending status only to 200 and commit it on Flush ([ff0e6fb](https://github.com/AlexGalhardo/vukem/commit/ff0e6fb33168165a90b1d078d3acccc8e8004463))
+- **BREAKING:** **view:** Refuse custom template functions that replace built-ins ([ed9a6df](https://github.com/AlexGalhardo/vukem/commit/ed9a6df23c8872e1866df82fa0c428a2ed51c3d3))
+- **BREAKING:** **telegram:** Honour info min level, never nil handler, html-safe send truncation ([9f8715c](https://github.com/AlexGalhardo/vukem/commit/9f8715cad95cad44f3f6cff5927b1cfecde1b8b2))
+- **broadcast:** Reject channels with an empty dot segment ([0c30e19](https://github.com/AlexGalhardo/vukem/commit/0c30e19eb2b2f85f35432c3cb3c174a2fc5a9bac))
+- **BREAKING:** **webhook:** Namespace dedupe keys per provider or route ([e722635](https://github.com/AlexGalhardo/vukem/commit/e72263546273db15c36418265c5aee0dc21ca500))
+- **webhook:** Record deliveries dropped for a disabled endpoint ([a177d48](https://github.com/AlexGalhardo/vukem/commit/a177d48bd128a0a15378e252beb03ff2f3b968ac))
+- **BREAKING:** **stripe:** Form-encode every map and slice type, refuse the rest ([9958167](https://github.com/AlexGalhardo/vukem/commit/995816748428ea7c18c33d5d9baab89ccc6350f9))
+- **cli:** Pin install:billing to the latest contrib/stripe tag ([79ef0c4](https://github.com/AlexGalhardo/vukem/commit/79ef0c40bc641d5b17058e07569311665659800d))
+- **BREAKING:** **i18n:** Refuse plural objects without other, explain bad catalog names ([be0512e](https://github.com/AlexGalhardo/vukem/commit/be0512e02ec90b95aa310ce48861a672631ee16d))
+- **devtools:** Treat X-Forwarded-Proto, X-Forwarded-Port and Via as proxied ([b10eb56](https://github.com/AlexGalhardo/vukem/commit/b10eb568ed2bbf656fa70d3e337594d8983ed68a))
+- **flags:** Stop repeating the flags prefix on invalid values ([a15d214](https://github.com/AlexGalhardo/vukem/commit/a15d214ae74f6f4977764c98f7c2372038622135))
+- **admin:** Mount flag routes only for registered flags, skip no-op audits ([da22e46](https://github.com/AlexGalhardo/vukem/commit/da22e4683c013d59091aa1fdf97fde0b8765cde1))
+- **admin:** Match short secret words in column names as whole segments ([f0e20df](https://github.com/AlexGalhardo/vukem/commit/f0e20df8f3b8ecf0d45b1c8e0586e22e7ef52ef7))
+- **admin:** Match secret words anywhere, exempt only known counters ([2d8d4c2](https://github.com/AlexGalhardo/vukem/commit/2d8d4c2368b8530da550df2df9c40b140b47420e))
+- **webhook:** Never namespace dedupe keys by the raw request path ([d477a32](https://github.com/AlexGalhardo/vukem/commit/d477a3237ca940cad6165843bff946cdb68af125))
+- **telegram:** Count UTF-16 units and skip self-closing tags when truncating ([05ee8b9](https://github.com/AlexGalhardo/vukem/commit/05ee8b9a4e232634fdb72b7ca4945dd654766bb2))
+- **stripe:** Bound param nesting, refuse NaN/Inf and send []byte as a string ([91d625a](https://github.com/AlexGalhardo/vukem/commit/91d625abc3780df129015f74b4bce4f5a4446bba))
+- **vukemtest:** Restore Accept after JSON sends, match HX-Trigger lists and stored nils ([d916cd5](https://github.com/AlexGalhardo/vukem/commit/d916cd5fcbc8ae398b366e4c411f106fd35aa62a))
+- **cli:** Validate generator input before writing and create the policies registry ([0a17532](https://github.com/AlexGalhardo/vukem/commit/0a175326a5238c7bf1624313f87037f677c82621))
+- **cli:** Run templ generate before app-command rebuilds and watch .buildtags ([727d365](https://github.com/AlexGalhardo/vukem/commit/727d365c503c198135dd40dfd2ea7563a436729e))
+- **cli:** Check bootstrap/app.go can be patched before install:inertia deletes files ([0580ff6](https://github.com/AlexGalhardo/vukem/commit/0580ff6f2b2cdd0c0ba0f9480a4b472b049a08af))
+- **cli:** Read APP_ENV from .env too when choosing embedded resources ([e8166d5](https://github.com/AlexGalhardo/vukem/commit/e8166d5a962c416f3bad2f196ea17993d108fa2a))
+- **cli:** Build the release binary with CGO_ENABLED=0 like the Dockerfile ([0f5d2e1](https://github.com/AlexGalhardo/vukem/commit/0f5d2e144f080068c558c5e4092cd35fbcc9c1ca))
+- **vukem:** Report every boot configuration error at once ([d31d8dc](https://github.com/AlexGalhardo/vukem/commit/d31d8dc5fa0ec79702691666c125dd5852e31419))
+- **flags:** Fail closed when a FLAG_ @file: secret cannot be read ([430b7db](https://github.com/AlexGalhardo/vukem/commit/430b7db869fdaab985b730b20a4d9192f1314e14))
+- **vukem:** Check @file: secrets are regular files before opening them ([6d98bce](https://github.com/AlexGalhardo/vukem/commit/6d98bce629c681667f1e3b575756119af55deb00))
+- **schema:** Defer closing the table listing rows on every return ([320f9a1](https://github.com/AlexGalhardo/vukem/commit/320f9a1f0a02bedf2d45909b9320c2f4bf63add8))
+
+### Security
+
+- **vukem:** Send security headers on the maintenance 503 ([8eff044](https://github.com/AlexGalhardo/vukem/commit/8eff0444c0957d6a3093e1820c69b1167a4ecdde))
+- **BREAKING:** **openapi:** Consistent operationIds, plain route bodies, unknown schemes fail ([22a766c](https://github.com/AlexGalhardo/vukem/commit/22a766cddecb7886b85de19352fe6213ffc6350f))
+- **api:** Document v0.28 API, OpenAPI and GraphQL fixes and refresh stale names ([88691b5](https://github.com/AlexGalhardo/vukem/commit/88691b5a6d2bf0caa4c80a0cd00d0080efc5fabc))
+
 ## [0.27.0] - 2026-10-18
 
 ### Added
@@ -814,7 +917,8 @@ Project foundation. No framework code yet; see [PLAN.md](PLAN.md) for the roadma
 - README, MIT license, CONTRIBUTING, SECURITY and CODE_OF_CONDUCT.
 - Agent configuration: `AGENTS.md`, `CLAUDE.md`, path-scoped `.claude/rules/`, Go skills and project settings.
 
-[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.27.0...HEAD
+[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.28.0...HEAD
+[0.28.0]: https://github.com/AlexGalhardo/vukem/compare/v0.27.0...v0.28.0
 [0.27.0]: https://github.com/AlexGalhardo/vukem/compare/v0.26.0...v0.27.0
 [0.26.0]: https://github.com/AlexGalhardo/vukem/compare/v0.25.0...v0.26.0
 [0.25.0]: https://github.com/AlexGalhardo/vukem/compare/v0.24.0...v0.25.0
