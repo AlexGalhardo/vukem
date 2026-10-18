@@ -61,7 +61,10 @@ func NewSigner(app *vukem.App) (*signed.Signer, error) {
 	// old key leaves APP_PREVIOUS_KEYS. New links use APP_KEY.
 	previous := app.DerivePreviousKeys("signed.urls", 32)
 
-	return signed.New(key).WithPreviousKeys(previous...), nil
+	// app.Now is the app clock, so a test's fake clock expires links.
+	return signed.New(key).
+		WithPreviousKeys(previous...).
+		WithClock(app.Now), nil
 }
 ```
 
@@ -233,6 +236,7 @@ There are no environment variables of its own; the key comes from `APP_KEY` and 
 | `signed.New(key []byte) *Signer` | a signer; panics when `key` is shorter than 32 bytes |
 | `signed.MinKeyLen` | `32` |
 | `(*Signer).WithPreviousKeys(keys ...[]byte) *Signer` | also accept links signed with these keys; panics on a short key |
+| `(*Signer).WithClock(now func() time.Time) *Signer` | read the time from `now` (pass `app.Now`); `nil` or not called: the system clock |
 | `(*Signer).Sign(rawURL string, ttl time.Duration) (string, error)` | adds `expires` (unless `ttl` is 0) and `signature` |
 | `(*Signer).Verify(r *http.Request) error` | `nil`, `ErrInvalid` or `ErrExpired` |
 | `(*Signer).Middleware()` | 403 for invalid or expired links, plus the security event |
@@ -284,7 +288,30 @@ func TestUnsubscribeNeedsASignedLink(t *testing.T) {
 }
 ```
 
-The signer reads the system clock (`time.Now`), not the app clock, so a `vukemtest.FakeClock` does not expire links. To test your expired-link page, sign with `time.Second`, wait two seconds, and request the link: `Verify` returns `signed.ErrExpired`.
+Because `NewSigner` passes `app.Now` to `WithClock`, a `vukemtest.FakeClock` controls expiry. To test your expired-link page, advance the clock past the TTL instead of sleeping:
+
+```go title="tests/newsletter_test.go"
+func TestUnsubscribeLinkExpires(t *testing.T) {
+	clock := vukemtest.NewFakeClock(time.Now())
+	app := vukemtest.New(t, bootstrap.New,
+		vukemtest.Options{Clock: clock.Now})
+
+	signer, err := links.NewSigner(app.App)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	link, err := signer.Sign("/unsubscribe/42", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	clock.Advance(2 * time.Hour)
+	app.Client(t).Get(link).AssertForbidden() // signed.ErrExpired
+}
+```
+
+A signer built without `WithClock` reads the system clock (`time.Now`), and a fake clock does not affect it. The `install:auth` scaffold passes `app.Now`.
 
 ## Common mistakes
 
