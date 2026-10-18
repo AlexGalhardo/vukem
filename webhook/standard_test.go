@@ -188,3 +188,55 @@ func TestSecurity_A04_WebhookDedupeFailsClosed(t *testing.T) {
 		t.Fatalf("store down = %d calls=%d, want 503 and no call", rec.Code, calls.Load())
 	}
 }
+
+func TestDedupeNamespacesKeys(t *testing.T) {
+	t.Parallel()
+
+	store := cache.NewMemory(100)
+
+	var calls atomic.Int32
+
+	handler := func(o DedupeOptions) http.Handler {
+		return Dedupe(store, StandardID, o)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			calls.Add(1)
+			w.WriteHeader(http.StatusNoContent)
+		}))
+	}
+
+	id := map[string]string{"webhook-id": "evt_1"}
+
+	// Two providers on the same store and path, told apart by Namespace.
+	for _, h := range []http.Handler{handler(DedupeOptions{Namespace: "github"}), handler(DedupeOptions{Namespace: "resend"})} {
+		if rec := serve(t, h, "{}", id); rec.Code != 204 {
+			t.Fatalf("first delivery = %d, want 204", rec.Code)
+		}
+	}
+
+	if calls.Load() != 2 {
+		t.Fatalf("calls = %d, want 2 (same event id from two providers)", calls.Load())
+	}
+
+	// Without Namespace the route pattern (or path) namespaces the key.
+	mux := http.NewServeMux()
+	mux.Handle("POST /a", handler(DedupeOptions{}))
+	mux.Handle("POST /b", handler(DedupeOptions{}))
+
+	for _, path := range []string{"/a", "/b", "/a"} {
+		rec := httptest.NewRecorder()
+		r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, path, strings.NewReader("{}"))
+		r.Header.Set("webhook-id", "evt_9")
+		mux.ServeHTTP(rec, r)
+	}
+
+	if calls.Load() != 4 {
+		t.Fatalf("calls = %d, want 4 (evt_9 once per route, redelivery to /a deduped)", calls.Load())
+	}
+}
+
+func TestDedupeKeyUnambiguous(t *testing.T) {
+	t.Parallel()
+
+	if a, b := dedupeKey("a:b", "c"), dedupeKey("a", "b:c"); a == b {
+		t.Errorf("dedupeKey(%q, %q) = dedupeKey(%q, %q) = %q", "a:b", "c", "a", "b:c", a)
+	}
+}

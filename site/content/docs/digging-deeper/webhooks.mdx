@@ -228,9 +228,9 @@ Two building blocks help with custom schemes:
 | No id | `400 Missing webhook event id.` | no |
 | Cache store down | `503 Webhook store unavailable.` | no (fail closed) |
 
-Under the hood, `Dedupe` atomically adds the key `webhook:event:<id>` with the value `running` for `LockTTL` (1 minute). After a status below 300 it stores `done` for `TTL` (72 hours, longer than providers' retry windows). After an error status it deletes the key, so the provider's retry runs your handler again. If the handler takes longer than `LockTTL`, a retry that arrives after the lock expired runs too, so keep handlers fast.
+Under the hood, `Dedupe` atomically adds a key built from the namespace and the event id with the value `running` for `LockTTL` (1 minute). After a status below 300 it stores `done` for `TTL` (72 hours, longer than providers' retry windows). After an error status it deletes the key, so the provider's retry runs your handler again. If the handler takes longer than `LockTTL`, a retry that arrives after the lock expired runs too, so keep handlers fast.
 
-Ids from different providers share the key space. If two providers could send the same id, prefix it in your `id` function (`"github:" + r.Header.Get(...)`).
+Keys are namespaced, so two providers that send the same id do not drop each other's events. The namespace is `DedupeOptions.Namespace`, or by default the matched route pattern (`POST /webhooks/github`), or the request path when `Dedupe` runs outside a route. Set `Namespace` when one route serves several providers, or before renaming a webhook route, so ids handled under the old route stay remembered.
 
 ### Keep webhook routes out of sessions
 
@@ -492,6 +492,7 @@ The sender calls `Record` from concurrent workers, with a context that outlives 
 | --- | --- | --- | --- |
 | `TTL` | `time.Duration` | 72 hours | How long a handled id is remembered |
 | `LockTTL` | `time.Duration` | 1 minute | How long a running delivery holds its id |
+| `Namespace` | `string` | route pattern, else path | Keeps ids of different providers or handlers apart on a shared store |
 
 `webhook.SenderOptions`:
 
