@@ -122,10 +122,12 @@ type DedupeOptions struct {
 	// LockTTL bounds a delivery that is still running (default 1 minute).
 	LockTTL time.Duration
 	// Namespace keeps event ids of different providers or handlers apart
-	// on a shared store (default: the matched ServeMux route pattern, or
-	// the request path when Dedupe runs outside a route). Set it when one
-	// handler serves several providers, or to keep keys stable across a
-	// route rename.
+	// on a shared store (default: the matched ServeMux route pattern).
+	// Outside a route (Dedupe as a global middleware) the default is one
+	// fixed namespace, never the client-controlled path, so all providers
+	// share it there: put Dedupe on the route, or set Namespace. Set it
+	// too when one route serves several providers, or to keep keys stable
+	// across a route rename.
 	Namespace string
 }
 
@@ -204,7 +206,8 @@ func namespace(r *http.Request, fixed string) string {
 	case r.Pattern != "":
 		return r.Pattern
 	default:
-		return r.URL.Path
+		// Not r.URL.Path: a replay to another path would get a fresh key.
+		return "default"
 	}
 }
 

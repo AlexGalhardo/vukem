@@ -216,7 +216,7 @@ func TestDedupeNamespacesKeys(t *testing.T) {
 		t.Fatalf("calls = %d, want 2 (same event id from two providers)", calls.Load())
 	}
 
-	// Without Namespace the route pattern (or path) namespaces the key.
+	// Without Namespace the matched route pattern namespaces the key.
 	mux := http.NewServeMux()
 	mux.Handle("POST /a", handler(DedupeOptions{}))
 	mux.Handle("POST /b", handler(DedupeOptions{}))
@@ -238,5 +238,32 @@ func TestDedupeKeyUnambiguous(t *testing.T) {
 
 	if a, b := dedupeKey("a:b", "c"), dedupeKey("a", "b:c"); a == b {
 		t.Errorf("dedupeKey(%q, %q) = dedupeKey(%q, %q) = %q", "a:b", "c", "a", "b:c", a)
+	}
+}
+
+// TestSecurity_A08_WebhookDedupeIgnoresRawPath replays one signed event to
+// several paths: outside a route the namespace must not come from the
+// client-controlled path, or each path would run the handler again.
+func TestSecurity_A08_WebhookDedupeIgnoresRawPath(t *testing.T) {
+	t.Parallel()
+
+	var calls atomic.Int32
+
+	h := Dedupe(cache.NewMemory(100), StandardID, DedupeOptions{})(
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			calls.Add(1)
+			w.WriteHeader(http.StatusNoContent)
+		}),
+	)
+
+	for _, path := range []string{"/hook", "/hook/", "/HOOK", "/other"} {
+		rec := httptest.NewRecorder()
+		r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, path, strings.NewReader("{}"))
+		r.Header.Set("webhook-id", "evt_replayed")
+		h.ServeHTTP(rec, r)
+	}
+
+	if n := calls.Load(); n != 1 {
+		t.Fatalf("handler ran %d times for one event id replayed to 4 paths, want 1", n)
 	}
 }
