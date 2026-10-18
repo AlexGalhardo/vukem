@@ -829,3 +829,42 @@ func TestFromTagsRequiredList(t *testing.T) {
 		t.Errorf("JSONSchema(required list) has minItems: %v", js)
 	}
 }
+
+func TestMessagesSingular(t *testing.T) {
+	t.Parallel()
+
+	str := func(s StringSchema, in string) func() error {
+		return func() error { _, err := s.Parse(in); return err }
+	}
+	list := func(s SliceSchema, in []any) func() error {
+		return func() error { _, err := s.Parse(in); return err }
+	}
+
+	tests := []struct {
+		name  string
+		parse func() error
+		want  string
+	}{
+		{"min 1 char", str(String().Min(1), ""), "The value field must be at least 1 character."},
+		{"max 1 char", str(String().Max(1), "ab"), "The value field must not be greater than 1 character."},
+		{"len 1 char", str(String().Len(1), "ab"), "The value field must be 1 character."},
+		{"max 2 chars", str(String().Max(2), "abc"), "The value field must not be greater than 2 characters."},
+		{"min 1 item", list(Slice(String()).Min(1), []any{}), "The value field must have at least 1 item."},
+		{
+			"max 1 item",
+			list(Slice(String()).Max(1), []any{"a", "b"}),
+			"The value field must not have more than 1 item.",
+		},
+		{"len 1 item", list(Slice(String()).Len(1), []any{"a", "b"}), "The value field must have 1 item."},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := issuesOf(t, tt.parse())[0].Message; got != tt.want {
+				t.Fatalf("message = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

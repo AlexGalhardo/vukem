@@ -120,7 +120,7 @@ func (o *opts[T]) issue(c *pctx, path, code, key string, params map[string]any) 
 		key = code
 	}
 
-	c.addKeyed(path, code, key, render(defaultMessages[key], path, params), cloneParams(params))
+	c.addKeyed(path, code, key, render(defaultMessage(key, params), path, params), cloneParams(params))
 }
 
 // parse runs the common pipeline around core: absence/null handling,

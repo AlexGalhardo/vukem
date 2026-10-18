@@ -207,6 +207,28 @@ var defaultMessages = map[string]string{
 	"file.extension":     "The {field} field must have one of these extensions: {extensions}.",
 }
 
+// singularMessages replace a default message whose count parameter is 1
+// ("at least 1 character", not "1 characters"). The issue key stays the
+// same, so translation catalogs keep a single entry per rule.
+var singularMessages = map[string]struct{ param, message string }{
+	"too_small.string": {"min", "The {field} field must be at least {min} character."},
+	"too_big.string":   {"max", "The {field} field must not be greater than {max} character."},
+	"exact.string":     {"len", "The {field} field must be {len} character."},
+	"too_small.array":  {"min", "The {field} field must have at least {min} item."},
+	"too_big.array":    {"max", "The {field} field must not have more than {max} item."},
+	"exact.array":      {"len", "The {field} field must have {len} item."},
+}
+
+// defaultMessage returns the built-in template for key, in the singular
+// when its count parameter is 1.
+func defaultMessage(key string, params map[string]any) string {
+	if one, ok := singularMessages[key]; ok && fmt.Sprint(params[one.param]) == "1" {
+		return one.message
+	}
+
+	return defaultMessages[key]
+}
+
 // Localize returns a copy of is with each built-in message rebuilt from the
 // template lookup returns for the issue's Key, then its Code (for example a
 // catalog's "validation.too_small.string" and "validation.too_small").
