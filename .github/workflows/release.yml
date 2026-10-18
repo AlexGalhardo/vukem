@@ -4,10 +4,20 @@ name: release
 # notes are created from CHANGELOG.md by internal/tools/release; GoReleaser
 # only attaches the archives, checksums, SBOMs (syft) and the cosign keyless
 # bundle of checksums.txt. Verification: docs/tooling.md#verifying-a-release.
+#
+# workflow_dispatch takes the version to build, because a tag push does not
+# always start a run: GitHub creates no push event when more than three tags
+# go up in a single push. Version tags are pushed one at a time, and a tag
+# that went up without a run is recovered by dispatching that version here
+# instead of moving the tag.
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Version tag to build (vX.Y.Z). The tag must already be pushed."
+        required: true
 
 permissions:
   contents: read
@@ -20,8 +30,26 @@ jobs:
       id-token: write # Sigstore OIDC identity for cosign and attestations
       attestations: write # build provenance attestations
     steps:
+      - name: Resolve the tag
+        id: tag
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          tag="${INPUT_VERSION:-$REF_NAME}"
+          case "$tag" in
+            v[0-9]*.[0-9]*.[0-9]*) ;;
+            *)
+              echo "::error::not a version tag: $tag"
+              exit 1
+              ;;
+          esac
+          echo "tag=$tag" >>"$GITHUB_OUTPUT"
+      # GoReleaser reads the version from HEAD, so a dispatched run checks out
+      # the tag itself rather than the branch the dispatch came from.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: refs/tags/${{ steps.tag.outputs.tag }}
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -55,7 +83,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           BUNDLE: ${{ steps.attest.outputs.bundle-path }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ steps.tag.outputs.tag }}
         run: |
           cp "$BUNDLE" vukem.intoto.jsonl
           gh release upload "$TAG" vukem.intoto.jsonl --clobber --repo "$GITHUB_REPOSITORY"

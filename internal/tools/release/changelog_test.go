@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -106,6 +108,55 @@ func TestValidVersion(t *testing.T) {
 	} {
 		if validVersion(v) != want {
 			t.Errorf("validVersion(%q) = %v", v, !want)
+		}
+	}
+}
+
+// TestReleaseNotesForEveryReleasedSection runs the extraction against the
+// repository's real CHANGELOG.md: a section that extracts to nothing would be
+// published as a release with an empty body, which is indistinguishable from a
+// successful release.
+func TestReleaseNotesForEveryReleasedSection(t *testing.T) {
+	t.Parallel()
+
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "CHANGELOG.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	changelog := string(raw)
+
+	versions := sectionRe.FindAllStringSubmatch(changelog, -1)
+	if len(versions) == 0 {
+		t.Fatal("CHANGELOG.md has no released section")
+	}
+
+	for _, m := range versions {
+		version := "v" + m[1]
+
+		notes := releaseNotes(changelog, version)
+		if strings.TrimSpace(notes) == "" {
+			t.Errorf("releaseNotes(%s) is empty", version)
+			continue
+		}
+
+		if !strings.Contains(notes, "### ") {
+			t.Errorf("releaseNotes(%s) has no change group:\n%s", version, notes)
+		}
+
+		if strings.Contains(notes, "## [") {
+			t.Errorf("releaseNotes(%s) leaked the next section:\n%s", version, notes)
+		}
+	}
+}
+
+func TestPublishRefusesEmptyNotes(t *testing.T) {
+	t.Parallel()
+
+	// The guard returns before gh is invoked, so no release can be created.
+	for _, notes := range []string{"", "   ", "\n\n\t\n"} {
+		if err := publish("v9.9.9", notes); err == nil {
+			t.Errorf("publish(%q) accepted an empty body", notes)
 		}
 	}
 }

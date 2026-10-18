@@ -1,0 +1,88 @@
+name: release
+
+# Canonical app release workflow: publishes the GitHub release for a version
+# tag with the matching CHANGELOG.md section as the body.
+#
+# Two things this file exists to get right:
+#
+#   1. The body is extracted with index($0, "## [" v "]") == 1, a literal
+#      match. The regex form '$0 ~ "^## \[" v "\]"' is broken: awk reads the
+#      string "\[" as a plain "[" (it warns "escape sequence `\[' treated as
+#      plain `['"), so the pattern becomes the character class ^## [0.8.0]
+#      and never matches a heading.
+#   2. An empty section fails the job. It must never fall back to a
+#      placeholder body: a release published with an empty body looks exactly
+#      like a successful release, which is how eight releases shipped with no
+#      notes before anyone noticed.
+#
+# workflow_dispatch is the recovery path. GitHub creates no push event when
+# more than three tags go up in a single push, so `on: push: tags` does not
+# fire and nothing is published, silently. Push version tags one at a time;
+# if a tag went up without a release, run this workflow with that version
+# instead of writing the `gh release create` call by hand.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version tag to publish (vX.Y.Z). The tag must already be pushed."
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create or update the GitHub release
+    steps:
+      - name: Resolve the tag
+        id: tag
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          tag="${INPUT_VERSION:-$REF_NAME}"
+          case "$tag" in
+            v[0-9]*.[0-9]*.[0-9]*) ;;
+            *)
+              echo "::error::not a version tag: $tag"
+              exit 1
+              ;;
+          esac
+          echo "tag=$tag" >>"$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ steps.tag.outputs.tag }}
+          persist-credentials: false
+
+      - name: Extract the changelog section
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          awk -v v="${TAG#v}" '
+            index($0, "## [" v "]") == 1 { found = 1; next }
+            found && index($0, "## [") == 1 { exit }
+            found
+          ' CHANGELOG.md >release-notes.md
+          if ! grep -q '[^[:space:]]' release-notes.md; then
+            echo "::error::CHANGELOG.md has no section for $TAG; refusing to publish a release with an empty body"
+            exit 1
+          fi
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          # Idempotent, so a workflow_dispatch recovery run can fix the notes
+          # of a release that was published empty.
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$TAG" --notes-file release-notes.md --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG" --verify-tag --title "$TAG" \
+              --notes-file release-notes.md --repo "$GITHUB_REPOSITORY"
+          fi
