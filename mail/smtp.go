@@ -172,11 +172,11 @@ func Build(msg *Message) ([]byte, error) {
 	header("Message-ID", "<"+msg.ID+"@"+domain+">")
 	header("MIME-Version", "1.0")
 
-	for k, v := range msg.Tags {
-		if strings.ContainsAny(k+v, "\r\n:") {
-			return nil, errors.New("mail: tag contains a line break or colon")
-		}
+	if err := checkTags(msg.Tags); err != nil {
+		return nil, err
+	}
 
+	for k, v := range msg.Tags {
 		header("X-Tag-"+k, v)
 	}
 

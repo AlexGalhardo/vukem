@@ -7,7 +7,9 @@
 //		return err
 //	}
 //
-//	s := signed.New(key).WithPreviousKeys(app.DerivePreviousKeys("signed.urls", 32)...)
+//	s := signed.New(key).
+//		WithPreviousKeys(app.DerivePreviousKeys("signed.urls", 32)...).
+//		WithClock(app.Now)
 //	link, _ := s.Sign(appURL+"/email/verify/42", time.Hour)
 //	r.Get("/email/verify/{id}", verify).Use(s.Middleware())
 //
@@ -52,6 +54,19 @@ func New(key []byte) *Signer {
 	checkKey(key)
 
 	return &Signer{key: key, now: time.Now}
+}
+
+// WithClock makes s read the time from now (pass app.Now, so a
+// vukemtest fake clock expires links); nil keeps the system clock. Call
+// it before s is used.
+func (s *Signer) WithClock(now func() time.Time) *Signer {
+	if now == nil {
+		now = time.Now
+	}
+
+	s.now = now
+
+	return s
 }
 
 // MinKeyLen is the minimum signing key length; New panics below it.

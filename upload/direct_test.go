@@ -208,3 +208,49 @@ func TestDirectLogsWriteErrors(t *testing.T) {
 		t.Fatalf("log = %q, want the response write error", buf.String())
 	}
 }
+
+// A51: Rules allowing a type outside the built-in extension table make
+// Presign issue a ".bin" (or Rules.Extensions) key; Verify must accept it.
+func TestPresignVerifyCustomType(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		exts     []string
+		filename string
+		wantExt  string
+	}{
+		{name: "no extensions", filename: "data.raw", wantExt: ".bin"},
+		{name: "custom extension", exts: []string{"DAT"}, filename: "Data.DAT", wantExt: ".dat"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			disk := storage.NewMemory("")
+			rules := Rules{
+				MaxFileSize: 1 << 10,
+				Types:       []string{"application/octet-stream"},
+				Extensions:  tt.exts,
+				Dir:         "blobs",
+			}
+
+			out, err := Presign(t.Context(), &fakePresigner{}, rules, tt.filename, "application/octet-stream", 16, 0)
+			if err != nil {
+				t.Fatalf("Presign() error = %v", err)
+			}
+
+			if !strings.HasSuffix(out.Key, tt.wantExt) {
+				t.Fatalf("Presign().Key = %q, want suffix %q", out.Key, tt.wantExt)
+			}
+
+			_ = storage.PutBytes(t.Context(), disk, out.Key, []byte{0, 1, 2, 3, 0xff, 0xfe})
+
+			f, err := Verify(t.Context(), disk, out.Key, rules)
+			if err != nil || f.Type != "application/octet-stream" {
+				t.Fatalf("Verify(%q) = %+v, %v, want application/octet-stream", out.Key, f, err)
+			}
+		})
+	}
+}

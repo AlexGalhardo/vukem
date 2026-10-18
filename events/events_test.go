@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net/http"
 	"slices"
 	"strings"
 	"sync"
@@ -135,5 +136,95 @@ func TestFake(t *testing.T) {
 
 	if len(Dispatched[orderPaid](f)) != 1 || len(Dispatched[string](f)) != 0 {
 		t.Fatal("Dispatched by type")
+	}
+}
+
+func sendWelcome(context.Context, userRegistered) error { return errors.New("smtp down") }
+
+type mailer struct{}
+
+func (*mailer) send(context.Context, userRegistered) error { return errors.New("smtp down") }
+
+func TestListenerNames(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		reg  Registration
+		want string
+	}{
+		{name: "function", reg: On(sendWelcome), want: "events.sendWelcome"},
+		{name: "method value", reg: On((&mailer{}).send), want: "events.(*mailer).send"},
+		{
+			name: "closure",
+			reg:  On(func(context.Context, userRegistered) error { return errors.New("smtp down") }),
+			want: "events.TestListenerNames.func1",
+		},
+		{name: "queued", reg: OnQueued("mail.welcome", sendWelcome), want: "mail.welcome"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := tt.reg.l.name; got != tt.want {
+				t.Errorf("listener name = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// A panicking synchronous listener must not crash a worker or a command:
+// Dispatch recovers it, logs it and returns it as an error.
+func TestSyncListenerPanicIsRecovered(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+
+	b := New(slog.New(slog.NewTextHandler(&buf, nil)), 0)
+	Listen(b, func(context.Context, userRegistered) error { panic("nil map") })
+
+	var ran bool
+
+	Listen(b, func(context.Context, userRegistered) error { ran = true; return nil })
+
+	err := b.Dispatch(t.Context(), userRegistered{})
+	if err == nil || !strings.Contains(err.Error(), "panic: nil map") {
+		t.Fatalf("Dispatch() = %v, want the recovered panic", err)
+	}
+
+	if ran {
+		t.Error("Dispatch() ran the listener after the panicking one")
+	}
+
+	if log := buf.String(); !strings.Contains(log, "listener panicked") || !strings.Contains(log, "nil map") {
+		t.Errorf("log = %q, want the panic", log)
+	}
+}
+
+// http.ErrAbortHandler keeps aborting the response; an error panic stays
+// matchable with errors.Is.
+func TestSyncListenerPanicAbortAndErrors(t *testing.T) {
+	t.Parallel()
+
+	b := New(slog.New(slog.DiscardHandler), 0)
+	Listen(b, func(context.Context, userRegistered) error { panic(http.ErrAbortHandler) })
+
+	func() {
+		defer func() {
+			if r := recover(); r != http.ErrAbortHandler { //nolint:errorlint // recover() value
+				t.Errorf("recover() = %v, want http.ErrAbortHandler", r)
+			}
+		}()
+
+		_ = b.Dispatch(t.Context(), userRegistered{})
+	}()
+
+	sentinel := errors.New("boom")
+	b2 := New(slog.New(slog.DiscardHandler), 0)
+	Listen(b2, func(context.Context, userRegistered) error { panic(sentinel) })
+
+	if err := b2.Dispatch(t.Context(), userRegistered{}); !errors.Is(err, sentinel) {
+		t.Errorf("Dispatch() = %v, want it to wrap the panic error", err)
 	}
 }

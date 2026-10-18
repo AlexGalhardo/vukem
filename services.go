@@ -306,7 +306,52 @@ func (a *App) Mailer() (*mail.Mailer, error) {
 	return a.mail.mailer, a.mail.err
 }
 
+// checkMailConfig fails Boot on an explicit MAIL_MAILER that can never
+// send (missing token, bad inbox id, unknown name), so a deploy stops at
+// boot instead of at its first email. An unset MAIL_MAILER stays a
+// first-use error: apps that send no mail need not configure it.
+func (a *App) checkMailConfig() error {
+	if a.mail.transport != nil {
+		return nil
+	}
+
+	cfg, err := configLoad[MailConfig](a)
+	if err != nil || cfg.Mailer == "" {
+		return err
+	}
+
+	return mailConfigError(cfg)
+}
+
+// mailConfigError reports settings the chosen transport cannot work with.
+func mailConfigError(cfg MailConfig) error {
+	switch cfg.Mailer {
+	case "", "log", "array", "smtp":
+		return nil
+	case "resend":
+		if cfg.ResendAPIKey.IsZero() {
+			return errors.New("vukem: MAIL_MAILER=resend needs RESEND_API_KEY")
+		}
+	case "mailtrap":
+		if cfg.MailtrapAPIToken.IsZero() {
+			return errors.New("vukem: MAIL_MAILER=mailtrap needs MAILTRAP_API_TOKEN")
+		}
+
+		if cfg.MailtrapInboxID < 0 {
+			return errors.New("vukem: MAILTRAP_INBOX_ID must be a positive sandbox inbox id")
+		}
+	default:
+		return fmt.Errorf("vukem: unknown MAIL_MAILER %q", cfg.Mailer)
+	}
+
+	return nil
+}
+
 func (a *App) mailTransport(cfg MailConfig) (mail.Transport, error) {
+	if err := mailConfigError(cfg); err != nil {
+		return nil, err
+	}
+
 	switch cfg.Mailer {
 	case "":
 		if a.Config.IsProduction() {
@@ -324,20 +369,8 @@ func (a *App) mailTransport(cfg MailConfig) (mail.Transport, error) {
 			InsecureSkipTLS: cfg.SMTPInsecure,
 		}), nil
 	case "resend":
-		if cfg.ResendAPIKey.IsZero() {
-			return nil, errors.New("vukem: MAIL_MAILER=resend needs RESEND_API_KEY")
-		}
-
 		return mail.NewResend(mail.ResendConfig{APIKey: cfg.ResendAPIKey}), nil
 	case "mailtrap":
-		if cfg.MailtrapAPIToken.IsZero() {
-			return nil, errors.New("vukem: MAIL_MAILER=mailtrap needs MAILTRAP_API_TOKEN")
-		}
-
-		if cfg.MailtrapInboxID < 0 {
-			return nil, errors.New("vukem: MAILTRAP_INBOX_ID must be a positive sandbox inbox id")
-		}
-
 		// Staging also runs APP_ENV=production, so a sandbox inbox is allowed
 		// but never silent.
 		if cfg.MailtrapInboxID > 0 && a.Config.IsProduction() {

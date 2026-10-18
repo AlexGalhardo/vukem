@@ -2,12 +2,14 @@ package storage_test
 
 import (
 	"bytes"
+	"io"
 	"log/slog"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -249,13 +251,13 @@ func TestPutUploaded(t *testing.T) {
 		t.Fatal("missing MaxSize accepted")
 	}
 
-	// Without a type allowlist unknown content gets .bin.
+	// Allowed types outside the extension table get .bin.
 	if p, err := storage.PutUploaded(
 		ctx,
 		d,
 		upload(t, "x.dat", []byte{0x00, 0x01, 0x02}),
 		"",
-		storage.UploadRules{MaxSize: 10},
+		storage.UploadRules{MaxSize: 10, Types: []string{"application/octet-stream"}},
 	); err != nil ||
 		!strings.HasSuffix(p, ".bin") {
 		t.Fatalf("binary = %q %v", p, err)
@@ -267,5 +269,137 @@ func TestPutUploaded(t *testing.T) {
 
 	if _, err := storage.PutUploaded(ctx, d, fh, "", storage.Images(64)); errs.Status(err) != 422 {
 		t.Fatalf("under-reported size = %v", err)
+	}
+}
+
+// PutUploaded without a type allowlist is a configuration error, not
+// "accept anything": an empty Types must never store an HTML or script
+// upload (fail closed).
+func TestSecurity_A05_PutUploadedRequiresTypes(t *testing.T) {
+	t.Parallel()
+
+	d := storage.NewMemory("")
+
+	_, err := storage.PutUploaded(
+		t.Context(), d, upload(t, "x.html", []byte("<html><script>1</script>")), "", storage.UploadRules{MaxSize: 1024},
+	)
+	if err == nil {
+		t.Fatal("PutUploaded(empty Types) = nil error, want a configuration error")
+	}
+
+	if all, _ := d.List(t.Context(), ""); len(all) != 0 {
+		t.Errorf("PutUploaded(empty Types) stored %v", all)
+	}
+}
+
+func TestHandlerLastModified(t *testing.T) {
+	t.Parallel()
+
+	d, dir := local(t, "")
+	ctx := t.Context()
+	modified := time.Date(2024, 5, 6, 7, 8, 9, 0, time.UTC)
+
+	_ = storage.PutBytes(ctx, d, "a.txt", []byte("hello"))
+	if err := os.Chtimes(filepath.Join(dir, "a.txt"), modified, modified); err != nil {
+		t.Fatal(err)
+	}
+
+	get := func(h http.Handler, ims string) *httptest.ResponseRecorder {
+		r := httptest.NewRequestWithContext(ctx, http.MethodGet, "/a.txt", http.NoBody)
+		if ims != "" {
+			r.Header.Set("If-Modified-Since", ims)
+		}
+
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, r)
+
+		return rec
+	}
+
+	h := storage.Handler(d, nil)
+	if got, want := get(h, "").Header().Get("Last-Modified"), modified.Format(http.TimeFormat); got != want {
+		t.Errorf("Last-Modified = %q, want %q", got, want)
+	}
+
+	if rec := get(h, modified.Format(http.TimeFormat)); rec.Code != http.StatusNotModified {
+		t.Errorf("GET with If-Modified-Since = %d, want 304", rec.Code)
+	}
+
+	if rec := get(h, modified.Add(-time.Hour).Format(http.TimeFormat)); rec.Code != http.StatusOK {
+		t.Errorf("GET with an older If-Modified-Since = %d, want 200", rec.Code)
+	}
+
+	mem := storage.NewMemory("")
+	_ = storage.PutBytes(ctx, mem, "a.txt", []byte("hello"))
+
+	if got := get(storage.Handler(mem, nil), "").Header().Get("Last-Modified"); got != "" {
+		t.Errorf("memory Last-Modified = %q, want none (time unknown)", got)
+	}
+}
+
+// observingReader runs check once, in the middle of a Put, while the
+// temporary file exists.
+type observingReader struct {
+	check func()
+	done  bool
+}
+
+func (o *observingReader) Read(p []byte) (int, error) {
+	if o.done {
+		return 0, io.EOF
+	}
+
+	o.check()
+	o.done = true
+
+	return copy(p, "partial"), nil
+}
+
+func TestLocalPutHidesTemporaryFile(t *testing.T) {
+	t.Parallel()
+
+	d, dir := local(t, "")
+	ctx := t.Context()
+
+	var (
+		names  []string
+		listed []string
+		code   int
+	)
+
+	r := &observingReader{check: func() {
+		entries, _ := os.ReadDir(filepath.Join(dir, "docs"))
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+
+		listed, _ = d.List(ctx, "")
+
+		for _, n := range names {
+			rec := httptest.NewRecorder()
+			storage.Handler(d, nil).
+				ServeHTTP(rec, httptest.NewRequestWithContext(ctx, http.MethodGet, "/docs/"+n, http.NoBody))
+			code = rec.Code
+		}
+	}}
+
+	if err := d.Put(ctx, "docs/a.txt", r); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(names) != 1 || !strings.HasPrefix(names[0], ".") {
+		t.Errorf("temporary files = %v, want one dot-prefixed name", names)
+	}
+
+	if len(listed) != 0 {
+		t.Errorf("List during Put = %v, want none", listed)
+	}
+
+	if code != http.StatusNotFound {
+		t.Errorf("GET temporary file = %d, want 404", code)
+	}
+
+	if all, _ := d.List(ctx, ""); !slices.Equal(all, []string{"docs/a.txt"}) {
+		t.Errorf("List after Put = %v, want [docs/a.txt]", all)
 	}
 }

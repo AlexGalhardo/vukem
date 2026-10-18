@@ -158,7 +158,7 @@ level=INFO msg="mail (log transport)"
 | `Bcc` | `[]string` | Hidden recipients; never written as a header |
 | `ReplyTo` | `[]string` | Where replies go |
 | `Subject` | `string` | The subject line; a line break in it is an error |
-| `Tags` | `map[string]string` | Provider metadata (see each transport below) |
+| `Tags` | `map[string]string` | Provider metadata (see each transport below). For every transport a name must not be empty and neither name nor value may contain a line break or a colon: rendering fails with `mail: tag with an empty name` or `mail: tag contains a line break or colon` |
 
 Addresses may be plain (`ana@example.com`) or carry a name (`Ana Souza <ana@example.com>`). Each one goes through [`net/mail.ParseAddress`](https://pkg.go.dev/net/mail#ParseAddress) and is written back in its normalised form, so `Ana <ana@example.com>` becomes `"Ana" <ana@example.com>`. An address that does not parse is an error such as `mail: recipient: "ana@": mail: no angle-addr`.
 
@@ -275,7 +275,7 @@ The app builds the mailer once, on the first `app.Mailer()` call. That call retu
 | `mailtrap` without a token | `vukem: MAIL_MAILER=mailtrap needs MAILTRAP_API_TOKEN` |
 | `MAILTRAP_INBOX_ID` below zero | `vukem: MAILTRAP_INBOX_ID must be a positive sandbox inbox id` |
 
-Mail is never lost silently. The starters call `app.Mailer()` while they register routes, so in practice these errors stop the app at boot.
+Mail is never lost silently. When `MAIL_MAILER` is set, the last four errors also stop `app.Boot`: `serve`, `queue:work` and every command fail at startup, before any request, instead of at the first email. An unset `MAIL_MAILER` in production is reported by `app.Mailer()` only, so an app that sends no mail does not need it; the starters call `app.Mailer()` while they register routes, so for them that error also appears at startup. `vukem.WithMailTransport` replaces the transport and skips these checks.
 
 ### SMTP
 
@@ -299,7 +299,7 @@ What happens on each send:
 5. It sends `MAIL FROM`, one `RCPT TO` per `To`, `Cc` and `Bcc` address, then the data. Bcc addresses get the mail but never appear in a header.
 6. Dialing and the whole exchange share a 30-second timeout.
 
-Tags become `X-Tag-<name>: <value>` headers. A tag name or value with a line break or a colon fails with `mail: tag contains a line break or colon`.
+Tags become `X-Tag-<name>: <value>` headers.
 
 `SMTP_INSECURE=true` allows a server without `STARTTLS`. Use it only for a local catcher such as [Mailpit](https://mailpit.axllent.org) on `localhost:1025`. Go's `net/smtp` still refuses to send a password over an unencrypted connection to any host other than `localhost`, so leave `SMTP_USERNAME` empty for the catcher.
 
@@ -339,9 +339,9 @@ Each send is one `POST https://api.resend.com/emails` with a JSON body.
 
 - `From`, `To`, `Cc`, `Bcc`, `ReplyTo`, subject, HTML and text map one to one.
 - Attachments are sent base64-encoded with their `content_type` and `content_id`.
-- Each tag becomes a Resend tag `{name, value}`. Resend accepts only ASCII letters, digits, `_` and `-` in tags, and the transport does not check that for you.
+- Each tag becomes a Resend tag `{name, value}`. Resend accepts only ASCII letters, digits, `_` and `-` (at most 256 characters), so the transport refuses any other tag before the request: `mail: resend tag "kind": names and values take only ASCII letters, digits, _ and -`. The error is not retried.
 - The message `ID` goes in the `Idempotency-Key` header. When a retry repeats a request Resend already accepted, Resend does not send the email twice.
-- A `429` or `5xx` answer is retried up to 2 times. The wait is the `Retry-After` header when present, otherwise 200 ms, then 400 ms, and never more than 5 seconds. A network error (DNS, connection refused) is returned at once, without a retry.
+- A `429` or `5xx` answer and a network error (DNS, connection refused, a connection reset, a timeout) are retried up to 2 times. The wait is the `Retry-After` header when present, otherwise 200 ms, then 400 ms, and never more than 5 seconds. The idempotency key makes a retry safe even when the first request reached Resend. A cancelled `ctx` stops at once.
 - An error answer becomes a `*mail.ResendError` with `Status`, `Name` and `Message`, for example `mail: resend 422 validation_error: Invalid from field.`. Its `Retryable()` method is true for 429 and 5xx.
 - Each request has a 10-second timeout.
 
@@ -371,6 +371,7 @@ How the message maps to the API:
 - Attachments get `disposition: attachment`; inline ones get `disposition: inline` and their `content_id`.
 - The tag named `category` becomes Mailtrap's `category`. Every other tag goes into `custom_variables`, which show up in Mailtrap logs and webhooks.
 - `429` and `5xx` answers are retried exactly like Resend (2 retries, `Retry-After` honoured, 5-second cap). Mailtrap has no idempotency key, so a `5xx` that arrives after Mailtrap already delivered the email can make a retry send it twice.
+- Of the network errors, only a failed connection (DNS, connection refused) is retried, with the same backoff: the request never left. A connection that breaks after the request was sent (a reset, a timeout) is returned at once, because Mailtrap may already have delivered the email.
 - A `2xx` answer whose body says `"success": false` is an error, and it is not retried.
 - Errors are `*mail.MailtrapError` with `Status` and `Errors`, for example `mail: mailtrap 401: Unauthorized`. At most 5 errors of 200 characters each are kept, on one line, so an upstream message cannot forge or flood log lines. The token is replaced by `[redacted]` if Mailtrap echoes it; addresses that Mailtrap quotes may remain.
 - Redirects are never followed, because following one would send your token and the email to another server.

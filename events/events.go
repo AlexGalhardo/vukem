@@ -20,8 +20,12 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"reflect"
+	"runtime"
+	"runtime/debug"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -68,7 +72,23 @@ func OnQueued[E any](kind string, fn func(ctx context.Context, e E) error, opts 
 // On registers fn for events of type E, run synchronously by Dispatch (its
 // error is returned to the caller).
 func On[E any](fn func(ctx context.Context, e E) error) Registration {
-	return Registration{typ: reflect.TypeFor[E](), l: listener{fn: wrap(fn), name: fmt.Sprintf("%T", fn)}}
+	return Registration{typ: reflect.TypeFor[E](), l: listener{fn: wrap(fn), name: funcName(fn)}}
+}
+
+// funcName names a listener in logs and errors: its package-qualified
+// function name ("listeners.SendWelcome", "listeners.(*Mailer).Send"),
+// or its type when the runtime cannot tell.
+func funcName(fn any) string {
+	if f := runtime.FuncForPC(reflect.ValueOf(fn).Pointer()); f != nil {
+		name := f.Name()
+		if i := strings.LastIndex(name, "/"); i >= 0 {
+			name = name[i+1:]
+		}
+
+		return strings.TrimSuffix(name, "-fm") // method values
+	}
+
+	return fmt.Sprintf("%T", fn)
 }
 
 // OnAsync registers fn for events of type E, run in the background; its
@@ -207,12 +227,36 @@ func (b *Bus) run(ctx context.Context, ls []listener, getQueue func() (Enqueuer,
 			continue
 		}
 
-		if err := l.fn(ctx, event); err != nil {
+		if err := b.runSync(ctx, l, event); err != nil {
 			return fmt.Errorf("events: %T listener %s: %w", event, l.name, err)
 		}
 	}
 
 	return nil
+}
+
+// runSync runs a synchronous listener, turning a panic into a logged
+// error so a bad listener cannot crash a queue worker or a command.
+func (b *Bus) runSync(ctx context.Context, l listener, event any) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			// The HTTP server aborts a response with this panic; keep it one.
+			if r == http.ErrAbortHandler { //nolint:errorlint // recover() value, not a wrapped error
+				panic(r)
+			}
+
+			b.log.ErrorContext(ctx, "listener panicked",
+				"event", fmt.Sprintf("%T", event), "listener", l.name, "panic", r, "stack", string(debug.Stack()))
+
+			if e, ok := r.(error); ok {
+				err = fmt.Errorf("panic: %w", e)
+			} else {
+				err = fmt.Errorf("panic: %v", r)
+			}
+		}
+	}()
+
+	return l.fn(ctx, event)
 }
 
 func enqueue(ctx context.Context, getQueue func() (Enqueuer, error), kind string, event any) error {

@@ -279,9 +279,9 @@ Both delete expired rows and are safe to run on every replica.
 ## What happens when a task runs
 
 1. Due tasks of one minute start together, each on its own goroutine.
-2. `OnOneServer` and `WithoutOverlapping` locks are taken first; a task that cannot take its lock is skipped.
+2. `OnOneServer` and `WithoutOverlapping` locks are taken first; a task whose lock another run holds is skipped (logged at `INFO`). When the lock store itself fails (Redis or the database is down), the task does not run and `scheduled task failed` is logged at `ERROR` with `err=lock: …`.
 3. The task runs with the scheduler's `ctx`.
-4. Success is logged at `INFO` (`scheduled task done`, with `took`); an error or a panic is recovered and logged at `ERROR` (`scheduled task failed`). Neither stops the other tasks.
+4. Success is logged at `INFO` (`scheduled task done`, with `took`: how long the task itself ran, not counting a late start); an error or a panic is recovered and logged at `ERROR` (`scheduled task failed`). Neither stops the other tasks.
 
 There is no retry: a failing task waits for its next occurrence. Use `s.Job(...)` when you want retries.
 

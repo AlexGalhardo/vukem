@@ -674,3 +674,65 @@ func TestFlagsFromConfig(t *testing.T) {
 		t.Error("the stored value did not win over FLAG_BETA, or Flags() built a second instance")
 	}
 }
+
+// A mail setting that can never send (a missing API token, a bad inbox id,
+// an unknown mailer) stops Boot, not the first email in production.
+func TestBootFailsOnBrokenMailConfig(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		env     map[string]string
+		opts    []Option
+		wantErr string
+	}{
+		{name: "resend without key", env: map[string]string{"MAIL_MAILER": "resend"}, wantErr: "RESEND_API_KEY"},
+		{
+			name:    "mailtrap without token",
+			env:     map[string]string{"MAIL_MAILER": "mailtrap"},
+			wantErr: "MAILTRAP_API_TOKEN",
+		},
+		{
+			name: "negative inbox",
+			env: map[string]string{
+				"MAIL_MAILER":        "mailtrap",
+				"MAILTRAP_API_TOKEN": "mt_x",
+				"MAILTRAP_INBOX_ID":  "-1",
+			},
+			wantErr: "MAILTRAP_INBOX_ID",
+		},
+		{name: "unknown mailer", env: map[string]string{"MAIL_MAILER": "pigeon"}, wantErr: `"pigeon"`},
+		{name: "resend with key", env: map[string]string{"MAIL_MAILER": "resend", "RESEND_API_KEY": "re_x"}},
+		{name: "unset in development", env: map[string]string{}},
+		{
+			name: "custom transport",
+			env:  map[string]string{"MAIL_MAILER": "resend"},
+			opts: []Option{WithMailTransport(mail.NewArray())},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			app, err := New(
+				append([]Option{WithSource(testSource(tt.env)), WithLogger(discardLogger())}, tt.opts...)...)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			err = app.Boot(t.Context())
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("Boot() = %v, want nil", err)
+				}
+
+				return
+			}
+
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("Boot() = %v, want an error naming %s", err, tt.wantErr)
+			}
+		})
+	}
+}

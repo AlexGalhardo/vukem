@@ -23,7 +23,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"time"
 )
 
 // Disk stores files under slash-separated relative paths.
@@ -198,6 +197,3 @@ func publicURL(base, p string) string {
 
 	return strings.TrimSuffix(base, "/") + "/" + strings.TrimPrefix(p, "/")
 }
-
-// modTimeNow is used by disks that cannot report a modification time.
-var modTimeNow = time.Now //nolint:gochecknoglobals // overridable clock for http.ServeContent only

@@ -62,7 +62,7 @@ func Handler(d Disk, signer *signed.Signer) http.Handler {
 			Set("Content-Security-Policy", "sandbox; default-src 'none'; img-src 'self'; style-src 'unsafe-inline'")
 
 		if rs, ok := f.(io.ReadSeeker); ok {
-			http.ServeContent(w, r, path.Base(p), modTimeNow(), rs)
+			http.ServeContent(w, r, path.Base(p), modTime(f), rs)
 			return
 		}
 
@@ -72,6 +72,22 @@ func Handler(d Disk, signer *signed.Signer) http.Handler {
 
 		_, _ = io.Copy(w, f)
 	})
+}
+
+// modTime reports when f was last modified, or the zero time (no
+// Last-Modified header, no conditional answers) when the disk cannot say:
+// a made-up time would turn If-Modified-Since into a lie.
+func modTime(f io.Reader) time.Time {
+	switch v := f.(type) {
+	case interface{ Stat() (fs.FileInfo, error) }:
+		if st, err := v.Stat(); err == nil {
+			return st.ModTime()
+		}
+	case interface{ ModTime() time.Time }:
+		return v.ModTime()
+	}
+
+	return time.Time{}
 }
 
 // original undoes http.StripPrefix for signature checks: links are signed
@@ -108,7 +124,8 @@ type UploadRules struct {
 	// MaxSize in bytes (required).
 	MaxSize int64
 	// Types are allowed MIME types, detected from the content (not the
-	// client's Content-Type or file name).
+	// client's Content-Type or file name) (required: an empty list is a
+	// configuration error, never "any type").
 	Types []string
 }
 
@@ -130,6 +147,10 @@ func PutUploaded(ctx context.Context, d Disk, fh *multipart.FileHeader, dir stri
 		return "", errors.New("storage: UploadRules.MaxSize is required")
 	}
 
+	if len(rules.Types) == 0 {
+		return "", errors.New("storage: UploadRules.Types is required")
+	}
+
 	if fh.Size > rules.MaxSize {
 		return "", errs.NewValidation().
 			Add("file", fmt.Sprintf("The file may not be larger than %d KB.", rules.MaxSize/1024))
@@ -146,7 +167,7 @@ func PutUploaded(ctx context.Context, d Disk, fh *multipart.FileHeader, dir stri
 	head = head[:n]
 
 	ct := http.DetectContentType(head)
-	if len(rules.Types) > 0 && !slices.Contains(rules.Types, ct) {
+	if !slices.Contains(rules.Types, ct) {
 		return "", errs.NewValidation().Add("file", "This file type is not allowed.")
 	}
 

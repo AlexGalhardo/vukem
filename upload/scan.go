@@ -61,7 +61,11 @@ func scanAndMove(ctx context.Context, d storage.Disk, s Scanner, field, quaranti
 			return errs.NewValidation().Add(field, "The file was rejected by the virus scanner.")
 		}
 
-		return errScanUnavailable.WithHeader("Retry-After", "60")
+		// The cause is logged by the error handler, never shown.
+		unavailable := errScanUnavailable.WithHeader("Retry-After", "60")
+		unavailable.Err = fmt.Errorf("upload: scan: %w", scanErr)
+
+		return unavailable
 	}
 
 	rc, err = d.Open(ctx, quarantined)

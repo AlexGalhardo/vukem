@@ -33,7 +33,7 @@ type MailtrapConfig struct {
 	BaseURL string
 	// HTTP is the client (10s timeout and no redirects by default).
 	HTTP *http.Client
-	// MaxRetries for 429 and 5xx responses (default 2).
+	// MaxRetries for 429 and 5xx responses and failed connections (default 2).
 	MaxRetries int
 	// MaxBackoff caps waits between retries, including Retry-After (default 5s).
 	MaxBackoff time.Duration
@@ -148,7 +148,8 @@ type mailtrapEmail struct {
 	CustomVariables map[string]string    `json:"custom_variables,omitempty"`
 }
 
-// Send implements Transport, retrying 429 and 5xx with backoff.
+// Send implements Transport, retrying 429, 5xx and failed connections
+// with backoff.
 func (m *Mailtrap) Send(ctx context.Context, msg *Message) error {
 	if m.cfg.APIToken.IsZero() {
 		return errors.New("mail: mailtrap needs an API token")
@@ -179,7 +180,11 @@ func (m *Mailtrap) Send(ctx context.Context, msg *Message) error {
 		last = err
 
 		me, ok := err.(*MailtrapError) //nolint:errorlint // post returns *MailtrapError unwrapped
-		if !ok || !me.Retryable() || attempt == m.cfg.MaxRetries {
+		// Mailtrap has no idempotency key: only a request that never
+		// reached it (connection refused, DNS) is safe to resend.
+		_, notSent := roundTripFailed(ctx, err)
+		retry := ok && me.Retryable() || notSent
+		if !retry || attempt == m.cfg.MaxRetries {
 			return err
 		}
 

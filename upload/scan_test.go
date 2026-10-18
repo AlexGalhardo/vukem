@@ -182,3 +182,25 @@ func TestReceiveScansBeforeFilesBecomeVisible(t *testing.T) {
 		})
 	}
 }
+
+// A scanner outage answers 503 to the client but keeps its cause for the
+// error log.
+func TestScanUnavailableKeepsCause(t *testing.T) {
+	t.Parallel()
+
+	down := errors.New("dial tcp 127.0.0.1:3310: connection refused")
+	rules := Rules{
+		MaxFileSize: 1 << 10, Types: []string{"text/plain"},
+		Scanner: scanFunc(func(context.Context, io.Reader) error { return down }),
+	}
+
+	_, err := receive(t, storage.NewMemory(""), rules, part{field: "f", filename: "a.txt", content: "hello"})
+	if errs.Status(err) != http.StatusServiceUnavailable || !errors.Is(err, down) {
+		t.Fatalf("Receive() with the scanner down = %v, want 503 wrapping the scanner error", err)
+	}
+
+	if he, ok := errors.AsType[*errs.HTTPError](err); !ok || he.Headers.Get("Retry-After") == "" ||
+		strings.Contains(he.Text(), "connection refused") {
+		t.Errorf("Receive() = %#v, want Retry-After and a client text without the cause", err)
+	}
+}

@@ -243,10 +243,11 @@ func Verify(ctx context.Context, d storage.Disk, key string, rules Rules) (File,
 var errInvalidKey = errs.New(http.StatusBadRequest, "The upload key is invalid.")
 
 // issued reports whether key has the shape of a key Presign issues for r
-// (storedPath: a random lower-case name and a known extension under
-// r.Dir), so a client-reported key never opens or deletes other objects.
-// Keys are random, not bound to a caller: apps that share Rules.Dir between
-// users must also check that the key was presigned for this caller.
+// (storedPath: a random lower-case name under r.Dir and an extension
+// matchType can return for one of r.Types), so a client-reported key never
+// opens or deletes other objects. Keys are random, not bound to a caller:
+// apps that share Rules.Dir between users must also check that the key was
+// presigned for this caller.
 func (r Rules) issued(key string) bool {
 	dir, name := path.Split(key)
 	if dir != "" {
@@ -259,9 +260,27 @@ func (r Rules) issued(key string) bool {
 
 	id, ext, ok := strings.Cut(name, ".")
 
-	return ok && validID(id) && slices.ContainsFunc(slices.Collect(maps.Values(extensions)), func(exts []string) bool {
-		return slices.Contains(exts, "."+ext)
-	})
+	return ok && validID(id) && slices.Contains(r.storedExts(), "."+ext)
+}
+
+// storedExts lists the extensions matchType can give a stored name under
+// r: the table's first extension for known types, otherwise r.Extensions
+// or ".bin".
+func (r Rules) storedExts() []string {
+	var out []string
+
+	for _, typ := range r.Types {
+		switch known := extensions[typ]; {
+		case len(known) > 0:
+			out = append(out, known[0])
+		case len(r.Extensions) > 0:
+			out = append(out, r.Extensions...)
+		default:
+			out = append(out, ".bin")
+		}
+	}
+
+	return out
 }
 
 func sortedKeys[V any](m map[string]V) []string { return slices.Sorted(maps.Keys(m)) }

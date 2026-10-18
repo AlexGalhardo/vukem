@@ -11,6 +11,7 @@ import (
 	"path"
 	"path/filepath"
 	"sort"
+	"strings"
 )
 
 // Local is a disk on the local filesystem. Every operation goes through
@@ -39,8 +40,19 @@ func NewLocal(dir, baseURL string) (*Local, error) {
 // Close releases the directory handle.
 func (l *Local) Close() error { return l.root.Close() }
 
-// Put implements Disk. The file is written to a temporary name and renamed,
-// so readers never see partial content.
+// tmpMarker separates a file name from the random suffix of its
+// temporary copy (".name.tmp-XXXXXXXX").
+const tmpMarker = ".tmp-"
+
+// isTemp reports whether name is a Put temporary file (left behind only
+// when the process dies mid-write).
+func isTemp(name string) bool {
+	return strings.HasPrefix(name, ".") && strings.Contains(name, tmpMarker)
+}
+
+// Put implements Disk. The file is written to a hidden temporary name
+// (".name.tmp-…", neither listed nor served) and renamed, so readers never
+// see partial content.
 func (l *Local) Put(_ context.Context, p string, r io.Reader) error {
 	c, err := Clean(p)
 	if err != nil {
@@ -53,7 +65,9 @@ func (l *Local) Put(_ context.Context, p string, r io.Reader) error {
 		}
 	}
 
-	tmp := c + ".tmp-" + rand.Text()[:8]
+	// A dot name keeps the partial file out of Handler (dotfiles are never
+	// served) and List until the rename publishes it.
+	tmp := path.Join(path.Dir(c), "."+path.Base(c)+tmpMarker+rand.Text()[:8])
 
 	f, err := l.root.OpenFile(tmp, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o640)
 	if err != nil {
@@ -149,7 +163,7 @@ func (l *Local) List(_ context.Context, dir string) ([]string, error) {
 			return fs.SkipAll
 		}
 
-		if err != nil || d.IsDir() {
+		if err != nil || d.IsDir() || isTemp(d.Name()) {
 			return err
 		}
 
