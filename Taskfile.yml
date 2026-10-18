@@ -91,6 +91,11 @@ tasks:
       - go fix -diff ./...
       - go run ./internal/tools/fixinline
 
+  mod:check:
+    desc: Fail when a nested module cannot be resolved from its own go.mod (GOWORK=off, test files included)
+    cmds:
+      - go run ./internal/tools/modcheck
+
   vuln:
     desc: Scan for known vulnerabilities
     cmds:
@@ -162,6 +167,7 @@ tasks:
     cmds:
       - task: lint
       - task: vet
+      - task: mod:check
       - task: test
 
   ci:full:
@@ -176,6 +182,7 @@ tasks:
     cmds:
       - task: lint
       - task: vet
+      - task: mod:check
       - task: test
       - task: test:linux
       - task: services:up

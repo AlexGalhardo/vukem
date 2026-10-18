@@ -33,6 +33,12 @@ jobs:
           if [ -s fix.diff ]; then echo "::warning::go fix suggests changes"; cat fix.diff; fi
       - name: go fix inline wrappers
         run: go run ./internal/tools/fixinline
+      # Every nested module has to resolve from its own go.mod, the way the
+      # proxy serves it. The per-driver jobs below cannot catch this: their
+      # "module alone" step has GOWORK=off but no build tags, and their
+      # integration step has the tags but runs inside the workspace.
+      - name: Nested modules resolve without the workspace
+        run: go run ./internal/tools/modcheck
 
   apidiff:
     name: API compatibility (apidiff)
