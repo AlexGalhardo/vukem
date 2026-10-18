@@ -459,12 +459,12 @@ func (g *TokenGuard[U]) User(c *web.Ctx) (U, error) {
 
 	var zero U
 
-	plain, ok := strings.CutPrefix(c.Header("Authorization"), "Bearer ")
-	if !ok || plain == "" {
+	plain, ok := BearerToken(c.Request())
+	if !ok {
 		return zero, ErrUnauthenticated
 	}
 
-	tok, err := g.tokens.Find(c.Context(), strings.TrimSpace(plain))
+	tok, err := g.tokens.Find(c.Context(), plain)
 
 	switch {
 	case err == nil:
@@ -492,6 +492,21 @@ func (g *TokenGuard[U]) User(c *web.Ctx) (U, error) {
 	c.SetRequest(c.Request().WithContext(context.WithValue(c.Context(), tokenKey{g.name}, tok)))
 
 	return u, nil
+}
+
+// BearerToken returns the credential of an "Authorization: Bearer <token>"
+// header, trimmed. The scheme is matched case-insensitively (RFC 7235
+// §2.1), so "bearer" and "BEARER" work too; ok is false without a bearer
+// header or with an empty token.
+func BearerToken(r *http.Request) (token string, ok bool) {
+	scheme, rest, found := strings.Cut(r.Header.Get("Authorization"), " ")
+	if !found || !strings.EqualFold(scheme, "Bearer") {
+		return "", false
+	}
+
+	token = strings.TrimSpace(rest)
+
+	return token, token != ""
 }
 
 // CurrentToken returns the token that authenticated c with guard.

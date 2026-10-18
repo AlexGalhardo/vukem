@@ -34,8 +34,8 @@ func Required(guards ...Checker) func(http.Handler) http.Handler {
 			apiOnly := allAPIGuards || isProblemJSON(r.Context())
 
 			for _, g := range guards {
-				if ec, ok := g.(errChecker); ok {
-					err := ec.authenticate(c)
+				if authenticate, ok := failClosed(g); ok {
+					err := authenticate(c)
 					if err == nil {
 						next.ServeHTTP(w, c.Request())
 						return
@@ -170,6 +170,31 @@ func ProblemJSON(next http.Handler) http.Handler {
 // errChecker is a guard that reports why authentication failed.
 type errChecker interface {
 	authenticate(c *web.Ctx) error
+}
+
+// FailClosedChecker is a guard that tells a missing or bad credential
+// apart from a check that could not run. Authenticate returns nil when the
+// request is authenticated, an error wrapping [ErrUnauthenticated] for a
+// missing, wrong or expired credential, and any other error (a store or
+// key-set outage, ideally an errs.HTTPError with status 503) when it could
+// not decide. Required renders that error and stops: it neither tries the
+// next guard nor treats the caller as a guest. Guards outside this package
+// (jwt.Guard, custom guards) implement it to fail closed like
+// SessionGuard and TokenGuard.
+type FailClosedChecker interface {
+	Checker
+	Authenticate(c *web.Ctx) error
+}
+
+func failClosed(g Checker) (func(*web.Ctx) error, bool) {
+	switch ec := g.(type) {
+	case errChecker:
+		return ec.authenticate, true
+	case FailClosedChecker:
+		return ec.Authenticate, true
+	}
+
+	return nil, false
 }
 
 func hasSession(c *web.Ctx) bool { return c.Session() != nil }

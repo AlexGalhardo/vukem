@@ -248,7 +248,7 @@ The `install:*` commands copy **your own code** into the project: routes, contro
 
 | Flag | Type | Default | What it does |
 | --- | --- | --- | --- |
-| `--social` | string | none | Also add [social login](/docs/security/social-login) for a comma-separated list: `github`, `gitlab`, `discord`, `google`, `microsoft`, `linkedin`, `x`, `apple` |
+| `--social` | string | none | Also add [social login](/docs/security/social-login) for a comma-separated list: `github`, `gitlab`, `discord`, `google`, `microsoft`, `linkedin`, `apple` (`x` is refused: X sends no email) |
 | `--2fa` | bool | `false` | Also add [two-factor authentication](/docs/security/two-factor) (TOTP) |
 | `--force` | bool | `false` | Overwrite existing files |
 

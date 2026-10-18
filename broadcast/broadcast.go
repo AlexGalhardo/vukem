@@ -6,12 +6,12 @@
 //
 //	b := broadcast.New(broadcast.Config{
 //		Broker:     redisClient, // nil = this process only
-//		User:       func(ctx context.Context) (any, error) { return auth.UserFrom[*models.User](ctx, "web") },
+//		User:       func(ctx context.Context) (any, error) { return auth.UserFrom[models.User](ctx, "web") },
 //		Authorizer: gate,
 //	})
 //	err := b.Public("posts")
 //	err = b.Private("user.{id}", func(ctx context.Context, u any, p map[string]string) (bool, error) {
-//		return u.(*models.User).ID == p["id"], nil
+//		return u.(models.User).AuthID() == p["id"], nil
 //	})
 //	r.Get("/broadcast/sse", b.SSE) // or drivers/websocket's Broadcast handler
 //

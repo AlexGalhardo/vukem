@@ -56,8 +56,6 @@ func NewSocial(app *vukem.App, names ...string) (*social.Social, error) {
 			s.Use(social.Microsoft("common", cfg))
 		case "linkedin":
 			s.Use(social.LinkedIn(cfg))
-		case "x":
-			s.Use(social.X(cfg))
 		case "apple":
 			// The callback is a cross-site POST: serve HTTPS and add
 			// https://appleid.apple.com to CSRF_TRUSTED_ORIGINS.

@@ -2550,3 +2550,48 @@ func TestSecurity_A02_MaxHeaderBytes(t *testing.T) {
 		}
 	}
 }
+
+// TestSecurity_A05_MaintenanceResponseCarriesSecurityHeaders checks that
+// the 503 of maintenance mode leaves through SecureHeaders like every
+// other response, on the web and API stacks (A57).
+func TestSecurity_A05_MaintenanceResponseCarriesSecurityHeaders(t *testing.T) {
+	t.Parallel()
+
+	file := filepath.Join(testutil.TempDir(t), "down")
+	if err := middleware.WriteMaintenance(file, middleware.MaintenanceState{}); err != nil {
+		t.Fatal(err)
+	}
+
+	app := newTestApp(t)
+	maint := maintenanceConfig(app)
+	maint.File = file
+
+	h := http.Handler(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Error("the app handler ran during maintenance")
+	}))
+
+	stack := serverMiddleware(app, secureHeadersConfig(app), maint)
+	for _, mw := range slices.Backward(stack) {
+		h = mw(h)
+	}
+
+	for _, accept := range []string{"text/html", "application/json"} {
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", http.NoBody)
+		req.Header.Set("Accept", accept)
+
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusServiceUnavailable {
+			t.Fatalf("Accept %s: status = %d, want 503", accept, rec.Code)
+		}
+
+		for _, name := range []string{
+			"Content-Security-Policy", "X-Content-Type-Options", "X-Frame-Options", "Referrer-Policy",
+		} {
+			if rec.Header().Get(name) == "" {
+				t.Errorf("Accept %s: maintenance 503 lacks %s", accept, name)
+			}
+		}
+	}
+}

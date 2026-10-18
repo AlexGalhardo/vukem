@@ -164,7 +164,7 @@ func (r *RemoteJWKS) Key(ctx context.Context, kid string) (Key, error) {
 
 	if (!ok || stale) && canRefresh {
 		if err := r.fetch(ctx); err != nil && !ok {
-			return Key{}, err
+			return Key{}, fmt.Errorf("%w: %w", ErrKeysUnavailable, err)
 		}
 
 		r.fetched = now()

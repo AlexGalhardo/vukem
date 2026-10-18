@@ -117,8 +117,9 @@ func TestSecurity_A07_TwoFactorFailsClosedOnEditedLogin(t *testing.T) {
 	}
 }
 
-// The secret and the recovery code hashes are orm.Encrypted columns, and
-// codes are checked against the last used step under a row lock.
+// The secret and the recovery code hashes are orm.Encrypted columns,
+// codes are checked against the last used step under a row lock, and every
+// code or password check of the settings page is rate limited.
 func TestSecurity_A07_TwoFactorScaffoldDefaults(t *testing.T) {
 	t.Parallel()
 
@@ -135,7 +136,18 @@ func TestSecurity_A07_TwoFactorScaffoldDefaults(t *testing.T) {
 		"scaffolds/auth-2fa/routes/two_factor.go.tmpl": {
 			"h.Challenge).Use(auth.Guest(acc.Web), challenge)",
 			"h.Confirm).Name(\"two-factor.confirm\").Use(required, verified, confirm)",
+			"h.RegenerateRecoveryCodes).Name(\"two-factor.recovery-codes\").Use(required, verified, confirm)",
+			"h.Disable).Name(\"two-factor.disable\").Use(required, verified, confirm)",
 		},
+	}
+
+	// New recovery codes are a way past the second factor: like turning
+	// 2FA off, they need the current password (generated
+	// TestTwoFactorRecoveryCodes checks it end to end).
+	for _, kit := range []string{"auth-2fa-web", "auth-2fa-inertia"} {
+		files["scaffolds/"+kit+"/app/controllers/account/two_factor.go.tmpl"] = []string{
+			`"stage", "recovery_codes")`,
+		}
 	}
 
 	for src, wants := range files {
@@ -199,9 +211,12 @@ func TestSecurity_A07_AuthScaffoldDefaults(t *testing.T) {
 		"scaffolds/auth-core/app/accounts/passwords.go.tmpl": {
 			"subtle.ConstantTimeCompare([]byte(stored), []byte(digest(token)))",
 			"a.expired(created, a.ResetTTL)",
+			"if err := a.revokeAccess(ctx, tx, u.ID); err != nil {",
+		},
+		"scaffolds/auth-core/app/accounts/users.go.tmpl": {
 			"DELETE FROM remember_tokens WHERE user_id",
-			"tokens := auth.NewTokens(tx)",
-			"tokens.RevokeAll(ctx, u.AuthID())",
+			"tokens := auth.NewTokens(ex)",
+			"tokens.RevokeAll(ctx, id)",
 		},
 		"scaffolds/auth-web/app/controllers/account/account.go.tmpl": {
 			"strings.ToLower(strings.TrimSpace(r.PostFormValue(\"email\")))",
@@ -250,7 +265,7 @@ func TestSecurity_A07_AuthScaffoldRevokesOtherSessions(t *testing.T) {
 			"sessions:  app.Sessions,",
 		},
 		"scaffolds/auth-core/app/accounts/passwords.go.tmpl": {
-			"if err := a.bumpSessionVersion(ctx, tx, u.ID); err != nil {",
+			"if err := a.revokeAccess(ctx, tx, u.ID); err != nil {",
 			`return u, a.revokeServerSessions(ctx, u.ID, "")`,
 		},
 		"scaffolds/auth-core/app/models/user.go.tmpl": {
@@ -570,7 +585,7 @@ func TestSecurity_A07_ProvingTheEmailEndsSquatterAccess(t *testing.T) {
 			"func (a *Accounts) VerifyEmail(ctx context.Context, u *models.User, keep string) error {",
 			"if err := a.revokeAccess(ctx, tx, u.ID); err != nil {",
 			`"DELETE FROM remember_tokens WHERE user_id = "`,
-			`"DELETE FROM access_tokens WHERE user_id = "`,
+			"tokens.RevokeAll(ctx, id)",
 			"return a.bumpSessionVersion(ctx, ex, userID)",
 			"return a.revokeServerSessions(ctx, u.ID, keep)",
 			`"%s/email/verify/%d?email_hash=%s", a.URL, u.ID, EmailHash(u.Email)`,
@@ -606,6 +621,23 @@ func TestSecurity_A07_ProvingTheEmailEndsSquatterAccess(t *testing.T) {
 			if !bytes.Contains(b, []byte(want)) {
 				t.Errorf("%s lacks %q", src, want)
 			}
+		}
+	}
+
+	// API tokens are revoked (kept with revoked_at for the audit trail),
+	// never deleted, like on a password reset.
+	for _, src := range []string{
+		"scaffolds/auth-core/app/accounts/users.go.tmpl",
+		"scaffolds/auth-core/app/accounts/passwords.go.tmpl",
+		"scaffolds/auth-social/app/accounts/social.go.tmpl",
+	} {
+		b, err := scaffoldFS.ReadFile(src)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if bytes.Contains(b, []byte("DELETE FROM access_tokens")) {
+			t.Errorf("%s deletes access_tokens instead of revoking them", src)
 		}
 	}
 
@@ -694,5 +726,35 @@ func TestVerificationMailIsQueued(t *testing.T) {
 	if !bytes.Contains(src, []byte("a.Mailer.SendLater(ctx, mail.VerifyEmail{")) ||
 		bytes.Contains(src, []byte("a.Mailer.Send(ctx, mail.VerifyEmail{")) {
 		t.Error("SendVerification does not queue the verification mail")
+	}
+}
+
+// X sends no email address, and the scaffold creates and links accounts
+// by a provider-verified email: --social x would wire a button that never
+// signs anyone up, so install:auth refuses it before writing anything.
+func TestSecurity_A07_SocialRefusesProvidersWithoutEmail(t *testing.T) {
+	t.Parallel()
+
+	for _, list := range []string{"x", "github,x"} {
+		dir := t.TempDir()
+		writeFiles(t, dir, map[string]string{"go.mod": "module example.com/app\n\ngo 1.27\n"})
+
+		code, out, errOut := vukem(t, dir, "install:auth", "--social", list)
+		if code != 2 || !strings.Contains(errOut, "sends no email") {
+			t.Errorf("install:auth --social %s = %d\n%s%s", list, code, out, errOut)
+		}
+
+		if _, err := os.Stat(filepath.Join(dir, "routes")); err == nil {
+			t.Errorf("install:auth --social %s wrote files before refusing", list)
+		}
+	}
+
+	b, err := scaffoldFS.ReadFile("scaffolds/auth-social/app/accounts/social.go.tmpl")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if bytes.Contains(b, []byte("social.X(")) {
+		t.Error("the social scaffold still wires social.X")
 	}
 }

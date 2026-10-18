@@ -25,7 +25,7 @@ import (
 //go:embed all:scaffolds
 var scaffoldFS embed.FS
 
-var socialProviders = []string{"github", "gitlab", "discord", "google", "microsoft", "linkedin", "x", "apple"}
+var socialProviders = []string{"github", "gitlab", "discord", "google", "microsoft", "linkedin", "apple"}
 
 func installAuth(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 	force := set.Bool("force", false, "overwrite existing files")
@@ -173,6 +173,15 @@ func parseProviders(list string) ([]string, error) {
 	for p := range strings.SplitSeq(list, ",") {
 		if p = strings.TrimSpace(strings.ToLower(p)); p == "" {
 			continue
+		}
+
+		// The scaffold signs users up and links accounts by a verified
+		// email; a provider without one would add a button that never
+		// signs anyone in.
+		if p == "x" {
+			return nil, usagef("social provider \"x\" sends no email address, which install:auth needs to create " +
+				"and link accounts; wire social.X yourself, for example to link X to a signed-in account " +
+				"(docs/authentication.md#social-login-social)")
 		}
 
 		if !slices.Contains(socialProviders, p) {

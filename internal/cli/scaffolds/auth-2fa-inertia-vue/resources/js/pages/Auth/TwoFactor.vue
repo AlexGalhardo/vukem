@@ -15,10 +15,15 @@ defineProps<{
 const button = "rounded-md bg-indigo-600 px-4 py-2 font-medium text-white hover:bg-indigo-500 disabled:opacity-50";
 
 const confirm = useForm({ code: "" });
+const regenerate = useForm({ password: "" });
 const disable = useForm({ password: "" });
 
 function submitConfirm(): void {
   confirm.post("/user/two-factor/confirm", { onFinish: () => confirm.reset("code") });
+}
+
+function submitRegenerate(): void {
+  regenerate.post("/user/two-factor/recovery-codes", { onFinish: () => regenerate.reset("password") });
 }
 
 function submitDisable(): void {
@@ -41,9 +46,17 @@ function submitDisable(): void {
       </ul>
     </template>
     <p v-else>You have {{ recoveryCodesLeft }} recovery codes left.</p>
-    <Link href="/user/two-factor/recovery-codes" method="post" as="button" :class="button">
-      Regenerate recovery codes
-    </Link>
+    <form class="space-y-4" @submit.prevent="submitRegenerate">
+      <Field
+        v-model="regenerate.password"
+        label="Current password"
+        type="password"
+        autocomplete="current-password"
+        required
+        :error="regenerate.errors.password"
+      />
+      <button type="submit" :disabled="regenerate.processing" :class="button">Regenerate recovery codes</button>
+    </form>
     <h2 class="pt-4 text-xl font-semibold">Turn off</h2>
     <form class="space-y-4" @submit.prevent="submitDisable">
       <Field

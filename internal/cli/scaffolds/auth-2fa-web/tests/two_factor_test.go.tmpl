@@ -153,8 +153,13 @@ func TestTwoFactorRecoveryCodes(t *testing.T) {
 
 	owner.Get("/user/two-factor").AssertSee("6 recovery codes left")
 
-	// Regenerating replaces every code.
-	owner.PostForm("/user/two-factor/recovery-codes", nil).AssertRedirect("/user/two-factor")
+	// Regenerating needs the current password, then replaces every code.
+	owner.WithHeader("Referer", "/user/two-factor").
+		PostForm("/user/two-factor/recovery-codes", url.Values{"password": {"not my password"}}).
+		AssertSessionHasErrors("password")
+	owner.Get("/user/two-factor").AssertSee("6 recovery codes left")
+	owner.PostForm("/user/two-factor/recovery-codes", url.Values{"password": {"correct horse battery"}}).
+		AssertRedirect("/user/two-factor")
 
 	fresh := recoveryRe.FindAllString(owner.Get("/user/two-factor").Body(), -1)
 	if len(fresh) != 8 || fresh[0] == codes[2] {

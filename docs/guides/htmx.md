@@ -86,7 +86,7 @@ vukem install:auth --social github,google
 vukem migrate
 ```
 
-`install:auth` copies user-owned code (`app/accounts`, `app/controllers/account`, `resources/views/auth`, `routes/auth.go`, `tests/auth_test.go`) and registers its migrations and routes. `--2fa` and `--social` also work on a project that already ran `install:auth`; social providers are `github`, `gitlab`, `discord`, `google`, `microsoft`, `linkedin`, `x` and `apple`, with credentials in `SOCIAL_<NAME>_CLIENT_ID` / `_SECRET`. Set `MAIL_MAILER` and `APP_URL` so verification and reset emails work. See [authentication.md](../authentication.md#installauth-scaffold).
+`install:auth` copies user-owned code (`app/accounts`, `app/controllers/account`, `resources/views/auth`, `routes/auth.go`, `tests/auth_test.go`) and registers its migrations and routes. `--2fa` and `--social` also work on a project that already ran `install:auth`; social providers are `github`, `gitlab`, `discord`, `google`, `microsoft`, `linkedin` and `apple` (`x` is refused: X sends no email), with credentials in `SOCIAL_<NAME>_CLIENT_ID` / `_SECRET`. Set `MAIL_MAILER` and `APP_URL` so verification and reset emails work. See [authentication.md](../authentication.md#installauth-scaffold).
 
 Next steps on top of auth: `vukem install:admin` (admin panel at `/admin`, [admin.md](../admin.md)), `vukem install:api` (tokens and `/api/v1` beside the web routes, [api.md](../api.md#starter)) and `vukem install:billing` (Stripe subscriptions, [billing.md](../billing.md)).
 

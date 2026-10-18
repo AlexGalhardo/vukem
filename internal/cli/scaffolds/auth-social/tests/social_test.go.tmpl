@@ -66,7 +66,9 @@ func TestSocialLinkEndsSquatterAccess(t *testing.T) {
 
 	squatter.Get("/email/verify").AssertRedirect("/login")
 	vukemtest.AssertDatabaseMissing(t, app, "remember_tokens", map[string]any{"user_id": userID})
-	vukemtest.AssertDatabaseMissing(t, app, "access_tokens", map[string]any{"user_id": userID})
+	// Revoked, not deleted: the token stays listed with revoked_at.
+	vukemtest.AssertDatabaseMissing(t, app, "access_tokens", map[string]any{"user_id": userID, "revoked_at": nil})
+	vukemtest.AssertDatabaseHas(t, app, "access_tokens", map[string]any{"user_id": userID})
 	app.Client(t).WithHeader("Referer", "/login").PostForm("/login", url.Values{
 		"email": {"vic@example.com"}, "password": {"correct horse battery"},
 	}).AssertSessionHasErrors("email")

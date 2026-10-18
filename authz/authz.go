@@ -3,7 +3,8 @@
 // closed: an ability or policy that was never registered denies.
 //
 //	gate := authz.New(func(ctx context.Context) (*models.User, error) {
-//		return auth.UserFrom[*models.User](ctx, "web")
+//		u, err := auth.UserFrom[models.User](ctx, "web") // the session guard stores a value
+//		return &u, err
 //	})
 //	gate.Define("edit-settings", func(ctx context.Context, u *models.User) bool { return u.Role == "admin" })
 //	gate.Register(authz.For[*models.Post](policies.PostPolicy{}))

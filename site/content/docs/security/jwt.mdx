@@ -177,6 +177,8 @@ Every failure wraps `jwt.ErrInvalid`; check it with [`errors.Is`](https://pkg.go
 - It implements `auth.Checker` and `auth.APIGuard`, so `auth.Required(guard)` answers `401` problem+json and never redirects to a login page.
 - `auth.User[U](c, name)` returns the user; `jwt.ClaimsFrom(c, name)` returns the claims.
 - A rejected token logs the `jwt.rejected` security event. A token whose `sub` matches no user is a `401` too.
+- It fails closed. When the key set cannot be consulted (a `RemoteJWKS` fetch fails and no cached key matches) or the user lookup fails for any reason other than not found, the answer is `503` problem+json, never `401`, and `auth.Required` does not try the next guard. An outage never looks like a bad credential to the client.
+- The `Bearer` scheme is matched case-insensitively, so `bearer <jwt>` works too.
 - `auth.Ability` does not apply: JWTs have no Vukem abilities. Check your own claims from `Extra`, or use [authorization](/docs/security/authorization) policies.
 
 ## Key sets
@@ -188,6 +190,8 @@ A verifier finds keys by `kid` through a `jwt.KeySet`:
 | `jwt.StaticKeys(current, previous...)` | your own keys. A token without `kid` is accepted only when the set has one key |
 | `&jwt.RemoteJWKS{URL: ...}` | an identity provider's public keys, fetched from its JWKS URL |
 | your own type | anything with `Key(ctx, kid) (jwt.Key, error)` |
+
+A custom key set that cannot reach its backend wraps `jwt.ErrKeysUnavailable` in its error, so the guard answers `503`. Any other error rejects the token as invalid (`401`).
 
 ### Rotating your keys
 
