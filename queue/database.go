@@ -1,6 +1,7 @@
 package queue
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"errors"
@@ -34,6 +35,16 @@ type Database struct {
 	seq atomic.Int64
 }
 
+// DefaultTable and DefaultFailedTable are the tables the queue owns when
+// DatabaseOptions leaves them empty. They are listed with every other
+// table vukem owns in docs/database.md#tables-the-framework-owns; set
+// QUEUE_TABLE and QUEUE_FAILED_TABLE to move them out of the way of an
+// app's own tables.
+const (
+	DefaultTable       = "jobs"
+	DefaultFailedTable = "failed_jobs"
+)
+
 // DatabaseOptions name the tables.
 type DatabaseOptions struct {
 	// Table holds pending jobs (default "jobs").
@@ -50,25 +61,34 @@ type DatabaseOptions struct {
 
 var identRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
+// tableNames returns o's table names with the defaults filled in.
+func tableNames(o DatabaseOptions) (jobs, failed string) {
+	return cmp.Or(o.Table, DefaultTable), cmp.Or(o.FailedTable, DefaultFailedTable)
+}
+
+// checkTables rejects names that are not plain identifiers: they are
+// interpolated into SQL, values never are.
+func checkTables(jobs, failed string) error {
+	for _, t := range []string{jobs, failed} {
+		if !identRe.MatchString(t) {
+			return fmt.Errorf("queue: invalid table name %q", t)
+		}
+	}
+
+	return nil
+}
+
 // NewDatabase returns a database driver; call CreateTables (or a
 // migration with the same schema) before use.
 func NewDatabase(db *database.DB, o DatabaseOptions) (*Database, error) {
-	if o.Table == "" {
-		o.Table = "jobs"
-	}
-
-	if o.FailedTable == "" {
-		o.FailedTable = "failed_jobs"
-	}
+	o.Table, o.FailedTable = tableNames(o)
 
 	if o.Grace <= 0 {
 		o.Grace = time.Minute
 	}
 
-	for _, t := range []string{o.Table, o.FailedTable} {
-		if !identRe.MatchString(t) {
-			return nil, fmt.Errorf("queue: invalid table name %q", t)
-		}
+	if err := checkTables(o.Table, o.FailedTable); err != nil {
+		return nil, err
 	}
 
 	if o.Now == nil {
@@ -94,8 +114,13 @@ func (d *Database) clock() time.Time { return (*d.now.Load())() }
 
 // q renders sqlText with table names ({j}, {f}) and dialect placeholders.
 func (d *Database) q(dl database.Dialect, sqlText string) string {
-	sqlText = strings.ReplaceAll(sqlText, "{j}", dl.Quote(d.jobs))
-	sqlText = strings.ReplaceAll(sqlText, "{f}", dl.Quote(d.failed))
+	return render(dl, d.jobs, d.failed, sqlText)
+}
+
+// render substitutes the table names ({j}, {f}) and dialect placeholders.
+func render(dl database.Dialect, jobs, failed, sqlText string) string {
+	sqlText = strings.ReplaceAll(sqlText, "{j}", dl.Quote(jobs))
+	sqlText = strings.ReplaceAll(sqlText, "{f}", dl.Quote(failed))
 
 	var b strings.Builder
 
@@ -141,11 +166,13 @@ func (d *Database) nextSeq() int64 {
 	}
 }
 
-// CreateTables creates the jobs and failed jobs tables if missing.
-func (d *Database) CreateTables(ctx context.Context) error {
-	dl := d.db.Dialect()
+// tableDDL returns the statements that create the jobs and failed jobs
+// tables and their index on dl, rendered for jobs and failed. CreateTables
+// runs them at boot and the migration from Migrations runs the same list,
+// so the two paths cannot drift (TestMigrationMatchesCreateTablesDDL).
+func tableDDL(dl database.Dialect, jobs, failed string) []string {
 	if dl.Name() == "mysql" {
-		return d.createMySQLTables(ctx, dl)
+		return mysqlTableDDL(dl, jobs, failed)
 	}
 
 	cols := `id TEXT PRIMARY KEY, queue TEXT NOT NULL, kind TEXT NOT NULL, payload TEXT NOT NULL,
@@ -153,12 +180,25 @@ func (d *Database) CreateTables(ctx context.Context) error {
 		timeout_ms BIGINT NOT NULL DEFAULT 0, available_at BIGINT NOT NULL, created_at BIGINT NOT NULL,
 		last_error TEXT NOT NULL DEFAULT ''`
 
-	for _, stmt := range []string{
+	stmts := []string{
 		`CREATE TABLE IF NOT EXISTS {j} (` + cols + `, reserved_at BIGINT NOT NULL DEFAULT 0, ` + seqColumn + `)`,
-		`CREATE INDEX IF NOT EXISTS ` + dl.Quote(d.jobs+"_queue_available") + ` ON {j} (queue, available_at)`,
+		`CREATE INDEX IF NOT EXISTS ` + dl.Quote(jobs+"_queue_available") + ` ON {j} (queue, available_at)`,
 		`CREATE TABLE IF NOT EXISTS {f} (` + cols + `, failed_at BIGINT NOT NULL)`,
-	} {
-		if _, err := d.db.ExecContext(ctx, d.q(dl, stmt)); err != nil {
+	}
+	for i, stmt := range stmts {
+		stmts[i] = render(dl, jobs, failed, stmt)
+	}
+
+	return stmts
+}
+
+// CreateTables creates the jobs and failed jobs tables if missing. It is
+// the fallback for apps that do not register Migrations: the statements
+// are the same, so running it after the migration changes nothing.
+func (d *Database) CreateTables(ctx context.Context) error {
+	dl := d.db.Dialect()
+	for _, stmt := range tableDDL(dl, d.jobs, d.failed) {
+		if _, err := d.db.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("queue: create tables: %w", err)
 		}
 	}
@@ -223,26 +263,27 @@ func unknownColumn(err error) bool {
 	return strings.Contains(msg, "no such column") || strings.Contains(msg, "Error 1054")
 }
 
-// createMySQLTables uses binary keys (exact, case-sensitive ids), keeps the
+// mysqlTableDDL uses binary keys (exact, case-sensitive ids), keeps the
 // index inline (MySQL has no CREATE INDEX IF NOT EXISTS) and drops the
 // TEXT default MySQL 8 refuses; inserts always set last_error.
-func (d *Database) createMySQLTables(ctx context.Context, dl database.Dialect) error {
+func mysqlTableDDL(dl database.Dialect, jobs, failed string) []string {
 	cols := `id VARBINARY(255) NOT NULL PRIMARY KEY, queue VARBINARY(255) NOT NULL, kind VARCHAR(255) NOT NULL,
 		payload LONGTEXT NOT NULL, attempts INT NOT NULL DEFAULT 0, max_retries INT NOT NULL DEFAULT 0,
 		timeout_ms BIGINT NOT NULL DEFAULT 0, available_at BIGINT NOT NULL, created_at BIGINT NOT NULL,
 		last_error LONGTEXT NOT NULL`
 
-	for _, stmt := range []string{
+	stmts := []string{
 		`CREATE TABLE IF NOT EXISTS {j} (` + cols + `, reserved_at BIGINT NOT NULL DEFAULT 0, ` + seqColumn + `, INDEX ` +
-			dl.Quote(d.jobs+"_queue_available") + ` (queue, available_at))`,
+			dl.Quote(
+				jobs+"_queue_available",
+			) + ` (queue, available_at))`,
 		`CREATE TABLE IF NOT EXISTS {f} (` + cols + `, failed_at BIGINT NOT NULL)`,
-	} {
-		if _, err := d.db.ExecContext(ctx, d.q(dl, stmt)); err != nil {
-			return fmt.Errorf("queue: create tables: %w", err)
-		}
+	}
+	for i, stmt := range stmts {
+		stmts[i] = render(dl, jobs, failed, stmt)
 	}
 
-	return d.ensureSeq(ctx, dl)
+	return stmts
 }
 
 func ms(t time.Time) int64 { return t.UnixMilli() }
