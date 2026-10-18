@@ -298,6 +298,8 @@ var apiStarterRemove = []string{
 	"tests/home_test.go", "package.json", "vite.config.ts", "resources/css", "resources/js", "resources/vite",
 	"resources/views/components", "resources/views/uploads", "app/controllers/upload_controller.go",
 	"tests/uploads_test.go",
+	// An API project has no app/controllers package, only app/controllers/apiv1.
+	"app/controllers/doc.go",
 }
 
 // makeAPIStarter turns the starter into a JSON API: the api-starter
