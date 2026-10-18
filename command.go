@@ -227,11 +227,14 @@ func routeListCommand() Command {
 }
 
 func openAPIExportCommand() Command {
+	var prefix string
+
 	return CommandFunc{
 		CommandName: "openapi:export",
 		Desc:        "Print the OpenAPI 3.1 document (vukem openapi:export > openapi.json)",
+		DefineFlags: func(fs *flag.FlagSet) { openAPIPrefixFlag(fs, &prefix) },
 		Fn: func(_ context.Context, app *App, _ []string) error {
-			doc, err := app.OpenAPI()
+			doc, err := openAPIDocument(app, prefix)
 			if err != nil {
 				return err
 			}
@@ -247,6 +250,8 @@ func openAPIExportCommand() Command {
 func codegenTypesCommand() Command {
 	var zod *bool
 
+	var prefix string
+
 	var out *string
 
 	return CommandFunc{
@@ -255,9 +260,10 @@ func codegenTypesCommand() Command {
 		DefineFlags: func(fs *flag.FlagSet) {
 			zod = fs.Bool("zod", false, "also emit Zod schemas")
 			out = fs.String("o", "", "write to this file instead of stdout")
+			openAPIPrefixFlag(fs, &prefix)
 		},
 		Fn: func(_ context.Context, app *App, _ []string) error {
-			doc, err := app.OpenAPI()
+			doc, err := openAPIDocument(app, prefix)
 			if err != nil {
 				return err
 			}
