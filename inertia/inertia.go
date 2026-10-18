@@ -379,9 +379,11 @@ func pageScript(p *Page, id string) (string, error) {
 	return `<script data-page="` + id + `" type="application/json">` + string(b) + `</script>`, nil
 }
 
+// absoluteURL rebuilds the request URL with the scheme the client used,
+// honouring a trusted proxy's X-Forwarded-Proto (web.Ctx.IsHTTPS).
 func absoluteURL(r *http.Request) string {
 	scheme := "http"
-	if r.TLS != nil {
+	if web.NewCtx(nil, r, web.ServicesFrom(r.Context())).IsHTTPS() {
 		scheme = "https"
 	}
 

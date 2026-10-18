@@ -59,7 +59,7 @@ type HandlerFunc func(c *Ctx) error
 
 | Area | Methods |
 | --- | --- |
-| Request | `Request()`, `Context()`, `Param`, `Query`, `Header`, `Cookie`, `IP()`, `Accepts(...)`, `IsJSON()` |
+| Request | `Request()`, `Context()`, `Param`, `Query`, `Header`, `Cookie`, `IP()`, `IsHTTPS()`, `Accepts(...)`, `IsJSON()` |
 | Binding | `Bind[T](c) (T, error)` — JSON, form, multipart, query; runs validation; `BindJSON`, `BindForm`, `File(name)` |
 | Responses | `String`, `HTML`, `JSON`, `NoContent`, `Redirect`, `RedirectRoute`, `Back`, `Stream`, `File`, `Download` |
 | Views | `Render(name, data)`, `Fragment(name, block, data)` (HTMX), `View(v view.View)` (templ) |

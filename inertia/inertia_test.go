@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -225,6 +226,49 @@ func TestVersionMismatch(t *testing.T) {
 		map[string]string{"X-Inertia-Version": "old"},
 	); rec.Code != http.StatusOK {
 		t.Errorf("non-Inertia GET with stale version = %d, want 200", rec.Code)
+	}
+}
+
+// Behind a TLS-terminating proxy the version reload must stay on https.
+func TestVersionMismatchBehindProxy(t *testing.T) {
+	t.Parallel()
+
+	_, proxies, _ := net.ParseCIDR("10.0.0.0/8")
+
+	in, err := inertia.New(baseConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tt := range []struct {
+		name, remote, want string
+	}{
+		{"trusted proxy", "10.0.0.1:1", "https://example.com/events"},
+		{"untrusted peer", "198.51.100.7:1", "http://example.com/events"},
+	} {
+		r := router.New(&web.Services{TrustedProxies: []*net.IPNet{proxies}, TrustForwardedProto: true})
+		r.Use(in.Middleware)
+		r.Get("/events", func(c *web.Ctx) error { return inertia.Render(c, "Events", nil) })
+
+		h, err := r.Handler()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/events", http.NoBody)
+		req.Host, req.RemoteAddr = "example.com", tt.remote
+		req.Header.Set("X-Forwarded-Proto", "https")
+
+		for k, v := range xhr("X-Inertia-Version", "old") {
+			req.Header.Set(k, v)
+		}
+
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+
+		if got := rec.Header().Get("X-Inertia-Location"); rec.Code != http.StatusConflict || got != tt.want {
+			t.Errorf("%s: %d X-Inertia-Location = %q, want 409 %q", tt.name, rec.Code, got, tt.want)
+		}
 	}
 }
 

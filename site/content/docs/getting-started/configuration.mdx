@@ -155,7 +155,7 @@ A line with an invalid key stops the boot with the file and line number, for exa
 | `HTTP_MAX_HEADER_BYTES` | `65536` | Cap on the request line plus headers (64 KiB; 4096–1048576). Larger requests get `431` |
 | `TRUSTED_PROXIES` | empty | Comma-separated CIDRs or IPs whose `X-Forwarded-For` sets `c.IP()`. Empty trusts nobody ([Deploy](/docs/deployment/docker-and-railway#trusted-proxies)) |
 | `CLIENT_IP_HEADER` | empty | Read the client IP from this single-IP header (such as `X-Real-IP`) instead of `X-Forwarded-For`, only from `TRUSTED_PROXIES` peers |
-| `TRUST_FORWARDED_PROTO` | `false` | Treat `X-Forwarded-Proto: https` from a trusted proxy as HTTPS (for HSTS). Requires `TRUSTED_PROXIES` |
+| `TRUST_FORWARDED_PROTO` | `false` | Treat `X-Forwarded-Proto: https` from a trusted proxy as HTTPS (HSTS, `c.IsHTTPS()`, the Inertia version reload). Requires `TRUSTED_PROXIES` |
 | `HSTS_FORCE` | `false` | Send HSTS on every response in production when the TLS proxy's range cannot be trusted ([trade-offs](/docs/deployment/docker-and-railway#hsts-without-a-trusted-range)). Requires an `https://` `APP_URL` in every environment; applied only in production, with a boot warning elsewhere |
 | `RATE_LIMIT_IPV6_PREFIX` | `64` | Prefix length `ratelimit.ByIP` groups IPv6 clients by (1–128); IPv4 stays per address |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error` |

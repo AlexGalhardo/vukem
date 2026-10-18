@@ -61,6 +61,9 @@ type Services struct {
 	// X-Forwarded-For, only from TrustedProxies peers; a missing, repeated
 	// or non-IP value falls back to the peer address.
 	ClientIPHeader string
+	// TrustForwardedProto makes IsHTTPS honour X-Forwarded-Proto: https,
+	// only from TrustedProxies peers (TRUST_FORWARDED_PROTO).
+	TrustForwardedProto bool
 	// IPv6Prefix is the prefix length per-IP keys (ratelimit.ByIP) group
 	// IPv6 clients by, since one client usually owns a whole /64; 0 or any
 	// value outside 1-128 means 64. IPv4 (and IPv4-mapped IPv6) keys stay
@@ -319,6 +322,29 @@ func canonicalIP(s string) (string, bool) {
 	}
 
 	return addr.Unmap().String(), true
+}
+
+// IsHTTPS reports whether the client reached the app over HTTPS: the
+// connection is TLS, or TrustForwardedProto is set and a TrustedProxies
+// peer sent a single X-Forwarded-Proto: https line (a second line may come
+// from the client).
+func (c *Ctx) IsHTTPS() bool {
+	if c.r.TLS != nil {
+		return true
+	}
+
+	if !c.s.TrustForwardedProto {
+		return false
+	}
+
+	host, _, err := net.SplitHostPort(c.r.RemoteAddr)
+	if err != nil {
+		host = c.r.RemoteAddr
+	}
+
+	vals := c.r.Header.Values("X-Forwarded-Proto")
+
+	return len(vals) == 1 && strings.TrimSpace(vals[0]) == "https" && c.trusted(host)
 }
 
 func (c *Ctx) trusted(host string) bool {

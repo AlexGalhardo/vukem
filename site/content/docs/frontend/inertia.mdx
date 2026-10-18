@@ -407,7 +407,7 @@ After a deploy, an open tab still runs the old JavaScript. Inertia fixes this wi
 
 1. `vukem.WithInertia` uses `app.Vite.Version` (a hash of the Vite manifest) when you set no `Config.Version`. Without Vite or a build it is `""`.
 2. Every page object carries `version`, and the client sends it back as `X-Inertia-Version`.
-3. On an Inertia `GET` whose version differs, the middleware answers **`409 Conflict`** with `X-Inertia-Location` (the absolute URL of the request) and the current `X-Inertia-Version`. It keeps the session's flash data for the next request.
+3. On an Inertia `GET` whose version differs, the middleware answers **`409 Conflict`** with `X-Inertia-Location` (the absolute URL of the request) and the current `X-Inertia-Version`. The scheme comes from `c.IsHTTPS()`: behind a TLS proxy, set `TRUSTED_PROXIES` and `TRUST_FORWARDED_PROTO=true` or the reload points to `http://`. It keeps the session's flash data for the next request.
 4. The client reacts to the `409` with a full page load, which fetches the new assets.
 
 Only `GET` requests are checked, so a form submission is never lost to a version change.

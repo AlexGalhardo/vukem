@@ -161,7 +161,7 @@ Vukem reads its settings from the process environment first, then from `.env` fi
 | `DATABASE_URL` | `file:storage/database.sqlite` | the database; `postgres://...` needs the [PostgreSQL driver](/docs/database/overview) |
 | `TRUSTED_PROXIES` | empty (trust nobody) | comma-separated CIDRs or IPs of your proxies, see [trusted proxies](#trusted-proxies) |
 | `CLIENT_IP_HEADER` | empty | a one-IP header the trusted proxy sets, such as `X-Real-IP`, read instead of `X-Forwarded-For` |
-| `TRUST_FORWARDED_PROTO` | `false` | trusts `X-Forwarded-Proto: https` from trusted proxies, which turns on HSTS |
+| `TRUST_FORWARDED_PROTO` | `false` | trusts `X-Forwarded-Proto: https` from trusted proxies, which turns on HSTS and keeps the Inertia version reload on `https://` |
 | `HSTS_FORCE` | `false` | sends HSTS on every production response, see [HSTS without a trusted range](#hsts-without-a-trusted-range) |
 | `HTTP_MAX_HEADER_BYTES` | `65536` (64 KiB) | caps the request line plus headers; from `4096` to `1048576` |
 | `HTTP_H2C` | `false` | serves HTTP/2 without TLS in production too (always on elsewhere), for a proxy that speaks h2c |

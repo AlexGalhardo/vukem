@@ -162,6 +162,7 @@ go func() { log.Info("viewed", "post", post) }()
 | `c.WantsJSON()` | The client prefers a JSON **answer** (rules below) |
 | `c.IsHTMX()` | The request was sent by htmx (`HX-Request: true`) |
 | `c.IsPartial()` | htmx asked for a fragment rather than a full page |
+| `c.IsHTTPS()` | The client used HTTPS: a TLS connection, or one `X-Forwarded-Proto: https` line from a trusted proxy with `TRUST_FORWARDED_PROTO=true` |
 
 `WantsJSON` decides between HTML and JSON in handlers and in the error handler:
 
@@ -328,6 +329,7 @@ Middleware stores per-request values in `c.Context()`. Read them with these func
 | --- | --- | --- |
 | `TRUSTED_PROXIES` | empty | Proxies whose forwarding headers `c.IP()` believes |
 | `CLIENT_IP_HEADER` | empty | A single-IP header read instead of `X-Forwarded-For` |
+| `TRUST_FORWARDED_PROTO` | `false` | `c.IsHTTPS()` believes `X-Forwarded-Proto: https` from `TRUSTED_PROXIES` |
 | `RATE_LIMIT_IPV6_PREFIX` | `64` | How per-IP keys group IPv6 clients |
 | `APP_DEBUG` | `false` | Detailed 5xx pages (ignored in production) |
 | `APP_PROBLEM_BASE_URL` | empty | Base of the problem `type` for validation errors |

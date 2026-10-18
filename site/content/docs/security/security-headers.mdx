@@ -291,7 +291,7 @@ TRUSTED_PROXIES=10.0.0.0/8
 TRUST_FORWARDED_PROTO=true
 ```
 
-`TRUST_FORWARDED_PROTO=true` without `TRUSTED_PROXIES` refuses the boot (`vukem: TRUST_FORWARDED_PROTO requires TRUSTED_PROXIES`): any client could otherwise claim HTTPS. A second `X-Forwarded-Proto` line is ignored, since it may have come from the client. The same `TRUSTED_PROXIES` decides the client IP; see [Rate limiting](/docs/security/rate-limiting#the-client-ip-behind-a-proxy).
+`TRUST_FORWARDED_PROTO=true` without `TRUSTED_PROXIES` refuses the boot (`vukem: TRUST_FORWARDED_PROTO requires TRUSTED_PROXIES`): any client could otherwise claim HTTPS. A second `X-Forwarded-Proto` line is ignored, since it may have come from the client. Handlers can ask the same question with `c.IsHTTPS()`; the Inertia adapter uses it for the absolute `X-Inertia-Location` of its version reload. The same `TRUSTED_PROXIES` decides the client IP; see [Rate limiting](/docs/security/rate-limiting#the-client-ip-behind-a-proxy).
 
 ### When the proxy's range is unknown
 
