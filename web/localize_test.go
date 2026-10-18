@@ -53,6 +53,10 @@ func TestParse_LocalizesIssues(t *testing.T) {
 			for name, parse := range map[string]func() error{
 				"Parse":      func() error { _, err := Parse(c, storePostSchema); return err },
 				"ParseQuery": func() error { _, err := ParseQuery(c, storePostSchema); return err },
+				"ParseMap": func() error {
+					_, err := ParseMap(c, storePostSchema, map[string]any{"title": "ab"})
+					return err
+				},
 			} {
 				err := parse()
 

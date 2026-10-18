@@ -13,6 +13,7 @@ import (
 	"github.com/AlexGalhardo/vukem/errs"
 	"github.com/AlexGalhardo/vukem/router"
 	"github.com/AlexGalhardo/vukem/web"
+	"github.com/AlexGalhardo/vukem/z"
 )
 
 type storeProduct struct {
@@ -196,4 +197,33 @@ func TestRegisterValidateResponseNeedsStruct(t *testing.T) {
 
 	api.Register(router.New(nil), "GET /list", api.Op{ValidateResponse: true},
 		func(*web.Ctx, struct{}) ([]checkedJSON, error) { return nil, nil })
+}
+
+func TestRegisterLocalizesValidation(t *testing.T) {
+	t.Parallel()
+
+	r := router.New(nil)
+	api.Register(r, "POST /products", api.Op{},
+		func(_ *web.Ctx, in storeProduct) (productJSON, error) { return productJSON{Name: in.Name}, nil })
+
+	localize := func(is z.Issues) z.Issues {
+		return is.Localize(func(key string) (string, bool) {
+			if key == "required" {
+				return "{field} é obrigatório", true
+			}
+
+			return "", false
+		})
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequestWithContext(web.WithIssueLocalizer(t.Context(), localize),
+		"POST", "/products", strings.NewReader(`{"shop":1}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != 422 || !strings.Contains(rec.Body.String(), "name é obrigatório") {
+		t.Fatalf("POST /products = %d %s, want 422 with the localized message", rec.Code, rec.Body)
+	}
 }

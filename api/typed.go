@@ -126,7 +126,7 @@ func Register[In, Out any](g Registrar, pattern string, op Op, fn func(*web.Ctx,
 			}
 
 			var err error
-			if in, err = web.ParseInput(schema, input); err != nil {
+			if in, err = web.ParseMap(c, schema, input); err != nil {
 				return err
 			}
 		}
