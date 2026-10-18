@@ -331,12 +331,14 @@ func (t *Tokens) revoke(ctx context.Context, where string, args ...any) (int64, 
 }
 
 // List returns userID's tokens, newest first, revoked ones included with
-// RevokedAt set (never the secrets).
+// RevokedAt set (never the secrets). Every Token carries the UserID stored on
+// its row, like Find, so the owner does not depend on what the caller asked
+// for.
 func (t *Tokens) List(ctx context.Context, userID string) ([]Token, error) {
 	rows, err := t.ex.QueryContext(
 		ctx,
-		t.q("SELECT id, name, abilities, last_used_at, expires_at, revoked_at FROM {table} WHERE user_id = ? "+
-			"ORDER BY created_at DESC, id"),
+		t.q("SELECT id, user_id, name, abilities, last_used_at, expires_at, revoked_at FROM {table} "+
+			"WHERE user_id = ? ORDER BY created_at DESC, id"),
 		userID,
 	)
 	if err != nil {
@@ -347,10 +349,13 @@ func (t *Tokens) List(ctx context.Context, userID string) ([]Token, error) {
 	var out []Token
 
 	for rows.Next() {
-		tok := Token{UserID: userID}
+		var (
+			tok  Token
+			abil string
+		)
 
-		var abil string
-		if err := rows.Scan(&tok.ID, &tok.Name, &abil, &tok.LastUsedAt, &tok.ExpiresAt, &tok.RevokedAt); err != nil {
+		if err := rows.Scan(&tok.ID, &tok.UserID, &tok.Name, &abil,
+			&tok.LastUsedAt, &tok.ExpiresAt, &tok.RevokedAt); err != nil {
 			return nil, err
 		}
 

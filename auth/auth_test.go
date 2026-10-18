@@ -592,6 +592,39 @@ func TestTokensAndAbilities(t *testing.T) {
 	}
 }
 
+// TestTokensListReportsTheOwner locks the owner of every listed token: the
+// response of an app that lists a caller's keys renders it, so an empty
+// Token.UserID would reach clients.
+func TestTokensListReportsTheOwner(t *testing.T) {
+	t.Parallel()
+
+	ta := newApp(t, hash.Fake())
+	ana := ta.user(t, "ana@example.com", "pw", true)
+	bob := ta.user(t, "bob@example.com", "pw", true)
+	ctx := t.Context()
+
+	for _, name := range []string{"cli", "ci"} {
+		if _, _, err := ta.tokens.Create(ctx, ana.AuthID(), name, nil, time.Hour); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if _, _, err := ta.tokens.Create(ctx, bob.AuthID(), "bob-cli", nil, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	list, err := ta.tokens.List(ctx, ana.AuthID())
+	if err != nil || len(list) != 2 {
+		t.Fatalf("List(ana) = %+v, %v, want 2 tokens", list, err)
+	}
+
+	for _, tok := range list {
+		if tok.UserID != ana.AuthID() {
+			t.Errorf("List(ana) token %s UserID = %q, want %q", tok.ID, tok.UserID, ana.AuthID())
+		}
+	}
+}
+
 func TestTokenOnlyRoutesAnswerProblemJSON(t *testing.T) {
 	t.Parallel()
 
