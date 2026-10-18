@@ -11,7 +11,7 @@ app, err := vukem.New(vukem.WithDevtools(), /* … */)
 Or set `DEVTOOLS=true` in `.env`. Either way:
 
 - `APP_ENV=production` makes `New` fail (`TestSecurity_A02_DevtoolsRefusedInProduction`). Use the env variable rather than the option in code that also runs in production.
-- The dashboard answers only requests whose direct peer is a loopback address, whose `Host` is `localhost`, `*.localhost` or a loopback IP, and that carry no `Forwarded` / `X-Forwarded-*` / `X-Real-Ip` header. Anything else gets a plain 404 (`TestSecurity_A01_DevtoolsLoopbackOnly`). The `Host` check stops DNS-rebinding pages from reading the dashboard through the developer's browser.
+- The dashboard answers only requests whose direct peer is a loopback address, whose `Host` is `localhost`, `*.localhost` or a loopback IP, and that carry no `Forwarded` / `X-Forwarded-For` / `-Host` / `-Proto` / `-Port` / `X-Real-Ip` / `Via` header (a tunnel that sets only `X-Forwarded-Proto` is still a proxy). Anything else gets a plain 404 (`TestSecurity_A01_DevtoolsLoopbackOnly`). The `Host` check stops DNS-rebinding pages from reading the dashboard through the developer's browser.
 - `DEVTOOLS_INSECURE_ALLOW_REMOTE=true` drops those checks (an app in a container or a remote VM). Anyone who reaches the app then sees its requests, queries, logs and mail.
 
 `app.Devtools` is the collector (nil when off).

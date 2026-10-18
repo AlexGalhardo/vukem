@@ -73,7 +73,7 @@ When it is on, `app.Devtools` holds the collector (a `*devtools.Devtools`). When
 The dashboard shows your app's requests, SQL, logs and emails, so it must not leak. A request may see it only when **all** of these are true:
 
 1. The direct peer (`RemoteAddr`) is a loopback address, such as `127.0.0.1` or `::1`.
-2. The request carries none of the proxy headers `Forwarded`, `X-Forwarded-For`, `X-Forwarded-Host` or `X-Real-Ip`. A request that came through a proxy is not really local.
+2. The request carries none of the proxy headers `Forwarded`, `X-Forwarded-For`, `X-Forwarded-Host`, `X-Forwarded-Proto`, `X-Forwarded-Port`, `X-Real-Ip` or `Via`. A request that came through a proxy is not really local.
 3. The `Host` header is `localhost`, a name ending in `.localhost` (`blog.localhost`), or a loopback IP.
 
 Anything else gets a plain `404 page not found`, as if the dashboard did not exist.

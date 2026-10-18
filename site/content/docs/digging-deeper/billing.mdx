@@ -120,7 +120,7 @@ Like every `install:*` command, the code is copied into your project. It is your
 | `routes/billing.go` | The routes, added to `routes/registry.go` |
 | `tests/billing_test.go`, `tests/billing_page_test.go` | Tests against a fake Stripe API |
 
-It also appends empty `STRIPE_*` lines to `.env.example`, registers the migration, and adds `github.com/AlexGalhardo/vukem/contrib/stripe` to `go.mod` with `go get …/contrib/stripe@v0.1.0`. Projects made with `vukem new --framework` get a `replace` to the checkout's `contrib/stripe` instead. Run `go get github.com/AlexGalhardo/vukem/contrib/stripe@v0.3.0` to use the newest client (Accounts v2, refunds, transfer reversals). Pass `--force` to overwrite files that already exist.
+It also appends empty `STRIPE_*` lines to `.env.example`, registers the migration, and adds `github.com/AlexGalhardo/vukem/contrib/stripe` to `go.mod` with `go get`, pinned to the latest `contrib/stripe` release when your `vukem` CLI was built. Projects made with `vukem new --framework` get a `replace` to the checkout's `contrib/stripe` instead. Later releases install with `go get github.com/AlexGalhardo/vukem/contrib/stripe@vX.Y.Z` (the tags are listed on [pkg.go.dev](https://pkg.go.dev/github.com/AlexGalhardo/vukem/contrib/stripe?tab=versions)). Pass `--force` to overwrite files that already exist.
 
 ### The subscriptions table
 
@@ -297,11 +297,7 @@ cs, err := sc.CreateCheckoutSession(ctx, stripe.Params{
 })
 ```
 
-The client sends `line_items[0][price]=price_pdf_pack&line_items[0][quantity]=1&…`. Supported values are strings, booleans, numbers, `fmt.Stringer`, `stripe.Params`, `map[string]any`, `map[string]string`, `[]string`, `[]any` and `[]stripe.Params`. A `nil` value is left out.
-
-<Callout type="warning" title="Slices of plain maps are not encoded">
-`[]map[string]any` is not on that list: it is sent as the text `[map[...]]` and Stripe rejects the request. Use `[]stripe.Params` or `[]any`.
-</Callout>
+The client sends `line_items[0][price]=price_pdf_pack&line_items[0][quantity]=1&…`. Any map with string keys (`stripe.Params`, `map[string]any`, `map[string]string`, ...) and any slice (`[]stripe.Params`, `[]map[string]any`, `[]string`, `[]int`, `[]any`, ...) is encoded at any depth, together with strings, booleans, numbers (named types such as `type Cents int64` too; floats without exponent) and `fmt.Stringer` values. A `nil` value, also a nil pointer, is left out. Anything else (a struct, a func, a map with non-string keys) fails the call with `stripe: encode <path>: param "<key>": unsupported type ...` before any request is sent.
 
 API v2 paths (`/v2/...`) send the params as JSON instead; there, a `nil` value becomes JSON `null`.
 

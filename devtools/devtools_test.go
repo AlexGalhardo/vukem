@@ -220,6 +220,15 @@ func TestSecurity_A01_DevtoolsLoopbackOnly(t *testing.T) {
 		{name: "dns rebinding host", remote: "127.0.0.1:5000", host: "evil.example:3000", want: 404},
 		{name: "through a proxy", remote: "127.0.0.1:5000", host: "localhost", header: "X-Forwarded-For", want: 404},
 		{name: "forwarded", remote: "127.0.0.1:5000", host: "localhost", header: "Forwarded", want: 404},
+		{
+			name:   "tunnel setting only the scheme",
+			remote: "127.0.0.1:5000",
+			host:   "localhost",
+			header: "X-Forwarded-Proto",
+			want:   404,
+		},
+		{name: "forwarded port", remote: "127.0.0.1:5000", host: "localhost", header: "X-Forwarded-Port", want: 404},
+		{name: "via a proxy", remote: "127.0.0.1:5000", host: "localhost", header: "Via", want: 404},
 		{name: "garbage remote", remote: "nonsense", host: "localhost", want: 404},
 		{name: "insecure allow remote", remote: "203.0.113.9:5000", host: "app.example", allow: true, want: 200},
 	}

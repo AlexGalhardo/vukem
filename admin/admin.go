@@ -94,12 +94,14 @@ type Config struct {
 	Title string
 	// Views overrides embedded templates by path: layouts/admin.html,
 	// index.html, show.html, form.html, delete.html, dashboard.html,
-	// audit.html, flags.html.
+	// audit.html, flags.html, partials/pager.html.
 	Views fs.FS
 	// Flags adds a page at <Prefix>/_flags to change the global value of
 	// the registered feature flags (app.Flags()); it needs the
-	// AbilityFlags gate ability. Locked flags are shown read-only. Every
-	// change is a "flags.changed" audit event and an audit-log entry.
+	// AbilityFlags gate ability. Without registered flags the page and its
+	// routes do not exist. Locked flags are shown read-only. Every change
+	// is a "flags.changed" audit event and an audit-log entry; a save that
+	// leaves the value as it was records nothing.
 	Flags *flags.Flags
 }
 
@@ -213,7 +215,7 @@ func (p *Panel) Mount(r *router.Router) error {
 			g.Get("", p.dashboard).Name("dashboard")
 			g.Get("/_audit", p.audit).Name("audit")
 
-			if p.cfg.Flags != nil {
+			if p.hasFlags() {
 				g.Get("/"+FlagsResource, p.flagsPage).Name("flags")
 				g.Post("/"+FlagsResource+"/{name}", p.flagsUpdate).Name("flags.update")
 			}

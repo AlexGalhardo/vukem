@@ -263,7 +263,7 @@ Every route needs the guard, the panel ability (`admin` by default) and then the
 | --- | --- | --- | --- |
 | GET | `/admin` | `admin.dashboard` | the panel ability |
 | GET | `/admin/_audit` | `admin.audit` | `viewAuditLogs` |
-| GET | `/admin/_flags` | `admin.flags` | `manageFlags` |
+| GET | `/admin/_flags` (only with registered flags) | `admin.flags` | `manageFlags` |
 | POST | `/admin/_flags/{name}` | `admin.flags.update` | `manageFlags` |
 | GET | `/admin/{slug}` | `admin.{slug}.index` | `viewAny` on the type |
 | GET | `/admin/{slug}/create` | `admin.{slug}.create` | `create` on the type |
@@ -299,7 +299,7 @@ Browse the log at `/admin/_audit`, newest first, 50 entries per page. `?resource
 
 ## The feature flags page
 
-With `Config.Flags` set (the `install:admin` scaffold passes `app.Flags()`), the panel lists every registered [feature flag](/docs/digging-deeper/feature-flags) at `/admin/_flags`: name, description, kind, default (the code default or `FLAG_<NAME>`), current global value and whether a value is stored.
+With `Config.Flags` set and at least one flag registered (the `install:admin` scaffold passes `app.Flags()`), the panel lists every registered [feature flag](/docs/digging-deeper/feature-flags) at `/admin/_flags`: name, description, kind, default (the code default or `FLAG_<NAME>`), current global value and whether a value is stored.
 
 - **Boolean** flags toggle with one button. **Int** and **string** flags take a value in a text box.
 - **Reset to default** deletes the stored value.
@@ -307,9 +307,11 @@ With `Config.Flags` set (the `install:admin` scaffold passes `app.Flags()`), the
 - An unknown flag name answers **404**, an invalid value **422** ("Invalid value for this flag.").
 - When the flag store is down, the page answers **503** instead of showing defaults that would invite wrong toggles.
 
+Without registered flags, `/admin/_flags` and its POST route do not exist (404) and the menu has no link.
+
 The page changes **global** values only; per-user and per-tenant values are written from code with `flags.Put`.
 
-Every change is recorded twice:
+Every change is recorded twice (a save that leaves the value as it was, or a reset to the value already in effect, records nothing and flashes "unchanged"):
 
 1. a `flags.changed` audit event in the log (`web.AuditEvent`), with `actor_id`, `flag`, `changed`, `old` and `new`;
 2. an audit-log row with resource `_flags` (`admin.FlagsResource`), the flag name as record id and a `value` change. Browse them at `/admin/_audit?resource=_flags`.
@@ -363,7 +365,7 @@ Keep the overrides free of inline `<script>` and `style` attributes, or the stri
 | **CSRF** | The panel adds `csrf.Middleware` (with the session-token fallback) to its routes, and its forms carry the token. |
 | **Mass assignment** | Only schema keys are read from the form and written. The primary key, timestamps, hidden and read-only columns never are. |
 | **Injection** | Sort, filter and search columns are allowlists; anything else is ignored. Values are bound parameters. |
-| **Secrets** | Columns tagged `json:"-"`, columns whose name contains `password`, `passwd`, `secret`, `token`, `api_key`, `apikey`, `private_key`, `recovery`, `otp` or `totp`, and columns marked `Sensitive` are never displayed, listed, searched, sorted or filtered. On a form they are empty password inputs that keep the stored value when left blank. The audit log records only that they changed. |
+| **Secrets** | Columns tagged `json:"-"`, columns whose name contains `password`, `passwd`, `secret`, `token`, `api_key`, `apikey`, `private_key`, `recovery`, `otp` or `totp` anywhere (except the counters `tokens_used`, `tokens_count`/`_total`/`_remaining`/`_limit`, `max_tokens*`, `*_token_count` and names containing `footprint`), and columns marked `Sensitive` are never displayed, listed, searched, sorted or filtered. On a form they are empty password inputs that keep the stored value when left blank. The audit log records only that they changed. |
 | **Headers** | Pages send `Cache-Control: no-store` and `X-Frame-Options: DENY`, plus a strict CSP when the app set none: `default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; form-action 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'`. |
 
 What stays your job: deciding who is an admin (`app/admin/admin.go`), narrowing each policy (an editor may update posts but not delete them), and keeping the admin accounts protected with [two-factor authentication](/docs/security/two-factor). See the [security overview](/docs/security/overview).

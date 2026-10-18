@@ -158,10 +158,10 @@ Flags are checked when the app starts, so a typo never reaches production silent
 | --- | --- |
 | A name that breaks the rules | `flags: invalid name "Bad" (lowercase letters, digits and _)` |
 | The same name twice | `flags: duplicate flag "new_checkout"` |
-| A `FLAG_` value of the wrong kind | `flags: FLAG_NEW_CHECKOUT: flags: invalid value: "maybe" is not a boolean` |
+| A `FLAG_` value of the wrong kind | `flags: invalid value: "maybe" is not a boolean (FLAG_NEW_CHECKOUT)` |
 | A `FLAG_` value for a locked flag | `flags: FLAG_ADMIN_TWO_FACTOR is set but flag "admin_two_factor" is locked` |
 | A `FLAG_` key in `.env` that names no flag | `flags: FLAG_TYPO names no registered flag` |
-| A string default longer than 1024 bytes | `flags: default of "home_variant": ...` |
+| A string default longer than 1024 bytes | `flags: invalid value: longer than 1024 bytes (default of "home_variant")` |
 
 All mistakes are reported together, joined with [`errors.Join`](https://pkg.go.dev/errors#Join). The unknown-key check runs even when no flag is registered. It covers `.env` files only: Go cannot list the process environment's keys for a typo check, so a misspelt `FLAG_` variable exported in your shell goes unnoticed.
 

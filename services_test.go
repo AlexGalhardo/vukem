@@ -350,8 +350,30 @@ func TestTelegramFromConfig(t *testing.T) {
 	t.Parallel()
 
 	off, err := New(WithSource(testSource(nil)), WithLogger(discardLogger()))
-	if err != nil || off.Telegram != nil {
+	if err != nil || off.Telegram == nil || off.Telegram.Configured() {
 		t.Fatalf("without config: %v %v", off.Telegram, err)
+	}
+
+	// The unconfigured handler is safe to call and reports ErrDisabled.
+	off.Telegram.Send(t.Context(), "dropped")
+
+	if err := off.Telegram.SendSync(t.Context(), "x"); !errors.Is(err, telegram.ErrDisabled) {
+		t.Fatalf("SendSync without config = %v, want ErrDisabled", err)
+	}
+
+	info, err := New(WithSource(testSource(map[string]string{
+		"TELEGRAM_BOT_TOKEN": "123:x", "TELEGRAM_CHAT_ID": "-1", "TELEGRAM_MIN_LEVEL": "info",
+	})), WithLogger(discardLogger()))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !info.Telegram.Enabled(context.Background(), slog.LevelInfo) {
+		t.Fatal("TELEGRAM_MIN_LEVEL=info does not forward info records")
+	}
+
+	if err := info.Shutdown(t.Context()); err != nil {
+		t.Fatal(err)
 	}
 
 	var out bytes.Buffer

@@ -311,7 +311,7 @@ func New(cfg Config) (*Flags, error) {
 		}
 
 		if _, err := normalize(d.kind, d.def); err != nil {
-			errs = append(errs, fmt.Errorf("flags: default of %q: %w", d.name, err))
+			errs = append(errs, fmt.Errorf("%w (default of %q)", err, d.name))
 			continue
 		}
 
@@ -335,7 +335,7 @@ func New(cfg Config) (*Flags, error) {
 
 		v, err := normalize(d.kind, raw)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("flags: %s: %w", envKey(d.name), err))
+			errs = append(errs, fmt.Errorf("%w (%s)", err, envKey(d.name)))
 			continue
 		}
 
@@ -587,6 +587,11 @@ func (f *Flags) write(ctx context.Context, scope Scope, name string, apply func(
 	}
 
 	if err := apply(d); err != nil {
+		if errors.Is(err, ErrInvalid) {
+			// Already "flags: invalid value: ..."; only name the flag.
+			return Change{}, fmt.Errorf("%w (flag %q)", err, name)
+		}
+
 		return Change{}, fmt.Errorf("flags: write %q: %w", name, err)
 	}
 

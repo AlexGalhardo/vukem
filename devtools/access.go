@@ -8,8 +8,11 @@ import (
 )
 
 // proxyHeaders mark a request relayed by a proxy or tunnel: the direct
-// peer is then loopback even though the client is not.
-var proxyHeaders = []string{"Forwarded", "X-Forwarded-For", "X-Forwarded-Host", "X-Real-Ip"}
+// peer is then loopback even though the client is not. Some tunnels set
+// only the scheme or port, so those count too.
+var proxyHeaders = []string{
+	"Forwarded", "X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Proto", "X-Forwarded-Port", "X-Real-Ip", "Via",
+}
 
 // Allowed reports whether r may see the dashboard: with
 // InsecureAllowRemote always; otherwise only when the direct peer is a

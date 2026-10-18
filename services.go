@@ -428,9 +428,10 @@ func telegramAPIURL(raw string, env config.Env) (string, error) {
 	return strings.TrimRight(raw, "/"), nil
 }
 
-// telegramHandler returns the Telegram handler when the bot token and chat
-// are configured, or nil (logging to Telegram is optional), and whether
-// log records are forwarded to it.
+// telegramHandler returns the Telegram handler and whether log records are
+// forwarded to it. Without a bot token and chat it returns a disabled
+// handler (Send drops, SendSync returns telegram.ErrDisabled), so
+// app.Telegram is never nil.
 func telegramHandler(
 	src *config.Source,
 	cfg *Config,
@@ -442,7 +443,7 @@ func telegramHandler(
 	}
 
 	if tc.BotToken.IsZero() || tc.ChatID == "" {
-		return nil, false, nil
+		return telegram.NewHandler(telegram.Config{}), false, nil
 	}
 
 	var level slog.Level
@@ -460,7 +461,7 @@ func telegramHandler(
 	}
 
 	tg := telegram.Config{
-		BotToken: tc.BotToken, ChatID: tc.ChatID, MinLevel: level, ThreadID: tc.ThreadID,
+		BotToken: tc.BotToken, ChatID: tc.ChatID, MinLevel: level, MinLevelSet: true, ThreadID: tc.ThreadID,
 		AppName: cfg.Name, Env: string(cfg.Env), RateLimit: tc.RateLimit, RatePeriod: time.Minute,
 		BaseURL: baseURL,
 	}

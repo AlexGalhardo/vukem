@@ -514,3 +514,60 @@ func TestServe_OutlivesServerTimeouts(t *testing.T) {
 		t.Errorf("Read = %q, %v, want %q", got, err, "echo: late")
 	}
 }
+
+// countingWriter records every WriteHeader, so a second response write
+// (the error handler answering after Serve) shows up.
+type countingWriter struct {
+	*httptest.ResponseRecorder
+
+	headers int
+}
+
+func (w *countingWriter) WriteHeader(code int) {
+	w.headers++
+	w.ResponseRecorder.WriteHeader(code)
+}
+
+func (w *countingWriter) Write(b []byte) (int, error) {
+	if w.headers == 0 {
+		w.WriteHeader(http.StatusOK)
+	}
+
+	return w.ResponseRecorder.Write(b)
+}
+
+func TestInvalidOptionsAnswerOnce(t *testing.T) {
+	t.Parallel()
+
+	bad := websocket.AllowedOrigins("*")
+
+	t.Run("Serve", func(t *testing.T) {
+		t.Parallel()
+
+		w := &countingWriter{ResponseRecorder: httptest.NewRecorder()}
+		r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/ws", nil)
+
+		err := websocket.Serve(w, r, func(*websocket.Conn) error { return nil }, bad)
+		if err == nil || w.Code != http.StatusInternalServerError || w.headers != 1 {
+			t.Fatalf("Serve = %v, status %d after %d writes, want an error and one 500", err, w.Code, w.headers)
+		}
+	})
+
+	t.Run("Handler through the router", func(t *testing.T) {
+		t.Parallel()
+
+		rt := router.New(nil)
+		rt.Get("/ws", websocket.Handler(func(*websocket.Conn) error { return nil }, bad))
+
+		w := &countingWriter{ResponseRecorder: httptest.NewRecorder()}
+		rt.ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/ws", nil))
+
+		if w.Code != http.StatusInternalServerError || w.headers != 1 {
+			t.Fatalf("status %d after %d writes, want one 500", w.Code, w.headers)
+		}
+
+		if body := w.Body.String(); body != "Internal Server Error\n" {
+			t.Errorf("body = %q, want the single plain 500", body)
+		}
+	})
+}

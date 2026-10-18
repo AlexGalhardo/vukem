@@ -66,12 +66,12 @@ defer tg.Close(ctx)
 
 | Feature | Detail |
 | --- | --- |
-| Levels | debug, info, warn, error plus `telegram.LevelSuccess` and `telegram.LevelFatal`; `MinLevel` filter |
+| Levels | debug, info, warn, error plus `telegram.LevelSuccess` and `telegram.LevelFatal`; `MinLevel` filter (`slog.LevelInfo` is the zero value: set `MinLevelSet` in a standalone config; `vukem.New` does it for `TELEGRAM_MIN_LEVEL`) |
 | Routing | per-level chat ids, forum topic (`ThreadID`), `Silent` |
-| Format | Telegram HTML: emoji and level, app name, environment, UTC time, then the message and attributes (groups dotted, error chains as "caused by") in a `<pre>` block; all content escaped; truncated to 4096 characters without cutting tags or entities |
+| Format | Telegram HTML: emoji and level, app name, environment, UTC time, then the message and attributes (groups dotted, error chains as "caused by") in a `<pre>` block; all content escaped; truncated to 4096 characters without cutting tags or entities; `Send`/`SendSync` truncate the caller's HTML outside tags and entities and close the tags left open |
 | Reliability | bounded queue (`QueueSize`, drops and reports when full), per-request `Timeout`, one retry after HTTP 429 honouring `retry_after` capped by `MaxRetryAfter`, `OnError` (never reentrant; records logged from it or carrying its error are not forwarded, so it may log through the app logger), drained by `app.Shutdown`; `SendSync` / `ContactSync` skip the queue and return the error (bounded by `Timeout` per request and by ctx) |
 | Log forwarding | on by default for records at `MinLevel`+; `TELEGRAM_LOG=false` turns it off; `Filter` and `RateLimit`/`RatePeriod` (`TELEGRAM_RATE_LIMIT` per minute, `ErrRateLimited` reported once per window) narrow it; `vukem.WithTelegram` edits the config in code |
-| Security | token held as `config.Secret`; request errors are redacted, also from `SendSync`/`ContactSync` (`TestSecurity_A09_TelegramTokenRedacted`, `TestSecurity_A09_TelegramSyncErrorRedactsToken`); `vukem about` shows only on/off; disabled when token or chat is missing; `TELEGRAM_API_URL` (default `https://api.telegram.org`, the token travels in its path) must be https outside development and test, without credentials, query or fragment, and a bad value fails boot without echoing it (`TestSecurity_A04_TelegramAPIURLRequiresHTTPS`); `WithTelegram` setting `BaseURL` still wins |
+| Security | token held as `config.Secret`; request errors are redacted, also from `SendSync`/`ContactSync` (`TestSecurity_A09_TelegramTokenRedacted`, `TestSecurity_A09_TelegramSyncErrorRedactsToken`); `vukem about` shows only on/off; disabled when token or chat is missing (`app.Telegram` is then a disabled handler, never nil: `Configured()` is false, `Send` drops, `SendSync` returns `ErrDisabled`); `TELEGRAM_API_URL` (default `https://api.telegram.org`, the token travels in its path) must be https outside development and test, without credentials, query or fragment, and a bad value fails boot without echoing it (`TestSecurity_A04_TelegramAPIURLRequiresHTTPS`); `WithTelegram` setting `BaseURL` still wins |
 
 ## Mail
 
@@ -453,7 +453,7 @@ Metrics are on when `Config.MetricReader` is set, or else when `OTEL_EXPORTER_OT
 | `messaging.process.duration` (s) | histogram | `messaging.destination.name`, `vukem.job.kind`, `error.type` |
 | `vukem.queue.job.failures` | counter | as above |
 
-Histogram counts are the request, query and job counts. The module ships no metric exporter: pass `sdkmetric.NewPeriodicReader(exporter)` with your backend's exporter (for OTLP, `go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp`). `otel.Middleware(tp, otel.WithMeterProvider(mp))` records the server metric without the provider. Without a reader (and without an endpoint) the provider does nothing.
+Histogram counts are the request, query and job counts. The module ships the OTLP/HTTP metric exporter (`otlpmetrichttp`) used by the endpoint variables above; for another backend, pass `Config.MetricReader` (`sdkmetric.NewPeriodicReader(exporter)` with that backend's exporter), which wins over the variables. `otel.Middleware(tp, otel.WithMeterProvider(mp))` records the server metric without the provider. Without a reader (and without an endpoint) the provider does nothing.
 
 ## Encryption
 
@@ -485,7 +485,7 @@ cart, err := app.Crypt.Cookie(r, "cart") // http.ErrNoCookie or crypt.ErrInvalid
 
 ## i18n
 
-Package `i18n`, stdlib only. One JSON catalog per locale in `resources/lang/<locale>.json` (`en.json`, `pt-BR.json`; `pt_BR.json` is accepted). Keys are nested objects or dotted names; values are strings with `{name}` placeholders, or plural objects.
+Package `i18n`, stdlib only. One JSON catalog per locale in `resources/lang/<locale>.json` (`en.json`, `pt-BR.json`; `pt_BR.json` is accepted); any other `.json` name at the root of the folder fails `i18n.Load` with `file name is not a locale`. Keys are nested objects or dotted names; values are strings with `{name}` placeholders, or plural objects.
 
 ```json
 {
@@ -514,7 +514,7 @@ b.T("pt-BR", "posts.count", "count", 3)                   // a Bundle directly
 ```
 
 - **Fallback chain:** the locale, its shorter forms, then the default (`pt-BR` → `pt` → `en`). A missing key returns the key and calls `Options.OnMissing` when set; translating never panics.
-- **Plurals:** an object whose keys are CLDR categories (`zero`, `one`, `two`, `few`, `many`, `other`; `other` required) is a plural message, chosen by the numeric `count` argument. Rules cover en, de, nl, sv, da, nb, fi, et, it, ca, es, el, hu, tr, bg, pt, pt-PT, fr, ru, uk, be, pl, cs, sk, ar, he, and ja, zh, ko, th, vi, id, ms (only `other`); other languages use the English rule. An explicit `zero` form wins for 0 in every language. `i18n.PluralCategory(locale, n)` exposes the rules.
+- **Plurals:** an object whose keys are CLDR categories (`zero`, `one`, `two`, `few`, `many`, `other`; `other` required: such an object without `other` fails the load) is a plural message, chosen by the numeric `count` argument. Rules cover en, de, nl, sv, da, nb, fi, et, it, ca, es, el, hu, tr, bg, pt, pt-PT, fr, ru, uk, be, pl, cs, sk, ar, he, and ja, zh, ko, th, vi, id, ms (only `other`); other languages use the English rule. An explicit `zero` form wins for 0 in every language. `i18n.PluralCategory(locale, n)` exposes the rules.
 - **Arguments:** key/value pairs (`"name", "Ana"`) or one `map[string]any`; unknown placeholders stay as written. Output is plain text, so `html/template` escapes it.
 - **Locale resolution:** `i18n.Middleware(bundle, i18n.MiddlewareConfig{})` returns `(middleware, error)`; the middleware checks, in order, `?lang=`, the `lang` cookie, the session value `locale` (when the session middleware runs first), `Accept-Language` (RFC 9110 q-values, at most 16 entries) and the default. Candidates must be valid tags matching an available catalog (`Bundle.Match`: exact, shorter form, then same language); invalid input is ignored. It stores the bundle and locale in the context (`i18n.Locale`, `i18n.WithLocale`, `i18n.BundleFrom`), sets `Content-Language`, adds `Vary: Cookie` when the cookie or session was consulted and `Vary: Accept-Language` when the header was. Rename or disable (`"-"`) sources with `Query`, `Cookie`, `SessionKey`; `Order` (`i18n.SourceQuery`, `SourceCookie`, `SourceSession`, `SourceHeader`) picks the sources and their order (left out = off) and `Locales` limits the selectable locales (must include the default). `MiddlewareConfig.Validate(bundle)` reports bad entries (`i18n.Middleware` returns them; `i18n.NewMiddleware` is a deprecated `//go:fix inline` alias); `vukem.MiddlewareOptions.I18n` passes the config to the default stack and validates it at boot. Apps persist a choice by setting the cookie or session value themselves.
 - **App wiring:** `WithTranslations` loads the bundle at boot (bad JSON or file names fail `New`), gives views the `t` and `locale` functions (`view.Config.I18n`) and makes `DefaultMiddleware` install the middleware after sessions.

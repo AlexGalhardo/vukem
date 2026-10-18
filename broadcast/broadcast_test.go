@@ -188,6 +188,9 @@ func TestAuthorize(t *testing.T) {
 		},
 		{name: "presence unauthenticated", channel: "presence-room.1", wantStatus: 403},
 		{name: "empty private name", user: "1", channel: "private-", wantStatus: 400},
+		{name: "empty parameter", user: "", channel: "private-user.", wantStatus: 400},
+		{name: "empty public segment", channel: "posts.", wantStatus: 400},
+		{name: "double dot", channel: "posts..9", wantStatus: 400},
 		{name: "newline injection", channel: "posts\nevent: x", wantStatus: 400},
 		{name: "comma", channel: "posts,private-user.2", wantStatus: 400},
 		{name: "too long", channel: strings.Repeat("p", 129), wantStatus: 400},
@@ -271,6 +274,12 @@ func TestBroadcast_InvalidEvents(t *testing.T) {
 
 	if err := b.Publish(ctx, "posts\n", "x", nil); err == nil {
 		t.Error("invalid channel accepted")
+	}
+
+	for _, ch := range []string{"private-user.", "presence-room.", "posts.", ".posts", "a..b", "private-."} {
+		if err := b.Publish(ctx, ch, "x", nil); err == nil {
+			t.Errorf("Publish(%q) accepted a channel with an empty segment", ch)
+		}
 	}
 
 	if err := b.Broadcast(ctx, noChannels{}); err == nil {
@@ -599,6 +608,7 @@ func TestSecurity_A01_BroadcastPrivateChannelsAuthorized(t *testing.T) {
 		{name: "injected space", channels: []string{"posts x"}, want: 400},
 		{name: "overlong name", channels: []string{strings.Repeat("a", 200)}, want: 400},
 		{name: "no channels", want: 400},
+		{name: "empty segment", user: "1", channels: []string{"private-user."}, want: 400},
 		{name: "own private channel", user: "1", channels: []string{"private-user.1"}, want: 200},
 	}
 

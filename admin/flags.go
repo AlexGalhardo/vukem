@@ -93,10 +93,17 @@ func (p *Panel) flagsUpdate(c *web.Ctx) error {
 		return err
 	}
 
+	if ch.Old == ch.New {
+		// Nothing changed (same value, or a reset to the value already in
+		// effect): an audit entry would only add noise.
+		_ = c.Flash(FlashKey, "Flag "+ch.Flag+" unchanged.")
+		return c.Redirect(p.url(FlagsResource))
+	}
+
 	actor := p.actor(ctx)
 	before, after := auditValues(ch)
 	web.AuditEvent(c.Request(), "flags.changed", "actor_id", actor, "flag", ch.Flag,
-		"changed", ch.Old != ch.New, "old", before, "new", after)
+		"changed", true, "old", before, "new", after)
 
 	// The store write and this row are not atomic (the store is pluggable):
 	// the flag already changed, so a failed row is logged, not undone.

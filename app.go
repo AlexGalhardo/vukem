@@ -193,8 +193,10 @@ type App struct {
 	ff         *flags.Flags
 	flagsErr   error
 
-	// Telegram is the Telegram log handler when TELEGRAM_* is set (nil
-	// otherwise); use it for Contact and Send.
+	// Telegram is the Telegram log handler; use it for Contact and Send.
+	// It is never nil: without TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID it
+	// is disabled (Configured reports false, Send drops, SendSync returns
+	// telegram.ErrDisabled).
 	Telegram *telegram.Handler
 	// telegramLogs reports whether log records are forwarded to Telegram
 	// (TELEGRAM_LOG).
@@ -681,9 +683,10 @@ func New(opts ...Option) (*App, error) {
 		app.enableDevtools(dt)
 	}
 
-	if tg != nil {
-		app.Telegram = tg
-		app.telegramLogs = tgLogs
+	app.Telegram = tg
+	app.telegramLogs = tgLogs
+
+	if tg.Configured() {
 		app.OnShutdown(tg.Close)
 	}
 

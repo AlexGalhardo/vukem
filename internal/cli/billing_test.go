@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -130,5 +131,35 @@ func TestSecurity_A08_BillingWebhookOutsideCSRFButSigned(t *testing.T) {
 
 	if !regexp.MustCompile(`"mode":\s+"subscription"`).Match(svc) {
 		t.Error("checkout is not in subscription mode")
+	}
+}
+
+// TestStripeVersionIsLatestTag keeps install:billing on the newest
+// contrib/stripe release: bump stripeVersion after tagging the module. It
+// skips without git or tags (shallow CI checkouts).
+func TestStripeVersionIsLatestTag(t *testing.T) {
+	t.Parallel()
+
+	if !regexp.MustCompile(`^v\d+\.\d+\.\d+$`).MatchString(stripeVersion) {
+		t.Fatalf("stripeVersion = %q, want a release tag vX.Y.Z", stripeVersion)
+	}
+
+	git, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("git not installed")
+	}
+
+	out, err := exec.CommandContext(t.Context(), git, "tag", "-l", "contrib/stripe/v*", "--sort=-v:refname").Output()
+	if err != nil {
+		t.Skipf("git tag: %v", err)
+	}
+
+	tags := strings.Fields(string(out))
+	if len(tags) == 0 {
+		t.Skip("no contrib/stripe tags in this checkout")
+	}
+
+	if latest := strings.TrimPrefix(tags[0], "contrib/stripe/"); stripeVersion != latest {
+		t.Errorf("stripeVersion = %s, want the latest contrib/stripe tag %s", stripeVersion, latest)
 	}
 }

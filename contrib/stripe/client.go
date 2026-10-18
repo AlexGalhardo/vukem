@@ -22,6 +22,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -467,7 +468,9 @@ func errorType(typ string, status int) string {
 func encodeBody(method string, v2 bool, p Params) (body, contentType string, err error) {
 	switch {
 	case method == http.MethodGet, method == http.MethodDelete && len(p) == 0:
-		return encodeParams(p), "", nil
+		body, err := encodeParams(p)
+
+		return body, "", err
 	case v2:
 		if p == nil {
 			p = Params{}
@@ -477,60 +480,98 @@ func encodeBody(method string, v2 bool, p Params) (body, contentType string, err
 
 		return string(b), "application/json", err
 	default:
-		return encodeParams(p), "application/x-www-form-urlencoded", nil
+		body, err := encodeParams(p)
+
+		return body, "application/x-www-form-urlencoded", err
 	}
 }
 
-// encodeParams form-encodes p with Stripe's bracket syntax, keys sorted.
-func encodeParams(p Params) string {
+// encodeParams form-encodes p with Stripe's bracket syntax, keys sorted:
+// maps become a[k], slices a[0], at any depth. A value it cannot encode
+// (a struct, func, channel, NaN or Inf) is an error rather than a guessed
+// string.
+func encodeParams(p Params) (string, error) {
 	v := url.Values{}
-	flatten(v, "", map[string]any(p))
+	if err := flatten(v, "", reflect.ValueOf(map[string]any(p)), 0); err != nil {
+		return "", err
+	}
 
-	return v.Encode()
+	return v.Encode(), nil
 }
 
-func flatten(v url.Values, prefix string, x any) {
-	key := func(k string) string {
-		if prefix == "" {
-			return k
-		}
+// maxParamDepth bounds nesting so a cyclic map is an error, not unbounded
+// recursion: each level grows the key, so memory grows quadratically.
+const maxParamDepth = 32
 
-		return prefix + "[" + k + "]"
+func flatten(v url.Values, prefix string, x reflect.Value, depth int) error {
+	if depth > maxParamDepth {
+		return fmt.Errorf("param %q: nested deeper than %d levels", prefix, maxParamDepth)
 	}
 
-	switch t := x.(type) {
-	case nil:
-	case Params:
-		flatten(v, prefix, map[string]any(t))
-	case map[string]any:
-		for k, val := range t {
-			flatten(v, key(k), val)
+	for x.IsValid() && x.Kind() == reflect.Interface && !x.IsNil() {
+		x = x.Elem()
+	}
+
+	// A typed nil (a nil *time.Time in an any) is omitted like nil.
+	if !x.IsValid() || (x.Kind() == reflect.Interface || x.Kind() == reflect.Pointer) && x.IsNil() {
+		return nil
+	}
+
+	if x.Kind() != reflect.Map && x.Kind() != reflect.Slice {
+		if s, ok := reflect.TypeAssert[fmt.Stringer](x); ok {
+			v.Set(prefix, s.String())
+			return nil
 		}
-	case map[string]string:
-		for k, val := range t {
-			v.Set(key(k), val)
+	}
+
+	switch x.Kind() {
+	case reflect.Pointer:
+		return flatten(v, prefix, x.Elem(), depth+1)
+	case reflect.Map:
+		if x.Type().Key().Kind() != reflect.String {
+			return fmt.Errorf("param %q: unsupported map key type %s", prefix, x.Type().Key())
 		}
-	case []string:
-		for i, val := range t {
-			v.Set(prefix+"["+strconv.Itoa(i)+"]", val)
+
+		for it := x.MapRange(); it.Next(); {
+			key := it.Key().String()
+			if prefix != "" {
+				key = prefix + "[" + key + "]"
+			}
+
+			if err := flatten(v, key, it.Value(), depth+1); err != nil {
+				return err
+			}
 		}
-	case []any:
-		for i, val := range t {
-			flatten(v, prefix+"["+strconv.Itoa(i)+"]", val)
+	case reflect.Slice, reflect.Array:
+		if x.Kind() == reflect.Slice && x.Type().Elem().Kind() == reflect.Uint8 {
+			v.Set(prefix, string(x.Bytes()))
+			return nil
 		}
-	case []Params:
-		for i, val := range t {
-			flatten(v, prefix+"["+strconv.Itoa(i)+"]", val)
+
+		for i := range x.Len() {
+			if err := flatten(v, prefix+"["+strconv.Itoa(i)+"]", x.Index(i), depth+1); err != nil {
+				return err
+			}
 		}
-	case bool:
-		v.Set(prefix, strconv.FormatBool(t))
-	case string:
-		v.Set(prefix, t)
-	case fmt.Stringer:
-		v.Set(prefix, t.String())
+	case reflect.String:
+		v.Set(prefix, x.String())
+	case reflect.Bool:
+		v.Set(prefix, strconv.FormatBool(x.Bool()))
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		v.Set(prefix, strconv.FormatInt(x.Int(), 10))
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+		v.Set(prefix, strconv.FormatUint(x.Uint(), 10))
+	case reflect.Float32, reflect.Float64:
+		if f := x.Float(); math.IsNaN(f) || math.IsInf(f, 0) {
+			return fmt.Errorf("param %q: %v is not a number Stripe accepts", prefix, f)
+		}
+
+		v.Set(prefix, strconv.FormatFloat(x.Float(), 'f', -1, x.Type().Bits()))
 	default:
-		v.Set(prefix, fmt.Sprint(t))
+		return fmt.Errorf("param %q: unsupported type %s", prefix, x.Type())
 	}
+
+	return nil
 }
 
 // List is a page of a list endpoint.

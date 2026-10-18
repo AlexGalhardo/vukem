@@ -135,7 +135,13 @@ func TestNewRejectsMisconfiguration(t *testing.T) {
 
 			_, err := flags.New(flags.Config{Flags: tt.flags, Env: config.MapSource(tt.env)})
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
-				t.Errorf("New() = %v, want an error containing %q", err, tt.want)
+				t.Fatalf("New() = %v, want an error containing %q", err, tt.want)
+			}
+
+			for line := range strings.Lines(err.Error()) {
+				if strings.Count(line, "flags:") != 1 {
+					t.Errorf("New() error line %q, want a single \"flags:\" prefix", line)
+				}
 			}
 		})
 	}
@@ -256,8 +262,13 @@ func TestSetPutReset(t *testing.T) {
 		{"not an int", "upload_limit_mb", "1.5", flags.ErrInvalid},
 		{"too long", "home_variant", strings.Repeat("x", 1025), flags.ErrInvalid},
 	} {
-		if _, err := f.Set(ctx, flags.Global, tt.flag, tt.value); !errors.Is(err, tt.want) {
+		_, err := f.Set(ctx, flags.Global, tt.flag, tt.value)
+		if !errors.Is(err, tt.want) {
 			t.Errorf("Set(%s) = %v, want %v", tt.name, err, tt.want)
+		}
+
+		if err != nil && strings.Count(err.Error(), "flags:") != 1 {
+			t.Errorf("Set(%s) = %q, want a single \"flags:\" prefix", tt.name, err)
 		}
 	}
 

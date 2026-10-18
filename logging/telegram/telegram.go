@@ -31,6 +31,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf16"
 	"unicode/utf8"
 
 	"github.com/AlexGalhardo/vukem/config"
@@ -52,8 +53,12 @@ type Config struct {
 	// ChatID is the default chat; ChatIDs routes levels to other chats.
 	ChatID  string
 	ChatIDs map[slog.Level]string
-	// MinLevel filters records (default: error).
+	// MinLevel filters records (default: error). slog.LevelInfo is 0, the
+	// zero value, so set MinLevelSet to forward info and above.
 	MinLevel slog.Level
+	// MinLevelSet marks MinLevel as explicit, so a zero MinLevel means info
+	// rather than the error default.
+	MinLevelSet bool
 	// Filter, when set, forwards only the log records it returns true for
 	// (Send and Contact are never filtered). It runs on the logging
 	// goroutine; call r.Clone() before keeping r beyond the call.
@@ -132,7 +137,7 @@ var ErrDisabled = errors.New("telegram: not configured")
 // NewHandler returns a handler and starts its sender goroutine (when
 // enabled); call Close to drain it.
 func NewHandler(cfg Config) *Handler {
-	if cfg.MinLevel == 0 && cfg.ChatIDs == nil {
+	if cfg.MinLevel == 0 && !cfg.MinLevelSet && cfg.ChatIDs == nil {
 		cfg.MinLevel = slog.LevelError
 	}
 
@@ -172,6 +177,13 @@ func NewHandler(cfg Config) *Handler {
 	}
 
 	return &Handler{s: s}
+}
+
+// Configured reports whether the bot token and a chat are set; a handler
+// that is not configured drops every message and its synchronous senders
+// return ErrDisabled.
+func (h *Handler) Configured() bool {
+	return h.s.enabled
 }
 
 // Enabled implements slog.Handler.
@@ -238,8 +250,9 @@ func (h *Handler) qualify(a slog.Attr) slog.Attr {
 }
 
 // Send queues a pre-formatted HTML message for the default chat (the
-// caller escapes user content). Delivery errors go to OnError; use
-// SendSync to get them.
+// caller escapes user content). A message over MaxLength is truncated
+// outside tags and entities, with the open tags closed. Delivery errors go
+// to OnError; use SendSync to get them.
 func (h *Handler) Send(_ context.Context, htmlText string) {
 	if h.s.enabled {
 		h.s.enqueue(h.s.cfg.ChatID, truncate(htmlText))
@@ -622,11 +635,11 @@ func writeAttr(b *strings.Builder, prefix string, a slog.Attr) {
 func finish(head, body string) string {
 	const open, closeTag = "\n\n<pre>", "</pre>"
 
-	room := MaxLength - utf8.RuneCountInString(head) - len(open) - len(closeTag)
+	room := MaxLength - utf16Len(head) - len(open) - len(closeTag)
 	escaped := html.EscapeString(body)
 
-	if utf8.RuneCountInString(escaped) > room {
-		escaped = cutRunes(escaped, max(room-1, 0))
+	if utf16Len(escaped) > room {
+		escaped = cutUTF16(escaped, max(room-1, 0))
 		// Do not leave half an entity ("&am").
 		if i := strings.LastIndexByte(escaped, '&'); i >= 0 && !strings.Contains(escaped[i:], ";") {
 			escaped = escaped[:i]
@@ -643,22 +656,121 @@ func finish(head, body string) string {
 }
 
 func truncate(s string) string {
-	if utf8.RuneCountInString(s) <= MaxLength {
+	return truncateHTML(s, MaxLength)
+}
+
+// truncateHTML cuts s to at most limit runes, ending with "…". It never
+// cuts inside a tag or an entity and closes the tags still open at the
+// cut, so Telegram's HTML parser accepts the result.
+func truncateHTML(s string, limit int) string {
+	if utf16Len(s) <= limit {
 		return s
 	}
 
-	return cutRunes(s, MaxLength-1) + "…"
-}
+	const ellipsis = "…"
 
-func cutRunes(s string, n int) string {
-	i := 0
+	var (
+		open       []string // names of the tags open at the cut
+		closingLen int      // runes needed to close them
+		used       int
+		end        int
+	)
 
-	for pos := range s {
-		if i == n {
-			return s[:pos]
+	for end < len(s) {
+		token, name, closing := nextToken(s[end:])
+		n := utf16Len(token)
+
+		nextOpen, nextClosing := open, closingLen
+
+		switch {
+		case name == "":
+		case closing:
+			if i := slices.Index(open, name); i >= 0 {
+				for _, t := range open[i:] {
+					nextClosing -= len("</" + t + ">")
+				}
+
+				nextOpen = open[:i]
+			}
+		default:
+			nextOpen = append(slices.Clip(open), name)
+			nextClosing += len("</" + name + ">")
 		}
 
-		i++
+		if used+n+utf16Len(ellipsis)+nextClosing > limit {
+			break
+		}
+
+		open, closingLen = nextOpen, nextClosing
+		used += n
+		end += len(token)
+	}
+
+	var b strings.Builder
+
+	b.WriteString(s[:end])
+	b.WriteString(ellipsis)
+
+	for _, t := range slices.Backward(open) {
+		b.WriteString("</" + t + ">")
+	}
+
+	return b.String()
+}
+
+// nextToken returns the first tag, entity or rune of s; name is the
+// lowercase tag name when the token is a tag.
+func nextToken(s string) (token, name string, closing bool) {
+	switch s[0] {
+	case '<':
+		if i := strings.IndexByte(s, '>'); i > 0 {
+			tag := s[1:i]
+			closing = strings.HasPrefix(tag, "/")
+			tag = strings.TrimPrefix(tag, "/")
+
+			if j := strings.IndexAny(tag, " \t\r\n/"); j >= 0 {
+				tag = tag[:j]
+			}
+
+			// A self-closing tag (<br/>) opens nothing to close later.
+			if tag != "" && s[i-1] != '/' {
+				return s[:i+1], strings.ToLower(tag), closing
+			}
+		}
+	case '&':
+		if i := strings.IndexByte(s, ';'); i > 0 && i <= 10 && !strings.ContainsAny(s[1:i], " <&") {
+			return s[:i+1], "", false
+		}
+	}
+
+	_, size := utf8.DecodeRuneInString(s)
+
+	return s[:size], "", false
+}
+
+// utf16Len is the length Telegram's limit counts: UTF-16 code units (an
+// emoji outside the BMP is two). Counting the raw HTML over-estimates the
+// parsed text, so staying under it is safe.
+func utf16Len(s string) int {
+	n := 0
+
+	for _, r := range s {
+		n += max(utf16.RuneLen(r), 1)
+	}
+
+	return n
+}
+
+// cutUTF16 returns the longest prefix of s within n UTF-16 units, never
+// splitting a rune.
+func cutUTF16(s string, n int) string {
+	used := 0
+
+	for pos, r := range s {
+		used += max(utf16.RuneLen(r), 1)
+		if used > n {
+			return s[:pos]
+		}
 	}
 
 	return s

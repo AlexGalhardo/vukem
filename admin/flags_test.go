@@ -215,3 +215,34 @@ func TestAdminFlagsAuditFailureStillRedirects(t *testing.T) {
 		t.Error("the flag did not change")
 	}
 }
+
+func TestAdminFlagsWithNoFlagsRegisteredHasNoRoutes(t *testing.T) {
+	t.Parallel()
+
+	app := newApp(t, options{flags: []flags.AnyFlag{}})
+	c := as(t, app, "admin")
+
+	c.Get("/admin").AssertOK().AssertDontSee("Feature flags")
+	c.Get("/admin/_flags").AssertNotFound()
+	c.PostForm("/admin/_flags/beta", url.Values{"value": {"true"}}).AssertNotFound()
+}
+
+func TestAdminFlagsUnchangedValueIsNotAudited(t *testing.T) {
+	t.Parallel()
+
+	app, _ := flagsApp(t)
+	got := listenAudits(app)
+	c := as(t, app, "admin")
+
+	// beta is already false: saving false again changes nothing.
+	c.PostForm("/admin/_flags/beta", url.Values{"value": {"false"}}).AssertRedirect("/admin/_flags")
+	c.PostForm("/admin/_flags/beta", url.Values{"reset": {"1"}}).AssertRedirect("/admin/_flags")
+
+	if n := len(auditLogs(t, app)); n != 0 {
+		t.Errorf("audit log has %d entries for no-op saves, want 0", n)
+	}
+
+	if n := len(got.list()); n != 0 {
+		t.Errorf("%d audit events for no-op saves, want 0", n)
+	}
+}

@@ -50,7 +50,7 @@ return panel.Mount(r)
 | `Prefix` | `/admin` | URL prefix |
 | `Ability` | `admin` | Gate ability required on every page |
 | `Title` | `Admin` | Header text |
-| `Views` | embedded | `fs.FS` overriding templates by path (`layouts/admin.html`, `index.html`, `show.html`, `form.html`, `delete.html`, `dashboard.html`, `audit.html`, `partials/pager.html`); `admin.Templates()` returns the originals to copy |
+| `Views` | embedded | `fs.FS` overriding templates by path (`layouts/admin.html`, `index.html`, `show.html`, `form.html`, `delete.html`, `dashboard.html`, `audit.html`, `flags.html`, `partials/pager.html`); `admin.Templates()` returns the originals to copy |
 
 ## Resources
 
@@ -79,7 +79,7 @@ Configuration mistakes (unknown or sensitive columns in lists, a schema key with
 | --- | --- | --- |
 | GET | `/admin` | `admin` (dashboard: counts of resources the user may `viewAny`) |
 | GET | `/admin/_audit` | `admin` + `viewAuditLogs` |
-| GET / POST | `/admin/_flags`, `/admin/_flags/{name}` | `admin` + `manageFlags` (only with `Config.Flags`) |
+| GET / POST | `/admin/_flags`, `/admin/_flags/{name}` | `admin` + `manageFlags` (only with `Config.Flags` holding at least one registered flag) |
 | GET | `/admin/{slug}` | `viewAny` on `(*T)(nil)` |
 | GET / POST | `/admin/{slug}/create`, `/admin/{slug}` | `create` on `(*T)(nil)` |
 | GET | `/admin/{slug}/{id}` | `view` on the record |
@@ -94,7 +94,7 @@ Route names are `admin.dashboard`, `admin.audit`, `admin.flags`, `admin.flags.up
 - **CSRF:** the panel adds `csrf.Middleware` with the session-token fallback on its routes; forms carry `{{csrfField}}` (`TestSecurity_A01_AdminCSRF`).
 - **Mass assignment:** only schema keys are read from the form and written; the primary key, timestamps, hidden and read-only columns never are (`TestSecurity_A01_AdminMassAssignment`).
 - **Injection:** sort, filter and search columns are allowlists; anything else is ignored and values are bound parameters (`TestSecurity_A05_AdminSortAndSearchAllowlisted`).
-- **Secrets:** columns tagged `json:"-"`, matching `password|secret|token|api_key|private_key|recovery|otp`, or marked `Sensitive` are never displayed, listed, searched, sorted or filtered; as form fields they are empty password inputs that keep the stored value when left blank; the audit log records only that they changed (`TestSecurity_A09_AdminAuditOmitsSensitive`).
+- **Secrets:** columns tagged `json:"-"`, whose name contains `password|passwd|secret|token|api_key|private_key|recovery|otp|totp` anywhere (only the counters `tokens_used`, `tokens_count`/`_total`/`_remaining`/`_limit`, `max_tokens*`, `*_token_count` and `*footprint*` names are exempt, `TestSecurity_A09_AdminSensitiveColumnNames`), or marked `Sensitive` are never displayed, listed, searched, sorted or filtered; as form fields they are empty password inputs that keep the stored value when left blank; the audit log records only that they changed (`TestSecurity_A09_AdminAuditOmitsSensitive`).
 - **Strict CSP:** templates and assets (htmx and CSS) are embedded and served from `/admin/_assets/`, with no inline scripts, styles or handlers; admin pages are `Cache-Control: no-store` and get a strict CSP when the app sent none (`TestSecurity_A02_AdminStrictHeaders`, `TestTemplatesHaveNoInlineCode`).
 
 ## Audit log
@@ -107,7 +107,7 @@ With `admin.Config{Flags: ff}` (`ff, err := app.Flags()`) the panel lists every 
 
 - Both routes need the `manageFlags` gate ability (fail closed: an undefined ability denies) and the panel's CSRF check (`TestSecurity_A01_AdminFlagsRequireAbilityAndRespectLocks`).
 - Locked flags are shown read-only; a crafted write is refused with 403 and logged as a `flags.locked_write` security event.
-- Every change writes a `flags.changed` audit event (`web.AuditEvent`, with `actor_id`, `flag`, `changed`, `old` and `new`) and an audit-log row (resource `_flags`, record = flag name, `value: {before, after}`), browsable at `/admin/_audit?resource=_flags`. String flag values are recorded only as their length and a SHA-256 prefix (`10 bytes, sha256:1a2b3c4d`), never in clear (`TestSecurity_A09_AdminFlagsRedactStringValues`).
+- A save that leaves the effective value as it was records nothing. Every change writes a `flags.changed` audit event (`web.AuditEvent`, with `actor_id`, `flag`, `changed`, `old` and `new`) and an audit-log row (resource `_flags`, record = flag name, `value: {before, after}`), browsable at `/admin/_audit?resource=_flags`. String flag values are recorded only as their length and a SHA-256 prefix (`10 bytes, sha256:1a2b3c4d`), never in clear (`TestSecurity_A09_AdminFlagsRedactStringValues`).
 - The flag write and the audit row are **not atomic** (the store is pluggable): when the row fails after the flag changed, the change is logged at ERROR (redacted the same way) and the page redirects with a warning flash.
 - When the store is down the page answers 503 instead of showing defaults that would invite wrong toggles.
 - Flag values are not secrets: never store credentials in a string flag.

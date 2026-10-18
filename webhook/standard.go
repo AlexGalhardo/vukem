@@ -121,6 +121,14 @@ type DedupeOptions struct {
 	TTL time.Duration
 	// LockTTL bounds a delivery that is still running (default 1 minute).
 	LockTTL time.Duration
+	// Namespace keeps event ids of different providers or handlers apart
+	// on a shared store (default: the matched ServeMux route pattern).
+	// Outside a route (Dedupe as a global middleware) the default is one
+	// fixed namespace, never the client-controlled path, so all providers
+	// share it there: put Dedupe on the route, or set Namespace. Set it
+	// too when one route serves several providers, or to keep keys stable
+	// across a route rename.
+	Namespace string
 }
 
 // Dedupe runs the handler at most once per event id: providers deliver
@@ -129,7 +137,9 @@ type DedupeOptions struct {
 // duplicate that arrives while the first is running gets 409 (the
 // provider retries). Deliveries answered with a status of 300 or above are
 // forgotten so the retry runs. A missing id is a 400, and a store failure
-// is a 503 (fail closed). Put it after the signature check.
+// is a 503 (fail closed). Keys are namespaced (DedupeOptions.Namespace),
+// so two providers that reuse an event id do not drop each other's
+// deliveries. Put it after the signature check.
 func Dedupe(store cache.Store, id func(*http.Request) string, o DedupeOptions) func(http.Handler) http.Handler {
 	if o.TTL <= 0 {
 		o.TTL = 72 * time.Hour
@@ -148,7 +158,7 @@ func Dedupe(store cache.Store, id func(*http.Request) string, o DedupeOptions) f
 			}
 
 			ctx := r.Context()
-			key := "webhook:event:" + eventID
+			key := dedupeKey(namespace(r, o.Namespace), eventID)
 
 			added, err := store.Add(ctx, key, []byte("running"), o.LockTTL)
 			if err != nil {
@@ -187,6 +197,24 @@ func Dedupe(store cache.Store, id func(*http.Request) string, o DedupeOptions) f
 			}
 		})
 	}
+}
+
+func namespace(r *http.Request, fixed string) string {
+	switch {
+	case fixed != "":
+		return fixed
+	case r.Pattern != "":
+		return r.Pattern
+	default:
+		// Not r.URL.Path: a replay to another path would get a fresh key.
+		return "default"
+	}
+}
+
+// dedupeKey length-prefixes the namespace, so a ":" in it or in the event
+// id can never make two pairs share a key.
+func dedupeKey(ns, eventID string) string {
+	return "webhook:event:" + strconv.Itoa(len(ns)) + ":" + ns + ":" + eventID
 }
 
 type statusWriter struct {

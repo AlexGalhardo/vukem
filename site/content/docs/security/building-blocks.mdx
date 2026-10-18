@@ -235,6 +235,7 @@ r.Post("/webhooks/resend", handleBounce).Use(
 | --- | --- | --- |
 | `TTL` | 72h | how long a handled id is remembered (longer than providers' retry windows) |
 | `LockTTL` | 1 minute | bounds a delivery that is still running |
+| `Namespace` | route pattern, else one fixed namespace | keeps ids of different providers apart on a shared store |
 
 `webhook.StandardID` reads the `webhook-id` header. For providers with their own header, pass a function: `func(r *http.Request) string { return r.Header.Get("X-Event-Id") }`. Use a shared store (database or Redis) when the app runs on more than one server.
 
