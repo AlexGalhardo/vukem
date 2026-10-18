@@ -117,8 +117,15 @@ var (
 // nor declared in Info.SecuritySchemes.
 var ErrUnknownSecurityScheme = errors.New("openapi: unknown security scheme")
 
+// ErrDuplicateOperationID is returned by Build when two routes in the
+// document share an operationId: the route's own name, so groups that
+// reuse a local name (api.v1.index and api.v2.index) collide, and the
+// generated clients would get clashing methods.
+var ErrDuplicateOperationID = errors.New("openapi: duplicate operationId")
+
 // Generate builds the document for routes (router.Routes()). It panics on
-// the errors Build returns (an undeclared security scheme): they are
+// the errors Build returns (duplicate operationIds, an undeclared security
+// scheme): they are
 // programming errors that should surface at boot or in a test.
 func Generate(routes []router.RouteInfo, info Info) *Document {
 	doc, err := Build(routes, info)
@@ -159,6 +166,7 @@ func Build(routes []router.RouteInfo, info Info) (*Document, error) {
 	maps.Copy(schemes, info.SecuritySchemes)
 
 	usedSchemes := map[string]bool{}
+	idOwner := map[string]string{} // operationId → route that took it
 
 	for _, rt := range routes {
 		if _, skip := rt.Doc.(Skip); skip || rt.Method == "" || rt.Method == "ANY" {
@@ -177,6 +185,17 @@ func Build(routes []router.RouteInfo, info Info) (*Document, error) {
 			op.Summary = cmpOr(typed.Summary, op.OperationID)
 		} else {
 			op = plainOperation(s, rt)
+		}
+
+		if id := op.OperationID; id != "" {
+			who := cmpOr(rt.Name, rt.Method+" "+rt.Path)
+			if prev, dup := idOwner[id]; dup {
+				return nil, fmt.Errorf("%w %q: routes %s and %s "+
+					"(rename one, or build one document per group with PathPrefix)",
+					ErrDuplicateOperationID, id, prev, who)
+			}
+
+			idOwner[id] = who
 		}
 
 		for _, req := range op.Security {

@@ -333,3 +333,29 @@ func TestBuildRejectsUnknownSecurityScheme(t *testing.T) {
 
 	openapi.Generate(r.Routes(), openapi.Info{})
 }
+
+func TestBuildRejectsDuplicateOperationIDs(t *testing.T) {
+	t.Parallel()
+
+	r := router.New(nil)
+	for _, v := range []string{"v1", "v2"} {
+		r.Group("/api/"+v, func(g *router.Group) {
+			g.Name("api." + v + ".")
+			g.Get("/", func(*web.Ctx) error { return nil }).Name("index")
+		})
+	}
+
+	if _, err := r.Handler(); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := openapi.Build(r.Routes(), openapi.Info{})
+	if !errors.Is(err, openapi.ErrDuplicateOperationID) ||
+		!strings.Contains(err.Error(), "api.v1.index") || !strings.Contains(err.Error(), "api.v2.index") {
+		t.Fatalf("Build(two routes named index) error = %v, want ErrDuplicateOperationID naming both", err)
+	}
+
+	if _, err := openapi.Build(r.Routes(), openapi.Info{PathPrefix: "/api/v1"}); err != nil {
+		t.Fatalf("Build(one version) error = %v", err)
+	}
+}
