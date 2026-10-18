@@ -580,3 +580,108 @@ func TestBuildRejectsPrefixMatchingNoRoute(t *testing.T) {
 
 	openapi.Generate(r.Routes(), openapi.Info{PathPrefix: "/nope"})
 }
+
+// An endpoint whose body shape varies by a discriminator field: the
+// payload is described as an open object rather than modelled field by
+// field, and that has to survive into the document and into both
+// generators. Before z.JSON/z.JSONObject there was no way to express it:
+// map[string]any panicked in z.For and json.RawMessage was taken for its
+// underlying []byte, so the document claimed "array of integers".
+func TestDynamicPayloadReachesTheGeneratedClients(t *testing.T) {
+	t.Parallel()
+
+	type submitIn struct {
+		Tool    string         `json:"tool"    validate:"required" doc:"Which tool to run"`
+		Options map[string]any `json:"options"                     doc:"Options for the chosen tool"`
+		Extra   any            `json:"extra"`
+	}
+
+	type submitOut struct {
+		ID string `json:"id"`
+	}
+
+	r := router.New(nil)
+	r.Group("/api/v1", func(g *router.Group) {
+		api.Register(g, "POST /conversions", api.Op{Name: "conversions.store", Summary: "Submit a conversion"},
+			func(*web.Ctx, submitIn) (submitOut, error) { return submitOut{}, nil })
+	})
+
+	if _, err := r.Handler(); err != nil {
+		t.Fatal(err)
+	}
+
+	doc := openapi.Generate(r.Routes(), openapi.Info{PathPrefix: "/api"})
+
+	raw, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var parsed struct {
+		Paths map[string]struct {
+			Post struct {
+				RequestBody struct {
+					Content map[string]struct {
+						Schema map[string]any `json:"schema"`
+					} `json:"content"`
+				} `json:"requestBody"`
+			} `json:"post"`
+		} `json:"paths"`
+	}
+
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		t.Fatal(err)
+	}
+
+	body := parsed.Paths["/api/v1/conversions"].Post.RequestBody.Content["application/json"].Schema
+	if body == nil {
+		t.Fatalf("no request body in:\n%s", raw)
+	}
+
+	props, _ := body["properties"].(map[string]any)
+
+	// An open object, with the doc comment carried over: the description is
+	// the only thing that tells a reader what belongs in the value.
+	want := map[string]any{
+		"type":                 "object",
+		"additionalProperties": map[string]any{},
+		"description":          "Options for the chosen tool",
+	}
+	if diff := cmp.Diff(want, props["options"]); diff != "" {
+		t.Errorf("options schema diff (-want +got):\n%s", diff)
+	}
+
+	// Any JSON value is the empty schema, which is how OpenAPI 3.1 spells
+	// "anything".
+	if diff := cmp.Diff(map[string]any{}, props["extra"]); diff != "" {
+		t.Errorf("extra schema diff (-want +got):\n%s", diff)
+	}
+
+	// What the clients make of it: a typed discriminator next to an open
+	// payload, never a number array.
+	ts, err := openapi.TypeScript(doc, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	zod, err := openapi.TypeScript(doc, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tt := range []struct {
+		out, name, snippet string
+		want               bool
+	}{
+		{ts, "ts", "options?: Record<string, unknown>;", true},
+		{ts, "ts", "extra?: unknown;", true},
+		{ts, "ts", "number[]", false},
+		{zod, "zod", "options: z.record(z.string(), z.unknown()).optional()", true},
+		{zod, "zod", "extra: z.unknown().optional()", true},
+		{zod, "zod", "z.array(z.int())", false},
+	} {
+		if strings.Contains(tt.out, tt.snippet) != tt.want {
+			t.Errorf("%s contains %q = %v, want %v\n%s", tt.name, tt.snippet, !tt.want, tt.want, tt.out)
+		}
+	}
+}

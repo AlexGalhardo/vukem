@@ -1,6 +1,8 @@
 package z
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 	"regexp"
@@ -234,6 +236,41 @@ func schemaForType(t reflect.Type, raw []string, depth int) (AnySchema, error) {
 	optional := !rs.required || nullable
 
 	switch {
+	// Before the slice case: json.RawMessage is a []byte, so it would be
+	// taken for a list of numbers — the document would say "array of
+	// integers" and the validator would refuse every object body.
+	case t == reflect.TypeFor[json.RawMessage]():
+		return nil, errRawMessage
+	case t == reflect.TypeFor[any]():
+		s := JSON()
+		if err := noRules(rs.rules); err != nil {
+			return nil, err
+		}
+
+		if optional {
+			s = s.Optional()
+		}
+
+		if nullable {
+			s = s.Nullable()
+		}
+
+		return s, nil
+	case t == reflect.TypeFor[map[string]any]():
+		s := JSONObject()
+		if err := noRules(rs.rules); err != nil {
+			return nil, err
+		}
+
+		if optional {
+			s = s.Optional()
+		}
+
+		if nullable {
+			s = s.Nullable()
+		}
+
+		return s, nil
 	case t == reflect.TypeFor[time.Time]():
 		s := Time()
 		if err := noRules(rs.rules); err != nil {
@@ -569,3 +606,15 @@ func (s structAny) parseAny(c *pctx, path string, in any, present bool) (any, bo
 		return rv.Interface(), true
 	})
 }
+
+// errRawMessage refuses json.RawMessage with the alternative named. Parse
+// takes already-decoded input, so the original bytes are gone by the time
+// a schema could fill the field: re-encoding them changes key order and
+// number formatting, and a type whose contract is "the bytes the client
+// sent" must not be filled with different ones. map[string]any and any
+// carry the same payload without that promise.
+var errRawMessage = errors.New(
+	"json.RawMessage cannot be validated: Parse receives decoded JSON, so the original bytes are gone. " +
+		"Use map[string]any for an object or any for any JSON value (z.JSONObject, z.JSON), " +
+		"and decode into your own type in the handler",
+)

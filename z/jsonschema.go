@@ -186,3 +186,13 @@ func allowsNull(m map[string]any) bool {
 	types, _ := m["type"].([]any)
 	return slices.Contains(types, any("null"))
 }
+
+// jsonSchema for a JSON value: an object says so, any value says nothing
+// at all, which is how JSON Schema and OpenAPI 3.1 spell "anything".
+func (s JSONValueSchema) jsonSchema() map[string]any {
+	if s.object {
+		return s.o.decorate(map[string]any{}, "object")
+	}
+
+	return s.o.decorate(map[string]any{}, "")
+}

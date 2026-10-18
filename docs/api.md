@@ -59,6 +59,16 @@ func API(r *router.Router, app *vukem.App) error {
 - `middleware.JSONOnly()` rejects non-JSON bodies on write methods with `415` and makes a missing or `*/*` `Accept` negotiate JSON (errors render as problem+json).
 - Query helpers: `c.QueryInt`, `c.QueryBool`, `c.QueryTime`, `c.QuerySlice`.
 
+### Payloads whose shape is not fixed
+
+A body whose shape varies by a discriminator field — one `POST /conversions` taking `{"tool": "...", "options": {...}}` instead of one route per tool — cannot be described field by field. Declare the varying part as `map[string]any` (an object) or `any` (any JSON value) and `z.For` describes it as an open object; `z.JSONObject()` and `z.JSON()` are the same thing in a hand-built `z.Shape`. The document gets `type: object` with `additionalProperties`, or the empty schema for any value, and the generated clients get `Record<string, unknown>` / `unknown` next to a fully typed discriminator.
+
+Use `Describe` (or a `doc:"..."` tag): nothing else in the document says what belongs in the value. Validate the decoded payload in the handler, or with `Refine` once the discriminator has decided the shape.
+
+`json.RawMessage` is refused with that advice, not described: `Parse` receives decoded JSON, so the bytes the client sent are already gone and re-encoding them changes key order and number formatting. Until this was refused it was silently taken for the `[]byte` it is built on — the document claimed an array of integers and the validator rejected every object body.
+
+A real discriminated union (OpenAPI `oneOf` plus `discriminator`, which generators turn into a TypeScript discriminated union) is the typed version of this and is not built yet; an open object is the floor it would stand on.
+
 ## Responses
 
 ```go
