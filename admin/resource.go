@@ -46,8 +46,13 @@ var (
 
 	// sensitiveRe flags columns that hold secrets by name; json:"-" fields
 	// are sensitive too. Sensitive columns are never shown, searched,
-	// sorted, filtered or written to the audit log.
-	sensitiveRe = regexp.MustCompile(`(?i)(password|passwd|secret|token|api_?key|private_?key|recovery|otp|totp)`)
+	// sorted, filtered or written to the audit log. Short words are matched
+	// as whole snake_case segments or at the end of the name ("api_token",
+	// "authtoken", not "footprint"), so a "tokens_used" counter stays
+	// visible while "refresh_tokens" does not.
+	sensitiveRe = regexp.MustCompile(
+		`(?i)(password|passwd|secret|api_?key|private_?key|recovery|(^|_)(token|otp|totp)(_|$)|(tokens?|otp)$)`,
+	)
 
 	protected = []string{"created_at", "updated_at", "deleted_at"}
 )
