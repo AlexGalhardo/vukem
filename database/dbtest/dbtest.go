@@ -135,13 +135,14 @@ func Run(t *testing.T, db *database.DB) {
 	run("BulkLocksChecks", testBulkLocksChecks)
 	run("PartialIndexRebind", testPartialIndexRebind)
 	run("AggregateTimes", testAggregateTimes)
+	run("RawRebindChunk", testRawRebindChunk)
 }
 
 func clean(ctx context.Context, t *testing.T, db *database.DB) {
 	t.Helper()
 
 	s := schema.New(ctx, db)
-	for _, table := range []string{"dbt_book_tag", "dbt_tags", "dbt_books", "dbt_authors", "dbt_tmp", "dbt_renamed", "dbt_jobs", "dbt_failed_jobs", "dbt_old_jobs", "dbt_old_failed_jobs", "dbt_numbers", "dbt_desc", "dbt_events"} {
+	for _, table := range []string{"dbt_book_tag", "dbt_tags", "dbt_books", "dbt_authors", "dbt_tmp", "dbt_renamed", "dbt_jobs", "dbt_failed_jobs", "dbt_old_jobs", "dbt_old_failed_jobs", "dbt_numbers", "dbt_desc", "dbt_events", "dbt_chunks"} {
 		if err := s.DropIfExists(table); err != nil {
 			t.Fatalf("drop %s: %v", table, err)
 		}
@@ -635,4 +636,50 @@ func testAggregateTimes(ctx context.Context, t *testing.T, db *database.DB) {
 			t.Fatalf("MIN(name), MAX(name) = %q, %q, want 2026-01-02, zeta", lo, hi)
 		}
 	})
+}
+
+// chunkRow is a plain model for testRawRebindChunk.
+type chunkRow struct {
+	ID   int64
+	Name string
+}
+
+// Table implements orm.Tabler.
+func (chunkRow) Table() string { return "dbt_chunks" }
+
+// testRawRebindChunk checks that schema.Raw rebinds "?" arguments for the
+// dialect and that Chunk visits every row when its callback deletes the
+// rows it receives (keyset, not OFFSET).
+func testRawRebindChunk(ctx context.Context, t *testing.T, db *database.DB) {
+	s := schema.New(ctx, db)
+	if err := s.Create("dbt_chunks", func(t *schema.Table) {
+		t.ID()
+		t.String("name", 50)
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() { _ = schema.New(context.Background(), db).DropIfExists("dbt_chunks") })
+
+	want := []string{"a", "b", "c", "d", "e"}
+	for _, name := range want {
+		if err := s.Raw("INSERT INTO dbt_chunks (name) VALUES (?)", name); err != nil {
+			t.Fatalf("Raw insert: %v", err)
+		}
+	}
+
+	var seen []string
+	err := orm.QueryOf[chunkRow](db).Chunk(ctx, 2, func(rows []chunkRow) error {
+		for i := range rows {
+			seen = append(seen, rows[i].Name)
+			if err := orm.Delete(ctx, db, &rows[i]); err != nil {
+				return err
+			}
+		}
+
+		return nil
+	})
+	if err != nil || !slices.Equal(seen, want) {
+		t.Fatalf("Chunk deleting its rows visited %v (%v), want %v", seen, err, want)
+	}
 }
