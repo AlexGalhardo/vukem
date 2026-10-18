@@ -2,6 +2,8 @@ import { Head, useForm } from "@inertiajs/react";
 import type { FormEvent } from "react";
 
 import Field from "../../components/Field";
+import PasswordField from "../../components/PasswordField";
+import { checkConfirmation, checkPassword, passwordAdvice } from "../../lib/password-policy";
 
 export default function ResetPassword({ token, email }: { token: string; email: string }) {
   const form = useForm({ token, email, password: "", password_confirmation: "" });
@@ -25,24 +27,24 @@ export default function ResetPassword({ token, email }: { token: string; email: 
           onChange={(e) => form.setData("email", e.target.value)}
           error={form.errors.email}
         />
-        <Field
-          label="New password (at least 12 characters)"
-          type="password"
+        <PasswordField
+          label="New password"
+          name="password"
           autoComplete="new-password"
-          minLength={12}
-          required
           value={form.data.password}
-          onChange={(e) => form.setData("password", e.target.value)}
+          onChange={(value) => form.setData("password", value)}
           error={form.errors.password}
+          checks={checkPassword(form.data.password)}
+          advice={passwordAdvice(form.data.password)}
         />
-        <Field
+        <PasswordField
           label="Confirm password"
-          type="password"
+          name="password_confirmation"
           autoComplete="new-password"
-          required
           value={form.data.password_confirmation}
-          onChange={(e) => form.setData("password_confirmation", e.target.value)}
+          onChange={(value) => form.setData("password_confirmation", value)}
           error={form.errors.password_confirmation}
+          checks={checkConfirmation(form.data.password, form.data.password_confirmation)}
         />
         <button
           type="submit"
