@@ -2,6 +2,8 @@
 
 A [Vukem](https://vukem.dev) application.
 
+## Commands
+
 ```sh
 vukem serve        # run with reload on http://localhost:3000
 vukem migrate      # apply migrations
@@ -13,3 +15,22 @@ vukem list         # all commands
 
 Run `go tool govulncheck ./...` in CI and on a schedule: new advisories
 appear after your code ships.
+
+## Documentation
+
+Every section of <https://vukem.dev/docs>, in the order a new project needs
+them:
+
+| Section | What it covers |
+| --- | --- |
+| [Getting started](https://vukem.dev/docs/introduction) | installation, the starters, `.env` and configuration, the directory structure |
+| [Architecture](https://vukem.dev/docs/architecture/lifecycle) | the application lifecycle, from `cmd/app` to a response |
+| [The basics](https://vukem.dev/docs/basics/routing) | routing, middleware, controllers, requests, validation, errors, sessions, CSRF, views |
+| [APIs](https://vukem.dev/docs/rest-apis/overview) | JSON APIs, pagination, typed handlers, OpenAPI, client generation, idempotency |
+| [Database](https://vukem.dev/docs/database/overview) | the ORM, relations, migrations, factories and seeders, PostgreSQL, Redis, MongoDB |
+| [Security](https://vukem.dev/docs/security/overview) | authentication, API tokens, two-factor, authorization, rate limiting, headers, encryption |
+| [Digging deeper](https://vukem.dev/docs/digging-deeper/mail) | mail, cache, storage, uploads, events, queue, scheduler, broadcasting, billing, admin |
+| [Frontend](https://vukem.dev/docs/frontend/htmx) | HTMX, Vite, Inertia |
+| [Testing](https://vukem.dev/docs/testing/overview) | the fluent HTTP client, the test database, factories |
+| [CLI](https://vukem.dev/docs/cli/overview) | every `vukem` command and flag |
+| [Deployment](https://vukem.dev/docs/deployment/single-binary) | the single binary, Docker and Railway |

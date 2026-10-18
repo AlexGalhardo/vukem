@@ -197,12 +197,7 @@ func newProject(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 			desc = "htmx " + htmxVersion + ", Tailwind, no database"
 		}
 
-		migrate := "  vukem migrate\n"
-		if st.kind == "minimal" {
-			migrate = ""
-		}
-
-		fmt.Fprintf(env.Stdout, "\nCreated %s (%s). Next:\n\n  cd %s\n%s  vukem serve\n\n", name, desc, name, migrate)
+		fmt.Fprint(env.Stdout, nextSteps(name, desc, st.kind, std))
 
 		return nil
 	}
