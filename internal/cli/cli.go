@@ -317,7 +317,17 @@ func (env *Env) path(rel string) string { return filepath.Join(env.Dir, rel) }
 // tool runs an external program in the project directory with the CLI's
 // output streams.
 func tool(ctx context.Context, env *Env, name string, args ...string) error {
+	return toolEnv(ctx, env, nil, name, args...)
+}
+
+// toolEnv is tool with extra environment variables ("KEY=value") added to
+// the CLI's own environment.
+func toolEnv(ctx context.Context, env *Env, extra []string, name string, args ...string) error {
 	cmd := exec.CommandContext(ctx, name, args...)
+	if len(extra) > 0 {
+		cmd.Env = append(os.Environ(), extra...)
+	}
+
 	cmd.Dir = env.Dir
 	cmd.Stdin = env.Stdin
 	cmd.Stdout = env.Stdout

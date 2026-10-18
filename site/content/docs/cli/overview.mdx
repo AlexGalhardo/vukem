@@ -202,7 +202,7 @@ Steps:
 
 1. `go tool templ generate` when `.templ` files exist.
 2. When a `vite.config.*` exists: it checks `node_modules` exists (`frontend dependencies missing: run npm install first`), then runs `vite build` through the package manager (`npm exec -- vite build`, `bun x vite build`, `pnpm exec vite build` or `yarn exec vite build`).
-3. `go build -trimpath -ldflags="-s -w"` of `./cmd/app`, plus the [build tags](#build-tags). `-trimpath` removes your local paths from the binary; `-s -w` drops debug symbols to make it smaller.
+3. `go build -trimpath -ldflags="-s -w"` of `./cmd/app` with `CGO_ENABLED=0` (like the production `Dockerfile`; a `CGO_ENABLED` you set yourself wins), plus the [build tags](#build-tags). `-trimpath` removes your local paths from the binary; `-s -w` drops debug symbols to make it smaller.
 
 It prints `built bin/blog`. See [Single binary](/docs/deployment/single-binary) for what the binary embeds.
 

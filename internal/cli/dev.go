@@ -110,6 +110,11 @@ func appBinary(ctx context.Context, env *Env) (string, error) {
 }
 
 func goBuild(ctx context.Context, env *Env, out string, extra ...string) error {
+	return goBuildEnv(ctx, env, out, nil, extra...)
+}
+
+// goBuildEnv is goBuild with extra environment variables for go build.
+func goBuildEnv(ctx context.Context, env *Env, out string, environ []string, extra ...string) error {
 	if !filepath.IsAbs(out) {
 		out = env.path(out)
 	}
@@ -130,7 +135,18 @@ func goBuild(ctx context.Context, env *Env, out string, extra ...string) error {
 
 	args = append(args, "-o", out, "./cmd/app")
 
-	return tool(ctx, env, "go", args...)
+	return toolEnv(ctx, env, environ, "go", args...)
+}
+
+// releaseBuildEnv is the environment of vukem build: CGO_ENABLED=0, like
+// the generated Dockerfile, so a local build links the same way as the
+// image; a CGO_ENABLED the developer set explicitly is kept.
+func releaseBuildEnv(env *Env) []string {
+	if _, ok := env.Getenv("CGO_ENABLED"); ok {
+		return nil
+	}
+
+	return []string{"CGO_ENABLED=0"}
 }
 
 // buildTagsFile lists Go build tags (one per line or comma-separated, "#"
@@ -227,7 +243,7 @@ func buildCmd(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 			}
 		}
 
-		if err := goBuild(ctx, env, *out, "-trimpath", "-ldflags=-s -w"); err != nil {
+		if err := goBuildEnv(ctx, env, *out, releaseBuildEnv(env), "-trimpath", "-ldflags=-s -w"); err != nil {
 			return err
 		}
 

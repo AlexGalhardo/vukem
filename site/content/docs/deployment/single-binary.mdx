@@ -91,12 +91,13 @@ Content-Type: application/json
 1. Checks that `cmd/app` exists, otherwise it fails with `no cmd/app in this directory: run vukem inside a Vukem project`.
 2. In a templ project, runs `go tool templ generate`.
 3. When `vite.config.ts`, `vite.config.js` or `vite.config.mjs` exists, runs `vite build` through your package manager (`npm exec -- vite build`, `bun x vite build`, `pnpm exec vite build` or `yarn exec vite build`). It fails with `frontend dependencies missing: run npm install first` (or your package manager's install command) when `node_modules` is missing.
-4. Runs `go build -trimpath -ldflags=-s -w -o bin/app ./cmd/app`, adding `-tags` from `.buildtags` when that file exists.
+4. Runs `go build -trimpath -ldflags=-s -w -o bin/app ./cmd/app` with `CGO_ENABLED=0`, adding `-tags` from `.buildtags` when that file exists.
 
 | Flag | Default | What it does |
 | --- | --- | --- |
 | `-trimpath` | always | removes your machine's file paths from the binary |
 | `-ldflags=-s -w` | always | drops the symbol table and debug information, so the file is smaller |
+| `CGO_ENABLED=0` | unless you set `CGO_ENABLED` yourself | a static binary without C code, linked like the production `Dockerfile` builds it |
 | `-tags` | from `.buildtags` | Go [build tags](https://pkg.go.dev/cmd/go#hdr-Build_constraints): one per line or comma-separated, `#` starts a comment; `--minimal` projects list `vukem_nosqlite` |
 | `-o` | `bin/app` (`bin\app.exe` on Windows) | the output path |
 
