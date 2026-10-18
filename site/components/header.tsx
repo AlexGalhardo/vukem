@@ -23,15 +23,15 @@ export function Header({ locale }: { locale: Locale }) {
   return (
     <header className="sticky top-0 z-40 h-(--header-h) border-b border-border bg-bg/80 backdrop-blur-md supports-[backdrop-filter]:bg-bg/70">
       {/* Same container as app/docs/layout.tsx; the left column matches the sidebar width. */}
-      <div className="mx-auto flex h-full max-w-[90rem] items-center gap-3 px-4 sm:px-6 lg:grid lg:grid-cols-[16rem_1fr_16rem] lg:gap-0">
-        <div className="flex items-center gap-3">
+      <div className="mx-auto flex h-full max-w-[90rem] items-center gap-2 px-4 sm:gap-3 sm:px-6 lg:grid lg:grid-cols-[16rem_1fr_16rem] lg:gap-0">
+        <div className="flex items-center gap-2 sm:gap-3">
           <MobileNav groupsByVersion={groupsByVersion} locale={locale} />
           <Logo locale={locale} />
         </div>
         <div className="flex flex-1 justify-end sm:justify-center">
           <SearchDialog />
         </div>
-        <div className="flex items-center justify-end gap-2">
+        <div className="flex items-center justify-end gap-1 sm:gap-2">
           <Link
             href={locale === "en" ? "/changelog" : `/${locale}/changelog`}
             className="hidden h-8 items-center rounded-lg px-2.5 text-sm font-medium text-muted transition-colors hover:bg-hover hover:text-fg sm:inline-flex"
@@ -44,7 +44,7 @@ export function Header({ locale }: { locale: Locale }) {
               target="_blank"
               rel="noreferrer"
               aria-label={t.githubLabel}
-              className="inline-flex size-8 items-center justify-center rounded-lg text-muted transition-colors hover:bg-hover hover:text-fg"
+              className="inline-flex size-8 items-center justify-center rounded-lg text-muted transition-colors hover:bg-hover hover:text-fg max-[380px]:hidden"
             >
               <GitHubIcon className="size-4" />
             </a>
