@@ -31,6 +31,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf16"
 	"unicode/utf8"
 
 	"github.com/AlexGalhardo/vukem/config"
@@ -634,11 +635,11 @@ func writeAttr(b *strings.Builder, prefix string, a slog.Attr) {
 func finish(head, body string) string {
 	const open, closeTag = "\n\n<pre>", "</pre>"
 
-	room := MaxLength - utf8.RuneCountInString(head) - len(open) - len(closeTag)
+	room := MaxLength - utf16Len(head) - len(open) - len(closeTag)
 	escaped := html.EscapeString(body)
 
-	if utf8.RuneCountInString(escaped) > room {
-		escaped = cutRunes(escaped, max(room-1, 0))
+	if utf16Len(escaped) > room {
+		escaped = cutUTF16(escaped, max(room-1, 0))
 		// Do not leave half an entity ("&am").
 		if i := strings.LastIndexByte(escaped, '&'); i >= 0 && !strings.Contains(escaped[i:], ";") {
 			escaped = escaped[:i]
@@ -662,7 +663,7 @@ func truncate(s string) string {
 // cuts inside a tag or an entity and closes the tags still open at the
 // cut, so Telegram's HTML parser accepts the result.
 func truncateHTML(s string, limit int) string {
-	if utf8.RuneCountInString(s) <= limit {
+	if utf16Len(s) <= limit {
 		return s
 	}
 
@@ -677,7 +678,7 @@ func truncateHTML(s string, limit int) string {
 
 	for end < len(s) {
 		token, name, closing := nextToken(s[end:])
-		n := utf8.RuneCountInString(token)
+		n := utf16Len(token)
 
 		nextOpen, nextClosing := open, closingLen
 
@@ -696,7 +697,7 @@ func truncateHTML(s string, limit int) string {
 			nextClosing += len("</" + name + ">")
 		}
 
-		if used+n+utf8.RuneCountInString(ellipsis)+nextClosing > limit {
+		if used+n+utf16Len(ellipsis)+nextClosing > limit {
 			break
 		}
 
@@ -731,7 +732,8 @@ func nextToken(s string) (token, name string, closing bool) {
 				tag = tag[:j]
 			}
 
-			if tag != "" {
+			// A self-closing tag (<br/>) opens nothing to close later.
+			if tag != "" && s[i-1] != '/' {
 				return s[:i+1], strings.ToLower(tag), closing
 			}
 		}
@@ -746,15 +748,29 @@ func nextToken(s string) (token, name string, closing bool) {
 	return s[:size], "", false
 }
 
-func cutRunes(s string, n int) string {
-	i := 0
+// utf16Len is the length Telegram's limit counts: UTF-16 code units (an
+// emoji outside the BMP is two). Counting the raw HTML over-estimates the
+// parsed text, so staying under it is safe.
+func utf16Len(s string) int {
+	n := 0
 
-	for pos := range s {
-		if i == n {
+	for _, r := range s {
+		n += max(utf16.RuneLen(r), 1)
+	}
+
+	return n
+}
+
+// cutUTF16 returns the longest prefix of s within n UTF-16 units, never
+// splitting a rune.
+func cutUTF16(s string, n int) string {
+	used := 0
+
+	for pos, r := range s {
+		used += max(utf16.RuneLen(r), 1)
+		if used > n {
 			return s[:pos]
 		}
-
-		i++
 	}
 
 	return s

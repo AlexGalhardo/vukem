@@ -119,6 +119,12 @@ func TestTruncation(t *testing.T) {
 	if s := truncate(strings.Repeat("x", 5000)); utf8.RuneCountInString(s) != MaxLength {
 		t.Fatal("Send truncation")
 	}
+
+	// Telegram counts UTF-16 units: an emoji is two.
+	emoji := format(Config{AppName: "A"}, slog.LevelError, time.Time{}, strings.Repeat("😀", 3000), nil)
+	if n := utf16Len(emoji); n > MaxLength {
+		t.Fatalf("emoji message has %d UTF-16 units, want <= %d", n, MaxLength)
+	}
 }
 
 func TestHandlerSendsAndRoutes(t *testing.T) {
@@ -343,6 +349,8 @@ func TestTruncateHTML(t *testing.T) {
 		{"never cuts inside an entity", "a&amp;b&amp;c", "a&amp;…", 7},
 		{"nested tags closed in order", "<b><i>abcdefghijklmnop</i></b>", "<b><i>abcd…</i></b>", 19},
 		{"closed tags are not reclosed", "<b>a</b>bcdefghij", "<b>a</b>bc…", 11},
+		{"self-closing tags are not reopened", "<b>a<br/>bcdefghij</b>", "<b>a<br/>bc…</b>", 16},
+		{"emoji count as two UTF-16 units", "ab😀😀😀😀", "ab😀…", 5},
 	}
 
 	for _, tt := range tests {
@@ -354,8 +362,8 @@ func TestTruncateHTML(t *testing.T) {
 				t.Errorf("truncateHTML(%q, %d) = %q, want %q", tt.in, tt.limit, got, tt.want)
 			}
 
-			if n := utf8.RuneCountInString(got); n > tt.limit {
-				t.Errorf("truncateHTML(%q, %d) has %d runes", tt.in, tt.limit, n)
+			if n := utf16Len(got); n > tt.limit {
+				t.Errorf("truncateHTML(%q, %d) has %d UTF-16 units", tt.in, tt.limit, n)
 			}
 		})
 	}
@@ -372,8 +380,16 @@ func TestSendKeepsHTMLValid(t *testing.T) {
 	}
 
 	text, _ := f.messages()[0]["text"].(string)
-	if n := utf8.RuneCountInString(text); n > MaxLength {
-		t.Fatalf("SendSync sent %d runes", n)
+	if n := utf16Len(text); n > MaxLength {
+		t.Fatalf("SendSync sent %d UTF-16 units", n)
+	}
+
+	if err := h.SendSync(t.Context(), strings.Repeat("😀", 3000)); err != nil {
+		t.Fatal(err)
+	}
+
+	if text, _ := f.messages()[1]["text"].(string); utf16Len(text) > MaxLength {
+		t.Fatalf("SendSync of emoji sent %d UTF-16 units, want <= %d", utf16Len(text), MaxLength)
 	}
 
 	if !strings.HasPrefix(text, "<b>") || !strings.HasSuffix(text, "…</b>") {

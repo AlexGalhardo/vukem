@@ -120,7 +120,7 @@ The message format is fixed:
 | Errors | `err: <message>`, then one `caused by:` line per [wrapped error](https://go.dev/blog/go1.13-errors) |
 | Attributes from `With` | included: a logger made with `log.With("request_id", id)` adds that line too |
 
-Every piece of text is HTML-escaped, so a user who types `<script>` in a form cannot change how the message renders. Telegram allows 4096 characters per message (`telegram.MaxLength`); a longer body is cut and ends with `…`. The cut never splits the `<pre>` tag or an HTML entity such as `&amp;`.
+Every piece of text is HTML-escaped, so a user who types `<script>` in a form cannot change how the message renders. Telegram allows 4096 characters per message (`telegram.MaxLength`, counted in UTF-16 units, so an emoji counts as two); a longer body is cut and ends with `…`. The cut never splits the `<pre>` tag or an HTML entity such as `&amp;`.
 
 ## Levels
 
