@@ -8,6 +8,8 @@
 package openapi
 
 import (
+	"errors"
+	"fmt"
 	"maps"
 	"net/http"
 	"reflect"
@@ -110,8 +112,30 @@ var (
 	problemJ = "application/problem+json"
 )
 
-// Generate builds the document for routes (router.Routes()).
+// ErrUnknownSecurityScheme is returned by Build when an operation lists a
+// security scheme (api.Op.Security) that is neither predefined ("bearer")
+// nor declared in Info.SecuritySchemes.
+var ErrUnknownSecurityScheme = errors.New("openapi: unknown security scheme")
+
+// Generate builds the document for routes (router.Routes()). It panics on
+// the errors Build returns (an undeclared security scheme): they are
+// programming errors that should surface at boot or in a test.
 func Generate(routes []router.RouteInfo, info Info) *Document {
+	doc, err := Build(routes, info)
+	if err != nil {
+		panic(err)
+	}
+
+	return doc
+}
+
+// Build is Generate returning its error. The operationId of every route is
+// its own name, without group name prefixes (Op.Name for a typed route),
+// typed or not. A plain POST, PUT
+// or PATCH route documents an optional JSON body of any shape, and plain
+// routes document a default response of any content, so generated clients
+// can send a body and ValidateResponse accepts what they return.
+func Build(routes []router.RouteInfo, info Info) (*Document, error) {
 	s := NewSchemas()
 	doc := &Document{
 		OpenAPI: "3.1.0",
@@ -149,13 +173,10 @@ func Generate(routes []router.RouteInfo, info Info) *Document {
 		var op *Operation
 		if typed, ok := rt.Doc.(*api.Operation); ok {
 			op = typedOperation(s, typed)
+			op.OperationID = cmpOr(rt.LocalName, typed.Name)
+			op.Summary = cmpOr(typed.Summary, op.OperationID)
 		} else {
-			op = &Operation{
-				OperationID: rt.Name,
-				Summary:     rt.Name,
-				Parameters:  pathParams(s, rt.Path, nil),
-				Responses:   map[string]Response{"default": {Description: "Response"}},
-			}
+			op = plainOperation(s, rt)
 		}
 
 		for _, req := range op.Security {
@@ -192,13 +213,35 @@ func Generate(routes []router.RouteInfo, info Info) *Document {
 
 		sc, ok := schemes[name]
 		if !ok {
-			sc = Schema{"type": "http", "scheme": "bearer"}
+			return nil, fmt.Errorf("%w %q: declare it in openapi.Info.SecuritySchemes", ErrUnknownSecurityScheme, name)
 		}
 
 		doc.Components.SecuritySchemes[name] = sc
 	}
 
-	return doc
+	return doc, nil
+}
+
+// plainOperation is the generic entry of a route registered without
+// api.Register: its input and output types are unknown, so the body and
+// the response accept anything.
+func plainOperation(s *Schemas, rt router.RouteInfo) *Operation {
+	op := &Operation{
+		OperationID: rt.LocalName,
+		Summary:     rt.LocalName,
+		Parameters:  pathParams(s, rt.Path, nil),
+		Responses: map[string]Response{"default": {
+			Description: "Response",
+			Content:     map[string]MediaType{"*/*": {Schema: Schema{}}},
+		}},
+	}
+
+	switch rt.Method {
+	case http.MethodPost, http.MethodPut, http.MethodPatch:
+		op.RequestBody = &RequestBody{Content: map[string]MediaType{"application/json": {Schema: Schema{}}}}
+	}
+
+	return op
 }
 
 func cmpOr(a, b string) string {

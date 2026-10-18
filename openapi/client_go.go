@@ -403,7 +403,13 @@ func (g *goGen) method(b *strings.Builder, op *clientOp) {
 	}
 
 	body := "nil"
-	if op.body != nil {
+
+	switch {
+	case op.body != nil && len(op.body) == 0:
+		// An undocumented body (a plain route): any JSON value, nil sends none.
+		args = append(args, "body any")
+		body = "body"
+	case op.body != nil:
 		args = append(args, "body "+g.named(name+"Body", op.body))
 		body = "body"
 	}
@@ -415,6 +421,10 @@ func (g *goGen) method(b *strings.Builder, op *clientOp) {
 	}
 
 	b.WriteString(".\n")
+
+	if op.body != nil && len(op.body) == 0 {
+		b.WriteString("// The body is encoded as JSON; nil sends none.\n")
+	}
 
 	if op.deprecated {
 		b.WriteString("//\n// Deprecated: the operation is deprecated.\n")

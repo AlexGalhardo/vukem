@@ -58,6 +58,8 @@ export type ProductsStoreBody = {
 
 export type ProductsStoreResponse = Product;
 
+export type WebhooksReceiveBody = unknown;
+
 export const ProblemSchema: z.ZodType<Problem> = z.lazy(() =>
   z.object({
     detail: z.string().optional(),
@@ -110,3 +112,5 @@ export const ProductsStoreBodySchema: z.ZodType<ProductsStoreBody> = z.object({
   status: z.union([z.literal("draft"), z.literal("published")]).optional(),
   tags: z.array(z.string().min(1).max(20)).max(5).optional(),
 });
+
+export const WebhooksReceiveBodySchema: z.ZodType<WebhooksReceiveBody> = z.unknown();

@@ -328,12 +328,15 @@ func TestAssertMatchesOpenAPI(t *testing.T) {
 				) (codeOut, error) {
 					return codeOut{Code: in.Code}, nil
 				})
+			r.Get("/api/plain", func(c *web.Ctx) error { return c.JSON(http.StatusOK, map[string]any{"ok": true}) })
 
 			return nil
 		}))...)
 	})
 
 	app.Client(t).GetJSON("/api/codes/abc").AssertOK().AssertMatchesOpenAPI()
+	// A plain route documents an untyped response: any body matches.
+	app.Client(t).GetJSON("/api/plain").AssertOK().AssertMatchesOpenAPI()
 
 	expectFailure(t, "$.code: length 6, want at most 3", func(tb *fakeTB) {
 		app.Client(tb).GetJSON("/api/codes/abcdef").AssertMatchesOpenAPI()

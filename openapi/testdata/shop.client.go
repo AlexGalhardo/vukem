@@ -230,3 +230,9 @@ func (c *Client) ProductsStore(ctx context.Context, shop int64, body ProductsSto
 
 	return out, err
 }
+
+// WebhooksReceive calls POST /api/v1/webhooks/{provider}.
+// The body is encoded as JSON; nil sends none.
+func (c *Client) WebhooksReceive(ctx context.Context, provider string, body any) error {
+	return c.do(ctx, "POST", "/api/v1/webhooks/"+url.PathEscape(queryString(provider)), nil, body, nil)
+}

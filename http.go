@@ -878,12 +878,12 @@ func (a *App) openAPI(prefix string) (*openapi.Document, error) {
 		return nil, err
 	}
 
-	return openapi.Generate(a.Router.Routes(), openapi.Info{
+	return openapi.Build(a.Router.Routes(), openapi.Info{
 		Title:      a.Config.Name,
 		Version:    a.Config.APIVersion,
 		Servers:    []string{a.Config.URL},
 		PathPrefix: prefix,
-	}), nil
+	})
 }
 
 // OpenAPIOptions tunes [ServeOpenAPIWith].

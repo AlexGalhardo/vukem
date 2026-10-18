@@ -3,6 +3,7 @@ package openapi_test
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"flag"
 	"maps"
 	"os"
@@ -83,6 +84,7 @@ func routes() []router.RouteInfo {
 		api.Register(g, "DELETE /products/{id}", api.Op{Name: "products.destroy", Deprecated: true},
 			func(*web.Ctx, struct{}) (struct{}, error) { return struct{}{}, nil })
 		g.Get("/legacy/{path...}", func(*web.Ctx) error { return nil }).Name("legacy")
+		g.Post("/webhooks/{provider}", func(*web.Ctx) error { return nil }).Name("webhooks.receive")
 		g.Get("/internal", func(*web.Ctx) error { return nil }).Doc(openapi.Skip{})
 	})
 	r.Get("/", func(*web.Ctx) error { return nil }).Name("home")
@@ -250,4 +252,84 @@ func TestPathPrefixMatchesWholeSegments(t *testing.T) {
 			t.Errorf("Generate(PathPrefix %q) paths (-want +got):\n%s", prefix, diff)
 		}
 	}
+}
+
+func TestGenerateNamesAndBodiesConsistently(t *testing.T) {
+	t.Parallel()
+
+	r := router.New(nil)
+	r.Group("/api", func(g *router.Group) {
+		g.Name("api.")
+		api.Register(g, "GET /ping", api.Op{Name: "ping"},
+			func(*web.Ctx, struct{}) (page, error) { return page{}, nil })
+		g.Get("/status", func(*web.Ctx) error { return nil }).Name("status")
+		g.Post("/hooks", func(*web.Ctx) error { return nil }).Name("hooks")
+	})
+
+	if _, err := r.Handler(); err != nil {
+		t.Fatal(err)
+	}
+
+	doc := openapi.Generate(r.Routes(), openapi.Info{})
+
+	got := map[string]string{}
+	for path, item := range doc.Paths {
+		for method, op := range item {
+			got[method+" "+path] = op.OperationID
+		}
+	}
+
+	want := map[string]string{
+		"get /api/ping":   "ping",
+		"get /api/status": "status",
+		"post /api/hooks": "hooks",
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("operationIds (-want +got):\n%s", diff)
+	}
+
+	if rb := doc.Paths["/api/hooks"]["post"].RequestBody; rb == nil || rb.Required {
+		t.Errorf("plain POST requestBody = %+v, want an optional body", rb)
+	}
+
+	if rb := doc.Paths["/api/status"]["get"].RequestBody; rb != nil {
+		t.Errorf("plain GET requestBody = %+v, want none", rb)
+	}
+
+	for _, body := range []string{`{"ok":true}`, `<p>ok</p>`, ``} {
+		if err := doc.ValidateResponse("POST", "/api/hooks", 200, []byte(body)); err != nil {
+			t.Errorf("ValidateResponse(plain route, %q) = %v, want nil", body, err)
+		}
+	}
+}
+
+func TestBuildRejectsUnknownSecurityScheme(t *testing.T) {
+	t.Parallel()
+
+	r := router.New(nil)
+	api.Register(r, "GET /me", api.Op{Name: "me", Security: []string{"cookie"}},
+		func(*web.Ctx, struct{}) (page, error) { return page{}, nil })
+
+	if _, err := r.Handler(); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := openapi.Build(r.Routes(), openapi.Info{}); !errors.Is(err, openapi.ErrUnknownSecurityScheme) {
+		t.Fatalf("Build(unknown scheme) error = %v, want ErrUnknownSecurityScheme", err)
+	}
+
+	doc, err := openapi.Build(r.Routes(), openapi.Info{SecuritySchemes: map[string]openapi.Schema{
+		"cookie": {"type": "apiKey", "in": "cookie", "name": "session"},
+	}})
+	if err != nil || doc.Components.SecuritySchemes["cookie"]["in"] != "cookie" {
+		t.Fatalf("Build(declared scheme) = %v, %v", doc, err)
+	}
+
+	defer func() {
+		if recover() == nil {
+			t.Error("Generate(unknown scheme) did not panic")
+		}
+	}()
+
+	openapi.Generate(r.Routes(), openapi.Info{})
 }
