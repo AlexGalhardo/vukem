@@ -104,7 +104,6 @@ function collect(found: Found) {
 
 function checkLink(href: string, valid: Set<string>, v: Snapshot): string | undefined {
   let p = href.split(/[?#]/)[0].replace(/\/$/, "");
-  if (p.startsWith("/pt-br/")) p = p.slice("/pt-br".length);
   if (p !== "/docs" && !p.startsWith("/docs/")) return undefined;
   // Snapshot pages link with current-layout URLs; lib/versions.ts moves them into the snapshot.
   if (v.prefix && !p.startsWith(`/docs/${v.prefix}/`) && p !== `/docs/${v.prefix}`) p = p === "/docs" ? `/docs/${v.prefix}` : `/docs/${v.prefix}${p.slice("/docs".length)}`;

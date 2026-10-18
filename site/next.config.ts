@@ -3,12 +3,13 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
-  // English and Portuguese have separate root layouts (for <html lang>), so the 404 is app/global-not-found.tsx.
+  // The root layout lives in a route group, so the 404 is app/global-not-found.tsx.
   experimental: { globalNotFound: true },
   async redirects() {
     return [
       { source: "/", destination: "/docs/introduction", permanent: false },
-      { source: "/pt-br", destination: "/pt-br/docs/introduction", permanent: false },
+      // The Portuguese translation was removed; old links land on the English page.
+      { source: "/pt-br/:path*", destination: "/:path*", permanent: true },
     ];
   },
   // Content is read from the filesystem at build time; make sure it ships with

@@ -4,9 +4,8 @@ import { MobileNav } from "@/components/mobile-nav";
 import { SearchDialog } from "@/components/search-dialog";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { IconTooltip } from "@/components/icon-tooltip";
-import { LanguageSwitcher } from "@/components/language-switcher";
 import { getNavGroupsByVersion } from "@/lib/content";
-import { dict, type Locale } from "@/lib/i18n";
+import { t } from "@/lib/ui-text";
 import { site } from "@/lib/site";
 
 function GitHubIcon({ className }: { className?: string }) {
@@ -17,23 +16,22 @@ function GitHubIcon({ className }: { className?: string }) {
   );
 }
 
-export function Header({ locale }: { locale: Locale }) {
-  const groupsByVersion = getNavGroupsByVersion(locale);
-  const t = dict(locale);
+export function Header() {
+  const groupsByVersion = getNavGroupsByVersion();
   return (
     <header className="sticky top-0 z-40 h-(--header-h) border-b border-border bg-bg/80 backdrop-blur-md supports-[backdrop-filter]:bg-bg/70">
       {/* Same container as app/docs/layout.tsx; the left column matches the sidebar width. */}
       <div className="mx-auto flex h-full max-w-[90rem] items-center gap-2 px-4 sm:gap-3 sm:px-6 lg:grid lg:grid-cols-[16rem_1fr_16rem] lg:gap-0">
         <div className="flex items-center gap-2 sm:gap-3">
-          <MobileNav groupsByVersion={groupsByVersion} locale={locale} />
-          <Logo locale={locale} />
+          <MobileNav groupsByVersion={groupsByVersion} />
+          <Logo />
         </div>
         <div className="flex flex-1 justify-end sm:justify-center">
           <SearchDialog />
         </div>
         <div className="flex items-center justify-end gap-1 sm:gap-2">
           <Link
-            href={locale === "en" ? "/changelog" : `/${locale}/changelog`}
+            href="/changelog"
             className="hidden h-8 items-center rounded-lg px-2.5 text-sm font-medium text-muted transition-colors hover:bg-hover hover:text-fg sm:inline-flex"
           >
             {t.changelog}
@@ -49,8 +47,7 @@ export function Header({ locale }: { locale: Locale }) {
               <GitHubIcon className="size-4" />
             </a>
           </IconTooltip>
-          <LanguageSwitcher locale={locale} />
-          <ThemeToggle locale={locale} />
+          <ThemeToggle />
         </div>
       </div>
     </header>

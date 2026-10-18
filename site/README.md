@@ -32,15 +32,15 @@ Mark features that are not implemented yet with `<Callout type="warning">Planned
 
 ## Last updated
 
-Every page shows "Last updated" with the date and time of the last commit that touched its MDX file, formatted with `Intl.DateTimeFormat` in the page's locale (English in UTC, Portuguese in `America/Sao_Paulo`).
+Every page shows "Last updated" with the date and time of the last commit that touched its MDX file, formatted with `Intl.DateTimeFormat` in English, in UTC.
 
 - At build time `lib/last-updated.ts` runs `git log` over `content/` once (`lib/git-dates.ts`).
 - Vercel clones shallowly (and may not ship `.git` at all). Commits at the shallow boundary are ignored, because git reports them as touching every file, and any page git cannot date falls back to the committed `content/last-updated.json`. If neither has the file, the line is hidden.
 - Refresh the fallback map with `npm run last-updated` (from a clone with full history) and commit it, e.g. before a release. Pages changed after the last refresh still get the right date from git whenever the deploy's clone contains that commit.
 
-## Translations
+## Language
 
-English is the default (`/docs/...`); Brazilian Portuguese is served at `/pt-br/docs/...`. To translate a page, copy it to `content/pt-br/<same path>` and translate the front matter and body; keep `/docs/...` links as they are (they are rewritten to `/pt-br/...`). Untranslated Portuguese pages show the English text with a notice. UI strings live in `lib/i18n.ts`. Search and `llms*.txt` are English-only. Details in [docs/site.md](../docs/site.md#languages).
+The site is English only. Old `/pt-br/...` links redirect to the English page. UI strings live in `lib/ui-text.ts`. Details in [docs/site.md](../docs/site.md#language).
 
 ## MDX components
 
@@ -58,9 +58,9 @@ Fenced code blocks accept a file name: ` ```go title="main.go" `.
 
 | Path | Contents |
 | --- | --- |
-| `app/` | Routes: `(en)/docs/[...slug]`, `(pt-br)/pt-br/docs/[...slug]` (one root layout per locale), global 404, `/search-index.json`, `/llms.txt`, `/llms-full.txt` |
+| `app/` | Routes: `(en)/docs/[...slug]` (the root layout), global 404, `/search-index.json`, `/llms.txt`, `/llms-full.txt` |
 | `components/` | Site shell, header, language switcher, sidebar, doc page, search, TOC, theme toggle, MDX components |
-| `lib/` | Content loading, i18n, last-updated dates, MDX rendering, Shiki highlighting, search index, TOC |
-| `content/` | MDX pages, `navigation.ts`, `pt-br/` translations, `last-updated.json` |
+| `lib/` | Content loading, UI strings, last-updated dates, MDX rendering, Shiki highlighting, search index, TOC |
+| `content/` | MDX pages, `navigation.ts`, `last-updated.json` |
 | `scripts/` | `last-updated.ts` (run by Node directly, no build step) |
 | `public/` | Logo |

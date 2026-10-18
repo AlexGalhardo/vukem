@@ -61,7 +61,7 @@ Reference pages (CLI, configuration lists) replace 3–5 with complete tables, o
 - **Name things consistently**: the same word for the same thing on every page (handler, middleware, provider, guard, seeder, migration). A term's first use on a page can carry a `<Term>` tooltip.
 - **Say the edge cases out loud**: "`r.Get("/")` matches only the root page, not every path" is better than letting the reader discover it.
 - **No marketing words** ("powerful", "blazing", "simply", "just", "easy"). Show it is easy instead.
-- **English only** on the English pages; Brazilian Portuguese pages translate meaning, not word for word.
+- **English only**: the site has no translations.
 
 ## Code examples
 

@@ -21,7 +21,7 @@ The public "how to use Vukem" website lives in [`site/`](../site) and is deploye
 | Search | `Ctrl+K` / `⌘K` command palette over a build-time index of titles, headings and text |
 | Theme | Light/dark/system toggle, persisted, no flash on load |
 | Navigation | Left sidebar grouped by category, right "On this page" table of contents, previous/next links, "Edit on GitHub" link |
-| Changelog | `/changelog` (and `/pt-br/changelog`) renders the repository `CHANGELOG.md` at build time as plain Markdown (braces stay literal), linked from the header; every item links to its commit (`.config/cliff.toml` template) |
+| Changelog | `/changelog` renders the repository `CHANGELOG.md` at build time as plain Markdown (braces stay literal), linked from the header; every item links to its commit (`.config/cliff.toml` template) |
 | Agents | `llms.txt` and `llms-full.txt` generated from the MDX content |
 | Hosting | Vercel project `vukem` (Root Directory `site`), production at `vukem.dev`, connected to GitHub: every push to `main` deploys production, other branches get previews |
 
@@ -63,15 +63,9 @@ The site is versioned per minor (PLAN S.2.1). The current docs live in `site/con
 - Search, `llms.txt` and `llms-full.txt` cover the latest version only.
 - **Cutting a minor:** copy `content/docs` and `content/navigation.ts` to `content/versions/<old minor>/` (fix the navigation's type import as in `0.20`), add the entry to `versions` in `lib/versions.ts` and to `NAVIGATION` in `lib/content.ts`, bump the current entry's id and label, then `task site:build`. Snapshots are never edited except to fix a broken page.
 
-## Languages
+## Language
 
-English is the default and keeps the unprefixed URLs (`/docs/...`); Brazilian Portuguese lives under `/pt-br/docs/...` (`/pt-br` redirects to its introduction). Only the current docs are localized; snapshots stay English-only.
-
-- Each locale has its own root layout (`app/(en)/layout.tsx`, `app/(pt-br)/layout.tsx`, both rendering `components/site-shell.tsx`), so every static page gets the right `<html lang>`. Unmatched URLs use `app/global-not-found.tsx` (`experimental.globalNotFound`). Switching language is a full page load.
-- `site/lib/i18n.ts`: locales, URL helpers and the small UI dictionary (header, sidebar, TOC, page footer, notices).
-- A translation is `site/content/pt-br/<same path as the English file>`, e.g. `content/pt-br/docs/getting-started/introduction.mdx`. Only the introduction is translated; the remaining Portuguese pages will be written at 1.0 stable.
-- A Portuguese URL without a translation renders the English text with the notice "Esta página ainda não foi traduzida", `lang="en"` on that text, and canonical + hreflang pointing at the English page. Translated pages link both ways with hreflang (`en`, `pt-BR`, `x-default` = English). `/docs/...` links in Portuguese pages are rewritten to `/pt-br/docs/...`.
-- Search, `llms.txt` and `llms-full.txt` stay English-only. There is no sitemap.
+The site is English only (since v0.28). `/pt-br/...` URLs from the earlier Portuguese pages redirect permanently to the same English path (`next.config.ts`). The root layout lives in the `app/(en)` route group and renders `components/site-shell.tsx` with `<html lang="en">`; unmatched URLs use `app/global-not-found.tsx` (`experimental.globalNotFound`). Interface strings live in `site/lib/ui-text.ts`. There is no sitemap.
 
 ## Workflow
 

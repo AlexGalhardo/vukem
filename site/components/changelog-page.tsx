@@ -1,19 +1,15 @@
 import type { Metadata } from "next";
 import { readChangelog, renderMarkdown } from "@/lib/changelog";
-import { dict, localeInfo, type Locale } from "@/lib/i18n";
+import { t } from "@/lib/ui-text";
 import { site } from "@/lib/site";
 
-export function changelogMetadata(locale: Locale): Metadata {
-  const t = dict(locale);
-  return {
-    title: t.changelogTitle,
-    description: t.changelogDescription,
-    alternates: { canonical: locale === "en" ? "/changelog" : `/${locale}/changelog` },
-  };
-}
+export const changelogMetadata: Metadata = {
+  title: t.changelogTitle,
+  description: t.changelogDescription,
+  alternates: { canonical: "/changelog" },
+};
 
-export async function ChangelogPage({ locale }: { locale: Locale }): Promise<React.ReactElement> {
-  const t = dict(locale);
+export async function ChangelogPage(): Promise<React.ReactElement> {
   const { intro, body } = readChangelog();
   return (
     <div className="mx-auto max-w-3xl px-4 py-10 sm:px-6">
@@ -27,8 +23,7 @@ export async function ChangelogPage({ locale }: { locale: Locale }): Promise<Rea
             </a>
           </p>
         </header>
-        {/* Release notes are written in English, like the rest of the repository. */}
-        <article className="prose" lang={localeInfo.en.tag}>
+        <article className="prose">
           {intro ? await renderMarkdown(intro) : null}
           {await renderMarkdown(body)}
         </article>

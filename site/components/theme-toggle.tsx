@@ -4,7 +4,7 @@ import { useTheme } from "next-themes";
 import { Monitor, Moon, Sun } from "lucide-react";
 import { IconTooltip } from "@/components/icon-tooltip";
 import { useMounted } from "@/components/use-mounted";
-import { dict, type Locale } from "@/lib/i18n";
+import { t } from "@/lib/ui-text";
 
 const OPTIONS = [
   { value: "light", label: "lightTheme", icon: Sun },
@@ -12,8 +12,7 @@ const OPTIONS = [
   { value: "system", label: "systemTheme", icon: Monitor },
 ] as const;
 
-export function ThemeToggle({ locale }: { locale: Locale }) {
-  const t = dict(locale);
+export function ThemeToggle() {
   const { theme, setTheme } = useTheme();
   const mounted = useMounted();
   const current = mounted ? theme : undefined;

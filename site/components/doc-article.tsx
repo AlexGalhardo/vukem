@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowLeft, ArrowRight, SquarePen } from "lucide-react";
 import { Toc } from "@/components/toc";
-import { getAllDocs, getDoc, getNeighbours, versionHome, type Doc } from "@/lib/content";
-import { defaultLocale, dict, formatUpdated, localeInfo, type Locale } from "@/lib/i18n";
+import { getAllDocs, getNeighbours, versionHome, type Doc } from "@/lib/content";
+import { formatUpdated, t } from "@/lib/ui-text";
 import { renderMdx } from "@/lib/mdx";
 import { site } from "@/lib/site";
 import { currentVersion, docsBase, type DocVersion } from "@/lib/versions";
@@ -15,40 +15,19 @@ function latestHref(href: string, v: DocVersion): string {
   return getAllDocs(currentVersion.id).some((d) => d.href === target) ? target : versionHome(currentVersion);
 }
 
-/** English URL of a doc (its href in the default locale). */
-function englishHref(doc: Doc): string {
-  return `/docs/${doc.slug.join("/")}`;
-}
-
-/**
- * Canonical and hreflang: a translated page is its own canonical and the
- * pair links both ways; an untranslated page (English text under another
- * locale) points canonical and hreflang at the English page.
- */
 export function docMetadata(doc: Doc): Metadata {
-  const en = englishHref(doc);
   const title = doc.version.id === currentVersion.id ? doc.title : `${doc.title} (${doc.version.label})`;
-  const languages: Record<string, string> = { [localeInfo.en.tag]: en, "x-default": en };
-  if (doc.version.id === currentVersion.id) {
-    for (const [locale, info] of Object.entries(localeInfo)) {
-      if (locale === defaultLocale) continue;
-      const translated = getDoc(doc.slug, locale as Locale);
-      if (translated?.translated) languages[info.tag] = translated.href;
-    }
-  }
-  const canonical = doc.translated ? doc.href : en;
   return {
     title,
     description: doc.description,
-    alternates: { canonical, languages },
-    openGraph: { title: doc.title, description: doc.description, url: canonical, locale: localeInfo[doc.locale].tag.replace("-", "_") },
+    alternates: { canonical: doc.href },
+    openGraph: { title: doc.title, description: doc.description, url: doc.href, locale: "en" },
   };
 }
 
 export async function DocArticle({ doc }: { doc: Doc }): Promise<React.ReactElement> {
-  const t = dict(doc.locale);
   const outdated = doc.version.id !== currentVersion.id;
-  const content = await renderMdx(doc.body, doc.source, doc.version, doc.locale);
+  const content = await renderMdx(doc.body, doc.source, doc.version);
   const { prev, next } = getNeighbours(doc);
 
   return (
@@ -63,29 +42,20 @@ export async function DocArticle({ doc }: { doc: Doc }): Promise<React.ReactElem
             </Link>
           </div>
         ) : null}
-        {doc.translated ? null : (
-          <div role="note" className="mb-8 rounded-xl border border-border bg-subtle px-4 py-3 text-sm text-muted">
-            {t.notTranslated}{" "}
-            <a href={englishHref(doc)} hrefLang="en" className="font-medium text-accent hover:underline">
-              {t.readInEnglish}
-            </a>
-          </div>
-        )}
         <header className="mb-10">
           <p className="mb-2 text-sm font-medium text-accent">{doc.category}</p>
-          {/* An untranslated page keeps lang="en" on its English text so screen readers pronounce it right. */}
-          <div lang={doc.translated ? undefined : localeInfo.en.tag}>
+          <div>
             <h1 className="text-3xl font-semibold tracking-tight text-fg sm:text-[2.125rem]">{doc.title}</h1>
             <p className="mt-3 text-lg leading-relaxed text-muted">{doc.description}</p>
           </div>
           {doc.updated ? (
             <p className="mt-3 text-sm text-faint">
-              {t.lastUpdated}: <time dateTime={doc.updated}>{formatUpdated(doc.updated, doc.locale)}</time>
+              {t.lastUpdated}: <time dateTime={doc.updated}>{formatUpdated(doc.updated)}</time>
             </p>
           ) : null}
         </header>
 
-        <article className="prose" lang={doc.translated ? undefined : localeInfo.en.tag}>
+        <article className="prose">
           {content}
         </article>
 
@@ -127,7 +97,7 @@ export async function DocArticle({ doc }: { doc: Doc }): Promise<React.ReactElem
       </main>
 
       <aside className="sticky top-(--header-h) hidden h-[calc(100dvh-var(--header-h))] w-56 shrink-0 overflow-y-auto py-10 xl:block">
-        <Toc headings={doc.headings} locale={doc.locale} />
+        <Toc headings={doc.headings} />
       </aside>
     </div>
   );

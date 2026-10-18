@@ -1,11 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { dict, type Locale } from "@/lib/i18n";
+import { t } from "@/lib/ui-text";
 import type { Heading } from "@/lib/toc";
 
 /** "On this page" with scroll-spy over the page's h2/h3 headings. */
-export function Toc({ headings, locale }: { headings: Heading[]; locale: Locale }) {
+export function Toc({ headings }: { headings: Heading[] }) {
   const [active, setActive] = useState<string | null>(null);
 
   useEffect(() => {
@@ -36,8 +36,8 @@ export function Toc({ headings, locale }: { headings: Heading[]; locale: Locale 
   if (headings.length === 0) return null;
 
   return (
-    <nav aria-label={dict(locale).onThisPage} className="text-sm">
-      <p className="mb-3 text-xs font-semibold tracking-wide text-fg">{dict(locale).onThisPage}</p>
+    <nav aria-label={t.onThisPage} className="text-sm">
+      <p className="mb-3 text-xs font-semibold tracking-wide text-fg">{t.onThisPage}</p>
       <ul className="space-y-1 border-l border-border">
         {headings.map((h) => {
           const on = h.id === active;

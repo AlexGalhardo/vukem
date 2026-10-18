@@ -7,7 +7,6 @@ import { Quote } from "@/components/mdx/quote";
 import { Step, Steps } from "@/components/mdx/steps";
 import { CodeGroup, Tab, Tabs } from "@/components/mdx/tabs";
 import { Term } from "@/components/mdx/term";
-import { defaultLocale, localizeHref, type Locale } from "@/lib/i18n";
 import { currentVersion, versionHref, type DocVersion } from "@/lib/versions";
 
 type HeadingProps = React.ComponentPropsWithoutRef<"h2">;
@@ -78,13 +77,12 @@ export const mdxComponents: MDXComponents = {
 };
 
 /**
- * Components for a page of version v in locale: in a snapshot, links to
- * /docs/... (written against the current layout) stay inside that snapshot;
- * in another locale they point at that locale's pages.
+ * Components for a page of version v: in a snapshot, links to /docs/...
+ * (written against the current layout) stay inside that snapshot.
  */
-export function mdxComponentsFor(v: DocVersion, locale: Locale = defaultLocale): MDXComponents {
-  if (v.id === currentVersion.id && locale === defaultLocale) return mdxComponents;
-  const rewrite = (href: string): string => localizeHref(versionHref(href, v), locale);
+export function mdxComponentsFor(v: DocVersion): MDXComponents {
+  if (v.id === currentVersion.id) return mdxComponents;
+  const rewrite = (href: string): string => versionHref(href, v);
 
   function LocalA({ href = "", ...rest }: React.ComponentPropsWithoutRef<"a">) {
     return <A href={rewrite(href)} {...rest} />;

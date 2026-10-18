@@ -6,11 +6,10 @@ import { Dialog } from "@base-ui/react/dialog";
 import { Menu, X } from "lucide-react";
 import { Sidebar } from "@/components/sidebar";
 import type { NavGroup } from "@/lib/content";
-import { dict, type Locale } from "@/lib/i18n";
+import { t } from "@/lib/ui-text";
 
 /** Drawer with the sidebar for small screens. */
-export function MobileNav({ groupsByVersion, locale }: { groupsByVersion: Record<string, NavGroup[]>; locale: Locale }) {
-  const t = dict(locale);
+export function MobileNav({ groupsByVersion }: { groupsByVersion: Record<string, NavGroup[]> }) {
   const [open, setOpen] = useState(false);
 
   return (
@@ -32,13 +31,13 @@ export function MobileNav({ groupsByVersion, locale }: { groupsByVersion: Record
           </div>
           <div className="flex-1 overflow-y-auto px-3 py-4">
             <Link
-              href={locale === "en" ? "/changelog" : `/${locale}/changelog`}
+              href="/changelog"
               onClick={() => setOpen(false)}
               className="mb-4 flex rounded-lg px-2 py-1.5 text-sm font-medium text-muted hover:bg-hover hover:text-fg"
             >
               {t.changelog}
             </Link>
-            <Sidebar groupsByVersion={groupsByVersion} locale={locale} collapsible onNavigate={() => setOpen(false)} />
+            <Sidebar groupsByVersion={groupsByVersion} collapsible onNavigate={() => setOpen(false)} />
           </div>
         </Dialog.Popup>
       </Dialog.Portal>
