@@ -107,7 +107,7 @@ The template lives in `.config/cliff.toml` (git-cliff is called with `--config .
    - requires a clean tree on `main`;
    - generates the version's section with git-cliff and inserts it below `[Unreleased]` in `CHANGELOG.md` (Keep a Changelog 1.1.0; released sections are never edited);
    - commits `chore(release): vX.Y.Z`, creates an annotated tag, pushes `main` and the tag;
-   - publishes a GitHub release whose notes are that changelog section (`v0.x` and pre-releases are marked pre-release).
+   - publishes a GitHub release whose notes are that changelog section (`v0.x` and pre-releases are marked pre-release), and **refuses to publish an empty body**: a release with an empty body is indistinguishable from a successful one, so an extraction that silently returns nothing fails the command instead.
 3. Missed a group? Cut it retroactively: `go run ./internal/tools/release -no-commit -ref <commit> vX.Y.Z`, tag `<commit>`, commit the changelog, push, and create the GitHub release from the section.
 4. Nested modules (`drivers/*`, `contrib/*`) are tagged separately as `<dir>/vX.Y.Z` (e.g. `drivers/redis/v0.4.0`) after the core release:
    - tag only modules with non-test changes since their last tag (`git log <dir>/<last tag>..HEAD -- <dir>`); a breaking change is a minor bump before v1;
@@ -131,6 +131,21 @@ The template lives in `.config/cliff.toml` (git-cliff is called with `--config .
 | Dependabot | weekly | `gomod` (all modules, prefix `build(deps)`), `npm` (`site/`), `github-actions` (prefix `ci`) |
 
 Workflows declare `permissions: contents: read` at the top; jobs widen it only for what they write. Every action is pinned by full commit SHA with a `# vX.Y.Z` comment (Dependabot bumps both), and tools fetched in workflows use exact versions (`govulncheck@v1.9.0`, `@redocly/cli@1.34.3`), never `@latest`.
+
+### Changelog extraction in app workflows
+
+The app `release.yml` ([the canonical copy](../.claude/skills/vukem-release/assets/app-release.yml)) builds the release body from `CHANGELOG.md` with a **literal** heading match:
+
+```sh
+awk -v v="${TAG#v}" '
+  index($0, "## [" v "]") == 1 { found = 1; next }
+  found && index($0, "## [") == 1 { exit }
+  found
+' CHANGELOG.md >release-notes.md
+grep -q '[^[:space:]]' release-notes.md # an empty section fails the job
+```
+
+The regex form that used to be copied between the apps, `'$0 ~ "^## \[" v "\]"'`, never matches: awk reads the string `"\["` as a plain `[` (it warns `escape sequence '\[' treated as plain '['`), so the pattern is the character class `^## [0.8.0]`. Paired with an `echo "See CHANGELOG.md"` fallback it published eight releases with a placeholder body and no failure. The fallback is gone: an empty section fails the job.
 
 ### Supply chain
 

@@ -149,8 +149,15 @@ func run(args []string, out io.Writer) error {
 }
 
 // publish creates the GitHub release with notes; v0.x and pre-releases are
-// marked as pre-release.
+// marked as pre-release. Empty notes are refused instead of published: a
+// release with an empty body looks exactly like a successful release, so a
+// broken extraction would stay invisible for as long as nobody reads the
+// releases page.
 func publish(version, notes string) error {
+	if strings.TrimSpace(notes) == "" {
+		return fmt.Errorf("refusing to publish %s with an empty release body", version)
+	}
+
 	f, err := os.CreateTemp("", "release-notes-*.md")
 	if err != nil {
 		return err

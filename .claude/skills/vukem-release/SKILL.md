@@ -28,7 +28,7 @@ For each fix branch (one worktree per branch under `../vukem-worktrees/<name>`, 
 go run ./internal/tools/release -push vX.Y.Z
 ```
 
-The tool generates the section from `.config/cliff.toml` (every entry links its commit), commits `chore(release): vX.Y.Z`, tags, pushes and publishes the GitHub release.
+The tool generates the section from `.config/cliff.toml` (every entry links its commit), commits `chore(release): vX.Y.Z`, tags, pushes and publishes the GitHub release. It refuses to publish when the section it extracted is empty, so a release never goes out with an empty body.
 
 ## 4. Tag nested modules
 
@@ -44,7 +44,14 @@ done
 - Breaking change (`!` commit) → minor bump while below v1. Annotated tag `<dir>/vX.Y.Z`, push the tags.
 - After tagging `contrib/stripe`, bump `stripeVersion` in `internal/cli/billing.go` (pinned by `install:billing`; `TestStripeVersionIsLatestTag` fails until it matches the newest tag) and commit it for the next core release.
 
-## 5. Warm the Go proxy
+## 5. The app release workflow
+
+Every app `release.yml` is a copy of [assets/app-release.yml](assets/app-release.yml). Two things in it are not interchangeable:
+
+- The changelog body is extracted with a **literal** match, `index($0, "## [" v "]") == 1`. The regex form `'$0 ~ "^## \[" v "\]"'` is broken: awk reads `"\["` as a plain `[` (`warning: escape sequence '\[' treated as plain '['`), the pattern becomes the character class `^## [0.8.0]`, and it never matches a heading.
+- An empty section **fails the job**. Never restore an `echo "See CHANGELOG.md"` fallback: a release published with an empty body is indistinguishable from a successful one, which is how eight app releases shipped with no notes.
+
+## 6. Warm the Go proxy
 
 Poll until every new version answers 200 (the proxy and sum.golang.org cache 404s for a few minutes after a push):
 
@@ -53,7 +60,7 @@ curl -s -o /dev/null -w '%{http_code}' https://proxy.golang.org/github.com/!alex
 curl -s -o /dev/null -w '%{http_code}' https://proxy.golang.org/github.com/!alex!galhardo/vukem/<dir>/@v/vA.B.C.info
 ```
 
-## 6. Bump the reference apps
+## 7. Bump the reference apps
 
 Ask each app agent to bump before any feature work, with the upgrade notes from `docs/upgrade/` and the list of adoptable features. Each reports CI green and a healthy production probe (`/up?checks=1` or `/ready`).
 
@@ -61,6 +68,6 @@ Ask each app agent to bump before any feature work, with the upgrade notes from 
 - Agents never change Railway variables or other production config without the owner's approval relayed by the main session. An approval for one app does not extend to the others.
 - Verify the change for real (for mail: trigger a password reset and read the Mailtrap sandbox through its API).
 
-## 7. Record it
+## 8. Record it
 
 Update `status.md`, `framework-feedback/audit.md` and each app's `framework-feedback/*.md` entry status ("fixed in vX.Y.Z"), then triage the new open entries into the next batch.

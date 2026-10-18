@@ -1,0 +1,54 @@
+name: release
+
+# Canonical app release workflow: publishes the GitHub release for a version
+# tag with the matching CHANGELOG.md section as the body.
+#
+# Two things this file exists to get right:
+#
+#   1. The body is extracted with index($0, "## [" v "]") == 1, a literal
+#      match. The regex form '$0 ~ "^## \[" v "\]"' is broken: awk reads the
+#      string "\[" as a plain "[" (it warns "escape sequence `\[' treated as
+#      plain `['"), so the pattern becomes the character class ^## [0.8.0]
+#      and never matches a heading.
+#   2. An empty section fails the job. It must never fall back to a
+#      placeholder body: a release published with an empty body looks exactly
+#      like a successful release, which is how eight releases shipped with no
+#      notes before anyone noticed.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create or update the GitHub release
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Extract the changelog section
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          awk -v v="${TAG#v}" '
+            index($0, "## [" v "]") == 1 { found = 1; next }
+            found && index($0, "## [") == 1 { exit }
+            found
+          ' CHANGELOG.md >release-notes.md
+          if ! grep -q '[^[:space:]]' release-notes.md; then
+            echo "::error::CHANGELOG.md has no section for $TAG; refusing to publish a release with an empty body"
+            exit 1
+          fi
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" --verify-tag --title "$TAG" \
+            --notes-file release-notes.md --repo "$GITHUB_REPOSITORY"
