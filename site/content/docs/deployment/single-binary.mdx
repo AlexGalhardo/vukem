@@ -146,7 +146,7 @@ The `all:` prefix matters. By default `//go:embed` skips files and folders whose
 
 `bootstrap/app.go` passes them to `vukem.WithViews(resources.Views())` and `vukem.WithVite(resources.Public())`, and `routes/web.go` serves the public files with `middleware.StaticFS`. You add nothing.
 
-`resources` reads `APP_ENV` from the same places the app does: the process environment first, then `.env`. `APP_ENV` cannot come from `.env.production`, since that file is chosen by `APP_ENV` itself.
+`resources` reads `APP_ENV` from the same places the app does: the process environment first, then `.env`. `APP_ENV` cannot come from `.env.production`, since that file is chosen by `APP_ENV` itself, and `resources` does not read `@file:` references: an `APP_ENV=@file:...` is not seen as production there, so set `APP_ENV` as plain text.
 
 ## Configure production
 
