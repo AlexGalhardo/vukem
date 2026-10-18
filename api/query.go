@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/AlexGalhardo/vukem/errs"
+	"github.com/AlexGalhardo/vukem/internal/naming"
 	"github.com/AlexGalhardo/vukem/orm"
 	"github.com/AlexGalhardo/vukem/web"
 )
@@ -56,7 +58,11 @@ func Filters(cols ...string) Option { return func(s *spec) { s.filters = cols } 
 // leading "-" means descending.
 func Sorts(cols ...string) Option { return func(s *spec) { s.sorts = cols } }
 
-// Includes allows ?include=rel,rel; handlers eager-load Request.Includes.
+// Includes allows ?include=rel,rel. An include naming a relation field of
+// the model (by Go field name, its snake_case form or its json tag, so
+// "author_profile" matches AuthorProfile) is eager-loaded on
+// Request.Query with orm.Query.With; any other allowlisted name only lands
+// in Request.Includes for the handler to act on.
 func Includes(rels ...string) Option { return func(s *spec) { s.includes = rels } }
 
 // Fields allows ?fields=col,col (sparse fieldsets).
@@ -70,16 +76,41 @@ func PerPage(def, maxPerPage int) Option {
 
 // Request is a query refined by the allowlisted conventions.
 type Request[T any] struct {
-	Query    orm.Query[T]
-	Page     int
-	PerPage  int
-	Cursor   string
+	// Query has the filters, sort, fields and relation includes applied.
+	Query   orm.Query[T]
+	Page    int
+	PerPage int
+	Cursor  string
+	// Includes lists the allowlisted ?include names the client sent, as
+	// sent.
 	Includes []string
+
+	unsorted   orm.Query[T] // Query before the sort, for CursorPaginate
+	hasBase    bool
+	clientSort bool
 }
 
 // Paginate runs an offset page of the refined query.
 func (r Request[T]) Paginate(ctx context.Context) (orm.Page[T], error) {
 	return r.Query.Paginate(ctx, r.Page, r.PerPage)
+}
+
+// CursorPaginate runs a keyset page of the refined query from r.Cursor,
+// ordered by the primary key in dir. The keyset order replaces the default
+// sort of Sorts; a ?sort the client sent explicitly cannot be honoured with
+// a cursor and is a 400 problem.
+func (r Request[T]) CursorPaginate(ctx context.Context, dir orm.Direction) (orm.CursorPage[T], error) {
+	if r.clientSort {
+		return orm.CursorPage[T]{}, errs.New(http.StatusBadRequest,
+			"Query parameter sort cannot be combined with cursor pagination.")
+	}
+
+	q := r.Query
+	if r.hasBase {
+		q = r.unsorted
+	}
+
+	return q.CursorPaginate(ctx, r.Cursor, r.PerPage, dir)
 }
 
 // Query applies ?filter, ?sort, ?fields, ?include, ?page, ?per_page and
@@ -130,7 +161,49 @@ func Query[T any](c *web.Ctx, q orm.Query[T], opts ...Option) (Request[T], error
 		}
 	}
 
+	if f := values.Get("fields"); f != "" {
+		cols := strings.Split(f, ",")
+		for _, col := range cols {
+			if !slices.Contains(s.fields, col) {
+				return req, unknown("field", col, s.fields)
+			}
+		}
+
+		q = q.Select(cols...)
+	}
+
+	if inc := values.Get("include"); inc != "" {
+		relations := relationNames[T]()
+
+		var loaded []string
+
+		for rel := range strings.SplitSeq(inc, ",") {
+			if !slices.Contains(s.includes, rel) {
+				return req, unknown("include", rel, s.includes)
+			}
+
+			req.Includes = append(req.Includes, rel)
+
+			if name, ok := relations[rel]; ok && !slices.Contains(loaded, name) {
+				loaded = append(loaded, name)
+			}
+		}
+
+		if len(loaded) > 0 {
+			q = q.With(loaded...)
+		}
+	}
+
+	// The endpoint's maximum replaces orm.DefaultMaxPerPage, which would
+	// otherwise lower a PerPage(…, 500) to 100.
+	if s.maxPerPage >= 1 {
+		q = q.MaxPerPage(s.maxPerPage)
+	}
+
+	req.unsorted, req.hasBase = q, true
+
 	sorts := values.Get("sort")
+	req.clientSort = sorts != ""
 	if sorts == "" && len(s.sorts) > 0 {
 		sorts = s.sorts[len(s.sorts)-1]
 	}
@@ -153,36 +226,29 @@ func Query[T any](c *web.Ctx, q orm.Query[T], opts ...Option) (Request[T], error
 		q = q.OrderBy(col, dir)
 	}
 
-	if f := values.Get("fields"); f != "" {
-		cols := strings.Split(f, ",")
-		for _, col := range cols {
-			if !slices.Contains(s.fields, col) {
-				return req, unknown("field", col, s.fields)
-			}
-		}
-
-		q = q.Select(cols...)
-	}
-
-	if inc := values.Get("include"); inc != "" {
-		for rel := range strings.SplitSeq(inc, ",") {
-			if !slices.Contains(s.includes, rel) {
-				return req, unknown("include", rel, s.includes)
-			}
-
-			req.Includes = append(req.Includes, rel)
-		}
-	}
-
-	// The endpoint's maximum replaces orm.DefaultMaxPerPage, which would
-	// otherwise lower a PerPage(…, 500) to 100.
-	if s.maxPerPage >= 1 {
-		q = q.MaxPerPage(s.maxPerPage)
-	}
-
 	req.Query = q
 
 	return req, nil
+}
+
+// relationNames maps the public spellings of T's relations (Go field name,
+// snake_case, json tag) to the field name orm.Query.With takes.
+func relationNames[T any]() map[string]string {
+	rt := reflect.TypeFor[T]()
+	out := map[string]string{}
+
+	for _, name := range orm.RelationsOf[T]() {
+		out[name] = name
+		out[naming.Snake(name)] = name
+
+		if f, ok := rt.FieldByName(name); ok {
+			if tag, _, _ := strings.Cut(f.Tag.Get("json"), ","); tag != "" && tag != "-" {
+				out[tag] = name
+			}
+		}
+	}
+
+	return out
 }
 
 // filterValue maps "true"/"false" to booleans (SQLite stores them as 0/1);

@@ -24,6 +24,14 @@ type Product struct {
 	Category string
 	Price    int
 	InStock  bool
+	Reviews  orm.HasMany[Review]
+}
+
+type Review struct {
+	orm.Model
+
+	ProductID int64
+	Body      string
 }
 
 type productJSON struct {
@@ -45,7 +53,9 @@ func setup(t *testing.T) *database.DB {
 	t.Cleanup(func() { _ = db.Close() })
 
 	ddl := `CREATE TABLE products (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TIMESTAMP, updated_at TIMESTAMP,
-		name TEXT NOT NULL, category TEXT NOT NULL, price INTEGER NOT NULL, in_stock BOOLEAN NOT NULL)`
+		name TEXT NOT NULL, category TEXT NOT NULL, price INTEGER NOT NULL, in_stock BOOLEAN NOT NULL);
+		CREATE TABLE reviews (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TIMESTAMP, updated_at TIMESTAMP,
+		product_id INTEGER NOT NULL, body TEXT NOT NULL)`
 	if _, err := db.ExecContext(t.Context(), ddl); err != nil {
 		t.Fatal(err)
 	}
@@ -60,6 +70,10 @@ func setup(t *testing.T) *database.DB {
 		if err := orm.Create(t.Context(), db, &p); err != nil {
 			t.Fatalf("seed %d: %v", i, err)
 		}
+	}
+
+	if err := orm.Create(t.Context(), db, &Review{ProductID: 5, Body: "Comfy"}); err != nil {
+		t.Fatal(err)
 	}
 
 	return db
@@ -409,5 +423,92 @@ func TestPerPageAboveORMDefault(t *testing.T) {
 	_, body := call(t, "/products?per_page=1000", h)
 	if got, want := len(body["data"].([]any)), orm.DefaultMaxPerPage+15; got != want {
 		t.Fatalf("?per_page=1000 with PerPage(20, 500) = %d items, want %d", got, want)
+	}
+}
+
+func TestQueryIncludesLoadRelations(t *testing.T) {
+	t.Parallel()
+
+	db := setup(t)
+	h := func(c *web.Ctx) error {
+		req, err := Query(c, orm.QueryOf[Product](db), Includes("reviews", "stats"), Sorts("id"))
+		if err != nil {
+			return err
+		}
+
+		ps, err := req.Query.Get(c.Context())
+		if err != nil {
+			return err
+		}
+
+		out := map[string]any{"includes": req.Includes}
+		for _, p := range ps {
+			if items, err := p.Reviews.Get(); err == nil {
+				out[p.Name] = len(items)
+			}
+		}
+
+		return c.JSON(200, out)
+	}
+
+	tests := []struct {
+		target string
+		want   map[string]any
+	}{
+		{"/p", map[string]any{"includes": nil}},
+		{"/p?include=stats", map[string]any{"includes": []any{"stats"}}},
+		{"/p?include=reviews", map[string]any{
+			"includes": []any{"reviews"},
+			"Pen":      0.0, "Desk": 0.0, "Lamp": 0.0, "Book": 0.0, "Chair": 1.0,
+		}},
+	}
+
+	for _, tt := range tests {
+		rec, body := call(t, tt.target, h)
+		if rec.Code != 200 {
+			t.Fatalf("%s = %d %v", tt.target, rec.Code, body)
+		}
+
+		if diff := cmp.Diff(tt.want, body); diff != "" {
+			t.Errorf("%s (-want +got):\n%s", tt.target, diff)
+		}
+	}
+}
+
+func TestRequestCursorPaginateIgnoresDefaultSort(t *testing.T) {
+	t.Parallel()
+
+	db := setup(t)
+	h := func(c *web.Ctx) error {
+		req, err := Query(c, orm.QueryOf[Product](db), Sorts("name", "-id"), Filters("category"), PerPage(2, 10))
+		if err != nil {
+			return err
+		}
+
+		page, err := req.CursorPaginate(c.Context(), orm.Asc)
+		if err != nil {
+			return err
+		}
+
+		return Cursor(c, page, toJSON)
+	}
+
+	rec, body := call(t, "/p?filter[category]=furniture", h)
+	if rec.Code != 200 {
+		t.Fatalf("first page = %d %v", rec.Code, body)
+	}
+
+	if diff := cmp.Diff([]string{"Desk", "Lamp"}, names(body)); diff != "" {
+		t.Errorf("first page (-want +got):\n%s", diff)
+	}
+
+	next := body["links"].(map[string]any)["next"].(string)
+	if _, body = call(t, next, h); !cmp.Equal([]string{"Chair"}, names(body)) {
+		t.Errorf("next page = %v", body)
+	}
+
+	rec, body = call(t, "/p?sort=name", h)
+	if rec.Code != 400 || !strings.Contains(body["detail"].(string), "sort") {
+		t.Errorf("explicit sort with a cursor = %d %v, want 400", rec.Code, body)
 	}
 }

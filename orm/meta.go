@@ -22,6 +22,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"reflect"
 	"regexp"
 	"slices"
@@ -255,6 +256,12 @@ func FieldsOf[T any]() []FieldInfo {
 	}
 
 	return out
+}
+
+// RelationsOf returns the relation field names of model T (the names
+// Query.With takes), sorted.
+func RelationsOf[T any]() []string {
+	return slices.Sorted(maps.Keys(metaOf[T]().relations))
 }
 
 // PrimaryKeyOf returns the primary key column of model T.

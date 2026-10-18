@@ -38,3 +38,15 @@ func TestFieldsOf(t *testing.T) {
 		t.Errorf("PrimaryKeyOf[User]() = %q, want id", pk)
 	}
 }
+
+func TestRelationsOf(t *testing.T) {
+	t.Parallel()
+
+	if diff := cmp.Diff([]string{"Posts", "Profile"}, RelationsOf[relUser]()); diff != "" {
+		t.Errorf("RelationsOf[relUser]() (-want +got):\n%s", diff)
+	}
+
+	if got := RelationsOf[User](); len(got) != 0 {
+		t.Errorf("RelationsOf[User]() = %v, want none", got)
+	}
+}
