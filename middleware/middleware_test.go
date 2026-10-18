@@ -566,6 +566,89 @@ func TestStaticFSWithPrefix(t *testing.T) {
 	}
 }
 
+func TestStaticCacheControl(t *testing.T) {
+	t.Parallel()
+
+	files := []string{
+		"img/hero-mountains.jpg", "img/background-image.png", "docs/report-20240101.pdf",
+		"js/app-3f9a1c2bde.js", "js/index-BkS3pZ8_.js", "css/app.4f2a9c1e.css", "css/app.css",
+	}
+	fsys := fstest.MapFS{}
+	for _, f := range files {
+		fsys[f] = &fstest.MapFile{Data: []byte(f)}
+	}
+
+	h := StaticFS(fsys, StaticConfig{})(http.NotFoundHandler())
+
+	const (
+		immutable   = "public, max-age=31536000, immutable"
+		revalidated = "public, max-age=0, must-revalidate"
+	)
+
+	tests := []struct{ path, want string }{
+		{"/img/hero-mountains.jpg", revalidated},
+		{"/img/background-image.png", revalidated},
+		{"/docs/report-20240101.pdf", revalidated},
+		{"/css/app.css", revalidated},
+		{"/js/app-3f9a1c2bde.js", immutable},
+		{"/js/index-BkS3pZ8_.js", immutable},
+		{"/css/app.4f2a9c1e.css", immutable},
+	}
+
+	for _, tt := range tests {
+		if got := do(t, h, get(t, tt.path)).Header().Get("Cache-Control"); got != tt.want {
+			t.Errorf("GET %s Cache-Control = %q, want %q", tt.path, got, tt.want)
+		}
+	}
+}
+
+func TestStaticEmbeddedETag(t *testing.T) {
+	t.Parallel()
+
+	// fstest.MapFS, like embed.FS, reports a zero ModTime.
+	fsys := fstest.MapFS{"app.css": {Data: []byte("body{}")}}
+	h := StaticFS(fsys, StaticConfig{})(http.NotFoundHandler())
+
+	first := do(t, h, get(t, "/app.css"))
+	etag := first.Header().Get("ETag")
+	if first.Code != 200 || etag == "" {
+		t.Fatalf("GET /app.css = %d, ETag %q, want 200 with an ETag", first.Code, etag)
+	}
+
+	r := get(t, "/app.css")
+	r.Header.Set("If-None-Match", etag)
+	if rec := do(t, h, r); rec.Code != http.StatusNotModified {
+		t.Fatalf("GET /app.css with If-None-Match = %d, want 304", rec.Code)
+	}
+
+	fsys["app.css"] = &fstest.MapFile{Data: []byte("body{color:red}")}
+	r = get(t, "/app.css")
+	r.Header.Set("If-None-Match", etag)
+	if rec := do(t, h, r); rec.Code != http.StatusOK || rec.Header().Get("ETag") == etag {
+		t.Fatalf("changed file = %d, ETag %q, want 200 with a new ETag", rec.Code, rec.Header().Get("ETag"))
+	}
+}
+
+func TestStaticDiskFileHasLastModified(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.css"), []byte("a"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = root.Close() })
+
+	rec := do(t, Static(root, StaticConfig{})(http.NotFoundHandler()), get(t, "/a.css"))
+	if rec.Header().Get("Last-Modified") == "" {
+		t.Fatal("disk file served without Last-Modified")
+	}
+}
+
 func TestSecurity_A02_SecureHeaders(t *testing.T) {
 	t.Parallel()
 
