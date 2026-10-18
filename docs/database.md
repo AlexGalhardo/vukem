@@ -14,21 +14,20 @@ Connections, the generic query builder, models, relations, migrations, factories
 
 ## Connections
 
-```go
-// config/database.go
-type Database struct {
-	Default     string `env:"DB_CONNECTION" default:"sqlite"`
-	URL         string `env:"DATABASE_URL"  default:"file:storage/database.sqlite"`
-	MaxOpen     int    `env:"DB_MAX_OPEN"   default:"10"`
-	MaxIdle     int    `env:"DB_MAX_IDLE"   default:"5"`
-	MaxLifetime time.Duration `env:"DB_MAX_LIFETIME" default:"30m"`
-}
-```
+`app.DB()` opens the default connection on first use from `vukem.DatabaseConfig`, adds a `db` health check, passes `app.Crypt` as the encrypter (`orm.Encrypted` columns) and closes it on shutdown:
 
-- `database.Manager` holds named connections (`app.DB.Conn("analytics")`); the default one is `app.DB.Default()`.
-- Each connection is a `*database.DB` wrapping `*sql.DB` plus its `Dialect`; `db.SQL()` exposes the raw `*sql.DB` (sqlc, other libraries).
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `DATABASE_URL` | `file:storage/database.sqlite` | Connection URL; its scheme picks the driver (`file:`/`sqlite:` built in, `postgres://`, `mysql://` and `mariadb://` from `WithDatabaseDrivers`) |
+| `DB_MAX_OPEN` | `10` | Open connections (the reader pool on SQLite) |
+| `DB_MAX_IDLE` | `5` | Idle connections kept |
+
+There is no `DB_CONNECTION` (the URL scheme decides) and no lifetime variable; pass a `database.Config` yourself when you open a connection with `database.Open(ctx, url, database.WithConfig(cfg))`.
+
+- Each connection is a `*database.DB` wrapping `*sql.DB` plus its `Dialect`; `db.SQL()` exposes the raw `*sql.DB` (the writer pool on SQLite) for sqlc or other libraries.
+- More connections: open them with `database.Open` and keep them where your code can reach them; `database.NewManager(db)` with `Add(name, db)`, `Conn(name)`, `Default()` and `Names()` is a small registry for that. The app itself only manages `app.DB()`.
 - Query observers (`database.QueryObserver`) see every statement run through a `DB` or its transactions (SQL, args, duration, error). `database.WithQueryObserver` can be passed several times and `db.AddQueryObserver` appends: all of them are notified in order. `db.SetQueryObserver` replaces them all. `vukem.WithQueryObservers(obs...)` adds observers to `app.DB()` next to devtools. Nil observers, typed nil pointers included, are ignored. A panicking observer is logged (observer type and panic value, never SQL or args) and skipped: the statement still returns its result or rows, and the observers after it still run.
-- Postgres and MySQL register their dialect when the user imports `drivers/postgres` or `drivers/mysql` and passes `postgres.Driver()` / `mysql.Driver()` to the database provider — explicit, no `init()`.
+- Postgres and MySQL are available once the app passes `postgres.Driver()` / `mysql.Driver()` to `vukem.WithDatabaseDrivers` (or `database.WithDriver` to `database.Open`) — explicit, no `init()`.
 
 ### PostgreSQL
 
@@ -99,9 +98,9 @@ PRAGMA synchronous = NORMAL;
 PRAGMA temp_store = MEMORY;
 ```
 
-- Two pools: a **writer** with `SetMaxOpenConns(1)` and a **reader** pool. The query builder routes `SELECT` to the reader and everything else (and all transactions) to the writer.
+- Two pools: a **writer** with `SetMaxOpenConns(1)` and a read-only **reader** pool (`DB_MAX_OPEN`). `QueryContext`/`QueryRowContext` go to the reader (a `RETURNING` statement to the writer); `ExecContext` and every transaction go to the writer.
 - Write transactions use `BEGIN IMMEDIATE` to avoid `SQLITE_BUSY` upgrades.
-- Tests use `file::memory:?cache=shared` or a file in `t.TempDir()`.
+- An in-memory database (`:memory:` or `mode=memory`) lives in one connection shared by reads and writes, without WAL. Tests use `:memory:` or a file in `t.TempDir()`.
 - Known SQLite quirk: an unknown double-quoted identifier is read as a string literal, so `t.Index("misspelled")` in a migration creates a useless index on a constant instead of failing. Postgres and MySQL reject it; run the migrations of apps that deploy on them against that database in CI (`TEST_DATABASE_URL`).
 
 - SQLite reports no column type for `MIN`/`MAX`/`COALESCE` or a subquery over a timestamp column, so the driver returns the stored text and a bare `Scan` into `time.Time` fails. `database.ScanTime(&dest)` (`*time.Time`, `**time.Time`, `*sql.NullTime`, `*sql.Null[time.Time]`) parses the driver's and SQLite's text forms (dates, date-times with `T` or a space, `Z` or an offset; not time-only text or unix integers) and passes a `time.Time` from any dialect through; zoned text comes back in a fixed zone, so compare with `Equal`; the ORM wraps its time fields with it on SQLite. String destinations stay raw (no global `_texttotime`: it would turn `MAX(day)` over text dates into RFC 3339 strings).
@@ -155,11 +154,15 @@ Inside `db.Tx`, use `tx` for every query (pass it as the `database.Executor`). S
 | --- | --- |
 | Where | `Where(col, val)`, `Where(col, op, val)`, `OrWhere`, `WhereIn`, `WhereNotIn`, `WhereNull`, `WhereNotNull`, `WhereBetween`, `WhereRaw(sql, args...)`, grouped `WhereGroup(func(q))` |
 | Shape | `Select(cols...)`, `OrderBy`, `Latest()`, `Limit`, `Offset`, `WithTrashed()`, `OnlyTrashed()` |
-| Read | `Get`, `First`, `Find`, `Count`, `Exists`, `Pluck[V]`, `Each`, `Chunk(n, fn)` |
+| Read | `Get`, `First`, `Find`, `Count`, `Exists`, `Pluck[V]`, `Each`, `Chunk(ctx, n, fn)` |
 | Lock | `LockForUpdate()`, `ForShare()`, then optional `SkipLocked()` / `NoWait()`; needs a `*database.Tx` (`orm.ErrLockOutsideTx` otherwise); all four are no-ops on SQLite, where `NoWait` never fails |
-| Paginate | `Paginate(ctx, page, perPage)` → `Page[T]{Items, Total, Page, PerPage, LastPage}`; `CursorPaginate(ctx, cursor, perPage, dir)` → `CursorPage[T]` |
+| Paginate | `Paginate(ctx, page, perPage)` → `Page[T]{Items, Total, Page, PerPage, LastPage}`; `CursorPaginate(ctx, cursor, perPage, dir)` → `CursorPage[T]`; `MaxPerPage(n)` |
 | Scopes | `Scope(fns ...func(Query[T]) Query[T])` |
 | Raw | `WhereRaw(sql, args...)` for conditions; `db.QueryContext` for anything else |
+
+`Chunk(ctx, n, fn)` reads batches by keyset (`WHERE pk > last ORDER BY pk LIMIT n`), so `fn` may delete or update the rows it receives without making the next batch skip rows, as OFFSET paging would. The query must not have its own `OrderBy`, `Limit` or `Offset`, and a `Select` must keep the primary key; `Chunk` returns an error otherwise. To walk rows in another order, use `Each` with `OrderBy`.
+
+`Paginate` and `CursorPaginate` clamp `perPage` to 1..`orm.DefaultMaxPerPage` (100), so a `per_page` passed through from a request cannot load a whole table in one call; the returned `PerPage` is the value used. `Query.MaxPerPage(n)` changes the bound for one query (`n < 1` is a query error). `api.Query` sets it to the `api.PerPage(def, max)` maximum, and admin list pages to `Resource.PerPage`.
 
 Column names passed as strings are validated against the model's cached column set at query build time (unknown column → error before hitting the database). Raw SQL is the explicit escape hatch.
 
@@ -203,11 +206,11 @@ func (User) Table() string { return "users" } // optional; default snake_case pl
 ```
 
 - Conventions: table = snake_case plural of type name; column = snake_case of field; primary key `id`.
-- Optional interfaces: `Table() string`, `Connection() string`, `PrimaryKey() string`.
-- Hooks via interfaces: `BeforeCreate(ctx) error`, `AfterCreate`, `BeforeUpdate`, `BeforeDelete`…
-- ULID/UUID keys: embed `orm.ULIDModel` instead of `orm.Model`.
+- Optional interfaces: `Table() string` (`orm.Tabler`) and `PrimaryKey() string` (`orm.Keyer`). The `db:"name"` tag renames a column, `db:"-"` skips a field.
+- Hooks: implement `BeforeCreate(ctx) error`, `AfterCreate`, `BeforeUpdate`, `AfterUpdate` or `BeforeDelete` on `*T` (`orm.BeforeCreator`, `orm.AfterCreator`, `orm.BeforeUpdater`, `orm.AfterUpdater`, `orm.BeforeDeleter`); an error aborts the write.
+- Primary keys: an integer key (as in `orm.Model`) is assigned by the database. For UUID or ULID keys, declare the fields yourself instead of embedding `orm.Model` (`ID uuid.UUID` with the `db:"id"` tag, plus `CreatedAt`/`UpdatedAt` for timestamps) and set the key before `Create`, e.g. with `uuid.NewV7()`.
 - No Active Record: models never hold a DB handle; persistence functions take the executor (`db` or `tx`).
-- **Strict mode** (default in development/test): accessing a relation that was not eager-loaded returns `orm.ErrNotLoaded`.
+- Relations are never lazy, in every environment: reading one that was not eager-loaded with `With` returns `orm.ErrNotLoaded`.
 
 ### Encrypted columns
 
@@ -268,32 +271,35 @@ _, err = plain.User.Get()          // orm.ErrNotLoaded: relations are never lazy
 // database/migrations/20261016120000_create_users_table.go
 package migrations
 
-func init() {} // none — migrations are listed in migrations/registry.go (edited by make:migration)
+import "github.com/AlexGalhardo/vukem/schema"
 
-var CreateUsersTable = schema.Migration{
-	ID: "20261016120000_create_users_table",
-	Up: func(s *schema.Schema) error {
-		return s.Create("users", func(t *schema.Table) {
-			t.ID()
-			t.String("name")
-			t.String("email").Unique()
-			t.String("password")
-			t.Timestamp("email_verified_at").Nullable()
-			t.Timestamps()
-		})
-	},
-	Down: func(s *schema.Schema) error { return s.Drop("users") },
+func m20261016120000CreateUsersTable() schema.Migration {
+	return schema.Migration{
+		ID: "20261016120000_create_users_table",
+		Up: func(s *schema.Schema) error {
+			return s.Create("users", func(t *schema.Table) {
+				t.ID()
+				t.String("name")
+				t.String("email").Unique()
+				t.String("password")
+				t.Timestamp("email_verified_at").Nullable()
+				t.Timestamps()
+			})
+		},
+		Down: func(s *schema.Schema) error { return s.DropIfExists("users") },
+	}
 }
 ```
 
-- `registry.go` holds `var All = []schema.Migration{...}`, appended by `make:migration` (codemod) — no `init()` registration.
-- Column types: `ID`, `BigInteger`, `Integer`, `String(n)`, `Text`, `Boolean`, `Decimal(p,s)`, `Float`, `Date`, `Timestamp`, `Timestamps`, `SoftDeletes`, `JSON`, `UUID`, `ULID`, `Enum(vals)`, `ForeignID("user_id").Constrained().CascadeOnDelete()`; modifiers `Nullable`, `Default`, `Unique`, `Index`, `Comment`.
-- `s.Table(name, fn)` alters (add/rename/drop column, indexes); SQLite table rebuild handled by the dialect where `ALTER` is unsupported.
+- `database/migrations/registry.go` holds `func All() []schema.Migration`, which `make:migration` appends to; `bootstrap/app.go` passes it with `vukem.WithMigrations(migrations.All())` — no `init()` registration. `make:migration create_posts_table` writes a `Create` stub, `add_x_to_posts_table` (also `alter_`, `change_`, `update_…_table` and `…_from_`/`_in_`/`_on_…_table`) an alter stub, any other name an empty one.
+- Column types: `ID`, `BigInteger`, `Integer`, `String(name, n...)` (default 255), `Text`, `Boolean`, `Decimal(p, s)`, `Float`, `Date`, `Timestamp`, `Timestamps`, `SoftDeletes`, `JSON`, `UUID`, `ULID`, `Binary`, `Enum(vals...)`, `ForeignID`; modifiers `Nullable`, `Default` (Go value or `schema.Expr`), `Unique`, `Index`; foreign keys `Constrained(table...)` with `CascadeOnDelete`, `NullOnDelete` or `RestrictOnDelete`. There is no column comment modifier.
+- `ForeignID("category_id").Constrained()` references `categories(id)`: the table is the column name without `_id`, pluralised with the ORM's table naming (`user_id` → `users`, `address_id` → `addresses`). Pass the table when it differs: `Constrained("people")`.
+- `s.Table(name, fn)` alters a table with plain `ALTER TABLE` statements: add, rename and drop columns, add and drop indexes, add checks. There is no table rebuild: SQLite cannot drop a column that has an index, a `UNIQUE` constraint or a foreign key, nor add or drop a check on an existing table, so those migrations fail on SQLite.
 - `t.Check(name, expr)` adds a named CHECK constraint (in `Create` on every dialect; in `s.Table` on PostgreSQL and MySQL only, SQLite fails the migration); `t.DropCheck(name)` removes one (MySQL 8.0.19+ / MariaDB 10.2+).
 - `t.Index(cols...)` / `t.UniqueIndex(cols...)` return an `*Index`; `.Where(expr)` makes it partial (`CREATE [UNIQUE] INDEX … WHERE expr`) on PostgreSQL and SQLite. MySQL/MariaDB have no partial indexes, so `Where` fails the migration there instead of creating a full index.
-- `s.Raw(sql)` for anything else.
-- Tracking table `migrations(id, batch, ran_at)`; each migration runs in a transaction where the dialect allows DDL in transactions.
-- Commands: `migrate`, `migrate:rollback [--step N]`, `migrate:reset`, `migrate:fresh [--seed]`, `migrate:status`, `make:migration create_posts_table` (name prefix `create_`/`add_`/`alter_` picks the stub).
+- `s.Raw(sql, args...)` for anything else (data migrations, views, triggers). With args, `?` placeholders are rebound for the dialect with `database.RebindChecked` (`$n` on PostgreSQL), so one data migration runs everywhere; a query mixing `?` and `$n` or ending inside a literal fails. Without args the statement runs as written, so PostgreSQL's jsonb `?` operators in DDL keep working.
+- Tracking table `migrations(id, batch, checksum, ran_at)`. Each migration runs in its own transaction (MySQL commits DDL implicitly, so a failed one is not rolled back there). The checksum is the SHA-256 of the SQL `Up` generates; `migrate:status` shows `Ran (CHANGED since applied)` when it no longer matches and `Ran (missing from code)` for recorded ids without a migration.
+- Commands: `migrate`, `migrate:rollback [--step N]`, `migrate:reset`, `migrate:fresh`, `migrate:status [--json]`, `make:migration <name>`. `migrate:reset` and `migrate:fresh` need `--force` in production; `migrate:fresh` has no `--seed`: run `vukem db:seed` after it.
 
 ## Factories and seeders
 
@@ -341,7 +347,7 @@ if err := orm.Validate(c.Context(), db,
 }
 ```
 
-The built-in messages follow the request locale (`validation.unique`, `validation.exists`, with `{field}` from `validation.attributes.<column>`; see [i18n](subsystems.md#i18n)); a `Message` override is used as is.
+`Field(name)` reports the error under `name` instead of the column, and the built-in message names it too: `Exists[models.Team]("id", x).Field("team_id")` fails with "The selected team_id is invalid.". The built-in messages follow the request locale (`validation.unique`, `validation.exists`, with `{field}` from `validation.attributes.<field>`, the `Field` name when set; see [i18n](subsystems.md#i18n)); a `Message` override is used as is.
 
 Empty values are skipped (`required` belongs to the schema). Columns are validated against the model, so input never chooses a column.
 
@@ -354,12 +360,14 @@ m, err := mongo.Open(ctx, os.Getenv("MONGO_URL"), os.Getenv("MONGO_DATABASE")) /
 app.AddHealthCheck("mongo", m.Ping)                                              // reported by /up?checks=1
 
 users := mongo.Collection[models.User](m, "users")
-u, err := users.FindOne(ctx, bson.D{{Key: "email", Value: e}}) // mongo.ErrNotFound when missing
+u, err := users.FindOne(ctx, bson.D{{Key: "email", Value: e}}) // mongo.ErrNotFound (404) when missing
 for u, err := range users.Find(ctx, bson.D{{Key: "active", Value: true}}, options.Find().SetLimit(50)) { ... }
 id, err := users.Insert(ctx, u)
 matched, modified, err := users.UpdateOne(ctx, filter, bson.D{{Key: "$set", Value: bson.D{{Key: "name", Value: n}}}})
 totals, err := mongo.Aggregate[Total](ctx, users, pipeline)
 ```
+
+`mongo.ErrNotFound` answers 404 when a handler returns it, like `orm.ErrNotFound` (it implements `HTTPStatus()`, which `errs.Status` reads), and wraps the official driver's `mongo.ErrNoDocuments`. `All` returns an empty slice, not nil, when nothing matches, so it encodes as JSON `[]`.
 
 Also `All`, `Count`, `InsertMany`, `UpdateMany`, `ReplaceOne`, `DeleteOne`, `DeleteMany` and `Raw()` for indexes and change streams. **Never pass decoded request JSON as a filter**: operators such as `$where` or `$ne` would come from the client; build filters from validated fields.
 
