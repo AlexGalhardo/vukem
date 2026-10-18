@@ -437,17 +437,48 @@ func funcName(mw Middleware) string {
 		return "middleware@" + strconv.FormatUint(uint64(pc), 16)
 	}
 
-	name := fn.Name()
-	// "github.com/x/y/middleware.Recover.func1" → "middleware.Recover"
+	return cleanFuncName(fn.Name())
+}
+
+// cleanFuncName drops the import path and the suffixes the compiler gives
+// closures and method values: "github.com/x/y/middleware.Recover.func1",
+// "middleware.Recover.1" (inlined closures) and "(*T).M-fm" become
+// "middleware.Recover" and "(*T).M".
+func cleanFuncName(name string) string {
 	if i := strings.LastIndexByte(name, '/'); i >= 0 {
 		name = name[i+1:]
 	}
+
+	name = strings.TrimSuffix(name, "-fm")
 
 	if i := strings.Index(name, ".func"); i >= 0 {
 		name = name[:i]
 	}
 
-	return name
+	for {
+		i := strings.LastIndexByte(name, '.')
+		if i < 0 || !closureSuffix(name[i+1:]) || !strings.Contains(name[:i], ".") {
+			return name
+		}
+
+		name = name[:i]
+	}
+}
+
+// closureSuffix reports a compiler-made name segment: "1", "gowrap2".
+func closureSuffix(seg string) bool {
+	seg = strings.TrimPrefix(seg, "gowrap")
+	if seg == "" {
+		return false
+	}
+
+	for _, r := range seg {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+
+	return true
 }
 
 func (r *Router) adapt(h web.HandlerFunc, rt *Route) http.Handler {

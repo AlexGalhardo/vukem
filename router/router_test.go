@@ -419,6 +419,46 @@ func TestGroupRootIsExact(t *testing.T) {
 	}
 }
 
+func TestRoutesStripsClosureSuffixes(t *testing.T) {
+	t.Parallel()
+
+	r := newRouter()
+	r.Get("/x", text("")).Use(requireRole("admin"), sampleMiddleware)
+
+	got := r.Routes()[0].Middleware
+	want := []string{"router.requireRole", "router.sampleMiddleware"}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("Routes()[0].Middleware mismatch (-want +got):\n%s", diff)
+	}
+
+	for _, tt := range []struct{ in, want string }{
+		{"github.com/x/app/middleware.RequireAdmin.func1", "middleware.RequireAdmin"},
+		{"github.com/x/app/middleware.RequireAdmin.func1.2", "middleware.RequireAdmin"},
+		{"github.com/x/app/middleware.RequireAdmin.1", "middleware.RequireAdmin"},
+		{"github.com/x/app/middleware.RequireAdmin.1.2", "middleware.RequireAdmin"},
+		{"github.com/x/app/middleware.(*Auth).Require-fm", "middleware.(*Auth).Require"},
+		{"github.com/x/app/routes.Register.RequireAdmin.gowrap1", "routes.Register.RequireAdmin"},
+		{"github.com/x/app/middleware.Logger", "middleware.Logger"},
+		{"main.v2", "main.v2"},
+	} {
+		if got := cleanFuncName(tt.in); got != tt.want {
+			t.Errorf("cleanFuncName(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+// requireRole returns a closure, named "router.requireRole.func1" by Go.
+func requireRole(role string) Middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if role == "" {
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 func sampleMiddleware(next http.Handler) http.Handler { return next }
 
 func BenchmarkStaticRoute(b *testing.B) {
