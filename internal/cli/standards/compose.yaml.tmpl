@@ -1,0 +1,80 @@
+# The local stack: the app{{if .Database}}, PostgreSQL{{end}} and a mail catcher.
+#
+#   docker compose up --build
+#
+# works on a fresh clone: the app is built from the same Dockerfile your
+# platform builds, and it reads .env, where `vukem new` already wrote APP_KEY.
+# Open http://localhost:3000 for the app and http://localhost:8025 for the
+# mail catcher, which holds every email the app sends.
+#
+# https://vukem.dev/docs/deployment/docker-and-railway
+name: {{.Name}}
+
+services:
+  app:
+    build: .
+    # .env drives the app; the overrides below are the values that are only
+    # true inside this network.
+    env_file: [.env]
+    environment:
+      APP_URL: http://localhost:3000
+      MAIL_MAILER: smtp
+      SMTP_HOST: mailpit
+      SMTP_PORT: "1025"
+      # The catcher speaks plain SMTP on a private network, not STARTTLS.
+      SMTP_INSECURE: "true"
+      MAIL_FROM: {{.Name}} <hello@localhost>
+    ports: ["3000:3000"]
+    volumes: ["storage:/app/storage"]
+{{- if .Database}}
+    # Apply the migrations, then hand the container to the server with exec,
+    # so the app receives Compose's stop signal and shuts down gracefully.
+    entrypoint: ["/bin/sh", "-c", "/app/app migrate && exec /app/app"]
+{{- end}}
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/up"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    depends_on:
+      mailpit:
+        condition: service_started
+{{- if .Database}}
+      postgres:
+        condition: service_healthy
+
+  # The app starts on SQLite, so this service is here to be switched to:
+  # uncomment DATABASE_URL in .env, then register the driver in
+  # bootstrap/app.go with vukem.WithDatabaseDrivers(postgres.Driver())
+  # (https://vukem.dev/docs/database/overview).
+  postgres:
+    image: postgres:18.6-alpine3.24
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+      POSTGRES_DB: app
+    ports: ["5432:5432"]
+    # PostgreSQL 18 images want the mount one level above the data directory,
+    # so pg_upgrade can move between major versions inside it.
+    volumes: ["postgres:/var/lib/postgresql"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app"]
+      interval: 2s
+      retries: 30
+{{- end}}
+
+  # Mailpit accepts every message and shows it in a web inbox, so password
+  # resets and verification emails are readable without a mail provider.
+  mailpit:
+    image: axllent/mailpit:v1.31.6
+    # Only the web inbox is published; SMTP stays on the private network.
+    ports: ["8025:8025"]
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: "1"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "1"
+
+volumes:
+  storage:
+{{- if .Database}}
+  postgres:
+{{- end}}

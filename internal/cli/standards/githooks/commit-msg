@@ -1,0 +1,42 @@
+#!/bin/sh
+# Conventional Commits 1.0.0 gate. Installed by `vukem new --standards`,
+# which also runs: git config core.hooksPath .githooks
+#
+# Nothing to install: Git runs this with its own POSIX shell, on Linux,
+# macOS and Windows alike. Bypass a single commit with `git commit --no-verify`.
+set -eu
+
+header=$(sed -n 1p "$1")
+
+# Git writes these itself.
+case $header in
+	'' | \#* | 'Merge '* | 'Revert '* | fixup!* | squash!* | amend!*) exit 0 ;;
+esac
+
+types='build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test'
+pattern="^($types)(\([a-z0-9._/-]+\))?!?: [a-z].*[^.]$"
+
+if ! printf '%s' "$header" | grep -Eq "$pattern"; then
+	printf 'commit-msg: %s\n\n' "$header" >&2
+	cat >&2 <<EOF
+The header must be a Conventional Commit: type(scope): description
+
+  type        one of: $(printf '%s' "$types" | tr '|' ' ')
+  scope       optional, lowercase, e.g. (posts)
+  !           after the type or scope for a breaking change
+  description imperative, lowercase start, no trailing period
+
+Examples:
+  feat(posts): add a draft state
+  fix: reject an expired reset token
+  refactor(orm)!: drop Model.Save
+
+https://www.conventionalcommits.org/en/v1.0.0/
+EOF
+	exit 1
+fi
+
+if [ ${#header} -gt 100 ]; then
+	echo "commit-msg: the header is ${#header} characters, the limit is 100" >&2
+	exit 1
+fi

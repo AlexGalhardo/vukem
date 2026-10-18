@@ -1,0 +1,61 @@
+// Railway Infrastructure as Code: https://docs.railway.com/infrastructure-as-code
+//
+// Plan and apply it with the Railway CLI, from the project root:
+//
+//   railway link
+//   railway config plan
+//   railway config apply
+//
+// `npm i -D railway` adds the types; the CLI does not need them.
+// The deprecated railway.json / railway.toml files are not used
+// (https://vukem.dev/docs/deployment/docker-and-railway).
+import { defineRailway, postgres, preserve, project, service } from "railway/iac";
+
+export default defineRailway(() => {
+  const db = postgres("postgres");
+
+  // Secrets stay in Railway: preserve() keeps the value already set there
+  // instead of writing one into the repository.
+  const env = {
+    APP_KEY: preserve(),
+    APP_URL: preserve(),
+    DATABASE_URL: db.env.DATABASE_URL,
+
+    // Railway's edge is observed at 100.64.0.x and sets X-Real-IP. Without
+    // these, every client shares one rate-limit bucket. Check the `peer`
+    // field of your request logs before widening the range.
+    TRUSTED_PROXIES: "100.64.0.0/24",
+    CLIENT_IP_HEADER: "X-Real-IP",
+    TRUST_FORWARDED_PROTO: "true",
+
+    // Railway blocks outbound SMTP below the Pro plan, so use an HTTP
+    // transport. Set MAILTRAP_API_TOKEN (or switch to resend) in Railway.
+    MAIL_MAILER: "mailtrap",
+    MAILTRAP_API_TOKEN: preserve(),
+    MAIL_FROM: preserve(),
+  };
+
+  // The web service builds the repository's Dockerfile. /up is the
+  // healthcheck; migrations run before the new deployment takes traffic.
+  const web = service("{{.Name}}", {
+    healthcheck: "/up",
+    preDeploy: "/app/app migrate",
+    env,
+  });
+
+  // A dedicated queue worker. The image's default command already runs the
+  // scheduler and a worker inside `serve`, so delete this service if one
+  // process is enough.
+  const worker = service("{{.Name}}-worker", {
+    start: "/app/app queue:work",
+    env,
+  });
+
+  // Uploads on S3-compatible object storage, instead of a volume:
+  //   const uploads = bucket("uploads", { region: "iad" });
+  // A volume is only needed for SQLite or local uploads, and pre-deploy
+  // commands do not get one:
+  //   const data = volume("storage", { region: "us-west2", sizeMB: 1024 });
+  //   volumeMounts: { "/app/storage": data }
+  return project("{{.Name}}", { resources: [db, web, worker] });
+});

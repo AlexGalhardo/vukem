@@ -1,0 +1,48 @@
+# Security policy
+
+## Reporting a vulnerability
+
+Do not open a public issue for a security problem.
+
+Report it privately instead. On GitHub, use **Security → Report a vulnerability**
+(Private vulnerability reporting), which opens a private advisory only the
+maintainers can read. If that is not available, email the maintainers and wait
+for an answer before disclosing anything publicly.
+
+Please include:
+
+- what an attacker can do, and the worst case you can think of;
+- the steps or request sequence that reproduce it;
+- the version, commit or deployment you tested;
+- any logs, payloads or screenshots that help.
+
+We aim to acknowledge a report within a few days and to agree on a disclosure
+date with you once a fix is ready.
+
+## Supported versions
+
+Only the latest release of {{.Name}} receives security fixes.
+
+## Scope
+
+In scope: this application's own code, its configuration and its dependencies
+as they are used here.
+
+Out of scope: findings that only apply to a modified deployment, missing
+hardening with no demonstrated impact, and reports produced by a scanner
+without a reproduction.
+
+## What the framework already does
+
+{{.Name}} is built on [Vukem](https://vukem.dev), which fails closed on a
+missing or short `APP_KEY`, on debug mode in production and on invalid proxy
+settings, and which ships CSRF protection, security headers, signed URLs and
+rate limiting as defaults. The
+[security overview](https://vukem.dev/docs/security/overview) lists every
+default and what stays the application's job.
+
+Run the vulnerability scanner on the dependency tree before a release:
+
+```sh
+go tool govulncheck ./...
+```
