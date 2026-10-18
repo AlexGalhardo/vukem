@@ -86,6 +86,7 @@ type testApp struct {
 
 	web    *auth.SessionGuard[User]
 	api    *auth.TokenGuard[User]
+	key    *auth.TokenGuard[User]
 	tokens *auth.Tokens
 	hasher hash.Hasher
 	// down makes the session guard's user lookups fail like a database
@@ -142,6 +143,9 @@ func newApp(t *testing.T, hasher hash.Hasher, extra ...vukem.Option) *testApp {
 				)
 				ta.web.InsecureCookies = true
 				ta.api = auth.NewTokenGuard("api", users, ta.tokens)
+				// A second token guard wired the way an app that wants the
+				// X-API-Key convention does.
+				ta.key = auth.NewTokenGuard("key", users, ta.tokens).WithTokenHeaders("X-API-Key")
 
 				r.Get("/", func(c *web.Ctx) error { return c.String(200, "home") }).Name("home")
 				r.Get("/login", func(c *web.Ctx) error { return c.String(200, "login form") }).Name("login").
@@ -235,6 +239,19 @@ func newApp(t *testing.T, hasher hash.Hasher, extra ...vukem.Option) *testApp {
 				r.Get("/papi-late", func(c *web.Ctx) error { return c.NoContent() }).
 					Use(auth.Required(ta.api, ta.web), auth.ProblemJSON)
 
+				// /keyapi takes the token from X-API-Key as well.
+				r.Group("/keyapi", func(g *router.Group) {
+					g.Use(auth.Required(ta.key))
+					g.Get("/me", func(c *web.Ctx) error {
+						u, err := auth.User[User](c, "key")
+						if err != nil {
+							return err
+						}
+
+						return c.String(200, u.Email)
+					})
+				})
+
 				r.Group("/api", func(g *router.Group) {
 					g.Use(auth.Required(ta.api, ta.web))
 					g.Get("/me", func(c *web.Ctx) error {
@@ -274,6 +291,18 @@ func str(v any) string {
 	}
 
 	return ""
+}
+
+// mustDB is DB without the error check, for tests that cannot run without it.
+func (ta *testApp) mustDB(t *testing.T) *database.DB {
+	t.Helper()
+
+	db, err := ta.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return db
 }
 
 func (ta *testApp) user(t *testing.T, email, password string, verified bool) User {

@@ -419,16 +419,146 @@ func TokensRevokedAtMigration(id string) schema.Migration {
 	}
 }
 
-// TokenGuard authenticates "Authorization: Bearer <token>" requests.
+// TokenGuard authenticates "Authorization: Bearer <token>" requests, plus
+// any header WithTokenHeaders names.
 type TokenGuard[U Authenticatable] struct {
 	name     string
 	provider UserProvider[U]
 	tokens   *Tokens
+	// headers is nil until WithTokenHeaders names a header, so Authorization
+	// is the only credential source unless the app opts in. It is held
+	// behind a pointer to keep TokenGuard comparable, which a slice field
+	// would end (docs/stability.md, the apidiff gate).
+	headers *tokenHeaders
 }
 
-// NewTokenGuard returns the "api" style guard.
+// tokenHeaders lists the extra headers a guard reads a bare token from, as
+// the app spelled them and in the order it named them.
+type tokenHeaders struct{ names []string }
+
+// NewTokenGuard returns the "api" style guard. It reads the token from
+// "Authorization: Bearer <token>" only; WithTokenHeaders adds more headers.
 func NewTokenGuard[U Authenticatable](name string, p UserProvider[U], tokens *Tokens) *TokenGuard[U] {
 	return &TokenGuard[U]{name: name, provider: p, tokens: tokens}
+}
+
+// WithTokenHeaders also accepts the token from each named header, such as the
+// "X-API-Key" convention, and returns g so it can be chained onto
+// NewTokenGuard. Such a header carries the token alone, without a scheme.
+//
+// Precedence: a bearer token in "Authorization" always wins, so opting in
+// never changes what a request that already worked resolves to; the named
+// headers are then tried in the order given, and one sent on more than one
+// line is skipped rather than guessed at. Every named header is added to the
+// response's Vary on every request the guard sees, carrying it or not, so a
+// shared cache cannot serve one key's response to a request holding another.
+// "Authorization" needs no Vary entry: RFC 9111 §3.5 already keeps shared
+// caches from storing a response to a request that carries it.
+//
+// No extra header is accepted without this call. It panics on a name that is
+// not an HTTP field name, on "Authorization" (always read, and only as
+// "Bearer <token>") and on "Cookie", since a token the browser attaches by
+// itself would authenticate every cross-site request.
+func (g *TokenGuard[U]) WithTokenHeaders(names ...string) *TokenGuard[U] {
+	for _, raw := range names {
+		name := strings.TrimSpace(raw)
+		if !validHeaderName(name) {
+			panic(fmt.Sprintf("auth: token header %q is not a valid HTTP header name", raw))
+		}
+
+		switch http.CanonicalHeaderKey(name) {
+		case "Authorization":
+			panic(`auth: token header "Authorization" is always read, as "Bearer <token>"`)
+		case "Cookie":
+			panic(`auth: token header "Cookie" would authenticate every cross-site request; ` +
+				`use a session guard for cookie authentication`)
+		}
+
+		if g.headers == nil {
+			g.headers = &tokenHeaders{}
+		}
+
+		// The name is kept as the app spelled it, since that is what Vary
+		// shows; header lookups canonicalize it themselves.
+		if !slices.ContainsFunc(g.headers.names, func(h string) bool { return strings.EqualFold(h, name) }) {
+			g.headers.names = append(g.headers.names, name)
+		}
+	}
+
+	return g
+}
+
+// tokenNames returns the extra header names, nil when the app named none.
+func (g *TokenGuard[U]) tokenNames() []string {
+	if g.headers == nil {
+		return nil
+	}
+
+	return g.headers.names
+}
+
+// fieldNamePunct are the punctuation characters of an RFC 9110 token, the
+// rest being letters and digits.
+const fieldNamePunct = "!#$%&'*+-.^_`|~"
+
+// validHeaderName reports whether name is a non-empty RFC 9110 token.
+func validHeaderName(name string) bool {
+	return name != "" && !strings.ContainsFunc(name, func(r rune) bool {
+		return (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') &&
+			!strings.ContainsRune(fieldNamePunct, r)
+	})
+}
+
+// token returns the credential of r: a bearer token in Authorization first,
+// then each header of WithTokenHeaders in order. An extra header holds the
+// bare token, trimmed; it is skipped when blank or sent on several lines,
+// where picking one of two keys would be a guess.
+func (g *TokenGuard[U]) token(r *http.Request) (string, bool) {
+	if plain, ok := BearerToken(r); ok {
+		return plain, true
+	}
+
+	for _, name := range g.tokenNames() {
+		if vals := r.Header.Values(name); len(vals) == 1 {
+			if plain := strings.TrimSpace(vals[0]); plain != "" {
+				return plain, true
+			}
+		}
+	}
+
+	return "", false
+}
+
+// vary marks the response as depending on every extra token header, whether
+// this request carried it or not: a cache that ignores it could serve one
+// key's response to a request holding another, or none.
+func (g *TokenGuard[U]) vary(c *web.Ctx) {
+	names := g.tokenNames()
+	if len(names) == 0 {
+		return
+	}
+
+	h := c.Writer().Header()
+
+	for _, name := range names {
+		if !varies(h, name) {
+			h.Add("Vary", name)
+		}
+	}
+}
+
+// varies reports whether h already lists name in Vary, over every header line
+// and every comma-separated item of one.
+func varies(h http.Header, name string) bool {
+	for _, line := range h.Values("Vary") {
+		for item := range strings.SplitSeq(line, ",") {
+			if strings.EqualFold(strings.TrimSpace(item), name) {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 // Name implements Checker.
@@ -456,15 +586,19 @@ func (g *TokenGuard[U]) authenticate(c *web.Ctx) error {
 // User returns the token's user (cached for the request), ErrUnauthenticated
 // for a missing, unknown, wrong, expired or revoked token, or a 503 error
 // when the token or user lookup fails (database down, access_tokens
-// without revoked_at), so an outage is not reported as bad credentials.
+// without revoked_at), so an outage is not reported as bad credentials. The
+// token comes from "Authorization: Bearer <token>" and from the headers of
+// WithTokenHeaders, which the response's Vary then names.
 func (g *TokenGuard[U]) User(c *web.Ctx) (U, error) {
+	g.vary(c)
+
 	if u, ok := cached[U](c, g.name); ok {
 		return u, nil
 	}
 
 	var zero U
 
-	plain, ok := BearerToken(c.Request())
+	plain, ok := g.token(c.Request())
 	if !ok {
 		return zero, ErrUnauthenticated
 	}
