@@ -315,6 +315,36 @@ func TestTokenGuardUserLookupErrors(t *testing.T) {
 	}
 }
 
+func TestTokenGuardBearerSchemeCaseInsensitive(t *testing.T) {
+	t.Parallel()
+
+	ta := newApp(t, hash.Fake())
+	u := ta.user(t, "ana@example.com", "pw", true)
+
+	plain, _, err := ta.tokens.Create(t.Context(), u.AuthID(), "cli", []string{"*"}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		authz string
+		want  int
+	}{
+		{"Bearer " + plain, http.StatusNoContent},
+		{"bearer " + plain, http.StatusNoContent},
+		{"BEARER  " + plain + " ", http.StatusNoContent},
+		{"Bearer" + plain, http.StatusUnauthorized},
+		{"Bearer ", http.StatusUnauthorized},
+		{"Basic " + plain, http.StatusUnauthorized},
+	}
+
+	for _, tt := range tests {
+		if got := ta.Client(t).WithHeader("Authorization", tt.authz).Get("/v1/me").Status(); got != tt.want {
+			t.Errorf("GET /v1/me with Authorization %.10q... = %d, want %d", tt.authz, got, tt.want)
+		}
+	}
+}
+
 func TestTokensRevokeOnLegacyTable(t *testing.T) {
 	t.Parallel()
 
