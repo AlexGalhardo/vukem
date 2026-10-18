@@ -42,6 +42,7 @@ done
 - Look at `git diff --stat <last tag>..HEAD -- <module>`: test-only changes need no tag.
 - `cd <module> && GOWORK=off go test ./...` must pass against the published core before tagging.
 - Breaking change (`!` commit) → minor bump while below v1. Annotated tag `<dir>/vX.Y.Z`, push the tags.
+- After tagging `contrib/stripe`, bump `stripeVersion` in `internal/cli/billing.go` (pinned by `install:billing`; `TestStripeVersionIsLatestTag` fails until it matches the newest tag) and commit it for the next core release.
 
 ## 5. Warm the Go proxy
 

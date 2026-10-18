@@ -120,7 +120,7 @@ Like every `install:*` command, the code is copied into your project. It is your
 | `routes/billing.go` | The routes, added to `routes/registry.go` |
 | `tests/billing_test.go`, `tests/billing_page_test.go` | Tests against a fake Stripe API |
 
-It also appends empty `STRIPE_*` lines to `.env.example`, registers the migration, and adds `github.com/AlexGalhardo/vukem/contrib/stripe` to `go.mod` with `go get …/contrib/stripe@v0.1.0`. Projects made with `vukem new --framework` get a `replace` to the checkout's `contrib/stripe` instead. Run `go get github.com/AlexGalhardo/vukem/contrib/stripe@v0.3.0` to use the newest client (Accounts v2, refunds, transfer reversals). Pass `--force` to overwrite files that already exist.
+It also appends empty `STRIPE_*` lines to `.env.example`, registers the migration, and adds `github.com/AlexGalhardo/vukem/contrib/stripe` to `go.mod` with `go get`, pinned to the latest `contrib/stripe` release when your `vukem` CLI was built. Projects made with `vukem new --framework` get a `replace` to the checkout's `contrib/stripe` instead. Later releases install with `go get github.com/AlexGalhardo/vukem/contrib/stripe@vX.Y.Z` (the tags are listed on [pkg.go.dev](https://pkg.go.dev/github.com/AlexGalhardo/vukem/contrib/stripe?tab=versions)). Pass `--force` to overwrite files that already exist.
 
 ### The subscriptions table
 
