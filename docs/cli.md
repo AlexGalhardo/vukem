@@ -7,7 +7,7 @@ The `vukem` command: scaffolding, generators, dev server, and delegation to the 
 | Binary | Installed by | Knows about the app? | Commands |
 | --- | --- | --- | --- |
 | **`vukem`** (global) | `go install github.com/AlexGalhardo/vukem/cmd/vukem@latest` | No — works on files | `new`, `make:*`, `install:*`, `serve`, `build`, `key:generate`, `key:rotate`, `codegen:rpc`, `version` |
-| **app binary** (`cmd/app`) | built from the user's project | Yes — boots the app | `serve:http` (default), `migrate*`, `db:*`, `route:list`, `queue:*`, `schedule:*`, `openapi:*`, `codegen:types`, `codegen:routes`, `codegen:client`, `about`, `key:generate` (prints a key, runs without booting), user commands |
+| **app binary** (`cmd/app`) | built from the user's project | Yes — boots the app | `serve` (default: HTTP server, plus the queue worker and scheduler when enabled), `migrate*`, `db:*`, `route:list`, `queue:*`, `schedule:*`, `openapi:*`, `codegen:types`, `codegen:routes`, `codegen:client`, `about`, `key:generate` (prints a key, runs without booting), user commands |
 
 When `vukem` receives a command it does not own, it delegates to the project's binary: `cmd/app` is built into `.vukem/bin/app` (rebuilt only when a `.go`, `go.mod` or `go.sum` file is newer than the binary) and run with the same arguments; its exit code is passed through. So `vukem migrate` works from the project root exactly like `php artisan migrate`. Projects ignore `.vukem/` in `.gitignore`.
 
@@ -20,9 +20,10 @@ The global CLI never imports user code and never wraps `go build` with custom se
 | Flag | Meaning |
 | --- | --- |
 | `--force` | overwrite files / allow destructive commands in production |
-| `--env <name>` | select `APP_ENV` |
-| `--json` | machine-readable output where it makes sense |
-| `-h`, `--help` | help (stdlib `flag` usage, grouped by namespace in `vukem list`) |
+| `--json` | machine-readable output (`route:list`, `migrate:status`, `about`, `queue:failed`) |
+| `-h`, `--help` | help (stdlib `flag` usage); `vukem list` groups the commands by namespace |
+
+There is no `--env` flag: set `APP_ENV` in the environment or `.env`.
 
 Exit codes: `0` success, `1` failure, `2` usage error.
 
@@ -69,7 +70,7 @@ Exit codes: `0` success, `1` failure, `2` usage error.
 
 ### ALPHA
 
-Shipped: `new --api`, `install:api`, `make:resource`, `make:factory`, `make:seeder`, `make:policy`, `make:mail`, `make:event`, `make:listener [--event Name] [--async|--queued]`, `make:job`, `install:auth [--social github,google] [--2fa]` (`--2fa`: TOTP two-factor authentication, also on a project that already ran `install:auth`; see [authentication.md](authentication.md#two-factor-authentication-installauth---2fa)), app: `db:seed [Name...] [--class Name] [seeder flags]` (runs every seeder, or the named ones in order; flags after the names go to the seeders that implement `vukem.FlagSeeder`), `db:wipe` (both need `--force` in production). Planned: `stub:publish`, `upgrade`, app: `db` (opens `sqlite3`/`psql` with the configured URL). `storage:link` was replaced by `storage.Handler` (see subsystems.md).
+Shipped: `new --api`, `install:api`, `make:resource`, `make:factory`, `make:seeder`, `make:policy`, `make:mail`, `make:event`, `make:listener [--event Name] [--async|--queued]`, `make:job`, `install:auth [--social github,google] [--2fa]` (`--2fa`: TOTP two-factor authentication, also on a project that already ran `install:auth`; see [authentication.md](authentication.md#two-factor-authentication-installauth---2fa)), app: `db:seed [Name...] [--class Name] [seeder flags]` (runs every seeder, or the named ones in order; flags after the names go to the seeders that implement `vukem.FlagSeeder`), `db:wipe` (both need `--force` in production). Planned: `stub:publish` (until then copy a stub from `internal/cli/stubs/` by hand, see below), `upgrade`, app: `db` (opens `sqlite3`/`psql` with the configured URL). `storage:link` was replaced by `storage.Handler` (see subsystems.md).
 
 ### BETA
 
@@ -80,7 +81,7 @@ Also shipped: `install:inertia`, `ssr:start`, `ssr:check`, `down`/`up` (maintena
 ## Generators and stubs
 
 - Stubs are `text/template` files embedded in `internal/cli/stubs/` (`embed.FS`).
-- `vukem stub:publish` copies them into the project's `stubs/`; local stubs take precedence.
+- A file in the project's `stubs/` with the same name (`stubs/controller.go.tmpl`) takes precedence over the embedded stub. There is no `stub:publish` command yet: copy the stub from `internal/cli/stubs/` by hand.
 - Stub data: `.Name` (Pascal), `.Snake`, `.Kebab`, `.Camel`, `.Plural`, `.Module`, plus `.Table`, `.Timestamp`, `.ID`, `.Func` for migrations and `.Resource`/`.API` for controllers. Unknown keys are errors.
 - Flags may follow the name: `vukem make:model Post -m -c`.
 - Generated Go files are passed through `go/format` before writing.
@@ -106,13 +107,28 @@ type Command interface {
 }
 ```
 
-`vukem make:command SendReports` generates this and appends it to `bootstrap/commands.go`. Commands run with the `console` environment (providers limited to `web` are skipped).
+`vukem.CommandFunc` implements it from a name, a description, optional flags and a function. `vukem make:command SendReports` writes `app/commands/send_reports.go` and appends `commands.SendReports()` to `Commands()` in `bootstrap/commands.go`:
+
+```go
+// SendReports is the "send-reports" command: vukem send-reports.
+func SendReports() vukem.Command {
+	return vukem.CommandFunc{
+		CommandName: "send-reports",
+		Desc:        "Describe what send-reports does",
+		Fn: func(ctx context.Context, app *vukem.App, args []string) error {
+			fmt.Fprintln(app.Stdout(), "send-reports ran with", args)
+			return nil
+		},
+	}
+}
+```
+
+Rename `CommandName` to the `namespace:action` form (`reports:send`) when the command belongs to a group. Commands run with the `console` environment (providers limited to `web` are skipped), after `Boot`.
 
 Commands print through `app.Stdout()` and `app.Stderr()` and read `app.Stdin()` instead of the `os` streams, so `vukem.WithStdout`, `WithStderr` and `WithStdin` (used by tests to capture or silence output) apply to them:
 
 ```go
-fmt.Fprintf(app.Stdout(), "%d users promoted
-", n)
+fmt.Fprintf(app.Stdout(), "%d users promoted\n", n)
 ```
 
 ### `boost:mcp`
@@ -121,6 +137,5 @@ Built-in app command started by agents (`go run ./cmd/app boost:mcp`): a Model C
 
 ## Output
 
-- Plain, colour only when stdout is a terminal and `NO_COLOR` is unset.
-- `--json` for `route:list`, `migrate:status`, `about`.
-- When an AI coding agent is detected (`CLAUDECODE`, `CODEX`, etc. env vars), verbose banners are suppressed (AdonisJS v7 idea).
+- Plain text without colour (so `NO_COLOR` has nothing to turn off) and no banners.
+- `--json` for `route:list`, `migrate:status`, `about` and `queue:failed`.

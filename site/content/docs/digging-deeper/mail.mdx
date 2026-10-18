@@ -275,7 +275,7 @@ The app builds the mailer once, on the first `app.Mailer()` call. That call retu
 | `mailtrap` without a token | `vukem: MAIL_MAILER=mailtrap needs MAILTRAP_API_TOKEN` |
 | `MAILTRAP_INBOX_ID` below zero | `vukem: MAILTRAP_INBOX_ID must be a positive sandbox inbox id` |
 
-Mail is never lost silently. The starters call `app.Mailer()` while they register routes, so in practice these errors stop the app at boot.
+Mail is never lost silently. When `MAIL_MAILER` is set, the last four errors also stop `app.Boot`: `serve`, `queue:work` and every command fail at startup, before any request, instead of at the first email. An unset `MAIL_MAILER` in production is reported by `app.Mailer()` only, so an app that sends no mail does not need it; the starters call `app.Mailer()` while they register routes, so for them that error also appears at startup. `vukem.WithMailTransport` replaces the transport and skips these checks.
 
 ### SMTP
 

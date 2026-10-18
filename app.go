@@ -1070,6 +1070,10 @@ func (a *App) Boot(ctx context.Context) error {
 }
 
 func (a *App) boot(ctx context.Context) error {
+	if err := a.checkMailConfig(); err != nil {
+		return err
+	}
+
 	if err := a.prepareDatabaseQueue(ctx); err != nil {
 		return err
 	}

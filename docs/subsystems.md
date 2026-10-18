@@ -105,7 +105,7 @@ err = mailer.Send(ctx, Welcome{User: u})
 | `log` | logs recipients and subject (bodies at debug) | default outside production |
 | `array` | in-memory (tests) | default in `vukemtest` |
 
-`MAIL_FROM` sets the default sender. Production must set `MAIL_MAILER` explicitly; a missing or unknown value is an error, never silent loss of mail. Hosts that block outbound SMTP (Railway on some plans, other PaaS) time out on `smtp`; use an HTTP transport (`resend` or `mailtrap`) there.
+`MAIL_FROM` sets the default sender. Production must set `MAIL_MAILER` explicitly; a missing or unknown value is an error, never silent loss of mail. An explicit `MAIL_MAILER` that cannot work (`resend` without `RESEND_API_KEY`, `mailtrap` without `MAILTRAP_API_TOKEN` or with a negative `MAILTRAP_INBOX_ID`, an unknown name) fails `app.Boot`, so `serve`, workers and commands stop at startup instead of at the first email; an unset `MAIL_MAILER` in production stays an `app.Mailer()` error, so apps that send no mail need not configure it. `WithMailTransport` skips the check. Hosts that block outbound SMTP (Railway on some plans, other PaaS) time out on `smtp`; use an HTTP transport (`resend` or `mailtrap`) there.
 
 ## Cache
 
