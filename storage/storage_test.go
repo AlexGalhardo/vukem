@@ -2,6 +2,8 @@ package storage_test
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"mime/multipart"
@@ -403,3 +405,121 @@ func TestLocalPutHidesTemporaryFile(t *testing.T) {
 		t.Errorf("List after Put = %v, want [docs/a.txt]", all)
 	}
 }
+
+// A102: a disk had no health check, so an app wrote its own, and the
+// natural one — does a known key exist? — is wrong: with the wrong
+// credentials several S3 implementations answer "object does not exist"
+// rather than failing, so the check reports healthy while nothing can be
+// stored. Only a real write distinguishes the two.
+func TestCheck(t *testing.T) {
+	t.Parallel()
+
+	disk := storage.NewMemory("https://cdn.example.com")
+
+	if err := storage.Check(t.Context(), disk); err != nil {
+		t.Fatalf("Check() on a working disk = %v", err)
+	}
+
+	// Nothing is left behind: a probe that leaks one object per run fills
+	// the bucket it is meant to watch.
+	files, err := disk.List(t.Context(), ".")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(files) != 0 {
+		t.Errorf("Check() left %v behind", files)
+	}
+}
+
+func TestCheckFailsWhenTheDiskDoesNot(t *testing.T) {
+	t.Parallel()
+
+	for name, disk := range map[string]storage.Disk{
+		// The case the existence check misses: writes are refused while a
+		// lookup answers "not found" rather than "forbidden".
+		"write refused":  &brokenDisk{put: errors.New("AccessDenied: key AKIAnotreal secret s3cr3t")},
+		"read refused":   &brokenDisk{open: errors.New("AccessDenied")},
+		"delete refused": &brokenDisk{del: errors.New("AccessDenied")},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			err := storage.Check(t.Context(), disk)
+			if err == nil {
+				t.Fatal("Check() on a broken disk = nil")
+			}
+
+			// The driver error is classified, not forwarded: it may carry a
+			// key or a secret, and a naive handler puts the error in the
+			// response body.
+			if !errors.Is(err, storage.ErrUnhealthy) {
+				t.Errorf("Check() = %v, want ErrUnhealthy", err)
+			}
+
+			for _, secret := range []string{"AKIAnotreal", "s3cr3t"} {
+				if strings.Contains(err.Error(), secret) {
+					t.Errorf("Check() error leaks %q: %v", secret, err)
+				}
+			}
+		})
+	}
+}
+
+// A round trip that writes and reads back different bytes is a disk that
+// is up and wrong, which a Put-only probe reports as healthy.
+func TestCheckDetectsCorruptedRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	err := storage.Check(t.Context(), &brokenDisk{body: []byte("not what was written")})
+	if err == nil || !errors.Is(err, storage.ErrUnhealthy) {
+		t.Fatalf("Check() on a disk returning other bytes = %v, want ErrUnhealthy", err)
+	}
+}
+
+// brokenDisk fails the operation its field names, and otherwise behaves.
+type brokenDisk struct {
+	put, open, del error
+	body           []byte
+}
+
+func (d *brokenDisk) Put(_ context.Context, _ string, r io.Reader) error {
+	if d.put != nil {
+		return d.put
+	}
+
+	b, err := io.ReadAll(r)
+	if err != nil {
+		return err
+	}
+
+	if d.body == nil {
+		d.body = b
+	}
+
+	return nil
+}
+
+func (d *brokenDisk) Open(_ context.Context, _ string) (io.ReadCloser, error) {
+	if d.open != nil {
+		return nil, d.open
+	}
+
+	return io.NopCloser(bytes.NewReader(d.body)), nil
+}
+
+func (d *brokenDisk) Exists(context.Context, string) (bool, error) { return d.body != nil, nil }
+
+func (d *brokenDisk) Delete(context.Context, string) error {
+	if d.del != nil {
+		return d.del
+	}
+
+	d.body = nil
+
+	return nil
+}
+
+func (*brokenDisk) List(context.Context, string) ([]string, error) { return nil, nil }
+
+func (*brokenDisk) URL(string) string { return "" }

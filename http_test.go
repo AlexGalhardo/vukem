@@ -2837,3 +2837,95 @@ func TestWithOpenAPI(t *testing.T) {
 		t.Errorf("info = %+v, servers = %+v, want the supplied values", doc.Info, doc.Servers)
 	}
 }
+
+// A100: the framework's own route names are namespaced, so an app naming a
+// route "health" boots. It used to take the bare name for GET /up, and the
+// duplicate-name error pointed at the app's route — the one that looked
+// wrong — with nothing in the docs or the type system saying the name was
+// taken. It was found by starting a container.
+func TestFrameworkRouteNamesDoNotCollideWithAnApp(t *testing.T) {
+	t.Parallel()
+
+	app := newTestApp(t, WithRoutes(func(r *router.Router, _ *App) error {
+		r.Get("/health", func(c *web.Ctx) error { return c.NoContent() }).Name("health")
+
+		return nil
+	}))
+
+	if _, err := app.Handler(); err != nil {
+		t.Fatalf("an app route named %q must boot: %v", "health", err)
+	}
+
+	// The framework's own route keeps a name, under a reserved prefix, so
+	// it stays addressable.
+	if _, err := app.Router.URL(reservedRouteName("health")); err != nil {
+		t.Errorf("the framework's /up route lost its name: %v", err)
+	}
+
+	// Every name the framework registers carries the prefix, so a future
+	// one cannot reintroduce the collision.
+	for _, rt := range app.Router.Routes() {
+		if rt.Path == "/health" {
+			continue
+		}
+
+		if !strings.HasPrefix(rt.Name, reservedRoutePrefix) {
+			t.Errorf("framework route %s %s is named %q, want the %q prefix",
+				rt.Method, rt.Path, rt.Name, reservedRoutePrefix)
+		}
+	}
+}
+
+// A liveness probe answer must not be cached by an intermediary: a cached
+// 200 reports a process that may already be gone. The readiness branch
+// already set it.
+func TestHealthEndpointIsNotCacheable(t *testing.T) {
+	t.Parallel()
+
+	app := newTestApp(t)
+
+	for _, target := range []string{"/up", "/up?checks=1"} {
+		if got := doReq(t, app, target).Header().Get("Cache-Control"); got != "no-store" {
+			t.Errorf("%s Cache-Control = %q, want no-store", target, got)
+		}
+	}
+}
+
+// A101: the readiness seam existed as a method; WithHealthCheck is the
+// build-time form, so an app declares its dependencies next to its
+// migrations and providers instead of needing a provider for it.
+func TestWithHealthCheck(t *testing.T) {
+	t.Parallel()
+
+	app := newTestApp(t,
+		WithHealthCheck("bucket", func(context.Context) error { return nil }),
+		WithHealthCheck("search", func(context.Context) error { return errors.New("dial tcp 10.0.0.9: refused") }),
+	)
+
+	rec := doReq(t, app, "/up?checks=1")
+
+	var body struct {
+		Status string            `json:"status"`
+		Checks map[string]string `json:"checks"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+
+	if rec.Code != 503 || body.Checks["bucket"] != "ok" || body.Checks["search"] != "fail" {
+		t.Fatalf("/up?checks=1 = %d %+v", rec.Code, body)
+	}
+
+	// The failing check's error names a host; it must not reach the client.
+	if strings.Contains(rec.Body.String(), "10.0.0.9") {
+		t.Errorf("readiness body leaks the dependency error: %s", rec.Body.String())
+	}
+
+	// A provider registering the same name wins, so a build-time default
+	// can be replaced.
+	app.AddHealthCheck("search", func(context.Context) error { return nil })
+
+	if rec := doReq(t, app, "/up?checks=1"); rec.Code != 200 {
+		t.Errorf("after replacing the check: /up?checks=1 = %d %s", rec.Code, rec.Body.String())
+	}
+}

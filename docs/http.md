@@ -33,7 +33,28 @@ func Web(r *router.Router, app *vukem.App) {
 | Resources | `Resource(name, ctrl)`, `APIResource(name, ctrl)` (no `create`/`edit`), `.Only(...)`, `.Except(...)` |
 | Listing | `vukem route:list` prints method, pattern, name, handler, middleware |
 
-Conflicting patterns panic at boot (ServeMux behaviour) and the router wraps the panic into an error naming both routes.
+Conflicting patterns panic at boot (ServeMux behaviour) and the router wraps the panic into an error naming both routes. A duplicate route **name** is a build error too, naming both routes with their methods and paths.
+
+### Reserved route names
+
+Every route the framework registers itself is named under the `vukem.` prefix (`vukem.health` for `GET /up`), so an app can use any name it likes. It used to take the bare name `health`, and an app registering its own `GET /health` under that obvious name made the router refuse to boot — with the error pointing at the app's route, the one that looked wrong, and nothing in the docs or the type system saying the name was taken. Do not prefix your own names with `vukem.` and the two sets can never meet.
+
+### Health and readiness
+
+| Probe | Where | What it touches |
+| --- | --- | --- |
+| Liveness | `GET /up` (`vukem.health`) | the process only; answers `{"status":"ok"}` with `Cache-Control: no-store` |
+| Readiness | `GET /up?checks=1`, or `app.ReadyHandler()` mounted on a path of your own | every registered health check, in parallel, each bounded by its timeout |
+
+Register checks with `vukem.WithHealthCheck(name, check)` at build time, or `app.AddHealthCheck(name, check)` / `app.AddHealthCheckTimeout(name, timeout, check)` from a provider. `app.CheckHealth(ctx)` runs them and returns each error by name.
+
+Three things decide whether this helps or hurts:
+
+- **Point liveness at `/up` and nothing else.** A liveness probe that runs the checks turns one slow dependency into a restart loop, and a load balancer pointed at them turns a degraded service into zero healthy instances.
+- **Make each check prove the dependency does what the app needs.** The database provider registers a `Ping`, and a pool hands out a connection to a database whose migrations never ran — the ping passes while no query the app makes can succeed. Add a check that reads a table the app owns (`SELECT count(*) FROM <table> WHERE 1 = 0` is cheap and index-free, and still fails when the table is absent). For a disk use [`storage.Check`](storage.md), because an existence check passes with credentials that cannot write.
+- **The errors stay server-side.** `ReadyHandler` answers only `"ok"` or `"fail"` per check and logs the detail, because a driver error carries hosts and sometimes credentials. `CheckHealth` returns them for the log, never for a response body.
+
+A check that hangs is abandoned at its timeout rather than accumulating goroutines, and while an abandoned run is still going the check fails immediately instead of starting another.
 
 ### Resource controllers
 

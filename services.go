@@ -277,6 +277,11 @@ type mailState struct {
 	mailer    *mail.Mailer
 	err       error
 	transport mail.Transport
+	// unconfigured records that MAIL_MAILER is unset in production and
+	// this process is not serving, so the refusal was deferred to Send.
+	// RequireMailer turns it back into a boot error for a long-running
+	// worker, which sends mail as its normal work.
+	unconfigured bool
 }
 
 // WithMailTransport replaces the transport chosen by MAIL_MAILER.
@@ -301,6 +306,8 @@ func (a *App) Mailer() (*mail.Mailer, error) {
 				return
 			}
 		}
+
+		_, a.mail.unconfigured = t.(unconfiguredMailer)
 
 		if a.Devtools != nil {
 			t = a.Devtools.MailTransport(t)
@@ -339,6 +346,35 @@ func (a *App) checkMailConfig() error {
 }
 
 // mailConfigError reports settings the chosen transport cannot work with.
+// errUnconfiguredMailer is the production requirement that MAIL_MAILER
+// names a transport, even if it is "log". Nothing is implicit: a
+// production app that silently dropped mail would be worse than one that
+// refuses to start.
+var errUnconfiguredMailer = errors.New("vukem: set MAIL_MAILER in production (smtp, resend, mailtrap or log)")
+
+// unconfiguredMailer carries that refusal to the send, for a process that
+// is not serving. A command that never sends mail runs; one that tries
+// gets the same message, from the call that needed it.
+type unconfiguredMailer struct{}
+
+// Send implements mail.Transport.
+func (unconfiguredMailer) Send(context.Context, *mail.Message) error { return errUnconfiguredMailer }
+
+// RequireMailer reports the production MAIL_MAILER requirement as an
+// error when the app has already built a mailer that cannot send. Call it
+// at the start of a long-running process that sends mail as part of its
+// normal work (queue:work, schedule:work): Mailer() defers the refusal to
+// the send for a console process, so that `about` and route:list run
+// (A81), and a worker should still fail at deploy time rather than job by
+// job. An app that never asks for a mailer is never refused.
+func (a *App) RequireMailer() error {
+	if a.mail.unconfigured {
+		return errUnconfiguredMailer
+	}
+
+	return nil
+}
+
 func mailConfigError(cfg MailConfig) error {
 	switch cfg.Mailer {
 	case "", "log", "array", "smtp":
@@ -370,7 +406,20 @@ func (a *App) mailTransport(cfg MailConfig) (mail.Transport, error) {
 	switch cfg.Mailer {
 	case "":
 		if a.Config.IsProduction() {
-			return nil, errors.New("vukem: set MAIL_MAILER in production (smtp, resend, mailtrap or log)")
+			// A serving process refuses at boot: that is the deploy-time
+			// signal, and the only place the check protects a user. A
+			// command carries the refusal in the transport instead, so it
+			// lands on the path that sends mail. install:auth registers
+			// routes that build a mailer, so refusing here stopped every
+			// command — `about`, whose whole job is to report
+			// configuration, exited 1 for a reason unrelated to what it
+			// does, and a generated image could not smoke-test itself
+			// (A81).
+			if a.Kind == KindWeb {
+				return nil, errUnconfiguredMailer
+			}
+
+			return unconfiguredMailer{}, nil
 		}
 
 		return mail.Log{L: a.Log}, nil

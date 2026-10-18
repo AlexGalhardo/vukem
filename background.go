@@ -459,6 +459,13 @@ func queueWorkCommand() Command {
 			sleep = fs.Duration("sleep", time.Second, "wait when the queue is empty")
 		},
 		Fn: func(ctx context.Context, app *App, _ []string) error {
+			// A worker sends queued mail as its normal work, so the
+			// production MAIL_MAILER requirement is a boot error here, as
+			// it is for serve (A81).
+			if err := app.RequireMailer(); err != nil {
+				return err
+			}
+
 			cfg, err := configLoad[QueueConfig](app)
 			if err != nil {
 				return err
@@ -750,6 +757,10 @@ func scheduleCommands() []Command {
 			CommandName: "schedule:work",
 			Desc:        "Run the scheduler in the foreground (pair with SCHEDULE_IN_SERVE=false on serve)",
 			Fn: func(ctx context.Context, app *App, _ []string) error {
+				if err := app.RequireMailer(); err != nil {
+					return err
+				}
+
 				s, err := app.Schedule()
 				if err != nil {
 					return err

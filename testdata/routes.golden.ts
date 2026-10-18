@@ -4,11 +4,11 @@ export const routes = {
   "admin.users.edit": { method: "GET", path: "/admin/users/{id}" },
   "comments.show": { method: "GET", path: "/posts/{id}/comments/{comment}" },
   "files.show": { method: "GET", path: "/files/{path...}" },
-  "health": { method: "GET", path: "/up" },
   "home": { method: "GET", path: "/" },
   "hooks": { method: "ANY", path: "/hooks/{provider}" },
   "posts.show": { method: "GET", path: "/posts/{id}" },
   "posts.store": { method: "POST", path: "/posts" },
+  "vukem.health": { method: "GET", path: "/up" },
 } as const;
 
 export type RouteName = keyof typeof routes;
@@ -21,11 +21,11 @@ export interface RouteParams {
   "admin.users.edit": { "id": RouteParam };
   "comments.show": { "id": RouteParam; "comment": RouteParam };
   "files.show": { "path": RouteParam };
-  "health": Record<string, never>;
   "home": Record<string, never>;
   "hooks": { "provider": RouteParam };
   "posts.show": { "id": RouteParam };
   "posts.store": Record<string, never>;
+  "vukem.health": Record<string, never>;
 }
 
 type RouteArgs<N extends RouteName> = RouteParams[N] extends Record<string, never>

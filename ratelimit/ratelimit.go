@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/AlexGalhardo/vukem/errs"
+	"github.com/AlexGalhardo/vukem/internal/principal"
 	"github.com/AlexGalhardo/vukem/web"
 )
 
@@ -180,6 +181,28 @@ func ByToken(r *http.Request) string {
 	}
 
 	return ByIP(r)
+}
+
+// ByUser keys requests by the user guard authenticated, falling back to
+// the client IP for an unauthenticated one. Use it after authentication
+// (auth.Required) for a limit that must count per account rather than per
+// address or per token: "10 new API keys an hour" has to survive an
+// attacker rotating addresses, and a session request carries no bearer
+// token, so [ByToken] would key every session by IP.
+//
+// An anonymous caller gets its IP key, not a shared one: a constant key
+// would let any caller exhaust everybody's budget, and an empty key makes
+// [Middleware] pass the request through with no limit at all. Put an IP
+// limit in front anyway when the route is reachable unauthenticated, the
+// way [ByToken] needs one.
+func ByUser(guard string) KeyFunc {
+	return func(r *http.Request) string {
+		if g, id, ok := principal.From(r.Context()); ok && g == guard {
+			return "user:" + guard + ":" + id
+		}
+
+		return ByIP(r)
+	}
 }
 
 // Middleware limits requests with l, keyed by key (ByIP when nil). It

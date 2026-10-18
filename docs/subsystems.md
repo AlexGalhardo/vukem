@@ -105,7 +105,17 @@ err = mailer.Send(ctx, Welcome{User: u})
 | `log` | logs recipients and subject (bodies at debug) | default outside production |
 | `array` | in-memory (tests) | default in `vukemtest` |
 
-`MAIL_FROM` sets the default sender. Production must set `MAIL_MAILER` explicitly; a missing or unknown value is an error, never silent loss of mail. An explicit `MAIL_MAILER` that cannot work (`resend` without `RESEND_API_KEY`, `mailtrap` without `MAILTRAP_API_TOKEN` or with a negative `MAILTRAP_INBOX_ID`, an unknown name) fails `app.Boot`, so `serve`, workers and commands stop at startup instead of at the first email; an unset `MAIL_MAILER` in production stays an `app.Mailer()` error, so apps that send no mail need not configure it. `WithMailTransport` skips the check. Hosts that block outbound SMTP (Railway on some plans, other PaaS) time out on `smtp`; use an HTTP transport (`resend` or `mailtrap`) there.
+`MAIL_FROM` sets the default sender. Production must set `MAIL_MAILER` explicitly; a missing or unknown value is an error, never silent loss of mail. An explicit `MAIL_MAILER` that cannot work (`resend` without `RESEND_API_KEY`, `mailtrap` without `MAILTRAP_API_TOKEN` or with a negative `MAILTRAP_INBOX_ID`, an unknown name) fails `app.Boot`, so `serve`, workers and commands stop at startup instead of at the first email. `WithMailTransport` skips the check.
+
+An **unset** `MAIL_MAILER` in production is refused where mail is actually sent:
+
+| Process | When it is refused |
+| --- | --- |
+| `serve` | at boot, as soon as anything asks for `app.Mailer()` |
+| `queue:work`, `schedule:work` | at boot, through `app.RequireMailer()` — a worker sends queued mail as its normal work |
+| any other command | at the `Send` call, with the same message |
+
+The last row is the point: `install:auth` registers routes that build a mailer, so refusing at construction stopped **every** command. `about`, whose whole job is to report configuration, exited 1 for a reason unrelated to what it does, and a freshly generated image could not smoke-test itself (`docker run <image> about`). An app that sends no mail never needs to configure one. Call `app.RequireMailer()` at the start of any long-running process of your own that sends mail, so it fails at deploy time rather than per job. Hosts that block outbound SMTP (Railway on some plans, other PaaS) time out on `smtp`; use an HTTP transport (`resend` or `mailtrap`) there.
 
 ## Cache
 
@@ -185,6 +195,7 @@ link, err := storage.TemporaryURL(signer, "/files", "invoices/42.pdf", 15*time.M
 - `storage.Disk`: `Put` (atomic rename on local disks, through a hidden `.name.tmp-…` file that `List` and `Handler` skip), `Open`, `Exists`, `Delete`, `List`, `URL`; helpers `storage.Get` and `storage.PutBytes`. Disks: `NewLocal` and `NewMemory` (tests); S3 in `drivers/s3` ([S3](#s3)). `storage/storagetest` holds the conformance and traversal suites (`TestSecurity_A01_StorageTraversal`).
 - `PutUploaded` never uses the client's file name: random name, extension from the type detected in the content (`http.DetectContentType`), size checked from the header and again while copying, 422 for disallowed types or sizes. `UploadRules.Types` is required: an empty list is an error, not "any type" (`TestSecurity_A05_PutUploadedRequiresTypes`).
 - `Handler` never serves dotfiles or directories, sends the file's real modification time as `Last-Modified` (none when the disk cannot report it) so `If-Modified-Since` answers 304, sends `X-Content-Type-Options: nosniff`, and with a `signed.Signer` only answers signed, unexpired URLs.
+- `storage.Check(ctx, disk)` is the readiness check for a disk: it writes a small object under a unique key below `.vukem-health/`, reads it back, compares the bytes and deletes it, with the delete running through `context.WithoutCancel` so an abandoned probe leaves nothing behind. Use it from `vukem.WithHealthCheck`/`app.AddHealthCheck`, never in a liveness probe. The round trip is the point: the obvious check — does a known object exist? — **passes when nothing works**, because with the wrong credentials several S3 implementations answer "object does not exist" rather than refusing, and reading the bytes back also catches a disk that is up and returning the wrong object. Every error wraps `storage.ErrUnhealthy` and none wraps the driver's, which carries the endpoint, the bucket and sometimes the access key.
 - Decision: instead of `storage:link` (a symlink, which needs extra privileges on Windows), public files are served by `storage.Handler` from the disk itself.
 
 ### S3
@@ -305,7 +316,17 @@ login := ratelimit.Middleware(limiters("login", 5, time.Minute), account.LoginTh
 r.Post("/login", h.Login).Use(login)
 ```
 
-Limiters are keyed by `ratelimit.ByIP` (default), `ByToken` (after `auth.Required` only) or your own `KeyFunc`; responses include `RateLimit-*` headers, `429` adds `Retry-After`; a failing store denies. `install:auth` and `install:api` throttle logins, mails and tokens by default, through `app.RateLimiters()`. `vukem.WithRateLimiters(factory)` replaces the `RATE_LIMIT_STORE` factory (a limiter of your own, or a fake in tests).
+Limiters are keyed by `ratelimit.ByIP` (default), `ByToken` (after `auth.Required` only), `ByUser(guard)` or your own `KeyFunc`; responses include `RateLimit-*` headers, `429` adds `Retry-After`; a failing store denies.
+
+Choosing the key is the whole decision:
+
+| Key | Bucket | When |
+| --- | --- | --- |
+| `ByIP` | client address (IPv6 grouped by `web.Services.IPv6Prefix`) | anything reachable unauthenticated |
+| `ByToken` | the bearer token, hashed; the IP when there is none | API routes, behind an IP limit |
+| `ByUser(guard)` | the account the guard authenticated; the IP when nobody is | an authenticated action whose budget belongs to the account |
+
+`ByUser` is the key for a limit like "10 new API keys an hour". `ByIP` punishes everybody behind one NAT while an attacker rotates addresses, and `ByToken` finds no bearer token on a session request, so it falls back to the IP and a stolen session can mint keys faster than the owner can revoke them. An unauthenticated caller gets its IP key, never a shared one: a constant key would let any caller exhaust everybody's budget and an empty one would skip the limit entirely — so put an IP limit in front as well when the route is reachable without authentication. `install:auth` and `install:api` throttle logins, mails and tokens by default, through `app.RateLimiters()`. `vukem.WithRateLimiters(factory)` replaces the `RATE_LIMIT_STORE` factory (a limiter of your own, or a fake in tests).
 
 | Store | Algorithm | Shared by servers |
 | --- | --- | --- |

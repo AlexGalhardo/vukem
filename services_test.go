@@ -784,3 +784,90 @@ func TestWithEventsFakeRecordsInsteadOfRunning(t *testing.T) {
 		t.Fatalf("Dispatched = %v, want one signedUp", got)
 	}
 }
+
+// A81: the production mailer requirement stopped every command, not just
+// the ones that send mail. install:auth registers routes that build a
+// mailer, so resolving the routes failed, and `about` — a read-only
+// command whose job is to report configuration — exited 1 with
+// "set MAIL_MAILER in production". A generated image could not smoke-test
+// itself. The requirement belongs where mail is sent, and at the boot of a
+// process that will serve.
+func TestProductionMailerIsRequiredOnlyWhereMailIsSent(t *testing.T) {
+	t.Parallel()
+
+	prod := map[string]string{"APP_ENV": "production", "APP_DEBUG": "false", "APP_URL": "https://example.com"}
+
+	// A console command builds a mailer: no error, so route registration
+	// and `about` work.
+	console := newTestApp(t, WithSource(testSource(prod)), WithKind(KindConsole))
+
+	m, err := console.Mailer()
+	if err != nil {
+		t.Fatalf("Mailer() in a console command = %v, want a mailer whose Send reports the problem", err)
+	}
+
+	// ... and sending is where it is refused, with the same message.
+	err = m.Send(t.Context(), unconfiguredMailable{})
+	if err == nil || !strings.Contains(err.Error(), "MAIL_MAILER") {
+		t.Fatalf("Send() without a configured mailer = %v, want the MAIL_MAILER error", err)
+	}
+
+	// A serving process still refuses at boot: that is the deploy-time
+	// signal, and it is the only place it protects a user.
+	serving := newTestApp(t, WithSource(testSource(prod)))
+	if _, err := serving.Mailer(); err == nil || !strings.Contains(err.Error(), "MAIL_MAILER") {
+		t.Fatalf("Mailer() in a serving app = %v, want the MAIL_MAILER error", err)
+	}
+
+	// Outside production nothing changes: the log transport is the default.
+	dev := newTestApp(t, WithKind(KindConsole))
+	if _, err := dev.Mailer(); err != nil {
+		t.Fatalf("Mailer() outside production = %v", err)
+	}
+}
+
+type unconfiguredMailable struct{}
+
+func (unconfiguredMailable) Envelope() mail.Envelope {
+	return mail.Envelope{To: []string{"a@example.com"}, Subject: "x"}
+}
+
+func (unconfiguredMailable) Content() mail.Content { return mail.Text("x") }
+
+// A worker sends queued mail as its normal work, so it keeps the boot
+// error that `about` lost: nothing is weakened, only moved off the
+// commands that never send.
+func TestRequireMailerRefusesAWorkerAndNotAReadOnlyCommand(t *testing.T) {
+	t.Parallel()
+
+	prod := map[string]string{"APP_ENV": "production", "APP_DEBUG": "false", "APP_URL": "https://example.com"}
+
+	app := newTestApp(t, WithSource(testSource(prod)), WithKind(KindConsole))
+
+	// Nothing has asked for a mailer yet: an app that never sends mail
+	// must not be refused.
+	if err := app.RequireMailer(); err != nil {
+		t.Fatalf("RequireMailer() before any Mailer() call = %v, want nil", err)
+	}
+
+	if _, err := app.Mailer(); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := app.RequireMailer(); err == nil || !strings.Contains(err.Error(), "MAIL_MAILER") {
+		t.Fatalf("RequireMailer() after Mailer() = %v, want the MAIL_MAILER error", err)
+	}
+
+	// A configured mailer is never refused.
+	withLog := map[string]string{"MAIL_MAILER": "log"}
+	maps.Copy(withLog, prod)
+
+	ok := newTestApp(t, WithSource(testSource(withLog)), WithKind(KindConsole))
+	if _, err := ok.Mailer(); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ok.RequireMailer(); err != nil {
+		t.Errorf("RequireMailer() with MAIL_MAILER=log = %v", err)
+	}
+}

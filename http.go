@@ -55,9 +55,25 @@ type health struct {
 	checks map[string]*healthCheck
 }
 
+// namedHealthCheck is a check registered by WithHealthCheck, before there
+// is an App to call AddHealthCheck on.
+type namedHealthCheck struct {
+	name  string
+	check HealthCheck
+}
+
 // AddHealthCheck registers a readiness check, reported by ReadyHandler and
 // GET /up?checks=1 and bounded by DefaultHealthCheckTimeout. A check with
-// the same name replaces the previous one.
+// the same name replaces the previous one. WithHealthCheck is the same
+// thing at build time.
+//
+// Make the check prove the dependency does what this app needs, not that
+// something answers. The database check the database provider registers is
+// a Ping, and a pool hands out a connection to a database whose migrations
+// never ran, so a Ping passes while no query the app makes can succeed: add
+// a check that reads a table the app owns. For a disk, use
+// [storage.Check], because an existence check passes with credentials that
+// cannot write.
 func (a *App) AddHealthCheck(name string, check HealthCheck) {
 	a.AddHealthCheckTimeout(name, DefaultHealthCheckTimeout, check)
 }
@@ -190,6 +206,11 @@ func (a *App) writeReadiness(w http.ResponseWriter, r *http.Request) {
 // ?checks=1 it answers like ReadyHandler.
 func (a *App) healthHandler(c *web.Ctx) error {
 	if !c.QueryBool("checks") {
+		// A cached liveness answer reports a process that may already be
+		// gone, so no intermediary may keep it (writeReadiness does the
+		// same for the readiness branch).
+		c.Writer().Header().Set("Cache-Control", "no-store")
+
 		return c.JSON(http.StatusOK, web.Map{"status": "ok"})
 	}
 
@@ -597,10 +618,24 @@ func (a *App) newRouter() *router.Router {
 	if a.Config.IsProduction() && len(a.proxies) == 0 {
 		r.UseServer(untrustedProxyWarning(a.Log))
 	}
-	r.Get("/up", a.healthHandler).Name("health")
+	r.Get("/up", a.healthHandler).Name(reservedRouteName("health"))
 
 	return r
 }
+
+// reservedRoutePrefix namespaces the route names the framework registers
+// itself. Without it they compete with the app's: GET /up was named
+// "health", so an app registering its own GET /health under that obvious
+// name made the router refuse to boot on a duplicate name, and the error
+// named the app's route — the one that looked wrong. Nothing in the docs
+// or the type system said the name was taken, and the two paths differ, so
+// there was no hint at the call site either (A100).
+const reservedRoutePrefix = "vukem."
+
+// reservedRouteName is the framework's name for one of its own routes. An
+// app's name never starts with the prefix unless it chooses to, and
+// docs/http.md says so.
+func reservedRouteName(name string) string { return reservedRoutePrefix + name }
 
 // untrustedProxyWarning logs once when a request from a private, CGNAT or
 // loopback peer carries X-Forwarded-For or X-Real-IP while TRUSTED_PROXIES

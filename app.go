@@ -309,6 +309,7 @@ type options struct {
 	kind          Kind
 	providers     []Provider
 	runners       []namedRunner
+	healthChecks  []namedHealthCheck
 	routes        []func(r *router.Router, app *App) error
 	bootRoutes    []func(r *router.Router, app *App) error
 	views         fs.FS
@@ -515,6 +516,25 @@ func WithRunner(name string, r Runner) Option {
 	return func(o *options) error { o.runners = append(o.runners, namedRunner{name, r}); return nil }
 }
 
+// WithHealthCheck registers a readiness check at build time, the
+// declarative form of [App.AddHealthCheck]: a dependency the instance
+// needs in order to serve, reported by [App.ReadyHandler] and
+// GET /up?checks=1 and bounded by [DefaultHealthCheckTimeout]. Use
+// [App.AddHealthCheckTimeout] from a provider for a check that needs its
+// own timeout.
+//
+// Point the platform's liveness probe at GET /up, which touches nothing,
+// and readiness at a path serving ReadyHandler. Pointing liveness at the
+// checks turns one slow dependency into a restart loop, and pointing a
+// load balancer at them turns it into zero healthy instances.
+func WithHealthCheck(name string, check HealthCheck) Option {
+	return func(o *options) error {
+		o.healthChecks = append(o.healthChecks, namedHealthCheck{name, check})
+
+		return nil
+	}
+}
+
 // New builds an App: it loads and validates configuration and registers
 // providers. It refuses insecure configuration (see docs/security.md, A02).
 func New(opts ...Option) (*App, error) {
@@ -690,6 +710,12 @@ func New(opts ...Option) (*App, error) {
 		app.Log.Warn("HSTS_FORCE is ignored outside production: HSTS is not forced", "env", string(cfg.Env))
 	}
 	routes = app.Router
+
+	// Before the providers run, so a provider's AddHealthCheck with the
+	// same name replaces a build-time one rather than the other way round.
+	for _, hc := range o.healthChecks {
+		app.AddHealthCheck(hc.name, hc.check)
+	}
 
 	if dt != nil {
 		app.enableDevtools(dt)

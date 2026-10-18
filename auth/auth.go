@@ -19,6 +19,7 @@ import (
 
 	"github.com/AlexGalhardo/vukem/database"
 	"github.com/AlexGalhardo/vukem/errs"
+	"github.com/AlexGalhardo/vukem/internal/principal"
 	"github.com/AlexGalhardo/vukem/orm"
 	"github.com/AlexGalhardo/vukem/web"
 )
@@ -144,31 +145,26 @@ type Checker interface {
 
 type userKey struct{ guard string }
 
-type principalKey struct{}
-
-type principal struct{ guard, id string }
-
-// cache stores the user for this request in c's context, and the
-// principal Principal reports (cleared when u is nil, on logout).
+// cache stores the user for this request in c's context, and the identity
+// Principal reports (cleared when u is nil, on logout).
 func cache(c *web.Ctx, guard string, u any) {
 	ctx := context.WithValue(c.Context(), userKey{guard}, u)
 
-	var p principal
+	var id string
 	if a, ok := u.(Authenticatable); ok {
-		p = principal{guard: guard, id: a.AuthID()}
+		id = a.AuthID()
 	}
 
-	c.SetRequest(c.Request().WithContext(context.WithValue(ctx, principalKey{}, p)))
+	c.SetRequest(c.Request().WithContext(principal.With(ctx, guard, id)))
 }
 
 // Principal returns the guard and user id of the user most recently
 // authenticated on this request by any guard, for code that must key data
-// by caller without knowing the guard (api.Idempotency). Combine the two
-// unambiguously (length-prefixed or hashed): either may contain any
-// character.
+// by caller without knowing the guard (api.Idempotency,
+// ratelimit.ByUser). Combine the two unambiguously (length-prefixed or
+// hashed): either may contain any character.
 func Principal(ctx context.Context) (guard, id string, ok bool) {
-	p, _ := ctx.Value(principalKey{}).(principal)
-	return p.guard, p.id, p.id != ""
+	return principal.From(ctx)
 }
 
 func cached[U any](c *web.Ctx, guard string) (U, bool) {
