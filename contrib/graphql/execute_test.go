@@ -198,7 +198,7 @@ scalar DateTime @specifiedBy(url: "https://scalars.graphql.org/andimarek/date-ti
 scalar JSON
 enum Color { RED GREEN }
 input PostInput { title: String! tags: [String!] = [] color: Color = RED when: DateTime meta: JSON }
-type Post { title: String! tags: [String!]! color: Color! when: DateTime meta: JSON count: Int }
+type Post { title: String! tags: [String!]! color: Color! when: DateTime meta: JSON }
 union Result = Post | Problem
 type Problem { reason: String }
 type Query {

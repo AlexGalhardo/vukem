@@ -220,7 +220,11 @@ func TestSecurity_A06_GraphQLComplexityUsesSDLDefaults(t *testing.T) {
 		want string
 	}{
 		{"default applies", Request{Query: `{ items { expensive } }`}, CodeLimitExceeded},
-		{"unset variable takes the default", Request{Query: `query ($n: Int) { items(first: $n) { expensive } }`}, CodeLimitExceeded},
+		{
+			"unset variable takes the default",
+			Request{Query: `query ($n: Int) { items(first: $n) { expensive } }`},
+			CodeLimitExceeded,
+		},
 		{"explicit value wins", Request{Query: `{ items(first: 2) { expensive } }`}, ""},
 	}
 

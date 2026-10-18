@@ -33,7 +33,10 @@ func Field[P, A, O any](
 			return fmt.Errorf("graphql: binding %s.%s: %w", typeName, fieldName, err)
 		}
 
-		bd := binding{typeName: typeName, field: fieldName, argNames: names}
+		bd := binding{
+			typeName: typeName, field: fieldName, argNames: names,
+			parent: reflect.TypeFor[P](), out: reflect.TypeFor[O](),
+		}
 		bd.resolve = func(ctx context.Context, parent any, args map[string]any) (any, error) {
 			p, ok := convertParent[P](parent)
 			if !ok {
@@ -133,32 +136,21 @@ func argsDecoder[A any]() (func(map[string]any) (A, error), []string, error) {
 			}
 		}
 
+		// Validate errors go through the resolver error mapping: z issues,
+		// validation errors, 4xx errs and *Error reach the client, anything
+		// else is masked and logged (CWE-209), as in contrib/grpc.
 		if v, ok := any(&a).(Validator); ok {
 			if err := v.Validate(); err != nil {
-				return a, asInputError(err)
+				return a, err
 			}
 		} else if v, ok := any(a).(Validator); ok {
 			if err := v.Validate(); err != nil {
-				return a, asInputError(err)
+				return a, err
 			}
 		}
 
 		return a, nil
 	}, names, nil
-}
-
-// asInputError keeps typed client errors and marks plain ones as
-// BAD_USER_INPUT (a Validator speaks about its own input).
-func asInputError(err error) error {
-	if isIssues(err) || isValidation(err) {
-		return err
-	}
-
-	if _, ok := err.(*Error); ok { //nolint:errorlint // only an unwrapped *Error keeps its own code
-		return err
-	}
-
-	return &Error{Message: err.Error(), Extensions: map[string]any{"code": CodeBadUserInput}, cause: err}
 }
 
 func tagSchema[A any]() (s z.Schema[A], err error) {
@@ -171,9 +163,29 @@ func tagSchema[A any]() (s z.Schema[A], err error) {
 	return z.For[A](), nil
 }
 
+// hasValidateTags reports whether rt or a struct it holds (a nested input
+// object, a list or a pointer of them) has `validate` tags.
 func hasValidateTags(rt reflect.Type) bool {
+	return hasTags(rt, map[reflect.Type]bool{})
+}
+
+func hasTags(rt reflect.Type, seen map[reflect.Type]bool) bool {
+	for rt.Kind() == reflect.Pointer || rt.Kind() == reflect.Slice || rt.Kind() == reflect.Array {
+		rt = rt.Elem()
+	}
+
+	if rt.Kind() != reflect.Struct || seen[rt] {
+		return false
+	}
+
+	seen[rt] = true
+
 	for _, f := range reflect.VisibleFields(rt) {
 		if _, ok := f.Tag.Lookup("validate"); ok {
+			return true
+		}
+
+		if f.IsExported() && !f.Anonymous && hasTags(f.Type, seen) {
 			return true
 		}
 	}

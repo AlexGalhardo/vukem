@@ -204,7 +204,7 @@ func (w *limitWalker) argValue(f *field, name string) (any, bool) {
 			continue
 		}
 
-		switch a.value.kind { //nolint:exhaustive // other kinds carry no page size
+		switch a.value.kind {
 		case valVariable:
 			v, ok := w.vars[a.value.raw]
 			return v, ok
