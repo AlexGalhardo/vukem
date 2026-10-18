@@ -39,7 +39,10 @@ type Envelope struct {
 	Bcc     []string
 	ReplyTo []string
 	Subject string
-	// Tags are provider metadata (Resend tags; X-Tag headers over SMTP).
+	// Tags are provider metadata (Resend tags; X-Tag headers over SMTP;
+	// Mailtrap category and custom variables). Names must not be empty and
+	// neither may contain a line break or colon; Resend also limits them
+	// to ASCII letters, digits, "_" and "-".
 	Tags map[string]string
 }
 
@@ -192,6 +195,10 @@ func (m *Mailer) Render(ctx context.Context, mailable Mailable) (*Message, error
 		return nil, errors.New("mail: subject contains a line break")
 	}
 
+	if err := checkTags(msg.Tags); err != nil {
+		return nil, err
+	}
+
 	if err := m.content(ctx, mailable.Content(), msg); err != nil {
 		return nil, err
 	}
@@ -234,6 +241,23 @@ func (m *Mailer) content(ctx context.Context, c Content, msg *Message) error {
 		msg.Text = b.String()
 	} else {
 		msg.Text = textFromHTML(msg.HTML)
+	}
+
+	return nil
+}
+
+// checkTags applies the rule every transport needs (SMTP writes tags as
+// X-Tag headers): a non-empty name, no line break or colon. Transports
+// add their provider's rules (Resend).
+func checkTags(tags map[string]string) error {
+	for k, v := range tags {
+		if k == "" {
+			return errors.New("mail: tag with an empty name")
+		}
+
+		if strings.ContainsAny(k+v, "\r\n:") {
+			return errors.New("mail: tag contains a line break or colon")
+		}
 	}
 
 	return nil

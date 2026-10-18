@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/AlexGalhardo/vukem/config"
@@ -99,6 +100,10 @@ type resendEmail struct {
 
 // Send implements Transport, retrying 429 and 5xx with backoff.
 func (r *Resend) Send(ctx context.Context, msg *Message) error {
+	if err := resendTags(msg.Tags); err != nil {
+		return err
+	}
+
 	body, err := json.Marshal(r.payload(msg))
 	if err != nil {
 		return err
@@ -131,6 +136,23 @@ func (r *Resend) Send(ctx context.Context, msg *Message) error {
 	}
 
 	return last
+}
+
+// resendTags applies Resend's tag rule (ASCII letters, digits, "_" and
+// "-", at most 256 characters), which its API answers with a 422.
+func resendTags(tags map[string]string) error {
+	other := func(r rune) bool {
+		return (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != '_' && r != '-'
+	}
+	valid := func(s string) bool { return s != "" && len(s) <= 256 && !strings.ContainsFunc(s, other) }
+
+	for k, v := range tags {
+		if !valid(k) || !valid(v) {
+			return fmt.Errorf("mail: resend tag %q: names and values take only ASCII letters, digits, _ and -", k)
+		}
+	}
+
+	return nil
 }
 
 func (r *Resend) payload(msg *Message) resendEmail {
