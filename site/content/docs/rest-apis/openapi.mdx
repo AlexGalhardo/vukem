@@ -184,6 +184,9 @@ For each typed route, the generator writes one operation:
 - **Other methods**: the other input fields become a required `application/json` **request body**.
 - **Responses**: the success status with the output schema (no content for `204` or `struct{}`), `422` → `ValidationError` when the route has input, `401` → `Problem` when `Op.Security` is set, and `default` → `Problem` for everything else. Both shared responses use the `Problem` schema: `type`, `title`, `status`, `detail`, `instance`, `request_id` and `errors`.
 - **Security**: each `Op.Security` name becomes a requirement and a scheme in `components/securitySchemes`. `bearer` is predefined; any other name must be declared in `openapi.Info.SecuritySchemes`, or building the document fails with `openapi: unknown security scheme "apiKey": declare it in openapi.Info.SecuritySchemes`.
+- **Unique operation ids**: two routes of one document with the same own name (`api.v1.index` and `api.v2.index` are both `index`) fail with `openapi.ErrDuplicateOperationID`, naming both routes. Serve one document per version (`vukem.OpenAPIOptions.PathPrefix`) or rename one.
+
+The document is built when it is asked for, not at boot: the first `GET /openapi.json` (a `500` problem, the cause in the log), `vukem openapi:export`, `codegen:types`, `codegen:client` or `AssertMatchesOpenAPI` reports these errors. Add a test that calls `app.OpenAPI()`, or run `vukem openapi:export` in CI, to catch them before deploying.
 
 Plain `web.HandlerFunc` routes appear too, with a generic entry: `operationId` and `summary` are the route's own name, like a typed route's (`me` inside `.Name("api.v1.")`, not `api.v1.me`), there is no `operationId` when the route has no name, and path parameters are strings. A plain `POST`, `PUT` or `PATCH` route documents an optional JSON body of any shape, and every plain route a `default` response of any content (`*/*` with an empty schema): the document says nothing about their data, so generated clients can still send a body and `AssertMatchesOpenAPI` accepts whatever they answer. A route is left out when it is marked `.Doc(openapi.Skip{})`, or when it has no method (an `ANY`/`Handle` route).
 
@@ -412,6 +415,8 @@ More in the [Security overview](/docs/security/overview).
 ## Common mistakes
 
 **Expecting `AssertMatchesOpenAPI` to check a plain handler.** It passes, but checks nothing: a plain route documents a response of any content. Register the route with `api.Register` to get a schema the assertion can enforce.
+
+**Two versions in one document.** `/api/v1` and `/api/v2` both with a route named `index` fail with `openapi: duplicate operationId "index": routes api.v1.index and api.v2.index`. Use `PathPrefix` per version.
 
 **An undeclared security scheme.** `api.Op{Security: []string{"apiKey"}}` without `openapi.Info.SecuritySchemes["apiKey"]` fails the document with `openapi: unknown security scheme "apiKey"`. Declare the scheme, or use the predefined `bearer`.
 

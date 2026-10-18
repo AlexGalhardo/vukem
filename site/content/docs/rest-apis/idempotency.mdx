@@ -121,7 +121,7 @@ The `422` also logs a security event `idempotency.key_reused`, and the empty-sco
 Two details of replays:
 
 - Only headers that describe the stored response are kept: `Content-Type` plus `ReplayHeaders` (default `Content-Language`, `Content-Disposition`, `Content-Location`, `Location`, `ETag`, `Last-Modified`, `Link`). Every other header of the retry comes from its own middleware, so `X-Request-ID`, `RateLimit-Remaining` and the security headers describe the retry, not the original request.
-- `Set-Cookie` is never stored or replayed, even when listed, so a session cookie of the first response cannot leak into a later one.
+- `Set-Cookie`, `Authorization`, `Proxy-Authorization`, `Proxy-Authenticate` and `WWW-Authenticate` are never stored or replayed, even when listed, so a session cookie or a credential challenge of the first response cannot leak into a later one.
 
 ## Scope: whose key is it?
 

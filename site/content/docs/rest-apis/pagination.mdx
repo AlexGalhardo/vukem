@@ -177,6 +177,10 @@ page, err := req.Paginate(c.Context())
 
 An allowlisted name that matches no relation (a computed `stats` block, say) is not loaded; it only appears in `req.Includes`, so your handler can act on it. `req.Includes` always lists the names as the client sent them.
 
+<Callout type="warning" title="Allowlist only bounded, safe relations">
+An include loads **every** related row of each item on the page: `?include=comments` on 100 tasks fetches all their comments, however many, because a has-many relation is not paginated. And when your response embeds the related model, it is serialized with that model's own `json` tags, so a `User` without `json:"-"` on `PasswordHash` would expose it. Allowlist only relations with a small, bounded number of rows, and map them through a [resource](/docs/rest-apis/overview) that picks the fields to send.
+</Callout>
+
 In the transformer, read a relation only when it was loaded: `m.User.Loaded()` reports it, and `m.User.Get()` returns `orm.ErrNotLoaded` otherwise. See [Relations](/docs/database/relations).
 
 ### Page size and limits
