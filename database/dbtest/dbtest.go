@@ -651,6 +651,8 @@ func (chunkRow) Table() string { return "dbt_chunks" }
 // dialect and that Chunk visits every row when its callback deletes the
 // rows it receives (keyset, not OFFSET).
 func testRawRebindChunk(ctx context.Context, t *testing.T, db *database.DB) {
+	t.Helper()
+
 	s := schema.New(ctx, db)
 	if err := s.Create("dbt_chunks", func(t *schema.Table) {
 		t.ID()
