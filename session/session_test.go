@@ -653,3 +653,16 @@ func TestFlushThroughUnwrapOnlyWriter(t *testing.T) {
 		t.Fatal("Flush did not reach the underlying writer")
 	}
 }
+
+func TestCookieSessionHasNoID(t *testing.T) {
+	t.Parallel()
+
+	m, _ := newManager(t, Config{})
+	c := newClient(t, appHandler(m, &bytes.Buffer{}))
+
+	for _, path := range []string{"/id", "/login", "/id", "/logout", "/id"} {
+		if got := c.do("GET", path, nil).Body.String(); got != "" && path != "/logout" {
+			t.Fatalf("cookie session: GET %s ID() = %q, want \"\"", path, got)
+		}
+	}
+}

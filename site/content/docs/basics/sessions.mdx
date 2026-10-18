@@ -108,7 +108,7 @@ Over HTTPS (or in production) the cookie is `Secure` and named `__Host-vukem_ses
 | `Flash(key, v)` | Stores `v` for the **next** request only |
 | `Regenerate()` | New session id, same data |
 | `Invalidate()` | Clears all data and issues a new id |
-| `ID()` | The session id (meaningful for server-side stores) |
+| `ID()` | The server-side session id (the store key). New sessions get one when saved; `Regenerate` and `Invalidate` issue a new one at once. Always `""` for cookie sessions, which have no id |
 
 The concrete type, `*session.Session`, also has `GetString(key)`, `GetInt64(key)`, `Has(key)`, `All()` (a copy of your values, internal keys removed) and `Reflash()` (keep the current flash values one request longer). Reach them with a type assertion:
 
