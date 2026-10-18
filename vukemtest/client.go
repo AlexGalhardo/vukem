@@ -103,18 +103,31 @@ func (c *Client) Get(target string) *Response { return c.Do(http.MethodGet, targ
 // GetJSON sends one GET accepting JSON; later requests keep the client's
 // own Accept header (use AcceptJSON to change it for good).
 func (c *Client) GetJSON(target string) *Response {
+	c.t.Helper()
+
+	defer c.acceptJSONOnce(true)()
+
+	return c.Get(target)
+}
+
+// acceptJSONOnce sets Accept: application/json for one request (only when
+// the client has no Accept of its own, unless force) and returns the func
+// that restores the client's previous header.
+func (c *Client) acceptJSONOnce(force bool) func() {
 	prev, had := c.headers["Accept"]
+	if had && !force {
+		return func() {}
+	}
+
 	c.headers.Set("Accept", "application/json")
 
-	defer func() {
+	return func() {
 		if had {
 			c.headers["Accept"] = prev
 		} else {
 			c.headers.Del("Accept")
 		}
-	}()
-
-	return c.Get(target)
+	}
 }
 
 // Delete sends DELETE.
@@ -125,7 +138,8 @@ func (c *Client) PostForm(target string, form url.Values) *Response {
 	return c.Do(http.MethodPost, target, strings.NewReader(form.Encode()), "application/x-www-form-urlencoded")
 }
 
-// PostJSON sends v as JSON.
+// PostJSON sends v as JSON. It accepts JSON for this request only when
+// the client sets no Accept header of its own (see GetJSON).
 func (c *Client) PostJSON(target string, v any) *Response {
 	return c.sendJSON(http.MethodPost, target, v)
 }
@@ -148,9 +162,7 @@ func (c *Client) sendJSON(method, target string, v any) *Response {
 		c.t.Fatalf("vukemtest: encode body: %v", err)
 	}
 
-	if c.headers.Get("Accept") == "" {
-		c.headers.Set("Accept", "application/json")
-	}
+	defer c.acceptJSONOnce(false)()
 
 	return c.Do(method, target, bytes.NewReader(b), "application/json")
 }
@@ -553,24 +565,30 @@ func (r *Response) AssertJSONValidationErrors(fields ...string) *Response {
 	return r
 }
 
-// AssertHXTrigger asserts the response triggers a client event.
+// AssertHXTrigger asserts the response triggers a client event: HX-Trigger
+// is a JSON object holding event, or a comma-separated list of event names
+// ("saved, refresh") that includes it.
 func (r *Response) AssertHXTrigger(event string) *Response {
 	r.t.Helper()
 
-	var triggers map[string]any
-
 	h := r.rec.Header().Get("HX-Trigger")
-	if err := json.Unmarshal([]byte(h), &triggers); err != nil {
-		if h != event {
+
+	var triggers map[string]any
+	if err := json.Unmarshal([]byte(h), &triggers); err == nil {
+		if _, ok := triggers[event]; !ok {
 			r.fail("HX-Trigger %q does not include %q", h, event)
 		}
 
 		return r
 	}
 
-	if _, ok := triggers[event]; !ok {
-		r.fail("HX-Trigger %q does not include %q", h, event)
+	for name := range strings.SplitSeq(h, ",") {
+		if strings.TrimSpace(name) == event {
+			return r
+		}
 	}
+
+	r.fail("HX-Trigger %q does not include %q", h, event)
 
 	return r
 }
@@ -603,23 +621,25 @@ func (r *Response) Session() map[string]any {
 	return m.Peek(r.t.Context(), cookies)
 }
 
-// AssertSessionHas asserts a session (or flash) key is set.
+// AssertSessionHas asserts a session (or flash) key is set. A key stored
+// with a nil value is set.
 func (r *Response) AssertSessionHas(key string) *Response {
 	r.t.Helper()
 
-	if r.Session()[key] == nil {
+	if _, ok := r.Session()[key]; !ok {
 		r.fail("session has no %q", key)
 	}
 
 	return r
 }
 
-// AssertSessionMissing asserts a session key is absent.
+// AssertSessionMissing asserts a session key is absent; a key stored with
+// a nil value is not absent.
 func (r *Response) AssertSessionMissing(key string) *Response {
 	r.t.Helper()
 
-	if r.Session()[key] != nil {
-		r.fail("session has %q", key)
+	if v, ok := r.Session()[key]; ok {
+		r.fail("session has %q (%s)", key, show(v))
 	}
 
 	return r
