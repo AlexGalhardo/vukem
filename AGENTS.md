@@ -27,7 +27,7 @@ Vukem: a Laravel/AdonisJS-inspired, stdlib-first Go web framework. Module `githu
 - Formatting: gofumpt + gci + golines via `golangci-lint fmt`; tabs in Go ([docs/tooling.md](docs/tooling.md)).
 - Commits: Conventional Commits, English, scope = package ([docs/tooling.md](docs/tooling.md#conventional-commits)).
 - After each PLAN.md task group: push and `task release -- vX.Y.Z` (changelog + GitHub release) — see [release process](docs/tooling.md#release-process).
-- Never edit released `CHANGELOG.md` sections by hand; never move a pushed tag.
+- Never edit released `CHANGELOG.md` sections by hand; never move a pushed tag; push version tags one at a time ([tag pushes](docs/tooling.md#tag-pushes)).
 - GitHub Actions is the CI gate (Linux/macOS/Windows, race, govulncheck, Postgres): push, then check `gh run list` and fix failures. Windows 11 stays first-class.
 - Everything (code, comments, docs) in English.
 

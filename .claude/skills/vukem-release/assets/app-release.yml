@@ -14,9 +14,20 @@ name: release
 #      placeholder body: a release published with an empty body looks exactly
 #      like a successful release, which is how eight releases shipped with no
 #      notes before anyone noticed.
+#
+# workflow_dispatch is the recovery path. GitHub creates no push event when
+# more than three tags go up in a single push, so `on: push: tags` does not
+# fire and nothing is published, silently. Push version tags one at a time;
+# if a tag went up without a release, run this workflow with that version
+# instead of writing the `gh release create` call by hand.
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version tag to publish (vX.Y.Z). The tag must already be pushed."
+        required: true
 
 permissions:
   contents: read
@@ -27,13 +38,30 @@ jobs:
     permissions:
       contents: write # create or update the GitHub release
     steps:
+      - name: Resolve the tag
+        id: tag
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          tag="${INPUT_VERSION:-$REF_NAME}"
+          case "$tag" in
+            v[0-9]*.[0-9]*.[0-9]*) ;;
+            *)
+              echo "::error::not a version tag: $tag"
+              exit 1
+              ;;
+          esac
+          echo "tag=$tag" >>"$GITHUB_OUTPUT"
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: refs/tags/${{ steps.tag.outputs.tag }}
           persist-credentials: false
 
       - name: Extract the changelog section
         env:
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ steps.tag.outputs.tag }}
         run: |
           awk -v v="${TAG#v}" '
             index($0, "## [" v "]") == 1 { found = 1; next }
@@ -48,7 +76,13 @@ jobs:
       - name: Publish the release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ steps.tag.outputs.tag }}
         run: |
-          gh release create "$TAG" --verify-tag --title "$TAG" \
-            --notes-file release-notes.md --repo "$GITHUB_REPOSITORY"
+          # Idempotent, so a workflow_dispatch recovery run can fix the notes
+          # of a release that was published empty.
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$TAG" --notes-file release-notes.md --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG" --verify-tag --title "$TAG" \
+              --notes-file release-notes.md --repo "$GITHUB_REPOSITORY"
+          fi

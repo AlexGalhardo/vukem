@@ -106,7 +106,7 @@ The template lives in `.config/cliff.toml` (git-cliff is called with `--config .
 2. `go run ./internal/tools/release -push vX.Y.Z` (or `task release -- vX.Y.Z`, which runs `task ci:full` first) once GitHub Actions is green for the pushed commits:
    - requires a clean tree on `main`;
    - generates the version's section with git-cliff and inserts it below `[Unreleased]` in `CHANGELOG.md` (Keep a Changelog 1.1.0; released sections are never edited);
-   - commits `chore(release): vX.Y.Z`, creates an annotated tag, pushes `main` and the tag;
+   - commits `chore(release): vX.Y.Z`, creates an annotated tag, pushes `main` and the tag as two separate pushes (see [Tag pushes](#tag-pushes));
    - publishes a GitHub release whose notes are that changelog section (`v0.x` and pre-releases are marked pre-release), and **refuses to publish an empty body**: a release with an empty body is indistinguishable from a successful one, so an extraction that silently returns nothing fails the command instead.
 3. Missed a group? Cut it retroactively: `go run ./internal/tools/release -no-commit -ref <commit> vX.Y.Z`, tag `<commit>`, commit the changelog, push, and create the GitHub release from the section.
 4. Nested modules (`drivers/*`, `contrib/*`) are tagged separately as `<dir>/vX.Y.Z` (e.g. `drivers/redis/v0.4.0`) after the core release:
@@ -115,7 +115,8 @@ The template lives in `.config/cliff.toml` (git-cliff is called with `--config .
    - test-only changes (integration tests) need no tag.
 5. From `v0.1.0` on, release tags also get `vukem` CLI binaries (linux, macOS, Windows; amd64 and arm64) built by GoReleaser (`.config/goreleaser.yaml`), attached to the existing release without touching its notes. `release.yml` does it on tag push and also uploads SBOMs and the cosign signature ([Supply chain](#supply-chain)). The local fallback, `task release:binaries` on the tagged commit (Docker; `SNAPSHOT=1` builds into `dist/` without publishing), skips signing: keyless signing needs the Actions OIDC token.
 6. Warm the proxy: `GOPROXY=https://proxy.golang.org go list -m github.com/AlexGalhardo/vukem@vX.Y.Z`. Right after a tag push the proxy and `sum.golang.org` can answer 404 for a few minutes (negative cache): poll `https://proxy.golang.org/github.com/!alex!galhardo/vukem/@v/vX.Y.Z.info` until it returns 200 before bumping apps.
-7. Bump the reference apps only after the proxy serves the new versions. A setting that only the new version understands (for example `MAIL_MAILER=mailtrap`, added in v0.26.0) is set on the platform **after** the bumped app is deployed: an unknown value fails the boot (fail closed).
+7. A tag that is up without a run is recovered, never re-tagged: `go run ./internal/tools/release -publish-only vX.Y.Z` republishes the notes, and `gh workflow run release.yml -f version=vX.Y.Z` rebuilds the binaries (`release.yml` takes the version as a `workflow_dispatch` input and checks out that tag).
+8. Bump the reference apps only after the proxy serves the new versions. A setting that only the new version understands (for example `MAIL_MAILER=mailtrap`, added in v0.26.0) is set on the platform **after** the bumped app is deployed: an unknown value fails the boot (fail closed).
 
 ## CI (GitHub Actions)
 
@@ -124,7 +125,7 @@ The template lives in `.config/cliff.toml` (git-cliff is called with `--config .
 | `ci.yml` | push to `main`, PRs | lint (per module), unit matrix, integration (services), e2e, markdownlint, govulncheck, coverage gate, `apidiff` ([API compatibility](#api-compatibility)) |
 | `vuln.yml` | weekly, manual | govulncheck on the core and every module (`drivers/*`, `contrib/*`, `examples/*`) with `GOWORK=off` |
 | `pr-title.yml` | PR opened/edited | semantic PR title |
-| `release.yml` | tag `v*` | GoReleaser binaries, SBOMs, cosign keyless signature, build provenance |
+| `release.yml` | tag `v*`, manual (`version` input) | GoReleaser binaries, SBOMs, cosign keyless signature, build provenance |
 | `codeql.yml` | push, weekly | CodeQL Go |
 | `scorecard.yml` | push to `main`, weekly | OpenSSF Scorecard |
 | `site.yml` | push to `main` and PRs touching `site/**` or `CHANGELOG.md` | docs site `npm ci`, lint and `next build` (Vercel only builds after the push, so MDX errors are caught here first) |
@@ -132,9 +133,15 @@ The template lives in `.config/cliff.toml` (git-cliff is called with `--config .
 
 Workflows declare `permissions: contents: read` at the top; jobs widen it only for what they write. Every action is pinned by full commit SHA with a `# vX.Y.Z` comment (Dependabot bumps both), and tools fetched in workflows use exact versions (`govulncheck@v1.9.0`, `@redocly/cli@1.34.3`), never `@latest`.
 
+### Tag pushes
+
+**Push version tags one at a time; never `git push origin --tags`.** GitHub creates no push event when more than three tags go up in a single push, so `on: push: tags` workflows do not fire at all — eight tags pushed together started zero runs and published nothing, with no error anywhere. `internal/tools/release` pushes `main` and the version tag as separate pushes for this reason; nested module tags (`drivers/*`, `contrib/*`) are pushed in a loop, each followed by `gh run list` to confirm the run exists before the next push.
+
+The limit is GitHub's and cannot be worked around, so every release workflow is recoverable instead: both this repository's `release.yml` and the app `release.yml` ([the canonical copy](../.claude/skills/vukem-release/assets/app-release.yml)) take the version as a `workflow_dispatch` input and check out that tag, so a tag whose push started no run is published by dispatching the workflow rather than by hand-written `gh release create` calls or by moving the tag.
+
 ### Changelog extraction in app workflows
 
-The app `release.yml` ([the canonical copy](../.claude/skills/vukem-release/assets/app-release.yml)) builds the release body from `CHANGELOG.md` with a **literal** heading match:
+The app `release.yml` builds the release body from `CHANGELOG.md` with a **literal** heading match:
 
 ```sh
 awk -v v="${TAG#v}" '
@@ -151,6 +158,7 @@ The regex form that used to be copied between the apps, `'$0 ~ "^## \[" v "\]"'`
 
 - `release.yml` runs GoReleaser with syft (one SPDX SBOM per archive, `<archive>.sbom.json`) and cosign keyless: `checksums.txt.sigstore.json` is a Sigstore bundle signed with the workflow's GitHub OIDC identity, so no signing key or secret exists. `actions/attest-build-provenance` then attests every file listed in `checksums.txt`.
 - `checksums.txt` lists the archives and their SBOMs, so its signature covers all of them.
+- A `workflow_dispatch` recovery run signs with the OIDC identity of the ref it was dispatched from (`…/release.yml@refs/heads/main`), not `@refs/tags/v…`, so its `checksums.txt` does not satisfy the identity regexp in [Verifying a release](#verifying-a-release). Prefer re-running the tag push path; when a dispatched build is the only option, say so on the release and verify it with `--certificate-identity-regexp '…/release\.yml@refs/heads/main$'`.
 - `scorecard.yml` runs OpenSSF Scorecard (target ≥ 7), publishes the results and uploads SARIF to code scanning.
 - Repository settings that Scorecard also checks are applied by an admin, never by workflows: a branch ruleset on `main` (pull request with the CI checks required, no force pushes or deletion), Dependabot alerts and security updates, private vulnerability reporting.
 
