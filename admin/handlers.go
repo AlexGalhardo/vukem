@@ -189,7 +189,7 @@ func (r *Resource[T]) index(p *Panel) web.HandlerFunc {
 			q = q.OrderBy(r.pk, orm.Desc)
 		}
 
-		pg, err := q.Paginate(c.Context(), max(c.QueryInt("page", 1), 1), r.perPage)
+		pg, err := q.MaxPerPage(r.perPage).Paginate(c.Context(), max(c.QueryInt("page", 1), 1), r.perPage)
 		if err != nil {
 			return err
 		}

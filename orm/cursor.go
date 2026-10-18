@@ -26,14 +26,15 @@ var ErrInvalidCursor = &errs.HTTPError{Status: 400, Message: "Invalid pagination
 // key in dir. Unlike Paginate it needs no COUNT and stays fast and stable
 // on large or changing tables. Pass "" for the first page and the
 // returned NextCursor for the following ones. The query must not have
-// its own OrderBy: the keyset order is the primary key.
+// its own OrderBy: the keyset order is the primary key. perPage is
+// clamped to 1..DefaultMaxPerPage (see MaxPerPage).
 func (q Query[T]) CursorPaginate(
 	ctx context.Context,
 	cursor string,
 	perPage int,
 	dir Direction,
 ) (CursorPage[T], error) {
-	perPage = max(perPage, 1)
+	perPage = q.perPage(perPage)
 
 	if len(q.orders) > 0 {
 		return CursorPage[T]{}, errors.New("orm: CursorPaginate orders by the primary key; remove OrderBy")

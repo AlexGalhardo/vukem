@@ -54,7 +54,10 @@ type Query[T any] struct {
 	with    []string
 	lock    string // "", "UPDATE" or "SHARE"
 	wait    string // "", "SKIP LOCKED" or "NOWAIT"
-	err     error
+	// maxPerPage bounds Paginate and CursorPaginate; 0 means
+	// DefaultMaxPerPage.
+	maxPerPage int
+	err        error
 }
 
 // QueryOf starts a query for model T on ex.
@@ -784,10 +787,39 @@ type Page[T any] struct {
 	LastPage int   `json:"last_page"`
 }
 
+// DefaultMaxPerPage bounds perPage in Paginate and CursorPaginate unless
+// the query sets MaxPerPage, so a per_page taken from a request cannot
+// make one call load a whole table.
+const DefaultMaxPerPage = 100
+
+// MaxPerPage sets the largest perPage Paginate and CursorPaginate accept
+// for this query (default DefaultMaxPerPage); a larger perPage is lowered
+// to n, and Page.PerPage reports the value used. n < 1 is an error.
+func (q Query[T]) MaxPerPage(n int) Query[T] {
+	if n < 1 {
+		return q.fail(fmt.Errorf("orm: MaxPerPage(%d) must be at least 1", n))
+	}
+
+	q.maxPerPage = n
+
+	return q
+}
+
+// perPage clamps n to 1..MaxPerPage.
+func (q Query[T]) perPage(n int) int {
+	limit := q.maxPerPage
+	if limit == 0 {
+		limit = DefaultMaxPerPage
+	}
+
+	return min(max(n, 1), limit)
+}
+
 // Paginate returns page (1-based) with perPage items and the total count.
+// perPage is clamped to 1..DefaultMaxPerPage (see MaxPerPage).
 func (q Query[T]) Paginate(ctx context.Context, page, perPage int) (Page[T], error) {
 	page = max(page, 1)
-	perPage = max(perPage, 1)
+	perPage = q.perPage(perPage)
 
 	total, err := q.Count(ctx)
 	if err != nil {
