@@ -36,7 +36,7 @@ func testPasswordResetEndsSessions(t *testing.T, driver string) {
 	register(t, app, laptop, "eve@example.com")
 
 	phone := app.Client(t)
-	phone.PostForm("/login", url.Values{"email": {"eve@example.com"}, "password": {"correct horse battery"}}).
+	phone.PostForm("/login", url.Values{"email": {"eve@example.com"}, "password": {testPassword}}).
 		AssertRedirect("/dashboard")
 
 	for _, c := range []*vukemtest.Client{laptop, phone} {
@@ -59,7 +59,7 @@ func testPasswordResetEndsSessions(t *testing.T, driver string) {
 		t.Fatal(err)
 	}
 
-	if _, err := acc.ResetPassword(t.Context(), "eve@example.com", token, "a brand new password"); err != nil {
+	if _, err := acc.ResetPassword(t.Context(), "eve@example.com", token, newPassword); err != nil {
 		t.Fatal(err)
 	}
 

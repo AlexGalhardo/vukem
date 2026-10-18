@@ -86,7 +86,7 @@ func enableTwoFactor(t *testing.T, app *vukemtest.App, c *vukemtest.Client, emai
 }
 
 func passwordStep(c *vukemtest.Client, email string, remember bool) *vukemtest.Response {
-	form := url.Values{"email": {email}, "password": {"correct horse battery"}}
+	form := url.Values{"email": {email}, "password": {testPassword}}
 	if remember {
 		form.Set("remember", "true")
 	}
@@ -158,7 +158,7 @@ func TestTwoFactorRecoveryCodes(t *testing.T) {
 		PostForm("/user/two-factor/recovery-codes", url.Values{"password": {"not my password"}}).
 		AssertSessionHasErrors("password")
 	owner.Get("/user/two-factor").AssertSee("6 recovery codes left")
-	owner.PostForm("/user/two-factor/recovery-codes", url.Values{"password": {"correct horse battery"}}).
+	owner.PostForm("/user/two-factor/recovery-codes", url.Values{"password": {testPassword}}).
 		AssertRedirect("/user/two-factor")
 
 	fresh := recoveryRe.FindAllString(owner.Get("/user/two-factor").Body(), -1)
@@ -212,7 +212,7 @@ func TestTwoFactorDisableNeedsPassword(t *testing.T) {
 		AssertSessionHasErrors("password")
 	c.Get("/user/two-factor").AssertSee("is on")
 
-	c.PostForm("/user/two-factor/disable", url.Values{"password": {"correct horse battery"}}).
+	c.PostForm("/user/two-factor/disable", url.Values{"password": {testPassword}}).
 		AssertRedirect("/user/two-factor")
 	c.Get("/user/two-factor").AssertSee("Enable two-factor authentication")
 

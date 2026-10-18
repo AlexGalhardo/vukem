@@ -15,8 +15,8 @@ func TestBillingPage(t *testing.T) {
 		AssertSee(`action="/billing/checkout/basic"`).
 		AssertSee("Subscribe to Pro")
 
-	setCustomer(t, app, u, "cus_1")
-	f.setSubscription("sub_1", "cus_1", "active", "price_pro")
+	setCustomer(t, app, u)
+	f.setSubscription("active", "price_pro")
 	postWebhook(t, app, "evt_1", "customer.subscription.created", map[string]any{"id": "sub_1"}).AssertOK()
 
 	c.Get("/billing").AssertOK().

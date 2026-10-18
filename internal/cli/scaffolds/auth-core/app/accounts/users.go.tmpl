@@ -96,7 +96,9 @@ func EmailHash(email string) string {
 // mail is queued (SendLater), so sign-up does not wait for the mail server.
 // The link carries EmailHash(u.Email), so it is void once the email changes.
 func (a *Accounts) SendVerification(ctx context.Context, u models.User) error {
-	link, err := a.Signer.Sign(fmt.Sprintf("%s/email/verify/%d?email_hash=%s", a.URL, u.ID, EmailHash(u.Email)), a.VerifyTTL)
+	target := fmt.Sprintf("%s/email/verify/%d?email_hash=%s", a.URL, u.ID, EmailHash(u.Email))
+
+	link, err := a.Signer.Sign(target, a.VerifyTTL)
 	if err != nil {
 		return err
 	}
@@ -140,7 +142,8 @@ func (a *Accounts) VerifyEmail(ctx context.Context, u *models.User, keep string)
 func (a *Accounts) revokeAccess(ctx context.Context, ex database.Executor, userID int64) error {
 	id := strconv.FormatInt(userID, 10)
 
-	if _, err := ex.ExecContext(ctx, "DELETE FROM remember_tokens WHERE user_id = "+ex.Dialect().Placeholder(1), id); err != nil {
+	del := "DELETE FROM remember_tokens WHERE user_id = " + ex.Dialect().Placeholder(1)
+	if _, err := ex.ExecContext(ctx, del, id); err != nil {
 		return err
 	}
 
@@ -166,7 +169,9 @@ func (a *Accounts) MarkVerified(ctx context.Context, ex database.Executor, u *mo
 	u.EmailVerifiedAt = orm.NullTime{}
 	u.EmailVerifiedAt.V, u.EmailVerifiedAt.Valid = a.now().UTC(), true
 
-	_, err := orm.QueryOf[models.User](ex).Where("id", u.ID).Update(ctx, orm.Set{"email_verified_at": u.EmailVerifiedAt.V})
+	set := orm.Set{"email_verified_at": u.EmailVerifiedAt.V}
+
+	_, err := orm.QueryOf[models.User](ex).Where("id", u.ID).Update(ctx, set)
 
 	return err
 }

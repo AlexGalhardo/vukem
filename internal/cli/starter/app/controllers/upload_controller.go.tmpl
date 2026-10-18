@@ -24,7 +24,7 @@ type UploadController struct {
 type uploadConfig struct {
 	// Disk is "local" (Dir on the filesystem) or "memory" (tests only).
 	Disk string `env:"UPLOADS_DISK" default:"local"`
-	Dir  string `env:"UPLOADS_DIR" default:"storage/app/uploads"`
+	Dir  string `env:"UPLOADS_DIR"  default:"storage/app/uploads"`
 }
 
 // NewUploadController opens the uploads disk (UPLOADS_DISK, UPLOADS_DIR)

@@ -150,14 +150,20 @@ func TestSecurity_A07_TwoFactorScaffoldDefaults(t *testing.T) {
 		}
 	}
 
+	// What is pinned is the shape, not the layout: a route declaration
+	// wraps once it passes 120 columns, so compare without whitespace.
+	squeeze := func(s string) string { return strings.Join(strings.Fields(s), "") }
+
 	for src, wants := range files {
 		b, err := scaffoldFS.ReadFile(src)
 		if err != nil {
 			t.Fatal(err)
 		}
 
+		got := squeeze(string(b))
+
 		for _, want := range wants {
-			if !bytes.Contains(b, []byte(want)) {
+			if !strings.Contains(got, squeeze(want)) {
 				t.Errorf("%s lacks %q", src, want)
 			}
 		}

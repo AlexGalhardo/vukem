@@ -10,11 +10,15 @@ import (
 	"{{.Module}}/bootstrap"
 )
 
+// testProvider is the social provider these tests drive: the first one
+// vukem install:auth --social was given.
+const testProvider = "{{.FirstProvider}}"
+
 // signIn follows redirect → fake provider → callback.
-func signIn(t *testing.T, c *vukemtest.Client, provider string) *vukemtest.Response {
+func signIn(t *testing.T, c *vukemtest.Client) *vukemtest.Response {
 	t.Helper()
 
-	r := c.Get("/auth/" + provider + "/redirect")
+	r := c.Get("/auth/" + testProvider + "/redirect")
 
 	return c.Get(r.Header("Location"))
 }
@@ -26,14 +30,16 @@ func TestSocialSignUpAndLogin(t *testing.T) {
 	app := vukemtest.New(t, bootstrap.New, vukemtest.Options{Env: vukemtest.FakeSocial(user)})
 
 	c := app.Client(t)
-	signIn(t, c, "{{.FirstProvider}}").AssertRedirect("/dashboard")
+	signIn(t, c).AssertRedirect("/dashboard")
 	c.Get("/dashboard").AssertOK().AssertSee("Lia").AssertSee("verified")
 
 	vukemtest.AssertDatabaseCount(t, app, "users", 1)
-	vukemtest.AssertDatabaseHas(t, app, "social_accounts", map[string]any{"provider": "{{.FirstProvider}}", "provider_id": "gh-1"})
+	vukemtest.AssertDatabaseHas(t, app, "social_accounts", map[string]any{
+		"provider": testProvider, "provider_id": "gh-1",
+	})
 
 	// Signing in again reuses the link.
-	signIn(t, app.Client(t), "{{.FirstProvider}}").AssertRedirect("/dashboard")
+	signIn(t, app.Client(t)).AssertRedirect("/dashboard")
 	vukemtest.AssertDatabaseCount(t, app, "users", 1)
 
 	app.Client(t).Get("/auth/myspace/redirect").AssertNotFound()
@@ -52,16 +58,16 @@ func TestSocialLinkEndsSquatterAccess(t *testing.T) {
 	squatter := app.Client(t)
 	squatter.PostForm("/register", url.Values{
 		"name": {"Mallory"}, "email": {"vic@example.com"},
-		"password": {"correct horse battery"}, "password_confirmation": {"correct horse battery"},
+		"password": {testPassword}, "password_confirmation": {testPassword},
 	}).AssertRedirect("/register/check-email")
 	squatter.PostForm("/login", url.Values{
-		"email": {"vic@example.com"}, "password": {"correct horse battery"}, "remember": {"true"},
+		"email": {"vic@example.com"}, "password": {testPassword}, "remember": {"true"},
 	}).AssertRedirect("/dashboard")
 
 	userID := apiTokenFor(t, app, "vic@example.com")
 
 	c := app.Client(t)
-	signIn(t, c, "{{.FirstProvider}}").AssertRedirect("/dashboard")
+	signIn(t, c).AssertRedirect("/dashboard")
 	c.Get("/dashboard").AssertOK()
 
 	squatter.Get("/email/verify").AssertRedirect("/login")
@@ -70,7 +76,7 @@ func TestSocialLinkEndsSquatterAccess(t *testing.T) {
 	vukemtest.AssertDatabaseMissing(t, app, "access_tokens", map[string]any{"user_id": userID, "revoked_at": nil})
 	vukemtest.AssertDatabaseHas(t, app, "access_tokens", map[string]any{"user_id": userID})
 	app.Client(t).WithHeader("Referer", "/login").PostForm("/login", url.Values{
-		"email": {"vic@example.com"}, "password": {"correct horse battery"},
+		"email": {"vic@example.com"}, "password": {testPassword},
 	}).AssertSessionHasErrors("email")
 }
 
@@ -82,9 +88,9 @@ func TestSocialDoesNotTakeOverUnverifiedEmails(t *testing.T) {
 
 	app.Client(t).PostForm("/register", url.Values{
 		"name": {"Owner"}, "email": {"owner@example.com"},
-		"password": {"correct horse battery"}, "password_confirmation": {"correct horse battery"},
+		"password": {testPassword}, "password_confirmation": {testPassword},
 	})
 
-	signIn(t, app.Client(t), "{{.FirstProvider}}").AssertStatus(409)
+	signIn(t, app.Client(t)).AssertStatus(409)
 	vukemtest.AssertDatabaseCount(t, app, "social_accounts", 0)
 }

@@ -44,7 +44,10 @@ var (
 	// ErrSubscriptionRequired answers JSON clients without a subscription.
 	ErrSubscriptionRequired = errs.New(http.StatusPaymentRequired, "A subscription is required.")
 
-	errAlreadySubscribed = errs.New(http.StatusConflict, "You already have a subscription: manage it in the billing portal.")
+	errAlreadySubscribed = errs.New(
+		http.StatusConflict,
+		"You already have a subscription: manage it in the billing portal.",
+	)
 	errNoCustomer        = errs.New(http.StatusConflict, "You have no billing account yet: choose a plan first.")
 )
 
@@ -151,9 +154,9 @@ func (b *Billing) Current(ctx context.Context, userID int64) (sub models.Subscri
 		return models.Subscription{}, false, err
 	}
 
-	for _, s := range subs {
-		if s.Valid() {
-			return s, true, nil
+	for i := range subs {
+		if subs[i].Valid() {
+			return subs[i], true, nil
 		}
 	}
 

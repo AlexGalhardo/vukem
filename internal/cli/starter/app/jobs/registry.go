@@ -6,8 +6,9 @@ import (
 	"github.com/AlexGalhardo/vukem/queue"
 )
 
-// All lists the job handlers, built from app so they reach its database,
-// clock and mailer; vukem make:job appends here.
-func All(app *vukem.App) []queue.Registration {
+// All lists the job handlers, built from the app so they reach its
+// database, clock and mailer; vukem make:job appends here and names the
+// parameter "app" with the first handler that needs it.
+func All(_ *vukem.App) []queue.Registration {
 	return []queue.Registration{}
 }
