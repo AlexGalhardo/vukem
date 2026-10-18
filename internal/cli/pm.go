@@ -2,6 +2,7 @@ package cli
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -40,6 +41,14 @@ var lockfiles = []struct{ file, pm string }{ //nolint:gochecknoglobals // read-o
 	{"package-lock.json", "npm"},
 }
 
+// installed is the order tried when a project has no lockfile, which is
+// every `vukem new`: its directory does not exist yet, so there is nothing
+// to detect and the choice has to come from the machine. The first manager
+// on PATH wins, bun first because the starter's dependencies all install
+// with it and it needs no corepack; npm stays ahead of pnpm and yarn so a
+// plain Node toolchain keeps the documented default.
+var installed = []string{"bun", "npm", "pnpm", "yarn"} //nolint:gochecknoglobals // read-only lookup table
+
 // binary is the program to run on this OS.
 func (p jsPM) binary() string {
 	if p.cmdShim && runtime.GOOS == "windows" {
@@ -53,8 +62,15 @@ func (p jsPM) binary() string {
 func (p jsPM) install() string { return p.name + " install" }
 
 // packageManager picks the package manager for the project in dir: the
-// explicit choice (--pm), else the one whose lockfile is in dir, else npm.
+// explicit choice (--pm), else the one whose lockfile is in dir, else the
+// first one installed on the machine.
 func packageManager(dir, explicit string) (jsPM, error) {
+	return pickPM(dir, explicit, exec.LookPath)
+}
+
+// pickPM is packageManager with an injectable PATH lookup, so tests can
+// describe a toolchain instead of depending on the machine's.
+func pickPM(dir, explicit string, look func(string) (string, error)) (jsPM, error) {
 	if explicit != "" {
 		pm, ok := pmByName[strings.ToLower(explicit)]
 		if !ok {
@@ -74,6 +90,16 @@ func packageManager(dir, explicit string) (jsPM, error) {
 	for _, l := range lockfiles {
 		if _, err := os.Stat(filepath.Join(dir, l.file)); err == nil {
 			return pmByName[l.pm], nil
+		}
+	}
+
+	// A lockfile the project does not have would make the generated
+	// Dockerfile install with a manager the app never uses, so the fallback
+	// is a manager that exists here and will write that lockfile.
+	for _, n := range installed {
+		pm := pmByName[n]
+		if _, err := look(pm.binary()); err == nil {
+			return pm, nil
 		}
 	}
 

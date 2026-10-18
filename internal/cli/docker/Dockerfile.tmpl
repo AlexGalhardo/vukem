@@ -41,6 +41,12 @@ COPY --from=build /out/app /app/app
 USER app
 # The platform's PORT overrides this one; HOST=0.0.0.0 makes the server
 # reachable from outside the container. Pass secrets at runtime, never here.
-ENV APP_ENV=production HOST=0.0.0.0 PORT=3000 LOG_FORMAT=json
+# MAIL_MAILER=log keeps the image runnable: with APP_ENV=production an unset
+# mailer stops every command at boot, serve and `about` alike, as soon as a
+# route needs one. "log" writes each message to the JSON log, so nothing is
+# lost silently; set smtp, resend or mailtrap on the deploy to send for real.
+ENV APP_ENV=production HOST=0.0.0.0 PORT=3000 LOG_FORMAT=json MAIL_MAILER=log
+# A platform start command (Railway, Fly) replaces this entrypoint, so it has
+# to name the binary: "/app/app queue:work", never "queue:work".
 EXPOSE 3000
 ENTRYPOINT ["/app/app"]

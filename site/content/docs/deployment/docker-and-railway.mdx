@@ -60,11 +60,10 @@ The command prints only the key, so `APP_KEY=$(docker run --rm blog key:generate
 docker run -d --name blog -p 3000:3000 \
   -e APP_KEY=base64:... \
   -e APP_URL=https://blog.example.com \
-  -e MAIL_MAILER=log \
   blog
 ```
 
-`-p 3000:3000` publishes the container's port 3000 on your machine. `MAIL_MAILER` is required in production as soon as the app sends mail; `log` writes messages to the log instead of sending them.
+`-p 3000:3000` publishes the container's port 3000 on your machine. The image ships `MAIL_MAILER=log`, so it boots with no mail configuration and every message goes to the log instead of a mailbox. A deploy that really sends mail sets `smtp`, `resend` or `mailtrap`, as in [mail on Railway](#mail-on-railway).
 
 </Step>
 <Step title="Check that it is alive">
@@ -103,21 +102,26 @@ The `Dockerfile` is a [multi-stage build](https://docs.docker.com/build/building
 | `build` | `golang:1.27.2-alpine3.24` | `go mod download`, `go tool templ generate` in `--templ` projects, copies `resources/public/build` from `assets`, then builds `./cmd/app` with `CGO_ENABLED=0 -trimpath -ldflags="-s -w"` and the tags in `.buildtags` |
 | runtime | `alpine:3.24.2` | installs `ca-certificates` and `tzdata`, adds a non-root `app` user (uid `10001`), creates a writable `/app/storage`, copies the binary to `/app/app` |
 
-The install command depends on the package manager you chose with `vukem new --pm`:
+The base image and the install command come from the package manager the project uses, so the image installs from the lockfile the repository tracks:
 
-| `--pm` | Lockfile | Install command |
-| --- | --- | --- |
-| `npm` (default) | `package-lock.json` | `npm ci --no-audit --no-fund` |
-| `bun` | `bun.lock` (also matches `bun.lockb`) | `bun install --frozen-lockfile` |
-| `pnpm` | `pnpm-lock.yaml` | `pnpm install --frozen-lockfile`, after `corepack enable` |
-| `yarn` | `yarn.lock` | `yarn install --frozen-lockfile`, after `corepack enable` |
+| Package manager | Base image | Lockfile | Install command |
+| --- | --- | --- | --- |
+| `bun` | `oven/bun:1.4.3-alpine` | `bun.lock` (also matches `bun.lockb`) | `bun install --frozen-lockfile` |
+| `npm` | `node:24.22.0-alpine3.24` | `package-lock.json` | `npm ci --no-audit --no-fund` |
+| `pnpm` | `node:24.22.0-alpine3.24` | `pnpm-lock.yaml` | `pnpm install --frozen-lockfile`, after `corepack enable` |
+| `yarn` | `node:24.22.0-alpine3.24` | `yarn.lock` | `yarn install --frozen-lockfile`, after `corepack enable` |
+
+`vukem new` picks it in this order: the `--pm` flag, then the lockfile already in the directory, then the first of `bun`, `npm`, `pnpm` and `yarn` installed on your machine. The same choice installs your dependencies and writes the `Dockerfile`, so the two always agree. Every install command above refuses to resolve versions the lockfile does not pin, which is why a missing lockfile fails the build instead of shipping untracked versions.
+
+The choice is written into the `Dockerfile` once, when the project is generated. If you switch package manager later — delete `package-lock.json` and run `bun install`, say — edit the `assets` stage to match.
 
 Under the hood:
 
 - **Static binary.** `CGO_ENABLED=0` builds a binary with no C dependencies, so it runs on the small Alpine base. SQLite uses the pure-Go `modernc.org/sqlite` driver, so it still works.
 - **Smaller binary.** `-trimpath` removes your machine's paths from the binary; `-ldflags="-s -w"` drops debug symbols.
 - **Build tags.** `.buildtags` lists Go [build tags](https://pkg.go.dev/cmd/go#hdr-Build_constraints), one per line or comma-separated, with `#` comments. `vukem build` reads the same file, so local and image builds match. `--minimal` projects put `vukem_nosqlite` there to leave SQLite out.
-- **Runtime defaults.** The last stage sets `APP_ENV=production`, `HOST=0.0.0.0`, `PORT=3000` and `LOG_FORMAT=json`, then `EXPOSE 3000` and `ENTRYPOINT ["/app/app"]`. `HOST=0.0.0.0` matters: the app's default `localhost` only accepts connections from inside the container.
+- **Runtime defaults.** The last stage sets `APP_ENV=production`, `HOST=0.0.0.0`, `PORT=3000`, `LOG_FORMAT=json` and `MAIL_MAILER=log`, then `EXPOSE 3000` and `ENTRYPOINT ["/app/app"]`. `HOST=0.0.0.0` matters: the app's default `localhost` only accepts connections from inside the container.
+- **A mailer the image can boot with.** In production an unset `MAIL_MAILER` stops the app as soon as a route needs a mailer, which `install:auth` adds, and that happens on every command — `serve`, `migrate` and the read-only `about` alike. `MAIL_MAILER=log` keeps the image runnable and loses nothing silently, because `log` writes each message to the JSON log. It is a default for the image, not for your deploy: set `smtp`, `resend` or `mailtrap` on the service, or your mail only ever reaches the log.
 - **Embedded files.** With `APP_ENV=production` (in the process environment or `.env`), the starter's `resources` package always serves the embedded views and assets, so the image needs no `resources/` folder.
 
 `.dockerignore` keeps these out of the build context, the files Docker sends to the builder:
@@ -130,7 +134,7 @@ Under the hood:
 | `/resources/public/hot`, `/resources/public/build/` | the Vite dev-server marker and local builds; the image builds its own assets |
 
 <Callout type="warning" title="Two things break the build">
-Commit the lockfile: the `assets` stage installs from it and fails without it. A project made with `vukem new --framework <path>` points `go.mod` at a local checkout through a `replace` directive; remove it with `go get github.com/AlexGalhardo/vukem@<version>` before you build an image.
+Commit the lockfile the `assets` stage names, and keep it the one that stage installs from: it fails on a missing lockfile (``npm error The `npm ci` command can only install with an existing package-lock.json``), which is what happens when the project moves to another package manager and the stage is not updated with it. A project made with `vukem new --framework <path>` points `go.mod` at a local checkout through a `replace` directive; remove it with `go get github.com/AlexGalhardo/vukem@<version>` before you build an image.
 </Callout>
 
 ### Storage and volumes
@@ -165,7 +169,7 @@ Vukem reads its settings from the process environment first, then from `.env` fi
 | `HSTS_FORCE` | `false` | sends HSTS on every production response, see [HSTS without a trusted range](#hsts-without-a-trusted-range) |
 | `HTTP_MAX_HEADER_BYTES` | `65536` (64 KiB) | caps the request line plus headers; from `4096` to `1048576` |
 | `HTTP_H2C` | `false` | serves HTTP/2 without TLS in production too (always on elsewhere), for a proxy that speaks h2c |
-| `MAIL_MAILER` | `log` outside production, none in production | `smtp`, `resend`, `mailtrap` or `log`; see [mail on Railway](#mail-on-railway) |
+| `MAIL_MAILER` | `log` in the image and outside production, none otherwise | `smtp`, `resend`, `mailtrap` or `log`; **set a real transport on the deploy**, or mail only reaches the log; see [mail on Railway](#mail-on-railway) |
 | `SCHEDULE_IN_SERVE` | `true` | runs the scheduler inside `serve` |
 | `QUEUE_IN_SERVE` | `true` | runs a queue worker inside `serve` |
 
@@ -198,7 +202,15 @@ Vukem refuses to start with an unsafe configuration, so a bad deploy fails its h
 | HSTS without HTTPS | `vukem: HSTS_FORCE requires an https APP_URL` |
 | header limit out of range | `vukem: HTTP_MAX_HEADER_BYTES 1024 must be between 4096 and 1048576` |
 
-Mail settings are checked when the app first builds its mailer, on the first send. With `APP_ENV=production` and no `MAIL_MAILER`, that send fails with `vukem: set MAIL_MAILER in production (smtp, resend, mailtrap or log)`, never a silent loss of mail.
+Mail settings are checked when the app first builds its mailer. A route that needs one — every route `install:auth` adds — builds it while the routes are registered, so the check runs before any command does its work, not on the first send. With `APP_ENV=production` and no `MAIL_MAILER` it fails with `vukem: routes: vukem: set MAIL_MAILER in production (smtp, resend, mailtrap or log)`, never a silent loss of mail. That is why the image ships `MAIL_MAILER=log`: without it no command runs in it at all. The check itself is untouched, so emptying the variable (`-e MAIL_MAILER=`) or naming a transport you did not finish configuring still stops the boot:
+
+```bash
+docker run --rm -e APP_KEY=base64:... -e MAIL_MAILER=resend blog about
+```
+
+```text
+vukem: routes: vukem: MAIL_MAILER=resend needs RESEND_API_KEY
+```
 
 ## Trusted proxies
 
@@ -300,7 +312,7 @@ Do not set `PORT`: Railway injects it and the app listens on it. Generate a publ
 Under **Settings → Deploy**:
 
 - **Healthcheck Path**: `/up`. Railway calls it with the host `healthcheck.railway.app` and switches traffic to the new deployment only after a `2xx`. It does not monitor the endpoint once the deployment is live ([healthchecks](https://docs.railway.com/reference/healthchecks)).
-- **Pre-deploy Command**: `/app/app migrate`. It runs in a separate container with the service's variables and private network, but without volumes ([pre-deploy command](https://docs.railway.com/deployments/pre-deploy-command)). Use it with PostgreSQL, not with SQLite on a volume.
+- **Pre-deploy Command**: `/app/app migrate`, with the path, because it replaces the image's entrypoint (see [start commands replace the entrypoint](#start-commands-replace-the-entrypoint)). It runs in a separate container with the service's variables and private network, but without volumes ([pre-deploy command](https://docs.railway.com/deployments/pre-deploy-command)). Use it with PostgreSQL, not with SQLite on a volume.
 - **Restart Policy**: `On Failure` with a few retries. A crash restarts the container, while a boot error (bad configuration) does not loop forever.
 
 </Step>
@@ -360,6 +372,27 @@ OTEL_METRICS_EXPORTER=none
 
 Traces keep flowing. Any value other than `otlp` or `none` stops the boot with `otel: OTEL_METRICS_EXPORTER must be otlp or none`.
 
+### Start commands replace the entrypoint
+
+The image's `ENTRYPOINT ["/app/app"]` is what turns `blog migrate` into `/app/app migrate` in `docker run`. A platform start command does not add to that entrypoint, it **replaces** it, and the result is executed directly, with no shell and no `PATH` lookup inside `/app`. So a start command is the path to the binary plus its arguments:
+
+```bash
+# Wrong: Railway runs this as a program named "queue:work".
+queue:work
+# Right: the binary, then the command.
+/app/app queue:work
+```
+
+The wrong form never reaches your code. The container fails to start, and the platform reports the failure as an image problem:
+
+```text
+exec: "queue:work": executable file not found in $PATH
+```
+
+<Callout type="warning" title="A worker with a bare command never starts">
+Nothing warns you while you type it: the web service keeps serving, `docker build` passes, and the worker service simply never comes up, so queued jobs — password resets and verification mail among them — pile up unprocessed. Check a new worker's logs for `queue worker started` before you trust it. The same rule applies to Railway's **Pre-deploy Command** (`/app/app migrate`) and to `docker run --entrypoint`.
+</Callout>
+
 ### Scheduler and queue workers
 
 The image's default command, `serve`, also runs the [scheduler](/docs/digging-deeper/scheduler) (`SCHEDULE_IN_SERVE=true`) and a [queue worker](/docs/digging-deeper/queue) for the memory, database and Redis queues (`QUEUE_IN_SERVE=true`) in the same process. One service therefore runs your scheduled tasks, the built-in prune tasks and queued jobs, mail included.
@@ -368,7 +401,7 @@ Run the scheduler as its own service only when tasks must fire exactly once acro
 
 1. Set `SCHEDULE_IN_SERVE=false` on the web service.
 2. Add a second service from the same repository with the same variables.
-3. Set its **Settings → Deploy → Custom Start Command** to `/app/app schedule:work`. A start command replaces the image's `ENTRYPOINT`. It needs no domain or healthcheck.
+3. Set its **Settings → Deploy → Custom Start Command** to `/app/app schedule:work`, with the path, because a start command replaces the image's `ENTRYPOINT` ([why](#start-commands-replace-the-entrypoint)). It needs no domain or healthcheck.
 
 Railway's own cron schedules run at most every 5 minutes ([cron jobs](https://docs.railway.com/cron-jobs)), so they cannot replace a per-minute `schedule:run`.
 
@@ -418,6 +451,17 @@ ENV APP_ENV=production
 # Right: listens on every interface.
 ENV APP_ENV=production HOST=0.0.0.0
 ```
+
+**A worker service never starts.** Its start command is a bare command, and the platform replaced the entrypoint that used to supply the binary. The log shows `exec: "queue:work": executable file not found in $PATH`.
+
+```bash
+# Wrong: no entrypoint left to put the binary in front of it.
+queue:work
+# Right.
+/app/app queue:work
+```
+
+**Mail goes nowhere but the log.** The image's `MAIL_MAILER=log` is still in place because the service sets no transport. Set `MAIL_MAILER=resend` or `mailtrap` with its token, as in [mail on Railway](#mail-on-railway).
 
 **Every visitor shares one rate limit.** The log shows `requests from a proxy carry X-Real-IP but TRUSTED_PROXIES is empty`. Set `TRUSTED_PROXIES` and `CLIENT_IP_HEADER` as in [trusted proxies on Railway](#trusted-proxies-on-railway).
 
