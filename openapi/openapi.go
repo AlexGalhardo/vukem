@@ -87,6 +87,12 @@ type Parameter struct {
 	Required    bool   `json:"required,omitempty"`
 	Description string `json:"description,omitempty"`
 	Schema      Schema `json:"schema"`
+	// Example is a single example value, from the field's `example` tag
+	// when the generator built this parameter.
+	Example any `json:"example,omitempty"`
+	// Examples are named alternatives; OpenAPI ignores Example when it is
+	// set.
+	Examples map[string]Example `json:"examples,omitempty"`
 }
 
 // RequestBody is an operation's body.
@@ -98,6 +104,19 @@ type RequestBody struct {
 // MediaType wraps a schema for one content type.
 type MediaType struct {
 	Schema Schema `json:"schema"`
+	// Example is a single example value for this content type.
+	Example any `json:"example,omitempty"`
+	// Examples are named alternatives, so two responses that share one
+	// component schema can still show different payloads; OpenAPI ignores
+	// Example when it is set.
+	Examples map[string]Example `json:"examples,omitempty"`
+}
+
+// Example is one named example value (an OpenAPI Example Object).
+type Example struct {
+	Summary     string `json:"summary,omitempty"`
+	Description string `json:"description,omitempty"`
+	Value       any    `json:"value,omitempty"`
 }
 
 // Response is a response or a $ref to a shared one.
@@ -291,6 +310,7 @@ func pathParams(s *Schemas, path string, types map[string]Field) []Parameter {
 		if f, ok := types[m[1]]; ok {
 			p.Schema = s.of(f.Type, f.Rules)
 			p.Description = f.Doc
+			p.Example = f.ExampleValue()
 		}
 
 		out = append(out, p)
@@ -339,7 +359,8 @@ func typedOperation(s *Schemas, t *api.Operation) *Operation {
 				}
 
 				op.Parameters = append(op.Parameters, Parameter{
-					Name: f.Key, In: "query", Required: f.Required, Description: f.Doc, Schema: s.of(f.Type, f.Rules),
+					Name: f.Key, In: "query", Required: f.Required, Description: f.Doc,
+					Schema: s.of(f.Type, f.Rules), Example: f.ExampleValue(),
 				})
 			}
 		} else {
