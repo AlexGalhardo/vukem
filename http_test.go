@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"fmt"
+	"html/template"
 	"io"
 	"log/slog"
 	"maps"
@@ -316,6 +318,40 @@ func TestRunMainBuildError(t *testing.T) {
 	err := RunMain(t.Context(), []string{"app"}, getenv, New)
 	if err == nil || !strings.Contains(err.Error(), "APP_KEY") {
 		t.Fatalf("RunMain() = %v, want APP_KEY error", err)
+	}
+}
+
+func TestWithViewFuncs(t *testing.T) {
+	t.Parallel()
+
+	fsys := fstest.MapFS{"home.html": {Data: []byte(`{{upper "hi"}} {{money 1234}}`)}}
+
+	app := newTestApp(t, WithViews(fsys),
+		WithViewFuncs(template.FuncMap{"upper": strings.ToUpper}),
+		WithViewFuncs(template.FuncMap{"money": func(c int) string { return fmt.Sprintf("$%d.%02d", c/100, c%100) }}),
+		WithRoutes(func(r *router.Router, _ *App) error {
+			r.Get("/", func(c *web.Ctx) error { return c.Render("home", nil) })
+			return nil
+		}))
+
+	if rec := doReq(t, app, "/"); rec.Body.String() != "HI $12.34" {
+		t.Fatalf("render = %d %q, want %q", rec.Code, rec.Body.String(), "HI $12.34")
+	}
+
+	bad := map[string][]Option{
+		"without WithViews": {WithViewFuncs(template.FuncMap{"upper": strings.ToUpper})},
+		"duplicate name": {
+			WithViews(fsys),
+			WithViewFuncs(template.FuncMap{"upper": strings.ToUpper}),
+			WithViewFuncs(template.FuncMap{"upper": strings.ToLower}),
+		},
+		"nil func": {WithViews(fsys), WithViewFuncs(template.FuncMap{"upper": nil})},
+	}
+	for name, opts := range bad {
+		opts = append(opts, WithSource(testSource(nil)), WithLogger(discardLogger()))
+		if _, err := New(opts...); err == nil {
+			t.Errorf("New(%s) = nil error, want a boot error", name)
+		}
 	}
 }
 
