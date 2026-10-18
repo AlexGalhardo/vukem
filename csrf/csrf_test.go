@@ -204,3 +204,41 @@ func TestConfigErrors(t *testing.T) {
 		t.Error("bad bypass pattern accepted")
 	}
 }
+
+func TestSecurity_A01_TokenFallbackSessionCookie(t *testing.T) {
+	t.Parallel()
+
+	sess := &fakeSession{data: map[string]any{web.TokenKey: "secret"}}
+
+	tests := []struct {
+		name          string
+		sessionCookie string
+		cookie        string
+		want          int
+	}{
+		{name: "named session cookie needs the token", sessionCookie: "app_session", cookie: "app_session", want: 403},
+		{name: "unrelated cookie is no session", sessionCookie: "app_session", cookie: "theme", want: 200},
+		{name: "no name: any cookie needs the token", cookie: "theme", want: 403},
+		{name: "no cookie at all", sessionCookie: "app_session", want: 200},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			h, _ := setup(t, Config{TokenFallback: true, SessionCookie: tt.sessionCookie}, sess)
+
+			r := httptest.NewRequestWithContext(t.Context(), "POST", "http://example.com/posts", http.NoBody)
+			if tt.cookie != "" {
+				r.AddCookie(&http.Cookie{Name: tt.cookie, Value: "x"})
+			}
+
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, r)
+
+			if rec.Code != tt.want {
+				t.Fatalf("POST with cookie %q = %d, want %d", tt.cookie, rec.Code, tt.want)
+			}
+		})
+	}
+}
