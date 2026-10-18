@@ -2634,3 +2634,32 @@ func TestWithRateLimiters(t *testing.T) {
 		t.Error("New(WithRateLimiters(nil)) = nil error, want an error")
 	}
 }
+
+// Routes mounted with r.Handle (plain http.Handler) go through the server
+// middleware too: they are logged and get the request id like any route.
+func TestHandleRoutesAreLogged(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+
+	app := newTestApp(t,
+		WithLogger(slog.New(slog.NewTextHandler(&buf, nil))),
+		WithRoutes(func(r *router.Router, app *App) error {
+			r.Handle("GET /raw", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusTeapot)
+			}))
+
+			return DefaultMiddleware(app, r)
+		}),
+	)
+
+	rec := doReq(t, app, "/raw")
+	if rec.Code != http.StatusTeapot || rec.Header().Get("X-Request-ID") == "" {
+		t.Fatalf("GET /raw = %d %v, want 418 with a request id", rec.Code, rec.Header())
+	}
+
+	if log := buf.String(); !strings.Contains(log, "msg=request") || !strings.Contains(log, "path=/raw") ||
+		!strings.Contains(log, "status=418") {
+		t.Errorf("log = %q, want a request line for /raw", log)
+	}
+}
