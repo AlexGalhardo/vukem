@@ -508,7 +508,7 @@ func (pc *PhotoController) Confirm(c *web.Ctx) error {
 }
 ```
 
-`Verify` first checks that the key looks like one `Presign` could have issued for these rules (inside `Dir`, a random 26-character name, a known extension); otherwise it answers 400 "The upload key is invalid." without touching the disk. Then it reads the object, sniffs its type, checks the extension, the size and `MaxPixels`, and **deletes the object** when any check fails. It does not run `Rules.Scanner`.
+`Verify` first checks that the key looks like one `Presign` could have issued for these rules (inside `Dir`, a random 26-character name, an extension `Presign` gives one of `Types`: the canonical one, one of your `Extensions` for a type outside the table, or `.bin`); otherwise it answers 400 "The upload key is invalid." without touching the disk. Then it reads the object, sniffs its type, checks the extension, the size and `MaxPixels`, and **deletes the object** when any check fails. It does not run `Rules.Scanner`.
 
 ## Thumbnails
 
