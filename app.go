@@ -255,23 +255,35 @@ type App struct {
 }
 
 // readConfigFile reads the file an "@file:" configuration value names
-// (Docker/Kubernetes secrets). Only regular files are read, and at most
-// one byte past config's 1 MiB cap, so a reference to a device or FIFO
-// (/dev/zero, /dev/stdin) cannot block or exhaust memory at boot.
+// (Docker/Kubernetes secrets; symlinks are followed, a relative path is
+// resolved against the working directory). Only regular files are read:
+// the path is checked with os.Stat before it is opened, because opening a
+// FIFO or a terminal (/dev/stdin, a named pipe) blocks; the opened file
+// must be the one checked (os.SameFile), and at most one byte past
+// config's 1 MiB cap is read, so /dev/zero cannot exhaust memory.
 func readConfigFile(name string) ([]byte, error) {
-	f, err := os.Open(name)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-
-	info, err := f.Stat()
+	info, err := os.Stat(name)
 	if err != nil {
 		return nil, err
 	}
 
 	if !info.Mode().IsRegular() {
 		return nil, fmt.Errorf("%s is not a regular file", name)
+	}
+
+	f, err := os.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	opened, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+
+	if !os.SameFile(info, opened) {
+		return nil, fmt.Errorf("%s changed while it was opened", name)
 	}
 
 	return io.ReadAll(io.LimitReader(f, 1<<20+1))
@@ -780,9 +792,6 @@ func New(opts ...Option) (*App, error) {
 	return app, nil
 }
 
-// checkConfig enforces secure defaults at boot (fail closed). envSet
-// reports whether APP_ENV was given explicitly (config.Source.EnvSet);
-// warmup whether the app is built in KindWarmup.
 // checkBootConfig runs every boot check on the loaded configuration and
 // returns all failures together (errors.Join), so a misconfigured deploy
 // shows each problem at once. It also normalizes cfg.ClientIPHeader.
@@ -843,6 +852,9 @@ func checkBootConfig(
 	return key, proxies, previous, nil
 }
 
+// checkConfig enforces secure defaults at boot (fail closed). envSet
+// reports whether APP_ENV was given explicitly (config.Source.EnvSet);
+// warmup whether the app is built in KindWarmup.
 func checkConfig(cfg *Config, envSet, warmup bool) (config.Key, error) {
 	var errs []error
 
