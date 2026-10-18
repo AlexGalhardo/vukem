@@ -42,8 +42,12 @@ type attemptKey struct{}
 
 // AttemptFrom returns the attempt the handler is running on, and whether
 // there is one: it is false outside a queue handler (a handler function
-// called directly, say from a test), where a zero Attempt would read as a
-// last attempt.
+// called directly, say from a test).
+//
+// Check the second value before using the first. A zero Attempt is
+// Number 0 and MaxRetries 0, so Last reports 0 > 0, which is false: it
+// reads as "not the last attempt", and a handler that settles the work it
+// owns only on Last would never settle it when called outside a queue.
 func AttemptFrom(ctx context.Context) (Attempt, bool) {
 	a, ok := ctx.Value(attemptKey{}).(Attempt)
 	return a, ok

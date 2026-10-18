@@ -160,3 +160,35 @@ func TestAttemptFromOutsideAHandler(t *testing.T) {
 		t.Errorf("AttemptFrom(plain ctx) = %+v, %v, want zero, false", got, ok)
 	}
 }
+
+// A118: the doc comment for AttemptFrom used to justify its second return
+// value with "where a zero Attempt would read as a last attempt". It reads
+// as the opposite — Last is Number > MaxRetries, so a zero Attempt is
+// 0 > 0 — and the hazard is the mirror image of the one claimed: a handler
+// settling its row only on Last never settles it outside a queue. Pinned
+// here so the comment and the code cannot drift apart again.
+func TestZeroAttemptIsNotTheLast(t *testing.T) {
+	t.Parallel()
+
+	if (queue.Attempt{}).Last() {
+		t.Error("Attempt{}.Last() = true; the doc comment describes the other way round")
+	}
+
+	// And the guard AttemptFrom offers is the one to use.
+	if _, ok := queue.AttemptFrom(t.Context()); ok {
+		t.Error("AttemptFrom(plain ctx) reported an attempt")
+	}
+
+	for _, tt := range []struct {
+		a    queue.Attempt
+		want bool
+	}{
+		{queue.Attempt{Number: 1, MaxRetries: 2}, false},
+		{queue.Attempt{Number: 3, MaxRetries: 2}, true},
+		{queue.Attempt{Number: 1, MaxRetries: 0}, true},
+	} {
+		if got := tt.a.Last(); got != tt.want {
+			t.Errorf("Attempt%+v.Last() = %v, want %v", tt.a, got, tt.want)
+		}
+	}
+}
