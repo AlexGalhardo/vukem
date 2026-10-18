@@ -29,14 +29,29 @@ type Database struct {
 
 var tableRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
+// DefaultTable is the table the database store owns when NewDatabase is
+// called with an empty name (CACHE_TABLE). It is listed with every other
+// table vukem owns in docs/database.md#tables-the-framework-owns.
+const DefaultTable = "cache"
+
+// checkTable rejects a name that is not a plain identifier: it is
+// interpolated into SQL, values never are.
+func checkTable(table string) error {
+	if !tableRe.MatchString(table) {
+		return fmt.Errorf("cache: invalid table name %q", table)
+	}
+
+	return nil
+}
+
 // NewDatabase returns a database store using table (default "cache").
 func NewDatabase(db *database.DB, table string) (*Database, error) {
 	if table == "" {
-		table = "cache"
+		table = DefaultTable
 	}
 
-	if !tableRe.MatchString(table) {
-		return nil, fmt.Errorf("cache: invalid table name %q", table)
+	if err := checkTable(table); err != nil {
+		return nil, err
 	}
 
 	return &Database{db: db, table: table, now: time.Now, pruneBatch: 1000}, nil
@@ -59,11 +74,13 @@ func (d *Database) val(b []byte) any {
 
 // q renders sqlText with the table name, the key column ({k}, a reserved
 // word on MySQL) and dialect placeholders.
-func (d *Database) q(sqlText string) string {
-	dl := d.db.Dialect()
+func (d *Database) q(sqlText string) string { return render(d.db.Dialect(), d.table, sqlText) }
 
+// render substitutes the table name ({t}), the key column ({k}, a
+// reserved word on MySQL) and dialect placeholders.
+func render(dl database.Dialect, table, sqlText string) string {
 	key := "key"
-	if d.mysql() {
+	if dl.Name() == "mysql" {
 		key = dl.Quote(key)
 	}
 
@@ -73,7 +90,7 @@ func (d *Database) q(sqlText string) string {
 
 	n := 0
 
-	for _, ch := range strings.ReplaceAll(sqlText, "{t}", dl.Quote(d.table)) {
+	for _, ch := range strings.ReplaceAll(sqlText, "{t}", dl.Quote(table)) {
 		if ch == '?' {
 			n++
 			b.WriteString(dl.Placeholder(n))
@@ -87,22 +104,41 @@ func (d *Database) q(sqlText string) string {
 	return b.String()
 }
 
-// CreateTable creates the cache table if missing.
-func (d *Database) CreateTable(ctx context.Context) error {
-	stmt := `CREATE TABLE IF NOT EXISTS {t} ({k} TEXT PRIMARY KEY, value TEXT NOT NULL, expires_at BIGINT NOT NULL DEFAULT 0)`
-	switch {
-	case d.mysql():
-		stmt = `CREATE TABLE IF NOT EXISTS {t} ({k} VARBINARY(255) NOT NULL PRIMARY KEY, value LONGBLOB NOT NULL,
+// tableDDL returns the statements that create table and its expires_at
+// index on dl. CreateTable runs them at boot and the migration from
+// Migrations runs the same list, so the two paths cannot drift
+// (TestMigrationMatchesCreateTableDDL). MySQL stores binary keys and
+// values so lookups stay exact and case-sensitive, and has no
+// CREATE INDEX IF NOT EXISTS; PostgreSQL rejects NUL bytes in TEXT.
+func tableDDL(dl database.Dialect, table string) []string {
+	create := `CREATE TABLE IF NOT EXISTS {t} ({k} TEXT PRIMARY KEY, value TEXT NOT NULL,
+		expires_at BIGINT NOT NULL DEFAULT 0)`
+	index := "CREATE INDEX IF NOT EXISTS " + dl.Quote(table+"_expires_at") + " ON {t} (expires_at)"
+
+	switch dl.Name() {
+	case "mysql":
+		create = `CREATE TABLE IF NOT EXISTS {t} ({k} VARBINARY(255) NOT NULL PRIMARY KEY, value LONGBLOB NOT NULL,
 			expires_at BIGINT NOT NULL DEFAULT 0)`
-	case d.postgres():
-		stmt = `CREATE TABLE IF NOT EXISTS {t} ({k} TEXT PRIMARY KEY, value BYTEA NOT NULL, expires_at BIGINT NOT NULL DEFAULT 0)`
+		index = "CREATE INDEX " + dl.Quote(table+"_expires_at") + " ON {t} (expires_at)"
+	case "postgres":
+		create = `CREATE TABLE IF NOT EXISTS {t} ({k} TEXT PRIMARY KEY, value BYTEA NOT NULL,
+			expires_at BIGINT NOT NULL DEFAULT 0)`
 	}
 
-	if _, err := d.db.ExecContext(ctx, d.q(stmt)); err != nil {
+	return []string{render(dl, table, create), render(dl, table, index)}
+}
+
+// CreateTable creates the cache table if missing. It is the fallback for
+// apps that do not register Migrations: the statements are the same, so
+// running it after the migration changes nothing.
+func (d *Database) CreateTable(ctx context.Context) error {
+	ddl := tableDDL(d.db.Dialect(), d.table)
+
+	if _, err := d.db.ExecContext(ctx, ddl[0]); err != nil {
 		return err
 	}
 
-	if err := d.createExpiryIndex(ctx); err != nil {
+	if err := d.createExpiryIndex(ctx, ddl[1]); err != nil {
 		return err
 	}
 
@@ -127,12 +163,11 @@ func (d *Database) CreateTable(ctx context.Context) error {
 // createExpiryIndex indexes expires_at for Prune. MySQL has no CREATE
 // INDEX IF NOT EXISTS: it checks first, and tolerates a server that
 // booted at the same time and won the race (error 1061).
-func (d *Database) createExpiryIndex(ctx context.Context) error {
+func (d *Database) createExpiryIndex(ctx context.Context, stmt string) error {
 	name := d.table + "_expires_at"
-	stmt := "CREATE INDEX " + d.db.Dialect().Quote(name) + d.q(" ON {t} (expires_at)")
 
 	if !d.mysql() {
-		_, err := d.db.ExecContext(ctx, strings.Replace(stmt, "CREATE INDEX", "CREATE INDEX IF NOT EXISTS", 1))
+		_, err := d.db.ExecContext(ctx, stmt)
 		return err
 	}
 
