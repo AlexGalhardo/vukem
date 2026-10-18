@@ -1168,3 +1168,40 @@ func TestSecurity_A02_ProcessEnvFileSecrets(t *testing.T) {
 		}
 	}
 }
+
+// Boot reports every configuration problem at once, not just the first.
+func TestNewReportsAllConfigErrors(t *testing.T) {
+	t.Parallel()
+
+	env := map[string]string{
+		"APP_ENV":                "production",
+		"APP_DEBUG":              "true",
+		"HSTS_FORCE":             "true",
+		"APP_URL":                "http://example.com",
+		"RATE_LIMIT_IPV6_PREFIX": "0",
+		"TRUSTED_PROXIES":        "not-an-ip",
+		"TRUST_FORWARDED_PROTO":  "true",
+		"HTTP_MAX_HEADER_BYTES":  "1",
+		"APP_PREVIOUS_KEYS":      "short",
+	}
+
+	_, err := New(WithSource(testSource(env)), WithLogOutput(io.Discard))
+	if err == nil {
+		t.Fatal("New() = nil error, want the configuration errors")
+	}
+
+	for _, want := range []string{
+		"APP_DEBUG", "HSTS_FORCE", "RATE_LIMIT_IPV6_PREFIX", "TRUSTED_PROXIES", "HTTP_MAX_HEADER_BYTES",
+		"APP_PREVIOUS_KEYS",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("New() error = %q, want it to mention %s", err, want)
+		}
+	}
+
+	// A TRUSTED_PROXIES that does not parse is reported once, not also as
+	// "TRUST_FORWARDED_PROTO requires TRUSTED_PROXIES".
+	if strings.Contains(err.Error(), "TRUST_FORWARDED_PROTO requires") {
+		t.Errorf("New() error = %q, want no follow-up error from the unparsed TRUSTED_PROXIES", err)
+	}
+}

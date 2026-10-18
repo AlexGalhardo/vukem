@@ -507,42 +507,7 @@ func New(opts ...Option) (*App, error) {
 
 	cfg.Devtools = cfg.Devtools || o.devtools
 
-	if err := checkFlags(o.flags, src); err != nil {
-		return nil, err
-	}
-
-	key, err := checkConfig(&cfg, src.EnvSet(), o.kind == KindWarmup)
-	if err != nil {
-		return nil, err
-	}
-
-	proxies, err := parseTrustedProxies(cfg.TrustedProxies)
-	if err != nil {
-		return nil, err
-	}
-
-	if cfg.TrustForwardedProto && len(proxies) == 0 {
-		return nil, errors.New("vukem: TRUST_FORWARDED_PROTO requires TRUSTED_PROXIES")
-	}
-
-	if cfg.HSTSForce && !strings.HasPrefix(cfg.URL, "https://") {
-		return nil, errors.New("vukem: HSTS_FORCE requires an https APP_URL")
-	}
-
-	if cfg.ClientIPHeader, err = clientIPHeader(cfg.ClientIPHeader, len(proxies) > 0); err != nil {
-		return nil, err
-	}
-
-	if cfg.MaxHeaderBytes < minMaxHeaderBytes || cfg.MaxHeaderBytes > http.DefaultMaxHeaderBytes {
-		return nil, fmt.Errorf("vukem: HTTP_MAX_HEADER_BYTES %d must be between %d and %d",
-			cfg.MaxHeaderBytes, minMaxHeaderBytes, http.DefaultMaxHeaderBytes)
-	}
-
-	if cfg.RateLimitIPv6Prefix < 1 || cfg.RateLimitIPv6Prefix > 128 {
-		return nil, fmt.Errorf("vukem: RATE_LIMIT_IPV6_PREFIX %d must be between 1 and 128", cfg.RateLimitIPv6Prefix)
-	}
-
-	previous, err := parsePreviousKeys(cfg.PreviousKeys)
+	key, proxies, previous, err := checkBootConfig(&cfg, src, &o)
 	if err != nil {
 		return nil, err
 	}
@@ -818,6 +783,66 @@ func New(opts ...Option) (*App, error) {
 // checkConfig enforces secure defaults at boot (fail closed). envSet
 // reports whether APP_ENV was given explicitly (config.Source.EnvSet);
 // warmup whether the app is built in KindWarmup.
+// checkBootConfig runs every boot check on the loaded configuration and
+// returns all failures together (errors.Join), so a misconfigured deploy
+// shows each problem at once. It also normalizes cfg.ClientIPHeader.
+func checkBootConfig(
+	cfg *Config,
+	src *config.Source,
+	o *options,
+) (config.Key, []*net.IPNet, []config.Key, error) {
+	var errs []error
+
+	if err := checkFlags(o.flags, src); err != nil {
+		errs = append(errs, err)
+	}
+
+	key, err := checkConfig(cfg, src.EnvSet(), o.kind == KindWarmup)
+	if err != nil {
+		errs = append(errs, err)
+	}
+
+	proxies, err := parseTrustedProxies(cfg.TrustedProxies)
+	if err != nil {
+		errs = append(errs, err)
+	} else {
+		// Checked only when TRUSTED_PROXIES parsed: an invalid entry is
+		// already reported above.
+		if cfg.TrustForwardedProto && len(proxies) == 0 {
+			errs = append(errs, errors.New("vukem: TRUST_FORWARDED_PROTO requires TRUSTED_PROXIES"))
+		}
+
+		if cfg.ClientIPHeader, err = clientIPHeader(cfg.ClientIPHeader, len(proxies) > 0); err != nil {
+			errs = append(errs, err)
+		}
+	}
+
+	if cfg.HSTSForce && !strings.HasPrefix(cfg.URL, "https://") {
+		errs = append(errs, errors.New("vukem: HSTS_FORCE requires an https APP_URL"))
+	}
+
+	if cfg.MaxHeaderBytes < minMaxHeaderBytes || cfg.MaxHeaderBytes > http.DefaultMaxHeaderBytes {
+		errs = append(errs, fmt.Errorf("vukem: HTTP_MAX_HEADER_BYTES %d must be between %d and %d",
+			cfg.MaxHeaderBytes, minMaxHeaderBytes, http.DefaultMaxHeaderBytes))
+	}
+
+	if cfg.RateLimitIPv6Prefix < 1 || cfg.RateLimitIPv6Prefix > 128 {
+		errs = append(errs, fmt.Errorf("vukem: RATE_LIMIT_IPV6_PREFIX %d must be between 1 and 128",
+			cfg.RateLimitIPv6Prefix))
+	}
+
+	previous, err := parsePreviousKeys(cfg.PreviousKeys)
+	if err != nil {
+		errs = append(errs, err)
+	}
+
+	if err := errors.Join(errs...); err != nil {
+		return config.Key{}, nil, nil, err
+	}
+
+	return key, proxies, previous, nil
+}
+
 func checkConfig(cfg *Config, envSet, warmup bool) (config.Key, error) {
 	var errs []error
 

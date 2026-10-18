@@ -138,7 +138,7 @@ A line with an invalid key stops the boot with the file and line number, for exa
 
 ## Core settings
 
-`vukem.New` loads these into `app.Config` (a `vukem.Config`):
+`vukem.New` loads these into `app.Config` (a `vukem.Config`). It checks them all before it fails, so a misconfigured deploy reports every invalid setting in one error (one per line), not just the first:
 
 | Variable | Default | What it does |
 | --- | --- | --- |
