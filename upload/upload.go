@@ -27,6 +27,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"mime"
 	"net/http"
 	"net/url"
@@ -165,12 +166,62 @@ var extensions = map[string][]string{ //nolint:gochecknoglobals // read-only loo
 // Extensions returns the file extensions accepted for a detected MIME type.
 func Extensions(mimeType string) []string { return slices.Clone(extensions[mediaType(mimeType)]) }
 
+// DetectableTypes are the media types this package can recognise from a
+// file's content, sorted. Rules.Types accepts only these: detection is by
+// content with http.DetectContentType, so a type it cannot name would make
+// the rule reject every file of that type.
+//
+// Measured on Go 1.27.2, these are **not** in it and so cannot be allowed:
+// image/avif, image/heic, image/heif, image/jxl, image/tiff. The detector
+// answers application/octet-stream for all of them.
+//
+// That is also the escape hatch. "application/octet-stream" is detectable
+// -- it is what the detector says when it cannot tell -- so a service
+// handling AVIF or TIFF allows it here and checks the type itself with a
+// real sniffer. Doing that deliberately is the point; having a rule name
+// image/avif and quietly match nothing is not.
+func DetectableTypes() []string {
+	out := slices.Sorted(maps.Keys(extensions))
+
+	// The detector's "I cannot tell", which has no canonical extension and
+	// so is not in the extension table.
+	return append(out, "application/octet-stream")
+}
+
 // errRules reports unusable rules: a configuration error, never shown to clients.
 var errRules = errors.New("upload: Rules need MaxFileSize > 0 and at least one type")
+
+// ErrUndetectableType reports a Rules.Types entry this package cannot
+// detect from a file's content. It is a configuration error, not a
+// client's: the rule would reject every file of that type instead of
+// accepting it, silently, because detection is by content and the
+// detector cannot name the type at all.
+//
+// The detectable set is the one Extensions knows (see [Extensions]), which
+// is what http.DetectContentType can return. AVIF, HEIC, JPEG XL and TIFF
+// are **not** in it, measured on Go 1.27.2. An application that needs one
+// of them has to sniff with a real detector and call [Save] or [Rules.Check]
+// with the type it found.
+var ErrUndetectableType = errors.New("upload: this type cannot be detected from content")
 
 func (r Rules) normalized() (Rules, error) {
 	if r.MaxFileSize <= 0 || len(r.Types) == 0 {
 		return r, errRules
+	}
+
+	// Refused rather than accepted and never matched. A rule naming a type
+	// the detector cannot produce looks like it allows that type and
+	// rejects every one of them, which is the silent half of the problem
+	// (A108).
+	for _, t := range r.Types {
+		if !slices.Contains(DetectableTypes(), mediaType(t)) {
+			return r, fmt.Errorf(
+				"%w: %q (detectable: %s)",
+				ErrUndetectableType,
+				t,
+				strings.Join(DetectableTypes(), ", "),
+			)
+		}
 	}
 
 	if r.MaxFiles <= 0 {
