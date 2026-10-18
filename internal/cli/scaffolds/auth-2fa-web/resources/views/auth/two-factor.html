@@ -15,6 +15,9 @@
 {{end}}
 <form method="post" action="{{route "two-factor.recovery-codes"}}">
 	{{csrfField}}
+	<label>Current password
+		<input type="password" name="password" required autocomplete="current-password">
+	</label>
 	<button type="submit">Regenerate recovery codes</button>
 </form>
 <h2>Turn off</h2>

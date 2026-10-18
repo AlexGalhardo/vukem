@@ -117,8 +117,9 @@ func TestSecurity_A07_TwoFactorFailsClosedOnEditedLogin(t *testing.T) {
 	}
 }
 
-// The secret and the recovery code hashes are orm.Encrypted columns, and
-// codes are checked against the last used step under a row lock.
+// The secret and the recovery code hashes are orm.Encrypted columns,
+// codes are checked against the last used step under a row lock, and every
+// code or password check of the settings page is rate limited.
 func TestSecurity_A07_TwoFactorScaffoldDefaults(t *testing.T) {
 	t.Parallel()
 
@@ -135,7 +136,18 @@ func TestSecurity_A07_TwoFactorScaffoldDefaults(t *testing.T) {
 		"scaffolds/auth-2fa/routes/two_factor.go.tmpl": {
 			"h.Challenge).Use(auth.Guest(acc.Web), challenge)",
 			"h.Confirm).Name(\"two-factor.confirm\").Use(required, verified, confirm)",
+			"h.RegenerateRecoveryCodes).Name(\"two-factor.recovery-codes\").Use(required, verified, confirm)",
+			"h.Disable).Name(\"two-factor.disable\").Use(required, verified, confirm)",
 		},
+	}
+
+	// New recovery codes are a way past the second factor: like turning
+	// 2FA off, they need the current password (generated
+	// TestTwoFactorRecoveryCodes checks it end to end).
+	for _, kit := range []string{"auth-2fa-web", "auth-2fa-inertia"} {
+		files["scaffolds/"+kit+"/app/controllers/account/two_factor.go.tmpl"] = []string{
+			`"stage", "recovery_codes")`,
+		}
 	}
 
 	for src, wants := range files {

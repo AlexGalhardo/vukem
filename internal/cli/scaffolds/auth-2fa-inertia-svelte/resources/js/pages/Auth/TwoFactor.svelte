@@ -18,11 +18,17 @@
     "rounded-md bg-indigo-600 px-4 py-2 font-medium text-white hover:bg-indigo-500 disabled:opacity-50";
 
   const confirm = useForm({ code: "" });
+  const regenerate = useForm({ password: "" });
   const disable = useForm({ password: "" });
 
   function submitConfirm(e: SubmitEvent): void {
     e.preventDefault();
     confirm.post("/user/two-factor/confirm", { onFinish: () => confirm.reset("code") });
+  }
+
+  function submitRegenerate(e: SubmitEvent): void {
+    e.preventDefault();
+    regenerate.post("/user/two-factor/recovery-codes", { onFinish: () => regenerate.reset("password") });
   }
 
   function submitDisable(e: SubmitEvent): void {
@@ -52,9 +58,17 @@
     {:else}
       <p>You have {recoveryCodesLeft} recovery codes left.</p>
     {/if}
-    <Link href="/user/two-factor/recovery-codes" method="post" as="button" class={button}>
-      Regenerate recovery codes
-    </Link>
+    <form onsubmit={submitRegenerate} class="space-y-4">
+      <Field
+        label="Current password"
+        type="password"
+        autocomplete="current-password"
+        required
+        bind:value={regenerate.password}
+        error={regenerate.errors.password}
+      />
+      <button type="submit" disabled={regenerate.processing} class={button}>Regenerate recovery codes</button>
+    </form>
     <h2 class="pt-4 text-xl font-semibold">Turn off</h2>
     <form onsubmit={submitDisable} class="space-y-4">
       <Field

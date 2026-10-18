@@ -106,11 +106,22 @@ func (h *TwoFactorHandlers) Confirm(c *web.Ctx) error {
 }
 
 // RegenerateRecoveryCodes replaces the recovery codes and shows the new
-// ones once.
+// ones once, after checking the current password: new codes are a way
+// past the second factor, so a hijacked session must not mint them.
 func (h *TwoFactorHandlers) RegenerateRecoveryCodes(c *web.Ctx) error {
 	u, err := auth.User[models.User](c, "web")
 	if err != nil {
 		return err
+	}
+
+	in, err := web.Parse(c, requests.ConfirmPasswordSchema)
+	if err != nil {
+		return err
+	}
+
+	if ok, err := h.a.Hasher.Verify(u.Password, in.Password); err != nil || !ok {
+		web.SecurityEvent(c.Request(), "auth.2fa_failed", "user_id", u.AuthID(), "stage", "recovery_codes")
+		return errs.NewValidation().Add("password", h.a.T(c.Context(), "auth.two_factor.wrong_password"))
 	}
 
 	codes, err := h.a.RegenerateRecoveryCodes(c.Context(), u.ID)

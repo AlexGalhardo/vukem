@@ -92,12 +92,12 @@ If your `Login` was rewritten by hand and the patch does not match, the command 
 | GET | `/user/two-factor` | `two-factor.show` | required, verified |
 | POST | `/user/two-factor` | `two-factor.enable` | required, verified |
 | POST | `/user/two-factor/confirm` | `two-factor.confirm` | required, verified, 5/min per user + IP |
-| POST | `/user/two-factor/recovery-codes` | `two-factor.recovery-codes` | required, verified |
+| POST | `/user/two-factor/recovery-codes` | `two-factor.recovery-codes` | required, verified, 5/min per user + IP |
 | POST | `/user/two-factor/disable` | `two-factor.disable` | required, verified, 5/min per user + IP |
 | GET | `/two-factor-challenge` | `two-factor.login` | guest |
 | POST | `/two-factor-challenge` | | guest, 5/min per user + IP |
 
-Confirm and disable share one budget (`two-factor.confirm`); the challenge has its own. Over the limit the answer is `429` with `Retry-After`.
+Confirm, recovery codes and disable share one budget (`two-factor.confirm`); the challenge has its own. Over the limit the answer is `429` with `Retry-After`.
 
 ### Where the secret lives
 
@@ -137,7 +137,7 @@ Each accepted code stores its time step in `two_factor_last_step`. A code whose 
 
 ### Recovery codes
 
-A recovery code replaces an app code when the phone is lost. Each one works once: using it removes its hash, and the settings page shows how many are left. **Regenerate** (`POST /user/two-factor/recovery-codes`) replaces them all; the old ones stop working and the new ones are shown once. With 2FA off it answers `409` (`auth.two_factor.not_enabled`).
+A recovery code replaces an app code when the phone is lost. Each one works once: using it removes its hash, and the settings page shows how many are left. **Regenerate** (`POST /user/two-factor/recovery-codes`) needs the current password, like disabling: new codes are a way past the second factor, so a hijacked session must not be able to mint them. A wrong password answers `422` on `password` and logs `auth.2fa_failed` with `stage=recovery_codes`. With the right one, all codes are replaced; the old ones stop working and the new ones are shown once. With 2FA off it answers `409` (`auth.two_factor.not_enabled`).
 
 ### Disable
 

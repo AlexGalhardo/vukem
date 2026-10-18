@@ -17,11 +17,17 @@ const button =
 
 export default function TwoFactor({ enabled, pending, secret, qr, recoveryCodes, recoveryCodesLeft }: Props) {
   const confirm = useForm({ code: "" });
+  const regenerate = useForm({ password: "" });
   const disable = useForm({ password: "" });
 
   const submitConfirm = (e: FormEvent) => {
     e.preventDefault();
     confirm.post("/user/two-factor/confirm", { onFinish: () => confirm.reset("code") });
+  };
+
+  const submitRegenerate = (e: FormEvent) => {
+    e.preventDefault();
+    regenerate.post("/user/two-factor/recovery-codes", { onFinish: () => regenerate.reset("password") });
   };
 
   const submitDisable = (e: FormEvent) => {
@@ -51,9 +57,20 @@ export default function TwoFactor({ enabled, pending, secret, qr, recoveryCodes,
           ) : (
             <p>You have {recoveryCodesLeft} recovery codes left.</p>
           )}
-          <Link href="/user/two-factor/recovery-codes" method="post" as="button" className={button}>
-            Regenerate recovery codes
-          </Link>
+          <form onSubmit={submitRegenerate} className="space-y-4">
+            <Field
+              label="Current password"
+              type="password"
+              autoComplete="current-password"
+              required
+              value={regenerate.data.password}
+              onChange={(e) => regenerate.setData("password", e.target.value)}
+              error={regenerate.errors.password}
+            />
+            <button type="submit" disabled={regenerate.processing} className={button}>
+              Regenerate recovery codes
+            </button>
+          </form>
           <h2 className="pt-4 text-xl font-semibold">Turn off</h2>
           <form onSubmit={submitDisable} className="space-y-4">
             <Field
