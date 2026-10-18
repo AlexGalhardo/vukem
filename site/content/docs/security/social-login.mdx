@@ -61,7 +61,7 @@ vukem install:auth --social github,google
 vukem migrate
 ```
 
-Accepted names: `github`, `gitlab`, `discord`, `google`, `microsoft`, `linkedin`, `x`, `apple`. The command also works on a project that already ran `install:auth`. It adds:
+Accepted names: `github`, `gitlab`, `discord`, `google`, `microsoft`, `linkedin`, `apple`. `x` is refused, because X sends no email (see below). The command also works on a project that already ran `install:auth`. It adds:
 
 ```text
 routes/social.go              /auth/{provider}/redirect
@@ -144,8 +144,8 @@ Then the scaffold's callback links the account, logs the user in with `acc.Web.L
 
 **Why end the old sessions?** An unverified local account may have been created by someone who signed up first with the address (account squatting). Once the provider proves the address, whatever that person opened must close.
 
-<Callout type="warning" title="X and the scaffold">
-X never shares an email, and the scaffold's `FindOrCreateFromSocial` needs one to create or link a user, so with `--social x` new X sign-ins answer `422` until you change that function to create users keyed by provider id.
+<Callout type="info" title="X and the scaffold">
+X never shares an email, and the scaffold's `FindOrCreateFromSocial` needs one to create or link a user. `install:auth --social x` is therefore refused with exit code 2 before it writes anything. Use `social.X` by hand instead, for example to link an X account to a user who is already signed in, keyed by provider and provider id.
 </Callout>
 
 ## The `social` package by hand

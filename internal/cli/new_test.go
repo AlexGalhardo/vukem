@@ -221,7 +221,7 @@ func TestNewProjectEndToEnd(t *testing.T) {
 		project,
 		"install:auth",
 		"--social",
-		"github,google,apple,linkedin,x",
+		"github,google,apple,linkedin",
 	); code != 0 ||
 		!strings.Contains(out, "created routes/social.go") ||
 		strings.Contains(out, "created routes/auth.go") {

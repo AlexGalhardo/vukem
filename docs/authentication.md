@@ -206,7 +206,7 @@ s := social.New(key, // panics on a key shorter than 32 bytes
 ).WithPreviousKeys(app.DerivePreviousKeys("social.state", 32)...) // APP_KEY rotation
 ```
 
-Sign in with Apple signs its client secret (an ES256 JWT, cached for an hour) with the `.p8` key, and answers with `response_mode=form_post`: the callback is a cross-site `POST` from `appleid.apple.com`. Register `POST` on the callback route, serve the app over HTTPS (the state cookie becomes `SameSite=None; Secure`, and `Redirect` refuses to run with `InsecureCookies`), and add `https://appleid.apple.com` to `CSRF_TRUSTED_ORIGINS`. Apple sends the user's name only on the first sign-in (read from the posted `user` field). `install:auth --social apple,linkedin,x` wires all three; Apple reads `SOCIAL_APPLE_CLIENT_ID`, `SOCIAL_APPLE_TEAM_ID`, `SOCIAL_APPLE_KEY_ID` and `SOCIAL_APPLE_PRIVATE_KEY_PATH`.
+Sign in with Apple signs its client secret (an ES256 JWT, cached for an hour) with the `.p8` key, and answers with `response_mode=form_post`: the callback is a cross-site `POST` from `appleid.apple.com`. Register `POST` on the callback route, serve the app over HTTPS (the state cookie becomes `SameSite=None; Secure`, and `Redirect` refuses to run with `InsecureCookies`), and add `https://appleid.apple.com` to `CSRF_TRUSTED_ORIGINS`. Apple sends the user's name only on the first sign-in (read from the posted `user` field). `install:auth --social apple,linkedin` wires both; Apple reads `SOCIAL_APPLE_CLIENT_ID`, `SOCIAL_APPLE_TEAM_ID`, `SOCIAL_APPLE_KEY_ID` and `SOCIAL_APPLE_PRIVATE_KEY_PATH`.
 
 ```go
 r.Get("/auth/{provider}/redirect", func(c *web.Ctx) error {
@@ -239,7 +239,7 @@ r.Get("/auth/{provider}/callback", func(c *web.Ctx) error {
 | Options | `social.WithEndpoints(...)` (GitHub Enterprise, self-hosted GitLab, tests), `social.WithAuthParams(...)`, `Config.Scopes`, `OIDC(...).AuthParams(...)`, `social.OAuth2(name, cfg, endpoints, scopes, mapUser)` |
 | Security | a provider `error` other than `access_denied` answers `social.ErrProvider` (400, fixed message) and logs the sanitized code, so a crafted callback link cannot put text on the page (`TestSecurity_A03_SocialProviderErrorNotReflected`); redirect URL fixed in config, provider calls through a client with a 10 s timeout and 1 MiB response limit, tokens never logged |
 
-Apple (`social.Apple`, form-post callback), LinkedIn (`social.LinkedIn`) and X (`social.X`) are built in. `social.Fake(name, callbackURL, user)` is a provider for tests.
+Apple (`social.Apple`, form-post callback), LinkedIn (`social.LinkedIn`) and X (`social.X`) are built in. X sends no email address, so `install:auth --social x` is refused (exit 2): the scaffold creates and links accounts by a provider-verified email, and an X sign-in could never create one (`TestSecurity_A07_SocialRefusesProvidersWithoutEmail`). Wire `social.X` yourself, for example to link X to an account that is already signed in, keyed by `(Provider, ID)`. `social.Fake(name, callbackURL, user)` is a provider for tests.
 
 ## Authorization
 

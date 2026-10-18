@@ -728,3 +728,33 @@ func TestVerificationMailIsQueued(t *testing.T) {
 		t.Error("SendVerification does not queue the verification mail")
 	}
 }
+
+// X sends no email address, and the scaffold creates and links accounts
+// by a provider-verified email: --social x would wire a button that never
+// signs anyone up, so install:auth refuses it before writing anything.
+func TestSecurity_A07_SocialRefusesProvidersWithoutEmail(t *testing.T) {
+	t.Parallel()
+
+	for _, list := range []string{"x", "github,x"} {
+		dir := t.TempDir()
+		writeFiles(t, dir, map[string]string{"go.mod": "module example.com/app\n\ngo 1.27\n"})
+
+		code, out, errOut := vukem(t, dir, "install:auth", "--social", list)
+		if code != 2 || !strings.Contains(errOut, "sends no email") {
+			t.Errorf("install:auth --social %s = %d\n%s%s", list, code, out, errOut)
+		}
+
+		if _, err := os.Stat(filepath.Join(dir, "routes")); err == nil {
+			t.Errorf("install:auth --social %s wrote files before refusing", list)
+		}
+	}
+
+	b, err := scaffoldFS.ReadFile("scaffolds/auth-social/app/accounts/social.go.tmpl")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if bytes.Contains(b, []byte("social.X(")) {
+		t.Error("the social scaffold still wires social.X")
+	}
+}
