@@ -148,7 +148,7 @@ func (w *limitWalker) field(f *field, parent *namedType) cost {
 	sub := w.selection(f.sel, fd.typ.base())
 	c.depth += sub.depth
 	c.aliases = saturating(c.aliases, sub.aliases)
-	c.complexity = saturating(c.complexity, multiply(sub.complexity, w.multiplier(f)))
+	c.complexity = saturating(c.complexity, multiply(sub.complexity, w.multiplier(f, fd)))
 	c.introDepth = sub.introDepth
 
 	if fd == w.s.metaSchema || fd == w.s.metaType {
@@ -172,20 +172,16 @@ func multiply(a, b int) int {
 }
 
 // multiplier reads a page-size argument (first, last, limit) so list
-// fields cost their requested size.
-func (w *limitWalker) multiplier(f *field) int {
-	for _, a := range f.args {
-		if a.name != "first" && a.name != "last" && a.name != "limit" {
-			continue
-		}
-
-		var v any
-
-		switch a.value.kind { //nolint:exhaustive // the remaining kinds take the common path below
-		case valVariable:
-			v = w.vars[a.value.raw]
-		case valInt:
-			v, _ = literalToGeneric(a.value, nil)
+// fields cost their requested size. An argument the query leaves out (or
+// passes as a variable the request does not set) costs its SDL default,
+// which is what the resolver receives.
+func (w *limitWalker) multiplier(f *field, fd *fieldType) int {
+	for _, name := range []string{"first", "last", "limit"} {
+		v, ok := w.argValue(f, name)
+		if !ok {
+			if def := fd.argMap[name]; def != nil && def.hasDefault {
+				v = def.defValue
+			}
 		}
 
 		if n, ok := toInt(v); ok && n > 1 {
@@ -198,4 +194,27 @@ func (w *limitWalker) multiplier(f *field) int {
 	}
 
 	return 1
+}
+
+// argValue returns the value the query gives argument name of f, and
+// false when it gives none.
+func (w *limitWalker) argValue(f *field, name string) (any, bool) {
+	for _, a := range f.args {
+		if a.name != name {
+			continue
+		}
+
+		switch a.value.kind {
+		case valVariable:
+			v, ok := w.vars[a.value.raw]
+			return v, ok
+		case valInt:
+			v, _ := literalToGeneric(a.value, nil)
+			return v, true
+		default:
+			return nil, true
+		}
+	}
+
+	return nil, false
 }

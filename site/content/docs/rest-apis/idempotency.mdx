@@ -94,7 +94,7 @@ The same task comes back — id `46` again — with `Idempotent-Replayed: true`,
 
 1. **Is it guarded?** Only methods in `Methods` (default `POST` and `PATCH`) are. A request without the header passes straight through, unless `Required` is set.
 2. **Is the key valid?** 1 to 255 visible ASCII characters (`!` to `~`; no spaces). Otherwise `400`.
-3. **Read the body**, up to `MaxBody` (1 MiB). A larger body is refused with `413`, so this limit also caps the request size of guarded routes.
+3. **Read the body**, up to `MaxBody` (1 MiB). The fingerprint needs the whole body, so a larger one is refused with `413` before the handler runs: on routes that take a key, `MaxBody` is the body limit, whatever a route-level `BodyLimit` allows. Requests without a key are not affected. Raise `MaxBody` on keyed routes that accept bigger bodies.
 4. **Find the scope**, the identity of the caller (see below). An empty scope is refused with `400`.
 5. **Fingerprint the request**: a SHA-256 of the method, the URL path and query, and the body. Headers are not part of it.
 6. **Claim the key** in the store with an atomic "add if absent" (`store.Add`), marked "in flight" for `LockTTL` (1 minute).
@@ -108,7 +108,7 @@ The store key is a SHA-256 of the scope and the key, so neither the key nor the 
 | Situation | Status | `detail` |
 | --- | --- | --- |
 | First request with this key | your handler's answer | — |
-| Same key, same request, finished | the stored status, body and headers, plus `Idempotent-Replayed: true` | — |
+| Same key, same request, finished | the stored status, body and representation headers, plus `Idempotent-Replayed: true` | — |
 | Same key while the first is still running | `409` | `A request with this Idempotency-Key is being processed.` |
 | Same key, different method, URL or body | `422` | `This Idempotency-Key was used for a different request.` |
 | Invalid key, or missing key with `Required: true` | `400` | `A valid Idempotency-Key header (1-255 printable characters) is required.` |
@@ -120,8 +120,8 @@ The `422` also logs a security event `idempotency.key_reused`, and the empty-sco
 
 Two details of replays:
 
-- `Set-Cookie` is never stored or replayed, so a session cookie of the first response cannot leak into a later one.
-- A replay copies the **other** headers of the original response, including those that middleware running before `Idempotency` had set on it (for example `X-Request-ID` or `RateLimit-Remaining`). They describe the original request, not the retry.
+- Only headers that describe the stored response are kept: `Content-Type` plus `ReplayHeaders` (default `Content-Language`, `Content-Disposition`, `Content-Location`, `Location`, `ETag`, `Last-Modified`, `Link`). Every other header of the retry comes from its own middleware, so `X-Request-ID`, `RateLimit-Remaining` and the security headers describe the retry, not the original request.
+- `Set-Cookie`, `Authorization`, `Proxy-Authorization`, `Proxy-Authenticate` and `WWW-Authenticate` are never stored or replayed, even when listed, so a session cookie or a credential challenge of the first response cannot leak into a later one.
 
 ## Scope: whose key is it?
 
@@ -156,7 +156,8 @@ To share keys between all callers on purpose (rare: a public, anonymous endpoint
 | `Required` | `bool` | `false` | answer `400` when a guarded request has no key |
 | `TTL` | `time.Duration` | 24h | how long a finished response is kept for replays |
 | `LockTTL` | `time.Duration` | 1 minute | how long a request counts as "in flight" |
-| `MaxBody` | `int64` | 1 MiB | the largest body that is fingerprinted; larger bodies get `413` |
+| `MaxBody` | `int64` | 1 MiB | the largest body of a keyed request; larger bodies get `413` before the handler |
+| `ReplayHeaders` | `[]string` | the representation headers above | response headers stored and replayed besides `Content-Type`; a non-nil list replaces the default |
 | `Scope` | `func(*http.Request) string` | the principal, else a hash of `Authorization` | separates callers |
 
 Zero or negative values keep the default. `api.IdempotencyHeader` is the header name, `"Idempotency-Key"`.
@@ -280,6 +281,10 @@ for (let i = 0; i < 3; i++) {
 **Installing it before authentication**, or on a public route without `Scope`: keyed requests from anonymous callers get `400` with `Idempotency-Key requires an identified caller.`
 
 **A key with a space** (`"order 1"`) gets `400`: keys must be visible ASCII characters only.
+
+**Expecting a custom response header on a replay.** A header your handler sets (`X-Order-Status`) is not replayed unless you list it: `api.IdempotencyOptions{ReplayHeaders: []string{"Location", "X-Order-Status"}}`.
+
+**A keyed upload larger than 1 MiB.** It gets `413` from `Idempotency` even when the route's `BodyLimit` allows more. Raise `MaxBody` for that route.
 
 **The memory store behind a load balancer.** Retries that reach another server run again. Use `CACHE_STORE=database` or Redis.
 

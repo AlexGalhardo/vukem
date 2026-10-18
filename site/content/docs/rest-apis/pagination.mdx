@@ -122,13 +122,13 @@ req, err := api.Query(c, orm.QueryOf[models.Task](t.db),
 
 | Field | Type | What it holds |
 | --- | --- | --- |
-| `Query` | `orm.Query[T]` | your query with the filters, sorts and fields applied |
+| `Query` | `orm.Query[T]` | your query with the filters, sorts, fields and relation includes applied |
 | `Page` | `int` | the requested page, at least 1 |
 | `PerPage` | `int` | the page size, between 1 and the maximum |
 | `Cursor` | `string` | the raw `?cursor=` value (empty for the first page) |
-| `Includes` | `[]string` | the allowlisted relations the client asked for |
+| `Includes` | `[]string` | the allowlisted include names the client sent, as sent |
 
-`req.Paginate(ctx)` runs `req.Query.Paginate(ctx, req.Page, req.PerPage)` for you.
+`req.Paginate(ctx)` runs `req.Query.Paginate(ctx, req.Page, req.PerPage)` for you, and `req.CursorPaginate(ctx, dir)` runs a cursor page (see [Cursor pages](#cursor-pages)).
 
 ### Filters
 
@@ -160,19 +160,26 @@ Use `omitempty` (or `omitzero`) [JSON tags](https://pkg.go.dev/encoding/json#Mar
 
 ### Includes
 
-`api.Includes(rels...)` allows `?include=user,comments` and fills `req.Includes` with what the client asked for. It does **not** load anything by itself: your handler decides how to load each relation. `orm.Query.With` takes the relation's **Go field name** (`"User"`), so map the public names:
+`api.Includes(rels...)` allows `?include=user,comments`. Each name the client sends that matches a relation of the model is **eager-loaded** on `req.Query` with `orm.Query.With`. A name matches a relation by its Go field name (`User`), its snake_case form (`user`, `author_profile` for `AuthorProfile`) or its `json` tag, so the public name of a relation is usually the one you already use in the JSON:
 
 ```go title="app/controllers/apiv1/tasks.go"
-// Public include name → orm relation field.
-var taskRelations = map[string]string{"user": "User"}
-
-q := req.Query
-for _, name := range req.Includes {
-	q = q.With(taskRelations[name])
+// models.Task has `User orm.BelongsTo[models.User]`:
+// ?include=user loads it, without ?include it stays unloaded.
+req, err := api.Query(c, orm.QueryOf[models.Task](t.db),
+	api.Includes("user"),
+)
+if err != nil {
+	return err
 }
 
-page, err := q.Paginate(c.Context(), req.Page, req.PerPage)
+page, err := req.Paginate(c.Context())
 ```
+
+An allowlisted name that matches no relation (a computed `stats` block, say) is not loaded; it only appears in `req.Includes`, so your handler can act on it. `req.Includes` always lists the names as the client sent them.
+
+<Callout type="warning" title="Allowlist only bounded, safe relations">
+An include loads **every** related row of each item on the page: `?include=comments` on 100 tasks fetches all their comments, however many, because a has-many relation is not paginated. And when your response embeds the related model, it is serialized with that model's own `json` tags, so a `User` without `json:"-"` on `PasswordHash` would expose it. Allowlist only relations with a small, bounded number of rows, and map them through a [resource](/docs/rest-apis/overview) that picks the fields to send.
+</Callout>
 
 In the transformer, read a relation only when it was loaded: `m.User.Loaded()` reports it, and `m.User.Get()` returns `orm.ErrNotLoaded` otherwise. See [Relations](/docs/database/relations).
 
@@ -211,7 +218,7 @@ How the links are built:
 
 ## Cursor pages
 
-For a cursor page, call `CursorPaginate` on the refined query and answer with `api.Cursor`:
+For a cursor page, call `req.CursorPaginate(ctx, dir)` and answer with `api.Cursor`:
 
 ```go title="app/controllers/apiv1/feed.go"
 func (f *Feed) Index(c *web.Ctx) error {
@@ -223,9 +230,7 @@ func (f *Feed) Index(c *web.Ctx) error {
 		return err
 	}
 
-	page, err := req.Query.CursorPaginate(
-		c.Context(), req.Cursor, req.PerPage, orm.Asc,
-	)
+	page, err := req.CursorPaginate(c.Context(), orm.Asc)
 	if err != nil {
 		// A tampered cursor is a 400.
 		return err
@@ -255,9 +260,7 @@ func (f *Feed) Index(c *web.Ctx) error {
 - `orm.Asc` walks from the oldest id up, `orm.Desc` from the newest down.
 - `links.self` is the request URI as received; `links.prev` is always `null`, because a keyset cursor only moves forward.
 
-<Callout type="warning" title="No api.Sorts on cursor endpoints">
-The keyset order is the primary key. `api.Sorts` always applies an `OrderBy` (its last entry is the default), and `CursorPaginate` then fails with `orm: CursorPaginate orders by the primary key; remove OrderBy`: the client gets a `500`.
-</Callout>
+The keyset order is the primary key, so a cursor page cannot follow another sort. `req.CursorPaginate` drops the default sort of `api.Sorts` (the endpoint can still offer `?sort` for offset pages), and answers `400` with `Query parameter sort cannot be combined with cursor pagination.` when the client sends `?sort` itself. Calling `req.Query.CursorPaginate(ctx, req.Cursor, req.PerPage, dir)` directly still fails with `orm: CursorPaginate orders by the primary key; remove OrderBy` (a `500`) as soon as `api.Sorts` added an `OrderBy`.
 
 ## Plain collections
 
@@ -365,6 +368,7 @@ Every rejection is a `400` problem+json whose `detail` names what is allowed:
 | `?page=1001` | `Query parameter page must be at most 1000.` |
 | `?filter[status]=` with 101 values | `Query parameter filter[status] accepts at most 100 values.` |
 | `?cursor=garbage` | `Invalid pagination cursor.` |
+| `?sort=title` on `req.CursorPaginate` | `Query parameter sort cannot be combined with cursor pagination.` |
 
 ```json
 {
@@ -404,21 +408,9 @@ func TestListTasks(t *testing.T) {
 
 ## Common mistakes
 
-**Using `api.Sorts` with a cursor.** The client gets a `500` and the log says `orm: CursorPaginate orders by the primary key; remove OrderBy`. Drop `api.Sorts` on cursor endpoints.
+**Calling `req.Query.CursorPaginate` on an endpoint with `api.Sorts`.** The client gets a `500` and the log says `orm: CursorPaginate orders by the primary key; remove OrderBy`. Use `req.CursorPaginate(ctx, dir)`, which leaves the default sort out.
 
-**Passing include names straight to `With`.**
-
-```go title="Wrong"
-// "user" is not a Go field name: the query fails with
-// orm: Task has no relation "user" (a 500).
-q = q.With(req.Includes...)
-```
-
-```go title="Right"
-for _, name := range req.Includes {
-	q = q.With(taskRelations[name])
-}
-```
+**Expecting an unknown include name to load something.** `api.Includes("owner")` on a model whose relation is `User` loads nothing: `owner` matches no relation, so it only lands in `req.Includes`. Name the include after the relation (`user`), or load it yourself from `req.Includes`.
 
 **Expecting `?fields` to remove properties.** It only narrows the `SELECT`; add `omitempty` to the transformer's fields.
 

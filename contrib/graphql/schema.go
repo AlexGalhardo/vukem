@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"reflect"
 	"slices"
 	"strings"
@@ -227,6 +228,9 @@ type binding struct {
 	subscribe       subscribeFn
 	argNames        []string // json names of the Go args struct, checked against the SDL
 	cost            int
+	// parent and out are the Go types of the parent and the result, so New
+	// can check that default-resolved fields exist on them.
+	parent, out reflect.Type
 }
 
 // WithLimits sets the operation limits (see Limits for defaults).
@@ -902,7 +906,87 @@ func (b *builder) bind() error {
 		}
 	}
 
+	if err := b.checkDefaultFields(); err != nil {
+		return err
+	}
+
 	b.bindIntrospection()
+
+	return nil
+}
+
+// checkDefaultFields walks from the Go types the bindings declare (parents,
+// results, Object[T]) and fails when an object field without a resolver
+// has no Go field the default resolver could read, so a typo or a
+// json:"-" field fails at boot instead of on the first query. Maps,
+// interfaces and other non-struct Go types are not checked.
+func (b *builder) checkDefaultFields() error {
+	seen := map[*namedType]map[reflect.Type]bool{}
+
+	var walk func(t *namedType, gt reflect.Type) error
+
+	walk = func(t *namedType, gt reflect.Type) error {
+		for gt.Kind() == reflect.Pointer || gt.Kind() == reflect.Slice || gt.Kind() == reflect.Array {
+			gt = gt.Elem()
+		}
+
+		if t == nil || t.kind != kindObject || gt.Kind() != reflect.Struct || seen[t][gt] {
+			return nil
+		}
+
+		if seen[t] == nil {
+			seen[t] = map[reflect.Type]bool{}
+		}
+
+		seen[t][gt] = true
+		index := b.s.fieldIndex(gt)
+
+		for _, f := range t.fields {
+			if f.resolve != nil {
+				continue
+			}
+
+			idx, ok := index[f.name]
+			if !ok {
+				idx, ok = index[foldPrefix+strings.ToLower(f.name)]
+			}
+
+			if !ok {
+				return fmt.Errorf("graphql: %s.%s has no resolver and Go type %s has no field for it "+
+					"(bind it with graphql.Field or add a json tag)", t.name, f.name, gt)
+			}
+
+			if err := walk(f.typ.base(), gt.FieldByIndex(idx).Type); err != nil {
+				return err
+			}
+		}
+
+		return nil
+	}
+
+	for _, bd := range b.bindings {
+		t := b.s.types[bd.typeName]
+
+		if bd.parent != nil {
+			if err := walk(t, bd.parent); err != nil {
+				return err
+			}
+		}
+
+		if bd.out != nil {
+			if err := walk(t.fieldMap[bd.field].typ.base(), bd.out); err != nil {
+				return err
+			}
+		}
+	}
+
+	for _, rt := range slices.SortedFunc(maps.Keys(b.s.goTypes), func(a, c reflect.Type) int {
+		return strings.Compare(a.String(), c.String())
+	}) {
+		if err := walk(b.s.types[b.s.goTypes[rt]], rt); err != nil {
+			return err
+		}
+	}
 
 	return nil
 }

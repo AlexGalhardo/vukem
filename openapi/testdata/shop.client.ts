@@ -56,6 +56,8 @@ export type ProductsStoreBody = {
 
 export type ProductsStoreResponse = Product;
 
+export type WebhooksReceiveBody = unknown;
+
 export type LegacyParams = {
   path: string;
 };
@@ -66,6 +68,10 @@ export type ProductsDestroyParams = {
 
 export type ProductsStoreParams = {
   shop: number;
+};
+
+export type WebhooksReceiveParams = {
+  provider: string;
 };
 
 /** ApiProblem is an RFC 9457 problem details document; errors maps each invalid field to its messages. */
@@ -205,6 +211,11 @@ export interface Client {
    * POST /api/v1/shops/{shop}/products: Create a product
    */
   productsStore(args: { params: ProductsStoreParams; body: ProductsStoreBody }): Promise<ProductsStoreResponse>;
+
+  /**
+   * POST /api/v1/webhooks/{provider}
+   */
+  webhooksReceive(args: { params: WebhooksReceiveParams; body?: WebhooksReceiveBody }): Promise<unknown>;
 }
 
 /** createClient returns a typed client; methods throw ApiError on non-2xx responses. */
@@ -216,5 +227,6 @@ export function createClient(options: ClientOptions = {}): Client {
     productsDestroy: (args) => request<ProductsDestroyResponse>("DELETE", "/api/v1/products/{id}", args),
     productsIndex: (args) => request<ProductsIndexResponse>("GET", "/api/v1/products", args),
     productsStore: (args) => request<ProductsStoreResponse>("POST", "/api/v1/shops/{shop}/products", args),
+    webhooksReceive: (args) => request<unknown>("POST", "/api/v1/webhooks/{provider}", args),
   };
 }

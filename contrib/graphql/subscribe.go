@@ -36,7 +36,7 @@ func Subscription[A, O any](
 			return fmt.Errorf("graphql: binding %s.%s: %w", typeName, fieldName, err)
 		}
 
-		bd := binding{typeName: typeName, field: fieldName, argNames: names}
+		bd := binding{typeName: typeName, field: fieldName, argNames: names, out: reflect.TypeFor[O]()}
 		// The event is the field value: the root field resolves to its parent.
 		bd.resolve = func(_ context.Context, parent any, _ map[string]any) (any, error) { return parent, nil }
 		bd.subscribe = func(ctx context.Context, args map[string]any) (func(context.Context) (any, bool), error) {

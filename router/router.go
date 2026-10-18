@@ -123,9 +123,12 @@ func (rt *Route) Use(mw ...Middleware) *Route {
 
 // RouteInfo describes a compiled route.
 type RouteInfo struct {
-	Method     string   `json:"method"`
-	Path       string   `json:"path"`
-	Name       string   `json:"name,omitempty"`
+	Method string `json:"method"`
+	Path   string `json:"path"`
+	Name   string `json:"name,omitempty"`
+	// LocalName is the name given to the route itself, without the group
+	// name prefixes (Name is the full name).
+	LocalName  string   `json:"-"`
 	Middleware []string `json:"middleware,omitempty"`
 	Doc        any      `json:"-"`
 }
@@ -412,7 +415,7 @@ func (r *Router) Routes() []RouteInfo {
 	infos := make([]RouteInfo, 0, len(r.routes))
 
 	for _, rt := range r.routes {
-		info := RouteInfo{Method: rt.method, Path: rt.path, Name: rt.FullName(), Doc: rt.doc}
+		info := RouteInfo{Method: rt.method, Path: rt.path, Name: rt.FullName(), LocalName: rt.name, Doc: rt.doc}
 		if info.Method == "" {
 			info.Method = "ANY"
 		}

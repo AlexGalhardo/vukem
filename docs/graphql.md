@@ -36,7 +36,7 @@ schema, err := graphql.New(sdl,
 )
 ```
 
-- `Field[P, A, O](type, field, fn, opts...)`, `Query[A, O]`, `Mutation[A, O]`. `P` is the parent value (T and *T convert both ways); `A` is decoded from the coerced arguments through `json` tags, then checked with `validate` tags (package [`z`](validation.md)) and a `Validate() error` method; `O` is serialized per the selection set. A Go argument the field does not declare, a binding to an unknown field and a root field without a resolver are boot errors.
+- `Field[P, A, O](type, field, fn, opts...)`, `Query[A, O]`, `Mutation[A, O]`. `P` is the parent value (T and *T convert both ways); `A` is decoded from the coerced arguments through `json` tags, then checked with `validate` tags (package [`z`](validation.md); nested input structs, pointers and lists included) and a `Validate() error` method, whose error is mapped like a resolver error (a plain error is masked as `Internal server error` and logged; return `z.FieldError`, `errs.New(422, ...)` or `graphql.NewError` for client messages); `O` is serialized per the selection set. A Go argument the field does not declare, a binding to an unknown field, a root field without a resolver, and an object field without a resolver that the Go type behind it (parent and result types of the bindings, `Object[T]`) cannot answer are boot errors.
 - Unbound fields read the parent: a `map[string]any` key, or a struct field by `json` name (`json:"-"` hides it), falling back to a case-insensitive Go name, tagged or not (`ID` → `id`, ``PriceCents `json:"price_cents"` `` → `priceCents`). An exact `json` name wins over another field's Go name. Folding makes a json-renamed field reachable by its Go name too (`Password json:"pw"` answers `password`) whenever the schema declares that field: what clients can read is decided by the SDL, so keep secrets out of it or hide them with `json:"-"`. A nil Go slice is an empty list.
 - Built-in scalars: `Int` (32-bit, out-of-range values are errors on input and output), `Float` (finite), `String`, `Boolean`, `ID` (string or integer input, string output). Custom scalars: `graphql.Scalar("DateTime", graphql.ScalarFuncs{Serialize, Parse})`; unbound custom scalars pass values through.
 - Interfaces and unions resolve through `graphql.ResolveType(name, fn)`, a `GraphQLTypename() string` method, `graphql.Object[T]("Type")` mappings or a `"__typename"` map key.
@@ -147,7 +147,7 @@ postsByUser := graphql.NewLoader(graphql.GroupByKey(orm.QueryOf[Post](db), "user
 | Limit | Default | Option |
 | --- | --- | --- |
 | Depth (introspection fields excluded) | 12 | `Limits.MaxDepth` |
-| Complexity: field cost (`graphql.Cost(n)`, default 1); `first` / `last` / `limit` arguments multiply the cost of the selection | 1000 | `Limits.MaxComplexity` |
+| Complexity: field cost (`graphql.Cost(n)`, default 1); `first` / `last` / `limit` arguments multiply the cost of the selection (their SDL default when omitted) | 1000 | `Limits.MaxComplexity` |
 | Aliases | 30 | `Limits.MaxAliases` |
 | Lexer tokens | 10000 | `Limits.MaxTokens` |
 | POST body | 1 MiB | `HandlerConfig.MaxBodyBytes` |
@@ -164,7 +164,7 @@ graphql.Serve(app, r, "/graphql", schema, graphql.Config{
 })
 ```
 
-- `schema.Handler(cfg)` is a plain `http.Handler`: POST `application/json` and GET (`query`, `variables`, `operationName`, `extensions` parameters) for queries only; a mutation over GET gets 405 with `Allow: POST`. Batched (array) bodies are rejected.
+- `schema.Handler(cfg)` is a plain `http.Handler`: POST `application/json` and GET (`query`, `variables`, `operationName`, `extensions` parameters) for queries only; a mutation over GET gets 405 with `Allow: POST`. Batched (array) bodies are rejected. It rejects `__schema` / `__type` unless `HandlerConfig.Introspection` is set (`DisableIntrospection` wins); `graphql.Serve` sets it outside production.
 - Responses are `application/graphql-response+json` when the client accepts it (request errors then use 400), otherwise `application/json` with 200, per GraphQL over HTTP. Responses are `Cache-Control: no-store`.
 - `graphql.Serve` mounts the endpoint (skipped by the OpenAPI document) and, outside production, an explorer page at `/graphql/explorer` (embedded, no CDN, runs under its own CSP with the request nonce). In production the explorer is not registered and `__schema` / `__type` are rejected unless `InsecureExplorerInProduction` / `InsecureIntrospectionInProduction` opt in; `__typename` always works. `DisableExplorer` turns it off everywhere.
 

@@ -55,3 +55,5 @@ export type ProductsStoreBody = {
 };
 
 export type ProductsStoreResponse = Product;
+
+export type WebhooksReceiveBody = unknown;

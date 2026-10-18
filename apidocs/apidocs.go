@@ -75,6 +75,10 @@ type Config struct {
 	Authentication map[string]any
 	// HideClientButton hides the "Test request" client.
 	HideClientButton bool
+	// Name is the route name of the page (default "apidocs"); the bundle
+	// and the shim are Name+".script" and Name+".page". Give each reference
+	// its own name to serve several on one router.
+	Name string
 	// InProduction makes Serve register the page in production too, for a
 	// public API (OPENAPI_IN_PRODUCTION=true does it for every page and
 	// document). Serve the document with vukem.ServeOpenAPIWith and
@@ -136,6 +140,10 @@ func Register(r *router.Router, path string, cfg Config) {
 		cfg.Title = "API Reference"
 	}
 
+	if cfg.Name == "" {
+		cfg.Name = "apidocs"
+	}
+
 	options := map[string]any{
 		"url":              cfg.SpecURL,
 		"telemetry":        false,
@@ -180,7 +188,7 @@ func Register(r *router.Router, path string, cfg Config) {
 			"Title": cfg.Title, "Script": script, "Nonce": nonce, "Options": options, "CSS": css,
 			"PageJS": pageScript,
 		})
-	}).Name("apidocs").Doc(openapi.Skip{})
+	}).Name(cfg.Name).Doc(openapi.Skip{})
 
 	r.Get(path+"/scalar.js", func(c *web.Ctx) error {
 		h := c.Writer().Header()
@@ -189,7 +197,7 @@ func Register(r *router.Router, path string, cfg Config) {
 		_, err := c.Writer().Write(scalarJS)
 
 		return err
-	}).Name("apidocs.script").Doc(openapi.Skip{})
+	}).Name(cfg.Name + ".script").Doc(openapi.Skip{})
 
 	r.Get(path+"/page.js", func(c *web.Ctx) error {
 		h := c.Writer().Header()
@@ -198,7 +206,7 @@ func Register(r *router.Router, path string, cfg Config) {
 		_, err := c.Writer().Write(pageJS)
 
 		return err
-	}).Name("apidocs.page").Doc(openapi.Skip{})
+	}).Name(cfg.Name + ".page").Doc(openapi.Skip{})
 }
 
 // Command returns "openapi:serve": it serves the document and the

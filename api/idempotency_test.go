@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
+
 	"github.com/AlexGalhardo/vukem/api"
 	"github.com/AlexGalhardo/vukem/auth"
 	"github.com/AlexGalhardo/vukem/cache"
@@ -292,5 +294,102 @@ func TestSecurity_A01_IdempotencyTokenPrefixDoesNotForkScope(t *testing.T) {
 
 	if calls.Load() != 2 {
 		t.Fatalf("same token id with another secret replayed (calls = %d)", calls.Load())
+	}
+}
+
+func TestSecurity_A01_IdempotencyReplayKeepsPerRequestHeaders(t *testing.T) {
+	t.Parallel()
+
+	var calls atomic.Int32
+
+	inner := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("ETag", `"v1"`)
+		w.Header().Set("X-Debug-Token", "first")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{}`))
+	})
+
+	// The outer middleware stands for request id and rate limit headers set
+	// per request before Idempotency runs.
+	var n atomic.Int32
+
+	perRequest := func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			id := strconv.Itoa(int(n.Add(1)))
+			w.Header().Set("X-Request-ID", "req-"+id)
+			w.Header().Set("RateLimit-Remaining", id)
+			next.ServeHTTP(w, r)
+		})
+	}
+
+	h := perRequest(api.Idempotency(cache.NewMemory(100), api.IdempotencyOptions{})(inner))
+
+	send(t, h, "POST", "/orders", "k1", "Bearer a", `{}`)
+	again := send(t, h, "POST", "/orders", "k1", "Bearer a", `{}`)
+
+	got := map[string]string{}
+	for _, k := range []string{
+		"X-Request-ID", "RateLimit-Remaining", "Content-Type", "ETag", "X-Debug-Token", "Idempotent-Replayed",
+	} {
+		got[k] = again.Header().Get(k)
+	}
+
+	want := map[string]string{
+		"X-Request-ID": "req-2", "RateLimit-Remaining": "2", "Content-Type": "application/json",
+		"ETag": `"v1"`, "X-Debug-Token": "", "Idempotent-Replayed": "true",
+	}
+	if diff := cmp.Diff(want, got); diff != "" || calls.Load() != 1 {
+		t.Fatalf("replayed headers (-want +got):\n%s (calls=%d)", diff, calls.Load())
+	}
+
+	custom := perRequest(api.Idempotency(cache.NewMemory(100),
+		api.IdempotencyOptions{ReplayHeaders: []string{"x-debug-token"}})(inner))
+
+	send(t, custom, "POST", "/orders", "k1", "Bearer a", `{}`)
+
+	if again := send(
+		t,
+		custom,
+		"POST",
+		"/orders",
+		"k1",
+		"Bearer a",
+		`{}`,
+	); again.Header().
+		Get("X-Debug-Token") !=
+		"first" ||
+		again.Header().Get("ETag") != "" {
+		t.Fatalf("ReplayHeaders = %v, want only X-Debug-Token replayed", again.Header())
+	}
+}
+
+func TestSecurity_A01_IdempotencyNeverReplaysCredentialHeaders(t *testing.T) {
+	t.Parallel()
+
+	inner := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		for _, h := range []string{"Set-Cookie", "Authorization", "Proxy-Authenticate", "WWW-Authenticate", "ETag"} {
+			w.Header().Set(h, "first")
+		}
+
+		w.WriteHeader(http.StatusCreated)
+	})
+
+	h := api.Idempotency(cache.NewMemory(100), api.IdempotencyOptions{ReplayHeaders: []string{
+		"set-cookie", "authorization", "proxy-authenticate", "www-authenticate", "etag",
+	}})(inner)
+
+	send(t, h, "POST", "/orders", "k1", "Bearer a", `{}`)
+	again := send(t, h, "POST", "/orders", "k1", "Bearer a", `{}`)
+
+	for _, name := range []string{"Set-Cookie", "Authorization", "Proxy-Authenticate", "WWW-Authenticate"} {
+		if v := again.Header().Get(name); v != "" {
+			t.Errorf("replay sent %s = %q, want it never replayed", name, v)
+		}
+	}
+
+	if again.Header().Get("ETag") != "first" {
+		t.Errorf("replay ETag = %q, want the listed header replayed", again.Header().Get("ETag"))
 	}
 }

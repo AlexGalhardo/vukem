@@ -251,49 +251,41 @@ type TasksUpdateBody struct {
 	Title  string                `json:"title"`
 }
 
-// APIV1Me calls GET /api/v1/me.
-func (c *Client) APIV1Me(ctx context.Context) error {
-	return c.do(ctx, "GET", "/api/v1/me", nil, nil, nil)
-}
-
-// APIV1PostsDestroy calls DELETE /api/v1/posts/{post}.
-func (c *Client) APIV1PostsDestroy(ctx context.Context, post string) error {
-	return c.do(ctx, "DELETE", "/api/v1/posts/"+url.PathEscape(queryString(post)), nil, nil, nil)
-}
-
-// APIV1PostsIndex calls GET /api/v1/posts.
-func (c *Client) APIV1PostsIndex(ctx context.Context) error {
-	return c.do(ctx, "GET", "/api/v1/posts", nil, nil, nil)
-}
-
-// APIV1PostsShow calls GET /api/v1/posts/{post}.
-func (c *Client) APIV1PostsShow(ctx context.Context, post string) error {
-	return c.do(ctx, "GET", "/api/v1/posts/"+url.PathEscape(queryString(post)), nil, nil, nil)
-}
-
-// APIV1PostsStore calls POST /api/v1/posts.
-func (c *Client) APIV1PostsStore(ctx context.Context) error {
-	return c.do(ctx, "POST", "/api/v1/posts", nil, nil, nil)
-}
-
-// APIV1PostsUpdate calls PATCH /api/v1/posts/{post}.
-func (c *Client) APIV1PostsUpdate(ctx context.Context, post string) error {
-	return c.do(ctx, "PATCH", "/api/v1/posts/"+url.PathEscape(queryString(post)), nil, nil, nil)
-}
-
-// APIV1TokensDestroy calls DELETE /api/v1/tokens/current.
-func (c *Client) APIV1TokensDestroy(ctx context.Context) error {
-	return c.do(ctx, "DELETE", "/api/v1/tokens/current", nil, nil, nil)
-}
-
-// APIV1TokensStore calls POST /api/v1/tokens.
-func (c *Client) APIV1TokensStore(ctx context.Context) error {
-	return c.do(ctx, "POST", "/api/v1/tokens", nil, nil, nil)
-}
-
 // Health calls GET /up.
 func (c *Client) Health(ctx context.Context) error {
 	return c.do(ctx, "GET", "/up", nil, nil, nil)
+}
+
+// Me calls GET /api/v1/me.
+func (c *Client) Me(ctx context.Context) error {
+	return c.do(ctx, "GET", "/api/v1/me", nil, nil, nil)
+}
+
+// PostsDestroy calls DELETE /api/v1/posts/{post}.
+func (c *Client) PostsDestroy(ctx context.Context, post string) error {
+	return c.do(ctx, "DELETE", "/api/v1/posts/"+url.PathEscape(queryString(post)), nil, nil, nil)
+}
+
+// PostsIndex calls GET /api/v1/posts.
+func (c *Client) PostsIndex(ctx context.Context) error {
+	return c.do(ctx, "GET", "/api/v1/posts", nil, nil, nil)
+}
+
+// PostsShow calls GET /api/v1/posts/{post}.
+func (c *Client) PostsShow(ctx context.Context, post string) error {
+	return c.do(ctx, "GET", "/api/v1/posts/"+url.PathEscape(queryString(post)), nil, nil, nil)
+}
+
+// PostsStore calls POST /api/v1/posts.
+// The body is encoded as JSON; nil sends none.
+func (c *Client) PostsStore(ctx context.Context, body any) error {
+	return c.do(ctx, "POST", "/api/v1/posts", nil, body, nil)
+}
+
+// PostsUpdate calls PATCH /api/v1/posts/{post}.
+// The body is encoded as JSON; nil sends none.
+func (c *Client) PostsUpdate(ctx context.Context, post string, body any) error {
+	return c.do(ctx, "PATCH", "/api/v1/posts/"+url.PathEscape(queryString(post)), nil, body, nil)
 }
 
 // TasksDestroy calls DELETE /api/v1/tasks/{task}: Delete a task.
@@ -331,4 +323,15 @@ func (c *Client) TasksUpdate(ctx context.Context, task int64, body TasksUpdateBo
 	err := c.do(ctx, "PUT", "/api/v1/tasks/"+url.PathEscape(queryString(task)), nil, body, &out)
 
 	return out, err
+}
+
+// TokensDestroy calls DELETE /api/v1/tokens/current.
+func (c *Client) TokensDestroy(ctx context.Context) error {
+	return c.do(ctx, "DELETE", "/api/v1/tokens/current", nil, nil, nil)
+}
+
+// TokensStore calls POST /api/v1/tokens.
+// The body is encoded as JSON; nil sends none.
+func (c *Client) TokensStore(ctx context.Context, body any) error {
+	return c.do(ctx, "POST", "/api/v1/tokens", nil, body, nil)
 }

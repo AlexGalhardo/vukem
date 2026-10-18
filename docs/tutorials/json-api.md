@@ -2,6 +2,8 @@
 
 Build a JSON API where users exchange their password for a bearer token and manage private tasks, with filtering, sorting, pagination, rate limiting, an OpenAPI 3.1 document and a generated Go client. The finished code is [`examples/api`](../../examples/api); CI runs its tests.
 
+The docs site publishes this tutorial as [Tutorial: a JSON API](https://vukem.dev/docs/rest-apis/tutorial) (`site/content/docs/rest-apis/tutorial.mdx`); keep both in step.
+
 You need Go 1.27, `curl` and the CLI:
 
 ```sh

@@ -472,7 +472,7 @@ Rules to remember:
 - `FieldErrorKey`'s `fallback` is the English message, used when a language has no `validation.<key>`. With an empty `key` it behaves like `FieldError`.
 - Placeholder names are lower snake case (`{field}`, `{other_field}`); other braces are left as they are.
 - Messages are plain text. Escaping is the renderer's job, and `html/template` does it in views.
-- `web.ParseInput(schema, m)` validates a map you built yourself. It has no request, so its messages stay in English.
+- `web.ParseMap(c, schema, m)` validates a map you built yourself with the request's locale and logger. `web.ParseInput(schema, m)` does the same outside a request, so its messages stay in English and failed `Refine` errors are not logged.
 
 ## Struct-tag shorthand
 
@@ -513,7 +513,7 @@ Fields without `required` are optional. Pointer fields are optional and nullable
 | Body: JSON, urlencoded or multipart form (merged over the query string) | `web.Parse(c, schema)`, `web.Bind[T](c)` |
 | Query string only | `web.ParseQuery(c, schema)` |
 | Route parameters | `web.ParseParams(c, schema, "post")`: invalid parameters answer **404**, since a malformed id names no resource |
-| A map you assembled | `web.ParseInput(schema, m)` |
+| A map you assembled | `web.ParseMap(c, schema, m)` (`web.ParseInput(schema, m)` outside a request) |
 | Any `io.Reader` of JSON (an upstream API) | `z.ParseJSON(r, schema)`: invalid JSON is one `invalid_type` issue, "The value must be valid JSON." |
 | A value you already have | `schema.Parse(v)` or, for typed values, `schema.Check(v)` |
 | Outgoing JSON | `web.JSONWith(c, status, schema, v)` |

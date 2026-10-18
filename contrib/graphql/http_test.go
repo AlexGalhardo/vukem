@@ -559,3 +559,24 @@ func TestSecurity_A02_GraphQLExplorerOffInProduction(t *testing.T) {
 		t.Errorf("DisableExplorer = %d, want 404", r.status)
 	}
 }
+
+func TestSecurity_A02_GraphQLHandlerIntrospectionOptIn(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		cfg     graphql.HandlerConfig
+		allowed bool
+	}{
+		{"off by default", graphql.HandlerConfig{}, false},
+		{"opted in", graphql.HandlerConfig{Introspection: true}, true},
+		{"disable wins", graphql.HandlerConfig{Introspection: true, DisableIntrospection: true}, false},
+	}
+
+	for _, tt := range tests {
+		r := introspect(t, counterSchema(t).Handler(tt.cfg))
+		if got := strings.Contains(r.body, `"queryType":{"name":"Query"}`); got != tt.allowed {
+			t.Errorf("%s: introspection allowed = %v, want %v (%.200s)", tt.name, got, tt.allowed, r.body)
+		}
+	}
+}

@@ -135,7 +135,7 @@ Every built-in message has a key, `Issue.Key`: the detailed key when there is on
 
 `Issues.Localize(lookup)` rebuilds messages from translated templates: it tries `lookup(Key)`, then `lookup(Code)`, and replaces `{field}` with `lookup("attributes.<last path segment>")` when present (else the humanized name). Untranslated issues keep their English message.
 
-In an app, translation is opt-in and per request: `vukem.WithTranslations` + `DefaultMiddleware` install `i18n.Middleware`, which stores a localizer in the request context (`web.WithIssueLocalizer`). `web.Parse`, `Bind`, `ParseQuery` and `ParseParams` apply it before building the `*errs.ValidationError`; `web.ParseInput` has no request and stays English. Catalog keys live under `validation.`:
+In an app, translation is opt-in and per request: `vukem.WithTranslations` + `DefaultMiddleware` install `i18n.Middleware`, which stores a localizer in the request context (`web.WithIssueLocalizer`). `web.Parse`, `Bind`, `ParseQuery`, `ParseParams` and `ParseMap` (an assembled map, used by `api.Register`) apply it before building the `*errs.ValidationError`; `web.ParseInput` has no request and stays English. Catalog keys live under `validation.`:
 
 ```json
 {

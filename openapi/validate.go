@@ -67,6 +67,12 @@ func (d *Document) ValidateResponse(method, path string, status int, body []byte
 		schema, _ = asMap(mt)["schema"].(map[string]any)
 	}
 
+	// An empty schema (a plain route's "*/*" response) accepts any body,
+	// JSON or not.
+	if len(schema) == 0 {
+		return nil
+	}
+
 	var value any
 	if err := json.Unmarshal(body, &value); err != nil {
 		return fmt.Errorf("openapi: response is not JSON: %w", err)

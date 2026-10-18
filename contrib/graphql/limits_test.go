@@ -197,3 +197,40 @@ func TestIntrospectionQueryWithinDefaultLimits(t *testing.T) {
 		t.Errorf("IntrospectionQuery errors = %v", r.Errors)
 	}
 }
+
+func TestSecurity_A06_GraphQLComplexityUsesSDLDefaults(t *testing.T) {
+	t.Parallel()
+
+	type item struct {
+		ID int `json:"id"`
+	}
+
+	s, err := New(`type Item { id: Int expensive: Int }
+		type Query { items(first: Int = 100): [Item!]! }`,
+		Query("items", func(context.Context, map[string]any) ([]item, error) { return nil, nil }),
+		Field("Item", "expensive", func(context.Context, *item, NoArgs) (int, error) { return 0, nil }, Cost(50)),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name string
+		req  Request
+		want string
+	}{
+		{"default applies", Request{Query: `{ items { expensive } }`}, CodeLimitExceeded},
+		{
+			"unset variable takes the default",
+			Request{Query: `query ($n: Int) { items(first: $n) { expensive } }`},
+			CodeLimitExceeded,
+		},
+		{"explicit value wins", Request{Query: `{ items(first: 2) { expensive } }`}, ""},
+	}
+
+	for _, tt := range tests {
+		if r := s.Execute(t.Context(), tt.req); firstCode(r) != tt.want {
+			t.Errorf("%s: code = %q (%v), want %q", tt.name, firstCode(r), r.Errors, tt.want)
+		}
+	}
+}

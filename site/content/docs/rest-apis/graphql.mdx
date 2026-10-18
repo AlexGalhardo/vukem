@@ -255,7 +255,8 @@ type NewReviewInput struct {
 	Body      string `json:"body"   validate:"required,max=500"`
 }
 
-// The validate tag on Input makes the nested rules run too.
+// The rules of NewReviewInput run too; validate:"required"
+// also refuses a missing input.
 type CreateReviewArgs struct {
 	Input NewReviewInput `json:"input" validate:"required"`
 }
@@ -283,11 +284,9 @@ A review with `rating: 9` and an empty body answers:
 
 `data` is `null` because `createReview` returns `Review!` (non-null): when a non-null field fails, the error travels up to the nearest field that may be null, as the [specification](https://spec.graphql.org/October2021/#sec-Handling-Field-Errors) requires.
 
-<Callout type="warning" title="Nested rules need a tag on the outer field">
-The struct is checked only when one of its **top-level** fields has a `validate` tag. Without `validate:"required"` on `Input` above, the rules on `rating` and `body` never run and `rating: 9` is accepted.
-</Callout>
+Rules on nested input structs run whether or not the outer field has a tag: Vukem looks for `validate` tags anywhere in the arguments struct, through nested structs, pointers and lists.
 
-An error returned by `Validate()` becomes `BAD_USER_INPUT`. Its text reaches the client as written (unless it is a `z.Issues` or `*errs.ValidationError`, which keep their `fields`), so write it for the client.
+An error returned by `Validate()` goes through the same mapping as a resolver error ([CWE-209](https://cwe.mitre.org/data/definitions/209.html)): `z.Issues` and `*errs.ValidationError` become `BAD_USER_INPUT` with their `fields`, an `errs.New(422, "...")` (or another status below 500) keeps its message, a `*graphql.Error` keeps its message and code, and anything else (a plain `errors.New`, a failed uniqueness query) answers `Internal server error` and is logged. Return `z.FieldError`, `errs.New(422, ...)` or `graphql.NewError` for a message meant for the client.
 
 ### Reading fields without a resolver
 
@@ -297,7 +296,7 @@ A field with no binding reads the parent value:
 - a struct: the field whose `json` name matches exactly, else a field whose **Go name** matches case-insensitively, tagged or not. `ID` answers `id`, and `PriceCents` with `json:"price_cents"` answers `priceCents`. An exact `json` name wins over another field's Go name.
 - `json:"-"` hides a field completely. A nil pointer parent gives `null`.
 
-If nothing matches, the field fails with `INTERNAL_SERVER_ERROR` and the log says `no field "secret" on Go type ... (bind a resolver or add a json tag)`.
+`graphql.New` checks this at boot: starting from the Go types your bindings declare (the parent and result types of `Field`, `Query`, `Mutation` and `Subscription`, and `Object[T]`), every object field without a resolver must match a Go field, or `New` fails with `graphql: Product.secret has no resolver and Go type graph.Product has no field for it (bind it with graphql.Field or add a json tag)`. Values the check cannot see (a `map[string]any`, an interface) are read at run time, where a missing field fails with `INTERNAL_SERVER_ERROR`.
 
 ### Scalars, interfaces and unions
 
@@ -648,7 +647,7 @@ graphql.New(sdl,
 }
 ```
 
-- The multiplier reads a literal or a variable. An argument left out (so its SDL default applies) multiplies by 1.
+- The multiplier reads a literal or a variable. An argument left out, or a variable the request does not set, multiplies by the SDL default (`products(first: Int = 20)` counts 20), which is what the resolver receives.
 - `@skip` and `@include` are not evaluated when measuring: the cost is an upper bound.
 - Introspection has its own depth bound (16) and a cap of 200000 resolved fields, so the standard `graphql.IntrospectionQuery` always fits; its aliases and complexity still count.
 
@@ -666,7 +665,8 @@ graphql.New(sdl,
 | `graphql.Cost(n)` (field option) | 1 | field cost in the complexity sum |
 | `HandlerConfig.MaxBodyBytes` | 1 MiB (`graphql.DefaultMaxBodyBytes`) | `POST` body limit |
 | `HandlerConfig.Persisted` | nil (off) | persisted queries |
-| `HandlerConfig.DisableIntrospection` | `false` | reject `__schema` and `__type` (`__typename` still works) |
+| `HandlerConfig.Introspection` | `false` (`Serve`: `true` outside production) | allow `__schema` and `__type` (`__typename` always works) |
+| `HandlerConfig.DisableIntrospection` | `false` | reject `__schema` and `__type` even when `Introspection` is set |
 | `HandlerConfig.DisableGET` | `false` | accept `POST` only |
 | `Config.DisableExplorer` | `false` | no explorer page, even in development |
 | `Config.InsecureExplorerInProduction` | `false` | serve the explorer in production |
@@ -685,7 +685,7 @@ The module reads no environment variables. Production is detected from `APP_ENV`
 
 What Vukem does by default:
 
-- **Production hides the schema.** `graphql.Serve` rejects introspection in production (`GraphQL introspection is not allowed, but the query contained __schema or __type.`) and does not register the explorer. Plain `schema.Handler` does not know the environment: set `DisableIntrospection` yourself there.
+- **Production hides the schema.** `graphql.Serve` rejects introspection in production (`GraphQL introspection is not allowed, but the query contained __schema or __type.`) and does not register the explorer. Plain `schema.Handler` does not know the environment, so it rejects introspection unless `HandlerConfig.Introspection` is set: turn it on only outside production.
 - **Internal errors are masked** as `Internal server error` ([CWE-209](https://cwe.mitre.org/data/definitions/209.html)); the cause goes only to `WithLogger`.
 - **State never changes over GET**, and batched array bodies are refused.
 - **Cost is bounded** by depth, complexity, alias, token and body limits.
@@ -695,7 +695,7 @@ What stays your job:
 
 - **Authentication and authorization.** Put `auth.Required` or `auth.Optional` on the group that holds the endpoint, then read the user in resolvers with `auth.UserFrom[models.User](ctx, "api")` (guards store the user by value) and return `errs.New(403, ...)` for denials. Over WebSocket, authenticate in `OnConnect`.
 - **The SDL decides what clients can read.** Case-insensitive matching makes `Password` with `json:"pw"` answer a `password` field if the SDL declares one. Keep secrets out of the SDL, or tag them `json:"-"`.
-- **Messages you choose are public.** `graphql.NewError`, `Extender` keys and `Validate()` errors reach clients as written.
+- **Messages you choose are public.** `graphql.NewError`, `Extender` keys and client errors (`errs.New` below 500) returned from resolvers or `Validate()` reach clients as written.
 - **Rate limiting.** One request can hold many fields; add [rate limiting](/docs/security/rate-limiting) to the route. Use the allowlist for first-party clients in production.
 
 See the [security overview](/docs/security/overview) and the [OWASP GraphQL cheat sheet](https://cheatsheetseries.owasp.org/cheatsheets/GraphQL_Cheat_Sheet.html).
@@ -748,19 +748,7 @@ func TestGraphQLProducts(t *testing.T) {
 
 ### Common mistakes
 
-**Validate tags only on nested fields.** The rules never run:
-
-```go title="wrong"
-type CreateReviewArgs struct {
-	Input NewReviewInput `json:"input"`
-}
-```
-
-```go title="right"
-type CreateReviewArgs struct {
-	Input NewReviewInput `json:"input" validate:"required"`
-}
-```
+**A plain error from `Validate()`.** `errors.New("name is taken")` answers `Internal server error`: plain errors are masked like any resolver error. Return `errs.New(422, "Name is taken.")` or `z.FieldError("name", "Name is taken.")`.
 
 **An `ID` argument into an `int64` without `,string`.** IDs arrive as strings, so decoding fails with `BAD_USER_INPUT` and `Invalid arguments: id must be int64`:
 
@@ -776,11 +764,11 @@ type ProductArgs struct {
 }
 ```
 
-**A schema field with no Go field.** `Product.secret` in the SDL with nothing on the struct answers `Internal server error`; with `WithLogger` the log shows `no field "secret" on Go type graph.Product (bind a resolver or add a json tag)`. Bind a resolver or add the field.
+**A schema field with no Go field.** `Product.secret` in the SDL with nothing on the struct makes `graphql.New` fail with `graphql: Product.secret has no resolver and Go type graph.Product has no field for it (bind it with graphql.Field or add a json tag)`. Bind a resolver or add the field.
 
 **A mutation sent as GET.** It answers 405 with `Can only perform a mutation operation from a POST request.` Send mutations as `POST`.
 
-**Expecting the SDL default to count.** `products(first: Int = 20)` queried as `products { ... }` costs as one item in the complexity sum. Give list fields a `Cost`, or make clients pass `first`.
+**Introspection through `schema.Handler`.** GraphiQL shows no schema: a bare handler rejects `__schema` unless `HandlerConfig{Introspection: true}`. Use `graphql.Serve`, which turns it on outside production.
 
 **A resolver that ignores `ctx.Done()`.** A subscription goroutine that keeps sending after the client left blocks forever. Always `select` on `ctx.Done()` and close the channel when you finish.
 

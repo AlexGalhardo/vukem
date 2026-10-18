@@ -56,9 +56,18 @@ func ParseParams[T any](c *Ctx, schema z.Schema[T], names ...string) (T, error) 
 	return v, err
 }
 
+// ParseMap validates an already assembled input map with the request's
+// context and logger: validation errors become a localized 422
+// ValidationError (see WithIssueLocalizer) and the raw errors of failed
+// Refine/Custom checks are logged, never sent to the client.
+func ParseMap[T any](c *Ctx, schema z.Schema[T], input map[string]any) (T, error) {
+	return parseWith(c.Context(), c.Log(), schema, input)
+}
+
 // ParseInput validates an already assembled input map (validation errors
-// become a 422 ValidationError). Messages stay in English: it has no
-// request context to localize them (see WithIssueLocalizer).
+// become a 422 ValidationError). Messages stay in English and Refine
+// errors are not logged: it has no request to read them from. Prefer
+// ParseMap inside a handler.
 func ParseInput[T any](schema z.Schema[T], input map[string]any) (T, error) {
 	return parseWith(context.Background(), nil, schema, input)
 }

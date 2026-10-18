@@ -27,7 +27,8 @@ type Config struct {
 	// InsecureExplorerInProduction serves the explorer page in production.
 	InsecureExplorerInProduction bool
 	// InsecureIntrospectionInProduction allows __schema and __type in
-	// production (they are rejected there by default).
+	// production (they are rejected there by default, whatever
+	// HandlerConfig.Introspection says).
 	InsecureIntrospectionInProduction bool
 }
 
@@ -41,9 +42,7 @@ func Serve(app *vukem.App, r Registrar, path string, s *Schema, cfg Config) {
 	path = "/" + strings.Trim(path, "/")
 	prod := app.Config.IsProduction()
 
-	if prod && !cfg.InsecureIntrospectionInProduction {
-		cfg.DisableIntrospection = true
-	}
+	cfg.Introspection = !prod || cfg.InsecureIntrospectionInProduction
 
 	h := s.Handler(cfg.HandlerConfig)
 	r.Handle("GET "+path, h).Name("graphql").Doc(openapi.Skip{})
