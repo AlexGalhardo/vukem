@@ -211,7 +211,8 @@ if err != nil {
 | `web.Bind[T](c)` | `c.Input()`, with a schema built from `T`'s `validate` struct tags | `*errs.ValidationError` (422) |
 | `web.ParseQuery(c, schema)` | the query string only | `*errs.ValidationError` (422) |
 | `web.ParseParams(c, schema, names...)` | the named path parameters | `errs.ErrNotFound` (404): a malformed id names no resource |
-| `web.ParseInput(schema, input)` | a map you built yourself | `*errs.ValidationError`, messages always in English |
+| `web.ParseMap(c, schema, input)` | a map you built yourself, in a handler | `*errs.ValidationError`, localized with the request |
+| `web.ParseInput(schema, input)` | a map you built yourself, outside a request | `*errs.ValidationError`, messages always in English |
 
 Returned from a handler, a `*errs.ValidationError` answers JSON clients with a 422 problem listing each field, sends htmx requests an error fragment, and redirects HTML form posts back with the errors and the old input in the session. The messages follow the request's locale when the app has translations. Schemas, coercion and messages are explained in [Validation](/docs/basics/validation).
 

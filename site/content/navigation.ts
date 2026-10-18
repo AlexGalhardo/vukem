@@ -46,6 +46,7 @@ export const navigation: NavCategory[] = [
     dir: "rest-apis",
     pages: [
       "overview",
+      "tutorial",
       "pagination",
       "typed-handlers",
       "openapi",

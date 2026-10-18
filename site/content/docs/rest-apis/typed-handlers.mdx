@@ -186,7 +186,7 @@ Details that matter:
 | `{"title":"Walk","tags":["a","bb","cc","dd"]}` with `validate:"max=3,dive,min=2"` | `422` | `errors.tags` and `errors["tags.0"]` |
 
 <Callout type="info">
-Validation messages of typed handlers are always in English. `web.Bind` and `web.Parse` translate them with the request locale; typed handlers validate through `web.ParseInput`, which has no request context to localize with.
+Validation messages of typed handlers follow the request locale, like `web.Bind` and `web.Parse`: they validate through `web.ParseMap`, which uses the request's context (for the [i18n middleware](/docs/digging-deeper/localization#validation-messages)) and logger (the raw error of a failed `Refine` or `Custom` check is logged, never sent).
 </Callout>
 
 ## The output
@@ -265,10 +265,10 @@ Under the hood:
 | `Tags` | `[]string` | groups operations in the API reference |
 | `Status` | `int` | the success status (see the table above) |
 | `Deprecated` | `bool` | marks the operation deprecated in the document and in generated clients |
-| `Security` | `[]string` | security schemes the document declares (`"bearer"` is predefined) |
+| `Security` | `[]string` | security schemes the document declares (`"bearer"` is predefined; others must be in `openapi.Info.SecuritySchemes`) |
 | `ValidateResponse` | `bool` | check the output before writing it |
 
-The group's name prefix applies to the **route** name as usual: inside `.Name("api.v1.")` you reverse the route with `c.URL("api.v1.tasks.store")`. The OpenAPI `operationId` is `Op.Name` as you wrote it (`tasks.store`), so generated clients get `tasksStore`, not `apiV1TasksStore`.
+The group's name prefix applies to the **route** name as usual: inside `.Name("api.v1.")` you reverse the route with `c.URL("api.v1.tasks.store")`. The OpenAPI `operationId` is `Op.Name` as you wrote it (`tasks.store`), so generated clients get `tasksStore`, not `apiV1TasksStore`. Plain routes follow the same rule: their `operationId` is their own name, without the group prefix.
 
 <Callout type="warning" title="Security is documentation only">
 `Op.Security` adds a security requirement to the OpenAPI document. It does not authenticate anything. Protect the route or its group with `auth.Required` (and `auth.Ability` for token abilities).

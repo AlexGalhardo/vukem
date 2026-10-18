@@ -183,9 +183,9 @@ For each typed route, the generator writes one operation:
 - **`GET`, `HEAD` and `DELETE`**: the other input fields become **query parameters**, with their `doc` as description.
 - **Other methods**: the other input fields become a required `application/json` **request body**.
 - **Responses**: the success status with the output schema (no content for `204` or `struct{}`), `422` → `ValidationError` when the route has input, `401` → `Problem` when `Op.Security` is set, and `default` → `Problem` for everything else. Both shared responses use the `Problem` schema: `type`, `title`, `status`, `detail`, `instance`, `request_id` and `errors`.
-- **Security**: each `Op.Security` name becomes a requirement and a scheme in `components/securitySchemes`.
+- **Security**: each `Op.Security` name becomes a requirement and a scheme in `components/securitySchemes`. `bearer` is predefined; any other name must be declared in `openapi.Info.SecuritySchemes`, or building the document fails with `openapi: unknown security scheme "apiKey": declare it in openapi.Info.SecuritySchemes`.
 
-Plain `web.HandlerFunc` routes appear too, with a generic entry: `operationId` and `summary` are the full route name, group prefix included (`api.v1.me`, while a typed route's `operationId` is its bare `Op.Name`), there is no `operationId` when the route has no name, path parameters are strings, and the only response is a `default` without content. A route is left out when it is marked `.Doc(openapi.Skip{})`, or when it has no method (an `ANY`/`Handle` route).
+Plain `web.HandlerFunc` routes appear too, with a generic entry: `operationId` and `summary` are the route's own name, like a typed route's (`me` inside `.Name("api.v1.")`, not `api.v1.me`), there is no `operationId` when the route has no name, and path parameters are strings. A plain `POST`, `PUT` or `PATCH` route documents an optional JSON body of any shape, and every plain route a `default` response of any content (`*/*` with an empty schema): the document says nothing about their data, so generated clients can still send a body and `AssertMatchesOpenAPI` accepts whatever they answer. A route is left out when it is marked `.Doc(openapi.Skip{})`, or when it has no method (an `ANY`/`Handle` route).
 
 ```go title="routes/api.go"
 // Internal health route: not part of the public API.
@@ -251,7 +251,7 @@ doc := openapi.Generate(r.Routes(), openapi.Info{
 })
 ```
 
-`Title` defaults to `API` and `Version` to `1.0.0`. `SecuritySchemes` adds or replaces schemes; `bearer` (an HTTP bearer token) is predefined. A name in `Op.Security` that has no scheme is documented as an HTTP bearer scheme. `openapi.NewSchemas()`, `Schemas.For`, `Schemas.Object` and `openapi.Fields` expose the type-to-schema mapping for your own generators.
+`Title` defaults to `API` and `Version` to `1.0.0`. `SecuritySchemes` adds or replaces schemes; `bearer` (an HTTP bearer token) is predefined. A name in `Op.Security` without a scheme is a programming error: `openapi.Build(routes, info)` returns `openapi.ErrUnknownSecurityScheme`, `openapi.Generate` panics with it, and `App.OpenAPI` (so `/openapi.json`, `openapi:export` and the code generators) returns it. `openapi.NewSchemas()`, `Schemas.For`, `Schemas.Object` and `openapi.Fields` expose the type-to-schema mapping for your own generators.
 
 ## Checking responses in tests
 
@@ -281,7 +281,7 @@ vukem codegen:types -zod -o resources/js/api.ts
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
-| `-o` | stdout | the file to write |
+| `-o` | stdout | the file to write; missing directories are created |
 | `-zod` | off | also emit [Zod](https://zod.dev) 4 schemas (needs `zod` 4.0 or newer) |
 
 You get one type per component schema, plus `<Op>Body`, `<Op>Query` and `<Op>Response` for every operation with an `operationId` (`tasks.store` → `TasksStoreBody`). `<Op>Response` is the first 2xx response (`void` without content). With `-zod`, `<Name>Schema` validates each component and `<Op>BodySchema` each JSON request body, inline ones included:
@@ -342,9 +342,10 @@ apidocs.Serve(app, r, "/docs", apidocs.Config{
 | `Layout` | `modern` | or `classic` |
 | `Authentication` | none | Scalar's `authentication` option, e.g. the preferred scheme. Never put a real secret here: the page is public wherever it is served |
 | `HideClientButton` | `false` | hide the "Test request" client |
+| `Name` | `apidocs` | the page's route name; the scripts are `<Name>.script` and `<Name>.page` |
 | `InProduction` | `false` | register the page in production too |
 
-`Serve` registers three `GET` routes: the page at `path` (named `apidocs`), `path/scalar.js` (`apidocs.script`) and `path/page.js` (`apidocs.page`); all three are skipped in the document. Because the names are fixed, one router holds one reference page. It returns `false` and registers nothing in production unless `OPENAPI_IN_PRODUCTION=true` or `Config.InProduction`. `apidocs.Register(r, path, cfg)` adds the routes without that check, for apps that gate them another way (its default title is `API Reference`).
+`Serve` registers three `GET` routes: the page at `path` (named `apidocs`), `path/scalar.js` (`apidocs.script`) and `path/page.js` (`apidocs.page`); all three are skipped in the document. Route names are unique per router, so a second reference page needs its own `Name` (`apidocs.Config{Name: "apidocs.admin", SpecURL: "/admin/openapi.json"}`). It returns `false` and registers nothing in production unless `OPENAPI_IN_PRODUCTION=true` or `Config.InProduction`. `apidocs.Register(r, path, cfg)` adds the routes without that check, for apps that gate them another way (its default title is `API Reference`).
 
 What the page does for you:
 
@@ -410,7 +411,9 @@ More in the [Security overview](/docs/security/overview).
 
 ## Common mistakes
 
-**Calling `AssertMatchesOpenAPI` on a plain handler.** Plain routes document only a `default` response without content, so any JSON body fails: `openapi: GET /api/v1/tasks 200 documents no body`. Register the route with `api.Register`, or skip the assertion.
+**Expecting `AssertMatchesOpenAPI` to check a plain handler.** It passes, but checks nothing: a plain route documents a response of any content. Register the route with `api.Register` to get a schema the assertion can enforce.
+
+**An undeclared security scheme.** `api.Op{Security: []string{"apiKey"}}` without `openapi.Info.SecuritySchemes["apiKey"]` fails the document with `openapi: unknown security scheme "apiKey"`. Declare the scheme, or use the predefined `bearer`.
 
 **Expecting the document in production.** `curl https://api.example.com/openapi.json` answers `404`. Set `InProduction: true` on that document, or `OPENAPI_IN_PRODUCTION=true`.
 

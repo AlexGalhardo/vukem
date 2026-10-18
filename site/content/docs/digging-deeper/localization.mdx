@@ -418,7 +418,7 @@ The middleware also translates the 422 messages of `web.Parse`, `Bind`, `ParseQu
 }
 ```
 
-An issue without a translation keeps its English message. `web.ParseInput` has no request, so it stays in English. The [validation page](/docs/basics/validation) lists every key and placeholder.
+An issue without a translation keeps its English message. `web.ParseInput` has no request, so it stays in English; inside a handler use `web.ParseMap(c, schema, m)`, which typed handlers use too. The [validation page](/docs/basics/validation) lists every key and placeholder.
 
 ## Framework messages
 

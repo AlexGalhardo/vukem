@@ -124,7 +124,7 @@ Like `openapi:export` and `codegen:types`, the command builds the app in **warmu
 Which operations get a method:
 
 - **Typed routes with `Op.Name`**: a fully typed method. Their `operationId` is `Op.Name` as written (`tasks.store` → `tasksStore` / `TasksStore`).
-- **Named plain routes** (`g.Get(...).Name("me")`): a method too, but the document knows nothing about their input or output, so it sends no body and returns `unknown` (TypeScript) or only an `error` (Go). Their `operationId` is the full route name with the group prefix (`api.v1.me` → `apiV1Me` / `APIV1Me`). Convert them to `api.Register` to type them.
+- **Named plain routes** (`g.Get(...).Name("me")`): a method too, but the document knows nothing about their input or output. A `POST`, `PUT` or `PATCH` method takes an optional untyped body (`body?: unknown` in TypeScript, `body any` in Go, where `nil` sends none), and the result is `unknown` (TypeScript) or only an `error` (Go). Their `operationId` is the route's own name, like a typed route's (`me` inside `.Name("api.v1.")` → `me` / `Me`). Convert them to `api.Register` to type them.
 - **Unnamed routes** and routes marked `.Doc(openapi.Skip{})`: no method.
 
 ## TypeScript client
@@ -413,9 +413,9 @@ In TypeScript tests, pass a fake `fetch` to `createClient({ fetch })` instead of
 **Calling a plain route's method and expecting data.**
 
 ```go title="Wrong"
-// The plain route is documented without a response body,
+// The plain route documents no response schema,
 // so the method has nothing to decode: it returns only error.
-err := c.APIV1Me(ctx)
+err := c.Me(ctx)
 ```
 
 ```go title="Right"
