@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -109,5 +110,63 @@ func TestMakeModelWritesNothingOnClash(t *testing.T) {
 		if strings.Contains(e.Name(), "create_posts_table") {
 			t.Errorf("migration %s written, want nothing written", e.Name())
 		}
+	}
+}
+
+// Generated code is the first Go a developer reads in a new project, so the
+// make:* stubs are held to the same .golangci.yml as the framework itself:
+// a fresh app reporting findings nobody wrote teaches that the bar is
+// optional. Mirrors the gate TestNewProjectEndToEnd puts on vukem new and
+// the installers (A76, same class of defect in the make:* generators).
+func TestGeneratedStubsPassRepositoryLint(t *testing.T) {
+	t.Parallel()
+	requireGo(t)
+
+	dir := project(t)
+
+	repoSum, err := os.ReadFile(filepath.Join("..", "..", "go.sum"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, "go.sum"), repoSum, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	runGenerators(t, dir)
+
+	// golangci-lint typechecks the project, so its dependencies must
+	// resolve before it runs.
+	tidy := exec.CommandContext(t.Context(), "go", "mod", "tidy")
+	tidy.Dir = dir
+	tidy.Env = append(os.Environ(), "GOWORK=off", "GOFLAGS=-mod=mod")
+
+	if out, err := tidy.CombinedOutput(); err != nil {
+		t.Fatalf("go mod tidy: %v\n%s", err, out)
+	}
+
+	requireGeneratedLint(t, dir, "example.com/blog")
+}
+
+// A package comment the generators already wrote is enough: an installer
+// shipping its own doc.go for the same package must neither refuse over it
+// nor replace it.
+func TestInstallKeepsAPackageCommentTheGeneratorsWrote(t *testing.T) {
+	t.Parallel()
+
+	dir := project(t)
+
+	if code, out, errOut := vukem(t, dir, "make:mail", "WelcomeMail"); code != 0 {
+		t.Fatalf("make:mail = %d\n%s%s", code, out, errOut)
+	}
+
+	before := read(t, dir, "app/mail/doc.go")
+
+	if code, out, errOut := vukem(t, dir, "install:auth"); code != 0 {
+		t.Fatalf("install:auth after make:mail = %d\n%s%s", code, out, errOut)
+	}
+
+	if got := read(t, dir, "app/mail/doc.go"); got != before {
+		t.Errorf("app/mail/doc.go = %q, want it kept as %q", got, before)
 	}
 }

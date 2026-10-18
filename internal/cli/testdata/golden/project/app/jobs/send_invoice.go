@@ -13,10 +13,11 @@ type SendInvoice struct{}
 // Kind names the job's handler; keep it stable across deploys.
 func (SendInvoice) Kind() string { return "send_invoice" }
 
-// HandleSendInvoice builds the job's handler from app (app.DB, app.Now,
-// app.Mailer...). Returning an error retries the job with backoff.
-func HandleSendInvoice(app *vukem.App) func(ctx context.Context, j SendInvoice) error {
-	return func(ctx context.Context, j SendInvoice) error {
+// HandleSendInvoice builds the job's handler from the app (app.DB, app.Now,
+// app.Mailer...). Returning an error retries the job with backoff. Name the
+// parameters (app, ctx, j) with the first one the body uses.
+func HandleSendInvoice(_ *vukem.App) func(ctx context.Context, j SendInvoice) error {
+	return func(_ context.Context, _ SendInvoice) error {
 		return nil
 	}
 }

@@ -9,7 +9,8 @@ import (
 // {{.Name}}Seeder fills the database; vukem db:seed runs it.
 type {{.Name}}Seeder struct{}
 
-// Seed implements vukem.Seeder.
-func ({{.Name}}Seeder) Seed(ctx context.Context, db *database.DB) error {
+// Seed implements vukem.Seeder. Name the parameters (ctx, db) with the
+// first row it inserts.
+func ({{.Name}}Seeder) Seed(_ context.Context, _ *database.DB) error {
 	return nil
 }

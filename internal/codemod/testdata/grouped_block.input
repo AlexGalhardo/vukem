@@ -1,0 +1,15 @@
+package policies
+
+import (
+	"context"
+
+	"github.com/AlexGalhardo/vukem/authz"
+
+	"example.com/blog/app/models"
+)
+
+func All(_ context.Context) []authz.Policy {
+	return []authz.Policy{
+		authz.For[*models.Post](PostPolicy{}),
+	}
+}

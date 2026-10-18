@@ -15,16 +15,18 @@ type {{.Name}} struct{}
 // Kind names the job's handler; keep it stable across deploys.
 func ({{.Name}}) Kind() string { return "{{.Snake}}" }
 {{if .App}}
-// Handle{{.Name}} builds the job's handler from app (app.DB, app.Now,
-// app.Mailer...). Returning an error retries the job with backoff.
-func Handle{{.Name}}(app *vukem.App) func(ctx context.Context, j {{.Name}}) error {
-	return func(ctx context.Context, j {{.Name}}) error {
+// Handle{{.Name}} builds the job's handler from the app (app.DB, app.Now,
+// app.Mailer...). Returning an error retries the job with backoff. Name the
+// parameters (app, ctx, j) with the first one the body uses.
+func Handle{{.Name}}(_ *vukem.App) func(ctx context.Context, j {{.Name}}) error {
+	return func(_ context.Context, _ {{.Name}}) error {
 		return nil
 	}
 }
 {{- else}}
 // Handle{{.Name}} runs the job. Returning an error retries it with backoff.
-func Handle{{.Name}}(ctx context.Context, j {{.Name}}) error {
+// Name the parameters (ctx, j) with the first one the body uses.
+func Handle{{.Name}}(_ context.Context, _ {{.Name}}) error {
 	return nil
 }
 {{- end}}

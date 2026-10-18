@@ -1,3 +1,4 @@
+// Package seeders fills the database with demo data: vukem db:seed.
 package seeders
 
 import vukem "github.com/AlexGalhardo/vukem"

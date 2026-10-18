@@ -8,6 +8,8 @@ import (
 	"flag"
 	"fmt"
 	"go/format"
+	"go/parser"
+	"go/token"
 	"io/fs"
 	"os"
 	"path"
@@ -146,7 +148,65 @@ func generate(env *Env, stub, rel string, data stubData, force bool) error {
 		return err
 	}
 
-	return create(env, rel, out, force)
+	if err := create(env, rel, out, force); err != nil {
+		return err
+	}
+
+	if !strings.HasSuffix(rel, ".go") {
+		return nil
+	}
+
+	return ensurePackageDoc(env, path.Dir(rel))
+}
+
+// packageDocs holds the doc comment of every package a make:* command can
+// be the first to create. The starter and the installers ship theirs.
+var packageDocs = map[string]string{
+	"app/commands":        "Package commands holds the application's own CLI commands.",
+	"app/controllers":     "Package controllers holds the HTTP handlers.",
+	"app/events":          "Package events holds the application's event types.",
+	"app/jobs":            "Package jobs holds the queued jobs.",
+	"app/listeners":       "Package listeners handles application events.",
+	"app/mail":            "Package mail holds the application's emails.",
+	"app/middleware":      "Package middleware holds the application's HTTP middleware.",
+	"app/models":          "Package models holds the database models.",
+	"app/policies":        "Package policies decides what users may do with each model.",
+	"app/providers":       "Package providers wires services into the application.",
+	"app/requests":        "Package requests holds validated request inputs.",
+	"app/resources":       "Package resources turns models into their JSON wire format.",
+	"database/factories":  "Package factories builds models with fake data for tests and seeders.",
+	"database/migrations": "Package migrations holds the schema migrations.",
+	"database/seeders":    "Package seeders fills the database with demo data: vukem db:seed.",
+}
+
+// ensurePackageDoc writes dir/doc.go when the package has no package
+// comment yet. The comment never rides on a generated file: deleting the
+// demo or the first stub is the first thing a real app does, and it would
+// take revive's package-comments down with it (A77).
+func ensurePackageDoc(env *Env, dir string) error {
+	doc, ok := packageDocs[dir]
+	if !ok || hasPackageDoc(env.path(filepath.FromSlash(dir))) {
+		return nil
+	}
+
+	return create(env, dir+"/doc.go", fmt.Appendf(nil, "// %s\npackage %s\n", doc, path.Base(dir)), false)
+}
+
+// hasPackageDoc reports whether any Go file in dir carries the package
+// comment. Files that do not parse cannot be read for one, so they count
+// as missing it: a doc.go next to them is still correct.
+func hasPackageDoc(dir string) bool {
+	files, _ := filepath.Glob(filepath.Join(dir, "*.go"))
+	for _, f := range files {
+		fset := token.NewFileSet()
+
+		file, err := parser.ParseFile(fset, f, nil, parser.PackageClauseOnly|parser.ParseComments)
+		if err == nil && file.Doc != nil {
+			return true
+		}
+	}
+
+	return false
 }
 
 // register appends expr to the list returned by funcName in rel. When the
@@ -159,9 +219,14 @@ func register(env *Env, rel, funcName, expr string, imports ...string) error {
 		return err
 	}
 
+	// The module path decides which added imports are the project's own,
+	// so they land in gci's last group. It is read from go.mod by every
+	// generator before this point, so it is there.
+	local, _ := modulePath(env)
+
 	var out []byte
 	if err == nil {
-		out, err = codemod.AppendToReturn(src, funcName, expr, imports...)
+		out, err = codemod.AppendToReturn(src, funcName, expr, local, imports...)
 	}
 
 	if err != nil {
@@ -322,6 +387,14 @@ func createAll(env *Env, files []plannedFile, force bool) error {
 
 		if isNew {
 			created = append(created, f.rel)
+		}
+
+		if !strings.HasSuffix(f.rel, ".go") {
+			continue
+		}
+
+		if err := ensurePackageDoc(env, path.Dir(f.rel)); err != nil {
+			return err
 		}
 	}
 

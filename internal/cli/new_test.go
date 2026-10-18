@@ -334,10 +334,10 @@ func TestNewProjectEndToEnd(t *testing.T) {
 		t.Fatalf("tests after install:auth: %v\n%s", err, out)
 	}
 
-	// The advice names whichever package manager this machine has, so the
-	// assertion is on the refusal, not on the manager.
+	// The advice names the manager the project declares, not whichever one
+	// this machine happens to have: there is no lockfile yet to detect.
 	if code, _, errOut := vukem(t, project, "build"); code != 1 ||
-		!strings.Contains(errOut, "frontend dependencies missing") {
+		!strings.Contains(errOut, "frontend dependencies missing: run npm install first") {
 		t.Fatalf("vukem build without node_modules = %d %s", code, errOut)
 	}
 

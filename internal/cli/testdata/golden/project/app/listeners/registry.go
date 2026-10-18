@@ -1,3 +1,4 @@
+// Package listeners handles application events.
 package listeners
 
 import "github.com/AlexGalhardo/vukem/events"

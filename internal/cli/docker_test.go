@@ -34,8 +34,11 @@ func TestWriteDocker(t *testing.T) {
 			kind: "htmx",
 			pm:   "npm",
 			want: []string{
-				"FROM node:24.22.0-alpine3.24 AS assets", "COPY package.json package-lock.json* ./", "RUN npm ci",
-				"RUN npm run build", "COPY --from=assets /src/resources/public/build resources/public/build",
+				"FROM node:24.22.0-alpine3.24 AS assets",
+				"COPY package.json package-lock.json* ./",
+				"&& npm ci --no-audit --no-fund",
+				"RUN npm run build",
+				"COPY --from=assets /src/resources/public/build resources/public/build",
 			},
 			notWant: []string{"templ generate"},
 		},
@@ -46,7 +49,7 @@ func TestWriteDocker(t *testing.T) {
 			want: []string{
 				// bun.lock* also matches the older binary bun.lockb.
 				"FROM oven/bun:1.4.3-alpine AS assets", "COPY package.json bun.lock* ./",
-				"RUN bun install --frozen-lockfile", "RUN bun run build",
+				"&& bun install --frozen-lockfile", "RUN bun run build",
 			},
 		},
 		{
@@ -54,7 +57,7 @@ func TestWriteDocker(t *testing.T) {
 			kind: "templ",
 			pm:   "pnpm",
 			want: []string{
-				"RUN corepack enable", "COPY package.json pnpm-lock.yaml* ./", "RUN pnpm install --frozen-lockfile",
+				"RUN corepack enable", "COPY package.json pnpm-lock.yaml* ./", "&& pnpm install --frozen-lockfile",
 				"RUN go tool templ generate",
 			},
 		},
@@ -64,7 +67,7 @@ func TestWriteDocker(t *testing.T) {
 			pm:   "yarn",
 			want: []string{
 				"COPY package.json yarn.lock* ./",
-				"RUN yarn install --frozen-lockfile",
+				"&& yarn install --frozen-lockfile",
 				"RUN yarn run build",
 			},
 		},
@@ -144,5 +147,56 @@ func TestSecurity_A02_DockerIgnoresSecrets(t *testing.T) {
 
 	if regexp.MustCompile(`(?m)^(ENV|ARG)\s.*APP_KEY`).MatchString(read(t, dir, "Dockerfile")) {
 		t.Error("Dockerfile bakes APP_KEY into the image")
+	}
+}
+
+// The assets stage installs the tracked lockfile, so the lockfile is a
+// required build input. Verified against Docker 29.8.1: without one,
+// "npm ci" fails with EUSAGE and "pnpm install --frozen-lockfile" with
+// ERR_PNPM_NO_LOCKFILE, while bun 1.4.3 and yarn 1.22.22 install anyway and
+// resolve fresh versions without a word. The silent half is the dangerous
+// one, so the Dockerfile states the requirement itself and every package
+// manager fails the same way, naming the command that fixes it.
+func TestDockerAssetsStageRequiresTheLockfile(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{"npm", "bun", "pnpm", "yarn"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			pm := pmByName[name]
+
+			dir := t.TempDir()
+			if err := writeDocker(dir, "htmx", pm); err != nil {
+				t.Fatal(err)
+			}
+
+			got := read(t, dir, "Dockerfile")
+			for _, want := range []string{
+				"if ! ls " + pm.lockfile + "* >/dev/null 2>&1; then",
+				`echo "` + pm.lockfile + ` not found: run '` + pm.install() + `', commit it, then build again" >&2`,
+				"exit 1;",
+			} {
+				if !strings.Contains(got, want) {
+					t.Errorf("Dockerfile lacks %q:\n%s", want, got)
+				}
+			}
+
+			// The guard runs before the install, not after it.
+			if i, j := strings.Index(got, "exit 1;"), strings.Index(got, "&& "+pm.name); i < 0 || j < 0 || i > j {
+				t.Errorf("the lockfile guard does not precede the install:\n%s", got)
+			}
+		})
+	}
+
+	// An API project builds no assets, so it needs no lockfile and must not
+	// grow a check for one.
+	dir := t.TempDir()
+	if err := writeDocker(dir, "api", pmByName["npm"]); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := read(t, dir, "Dockerfile"); strings.Contains(got, "not found: run") {
+		t.Errorf("the API Dockerfile checks for a lockfile:\n%s", got)
 	}
 }

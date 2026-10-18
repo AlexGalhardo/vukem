@@ -10,6 +10,7 @@ import (
 	"go/format"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -490,6 +491,14 @@ func installScaffold(env *Env, name string, data map[string]string, force bool) 
 	if err != nil {
 		return err
 	}
+
+	// A doc.go carries nothing but the package comment, so an existing one
+	// already does its job: a make:* command that created the package
+	// first wrote it. Replacing it would say the same thing, and refusing
+	// over it would block the installer on nothing.
+	files = slices.DeleteFunc(files, func(f file) bool {
+		return path.Base(f.rel) == "doc.go" && exists(env, filepath.FromSlash(f.rel))
+	})
 
 	if !force {
 		var taken []string

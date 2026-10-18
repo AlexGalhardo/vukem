@@ -220,6 +220,20 @@ func TestInterleave(t *testing.T) {
 
 // generated lists every file the generators below create.
 var generated = []string{
+	// A package the generators are the first to create gets its package
+	// comment in doc.go, so deleting the generated file never takes
+	// revive's package-comments with it.
+	"app/commands/doc.go",
+	"app/controllers/doc.go",
+	"app/events/doc.go",
+	"app/mail/doc.go",
+	"app/middleware/doc.go",
+	"app/models/doc.go",
+	"app/policies/doc.go",
+	"app/providers/doc.go",
+	"app/requests/doc.go",
+	"app/resources/doc.go",
+	"database/factories/doc.go",
 	"app/controllers/post_controller.go",
 	"app/controllers/comment_controller.go",
 	"app/controllers/photo_controller.go",
@@ -344,7 +358,7 @@ func TestMakeJobLegacyRegistry(t *testing.T) {
 	}
 
 	job := read(t, dir, "app/jobs/ping.go")
-	if !strings.Contains(job, "func HandlePing(ctx context.Context, j Ping) error {") ||
+	if !strings.Contains(job, "func HandlePing(_ context.Context, _ Ping) error {") ||
 		strings.Contains(job, "vukem") {
 		t.Errorf("legacy job stub =\n%s", job)
 	}

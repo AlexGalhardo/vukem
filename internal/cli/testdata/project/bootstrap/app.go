@@ -1,10 +1,12 @@
+// Package bootstrap wires the application together. There is no hidden
+// registration: everything the app uses is listed here.
 package bootstrap
 
 import (
+	vukem "github.com/AlexGalhardo/vukem"
+
 	"example.com/blog/database/migrations"
 	"example.com/blog/database/seeders"
-
-	vukem "github.com/AlexGalhardo/vukem"
 )
 
 // New builds the application.

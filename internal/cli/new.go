@@ -135,6 +135,13 @@ func newProject(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 			return err
 		}
 
+		// After the stack is in place, because an Inertia project replaces
+		// package.json, and before the install, so a lockfile-less project
+		// still answers for its own package manager.
+		if err := setPackageManager(&project, pm); err != nil {
+			return err
+		}
+
 		// Before writeAppKey: it copies .env.example to .env, so the
 		// Compose block has to be in place already.
 		if err := writeStandards(&project, newStandardsData(data, st.kind, std, env.Now().Year()), std); err != nil {
@@ -197,7 +204,7 @@ func newProject(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 			desc = "htmx " + htmxVersion + ", Tailwind, no database"
 		}
 
-		fmt.Fprint(env.Stdout, nextSteps(name, desc, st.kind, std))
+		fmt.Fprint(env.Stdout, nextSteps(name, desc, st.kind, std, pm, hasLockfile(dir)))
 
 		return nil
 	}

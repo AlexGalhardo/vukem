@@ -7,12 +7,13 @@ import (
 	vukem "github.com/AlexGalhardo/vukem"
 )
 
-// {{.Name}} is the "{{.Kebab}}" command: vukem {{.Kebab}}.
+// {{.Name}} is the "{{.Kebab}}" command: vukem {{.Kebab}}. Name the ctx
+// parameter with the first call that needs it; anything doing I/O does.
 func {{.Name}}() vukem.Command {
 	return vukem.CommandFunc{
 		CommandName: "{{.Kebab}}",
 		Desc:        "Describe what {{.Kebab}} does",
-		Fn: func(ctx context.Context, app *vukem.App, args []string) error {
+		Fn: func(_ context.Context, app *vukem.App, args []string) error {
 			fmt.Fprintln(app.Stdout(), "{{.Kebab}} ran with", args)
 			return nil
 		},

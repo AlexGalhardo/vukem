@@ -11,7 +11,7 @@ const docs = "https://vukem.dev/docs"
 // nextSteps is the handover: every step a new project needs before it is
 // deployed, each with the page that explains it. The README lists every
 // documentation section; this list is the order to read them in.
-func nextSteps(name, desc, kind string, o standardsOpts) string {
+func nextSteps(name, desc, kind string, o standardsOpts, pm jsPM, hasLockfile bool) string {
 	type step struct{ do, doc string }
 
 	steps := []step{
@@ -39,10 +39,19 @@ func nextSteps(name, desc, kind string, o standardsOpts) string {
 	)
 
 	if o.docker {
-		steps = append(steps, step{
-			"or run the whole stack with the mail catcher: docker compose up --build",
-			docs + "/deployment/docker-and-railway",
-		})
+		compose := "or run the whole stack with the mail catcher: docker compose up --build"
+
+		// The image's assets stage installs the tracked lockfile, so there
+		// has to be one: --no-install, or a package manager this machine
+		// does not have, leaves the project without it and the build stops
+		// on the first stage.
+		if kind != "api" && !hasLockfile {
+			compose = "or run the whole stack with the mail catcher: " + pm.install() + " first,\n" +
+				"     because the image installs from the lockfile and this project has\n" +
+				"     none yet, then docker compose up --build"
+		}
+
+		steps = append(steps, step{compose, docs + "/deployment/docker-and-railway"})
 	}
 
 	steps = append(steps,
