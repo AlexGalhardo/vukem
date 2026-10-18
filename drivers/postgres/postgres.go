@@ -4,9 +4,16 @@
 //	vukem.New(vukem.WithDatabaseDrivers(postgres.Driver()))
 //	// DATABASE_URL=postgres://user:pass@localhost:5432/app?sslmode=disable
 //
-// [Driver] is the only API: once it is registered, everything built on the
-// database package (ORM, schema builder, migrations, database-backed
-// stores) speaks the PostgreSQL dialect.
+// Once [Driver] is registered, everything built on the database package
+// (ORM, schema builder, migrations, database-backed stores) speaks the
+// PostgreSQL dialect.
+//
+// [NewBroker] is the second half of the module: an sse.Broker on
+// LISTEN/NOTIFY, so server-sent events cross processes (web service to
+// queue:work service) on the database the app already has.
+//
+//	broker, err := postgres.NewBroker(db)
+//	hub := sse.NewHub(broker)
 //
 // See https://github.com/AlexGalhardo/vukem/blob/main/docs/database.md.
 package postgres
