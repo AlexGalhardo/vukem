@@ -32,6 +32,7 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -192,7 +193,9 @@ func validRune(r rune) bool {
 
 func validChannel(channel string) bool {
 	_, rest := kindOf(channel)
-	return ValidName(channel) && rest != ""
+	// An empty dot segment ("private-user.") would be a channel no pattern
+	// can authorize but Publish would still accept, so reject it here.
+	return ValidName(channel) && !slices.Contains(strings.Split(rest, "."), "")
 }
 
 type authorizeFunc func(ctx context.Context, user any, params map[string]string) (Member, bool, error)

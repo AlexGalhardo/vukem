@@ -191,7 +191,7 @@ broadcast: invalid parameter "{id}" in pattern "a.{id}.{id}"
 broadcast: invalid segment "" in pattern "a..b"
 ```
 
-A channel or event name is 1 to 128 characters (`broadcast.MaxNameLength`) from `A-Z a-z 0-9 _ - = @ . :`. `broadcast.ValidName(name)` checks it. Commas, spaces, quotes and line breaks are refused, so a name can never break the comma-separated `channels` list or a wire frame.
+A channel or event name is 1 to 128 characters (`broadcast.MaxNameLength`) from `A-Z a-z 0-9 _ - = @ . :`. `broadcast.ValidName(name)` checks it. A channel also needs a non-empty name after its prefix and no empty dot segment: `private-user.`, `posts.` and `a..b` are refused by `Authorize`, `Subscribe` and `Publish` alike, so an event built from an empty id fails loudly instead of going to a channel nobody can join. Commas, spaces, quotes and line breaks are refused, so a name can never break the comma-separated `channels` list or a wire frame.
 
 ### Public channels
 
