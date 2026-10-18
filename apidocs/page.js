@@ -142,13 +142,27 @@
     for (const el of document.querySelectorAll('input[role="combobox"]')) {
       if (!named(el)) el.setAttribute("aria-label", "Search");
     }
+    // A marker, so a test can tell "the pass ran" from "the page never
+    // rendered". Without it the only signal is elapsed time, and a slow
+    // runner then fails a page that was simply not finished.
+    document.documentElement.setAttribute("data-vukem-apidocs", "fixed");
   };
 
   let queued = false;
   new MutationObserver(() => {
     if (queued) return;
     queued = true;
-    requestAnimationFrame(() => {
+    // A microtask, not requestAnimationFrame: rAF needs a frame to be
+    // painted, and a headless dump under a virtual-time budget can end
+    // before one is. The pass then never ran and the page kept the markup
+    // this shim exists to fix — which is exactly how this failed on a slow
+    // Windows runner. A microtask still coalesces a burst of mutations into
+    // one pass, and always runs.
+    //
+    // Promise.resolve().then rather than queueMicrotask: the same microtask,
+    // but available wherever Promise is, including the minimal environment
+    // the shim's own tests run page.js in.
+    Promise.resolve().then(() => {
       queued = false;
       fix();
     });

@@ -110,7 +110,17 @@ function load(nonce) {
 
   const document = Object.assign(new Document(), {
     currentScript: { nonce },
-    documentElement: {},
+    // page.js marks the document once its pass has run, so a test can tell
+    // "the pass ran" from "the page never rendered".
+    documentElement: {
+      attrs: {},
+      setAttribute(name, value) {
+        this.attrs[name] = value;
+      },
+      getAttribute(name) {
+        return name in this.attrs ? this.attrs[name] : null;
+      },
+    },
     querySelectorAll: (sel) => tree.filter((el) => matches(el, sel)),
   });
 
@@ -139,8 +149,14 @@ function load(nonce) {
   vm.runInContext(source, ctx);
 
   // The shim queues its accessibility pass on a mutation; the fake
-  // requestAnimationFrame runs it straight away.
-  const fix = () => observers.forEach((observer) => observer());
+  // page.js defers its pass to a microtask (a frame may never be painted in
+  // a headless dump), so firing the observers is not enough: the queue has to
+  // drain before the DOM reflects the pass. A macrotask tick guarantees that
+  // without depending on how many microtasks the pass itself schedules.
+  const fix = async () => {
+    observers.forEach((observer) => observer());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  };
 
   return { document, attrs, observers, all, tree, add, fix, globalThis: ctx };
 }
@@ -234,12 +250,12 @@ test("innerHTML is left alone without a nonce", () => {
   assert.equal(el.html, html);
 });
 
-test("a caption <label> that labels nothing is retagged as a span", () => {
+test("a caption <label> that labels nothing is retagged as a span", async () => {
   const { add, fix, tree } = load("N");
   const text = { tagName: "#TEXT", parentNode: null, childNodes: [] };
   const caption = add("label", { class: "bg-b-2 font-medium", "data-v-dfab866f": "" }, [text]);
 
-  fix();
+  await fix();
 
   const span = tree[0];
   assert.equal(span.tagName, "SPAN");
@@ -249,37 +265,37 @@ test("a caption <label> that labels nothing is retagged as a span", () => {
   assert.deepEqual(span.childNodes, [text]);
   assert.equal(text.parentNode, span);
   // Idempotent: a second pass finds no <label> left to retag.
-  fix();
+  await fix();
   assert.equal(tree.length, 1);
   assert.equal(tree[0], span);
 });
 
-test("a caption's inline style is copied through the CSSOM, not setAttribute", () => {
+test("a caption's inline style is copied through the CSSOM, not setAttribute", async () => {
   const { add, fix, tree, attrs } = load("N");
   const caption = add("label", { class: "c", style: "width: 10px" });
   caption.style.cssText = "width: 10px";
 
-  fix();
+  await fix();
 
   assert.equal(tree[0].tagName, "SPAN");
   assert.equal(tree[0].style.cssText, "width: 10px");
   assert.deepEqual(attrs, [["class", "c"]]);
 });
 
-test("labels that label something are left alone", () => {
+test("labels that label something are left alone", async () => {
   const { add, fix, tree } = load("N");
   const field = add("input", { id: "token" });
   const explicit = add("label", { for: "token" });
   const missing = add("label", { for: "not-mounted-yet" });
   const nested = add("label", { class: "scalar-card-checkbox" }, [add("input", { type: "checkbox" })]);
 
-  fix();
+  await fix();
 
   assert.deepEqual(tree.filter((el) => el.tagName === "LABEL"), [explicit, missing, nested]);
   assert.equal(field.parentNode, null);
 });
 
-test("an unnamed combobox field gets an accessible name, a named one keeps its own", () => {
+test("an unnamed combobox field gets an accessible name, a named one keeps its own", async () => {
   const { add, fix } = load("N");
   const unnamed = add("input", { role: "combobox" });
   const labelled = add("input", { role: "combobox", "aria-label": "Search clients" });
@@ -288,7 +304,7 @@ test("an unnamed combobox field gets an accessible name, a named one keeps its o
   const titled = add("input", { role: "combobox", title: "Search" });
   const plain = add("input", { type: "text" });
 
-  fix();
+  await fix();
 
   assert.equal(unnamed.getAttribute("aria-label"), "Search");
   assert.equal(labelled.getAttribute("aria-label"), "Search clients");
@@ -298,7 +314,7 @@ test("an unnamed combobox field gets an accessible name, a named one keeps its o
   assert.equal(plain.getAttribute("aria-label"), null);
 });
 
-test("the scrollable endpoint list and the Show More buttons keep their fixes", () => {
+test("the scrollable endpoint list and the Show More buttons keep their fixes", async () => {
   const { add, fix } = load("N");
   const list = add("div", { class: "endpoints" });
   const button = add("button", { class: "show-more", "aria-label": "7 more operations" });
@@ -306,7 +322,7 @@ test("the scrollable endpoint list and the Show More buttons keep their fixes", 
   const already = add("button", { class: "show-more", "aria-label": "Show More: 7 more operations" });
   already.textContent = "Show More";
 
-  fix();
+  await fix();
 
   assert.equal(list.tabIndex, 0);
   assert.equal(button.getAttribute("aria-label"), "Show More: 7 more operations");
