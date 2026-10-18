@@ -975,3 +975,51 @@ func TestStatusWithoutBody(t *testing.T) {
 		})
 	}
 }
+
+func TestBindJSONRejectsUnknownFields(t *testing.T) {
+	t.Parallel()
+
+	type comment struct {
+		Author string `json:"author"`
+		Meta   struct {
+			Lang string `json:"lang"`
+		} `json:"meta"`
+	}
+
+	tests := []struct {
+		name, body string
+		wantField  string
+	}{
+		{name: "known fields", body: `{"author":"Ana","meta":{"lang":"en"}}`},
+		{name: "unknown top-level field", body: `{"author":"Ana","role":"admin"}`, wantField: "role"},
+		{name: "unknown nested field", body: `{"meta":{"lang":"en","x":1}}`, wantField: "x"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			r := httptest.NewRequestWithContext(t.Context(), "POST", "/", strings.NewReader(tt.body))
+			r.Header.Set("Content-Type", "application/json")
+			c, _ := newCtx(t, r, nil)
+
+			var in comment
+			err := c.BindJSON(&in)
+
+			if tt.wantField == "" {
+				if err != nil {
+					t.Fatalf("BindJSON() = %v, want nil", err)
+				}
+				return
+			}
+
+			verr, ok := errors.AsType[*errs.ValidationError](err)
+			if !ok || errs.Status(err) != http.StatusUnprocessableEntity {
+				t.Fatalf("BindJSON() = %v (status %d), want a 422 validation error", err, errs.Status(err))
+			}
+			if len(verr.Fields[tt.wantField]) == 0 {
+				t.Fatalf("BindJSON() fields = %v, want an error for %q", verr.Fields, tt.wantField)
+			}
+		})
+	}
+}

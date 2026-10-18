@@ -39,7 +39,7 @@ func (c *Ctx) Input() (map[string]any, error) {
 		return out, nil
 	case c.IsJSON():
 		var body map[string]any
-		if err := c.decodeJSON(&body); err != nil {
+		if err := c.decodeJSON(&body, false); err != nil {
 			return nil, err
 		}
 
@@ -89,14 +89,15 @@ func fileInput(f *multipart.Form) map[string]any {
 // QueryInput returns the query string as a generic map (see Input).
 func (c *Ctx) QueryInput() map[string]any { return FormToMap(c.r.URL.Query()) }
 
-// BindJSON decodes the JSON body into v, rejecting unknown fields, trailing
-// data and bodies over the size limit.
+// BindJSON decodes the JSON body into v, rejecting unknown fields (422
+// with a field error per key, for struct targets), trailing data and
+// bodies over the size limit.
 func (c *Ctx) BindJSON(v any) error {
 	if !c.IsJSON() {
 		return errs.ErrUnsupportedMediaType
 	}
 
-	return c.decodeJSON(v)
+	return c.decodeJSON(v, true)
 }
 
 // FormFile returns an uploaded file.
@@ -177,13 +178,21 @@ func (c *Ctx) limitBody() {
 	}
 }
 
-func (c *Ctx) decodeJSON(v any) error {
+func (c *Ctx) decodeJSON(v any, strict bool) error {
 	c.limitBody()
 
 	dec := json.NewDecoder(c.r.Body)
 	dec.UseNumber()
 
+	if strict {
+		dec.DisallowUnknownFields()
+	}
+
 	if err := dec.Decode(v); err != nil {
+		if field, ok := unknownField(err); ok {
+			return errs.NewValidation().Add(field, "The field is not allowed.")
+		}
+
 		return bodyError(err)
 	}
 
@@ -215,6 +224,19 @@ func (c *Ctx) parseForm() error {
 	}
 
 	return nil
+}
+
+// unknownField reads the key out of the error DisallowUnknownFields
+// returns: encoding/json has no typed error for it.
+func unknownField(err error) (string, bool) {
+	rest, ok := strings.CutPrefix(err.Error(), "json: unknown field ")
+	if !ok {
+		return "", false
+	}
+
+	field, uerr := strconv.Unquote(rest)
+
+	return field, uerr == nil && field != ""
 }
 
 func isForm(r *http.Request) bool {

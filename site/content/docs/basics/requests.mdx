@@ -151,7 +151,7 @@ The `json:"author"` parts are [struct tags](https://go.dev/ref/spec#Struct_types
 | --- | --- |
 | no JSON `Content-Type` | `415 Unsupported Media Type` |
 | `{"author":"Ana","body":"Hi"}` | `nil`, `in` is filled |
-| `{"author":"Ana","extra":1}` | `nil`: unknown keys are ignored |
+| `{"author":"Ana","extra":1}` | `422`, field error on `extra`: `The field is not allowed.` (nested keys too) |
 | empty | `400`, `Request body is empty.` |
 | `{"author" "Ana"}` | `400`, `Malformed JSON at position 11.` |
 | `{"author":` (cut short) | `400` with no detail (`unexpected EOF` is logged) |
