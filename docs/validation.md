@@ -199,7 +199,36 @@ var LoginSchema = z.FromTags[Login]() // panics at boot on unknown rules or type
 
 `web.Bind[T]` uses `z.For[T]()`: the tag-derived schema, built once per type and memoized (no mutable registry). For hand-written schemas call `web.Parse(c, schema)`.
 
-Supported rules: `required`, `min=N`, `max=N`, `len=N`, `email`, `url`, `uuid`, `ulid`, `alpha`, `alphanum`, `numeric`, `oneof=a b`, `regex=…` (last), `startswith=`, `endswith=`, `contains=`, `trim`, `lowercase`, `positive`, `unique`, `dive` (following rules apply to slice elements). `required` on a string means non-empty; on a list it means present and not null (an empty list passes, as with OpenAPI `required`), so use `min=1` for a non-empty list. Pointer fields are optional and nullable.
+Supported rules, by the field kind they apply to:
+
+| Rule | Applies to | Meaning |
+| --- | --- | --- |
+| `required` | any kind | the key must be present and not null |
+| `omitempty` | any kind | accepted and ignored (fields are optional unless `required`) |
+| `dive` | any kind | the rules after it apply to the slice elements |
+| `min=N` | string, number, list | minimum length, value or element count |
+| `max=N` | string, number, list | maximum length, value or element count |
+| `len=N` | string, list | exact length or element count |
+| `email` | string | `Email()` |
+| `url` | string | `URL()` |
+| `uuid` | string | `UUID()` |
+| `ulid` | string | `ULID()` |
+| `alpha` | string | `Alpha()` |
+| `alphanum` | string | `Alphanum()` |
+| `numeric` | string | `Numeric()` |
+| `oneof=a b c` | string | `OneOf("a", "b", "c")`, values separated by spaces |
+| `regex=…` | string | `Regex(...)`; must be the last rule of the tag |
+| `startswith=…` | string | `StartsWith(...)` |
+| `endswith=…` | string | `EndsWith(...)` |
+| `contains=…` | string | `Includes(...)` |
+| `trim` | string | `Trim()`, a pre-step: the value is trimmed before the checks run |
+| `lowercase` | string | `ToLower()`, a pre-step, like `trim` |
+| `positive` | number | value > 0 |
+| `unique` | list | `Unique()` |
+
+A bool, a `time.Time` and a nested struct take no rule but `required`; any other rule on them is a boot panic, as is an unknown rule or a bad argument. `required` on a string means non-empty; on a list it means present and not null (an empty list passes, as with OpenAPI `required`), so use `min=1` for a non-empty list. Pointer fields are optional and nullable.
+
+The table above is checked against the implementation by `TestTagRules_DocumentedInValidationDocs` in `z`: a rule cannot be added to the tag parser without appearing here.
 
 ## Typed boundaries
 

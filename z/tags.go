@@ -17,14 +17,23 @@ import (
 //		Password string `json:"password" validate:"required,min=12"`
 //	}
 //
-// Rules: required, min=N, max=N, len=N, email, url, uuid, ulid, alpha,
-// alphanum, numeric, oneof=a b c, regex=PATTERN (last rule), startswith=,
-// endswith=, contains=, positive, unique, dive (rules after it apply to
-// slice elements). Fields without "required" are optional; "required" on a
-// string means non-empty, on a list present and not null (use min=1 for a
-// non-empty list); pointers are optional and nullable; nested structs are
-// parsed recursively. It panics on unknown rules or bad arguments, so
-// mistakes surface at boot.
+// Rules, grouped by the field kind they apply to:
+//
+//	any:    required, omitempty (accepted and ignored), dive (the rules
+//	        after it apply to slice elements)
+//	string: min=N, max=N, len=N, email, url, uuid, ulid, alpha, alphanum,
+//	        numeric, oneof=a b c, regex=PATTERN (last rule), startswith=,
+//	        endswith=, contains=, trim, lowercase
+//	number: min=N, max=N, positive
+//	list:   min=N, max=N, len=N, unique
+//
+// Fields without "required" are optional; "required" on a string means
+// non-empty, on a list present and not null (use min=1 for a non-empty
+// list); pointers are optional and nullable; nested structs are parsed
+// recursively. A bool, a time.Time and a nested struct take no rule but
+// "required". It panics on unknown rules or bad arguments, so mistakes
+// surface at boot. The same table is in docs/validation.md; both are checked
+// against the implementation by TestTagRules_* in this package.
 func FromTags[T any]() StructSchema[T] {
 	return StructSchema[T]{core: tagCore(reflect.TypeFor[T](), 0)}
 }
@@ -46,6 +55,85 @@ func For[T any]() StructSchema[T] {
 	tagCache.Store(rt, core)
 
 	return StructSchema[T]{core: core}
+}
+
+// tagScope is the family of field kinds a `validate` rule applies to.
+type tagScope string
+
+const (
+	scopeAny    tagScope = "any" // consumed before the per-kind rules
+	scopeString tagScope = "string"
+	scopeNumber tagScope = "number"
+	scopeList   tagScope = "list"
+)
+
+// tagRule is one `validate` rule FromTags understands.
+type tagRule struct {
+	name   string
+	arg    string // example argument, empty when the rule takes none
+	scopes []tagScope
+}
+
+// tagRules lists every `validate` rule FromTags understands. It is the one
+// list the FromTags doc comment, the rule table in docs/validation.md, the
+// unknown-rule errors and TestTagRules_* all agree on: adding a case to
+// stringFromRules, numberFromRules or the list branch without adding it here
+// fails TestTagRules_MatchImplementation.
+func tagRules() []tagRule {
+	return []tagRule{
+		{name: "required", scopes: []tagScope{scopeAny}},
+		{name: "omitempty", scopes: []tagScope{scopeAny}},
+		{name: "dive", scopes: []tagScope{scopeAny}},
+		{name: "min", arg: "1", scopes: []tagScope{scopeString, scopeNumber, scopeList}},
+		{name: "max", arg: "5", scopes: []tagScope{scopeString, scopeNumber, scopeList}},
+		{name: "len", arg: "3", scopes: []tagScope{scopeString, scopeList}},
+		{name: "email", scopes: []tagScope{scopeString}},
+		{name: "url", scopes: []tagScope{scopeString}},
+		{name: "uuid", scopes: []tagScope{scopeString}},
+		{name: "ulid", scopes: []tagScope{scopeString}},
+		{name: "alpha", scopes: []tagScope{scopeString}},
+		{name: "alphanum", scopes: []tagScope{scopeString}},
+		{name: "numeric", scopes: []tagScope{scopeString}},
+		{name: "oneof", arg: "a b c", scopes: []tagScope{scopeString}},
+		{name: "regex", arg: "^a$", scopes: []tagScope{scopeString}},
+		{name: "startswith", arg: "a", scopes: []tagScope{scopeString}},
+		{name: "endswith", arg: "a", scopes: []tagScope{scopeString}},
+		{name: "contains", arg: "a", scopes: []tagScope{scopeString}},
+		{name: "trim", scopes: []tagScope{scopeString}},
+		{name: "lowercase", scopes: []tagScope{scopeString}},
+		{name: "positive", scopes: []tagScope{scopeNumber}},
+		{name: "unique", scopes: []tagScope{scopeList}},
+	}
+}
+
+// ruleNamesFor lists the rules usable on a scope, "name=" when the rule
+// takes an argument, for an unknown-rule error.
+func ruleNamesFor(scope tagScope) []string {
+	var names []string
+
+	for _, r := range tagRules() {
+		for _, s := range r.scopes {
+			if s != scope {
+				continue
+			}
+
+			if r.arg == "" {
+				names = append(names, r.name)
+			} else {
+				names = append(names, r.name+"=")
+			}
+
+			break
+		}
+	}
+
+	return names
+}
+
+// unknownRuleError reports rule r as unusable on scope and lists what is.
+func unknownRuleError(r string, scope tagScope) error {
+	return fmt.Errorf("unknown rule %q for a %s, want one of: %s",
+		r, scope, strings.Join(ruleNamesFor(scope), ", "))
 }
 
 const maxTagDepth = 32
@@ -205,7 +293,7 @@ func schemaForType(t reflect.Type, raw []string, depth int) (AnySchema, error) {
 			case "unique":
 				s = s.Unique()
 			default:
-				return nil, fmt.Errorf("unknown rule %q for a list", r)
+				return nil, unknownRuleError(r, scopeList)
 			}
 		}
 
@@ -308,7 +396,7 @@ func stringFromRules(t reflect.Type, rs ruleSet, optional, nullable bool) (AnySc
 		case "lowercase":
 			s = s.ToLower()
 		default:
-			return nil, fmt.Errorf("unknown rule %q for a string", r)
+			return nil, unknownRuleError(r, scopeString)
 		}
 	}
 
@@ -378,7 +466,7 @@ func numberFromRules(t reflect.Type, rs ruleSet, optional bool) (AnySchema, erro
 			positive = true
 			kw["exclusiveMinimum"] = 0
 		default:
-			return nil, fmt.Errorf("unknown rule %q for a number", r)
+			return nil, unknownRuleError(r, scopeNumber)
 		}
 	}
 
