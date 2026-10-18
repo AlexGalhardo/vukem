@@ -308,13 +308,15 @@ func dropAll(ctx context.Context, db *database.DB) error {
 	if err != nil {
 		return fmt.Errorf("schema: list tables: %w", err)
 	}
+	// Closed explicitly below before the drops reuse the connection; the
+	// defer only covers the early returns (Close is idempotent).
+	defer rows.Close()
 
 	var tables []string
 
 	for rows.Next() {
 		var name string
 		if err := rows.Scan(&name); err != nil {
-			_ = rows.Close()
 			return err
 		}
 
@@ -391,13 +393,15 @@ func dropAllMySQL(ctx context.Context, db *database.DB) error {
 	if err != nil {
 		return fmt.Errorf("schema: list tables: %w", err)
 	}
+	// Closed explicitly below before the drops reuse the connection; the
+	// defer only covers the early returns (Close is idempotent).
+	defer rows.Close()
 
 	var tables []string
 
 	for rows.Next() {
 		var name string
 		if err := rows.Scan(&name); err != nil {
-			_ = rows.Close()
 			return err
 		}
 
