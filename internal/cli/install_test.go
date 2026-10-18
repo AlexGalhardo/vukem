@@ -3,6 +3,8 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -111,5 +113,51 @@ func TestInstallScaffoldRefusesCatalogsWithoutLocales(t *testing.T) {
 	err := installScaffold(env, "auth-core", map[string]string{"Module": "example.com/app"}, true)
 	if err == nil {
 		t.Fatal("installScaffold() without a locale set = nil, want an error")
+	}
+}
+
+// A85: the generated API mints least-privilege keys, so the handover has
+// to say so. A token issued the obvious way — no "abilities" field —
+// carries nothing and is refused by GET /api/v1/me, which the generated
+// TestAPITokenWithoutAbilityIsRefused asserts. Without a word about it,
+// the developer's first 403 looks like a bug in the framework.
+func TestInstallAPIHandoverExplainsAbilities(t *testing.T) {
+	t.Parallel()
+
+	msg := apiInstalled()
+
+	for _, want := range []string{
+		"abilities",         // names the concept
+		"apiv1.Abilities()", // where the set lives
+		"auth.Ability",      // how a route demands one
+		"/docs/security/api-tokens",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("the install:api handover does not mention %q:\n%s", want, msg)
+		}
+	}
+
+	// Every ability the scaffold defines is named, so adding one to the
+	// template without the handover fails here instead of silently
+	// shipping a message that is missing it.
+	tmpl, err := scaffoldFS.ReadFile("scaffolds/api/app/controllers/apiv1/abilities.go.tmpl")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	abilities := regexp.MustCompile(`(?m)^\tAbility\w+ = "([^"]+)"$`).FindAllSubmatch(tmpl, -1)
+	if len(abilities) == 0 {
+		t.Fatal("no Ability constants found in the scaffold; the assertion below would prove nothing")
+	}
+
+	for _, m := range abilities {
+		if !strings.Contains(msg, string(m[1])) {
+			t.Errorf("the handover does not name the %q ability:\n%s", m[1], msg)
+		}
+	}
+
+	// And it must not teach the wildcard the scaffold refuses.
+	if strings.Contains(msg, `"*"`) {
+		t.Errorf("the handover mentions the wildcard ability:\n%s", msg)
 	}
 }

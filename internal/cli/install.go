@@ -181,11 +181,32 @@ func installAPI(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 			return err
 		}
 
-		fmt.Fprint(env.Stdout, "\nAPI installed: POST /api/v1/tokens, GET /api/v1/me, DELETE /api/v1/tokens/current.\n"+
-			"Run vukem migrate, and set CORS_ALLOWED_ORIGINS for browser clients.\n\n")
+		fmt.Fprint(env.Stdout, apiInstalled())
 
 		return nil
 	}
+}
+
+// apiInstalled is the install:api handover. It spells out the ability
+// model because the generated endpoint is least-privilege: a token carries
+// only what the request asked for, so the obvious first call — no
+// "abilities" field — issues a key that GET /api/v1/me refuses. Without
+// this, that 403 reads as a framework bug instead of the default working
+// (A85). Every ability named here is one the scaffold defines; the
+// wildcard is not one of them, and the generated schema refuses it.
+func apiInstalled() string {
+	return "\nAPI installed: POST /api/v1/tokens, GET /api/v1/me, DELETE /api/v1/tokens/current.\n" +
+		"Run vukem migrate, and set CORS_ALLOWED_ORIGINS for browser clients.\n\n" +
+		"Keys are least-privilege: POST /api/v1/tokens grants only the abilities the\n" +
+		"request asks for, out of apiv1.Abilities() in app/controllers/apiv1/abilities.go.\n" +
+		`  {"email": "...", "password": "...", "device_name": "cli", "abilities": ["read"]}` + "\n" +
+		"  read   GET /api/v1/me and your own read routes\n" +
+		"  write  routes that create, change or delete\n" +
+		"Omitting the field grants nothing, and an ability the app does not define is a\n" +
+		"422, so a typo cannot widen a key. To add one: declare it in abilities.go, then\n" +
+		"gate its routes with auth.Ability(acc.API, apiv1.AbilityX) in routes/api.go --\n" +
+		"every key issued before it is refused.\n" +
+		"  https://vukem.dev/docs/security/api-tokens\n\n"
 }
 
 func parseProviders(list string) ([]string, error) {
