@@ -541,3 +541,47 @@ func TestSessionAssertionsSeeStoredNil(t *testing.T) {
 		app.Client(tb).Get("/session-nil").AssertSessionMissing("empty")
 	})
 }
+
+// A116: nothing decoded a response body into a struct, so every test
+// wanting a typed body wrote json.Unmarshal plus an error branch — and the
+// forgotten branch is the hazard, because a decode failure then reads as
+// an empty struct rather than a failed test.
+func TestResponseJSON(t *testing.T) {
+	t.Parallel()
+
+	app := vukemtest.New(t, build)
+
+	var got struct {
+		ID   int64  `json:"id"`
+		Body string `json:"body"`
+	}
+
+	app.Client(t).PostJSON("/notes", map[string]any{"body": "typed"}).AssertCreated().JSON(&got)
+
+	if got.Body != "typed" || got.ID == 0 {
+		t.Errorf("JSON(&v) = %+v, want the created note with an id", got)
+	}
+
+	// It chains like every other assertion.
+	res := app.Client(t).PostJSON("/notes", map[string]any{"body": "again"})
+	if res.JSON(&got) != res {
+		t.Error("JSON() did not return the same response")
+	}
+
+	// A body that does not decode fails the test, which is the point: an
+	// ignored json.Unmarshal error leaves the zero value behind and the
+	// test carries on asserting against it. /notes renders HTML.
+	expectFailure(t, "decode the response body as JSON", func(tb *fakeTB) {
+		var into struct {
+			ID int64 `json:"id"`
+		}
+
+		app.Client(tb).Get("/notes").JSON(&into)
+	})
+
+	// So does a destination that cannot hold the body.
+	expectFailure(t, "decode the response body as JSON", func(tb *fakeTB) {
+		var into int
+		app.Client(tb).PostJSON("/notes", map[string]any{"body": "x"}).JSON(&into)
+	})
+}

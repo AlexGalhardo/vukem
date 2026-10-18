@@ -221,6 +221,25 @@ func (r *Response) Body() string { return r.rec.Body.String() }
 // Header returns a response header.
 func (r *Response) Header(key string) string { return r.rec.Header().Get(key) }
 
+// JSON decodes the body into v, which must be a pointer, and fails the
+// test when it does not decode. Use it for a typed assertion on a
+// response, instead of json.Unmarshal([]byte(res.Body()), &v): the error
+// branch that call needs is easy to leave out, and without it a body that
+// did not decode reads as a zero value and the test carries on asserting
+// against it.
+//
+// Unknown fields are ignored, like encoding/json: assert on what the
+// handler promises, not on the absence of what it does not.
+func (r *Response) JSON(v any) *Response {
+	r.t.Helper()
+
+	if err := json.Unmarshal(r.rec.Body.Bytes(), v); err != nil {
+		r.fail("decode the response body as JSON into %T: %v\nbody: %s", v, err, r.Body())
+	}
+
+	return r
+}
+
 func (r *Response) fail(format string, args ...any) {
 	r.t.Helper()
 

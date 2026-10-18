@@ -65,7 +65,7 @@ Each `app.Client(t)` keeps its own cookie jar between requests. Assertions are m
 | Status | `AssertStatus(n)`, `AssertOK`, `AssertCreated`, `AssertNoContent`, `AssertNotFound`, `AssertForbidden`, `AssertUnauthorized`, `AssertUnprocessable` |
 | Redirects | `AssertRedirect(url)` (3xx or `HX-Location`), `AssertRedirectRoute(name, params...)` |
 | Body and headers | `AssertSee(text)`, `AssertDontSee`, `AssertHeader`, `AssertHeaderContains`, `AssertHeaderMissing` |
-| JSON and APIs | `AssertJSON(v)`, `AssertJSONPath("data.title", "x")`, `AssertJSONCount(path, n)`, `JSONPath(path)`, `AssertProblem(status)`, `AssertJSONValidationErrors(fields...)`, `AssertMatchesOpenAPI()` |
+| JSON and APIs | `JSON(&v)` (decodes into a struct and fails the test if the body does not decode — prefer it to `json.Unmarshal([]byte(res.Body()), &v)`, whose error branch is easy to leave out, and without which a body that did not decode reads as a zero value), `AssertJSON(v)`, `AssertJSONPath("data.title", "x")`, `AssertJSONCount(path, n)`, `JSONPath(path)`, `AssertProblem(status)`, `AssertJSONValidationErrors(fields...)`, `AssertMatchesOpenAPI()` |
 | Session | `AssertSessionHas`, `AssertSessionMissing`, `AssertSessionHasErrors("title")`, `Session()` |
 | Flash | `AssertFlash(key, v)`, `AssertNoFlash(key)` (web and Inertia flash, session or page) |
 | HTMX | `AssertHXTrigger("post-created")`, `AssertFragment()` (no `<html>` document) |
