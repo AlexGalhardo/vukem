@@ -297,7 +297,7 @@ func TestSecurity_A01_IdempotencyTokenPrefixDoesNotForkScope(t *testing.T) {
 	}
 }
 
-func TestIdempotencyReplayKeepsPerRequestHeaders(t *testing.T) {
+func TestSecurity_A01_IdempotencyReplayKeepsPerRequestHeaders(t *testing.T) {
 	t.Parallel()
 
 	var calls atomic.Int32

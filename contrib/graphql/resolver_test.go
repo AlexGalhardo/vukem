@@ -188,7 +188,7 @@ func TestSecurity_A03_GraphQLValidatesNestedInputs(t *testing.T) {
 	}
 }
 
-func TestSecurity_A05_GraphQLMasksPlainValidateErrors(t *testing.T) {
+func TestSecurity_A10_GraphQLValidateErrorsMasked(t *testing.T) {
 	t.Parallel()
 
 	s, err := New(`type Query { check(name: String): Boolean }`,
