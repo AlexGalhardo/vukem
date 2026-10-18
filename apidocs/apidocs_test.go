@@ -350,3 +350,32 @@ func TestPageShim(t *testing.T) {
 		t.Fatalf("node --test shim_test.mjs: %v\n%s", err, out)
 	}
 }
+
+func TestRegisterTwiceWithNames(t *testing.T) {
+	t.Parallel()
+
+	r := router.New(nil)
+	apidocs.Register(r, "/docs/public", apidocs.Config{SpecURL: "/public.json"})
+	apidocs.Register(r, "/docs/admin", apidocs.Config{SpecURL: "/admin.json", Name: "apidocs.admin"})
+
+	if _, err := r.Handler(); err != nil {
+		t.Fatalf("Handler() = %v, want two references on one router", err)
+	}
+
+	var names []string
+	for _, rt := range r.Routes() {
+		names = append(names, rt.Name)
+	}
+
+	want := []string{
+		"apidocs",
+		"apidocs.script",
+		"apidocs.page",
+		"apidocs.admin",
+		"apidocs.admin.script",
+		"apidocs.admin.page",
+	}
+	if diff := cmp.Diff(want, names); diff != "" {
+		t.Errorf("route names (-want +got):\n%s", diff)
+	}
+}
