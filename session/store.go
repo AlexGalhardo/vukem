@@ -249,6 +249,11 @@ type SQLStore struct {
 // SQLOption configures NewSQLStore.
 type SQLOption func(*SQLStore)
 
+// DefaultTable is the table the SQL store owns when WithTable is not
+// used. It is listed with every other table vukem owns in
+// docs/database.md#tables-the-framework-owns.
+const DefaultTable = "sessions"
+
 // WithTable sets the table name (default "sessions").
 func WithTable(name string) SQLOption { return func(s *SQLStore) { s.table = name } }
 
@@ -264,34 +269,61 @@ func WithMySQL() SQLOption { return func(s *SQLStore) { s.mysql = true } }
 
 var tableNameRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
+// checkTable rejects a name that is not a plain identifier: it is
+// interpolated into SQL (A05), values never are.
+func checkTable(table string) error {
+	if !tableNameRe.MatchString(table) {
+		return fmt.Errorf("session: invalid table name %q", table)
+	}
+
+	return nil
+}
+
+// tableDDL returns the statements that create table and its user_id
+// index. NewSQLStore runs them from CreateTable at boot and the migration
+// from Migrations runs the same list, so the two paths cannot drift
+// (TestMigrationMatchesCreateTableDDL). MySQL uses a VARBINARY id so
+// session ids compare exactly, and has no CREATE INDEX IF NOT EXISTS.
+func tableDDL(mysql bool, table string) []string {
+	if mysql {
+		return []string{
+			"CREATE TABLE IF NOT EXISTS " + table +
+				" (id VARBINARY(255) NOT NULL PRIMARY KEY, data LONGTEXT NOT NULL, expires_at BIGINT NOT NULL," +
+				" user_id VARCHAR(255) NULL)",
+			"CREATE INDEX " + table + "_user_id ON " + table + " (user_id)",
+		}
+	}
+
+	return []string{
+		"CREATE TABLE IF NOT EXISTS " + table +
+			" (id TEXT PRIMARY KEY, data TEXT NOT NULL, expires_at BIGINT NOT NULL, user_id VARCHAR(255))",
+		"CREATE INDEX IF NOT EXISTS " + table + "_user_id ON " + table + " (user_id)",
+	}
+}
+
 // NewSQLStore returns a SQLStore. The table name is validated because it is
 // interpolated into SQL (A05).
 func NewSQLStore(db *sql.DB, opts ...SQLOption) (*SQLStore, error) {
-	s := &SQLStore{db: db, table: "sessions", placeholder: func(int) string { return "?" }}
+	s := &SQLStore{db: db, table: DefaultTable, placeholder: func(int) string { return "?" }}
 	for _, o := range opts {
 		o(s)
 	}
 
-	if !tableNameRe.MatchString(s.table) {
-		return nil, fmt.Errorf("session: invalid table name %q", s.table)
+	if err := checkTable(s.table); err != nil {
+		return nil, err
 	}
 
 	// The table name matched tableNameRe above; values always use placeholders.
 	t, p := s.table, s.placeholder
-	s.qCreate = "CREATE TABLE IF NOT EXISTS " + t +
-		" (id TEXT PRIMARY KEY, data TEXT NOT NULL, expires_at BIGINT NOT NULL, user_id VARCHAR(255))"
+	ddl := tableDDL(s.mysql, t)
+	s.qCreate, s.qIndex = ddl[0], ddl[1]
 	s.qLoad = "SELECT data FROM " + t + " WHERE id = " + p(1) + " AND expires_at > " + p(2)
 	s.qSave = "INSERT INTO " + t + " (id, data, expires_at) VALUES (" + p(1) + ", " + p(2) + ", " + p(3) + ")" +
 		" ON CONFLICT (id) DO UPDATE SET data = excluded.data, expires_at = excluded.expires_at"
-	s.qIndex = "CREATE INDEX IF NOT EXISTS " + t + "_user_id ON " + t + " (user_id)"
 
 	if s.mysql {
-		s.qCreate = "CREATE TABLE IF NOT EXISTS " + t +
-			" (id VARBINARY(255) NOT NULL PRIMARY KEY, data LONGTEXT NOT NULL, expires_at BIGINT NOT NULL," +
-			" user_id VARCHAR(255) NULL)"
 		s.qSave = "INSERT INTO " + t + " (id, data, expires_at) VALUES (" + p(1) + ", " + p(2) + ", " + p(3) + ")" +
 			" ON DUPLICATE KEY UPDATE data = VALUES(data), expires_at = VALUES(expires_at)"
-		s.qIndex = "CREATE INDEX " + t + "_user_id ON " + t + " (user_id)"
 	}
 
 	s.qInsert = "INSERT INTO " + t + " (id, data, expires_at, user_id) VALUES (" +

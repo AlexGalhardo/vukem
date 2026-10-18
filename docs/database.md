@@ -319,6 +319,47 @@ func m20261016120000CreateUsersTable() schema.Migration {
 - `s.Raw(sql, args...)` for anything else (data migrations, views, triggers). With args, `?` placeholders are rebound for the dialect with `database.RebindChecked` (`$n` on PostgreSQL), so one data migration runs everywhere; a query mixing `?` and `$n` or ending inside a literal fails. Without args the statement runs as written, so PostgreSQL's jsonb `?` operators in DDL keep working.
 - Tracking table `migrations(id, batch, checksum, ran_at)`. Each migration runs in its own transaction (MySQL commits DDL implicitly, so a failed one is not rolled back there). The checksum is the SHA-256 of the SQL `Up` generates; `migrate:status` shows `Ran (CHANGED since applied)` when it no longer matches and `Ran (missing from code)` for recorded ids without a migration.
 - Commands: `migrate`, `migrate:rollback [--step N]`, `migrate:reset`, `migrate:fresh`, `migrate:status [--json]`, `make:migration <name>`. `migrate:reset` and `migrate:fresh` need `--force` in production; `migrate:fresh` has no `--seed`: run `vukem db:seed` after it.
+- `schema.Record(dialect, up)` returns the statements a migration's `Up` generates for a dialect without a database (the SQL the checksum hashes), so DDL can be reviewed or diffed in a test. Queries are not run while recording: `s.HasTable` and `s.HasColumn` report `false`, so `Record` shows the statements for an empty database.
+
+## Tables the framework owns
+
+Five tables belong to vukem's own database-backed stores, not to the app. Check this list before naming a table: `jobs` is the obvious name for a domain table too, and the framework took it first.
+
+| Table | Owner | Rename with | Migration id |
+| --- | --- | --- | --- |
+| `jobs` | database queue (`QUEUE_CONNECTION=database`) | `QUEUE_TABLE` | `20261018000000_vukem_create_queue_tables` |
+| `failed_jobs` | database queue | `QUEUE_FAILED_TABLE` | same migration |
+| `sessions` | database session store (`SESSION_DRIVER=database`) | `session.WithTable` | `20261018000001_vukem_create_sessions_table` |
+| `cache` | database cache store (`CACHE_STORE=database`) | `CACHE_TABLE` | `20261018000002_vukem_create_cache_table` |
+| `webhook_deliveries` | `webhook.SQLDeliveryLog` | the `table` argument of `webhook.NewSQLDeliveryLog` | `20261018000003_vukem_create_webhook_deliveries_table` |
+
+Plus `migrations(id, batch, checksum, ran_at)`, the migrator's own tracking table.
+
+- The defaults keep their names: `jobs` and `failed_jobs` are not prefixed, because renaming them would break every app that already has those tables (the queue would find an empty `vukem_jobs` and the jobs in flight would never run). `QUEUE_TABLE` and `QUEUE_FAILED_TABLE` exist for collision avoidance, not as a customisation knob: an app that wants its own `jobs` table sets them (`QUEUE_TABLE=vukem_jobs`, `QUEUE_FAILED_TABLE=vukem_failed_jobs`) **before the first boot**, since moving them later leaves the pending jobs behind in the old table. `stores.Options` then needs the same names, so the migration manages the tables the stores read.
+- `stores.Tables(stores.Options{})` returns the list above at run time, and `go doc github.com/AlexGalhardo/vukem/schema/stores` prints it.
+
+### Managing them with migrate
+
+By default each store runs its own `CREATE TABLE IF NOT EXISTS` at boot, so `migrate` reports `Nothing to migrate.` while those tables exist and no migration describes them. Register the framework's migrations to put them under `migrate` instead:
+
+```go
+// bootstrap/app.go
+import "github.com/AlexGalhardo/vukem/schema/stores"
+
+vukem.New(
+	vukem.WithMigrations(slices.Concat(
+		stores.Migrations(stores.Options{}), // framework tables
+		migrations.All(),                    // the app's own
+	)),
+)
+```
+
+- Opting in is the only change needed: `migrate:status` then lists the five tables, `migrate:fresh` round-trips them and `migrate:rollback` drops them. An app that does not register them keeps the boot-time creation, so nothing breaks on upgrade.
+- Both paths run the same statements (one DDL builder per store), for SQLite, PostgreSQL and MySQL. `TestMigrationMatchesCreateTableDDL` in each package diffs the migration's recorded SQL against the boot-time DDL for all three dialects, and `TestMigrationSchemaMatchesCreateTable` builds one database by each path and compares SQLite's own catalog (columns, types, nullability, defaults, primary keys, indexes).
+- On a database where the tables already exist (the app opts in after the stores created them), the migration records itself and changes nothing — no conflicting `CREATE TABLE`. Rolling it back afterwards still drops the table.
+- `stores.Options` must repeat the names the stores read at run time; the ids are fixed, so a migration is recorded once whichever way the list is composed. Changing a table name after the migration ran makes `migrate:status` show `Ran (CHANGED since applied)`, because the recorded checksum covers the old name.
+- An app that uses only some stores can pass the per-package lists instead: `queue.Migrations(queue.DatabaseOptions{…})`, `session.Migrations(table)`, `cache.Migrations(table)`, `webhook.Migrations(table)`.
+- The stores still call their `CreateTable` at boot even when the migration ran: the statements are `IF NOT EXISTS`, so it is a no-op, but the database user needs `CREATE` rights at boot anyway. A least-privilege user without `CREATE` is not supported yet.
 
 ## Factories and seeders
 

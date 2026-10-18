@@ -63,28 +63,44 @@ const (
 	maxRecent   = 1000
 )
 
+// DefaultDeliveryTable is the table SQLDeliveryLog owns when
+// NewSQLDeliveryLog is called with an empty name. It is listed with every
+// other table vukem owns in docs/database.md#tables-the-framework-owns.
+const DefaultDeliveryTable = "webhook_deliveries"
+
+// checkLogTable rejects a name that is not a plain identifier of at most
+// 51 bytes: it is interpolated into SQL, values never are.
+func checkLogTable(table string) error {
+	if !logTableRe.MatchString(table) {
+		return fmt.Errorf("webhook: invalid table name %q", table)
+	}
+
+	return nil
+}
+
 // NewSQLDeliveryLog returns a log on table (default "webhook_deliveries").
 func NewSQLDeliveryLog(db *database.DB, table string) (*SQLDeliveryLog, error) {
 	if table == "" {
-		table = "webhook_deliveries"
+		table = DefaultDeliveryTable
 	}
 
-	if !logTableRe.MatchString(table) {
-		return nil, fmt.Errorf("webhook: invalid table name %q", table)
+	if err := checkLogTable(table); err != nil {
+		return nil, err
 	}
 
 	return &SQLDeliveryLog{db: db, table: table}, nil
 }
 
 // q renders sqlText with the table name ({t}) and dialect placeholders.
-func (l *SQLDeliveryLog) q(sqlText string) string {
-	dl := l.db.Dialect()
+func (l *SQLDeliveryLog) q(sqlText string) string { return render(l.db.Dialect(), l.table, sqlText) }
 
+// render substitutes the table name ({t}) and dialect placeholders.
+func render(dl database.Dialect, table, sqlText string) string {
 	var b strings.Builder
 
 	n := 0
 
-	for _, ch := range strings.ReplaceAll(sqlText, "{t}", dl.Quote(l.table)) {
+	for _, ch := range strings.ReplaceAll(sqlText, "{t}", dl.Quote(table)) {
 		if ch == '?' {
 			n++
 			b.WriteString(dl.Placeholder(n))
@@ -98,13 +114,14 @@ func (l *SQLDeliveryLog) q(sqlText string) string {
 	return b.String()
 }
 
-// CreateTable creates the table and its (endpoint, attempted_at) index if
-// missing.
-func (l *SQLDeliveryLog) CreateTable(ctx context.Context) error {
-	dl := l.db.Dialect()
+// tableDDL returns the statements that create table and its
+// (endpoint, attempted_at) index on dl. CreateTable runs them at boot and
+// the migration from Migrations runs the same list, so the two paths
+// cannot drift (TestMigrationMatchesCreateTableDDL).
+func tableDDL(dl database.Dialect, table string) []string {
 	cols := `endpoint TEXT NOT NULL, event_id TEXT NOT NULL, status INTEGER NOT NULL,
 		duration_ms BIGINT NOT NULL, error TEXT NOT NULL, attempted_at BIGINT NOT NULL`
-	index := dl.Quote(l.table + "_endpoint_at")
+	index := dl.Quote(table + "_endpoint_at")
 
 	var stmts []string
 
@@ -125,8 +142,20 @@ func (l *SQLDeliveryLog) CreateTable(ctx context.Context) error {
 		stmts = append(stmts, `CREATE INDEX IF NOT EXISTS `+index+` ON {t} (endpoint, attempted_at)`)
 	}
 
-	for _, stmt := range stmts {
-		if _, err := l.db.ExecContext(ctx, l.q(stmt)); err != nil {
+	for i, stmt := range stmts {
+		stmts[i] = render(dl, table, stmt)
+	}
+
+	return stmts
+}
+
+// CreateTable creates the table and its (endpoint, attempted_at) index if
+// missing. It is the fallback for apps that do not register Migrations:
+// the statements are the same, so running it after the migration changes
+// nothing.
+func (l *SQLDeliveryLog) CreateTable(ctx context.Context) error {
+	for _, stmt := range tableDDL(l.db.Dialect(), l.table) {
+		if _, err := l.db.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("webhook: create delivery log: %w", err)
 		}
 	}
