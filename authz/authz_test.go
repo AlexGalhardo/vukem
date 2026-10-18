@@ -307,3 +307,69 @@ func TestValueSubjectUsesPointerPolicy(t *testing.T) {
 		t.Errorf("range over []Post = %q, want %q", got, "1:edit 2:- ")
 	}
 }
+
+type Note struct {
+	ID    int64
+	Owner int64
+}
+
+// NoteValuePolicy answers for Note values only.
+type NoteValuePolicy struct{}
+
+func (NoteValuePolicy) Update(_ context.Context, u *User, n Note) bool { return u.ID == n.Owner }
+
+// NotePointerPolicy answers for *Note and tries to change the subject.
+type NotePointerPolicy struct{}
+
+func (NotePointerPolicy) Update(_ context.Context, _ *User, n *Note) bool {
+	n.Owner = -1
+
+	return true
+}
+
+type Tag struct{ ID int64 }
+
+type TagValuePolicy struct{}
+
+func (TagValuePolicy) Update(context.Context, *User, Tag) bool { return true }
+
+// The *T fallback only applies to values with no policy of their own: a
+// value policy wins over a pointer one, a value policy never answers for a
+// pointer, and the policy works on a copy of the caller's value.
+func TestValueSubjectFallbackEdges(t *testing.T) {
+	t.Parallel()
+
+	g := gate()
+	if err := g.Register(
+		For[Note](NoteValuePolicy{}),
+		For[*Note](NotePointerPolicy{}),
+		For[Tag](TagValuePolicy{}),
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	u := &User{ID: 1}
+	ctx := as(u)
+
+	if g.Allows(ctx, u, "update", Note{ID: 1, Owner: 9}) {
+		t.Error("Note value used the *Note policy; want the Note policy (deny)")
+	}
+
+	if g.Allows(ctx, u, "update", &Tag{ID: 1}) {
+		t.Error("*Tag allowed by the Tag value policy; want deny")
+	}
+
+	g2 := gate()
+	if err := g2.Register(For[*Note](NotePointerPolicy{})); err != nil {
+		t.Fatal(err)
+	}
+
+	n := Note{ID: 1, Owner: 1}
+	if !g2.Allows(ctx, u, "update", n) {
+		t.Fatal("Note value denied; want the *Note policy to allow")
+	}
+
+	if n.Owner != 1 {
+		t.Errorf("policy changed the caller's value: Owner = %d, want 1", n.Owner)
+	}
+}

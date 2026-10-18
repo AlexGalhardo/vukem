@@ -323,7 +323,7 @@ The `can` template function asks the same gate, so a link only shows when the ac
 - It returns `false` when no `Authorizer` is configured, when nobody is signed in, and for any denial. It never logs a security event.
 - Hiding a link is a convenience, not protection: a user can still type the URL. Always call `c.Authorize` in the handler too.
 
-Inside `{{range .Posts}}` over a `[]models.Post`, each `.` is a `models.Post` value. A policy registered for `*models.Post` still answers: the gate passes the policy a pointer to a copy of the value, so `{{if can "delete" .}}` works in a loop. The copy means a policy cannot change the value it checks. The reverse is not true: a policy registered for a value type (`authz.For[models.Post]`) does not answer for `*models.Post`.
+Inside `{{range .Posts}}` over a `[]models.Post`, each `.` is a `models.Post` value. A policy registered for `*models.Post` still answers: the gate passes the policy a pointer to a copy of the value, so `{{if can "delete" .}}` works in a loop. The copy is shallow: a policy cannot change the value's own fields, but data behind slices, maps and pointers is shared. Type-level abilities (`Create(ctx, u)`) also answer for a zero value such as `models.Post{}`. The reverse is not true: a policy registered for a value type (`authz.For[models.Post]`) does not answer for `*models.Post`.
 
 ## Configuration
 

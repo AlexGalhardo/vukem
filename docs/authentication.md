@@ -288,7 +288,7 @@ if err := c.Authorize("update", post); err != nil { return err }
 if err := c.Authorize("create", (*models.Post)(nil)); err != nil { return err }
 ```
 
-- Policies are found by the subject's Go type; a `models.Post` value (a template ranging over `[]models.Post`) uses the `*models.Post` policy on a copy. Ability names map to methods (`"update"` → `Update`). Methods return `authz.Result` (`Allow`, `Deny(msg)`, `DenyAsNotFound`) or `bool`; other methods on the policy are ignored.
+- Policies are found by the subject's Go type; a `models.Post` value (a template ranging over `[]models.Post`) uses the `*models.Post` policy on a shallow copy (slices, maps and pointers inside it stay shared); a type with its own value policy keeps it. Ability names map to methods (`"update"` → `Update`). Methods return `authz.Result` (`Allow`, `Deny(msg)`, `DenyAsNotFound`) or `bool`; other methods on the policy are ignored.
 - `gate.Before(func(ctx, u, ability) *authz.Result)` decides first (super-admins).
 - `gate.Allows(ctx, u, ability, subject)` for code outside requests.
 - Denials through `c.Authorize` emit the `authz.denied` security event. Without an `Authorizer` every check denies.

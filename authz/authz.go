@@ -227,7 +227,8 @@ func (g *Gate[U]) Check(ctx context.Context, u U, ability string, subject any) (
 	methods, ok := g.policies[sv.Type()]
 	if !ok && sv.Kind() != reflect.Pointer {
 		// A value (a template ranging over []Post) uses the *Post policy on a
-		// copy, so the policy cannot change the caller's value.
+		// shallow copy: its fields are protected, data behind slices, maps and
+		// pointers is shared.
 		if methods, ok = g.policies[reflect.PointerTo(sv.Type())]; ok {
 			p := reflect.New(sv.Type())
 			p.Elem().Set(sv)
