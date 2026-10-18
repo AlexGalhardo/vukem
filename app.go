@@ -342,7 +342,8 @@ func WithViews(fsys fs.FS) Option {
 // app.Router.Services().ErrorPage when no hook is set yet, before the
 // routes run, so routes may replace it or set it to nil to keep the HTML
 // error page. Outside production a web app warns once at boot when the
-// project has resources/js/pages but no page for that component. Version
+// project (the WithEnv file system, else the working directory) has
+// resources/js/pages but no page for that component. Version
 // and the SSR dev endpoint default to app.Vite when WithVite is given.
 func WithInertia(cfg inertia.Config) Option {
 	return func(o *options) error { o.inertia = &cfg; return nil }
@@ -729,8 +730,14 @@ func New(opts ...Option) (*App, error) {
 			app.Router.Services().ErrorPage = app.Inertia.ErrorPage
 		}
 
-		if comp := cmp.Or(icfg.ErrorComponent, "Error"); !cfg.IsProduction() && app.Kind == KindWeb && o.fsys != nil &&
-			inertiaPageMissing(o.fsys, comp) {
+		// Without WithEnv the project is the working directory, as for config.
+		project := o.fsys
+		if project == nil {
+			project = os.DirFS(".")
+		}
+
+		if comp := cmp.Or(icfg.ErrorComponent, "Error"); !cfg.IsProduction() && app.Kind == KindWeb &&
+			inertiaPageMissing(project, comp) {
 			app.Log.Warn("inertia error page not found: errors on Inertia visits will not render",
 				"component", comp, "want", inertiaPagesDir+"/"+comp+".{tsx,vue,svelte}",
 				"fix", "add the page, set inertia.Config.ErrorComponent, or set app.Router.Services().ErrorPage = nil")

@@ -398,7 +398,7 @@ You may change it:
 - `app.Router.Services().ErrorPage = nil` in your routes keeps the HTML page.
 
 <Callout type="warning" title="Missing Error page">
-An app without the component breaks every error on an Inertia visit: the client cannot resolve the page. Outside production, a web app with `resources/js/pages` but no matching `.tsx`, `.jsx`, `.vue`, `.svelte`, `.ts` or `.js` file logs `inertia error page not found` once at boot.
+An app without the component breaks every error on an Inertia visit: the client cannot resolve the page. Outside production, a web app with `resources/js/pages` but no matching `.tsx`, `.jsx`, `.vue`, `.svelte`, `.ts` or `.js` file logs `inertia error page not found` once at boot. The project is the `WithEnv` file system, or the working directory without it.
 </Callout>
 
 ## Asset versioning
