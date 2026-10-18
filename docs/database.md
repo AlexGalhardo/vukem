@@ -301,6 +301,23 @@ func m20261016120000CreateUsersTable() schema.Migration {
 - Tracking table `migrations(id, batch, checksum, ran_at)`. Each migration runs in its own transaction (MySQL commits DDL implicitly, so a failed one is not rolled back there). The checksum is the SHA-256 of the SQL `Up` generates; `migrate:status` shows `Ran (CHANGED since applied)` when it no longer matches and `Ran (missing from code)` for recorded ids without a migration.
 - Commands: `migrate`, `migrate:rollback [--step N]`, `migrate:reset`, `migrate:fresh`, `migrate:status [--json]`, `make:migration <name>`. `migrate:reset` and `migrate:fresh` need `--force` in production; `migrate:fresh` has no `--seed`: run `vukem db:seed` after it.
 
+## Tables the framework owns
+
+Five tables belong to vukem's own database-backed stores, not to the app. Check this list before naming a table: `jobs` is the obvious name for a domain table too, and the framework took it first.
+
+| Table | Owner | Rename with | Migration id |
+| --- | --- | --- | --- |
+| `jobs` | database queue (`QUEUE_CONNECTION=database`) | `QUEUE_TABLE` | `20261018000000_vukem_create_queue_tables` |
+| `failed_jobs` | database queue | `QUEUE_FAILED_TABLE` | same migration |
+| `sessions` | database session store (`SESSION_DRIVER=database`) | `session.WithTable` | `20261018000001_vukem_create_sessions_table` |
+| `cache` | database cache store (`CACHE_STORE=database`) | `CACHE_TABLE` | `20261018000002_vukem_create_cache_table` |
+| `webhook_deliveries` | `webhook.SQLDeliveryLog` | the `table` argument of `webhook.NewSQLDeliveryLog` | `20261018000003_vukem_create_webhook_deliveries_table` |
+
+Plus `migrations(id, batch, checksum, ran_at)`, the migrator's own tracking table.
+
+- The defaults keep their names: `jobs` and `failed_jobs` are not prefixed, because renaming them would break every app that already has those tables (the queue would find an empty `vukem_jobs` and the jobs in flight would never run). `QUEUE_TABLE` and `QUEUE_FAILED_TABLE` exist for collision avoidance, not as a customisation knob: an app that wants its own `jobs` table sets them (`QUEUE_TABLE=vukem_jobs`, `QUEUE_FAILED_TABLE=vukem_failed_jobs`) **before the first boot**, since moving them later leaves the pending jobs behind in the old table. `stores.Options` then needs the same names, so the migration manages the tables the stores read.
+- `stores.Tables(stores.Options{})` returns the list above at run time, and `go doc github.com/AlexGalhardo/vukem/schema/stores` prints it.
+
 ## Factories and seeders
 
 ```go
