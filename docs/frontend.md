@@ -138,7 +138,7 @@ r.Get("/chat", func(c *web.Ctx) error {
 r.Get("/feed", websocket.Handler(feed, websocket.AllowedOrigins("app.example.com")))
 ```
 
-- `websocket.Handle(c, fn, opts...)`, `websocket.Handler(fn, opts...)` (a `web.HandlerFunc`) and `websocket.Serve(w, r, fn, opts...)` for plain handlers. A refused upgrade returns an HTTP error whose status was already sent.
+- `websocket.Handle(c, fn, opts...)`, `websocket.Handler(fn, opts...)` (a `web.HandlerFunc`) and `websocket.Serve(w, r, fn, opts...)` for plain handlers. A refused upgrade returns an HTTP error whose status was already sent; when `Serve` returns, the request has always been answered (refusal, 500 for an invalid option, or hijacked), so callers never write to `w` again.
 - `Conn`: `ReadText`, `ReadJSON`, `WriteText`, `WriteJSON` (each takes a context), `Close(code, reason)`, `CloseRead(ctx)` for write-only handlers, `Subprotocol()`, `Unwrap()` for binary or streaming I/O. `Conn.Context()` ends when the client goes away, the peer stops answering pings, `fn` returns or the app shuts down. One reader and one writer may run at the same time.
 - Origin: same-origin only by default; `AllowedOrigins(patterns...)` (`path.Match` on the host, or on `scheme://host` when the pattern has `://`) opens specific origins. `"*"` or a malformed pattern refuses every upgrade; `InsecureSkipOriginCheck()` is the only way to accept any origin. Requests without an `Origin` header (non-browser clients) are accepted.
 - Limits: `ReadLimit(n)` (default 32 KiB; larger messages close with 1009), `WriteTimeout(d)` per message (default 10s), `PingInterval(d)` / `PingTimeout(d)` (30s / 10s; zero interval disables). Pongs only arrive while something reads, so handlers that only write call `conn.CloseRead(ctx)`.

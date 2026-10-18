@@ -425,7 +425,7 @@ r.Get("/support/chat", func(c *web.Ctx) error {
 })
 ```
 
-Three entry points do the same thing: `websocket.Handle(c, fn, opts...)` inside a handler, `websocket.Handler(fn, opts...)` as a route handler, and `websocket.Serve(w, r, fn, opts...)` for plain `net/http`. A refused upgrade (not a WebSocket request, wrong origin) returns an HTTP error whose status was already sent.
+Three entry points do the same thing: `websocket.Handle(c, fn, opts...)` inside a handler, `websocket.Handler(fn, opts...)` as a route handler, and `websocket.Serve(w, r, fn, opts...)` for plain `net/http`. A refused upgrade (not a WebSocket request, wrong origin) returns an HTTP error whose status was already sent. With `Serve`, the request is always answered when it returns (the refusal or the 500 for an invalid option was written, or the connection was hijacked), so log its error but never write to `w` again; `Handle` and `Handler` already leave the response alone.
 
 | `Conn` method | What it does |
 | --- | --- |

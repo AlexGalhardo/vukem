@@ -169,7 +169,9 @@ var errUpgrade = errors.New("websocket: upgrade refused")
 // peer stops answering pings or the app shuts down; Conn.Context is then
 // done. The connection is closed when Serve returns: StatusNormalClosure
 // when fn returns nil, StatusInternalError when it fails, StatusGoingAway
-// on shutdown.
+// on shutdown. When Serve returns, the request has always been answered:
+// a refused upgrade or an invalid option (500) wrote its response, and an
+// accepted one hijacked the connection, so never write to w afterwards.
 func Serve(w http.ResponseWriter, r *http.Request, fn func(*Conn) error, opts ...Option) error {
 	o, err := newOptions(opts)
 	if err != nil {
