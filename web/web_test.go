@@ -1023,3 +1023,24 @@ func TestBindJSONRejectsUnknownFields(t *testing.T) {
 		})
 	}
 }
+
+func TestFormFileOnNonMultipart(t *testing.T) {
+	t.Parallel()
+
+	for _, ct := range []string{"application/x-www-form-urlencoded", "application/json", ""} {
+		t.Run(ct, func(t *testing.T) {
+			t.Parallel()
+
+			r := httptest.NewRequestWithContext(t.Context(), "POST", "/", strings.NewReader("a=1"))
+			if ct != "" {
+				r.Header.Set("Content-Type", ct)
+			}
+			c, _ := newCtx(t, r, nil)
+
+			_, _, err := c.FormFile("avatar")
+			if st := errs.Status(err); st != http.StatusUnprocessableEntity {
+				t.Fatalf("FormFile() = %v (status %d), want 422", err, st)
+			}
+		})
+	}
+}

@@ -100,14 +100,16 @@ func (c *Ctx) BindJSON(v any) error {
 	return c.decodeJSON(v, true)
 }
 
-// FormFile returns an uploaded file.
+// FormFile returns an uploaded file. A missing file, or a request that is
+// not multipart/form-data (a form without enctype, a JSON body), is a 422
+// validation error on name.
 func (c *Ctx) FormFile(name string) (multipart.File, *multipart.FileHeader, error) {
 	if err := c.parseForm(); err != nil {
 		return nil, nil, err
 	}
 
 	f, h, err := c.r.FormFile(name)
-	if errors.Is(err, http.ErrMissingFile) {
+	if errors.Is(err, http.ErrMissingFile) || errors.Is(err, http.ErrNotMultipart) {
 		return nil, nil, errs.NewValidation().Add(name, "The file is required.")
 	}
 

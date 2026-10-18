@@ -189,7 +189,7 @@ c.Log().InfoContext(c.Context(), "cover received",
 )
 ```
 
-`header.Filename` comes from the client: never use it as a path on disk. `c.FormFile` reads the whole form first (8 MiB in memory, the rest in temporary files). On a request that is not multipart, it returns the standard library's `request Content-Type isn't multipart/form-data` error, which the error handler answers as a 500; make sure the form has `enctype="multipart/form-data"`.
+`header.Filename` comes from the client: never use it as a path on disk. `c.FormFile` reads the whole form first (8 MiB in memory, the rest in temporary files). A missing file, and a request that is not multipart (a form without `enctype="multipart/form-data"`, a JSON body), return a 422 validation error on the field: `The file is required.`
 
 For real uploads, use the [`upload` package](/docs/digging-deeper/uploads). It streams files to storage part by part, checks their real type and size, and cleans up on errors. Do not call `c.Input()`, `c.FormValue()` or `c.FormFile()` before `upload.Receive`: they would read the body first.
 
