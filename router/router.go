@@ -160,7 +160,9 @@ func (r *Router) Any(path string, h web.HandlerFunc) *Route { return r.root.Any(
 // start with a method ("GET /metrics").
 func (r *Router) Handle(pattern string, h http.Handler) *Route { return r.root.Handle(pattern, h) }
 
-// Group creates a route group under prefix.
+// Group creates a route group under prefix. Inside it, g.Get("/", h)
+// serves prefix+"/" exactly (ServeMux redirects the bare prefix there)
+// and g.Get("", h) serves the bare prefix; neither is a catch-all.
 func (r *Router) Group(prefix string, fn func(g *Group)) *Group { return r.root.Group(prefix, fn) }
 
 // Resource registers the actions ctrl implements (see Indexer, Storer, ...).

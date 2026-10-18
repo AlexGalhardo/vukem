@@ -382,6 +382,43 @@ func TestRoutesListsMiddlewareNames(t *testing.T) {
 	}
 }
 
+func TestGroupRootIsExact(t *testing.T) {
+	t.Parallel()
+
+	r := newRouter()
+	r.Group("", func(g *Group) { g.Get("", text("home")) })
+	r.Group("/admin", func(g *Group) {
+		g.Get("/", text("dashboard")).Name("admin")
+		g.Get("/users", text("users"))
+		g.Group("/reports", func(g *Group) { g.Get("", text("reports")) })
+	})
+
+	tests := []struct {
+		path, want string
+		status     int
+	}{
+		{"/", "home", 200},
+		{"/missing", "", 404},
+		{"/admin/", "dashboard", 200},
+		{"/admin", "", 307}, // ServeMux redirects to "/admin/"
+		{"/admin/users", "users", 200},
+		{"/admin/anything", "", 404},
+		{"/admin/reports", "reports", 200},
+		{"/admin/reports/x", "", 404},
+	}
+
+	for _, tt := range tests {
+		rec := serve(t, r, http.MethodGet, tt.path, "Accept", "application/json")
+		if rec.Code != tt.status || (tt.want != "" && rec.Body.String() != tt.want) {
+			t.Errorf("GET %s = %d %q, want %d %q", tt.path, rec.Code, rec.Body.String(), tt.status, tt.want)
+		}
+	}
+
+	if u, err := r.URL("admin"); err != nil || u != "/admin/" {
+		t.Errorf(`URL("admin") = %q, %v, want "/admin/"`, u, err)
+	}
+}
+
 func sampleMiddleware(next http.Handler) http.Handler { return next }
 
 func BenchmarkStaticRoute(b *testing.B) {

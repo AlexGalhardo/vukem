@@ -173,18 +173,16 @@ r.Match([]string{"GET", "POST"}, "/search", posts.Index)
 
 `r.Get("/", h)` matches **only** the home page. In ServeMux syntax a bare `/` would match every path (it is a prefix), so Vukem registers it as `/{$}`, where `{$}` means "the path ends here". That is why `route:list` prints `/{$}`.
 
-Inside a group the rule is different, and it surprises people:
+Inside a group the same rule applies: `/` means the group's own page, never a catch-all.
 
 | You write | Pattern registered | Matches |
 | --- | --- | --- |
 | `r.Get("/", h)` | `GET /{$}` | only `/` |
 | `r.Get("", h)` | `GET /{$}` | only `/` |
+| `g.Get("/", h)` in group `/admin` | `GET /admin/{$}` | only `/admin/`; `/admin` redirects there (307) |
 | `g.Get("", h)` in group `/admin` | `GET /admin` | only `/admin` |
-| `g.Get("/", h)` in group `/admin` | `GET /admin/` | `/admin/` **and every path below it**, such as `/admin/anything` |
 
-<Callout type="warning" title="Trailing slash in groups">
-Inside a group, `g.Get("/", h)` registers a ServeMux prefix pattern: it answers `/admin/anything` instead of a 404, and `/admin` redirects to `/admin/`. Write `g.Get("", h)` for the group's own page.
-</Callout>
+Pick one per group: `g.Get("/", h)` makes `/admin/` the canonical URL, `g.Get("", h)` makes it `/admin`. Before v0.28, `g.Get("/", h)` was a ServeMux prefix pattern that also answered `/admin/anything`.
 
 ## Route parameters
 
@@ -523,16 +521,6 @@ func TestRoutes(t *testing.T) {
 Replace `blog` with your module name from `go.mod`. `AssertRedirectRoute(name, params...)` checks that a response redirects to a named route. See [Testing](/docs/testing/overview).
 
 ## Common mistakes
-
-**A group page that answers every path.**
-
-```go
-// Wrong: also answers /admin/anything.
-g.Get("/", admin.Dashboard)
-
-// Right: answers /admin only.
-g.Get("", admin.Dashboard)
-```
 
 **The same name twice.** Boot fails with `router: duplicate route name "posts.show" (GET /posts/{post} and GET /articles/{post})`. Give each route its own name.
 
