@@ -62,7 +62,7 @@ func Handler(d Disk, signer *signed.Signer) http.Handler {
 			Set("Content-Security-Policy", "sandbox; default-src 'none'; img-src 'self'; style-src 'unsafe-inline'")
 
 		if rs, ok := f.(io.ReadSeeker); ok {
-			http.ServeContent(w, r, path.Base(p), modTimeNow(), rs)
+			http.ServeContent(w, r, path.Base(p), modTime(f), rs)
 			return
 		}
 
@@ -72,6 +72,22 @@ func Handler(d Disk, signer *signed.Signer) http.Handler {
 
 		_, _ = io.Copy(w, f)
 	})
+}
+
+// modTime reports when f was last modified, or the zero time (no
+// Last-Modified header, no conditional answers) when the disk cannot say:
+// a made-up time would turn If-Modified-Since into a lie.
+func modTime(f io.Reader) time.Time {
+	switch v := f.(type) {
+	case interface{ Stat() (fs.FileInfo, error) }:
+		if st, err := v.Stat(); err == nil {
+			return st.ModTime()
+		}
+	case interface{ ModTime() time.Time }:
+		return v.ModTime()
+	}
+
+	return time.Time{}
 }
 
 // original undoes http.StripPrefix for signature checks: links are signed

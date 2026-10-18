@@ -194,9 +194,9 @@ func Copy(ctx context.Context, d storage.Disk, w io.Writer) error {
 
 Under the hood, `Put` works in three steps:
 
-1. It writes the bytes to a temporary file next to the target (`42.png.tmp-<random>`, permissions `0640`).
+1. It writes the bytes to a hidden temporary file next to the target (`.42.png.tmp-<random>`, permissions `0640`). The leading dot keeps it out of `List` and `Handler` while it is being written.
 2. When everything is written and closed, it renames the temporary file to `42.png`. A rename is atomic: readers see the old file or the new one, never half of it.
-3. If anything fails (the reader errors, the disk is full), the temporary file is removed.
+3. If anything fails (the reader errors, the disk is full), the temporary file is removed. A process killed mid-write can leave one behind; it stays hidden, and you may delete such `.*.tmp-*` files.
 
 Call `Close()` on shutdown (as in the quick start) to release the folder handle. Files keep the folder's ownership, so the process must be allowed to write there; in Docker that usually means a mounted volume. See [Docker and Railway](/docs/deployment/docker-and-railway).
 
@@ -221,7 +221,7 @@ For each request it:
 1. With a signer, checks the URL signature and expiry first, and answers 403 when they are wrong (see the next section).
 2. Answers 404 for directories, dotfiles (`.env`) and anything under a dot folder (`.git/config`, the upload quarantine). Invalid and missing paths are also 404.
 3. Sets `X-Content-Type-Options: nosniff` and `Content-Security-Policy: sandbox; default-src 'none'; img-src 'self'; style-src 'unsafe-inline'`. An uploaded HTML or SVG file therefore cannot run scripts on your site; images and downloads still work.
-4. Sends the file. Files that can seek (local disk) go through [`http.ServeContent`](https://pkg.go.dev/net/http#ServeContent), which handles `Range` requests and the `Content-Type`. Other files get a `Content-Type` from their extension.
+4. Sends the file. Files that can seek (local disk) go through [`http.ServeContent`](https://pkg.go.dev/net/http#ServeContent), which handles `Range` requests and the `Content-Type`. The `Last-Modified` header is the file's real modification time, so `If-Modified-Since` answers 304 for an unchanged file; a disk that cannot report the time sends no `Last-Modified`. Other files get a `Content-Type` from their extension.
 
 ## Private files and temporary links
 
