@@ -93,6 +93,47 @@ docker run --rm -e APP_KEY=base64:... blog about
 
 `about` prints the resolved configuration, including the trusted proxies, which makes it a quick way to check a deploy's settings. The binary exits with code `0` on success, `1` on an error (printed to stderr) and `2` on a usage error.
 
+## The local stack with Compose
+
+`vukem new blog --docker` also writes a `compose.yaml` next to the `Dockerfile`. It runs three things: your app, a PostgreSQL server and [Mailpit](https://mailpit.axllent.org), a mail catcher that accepts every message and shows it in a web inbox. On a fresh clone, with nothing installed but Docker:
+
+```bash
+docker compose up --build
+```
+
+The app answers on [localhost:3000](http://localhost:3000) and the inbox is on [localhost:8025](http://localhost:8025), so a password reset or a verification email is readable without a mail provider account.
+
+| Service | Image | What it is for |
+| --- | --- | --- |
+| `app` | built from your `Dockerfile` | the same image your platform builds, so a Compose failure is a real deployment failure |
+| `postgres` | `postgres:18.6-alpine3.24` | the database to grow into, already running and health-checked |
+| `mailpit` | `axllent/mailpit:v1.31.6` | catches SMTP on the private network, shows the inbox on port 8025 |
+
+Nothing is configured twice. The `app` service reads your `.env` through `env_file`, so the `APP_KEY` that `vukem new` generated is already there, and the `environment` block only overrides what is true inside the Compose network: `APP_URL`, and `MAIL_MAILER=smtp` with `SMTP_HOST=mailpit`, `SMTP_PORT=1025` and `SMTP_INSECURE=true` (the catcher speaks plain SMTP, with no STARTTLS). Migrations run before the server starts, and `exec` hands the container to the app so it still shuts down gracefully:
+
+```yaml title="compose.yaml"
+entrypoint: ["/bin/sh", "-c", "/app/app migrate && exec /app/app"]
+```
+
+<Callout type="info" title="SQLite stays the default until you switch">
+The app starts on SQLite, in the `storage` volume, because the starter registers only the SQLite driver. PostgreSQL is running next to it so that moving is two edits, not an afternoon: uncomment the `DATABASE_URL` line that `--docker` added to `.env`, and add the driver to the options in `bootstrap/app.go`.
+
+```dotenv title=".env"
+DATABASE_URL=postgres://app:app@postgres:5432/app?sslmode=disable
+```
+
+```go title="bootstrap/app.go"
+import "github.com/AlexGalhardo/vukem/drivers/postgres"
+
+// Inside New, in the base options:
+vukem.WithDatabaseDrivers(postgres.Driver()),
+```
+
+See [Database overview](/docs/database/overview). `--minimal` projects have no database, so their `compose.yaml` holds only the app and the mail catcher.
+</Callout>
+
+Compose is for development. It publishes PostgreSQL on `5432` with the password `app` and runs the app with your `.env`, debug mode included; nothing in it is a production setup.
+
 ## What the Dockerfile does
 
 The `Dockerfile` is a [multi-stage build](https://docs.docker.com/build/building/multi-stage/): each `FROM` starts a new stage, and only the last one becomes the image you run. The earlier stages are the kitchen; the last one is the plate.
@@ -388,14 +429,43 @@ Pre-deploy commands get no volume, so migrations have to run in the app containe
 
 ### Config as Code
 
-Railway's Config as Code files (`railway.json`, `railway.toml`) are deprecated: new services cannot opt into them, and existing files stop being read on 2026-12-01 ([Config as Code](https://docs.railway.com/config-as-code)). Starters therefore ship no `railway.json`. Set the healthcheck, pre-deploy command and restart policy in the service settings, or in Railway's [Infrastructure as Code](https://docs.railway.com/infrastructure-as-code) file `.railway/railway.ts`:
+Railway's Config as Code files (`railway.json`, `railway.toml`) are deprecated: new services cannot opt into them, and existing files stop being read on 2026-12-01 ([Config as Code](https://docs.railway.com/config-as-code)). Starters therefore ship no `railway.json`. Set the healthcheck, pre-deploy command and restart policy in the service settings, or in Railway's [Infrastructure as Code](https://docs.railway.com/infrastructure-as-code) file `.railway/railway.ts`.
+
+`vukem new blog --deploy railway` writes that file, with everything this page set by hand: a PostgreSQL service, the web service with `/up` as its healthcheck and `/app/app migrate` as its pre-deploy command, a `queue:work` worker, the trusted-proxy variables and an HTTP mail transport. Secrets stay in Railway, because `preserve()` means "keep the value that is already there":
 
 ```ts title=".railway/railway.ts"
-const blog = service("blog", {
-  healthcheck: "/up",
-  preDeploy: "/app/app migrate",
-})
+import { defineRailway, postgres, preserve, project, service } from "railway/iac";
+
+export default defineRailway(() => {
+  const db = postgres("postgres");
+
+  const env = {
+    APP_KEY: preserve(),
+    DATABASE_URL: db.env.DATABASE_URL,
+    TRUSTED_PROXIES: "100.64.0.0/24",
+    CLIENT_IP_HEADER: "X-Real-IP",
+    TRUST_FORWARDED_PROTO: "true",
+    MAIL_MAILER: "mailtrap",
+    MAILTRAP_API_TOKEN: preserve(),
+    // ... the rest of the generated file.
+  };
+
+  const web = service("blog", { healthcheck: "/up", preDeploy: "/app/app migrate", env });
+  const worker = service("blog-worker", { start: "/app/app queue:work", env });
+
+  return project("blog", { resources: [db, web, worker] });
+});
 ```
+
+Plan and apply it with the Railway CLI:
+
+```bash
+railway link
+railway config plan
+railway config apply
+```
+
+The generated file also carries commented lines for a [bucket](https://docs.railway.com/infrastructure-as-code/reference#buckets) (uploads on object storage) and a [volume](https://docs.railway.com/infrastructure-as-code/reference#volumes) (SQLite or local uploads), since which one you want depends on the app. `npm i -D railway` adds the TypeScript types; the CLI does not need them.
 
 ## Security
 
