@@ -9,10 +9,13 @@ import (
 	"time"
 )
 
-// Broker carries events between app instances; *redis.Client from
-// drivers/redis implements it. Subscribe must end the subscription and
-// close the returned channel once ctx is done: the Hub cancels it when a
-// topic loses its last local subscriber.
+// Broker carries events between app instances. Two implementations ship
+// with the framework: *redis.Client from drivers/redis (pub/sub) and
+// *postgres.Broker from drivers/postgres (LISTEN/NOTIFY, for an app that
+// has PostgreSQL and no Redis; it refuses a payload over 7999 bytes, the
+// NOTIFY limit). Subscribe must end the subscription and close the returned
+// channel once ctx is done: the Hub cancels it when a topic loses its last
+// local subscriber.
 type Broker interface {
 	Publish(ctx context.Context, channel string, payload []byte) error
 	Subscribe(ctx context.Context, channels ...string) (<-chan []byte, error)

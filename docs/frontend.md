@@ -115,7 +115,14 @@ Invalid input from a classic form post → the validation hook flashes the error
 
 `c.SSE(func(s *sse.Stream) error { return s.Send("message", html) })` (or `sse.Serve(w, r, fn)` in plain handlers) streams `text/event-stream`: every event is flushed through `http.ResponseController`, the server's `WriteTimeout` is lifted for the stream, a `: ping` comment goes out every 15s (`sse.Heartbeat(d)`), and `Stream.Context()` ends on client disconnect, when `fn` returns, or when the app shuts down (the HTTP server signals open streams so shutdown never waits on them). `s.SendJSON`, `s.SendEvent(sse.Event{ID, Event, Data, Retry})` and `s.LastEventID()` cover reconnects; field values lose CR/LF so input cannot forge fields.
 
-`sse.NewHub(broker)` fans events out by topic: `hub.Publish(ctx, "posts", ev)` and `hub.Stream(s, "posts")`. With a nil broker it works within one process; pass the `drivers/redis` client to reach every instance. A topic holds one broker subscription while it has local subscribers and releases it when the last one leaves (a custom `Broker` must end the subscription when the `Subscribe` ctx is done). `Subscribe` waits for that broker subscription (at most 10s); on failure or timeout the subscriber's channel is closed and the next subscriber retries. Slow subscribers that fall 64 events behind are dropped (the browser reconnects). Pairs with htmx `hx-sse`.
+`sse.NewHub(broker)` fans events out by topic: `hub.Publish(ctx, "posts", ev)` and `hub.Stream(s, "posts")`. With a nil broker it works within one process; pass a broker to reach every instance — the `drivers/redis` client (pub/sub) or `postgres.NewBroker(db)` from `drivers/postgres` (`LISTEN`/`NOTIFY`), which is what an app on PostgreSQL with no Redis uses to stream a `queue:work` job's progress to a browser connected to the web service. A topic holds one broker subscription while it has local subscribers and releases it when the last one leaves (a custom `Broker` must end the subscription when the `Subscribe` ctx is done). `Subscribe` waits for that broker subscription (at most 10s); on failure or timeout the subscriber's channel is closed and the next subscriber retries. Slow subscribers that fall 64 events behind are dropped (the browser reconnects). Pairs with htmx `hx-sse`.
+
+The PostgreSQL broker (`drivers/postgres`) costs what `LISTEN`/`NOTIFY` costs, and all of it is deliberate:
+
+- **Payload limit.** PostgreSQL refuses a `NOTIFY` payload of 8000 bytes or more, so `Publish` refuses one over `postgres.MaxNotifyPayload` (7999) with `postgres.ErrPayloadTooLarge` instead of truncating it: a truncated event reaches the browser as valid-looking, unparseable data. SSE events are tens of bytes; send an id and let the client fetch the rest.
+- **One connection per subscription.** `LISTEN` holds a connection for the life of the subscription, so each one is taken out of the pool. The hub keeps one per topic that has local subscribers and releases it when the last one leaves, so the count follows watched topics, not watching browsers: size `DB_MAX_OPEN` (`database.Config.MaxOpen`, 10 by default) for the topics one instance watches at once plus the connections its requests need. The connection goes back clean (`UNLISTEN *`, or it is discarded), so no borrower inherits a subscription.
+- **No replay.** A notification is not persisted: a subscriber that is not connected when the event is published never sees it, and a notification the subscriber has no room for is dropped rather than blocking the connection that serves every other subscriber of that topic. The stream is the fast path; durable progress belongs in a table the client can read on reconnect.
+- **Fails closed.** `postgres.NewBroker` returns `postgres.ErrNotPostgres` when the database is not PostgreSQL (and `Subscribe` does when it is not reached through pgx) rather than accept every publish and deliver nothing. Pass `postgres.WithBrokerLogger(app.Log)` to get a subscription that ends unexpectedly in the app's log.
 
 ### WebSockets
 
@@ -151,7 +158,7 @@ Package `broadcast` (core, stdlib only) pushes server events to browsers over na
 
 ```go
 b := broadcast.New(broadcast.Config{
-	Broker:     redisClient, // sse.Broker; nil = this process only
+	Broker:     redisClient, // sse.Broker: drivers/redis, or postgres.NewBroker(db); nil = this process only
 	User:       func(ctx context.Context) (any, error) { return auth.UserFrom[models.User](ctx, "web") },
 	Authorizer: gate, // for PrivateGate (web.Authorizer, e.g. *authz.Gate)
 })
