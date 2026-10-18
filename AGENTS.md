@@ -13,6 +13,7 @@ Vukem: a Laravel/AdonisJS-inspired, stdlib-first Go web framework. Module `githu
 - `task ci`: lint, vet and test (run before finishing any task)
 - `task fmt` / `task lint` / `task test` / `task test:integration`
 - `task api:check`: apidiff gate on exported API (renames keep a deprecated `//go:fix inline` alias) — see [API compatibility](docs/tooling.md#api-compatibility)
+- `task mod:check`: every nested module resolves from its own `go.mod` with `GOWORK=off` (part of `task ci`)
 - `go test ./path/...` for a single package
 
 ## Rules
@@ -38,7 +39,7 @@ Vukem: a Laravel/AdonisJS-inspired, stdlib-first Go web framework. Module `githu
 | `docs/` | design docs, one per area, and the roadmap `PLAN.md` |
 | `.config/` | git-cliff, GoReleaser and Compose configs ([layout](docs/tooling.md#repository-layout)) |
 | `.github/` | workflows, templates, CONTRIBUTING, SECURITY, CODE_OF_CONDUCT |
-| `internal/tools/` | repo tooling (apicheck, commitlint, covergate, fixinline, release) |
+| `internal/tools/` | repo tooling (apicheck, commitlint, covergate, fixinline, modcheck, release) |
 | `drivers/*` | optional driver modules (postgres, redis, mongo) |
 | `contrib/*` | optional feature modules (graphql, grpc, stripe, imaging) |
 | `.claude/rules/` | path-scoped rules for agents |

@@ -1,9 +1,11 @@
 package cli
 
 import (
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -235,5 +237,126 @@ func TestInstallInertiaKeepsThePackageManager(t *testing.T) {
 	if code, _, errOut := vukem(t, project, "build"); code != 1 ||
 		!strings.Contains(errOut, "run npm install first") {
 		t.Fatalf("vukem build = %d %q, want the refusal to name npm", code, errOut)
+	}
+}
+
+// A80: the demo resource's links live inside the demo. A project that
+// removes it — the first thing a real project does — must not be left with
+// navigation pointing at a route that is gone, and go build, go vet and tsc
+// all stay green when it is, so only this check catches it.
+//
+// demo.ts is the single exception: it owns the link and gates it on an
+// import.meta.glob over the demo's own pages, so the link disappears with
+// them. Everything else may reach the demo route only through demo.ts.
+func TestInertiaDemoLinksStayInsideTheDemo(t *testing.T) {
+	t.Parallel()
+
+	// Anything naming the demo route or its label.
+	demoRef := regexp.MustCompile(`/posts|Posts`)
+
+	for _, st := range inertiaStarters {
+		t.Run(st.name, func(t *testing.T) {
+			t.Parallel()
+
+			root := "scaffolds/inertia-" + st.name + "/resources/js"
+
+			owners, offenders := 0, []string(nil)
+
+			err := fs.WalkDir(scaffoldFS, root, func(p string, d fs.DirEntry, err error) error {
+				if err != nil || d.IsDir() {
+					return err
+				}
+
+				b, err := scaffoldFS.ReadFile(p)
+				if err != nil || !demoRef.Match(b) {
+					return err
+				}
+
+				rel := strings.TrimPrefix(p, root+"/")
+
+				// The demo owns its own pages, its form, and demo.ts.
+				if rel == "demo.ts" || strings.HasPrefix(rel, "pages/Posts/") ||
+					strings.HasPrefix(rel, "components/PostForm.") {
+					owners++
+
+					return nil
+				}
+
+				offenders = append(offenders, rel)
+
+				return nil
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if len(offenders) > 0 {
+				t.Errorf("these files reach the demo resource outside it: %v", offenders)
+			}
+
+			// Guards the guard: if the demo's own files stopped naming the
+			// route, the check above would pass on an empty set.
+			if owners == 0 {
+				t.Error("no file names the demo route; this check would pass on anything")
+			}
+
+			// demo.ts must gate on the demo's pages, not on a wider glob:
+			// one that still matches after the demo is gone leaves
+			// demoInstalled true and the link rendered.
+			demo, err := scaffoldFS.ReadFile(root + "/demo.ts")
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if !strings.Contains(string(demo), `import.meta.glob("./pages/Posts/`) {
+				t.Errorf("demo.ts does not gate on the demo's own pages:\n%s", demo)
+			}
+
+			// ... and on the glob being empty. ">= 0" is always true, so
+			// the link would survive the demo it belongs to.
+			if !strings.Contains(string(demo), "Object.keys(demoPages).length > 0") {
+				t.Errorf("demoInstalled is not the glob being non-empty:\n%s", demo)
+			}
+
+			// A file cannot render the link without the gate: demoLink and
+			// demoInstalled are imported together or not at all.
+			requireGateTravelsWithTheLink(t, root)
+		})
+	}
+}
+
+// requireGateTravelsWithTheLink fails if any file under root imports the
+// demo link without the flag that hides it. That pairing is what keeps the
+// link renderable only while the demo is there, and it is cheap to break
+// by accident while editing a layout.
+func requireGateTravelsWithTheLink(t *testing.T, root string) {
+	t.Helper()
+
+	users := 0
+
+	err := fs.WalkDir(scaffoldFS, root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || strings.HasSuffix(p, "/demo.ts") {
+			return err
+		}
+
+		b, err := scaffoldFS.ReadFile(p)
+		if err != nil || !strings.Contains(string(b), "demoLink") {
+			return err
+		}
+
+		users++
+
+		if !strings.Contains(string(b), "demoInstalled") {
+			t.Errorf("%s uses demoLink without demoInstalled", strings.TrimPrefix(p, root+"/"))
+		}
+
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if users == 0 {
+		t.Error("nothing imports demoLink; this check would pass on anything")
 	}
 }

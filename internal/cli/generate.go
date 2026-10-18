@@ -159,8 +159,9 @@ func generate(env *Env, stub, rel string, data stubData, force bool) error {
 	return ensurePackageDoc(env, path.Dir(rel))
 }
 
-// packageDocs holds the doc comment of every package a make:* command can
-// be the first to create. The starter and the installers ship theirs.
+// packageDocs holds the doc comment of every package a make:* command or
+// an install:* scaffold can be the first to create. A package the starter
+// ships already has one, so those entries never fire there.
 var packageDocs = map[string]string{
 	"app/commands":        "Package commands holds the application's own CLI commands.",
 	"app/controllers":     "Package controllers holds the HTTP handlers.",
@@ -177,6 +178,7 @@ var packageDocs = map[string]string{
 	"database/factories":  "Package factories builds models with fake data for tests and seeders.",
 	"database/migrations": "Package migrations holds the schema migrations.",
 	"database/seeders":    "Package seeders fills the database with demo data: vukem db:seed.",
+	"routes":              "Package routes declares the HTTP routes.",
 }
 
 // ensurePackageDoc writes dir/doc.go when the package has no package

@@ -188,6 +188,35 @@ Rules: `Min(n)`, `Max(n)`, `Positive()` (greater than 0), `NonNegative()` (0 or 
 - **`z.Slice(elem)`** produces `[]E`, where `E` is the type of `elem`. Rules: `Min(n)`, `Max(n)`, `Len(n)`, `NonEmpty()`, `Unique()` (code `not_unique`). Each element is parsed with `elem`, so errors point at `tags.2`. From a form, a single value becomes a one-item list. `Default(v)` panics at boot when `v` is not a slice of the element type.
 - **`z.Map(value)`** produces `map[string]V` from a JSON object, with `Min(n)` and `Max(n)` keys.
 - **`z.File()`** validates an uploaded file (`*multipart.FileHeader`) from a multipart form: `MaxSize(bytes)`, `Types("image/png", "image/jpeg")` and `Extensions(".png", "jpg")`. The type is detected from the first 512 bytes of the file, never taken from the client's `Content-Type`. See [Uploads](/docs/digging-deeper/uploads) for large or streamed files.
+- **`z.JSONObject()`** produces `map[string]any`: a JSON object whose contents are not validated. **`z.JSON()`** produces `any` and takes any JSON value. Rules: `Optional()`, `Nullable()`, `Describe(text)`, `Refine(fn)`, `Message(code, text)`.
+
+### Payloads whose shape is not fixed
+
+Some bodies cannot be described field by field: one endpoint taking `{"tool": "...", "options": {...}}`, where `options` depends on `tool`, instead of one endpoint per tool. Declare the varying part as `map[string]any` or `any` and the struct-tag shorthand handles it:
+
+```go title="app/requests/conversion.go"
+type Submit struct {
+	Tool    string         `json:"tool"    validate:"required" doc:"Which tool to run"`
+	Options map[string]any `json:"options" doc:"Options for the chosen tool"`
+}
+
+var SubmitSchema = z.For[Submit]()
+```
+
+The discriminator stays fully validated and typed; the payload reaches the [OpenAPI document](/docs/rest-apis/openapi) as `type: object` with `additionalProperties`, and the generated clients as `Record<string, unknown>` next to a typed `tool`. `z.JSON()` is the same for any JSON value, and becomes the empty schema, which is how OpenAPI 3.1 spells "anything".
+
+<Callout type="warning" title="This is the weakest schema in the package">
+Nothing inside the value is checked, and the clients get no help with it. Always `Describe` it — the description is the only thing in the document that says what belongs there — and validate the decoded payload in the handler, or with `Refine` once the discriminator has decided the shape:
+
+```go
+"options": z.JSONObject().
+	Describe("Options for the chosen tool").
+	Refine(func(v any) error { return tools.ValidateOptions(v) }),
+```
+
+</Callout>
+
+`json.RawMessage` is refused, with that advice in the message: `Parse` receives decoded JSON, so the bytes the client sent are gone by then, and re-encoding them changes key order and number formatting — a type whose contract is "the original bytes" must not be filled with different ones.
 
 ```go title="app/requests/post.go"
 var cover = z.File().

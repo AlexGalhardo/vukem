@@ -162,11 +162,14 @@ func (h *Tokens) Issue(c *web.Ctx) error {
 			"Your email address is not verified.", nil)
 	}
 
+	// Only what the request asked for, validated against
+	// apiv1.Abilities(): no wildcard, and nothing when the
+	// field is omitted.
 	plain, tok, err := h.a.Tokens.Create(
 		c.Context(),
 		u.AuthID(),
 		in.DeviceName,
-		[]string{"*"},
+		in.Abilities,
 		h.TTL, // 30 days
 	)
 	if err != nil {
@@ -177,10 +180,21 @@ func (h *Tokens) Issue(c *web.Ctx) error {
 	return c.JSON(http.StatusCreated, map[string]any{
 		"token":      plain,
 		"type":       "Bearer",
+		"abilities":  tok.Abilities,
 		"expires_at": tok.ExpiresAt,
 	})
 }
 ```
+
+<Callout type="warning" title="A key carries only what the caller asked for">
+`install:api` generates `app/controllers/apiv1/abilities.go` with the app's ability set (`read`, `write`) and validates the request against it, so the first token you issue without an `"abilities"` field carries **none** and `GET /api/v1/me` answers `403`. That is the default working, not a bug. Ask for what the key needs:
+
+```json
+{"email": "...", "password": "...", "device_name": "cli", "abilities": ["read"]}
+```
+
+An ability the app does not define is a `422`, wildcards included, so a typo cannot widen a key.
+</Callout>
 
 `Create(ctx, userID, name, abilities, ttl)` returns the plain token and a `Token` (`ID`, `UserID`, `Name`, `Abilities`, `LastUsedAt`, `ExpiresAt`, `RevokedAt`; never the secret). A `ttl` of `0` means the token **never expires** and stays valid until revoked.
 
@@ -252,12 +266,14 @@ A missing, unknown, wrong, expired or revoked token gives `401` and the `token.r
 
 ## Abilities (scopes)
 
-Each token carries a list of abilities. `"*"` grants everything; anything else is a string you define, such as `posts:read`.
+Each token carries a list of abilities: strings you define, such as `posts:read`. Grant the narrowest set that does the job, and keep the set itself in one place so a route can name it.
 
 ```go
 plain, _, err := tokens.Create(ctx, user.AuthID(), "reporting",
 	[]string{"posts:read"}, 90*24*time.Hour)
 ```
+
+`"*"` is also recognised, and `token.Can` reads it as granting everything. Do not mint it. A `"*"` key cannot be narrowed later and silently gains every ability you add afterwards, so the one route you add next month is open to every key issued before it existed. The generated endpoint refuses `"*"` for exactly that reason; it exists in `Can` only so tokens stored by older applications keep working.
 
 ```go title="routes/api.go"
 // Route level: 403 unless the token grants every listed ability.
@@ -368,7 +384,7 @@ func TestMe(t *testing.T) {
 	}
 
 	plain, _, err := auth.NewTokens(db).Create(t.Context(), user.AuthID(),
-		"test", []string{"*"}, time.Hour)
+		"test", []string{apiv1.AbilityRead}, time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -378,7 +394,7 @@ func TestMe(t *testing.T) {
 }
 ```
 
-`createVerifiedUser` stands for your own helper. The generated `tests/api_tokens_test.go` covers issuing, revoking and the unverified-email `403`.
+`createVerifiedUser` stands for your own helper. Mint the ability the route under test needs, not every ability: a test that grants everything stops being a test of the guard. The generated `tests/api_tokens_test.go` covers issuing, revoking, the unverified-email `403`, a key without the ability (`TestAPITokenWithoutAbilityIsRefused`) and an ability the app does not define (`TestAPITokenRejectsUnknownAbility`).
 
 ## Common mistakes
 

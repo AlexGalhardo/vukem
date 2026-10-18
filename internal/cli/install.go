@@ -131,10 +131,7 @@ func installAuth(set *flag.FlagSet) func(context.Context, *Env, []string) error 
 			return err
 		}
 
-		fmt.Fprint(env.Stdout, "\nAuthentication installed. Next:\n\n"+
-			"  vukem migrate\n"+
-			"  set MAIL_MAILER (smtp, resend or mailtrap) and APP_URL so verification and reset emails work\n"+
-			"  go test ./tests/...\n\n")
+		fmt.Fprint(env.Stdout, authInstalled())
 
 		if *twoFactor {
 			fmt.Fprint(env.Stdout, "Two-factor authentication: users turn it on at /user/two-factor.\n\n")
@@ -181,11 +178,50 @@ func installAPI(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 			return err
 		}
 
-		fmt.Fprint(env.Stdout, "\nAPI installed: POST /api/v1/tokens, GET /api/v1/me, DELETE /api/v1/tokens/current.\n"+
-			"Run vukem migrate, and set CORS_ALLOWED_ORIGINS for browser clients.\n\n")
+		fmt.Fprint(env.Stdout, apiInstalled())
 
 		return nil
 	}
+}
+
+// authInstalled is the install:auth handover. It names --locales because
+// the generated catalogs are English-only by default (A79): a second
+// language nobody asked for is a file the app has to maintain or delete,
+// and the generated message test asserts whatever locales exist, so a
+// deleted catalog would break it. The flag is the only way to discover
+// that the i18n example exists at all.
+func authInstalled() string {
+	return "\nAuthentication installed. Next:\n\n" +
+		"  vukem migrate\n" +
+		"  set MAIL_MAILER (smtp, resend or mailtrap) and APP_URL so verification and reset emails work\n" +
+		"  go test ./tests/...\n\n" +
+		"Messages are generated for " + defaultLocale + " only. For a translated app, ask for the\n" +
+		"catalogs up front -- install:auth --locales " + strings.Join(availableLocales(), ",") + " -- and a later\n" +
+		"install:auth writes catalogs only for the locales the project already has, so\n" +
+		"one you delete is never put back.\n" +
+		"  https://vukem.dev/docs/digging-deeper/localization\n\n"
+}
+
+// apiInstalled is the install:api handover. It spells out the ability
+// model because the generated endpoint is least-privilege: a token carries
+// only what the request asked for, so the obvious first call — no
+// "abilities" field — issues a key that GET /api/v1/me refuses. Without
+// this, that 403 reads as a framework bug instead of the default working
+// (A85). Every ability named here is one the scaffold defines; the
+// wildcard is not one of them, and the generated schema refuses it.
+func apiInstalled() string {
+	return "\nAPI installed: POST /api/v1/tokens, GET /api/v1/me, DELETE /api/v1/tokens/current.\n" +
+		"Run vukem migrate, and set CORS_ALLOWED_ORIGINS for browser clients.\n\n" +
+		"Keys are least-privilege: POST /api/v1/tokens grants only the abilities the\n" +
+		"request asks for, out of apiv1.Abilities() in app/controllers/apiv1/abilities.go.\n" +
+		`  {"email": "...", "password": "...", "device_name": "cli", "abilities": ["read"]}` + "\n" +
+		"  read   GET /api/v1/me and your own read routes\n" +
+		"  write  routes that create, change or delete\n" +
+		"Omitting the field grants nothing, and an ability the app does not define is a\n" +
+		"422, so a typo cannot widen a key. To add one: declare it in abilities.go, then\n" +
+		"gate its routes with auth.Ability(acc.API, apiv1.AbilityX) in routes/api.go --\n" +
+		"every key issued before it is refused.\n" +
+		"  https://vukem.dev/docs/security/api-tokens\n\n"
 }
 
 func parseProviders(list string) ([]string, error) {
@@ -528,6 +564,26 @@ func installScaffold(env *Env, name string, data map[string]string, force bool) 
 		}
 
 		fmt.Fprintln(env.Stdout, "created", f.rel)
+	}
+
+	// After the loop, so a doc.go the scaffold ships is already on disk and
+	// keeps its own wording. A scaffold is the first to create a package in
+	// any project that does not ship it — a hand-rolled one, or a starter
+	// whose demo and its doc.go were deleted — and the package comment
+	// never rides on a generated file (the same rule as the generators).
+	seen := map[string]bool{}
+
+	for _, f := range files {
+		dir := path.Dir(f.rel)
+		if !strings.HasSuffix(f.rel, ".go") || seen[dir] {
+			continue
+		}
+
+		seen[dir] = true
+
+		if err := ensurePackageDoc(env, dir); err != nil {
+			return err
+		}
 	}
 
 	return nil
