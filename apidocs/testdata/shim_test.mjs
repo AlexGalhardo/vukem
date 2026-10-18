@@ -7,10 +7,33 @@ import vm from "node:vm";
 
 const source = readFileSync(new URL("../page.js", import.meta.url), "utf8");
 
+// Labelable elements, for the fake <label>.control.
+const labelable = new Set(["BUTTON", "INPUT", "METER", "OUTPUT", "PROGRESS", "SELECT", "TEXTAREA"]);
+
+// A fake matcher for the compound selectors page.js uses: a tag name,
+// .class, [attr], [attr="value"] and :not(...) of those.
+function matches(el, sel) {
+  const tokens = sel.match(/:not\([^)]*\)|\[[^\]]*\]|\.[A-Za-z0-9_-]+|[A-Za-z][A-Za-z0-9-]*/g) || [];
+
+  return tokens.every((token) => {
+    if (token.startsWith(":not(")) return !matches(el, token.slice(5, -1));
+    if (token.startsWith("[")) {
+      const [, name, value] = token.slice(1, -1).match(/^([^=]+)(?:=["']?([^"']*)["']?)?$/);
+      const got = el.getAttribute(name);
+      return value === undefined ? got !== null : got === value;
+    }
+    if (token.startsWith(".")) return (el.getAttribute("class") || "").split(/\s+/).includes(token.slice(1));
+
+    return el.tagName === token.toUpperCase();
+  });
+}
+
 function load(nonce) {
   const attrs = [];
   const observers = [];
   const all = [];
+  // Every element document.querySelectorAll can find, in document order.
+  const tree = [];
 
   class Element {
     constructor(tag) {
@@ -19,6 +42,34 @@ function load(nonce) {
       this.style = { cssText: "", length: 0, props: {}, setProperty(k, v) { this.props[k] = v; this.length++; } };
       this.textContent = "";
       this.className = "";
+      this.childNodes = [];
+      this.parentNode = null;
+    }
+    get control() {
+      const forId = this.getAttribute("for");
+      if (forId !== null) return tree.find((el) => el.getAttribute("id") === forId) || null;
+
+      return this.childNodes.find((el) => labelable.has(el.tagName)) || null;
+    }
+    getAttributeNames() {
+      return [...this.attributes.keys()];
+    }
+    append(...nodes) {
+      for (const node of nodes) {
+        node.parentNode?.childNodes.splice(node.parentNode.childNodes.indexOf(node), 1);
+        node.parentNode = this;
+        this.childNodes.push(node);
+      }
+    }
+    replaceWith(node) {
+      const inTree = tree.indexOf(this);
+      if (inTree >= 0) tree[inTree] = node;
+
+      const inParent = this.parentNode ? this.parentNode.childNodes.indexOf(this) : -1;
+      if (inParent >= 0) this.parentNode.childNodes[inParent] = node;
+
+      node.parentNode = this.parentNode;
+      this.parentNode = null;
     }
     setAttribute(name, value) {
       attrs.push([name, String(value)]);
@@ -60,8 +111,18 @@ function load(nonce) {
   const document = Object.assign(new Document(), {
     currentScript: { nonce },
     documentElement: {},
-    querySelectorAll: () => [],
+    querySelectorAll: (sel) => tree.filter((el) => matches(el, sel)),
   });
+
+  // Adds an element to the fake document and returns it.
+  const add = (tag, attributes = {}, children = []) => {
+    const el = new Element(tag);
+    for (const [name, value] of Object.entries(attributes)) el.attributes.set(name, String(value));
+    el.append(...children);
+    tree.push(el);
+
+    return el;
+  };
 
   const ctx = {
     Document,
@@ -77,7 +138,11 @@ function load(nonce) {
   vm.createContext(ctx);
   vm.runInContext(source, ctx);
 
-  return { document, attrs, observers, all, globalThis: ctx };
+  // The shim queues its accessibility pass on a mutation; the fake
+  // requestAnimationFrame runs it straight away.
+  const fix = () => observers.forEach((observer) => observer());
+
+  return { document, attrs, observers, all, tree, add, fix, globalThis: ctx };
 }
 
 test("created style elements get the nonce, other elements do not", () => {
@@ -167,4 +232,83 @@ test("innerHTML is left alone without a nonce", () => {
   const html = '<code style="--line-count: 1;">x</code>';
   el.innerHTML = html;
   assert.equal(el.html, html);
+});
+
+test("a caption <label> that labels nothing is retagged as a span", () => {
+  const { add, fix, tree } = load("N");
+  const text = { tagName: "#TEXT", parentNode: null, childNodes: [] };
+  const caption = add("label", { class: "bg-b-2 font-medium", "data-v-dfab866f": "" }, [text]);
+
+  fix();
+
+  const span = tree[0];
+  assert.equal(span.tagName, "SPAN");
+  assert.notEqual(span, caption);
+  assert.deepEqual(span.getAttributeNames(), ["class", "data-v-dfab866f"]);
+  assert.equal(span.getAttribute("class"), "bg-b-2 font-medium");
+  assert.deepEqual(span.childNodes, [text]);
+  assert.equal(text.parentNode, span);
+  // Idempotent: a second pass finds no <label> left to retag.
+  fix();
+  assert.equal(tree.length, 1);
+  assert.equal(tree[0], span);
+});
+
+test("a caption's inline style is copied through the CSSOM, not setAttribute", () => {
+  const { add, fix, tree, attrs } = load("N");
+  const caption = add("label", { class: "c", style: "width: 10px" });
+  caption.style.cssText = "width: 10px";
+
+  fix();
+
+  assert.equal(tree[0].tagName, "SPAN");
+  assert.equal(tree[0].style.cssText, "width: 10px");
+  assert.deepEqual(attrs, [["class", "c"]]);
+});
+
+test("labels that label something are left alone", () => {
+  const { add, fix, tree } = load("N");
+  const field = add("input", { id: "token" });
+  const explicit = add("label", { for: "token" });
+  const missing = add("label", { for: "not-mounted-yet" });
+  const nested = add("label", { class: "scalar-card-checkbox" }, [add("input", { type: "checkbox" })]);
+
+  fix();
+
+  assert.deepEqual(tree.filter((el) => el.tagName === "LABEL"), [explicit, missing, nested]);
+  assert.equal(field.parentNode, null);
+});
+
+test("an unnamed combobox field gets an accessible name, a named one keeps its own", () => {
+  const { add, fix } = load("N");
+  const unnamed = add("input", { role: "combobox" });
+  const labelled = add("input", { role: "combobox", "aria-label": "Search clients" });
+  const described = add("input", { role: "combobox", "aria-labelledby": "heading" });
+  const placeheld = add("input", { role: "combobox", placeholder: "Search..." });
+  const titled = add("input", { role: "combobox", title: "Search" });
+  const plain = add("input", { type: "text" });
+
+  fix();
+
+  assert.equal(unnamed.getAttribute("aria-label"), "Search");
+  assert.equal(labelled.getAttribute("aria-label"), "Search clients");
+  assert.equal(described.getAttribute("aria-label"), null);
+  assert.equal(placeheld.getAttribute("aria-label"), null);
+  assert.equal(titled.getAttribute("aria-label"), null);
+  assert.equal(plain.getAttribute("aria-label"), null);
+});
+
+test("the scrollable endpoint list and the Show More buttons keep their fixes", () => {
+  const { add, fix } = load("N");
+  const list = add("div", { class: "endpoints" });
+  const button = add("button", { class: "show-more", "aria-label": "7 more operations" });
+  button.textContent = "Show More";
+  const already = add("button", { class: "show-more", "aria-label": "Show More: 7 more operations" });
+  already.textContent = "Show More";
+
+  fix();
+
+  assert.equal(list.tabIndex, 0);
+  assert.equal(button.getAttribute("aria-label"), "Show More: 7 more operations");
+  assert.equal(already.getAttribute("aria-label"), "Show More: 7 more operations");
 });
