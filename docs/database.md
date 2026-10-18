@@ -188,6 +188,24 @@ u, err := uuid.Parse(r.PathValue("id")) // canonical 36-char form only; errors.I
 - `uuid.UUID` is a `[16]byte`: JSON and query strings use the canonical lowercase text (`encoding.TextMarshaler`); SQL writes the text (`driver.Valuer`: PostgreSQL `uuid`, SQLite/MySQL text) and scans text or 16-byte binary columns. NULL needs a `*uuid.UUID`; an empty string never parses as the nil UUID.
 - `t.UUID("public_id").Unique()` in a migration matches it.
 
+## ULIDs
+
+Package `ulid` (stdlib only) generates ULIDs: 128-bit ids whose 26-character text form sorts by creation time. Use one where the id is handed to clients and rows are read newest-first — a sequential integer leaks how many rows a table holds, and a random `uuid.NewV4` key destroys index locality.
+
+```go
+ids := ulid.NewGenerator()   // one per app, wired like any other service
+id := ids.New()              // "01KAB2M4R1R4Q5WJ2B6PM9NZ3K": 26 chars, sorts by creation millisecond
+at, ok := ulid.TimeOf(id)    // the millisecond it was stamped with, UTC
+if !ulid.Valid(r.PathValue("id")) { ... } // refuse an impossible id before the query
+```
+
+- Layout: a 48-bit Unix timestamp in milliseconds (the first 10 characters) and 80 bits from `crypto/rand` (the last 16), rendered in Crockford base32 — digits and upper-case letters without I, L, O or U, in ascending ASCII order, so the text sorts like the number it holds. The timestamp is visible to anyone holding the id.
+- Ids are **strictly increasing per generator**, including several in the same millisecond (the random tail is incremented, not redrawn) and when the clock steps backwards, so an id never sorts before one already handed out. A `*ulid.Generator` is safe for concurrent use; its zero value is ready to use. `At(t)` stamps an explicit time, which is how tests pin it.
+- There is no package-level generator: staying monotonic needs state, and the framework keeps no package-level mutable state. Hold the generator in whatever owns the writes (a service, a repository).
+- `ulid.Valid` accepts only the canonical upper-case form `New` returns, so a `CHAR(26)` key has exactly one text form; the `ulid` [validation rule](validation.md) is the case-insensitive one, for ids from elsewhere.
+- An id is a plain `string`: no `driver.Valuer` or `sql.Scanner` is involved, and it works as it is in a model field, a URL and a `Where` clause. `t.ULID("id")` in a migration makes the matching column (`CHAR(26)` everywhere).
+- A time the 48-bit field cannot hold (before 1970, past year 10889) is clamped, not silently encoded as another time. `ulid.Length` is 26.
+
 ## Models
 
 Plain structs. Mapping is computed **once per type** with reflection and cached; no reflection in the hot path beyond scanning.
@@ -208,7 +226,8 @@ func (User) Table() string { return "users" } // optional; default snake_case pl
 - Conventions: table = snake_case plural of type name; column = snake_case of field; primary key `id`.
 - Optional interfaces: `Table() string` (`orm.Tabler`) and `PrimaryKey() string` (`orm.Keyer`). The `db:"name"` tag renames a column, `db:"-"` skips a field.
 - Hooks: implement `BeforeCreate(ctx) error`, `AfterCreate`, `BeforeUpdate`, `AfterUpdate` or `BeforeDelete` on `*T` (`orm.BeforeCreator`, `orm.AfterCreator`, `orm.BeforeUpdater`, `orm.AfterUpdater`, `orm.BeforeDeleter`); an error aborts the write.
-- Primary keys: an integer key (as in `orm.Model`) is assigned by the database. For UUID or ULID keys, declare the fields yourself instead of embedding `orm.Model` (`ID uuid.UUID` with the `db:"id"` tag, plus `CreatedAt`/`UpdatedAt` for timestamps) and set the key before `Create`, e.g. with `uuid.NewV7()`.
+- Primary keys: an integer key (as in `orm.Model`) is assigned by the database, and `Create` reads it back (`RETURNING`, or `LastInsertId` on MySQL). For UUID or ULID keys, declare the fields yourself instead of embedding `orm.Model` (`ID uuid.UUID` or `ID string` with the `db:"id"` tag, plus `CreatedAt`/`UpdatedAt` for timestamps) and set the key before `Create`, e.g. with `uuid.NewV7()` or `ulid.NewGenerator().New()`.
+- `Create` never invents a key it cannot read back: a non-integer key is inserted exactly as given, including an empty string, which the primary key constraint then rejects on the second row. A string key could be a ULID, a UUID or a format the app chose, and guessing one would be a behaviour nobody asked for; set it where the id is decided, or in a `BeforeCreate(ctx) error` hook on the model when every call site would otherwise repeat it.
 - No Active Record: models never hold a DB handle; persistence functions take the executor (`db` or `tx`).
 - Relations are never lazy, in every environment: reading one that was not eager-loaded with `With` returns `orm.ErrNotLoaded`.
 

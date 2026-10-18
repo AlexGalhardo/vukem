@@ -163,7 +163,8 @@ func (t *Table) JSON(name string) *Column { return t.add(name, kindJSON) }
 // UUID adds a UUID column.
 func (t *Table) UUID(name string) *Column { return t.add(name, kindUUID) }
 
-// ULID adds a CHAR(26) column.
+// ULID adds a CHAR(26) column, the width of the text form of a ULID.
+// Package ulid generates the values; the Go field is a plain string.
 func (t *Table) ULID(name string) *Column { return t.add(name, kindULID) }
 
 // Binary adds a binary column.

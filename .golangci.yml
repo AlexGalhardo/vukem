@@ -103,6 +103,7 @@ linters:
             - "**/webhook/**"
             - "**/config/**"
             - "**/uuid/**"
+            - "**/ulid/**"
           deny:
             - pkg: math/rand
               desc: security-sensitive code must use crypto/rand
