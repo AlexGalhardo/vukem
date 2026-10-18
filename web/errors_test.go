@@ -553,3 +553,37 @@ func TestErrorHandlerErrorPage(t *testing.T) {
 		t.Errorf("fallback body = %q, want the HTML page", rec.Body)
 	}
 }
+
+// captureViews records the data an error view receives.
+type captureViews struct{ got *errorData }
+
+func (v captureViews) Has(string) bool { return true }
+
+func (v captureViews) Render(_ context.Context, _ io.Writer, _ string, data any) error {
+	d := data.(errorData)
+	*v.got = d
+	return nil
+}
+
+func (v captureViews) RenderBlock(context.Context, io.Writer, string, string, any) error { return nil }
+
+func TestSecurity_A10_ErrorViewErrorOnlyInDebug(t *testing.T) {
+	t.Parallel()
+
+	cause := errs.New(http.StatusConflict, "This slug is already taken.")
+
+	for _, debug := range []bool{false, true} {
+		var got errorData
+		runError(t, cause, nil, &Services{Views: captureViews{got: &got}, Debug: debug})
+
+		if got.Status != http.StatusConflict {
+			t.Fatalf("debug %v: view status = %d, want 409", debug, got.Status)
+		}
+		if debug && !errors.Is(got.Error, cause) {
+			t.Errorf("debug: .Error = %v, want the handler's error", got.Error)
+		}
+		if !debug && got.Error != nil {
+			t.Errorf("production: .Error = %v, want nil (CWE-209)", got.Error)
+		}
+	}
+}
