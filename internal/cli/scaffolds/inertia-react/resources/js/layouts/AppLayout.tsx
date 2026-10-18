@@ -1,6 +1,7 @@
 import { Link, usePage } from "@inertiajs/react";
 import type { ReactNode } from "react";
 
+import { demoInstalled, demoLink } from "../demo";
 import type { SharedProps } from "../types";
 
 const link = "text-indigo-600 hover:underline dark:text-indigo-400";
@@ -17,9 +18,11 @@ export default function AppLayout({ children }: { children: ReactNode }) {
           {page.props.appName}
         </Link>
         <nav className="flex items-center gap-4">
-          <Link href="/posts" className={link}>
-            Posts
-          </Link>
+          {demoInstalled && (
+            <Link href={demoLink.href} className={link}>
+              {demoLink.label}
+            </Link>
+          )}
           {auth?.user ? (
             <>
               <Link href="/dashboard" className={link}>

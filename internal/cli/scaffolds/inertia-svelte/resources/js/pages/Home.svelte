@@ -1,5 +1,7 @@
 <script lang="ts">
   import { Link } from "@inertiajs/svelte";
+
+  import { demoInstalled, demoLink } from "../demo";
 </script>
 
 <svelte:head>
@@ -11,10 +13,12 @@
   <p class="mt-3 text-zinc-600 dark:text-zinc-400">
     Go on the server, Svelte with Inertia in the browser, Tailwind for the styles.
   </p>
-  <Link
-    href="/posts"
-    class="mt-6 inline-block rounded-md bg-indigo-600 px-4 py-2 font-medium text-white hover:bg-indigo-500"
-  >
-    See the posts
-  </Link>
+  {#if demoInstalled}
+    <Link
+      href={demoLink.href}
+      class="mt-6 inline-block rounded-md bg-indigo-600 px-4 py-2 font-medium text-white hover:bg-indigo-500"
+    >
+      See the posts
+    </Link>
+  {/if}
 </section>
