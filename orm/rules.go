@@ -19,10 +19,12 @@ import (
 //		return err // 422 (or flashed errors for forms), like any validation error
 //	}
 type Rule struct {
-	field   string
-	column  string
+	field string
+	// message replaces the built-in text when set (Message).
 	message string
-	// key translates message in the request locale; Message clears it.
+	// def is the built-in English text for a field name; key translates
+	// it in the request locale. Message clears key.
+	def    func(field string) string
 	key    string
 	check  func(ctx context.Context, ex database.Executor, r Rule) (bool, error)
 	ignore any
@@ -33,11 +35,10 @@ type Rule struct {
 // count, as the database constraint does). Use Ignore(id) when updating.
 func Unique[T any](column string, value any) Rule {
 	return Rule{
-		field:   column,
-		column:  column,
-		value:   value,
-		key:     "validation.unique",
-		message: "The " + column + " has already been taken.",
+		field: column,
+		value: value,
+		key:   "validation.unique",
+		def:   func(f string) string { return "The " + f + " has already been taken." },
 		check: func(ctx context.Context, ex database.Executor, r Rule) (bool, error) {
 			q := QueryOf[T](ex).WithTrashed().Where(column, value)
 			if r.ignore != nil {
@@ -54,11 +55,10 @@ func Unique[T any](column string, value any) Rule {
 // Exists passes when a (not soft-deleted) row of T has column = value.
 func Exists[T any](column string, value any) Rule {
 	return Rule{
-		field:   column,
-		column:  column,
-		value:   value,
-		key:     "validation.exists",
-		message: "The selected " + column + " is invalid.",
+		field: column,
+		value: value,
+		key:   "validation.exists",
+		def:   func(f string) string { return "The selected " + f + " is invalid." },
 		check: func(ctx context.Context, ex database.Executor, _ Rule) (bool, error) {
 			return QueryOf[T](ex).Where(column, value).Exists(ctx)
 		},
@@ -68,7 +68,8 @@ func Exists[T any](column string, value any) Rule {
 // Ignore excludes the row with primary key id (the model being updated).
 func (r Rule) Ignore(id any) Rule { r.ignore = id; return r }
 
-// Field reports the error on name instead of the column name.
+// Field reports the error on name instead of the column name; the
+// built-in message names it too ("The contact has already been taken.").
 func (r Rule) Field(name string) Rule { r.field = name; return r }
 
 // Message replaces the error message; it is used as is, not translated.
@@ -118,14 +119,14 @@ func isEmpty(v any) bool {
 }
 
 // localized translates the built-in message through the Translator of ctx
-// (errs.WithTranslator), naming the column by its
-// "validation.attributes.<column>" translation when the catalog has one.
+// (errs.WithTranslator), naming the field by its
+// "validation.attributes.<field>" translation when the catalog has one.
 func (r Rule) localized(ctx context.Context) string {
 	if r.key == "" {
 		return r.message
 	}
 
-	field := errs.Translate(ctx, "validation.attributes."+r.column, r.column, nil)
+	field := errs.Translate(ctx, "validation.attributes."+r.field, r.field, nil)
 
-	return errs.Translate(ctx, r.key, r.message, map[string]any{"field": field})
+	return errs.Translate(ctx, r.key, r.def(field), map[string]any{"field": field})
 }
