@@ -338,3 +338,28 @@ body {
 .step > * + * {
   margin-top: 1rem;
 }
+
+/* ---------- Small screens ---------- */
+
+/* On phones the 4-column tabs and the Steps rail eat half the width of a code
+   block, so deep Go code wraps on almost every line. Halve both. */
+@media (max-width: 640px) {
+  .shiki,
+  .prose pre {
+    tab-size: 2;
+    font-size: 0.75rem;
+    padding: 0.75rem 0.875rem;
+  }
+
+  .steps {
+    margin-left: 0.5rem;
+    padding-left: 1.125rem;
+  }
+
+  .step::before {
+    left: calc(-1.125rem - 0.5rem - 0.5px);
+    width: 1.5rem;
+    height: 1.5rem;
+    font-size: 0.6875rem;
+  }
+}

@@ -31,7 +31,7 @@ Sidebar categories, in learning order:
 Rules:
 
 - **Guides and reference live apart.** Guides teach a task in order; reference pages list every option. A guide links to the reference instead of repeating it.
-- **One topic per page.** If a page needs more than ~8 H2 sections, split it.
+- **One topic per page.** The page anatomy alone takes about seven H2 sections, so a feature page usually has 10–14. Split when a page passes ~15 H2 sections or ~800 lines, or when two sections serve different readers (a guide and a reference, a transport and its deployment).
 - **Slugs are short nouns** (`/docs/basics/routing`), titles are the feature name ("Routing", "Database: Migrations" style prefixes are not needed because the category already says it).
 - **Getting started is a path, not a list**: Introduction → Prerequisites → Installation → Pick a starter → Your first app → Directory structure → Configuration. Each page ends by pointing to the next.
 
