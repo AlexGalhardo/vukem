@@ -152,7 +152,20 @@ The base image and the install command come from the package manager the project
 | `pnpm` | `node:24.22.0-alpine3.24` | `pnpm-lock.yaml` | `pnpm install --frozen-lockfile`, after `corepack enable` |
 | `yarn` | `node:24.22.0-alpine3.24` | `yarn.lock` | `yarn install --frozen-lockfile`, after `corepack enable` |
 
-`vukem new` picks it in this order: the `--pm` flag, then the lockfile already in the directory, then the first of `bun`, `npm`, `pnpm` and `yarn` installed on your machine. The same choice installs your dependencies and writes the `Dockerfile`, so the two always agree.
+Every command picks it in the same order: the `--pm` flag, then the `packageManager` field of `package.json`, then the lockfile in the directory, then the first of `bun`, `npm`, `pnpm` and `yarn` installed on your machine. The same choice installs your dependencies and writes the `Dockerfile`, so the two always agree.
+
+`vukem new` writes that field, which is [the one Corepack reads](https://nodejs.org/api/corepack.html):
+
+```json title="package.json"
+{
+  "packageManager": "npm@12.2.0",
+  "private": true
+}
+```
+
+It is there so the choice survives: without it, `vukem new blog --pm npm --no-install` followed by `vukem build` had nothing to read — the lockfile does not exist yet — and advised `bun install` on a machine with `bun`. The field is the project's declaration, so it outranks the lockfile, which only records the last install. Change it if you change package manager, and `vukem build`, `vukem serve`, `vukem dev` and `install:inertia` follow.
+
+The version is pinned exactly. With [Corepack](https://nodejs.org/api/corepack.html) enabled, that version is the one your commands use, which is the point: the image and your machine install the same way. `yarn` stays on Classic (`1.22.22`) because the `assets` stage installs with `--frozen-lockfile`, which Yarn 2 replaced with `--immutable`.
 
 The lockfile is a required build input, and the `assets` stage checks for it before installing:
 

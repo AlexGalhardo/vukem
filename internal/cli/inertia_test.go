@@ -195,3 +195,45 @@ func TestInstallInertiaKeepsFilesWhenAppCannotBePatched(t *testing.T) {
 		t.Error("Inertia pages written, want nothing written")
 	}
 }
+
+// install:inertia replaces package.json with the scaffold's, so it has to
+// carry the project's package manager across: otherwise the next command
+// goes back to guessing from a lockfile the project may not have, and
+// advises an install with a manager the project does not use.
+func TestInstallInertiaKeepsThePackageManager(t *testing.T) {
+	t.Parallel()
+	requireGo(t)
+
+	repo, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dir := t.TempDir()
+
+	code, out, errOut := vukem(t, dir, "new", "app", "--module", "example.com/app",
+		"--framework", repo, "--no-install", "--pm", "npm")
+	if code != 0 {
+		t.Fatalf("vukem new = %d\n%s%s", code, out, errOut)
+	}
+
+	project := filepath.Join(dir, "app")
+	if pkg := read(t, project, "package.json"); !strings.Contains(pkg, `"packageManager": "npm@`) {
+		t.Fatalf("package.json does not record the manager:\n%s", pkg)
+	}
+
+	if code, out, errOut := vukem(t, project, "install:inertia", "--react", "--force", "--no-install"); code != 0 {
+		t.Fatalf("install:inertia = %d\n%s%s", code, out, errOut)
+	}
+
+	if pkg := read(t, project, "package.json"); !strings.Contains(pkg, `"packageManager": "npm@`) {
+		t.Fatalf("install:inertia dropped the manager:\n%s", pkg)
+	}
+
+	// The project has no lockfile, so this is the advice the reported bug
+	// got wrong: it named whichever manager the machine happens to have.
+	if code, _, errOut := vukem(t, project, "build"); code != 1 ||
+		!strings.Contains(errOut, "run npm install first") {
+		t.Fatalf("vukem build = %d %q, want the refusal to name npm", code, errOut)
+	}
+}

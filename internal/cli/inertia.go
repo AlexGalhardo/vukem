@@ -49,16 +49,23 @@ func installInertia(set *flag.FlagSet) func(context.Context, *Env, []string) err
 			)
 		}
 
+		// Read the project's package manager before applyInertia, which
+		// replaces package.json with the scaffold's and would take the
+		// declaration with it.
+		pm, err := packageManager(env.Dir, "")
+		if err != nil {
+			return err
+		}
+
 		if err := applyInertia(env, fw); err != nil {
 			return err
 		}
 
-		if err := tool(ctx, env, "go", "mod", "tidy"); err != nil {
+		if err := setPackageManager(env, pm); err != nil {
 			return err
 		}
 
-		pm, err := packageManager(env.Dir, "")
-		if err != nil {
+		if err := tool(ctx, env, "go", "mod", "tidy"); err != nil {
 			return err
 		}
 
