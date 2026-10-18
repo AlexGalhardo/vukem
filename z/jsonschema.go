@@ -137,9 +137,12 @@ func (c structCore) jsonSchema() map[string]any {
 	var required []string
 
 	for _, f := range c.fields {
-		props[f.key] = JSONSchema(f.schema)
+		prop := JSONSchema(f.schema)
+		props[f.key] = prop
 
-		if !f.schema.optional() {
+		// The parser accepts a Nullable key that is absent, so it is not
+		// required here either.
+		if !f.schema.optional() && !allowsNull(prop) {
 			required = append(required, f.key)
 		}
 	}
@@ -176,4 +179,10 @@ func (n numberAny) jsonSchema() map[string]any {
 	m["type"] = numberType(n.t)
 
 	return m
+}
+
+// allowsNull reports a schema whose type list includes "null" (Nullable).
+func allowsNull(m map[string]any) bool {
+	types, _ := m["type"].([]any)
+	return slices.Contains(types, any("null"))
 }

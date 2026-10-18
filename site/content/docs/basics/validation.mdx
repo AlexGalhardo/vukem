@@ -271,7 +271,7 @@ A field can be missing from the input, sent as JSON `null`, or sent as an empty 
 
 The last row exists because an HTML form sends every field, even the ones the visitor left blank: an empty "age" box arrives as `age=`, and Vukem treats it as "not given".
 
-When parsing, `Optional` and `Nullable` accept the same inputs. They differ in the exported [JSON Schema](#typed-boundaries): `Optional` (and `Default`) remove the key from `required`, while `Nullable` adds `null` to the allowed types. Use `Optional` for "may be left out" and `Nullable` for "may be sent as `null`". The "zero value" is Go's [zero value](https://go.dev/tour/basics/12) for the type (`""`, `0`, `false`); a pointer field stays `nil`.
+When parsing, `Optional` and `Nullable` accept the same inputs: an absent key and `null`. The exported [JSON Schema](#typed-boundaries) follows the parser, so all three (`Optional`, `Nullable`, `Default`) leave the key out of `required`; `Nullable` also adds `null` to the allowed types. Use `Optional` for "may be left out" and `Nullable` for "may be sent as `null`", which documents the intent for clients. The "zero value" is Go's [zero value](https://go.dev/tour/basics/12) for the type (`""`, `0`, `false`); a pointer field stays `nil`.
 
 Not every builder has every modifier:
 
