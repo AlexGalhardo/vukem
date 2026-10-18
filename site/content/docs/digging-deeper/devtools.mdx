@@ -3,54 +3,326 @@ title: Dev dashboard
 description: A development-only dashboard at /_vukem with requests, SQL queries and N+1 detection, jobs, events, mail previews, logs and per-request traces.
 ---
 
-The `devtools` package (core, stdlib only) serves a dashboard at `/_vukem`: recent requests with timings, SQL queries with N+1 detection, jobs, events, sent mail previews, log records, a per-request trace and the route table. Everything lives in bounded in-memory ring buffers (200 records per kind).
+The dev dashboard shows what your app did while you clicked around: every request with its timing, the SQL it ran, the jobs, events and emails it produced, and its log lines. It lives at `/_vukem`, runs only on your machine, and helps you find slow pages and the classic <Term tip="A page that runs one query for a list, then one more query for every item in it.">N+1 query</Term> before your users do. The `devtools` package is part of the core and uses only the standard library.
 
-## Enabling
+You will learn:
+
+- how to turn the dashboard on, and why production refuses it
+- who may open it, and how it protects you from other web pages
+- what each page shows, including the per-request trace
+- how Vukem collects the data without slowing an app that has it off
+- how values are redacted and how N+1 queries are detected
+- how to use the collector in tests to catch N+1 queries
+
+## The idea
+
+Think of the black box of an airplane. It records everything the plane does, but only the crew on the ground reads it, and it keeps only the last stretch of the flight. The dashboard records your app in the same way:
+
+- **Everything, briefly.** It keeps the last 200 records of each kind (requests, queries, jobs, events, mails, logs) in memory. Older records fall off; nothing is written to disk, and a restart clears it.
+- **Only for you.** It answers requests from your own computer only.
+- **Never in production.** The app does not boot with it on in production.
+
+## Quick start
+
+The running example on this page is a blog whose posts page is slower than it should be.
+
+<Steps>
+<Step title="Turn it on">
+
+```bash title=".env"
+DEVTOOLS=true
+```
+
+</Step>
+<Step title="Start the app">
 
 ```bash
-DEVTOOLS=true vukem serve   # or set DEVTOOLS=true in .env
+vukem serve
 ```
 
-```go
-app, err := vukem.New(vukem.WithDevtools(), /* … */) // app.Devtools; nil when off
+</Step>
+<Step title="Use your app">
+
+Open `http://localhost:3000/posts` a few times.
+
+</Step>
+<Step title="Open the dashboard">
+
+Go to `http://localhost:3000/_vukem/`. The overview shows how many records of each kind it holds, any N+1 alerts, and the latest requests. Click a request to see its trace.
+
+</Step>
+</Steps>
+
+You may also turn it on in code with `vukem.WithDevtools()`. `DEVTOOLS=true` and the option do the same thing; either one is enough.
+
+```go title="bootstrap/app.go"
+app, err := vukem.New(
+	vukem.WithDevtools(),
+	vukem.WithRoutes(routes.Web),
+)
 ```
 
-<Callout type="warning">
-`APP_ENV=production` with devtools enabled is a boot error. Prefer the `DEVTOOLS` variable over the option in code that also runs in production.
+<Callout type="warning" title="Production refuses to boot">
+With `APP_ENV=production`, either switch makes `vukem.New` fail with `vukem: devtools (WithDevtools, DEVTOOLS) must be off when APP_ENV=production`. Prefer `DEVTOOLS=true` in `.env` over `WithDevtools()` in code that also runs in production.
 </Callout>
 
-- The dashboard answers only requests whose direct peer is a loopback address, whose `Host` is `localhost`, `*.localhost` or a loopback IP, and that carry no `Forwarded`, `X-Forwarded-*` or `X-Real-Ip` header. Anything else gets a plain 404. The `Host` check stops DNS-rebinding pages from reading the dashboard through your browser.
-- `DEVTOOLS_INSECURE_ALLOW_REMOTE=true` drops those checks (an app in a container or a remote VM). Anyone who reaches the app then sees its requests, queries, logs and mail.
+When it is on, `app.Devtools` holds the collector (a `*devtools.Devtools`). When it is off, `app.Devtools` is `nil`.
 
-## Pages
+## Who may open the dashboard
+
+The dashboard shows your app's requests, SQL, logs and emails, so it must not leak. A request may see it only when **all** of these are true:
+
+1. The direct peer (`RemoteAddr`) is a loopback address, such as `127.0.0.1` or `::1`.
+2. The request carries none of the proxy headers `Forwarded`, `X-Forwarded-For`, `X-Forwarded-Host` or `X-Real-Ip`. A request that came through a proxy is not really local.
+3. The `Host` header is `localhost`, a name ending in `.localhost` (`blog.localhost`), or a loopback IP.
+
+Anything else gets a plain `404 page not found`, as if the dashboard did not exist.
+
+Why check `Host` too? A trick called [DNS rebinding](https://en.wikipedia.org/wiki/DNS_rebinding) lets a web page you visit point its own domain at `127.0.0.1` and read your local server through your browser. Such a request arrives from loopback, but with `Host: evil.example.com`, so it is refused.
+
+| Request | Allowed |
+| --- | --- |
+| From `127.0.0.1`, `Host: localhost:3000` | yes |
+| From `::1`, `Host: [::1]:3000` | yes |
+| From `127.0.0.1`, `Host: blog.localhost:3000` | yes |
+| From `127.0.0.1`, `Host: evil.example.com` | no (DNS rebinding) |
+| From `10.0.0.2`, `Host: localhost:3000` | no (not loopback) |
+| From `127.0.0.1` with `X-Forwarded-For` | no (came through a proxy) |
+
+### Opening it from a container or a VM
+
+Inside Docker or a remote VM, your browser is not on loopback. `DEVTOOLS_INSECURE_ALLOW_REMOTE=true` drops all three checks. Anyone who can reach the app then sees its requests, queries, logs and mail, so use it only on a private network.
+
+## The pages
 
 | Path | Shows |
 | --- | --- |
-| `/_vukem/` | counts per kind, N+1 alerts, recent requests |
-| `/_vukem/requests`, `/_vukem/requests/{id}` | requests (method, path, route, status, duration, query count); the trace of one request with a timeline of its queries, logs, jobs, events and mail |
-| `/_vukem/queries` | normalized SQL, redacted arguments, duration, caller frame, N+1 badge |
-| `/_vukem/jobs` | dispatched and attempted jobs (kind, queue, status, attempt, error) |
-| `/_vukem/events` | dispatched event types, listener count, duration, error |
-| `/_vukem/mails`, `/_vukem/mails/{id}` | sent messages and their HTML and text preview |
-| `/_vukem/logs` | log records at `LOG_LEVEL` or above |
-| `/_vukem/routes` | the route table with middleware |
+| `/_vukem/` | Counts per kind, N+1 alerts, recent requests |
+| `/_vukem/requests` | Method, path, route name, status, duration, query count |
+| `/_vukem/requests/{id}` | The trace of one request (see below) |
+| `/_vukem/queries` | Normalized SQL, redacted arguments, duration, the calling line in your code, an N+1 badge |
+| `/_vukem/jobs` | Dispatched and attempted jobs: kind, queue, status, attempt, duration, error |
+| `/_vukem/events` | Dispatched event types, listener count, duration, error |
+| `/_vukem/mails` | Sent messages: from, to, cc, subject, attachments, error |
+| `/_vukem/mails/{id}` | One message with its HTML and text preview |
+| `/_vukem/logs` | Log records at `LOG_LEVEL` or above |
+| `/_vukem/routes` | Your route table with each route's middleware |
 
-Pages are server-rendered with no script, so they work under the default CSP. `?refresh=5` reloads the page every 5 seconds (2–60). The dashboard's own requests are never recorded.
+Lists show the newest record first. Add `?refresh=5` to any page to reload it every 5 seconds; values are clamped between 2 and 60.
+
+Under the hood:
+
+- The pages are server-rendered with [`html/template`](https://pkg.go.dev/html/template), with one nonce'd `<style>` and no JavaScript. They work under the default Content Security Policy of `SecureHeaders`. Without `SecureHeaders`, they send their own strict policy.
+- Every page answers with `Cache-Control: no-store` and `X-Robots-Tag: noindex`.
+- The dashboard's own requests are never recorded, nor are the queries and logs they cause.
+- The routes are named `devtools.overview`, `devtools.requests`, `devtools.trace`, `devtools.mail` and so on, and they are left out of your OpenAPI document.
+
+### The request trace
+
+Each request gets a trace id such as `r12`. Everything recorded while it ran (queries, logs, jobs, events, mail) carries that id, so `/_vukem/requests/r12` shows them on one timeline, in time order, with the offset from the start of the request. The page also lists the statements that repeated (the N+1 shapes).
+
+A request records:
+
+| Field | Meaning |
+| --- | --- |
+| `ID` | The trace id (`r12`) |
+| `RequestID` | The `X-Request-ID` response header, when the `RequestID` middleware set it |
+| `Method`, `Path` | What was asked |
+| `Pattern` | The matched ServeMux pattern (`GET /posts/{id}`) |
+| `Route` | The route name (`posts.show`), when the route has one |
+| `Status` | The response status; a panic is recorded as 500 |
+| `Duration`, `Queries`, `QueryTime` | Total time, number of SQL statements, time spent in SQL |
+| `NPlusOne` | The repeated `SELECT` shapes and how many times each ran |
+
+Work outside a request (a queue worker, a scheduled task) is still recorded, with an empty trace id.
+
+## Finding an N+1 query
+
+Here is the slow posts page. It loads the posts, then asks for the comments of each post, one by one:
+
+```go title="app/controllers/posts.go"
+func (h *Posts) Index(c *web.Ctx) error {
+	ctx := c.Context()
+	posts, err := orm.QueryOf[models.Post](h.db).Get(ctx)
+	if err != nil {
+		return err
+	}
+	for i := range posts {
+		// One query per post: 1 + N queries in total.
+		posts[i].Comments, err = orm.QueryOf[models.Comment](h.db).
+			Where("post_id", posts[i].ID).Get(ctx)
+		if err != nil {
+			return err
+		}
+	}
+	return c.Render("posts/index", posts)
+}
+```
+
+With 20 posts, the trace shows 21 queries and this alert:
+
+```text
+SELECT * FROM comments WHERE post_id = ?   ×20
+```
+
+The fix is to load every comment in one batched query with `With`:
+
+```go title="app/controllers/posts.go"
+posts, err := orm.QueryOf[models.Post](h.db).
+	With("Comments").
+	Get(ctx)
+```
+
+Now the page runs 2 queries. See [Relations](/docs/database/relations) for eager loading.
+
+How detection works:
+
+1. Each statement is normalized (see below), so `post_id = 1` and `post_id = 2` have the same shape.
+2. Within one request, Vukem counts each shape.
+3. A shape that starts with `SELECT` or `WITH` and runs at least 3 times (`devtools.Config.NPlusOneThreshold`) is an N+1. From the third run on, its queries get a badge, and the request lists the shape with its count.
+
+Repeated `INSERT` or `UPDATE` statements are not flagged: a bulk write loop is often intended.
+
+## Redaction
+
+Query arguments hold user data, tokens and passwords, so the dashboard never shows them.
+
+`devtools.NormalizeSQL` turns a statement into its shape:
+
+```go
+devtools.NormalizeSQL(
+	"SELECT * FROM posts WHERE id = $1 AND title = 'hi'" +
+		" AND tag IN ($2, $3, $4) LIMIT 10")
+// SELECT * FROM posts WHERE id = ? AND title = ? AND tag IN (?...) LIMIT ?
+```
+
+String and number literals and `$n` placeholders become `?`, lists of placeholders collapse to `(?...)`, and runs of spaces and newlines become one space.
+
+`devtools.RedactArgs` describes each bound argument by its type only:
+
+```go
+devtools.RedactArgs([]any{"hunter2-password", 42, nil, []byte("abc")})
+// [string(len=16) int NULL bytes(len=3)]
+```
+
+Other kinds: `bool`, `float`, `time`, a named argument as `name=<type>`, and anything else by its Go type (`%T`).
+
+Jobs and events show their kind and Go type, never their payload. Log records keep their attributes as your logger wrote them; values that implement [`slog.LogValuer`](https://pkg.go.dev/log/slog#LogValuer), such as `config.Secret`, are resolved first, so secrets stay redacted.
+
+The **caller** column shows the first stack frame outside Vukem, `database/sql`, `net/http`, `testing` and the Go runtime: the line of your code that ran the query.
+
+## Mail previews
+
+Every message the app sends through its mailer is kept, whichever `MAIL_MAILER` you use, including its HTML and text parts (each capped at 512 KiB, with `[truncated by devtools]` appended) and a list of attachments as `name (type, size bytes)`. The send still happens; the dashboard only watches. A failed send is recorded with its error.
+
+The HTML part is shown inside `<iframe sandbox="" srcdoc="…">`, escaped by `html/template`, and never inline on the page. The preview page's policy has no script source at all, allows inline styles (so the email looks right) and blocks remote images, which also stops tracking pixels from calling home.
 
 ## How it collects
 
+Each kind of record comes from a small hook that Vukem installs when the dashboard is on:
+
 | Kind | Hook |
 | --- | --- |
-| Requests | outermost server middleware, so timings cover the whole stack |
-| SQL | a `database.QueryObserver` set by `app.DB()`; observers added with `vukem.WithQueryObservers` (tracing) run next to it; statements run on `DB.SQL()` directly bypass it |
-| Jobs, events | `queue.Observer` and `events.Observer` |
-| Mail | wraps the transport chosen by `MAIL_MAILER` |
-| Logs | a handler teed next to the app's |
+| Requests | `Devtools.Middleware()`, the outermost server middleware, so timings cover the whole stack; `RouteMiddleware()` captures the matched pattern; the route name comes from `Router.Routes()` |
+| SQL | A `database.QueryObserver` set by `app.DB()`; transactions inherit it. Observers you add with `vukem.WithQueryObservers` or `db.AddQueryObserver` run next to it; only `db.SetQueryObserver` replaces it |
+| Jobs | A `queue.Observer` added by `app.Queue()`: dispatched, processed, failed |
+| Events | An `events.Observer` on the event bus |
+| Mail | `Devtools.MailTransport` wraps the transport chosen by `MAIL_MAILER` |
+| Logs | `Devtools.LogHandler()`, teed next to the app's handler with [`slog.NewMultiHandler`](https://pkg.go.dev/log/slog#NewMultiHandler) |
 
-The observed packages never import `devtools`; with it off, each hook costs one nil check.
+The observer interfaces live in the observed packages, so `database`, `queue` and `events` never import `devtools`. When the dashboard is off, no hook is installed, and each one costs a single `nil` check.
 
-## Redaction and N+1
+Statements you run directly on `DB.SQL()` (for example through [sqlc](https://sqlc.dev)) bypass the observer and do not appear.
 
-- SQL is shown as a normalized shape (literals and placeholders become `?`). Bound arguments are shown as types and lengths (`string(len=16)`, `int`, `NULL`), never values. Jobs and events show kinds and Go types, not payloads.
-- A `SELECT` shape that runs at least 3 times in one request (`devtools.Config.NPlusOneThreshold`) is flagged as N+1.
-- Mail HTML renders in a sandboxed `iframe` under a CSP with no script source that blocks remote images (and tracking pixels).
+### Using the collector by hand
+
+`devtools.New(cfg)` returns a collector you may wire yourself, outside `vukem.New`:
+
+| Method | What it does |
+| --- | --- |
+| `Middleware()` | Records requests; install first with `Router.UseServer` |
+| `RouteMiddleware()` | Captures the matched pattern; install with `Router.Use` |
+| `Register(r)` | Mounts the pages under `devtools.Path` (`/_vukem`), guarded by `Allowed` |
+| `Allowed(r)` | Reports whether a request may see the dashboard |
+| `ObserveQuery`, `ObserveJob`, `ObserveEvent` | The database, queue and event hooks |
+| `MailTransport(next)`, `LogHandler()` | The mail and log hooks |
+| `Requests()`, `Queries()`, `Jobs()`, `Events()`, `Mails()`, `Logs()` | The records, newest first |
+| `Trace(id)` | One request and its timeline, or `false` |
+
+The collector is safe for concurrent use by many requests.
+
+## Configuration
+
+| Name | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `DEVTOOLS` | env bool | `false` | Turns the dashboard on (same as `vukem.WithDevtools()`) |
+| `DEVTOOLS_INSECURE_ALLOW_REMOTE` | env bool | `false` | Serves the dashboard to any client |
+| `LOG_LEVEL` | env | `info` | Minimum level of the collected log records |
+| `devtools.Config.Capacity` | `int` | `200` (`DefaultCapacity`) | Records kept per kind |
+| `devtools.Config.NPlusOneThreshold` | `int` | `3` (`DefaultNPlusOneThreshold`) | Runs of one `SELECT` shape in one request that make an N+1 |
+| `devtools.Config.InsecureAllowRemote` | `bool` | `false` | The field behind `DEVTOOLS_INSECURE_ALLOW_REMOTE` |
+| `devtools.Config.Level` | `slog.Leveler` | Info | Minimum log level |
+| `devtools.Config.Routes` | `func() []router.RouteInfo` | nil | Feeds the routes page and route names |
+| `devtools.Config.Now` | `func() time.Time` | `time.Now` | The clock |
+
+Through `vukem.New`, Vukem sets `Level` from `LOG_LEVEL`, `Routes` from your router and `Now` from the app clock; `Capacity` and `NPlusOneThreshold` keep their defaults.
+
+## Security
+
+- Production refuses to boot with the dashboard on (`TestSecurity_A02_DevtoolsRefusedInProduction`).
+- Only loopback clients with a loopback `Host` and no proxy headers get it (`TestSecurity_A01_DevtoolsLoopbackOnly`).
+- Query arguments are never shown (`TestSecurity_A09_DevtoolsRedactsQueryArgs`).
+- Mail previews are sandboxed with no scripts and no remote images (`TestSecurity_A05_DevtoolsMailPreviewIsSandboxed`).
+- What stays your job: emails are shown in full, including password reset links, and log lines show what you log. Do not turn on `DEVTOOLS_INSECURE_ALLOW_REMOTE` on a shared network.
+
+See [docs/security.md](https://github.com/AlexGalhardo/vukem/blob/main/docs/security.md).
+
+## Testing
+
+The collector works in tests too, which turns N+1 detection into a test that fails:
+
+```go title="tests/posts_test.go"
+func TestPostsPageHasNoNPlusOne(t *testing.T) {
+	app := vukemtest.New(t, bootstrap.New, vukemtest.Options{
+		Env: map[string]string{"DEVTOOLS": "true"},
+	})
+
+	app.Client(t).Get("/posts").AssertOK()
+
+	req := app.Devtools.Requests()[0]
+	if len(req.NPlusOne) > 0 {
+		t.Fatalf("N+1 on /posts: %+v", req.NPlusOne)
+	}
+}
+```
+
+`vukemtest.App` embeds `*vukem.App`, so `app.Devtools` is there. The test client's requests do not come from loopback, so the dashboard pages answer 404 in tests; read the records through the methods instead.
+
+## Common mistakes
+
+**Turning it on in code that ships.** Wrong: `vukem.WithDevtools()` in `bootstrap/app.go`; the first production deploy fails with `vukem: devtools (WithDevtools, DEVTOOLS) must be off when APP_ENV=production`. Right: `DEVTOOLS=true` in your local `.env` only.
+
+**Opening it through a proxy or tunnel.** A request through a reverse proxy, `ngrok` or a Vite proxy carries `X-Forwarded-For` or a public `Host`, so you get `404 page not found`. Right: open `http://localhost:3000/_vukem/` directly.
+
+**Expecting sqlc queries.** Statements run on `DB.SQL()` skip the observer, so the queries page looks empty for them. Right: run them through `app.DB()` methods, or add your own timing.
+
+**Looking for old records after a restart.** The records live in memory. Restarting the app (including a reload by `vukem serve`) clears them.
+
+## Next steps
+
+<CardGroup cols="2">
+<Card title="Relations" href="/docs/database/relations" icon="database">
+Fix N+1 queries with eager loading.
+</Card>
+<Card title="OpenTelemetry" href="/docs/digging-deeper/opentelemetry" icon="zap">
+Traces and metrics for production.
+</Card>
+<Card title="Mail" href="/docs/digging-deeper/mail" icon="code">
+Send the emails the dashboard previews.
+</Card>
+<Card title="Testing" href="/docs/testing/overview" icon="terminal">
+The test client and its assertions.
+</Card>
+</CardGroup>
+
+Package reference: [pkg.go.dev/github.com/AlexGalhardo/vukem/devtools](https://pkg.go.dev/github.com/AlexGalhardo/vukem/devtools).

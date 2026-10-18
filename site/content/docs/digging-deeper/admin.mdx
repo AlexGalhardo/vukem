@@ -1,92 +1,441 @@
 ---
 title: Admin panel
-description: Generate an HTMX admin panel from ORM models, with search, sort, filters, z-schema forms, policies on every action and an audit log.
+description: Generate an HTMX admin panel from your ORM models, with search, sort, filters, forms from z schemas, policies on every action, a feature flags page and an audit log.
 ---
 
-Package `admin` (core, stdlib only) builds an admin panel from your models: paginated lists with search, sort and filters, detail pages, create and edit forms from `z` schemas, deletes behind a confirmation page, and an audit log of every change.
+Every app ends up needing a back office: a place where staff list records, fix a typo in a post or delete spam. Writing those screens by hand is slow and easy to get wrong, because each one needs authentication, permission checks, CSRF protection and safe queries. The `admin` package builds them for you from your models: lists with search, sort, filters and pagination, detail pages, create and edit forms, deletes behind a confirmation page, a [feature flags](/docs/digging-deeper/feature-flags) page and an audit log of every change.
+
+You will learn:
+
+- how to install the panel and add a model to it;
+- how a resource turns a model and a `z` schema into lists and forms;
+- who may do what, and how the panel fails closed;
+- how the audit log and the flags page work;
+- how to change the look by overriding templates;
+- how to test the panel.
+
+## The idea
+
+Think of the panel as the staff-only door at the back of a shop. A guard at the door checks who you are (**authentication**), a manager decides whether staff may come in at all (the **panel ability**), and each shelf has its own rule about who may touch it (a **policy** per model). Every time someone moves something, it is written in a logbook (the **audit log**).
+
+The panel is server-rendered HTML ([`html/template`](https://pkg.go.dev/html/template)) with [htmx](https://htmx.org) for searching and paging without a full reload. Everything it needs, templates, CSS and htmx itself, is embedded in the Go binary with [`embed`](https://pkg.go.dev/embed): no CDN, and no inline scripts or styles, so it runs under a strict Content Security Policy.
+
+The package is part of the core module and uses the standard library only.
+
+Throughout this page you build one example: the admin side of a blog with posts.
 
 ## Quick start
+
+<Steps>
+<Step title="1. Install authentication and the panel">
 
 ```bash
 vukem install:auth
 vukem install:admin
-vukem make:admin-resource Post
-vukem migrate
-ADMIN_EMAILS=you@example.com vukem serve   # then open /admin
 ```
 
-- `install:admin` (needs `install:auth`) writes `routes/admin.go` (the panel with its own `authz.Gate`), `app/admin/admin.go` (admins read from `ADMIN_EMAILS`; nobody is an admin when it is empty, and a listed address counts only once verified), `app/admin/registry.go`, the audit-log migration and `tests/admin_test.go`.
-- `make:admin-resource <Model>` checks that `models.<Model>` exists and writes `app/admin/<model>.go` (the resource, using `requests.<Model>Schema` when it exists, and a policy allowing admins every action) plus a test, registered in `app/admin/registry.go`.
+`install:admin` needs `install:auth` (it checks for `app/accounts/accounts.go`) and a web project with sessions (`routes/web.go`). It writes:
 
-## Wiring
+| File | What it holds |
+| --- | --- |
+| `routes/admin.go` | the panel, mounted at `/admin`, with its own `authz.Gate` |
+| `app/admin/admin.go` | `Admins`: who counts as an admin, read from `ADMIN_EMAILS` |
+| `app/admin/registry.go` | `Resources()` and `Policies(admins)`, filled by `make:admin-resource` |
+| `database/migrations/<timestamp>_create_admin_audit_logs_table.go` | the audit log table |
+| `tests/admin_test.go` | access tests for the panel |
 
-```go
-panel, err := admin.New(admin.Config{DB: db, Guard: acc.Web, Authorizer: gate})
+It also registers the migration and the route file and adds `ADMIN_EMAILS` to `.env.example`. `--force` overwrites existing files.
+
+</Step>
+<Step title="2. Add a model">
+
+```bash
+vukem make:admin-resource Post
+```
+
+The command checks that `app/models` declares `type Post struct` (otherwise it tells you to run `vukem make:model Post`). It writes `app/admin/post.go`, with the resource and a `PostPolicy` that allows admins every action, and `tests/admin_post_test.go`, then registers both in `app/admin/registry.go`. When `app/requests` declares `var PostSchema`, the resource uses it for its forms; otherwise it starts with an empty `z.Shape` for you to fill.
+
+</Step>
+<Step title="3. Migrate and name the admins">
+
+```bash title=".env"
+ADMIN_EMAILS=you@example.com,editor@example.com
+```
+
+```bash
+vukem migrate
+vukem serve
+```
+
+Open `http://localhost:3000/admin`. Guests are sent to the login page; after you sign in with a listed, **verified** address you see the dashboard with a card per resource and its record count.
+
+</Step>
+</Steps>
+
+`ADMIN_EMAILS` is a comma-separated list, compared without case. When it is empty, nobody is an admin. A listed address only counts once the account's email is verified: otherwise anyone could sign up first with the admin's address and walk in.
+
+## The wiring
+
+This is what `install:admin` writes in `routes/admin.go`, trimmed to the important lines:
+
+```go title="routes/admin.go"
+admins := admin.NewAdmins(app.Source.Get("ADMIN_EMAILS"))
+
+// The panel has its own gate, so its policies never mix with the
+// app's.
+gate := authz.New(func(ctx context.Context) (*models.User, error) {
+	u, err := auth.UserFrom[models.User](ctx, acc.Web.Name())
+	return &u, err
+})
+
+isAdmin := func(_ context.Context, u *models.User) bool {
+	return admins.Has(u)
+}
+gate.Define(vadmin.AbilityAdmin, isAdmin)
+gate.Define(vadmin.AbilityAudit, isAdmin)
+gate.Define(vadmin.AbilityFlags, isAdmin)
+
+if err := gate.Register(admin.Policies(admins)...); err != nil {
+	return err
+}
+
+ff, err := app.Flags()
 if err != nil {
 	return err
 }
-if err := panel.Register(
-	admin.NewResource[models.Post](requests.PostSchema).
-		Search("title", "body").
-		Filter("status", "draft", "published").
-		List("id", "title", "status", "created_at"),
-); err != nil {
+
+panel, err := vadmin.New(vadmin.Config{
+	DB:         acc.DB,
+	Guard:      acc.Web,
+	Authorizer: gate,
+	Title:      app.Config.Name + " admin",
+	Flags:      ff,
+})
+if err != nil {
 	return err
 }
+
+if err := panel.Register(admin.Resources()...); err != nil {
+	return err
+}
+
 return panel.Mount(r)
 ```
 
-The gate defines `admin.AbilityAdmin` (every page) and `admin.AbilityAudit` (the audit log), and registers a policy per model.
+`vadmin` is the framework's `admin` package, renamed on import because your own package is also called `admin`. The three steps are always the same:
 
-| `Config` field | Default | Meaning |
+1. `admin.New(cfg)` validates the configuration and returns an empty `*admin.Panel`.
+2. `panel.Register(resources...)` checks and adds each resource. Mistakes come back here, at boot.
+3. `panel.Mount(r)` adds every route to the [router](/docs/basics/routing).
+
+### Config
+
+| Field | Default | Meaning |
 | --- | --- | --- |
-| `DB` | required | records and the audit log |
-| `Guard` | required | authenticates admins; guests go to the `login` route (401 for JSON) |
-| `Authorizer` | `Services.Authorizer` | decides panel and policy abilities; with none, everything is denied |
-| `Prefix` | `/admin` | URL prefix |
-| `Ability` | `admin` | gate ability required on every page |
-| `Title` | `Admin` | header text |
-| `Views` | embedded | `fs.FS` overriding templates by path; `admin.Templates()` returns the originals to copy |
+| `DB` | required | the database holding the records and the audit log |
+| `Guard` | required | an `auth.Checker` that authenticates admins, usually the `web` session guard |
+| `Authorizer` | the router's `Services.Authorizer` | decides the panel and policy abilities, usually an `authz.Gate`; with none at all, everything is denied |
+| `Prefix` | `/admin` | the URL prefix; slashes are trimmed, and `/` is refused |
+| `Ability` | `admin` | the gate ability required on every page |
+| `Title` | `Admin` | the header text |
+| `Views` | embedded templates | an `fs.FS` that overrides templates by path |
+| `Flags` | nil | a `*flags.Flags` that adds the flags page |
+
+`admin.New` fails with `admin: Config.DB is required`, `admin: Config.Guard is required (the panel never runs without authentication)` or `admin: Config.Prefix cannot be the site root`.
 
 ## Resources
 
-`admin.NewResource[T](schema)` takes the model type and infers the input type from the `z.StructSchema`. Columns come from the ORM metadata; form fields come from the schema keys. Controls follow the schema: enums become selects, booleans checkboxes, numbers number inputs, `Email()` and `URL()` typed inputs, dates `datetime-local`, short strings text inputs and longer ones textareas.
+A resource shows one model in the panel. The generated `app/admin/post.go` looks like this:
+
+```go title="app/admin/post.go"
+// Post is the admin resource for models.Post at /admin/posts.
+func Post() *vadmin.Resource[models.Post] {
+	return vadmin.NewResource[models.Post](requests.PostSchema).
+		Search("title", "body").
+		Filter("status", "draft", "published").
+		List("id", "title", "status", "created_at")
+}
+```
+
+The schema is the same [`z`](/docs/basics/validation) schema your app's forms use:
+
+```go title="app/requests/post.go"
+type PostInput struct {
+	Title  string `form:"title"`
+	Body   string `form:"body"`
+	Status string `form:"status"`
+}
+
+var PostSchema = z.Struct[PostInput](z.Shape{
+	"title":  z.String().Trim().Min(3).Max(120),
+	"body":   z.String().Max(5000).Optional(),
+	"status": z.Enum("draft", "published"),
+})
+```
+
+`admin.NewResource[T](schema)` takes the model type `T` explicitly; Go [infers](https://go.dev/ref/spec#Type_inference) the input type from the `z.StructSchema`. Under the hood:
+
+- **Columns** come from the ORM metadata of `T`, the same as [ORM](/docs/database/orm) queries use.
+- **Form fields** come from the schema keys. Each key is written to the model column with the same name (or the snake_case of the input field's name).
+- **Only schema keys are ever written.** This is the panel's mass-assignment protection: a crafted form field that is not in the schema is ignored.
+
+### Form controls
+
+The control for each field follows the schema:
+
+| Schema | Control |
+| --- | --- |
+| `z.Enum(...)` or `OneOf(...)` | select |
+| `z.Bool()` | checkbox (with a hidden `false`, so unticking saves) |
+| `z.Int()`, `z.Float()` and other numbers | number input |
+| `z.String().Email()` | email input |
+| `z.String().URL()` | url input |
+| a date-time format, or a `time.Time` / `orm.NullTime` column | `datetime-local` input |
+| `z.String().Max(n)` with `n` up to 255 | text input |
+| any other string | textarea |
+| a sensitive column | empty password input |
+
+`Input(key, kind)` overrides the control with one of `admin.InputText`, `InputTextarea`, `InputNumber`, `InputEmail`, `InputURL`, `InputPassword`, `InputCheckbox`, `InputSelect`, `InputDate` or `InputDateTime`.
+
+When validation fails, the form is shown again with status **422** and the messages next to each field. A unique-index conflict shows "This record conflicts with an existing one."
+
+### Options
+
+Options chain: each returns the resource.
 
 | Option | Effect |
 | --- | --- |
-| `Slug(s)`, `Labels(singular, plural)`, `Label(col, text)` | URL segment and UI names |
-| `List(cols...)`, `Column(label, func(T) string)` | list columns; computed columns (escaped) |
-| `Search(cols...)` | search over string columns (`LIKE`, `ILIKE` on Postgres, bound parameters; `%` and `_` in the text match literally) |
-| `Sortable(cols...)`, `Filter(col, options...)`, `PerPage(n)` | sorting, exact-match filters, page size (default 20, max 200) |
-| `Hidden(cols...)`, `ReadOnly(cols...)`, `Sensitive(cols...)` | never shown; shown but never written; secret columns |
+| `Slug(s)` | URL segment (default: the table name in kebab-case, such as `blog-posts`); lowercase letters, digits and `-` |
+| `Labels(singular, plural)` | names shown in the UI |
+| `Label(col, text)` | the label of one column |
+| `List(cols...)` | list columns, in order (default: every column that is not hidden or sensitive) |
+| `Column(label, fn)` | a computed column, `func(T) string`; its result is HTML-escaped |
+| `Search(cols...)` | a search box over string columns |
+| `Sortable(cols...)` | columns the list may be sorted by (default: the listed ones) |
+| `Filter(col, options...)` | an exact-match filter: a select with the options, a text box without; boolean columns get yes/no |
+| `PerPage(n)` | page size, 1 to 200 (default 20) |
+| `Hidden(cols...)` | never shown; hidden schema keys are never written |
+| `ReadOnly(cols...)` | shown disabled on the edit form, never written |
+| `Sensitive(cols...)` | secret columns, on top of the ones detected by name (see Security) |
 | `Input(key, kind)` | override a form control |
-| `BeforeSave(fn)` | runs inside the transaction before create/update (hash a password, set an owner) |
+| `BeforeSave(fn)` | runs before every create and update |
 
-Configuration mistakes (unknown columns, a schema key without a column, duplicate slugs) are returned by `Panel.Register` at boot.
+Search is a case-insensitive `LIKE` (`ILIKE` on PostgreSQL) with bound parameters; `%` and `_` in the search text match literally.
 
-## Routes
+`BeforeSave(func(ctx context.Context, rec *T) error)` runs after validation, inside the same database transaction as the write. Use it to hash a password or set an owner. Returning an error aborts the write; returning `z` issues (for example `z.FieldError("title", "Taken.")`) shows them on the form.
 
-| Path | Ability |
-| --- | --- |
-| `GET /admin` | `admin` (dashboard with counts) |
-| `GET /admin/_audit` | `admin` + `viewAuditLogs` |
-| `GET /admin/{slug}` | `viewAny` |
-| `/admin/{slug}/create`, `POST /admin/{slug}` | `create` |
-| `GET /admin/{slug}/{id}` | `view` on the record |
-| `/admin/{slug}/{id}/edit`, `POST /admin/{slug}/{id}` | `update` on the record |
-| `/admin/{slug}/{id}/delete` | `delete` on the record (GET is the confirmation page) |
+```go title="app/admin/post.go"
+func Post() *vadmin.Resource[models.Post] {
+	return vadmin.NewResource[models.Post](requests.PostSchema).
+		Column("Words", func(p models.Post) string {
+			return strconv.Itoa(len(strings.Fields(p.Body)))
+		}).
+		BeforeSave(func(ctx context.Context, p *models.Post) error {
+			// New posts belong to the admin who wrote them.
+			if p.AuthorID == 0 {
+				u, err := auth.UserFrom[models.User](ctx, "web")
+				if err != nil {
+					return err
+				}
+				p.AuthorID = u.ID
+			}
+			return nil
+		})
+}
+```
 
-Route names are `admin.dashboard`, `admin.audit` and `admin.<slug>.<action>`. Lists answer htmx partial requests (search, sort, pagination) with the list block only.
+### Mistakes caught at boot
+
+`panel.Register` returns every mistake, prefixed with `admin: resource <slug>:`, so a broken resource never reaches production:
+
+- a schema key that matches no column (`schema key "titel" matches no column of Posts`);
+- a schema key for the primary key or a timestamp (`schema key "id" writes the protected column "id"`);
+- a sensitive column in `List`, `Search`, `Sortable` or `Filter` (`sensitive column "api_token" cannot be listed`);
+- a search on a column that is not a string, or a filter on a type that cannot be filtered;
+- an unknown column in an option (`unknown column "titel"`), an invalid slug, a page size outside 1 to 200, an unknown input type or an `Input` for a key that is not in the schema;
+- two resources with the same slug (`admin: duplicate resource "posts"`).
+
+## Routes and abilities
+
+Every route needs the guard, the panel ability (`admin` by default) and then the ability in the last column. Policy abilities are checked on the model type, `(*T)(nil)`, or on the record itself, `*T`, as [authorization](/docs/security/authorization) policies expect.
+
+| Method | Path | Name | Ability |
+| --- | --- | --- | --- |
+| GET | `/admin` | `admin.dashboard` | the panel ability |
+| GET | `/admin/_audit` | `admin.audit` | `viewAuditLogs` |
+| GET | `/admin/_flags` | `admin.flags` | `manageFlags` |
+| POST | `/admin/_flags/{name}` | `admin.flags.update` | `manageFlags` |
+| GET | `/admin/{slug}` | `admin.{slug}.index` | `viewAny` on the type |
+| GET | `/admin/{slug}/create` | `admin.{slug}.create` | `create` on the type |
+| POST | `/admin/{slug}` | `admin.{slug}.store` | `create` on the type |
+| GET | `/admin/{slug}/{id}` | `admin.{slug}.show` | `view` on the record |
+| GET | `/admin/{slug}/{id}/edit` | `admin.{slug}.edit` | `update` on the record |
+| POST | `/admin/{slug}/{id}` | `admin.{slug}.update` | `update` on the record |
+| GET | `/admin/{slug}/{id}/delete` | `admin.{slug}.delete` | `delete` on the record (confirmation page) |
+| POST | `/admin/{slug}/{id}/delete` | `admin.{slug}.destroy` | `delete` on the record |
+
+The ability names are constants: `admin.AbilityAdmin`, `AbilityAudit`, `AbilityFlags`, `AbilityViewAny`, `AbilityView`, `AbilityCreate`, `AbilityUpdate` and `AbilityDelete`. The flags routes exist only when `Config.Flags` is set. `/admin/_assets/admin.css` and `/admin/_assets/htmx.min.js` are public and cached for an hour.
+
+The navigation only shows the resources the user may `viewAny`, and the audit and flags links only to users with those abilities. The dashboard counts records of the resources the user may list.
+
+Lists answer htmx partial requests (search, sort, pagination) with only the list block, and send `Vary: HX-Request` so caches keep the two versions apart. After a save, the panel redirects to the record when the user may `view` it, otherwise to the list, and shows a flash message such as "Post saved." (session key `admin.FlashKey`, `admin.success`).
+
+## The audit log
+
+Every create, every update that changed something and every delete writes an `admin.AuditLog` row **in the same transaction** as the change. If the log row fails, the change is rolled back.
+
+| Field | Column | Meaning |
+| --- | --- | --- |
+| `ActorID` | `actor_id` | the `AuthID()` of the user who made the change |
+| `Resource` | `resource` | the resource slug (`posts`), or `_flags` |
+| `RecordID` | `record_id` | the primary key of the record |
+| `Action` | `action` | `admin.ActionCreate`, `ActionUpdate` or `ActionDelete` |
+| `Changes` | `changes` | JSON: column → `admin.Change` with `before` and `after` |
+| `CreatedAt` | `created_at` | when it happened |
+
+For a sensitive column, the `Change` is only `{"redacted": true}`: the log records that it changed, never the value. The table is `admin.AuditTable` (`admin_audit_logs`), created by `admin.Migration("<timestamp>_create_admin_audit_logs_table")`, which `install:admin` registers for you.
+
+Browse the log at `/admin/_audit`, newest first, 50 entries per page. `?resource=posts` narrows it to one resource (only registered slugs and `_flags` are accepted).
+
+## The feature flags page
+
+With `Config.Flags` set (the `install:admin` scaffold passes `app.Flags()`), the panel lists every registered [feature flag](/docs/digging-deeper/feature-flags) at `/admin/_flags`: name, description, kind, default (the code default or `FLAG_<NAME>`), current global value and whether a value is stored.
+
+- **Boolean** flags toggle with one button. **Int** and **string** flags take a value in a text box.
+- **Reset to default** deletes the stored value.
+- **Locked** flags are shown read-only. A crafted write to one is refused with **403** ("This flag is locked in code.") and logged as a `flags.locked_write` security event.
+- An unknown flag name answers **404**, an invalid value **422** ("Invalid value for this flag.").
+- When the flag store is down, the page answers **503** instead of showing defaults that would invite wrong toggles.
+
+The page changes **global** values only; per-user and per-tenant values are written from code with `flags.Put`.
+
+Every change is recorded twice:
+
+1. a `flags.changed` audit event in the log (`web.AuditEvent`), with `actor_id`, `flag`, `changed`, `old` and `new`;
+2. an audit-log row with resource `_flags` (`admin.FlagsResource`), the flag name as record id and a `value` change. Browse them at `/admin/_audit?resource=_flags`.
+
+String values may hold anything, so both records keep only their length and a SHA-256 prefix, such as `10 bytes, sha256:1a2b3c4d`, never the value in clear.
+
+<Callout type="warning" title="Flag write and audit row are not atomic">
+The flag store is pluggable, so its write and the audit row cannot share a transaction. If the row fails after the flag changed, the change is logged at ERROR (redacted the same way) and the page shows a warning flash. The flag stays changed.
+</Callout>
+
+An app that ran `install:admin` before v0.27.0 wires the page by hand in `routes/admin.go`: define the ability on its gate and pass the flags.
+
+```go title="routes/admin.go"
+gate.Define(vadmin.AbilityFlags, isAdmin)
+
+ff, err := app.Flags()
+if err != nil {
+	return err
+}
+
+panel, err := vadmin.New(vadmin.Config{
+	DB:         acc.DB,
+	Guard:      acc.Web,
+	Authorizer: gate,
+	Flags:      ff,
+})
+```
+
+## Customizing the look
+
+`Config.Views` takes any [`fs.FS`](https://pkg.go.dev/io/fs#FS). A file in it replaces the embedded template with the same path; every other template keeps the original. The paths are `layouts/admin.html`, `index.html`, `show.html`, `form.html`, `delete.html`, `dashboard.html`, `audit.html`, `flags.html` and `partials/pager.html`.
+
+`admin.Templates()` returns the embedded originals, so you can copy one and edit it:
+
+```go title="routes/admin.go"
+panel, err := vadmin.New(vadmin.Config{
+	DB:         acc.DB,
+	Guard:      acc.Web,
+	Authorizer: gate,
+	Views:      os.DirFS("resources/views/admin"),
+})
+```
+
+Keep the overrides free of inline `<script>` and `style` attributes, or the strict CSP blocks them.
 
 ## Security
 
-- **Fail closed:** every route needs the guard, the panel ability and the policy ability; anything missing answers 403 and logs an `authz.denied` security event.
-- **CSRF:** the panel adds CSRF protection to its routes; forms carry the token.
-- **Mass assignment:** only schema keys are written; the primary key, timestamps, hidden and read-only columns never are.
-- **Injection:** sort, filter and search columns are allowlists; values are bound parameters.
-- **Secrets:** columns tagged `json:"-"`, named like `password`, `secret`, `token`, `api_key`, `private_key`, `recovery` or `otp`, or marked `Sensitive` are never displayed, searched, sorted or filtered. As form fields they are empty password inputs that keep the stored value when left blank.
-- **Strict CSP:** templates, htmx and CSS are embedded and served from `/admin/_assets/` with no inline code; pages are `Cache-Control: no-store`.
+| Default | What it means |
+| --- | --- |
+| **Fail closed** | Every route needs the guard, the panel ability and the policy ability. A missing ability, policy or authorizer answers **403** and logs an `authz.denied` security event (with `area=admin`). Guests are redirected to the route named `login`; JSON requests get **401**. |
+| **CSRF** | The panel adds `csrf.Middleware` (with the session-token fallback) to its routes, and its forms carry the token. |
+| **Mass assignment** | Only schema keys are read from the form and written. The primary key, timestamps, hidden and read-only columns never are. |
+| **Injection** | Sort, filter and search columns are allowlists; anything else is ignored. Values are bound parameters. |
+| **Secrets** | Columns tagged `json:"-"`, columns whose name contains `password`, `passwd`, `secret`, `token`, `api_key`, `apikey`, `private_key`, `recovery`, `otp` or `totp`, and columns marked `Sensitive` are never displayed, listed, searched, sorted or filtered. On a form they are empty password inputs that keep the stored value when left blank. The audit log records only that they changed. |
+| **Headers** | Pages send `Cache-Control: no-store` and `X-Frame-Options: DENY`, plus a strict CSP when the app set none: `default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; form-action 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'`. |
 
-## Audit log
+What stays your job: deciding who is an admin (`app/admin/admin.go`), narrowing each policy (an editor may update posts but not delete them), and keeping the admin accounts protected with [two-factor authentication](/docs/security/two-factor). See the [security overview](/docs/security/overview).
 
-Every create, update (when something changed) and delete writes an `admin.AuditLog` row in the same transaction: the actor, resource, record id, action and a JSON map of changed columns (`before`, `after`; sensitive columns only record that they changed). Register the table with `admin.Migration("<timestamp>_create_admin_audit_logs_table")` (`install:admin` does) and browse it at `/admin/_audit`.
+## Testing
+
+The generated `tests/admin_test.go` boots the app with an admin listed in `ADMIN_EMAILS` and checks who gets in:
+
+```go title="tests/admin_test.go"
+func TestAdminPanelAccess(t *testing.T) {
+	t.Parallel()
+
+	app := newAdminApp(t)
+
+	app.Client(t).Get("/admin").AssertRedirect("/login")
+	adminClient(t, app, "user@example.com").
+		Get("/admin").
+		AssertForbidden()
+
+	c := adminClient(t, app, adminEmail)
+	c.Get("/admin").AssertOK().AssertSee("Dashboard")
+	c.Get("/admin/_audit").AssertOK().AssertSee("Audit log")
+	c.Get("/admin/_flags").AssertOK().AssertSee("Feature flags")
+}
+```
+
+`adminClient` creates a user with a verified email and returns a client logged in as that user with `ActingAs("web", u)`. It also sends `Sec-Fetch-Site: same-origin`, so the panel's CSRF check accepts its POST requests. Each `make:admin-resource` adds a test for its resource:
+
+```go title="tests/admin_post_test.go"
+func TestAdminPostResource(t *testing.T) {
+	t.Parallel()
+
+	app := newAdminApp(t)
+	c := adminClient(t, app, adminEmail)
+
+	c.Get("/admin").AssertOK().AssertSee(`href="/admin/posts"`)
+	c.Get("/admin/posts").AssertOK()
+	c.Get("/admin/posts/create").AssertOK()
+
+	adminClient(t, app, "user@example.com").
+		Get("/admin/posts").
+		AssertForbidden()
+}
+```
+
+See [Testing](/docs/testing/overview) for the test client.
+
+## Common mistakes
+
+**A resource without a policy.** The resource is registered, but its list answers 403 for everyone and it is missing from the navigation. A missing policy denies. Register one with `gate.Register(authz.For[*models.Post](PostPolicy{Admins: admins}))`; `make:admin-resource` does it for you.
+
+**Listing a secret column.** `List("id", "email", "api_token")` stops the boot with `admin: resource accounts: sensitive column "api_token" cannot be listed`. Leave it out of the list.
+
+**A schema key with no column.** `"titel": z.String()` stops the boot with `schema key "titel" matches no column of Posts`. The key must match a column name.
+
+**Expecting an unverified admin to get in.** An address in `ADMIN_EMAILS` whose account is not verified answers 403. Verify the email first.
+
+## Next steps
+
+<CardGroup cols="2">
+<Card title="Authorization" href="/docs/security/authorization" icon="lock">
+Write policies that narrow what each admin may do.
+</Card>
+<Card title="Feature flags" href="/docs/digging-deeper/feature-flags" icon="zap">
+Declare the flags the panel toggles.
+</Card>
+<Card title="Validation" href="/docs/basics/validation" icon="shield">
+Build the z schemas that become forms.
+</Card>
+<Card title="HTMX" href="/docs/frontend/htmx" icon="code">
+Learn how partial requests work.
+</Card>
+</CardGroup>
+
+Package reference: [pkg.go.dev/github.com/AlexGalhardo/vukem/admin](https://pkg.go.dev/github.com/AlexGalhardo/vukem/admin).

@@ -1,50 +1,464 @@
 ---
 title: Telegram logging
-description: Send selected log records to Telegram chats with a non-blocking slog handler.
+description: Send important log records, contact forms and deploy notices to a Telegram chat with a non-blocking slog handler.
 ---
 
-Set the variables and the app logger fans out to stderr and Telegram (`slog.NewMultiHandler`):
+Your app writes logs to the terminal, but nobody watches the terminal at 3 a.m. Vukem can copy the important log records into a Telegram chat, so a failed payment buzzes your phone instead of hiding in a log file. The same handler also sends contact-form messages and custom notices.
+
+You will learn:
+
+- how a log record travels from `app.Log.Error(...)` to a Telegram chat;
+- how to turn it on with five environment variables;
+- how to send contact forms and HTML notices with `app.Telegram`;
+- how levels, filters, rate limits, retries and the queue behave;
+- how the bot token stays secret, and how to test it all without the internet.
+
+## The idea
+
+Think of a doorbell camera. Most of the time it only records. When something important happens (a person at the door), it sends a notification to your phone. Telegram logging is that notification: your normal logs keep going to the terminal, and only the records at or above a level you choose also go to a chat.
+
+Vukem logs with [`log/slog`](https://pkg.go.dev/log/slog), Go's standard structured logger. A logger hands each record to a <Term tip="A value that implements the slog.Handler interface: it decides whether a record is wanted and where it is written.">handler</Term>. Vukem's `telegram.Handler` is one more handler, joined to the terminal handler with [`slog.NewMultiHandler`](https://pkg.go.dev/log/slog#NewMultiHandler), so every record goes to both and each one decides on its own.
+
+```text
+app.Log.Error("payment failed", "order_id", 42)
+        │
+        ▼
+  slog.MultiHandler
+   ├── terminal handler  → stderr (always)
+   └── telegram.Handler  → is level ≥ MinLevel?
+                            → Filter → rate limit
+                            → format as HTML
+                            → queue (channel)
+                            → sender goroutine
+                            → POST /bot<token>/sendMessage
+```
+
+Sending happens in a background <Term tip="A function running concurrently with the rest of the program, started with the go keyword.">goroutine</Term> that reads from a [channel](https://go.dev/tour/concurrency/2). Your handler never waits for Telegram, and a Telegram outage never makes a request fail. If you have not met goroutines yet, the [Tour of Go concurrency section](https://go.dev/tour/concurrency/1) explains them in a few pages.
+
+## Quick start
+
+The running example on this page is a small shop: it alerts on failed payments and forwards the contact form.
+
+<Steps>
+<Step title="Create a bot and find the chat id">
+
+Open a chat with [@BotFather](https://core.telegram.org/bots/features#botfather) in Telegram, send `/newbot` and copy the token it gives you. Add the bot to a group (or send it a message), then open `https://api.telegram.org/bot<token>/getUpdates` in a browser: the `chat.id` field is your chat id. Group ids are negative, such as `-1001234567890`.
+
+</Step>
+<Step title="Set the variables">
 
 ```bash title=".env"
-TELEGRAM_BOT_TOKEN=123456:ABC...   # never logged
+TELEGRAM_BOT_TOKEN=123456:ABC-replace-me
 TELEGRAM_CHAT_ID=-1001234567890
-TELEGRAM_MIN_LEVEL=error           # debug, info, warn, error
-TELEGRAM_THREAD_ID=42              # optional forum topic
-TELEGRAM_LOG=true                  # false: no log forwarding, app.Telegram only for Send/Contact
-TELEGRAM_RATE_LIMIT=20             # optional cap on forwarded log records per minute (0: none)
-TELEGRAM_API_URL=https://api.telegram.org  # optional: self-hosted Bot API server or a fake; https outside development/test
+TELEGRAM_MIN_LEVEL=error
 ```
 
-```go
-app.Telegram.Contact(ctx, map[string]string{"name": in.Name, "message": in.Message}) // never filtered by level
-app.Telegram.Send(ctx, "<b>Deploy</b> finished")                                     // pre-formatted HTML
+Both `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` must be set. If either is missing, Telegram stays off and `app.Telegram` is `nil`.
 
-// In a queued job: deliver now and return the error so the job retries.
-err := app.Telegram.ContactSync(ctx, fields) // or SendSync; telegram.ErrDisabled when not configured
+</Step>
+<Step title="Log an error">
 
-// Only forward the records you mark (Filter sees log records, never Send/Contact).
+```go title="app/payments/charge.go"
+package payments
+
+import (
+	"context"
+	"log/slog"
+)
+
+// Charge reports a failed payment; the log line also reaches Telegram
+// because it is at the error level.
+func Charge(ctx context.Context, log *slog.Logger, orderID int) {
+	err := chargeCard(ctx, orderID)
+	if err != nil {
+		log.ErrorContext(ctx, "payment failed",
+			"order_id", orderID,
+			"err", err,
+		)
+	}
+}
+```
+
+Pass it `app.Log` (or `c.Log()` inside a handler). No other code is needed: `vukem.New` builds the handler and adds it to the app logger.
+
+</Step>
+<Step title="See the message">
+
+The chat receives an HTML message like this (app name from `APP_NAME`, environment from `APP_ENV`):
+
+```text
+🚨 ERROR — Shop (production)
+2026-10-16T12:00:00Z
+
+payment failed
+order_id: 42
+err: charge failed: card declined
+  caused by: card declined
+```
+
+</Step>
+</Steps>
+
+## How a record becomes a message
+
+`Handle` runs these checks in order; the first one that fails drops the record silently:
+
+1. **Enabled**: the handler is configured and the record level is at least `MinLevel`.
+2. **No loop**: the record is not being logged from inside `OnError`, and none of its attributes is an error that `OnError` received (see [Errors and OnError](#errors-and-onerror)).
+3. **Filter**: if `Filter` is set, it must return `true`.
+4. **Rate limit**: if `RateLimit` is set, the record must fit in the current window.
+5. **Format and queue**: the record becomes HTML and goes into the queue.
+
+The message format is fixed:
+
+| Part | Content |
+| --- | --- |
+| Header | level emoji and name in bold, ` — ` and the app name, the environment in italics |
+| Time | the record time in UTC, [RFC 3339](https://www.rfc-editor.org/rfc/rfc3339) (`2026-10-16T12:00:00Z`), in italics |
+| Body | the message, then one `key: value` line per attribute, inside a `<pre>` block |
+| Groups | flattened with dots: `slog.Group("user", "email", e)` prints `user.email: …` |
+| Errors | `err: <message>`, then one `caused by:` line per [wrapped error](https://go.dev/blog/go1.13-errors) |
+| Attributes from `With` | included: a logger made with `log.With("request_id", id)` adds that line too |
+
+Every piece of text is HTML-escaped, so a user who types `<script>` in a form cannot change how the message renders. Telegram allows 4096 characters per message (`telegram.MaxLength`); a longer body is cut and ends with `…`. The cut never splits the `<pre>` tag or an HTML entity such as `&amp;`.
+
+## Levels
+
+`slog` has four levels; the handler adds two of its own:
+
+| Level | Value | Emoji | `TELEGRAM_MIN_LEVEL` |
+| --- | --- | --- | --- |
+| `slog.LevelDebug` | -4 | 🐛 | `debug` |
+| `slog.LevelInfo` | 0 | ℹ️ | `info` (see the warning below) |
+| `telegram.LevelSuccess` | 2 | ✅ | `info+2` |
+| `slog.LevelWarn` | 4 | ⚠️ | `warn` |
+| `slog.LevelError` | 8 | 🚨 | `error` (default) |
+| `telegram.LevelFatal` | 12 | 💀 | `error+4` |
+
+Any other level prints 📝 and slog's own name, such as `WARN+3`. `TELEGRAM_MIN_LEVEL` is case-insensitive and accepts slog's offset syntax (`warn+2`). An unknown word stops the app at boot:
+
+```text
+vukem: TELEGRAM_MIN_LEVEL: slog: level string "LOUD": unknown name
+```
+
+Log the custom levels with [`Logger.Log`](https://pkg.go.dev/log/slog#Logger.Log), which takes any level:
+
+```go title="app/deploys/notify.go"
+app.Log.Log(ctx, telegram.LevelSuccess, "deploy finished",
+	"version", "v1.4.0",
+)
+```
+
+<Callout type="warning" title="info means error in v0.27.0">
+`MinLevel` zero is read as "not set" and replaced by error, and `slog.LevelInfo` is zero. So `TELEGRAM_MIN_LEVEL=info` (or `MinLevel: slog.LevelInfo`) forwards only errors. Use `debug`, or keep `MinLevel` at info by also setting `c.ChatIDs = map[slog.Level]string{}` in `vukem.WithTelegram`.
+</Callout>
+
+## Contact forms and notices
+
+`app.Telegram` is the same handler, exposed for messages that are not log records. These methods are never filtered by level, `Filter` or the rate limit.
+
+| Method | Sends | Waits? | Errors go to |
+| --- | --- | --- | --- |
+| `Contact(ctx, fields)` | a "📬 New contact" message with one `key: value` line per field, sorted by key, all escaped | no, queued | `OnError` |
+| `ContactSync(ctx, fields)` | the same | yes | the returned `error` |
+| `Send(ctx, html)` | your own HTML, as given | no, queued | `OnError` |
+| `SendSync(ctx, html)` | the same | yes | the returned `error` |
+
+All four go to the default chat (`ChatID`). The running example forwards the shop's contact form:
+
+```go title="routes/web.go"
+package routes
+
+import (
+	"net/http"
+
+	vukem "github.com/AlexGalhardo/vukem"
+	"github.com/AlexGalhardo/vukem/router"
+	"github.com/AlexGalhardo/vukem/web"
+)
+
+// Web registers the contact form.
+func Web(r *router.Router, app *vukem.App) error {
+	r.Post("/contact", func(c *web.Ctx) error {
+		// app.Telegram is nil when the TELEGRAM_* variables are missing.
+		if app.Telegram != nil {
+			app.Telegram.Contact(c.Context(), map[string]string{
+				"name":    c.FormValue("name"),
+				"email":   c.FormValue("email"),
+				"message": c.FormValue("message"),
+			})
+		}
+
+		return c.Redirect("/thanks")
+	})
+
+	return nil
+}
+```
+
+The chat shows:
+
+```text
+📬 New contact — Shop (production)
+
+email: ana@example.com
+message: Do you ship to Lisbon?
+name: Ana
+```
+
+`Send` posts HTML that you wrote, using [Telegram's HTML subset](https://core.telegram.org/bots/api#html-style) (`<b>`, `<i>`, `<code>`, `<pre>`, `<a href>`). Escape anything a user typed with [`html.EscapeString`](https://pkg.go.dev/html#EscapeString) first. `Send` cuts text over 4096 characters without looking at tags, so keep notices short.
+
+```go title="app/deploys/notify.go"
+app.Telegram.Send(ctx, "<b>Deploy</b> v1.4.0 finished")
+```
+
+### When you need to know it arrived
+
+`Contact` and `Send` return nothing: if Telegram is down, the error goes to `OnError` and your code moves on. In a [queued job](/docs/digging-deeper/queue) you usually want the opposite: fail the job so the queue retries it. `ContactSync` and `SendSync` skip the queue, send right away and return the error:
+
+```go title="app/jobs/contact.go"
+// ContactJob carries one contact form through the queue.
+type ContactJob struct {
+	Fields map[string]string
+}
+
+func (ContactJob) Kind() string { return "contact.telegram" }
+
+// HandleContact returns the job handler. A failed delivery returns an
+// error, so the queue retries the job.
+func HandleContact(
+	tg *telegram.Handler,
+) func(context.Context, ContactJob) error {
+	return func(ctx context.Context, j ContactJob) error {
+		return tg.ContactSync(ctx, j.Fields)
+	}
+}
+```
+
+Register it with `queue.Handle(HandleContact(app.Telegram))`.
+
+Each HTTP request is bounded by `Timeout` (5 seconds by default) and the whole call by `ctx`, including the wait before a retry. On a handler built without a token or chat, the sync methods return `telegram.ErrDisabled`; check it with [`errors.Is`](https://pkg.go.dev/errors#Is).
+
+## Filter and rate limit
+
+`MinLevel` is a blunt tool. `Filter` lets you choose records one by one. It receives the [`context.Context`](https://pkg.go.dev/context) and the `slog.Record`, and returns `true` to forward it. Set it with `vukem.WithTelegram`, which edits the config after the environment is read:
+
+```go title="bootstrap/app.go"
 vukem.WithTelegram(func(c *telegram.Config) {
-	c.Filter = func(_ context.Context, r slog.Record) bool { return r.Level >= telegram.LevelFatal }
-})
+	// Only records that carry an "alert" attribute reach the chat.
+	c.Filter = func(_ context.Context, r slog.Record) bool {
+		alert := false
+		r.Attrs(func(a slog.Attr) bool {
+			alert = a.Key == "alert"
+			return !alert
+		})
+		return alert
+	}
+}),
 ```
 
-Use the handler directly for per-level chats or custom error handling:
+`Filter` runs on the goroutine that logged, so keep it fast. If you keep `r` after the call, store `r.Clone()` (the [`slog.Record` docs](https://pkg.go.dev/log/slog#Record) explain why).
 
-```go
+A loop that fails 10,000 times would send 10,000 messages, and Telegram would block your bot. `TELEGRAM_RATE_LIMIT=20` forwards at most 20 log records per minute. The window is fixed: it starts with the first record and resets after one `RatePeriod` (one minute from the environment; any duration in code). Records over the cap are dropped, and `OnError` receives `telegram.ErrRateLimited` once per window. Contact and Send messages are never counted.
+
+In production, Vukem's [log deduplication](/docs/configuration) also sits in front of Telegram: a burst of the same error becomes one message plus a "repeated" summary.
+
+## Errors and OnError
+
+Queued sends cannot return an error to anyone, so the handler reports them to `OnError`. Without one, they are discarded.
+
+| Error | When |
+| --- | --- |
+| `telegram.ErrQueueFull` | the queue holds `QueueSize` messages (100) and a new one is dropped |
+| `telegram.ErrRateLimited` | `RateLimit` was reached; reported once per window |
+| `telegram: sendMessage 400: Bad Request: chat not found` | Telegram answered with a non-200 status; the text is Telegram's `description` |
+| `telegram: request failed: …` | the network failed or `Timeout` passed; `errors.Is(err, context.DeadlineExceeded)` still works |
+
+Telegram answers HTTP 429 when you send too fast, with a `retry_after` in seconds. The handler waits that long (at least 1 second, at most `MaxRetryAfter`, 10 seconds by default) and tries once more. Any other failure is not retried.
+
+You may log the error through the app logger, which also feeds this handler. That cannot loop: records logged while `OnError` runs, and records whose attributes hold an error `OnError` received, are never forwarded. `OnError` calls never overlap; a report that arrives while one runs is dropped.
+
+```go title="bootstrap/app.go"
+vukem.WithTelegram(func(c *telegram.Config) {
+	c.OnError = func(err error) {
+		// Safe: this record is not sent back to Telegram.
+		slog.Default().Warn("telegram delivery failed", "err", err)
+	}
+}),
+```
+
+## Shutdown
+
+`Close(ctx)` stops accepting messages and waits until the queue is empty or `ctx` ends. It returns `telegram: messages still queued: context deadline exceeded` when time runs out. `vukem.New` registers it with `app.OnShutdown`, so `app.Shutdown` flushes the queue for you. Messages logged after `Close` are dropped silently, and calling `Close` twice is safe.
+
+## Using the handler without vukem.New
+
+The package `github.com/AlexGalhardo/vukem/logging/telegram` works with any `slog` logger. You build the `Config` yourself, which also unlocks per-level chats:
+
+```go title="cmd/worker/main.go"
 tg := telegram.NewHandler(telegram.Config{
-	BotToken: token, ChatID: "-100", ChatIDs: map[slog.Level]string{telegram.LevelFatal: "-200"},
-	MinLevel: slog.LevelWarn, AppName: "Shop", Env: "production", Silent: true, OnError: report,
+	BotToken: config.NewSecret(os.Getenv("TELEGRAM_BOT_TOKEN")),
+	ChatID:   "-1001234567890",
+	// Fatal records go to the on-call chat instead.
+	ChatIDs: map[slog.Level]string{
+		telegram.LevelFatal: "-1009876543210",
+	},
+	MinLevel: slog.LevelWarn,
+	AppName:  "Shop worker",
+	Env:      "production",
+	Silent:   true,
+	OnError:  func(err error) { fmt.Fprintln(os.Stderr, err) },
 })
-defer tg.Close(ctx)
+defer tg.Close(context.Background())
+
+base := slog.NewTextHandler(os.Stderr, nil)
 log := slog.New(slog.NewMultiHandler(base, tg))
 ```
 
-| Feature | Detail |
-| --- | --- |
-| Levels | debug, info, warn, error plus `telegram.LevelSuccess` and `telegram.LevelFatal` |
-| Format | Telegram HTML: level emoji, app, environment, UTC time, then message and attributes (groups dotted, error chains as "caused by") in a `<pre>` block; all content escaped; truncated to 4096 characters without cutting tags or entities |
-| Reliability | bounded queue (drops and reports when full), per-request timeout, one retry after HTTP 429 honouring `retry_after` (capped), `OnError` (never reentrant; records logged from it or carrying its error are not forwarded, so it may log through the app logger), drained by `app.Shutdown`; `SendSync` / `ContactSync` skip the queue and return the error, bounded by the per-request timeout and ctx |
-| Log forwarding | on by default for records at `MinLevel`+; `TELEGRAM_LOG=false` turns it off; `Filter` and `RateLimit` (`TELEGRAM_RATE_LIMIT` per minute) narrow it; `vukem.WithTelegram` edits the config in code |
-| Security | the token is a `config.Secret`, redacted from errors; `vukem about` shows only on/off; disabled when token or chat is missing; `TELEGRAM_API_URL` (the token travels in its path) must be https outside development and test, and a bad value fails boot without echoing it |
+`ChatIDs` matches the exact level, not "this level and above". A record whose level has no entry goes to `ChatID`. With `ChatIDs` set, `MinLevel` is not replaced by the error default, so set it yourself.
 
-Ported from the maintainer's TypeScript [telegram-logger](https://github.com/AlexGalhardo/telegram-logger).
+## Configuration
+
+Environment variables, read by `vukem.New`:
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `TELEGRAM_BOT_TOKEN` | — | Bot token from BotFather; required, held as a `config.Secret` |
+| `TELEGRAM_CHAT_ID` | — | Default chat; required |
+| `TELEGRAM_MIN_LEVEL` | `error` | Lowest level forwarded: `debug`, `info`, `warn`, `error`, with offsets such as `error+4` |
+| `TELEGRAM_THREAD_ID` | `0` | Forum topic id inside a group (`message_thread_id`) |
+| `TELEGRAM_LOG` | `true` | `false` keeps `app.Telegram` for `Send` / `Contact` but forwards no log records |
+| `TELEGRAM_RATE_LIMIT` | `0` | Log records per minute; `0` means no cap; negative fails boot |
+| `TELEGRAM_API_URL` | `https://api.telegram.org` | Bot API base URL: a [self-hosted Bot API server](https://github.com/tdlib/telegram-bot-api) or a fake in tests |
+
+`telegram.Config` fields (set them in `vukem.WithTelegram` or `telegram.NewHandler`):
+
+| Field | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `BotToken` | `config.Secret` | — | Token; the handler is off without it |
+| `ChatID` | `string` | — | Default chat for logs, `Send` and `Contact` |
+| `ChatIDs` | `map[slog.Level]string` | `nil` | Chat per exact level for log records |
+| `MinLevel` | `slog.Level` | `slog.LevelError` | Lowest forwarded level |
+| `Filter` | `func(context.Context, slog.Record) bool` | `nil` | Forward only records it returns `true` for |
+| `RateLimit` | `int` | `0` | Max log records per `RatePeriod` |
+| `RatePeriod` | `time.Duration` | 1 minute | Rate-limit window |
+| `AppName` | `string` | `APP_NAME` | Shown in the header |
+| `Env` | `string` | `APP_ENV` | Shown in the header |
+| `ThreadID` | `int` | `0` | Forum topic |
+| `Silent` | `bool` | `false` | Deliver without a notification sound |
+| `QueueSize` | `int` | `100` | Pending messages before new ones are dropped |
+| `Timeout` | `time.Duration` | 5 seconds | Limit per HTTP request |
+| `MaxRetryAfter` | `time.Duration` | 10 seconds | Longest wait before the one 429 retry |
+| `OnError` | `func(error)` | no-op | Receives delivery failures |
+| `BaseURL` | `string` | `https://api.telegram.org` | Bot API base URL; set in code, it skips the https check |
+| `HTTP` | `*http.Client` | client with `Timeout` | HTTP client used for every request |
+
+Every message is sent as `sendMessage` with `parse_mode: "HTML"` and link previews off.
+
+## Security
+
+- The token is a [`config.Secret`](/docs/configuration): `fmt`, JSON and `slog` print `[redacted]`. It travels in the request path (`/bot<token>/sendMessage`), so transport errors, which include the URL, are rewritten with `[redacted]` before they reach `OnError` or the sync methods' return value.
+- `TELEGRAM_API_URL` must use `https` outside the `development` and `test` environments, and must not hold credentials, a query or a fragment. A bad value stops the boot, and the error never echoes the value:
+
+```text
+vukem: TELEGRAM_API_URL must use https (http only in development and test)
+```
+
+- `vukem about` prints only `on (token [redacted])`, `on (token [redacted], log forwarding off)` or `off`.
+- All log content and contact fields are HTML-escaped. Only `Send` and `SendSync` take raw HTML, so escaping there is your job.
+- Log records can hold personal data. Forward only what the chat's members may see, using `MinLevel` and `Filter`.
+
+The full list of defaults is in the [security overview](/docs/security/overview).
+
+## Testing
+
+Point `TELEGRAM_API_URL` at an [`httptest.Server`](https://pkg.go.dev/net/http/httptest#Server) that plays the Bot API. Plain `http` is allowed because tests run in the `test` environment, so no message leaves your machine.
+
+```go title="routes/contact_test.go"
+package routes_test
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"example.com/shop/bootstrap"
+	"github.com/AlexGalhardo/vukem/vukemtest"
+)
+
+func TestContactReachesTelegram(t *testing.T) {
+	sent := make(chan string, 1)
+	api := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			var body struct {
+				Text string `json:"text"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			sent <- body.Text
+			_, _ = w.Write([]byte(`{"ok":true}`))
+		},
+	))
+	defer api.Close()
+
+	app := vukemtest.New(t, bootstrap.New, vukemtest.Options{
+		Env: map[string]string{
+			"TELEGRAM_BOT_TOKEN": "123:TEST",
+			"TELEGRAM_CHAT_ID":   "-100",
+			"TELEGRAM_API_URL":   api.URL,
+		},
+	})
+
+	err := app.Telegram.ContactSync(t.Context(), map[string]string{
+		"name": "Ana",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got := <-sent; got == "" {
+		t.Fatal("no message sent")
+	}
+}
+```
+
+For queued messages (`Contact`, logs), call `app.Telegram.Close(ctx)` before you assert: it waits until the queue is sent. Without the `TELEGRAM_*` variables, test apps keep Telegram off.
+
+## Common mistakes
+
+**Calling `app.Telegram` when it is not configured.** It is `nil`, so any method call panics.
+
+```go
+// Wrong: panics in development, where TELEGRAM_* is not set.
+app.Telegram.Send(ctx, "hello")
+
+// Right
+if app.Telegram != nil {
+	app.Telegram.Send(ctx, "hello")
+}
+```
+
+**Expecting a queued send to fail the job.** `Contact` returns nothing, so the job succeeds even when Telegram is down. Use `ContactSync` and return its error.
+
+**Pasting user input into `Send`.** `Send(ctx, "<b>"+name+"</b>")` breaks when `name` contains `<`, and Telegram answers `telegram: sendMessage 400: Bad Request: can't parse entities…`. Escape it with `html.EscapeString(name)`, or use `Contact`, which escapes for you.
+
+**A plain `http` URL in production.** `TELEGRAM_API_URL=http://bot-api.internal` fails boot outside development and test. Put the self-hosted server behind TLS.
+
+## Next steps
+
+<CardGroup cols="2">
+<Card title="Configuration" href="/docs/configuration" icon="layers">
+`LOG_LEVEL`, `LOG_FORMAT` and log deduplication.
+</Card>
+<Card title="Queues" href="/docs/digging-deeper/queue" icon="zap">
+Retry Telegram deliveries from a job with `ContactSync`.
+</Card>
+<Card title="OpenTelemetry" href="/docs/digging-deeper/opentelemetry" icon="route">
+Traces and metrics for the full picture.
+</Card>
+<Card title="Security overview" href="/docs/security/overview" icon="shield">
+How secrets and outbound URLs are protected.
+</Card>
+</CardGroup>
+
+Package reference: [pkg.go.dev/github.com/AlexGalhardo/vukem/logging/telegram](https://pkg.go.dev/github.com/AlexGalhardo/vukem/logging/telegram).

@@ -1,78 +1,541 @@
 ---
 title: Localization
-description: JSON translation catalogs with CLDR plurals, locale resolution from the request, a t view function and translated validation messages.
+description: Translate your app with JSON catalogs, CLDR plurals, a locale picked from each request, a t view function and translated validation messages.
 ---
 
-Package `i18n` (stdlib only) loads one JSON catalog per locale from `resources/lang/<locale>.json` (`en.json`, `pt-BR.json`; `pt_BR.json` is accepted). Keys are nested objects or dotted names; values are strings with `{name}` placeholders, or plural objects.
+Localization (often shortened to <Term tip="'i18n' is short for 'internationalization': an i, 18 letters, then an n.">i18n</Term>) lets the same app speak several languages. You write every sentence once per language in a JSON file, and Vukem picks the right file for each visitor. The `i18n` package uses only the Go standard library.
+
+You will learn:
+
+- how to write translation catalogs, with placeholders and plurals
+- how to turn translations on with `vukem.WithTranslations`
+- how to translate in handlers, views and Inertia components
+- how Vukem chooses the language of each request, and how to change that
+- how validation and framework error messages get translated
+- how to test a page in another language
+
+## The idea
+
+Think of a phrase book for travellers. Each page has the same sentence in English, Portuguese and Spanish, and each sentence has a short label. In Vukem, the phrase book is a folder with one JSON file per language. The label is a **key** such as `posts.created`, and the sentence is the **message**.
+
+| Word | Meaning | Example |
+| --- | --- | --- |
+| <Term tip="A language tag such as en, pt-BR or zh-Hant-TW.">Locale</Term> | The language (and maybe region) to speak | `en`, `pt-BR` |
+| Catalog | One JSON file with every message of one locale | `resources/lang/pt-BR.json` |
+| Key | The label of a message | `posts.created` |
+| Placeholder | A hole in the message filled at run time | `{name}` |
+| Bundle | All catalogs loaded in memory (`*i18n.Bundle`) | `app.I18n` |
+
+When a key is missing in `pt-BR`, Vukem looks for it in `pt`, then in the default locale (`en`). This is the **fallback chain**. A missing key never crashes your app: you get the key back as text.
+
+Locale tags follow [BCP 47](https://www.rfc-editor.org/info/bcp47), the same tags browsers send in the [`Accept-Language`](https://developer.mozilla.org/docs/Web/HTTP/Headers/Accept-Language) header.
+
+## Quick start
+
+The running example on this page is a blog that greets the reader and counts posts.
+
+<Steps>
+<Step title="Write the English catalog">
 
 ```json title="resources/lang/en.json"
 {
   "welcome": "Hello, {name}!",
   "posts": {
     "created": "Post created.",
-    "count": { "zero": "No posts", "one": "{count} post", "other": "{count} posts" }
+    "count": {
+      "zero": "No posts yet",
+      "one": "{count} post",
+      "other": "{count} posts"
+    }
   }
 }
 ```
 
+</Step>
+<Step title="Write the Brazilian Portuguese catalog">
+
+```json title="resources/lang/pt-BR.json"
+{
+  "welcome": "Olá, {name}!",
+  "posts": {
+    "created": "Post criado.",
+    "count": {
+      "zero": "Nenhum post ainda",
+      "one": "{count} post",
+      "other": "{count} posts"
+    }
+  }
+}
+```
+
+</Step>
+<Step title="Turn translations on">
+
 ```go title="bootstrap/app.go"
 app, err := vukem.New(
-	vukem.WithTranslations(os.DirFS("resources/lang")), // app.I18n; APP_LOCALE is the default (en)
+	// Loads every <locale>.json into app.I18n at boot.
+	vukem.WithTranslations(os.DirFS("resources/lang")),
 	vukem.WithViews(resources.Views()),
-	vukem.WithRoutes(routes), // routes call vukem.DefaultMiddleware
+	vukem.WithRoutes(routes.Web),
 )
 ```
 
-`WithTranslations` loads the bundle at boot (bad JSON or file names fail `New`), gives views the `t` and `locale` functions and makes `vukem.DefaultMiddleware` install the locale middleware after sessions.
+Your route file must call `vukem.DefaultMiddleware(app, r)`, as the starters do. With `WithTranslations`, it adds the locale middleware.
 
-<Callout type="info">
-Starters do not ship catalogs yet: add `resources/lang/en.json` and pass `WithTranslations`.
-</Callout>
+</Step>
+<Step title="Use it in a view">
 
-## Translating
+```html title="resources/views/posts/index.html"
+<html lang="{{locale}}">
+<h1>{{t "welcome" "name" .User.Name}}</h1>
+<p>{{t "posts.count" "count" (len .Posts)}}</p>
+</html>
+```
 
-```go
-c.Flash("status", i18n.T(c.Context(), "posts.created")) // the request's locale
-b.T("pt-BR", "posts.count", "count", 3)                 // a Bundle directly
+</Step>
+<Step title="Try it">
+
+```bash
+curl -s "http://localhost:8080/posts?lang=pt-BR" | grep h1
 ```
 
 ```html
-<html lang="{{locale}}">
-<p>{{t "welcome" "name" .User.Name}} · {{t "posts.count" "count" (len .Posts)}}</p>
+<h1>Olá, Ana!</h1>
 ```
 
-- **Fallback chain:** the locale, its shorter forms, then the default (`pt-BR` → `pt` → `en`). A missing key returns the key and calls `Options.OnMissing` when set; translating never panics.
-- **Arguments:** key/value pairs (`"name", "Ana"`) or one `map[string]any`; unknown placeholders stay as written. Output is plain text, so `html/template` escapes it.
-- **Plurals:** an object keyed by CLDR categories (`zero`, `one`, `two`, `few`, `many`, `other`; `other` is required), chosen by the numeric `count` argument. Rules cover most European languages, Arabic, Hebrew and the CJK/South-East Asian languages; others use the English rule. An explicit `zero` form wins for 0 in every language. `i18n.PluralCategory(locale, n)` exposes the rules.
-- **Vue / React / Svelte (Inertia):** `inertia.I18n()` shares the catalog with your components; see [Translations in Inertia](/docs/frontend/inertia#translations-i18n).
+</Step>
+</Steps>
 
-## Locale resolution
+<Callout type="info">
+The starters do not ship catalogs yet. Create `resources/lang/en.json` yourself and add `WithTranslations`.
+</Callout>
 
-`mw, err := i18n.Middleware(bundle, i18n.MiddlewareConfig{})` builds a middleware that picks the locale, in order, from:
+## Writing catalogs
 
-1. `?lang=`
-2. the `lang` cookie
-3. the session value `locale` (when sessions run first)
-4. `Accept-Language` (q-values, at most 16 entries)
-5. the default locale
+A catalog is a JSON object. Each value is one of three things:
 
-Candidates must be valid tags matching an available catalog (exact, shorter form, then same language); invalid input is ignored. The middleware stores the bundle and locale in the context (`i18n.Locale`, `i18n.WithLocale`, `i18n.BundleFrom`), sets `Content-Language`, and adds `Vary: Cookie` when the cookie or session was consulted and `Vary: Accept-Language` when the header was (a locale from the query needs no `Vary`: the URL is the cache key). Rename or disable (`"-"`) the sources with `Query`, `Cookie` and `SessionKey`. To remember a user's choice, set the cookie or session value yourself.
+1. **A string**: a plain message, maybe with placeholders.
+2. **A nested object**: a group. Its keys join with a dot, so `posts` → `created` becomes `posts.created`. You may also write `"posts.created"` as one flat key; both forms mean the same key.
+3. **A plural object**: an object whose keys are all plural categories (see below), with `other` present.
 
-`Order` picks the sources and their order (a source left out is off), and `Locales` limits the locales a request can select (it must include the default, which stays the fallback). `cfg.Validate(bundle)` reports unknown or repeated sources and locales without a catalog. An invalid config fails closed: `i18n.Middleware` returns the error (`i18n.NewMiddleware` is a deprecated alias that `go fix` rewrites). `vukem.DefaultMiddlewareWith` takes the config as `MiddlewareOptions.I18n` (and `APIMiddlewareWith` as `APIMiddlewareOptions.I18n`) and returns the error at boot:
+Any other JSON value (a number, `true`, an array) fails the boot:
+
+```text
+i18n: en.json: i18n: key "a": unsupported value of type float64 (want string or object)
+```
+
+### File names
+
+`i18n.Load` (which `WithTranslations` calls) reads the `.json` files at the **root** of the folder. Sub-folders and files with other extensions are skipped.
+
+- The file name, minus `.json`, must be a valid locale tag. `notes.json` fails the boot with `i18n: notes.json: invalid locale`.
+- Names are normalized by `i18n.Canonical`: `pt_BR.json`, `pt-br.json` and `pt-BR.json` all become `pt-BR`. Two files for the same locale fail with `duplicate catalog for pt-BR`.
+- Valid tags are language (2–3 letters), an optional script (4 letters) and an optional region (2 letters or 3 digits): `en`, `pt-BR`, `zh-Hant-TW`, `es-419`. Variants and extensions such as `en-US-u-ca-buddhist` are rejected.
+
+You may also pass an [`embed.FS`](https://pkg.go.dev/embed) so the catalogs live inside your binary. The folder must then be the root of the file system: use [`fs.Sub`](https://pkg.go.dev/io/fs#Sub) when the embed starts higher up.
+
+### Placeholders
+
+A placeholder is a name in braces, such as `{name}`. Names start with a letter or `_`, then letters, digits or `_`. A placeholder with no matching argument stays as written, so a typo shows up on the page instead of disappearing:
 
 ```go
-err := vukem.DefaultMiddlewareWith(app, r, vukem.MiddlewareOptions{
-	I18n: &i18n.MiddlewareConfig{
-		Order:   []i18n.Source{i18n.SourceQuery, i18n.SourceHeader}, // no cookie, no session
-		Locales: []string{"en", "pt-BR"},
-	},
-})
+b.T("en", "welcome", "nam", "Ana")
+// Hello, {name}!
 ```
+
+Values are printed with [`fmt.Sprint`](https://pkg.go.dev/fmt#Sprint), so numbers, strings and anything with a `String()` method work.
+
+### Plurals
+
+Languages count differently. English has "1 post" and "2 posts". Russian has three forms, Arabic has six. The [Unicode CLDR](https://cldr.unicode.org/index/cldr-spec/plural-rules) names these forms with six **categories**: `zero`, `one`, `two`, `few`, `many` and `other`.
+
+A plural object lists the forms your language needs; `other` is required. Vukem picks the form with the numeric `count` argument:
+
+```go
+b.T("en", "posts.count", "count", 0)  // No posts yet
+b.T("en", "posts.count", "count", 1)  // 1 post
+b.T("en", "posts.count", "count", 7)  // 7 posts
+```
+
+What happens under the hood:
+
+1. Without a numeric `count`, you get the `other` form.
+2. If `count` is 0 and the message has a `zero` form, you get it. This works in every language, even where CLDR has no `zero` category.
+3. Otherwise `i18n.PluralCategory(locale, count)` picks the category. If the message lacks that form, you get `other`.
+
+`count` may be any Go integer or float type, a [`json.Number`](https://pkg.go.dev/encoding/json#Number) or a numeric string.
+
+| Categories used | Languages |
+| --- | --- |
+| `one`, `other` (English rule) | en, de, nl, sv, da, nb, fi, et, el, hu, tr, bg, and every language not listed here |
+| `one`, `many` (exact millions), `other` | es, it, ca, pt-PT |
+| `one` for 0 and 1, `many` (exact millions), `other` | pt (so pt-BR), fr |
+| `one`, `few`, `many` | ru, uk, be, pl, cs, sk (Czech and Slovak use `many` for fractions) |
+| `zero`, `one`, `two`, `few`, `many`, `other` | ar |
+| `one`, `two`, `other` | he |
+| `other` only | ja, zh, ko, th, vi, id, ms, lo, my, km |
+
+"Exact millions" means 1,000,000, 2,000,000 and so on, as in Spanish "1 millón de usuarios". Negative numbers use the rule of their absolute value.
+
+```go
+i18n.PluralCategory("pt", 0)    // "one": Brazilian Portuguese says "0 post"
+i18n.PluralCategory("pt-PT", 0) // "other"
+i18n.PluralCategory("ru", 5)    // "many"
+```
+
+<Callout type="warning" title="A plural object needs other">
+An object such as `{"one": "1 post"}` without `other` is not a plural. Vukem reads it as a group, so you get the key `posts.count.one` and `posts.count` stays missing.
+</Callout>
+
+`count` is a `float64` inside, so "1.0" written with a visible decimal is treated as 1.
+
+## Translating in Go code
+
+Inside a handler, call `i18n.T` with the request context. It uses the bundle and locale the middleware stored there:
+
+```go title="app/controllers/posts.go"
+func (h *Posts) Store(c *web.Ctx) error {
+	// ... save the post ...
+	msg := i18n.T(c.Context(), "posts.created")
+	if err := c.Flash("status", msg); err != nil {
+		return err
+	}
+	return c.RedirectRoute("posts.index")
+}
+```
+
+Arguments come as key/value pairs or as one `map[string]any`:
+
+```go
+i18n.T(ctx, "welcome", "name", "Ana")
+i18n.T(ctx, "welcome", map[string]any{"name": "Ana"})
+```
+
+When the context has no locale (a queued job, a CLI command), `i18n.T` uses the bundle's default locale. When the context has no bundle at all, it returns the key. To translate outside a request, call the bundle directly or put the values in a context yourself:
+
+```go
+// Direct: you choose the locale.
+app.I18n.T("pt-BR", "posts.count", "count", 3)
+// 3 posts
+
+// For code that only takes a context.
+ctx = i18n.WithLocale(i18n.WithBundle(ctx, app.I18n), "pt-BR")
+```
+
+[`context.Context`](https://pkg.go.dev/context) is how Go carries request-scoped values through function calls; `i18n.Locale(ctx)` and `i18n.BundleFrom(ctx)` read them back.
+
+### The fallback chain in detail
+
+`T` tries the locale, then its shorter forms, then the default locale and its shorter forms:
+
+| Requested | Lookup order (default `en`) |
+| --- | --- |
+| `pt-BR` | `pt-BR` → `pt` → `en` |
+| `zh-Hant-TW` | `zh-Hant-TW` → `zh-Hant` → `zh` → `en` |
+| `fr` (no catalog) | `fr` → `en` |
+| `not a tag` | `en` |
+
+`T` does not jump sideways: `T("pt", ...)` never reads `pt-BR.json`. The middleware does that sideways match when it picks the request locale (see below), so inside a request you always get a locale that has a catalog.
+
+A key found nowhere returns the key itself (`"posts.missing"`) and calls `Options.OnMissing` when you set it. Use that hook to log missing keys during development.
+
+### Other Bundle methods
+
+| Method | What it does |
+| --- | --- |
+| `i18n.Load(fsys, opts)` | Builds a bundle from the JSON files at the root of `fsys` |
+| `i18n.New(opts)` + `b.Add(locale, map)` | Builds a bundle in code; `Add` merges, later keys win |
+| `b.T(locale, key, args...)` | Translates with fallback; never panics |
+| `b.Lookup(locale, key)` | Returns the raw template (the `other` form for plurals) and `true`, or `false` |
+| `b.Has(locale, key)` | Reports whether that exact catalog has the key (no fallback) |
+| `b.Match(tag)` | Returns the best available locale for a tag, or `false` |
+| `b.Locales()` | Lists the locales that have a catalog, sorted |
+| `b.Default()` | Returns the default locale |
+| `b.Messages(locale, prefixes...)` | Returns the resolved catalog as a fresh map, optionally only keys with those prefixes |
+| `b.Translator(locale)` | Returns an `errs.Translator` for keyed framework errors |
+| `b.LocalizeIssues(locale, issues)` | Translates validation issues from `validation.*` keys |
+| `b.AddBuiltin()` | Adds the framework's own English and Portuguese messages |
+
+A `Bundle` is safe for concurrent use by many requests. `i18n.New` with an invalid `Default` returns an error wrapping `i18n.ErrInvalidLocale`.
+
+## Translating in views
+
+`WithTranslations` gives every template two functions:
+
+- `t` translates a key in the request locale, with the same arguments as `i18n.T`.
+- `locale` returns the request locale, or the default locale outside a request.
+
+```html title="resources/views/layouts/app.html"
+<html lang="{{locale}}">
+<p>{{t "posts.count" "count" (len .Posts)}}</p>
+<p>{{t "welcome" "name" .User.Name}}</p>
+</html>
+```
+
+Messages are plain text. [`html/template`](https://pkg.go.dev/html/template) escapes them like any other value, so a translator cannot inject HTML by mistake. Do not put HTML tags in your catalogs: they are shown as text.
+
+## Translating in Vue, React and Svelte
+
+With Inertia, `inertia.I18n()` shares the locale, the list of locales and the catalog with your components. Pass key prefixes (`inertia.I18n("posts.", "nav.")`) to keep server-only messages out of the page. See [Inertia i18n](/docs/frontend/inertia-i18n).
+
+## How the request locale is chosen
+
+The locale middleware runs on every request. It walks a list of **sources** and stops at the first one that names a usable locale:
+
+<Steps>
+<Step title="Query string">
+`?lang=pt-BR` on the URL. Good for links such as "Ver em português".
+</Step>
+<Step title="Cookie">
+The `lang` cookie, if your app set one.
+</Step>
+<Step title="Session">
+The session value `locale`. This source works only when the session middleware runs before the locale middleware, as in `DefaultMiddleware`.
+</Step>
+<Step title="Accept-Language">
+The browser's preferred languages, ordered by their `q` weight. Entries with `q=0`, a bad `q`, a bad tag and `*` are dropped. Only the first 16 entries are read, which bounds the work an attacker can cause.
+</Step>
+<Step title="Default">
+When nothing matches, the bundle's default locale (`APP_LOCALE`, `en` when unset).
+</Step>
+</Steps>
+
+### Matching a candidate
+
+Each candidate goes through `Bundle.Match`, which tries, in order:
+
+1. the tag itself (`pt-BR`);
+2. its shorter forms (`pt-Hant-BR` → `pt-Hant` → `pt`);
+3. any catalog of the same language (`pt-PT` → `pt-BR`).
+
+With catalogs `en` and `pt-BR`, a browser that asks for `pt-PT;q=0.9, en;q=0.8` gets `pt-BR`. A value that is not a valid tag, such as `?lang=../../etc`, is ignored, and the next source is tried. So a locale that reaches your code is always well formed and always has a catalog (or is the default).
+
+### What the middleware does with the result
+
+- Stores the bundle and the locale in the request context (`i18n.T`, `i18n.Locale`, the view functions).
+- Translates the validation messages of `web.Parse` and `Bind` and the keyed framework errors (see below).
+- Sets the `Content-Language` response header, for example `Content-Language: pt-BR`.
+- Adds `Vary: Cookie` when it looked at the cookie or the session, and `Vary: Accept-Language` when it looked at the header. These tell caches and CDNs that the same URL can answer in different languages. A locale from the query string needs no `Vary`, because the URL itself differs.
+
+### Remembering the visitor's choice
+
+The middleware only reads the cookie and the session; it never writes them. To remember a choice from a language switcher, store it yourself:
+
+```go title="app/controllers/locale.go"
+func SwitchLocale(c *web.Ctx) error {
+	b := i18n.BundleFrom(c.Context())
+	locale, ok := b.Match(c.FormValue("locale"))
+	if !ok {
+		locale = b.Default()
+	}
+	if s := c.Session(); s != nil {
+		s.Put("locale", locale)
+	}
+	return c.Back("/")
+}
+```
+
+Validating with `Match` first keeps a junk value out of the session; the middleware would ignore it anyway.
+
+### Customizing the sources
+
+`i18n.MiddlewareConfig` changes the names, order and allowed locales:
+
+| Field | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `Query` | `string` | `"lang"` | Query parameter name; `"-"` turns the source off |
+| `Cookie` | `string` | `"lang"` | Cookie name; `"-"` turns the source off |
+| `SessionKey` | `string` | `"locale"` | Session key; `"-"` turns the source off |
+| `Order` | `[]i18n.Source` | query, cookie, session, header | Sources to read, first match wins; a source left out is off |
+| `Locales` | `[]string` | every catalog | Locales a request may select; must include the default |
+
+The sources are `i18n.SourceQuery`, `i18n.SourceCookie`, `i18n.SourceSession` and `i18n.SourceHeader` (`Accept-Language`).
+
+Pass the config through `vukem.DefaultMiddlewareWith`:
+
+```go title="routes/web.go"
+cfg := &i18n.MiddlewareConfig{
+	// No cookie, no session: only ?lang= and the browser.
+	Order: []i18n.Source{
+		i18n.SourceQuery,
+		i18n.SourceHeader,
+	},
+	Locales: []string{"en", "pt-BR"},
+}
+err := vukem.DefaultMiddlewareWith(app, r, vukem.MiddlewareOptions{
+	I18n: cfg,
+})
+if err != nil {
+	return err
+}
+```
+
+For JSON APIs, `vukem.APIMiddlewareWith` takes the same config as `APIMiddlewareOptions.I18n`. When you pass nil there, it reads only the query and `Accept-Language`, because API clients usually send no cookies or sessions.
+
+### Configuration errors fail the boot
+
+`MiddlewareConfig.Validate(bundle)` checks the config. `i18n.Middleware` returns its error (since v0.26), and `DefaultMiddlewareWith` returns it from your route function, so the app does not start with a broken config:
+
+| Mistake | Error |
+| --- | --- |
+| `Order: []i18n.Source{}` (empty, not nil) | `i18n: middleware Order is empty (nil uses the default order)` |
+| An unknown source | `i18n: unknown locale source "cookies"` |
+| A source listed twice | `i18n: locale source "query" listed twice` |
+| A bad tag in `Locales` | `i18n: invalid locale "x"` |
+| A locale with no catalog | `i18n: locale "fr" has no catalog` |
+| `Locales` without the default | `i18n: Locales must include the default locale "en"` |
+| An `I18n` config without `WithTranslations` | `vukem: i18n middleware options have no effect without WithTranslations` |
+
+Through `DefaultMiddlewareWith`, the `i18n:` errors gain a `vukem: i18n: ` prefix.
+
+### Using the middleware by hand
+
+Outside `DefaultMiddleware` (a plain `http.Handler`, a test), build it yourself:
+
+```go
+mw, err := i18n.Middleware(app.I18n, i18n.MiddlewareConfig{})
+if err != nil {
+	return err
+}
+handler = mw(handler)
+```
+
+`i18n.NewMiddleware` is a deprecated alias with the same signature. Run `go fix ./...` and it is rewritten to `i18n.Middleware`.
 
 ## Validation messages
 
-The middleware also translates `web.Parse`/`Bind` validation messages from `validation.*` keys in your catalogs, so [validation](/docs/basics/validation) errors follow the request's locale.
+The middleware also translates the 422 messages of `web.Parse`, `Bind`, `ParseQuery` and `ParseParams`. Put the templates under `validation.` in your catalog. `{field}` is the field name, and `validation.attributes` gives fields a readable name:
+
+```json title="resources/lang/pt-BR.json"
+{
+  "validation": {
+    "required": "O campo {field} é obrigatório.",
+    "too_small": {
+      "string": "O campo {field} deve ter pelo menos {min} caracteres."
+    },
+    "attributes": { "title": "título" }
+  }
+}
+```
+
+An issue without a translation keeps its English message. `web.ParseInput` has no request, so it stays in English. The [validation page](/docs/basics/validation) lists every key and placeholder.
 
 ## Framework messages
 
-Errors from `auth`, `social` and `orm.Unique`/`Exists` carry message keys and keep their English text as the fallback: `auth.failed`, `auth.unauthenticated`, `auth.unverified`, `auth.token_ability` (`{ability}`), `social.unknown_provider`, `social.state`, `social.denied`, `social.failed`, `validation.unique` and `validation.exists` (`{field}`). `WithTranslations` adds built-in English and Brazilian Portuguese catalogs for them (`Bundle.AddBuiltin`) to the catalogs your app already has (`en`; `pt-BR` and `pt`); a key in your own catalog always wins. Your own errors can do the same with `errs.NewKey(status, key, fallback, params)` or `errs.Translate(ctx, key, fallback, params)`.
+Some errors from Vukem itself carry a message key and keep their English text as the fallback:
+
+| Key | English text |
+| --- | --- |
+| `auth.failed` | These credentials do not match our records. |
+| `auth.unauthenticated` | Unauthenticated. |
+| `auth.unverified` | Your email address is not verified. |
+| `auth.token_ability` | This token cannot `{ability}`. |
+| `social.unknown_provider` | Unknown sign-in provider. |
+| `social.state` | The sign-in attempt expired or is invalid. Please try again. |
+| `social.denied` | Sign-in was cancelled. |
+| `social.failed` | Sign-in failed. Please try again. |
+| `validation.unique` | The `{field}` has already been taken. |
+| `validation.exists` | The selected `{field}` is invalid. |
+
+`WithTranslations` calls `Bundle.AddBuiltin`, which ships these keys in English and Brazilian Portuguese. Under the hood:
+
+- The built-in messages only fill catalogs you already have. The `pt-BR` messages fill your `pt-BR` and `pt` catalogs, never `pt-PT`. No new catalog is created, so `Locales` and `Match` stay the same.
+- A key in your own catalog always wins over the built-in one.
+
+Your own errors may use the same mechanism:
+
+```go
+// A 403 whose message follows the request locale.
+return errs.NewKey(http.StatusForbidden, "posts.locked",
+	"This post is locked.", nil)
+
+// A translated string with an English fallback.
+msg := errs.Translate(ctx, "posts.locked", "This post is locked.", nil)
+```
+
+A key the catalogs do not know keeps the fallback text and does not call `OnMissing`.
+
+## Configuration
+
+| Name | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `APP_LOCALE` | env | `en` | Default locale: the end of every fallback chain and the answer when no source matches |
+| `vukem.WithTranslations(fsys)` | option | off | Loads the catalogs, adds built-in messages, enables `t` / `locale` and the middleware |
+| `i18n.Options.Default` | `string` | `"en"` | Default locale when you build a bundle yourself |
+| `i18n.Options.OnMissing` | `func(locale, key string)` | nil | Called by `T` for a key found in no catalog of the chain |
+| `MiddlewareOptions.I18n` | `*i18n.MiddlewareConfig` | nil (defaults) | Locale sources for `DefaultMiddlewareWith` |
+| `APIMiddlewareOptions.I18n` | `*i18n.MiddlewareConfig` | nil (query + header) | Locale sources for `APIMiddlewareWith` |
+
+An invalid `APP_LOCALE` (such as `english!`) fails `vukem.New` with `i18n.ErrInvalidLocale`.
+
+## Security
+
+- Request input never reaches a file path or a header unchecked: every candidate goes through `Canonical` and `Match`, so only tags with a catalog are used.
+- `Accept-Language` parsing stops after 16 entries.
+- Translations are plain text and escaped by `html/template`. If you put a translated string into HTML by another route (`template.HTML`, a JavaScript string), escaping is your job.
+- Treat catalogs as code: anyone who edits them changes what users read. See [docs/security.md](https://github.com/AlexGalhardo/vukem/blob/main/docs/security.md).
+
+## Testing
+
+Send the locale the way a browser would, and assert the text and headers:
+
+```go title="tests/locale_test.go"
+func TestPostsInPortuguese(t *testing.T) {
+	app := vukemtest.New(t, bootstrap.New)
+
+	app.Client(t).
+		WithHeader("Accept-Language", "pt-BR,pt;q=0.9").
+		Get("/posts").
+		AssertOK().
+		AssertHeader("Content-Language", "pt-BR").
+		AssertSee("Nenhum post ainda")
+}
+
+func TestLangQueryWins(t *testing.T) {
+	app := vukemtest.New(t, bootstrap.New)
+
+	app.Client(t).
+		WithHeader("Accept-Language", "pt-BR").
+		Get("/posts?lang=en").
+		AssertSee("No posts yet")
+}
+```
+
+`WithCookie("lang", "pt-BR")` and `WithSession(map[string]any{"locale": "pt-BR"})` test the other sources. For catalog-only checks, build a bundle with `i18n.New` and `Add`, then call `T` without any HTTP at all.
+
+## Common mistakes
+
+**A plural without `other`.** Wrong:
+
+```json
+{ "posts": { "count": { "one": "{count} post" } } }
+```
+
+The page shows `posts.count`, because the object became the key `posts.count.one`. Right: add `"other": "{count} posts"`.
+
+**Expecting `T` to find a sibling region.** `app.I18n.T("pt", "welcome")` with only `pt-BR.json` returns the English text. Right: let the middleware pick the locale, or call `b.Match("pt")` first.
+
+**Naming the number something else.** Wrong: `{{t "posts.count" "n" 3}}` always shows the `other` form and leaves `{count}` unfilled. Right: the argument that picks the plural form must be named `count`.
+
+**A stray JSON file.** Putting `README.json` next to the catalogs fails the boot with `i18n: README.json: invalid locale`. Keep only `<locale>.json` files at the root of the folder.
+
+**An empty Order.** `Order: []i18n.Source{}` is an error, not "use the defaults". Leave `Order` nil for the default order.
+
+## Next steps
+
+<CardGroup cols="2">
+<Card title="Validation" href="/docs/basics/validation" icon="shield">
+Every `validation.*` key and its placeholders.
+</Card>
+<Card title="Inertia i18n" href="/docs/frontend/inertia-i18n" icon="layers">
+Share catalogs with Vue, React and Svelte.
+</Card>
+<Card title="Sessions" href="/docs/basics/sessions" icon="lock">
+Store the visitor's language choice.
+</Card>
+<Card title="Views" href="/docs/basics/views" icon="code">
+Templates, layouts and the built-in functions.
+</Card>
+</CardGroup>
+
+Package reference: [pkg.go.dev/github.com/AlexGalhardo/vukem/i18n](https://pkg.go.dev/github.com/AlexGalhardo/vukem/i18n).

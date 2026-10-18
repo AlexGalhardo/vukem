@@ -1,128 +1,689 @@
 ---
 title: File uploads
-description: Streaming multipart uploads with per-route limits, content sniffing and virus scanning, resumable tus uploads and direct-to-S3 presigned uploads.
+description: Stream multipart uploads to a disk with per-route limits, content sniffing, image-size and virus checks, resumable tus uploads, direct-to-S3 presigned uploads and thumbnails.
 ---
 
-Package `upload` (stdlib only) goes beyond [`storage.PutUploaded`](/docs/digging-deeper/storage#uploads): it never buffers a whole file.
+Letting people send you files is one of the riskiest things a web app does. A file can be huge, it can pretend to be a photo while being an HTML page with a script, it can be a tiny image that explodes into gigabytes when decoded, or it can carry a virus. The `upload` package receives files **without ever holding a whole file in memory** and checks each one before it becomes visible. It also covers uploads that resume after a broken connection and uploads that go straight from the browser to S3.
 
-```go
-rules := upload.Images(5 << 20) // MaxFileSize and Types are required: zero Rules reject everything
-rules.MaxFiles, rules.Dir = 3, "photos"
-rules.Scanner = upload.ClamAV("127.0.0.1:3310") // optional
+You will learn:
 
-form, err := upload.Receive(c, disk, rules) // form.Values, form.Files[i].Path/Name/Type/Size/SHA256
+- how `upload.Receive` streams a form's files to a [disk](/docs/digging-deeper/storage) part by part;
+- every field of `upload.Rules` and what happens when a rule is broken;
+- how Vukem decides the real type of a file, and why the file name is never trusted;
+- how to add image-dimension checks and ClamAV virus scanning;
+- how to accept resumable uploads (tus) and direct-to-S3 uploads;
+- how to make thumbnails and how to test all of it.
+
+## The idea
+
+Imagine a post office. A letter arrives; the clerk does not open your door and empty the whole truck into your living room. They take one parcel at a time, weigh it, check that the label matches what is inside, put it on the right shelf with a new tracking number, and send it back if anything is wrong. `upload` is that clerk.
+
+| Tool | Use it when | Where the bytes go |
+| --- | --- | --- |
+| `storage.PutUploaded` | one small file from a normal form (an avatar) | through `c.FormFile`, which buffers the form ([Storage](/docs/digging-deeper/storage)) |
+| `upload.Receive` | any multipart form, large or many files | streamed from the request to the disk |
+| `upload.Save` | a file from any other reader (an import, a finished tus upload) | streamed from the reader to the disk |
+| `upload.Tus` | very large files on flaky connections (videos) | appended to a partial file, resumable |
+| `upload.Direct` + `upload.Verify` | files that should never touch your server | from the browser straight to S3 |
+
+Two Go ideas carry this page. A **stream** is an [`io.Reader`](https://pkg.go.dev/io#Reader): you read a bit, handle it, read the next bit, so memory stays small however big the file is. A **multipart form** is how browsers send files: the body is split into parts, one per field, as described in [`mime/multipart`](https://pkg.go.dev/mime/multipart).
+
+The running example on this page is a **blog photo gallery**: authors attach photos to a post, upload videos that may take minutes, and, in production, send big photos straight to an S3 bucket.
+
+## Quick start
+
+<Steps>
+<Step title="Describe what the route accepts">
+
+```go title="app/controllers/photo_controller.go"
+package controllers
+
+import (
+	"net/http"
+
+	"github.com/AlexGalhardo/vukem/storage"
+	"github.com/AlexGalhardo/vukem/upload"
+	"github.com/AlexGalhardo/vukem/web"
+)
+
+// PhotoController receives the photos of a blog post.
+type PhotoController struct {
+	disk storage.Disk
+}
+
+// NewPhotoController stores photos on disk.
+func NewPhotoController(disk storage.Disk) *PhotoController {
+	return &PhotoController{disk: disk}
+}
+
+// photoRules accept up to five photos of 5 MiB each per request.
+func photoRules() upload.Rules {
+	rules := upload.Images(5 << 20)
+	rules.MaxFiles = 5
+	rules.Dir = "photos"
+
+	return rules
+}
 ```
 
-## Streaming multipart
+`upload.Images(5 << 20)` allows JPEG, PNG, GIF and WebP files up to 5 MiB (`5 << 20` is 5 × 2²⁰ bytes, see [shift operators](https://go.dev/ref/spec#Arithmetic_operators)).
 
-- `Receive` reads `r.MultipartReader()` part by part and streams each file to the `storage.Disk`: a 64 MiB upload allocates about 100 KiB.
-- `Rules` bound the file size, the whole request (`MaxSize`, default `MaxFiles*MaxFileSize + 1 MiB`, which replaces the router-wide body limit for that route), the file count, and field count and size. Sizes fail with 413; types, extensions and count with 422. On any error every file already written is deleted.
-- **Type checks:** `http.DetectContentType` on the first 512 bytes must be in `Types`, and the client's extension must be one known for that type (`upload.Extensions("image/jpeg")` → `.jpg`, `.jpeg`). The client's `Content-Type` is ignored. Stored names are random with the canonical extension; the sanitized client name (`upload.SanitizeName`) is metadata only.
-- `upload.Save(ctx, disk, rules, field, filename, r)` applies the same checks to any reader (finished tus uploads, imports).
-- **Image dimensions:** a 50 KB file can declare a 100 000 × 100 000 canvas that takes gigabytes to decode (a *decompression bomb*). `upload.Images` sets `MaxPixels` to 25 megapixels: after storing a JPEG, PNG, GIF or WebP, only its header is read, and the file is deleted with 422 when the declared width × height is larger, or when the header cannot be read. Raise it for photo apps (`rules.MaxPixels = 50_000_000`); `0` turns the check off. Direct uploads get the same check in `Verify`.
+</Step>
+<Step title="Receive the form">
 
-<Callout type="warning">
-Nothing may read the body before `Receive`: do not call `c.Input()` or `c.FormFile()` first. `middleware.MethodOverride` leaves multipart bodies unread (multipart forms put `_method` in the query string).
+```go title="app/controllers/photo_controller.go"
+// Store streams the photos to the disk and returns what was stored.
+func (pc *PhotoController) Store(c *web.Ctx) error {
+	form, err := upload.Receive(c, pc.disk, photoRules())
+	if err != nil {
+		return err
+	}
+
+	// Text fields of the same form are in form.Values.
+	_ = form.Values.Get("caption")
+
+	return c.JSON(http.StatusCreated, form)
+}
+```
+
+</Step>
+<Step title="Register the route">
+
+```go title="routes/web.go"
+disk, err := storage.NewLocal("storage/app/public", "/storage")
+if err != nil {
+	return err
+}
+
+app.OnShutdown(func(context.Context) error { return disk.Close() })
+
+photos := controllers.NewPhotoController(disk)
+r.Post("/photos", photos.Store).Name("photos.store")
+```
+
+</Step>
+<Step title="Send a photo">
+
+```bash
+curl -F caption=Beach -F "photo=@Beach Day.png" \
+  -H "Accept: application/json" http://localhost:8080/photos
+```
+
+```json
+{
+  "Values": {"caption": ["Beach"]},
+  "Files": [{
+    "field": "photo",
+    "name": "Beach Day.png",
+    "path": "photos/rbayr32gvibjm2tzmzuh6a26ns.png",
+    "type": "image/png",
+    "size": 39,
+    "sha256": "783e80861992beffceddd79eda19ef6ba30594ac1d35b25ddda771dd5b0933b9"
+  }]
+}
+```
+
+The stored file has a random name. The name the browser sent survives only as `name`, for display.
+
+</Step>
+</Steps>
+
+## Rules
+
+`upload.Rules` says what a route accepts. `Receive`, `Save`, `Presign`, `Direct` and `Verify` all take one.
+
+| Field | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `MaxFileSize` | `int64` | — (required) | Largest file, in bytes |
+| `Types` | `[]string` | — (required) | Allowed MIME types, compared with the type **detected from the content** |
+| `MaxFiles` | `int` | `1` | Files accepted per request |
+| `MaxSize` | `int64` | `MaxFiles × MaxFileSize + 1 MiB` | Cap on the whole request body. It **replaces** the router's 10 MiB default for this request |
+| `Extensions` | `[]string` | — | Optional extra filter on file name extensions (`".jpg"`); case and the leading dot do not matter |
+| `MaxPixels` | `int64` | `0` (`Images`: 25 000 000) | Largest width × height of JPEG, PNG, GIF and WebP files; `0` skips the check |
+| `Dir` | `string` | `""` | Folder on the disk where files are stored |
+| `MaxFields` | `int` | `32` | Non-file fields accepted |
+| `MaxFieldSize` | `int64` | `64 KiB` | Largest non-file field |
+| `Scanner` | `upload.Scanner` | `nil` | Virus scanner run before a file becomes visible |
+| `QuarantineDir` | `string` | `quarantine` | Folder where files wait for the scanner |
+
+A zero `Rules` value rejects everything: without `MaxFileSize` and at least one type, every call fails with `upload: Rules need MaxFileSize > 0 and at least one type`. This is <Term tip="When the code is not told what is allowed, it allows nothing, instead of everything.">fail closed</Term>. `Dir` and `QuarantineDir` must be valid disk paths (no `..`, no leading `/`), or the call fails with `upload: directory "…": storage: invalid path`. The defaults are exported as `upload.DefaultMaxFiles`, `DefaultMaxFields`, `DefaultMaxFieldSize` and `DefaultQuarantineDir`.
+
+## Receiving a form
+
+`upload.Receive(c, disk, rules)` reads the request body with [`Request.MultipartReader`](https://pkg.go.dev/net/http#Request.MultipartReader), one part at a time. A 64 MiB upload allocates about 100 KiB.
+
+Under the hood:
+
+1. It caps the body at `rules.MaxSize` with `web.LimitBody`, replacing the router-wide limit for this request.
+2. It refuses a body that is not `multipart/form-data` (415) or a form that something already parsed (500, see the warning below).
+3. For each part:
+   - a part without a field name is skipped;
+   - a **text field** is read up to `MaxFieldSize` and added to `form.Values`;
+   - a **file** beyond `MaxFiles` stops the request with 422;
+   - otherwise the file is checked and streamed to the disk (next section).
+4. If **anything** fails, every file this request already wrote is deleted, so a rejected request leaves nothing behind.
+
+Each stored file is described by an `upload.File`:
+
+| Field | JSON | Meaning |
+| --- | --- | --- |
+| `Field` | `field` | The form field name |
+| `Name` | `name` | The client's file name, cleaned by `upload.SanitizeName`. Metadata only |
+| `Path` | `path` | Where the file is on the disk (random name) |
+| `Type` | `type` | The MIME type detected from the content |
+| `Size` | `size` | Size in bytes |
+| `SHA256` | `sha256` | Hex [SHA-256](https://pkg.go.dev/crypto/sha256) of the content, for deduplication or integrity checks |
+
+<Callout type="warning" title="Nothing may read the body first">
+`Receive` must be the first thing that reads the body. Do not call `c.Input()`, `c.FormFile()` or `c.FormValue()` before it: the body would be consumed or buffered. `middleware.MethodOverride` leaves multipart bodies unread (multipart forms carry `_method` in the query string).
 </Callout>
 
-### Virus scanning
+### Errors
 
-With `Rules.Scanner`, files are written to `QuarantineDir/.<random>` (dot-named, so `storage.Handler` never serves them), scanned, then copied to `Dir`. `ErrInfected` deletes the file and answers 422; a scanner error deletes it and answers 503 (fail closed). `upload.ClamAV(addr)` speaks clamd's `INSTREAM` over TCP with per-operation timeouts.
+| Status | Message | When |
+| --- | --- | --- |
+| 413 | "The file is too large." (`upload.ErrFileTooLarge`) | A file is bigger than `MaxFileSize` |
+| 413 | "A form field is too large." (`upload.ErrFieldTooLarge`) | A text field is bigger than `MaxFieldSize` |
+| 413 | "Too many form fields." (`upload.ErrTooManyFields`) | More than `MaxFields` fields, or more than `MaxFields + MaxFiles` parts |
+| 413 | "Request Entity Too Large" | The whole body is bigger than `MaxSize` |
+| 415 | "The request must be multipart/form-data." (`upload.ErrNotMultipart`) | Wrong `Content-Type` |
+| 422 | "This file type is not allowed." | Detected type not in `Types` |
+| 422 | "The file extension does not match its content." | `photo.jpg` that is really a PNG |
+| 422 | "This file extension is not allowed." | Extension not in `Extensions` |
+| 422 | "No more than N files may be uploaded." | More than `MaxFiles` files |
+| 422 | "The image could not be read." / "The image dimensions are too large." | `MaxPixels` check |
+| 422 | "The file was rejected by the virus scanner." | The scanner found malware |
+| 503 | "The file could not be checked. Try again later." | The scanner could not run (with `Retry-After: 60`) |
+| 400 | "Bad Request" | The client hung up or sent a broken body |
+
+422 errors are validation errors keyed by the form field, handled like any other [validation](/docs/basics/validation) error. A JSON client gets them under `errors.photo`:
+
+```json
+{
+  "title": "Validation failed",
+  "status": 422,
+  "errors": {"photo": ["The file extension does not match its content."]}
+}
+```
+
+## How a file is checked
+
+For every file, `Receive` (and `Save`) do this, in order:
+
+1. **Sniff the content.** Read the first 512 bytes and detect the type with [`http.DetectContentType`](https://pkg.go.dev/net/http#DetectContentType). The browser's `Content-Type` is ignored: it is whatever the client chooses to send.
+2. **Check the type.** The detected type must be in `Types`.
+3. **Check the extension.** The extension of the client's file name must be one of those known for the detected type, and one of `Extensions` when you set it.
+4. **Pick the stored name.** A random lower-case name plus the type's canonical extension (the first in the table below), under `Dir`. A type with no known extension gets your extension, or `.bin`.
+5. **Stream and count.** Copy the file to the disk while hashing it and counting bytes. More than `MaxFileSize` stops the write with 413, even if the client lied about the size.
+6. **Check the image size** (`MaxPixels`), then **scan** (`Scanner`), both described below.
+
+| Detected type | Accepted extensions |
+| --- | --- |
+| `image/jpeg` | `.jpg`, `.jpeg` |
+| `image/png` | `.png` |
+| `image/gif` | `.gif` |
+| `image/webp` | `.webp` |
+| `image/bmp`, `image/x-icon` | `.bmp`, `.ico` |
+| `application/pdf` | `.pdf` |
+| `application/zip` | `.zip`, `.docx`, `.xlsx`, `.pptx`, `.odt`, `.ods`, `.odp` |
+| `application/x-gzip` | `.gz`, `.tgz` |
+| `text/plain` | `.txt`, `.csv`, `.md`, `.json`, `.log` |
+| `text/html`, `text/xml` | `.html`, `.htm`, `.xml` |
+| `audio/mpeg`, `audio/wave`, `application/ogg` | `.mp3`, `.wav`, `.ogg`, `.oga` |
+| `video/mp4`, `video/webm`, `video/avi` | `.mp4`, `.m4v`, `.m4a`, `.webm`, `.avi` |
+| `font/woff`, `font/woff2`, `font/ttf`, `application/vnd.ms-fontobject` | `.woff`, `.woff2`, `.ttf`, `.eot` |
+
+`upload.Extensions("image/jpeg")` returns `[".jpg" ".jpeg"]`. Office files (`.docx`, `.xlsx`) are ZIP archives, so they are detected as `application/zip`: allow that type to accept them. Types are compared without parameters, so `text/plain; charset=utf-8` matches `text/plain`.
+
+`upload.SanitizeName(name)` makes the client's name safe to **show**: it keeps the last path element, removes control characters, bidi and zero-width characters (which can make `exe.png` look like `png.exe`), quotes and leading dots, cuts it to 200 characters, and returns `file` when nothing is left. Never use it as a storage path; that is what `Path` is for.
+
+## Image dimensions
+
+A 50 KB PNG can declare a canvas of 100 000 × 100 000 pixels. Decoding it to make a thumbnail would need about 40 GB of memory. This is a <Term tip="A small file built to expand into an enormous amount of data when it is decompressed or decoded, to exhaust a server's memory.">decompression bomb</Term>.
+
+With `MaxPixels` set (`upload.Images` uses `upload.DefaultMaxPixels`, 25 megapixels, about 100 MB once decoded), every stored JPEG, PNG, GIF and WebP is reopened and **only its header** is read. The file is deleted with 422 when width × height is larger than `MaxPixels`, or when the header cannot be read. Raise it for photo sites (`rules.MaxPixels = 50_000_000`); `0` turns the check off. Other types are not checked.
+
+## Virus scanning
+
+Set `Rules.Scanner` to scan every file before anyone can see it:
+
+```go
+rules := photoRules()
+rules.Scanner = upload.ClamAV("127.0.0.1:3310")
+```
+
+With a scanner, the flow changes:
+
+1. The file is written to `QuarantineDir/.<random>`. The name starts with a dot, so `storage.Handler` never serves it.
+2. The scanner reads it.
+3. Clean: the file is copied to its final path under `Dir` and the quarantined copy is deleted.
+4. Infected (an error wrapping `upload.ErrInfected`): the file is deleted and the request fails with 422.
+5. Any other scanner error (clamd is down, a timeout): the file is deleted and the request fails with 503 and `Retry-After: 60`. A scan that could not run never lets a file through.
+
+`upload.ClamAV(addr)` returns an `*upload.ClamAVScanner` that streams the file to [clamd](https://docs.clamav.net/manual/Usage/Scanning.html#clamd) with its `INSTREAM` command over TCP:
+
+| Field | Default | What it does |
+| --- | --- | --- |
+| `Addr` | — | clamd's `host:port`, such as `127.0.0.1:3310` |
+| `Timeout` | 30s | Bounds dialing and each read or write; a cancelled context also stops the scan |
+| `ChunkSize` | 64 KiB | Size of each `INSTREAM` chunk; keep it below clamd's `StreamMaxLength` |
+
+An infected file returns an `*upload.InfectedError` whose `Signature` names what clamd found (`Eicar-Signature`). You may plug in any other scanner by implementing the interface:
+
+```go
+type Scanner interface {
+	Scan(ctx context.Context, r io.Reader) error
+}
+```
+
+## Saving from any reader
+
+`upload.Save(ctx, disk, rules, field, filename, src)` runs the same checks as `Receive` on any reader and returns one `upload.File`. `field` names the input in validation errors; `filename` is the untrusted name whose extension is checked. Use it for imports, files fetched from a URL, or finished tus uploads (next section). Unlike `Receive`, it does not delete files from earlier calls when one fails.
 
 ## Resumable uploads (tus)
 
-`upload.Tus` implements tus 1.0 core with the creation, expiration and termination extensions:
+A 2 GB video over a phone connection will break halfway. With a normal form the user starts again from zero. [tus](https://tus.io/protocols/resumable-upload) is an open protocol for uploads that **resume** where they stopped. `upload.Tus` implements tus 1.0 core with the creation, expiration and termination extensions, so client libraries such as [tus-js-client](https://github.com/tus/tus-js-client) and Uppy work with it.
 
-```go
+```go title="routes/uploads.go"
+// videoRules accept one MP4 or WebM video up to 2 GiB.
+func videoRules() upload.Rules {
+	return upload.Rules{
+		MaxFileSize: 2 << 30,
+		Types:       []string{"video/mp4", "video/webm"},
+		Dir:         "videos",
+	}
+}
+
 tus, err := upload.Tus(upload.TusConfig{
-	Dir: "storage/app/tus", BasePath: "/uploads/tus/", MaxSize: 2 << 30,
-	Authorize: func(r *http.Request) error { /* session or token check */ return nil },
-	OnComplete: func(ctx context.Context, info upload.TusInfo, open func() (io.ReadCloser, error)) error {
+	Dir:       "storage/app/tus",
+	BasePath:  "/uploads/tus/",
+	MaxSize:   2 << 30,
+	Authorize: signedIn,
+	OnComplete: func(
+		ctx context.Context,
+		info upload.TusInfo,
+		open func() (io.ReadCloser, error),
+	) error {
 		rc, err := open()
 		if err != nil {
 			return err
 		}
 		defer rc.Close()
-		_, err = upload.Save(ctx, disk, rules, "file", info.Filename(), rc)
+
+		// Save checks the content and moves it to the disk.
+		_, err = upload.Save(
+			ctx, disk, videoRules(), "file", info.Filename(), rc,
+		)
+
 		return err
 	},
 })
-r.Handle("/uploads/tus/", tus)
+if err != nil {
+	return err
+}
+
 app.OnShutdown(func(context.Context) error { return tus.Close() })
+
+r.Handle("/uploads/tus/", tus)
 ```
 
-- `POST` checks `Upload-Length` and `Upload-Metadata` and answers 201 with a random `Location`; `HEAD` returns the offset; `PATCH` needs `Tus-Resumable: 1.0.0`, `Content-Type: application/offset+octet-stream` and the current `Upload-Offset`, and appends the body as it streams. An interrupted request keeps what arrived. Concurrent `PATCH`es on one upload get 423.
-- The upload id is the capability, so `Authorize` is required (boot error when nil; return `nil` explicitly to allow everyone).
-- Abandoned uploads expire after `Expiry` (24h); schedule `tus.Cleanup(ctx)` to delete them. When the last byte arrives `OnComplete` runs; its error goes to the client (422 for validation) and the partial data is deleted either way. Validation means `*errs.ValidationError`, `z.FieldError` or `z.Issues` (the first message is the response text; a plain `Refine` error reads "The value field is invalid."); an `Authorize` error keeps its 4xx status (422 for z errors, anything else 403) but never its text.
+`upload.Tus` fails at boot when `Dir`, `BasePath`, `MaxSize`, `Authorize` or `OnComplete` is missing, so an upload endpoint is never open by accident.
+
+| Field | Default | What it does |
+| --- | --- | --- |
+| `Dir` | — (required) | Folder for partial uploads, opened with `os.Root` and created if needed. Keep it outside any served folder |
+| `BasePath` | — (required) | Where the handler is mounted; a trailing `/` is added. Upload URLs are `BasePath + id` |
+| `MaxSize` | — (required) | Largest `Upload-Length` accepted |
+| `Authorize` | — (required) | Runs before every request except `OPTIONS`. Return `nil` explicitly to allow everyone |
+| `OnComplete` | — (required) | Receives the finished upload; `open` reads its bytes (close it before returning) |
+| `Expiry` | 24h | How long an unfinished upload is kept |
+| `Now` | `time.Now` | The clock, for tests |
+
+### The protocol, request by request
+
+| Request | Vukem checks | Answer |
+| --- | --- | --- |
+| `OPTIONS` | nothing (no auth) | 204 with `Tus-Version: 1.0.0`, `Tus-Max-Size`, `Tus-Extension: creation,expiration,termination` |
+| `POST BasePath` | `Upload-Length` (≤ `MaxSize`, else 413; missing, 400), `Upload-Metadata` (≤ 4 KiB, ≤ 32 pairs, else 400); `Upload-Defer-Length` is not supported (400) | 201, `Location: BasePath + <26-character id>`, `Upload-Expires` |
+| `HEAD BasePath + id` | the upload exists and has not expired (else 404) | 200 with `Upload-Offset`, `Upload-Length`, `Upload-Expires`, `Upload-Metadata`, `Cache-Control: no-store` |
+| `PATCH BasePath + id` | `Content-Type: application/offset+octet-stream` (else 415), `Upload-Offset` equals the stored offset (else 409), no more bytes than remain (else 413), no other `PATCH` running on it (else 423) | 204 with the new `Upload-Offset` |
+| `DELETE BasePath + id` | the upload exists | 204, data deleted |
+
+Every request except `OPTIONS` must send `Tus-Resumable: 1.0.0`, or it gets 412. An `Authorize` error answers with its own status when it is a 4xx (403 otherwise), but never with its text.
+
+`PATCH` appends the body to the partial file **while it streams**. If the connection breaks, the bytes that arrived stay; the client asks `HEAD` for the offset and continues from there:
+
+```text
+POST  /uploads/tus/     Upload-Length: 39
+  → 201 Location: /uploads/tus/risaw34…
+PATCH /uploads/tus/ris… Upload-Offset: 0
+  → 204 Upload-Offset: 10    (connection lost after 10 bytes)
+HEAD  /uploads/tus/ris…
+  → 200 Upload-Offset: 10
+PATCH /uploads/tus/ris… Upload-Offset: 10
+  → 204 Upload-Offset: 39    (last byte: OnComplete runs)
+```
+
+### When the last byte arrives
+
+`OnComplete` runs inside the last `PATCH`. Whatever it returns, the partial data is deleted afterwards.
+
+- `nil`: the client gets 204.
+- A validation error (`*errs.ValidationError`, a `z.FieldError` or `z.Issues`): the client gets 422 and the first message as the body, such as "The file extension does not match its content.". A plain `Refine` error reads "The value field is invalid.".
+- An `*errs.HTTPError`: its status and its client-safe text.
+- Any other error: 500 "Internal Server Error".
+
+`info.Filename()` returns the `filename` metadata the client sent. It is untrusted: pass it to `Save`, which checks its extension and sanitizes it. `info.Metadata` holds every metadata pair; `ID`, `Length`, `Created` and `Expires` describe the upload.
+
+### Cleaning up abandoned uploads
+
+An upload nobody finishes expires after `Expiry`; requests on it answer 404. Its data stays on disk until `tus.Cleanup(ctx)` deletes it. Schedule it:
+
+```go title="cmd/app/main.go"
+vukem.WithSchedule(func(s *schedule.Schedule, app *vukem.App) {
+	s.Func("uploads:tus-cleanup", func(ctx context.Context) error {
+		_, err := tus.Cleanup(ctx)
+		return err
+	}).Hourly()
+})
+```
+
+`Cleanup` returns how many uploads it removed. It also removes orphaned data files older than `Expiry` and skips uploads that a `PATCH` is writing right now. See [Scheduler](/docs/digging-deeper/scheduler).
 
 ## Direct-to-S3 uploads
 
-Browsers can upload straight to the bucket. `upload.Direct` takes any `upload.Presigner`:
+Big files cost your server bandwidth and time. With direct uploads the browser sends the file **straight to the bucket**, and your server only signs a permission slip and checks the result.
+
+```text
+1. Browser → POST /photos/presign {"filename","content_type","size"}
+2. Server  → checks the plan, answers {"key","url","method","headers"}
+3. Browser → PUT url (to S3), with the headers
+4. Browser → POST /photos/confirm {"key"}
+5. Server  → upload.Verify reads the object, deletes it if it breaks the rules
+```
+
+### The presigner
+
+`upload.Direct` needs an `upload.Presigner`:
 
 ```go
 type Presigner interface {
-	PresignPut(ctx context.Context, key, contentType string, maxSize int64, ttl time.Duration) (url string, headers http.Header, err error)
+	PresignPut(
+		ctx context.Context,
+		key, contentType string,
+		maxSize int64,
+		ttl time.Duration,
+	) (url string, headers http.Header, err error)
 }
-
-direct, err := upload.Direct(upload.DirectConfig{Presigner: presigner, Rules: rules, Authorize: authorize})
-r.Handle("/uploads/presign", direct)
-
-// later, when the client reports the upload done:
-file, err := upload.Verify(ctx, disk, key, rules)
 ```
 
-<Callout type="info">
-The [S3 disk](/docs/digging-deeper/storage#s3) does not implement `upload.Presigner` itself. Wrap `disk.PresignPutWith(key, ttl, s3.PresignPutOptions{ContentType: contentType, ContentLength: maxSize})` and return `Content-Type` in `headers`, so the bucket rejects any other type or size. Despite its name, `Direct` passes the client's declared `size` (already checked against `Rules.MaxFileSize`) as `maxSize`. A signed `Content-Length` is an exact size, not a ceiling: signing `Rules.MaxFileSize` instead would reject every smaller file with 403, and the client must upload exactly the size it declared. Plain `PresignPut(key, ttl)` signs only the `host` header.
-</Callout>
+The [S3 disk](/docs/digging-deeper/storage) does not implement it directly. Wrap it, signing the type and the size, so S3 itself rejects anything else:
 
-`Direct` answers `POST {"filename","content_type","size"}` with `{"key","url","method":"PUT","headers","expires_at"}` after checking the declared type, extension and size, under a random key in `Rules.Dir` (TTL 15 minutes, at most 1 hour). The declared type cannot be trusted, so `upload.Verify` sniffs the stored object and deletes it when it breaks the rules.
+```go title="app/files/presigner.go"
+// S3Presigner lets upload.Direct hand out S3 upload URLs.
+type S3Presigner struct {
+	Disk *s3.Disk
+}
 
-## Thumbnails (`contrib/imaging`)
+// PresignPut signs the exact type and size the client declared.
+func (p S3Presigner) PresignPut(
+	_ context.Context,
+	key, contentType string,
+	size int64,
+	ttl time.Duration,
+) (string, http.Header, error) {
+	url, err := p.Disk.PresignPutWith(key, ttl, s3.PresignPutOptions{
+		ContentType:   contentType,
+		ContentLength: size,
+	})
+	if err != nil {
+		return "", nil, err
+	}
 
-Product photos, avatars and galleries need smaller copies. The optional module `contrib/imaging` makes them:
+	// The browser must send this header, or S3 answers 403.
+	return url, http.Header{"Content-Type": {contentType}}, nil
+}
+```
+
+Despite its name, the `maxSize` argument receives the **size the client declared** (already checked against `Rules.MaxFileSize`). That is exactly what a signed `Content-Length` needs: it is an exact size, so signing `MaxFileSize` would reject every smaller file with 403. The client must then upload exactly the size it declared. Plain `disk.PresignPut(key, ttl)` signs only the host, so it would accept any type and size.
+
+### The two endpoints
+
+```go title="routes/web.go"
+direct, err := upload.Direct(upload.DirectConfig{
+	Presigner: files.S3Presigner{Disk: bucket},
+	Rules:     photoRules(),
+	Authorize: signedIn,
+})
+if err != nil {
+	return err
+}
+
+r.Handle("POST /photos/presign", direct)
+r.Post("/photos/confirm", photos.Confirm)
+```
+
+`upload.Direct(cfg)` fails at boot without `Presigner` or `Authorize`, or with unusable `Rules`. For each request the handler:
+
+1. answers 405 (with `Allow: POST`) for any other method;
+2. runs `Authorize`; a 5xx error becomes 403;
+3. reads at most 4 KiB of JSON with exactly `filename`, `content_type` and `size` (unknown fields or bad JSON: 400 "Send filename, content_type and size as JSON.");
+4. calls `upload.Presign`: `size` must be positive ("The file size is required.") and at most `MaxFileSize` (413); the declared type must be allowed and match the extension (422);
+5. answers with a fresh random key under `Rules.Dir` and `Cache-Control: no-store`.
+
+```json
+{
+  "key": "photos/zubr7pjsganyuvzsbmrbtw7ewj.png",
+  "url": "https://blog-files.s3.us-east-1.amazonaws.com/photos/…",
+  "method": "PUT",
+  "headers": {"Content-Type": "image/png"},
+  "expires_at": "2026-10-17T21:52:20Z"
+}
+```
+
+`DirectConfig.TTL` sets how long the URL works: 15 minutes by default (`upload.DefaultPresignTTL`), at most one hour. You may also call `upload.Presign(ctx, presigner, rules, filename, contentType, size, ttl)` from your own handler.
+
+### Verifying the upload
+
+The browser chose the type it declared, so nothing has been checked yet. When it reports the upload done, call `upload.Verify`. Here the controller also holds the S3 disk in a `bucket *s3.Disk` field:
+
+```go title="app/controllers/photo_controller.go"
+type confirmInput struct {
+	Key string `json:"key"`
+}
+
+// Confirm checks a finished direct upload against the photo rules.
+func (pc *PhotoController) Confirm(c *web.Ctx) error {
+	var in confirmInput
+	if err := c.BindJSON(&in); err != nil {
+		return err
+	}
+
+	file, err := upload.Verify(c.Context(), pc.bucket, in.Key, photoRules())
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, file)
+}
+```
+
+`Verify` first checks that the key looks like one `Presign` could have issued for these rules (inside `Dir`, a random 26-character name, a known extension); otherwise it answers 400 "The upload key is invalid." without touching the disk. Then it reads the object, sniffs its type, checks the extension, the size and `MaxPixels`, and **deletes the object** when any check fails. It does not run `Rules.Scanner`.
+
+## Thumbnails
+
+Galleries need small copies of each photo. The optional module `contrib/imaging` makes them, so the core does not depend on `golang.org/x/image`:
 
 ```bash
 go get github.com/AlexGalhardo/vukem/contrib/imaging
 ```
 
-```go
-form, err := upload.Receive(c, disk, upload.Images(10<<20))
-if err != nil {
-	return err
-}
-
+```go title="app/controllers/photo_controller.go"
 photo := form.Files[0]
 
-// One size:
-thumb, err := imaging.Thumbnail(c.Context(), disk, photo.Path, "products/"+id+"/thumb",
-	imaging.Options{MaxWidth: 400, MaxHeight: 400})
-// thumb.Path = "products/<id>/thumb.jpg", thumb.Width, thumb.Height
+// One size, stored at photos/thumbs/<id>.jpg (or .png).
+thumb, err := imaging.Thumbnail(
+	c.Context(), pc.disk, photo.Path, "photos/thumbs/"+id,
+	imaging.Options{MaxWidth: 400, MaxHeight: 400},
+)
 
-// Several sizes from one decode:
-sizes, err := imaging.Thumbnails(c.Context(), disk, photo.Path, "products/"+id, map[string]imaging.Options{
-	"sm": {MaxWidth: 320, MaxHeight: 320},
-	"lg": {MaxWidth: 1200, MaxHeight: 1200, Quality: 88},
-})
-// sizes["sm"].Path = "products/<id>-sm.jpg"
+// Several sizes from one decode, at <dst>-<name>.jpg.
+sizes, err := imaging.Thumbnails(
+	c.Context(), pc.disk, photo.Path, "photos/"+id,
+	map[string]imaging.Options{
+		"sm": {MaxWidth: 320, MaxHeight: 320},
+		"lg": {MaxWidth: 1200, MaxHeight: 1200, Quality: 88},
+	},
+)
+// sizes["sm"].Path == "photos/<id>-sm.jpg"
 ```
 
 What it does, step by step:
 
 1. Reads the file from the disk (at most `MaxBytes`, 25 MiB by default) and picks the decoder from the **content** (JPEG, PNG, GIF, WebP), never the file name.
-2. Reads only the header and refuses images that declare more than `MaxPixels` (`upload.DefaultMaxPixels`, 25 megapixels) **before** decoding: a decompression bomb never gets decoded.
-3. Scales down to fit `MaxWidth` × `MaxHeight`, keeping the aspect ratio (CatmullRom filter). Small images are never upscaled.
-4. Writes a JPEG (`Quality`, default 82), or a PNG when the image has transparency, replacing a file already at that path. Re-encoding removes all metadata (EXIF, GPS location). EXIF orientation is not applied: photos taken sideways stay sideways. Animated GIFs become a still of their first frame.
+2. Reads only the header and refuses images that declare more than `MaxPixels` (`upload.DefaultMaxPixels`) **before** decoding.
+3. Scales down to fit `MaxWidth` × `MaxHeight`, keeping the aspect ratio (CatmullRom filter). Small images are never made bigger.
+4. Writes a JPEG (`Quality`, default 82), or a PNG when the image has transparency, replacing a file already at that path. Re-encoding removes all metadata (EXIF, GPS location). EXIF orientation is not applied, so sideways photos stay sideways. Animated GIFs become a still of their first frame.
+
+The result (`imaging.Result`) has `Path`, `Type`, `Width` and `Height`.
 
 | Error | When |
 | --- | --- |
-| `imaging.ErrTooLarge` | the file is bigger than `MaxBytes` or declares more than `MaxPixels` |
-| `imaging.ErrUnsupported` | not a readable JPEG, PNG, GIF or WebP |
-| `imaging.ErrInvalidOptions` | `MaxWidth`/`MaxHeight` missing or above 16384, `Quality` outside 0–100, a `Thumbnails` size name that is not letters, digits, `-` or `_` |
+| `imaging.ErrTooLarge` | The file is bigger than `MaxBytes` or declares more than `MaxPixels` |
+| `imaging.ErrUnsupported` | Not a readable JPEG, PNG, GIF or WebP |
+| `imaging.ErrInvalidOptions` | `MaxWidth`/`MaxHeight` missing or above 16384 (`imaging.MaxSide`), `Quality` outside 0–100, a negative limit, or a `Thumbnails` size name that is not 1–32 letters, digits, `-` or `_` |
 
-On failure the output is removed. `Thumbnails` applies the strictest `MaxPixels`/`MaxBytes` of all sizes (defaults included) to its single decode.
+On failure the output is removed. `Thumbnails` applies the strictest `MaxPixels` and `MaxBytes` of all sizes to its single decode. One call holds the file plus its decoded pixels, up to about 8 bytes per pixel, so a 25-megapixel image can take around 200 MB and noticeable CPU. For big uploads, make thumbnails in a [queue job](/docs/digging-deeper/queue) with limited concurrency.
 
-Memory: one call holds the source file plus its decoded pixels, up to about 8 bytes per pixel (16-bit PNG), so a 25-megapixel image can take ~200 MB. Resizing also takes CPU time. For big uploads, store the original in the request and make thumbnails in a [queue job](/docs/digging-deeper/queue) with limited concurrency.
+## Configuration
 
-## HTMX progress component
+The `upload` package reads no environment variables: rules live in code, per route. The starter's demo upload page reads two:
 
-The HTMX starter ships `resources/views/components/upload.html` (a `data-upload` form with a `<progress>`) and a `/uploads` demo page. `resources/js/app.ts` swaps htmx's `fetch` for `XMLHttpRequest` on those forms to report progress, without inline scripts, so the CSP holds. The demo stores files under `UPLOADS_DIR` (default `storage/app/uploads`); `UPLOADS_DISK=memory` swaps in `storage.NewMemory` for tests (refused in production), so the generated `TestUploads` never writes to the filesystem: on Windows, antivirus filters briefly recreate just-deleted files, which can make `t.TempDir` cleanup fail with "directory is not empty". Use a memory disk the same way in your own upload tests. Validate files received through `c.Input()` with `z.File()` ([validation](/docs/basics/validation)).
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `UPLOADS_DISK` | `local` | `local` stores files on the filesystem; `memory` uses `storage.NewMemory` for tests and is refused in production |
+| `UPLOADS_DIR` | `storage/app/uploads` | Folder of the `local` disk |
+
+| Constant | Value |
+| --- | --- |
+| `upload.DefaultMaxFiles` | `1` |
+| `upload.DefaultMaxFields` | `32` |
+| `upload.DefaultMaxFieldSize` | `64 << 10` (64 KiB) |
+| `upload.DefaultQuarantineDir` | `quarantine` |
+| `upload.DefaultMaxPixels` | `25_000_000` |
+| `upload.DefaultPresignTTL` | 15 minutes |
+| `upload.TusVersion` | `1.0.0` |
+
+The HTMX starter also ships `resources/views/components/upload.html` (a `data-upload` form with a `<progress>` bar) and a `/uploads` demo page. `resources/js/app.ts` swaps htmx's `fetch` for `XMLHttpRequest` on those forms to report progress, without inline scripts, so the [Content Security Policy](/docs/security/security-headers) holds.
+
+## Security
+
+What Vukem does for you:
+
+- Files never sit whole in memory, and every limit (file size, body size, field count and size, file count) is enforced while streaming.
+- The type comes from the content, the extension must agree with it, and stored names are random. The client's name and `Content-Type` decide nothing.
+- Rejected requests leave no files behind. Quarantined files are dot-named, so `storage.Handler` never serves them.
+- Scanning fails closed: no scan, no file.
+- tus and direct uploads require an `Authorize` function, and tus ids are 26 random characters.
+
+What stays your job (see the [security overview](/docs/security/overview)):
+
+- **Authorize every upload route** (session, token, ownership of the post). For tus, the upload id is a capability: anyone who has it can append to the upload.
+- **Serve user files from a sandboxed handler** (`storage.Handler`) or another domain, never as pages of your app.
+- **Keep `TusConfig.Dir` and the quarantine out of served folders.**
+- **Call `upload.Verify`** for every direct upload before using the object, and scan it yourself if you need malware checks.
+- **Watch cross-origin clients.** Upload routes sit behind the [CSRF](/docs/basics/csrf) middleware like every route; a tus client on another origin needs that origin in `CSRF_TRUSTED_ORIGINS`.
+
+## Testing
+
+Use a memory disk, so tests never touch the filesystem. On Windows this also avoids flaky `t.TempDir` cleanup: antivirus filters may briefly recreate just-deleted files, and cleanup fails with "directory is not empty". The starter's upload controller picks its disk from `UPLOADS_DISK`, so its `TestUploads` sets `UPLOADS_DISK=memory`; the test below assumes your photo routes choose their disk the same way.
+
+```go title="tests/photos_test.go"
+// pngHeader is a 1×1 PNG signature and IHDR chunk: uploads read the
+// declared dimensions, so a bare signature is rejected.
+const pngHeader = "\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR" +
+	"\x00\x00\x00\x01\x00\x00\x00\x01\x08\x00\x00\x00\x00:~\x9bU"
+
+func photoForm(t *testing.T, name, content string) (*bytes.Buffer, string) {
+	t.Helper()
+
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+
+	w, err := mw.CreateFormFile("photo", name)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, _ = w.Write([]byte(content))
+	_ = mw.Close()
+
+	return &body, mw.FormDataContentType()
+}
+
+func TestPhotoUpload(t *testing.T) {
+	app := vukemtest.New(t, bootstrap.New, vukemtest.Options{
+		Env: map[string]string{"UPLOADS_DISK": "memory"},
+	})
+
+	body, ct := photoForm(t, "beach.png", pngHeader+"pixels")
+	app.Client(t).AcceptJSON().
+		Do(http.MethodPost, "/photos", body, ct).
+		AssertCreated()
+
+	// The content decides the type: an HTML page named .png fails.
+	body, ct = photoForm(t, "evil.png", "<html><script></script></html>")
+	app.Client(t).AcceptJSON().
+		Do(http.MethodPost, "/photos", body, ct).
+		AssertJSONValidationErrors("photo")
+}
+```
+
+For unit tests of your own code, call `upload.Save` with a `storage.NewMemory("")` disk and a `strings.Reader`. A fake `Scanner` that returns `&upload.InfectedError{Signature: "Test"}` tests the infected path without ClamAV. `TusConfig.Now` lets you test expiry without waiting.
+
+## Common mistakes
+
+**Reading the form before `Receive`.**
+
+```go
+// Wrong: FormValue parses (and buffers) the whole body first.
+caption := c.FormValue("caption")
+form, err := upload.Receive(c, disk, rules)
+
+// Right: Receive first, then read text fields from form.Values.
+form, err := upload.Receive(c, disk, rules)
+caption := form.Values.Get("caption")
+```
+
+**Leaving out the required rules.**
+
+```go
+// Wrong: upload: Rules need MaxFileSize > 0 and at least one type
+form, err := upload.Receive(c, disk, upload.Rules{Dir: "photos"})
+
+// Right: say how big and which types.
+form, err := upload.Receive(c, disk, upload.Images(5<<20))
+```
+
+**Expecting Word files to be `application/vnd.openxmlformats…`.** `http.DetectContentType` sees a `.docx` as `application/zip`. Allow `application/zip` and narrow with `Extensions: []string{".docx"}`.
+
+**Signing `MaxFileSize` in the presigner.** Every file that is not exactly that size gets 403 `SignatureDoesNotMatch` from S3. Sign the `maxSize` argument, which already holds the declared size.
+
+**Forgetting `Cleanup`.** Abandoned tus uploads keep their data on disk until `tus.Cleanup` runs. Schedule it hourly.
+
+## Next steps
+
+<CardGroup cols="2">
+<Card title="Storage" href="/docs/digging-deeper/storage" icon="database">
+Local, memory and S3 disks, serving files and signed links.
+</Card>
+<Card title="Queue" href="/docs/digging-deeper/queue" icon="layers">
+Make thumbnails and process videos in the background.
+</Card>
+<Card title="Validation" href="/docs/basics/validation" icon="shield">
+Validate the other fields of an upload form, or files with `z.File()`.
+</Card>
+<Card title="Package reference" href="https://pkg.go.dev/github.com/AlexGalhardo/vukem/upload" icon="book">
+Every exported name of `upload` on pkg.go.dev.
+</Card>
+</CardGroup>

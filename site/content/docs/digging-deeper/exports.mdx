@@ -1,79 +1,355 @@
 ---
 title: Exports
-description: Stream CSV, JSON and NDJSON downloads row by row from ORM queries, with safe file names and CSV formula-injection protection.
+description: Stream CSV, JSON and NDJSON downloads row by row from ORM queries, with safe file names, CSV formula-injection protection and honest failures.
 ---
 
-```go
-r.Get("/users/export.csv", func(c *web.Ctx) error {
-	return export.CSV(c.Writer(), c.Request(), "users.csv",
-		[]string{"id", "name", "email"},
-		orm.QueryOf[User](db).OrderBy("id", orm.Asc).Each(c.Context()),
-		func(u User) []string {
-			return []string{strconv.FormatInt(u.ID, 10), u.Name, u.Email}
-		})
-})
+Sooner or later someone asks for "a spreadsheet of all orders". Loading every row into memory and then writing a file works for a hundred orders and crashes for a million. The `export` package streams the download instead: it reads one row from the database, writes it to the browser, and moves on, so memory stays flat however large the file gets.
+
+You will learn:
+
+- how to stream a CSV, JSON or NDJSON download from an ORM query
+- how file names are cleaned so they cannot break headers or paths
+- what CSV formula injection is and how every cell is guarded
+- what happens when the query fails before, or in the middle of, a download
+- every option: flushing, write timeouts, the Excel BOM, raw cells
+
+## The idea
+
+Think of a bucket brigade passing water from a well to a fire. Nobody carries the whole well; each bucket moves along as soon as it is filled. An export is the same: the database fills one row, the export writes it to the network, and the next row follows.
+
+The rows come from an <Term tip="A function that hands values to a loop one at a time. Go 1.23 lets you range over it with for v, err := range seq.">iterator</Term> of type [`iter.Seq2[T, error]`](https://pkg.go.dev/iter#Seq2): each step yields one value and an error. The ORM's `Query.Each(ctx)` returns exactly that, reading rows lazily from the database. If iterators are new to you, read [Range over function types](https://go.dev/blog/range-functions) on the Go blog.
+
+| Function | `Content-Type` | Body | Default file name |
+| --- | --- | --- | --- |
+| `export.CSV(w, r, name, header, rows, record, opts...)` | `text/csv; charset=utf-8` | the header row, then `record(row)` per row | `export.csv` |
+| `export.WriteCSV(w, r, name, fn, opts...)` | `text/csv; charset=utf-8` | whatever `fn` writes | `export.csv` |
+| `export.JSON(w, r, name, rows, opts...)` | `application/json; charset=utf-8` | one JSON array, one element per row | `export.json` |
+| `export.NDJSON(w, r, name, rows, opts...)` | `application/x-ndjson` | one JSON value per line | `export.ndjson` |
+
+An empty `name` uses the default file name. The functions are [generic](https://go.dev/doc/tutorial/generics): `T` is your model type, and Go infers it from `rows`.
+
+This page builds one running example: a shop that exports its orders.
+
+## Quick start
+
+<Steps>
+<Step title="Have a model">
+
+```go title="app/models/order.go"
+package models
+
+import "time"
+
+// Order is one purchase in the shop.
+type Order struct {
+	ID           int64     `json:"id"`
+	Number       string    `json:"number"`
+	CustomerName string    `json:"customer_name"`
+	TotalCents   int64     `json:"total_cents"`
+	CreatedAt    time.Time `json:"created_at"`
+}
 ```
 
-The `export` package writes one row at a time, so a large export never sits in memory. Rows come from any `iter.Seq2[T, error]`, and `orm` `Query.Each` is one: it reads from the database while the client downloads.
+</Step>
+<Step title="Add the export route">
 
-## Formats
+```go title="app/controllers/orders.go"
+// Export downloads every order as CSV.
+func (o *OrderController) Export(c *web.Ctx) error {
+	rows := orm.QueryOf[models.Order](o.db).
+		OrderBy("id", orm.Asc).
+		Each(c.Context())
 
-| Function | Content-Type | Body |
-| --- | --- | --- |
-| `export.CSV(w, r, name, header, rows, record)` | `text/csv; charset=utf-8` | header row, then `record(row)` for each row |
-| `export.WriteCSV(w, r, name, fn)` | `text/csv; charset=utf-8` | whatever `fn` writes with `cw.Write(record)` |
-| `export.JSON(w, r, name, rows)` | `application/json; charset=utf-8` | one JSON array, one element per row |
-| `export.NDJSON(w, r, name, rows)` | `application/x-ndjson` | one JSON object per line |
-
-`WriteCSV` fits files that are not one row per item, such as several sections with their own headers. An empty record writes a blank line:
-
-```go
-return export.WriteCSV(c.Writer(), c.Request(), "raffle-audit.csv", func(cw *export.CSVWriter) error {
-	if err := cw.Write([]string{"record", "id", "title"}); err != nil {
-		return err
-	}
-	if err := cw.Write([]string{"raffle", id, raffle.Title}); err != nil {
-		return err
-	}
-	return cw.Write(nil) // blank line before the next section
-})
+	return export.CSV(
+		c.Writer(), c.Request(), "orders.csv",
+		[]string{"number", "customer", "total"},
+		rows,
+		func(o models.Order) []string {
+			return []string{
+				o.Number,
+				o.CustomerName,
+				strconv.FormatInt(o.TotalCents, 10),
+			}
+		},
+	)
+}
 ```
 
-An empty `name` becomes `export.csv`, `export.json` or `export.ndjson`.
+```go title="routes/web.go"
+r.Get("/admin/orders/export.csv", orders.Export).
+	Use(auth.Required(acc.Web))
+```
+
+</Step>
+<Step title="Download it">
+
+```bash
+curl -i http://localhost:3000/admin/orders/export.csv
+```
+
+```text
+HTTP/1.1 200 OK
+Cache-Control: no-store
+Content-Disposition: attachment; filename="orders.csv"
+Content-Type: text/csv; charset=utf-8
+X-Content-Type-Options: nosniff
+
+number,customer,total
+1042,Ana,5990
+1043,"'=HYPERLINK(""http://evil.example"")",1250
+```
+
+The second customer typed a spreadsheet formula as their name. The export wrote it with a leading `'`, so a spreadsheet shows it as text instead of running it. See [CSV formula injection](#csv-formula-injection).
+
+</Step>
+</Steps>
+
+## Formats in depth
+
+### CSV
+
+`export.CSV` writes `header` first (skip it with `nil`), then calls `record` once per row. Cells are written with Go's [`encoding/csv`](https://pkg.go.dev/encoding/csv), which quotes commas, quotes and line breaks for you. A zero-row export still sends the header.
+
+Every cell, header included, goes through `export.SafeCell` (see below).
+
+### Several sections in one CSV
+
+Some files are not "one line per item": an order report with a summary block, then the line items. `export.WriteCSV` hands you a `*export.CSVWriter` and lets you write any records you like:
+
+```go title="app/controllers/orders.go"
+// Report downloads one order: a summary, then its items.
+func (o *OrderController) Report(c *web.Ctx) error {
+	order, items, err := o.load(c)
+	if err != nil {
+		return err
+	}
+
+	name := "order-" + order.Number + ".csv"
+
+	return export.WriteCSV(c.Writer(), c.Request(), name,
+		func(cw *export.CSVWriter) error {
+			if err := cw.Write([]string{"order", order.Number}); err != nil {
+				return err
+			}
+
+			// An empty record writes a blank line between sections.
+			if err := cw.Write(nil); err != nil {
+				return err
+			}
+
+			if err := cw.Write([]string{"sku", "qty"}); err != nil {
+				return err
+			}
+
+			for _, it := range items {
+				q := strconv.Itoa(it.Qty)
+				if err := cw.Write([]string{it.SKU, q}); err != nil {
+					return err
+				}
+			}
+
+			return nil
+		},
+	)
+}
+```
+
+`cw.Write` counts as a row for flushing, and each cell goes through `SafeCell` too.
+
+### JSON
+
+`export.JSON` writes `[`, the rows separated by commas, then `]` and a newline. Each row is encoded with [`json.Marshal`](https://pkg.go.dev/encoding/json#Marshal), so your struct tags decide the field names. Zero rows give `[]`.
+
+```go title="app/controllers/orders.go"
+return export.JSON(c.Writer(), c.Request(), "orders.json", rows)
+```
+
+The body is one line; here it is shortened to fit:
+
+```json
+[{"id":1,"number":"1042","customer_name":"Ana",...},{"id":2,...}]
+```
+
+A row that cannot be encoded fails with `export: encode row: ...`.
+
+### NDJSON
+
+[NDJSON](https://github.com/ndjson/ndjson-spec) (newline-delimited JSON) writes one JSON value per line. Tools such as `jq`, data warehouses and log pipelines can read it line by line, without loading the whole file:
+
+```go title="app/controllers/orders.go"
+return export.NDJSON(c.Writer(), c.Request(), "orders.ndjson", rows)
+```
+
+```text
+{"id":1,"number":"1042","customer_name":"Ana","total_cents":5990,...}
+{"id":2,"number":"1043","customer_name":"Bob","total_cents":1250,...}
+```
+
+JSON and NDJSON never touch cell values: formula protection is a spreadsheet concern and applies to CSV only.
 
 ## Headers and file names
 
-Every export is an attachment with `Cache-Control: no-store` (exports usually hold personal data) and `X-Content-Type-Options: nosniff`.
+Every export answers `200` with these headers, sent right before the first byte of the body:
 
-`export.ContentDisposition(name)` builds the header (RFC 6266), and you can use it for other downloads:
+| Header | Value | Why |
+| --- | --- | --- |
+| `Content-Type` | per format (table above) | Tells the browser what the file is |
+| `Content-Disposition` | `attachment; filename="..."` | Makes the browser download instead of display |
+| `Cache-Control` | `no-store` | Exports usually hold personal data; no cache may keep a copy |
+| `X-Content-Type-Options` | `nosniff` | Stops the browser from guessing another type |
+
+The file name may come from user input (`"order-" + number + ".csv"`), so `export.ContentDisposition(name)` cleans it ([RFC 6266](https://www.rfc-editor.org/rfc/rfc6266)):
 
 - Only the last path element is kept, for `/` and `\` alike: `../../etc/passwd` becomes `passwd`.
-- Control characters (CR, LF, NUL) and format characters (bidi overrides, zero-width) are removed, so a name cannot add headers or disguise its extension.
-- Control characters include C1 and the Unicode line and paragraph separators.
-- `< > : " / | ? *` become `_`; leading dots and trailing dots and spaces are removed; Windows device names (`CON`, `PRN`, `AUX`, `NUL`, `COM1`-`COM9`, `LPT1`-`LPT9`, with any extension) get a `_` prefix; names are cut to 200 characters, keeping the extension; an empty result becomes `download`.
+- Control characters (C0 such as CR, LF and NUL, C1, and the Unicode line and paragraph separators) are removed, so a name cannot add a header.
+- Format characters (bidi overrides, zero-width spaces) are removed, so `invoice‮fdp.exe` cannot pose as a PDF.
+- `< > : " / | ? *` become `_`.
+- Leading dots, and trailing dots and spaces, are removed.
+- Windows device names (`CON`, `PRN`, `AUX`, `NUL`, `COM1` to `COM9`, `LPT1` to `LPT9`, with any extension) get a `_` prefix: `CON.csv` becomes `_CON.csv`.
+- The name is cut to 200 characters, keeping the extension.
+- If nothing is left, the name is `download`.
+- Non-ASCII names get an ASCII `filename` plus an [RFC 5987](https://www.rfc-editor.org/rfc/rfc5987) `filename*`, which modern browsers prefer:
 
-`c.Download` applies the same rules.
-- Non-ASCII names get an ASCII `filename` plus an RFC 5987 `filename*`: `relatório.csv` is sent as `filename="relat_rio.csv"; filename*=UTF-8''relat%C3%B3rio.csv`.
+```text
+attachment; filename="relat_rio.csv"; filename*=UTF-8''relat%C3%B3rio.csv
+```
+
+You may call `export.ContentDisposition` for any download of your own. `c.Download` uses the same rules.
 
 ## CSV formula injection
 
-A spreadsheet runs a cell that starts with `=`, `+`, `-` or `@` as a formula, so a buyer named `=HYPERLINK(...)` could run code on the machine of whoever opens the file ([OWASP CSV injection](https://owasp.org/www-community/attacks/CSV_Injection)). Every cell, header included, goes through `export.SafeCell`: a cell starting with `=`, `+`, `-`, `@`, tab or carriage return gets a leading `'`, which spreadsheets show as text. Some spreadsheets skip leading spaces, line breaks and quotes, so cells such as ` =1+1` or `"=1+1"` are guarded too. The cost is a few false positives: text like ` - note` also gets the apostrophe. Plain decimal numbers such as `-42` or `+3.14` stay as they are.
+A spreadsheet treats a cell that starts with `=`, `+`, `-` or `@` as a formula. If a customer names themselves `=HYPERLINK("http://evil.example","Click")`, whoever opens your export may run that formula on their own machine. This attack is called [CSV injection](https://owasp.org/www-community/attacks/CSV_Injection).
 
-`export.InsecureRawCells()` turns the guard off, for files that are never opened in a spreadsheet.
+`export.SafeCell(s)` guards every CSV cell:
 
-## Streaming
-
-- Nothing is sent before the first row. If the query fails up front, the function returns the error with the response untouched, and the error handler renders a normal error page.
-- After the first byte, a failure (a query error, a row that does not encode) cannot change the status any more. The function drops the connection, so the browser reports a failed download instead of saving a CSV that stops in the middle and still looks complete. On HTTP/1.x it hijacks and closes the connection and returns an error wrapping `export.ErrIncomplete` and the cause; returned from a handler, the error handler only logs it. Where the connection cannot be hijacked (HTTP/2), it panics with `http.ErrAbortHandler`, net/http's documented way to abort a response: the server recovers it silently and resets the stream, and `middleware.Recover` lets it through.
-- The request context is checked before each row, and `Query.Each(c.Context())` stops the query when the client goes away. A client that went away is not a server error: the returned error still matches `context.Canceled` but reports status 499, so the error handler logs it at debug level.
-
-| Option | Default | Effect |
+| Cell | Written as | Why |
 | --- | --- | --- |
-| `export.FlushEvery(n)` | 500 | flush to the client every `n` rows; the end is always flushed |
-| `export.WriteTimeout(d)` | 1 minute | write deadline kept `d` ahead of every write to the client (renewed at most every `d/4`, or 1s), so a long export outlives the server's `WriteTimeout` while a client that stops reading is still cut; cleared when the export ends; zero keeps the server deadline |
-| `export.WithBOM()` | off | start a CSV with a UTF-8 BOM, which Excel needs to show accents; JSON and NDJSON ignore it |
-| `export.InsecureRawCells()` | off | disable the CSV formula guard |
+| `=1+1` | `'=1+1` | starts with `=` |
+| `@ana` | `'@ana` | starts with `@` |
+| a cell starting with a tab or a carriage return | prefixed with `'` | some spreadsheets run those too |
+| ` =1+1`, `"=1+1"` | `' =1+1`, `'"=1+1"` | some spreadsheets skip leading spaces, line breaks and quotes |
+| `- note` | `'- note` | the price of safety: a few harmless texts gain an apostrophe |
+| `-42`, `+3.14` | unchanged | plain decimal numbers cannot run anything |
+| `-1e5` | `'-1e5` | only digits with an optional sign and one dot count as numbers |
+| `Ana` | unchanged | nothing to guard |
 
-## In plain net/http
+The leading `'` tells spreadsheets "this is text"; it is not shown in the cell. For a file that no spreadsheet will ever open (an import for another program), turn the guard off with `export.InsecureRawCells()`.
 
-The functions take an `http.ResponseWriter` and the `*http.Request`, so they work outside `web.Ctx` too. In that case, write an error page only when the error does not wrap `export.ErrIncomplete`, because that error means the download had already started.
+## Streaming and failures
+
+### Nothing is sent before the first row
+
+The headers go out only when the first row is ready. If the query fails right away (a bad column, the database is down), the function returns that error and the response is untouched. Your handler returns it, and the [error handler](/docs/basics/error-handling) renders a normal error page with the right status.
+
+### A failure in the middle
+
+After the first byte, the status `200` is already on its way and cannot change. A file that simply stopped would still look complete: a CSV or NDJSON file cut between two rows parses fine, and someone would import half the orders without noticing. So, on a failure after the start (a query error at row 50 000, a row that does not encode), the export **drops the connection** and the browser reports a failed download:
+
+- On HTTP/1.x it <Term tip="Takes over the raw network connection from net/http, here only to close it.">hijacks</Term> the connection, closes it, and returns an error that wraps `export.ErrIncomplete` and the cause, for example `export: response incomplete: db down`. Returned from a handler, the error handler only logs it, since the headers are gone.
+- Where the connection cannot be hijacked (HTTP/2), it panics with [`http.ErrAbortHandler`](https://pkg.go.dev/net/http#ErrAbortHandler). That is net/http's documented way to abort a response: the server recovers it silently and resets the stream, and `middleware.Recover` lets it through.
+
+### The client goes away
+
+The request context is checked before each row, and `Query.Each(c.Context())` stops the database query when the browser disconnects. A client that left is not a server error: the returned error still matches `context.Canceled` with [`errors.Is`](https://pkg.go.dev/errors#Is), but reports status 499 (nginx's "client closed request"), so the error handler logs it at debug level instead of error.
+
+### Flushing and deadlines
+
+The export writes through a buffer and flushes it to the client every 500 rows (`export.DefaultFlushEvery`), and always at the end. `export.FlushEvery(n)` changes that; values below 1 flush after every row.
+
+The app's HTTP server has a write timeout (60 seconds by default), which would cut a long export. The export manages the deadline itself: before writes to the client it moves the deadline `export.DefaultWriteTimeout` (1 minute) ahead. It renews at most every quarter of that time (capped at once per second), so small writes do not each pay for an update. A client that stops reading for a whole minute is still cut. When the export ends, the deadline is cleared, so it does not linger on a keep-alive connection.
+
+## Configuration
+
+The export functions read no environment variables. Pass options as the last arguments:
+
+| Option | Default | What it does |
+| --- | --- | --- |
+| `export.FlushEvery(n)` | `500` rows | Flush every `n` rows; below 1 means every row; the end is always flushed |
+| `export.WriteTimeout(d)` | `1m` | Keep the write deadline `d` ahead of every write; zero or negative keeps the server's deadline |
+| `export.WithBOM()` | off | Start a CSV with a UTF-8 byte order mark, which Excel needs to show accents; JSON and NDJSON ignore it |
+| `export.InsecureRawCells()` | off | Write CSV cells as given, without `SafeCell` |
+
+```go title="app/controllers/orders.go"
+return export.CSV(
+	c.Writer(), c.Request(), "orders.csv", header, rows, record,
+	export.WithBOM(),
+	export.FlushEvery(100),
+)
+```
+
+## Outside `web.Ctx`
+
+The functions take an [`http.ResponseWriter`](https://pkg.go.dev/net/http#ResponseWriter) and an `*http.Request`, so they work in plain `net/http` handlers too. Write an error page only when the error does **not** wrap `export.ErrIncomplete`, because that error means the download had already started:
+
+```go title="internal/reports/handler.go"
+err := export.NDJSON(w, r, "orders.ndjson", rows)
+if err != nil && !errors.Is(err, export.ErrIncomplete) {
+	http.Error(w, "export failed", http.StatusInternalServerError)
+}
+```
+
+## Security
+
+- **Authorize the route.** An export is usually your largest pile of personal data in one response. Put it behind authentication and an [authorization](/docs/security/authorization) check, and consider [rate limiting](/docs/security/rate-limiting).
+- **Formula injection** is blocked for CSV by default (`SafeCell`).
+- **File names** are sanitized against header injection, path tricks and disguised extensions.
+- **No caching**: `Cache-Control: no-store` keeps exports out of browser and proxy caches.
+- **No truncated files**: a failure after the start drops the connection instead of serving a file that looks complete.
+
+What stays your job: choose which columns leave the database. Do not export password hashes or tokens. See [Security overview](/docs/security/overview).
+
+## Testing
+
+Call the route with the `vukemtest` client and read the body:
+
+```go title="tests/orders_export_test.go"
+func TestExportOrders(t *testing.T) {
+	app := vukemtest.New(t, bootstrap.New)
+	createOrder(t, app, "1042", "=HYPERLINK(\"x\")")
+
+	res := app.Client(t).
+		ActingAs("web", admin(t, app)).
+		Get("/admin/orders/export.csv").
+		AssertOK().
+		AssertHeader("Content-Type", "text/csv; charset=utf-8").
+		AssertHeaderContains("Content-Disposition", "orders.csv")
+
+	if !strings.Contains(res.Body(), `"'=HYPERLINK(""x"")"`) {
+		t.Errorf("formula not guarded:\n%s", res.Body())
+	}
+}
+```
+
+To unit-test a format without the app, pass an [`httptest.NewRecorder`](https://pkg.go.dev/net/http/httptest#NewRecorder) and any `iter.Seq2`, such as a function literal that yields two orders.
+
+## Common mistakes
+
+**Loading everything first.**
+
+```go title="wrong"
+orders, err := orm.QueryOf[models.Order](db).Get(ctx)
+// One million orders now sit in memory.
+```
+
+```go title="right"
+rows := orm.QueryOf[models.Order](db).Each(c.Context())
+return export.CSV(c.Writer(), c.Request(), "orders.csv",
+	header, rows, record)
+```
+
+**Using a context that outlives the request.** `Each(context.Background())` keeps the query running after the browser left. Pass `c.Context()`.
+
+**Writing an error page after a broken download.** In plain `net/http`, `http.Error` after an `ErrIncomplete` writes into a response that already started. Check `errors.Is(err, export.ErrIncomplete)` first.
+
+**Expecting accents to show in Excel.** Without a BOM, Excel may show `relatÃ³rio` instead of `relatório`. Pass `export.WithBOM()`.
+
+## Next steps
+
+<CardGroup cols="2">
+<Card title="ORM" href="/docs/database/orm" icon="database">Build the query that feeds the export.</Card>
+<Card title="Pagination" href="/docs/rest-apis/pagination" icon="layers">Serve the same data page by page to an API.</Card>
+<Card title="Storage" href="/docs/digging-deeper/storage" icon="boxes">Save generated files instead of streaming them.</Card>
+<Card title="Queue" href="/docs/digging-deeper/queue" icon="zap">Build very large reports in the background.</Card>
+</CardGroup>
+
+Package reference: [pkg.go.dev/github.com/AlexGalhardo/vukem/export](https://pkg.go.dev/github.com/AlexGalhardo/vukem/export).

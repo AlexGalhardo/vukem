@@ -1,103 +1,223 @@
 ---
 title: OpenTelemetry
-description: Trace every HTTP request with OpenTelemetry, export spans over OTLP/HTTP to any collector, and link your logs to traces with the drivers/otel module.
+description: Trace every request, query, job, email and outbound call, export traces and metrics over OTLP/HTTP to any collector, and link your logs to traces with the drivers/otel module.
 ---
 
-[OpenTelemetry](https://opentelemetry.io) (OTel) is the vendor-neutral standard for traces, metrics and logs. A **trace** follows one request through your system; it is made of **spans**, each one a timed operation (`GET /posts/{slug}`, `SELECT posts`). Backends such as Grafana Tempo, Jaeger, Honeycomb, Datadog or Railway's tracing view show them as a timeline.
+When a page is slow or a request fails in production, a log line tells you *that* something went wrong, rarely *where*. [OpenTelemetry](https://opentelemetry.io/docs/what-is-opentelemetry/) (OTel) is the vendor-neutral standard for answering "where": it records what each request did, step by step, and sends it to a backend such as Grafana Tempo, Jaeger, Honeycomb, Datadog or Railway's tracing view. Vukem ships it as a separate module, `drivers/otel`, so only apps that use it download the OpenTelemetry SDK.
 
-Vukem ships OTel in a **separate module**, `drivers/otel`, so the OpenTelemetry SDK is only downloaded by apps that use it.
+You will learn:
 
-## What you get
+- what traces, spans and metrics are, and what Vukem records for you;
+- how to turn tracing on with one provider and a few `OTEL_*` variables;
+- how database queries, queue jobs, emails and outbound HTTP calls show up;
+- how to export metrics, or switch them off for a traces-only backend;
+- how to link log lines to traces and add your own spans;
+- how to test your instrumentation without a collector.
 
-- **One server span per HTTP request**, named after the matched route pattern (`GET /posts/{slug}`), never the raw path.
-- **Trace propagation**: an incoming W3C `traceparent` (and `baggage`) header continues the caller's trace.
-- **HTTP semantic conventions**: method, route, status code, scheme, protocol, server address and user agent. `5xx` responses and panics mark the span as an error.
-- **Log correlation**: records logged with the request's context get `trace_id` and `span_id`, so a log line links to its trace.
-- **Export over OTLP/HTTP**, configured with the standard `OTEL_*` variables, flushed on shutdown.
+## The idea
 
-Check the module's package documentation for what else is exported in your version.
+Think of a parcel tracking page. The parcel is one request. Each stop it makes, the warehouse, the truck, the local depot, is a line with a start time and an end time. Put together, the lines show where the parcel spent its time.
 
-## Step by step
+- A <Term tip="The full story of one request as it moves through your system, made of spans that share one trace id.">trace</Term> is the whole journey of one request.
+- A <Term tip="One timed operation inside a trace, such as handling GET /posts/{slug} or running a SELECT. Spans nest: a query span is a child of the request span.">span</Term> is one stop: `GET /posts/{slug}`, then `SELECT` inside it.
+- A **metric** is a number aggregated over time: how many requests per second, and how long they took.
+- **OTLP** is the OpenTelemetry protocol that carries traces and metrics to a <Term tip="A server that receives telemetry over OTLP and stores or forwards it. Jaeger, Grafana Tempo and most hosted backends accept OTLP directly.">collector</Term>. Vukem's exporter speaks OTLP over HTTP (port 4318), not gRPC (port 4317).
+
+A span knows its parent through a [`context.Context`](https://pkg.go.dev/context). That is why Vukem passes `c.Context()` everywhere: a query run with the request's context becomes a child of the request's span.
+
+Throughout this page you instrument one example: a shop with posts, orders, a queue that sends receipts, and a payment API it calls.
+
+## Quick start
 
 <Steps>
 <Step title="1. Add the module">
 
 ```bash
-go get github.com/AlexGalhardo/vukem/drivers/otel
+go get github.com/AlexGalhardo/vukem/drivers/otel@v0.3.0
 ```
 
+`drivers/otel` is its own Go module, versioned apart from the core. v0.3.0 uses the OpenTelemetry Go SDK v1.47 and semantic conventions v1.43.
+
 </Step>
-<Step title="2. Register the provider before your routes">
+<Step title="2. Register the provider first">
 
 ```go title="bootstrap/app.go"
 import "github.com/AlexGalhardo/vukem/drivers/otel"
 
 app, err := vukem.New(
-	vukem.WithProviders(otel.New(otel.Config{})), // before routes: its middleware wraps the whole stack
+	// First: its middleware then wraps everything the other
+	// providers add, and its hooks attach before anyone opens the
+	// database, the queue or the mailer.
+	vukem.WithProviders(
+		otel.New(otel.Config{}),
+		// ...your other providers
+	),
 	vukem.WithRoutes(routes.All),
-	// ...
 )
 ```
 
-The provider builds a `TracerProvider`, installs the tracing middleware on the router, wraps `app.Log` so logs carry trace ids, and exports pending spans when the app shuts down.
+When the app boots, the provider:
+
+1. reads the `OTEL_*` settings through `app.Source` (the process environment and `.env` files);
+2. builds a `TracerProvider` and, when metrics are on, a `MeterProvider`;
+3. installs the tracing middleware on the router;
+4. attaches an `otel.Observer` to the database, the queue and the mailer;
+5. wraps `app.Log` so log records carry trace ids;
+6. flushes pending spans and metrics when the app shuts down.
 
 </Step>
 <Step title="3. Point it at a collector">
 
 ```bash title=".env"
-OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318   # OTLP/HTTP; /v1/traces is appended
-OTEL_SERVICE_NAME=shop                              # defaults to APP_NAME
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+OTEL_SERVICE_NAME=shop
 ```
 
-Without `OTEL_EXPORTER_OTLP_ENDPOINT` (or `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, used as is) tracing stays **off** and costs nothing, so the same binary runs in development without a collector. `OTEL_SDK_DISABLED=true` turns it off explicitly. A value that is not an `http(s)` URL fails the boot.
+Traces go to `http://localhost:4318/v1/traces` and metrics to `http://localhost:4318/v1/metrics`. Without an endpoint the provider stays **off** and costs nothing, so the same binary runs in development without a collector.
 
 </Step>
-<Step title="4. Run a collector locally and look at a trace">
+<Step title="4. Run a collector and look at a trace">
 
-Jaeger's all-in-one image accepts OTLP and has a UI:
+Jaeger's all-in-one image accepts OTLP/HTTP and has a UI:
 
 ```bash
 docker run --rm -p 16686:16686 -p 4318:4318 jaegertracing/jaeger:2.5.0
 vukem serve
-curl http://localhost:3000/
+curl http://localhost:3000/posts/hello-world
 ```
 
-Open `http://localhost:16686`, pick your service and you will see one span per request.
-
-</Step>
-<Step title="5. Log with the request context">
-
-```go
-func (h *Orders) Store(c *web.Ctx) error {
-	c.Log().InfoContext(c.Context(), "order created", "order_id", id) // gets trace_id and span_id
-	return c.NoContent()
-}
-```
-
-Only the `*Context` logging methods see the span. `c.Log().Info(...)` without a context logs without trace ids.
+Open `http://localhost:16686`, pick the `shop` service and open the trace. You see a `GET /posts/{slug}` span with a `SELECT` span inside it. Jaeger stores traces only, so add `OTEL_METRICS_EXPORTER=none` for this collector (see [Metrics](#metrics)).
 
 </Step>
 </Steps>
 
-## Configuration
+## What gets recorded
 
-| Variable or field | Default | Notes |
+| Source | Span name | Kind | Attributes |
+| --- | --- | --- | --- |
+| Every HTTP request | `GET /posts/{slug}` | server | method, route, status code, scheme, protocol version, server address and port, user agent |
+| `app.DB()` statements | `SELECT`, `INSERT`... | client | `db.system.name`, `db.operation.name` |
+| `app.Queue()` dispatch | `send <queue>` | producer | `messaging.system=vukem`, `messaging.destination.name`, `messaging.message.id`, `vukem.job.kind` |
+| `app.Queue()` attempt | `process <queue>` | consumer | as above, plus `vukem.job.attempt` |
+| `app.Mailer()` sends | `mail send` | client | none |
+| Outbound HTTP (opt-in) | `POST` | client | method, scheme, server address and port, status code |
+
+Attribute names follow the OpenTelemetry [semantic conventions](https://opentelemetry.io/docs/specs/semconv/), so every backend knows how to display them. Failures mark the span with status Error and an `error.type` attribute.
+
+What is **never** recorded: paths and query strings of requests, bound SQL arguments, job payloads, email addresses, subjects and bodies. These may carry tokens or personal data.
+
+## HTTP request spans
+
+Each request gets one server span. It is named after the **route pattern** that matched (`GET /posts/{slug}`), never the raw path (`/posts/hello-world`). One name per route keeps the number of distinct span names small, which backends need to group and compare requests. A request that matched no route is named after its method only, such as `GET`; an unusual method becomes `HTTP`.
+
+Under the hood:
+
+- An incoming W3C `traceparent` header continues the caller's trace, and `baggage` is read too (`otel.DefaultPropagator()`, W3C TraceContext + Baggage).
+- The provider installs the middleware twice: with `Router.UseServer`, so the span times the whole stack, and with `Router.Use`, so the span still gets the route name when a middleware in between replaced the `*http.Request`.
+- The status code is the first one written; a handler that writes nothing counts as 200.
+- **5xx** responses mark the span as an error with `error.type` set to the code. 4xx responses do not: they are the client's mistake, not the server's.
+- A **panic** marks the span as an error with `error.type=panic`, ends it, and re-panics so the recovery middleware still answers.
+
+## Database, queue and mail spans
+
+The provider attaches an `otel.Observer` to the app with `app.Instrument`. Core Vukem never imports OpenTelemetry; it only offers these neutral hooks, and the observer turns their reports into spans and metrics.
+
+**Queries.** Each statement run through `app.DB()` becomes a client span named after its first SQL keyword (`SELECT`, `INSERT`, `UPDATE`...), or `db` when there is none. `db.system.name` comes from the `DATABASE_URL` scheme: `postgresql`, `mysql`, `mariadb` or `sqlite` (`:memory:`, `file:` and `sqlite:` URLs). Set `Config.DBSystem` for any other. A failed query marks the span as an error.
+
+The SQL text is off by default. `Config.QueryText: true` adds `db.query.text`. Statements written with `?` placeholders are safe to record, but SQL built by string concatenation would leak its values.
+
+**Jobs.** Dispatching a job records a `send <queue>` producer span. Each attempt a worker runs records a `process <queue>` consumer span with its attempt number; a failed attempt marks it as an error.
+
+**Mail.** Each send through `app.Mailer()` is a `mail send` client span, with no recipient, subject or body.
+
+Query and job reports arrive *after* the work is done, so their spans are back-dated by the reported duration and parented to the caller's context: a query inside a request is a child of the request span. A job run by a worker starts a **new trace**, because the dispatching request's context is not stored in the job.
+
+## Outbound HTTP calls
+
+Calls your app makes to other services are not traced unless you opt in, by wrapping the client's transport:
+
+```go title="app/services/payments.go"
+package services
+
+import (
+	"net/http"
+
+	"github.com/AlexGalhardo/vukem/drivers/otel"
+	"github.com/AlexGalhardo/vukem/httpclient"
+)
+
+// NewPaymentsClient returns a client whose calls are client spans.
+func NewPaymentsClient(tracing *otel.Provider) *http.Client {
+	return &http.Client{Transport: tracing.Transport(nil)}
+}
+
+// NewWebhookClient calls URLs users typed in, with the SSRF check of
+// httpclient.Safe still in place.
+func NewWebhookClient(tracing *otel.Provider) *http.Client {
+	return httpclient.Safe(httpclient.Options{
+		WrapTransport: tracing.Transport,
+	})
+}
+```
+
+`tracing.Transport(next)` wraps `next`, or `http.DefaultTransport` when `next` is nil. Call it after the app booted: before `Register`, or while the provider is off, it returns `next` unchanged. Each call becomes a client span named after the method, with the host and port but never the path or query string. Responses of **400 and above** mark the span as an error, because for a client a 4xx usually means a bug in the call.
+
+The trace context is **not** sent to the other service by default: third parties would receive your trace ids and any baggage. For calls to your own services, build the transport with `otel.NewObserver(tp, otel.WithClientPropagation()).Transport(nil)`, which adds `traceparent` and `baggage` headers so their spans join your trace.
+
+## Metrics
+
+Metrics are on when one of these is set, checked in this order:
+
+1. `Config.MetricReader`, any `sdkmetric.Reader` you build;
+2. `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`, used as is;
+3. `OTEL_EXPORTER_OTLP_ENDPOINT`, with `/v1/metrics` appended.
+
+As the OpenTelemetry specification says, the generic endpoint is for **every** signal, so setting it turns on traces *and* metrics. Metrics are exported every 60 seconds (`OTEL_METRIC_EXPORT_INTERVAL`, in milliseconds).
+
+<Callout type="warning" title="Traces-only collectors need OTEL_METRICS_EXPORTER=none">
+Some receivers accept traces only: Railway's tracing receiver and Jaeger, for example. With the generic endpoint, the metrics uploads fail and show up as export errors every minute. Set `OTEL_METRICS_EXPORTER=none` to keep traces and drop metrics. Before v0.3.0 of the module, metrics also needed `OTEL_METRICS_EXPORTER=otlp`; now that is the default.
+</Callout>
+
+| Metric | Kind | Attributes |
 | --- | --- | --- |
-| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | — | full URL of the traces endpoint, used as is |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | — | base URL for every signal; `/v1/traces` and `/v1/metrics` are appended |
-| `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | — | full URL of the metrics endpoint, used as is; overrides the generic one for metrics |
-| `OTEL_METRICS_EXPORTER` | `otlp` | `none` turns metrics off (traces stay on); any other value than `otlp` or `none` fails the boot |
-| `OTEL_METRIC_EXPORT_INTERVAL` | `60000` | metrics export period in milliseconds |
-| `Config.MetricReader` | — | any `sdkmetric.Reader`; overrides the OTLP metrics settings |
-| `OTEL_SERVICE_NAME` / `Config.ServiceName` | `APP_NAME` | the `service.name` resource attribute; `deployment.environment.name` is `APP_ENV` |
-| `OTEL_SDK_DISABLED` | `false` | `true` disables tracing |
-| `Config.Sampler` | `ParentBased(AlwaysSample)` | e.g. `sdktrace.ParentBased(sdktrace.TraceIDRatioBased(0.1))` to keep 10% |
-| `Config.Exporter` | OTLP/HTTP | any `sdktrace.SpanExporter` (tests, other protocols) |
-| `Config.Global` | `false` | also install the provider and propagator as OTel globals, for libraries instrumented through them |
+| `http.server.request.duration` | histogram, seconds | method, `http.route`, status code, `url.scheme`, `error.type` on 5xx and panics |
+| `http.client.request.duration` | histogram, seconds | method, `server.address`, `server.port`, status code, `error.type` |
+| `db.client.operation.duration` | histogram, seconds | `db.system.name`, `db.operation.name`, `error.type` |
+| `messaging.process.duration` | histogram, seconds | `messaging.system`, `messaging.destination.name`, `vukem.job.kind`, `error.type` |
+| `vukem.queue.job.failures` | counter | as above |
 
-As the OpenTelemetry spec says, the generic endpoint carries metrics too: a collector that accepts only traces (Railway's tracing receiver, for example) needs `OTEL_METRICS_EXPORTER=none`, or failed metric uploads show up as export errors.
+The names are also Go constants: `otel.MetricHTTPServerDuration`, `MetricHTTPClientDuration`, `MetricDBDuration`, `MetricJobDuration` and `MetricJobFailures`. A histogram's count is the number of requests, queries or attempts, so you get throughput for free. The buckets go from 5 ms to 10 s.
 
-Most hosted backends need an API key header (`OTEL_EXPORTER_OTLP_HEADERS=x-api-key=...`, or the `_TRACES_`/`_METRICS_` variants). The provider reads every `OTEL_*` setting through `app.Source`, so a value in `.env` works like one in the process environment. A malformed value fails the boot with an error that names the variable but never echoes its value.
+To send metrics to a backend that does not speak OTLP, pass its reader:
+
+```go title="bootstrap/app.go"
+exp, err := yourbackend.NewExporter()
+if err != nil {
+	return nil, err
+}
+
+tracing := otel.New(otel.Config{
+	MetricReader: sdkmetric.NewPeriodicReader(exp),
+})
+```
+
+`sdkmetric` is `go.opentelemetry.io/otel/sdk/metric`. Metrics may be on while traces are off, and the other way round: each signal follows its own endpoint.
+
+## Logs linked to traces
+
+When tracing is on, the provider wraps `app.Log` (and the logger behind `c.Log()`) with `otel.LogHandler`. Every record logged **with a context that carries a span** gets `trace_id` and `span_id` attributes, hex-encoded, so your backend can jump from a log line to its trace:
+
+```go title="app/controllers/posts.go"
+func (h *Posts) Show(c *web.Ctx) error {
+	c.Log().InfoContext(c.Context(), "showing post")
+
+	return c.String(http.StatusOK, "ok")
+}
+```
+
+The record then reads `level=INFO msg="showing post" trace_id=e3339779b5bc595b4e246a948ef6065f span_id=5883cca4e739562f`.
+
+Only the `*Context` methods of [`log/slog`](https://pkg.go.dev/log/slog) (`InfoContext`, `ErrorContext`...) see the span. `c.Log().Info(...)` logs without trace ids. The ids are added inside any group opened with `WithGroup`, and the keys are `otel.TraceIDKey` and `otel.SpanIDKey`.
 
 ## Your own spans
 
@@ -106,71 +226,232 @@ Get a tracer from the provider and start child spans inside a handler. They join
 ```go title="bootstrap/app.go"
 tracing := otel.New(otel.Config{})
 
-app, err := vukem.New(vukem.WithProviders(tracing) /* , ... */)
-if err != nil {
-	return nil, err
-}
-
-checkout := &controllers.Checkout{Tracer: tracing.TracerProvider().Tracer("shop/checkout")}
+app, err := vukem.New(
+	vukem.WithProviders(tracing),
+	vukem.WithRoutes(func(r *router.Router, app *vukem.App) error {
+		tracer := tracing.TracerProvider().Tracer("shop/checkout")
+		checkout := &controllers.Checkout{Tracer: tracer}
+		r.Post("/checkout", checkout.Pay)
+		return nil
+	}),
+)
 ```
 
 ```go title="app/controllers/checkout.go"
+package controllers
+
+import (
+	"go.opentelemetry.io/otel/trace"
+
+	"github.com/AlexGalhardo/vukem/web"
+)
+
 type Checkout struct {
-	Tracer trace.Tracer // go.opentelemetry.io/otel/trace
+	Tracer trace.Tracer
 }
 
 func (h *Checkout) Pay(c *web.Ctx) error {
 	ctx, span := h.Tracer.Start(c.Context(), "charge card")
 	defer span.End()
 
-	return chargeCard(ctx) // pass ctx down so deeper spans nest
+	// Pass ctx down so deeper spans nest under "charge card".
+	if err := chargeCard(ctx); err != nil {
+		span.RecordError(err)
+		return err
+	}
+
+	return c.NoContent()
 }
 ```
 
-`TracerProvider()` returns a no-op provider while tracing is off, so this code needs no `if`.
+`TracerProvider()` and `MeterProvider()` return no-op providers while a signal is off, so this code needs no `if`. `defer span.End()` uses Go's [`defer`](https://go.dev/tour/flowcontrol/12) to end the span however the function returns.
+
+## Sampling
+
+Recording every request is fine for a small app, but a busy one sends a lot of data. A <Term tip="The rule that decides which traces are recorded and exported. Unsampled requests still run normally; only their spans are dropped.">sampler</Term> keeps a share of them. The default is `ParentBased(AlwaysSample)`: follow the caller's decision when a `traceparent` says it, and sample everything else.
+
+```bash title=".env"
+OTEL_TRACES_SAMPLER=parentbased_traceidratio
+OTEL_TRACES_SAMPLER_ARG=0.1
+```
+
+| `OTEL_TRACES_SAMPLER` | Behaviour |
+| --- | --- |
+| `always_on` | every trace |
+| `always_off` | no trace |
+| `traceidratio` | a share of traces, `OTEL_TRACES_SAMPLER_ARG` from 0 to 1 (default 1) |
+| `parentbased_always_on` | the caller decides; otherwise every trace |
+| `parentbased_always_off` | the caller decides; otherwise none |
+| `parentbased_traceidratio` | the caller decides; otherwise the ratio |
+
+`Config.Sampler` wins over the variables, for example `sdktrace.ParentBased(sdktrace.TraceIDRatioBased(0.1))`.
 
 ## Bringing your own TracerProvider
 
-Without the provider, install the middleware yourself:
+Without the provider, wire the pieces yourself. Each one takes the same options:
 
-```go
-r.UseServer(otel.Middleware(tp))                  // one span per request
-log := slog.New(otel.LogHandler(base.Handler())) // trace_id / span_id on records
+```go title="bootstrap/tracing.go"
+// One server span (and a duration sample) per request.
+mw := otel.Middleware(tp, otel.WithMeterProvider(mp))
+app.Router.UseServer(mw)
+
+// Database, queue and mail spans. Call Instrument from a provider's
+// Register, before DB(), Queue() or Mailer() is first used.
+ob := otel.NewObserver(tp, otel.WithMeterProvider(mp))
+if err := app.Instrument(ob.Instrumentation()); err != nil {
+	return err
+}
+
+// trace_id and span_id on log records.
+app.Log = slog.New(otel.LogHandler(app.Log.Handler()))
 ```
 
-`otel.WithPropagator(p)` replaces the default W3C TraceContext + Baggage propagator.
+| Option | Effect |
+| --- | --- |
+| `otel.WithMeterProvider(mp)` | records metrics next to the spans; without it no metric is recorded |
+| `otel.WithPropagator(p)` | replaces W3C TraceContext + Baggage |
+| `otel.WithQueryText()` | records `db.query.text` |
+| `otel.WithDBSystem(name)` | sets `db.system.name` |
+| `otel.WithClientPropagation()` | `Transport` injects `traceparent` and `baggage` |
+
+`app.Instrument` called after the database, queue or mailer was built fails with `vukem.ErrInstrumentTooLate`, and none of its hooks is attached. The provider treats that as a boot error instead of a warning, because a silently partial trace is harder to notice than a failed boot.
+
+## Shutting down
+
+Spans are sent in batches, a few seconds after they end. `app.Run` calls the provider's `Shutdown` after the HTTP server and the queue worker have drained, within `SHUTDOWN_TIMEOUT`, so the last requests and jobs are exported too. Called with a context that has no deadline, the flush gives up after 10 seconds. A process killed with `SIGKILL` loses its last batch.
+
+## Configuration
+
+Every setting is read through `app.Source`, so a value in `.env` works like one in the process environment.
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | unset | base URL for every signal; `/v1/traces` and `/v1/metrics` are appended |
+| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | unset | full traces URL, used as is; wins over the generic one |
+| `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | unset | full metrics URL, used as is; wins over the generic one |
+| `OTEL_METRICS_EXPORTER` | `otlp` | `none` turns metrics off; anything else fails the boot |
+| `OTEL_METRIC_EXPORT_INTERVAL` | `60000` | metrics export period, in milliseconds |
+| `OTEL_EXPORTER_OTLP_HEADERS` | unset | `key=value,key2=value2`, percent-decoded: API keys for hosted backends |
+| `OTEL_EXPORTER_OTLP_TIMEOUT` | SDK default | per-export timeout, in milliseconds |
+| `OTEL_EXPORTER_OTLP_COMPRESSION` | SDK default | `gzip` or `none` |
+| `OTEL_TRACES_SAMPLER` / `_ARG` | `parentbased_always_on` | see [Sampling](#sampling) |
+| `OTEL_SERVICE_NAME` | `APP_NAME` | the `service.name` resource attribute |
+| `OTEL_RESOURCE_ATTRIBUTES` | unset | extra `key=value` resource attributes |
+| `OTEL_SDK_DISABLED` | `false` | `true` (any case) turns traces and metrics off |
+
+`HEADERS`, `TIMEOUT` and `COMPRESSION` also have per-signal versions, such as `OTEL_EXPORTER_OTLP_TRACES_HEADERS` or `OTEL_EXPORTER_OTLP_METRICS_TIMEOUT`, which win over the generic ones.
+
+Every span and metric carries the same resource: `deployment.environment.name` from `APP_ENV`, the `OTEL_RESOURCE_ATTRIBUTES`, and `service.name` from `Config.ServiceName`, else `OTEL_SERVICE_NAME`, else `service.name` in the attributes, else `APP_NAME`.
+
+| `otel.Config` field | Default | What it does |
+| --- | --- | --- |
+| `ServiceName` | from the variables | overrides `service.name` |
+| `Exporter` | OTLP/HTTP | any `sdktrace.SpanExporter`; set, it turns traces on without an endpoint |
+| `Sampler` | from `OTEL_TRACES_SAMPLER` | any `sdktrace.Sampler` |
+| `MetricReader` | from the variables | any `sdkmetric.Reader`; set, it turns metrics on |
+| `QueryText` | `false` | records the SQL text on database spans |
+| `DBSystem` | from `DATABASE_URL` | `db.system.name` on database spans and metrics |
+| `Global` | `false` | also installs the providers (and the propagator) as OpenTelemetry globals |
+
+`Global` is for libraries instrumented through `otel.GetTracerProvider()`. Only signals that are on are installed, so a disabled one never replaces an existing global with a no-op.
+
+### Boot errors
+
+A malformed value stops `vukem.New`. The error names the variable but never echoes its value, which may be an API key:
+
+| Mistake | Error |
+| --- | --- |
+| an endpoint that is not an `http(s)` URL | `otel: OTEL_EXPORTER_OTLP_ENDPOINT must be an http(s) URL` |
+| an unknown metrics exporter | `otel: OTEL_METRICS_EXPORTER must be otlp or none` |
+| a header without `=` | `otel: OTEL_EXPORTER_OTLP_HEADERS: entry 1 is not key=value` |
+| a timeout or interval that is not a positive number | `otel: OTEL_EXPORTER_OTLP_TIMEOUT must be a positive number of milliseconds` |
+| a compression other than `gzip` or `none` | `otel: OTEL_EXPORTER_OTLP_COMPRESSION must be gzip or none` |
+| an unknown sampler | `otel: unknown OTEL_TRACES_SAMPLER (always_on, ...)` |
+| a ratio outside 0 to 1 | `otel: OTEL_TRACES_SAMPLER_ARG must be a ratio between 0 and 1` |
+
+Each is wrapped as `vukem: register *otel.Provider: ...`.
+
+## Security
+
+- Spans record the **route pattern**, never the raw path or the query string, which may carry tokens or personal data.
+- SQL arguments, job payloads and email content are never recorded; the SQL text only with `QueryText`.
+- Trace context is not sent to third parties unless you turn on `WithClientPropagation`.
+- Incoming `baggage` is set by the client: never trust it for decisions.
+- Do not put secrets or personal data in your own span attributes or baggage: they leave your infrastructure.
+- Send telemetry over `https://` to collectors outside your private network.
+
+See the [security overview](/docs/security/overview) for the framework's other defaults.
 
 ## Testing
 
-Use the SDK's in-memory recorder, no collector needed:
+Use the SDK's in-memory recorder; no collector is needed:
 
-```go
-sr := tracetest.NewSpanRecorder()
-tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(sr))
+```go title="app/controllers/posts_test.go"
+package controllers_test
 
-r := router.New(nil)
-r.UseServer(otel.Middleware(tp))
-r.Get("/posts/{slug}", show)
+import (
+	"net/http"
+	"net/http/httptest"
+	"testing"
 
-r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/posts/hello", http.NoBody))
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
-if got := sr.Ended()[0].Name(); got != "GET /posts/{slug}" {
-	t.Fatalf("span name = %q", got)
+	"github.com/AlexGalhardo/vukem/drivers/otel"
+	"github.com/AlexGalhardo/vukem/router"
+	"github.com/AlexGalhardo/vukem/web"
+)
+
+func TestPostSpanName(t *testing.T) {
+	sr := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(sr))
+
+	r := router.New(nil)
+	r.UseServer(otel.Middleware(tp))
+	r.Get("/posts/{slug}", func(c *web.Ctx) error {
+		return c.String(http.StatusOK, "post")
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/posts/hello", nil)
+	r.ServeHTTP(httptest.NewRecorder(), req)
+
+	if got := sr.Ended()[0].Name(); got != "GET /posts/{slug}" {
+		t.Fatalf("span name = %q", got)
+	}
 }
 ```
 
-Or pass `otel.Config{Exporter: tracetest.NewInMemoryExporter()}` to the provider.
+To test through the provider, pass `otel.Config{Exporter: tracetest.NewInMemoryExporter(), MetricReader: sdkmetric.NewManualReader()}`. Read the spans with `exp.GetSpans()` before the app shuts down: shutting the exporter down clears them. See [Testing](/docs/testing/overview) for booting the app in tests.
 
-## Pitfalls
+## Common mistakes
 
-- **Register the provider before routes.** Otherwise middleware added earlier is not inside the span.
-- **No endpoint, no traces.** Tracing is silently off without `OTEL_EXPORTER_OTLP_ENDPOINT`; check the variable first when a backend shows nothing.
-- **Port 4318 is OTLP/HTTP, 4317 is gRPC.** The built-in exporter speaks HTTP.
-- **Spans are batched.** They reach the backend a few seconds later, and on graceful shutdown. A process killed with `SIGKILL` loses the last batch.
-- **Sample in production.** `AlwaysSample` sends every request; busy apps usually keep a ratio.
+**No endpoint, no traces.** Tracing is silently off without `OTEL_EXPORTER_OTLP_ENDPOINT` (or a traces endpoint, or `Config.Exporter`). Check the variable first when a backend shows nothing.
 
-## Security notes
+**Pointing at port 4317.** That is OTLP over gRPC; the built-in exporter speaks HTTP. Use 4318.
 
-- Spans record the **route pattern**, never the raw path or the query string, which may carry tokens or personal data.
-- Do not put secrets, tokens or personal data in span attributes or baggage: they leave your infrastructure. Incoming `baggage` is client-controlled; never trust it for decisions.
-- Send traces over `https://` to collectors outside your private network.
+**Metrics errors on a traces-only backend.** With Railway or Jaeger, the log shows failed metric exports every minute. Add `OTEL_METRICS_EXPORTER=none`.
+
+**Registering the provider late.** A provider listed before `otel.New` that opens the database in its `Register` makes the boot fail with `vukem: register *otel.Provider: otel: vukem: Instrument must run before DB(), Queue() or Mailer() is first used (call it from a provider's Register)`.
+
+List `otel.New(...)` first in `vukem.WithProviders`.
+
+**Logging without the context.** `c.Log().Info("paid")` has no trace id. Write `c.Log().InfoContext(c.Context(), "paid")`.
+
+## Next steps
+
+<CardGroup cols="2">
+<Card title="Docker and Railway" href="/docs/deployment/docker-and-railway" icon="rocket">
+Deploy with tracing on Railway.
+</Card>
+<Card title="Devtools" href="/docs/digging-deeper/devtools" icon="terminal">
+Inspect queries and requests locally.
+</Card>
+<Card title="Queues" href="/docs/digging-deeper/queue" icon="layers">
+Learn what the job spans measure.
+</Card>
+<Card title="Telegram logging" href="/docs/digging-deeper/telegram-logging" icon="zap">
+Get alerted on errors in a chat.
+</Card>
+</CardGroup>
+
+Package reference: [pkg.go.dev/github.com/AlexGalhardo/vukem/drivers/otel](https://pkg.go.dev/github.com/AlexGalhardo/vukem/drivers/otel).

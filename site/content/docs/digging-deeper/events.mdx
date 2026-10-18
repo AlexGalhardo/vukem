@@ -1,40 +1,376 @@
 ---
 title: Events
-description: Typed events with synchronous and async listeners, registered explicitly and drained on shutdown.
+description: Announce that something happened and let independent listeners react, synchronously, in the background or from the queue.
 ---
 
-```go title="app/events/order_shipped.go"
-// vukem make:event OrderShipped
-type OrderShipped struct{ OrderID int64 }
+An event is a small message that says "this just happened": an order shipped, a user signed up, a password changed. Instead of one handler that ships the order **and** emails the customer **and** updates the stock **and** writes an audit log, the handler announces `OrderShipped` and each of those jobs lives in its own listener. Adding a new reaction later means adding a listener, not editing the handler.
+
+You will learn:
+
+- how to declare an event and its listeners with `vukem make:event` and `vukem make:listener`;
+- the three kinds of listener (synchronous, async, queued) and when to pick each;
+- what happens, step by step, inside `app.Events.Dispatch`;
+- how errors, panics and shutdown are handled;
+- how to test code that dispatches events.
+
+## The idea
+
+Think of a school bell. When it rings, nobody tells each class what to do: every teacher already knows that the bell means "break time" and reacts in their own room. The bell does not know who is listening.
+
+In Vukem the bell is the <Term tip="The events.Bus that every app has in app.Events. It keeps the list of listeners for each event type and runs them.">event bus</Term>, the ring is a Go value (the event), and each teacher is a <Term tip="A plain Go function func(ctx context.Context, e SomeEvent) error that reacts to one event type.">listener</Term>.
+
+- An **event** is a plain Go [struct](https://go.dev/tour/moretypes/2). Its type is its name: the bus finds listeners by the event's Go type, not by a string.
+- A **listener** is a function that receives a [`context.Context`](https://pkg.go.dev/context) and the event, and returns an [`error`](https://go.dev/tour/methods/19).
+- Vukem uses [generics](https://go.dev/doc/tutorial/generics) so that `events.On(fn)` reads the event type from the function's signature: you never write the type twice.
+
+There are three ways to run a listener:
+
+| Registration | Runs | Its error | Survives a restart |
+| --- | --- | --- | --- |
+| `events.On(fn)` | now, inside `Dispatch`, in order | returned by `Dispatch` | not applicable |
+| `events.OnAsync(fn)` | in the background, on a goroutine pool | logged | no |
+| `events.OnQueued(kind, fn)` | as a [queue job](/docs/digging-deeper/queue) | retried by the queue | yes (with a persistent queue) |
+
+Rule of thumb: use `On` when the caller must know it worked (writing the audit row in the same request), `OnAsync` for quick best-effort work (a cache refresh, a metrics ping), and `OnQueued` for anything that must happen even if the server restarts (emails, calls to other APIs).
+
+## Quick start
+
+The running example on this page is a shop. When an order ships, the shop emails the customer and updates the stock.
+
+<Steps>
+<Step title="1. Create the event">
+
+```bash
+vukem make:event OrderShipped
 ```
+
+The command writes `app/events/order_shipped.go`. Add the fields the listeners need:
+
+```go title="app/events/order_shipped.go"
+package events
+
+// OrderShipped is dispatched once an order leaves the warehouse.
+type OrderShipped struct {
+	OrderID int64  `json:"order_id"`
+	Email   string `json:"email"`
+}
+```
+
+The [struct tags](https://go.dev/ref/spec#Struct_types) matter for queued listeners, which store the event as JSON.
+
+</Step>
+<Step title="2. Create the listeners">
+
+```bash
+vukem make:listener NotifyCustomer --event OrderShipped --async
+vukem make:listener UpdateStock --event OrderShipped --queued
+```
+
+Each command writes a file in `app/listeners/` and appends one line to `app/listeners/registry.go`. Without a flag the listener is synchronous; `--async` and `--queued` are exclusive.
 
 ```go title="app/listeners/notify_customer.go"
-// vukem make:listener NotifyCustomer --event OrderShipped [--async]
-func NotifyCustomer(ctx context.Context, e events.OrderShipped) error { return nil }
+package listeners
+
+import (
+	"context"
+	"log/slog"
+
+	"example.com/shop/app/events"
+)
+
+// NotifyCustomer handles events.OrderShipped.
+func NotifyCustomer(ctx context.Context, e events.OrderShipped) error {
+	slog.InfoContext(ctx, "order shipped", "order", e.OrderID)
+	return nil
+}
 ```
+
+</Step>
+<Step title="3. Check the registry">
 
 ```go title="app/listeners/registry.go"
-// make:listener appends; bootstrap passes vukem.WithListeners(listeners.All()...)
-func All() []events.Registration { return []events.Registration{events.OnAsync(NotifyCustomer)} }
+package listeners
+
+import "github.com/AlexGalhardo/vukem/events"
+
+// All lists the event listeners; vukem make:listener appends here.
+func All() []events.Registration {
+	return []events.Registration{
+		events.OnAsync(NotifyCustomer),
+		events.OnQueued("update_stock", UpdateStock),
+	}
+}
 ```
 
-```go
-err := app.Events.Dispatch(ctx, events.OrderShipped{OrderID: 42})
+The starter's `bootstrap/app.go` already passes this list to the app with `vukem.WithListeners(listeners.All()...)`. Nothing is discovered by magic: if a listener is not in `All`, it never runs.
+
+</Step>
+<Step title="4. Dispatch the event">
+
+```go title="app/controllers/order_controller.go"
+package controllers
+
+import (
+	vukem "github.com/AlexGalhardo/vukem"
+	"github.com/AlexGalhardo/vukem/web"
+
+	"example.com/shop/app/events"
+)
+
+// OrderController ships orders.
+type OrderController struct {
+	app *vukem.App
+}
+
+// Ship marks an order as shipped and announces it.
+func (oc *OrderController) Ship(c *web.Ctx) error {
+	id, err := c.ParamInt("id")
+	if err != nil {
+		return err
+	}
+
+	// ... update the order row ...
+
+	err = oc.app.Events.Dispatch(c.Context(), events.OrderShipped{
+		OrderID: id,
+		Email:   "user@example.com",
+	})
+	if err != nil {
+		return err
+	}
+
+	return c.NoContent()
+}
 ```
 
-- `events.On(fn)` infers the event type from the function. Synchronous listeners run in registration order; the first error stops the chain and is returned to the caller.
-- `events.OnAsync(fn)` listeners run on a bounded pool with a context detached from the request, log errors and panics, and are drained by `app.Shutdown`.
-- `events.Listen(bus, fn)` and `events.ListenAsync(bus, fn)` register directly on a bus.
-- Every security event is also dispatched as a [`security.Event`](/docs/security/building-blocks#security-events).
+</Step>
+<Step title="5. See it run">
 
-## Testing
+`POST /orders/42/ship` answers `204 No Content`. A moment later the log shows the async listener:
 
-```go
-fake := events.NewFake()
-_ = fake.Dispatch(ctx, events.OrderShipped{OrderID: 1})
-shipped := events.Dispatched[events.OrderShipped](fake)
+```text
+INFO order shipped order=42
 ```
+
+`UpdateStock` runs wherever the queue runs its jobs: inside `Dispatch` with the default `QUEUE_CONNECTION=sync`, or in a worker with `memory`, `database` or Redis.
+
+</Step>
+</Steps>
+
+## Events are Go types
+
+The bus looks listeners up with [`reflect.TypeOf`](https://pkg.go.dev/reflect#TypeOf) of the value you pass to `Dispatch`. Two consequences:
+
+- The type must match **exactly**. Listeners for `events.OrderShipped` do not receive `&events.OrderShipped{...}`: a pointer is a different type. Dispatching a type nobody listens to is not an error, so this mistake is silent.
+- Two packages can each have an `OrderShipped` type; they are different events.
+
+An event with no listeners is fine: `Dispatch` returns `nil`. Keep events small and made of plain data (IDs, strings, numbers, times). Queued listeners encode the event with [`encoding/json`](https://pkg.go.dev/encoding/json), so channels, functions and unexported fields do not survive the trip.
+
+## What Dispatch does, step by step
+
+`app.Events.Dispatch(ctx, event)` walks the listeners of the event's type **in registration order**:
+
+1. A **synchronous** listener runs right away on the caller's goroutine. If it returns an error, `Dispatch` stops and returns it, wrapped as `events: <event type> listener <name>: <error>`. Later listeners of every kind do not run.
+2. An **async** listener is handed to the background pool and `Dispatch` moves on at once.
+3. A **queued** listener enqueues the event. If the enqueue fails, `Dispatch` stops and returns `events: <event type> queued listener <kind>: <error>`.
+
+So order matters when you mix kinds: an async listener registered **before** a failing synchronous one has already started; one registered **after** it never starts.
+
+A panic in a synchronous listener is not recovered by the bus: it travels up to the caller like any Go [panic](https://go.dev/blog/defer-panic-and-recover). In an HTTP handler the recovery middleware turns it into a 500 response.
+
+After `app.Shutdown` began, `Dispatch` returns `events.ErrClosed` without running anything.
+
+## Synchronous listeners
+
+```go title="app/listeners/registry.go"
+events.On(RecordShipment)
+```
+
+Use them when the caller must know the reaction worked, or when it must happen before the response, such as writing an audit row. They run with the request's `ctx`, so a client that disconnects cancels their queries. Every synchronous listener adds its time to the request, so keep them fast.
+
+## Async listeners
+
+```go title="app/listeners/registry.go"
+events.OnAsync(NotifyCustomer)
+```
+
+An async listener runs on its own [goroutine](https://go.dev/tour/concurrency/1). Under the hood:
+
+- **Detached context.** The listener gets [`context.WithoutCancel(ctx)`](https://pkg.go.dev/context#WithoutCancel): it keeps the request's values (request ID, trace) but is not cancelled when the response is sent. Otherwise most async work would be cancelled before it started.
+- **Bounded pool.** The app's bus runs at most 16 async listeners at once. Extra ones wait their turn, so a burst of events cannot open thousands of database connections.
+- **Errors are logged, not returned.** A returned error is logged at `ERROR` as `async listener failed` with the event type and the error; a panic is recovered and logged as `async listener panicked`. Nothing is retried.
+- **Drained on shutdown.** `app.Shutdown` stops accepting events and waits for running async listeners, up to `SHUTDOWN_TIMEOUT` (default `15s`). If some are still running then, shutdown reports `events: async listeners still running: context deadline exceeded` and the process exits without them.
+
+<Callout type="warning" title="Async work can be lost">
+An async listener lives only in memory. If the process crashes or is killed, or shutdown runs out of time, the work is gone. Use a queued listener for anything that must happen.
+</Callout>
 
 ## Queued listeners
 
-`events.OnQueued("update_stock", listeners.UpdateStock)` (or `vukem make:listener UpdateStock --event OrderShipped --queued`) stores the event as JSON and runs the listener in a [queue](/docs/digging-deeper/queue) worker, with the queue's retries. `Dispatch` only reports enqueue errors.
+```go title="app/listeners/registry.go"
+events.OnQueued("update_stock", UpdateStock, queue.Retries(5))
+```
+
+`OnQueued(kind, fn, opts...)` turns the listener into a [queue job](/docs/digging-deeper/queue):
+
+- `Dispatch` encodes the event as JSON and enqueues a job named `kind`. It returns only **enqueue** errors; the listener's own errors are retried by the queue (3 retries with exponential backoff by default).
+- `opts` are the usual [queue options](/docs/digging-deeper/queue) (`queue.Retries`, `queue.Backoff`, `queue.Timeout`, `queue.OnQueue`), used as the job's defaults.
+- `app.Queue()` registers the job handler for you (the bus lists it in `Bus.Jobs`). The `kind` shares the name space of your jobs: it must not collide with a job's `Kind()`, or the queue fails to build with `queue: job kind already registered`. Keep it stable across deploys, because stored jobs carry it.
+- The listener runs wherever the queue runs jobs. With `QUEUE_CONNECTION=sync` (the default) that is **inside** `Dispatch`, and its error is returned to the caller like a synchronous listener's.
+
+Queued listeners need a queue, which the app wires up lazily on the first queued dispatch. A bus you build yourself with `events.New` returns `events.ErrNoQueue` until you call `SetQueue`.
+
+## Registering listeners
+
+| API | Use it for |
+| --- | --- |
+| `vukem.WithListeners(regs...)` | The app's listeners; the starter passes `listeners.All()` |
+| `events.On`, `events.OnAsync`, `events.OnQueued` | Build a `Registration` |
+| `bus.Register(regs...)` | Add registrations to a bus, in order |
+| `events.Listen(bus, fn)` | Shortcut for `bus.Register(events.On(fn))` |
+| `events.ListenAsync(bus, fn)` | Shortcut for `bus.Register(events.OnAsync(fn))` |
+
+You may register several listeners for the same event; they run in the order you listed them.
+
+## Built-in events: security alerts
+
+Vukem itself dispatches events on `app.Events`. Every `web.SecurityEvent` (a failed login, a CSRF rejection, a rate limit hit) is also dispatched as a `security.Event`, and every `web.AuditEvent` as a `security.Audit`, so you can alert on them:
+
+```go title="app/listeners/security_alert.go"
+package listeners
+
+import (
+	"context"
+	"log/slog"
+
+	"github.com/AlexGalhardo/vukem/security"
+)
+
+// SecurityAlert forwards security events to the on-call log.
+func SecurityAlert(ctx context.Context, e security.Event) error {
+	slog.WarnContext(ctx, "security alert", "name", e.Name, "ip", e.IP)
+	return nil
+}
+```
+
+Register it with `events.OnAsync(SecurityAlert)` so alerting never slows the request. See [security building blocks](/docs/security/building-blocks).
+
+## A bus outside the app
+
+The `events` package does not depend on `vukem.App`. A command-line tool or a library may build its own bus:
+
+```go title="cmd/importer/main.go"
+bus := events.New(slog.Default(), 4)
+events.Listen(bus, func(ctx context.Context, e Imported) error {
+	return nil
+})
+
+err := bus.Dispatch(ctx, Imported{Rows: 120})
+_ = bus.Shutdown(ctx)
+```
+
+`events.New(log, workers)` runs at most `workers` async listeners at once (`0` means 16; a `nil` logger means `slog.Default()`). Call `bus.SetQueue(fn)` to give queued listeners a queue and register `bus.Jobs()` on it.
+
+## Observing dispatches
+
+`bus.SetObserver(obs)` reports every `Dispatch` to an `events.Observer`. It receives an `events.Event` with the event's Go type, the number of listeners, the duration of the synchronous part and the returned error. It never sees the event's fields, which may hold personal data. The app sets the [devtools](/docs/digging-deeper/devtools) observer in development. An observer runs on the caller's goroutine, so it must be fast and safe for concurrent use.
+
+## Configuration
+
+Events have no environment variables of their own. These settings shape them:
+
+| Setting | Default | Effect |
+| --- | --- | --- |
+| `vukem.WithListeners(...)` | none | The listeners of `app.Events` |
+| Async pool size | `16` | Async listeners running at once (`events.New(log, workers)` outside the app) |
+| `SHUTDOWN_TIMEOUT` | `15s` | How long shutdown waits for async listeners |
+| `QUEUE_CONNECTION` | `sync` | Where queued listeners run (see [queues](/docs/digging-deeper/queue)) |
+
+Errors you may see:
+
+| Error | When |
+| --- | --- |
+| `events.ErrClosed` | `Dispatch` after shutdown began |
+| `events.ErrNoQueue` | A queued listener on a bus without `SetQueue` |
+| `queue.ErrDuplicateKind` | A queued listener's kind equals another job's kind |
+
+## Security
+
+- Listeners run with the app's full privileges and no user check of their own. Authorize in the handler **before** dispatching.
+- Queued listeners store the whole event as JSON in the jobs table (and in `failed_jobs` if they fail). Put IDs in events, not passwords, tokens or reset links; load the sensitive data inside the listener.
+- Observers and devtools only see the event's type, never its fields.
+
+More in the [security overview](/docs/security/overview).
+
+## Testing
+
+**Test a listener** as the plain function it is:
+
+```go title="app/listeners/notify_customer_test.go"
+func TestNotifyCustomer(t *testing.T) {
+	err := NotifyCustomer(t.Context(), events.OrderShipped{OrderID: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+```
+
+**Test that code dispatches an event** with `events.NewFake()`. Write the code against the `events.Dispatcher` interface (both `*events.Bus` and `*events.Fake` implement it), then pass the fake in the test:
+
+```go title="app/orders/ship_test.go"
+func TestShipDispatches(t *testing.T) {
+	fake := events.NewFake()
+
+	if err := orders.Ship(t.Context(), fake, 42); err != nil {
+		t.Fatal(err)
+	}
+
+	got := events.Dispatched[appevents.OrderShipped](fake)
+	if len(got) != 1 || got[0].OrderID != 42 {
+		t.Fatalf("dispatched = %v", got)
+	}
+}
+```
+
+`appevents` is an [import alias](https://go.dev/ref/spec#Import_declarations) for `example.com/shop/app/events`, needed because the file also imports Vukem's `events` package. The fake records events and runs no listener. `events.Dispatched[E](fake)` returns the recorded events of type `E`, in order.
+
+**Test the whole flow** through the app with [`vukemtest`](/docs/testing/overview): send the request, then assert on what the listeners did (rows written, mail sent to `app.Mails`). Async listeners may still be running when the request returns; prefer synchronous or queued listeners for behaviour a test must observe.
+
+## Common mistakes
+
+**Dispatching a pointer.**
+
+```go
+// Wrong: no listener receives it, and no error says so.
+app.Events.Dispatch(ctx, &events.OrderShipped{OrderID: 42})
+
+// Right: dispatch the same type the listener takes.
+app.Events.Dispatch(ctx, events.OrderShipped{OrderID: 42})
+```
+
+**Forgetting the registry.** A listener file that is not listed in `listeners.All()` never runs. `vukem make:listener` adds it for you; a hand-written listener needs the line.
+
+**Ignoring the error of Dispatch.** A failing synchronous listener stops the chain, and the error is the only sign:
+
+```text
+events: events.OrderShipped listener
+func(context.Context, events.OrderShipped) error:
+stock row missing
+```
+
+The real message is one line; it is wrapped here to fit. The "name" of a listener is its Go function type, not its function name.
+
+**Async for work that must happen.** An email sent from `OnAsync` is lost when the deploy restarts the server mid-send. Use `OnQueued`, which retries and survives restarts with a persistent queue.
+
+**Reusing a job kind.** `events.OnQueued("send_invoice", fn)` next to a job whose `Kind()` is `"send_invoice"` makes `app.Queue()` fail with `queue: job kind already registered: "send_invoice"`.
+
+## Next steps
+
+<CardGroup cols="2">
+<Card title="Queues" href="/docs/digging-deeper/queue" icon="layers">Where queued listeners run, with retries and failed jobs.</Card>
+<Card title="Mail" href="/docs/digging-deeper/mail" icon="zap">Send the customer email from a listener.</Card>
+<Card title="Broadcasting" href="/docs/digging-deeper/broadcasting" icon="route">Push events to browsers in real time.</Card>
+<Card title="Testing" href="/docs/testing/overview" icon="code">Boot the app in tests with vukemtest.</Card>
+</CardGroup>
+
+Package reference: [pkg.go.dev/github.com/AlexGalhardo/vukem/events](https://pkg.go.dev/github.com/AlexGalhardo/vukem/events).

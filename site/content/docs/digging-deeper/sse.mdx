@@ -1,19 +1,65 @@
 ---
 title: Server-sent events
-description: Stream text/event-stream responses with heartbeats, reconnect support and clean shutdown, and fan events out by topic across instances.
+description: Push live updates from the server to the browser over one long HTTP response, with heartbeats, reconnects, clean shutdown and a hub that fans events out by topic across instances.
 ---
 
-```go
-r.Get("/clock", func(c *web.Ctx) error {
+Some pages must change while the visitor looks at them: an order that moves from "paid" to "shipped", a new comment, a progress bar. Instead of the browser asking "anything new?" every few seconds, the server keeps one response open and writes an event whenever something happens. That is <Term tip="A W3C/WHATWG standard: the server answers with Content-Type text/event-stream and keeps writing small text events; the browser's EventSource reads them.">server-sent events</Term> (SSE), and the `sse` package does the hard parts for you.
+
+You will learn:
+
+- how an event stream works on the wire, and when to pick it over WebSockets
+- how to open a stream with `c.SSE` and send text, JSON and full events
+- what heartbeats, `Last-Event-ID` and `retry` do for reconnecting clients
+- how streams end: client gone, handler done, server shutting down
+- how a `Hub` sends one event to many browsers, on one or many servers
+- how to test a stream
+
+## The idea
+
+Picture a radio station. Your browser tunes in once (one HTTP request), and the station keeps talking (one response that never finishes). The browser cannot talk back on that channel; when it needs to, it sends a normal request.
+
+| | Polling | Server-sent events | WebSocket |
+| --- | --- | --- | --- |
+| Direction | browser asks, server answers | server to browser | both ways |
+| Protocol | plain HTTP | plain HTTP, `text/event-stream` | its own protocol after an upgrade |
+| Reconnect | your code | automatic, built into `EventSource` | your code |
+| Works through proxies and HTTP/2 | yes | yes | often needs extra setup |
+
+Use SSE when the server pushes and the browser only listens, which is most "live update" screens. For two-way chat with private channels, see [Broadcasting](/docs/digging-deeper/broadcasting).
+
+On the wire, an event is a few `field: value` lines followed by a blank line:
+
+```text
+id: 7
+event: status
+retry: 3000
+data: shipped
+
+```
+
+The browser side is the standard [`EventSource`](https://developer.mozilla.org/en-US/docs/Web/API/EventSource) API; the format is defined in the [HTML Living Standard](https://html.spec.whatwg.org/multipage/server-sent-events.html).
+
+This page builds one running example: a shop where the order page shows its status live.
+
+## Quick start
+
+<Steps>
+<Step title="Add a streaming route">
+
+```go title="routes/web.go"
+r.Get("/orders/{number}/clock", func(c *web.Ctx) error {
 	return c.SSE(func(s *sse.Stream) error {
 		t := time.NewTicker(time.Second)
 		defer t.Stop()
+
 		for {
 			select {
 			case <-s.Context().Done():
+				// The browser left or the server is stopping.
 				return nil
 			case now := <-t.C:
-				if err := s.Send("tick", now.Format(time.TimeOnly)); err != nil {
+				err := s.Send("tick", now.Format(time.TimeOnly))
+				if err != nil {
 					return err
 				}
 			}
@@ -22,36 +68,378 @@ r.Get("/clock", func(c *web.Ctx) error {
 })
 ```
 
-In plain `net/http` handlers use `sse.Serve(w, r, fn)`.
+`c.SSE` calls your function with a `*sse.Stream` and keeps the response open until the function returns. The [`select`](https://go.dev/tour/concurrency/5) statement waits on two [channels](https://go.dev/tour/concurrency/2) at once: the ticker and the stream's context.
 
-## Streams
+</Step>
+<Step title="Listen in the browser">
 
-- Every event is flushed through `http.ResponseController`, and the server's `WriteTimeout` is lifted for the stream.
-- A `: ping` comment goes out every 15s; change it with `sse.Heartbeat(d)`.
-- `Stream.Context()` ends when the client disconnects, when `fn` returns or when the app shuts down. The HTTP server signals open streams on shutdown, so it never waits on them.
-- `s.Send(event, data)`, `s.SendJSON(event, v)` and `s.SendEvent(sse.Event{ID, Event, Data, Retry})`; `s.LastEventID()` reads the client's `Last-Event-ID` after a reconnect.
-- Field values lose CR and LF, so input cannot forge extra fields.
+```html title="resources/views/orders/show.html"
+<p>Server time: <span id="clock">…</span></p>
+<script>
+	const source = new EventSource("/orders/1042/clock");
+	source.addEventListener("tick", (e) => {
+		document.getElementById("clock").textContent = e.data;
+	});
+</script>
+```
 
-## Hub
+</Step>
+<Step title="Watch the stream">
 
-`sse.NewHub(broker)` fans events out by topic:
+```bash
+curl -N http://localhost:3000/orders/1042/clock
+```
 
-```go
-hub := sse.NewHub(nil) // nil broker: this process only; pass the drivers/redis client for every instance
+```text
+event: tick
+data: 14:03:01
 
-err := hub.Publish(ctx, "posts", sse.Event{Event: "created", Data: html})
+event: tick
+data: 14:03:02
 
-r.Get("/posts/stream", func(c *web.Ctx) error {
-	return c.SSE(func(s *sse.Stream) error { return hub.Stream(s, "posts") })
+```
+
+`-N` turns off curl's buffering so each event shows the moment it arrives.
+
+</Step>
+</Steps>
+
+## Streams in depth
+
+### What `c.SSE` sets up
+
+`c.SSE(fn, opts...)` is `sse.Serve(c.Writer(), c.Request(), fn, opts...)`. In a plain `net/http` handler, call `sse.Serve(w, r, fn)` directly. Before your function runs, `Serve`:
+
+1. Removes the server's write deadline for this response with [`http.ResponseController`](https://pkg.go.dev/net/http#ResponseController). The app's HTTP server has a 60-second `WriteTimeout`, which would otherwise cut every stream after a minute.
+2. Sets the headers and sends status `200`:
+
+| Header | Value | Why |
+| --- | --- | --- |
+| `Content-Type` | `text/event-stream` | Tells the browser this is an event stream |
+| `Cache-Control` | `no-cache` | Nobody may cache a live stream |
+| `X-Accel-Buffering` | `no` | Tells nginx not to buffer the response, so events arrive at once |
+
+3. Flushes, so the browser knows the stream is open. If the client is already gone, `Serve` returns `nil` without calling your function.
+4. Starts the heartbeat (see below).
+
+When your function returns, `Serve` stops the heartbeat and waits for it, so nothing writes to the response after the handler ends. Its return value is what `Serve` returns.
+
+### Sending events
+
+| Method | Sends |
+| --- | --- |
+| `s.Send(event, data)` | an event with a type and text data |
+| `s.SendJSON(event, v)` | an event whose data is `v` encoded with [`encoding/json`](https://pkg.go.dev/encoding/json) |
+| `s.SendEvent(sse.Event{...})` | an event with every field you choose |
+
+Every send writes the event and flushes it immediately; there is no buffering to wait for. A `Stream` is safe to use from several [goroutines](https://go.dev/tour/concurrency/1) at once.
+
+```go title="app/controllers/orders.go"
+err := s.SendJSON("order", map[string]any{
+	"number": "1042",
+	"status": "shipped",
 })
 ```
 
-Subscribers that fall 64 events behind are dropped; the browser reconnects on its own.
+```text
+event: order
+data: {"number":"1042","status":"shipped"}
 
-With a broker, each topic holds one broker subscription while it has local subscribers on this instance; it is released when the last one leaves, so per-user topics (`user:42`) do not pile up Redis subscriptions. `hub.Subscribe` returns once the topic's broker subscription is up (at most 10 seconds), so a publish right after it reaches the stream; if the broker fails or does not answer in time, the stream's channel is closed (the browser reconnects and the next subscriber retries). A custom `sse.Broker` must close its channel and end the subscription when the `Subscribe` context is done.
+```
 
-## With htmx
+`sse.Event` has four fields:
 
-The stream pairs with htmx's `hx-sse`: send rendered HTML fragments as event data and let htmx swap them in. See [HTMX](/docs/frontend/htmx).
+| Field | Type | On the wire | What the browser does |
+| --- | --- | --- | --- |
+| `ID` | `string` | `id: ...` | Remembers it and sends it back as `Last-Event-ID` on reconnect |
+| `Event` | `string` | `event: ...` | Fires listeners for that type; empty means `message` |
+| `Data` | `string` | one `data: ...` line per line of text | Joins the lines back with `\n` into `e.data` |
+| `Retry` | `time.Duration` | `retry: <milliseconds>` | Waits this long before reconnecting |
 
-For named channels with authorization (private and presence channels), use [broadcasting](/docs/digging-deeper/broadcasting), which also serves over SSE.
+`Data` may span several lines: `"line1\nline2"` is written as two `data:` lines, and `\r\n` or a lone `\r` count as line breaks too. In `ID` and `Event`, carriage returns and line feeds are removed, so text from a user can never start a new field.
+
+A send after the stream ended returns the context's error (`context canceled`), so a loop that checks errors stops by itself.
+
+### Heartbeats
+
+Proxies and load balancers close connections that stay silent too long. Every 15 seconds (`sse.DefaultHeartbeat`) the stream writes a comment line, which `EventSource` ignores:
+
+```text
+: ping
+
+```
+
+If a heartbeat write fails, the client is gone: the stream's context is cancelled, so your function sees `s.Context().Done()`. Change the interval with `sse.Heartbeat(d)`; zero or a negative value turns heartbeats off:
+
+```go title="routes/web.go"
+return c.SSE(stream, sse.Heartbeat(30*time.Second))
+```
+
+### Reconnecting clients
+
+When the connection drops, `EventSource` reconnects by itself, after about 3 seconds or the last `Retry` you sent. On reconnect it sends the last `ID` it saw in the `Last-Event-ID` header. `s.LastEventID()` reads it, so you can send only what the browser missed:
+
+```go title="app/controllers/orders.go"
+return c.SSE(func(s *sse.Stream) error {
+	// Empty on the first connection.
+	since := s.LastEventID()
+
+	for _, ev := range o.history(number, since) {
+		if err := s.SendEvent(ev); err != nil {
+			return err
+		}
+	}
+
+	return o.hub.Stream(s, "order:"+number)
+})
+```
+
+Replaying missed events is your job: neither the stream nor the hub keeps history.
+
+### How a stream ends
+
+`s.Context()` is a [`context.Context`](https://pkg.go.dev/context) that is done when any of these happens:
+
+- the client disconnects (the browser tab closes, the network drops) or a heartbeat fails;
+- your function returns;
+- the server starts shutting down.
+
+On shutdown, the app's HTTP server signals every open stream through `sse.WithShutdown`, so `Shutdown` does not wait `SHUTDOWN_TIMEOUT` for connections that would never finish by themselves. Browsers then reconnect to the next instance. You only need `sse.WithShutdown(ctx, stop)` and `sse.ShutdownSignal(ctx)` when you run your own `http.Server`; the [WebSocket](/docs/digging-deeper/broadcasting) driver listens to the same signal.
+
+<Callout type="info" title="Request timeouts end streams">`middleware.Timeout(d)` puts a deadline on the request context, and the stream's context inherits it: every stream on that route closes after `d`. Do not put a timeout middleware in front of streaming routes.</Callout>
+
+## Fanning out with a Hub
+
+Most of the time the code that knows "order 1042 shipped" runs in another request (an admin clicking "Ship"), not in the stream. A `Hub` connects the two: publishers send events to a **topic**, and every stream subscribed to that topic receives them.
+
+```go title="routes/web.go"
+func Web(r *router.Router, app *vukem.App) error {
+	// One hub for the whole app.
+	hub := sse.NewHub(nil)
+	app.OnShutdown(func(context.Context) error {
+		hub.Close()
+		return nil
+	})
+
+	orders := controllers.NewOrderController(hub)
+
+	r.Get("/orders/{number}/events", orders.Events)
+	r.Post("/admin/orders/{number}/ship", orders.Ship)
+
+	return nil
+}
+```
+
+```go title="app/controllers/orders.go"
+// Events streams the status of one order.
+func (o *OrderController) Events(c *web.Ctx) error {
+	topic := "order:" + c.Param("number")
+
+	return c.SSE(func(s *sse.Stream) error {
+		return o.hub.Stream(s, topic)
+	})
+}
+
+// Ship marks the order shipped and tells every open page.
+func (o *OrderController) Ship(c *web.Ctx) error {
+	number := c.Param("number")
+	// ... update the order in the database ...
+
+	err := o.hub.Publish(c.Context(), "order:"+number, sse.Event{
+		Event: "status",
+		Data:  "shipped",
+	})
+	if err != nil {
+		return err
+	}
+
+	return c.Redirect("/admin/orders")
+}
+```
+
+| Method | What it does |
+| --- | --- |
+| `sse.NewHub(broker)` | A hub; `nil` keeps events inside this process |
+| `hub.Publish(ctx, topic, ev)` | Sends `ev` to every subscriber of `topic` |
+| `hub.Stream(s, topics...)` | Forwards the events of `topics` to `s` until the client leaves, the server stops or the hub closes; returns `nil` then |
+| `hub.Subscribe(ctx, topics...)` | Returns a channel of events and an unsubscribe function, for code that is not a stream |
+| `hub.Subscribers(topic)` | How many subscribers `topic` has on this instance |
+| `hub.Close()` | Ends every subscription; later subscriptions end immediately |
+
+Under the hood:
+
+- Each subscriber has a buffer of 64 events. A subscriber that falls 64 events behind is dropped instead of slowing down publishers: its channel closes, `hub.Stream` returns, the response ends, and the browser reconnects on its own.
+- A subscription ends, and its channel closes, when you call the unsubscribe function, when its `ctx` is done, or on `hub.Close()`.
+- Publishing to a topic with no subscribers does nothing. Events are not stored.
+
+### Across several instances
+
+With two servers behind a load balancer, a publish on server A must reach a browser connected to server B. Pass a `sse.Broker` to `NewHub` and every instance receives every event. The `*redis.Client` from [`drivers/redis`](/docs/database/redis) implements it with Redis Pub/Sub:
+
+```go title="routes/web.go"
+rc, err := redis.Open(ctx, app.Source.Get("REDIS_URL"))
+if err != nil {
+	return err
+}
+
+hub := sse.NewHub(rc)
+```
+
+What changes with a broker:
+
+- `Publish` encodes the event as JSON and publishes it on the broker channel `sse:<topic>`. The publishing instance receives it back through its own subscription, like everyone else.
+- A topic holds **one** broker subscription per instance while it has local subscribers, and releases it when the last one leaves. Per-user topics such as `user:42` therefore do not pile up Redis subscriptions.
+- `hub.Subscribe` returns once the topic's broker subscription is ready (at most 10 seconds), so an event published right after it is not missed. If the broker fails or does not answer in time, the subscriber's channel is closed; the browser reconnects and the next subscriber tries again.
+- Redis Pub/Sub delivers only to who is listening at that moment, so an event published while a browser is reconnecting is lost. Use `Last-Event-ID` replay when every event matters.
+
+A custom broker implements two methods:
+
+```go
+type Broker interface {
+	Publish(ctx context.Context, channel string, payload []byte) error
+	Subscribe(
+		ctx context.Context, channels ...string,
+	) (<-chan []byte, error)
+}
+```
+
+`Subscribe` must end the subscription and close the returned channel once `ctx` is done: the hub cancels that context when a topic loses its last local subscriber. Payloads that are not valid event JSON are ignored.
+
+## In the browser and with htmx
+
+`EventSource` fires one listener per event type, and `message` for events without a type:
+
+```js title="resources/js/order-status.js"
+const source = new EventSource("/orders/1042/events");
+
+source.addEventListener("status", (e) => {
+	document.getElementById("status").textContent = e.data;
+});
+
+source.onerror = () => {
+	// EventSource reconnects by itself; this only reports it.
+	console.warn("order stream lost, reconnecting");
+};
+```
+
+With [htmx](/docs/frontend/htmx), send rendered HTML fragments as event data and let the [htmx SSE extension](https://htmx.org/extensions/sse/) swap them into the page, with no JavaScript of your own. Browsers allow only about six HTTP/1.1 connections per site, and every open stream holds one; serve over HTTP/2 (most proxies and CDNs do) or keep one stream per page.
+
+## Configuration
+
+SSE reads no environment variables. Everything is in code:
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| `sse.Heartbeat(d)` | `15s` (`sse.DefaultHeartbeat`) | Interval of `: ping` comments; zero or negative disables them |
+| `sse.NewHub(broker)` | `nil` broker | `nil` for one process, a `sse.Broker` (Redis) for many |
+| subscriber buffer | 64 events | A slower subscriber is dropped |
+| broker subscribe timeout | 10 seconds | After that, the subscriber's channel closes |
+| `SHUTDOWN_TIMEOUT` | `15s` | Not used by streams: they end as soon as shutdown starts |
+
+Two things around SSE matter in production: `middleware.Gzip` never compresses `text/event-stream` (compression would buffer events), and nginx honours `X-Accel-Buffering: no`. Other proxies may need response buffering turned off for streaming routes.
+
+## Security
+
+- **Authentication works as usual.** A stream is a normal `GET`, so route middleware such as `auth.Required` runs before it, and `EventSource` sends cookies on same-origin requests. Check that the user may see a topic **before** subscribing, for example that order 1042 belongs to them. For private channels with authorization built in, use [Broadcasting](/docs/digging-deeper/broadcasting).
+- **No field injection.** `ID` and `Event` lose CR and LF, and `Data` is split into `data:` lines, so user text cannot forge extra fields or events.
+- **Escape HTML you send.** If the browser inserts `e.data` as HTML, render it with a view (`html/template` escapes it) instead of building strings by hand.
+- **Mind the connection count.** Each stream holds a connection and a goroutine. Put [rate limiting](/docs/security/rate-limiting) on streaming routes that anonymous visitors can open.
+
+See [Security overview](/docs/security/overview) for the rest.
+
+## Testing
+
+A stream never ends by itself, so test it with a real HTTP server from [`net/http/httptest`](https://pkg.go.dev/net/http/httptest) and a request whose context you control:
+
+```go title="app/controllers/orders_test.go"
+func TestOrderStream(t *testing.T) {
+	hub := sse.NewHub(nil)
+	t.Cleanup(hub.Close)
+
+	srv := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			_ = sse.Serve(w, r, func(s *sse.Stream) error {
+				return hub.Stream(s, "order:1042")
+			})
+		},
+	))
+	t.Cleanup(srv.Close)
+
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+
+	req, _ := http.NewRequestWithContext(ctx, "GET", srv.URL, nil)
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+
+	// Publish only once the handler has subscribed.
+	for hub.Subscribers("order:1042") == 0 {
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	ev := sse.Event{Event: "status", Data: "shipped"}
+	if err := hub.Publish(ctx, "order:1042", ev); err != nil {
+		t.Fatal(err)
+	}
+
+	sc := bufio.NewScanner(res.Body)
+	for sc.Scan() {
+		line := sc.Text()
+		if strings.HasPrefix(line, "data: ") {
+			if line != "data: shipped" {
+				t.Fatalf("got %q", line)
+			}
+
+			return
+		}
+	}
+
+	t.Fatal("stream ended without data")
+}
+```
+
+To test only the publishing side, subscribe directly and read the channel: `events, stop := hub.Subscribe(ctx, "order:1042")`, then `ev := <-events`.
+
+## Common mistakes
+
+**Ignoring the context.** A loop that never checks `s.Context().Done()` keeps running after the browser left, until its next send fails.
+
+```go title="wrong"
+for {
+	time.Sleep(time.Second)
+	s.Send("tick", "...")
+}
+```
+
+```go title="right"
+for {
+	select {
+	case <-s.Context().Done():
+		return nil
+	case <-time.After(time.Second):
+		if err := s.Send("tick", "..."); err != nil {
+			return err
+		}
+	}
+}
+```
+
+**A new hub per request.** `sse.NewHub` inside a handler gives every request its own hub, so publishers and streams never meet. Create one hub at boot and share it.
+
+**Publishing before anyone listens.** Events are not stored. A publish that happens before the stream subscribed is lost; in tests, wait for `hub.Subscribers(topic) > 0`.
+
+**Expecting events to survive a restart or a reconnect gap.** Use `ID` plus `s.LastEventID()` and replay from your database when the client must see every event.
+
+## Next steps
+
+<CardGroup cols="2">
+<Card title="Broadcasting" href="/docs/digging-deeper/broadcasting" icon="zap">Private and presence channels over SSE or WebSockets.</Card>
+<Card title="HTMX" href="/docs/frontend/htmx" icon="code">Swap streamed HTML fragments into the page.</Card>
+<Card title="Redis" href="/docs/database/redis" icon="database">The broker for several instances.</Card>
+<Card title="Events" href="/docs/digging-deeper/events" icon="layers">Publish to the hub from an event listener.</Card>
+</CardGroup>
+
+Package reference: [pkg.go.dev/github.com/AlexGalhardo/vukem/sse](https://pkg.go.dev/github.com/AlexGalhardo/vukem/sse).

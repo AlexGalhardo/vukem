@@ -1,82 +1,622 @@
 ---
 title: Mail
-description: Mailables rendered from views and sent through SMTP, Resend, Mailtrap, log or an in-memory transport for tests.
+description: Describe each email as a mailable, render it from a view and send it through SMTP, Resend, Mailtrap, the log or an in-memory transport, now or from a queue.
 ---
 
-```go title="app/mail/welcome.go"
-// vukem make:mail Welcome (also creates resources/views/mail/welcome.html)
-type Welcome struct{ User models.User }
+Almost every app sends email: "confirm your address", "reset your password", "your order shipped". The `mail` package lets you describe each email once, as a small Go type, and send it through the provider you choose with an environment variable. The code that sends the email never changes when you move from your laptop to production.
 
-func (m Welcome) Envelope() mail.Envelope {
-	return mail.Envelope{To: []string{m.User.Email}, Subject: "Welcome!", Tags: map[string]string{"kind": "welcome"}}
-}
+You will learn:
 
-func (m Welcome) Content() mail.Content { return mail.View("mail/welcome", m) }
-```
+- what a mailable, a mailer and a transport are, and how they fit together
+- how to write the HTML and plain-text body of an email with a view
+- how to pick a transport (SMTP, Resend, Mailtrap, log, array) with `MAIL_MAILER`
+- why some hosts such as Railway block SMTP, and what to use instead
+- how to send mail from a queue, and only after a database transaction commits
+- how to preview emails in the browser and assert on them in tests
+
+## The idea
+
+Think of sending a letter. You write the letter (the **mailable**), a post office worker puts it in an envelope and stamps it (the **mailer**), and a delivery company carries it (the **transport**). You can switch delivery companies without rewriting the letter.
+
+| Piece | Go type | Job |
+| --- | --- | --- |
+| Mailable | any type with `Envelope()` and `Content()` | Says who receives the email, its subject and its body |
+| Mailer | `*mail.Mailer` | Renders the mailable into a `*mail.Message` and hands it to the transport |
+| Message | `*mail.Message` | The finished email: addresses, subject, HTML, text, attachments, tags |
+| Transport | any type with `Send(ctx, msg)` | Delivers the message: SMTP, Resend, Mailtrap, a log line or memory |
+
+A mailable is a <Term tip="A set of method signatures. Any type that has those methods satisfies the interface, with no 'implements' keyword.">Go interface</Term>, so any struct with the two methods works. If interfaces are new to you, read [A Tour of Go: Interfaces](https://go.dev/tour/methods/9). Every send also takes a `context.Context`, which carries deadlines and cancellation; see the [context package](https://pkg.go.dev/context).
 
 ```go
-mailer, err := app.Mailer()
-err = mailer.Send(ctx, Welcome{User: u})
+type Mailable interface {
+	Envelope() Envelope
+	Content() Content
+}
+
+type Transport interface {
+	Send(ctx context.Context, msg *Message) error
+}
 ```
 
-## Content
+This page builds one running example: a shop that emails a customer when their order ships.
 
-- `mail.View(name, data)` renders an `html/template` view; the text part comes from `<name>_text` when it exists, otherwise from the HTML (links become `text (url)`). Mail views use `{{/* layout: none */}}`.
-- `mail.HTML(html, text)` and `mail.Text(text)` for literal bodies.
-- Attachments: implement `Attachments() []mail.Attachment`; inline parts set `Inline` and `ContentID` and are referenced as `cid:...`.
-- Context: implement `EnvelopeContext(ctx) mail.Envelope` (`mail.ContextEnveloper`) to build the envelope from the send's context, e.g. a subject in the request locale with `i18n.T(ctx, key)`. The Mailer calls it instead of `Envelope`, which stays required as the context-free fallback. `SendLater` renders before queueing, so it uses the context of the call.
+## Quick start
+
+<Steps>
+<Step title="Generate the mailable">
+
+```bash
+vukem make:mail OrderShipped
+```
+
+The command creates two files: `app/mail/order_shipped.go` (the mailable) and `resources/views/mail/order_shipped.html` (its view). A trailing `Mail` in the name is dropped, so `OrderShippedMail` gives the same type name.
+
+</Step>
+<Step title="Describe the email">
+
+```go title="app/mail/order_shipped.go"
+package mail
+
+import (
+	"github.com/AlexGalhardo/vukem/mail"
+
+	"example.com/shop/app/models"
+)
+
+// OrderShipped tells a customer their parcel is on its way.
+type OrderShipped struct {
+	Order models.Order
+	// TrackingURL is shown as a button in the email.
+	TrackingURL string
+}
+
+// Envelope implements mail.Mailable.
+func (m OrderShipped) Envelope() mail.Envelope {
+	return mail.Envelope{
+		To:      []string{m.Order.CustomerEmail},
+		Subject: "Your order has shipped",
+		Tags:    map[string]string{"category": "orders"},
+	}
+}
+
+// Content implements mail.Mailable.
+func (m OrderShipped) Content() mail.Content {
+	return mail.View("mail/order_shipped", m)
+}
+```
+
+</Step>
+<Step title="Write the view">
+
+```html title="resources/views/mail/order_shipped.html"
+{{/* layout: none */}}
+<!doctype html>
+<html lang="en">
+<body style="font-family: system-ui, sans-serif;">
+	<h1>Order #{{.Order.Number}} is on its way</h1>
+	<p>Hello {{.Order.CustomerName}},</p>
+	<p>Follow your parcel <a href="{{.TrackingURL}}">here</a>.</p>
+</body>
+</html>
+```
+
+The first line, `{{/* layout: none */}}`, tells the view engine not to wrap the email in your website layout (`layouts/app.html`).
+
+</Step>
+<Step title="Send it">
+
+```go title="app/controllers/orders.go"
+func (o *OrderController) Ship(c *web.Ctx) error {
+	order, err := o.find(c)
+	if err != nil {
+		return err
+	}
+
+	// app.Mailer() builds the mailer from MAIL_* on first use.
+	mailer, err := o.app.Mailer()
+	if err != nil {
+		return err
+	}
+
+	err = mailer.Send(c.Context(), shopmail.OrderShipped{
+		Order:       order,
+		TrackingURL: "https://example.com/track/" + order.Number,
+	})
+	if err != nil {
+		return err
+	}
+
+	return c.Redirect("/orders")
+}
+```
+
+</Step>
+<Step title="See it in the log">
+
+Outside production, with no `MAIL_MAILER` set, the mailer uses the `log` transport, so nothing leaves your machine. Run `vukem serve`, ship an order, and the terminal shows (wrapped here to fit):
+
+```text
+level=INFO msg="mail (log transport)"
+  to="[\"Ana\" <ana@example.com>]" cc=[]
+  subject="Your order has shipped" attachments=0
+```
+
+</Step>
+</Steps>
+
+## Mailables in depth
+
+### The envelope
+
+`Envelope()` returns a `mail.Envelope`. Every field is optional except that at least one of `To`, `Cc` or `Bcc` must hold an address.
+
+| Field | Type | What it does |
+| --- | --- | --- |
+| `From` | `string` | The sender. Empty means `MAIL_FROM` (default `Vukem <hello@example.com>`) |
+| `To` | `[]string` | Main recipients |
+| `Cc` | `[]string` | Copied recipients, visible to everyone |
+| `Bcc` | `[]string` | Hidden recipients; never written as a header |
+| `ReplyTo` | `[]string` | Where replies go |
+| `Subject` | `string` | The subject line; a line break in it is an error |
+| `Tags` | `map[string]string` | Provider metadata (see each transport below) |
+
+Addresses may be plain (`ana@example.com`) or carry a name (`Ana Souza <ana@example.com>`). Each one goes through [`net/mail.ParseAddress`](https://pkg.go.dev/net/mail#ParseAddress) and is written back in its normalised form, so `Ana <ana@example.com>` becomes `"Ana" <ana@example.com>`. An address that does not parse is an error such as `mail: recipient: "ana@": mail: no angle-addr`.
+
+A mailable with no recipient at all fails with `mail.ErrNoRecipients` (`mail: no recipients`).
+
+### The envelope from the context
+
+Sometimes the envelope depends on the request: a subject in the customer's language, for example. Add an `EnvelopeContext` method (the `mail.ContextEnveloper` interface) and the mailer calls it instead of `Envelope`:
+
+```go title="app/mail/order_shipped.go"
+// EnvelopeContext implements mail.ContextEnveloper.
+func (m OrderShipped) EnvelopeContext(
+	ctx context.Context,
+) mail.Envelope {
+	env := m.Envelope()
+	env.Subject = i18n.T(ctx, "mail.order_shipped")
+
+	return env
+}
+```
+
+`Envelope` stays required: it is the fallback for code that has no context. See [Localization](/docs/digging-deeper/localization) for `i18n.T`.
+
+### The content
+
+`Content()` returns one of three kinds of body:
+
+| Constructor | HTML part | Plain-text part |
+| --- | --- | --- |
+| `mail.View(name, data)` | the view `name` rendered with `data` | the view `name_text` if it exists, otherwise derived from the HTML |
+| `mail.HTML(html, text)` | `html` as given | `text`, or derived from `html` when `text` is empty |
+| `mail.Text(text)` | none | `text` |
+
+Views are [`html/template`](https://pkg.go.dev/html/template) files, the same engine as your pages, so values are escaped and `{{.TrackingURL}}` cannot inject HTML. A `mail.View` content needs the app's view engine (`vukem.WithViews`); without one, sending fails with `mail: view content needs a view engine`.
+
+Every email gets a plain-text part, because some people read mail in text-only clients and spam filters like it. When you do not write a `_text` view, the mailer derives it from the HTML: it drops `<script>`, `<style>` and `<head>`, turns `<br>`, `</p>`, `</div>`, headings, list items and table rows into line breaks, rewrites links as `text (url)` and decodes entities. The view above becomes:
+
+```text
+Order #1042 is on its way
+Hello Ana,
+Follow your parcel here (https://example.com/track/1042).
+```
+
+To write the text yourself, add a second view next to the first:
+
+```text title="resources/views/mail/order_shipped_text.html"
+{{/* layout: none */}}
+Hello {{.Order.CustomerName}},
+
+Order #{{.Order.Number}} is on its way:
+{{.TrackingURL}}
+```
+
+### Attachments and inline images
+
+Add an `Attachments()` method (the `mail.Attachable` interface) to attach files. Here the struct gains an `InvoicePDF []byte` field, and `logoPNG` is a file embedded with [`//go:embed`](https://pkg.go.dev/embed):
+
+```go title="app/mail/order_shipped.go"
+//go:embed logo.png
+var logoPNG []byte
+
+// Attachments implements mail.Attachable.
+func (m OrderShipped) Attachments() []mail.Attachment {
+	return []mail.Attachment{
+		{
+			Filename:    "invoice-1042.pdf",
+			ContentType: "application/pdf",
+			Data:        m.InvoicePDF,
+		},
+		{
+			Filename:  "logo.png",
+			Data:      logoPNG,
+			Inline:    true,
+			ContentID: "logo",
+		},
+	}
+}
+```
+
+| Field | What it does |
+| --- | --- |
+| `Filename` | The name the reader sees |
+| `ContentType` | The MIME type; empty means a guess from the file extension, then `application/octet-stream` |
+| `Data` | The file bytes |
+| `Inline` | `true` shows the file inside the HTML instead of as a download |
+| `ContentID` | The id the HTML uses: `<img src="cid:logo">` |
+
+Over SMTP the content type is parsed and rebuilt, so a type that came from an upload cannot smuggle a line break into the headers (`mail: invalid attachment content type`). A content id with a line break or `<`, `>` is refused (`mail: invalid content id`).
+
+### Rendering without sending
+
+`mailer.Render(ctx, mailable)` returns the finished `*mail.Message` without sending it. Each render gets a fresh random `ID`, which becomes the `Message-ID` header over SMTP and the idempotency key on Resend. Previews and tests use `Render`.
 
 ## Transports
 
-| `MAIL_MAILER` | Transport | Settings |
-| --- | --- | --- |
-| `smtp` | `net/smtp` with required STARTTLS (or implicit TLS on 465), AUTH PLAIN, multipart MIME | `SMTP_HOST`, `SMTP_PORT` (587), `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_INSECURE` (local catchers only) |
-| `resend` | Resend HTTP API: tags, reply-to, attachments, the message id as `Idempotency-Key`, retries on 429/5xx, typed `*mail.ResendError` | `RESEND_API_KEY` |
-| `mailtrap` | Mailtrap Email API: cc/bcc, one reply-to, attachments and inline images, the `category` tag as category and other tags as custom variables, retries on 429/5xx, typed `*mail.MailtrapError` | `MAILTRAP_API_TOKEN`, `MAILTRAP_INBOX_ID` (sandbox) |
-| `log` | logs recipients and subject (bodies at debug) | default outside production |
-| `array` | in memory | default in `vukemtest` |
+You choose the transport with `MAIL_MAILER`. The mailable code stays the same.
 
-`MAIL_FROM` sets the default sender. Production must set `MAIL_MAILER`; a missing or unknown value is an error, never silent loss of mail. `vukem.WithMailTransport(t)` plugs in your own `mail.Transport`.
+| `MAIL_MAILER` | Delivers through | Use it for |
+| --- | --- | --- |
+| *(empty)* | `log` outside production; an error in production | Local development |
+| `log` | the app logger | Development, or a staging app that must never email anyone |
+| `array` | memory | Tests (`vukemtest` sets it) |
+| `smtp` | any SMTP server, over TLS | Your own mail server, Amazon SES SMTP, Postmark SMTP, Mailpit |
+| `resend` | the [Resend](https://resend.com/docs/api-reference/emails/send-email) HTTP API | Production on hosts that block SMTP |
+| `mailtrap` | the [Mailtrap Email API](https://docs.mailtrap.io/developers/email-sending) | Production or a staging sandbox, on hosts that block SMTP |
+
+The app builds the mailer once, on the first `app.Mailer()` call. That call returns an error when the configuration is wrong:
+
+| Situation | Error |
+| --- | --- |
+| `APP_ENV=production` and no `MAIL_MAILER` | `vukem: set MAIL_MAILER in production (smtp, resend, mailtrap or log)` |
+| an unknown name, such as `sendgrid` | `vukem: unknown MAIL_MAILER "sendgrid"` |
+| `resend` without a key | `vukem: MAIL_MAILER=resend needs RESEND_API_KEY` |
+| `mailtrap` without a token | `vukem: MAIL_MAILER=mailtrap needs MAILTRAP_API_TOKEN` |
+| `MAILTRAP_INBOX_ID` below zero | `vukem: MAILTRAP_INBOX_ID must be a positive sandbox inbox id` |
+
+Mail is never lost silently. The starters call `app.Mailer()` while they register routes, so in practice these errors stop the app at boot.
+
+### SMTP
+
+[SMTP](https://www.rfc-editor.org/rfc/rfc5321) is the classic protocol mail servers speak. The transport uses Go's [`net/smtp`](https://pkg.go.dev/net/smtp).
+
+```bash title=".env"
+MAIL_MAILER=smtp
+MAIL_FROM="Shop <orders@example.com>"
+SMTP_HOST=smtp.example.com
+SMTP_PORT=587
+SMTP_USERNAME=orders@example.com
+SMTP_PASSWORD=change-me
+```
+
+What happens on each send:
+
+1. The message is built as RFC 5322 bytes: `multipart/mixed` (files) around `multipart/related` (inline images) around `multipart/alternative` (text, then HTML). Every part is base64. The subject is encoded so accents survive.
+2. The transport dials `SMTP_HOST:SMTP_PORT`. Port `465` uses <Term tip="The connection is encrypted from the first byte, before any SMTP command.">implicit TLS</Term>; any other port connects in plain text and then upgrades with `STARTTLS`.
+3. If the server does not offer `STARTTLS`, the send fails with `mail: smtp server does not offer STARTTLS (set InsecureSkipTLS only for local catchers)`. TLS 1.2 is the minimum.
+4. With `SMTP_USERNAME` set, it logs in with `AUTH PLAIN`.
+5. It sends `MAIL FROM`, one `RCPT TO` per `To`, `Cc` and `Bcc` address, then the data. Bcc addresses get the mail but never appear in a header.
+6. Dialing and the whole exchange share a 30-second timeout.
+
+Tags become `X-Tag-<name>: <value>` headers. A tag name or value with a line break or a colon fails with `mail: tag contains a line break or colon`.
+
+`SMTP_INSECURE=true` allows a server without `STARTTLS`. Use it only for a local catcher such as [Mailpit](https://mailpit.axllent.org) on `localhost:1025`. Go's `net/smtp` still refuses to send a password over an unencrypted connection to any host other than `localhost`, so leave `SMTP_USERNAME` empty for the catcher.
+
+### When your host blocks SMTP (Railway and other PaaS)
+
+Spammers love cloud servers, so many hosting platforms close the outgoing SMTP ports (25, 465 and 587). On Railway, outbound SMTP is only available on the Pro plan and above; Free, Trial and Hobby projects cannot reach an SMTP server at all.
+
+<Quote source="https://docs.railway.com/networking/outbound-networking#email-delivery" author="Railway docs" title="Outbound Networking: Email delivery">
+SMTP is only available on the Pro plan and above.
+</Quote>
+
+With `MAIL_MAILER=smtp` on such a host, every send waits and then fails while dialing:
+
+```text
+mail: smtp dial: dial tcp 203.0.113.10:587: i/o timeout
+```
+
+The fix is an HTTP transport. `resend` and `mailtrap` send the email as an HTTPS request on port 443, which every host allows. Change two variables and redeploy; the mailables stay as they are.
+
+```bash title=".env (Railway)"
+MAIL_MAILER=resend
+RESEND_API_KEY=re_...
+MAIL_FROM="Shop <orders@example.com>"
+```
+
+<Callout type="tip">Whatever the host, verify your sending domain with the provider (SPF and DKIM records) before you go live, or your mail lands in spam.</Callout>
+
+### Resend
+
+```bash title=".env"
+MAIL_MAILER=resend
+RESEND_API_KEY=re_...
+MAIL_FROM="Shop <orders@example.com>"
+```
+
+Each send is one `POST https://api.resend.com/emails` with a JSON body.
+
+- `From`, `To`, `Cc`, `Bcc`, `ReplyTo`, subject, HTML and text map one to one.
+- Attachments are sent base64-encoded with their `content_type` and `content_id`.
+- Each tag becomes a Resend tag `{name, value}`. Resend accepts only ASCII letters, digits, `_` and `-` in tags, and the transport does not check that for you.
+- The message `ID` goes in the `Idempotency-Key` header. When a retry repeats a request Resend already accepted, Resend does not send the email twice.
+- A `429` or `5xx` answer is retried up to 2 times. The wait is the `Retry-After` header when present, otherwise 200 ms, then 400 ms, and never more than 5 seconds. A network error (DNS, connection refused) is returned at once, without a retry.
+- An error answer becomes a `*mail.ResendError` with `Status`, `Name` and `Message`, for example `mail: resend 422 validation_error: Invalid from field.`. Its `Retryable()` method is true for 429 and 5xx.
+- Each request has a 10-second timeout.
 
 ### Mailtrap
 
-Some hosts block outbound SMTP (Railway on some plans, other PaaS): `smtp` then fails with a dial timeout. Mailtrap's HTTP API goes over HTTPS on port 443 instead.
-
 ```bash title=".env"
 MAIL_MAILER=mailtrap
-MAILTRAP_API_TOKEN=...      # Email API token, required: a missing token stops the app at boot
-MAILTRAP_INBOX_ID=1234567   # optional: deliver to this Email Sandbox inbox instead of real recipients
-MAIL_FROM="App <hello@your-verified-domain.com>"
+MAILTRAP_API_TOKEN=...
+MAIL_FROM="Shop <orders@example.com>"
+# Optional: deliver to a sandbox inbox instead.
+MAILTRAP_INBOX_ID=1234567
 ```
 
-- Without `MAILTRAP_INBOX_ID` mail goes to `https://send.api.mailtrap.io/api/send` (transactional stream); the sender domain must be verified in Mailtrap.
-- With `MAILTRAP_INBOX_ID` it goes to `https://sandbox.api.mailtrap.io/api/send/{inbox}`, for staging. Use a token that can access that inbox. With `APP_ENV=production` the app logs a warning at boot, since recipients receive nothing.
-- A `category` tag becomes Mailtrap's `category`; other tags are sent as `custom_variables` (they show up in webhooks and logs).
-- Mailtrap accepts a single reply-to address; more than one is an error rather than a silently dropped address.
-- The API has no idempotency key, so a 5xx answered after delivery can send twice when retried.
-- Errors are `*mail.MailtrapError` with the HTTP status and Mailtrap's `errors` list (or its `message` when the shape differs), at most 5 one-line items of 200 characters. They never carry the message body or the token but may contain addresses quoted by the API. `Retryable()` is true for 429 and 5xx; a 2xx answering `success: false` is a non-retryable error.
+Mailtrap has two modes:
+
+| `MAILTRAP_INBOX_ID` | Endpoint | Who receives the email |
+| --- | --- | --- |
+| unset or `0` | `https://send.api.mailtrap.io/api/send` | The real recipients. Your sending domain must be verified in Mailtrap |
+| a positive number | `https://sandbox.api.mailtrap.io/api/send/<id>` | Nobody: the email lands in that Email Sandbox inbox, for staging |
+
+A staging app usually runs with `APP_ENV=production` too. With a sandbox inbox in production the app logs a warning at startup (`mail goes to the Mailtrap sandbox; recipients receive nothing`), so the setting is never silent.
+
+How the message maps to the API:
+
+- Addresses are split into `email` and `name`.
+- Mailtrap accepts one reply-to address. Two or more fail with `mail: mailtrap accepts a single reply-to address`, instead of dropping the others and misrouting replies.
+- Attachments get `disposition: attachment`; inline ones get `disposition: inline` and their `content_id`.
+- The tag named `category` becomes Mailtrap's `category`. Every other tag goes into `custom_variables`, which show up in Mailtrap logs and webhooks.
+- `429` and `5xx` answers are retried exactly like Resend (2 retries, `Retry-After` honoured, 5-second cap). Mailtrap has no idempotency key, so a `5xx` that arrives after Mailtrap already delivered the email can make a retry send it twice.
+- A `2xx` answer whose body says `"success": false` is an error, and it is not retried.
+- Errors are `*mail.MailtrapError` with `Status` and `Errors`, for example `mail: mailtrap 401: Unauthorized`. At most 5 errors of 200 characters each are kept, on one line, so an upstream message cannot forge or flood log lines. The token is replaced by `[redacted]` if Mailtrap echoes it; addresses that Mailtrap quotes may remain.
+- Redirects are never followed, because following one would send your token and the email to another server.
+- Each request has a 10-second timeout and sends a `User-Agent: vukem-mail` header.
+
+### Log and array
+
+`log` writes one `INFO` line per email with the recipients, the subject and the number of attachments. The text body is logged only at `DEBUG` level, so `LOG_LEVEL=debug` shows it. Nothing is delivered.
+
+`array` keeps every message in memory. `vukemtest` sets `MAIL_MAILER=array` for you; see [Testing](#testing).
+
+### Your own transport
+
+Any type with `Send(ctx, *mail.Message) error` is a transport. Pass it with `vukem.WithMailTransport` and it replaces whatever `MAIL_MAILER` chose:
+
+```go title="bootstrap/app.go"
+app, err := vukem.New(
+	vukem.WithMailTransport(postmark.New(token)),
+)
+```
+
+Wrappers still apply around your transport: the [devtools](/docs/digging-deeper/devtools) Mail tab records every message, and [OpenTelemetry](/docs/digging-deeper/opentelemetry) adds a span per send.
+
+## Sending later, from a queue
+
+`Send` talks to the provider while the request waits. A slow provider means a slow page, and a failure means an error page. `SendLater` moves the delivery to a background [queue](/docs/digging-deeper/queue) job:
+
+```go title="app/controllers/orders.go"
+err = mailer.SendLater(
+	c.Context(),
+	shopmail.OrderShipped{Order: order, TrackingURL: url},
+	queue.OnQueue("mail"),
+	queue.Retries(5),
+)
+```
+
+`app.MailLater(ctx, mailable, opts...)` does the same in one call. Under the hood:
+
+1. The mailable is rendered **now**, so a broken view or a missing recipient returns an error to you, not to a worker later. `EnvelopeContext` sees the context of this call.
+2. The rendered message is encrypted with `app.Crypt` (your `APP_KEY`) and stored as a `vukem.mail` job. Reset links and other secrets in the body never sit in clear text in the jobs table, in logs or in `queue:failed` output.
+3. A worker opens the job and sends the message through the transport. A failure is retried with the queue's backoff (3 retries by default).
+4. The message `ID` stays the same on every retry, so Resend's idempotency key sends it once.
+
+Every [queue option](/docs/digging-deeper/queue) applies to the mail job: `queue.OnQueue`, `queue.Retries`, `queue.Backoff`, `queue.Timeout` and `queue.Delay`.
+
+Where the job runs depends on `QUEUE_CONNECTION`:
+
+| `QUEUE_CONNECTION` | What `SendLater` does |
+| --- | --- |
+| `sync` (default) | Sends during the call and returns the send error. `queue.Delay` fails with `queue: the sync driver cannot delay jobs ...` |
+| `memory` | Queues in the process; the worker inside `serve` sends it. A restart loses queued mail |
+| `database` | Stores the job in the `jobs` table; the worker inside `serve` (unless `QUEUE_IN_SERVE=false`) or `vukem queue:work` sends it |
+
+Use `database` in production so requests never wait for the mail provider and nothing is lost on a restart.
+
+### Only after the transaction commits
+
+An order email must not go out if saving the order fails. `SendLaterTx` (or `app.MailLaterTx`) ties the email to a database transaction:
+
+```go title="app/controllers/orders.go"
+err = db.Tx(c.Context(), func(tx *database.Tx) error {
+	if err := orm.Update(c.Context(), tx, &order); err != nil {
+		return err
+	}
+
+	return mailer.SendLaterTx(
+		c.Context(), tx,
+		shopmail.OrderShipped{Order: order, TrackingURL: url},
+	)
+})
+```
+
+- On the `database` queue, the job row is inserted inside the same transaction: it exists only if the transaction commits.
+- On other drivers, the job is queued right after the commit. With `sync` the email is sent at that moment; since your function already returned, a send error is logged instead of returned.
+- Rendering errors are still returned at once, inside the transaction, so you can roll back.
+
+### A mailer you build yourself
+
+`mail.New(transport, from, views)` returns a bare `*mail.Mailer` for scripts and libraries. It has no queue: `SendLater` and `SendLaterTx` return `mail.ErrNoQueue` until you call `SetEnqueue` and `SetEnqueueTx`. `app.Mailer()` sets both for you.
+
+### Upgrading from before v0.24.0
+
+Mail jobs queued by versions before v0.24.0 were stored in clear text. They now fail with `vukem: clear-text mail job refused (QUEUE_ALLOW_LEGACY_MAIL is off)`. Drain the queue before you upgrade, or set `QUEUE_ALLOW_LEGACY_MAIL=true` until the old jobs are gone (each one logs a warning), then remove it.
+
+## Previewing emails
+
+Seeing an email in a browser is faster than sending it to yourself. `mail.Preview` serves rendered mailables:
+
+```go title="routes/web.go"
+if !app.Config.IsProduction() {
+	mailer, err := app.Mailer()
+	if err != nil {
+		return err
+	}
+
+	previews := map[string]mail.Mailable{
+		"order-shipped": shopmail.OrderShipped{
+			Order:       models.Order{Number: "1042"},
+			TrackingURL: "https://example.com/track/1042",
+		},
+	}
+
+	r.Handle("/_mail/", http.StripPrefix(
+		"/_mail/",
+		mail.Preview(mailer, previews),
+	))
+}
+```
+
+| URL | Shows |
+| --- | --- |
+| `/_mail/` | A list of every preview name, sorted |
+| `/_mail/order-shipped` | The HTML part |
+| `/_mail/order-shipped?text=1` | The plain-text part |
+
+An unknown name answers 404; a render error answers 500 with the error text. Responses carry `Cache-Control: no-store`. Mount it only outside production: anyone who can open it sees your sample data. The [devtools](/docs/digging-deeper/devtools) Mail tab also shows every email the app really sent.
+
+## Configuration
+
+| Variable | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `MAIL_MAILER` | string | empty: `log` outside production, required in production | `smtp`, `resend`, `mailtrap`, `log` or `array` |
+| `MAIL_FROM` | string | `Vukem <hello@example.com>` | Default sender when the envelope has no `From` |
+| `SMTP_HOST` | string | `localhost` | SMTP server host |
+| `SMTP_PORT` | int | `587` | `587` (STARTTLS) or `465` (implicit TLS) |
+| `SMTP_USERNAME` | string | empty | Login; empty skips authentication |
+| `SMTP_PASSWORD` | secret | empty | Password |
+| `SMTP_INSECURE` | bool | `false` | Allow servers without STARTTLS (local catchers only) |
+| `RESEND_API_KEY` | secret | empty | Required with `resend` |
+| `MAILTRAP_API_TOKEN` | secret | empty | Required with `mailtrap` |
+| `MAILTRAP_INBOX_ID` | int | `0` | A positive id sends to that sandbox inbox |
+| `QUEUE_ALLOW_LEGACY_MAIL` | bool | `false` | Send clear-text mail jobs queued before v0.24.0 |
+
+Code-level settings, for transports you build yourself with `mail.NewSMTP`, `mail.NewResend` and `mail.NewMailtrap`:
+
+| Config | Field | Default |
+| --- | --- | --- |
+| `mail.SMTPConfig` | `Port` | `587` |
+| | `Timeout` | 30 s (dial plus the whole exchange) |
+| | `InsecureSkipTLS` | `false` |
+| | `TLSConfig` | `ServerName: Host`, TLS 1.2 minimum |
+| `mail.ResendConfig` | `BaseURL` | `https://api.resend.com` |
+| | `HTTP` | client with a 10 s timeout |
+| | `MaxRetries` / `MaxBackoff` | `2` / 5 s |
+| `mail.MailtrapConfig` | `BaseURL` | `https://send.api.mailtrap.io`, or the sandbox host with `InboxID` |
+| | `HTTP` | client with a 10 s timeout that never follows redirects |
+| | `MaxRetries` / `MaxBackoff` | `2` / 5 s |
 
 ## Security
 
-- Addresses go through `net/mail`; subjects, tags and content ids with line breaks are rejected (no header injection). `Bcc` is never written as a header.
-- The Resend key, Mailtrap token and SMTP password are `config.Secret` and never appear in logs or errors.
+What Vukem does for you:
 
-## Previews and tests
+- **No header injection.** Addresses go through `net/mail`, and subjects, tags and content ids with line breaks are refused, so user input cannot add a `Bcc:` header ([OWASP: injection](https://owasp.org/Top10/A03_2021-Injection/)).
+- **Bcc stays hidden.** It is passed to the SMTP server or the API, never written as a header.
+- **Secrets stay secret.** `SMTP_PASSWORD`, `RESEND_API_KEY` and `MAILTRAP_API_TOKEN` are `config.Secret` values: they print as `[redacted]` and never appear in errors or logs.
+- **TLS by default.** SMTP requires STARTTLS or implicit TLS with TLS 1.2 or later.
+- **Queued mail is encrypted** with `APP_KEY`. Someone with write access to the jobs table could replay a sealed email, but that access already allows worse.
 
-```go
-if !app.Config.IsProduction() {
-	r.Handle("/_mail/", http.StripPrefix("/_mail/", mail.Preview(mailer, map[string]mail.Mailable{"welcome": sample})))
+What stays your job: escape nothing by hand (views do it), but never put a password in an email, keep reset links short-lived (see [Signed URLs](/docs/security/signed-urls)), and verify your sending domain. The full list is in [Security overview](/docs/security/overview).
+
+## Testing
+
+`vukemtest` sets `MAIL_MAILER=array` and leaves the queue on its `sync` default, so both `Send` and `SendLater` land in memory before your request returns. `app.Mails()` returns the `*mail.Array`:
+
+```go title="tests/orders_test.go"
+func TestShipOrderEmailsCustomer(t *testing.T) {
+	app := vukemtest.New(t, bootstrap.New)
+	order := createOrder(t, app, "ana@example.com")
+
+	app.Client(t).
+		ActingAs("web", admin(t, app)).
+		PostForm("/orders/"+order.Number+"/ship", nil).
+		AssertRedirect("/orders")
+
+	sent := app.Mails().SentTo("ana@example.com")
+	if len(sent) != 1 {
+		t.Fatalf("sent %d emails, want 1", len(sent))
+	}
+
+	if sent[0].Subject != "Your order has shipped" {
+		t.Errorf("subject = %q", sent[0].Subject)
+	}
 }
 ```
 
-```go
-app := vukemtest.New(t, bootstrap.New)
-// ...
-if len(app.Mails().SentTo("ana@example.com")) != 1 {
-	t.Fatal("welcome mail not sent")
-}
+| Method | Returns |
+| --- | --- |
+| `Sent()` | A copy of every message, in order |
+| `SentTo(addr)` | Messages with `addr` in `To`, `Cc` or `Bcc` (case-insensitive, names ignored) |
+| `Reset()` | Forgets everything sent so far |
+
+To test a mailable on its own, render it: `mail.New(mail.NewArray(), "shop@example.com", nil).Render(ctx, m)` works for `mail.HTML` and `mail.Text` content; `mail.View` content needs the app's mailer.
+
+## Common mistakes
+
+**Using SMTP on a host that blocks it.**
+
+```bash title="wrong"
+MAIL_MAILER=smtp
+SMTP_HOST=smtp.example.com
 ```
 
-## Queued mail
+```text
+mail: smtp dial: dial tcp 203.0.113.10:587: i/o timeout
+```
 
-`mailer.SendLater(ctx, mailable, opts...)` (or `app.MailLater`) renders the message now and sends it from a retried [queue](/docs/digging-deeper/queue) job. The message ID stays the same across retries, so Resend's idempotency key prevents duplicates. The job payload is the rendered message encrypted with `app.Crypt`, so reset links and other tokens never sit in the jobs tables or `queue:failed` output in clear text. Queue options apply to the mail job: `queue.OnQueue("mail")`, `queue.Retries(5)`. `mailer.SendLaterTx(ctx, tx, mailable)` (or `app.MailLaterTx`) queues the mail only if the transaction commits, so a rolled-back order or payment sends nothing: the database queue inserts the job in the transaction, other drivers queue it right after the commit. With `QUEUE_CONNECTION=sync` the mail is sent during the call (after the commit for `SendLaterTx`); use `database` so requests do not wait for the mail server (`memory` too, but a restart loses queued mail). `serve` runs the worker that sends it. Clear-text mail jobs queued before v0.24.0 fail unless `QUEUE_ALLOW_LEGACY_MAIL=true` (an upgrade window: drain the queue before upgrading, or set it until they are gone). Someone with write access to the jobs table can replay a sealed mail; that access already allows worse.
+```bash title="right"
+MAIL_MAILER=resend
+RESEND_API_KEY=re_...
+```
+
+**Forgetting `MAIL_MAILER` in production.**
+
+```text
+vukem: set MAIL_MAILER in production (smtp, resend, mailtrap or log)
+```
+
+Set it explicitly. `log` is allowed if the app truly must not send mail.
+
+**Delaying a mail on the sync queue.**
+
+```go title="wrong (QUEUE_CONNECTION=sync)"
+mailer.SendLater(ctx, m, queue.Delay(time.Hour))
+// queue: the sync driver cannot delay jobs (use
+// QUEUE_CONNECTION=memory or database, or queue.Fake in tests)
+```
+
+Switch to `QUEUE_CONNECTION=database`, where a delayed job waits in the table.
+
+**Two reply-to addresses on Mailtrap.**
+
+```text
+mail: mailtrap accepts a single reply-to address
+```
+
+Keep one address in `ReplyTo`, or use Resend or SMTP, which accept several.
+
+**A mail view without `layout: none`.** The email arrives wrapped in your whole website (navigation, scripts). Put `{{/* layout: none */}}` on the first line of every mail view, or name a dedicated mail layout.
+
+## Next steps
+
+<CardGroup cols="2">
+<Card title="Queue" href="/docs/digging-deeper/queue" icon="layers">Run mail jobs with workers, retries and failed-job tools.</Card>
+<Card title="Localization" href="/docs/digging-deeper/localization" icon="book">Translate subjects and bodies per customer.</Card>
+<Card title="Docker and Railway" href="/docs/deployment/docker-and-railway" icon="rocket">Deploy with an HTTP mail transport.</Card>
+<Card title="Devtools" href="/docs/digging-deeper/devtools" icon="terminal">See every sent email in the browser.</Card>
+</CardGroup>
+
+Package reference: [pkg.go.dev/github.com/AlexGalhardo/vukem/mail](https://pkg.go.dev/github.com/AlexGalhardo/vukem/mail).

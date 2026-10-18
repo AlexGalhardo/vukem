@@ -1,96 +1,85 @@
 ---
 title: Task scheduling
-description: Run functions, commands and queue jobs on cron expressions, in process or from one cron entry.
+description: Run functions, commands and queue jobs on cron expressions, in process or from one cron entry, with overlap and one-server locks.
 ---
 
-The scheduler runs your code on a timetable: send a report every morning, prune old rows every hour, retry failed payments every five minutes. You declare every task in Go, in one file, instead of maintaining crontab lines on a server. New to it? Follow the [step-by-step guide](#step-by-step-a-daily-cleanup-task) below the reference.
+The scheduler runs your code on a timetable: send the sales report every morning, delete abandoned carts every hour, email a digest every Monday. You declare every task in Go, in one file that lives in your repository, instead of keeping `crontab` lines on a server that nobody remembers to update.
 
-```go
-// routes/schedule.go, passed to vukem.WithSchedule by bootstrap
-func Schedule(s *schedule.Schedule, app *vukem.App) {
-	s.Command("reports:send", "--daily").DailyAt("08:00").WithoutOverlapping()
-	s.Job(jobs.PruneSessions{}).Hourly()
-	s.Func("ping", func(ctx context.Context) error { ... }).EveryFiveMinutes()
-	s.Func("invoices", sendInvoices).Cron("30 9 1 * *").In(saoPaulo)
-}
-```
+You will learn:
 
-## Frequencies
+- how to declare tasks in `routes/schedule.go` with helpers such as `DailyAt` or a cron expression;
+- how the scheduler decides, minute by minute, which tasks are due;
+- how time zones, overlapping runs and several servers are handled;
+- the three ways to run the schedule (`serve`, `schedule:work`, `schedule:run`);
+- how to test a schedule.
 
-| Method | Expression |
-| --- | --- |
-| `EveryMinute()` (default) | `* * * * *` |
-| `EveryFiveMinutes()` | `*/5 * * * *` |
-| `Every(15 * time.Minute)` | `*/15 * * * *` (whole minutes dividing an hour or a day) |
-| `Hourly()`, `HourlyAt(7)` | `0 * * * *`, `7 * * * *` |
-| `Daily()`, `DailyAt("08:00")` | `0 0 * * *`, `0 8 * * *` |
-| `Weekdays()` | keeps the time, Monday–Friday |
-| `WeeklyOn(time.Monday, "09:00")` | `0 9 * * 1` |
-| `MonthlyOn(1, "00:00")` | `0 0 1 * *` |
-| `Cron(expr)` | any five-field expression |
+## The idea
 
-Cron expressions support `*`, values, ranges, steps (`*/15`, `10-50/20`), lists, `JAN`/`MON` names and `@hourly`, `@daily`, `@weekly`, `@monthly`, `@yearly`. When both day fields are set, a day matches either (Vixie cron). A bad expression panics at boot; the parser is fuzzed.
+Think of an alarm clock with many alarms. Each alarm has a time ("every day at 08:00") and a job ("wake up"). Once a minute the clock looks at all its alarms and rings every one that matches the current minute.
 
-## Time zones and overlap
+Vukem's scheduler is that clock. A <Term tip="One entry of the schedule: a name, a function to run and a timetable (a cron expression).">task</Term> pairs a timetable with something to run. At the start of every minute the scheduler asks each task "are you due now?" and runs the due ones at the same time, each on its own [goroutine](https://go.dev/tour/concurrency/1).
 
-- `SCHEDULE_TIMEZONE` (IANA name, default `UTC`) applies to every task; `.In(loc)` overrides one. The zone database is embedded, so it works on Windows hosts without one.
-- `WithoutOverlapping()` skips a run while the previous one still holds its lock (released when it ends, or after 24h). Locks use `app.Cache()`: set `CACHE_STORE=database` or use [Redis](/docs/database/redis) when several servers run the schedule.
-- `OnOneServer()` runs each occurrence on one server: the first scheduler to take the occurrence's lock (task name and minute, kept for an hour) in `app.Cache()` runs it, the others skip it. It needs a cache the servers share (`CACHE_STORE=database` or Redis): with the in-process memory cache, or a custom store that does not declare `cache.Sharer` (see [shared stores](/docs/digging-deeper/cache#shared-stores)), the schedule does not build (`schedule.ErrLocksNotShared`), so `serve` and `schedule:work` stop at boot instead of running the task on every server.
-- Lock keys include the app name (`APP_NAME`, lowercased, other characters as `-`), so several apps can share one Redis or cache table; give each app a unique `APP_NAME` (or its own `CACHE_PREFIX`). The keys changed in v0.25.0: a run in progress during the upgrade deploy is not seen by the new version.
+A task can run three things:
 
-## Running it
+| Declared with | Runs | Good for |
+| --- | --- | --- |
+| `s.Func(name, fn)` | your `func(ctx context.Context) error` | short work in the same process |
+| `s.Command(name, args...)` | an app command, in process | reusing a CLI command |
+| `s.Job(job, opts...)` | dispatches a [queue job](/docs/digging-deeper/queue) | work that may fail and should be retried |
 
-`serve` (the app binary's default command, and `vukem serve` in development) runs the scheduler in process next to the HTTP server, so a single-process deploy (one Railway, Fly or Render service) still runs your tasks and the built-in hourly `session:prune` (`SESSION_DRIVER=database`) and `cache:prune` (`CACHE_STORE=database`). The scheduler ticks at the start of every minute, starts only when tasks exist, and stops with the server: on `SIGINT`/`SIGTERM` it stops ticking and gives running tasks `SHUTDOWN_TIMEOUT` to finish, then cancels their `ctx` before shutdown hooks run. Tasks must honor `ctx` (pass it to queries and HTTP calls, check it in loops): one that ignores it keeps the process alive until the platform kills it.
+Timetables are <Term tip="A five-field text format from Unix (minute hour day month weekday) that describes when something repeats.">cron expressions</Term>. You may write them by hand (`"30 9 1 * *"`) or let helpers such as `DailyAt("08:00")` write them for you.
 
-To run the schedule in its own process instead, set `SCHEDULE_IN_SERVE=false` on the web process and run one of:
+## Quick start
 
-```bash
-vukem schedule:work    # in process: ticks at the start of every minute
-vukem schedule:list    # each task and its next run
-```
-
-Or one crontab entry calling `schedule:run` every minute:
-
-```text
-* * * * * cd /srv/app && ./app schedule:run
-```
-
-### Several replicas
-
-Every process that runs the scheduler (each `serve` replica with the default `SCHEDULE_IN_SERVE=true`, plus any `schedule:work`) fires every due task. There is no leader election:
-
-- A task without `WithoutOverlapping()` runs once per replica each time it is due.
-- `WithoutOverlapping()` only skips a run while another one still holds the lock. With the default in-memory cache each replica has its own locks, so it protects nothing across replicas. With a shared store (`CACHE_STORE=database` or Redis) a replica skips the task while another is still running it, but a short task that finishes before the next replica checks can still run again in the same minute.
-
-- `OnOneServer()` with a shared cache runs the task once per occurrence across replicas.
-
-The built-in prune tasks are idempotent, so running them on every replica is safe. For tasks that must run exactly once per schedule (emails, charges, draws), mark them `OnOneServer()` with a shared cache, or set `SCHEDULE_IN_SERVE=false` on the web replicas and run a single `schedule:work` process.
-
-`schedule:work` stops the same way (running tasks get `SHUTDOWN_TIMEOUT`, then their `ctx` is cancelled); `schedule:run` passes its own `ctx`, cancelled on `SIGINT`/`SIGTERM`.
-
-Tasks due at the same minute run concurrently; failures and panics are logged and do not stop the others. Command tasks run in the same process through `app.Call`.
-
-## Step by step: a daily cleanup task
+The running example is a shop that deletes carts nobody touched for a week.
 
 <Steps>
-<Step title="1. Write the task as a function that honours ctx">
+<Step title="1. Write the task as a function that honors ctx">
 
-```go title="app/tasks/prune_drafts.go"
-// PruneDrafts deletes drafts nobody touched in 30 days.
-func PruneDrafts(db *database.DB, now func() time.Time) func(context.Context) error {
+```go title="app/tasks/prune_carts.go"
+package tasks
+
+import (
+	"context"
+	"time"
+
+	"github.com/AlexGalhardo/vukem/database"
+)
+
+// PruneCarts deletes carts untouched for seven days.
+func PruneCarts(
+	db *database.DB,
+	now func() time.Time,
+) func(context.Context) error {
 	return func(ctx context.Context) error {
-		_, err := db.ExecContext(ctx, `DELETE FROM posts WHERE status = 'draft' AND updated_at < ?`, now().AddDate(0, 0, -30))
+		cutoff := now().AddDate(0, 0, -7)
+
+		// Passing ctx lets shutdown cancel the query.
+		_, err := db.ExecContext(ctx,
+			"DELETE FROM carts WHERE updated_at < ?",
+			cutoff,
+		)
 		return err
 	}
 }
 ```
 
-Passing `ctx` to the query lets the scheduler cancel it on shutdown.
+The `?` placeholder is SQLite and MySQL syntax; PostgreSQL uses `$1`.
 
 </Step>
 <Step title="2. Declare it in routes/schedule.go">
 
 ```go title="routes/schedule.go"
+package routes
+
+import (
+	vukem "github.com/AlexGalhardo/vukem"
+	"github.com/AlexGalhardo/vukem/schedule"
+
+	"example.com/shop/app/tasks"
+)
+
+// Schedule declares the scheduled tasks.
 func Schedule(s *schedule.Schedule, app *vukem.App) {
 	db, err := app.DB()
 	if err != nil {
@@ -98,67 +87,298 @@ func Schedule(s *schedule.Schedule, app *vukem.App) {
 		return
 	}
 
-	s.Func("posts:prune-drafts", tasks.PruneDrafts(db, app.Now)).
+	s.Func("carts:prune", tasks.PruneCarts(db, app.Now)).
 		DailyAt("03:00").
 		WithoutOverlapping()
 }
 ```
 
-The starter's `bootstrap/app.go` already passes this function to `vukem.WithSchedule`. The name (`posts:prune-drafts`) appears in logs and in `schedule:list`.
+The starter's `bootstrap/app.go` already passes this function to `vukem.WithSchedule(routes.Schedule)`. The name (`carts:prune`) appears in logs, in lock keys and in `schedule:list`.
 
 </Step>
 <Step title="3. Check the timetable">
 
 ```bash
 vukem schedule:list
-# TASK                 EXPRESSION  NEXT RUN
-# posts:prune-drafts   0 3 * * *   2026-10-18T03:00:00Z
+```
+
+```text
+TASK         EXPRESSION  NEXT RUN
+carts:prune  0 3 * * *   2026-10-18T03:00:00Z
 ```
 
 </Step>
 <Step title="4. Run it">
 
-Nothing else is needed: `vukem serve` in development and the app binary's `serve` in production run the scheduler in process. To run every due task once, right now, use `vukem schedule:run`.
+Nothing else is needed: `vukem serve` in development, and the app binary's `serve` in production, run the scheduler next to the HTTP server. At 03:00 UTC the log shows:
+
+```text
+INFO scheduled task done task=carts:prune took=41ms
+```
+
+To run every task due **right now**, once, use `vukem schedule:run`.
 
 </Step>
 </Steps>
 
-### Tasks that are queue jobs or commands
+## Frequencies
 
-- `s.Job(jobs.SendDigest{}).WeeklyOn(time.Monday, "09:00")` only **dispatches** the job; a queue worker runs it, with the queue's retries. Prefer it for work that may fail and should be retried.
-- `s.Command("reports:send", "--daily")` runs an app command in the same process, exactly as `vukem reports:send --daily` would.
+Every helper replaces the task's expression with a fixed one. A task without any helper runs **every minute**.
+
+| Method | Expression | Notes |
+| --- | --- | --- |
+| `EveryMinute()` | `* * * * *` | the default |
+| `EveryFiveMinutes()` | `*/5 * * * *` | |
+| `Every(15 * time.Minute)` | `*/15 * * * *` | see the rules below |
+| `Every(2 * time.Hour)` | `0 */2 * * *` | |
+| `Hourly()` | `0 * * * *` | |
+| `HourlyAt(7)` | `7 * * * *` | minute 0–59, else panics |
+| `Daily()` | `0 0 * * *` | midnight |
+| `DailyAt("08:00")` | `0 8 * * *` | `"HH:MM"`, 24-hour clock |
+| `Weekdays()` | keeps the time, adds `1-5` | Monday to Friday |
+| `WeeklyOn(time.Monday, "09:00")` | `0 9 * * 1` | |
+| `MonthlyOn(1, "00:00")` | `0 0 1 * *` | day 1–31 |
+| `Cron(expr)` | any expression | see the syntax below |
+
+Rules the helpers enforce:
+
+- `Every(d)` takes whole minutes that divide an hour (1, 2, 3, 4, 5, 6, 10, 12, 15, 20, 30 minutes) or whole hours that divide a day (1, 2, 3, 4, 6, 8, 12, 24 hours), aligned to the clock. `Every(7 * time.Minute)` panics with `schedule: Every(7m0s) must divide an hour or a day; use Cron`.
+- `DailyAt`, `WeeklyOn` and `MonthlyOn` panic on a malformed time: `schedule: bad time "8am", want HH:MM`.
+- `Weekdays()` changes only the weekday field of the **current** expression, so call it **after** the time helper. `DailyAt("08:00").Weekdays()` gives `0 8 * * 1-5`; `Weekdays().DailyAt("08:00")` gives `0 8 * * *`, because `DailyAt` replaces everything.
+- `MonthlyOn(31, ...)` runs only in months that have a 31st day.
+
+Panics happen while `routes.Schedule` runs, at boot, so a typo stops the deploy instead of silently never running.
+
+## Cron syntax
+
+An expression has five fields separated by spaces:
+
+| Field | Values | Names |
+| --- | --- | --- |
+| minute | 0–59 | |
+| hour | 0–23 | |
+| day of month | 1–31 | |
+| month | 1–12 | `JAN`–`DEC` |
+| day of week | 0–7 (0 and 7 are Sunday) | `SUN`–`SAT` |
+
+Each field accepts `*` (every value), a value (`5`), a range (`1-5`), a step (`*/15`, `10-50/20`, `5/15` meaning 5, 20, 35, 50), and lists of those (`1,15,30`). Names are case-insensitive. Macros replace the whole expression: `@hourly`, `@daily` (and `@midnight`), `@weekly` (Sunday 00:00), `@monthly`, `@yearly` (and `@annually`).
+
+When **both** day fields are restricted, a day matches if **either** matches, as in [Vixie cron](https://man7.org/linux/man-pages/man5/crontab.5.html): `0 9 1 * MON` runs on the 1st of the month **and** on every Monday.
+
+A bad expression in `Cron(expr)` panics at boot with `schedule.ErrCron` in the message, for example `schedule: invalid cron expression "61 * * * *": field 1: 61 out of range 0-59`. The parser is fuzz-tested. `schedule.ParseCron(expr)` returns the error instead of panicking, and a `schedule.Cron` has `Matches(t)` and `Next(t)` (the first run strictly after `t`, or the zero time if none comes within five years).
+
+## Time zones
+
+Expressions are read in **UTC** by default. `SCHEDULE_TIMEZONE` changes the zone of every task; `.In(loc)` changes one task:
+
+```go title="routes/schedule.go"
+saoPaulo, err := time.LoadLocation("America/Sao_Paulo")
+if err != nil {
+	app.Log.Error("schedule: time zone", "err", err)
+	return
+}
+
+s.Job(jobs.SendSalesReport{}).DailyAt("08:00").In(saoPaulo)
+```
+
+Zone names come from the [IANA time zone database](https://www.iana.org/time-zones), loaded with [`time.LoadLocation`](https://pkg.go.dev/time#LoadLocation). Vukem embeds that database ([`time/tzdata`](https://pkg.go.dev/time/tzdata)), so names work on Windows hosts and slim containers that have none. A bad `SCHEDULE_TIMEZONE` fails with `vukem: SCHEDULE_TIMEZONE: unknown time zone ...`.
+
+Daylight-saving changes follow the wall clock: a task at a local time that is skipped when clocks jump forward does not run that day, and a task at a local time that happens twice when clocks go back runs twice.
+
+## Commands and queue jobs as tasks
+
+```go title="routes/schedule.go"
+s.Command("reports:send", "--daily").DailyAt("08:00")
+s.Job(jobs.SendDigest{}).WeeklyOn(time.Monday, "09:00")
+```
+
+- `s.Command(name, args...)` runs an app command in the same process, through `app.Call`, exactly as `vukem reports:send --daily` would. Its task name is the command line (`reports:send --daily`). An unknown command fails each run with `vukem: unknown command "reports:send"`.
+- `s.Job(job, opts...)` only **dispatches** the job, with the [queue options](/docs/digging-deeper/queue) you pass; a queue worker runs it, with retries. Its task name is `job:` plus the kind (`job:send_digest`). Prefer it for work that may fail, or that is long: the scheduler stays light and the queue retries.
+
+## Overlapping runs
+
+A task that takes five minutes, scheduled `EveryMinute()`, would run five copies at once. `WithoutOverlapping()` prevents that:
+
+```go title="routes/schedule.go"
+s.Func("carts:prune", prune).EveryMinute().WithoutOverlapping()
+s.Func("search:reindex", reindex).Hourly().WithoutOverlapping(2 * time.Hour)
+```
+
+Under the hood, before each run the scheduler tries to take a [cache lock](/docs/digging-deeper/cache) named `schedule:<app>:<task name>`:
+
+- if another run holds it, this run is skipped and logged as `scheduled task skipped: still running`;
+- the lock is released when the run ends, or expires after the TTL you pass (default `24h`), so a crashed process cannot block the task forever.
+
+Locks live in `app.Cache()`. With the default in-memory cache they protect one process only; set `CACHE_STORE=database` or use [Redis](/docs/database/redis) when several servers run the schedule.
+
+## Several servers
+
+Every process that runs the scheduler fires every due task: each `serve` replica (with the default `SCHEDULE_IN_SERVE=true`) and each `schedule:work`. There is no leader election.
+
+- A task without locks runs **once per replica** each time it is due.
+- `WithoutOverlapping()` with a shared cache skips a run only **while** another replica still holds the lock. A short task that finishes before the next replica checks can run again in the same minute.
+- `OnOneServer()` runs each occurrence **once across all servers**.
+
+```go title="routes/schedule.go"
+s.Job(jobs.ChargeSubscriptions{}).DailyAt("06:00").OnOneServer()
+```
+
+`OnOneServer()` takes a lock named `schedule:one:<app>:<task name>:<minute>` (the minute in UTC, like `2026-10-18T06:00`) for each occurrence. The first scheduler to take it runs the task; the others log `scheduled task skipped: another server runs it`. The lock is never released: it expires after one hour, so the same occurrence can never run twice.
+
+<Callout type="warning" title="OnOneServer fails closed">
+`OnOneServer()` needs a cache all servers share (`CACHE_STORE=database`, Redis, or a custom store that declares `cache.Sharer`). With the in-memory cache, `app.Schedule()` fails with `schedule.ErrLocksNotShared`, so `serve`, `schedule:work` and `schedule:run` refuse to start instead of running the task on every server.
+</Callout>
+
+Lock keys include `<app>`: `APP_NAME` lowercased, with every run of other characters turned into one `-` (`My Shop!` becomes `my-shop`; an empty name becomes `app`). Apps that share one Redis or cache table keep their locks apart, so give each app a unique `APP_NAME` (or its own `CACHE_PREFIX`). The key format changed in v0.25.0: a run in progress during that upgrade was not seen by the new version.
+
+For tasks that must run exactly once (charges, emails, draws), use `OnOneServer()` with a shared cache, or set `SCHEDULE_IN_SERVE=false` on the web replicas and run a single `schedule:work` process. Make them [idempotent](https://en.wikipedia.org/wiki/Idempotence) anyway.
+
+## Running the schedule
+
+### Inside serve (default)
+
+`serve` runs the scheduler in process, so a single-process deploy (one Railway, Fly or Render service) still runs your tasks. It starts only when tasks exist and logs `scheduler running inside serve; set SCHEDULE_IN_SERVE=false if you run schedule:work`.
+
+The scheduler sleeps until the start of the next minute, runs the due tasks, and repeats. On `SIGINT`/`SIGTERM` it stops ticking, gives running tasks `SHUTDOWN_TIMEOUT` (default `15s`) to finish, then cancels their `ctx` and logs `scheduled tasks still running at shutdown: cancelling them`. Tasks must honor `ctx`: one that ignores it keeps the process alive until the platform kills it.
+
+### schedule:work
+
+Set `SCHEDULE_IN_SERVE=false` on the web process and run one dedicated process:
+
+```bash
+vukem schedule:work
+```
+
+It ticks at the start of every minute and stops the same way as `serve`.
+
+### schedule:run from cron
+
+`schedule:run` runs the tasks due in the current minute, waits for them, and exits. Call it every minute from the system cron:
+
+```text title="crontab"
+* * * * * cd /srv/shop && ./shop schedule:run
+```
+
+It exits with an error when a task failed (the errors are joined, each prefixed by its task name), so cron mail or your monitoring sees it. It passes its own `ctx`, cancelled on `SIGINT`/`SIGTERM`.
+
+### schedule:list
+
+`vukem schedule:list` prints each task, its expression and its next run (in the task's zone, RFC 3339). A task with no run in the next five years shows `never`. With no tasks it fails with `no scheduled tasks (declare them in routes/schedule.go)`.
+
+## Built-in tasks
+
+The app adds two tasks of its own, before yours:
+
+| Task | When | Added if |
+| --- | --- | --- |
+| `session:prune` | hourly, without overlapping | `SESSION_DRIVER=database` |
+| `cache:prune` | hourly, without overlapping | `CACHE_STORE=database` |
+
+Both delete expired rows and are safe to run on every replica.
+
+## What happens when a task runs
+
+1. Due tasks of one minute start together, each on its own goroutine.
+2. `OnOneServer` and `WithoutOverlapping` locks are taken first; a task that cannot take its lock is skipped.
+3. The task runs with the scheduler's `ctx`.
+4. Success is logged at `INFO` (`scheduled task done`, with `took`); an error or a panic is recovered and logged at `ERROR` (`scheduled task failed`). Neither stops the other tasks.
+
+There is no retry: a failing task waits for its next occurrence. Use `s.Job(...)` when you want retries.
+
+## Configuration
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `SCHEDULE_TIMEZONE` | `UTC` | IANA zone of every expression |
+| `SCHEDULE_IN_SERVE` | `true` | Run the scheduler inside `serve` |
+| `SHUTDOWN_TIMEOUT` | `15s` | How long running tasks may finish on shutdown |
+| `APP_NAME` | `Vukem` | Namespace of the lock keys (normalized to `vukem`) |
+| `CACHE_STORE` | `memory` | Where locks live (`database` or Redis for several servers) |
+
+Using the package without the app: `schedule.New(schedule.Options{...})` takes `Location` (default UTC), `Log` (default `slog.Default()`), `Locks` (a `*cache.Cache`; default an in-memory cache), `Namespace` (empty keeps the v0.24.0 keys), `Commands` and `Queue` (needed by `Command` and `Job` tasks; without them each run fails with `schedule: no command runner configured` or `schedule: no queue configured`) and `StopTimeout` (default `30s`). Run it with `s.Work(ctx, now)` or `s.RunDue(ctx, minute)`, and call `s.Validate()` to catch `ErrLocksNotShared` early.
+
+## Security
+
+- Tasks run with the app's full privileges and without a request, so there is no user to authorize. Never build a task's behaviour from data a user can edit without validating it.
+- Make tasks that move money or send messages idempotent (check "already sent" before sending), so a duplicate run on another replica, or after a daylight-saving change, is harmless.
+- Failures and panics are logged with the task name; route them to your alerting, for example [Telegram logging](/docs/digging-deeper/telegram-logging).
 
 ## Testing
 
-`app.Schedule()` returns the schedule your app declared, so a test can check that a task exists and when it runs next:
+`app.Schedule()` returns the schedule your app declared, with the built-in tasks. `s.Due(t)` lists the tasks due at a given minute, so a test can check the timetable without waiting:
 
-```go
-s, err := app.Schedule()
-if err != nil {
-	t.Fatal(err)
-}
+```go title="tests/schedule_test.go"
+func TestCartsPruneRunsAtThree(t *testing.T) {
+	app := vukemtest.New(t, bootstrap.New)
 
-for _, task := range s.Tasks() {
-	if task.Name() == "posts:prune-drafts" {
-		if got := task.Expression(); got != "0 3 * * *" {
-			t.Fatalf("expression = %q", got)
-		}
+	s, err := app.Schedule()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	at := time.Date(2026, 10, 18, 3, 0, 0, 0, time.UTC)
+
+	var names []string
+	for _, task := range s.Due(at) {
+		names = append(names, task.Name())
+	}
+
+	if !slices.Contains(names, "carts:prune") {
+		t.Fatalf("due at 03:00 = %v", names)
 	}
 }
 ```
 
-Test the task's function itself like any other function: call it with a `context.Context` and a fake clock.
+- `s.Tasks()` returns every task in registration order; `task.Name()` and `task.Expression()` describe it, and `s.Next(task, now)` gives its next run.
+- `s.RunDue(ctx, at)` runs the tasks due at `at` and returns their joined errors, which is how to run a task end to end in a test.
+- An `OnOneServer` task makes `app.Schedule()` fail in tests too, unless the test sets `CACHE_STORE=database` (`vukemtest.Options{Env: ...}`).
+- Test the task's function itself like any other function: call it with a `context.Context` and a fake clock (`vukemtest.NewFakeClock`).
 
-## Pitfalls
+## Common mistakes
 
-- **Times are UTC by default.** `DailyAt("08:00")` is 08:00 UTC unless `SCHEDULE_TIMEZONE` or `.In(loc)` says otherwise. Around daylight-saving changes, a local time can be skipped or repeated.
-- **Long tasks overlap.** A five-minute task scheduled `EveryMinute()` runs five copies at once without `WithoutOverlapping()`.
-- **Several replicas run every task.** Read [Several replicas](#several-replicas) before scaling the web service.
-- **Ignoring `ctx`.** A task that does not pass `ctx` to its queries and HTTP calls delays shutdown until the platform kills the process.
-- **Heavy work in a task.** Tasks run inside the web process by default; dispatch a [queue job](/docs/digging-deeper/queue) for anything long or CPU-heavy so requests stay fast.
+**Times are UTC.**
 
-## Security notes
+```go
+// Wrong for a shop in São Paulo: this is 08:00 UTC (05:00 local).
+s.Job(jobs.SendSalesReport{}).DailyAt("08:00")
 
-- Tasks run with the app's full privileges and without a request, so there is no user to authorize: never build a task's behaviour from data a user can edit without validating it.
-- Make tasks that move money or send messages **idempotent** (check "already sent" before sending), so a duplicate run is harmless.
-- Failures and panics are logged with the task name; route them to your alerting (for example [Telegram logging](/docs/digging-deeper/telegram-logging)).
+// Right: set SCHEDULE_TIMEZONE=America/Sao_Paulo, or:
+s.Job(jobs.SendSalesReport{}).DailyAt("08:00").In(saoPaulo)
+```
+
+**Weekdays before the time.**
+
+```go
+// Wrong: DailyAt replaces the whole expression (0 8 * * *).
+s.Func("standup", ping).Weekdays().DailyAt("08:00")
+
+// Right: 0 8 * * 1-5
+s.Func("standup", ping).DailyAt("08:00").Weekdays()
+```
+
+**OnOneServer with the memory cache.** Boot fails with:
+
+```text
+vukem: schedule: OnOneServer needs a lock store shared by the servers
+(CACHE_STORE=database, Redis, or a custom store implementing
+cache.Sharer): task "job:charge_subscriptions"
+```
+
+Set `CACHE_STORE=database` or configure Redis.
+
+**Several replicas, no locks.** Scaling the web service to three replicas runs every unlocked task three times. Read [several servers](#several-servers) before you scale.
+
+**Ignoring ctx.** A task that does not pass `ctx` to its queries and HTTP calls delays shutdown until the platform kills the process.
+
+**Heavy work in a task.** Tasks run inside the web process by default. Dispatch a [queue job](/docs/digging-deeper/queue) with `s.Job(...)` for anything long or CPU-heavy, so requests stay fast.
+
+## Next steps
+
+<CardGroup cols="2">
+<Card title="Queues" href="/docs/digging-deeper/queue" icon="layers">Retries and workers for scheduled jobs.</Card>
+<Card title="Cache" href="/docs/digging-deeper/cache" icon="database">The store behind the scheduler's locks.</Card>
+<Card title="Docker and Railway" href="/docs/deployment/docker-and-railway" icon="rocket">Run serve, workers and the scheduler in production.</Card>
+<Card title="CLI" href="/docs/cli/overview" icon="terminal">Every schedule and queue command.</Card>
+</CardGroup>
+
+Package reference: [pkg.go.dev/github.com/AlexGalhardo/vukem/schedule](https://pkg.go.dev/github.com/AlexGalhardo/vukem/schedule).

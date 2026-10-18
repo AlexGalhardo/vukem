@@ -1,71 +1,78 @@
 ---
 title: Cache
-description: A typed cache over memory or database stores, with stampede-safe Remember, counters and locks.
+description: Keep the result of slow work for a while, with typed reads, stampede-safe Remember, atomic counters and distributed locks over memory, database or Redis stores.
 ---
 
-A cache keeps the result of slow work (a heavy query, an external API call) for a while, so the next request reads it instead of doing the work again. Every value has a **key** and a **TTL** (time to live). Start with the step-by-step guide at the [end of this page](#step-by-step-cache-a-slow-query) if you are new to caching.
+Some work is slow: a heavy SQL query, a call to another company's API, a big report. If a hundred visitors ask for the same thing, doing that work a hundred times wastes time and money. A **cache** keeps the answer for a while, so the next request reads it instead of doing the work again. Vukem's `cache` package gives you that, plus counters and locks that work across several servers.
 
-```go
-c, err := app.Cache() // CACHE_STORE=memory (default) or database
+You will learn:
 
-user, err := cache.Remember(ctx, c, "user:42", time.Hour, func(ctx context.Context) (models.User, error) {
-	return orm.QueryOf[models.User](db).Find(ctx, 42)
-})
+- what a key, a value and a TTL are, and how the cache stores them;
+- how to read and write typed values with `Get`, `Put` and `Remember`;
+- how `Remember` stops a "stampede" of identical queries;
+- how to count things with `Increment` and protect work with a `Lock`;
+- how to pick a store (memory, database, Redis) and when it must be shared;
+- how to test code that uses the cache.
 
-err = c.Put(ctx, "settings", settings, 10*time.Minute)
-v, ok, err := cache.Get[Settings](ctx, c, "settings")
-err = c.Forget(ctx, "settings")
-n, err := c.Increment(ctx, "visits", 1, 24*time.Hour)
-```
+## The idea
 
-- Values are JSON. `Remember` runs the function once for concurrent misses of a key in the process (singleflight) and never caches errors.
-- Locks: `lock := c.NewLock("reports:daily", time.Minute)`, then `TryAcquire`, `Block(ctx, wait, interval)` and `Release` (only the owner can release).
+Think of the cache as a fridge with labelled boxes. Each box has a **label** (the key, such as `posts:popular`), some **food** inside (the value) and a **"best before" date** (the TTL). When you are hungry you check the fridge first. If the box is there and still fresh, you eat it. If not, you cook (do the slow work) and put a new box in the fridge.
 
-## Stores
+| Word | Meaning | Example |
+| --- | --- | --- |
+| Key | The name of an entry, a plain string | `post:42:views` |
+| Value | Any Go value that can become JSON | a `[]Post`, a struct, an `int` |
+| <Term tip="Time to live: how long the entry stays valid before the cache treats it as missing.">TTL</Term> | A [`time.Duration`](https://pkg.go.dev/time#Duration) | `10*time.Minute`; `0` means "never expires" |
+| Store | Where entries live | memory, a database table, Redis |
+| Prefix | Text added in front of every key | `vukem:` (from `CACHE_PREFIX`) |
 
-| Store | Notes |
-| --- | --- |
-| `cache.NewMemory(maxEntries)` | LRU with TTLs, in process |
-| `cache.NewDatabase(db, table)` | SQLite, PostgreSQL and MySQL; `Increment` is one atomic upsert, so counters stay exact across servers; `CreateTable` (indexes `expires_at`), `Prune` for expired rows in batches (every app with `CACHE_STORE=database` schedules `cache:prune` hourly, run by the scheduler inside `serve` unless `SCHEDULE_IN_SERVE=false`) |
-| [Redis](/docs/database/redis) | `vukem.WithCacheStore(rc.CacheStore("cache:"))` |
+Three Go ideas appear on this page:
 
-| Variable | Default |
-| --- | --- |
-| `CACHE_STORE` | `memory` |
-| `CACHE_PREFIX` | `vukem:` |
-| `CACHE_TABLE` | `cache` |
-| `CACHE_MAX_ENTRIES` | `10000` |
+- **Generics.** `cache.Get[Post](...)` names the type you want back between square brackets. See the [Go tour on generics](https://go.dev/tour/generics/1).
+- **JSON.** Values are turned into JSON with [`encoding/json`](https://pkg.go.dev/encoding/json) on the way in and decoded on the way out. Only exported struct fields (names that start with a capital letter) survive.
+- **Contexts.** Every call takes a [`context.Context`](https://pkg.go.dev/context), so a cancelled request also stops its cache work. In a handler, use `c.Context()`.
 
-Custom stores implement `cache.Store` and must pass `cache/cachetest.Run`.
+The running example on this page is a **blog**: we cache the list of popular posts, count post views and make sure the daily report runs only once.
 
-### Shared stores
-
-Features that coordinate servers through the cache (`OnOneServer()` tasks, `RATE_LIMIT_STORE=cache`) ask `cache.Shared(store)` whether every server sees the same entries. A store answers by implementing `cache.Sharer`:
-
-```go
-func (s *MyStore) Shared() bool { return true } // backed by a service every server reaches
-```
-
-The built-in stores declare it: memory is not shared, database and Redis (`drivers/redis`) are. The SQLite database store counts as shared only between processes on the same host; servers on several hosts need PostgreSQL, MySQL or Redis. A wrapper (metrics, tracing) forwards the answer of the store it wraps, either with its own `Shared()` or by exposing that store with `Unwrap() cache.Store`. A store that does neither is treated as **not shared** (fail closed), so a metrics wrapper around the memory cache cannot pass for a shared lock store. `cachetest.Run` fails a store that does not implement `cache.Sharer`.
-
-## Step by step: cache a slow query
+## Quick start
 
 <Steps>
-<Step title="1. Get the cache once and keep it">
+<Step title="Get the cache once, at boot">
 
-```go title="app/controllers/posts.go"
+`app.Cache()` returns the application cache. It is built on the first call and reused afterwards, so call it in a constructor and keep the result.
+
+```go title="app/controllers/post_controller.go"
+package controllers
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"time"
+
+	vukem "github.com/AlexGalhardo/vukem"
+	"github.com/AlexGalhardo/vukem/cache"
+	"github.com/AlexGalhardo/vukem/database"
+	"github.com/AlexGalhardo/vukem/orm"
+	"github.com/AlexGalhardo/vukem/web"
+
+	"example.com/blog/app/models"
+)
+
+// PostController serves the blog posts.
 type PostController struct {
 	db    *database.DB
 	cache *cache.Cache
 }
 
+// NewPostController gets the database and the cache once, at boot.
 func NewPostController(app *vukem.App) (*PostController, error) {
 	db, err := app.DB()
 	if err != nil {
 		return nil, err
 	}
 
-	c, err := app.Cache() // memory by default; CACHE_STORE=database or Redis to share it
+	c, err := app.Cache()
 	if err != nil {
 		return nil, err
 	}
@@ -75,14 +82,20 @@ func NewPostController(app *vukem.App) (*PostController, error) {
 ```
 
 </Step>
-<Step title="2. Wrap the slow call in Remember">
+<Step title="Wrap the slow query in Remember">
 
-```go
-func (p *PostController) Popular(c *web.Ctx) error {
-	posts, err := cache.Remember(c.Context(), p.cache, "posts:popular", 10*time.Minute,
+```go title="app/controllers/post_controller.go"
+// Popular lists the ten most viewed posts, cached for ten minutes.
+func (pc *PostController) Popular(c *web.Ctx) error {
+	posts, err := cache.Remember(
+		c.Context(), pc.cache, "posts:popular", 10*time.Minute,
 		func(ctx context.Context) ([]models.Post, error) {
-			return orm.QueryOf[models.Post](p.db).OrderBy("views", orm.Desc).Limit(10).Get(ctx)
-		})
+			return orm.QueryOf[models.Post](pc.db).
+				OrderBy("views", orm.Desc).
+				Limit(10).
+				Get(ctx)
+		},
+	)
 	if err != nil {
 		return err
 	}
@@ -91,61 +104,461 @@ func (p *PostController) Popular(c *web.Ctx) error {
 }
 ```
 
-The first request runs the query and stores the JSON for 10 minutes; the next ones read it. If 100 requests miss the key at once, the query still runs once in this process.
-
 </Step>
-<Step title="3. Forget the key when the data changes">
+<Step title="Register the route">
 
-```go
-func (p *PostController) Update(c *web.Ctx) error {
-	// ... save the post ...
-
-	if err := p.cache.Forget(c.Context(), "posts:popular"); err != nil {
-		return err
-	}
-
-	return c.RedirectRoute("posts.index")
+```go title="routes/web.go"
+posts, err := controllers.NewPostController(app)
+if err != nil {
+	return err
 }
+
+r.Get("/posts/popular", posts.Popular).Name("posts.popular")
 ```
 
 </Step>
-<Step title="4. Share the cache between servers">
+<Step title="Call it twice">
 
-```bash title=".env"
-CACHE_STORE=database   # a "cache" table in DATABASE_URL, created at boot
+```bash
+curl http://localhost:8080/posts/popular
+curl http://localhost:8080/posts/popular
 ```
 
-Or pass a [Redis](/docs/database/redis) store with `vukem.WithCacheStore`. Your code does not change.
+The first request runs the SQL query and stores the JSON under `vukem:posts:popular` for ten minutes. The second request reads it from the cache: no query runs. Both answers are the same:
+
+```json
+[{"ID":7,"Title":"Hello, Go","Views":1520}]
+```
 
 </Step>
 </Steps>
 
-## Counters and locks
+## Getting the cache
+
+`app.Cache()` reads the `CACHE_*` [configuration](/docs/configuration) the first time it is called, builds the store and wraps it in a `*cache.Cache`. Under the hood it uses a [`sync.Once`](https://pkg.go.dev/sync#Once), so every later call returns the same cache (and the same error, if building failed).
+
+What it builds depends on `CACHE_STORE` and on two options you may pass to `vukem.New`:
+
+1. If you passed `vukem.WithCacheStore(store)`, that store is used.
+2. Else, if you passed `vukem.WithCacheStoreFunc(fn)`, `fn(app)` runs now. It may return `vukem.ErrUseDefault` (with a `nil` store) to fall back to step 3, for example when `REDIS_URL` is empty. Any other error, or a `nil` store with a `nil` error, is returned by `app.Cache()`: a configured but broken store never falls back silently.
+3. Else `CACHE_STORE=memory` (the default) builds `cache.NewMemory(CACHE_MAX_ENTRIES)`, and `CACHE_STORE=database` opens `app.DB()`, builds `cache.NewDatabase(db, CACHE_TABLE)` and creates the table if it is missing (with a 10 second timeout).
+4. Any other `CACHE_STORE` value fails with `vukem: unknown CACHE_STORE "…" (memory or database)`.
+
+The last of `WithCacheStore` and `WithCacheStoreFunc` wins. Every store, including one you pass, gets the `CACHE_PREFIX` prefix.
+
+<Callout type="warning" title="Deadlock">
+A `WithCacheStoreFunc` function runs inside `app.Cache()`'s `sync.Once`. It must not call `app.Cache()` (or `app.RateLimiters()`, which calls it), or the program hangs forever.
+</Callout>
+
+Outside an app (a script, a unit test) you may build a cache yourself with `cache.New(store, prefix)`:
 
 ```go
-views, err := c.Increment(ctx, "post:42:views", 1, 24*time.Hour) // the TTL is set when the key is created
-
-lock := c.NewLock("reports:daily", 5*time.Minute) // expires on its own if the holder crashes
-ok, err := lock.TryAcquire(ctx)
-if err != nil || !ok {
-	return err // someone else is generating the report
-}
-defer lock.Release(ctx)
+c := cache.New(cache.NewMemory(1000), "blog:")
 ```
 
-`lock.Block(ctx, 10*time.Second, 200*time.Millisecond)` waits up to 10 seconds, polling every 200 ms, and returns `cache.ErrNotAcquired` when the time runs out.
+## Reading and writing values
 
-## Pitfalls
+`Put` stores any value as JSON. `Get` reads it back into the type you name. `Forget` deletes one or more keys.
 
-- **Values round-trip through JSON.** Unexported fields are lost and `time.Time` comes back with its offset, not its `*time.Location`. Cache plain data structs.
-- **Changing a cached struct.** Old entries may not decode into the new shape. Put a version in the key (`posts:popular:v2`) when you change the type.
-- **The memory store is per process.** With several servers, each has its own copy, `Forget` only clears the local one, and locks protect nothing across servers. Use `CACHE_STORE=database` or Redis there.
-- **`Put` with TTL 0 never expires.** Always pass a TTL unless the key is forgotten explicitly.
-- **`Flush` empties the whole store.** The same store may also hold rate-limit counters (`RATE_LIMIT_STORE=cache`), idempotency keys and webhook dedupe ids; flushing resets all of them.
-- **Errors are not cached.** A failing function runs again on the next call; protect a failing dependency with a timeout, not with the cache.
+```go title="app/controllers/settings.go"
+// Settings are the blog settings shown in the footer.
+type Settings struct {
+	Theme string
+	Title string
+}
 
-## Security notes
+func saveSettings(ctx context.Context, c *cache.Cache) error {
+	s := Settings{Theme: "dark", Title: "My blog"}
 
-- Never cache a response that depends on the user under a shared key. Put the user id in the key (`user:42:dashboard`) or do not cache it.
-- Do not store secrets or tokens in the cache: the database store keeps them in a plain table, and Redis is often shared between apps. Keep a distinct `CACHE_PREFIX` per app on a shared Redis.
-- Keys built from user input should be bounded and normalised (`strings.ToLower`, length limit), so a client cannot fill the store with unique keys; the memory store is bounded by `CACHE_MAX_ENTRIES`.
+	return c.Put(ctx, "settings", s, time.Hour)
+}
+
+func loadSettings(
+	ctx context.Context, c *cache.Cache,
+) (Settings, bool, error) {
+	return cache.Get[Settings](ctx, c, "settings")
+}
+
+func clearSettings(ctx context.Context, c *cache.Cache) error {
+	// Forget takes several keys at once.
+	return c.Forget(ctx, "settings", "posts:popular")
+}
+```
+
+What each call does:
+
+| Call | Returns | Notes |
+| --- | --- | --- |
+| `c.Put(ctx, key, v, ttl)` | `error` | Encodes `v` with `json.Marshal`. A value that cannot be encoded (a channel, a function) fails with `cache: encode <key>: …`. `ttl` `0` (or negative) means the entry never expires |
+| `cache.Get[T](ctx, c, key)` | `(T, bool, error)` | `ok` is `false` when the key is missing **or** expired. If the stored JSON does not fit `T`, you get `ok == false` and `cache: decode <key>: …` |
+| `c.Forget(ctx, keys...)` | `error` | Missing keys are not an error |
+| `c.Flush(ctx)` | `error` | Empties the **whole store**, see below |
+| `c.Store()` | `cache.Store` | The backend, for advanced checks (`cache.Shared`) |
+
+Keys you pass are always prefixed: with `CACHE_PREFIX=vukem:`, `c.Put(ctx, "settings", …)` writes the key `vukem:settings` in the store.
+
+<Callout type="warning" title="Flush ignores the prefix">
+`Flush` deletes everything in the store, not only keys with your prefix. The memory store is cleared, the database store runs `DELETE FROM cache`, and the Redis store deletes its own key prefix. Rate-limit counters, scheduler locks and other apps sharing the table are wiped too.
+</Callout>
+
+## Remember: compute once, read many times
+
+Most of the time you want "read it, or compute and store it". `cache.Remember` does exactly that in one call:
+
+```go
+posts, err := cache.Remember(ctx, c, "posts:popular", 10*time.Minute,
+	func(ctx context.Context) ([]models.Post, error) {
+		return loadPopularPosts(ctx)
+	})
+```
+
+Under the hood, step by step:
+
+1. It calls `Get[T]`. On a hit it returns the value. If the store fails or the old JSON does not decode, it treats that as a miss and goes on.
+2. On a miss it checks whether another goroutine **in this process** is already computing the same key. If so, it waits for that result instead of running your function again. This is called <Term tip="Single flight: when many callers ask for the same missing key at the same time, only one of them does the work and the others share its result.">singleflight</Term>.
+3. Otherwise it runs your function. If the function returns an error, `Remember` returns that error and **stores nothing**: errors are never cached.
+4. It encodes the result as JSON and stores it for `ttl`.
+5. If storing fails, `Remember` returns the value **and** the store error. The value is still correct; only the cache write failed.
+
+Why step 2 matters: when a popular key expires, a hundred requests can miss it at the same moment. Without singleflight, all of them hit the database together. This is a **cache stampede**. With `Remember`, one request runs the query and the other ninety-nine wait for it.
+
+A few details:
+
+- A waiting request stops waiting when its own context is cancelled (the client went away) and returns `ctx.Err()`.
+- Waiters share the leader's error too. If the query fails, every waiter of that round gets the same error.
+- Singleflight works inside one process. Two servers that miss at the same time each run the function once.
+- Waiters receive a value decoded from the same JSON that was stored, so they see exactly what later `Get` calls will see.
+
+## Counters
+
+`Increment` adds a number to an integer stored at a key and returns the new value. It is atomic: two requests that increment at the same time never read the same count.
+
+```go title="app/controllers/post_controller.go"
+// Show counts a view and returns the running total for the day.
+func (pc *PostController) Show(c *web.Ctx) error {
+	id, err := c.ParamInt("id")
+	if err != nil {
+		return err
+	}
+
+	key := fmt.Sprintf("post:%d:views", id)
+
+	views, err := pc.cache.Increment(c.Context(), key, 1, 24*time.Hour)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, map[string]any{"views": views})
+}
+```
+
+The rules:
+
+- A missing (or expired) key starts at `delta` and gets the `ttl`.
+- An existing key **keeps its expiry**. The TTL you pass on later calls is ignored, so the counter above resets once a day, not 24 hours after the last view.
+- `delta` may be negative to count down.
+- A key that holds something other than an integer (for example a string you stored with `Put`) is left alone and the call fails with `cache: <key> is not an integer`.
+
+Rate limiting with `RATE_LIMIT_STORE=cache` is built on `Increment`. See [Rate limiting](/docs/security/rate-limiting).
+
+## Locks
+
+Sometimes a job must run only once at a time, even with several servers: sending the daily report, charging subscriptions. A **lock** is a key that only one owner can hold.
+
+```go title="app/reports/daily.go"
+package reports
+
+import (
+	"context"
+	"time"
+
+	"github.com/AlexGalhardo/vukem/cache"
+)
+
+// SendDaily sends the daily report unless another server is already
+// sending it.
+func SendDaily(ctx context.Context, c *cache.Cache) error {
+	// The lock expires on its own after five minutes, so a server that
+	// crashes while holding it does not block the report forever.
+	lock := c.NewLock("reports:daily", 5*time.Minute)
+
+	ok, err := lock.TryAcquire(ctx)
+	if err != nil {
+		return err
+	}
+
+	if !ok {
+		// Someone else holds the lock: nothing to do.
+		return nil
+	}
+
+	// Release with a context that is not cancelled, so the lock is
+	// freed even when ctx was cancelled during the work.
+	defer lock.Release(context.WithoutCancel(ctx))
+
+	return send(ctx)
+}
+```
+
+How it works:
+
+- `c.NewLock(name, ttl)` prepares a lock on the key `<prefix>lock:<name>` with a random owner token. It does not touch the store yet.
+- `TryAcquire(ctx)` writes the token only if the key is absent or expired (the store's atomic `Add`). It returns `true` when you got the lock, `false` when someone holds it.
+- `Release(ctx)` deletes the key **only if it still holds your token** (the store's `DeleteIf`). If your lock already expired and another owner took it, `Release` leaves their lock alone and returns `nil`.
+- `Block(ctx, wait, interval)` retries `TryAcquire` every `interval` until it succeeds or `wait` has passed. It returns `nil` when acquired, `cache.ErrNotAcquired` when the time ran out, or `ctx.Err()` if the context is cancelled first.
+
+```go
+err := lock.Block(ctx, 10*time.Second, 200*time.Millisecond)
+if errors.Is(err, cache.ErrNotAcquired) {
+	return nil // waited ten seconds, still busy
+}
+```
+
+Pick a TTL longer than the work normally takes. When the TTL is too short, the lock expires mid-job and a second server may start the same work.
+
+The scheduler's `WithoutOverlapping()` and `OnOneServer()` use these locks. See [Scheduler](/docs/digging-deeper/scheduler).
+
+## Stores
+
+A store is the place entries live. Every store implements the `cache.Store` [interface](https://go.dev/tour/methods/9):
+
+```go
+type Store interface {
+	Get(ctx context.Context, key string) ([]byte, bool, error)
+	Set(ctx context.Context, key string, value []byte,
+		ttl time.Duration) error
+	// Add sets key only when it is absent (or expired); locks rely on
+	// it being atomic.
+	Add(ctx context.Context, key string, value []byte,
+		ttl time.Duration) (bool, error)
+	Delete(ctx context.Context, keys ...string) error
+	// DeleteIf deletes key only when it holds value (lock release).
+	DeleteIf(ctx context.Context, key string,
+		value []byte) (bool, error)
+	Increment(ctx context.Context, key string, delta int64,
+		ttl time.Duration) (int64, error)
+	Flush(ctx context.Context) error
+}
+```
+
+Keys reach the store already prefixed.
+
+| Store | Built with | Shared between servers | Best for |
+| --- | --- | --- | --- |
+| Memory | `cache.NewMemory(maxEntries)` | No | One server, development, tests |
+| Database | `cache.NewDatabase(db, table)` | Yes (SQLite: one host only) | Several servers without Redis |
+| Redis | `redisClient.CacheStore(prefix)` in `drivers/redis` | Yes | Busy apps, many servers |
+
+### Memory
+
+`cache.NewMemory(maxEntries)` keeps entries in a map inside your process, with an <Term tip="Least recently used: when the store is full, the entry nobody has read or written for the longest time is thrown away first.">LRU</Term> list. `maxEntries` `0` (or negative) means 10000.
+
+- Reading or writing an entry marks it as recently used. When a new key would go over `maxEntries`, the least recently used entry is evicted.
+- Expired entries are removed when they are touched, not by a background goroutine. `m.Len()` therefore counts expired entries that nobody has read yet.
+- Values are copied on the way in and out, so changing a byte slice you got back never changes the cache.
+- Everything is lost when the process stops, and each server has its own copy.
+
+### Database
+
+`cache.NewDatabase(db, table)` stores entries in a SQL table on SQLite, PostgreSQL or MySQL/MariaDB. `table` defaults to `cache` and must match `^[A-Za-z_][A-Za-z0-9_]*$`; any other name fails with `cache: invalid table name "…"`.
+
+```sql
+cache(key TEXT PRIMARY KEY, value TEXT NOT NULL, expires_at BIGINT)
+```
+
+- `expires_at` is a Unix time in milliseconds; `0` means "never". `CreateTable(ctx)` creates the table and an index on `expires_at` if they are missing. `app.Cache()` calls it for you.
+- On PostgreSQL `value` is `BYTEA`. On MySQL `key` and `value` are binary (`VARBINARY`, `LONGBLOB`), so lookups stay exact and case-sensitive.
+- `Increment` is a single upsert, so counters stay exact across connections and servers. MySQL has no `RETURNING`, so there the upsert and a `SELECT` share a transaction.
+- Expired rows stay in the table until `Prune(ctx)` deletes them, 1000 rows per statement so a large backlog never holds one long lock. Every app whose cache store can prune schedules `cache:prune` hourly with `WithoutOverlapping()`. You may also run it by hand:
+
+```bash
+vukem cache:prune
+# Pruned 1834 expired cache entries.
+```
+
+The scheduled task runs inside `vukem serve` unless `SCHEDULE_IN_SERVE=false`. See [Scheduler](/docs/digging-deeper/scheduler).
+
+### Redis
+
+The Redis driver lives in its own module. Pass its store with `vukem.WithCacheStore`, or with `WithCacheStoreFunc` to read `REDIS_URL` from the configuration first. Setup is on the [Redis](/docs/database/redis) page.
+
+```go
+vukem.WithCacheStore(redisClient.CacheStore("cache:"))
+```
+
+The Redis store adds its own key prefix (`cache:`) in front of `CACHE_PREFIX`, and its `Flush` deletes only the keys under its prefix.
+
+### Writing your own store
+
+A custom store implements `cache.Store` and `cache.Sharer` (next section), then runs the conformance suite from one of its tests:
+
+```go title="mystore/store_test.go"
+func TestStore(t *testing.T) {
+	cachetest.Run(t, mystore.New())
+}
+```
+
+`cachetest.Run` checks every method, TTL expiry (with short sleeps), concurrent `Increment` and that the store implements `cache.Sharer`. It runs in Vukem's own CI against memory, SQLite, PostgreSQL, MySQL, MariaDB and Redis.
+
+## Shared stores
+
+Some features coordinate several servers through the cache: `OnOneServer()` scheduled tasks and `RATE_LIMIT_STORE=cache`. They only work if **every server sees the same entries**. A memory cache cannot do that: each server would hold its own lock and its own counters.
+
+So these features ask `cache.Shared(store)`. A store answers by implementing the one-method `cache.Sharer` interface:
+
+```go
+type Sharer interface {
+	Shared() bool
+}
+```
+
+| Store | `Shared()` |
+| --- | --- |
+| `*cache.Memory` | `false` |
+| `*cache.Database` | `true` |
+| Redis (`drivers/redis`) | `true` |
+
+The SQLite database store reports `true`, but a SQLite file is shared only by processes on one host. Servers on several hosts need PostgreSQL, MySQL or Redis.
+
+### Wrappers and `Layers`
+
+You may wrap a store to add metrics or tracing. The wrapper must pass on the answer of the store inside it, in one of two ways:
+
+```go title="app/metrics/cache.go"
+// CountingStore counts cache calls and forwards them to Store.
+type CountingStore struct {
+	cache.Store
+}
+
+// Unwrap lets cache.Shared (and cache:prune) see the wrapped store.
+func (s CountingStore) Unwrap() cache.Store { return s.Store }
+```
+
+- implement `Shared() bool` yourself, or
+- expose the inner store with an `Unwrap() cache.Store` method.
+
+`cache.Layers(store)` is an [iterator](https://go.dev/blog/range-functions) that yields the store, then each store underneath it, following `Unwrap`. It stops at a store without `Unwrap`, at `nil`, or after 32 stores (so a wrapper that unwraps to itself cannot loop forever). `cache.Shared` returns the answer of the **first** layer that implements `Sharer`. The `cache:prune` command uses `Layers` the same way to find a store that can prune.
+
+When no layer answers (an unknown store, `nil`, or a chain cut at 32), `Shared` returns `false`. This is <Term tip="When the code cannot tell whether something is safe, it chooses the safe answer (here: not shared) instead of the convenient one.">fail closed</Term>: a metrics wrapper around the memory cache cannot pass for a shared store by accident. The app then refuses to start with, for example:
+
+```text
+vukem: RATE_LIMIT_STORE=cache needs a cache shared by every server
+(CACHE_STORE=database or vukem.WithCacheStore with Redis; a custom
+store or wrapper must implement cache.Sharer); the memory cache keeps
+one budget per process
+```
+
+## Configuration
+
+| Variable | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `CACHE_STORE` | string | `memory` | `memory` or `database`. Ignored when you pass `WithCacheStore` or a `WithCacheStoreFunc` that returns a store |
+| `CACHE_PREFIX` | string | `vukem:` | Added in front of every key. Use a distinct prefix per app on a shared Redis or table |
+| `CACHE_TABLE` | string | `cache` | Table of the database store |
+| `CACHE_MAX_ENTRIES` | int | `10000` | Size of the memory store; `0` also means 10000 |
+| `SCHEDULE_IN_SERVE` | bool | `true` | Runs the hourly `cache:prune` (and other tasks) inside `vukem serve` |
+
+| Option or function | What it does |
+| --- | --- |
+| `vukem.WithCacheStore(store)` | Uses `store` instead of `CACHE_STORE` |
+| `vukem.WithCacheStoreFunc(fn)` | Builds the store on the first `app.Cache()` call; `vukem.ErrUseDefault` keeps `CACHE_STORE` |
+| `cache.New(store, prefix)` | Builds a cache by hand |
+| `cache.NewMemory(maxEntries)` | Memory store |
+| `cache.NewDatabase(db, table)` | Database store; `CreateTable`, `Prune` |
+| `cache.ErrNotAcquired` | Returned by `Lock.Block` when the wait expired |
+
+## Security
+
+What Vukem does for you:
+
+- The memory store is bounded by `CACHE_MAX_ENTRIES`, so a flood of unique keys evicts old entries instead of eating all the memory.
+- Lock release checks the owner token, so one server cannot free another server's lock.
+- Features that need a shared store refuse to boot on a store that does not say it is shared.
+
+What stays your job (see the [security overview](/docs/security/overview)):
+
+- **Never cache per-user data under a shared key.** Put the user id in the key (`user:42:dashboard`), or do not cache it. Otherwise one user sees another user's page.
+- **Do not cache secrets or tokens.** The database store keeps values in a plain table, and Redis is often shared between apps.
+- **Bound keys built from user input.** Normalise them (`strings.ToLower`) and limit their length, so a client cannot create millions of entries in a database or Redis store.
+- **Keep a distinct `CACHE_PREFIX` per app** on a shared Redis, and remember that `Flush` on the database store clears the whole table.
+
+## Testing
+
+Each `vukemtest.New` boots a fresh app, and `CACHE_STORE` defaults to `memory`, so every test starts with an empty cache. Read it through the embedded `*vukem.App`:
+
+```go title="tests/posts_test.go"
+func TestPopularIsCached(t *testing.T) {
+	app := vukemtest.New(t, bootstrap.New)
+
+	app.Client(t).Get("/posts/popular").AssertOK()
+
+	c, err := app.Cache()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, ok, err := cache.Get[[]models.Post](
+		t.Context(), c, "posts:popular",
+	)
+	if err != nil || !ok {
+		t.Fatalf("posts:popular cached = %v, %v", ok, err)
+	}
+}
+```
+
+For plain unit tests, build a cache by hand: `cache.New(cache.NewMemory(0), "test:")`. To test the database store, set `CACHE_STORE=database` in `vukemtest.Options.Env`; the test database is in memory.
+
+## Common mistakes
+
+**Unexported fields disappear.** Values go through JSON, so lower-case fields are dropped.
+
+```go
+// Wrong: title is unexported, the cached copy has an empty title.
+type Post struct {
+	ID    int64
+	title string
+}
+
+// Right: exported fields survive the round trip.
+type Post struct {
+	ID    int64
+	Title string
+}
+```
+
+**Changing a cached struct.** Old entries may not decode into the new shape, and `Get` returns `cache: decode posts:popular: json: cannot unmarshal …`. Put a version in the key (`posts:popular:v2`) when you change the type.
+
+**Forgetting the TTL.** `c.Put(ctx, "settings", s, 0)` never expires. Pass a TTL unless you `Forget` the key yourself every time the data changes.
+
+**Expecting `Forget` to reach other servers.** With the memory store each server has its own copy, so `Forget` clears only the local one. Use `CACHE_STORE=database` or Redis when you run more than one server.
+
+**Mixing types under one key.**
+
+```go
+// Wrong: "views" holds a JSON string, Increment cannot add to it.
+_ = c.Put(ctx, "views", "12", 0)
+_, err := c.Increment(ctx, "views", 1, 0)
+// err: cache: vukem:views is not an integer
+
+// Right: let Increment create and own the counter.
+n, err := c.Increment(ctx, "views", 1, 24*time.Hour)
+```
+
+**Caching an error with a timeout instead.** `Remember` never caches errors, so a failing database is called again on every request. Protect a slow dependency with a context timeout, not with the cache.
+
+## Next steps
+
+<CardGroup cols="2">
+<Card title="Redis" href="/docs/database/redis" icon="database">
+Share the cache between servers with the Redis store.
+</Card>
+<Card title="Scheduler" href="/docs/digging-deeper/scheduler" icon="zap">
+Locks behind `WithoutOverlapping` and `OnOneServer`.
+</Card>
+<Card title="Rate limiting" href="/docs/security/rate-limiting" icon="shield">
+Counters over a shared cache with `RATE_LIMIT_STORE=cache`.
+</Card>
+<Card title="Package reference" href="https://pkg.go.dev/github.com/AlexGalhardo/vukem/cache" icon="book">
+Every exported name of the `cache` package on pkg.go.dev.
+</Card>
+</CardGroup>

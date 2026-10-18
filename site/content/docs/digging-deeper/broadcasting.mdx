@@ -1,127 +1,622 @@
 ---
 title: WebSockets and broadcasting
-description: WebSocket handlers with origin checks and clean shutdown, and Laravel-style broadcasting over public, private and presence channels via SSE or WebSockets.
+description: Push live updates to browsers over public, private and presence channels, through server-sent events or WebSockets, with authorization that fails closed.
 ---
 
-## WebSockets
+A normal web page only changes when the browser asks for something. Live features (an order status that flips to "shipped", a stock counter, a "who is online" list) need the server to speak first. Vukem gives you two tools for that: **broadcasting**, which sends named events to channels that browsers subscribe to, and a **WebSocket driver** for when you need a raw two-way connection.
 
-```bash
-go get github.com/AlexGalhardo/vukem/drivers/websocket
+You will learn:
+
+- what public, private and presence channels are, and how each is authorized;
+- how to declare events and broadcast them from handlers, listeners or queue jobs;
+- how browsers subscribe over server-sent events (SSE) or WebSockets, and what every message looks like;
+- how events reach every app instance through Redis;
+- how to write your own WebSocket handler with safe defaults;
+- how to test all of it.
+
+## The idea
+
+Think of a radio station. The station (your server) broadcasts on channels. A listener (a browser) tunes in to the channels it cares about. Some channels are open to everyone, like music radio. Some are private, like a walkie-talkie for one family. Some also tell you who else is listening, like a conference call.
+
+| Kind | Name looks like | Who may subscribe | Example in a shop |
+| --- | --- | --- | --- |
+| Public | `products.42` | anyone, but only for names you declared | stock updates on a product page |
+| Private | `private-user.7` | a logged-in user your rule accepts | "your order has shipped" |
+| Presence | `presence-support.3` | like private, and members see each other | the support room's "who is here" list |
+
+The prefix (`private-`, `presence-`) chooses the kind. Every channel needs a rule, and every decision **fails closed**: a name without a rule, a rule that returns an error, or a visitor without a user is denied.
+
+Two transports carry events to the browser:
+
+- **<Term tip="Server-sent events: a one-way HTTP stream from server to browser, read in JavaScript with EventSource.">SSE</Term>**, built into Vukem core. One HTTP request stays open and the server writes events into it. The browser's [`EventSource`](https://developer.mozilla.org/en-US/docs/Web/API/EventSource) reconnects by itself.
+- **<Term tip="A two-way connection that starts as HTTP and then switches protocol (RFC 6455).">WebSocket</Term>**, from the optional `drivers/websocket` module. The browser can subscribe and unsubscribe on one open connection.
+
+Under the hood each subscription reads from a Go [channel](https://go.dev/tour/concurrency/2), and each event is encoded with [`encoding/json`](https://pkg.go.dev/encoding/json). With a <Term tip="A message relay shared by every app instance, such as Redis pub/sub.">broker</Term>, an event published on one server reaches browsers connected to any server.
+
+## Quick start
+
+The running example is a shop: customers see their own orders ship in real time.
+
+<Steps>
+<Step title="Create the broadcast server and its rules">
+
+```go title="app/realtime/realtime.go"
+package realtime
+
+import (
+	"context"
+	"strconv"
+
+	"example.com/shop/app/models"
+	"github.com/AlexGalhardo/vukem/auth"
+	"github.com/AlexGalhardo/vukem/broadcast"
+)
+
+// New returns the shop's broadcast server with every channel rule.
+func New() (*broadcast.Server, error) {
+	b := broadcast.New(broadcast.Config{
+		// User tells private and presence rules who is asking.
+		User: func(ctx context.Context) (any, error) {
+			return auth.UserFrom[*models.User](ctx, "web")
+		},
+	})
+
+	// A customer may only listen to their own channel.
+	err := b.Private("user.{id}", func(
+		_ context.Context, u any, p map[string]string,
+	) (bool, error) {
+		id := strconv.FormatInt(u.(*models.User).ID, 10)
+		return id == p["id"], nil
+	})
+
+	return b, err
+}
 ```
 
-The driver module is built on `github.com/coder/websocket`. Core never imports drivers, so the handler is a function that takes the context:
+</Step>
+<Step title="Declare the event">
 
-```go
-r.Get("/chat", func(c *web.Ctx) error {
+```go title="app/orders/events.go"
+package orders
+
+import "strconv"
+
+// Shipped is broadcast when an order leaves the warehouse.
+type Shipped struct {
+	OrderID int64  `json:"order_id"`
+	UserID  int64  `json:"user_id"`
+	Carrier string `json:"carrier"`
+}
+
+// Channels lists where the event goes.
+func (e Shipped) Channels() []string {
+	return []string{"private-user." + strconv.FormatInt(e.UserID, 10)}
+}
+
+// BroadcastAs names the event for the browser.
+func (Shipped) BroadcastAs() string { return "order.shipped" }
+
+// BroadcastWith sends only what the browser needs.
+func (e Shipped) BroadcastWith() any {
+	return map[string]any{
+		"order_id": e.OrderID,
+		"carrier":  e.Carrier,
+	}
+}
+```
+
+</Step>
+<Step title="Add the route and broadcast">
+
+```go title="routes/broadcast.go"
+package routes
+
+import (
+	vukem "github.com/AlexGalhardo/vukem"
+	"github.com/AlexGalhardo/vukem/auth"
+	"github.com/AlexGalhardo/vukem/broadcast"
+	"github.com/AlexGalhardo/vukem/router"
+)
+
+// Broadcast mounts the SSE endpoint behind the session guard, so
+// private rules can see the logged-in user.
+func Broadcast(
+	b *broadcast.Server,
+	guard auth.Checker,
+) func(*router.Router, *vukem.App) error {
+	return func(r *router.Router, _ *vukem.App) error {
+		r.Get("/broadcast/sse", b.SSE).Use(auth.Optional(guard))
+		return nil
+	}
+}
+```
+
+When the warehouse marks the order, publish it:
+
+```go title="app/controllers/warehouse.go"
+err := h.Broadcast.Broadcast(c.Context(), orders.Shipped{
+	OrderID: 1001,
+	UserID:  7,
+	Carrier: "DHL",
+})
+```
+
+</Step>
+<Step title="Listen in the browser">
+
+```js title="resources/js/orders.js"
+const source = new EventSource(
+  "/broadcast/sse?channels=private-user.7",
+);
+
+source.addEventListener("order.shipped", (e) => {
+  const msg = JSON.parse(e.data);
+  console.log(msg.channel, msg.data.carrier);
+});
+```
+
+The console prints `private-user.7 DHL`. The `data` of every SSE event is a JSON object:
+
+```json
+{
+  "channel": "private-user.7",
+  "event": "order.shipped",
+  "data": { "order_id": 1001, "carrier": "DHL" }
+}
+```
+
+</Step>
+</Steps>
+
+`routes.Broadcast` returns the function type `vukem.WithRoutes` takes. The [wiring section](#wiring-it-into-the-app) shows the whole bootstrap.
+
+## Broadcasting
+
+### Channel names and patterns
+
+You register rules with a pattern **without** the prefix. Patterns split on dots; a `{name}` segment matches exactly one non-empty segment and becomes a parameter:
+
+| Rule | Matches | Does not match | Parameters |
+| --- | --- | --- | --- |
+| `b.Public("products")` | `products` | `products.1` | none |
+| `b.Public("products.{id}")` | `products.42` | `products`, `products.42.x` | `id=42` |
+| `b.Private("user.{id}", fn)` | `private-user.7` | `user.7` (that is a public name) | `id=7` |
+| `b.Presence("support.{room}", fn)` | `presence-support.3` | `private-support.3` | `room=3` |
+
+Rules are checked in the order you registered them, and the first one that matches decides. Registration returns an error for a bad pattern, so check it at boot:
+
+```text
+broadcast: pattern "private-user.{id}" must omit the private-/presence- prefix
+broadcast: invalid parameter "{id}" in pattern "a.{id}.{id}"
+broadcast: invalid segment "" in pattern "a..b"
+```
+
+A channel or event name is 1 to 128 characters (`broadcast.MaxNameLength`) from `A-Z a-z 0-9 _ - = @ . :`. `broadcast.ValidName(name)` checks it. Commas, spaces, quotes and line breaks are refused, so a name can never break the comma-separated `channels` list or a wire frame.
+
+### Public channels
+
+```go title="app/realtime/realtime.go"
+// Product pages show live stock.
+if err := b.Public("products.{id}"); err != nil {
+	return nil, err
+}
+```
+
+`Public` needs no user. A public name you did not declare is denied, so a typo or a per-user name never becomes readable by accident.
+
+### Private channels
+
+`Private(pattern, fn)` calls `fn(ctx, user, params)` with the value `Config.User` returned and the pattern parameters. Return `true` to allow. Returning `false` answers 403; returning an error also answers 403 and keeps the error for your logs.
+
+The user is an `any` (Go's empty interface, see [the tour](https://go.dev/tour/methods/14)), so you convert it with a [type assertion](https://go.dev/tour/methods/15) such as `u.(*models.User)`. Vukem never calls a private or presence rule without a user: when `Config.User` is `nil`, returns an error, or returns a nil value, the request is denied before your rule runs.
+
+### Private channels through a gate
+
+If your app already has an [authorization gate or policy](/docs/security/authorization), reuse it instead of writing the check twice. `PrivateGate(pattern, ability, load)` loads the subject from the parameters and asks `Config.Authorizer` (an `*authz.Gate` works):
+
+```go title="app/realtime/realtime.go"
+// Staff may follow any order the "view" policy allows.
+err = b.PrivateGate("order.{id}", "view",
+	func(ctx context.Context, p map[string]string) (any, error) {
+		return orders.Find(ctx, p["id"])
+	},
+)
+```
+
+The result is the same as `c.Authorize("view", order)` in a handler. With `load` set to `nil`, the ability is checked with no subject (a gate ability such as `"see-dashboard"`). Without `Config.Authorizer`, every `PrivateGate` channel is denied. An empty ability is a registration error.
+
+### Presence channels
+
+A presence rule returns a `broadcast.Member` instead of a boolean. `Member.ID` identifies the person (it must not be empty), and `Member.Info` is anything JSON can encode that the other members may see:
+
+```go title="app/realtime/realtime.go"
+err = b.Presence("support.{room}", func(
+	_ context.Context, u any, _ map[string]string,
+) (broadcast.Member, bool, error) {
+	user := u.(*models.User)
+	return broadcast.Member{
+		ID:   strconv.FormatInt(user.ID, 10),
+		Info: map[string]string{"name": user.Name},
+	}, true, nil
+})
+```
+
+What subscribers receive:
+
+| Moment | Event name | `data` |
+| --- | --- | --- |
+| right after subscribing | `presence:here` | the member list, sorted by id: `[{"id":"7","info":{"name":"Ana"}}]` |
+| someone else joins | `presence:joining` | that member |
+| someone else leaves | `presence:leaving` | that member |
+
+One person with three tabs counts once: `joining` is sent with their first connection and `leaving` with their last. You never receive your own `joining`. Event names that start with `presence:` are reserved (`broadcast.EventHere`, `EventJoining`, `EventLeaving`), so your own events cannot use them.
+
+<Callout type="info" title="Presence lists are per instance">
+With a broker, `joining` and `leaving` reach every instance, but the `presence:here` list only knows members connected to the same instance.
+</Callout>
+
+### Events
+
+An event is any type with a `Channels() []string` method. Two optional methods change what is sent:
+
+| Method | Default when missing |
+| --- | --- |
+| `BroadcastAs() string` | the Go type name (`Shipped`; pointers are followed) |
+| `BroadcastWith() any` | the event itself, encoded as JSON (field tags such as `json:"-"` apply) |
+
+The quick start's `Shipped` uses both: the browser sees `order.shipped` with only `order_id` and `carrier`, while `user_id` stays on the server.
+
+`b.Broadcast(ctx, event)` encodes the payload once and publishes it on every channel the event lists. It returns an error when the event is `nil`, has no channels, cannot be encoded, uses an invalid or reserved name, or the broker fails; errors from several channels are joined with [`errors.Join`](https://pkg.go.dev/errors#Join). Publishing to a channel nobody is subscribed to is not an error.
+
+For a one-off message without a type, use `Publish`:
+
+```go title="app/controllers/stock.go"
+err := b.Publish(ctx, "products.42", "stock.changed",
+	map[string]int{"stock": 3},
+)
+```
+
+### From the event bus or a queue
+
+You often already dispatch a domain event on the [event bus](/docs/digging-deeper/events). Three helpers turn it into a broadcast without extra code:
+
+| Helper | Runs | On failure |
+| --- | --- | --- |
+| `broadcast.Listener[E](b)` | inside `Dispatch` | `Dispatch` returns the publish error |
+| `broadcast.ListenerAsync[E](b)` | in the background | the bus logs it |
+| `broadcast.Queued[E](b, kind, opts...)` | in a [queue](/docs/digging-deeper/queue) job named `kind` | the queue retries it; it survives restarts |
+
+```go title="bootstrap/app.go"
+vukem.WithListeners(
+	broadcast.Queued[orders.Shipped](b, "broadcast.order_shipped"),
+),
+```
+
+`Queued` stores the event as JSON, so every field `Channels()` and `BroadcastWith()` read must survive a JSON round trip; a field tagged `json:"-"` arrives empty in the job. In a Vukem app the bus's jobs are registered on the queue for you. `kind` must stay stable across deploys, like any job kind.
+
+### Many app instances
+
+Without a broker, events reach only browsers connected to the same process. With two or more instances behind a load balancer, pass a broker. The [Redis driver](/docs/database/redis)'s client implements `sse.Broker`:
+
+```go title="app/realtime/realtime.go"
+b := broadcast.New(broadcast.Config{
+	Broker: redisClient,
+	User:   currentUser,
+})
+```
+
+Each channel becomes a pub/sub topic named `broadcast:<channel>`. An instance holds one Redis subscription per topic while it has local subscribers and drops it when the last one leaves.
+
+## Subscriptions
+
+Both transports are built on `b.Subscribe(ctx, channels...)`, which you can also call yourself (in a test, or a custom transport):
+
+1. Blank names and duplicates are removed. No channel left is `ErrInvalidChannel` (400).
+2. More than `MaxChannels` (32 by default) is `ErrTooManyChannels` (400).
+3. Every channel is authorized; **one** refusal refuses them all.
+4. Presence channels announce the member to the others.
+
+The returned `*broadcast.Subscription` has:
+
+| Method | What it does |
+| --- | --- |
+| `Messages()` | a receive-only channel of `broadcast.Message` (`Channel`, `Event`, `Data`) |
+| `Members(channel)` | this instance's members of a presence channel, or `false` for other kinds |
+| `Channels()` | the subscribed names |
+| `Close()` | unsubscribes and announces leaving; safe to call twice |
+
+A subscription ends when you call `Close`, when `ctx` is cancelled, when `b.Close()` runs, or when the subscriber falls 64 events behind. Then `Messages()` closes and the client should reconnect. `b.Authorize(ctx, channel)` runs the check for one channel without subscribing.
+
+| Error | Status | Message the client sees |
+| --- | --- | --- |
+| `broadcast.ErrInvalidChannel` | 400 | `Invalid channel name.` |
+| `broadcast.ErrTooManyChannels` | 400 | `Too many channels.` |
+| `broadcast.ErrForbidden` | 403 | `This channel is unauthorized.` |
+
+A visitor who is not logged in gets the same 403 as one who is logged in but not allowed, so nobody can probe which private channels exist. The real cause (`broadcast: no rule registered: channel "news"`, `broadcast: no user: …`) is wrapped inside the error for your logs.
+
+## The SSE transport
+
+`b.SSE` is a route handler for `GET /broadcast/sse?channels=a,b,c`. `b.SSEHandler()` is the same as a plain [`http.Handler`](https://pkg.go.dev/net/http#Handler) for a standard mux.
+
+- Every channel is authorized **before** the stream starts. A refusal answers 400 or 403 with no stream, and logs a `broadcast.denied` security event.
+- Other methods than `GET` answer 405 with `Allow: GET`.
+- Each event is written with the broadcast event name as the SSE event type, and the `Message` as JSON data. Presence channels first get a `presence:here` event.
+- A heartbeat comment goes out every 15 seconds, so proxies keep the connection open.
+- The stream ends when the browser leaves, the subscription is dropped or the app shuts down; `EventSource` then reconnects.
+
+```js title="resources/js/support.js"
+const source = new EventSource(
+  "/broadcast/sse?channels=presence-support.3,products.42",
+);
+
+source.addEventListener("presence:here", (e) => {
+  const members = JSON.parse(e.data).data;
+  renderOnline(members);
+});
+
+source.addEventListener("stock.changed", (e) => {
+  showStock(JSON.parse(e.data).data.stock);
+});
+```
+
+## The WebSocket transport
+
+Install the driver module (it is separate, so apps that do not need WebSockets do not download [coder/websocket](https://github.com/coder/websocket)):
+
+```bash
+go get github.com/AlexGalhardo/vukem/drivers/websocket@v0.1.1
+```
+
+```go title="routes/broadcast.go"
+r.Get("/broadcast/ws", websocket.Broadcast(b)).Use(auth.Optional(guard))
+```
+
+Each subscribe is authorized with the context of the upgrade request, so mount the route behind the auth middleware, exactly like the SSE route. The protocol is JSON text messages:
+
+| Direction | Message |
+| --- | --- |
+| browser → server | `{"type":"subscribe","channel":"private-user.7"}` |
+| browser → server | `{"type":"unsubscribe","channel":"private-user.7"}` |
+| server → browser | `{"type":"subscribed","channel":"private-user.7"}` (also when already subscribed) |
+| server → browser | `{"type":"unsubscribed","channel":"…"}` |
+| server → browser | `{"type":"event","channel":"…","event":"order.shipped","data":{…}}` |
+| server → browser | `{"type":"here","channel":"presence-…","data":[…]}`, then `joining` / `leaving` with one member |
+| server → browser | `{"type":"error","channel":"…","status":403,"message":"This channel is unauthorized."}` |
+
+Errors use status 400 for an invalid name, too many channels (`MaxChannels` per connection), a message that is not JSON (`Invalid message.`) or an unknown type (`Unknown message type.`). An invalid channel name is never echoed back. A binary frame closes the socket with 1008 ("text frames only"). If a subscription is dropped (too slow, or `b.Close()`), the socket closes with 1001 "subscription ended, reconnect".
+
+```js title="resources/js/orders.js"
+const ws = new WebSocket(`wss://${location.host}/broadcast/ws`);
+
+ws.onopen = () => {
+  ws.send(JSON.stringify({ type: "subscribe", channel: "private-user.7" }));
+};
+
+ws.onmessage = (e) => {
+  const m = JSON.parse(e.data);
+  if (m.type === "event") console.log(m.event, m.data);
+};
+```
+
+The type names are exported as constants (`websocket.TypeSubscribe`, `TypeEvent`, `TypeError`…) with the `websocket.Request` and `websocket.Frame` structs, for Go clients.
+
+## Your own WebSocket handler
+
+For a two-way feature that is not channel-shaped (a chat bot, a collaborative editor), write the handler yourself. `websocket.Handle` upgrades the request and gives you a `*websocket.Conn`:
+
+```go title="routes/chat.go"
+r.Get("/support/chat", func(c *web.Ctx) error {
 	return websocket.Handle(c, func(conn *websocket.Conn) error {
 		for {
-			var msg Message
-			if err := conn.ReadJSON(conn.Context(), &msg); err != nil {
-				return nil // client left or the app is shutting down
+			var in Question
+			err := conn.ReadJSON(conn.Context(), &in)
+			if err != nil {
+				// The client left or the app is shutting down.
+				return nil
 			}
-			if err := conn.WriteJSON(conn.Context(), reply(msg)); err != nil {
+
+			err = conn.WriteJSON(conn.Context(), answer(in))
+			if err != nil {
 				return err
 			}
 		}
 	})
 })
-r.Get("/feed", websocket.Handler(feed, websocket.AllowedOrigins("app.example.com")))
 ```
 
-- Entry points: `websocket.Handle(c, fn, opts...)`, `websocket.Handler(fn, opts...)` (a `web.HandlerFunc`) and `websocket.Serve(w, r, fn, opts...)` for plain handlers.
-- `Conn`: `ReadText`, `ReadJSON`, `WriteText`, `WriteJSON` (each takes a context), `Close(code, reason)`, `CloseRead(ctx)` for write-only handlers, `Subprotocol()`, and `Unwrap()` for binary or streaming I/O. One reader and one writer may run at the same time.
-- `Conn.Context()` ends when the client goes away, the peer stops answering pings, `fn` returns or the app shuts down.
+Three entry points do the same thing: `websocket.Handle(c, fn, opts...)` inside a handler, `websocket.Handler(fn, opts...)` as a route handler, and `websocket.Serve(w, r, fn, opts...)` for plain `net/http`. A refused upgrade (not a WebSocket request, wrong origin) returns an HTTP error whose status was already sent.
 
-| Option | Default |
+| `Conn` method | What it does |
 | --- | --- |
-| Origin | same-origin only; `AllowedOrigins(patterns...)` opens specific hosts (`path.Match`, or `scheme://host` patterns). `"*"` or a malformed pattern refuses every upgrade; `InsecureSkipOriginCheck()` is the only way to accept any origin |
-| `ReadLimit(n)` | 32 KiB; larger messages close with 1009 |
-| `WriteTimeout(d)` | 10s per message |
-| `PingInterval(d)` / `PingTimeout(d)` | 30s / 10s (zero interval disables) |
-| `Subprotocols(...)` | none |
+| `ReadText(ctx)`, `ReadJSON(ctx, v)` | read one text message; a binary one returns `websocket.ErrNotText` |
+| `WriteText(ctx, s)`, `WriteJSON(ctx, v)` | send one text message within the write timeout |
+| `Context()` | done when the client leaves, `fn` returns, a ping goes unanswered or the app shuts down |
+| `CloseRead(ctx)` | for handlers that only write: discards input so pings still work |
+| `Close(code, reason)` | closing handshake; a second call does nothing |
+| `Subprotocol()` | the negotiated subprotocol, or `""` |
+| `Unwrap()` | the underlying `*websocket.Conn` from coder/websocket, for binary or streaming I/O |
 
-Requests without an `Origin` header (non-browser clients) are accepted. Pongs only arrive while something reads, so write-only handlers call `conn.CloseRead(ctx)`.
+One goroutine may read while another writes. When `fn` returns `nil` the socket closes with 1000 (normal); with an error, 1011 (internal error). On shutdown every socket closes with 1001 "server shutting down", so shutdown never waits for open sockets. The connection outlives the HTTP server's read and write timeouts. `websocket.CloseStatus(err)` returns the close code inside an error, or -1.
 
-`fn` returning nil closes with 1000, an error with 1011. On shutdown every socket closes with 1001 "going away", so shutdown never waits on open sockets.
+## Wiring it into the app
 
-## Broadcasting
+The broadcast server is a plain value: create it once, pass it to routes and listeners, and close it on shutdown.
 
-Package `broadcast` (core, stdlib only) pushes server events to browsers over named channels. The channel kind comes from the name prefix: public (`posts`), private (`private-user.42`) or presence (`presence-room.7`).
+```go title="bootstrap/app.go"
+package bootstrap
+
+import (
+	"context"
+
+	vukem "github.com/AlexGalhardo/vukem"
+	"github.com/AlexGalhardo/vukem/broadcast"
+
+	"example.com/shop/app/orders"
+	"example.com/shop/app/realtime"
+	"example.com/shop/routes"
+)
+
+// New builds the shop.
+func New(opts ...vukem.Option) (*vukem.App, error) {
+	b, err := realtime.New()
+	if err != nil {
+		return nil, err
+	}
+
+	base := []vukem.Option{
+		vukem.WithListeners(
+			broadcast.Listener[orders.Shipped](b),
+		),
+		vukem.WithRoutes(routes.Broadcast(b, routes.WebGuard)),
+	}
+
+	app, err := vukem.New(append(base, opts...)...)
+	if err != nil {
+		return nil, err
+	}
+
+	app.OnShutdown(func(context.Context) error {
+		b.Close()
+		return nil
+	})
+
+	return app, nil
+}
+```
+
+`routes.WebGuard` stands for your session guard (the one `vukem install:auth` creates).
+
+## Configuration
+
+`broadcast.Config`:
+
+| Field | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `Broker` | `sse.Broker` | `nil` | Carries events between instances; `nil` works in one process |
+| `User` | `func(context.Context) (any, error)` | `nil` | Finds the user; `nil`, an error or a nil user denies private and presence channels |
+| `Authorizer` | `web.Authorizer` | `nil` | Backs `PrivateGate`; without it those channels are denied |
+| `MaxChannels` | `int` | `32` | Channels per connection (`broadcast.DefaultMaxChannels`) |
+
+WebSocket options (for `websocket.Broadcast`, `Handle`, `Handler` and `Serve`):
+
+| Option | Default | What it does |
+| --- | --- | --- |
+| `AllowedOrigins(patterns...)` | same origin only | Extra browser origins; [`path.Match`](https://pkg.go.dev/path#Match) on the host, or on `scheme://host` when the pattern has `://`; case-insensitive |
+| `InsecureSkipOriginCheck()` | off | Accept any origin; only for endpoints that do not use cookies |
+| `ReadLimit(n)` | 32 KiB | Largest incoming message; bigger closes with 1009 |
+| `WriteTimeout(d)` | 10 s | Limit per write; a timeout closes the socket |
+| `PingInterval(d)` | 30 s | Keepalive ping; zero or negative disables it |
+| `PingTimeout(d)` | 10 s | Wait for the pong before the peer is dropped |
+| `Subprotocols(p...)` | none | Subprotocols offered, in order of preference |
+
+An invalid option (`AllowedOrigins("*")`, a malformed pattern, a read limit of 0 or less, a ping or write timeout of 0 or less while keepalive is on) answers every upgrade with 500 and returns the error, for example `websocket: AllowedOrigins("*") is refused; use InsecureSkipOriginCheck`.
+
+## Security
+
+- **Fail closed.** Undeclared channels, rule errors, a missing `User` or `Authorizer`, and anonymous visitors on private or presence channels are all denied (`TestSecurity_A01_BroadcastPrivateChannelsAuthorized`).
+- **No probing.** Anonymous and forbidden visitors see the same 403. Denials are logged as `broadcast.denied` security events.
+- **Strict names.** Only the safe character set is accepted; rejected names are never reflected in WebSocket replies.
+- **Same-origin WebSockets.** A browser on another site cannot open a socket with your user's cookies (<Term tip="Cross-site WebSocket hijacking: a malicious page opening a socket to your app with the visitor's cookies.">CSWSH</Term>). Requests without an `Origin` header (non-browser clients) are accepted.
+- **Limits.** 32 KiB per message, 32 channels per connection, dead peers dropped by ping, slow subscribers dropped after 64 queued events.
+- **Your job:** never put secrets in a public channel, and keep presence `Info` to what other members may see.
+
+See the [security overview](/docs/security/overview) for the full list.
+
+## Testing
+
+Call `Subscribe` directly with a `User` function that reads a test value from the context. No server, no browser:
+
+```go title="app/realtime/realtime_test.go"
+package realtime_test
+
+import (
+	"context"
+	"testing"
+
+	"example.com/shop/app/orders"
+	"github.com/AlexGalhardo/vukem/broadcast"
+)
+
+type userKey struct{}
+
+func TestShippedReachesOwner(t *testing.T) {
+	b := broadcast.New(broadcast.Config{
+		User: func(ctx context.Context) (any, error) {
+			return ctx.Value(userKey{}), nil
+		},
+	})
+	defer b.Close()
+
+	err := b.Private("user.{id}", func(
+		_ context.Context, u any, p map[string]string,
+	) (bool, error) {
+		return u == p["id"], nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.WithValue(t.Context(), userKey{}, "7")
+	sub, err := b.Subscribe(ctx, "private-user.7")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sub.Close()
+
+	err = b.Broadcast(ctx, orders.Shipped{OrderID: 1, UserID: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if m := <-sub.Messages(); m.Event != "order.shipped" {
+		t.Fatalf("event = %q", m.Event)
+	}
+
+	// Another user's channel is refused.
+	if _, err := b.Subscribe(ctx, "private-user.8"); err == nil {
+		t.Fatal("want 403")
+	}
+}
+```
+
+To test the SSE route end to end, send `GET /broadcast/sse?channels=…` with the [test client](/docs/testing/overview) and assert the 400 and 403 answers; a successful stream stays open, so read it with a timeout.
+
+## Common mistakes
+
+**Registering the pattern with its prefix.**
 
 ```go
-b := broadcast.New(broadcast.Config{
-	Broker:     redisClient, // sse.Broker; nil = this process only
-	User:       func(ctx context.Context) (any, error) { return auth.UserFrom[*models.User](ctx, "web") },
-	Authorizer: gate, // used by PrivateGate
-})
-defer b.Close()
+// Wrong: returns an error at boot.
+b.Private("private-user.{id}", rule)
 
-err := b.Public("posts")
-err = b.Private("user.{id}", func(ctx context.Context, u any, p map[string]string) (bool, error) {
-	return fmt.Sprint(u.(*models.User).ID) == p["id"], nil
-})
-err = b.PrivateGate("post.{id}", "view", func(ctx context.Context, p map[string]string) (any, error) {
-	return findPost(ctx, p["id"]) // checked like c.Authorize("view", post)
-})
-err = b.Presence("room.{id}", func(ctx context.Context, u any, p map[string]string) (broadcast.Member, bool, error) {
-	user := u.(*models.User)
-	return broadcast.Member{ID: fmt.Sprint(user.ID), Info: map[string]string{"name": user.Name}}, true, nil
-})
+// Right
+b.Private("user.{id}", rule)
 ```
 
-<Callout type="warning">
-Every channel needs a rule, and decisions **fail closed**: no matching rule, a rule error, a missing `Config.User` or no user all deny.
-</Callout>
+**Forgetting the auth middleware on the transport route.** Without it, `auth.UserFrom` finds no user, and every private channel answers `403 This channel is unauthorized.`, even for logged-in users.
 
-- Patterns omit the prefix and split on `.`; `{param}` matches one segment. An invalid pattern is returned as an error at registration.
-- Channel names are 1–128 characters of `A-Z a-z 0-9 _ - = @ . :`; anything else answers 400.
-- `b.Subscribe(ctx, channels...)` authorizes every channel (all or nothing, at most 32 by default) and returns a `*Subscription`; transports are built on it.
+**Expecting an undeclared public channel to work.** `?channels=news` answers 403 until you call `b.Public("news")`.
 
-### Sending events
+**Queuing an event whose routing field is not in its JSON.** With `Queued`, a field tagged `json:"-"` arrives empty in the job, so `Channels()` builds `private-user.0`, and nobody receives the event.
 
-Events implement `Channels() []string`, and optionally `BroadcastAs() string` (default: the Go type name) and `BroadcastWith() any` (default: the event as JSON).
+**Opening one subscription per channel.** A browser that opens 40 `EventSource` connections hits the browser's connection limit. Put the channels in one `channels=` list (up to 32), or use one WebSocket.
 
-```go
-err := b.Broadcast(ctx, PostPublished{Post: p})        // every channel of the event, on every instance
-err = b.Publish(ctx, "posts", "PostPublished", payload) // without a type
+## Next steps
 
-bus.Register(broadcast.Listener[PostPublished](b))                          // from the events bus
-bus.Register(broadcast.Queued[PostPublished](b, "broadcast.post_published")) // from a retried queue job
-```
+<CardGroup cols="2">
+<Card title="Server-sent events" href="/docs/digging-deeper/sse" icon="zap">
+The `sse` package under the SSE transport.
+</Card>
+<Card title="Events" href="/docs/digging-deeper/events" icon="layers">
+Dispatch domain events that become broadcasts.
+</Card>
+<Card title="Authorization" href="/docs/security/authorization" icon="shield">
+Gates and policies for `PrivateGate`.
+</Card>
+<Card title="GraphQL" href="/docs/rest-apis/graphql" icon="code">
+GraphQL subscriptions fed by broadcast channels.
+</Card>
+</CardGroup>
 
-`broadcast.ListenerAsync` broadcasts in the background. Event names starting with `presence:` are reserved.
-
-### Transports
-
-```go
-r.Get("/broadcast/sse", b.SSE)                    // core
-r.Get("/broadcast/ws", websocket.Broadcast(b))   // drivers/websocket
-```
-
-Mount both behind your auth middleware: channels are authorized in the context of the request.
-
-- **SSE:** `GET /broadcast/sse?channels=posts,private-user.42`. Every channel is authorized before streaming (400/403 otherwise). Each SSE event is named after the broadcast event, with data `{"channel","event","data"}`; presence channels get `presence:here`, then `presence:joining` and `presence:leaving`.
-- **WebSocket:** JSON text messages.
-
-| Direction | Message |
-| --- | --- |
-| client → server | `{"type":"subscribe","channel":"private-user.42"}`, `{"type":"unsubscribe","channel":"…"}` |
-| server → client | `subscribed`, `unsubscribed`, `event` (`channel`, `event`, `data`), presence `here` / `joining` / `leaving` |
-| server → client | `{"type":"error","channel":"…","status":403,"message":"This channel is unauthorized."}` |
-
-```js
-const ws = new WebSocket(`wss://${location.host}/broadcast/ws`)
-ws.onopen = () => ws.send(JSON.stringify({ type: 'subscribe', channel: 'private-user.42' }))
-ws.onmessage = (e) => { const m = JSON.parse(e.data); if (m.type === 'event') console.log(m.event, m.data) }
-
-new EventSource('/broadcast/sse?channels=posts')
-  .addEventListener('PostPublished', (e) => console.log(JSON.parse(e.data)))
-```
-
-A subscription the server drops (64 events behind, or `b.Close()`) ends the stream or closes the socket with 1001; the client reconnects and subscribes again.
-
-<Callout type="info">
-Presence is tracked per instance: `joining`/`leaving` reach every instance through the broker, but `here` lists only members connected to the instance serving the client.
-</Callout>
-
-GraphQL subscriptions can read broadcast channels with the same rules: see [GraphQL](/docs/rest-apis/graphql#subscriptions).
+Package reference: [broadcast](https://pkg.go.dev/github.com/AlexGalhardo/vukem/broadcast) and [drivers/websocket](https://pkg.go.dev/github.com/AlexGalhardo/vukem/drivers/websocket).

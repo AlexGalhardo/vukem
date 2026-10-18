@@ -1,79 +1,513 @@
 ---
 title: Storage
-description: Local, in-memory and S3 disks, a file handler, signed temporary URLs, presigned URLs and safe uploads.
+description: Read and write files on local, in-memory and S3 disks through one interface, serve them safely over HTTP and hand out signed or presigned links.
 ---
 
-```go
-disk, err := storage.NewLocal("storage/app/public", "/storage") // os.Root: no "..", no escaping symlinks
-r.Handle("/storage/", http.StripPrefix("/storage", storage.Handler(disk, nil)))
+Web apps keep files: profile pictures, PDF invoices, exported reports. Writing them straight to `os.Create` works on your laptop, but it ties your code to one folder, lets a bad path like `../../etc/passwd` escape that folder, and has to be rewritten when you move to cloud storage. The `storage` package puts every place you can keep files behind one small interface, the **disk**, so your code stays the same from development to production.
 
-path, err := storage.PutUploaded(ctx, disk, fileHeader, "avatars", storage.Images(2<<20))
-url := disk.URL(path)
-```
+You will learn:
 
-## Disks
+- what a disk is and the six methods every disk has;
+- how the local disk keeps paths inside its folder and never shows half-written files;
+- how to serve public files, and private files through signed temporary links;
+- how to store a small uploaded file safely with `PutUploaded`;
+- how to use Amazon S3 or any S3-compatible service, including presigned URLs;
+- how to test file code without touching the real filesystem.
 
-`storage.Disk` has `Put` (atomic rename on local disks), `Open`, `Exists`, `Delete`, `List` and `URL`; `storage.Get` and `storage.PutBytes` are helpers. `storage.NewMemory(baseURL)` serves tests, and [S3](#s3) lives in its own module. Custom disks pass `storage/storagetest` (conformance and traversal suites).
+## The idea
 
-## Serving files
-
-`storage.Handler(disk, signer)` never serves dotfiles or directories and sends `X-Content-Type-Options: nosniff`. With a `signed.Signer` it answers only signed, unexpired URLs:
-
-```go
-private, _ := storage.NewLocal("storage/app/private", "")
-r.Handle("/files/", http.StripPrefix("/files", storage.Handler(private, signer)))
-
-link, err := storage.TemporaryURL(signer, "/files", "invoices/42.pdf", 15*time.Minute)
-```
-
-Public files are served by the handler instead of a `storage:link` symlink (which needs extra privileges on Windows).
-
-## Uploads
-
-`PutUploaded` never uses the client's file name: it stores a random name with an extension from the type detected in the content (`http.DetectContentType`), checks the size from the header and again while copying, and answers 422 for disallowed types or sizes.
+A disk is like a set of labelled drawers. You give it a **path** (the label, such as `avatars/42.png`) and some bytes, and later you ask for them back by the same path. You never see where the drawers really are: a folder on this machine, a map in memory, or a bucket in the cloud.
 
 ```go
-storage.Images(2 << 20)                                               // JPEG, PNG, GIF, WebP up to 2 MiB
-storage.UploadRules{MaxSize: 10 << 20, Types: []string{"application/pdf"}}
+type Disk interface {
+	Put(ctx context.Context, p string, r io.Reader) error
+	Open(ctx context.Context, p string) (io.ReadCloser, error)
+	Exists(ctx context.Context, p string) (bool, error)
+	Delete(ctx context.Context, p string) error
+	// List returns the file paths under dir (recursively), sorted.
+	List(ctx context.Context, dir string) ([]string, error)
+	// URL is the public URL of p ("" for private disks).
+	URL(p string) string
+}
 ```
 
-For streaming, resumable (tus), scanned and direct-to-bucket uploads, see [File uploads](/docs/digging-deeper/uploads).
+`Disk` is a Go [interface](https://go.dev/tour/methods/9): any type with these methods is a disk. Files go in and come out as streams, an [`io.Reader`](https://pkg.go.dev/io#Reader) and an [`io.ReadCloser`](https://pkg.go.dev/io#ReadCloser), so a 2 GB video never has to fit in memory.
 
-## S3
+| Disk | Built with | Lives in | Use it for |
+| --- | --- | --- | --- |
+| Local | `storage.NewLocal(dir, baseURL)` | a folder on this machine | one server, a mounted volume |
+| Memory | `storage.NewMemory(baseURL)` | a map in this process | tests |
+| S3 | `s3.New(cfg)` in `drivers/s3` | an S3-compatible bucket | several servers, CDNs, big files |
+
+The running example on this page is a **blog**: authors upload an avatar that everyone may see, and posts have PDF attachments that only logged-in readers may download.
+
+## Quick start
+
+<Steps>
+<Step title="Open the disks at boot">
+
+```go title="app/files/disks.go"
+package files
+
+import (
+	"context"
+
+	vukem "github.com/AlexGalhardo/vukem"
+	"github.com/AlexGalhardo/vukem/signed"
+	"github.com/AlexGalhardo/vukem/storage"
+)
+
+// Disks holds the blog's disks and the signer for private links.
+type Disks struct {
+	Public  storage.Disk
+	Private storage.Disk
+	Signer  *signed.Signer
+}
+
+// New opens the public and private disks and closes them on shutdown.
+func New(app *vukem.App) (*Disks, error) {
+	public, err := storage.NewLocal("storage/app/public", "/storage")
+	if err != nil {
+		return nil, err
+	}
+
+	app.OnShutdown(func(context.Context) error { return public.Close() })
+
+	// An empty base URL makes the disk private: URL returns "".
+	private, err := storage.NewLocal("storage/app/private", "")
+	if err != nil {
+		return nil, err
+	}
+
+	app.OnShutdown(func(context.Context) error { return private.Close() })
+
+	key, err := app.DeriveKey("signed.urls", 32)
+	if err != nil {
+		return nil, err
+	}
+
+	signer := signed.New(key).
+		WithPreviousKeys(app.DerivePreviousKeys("signed.urls", 32)...)
+
+	return &Disks{Public: public, Private: private, Signer: signer}, nil
+}
+```
+
+`NewLocal` creates the folder if it is missing. `app.DeriveKey` needs `APP_KEY` and fails without it.
+
+</Step>
+<Step title="Serve the files">
+
+```go title="routes/web.go"
+disks, err := files.New(app)
+if err != nil {
+	return err
+}
+
+r.Handle("/storage/", http.StripPrefix("/storage",
+	storage.Handler(disks.Public, nil)))
+r.Handle("/files/", http.StripPrefix("/files",
+	storage.Handler(disks.Private, disks.Signer)))
+```
+
+</Step>
+<Step title="Write a file and read it back">
+
+```go
+err := storage.PutBytes(ctx, disks.Public, "avatars/42.png", png)
+url := disks.Public.URL("avatars/42.png")
+// url == "/storage/avatars/42.png"
+```
+
+</Step>
+<Step title="Open it in the browser">
+
+```bash
+curl -I http://localhost:8080/storage/avatars/42.png
+```
+
+```text
+HTTP/1.1 200 OK
+Content-Type: image/png
+Content-Security-Policy: sandbox; default-src 'none'; …
+X-Content-Type-Options: nosniff
+```
+
+</Step>
+</Steps>
+
+## Paths
+
+Every disk path is **relative** and uses forward slashes, like a URL: `avatars/42.png`, never `/avatars/42.png` or `avatars\42.png`. Before any disk touches a path it passes through `storage.Clean`:
+
+| Input | Result |
+| --- | --- |
+| `avatars/42.png` | `avatars/42.png` |
+| `avatars//42.png`, `avatars/./42.png` | `avatars/42.png` (normalised with [`path.Clean`](https://pkg.go.dev/path#Clean)) |
+| `""`, `.`, `/avatars/42.png` | `storage.ErrInvalidPath` |
+| `../secret`, `a/../../b` | `storage.ErrInvalidPath` |
+| a path with `\`, `:` or a NUL byte | `storage.ErrInvalidPath` |
+
+Rejecting a leading `/` means `a` and `/a` can never name two different files. Rejecting `..` stops <Term tip="An attack where a crafted file name such as ../../etc/passwd makes the program read or write outside the folder it should stay in.">path traversal</Term>.
+
+Missing files are reported with an error that matches `storage.ErrNotFound` (which is [`fs.ErrNotExist`](https://pkg.go.dev/io/fs#ErrNotExist)), so you test them with [`errors.Is`](https://pkg.go.dev/errors#Is):
+
+```go
+data, err := storage.Get(ctx, disks.Private, "attachments/42.pdf")
+if errors.Is(err, storage.ErrNotFound) {
+	return errs.ErrNotFound
+}
+```
+
+## Reading and writing
+
+| Call | What it does |
+| --- | --- |
+| `d.Put(ctx, p, r)` | Writes everything read from `r` to `p`, replacing an existing file. Parent folders are created |
+| `d.Open(ctx, p)` | Opens `p` for reading. You must `Close` it. A folder counts as missing |
+| `d.Exists(ctx, p)` | `true` when `p` is a file. A folder or a missing path gives `false, nil` |
+| `d.Delete(ctx, p)` | Deletes `p`. A missing file is not an error |
+| `d.List(ctx, dir)` | Every file under `dir`, in all subfolders, sorted. `""` or `.` lists the whole disk; a missing folder gives an empty list |
+| `d.URL(p)` | `baseURL + "/" + p`, or `""` for a private disk |
+| `storage.Get(ctx, d, p)` | Opens, reads the whole file into a `[]byte` and closes it |
+| `storage.PutBytes(ctx, d, p, data)` | `Put` with a byte slice |
+
+```go title="app/files/attachments.go"
+// Copy streams an attachment from the private disk to w without
+// loading it into memory.
+func Copy(ctx context.Context, d storage.Disk, w io.Writer) error {
+	f, err := d.Open(ctx, "attachments/42.pdf")
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	_, err = io.Copy(w, f)
+
+	return err
+}
+```
+
+## The local disk
+
+`storage.NewLocal(dir, baseURL)` makes a disk out of a folder. It creates `dir` (permissions `0750`) and opens it as an [`os.Root`](https://pkg.go.dev/os#Root), a handle that the operating system keeps inside that folder. Even a symbolic link that points outside cannot be followed out of it.
+
+Under the hood, `Put` works in three steps:
+
+1. It writes the bytes to a temporary file next to the target (`42.png.tmp-<random>`, permissions `0640`).
+2. When everything is written and closed, it renames the temporary file to `42.png`. A rename is atomic: readers see the old file or the new one, never half of it.
+3. If anything fails (the reader errors, the disk is full), the temporary file is removed.
+
+Call `Close()` on shutdown (as in the quick start) to release the folder handle. Files keep the folder's ownership, so the process must be allowed to write there; in Docker that usually means a mounted volume. See [Docker and Railway](/docs/deployment/docker-and-railway).
+
+<Callout type="info">
+Vukem has no `storage:link` command. Laravel creates a symbolic link from `public/` to the storage folder, which needs extra privileges on Windows. Here `storage.Handler` serves the disk itself.
+</Callout>
+
+## The memory disk
+
+`storage.NewMemory(baseURL)` keeps files in a map. It is safe to use from several goroutines, copies bytes in and out, and loses everything when the process stops. Use it in tests, never in production.
+
+```go
+disk := storage.NewMemory("/storage")
+```
+
+## Serving files over HTTP
+
+`storage.Handler(disk, signer)` returns an [`http.Handler`](https://pkg.go.dev/net/http#Handler) that sends a disk's files. Mount it under a prefix with [`http.StripPrefix`](https://pkg.go.dev/net/http#StripPrefix), so `/storage/avatars/42.png` becomes the disk path `avatars/42.png`.
+
+For each request it:
+
+1. With a signer, checks the URL signature and expiry first, and answers 403 when they are wrong (see the next section).
+2. Answers 404 for directories, dotfiles (`.env`) and anything under a dot folder (`.git/config`, the upload quarantine). Invalid and missing paths are also 404.
+3. Sets `X-Content-Type-Options: nosniff` and `Content-Security-Policy: sandbox; default-src 'none'; img-src 'self'; style-src 'unsafe-inline'`. An uploaded HTML or SVG file therefore cannot run scripts on your site; images and downloads still work.
+4. Sends the file. Files that can seek (local disk) go through [`http.ServeContent`](https://pkg.go.dev/net/http#ServeContent), which handles `Range` requests and the `Content-Type`. Other files get a `Content-Type` from their extension.
+
+## Private files and temporary links
+
+Some files must not be public: a paid ebook, an invoice. Keep them on a disk with an empty base URL and serve that disk with a [signer](/docs/security/signed-urls). The handler then answers only links that carry a valid signature and have not expired.
+
+```go title="app/controllers/attachment_controller.go"
+// Download sends the reader to a link that works for 15 minutes.
+func (ac *AttachmentController) Download(c *web.Ctx) error {
+	link, err := storage.TemporaryURL(
+		ac.disks.Signer, "/files", "attachments/42.pdf", 15*time.Minute,
+	)
+	if err != nil {
+		return err
+	}
+
+	return c.Redirect(link)
+}
+```
+
+`storage.TemporaryURL(signer, prefix, p, ttl)` cleans `p`, joins it to the prefix where the handler is mounted and signs the result:
+
+```text
+/files/attachments/42.pdf?expires=1792284982&signature=-5Y5fcEIqt_hre…
+```
+
+- The signature covers the path and the query, so changing any character breaks it. The handler checks it against the **full** request path, before `StripPrefix` removed `/files`.
+- A wrong or missing signature answers 403 "Invalid signature."; an old link answers 403 "This link has expired.".
+- `ttl` `0` makes a link that never expires. Prefer a short TTL.
+- Links signed before an `APP_KEY` rotation keep working while the old key is listed in `APP_PREVIOUS_KEYS` (that is what `WithPreviousKeys` does).
+
+Check that the reader may see the file **before** you create the link (an authorization check, see [Authorization](/docs/security/authorization)). Anyone who has the link can use it until it expires.
+
+## Storing a small upload
+
+`storage.PutUploaded` stores one file from a regular form upload under a random name:
+
+```go title="app/controllers/avatar_controller.go"
+// Store saves the author's avatar and returns its public URL.
+func (ac *AvatarController) Store(c *web.Ctx) error {
+	_, fh, err := c.FormFile("avatar")
+	if err != nil {
+		return err
+	}
+
+	p, err := storage.PutUploaded(
+		c.Context(), ac.disks.Public, fh, "avatars", storage.Images(2<<20),
+	)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusCreated, map[string]string{
+		"path": p,
+		"url":  ac.disks.Public.URL(p),
+	})
+}
+```
+
+```json
+{
+  "path": "avatars/3hx2kq7mzb4vw6tn5yr8pjc2la.png",
+  "url": "/storage/avatars/3hx2kq7mzb4vw6tn5yr8pjc2la.png"
+}
+```
+
+Step by step:
+
+1. `rules.MaxSize` must be positive, or the call fails (a programming error, 500).
+2. If the size the browser declared is larger than `MaxSize`, it answers 422 "The file may not be larger than N KB.".
+3. It reads the first 512 bytes and detects the type from the **content** with [`http.DetectContentType`](https://pkg.go.dev/net/http#DetectContentType). The browser's `Content-Type` and the file name are ignored. A type not in `rules.Types` answers 422 "This file type is not allowed.". An empty `Types` list allows every type.
+4. It picks the extension from the detected type (`.jpg`, `.png`, `.gif`, `.webp`, `.pdf`, `.txt`, otherwise `.bin`) and a random lower-case name. The client's file name is never used.
+5. It copies the file while counting bytes. If the real file is bigger than `MaxSize` (a client that lied about the size), the write stops and answers 422 "The file is too large.".
+
+| Rules | Allows |
+| --- | --- |
+| `storage.Images(maxSize)` | JPEG, PNG, GIF and WebP up to `maxSize` bytes |
+| `storage.UploadRules{MaxSize: 10 << 20, Types: []string{"application/pdf"}}` | PDF up to 10 MiB |
+
+`c.FormFile` parses the whole form first (8 MiB in memory, the rest in temporary files), within the router's default 10 MiB body limit. That is fine for avatars. For large files, many files, virus scanning, resumable or direct-to-bucket uploads, use the [`upload` package](/docs/digging-deeper/uploads): it streams without buffering.
+
+## Amazon S3 and compatible services
+
+The S3 disk lives in its own [module](https://go.dev/doc/modules/managing-dependencies), so apps that never use S3 do not download it:
 
 ```bash
 go get github.com/AlexGalhardo/vukem/drivers/s3
 ```
 
-A `storage.Disk` on Amazon S3 or any S3-compatible service (Cloudflare R2, DigitalOcean Spaces, Backblaze B2, RustFS, SeaweedFS, Garage). There is no AWS SDK: requests are signed by a standard-library Signature Version 4 implementation verified against the AWS test suite.
+It works with Amazon S3 and with any service that speaks the S3 API: Cloudflare R2, DigitalOcean Spaces, Backblaze B2, Wasabi, RustFS, SeaweedFS, Garage, MinIO. There is no AWS SDK: requests are signed by a standard-library implementation of <Term tip="AWS Signature Version 4: the way S3 checks that a request comes from someone who knows the secret key and was not changed on the way.">SigV4</Term>, tested against the AWS test suite.
 
-```go
-cfg, err := config.Load[s3.Config](app.Source)
-disk, err := s3.New(cfg) // validates the config, no I/O
+```go title="app/files/disks.go"
+// Production stores files in the bucket configured by S3_*.
+func Production(app *vukem.App) (*s3.Disk, error) {
+	cfg, err := config.Load[s3.Config](app.Source)
+	if err != nil {
+		return nil, err
+	}
 
-err = disk.Put(ctx, "videos/intro.mp4", file)                   // one PUT up to S3_PART_SIZE, multipart above
-info, err := disk.Stat(ctx, "videos/intro.mp4")                 // Size, ETag, ContentType, LastModified
-up, err := disk.PresignPut("uploads/avatar.png", 5*time.Minute) // browser uploads straight to the bucket
-up, err := disk.PresignPutWith("uploads/avatar.png", 5*time.Minute, s3.PresignPutOptions{
-	ContentType: "image/png", ContentLength: size, // signed: the upload must send exactly these
-})
-link, err := disk.PresignGet("invoices/42.pdf", time.Hour)
+	// New validates the configuration; it does no network call.
+	return s3.New(cfg)
+}
 ```
 
-| Variable | Default | Meaning |
-| --- | --- | --- |
-| `S3_BUCKET` | — | bucket name (3–63 of `a-z 0-9 . -`) |
-| `S3_REGION` | `us-east-1` | signing region (`auto` for R2) |
-| `S3_ENDPOINT` | `https://s3.<region>.amazonaws.com` | origin of an S3-compatible service |
-| `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | — | required; `S3_SESSION_TOKEN` for temporary credentials |
-| `S3_USE_PATH_STYLE` | `false` | `endpoint/bucket/key` instead of `bucket.endpoint/key` (most self-hosted servers) |
-| `S3_INSECURE_HTTP` | `false` | allow an `http://` endpoint (local development only) |
-| `S3_PART_SIZE` | 8 MiB | multipart part size, 5 MiB to 5 GiB |
-| `S3_PUBLIC_URL` | — | prefix for `disk.URL` (CDN or public bucket); empty means private |
+```bash title=".env"
+S3_BUCKET=blog-files
+S3_REGION=us-east-1
+S3_ACCESS_KEY_ID=AKIAEXAMPLE
+S3_SECRET_ACCESS_KEY=example-secret
+S3_PUBLIC_URL=https://cdn.example.com
+```
 
-- `Put` buffers at most one part. A multipart upload is aborted on any failure (part error, reader error, cancelled context, a `200` carrying an `<Error>`), so no orphaned parts are billed. The content type comes from the extension, else from the first bytes.
-- `Open` streams the object; `List` follows continuation tokens and skips folder placeholders. Missing objects match `fs.ErrNotExist`; other failures are `*s3.Error` (`StatusCode`, `Code`, `Message`, `RequestID`).
-- `disk.CreateBucket(ctx)` creates the bucket in `S3_REGION`, for dev setup and tests against a fresh local S3 (RustFS, MinIO). A bucket you already own is not an error; a name taken by another account is an `*s3.Error` with `Code` `BucketAlreadyExists`.
-- Keys go through `storage.Clean`: no empty key, no leading `/`, no `..`, backslash or `:`.
-- Presigned URLs expire after 1 second to 7 days. `PresignGet` and `PresignPut` sign only the `host` header, so a `PresignPut` URL accepts any type and size. `PresignPutWith` also signs `Content-Type` and/or `Content-Length` (`s3.PresignPutOptions`): the uploader must send exactly those values or the bucket answers 403. Browsers set `Content-Length` from the body, but the `Content-Type` header must be sent explicitly: `fetch(url, {method: "PUT", headers: {"Content-Type": type}, body: file})`. A signed `Content-Length` is an exact size, not a ceiling: pass the real file size the client declared (after checking it against your maximum), never the maximum itself, or every smaller file gets 403. Credentials are `config.Secret`, so errors and `%+v` never show them.
-- Integration tests run against RustFS (`task services:up`); the driver passes `storagetest.Run` and `storagetest.RunTraversal`.
+Because `*s3.Disk` is a `storage.Disk`, the rest of your code (handlers, `PutUploaded`, the `upload` package) does not change.
+
+### What the S3 disk does
+
+- **`Put`** sends bodies up to `S3_PART_SIZE` (8 MiB) in one signed `PUT`. Larger bodies become a <Term tip="S3's way to upload a big file in numbered parts and then join them; parts can be retried one by one.">multipart upload</Term>, reading one part at a time, so memory stays bounded by one part. On any failure (a part fails, the reader fails, the context is cancelled, or S3 returns `200` with an `<Error>` body) the multipart upload is aborted, so you are not billed for orphaned parts. The `Content-Type` comes from the extension, else from the first bytes.
+- **`Open`** streams the object straight from S3.
+- **`List`** uses ListObjectsV2, follows continuation tokens and skips folder placeholder keys (ending in `/`).
+- **`Stat(ctx, p)`** sends a `HEAD` and returns `s3.ObjectInfo` (`Key`, `Size`, `ETag`, `ContentType`, `LastModified`).
+- **`URL(p)`** returns `S3_PUBLIC_URL + "/" + p`, or `""` when `S3_PUBLIC_URL` is empty (a private bucket).
+- **`CreateBucket(ctx)`** creates the bucket in `S3_REGION`, for development and tests against a fresh local server. A bucket you already own is not an error; a name taken by another account returns an `*s3.Error` with `Code` `BucketAlreadyExists`.
+- Keys go through `storage.Clean`, like every disk.
+
+Errors: a missing object matches `storage.ErrNotFound`. Other failures are `*s3.Error` with `Op`, `Key`, `StatusCode`, `Code`, `Message` and `RequestID`; its text never contains the URL or the credentials. Read it with [`errors.As`](https://pkg.go.dev/errors#As).
+
+### Presigned URLs
+
+A <Term tip="A URL signed with your S3 credentials that lets whoever holds it do one thing (download or upload one object) until it expires, without knowing the credentials.">presigned URL</Term> lets a browser talk to the bucket directly, so big files never pass through your server.
+
+```go
+// Download link valid for one hour.
+link, err := disk.PresignGet("attachments/42.pdf", time.Hour)
+
+// Upload link bound to one type and one exact size.
+up, err := disk.PresignPutWith(
+	"avatars/42.png", 5*time.Minute,
+	s3.PresignPutOptions{ContentType: "image/png", ContentLength: size},
+)
+```
+
+| Method | Signs | The uploader may send |
+| --- | --- | --- |
+| `PresignGet(p, ttl)` | host only | — |
+| `PresignPut(p, ttl)` | host only | any type, any size up to 5 GiB |
+| `PresignPutWith(p, ttl, opts)` | host, plus `Content-Type` and/or `Content-Length` | exactly those values, or S3 answers 403 `SignatureDoesNotMatch` |
+
+- `ttl` must be between one second and seven days (`s3.MaxPresignExpiry`), or you get `s3.ErrInvalidExpiry`. Invalid options return `s3.ErrInvalidPresign`.
+- A signed `ContentLength` is an **exact** size, not a maximum. Check the size the client declared against your limit, then sign that size. Signing your maximum would reject every smaller file. `0` leaves the size free.
+- Browsers set `Content-Length` from the body, but you must send `Content-Type` yourself: `fetch(url, {method: "PUT", headers: {"Content-Type": type}, body: file})`.
+
+For a ready-made endpoint that checks the planned upload, hands out the URL and verifies the stored file afterwards, see [direct uploads](/docs/digging-deeper/uploads).
+
+### Local S3 for development
+
+Run an S3-compatible server locally and point the disk at it:
+
+```bash title=".env"
+S3_BUCKET=blog-files
+S3_ENDPOINT=http://localhost:59000
+S3_USE_PATH_STYLE=true
+S3_INSECURE_HTTP=true
+S3_ACCESS_KEY_ID=local-access-key
+S3_SECRET_ACCESS_KEY=local-secret-key
+```
+
+Use the access key and secret your local server is configured with, then call `disk.CreateBucket(ctx)` once. Vukem's own integration tests run against RustFS (`rustfs/rustfs`, port 59000) this way.
+
+## Configuration
+
+The core `storage` package reads no environment variables: you choose folders and base URLs in code. The S3 disk reads `S3_*` through `config.Load[s3.Config]`.
+
+| Variable | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `S3_BUCKET` | string | — | Bucket name, required: 3–63 characters of `a-z`, `0-9`, `.` and `-`, starting and ending with a letter or digit |
+| `S3_REGION` | string | `us-east-1` | Signing region; `auto` for Cloudflare R2. Empty fails with `S3_REGION is empty` |
+| `S3_ENDPOINT` | string | `https://s3.<region>.amazonaws.com` | Bare origin of the service (no path, query or user) |
+| `S3_ACCESS_KEY_ID` | string | — | Required |
+| `S3_SECRET_ACCESS_KEY` | secret | — | Required; a `config.Secret`, printed as `[redacted]` |
+| `S3_SESSION_TOKEN` | secret | — | For temporary (STS) credentials |
+| `S3_USE_PATH_STYLE` | bool | `false` | `endpoint/bucket/key` instead of `bucket.endpoint/key`; most self-hosted servers need it |
+| `S3_INSECURE_HTTP` | bool | `false` | Allows an `http://` endpoint; local development only |
+| `S3_PART_SIZE` | int (bytes) | 8 MiB | Multipart part size, 5 MiB to 5 GiB |
+| `S3_PUBLIC_URL` | string | — | Prefix for `disk.URL` (a CDN or public bucket); empty keeps the disk private |
+
+Invalid values fail `s3.New` with an error wrapping `s3.ErrConfig`, for example `s3: invalid configuration: http endpoint refused; set S3_INSECURE_HTTP=true for local development`.
+
+| Option | What it does |
+| --- | --- |
+| `s3.WithHTTPClient(c)` | Uses your [`http.Client`](https://pkg.go.dev/net/http#Client) (proxies, custom TLS roots, tests) |
+| `s3.WithClock(now)` | Replaces the clock used for signatures (tests) |
+
+By default the S3 client waits at most one minute for response headers and has no total timeout, so long downloads stream for as long as the context allows.
+
+## Security
+
+What Vukem does for you:
+
+- Every path is cleaned: no `..`, no absolute paths, no backslashes. The local disk also runs through `os.Root`, so symbolic links cannot escape.
+- `Handler` never serves dotfiles, dot folders or directories, and sandboxes every response with a CSP plus `nosniff`.
+- `PutUploaded` ignores the client's file name and `Content-Type` and checks the size twice.
+- S3 refuses plain HTTP unless you opt in, and credentials never appear in errors or logs.
+
+What stays your job (see the [security overview](/docs/security/overview)):
+
+- **Authorize before you link.** Check that the user may see a private file before calling `TemporaryURL` or `PresignGet`.
+- **Keep private and public files on different disks.** A file on a public disk is reachable by anyone who guesses its path.
+- **Keep disks outside your web root** and outside the folder `middleware.StaticFS` serves.
+- **Bound presigned uploads** with `PresignPutWith`, and verify the stored object afterwards (`upload.Verify`).
+
+## Testing
+
+Use a memory disk in tests, so nothing touches the filesystem. On Windows this also avoids flaky `t.TempDir` cleanup: antivirus filters may briefly recreate just-deleted files and cleanup fails with "directory is not empty".
+
+```go title="app/files/attachments_test.go"
+func TestCopy(t *testing.T) {
+	disk := storage.NewMemory("")
+	ctx := t.Context()
+
+	err := storage.PutBytes(ctx, disk, "attachments/42.pdf", []byte("%PDF"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	if err := files.Copy(ctx, disk, &out); err != nil {
+		t.Fatal(err)
+	}
+
+	if out.String() != "%PDF" {
+		t.Fatalf("copied %q", out.String())
+	}
+}
+```
+
+When you write your own disk, run the conformance suites from `storage/storagetest` against a new, empty disk:
+
+```go title="mydisk/disk_test.go"
+func TestDisk(t *testing.T) {
+	storagetest.Run(t, mydisk.New())
+	storagetest.RunTraversal(t, mydisk.New())
+}
+```
+
+`Run` checks every method; `RunTraversal` checks that paths escaping the disk are rejected. The local, memory and S3 disks all pass both.
+
+## Common mistakes
+
+**A leading slash.**
+
+```go
+// Wrong: storage: invalid path
+err := storage.PutBytes(ctx, disk, "/avatars/42.png", png)
+
+// Right: disk paths are relative.
+err := storage.PutBytes(ctx, disk, "avatars/42.png", png)
+```
+
+**Mounting the handler without `StripPrefix`.** `r.Handle("/storage/", storage.Handler(disk, nil))` looks up `storage/avatars/42.png` on the disk and answers 404. Wrap it in `http.StripPrefix("/storage", …)`.
+
+**Signing the wrong prefix.** `TemporaryURL(signer, "/downloads", …)` for a handler mounted at `/files/` produces links that answer 404, or 403 if the prefix exists but the path differs. Use the same prefix in both places.
+
+**Using the client's file name as the path.**
+
+```go
+// Wrong: the client chooses the path (and may overwrite other files).
+p := "avatars/" + fh.Filename
+
+// Right: PutUploaded picks a random name and a safe extension.
+p, err := storage.PutUploaded(ctx, disk, fh, "avatars", rules)
+```
+
+**Signing the maximum size.** `PresignPutWith(key, ttl, s3.PresignPutOptions{ContentLength: 5 << 20})` makes every file that is not exactly 5 MiB fail with 403. Sign the size the client declared.
+
+## Next steps
+
+<CardGroup cols="2">
+<Card title="File uploads" href="/docs/digging-deeper/uploads" icon="boxes">
+Streaming, scanned, resumable and direct-to-bucket uploads.
+</Card>
+<Card title="Signed URLs" href="/docs/security/signed-urls" icon="lock">
+How the signer behind temporary links works.
+</Card>
+<Card title="Exports" href="/docs/digging-deeper/exports" icon="layers">
+Stream CSV and JSON downloads row by row.
+</Card>
+<Card title="Package reference" href="https://pkg.go.dev/github.com/AlexGalhardo/vukem/storage" icon="book">
+Every exported name of `storage` on pkg.go.dev.
+</Card>
+</CardGroup>
