@@ -155,6 +155,31 @@ func TestWorkStopTimeoutCapsFreeInterruptions(t *testing.T) {
 	})
 }
 
+// A job released by a shutdown is not a final failure, even though its
+// attempt number is already past its retry limit: an observer must not
+// report it as dead.
+func TestWorkStopTimeoutIsNotAFinalFailure(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		obs := &jobEvents{}
+
+		q := newQueue(t, queue.NewMemory(), queue.Handle(func(ctx context.Context, _ sendInvoice) error {
+			<-ctx.Done()
+
+			return ctx.Err()
+		}, queue.Retries(0), queue.Timeout(time.Hour)))
+		q.SetObserver(obs)
+
+		_ = q.Dispatch(t.Context(), sendInvoice{OrderID: 1})
+		stopRound(t, q)
+
+		if got := obs.failures(); len(got) != 1 || got[0] != "1/0 final=false" {
+			t.Fatalf("failure events = %v, want [1/0 final=false]", got)
+		}
+	})
+}
+
 // blockingAck never settles until its context ends.
 type blockingAck struct{ *queue.Memory }
 

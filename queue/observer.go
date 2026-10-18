@@ -23,11 +23,24 @@ const (
 // JobEvent describes one step of a job for an Observer. It carries no
 // payload: payloads may hold user data.
 type JobEvent struct {
-	ID       string
-	Kind     string
-	Queue    string
-	Status   JobStatus
-	Attempt  int
+	ID    string
+	Kind  string
+	Queue string
+	// Status is the step reported.
+	Status JobStatus
+	// Attempt is the 1-based attempt number (0 on JobDispatched).
+	Attempt int
+	// MaxRetries is how many retries the job was dispatched with, so
+	// Attempt of MaxRetries+1 is its last one. It is 0 with an Inline
+	// driver (Sync), which does not retry.
+	MaxRetries int
+	// Final reports, on JobFailed, that the job was not retried: it moved
+	// to the failed jobs, either because the handler returned
+	// ErrPermanent or because its retries ran out. It is false on the
+	// other statuses, and false for an attempt a shutdown gave back (see
+	// MaxFreeInterruptions), which Attempt and MaxRetries alone cannot
+	// tell apart from an exhausted one.
+	Final    bool
 	Duration time.Duration
 	Err      error
 }
@@ -100,7 +113,7 @@ func isNil(obs Observer) bool {
 	}
 }
 
-func (q *Queue) observe(ctx context.Context, m *Message, status JobStatus, d time.Duration, err error) {
+func (q *Queue) observe(ctx context.Context, m *Message, status JobStatus, d time.Duration, err error, final bool) {
 	q.mu.RLock()
 	obs := q.obs
 	q.mu.RUnlock()
@@ -110,7 +123,8 @@ func (q *Queue) observe(ctx context.Context, m *Message, status JobStatus, d tim
 	}
 
 	e := JobEvent{
-		ID: m.ID, Kind: m.Kind, Queue: m.Queue, Status: status, Attempt: m.Attempts, Duration: d, Err: err,
+		ID: m.ID, Kind: m.Kind, Queue: m.Queue, Status: status, Attempt: m.Attempts,
+		MaxRetries: m.MaxRetries, Final: final, Duration: d, Err: err,
 	}
 
 	if multi, ok := obs.(observers); ok {

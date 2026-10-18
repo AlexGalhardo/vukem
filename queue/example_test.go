@@ -2,6 +2,7 @@ package queue_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -34,6 +35,35 @@ func Example() {
 	// Output:
 	// sending invoice for order 1
 	// <nil>
+}
+
+// A handler that cannot succeed reports a permanent failure instead of
+// being retried, and reads its attempt number from the context to settle
+// the work it owns before its retries run out.
+func ExampleErrPermanent() {
+	ctx := context.Background()
+	q := queue.New(queue.Sync{}, slog.New(slog.DiscardHandler))
+
+	err := q.Register(queue.Handle(func(ctx context.Context, j SendInvoice) error {
+		a, _ := queue.AttemptFrom(ctx)
+		fmt.Printf("attempt %d of %d (last: %v)\n", a.Number, a.MaxRetries+1, a.Last())
+
+		if j.OrderID == 0 {
+			return fmt.Errorf("order %d does not exist: %w", j.OrderID, queue.ErrPermanent)
+		}
+
+		return nil
+	}, queue.Retries(5)))
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	// Sync runs the job once, so its single attempt is the last one.
+	fmt.Println(errors.Is(q.Dispatch(ctx, SendInvoice{}), queue.ErrPermanent))
+	// Output:
+	// attempt 1 of 1 (last: true)
+	// true
 }
 
 func ExampleFake() {

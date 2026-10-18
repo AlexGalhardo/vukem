@@ -9,6 +9,10 @@
 //
 //	err := q.Dispatch(ctx, SendInvoice{OrderID: 1}, queue.OnQueue("billing"), queue.Delay(5*time.Minute))
 //
+// A handler whose failure retrying cannot fix wraps [ErrPermanent] to skip
+// its remaining retries; [AttemptFrom] tells it which attempt it is on and
+// whether that is the last one.
+//
 // Payloads are JSON. Drivers store messages: Sync runs jobs inline, Memory
 // keeps them in process, the database driver (and Redis) persist them.
 // [Queue.Work] runs a worker (vukem queue:work); [Fake] records
@@ -312,18 +316,22 @@ func (q *Queue) send(ctx context.Context, m *Message, h handler) error {
 	}
 
 	if q.inline() {
-		q.observe(ctx, m, JobDispatched, 0, nil)
+		// An Inline driver runs the job once and hands the error to the
+		// caller, so its retry limit is 0: the single attempt is the last
+		// one, both for the handler and for the observers.
+		m.MaxRetries = 0
+		q.observe(ctx, m, JobDispatched, 0, nil, false)
 
 		start := time.Now()
-		err := q.attempt(ctx, h, m)
-		q.observe(ctx, m, finished(err), time.Since(start), err)
+		err := q.attempt(ctx, h, m, Attempt{Number: 1, MaxRetries: m.MaxRetries})
+		q.observe(ctx, m, finished(err), time.Since(start), err, err != nil)
 
 		return err
 	}
 
 	err := q.driver.Push(ctx, m)
 	if err == nil {
-		q.observe(ctx, m, JobDispatched, 0, nil)
+		q.observe(ctx, m, JobDispatched, 0, nil, false)
 	}
 
 	return err
@@ -361,7 +369,7 @@ func (q *Queue) DispatchKindTx(ctx context.Context, ex database.Executor, kind s
 	if tp, ok := q.driver.(TxPusher); ok {
 		err = tp.PushTx(ctx, ex, m)
 		if err == nil {
-			q.observe(ctx, m, JobDispatched, 0, nil)
+			q.observe(ctx, m, JobDispatched, 0, nil, false)
 		}
 
 		return err
@@ -475,7 +483,7 @@ func (q *Queue) process(runCtx, ctx context.Context, m *Message, interrupted fun
 	h, ok := q.handlers[m.Kind]
 	q.mu.RUnlock()
 
-	free := interruptions(m.LastError)
+	freeSoFar := interruptions(m.LastError)
 	m.Attempts++
 
 	var err error
@@ -486,29 +494,45 @@ func (q *Queue) process(runCtx, ctx context.Context, m *Message, interrupted fun
 		err = fmt.Errorf("%w: %q", ErrUnknownKind, m.Kind)
 		m.MaxRetries = 0
 	} else {
-		err = q.attempt(runCtx, h, m)
+		err = q.attempt(runCtx, h, m, Attempt{Number: m.Attempts, MaxRetries: m.MaxRetries})
 	}
 
-	q.observe(ctx, m, finished(err), time.Since(start), err)
+	took := time.Since(start)
 
 	if err == nil {
+		q.observe(ctx, m, JobProcessed, took, nil, false)
 		return settle(q.driver.Ack)
 	}
+
+	// ErrPermanent is the handler's own verdict that retrying cannot help:
+	// it overrides both the shutdown grace and the remaining retries.
+	permanent := errors.Is(err, ErrPermanent)
+	cancelled := errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+	free := !permanent && cancelled && interrupted != nil && interrupted() && freeSoFar < MaxFreeInterruptions
+	exhausted := m.Attempts > m.MaxRetries
+
+	// A free interruption is not the job's last attempt even when its
+	// number is already past the limit: the attempt is given back.
+	q.observe(ctx, m, JobFailed, took, err, permanent || (!free && exhausted))
 
 	m.LastError = err.Error()
 	log := q.log.With("job", m.Kind, "id", m.ID, "attempt", m.Attempts, "err", err)
 
-	cancelled := errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
-	if cancelled && interrupted != nil && interrupted() && free < MaxFreeInterruptions {
+	if free {
 		m.Attempts--
 		m.AvailableAt = q.clock().UTC()
-		m.LastError = fmt.Sprintf("%s%d/%d): %v", interruptedPrefix, free+1, MaxFreeInterruptions, err)
-		log.WarnContext(ctx, "job interrupted by shutdown: released", "interruptions", free+1)
+		m.LastError = fmt.Sprintf("%s%d/%d): %v", interruptedPrefix, freeSoFar+1, MaxFreeInterruptions, err)
+		log.WarnContext(ctx, "job interrupted by shutdown: released", "interruptions", freeSoFar+1)
 
 		return settle(q.driver.Release)
 	}
 
-	if m.Attempts > m.MaxRetries {
+	if permanent {
+		log.ErrorContext(ctx, "job failed permanently: not retried")
+		return settle(q.driver.Fail)
+	}
+
+	if exhausted {
 		log.ErrorContext(ctx, "job failed")
 		return settle(q.driver.Fail)
 	}
@@ -524,14 +548,15 @@ func (q *Queue) process(runCtx, ctx context.Context, m *Message, interrupted fun
 	return settle(q.driver.Release)
 }
 
-// attempt runs the handler with the message timeout, recovering panics.
-func (q *Queue) attempt(ctx context.Context, h handler, m *Message) (err error) {
+// attempt runs the handler with the message timeout and a, recovering
+// panics.
+func (q *Queue) attempt(ctx context.Context, h handler, m *Message, a Attempt) (err error) {
 	timeout := m.Timeout
 	if timeout <= 0 {
 		timeout = h.opts.timeout
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, timeout)
+	ctx, cancel := context.WithTimeout(withAttempt(ctx, a), timeout)
 	defer cancel()
 
 	defer func() {

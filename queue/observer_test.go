@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 
@@ -82,6 +84,98 @@ func TestObserverSeesDispatchAndAttempts(t *testing.T) {
 			t.Errorf("events (-want +got):\n%s", diff)
 		}
 	})
+}
+
+// jobEvents records the events themselves, not only their status.
+type jobEvents struct {
+	mu  sync.Mutex
+	got []queue.JobEvent
+}
+
+func (l *jobEvents) ObserveJob(_ context.Context, e queue.JobEvent) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	l.got = append(l.got, e)
+}
+
+// events returns "<attempt>/<max retries> final=<final>" per failed
+// attempt, so a dashboard observer can be checked for what it needs to
+// tell a retry from a dead job.
+func (l *jobEvents) failures() []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	var out []string
+
+	for _, e := range l.got {
+		if e.Status != queue.JobFailed {
+			continue
+		}
+
+		out = append(out, fmt.Sprintf("%d/%d final=%v", e.Attempt, e.MaxRetries, e.Final))
+	}
+
+	return out
+}
+
+// An Observer sees the retry limit and whether the failure was the job's
+// last, which JobFailed alone cannot say.
+func TestObserverSeesRetryLimitAndFinalFailure(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		err   error
+		opts  []queue.Option
+		runs  int
+		want  []string
+		rerun bool
+	}{
+		"retries run out": {
+			err:  errors.New("try again"),
+			opts: []queue.Option{queue.Retries(1), queue.Backoff(queue.Constant(time.Minute))},
+			runs: 2,
+			want: []string{"1/1 final=false", "2/1 final=true"},
+		},
+		"permanent on the first attempt": {
+			err:  fmt.Errorf("corrupt input: %w", queue.ErrPermanent),
+			opts: []queue.Option{queue.Retries(3), queue.Backoff(queue.Constant(time.Minute))},
+			runs: 2,
+			want: []string{"1/3 final=true"},
+		},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			clock := &fakeClock{now: time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC)}
+			obs := &jobEvents{}
+
+			d := queue.NewMemory()
+			d.SetClock(clock.Now)
+
+			q := newQueue(t, d, queue.Handle(func(context.Context, sendInvoice) error { return tc.err }, tc.opts...))
+			q.SetClock(clock.Now)
+			q.SetObserver(obs)
+
+			if err := q.Dispatch(t.Context(), sendInvoice{OrderID: 1}); err != nil {
+				t.Fatal(err)
+			}
+
+			for range tc.runs {
+				if err := q.Work(t.Context(), queue.WorkOptions{StopWhenEmpty: true}); err != nil {
+					t.Fatal(err)
+				}
+
+				clock.Advance(time.Minute)
+			}
+
+			if diff := cmp.Diff(tc.want, obs.failures()); diff != "" {
+				t.Errorf("failure events (-want +got):\n%s", diff)
+			}
+		})
+	}
 }
 
 type panicJobObserver struct{}
