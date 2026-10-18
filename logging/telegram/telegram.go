@@ -52,8 +52,12 @@ type Config struct {
 	// ChatID is the default chat; ChatIDs routes levels to other chats.
 	ChatID  string
 	ChatIDs map[slog.Level]string
-	// MinLevel filters records (default: error).
+	// MinLevel filters records (default: error). slog.LevelInfo is 0, the
+	// zero value, so set MinLevelSet to forward info and above.
 	MinLevel slog.Level
+	// MinLevelSet marks MinLevel as explicit, so a zero MinLevel means info
+	// rather than the error default.
+	MinLevelSet bool
 	// Filter, when set, forwards only the log records it returns true for
 	// (Send and Contact are never filtered). It runs on the logging
 	// goroutine; call r.Clone() before keeping r beyond the call.
@@ -132,7 +136,7 @@ var ErrDisabled = errors.New("telegram: not configured")
 // NewHandler returns a handler and starts its sender goroutine (when
 // enabled); call Close to drain it.
 func NewHandler(cfg Config) *Handler {
-	if cfg.MinLevel == 0 && cfg.ChatIDs == nil {
+	if cfg.MinLevel == 0 && !cfg.MinLevelSet && cfg.ChatIDs == nil {
 		cfg.MinLevel = slog.LevelError
 	}
 
@@ -172,6 +176,13 @@ func NewHandler(cfg Config) *Handler {
 	}
 
 	return &Handler{s: s}
+}
+
+// Configured reports whether the bot token and a chat are set; a handler
+// that is not configured drops every message and its synchronous senders
+// return ErrDisabled.
+func (h *Handler) Configured() bool {
+	return h.s.enabled
 }
 
 // Enabled implements slog.Handler.
@@ -238,8 +249,9 @@ func (h *Handler) qualify(a slog.Attr) slog.Attr {
 }
 
 // Send queues a pre-formatted HTML message for the default chat (the
-// caller escapes user content). Delivery errors go to OnError; use
-// SendSync to get them.
+// caller escapes user content). A message over MaxLength is truncated
+// outside tags and entities, with the open tags closed. Delivery errors go
+// to OnError; use SendSync to get them.
 func (h *Handler) Send(_ context.Context, htmlText string) {
 	if h.s.enabled {
 		h.s.enqueue(h.s.cfg.ChatID, truncate(htmlText))
@@ -643,11 +655,95 @@ func finish(head, body string) string {
 }
 
 func truncate(s string) string {
-	if utf8.RuneCountInString(s) <= MaxLength {
+	return truncateHTML(s, MaxLength)
+}
+
+// truncateHTML cuts s to at most limit runes, ending with "…". It never
+// cuts inside a tag or an entity and closes the tags still open at the
+// cut, so Telegram's HTML parser accepts the result.
+func truncateHTML(s string, limit int) string {
+	if utf8.RuneCountInString(s) <= limit {
 		return s
 	}
 
-	return cutRunes(s, MaxLength-1) + "…"
+	const ellipsis = "…"
+
+	var (
+		open       []string // names of the tags open at the cut
+		closingLen int      // runes needed to close them
+		used       int
+		end        int
+	)
+
+	for end < len(s) {
+		token, name, closing := nextToken(s[end:])
+		n := utf8.RuneCountInString(token)
+
+		nextOpen, nextClosing := open, closingLen
+
+		switch {
+		case name == "":
+		case closing:
+			if i := slices.Index(open, name); i >= 0 {
+				for _, t := range open[i:] {
+					nextClosing -= len("</" + t + ">")
+				}
+
+				nextOpen = open[:i]
+			}
+		default:
+			nextOpen = append(slices.Clip(open), name)
+			nextClosing += len("</" + name + ">")
+		}
+
+		if used+n+utf8.RuneCountInString(ellipsis)+nextClosing > limit {
+			break
+		}
+
+		open, closingLen = nextOpen, nextClosing
+		used += n
+		end += len(token)
+	}
+
+	var b strings.Builder
+
+	b.WriteString(s[:end])
+	b.WriteString(ellipsis)
+
+	for _, t := range slices.Backward(open) {
+		b.WriteString("</" + t + ">")
+	}
+
+	return b.String()
+}
+
+// nextToken returns the first tag, entity or rune of s; name is the
+// lowercase tag name when the token is a tag.
+func nextToken(s string) (token, name string, closing bool) {
+	switch s[0] {
+	case '<':
+		if i := strings.IndexByte(s, '>'); i > 0 {
+			tag := s[1:i]
+			closing = strings.HasPrefix(tag, "/")
+			tag = strings.TrimPrefix(tag, "/")
+
+			if j := strings.IndexAny(tag, " \t\r\n/"); j >= 0 {
+				tag = tag[:j]
+			}
+
+			if tag != "" {
+				return s[:i+1], strings.ToLower(tag), closing
+			}
+		}
+	case '&':
+		if i := strings.IndexByte(s, ';'); i > 0 && i <= 10 && !strings.ContainsAny(s[1:i], " <&") {
+			return s[:i+1], "", false
+		}
+	}
+
+	_, size := utf8.DecodeRuneInString(s)
+
+	return s[:size], "", false
 }
 
 func cutRunes(s string, n int) string {

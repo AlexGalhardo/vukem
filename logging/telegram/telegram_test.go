@@ -296,3 +296,107 @@ func TestDisabledAndQueueFull(t *testing.T) {
 
 	h.s.enqueue("", "x") // empty chat ignored
 }
+
+func TestMinLevel(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		cfg       Config
+		info, err bool
+	}{
+		{"unset defaults to error", Config{}, false, true},
+		{"explicit info is honoured", Config{MinLevel: slog.LevelInfo, MinLevelSet: true}, true, true},
+		{"explicit warn", Config{MinLevel: slog.LevelWarn}, false, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			tt.cfg.BotToken, tt.cfg.ChatID = config.NewSecret("1:x"), "-1"
+			h := NewHandler(tt.cfg)
+			t.Cleanup(func() { _ = h.Close(context.Background()) })
+
+			if got := h.Enabled(t.Context(), slog.LevelInfo); got != tt.info {
+				t.Errorf("Enabled(info) = %v, want %v", got, tt.info)
+			}
+
+			if got := h.Enabled(t.Context(), slog.LevelError); got != tt.err {
+				t.Errorf("Enabled(error) = %v, want %v", got, tt.err)
+			}
+		})
+	}
+}
+
+func TestTruncateHTML(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name, in, want string
+		limit          int
+	}{
+		{"short is unchanged", "<b>hi</b>", "<b>hi</b>", 20},
+		{"plain text", "abcdefgh", "abcd…", 5},
+		{"closes open tags", "<b>bold <i>both</i> more text</b>", "<b>bold …</b>", 13},
+		{"never cuts inside a tag", `<a href="https://example.com">link</a>`, "…", 10},
+		{"never cuts inside an entity", "a&amp;b&amp;c", "a&amp;…", 7},
+		{"nested tags closed in order", "<b><i>abcdefghijklmnop</i></b>", "<b><i>abcd…</i></b>", 19},
+		{"closed tags are not reclosed", "<b>a</b>bcdefghij", "<b>a</b>bc…", 11},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := truncateHTML(tt.in, tt.limit)
+			if got != tt.want {
+				t.Errorf("truncateHTML(%q, %d) = %q, want %q", tt.in, tt.limit, got, tt.want)
+			}
+
+			if n := utf8.RuneCountInString(got); n > tt.limit {
+				t.Errorf("truncateHTML(%q, %d) has %d runes", tt.in, tt.limit, n)
+			}
+		})
+	}
+}
+
+func TestSendKeepsHTMLValid(t *testing.T) {
+	t.Parallel()
+
+	f := newFake(t, nil)
+	h := NewHandler(cfg(f))
+
+	if err := h.SendSync(t.Context(), "<b>"+strings.Repeat("x", 5000)+"</b>"); err != nil {
+		t.Fatal(err)
+	}
+
+	text, _ := f.messages()[0]["text"].(string)
+	if n := utf8.RuneCountInString(text); n > MaxLength {
+		t.Fatalf("SendSync sent %d runes", n)
+	}
+
+	if !strings.HasPrefix(text, "<b>") || !strings.HasSuffix(text, "…</b>") {
+		t.Fatalf("SendSync sent %q...%q", text[:10], text[len(text)-10:])
+	}
+}
+
+func TestDisabledHandlerIsSafe(t *testing.T) {
+	t.Parallel()
+
+	h := NewHandler(Config{})
+	if h.Configured() {
+		t.Fatal("Configured() = true without token and chat")
+	}
+
+	h.Send(t.Context(), "x")
+	h.Contact(t.Context(), map[string]string{"a": "b"})
+
+	if err := h.SendSync(t.Context(), "x"); !errors.Is(err, ErrDisabled) {
+		t.Errorf("SendSync = %v, want ErrDisabled", err)
+	}
+
+	if err := h.Close(t.Context()); err != nil {
+		t.Errorf("Close = %v", err)
+	}
+}

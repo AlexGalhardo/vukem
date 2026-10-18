@@ -354,7 +354,7 @@ func trustedProxiesStatus(app *App) string {
 }
 
 func telegramStatus(app *App) string {
-	if app.Telegram == nil {
+	if app.Telegram == nil || !app.Telegram.Configured() {
 		return "off"
 	}
 

@@ -53,7 +53,7 @@ TELEGRAM_CHAT_ID=-1001234567890
 TELEGRAM_MIN_LEVEL=error
 ```
 
-Both `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` must be set. If either is missing, Telegram stays off and `app.Telegram` is `nil`.
+Both `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` must be set. If either is missing, Telegram stays off: `app.Telegram` is a disabled handler (never `nil`), `Send` and `Contact` drop the message, `SendSync` and `ContactSync` return `telegram.ErrDisabled`, and `app.Telegram.Configured()` reports `false`.
 
 </Step>
 <Step title="Log an error">
@@ -129,7 +129,7 @@ Every piece of text is HTML-escaped, so a user who types `<script>` in a form ca
 | Level | Value | Emoji | `TELEGRAM_MIN_LEVEL` |
 | --- | --- | --- | --- |
 | `slog.LevelDebug` | -4 | 🐛 | `debug` |
-| `slog.LevelInfo` | 0 | ℹ️ | `info` (see the warning below) |
+| `slog.LevelInfo` | 0 | ℹ️ | `info` |
 | `telegram.LevelSuccess` | 2 | ✅ | `info+2` |
 | `slog.LevelWarn` | 4 | ⚠️ | `warn` |
 | `slog.LevelError` | 8 | 🚨 | `error` (default) |
@@ -149,9 +149,7 @@ app.Log.Log(ctx, telegram.LevelSuccess, "deploy finished",
 )
 ```
 
-<Callout type="warning" title="info means error in v0.27.0">
-`MinLevel` zero is read as "not set" and replaced by error, and `slog.LevelInfo` is zero. So `TELEGRAM_MIN_LEVEL=info` (or `MinLevel: slog.LevelInfo`) forwards only errors. Use `debug`, or keep `MinLevel` at info by also setting `c.ChatIDs = map[slog.Level]string{}` in `vukem.WithTelegram`.
-</Callout>
+`slog.LevelInfo` is zero, the zero value of `MinLevel`. `TELEGRAM_MIN_LEVEL=info` works as written; in a standalone `telegram.Config`, set `MinLevelSet: true` next to `MinLevel: slog.LevelInfo`, or the zero is read as "not set" and replaced by the error default.
 
 ## Contact forms and notices
 
@@ -180,14 +178,12 @@ import (
 // Web registers the contact form.
 func Web(r *router.Router, app *vukem.App) error {
 	r.Post("/contact", func(c *web.Ctx) error {
-		// app.Telegram is nil when the TELEGRAM_* variables are missing.
-		if app.Telegram != nil {
-			app.Telegram.Contact(c.Context(), map[string]string{
-				"name":    c.FormValue("name"),
-				"email":   c.FormValue("email"),
-				"message": c.FormValue("message"),
-			})
-		}
+		// Without the TELEGRAM_* variables this is a no-op.
+		app.Telegram.Contact(c.Context(), map[string]string{
+			"name":    c.FormValue("name"),
+			"email":   c.FormValue("email"),
+			"message": c.FormValue("message"),
+		})
 
 		return c.Redirect("/thanks")
 	})
@@ -206,7 +202,7 @@ message: Do you ship to Lisbon?
 name: Ana
 ```
 
-`Send` posts HTML that you wrote, using [Telegram's HTML subset](https://core.telegram.org/bots/api#html-style) (`<b>`, `<i>`, `<code>`, `<pre>`, `<a href>`). Escape anything a user typed with [`html.EscapeString`](https://pkg.go.dev/html#EscapeString) first. `Send` cuts text over 4096 characters without looking at tags, so keep notices short.
+`Send` posts HTML that you wrote, using [Telegram's HTML subset](https://core.telegram.org/bots/api#html-style) (`<b>`, `<i>`, `<code>`, `<pre>`, `<a href>`). Escape anything a user typed with [`html.EscapeString`](https://pkg.go.dev/html#EscapeString) first. `Send` truncates text over 4096 characters (`telegram.MaxLength`) outside tags and entities, ends it with `…` and closes the tags still open, so the cut message still parses.
 
 ```go title="app/deploys/notify.go"
 app.Telegram.Send(ctx, "<b>Deploy</b> v1.4.0 finished")
@@ -339,6 +335,7 @@ Environment variables, read by `vukem.New`:
 | `ChatID` | `string` | — | Default chat for logs, `Send` and `Contact` |
 | `ChatIDs` | `map[slog.Level]string` | `nil` | Chat per exact level for log records |
 | `MinLevel` | `slog.Level` | `slog.LevelError` | Lowest forwarded level |
+| `MinLevelSet` | `bool` | `false` | Marks `MinLevel` as explicit, so zero means info (`vukem.New` sets it) |
 | `Filter` | `func(context.Context, slog.Record) bool` | `nil` | Forward only records it returns `true` for |
 | `RateLimit` | `int` | `0` | Max log records per `RatePeriod` |
 | `RatePeriod` | `time.Duration` | 1 minute | Rate-limit window |
@@ -426,17 +423,7 @@ For queued messages (`Contact`, logs), call `app.Telegram.Close(ctx)` before you
 
 ## Common mistakes
 
-**Calling `app.Telegram` when it is not configured.** It is `nil`, so any method call panics.
-
-```go
-// Wrong: panics in development, where TELEGRAM_* is not set.
-app.Telegram.Send(ctx, "hello")
-
-// Right
-if app.Telegram != nil {
-	app.Telegram.Send(ctx, "hello")
-}
-```
+**Expecting `SendSync` to succeed without configuration.** Without `TELEGRAM_*`, `app.Telegram` is disabled and `SendSync` returns `telegram.ErrDisabled`. Check `app.Telegram.Configured()` or `errors.Is(err, telegram.ErrDisabled)` when a job should not retry.
 
 **Expecting a queued send to fail the job.** `Contact` returns nothing, so the job succeeds even when Telegram is down. Use `ContactSync` and return its error.
 
