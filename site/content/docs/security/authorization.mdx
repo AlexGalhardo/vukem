@@ -264,9 +264,6 @@ c.Authorize("update", &models.Comment{ID: 1})
 
 // A policy without an Archive method.
 c.Authorize("archive", &post)
-
-// A value instead of the registered pointer type.
-c.Authorize("update", post)
 ```
 
 The response says only `403 Forbidden`; the reason stays in the server log at `DEBUG` level as the error cause, for example `authz: no rule registered: policy for models.Post`. A forgotten rule therefore locks a feature instead of opening it, which is the [fail-closed principle](/docs/security/overview) the whole framework follows.
@@ -326,9 +323,7 @@ The `can` template function asks the same gate, so a link only shows when the ac
 - It returns `false` when no `Authorizer` is configured, when nobody is signed in, and for any denial. It never logs a security event.
 - Hiding a link is a convenience, not protection: a user can still type the URL. Always call `c.Authorize` in the handler too.
 
-<Callout type="warning" title="Pass the registered type">
-The subject must have the exact Go type the policy was registered for. Render the show page with `c.Render("posts/show", &post)`, not `post`. Inside `{{range .Posts}}` over a `[]models.Post`, each `.` is a `models.Post` value, so `can "delete" .` is always `false`; pass a `[]*models.Post` to the view instead.
-</Callout>
+Inside `{{range .Posts}}` over a `[]models.Post`, each `.` is a `models.Post` value. A policy registered for `*models.Post` still answers: the gate passes the policy a pointer to a copy of the value, so `{{if can "delete" .}}` works in a loop. The copy is shallow: a policy cannot change the value's own fields, but data behind slices, maps and pointers is shared. Type-level abilities (`Create(ctx, u)`) also answer for a zero value such as `models.Post{}`. The reverse is not true: a policy registered for a value type (`authz.For[models.Post]`) does not answer for `*models.Post`.
 
 ## Configuration
 
@@ -426,18 +421,6 @@ func TestPostPolicy(t *testing.T) {
 ```
 
 ## Common mistakes
-
-**Checking a value instead of the pointer.** The policy is registered for `*models.Post`:
-
-```go
-// Wrong: models.Post has no policy, so this always answers 403.
-err := c.Authorize("update", post)
-
-// Right: the pointer type the policy was registered for.
-err := c.Authorize("update", &post)
-```
-
-The log shows `authz: no rule registered: policy for models.Post`.
 
 **Forgetting to set the `Authorizer`.** Without `r.Services().Authorizer = gate`, every `c.Authorize` answers `403 Forbidden` and every `can` is `false`. The log cause is `web: no Authorizer configured`.
 

@@ -134,6 +134,8 @@ type Policy struct {
 // "update" calls policy.Update(ctx, user, subject T) returning Result or
 // bool. Methods without the subject parameter (Create(ctx, user)) serve
 // type-level abilities: c.Authorize("create", (*models.Post)(nil)).
+// A policy bound to *T also serves T values (a template ranging over
+// []models.Post): the method receives a pointer to a copy.
 func For[T any](policy any) Policy { return Policy{subject: reflect.TypeFor[T](), impl: policy} }
 
 // Register validates and adds policies. Signatures are checked here, at
@@ -223,6 +225,17 @@ func (g *Gate[U]) Check(ctx context.Context, u U, ability string, subject any) (
 	sv := reflect.ValueOf(subject)
 
 	methods, ok := g.policies[sv.Type()]
+	if !ok && sv.Kind() != reflect.Pointer {
+		// A value (a template ranging over []Post) uses the *Post policy on a
+		// shallow copy: its fields are protected, data behind slices, maps and
+		// pointers is shared.
+		if methods, ok = g.policies[reflect.PointerTo(sv.Type())]; ok {
+			p := reflect.New(sv.Type())
+			p.Elem().Set(sv)
+			sv = p
+		}
+	}
+
 	if !ok {
 		return Deny(), fmt.Errorf("%w: policy for %s", errUnregistered, sv.Type())
 	}

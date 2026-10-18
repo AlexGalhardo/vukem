@@ -884,3 +884,45 @@ func FuzzSafeRedirect(f *testing.F) {
 		}
 	})
 }
+
+// X-Forwarded-Proto counts only when TrustForwardedProto is set and the
+// direct peer is a trusted proxy; a client cannot claim HTTPS.
+func TestSecurity_A02_IsHTTPSTrustsOnlyProxies(t *testing.T) {
+	t.Parallel()
+
+	_, proxies, _ := net.ParseCIDR("10.0.0.0/8")
+
+	tests := []struct {
+		name   string
+		remote string
+		trust  bool
+		proto  []string
+		want   bool
+	}{
+		{name: "trusted proxy", remote: "10.0.0.1:1", trust: true, proto: []string{"https"}, want: true},
+		{name: "untrusted peer", remote: "198.51.100.7:1", trust: true, proto: []string{"https"}},
+		{name: "trust off", remote: "10.0.0.1:1", proto: []string{"https"}},
+		{name: "http", remote: "10.0.0.1:1", trust: true, proto: []string{"http"}},
+		{name: "two lines", remote: "10.0.0.1:1", trust: true, proto: []string{"https", "https"}},
+		{name: "no header", remote: "10.0.0.1:1", trust: true},
+	}
+
+	for _, tt := range tests {
+		r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", http.NoBody)
+		r.RemoteAddr = tt.remote
+
+		for _, v := range tt.proto {
+			r.Header.Add("X-Forwarded-Proto", v)
+		}
+
+		c, _ := newCtx(t, r, &Services{TrustedProxies: []*net.IPNet{proxies}, TrustForwardedProto: tt.trust})
+		if got := c.IsHTTPS(); got != tt.want {
+			t.Errorf("%s: IsHTTPS = %v, want %v", tt.name, got, tt.want)
+		}
+	}
+
+	tls := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "https://example.com/", http.NoBody)
+	if c, _ := newCtx(t, tls, nil); !c.IsHTTPS() {
+		t.Error("IsHTTPS = false on a TLS connection")
+	}
+}

@@ -151,7 +151,7 @@ The root view is a normal `html/template` view. It receives `inertia.RootData`:
 
 | `RootData` field | Contains |
 | --- | --- |
-| `.Inertia` | `<script data-page="app" type="application/json">` with the page object, then `<div id="app"></div>` (or the SSR body) |
+| `.Inertia` | `<script data-page="app" type="application/json">` with the page object, then `<div id="app"></div>` (or the SSR body); both use `RootID` |
 | `.Head` | Server-rendered `<head>` tags with SSR, empty otherwise |
 | `.Page` | The `*inertia.Page` itself, for custom root views |
 
@@ -398,7 +398,7 @@ You may change it:
 - `app.Router.Services().ErrorPage = nil` in your routes keeps the HTML page.
 
 <Callout type="warning" title="Missing Error page">
-An app without the component breaks every error on an Inertia visit: the client cannot resolve the page. Outside production, a web app with `resources/js/pages` but no matching `.tsx`, `.jsx`, `.vue`, `.svelte`, `.ts` or `.js` file logs `inertia error page not found` once at boot.
+An app without the component breaks every error on an Inertia visit: the client cannot resolve the page. Outside production, a web app with `resources/js/pages` but no matching `.tsx`, `.jsx`, `.vue`, `.svelte`, `.ts` or `.js` file logs `inertia error page not found` once at boot. The project is the `WithEnv` file system, or the working directory without it.
 </Callout>
 
 ## Asset versioning
@@ -407,7 +407,7 @@ After a deploy, an open tab still runs the old JavaScript. Inertia fixes this wi
 
 1. `vukem.WithInertia` uses `app.Vite.Version` (a hash of the Vite manifest) when you set no `Config.Version`. Without Vite or a build it is `""`.
 2. Every page object carries `version`, and the client sends it back as `X-Inertia-Version`.
-3. On an Inertia `GET` whose version differs, the middleware answers **`409 Conflict`** with `X-Inertia-Location` (the absolute URL of the request) and the current `X-Inertia-Version`. It keeps the session's flash data for the next request.
+3. On an Inertia `GET` whose version differs, the middleware answers **`409 Conflict`** with `X-Inertia-Location` (the absolute URL of the request) and the current `X-Inertia-Version`. The scheme comes from `c.IsHTTPS()`: behind a TLS proxy, set `TRUSTED_PROXIES` and `TRUST_FORWARDED_PROTO=true` or the reload points to `http://`. It keeps the session's flash data for the next request.
 4. The client reacts to the `409` with a full page load, which fetches the new assets.
 
 Only `GET` requests are checked, so a form submission is never lost to a version change.
@@ -477,7 +477,7 @@ On a first visit, the adapter POSTs the page object to the Node SSR server and p
 | `inertia.Config` field | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `RootView` | `string` | `"app"` | View rendered on first visits |
-| `RootID` | `string` | `"app"` | Id of the mount element; quotes, `<`, `>`, `&` and spaces are rejected |
+| `RootID` | `string` | `"app"` | Id of the mount element and `data-page` name of the page script; set the same `id` in `createInertiaApp`. Quotes, `<`, `>`, `&` and spaces are rejected |
 | `Version` | `func() string` | `app.Vite.Version` with `WithVite`, else none | Current asset version |
 | `Shared` | `inertia.Props` | none | Props added to every page |
 | `EncryptHistory` | `bool` | `false` | Encrypt history state on every page |

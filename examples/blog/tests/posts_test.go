@@ -46,6 +46,10 @@ func TestOnlyAuthorsChangePosts(t *testing.T) {
 	path := "/posts/" + strconv.FormatInt(post.ID, 10)
 	intruder := app.Client(t).ActingAs("web", bob)
 
+	// The index ranges over []models.Post values; the *Post policy still decides.
+	app.Client(t).ActingAs("web", ana).Get("/posts").AssertOK().AssertSee(`hx-delete="` + path + `"`)
+	intruder.Get("/posts").AssertOK().AssertDontSee("hx-delete")
+
 	intruder.Get(path + "/edit").AssertForbidden()
 	intruder.PostForm(path, url.Values{"_method": {"PUT"}, "title": {"Hacked"}}).AssertForbidden()
 	intruder.HTMX().Delete(path).AssertForbidden()

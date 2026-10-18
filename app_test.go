@@ -11,6 +11,7 @@ import (
 	"maps"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -1074,6 +1075,27 @@ func TestWithInertiaWarnsWithoutErrorPage(t *testing.T) {
 				t.Errorf("warnings = %d, want warn=%v; log:\n%s", got, tt.warn, buf.String())
 			}
 		})
+	}
+}
+
+// Without WithEnv the project is the working directory, as for config.
+func TestWithInertiaWarnsWithoutErrorPageNoEnv(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "resources", "js", "pages"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Chdir(dir)
+
+	var buf bytes.Buffer
+
+	if _, err := New(WithSource(testSource(map[string]string{"APP_ENV": "development"})), WithLogOutput(&buf),
+		WithInertia(inertia.Config{})); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := strings.Count(buf.String(), "inertia error page not found"); got != 1 {
+		t.Errorf("warnings = %d, want 1; log:\n%s", got, buf.String())
 	}
 }
 

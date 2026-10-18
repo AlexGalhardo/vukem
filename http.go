@@ -566,6 +566,8 @@ func (a *App) newRouter() *router.Router {
 		TrustedProxies: a.proxies,
 		ClientIPHeader: a.Config.ClientIPHeader,
 		IPv6Prefix:     a.Config.RateLimitIPv6Prefix,
+
+		TrustForwardedProto: a.Config.TrustForwardedProto,
 	}
 
 	if debug && a.Kind == KindWeb {

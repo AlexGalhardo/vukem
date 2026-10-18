@@ -1314,9 +1314,16 @@ func TestSecurity_A02_TrustForwardedProtoOnlyFromTrustedProxies(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			rec := proxyReq(t, proxyApp(t, tt.env), tt.peer, https)
+			app := proxyApp(t, tt.env)
+
+			rec := proxyReq(t, app, tt.peer, https)
 			if got := rec.Header().Get("Strict-Transport-Security") != ""; got != tt.wantHSTS {
 				t.Fatalf("HSTS sent = %v, want %v", got, tt.wantHSTS)
+			}
+
+			// web.Ctx.IsHTTPS (Inertia's X-Inertia-Location) follows the same setting.
+			if got, want := app.Router.Services().TrustForwardedProto, tt.env["TRUST_FORWARDED_PROTO"] == "true"; got != want {
+				t.Errorf("Services().TrustForwardedProto = %v, want %v", got, want)
 			}
 		})
 	}
