@@ -162,8 +162,13 @@ func TestSecurity_A02_StarterShipsNoSecrets(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !slices.Contains(strings.Split(strings.ReplaceAll(string(ignore), "\r\n", "\n"), "\n"), ".env") {
-		t.Errorf("starter .gitignore does not ignore .env:\n%s", ignore)
+	// Every local file config.Load reads (.env, .env.local, .env.<env>.local)
+	// can hold secrets; .env.<env> files are shared and stay committed.
+	lines := strings.Split(strings.ReplaceAll(string(ignore), "\r\n", "\n"), "\n")
+	for _, want := range []string{".env", ".env.local", ".env.*.local"} {
+		if !slices.Contains(lines, want) {
+			t.Errorf("starter .gitignore does not ignore %s:\n%s", want, ignore)
+		}
 	}
 
 	example, err := starterFS.ReadFile("starter/.env.example.tmpl")
