@@ -329,17 +329,26 @@ func patchPackageJSON(env *Env, assets bool) error {
 // installHooksPath points the new repository at .githooks, so a clone needs
 // no hook manager and no install step. It runs after git init and only
 // warns on failure, like git init itself.
+//
+// The hooks are also staged with --chmod=+x: Git ignores the file mode on
+// Windows (core.filemode=false), so without it they would be committed as
+// 0644 and every clone on Linux or macOS would skip them silently.
 func installHooksPath(ctx context.Context, env *Env) {
 	if !exists(env, filepath.Join(".githooks", "commit-msg")) {
 		return
 	}
 
-	cmd := exec.CommandContext(ctx, "git", "config", "core.hooksPath", ".githooks")
-	cmd.Dir = env.Dir
+	for _, args := range [][]string{
+		{"config", "core.hooksPath", ".githooks"},
+		{"add", "--chmod=+x", ".githooks/commit-msg", ".githooks/pre-commit"},
+	} {
+		cmd := exec.CommandContext(ctx, "git", args...)
+		cmd.Dir = env.Dir
 
-	if out, err := cmd.CombinedOutput(); err != nil {
-		fmt.Fprintf(env.Stderr, "git config core.hooksPath failed (continuing): %v\n%s", err, out)
-		return
+		if out, err := cmd.CombinedOutput(); err != nil {
+			fmt.Fprintf(env.Stderr, "git %s failed (continuing): %v\n%s", strings.Join(args, " "), err, out)
+			return
+		}
 	}
 
 	fmt.Fprintln(env.Stdout, "git hooks enabled (core.hooksPath=.githooks)")
