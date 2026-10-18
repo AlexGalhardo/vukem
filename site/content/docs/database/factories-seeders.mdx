@@ -1,112 +1,491 @@
 ---
-title: Factories, seeders and database rules
-description: Model factories with a built-in Faker, seeders with db:seed, and the Unique and Exists validation rules.
+title: Factories and seeders
+description: Build models with realistic fake data in English or Brazilian Portuguese, insert thousands of rows in batches, and fill the database with vukem db:seed, including seeders that take their own flags.
 ---
 
-## Factories
+Tests and demos need data: a user to log in as, ten posts to list, a few comments to moderate. Writing `models.Post{Title: "Test 1", ...}` by hand in every test gets old fast. A **factory** builds models with fake but realistic data; a **seeder** uses factories (or plain SQL) to fill the database, and `vukem db:seed` runs it.
 
-```go title="database/factories/user_factory.go"
-// vukem make:factory User
-var User = factory.New(func(f *factory.Faker) models.User {
-	return models.User{Name: f.Name(), Email: f.Email()}
-})
+You will learn:
+
+- how to define a factory and build models in memory or in the database;
+- every method of the built-in `Faker`, and how locales change its data;
+- how to make fake data reproducible with `Seed`;
+- how `Create` and `CreateMany` insert rows, and when to use each;
+- how to write seeders, run some of them by name, and give them their own flags.
+
+The running example is the blog: users, posts, comments and tags.
+
+## The idea
+
+A factory is a **cookie cutter**: you design the shape once ("a user has a name and an email"), then press out as many cookies as you like, each with different sprinkles. `State` changes the sprinkles ("this one is an admin"), `Count` says how many, and `Seed` makes the random sprinkles land in the same places every time.
+
+A seeder is the **baker's morning routine**: "make two authors, give each five posts, add three comments to every post". `vukem db:seed` runs the routines you registered, in order.
+
+| Piece | Package | What it is |
+| --- | --- | --- |
+| `factory.Factory[T]` | `factory` | Builds `T` values from a definition function |
+| `factory.Faker` | `factory` | Generates names, emails, sentences, addresses... |
+| `vukem.Seeder` / `vukem.AppSeeder` | `vukem` | Fills the database |
+| `vukem db:seed` | CLI | Runs the seeders |
+
+## Quick start
+
+<Steps>
+<Step title="1. Generate a factory and a seeder">
+
+```bash
+vukem make:factory Post
+vukem make:seeder Blog
 ```
 
-```go
-admins, err := factories.User.Count(3).State(func(u *models.User) { u.Role = "admin" }).Create(ctx, db)
-draft := factories.User.MakeOne()                // not saved
-same := factories.User.Seed(42).Count(5).Make()  // reproducible data
+This writes `database/factories/post_factory.go`, `database/seeders/blog_seeder.go`, and registers `BlogSeeder{}` in `database/seeders/registry.go`.
 
-// Related models: AfterCreate runs inside Create's transaction.
-withPosts := factories.User.AfterCreate(func(ctx context.Context, ex database.Executor, u *models.User) error {
-	_, err := factories.Post.Count(2).State(func(p *models.Post) { p.UserID = u.ID }).Create(ctx, ex)
+</Step>
+<Step title="2. Define the factory">
+
+```go title="database/factories/post_factory.go"
+package factories
+
+import (
+	"github.com/AlexGalhardo/vukem/factory"
+
+	"example.com/blog/app/models"
+)
+
+// Post builds models.Post with fake data; set UserID with State.
+var Post = factory.New(func(f *factory.Faker) models.Post {
+	return models.Post{
+		Title: f.Sentence(),
+		Slug:  f.Slug(),
+		Body:  f.Paragraph(),
+		Views: f.Int(0, 5000),
+	}
+}).Locale(factory.LocaleEN())
+```
+
+</Step>
+<Step title="3. Write the seeder">
+
+```go title="database/seeders/blog_seeder.go"
+package seeders
+
+import (
+	"context"
+
+	"github.com/AlexGalhardo/vukem/database"
+
+	"example.com/blog/app/models"
+	"example.com/blog/database/factories"
+)
+
+// BlogSeeder creates two authors with five posts each.
+type BlogSeeder struct{}
+
+// Seed implements vukem.Seeder.
+func (BlogSeeder) Seed(ctx context.Context, db *database.DB) error {
+	authors, err := factories.User.Count(2).Create(ctx, db)
+	if err != nil {
+		return err
+	}
+
+	for _, a := range authors {
+		_, err := factories.Post.Count(5).
+			State(func(p *models.Post) { p.UserID = a.ID }).
+			Create(ctx, db)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+```
+
+</Step>
+<Step title="4. Run it">
+
+```bash
+vukem migrate
+vukem db:seed
+```
+
+```text
+Seeded: BlogSeeder
+```
+
+</Step>
+</Steps>
+
+## Defining factories
+
+`factory.New` takes a function that receives a `*factory.Faker` and returns one model. The result is a `factory.Factory[T]`, a [generic](https://go.dev/doc/tutorial/generics) type:
+
+```go title="database/factories/user_factory.go"
+var User = factory.New(func(f *factory.Faker) models.User {
+	name := f.Name()
+
+	return models.User{
+		Name:  name,
+		Email: f.EmailFor(name),
+		// A placeholder hash: seeded users sign in after a password reset.
+		Password: "$argon2id$v=19$m=8,t=1,p=1$c2FsdHNhbHQ$aGFzaGhhc2g",
+	}
+}).Locale(factory.LocaleEN())
+```
+
+Factories are **values**: `State`, `Count`, `Seed`, `Locale` and `AfterCreate` return a modified copy and never change the original. That is why a package-level `var User` is safe to share between tests running in parallel.
+
+| Method | What it does | Default |
+| --- | --- | --- |
+| `Count(n)` | How many models `Make`, `Create` and `CreateMany` build; a negative `n` becomes 0 | 1 |
+| `State(fn)` | Runs `fn(*T)` on every built model, after the definition and after earlier states | none |
+| `Seed(n)` | Makes the fake data reproducible | a fresh random seed (from `crypto/rand`) on every `Make` |
+| `Locale(l)` | The Faker's language for this factory | the zero locale, see [Locales](#locales) |
+| `AfterCreate(fn)` | Runs `fn(ctx, ex, *T)` for every created model | none |
+
+### Building without the database
+
+```go
+draft := factories.Post.MakeOne()          // one models.Post, not saved
+drafts := factories.Post.Count(3).Make()   // []models.Post, not saved
+
+admins := factories.User.Count(2).
+	State(func(u *models.User) { u.Role = "admin" }).
+	Make()
+```
+
+`Make` suits unit tests that never touch a database: validation, view rendering, JSON encoding.
+
+### Reproducible data with `Seed`
+
+Without `Seed`, every `Make` uses a new random seed. With it, the same seed always produces the same models, which golden tests and demo databases rely on:
+
+```go
+a := factories.Post.Seed(42).Count(3).Make()
+b := factories.Post.Seed(42).Count(3).Make()
+// a and b are identical
+```
+
+With the `Post` factory above (`factory.LocaleEN()`) and seed 42, the three titles are:
+
+```text
+Teacher back month history moment water right money change.
+Study study study morning door program point change morning line.
+Result company head research issue hour game face moment.
+```
+
+The output stays the same for a given seed, locale and Vukem version; adding a field that calls the Faker earlier in the definition changes what the later fields get.
+
+### Creating rows
+
+```go
+// Inserts one row per model, in one transaction on db.
+posts, err := factories.Post.Count(10).
+	State(func(p *models.Post) { p.UserID = ada.ID }).
+	Create(ctx, db)
+
+// One model.
+post, err := factories.Post.
+	State(func(p *models.Post) { p.UserID = ada.ID }).
+	CreateOne(ctx, db)
+```
+
+`Create` builds the models with `Make`, then inside `database.RunInTx` calls [`orm.Create`](/docs/database/orm#creating-updating-and-deleting) for each one and runs its `AfterCreate` functions right after its insert. On a `*database.DB` that is one transaction: an error rolls back every row. On a `*database.Tx` it joins the caller's transaction. The returned models carry their new ids. An insert error reads `factory: create models.Post: <error>`.
+
+### Related models with `AfterCreate`
+
+`AfterCreate` receives the transaction as `ex`, so related rows join the same transaction:
+
+```go title="database/factories/post_factory.go"
+// PostWithComments creates three comments under every post.
+var PostWithComments = Post.AfterCreate(func(
+	ctx context.Context,
+	ex database.Executor,
+	p *models.Post,
+) error {
+	_, err := Comment.Count(3).
+		State(func(c *models.Comment) {
+			c.PostID = p.ID
+			c.UserID = p.UserID
+		}).
+		Create(ctx, ex)
+
 	return err
 })
 ```
 
-- Factories are values: `State`, `Count`, `Seed` and `AfterCreate` return copies, so a base factory can be shared.
-- `Create` inserts one row per statement. For seeding many rows use `CreateMany`, which batches through `orm.CreateMany`:
+Tags need a pivot row, so link them with [`orm.Attach`](/docs/database/relations#linking-rows-through-a-pivot-table):
 
 ```go
-products, err := factories.Product.Seed(42).Count(2000).CreateMany(ctx, db)
+var PostWithTags = Post.AfterCreate(func(
+	ctx context.Context,
+	ex database.Executor,
+	p *models.Post,
+) error {
+	return orm.Attach(ctx, ex, p, "Tags", 1, 2)
+})
 ```
 
-`CreateMany` splits the rows into multi-row `INSERT`s under the dialect's bound-parameter limit and writes the generated ids back (`RETURNING` on PostgreSQL and SQLite; MySQL cannot report the ids of a multi-row insert, so there each row is its own `INSERT`). `AfterCreate` hooks run after every row is stored, in order, in the same transaction. Given a `*database.DB`, `CreateMany` opens that transaction and an insert or hook error rolls back every row; given a `*database.Tx` it joins it, returns the error and leaves the rollback to you (`db.Tx` rolls back when its function returns the error). On a local SQLite file 1000 users take 20 ms instead of 65 ms; against a networked database the gain is larger.
-- `factory.Faker` has no dependency: `Name`, `FirstName`, `LastName`, `Username`, `Email` (reserved example domains), `Word`, `Words`, `Sentence`, `Paragraph`, `Slug`, `URL`, `UUID`, `Int`, `Float`, `Bool`, `Time`, `factory.Pick(f, ...)` and `Seq()`. It uses `math/rand/v2` and must never generate secrets.
+<Callout type="warning" title="Use ex inside AfterCreate, never db">
+The insert runs inside a transaction. On SQLite that transaction holds the only writer connection, so a write through `db` inside `AfterCreate` waits forever.
+</Callout>
 
-### Locales and commerce data
+### Many rows at once: `CreateMany`
 
-`factory.LocaleEN()` and `factory.LocalePTBR()` switch the Faker to English or Brazilian Portuguese data, embedded in the package. Seeded output stays reproducible per locale:
+`Create` sends one `INSERT` per row. To seed thousands of rows, `CreateMany` sends multi-row `INSERT`s through [`orm.CreateMany`](/docs/database/orm#inserting-many-rows-createmany):
 
-```go title="database/factories/product_factory.go"
+```go
+posts, err := factories.Post.
+	Seed(42).
+	Count(2000).
+	State(func(p *models.Post) { p.UserID = ada.ID }).
+	CreateMany(ctx, db)
+```
+
+| | `Create` | `CreateMany` |
+| --- | --- | --- |
+| Statements | one `INSERT` per row | multi-row `INSERT`s under the dialect's parameter limit (one per row on MySQL) |
+| Ids written back | yes | yes (`RETURNING` on PostgreSQL and SQLite) |
+| `AfterCreate` | right after each row | after every row is stored, in order |
+| Transaction | one on a `DB`, joined on a `Tx` | same |
+| 1,000 users on a local SQLite file | about 65 ms | about 20 ms |
+
+Given a `*database.DB`, `CreateMany` opens the transaction and an insert or hook error rolls back every row. Given a `*database.Tx`, it joins it, returns the error and leaves the rollback to you (`db.Tx` rolls back when its function returns the error). `Count(0)` returns an empty slice without touching the database. Against a networked database the gap is larger, since every saved round trip counts.
+
+## The Faker
+
+`factory.Faker` generates fake data with no third-party dependency. It uses [`math/rand/v2`](https://pkg.go.dev/math/rand/v2), seeded per `Make`, so it is fast and reproducible but **not** secure.
+
+| Method | Returns | Example (`LocaleEN`) |
+| --- | --- | --- |
+| `Name()` | a full name | `Benjamin Baker` |
+| `FirstName()` / `LastName()` | one part | `Benjamin` / `Baker` |
+| `Username()` | a lowercase handle, unique within one `Make` | `elijah1367` |
+| `Email()` | an address on `example.com`, `.org` or `.net`, unique within one `Make` | `daniel.green.02619@example.org` |
+| `EmailFor(name)` | an address derived from a name you already generated | `ana.luiza.03080@example.net` |
+| `Word()` / `Words(n)` | one word / `n` words | `name door minute` |
+| `Sentence()` | 6 to 12 words, capitalised, with a period | `Morning line eye door member war story day room back.` |
+| `Paragraph()` | 3 to 6 sentences | |
+| `Slug()` | 3 ASCII words joined by dashes, plus the model's index | `name-door-minute-1` |
+| `URL()` | an https URL on an example domain | `https://example.net/minute-member-morning-1` |
+| `UUID()` | a random version 4 UUID string | |
+| `Int(lo, hi)` | a number in `[lo, hi]` (both included); `lo` when `hi <= lo` | |
+| `Float(lo, hi)` | a number in `[lo, hi)` | |
+| `Bool()` | `true` or `false` | |
+| `Time(from, to)` | a UTC time between them, truncated to the second; `from` when `to` is not after it | |
+| `Seq()` | the 1-based index of the model being built | `1`, `2`, `3`... |
+| `factory.Pick(f, items...)` | one of the items (panics with none) | `factory.Pick(f, "draft", "published")` |
+| `Company()` | a company name | `Smith Outfitters LLC` |
+| `ProductTitle()` / `ProductDescription()` / `Category()` | store data | `Classic Wool Desk` / `Electronics` |
+| `StreetAddress()`, `City()`, `State()`, `PostalCode()` | address parts (`State` is independent of `City`) | `1775 Sunset Blvd`, `Madison`, `KY`, `08533` |
+| `Address()` | a one-line address whose city and state match | `1375 Cedar Ln, Georgetown, KY 99888` |
+| `FakeCPF()` | a Brazilian CPF-formatted string that is never valid | `872.776.590-82` |
+| `Locale()` | the Faker's `factory.Locale` | |
+
+"Unique within one `Make`" means the models of one `Count(n)` call never repeat a username or email; two separate `Make` calls may. `Seq()` restarts at 1 on every `Make`.
+
+<Callout type="warning" title="Never use the Faker for secrets">
+Tokens, passwords and API keys need [`crypto/rand`](https://pkg.go.dev/crypto/rand). The Faker is predictable on purpose.
+</Callout>
+
+`FakeCPF` deserves a note: its first check digit is always wrong, so it can never be a real person's CPF, and every standard CPF validator rejects it. Write it straight into the column; it will not pass validation meant for real documents.
+
+### Locales
+
+`factory.LocaleEN()` (English, United States) and `factory.LocalePTBR()` (Brazilian Portuguese) switch the data the Faker draws from. The data is embedded in the package. Pick one per factory, or per Faker:
+
+```go
 var Product = factory.New(func(f *factory.Faker) models.Product {
 	return models.Product{
-		Title:       f.ProductTitle(),       // "Cadeira Ergonômica de Aço"
-		Description: f.ProductDescription(), // "Mochila Leve de Couro, ideal para o dia a dia. Envio em 24 horas."
-		Category:    f.Category(),           // "Casa e Cozinha"
-		Seller:      f.Company(),            // "Silva & Costa Comércio Ltda"
+		Title:    f.ProductTitle(),
+		Category: f.Category(),
+		Seller:   f.Company(),
 	}
 }).Locale(factory.LocalePTBR())
 
-catalog := factories.Product.Seed(42).Count(2000).Make()
+f := factory.NewFaker(42).WithLocale(factory.LocalePTBR())
+fmt.Println(f.Name()) // Cecília Freitas
 ```
 
 | Method | `LocaleEN()` | `LocalePTBR()` |
 | --- | --- | --- |
-| `Name`, `Word`, `Sentence` | English names and words | Brazilian names, Portuguese words |
-| `Company` | `Baker Logistics LLC` | `Soares & Alves Papelaria Ltda` |
-| `ProductTitle`, `ProductDescription`, `Category` | `Vintage Leather Lamp`, `Electronics` | `Luminária Vintage de Couro`, `Eletrônicos` |
-| `StreetAddress`, `City`, `State`, `PostalCode` | `2417 Sunset St`, `Georgetown`, `KY`, ZIP | `Rua Getúlio Vargas, 2417`, `Fortaleza`, `CE`, CEP |
-| `Address` (city and state match) | `2417 Sunset St, Georgetown, KY 34691` | `Rua Getúlio Vargas, 2417 - Fortaleza/CE, 34691-928` |
+| `Name` | `Benjamin Baker` | `Cecília Freitas` |
+| `Words(3)` | `name door minute` | `comunidade nível equipe` |
+| `Company` | `Smith Outfitters LLC` | `Silva Papelaria Ltda` |
+| `ProductTitle` | `Classic Wool Desk` | `Mesa Clássica de Lã` |
+| `Category` | `Electronics` | `Eletrônicos` |
+| `StreetAddress` | `1775 Sunset Blvd` | `Travessa Getúlio Vargas, 1775` |
+| `PostalCode` | ZIP `08533` | CEP `08533-758` |
+| `Address` | `1375 Cedar Ln, Georgetown, KY 99888` | `Rua XV de Novembro, 1964 - Manaus/AM, 84604-799` |
+| `Locale().Name()` | `en` | `pt-BR` |
 
-- `f.EmailFor(name)` derives the address from a name you already generated (`ana.luiza.13120@example.com`), on the same reserved domains as `Email`.
-- `f.FakeCPF()` returns a CPF-formatted string (`867.974.402-70`) whose first check digit is always wrong: it can never be a real person's CPF, and every standard CPF validator rejects it. Seed the column directly.
-- `factory.NewFaker(seed).WithLocale(l)` builds a Faker outside a factory.
+`WithLocale` consumes no randomness, so switching locale keeps the output reproducible for the seed. `factory.NewFaker(seed)` builds a Faker outside a factory, for a script or a test.
 
-<Callout type="warning">
-Without a locale the Faker is **not** English: it keeps its original data set (mostly Brazilian first names, lorem ipsum), so seeds written before locales produce the same rows. Only the methods that data set never had (`Company`, the product and address methods) use English there. Pass `factory.LocaleEN()` for consistent English data.
-</Callout>
+The **zero locale** (no `Locale` call) is not English. It is the original data set, a mix of mostly Brazilian first names and lorem ipsum words, kept so seeds written before locales existed produce the same rows. Only the methods that data set never had (`Company`, the product and address methods) use English there; its `Locale().Name()` is `""`. Pass `factory.LocaleEN()` for consistent English.
 
 ## Seeders
 
-```go title="database/seeders/posts_seeder.go"
-// vukem make:seeder Posts (registered in database/seeders/registry.go)
-type PostsSeeder struct{}
+### Writing a seeder
 
-func (PostsSeeder) Seed(ctx context.Context, db *database.DB) error {
-	_, err := factories.Post.Count(10).Create(ctx, db)
-	return err
+A seeder implements `vukem.Seeder`:
+
+```go
+type Seeder interface {
+	Seed(ctx context.Context, db *database.DB) error
 }
 ```
+
+`vukem make:seeder Blog` writes `BlogSeeder` in `database/seeders/blog_seeder.go` and appends `BlogSeeder{}` to the registry:
+
+```go title="database/seeders/registry.go"
+package seeders
+
+import vukem "github.com/AlexGalhardo/vukem"
+
+// All lists the seeders run by vukem db:seed, in order.
+func All() []vukem.Seeder {
+	return []vukem.Seeder{
+		BlogSeeder{},
+	}
+}
+```
+
+```go title="bootstrap/app.go"
+vukem.WithSeeders(seeders.All()...),
+```
+
+`vukem.SeederFunc` turns a plain function into a `Seeder`:
+
+```go
+vukem.WithSeeders(vukem.SeederFunc(
+	func(ctx context.Context, db *database.DB) error {
+		_, err := factories.Tag.Count(5).Create(ctx, db)
+		return err
+	},
+)),
+```
+
+### Seeders that need the app
+
+A `Seeder` only receives the database. A seeder that reads configuration, logs, or uses a service a provider opened (an S3 disk for cover images) implements `vukem.AppSeeder` and is registered with `vukem.WithAppSeeders`:
+
+```go title="database/seeders/demo_users.go"
+// DemoUsers creates a login for the demo, never in production.
+func DemoUsers() vukem.AppSeeder {
+	return vukem.NamedAppSeeder("DemoUsers",
+		func(ctx context.Context, app *vukem.App) error {
+			if app.Config.IsProduction() {
+				return errors.New("demo users are not seeded in production")
+			}
+
+			db, err := app.DB()
+			if err != nil {
+				return err
+			}
+
+			app.Log.InfoContext(ctx, "seeding demo users")
+
+			_, err = factories.User.
+				State(func(u *models.User) {
+					u.Email = "demo@example.com"
+				}).
+				CreateOne(ctx, db)
+
+			return err
+		})
+}
+```
+
+```go title="bootstrap/app.go"
+vukem.WithSeeders(seeders.All()...),
+vukem.WithAppSeeders(seeders.DemoUsers()),
+```
+
+| Type | Signature | Register with |
+| --- | --- | --- |
+| `vukem.Seeder` | `Seed(ctx, db *database.DB) error` | `vukem.WithSeeders` |
+| `vukem.SeederFunc` | a function with that signature | `vukem.WithSeeders` |
+| `vukem.AppSeeder` | `SeedApp(ctx, app *vukem.App) error` | `vukem.WithAppSeeders` |
+| `vukem.AppSeederFunc` | a function with that signature | `vukem.WithAppSeeders` |
+| `vukem.NamedAppSeeder(name, fn)` | an `AppSeederFunc` with a name | `vukem.WithAppSeeders` |
+| `vukem.FlagSeeder` | `SeedFlags(fs *flag.FlagSet)`, next to `Seed` or `SeedApp` | either |
+
+- Both kinds run in **one list, in option order**: every `WithSeeders` and `WithAppSeeders` call appends to it.
+- A seeder's **name** is its `Name() string` method when it has one, else its Go type name (`BlogSeeder`; a pointer `*DemoCatalog` is `DemoCatalog`). Every plain `AppSeederFunc` has the same type name, which is why `NamedAppSeeder` exists.
+- `db:seed` **boots the app** first, so services that providers open in `Boot` are ready. When you seed from your own code, call `app.Boot(ctx)` before `app.Seed(ctx)`.
+- A provider's service can be handed to a seeder when `bootstrap` builds both (`seeders.Covers(storageProvider)`).
 
 ### Running seeders
 
 ```bash
-vukem db:seed                              # every seeder in vukem.WithSeeders(seeders.All()...), in order
-vukem db:seed DemoCatalog Users            # only these, in this order
-vukem db:seed --class DemoCatalog          # same as a name; repeatable
-vukem db:seed DemoCatalog --fresh          # flags after the names go to the seeders
-vukem db:seed DemoCatalog --fresh --force  # production
-vukem db:wipe                              # drops every table
+# Every registered seeder, in order.
+vukem db:seed
+
+# Only these, in this order.
+vukem db:seed DemoCatalog BlogSeeder
+
+# Same as a name; repeatable.
+vukem db:seed --class DemoCatalog --class Blog
+
+# Flags after the names go to the seeders.
+vukem db:seed DemoCatalog --fresh --posts 500
+
+# Production needs --force, anywhere on the line.
+vukem db:seed DemoCatalog --fresh --force
 ```
 
-A name matches the seeder's name (`Name()` or its Go type) case-insensitively, also without the `Seeder` suffix (`posts` runs `PostsSeeder`). An unknown or ambiguous name fails before any seeder runs, and so do unknown flags, stray arguments and a `--class` without a name.
+```text
+Seeded: DemoCatalog
+Seeded: BlogSeeder
+```
 
-Both commands need `--force` in production. `--force` may come before or after the names; `db:seed` checks it after parsing everything and before the first seeder runs. Tests call `app.Seed(ctx)`, which runs every seeder with its flag defaults.
+How `db:seed` reads its arguments:
+
+1. Words before the first flag are **seeder names**; `--class Name` (or `--class=Name`) adds a name anywhere.
+2. A name matches a seeder's name case-insensitively, also without its `Seeder` suffix: `blog` runs `BlogSeeder`. An exact match wins over a suffix match. A seeder named twice runs once.
+3. The first other flag starts the **seeder flags**; everything after it goes to the seeders' flag set. `--` ends parsing.
+4. `--force` is moved in front, so it is never read as the value of a seeder flag.
+5. Everything is checked **before the first seeder runs**: unknown names, ambiguous names, unknown flags and stray arguments fail the whole command, and then the production check runs.
+6. Seeders run in the order you named them (or registration order without names). The first error stops the run: `seed DemoCatalog: <error>`.
+
+| Situation | Message |
+| --- | --- |
+| Unknown name | `db:seed: unknown seeder "Blgo" (registered: BlogSeeder, DemoUsers)` |
+| Two seeders match | `db:seed: seeder name "Demo" is ambiguous (registered: ...)` |
+| `--class` without a value | `db:seed: -class needs a seeder name` |
+| A word after the flags | `db:seed: unexpected argument "Blog" (seeder names go before the flags)` |
+| An undefined flag | `flag provided but not defined: -count` |
+| Production without `--force` | `refusing to run a destructive command in production without --force` |
+| No seeders registered | `No seeders registered (vukem make:seeder).` |
+
+`vukem db:seed DemoCatalog -h` lists the flags of the seeders that would run.
 
 ### Seeder flags
 
-A seeder that takes options implements `vukem.FlagSeeder` and binds its flags to fields of a pointer receiver:
+A seeder that takes options implements `vukem.FlagSeeder` and binds its flags to fields with the standard [`flag`](https://pkg.go.dev/flag) package:
 
 ```go title="database/seeders/demo_catalog.go"
+package seeders
+
+import (
+	"context"
+	"flag"
+
+	vukem "github.com/AlexGalhardo/vukem"
+
+	"example.com/blog/app/models"
+	"example.com/blog/database/factories"
+)
+
+// DemoCatalog fills the blog with many posts for load tests.
 type DemoCatalog struct {
 	fresh bool
-	count int
+	posts int
 }
 
 func (s *DemoCatalog) SeedFlags(fs *flag.FlagSet) {
-	fs.BoolVar(&s.fresh, "fresh", false, "delete the demo catalog first")
-	fs.IntVar(&s.count, "count", 2000, "products to create")
+	fs.BoolVar(&s.fresh, "fresh", false, "delete demo posts first")
+	fs.IntVar(&s.posts, "posts", 2000, "posts to create")
 }
 
 func (s *DemoCatalog) SeedApp(ctx context.Context, app *vukem.App) error {
@@ -116,12 +495,25 @@ func (s *DemoCatalog) SeedApp(ctx context.Context, app *vukem.App) error {
 	}
 
 	if s.fresh {
-		if _, err := db.ExecContext(ctx, "DELETE FROM products WHERE demo = ?", true); err != nil {
+		_, err := db.ExecContext(ctx,
+			"DELETE FROM posts WHERE slug LIKE ?", "demo-%")
+		if err != nil {
 			return err
 		}
 	}
 
-	_, err = factories.Product.Seed(42).Count(s.count).CreateMany(ctx, db)
+	author, err := factories.User.CreateOne(ctx, db)
+	if err != nil {
+		return err
+	}
+
+	_, err = factories.Post.Seed(42).Count(s.posts).
+		State(func(p *models.Post) {
+			p.UserID = author.ID
+			p.Slug = "demo-" + p.Slug
+		}).
+		CreateMany(ctx, db)
+
 	return err
 }
 ```
@@ -130,58 +522,108 @@ func (s *DemoCatalog) SeedApp(ctx context.Context, app *vukem.App) error {
 vukem.WithAppSeeders(&seeders.DemoCatalog{}),
 ```
 
-`vukem db:seed DemoCatalog --fresh --count 500` sets both fields; `vukem db:seed DemoCatalog -h` lists the flags. Only the flags of the seeders that run are accepted, and every seeder that defines a flag receives its value (`db:seed --fresh` reaches each seeder with a `--fresh` flag). `--force`, `--class`, `--help` and `-h` belong to `db:seed`: a seeder that defines one fails the command, so no seeder can take over the production check or hide the usage. `db:seed` always reads `--force` and `--class` as its own flags, so they cannot be values of a seeder flag (`--note --force` sets `--force` and fails because `--note` has no value). Register a seeder with flags as a pointer (`&seeders.DemoCatalog{}`): flags bound to a value would set a copy, so `db:seed` refuses a value seeder that defines flags.
+`vukem db:seed DemoCatalog --fresh --posts 500` sets both fields before `SeedApp` runs; without the flags, the defaults (`false`, `2000`) apply.
 
-### Seeders that need the app
+- **Register a pointer** (`&seeders.DemoCatalog{}`), with the methods on the pointer receiver. Flags bound to a value would set a copy, so `db:seed` refuses: `seeder DemoCatalog defines flags but is not a pointer: register &DemoCatalog{} so they bind to it`.
+- Only the flags of the seeders that run are accepted.
+- Seeders that define the same flag all receive its value: `db:seed --fresh` reaches every running seeder with a `--fresh` flag. They must agree on its kind: `db:seed: seeders define flag -fresh both as a bool and with a value`.
+- `force`, `class`, `help` and `h` belong to `db:seed`. A seeder that defines one fails the command (`seeder DemoCatalog: flag -force is reserved by db:seed`), so no seeder can take over the production check or hide the usage.
+- `--force` and `--class` are always read as `db:seed`'s own, so they cannot be values of a seeder flag: `--note --force` sets `--force` and then fails because `--note` has no value.
+- `app.Seed(ctx)` runs every seeder with its flag defaults.
 
-A `Seeder` only gets the database. A seeder that reads configuration, logs, or uses a service a provider opened (an S3 disk for seeded images) implements `vukem.AppSeeder` instead and is registered with `vukem.WithAppSeeders`:
+### Wiping the database
 
-```go title="database/seeders/users_seeder.go"
-func Users() vukem.AppSeeder {
-	return vukem.NamedAppSeeder("Users", func(ctx context.Context, app *vukem.App) error {
-		if app.Config.IsProduction() {
-			return errors.New("demo users are not seeded in production")
-		}
-
-		db, err := app.DB()
-		if err != nil {
-			return err
-		}
-
-		password := app.Source.Get("SEED_PASSWORD")
-		app.Log.InfoContext(ctx, "seeding demo users")
-
-		return createDemoUsers(ctx, db, password)
-	})
-}
-```
-
-```go title="bootstrap/app.go"
-vukem.WithSeeders(seeders.All()...),
-vukem.WithAppSeeders(seeders.Users()),
-```
-
-Both kinds run in one list, in option order. `db:seed` prints `Seeded: <name>` and errors read `seed <name>: ...`, where the name is the seeder's `Name() string` method when it has one, else its Go type (`AppSeederFunc` for every function); `vukem.NamedAppSeeder("Users", fn)` gives a function a name. `db:seed` boots the app before seeding, so services providers open in `Boot` are ready; call `app.Boot(ctx)` before `app.Seed(ctx)` when you seed from your own code. A provider's service can be handed to the seeder when `bootstrap` builds both (`seeders.Media(mediaProvider)`).
+`vukem db:wipe` drops every table, including tables no migration created. Like `db:seed`, it needs `--force` in production. To rebuild from scratch: `vukem migrate:fresh` followed by `vukem db:seed`.
 
 ## Database validation rules
 
-`z` schemas check shape and format without I/O. Rules that need the database run after parsing and return the same 422 validation error (flashed for forms):
+Rules that check the database ("this email is taken", "this tag exists") live with the ORM: see [`orm.Unique` and `orm.Exists`](/docs/database/orm#database-validation-rules).
 
-```go
-in, err := web.Parse(c, requests.RegisterSchema)
-if err != nil {
-	return err
-}
+## Security
 
-if err := orm.Validate(c.Context(), db,
-	orm.Unique[models.User]("email", in.Email),                          // soft-deleted rows count, like the index
-	orm.Unique[models.User]("username", in.Username).Ignore(current.ID), // updates keep their own value
-	orm.Exists[models.Team]("id", in.TeamID).Field("team_id").Message("Pick a valid team."),
-); err != nil {
-	return err
+- `db:seed` and `db:wipe` refuse to run in production without `--force`, and `db:seed` checks it after parsing every argument, before any seeder runs.
+- Seeders run with full database access: never seed known passwords into a production database. Guard demo seeders with `app.Config.IsProduction()`, as `DemoUsers` does.
+- The Faker uses `math/rand/v2` and is predictable: it must never generate tokens, passwords or keys.
+- `Email` and `URL` use the reserved `example.*` domains, so a seeded database can never e-mail a real person.
+- `FakeCPF` never produces a valid CPF.
+
+## Testing
+
+Factories are the main tool for test data:
+
+```go title="tests/comments_test.go"
+func TestPostShowsItsComments(t *testing.T) {
+	app := vukemtest.New(t, bootstrap.New)
+
+	db, err := app.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	author, err := factories.User.CreateOne(t.Context(), db)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	post, err := factories.PostWithComments.
+		State(func(p *models.Post) { p.UserID = author.ID }).
+		CreateOne(t.Context(), db)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	vukemtest.AssertDatabaseCount(t, app, "comments", 3)
+
+	app.Client(t).
+		GetJSON(fmt.Sprintf("/posts/%d", post.ID)).
+		AssertOK().
+		AssertJSONCount("comments", 3)
 }
 ```
 
-The built-in messages follow the request locale (`validation.unique`, `validation.exists`, with `{field}` from `validation.attributes.<column>`; see [Localization](/docs/digging-deeper/localization)); a `Message` override is used as is.
+To test with the seeded demo data, call `app.Seed(t.Context())` after `vukemtest.New`, which already booted the app. It runs every registered seeder with its flag defaults.
 
-Empty values are skipped (`required` belongs to the schema). Columns are validated against the model.
+Golden tests (comparing output to a saved file) need stable data: always pass `Seed(n)` and a locale.
+
+## Common mistakes
+
+**Forgetting the foreign key.**
+
+```go
+// Wrong: user_id is 0; with foreign keys on, the insert fails.
+posts, err := factories.Post.Count(3).Create(ctx, db)
+
+// Right
+posts, err := factories.Post.Count(3).
+	State(func(p *models.Post) { p.UserID = ada.ID }).
+	Create(ctx, db)
+```
+
+On SQLite the error reads `factory: create models.Post: ... FOREIGN KEY constraint failed`.
+
+**Writing through `db` inside `AfterCreate`.** Use the `ex` argument, or the seeder hangs on SQLite.
+
+**Registering a flag seeder as a value.** `vukem.WithAppSeeders(seeders.DemoCatalog{})` fails `db:seed` with `defines flags but is not a pointer`; register `&seeders.DemoCatalog{}`.
+
+**Expecting English without a locale.** A factory with no `Locale` call produces Brazilian names and lorem ipsum. Add `.Locale(factory.LocaleEN())`.
+
+**Unique columns across two `Make` calls.** `Username`, `Email` and `Slug` are unique within one `Make` only. Creating users in a loop of `CreateOne` calls may, rarely, repeat one; build them in one `Count(n)` call instead.
+
+## Next steps
+
+<CardGroup cols="2">
+<Card title="Testing" href="/docs/testing/overview" icon="code">
+The test client and database assertions.
+</Card>
+<Card title="Migrations" href="/docs/database/migrations" icon="layers">
+Create the tables the factories fill.
+</Card>
+<Card title="ORM" href="/docs/database/orm" icon="database">
+`CreateMany`, hooks and validation rules.
+</Card>
+<Card title="CLI" href="/docs/cli/overview" icon="terminal">
+`make:factory`, `make:seeder` and `db:seed`.
+</Card>
+</CardGroup>
+
+Package reference: [`factory`](https://pkg.go.dev/github.com/AlexGalhardo/vukem/factory), [`vukem` (seeders)](https://pkg.go.dev/github.com/AlexGalhardo/vukem#Seeder).

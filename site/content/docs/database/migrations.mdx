@@ -1,100 +1,517 @@
 ---
 title: Migrations
-description: Versioned schema changes in Go with a portable schema builder, checksums, and vukem migrate commands.
+description: Versioned schema changes written in Go, a portable schema builder for SQLite, PostgreSQL and MySQL, and the vukem migrate commands with batches and checksums.
 ---
 
-Migrations are plain Go values listed in one registry function. There is no `init()` registration: `vukem make:migration` writes the file and appends it to the list.
+Your tables change as the app grows: today posts have a title and a body, next month they need a slug, later a `published_at` date. A **migration** is one such change, written in Go and stored in the project, so every copy of the app (your laptop, a teammate's, CI, production) builds the exact same schema by running `vukem migrate`.
 
-## Creating a migration
+You will learn:
+
+- how `vukem make:migration` creates a migration and registers it;
+- how to create and change tables with the schema builder, and what SQL each method produces per database;
+- how foreign keys, indexes, partial indexes and CHECK constraints work;
+- what `migrate`, `rollback`, `reset`, `fresh` and `status` do, and how batches and checksums keep you safe;
+- how to test migrations and avoid the classic mistakes.
+
+The running example is the blog: tables for users, posts, comments, tags and the `post_tag` pivot.
+
+## The idea
+
+A migration is like a numbered page in a building's renovation log: "page 1: build the walls", "page 2: add a window". Anyone who reads the log from the first page builds the same house. The database keeps a bookmark (the `migrations` table) saying which pages it already applied, so `vukem migrate` only applies the new ones.
+
+Each migration has three parts:
+
+| Field | What it is |
+| --- | --- |
+| `ID` | A unique, sortable name: `20261016184615_create_posts_table`. The timestamp prefix decides the order |
+| `Up` | The change: create a table, add a column |
+| `Down` | The undo: drop that table, remove that column. Optional, but `rollback` needs it |
+
+`Up` and `Down` receive a `*schema.Schema`, the **schema builder**: Go methods such as `s.Create("posts", ...)` that generate the right SQL for SQLite, PostgreSQL or MySQL. You write the migration once; the dialect decides the column types.
+
+There is no hidden registration (no `init()` functions): every migration is listed in one function, `migrations.All()`, which `bootstrap/app.go` passes to the app.
+
+## Quick start
+
+<Steps>
+<Step title="1. Generate the migration">
 
 ```bash
-vukem make:migration create_comments_table
-vukem make:migration add_slug_to_posts_table
+vukem make:migration create_tags_table
 ```
 
-The stub depends on the name: `create_<table>_table` creates a table, `add_x_to_<table>_table` / `alter_<table>_table` alter one, anything else is blank.
+The command writes `database/migrations/20261017090000_create_tags_table.go` (the timestamp is the current UTC time) and appends it to `database/migrations/registry.go`.
 
-```go title="database/migrations/20261016120000_create_comments_table.go"
-func m20261016120000CreateCommentsTable() schema.Migration {
+</Step>
+<Step title="2. Describe the table">
+
+```go title="database/migrations/20261017090000_create_tags_table.go"
+package migrations
+
+import "github.com/AlexGalhardo/vukem/schema"
+
+func m20261017090000CreateTagsTable() schema.Migration {
 	return schema.Migration{
-		ID: "20261016120000_create_comments_table",
+		ID: "20261017090000_create_tags_table",
 		Up: func(s *schema.Schema) error {
-			return s.Create("comments", func(t *schema.Table) {
+			return s.Create("tags", func(t *schema.Table) {
 				t.ID()
-				t.ForeignID("post_id").Constrained().CascadeOnDelete()
-				t.Text("body")
-				t.Boolean("approved").Default(false)
+				t.String("name", 50).Unique()
 				t.Timestamps()
-				t.Index("post_id", "approved")
 			})
 		},
-		Down: func(s *schema.Schema) error { return s.DropIfExists("comments") },
+		Down: func(s *schema.Schema) error {
+			return s.DropIfExists("tags")
+		},
 	}
 }
 ```
+
+</Step>
+<Step title="3. Run it">
+
+```bash
+vukem migrate
+```
+
+```text
+Migrated: 20261017090000_create_tags_table
+```
+
+Running it again prints `Nothing to migrate.`
+
+</Step>
+<Step title="4. Check the state">
+
+```bash
+vukem migrate:status
+```
+
+```text
+MIGRATION                                STATUS  BATCH
+20261016184613_create_users_table        Ran     1
+20261016184615_create_posts_table        Ran     1
+20261017090000_create_tags_table         Ran     2
+```
+
+</Step>
+</Steps>
+
+## Creating migrations
+
+`vukem make:migration <name>` turns the name into snake_case and picks a stub from its shape:
+
+| Name pattern | Stub | Example |
+| --- | --- | --- |
+| `create_<table>_table` | `s.Create` with `t.ID()` and `t.Timestamps()`; `Down` drops the table | `create_comments_table` |
+| `<anything>_to_<table>_table`, `_from_`, `_in_`, `_on_` | `s.Table` in `Up` and `Down`, both empty | `add_slug_to_posts_table` |
+| `alter_<table>_table`, `change_...`, `update_...` | the same alter stub | `alter_posts_table` |
+| anything else | `Up` and `Down` that return `nil` | `backfill_post_slugs` |
+
+`--force` overwrites an existing file. `vukem make:model Post -m` also creates the `create_posts_table` migration.
+
+The generated function name is `m` + timestamp + the name in PascalCase, and the registry gets one more line:
 
 ```go title="database/migrations/registry.go"
+package migrations
+
+import "github.com/AlexGalhardo/vukem/schema"
+
+// All lists the migrations in order; vukem make:migration appends here.
 func All() []schema.Migration {
 	return []schema.Migration{
-		m20260101000000CreatePostsTable(),
-		m20261016120000CreateCommentsTable(), // appended by make:migration
+		m20261016184613CreateUsersTable(),
+		m20261016184615CreatePostsTable(),
+		m20261016184616CreateCommentsTable(),
+		m20261017090000CreateTagsTable(),
 	}
 }
 ```
 
-`bootstrap.New` passes `migrations.All()` to `vukem.WithMigrations`.
+```go title="bootstrap/app.go"
+vukem.WithMigrations(migrations.All()),
+```
 
-## Schema builder
+`schema.NewMigrator` checks the list when the app builds its migrator: every migration needs an `ID` and an `Up` (`schema: migration "" needs an ID and Up`), IDs must be unique (`schema: duplicate migration "..."`), and the list is sorted by ID, so the order in `All()` does not matter.
 
-| `Schema` | `Table` columns | Column modifiers |
-| --- | --- | --- |
-| `Create`, `Table` (alter), `Drop`, `DropIfExists`, `Rename`, `HasTable`, `HasColumn`, `Raw` | `ID`, `String(name, len?)`, `Text`, `Integer`, `BigInteger`, `Boolean`, `Decimal(p, s)`, `Float`, `Date`, `Timestamp`, `Timestamps`, `SoftDeletes`, `JSON`, `UUID`, `ULID`, `Binary`, `Enum(name, values...)`, `ForeignID` | `Nullable`, `Default`, `Unique`, `Index`, `Constrained(table?)`, `CascadeOnDelete`, `NullOnDelete`, `RestrictOnDelete` |
+## Creating tables
 
-Altering: `t.RenameColumn(from, to)`, `t.DropColumn(names...)`, `t.Index(cols...)`, `t.UniqueIndex(cols...)`, `t.DropIndex(name)`, `t.DropCheck(name)`.
+Here are the blog's tables. Each is its own migration; only the `Up` bodies are shown.
 
-Named CHECK constraints keep integrity rules in the database:
-
-```go
-s.Create("raffles", func(t *schema.Table) {
+```go title="database/migrations/20261016184613_create_users_table.go"
+return s.Create("users", func(t *schema.Table) {
 	t.ID()
-	t.Integer("number_count")
-	t.Check("raffles_number_count_check", "number_count BETWEEN 10 AND 1000")
+	t.String("name")
+	t.String("email").Unique()
+	t.String("password")
+	t.Timestamp("email_verified_at").Nullable()
+	t.Timestamps()
 })
 ```
 
-`t.Check(name, expr)` emits `CONSTRAINT name CHECK (expr)` inside `CREATE TABLE` on every dialect, and `ALTER TABLE … ADD CONSTRAINT` in `s.Table` on PostgreSQL and MySQL. SQLite cannot add or drop constraints on an existing table, so `Check` and `DropCheck` inside `s.Table` fail the migration there instead of skipping the rule. The expression is raw SQL written by you (never user input); prefix names with the table, since MySQL requires them to be unique per database. `DropCheck` uses `ALTER TABLE … DROP CONSTRAINT`, which needs MySQL 8.0.19+ or MariaDB 10.2+.
-
-Partial indexes cover only the rows matching an expression, e.g. one live reservation per number:
-
-```go
-s.Create("reservations", func(t *schema.Table) {
+```go title="database/migrations/20261016184615_create_posts_table.go"
+return s.Create("posts", func(t *schema.Table) {
 	t.ID()
-	t.ForeignID("number_id").Constrained()
-	t.String("status")
-	t.UniqueIndex("number_id").Where("status = 'live'")
+	t.ForeignID("user_id").Constrained().CascadeOnDelete()
+	t.String("title")
+	t.String("slug").Unique()
+	t.Text("body")
+	t.Integer("views").Default(0)
+	t.Integer("comments_count").Default(0)
+	t.Timestamp("published_at").Nullable()
+	t.JSON("meta").Nullable()
+	t.Timestamps()
+	t.SoftDeletes()
+	t.Index("user_id", "published_at")
 })
 ```
 
-`t.Index(cols...)` and `t.UniqueIndex(cols...)` return an `*Index`; `.Where(expr)` emits `CREATE [UNIQUE] INDEX … WHERE expr` on PostgreSQL and SQLite, in `Create` and `s.Table`. MySQL and MariaDB have no partial indexes, so `Where` fails the migration there instead of creating a full index that would reject valid rows. Like `Check`, the expression is raw SQL written by you.
+```go title="database/migrations/20261016184616_create_comments_table.go"
+return s.Create("comments", func(t *schema.Table) {
+	t.ID()
+	t.ForeignID("post_id").Constrained().CascadeOnDelete()
+	t.ForeignID("user_id").Constrained().CascadeOnDelete()
+	t.Text("body")
+	t.Timestamps()
+})
+```
 
-DDL is generated per dialect (SQLite, PostgreSQL and MySQL/MariaDB). Table and column names are validated, never taken from user input.
+```go title="database/migrations/20261017090100_create_post_tag_table.go"
+return s.Create("post_tag", func(t *schema.Table) {
+	t.ForeignID("post_id").Constrained().CascadeOnDelete()
+	t.ForeignID("tag_id").Constrained().CascadeOnDelete()
+	t.UniqueIndex("post_id", "tag_id")
+})
+```
 
-<Callout type="warning">
-SQLite cannot drop columns in every situation; Vukem does not rebuild tables for you yet.
-</Callout>
+Columns are **NOT NULL** unless you add `.Nullable()`. `Create` runs one `CREATE TABLE` and then one `CREATE INDEX` per index.
+
+### Column types
+
+| Method | SQLite | PostgreSQL | MySQL / MariaDB |
+| --- | --- | --- | --- |
+| `ID()` | `INTEGER PRIMARY KEY AUTOINCREMENT` | `BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY` | `BIGINT AUTO_INCREMENT PRIMARY KEY` |
+| `String(name, len?)` | `VARCHAR(len)`, 255 by default | same | same |
+| `Text(name)` | `TEXT` | `TEXT` | `LONGTEXT` |
+| `Integer(name)` | `INTEGER` | `INTEGER` | `INT` |
+| `BigInteger(name)` | `INTEGER` | `BIGINT` | `BIGINT` |
+| `ForeignID(name)` | `INTEGER` | `BIGINT` | `BIGINT` |
+| `Boolean(name)` | `BOOLEAN` | `BOOLEAN` | `BOOLEAN` |
+| `Decimal(name, p, s)` | `NUMERIC(p, s)` | `NUMERIC(p, s)` | `DECIMAL(p, s)` |
+| `Float(name)` | `REAL` | `DOUBLE PRECISION` | `DOUBLE` |
+| `Date(name)` | `DATE` | `DATE` | `DATE` |
+| `Timestamp(name)` | `TIMESTAMP` | `TIMESTAMPTZ` | `DATETIME(6)` |
+| `Timestamps()` | nullable `created_at`, `updated_at` | same | same |
+| `SoftDeletes()` | nullable `deleted_at` timestamp | same | same |
+| `JSON(name)` | `TEXT` | `JSONB` | `JSON` |
+| `UUID(name)` | `TEXT` | `UUID` | `CHAR(36)` |
+| `ULID(name)` | `CHAR(26)` | `CHAR(26)` | `CHAR(26)` |
+| `Binary(name)` | `BLOB` | `BYTEA` | `LONGBLOB` |
+| `Enum(name, values...)` | `TEXT` + `CHECK (name IN (...))` | same | `VARCHAR(255)` + `CHECK` |
+
+`Enum` without values fails with `schema: enum status needs values`. MySQL stores timestamps as `DATETIME(6)`: microseconds, no year-2038 limit, no session time-zone conversion.
+
+### Column modifiers
+
+Every column method returns a `*schema.Column`; modifiers chain:
+
+| Modifier | Effect |
+| --- | --- |
+| `Nullable()` | Allows `NULL` |
+| `Default(v)` | A default value: a Go `string`, `bool`, integer or float becomes a SQL literal (strings are quoted and escaped); `schema.Expr("CURRENT_TIMESTAMP")` is raw SQL |
+| `Unique()` | An inline `UNIQUE` constraint |
+| `Index()` | A single-column index named `<table>_<column>_index` |
+| `Constrained(table?)` | A foreign key to `table(id)` |
+| `CascadeOnDelete()` | Deleting the parent deletes this row |
+| `NullOnDelete()` | Deleting the parent sets this column to `NULL` (and makes it nullable) |
+| `RestrictOnDelete()` | Deleting a parent that is still referenced fails |
+
+On MySQL, defaults on `Text`, `JSON` and `Binary` columns become expression defaults (`DEFAULT ('x')`), the only form MySQL 8 accepts there, and `schema.Expr("CURRENT_TIMESTAMP")` on a timestamp becomes `CURRENT_TIMESTAMP(6)` to match `DATETIME(6)`.
+
+### Foreign keys
+
+A <Term tip="A column that stores another table's id; the database refuses values that point nowhere.">foreign key</Term> keeps the data honest: a comment cannot point to a post that does not exist. `ForeignID("post_id")` adds the column; `Constrained()` adds the constraint:
+
+```go
+t.ForeignID("post_id").Constrained().CascadeOnDelete()
+// post_id BIGINT NOT NULL,
+// FOREIGN KEY (post_id) REFERENCES posts (id) ON DELETE CASCADE
+```
+
+- Without an argument, `Constrained()` guesses the table by removing `_id` and appending `s`: `post_id` → `posts`, `user_id` → `users`. It does not know irregular plurals, so `category_id` would point to `categorys`: write `Constrained("categories")`.
+- An `ON DELETE` action before `Constrained()` fails: `schema: post_id: call Constrained() before an ON DELETE action`.
+- SQLite enforces foreign keys because Vukem turns on `PRAGMA foreign_keys` for every connection.
+
+### Indexes
+
+An <Term tip="A sorted copy of one or more columns that lets the database find rows without reading the whole table.">index</Term> makes lookups fast; a unique index also forbids duplicates.
+
+```go
+t.Index("user_id", "published_at")  // posts_user_id_published_at_index
+t.UniqueIndex("post_id", "tag_id")  // post_tag_post_id_tag_id_unique
+```
+
+Names are derived as `<table>_<col1>_<col2>_index` or `_unique`; `t.DropIndex(name)` takes that name.
+
+#### Partial indexes
+
+A partial index covers only the rows matching an expression. On the blog, a slug must be unique among live posts only, so a deleted post frees its slug:
+
+```go
+t.String("slug")
+t.UniqueIndex("slug").Where("deleted_at IS NULL")
+// CREATE UNIQUE INDEX posts_slug_unique ON posts (slug)
+//   WHERE deleted_at IS NULL
+```
+
+`.Where(expr)` works in `Create` and `s.Table` on PostgreSQL and SQLite. MySQL and MariaDB have no partial indexes, so there the migration fails instead of creating a full index that would reject valid rows. An empty expression fails too. The expression is raw SQL that you write, never user input.
+
+### CHECK constraints
+
+A named CHECK constraint keeps a rule in the database itself, whatever code writes the row:
+
+```go
+s.Create("posts", func(t *schema.Table) {
+	// ...
+	t.Check("posts_views_check", "views >= 0")
+})
+```
+
+- In `Create`, `t.Check(name, expr)` emits `CONSTRAINT name CHECK (expr)` on every dialect.
+- In `s.Table`, it emits `ALTER TABLE ... ADD CONSTRAINT` on PostgreSQL and MySQL. SQLite cannot add constraints to an existing table, so the migration fails with `schema: sqlite cannot add a check to existing table posts; add it in Create` instead of silently skipping the rule.
+- `t.DropCheck(name)` is alter-only, unsupported on SQLite, and emits `DROP CONSTRAINT` (MySQL 8.0.19+ or MariaDB 10.2+).
+- MySQL scopes constraint names per database, so prefix them with the table name.
+- The expression is raw SQL that you write, and should use syntax every target dialect understands.
+
+## Changing tables
+
+`s.Table(name, fn)` alters an existing table. Generate the migration with a name that matches the alter pattern:
+
+```bash
+vukem make:migration add_reading_minutes_to_posts_table
+```
+
+```go title="database/migrations/20261018100000_add_reading_minutes_to_posts_table.go"
+func m20261018100000AddReadingMinutesToPostsTable() schema.Migration {
+	return schema.Migration{
+		ID: "20261018100000_add_reading_minutes_to_posts_table",
+		Up: func(s *schema.Schema) error {
+			return s.Table("posts", func(t *schema.Table) {
+				t.Integer("reading_minutes").Default(0)
+				t.RenameColumn("body", "content")
+				t.Index("reading_minutes")
+			})
+		},
+		Down: func(s *schema.Schema) error {
+			return s.Table("posts", func(t *schema.Table) {
+				t.DropIndex("posts_reading_minutes_index")
+				t.RenameColumn("content", "body")
+				t.DropColumn("reading_minutes")
+			})
+		},
+	}
+}
+```
+
+Inside `s.Table` the statements run in a fixed order, whatever order you wrote them in:
+
+1. `ADD COLUMN` for each new column (a new `Constrained()` column carries its `REFERENCES` inline; on MySQL it becomes an `ADD FOREIGN KEY` clause of the same statement).
+2. `DROP CONSTRAINT` for each `DropCheck`.
+3. `RENAME COLUMN` for each `RenameColumn(from, to)`.
+4. `DROP INDEX` for each `DropIndex(name)`.
+5. `DROP COLUMN` for each `DropColumn(names...)`.
+6. `CREATE INDEX` for each new index.
+7. `ADD CONSTRAINT` for each new `Check`.
+
+- `t.ID()` inside `s.Table` fails: `schema: cannot add a primary key column to existing table posts`.
+- SQLite can only drop a column that has no index, `UNIQUE` constraint or foreign key; drop the index first. Vukem does not rebuild tables for you.
+
+### The other `Schema` methods
+
+| Method | What it does |
+| --- | --- |
+| `s.Drop(table)` / `s.DropIfExists(table)` | Drops a table (the second ignores a missing one) |
+| `s.Rename(from, to)` | Renames a table |
+| `s.HasTable(table)` | `(bool, error)`: whether the table exists |
+| `s.HasColumn(table, column)` | `(bool, error)`: whether the column exists; `false` for a missing table |
+| `s.Raw(sql, args...)` | Runs any SQL: data fixes, views, triggers |
+| `s.Dialect()` | `"sqlite"`, `"postgres"` or `"mysql"`, for dialect-specific SQL |
+
+Every table and column name is checked against `^[A-Za-z_][A-Za-z0-9_]*$` (`schema: invalid table name "..."`) and quoted, so names never come from input. When a statement fails, the error includes the SQL that failed.
+
+A **data migration** fixes rows instead of the schema:
+
+```go
+Up: func(s *schema.Schema) error {
+	return s.Raw(
+		"UPDATE posts SET reading_minutes = 1 WHERE reading_minutes = 0",
+	)
+},
+```
+
+`s.Raw` sends the statement exactly as written and does not rewrite placeholders: `?` arguments work on SQLite and MySQL, PostgreSQL needs `$1`. For a migration that must run on every dialect, use constant SQL as above or branch on `s.Dialect()`. Only the statement text goes into the checksum, not the arguments.
 
 ## Running migrations
 
-| Command | Effect |
+The migrate commands run inside your app's own binary (`cmd/app`), so they use your `DATABASE_URL` and your registered migrations.
+
+| Command | What it does |
 | --- | --- |
-| `vukem migrate` | Run pending migrations in one batch |
-| `vukem migrate:rollback [--step N]` | Roll back the last batch, or the last N migrations |
-| `vukem migrate:reset` | Roll back everything |
-| `vukem migrate:fresh` | Drop all tables and re-run every migration |
-| `vukem migrate:status [--json]` | Which migrations ran, in which batch, and when |
+| `vukem migrate` | Runs every pending migration, in ID order, as one new batch |
+| `vukem migrate:rollback` | Reverts the last batch, newest first |
+| `vukem migrate:rollback --step 2` | Reverts the last 2 migrations, whatever their batch |
+| `vukem migrate:reset` | Reverts every applied migration |
+| `vukem migrate:fresh` | Drops **every table** and runs all migrations again |
+| `vukem migrate:status` | Lists every migration with its state and batch |
+| `vukem migrate:status --json` | The same as JSON |
+| `vukem db:wipe` | Drops every table without migrating |
 
-`migrate:reset` and `migrate:fresh` refuse to run with `APP_ENV=production` unless `--force` is given.
+```text
+$ vukem migrate:rollback
+Rolled back: 20261018100000_add_reading_minutes_to_posts_table
+```
 
-Each applied migration stores a checksum of the SQL it produced. `migrate:status` flags migrations whose SQL **changed** after they ran and migrations recorded in the database but **missing** from code.
+<Callout type="warning" title="fresh, reset and wipe destroy data">
+`migrate:fresh` and `db:wipe` drop every table in the database, including tables no migration created. `migrate:reset` runs every `Down`. All three refuse to run with `APP_ENV=production` unless you pass `--force`: `refusing to run a destructive command in production without --force`.
+</Callout>
 
-In code, `app.Migrator()` returns a `*schema.Migrator` with `Up`, `Rollback`, `Reset`, `Fresh` and `Status`; `vukemtest.New` uses it to migrate the test database.
+### Under the hood
+
+- The first command creates the tracking table: `migrations (id VARCHAR(255) PRIMARY KEY, batch INTEGER, checksum VARCHAR(64), ran_at TIMESTAMP)`.
+- **Batches.** Every `vukem migrate` gets the next batch number. `rollback` without `--step` reverts exactly the migrations of the highest batch, so "undo my last migrate" works even when it was several migrations.
+- **One transaction per migration.** Each `Up` (and its row in `migrations`) runs in its own transaction. If migration 3 of 5 fails, migrations 1 and 2 stay applied, migration 3 is rolled back, and `migrate` stops with `schema: migrate <id>: <error>`. MySQL commits DDL implicitly, so there a failed migration may stay half applied: keep MySQL migrations small.
+- **Rollback** needs `Down`: `schema: migration <id> has no Down`. A migration recorded in the database but missing from code cannot be reverted: `schema: migration <id> is recorded but missing from code`.
+- **`fresh`** drops every table (with `CASCADE` on PostgreSQL, foreign keys switched off on SQLite and MySQL) and then runs `Up` for everything.
+
+### Checksums: catching edited migrations
+
+When a migration runs, Vukem stores the SHA-256 of the SQL its `Up` generates for your dialect. `migrate:status` regenerates that SQL (without running it) and compares:
+
+| Status | Meaning |
+| --- | --- |
+| `Pending` | Not applied yet |
+| `Ran` | Applied, and the SQL still matches |
+| `Ran (CHANGED since applied)` | Someone edited the migration after it ran: this database and a fresh one now differ |
+| `Ran (missing from code)` | Recorded in the database, but no migration has this ID any more |
+
+`vukem migrate:status --json` prints one object per migration (shown indented):
+
+```json
+[
+  {
+    "id": "20261016184613_create_users_table",
+    "ran": true,
+    "batch": 1,
+    "ran_at": "2026-10-18T00:38:26Z"
+  },
+  {"id": "20261018100000_add_reading_minutes_to_posts_table", "ran": false}
+]
+```
+
+With `--json`, each entry also carries `"changed": true` or `"missing": true` when they apply. While the checksum is computed, statements are recorded instead of executed, so `s.HasTable` and `s.HasColumn` return `false`; keep the SQL a migration generates independent of the current database where you can.
+
+### From code
+
+`app.Migrator()` returns a `*schema.Migrator` over `app.DB()` with the registered migrations:
+
+| Method | Returns |
+| --- | --- |
+| `Up(ctx)` | The IDs that ran |
+| `Rollback(ctx, steps)` | The IDs reverted, newest first (`steps` 0 = last batch) |
+| `Reset(ctx)` | The IDs reverted |
+| `Fresh(ctx)` | The IDs that ran after dropping everything |
+| `Status(ctx)` | `[]schema.Status`: `ID`, `Ran`, `Batch`, `RanAt`, `Changed`, `Missing` |
+| `Checksum(mig)` | The SHA-256 of a migration's SQL for this dialect |
+
+`schema.NewMigrator(db, migrations)` builds one for any `*database.DB`, and `schema.DropAll(ctx, db)` is what `db:wipe` runs.
+
+## Deploying migrations
+
+Run `vukem migrate` once per deploy, before the new code serves traffic: as a release command on [Railway](/docs/deployment/docker-and-railway), or a step in your pipeline. Only one process should migrate at a time.
+
+Because the old code keeps running while the new schema arrives, change tables in steps that both versions understand: add a nullable column first, deploy code that writes it, then make it required in a later migration.
+
+## Security
+
+- Table and column names are validated identifiers and always quoted.
+- `Default` values are written as escaped SQL literals.
+- Partial-index expressions, CHECK expressions, `schema.Expr` and `s.Raw` are raw SQL: write them yourself, never build them from input.
+- `migrate:fresh`, `migrate:reset` and `db:wipe` need `--force` in production.
+- Run migrations with a database user allowed to change the schema, and the app with a user that cannot, when your platform allows it.
+
+## Testing
+
+`vukemtest.New` runs every registered migration on a fresh in-memory SQLite database for each test, and fails the test when one fails. A migration bug therefore shows up in the first test of the suite.
+
+```go title="tests/migrations_test.go"
+func TestMigrationsRollBackCleanly(t *testing.T) {
+	app := vukemtest.New(t, bootstrap.New)
+
+	m, err := app.Migrator()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := m.Reset(t.Context()); err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+
+	if _, err := m.Up(t.Context()); err != nil {
+		t.Fatalf("migrate again: %v", err)
+	}
+}
+```
+
+- `vukemtest.Options{SkipMigrations: true}` starts with an empty database.
+- `app.RefreshDatabase(t)` drops every table and migrates again.
+- SQLite reads an unknown double-quoted identifier as a string, so `t.Index("mispelled")` passes on SQLite and fails on PostgreSQL and MySQL. If you deploy on those, run the tests against them in CI too, with `vukemtest.Options{Env: map[string]string{"DATABASE_URL": url}}`.
+
+## Common mistakes
+
+**Editing a migration that already ran.** The database does not re-run it; `migrate:status` shows `Ran (CHANGED since applied)` and production keeps the old schema. Write a new migration instead.
+
+**Adding a required column to a table with rows.**
+
+```go
+// Wrong: existing rows have no value, so the database refuses.
+t.String("subtitle")
+
+// Right: give it a default, or make it nullable.
+t.String("subtitle").Default("")
+t.String("subtitle").Nullable()
+```
+
+On SQLite the error reads `Cannot add a NOT NULL column with default value NULL`.
+
+**`ON DELETE` before `Constrained`.**
+
+```go
+// Wrong: schema: post_id: call Constrained() before an ON DELETE action
+t.ForeignID("post_id").CascadeOnDelete().Constrained()
+
+// Right
+t.ForeignID("post_id").Constrained().CascadeOnDelete()
+```
+
+**Relying on `Constrained()` for irregular plurals.** `t.ForeignID("category_id").Constrained()` references `categorys`; pass `Constrained("categories")`.
+
+**A `Down` that does not undo `Up`.** `rollback` then leaves the schema in a state no migration describes. Test `Reset` followed by `Up`, as above.
+
+## Next steps
+
+<CardGroup cols="2">
+<Card title="ORM" href="/docs/database/orm" icon="database">
+Map the tables to Go structs.
+</Card>
+<Card title="Relations" href="/docs/database/relations" icon="boxes">
+Use the foreign keys and the pivot table.
+</Card>
+<Card title="Factories and seeders" href="/docs/database/factories-seeders" icon="code">
+Fill the new tables with fake data.
+</Card>
+<Card title="CLI" href="/docs/cli/overview" icon="terminal">
+Every vukem command.
+</Card>
+</CardGroup>
+
+Package reference: [`schema`](https://pkg.go.dev/github.com/AlexGalhardo/vukem/schema).

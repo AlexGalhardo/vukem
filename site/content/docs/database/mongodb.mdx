@@ -1,64 +1,51 @@
 ---
 title: MongoDB
-description: A typed collection API over the official MongoDB driver.
+description: Store documents in MongoDB with a typed collection API over the official Go driver, with lazy connections, health checks and filters that are safe from operator injection.
 ---
 
-MongoDB stores JSON-like **documents** in **collections** instead of rows in tables. It suits data whose shape varies or grows over time: audit trails, event history, product attributes, telemetry. `drivers/mongo` wraps the official driver with typed collections, so a `Coll[User]` reads and writes `User` values. The [step-by-step guide](#step-by-step-an-audit-log) below the reference starts from zero.
+MongoDB stores JSON-like **documents** in **collections** instead of rows in tables. It suits data whose shape varies or grows over time: activity feeds, audit trails, event history, telemetry. `drivers/mongo` wraps the [official Go driver](https://pkg.go.dev/go.mongodb.org/mongo-driver/v2/mongo) with typed collections, so a `Coll[Activity]` reads and writes `Activity` values instead of raw maps.
 
-```bash
-go get github.com/AlexGalhardo/vukem/drivers/mongo
-```
+You will learn:
 
-```go
-m, err := mongo.Open(ctx, os.Getenv("MONGO_URL"), os.Getenv("MONGO_DATABASE")) // empty MONGO_DATABASE: database from the URI path
-app.AddHealthCheck("mongo", m.Ping)                                              // reported by /up?checks=1
+- how documents, collections and BSON relate to Go structs;
+- how to connect with `mongo.Open` or `mongo.OpenLazy`, and pick the database;
+- every method of a typed collection, from `FindOne` to `Aggregate`;
+- how to create indexes and use the driver directly when you need more;
+- how to keep filters safe from operator injection.
 
-users := mongo.Collection[models.User](m, "users")
+The running example is the blog's **activity feed**: "Ada published a post", "Grace commented on it". The posts themselves stay in SQL; the feed, which grows fast and changes shape, goes to MongoDB.
 
-u, err := users.FindOne(ctx, bson.D{{Key: "email", Value: email}}) // mongo.ErrNotFound when missing
-for u, err := range users.Find(ctx, bson.D{{Key: "active", Value: true}}, options.Find().SetLimit(50)) {
-	// break to stop early; the cursor is closed
+## The idea
+
+A SQL table is a spreadsheet: every row has the same columns. A MongoDB collection is a **box of index cards**: each card (document) may carry different fields, and a field may hold a list or another card. You do not declare the cards' shape in advance, so there are no migrations.
+
+Documents travel as [BSON](https://bsonspec.org), a binary cousin of JSON. In Go you describe a document with a struct and `bson` [struct tags](https://go.dev/ref/spec#Struct_types), much like `json` tags:
+
+```go title="app/models/activity.go"
+package models
+
+import (
+	"time"
+
+	"go.mongodb.org/mongo-driver/v2/bson"
+)
+
+// Activity is one entry of the blog's activity feed.
+type Activity struct {
+	ID     bson.ObjectID  `bson:"_id,omitempty" json:"id"`
+	UserID int64          `bson:"user_id"       json:"user_id"`
+	Action string         `bson:"action"        json:"action"`
+	PostID int64          `bson:"post_id"       json:"post_id"`
+	Data   map[string]any `bson:"data"          json:"data"`
+	At     time.Time      `bson:"at"            json:"at"`
 }
-
-id, err := users.Insert(ctx, u)
-matched, modified, err := users.UpdateOne(ctx, filter, bson.D{{Key: "$set", Value: bson.D{{Key: "name", Value: n}}}})
-totals, err := mongo.Aggregate[Total](ctx, users, pipeline)
 ```
 
-Also `All`, `Count`, `InsertMany`, `UpdateMany`, `ReplaceOne`, `DeleteOne`, `DeleteMany`, and `Raw()` on the client and on collections for indexes, transactions and change streams.
+`_id` is the document's primary key. `omitempty` leaves a zero `ObjectID` out, so MongoDB generates one on insert.
 
-## Connection
+MongoDB has its own API on purpose: the SQL query builder, relations and migrations do not apply to it. Filters are BSON documents such as `bson.D{{Key: "user_id", Value: 7}}`.
 
-| Variable | Meaning |
-| --- | --- |
-| `MONGO_URL` | connection string; its path (`mongodb://host:27017/app`) names the database when `MONGO_DATABASE` is empty |
-| `MONGO_DATABASE` | database name passed as the third argument of `mongo.Open`; wins over the URI path |
-
-Managed providers often give a URL without a path (Railway's `MONGO_URL` is `mongodb://mongo:<password>@mongodb.railway.internal:27017`). Set `MONGO_DATABASE` instead of editing the URL: with neither a path nor a name, `Open` fails.
-
-<Callout type="warning">
-A database in the URI path is also the default `authSource`. Appending `/app` to a provider URL makes the driver authenticate against `app` instead of `admin`, and login fails. Keep the path empty and set `MONGO_DATABASE`, or add `?authSource=admin` (`mongodb://user:pw@host:27017/app?authSource=admin`).
-</Callout>
-
-`Open` pings the primary, so the app does not boot while MongoDB is down; a malformed URI always fails. To start anyway and let a readiness check report the outage, use `mongo.OpenLazy`, which validates the URI and database name without contacting the server:
-
-```go
-m, err := mongo.OpenLazy(os.Getenv("MONGO_URL"), os.Getenv("MONGO_DATABASE"))
-app.AddHealthCheck("mongo", m.Ping) // /up?checks=1 fails until MongoDB answers
-app.OnShutdown(m.Close)
-```
-
-The lazy client starts its topology-monitoring goroutines immediately, even before the server is up, so it must be closed on shutdown like any other client.
-
-Server selection waits 10 seconds unless the URI sets `serverSelectionTimeoutMS`.
-
-<Callout type="warning">
-Never pass decoded request JSON as a filter: operators such as `$where` or `$ne` would come from the client. Build filters from validated fields.
-</Callout>
-
-MongoDB has its own API on purpose: the SQL query builder and migrations do not apply to it.
-
-## Step by step: an audit log
+## Quick start
 
 <Steps>
 <Step title="1. Start MongoDB locally">
@@ -76,44 +63,46 @@ docker compose up -d mongo
 
 ```bash title=".env"
 MONGO_URL=mongodb://localhost:27017
-MONGO_DATABASE=app
+MONGO_DATABASE=blog
 ```
 
 </Step>
-<Step title="2. Describe the document">
+<Step title="2. Add the driver">
 
-```go title="app/models/audit_entry.go"
-import "go.mongodb.org/mongo-driver/v2/bson"
-
-type AuditEntry struct {
-	ID     bson.ObjectID  `bson:"_id,omitempty" json:"id"`
-	UserID int64          `bson:"user_id"       json:"user_id"`
-	Action string         `bson:"action"        json:"action"`
-	Data   map[string]any `bson:"data"          json:"data"`
-	At     time.Time      `bson:"at"            json:"at"`
-}
+```bash
+go get github.com/AlexGalhardo/vukem/drivers/mongo
 ```
-
-`omitempty` on `_id` lets MongoDB generate the id on insert.
 
 </Step>
 <Step title="3. Connect at boot and create an index">
 
-```go title="app/audit/audit.go"
+```go title="app/activity/feed.go"
+package activity
+
 import (
+	"context"
+	"time"
+
 	"go.mongodb.org/mongo-driver/v2/bson"
 	mongodriver "go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 
+	vukem "github.com/AlexGalhardo/vukem"
 	"github.com/AlexGalhardo/vukem/drivers/mongo"
+
+	"example.com/blog/app/models"
 )
 
-type Log struct {
-	entries *mongo.Coll[models.AuditEntry]
+// Feed records and lists what happens on the blog.
+type Feed struct {
+	entries *mongo.Coll[models.Activity]
 }
 
-func New(ctx context.Context, app *vukem.App) (*Log, error) {
-	m, err := mongo.Open(ctx, app.Source.Get("MONGO_URL"), app.Source.Get("MONGO_DATABASE"))
+func New(ctx context.Context, app *vukem.App) (*Feed, error) {
+	m, err := mongo.Open(ctx,
+		app.Source.Get("MONGO_URL"),
+		app.Source.Get("MONGO_DATABASE"),
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -121,17 +110,21 @@ func New(ctx context.Context, app *vukem.App) (*Log, error) {
 	app.AddHealthCheck("mongo", m.Ping)
 	app.OnShutdown(m.Close)
 
-	entries := mongo.Collection[models.AuditEntry](m, "audit_entries")
+	entries := mongo.Collection[models.Activity](m, "activities")
 
-	// Indexes are created through the official driver: Raw() returns it.
-	_, err = entries.Raw().Indexes().CreateOne(ctx, mongodriver.IndexModel{
-		Keys: bson.D{{Key: "user_id", Value: 1}, {Key: "at", Value: -1}},
-	})
+	// Indexes go through the official driver: Raw() returns it.
+	_, err = entries.Raw().Indexes().CreateOne(ctx,
+		mongodriver.IndexModel{
+			Keys: bson.D{
+				{Key: "user_id", Value: 1},
+				{Key: "at", Value: -1},
+			},
+		})
 	if err != nil {
 		return nil, err
 	}
 
-	return &Log{entries: entries}, nil
+	return &Feed{entries: entries}, nil
 }
 ```
 
@@ -140,16 +133,32 @@ func New(ctx context.Context, app *vukem.App) (*Log, error) {
 </Step>
 <Step title="4. Write and read">
 
-```go
-func (l *Log) Record(ctx context.Context, userID int64, action string, data map[string]any) error {
-	_, err := l.entries.Insert(ctx, models.AuditEntry{UserID: userID, Action: action, Data: data, At: time.Now().UTC()})
+```go title="app/activity/feed.go"
+func (f *Feed) Record(
+	ctx context.Context,
+	userID, postID int64,
+	action string,
+) error {
+	_, err := f.entries.Insert(ctx, models.Activity{
+		UserID: userID,
+		PostID: postID,
+		Action: action,
+		At:     time.Now().UTC(),
+	})
+
 	return err
 }
 
-func (l *Log) Recent(ctx context.Context, userID int64) ([]models.AuditEntry, error) {
-	return l.entries.All(ctx,
-		bson.D{{Key: "user_id", Value: userID}}, // built from a typed value, never from request JSON
-		options.Find().SetSort(bson.D{{Key: "at", Value: -1}}).SetLimit(50),
+func (f *Feed) Recent(
+	ctx context.Context,
+	userID int64,
+) ([]models.Activity, error) {
+	return f.entries.All(ctx,
+		// Built from a typed value, never from request JSON.
+		bson.D{{Key: "user_id", Value: userID}},
+		options.Find().
+			SetSort(bson.D{{Key: "at", Value: -1}}).
+			SetLimit(50),
 	)
 }
 ```
@@ -157,14 +166,14 @@ func (l *Log) Recent(ctx context.Context, userID int64) ([]models.AuditEntry, er
 </Step>
 <Step title="5. Use it from a handler">
 
-```go
-func (h *Account) Activity(c *web.Ctx) error {
+```go title="app/controllers/activity_controller.go"
+func (h *ActivityController) Index(c *web.Ctx) error {
 	u, err := auth.User[models.User](c, "web")
 	if err != nil {
 		return err
 	}
 
-	entries, err := h.audit.Recent(c.Context(), u.ID)
+	entries, err := h.feed.Recent(c.Context(), u.ID)
 	if err != nil {
 		return err
 	}
@@ -173,20 +182,282 @@ func (h *Account) Activity(c *web.Ctx) error {
 }
 ```
 
+```json
+[
+  {
+    "id": "6711f0c2a1b2c3d4e5f60718",
+    "user_id": 1,
+    "action": "post.published",
+    "post_id": 42,
+    "data": null,
+    "at": "2026-10-18T09:00:00Z"
+  }
+]
+```
+
 </Step>
 </Steps>
 
-## Pitfalls
+## Connecting
 
-- **Database name.** With neither a path in `MONGO_URL` nor `MONGO_DATABASE`, `Open` fails; a path in the URI also changes `authSource` (see the warning above).
-- **No migrations.** Collections are created on first insert. Create indexes in code at boot (as above) or in a deploy script; a missing index turns queries into full scans.
-- **Unique constraints need a unique index.** Without one, two concurrent inserts both succeed. Add `Options: options.Index().SetUnique(true)` and check `mongodriver.IsDuplicateKeyError(err)`.
-- **Zero values are written.** A `0` or `""` field is stored unless the tag has `omitempty`; with `omitempty` you cannot store an explicit zero. Choose per field.
-- **Times are stored in UTC milliseconds.** Nanoseconds are truncated; compare times at millisecond precision in tests.
-- **Large `Find` results.** `All` loads everything into memory; iterate with `Find` (a cursor) and set a limit for big collections.
+```go
+m, err := mongo.Open(ctx, uri, database)
+```
 
-## Security notes
+| Function | Contacts the server | When MongoDB is down |
+| --- | --- | --- |
+| `mongo.Open(ctx, uri, db...)` | yes: pings the primary | returns an error, so the app does not boot |
+| `mongo.OpenLazy(uri, db...)` | no: validates the URI and the database name only | the app boots and connects on first use; `m.Ping` fails readiness until MongoDB answers |
 
-- **Operator injection.** Decoding request JSON into a `bson.M` filter lets a client send `{"email": {"$ne": ""}}` and match every document. Validate input with [`z`](/docs/basics/validation) into typed fields first, then build `bson.D` filters from those fields.
-- Enable authentication on every MongoDB outside your laptop, use a user with access to the app's database only, and keep the credentials in `MONGO_URL` in the environment.
-- Use TLS (`mongodb+srv://` on Atlas, or `?tls=true`) across networks.
+**Picking the database.** The third argument wins when it is non-empty; otherwise the database comes from the URI path (`mongodb://host:27017/blog`). With neither, opening fails:
+
+```text
+mongo: no database: pass it to Open (e.g. MONGO_DATABASE) or set the URI path
+```
+
+| Variable | Meaning |
+| --- | --- |
+| `MONGO_URL` | The [connection string](https://www.mongodb.com/docs/manual/reference/connection-string/); its path names the database when `MONGO_DATABASE` is empty |
+| `MONGO_DATABASE` | The database name passed as the third argument; wins over the URI path |
+
+Like `REDIS_URL`, both are names your code reads with `app.Source.Get`; Vukem does not read them itself.
+
+Managed providers often give a URL without a path (Railway's `MONGO_URL` is `mongodb://mongo:<password>@mongodb.railway.internal:27017`). Set `MONGO_DATABASE` instead of editing the URL.
+
+<Callout type="warning" title="The URI path is also the authSource">
+A database in the URI path is also the default `authSource`. Appending `/blog` to a provider URL makes the driver authenticate against `blog` instead of `admin`, and login fails. Keep the path empty and set `MONGO_DATABASE`, or add `?authSource=admin`.
+</Callout>
+
+What else happens:
+
+- Server selection waits **10 seconds** unless the URI sets `serverSelectionTimeoutMS`.
+- A malformed URI fails with `mongo: parse uri: <reason>`; a failed connect or ping with `mongo: connect: <reason>` or `mongo: ping: <reason>`.
+- The lazy client starts its topology-monitoring goroutines right away, even before the server answers, so close it on shutdown like any other client: `app.OnShutdown(m.Close)`. `m.Close(ctx)` has the `func(context.Context) error` signature `OnShutdown` expects.
+
+```go
+m, err := mongo.OpenLazy(
+	app.Source.Get("MONGO_URL"),
+	app.Source.Get("MONGO_DATABASE"),
+)
+if err != nil {
+	return nil, err // a malformed URI or no database name
+}
+
+app.AddHealthCheck("mongo", m.Ping) // /up?checks=1 fails until it answers
+app.OnShutdown(m.Close)
+```
+
+| Client method | Returns |
+| --- | --- |
+| `m.Ping(ctx)` | an error unless the primary answers |
+| `m.Close(ctx)` | disconnects |
+| `m.Database()` | the bound `*mongo.Database` of the official driver |
+| `m.Raw()` | the official `*mongo.Client`, for transactions, sessions and other databases |
+
+## Typed collections
+
+`mongo.Collection[T](m, name)` returns a `*mongo.Coll[T]`: every document it reads decodes into a `T`.
+
+```go
+feed := mongo.Collection[models.Activity](m, "activities")
+```
+
+Collections are created on the first insert; there is nothing to declare.
+
+### Reading
+
+| Method | Returns | Notes |
+| --- | --- | --- |
+| `FindOne(ctx, filter, opts...)` | `(T, error)` | `mongo.ErrNotFound` when nothing matches |
+| `Find(ctx, filter, opts...)` | an iterator of `(T, error)` | Streams with a cursor; breaking out of the loop closes it |
+| `All(ctx, filter, opts...)` | `([]T, error)` | Loads every match into memory; `nil` when nothing matches |
+| `Count(ctx, filter)` | `(int64, error)` | Counts matching documents |
+| `mongo.Aggregate[R](ctx, coll, pipeline)` | `([]R, error)` | Runs an [aggregation pipeline](https://www.mongodb.com/docs/manual/core/aggregation-pipeline/) and decodes into `R` |
+
+```go
+latest, err := feed.FindOne(ctx,
+	bson.D{{Key: "post_id", Value: post.ID}},
+	options.FindOne().SetSort(bson.D{{Key: "at", Value: -1}}),
+)
+if errors.Is(err, mongo.ErrNotFound) {
+	// No activity for this post yet.
+}
+```
+
+`Find` returns a Go [range-over-func iterator](https://go.dev/blog/range-functions). The first non-nil error ends the loop:
+
+```go
+for a, err := range feed.Find(ctx,
+	bson.D{{Key: "action", Value: "comment.created"}},
+	options.Find().SetLimit(500),
+) {
+	if err != nil {
+		return err
+	}
+
+	notify(a)
+}
+```
+
+`mongo.Aggregate` has two type parameters, `R` (the result) and `T` (the collection); you write `R`, and Go infers `T` from the collection:
+
+```go
+type ActionCount struct {
+	Action string `bson:"_id"`
+	Total  int64  `bson:"total"`
+}
+
+pipeline := bson.A{
+	bson.D{{Key: "$match", Value: bson.D{{Key: "user_id", Value: 1}}}},
+	bson.D{{Key: "$group", Value: bson.D{
+		{Key: "_id", Value: "$action"},
+		{Key: "total", Value: bson.D{{Key: "$sum", Value: 1}}},
+	}}},
+}
+
+counts, err := mongo.Aggregate[ActionCount](ctx, feed, pipeline)
+// [{post.published 3} {comment.created 12}]
+```
+
+Options come from the official [`options`](https://pkg.go.dev/go.mongodb.org/mongo-driver/v2/mongo/options) package: `options.Find().SetSort(...).SetLimit(...).SetSkip(...).SetProjection(...)`, `options.FindOne().SetSort(...)`.
+
+### Writing
+
+| Method | Returns | Notes |
+| --- | --- | --- |
+| `Insert(ctx, doc)` | `(any, error)` | The new `_id` (generated when the document has none) |
+| `InsertMany(ctx, docs)` | `([]any, error)` | The `_id`s in order |
+| `UpdateOne(ctx, filter, update)` | `(matched, modified int64, err)` | Applies an update document to the first match |
+| `UpdateMany(ctx, filter, update)` | `(matched, modified int64, err)` | To every match |
+| `ReplaceOne(ctx, filter, doc)` | `(matched int64, err)` | Replaces the first match with `doc` |
+| `DeleteOne(ctx, filter)` | `(int64, error)` | Deleted count (0 or 1) |
+| `DeleteMany(ctx, filter)` | `(int64, error)` | Deleted count |
+
+`Insert` takes the document by value, so it cannot fill your struct's `ID`. Keep the returned id:
+
+```go
+id, err := feed.Insert(ctx, entry)
+if err != nil {
+	return err
+}
+
+entry.ID = id.(bson.ObjectID) // generated ids are ObjectIDs
+```
+
+An update document uses [update operators](https://www.mongodb.com/docs/manual/reference/operator/update/) such as `$set` and `$inc`:
+
+```go
+matched, modified, err := feed.UpdateOne(ctx,
+	bson.D{{Key: "_id", Value: entry.ID}},
+	bson.D{{Key: "$set", Value: bson.D{
+		{Key: "data.title", Value: "Hello, world"},
+	}}},
+)
+// matched == 1, modified == 1 (0 when the value was already the same)
+```
+
+### The official driver underneath
+
+`coll.Raw()` returns the official `*mongo.Collection`: indexes, change streams, bulk writes, `FindOneAndUpdate`. `m.Raw()` returns the client, for [transactions](https://www.mongodb.com/docs/manual/core/transactions/) (which need a replica set).
+
+A unique index makes MongoDB reject duplicates; without one, two concurrent inserts both succeed:
+
+```go
+_, err = feed.Raw().Indexes().CreateOne(ctx, mongodriver.IndexModel{
+	Keys:    bson.D{{Key: "user_id", Value: 1}, {Key: "post_id", Value: 1}},
+	Options: options.Index().SetUnique(true),
+})
+
+_, err = feed.Insert(ctx, dup)
+if mongodriver.IsDuplicateKeyError(err) {
+	return errs.ErrConflict // 409
+}
+```
+
+## Security
+
+<Callout type="warning" title="Never use request JSON as a filter">
+Decoding a request body into a `bson.M` and passing it as a filter lets a client send `{"user_id": {"$ne": 0}}` and match every document, or `$where` to run JavaScript. Validate input with [`z`](/docs/basics/validation) into typed fields first, then build `bson.D` filters from those fields.
+</Callout>
+
+- Enable authentication on every MongoDB outside your laptop, and give the app a user with access to its own database only.
+- Keep the credentials in `MONGO_URL` in the environment, never in code.
+- Use TLS across networks: `mongodb+srv://` on Atlas, or `?tls=true`.
+- Field names in `bson.D` filters must come from your code, not from input, for the same reason values must be typed.
+
+## Testing
+
+Unit tests should not need a running MongoDB: put the feed behind a small [interface](https://go.dev/tour/methods/9) and pass a fake in tests.
+
+```go title="app/activity/recorder.go"
+// Recorder is what handlers need from the feed.
+type Recorder interface {
+	Record(ctx context.Context, userID, postID int64, action string) error
+}
+```
+
+```go title="tests/fakes_test.go"
+type fakeFeed struct{ actions []string }
+
+func (f *fakeFeed) Record(
+	_ context.Context,
+	_, _ int64,
+	action string,
+) error {
+	f.actions = append(f.actions, action)
+	return nil
+}
+```
+
+For integration tests, run MongoDB in Docker and connect with a database per test run (`MONGO_DATABASE=blog_test`), dropping it afterwards with `m.Database().Drop(ctx)`. Put them behind a build tag such as `//go:build integration`, as the driver's own tests do.
+
+Times are stored in milliseconds: compare them with [`Time.Equal`](https://pkg.go.dev/time#Time.Equal) after truncating, `want.Truncate(time.Millisecond)`.
+
+## Common mistakes
+
+**Returning `mongo.ErrNotFound` from a handler.** It is a plain error, not an HTTP error, so the visitor gets a 500. Map it:
+
+```go
+a, err := feed.FindOne(ctx, filter)
+if errors.Is(err, mongo.ErrNotFound) {
+	return errs.ErrNotFound // 404
+}
+if err != nil {
+	return err
+}
+```
+
+**`All` with nothing found.** It returns a `nil` slice, which encodes as JSON `null`. Return `[]models.Activity{}` when the client expects an array:
+
+```go
+if entries == nil {
+	entries = []models.Activity{}
+}
+```
+
+**Neither a URI path nor `MONGO_DATABASE`.** `Open` fails with `mongo: no database: ...`; set `MONGO_DATABASE`. Adding a path to a provider URL changes `authSource` (see the warning above).
+
+**No index.** Without one, every query reads the whole collection. Create indexes at boot (as above) or in a deploy script.
+
+**Zero values are written.** A `0` or `""` field is stored unless its tag has `omitempty`; with `omitempty` you cannot store an explicit zero. Decide per field.
+
+**`All` on a large collection.** It loads everything into memory. Iterate with `Find` and set a limit.
+
+## Next steps
+
+<CardGroup cols="2">
+<Card title="Database" href="/docs/database/overview" icon="database">
+SQL connections, transactions and query observers.
+</Card>
+<Card title="Redis" href="/docs/database/redis" icon="zap">
+Shared cache, sessions and queues.
+</Card>
+<Card title="Validation" href="/docs/basics/validation" icon="shield">
+Turn request input into typed values before building filters.
+</Card>
+<Card title="Docker and Railway" href="/docs/deployment/docker-and-railway" icon="rocket">
+Run MongoDB next to the app.
+</Card>
+</CardGroup>
+
+Package reference: [`drivers/mongo`](https://pkg.go.dev/github.com/AlexGalhardo/vukem/drivers/mongo).

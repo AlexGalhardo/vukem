@@ -1,167 +1,657 @@
 ---
 title: Database
-description: SQLite by default with safe pragmas and split reader/writer pools, transactions, and opt-in drivers for PostgreSQL, MySQL/MariaDB, Redis and MongoDB.
+description: Connect to SQLite, PostgreSQL or MySQL, run raw SQL safely on every dialect, use transactions, and watch every query your app sends.
 ---
 
-## Support matrix
+Almost every web app keeps data somewhere: the users who signed up, the posts they wrote, the comments under each post. Vukem talks to SQL databases through one small package, `database`, which opens the connection, picks safe defaults and gives the [ORM](/docs/database/orm) and the [migrations](/docs/database/migrations) a single way to run SQL. SQLite works out of the box with no server to install; PostgreSQL and MySQL/MariaDB are one import away.
 
-| Database | Package | Status |
+You will learn:
+
+- how `app.DB()` opens the database from `DATABASE_URL`, and what the defaults are;
+- what Vukem configures on SQLite so concurrent requests do not fail;
+- how to switch to PostgreSQL or MySQL/MariaDB;
+- how to write raw SQL once and run it on every dialect (`Rebind`, `RebindChecked`, `ScanTime`);
+- how transactions commit, roll back and run work after the commit;
+- how to watch every query for tracing or debugging.
+
+Throughout the database pages you build one example: a **blog** with users, posts, comments and tags.
+
+## The idea
+
+Think of the database as a big filing cabinet and your app as an office worker. The worker never walks to the cabinet for each sheet of paper: a small team of helpers (a <Term tip="A set of open connections kept ready, so each query does not pay the cost of connecting.">connection pool</Term>) stands next to it and fetches things on request. `database.Open` hires that team for you; `app.DB()` does it once, the first time you ask.
+
+Three types do all the work:
+
+| Type | What it is | You get it from |
 | --- | --- | --- |
-| SQLite (pure Go, no cgo) | core, `modernc.org/sqlite` | Available |
-| PostgreSQL | `drivers/postgres` (pgx) | Available |
-| MySQL 8 / MariaDB 11 | `drivers/mysql` (go-sql-driver/mysql) | Available |
-| [Redis](/docs/database/redis) (cache, sessions, queues, rate limiting) | `drivers/redis` (go-redis) | Available |
-| [MongoDB](/docs/database/mongodb) | `drivers/mongo` (official driver) | Available |
+| `*database.DB` | The connection pools plus the SQL <Term tip="The flavour of SQL a database speaks: SQLite, PostgreSQL and MySQL differ in placeholders, quoting and column types.">dialect</Term> | `app.DB()` or `database.Open` |
+| `*database.Tx` | One open transaction | `db.Tx(ctx, fn)` |
+| `database.Executor` | The [interface](https://go.dev/tour/methods/9) both implement | — |
 
-Drivers are separate Go modules, so importing the core never downloads a heavy driver.
+`Executor` has four methods: `ExecContext`, `QueryContext`, `QueryRowContext` and `Dialect`. The first three have the same signatures as Go's [`database/sql`](https://pkg.go.dev/database/sql), so anything you know about `sql.DB` applies. Every ORM and schema function takes an `Executor`, so the same function runs inside or outside a transaction: pass `db` or pass `tx`.
 
-## Connecting
+Every method takes a [`context.Context`](https://pkg.go.dev/context) first. The context carries the request's deadline: when the visitor closes the tab, the query is cancelled instead of running for nobody.
 
-`app.DB()` opens the default connection on first use from `DB_*` variables, registers a `db` health check (`/up?checks=1`) and closes it on shutdown:
+| Database | Package | Driver underneath |
+| --- | --- | --- |
+| SQLite (pure Go, no cgo) | core | [`modernc.org/sqlite`](https://pkg.go.dev/modernc.org/sqlite) |
+| PostgreSQL | `drivers/postgres` | [`jackc/pgx/v5`](https://pkg.go.dev/github.com/jackc/pgx/v5) |
+| MySQL 8 / MariaDB 11 | `drivers/mysql` | [`go-sql-driver/mysql`](https://pkg.go.dev/github.com/go-sql-driver/mysql) |
+| [Redis](/docs/database/redis) (cache, sessions, queues) | `drivers/redis` | `redis/go-redis/v9` |
+| [MongoDB](/docs/database/mongodb) (documents) | `drivers/mongo` | the official driver v2 |
 
-| Variable | Default |
-| --- | --- |
-| `DATABASE_URL` | `file:storage/database.sqlite` |
-| `DB_MAX_OPEN` | `10` |
-| `DB_MAX_IDLE` | `5` |
+Each driver is its own Go module, so an app that only uses SQLite never downloads pgx or the MySQL driver.
+
+## Quick start
+
+<Steps>
+<Step title="1. Point the app at a database">
+
+A new project already has this line. SQLite stores the whole database in one file:
+
+```bash title=".env"
+DATABASE_URL=file:storage/database.sqlite
+```
+
+</Step>
+<Step title="2. Create the tables">
+
+```bash
+vukem migrate
+```
+
+```text
+Migrated: 20261016184613_create_users_table
+Migrated: 20261016184615_create_posts_table
+```
+
+[Migrations](/docs/database/migrations) explains how to write them.
+
+</Step>
+<Step title="3. Ask the app for the database">
 
 ```go title="routes/web.go"
-db, err := app.DB() // *database.DB
-if err != nil {
-	return err
-}
-r.Resource("posts", controllers.NewPostController(db))
-```
+package routes
 
-SQLite URLs: `file:storage/app.db`, `sqlite:storage/app.db` or `:memory:`. Other schemes need their driver, added with `vukem.WithDatabaseDrivers(...)`.
+import (
+	"net/http"
 
-Outside an app, `database.Open(ctx, url, database.WithConfig(cfg))` returns the same `*database.DB`; `database.FromSQL(conn, dialect)` wraps an existing `*sql.DB`.
+	vukem "github.com/AlexGalhardo/vukem"
+	"github.com/AlexGalhardo/vukem/router"
+	"github.com/AlexGalhardo/vukem/web"
+)
 
-## SQLite defaults
-
-Every SQLite connection gets WAL journaling, `busy_timeout`, `foreign_keys=ON` and `BEGIN IMMEDIATE` for write transactions. Writes and transactions go to a **single-connection writer pool**, reads to a read-only reader pool, so concurrent requests do not fail with `SQLITE_BUSY`.
-
-Apps that never open a SQLite database can leave the driver out with the `vukem_nosqlite` build tag (`go build -tags vukem_nosqlite`, or `vukem_nosqlite` in the project's `.buildtags`, which `vukem new --minimal` writes). `database.Open` then refuses SQLite URLs with an error naming the tag. Tests (`vukemtest`) keep using in-memory SQLite, so run them without the tag.
-
-## Raw SQL
-
-`*database.DB` and `*database.Tx` implement `database.Executor`:
-
-```go
-var n int64
-err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM posts WHERE published = ?", true).Scan(&n)
-```
-
-Always pass values as arguments; never concatenate input into SQL. `db.Dialect()` gives `Quote` and `Placeholder` for portable statements, and `db.SQL()` exposes the underlying `*sql.DB`.
-
-PostgreSQL uses `$1, $2` placeholders where SQLite and MySQL use `?`. Write raw SQL once with `?` and rebind it for the connection's dialect:
-
-```go
-q := database.Rebind(db.Dialect(), "SELECT id FROM posts WHERE author_id = ? AND status = ?")
-rows, err := db.QueryContext(ctx, q, authorID, "published") // $1, $2 on PostgreSQL
-```
-
-`Rebind` leaves `?` inside string literals, quoted identifiers, dollar-quoted bodies and comments alone. On PostgreSQL `??` is a literal `?`, for jsonb operators (`data ?? 'key'`). `ExecContext` and `QueryContext` never rebind on their own, so queries already written with `$n` keep working. Write one style per query: a `$n` mixed with `?` is not renumbered and would bind the wrong value. `database.RebindChecked(d, query)` is the fail-closed variant: it returns `ErrMixedPlaceholders` for that mix and `ErrUnterminatedSQL` when the query ends inside a literal, quoted identifier, comment (a trailing `--` comment needs its newline) or dollar-quoted body. Use it for queries assembled at runtime, where an unbalanced quote would swallow the SQL appended after it; `Rebind` is enough for constant queries. The errors quote at most the first 80 bytes of the query; what of it to log is the caller's call. The lexer assumes the servers' default settings: `standard_conforming_strings` on (PostgreSQL), no `ANSI_QUOTES` or `NO_BACKSLASH_ESCAPES` (MySQL). MySQL executes the contents of `/*! */` and `/*+ */` comments, but they are skipped like any comment, so placeholders inside them are not supported.
-
-SQLite stores timestamps as text and reports no column type for `MIN`, `MAX`, `COALESCE` or a subquery over a timestamp column, so a bare `Scan(&t)` of such an expression into a `time.Time` fails with `unsupported Scan, storing driver.Value type string`. Wrap the destination in `database.ScanTime`, which accepts `*time.Time`, `**time.Time`, `*sql.NullTime` and `*sql.Null[time.Time]` (`&n.Null` for an `orm.NullTime`), parses the text forms SQLite and its driver write (a date, or a date and time with `T` or a space and an optional `Z` or offset), and stores a `time.Time` from PostgreSQL or MySQL as is. Time-only text and unix timestamps stored as integers are errors; text with an offset comes back in a fixed zone, so compare times with `Equal`:
-
-```go
-var oldest sql.NullTime
-err := db.QueryRowContext(ctx, "SELECT MIN(created_at) FROM refunds WHERE status = ?", "pending").
-	Scan(database.ScanTime(&oldest))
-```
-
-The ORM does this for its time fields on SQLite (`Get`, `First`, `Each`, `Pluck`, relations), so a model also reads a timestamp kept in a `TEXT` column. Plain `string` destinations are untouched: `MAX(day)` over text dates still scans as the stored text.
-
-## Query observers
-
-A `database.QueryObserver` sees every statement run through a `DB` and its transactions (SQL, duration, error; `Args` hold user data, so never log them). Add one to `app.DB()` with an option; it runs next to devtools instead of replacing it:
-
-```go
-app, err := vukem.New(vukem.WithQueryObservers(sqlTracer))
-```
-
-On a `DB` you open yourself, pass `database.WithQueryObserver` once per observer or call `db.AddQueryObserver` before sharing the `DB`. `db.SetQueryObserver` replaces every observer. A panicking observer is logged and skipped, so it never fails the query or stops the other observers.
-
-## Transactions
-
-```go
-err := db.Tx(ctx, func(tx *database.Tx) error {
-	if err := orm.Create(ctx, tx, &order); err != nil {
+func Web(r *router.Router, app *vukem.App) error {
+	db, err := app.DB()
+	if err != nil {
 		return err
 	}
 
-	return orm.Create(ctx, tx, &item)
-}) // commit on nil, rollback on error or panic (the panic is re-raised)
-```
+	r.Get("/stats", func(c *web.Ctx) error {
+		var posts int64
 
-`database.RunInTx(ctx, ex, fn)` joins the caller's transaction when `ex` is already a `*Tx`, or starts one when it is a `*DB`, which keeps service functions composable.
+		err := db.QueryRowContext(c.Context(),
+			"SELECT COUNT(*) FROM posts").Scan(&posts)
+		if err != nil {
+			return err
+		}
 
-`tx.AfterCommit(func(ctx context.Context) { ... })` runs work once the transaction commits, in registration order, and drops it on rollback or panic. A hook registered after the `db.Tx` function returned never runs; a panicking hook is logged and the others still run (`db.Tx` returns nil, since the commit happened). `queue.DispatchTx` uses it on drivers without transactional storage.
+		return c.JSON(http.StatusOK, map[string]int64{
+			"posts": posts,
+		})
+	})
 
-## UUIDs
-
-Package `uuid` (stdlib only) makes RFC 9562 UUIDs for public ids, without a third-party dependency:
-
-```go
-type Order struct {
-	orm.Model
-	PublicID uuid.UUID // t.UUID("public_id").Unique() in the migration
+	return nil
 }
-
-o := Order{PublicID: uuid.NewV7()}      // time-ordered; uuid.NewV4() is fully random
-u, err := uuid.Parse(r.PathValue("id")) // errors.Is(err, uuid.ErrInvalid) → 404
 ```
 
-Both versions draw their random bits from `crypto/rand`. A v7 UUID sorts by its creation millisecond (random order inside one) and reveals that time (`u.Time()`). `Parse` accepts only the canonical 36-character form, in either case. A `uuid.UUID` is JSON and query-string text, is written to SQL as text (PostgreSQL `uuid`, text columns elsewhere) and scans text or 16-byte binary columns; scan nullable columns into a `*uuid.UUID`.
+</Step>
+<Step title="4. Call it">
 
-## Next
+```bash
+curl -s http://localhost:3000/stats
+```
 
-- [ORM](/docs/database/orm): typed queries and models.
-- [Migrations](/docs/database/migrations): schema builder and `vukem migrate`.
+```json
+{"posts":10}
+```
 
-## PostgreSQL
+</Step>
+</Steps>
+
+`app.DB()` opens the connection on its first call and returns the same `*database.DB` afterwards. It also registers a `db` health check (reported by `/up?checks=1`) and closes the pools when the app shuts down. If the URL is wrong, every call returns the same error.
+
+## Connecting to a database
+
+### SQLite (the default)
+
+SQLite URLs take three forms:
+
+| URL | Meaning |
+| --- | --- |
+| `file:storage/app.db` | A file, relative to the working directory |
+| `sqlite:storage/app.db` | The same, with a `sqlite:` prefix |
+| `:memory:` | A database that lives in memory and disappears with the process |
+
+SQLite is a file, not a server, so two writers at the same moment can collide with `SQLITE_BUSY` ("database is locked"). Vukem prevents that with two pools and a few settings applied to every connection:
+
+```sql
+PRAGMA journal_mode = WAL;     -- readers never block the writer
+PRAGMA busy_timeout = 5000;    -- wait up to 5 s for a lock
+PRAGMA foreign_keys = ON;      -- enforce REFERENCES
+PRAGMA synchronous = NORMAL;   -- safe with WAL, much faster
+PRAGMA temp_store = MEMORY;
+```
+
+- **A writer pool with exactly one connection.** `ExecContext` and every transaction go there, so writes queue up instead of failing.
+- **A read-only reader pool** (`mode=ro`), sized by `DB_MAX_OPEN`. `QueryContext` and `QueryRowContext` go there, except a `QueryRowContext` whose SQL contains `RETURNING`, which writes and therefore uses the writer.
+- **`BEGIN IMMEDIATE`** for transactions: the write lock is taken at the start, never upgraded halfway (the classic cause of `SQLITE_BUSY`).
+- **In-memory databases** (`:memory:` or `mode=memory`) skip WAL and use the single writer connection for reads too, because an in-memory database lives in one connection.
+
+Tests use in-memory SQLite (see [Testing](#testing)).
+
+#### Leaving SQLite out of the binary
+
+An app that never opens SQLite can drop the driver with the `vukem_nosqlite` [build tag](https://pkg.go.dev/cmd/go#hdr-Build_constraints): `go build -tags vukem_nosqlite`, or add `vukem_nosqlite` to the project's `.buildtags` file (`vukem new --minimal` writes it). A SQLite URL then fails with:
+
+```text
+database: SQLite is not linked into this binary (built with -tags
+vukem_nosqlite); rebuild without the tag or set DATABASE_URL to another
+driver
+```
+
+`vukemtest` uses in-memory SQLite, so run your tests without the tag.
+
+### PostgreSQL
+
+Other databases need their driver module, passed to the app with `vukem.WithDatabaseDrivers`. There is no `init()` magic: the import and the option are both visible in `bootstrap/app.go`.
 
 ```bash
 go get github.com/AlexGalhardo/vukem/drivers/postgres
 ```
 
 ```go title="bootstrap/app.go"
-vukem.New(append([]vukem.Option{
-	vukem.WithDatabaseDrivers(postgres.Driver()), // postgres:// and postgresql:// URLs
+base := []vukem.Option{
+	// Accepts postgres:// and postgresql:// URLs.
+	vukem.WithDatabaseDrivers(postgres.Driver()),
+	vukem.WithMigrations(migrations.All()),
 	// ...
-}, opts...)...)
+}
 ```
 
 ```bash title=".env"
-DATABASE_URL=postgres://app:secret@localhost:5432/app?sslmode=disable
+DATABASE_URL=postgres://blog:secret@localhost:5432/blog?sslmode=disable
 ```
 
-Models, queries, migrations, relations, the database cache store and `SESSION_DRIVER=database` work unchanged on SQLite, PostgreSQL and MySQL.
+The URL goes to pgx unchanged, so every [pgx connection parameter](https://pkg.go.dev/github.com/jackc/pgx/v5/pgconn#ParseConfig) works (`sslmode`, `connect_timeout`, `search_path`...). Use `sslmode=disable` only for a local server; across a network use `sslmode=verify-full`.
 
-## MySQL and MariaDB
+### MySQL and MariaDB
+
+The MySQL module works the same way:
 
 ```bash
 go get github.com/AlexGalhardo/vukem/drivers/mysql
 ```
 
 ```go title="bootstrap/app.go"
-vukem.New(append([]vukem.Option{
-	vukem.WithDatabaseDrivers(mysql.Driver()), // mysql:// and mariadb:// URLs
+base := []vukem.Option{
+	// Accepts mysql:// and mariadb:// URLs.
+	vukem.WithDatabaseDrivers(mysql.Driver()),
+	vukem.WithMigrations(migrations.All()),
 	// ...
-}, opts...)...)
+}
 ```
 
 ```bash title=".env"
-DATABASE_URL=mysql://app:secret@localhost:3306/app
+DATABASE_URL=mysql://blog:secret@localhost:3306/blog
 ```
 
-The URL becomes a go-sql-driver DSN with `parseTime`, UTC times, `utf8mb4` and a 10s dial timeout; query parameters override them. Hosts other than `localhost` require TLS with a verified certificate unless the URL sets `tls=` (for example `tls=preferred`). Default MySQL collations compare text case-insensitively, so `Where` and unique indexes on strings ignore case.
+The MySQL driver does not take URLs, so `mysql.DSN` translates yours into a go-sql-driver data source name. Percent-encode special characters in the password (`p@ss` → `p%40ss`). The port defaults to `3306`; a path with more than one segment is rejected. Query parameters reach the driver and override these defaults:
 
-## Conformance suite
+| Parameter | Default | Why |
+| --- | --- | --- |
+| `parseTime`, `loc`, `time_zone` | `true`, `UTC`, `'+00:00'` | `DATETIME` scans into `time.Time`, always in UTC |
+| `charset` | `utf8mb4` | Full Unicode, emoji included |
+| `timeout` | `10s` | Dial timeout; per-query limits come from the context |
+| `clientFoundRows` | `true` | `UPDATE` reports matched rows, as SQLite and PostgreSQL do; `orm.Update` relies on it |
+| `tls` | `false` for `localhost` and loopback IPs, otherwise `true` (verified certificate) | Secure by default; set `tls=preferred`, `skip-verify` or a registered config name yourself |
 
-`database/dbtest.Run(t, db)` is the suite every dialect passes: migrations, schema changes, ORM round trips (JSON, nullable, booleans, times), unique violations as 409, foreign keys, soft deletes, cursor pagination, relations and transactions (including rollback on panic). `drivers/postgres` runs it against `postgres:17` and `drivers/mysql` against `mysql:8.4` and `mariadb:11.8` with `go test -tags=integration`. Each top-level subtest gets a context cancelled after `dbtest.SubtestTimeout` (2 minutes), so a stuck lock or a slow server fails that subtest instead of hanging the run.
+A malformed URL fails with an error wrapping `mysql.ErrInvalidURL`. The URL itself never appears in the message, because it may hold a password.
 
-## Transactions and SQLite
+### Differences between dialects
 
-Inside `db.Tx`, pass `tx` to every query. SQLite has a single writer connection, so a write through `db` while the transaction holds it waits forever. `database.RunInTx(ctx, ex, fn)` joins the caller's transaction when `ex` is already a `*database.Tx`.
+Models, queries, migrations, relations, the database cache store and `SESSION_DRIVER=database` work unchanged on all three dialects. Differences you may notice:
+
+| Topic | SQLite | PostgreSQL | MySQL / MariaDB |
+| --- | --- | --- | --- |
+| Placeholders | `?` | `$1`, `$2` | `?` |
+| New ids | `RETURNING` | `RETURNING` | `LastInsertId` (no `RETURNING`) |
+| Text comparison | case-sensitive | case-sensitive | case-insensitive (default collation `utf8mb4_0900_ai_ci`) |
+| DDL in a transaction | rolled back on failure | rolled back on failure | commits implicitly: a failed migration stays half applied |
+| Row locks | none (the whole database locks) | `FOR UPDATE` | `FOR UPDATE` |
+
+One `mysql` dialect covers MySQL 8.0.16+ and MariaDB 10.6+ (CI tests MySQL 8.4 and MariaDB 11.8), so it only emits SQL both accept: upserts use `ON DUPLICATE KEY UPDATE`, the database queue reserves jobs with `FOR UPDATE SKIP LOCKED`, `ILIKE` is sent as `LIKE`, and the session, cache and queue tables use binary keys so ids always compare exactly.
+
+### Opening a database yourself
+
+Outside an app (a script, a test helper, a second database) call `database.Open` directly:
+
+```go title="cmd/report/main.go"
+db, err := database.Open(ctx, os.Getenv("ANALYTICS_URL"),
+	database.WithDriver(postgres.Driver()),
+	database.WithConfig(database.Config{MaxOpen: 4}),
+)
+if err != nil {
+	return err
+}
+defer db.Close()
+```
+
+| Option | What it does |
+| --- | --- |
+| `database.WithDriver(d)` | Makes a non-SQLite driver available; repeat it for several |
+| `database.WithConfig(cfg)` | Pool sizes and the logger (see [Configuration](#configuration)); zero fields keep their default |
+| `database.WithEncrypter(enc)` | Lets [`orm.Encrypted`](/docs/database/orm#encrypted-columns) columns be read and written (`app.DB()` passes `app.Crypt`) |
+| `database.WithQueryObserver(obs)` | Reports every statement to `obs`; may be passed several times |
+
+A URL with a scheme no driver claims fails with `database: no driver for "postgres" URLs (import the driver module and pass its Driver)`.
+
+`database.FromSQL(conn, database.Postgres)` wraps an `*sql.DB` you already have; `db.SQL()` goes the other way and returns the writer `*sql.DB` for libraries such as [sqlc](https://sqlc.dev). Statements you run directly on `db.SQL()` bypass query observers. Always `Close` a database before deleting its file; Windows refuses to delete an open one.
+
+#### Several connections
+
+`database.Manager` keeps named connections side by side, for an app that also reads from an analytics database:
+
+```go
+dbs := database.NewManager(db) // db becomes "default"
+if err := dbs.Add("analytics", analytics); err != nil {
+	return err // the name is already taken
+}
+
+events := dbs.Conn("analytics") // nil when the name is unknown
+```
+
+`Default()`, `Names()` (sorted), `Ping(ctx)` (every connection, errors joined) and `Close()` complete it. The app itself uses one connection, `app.DB()`.
+
+## Running raw SQL
+
+The ORM covers most queries, but sometimes you need SQL by hand: a report, a `GROUP BY`, a database feature the builder does not wrap. `*database.DB` and `*database.Tx` give you the `database/sql` methods directly:
+
+```go title="app/services/stats.go"
+// CommentsPerPost counts the comments of every published post.
+func CommentsPerPost(
+	ctx context.Context,
+	ex database.Executor,
+) (map[int64]int64, error) {
+	rows, err := ex.QueryContext(ctx, `
+		SELECT post_id, COUNT(*)
+		FROM comments
+		GROUP BY post_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	counts := map[int64]int64{}
+	for rows.Next() {
+		var postID, n int64
+		if err := rows.Scan(&postID, &n); err != nil {
+			return nil, err
+		}
+		counts[postID] = n
+	}
+
+	return counts, rows.Err()
+}
+```
+
+<Callout type="warning" title="Never build SQL from input">
+Pass every value as an argument (`?`), never with `+` or `fmt.Sprintf`. A title like `'); DROP TABLE posts; --` in a concatenated query is [SQL injection](https://owasp.org/www-community/attacks/SQL_Injection), the classic way databases get stolen.
+</Callout>
+
+### One query for every dialect: `Rebind`
+
+SQLite and MySQL mark arguments with `?`, PostgreSQL with `$1`, `$2`. Write the query once with `?` and let `database.Rebind` translate it for the connection's dialect:
+
+```go
+q := database.Rebind(db.Dialect(), `
+	SELECT id FROM posts
+	WHERE user_id = ? AND title <> '?' AND views > ?`)
+
+rows, err := db.QueryContext(ctx, q, authorID, 100)
+```
+
+On PostgreSQL the query becomes:
+
+```sql
+SELECT id FROM posts
+WHERE user_id = $1 AND title <> '?' AND views > $2
+```
+
+On SQLite and MySQL it is returned unchanged. Under the hood `Rebind` reads the query the way the database would, so a `?` that is not a placeholder stays put:
+
+- inside string literals (`'?'`, PostgreSQL's `E'…'`), quoted identifiers (`"…"`, and `` `…` `` on MySQL and SQLite, `[…]` on SQLite) and comments (`--`, `/* */`, MySQL's `#`);
+- inside PostgreSQL dollar-quoted bodies (`$$…$$`, `$tag$…$tag$`);
+- `??` on PostgreSQL is a literal `?`, for the jsonb operators: `data ?? 'draft'` runs as `data ? 'draft'`.
+
+`ExecContext` and `QueryContext` never rebind on their own, so a query you already wrote with `$1` keeps working. Write one style per query: `Rebind` does not check its input, so `$2` mixed with `?` is renumbered anyway and binds the wrong value.
+
+### Queries built at runtime: `RebindChecked`
+
+When you assemble a query from pieces (an optional `AND` clause, a search filter), a missing quote in one piece would swallow everything after it. `database.RebindChecked` is the fail-closed version, returning `(string, error)`:
+
+```go title="app/services/search.go"
+q := "SELECT id, title FROM posts WHERE deleted_at IS NULL"
+args := []any{}
+
+if tag != "" {
+	q += " AND id IN (SELECT post_id FROM post_tag WHERE tag_id = ?)"
+	args = append(args, tagID)
+}
+
+query, err := database.RebindChecked(db.Dialect(), q)
+if err != nil {
+	return nil, err
+}
+
+rows, err := db.QueryContext(ctx, query, args...)
+```
+
+| Error | When |
+| --- | --- |
+| `database.ErrUnterminatedSQL` | The query ends inside a literal, a quoted identifier, a comment (a trailing `--` comment needs its newline) or a dollar-quoted body, on any dialect |
+| `database.ErrMixedPlaceholders` | A PostgreSQL query has both `?` and `$n` (a query with only `$n` is returned unchanged) |
+
+```text
+database: query ends inside an unterminated literal, identifier or comment:
+"SELECT 1 WHERE a = 'oops"
+```
+
+The message quotes at most the first 80 bytes of the query, so a literal holding a secret is not copied whole into it; what of the query you log is your decision. Use `Rebind` for constant queries that a test runs, `RebindChecked` for anything assembled.
+
+The lexer assumes each server's default settings: `standard_conforming_strings` on for PostgreSQL, no `ANSI_QUOTES` or `NO_BACKSLASH_ESCAPES` for MySQL. MySQL executes the contents of `/*! */` and `/*+ */` comments, but the lexer skips them like any comment, so placeholders inside them are not supported.
+
+### Timestamps from SQLite aggregates: `ScanTime`
+
+SQLite stores timestamps as text. For a plain column the driver knows the declared type and returns a `time.Time`, but for `MIN`, `MAX`, `COALESCE` or a subquery it reports no type and hands back the text. A bare `Scan` into a `time.Time` then fails:
+
+```text
+sql: Scan error on column index 0, name "MIN(created_at)": unsupported
+Scan, storing driver.Value type string into type *time.Time
+```
+
+Wrap the destination in `database.ScanTime`:
+
+```go
+var oldest sql.NullTime
+
+err := db.QueryRowContext(ctx,
+	"SELECT MIN(created_at) FROM comments WHERE post_id = ?",
+	postID,
+).Scan(database.ScanTime(&oldest))
+```
+
+- It accepts `*time.Time`, `**time.Time`, `*sql.NullTime` and `*sql.Null[time.Time]`; the compiler rejects anything else (it is a [generic](https://go.dev/doc/tutorial/generics) function constrained by `database.TimeDest`). For an `orm.NullTime` pass its embedded field: `database.ScanTime(&closed.Null)`.
+- It parses the text forms SQLite and its driver write: a date, or a date and time with `T` or a space and an optional `Z` or offset.
+- A `time.Time` from PostgreSQL, MySQL or a typed SQLite column is stored as is, so the same code runs everywhere.
+- `NULL` clears a pointer or nullable destination and is an error for a plain `time.Time`, as in `database/sql`.
+- Time-only text (`15:04:05`), unix timestamps stored as integers and any other text are errors.
+- Text with an offset comes back in a fixed zone of that offset and text without one in UTC, so compare with [`Time.Equal`](https://pkg.go.dev/time#Time.Equal), never `==`.
+
+The ORM already does this for its time fields on SQLite (`Get`, `First`, `Each`, `Pluck`, relations). Plain `string` destinations are never touched: `MAX(day)` over text dates still scans as the stored text.
+
+## Transactions
+
+A <Term tip="A group of statements that succeed or fail together: either all of them are saved, or none.">transaction</Term> keeps related writes together. When a reader posts a comment you insert the comment and bump the post's counter; if the second write fails, the first must disappear too.
+
+```go title="app/services/comments.go"
+func AddComment(
+	ctx context.Context,
+	db *database.DB,
+	c *models.Comment,
+) error {
+	return db.Tx(ctx, func(tx *database.Tx) error {
+		if err := orm.Create(ctx, tx, c); err != nil {
+			return err
+		}
+
+		_, err := tx.ExecContext(ctx,
+			database.Rebind(tx.Dialect(),
+				"UPDATE posts SET comments_count = comments_count + 1"+
+					" WHERE id = ?"),
+			c.PostID,
+		)
+
+		return err
+	})
+}
+```
+
+What `db.Tx` does, in order:
+
+1. Begins a transaction on the writer pool (`BEGIN IMMEDIATE` on SQLite).
+2. Calls your function with the `*database.Tx`.
+3. **Returns `nil`**: commits. **Returns an error**: rolls back and returns your error (joined with the rollback error, if that failed too). **Panics**: rolls back and re-raises the [panic](https://go.dev/blog/defer-panic-and-recover).
+4. After a successful commit, runs the `AfterCommit` hooks.
+
+<Callout type="warning" title="Use tx inside the function, never db">
+SQLite has one writer connection, and the transaction holds it. A write through `db` inside `db.Tx` waits for a connection that never comes back, and the request hangs until its context ends.
+</Callout>
+
+### Joining the caller's transaction: `RunInTx`
+
+A service function should not care whether its caller already opened a transaction. `database.RunInTx(ctx, ex, fn)` joins the transaction when `ex` is a `*database.Tx` and starts a new one when it is a `*database.DB`; any other `Executor` returns `database: cannot start a transaction on <type>`.
+
+```go
+func Publish(ctx context.Context, ex database.Executor, p *models.Post) error {
+	return database.RunInTx(ctx, ex, func(tx *database.Tx) error {
+		p.PublishedAt = orm.NullTime{Null: sql.Null[time.Time]{
+			V: time.Now(), Valid: true,
+		}}
+
+		return orm.Update(ctx, tx, p)
+	})
+}
+```
+
+### Work after the commit: `AfterCommit`
+
+Some work must only happen when the data is really saved: e-mailing the post's author about a new comment, or dispatching a job. `tx.AfterCommit(fn)` registers it:
+
+```go
+err := db.Tx(ctx, func(tx *database.Tx) error {
+	if err := orm.Create(ctx, tx, &comment); err != nil {
+		return err
+	}
+
+	tx.AfterCommit(func(ctx context.Context) {
+		notifyAuthor(ctx, comment)
+	})
+
+	return nil
+})
+```
+
+- Hooks run after the commit, in registration order, with `db.Tx`'s context.
+- A rollback or a panic discards them.
+- A hook registered after `db.Tx`'s function returned never runs.
+- A panicking hook is logged (`database: AfterCommit hook panicked`) and the remaining hooks still run; `db.Tx` returns `nil` because the commit already happened.
+- Calling `AfterCommit` on a `Tx` that `db.Tx` did not start panics: it is a programming error.
+
+`queue.DispatchTx` uses it on queue drivers without transactional storage, so a job never runs for a rolled-back comment.
+
+## Watching queries
+
+A `database.QueryObserver` sees every statement that runs through a `DB` and its transactions. [Devtools](/docs/digging-deeper/devtools) uses one to show the queries of each request; [OpenTelemetry](/docs/digging-deeper/opentelemetry) uses one for spans.
+
+```go title="app/observers/slow.go"
+package observers
+
+import (
+	"context"
+	"log/slog"
+	"time"
+
+	"github.com/AlexGalhardo/vukem/database"
+)
+
+// Slow logs statements that take longer than Limit.
+type Slow struct {
+	Log   *slog.Logger
+	Limit time.Duration
+}
+
+func (s Slow) ObserveQuery(ctx context.Context, q database.Query) {
+	if q.Duration < s.Limit {
+		return
+	}
+
+	// q.Args hold user data and secrets: never log them.
+	s.Log.WarnContext(ctx, "slow query",
+		"sql", q.SQL, "duration", q.Duration, "err", q.Err)
+}
+```
+
+```go title="bootstrap/app.go"
+vukem.WithQueryObservers(observers.Slow{
+	Log:   slog.Default(),
+	Limit: 200 * time.Millisecond,
+}),
+```
+
+| `database.Query` field | Meaning |
+| --- | --- |
+| `SQL` | The statement text as passed |
+| `Args` | The bound values: user data and secrets, never log or display them |
+| `Duration` | Time until the driver returned (for a query: until the rows were ready, not until you read them) |
+| `Err` | The statement's error, if any |
+
+- An observer runs on the caller's goroutine, so it must be fast and safe for [concurrent use](https://go.dev/doc/effective_go#concurrency).
+- `vukem.WithQueryObservers(obs...)` adds observers to `app.DB()`; they run after devtools' observer, so neither replaces the other.
+- On a `DB` you open yourself, pass `database.WithQueryObserver` once per observer, or call `db.AddQueryObserver(obs)` before sharing the `DB` between goroutines. `db.SetQueryObserver(obs)` replaces them all (`nil` removes them).
+- Nil observers, typed nil pointers included, are ignored.
+- A panicking observer is logged (its type and the panic value, never SQL or arguments) and skipped: the statement still returns its result, and the observers after it still run.
+- Without observers the cost is one nil check per statement.
+
+## Configuration
+
+`app.DB()` reads three variables:
+
+| Variable | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `DATABASE_URL` | string | `file:storage/database.sqlite` | Where the database is; the scheme picks the driver |
+| `DB_MAX_OPEN` | int | `10` | Maximum open connections (on SQLite: the reader pool) |
+| `DB_MAX_IDLE` | int | `5` | Idle connections kept ready |
+
+With `database.Open` you set the same limits in `database.Config`:
+
+| Field | Default | Notes |
+| --- | --- | --- |
+| `MaxOpen` | `10` | The SQLite writer is always 1 connection |
+| `MaxIdle` | `5` | |
+| `MaxLifetime` | `30m` | Not applied to SQLite pools |
+| `MaxIdleTime` | `5m` | |
+| `Log` | `slog.Default()` | Used for `AfterCommit` and observer panics |
+
+Zero or negative values keep the default. `app.DB()` sets `MaxOpen`, `MaxIdle` and `Log` (the app logger); the other two keep their defaults.
+
+## Security
+
+What Vukem does for you:
+
+- The ORM and the schema builder bind every value as a parameter and validate every column and table name against the model or an identifier pattern; input never becomes SQL.
+- `RebindChecked` and `WhereRaw` refuse SQL that ends inside a literal or comment, so a broken fragment cannot swallow the conditions after it.
+- MySQL connections to non-loopback hosts require TLS with a verified certificate unless you opt out.
+- Error messages never include the MySQL URL, and `RebindChecked` errors quote at most 80 bytes of the query.
+- Observers receive arguments, but the documented rule (and devtools) never displays them.
+
+What stays your job:
+
+- Keep `DATABASE_URL` in the environment, never in code or a committed `.env`.
+- Give the app a database user with only the rights it needs; run migrations with the same user only if it may change the schema.
+- Use TLS across networks (`sslmode=verify-full` on PostgreSQL).
+- Write raw SQL with `?` arguments only.
+
+See the [security overview](/docs/security/overview) for the full picture.
+
+## Testing
+
+`vukemtest.New` gives every test a private in-memory SQLite database, runs your migrations and closes it in `t.Cleanup`:
+
+```go title="tests/stats_test.go"
+func TestStatsCountsPosts(t *testing.T) {
+	app := vukemtest.New(t, bootstrap.New)
+
+	db, err := app.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := factories.Post.Count(3).Create(t.Context(), db); err != nil {
+		t.Fatal(err)
+	}
+
+	app.Client(t).
+		GetJSON("/stats").
+		AssertOK().
+		AssertJSONPath("posts", float64(3))
+}
+```
+
+- `vukemtest.AssertDatabaseHas(t, app, "posts", map[string]any{"title": "Hello"})`, `AssertDatabaseMissing` and `AssertDatabaseCount(t, app, "posts", 3)` check rows directly.
+- `app.RefreshDatabase(t)` drops every table and re-runs the migrations in the middle of a test.
+- To run a test against PostgreSQL or MySQL, pass `vukemtest.Options{Env: map[string]string{"DATABASE_URL": url}}`.
+
+`database/dbtest.Run(t, db)` is the conformance suite every dialect passes: migrations, schema changes, ORM round trips (JSON, nullable, booleans, times), unique violations as 409, foreign keys, soft deletes, cursor pagination, relations and transactions. `drivers/postgres` runs it against `postgres:17`, `drivers/mysql` against `mysql:8.4` and `mariadb:11.8`, with `go test -tags=integration`. Each top-level subtest gets a context cancelled after `dbtest.SubtestTimeout` (2 minutes), so a stuck lock fails that subtest instead of hanging the run.
+
+See [Testing](/docs/testing/overview) for the client and the other assertions.
+
+## Common mistakes
+
+**Writing through `db` inside a transaction.**
+
+```go
+// Wrong: on SQLite this waits forever for the writer connection.
+db.Tx(ctx, func(tx *database.Tx) error {
+	return orm.Create(ctx, db, &comment)
+})
+
+// Right: every statement inside goes through tx.
+db.Tx(ctx, func(tx *database.Tx) error {
+	return orm.Create(ctx, tx, &comment)
+})
+```
+
+**Forgetting the driver.** `DATABASE_URL=postgres://...` without `vukem.WithDatabaseDrivers(postgres.Driver())` fails at the first `app.DB()`:
+
+```text
+database: no driver for "postgres" URLs (import the driver module and pass
+its Driver)
+```
+
+**Hard-coding `$1` or `?`.** A query written with `$1` fails on SQLite and MySQL; one written with `?` fails on PostgreSQL. Write `?` and pass it through `database.Rebind`.
+
+**Scanning `MIN(created_at)` into `time.Time` on SQLite.** You get `unsupported Scan, storing driver.Value type string into type *time.Time`; wrap the destination in `database.ScanTime`.
+
+**Comparing times with `==`.** A time read back may carry another zone or monotonic reading. Use `a.Equal(b)`.
+
+**Expecting case-sensitive matches on MySQL.** `WHERE email = 'Ada@example.com'` also matches `ada@example.com` under the default collation, and a unique index on `email` rejects both. Normalise case before saving, or use a binary collation.
+
+## Next steps
+
+<CardGroup cols="2">
+<Card title="ORM" href="/docs/database/orm" icon="database">
+Map structs to tables and build typed queries.
+</Card>
+<Card title="Migrations" href="/docs/database/migrations" icon="layers">
+Create and change tables in Go with `vukem migrate`.
+</Card>
+<Card title="Relations" href="/docs/database/relations" icon="boxes">
+Load a post's author, comments and tags in three queries.
+</Card>
+<Card title="Factories and seeders" href="/docs/database/factories-seeders" icon="code">
+Fill the database with fake data for tests and demos.
+</Card>
+</CardGroup>
+
+Package reference: [`database`](https://pkg.go.dev/github.com/AlexGalhardo/vukem/database), [`drivers/postgres`](https://pkg.go.dev/github.com/AlexGalhardo/vukem/drivers/postgres), [`drivers/mysql`](https://pkg.go.dev/github.com/AlexGalhardo/vukem/drivers/mysql).

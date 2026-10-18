@@ -1,116 +1,37 @@
 ---
 title: Redis
-description: Cache, sessions, queues, a shared rate limiter, locks and pub/sub on Redis or Valkey.
+description: Share the cache, sessions, queue, rate limits and locks between servers with Redis or Valkey, read REDIS_URL lazily from the app configuration, and fall back to the defaults when it is not set.
 ---
 
-Redis (or its open-source fork Valkey) is an in-memory key-value server. Vukem uses it as a **shared** backend: when your app runs on more than one server, the cache, sessions, queue, rate limits and locks must live somewhere every server can see. One Redis gives you all five. The [step-by-step guide](#step-by-step-sessions-and-cache-on-redis) at the end starts from zero.
+Redis (or its open-source fork [Valkey](https://valkey.io)) is an in-memory key-value server. Vukem uses it as a **shared** backend. While the blog runs on one server, an in-memory cache and cookie sessions are fine. Once it runs on two, each server has its own memory: a reader logged in on server A is a stranger on server B, and rate limits count twice. One Redis that every server talks to fixes the cache, sessions, queue, rate limits and locks at once.
 
-```bash
-go get github.com/AlexGalhardo/vukem/drivers/redis
-```
+You will learn:
 
-```go
-rc, err := redis.Open(ctx, os.Getenv("REDIS_URL")) // redis://localhost:6379/0, rediss:// for TLS
+- how to connect with `redis.Open` or `redis.OpenLazy`, and plug Redis into the app;
+- how to read `REDIS_URL` from the app configuration with the lazy `With...Func` options;
+- how `vukem.ErrUseDefault` keeps the defaults when Redis is not configured, and why it fails closed;
+- what each store does in Redis: cache, sessions, queue, rate limiter, locks, pub/sub;
+- how to run it locally, test it and keep it safe in production.
 
-app, err := vukem.New(
-	vukem.WithCacheStore(rc.CacheStore("cache:")), // also backs locks
-	vukem.WithSessionStore(rc.SessionStore("")),   // "session:" keys with TTL
-	vukem.WithQueueDriver(rc.Queue(redis.QueueOptions{})),
-	// ...
-)
-app.AddHealthCheck("redis", rc.Ping)
-```
+The running example is the blog, moving from one server to two.
 
-### Reading `REDIS_URL` from the app configuration
+## The idea
 
-`os.Getenv` above runs before `vukem.New` loads `.env`, `.env.local` and the sources `vukemtest` passes. To read the URL from `app.Source`, use the lazy options: each function runs on the first `app.Cache()`, `app.Sessions()` or `app.Queue()` call, after configuration loaded, and its error is returned by that call (`DefaultMiddleware` builds sessions at boot, so a bad URL is still a boot error).
+Think of Redis as the **whiteboard in a shared office**. Each worker (each server of your app) has a notepad, but notes on a notepad are invisible to the others. The whiteboard is where anything that everybody must see goes: who is logged in, which jobs wait, how many times an IP has tried to log in this minute.
 
-```go
-var (
-	once  sync.Once
-	rc    *redis.Client
-	rcErr error
-)
+`drivers/redis` is a separate Go module that wraps [go-redis](https://pkg.go.dev/github.com/redis/go-redis/v9). One `*redis.Client` is a connection pool, and every store you ask it for shares that pool:
 
-client := func(app *vukem.App) (*redis.Client, error) {
-	once.Do(func() {
-		url := app.Source.Get("REDIS_URL")
-		switch {
-		case url == "" && app.Config.IsProduction():
-			rcErr = errors.New("REDIS_URL is required in production")
-			return
-		case url == "":
-			rcErr = vukem.ErrUseDefault // see "Redis only when REDIS_URL is set"
-			return
-		}
+| You call | You get | It implements | Plug it in with |
+| --- | --- | --- | --- |
+| `rc.CacheStore(prefix)` | `*redis.Store` | `cache.Store`, `cache.Sharer` | `vukem.WithCacheStore` |
+| `rc.SessionStore(prefix)` | `*redis.SessionStore` | `session.ListStore` | `vukem.WithSessionStore` |
+| `rc.Queue(redis.QueueOptions{})` | `*redis.Queue` | `queue.Driver`, `queue.FailedStore` | `vukem.WithQueueDriver` |
+| `rc.RateLimiter(prefix, limit, window)` | `*redis.Limiter` | `ratelimit.Limiter` | `ratelimit.Middleware` |
+| `rc.Publish` / `rc.Subscribe` | pub/sub | — | your code |
 
-		if rc, rcErr = redis.Open(context.Background(), url); rcErr != nil {
-			return
-		}
+It works with Redis 7+ and Valkey 8+; CI runs the cache and queue conformance suites on both. The current module version is `v0.4.0`.
 
-		app.AddHealthCheck("redis", rc.Ping)
-		app.OnShutdown(func(context.Context) error { return rc.Close() })
-	})
-
-	return rc, rcErr
-}
-
-app, err := vukem.New(
-	vukem.WithCacheStoreFunc(func(app *vukem.App) (cache.Store, error) {
-		c, err := client(app)
-		if err != nil {
-			return nil, err
-		}
-
-		return c.CacheStore("cache:"), nil
-	}),
-	vukem.WithSessionStoreFunc(func(app *vukem.App) (session.Store, error) {
-		c, err := client(app)
-		if err != nil {
-			return nil, err
-		}
-
-		return c.SessionStore(""), nil
-	}),
-	vukem.WithQueueDriverFunc(func(app *vukem.App) (queue.Driver, error) {
-		c, err := client(app)
-		if err != nil {
-			return nil, err
-		}
-
-		return c.Queue(redis.QueueOptions{}), nil
-	}),
-)
-```
-
-The last of `WithCacheStore` / `WithCacheStoreFunc` (and likewise for sessions and queues) wins; `SetSessionStore` from a provider still overrides both. A function that returns `nil, nil` is an error, and so is a store returned together with `vukem.ErrUseDefault`. A function must not call the accessor it feeds (`app.Cache()` inside `WithCacheStoreFunc`, `app.Sessions()` or `DefaultMiddleware` inside `WithSessionStoreFunc`, `app.Queue()` inside `WithQueueDriverFunc`): it runs inside that accessor's `sync.Once` and would deadlock.
-
-### Redis only when `REDIS_URL` is set
-
-A function returns `nil, vukem.ErrUseDefault` (directly or wrapped) to keep what the configuration chooses: `CACHE_STORE` (memory by default), `SESSION_DRIVER` (cookie sessions by default) and `QUEUE_CONNECTION` (sync by default), exactly as if the option had not been passed. With the `client` helper above, unit tests and local runs without `REDIS_URL` use those defaults, and a deploy that sets it uses Redis; the app logs which default it chose.
-
-The fallback is explicit and fails closed:
-
-- Only `ErrUseDefault` itself, or a chain of single `%w` wraps of it, selects the default. Any other error (a malformed URL, `redis.Open` failing because the server is down), including one joined with the sentinel (`errors.Join`, several `%w`), is returned by `app.Cache()`, `app.Sessions()` or `app.Queue()`, so a configured but broken Redis is a boot error, never a silent switch to per-process stores. With `redis.OpenLazy` the app boots and the `redis` health check fails readiness instead.
-- The default keeps its own `cache.Sharer` answer: falling back to the memory cache makes `OnOneServer()` tasks and `RATE_LIMIT_STORE=cache` boot errors, as with `CACHE_STORE=memory`; `CACHE_STORE=database` stays shared.
-- With `QUEUE_CONNECTION=database`, boot runs the `WithQueueDriverFunc` function (once; the first `app.Queue()` reuses its answer) and creates the queue tables only when it falls back, so a Redis queue adds no database access at boot and the fallback never runs DDL on the first dispatch. Its error is then a boot error.
-
-**Production risk.** A missing or misspelled `REDIS_URL` also returns `ErrUseDefault`, and the app then runs on per-process stores: memory cache, sync queue, cookie sessions. The fallback is logged at `WARN` in production (`INFO` elsewhere), but the app still starts. Return `ErrUseDefault` only outside production, as the helper above does, so a production deploy without `REDIS_URL` fails at boot instead.
-
-| Feature | API |
-| --- | --- |
-| Cache store | `rc.CacheStore(prefix)` implements `cache.Store`; `Flush` deletes only the prefix (`SCAN` + `DEL`) and refuses an empty one; it declares `cache.Sharer` (`Shared()` is `true`), so `OnOneServer()` and `RATE_LIMIT_STORE=cache` accept it. Upgrade `drivers/redis` together with core: a driver release without `Shared()` is treated as not shared and refused |
-| Sessions | `rc.SessionStore(prefix)` implements `session.ListStore`: `RevokeOthers`, `UserSessions` and `RevokeSession` work as on the database store. Keys hold SHA-256 of the session id, never the cookie value; sessions saved under the clear id by older versions move to the hashed key on their first load. Each session records its owner (`<prefix>owner:<hash>`) and each user a set of session hashes (`<prefix>user:<owner>`); every command touches one key (Redis Cluster works), so listing or revoking costs three round trips per session of the user; needs Redis 6.2+ |
-| Queue | `rc.Queue(redis.QueueOptions{Prefix, Grace})`: sorted sets under `{queue}:` (one Cluster slot), atomic Lua reservation, failed jobs for `queue:failed`, `queue:retry`, `queue:forget` |
-| Rate limiting | `rc.RateLimiter("api:", 60, time.Minute)` implements `ratelimit.Limiter` with GCRA, shared by every server |
-| Locks | `cache.New(rc.CacheStore("locks:"), "").NewLock(name, ttl)` |
-| Pub/sub | `rc.Publish(ctx, channel, b)`, `msgs, err := rc.Subscribe(ctx, channels...)` |
-
-- Works with Redis 7+ and Valkey 8+; CI runs the `cachetest` and `queuetest` conformance suites on both.
-- `Open` pings the server, so the app does not boot while Redis is down; a malformed URL always fails. `redis.OpenLazy(url)` only parses the URL and connects on first use, so the process starts and `rc.Ping` reports the outage in a readiness check (`app.AddHealthCheck`). go-redis retries a failed command 3 times with backoff, so that `Ping` takes seconds while Redis is down; for a fast readiness answer set `?dial_timeout=1s&max_retries=-1` on the URL (or use a separate client with those options for the check).
-- `redis.New(client)` wraps an existing go-redis client (Cluster, Sentinel, custom options); `rc.Redis()` returns it.
-
-## Step by step: sessions and cache on Redis
+## Quick start
 
 <Steps>
 <Step title="1. Start Redis locally">
@@ -137,81 +58,403 @@ go get github.com/AlexGalhardo/vukem/drivers/redis
 REDIS_URL=redis://localhost:6379/0
 ```
 
+`REDIS_URL` is a name your code reads; Vukem itself never looks at it.
+
 </Step>
 <Step title="3. Plug Redis into the app">
 
-Use the lazy options shown in [Reading `REDIS_URL` from the app configuration](#reading-redis_url-from-the-app-configuration), so the URL comes from `.env` and from `vukemtest` sources. For a quick start, the eager form is enough:
+The shortest form connects before the app exists:
 
 ```go title="bootstrap/app.go"
-rc, err := redis.Open(ctx, os.Getenv("REDIS_URL")) // fails when Redis is down
-if err != nil {
-	return nil, err
-}
+func New(opts ...vukem.Option) (*vukem.App, error) {
+	ctx := context.Background()
 
-app, err := vukem.New(
-	vukem.WithCacheStore(rc.CacheStore("myapp:cache:")),
-	vukem.WithSessionStore(rc.SessionStore("myapp:session:")),
-	// ...
-)
-if err != nil {
-	return nil, err
-}
+	// Fails when Redis is down or the URL is malformed.
+	rc, err := redis.Open(ctx, os.Getenv("REDIS_URL"))
+	if err != nil {
+		return nil, err
+	}
 
-app.AddHealthCheck("redis", rc.Ping)
-app.OnShutdown(func(context.Context) error { return rc.Close() })
+	base := []vukem.Option{
+		vukem.WithCacheStore(rc.CacheStore("blog:cache:")),
+		vukem.WithSessionStore(rc.SessionStore("blog:session:")),
+		vukem.WithQueueDriver(rc.Queue(redis.QueueOptions{})),
+		// ...
+	}
+
+	app, err := vukem.New(append(base, opts...)...)
+	if err != nil {
+		return nil, err
+	}
+
+	app.AddHealthCheck("redis", rc.Ping)
+	app.OnShutdown(func(context.Context) error { return rc.Close() })
+
+	return app, nil
+}
 ```
 
-</Step>
-<Step title="4. Share rate limits">
-
-```bash title=".env"
-RATE_LIMIT_STORE=cache   # limiters count in app.Cache(), now Redis
-```
-
-Or use the Redis GCRA limiter directly: `ratelimit.Middleware(rc.RateLimiter("login:", 5, time.Minute), ratelimit.ByIP)`.
+`os.Getenv` only sees the process environment, not `.env`. The [lazy form](#reading-redis_url-from-the-app-configuration) below fixes that and is what you should ship.
 
 </Step>
-<Step title="5. Check that it works">
+<Step title="4. Check that it works">
 
 ```bash
 vukem serve
-curl -s -c jar.txt http://localhost:3000/ > /dev/null   # creates a session
-docker compose exec redis redis-cli --scan --pattern 'myapp:*'
-curl -s 'http://localhost:3000/up?checks=1'               # "redis" is reported
+curl -s -c jar.txt http://localhost:3000/ > /dev/null
+docker compose exec redis redis-cli --scan --pattern 'blog:*'
+curl -s 'http://localhost:3000/up?checks=1'
 ```
+
+```text
+blog:session:6f1c0e5b2c...
+```
+
+The session key is a SHA-256 hash, never the cookie value, and `/up?checks=1` now reports a `redis` check.
 
 </Step>
 </Steps>
 
-## Pub/sub
+## Connecting
+
+| Function | Contacts the server | When the server is down | Use it when |
+| --- | --- | --- | --- |
+| `redis.Open(ctx, url)` | yes, with a `PING` | returns an error, so the app does not boot | Redis must be up before you serve |
+| `redis.OpenLazy(url)` | no, only on first use | the app boots; the `redis` health check fails readiness | the platform restarts unready instances, or Redis may start later |
+| `redis.New(client)` | — | — | you already have a go-redis client (Cluster, Sentinel, custom options) |
+
+Both `Open` and `OpenLazy` reject a malformed URL: `redis: parse url: <reason>`. A failed ping reads `redis: ping: <reason>`, and `Open` closes the pool before returning it.
+
+The URL follows go-redis's [`ParseURL`](https://pkg.go.dev/github.com/redis/go-redis/v9#ParseURL):
+
+```text
+redis://[user:password@]host:port/db?option=value
+rediss://...   (TLS)
+```
+
+| Query option | Example | What it does |
+| --- | --- | --- |
+| `dial_timeout` | `1s` | How long to wait for a connection |
+| `read_timeout`, `write_timeout` | `3s` | Per-command limits |
+| `max_retries` | `-1` | Retries of a failed command (go-redis retries 3 times with backoff by default; `-1` disables it) |
+| `pool_size` | `20` | Connections in the pool |
+
+Other methods on the client:
+
+| Method | What it does |
+| --- | --- |
+| `rc.Ping(ctx)` | Checks connectivity; register it with `app.AddHealthCheck("redis", rc.Ping)` |
+| `rc.Close()` | Closes the pool |
+| `rc.Redis()` | The underlying `goredis.UniversalClient`, for commands Vukem does not wrap |
+
+Because go-redis retries a failed command 3 times with backoff, `rc.Ping` takes seconds while Redis is down. For a fast readiness answer, add `?dial_timeout=1s&max_retries=-1` to the URL, or ping from a separate client with those options.
+
+## Reading `REDIS_URL` from the app configuration
+
+`vukem.New` loads `.env`, `.env.local` and the values `vukemtest` passes. Code that runs **before** `vukem.New` (like the quick start) cannot see them. The lazy options take a function that runs on first use, **after** configuration loaded, so it can read `app.Source`:
+
+| Option | The function runs on the first | Replaces |
+| --- | --- | --- |
+| `vukem.WithCacheStoreFunc(fn)` | `app.Cache()` | `CACHE_STORE` |
+| `vukem.WithSessionStoreFunc(fn)` | `app.Sessions()` (`DefaultMiddleware` calls it at boot) | `SESSION_DRIVER` |
+| `vukem.WithQueueDriverFunc(fn)` | `app.Queue()`, or at boot with `QUEUE_CONNECTION=database` | `QUEUE_CONNECTION` |
+
+Each function has the signature `func(app *vukem.App) (Store, error)`. The three below share one client through [`sync.Once`](https://pkg.go.dev/sync#Once), so the app opens one pool:
+
+```go title="bootstrap/redis.go"
+package bootstrap
+
+import (
+	"context"
+	"errors"
+	"sync"
+
+	vukem "github.com/AlexGalhardo/vukem"
+	"github.com/AlexGalhardo/vukem/cache"
+	"github.com/AlexGalhardo/vukem/drivers/redis"
+	"github.com/AlexGalhardo/vukem/queue"
+	"github.com/AlexGalhardo/vukem/session"
+)
+
+// redisOptions plugs Redis into the cache, sessions and queue when
+// REDIS_URL is set, and keeps the configured defaults when it is not.
+func redisOptions() []vukem.Option {
+	var (
+		once  sync.Once
+		rc    *redis.Client
+		rcErr error
+	)
+
+	client := func(app *vukem.App) (*redis.Client, error) {
+		once.Do(func() {
+			url := app.Source.Get("REDIS_URL")
+
+			switch {
+			case url == "" && app.Config.IsProduction():
+				rcErr = errors.New("REDIS_URL is required in production")
+				return
+			case url == "":
+				rcErr = vukem.ErrUseDefault
+				return
+			}
+
+			rc, rcErr = redis.Open(context.Background(), url)
+			if rcErr != nil {
+				return
+			}
+
+			app.AddHealthCheck("redis", rc.Ping)
+			app.OnShutdown(func(context.Context) error {
+				return rc.Close()
+			})
+		})
+
+		return rc, rcErr
+	}
+
+	return []vukem.Option{
+		vukem.WithCacheStoreFunc(
+			func(app *vukem.App) (cache.Store, error) {
+				c, err := client(app)
+				if err != nil {
+					return nil, err
+				}
+
+				return c.CacheStore("blog:cache:"), nil
+			}),
+		vukem.WithSessionStoreFunc(
+			func(app *vukem.App) (session.Store, error) {
+				c, err := client(app)
+				if err != nil {
+					return nil, err
+				}
+
+				return c.SessionStore("blog:session:"), nil
+			}),
+		vukem.WithQueueDriverFunc(
+			func(app *vukem.App) (queue.Driver, error) {
+				c, err := client(app)
+				if err != nil {
+					return nil, err
+				}
+
+				return c.Queue(redis.QueueOptions{}), nil
+			}),
+	}
+}
+```
+
+```go title="bootstrap/app.go"
+base := append([]vukem.Option{
+	vukem.WithMigrations(migrations.All()),
+	// ...
+}, redisOptions()...)
+```
+
+Rules the options follow:
+
+- **The last one wins.** Of `WithCacheStore` and `WithCacheStoreFunc`, whichever comes last is used (likewise for sessions and queues). A provider calling `SetSessionStore` still overrides both.
+- **Errors surface on the accessor.** An error from the function is returned by `app.Cache()`, `app.Sessions()` or `app.Queue()`, prefixed `vukem: cache store:` and so on. `DefaultMiddleware` builds sessions at boot, so a bad session URL is a boot error.
+- **`nil, nil` is an error:** `WithCacheStoreFunc returned a nil store (return vukem.ErrUseDefault for the configured default)`.
+- **No re-entry.** A function must not call the accessor it feeds (`app.Cache()` inside `WithCacheStoreFunc`, or `app.RateLimiters()`, which uses the cache; `app.Sessions()` or `DefaultMiddleware` inside `WithSessionStoreFunc`; `app.Queue()` or a dispatch inside `WithQueueDriverFunc`). It runs inside that accessor's `sync.Once`, so the call would deadlock.
+- A function may register cleanup with `app.OnShutdown` and health checks with `app.AddHealthCheck`, as above.
+
+### Redis only when `REDIS_URL` is set: `ErrUseDefault`
+
+A function returns `nil, vukem.ErrUseDefault` (directly or wrapped) to keep what the configuration chooses, exactly as if the option had not been passed:
+
+| Store | Falls back to | Default |
+| --- | --- | --- |
+| Cache | `CACHE_STORE` | `memory` |
+| Sessions | `SESSION_DRIVER` | cookie sessions |
+| Queue | `QUEUE_CONNECTION` | `sync` |
+
+With the helper above, unit tests and local runs without `REDIS_URL` use those defaults, and a deploy that sets it uses Redis. The app logs which default it chose: `vukem: WithCacheStoreFunc chose the configured default store=CACHE_STORE=memory`.
+
+The fallback is explicit and **fails closed**:
+
+- Only `ErrUseDefault` itself, or a chain of single `%w` wraps of it (`fmt.Errorf("no redis: %w", vukem.ErrUseDefault)`), selects the default.
+- Any other error is returned, including one that merely contains the sentinel next to a real failure (`errors.Join`, or `fmt.Errorf` with several `%w`). A malformed URL, or `redis.Open` failing because the server is down, is therefore a boot error, never a silent switch to per-process stores. With `redis.OpenLazy` the app boots and the `redis` health check fails readiness instead.
+- A store returned **together with** `ErrUseDefault` is an error: `WithCacheStoreFunc returned a store together with ErrUseDefault`, because it would be unclear which one the app uses.
+- The fallback keeps its own `cache.Sharer` answer: falling back to the memory cache makes `OnOneServer()` scheduled tasks and `RATE_LIMIT_STORE=cache` boot errors, exactly as `CACHE_STORE=memory` would; `CACHE_STORE=database` stays shared.
+- With `QUEUE_CONNECTION=database`, boot runs the `WithQueueDriverFunc` function once (the first `app.Queue()` reuses its answer) and creates the queue tables only when it falls back. A Redis queue therefore adds no database access at boot, the fallback never runs DDL on the first dispatch, and an error there is a boot error.
+
+<Callout type="warning" title="A missing REDIS_URL in production">
+A missing or misspelled `REDIS_URL` also returns `ErrUseDefault`, and the app then runs on per-process stores: memory cache, sync queue, cookie sessions. The fallback is logged at `WARN` in production (`INFO` elsewhere), but the app still starts. Return `ErrUseDefault` only outside production, as the helper does, so a production deploy without `REDIS_URL` fails at boot.
+</Callout>
+
+## The stores
+
+### Cache
 
 ```go
-msgs, err := rc.Subscribe(ctx, "orders") // the channel closes when ctx ends
+store := rc.CacheStore("blog:cache:")
+```
+
+- Implements every `cache.Store` method: `Get`, `Set`, `Add` (`SET NX`), `Delete`, `DeleteIf` (atomic, used to release locks), `Increment` (a missing key starts at 0 with the TTL) and `Flush`.
+- `Flush` deletes only the keys under the prefix (`SCAN` + `DEL`, with glob characters in the prefix escaped), never the whole Redis database. An empty prefix makes `Flush` refuse: `redis: refusing to flush a cache store without a prefix`.
+- It declares `cache.Sharer` (`Shared()` is `true`), so `OnOneServer()` tasks and `RATE_LIMIT_STORE=cache` accept it. Upgrade `drivers/redis` together with core: a driver release without `Shared()` is treated as not shared and refused.
+- `app.Cache()` adds `CACHE_PREFIX` (default `vukem:`) in front of your keys, after the store prefix: `c.Remember("posts.popular", ...)` lives at `blog:cache:vukem:posts.popular`.
+
+**Locks** come from the cache: `cache.New(rc.CacheStore("blog:locks:"), "").NewLock(name, ttl)`, or `app.Cache()` once Redis backs it. They use `Add` to take the lock and `DeleteIf` to release only your own. See [Cache](/docs/digging-deeper/cache).
+
+### Sessions
+
+```go
+store := rc.SessionStore("blog:session:") // "" means "session:"
+```
+
+It implements `session.ListStore`, so "log out other devices" (`RevokeOthers`), listing a user's sessions and revoking one work as on the database store. In Redis it keeps:
+
+| Key | Holds | Lifetime |
+| --- | --- | --- |
+| `<prefix><hash>` | the session data | the session's TTL |
+| `<prefix>owner:<hash>` | the owning user | same TTL |
+| `<prefix>user:<user>` | the set of that user's session hashes | as long as their longest session; hashes of ended sessions are dropped when the set is read |
+| `<prefix>gone:<hash>` | a marker of a deleted session | one minute |
+
+- Keys hold SHA-256 of the session id in hex, never the id itself, so reading the keyspace (`SCAN`, a replica, a dump) yields no usable cookie. Sessions saved under the clear id by older versions move to the hashed key on their first load.
+- An update uses `SET ... XX`, so a session revoked or logged out while a request ran is never recreated by that request.
+- Every command touches one key, so it works on Redis Cluster. Listing or revoking costs three round trips per session of the user.
+- It needs Redis 6.2 or later (`GETDEL`, `SET ... GET`).
+
+See [Sessions](/docs/basics/sessions).
+
+### Queue
+
+```go
+q := rc.Queue(redis.QueueOptions{
+	Prefix: "{blog-queue}:", // default "{queue}:"
+	Grace:  time.Minute,      // default 1 minute
+})
+```
+
+| Option | Default | What it does |
+| --- | --- | --- |
+| `Prefix` | `{queue}:` | Key prefix. The braces keep every key in one Redis Cluster slot, which the Lua scripts need: keep them in your own prefix |
+| `Grace` | 1 minute | Added to a job's timeout before a reservation whose worker vanished is taken over |
+| `Now` | `time.Now` | The clock for delayed and abandoned jobs; `app.Queue()` sets the app clock through `SetClock` |
+
+- Jobs live in sorted sets scored by when they become available; reserving one is a single atomic Lua script, so any number of workers may share a queue.
+- Delivery is **at least once**: a job whose worker crashes runs again after its timeout plus `Grace`, so make jobs safe to repeat.
+- It implements `queue.FailedStore`, so `vukem queue:failed`, `queue:retry` and `queue:forget` work. `Retry` puts jobs back with their attempts reset; with no ids, `Retry` and `Forget` act on every failed job.
+- `q.Pending(ctx)` counts waiting and running jobs.
+
+See [Queues](/docs/digging-deeper/queue).
+
+### Rate limiting
+
+```go
+login := ratelimit.Middleware(
+	rc.RateLimiter("blog:login:", 5, time.Minute),
+	ratelimit.ByIP,
+)
+```
+
+`rc.RateLimiter(prefix, limit, window)` allows `limit` requests per `window` for each key, with the [GCRA](https://en.wikipedia.org/wiki/Generic_cell_rate_algorithm) algorithm in Redis, so every server shares the same budget. An empty prefix means `ratelimit:`. Alternatively set `RATE_LIMIT_STORE=cache` and the app's limiters count in `app.Cache()`, which is now Redis. See [Rate limiting](/docs/security/rate-limiting).
+
+### Pub/sub
+
+Publish/subscribe sends a message to every listener of a channel at that moment, for example to tell every server that a post changed so they drop their local copy:
+
+```go
+msgs, err := rc.Subscribe(ctx, "posts")
 if err != nil {
-	return err
+	return err // redis: subscribe: <reason>
 }
 
 go func() {
-	for b := range msgs {
-		log.Printf("order event: %s", b)
+	for b := range msgs { // closed when ctx ends
+		log.Printf("post event: %s", b)
 	}
 }()
 
-err = rc.Publish(ctx, "orders", []byte(`{"id":42}`))
+err = rc.Publish(ctx, "posts", []byte(`{"id":42,"event":"updated"}`))
 ```
 
-Pub/sub is fire-and-forget: subscribers that are offline miss messages. Use the queue for work that must not be lost.
+- `Subscribe` waits until the subscription is confirmed, then delivers payloads on a channel with a buffer of 64. A slow reader holds up delivery; when `ctx` ends, the subscription closes and so does the channel.
+- Pub/sub is fire-and-forget: a server that is offline misses the message. Use the queue for work that must not be lost.
 
-## Pitfalls
+## Configuration
 
-- **One Redis, several apps.** Give every store its own prefix per app (`myapp:cache:`, `myapp:session:`), or two apps read each other's keys.
-- **Eviction policies.** A Redis configured with `maxmemory-policy allkeys-lru` may evict sessions and queued jobs under memory pressure. Use `noeviction` (or `volatile-lru`) for a Redis that holds sessions or queues, or run a separate one for the cache.
-- **`os.Getenv` before `.env` loads.** The eager form reads the process environment only; use the lazy `With...Func` options to read `app.Source`.
-- **Slow readiness checks while Redis is down.** go-redis retries; add `?dial_timeout=1s&max_retries=-1` to the URL used by the health check.
-- **Persistence.** A default Redis may lose recent writes on restart. Queues and sessions need AOF or RDB persistence enabled (managed Redis usually has it).
+| Name | Where | Default | What it does |
+| --- | --- | --- | --- |
+| `REDIS_URL` | your code (the helper above) | none | The server; Vukem does not read it itself |
+| `CacheStore(prefix)` | code | none | Prefix of cache keys; `Flush` needs a non-empty one |
+| `SessionStore(prefix)` | code | `session:` | Prefix of session keys |
+| `QueueOptions.Prefix` | code | `{queue}:` | Prefix of queue keys |
+| `QueueOptions.Grace` | code | `1m` | Extra time before an abandoned job is taken over |
+| `RateLimiter(prefix, ...)` | code | `ratelimit:` | Prefix of limiter keys |
+| `CACHE_PREFIX` | env | `vukem:` | Added by `app.Cache()` inside the store prefix |
+| `CACHE_STORE`, `SESSION_DRIVER`, `QUEUE_CONNECTION` | env | `memory`, cookie, `sync` | What `ErrUseDefault` falls back to |
+| `RATE_LIMIT_STORE` | env | — | `cache` counts limits in `app.Cache()` |
 
-## Security notes
+## Security
 
-- Never expose Redis to the internet. Bind it to a private network, require a password (`redis://:password@host:6379/0`) and use `rediss://` (TLS) across networks.
+- **Never expose Redis to the internet.** Bind it to a private network, require a password (`redis://:password@host:6379/0`), and use `rediss://` (TLS) across networks.
 - Keep the password in an environment variable, never in code or in a committed `.env`.
-- Sessions in Redis hold only session data; still, anyone with Redis access can read or forge sessions, so treat Redis credentials like database credentials.
+- Anyone with Redis access can read cached data, read or forge session data and enqueue jobs. Treat Redis credentials like database credentials.
+- Session keys are hashed, so a leaked keyspace gives no usable cookie, but the session **data** is stored as is.
+- A production deploy without `REDIS_URL` should fail at boot; the helper above makes sure it does.
+
+## Testing
+
+- With the `ErrUseDefault` helper, `vukemtest.New` runs without `REDIS_URL`, so unit tests use the memory cache, cookie sessions and the sync queue. No Redis needed.
+- To run a test against a real Redis, pass the URL: `vukemtest.Options{Env: map[string]string{"REDIS_URL": "redis://localhost:6379/15"}}`. Use a dedicated database number and a test prefix, and flush it between runs.
+- Check that the fallback fails closed in production with `vukemtest.Build`, which returns the boot error instead of failing the test. Routes that use `DefaultMiddleware` build the session store at boot, so the helper's error surfaces there:
+
+```go title="tests/redis_test.go"
+func TestProductionRequiresRedis(t *testing.T) {
+	_, err := vukemtest.Build(t, bootstrap.New, vukemtest.Options{
+		Env: map[string]string{"APP_ENV": "production"},
+	})
+
+	want := "REDIS_URL is required in production"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("err = %v, want %q", err, want)
+	}
+}
+```
+
+The driver's own suites (`cachetest`, `queuetest`, sessions) run with `go test -tags=integration` against Redis 7 and Valkey 8.
+
+## Common mistakes
+
+**Reading `REDIS_URL` with `os.Getenv` before `vukem.New`.** It sees only the process environment, so a URL in `.env` is ignored and tests cannot pass one. Use the `With...Func` options and `app.Source.Get`.
+
+**Returning `nil, nil` from a lazy function.** The accessor fails with `returned a nil store (return vukem.ErrUseDefault for the configured default)`. Return `nil, vukem.ErrUseDefault` to mean "use the default".
+
+**Joining the sentinel with a real error.**
+
+```go
+// Wrong: errors.Join hides a real failure, so Vukem returns it.
+return nil, errors.Join(vukem.ErrUseDefault, err)
+
+// Right: fall back only when there is nothing configured.
+return nil, vukem.ErrUseDefault
+```
+
+**One Redis, several apps, same prefixes.** Two apps then read each other's cache and sessions. Give every store a per-app prefix (`blog:cache:`, `shop:cache:`).
+
+**An eviction policy that drops sessions and jobs.** With `maxmemory-policy allkeys-lru`, Redis may evict sessions and queued jobs under memory pressure. Use `noeviction` (or `volatile-lru`) for a Redis that holds sessions or queues, or run a separate one for the cache.
+
+**No persistence.** A default Redis may lose recent writes on restart. Queues and sessions need AOF or RDB persistence; managed Redis usually has it on.
+
+## Next steps
+
+<CardGroup cols="2">
+<Card title="Cache" href="/docs/digging-deeper/cache" icon="zap">
+`Remember`, tags and locks on top of the store.
+</Card>
+<Card title="Queues" href="/docs/digging-deeper/queue" icon="layers">
+Dispatch jobs and run workers.
+</Card>
+<Card title="Sessions" href="/docs/basics/sessions" icon="lock">
+Session drivers, revocation and "log out other devices".
+</Card>
+<Card title="Rate limiting" href="/docs/security/rate-limiting" icon="shield">
+Limit logins and API calls across servers.
+</Card>
+</CardGroup>
+
+Package reference: [`drivers/redis`](https://pkg.go.dev/github.com/AlexGalhardo/vukem/drivers/redis).

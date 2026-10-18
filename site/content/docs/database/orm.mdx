@@ -1,131 +1,549 @@
 ---
 title: ORM
-description: Plain-struct models and a generic, always-parameterised query builder with pagination, streaming, soft deletes and hooks.
+description: Map plain Go structs to tables and read and write them with a typed, always-parameterised query builder, with pagination, streaming, soft deletes, row locks, hooks, JSON, encrypted columns and database validation rules.
 ---
 
-The `orm` package maps plain structs to tables. There is no Active Record: persistence functions take an executor (`*database.DB` or `*database.Tx`), so models carry no hidden connection.
+An <Term tip="Object-relational mapper: code that turns rows of a table into values of your language, and back.">ORM</Term> saves you from writing the same `INSERT`, `SELECT` and `Scan` code for every table. In Vukem a model is a plain Go struct; the `orm` package reads its fields once, works out the table and columns, and gives you typed functions to create, find, update and delete rows. Every value travels as a bound parameter and every column name is checked against the struct, so user input can never become SQL.
 
-## Models
+You will learn:
+
+- how a struct becomes a model, and the naming conventions behind it;
+- how to create, update, soft delete, restore and bulk-insert rows;
+- how to build queries with `orm.QueryOf`: conditions, ordering, scopes, streaming and pagination;
+- how row locks, hooks and the test clock work;
+- how to store JSON, encrypted values and UUIDs;
+- how to check `unique` and `exists` rules against the database.
+
+The running example is the blog: users write posts, readers leave comments, posts carry tags.
+
+## The idea
+
+Think of a model as a **form template** and each row as a **filled-in form**. The template (`type Post struct`) says which boxes exist; the filing cabinet (the `posts` table) stores the filled copies. The ORM is the clerk who copies boxes into the cabinet and back.
+
+Two decisions shape the package:
+
+- **No Active Record.** A model never holds a database handle. Every function takes the executor as an argument: `orm.Create(ctx, db, &post)`. You pass `db` normally and `tx` inside a [transaction](/docs/database/overview#transactions), and the same code works in both.
+- **Generics instead of strings.** `orm.QueryOf[models.Post](db)` is a `Query[Post]`, and `Get` returns `[]Post`. The compiler knows the type, so there is no `interface{}` to cast. [Generics](https://go.dev/doc/tutorial/generics) are Go's type parameters: the `[models.Post]` part.
+
+The ORM learns about your struct with [reflection](https://go.dev/blog/laws-of-reflection) the first time it sees the type, caches the result, and never repeats the work.
+
+## Quick start
+
+<Steps>
+<Step title="1. Create the model">
+
+```bash
+vukem make:model Post -m -f
+```
+
+This writes `app/models/post.go`, a `create_posts_table` migration and `database/factories/post_factory.go`. Fill the model in:
 
 ```go title="app/models/post.go"
-type Post struct {
-	orm.Model                    // ID, CreatedAt, UpdatedAt
-	orm.SoftDeletes              // optional: DeletedAt, Delete becomes a soft delete
+package models
 
-	Title    string             `json:"title"`
-	Body     string             `json:"body"`
-	AuthorID int64              `json:"author_id" db:"author_id"`
-	Meta     orm.JSON[PostMeta] `json:"meta"` // stored as JSON text; the value is Meta.V
+import "github.com/AlexGalhardo/vukem/orm"
+
+// Post is a row of the posts table.
+type Post struct {
+	orm.Model
+
+	UserID int64  `json:"user_id"`
+	Title  string `json:"title"`
+	Slug   string `json:"slug"`
+	Body   string `json:"body"`
+	Views  int    `json:"views"`
 }
 ```
 
-| Convention | Default | Override |
-| --- | --- | --- |
-| Table | snake_case plural of the type (`Post` → `posts`) | `Table() string` (`orm.Tabler`) |
-| Column | snake_case of the field (`AuthorID` → `author_id`) | `db:"name"`; `db:"-"` skips a field |
-| Primary key | `id` | `PrimaryKey() string` (`orm.Keyer`) |
+The table needs the same columns; [Migrations](/docs/database/migrations) shows the `posts` migration.
 
-`orm.TableOf[T]()` and `orm.Columns[T]()` report what Vukem derived.
+</Step>
+<Step title="2. Save and read posts">
 
-## Writing
+```go title="app/controllers/post_controller.go"
+package controllers
+
+import (
+	"net/http"
+
+	"github.com/AlexGalhardo/vukem/database"
+	"github.com/AlexGalhardo/vukem/orm"
+	"github.com/AlexGalhardo/vukem/web"
+
+	"example.com/blog/app/models"
+)
+
+type PostController struct{ db *database.DB }
+
+func NewPostController(db *database.DB) *PostController {
+	return &PostController{db: db}
+}
+
+func (h *PostController) Index(c *web.Ctx) error {
+	posts, err := orm.QueryOf[models.Post](h.db).
+		Where("views", ">=", 100).
+		OrderBy("id", orm.Desc).
+		Limit(20).
+		Get(c.Context())
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, posts)
+}
+
+func (h *PostController) Store(c *web.Ctx) error {
+	post := models.Post{UserID: 1, Title: "Hello", Slug: "hello"}
+	if err := orm.Create(c.Context(), h.db, &post); err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusCreated, post)
+}
+```
+
+</Step>
+<Step title="3. See the result">
+
+```bash
+curl -s -X POST http://localhost:3000/posts
+```
+
+```json
+{
+  "id": 1,
+  "created_at": "2026-10-18T00:38:26Z",
+  "updated_at": "2026-10-18T00:38:26Z",
+  "user_id": 1,
+  "title": "Hello",
+  "slug": "hello",
+  "body": "",
+  "views": 0
+}
+```
+
+`Create` filled `ID`, `CreatedAt` and `UpdatedAt` for you.
+
+</Step>
+</Steps>
+
+## Defining models
+
+Embed `orm.Model` to get an auto-increment id and two timestamps:
 
 ```go
-post := models.Post{Title: "Hello"}
-err := orm.Create(ctx, db, &post) // sets ID, CreatedAt, UpdatedAt
-post.Title = "Edited"
-err = orm.Update(ctx, db, &post)  // bumps UpdatedAt
-err = orm.Delete(ctx, db, &post)  // soft delete when the model embeds SoftDeletes
+type Model struct {
+	ID        int64     `db:"id"         json:"id"`
+	CreatedAt time.Time `db:"created_at" json:"created_at"`
+	UpdatedAt time.Time `db:"updated_at" json:"updated_at"`
+}
+```
+
+Fields of an [embedded struct](https://go.dev/doc/effective_go#embedding) count as fields of the model, so `orm.Model` adds `id`, `created_at` and `updated_at` columns. Here is the full blog post model, used on the rest of this page:
+
+```go title="app/models/post.go"
+package models
+
+import "github.com/AlexGalhardo/vukem/orm"
+
+// PostMeta is stored as JSON text in posts.meta.
+type PostMeta struct {
+	ReadingMinutes int      `json:"reading_minutes"`
+	Keywords       []string `json:"keywords"`
+}
+
+type Post struct {
+	orm.Model
+	orm.SoftDeletes // deleted_at: Delete hides the row instead
+
+	UserID        int64              `json:"user_id"`
+	Title         string             `json:"title"`
+	Slug          string             `json:"slug"`
+	Body          string             `json:"body"`
+	Views         int                `json:"views"`
+	CommentsCount int                `json:"comments_count"`
+	PublishedAt   orm.NullTime       `json:"published_at,omitzero"`
+	Meta          orm.JSON[PostMeta] `json:"meta"`
+	DraftNotes    string             `db:"-" json:"-"`
+}
+```
+
+### Naming conventions
+
+| What | Default | How to override |
+| --- | --- | --- |
+| Table | snake_case plural of the type: `Post` → `posts`, `Category` → `categories` | a `Table() string` method (`orm.Tabler`) |
+| Column | snake_case of the field: `CommentsCount` → `comments_count`, `UserID` → `user_id` | the [struct tag](https://go.dev/ref/spec#Struct_types) `db:"name"` |
+| Skip a field | — | `db:"-"` |
+| Primary key | `id` | a `PrimaryKey() string` method (`orm.Keyer`) |
+
+```go
+func (Post) Table() string { return "blog_posts" }
+```
+
+- Unexported fields are ignored.
+- When an embedded struct and the model both define a column, the shallowest field wins.
+- An integer primary key (`int`, `int32`, `int64`, `uint`...) is generated by the database; any other type (a `uuid.UUID`, a string) is yours to set before `Create`.
+- Relation fields (`orm.BelongsTo[User]`, `orm.HasMany[Comment]`...) are not columns; see [Relations](/docs/database/relations).
+
+### Column types
+
+| Go field type | Column it maps to | Notes |
+| --- | --- | --- |
+| `string`, `int`, `int64`, `float64`, `bool` | text, integer, real, boolean | Read and written by `database/sql` |
+| `time.Time` | timestamp | Stored in UTC by the ORM's timestamps |
+| `orm.NullTime` | nullable timestamp | JSON `null` or an RFC 3339 time; `omitzero` drops it when NULL |
+| `*string`, `*int64`, `sql.Null[T]` | nullable column | `nil` / `Valid: false` is NULL |
+| `orm.JSON[T]` | `JSON` / text | `T` encoded as JSON; read it with `.V` |
+| `orm.Encrypted[T]` | text | Sealed with the app key; see [Encrypted columns](#encrypted-columns) |
+| `uuid.UUID` | `UUID` on PostgreSQL, text elsewhere | See [UUIDs](#uuids) |
+
+`orm.NullTime` exists because `sql.Null[time.Time]` would encode as `{"V":...,"Valid":true}` in JSON. Set it like this:
+
+```go
+post.PublishedAt = orm.NullTime{Null: sql.Null[time.Time]{
+	V:     time.Now(),
+	Valid: true,
+}}
+```
+
+### Asking the ORM what it derived
+
+```go
+orm.TableOf[models.Post]()      // "posts"
+orm.Columns[models.Post]()      // ["id" "created_at" "updated_at" ...]
+orm.PrimaryKeyOf[models.Post]() // "id"
+// []orm.FieldInfo: Column, Name, Index, Type, Tag
+orm.FieldsOf[models.Post]()
+```
+
+`FieldsOf` is what the admin panel and exporters use to work with any model.
+
+<Callout type="info">
+An invalid model panics the first time it is used, usually at boot: a non-struct, a table or column name that is not a plain identifier, no primary key column, a `BelongsTo` without its foreign key column, or an unknown `orm` tag option. These are programming errors, so they stop the app before it serves a request.
+</Callout>
+
+## Creating, updating and deleting
+
+```go title="app/services/posts.go"
+post := models.Post{UserID: ada.ID, Title: "Hello", Slug: "hello"}
+
+// INSERT; fills ID, CreatedAt and UpdatedAt.
+err := orm.Create(ctx, db, &post)
+
+post.Title = "Hello, world"
+// UPDATE every column except id and created_at; bumps UpdatedAt.
+err = orm.Update(ctx, db, &post)
+
+// Soft delete (sets deleted_at) because Post embeds orm.SoftDeletes.
+err = orm.Delete(ctx, db, &post)
+
+// Clears deleted_at again.
 err = orm.Restore(ctx, db, &post)
+
+// Removes the row for real, soft deletes or not.
 err = orm.ForceDelete(ctx, db, &post)
 ```
 
-Unique-constraint violations return an error matching `orm.ErrConflict` (HTTP 409 when returned from a handler).
+What happens under the hood:
 
-Bulk writes go through a query:
+| Function | Details |
+| --- | --- |
+| `Create` | Sets `CreatedAt`/`UpdatedAt` only when they are zero, so you may set your own. Skips a zero integer id and reads the new one back (`RETURNING`, or `LastInsertId` on MySQL). Runs `BeforeCreate` and `AfterCreate` hooks |
+| `Update` | Writes **all** columns, not only the ones you changed: load the row first, then change it. Always refreshes `UpdatedAt`. Returns `orm.ErrNotFound` when no row has that id |
+| `Delete` | With `SoftDeletes`: sets `deleted_at` to now and fills `post.DeletedAt`; deleting an already deleted row returns `orm.ErrNotFound`. Without: same as `ForceDelete`. Runs `BeforeDelete` |
+| `ForceDelete` | `DELETE` even for soft-deleted rows; `orm.ErrNotFound` when nothing matched. Does not run `BeforeDelete` |
+| `Restore` | Clears `deleted_at`; a model without `SoftDeletes` returns `orm: posts does not use soft deletes` |
 
-```go
-n, err := orm.QueryOf[models.Post](db).Where("published", false).Update(ctx, orm.Set{"archived": true})
-n, err = orm.QueryOf[models.Post](db).Where("created_at", "<", cutoff).Delete(ctx)
+### Unique violations become 409
+
+When an insert or update breaks a unique index, the error wraps `orm.ErrConflict`:
+
+```text
+orm: insert users: unique constraint violated: constraint failed: UNIQUE
+constraint failed: users.email (2067)
 ```
 
-`orm.CreateMany` inserts a slice with multi-row `INSERT` statements, batched under the bound-parameter limit (32766 on SQLite, 65535 on PostgreSQL and MySQL):
+`errors.Is(err, orm.ErrConflict)` is true, and returned from a handler it answers **409 Conflict** instead of 500. The ORM recognises the SQLite, PostgreSQL and MySQL messages. For a friendlier form error, check first with [`orm.Unique`](#database-validation-rules).
+
+### Inserting many rows: `CreateMany`
+
+`orm.Create` sends one `INSERT` per row. For hundreds of rows, `orm.CreateMany` sends multi-row `INSERT` statements instead:
 
 ```go
-numbers := make([]models.Number, 1000)
-for i := range numbers {
-	numbers[i] = models.Number{RaffleID: raffle.ID, Value: i + 1}
-}
-err := orm.CreateMany(ctx, db, numbers) // fills timestamps and ids
+tags := []models.Tag{{Name: "go"}, {Name: "web"}, {Name: "sql"}}
+
+// One INSERT ... VALUES (...), (...), (...); ids are filled in.
+err := orm.CreateMany(ctx, db, tags)
 ```
 
-- Atomicity holds for `db` and `tx` only: on `db` the batches share one transaction (all rows or none); on a `tx` they join it. Any other `database.Executor` (a wrapper) runs the statements directly, so batches written before a failure stay written and keep their ids.
-- `BeforeCreate` runs for every model before the first insert. `AfterCreate` runs after the last, once the transaction on `db` has committed: an `AfterCreate` error there means the rows are stored and you still get the error.
-- Auto-increment ids are filled when every model leaves its id zero (mixing set and zero ids is an error). PostgreSQL and SQLite return them with `RETURNING`; they must be strictly increasing (an ascending sequence), otherwise `CreateMany` fails and rolls back instead of guessing which row got which id. MySQL cannot report the ids of a multi-row insert, so there such rows are inserted one statement each.
+- Rows are split into batches that stay under the dialect's bound-parameter limit: 32766 on SQLite, 65535 on PostgreSQL and MySQL.
+- **Atomicity** holds for `*database.DB` and `*database.Tx` only. On a `DB` the batches share one transaction, so either every row is stored or none is; on a `Tx` they join it. Any other `Executor` (a wrapper of yours) runs the statements directly, so batches written before a failure stay written.
+- `BeforeCreate` runs on every model before the first insert. `AfterCreate` runs after the last one, once the transaction on `db` has committed: an `AfterCreate` error there means the rows are stored and you still get the error.
+- Ids are written back when every model leaves its id zero (or every model sets its own; mixing both is an error). PostgreSQL and SQLite return them with `RETURNING`, and they must come back strictly increasing; otherwise `CreateMany` fails and rolls back rather than guess which row got which id. MySQL cannot report the ids of a multi-row insert, so there each row is its own `INSERT`.
 - A model whose only column is its generated key is rejected; use `orm.Create`.
 
 ## Querying
 
+`orm.QueryOf[T](ex)` starts a query. Builder methods return a **new** query each time (they are values, not pointers), so you may keep a base query and refine it without changing the original:
+
 ```go
-posts, err := orm.QueryOf[models.Post](db).
-	Where("published", true).                 // col = ?
-	Where("views", ">=", 100).                // allow-listed operators, including LIKE
-	WhereIn("author_id", 1, 2, 3).
-	WhereGroup(func(q orm.Query[models.Post]) orm.Query[models.Post] {
-		return q.Where("title", "LIKE", "%go%").OrWhere("body", "LIKE", "%go%")
-	}).
-	OrderBy("id", orm.Desc).
-	Limit(20).
-	Get(ctx) // []models.Post
+published := orm.QueryOf[models.Post](db).WhereNotNull("published_at")
+
+popular, err := published.Where("views", ">=", 1000).Get(ctx)
+recent, err := published.Latest().Limit(5).Get(ctx)
 ```
 
-| Builders | Terminals |
-| --- | --- |
-| `Select`, `Where`, `OrWhere`, `WhereIn`, `WhereNotIn`, `WhereNull`, `WhereNotNull`, `WhereBetween`, `WhereRaw`, `WhereGroup` | `Get`, `First`, `Find(id)`, `Count`, `Exists` |
-| `LockForUpdate()`, `ForShare()`, `SkipLocked()`, `NoWait()` ([row locks](#row-locks)) | |
-| `OrderBy(col, orm.Asc/orm.Desc)`, `Latest()`, `Limit`, `Offset` | `Pluck[V](col)`, `Each`, `Chunk`, `Paginate` |
-| `Scope(fns...)`, `WithTrashed()`, `OnlyTrashed()` | `Update(set)`, `Delete()`, `SQL()` |
+A mistake in a builder (an unknown column, a bad operator) does not panic. It is remembered and returned by the terminal method (`Get`, `First`, `Count`...).
 
-Column names are validated against the model, never interpolated from input; values are always bound parameters. `WhereRaw(sql, args...)` is the explicit escape hatch and checks the number of `?` placeholders. It finds them the way the dialect lexes SQL, with the same rules as `database.Rebind`: `?` inside literals, quoted identifiers, comments and PostgreSQL dollar-quoted bodies does not count, and `??` is a literal `?` on PostgreSQL (jsonb operators). A fragment that ends inside a literal, identifier or comment (a trailing `--` comment too) is rejected, since it would swallow the SQL appended after it, and so are explicit `$n` parameters on PostgreSQL. Without an executor the fragment is lexed with SQLite's rules. The lexer assumes the servers' default string and quote settings; placeholders inside MySQL's executable `/*! */` and `/*+ */` comments are not supported.
+### Conditions
 
 ```go
-post, err := orm.QueryOf[models.Post](db).Find(ctx, id) // orm.ErrNotFound → 404 in handlers
+posts, err := orm.QueryOf[models.Post](db).
+	Where("user_id", ada.ID).         // user_id = ?
+	Where("views", ">=", 100).        // views >= ?
+	WhereIn("id", []int64{1, 2, 3}).  // id IN (?, ?, ?)
+	WhereGroup(func(
+		q orm.Query[models.Post],
+	) orm.Query[models.Post] {
+		return q.Where("title", "LIKE", "%go%").
+			OrWhere("body", "LIKE", "%go%")
+	}).
+	Get(ctx)
+```
 
-titles, err := orm.QueryOf[models.Post](db).Pluck[string](ctx, "title")
+| Method | SQL | Notes |
+| --- | --- | --- |
+| `Where(col, v)` | `col = ?` | `Where(col, nil)` is `col IS NULL` |
+| `Where(col, op, v)` | `col op ?` | `op` is one of `=`, `!=`, `<>`, `<`, `<=`, `>`, `>=`, `LIKE`, `NOT LIKE`, `ILIKE` (any case); `!=`/`<>` with `nil` is `IS NOT NULL` |
+| `OrWhere(...)` | `OR ...` | Same arguments as `Where` |
+| `WhereIn(col, vs...)` | `col IN (...)` | Accepts values or one slice; an empty list matches **nothing** |
+| `WhereNotIn(col, vs...)` | `col NOT IN (...)` | An empty list matches **everything** |
+| `WhereNull(col)` / `WhereNotNull(col)` | `IS NULL` / `IS NOT NULL` | |
+| `WhereBetween(col, lo, hi)` | `col BETWEEN ? AND ?` | |
+| `WhereGroup(fn)` | `(...)` | Parentheses around the conditions `fn` adds |
+| `WhereRaw(sql, args...)` | your fragment | The escape hatch, see below |
 
-for post, err := range orm.QueryOf[models.Post](db).Each(ctx) { // streams rows
+- Column names may be bare (`"title"`) or qualified with the model's own table (`"posts.title"`); anything else is `orm: unknown column "password" on posts`.
+- An operator outside the list is `orm: invalid operator ...`.
+- `ILIKE` (case-insensitive `LIKE`) is sent as `LIKE` on MySQL, whose default collation already ignores case. SQLite does not understand `ILIKE`; use `LIKE`, which is case-insensitive for ASCII there.
+- Conditions join with `AND`, and `OrWhere` adds `OR` in place, so `Where(a).Where(b).OrWhere(c)` means `(a AND b) OR c`. Use `WhereGroup` to say what you mean. The soft-delete filter is always kept outside your `OR`s, so an `OrWhere` never reveals deleted rows.
+
+#### `WhereRaw`
+
+`WhereRaw` takes a fragment of SQL with `?` placeholders, for what the builder cannot say:
+
+```go
+q := orm.QueryOf[models.Post](db).
+	WhereRaw("LOWER(title) = ?", strings.ToLower(title))
+```
+
+The fragment is checked before it runs:
+
+- the number of `?` must match the arguments: `orm: WhereRaw("title = ? AND slug = ?") has 2 placeholders but 1 args`;
+- `?` inside literals, quoted identifiers, comments and PostgreSQL dollar-quoted bodies does not count, and `??` is a literal `?` on PostgreSQL, exactly as in [`database.Rebind`](/docs/database/overview#one-query-for-every-dialect-rebind);
+- a fragment that ends inside a literal, identifier or comment (a trailing `--` comment too) is rejected, because it would swallow the SQL appended after it;
+- explicit `$1` parameters are rejected on PostgreSQL, because the ORM renumbers every `?` of the statement.
+
+Without an executor the fragment is lexed with SQLite's rules.
+
+### Shape and order
+
+| Method | What it does |
+| --- | --- |
+| `Select(cols...)` | Only these columns (validated); the other fields stay zero. `"*"` is allowed |
+| `OrderBy(col, orm.Asc / orm.Desc)` | Adds an `ORDER BY`; call it again for a second key |
+| `Latest()` | `created_at DESC, id DESC`, or `id DESC` when the model has no `created_at` |
+| `Limit(n)` / `Offset(n)` | Paging by hand |
+| `Scope(fns...)` | Applies reusable query functions, see below |
+| `WithTrashed()` / `OnlyTrashed()` | Include, or return only, soft-deleted rows |
+| `With(relations...)` | Eager loads relations, see [Relations](/docs/database/relations) |
+
+**Scopes** are plain functions from query to query, so conditions you repeat get a name:
+
+```go title="app/models/post_scopes.go"
+// Published keeps posts that have a publication date.
+func Published(q orm.Query[Post]) orm.Query[Post] {
+	return q.WhereNotNull("published_at")
+}
+
+// By keeps the posts of one author.
+func By(userID int64) func(orm.Query[Post]) orm.Query[Post] {
+	return func(q orm.Query[Post]) orm.Query[Post] {
+		return q.Where("user_id", userID)
+	}
+}
+```
+
+```go
+posts, err := orm.QueryOf[models.Post](db).
+	Scope(models.Published, models.By(ada.ID)).
+	Get(ctx)
+```
+
+### Getting results
+
+| Method | Returns | Notes |
+| --- | --- | --- |
+| `Get(ctx)` | `[]T` | Every matching row |
+| `First(ctx)` | `T` | The first row; orders by primary key when you gave no order; `orm.ErrNotFound` when empty |
+| `Find(ctx, id)` | `T` | The row with that primary key, or `orm.ErrNotFound` |
+| `Count(ctx)` | `int64` | `COUNT(*)` |
+| `Exists(ctx)` | `bool` | |
+| `Pluck[V](ctx, col)` | `[]V` | One column of every row |
+| `Each(ctx)` | an iterator | Streams rows without loading them all |
+| `Chunk(ctx, size, fn)` | `error` | Calls `fn` with batches of `size` rows |
+| `SQL()` | `(string, []any, error)` | The `SELECT` it would run, for debugging and tests |
+
+`orm.ErrNotFound` answers **404** when a handler returns it, so a show page needs no extra check:
+
+```go
+func (h *PostController) Show(c *web.Ctx) error {
+	// 404 when {id} is not a number.
+	id, err := c.ParamInt("id")
 	if err != nil {
 		return err
 	}
-	index(post)
-}
 
-page, err := orm.QueryOf[models.Post](db).Latest().Paginate(ctx, c.QueryInt("page", 1), 15)
-// page.Items, page.Total, page.Page, page.PerPage, page.LastPage; JSON: {"data": [...], "total": …}
+	post, err := orm.QueryOf[models.Post](h.db).Find(c.Context(), id)
+	if err != nil {
+		return err // 404 "Record not found." when missing
+	}
+
+	return c.JSON(http.StatusOK, post)
+}
 ```
 
-Reusable conditions are plain functions:
+`Pluck` is a generic method, so the type comes after the name:
 
 ```go
-func Published(q orm.Query[models.Post]) orm.Query[models.Post] { return q.Where("published", true) }
-
-orm.QueryOf[models.Post](db).Scope(Published).Get(ctx)
+titles, err := orm.QueryOf[models.Post](db).
+	OrderBy("id", orm.Asc).
+	Pluck[string](ctx, "title")
+// ["Hello" "Second post" "Third post"]
 ```
+
+`Each` returns a Go 1.23 [range-over-func iterator](https://go.dev/blog/range-functions): rows are read one at a time, and breaking out of the loop closes them.
+
+```go
+for post, err := range orm.QueryOf[models.Post](db).Each(ctx) {
+	if err != nil {
+		return err
+	}
+
+	if err := searchIndex.Add(post); err != nil {
+		return err // closes the rows
+	}
+}
+```
+
+`Chunk` orders by primary key and pages with `LIMIT`/`OFFSET`; returning an error from `fn` stops it. Because it uses offsets, deleting rows of the same query inside `fn` makes it skip rows; use `Each` or `CursorPaginate` for that. `Each` does not eager load relations.
+
+`SQL()` shows exactly what will run:
+
+```go
+q, args, err := orm.QueryOf[models.Post](db).
+	Where("views", ">=", 200).
+	OrderBy("id", orm.Desc).
+	Limit(10).
+	SQL()
+```
+
+```sql
+SELECT "id", "created_at", ..., "views" FROM "posts"
+WHERE "deleted_at" IS NULL AND "views" >= ?
+ORDER BY "id" DESC LIMIT 10
+-- args: [200]
+```
+
+## Pagination
+
+`Paginate(ctx, page, perPage)` returns one page and the total count. `page` is 1-based; values below 1 become 1.
+
+```go
+page, err := orm.QueryOf[models.Post](db).
+	Latest().
+	Paginate(ctx, c.QueryInt("page", 1), 15)
+```
+
+`orm.Page[T]` encodes as:
+
+```json
+{"data":[...],"total":42,"page":1,"per_page":15,"last_page":3}
+```
+
+`CursorPaginate(ctx, cursor, perPage, dir)` is <Term tip="Pagination that continues after the last key seen instead of skipping N rows; it stays fast on big tables and never shows a row twice when rows are added.">keyset pagination</Term>: no `COUNT`, stable while new posts arrive. Pass `""` for the first page and the returned `NextCursor` for the next:
+
+```go
+page, err := orm.QueryOf[models.Post](db).
+	CursorPaginate(ctx, c.Query("cursor"), 20, orm.Desc)
+// {"data":[...],"per_page":20,"next_cursor":"Mg"}
+```
+
+- It orders by the primary key in `dir`; a query with its own `OrderBy` fails with `orm: CursorPaginate orders by the primary key; remove OrderBy`.
+- `NextCursor` is empty on the last page.
+- A cursor is the last key, JSON-encoded in URL-safe base64. It is opaque to clients but not secret, and a malformed one returns `orm.ErrInvalidCursor` (**400** "Invalid pagination cursor.").
+
+[Pagination](/docs/rest-apis/pagination) shows both in an API with links.
+
+<Callout type="warning" title="Cap perPage yourself">
+Neither method limits `perPage`. If you read it from the query string, clamp it (`min(perPage, 100)`), or one request for a million rows can exhaust the server's memory.
+</Callout>
+
+## Bulk updates and deletes
+
+To change many rows at once, call `Update` or `Delete` on a query. Both return how many rows they touched:
+
+```go
+// Archive every draft older than a year.
+n, err := orm.QueryOf[models.Post](db).
+	WhereNull("published_at").
+	Where("created_at", "<", time.Now().AddDate(-1, 0, 0)).
+	Update(ctx, orm.Set{"views": 0})
+
+// Soft deletes, because Post embeds orm.SoftDeletes.
+n, err = orm.QueryOf[models.Post](db).
+	Where("user_id", spammer.ID).
+	Delete(ctx)
+```
+
+- `orm.Set` is a `map[string]any` of column to value; columns are validated, and an empty `Set` is an error.
+- `updated_at` is refreshed unless the `Set` names it.
+- On a soft-delete model, `Delete` sets `deleted_at`; after `WithTrashed()` or `OnlyTrashed()` it deletes for real.
+- Hooks do not run for bulk writes, and encrypted columns in a `Set` are sealed.
+
+## Soft deletes
+
+Embed `orm.SoftDeletes` and add `t.SoftDeletes()` to the migration. The model gains a `DeletedAt orm.NullTime` column, and:
+
+| Operation | Behaviour |
+| --- | --- |
+| `orm.Delete`, `Query.Delete` | Set `deleted_at` instead of removing the row |
+| Every query | Adds `deleted_at IS NULL` |
+| `WithTrashed()` | Includes deleted rows |
+| `OnlyTrashed()` | Only deleted rows |
+| `orm.Restore` | Clears `deleted_at` |
+| `orm.ForceDelete` | Removes the row |
+| Eager loading | Never loads soft-deleted related rows |
+
+A soft-deleted post keeps its slug, so a unique index on `slug` still rejects a new post with the same slug. `orm.Unique` counts deleted rows for the same reason.
 
 ## Row locks
 
-Inside a transaction, lock the rows you read so concurrent requests cannot change them before you write:
+Two readers click "like" at the same moment: both read `views = 10`, both write 11, and one like is lost. A row lock makes the second transaction wait until the first one finishes:
 
 ```go
 err := db.Tx(ctx, func(tx *database.Tx) error {
-	n, err := orm.QueryOf[models.Number](tx).
-		Where("raffle_id", raffleID).Where("value", value).
-		LockForUpdate(). // SELECT … FOR UPDATE
-		First(ctx)
+	post, err := orm.QueryOf[models.Post](tx).
+		LockForUpdate(). // SELECT ... FOR UPDATE
+		Find(ctx, postID)
 	if err != nil {
 		return err
 	}
-	n.Status = "reserved"
-	return orm.Update(ctx, tx, &n)
+
+	post.Views++
+
+	return orm.Update(ctx, tx, &post)
 })
 ```
 
@@ -133,25 +551,293 @@ err := db.Tx(ctx, func(tx *database.Tx) error {
 | --- | --- | --- | --- |
 | `LockForUpdate()` | `FOR UPDATE` | `FOR UPDATE` | no-op |
 | `ForShare()` | `FOR SHARE` | `LOCK IN SHARE MODE` | no-op |
-| `.SkipLocked()` / `.NoWait()` after a lock | `SKIP LOCKED` / `NOWAIT` | same (with `ForShare`, MySQL 8 only: `FOR SHARE …`) | no-op (`NoWait` never fails) |
+| `.SkipLocked()` after a lock | `SKIP LOCKED` | `SKIP LOCKED` (with `ForShare`: MySQL 8 only) | no-op |
+| `.NoWait()` after a lock | `NOWAIT` | `NOWAIT` | no-op, never fails |
 
-- A locking query on `db` returns `orm.ErrLockOutsideTx`: without a transaction the lock ends with the statement. This holds on SQLite too, so code stays portable.
-- SQLite has no row locks; its write transactions (`BEGIN IMMEDIATE`) already lock the whole database, so the lock clauses are dropped.
+- A locking query on `db` instead of `tx` returns `orm.ErrLockOutsideTx` ("row locks need a transaction"), on SQLite too, so the code stays portable: without a transaction the lock would end with the statement.
+- SQLite has no row locks; a write transaction (`BEGIN IMMEDIATE`) already locks the whole database. A second writer waits for the busy timeout instead of failing with `NoWait`.
 - `Count` and `Exists` ignore locks (PostgreSQL rejects them on aggregates), and eager-loaded relations are not locked.
+- `SkipLocked` suits work queues: each worker takes rows nobody else holds.
 
 ## Hooks
 
-Models can implement `BeforeCreate`, `AfterCreate`, `BeforeUpdate`, `AfterUpdate` and `BeforeDelete` (each `func(ctx context.Context) error`). An error aborts the write.
+A model may implement any of these methods, each `func(ctx context.Context) error`. Returning an error aborts the write and returns that error.
 
-```go
+| Method | Runs | Called by |
+| --- | --- | --- |
+| `BeforeCreate` | before `INSERT` | `Create`, `CreateMany`, factories |
+| `AfterCreate` | after `INSERT` | `Create`, `CreateMany` (after the last row) |
+| `BeforeUpdate` | before `UPDATE` | `Update` |
+| `AfterUpdate` | after `UPDATE` | `Update` |
+| `BeforeDelete` | before `DELETE` or soft delete | `Delete` (not `ForceDelete`) |
+
+Define them on the pointer receiver so they may change the model:
+
+```go title="app/models/post.go"
 func (p *Post) BeforeCreate(ctx context.Context) error {
 	p.Title = strings.TrimSpace(p.Title)
+	if p.Slug == "" {
+		p.Slug = slugify(p.Title)
+	}
+
 	return nil
 }
 ```
 
-Timestamps use `orm.WithClock(ctx, now)` when present, so tests can fix the time.
+Hooks do not run for `Query.Update`, `Query.Delete` and `ForceDelete`.
 
-<Callout type="warning">
-See [Relations](/docs/database/relations) for eager loading and [Factories and seeders](/docs/database/factories-seeders) for test data.
-</Callout>
+### Fixing the clock in tests
+
+Timestamps come from `time.Now().UTC()`, unless the context carries a clock:
+
+```go
+fixed := time.Date(2026, 10, 18, 9, 0, 0, 0, time.UTC)
+ctx = orm.WithClock(ctx, func() time.Time { return fixed })
+
+err := orm.Create(ctx, db, &post) // CreatedAt == fixed
+```
+
+The clock is used by `Create`, `Update`, soft deletes and `Query.Update`, always converted to UTC.
+
+## JSON, encrypted columns and UUIDs
+
+### JSON columns
+
+`orm.JSON[T]` stores any [JSON-encodable](https://pkg.go.dev/encoding/json) value in one column (`JSONB` on PostgreSQL, `JSON` on MySQL, text on SQLite). The value lives in `.V`:
+
+```go
+post.Meta = orm.JSON[models.PostMeta]{V: models.PostMeta{
+	ReadingMinutes: 4,
+	Keywords:       []string{"go", "sql"},
+}}
+
+minutes := post.Meta.V.ReadingMinutes
+```
+
+NULL reads as the zero value of `T`. In API output the field encodes as the plain value, not as `{"V":...}`.
+
+### Encrypted columns
+
+Some data must be unreadable even to someone who copies the database: an API key a user saved, private notes. `orm.Encrypted[T]` stores `T` as JSON encrypted with the app key (AES-256-GCM through `app.Crypt`):
+
+```go title="app/models/user.go"
+type User struct {
+	orm.Model
+
+	Name          string                `json:"name"`
+	Email         string                `json:"email"`
+	WebhookSecret orm.Encrypted[string] `json:"-"` // a TEXT column
+}
+```
+
+```go
+u := models.User{
+	Name:          "Ada",
+	Email:         "ada@example.com",
+	WebhookSecret: orm.Encrypted[string]{V: "sk_test_..."},
+}
+err := orm.Create(ctx, db, &u) // stores ciphertext
+
+got, err := orm.QueryOf[models.User](db).Find(ctx, u.ID)
+// got.WebhookSecret.V == "sk_test_..."
+```
+
+- `app.DB()` passes `app.Crypt` as the encrypter; a `DB` you open yourself needs `database.WithEncrypter(enc)`.
+- **Fails closed:** without an encrypter, reads and writes return `orm.ErrNoEncrypter` and nothing is stored. Passing an `Encrypted` value straight to `database/sql` (`Value`/`Scan`) is an error, so plaintext never reaches the database by accident.
+- Sealed on `Create`, `Update` and `Query.Update`; opened by queries, eager loads and `Pluck`.
+- The table and column (`orm:<table>.<column>`) are authenticated with the value, so a ciphertext copied to another column or table is rejected. Renaming the table or column needs a re-encryption.
+- **Key rotation:** values sealed with a key listed in `APP_PREVIOUS_KEYS` still decrypt, and saving the model re-encrypts them with the current key.
+- **Not searchable:** every encryption is randomised, so `Where("webhook_secret", ...)` never matches. NULL reads as the zero value.
+- JSON encoding uses the plain value; tag the field `json:"-"` to keep it out of responses.
+
+[Encryption](/docs/security/encryption) covers the keys.
+
+### UUIDs
+
+Auto-increment ids are guessable: `/posts/41` tells a visitor that `/posts/40` exists. Package `uuid` (standard library only) makes [RFC 9562](https://www.rfc-editor.org/rfc/rfc9562) UUIDs for public ids:
+
+```go
+type Post struct {
+	orm.Model
+
+	// t.UUID("public_id").Unique() in the migration.
+	PublicID uuid.UUID `json:"public_id"`
+}
+
+post := models.Post{PublicID: uuid.NewV7()}
+
+id, err := uuid.Parse(c.Param("id"))
+if errors.Is(err, uuid.ErrInvalid) {
+	return errs.ErrNotFound
+}
+```
+
+| Function | What it does |
+| --- | --- |
+| `uuid.NewV7()` | Time-ordered: sorts by its creation millisecond (random inside one), which keeps indexes compact; reveals that time through `u.Time()` |
+| `uuid.NewV4()` | Fully random (122 random bits) |
+| `uuid.Parse(s)` | Accepts only the canonical 36-character form, in either case; otherwise `uuid.ErrInvalid` |
+| `uuid.MustParse(s)` | `Parse` that panics, for constants |
+
+Both versions draw from `crypto/rand`. A `uuid.UUID` is a `[16]byte`: JSON and query strings use the canonical lowercase text, SQL writes the text (PostgreSQL `uuid`, text elsewhere) and scans text or 16-byte binary columns. Scan a nullable column into a `*uuid.UUID`; an empty string never parses as the nil UUID.
+
+## Database validation rules
+
+[`z` schemas](/docs/basics/validation) check shape and format without touching the database. "Is this email already taken?" and "does this tag exist?" need a query, so they run after parsing, with `orm.Validate`:
+
+```go title="app/controllers/registration_controller.go"
+in, err := web.Parse(c, requests.RegisterSchema)
+if err != nil {
+	return err
+}
+
+err = orm.Validate(c.Context(), h.db,
+	// Soft-deleted rows count, like the unique index.
+	orm.Unique[models.User]("email", in.Email),
+	orm.Exists[models.Tag]("id", in.TagID).
+		Field("tag_id").
+		Message("Pick a tag from the list."),
+)
+if err != nil {
+	return err // 422, or flashed errors for an HTML form
+}
+```
+
+| Rule | Passes when |
+| --- | --- |
+| `orm.Unique[T](column, value)` | No row of `T` has `column = value`, soft-deleted rows included |
+| `orm.Exists[T](column, value)` | A row of `T` (not soft-deleted) has `column = value` |
+
+| Modifier | What it does |
+| --- | --- |
+| `.Ignore(id)` | Skips the row with that primary key: an update keeps its own email |
+| `.Field(name)` | Reports the error under `name` instead of the column |
+| `.Message(msg)` | Replaces the message; it is used as is, never translated |
+
+- Empty values (`nil`, `""`, zero numbers, nil or zero pointers) are skipped: required-ness belongs to the schema.
+- Every rule runs, and all failures come back together in one `*errs.ValidationError`. A database error stops at once and is returned as is.
+- The column is validated against the model, so input never chooses a column.
+- The built-in messages are `The email has already been taken.` and `The selected id is invalid.`. They follow the request locale through the keys `validation.unique` and `validation.exists`, with the column name translated by `validation.attributes.<column>`; see [Localization](/docs/digging-deeper/localization).
+
+A JSON client receives a 422 [problem details](https://www.rfc-editor.org/rfc/rfc9457) body:
+
+```json
+{
+  "type": "about:blank",
+  "title": "Validation failed",
+  "status": 422,
+  "detail": "2 field(s) are invalid.",
+  "instance": "/register",
+  "errors": {
+    "email": ["The email has already been taken."],
+    "tag_id": ["Pick a tag from the list."]
+  }
+}
+```
+
+## Security
+
+- **Columns are validated, values are bound.** `Where`, `OrderBy`, `Select`, `Pluck`, `Set` and the rules check every column name against the model; a name from the query string that is not a column fails the query. Values always travel as parameters.
+- **`WhereRaw` is the only door for raw SQL in the builder.** It checks placeholder counts and unterminated fragments, but it cannot tell whether you concatenated input into the fragment. Never do.
+- **Mass assignment.** Do not decode a request body straight into a model: a client could send `"user_id"` or `"views"`. Parse into a request struct with `z`, then copy the fields you allow.
+- **Encrypted columns fail closed** and are bound to their table and column.
+- **`perPage` is unbounded**: clamp it.
+- **Sequential ids** reveal how many rows exist; expose a `uuid.NewV7()` instead when that matters.
+
+## Testing
+
+```go title="tests/posts_test.go"
+func TestCreatePost(t *testing.T) {
+	app := vukemtest.New(t, bootstrap.New)
+
+	db, err := app.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := orm.WithClock(t.Context(), func() time.Time {
+		return time.Date(2026, 10, 18, 9, 0, 0, 0, time.UTC)
+	})
+
+	post := models.Post{UserID: 1, Title: " Hello ", Slug: "hello"}
+	if err := orm.Create(ctx, db, &post); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := orm.QueryOf[models.Post](db).Find(ctx, post.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got.Title != "Hello" { // trimmed by BeforeCreate
+		t.Errorf("Title = %q", got.Title)
+	}
+
+	vukemtest.AssertDatabaseHas(t, app, "posts",
+		map[string]any{"slug": "hello"})
+}
+```
+
+`Query.SQL()` lets a test assert the generated SQL without a database round trip. [Factories](/docs/database/factories-seeders) build models with fake data.
+
+## Common mistakes
+
+**`Update` after building a model by hand.** `orm.Update` writes every column, so the fields you left empty overwrite the stored values.
+
+```go
+// Wrong: Body, Views and the rest become empty.
+err := orm.Update(ctx, db, &models.Post{
+	Model: orm.Model{ID: 7},
+	Title: "New title",
+})
+
+// Right: load, change, save; or a bulk update of one column.
+post, err := orm.QueryOf[models.Post](db).Find(ctx, 7)
+post.Title = "New title"
+err = orm.Update(ctx, db, &post)
+
+_, err = orm.QueryOf[models.Post](db).
+	Where("id", 7).
+	Update(ctx, orm.Set{"title": "New title"})
+```
+
+**Ordering by user input without a fallback.** `OrderBy(c.Query("sort"), orm.Asc)` with `?sort=password` fails with `orm: unknown column "password" on posts`. That keeps you safe, but answers 500. Map the allowed values first.
+
+**`OrWhere` without a group.**
+
+```go
+// Wrong: (user_id = 1 AND title LIKE '%go%') OR body LIKE '%go%'
+q.Where("user_id", 1).
+	Where("title", "LIKE", "%go%").
+	OrWhere("body", "LIKE", "%go%")
+
+// Right: user_id = 1 AND (title LIKE '%go%' OR body LIKE '%go%')
+q.Where("user_id", 1).
+	WhereGroup(func(g orm.Query[models.Post]) orm.Query[models.Post] {
+		return g.Where("title", "LIKE", "%go%").
+			OrWhere("body", "LIKE", "%go%")
+	})
+```
+
+**Locking outside a transaction.** `QueryOf[Post](db).LockForUpdate().First(ctx)` returns `orm: row locks need a transaction (run the query on a *database.Tx)`. Run it on `tx`.
+
+**`WhereIn` with an empty slice.** It matches nothing, which is usually right; `WhereNotIn` with an empty slice matches everything.
+
+## Next steps
+
+<CardGroup cols="2">
+<Card title="Relations" href="/docs/database/relations" icon="boxes">
+Load a post's author, comments and tags without N+1 queries.
+</Card>
+<Card title="Migrations" href="/docs/database/migrations" icon="layers">
+Create the tables your models map to.
+</Card>
+<Card title="Factories and seeders" href="/docs/database/factories-seeders" icon="code">
+Build posts with fake data for tests and demos.
+</Card>
+<Card title="Pagination" href="/docs/rest-apis/pagination" icon="route">
+Page results in an API.
+</Card>
+</CardGroup>
+
+Package reference: [`orm`](https://pkg.go.dev/github.com/AlexGalhardo/vukem/orm), [`uuid`](https://pkg.go.dev/github.com/AlexGalhardo/vukem/uuid).

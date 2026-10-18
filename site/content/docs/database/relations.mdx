@@ -1,56 +1,438 @@
 ---
 title: Relations
-description: BelongsTo, HasOne, HasMany and ManyToMany fields, batched eager loading with With, pivot writes and strict mode.
+description: Declare BelongsTo, HasOne, HasMany and ManyToMany fields on your models, load them in batches with With, and link rows through pivot tables with Attach, Detach and Sync.
 ---
 
+Rows in different tables belong together: a post has an author, many comments and a few tags. A **relation** is a field on your model that says how to find those related rows. Vukem loads relations only when you ask for them with `With`, in one batched query per relation, so a list of 50 posts with their authors costs two queries, not 51.
+
+You will learn:
+
+- the four relation types and the columns they expect;
+- how `With` loads relations, and how many queries it costs;
+- why reading a relation you did not load returns `orm.ErrNotLoaded`;
+- how relations appear in JSON;
+- how to link posts and tags with `Attach`, `Detach` and `Sync`.
+
+The running example is the blog: users write posts, posts have comments and tags.
+
+## The idea
+
+Picture a library card catalogue. Each book card says "written by author #7". To show the author's name you look up card #7 in the authors drawer. Doing that once per book, walking back and forth, is slow; collecting every author number first and opening the drawer once is fast. That second approach is <Term tip="Loading related rows ahead of time, in bulk, instead of one query per row when you first touch them.">eager loading</Term>, and it is the only way Vukem loads relations.
+
+The slow way has a name: the <Term tip="One query for the list plus one more query for each row of the list: N rows cost N + 1 queries.">N+1 problem</Term>. Many ORMs fall into it silently by loading a relation the first time you read it. Vukem never does: a relation you did not load returns an error instead of running a hidden query. This is called **strict mode**.
+
+| Relation | Read it as | Foreign key lives on | Blog example |
+| --- | --- | --- | --- |
+| `orm.BelongsTo[T]` | "this row points to one `T`" | this table | a post belongs to its author (`posts.user_id`) |
+| `orm.HasOne[T]` | "one `T` points to this row" | `T`'s table | a user has one profile (`profiles.user_id`) |
+| `orm.HasMany[T]` | "many `T` point to this row" | `T`'s table | a post has many comments (`comments.post_id`) |
+| `orm.ManyToMany[T]` | "linked through a pivot table" | a pivot table | posts and tags (`post_tag.post_id`, `post_tag.tag_id`) |
+
+Each type is a [generic](https://go.dev/doc/tutorial/generics) struct: the type parameter `T` is the related model.
+
+## Quick start
+
+<Steps>
+<Step title="1. Declare the relations">
+
 ```go title="app/models/post.go"
+package models
+
+import "github.com/AlexGalhardo/vukem/orm"
+
 type Post struct {
 	orm.Model
 
-	UserID   int64
-	User     orm.BelongsTo[User]   `json:"user,omitzero"`               // posts.user_id → users.id
-	Comments orm.HasMany[Comment]  `json:"comments,omitzero"`           // comments.post_id
-	Tags     orm.ManyToMany[Tag]   `json:"tags,omitzero"`               // pivot post_tag(post_id, tag_id)
-	Cover    orm.HasOne[Image]     `json:"cover,omitzero" orm:"fk:owner_id"`
+	UserID int64  `json:"user_id"`
+	Title  string `json:"title"`
+	Body   string `json:"body"`
+
+	User     orm.BelongsTo[User]  `json:"author,omitzero"`
+	Comments orm.HasMany[Comment] `json:"comments,omitzero"`
+	Tags     orm.ManyToMany[Tag]  `json:"tags,omitzero"`
 }
 ```
 
-```go
-posts, err := orm.QueryOf[models.Post](db).With("User", "Comments", "Tags").Get(ctx)
+```go title="app/models/comment.go"
+type Comment struct {
+	orm.Model
 
-user, err := posts[0].User.Get() // *User, nil when the key points nowhere
-tags, err := posts[0].Tags.Get() // []Tag
+	PostID int64  `json:"post_id"`
+	UserID int64  `json:"user_id"`
+	Body   string `json:"body"`
+
+	User orm.BelongsTo[User] `json:"author,omitzero"`
+}
 ```
 
-## Conventions
+```go title="app/models/tag.go"
+type Tag struct {
+	orm.Model
 
-| Relation | Convention | Override (`orm` tag) |
+	Name string `json:"name"`
+}
+```
+
+</Step>
+<Step title="2. Load them with With">
+
+```go title="app/controllers/post_controller.go"
+func (h *PostController) Index(c *web.Ctx) error {
+	posts, err := orm.QueryOf[models.Post](h.db).
+		With("User", "Comments", "Tags").
+		Latest().
+		Get(c.Context())
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, posts)
+}
+```
+
+</Step>
+<Step title="3. See the result">
+
+```json
+[
+  {
+    "id": 1,
+    "user_id": 1,
+    "title": "Hello",
+    "body": "First post",
+    "author": {"id": 1, "name": "Ada", "email": "ada@example.com"},
+    "comments": [
+      {"id": 1, "post_id": 1, "user_id": 1, "body": "Nice"}
+    ],
+    "tags": [{"id": 1, "name": "go"}, {"id": 2, "name": "web"}]
+  }
+]
+```
+
+Timestamps are left out here to keep it short. However many posts there are, this request runs **5 queries**: one for the posts, one for the authors, one for the comments and two for the tags (pivot rows, then the tags).
+
+</Step>
+</Steps>
+
+## Declaring relations
+
+### `BelongsTo`: the foreign key is on this model
+
+```go
+type Post struct {
+	orm.Model
+
+	UserID int64               `json:"user_id"`
+	User   orm.BelongsTo[User] `json:"author,omitzero"`
+}
+```
+
+The column comes from the **field name**: field `User` → column `user_id`. A field named `Author` would look for `author_id`. The column must exist on the model as a normal field, otherwise the model panics on first use:
+
+```text
+orm: models.Post.Author needs a "author_id" column (or an orm:"fk:..." tag)
+```
+
+Point it at another column with the `orm` tag:
+
+```go
+AuthorID int64               `json:"author_id"`
+Writer   orm.BelongsTo[User] `json:"writer,omitzero" orm:"fk:author_id"`
+```
+
+The foreign key may be a pointer (`*int64`) for an optional relation; a nil key loads as "no related row".
+
+### `HasOne` and `HasMany`: the foreign key is on the other model
+
+```go
+type User struct {
+	orm.Model
+
+	Name    string               `json:"name"`
+	Profile orm.HasOne[Profile]  `json:"profile,omitzero"`
+	Posts   orm.HasMany[Post]    `json:"posts,omitzero"`
+}
+```
+
+The column comes from **this model's type name**: on `User`, the ORM looks for `user_id` on `profiles` and on `posts`, matched against `users.id`. Override it with `orm:"fk:owner_id"`.
+
+`HasOne` takes the first related row in primary key order; `HasMany` returns them all in primary key order.
+
+### `ManyToMany`: a pivot table in the middle
+
+A post has many tags and a tag has many posts. Neither table can hold the other's id, so a third table, the <Term tip="A table with two foreign keys whose only job is to link rows of two other tables.">pivot table</Term>, stores one row per link:
+
+```go
+type Post struct {
+	orm.Model
+
+	Tags orm.ManyToMany[Tag] `json:"tags,omitzero"`
+}
+```
+
+| Part | Convention | Blog example |
 | --- | --- | --- |
-| `BelongsTo[T]` | column `<field>_id` on this model → `T`'s primary key | `fk:author_id` |
-| `HasOne[T]` / `HasMany[T]` | column `<model>_id` on `T` → this primary key | `fk:owner_id` |
-| `ManyToMany[T]` | pivot `<a>_<b>` (singular snake names, sorted), columns `<model>_id` and `<t>_id` | `pivot:taggings,fk:post_id,rk:tag_id` |
+| Pivot table | the two singular snake_case type names, sorted and joined with `_` | `Post` + `Tag` → `post_tag` |
+| `fk` column (this model) | `<this type>_id` | `post_id` |
+| `rk` column (related model) | `<related type>_id` | `tag_id` |
 
-## Eager loading
+Override any of them: `orm:"pivot:taggings,fk:post_id,rk:tag_id"`. The pivot table has no model; create it in a migration:
 
-- `With(...)` works for `Get`, `First`, `Find`, `Paginate` and `CursorPaginate` (not `Each`). Each relation costs one query batched with `IN` (chunks of 500); many-to-many costs two. N posts with two relations take 3 queries; the conformance suite asserts these counts on SQLite and PostgreSQL.
-- Soft-deleted related rows are not loaded. An unknown relation name is a query error.
-- Nested eager loading (`"Comments.User"`) is not supported yet.
-
-## Strict mode
-
-Relations are never loaded lazily, so there are no hidden N+1 queries:
-
-```go
-post, _ := orm.QueryOf[models.Post](db).Find(ctx, 1)
-_, err := post.User.Get() // orm.ErrNotLoaded
+```go title="database/migrations/20261017090000_create_post_tag_table.go"
+s.Create("post_tag", func(t *schema.Table) {
+	t.ForeignID("post_id").Constrained().CascadeOnDelete()
+	t.ForeignID("tag_id").Constrained().CascadeOnDelete()
+	t.UniqueIndex("post_id", "tag_id")
+})
 ```
 
-Relation fields are not columns. With `json:",omitzero"` they appear in JSON only when loaded.
+The unique index stops the same tag from being linked twice, even when two requests race.
 
-## Pivot writes
+### The `orm` tag
+
+| Option | Used by | Meaning |
+| --- | --- | --- |
+| `fk:<column>` | all four | `BelongsTo`: the column on this model. `HasOne`/`HasMany`: the column on the related model. `ManyToMany`: the pivot column for this model |
+| `rk:<column>` | `ManyToMany` | The pivot column for the related model |
+| `pivot:<table>` | `ManyToMany` | The pivot table |
+
+Options are separated by commas. An unknown option or a name that is not a plain identifier panics on first use, like any invalid model.
+
+Relation fields are not columns: `orm.Columns[Post]()` does not list them, and `Create` and `Update` ignore them. Saving a post never saves its comments.
+
+## Eager loading with `With`
+
+`With(names...)` takes the **Go field names** of the relations and works on `Get`, `First`, `Find`, `Paginate` and `CursorPaginate`:
 
 ```go
-err = orm.Attach(ctx, db, &post, "Tags", 1, 2) // skips ids already linked
-err = orm.Detach(ctx, db, &post, "Tags", 2)    // no ids: detach all
-err = orm.Sync(ctx, db, &post, "Tags", 1, 3)   // exact set, in a transaction
+post, err := orm.QueryOf[models.Post](db).
+	With("User", "Tags").
+	Find(ctx, id)
+
+page, err := orm.QueryOf[models.Post](db).
+	With("User").
+	Latest().
+	Paginate(ctx, 1, 15)
 ```
+
+What happens under the hood, for `With("User", "Comments", "Tags")` over 50 posts:
+
+1. The posts query runs as usual.
+2. **User**: collects the distinct `user_id` values and runs `SELECT ... FROM users WHERE id IN (...)`.
+3. **Comments**: collects the post ids and runs `SELECT ... FROM comments WHERE post_id IN (...) ORDER BY id`.
+4. **Tags**: reads `post_id, tag_id` from `post_tag` for those posts, then `SELECT ... FROM tags WHERE id IN (...)`.
+5. Each post gets its own related rows.
+
+| Relation | Queries |
+| --- | --- |
+| `BelongsTo`, `HasOne`, `HasMany` | 1 |
+| `ManyToMany` | 2 |
+
+So N posts with relations cost `1 + len(relations)` queries, plus one per many-to-many. Keys are sent in chunks of 500 per `IN` list, so 2,000 posts add three more queries per relation. The conformance suite asserts these counts on SQLite and PostgreSQL.
+
+- **Soft-deleted related rows are not loaded.** A deleted comment does not show up under its post.
+- **An unknown relation name** makes the query fail: `orm: Post has no relation "Author"`.
+- **`Each` does not eager load**; stream the parents, then load relations per batch with `Get`.
+- **Nested loading** (`"Comments.User"`) is not supported. Load the second level with its own query, shown below.
+
+### Loading a second level by hand
+
+To show each comment's author, collect the comments and load them with `With("User")` through a query on comments:
+
+```go
+post, err := orm.QueryOf[models.Post](db).Find(ctx, id)
+if err != nil {
+	return err
+}
+
+comments, err := orm.QueryOf[models.Comment](db).
+	Where("post_id", post.ID).
+	With("User").
+	OrderBy("id", orm.Asc).
+	Get(ctx)
+```
+
+Two queries, however many comments the post has.
+
+## Reading relations
+
+Every relation has three methods:
+
+| Method | `BelongsTo` / `HasOne` | `HasMany` / `ManyToMany` |
+| --- | --- | --- |
+| `Get()` | `(*T, error)`: `nil` when nothing matches | `([]T, error)`: empty when nothing matches |
+| `Loaded()` | `true` after `With` loaded it | same |
+| `IsZero()` | `true` when **not** loaded | same |
+
+```go
+author, err := post.User.Get()
+if err != nil {
+	return err // orm.ErrNotLoaded: you forgot With("User")
+}
+
+if author == nil {
+	// The post points to a user that does not exist.
+}
+
+comments, err := post.Comments.Get() // []models.Comment
+```
+
+### Strict mode: no hidden queries
+
+```go
+post, err := orm.QueryOf[models.Post](db).Find(ctx, 1)
+
+_, err = post.User.Get()
+// orm: relation not loaded (use Query.With)
+```
+
+`errors.Is(err, orm.ErrNotLoaded)` is true. The error points at the missing `With` during development, instead of a page that becomes slow in production.
+
+### Relations in JSON
+
+With the `omitzero` [JSON option](https://pkg.go.dev/encoding/json#Marshal), a relation that was not loaded is left out entirely, because `IsZero()` reports it as empty:
+
+| State | `BelongsTo` / `HasOne` | `HasMany` / `ManyToMany` |
+| --- | --- | --- |
+| Not loaded (with `omitzero`) | field omitted | field omitted |
+| Not loaded (without `omitzero`) | `null` | `null` |
+| Loaded, nothing found | `null` | `[]` |
+| Loaded | the object | the array |
+
+So the same model serves a list without comments and a detail page with them, and the JSON never lies about what was loaded.
+
+## Linking rows through a pivot table
+
+Three functions write `ManyToMany` links. Each takes the model (which must be saved, so its id is set), the relation's field name and the related ids:
+
+```go
+post, err := orm.QueryOf[models.Post](db).Find(ctx, id)
+
+// Link tags 1 and 2; ids already linked are skipped.
+err = orm.Attach(ctx, db, &post, "Tags", 1, 2)
+
+// Unlink tag 2.
+err = orm.Detach(ctx, db, &post, "Tags", 2)
+
+// Unlink every tag.
+err = orm.Detach(ctx, db, &post, "Tags")
+
+// Make exactly tags 1 and 3 linked: attach 3, detach the rest.
+err = orm.Sync(ctx, db, &post, "Tags", 1, 3)
+```
+
+| Function | What it does | Under the hood |
+| --- | --- | --- |
+| `Attach` | Adds links, skipping ids already present | Reads the current ids, then one `INSERT` per new id |
+| `Detach` | Removes the given links, or all of them with no ids | One `DELETE` |
+| `Sync` | Makes the ids the exact set | `Detach` of the extra ids and `Attach` of the missing ones, in a transaction (it joins yours when you pass a `tx`) |
+
+- A field that is not a `ManyToMany` fails with `orm: Post has no many-to-many relation "User"`.
+- A model with a zero id fails with `orm: Post is not saved (empty primary key)`.
+- Pivot rows carry only the two key columns; they have no timestamps.
+- `Attach` is not atomic on its own: pass a `tx` to link several ids all-or-nothing. With the unique index above, a duplicate inserted by a concurrent request fails with an error wrapping `orm.ErrConflict` (409).
+
+A typical edit form receives the chosen tag ids and calls `Sync`. The ids parameter is [variadic](https://go.dev/ref/spec#Passing_arguments_to_..._parameters) `...any`, so a `[]int64` is copied into a `[]any` first:
+
+```go
+ids := make([]any, len(in.TagIDs))
+for i, id := range in.TagIDs {
+	ids[i] = id
+}
+
+err := db.Tx(ctx, func(tx *database.Tx) error {
+	if err := orm.Update(ctx, tx, &post); err != nil {
+		return err
+	}
+
+	// No ids at all detaches every tag.
+	return orm.Sync(ctx, tx, &post, "Tags", ids...)
+})
+```
+
+## Security
+
+- Relation names passed to `With` are checked against the model's fields, and every key travels as a bound parameter.
+- Do not pass `With` names straight from the query string (`?include=Comments`): map allowed values to names, so a client cannot make you load every relation of a big list.
+- A loaded relation's JSON shows every field of the related model. Tag secrets on that model with `json:"-"` (the user's password hash, for example), because a post's `BelongsTo[User]` would otherwise print them.
+- Pivot ids from a form are user input: verify they exist (and that the user may use them) before `Attach` or `Sync`.
+
+## Testing
+
+Count queries with a [query observer](/docs/database/overview#watching-queries) to keep N+1 out for good:
+
+```go title="tests/posts_test.go"
+type counter struct{ n atomic.Int64 }
+
+func (c *counter) ObserveQuery(context.Context, database.Query) {
+	c.n.Add(1)
+}
+
+func TestIndexLoadsRelationsInFiveQueries(t *testing.T) {
+	queries := &counter{}
+	app := vukemtest.New(t, bootstrap.New, vukemtest.Options{
+		AppOptions: []vukem.Option{vukem.WithQueryObservers(queries)},
+	})
+
+	db, err := app.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A helper of yours, built on factories.
+	seedPostsWithCommentsAndTags(t, db, 20)
+	queries.n.Store(0)
+
+	_, err = orm.QueryOf[models.Post](db).
+		With("User", "Comments", "Tags").
+		Get(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got := queries.n.Load(); got != 5 {
+		t.Errorf("queries = %d, want 5", got)
+	}
+}
+```
+
+## Common mistakes
+
+**Reading a relation without `With`.**
+
+```go
+// Wrong: orm: relation not loaded (use Query.With)
+post, _ := orm.QueryOf[models.Post](db).Find(ctx, id)
+author, err := post.User.Get()
+
+// Right
+post, _ := orm.QueryOf[models.Post](db).With("User").Find(ctx, id)
+author, err := post.User.Get()
+```
+
+**Using the column or table name in `With`.** `With("user")` and `With("comments")` fail with `orm: Post has no relation "user"`. Pass the Go field name: `With("User", "Comments")`.
+
+**Naming a `BelongsTo` field differently from its column.** `Author orm.BelongsTo[User]` looks for `author_id`. Either name the column `author_id` or add `orm:"fk:user_id"`.
+
+**Forgetting `omitzero`.** Without it, a relation that was not loaded appears as `"author": null` in every response, which looks like "this post has no author".
+
+**Expecting `Each` to load relations.** `Each` streams rows without eager loading; use `Get` (or `Paginate`) when you need `With`.
+
+## Next steps
+
+<CardGroup cols="2">
+<Card title="Migrations" href="/docs/database/migrations" icon="layers">
+Create foreign keys and pivot tables.
+</Card>
+<Card title="Factories and seeders" href="/docs/database/factories-seeders" icon="code">
+Create posts with comments and tags in one call.
+</Card>
+<Card title="ORM" href="/docs/database/orm" icon="database">
+Queries, scopes, pagination and hooks.
+</Card>
+<Card title="REST resources" href="/docs/rest-apis/overview" icon="route">
+Shape related data in API responses.
+</Card>
+</CardGroup>
+
+Package reference: [`orm`](https://pkg.go.dev/github.com/AlexGalhardo/vukem/orm).
