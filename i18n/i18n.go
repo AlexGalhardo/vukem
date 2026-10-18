@@ -92,7 +92,9 @@ var ErrInvalidLocale = errors.New("invalid locale")
 
 // Load reads every <locale>.json file at the root of fsys
 // (os.DirFS("resources/lang") or an embed.FS) into a new Bundle. File names
-// must be valid locales ("pt-BR.json", "pt_BR.json"); other files are
+// must be valid locales ("pt-BR.json", "pt_BR.json"): any other .json
+// name at the root is an error (a misspelt catalog would otherwise drop
+// its translations silently). Directories and other extensions are
 // ignored.
 func Load(fsys fs.FS, opts Options) (*Bundle, error) {
 	b, err := New(opts)
@@ -115,7 +117,12 @@ func Load(fsys fs.FS, opts Options) (*Bundle, error) {
 
 		locale, ok := Canonical(strings.TrimSuffix(name, ".json"))
 		if !ok {
-			return nil, fmt.Errorf("i18n: %s: %w", name, ErrInvalidLocale)
+			return nil, fmt.Errorf(
+				"i18n: %s: file name is not a locale (want <locale>.json, such as en.json or pt-BR.json; "+
+					"keep other files out of the catalog folder): %w",
+				name,
+				ErrInvalidLocale,
+			)
 		}
 
 		if prev, dup := seen[locale]; dup {
@@ -145,7 +152,8 @@ func Load(fsys fs.FS, opts Options) (*Bundle, error) {
 // Add merges messages into the catalog of locale. Values are strings,
 // nested maps (keys joined with ".") or plural maps: a map whose keys are
 // all plural categories (zero, one, two, few, many, other) including
-// "other".
+// "other". A map of plural categories without "other" is an error, not a
+// group, since T could never pick a form for it.
 func (b *Bundle) Add(locale string, messages map[string]any) error {
 	canon, ok := Canonical(locale)
 	if !ok {
@@ -188,6 +196,10 @@ func flatten(prefix string, in map[string]any, out map[string]message) error {
 				continue
 			}
 
+			if lacksOther(v) {
+				return fmt.Errorf("i18n: key %q: plural forms need \"other\" and CLDR category names", key)
+			}
+
 			if err := flatten(key+".", v, out); err != nil {
 				return err
 			}
@@ -212,6 +224,22 @@ func pluralForms(m map[string]any) (map[string]string, bool) {
 	}
 
 	return forms, isPlural(forms)
+}
+
+// lacksOther reports a map of plural forms that forgot "other": every key
+// is a CLDR category and every value a string.
+func lacksOther(m map[string]any) bool {
+	if len(m) == 0 {
+		return false
+	}
+
+	for k, v := range m {
+		if _, ok := v.(string); !ok || !slices.Contains(categories, k) {
+			return false
+		}
+	}
+
+	return true
 }
 
 func isPlural(forms map[string]string) bool {

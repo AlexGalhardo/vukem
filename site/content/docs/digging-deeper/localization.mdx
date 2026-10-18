@@ -128,7 +128,7 @@ i18n: en.json: i18n: key "a": unsupported value of type float64 (want string or 
 
 `i18n.Load` (which `WithTranslations` calls) reads the `.json` files at the **root** of the folder. Sub-folders and files with other extensions are skipped.
 
-- The file name, minus `.json`, must be a valid locale tag. `notes.json` fails the boot with `i18n: notes.json: invalid locale`.
+- The file name, minus `.json`, must be a valid locale tag. `notes.json` fails the boot with `i18n: notes.json: file name is not a locale (want <locale>.json, such as en.json or pt-BR.json; keep other files out of the catalog folder): invalid locale`. Directories and files with other extensions are skipped.
 - Names are normalized by `i18n.Canonical`: `pt_BR.json`, `pt-br.json` and `pt-BR.json` all become `pt-BR`. Two files for the same locale fail with `duplicate catalog for pt-BR`.
 - Valid tags are language (2–3 letters), an optional script (4 letters) and an optional region (2 letters or 3 digits): `en`, `pt-BR`, `zh-Hant-TW`, `es-419`. Variants and extensions such as `en-US-u-ca-buddhist` are rejected.
 
@@ -183,9 +183,7 @@ i18n.PluralCategory("pt-PT", 0) // "other"
 i18n.PluralCategory("ru", 5)    // "many"
 ```
 
-<Callout type="warning" title="A plural object needs other">
-An object such as `{"one": "1 post"}` without `other` is not a plural. Vukem reads it as a group, so you get the key `posts.count.one` and `posts.count` stays missing.
-</Callout>
+A plural object needs `other`. An object whose keys are all plural categories but which has no `other`, such as `{"one": "1 post"}`, fails the boot with `i18n: en.json: i18n: key "posts.count": plural forms need "other" and CLDR category names`.
 
 `count` is a `float64` inside, so "1.0" written with a visible decimal is treated as 1.
 
@@ -511,13 +509,13 @@ func TestLangQueryWins(t *testing.T) {
 { "posts": { "count": { "one": "{count} post" } } }
 ```
 
-The page shows `posts.count`, because the object became the key `posts.count.one`. Right: add `"other": "{count} posts"`.
+The boot fails with `plural forms need "other"`. Right: add `"other": "{count} posts"`.
 
 **Expecting `T` to find a sibling region.** `app.I18n.T("pt", "welcome")` with only `pt-BR.json` returns the English text. Right: let the middleware pick the locale, or call `b.Match("pt")` first.
 
 **Naming the number something else.** Wrong: `{{t "posts.count" "n" 3}}` always shows the `other` form and leaves `{count}` unfilled. Right: the argument that picks the plural form must be named `count`.
 
-**A stray JSON file.** Putting `README.json` next to the catalogs fails the boot with `i18n: README.json: invalid locale`. Keep only `<locale>.json` files at the root of the folder.
+**A stray JSON file.** Putting `README.json` next to the catalogs fails the boot with `i18n: README.json: file name is not a locale (...)`. Keep only `<locale>.json` files at the root of the folder.
 
 **An empty Order.** `Order: []i18n.Source{}` is an error, not "use the defaults". Leave `Order` nil for the default order.
 

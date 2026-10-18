@@ -80,6 +80,18 @@ func TestLoad_Errors(t *testing.T) {
 		{"unsupported value", fstest.MapFS{"en.json": {Data: []byte(`{"a": 1}`)}}, Options{}, `"a"`},
 		{"array value", fstest.MapFS{"en.json": {Data: []byte(`{"a": ["x"]}`)}}, Options{}, `"a"`},
 		{"invalid default", fstest.MapFS{}, Options{Default: "english!"}, "invalid locale"},
+		{
+			"non-locale file name explains the convention",
+			fstest.MapFS{"en.json": {Data: []byte(`{}`)}, "README.json": {Data: []byte(`{}`)}},
+			Options{},
+			"README.json: file name is not a locale",
+		},
+		{
+			"plural without other",
+			fstest.MapFS{"en.json": {Data: []byte(`{"posts": {"count": {"one": "1 post", "few": "{count} posts"}}}`)}},
+			Options{},
+			`key "posts.count": plural forms need "other"`,
+		},
 	}
 
 	for _, tt := range tests {
