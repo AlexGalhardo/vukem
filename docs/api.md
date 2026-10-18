@@ -55,17 +55,22 @@ func API(r *router.Router, app *vukem.App) error {
 ## Requests
 
 - `web.Bind[T](c)` decodes `application/json` (rejects unknown fields by default; configurable), runs validation, and on failure returns `422` problem+json.
-- Body size limited per group (`api.JSONOnly(api.MaxBody(1 << 20))`); oversize → `413`.
-- `api.JSONOnly()` rejects non-JSON bodies on write methods with `415` and sets `Accept` negotiation to JSON.
+- Body size limited per group (`middleware.BodyLimit(1 << 20)`); oversize → `413`.
+- `middleware.JSONOnly()` rejects non-JSON bodies on write methods with `415` and makes a missing or `*/*` `Accept` negotiate JSON (errors render as problem+json).
 - Query helpers: `c.QueryInt`, `c.QueryBool`, `c.QueryTime`, `c.QuerySlice`.
 
 ## Responses
 
 ```go
 func (p *ProductController) Show(c *web.Ctx) error {
-	product, err := orm.Query[models.Product](p.db).Find(c.Context(), c.ParamInt64("product"))
+	id, err := c.ParamInt("product") // not a number → 404
 	if err != nil {
-		return err // ErrNoRows → 404 problem+json
+		return err
+	}
+
+	product, err := orm.QueryOf[models.Product](p.db).Find(c.Context(), id)
+	if err != nil {
+		return err // orm.ErrNotFound → 404 problem+json
 	}
 	return c.JSON(http.StatusOK, resources.Product(product))
 }
@@ -75,7 +80,9 @@ func (p *ProductController) Store(c *web.Ctx) error {
 	if err != nil { return err }
 	product := models.Product{Name: in.Name, Price: in.Price}
 	if err := orm.Create(c.Context(), p.db, &product); err != nil { return err }
-	return c.Created(c.URLFor("api.v1.products.show", "product", product.ID), resources.Product(product)) // 201 + Location
+	location, err := c.URL("api.v1.products.show", "product", product.ID)
+	if err != nil { return err }
+	return c.Created(location, resources.Product(product)) // 201 + Location
 }
 ```
 
@@ -133,7 +140,7 @@ Opt-in, allowlisted per endpoint (never free-form columns):
 req, err := api.Query(c, orm.QueryOf[models.Product](p.db),
 	api.Filters("category", "in_stock"),        // ?filter[category]=books,toys&filter[in_stock]=true
 	api.Sorts("name", "price", "-created_at"), // ?sort=-price,name  (default: last listed)
-	api.Includes("reviews"),                   // ?include=reviews → req.Includes (eager loading in A.2)
+	api.Includes("reviews"),                   // ?include=reviews → eager-loads Product.Reviews
 	api.Fields("id", "name", "price"),         // ?fields=id,name
 	api.PerPage(20, 100),                      // ?page=2&per_page=50 (capped at 100)
 )
@@ -141,18 +148,21 @@ if err != nil {
 	return err // 400 problem+json
 }
 
-page, err := req.Paginate(c.Context()) // or req.Query.CursorPaginate(ctx, req.Cursor, req.PerPage, orm.Asc)
+page, err := req.Paginate(c.Context()) // or req.CursorPaginate(c.Context(), orm.Asc)
 ```
+
+- An allowlisted include that names a relation of the model (its Go field name, snake_case form or `json` tag: `reviews` matches `Reviews`) is eager-loaded on `req.Query` with `With`; other allowlisted names only appear in `req.Includes` for the handler.
+- `req.CursorPaginate(ctx, dir)` pages by primary key from `?cursor` and drops the default sort of `api.Sorts`; a `?sort` sent by the client cannot be honoured with a cursor and answers 400. Calling `req.Query.CursorPaginate` directly fails when `api.Sorts` added an `OrderBy`.
 
 Unknown filter/sort/field/include → `400` problem+json listing the allowed values (`TestSecurity_A05_QueryConventionsRejectUnknownColumns`). Filter values are always bound parameters; `true`/`false` become booleans. `?page` above `api.MaxPage(n)` (default 1000) and a filter with more values than `api.MaxFilterValues(n)` (default 100) are 400 too (`n <= 0` keeps the default), so a request cannot make the database skip millions of rows or bind thousands of parameters; use `?cursor` for deep lists (`TestSecurity_A04_QueryBoundsPageAndFilterLists`).
 
 ## Errors
 
-All API errors are `application/problem+json` (RFC 9457). The `type` base URI is configurable (`APP_PROBLEM_BASE_URL`) and defaults to `about:blank`:
+All API errors are `application/problem+json` (RFC 9457). The `type` defaults to `about:blank`; with a base URI (`APP_PROBLEM_BASE_URL`) validation errors use `<base>/validation`:
 
 ```json
 {
-  "type": "about:blank#validation",
+  "type": "about:blank",
   "title": "Validation failed",
   "status": 422,
   "detail": "2 fields are invalid.",
@@ -167,7 +177,7 @@ All API errors are `application/problem+json` (RFC 9457). The `type` base URI is
 | Malformed JSON / unknown query param | 400 |
 | Missing/invalid token | 401 (`WWW-Authenticate: Bearer`) |
 | Policy denial | 403 (or 404 with `DenyAsNotFound`) |
-| Not found / `ErrNoRows` | 404 |
+| Not found / `orm.ErrNotFound` | 404 |
 | Method not allowed | 405 (`Allow` header) |
 | Conflict (unique violation, stale `If-Match`) | 409 / 412 |
 | Unsupported media type | 415 |
@@ -192,9 +202,9 @@ Database unique-constraint violations are mapped to `409` by the dialect.
 | CORS | `middleware.CORS(cfg)`: allowlisted origins, methods, headers, credentials, max-age; deny by default; `*` with credentials is a boot error |
 | Rate limiting | `ratelimit.Middleware(limiter, key)`: GCRA (`ratelimit.NewMemory(limit, window)`), keyed by `ratelimit.ByIP` (the default) or `ratelimit.ByToken` (hashed bearer token, else IP; use it after `auth.Required`, behind an IP limit, since unverified tokens would each get a bucket); `RateLimit-Limit/Remaining/Reset` on every response, `429` + `Retry-After` when empty; a failing store denies (503) |
 | Versioning | URL prefix (`/api/v1`) by default; route groups make `/api/v2` side-by-side trivial; `api.Deprecate(since, sunset, link)` sets `Deprecation`, `Sunset` and `Link: rel="deprecation"` |
-| Caching | `c.ETag(v)` / `If-None-Match` → 304; `Last-Modified`; `Cache-Control` helpers |
-| Concurrency control | `If-Match` with ETag → 412 on mismatch |
-| Idempotency | `api.Idempotency(store, api.IdempotencyOptions{})` on any `cache.Store` (memory, database, Redis): the first `POST`/`PATCH` with an `Idempotency-Key` runs and its response (below 500, without `Set-Cookie`) is stored for 24h; repeats replay it with `Idempotent-Replayed: true`, an in-flight duplicate gets 409, the same key with a different request 422. Keys are scoped to the caller: by default the authenticated user (`auth.Principal`, when `auth.Required`/`auth.Optional` ran first, which is where it belongs), else a SHA-256 of `Authorization`; set `Scope` for other identities (`TestSecurity_A01_IdempotencyScopedToPrincipal`). Store errors answer 503. |
+| Caching | `web.ETagOf(v)` builds a strong ETag; `c.NotModified(etag, lastModified)` sets `ETag`/`Last-Modified` and answers 304 to a matching `If-None-Match` / `If-Modified-Since` |
+| Concurrency control | `c.CheckIfMatch(etag)` returns a 412 error when `If-Match` does not match |
+| Idempotency | `api.Idempotency(store, api.IdempotencyOptions{})` on any `cache.Store` (memory, database, Redis): the first `POST`/`PATCH` with an `Idempotency-Key` runs and its response (below 500, without `Set-Cookie`) is stored for 24h; repeats replay it with `Idempotent-Replayed: true`, an in-flight duplicate gets 409, the same key with a different request 422. A replay sends the stored status, body, `Content-Type` and the representation headers in `ReplayHeaders` (default `Content-Language`, `Content-Disposition`, `Content-Location`, `Location`, `ETag`, `Last-Modified`, `Link`); every other header (`X-Request-ID`, `RateLimit-*`, security headers) comes from the repeat request's own middleware. A keyed body is read whole to fingerprint it, so `MaxBody` (default 1 MiB) is the body limit of keyed requests: a larger one is a 413 before the handler runs, whatever the route's own body limit allows; raise `MaxBody` on upload routes that take keys. Keys are scoped to the caller: by default the authenticated user (`auth.Principal`, when `auth.Required`/`auth.Optional` ran first, which is where it belongs), else a SHA-256 of `Authorization`; set `Scope` for other identities (`TestSecurity_A01_IdempotencyScopedToPrincipal`). Store errors answer 503. |
 | Compression | gzip middleware (stdlib `compress/gzip`) |
 | Health | `/up` (liveness), `/up?checks=1` or `app.ReadyHandler()` (readiness) |
 | Request ID | `X-Request-ID` propagated and returned |
@@ -211,15 +221,16 @@ api.Register(g, "POST /products", api.Op{
 }, func(c *web.Ctx, in requests.StoreProduct) (resources.ProductJSON, error) { ... })
 ```
 
-- Input: query string, JSON/form body (not for GET, HEAD, DELETE) and path parameters, which win over body fields; validated with the input struct's `validate` tags (422 with field errors). `struct{}` means no input.
+- Input: query string, JSON/form body (not for GET, HEAD, DELETE) and path parameters, which win over body fields; validated with the input struct's `validate` tags (422 with field errors, localized with the request locale like `web.Parse`). `struct{}` means no input.
 - Output: JSON with `Op.Status`, or 201 for POST, 204 when the output type is `struct{}`, 200 otherwise. Errors returned by the handler go through the normal problem+json path.
 - `Op.ValidateResponse: true` checks the output against its `validate` tags (`z.For[Out]`, Out must be a struct) before writing it, when `web.Services.CheckResponses` is on, like `web.JSONWith`. The app turns it on whenever `APP_ENV` is not `production` (`development` or `test`), so a staging deployment that runs with `APP_ENV=development` also checks, and answers 500 on a mismatch; only `APP_ENV=production` skips it. A mismatch is logged and answered with a generic 500, so contract drift fails loudly.
 - Each typed route carries an `api.Operation` (`router.RouteInfo.Doc`) with its method, full path, params and input/output types for the generators below.
 - Request schema from the input struct (`json` + `validate` tags), response schema from the output type, errors from the problem catalogue.
 - `vukem.ServeOpenAPI(app, r, "/openapi.json")` serves the document (not registered in production unless `OPENAPI_IN_PRODUCTION=true`); `vukem openapi:export > openapi.json` prints it (warmup mode, like `codegen:types`: no database, `APP_KEY` optional). Title is `APP_NAME`, version `API_VERSION`, and `OPENAPI_PREFIX=/api` keeps only API routes. `vukem.ServeOpenAPIWith(app, r, path, vukem.OpenAPIOptions{PathPrefix, InProduction})` serves a document per prefix (whole path segments: `/api/v1` excludes `/api/v10`; one per API version) with its own production opt-in; its route is unnamed.
-- Schemas come from `json` tags (names, `-`) and `validate` rules (`required`, `min`/`max`/`len`, `email`, `url`, `uuid`, `oneof`, `regex`, `positive`, `unique`, `dive`...); a `doc:"..."` tag becomes the description. `required` marks the key as required; on a string it also emits `minLength: 1` (z rejects an empty string), on a list it does not emit `minItems` (an empty list passes; use `min=1`). Named structs become `components/schemas`, `orm` relations and `NullTime` map to their JSON shape, errors reference the shared `Problem` and `ValidationError` responses, and `Op.Security` names (`bearer` is predefined) become security requirements.
-- `openapi.Generate(routes, openapi.Info{...})` builds the document directly; `.Doc(openapi.Skip{})` hides a route. CI validates a golden document with Redocly.
-- Plain `HandlerFunc` routes still work; they appear in the document with a generic schema unless described with `api.Doc(...)`.
+- Schemas come from `json` tags (names, `-`) and `validate` rules (`required`, `min`/`max`/`len`, `email`, `url`, `uuid`, `oneof`, `regex`, `positive`, `unique`, `dive`...); a `doc:"..."` tag becomes the description. `required` marks the key as required; on a string it also emits `minLength: 1` (z rejects an empty string), on a list it does not emit `minItems` (an empty list passes; use `min=1`). Named structs become `components/schemas`, `orm` relations and `NullTime` map to their JSON shape, errors reference the shared `Problem` and `ValidationError` responses, and `Op.Security` names become security requirements: `bearer` is predefined, other schemes go in `openapi.Info.SecuritySchemes`, and an undeclared name is an error (`openapi.ErrUnknownSecurityScheme`) instead of silently becoming bearer.
+- The `operationId` of every route is the route's own name without the group name prefix (`products.store` inside `.Name("api.v1.")`; `Op.Name` for a typed route), for typed and plain routes alike. Route names are unique per router, but two groups may reuse one local name (`v1` and `v2` both naming `products.store`); give each version its own document (`OpenAPIOptions.PathPrefix`), since `codegen:types`/`codegen:client` fail on a duplicate.
+- `openapi.Build(routes, openapi.Info{...})` builds the document directly and returns its error; `openapi.Generate` panics on it. `.Doc(openapi.Skip{})` hides a route. CI validates a golden document with Redocly.
+- Plain `HandlerFunc` routes still work; they appear in the document with their path parameters, an optional JSON body of any shape on `POST`/`PUT`/`PATCH` (generated clients take a `body` argument) and a default response of any content (so `AssertMatchesOpenAPI` accepts it). Use `api.Register` to describe their input and output.
 
 ## Testing
 
@@ -263,12 +274,13 @@ apidocs.Serve(app, r, "/api/docs", apidocs.Config{SpecURL: "/api/v1/openapi.json
 ```
 
 - The `apidocs` package (about 4 MB) is linked only when imported.
+- `Config.Name` (default `apidocs`) names the page route; the bundle and shim are `<Name>.script` and `<Name>.page`. Give each reference its own name to serve several on one router.
 - `apidocs.Command()` adds `vukem openapi:serve [-addr localhost:8081]` to preview the reference locally.
 
 ### Types for clients
 
 - `z.JSONSchema(schema)` exports any `z` schema as JSON Schema 2020-12 (types, required keys, lengths, ranges, formats, patterns, enums, defaults, descriptions; `Refine`/`Custom` logic cannot be expressed).
-- `vukem codegen:types -o resources/js/api.ts` writes TypeScript types for every component schema and operation; `-zod` adds Zod 4 validators (`zod` 4.0+): `<Name>Schema` for every component schema and `<Operation>BodySchema` for every JSON request body, including inline ones. It runs in warmup mode like `codegen:client`: no provider `Boot`, so no database connection, and `APP_KEY` may be unset (routes that derive a key at build time still fail with `config.ErrKeyMissing`), so CI can run it without secrets. A component whose name would shadow a TypeScript or DOM global, or a name the generated client declares (`Number`, `String`, `Object`, `Date`, `Error`, `Promise`, `Record`, `Array`, `Response`, `Request`, `URL`, `Client`, ...), gets a `Type` suffix: a Go type `Number` becomes `NumberType` (Zod: `NumberTypeSchema`). If two generated names still collide (a `Number` and a `NumberType` schema, a component named like an operation type such as `<Op>Body` or `<Op>Params`, or two operation names that map to the same identifier), `codegen:types` and `codegen:client` fail with an error naming the duplicate instead of emitting code that does not compile. CI type-checks the golden output with `tsc --strict`.
+- `vukem codegen:types -o resources/js/api.ts` (missing directories are created) writes TypeScript types for every component schema and operation; `-zod` adds Zod 4 validators (`zod` 4.0+): `<Name>Schema` for every component schema and `<Operation>BodySchema` for every JSON request body, including inline ones. It runs in warmup mode like `codegen:client`: no provider `Boot`, so no database connection, and `APP_KEY` may be unset (routes that derive a key at build time still fail with `config.ErrKeyMissing`), so CI can run it without secrets. A component whose name would shadow a TypeScript or DOM global, or a name the generated client declares (`Number`, `String`, `Object`, `Date`, `Error`, `Promise`, `Record`, `Array`, `Response`, `Request`, `URL`, `Client`, ...), gets a `Type` suffix: a Go type `Number` becomes `NumberType` (Zod: `NumberTypeSchema`). If two generated names still collide (a `Number` and a `NumberType` schema, a component named like an operation type such as `<Op>Body` or `<Op>Params`, or two operation names that map to the same identifier), `codegen:types` and `codegen:client` fail with an error naming the duplicate instead of emitting code that does not compile. CI type-checks the golden output with `tsc --strict`.
 
 `AssertMatchesOpenAPI()` validates the response against the generated document: it finds the operation for the request path, then checks the body against the schema of the response status (or the default problem response). It supports the JSON Schema subset the generator emits (types, `$ref`, `anyOf`/`allOf`, `required`, lengths, ranges, `pattern`, `enum`, `date-time`). `doc.ValidateResponse(method, path, status, body)` does the same outside tests. OpenAPI cannot express a multi-segment `{path...}` wildcard, so it is documented as one segment.
 
@@ -314,7 +326,7 @@ if apiErr, ok := errors.AsType[*apiclient.Error](err); ok && apiErr.Status == 42
 }
 ```
 
-- Component schemas become Go types: objects are structs with `json` tags (`omitempty` on optional fields), optional or nullable scalars and structs are pointers, `additionalProperties` maps, string enums named types with constants, `date-time` `time.Time`, integers `int64`, numbers `float64`, unions `json.RawMessage`. Inline schemas get `<Op>Body`, `<Op>Query` and `<Op>Response`.
+- Component schemas become Go types: objects are structs with `json` tags (`omitempty` on optional fields), optional or nullable scalars and structs are pointers, `additionalProperties` maps, string enums named types with constants, `date-time` `time.Time`, integers `int64`, numbers `float64`, unions `json.RawMessage`. Inline schemas get `<Op>Body`, `<Op>Query` and `<Op>Response`; the untyped body of a plain route is `body any` (JSON-encoded, `nil` sends none).
 - `Client{BaseURL, HTTP, Header}`: `HTTP` defaults to `http.DefaultClient`; `Header` is called on every request. Each method takes `ctx`, the path parameters as typed arguments, then the query struct and the body; operations without a response body return only `error`.
 - Any non-2xx response returns `*apiclient.Error{Status, Problem}`.
 
