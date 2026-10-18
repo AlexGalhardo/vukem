@@ -136,6 +136,13 @@ var (
 // nor declared in Info.SecuritySchemes.
 var ErrUnknownSecurityScheme = errors.New("openapi: unknown security scheme")
 
+// ErrEmptyDocument is returned by Build when Info.PathPrefix is set and
+// filters out every route: the resulting document has no paths, which
+// looks exactly like a broken app, and the usual cause is a mistyped or
+// shell-rewritten prefix. A router with no documentable route at all is
+// still an empty document and no error.
+var ErrEmptyDocument = errors.New("openapi: path prefix matches no route")
+
 // ErrDuplicateOperationID is returned by Build when two routes in the
 // document share an operationId: the route's own name, so groups that
 // reuse a local name (api.v1.index and api.v2.index) collide, and the
@@ -144,7 +151,7 @@ var ErrDuplicateOperationID = errors.New("openapi: duplicate operationId")
 
 // Generate builds the document for routes (router.Routes()). It panics on
 // the errors Build returns (duplicate operationIds, an undeclared security
-// scheme): they are
+// scheme, a path prefix matching no route): they are
 // programming errors that should surface at boot or in a test.
 func Generate(routes []router.RouteInfo, info Info) *Document {
 	doc, err := Build(routes, info)
@@ -186,11 +193,14 @@ func Build(routes []router.RouteInfo, info Info) (*Document, error) {
 
 	usedSchemes := map[string]bool{}
 	idOwner := map[string]string{} // operationId → route that took it
+	documentable := 0              // routes the prefix could have kept
 
 	for _, rt := range routes {
 		if _, skip := rt.Doc.(Skip); skip || rt.Method == "" || rt.Method == "ANY" {
 			continue
 		}
+
+		documentable++
 
 		path := oaPath(rt.Path)
 		if !underPrefix(path, info.PathPrefix) {
@@ -229,6 +239,11 @@ func Build(routes []router.RouteInfo, info Info) (*Document, error) {
 		}
 
 		doc.Paths[path][method] = op
+	}
+
+	if len(doc.Paths) == 0 && documentable > 0 && info.PathPrefix != "" {
+		return nil, fmt.Errorf("%w %q: none of the %d documentable routes is under it "+
+			"(check Info.PathPrefix / OPENAPI_PREFIX)", ErrEmptyDocument, info.PathPrefix, documentable)
 	}
 
 	problem := s.For(reflect.TypeFor[web.Problem]())

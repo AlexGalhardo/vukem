@@ -541,3 +541,42 @@ func TestMediaTypeAndParameterCarryExamples(t *testing.T) {
 		t.Errorf("parameter (-want +got):\n%s", diff)
 	}
 }
+
+func TestBuildRejectsPrefixMatchingNoRoute(t *testing.T) {
+	t.Parallel()
+
+	r := router.New(nil)
+	r.Get("/api/v1/ping", func(c *web.Ctx) error { return c.NoContent() })
+
+	if _, err := r.Handler(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Git Bash rewrites OPENAPI_PREFIX=/api/v1 into an absolute Windows path.
+	_, err := openapi.Build(r.Routes(), openapi.Info{PathPrefix: "C:/Program Files/Git/api/v1"})
+	if !errors.Is(err, openapi.ErrEmptyDocument) {
+		t.Fatalf("Build(prefix matching no route) error = %v, want ErrEmptyDocument", err)
+	}
+
+	if _, err := openapi.Build(r.Routes(), openapi.Info{PathPrefix: "/api/v1"}); err != nil {
+		t.Fatalf("Build(matching prefix) error = %v", err)
+	}
+
+	empty := router.New(nil)
+	if _, err := empty.Handler(); err != nil {
+		t.Fatal(err)
+	}
+
+	doc, err := openapi.Build(empty.Routes(), openapi.Info{PathPrefix: "/api"})
+	if err != nil || len(doc.Paths) != 0 {
+		t.Fatalf("Build(router with no routes) = %v, %v, want an empty document and no error", doc, err)
+	}
+
+	defer func() {
+		if recover() == nil {
+			t.Error("Generate(prefix matching no route) did not panic")
+		}
+	}()
+
+	openapi.Generate(r.Routes(), openapi.Info{PathPrefix: "/nope"})
+}
