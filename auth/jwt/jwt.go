@@ -44,6 +44,13 @@ const (
 // cause is wrapped for logs and never shown to clients.
 var ErrInvalid = errors.New("jwt: invalid token")
 
+// ErrKeysUnavailable is wrapped by Verify when the key set could not be
+// consulted (a RemoteJWKS fetch failing with no cached key for the token):
+// the token was not judged, so Guard answers 503 instead of 401. Custom
+// KeySets wrap it for their own outages; any other KeySet error rejects
+// the token as ErrInvalid.
+var ErrKeysUnavailable = errors.New("jwt: key set unavailable")
+
 const (
 	maxTokenSize    = 8 << 10
 	minHMACKeySize  = 32
@@ -451,7 +458,8 @@ func invalid(format string, args ...any) error {
 }
 
 // Verify checks the signature and claims of token and returns its claims.
-// Every failure wraps ErrInvalid.
+// Every failure wraps ErrInvalid, except a key set outage, which wraps
+// ErrKeysUnavailable instead.
 func (v *Verifier) Verify(ctx context.Context, token string) (Claims, error) {
 	if v.err != nil {
 		return Claims{}, ErrInvalid // the detail is in Err, not in client-facing errors
@@ -481,6 +489,10 @@ func (v *Verifier) Verify(ctx context.Context, token string) (Claims, error) {
 	}
 
 	k, err := v.keys.Key(ctx, h.Kid)
+	if errors.Is(err, ErrKeysUnavailable) {
+		return Claims{}, err
+	}
+
 	if err != nil {
 		return Claims{}, invalid("%v", err)
 	}
