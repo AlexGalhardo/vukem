@@ -29,8 +29,21 @@ type IdempotencyOptions struct {
 	TTL time.Duration
 	// LockTTL bounds an in-flight request (default 1 minute).
 	LockTTL time.Duration
-	// MaxBody bounds the request body that is fingerprinted (default 1 MiB).
+	// MaxBody bounds the body of a keyed request (default 1 MiB). The body
+	// is read whole to fingerprint it, so a larger one is refused with 413
+	// before the handler runs, whatever a route-level body limit allows.
+	// Raise it for keyed routes that accept bigger bodies; requests without
+	// a key are not affected.
 	MaxBody int64
+	// ReplayHeaders lists the response headers stored and replayed besides
+	// Content-Type. Default: the headers describing the stored
+	// representation (Content-Language, Content-Disposition,
+	// Content-Location, Location, ETag, Last-Modified, Link); a non-nil list
+	// replaces it and Set-Cookie is never replayed. Every other header is
+	// written fresh by the middleware of the repeat request (X-Request-ID,
+	// RateLimit-*, security headers) or dropped, so a replay never carries
+	// the first request's per-request values or its Set-Cookie.
+	ReplayHeaders []string
 	// Scope separates callers so one cannot replay another's response.
 	// Default: the authenticated principal (auth.Principal: guard and user
 	// id) when an auth middleware ran before Idempotency, else a SHA-256 of
@@ -77,6 +90,19 @@ func Idempotency(store cache.Store, o IdempotencyOptions) func(http.Handler) htt
 
 	if o.Scope == nil {
 		o.Scope = defaultScope
+	}
+
+	replayed := []string{"Content-Type"}
+	if o.ReplayHeaders == nil {
+		o.ReplayHeaders = []string{
+			"Content-Language", "Content-Disposition", "Content-Location", "Location", "ETag", "Last-Modified", "Link",
+		}
+	}
+
+	for _, h := range o.ReplayHeaders {
+		if h = http.CanonicalHeaderKey(h); h != "Set-Cookie" && !slices.Contains(replayed, h) {
+			replayed = append(replayed, h)
+		}
 	}
 
 	return func(next http.Handler) http.Handler {
@@ -134,7 +160,7 @@ func Idempotency(store cache.Store, o IdempotencyOptions) func(http.Handler) htt
 			}
 
 			if !added {
-				replay(w, r, store, storeKey, fingerprint)
+				replay(w, r, store, storeKey, fingerprint, replayed)
 				return
 			}
 
@@ -146,8 +172,7 @@ func Idempotency(store cache.Store, o IdempotencyOptions) func(http.Handler) htt
 				return
 			}
 
-			header := rec.Header().Clone()
-			header.Del("Set-Cookie") // never replay session cookies
+			header := pick(rec.Header(), replayed)
 
 			done, err := json.Marshal(idemRecord{
 				Fingerprint: fingerprint, Done: true, Status: rec.status, Header: header, Body: rec.body.Bytes(),
@@ -163,7 +188,26 @@ func Idempotency(store cache.Store, o IdempotencyOptions) func(http.Handler) htt
 	}
 }
 
-func replay(w http.ResponseWriter, r *http.Request, store cache.Store, storeKey, fingerprint string) {
+// pick copies the listed headers of h.
+func pick(h http.Header, names []string) http.Header {
+	out := http.Header{}
+
+	for _, n := range names {
+		if v := h.Values(n); len(v) > 0 {
+			out[n] = slices.Clone(v)
+		}
+	}
+
+	return out
+}
+
+func replay(
+	w http.ResponseWriter,
+	r *http.Request,
+	store cache.Store,
+	storeKey, fingerprint string,
+	replayed []string,
+) {
 	raw, ok, err := store.Get(r.Context(), storeKey)
 	if err != nil {
 		web.Fail(w, r, errs.New(http.StatusServiceUnavailable, "Idempotency store unavailable."))
@@ -187,7 +231,9 @@ func replay(w http.ResponseWriter, r *http.Request, store cache.Store, storeKey,
 	case !rec.Done:
 		web.Fail(w, r, errs.New(http.StatusConflict, "A request with this Idempotency-Key is being processed."))
 	default:
-		maps.Copy(w.Header(), rec.Header)
+		// Records written before ReplayHeaders held every header: filter
+		// again so they cannot overwrite this request's values either.
+		maps.Copy(w.Header(), pick(rec.Header, replayed))
 
 		w.Header().Set("Idempotent-Replayed", "true")
 		w.WriteHeader(rec.Status)

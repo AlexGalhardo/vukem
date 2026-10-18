@@ -60,14 +60,15 @@ func setup(t *testing.T) *database.DB {
 		t.Fatal(err)
 	}
 
-	for i, p := range []Product{
+	products := []Product{
 		{Name: "Pen", Category: "office", Price: 2, InStock: true},
 		{Name: "Desk", Category: "furniture", Price: 300},
 		{Name: "Lamp", Category: "furniture", Price: 40, InStock: true},
 		{Name: "Book", Category: "books", Price: 15, InStock: true},
 		{Name: "Chair", Category: "furniture", Price: 120, InStock: true},
-	} {
-		if err := orm.Create(t.Context(), db, &p); err != nil {
+	}
+	for i := range products {
+		if err := orm.Create(t.Context(), db, &products[i]); err != nil {
 			t.Fatalf("seed %d: %v", i, err)
 		}
 	}
