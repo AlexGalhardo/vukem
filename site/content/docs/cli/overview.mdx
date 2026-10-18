@@ -282,7 +282,7 @@ Needs `install:auth` first (`install:billing bills the users of install:auth: ru
 
 ### `vukem install:inertia`
 
-Turns an HTMX starter into an Inertia app. It **deletes** the HTMX pages, layouts, partials, components, upload demo and `resources/js/app.ts`, writes the Inertia pages, controllers and tests, adds `vukem.WithInertia(inertia.Config{})` after `vukem.WithVite(...)` in `bootstrap/app.go`, runs `go mod tidy` and installs the frontend dependencies.
+Turns an HTMX starter into an Inertia app. It **deletes** the HTMX pages, layouts, partials, components, upload demo and `resources/js/app.ts`, writes the Inertia pages, controllers and tests, adds `vukem.WithInertia(inertia.Config{})` after `vukem.WithVite(...)` in `bootstrap/app.go`, runs `go mod tidy` and installs the frontend dependencies. It checks that `bootstrap/app.go` can be patched before deleting anything: without the `vukem.WithVite(resources.Public())` line it fails and leaves the project as it was.
 
 | Flag | Type | Default | What it does |
 | --- | --- | --- | --- |
