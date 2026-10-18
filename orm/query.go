@@ -54,7 +54,10 @@ type Query[T any] struct {
 	with    []string
 	lock    string // "", "UPDATE" or "SHARE"
 	wait    string // "", "SKIP LOCKED" or "NOWAIT"
-	err     error
+	// maxPerPage bounds Paginate and CursorPaginate; 0 means
+	// DefaultMaxPerPage.
+	maxPerPage int
+	err        error
 }
 
 // QueryOf starts a query for model T on ex.
@@ -729,20 +732,45 @@ func (q Query[T]) Pluck[V any](ctx context.Context, colName string) ([]V, error)
 }
 
 // Chunk processes rows in batches of size ordered by primary key; fn may
-// stop early by returning an error.
+// stop early by returning an error. Batches are read by keyset (primary
+// key greater than the last one seen), not OFFSET, so fn may delete or
+// update the rows it receives without making Chunk skip rows. The query
+// must not have its own OrderBy, Limit or Offset.
 func (q Query[T]) Chunk(ctx context.Context, size int, fn func([]T) error) error {
 	if size <= 0 {
 		return errors.New("orm: chunk size must be positive")
 	}
 
-	for page := 0; ; page++ {
-		batch, err := q.OrderBy(q.m.pk, Asc).Limit(size).Offset(page * size).Get(ctx)
+	if len(q.orders) > 0 || q.limit >= 0 || q.offset > 0 {
+		return errors.New("orm: Chunk orders and pages by the primary key; remove OrderBy, Limit and Offset")
+	}
+
+	if len(q.selects) > 0 && !slices.Contains(q.selects, q.m.pk) {
+		// Without the key every batch would restart from the same row.
+		return fmt.Errorf("orm: Chunk needs %s in the selected columns", q.m.pk)
+	}
+
+	// Group an OR filter so the keyset condition applies to all of it:
+	// "a OR b AND pk > ?" would re-read the rows matching a forever.
+	q = q.clone()
+	q.conds = wrapOr(q.conds)
+
+	pkIndex := q.m.byColumn[q.m.pk].index
+	next := q
+
+	for {
+		batch, err := next.OrderBy(q.m.pk, Asc).Limit(size).Get(ctx)
 		if err != nil {
 			return err
 		}
 
 		if len(batch) == 0 {
 			return nil
+		}
+
+		if len(batch) == size {
+			last := reflect.ValueOf(&batch[size-1]).Elem().FieldByIndex(pkIndex)
+			next = q.Where(q.m.pk, ">", last.Interface())
 		}
 
 		if err := fn(batch); err != nil {
@@ -764,10 +792,39 @@ type Page[T any] struct {
 	LastPage int   `json:"last_page"`
 }
 
+// DefaultMaxPerPage bounds perPage in Paginate and CursorPaginate unless
+// the query sets MaxPerPage, so a per_page taken from a request cannot
+// make one call load a whole table.
+const DefaultMaxPerPage = 100
+
+// MaxPerPage sets the largest perPage Paginate and CursorPaginate accept
+// for this query (default DefaultMaxPerPage); a larger perPage is lowered
+// to n, and Page.PerPage reports the value used. n < 1 is an error.
+func (q Query[T]) MaxPerPage(n int) Query[T] {
+	if n < 1 {
+		return q.fail(fmt.Errorf("orm: MaxPerPage(%d) must be at least 1", n))
+	}
+
+	q.maxPerPage = n
+
+	return q
+}
+
+// perPage clamps n to 1..MaxPerPage.
+func (q Query[T]) perPage(n int) int {
+	limit := q.maxPerPage
+	if limit == 0 {
+		limit = DefaultMaxPerPage
+	}
+
+	return min(max(n, 1), limit)
+}
+
 // Paginate returns page (1-based) with perPage items and the total count.
+// perPage is clamped to 1..DefaultMaxPerPage (see MaxPerPage).
 func (q Query[T]) Paginate(ctx context.Context, page, perPage int) (Page[T], error) {
 	page = max(page, 1)
-	perPage = max(perPage, 1)
+	perPage = q.perPage(perPage)
 
 	total, err := q.Count(ctx)
 	if err != nil {

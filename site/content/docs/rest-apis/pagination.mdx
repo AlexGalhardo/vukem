@@ -184,7 +184,7 @@ In the transformer, read a relation only when it was loaded: `m.User.Loaded()` r
 | `?per_page` | missing or not a number → the default; below 1 → `1`; above the maximum → the maximum (capped, no error) |
 | `?filter[col]` | more comma-separated values than `MaxFilterValues` → `400` |
 
-`api.MaxPage(n)` defaults to `api.DefaultMaxPage` (1000) and `api.MaxFilterValues(n)` to `api.DefaultMaxFilterValues` (100). Both ignore `n <= 0` and keep the default. `api.PerPage(def, max)` defaults to 20 and 100. These bounds exist because `OFFSET 10000000` still makes the database walk ten million rows, and a filter with ten thousand values binds ten thousand parameters: a cheap request should not cost you an expensive query. For deep lists, use a cursor.
+`api.MaxPage(n)` defaults to `api.DefaultMaxPage` (1000) and `api.MaxFilterValues(n)` to `api.DefaultMaxFilterValues` (100). Both ignore `n <= 0` and keep the default. `api.PerPage(def, max)` defaults to 20 and 100; its maximum also replaces the ORM's own cap (`orm.DefaultMaxPerPage`, 100) on the query, so `PerPage(20, 500)` serves up to 500 rows. These bounds exist because `OFFSET 10000000` still makes the database walk ten million rows, and a filter with ten thousand values binds ten thousand parameters: a cheap request should not cost you an expensive query. For deep lists, use a cursor.
 
 ## Offset pages
 

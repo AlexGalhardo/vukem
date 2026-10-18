@@ -378,3 +378,36 @@ func TestQueryLimitsDefaultWhenNotPositive(t *testing.T) {
 		}
 	}
 }
+
+// PerPage above orm.DefaultMaxPerPage raises the ORM's bound too, so the
+// endpoint's own maximum is the one that applies.
+func TestPerPageAboveORMDefault(t *testing.T) {
+	t.Parallel()
+
+	db := setup(t)
+	for i := range orm.DefaultMaxPerPage + 10 {
+		p := Product{Name: "x", Category: "bulk", Price: i}
+		if err := orm.Create(t.Context(), db, &p); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	h := func(c *web.Ctx) error {
+		req, err := Query(c, orm.QueryOf[Product](db), PerPage(20, 500))
+		if err != nil {
+			return err
+		}
+
+		page, err := req.Paginate(c.Context())
+		if err != nil {
+			return err
+		}
+
+		return Page(c, page, toJSON)
+	}
+
+	_, body := call(t, "/products?per_page=1000", h)
+	if got, want := len(body["data"].([]any)), orm.DefaultMaxPerPage+15; got != want {
+		t.Fatalf("?per_page=1000 with PerPage(20, 500) = %d items, want %d", got, want)
+	}
+}

@@ -3,6 +3,8 @@ package schema
 import (
 	"fmt"
 	"strings"
+
+	"github.com/AlexGalhardo/vukem/internal/naming"
 )
 
 type kind int
@@ -321,9 +323,10 @@ func (c *Column) Unique() *Column { c.unique = true; return c }
 func (c *Column) Index() *Column { c.t.Index(c.name); return c }
 
 // Constrained adds a foreign key to table(id); the table defaults to the
-// column name without "_id" pluralised ("user_id" → "users").
+// column name without "_id" pluralised with the ORM's table naming
+// ("user_id" → "users", "category_id" → "categories").
 func (c *Column) Constrained(table ...string) *Column {
-	target := strings.TrimSuffix(c.name, "_id") + "s"
+	target := naming.Plural(strings.TrimSuffix(c.name, "_id"))
 	if len(table) > 0 {
 		target = table[0]
 	}

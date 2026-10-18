@@ -707,3 +707,93 @@ func FuzzWhereColumn(f *testing.F) {
 		}
 	})
 }
+
+// Chunk walks by primary key (keyset), so a callback that deletes or
+// updates the rows it was given does not make it skip the next ones.
+func TestChunkSurvivesDeletesInCallback(t *testing.T) {
+	t.Parallel()
+
+	db, ctx := setup(t)
+	seedUsers(ctx, t, db)
+
+	var seen []string
+	err := QueryOf[User](db).Where("age", ">", 0).Chunk(ctx, 2, func(us []User) error {
+		for i := range us {
+			seen = append(seen, us[i].Name)
+			if err := Delete(ctx, db, &us[i]); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if diff := cmp.Diff([]string{"Ana", "Bob", "Cid", "Dea"}, seen); diff != "" {
+		t.Fatalf("Chunk visited (-want +got):\n%s", diff)
+	}
+
+	if err := QueryOf[User](db).OrderBy("name", Asc).Chunk(ctx, 2, func([]User) error { return nil }); err == nil {
+		t.Fatal("Chunk with a custom OrderBy = nil, want error")
+	}
+
+	seedUsers(ctx, t, db)
+
+	err = QueryOf[User](db).Select("name").Chunk(ctx, 2, func([]User) error { return nil })
+	if err == nil {
+		t.Fatal("Chunk without the primary key selected = nil, want error")
+	}
+}
+
+// The keyset condition must bind to the whole user filter: with an OR,
+// "a OR b AND id > ?" would re-read the rows matching a forever.
+func TestChunkWithOrWhere(t *testing.T) {
+	t.Parallel()
+
+	db, ctx := setup(t)
+	seedUsers(ctx, t, db)
+
+	var names []string
+	err := QueryOf[User](db).Where("age", "<", 20).OrWhere("age", ">", 40).Chunk(ctx, 1, func(us []User) error {
+		if len(names) > 4 {
+			return errors.New("chunk did not advance")
+		}
+
+		names = append(names, us[0].Name)
+
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if diff := cmp.Diff([]string{"Bob", "Cid"}, names); diff != "" {
+		t.Fatalf("Chunk visited (-want +got):\n%s", diff)
+	}
+
+	posts := []Post{{UserID: 1, Title: "a"}, {UserID: 2, Title: "b"}, {UserID: 3, Title: "c"}}
+	for i := range posts {
+		if err := Create(ctx, db, &posts[i]); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var titles []string
+	err = QueryOf[Post](db).Where("user_id", 1).OrWhere("user_id", 3).Chunk(ctx, 1, func(ps []Post) error {
+		if len(titles) > 4 {
+			return errors.New("chunk did not advance")
+		}
+
+		titles = append(titles, ps[0].Title)
+
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if diff := cmp.Diff([]string{"a", "c"}, titles); diff != "" {
+		t.Fatalf("soft-delete Chunk visited (-want +got):\n%s", diff)
+	}
+}

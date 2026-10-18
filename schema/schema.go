@@ -253,8 +253,24 @@ func (s *Schema) Rename(from, to string) error {
 	return s.exec("ALTER TABLE " + s.q(from) + " RENAME TO " + s.q(to))
 }
 
-// Raw runs any SQL statement (data migrations, views, triggers).
-func (s *Schema) Raw(sql string, args ...any) error { return s.exec(sql, args...) }
+// Raw runs any SQL statement (data migrations, views, triggers). With
+// args, "?" placeholders are rebound to the dialect (database.RebindChecked),
+// so the same data migration runs on SQLite, MySQL and PostgreSQL; a query
+// mixing "?" with "$n" or ending inside a literal is an error. Without
+// args the statement runs as written, so PostgreSQL's jsonb "?" operators
+// in DDL keep working. The migration checksum covers the query as written.
+func (s *Schema) Raw(sql string, args ...any) error {
+	if len(args) == 0 || s.record != nil {
+		return s.exec(sql, args...)
+	}
+
+	bound, err := database.RebindChecked(s.d, sql)
+	if err != nil {
+		return fmt.Errorf("schema: raw: %w", err)
+	}
+
+	return s.exec(bound, args...)
+}
 
 // HasTable reports whether table exists (false while recording).
 func (s *Schema) HasTable(table string) (bool, error) {

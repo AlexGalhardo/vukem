@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	"net/http"
 	"time"
 
 	"go.mongodb.org/mongo-driver/v2/mongo"
@@ -25,8 +26,17 @@ import (
 	"go.mongodb.org/mongo-driver/v2/x/mongo/driver/connstring"
 )
 
-// ErrNotFound is returned by FindOne when no document matches.
-var ErrNotFound = errors.New("mongo: document not found")
+// ErrNotFound is returned by FindOne when no document matches. A handler
+// that returns it answers 404, like orm.ErrNotFound (vukem's errs.Status
+// reads its HTTPStatus method), and it wraps mongo.ErrNoDocuments.
+var ErrNotFound error = notFoundError{}
+
+// notFoundError carries its HTTP status without importing vukem's errs.
+type notFoundError struct{}
+
+func (notFoundError) Error() string   { return "mongo: document not found" }
+func (notFoundError) HTTPStatus() int { return http.StatusNotFound }
+func (notFoundError) Unwrap() error   { return mongo.ErrNoDocuments }
 
 // Client is a connection pool bound to a database.
 type Client struct {
@@ -166,9 +176,10 @@ func (c *Coll[T]) Find(
 	}
 }
 
-// All returns every matching document.
+// All returns every matching document; no match is an empty, non-nil
+// slice, so it encodes as JSON [] rather than null.
 func (c *Coll[T]) All(ctx context.Context, filter any, opts ...options.Lister[options.FindOptions]) ([]T, error) {
-	var out []T
+	out := []T{}
 
 	for doc, err := range c.Find(ctx, filter, opts...) {
 		if err != nil {

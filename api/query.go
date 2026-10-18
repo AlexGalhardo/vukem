@@ -62,7 +62,8 @@ func Includes(rels ...string) Option { return func(s *spec) { s.includes = rels 
 // Fields allows ?fields=col,col (sparse fieldsets).
 func Fields(cols ...string) Option { return func(s *spec) { s.fields = cols } }
 
-// PerPage sets the default and maximum ?per_page (larger values are capped).
+// PerPage sets the default and maximum ?per_page (larger values are
+// capped); the maximum also replaces orm.DefaultMaxPerPage for the query.
 func PerPage(def, maxPerPage int) Option {
 	return func(s *spec) { s.perPage, s.maxPerPage = def, maxPerPage }
 }
@@ -171,6 +172,12 @@ func Query[T any](c *web.Ctx, q orm.Query[T], opts ...Option) (Request[T], error
 
 			req.Includes = append(req.Includes, rel)
 		}
+	}
+
+	// The endpoint's maximum replaces orm.DefaultMaxPerPage, which would
+	// otherwise lower a PerPage(…, 500) to 100.
+	if s.maxPerPage >= 1 {
+		q = q.MaxPerPage(s.maxPerPage)
 	}
 
 	req.Query = q

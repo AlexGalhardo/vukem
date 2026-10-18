@@ -114,3 +114,51 @@ func TestValidateRulesTranslated(t *testing.T) {
 		t.Errorf("fields (-want +got):\n%s", diff)
 	}
 }
+
+// Field renames the reported field, and the built-in message names it too
+// (translated through "validation.attributes.<field>").
+func TestValidateRulesFieldNamesTheMessage(t *testing.T) {
+	t.Parallel()
+
+	db, ctx := setup(t)
+	users := seedUsers(ctx, t, db)
+
+	err := Validate(ctx, db,
+		Unique[User]("email", users[1].Email).Field("contact"),
+		Exists[User]("id", int64(999)).Field("owner"),
+	)
+
+	verr, ok := errors.AsType[*errs.ValidationError](err)
+	if !ok {
+		t.Fatalf("err = %v", err)
+	}
+
+	want := map[string][]string{
+		"contact": {"The contact has already been taken."},
+		"owner":   {"The selected owner is invalid."},
+	}
+	if diff := cmp.Diff(want, verr.Fields); diff != "" {
+		t.Errorf("fields (-want +got):\n%s", diff)
+	}
+
+	b, err := i18n.New(i18n.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := b.Add("pt-BR", map[string]any{"validation.attributes.contact": "contato"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := b.AddBuiltin(); err != nil {
+		t.Fatal(err)
+	}
+
+	err = Validate(errs.WithTranslator(ctx, b.Translator("pt-BR")), db,
+		Unique[User]("email", users[1].Email).Field("contact"))
+
+	verr, _ = errors.AsType[*errs.ValidationError](err)
+	if verr == nil || verr.First("contact") != "O campo contato já está em uso." {
+		t.Fatalf("translated = %v", err)
+	}
+}

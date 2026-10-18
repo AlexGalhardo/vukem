@@ -268,9 +268,9 @@ Collections are created on the first insert; there is nothing to declare.
 
 | Method | Returns | Notes |
 | --- | --- | --- |
-| `FindOne(ctx, filter, opts...)` | `(T, error)` | `mongo.ErrNotFound` when nothing matches |
+| `FindOne(ctx, filter, opts...)` | `(T, error)` | `mongo.ErrNotFound` when nothing matches; a handler that returns it answers **404** |
 | `Find(ctx, filter, opts...)` | an iterator of `(T, error)` | Streams with a cursor; breaking out of the loop closes it |
-| `All(ctx, filter, opts...)` | `([]T, error)` | Loads every match into memory; `nil` when nothing matches |
+| `All(ctx, filter, opts...)` | `([]T, error)` | Loads every match into memory; an empty slice (JSON `[]`) when nothing matches |
 | `Count(ctx, filter)` | `(int64, error)` | Counts matching documents |
 | `mongo.Aggregate[R](ctx, coll, pipeline)` | `([]R, error)` | Runs an [aggregation pipeline](https://www.mongodb.com/docs/manual/core/aggregation-pipeline/) and decodes into `R` |
 
@@ -414,26 +414,6 @@ For integration tests, run MongoDB in Docker and connect with a database per tes
 Times are stored in milliseconds: compare them with [`Time.Equal`](https://pkg.go.dev/time#Time.Equal) after truncating, `want.Truncate(time.Millisecond)`.
 
 ## Common mistakes
-
-**Returning `mongo.ErrNotFound` from a handler.** It is a plain error, not an HTTP error, so the visitor gets a 500. Map it:
-
-```go
-a, err := feed.FindOne(ctx, filter)
-if errors.Is(err, mongo.ErrNotFound) {
-	return errs.ErrNotFound // 404
-}
-if err != nil {
-	return err
-}
-```
-
-**`All` with nothing found.** It returns a `nil` slice, which encodes as JSON `null`. Return `[]models.Activity{}` when the client expects an array:
-
-```go
-if entries == nil {
-	entries = []models.Activity{}
-}
-```
 
 **Neither a URI path nor `MONGO_DATABASE`.** `Open` fails with `mongo: no database: ...`; set `MONGO_DATABASE`. Adding a path to a provider URL changes `authSource` (see the warning above).
 
