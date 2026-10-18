@@ -26,6 +26,7 @@ import (
 	"html/template"
 	"io"
 	"io/fs"
+	"maps"
 	"path"
 	"regexp"
 	"slices"
@@ -48,7 +49,8 @@ type Config struct {
 	DefaultLayout string
 	// Reload re-parses views on every render (development).
 	Reload bool
-	// Funcs adds custom template functions.
+	// Funcs adds custom template functions. A name already used by a
+	// built-in ("route", "csrfField", "cspNonce"...) is an error.
 	Funcs template.FuncMap
 	// URLs resolves named routes for the "route" function.
 	URLs web.URLGenerator
@@ -96,6 +98,15 @@ func New(cfg Config) (*Engine, error) {
 	}
 
 	e := &Engine{cfg: cfg}
+
+	// A custom csrfField, cspNonce or errors would silently drop the CSRF
+	// token, the CSP nonce or escaping the built-ins guarantee.
+	builtins := e.builtinFuncs(context.Background())
+	for _, name := range slices.Sorted(maps.Keys(cfg.Funcs)) {
+		if _, taken := builtins[name]; taken {
+			return nil, fmt.Errorf("view: Config.Funcs %q replaces a built-in template function", name)
+		}
+	}
 
 	pages, err := e.parseAll()
 	if err != nil {

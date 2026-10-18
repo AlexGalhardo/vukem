@@ -339,9 +339,9 @@ func WithViews(fsys fs.FS) Option {
 
 // WithViewFuncs adds template functions to the WithViews engine
 // (view.Config.Funcs), for helpers such as money or date formatting. Calls
-// accumulate. A name given twice, a nil function or a missing WithViews is
-// a boot error. A function with a built-in's name ("route", "asset")
-// replaces it.
+// accumulate. A name given twice, a nil function, a built-in's name
+// ("route", "csrfField", "cspNonce"...) or a missing WithViews is a boot
+// error.
 func WithViewFuncs(funcs template.FuncMap) Option {
 	return func(o *options) error {
 		if o.viewFuncs == nil {

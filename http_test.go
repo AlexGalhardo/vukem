@@ -346,6 +346,10 @@ func TestWithViewFuncs(t *testing.T) {
 			WithViewFuncs(template.FuncMap{"upper": strings.ToLower}),
 		},
 		"nil func": {WithViews(fsys), WithViewFuncs(template.FuncMap{"upper": nil})},
+		"built-in name": {
+			WithViews(fsys),
+			WithViewFuncs(template.FuncMap{"csrfField": func() template.HTML { return "" }}),
+		},
 	}
 	for name, opts := range bad {
 		opts = append(opts, WithSource(testSource(nil)), WithLogger(discardLogger()))

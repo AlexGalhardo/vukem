@@ -18,6 +18,15 @@ import (
 
 // funcs returns the template functions bound to the request in ctx.
 func (e *Engine) funcs(ctx context.Context) template.FuncMap {
+	fm := e.builtinFuncs(ctx)
+	maps.Copy(fm, e.cfg.Funcs)
+
+	return fm
+}
+
+// builtinFuncs are the functions every view gets; Config.Funcs may not
+// reuse their names (New refuses it).
+func (e *Engine) builtinFuncs(ctx context.Context) template.FuncMap {
 	fm := template.FuncMap{
 		"route": func(name string, params ...any) (string, error) {
 			if e.cfg.URLs == nil {
@@ -116,8 +125,6 @@ func (e *Engine) funcs(ctx context.Context) template.FuncMap {
 			return trustedHTML(`<script src="` + template.HTMLEscapeString(src) + `" defer` + attr + `></script>`)
 		},
 	}
-
-	maps.Copy(fm, e.cfg.Funcs)
 
 	return fm
 }

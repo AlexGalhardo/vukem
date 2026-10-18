@@ -277,7 +277,7 @@ app, err := vukem.New(
 )
 ```
 
-Calls accumulate. The same name in two calls, a `nil` function, or `WithViewFuncs` without `WithViews` fails `vukem.New` (`vukem: WithViewFuncs: "excerpt" given twice`). Your functions are added after the built-in ones, so a function with the same name replaces the built-in: do not name one `csrfField` or `route`.
+Calls accumulate. The same name in two calls, a `nil` function, or `WithViewFuncs` without `WithViews` fails `vukem.New` (`vukem: WithViewFuncs: "excerpt" given twice`). A name that a built-in already uses (`route`, `csrfField`, `cspNonce`, `errors`…) fails too, with `view: Config.Funcs "csrfField" replaces a built-in template function`: replacing one could drop the CSRF token or the CSP nonce.
 
 You may also build an engine yourself with `view.New` and install it as `app.Router.Services().Views`; `view.Config` takes the same functions in `Funcs`.
 
@@ -287,7 +287,7 @@ You may also build an engine yourself with `view.New` and install it as `app.Rou
 | `Ext` | `.html` | File extension of views |
 | `DefaultLayout` | `app` | Layout for pages without a comment; ignored when the file does not exist |
 | `Reload` | `false` | Re-parse on every render |
-| `Funcs` | none | Extra template functions |
+| `Funcs` | none | Extra template functions; a built-in's name is an error |
 | `URLs` | none | Resolves `route` (the router); without it `route` fails |
 | `AssetPrefix` | `/` | Prefix of `asset` |
 | `Vite` | none | Backs `vite`, `viteReactRefresh` and Vite-aware `asset` |
