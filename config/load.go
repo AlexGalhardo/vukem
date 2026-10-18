@@ -20,7 +20,8 @@ const (
 	Test        Env = "test"
 )
 
-// filePrefix marks a value read from a file (Docker/Kubernetes secrets).
+// filePrefix marks a value read from a file (Docker/Kubernetes secrets);
+// "@@file:" escapes a literal value that starts with "@file:".
 // It is "@file:" rather than "file:" so SQLite DSNs such as
 // "file:storage/app.db" stay untouched.
 const filePrefix = "@file:"
@@ -62,6 +63,10 @@ func (s *Source) Lookup(key string) (string, bool) {
 func (s *Source) lookupErr(key string) (string, bool, error) {
 	if s.getenv != nil {
 		if v, ok := s.getenv(key); ok {
+			if lit, ok := escapedFileRef(v); ok {
+				return lit, true, nil
+			}
+
 			if !strings.HasPrefix(v, filePrefix) {
 				return v, true, nil
 			}
@@ -99,6 +104,17 @@ func (s *Source) resolveEnvRef(key, raw string) (string, error) {
 	s.refs[key] = fileRef{raw: raw, value: v, err: err}
 
 	return v, err
+}
+
+// escapedFileRef reports whether v escapes a literal "@file:" value: one
+// extra leading "@" ("@@file:x" is the text "@file:x", "@@@file:x" is
+// "@@file:x"), and returns v without that "@".
+func escapedFileRef(v string) (string, bool) {
+	if strings.HasPrefix(v, "@@") && strings.HasPrefix(strings.TrimLeft(v, "@"), "file:") {
+		return v[1:], true
+	}
+
+	return "", false
 }
 
 // readFileRef returns the content of the file an "@file:<path>" value
@@ -227,7 +243,9 @@ func LoadSource(
 			v = expand(v, lookup)
 		}
 
-		if strings.HasPrefix(v, filePrefix) {
+		if lit, ok := escapedFileRef(v); ok {
+			v = lit
+		} else if strings.HasPrefix(v, filePrefix) {
 			var err error
 			if v, err = readFileRef(k, v, readFile); err != nil {
 				return nil, err

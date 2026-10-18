@@ -250,3 +250,25 @@ func TestSecurity_A02_ProcessEnvFileRefFailsClosed(t *testing.T) {
 		})
 	}
 }
+
+// "@@file:" is the escape for a literal value that starts with "@file:",
+// in .env files and in the process environment.
+func TestLoadSourceFileRefEscape(t *testing.T) {
+	t.Parallel()
+
+	fsys := fstest.MapFS{".env": {Data: []byte("IN_FILE=@@file:not/a/path\nKEEP=@@@file:x\n")}}
+	readFile := func(string) ([]byte, error) { return nil, errors.New("must not be read") }
+
+	src, err := LoadSource(fsys, fakeEnv(map[string]string{"IN_ENV": "@@file:/literal"}), readFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := map[string]string{"IN_FILE": "@file:not/a/path", "IN_ENV": "@file:/literal", "KEEP": "@@file:x"}
+	for k, v := range want {
+		got, ok, err := LookupErr(src, k)
+		if err != nil || !ok || got != v {
+			t.Errorf("LookupErr(%q) = %q, %v, %v, want %q", k, got, ok, err, v)
+		}
+	}
+}

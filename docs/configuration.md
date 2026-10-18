@@ -19,7 +19,7 @@ Loaded by a small stdlib-only parser in `config/`. Precedence, highest first:
 4. `.env.<APP_ENV>`
 5. `.env`
 
-Supported syntax: `KEY=value`, `export KEY=value`, single/double quotes, `\n` escapes inside double quotes, `#` comments, `${OTHER}` interpolation, and the `@file:` prefix (`DB_PASSWORD=@file:/run/secrets/db`) to read a value from a file (Docker/Kubernetes secrets); a process environment variable set to `@file:<path>` is read the same way. Only regular files up to 1 MiB are read, and an unreadable reference fails `config.Load` (boot). The `@` keeps SQLite DSNs such as `file:storage/app.db` untouched.
+Supported syntax: `KEY=value`, `export KEY=value`, single/double quotes, `\n` escapes inside double quotes, `#` comments, `${OTHER}` interpolation, and the `@file:` prefix (`DB_PASSWORD=@file:/run/secrets/db`) to read a value from a file (Docker/Kubernetes secrets); a process environment variable set to `@file:<path>` is read the same way. Only regular files up to 1 MiB are read, and an unreadable reference fails `config.Load` (boot). Trust boundary: configuration values (process environment and `.env` files) are trusted operator input. `@file:` applies to every variable the app reads, follows symlinks, and resolves a relative path against the process working directory, so whoever can set an environment variable can make the app read any regular file the process can read. Write `@@file:` for a literal value that starts with `@file:` (one leading `@` is removed). The `@` keeps SQLite DSNs such as `file:storage/app.db` untouched.
 
 `.env` and `.env.*.local` are git-ignored; `.env.example` is committed and kept in sync by generators that add variables.
 
