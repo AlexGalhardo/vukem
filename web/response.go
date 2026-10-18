@@ -1,12 +1,14 @@
 package web
 
 import (
+	"bufio"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"mime"
+	"net"
 	"net/http"
 	"net/url"
 	"path"
@@ -29,15 +31,19 @@ type ResponseWriter struct {
 }
 
 // WriteHeader records and writes the status. A status set earlier with
-// Ctx.Status replaces code.
+// Ctx.Status replaces a 200 (the implicit status of Write, and the default
+// of helpers such as Render, View or inertia.Render); any other code (a
+// redirect, 204, 304, an explicit 202) is sent as given.
 func (w *ResponseWriter) WriteHeader(code int) {
 	if w.written {
 		return
 	}
 
-	if w.pending != 0 {
+	if w.pending != 0 && code == http.StatusOK {
 		code = w.pending
 	}
+
+	w.pending = 0
 
 	w.status = code
 	w.written = true
@@ -81,12 +87,42 @@ func (w *ResponseWriter) Size() int64 { return w.size }
 // Unwrap supports http.ResponseController.
 func (w *ResponseWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
+// Flush sends the status (a pending Ctx.Status, else 200) and flushes the
+// underlying writer. Without it, http.ResponseController would flush the
+// unwrapped writer and send an implicit 200 behind this one's back.
+func (w *ResponseWriter) Flush() { _ = w.FlushError() }
+
+// FlushError is Flush reporting http.ErrNotSupported when the underlying
+// writer cannot flush (http.ResponseController prefers it).
+func (w *ResponseWriter) FlushError() error {
+	if !w.written {
+		w.WriteHeader(http.StatusOK)
+	}
+
+	return http.NewResponseController(w.ResponseWriter).Flush()
+}
+
+// Hijack hands the connection to the caller (WebSocket upgrades). No status
+// is sent: the hijacker writes its own response, and the writer counts as
+// written so nothing is sent on the connection afterwards.
+func (w *ResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	conn, rw, err := http.NewResponseController(w.ResponseWriter).Hijack()
+	if err == nil {
+		w.written = true
+		w.pending = 0
+	}
+
+	return conn, rw, err
+}
+
 // Status sets the response status without sending it: the next helper
-// that writes the response (JSON, Render, View, inertia.Render...) sends
-// it with its headers, in place of its own status. c.Status(201).JSON(200, v)
-// answers 201 with Content-Type application/json. A handler that returns
-// nil without writing sends the status alone; a returned error replaces
-// it with the error's status.
+// that writes the response with the default 200 (JSON(200, v), Render,
+// View, inertia.Render, a plain Write) sends it instead, with its headers.
+// c.Status(201).JSON(200, v) answers 201 with Content-Type
+// application/json. Any other status wins over it: a redirect, NoContent,
+// a 304, JSON(202, v). A handler that returns nil without writing sends
+// the status alone; a returned error or a panic answers with its own
+// status.
 func (c *Ctx) Status(code int) *Ctx {
 	c.w.pending = code
 	return c

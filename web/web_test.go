@@ -1,6 +1,7 @@
 package web
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -1042,5 +1043,94 @@ func TestFormFileOnNonMultipart(t *testing.T) {
 				t.Fatalf("FormFile() = %v (status %d), want 422", err, st)
 			}
 		})
+	}
+}
+
+func TestStatusPendingRules(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		h        HandlerFunc
+		want     int
+		location string
+	}{
+		{name: "replaces the default 200", h: func(c *Ctx) error { return c.Status(201).JSON(200, 1) }, want: 201},
+		{name: "explicit status wins", h: func(c *Ctx) error { return c.Status(201).JSON(202, 1) }, want: 202},
+		{name: "no content wins", h: func(c *Ctx) error { return c.Status(201).NoContent() }, want: 204},
+		{
+			name: "redirect wins", h: func(c *Ctx) error { return c.Status(201).Redirect("/next") },
+			want: http.StatusFound, location: "/next",
+		},
+		{
+			name: "flush sends the pending status once",
+			h: func(c *Ctx) error {
+				c.Status(http.StatusAccepted)
+				if err := http.NewResponseController(c.Writer()).Flush(); err != nil {
+					return err
+				}
+				_, err := c.Writer().Write([]byte("x"))
+				return err
+			},
+			want: http.StatusAccepted,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			c, rec := newCtx(t, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/x", http.NoBody), nil)
+			c.Serve(tt.h)
+
+			if rec.Code != tt.want || c.Writer().Status() != tt.want {
+				t.Fatalf("status = %d (recorded %d), want %d", rec.Code, c.Writer().Status(), tt.want)
+			}
+			if tt.location != "" && rec.Header().Get("Location") != tt.location {
+				t.Fatalf("Location = %q, want %q", rec.Header().Get("Location"), tt.location)
+			}
+		})
+	}
+}
+
+// hijackRecorder is a ResponseRecorder that can be hijacked.
+type hijackRecorder struct {
+	*httptest.ResponseRecorder
+
+	hijacked    bool
+	headerCalls int
+}
+
+func (h *hijackRecorder) WriteHeader(code int) {
+	h.headerCalls++
+	h.ResponseRecorder.WriteHeader(code)
+}
+
+func (h *hijackRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	h.hijacked = true
+	return nil, nil, nil
+}
+
+func TestResponseWriterHijack(t *testing.T) {
+	t.Parallel()
+
+	rec := &hijackRecorder{ResponseRecorder: httptest.NewRecorder()}
+	r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/ws", http.NoBody)
+	c := NewCtx(rec, r, &Services{Log: slog.New(slog.DiscardHandler)})
+
+	c.Serve(func(c *Ctx) error {
+		c.Status(http.StatusCreated)
+		_, _, err := http.NewResponseController(c.Writer()).Hijack()
+		return err
+	})
+
+	if !rec.hijacked {
+		t.Fatal("Hijack did not reach the underlying writer")
+	}
+	if rec.headerCalls != 0 {
+		t.Fatalf("WriteHeader called %d times on a hijacked connection, want 0", rec.headerCalls)
+	}
+	if !c.Writer().Written() {
+		t.Fatal("Written() = false after Hijack; Serve would write on a hijacked connection")
 	}
 }

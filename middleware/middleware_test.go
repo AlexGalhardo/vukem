@@ -382,6 +382,29 @@ func TestSecurity_A06_MethodOverrideKeepsTighterLimit(t *testing.T) {
 	}
 }
 
+func TestPanicAfterStatusIs500(t *testing.T) {
+	t.Parallel()
+
+	log := slog.New(slog.DiscardHandler)
+	panics := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		web.NewCtx(w, r, web.ServicesFrom(r.Context())).Serve(func(c *web.Ctx) error {
+			c.Status(http.StatusCreated)
+			panic("boom")
+		})
+	})
+
+	stacks := map[string]http.Handler{
+		"recover outside logger": Recover()(Logger(log)(panics)),
+		"recover inside logger":  Logger(log)(Recover()(panics)),
+	}
+
+	for name, h := range stacks {
+		if rec := do(t, withServices(h, log), get(t, "/")); rec.Code != http.StatusInternalServerError {
+			t.Errorf("%s: status = %d, want 500", name, rec.Code)
+		}
+	}
+}
+
 func TestJSONOnly(t *testing.T) {
 	t.Parallel()
 
