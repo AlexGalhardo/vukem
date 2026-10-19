@@ -15,8 +15,13 @@ import (
 	"strings"
 )
 
-// moduleParents are the directories holding publishable nested modules.
-var moduleParents = []string{"contrib", "drivers"}
+// moduleParents are the directories holding nested modules that must resolve
+// from their own go.mod. contrib/* and drivers/* because consumers fetch them
+// from the proxy; examples/* because CI builds them with GOWORK=off, so the
+// same drift fails there and nowhere else. examples/blog shipped exactly that:
+// it required core v0.20.0 while importing a package added later, and the only
+// thing that noticed was a CI job saying "updates to go.mod needed".
+var moduleParents = []string{"contrib", "drivers", "examples"}
 
 // repoRoot walks up from the working directory to the directory holding
 // go.work, which is the repository root.

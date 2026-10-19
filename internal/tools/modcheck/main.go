@@ -80,7 +80,11 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 	failed := false
 
 	for _, dir := range mods {
-		if !used[dir] {
+		// examples/* are deliberately outside the workspace: they exist to
+		// resolve the way a consumer does, so membership is not required of
+		// them. The GOWORK=off resolution check below still applies, and for
+		// an example it is the only check that matters.
+		if !used[dir] && !strings.HasPrefix(dir, "examples/") {
 			failed = true
 
 			// GitHub Actions renders ::error lines as annotations.
