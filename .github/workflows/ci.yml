@@ -254,6 +254,30 @@ jobs:
         working-directory: contrib/imaging
         run: go test -count=1 ./...
 
+  engine:
+    name: Engine module (subprocess seam)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: "**/go.sum"
+      # prlimit(1) applies the resource limits, which is the only route to
+      # them from Go: syscall.Setrlimit bounds the caller and there is no
+      # pre-exec hook. util-linux is present on this runner, so the limits
+      # path is exercised here rather than skipped.
+      - name: Check prlimit is present
+        run: prlimit --version
+      - name: Unit tests (module alone)
+        working-directory: contrib/engine
+        env:
+          GOWORK: "off"
+        run: go test -race -count=1 ./...
+      - name: Unit tests (workspace, current core)
+        working-directory: contrib/engine
+        run: go test -count=1 ./...
+
   redis:
     name: Redis driver (${{ matrix.image }})
     runs-on: ubuntu-latest

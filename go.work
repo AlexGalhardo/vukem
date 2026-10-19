@@ -14,5 +14,6 @@ use (
 	./contrib/graphql
 	./contrib/grpc
 	./contrib/imaging
+	./contrib/engine
 	./internal/bench
 )

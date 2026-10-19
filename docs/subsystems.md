@@ -586,6 +586,52 @@ b.T("pt-BR", "posts.count", "count", 3)                   // a Bundle directly
 - **Framework messages:** errors from `auth`, `social` and `orm.Unique`/`Exists` carry message keys (`auth.failed`, `auth.unauthenticated`, `auth.unverified`, `auth.token_ability` with `{ability}`, `social.unknown_provider`, `social.state`, `social.denied`, `social.failed`, `validation.unique`, `validation.exists` with `{field}`) and keep their English text as the fallback. `WithTranslations` adds the built-in English and Brazilian Portuguese catalogs (`Bundle.AddBuiltin`) to the catalogs the app already has (pt-BR messages fill `pt-BR` and `pt`, not `pt-PT`; no catalog is created), never overriding a key the app defines for that locale or its language. The middleware installs `Bundle.Translator(locale)` as the request's `errs.Translator`: the error handler shows `errs.NewKey(status, key, fallback, params)` errors through `HTTPError.LocalizedText`, and code with a context calls `errs.Translate(ctx, key, fallback, params)`. Login and reset messages stay generic in every locale (no user enumeration).
 - Starters do not ship catalogs yet; add `resources/lang/en.json` and pass `WithTranslations`.
 
+## External binaries (`contrib/engine`)
+
+Separate module (`github.com/AlexGalhardo/vukem/contrib/engine`), standard library only and no core dependency. For an app that shells out to ffmpeg, yt-dlp, Ghostscript or ImageMagick.
+
+```go
+tool, err := engine.Find(ctx, engine.Config{
+	Name: "ffmpeg", VersionArgs: []string{"-version"}, Log: app.Log,
+	CPUCount: cpu.Count(),                                 // vukem/cpu
+	Limits: engine.Limits{CPUTime: 10 * time.Minute, AddressSpace: 2 << 30},
+})
+res, err := tool.Run(ctx, jobDir, "-i", in, "-threads", strconv.Itoa(tool.CPUCount()), out)
+```
+
+`Find` is a boot call: a missing binary, or limits that cannot be applied here, stops the process instead of surfacing on the first request. It logs the resolved path and version, and the probe reads **stderr as well as stdout**, taking the first non-blank line — poppler's `pdftotext` and `pdftoppm` answer `-v` on stderr with exit 0, so a stdout-only probe records "unknown" for a tool that works.
+
+Six things it does that are traps rather than preferences:
+
+| | What, and why it is not a preference |
+| --- | --- |
+| no inherited environment | `os.Environ()` holds the database URL and the bucket credentials. The child sees `PATH`, the platform minimum (`SystemRoot`/`windir` on Windows), `LANG`/`LC_ALL` when set, `HOME`, the temp triple, and `Config.Env` — so widening it is a visible decision in the app's code |
+| pinned temp directory | `TMPDIR`, `TEMP` and `TMP` point at the run's own directory. See below |
+| limits through `prlimit(1)` | `syscall.Setrlimit` applies to the **caller** and Go has no pre-exec hook, so a limit set in the parent bounds the server. `prlimit` applies them and then execs. Linux-only, and `Find` **refuses** when `Limits` are set and it is unavailable: silently unlimited execution is the outcome worth refusing |
+| process-group cancellation | ffmpeg and yt-dlp spawn children; killing the parent leaves them holding the working directory open, which on Windows also blocks its removal |
+| `Cmd.Cancel` + `Cmd.WaitDelay` | not a watcher goroutine, so the context stays on the call |
+| bounded capture | `Run` keeps a **tail** (`MaxOutput`, default 64 KiB) with an `[earlier output dropped]` marker, because a progress line every 200 ms for a 40-minute transcode is megabytes per run. When the tool's product **is** its stdout, `RunStream` never buffers it |
+
+### Why the temp directory is pinned
+
+Measured, not assumed. The same hostile PostScript document writing to an absolute `/tmp` path, the same `-dSAFER`:
+
+| Ghostscript | `TMPDIR` | Result |
+| --- | --- | --- |
+| 10.05.1 | `/tmp` (the default) | **wrote the file and reported success** |
+| 10.05.1 | the run's directory | refused, `Last OS error: Permission denied`, exit 1 |
+| 10.08.0 | either | refused |
+
+So `-dSAFER` is not inert: on 10.05.1 it permits writes under whatever `TMPDIR` names, and `TMPDIR` defaults to `/tmp`, which made the whole tree writable by a document. 10.08.0 fixed it.
+
+Do not read that as a workaround that expired. Pinning is worth having whatever the tool: ffmpeg's muxers, yt-dlp's fragments and ImageMagick's scratch files all land in the temp directory, so pinning keeps a run's temporary files inside the directory the caller is about to delete, keeps two concurrent runs from colliding on a shared name in `/tmp`, and contains a tool that writes where it should not by default rather than by a flag the next release might reinterpret.
+
+### Threads are the caller's to place
+
+`Tool.CPUCount()` reports the budget and this package never puts it in the arguments. It cannot: `-threads` is **positional** in ffmpeg (before an input it bounds that input's decoder, after the inputs it bounds the encoder, and the wrong one gives "at least one of its streams received no packets" with no cause named), and SVT-AV1 ignores `-threads` entirely and needs `-svtav1-params lp=`. Set `Config.CPUCount` from [`cpu.Count()`](architecture.md#sizing-work-to-the-containers-cpu-quota), never from `runtime.GOMAXPROCS`, which rounds the quota up and never drops below 2.
+
+Progress parsing is deliberately **not** here: it is the shape of a progress subsystem, not of a subprocess seam.
+
 ## Stripe (`contrib/stripe`)
 
 Separate module (`github.com/AlexGalhardo/vukem/contrib/stripe`), standard library only (no stripe-go). Use a restricted key (`rk_…`).
