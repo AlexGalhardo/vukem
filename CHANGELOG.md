@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.30.0] - 2026-10-19
+
+### Added
+
+- **cli:** Record the project's package manager in package.json ([c5b0b92](https://github.com/AlexGalhardo/vukem/commit/c5b0b92870abdaf7d39d89036efa8dcdecdc3bea))
+- **z:** Describe a JSON payload whose shape is not fixed ([999d0e8](https://github.com/AlexGalhardo/vukem/commit/999d0e8af244f9648cf404f0ec7214ce1ce815d1))
+- **vukem:** Give the operational seams their own names and checks ([131e904](https://github.com/AlexGalhardo/vukem/commit/131e904967a689a378c90ba46c272351aef23caa))
+- **z:** Let the validate tag express an optional value and a default ([51fbbfc](https://github.com/AlexGalhardo/vukem/commit/51fbbfc38bb0c646ad7d4a5376d582033d1ea42c))
+- **cpu:** Report the container's CPU quota for pools the runtime does not size ([073560f](https://github.com/AlexGalhardo/vukem/commit/073560fd3a04066ce2a22786449830df185cd5bd))
+- **vukemtest:** Decode a response body into a struct ([9f218a9](https://github.com/AlexGalhardo/vukem/commit/9f218a9e14201603450643178f7c0cfccae058bd))
+
+### Fixed
+
+- **apidocs:** Run the accessibility pass in a microtask, not a frame ([6664021](https://github.com/AlexGalhardo/vukem/commit/66640213bb21397e4cb64e8e022f941c978d7796))
+- **cli:** Make the make:* generators produce lint-clean code ([0977763](https://github.com/AlexGalhardo/vukem/commit/0977763d42dcccb4b525764c93b8df4479f94c52))
+- **docker:** Make the lockfile an explicit build input of the assets stage ([f29c478](https://github.com/AlexGalhardo/vukem/commit/f29c4788cd0bfc4d58b9b5d4d652494f83dc72a9))
+- **cli:** Gate install:auth --social and give its packages a doc.go ([856512c](https://github.com/AlexGalhardo/vukem/commit/856512c600f65048676c7024fd0bd45e31f2a18c))
+- **upload:** Refuse a type the content detector cannot produce ([7912ed6](https://github.com/AlexGalhardo/vukem/commit/7912ed67529f88095cc8a5c6b1d13d3d57d4c68f))
+
+### Security
+
+- **cli:** Teach the API ability model the scaffold already enforces ([b8087dc](https://github.com/AlexGalhardo/vukem/commit/b8087dc5dfc6845722ccbf65f0fcbeac7da89922))
+- **archive:** Read a user archive under a policy and return safe keys ([0d1e0c8](https://github.com/AlexGalhardo/vukem/commit/0d1e0c87c8ed836f6d1cf999ba6cd05df7fd50d3))
+- **mediatype:** Name the types an app produces, not the ones it accepts ([933de25](https://github.com/AlexGalhardo/vukem/commit/933de25e3cfea4b235e1b2ff65cca608cba66970))
+
 ## [0.29.0] - 2026-10-18
 
 ### Added
@@ -963,7 +988,8 @@ Project foundation. No framework code yet; see [PLAN.md](PLAN.md) for the roadma
 - README, MIT license, CONTRIBUTING, SECURITY and CODE_OF_CONDUCT.
 - Agent configuration: `AGENTS.md`, `CLAUDE.md`, path-scoped `.claude/rules/`, Go skills and project settings.
 
-[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.29.0...HEAD
+[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.30.0...HEAD
+[0.30.0]: https://github.com/AlexGalhardo/vukem/compare/v0.29.0...v0.30.0
 [0.29.0]: https://github.com/AlexGalhardo/vukem/compare/v0.28.0...v0.29.0
 [0.28.0]: https://github.com/AlexGalhardo/vukem/compare/v0.27.0...v0.28.0
 [0.27.0]: https://github.com/AlexGalhardo/vukem/compare/v0.26.0...v0.27.0
