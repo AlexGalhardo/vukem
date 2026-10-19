@@ -251,11 +251,6 @@ type TasksUpdateBody struct {
 	Title  string                `json:"title"`
 }
 
-// Health calls GET /up.
-func (c *Client) Health(ctx context.Context) error {
-	return c.do(ctx, "GET", "/up", nil, nil, nil)
-}
-
 // Me calls GET /api/v1/me.
 func (c *Client) Me(ctx context.Context) error {
 	return c.do(ctx, "GET", "/api/v1/me", nil, nil, nil)
@@ -334,4 +329,9 @@ func (c *Client) TokensDestroy(ctx context.Context) error {
 // The body is encoded as JSON; nil sends none.
 func (c *Client) TokensStore(ctx context.Context, body any) error {
 	return c.do(ctx, "POST", "/api/v1/tokens", nil, body, nil)
+}
+
+// VukemHealth calls GET /up.
+func (c *Client) VukemHealth(ctx context.Context) error {
+	return c.do(ctx, "GET", "/up", nil, nil, nil)
 }
