@@ -1,0 +1,246 @@
+---
+title: "CLI reference: database"
+description: Manual for vukem migrate, migrate:rollback, migrate:reset, migrate:fresh, migrate:status, db:seed and db:wipe, with flags, the production guard, errors and real output.
+---
+
+These commands change or read your database. They are **app** commands: `vukem` builds `cmd/app`, boots your app and runs the command inside it, so they use your `.env`. Back to the [command cheat sheet](/docs/cli/reference).
+
+## Rules that apply to all of them
+
+- Flags go **before** positional arguments. `db:seed` is the exception (see below).
+- Environment: `DATABASE_URL` (default `file:storage/database.sqlite`), `DB_MAX_OPEN` (`10`), `DB_MAX_IDLE` (`5`), `APP_ENV`, `APP_DEBUG`.
+- The app boots before the command runs, so a boot error stops it first, with exit code 1 and a `vukem:` prefix. In production, `APP_DEBUG=true` is a boot error: `vukem: APP_DEBUG must be false when APP_ENV=production`.
+- Output is one line per migration, in the order they ran.
+- All of them print to standard output and use exit code 1 on failure.
+
+### The production guard
+
+`migrate:reset`, `migrate:fresh`, `db:seed` and `db:wipe` destroy or rewrite data. When `APP_ENV=production` they refuse to run unless you pass `-force`:
+
+```bash
+APP_ENV=production APP_DEBUG=false vukem migrate:fresh
+```
+
+```text
+refusing to run a destructive command in production without --force
+```
+
+Exit code 1, nothing changed. With `-force` it runs. `migrate`, `migrate:rollback` and `migrate:status` have no guard.
+
+## `vukem migrate`
+
+Run every pending migration, in timestamp order, as one new batch.
+
+```text
+vukem migrate
+```
+
+No flags, no arguments.
+
+```bash
+vukem migrate
+```
+
+```text
+Migrated: 20261024221120_add_slug_to_posts_table
+Migrated: 20261024221120_create_comments_table
+Migrated: 20261024221145_create_users_table
+```
+
+Run again:
+
+```text
+Nothing to migrate.
+```
+
+Writes to the `migrations` bookkeeping table (id, batch, run time). A migration that fails stops the run and returns its error with exit code 1.
+
+**Advanced: a different database for one run.** The command reads `DATABASE_URL` from the environment before `.env`, so you may point one run elsewhere:
+
+```bash
+DATABASE_URL=file:storage/test.sqlite vukem migrate
+```
+
+Migrations are written with `vukem make:migration`. See [Migrations](/docs/database/migrations).
+
+## `vukem migrate:rollback`
+
+Undo migrations, newest first.
+
+```text
+vukem migrate:rollback [-step N]
+```
+
+| Flag | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `-step` | int | `0` | Roll back this many migrations. `0` rolls back the whole last batch. |
+
+```bash
+vukem migrate:rollback -step 1
+```
+
+```text
+Rolled back: 20261024221206_add_billing_tables
+```
+
+Without `-step`, every migration in the last batch goes. After a fresh install all migrations share batch 1, so a bare `migrate:rollback` undoes all of them:
+
+```text
+Rolled back: 20261024221607_create_auth_tables
+Rolled back: 20261024221606_create_users_table
+Rolled back: 20260101000000_create_posts_table
+```
+
+Each migration's `Down` runs, so data in dropped tables is lost. Check `migrate:status` before you run it in production.
+
+## `vukem migrate:reset`
+
+Roll back every migration, in reverse order.
+
+```text
+vukem migrate:reset [-force]
+```
+
+| Flag | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `-force` | bool | `false` | Allow it when `APP_ENV=production`. |
+
+Output: one `Rolled back: <id>` line per migration. Each migration's `Down` runs.
+
+## `vukem migrate:fresh`
+
+Drop **all** tables, then run every migration again.
+
+```text
+vukem migrate:fresh [-force]
+```
+
+| Flag | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `-force` | bool | `false` | Allow it when `APP_ENV=production`. |
+
+```bash
+vukem migrate:fresh
+```
+
+```text
+Migrated: 20260101000000_create_posts_table
+Migrated: 20261024221607_create_auth_tables
+```
+
+Everything lands in batch 1 again. The usual loop in development:
+
+```bash
+vukem migrate:fresh && vukem db:seed
+```
+
+## `vukem migrate:status`
+
+Show which migrations ran and which are pending.
+
+```text
+vukem migrate:status [-json]
+```
+
+| Flag | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `-json` | bool | `false` | Print a JSON array instead of a table. |
+
+```bash
+vukem migrate:status
+```
+
+```text
+MIGRATION                                     STATUS   BATCH
+20260101000000_create_posts_table             Ran      1
+20261024221120_add_slug_to_posts_table        Pending  
+20261024221120_create_comments_table          Pending  
+```
+
+With `-json` each entry has `id`, `ran`, `batch` and `ran_at` (UTC):
+
+```json
+[{"id":"20260101000000_create_posts_table","ran":true,"batch":1,"ran_at":"2026-10-24T22:08:10.2232772Z"}]
+```
+
+Use it in CI to fail a deploy that has pending migrations.
+
+## `vukem db:seed`
+
+Run the seeders: classes that insert starting data.
+
+```text
+vukem db:seed [Name...] [-class Name]... [-force] [seeder flags]
+```
+
+**Arguments**: zero or more seeder names, before any flag. With none, every registered seeder runs, in the order of `All()` in `database/seeders/registry.go`.
+
+| Flag | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `-class` | string, repeatable | none | Run only this seeder. Same as a name before the flags. |
+| `-force` | bool | `false` | Allow it when `APP_ENV=production`. |
+| seeder flags | any | none | Flags defined by seeders that implement `vukem.FlagSeeder`. Only the seeders that run are asked. |
+
+**Interactions**
+
+- Names come first, then flags: `vukem db:seed PostsSeeder -force`. This is the one app command that reads names before flags, because the flags it accepts depend on the seeders you name.
+- Flag names that several seeders define are shared: the seeders that run all receive the value.
+- `force`, `class`, `help` and `h` belong to `db:seed`. A seeder that defines one of them is an error, so no seeder can bypass the production guard.
+- `make:seeder -app` seeders (`AppSeeder`) receive the booted app. Register them with `vukem.WithAppSeeders(seeders.AllApp()...)`.
+
+```bash
+vukem db:seed
+```
+
+```text
+Seeded: PostsSeeder
+Seeded: TagSeeder
+```
+
+**Errors**
+
+| Message | Exit | Fix |
+| --- | --- | --- |
+| `db:seed: unknown seeder "Nope" (registered: PostsSeeder, TagSeeder)` | 2 | Use a listed name. The match is exact. |
+| `db:seed: unexpected argument "x" (seeder names go before the flags)` | 2 | Move names before flags. |
+| `refusing to run a destructive command in production without --force` | 1 | Add `-force` on purpose. |
+| `No seeders registered (vukem make:seeder).` | 0 | Create one. |
+
+**Advanced: pick seeders**
+
+```bash
+vukem db:seed TagSeeder -class PostsSeeder
+```
+
+Runs `TagSeeder` and `PostsSeeder`. See [Factories and seeders](/docs/database/factories-seeders).
+
+## `vukem db:wipe`
+
+Drop every table, leaving an empty database. Unlike `migrate:fresh` it does not migrate again.
+
+```text
+vukem db:wipe [-force]
+```
+
+| Flag | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `-force` | bool | `false` | Allow it when `APP_ENV=production`. |
+
+```bash
+vukem db:wipe
+```
+
+```text
+Dropped all tables.
+```
+
+After it, `vukem migrate` rebuilds the schema. Back up first in any shared environment.
+
+## Troubleshooting
+
+| Symptom | Cause and fix |
+| --- | --- |
+| `unknown command "migrate" (app commands need a Vukem project with cmd/app)` | You are outside a project. `cd` into the root. |
+| `error obtaining VCS status: exit status 128` | `go build` could not read the Git state of the project. Repair the repository (or its `safe.directory`), or run `GOFLAGS=-buildvcs=false vukem migrate`. |
+| `vukem: APP_DEBUG must be false when APP_ENV=production` | Set `APP_DEBUG=false`. |
+| `vukem: set MAIL_MAILER in production (smtp, resend, mailtrap or log)` | Production apps need a mailer to boot. Set `MAIL_MAILER`. |
