@@ -24,6 +24,20 @@ func schemaForType(t reflect.Type, raw []string, depth int) (AnySchema, error) {
 
 	optional := !rs.required || nullable
 
+	if rs.omitEmpty && t.Kind() != reflect.String && t != reflect.TypeFor[json.RawMessage]() {
+		// Refused rather than ignored. "omitempty" has an unambiguous
+		// meaning only where the empty value is not itself a datum people
+		// bound: on a number it would make "omitempty,min=1" accept 0, and
+		// on a slice "omitempty,min=1" accept the empty list, which is the
+		// opposite of what the tag says. Accepting it silently is how an
+		// optional enum came to be rejected in the first place (A111).
+		return nil, fmt.Errorf(
+			"rule \"omitempty\" applies to a string, not %s "+
+				"(it skips the later rules when the value is empty; drop it, or use a pointer for an absent value)",
+			t,
+		)
+	}
+
 	switch {
 	// Before the slice case: json.RawMessage is a []byte, so it would be
 	// taken for a list of numbers — the document would say "array of
@@ -77,18 +91,6 @@ func schemaForType(t reflect.Type, raw []string, depth int) (AnySchema, error) {
 		return s, nil
 	case t.Kind() == reflect.String:
 		return stringFromRules(t, rs, optional, nullable)
-	case rs.omitEmpty:
-		// Refused rather than ignored. "omitempty" has an unambiguous
-		// meaning only where the empty value is not itself a datum people
-		// bound: on a number it would make "omitempty,min=1" accept 0, and
-		// on a slice "omitempty,min=1" accept the empty list, which is the
-		// opposite of what the tag says. Accepting it silently is how an
-		// optional enum came to be rejected in the first place (A111).
-		return nil, fmt.Errorf(
-			"rule \"omitempty\" applies to a string, not %s "+
-				"(it skips the later rules when the value is empty; drop it, or use a pointer for an absent value)",
-			t,
-		)
 	case t.Kind() == reflect.Bool:
 		if err := noRules(rs.rules); err != nil {
 			return nil, err

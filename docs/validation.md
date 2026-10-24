@@ -227,7 +227,7 @@ Supported rules, by the field kind they apply to:
 | `default=V` | string, number | `Default(V)`: used when the key is absent, or empty with `omitempty`; it also reaches the OpenAPI document. Never re-validated, so a value outside the field's own rules is a boot error. Contradicts `required` |
 | `unique` | list | `Unique()` |
 
-A bool, a `time.Time` and a nested struct take no rule but `required`; any other rule on them is a boot panic, as is an unknown rule or a bad argument. `required` on a string means non-empty; on a list it means present and not null (an empty list passes, as with OpenAPI `required`), so use `min=1` for a non-empty list. Pointer fields are optional and nullable.
+A bool, a `time.Time`, an `any` (any JSON value), a `map[string]any` (a JSON object) and a nested struct take no rule but `required`; any other rule on them is a boot panic, as is an unknown rule or a bad argument. `required` on a string means non-empty; on a list it means present and not null (an empty list passes, as with OpenAPI `required`), so use `min=1` for a non-empty list. Pointer fields are optional and nullable.
 
 The table above is checked against the implementation by `TestTagRules_DocumentedInValidationDocs` in `z`: a rule cannot be added to the tag parser without appearing here.
 

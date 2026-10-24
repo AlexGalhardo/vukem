@@ -264,6 +264,18 @@ func TestTagRules_ApplyToTheirScopes(t *testing.T) {
 			t.Errorf("rule %q on a bool: accepted, want an error", tag)
 		}
 
+		// any and map[string]any, like a bool, take only the scopeAny rules.
+		for _, rt := range []reflect.Type{reflect.TypeFor[any](), reflect.TypeFor[map[string]any]()} {
+			_, err := schemaForType(rt, []string{tag}, 0)
+			if anyKind && err != nil {
+				t.Errorf("rule %q on a %s: %v, want it accepted on any kind", tag, rt, err)
+			}
+
+			if !anyKind && err == nil {
+				t.Errorf("rule %q on a %s: accepted, want an error", tag, rt)
+			}
+		}
+
 		for scope, rt := range kinds {
 			_, err := schemaForType(rt, []string{tag}, 0)
 

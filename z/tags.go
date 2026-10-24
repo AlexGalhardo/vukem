@@ -32,8 +32,9 @@ import (
 // non-empty, on a list present and not null (use min=1 for a non-empty
 // list); pointers are optional and nullable; nested structs are parsed
 // recursively. A bool, a time.Time and a nested struct take no rule but
-// "required". It panics on unknown rules or bad arguments, so mistakes
-// surface at boot. The same table is in docs/validation.md; both are checked
+// "required", and so do any (a JSON value of any shape) and
+// map[string]any (a JSON object). It panics on unknown rules or bad
+// arguments, so mistakes surface at boot. The same table is in docs/validation.md; both are checked
 // against the implementation by TestTagRules_* in this package.
 func FromTags[T any]() StructSchema[T] {
 	return StructSchema[T]{core: tagCore(reflect.TypeFor[T](), 0)}
