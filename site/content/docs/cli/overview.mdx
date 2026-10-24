@@ -390,7 +390,7 @@ Each `make:*` command renders a template, formats Go output with [`go/format`](h
 | `make:provider <Name>` | `app/providers/<name>_provider.go` | `Providers()` in `bootstrap/providers.go` |
 | `make:resource <Name>` | `app/resources/<name>.go` | — |
 | `make:factory <Name>` | `database/factories/<name>_factory.go` | — |
-| `make:seeder <Name>` | `database/seeders/<name>_seeder.go` | `All()` in `database/seeders/registry.go` |
+| `make:seeder <Name> [--app]` | `database/seeders/<name>_seeder.go` | `All()` in `database/seeders/registry.go`; with `--app`, an `AppSeeder` registered in `AllApp()` |
 | `make:event <Name>` | `app/events/<name>.go` | — |
 | `make:listener <Name>` | `app/listeners/<name>.go` | `All()` in `app/listeners/registry.go` |
 | `make:job <Name>` | `app/jobs/<name>.go` | `All()` in `app/jobs/registry.go` |

@@ -32,7 +32,7 @@ Usage:
   make:provider <Name>         Create a provider and register it
   make:resource <Name>         Create an API resource (JSON transformer) for a model
   make:factory <Name>          Create a model factory (fake data for tests and seeders)
-  make:seeder <Name>           Create a seeder and register it
+  make:seeder <Name> [--app]   Create a seeder and register it (--app: gets the App)
   make:event <Name>            Create an event type
   make:listener <Name>         Create an event listener and register it (--event Name [--async|--queued])
   make:job <Name>              Create a queued job and register its handler

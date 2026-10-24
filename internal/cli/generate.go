@@ -472,20 +472,67 @@ func makeFactory(set *flag.FlagSet) func(context.Context, *Env, []string) error 
 }
 
 func makeSeeder(set *flag.FlagSet) func(context.Context, *Env, []string) error {
-	run := simple(set, "seeder name", "seeder.go.tmpl", "database/seeders/%s_seeder.go", "Seeder")
+	app := set.Bool("app", false, "generate an AppSeeder that receives the booted App (config, logger, storage)")
+	force := set.Bool("force", false, "overwrite existing files")
 
-	return func(ctx context.Context, env *Env, args []string) error {
-		if err := run(ctx, env, args); err != nil {
-			return err
-		}
-
-		d, err := newStubData(env, className(args[0], "Seeder"))
+	return func(_ context.Context, env *Env, args []string) error {
+		name, err := oneArg(args, "seeder name")
 		if err != nil {
 			return err
 		}
 
-		return register(env, "database/seeders/registry.go", "All", d.Name+"Seeder{}")
+		d, err := newStubData(env, className(name, "Seeder"))
+		if err != nil {
+			return err
+		}
+
+		stub, fn := "seeder.go.tmpl", "All"
+		if *app {
+			stub, fn = "seeder_app.go.tmpl", "AllApp"
+		}
+
+		if err := generate(env, stub, "database/seeders/"+d.Snake+"_seeder.go", d, *force); err != nil {
+			return err
+		}
+
+		if *app {
+			if err := ensureAppSeeders(env); err != nil {
+				return err
+			}
+		}
+
+		return register(env, "database/seeders/registry.go", fn, d.Name+"Seeder{}")
 	}
+}
+
+const appSeedersFunc = `
+// AllApp lists the seeders that receive the booted App, run by vukem db:seed
+// in option order; make:seeder --app appends here. Register it with
+// vukem.WithAppSeeders(seeders.AllApp()...).
+func AllApp() []vukem.AppSeeder {
+	return []vukem.AppSeeder{}
+}
+`
+
+// ensureAppSeeders adds AllApp to the seeders registry when it has none yet,
+// and tells the developer to pass it to vukem.WithAppSeeders.
+func ensureAppSeeders(env *Env) error {
+	p := env.path(filepath.FromSlash("database/seeders/registry.go"))
+
+	src, err := os.ReadFile(p)
+	if err != nil || bytes.Contains(src, []byte("func AllApp(")) {
+		return nil //nolint:nilerr // register reports a missing registry; an existing AllApp needs nothing
+	}
+
+	out := append(bytes.TrimRight(src, "\n"), []byte("\n"+appSeedersFunc)...)
+	if err := writeFile(p, out); err != nil {
+		return err
+	}
+
+	fmt.Fprintln(env.Stdout, "updated database/seeders/registry.go")
+	fmt.Fprintln(env.Stdout, "add vukem.WithAppSeeders(seeders.AllApp()...) to bootstrap/app.go")
+
+	return nil
 }
 
 func makePolicy(set *flag.FlagSet) func(context.Context, *Env, []string) error {

@@ -70,6 +70,26 @@ func TestSecurity_A10_RecoverHidesPanic(t *testing.T) {
 	}
 }
 
+func TestRecover_LogsPanicAttr(t *testing.T) {
+	t.Parallel()
+
+	var logs bytes.Buffer
+	log := slog.New(slog.NewJSONHandler(&logs, nil))
+
+	h := withServices(Recover()(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { panic("boom") })), log)
+	do(t, h, get(t, "/"))
+
+	var rec map[string]any
+	first, _, _ := strings.Cut(logs.String(), "\n")
+	if err := json.Unmarshal([]byte(first), &rec); err != nil {
+		t.Fatalf("log line = %q: %v", logs.String(), err)
+	}
+
+	if rec["level"] != "ERROR" || rec["panic"] != true {
+		t.Fatalf("record = %v, want level ERROR and panic=true", rec)
+	}
+}
+
 func TestRecoverRepanicsAbortHandler(t *testing.T) {
 	t.Parallel()
 

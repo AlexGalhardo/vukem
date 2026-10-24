@@ -79,7 +79,7 @@ func commands() []command {
 		{"make:provider", "<Name>", "Create a provider and register it", makeProvider},
 		{"make:resource", "<Name>", "Create an API resource (JSON transformer) for a model", makeResource},
 		{"make:factory", "<Name>", "Create a model factory (fake data for tests and seeders)", makeFactory},
-		{"make:seeder", "<Name>", "Create a seeder and register it", makeSeeder},
+		{"make:seeder", "<Name> [--app]", "Create a seeder and register it (--app: gets the App)", makeSeeder},
 		{"make:event", "<Name>", "Create an event type", makeEvent},
 		{
 			"make:listener",

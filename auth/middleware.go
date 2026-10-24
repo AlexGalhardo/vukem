@@ -70,6 +70,7 @@ func Required(guards ...Checker) func(http.Handler) http.Handler {
 				target = u
 			}
 
+			// A failed redirect write means the client is gone; nothing to recover.
 			_ = c.Redirect(target)
 		})
 	}
@@ -231,6 +232,7 @@ func Guest(guards ...Checker) func(http.Handler) http.Handler {
 						target = u
 					}
 
+					// A failed redirect write means the client is gone; nothing to recover.
 					_ = c.Redirect(target)
 
 					return
@@ -269,6 +271,7 @@ func Verified(guard Checker) func(http.Handler) http.Handler {
 
 			if !c.WantsJSON() && !isProblemJSON(r.Context()) && hasSession(c) {
 				if u, err := c.URL("verification.notice"); err == nil {
+					// A failed redirect write means the client is gone; nothing to recover.
 					_ = c.Redirect(u)
 					return
 				}

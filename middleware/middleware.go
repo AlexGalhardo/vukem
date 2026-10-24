@@ -55,6 +55,7 @@ func Recover() Middleware {
 				}
 
 				log.ErrorContext(r.Context(), "panic recovered", "err", err, "stack", string(debug.Stack()),
+					"panic", true,
 					"request_id", web.RequestID(r.Context()))
 
 				web.Fail(w, r, errs.Wrap(http.StatusInternalServerError, err))

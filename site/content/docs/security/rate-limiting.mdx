@@ -157,6 +157,17 @@ throttle := ratelimit.Middleware(
 )
 ```
 
+You do not have to write this one: `auth.ThrottleKeys("email")` returns the ready-made pair the `install:auth` scaffolds use, reading the email from a form or JSON body:
+
+```go title="routes/auth.go"
+loginIP, loginAccount := auth.ThrottleKeys("email")
+
+throttle := ratelimit.Middleware(limiters("login", 5, time.Minute), loginIP)
+perAccount := ratelimit.Middleware(limiters("login.account", 20, 10*time.Minute), loginAccount)
+```
+
+`loginIP` counts per email and IP; `loginAccount` counts per email from any IP, so many addresses cannot share the guessing budget of one account. Both return `""` for anything but `POST`. They read the email like `Ctx.Input` does (JSON body or form over the query string, media type parameters and casing ignored). When it cannot be read (unparsable or oversized body, no `email`), the request counts in a bucket of its own IP, never in a bucket shared by everyone and never unlimited.
+
 Rules for a custom key:
 
 - **Normalize what you key by.** Trim and lower-case an email, or `Ana@Example.com` and `ana@example.com ` get separate budgets.
@@ -216,6 +227,10 @@ This changed in v0.27.0: before, `ByIP` keyed every IPv6 address separately. If 
 Every IP key starts from `c.IP()`. Getting it right matters: if the app reads the wrong address, either every visitor shares one bucket or every attacker picks their own.
 
 When your app runs behind a reverse proxy (nginx, a load balancer, Railway, Fly), the TCP connection comes from the **proxy**, not from the visitor. The proxy writes the visitor's address in a header, usually `X-Forwarded-For`. But any client can send that header too, so the app must only believe it when it came from a proxy it trusts.
+
+<Callout type="warning" title="Behind a proxy, set TRUSTED_PROXIES">
+Without `TRUSTED_PROXIES`, the app sees only the proxy's address. `ratelimit.ByIP` then groups **all** clients into one bucket, so a single noisy client can exhaust the budget and lock everyone else out. Set `TRUSTED_PROXIES` to your proxy's address or CIDR.
+</Callout>
 
 ### How `c.IP()` decides
 

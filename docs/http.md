@@ -80,12 +80,13 @@ type HandlerFunc func(c *Ctx) error
 
 | Area | Methods |
 | --- | --- |
-| Request | `Request()`, `Context()`, `Param`, `Query`, `Header`, `Cookie`, `IP()`, `IsHTTPS()`, `Accepts(...)`, `IsJSON()` |
-| Binding | `Bind[T](c) (T, error)` — JSON, form, multipart, query; runs validation; `BindJSON`, `BindForm`, `File(name)` |
-| Responses | `String`, `HTML`, `JSON`, `NoContent`, `Redirect`, `RedirectRoute`, `Back`, `Stream`, `File`, `Download` |
+| Request | `Request()`, `Context()`, `Param`, `Query`, `Header`, `Cookie`, `IP()`, `IsHTTPS()`, `IsJSON()`, `WantsJSON()` |
+| Binding | `web.Bind[T](c) (T, error)` (a package function, [web/parse.go](../web/parse.go)): JSON, form, multipart, query; runs validation; `BindJSON`, `FormFile(name)` |
+| Responses | `Status`, `String`, `HTML`, `JSON`, `Created`, `Accepted`, `NoContent`, `Blob`, `Problem`, `Redirect`, `RedirectRoute`, `Back`, `Stream`, `File`, `Download` |
+| Conditional | `NotModified(etag, lastModified)`, `CheckIfMatch(current)` |
 | Views | `Render(name, data)`, `Fragment(name, block, data)` (HTMX), `View(v view.View)` (templ) |
 | Session | `Session()`, `Flash(key, msg)`, `Old(field)`, `Errors()` |
-| Auth (ALPHA) | `User()`, `Auth()`, `Authorize(ability, subject)` |
+| Auth (ALPHA) | `Authorize(ability, subject)`; the current user comes from `auth.User[U](c, guard)`, a package function |
 | HTMX | `HTMX()` returns request/response helpers ([frontend.md](frontend.md#htmx)) |
 
 `*web.Ctx` wraps `http.ResponseWriter` and `*http.Request`; `c.Writer()` and `c.Request()` give raw access. A `*web.Ctx` must not escape its handler goroutine.
