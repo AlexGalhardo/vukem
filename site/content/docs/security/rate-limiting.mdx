@@ -228,6 +228,10 @@ Every IP key starts from `c.IP()`. Getting it right matters: if the app reads th
 
 When your app runs behind a reverse proxy (nginx, a load balancer, Railway, Fly), the TCP connection comes from the **proxy**, not from the visitor. The proxy writes the visitor's address in a header, usually `X-Forwarded-For`. But any client can send that header too, so the app must only believe it when it came from a proxy it trusts.
 
+<Callout type="warning" title="Behind a proxy, set TRUSTED_PROXIES">
+Without `TRUSTED_PROXIES`, the app sees only the proxy's address. `ratelimit.ByIP` then groups **all** clients into one bucket, so a single noisy client can exhaust the budget and lock everyone else out. Set `TRUSTED_PROXIES` to your proxy's address or CIDR.
+</Callout>
+
 ### How `c.IP()` decides
 
 1. Take the peer address of the TCP connection (`r.RemoteAddr`).
