@@ -534,6 +534,7 @@ func (q *qr) format(mask int) {
 	q.dark[q.size-8][8] = true
 }
 
+//nolint:gocognit // QR mask penalty rules straight from ISO/IEC 18004
 func (q *qr) penalty() int {
 	p := 0
 	n := q.size

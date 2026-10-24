@@ -52,6 +52,7 @@ func CreateMany[T any](ctx context.Context, ex database.Executor, models []T) er
 	return createMany(ctx, ex, models, maxParams(ex.Dialect()))
 }
 
+//nolint:gocognit // batching with per-dialect limits; kept in one pass
 func createMany[T any](ctx context.Context, ex database.Executor, models []T, limit int) error {
 	if len(models) == 0 {
 		return nil

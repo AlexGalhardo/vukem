@@ -537,6 +537,8 @@ func WithHealthCheck(name string, check HealthCheck) Option {
 
 // New builds an App: it loads and validates configuration and registers
 // providers. It refuses insecure configuration (see docs/security.md, A02).
+//
+//nolint:gocognit // composition root; options apply in a fixed order
 func New(opts ...Option) (*App, error) {
 	o := options{kind: KindWeb}
 

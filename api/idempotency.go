@@ -73,6 +73,8 @@ type idemRecord struct {
 // first is running gets 409, and reusing a key for a different request
 // gets 422. If the store fails the request is refused with 503 (fail
 // closed) rather than risking a duplicate side effect.
+//
+//nolint:gocognit // single request-state machine; splitting hides the replay/conflict ordering
 func Idempotency(store cache.Store, o IdempotencyOptions) func(http.Handler) http.Handler {
 	if len(o.Methods) == 0 {
 		o.Methods = []string{http.MethodPost, http.MethodPatch}

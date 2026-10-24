@@ -43,6 +43,7 @@ type starterData struct {
 	Module string // Go module path
 }
 
+//nolint:gocognit // sequential project generation; each step reports its own error
 func newProject(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 	module := set.String("module", "", "Go module path (default: the project name)")
 	framework := set.String("framework", "", "path to a local Vukem checkout to use instead of a release")

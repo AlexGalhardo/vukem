@@ -81,6 +81,8 @@ type MaintenanceConfig struct {
 // Maintenance answers 503 (Retry-After, the "errors/503" view or
 // problem+json) while the state file exists. Visiting /<secret> sets a
 // signed bypass cookie. A file that cannot be read keeps the app down.
+//
+//nolint:gocognit // bypass rules are order-sensitive; kept in one function
 func Maintenance(cfg MaintenanceConfig) Middleware {
 	if cfg.File == "" {
 		cfg.File = DefaultMaintenanceFile

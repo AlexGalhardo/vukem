@@ -441,6 +441,7 @@ func zodEnum(enum []any) string {
 	return "z.union([" + strings.Join(parts, ", ") + "])"
 }
 
+//nolint:gocognit // one case per JSON Schema keyword
 func zodBase(s map[string]any, t, indent string) string {
 	num := func(k string) (string, bool) {
 		v, ok := s[k].(float64)

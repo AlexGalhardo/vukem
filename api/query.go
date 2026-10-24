@@ -118,6 +118,8 @@ func (r Request[T]) CursorPaginate(ctx context.Context, dir orm.Direction) (orm.
 // field or include is a 400 problem naming the allowed values, so request
 // input never chooses columns freely. A ?page above MaxPage or a filter
 // with more than MaxFilterValues values is a 400 too.
+//
+//nolint:gocognit // one pass over each allowlisted query parameter; kept flat to read top-down
 func Query[T any](c *web.Ctx, q orm.Query[T], opts ...Option) (Request[T], error) {
 	s := spec{perPage: 20, maxPerPage: 100, maxPage: DefaultMaxPage, maxFilterValues: DefaultMaxFilterValues}
 	for _, o := range opts {

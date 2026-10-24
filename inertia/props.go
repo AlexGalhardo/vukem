@@ -293,6 +293,7 @@ func (r *resolver) asMap(v any) (map[string]any, error) {
 	return nil, nil
 }
 
+//nolint:gocognit // prop resolution walk with lazy/deferred/once cases kept together
 func (r *resolver) resolveMap(props map[string]any, prefix string, parentResolved bool) (map[string]any, error) {
 	out := make(map[string]any, len(props))
 

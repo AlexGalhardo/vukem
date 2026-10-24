@@ -56,6 +56,7 @@ linters:
     - copyloopvar
     - exptostd
     - gocheckcompilerdirectives
+    - gocognit
     - gocritic
     - godot
     - intrange
@@ -109,6 +110,8 @@ linters:
               desc: security-sensitive code must use crypto/rand
             - pkg: math/rand/v2
               desc: security-sensitive code must use crypto/rand
+    gocognit:
+      min-complexity: 30
     errcheck:
       check-type-assertions: true
     exhaustive:
@@ -158,8 +161,13 @@ linters:
         linters:
           - errcheck
           - forcetypeassert
+          - gocognit
           - gosec
           - noctx
+          # shared conformance suites (queuetest, sessiontest) read as one long scenario
+      - path: (queuetest|sessiontest|cachetest|dbtest)/
+        linters:
+          - gocognit
 
 issues:
   max-issues-per-linter: 0

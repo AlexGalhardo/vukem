@@ -168,6 +168,8 @@ func Generate(routes []router.RouteInfo, info Info) *Document {
 // or PATCH route documents an optional JSON body of any shape, and plain
 // routes document a default response of any content, so generated clients
 // can send a body and ValidateResponse accepts what they return.
+//
+//nolint:gocognit // document assembly over routes; steps share state
 func Build(routes []router.RouteInfo, info Info) (*Document, error) {
 	s := NewSchemas()
 	doc := &Document{

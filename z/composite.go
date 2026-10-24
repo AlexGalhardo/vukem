@@ -29,6 +29,7 @@ func (s SliceSchema) GoType() reflect.Type { return reflect.SliceOf(s.elem.GoTyp
 
 func (s SliceSchema) optional() bool { return s.o.optional || s.o.hasDef }
 
+//nolint:gocognit // slice parse with min/max/unique and per-element issues in one pass
 func (s SliceSchema) parseAny(c *pctx, path string, in any, present bool) (any, bool, bool) {
 	return parse(&s.o, c, path, in, present, false, func(c *pctx, path string, in any) (any, bool) {
 		items, isList := in.([]any)

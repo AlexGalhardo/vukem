@@ -110,6 +110,8 @@ func RegisterWith[In, Out any](
 // register backs Register and RegisterWith: a nil schema is derived from
 // In's tags, and stays nil when In has no fields (no input to bind). who
 // names the caller, so a boot panic points at the function the app called.
+//
+//nolint:gocognit // boot-time wiring of one route; steps depend on shared locals
 func register[In, Out any](
 	who string,
 	g Registrar,

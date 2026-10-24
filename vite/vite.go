@@ -78,6 +78,8 @@ func New(cfg Config) (*Vite, error) {
 
 // Tags returns the HTML that loads entries (manifest keys such as
 // "resources/js/app.ts"). nonce is the request's CSP nonce ("" for none).
+//
+//nolint:gocognit // manifest walk with dedupe; steps share state
 func (v *Vite) Tags(nonce string, entries ...string) (template.HTML, error) {
 	hot, err := v.hot()
 	if err != nil {

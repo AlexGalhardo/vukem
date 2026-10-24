@@ -268,6 +268,8 @@ func (r result) count(incompatible bool) int {
 }
 
 // renderMarkdown writes results as a report grouped by module and package.
+//
+//nolint:gocognit // report rendering; one section per change kind
 func renderMarkdown(w io.Writer, title, command string, results []result) error {
 	var b strings.Builder
 

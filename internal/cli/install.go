@@ -29,6 +29,7 @@ var scaffoldFS embed.FS
 
 var socialProviders = []string{"github", "gitlab", "discord", "google", "microsoft", "linkedin", "apple"}
 
+//nolint:gocognit // sequential scaffold steps; each step reports its own error
 func installAuth(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 	force := set.Bool("force", false, "overwrite existing files")
 	socialList := set.String("social", "", "also add social login: "+strings.Join(socialProviders, ","))
@@ -474,6 +475,8 @@ func appendEnvExample(env *Env, keys []string) error {
 
 // installScaffold renders scaffolds/<name> into the project. It checks
 // every destination first, so nothing is written when a file exists.
+//
+//nolint:gocognit // sequential scaffold steps; each step reports its own error
 func installScaffold(env *Env, name string, data map[string]string, force bool) error {
 	root := "scaffolds/" + name
 

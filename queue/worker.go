@@ -39,6 +39,8 @@ type WorkOptions struct {
 // reserving new jobs and waits for running ones (graceful drain): they
 // keep a context that is not cancelled, bounded by their timeout and by
 // StopTimeout.
+//
+//nolint:gocognit // worker loop with shutdown, retry and backoff paths that share state
 func (q *Queue) Work(ctx context.Context, o WorkOptions) error {
 	if len(o.Queues) == 0 {
 		o.Queues = []string{"default"}

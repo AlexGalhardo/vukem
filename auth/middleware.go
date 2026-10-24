@@ -25,6 +25,8 @@ func ctxOf(w http.ResponseWriter, r *http.Request) *web.Ctx {
 // problem+json, whatever the Accept header or session cookie says; the
 // same holds for any guards under [ProblemJSON], which must be mounted
 // before Required (Required mounted first never sees it and redirects).
+//
+//nolint:gocognit // guard decision tree; branch order is the security contract
 func Required(guards ...Checker) func(http.Handler) http.Handler {
 	allAPIGuards := allAPI(guards)
 
