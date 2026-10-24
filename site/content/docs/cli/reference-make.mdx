@@ -1,0 +1,482 @@
+---
+title: "CLI reference: make and codegen"
+description: Manual for every vukem make generator and for codegen:rpc, with usage, arguments, flags, the files each one writes and registers, errors and real output.
+---
+
+The `make:*` commands write boilerplate Go files into your project. They are **global** commands: they edit files, format Go with `go/format`, and never run your code. Back to the [command cheat sheet](/docs/cli/reference).
+
+## Rules that apply to every generator
+
+**Usage**
+
+```text
+vukem make:<kind> [flags] <Name>
+```
+
+**Arguments**: exactly one name. It may be `BlogPost`, `blog_post` or `blog-post`. Each place gets the right form: `BlogPost` for the Go type, `blog_post` for the file. A usual suffix is dropped: `PostController`, `BillingProvider`, `SendReportsCommand`, `PostSeeder`, `PostPolicy`, `WelcomeMail`, `PostPublishedEvent`, `NotifyListener`, `SendDigestJob`, `PostResource`, `PostFactory`, `PostsTest`.
+
+**Common flag**
+
+| Flag | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `-force` | bool | `false` | Overwrite existing files. Without it, an existing destination fails the whole command and nothing is written. |
+
+**Behaviour shared by all**
+
+- Run from the project root: the module path comes from `go.mod`. Outside a project: `no go.mod here: run vukem inside a project`.
+- Flags may come before or after the name (`make:model Post -m`).
+- Registration edits the Go syntax tree of the registry file (`go/parser`), adds the entry and its import, and formats the file. Running twice registers once. If you changed the file so the marker cannot be found, the generator still writes its file and prints the line to add by hand.
+- A package the first generator creates also gets a `doc.go` with the package comment. Delete it freely.
+- Put a file with the same name as a built-in stub in `stubs/` (for example `stubs/controller.go.tmpl`) to change the output. See [custom stubs](/docs/cli/overview#custom-stubs).
+- Environment: none. Only `PATH` matters, for `go mod tidy` after some installers.
+
+**Errors shared by all**
+
+| Message | Exit | Fix |
+| --- | --- | --- |
+| `usage error: expected exactly one controller name` (or `model`, ...) | 2 | Pass one name. |
+| `error: app/models/post.go already exists (use --force to overwrite)` | 1 | Pick a new name, or commit and use `-force`. |
+| `no go.mod here: run vukem inside a project` | 1 | `cd` into the project. |
+| `usage error: flag provided but not defined: -x` | 2 | The usage text is printed above the message. |
+| `stub <name> produced invalid Go` | 1 | Your custom stub renders broken Go. |
+
+## `vukem make:controller`
+
+Create a controller struct, its constructor and its actions.
+
+```text
+vukem make:controller [flags] <Name>
+```
+
+| Flag | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `-resource` | bool | `false` | Seven actions: `Index`, `Create`, `Store`, `Show`, `Edit`, `Update`, `Destroy`. |
+| `-api` | bool | `false` | Five JSON actions: `Index`, `Store`, `Show`, `Update`, `Destroy`. |
+| `-force` | bool | `false` | Overwrite. |
+
+Without `-resource` or `-api` the controller has one `Index` action. Writes `app/controllers/<name>_controller.go`. Registers nothing: add the routes in `routes/`.
+
+```bash
+vukem make:controller Thing -api
+```
+
+```text
+created app/controllers/thing_controller.go
+```
+
+## `vukem make:model`
+
+Create a model, and optionally the migration, factory and controller around it.
+
+```text
+vukem make:model [flags] <Name>
+```
+
+| Flag | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `-m` | bool | `false` | Also write a `create_<table>_table` migration and register it. |
+| `-f` | bool | `false` | Also write a factory. |
+| `-c` | bool | `false` | Also write a controller with the seven resource actions. |
+| `-force` | bool | `false` | Overwrite. |
+
+Writes `app/models/<name>.go`. All destinations are checked first, so a clash writes nothing. Flags are single-dash and do not combine: `-m -f -c`.
+
+```bash
+vukem make:model Comment -m -f -c
+```
+
+```text
+created app/models/comment.go
+created database/migrations/20261024221120_create_comments_table.go
+created database/factories/comment_factory.go
+created app/controllers/comment_controller.go
+updated database/migrations/registry.go
+```
+
+Run again without `-force`:
+
+```text
+error: app/models/comment.go already exists (use --force to overwrite)
+```
+
+## `vukem make:migration`
+
+Create a timestamped migration and register it in `All()` of `database/migrations/registry.go`.
+
+```text
+vukem make:migration [flags] <name>
+```
+
+The name picks the body:
+
+| Name shape | Body |
+| --- | --- |
+| `create_<table>_table` | `s.Create` with `t.ID()` and `t.Timestamps()`; `Down` drops the table |
+| `add_x_to_<table>_table`, `remove_x_from_<table>_table`, `index_x_on_<table>_table`, `alter_`, `change_`, `update_` | `s.Table(...)` in `Up` and `Down`, empty for you to fill |
+| anything else | `Up` and `Down` returning `nil` |
+
+The file name uses the UTC time: `20261024221120_add_slug_to_posts_table.go`.
+
+```bash
+vukem make:migration add_slug_to_posts_table
+```
+
+```text
+created database/migrations/20261024221120_add_slug_to_posts_table.go
+updated database/migrations/registry.go
+```
+
+Then run [`vukem migrate`](/docs/cli/reference-database#vukem-migrate).
+
+## `vukem make:middleware`
+
+Create `func(http.Handler) http.Handler`. Writes `app/middleware/<name>.go`. Register it yourself with `r.Use`, `group.Use` or `route.Use`.
+
+```bash
+vukem make:middleware EnsureAdmin
+```
+
+```text
+created app/middleware/ensure_admin.go
+created app/middleware/doc.go
+```
+
+## `vukem make:request`
+
+Create a request struct with validation tags. Writes `app/requests/<name>.go`. Registers nothing.
+
+```bash
+vukem make:request StorePost
+```
+
+```text
+created app/requests/store_post.go
+```
+
+## `vukem make:command`
+
+Create an app command and register it in `Commands()` of `bootstrap/commands.go`. Writes `app/commands/<name>.go`. The command is named in kebab-case (`SendReports` becomes `send-reports`). Rename it to `namespace:action` when it belongs to a group.
+
+```bash
+vukem make:command SendReports
+vukem send-reports a b
+```
+
+```text
+created app/commands/send_reports.go
+created app/commands/doc.go
+updated bootstrap/commands.go
+send-reports ran with [a b]
+```
+
+## `vukem make:provider`
+
+Create a provider and register it in `Providers()` of `bootstrap/providers.go`. Writes `app/providers/<name>_provider.go`.
+
+```bash
+vukem make:provider Billing
+```
+
+```text
+created app/providers/billing_provider.go
+created app/providers/doc.go
+updated bootstrap/providers.go
+```
+
+## `vukem make:resource`
+
+Create an API resource (a JSON transformer) for a model. Writes `app/resources/<name>.go`. Registers nothing.
+
+```bash
+vukem make:resource Post
+```
+
+```text
+created app/resources/post.go
+created app/resources/doc.go
+```
+
+## `vukem make:factory`
+
+Create a model factory for fake data in tests and seeders. Writes `database/factories/<name>_factory.go`. Registers nothing.
+
+```bash
+vukem make:factory Tag
+```
+
+```text
+created database/factories/tag_factory.go
+```
+
+## `vukem make:seeder`
+
+Create a seeder and register it in `All()` of `database/seeders/registry.go`.
+
+```text
+vukem make:seeder [flags] <Name>
+```
+
+| Flag | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `-app` | bool | `false` | Generate an `AppSeeder` that receives the booted `*App` (config, logger, storage). It is registered in `AllApp()`. |
+| `-force` | bool | `false` | Overwrite. |
+
+The type is `<Name>Seeder`: `Tag` becomes `TagSeeder`, which you run with `vukem db:seed TagSeeder`. The generated `Seed` method returns `nil`: fill it in.
+
+```bash
+vukem make:seeder Tag
+vukem make:seeder Post -app
+```
+
+```text
+created database/seeders/tag_seeder.go
+updated database/seeders/registry.go
+created database/seeders/post_seeder.go
+updated database/seeders/registry.go
+add vukem.WithAppSeeders(seeders.AllApp()...) to bootstrap/app.go
+```
+
+With `-app`, add the `WithAppSeeders` line to `bootstrap/app.go` yourself; the command prints it.
+
+## `vukem make:event`
+
+Create an event type. Writes `app/events/<name>.go`. Registers nothing.
+
+```bash
+vukem make:event OrderShipped
+```
+
+```text
+created app/events/order_shipped.go
+```
+
+## `vukem make:listener`
+
+Create an event listener and register it in `All()` of `app/listeners/registry.go`.
+
+```text
+vukem make:listener [flags] <Name>
+```
+
+| Flag | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `-event` | string | none | **Required.** The event type the listener handles. |
+| `-async` | bool | `false` | Run in the background; errors are logged. |
+| `-queued` | bool | `false` | Run as a queue job: retried, survives restarts. |
+| `-force` | bool | `false` | Overwrite. |
+
+`-async` and `-queued` are exclusive (`usage error: --async and --queued are exclusive`, before any file is written). The line added to `All()`:
+
+| Flags | Registered as |
+| --- | --- |
+| none | `events.On(NotifyFollowers)` |
+| `-async` | `events.OnAsync(NotifyFollowers)` |
+| `-queued` | `events.OnQueued("notify_followers", NotifyFollowers)` |
+
+```bash
+vukem make:listener NotifyFollowers -event PostPublished -queued
+```
+
+```text
+created app/listeners/notify_followers.go
+updated app/listeners/registry.go
+```
+
+Without `-event`:
+
+```text
+usage error: --event is required
+Run 'vukem list' for the available commands.
+```
+
+## `vukem make:job`
+
+Create a queued job and register its handler in `All()` of `app/jobs/registry.go`. When the registry declares `func All(app *vukem.App)` the handler gets the app (`queue.Handle(HandleSendDigest(app))`), otherwise `queue.Handle(HandleSendDigest)`.
+
+```bash
+vukem make:job SendDigest
+```
+
+```text
+created app/jobs/send_digest.go
+updated app/jobs/registry.go
+```
+
+## `vukem make:mail`
+
+Create a mailable and its HTML view. Writes `app/mail/<name>.go` and `resources/views/mail/<name>.html`. Registers nothing.
+
+```bash
+vukem make:mail Welcome
+```
+
+```text
+created app/mail/welcome.go
+created app/mail/doc.go
+created resources/views/mail/welcome.html
+```
+
+## `vukem make:policy`
+
+Create an authorization policy and register it in `All()` of `app/policies/registry.go`, which the first call creates with an empty `All()`. The policy takes `*models.User`.
+
+```bash
+vukem make:policy Post
+```
+
+```text
+created app/policies/post_policy.go
+created app/policies/doc.go
+created app/policies/registry.go
+note: the policy takes *models.User, which app/models does not define yet; run vukem install:auth or change the user type
+updated app/policies/registry.go
+```
+
+The `note:` line appears when `app/models` has no `User` yet. Run [`install:auth`](/docs/cli/reference-install#vukem-installauth) or change the type.
+
+## `vukem make:admin-resource`
+
+Create an admin panel resource and its policy for an **existing** model.
+
+```text
+vukem make:admin-resource [flags] <Model>
+```
+
+Needs the admin panel (`vukem install:admin`) and a `type <Model> struct` in `app/models`. Writes `app/admin/<model>.go` and `tests/admin_<model>_test.go`; registers the resource in `Resources()` and the policy in `Policies()` of `app/admin/registry.go`. When `app/requests` declares `var <Model>Schema`, the resource validates its forms with it.
+
+```bash
+vukem make:admin-resource Post
+```
+
+For a model that does not exist:
+
+```text
+usage error: no models.Nope in app/models (create it with vukem make:model Nope)
+```
+
+```text
+created app/admin/post.go
+created tests/admin_post_test.go
+updated app/admin/registry.go
+```
+
+## `vukem make:test`
+
+Create a test that uses the fluent test client. Writes `tests/<name>_test.go`. Registers nothing.
+
+```bash
+vukem make:test Posts
+```
+
+```text
+error: tests/posts_test.go already exists (use --force to overwrite)
+```
+
+The `blog` starter already ships `tests/posts_test.go`, so this is the clash you see. Pick another name.
+
+## `vukem make:proto`
+
+Create a gRPC service definition and the buf files.
+
+```text
+vukem make:proto [flags] <Name>
+```
+
+| Flag | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `-force` | bool | `false` | Overwrite the `.proto` only. `buf.yaml` and `buf.gen.yaml` are never replaced. |
+
+Writes `proto/<name>/v1/<name>.proto` (package `<name>.v1`, one `Get<Name>` RPC), and `buf.yaml` and `buf.gen.yaml` when they do not exist. A `Service` suffix is dropped.
+
+```bash
+vukem make:proto Blog
+```
+
+```text
+created proto/blog/v1/blog.proto
+created buf.yaml
+created buf.gen.yaml
+
+Next:
+  go get -tool google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.12
+  go get -tool connectrpc.com/connect/cmd/protoc-gen-connect-go@v1.21.1
+  go get github.com/AlexGalhardo/vukem/contrib/grpc
+  vukem codegen:rpc     # writes gen/blog/v1 (buf, or protoc when buf is missing)
+```
+
+## `vukem codegen:rpc`
+
+Generate Go and connect-go code from your `.proto` files.
+
+```text
+vukem codegen:rpc [flags]
+```
+
+Arguments: none.
+
+| Flag | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `-protoc` | bool | `false` | Use `protoc` even when `buf.gen.yaml` exists. |
+| `-proto` | string | `proto` | Folder of the `.proto` files. `protoc` mode only. |
+| `-out` | string | `gen` | Output folder. `protoc` mode only. |
+
+How it chooses:
+
+1. It refuses to run until `protoc-gen-go` and `protoc-gen-connect-go` are `tool` lines in `go.mod`.
+2. With `buf.gen.yaml` (and no `-protoc`): `go tool buf generate` when buf is a tool of the module, else `buf generate` from `PATH`.
+3. Otherwise `protoc` with the plugins resolved by `go tool -n`, using `paths=source_relative`.
+
+Environment: `PATH` (`buf` or `protoc`).
+
+| Message | Exit | Fix |
+| --- | --- | --- |
+| `error: codegen:rpc runs the code generators as Go tools; add them with:` followed by two `go get -tool` lines | 1 | Run the lines it prints. |
+| `buf` or `protoc` not found | 1 | Install one, or make `buf` a Go tool. |
+
+```bash
+vukem codegen:rpc
+```
+
+```text
+error: codegen:rpc runs the code generators as Go tools; add them with:
+  go get -tool google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.12
+  go get -tool connectrpc.com/connect/cmd/protoc-gen-connect-go@v1.21.1
+```
+
+That is the real output on a project that has not added the tools yet. After the two `go get -tool` lines, the same command writes `gen/blog/v1`. See [gRPC](/docs/rest-apis/grpc).
+
+**Advanced: force protoc and a custom layout**
+
+```bash
+vukem codegen:rpc -protoc -proto api/proto -out internal/gen
+```
+
+## Advanced: casing, overwrite and stubs
+
+A kebab-case name becomes a snake-case file and a Pascal-case type. Running it twice shows the guard, `-force` bypasses it:
+
+```bash
+vukem make:controller blog-post -resource
+vukem make:controller blog-post -resource
+vukem make:controller blog-post -resource -force
+```
+
+```text
+created app/controllers/blog_post_controller.go
+error: app/controllers/blog_post_controller.go already exists (use --force to overwrite)
+created app/controllers/blog_post_controller.go
+```
+
+Two exclusive flags fail before any file is written, with exit code 2:
+
+```bash
+vukem make:listener A -event E -async -queued
+```
+
+```text
+usage error: --async and --queued are exclusive
+Run 'vukem list' for the available commands.
+```
+
+To change what a generator writes, copy its stub from `internal/cli/stubs` in the Vukem repository to `stubs/` in your project. A stub has the data fields `.Name`, `.Snake`, `.Kebab`, `.Camel`, `.Plural` and `.Module`, plus a few per generator. An unknown field is an error, not an empty string. The full table is in the [overview](/docs/cli/overview#custom-stubs).
+
