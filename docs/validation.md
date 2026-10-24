@@ -75,7 +75,7 @@ if errors.As(err, &issues) {
 | `z.Time()` | `time.Time` | `After`, `Before`, `Layout(...)` (default RFC 3339) |
 | `z.Enum(vals...)` | `string` (or any `~string` via `z.EnumOf[T]`) | membership |
 | `z.Slice(elem)` | `[]E` (E = element schema type) | `Min`, `Max`, `Len`, `NonEmpty`, `Unique` |
-| `z.Map(key, val)` | `map[K]V` | `Min`, `Max` |
+| `z.Map(value)` | `map[string]V` | `Min`, `Max` (entry count) |
 | `z.Struct[T](z.Shape{...})` | `T` | field schemas mapped by `json`/`form`/`query` tag or field name; `Strict()` rejects unknown keys |
 | `z.Custom[T](fn)` | `T` | user parser |
 | `z.File()` | `*multipart.FileHeader` | `MaxSize(bytes)`, `Types(mime...)` (detected from the first 512 bytes of the content), `Extensions(...)` |
