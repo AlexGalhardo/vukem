@@ -68,7 +68,7 @@ if errors.As(err, &issues) {
 
 | Constructor | Go type | Checks / transforms |
 | --- | --- | --- |
-| `z.String()` | `string` | `Min`, `Max`, `Len`, `Email`, `URL`, `UUID`, `ULID`, `Regex`, `Alpha`, `Alphanum`, `Numeric`, `StartsWith`, `EndsWith`, `Includes`, `OneOf`; `Trim`, `ToLower`, `ToUpper`, `Preprocess(fn)` |
+| `z.String()` | `string` | `Min`, `Max`, `Len`, `Email`, `URL`, `UUID`, `ULID`, `Regex`, `Alpha`, `Alphanum`, `Numeric`, `StartsWith`, `EndsWith`, `Includes`, `HasLower`, `HasUpper`, `HasDigit`, `HasSymbol`, `OneOf`; `Trim`, `ToLower`, `ToUpper`, `Preprocess(fn)` |
 | `z.Int()`, `z.Int64()`, `z.Uint()`… | integer types | `Min`, `Max`, `Positive`, `NonNegative`, `MultipleOf` |
 | `z.Float()` | `float64` | `Min`, `Max`, `Positive`, `Finite` |
 | `z.Bool()` | `bool` | — |

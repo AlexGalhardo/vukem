@@ -158,6 +158,7 @@ slug := base.ToLower().Regex(slugRe)
 | `Numeric()` | A decimal number written as text: `-12`, `3.50` | `string.numeric` |
 | `Regex(re)` | Must match the [`*regexp.Regexp`](https://pkg.go.dev/regexp) | `string.regex` |
 | `StartsWith(s)`, `EndsWith(s)`, `Includes(s)` | Must start with, end with or contain `s` | `string.starts_with`, `string.ends_with`, `string.includes` |
+| `HasLower()`, `HasUpper()`, `HasDigit()`, `HasSymbol()` | At least one lowercase letter, uppercase letter, digit or punctuation/symbol character, by Unicode class (`ç` is lower, `٣` is a digit, `€` and `_` are symbols, a space is none). Chain them for a password policy; each failing rule adds its own issue | `string.has_lower`, `string.has_upper`, `string.has_digit`, `string.has_symbol` |
 | `OneOf(values...)` | Must equal one of the values (see also `Enum`) | `invalid_enum` |
 | `Trim()` | Removes spaces, tabs and newlines at both ends **before** the checks | — |
 | `ToLower()`, `ToUpper()` | Changes the case **before** the checks | — |

@@ -31,6 +31,10 @@ func TestIssues_Key(t *testing.T) {
 		}](Shape{"a": String()}), map[string]any{}, []string{CodeRequired}},
 		{"detailed key", String().Min(3), "ab", []string{"too_small.string"}},
 		{"format", String().Email(), "nope", []string{"string.email"}},
+		{"has_lower", String().HasLower(), "AB", []string{"string.has_lower"}},
+		{"has_upper", String().HasUpper(), "ab", []string{"string.has_upper"}},
+		{"has_digit", String().HasDigit(), "ab", []string{"string.has_digit"}},
+		{"has_symbol", String().HasSymbol(), "ab", []string{"string.has_symbol"}},
 		{"positive", Int().Positive(), 0, []string{"too_small.positive"}},
 		{"override clears key", String().Min(3).Message(CodeTooSmall, "short"), "ab", []string{""}},
 		{
