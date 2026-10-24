@@ -89,6 +89,8 @@ func Subscription[A, O any](
 //	graphql.Subscription("postCreated", graphql.FromBroadcast[graphql.NoArgs, Post](b,
 //		func(context.Context, graphql.NoArgs) ([]string, error) { return []string{"posts"}, nil },
 //		"post.created"))
+//
+//nolint:gocognit // one goroutine pump with cancel, backpressure and close paths that share state
 func FromBroadcast[A, O any](
 	b *broadcast.Server, channels func(ctx context.Context, args A) ([]string, error), events ...string,
 ) func(context.Context, A) (<-chan O, error) {

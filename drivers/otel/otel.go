@@ -81,6 +81,8 @@ type state struct {
 // panics mark the span as an error. Query strings and paths are not
 // recorded: they may carry tokens. With WithMeterProvider each request is
 // also an http.server.request.duration sample (method, route, status).
+//
+//nolint:gocognit // one middleware recording trace, metrics and status together
 func Middleware(tp trace.TracerProvider, opts ...Option) func(http.Handler) http.Handler {
 	o := newOptions(opts)
 	tracer := tp.Tracer(ScopeName)

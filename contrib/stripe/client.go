@@ -503,6 +503,7 @@ func encodeParams(p Params) (string, error) {
 // recursion: each level grows the key, so memory grows quadratically.
 const maxParamDepth = 32
 
+//nolint:gocognit // form encoding of nested values; one case per reflect kind
 func flatten(v url.Values, prefix string, x reflect.Value, depth int) error {
 	if depth > maxParamDepth {
 		return fmt.Errorf("param %q: nested deeper than %d levels", prefix, maxParamDepth)

@@ -556,6 +556,7 @@ func (b *builder) inputValues(owner string, defs []*inputValueDef) ([]*inputValu
 	return out, m, nil
 }
 
+//nolint:gocognit // one pass over a type definition kind by kind; checks share state
 func (b *builder) fill(d *typeDef) error {
 	t := b.s.types[d.name]
 
@@ -920,6 +921,8 @@ func (b *builder) bind() error {
 // has no Go field the default resolver could read, so a typo or a
 // json:"-" field fails at boot instead of on the first query. Maps,
 // interfaces and other non-struct Go types are not checked.
+//
+//nolint:gocognit // default-value checks per argument and input field in one walk
 func (b *builder) checkDefaultFields() error {
 	seen := map[*namedType]map[reflect.Type]bool{}
 

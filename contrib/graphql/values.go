@@ -34,6 +34,8 @@ func describeLiteral(v *value) string {
 
 // coerceLiteral converts an AST value to t (spec §5.6.1 rules applied to
 // literals). vars holds coerced variable values; nil in constant context.
+//
+//nolint:gocognit // one case per GraphQL literal kind; mirrors the spec's coercion table
 func coerceLiteral(v *value, t *gtype, vars map[string]any) (any, error) {
 	if v.kind == valVariable {
 		val, ok := vars[v.raw]
@@ -293,6 +295,8 @@ func literalToGeneric(v *value, vars map[string]any) (any, error) {
 
 // coerceVariable converts a JSON (or Go) variable value to t (spec
 // §5.6.1 CoerceVariableValues / input coercion).
+//
+//nolint:gocognit // one case per GraphQL variable type; mirrors the spec's coercion table
 func coerceVariable(v any, t *gtype) (any, error) {
 	if t.kind == kindNonNull {
 		if v == nil {

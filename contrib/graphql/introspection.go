@@ -181,6 +181,7 @@ func (b *builder) bindIntrospection() {
 	b.bindMemberIntrospection()
 }
 
+//nolint:gocognit // one binding per introspection field; splitting scatters the schema
 func (b *builder) bindTypeIntrospection() {
 	s := b.s
 	set := func(fieldName string, fn func(t *gtype, args map[string]any) any) {
