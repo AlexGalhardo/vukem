@@ -1,0 +1,475 @@
+---
+title: "CLI reference: runtime and tooling"
+description: Manual for key, maintenance mode, route:list, about, queue, schedule, prune, OpenAPI, codegen, SSR and boost:mcp commands, with flags, environment variables, errors and real output.
+---
+
+This page covers the commands you use while an app runs and while you ship it: keys, maintenance mode, inspection, queues, the scheduler, OpenAPI and client generation. The first group is **global**; the rest are **app** commands, which `vukem` builds from `cmd/app` and runs for you. Back to the [command cheat sheet](/docs/cli/reference).
+
+For app commands, flags go **before** positional arguments, and the app boots first (a boot error such as `vukem: APP_DEBUG must be false when APP_ENV=production` exits with 1). `openapi:export`, `codegen:types`, `codegen:routes` and `codegen:client` run in **warmup** mode instead: they register the routes but open no database, boot no provider and do not need `APP_KEY`.
+
+## `vukem key:generate`
+
+Write a new random `APP_KEY` to `.env`. **Global.**
+
+```text
+vukem key:generate [flags]
+```
+
+| Flag | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `-show` | bool | `false` | Print the key and write nothing. |
+| `-force` | bool | `false` | Replace an existing non-empty `APP_KEY`. |
+
+If `.env` is missing, it starts from `.env.example`. The key signs sessions and encrypts data ([Encryption](/docs/security/encryption)).
+
+```bash
+vukem key:generate
+```
+
+```text
+error: APP_KEY is already set in .env (use --force to replace it; existing sessions and encrypted data become unreadable)
+```
+
+Exit 1, nothing changed. Replacing a key logs every user out and makes encrypted values unreadable. Use [`key:rotate`](#vukem-keyrotate) instead on a live app.
+
+```bash
+vukem key:generate -show
+vukem key:generate -force
+```
+
+```text
+base64:Ile84lRsqMKmNobqAgxgW3HTUvtSMIFjSguzeIVXSKI=
+APP_KEY written to .env
+```
+
+**Without the CLI** (a Docker image or CI runner with only your binary): `./app key:generate` prints a key to standard output and never writes `.env`. Only the key goes to standard output, so `export APP_KEY="$(./app key:generate)"` is safe. This built-in wins over an app command with the same name, and `vukem key:generate` itself is never delegated.
+
+## `vukem key:rotate`
+
+Write a new `APP_KEY` and move the old one to the front of `APP_PREVIOUS_KEYS`, so old sessions and encrypted values still open. **Global.**
+
+```text
+vukem key:rotate
+```
+
+No flags. An argument is a usage error (`usage error: key:rotate takes no arguments`, exit 2).
+
+- It never prints a key.
+- It refuses a missing `.env`, an empty `APP_KEY` and any malformed current or previous key, because a bad previous key would stop the app from booting.
+- It keeps `export`, indentation, inline comments and CRLF line endings, writes through a synced temporary file and renames it, and keeps a symlinked `.env` a symlink.
+- It warns on standard error when more than 3 previous keys remain: each one can still forge sessions and signed links.
+
+```bash
+vukem key:rotate
+```
+
+```text
+APP_KEY rotated in .env; the old key is now first in APP_PREVIOUS_KEYS.
+Restart the app. Remove the old key from APP_PREVIOUS_KEYS once the sessions and links
+it signed have expired and encrypted columns are re-saved (https://vukem.dev/docs/security/encryption).
+```
+
+Restart the app afterwards: a running process keeps the old key in memory.
+
+## `vukem down` and `vukem up`
+
+Put the app in maintenance mode, and bring it back. **Global.**
+
+```text
+vukem down [flags]
+vukem up
+```
+
+`down` writes `storage/framework/down`. The `middleware.Maintenance` middleware, which both default stacks include, then answers every request with `503 Service Unavailable` and a `Retry-After` header (an `errors/503` view, or problem+json for APIs). `/up` keeps answering so health checks pass. `up` deletes the file. A running app notices both without a restart.
+
+| Flag (`down`) | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `-secret` | string | none | Visitors of `/<secret>` get a signed bypass cookie and see the live site. |
+| `-with-secret` | bool | `false` | Generate a random secret and print the bypass path. Use it instead of `-secret`. |
+| `-retry` | duration | none | `Retry-After` sent with the 503, such as `60s`. |
+
+`up` has no flags. The secret is stored hashed. An unreadable state file keeps the app **down**: it fails closed.
+
+```bash
+vukem down
+vukem up
+vukem up
+```
+
+```text
+The application is in maintenance mode (vukem up brings it back).
+The application is live.
+The application is live.
+```
+
+Running `up` on a live app is harmless.
+
+**Advanced: let yourself in while it is down**
+
+```bash
+vukem down -secret abc -retry 60s
+```
+
+```text
+The application is in maintenance mode (vukem up brings it back).
+Bypass: open /abc once to get a cookie that lets you in.
+```
+
+With `-with-secret` the same line shows a random value, for example `/R7WGCWCMG4OVUASTHHEQVI6HWZ`.
+
+## `vukem route:list`
+
+List the registered routes. **App.**
+
+```text
+vukem route:list [-json]
+```
+
+| Flag | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `-json` | bool | `false` | Print a JSON array of routes with their middleware. |
+
+```bash
+vukem route:list
+```
+
+```text
+METHOD  PATH                    NAME                   MIDDLEWARE
+GET     /up                     vukem.health           middleware.BodyLimit
+POST    /api/v1/tokens          api.v1.tokens.store    middleware.BodyLimit, middleware.JSONOnly, ratelimit.Middleware, ratelimit.Middleware
+GET     /api/v1/me              api.v1.me              middleware.BodyLimit, middleware.JSONOnly, ratelimit.Middleware, auth.Required, ratelimit.Middleware, auth.Ability
+GET     /api/v1/posts           api.v1.posts.index     middleware.BodyLimit, middleware.JSONOnly
+```
+
+The output is cut to four rows here. Use it to check which middleware guards a route, and `-json` with `jq` in scripts.
+
+## `vukem about`
+
+Show the application, environment and security summary, with secrets redacted. **App.**
+
+```text
+vukem about [-json]
+```
+
+```text
+Name             shop
+Environment      development
+Debug            true
+URL              http://localhost:3000
+Address          localhost:3000
+Go               go1.27.3
+APP_KEY          [redacted]
+Trusted proxies  none
+Telegram         off
+Providers        0
+Routes           9
+```
+
+`-json` prints the same fields as JSON. Reads `APP_NAME`, `APP_ENV`, `APP_DEBUG`, `APP_URL`, `HOST`, `PORT`, `TRUSTED_PROXIES`.
+
+## `vukem queue:work`
+
+Process queued jobs until stopped. **App.**
+
+```text
+vukem queue:work [flags]
+```
+
+| Flag | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `-queue` | string | `QUEUE_NAMES` (`default`) | Queues in priority order, comma-separated: `high,default`. |
+| `-concurrency` | int | `QUEUE_CONCURRENCY` (`4`) | Parallel workers. |
+| `-sleep` | duration | `1s` | Wait when the queue is empty. |
+| `-once` | bool | `false` | Process one job and exit. Implies concurrency 1 and `-stop-when-empty`. |
+| `-stop-when-empty` | bool | `false` | Exit when no job is available. |
+
+Environment: `QUEUE_CONNECTION` (`sync`, `memory` or `database`; default `sync`), `QUEUE_NAMES`, `QUEUE_CONCURRENCY`, `QUEUE_TABLE` (`jobs`), `QUEUE_FAILED_TABLE` (`failed_jobs`), `QUEUE_IN_SERVE` (`true`: `serve` also runs a worker), `SHUTDOWN_TIMEOUT` (`15s`), `MAIL_MAILER` (required in production, since queued mail is sent by the worker).
+
+Ctrl+C stops it and waits up to `SHUTDOWN_TIMEOUT` for running jobs.
+
+**Errors**
+
+| Message | Fix |
+| --- | --- |
+| `vukem: QUEUE_CONNECTION=sync runs jobs during Dispatch, so queue:work has nothing to process (use QUEUE_CONNECTION=database for a separate worker)` | Set `QUEUE_CONNECTION=database` (and run `vukem migrate` first). |
+| `vukem: unknown QUEUE_CONNECTION "x" (sync, memory, database)` | Use a listed value. |
+
+```bash
+QUEUE_CONNECTION=database vukem queue:work -stop-when-empty -sleep 100ms
+```
+
+```text
+time=2026-10-24T19:15:38.912-03:00 level=INFO msg="queue worker started" queues=[default] concurrency=4
+```
+
+It exits 0 once the queue is empty. Use this form in a deploy script or a test.
+
+**Advanced: two queues, high priority first**
+
+```bash
+vukem queue:work -queue high,default -concurrency 8
+```
+
+## `vukem queue:failed`
+
+List failed jobs. **App.** Flag: `-json` (bool, default `false`).
+
+```bash
+QUEUE_CONNECTION=database vukem queue:failed
+```
+
+```text
+ID  QUEUE  KIND  ATTEMPTS  FAILED AT  ERROR
+```
+
+The table is empty when nothing failed. With `QUEUE_CONNECTION=sync` or `memory` there is no failed store:
+
+```text
+vukem: QUEUE_CONNECTION=sync returns job errors to Dispatch and keeps no failed jobs: vukem: the queue driver does not keep failed jobs (use QUEUE_CONNECTION=database)
+```
+
+Exit 1.
+
+## `vukem queue:retry` and `vukem queue:forget`
+
+Re-queue, or delete, failed jobs. **App.**
+
+```text
+vukem queue:retry <id>... | all
+vukem queue:forget <id>... | all
+```
+
+No flags. Arguments: one or more job IDs from `queue:failed`, or the word `all`. Without one: `queue:retry needs job IDs or "all"` (exit 1).
+
+```bash
+QUEUE_CONNECTION=database vukem queue:retry all
+QUEUE_CONNECTION=database vukem queue:forget all
+```
+
+```text
+0 failed job(s) re-queued
+0 failed job(s) deleted
+```
+
+`forget` is permanent.
+
+## `vukem schedule:run`, `schedule:work`, `schedule:list`
+
+The scheduler runs tasks declared in `routes/schedule.go`. **App.** None of the three has flags.
+
+| Command | What it does |
+| --- | --- |
+| `schedule:run` | Runs the tasks due at the current minute, then exits. Call it every minute from cron. |
+| `schedule:work` | Runs the scheduler in the foreground until stopped. Pair it with `SCHEDULE_IN_SERVE=false` on `serve`. Needs `MAIL_MAILER` in production. |
+| `schedule:list` | Prints each task, its cron expression and the next run. |
+
+Environment: `SCHEDULE_TIMEZONE` (default `UTC`), `SCHEDULE_IN_SERVE` (default `true`: `serve` runs the scheduler too). An invalid timezone is a boot error: `vukem: SCHEDULE_TIMEZONE: ...`.
+
+```bash
+vukem schedule:list
+```
+
+```text
+no scheduled tasks (declare them in routes/schedule.go)
+```
+
+Exit 1 when there are no tasks. With tasks it prints `TASK  EXPRESSION  NEXT RUN`. `schedule:run` with nothing due prints nothing and exits 0. A cron line: `* * * * * cd /srv/blog && ./bin/blog schedule:run`.
+
+## `vukem cache:prune` and `vukem session:prune`
+
+Delete expired database cache entries, or expired database sessions. **App.** No flags. The app already schedules both hourly when the store is the database.
+
+```bash
+vukem session:prune
+vukem cache:prune
+```
+
+```text
+Sessions are not stored in the database: nothing to prune.
+The cache does not keep expired entries: nothing to prune.
+```
+
+Those lines are what the default `cookie` sessions and `memory` cache print. With `SESSION_DRIVER=database` or `CACHE_STORE=database` you get `Pruned N expired sessions.` and `Pruned N expired cache entries.`.
+
+## `vukem openapi:export`
+
+Print the OpenAPI 3.1 document of the routes as JSON. **App**, warmup mode.
+
+```text
+vukem openapi:export [-prefix /api]
+```
+
+| Flag | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `-prefix` | string | `OPENAPI_PREFIX` | Keep only routes under this path prefix. |
+
+```bash
+vukem openapi:export -prefix /api/v1 > openapi.json
+```
+
+**Errors**
+
+| Message | Fix |
+| --- | --- |
+| `openapi: path prefix matches no route "/x": none of the 54 documentable routes is under it (...)` | Check the prefix. In Git Bash write `//api` (see [Git Bash on Windows](/docs/cli/reference#environment-variables)). |
+| `openapi: duplicate operationId "dashboard": routes dashboard and admin.dashboard (rename one, or build one document per group with PathPrefix)` | Route names must be unique in the document. Pass `-prefix` to leave page routes out, or rename a route. |
+
+See [OpenAPI](/docs/rest-apis/openapi).
+
+## `vukem openapi:serve`
+
+Preview the Scalar API reference locally. **App**, and **opt-in**: it exists only when your app registers `apidocs.Command()`. Flag: `-addr` (string, default `localhost:8081`). Without the registration it is an unknown command.
+
+## `vukem codegen:types`
+
+Generate TypeScript types for every schema and operation (`<Op>Body`, `<Op>Query`, `<Op>Response`). **App**, warmup mode.
+
+```text
+vukem codegen:types [flags]
+```
+
+| Flag | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `-zod` | bool | `false` | Also emit Zod 4 schemas (`<Name>Schema`, `<Op>BodySchema`). |
+| `-o` | string | stdout | Write to this file. Parent folders are created. `-` or no `-o` prints to stdout. |
+| `-prefix` | string | `OPENAPI_PREFIX` | Keep only routes under this path prefix. |
+
+```bash
+vukem codegen:types -prefix //api -o resources/js/types.ts
+```
+
+The command prints nothing when it writes a file. Without `-o` the code goes to stdout:
+
+```bash
+vukem codegen:types -zod -prefix /api/v1
+```
+
+```text
+export type PostsStoreBody = unknown;
+
+export type PostsUpdateBody = unknown;
+
+export type TokensStoreBody = unknown;
+```
+
+The output is the last lines of the real result. It shares the errors of `openapi:export`.
+
+## `vukem codegen:routes`
+
+Generate typed frontend routes: `route(name, params, query)`, `RouteName` and `routes`. **App**, warmup mode, opens no connections.
+
+```text
+vukem codegen:routes [-o file]
+```
+
+| Flag | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `-o` | string | `resources/js/routes.ts` | Output file. `-` prints to stdout. |
+
+```bash
+vukem codegen:routes -o -
+```
+
+The last lines of the real output:
+
+```text
+    if (parts.length > 0) {
+      url += "?" + parts.join("&");
+    }
+  }
+  return url;
+}
+```
+
+See [Inertia](/docs/frontend/inertia).
+
+## `vukem codegen:client`
+
+Generate a typed API client from the OpenAPI document. **App**, warmup mode.
+
+```text
+vukem codegen:client [flags]
+```
+
+| Flag | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `-lang` | string | `ts` | `ts` (a `createClient` function) or `go` (a standard-library `Client`). |
+| `-o` | string | `resources/js/api.ts` or `internal/apiclient/client.go` | Output file. `-` prints to stdout. |
+| `-package` | string | `apiclient` | Go package name. `-lang go` only. |
+| `-prefix` | string | `OPENAPI_PREFIX` | Keep only routes under this path prefix, so page routes stay out of the client. |
+
+| Message | Fix |
+| --- | --- |
+| `codegen:client: unknown -lang "rust" (want ts or go)` | Use `ts` or `go`. |
+| `openapi: duplicate operationId ...` | Same as `openapi:export`: pass `-prefix`. |
+
+```bash
+vukem codegen:client -prefix /api -o -
+```
+
+```text
+export function createClient(options: ClientOptions = {}): Client {
+  const request = requester(options);
+
+  return {
+    me: () => request<unknown>("GET", "/api/v1/me"),
+    postsDestroy: (args) => request<unknown>("DELETE", "/api/v1/posts/{post}", args),
+    postsIndex: () => request<unknown>("GET", "/api/v1/posts"),
+    ...
+  };
+}
+```
+
+**Advanced: a Go client**
+
+```bash
+vukem codegen:client -lang go -package shopclient -prefix /api -o internal/shopclient/client.go
+```
+
+The Go client has one method per operation, for example `func (c *Client) TokensDestroy(ctx context.Context) error`. See [Client generation](/docs/rest-apis/client-generation).
+
+## `vukem ssr:start` and `vukem ssr:check`
+
+Run and probe the Inertia server-side rendering server. **App.**
+
+```text
+vukem ssr:start [flags]
+vukem ssr:check [-url URL]
+```
+
+| Command | Flag | Type | Default | What it does |
+| --- | --- | --- | --- | --- |
+| `ssr:start` | `-bundle` | string | `bootstrap/ssr/ssr.js` | SSR bundle built by `vite build --ssr`. |
+| `ssr:start` | `-runtime` | string | `node` | JavaScript runtime that runs the bundle. |
+| `ssr:start` | `-restart-delay` | duration | `1s` | Wait before restarting a crashed server. |
+| `ssr:check` | `-url` | string | `http://127.0.0.1:13714` | SSR server URL. |
+
+`ssr:check` requests `/health` and exits 0 on success, 1 otherwise:
+
+```bash
+vukem ssr:check
+```
+
+```text
+ssr:check: Get "http://127.0.0.1:13714/health": dial tcp 127.0.0.1:13714: connectex: ...
+```
+
+The message comes from the operating system and varies. Start `ssr:start` first, then check. See [Inertia](/docs/frontend/inertia).
+
+## `vukem boost:mcp`
+
+A Model Context Protocol server over standard input and output, for coding agents. **App.** No flags. `vukem boost:install` registers it for you; you do not run it by hand. Tools: `application_info`, `list_routes`, `list_commands`, `database_schema`, `database_query` (one read-only statement, at most 100 rows), `get_absolute_url`, `search_docs`.
+
+## Your own commands
+
+`vukem make:command SendReports` adds an app command. It runs like any other:
+
+```bash
+vukem send-reports a b
+```
+
+```text
+send-reports ran with [a b]
+```
+
+Commands run in the `console` environment, after the app boots. Unknown names print the app's command list and exit 2.
