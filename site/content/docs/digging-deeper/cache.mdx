@@ -261,6 +261,25 @@ The rules:
 
 Rate limiting with `RATE_LIMIT_STORE=cache` is built on `Increment`. See [Rate limiting](/docs/security/rate-limiting).
 
+## Claims and one-time codes
+
+`cache.Add` stores a value only when the key is absent (or expired) and tells you whether it did. It is atomic: of many concurrent callers, on any number of servers sharing the store, exactly one gets `true`. That makes it the right tool for "first request wins" guards, such as an idempotency key or a webhook you must handle once.
+
+```go title="app/webhooks/handler.go"
+claimed, err := cache.Add(ctx, c, "webhook:"+eventID, true, 24*time.Hour)
+if err != nil {
+	return err
+}
+
+if !claimed {
+	return nil // another request already handled this event
+}
+```
+
+`cache.Pull[T]` reads a value and deletes it, which suits one-time codes. It is **not** an atomic claim: two concurrent callers can both read the value before either deletes it. When only one caller may act on a code, claim it with `Add` first.
+
+Reach for `NewLock` (next section) only when you need an owner and an early release: a lock is an `Add` plus a token, so the holder can release it without freeing someone else's.
+
 ## Locks
 
 Sometimes a job must run only once at a time, even with several servers: sending the daily report, charging subscriptions. A **lock** is a key that only one owner can hold.
