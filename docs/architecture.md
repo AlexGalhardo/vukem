@@ -15,7 +15,11 @@ How Vukem is put together: modules, packages, application lifecycle, request lif
 
 ```text
 vukem/                            module github.com/AlexGalhardo/vukem
-├── app.go                        package vukem: App, Provider, builder
+├── app.go                        package vukem: Config, App, Option, New
+├── options_*.go                  With* options by subsystem (routes, views, runtime); the rest sit beside their subsystem
+├── validate_config.go            boot-time config checks, key derivation, logger setup
+├── boot.go / serve.go            Boot and route registration; Run, Shutdown, HTTPServer
+├── providers.go / instrument.go  Provider and Runner contracts; query, job and mail instrumentation
 ├── router/                       ServeMux wrapper, groups, names, resources, URLFor
 ├── web/                          *web.Ctx: request/response helpers, Parse/Bind[T], Render
 ├── middleware/                   built-in middleware (recover, logger, request id, timeout, cors…)

@@ -78,3 +78,53 @@ func (s Secret) MarshalJSON() ([]byte, error) // "\"[redacted]\""
 | `HSTS_FORCE` | `false` | Send HSTS on every response in production, for a TLS proxy whose range cannot be put in `TRUSTED_PROXIES` (`SecureHeadersConfig.HSTSForce`); validated in every environment (a boot error unless `APP_URL` is `https://`), applied only in production (a boot warning otherwise) |
 | `HTTP_MAX_HEADER_BYTES` | `65536` | Cap on the request line plus headers the app server reads (64 KiB; Go's own default is 1 MiB); larger requests get 431; outside 4096–1048576 is a boot error |
 | `HTTP_H2C` | `false` | The app server speaks HTTP/2 without TLS (prior knowledge, for gRPC clients) outside production; `true` enables it in production behind a proxy that speaks h2c ([api.md](api.md#grpc)); a separate `grpc.Serve` port has its own opt-in, `GRPC_INSECURE_CLEARTEXT` |
+
+## App options
+
+Every exported `With*` option of the root package, grouped in the source by subsystem. `Option` and the `options` struct live in `app.go`.
+
+| Option | Subsystem | Defined in | Doc |
+| --- | --- | --- | --- |
+| `WithAppSeeders` | Database | `database.go` | [database.md](database.md) |
+| `WithCacheStore` | Cache | `services.go` | [subsystems.md](subsystems.md) |
+| `WithCacheStoreFunc` | Cache | `services.go` | [subsystems.md](subsystems.md) |
+| `WithClock` | Runtime | `options_runtime.go` | [testing.md](testing.md) |
+| `WithDatabaseDrivers` | Database | `database.go` | [database.md](database.md) |
+| `WithDevtools` | Devtools | `options_runtime.go` | [devtools.md](devtools.md) |
+| `WithEnv` | Configuration | `options_runtime.go` | [configuration.md](configuration.md) |
+| `WithEventsFake` | Events | `services.go` | [testing.md](testing.md) |
+| `WithFlags` | Feature flags | `services.go` | [subsystems.md](subsystems.md) |
+| `WithHealthCheck` | Health checks | `options_runtime.go` | [http.md](http.md) |
+| `WithInertia` | Inertia | `options_views.go` | [frontend.md](frontend.md) |
+| `WithJobs` | Queue | `background.go` | [subsystems.md](subsystems.md) |
+| `WithJobsFunc` | Queue | `background.go` | [subsystems.md](subsystems.md) |
+| `WithKind` | Runtime | `options_runtime.go` | [architecture.md](architecture.md) |
+| `WithListeners` | Events | `services.go` | [subsystems.md](subsystems.md) |
+| `WithLogOutput` | Logging | `options_runtime.go` | [subsystems.md](subsystems.md) |
+| `WithLogger` | Logging | `options_runtime.go` | [subsystems.md](subsystems.md) |
+| `WithMailTransport` | Mail | `services.go` | [subsystems.md](subsystems.md) |
+| `WithMigrations` | Database | `database.go` | [database.md](database.md) |
+| `WithOpenAPI` | OpenAPI | `http.go` | [api.md](api.md) |
+| `WithProviders` | Providers | `options_runtime.go` | [architecture.md](architecture.md) |
+| `WithQueryObservers` | Database | `database.go` | [database.md](database.md) |
+| `WithQueueDriver` | Queue | `background.go` | [subsystems.md](subsystems.md) |
+| `WithQueueDriverFunc` | Queue | `background.go` | [subsystems.md](subsystems.md) |
+| `WithRateLimiters` | Rate limiting | `http.go` | [subsystems.md](subsystems.md) |
+| `WithReady` | Runtime | `options_runtime.go` | [testing.md](testing.md) |
+| `WithRoutes` | Routing | `options_routes.go` | [http.md](http.md) |
+| `WithRoutesAfterBoot` | Routing | `options_routes.go` | [architecture.md](architecture.md) |
+| `WithRunner` | Runners | `options_runtime.go` | [architecture.md](architecture.md) |
+| `WithSchedule` | Scheduler | `background.go` | [subsystems.md](subsystems.md) |
+| `WithSeeders` | Database | `database.go` | [database.md](database.md) |
+| `WithSessionStore` | Sessions | `services.go` | [subsystems.md](subsystems.md) |
+| `WithSessionStoreFunc` | Sessions | `services.go` | [subsystems.md](subsystems.md) |
+| `WithSource` | Configuration | `options_runtime.go` | [configuration.md](configuration.md) |
+| `WithStderr` | Runtime | `options_runtime.go` | [testing.md](testing.md) |
+| `WithStdin` | Runtime | `options_runtime.go` | [testing.md](testing.md) |
+| `WithStdout` | Runtime | `options_runtime.go` | [testing.md](testing.md) |
+| `WithTelegram` | Logging | `services.go` | [subsystems.md](subsystems.md) |
+| `WithTranslations` | i18n | `options_views.go` | [subsystems.md](subsystems.md) |
+| `WithViewFuncs` | Views | `options_views.go` | [frontend.md](frontend.md) |
+| `WithViews` | Views | `options_views.go` | [frontend.md](frontend.md) |
+| `WithVite` | Vite | `options_views.go` | [frontend.md](frontend.md) |
+| `WithoutHTTP` | Runtime | `options_runtime.go` | [architecture.md](architecture.md) |
