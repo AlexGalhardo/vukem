@@ -148,7 +148,7 @@ func docScopes(t *testing.T, doc string) map[tagScope]string {
 
 		text := strings.TrimSpace(line)
 
-		for _, scope := range []tagScope{scopeAny, scopeString, scopeNumber, scopeList} {
+		for _, scope := range []tagScope{scopeAny, scopeString, scopeNumber, scopeList, scopeMap} {
 			if label := string(scope) + ":"; strings.HasPrefix(text, label) {
 				current = scope
 				text = strings.TrimPrefix(text, label)
@@ -162,8 +162,8 @@ func docScopes(t *testing.T, doc string) map[tagScope]string {
 		}
 	}
 
-	if len(sections) != 4 {
-		t.Fatalf("FromTags doc comment lists %d scopes, want 4 (any, string, number, list)", len(sections))
+	if len(sections) != 5 {
+		t.Fatalf("FromTags doc comment lists %d scopes, want 5 (any, string, number, list, map)", len(sections))
 	}
 
 	return sections
@@ -244,6 +244,7 @@ func TestTagRules_ApplyToTheirScopes(t *testing.T) {
 		scopeString: reflect.TypeFor[string](),
 		scopeNumber: reflect.TypeFor[int](),
 		scopeList:   reflect.TypeFor[[]string](),
+		scopeMap:    reflect.TypeFor[map[string]string](),
 	}
 
 	for _, rule := range tagRules() {

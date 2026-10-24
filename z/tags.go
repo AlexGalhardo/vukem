@@ -17,7 +17,8 @@ import (
 //
 // Rules, grouped by the field kind they apply to:
 //
-//	any:    required, dive (the rules after it apply to slice elements)
+//	any:    required, dive (the rules after it apply to slice elements
+//	        or map values)
 //	string: min=N, max=N, len=N, email, url, uuid, ulid, alpha, alphanum,
 //	        numeric, oneof=a b c, regex=PATTERN (last rule), startswith=,
 //	        endswith=, contains=, trim, lowercase, omitempty (skips the
@@ -27,6 +28,7 @@ import (
 //	        document)
 //	number: min=N, max=N, positive, default=V
 //	list:   min=N, max=N, len=N, unique
+//	map:    min=N, max=N (entry count); the key must be string
 //
 // Fields without "required" are optional; "required" on a string means
 // non-empty, on a list present and not null (use min=1 for a non-empty
@@ -34,8 +36,8 @@ import (
 // recursively. A bool, a time.Time and a nested struct take no rule but
 // "required", and so do any (a JSON value of any shape) and
 // map[string]any (a JSON object). It panics on unknown rules or bad
-// arguments, so mistakes surface at boot. The same table is in docs/validation.md; both are checked
-// against the implementation by TestTagRules_* in this package.
+// arguments, so mistakes surface at boot. The same table is in
+// docs/validation.md; both are checked against the implementation by TestTagRules_* in this package.
 func FromTags[T any]() StructSchema[T] {
 	return StructSchema[T]{core: tagCore(reflect.TypeFor[T](), 0)}
 }
@@ -67,6 +69,7 @@ const (
 	scopeString tagScope = "string"
 	scopeNumber tagScope = "number"
 	scopeList   tagScope = "list"
+	scopeMap    tagScope = "map"
 )
 
 // tagRule is one `validate` rule FromTags understands.
@@ -87,8 +90,8 @@ func tagRules() []tagRule {
 		{name: "omitempty", scopes: []tagScope{scopeString}},
 		{name: "default", arg: "1", scopes: []tagScope{scopeString, scopeNumber}},
 		{name: "dive", scopes: []tagScope{scopeAny}},
-		{name: "min", arg: "1", scopes: []tagScope{scopeString, scopeNumber, scopeList}},
-		{name: "max", arg: "5", scopes: []tagScope{scopeString, scopeNumber, scopeList}},
+		{name: "min", arg: "1", scopes: []tagScope{scopeString, scopeNumber, scopeList, scopeMap}},
+		{name: "max", arg: "5", scopes: []tagScope{scopeString, scopeNumber, scopeList, scopeMap}},
 		{name: "len", arg: "3", scopes: []tagScope{scopeString, scopeList}},
 		{name: "email", scopes: []tagScope{scopeString}},
 		{name: "url", scopes: []tagScope{scopeString}},

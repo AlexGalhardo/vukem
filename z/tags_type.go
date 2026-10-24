@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
-	"strconv"
-	"strings"
 	"time"
 )
 
@@ -105,45 +103,9 @@ func schemaForType(t reflect.Type, raw []string, depth int) (AnySchema, error) {
 	case isNumberKind(t.Kind()):
 		return numberFromRules(t, rs, optional)
 	case t.Kind() == reflect.Slice:
-		elem, err := schemaForType(t.Elem(), rs.dive, depth+1)
-		if err != nil {
-			return nil, err
-		}
-
-		s := Slice(elem)
-
-		for _, r := range rs.rules {
-			name, arg, _ := strings.Cut(r, "=")
-
-			switch name {
-			case "min", "max", "len":
-				n, err := strconv.Atoi(arg)
-				if err != nil {
-					return nil, fmt.Errorf("rule %q needs an integer", r)
-				}
-
-				switch name {
-				case "min":
-					s = s.Min(n)
-				case "max":
-					s = s.Max(n)
-				default:
-					s = s.Len(n)
-				}
-			case "unique":
-				s = s.Unique()
-			default:
-				return nil, unknownRuleError(r, scopeList)
-			}
-		}
-
-		// required means present and not null, as in OpenAPI; an empty list
-		// passes. Non-empty lists use min=1.
-		if optional {
-			s = s.Optional()
-		}
-
-		return s, nil
+		return listFromRules(t, rs, optional, depth)
+	case t.Kind() == reflect.Map:
+		return mapFromRules(t, rs, optional, depth)
 	case t.Kind() == reflect.Struct:
 		if err := noRules(rs.rules); err != nil {
 			return nil, err
@@ -154,7 +116,9 @@ func schemaForType(t reflect.Type, raw []string, depth int) (AnySchema, error) {
 
 		return structAny{core: core}, nil
 	default:
-		return nil, fmt.Errorf("unsupported type %s", t)
+		return nil, fmt.Errorf(
+			"unsupported type %s, want a string, number, bool, time.Time, any, map[string]any, "+
+				"map[string]V, slice or struct (or a pointer to one)", t)
 	}
 }
 

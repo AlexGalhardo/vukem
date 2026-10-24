@@ -401,3 +401,55 @@ func TestRegisterWithKeepsTagDerivedOpenAPI(t *testing.T) {
 		t.Errorf("document lost the tag-derived rules:\n%s", custom)
 	}
 }
+
+type tagsInput struct {
+	Labels map[string]int `json:"labels" validate:"required,min=1,dive,min=1"`
+}
+
+func TestRegister_MapInput(t *testing.T) {
+	t.Parallel()
+
+	r := router.New(nil)
+	api.Register(r, "POST /tags", api.Op{},
+		func(_ *web.Ctx, in tagsInput) (map[string]int, error) { return in.Labels, nil })
+
+	tests := []struct {
+		name, body string
+		status     int
+		want       string
+	}{
+		{"valid", `{"labels":{"a":2}}`, 201, `{"a":2}`},
+		{"value rule", `{"labels":{"a":0}}`, 422, `labels.a`},
+		{"empty map", `{"labels":{}}`, 422, `labels`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest("POST", "/tags", strings.NewReader(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+			r.ServeHTTP(rec, req)
+
+			if rec.Code != tt.status || !strings.Contains(rec.Body.String(), tt.want) {
+				t.Fatalf("POST /tags %s = %d %s, want %d containing %q",
+					tt.body, rec.Code, rec.Body.String(), tt.status, tt.want)
+			}
+		})
+	}
+
+	doc, err := openapi.Build(r.Routes(), openapi.Info{Title: "Tags", Version: "1.0.0"})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	out, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	if !strings.Contains(string(out), `"additionalProperties":{"minimum":1,"type":"integer"}`) {
+		t.Errorf("document lacks a typed additionalProperties with minimum 1: %s", out)
+	}
+}

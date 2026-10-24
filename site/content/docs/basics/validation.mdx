@@ -521,7 +521,7 @@ var LoginSchema = z.FromTags[Login]()
 | Rule | Applies to | Meaning |
 | --- | --- | --- |
 | `required` | all | Strings: not empty. Lists: present and not `null` (an empty list passes; add `min=1`). Others: present |
-| `min=N`, `max=N` | strings, numbers, lists | Length, value or item count |
+| `min=N`, `max=N` | strings, numbers, lists, maps | Length, value, item count or entry count |
 | `len=N` | strings, lists | Exact length or count |
 | `email`, `url`, `uuid`, `ulid`, `alpha`, `alphanum`, `numeric` | strings | As the string methods |
 | `oneof=a b c` | strings | One of the space-separated values |
@@ -530,10 +530,10 @@ var LoginSchema = z.FromTags[Login]()
 | `trim`, `lowercase` | strings | Pre-steps, as `Trim` and `ToLower` |
 | `positive` | numbers | Greater than 0 |
 | `unique` | lists | No duplicates |
-| `dive` | lists | Rules after it apply to each element |
+| `dive` | lists, maps | Rules after it apply to each element or map value |
 | `omitempty` | strings | Skips the rules above when the value is empty (after `trim`), as `OmitEmpty` |
 
-A bool, a time, an `any` (any JSON value), a `map[string]any` (a JSON object) and a nested struct take no rule but `required`. Fields without `required` are optional. Pointer fields are optional and nullable. Nested structs are parsed with their own tags. An unknown rule or a bad argument panics at boot (`unknown rule "mn" for a string`), and `json:"-"` fields are skipped.
+A bool, a time, an `any` (any JSON value), a `map[string]any` (a JSON object) and a nested struct take no rule but `required`. Fields without `required` are optional. Pointer fields are optional and nullable. Nested structs are parsed with their own tags. A `map[string]V` field is parsed from a JSON object, with `V` derived from its own type and the rules after `dive`; only string keys are supported. An unknown rule or a bad argument panics at boot (`unknown rule "mn" for a string`), and `json:"-"` fields are skipped.
 
 ### An optional enum
 
