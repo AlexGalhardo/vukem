@@ -23,7 +23,7 @@ func TestDocsCtxTableListsRealMethods(t *testing.T) {
 	typ := reflect.TypeFor[*Ctx]()
 	tok := regexp.MustCompile("`([A-Z][A-Za-z0-9]*)[`(\\[]")
 	checked := 0
-	for _, line := range strings.Split(section, "\n") {
+	for line := range strings.SplitSeq(section, "\n") {
 		if !strings.HasPrefix(line, "| ") {
 			continue
 		}

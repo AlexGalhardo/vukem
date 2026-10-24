@@ -71,7 +71,7 @@ func TestSecurity_A07_LoginThrottle(t *testing.T) {
 	t.Run("non-POST is not limited", func(t *testing.T) {
 		t.Parallel()
 
-		r := httptest.NewRequest(http.MethodGet, "/login", nil)
+		r := httptest.NewRequest(http.MethodGet, "/login", http.NoBody)
 		if perIP(r) != "" || perAccount(r) != "" {
 			t.Error("GET was counted")
 		}
