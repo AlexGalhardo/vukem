@@ -1,0 +1,296 @@
+---
+title: "CLI reference: new, serve, build"
+description: Manual for vukem new, serve, build, version and list, with every flag, the files they write, the errors you may hit and real examples.
+---
+
+These are the commands that create a project, run it while you code and build it for production. They are **global** commands: they work on files and call the Go toolchain, and they never import your code. Back to the [command cheat sheet](/docs/cli/reference).
+
+## `vukem new`
+
+Create a project in a new folder from the starter embedded in the CLI.
+
+**Usage**
+
+```text
+vukem new [flags] <name>
+```
+
+**Arguments**
+
+| Argument | Required | Meaning |
+| --- | --- | --- |
+| `<name>` | yes | Folder and `APP_NAME`. Starts with a letter; letters, digits, `-`, `_` and `.` only. The folder must not exist. |
+
+**Flags**
+
+| Flag | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `-module` | string | the project name | Go [module path](https://go.dev/ref/mod#module-path) in `go.mod`. Also gives the copyright holder of `-license` when it is `github.com/owner/repo`. |
+| `-api` | bool | `false` | JSON API starter: tokens, `/api/v1`, no views, no sessions, no frontend. |
+| `-templ` | bool | `false` | HTMX starter with [templ](https://templ.guide) components instead of `html/template`. Pins templ as a Go tool and generates the components. |
+| `-inertia` | string | none | Inertia starter. Value: `react`, `vue` or `svelte`. |
+| `-minimal` | bool | `false` | HTMX starter without a database: no posts, uploads, migrations or SQLite driver. Writes `.buildtags` with `vukem_nosqlite`. |
+| `-pm` | string | see below | JavaScript package manager: `npm`, `bun`, `pnpm` or `yarn`. |
+| `-no-install` | bool | `false` | Do not install frontend dependencies. |
+| `-framework` | string | none | Path to a local Vukem checkout. Adds a `replace` directive instead of requiring a release. |
+| `-standards` | bool | `false` | `.markdownlint-cli2.jsonc`, `lint:md` script, `CHANGELOG.md`, `.config/cliff.toml`, `.githooks/commit-msg` and `pre-commit`, version `0.1.0`. Sets `core.hooksPath` to `.githooks`. |
+| `-license` | string | none | `mit`: `LICENSE`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`. |
+| `-ci` | bool | `false` | `.github/workflows/ci.yml` and `.github/dependabot.yml`. |
+| `-deploy` | string | none | `railway`: `.railway/railway.ts`. |
+| `-docker` | bool | `false` | `compose.yaml` with the app, PostgreSQL and a mail catcher, plus its `.env` block. |
+
+**Interactions and conflicts**
+
+- `-api`, `-templ` and `-inertia` are exclusive. `-minimal` refuses all three.
+- With none of them, on a terminal, `new` asks which stack you want. Without a terminal (CI, a pipe) it picks HTMX.
+- `-pm` default: when you omit it, `new` uses the first of `bun`, `npm`, `pnpm`, `yarn` found on `PATH`. The choice is written to `package.json` as `packageManager`, and later commands (`serve`, `build`) follow it.
+- `-api` has no frontend, so `-pm` and `-no-install` change nothing for it.
+- `-inertia`, `-license` and `-deploy` values are validated before anything is written.
+- `-standards`, `-license`, `-ci`, `-deploy` and `-docker` are opt-in. Nothing in this group is written by default.
+
+**Environment**: `PATH` (finds `go`, `git`, the package manager). It writes `APP_KEY` into the new `.env`.
+
+**What it writes, in order**
+
+1. The starter files for the stack (`gitignore` becomes `.gitignore`).
+2. `Dockerfile` and `.dockerignore` for the stack and package manager.
+3. `.editorconfig` and `.gitattributes`, then the optional files above.
+4. `go.mod` requiring the framework release that matches the CLI (the latest for a `devel` build), or a `replace` with `-framework`. It pins `govulncheck` as a Go tool.
+5. `go mod tidy`, then `.env` copied from `.env.example` with a new `APP_KEY`.
+6. `git init` when Git is installed (a failure only warns).
+7. The frontend dependencies, except for `-api` or `-no-install`. A missing package manager or a failed install only warns.
+
+**Errors**
+
+| Message | Exit | Fix |
+| --- | --- | --- |
+| `usage error: expected exactly one project name` | 2 | Pass one name. |
+| `usage error: invalid project name "1bad" (letters, digits, '-', '_' and '.')` | 2 | Start with a letter. |
+| `error: blog already exists` | 1 | Pick another name or remove the folder. |
+| `usage error: choose one of --api, --templ or --inertia` | 2 | Keep one stack flag. |
+| `usage error: --minimal is an HTMX starter: drop --api, --templ and --inertia` | 2 | Drop the extra flag. |
+| `usage error: --inertia must be react, vue or svelte, not "angular"` | 2 | Use a listed framework. |
+| `usage error: --license must be one of mit, not "gpl"` | 2 | Only `mit` exists. |
+| `usage error: --deploy must be railway, not "fly"` | 2 | Only `railway` exists. |
+| `usage error: unknown package manager "foo" (want bun, npm, pnpm, yarn)` | 2 | Use a listed manager. |
+| `go: ... reading ...\go.mod: open ...` | 1 | `-framework` must point to a folder with the framework's `go.mod`. |
+
+**Example: a blog**
+
+```bash
+vukem new blog
+cd blog
+```
+
+```text
+created .editorconfig
+created .gitattributes
+APP_KEY written to .env
+
+Created blog (htmx 4.0.0, Tailwind, SQLite). Next:
+
+  1. cd blog
+  2. read .env: APP_KEY is set; APP_URL, the database and mail live here
+  3. pick a database: SQLite is the default, and PostgreSQL, MySQL or MongoDB
+     need their driver in bootstrap/app.go
+  4. apply the migrations: vukem migrate
+  ...
+  7. start the app: vukem serve, then open http://localhost:3000
+  8. deploy the Dockerfile, or vukem build for a single binary
+```
+
+Output is shortened here. The real command also prints the documentation link for each step.
+
+**Example: an API with project standards**
+
+```bash
+vukem new shop --api --module github.com/acme/shop --standards --license mit --ci
+```
+
+This creates a JSON API project whose module is `github.com/acme/shop`, with a changelog, Conventional Commits hooks, an MIT licence and a GitHub Actions pipeline.
+
+## `vukem serve`
+
+Run the app while you code. It builds `cmd/app`, starts it, and rebuilds and restarts it when a source file changes.
+
+**Usage**
+
+```text
+vukem serve [flags]
+```
+
+**Arguments**: none.
+
+**Flags**
+
+| Flag | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `-poll` | duration | `500ms` | How often to check files for changes. Go [duration](https://pkg.go.dev/time#ParseDuration): `250ms`, `1s`. |
+| `-no-vite` | bool | `false` | Do not start the Vite dev server. |
+
+**Interactions**
+
+- Vite starts only when `vite.config.ts`, `.js` or `.mjs` exists. The package manager comes from `package.json`, then the lockfile.
+- `.templ` files make `go tool templ generate` run before each build.
+- `-no-vite` is useful when you run Vite in another terminal.
+
+**Environment**: your app's `.env` and process environment (`PORT`, `HOST`, `APP_ENV`, ...). `.env` is also watched.
+
+**What it watches**: `.go` and `.templ` files, `go.mod`, `go.sum`, `.buildtags` and `.env`. It skips hidden folders, `node_modules`, `vendor`, `storage`, `bin`, `dist`, `public` and `tmp`, and generated `*_templ.go` files.
+
+**Files it creates**: `.vukem/serve/app-next` (the next build, renamed over the running binary after the old process stops). Add `.vukem/` to `.gitignore`; the starters do. It removes `resources/public/hot` on exit.
+
+**Errors**
+
+| Message | Fix |
+| --- | --- |
+| `error: no cmd/app in this directory: run vukem inside a Vukem project` | `cd` into the project root. |
+| `vukem serve: build failed, keeping the previous version` | Read the compiler errors above it. The old version keeps answering. Save a fixed file to rebuild. |
+| `error obtaining VCS status: exit status 128` above a failed build | Go stamps the build with Git data and Git failed (broken or unowned repository). Fix the repository or its `safe.directory`. |
+
+Ctrl+C stops it. There is no graceful shutdown of the old process on a rebuild, so use `serve` for development only.
+
+**Example**
+
+```bash
+vukem serve
+```
+
+```text
+time=2026-10-24T19:17:12.787-03:00 level=INFO msg="http server starting" addr=localhost:3000 env=development
+```
+
+**Advanced: slower polling, no Vite**
+
+```bash
+vukem serve -poll 2s -no-vite
+```
+
+Checks files every 2 seconds, which saves CPU on large trees or network drives, and leaves the frontend to a Vite you started yourself.
+
+## `vukem build`
+
+Produce the production binary.
+
+**Usage**
+
+```text
+vukem build [flags]
+```
+
+**Arguments**: none.
+
+**Flags**
+
+| Flag | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `-o` | string | `bin/app` (`bin\app.exe` on Windows) | Output path of the binary. |
+
+**Steps**
+
+1. `go tool templ generate` when `.templ` files exist.
+2. When a `vite.config.*` exists: checks `node_modules`, then runs `vite build` through the package manager (`npm exec -- vite build`, `bun x vite build`, `pnpm exec vite build`, `yarn exec vite build`).
+3. `go build -trimpath -ldflags="-s -w"` of `./cmd/app` with `CGO_ENABLED=0` and the tags from `.buildtags`.
+
+**Environment**: `CGO_ENABLED` (your value wins). `PATH`.
+
+**Files it creates**: the binary, plus the generated `*_templ.go` files and the Vite output when the project has templ or Vite.
+
+**Build tags**: `.buildtags` lists tags, one per line or comma-separated, with `#` comments. A tag may contain only letters, digits, `_` and `.`; otherwise `.buildtags: invalid build tag "..."`. The same tags apply to `serve` and to every delegated app command.
+
+**Errors**
+
+| Message | Fix |
+| --- | --- |
+| `error: no cmd/app in this directory: run vukem inside a Vukem project` | Run it in the project root. |
+| `error: frontend dependencies missing: run bun install first` | Install the dependencies. The command names the package manager the project uses. |
+| Compiler errors | Fix the Go code. |
+
+**Example**
+
+```bash
+vukem build -o bin/shop
+```
+
+```text
+built bin/shop
+```
+
+For the `shop` API project the binary is about 18 MB and contains every app command (`./bin/shop migrate:status`).
+
+**Advanced: build without SQLite**
+
+```bash
+echo vukem_nosqlite > .buildtags
+vukem build -o bin/blog
+```
+
+The SQLite driver is left out of the binary. Use it with PostgreSQL or MySQL in `DATABASE_URL`.
+
+## `vukem version`
+
+Print the CLI version.
+
+**Usage**
+
+```text
+vukem version
+```
+
+`vukem --version` and `vukem -v` do the same. No flags, no arguments. A binary built from a checkout prints `devel`.
+
+```bash
+vukem version
+```
+
+```text
+vukem vX.Y.Z
+```
+
+## `vukem list` and `vukem help`
+
+Show what exists.
+
+**Usage**
+
+```text
+vukem list
+vukem help [<command>]
+vukem <command> -h
+```
+
+| Form | Result |
+| --- | --- |
+| `vukem`, `vukem list`, `vukem help`, `vukem -h`, `vukem --help` | The global commands grouped by namespace (`install`, `boost`, `key`, `make`, `codegen`), then a note that other commands run in the app. |
+| `vukem help <command>` | Usage line, description and flags of a global command. |
+| `vukem <command> -h` | The same, and exit 0. |
+| `vukem help nope` | `usage error: unknown command "nope"`, exit 2. |
+
+`list` does not list app commands such as `migrate`. To list those, run any unknown name inside a project:
+
+```bash
+vukem help-me
+```
+
+The app prints `unknown command "help-me"`, then every app command with its description, and the exit code is 2.
+
+**Example**
+
+```bash
+vukem help make:model
+```
+
+```text
+Usage: vukem make:model [flags] <Name>
+
+Create a model (with -m, -f, -c)
+
+Flags:
+  -c	also create a resource controller
+  -f	also create a factory
+  -force
+    	overwrite existing files
+  -m	also create a create_<table>_table migration
+```
+
+**Known limits**: `help <command> <extra>` ignores the extra word. `vukem new --pm foo` asks the stack question before it reports the bad package manager.
