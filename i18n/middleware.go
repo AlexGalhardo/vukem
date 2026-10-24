@@ -1,6 +1,7 @@
 package i18n
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -142,23 +143,15 @@ func (c MiddlewareConfig) Validate(b *Bundle) error {
 }
 
 func (c MiddlewareConfig) withDefaults() MiddlewareConfig {
-	c.Query = orDefault(c.Query, "lang")
-	c.Cookie = orDefault(c.Cookie, "lang")
-	c.SessionKey = orDefault(c.SessionKey, "locale")
+	c.Query = cmp.Or(c.Query, "lang")
+	c.Cookie = cmp.Or(c.Cookie, "lang")
+	c.SessionKey = cmp.Or(c.SessionKey, "locale")
 
 	if c.Order == nil {
 		c.Order = defaultOrder
 	}
 
 	return c
-}
-
-func orDefault(v, def string) string {
-	if v == "" {
-		return def
-	}
-
-	return v
 }
 
 // Middleware resolves the request locale from, in order, the query

@@ -124,9 +124,9 @@ func SecureHeaders(cfg SecureHeadersConfig) Middleware {
 		hsts = "max-age=" + strconv.Itoa(int(age.Seconds())) + "; includeSubDomains"
 	}
 
-	frame := orDefault(cfg.FrameOptions, "DENY")
-	referrer := orDefault(cfg.ReferrerPolicy, "strict-origin-when-cross-origin")
-	permissions := orDefault(cfg.PermissionsPolicy, "camera=(), microphone=(), geolocation=()")
+	frame := cmp.Or(cfg.FrameOptions, "DENY")
+	referrer := cmp.Or(cfg.ReferrerPolicy, "strict-origin-when-cross-origin")
+	permissions := cmp.Or(cfg.PermissionsPolicy, "camera=(), microphone=(), geolocation=()")
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -454,12 +454,4 @@ func newNonce() string {
 	_, _ = rand.Read(b) // never fails since Go 1.24
 
 	return base64.RawURLEncoding.EncodeToString(b) // base64url: no characters that need HTML escaping
-}
-
-func orDefault(v, def string) string {
-	if v == "" {
-		return def
-	}
-
-	return v
 }
