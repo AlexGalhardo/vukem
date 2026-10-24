@@ -1,0 +1,304 @@
+---
+title: "CLI reference: install and boost"
+description: Manual for vukem install:auth, install:api, install:admin, install:flags, install:billing, install:inertia and boost:install, with flags, prerequisites, files written and errors.
+---
+
+The `install:*` commands copy **your own code** into the project: routes, controllers, pages, migrations and tests that you may edit. They are **global** commands. Back to the [command cheat sheet](/docs/cli/reference).
+
+## Rules that apply to every installer
+
+- Run them from the project root.
+- Each installer checks every destination first. If a file exists it writes nothing and lists the clashes:
+
+  ```text
+  error: these files already exist (use --force to overwrite):
+    app/admin/admin.go
+    app/admin/registry.go
+    routes/admin.go
+    tests/admin_test.go
+  ```
+
+- Then it registers the new parts in the project's registries, appends new keys to `.env.example` (never to `.env`) and runs `go mod tidy`. Run `vukem migrate` afterwards when the installer adds a migration.
+- Environment: `PATH` (`go`, and the package manager for the Inertia and billing installers). A failed `go mod tidy` fails the command.
+- A missing prerequisite is a usage error (exit 2) that names the command to run first.
+- Installers are not stubs: `stubs/` cannot override them.
+
+Order matters. A typical full stack:
+
+```bash
+vukem install:auth
+vukem install:api
+vukem install:admin
+vukem install:billing
+vukem migrate
+```
+
+## `vukem install:auth`
+
+Add login, registration, email verification and password reset.
+
+```text
+vukem install:auth [flags]
+```
+
+**Arguments**: none.
+
+| Flag | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `-social` | string | none | Also add social login for a comma-separated list: `github`, `gitlab`, `discord`, `google`, `microsoft`, `linkedin`, `apple`. `x` is refused because X sends no email. |
+| `-2fa` | bool | `false` | Also add TOTP two-factor authentication. Users turn it on at `/user/two-factor`. |
+| `-locales` | string | the project's locales, else `en` | Message catalogs to write, comma separated, such as `en,pt-BR`. `en` is always written because it is the fallback. |
+| `-force` | bool | `false` | Overwrite existing files. |
+
+**Writes**: the shared core (users and accounts, tokens, mails, migrations `create_users_table` and `create_auth_tables`), pages, controllers, routes and tests. Pages follow your frontend: `html/template` for HTMX, or React, Vue or Svelte pages when `package.json` lists an Inertia adapter. `app/accounts/accounts.go` marks the core as installed. Updates `routes/registry.go`.
+
+**Interactions**
+
+- Run it again with only `-social` or `-2fa` on a project that already has auth: it adds that part and leaves the rest alone. This is how you add 2FA later.
+- `-social` appends `SOCIAL_<NAME>_CLIENT_ID` and `SOCIAL_<NAME>_CLIENT_SECRET` to `.env.example`. Apple gets `SOCIAL_APPLE_CLIENT_ID`, `SOCIAL_APPLE_TEAM_ID`, `SOCIAL_APPLE_KEY_ID`, `SOCIAL_APPLE_PRIVATE_KEY_PATH`.
+- Later runs write catalogs only for locales the project already has, so a catalog you delete is never put back. Ask for the locales on the first run.
+
+**Errors**
+
+| Message | Fix |
+| --- | --- |
+| `install:auth writes html/template pages; templ projects are not supported yet` | Use the HTMX or Inertia starter. |
+| `error: these files already exist (use --force to overwrite)` | Review the files, then use `-force`. |
+| `usage error: no auth message catalog for locale "xx" (one of ...)` | `-locales` accepts only locales the scaffold ships. Translate the generated `en` catalog for others. |
+| `usage error: unknown social provider "foo" (one of github, gitlab, ...)` | Use one of the listed names. |
+
+```bash
+vukem install:auth
+```
+
+```text
+updated routes/registry.go
+
+Authentication installed. Next:
+
+  vukem migrate
+  set MAIL_MAILER (smtp, resend or mailtrap) and APP_URL so verification and reset emails work
+  go test ./tests/...
+```
+
+**Advanced**
+
+```bash
+vukem install:auth -social github,google -2fa -locales en,pt-BR
+```
+
+Social login for GitHub and Google, two-factor authentication and English plus Brazilian Portuguese messages. See [Authentication](/docs/security/authentication), [Social login](/docs/security/social-login) and [Two-factor](/docs/security/two-factor).
+
+## `vukem install:api`
+
+Add API tokens: `POST /api/v1/tokens`, `GET /api/v1/me`, `DELETE /api/v1/tokens/current`, CORS and rate limiting.
+
+```text
+vukem install:api [flags]
+```
+
+| Flag | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `-force` | bool | `false` | Overwrite existing files. |
+
+**Writes**: the auth core when missing, `routes/api.go`, `app/controllers/apiv1/abilities.go` and tests. Appends `CORS_ALLOWED_ORIGINS` to `.env.example`. With two-factor installed, issuing a token also asks for the code.
+
+Keys are least privilege: a token gets only the abilities the request asks for, out of `apiv1.Abilities()`. Omitting the field grants nothing, and an unknown ability is a `422`.
+
+```bash
+vukem install:api
+```
+
+```text
+API installed: POST /api/v1/tokens, GET /api/v1/me, DELETE /api/v1/tokens/current.
+Run vukem migrate, and set CORS_ALLOWED_ORIGINS for browser clients.
+```
+
+The real command also prints the token request body and how to add an ability. See [API tokens](/docs/security/api-tokens).
+
+## `vukem install:admin`
+
+Add the admin panel at `/admin`.
+
+```text
+vukem install:admin [flags]
+```
+
+| Flag | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `-force` | bool | `false` | Overwrite existing files. |
+
+**Needs** `install:auth` (it looks for `app/accounts/accounts.go`) and a web project (`routes/web.go`). **Writes** `app/admin/admin.go`, `app/admin/registry.go`, a `create_admin_audit_logs_table` migration, `routes/admin.go` and `tests/admin_test.go`. Appends `ADMIN_EMAILS` to `.env.example`: set it to the comma-separated emails allowed in.
+
+```bash
+vukem install:admin
+```
+
+```text
+created app/admin/admin.go
+created app/admin/registry.go
+created database/migrations/20261024221157_create_admin_audit_logs_table.go
+created routes/admin.go
+created tests/admin_test.go
+updated database/migrations/registry.go
+updated routes/registry.go
+
+Admin panel installed at /admin. Next:
+
+  vukem migrate
+  set ADMIN_EMAILS=you@example.com (comma-separated) in .env
+  vukem make:admin-resource Post
+```
+
+Without auth:
+
+```text
+usage error: install:admin needs authentication: run vukem install:auth first
+```
+
+Next run [`vukem make:admin-resource <Model>`](/docs/cli/reference-make#vukem-makeadmin-resource) for each model. See [Admin](/docs/digging-deeper/admin).
+
+## `vukem install:flags`
+
+Add feature flags: `app/features/features.go`, the `feature_flags` table and `vukem.WithFlags(features.All()...)` in `bootstrap/app.go`.
+
+```text
+vukem install:flags [flags]
+```
+
+| Flag | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `-force` | bool | `false` | Rewrite the feature flags migration in place. `app/features/features.go` is never overwritten, even with `-force`. |
+
+**Needs** `bootstrap/app.go` and `database/migrations/registry.go`. Flag values live in the database, so a `-minimal` project is refused. It is safe to re-run: an existing flags migration is reused.
+
+First run:
+
+```text
+created app/features/features.go
+created database/migrations/20261024221158_create_feature_flags_table.go
+updated bootstrap/app.go
+updated database/migrations/registry.go
+
+Feature flags installed. Next:
+
+  vukem migrate
+  declare flags in app/features/features.go and list them in All()
+  with the admin panel, toggle them at /admin/_flags
+```
+
+Second run:
+
+```text
+kept app/features/features.go
+kept database/migrations/20261024221158_create_feature_flags_table.go
+```
+
+See [Feature flags](/docs/digging-deeper/feature-flags).
+
+## `vukem install:billing`
+
+Add Stripe subscriptions: plans, Checkout, Billing Portal and a webhook.
+
+```text
+vukem install:billing [flags]
+```
+
+| Flag | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `-force` | bool | `false` | Overwrite existing files. |
+
+**Needs** `install:auth` first. **Writes** the plans config, the billing migration (`add_billing_tables`), `app/controllers/account/billing_page.go`, `resources/views/billing/show.html` (or Inertia pages), `routes/billing.go`, the webhook handler and tests with a fake Stripe API. **Routes**: `GET /billing`, `POST /billing/checkout/{plan}`, `POST /billing/portal`, `POST /stripe/webhook`. Appends `STRIPE_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_BASIC` and `STRIPE_PRICE_PRO` to `.env.example`. Requires `github.com/AlexGalhardo/vukem/contrib/stripe` at the latest release (a `replace` to your checkout when the framework itself is replaced).
+
+| Message | Fix |
+| --- | --- |
+| `install:billing bills the users of install:auth: run vukem install:auth first` | Install auth first. |
+
+```bash
+vukem install:billing
+```
+
+```text
+created app/controllers/account/billing_page.go
+created resources/views/billing/show.html
+created tests/billing_page_test.go
+updated database/migrations/registry.go
+updated routes/registry.go
+
+Billing installed: GET /billing, POST /billing/checkout/{plan}, POST /billing/portal, POST /stripe/webhook. Next:
+
+  vukem migrate
+  stripe sandbox create, then set STRIPE_KEY (a restricted rk_ key) and STRIPE_PRICE_* in .env
+  ...
+```
+
+Output is shortened (some created files are not listed here). See [Billing](/docs/digging-deeper/billing).
+
+## `vukem install:inertia`
+
+Turn the HTMX starter into an Inertia app. It **deletes** the HTMX pages, layouts, partials, components, upload demo and `resources/js/app.ts`, then writes Inertia pages, controllers and tests.
+
+```text
+vukem install:inertia [flags]
+```
+
+| Flag | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `-force` | bool | `false` | **Required.** Confirms the HTMX pages, controllers and tests are replaced. |
+| `-react` | bool | `true` when no other is set | React pages. |
+| `-vue` | bool | `false` | Vue pages. |
+| `-svelte` | bool | `false` | Svelte pages. |
+| `-no-install` | bool | `false` | Skip installing frontend dependencies. |
+
+**Interactions**: `-react`, `-vue` and `-svelte` are exclusive. It adds `vukem.WithInertia(inertia.Config{})` after `vukem.WithVite(...)` in `bootstrap/app.go`, runs `go mod tidy`, then installs the frontend dependencies. It checks that `bootstrap/app.go` can be patched **before** deleting anything: without the `vukem.WithVite(resources.Public())` line it fails and leaves the project untouched.
+
+| Message | Exit | Fix |
+| --- | --- | --- |
+| `usage error: install:inertia replaces the starter's HTMX pages, controllers and tests; run it with --force` | 2 | Commit your work, then add `-force`. |
+| `usage error: choose one of --react, --vue or --svelte` | 2 | Pass one framework flag. |
+| `usage error: no bootstrap/app.go: run vukem install:inertia inside a Vukem project` | 2 | Run it in the project root. |
+| `this project already uses Inertia` | 2 | Nothing to do. |
+
+```bash
+vukem install:inertia
+```
+
+```text
+usage error: install:inertia replaces the starter's HTMX pages, controllers and tests; run it with --force
+Run 'vukem list' for the available commands.
+```
+
+**Advanced**
+
+```bash
+git commit -am "before inertia"
+vukem install:inertia -force -vue -no-install
+```
+
+Switches to Vue and skips `npm install` (run it yourself later). See [Inertia](/docs/frontend/inertia).
+
+## `vukem boost:install`
+
+Prepare the project for AI coding agents, in the style of Laravel Boost.
+
+```text
+vukem boost:install
+```
+
+No flags, no arguments. It is safe to re-run.
+
+- Writes the Vukem guidelines into `AGENTS.md` between `<!-- vukem-boost:start -->` and `<!-- vukem-boost:end -->`. Text outside the markers is kept.
+- Adds `@AGENTS.md` to `CLAUDE.md` and writes skills to `.claude/skills/vukem-*`.
+- Registers the `vukem-boost` MCP server (`go run ./cmd/app boost:mcp`) in `.mcp.json`, and in `.cursor/mcp.json` and `.vscode/mcp.json` when those folders exist.
+
+Every JSON file is checked before anything is written. A broken one stops the command: `.mcp.json is not valid JSON (fix or remove it first)`.
+
+```bash
+vukem boost:install
+```
+
+```text
+Vukem Boost installed: AGENTS.md guidelines, .claude/skills/vukem-*, MCP server vukem-boost.
+```
+
+The server itself is the app command [`boost:mcp`](/docs/cli/reference-runtime#vukem-boostmcp).
