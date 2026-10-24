@@ -132,6 +132,11 @@ tasks:
     cmds:
       - git cliff --config .config/cliff.toml --unreleased --strip all
 
+  snippets:check:
+    desc: 'Fail when a go code block of the site docs uses an API that does not exist (mark fragments nocompile)'
+    cmds:
+      - go run ./internal/tools/snippetcheck
+
   release:
     desc: "Cut a release at the end of a PLAN.md task group: task release -- vX.Y.Z (runs ci:full first)"
     cmds:
@@ -168,6 +173,7 @@ tasks:
       - task: lint
       - task: vet
       - task: mod:check
+      - task: snippets:check
       - task: test
 
   ci:full:
@@ -183,6 +189,7 @@ tasks:
       - task: lint
       - task: vet
       - task: mod:check
+      - task: snippets:check
       - task: test
       - task: test:linux
       - task: services:up

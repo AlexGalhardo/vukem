@@ -342,7 +342,7 @@ func NewSender(
 
 Register the job when the app builds its queue. `vukem.WithJobsFunc` gives you the app's database:
 
-```go title="bootstrap/app.go"
+```go title="bootstrap/app.go" nocompile
 vukem.WithJobsFunc(func(app *vukem.App) []queue.Registration {
 	db, err := app.DB()
 	if err != nil {

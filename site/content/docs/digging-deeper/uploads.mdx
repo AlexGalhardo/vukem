@@ -284,7 +284,7 @@ type Scanner interface {
 
 A 2 GB video over a phone connection will break halfway. With a normal form the user starts again from zero. [tus](https://tus.io/protocols/resumable-upload) is an open protocol for uploads that **resume** where they stopped. `upload.Tus` implements tus 1.0 core with the creation, expiration and termination extensions, so client libraries such as [tus-js-client](https://github.com/tus/tus-js-client) and Uppy work with it.
 
-```go title="routes/uploads.go"
+```go title="routes/uploads.go" nocompile
 // videoRules accept one MP4 or WebM video up to 2 GiB.
 func videoRules() upload.Rules {
 	return upload.Rules{

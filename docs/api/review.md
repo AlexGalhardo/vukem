@@ -87,6 +87,64 @@ Exported identifiers at review time (functions, types, constants, variables and 
 | `webhook` | 4 | HMAC signing and verification middleware |
 | `z` | 174 | Zod-like schemas, issues and codes, struct tags, JSON Schema export |
 
+## Root package decisions (4.1)
+
+Decision for every package directory at the repository root (those with Go files). `internal/`, `contrib/*`, `drivers/*` and `examples/*` are not listed: they are already outside the core's public surface or separate modules. No package was moved; every root package stays **public**, and the reasons below are why none belongs in `internal/` or a `contrib/` module. "Doc" is where an application author learns the package (`site/` = `site/content/docs`); every package also has a package doc comment.
+
+| Package | Decision | Rationale | Doc |
+| --- | --- | --- | --- |
+| `admin` | public | Resource-based admin panel apps build on | `docs/admin.md`, site `digging-deeper/admin` |
+| `api` | public | Typed JSON handlers, the REST contract | `docs/api.md`, site `rest-apis/*` |
+| `apidocs` | public | Serves the OpenAPI reference; apps mount it | `docs/api.md`, site `rest-apis/openapi` |
+| `archive` | public | Safe archive reading for uploads; apps call it directly | **none** (godoc only) |
+| `auth` | public | Authentication, tokens, 2FA | `docs/authentication.md`, site `security/authentication` |
+| `authz` | public | Gates and policies | `docs/authentication.md`, site `security/authorization` |
+| `broadcast` | public | Realtime channel API apps publish to | `docs/frontend.md`, site `digging-deeper/broadcasting` |
+| `cache` | public | Cache interface and stores | `docs/subsystems.md`, site `digging-deeper/cache` |
+| `config` | public | Typed env configuration and `config.Secret` | `docs/configuration.md`, site `getting-started/configuration` |
+| `cpu` | public | Container CPU quota for sizing work; small, stable, useful outside the framework | `docs/subsystems.md` only |
+| `crypt` | public | Encryption and hashing helpers | `docs/security.md`, site `security/encryption` |
+| `csrf` | public | CSRF middleware | `docs/security.md`, site `basics/csrf` |
+| `database` | public | Connection management and transactions | `docs/database.md`, site `database/overview` |
+| `devtools` | public | Dev dashboard apps enable | `docs/devtools.md`, site `digging-deeper/devtools` |
+| `errs` | public | Error values handlers return | `docs/http.md`, site `basics/error-handling` |
+| `events` | public | Event bus | `docs/subsystems.md`, site `digging-deeper/events` |
+| `export` | public | Streamed CSV, JSON and NDJSON downloads | `docs/subsystems.md`, site `digging-deeper/exports` |
+| `factory` | public | Test and seed data factories | `docs/database.md`, site `database/factories-seeders` |
+| `flags` | public | Feature flags | `docs/subsystems.md`, site `digging-deeper/feature-flags` |
+| `htmx` | public | HTMX request and response helpers | `docs/frontend.md`, site `frontend/htmx` |
+| `httpclient` | public | `Safe()` client for user-supplied URLs, required by the security rules | `docs/security-review.md`, site `security/building-blocks` |
+| `i18n` | public | Localization | `docs/subsystems.md`, site `digging-deeper/localization` |
+| `inertia` | public | Inertia adapter | `docs/frontend.md`, site `frontend/inertia` |
+| `logging` | public | Shared `log/slog` handlers (dedup, Telegram) apps wire | site `digging-deeper/telegram-logging` only |
+| `mail` | public | Mailers and templates | `docs/subsystems.md`, site `digging-deeper/mail` |
+| `mediatype` | public | Extensions and labels for types the app produces | **none** (godoc only) |
+| `middleware` | public | Stock middleware | `docs/http.md`, site `basics/middleware` |
+| `openapi` | public | OpenAPI 3.1 document model | `docs/api.md`, site `rest-apis/openapi` |
+| `orm` | public | Generic query builder | `docs/database.md`, site `database/orm` |
+| `queue` | public | Background jobs | `docs/subsystems.md`, site `digging-deeper/queue` |
+| `ratelimit` | public | Rate limiting | `docs/subsystems.md`, site `security/rate-limiting` |
+| `router` | public | Router and groups | `docs/http.md`, site `basics/routing` |
+| `schedule` | public | Scheduler | `docs/subsystems.md`, site `digging-deeper/scheduler` |
+| `schema` | public | Migration schema builder | `docs/database.md`, site `database/migrations` |
+| `security` | public | Security event dispatched for every security decision | `docs/security.md`, site `digging-deeper/events` |
+| `session` | public | Session manager and flash | `docs/http.md`, site `basics/sessions` |
+| `signed` | public | Signed URLs | `docs/security.md`, site `security/signed-urls` |
+| `social` | public | Social login | `docs/authentication.md`, site `security/social-login` |
+| `sse` | public | Server-sent events | `docs/frontend.md`, site `digging-deeper/sse` |
+| `storage` | public | File storage disks | `docs/subsystems.md`, site `digging-deeper/storage` |
+| `ulid` | public | ULID generation for model keys | **none** (mentioned in `docs/database.md`) |
+| `upload` | public | Validated, resumable uploads | `docs/subsystems.md`, site `digging-deeper/uploads` |
+| `uuid` | public | UUID generation for model keys | `docs/database.md` |
+| `view` | public | Template engine | `docs/frontend.md`, site `basics/views` |
+| `vite` | public | Vite asset integration | `docs/frontend.md`, site `frontend/vite` |
+| `vukemtest` | public | Test client and assertions apps use in their own tests | `docs/testing.md`, site `testing/overview` |
+| `web` | public | `Ctx` and the handler contract | `docs/http.md`, site `basics/http-context` |
+| `webhook` | public | Incoming and outgoing webhooks | `docs/billing.md`, site `digging-deeper/webhooks` |
+| `z` | public | Typed schemas | `docs/validation.md`, site `basics/validation` |
+
+Packages without a dedicated page: `archive`, `mediatype`, `ulid` (none), and `cpu`, `logging` (one-line mentions only). Follow-up: add a short section for each to the owning doc (`archive` to `docs/security.md` next to uploads, `mediatype` to `docs/subsystems.md`, `ulid`/`uuid` to `docs/database.md`). `cpu` and `mediatype` have no importers inside the repository; they stay public because they are dependency-free and apps use them directly, but they are the first candidates to revisit before v1.
+
 ## Findings
 
 | Identifier | Issue | Decision | Commit |

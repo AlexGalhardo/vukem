@@ -78,7 +78,7 @@ Open `http://localhost:3000/admin`. Guests are sent to the login page; after you
 
 This is what `install:admin` writes in `routes/admin.go`, trimmed to the important lines:
 
-```go title="routes/admin.go"
+```go title="routes/admin.go" nocompile
 admins := admin.NewAdmins(app.Source.Get("ADMIN_EMAILS"))
 
 // The panel has its own gate, so its policies never mix with the

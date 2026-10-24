@@ -121,7 +121,7 @@ The app starts on SQLite, in the `storage` volume, because the starter registers
 DATABASE_URL=postgres://app:app@postgres:5432/app?sslmode=disable
 ```
 
-```go title="bootstrap/app.go"
+```go title="bootstrap/app.go" nocompile
 import "github.com/AlexGalhardo/vukem/drivers/postgres"
 
 // Inside New, in the base options:
@@ -339,7 +339,7 @@ The namespace is the database service's name on the canvas; change the reference
 
 PostgreSQL needs its driver registered. Add it to the options in `bootstrap/app.go`:
 
-```go title="bootstrap/app.go"
+```go title="bootstrap/app.go" nocompile
 import "github.com/AlexGalhardo/vukem/drivers/postgres"
 
 // Inside New, in the base options:

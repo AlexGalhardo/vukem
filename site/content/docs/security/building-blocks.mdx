@@ -366,7 +366,7 @@ Emit your own from a handler with `web.SecurityEvent(c.Request(), "billing.card_
 
 Routine records that are not attacks ("an admin recorded a payout", "a role was granted") go through `web.AuditEvent` instead, so they do not drown the security alerts. It logs at `INFO` with message `audit event` and the same envelope (`event`, `method`, `path`, `request_id`), and dispatches a `security.Audit`: the fields of `security.Event`, but a distinct type, so a listener for `security.Event` never sees audit records.
 
-```go title="app/controllers/admin/payouts.go"
+```go title="app/controllers/admin/payouts.go" nocompile
 web.AuditEvent(c.Request(), "payout.recorded",
 	"actor_id", admin.AuthID(), "payout_id", p.ID)
 ```

@@ -262,7 +262,7 @@ Calling `r.URL` compiles the router (see [below](#compiling-and-checking-routes)
 
 Groups share three things among their routes: a path prefix, a name prefix and middleware. The blog keeps its back office under `/admin`:
 
-```go title="routes/web.go"
+```go title="routes/web.go" nocompile
 r.Group("/admin", func(g *router.Group) {
 	g.Use(appmw.RequireAdmin(app.Source.Get("ADMIN_TOKEN")))
 

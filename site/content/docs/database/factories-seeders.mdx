@@ -351,7 +351,7 @@ func All() []vukem.Seeder {
 }
 ```
 
-```go title="bootstrap/app.go"
+```go title="bootstrap/app.go" nocompile
 vukem.WithSeeders(seeders.All()...),
 ```
 
@@ -397,7 +397,7 @@ func DemoUsers() vukem.AppSeeder {
 }
 ```
 
-```go title="bootstrap/app.go"
+```go title="bootstrap/app.go" nocompile
 vukem.WithSeeders(seeders.All()...),
 vukem.WithAppSeeders(seeders.DemoUsers()),
 ```
@@ -525,7 +525,7 @@ func (s *DemoCatalog) SeedApp(ctx context.Context, app *vukem.App) error {
 }
 ```
 
-```go title="bootstrap/app.go"
+```go title="bootstrap/app.go" nocompile
 vukem.WithAppSeeders(&seeders.DemoCatalog{}),
 ```
 
