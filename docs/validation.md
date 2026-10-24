@@ -239,6 +239,7 @@ The table above is checked against the implementation by `TestTagRules_Documente
 | Query string | `web.ParseQuery(c, schema)` |
 | Route params | `web.ParseParams(c, schema, "id")` (invalid params → 404) |
 | Config / env | `config.Load[T]` + `z.For[T]().Check(cfg)` at boot |
+| A typed value that must also be cleaned | `schema.Normalize(v)` returns it with `Trim`, defaults and `Transform` applied (`Check` only validates) |
 | Queue payloads | job schemas checked on dispatch and on execution (BETA) |
 | Outgoing JSON | `web.JSONWith(c, status, schema, v)`; outside production a contract violation is logged and answered with 500 instead of sending bad data |
 | Inertia props | `inertia.Render` checks props against the page schema when registered (BETA) |

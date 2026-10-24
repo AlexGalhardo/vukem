@@ -502,8 +502,25 @@ func (s StructSchema[T]) Field(key string) (reflect.StructField, bool) {
 // Parse implements Schema.
 func (s StructSchema[T]) Parse(in any) (T, error) { return parseRoot[T](s, in) }
 
-// Check implements Schema.
+// Check implements Schema. It validates v as it stands: the pre-steps run
+// inside the check, but nothing is returned, so Trim, Default and Transform
+// do not change v. Use [StructSchema.Normalize] to get the transformed value.
 func (s StructSchema[T]) Check(v T) error { return checkValue(s, v) }
+
+// Normalize validates v like Parse does for decoded input and returns the
+// result with the pre-steps (Trim, ToLower, Preprocess), defaults and
+// transforms applied. v goes through its JSON form, so fields tagged
+// omitempty or "-" are seen as absent.
+func (s StructSchema[T]) Normalize(v T) (T, error) {
+	in, err := normalizeValue(v)
+	if err != nil {
+		var zero T
+
+		return zero, fmt.Errorf("z: normalize: %w", err)
+	}
+
+	return parseRoot[T](s, in)
+}
 
 // toMap converts a struct value back to generic input for re-validation.
 func toMap(v any) any {

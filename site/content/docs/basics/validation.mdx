@@ -563,7 +563,7 @@ On a number or a list, "empty" is the zero value, and skipping the rules for it 
 | Route parameters | `web.ParseParams(c, schema, "post")`: invalid parameters answer **404**, since a malformed id names no resource |
 | A map you assembled | `web.ParseMap(c, schema, m)` (`web.ParseInput(schema, m)` outside a request) |
 | Any `io.Reader` of JSON (an upstream API) | `z.ParseJSON(r, schema)`: invalid JSON is one `invalid_type` issue, "The value must be valid JSON." |
-| A value you already have | `schema.Parse(v)` or, for typed values, `schema.Check(v)` |
+| A value you already have | `schema.Parse(v)` or, for typed values, `schema.Check(v)` (validates only) or `schema.Normalize(v)` (also returns the value with `Trim`, defaults and `Transform` applied) |
 | Outgoing JSON | `web.JSONWith(c, status, schema, v)` |
 
 `web.JSONWith` checks the value you are about to send when `Services.CheckResponses` is on, which the app does outside production. A mismatch is a server bug: it is answered with a 500 (and logged) instead of sending data that breaks your API contract. In production the check is skipped.
