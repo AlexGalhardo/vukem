@@ -9,3 +9,12 @@ func All() []vukem.Seeder {
 		UsersSeeder{},
 	}
 }
+
+// AllApp lists the seeders that receive the booted App, run by vukem db:seed
+// in option order; make:seeder --app appends here. Register it with
+// vukem.WithAppSeeders(seeders.AllApp()...).
+func AllApp() []vukem.AppSeeder {
+	return []vukem.AppSeeder{
+		ReportsSeeder{},
+	}
+}

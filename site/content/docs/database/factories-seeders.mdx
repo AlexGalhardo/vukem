@@ -401,6 +401,12 @@ vukem.WithSeeders(seeders.All()...),
 vukem.WithAppSeeders(seeders.DemoUsers()),
 ```
 
+`vukem make:seeder Reports --app` generates this kind for you: a `ReportsSeeder` with a `SeedApp(ctx, app)` method in `database/seeders/reports_seeder.go`, appended to an `AllApp()` function it adds to `database/seeders/registry.go` when missing. The command then reminds you to pass it to the app:
+
+```go title="bootstrap/app.go"
+vukem.WithAppSeeders(seeders.AllApp()...),
+```
+
 | Type | Signature | Register with |
 | --- | --- | --- |
 | `vukem.Seeder` | `Seed(ctx, db *database.DB) error` | `vukem.WithSeeders` |
