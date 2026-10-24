@@ -15,6 +15,48 @@
 
 Vukem is a complete Model-View-Controller (MVC) web framework for Go built on `net/http` and the `standard library` to build APIs and FullStack Web Applications.
 
+## Highlights
+
+Six things that make Vukem different, each shown with the real `vukem` CLI.
+
+### 1. A typed JSON API in one command
+
+`vukem new shop --api` writes a working JSON-only API: API tokens, a posts resource, RFC 9457 problem+json errors, CORS, rate limits and tests. Typed handlers, OpenAPI 3.1 and a Scalar reference are opt-in. Migrate, seed and call it.
+
+![vukem new --api: migrate, seed, serve and curl the posts endpoint](docs/media/new-api.gif)
+
+### 2. A full-stack HTMX app
+
+Server-rendered `html/template` views, HTMX 4, Vite and Tailwind CSS v4, sessions, CSRF protection and a migration, from one command. Every route is named and listed by `vukem route:list`.
+
+![vukem new with the HTMX starter, then route:list](docs/media/new-htmx.gif)
+
+### 3. Inertia with React, Vue or Svelte
+
+`vukem new app --inertia react` gives you Inertia pages, shared props, SSR and a typed client without a separate API layer.
+
+![vukem new --inertia react and the generated resources/js tree](docs/media/new-inertia-react.gif)
+
+### 4. Tested by default, secure by default
+
+The framework ships with a large test suite, including one `TestSecurity_*` test for every secure default, and `vukemtest` gives your own app an in-process client with fluent assertions.
+
+![go test across router, web, orm, z, auth, cache and more, all passing](docs/media/tests.gif)
+
+### 5. Migrations, seeders and factories
+
+Generate a model with its migration and factory, add seeders (plain or app-aware with `--app`), then `vukem migrate` and `vukem db:seed`.
+
+![make:model, make:seeder, migrate and db:seed](docs/media/seeds-migrations.gif)
+
+### 6. Generators that write code you own
+
+Controllers, form requests, resources, jobs, mail and more. The generated files are ordinary Go that you read and edit; there is no hidden runtime.
+
+![make:controller, make:request and route:list](docs/media/scaffold.gif)
+
+Every command, flag and example is in the [CLI reference](https://vukem.dev/docs/cli/reference).
+
 ## Summary
 
 | Area | What you get |
@@ -43,9 +85,11 @@ Vukem is a complete Model-View-Controller (MVC) web framework for Go built on `n
 
 ## Showcase
 
-Three open-source reference apps are built with Vukem and run in production on Railway. Each one is a complete product, not a demo page: read their code to see how the pieces fit together ([details](https://vukem.dev/docs/showcase)).
+Four open-source reference apps are built with Vukem and run live. Each one is a complete product, not a demo page: read their code to see how the pieces fit together ([details](https://vukem.dev/docs/showcase)).
 
 ### Go Quiz
+
+[![Go Quiz: answer a question and read why each alternative is right or wrong](https://raw.githubusercontent.com/AlexGalhardo/vukem-golang-quiz-htmx/main/docs/media/answer-with-explanation.gif)](https://github.com/AlexGalhardo/vukem-golang-quiz-htmx)
 
 A Go interview trainer with 130+ questions in English and Brazilian Portuguese, from very easy to very hard. You answer one question at a time, get an explanation of why each of the five alternatives is right or wrong, with sources, and track your accuracy per difficulty. There are no accounts: progress stays in your browser.
 
@@ -55,6 +99,8 @@ A Go interview trainer with 130+ questions in English and Brazilian Portuguese, 
 
 ### Rifa
 
+[![Rifa: a buyer picks a number and goes to the PIX payment](https://raw.githubusercontent.com/AlexGalhardo/vukem-rifa-vuejs/main/docs/media/public-checkout.gif)](https://github.com/AlexGalhardo/vukem-rifa-vuejs)
+
 A Brazilian raffle platform. Owners create raffles with 10 to 1000 numbers, generate a 10-minute payment link for each buyer, and get paid by PIX; the draw runs automatically at the end date or when every number is sold. Payments split 90% to the owner and 10% to the platform through a ledger with manual payouts.
 
 - **Stack**: Inertia v3 + Vue, PostgreSQL, Tailwind CSS v4.
@@ -63,11 +109,23 @@ A Brazilian raffle platform. Owners create raffles with 10 to 1000 numbers, gene
 
 ### Marketplace
 
+[![Marketplace: searching products](https://raw.githubusercontent.com/AlexGalhardo/vukem-marketplace-reactjs/main/docs/media/search.gif)](https://github.com/AlexGalhardo/vukem-marketplace-reactjs)
+
 A multi-seller marketplace inspired by the big Latin American e-commerce sites. Sellers open shops and list products with images; buyers search, fill a cart, calculate freight by CEP and pay by card or PIX, and sellers receive their share through Stripe Connect.
 
 - **Stack**: Inertia v3 + React + Base UI, PostgreSQL, Redis, MongoDB, S3-compatible storage, Tailwind CSS v4.
 - **Shows**: TOTP two-factor auth, Google login, Stripe Connect and PIX, ViaCEP, REST, GraphQL and gRPC on one domain model, queues and SSE, seller webhooks, OpenTelemetry and Telegram logging.
 - **Links**: [live](https://marketplace.vukem.dev) · [source](https://github.com/AlexGalhardo/vukem-marketplace-reactjs)
+
+### Vukem Tools
+
+[![Vukem Tools: convert pixel art to SVG](https://raw.githubusercontent.com/AlexGalhardo/vukem-tools/main/docs/media/pixel-art-to-svg.gif)](https://github.com/AlexGalhardo/vukem-tools)
+
+A self-hosted file toolbox in a single Go binary: convert, compress and optimise images, video, audio and documents, download videos, turn pixel art into SVG, and use developer tools such as a JSON formatter, a text diff and CPF/CNPJ helpers. Long conversions run as queued jobs with live progress.
+
+- **Stack**: Inertia v3 + React + Base UI, PostgreSQL, Tailwind CSS v4, external engines (ffmpeg, libvips, Ghostscript and others) driven as subprocesses.
+- **Shows**: queue jobs with progress over Server-Sent Events, streaming uploads, accounts and per-user limits, a Telegram bot on the same API.
+- **Links**: [live](https://tools.vukem.dev) · [source](https://github.com/AlexGalhardo/vukem-tools)
 
 ## Why MVC and not Hexagonal/Clean Architecture?
 
