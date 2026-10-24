@@ -17,4 +17,4 @@ paths:
 - Windows 11 is a first-class target: `filepath` for OS paths, close files/roots/DB handles before deleting (use `t.Cleanup`), accept CRLF input, no `sh`/`bash` in code paths, no cgo (see docs/architecture.md#platform-support).
 - Comment only the *why*; known limits use `// shortcut: <limit>, <when to upgrade>`.
 - Deprecated wrappers use `//go:fix inline`; name their parameters differently from common caller variables (`bundle`, `config`): an inliner argument swap was reported when a parameter name matches a caller's argument name (v0.26.0, B2; not reproduced on Go 1.27.2) — run `go run ./internal/tools/fixinline` (part of `task vet` and CI).
-- Root package code goes into the matching theme file (`app.go`, `http.go`, `database.go`, `background.go`, `services.go`, `command.go`, `codegen.go`), not a new root file.
+- Root package code goes into the matching theme file (`app.go`, `options_*.go`, `boot.go`, `serve.go`, `validate_config.go`, `providers.go`, `instrument.go`, `http.go`, `database.go`, `background.go`, `services.go`, `command.go`, `codegen.go`), not a new root file.

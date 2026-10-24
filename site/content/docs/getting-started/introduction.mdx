@@ -9,8 +9,6 @@ You will learn:
 
 - what a web framework does, and what Vukem adds on top of Go
 - the ideas that shape Vukem (standard library first, no magic, typed end to end)
-- what a Vukem handler looks like
-- which features are available today
 - where to go next, depending on what you know
 
 ## What a web framework does
@@ -45,62 +43,6 @@ A straightforward translation of a C++ or Java program into Go is unlikely to pr
 </Quote>
 
 Vukem follows that advice: it borrows the productivity of [Laravel](https://laravel.com) and [AdonisJS](https://adonisjs.com), but the code you write is idiomatic Go.
-
-## A taste
-
-A handler is a function that receives a `*web.Ctx` (the request and the response, together) and returns an `error`. When it returns an error, a central error handler turns it into the right response for whoever asked: an HTML page for a browser, a redirect with the form errors flashed to the session, or problem+json for an API client.
-
-```go title="app/controllers/task_controller.go"
-// Edit shows the edit form: GET /tasks/{task}/edit.
-func (tc *TaskController) Edit(c *web.Ctx) error {
-	// A non-numeric id such as /tasks/abc/edit becomes 404.
-	id, err := c.ParamInt("task")
-	if err != nil {
-		return err
-	}
-
-	// orm.ErrNotFound also becomes 404, by content negotiation.
-	task, err := orm.QueryOf[models.Task](tc.db).Find(c.Context(), id)
-	if err != nil {
-		return err
-	}
-
-	return c.Render("tasks/edit", task)
-}
-```
-
-```go title="routes/web.go"
-// One line registers index, store, edit, update and destroy
-// routes, named tasks.index, tasks.store, and so on.
-r.Resource("tasks", controllers.NewTaskController(db))
-```
-
-You will build this exact controller, step by step, in [Your first app](/docs/first-app).
-
-<Callout type="info">
-Do not worry if `*web.Ctx`, `error` or `[models.Task]` look strange. The [Prerequisites](/docs/prerequisites) page explains every Go concept the docs use, with small programs you can run.
-</Callout>
-
-## What works today
-
-Vukem is at `v0.27.0`. The Prototype (`v0.1`) and ALPHA (`v0.2`–`v0.13`) phases are complete, and every BETA feature has shipped (`v0.14`–`v0.20`); BETA is in stabilisation before `v1.0.0`.
-
-| Area | Status |
-| --- | --- |
-| Configuration, [application lifecycle](/docs/architecture/lifecycle), [router](/docs/basics/routing), [`*web.Ctx`](/docs/basics/http-context), [middleware](/docs/basics/middleware), problem+json [errors](/docs/basics/error-handling) | Available |
-| [Validation](/docs/basics/validation) with `z`, [sessions](/docs/basics/sessions), [CSRF](/docs/basics/csrf), `html/template` [views](/docs/basics/views), [htmx 4](/docs/frontend/htmx) helpers | Available |
-| SQLite and [PostgreSQL](/docs/database/overview#postgresql), generic [ORM](/docs/database/orm), [relations](/docs/database/relations), [migrations](/docs/database/migrations), [factories and seeders](/docs/database/factories-seeders) | Available |
-| [REST toolkit](/docs/rest-apis/overview): `vukem new --api`, `install:api`, [pagination and query conventions](/docs/rest-apis/pagination), [rate limiting](/docs/security/rate-limiting), CORS | Available |
-| [Authentication](/docs/security/authentication) (session and token guards, `install:auth`), [social login](/docs/security/social-login), [authorization](/docs/security/authorization) | Available |
-| [Mail](/docs/digging-deeper/mail) (SMTP, Resend), [cache](/docs/digging-deeper/cache), [storage](/docs/digging-deeper/storage), [events](/docs/digging-deeper/events), [Telegram logging](/docs/digging-deeper/telegram-logging) | Available |
-| [Security building blocks](/docs/security/building-blocks): SSRF-safe client, signed URLs, webhook signatures, security events | Available |
-| [`vukemtest`](/docs/testing/overview) and the [`vukem` CLI](/docs/cli/overview) | Available |
-| [Typed handlers](/docs/rest-apis/typed-handlers), [OpenAPI 3.1, TypeScript/Zod types and the Scalar API reference](/docs/rest-apis/openapi), [idempotency keys](/docs/rest-apis/idempotency) | Available |
-| [Queues](/docs/digging-deeper/queue) (sync, memory, database, Redis), [task scheduling](/docs/digging-deeper/scheduler), [Redis](/docs/database/redis), [MongoDB](/docs/database/mongodb) | Available |
-| [Starters](/docs/starters): HTMX on [Vite](/docs/frontend/vite) + Tailwind CSS v4, templ, [Inertia](/docs/frontend/inertia) (React, Vue, Svelte), API | Available |
-| [Localization](/docs/digging-deeper/localization), [server-sent events](/docs/digging-deeper/sse), [encryption](/docs/security/encryption), [MySQL/MariaDB](/docs/database/overview#mysql-and-mariadb), [S3](/docs/digging-deeper/storage#s3), [file uploads](/docs/digging-deeper/uploads) (streaming, tus, direct-to-bucket) | Available |
-| [GraphQL](/docs/rest-apis/graphql), [WebSockets and broadcasting](/docs/digging-deeper/broadcasting), [gRPC](/docs/rest-apis/grpc) (connect-go), [typed API clients](/docs/rest-apis/client-generation) | Available |
-| [Admin panel](/docs/digging-deeper/admin), [dev dashboard](/docs/digging-deeper/devtools), [JWT](/docs/security/jwt), [two-factor](/docs/security/two-factor), [Stripe billing](/docs/digging-deeper/billing) | Available |
 
 ## See it in production
 

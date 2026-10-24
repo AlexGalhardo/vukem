@@ -108,7 +108,7 @@ The template lives in `.config/cliff.toml` (git-cliff is called with `--config .
 2. `go run ./internal/tools/release -push vX.Y.Z` (or `task release -- vX.Y.Z`, which runs `task ci:full` first) once GitHub Actions is green for the pushed commits:
    - requires a clean tree on `main`;
    - generates the version's section with git-cliff and inserts it below `[Unreleased]` in `CHANGELOG.md` (Keep a Changelog 1.1.0; released sections are never edited);
-   - rewrites the "Last release" and "Updated" rows of the [PLAN.md](PLAN.md#status) status table in the same commit;
+   - rewrites the "Updated" row of the [PLAN.md](PLAN.md#status) status table in the same commit;
    - commits `chore(release): vX.Y.Z`, creates an annotated tag, pushes `main` and the tag as two separate pushes (see [Tag pushes](#tag-pushes));
    - publishes a GitHub release whose notes are that changelog section (`v0.x` and pre-releases are marked pre-release), and **refuses to publish an empty body**: a release with an empty body is indistinguishable from a successful one, so an extraction that silently returns nothing fails the command instead.
    - with `-push`, once the tag is pushed, raises the `github.com/AlexGalhardo/vukem` requirement of every `contrib/*`, `drivers/*` and `examples/*` module to the released version (a `v0.0.0` placeholder is left alone), runs `GOWORK=off go mod tidy` in each changed module and pushes a follow-up `chore(deps): require vukem vX.Y.Z in nested modules` commit. It runs after the push because `go.sum` needs the version to resolve from the module proxy; `task mod:check` verifies the result.
@@ -169,7 +169,7 @@ The regex form that used to be copied between the apps, `'$0 ~ "^## \[" v "\]"'`
 ### Verifying a release
 
 ```sh
-VERSION=v0.30.0 # the release tag
+VERSION=vX.Y.Z # the release tag
 ARCHIVE="vukem_${VERSION#v}_linux_amd64.tar.gz"
 gh release download "$VERSION" -R AlexGalhardo/vukem \
   -p checksums.txt -p checksums.txt.sigstore.json -p "$ARCHIVE" -p "$ARCHIVE.sbom.json"

@@ -112,7 +112,7 @@ func run(args []string, out io.Writer) error {
 	}
 
 	if !*noCommit {
-		if err := bumpPlanFile(version); err != nil {
+		if err := bumpPlanFile(); err != nil {
 			return err
 		}
 	}
@@ -158,7 +158,7 @@ func run(args []string, out io.Writer) error {
 	return nil
 }
 
-func bumpPlanFile(version string) error {
+func bumpPlanFile() error {
 	const path = "docs/PLAN.md"
 
 	plan, err := os.ReadFile(path)
@@ -166,7 +166,7 @@ func bumpPlanFile(version string) error {
 		return err
 	}
 
-	updated, err := updatePlanStatus(string(plan), version, time.Now().Format(time.DateOnly))
+	updated, err := updatePlanStatus(string(plan), time.Now().Format(time.DateOnly))
 	if err != nil {
 		return err
 	}

@@ -255,7 +255,7 @@ vukem.WithTelegram(func(c *telegram.Config) {
 
 `middleware.Recover` adds `panic=true` to the `ERROR` record it logs for a recovered panic, so a `Filter` can tell panics from other errors. To send panics to their own chat, use a second handler that only accepts them (see [Using the handler without vukem.New](#using-the-handler-without-vukemnew)) and negate the same test in the main handler's `Filter`:
 
-```go title="cmd/worker/main.go"
+```go title="cmd/worker/main.go" nocompile
 func isPanic(r slog.Record) bool {
 	found := false
 	r.Attrs(func(a slog.Attr) bool {

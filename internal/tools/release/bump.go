@@ -13,21 +13,18 @@ import (
 const corePath = "github.com/AlexGalhardo/vukem"
 
 var (
-	lastReleaseRe = regexp.MustCompile(`(?m)^(\| Last release \| )` + "`v[^`]+`")
-	updatedRe     = regexp.MustCompile(`(?m)^(\| Updated \| )\d{4}-\d{2}-\d{2}`)
-	requireRe     = regexp.MustCompile(
+	updatedRe = regexp.MustCompile(`(?m)^(\| Updated \| )\d{4}-\d{2}-\d{2}`)
+	requireRe = regexp.MustCompile(
 		`(?m)^(\s*(?:require\s+)?` + regexp.QuoteMeta(corePath) + `\s+)(v\d+\.\d+\.\d+[0-9A-Za-z.-]*)`,
 	)
 )
 
-// updatePlanStatus rewrites the "Last release" and "Updated" rows of the
-// PLAN.md status table, leaving the "(signed ...)" suffix untouched.
-func updatePlanStatus(plan, version, date string) (string, error) {
-	if !lastReleaseRe.MatchString(plan) || !updatedRe.MatchString(plan) {
-		return "", errors.New("PLAN.md status table has no \"Last release\" and \"Updated\" rows")
+// updatePlanStatus rewrites the "Updated" row of the PLAN.md status table.
+// The table never names a release: docs do not cite the current version.
+func updatePlanStatus(plan, date string) (string, error) {
+	if !updatedRe.MatchString(plan) {
+		return "", errors.New("PLAN.md status table has no \"Updated\" row")
 	}
-
-	plan = lastReleaseRe.ReplaceAllString(plan, "${1}`"+version+"`")
 
 	return updatedRe.ReplaceAllString(plan, "${1}"+date), nil
 }

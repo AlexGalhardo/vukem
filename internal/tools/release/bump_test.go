@@ -8,19 +8,19 @@ import (
 )
 
 func TestUpdatePlanStatus(t *testing.T) {
-	plan := "| Next task | `B.5.1` |\n| Last release | `v0.20.1` (signed with cosign) |\n| Updated | 2026-10-17 |\n"
+	plan := "| Next task | `B.5.1` |\n| Updated | 2026-10-17 |\n"
 
-	got, err := updatePlanStatus(plan, "v0.31.0", "2026-11-01")
+	got, err := updatePlanStatus(plan, "2026-11-01")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	want := "| Next task | `B.5.1` |\n| Last release | `v0.31.0` (signed with cosign) |\n| Updated | 2026-11-01 |\n"
+	want := "| Next task | `B.5.1` |\n| Updated | 2026-11-01 |\n"
 	if got != want {
 		t.Errorf("got:\n%s\nwant:\n%s", got, want)
 	}
 
-	if _, err := updatePlanStatus("no table", "v0.31.0", "2026-11-01"); err == nil {
+	if _, err := updatePlanStatus("no table", "2026-11-01"); err == nil {
 		t.Error("expected an error without status rows")
 	}
 }
