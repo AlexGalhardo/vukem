@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/AlexGalhardo/vukem/auth"
-	"github.com/AlexGalhardo/vukem/ratelimit"
 	"github.com/AlexGalhardo/vukem/web"
 
 	"{{.Module}}/app/accounts"
@@ -25,25 +24,6 @@ type Handlers struct {
 // New returns the handlers.
 func New(a *accounts.Accounts) *Handlers { return &Handlers{a: a} }
 
-// LoginThrottleKey limits login attempts per email and IP.
-func LoginThrottleKey(r *http.Request) string {
-	if r.Method != http.MethodPost {
-		return ""
-	}
-
-	return "login:" + loginEmail(r) + ":" + ratelimit.ByIP(r)
-}
-
-// LoginAccountThrottleKey limits login attempts per email from any IP, so
-// many addresses cannot share the guessing budget of one account.
-func LoginAccountThrottleKey(r *http.Request) string {
-	if r.Method != http.MethodPost {
-		return ""
-	}
-
-	return "login-account:" + loginEmail(r)
-}
-
 // RegisterThrottleKey limits sign-ups per address. It keys on a hash of
 // the normalized email, so the limiter store holds no addresses.
 func RegisterThrottleKey(r *http.Request) string {
@@ -56,11 +36,8 @@ func RegisterThrottleKey(r *http.Request) string {
 	return "register:" + hex.EncodeToString(sum[:])
 }
 
-// loginEmail normalizes the email like LoginSchema (trimmed, lower case):
-// " a@b.co" and "A@b.co " are the same account and the same bucket.
-func loginEmail(r *http.Request) string {
-	return strings.ToLower(strings.TrimSpace(r.PostFormValue("email")))
-}
+// loginEmail is the normalized email of the request, shared with the login throttle.
+func loginEmail(r *http.Request) string { return auth.RequestEmail(r, "email") }
 
 // ShowLogin renders the login form.
 func (*Handlers) ShowLogin(c *web.Ctx) error { return c.Render("auth/login", nil) }

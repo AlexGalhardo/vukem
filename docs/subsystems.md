@@ -345,7 +345,8 @@ err := app.Events.Dispatch(ctx, events.OrderShipped{OrderID: 42})
 
 ```go
 limiters, err := app.RateLimiters() // RATE_LIMIT_STORE=memory (default) or cache
-login := ratelimit.Middleware(limiters("login", 5, time.Minute), account.LoginThrottleKey)
+loginIP, _ := auth.ThrottleKeys("email") // per email and IP; the second key is per email only
+login := ratelimit.Middleware(limiters("login", 5, time.Minute), loginIP)
 r.Post("/login", h.Login).Use(login)
 ```
 

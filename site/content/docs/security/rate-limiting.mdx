@@ -157,6 +157,17 @@ throttle := ratelimit.Middleware(
 )
 ```
 
+You do not have to write this one: `auth.ThrottleKeys("email")` returns the ready-made pair the `install:auth` scaffolds use, reading the email from a form or JSON body:
+
+```go title="routes/auth.go"
+loginIP, loginAccount := auth.ThrottleKeys("email")
+
+throttle := ratelimit.Middleware(limiters("login", 5, time.Minute), loginIP)
+perAccount := ratelimit.Middleware(limiters("login.account", 20, 10*time.Minute), loginAccount)
+```
+
+`loginIP` counts per email and IP; `loginAccount` counts per email from any IP, so many addresses cannot share the guessing budget of one account. Both return `""` for anything but `POST`.
+
 Rules for a custom key:
 
 - **Normalize what you key by.** Trim and lower-case an email, or `Ana@Example.com` and `ana@example.com ` get separate budgets.

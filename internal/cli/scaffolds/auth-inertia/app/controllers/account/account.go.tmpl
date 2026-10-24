@@ -4,17 +4,13 @@
 package account
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
-	"io"
 	"net/http"
 	"strings"
 
 	"github.com/AlexGalhardo/vukem/auth"
 	"github.com/AlexGalhardo/vukem/inertia"
-	"github.com/AlexGalhardo/vukem/ratelimit"
 	"github.com/AlexGalhardo/vukem/web"
 
 	"{{.Module}}/app/accounts"
@@ -29,25 +25,6 @@ type Handlers struct {
 // New returns the handlers.
 func New(a *accounts.Accounts) *Handlers { return &Handlers{a: a} }
 
-// LoginThrottleKey limits login attempts per email and IP.
-func LoginThrottleKey(r *http.Request) string {
-	if r.Method != http.MethodPost {
-		return ""
-	}
-
-	return "login:" + loginEmail(r) + ":" + ratelimit.ByIP(r)
-}
-
-// LoginAccountThrottleKey limits login attempts per email from any IP, so
-// many addresses cannot share the guessing budget of one account.
-func LoginAccountThrottleKey(r *http.Request) string {
-	if r.Method != http.MethodPost {
-		return ""
-	}
-
-	return "login-account:" + loginEmail(r)
-}
-
 // RegisterThrottleKey limits sign-ups per address. It keys on a hash of
 // the normalized email, so the limiter store holds no addresses.
 func RegisterThrottleKey(r *http.Request) string {
@@ -60,28 +37,8 @@ func RegisterThrottleKey(r *http.Request) string {
 	return "register:" + hex.EncodeToString(sum[:])
 }
 
-// loginEmail normalizes the email like LoginSchema (trimmed, lower case),
-// so " a@b.co" and "A@b.co " share a bucket. Inertia posts JSON, so the
-// email is read from a JSON body as well as from a form.
-func loginEmail(r *http.Request) string {
-	email := r.PostFormValue("email")
-
-	if email == "" && strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
-		body, err := io.ReadAll(io.LimitReader(r.Body, 64<<10))
-		if err == nil {
-			var in struct {
-				Email string `json:"email"`
-			}
-
-			_ = json.Unmarshal(body, &in)
-			email = in.Email
-		}
-
-		r.Body = io.NopCloser(bytes.NewReader(body))
-	}
-
-	return strings.ToLower(strings.TrimSpace(email))
-}
+// loginEmail is the normalized email of the request, shared with the login throttle.
+func loginEmail(r *http.Request) string { return auth.RequestEmail(r, "email") }
 
 // ShowLogin renders the login page.
 func (*Handlers) ShowLogin(c *web.Ctx) error { return inertia.Render(c, "Auth/Login", nil) }

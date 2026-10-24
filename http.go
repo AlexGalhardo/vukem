@@ -1050,7 +1050,8 @@ func WithRateLimiters(f ratelimit.Factory) Option {
 // RATE_LIMIT_STORE, so switching to a shared store needs no code change:
 //
 //	limiters, err := app.RateLimiters()
-//	login := ratelimit.Middleware(limiters("login", 5, time.Minute), account.LoginThrottleKey)
+//	loginIP, _ := auth.ThrottleKeys("email")
+//	login := ratelimit.Middleware(limiters("login", 5, time.Minute), loginIP)
 //
 // An unknown store is an error, not a silent fallback to memory, and so
 // is RATE_LIMIT_STORE=cache over a store [cache.Shared] does not report

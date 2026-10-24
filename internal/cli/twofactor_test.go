@@ -225,16 +225,18 @@ func TestSecurity_A07_AuthScaffoldDefaults(t *testing.T) {
 			"tokens.RevokeAll(ctx, id)",
 		},
 		"scaffolds/auth-web/app/controllers/account/account.go.tmpl": {
-			"strings.ToLower(strings.TrimSpace(r.PostFormValue(\"email\")))",
+			`auth.RequestEmail(r, "email")`,
 		},
 		"scaffolds/auth-inertia/app/controllers/account/account.go.tmpl": {
-			"strings.ToLower(strings.TrimSpace(email))",
+			`auth.RequestEmail(r, "email")`,
 		},
 		"scaffolds/auth-web/routes/auth.go.tmpl": {
+			`auth.ThrottleKeys("email")`,
 			`r.Post("/login", h.Login).Use(guest, throttle, perAccount)`,
 			`h.SendResetLink).Name("password.email").Use(guest, mails)`,
 		},
 		"scaffolds/auth-inertia/routes/auth.go.tmpl": {
+			`auth.ThrottleKeys("email")`,
 			`r.Post("/login", h.Login).Use(guest, throttle, perAccount)`,
 		},
 	}

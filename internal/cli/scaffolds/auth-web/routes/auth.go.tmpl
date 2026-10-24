@@ -32,8 +32,9 @@ func Auth(r *router.Router, app *vukem.App) error {
 	// Signed-in pages also need a verified email; unverified users are sent
 	// to the verification notice.
 	verified := auth.Verified(acc.Web)
-	throttle := ratelimit.Middleware(limiters("login", 5, time.Minute), account.LoginThrottleKey)
-	perAccount := ratelimit.Middleware(limiters("login.account", 20, 10*time.Minute), account.LoginAccountThrottleKey)
+	loginIP, loginAccount := auth.ThrottleKeys("email")
+	throttle := ratelimit.Middleware(limiters("login", 5, time.Minute), loginIP)
+	perAccount := ratelimit.Middleware(limiters("login.account", 20, 10*time.Minute), loginAccount)
 	mails := ratelimit.Middleware(limiters("mails", 3, time.Minute), ratelimit.ByIP)
 	// Sign-up queues a mail: limit it per IP and per address. The limits count
 	// requests, not accounts, so they answer alike for new and existing emails.
