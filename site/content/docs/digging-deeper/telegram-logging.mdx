@@ -239,7 +239,7 @@ Each HTTP request is bounded by `Timeout` (5 seconds by default) and the whole c
 
 `MinLevel` is a blunt tool. `Filter` lets you choose records one by one. It receives the [`context.Context`](https://pkg.go.dev/context) and the `slog.Record`, and returns `true` to forward it. Set it with `vukem.WithTelegram`, which edits the config after the environment is read:
 
-```go title="bootstrap/app.go"
+```go title="bootstrap/app.go" nocompile
 vukem.WithTelegram(func(c *telegram.Config) {
 	// Only records that carry an "alert" attribute reach the chat.
 	c.Filter = func(_ context.Context, r slog.Record) bool {
@@ -274,7 +274,7 @@ Telegram answers HTTP 429 when you send too fast, with a `retry_after` in second
 
 You may log the error through the app logger, which also feeds this handler. That cannot loop: records logged while `OnError` runs, and records whose attributes hold an error `OnError` received, are never forwarded. `OnError` calls never overlap; a report that arrives while one runs is dropped.
 
-```go title="bootstrap/app.go"
+```go title="bootstrap/app.go" nocompile
 vukem.WithTelegram(func(c *telegram.Config) {
 	c.OnError = func(err error) {
 		// Safe: this record is not sent back to Telegram.

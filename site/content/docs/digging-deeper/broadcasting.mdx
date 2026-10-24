@@ -286,7 +286,7 @@ You often already dispatch a domain event on the [event bus](/docs/digging-deepe
 | `broadcast.ListenerAsync[E](b)` | in the background | the bus logs it |
 | `broadcast.Queued[E](b, kind, opts...)` | in a [queue](/docs/digging-deeper/queue) job named `kind` | the queue retries it; it survives restarts |
 
-```go title="bootstrap/app.go"
+```go title="bootstrap/app.go" nocompile
 vukem.WithListeners(
 	broadcast.Queued[orders.Shipped](b, "broadcast.order_shipped"),
 ),

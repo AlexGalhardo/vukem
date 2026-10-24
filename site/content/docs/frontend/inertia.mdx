@@ -52,7 +52,7 @@ Use `vue` or `svelte` for the other frameworks. To convert an existing HTMX star
 </Step>
 <Step title="See what the starter wired">
 
-```go title="bootstrap/app.go"
+```go title="bootstrap/app.go" nocompile
 vukem.WithInertia(inertia.Config{}),
 ```
 
@@ -204,7 +204,7 @@ Every page object carries these fields. Most are filled for you by the prop type
 
 A value of type `func(context.Context) (any, error)` is a **closure** that runs only when the prop is actually sent. This matters for partial reloads, where most props are skipped:
 
-```go title="app/controllers/post_controller.go"
+```go title="app/controllers/post_controller.go" nocompile
 "stats": func(ctx context.Context) (any, error) {
 	return pc.stats(ctx)
 },
@@ -447,7 +447,7 @@ r.Post("/posts", inertia.Precognitive(requests.PostSchema, posts.Store)).
 
 With SSR, the server sends the rendered HTML in the first response, so the page shows before JavaScript loads and search engines see content. It is **off** by default.
 
-```go title="bootstrap/app.go"
+```go title="bootstrap/app.go" nocompile
 vukem.WithInertia(inertia.Config{
 	SSR: &inertia.SSRConfig{Bundle: "bootstrap/ssr/ssr.js"},
 }),

@@ -308,7 +308,7 @@ More in the [security overview](/docs/security/overview).
 
 **Test a listener** as the plain function it is:
 
-```go title="app/listeners/notify_customer_test.go"
+```go title="app/listeners/notify_customer_test.go" nocompile
 func TestNotifyCustomer(t *testing.T) {
 	err := NotifyCustomer(t.Context(), events.OrderShipped{OrderID: 1})
 	if err != nil {

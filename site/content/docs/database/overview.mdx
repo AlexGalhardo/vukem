@@ -512,7 +512,7 @@ func (s Slow) ObserveQuery(ctx context.Context, q database.Query) {
 }
 ```
 
-```go title="bootstrap/app.go"
+```go title="bootstrap/app.go" nocompile
 vukem.WithQueryObservers(observers.Slow{
 	Log:   slog.Default(),
 	Limit: 200 * time.Millisecond,

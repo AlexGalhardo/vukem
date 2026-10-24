@@ -527,7 +527,7 @@ func countdown(
 
 For live events from the rest of the app, `graphql.FromBroadcast` feeds a subscription from [broadcast channels](/docs/digging-deeper/broadcasting):
 
-```go title="app/graph/subscriptions.go"
+```go title="app/graph/subscriptions.go" nocompile
 // SDL: type Subscription { reviewAdded: Review! }
 func reviewChannels(
 	context.Context, graphql.NoArgs,

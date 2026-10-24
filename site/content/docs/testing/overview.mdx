@@ -421,7 +421,7 @@ Vukem answers API errors as [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457) p
 | `AssertJSONValidationErrors(fields...)` | `AssertProblem(422)` passes and the body's `errors` object has a key for every field |
 | `AssertMatchesOpenAPI()` | The response matches the schema of the request's operation in the app's [OpenAPI](/docs/rest-apis/openapi) document (`app.OpenAPI()`), or the default problem response |
 
-```go title="tests/posts_api_test.go"
+```go title="tests/posts_api_test.go" nocompile
 api.PostJSON("/posts", map[string]any{"title": "x"}).
 	AssertJSONValidationErrors("title")
 
