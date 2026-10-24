@@ -275,6 +275,7 @@ Given a `*database.DB`, `CreateMany` opens the transaction and an insert or hook
 | `Time(from, to)` | a UTC time between them, truncated to the second; `from` when `to` is not after it | |
 | `Seq()` | the 1-based index of the model being built | `1`, `2`, `3`... |
 | `factory.Pick(f, items...)` | one of the items (panics with none) | `factory.Pick(f, "draft", "published")` |
+| `factory.PickWeighted(f, items...)` | one of the `factory.Weighted{Item, Weight}` values, with odds proportional to `Weight` (zero is never picked; panics with no items, a negative weight or all weights zero) | `factory.PickWeighted(f, factory.Weighted[string]{"active", 8}, factory.Weighted[string]{"banned", 1})` |
 | `Company()` | a company name | `Smith Outfitters LLC` |
 | `ProductTitle()` / `ProductDescription()` / `Category()` | store data | `Classic Wool Desk` / `Electronics` |
 | `StreetAddress()`, `City()`, `State()`, `PostalCode()` | address parts (`State` is independent of `City`) | `1775 Sunset Blvd`, `Madison`, `KY`, `08533` |

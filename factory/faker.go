@@ -85,6 +85,42 @@ func (f *Faker) Bool() bool { return f.r.IntN(2) == 1 }
 // Pick returns one of items.
 func Pick[T any](f *Faker, items ...T) T { return items[f.r.IntN(len(items))] }
 
+// Weighted is an item with a relative weight for [PickWeighted].
+type Weighted[T any] struct {
+	Item   T
+	Weight int
+}
+
+// PickWeighted returns one of items with probability proportional to its
+// Weight. A zero weight is never picked. Like [Pick] it panics with no
+// items; it also panics on a negative weight or when every weight is zero.
+func PickWeighted[T any](f *Faker, items ...Weighted[T]) T {
+	total := 0
+
+	for _, it := range items {
+		if it.Weight < 0 {
+			panic("factory: PickWeighted with a negative weight")
+		}
+
+		total += it.Weight
+	}
+
+	if total == 0 {
+		panic("factory: PickWeighted needs at least one positive weight")
+	}
+
+	n := f.r.IntN(total)
+	for _, it := range items {
+		if n < it.Weight {
+			return it.Item
+		}
+
+		n -= it.Weight
+	}
+
+	panic("unreachable")
+}
+
 // FirstName returns a first name.
 func (f *Faker) FirstName() string {
 	if f.loc != nil {
