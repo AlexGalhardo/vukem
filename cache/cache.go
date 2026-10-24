@@ -55,7 +55,8 @@ func New(store Store, prefix string) *Cache {
 	return &Cache{store: store, prefix: prefix, flight: map[string]*call{}}
 }
 
-// Store returns the backend.
+// Store returns the backend. It is unprefixed and unencoded: keys must be
+// passed already prefixed and values are raw bytes, not JSON.
 func (c *Cache) Store() Store { return c.store }
 
 func (c *Cache) key(k string) string { return c.prefix + k }

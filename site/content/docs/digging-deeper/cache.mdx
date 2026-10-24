@@ -193,7 +193,7 @@ What each call does:
 | `cache.Get[T](ctx, c, key)` | `(T, bool, error)` | `ok` is `false` when the key is missing **or** expired. If the stored JSON does not fit `T`, you get `ok == false` and `cache: decode <key>: …` |
 | `c.Forget(ctx, keys...)` | `error` | Missing keys are not an error |
 | `c.Flush(ctx)` | `error` | Empties the **whole store**, see below |
-| `c.Store()` | `cache.Store` | The backend, for advanced checks (`cache.Shared`) |
+| `c.Store()` | `cache.Store` | The backend, for advanced checks (`cache.Shared`). It is unprefixed and unencoded: keys are not prefixed and values are raw bytes, not JSON |
 
 Keys you pass are always prefixed: with `CACHE_PREFIX=vukem:`, `c.Put(ctx, "settings", …)` writes the key `vukem:settings` in the store.
 
