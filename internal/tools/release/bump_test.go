@@ -81,7 +81,7 @@ func TestBumpModules(t *testing.T) {
 		t.Fatalf("changed = %v, want only drivers/pg", changed)
 	}
 
-	b, _ := os.ReadFile(filepath.Join(root, "drivers/pg/go.mod"))
+	b, _ := os.ReadFile(filepath.Join(root, "drivers", "pg", "go.mod"))
 	if !strings.Contains(string(b), "v0.31.0") {
 		t.Errorf("drivers/pg not bumped: %s", b)
 	}

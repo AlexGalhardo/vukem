@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -23,7 +24,7 @@ var (
 // PLAN.md status table, leaving the "(signed ...)" suffix untouched.
 func updatePlanStatus(plan, version, date string) (string, error) {
 	if !lastReleaseRe.MatchString(plan) || !updatedRe.MatchString(plan) {
-		return "", fmt.Errorf("PLAN.md status table has no \"Last release\" and \"Updated\" rows")
+		return "", errors.New("PLAN.md status table has no \"Last release\" and \"Updated\" rows")
 	}
 
 	plan = lastReleaseRe.ReplaceAllString(plan, "${1}`"+version+"`")
@@ -72,7 +73,7 @@ func bumpModules(root, version string) ([]string, error) {
 			continue
 		}
 
-		if err := os.WriteFile(path, []byte(updated), 0o600); err != nil {
+		if err := os.WriteFile(path, []byte(updated), 0o600); err != nil { //nolint:gosec // G703: glob of the repo tree
 			return nil, err
 		}
 

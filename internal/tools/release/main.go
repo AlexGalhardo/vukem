@@ -171,7 +171,7 @@ func bumpPlanFile(version string) error {
 		return err
 	}
 
-	return os.WriteFile(path, []byte(updated), 0o600)
+	return os.WriteFile(path, []byte(updated), 0o600) //nolint:gosec // G703: fixed repo path
 }
 
 // bumpNestedModules runs once the tag is pushed: go mod tidy needs the
