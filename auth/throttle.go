@@ -8,29 +8,45 @@ import (
 	"strings"
 
 	"github.com/AlexGalhardo/vukem/ratelimit"
+	"github.com/AlexGalhardo/vukem/web"
 )
 
-const maxThrottleBody = 64 << 10
-
 // RequestEmail returns the normalized (trimmed, lower case) value of field
-// from a form or JSON request body, so " a@b.co" and "A@b.co " share one
-// throttle bucket. A JSON body is restored for the handler. It returns ""
-// when the field is absent.
+// the way web.Ctx.Input reads it, so the throttle and the login handler see
+// the same address: a JSON body (any application/json or +json media type,
+// parameters and casing ignored) wins over the query string, a form body
+// over the query string. A JSON body is restored for the handler. It
+// returns "" when the field is absent, not a string, or the body is over
+// web.DefaultMaxBody or cannot be parsed; callers must treat "" as
+// unknown, never as an address.
 func RequestEmail(r *http.Request, field string) string {
-	email := r.PostFormValue(field)
+	var email string
 
-	if email == "" && strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
-		body, err := io.ReadAll(io.LimitReader(r.Body, maxThrottleBody))
-		if err == nil {
-			var in map[string]any
-
-			if json.Unmarshal(body, &in) == nil {
-				email, _ = in[field].(string)
-			}
-		}
-
+	if web.IsJSONMediaType(r.Header.Get("Content-Type")) {
+		body, err := io.ReadAll(io.LimitReader(r.Body, web.DefaultMaxBody+1))
 		// Restore what was read so the handler still sees the whole body.
 		r.Body = io.NopCloser(io.MultiReader(bytes.NewReader(body), r.Body))
+
+		if err != nil || len(body) > web.DefaultMaxBody {
+			return ""
+		}
+
+		var in map[string]any
+
+		if err := json.Unmarshal(body, &in); err != nil {
+			return ""
+		}
+
+		if v, ok := in[field]; ok {
+			email, _ = v.(string)
+		} else {
+			email = r.URL.Query().Get(field)
+		}
+	} else {
+		email = r.PostFormValue(field)
+		if email == "" {
+			email = r.URL.Query().Get(field)
+		}
 	}
 
 	return strings.ToLower(strings.TrimSpace(email))
@@ -48,7 +64,12 @@ func ThrottleKeys(emailField string) (perIP, perAccount ratelimit.KeyFunc) {
 			return ""
 		}
 
-		return "login:" + RequestEmail(r, emailField) + ":" + ratelimit.ByIP(r)
+		email := RequestEmail(r, emailField)
+		if email == "" {
+			return unparsedKey(r)
+		}
+
+		return "login:" + email + ":" + ratelimit.ByIP(r)
 	}
 
 	perAccount = func(r *http.Request) string {
@@ -56,8 +77,19 @@ func ThrottleKeys(emailField string) (perIP, perAccount ratelimit.KeyFunc) {
 			return ""
 		}
 
-		return "login-account:" + RequestEmail(r, emailField)
+		email := RequestEmail(r, emailField)
+		if email == "" {
+			return unparsedKey(r)
+		}
+
+		return "login-account:" + email
 	}
 
 	return perIP, perAccount
 }
+
+// unparsedKey is the bucket of a login POST whose email could not be read.
+// It is per IP, never shared: one shared bucket would let anyone lock every
+// login out, and no bucket would let a body the throttle cannot parse but
+// the handler can skip the limit.
+func unparsedKey(r *http.Request) string { return "login-unparsed:" + ratelimit.ByIP(r) }

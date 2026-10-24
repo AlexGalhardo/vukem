@@ -166,7 +166,7 @@ throttle := ratelimit.Middleware(limiters("login", 5, time.Minute), loginIP)
 perAccount := ratelimit.Middleware(limiters("login.account", 20, 10*time.Minute), loginAccount)
 ```
 
-`loginIP` counts per email and IP; `loginAccount` counts per email from any IP, so many addresses cannot share the guessing budget of one account. Both return `""` for anything but `POST`.
+`loginIP` counts per email and IP; `loginAccount` counts per email from any IP, so many addresses cannot share the guessing budget of one account. Both return `""` for anything but `POST`. They read the email like `Ctx.Input` does (JSON body or form over the query string, media type parameters and casing ignored). When it cannot be read (unparsable or oversized body, no `email`), the request counts in a bucket of its own IP, never in a bucket shared by everyone and never unlimited.
 
 Rules for a custom key:
 

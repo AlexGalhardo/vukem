@@ -531,7 +531,7 @@ func TestSecurity_A07_SignupRateLimited(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		if !bytes.Contains(ctrl, []byte("sha256.Sum256([]byte(loginEmail(r)))")) {
+		if !bytes.Contains(ctrl, []byte("sha256.Sum256([]byte(email))")) {
 			t.Errorf("%s RegisterThrottleKey does not hash the address", kit)
 		}
 
