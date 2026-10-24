@@ -253,6 +253,27 @@ vukem.WithTelegram(func(c *telegram.Config) {
 }),
 ```
 
+`middleware.Recover` adds `panic=true` to the `ERROR` record it logs for a recovered panic, so a `Filter` can tell panics from other errors. To send panics to their own chat, use a second handler that only accepts them (see [Using the handler without vukem.New](#using-the-handler-without-vukemnew)) and negate the same test in the main handler's `Filter`:
+
+```go title="cmd/worker/main.go"
+func isPanic(r slog.Record) bool {
+	found := false
+	r.Attrs(func(a slog.Attr) bool {
+		found = a.Key == "panic" && a.Value.Kind() == slog.KindBool && a.Value.Bool()
+		return !found
+	})
+	return found
+}
+
+panics := telegram.NewHandler(telegram.Config{
+	BotToken:    config.NewSecret(os.Getenv("TELEGRAM_BOT_TOKEN")),
+	ChatID:      "-1009876543210", // the on-call chat
+	MinLevel:    slog.LevelError,
+	MinLevelSet: true,
+	Filter:      func(_ context.Context, r slog.Record) bool { return isPanic(r) },
+})
+```
+
 `Filter` runs on the goroutine that logged, so keep it fast. If you keep `r` after the call, store `r.Clone()` (the [`slog.Record` docs](https://pkg.go.dev/log/slog#Record) explain why).
 
 A loop that fails 10,000 times would send 10,000 messages, and Telegram would block your bot. `TELEGRAM_RATE_LIMIT=20` forwards at most 20 log records per minute. The window is fixed: it starts with the first record and resets after one `RatePeriod` (one minute from the environment; any duration in code). Records over the cap are dropped, and `OnError` receives `telegram.ErrRateLimited` once per window. Contact and Send messages are never counted.

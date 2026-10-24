@@ -56,6 +56,14 @@ vukem.WithTelegram(func(c *telegram.Config) {
 	c.Filter = func(_ context.Context, r slog.Record) bool { return r.Level >= telegram.LevelFatal }
 })
 
+// Panics carry panic=true (middleware.Recover). Send them to their own chat with a
+// second handler, and keep them out of the main one:
+panics := telegram.NewHandler(telegram.Config{
+	BotToken: token, ChatID: "-300", MinLevel: slog.LevelError, MinLevelSet: true,
+	Filter: func(_ context.Context, r slog.Record) bool { return hasPanicAttr(r) },
+})
+// hasPanicAttr walks r.Attrs for the "panic" key; negate it in the main handler's Filter.
+
 // Standalone: per-level routing, silent mode, custom error handling.
 tg := telegram.NewHandler(telegram.Config{
 	BotToken: token, ChatID: "-100", ChatIDs: map[slog.Level]string{telegram.LevelFatal: "-200"},
