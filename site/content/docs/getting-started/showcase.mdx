@@ -1,9 +1,9 @@
 ---
 title: Showcase
-description: Three open-source reference apps built with Vukem, live in production, and which framework features each one demonstrates.
+description: Four open-source reference apps built with Vukem, live in production, and which framework features each one demonstrates.
 ---
 
-The best way to learn a framework after the tutorial is to read a real app that uses it. These three apps are built and maintained alongside Vukem. Each one is open source and deployed on Railway, so you can read the code that runs behind a live URL. They are also how Vukem is tested in the real world: their feedback drives most releases.
+The best way to learn a framework after the tutorial is to read a real app that uses it. These four apps are built and maintained alongside Vukem. Each one is open source and deployed, so you can read the code that runs behind a live URL. They are also how Vukem is tested in the real world: their feedback drives most releases.
 
 You will learn:
 
@@ -20,8 +20,9 @@ Pick the app closest to what you are building and read it next to these docs. St
 | [Quiz](#quiz-htmx) | HTMX 4, `html/template` | Embedded JSON | Server-rendered apps, i18n, a strict CSP |
 | [Rifa](#rifa-inertia-and-vue) | Inertia v3 + Vue | PostgreSQL | Payments, a ledger, a public REST API, background work |
 | [Marketplace](#marketplace-inertia-and-react) | Inertia v3 + React + Base UI | PostgreSQL, Redis, MongoDB | Multi-database apps, REST + GraphQL + gRPC, marketplace payments, tracing |
+| [Tools](#tools-inertia-and-react) | Inertia v3 + React + Base UI | PostgreSQL | File conversion jobs, external engines as subprocesses, progress over SSE, a Telegram bot |
 
-All three follow the layout described in [Directory structure](/docs/directory-structure): start reading at `bootstrap/app.go` to see everything the app wires, then `routes/` to see every URL, then the controllers they point to.
+All four follow the layout described in [Directory structure](/docs/directory-structure): start reading at `bootstrap/app.go` to see everything the app wires, then `routes/` to see every URL, then the controllers they point to.
 
 ## Quiz (HTMX)
 
@@ -77,7 +78,7 @@ AlexGalhardo/vukem-marketplace-reactjs
 </Card>
 </CardGroup>
 
-A small Mercado Livre-style marketplace: sellers list products, buyers pay, sellers get paid. The largest of the three.
+A small Mercado Livre-style marketplace: sellers list products, buyers pay, sellers get paid. The largest of the apps with a payments flow.
 
 What it demonstrates:
 
@@ -86,6 +87,31 @@ What it demonstrates:
 - **Stripe Connect and PIX** payments, with payouts to sellers ([Stripe Connect](/docs/digging-deeper/billing#stripe-connect-marketplaces)).
 - **Three API styles** over the same services: REST, [GraphQL](/docs/rest-apis/graphql) and [gRPC](/docs/rest-apis/grpc).
 - **Tracing** with [OpenTelemetry](/docs/digging-deeper/opentelemetry).
+
+## Tools (Inertia and React)
+
+<CardGroup cols="2">
+<Card title="Live app" href="https://tools.vukem.dev" icon="rocket">
+tools.vukem.dev
+</Card>
+<Card title="Source code" href="https://github.com/AlexGalhardo/vukem-tools" icon="code">
+AlexGalhardo/vukem-tools
+</Card>
+</CardGroup>
+
+A self-hosted file toolbox: convert, compress and optimise images, video, audio and documents, download videos, turn pixel art into SVG, and use developer tools such as a JSON formatter and a text diff. The whole backend is one Go binary.
+
+What it demonstrates:
+
+- **Inertia v3 with React** and the **Base UI** component library ([Inertia](/docs/frontend/inertia)).
+- **Long conversions as queued jobs** on PostgreSQL, with progress pushed to the browser over [Server-Sent Events](/docs/digging-deeper/sse) ([Queues](/docs/digging-deeper/queue)).
+- **External engines as subprocesses** (ffmpeg, libvips, Ghostscript and others), pinned by version; a tool whose engine is missing is not registered.
+- **Streaming [uploads](/docs/digging-deeper/uploads)** for large files, behind accounts and per-user limits.
+- **A Telegram bot** that talks to the same HTTP API.
+
+<Callout type="info">
+Several conversion engines are licensed under the GPL or the AGPL, so the project is not for commercial use. The `/licenses` page of the app lists each engine and its licence.
+</Callout>
 
 ## Running one locally
 
@@ -109,14 +135,14 @@ vukem key:generate
 When `.env` is missing, this copies `.env.example` to `.env` and writes a fresh `APP_KEY`. Fill in the other values the README asks for.
 
 </Step>
-<Step title="Start the databases (Rifa and Marketplace)">
+<Step title="Start the databases (Rifa, Marketplace and Tools)">
 
 ```bash
 docker compose up -d
 vukem migrate
 ```
 
-Each of those repositories has a `compose.yaml` that starts its databases. The Quiz has no database, so skip this step.
+Rifa and Marketplace have a `compose.yaml` that starts their databases. The Quiz has no database, so skip this step. Tools needs PostgreSQL and its conversion engines installed; its README lists them.
 
 </Step>
 <Step title="Run it">
