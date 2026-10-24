@@ -49,6 +49,13 @@ function A({ href = "", children, ...rest }: React.ComponentPropsWithoutRef<"a">
   );
 }
 
+// Plain <img>: the demo GIFs are remote and animated, which next/image would
+// not optimize anyway.
+function Img({ alt = "", ...rest }: React.ComponentPropsWithoutRef<"img">) {
+  // eslint-disable-next-line @next/next/no-img-element
+  return <img alt={alt} loading="lazy" decoding="async" {...rest} />;
+}
+
 function Table(props: React.ComponentPropsWithoutRef<"table">) {
   return (
     <div className="table-wrap">
@@ -62,6 +69,7 @@ export const mdxComponents: MDXComponents = {
   h3: anchored("h3"),
   h4: anchored("h4"),
   a: A,
+  img: Img,
   table: Table,
   Callout,
   Card,
