@@ -428,7 +428,7 @@ func TestRegister_MapInput(t *testing.T) {
 			t.Parallel()
 
 			rec := httptest.NewRecorder()
-			req := httptest.NewRequest("POST", "/tags", strings.NewReader(tt.body))
+			req := httptest.NewRequest(http.MethodPost, "/tags", strings.NewReader(tt.body))
 			req.Header.Set("Content-Type", "application/json")
 			r.ServeHTTP(rec, req)
 
