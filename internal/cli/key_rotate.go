@@ -210,7 +210,7 @@ func rotateAppKey(env *Env, next string) error {
 	fmt.Fprintln(env.Stdout, "Restart the app. Remove the old key from APP_PREVIOUS_KEYS once the sessions and links")
 	fmt.Fprintln(
 		env.Stdout,
-		"it signed have expired and encrypted columns are re-saved (docs/security.md#key-rotation).",
+		"it signed have expired and encrypted columns are re-saved (https://vukem.dev/docs/security/encryption).",
 	)
 
 	if len(keys) > maxPreviousKeys {

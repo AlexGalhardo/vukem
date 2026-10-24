@@ -259,7 +259,7 @@ func codegenTypesCommand() Command {
 		Desc:        "Generate TypeScript types (and Zod schemas with -zod) from the OpenAPI document",
 		DefineFlags: func(fs *flag.FlagSet) {
 			zod = fs.Bool("zod", false, "also emit Zod schemas")
-			out = fs.String("o", "", "write to this file instead of stdout")
+			out = fs.String("o", "", `write to this file ("-" or empty for stdout)`)
 			openAPIPrefixFlag(fs, &prefix)
 		},
 		Fn: func(_ context.Context, app *App, _ []string) error {
@@ -273,7 +273,7 @@ func codegenTypesCommand() Command {
 				return err
 			}
 
-			if *out == "" {
+			if *out == "" || *out == "-" {
 				_, err = io.WriteString(app.stdout, ts)
 				return err
 			}

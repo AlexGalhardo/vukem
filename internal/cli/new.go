@@ -52,7 +52,10 @@ func newProject(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 	templ := set.Bool("templ", false, "HTMX starter with templ components instead of html/template views")
 	minimal := set.Bool("minimal", false, "HTMX starter without a database: no posts, uploads or migrations, no SQLite")
 	noInstall := set.Bool("no-install", false, "skip installing frontend dependencies")
-	pmFlag := set.String("pm", "", "JavaScript package manager: npm, bun, pnpm or yarn (default npm)")
+	pmFlag := set.String(
+		"pm", "",
+		"JavaScript package manager: npm, bun, pnpm or yarn (default: the first of bun, npm, pnpm, yarn on PATH)",
+	)
 	standards := set.Bool("standards", false,
 		"markdownlint and a lint:md script, a Keep a Changelog CHANGELOG.md with cliff.toml, "+
 			"Conventional Commits git hooks and a SemVer version")

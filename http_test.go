@@ -2137,6 +2137,30 @@ func TestCodegenTypesCommand_CreatesDirectories(t *testing.T) {
 	}
 }
 
+func TestCodegenTypesCommand_DashWritesToStdout(t *testing.T) {
+	t.Chdir(t.TempDir())
+
+	var out bytes.Buffer
+
+	build := func(opts ...Option) (*App, error) {
+		return New(append(opts, WithLogger(discardLogger()), WithStdout(&out), WithRoutes(openAPIRoutes))...)
+	}
+
+	if err := RunMain(
+		t.Context(), []string{"app", "codegen:types", "-o", "-"}, testSource(nil).Lookup, build,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(out.String(), "PingResponse") {
+		t.Fatalf("codegen:types -o - printed %q, want the types on stdout", out.String())
+	}
+
+	if _, err := os.Stat("-"); err == nil {
+		t.Fatal(`codegen:types -o - created a file named "-"`)
+	}
+}
+
 func TestServeOpenAPIWithPrefix(t *testing.T) {
 	t.Parallel()
 
