@@ -10,7 +10,7 @@ func TestWriteDocker(t *testing.T) {
 	t.Parallel()
 
 	common := []string{
-		"FROM golang:1.27.2-alpine3.24 AS build",
+		"FROM golang:1.27.3-alpine3.24 AS build",
 		"COPY go.mod go.sum ./",
 		// .buildtags is read at build time, so later edits reach the image.
 		`.buildtags`,

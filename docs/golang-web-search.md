@@ -29,7 +29,7 @@ Consolidation of the research that underpins Vukem's design. Each section ends w
 
 | Item | Version | Note |
 | --- | --- | --- |
-| Go | **1.27.2** (1.27.0 on 2026-08-19) | 1.26 still supported; 1.25 out of support |
+| Go | **1.27.3** (1.27.0 on 2026-08-19) | 1.26 still supported; 1.25 out of support |
 | Laravel | 13 (2026-03-17) | PHP 8.3+, one major/year |
 | AdonisJS | 7 (2026-02-25) | Node 24+, focus on type-safety via codegen |
 | Goravel | v1.18 (2026-07) | ~4.9k★ on the skeleton |

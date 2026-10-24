@@ -1,6 +1,6 @@
 module github.com/AlexGalhardo/vukem/drivers/mongo
 
-go 1.27.2
+go 1.27.3
 
 require go.mongodb.org/mongo-driver/v2 v2.9.1
 
