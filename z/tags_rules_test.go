@@ -17,17 +17,36 @@ import (
 )
 
 // implementedRules returns every rule name the tag parser branches on, read
-// from the source: each `case "..."` of a rule switch in tags.go.
+// from the source: each `case "..."` of a rule switch in the tags*.go files.
 func implementedRules(t *testing.T) []string {
 	t.Helper()
 
-	file, err := parser.ParseFile(token.NewFileSet(), filepath.Join(".", "tags.go"), nil, parser.ParseComments)
+	files, err := filepath.Glob("tags*.go")
 	if err != nil {
-		t.Fatalf("parse tags.go: %v", err)
+		t.Fatal(err)
 	}
 
 	var names []string
 
+	for _, name := range files {
+		if strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+
+		file, err := parser.ParseFile(token.NewFileSet(), name, nil, 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", name, err)
+		}
+
+		collectCases(file, &names)
+	}
+
+	slices.Sort(names)
+
+	return names
+}
+
+func collectCases(file *ast.File, names *[]string) {
 	ast.Inspect(file, func(n ast.Node) bool {
 		clause, ok := n.(*ast.CaseClause)
 		if !ok {
@@ -45,17 +64,13 @@ func implementedRules(t *testing.T) []string {
 				continue // the empty rule of parseRules, or a non-literal case
 			}
 
-			if !slices.Contains(names, name) {
-				names = append(names, name)
+			if !slices.Contains(*names, name) {
+				*names = append(*names, name)
 			}
 		}
 
 		return true
 	})
-
-	slices.Sort(names)
-
-	return names
 }
 
 func ruleNames() []string {
@@ -76,7 +91,7 @@ func TestTagRules_MatchImplementation(t *testing.T) {
 	t.Parallel()
 
 	if diff := cmp.Diff(implementedRules(t), ruleNames()); diff != "" {
-		t.Fatalf("tagRules out of step with tags.go (-implemented +listed):\n%s", diff)
+		t.Fatalf("tagRules out of step with tags*.go (-implemented +listed):\n%s", diff)
 	}
 }
 
