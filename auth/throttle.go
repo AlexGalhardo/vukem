@@ -1,9 +1,6 @@
 package auth
 
 import (
-	"bytes"
-	"encoding/json"
-	"io"
 	"net/http"
 	"strings"
 
@@ -16,24 +13,16 @@ import (
 // the same address: a JSON body (any application/json or +json media type,
 // parameters and casing ignored) wins over the query string, a form body
 // over the query string. A JSON body is restored for the handler. It
-// returns "" when the field is absent, not a string, or the body is over
-// web.DefaultMaxBody or cannot be parsed; callers must treat "" as
-// unknown, never as an address.
+// returns "" when the field is absent, not a string, or the body is one the
+// handler would reject (web.PeekJSON: over the route's body limit, trailing
+// data, not an object); callers must treat "" as unknown, never as an
+// address.
 func RequestEmail(r *http.Request, field string) string {
 	var email string
 
 	if web.IsJSONMediaType(r.Header.Get("Content-Type")) {
-		body, err := io.ReadAll(io.LimitReader(r.Body, web.DefaultMaxBody+1))
-		// Restore what was read so the handler still sees the whole body.
-		r.Body = io.NopCloser(io.MultiReader(bytes.NewReader(body), r.Body))
-
-		if err != nil || len(body) > web.DefaultMaxBody {
-			return ""
-		}
-
-		var in map[string]any
-
-		if err := json.Unmarshal(body, &in); err != nil {
+		in, err := web.PeekJSON(r)
+		if err != nil {
 			return ""
 		}
 
