@@ -118,6 +118,13 @@ type App struct {
 - Fields are concrete, typed services. There is no `Make("cache")`.
 - Optional services are `nil` until their provider registers them; accessing one without its provider fails at **boot**, not at request time.
 - Controllers receive the `*App` (or narrower interfaces) through their constructors.
+- `web.Services`, the bag that travels in the request context, is not a service locator in the making: a field enters `Services` only if it is read by more than one package. Every other dependency goes through the constructor of the package that needs it.
+
+### Values and pointers
+
+- Descriptions are immutable values: schemas (`z`), queries (`orm.Query[T]`), factories (`factory.Factory[T]`) and configs. Every method returns a copy, so a shared description is never mutated by a caller.
+- Registrars and resources are pointers: the router and its groups, the `App`, stores, clients and pools. They carry mutable state or own a resource, so copying them would be a bug.
+- `Transform`, `Refine` and `Preprocess` callbacks are pure functions and do no I/O; a `Refine` that queries the database is the documented exception.
 
 ### Providers and lifecycle
 
