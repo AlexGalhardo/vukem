@@ -7,9 +7,9 @@
 //	})
 //
 // [Cache] wraps a [Store] with a key prefix and adds Put, Forget,
-// Increment and distributed locks ([Cache.NewLock]); [Get] and [Remember]
-// decode typed values. Apps get one from app.Cache(), configured by
-// CACHE_STORE.
+// Increment and distributed locks ([Cache.NewLock]); [Get], [Pull], [Add]
+// and [Remember] encode and decode typed values. Apps get one from app.Cache(),
+// configured by CACHE_STORE.
 //
 // See https://github.com/AlexGalhardo/vukem/blob/main/docs/subsystems.md#cache.
 package cache
@@ -70,6 +70,36 @@ func Get[T any](ctx context.Context, c *Cache, key string) (v T, ok bool, err er
 
 	if err := json.Unmarshal(b, &v); err != nil {
 		return v, false, fmt.Errorf("cache: decode %s: %w", key, err)
+	}
+
+	return v, true, nil
+}
+
+// Add stores v under key for ttl only when key is absent (or expired) and
+// reports whether it did. It is an atomic claim: of many concurrent callers
+// exactly one gets true, even across servers on a shared store. Use it for
+// one-time codes and "first request wins" guards; use [Cache.NewLock] only
+// when the holder must be identified and release the claim early.
+func Add[T any](ctx context.Context, c *Cache, key string, v T, ttl time.Duration) (bool, error) {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return false, fmt.Errorf("cache: encode %s: %w", key, err)
+	}
+
+	return c.store.Add(ctx, c.key(key), b, ttl)
+}
+
+// Pull reads key like [Get], then deletes it. It is not an atomic claim:
+// two concurrent callers can both read the value before either deletes it.
+// To make sure only one caller acts on a value, claim it with [Add].
+func Pull[T any](ctx context.Context, c *Cache, key string) (v T, ok bool, err error) {
+	v, ok, err = Get[T](ctx, c, key)
+	if err != nil || !ok {
+		return v, false, err
+	}
+
+	if err := c.Forget(ctx, key); err != nil {
+		return v, false, err
 	}
 
 	return v, true, nil

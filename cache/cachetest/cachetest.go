@@ -169,6 +169,48 @@ func Run(t *testing.T, store cache.Store) {
 		}
 	})
 
+	// Add is the exclusive claim: one caller wins, whatever the backend.
+	t.Run("AddConcurrent", func(t *testing.T) {
+		const workers = 16
+
+		var (
+			wg   sync.WaitGroup
+			won  atomic.Int32
+			errs atomic.Int32
+		)
+
+		for range workers {
+			wg.Go(func() {
+				ok, err := cache.Add(ctx, c, "claim", "x", time.Minute)
+				if err != nil {
+					errs.Add(1)
+				} else if ok {
+					won.Add(1)
+				}
+			})
+		}
+
+		wg.Wait()
+
+		if errs.Load() != 0 || won.Load() != 1 {
+			t.Fatalf("concurrent Add: %d errors, %d winners, want 0 and 1", errs.Load(), won.Load())
+		}
+	})
+
+	t.Run("Pull", func(t *testing.T) {
+		if err := c.Put(ctx, "code", "123456", time.Minute); err != nil {
+			t.Fatal(err)
+		}
+
+		if v, ok, err := cache.Pull[string](ctx, c, "code"); err != nil || !ok || v != "123456" {
+			t.Fatalf("first Pull = %q %v %v", v, ok, err)
+		}
+
+		if _, ok, err := cache.Pull[string](ctx, c, "code"); err != nil || ok {
+			t.Fatalf("second Pull = %v %v, want ok=false", ok, err)
+		}
+	})
+
 	t.Run("IncrementRestartsExpired", func(t *testing.T) {
 		if _, err := c.Increment(ctx, "window", 5, 20*time.Millisecond); err != nil {
 			t.Fatal(err)
