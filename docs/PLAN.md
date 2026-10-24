@@ -19,8 +19,8 @@ Task IDs: `<phase>.<group>.<task>` (e.g. `P.3.2`). Reference them in commit bodi
 | --- | --- |
 | Current phase | **BETA** (stabilisation: B.5) |
 | Next task | `B.5.1` (public API review); B.5.2, B.5.4 and B.5.6 have work in progress |
-| Last release | `v0.20.1` (signed with cosign, SBOMs, provenance) |
-| Updated | 2026-10-17 |
+| Last release | `v0.30.0` (signed with cosign, SBOMs, provenance) |
+| Updated | 2026-10-24 |
 
 ## Design references
 

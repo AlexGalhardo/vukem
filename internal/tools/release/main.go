@@ -6,7 +6,10 @@
 // section with git-cliff (Keep a Changelog 1.1.0), inserts it below
 // [Unreleased], commits "chore(release): vX.Y.Z", creates an annotated tag
 // (on -ref when cutting a retroactive release) and, with -push, pushes and
-// publishes a GitHub release whose notes are that section.
+// publishes a GitHub release whose notes are that section. The release commit
+// also refreshes the PLAN.md status rows; after the push, nested modules
+// (contrib, drivers, examples) get their vukem requirement raised in a
+// follow-up commit.
 package main
 
 import (
@@ -18,6 +21,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 func main() {
@@ -107,6 +111,12 @@ func run(args []string, out io.Writer) error {
 		return err
 	}
 
+	if !*noCommit {
+		if err := bumpPlanFile(version); err != nil {
+			return err
+		}
+	}
+
 	fmt.Fprintf(out, "CHANGELOG.md updated for %s (previous %s)\n", version, orNone(previous))
 
 	if *noCommit {
@@ -115,7 +125,7 @@ func run(args []string, out io.Writer) error {
 
 	msg := "chore(release): " + version
 	steps := [][]string{
-		{"git", "add", "CHANGELOG.md"},
+		{"git", "add", "CHANGELOG.md", "docs/PLAN.md"},
 		{"git", "commit", "-m", msg},
 		{"git", "tag", "-a", version, "-m", version, tagTarget(*ref)},
 	}
@@ -140,10 +150,55 @@ func run(args []string, out io.Writer) error {
 
 		fmt.Fprintln(out, "released", version)
 
-		return nil
+		return bumpNestedModules(out, version)
 	}
 
 	fmt.Fprintf(out, "tagged %s; push with: git push origin main %s\n", version, version)
+
+	return nil
+}
+
+func bumpPlanFile(version string) error {
+	const path = "docs/PLAN.md"
+
+	plan, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+
+	updated, err := updatePlanStatus(string(plan), version, time.Now().Format(time.DateOnly))
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(path, []byte(updated), 0o600)
+}
+
+// bumpNestedModules runs once the tag is pushed: go mod tidy needs the
+// version to resolve from the module proxy to write go.sum.
+func bumpNestedModules(out io.Writer, version string) error {
+	changed, err := bumpModules(".", version)
+	if err != nil || len(changed) == 0 {
+		return err
+	}
+
+	if err := tidyModules(changed); err != nil {
+		return err
+	}
+
+	steps := [][]string{
+		{"git", "add", "contrib", "drivers", "examples"},
+		{"git", "commit", "-m", "chore(deps): require vukem " + version + " in nested modules"},
+		{"git", "push", "origin", "main"},
+	}
+
+	for _, s := range steps {
+		if _, err := output(s[0], s[1:]...); err != nil {
+			return fmt.Errorf("%s: %w", strings.Join(s, " "), err)
+		}
+	}
+
+	fmt.Fprintf(out, "bumped %d nested modules to %s\n", len(changed), version)
 
 	return nil
 }
