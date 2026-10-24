@@ -68,14 +68,14 @@ if errors.As(err, &issues) {
 
 | Constructor | Go type | Checks / transforms |
 | --- | --- | --- |
-| `z.String()` | `string` | `Min`, `Max`, `Len`, `Email`, `URL`, `UUID`, `ULID`, `Regex`, `Alpha`, `Alphanum`, `Numeric`, `StartsWith`, `EndsWith`, `Includes`, `OneOf`; `Trim`, `ToLower`, `ToUpper`, `Preprocess(fn)` |
+| `z.String()` | `string` | `Min`, `Max`, `Len`, `Email`, `URL`, `UUID`, `ULID`, `Regex`, `Alpha`, `Alphanum`, `Numeric`, `StartsWith`, `EndsWith`, `Includes`, `HasLower`, `HasUpper`, `HasDigit`, `HasSymbol`, `OneOf`; `Trim`, `ToLower`, `ToUpper`, `Preprocess(fn)` |
 | `z.Int()`, `z.Int64()`, `z.Uint()`… | integer types | `Min`, `Max`, `Positive`, `NonNegative`, `MultipleOf` |
 | `z.Float()` | `float64` | `Min`, `Max`, `Positive`, `Finite` |
 | `z.Bool()` | `bool` | — |
 | `z.Time()` | `time.Time` | `After`, `Before`, `Layout(...)` (default RFC 3339) |
 | `z.Enum(vals...)` | `string` (or any `~string` via `z.EnumOf[T]`) | membership |
 | `z.Slice(elem)` | `[]E` (E = element schema type) | `Min`, `Max`, `Len`, `NonEmpty`, `Unique` |
-| `z.Map(key, val)` | `map[K]V` | `Min`, `Max` |
+| `z.Map(value)` | `map[string]V` | `Min`, `Max` (entry count) |
 | `z.Struct[T](z.Shape{...})` | `T` | field schemas mapped by `json`/`form`/`query` tag or field name; `Strict()` rejects unknown keys |
 | `z.Custom[T](fn)` | `T` | user parser |
 | `z.File()` | `*multipart.FileHeader` | `MaxSize(bytes)`, `Types(mime...)` (detected from the first 512 bytes of the content), `Extensions(...)` |
@@ -205,9 +205,9 @@ Supported rules, by the field kind they apply to:
 | --- | --- | --- |
 | `required` | any kind | the key must be present and not null |
 | `omitempty` | string | `OmitEmpty()`: skips every other rule when the value is empty after the pre-steps, so `omitempty,oneof=a b` accepts `a`, `b` and `""`. On any other kind it is a boot error, because skipping the rules for a zero number or an empty list would make `omitempty,min=1` accept `0` and `[]` |
-| `dive` | any kind | the rules after it apply to the slice elements |
-| `min=N` | string, number, list | minimum length, value or element count |
-| `max=N` | string, number, list | maximum length, value or element count |
+| `dive` | any kind | the rules after it apply to the slice elements or the map values |
+| `min=N` | string, number, list, map | minimum length, value, element count or entry count |
+| `max=N` | string, number, list, map | maximum length, value, element count or entry count |
 | `len=N` | string, list | exact length or element count |
 | `email` | string | `Email()` |
 | `url` | string | `URL()` |
@@ -227,7 +227,7 @@ Supported rules, by the field kind they apply to:
 | `default=V` | string, number | `Default(V)`: used when the key is absent, or empty with `omitempty`; it also reaches the OpenAPI document. Never re-validated, so a value outside the field's own rules is a boot error. Contradicts `required` |
 | `unique` | list | `Unique()` |
 
-A bool, a `time.Time` and a nested struct take no rule but `required`; any other rule on them is a boot panic, as is an unknown rule or a bad argument. `required` on a string means non-empty; on a list it means present and not null (an empty list passes, as with OpenAPI `required`), so use `min=1` for a non-empty list. Pointer fields are optional and nullable.
+A bool, a `time.Time`, an `any` (any JSON value), a `map[string]any` (a JSON object) and a nested struct take no rule but `required`; any other rule on them is a boot panic, as is an unknown rule or a bad argument. `required` on a string means non-empty; on a list it means present and not null (an empty list passes, as with OpenAPI `required`), so use `min=1` for a non-empty list. Pointer fields are optional and nullable. A `map[string]V` field is parsed from a JSON object with `V` derived recursively; `min`/`max` count entries and the rules after `dive` apply to each value (`map[string]string` with `validate:"min=1,dive,max=20"`). Only string keys are supported; any other key type is a boot panic, as is an unsupported field kind.
 
 The table above is checked against the implementation by `TestTagRules_DocumentedInValidationDocs` in `z`: a rule cannot be added to the tag parser without appearing here.
 
@@ -239,6 +239,7 @@ The table above is checked against the implementation by `TestTagRules_Documente
 | Query string | `web.ParseQuery(c, schema)` |
 | Route params | `web.ParseParams(c, schema, "id")` (invalid params → 404) |
 | Config / env | `config.Load[T]` + `z.For[T]().Check(cfg)` at boot |
+| A typed value that must also be cleaned | `schema.Normalize(v)` returns it with `Trim`, defaults and `Transform` applied (`Check` only validates) |
 | Queue payloads | job schemas checked on dispatch and on execution (BETA) |
 | Outgoing JSON | `web.JSONWith(c, status, schema, v)`; outside production a contract violation is logged and answered with 500 instead of sending bad data |
 | Inertia props | `inertia.Render` checks props against the page schema when registered (BETA) |

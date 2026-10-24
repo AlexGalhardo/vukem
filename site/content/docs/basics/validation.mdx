@@ -158,6 +158,7 @@ slug := base.ToLower().Regex(slugRe)
 | `Numeric()` | A decimal number written as text: `-12`, `3.50` | `string.numeric` |
 | `Regex(re)` | Must match the [`*regexp.Regexp`](https://pkg.go.dev/regexp) | `string.regex` |
 | `StartsWith(s)`, `EndsWith(s)`, `Includes(s)` | Must start with, end with or contain `s` | `string.starts_with`, `string.ends_with`, `string.includes` |
+| `HasLower()`, `HasUpper()`, `HasDigit()`, `HasSymbol()` | At least one lowercase letter, uppercase letter, digit or punctuation/symbol character, by Unicode class (`ç` is lower, `٣` is a digit, `€` and `_` are symbols, a space is none). Chain them for a password policy; each failing rule adds its own issue | `string.has_lower`, `string.has_upper`, `string.has_digit`, `string.has_symbol` |
 | `OneOf(values...)` | Must equal one of the values (see also `Enum`) | `invalid_enum` |
 | `Trim()` | Removes spaces, tabs and newlines at both ends **before** the checks | — |
 | `ToLower()`, `ToUpper()` | Changes the case **before** the checks | — |
@@ -521,7 +522,7 @@ var LoginSchema = z.FromTags[Login]()
 | Rule | Applies to | Meaning |
 | --- | --- | --- |
 | `required` | all | Strings: not empty. Lists: present and not `null` (an empty list passes; add `min=1`). Others: present |
-| `min=N`, `max=N` | strings, numbers, lists | Length, value or item count |
+| `min=N`, `max=N` | strings, numbers, lists, maps | Length, value, item count or entry count |
 | `len=N` | strings, lists | Exact length or count |
 | `email`, `url`, `uuid`, `ulid`, `alpha`, `alphanum`, `numeric` | strings | As the string methods |
 | `oneof=a b c` | strings | One of the space-separated values |
@@ -530,10 +531,10 @@ var LoginSchema = z.FromTags[Login]()
 | `trim`, `lowercase` | strings | Pre-steps, as `Trim` and `ToLower` |
 | `positive` | numbers | Greater than 0 |
 | `unique` | lists | No duplicates |
-| `dive` | lists | Rules after it apply to each element |
+| `dive` | lists, maps | Rules after it apply to each element or map value |
 | `omitempty` | strings | Skips the rules above when the value is empty (after `trim`), as `OmitEmpty` |
 
-Fields without `required` are optional. Pointer fields are optional and nullable. Nested structs are parsed with their own tags. An unknown rule or a bad argument panics at boot (`unknown rule "mn" for a string`), and `json:"-"` fields are skipped.
+A bool, a time, an `any` (any JSON value), a `map[string]any` (a JSON object) and a nested struct take no rule but `required`. Fields without `required` are optional. Pointer fields are optional and nullable. Nested structs are parsed with their own tags. A `map[string]V` field is parsed from a JSON object, with `V` derived from its own type and the rules after `dive`; only string keys are supported. An unknown rule or a bad argument panics at boot (`unknown rule "mn" for a string`), and `json:"-"` fields are skipped.
 
 ### An optional enum
 
@@ -563,7 +564,7 @@ On a number or a list, "empty" is the zero value, and skipping the rules for it 
 | Route parameters | `web.ParseParams(c, schema, "post")`: invalid parameters answer **404**, since a malformed id names no resource |
 | A map you assembled | `web.ParseMap(c, schema, m)` (`web.ParseInput(schema, m)` outside a request) |
 | Any `io.Reader` of JSON (an upstream API) | `z.ParseJSON(r, schema)`: invalid JSON is one `invalid_type` issue, "The value must be valid JSON." |
-| A value you already have | `schema.Parse(v)` or, for typed values, `schema.Check(v)` |
+| A value you already have | `schema.Parse(v)` or, for typed values, `schema.Check(v)` (validates only) or `schema.Normalize(v)` (also returns the value with `Trim`, defaults and `Transform` applied) |
 | Outgoing JSON | `web.JSONWith(c, status, schema, v)` |
 
 `web.JSONWith` checks the value you are about to send when `Services.CheckResponses` is on, which the app does outside production. A mismatch is a server bug: it is answered with a 500 (and logged) instead of sending data that breaks your API contract. In production the check is skipped.

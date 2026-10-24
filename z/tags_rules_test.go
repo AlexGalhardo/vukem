@@ -17,17 +17,36 @@ import (
 )
 
 // implementedRules returns every rule name the tag parser branches on, read
-// from the source: each `case "..."` of a rule switch in tags.go.
+// from the source: each `case "..."` of a rule switch in the tags*.go files.
 func implementedRules(t *testing.T) []string {
 	t.Helper()
 
-	file, err := parser.ParseFile(token.NewFileSet(), filepath.Join(".", "tags.go"), nil, parser.ParseComments)
+	files, err := filepath.Glob("tags*.go")
 	if err != nil {
-		t.Fatalf("parse tags.go: %v", err)
+		t.Fatal(err)
 	}
 
 	var names []string
 
+	for _, name := range files {
+		if strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+
+		file, err := parser.ParseFile(token.NewFileSet(), name, nil, 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", name, err)
+		}
+
+		collectCases(file, &names)
+	}
+
+	slices.Sort(names)
+
+	return names
+}
+
+func collectCases(file *ast.File, names *[]string) {
 	ast.Inspect(file, func(n ast.Node) bool {
 		clause, ok := n.(*ast.CaseClause)
 		if !ok {
@@ -45,17 +64,13 @@ func implementedRules(t *testing.T) []string {
 				continue // the empty rule of parseRules, or a non-literal case
 			}
 
-			if !slices.Contains(names, name) {
-				names = append(names, name)
+			if !slices.Contains(*names, name) {
+				*names = append(*names, name)
 			}
 		}
 
 		return true
 	})
-
-	slices.Sort(names)
-
-	return names
 }
 
 func ruleNames() []string {
@@ -76,7 +91,7 @@ func TestTagRules_MatchImplementation(t *testing.T) {
 	t.Parallel()
 
 	if diff := cmp.Diff(implementedRules(t), ruleNames()); diff != "" {
-		t.Fatalf("tagRules out of step with tags.go (-implemented +listed):\n%s", diff)
+		t.Fatalf("tagRules out of step with tags*.go (-implemented +listed):\n%s", diff)
 	}
 }
 
@@ -133,7 +148,7 @@ func docScopes(t *testing.T, doc string) map[tagScope]string {
 
 		text := strings.TrimSpace(line)
 
-		for _, scope := range []tagScope{scopeAny, scopeString, scopeNumber, scopeList} {
+		for _, scope := range []tagScope{scopeAny, scopeString, scopeNumber, scopeList, scopeMap} {
 			if label := string(scope) + ":"; strings.HasPrefix(text, label) {
 				current = scope
 				text = strings.TrimPrefix(text, label)
@@ -147,8 +162,8 @@ func docScopes(t *testing.T, doc string) map[tagScope]string {
 		}
 	}
 
-	if len(sections) != 4 {
-		t.Fatalf("FromTags doc comment lists %d scopes, want 4 (any, string, number, list)", len(sections))
+	if len(sections) != 5 {
+		t.Fatalf("FromTags doc comment lists %d scopes, want 5 (any, string, number, list, map)", len(sections))
 	}
 
 	return sections
@@ -229,6 +244,7 @@ func TestTagRules_ApplyToTheirScopes(t *testing.T) {
 		scopeString: reflect.TypeFor[string](),
 		scopeNumber: reflect.TypeFor[int](),
 		scopeList:   reflect.TypeFor[[]string](),
+		scopeMap:    reflect.TypeFor[map[string]string](),
 	}
 
 	for _, rule := range tagRules() {
@@ -247,6 +263,18 @@ func TestTagRules_ApplyToTheirScopes(t *testing.T) {
 
 		if !anyKind && err == nil {
 			t.Errorf("rule %q on a bool: accepted, want an error", tag)
+		}
+
+		// any and map[string]any, like a bool, take only the scopeAny rules.
+		for _, rt := range []reflect.Type{reflect.TypeFor[any](), reflect.TypeFor[map[string]any]()} {
+			_, err := schemaForType(rt, []string{tag}, 0)
+			if anyKind && err != nil {
+				t.Errorf("rule %q on a %s: %v, want it accepted on any kind", tag, rt, err)
+			}
+
+			if !anyKind && err == nil {
+				t.Errorf("rule %q on a %s: accepted, want an error", tag, rt)
+			}
 		}
 
 		for scope, rt := range kinds {

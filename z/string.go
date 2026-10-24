@@ -246,6 +246,36 @@ func (s StringSchema) Numeric() StringSchema {
 	return s.kw("pattern", numericRe.String()).format("string.numeric", numericRe.MatchString, nil)
 }
 
+// The Has* rules carry no JSON Schema keyword: "contains a character of a
+// class" chained across classes needs lookaheads, and one pattern would
+// replace the others.
+
+// HasLower requires at least one lowercase letter (unicode.IsLower).
+func (s StringSchema) HasLower() StringSchema {
+	return s.hasRune("string.has_lower", unicode.IsLower)
+}
+
+// HasUpper requires at least one uppercase letter (unicode.IsUpper).
+func (s StringSchema) HasUpper() StringSchema {
+	return s.hasRune("string.has_upper", unicode.IsUpper)
+}
+
+// HasDigit requires at least one decimal digit (unicode.IsDigit, so digits
+// of other scripts count).
+func (s StringSchema) HasDigit() StringSchema {
+	return s.hasRune("string.has_digit", unicode.IsDigit)
+}
+
+// HasSymbol requires at least one punctuation or symbol character
+// (unicode.IsPunct or unicode.IsSymbol); spaces do not count.
+func (s StringSchema) HasSymbol() StringSchema {
+	return s.hasRune("string.has_symbol", func(r rune) bool { return unicode.IsPunct(r) || unicode.IsSymbol(r) })
+}
+
+func (s StringSchema) hasRune(key string, class func(rune) bool) StringSchema {
+	return s.format(key, func(v string) bool { return strings.IndexFunc(v, class) >= 0 }, nil)
+}
+
 // Regex requires a match of re.
 func (s StringSchema) Regex(re *regexp.Regexp) StringSchema {
 	return s.kw("pattern", re.String()).format("string.regex", re.MatchString, nil)

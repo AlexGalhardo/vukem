@@ -1,15 +1,11 @@
 package z
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
-	"regexp"
-	"strconv"
 	"strings"
 	"sync"
-	"time"
 )
 
 // FromTags builds a schema for T from `validate` struct tags, e.g.
@@ -21,7 +17,8 @@ import (
 //
 // Rules, grouped by the field kind they apply to:
 //
-//	any:    required, dive (the rules after it apply to slice elements)
+//	any:    required, dive (the rules after it apply to slice elements
+//	        or map values)
 //	string: min=N, max=N, len=N, email, url, uuid, ulid, alpha, alphanum,
 //	        numeric, oneof=a b c, regex=PATTERN (last rule), startswith=,
 //	        endswith=, contains=, trim, lowercase, omitempty (skips the
@@ -31,14 +28,16 @@ import (
 //	        document)
 //	number: min=N, max=N, positive, default=V
 //	list:   min=N, max=N, len=N, unique
+//	map:    min=N, max=N (entry count); the key must be string
 //
 // Fields without "required" are optional; "required" on a string means
 // non-empty, on a list present and not null (use min=1 for a non-empty
 // list); pointers are optional and nullable; nested structs are parsed
 // recursively. A bool, a time.Time and a nested struct take no rule but
-// "required". It panics on unknown rules or bad arguments, so mistakes
-// surface at boot. The same table is in docs/validation.md; both are checked
-// against the implementation by TestTagRules_* in this package.
+// "required", and so do any (a JSON value of any shape) and
+// map[string]any (a JSON object). It panics on unknown rules or bad
+// arguments, so mistakes surface at boot. The same table is in
+// docs/validation.md; both are checked against the implementation by TestTagRules_* in this package.
 func FromTags[T any]() StructSchema[T] {
 	return StructSchema[T]{core: tagCore(reflect.TypeFor[T](), 0)}
 }
@@ -70,6 +69,7 @@ const (
 	scopeString tagScope = "string"
 	scopeNumber tagScope = "number"
 	scopeList   tagScope = "list"
+	scopeMap    tagScope = "map"
 )
 
 // tagRule is one `validate` rule FromTags understands.
@@ -90,8 +90,8 @@ func tagRules() []tagRule {
 		{name: "omitempty", scopes: []tagScope{scopeString}},
 		{name: "default", arg: "1", scopes: []tagScope{scopeString, scopeNumber}},
 		{name: "dive", scopes: []tagScope{scopeAny}},
-		{name: "min", arg: "1", scopes: []tagScope{scopeString, scopeNumber, scopeList}},
-		{name: "max", arg: "5", scopes: []tagScope{scopeString, scopeNumber, scopeList}},
+		{name: "min", arg: "1", scopes: []tagScope{scopeString, scopeNumber, scopeList, scopeMap}},
+		{name: "max", arg: "5", scopes: []tagScope{scopeString, scopeNumber, scopeList, scopeMap}},
 		{name: "len", arg: "3", scopes: []tagScope{scopeString, scopeList}},
 		{name: "email", scopes: []tagScope{scopeString}},
 		{name: "url", scopes: []tagScope{scopeString}},
@@ -252,470 +252,3 @@ func parseRules(rules []string) ruleSet {
 
 	return rs
 }
-
-func schemaForType(t reflect.Type, raw []string, depth int) (AnySchema, error) {
-	rs := parseRules(raw)
-	if err := rs.coherent(); err != nil {
-		return nil, err
-	}
-
-	nullable := false
-
-	if t.Kind() == reflect.Pointer {
-		nullable = true
-		t = t.Elem()
-	}
-
-	optional := !rs.required || nullable
-
-	switch {
-	// Before the slice case: json.RawMessage is a []byte, so it would be
-	// taken for a list of numbers — the document would say "array of
-	// integers" and the validator would refuse every object body.
-	case t == reflect.TypeFor[json.RawMessage]():
-		return nil, errRawMessage
-	case t == reflect.TypeFor[any]():
-		s := JSON()
-		if err := noRules(rs.rules); err != nil {
-			return nil, err
-		}
-
-		if optional {
-			s = s.Optional()
-		}
-
-		if nullable {
-			s = s.Nullable()
-		}
-
-		return s, nil
-	case t == reflect.TypeFor[map[string]any]():
-		s := JSONObject()
-		if err := noRules(rs.rules); err != nil {
-			return nil, err
-		}
-
-		if optional {
-			s = s.Optional()
-		}
-
-		if nullable {
-			s = s.Nullable()
-		}
-
-		return s, nil
-	case t == reflect.TypeFor[time.Time]():
-		s := Time()
-		if err := noRules(rs.rules); err != nil {
-			return nil, err
-		}
-
-		if optional {
-			s = s.Optional()
-		}
-
-		if nullable {
-			s = s.Nullable()
-		}
-
-		return s, nil
-	case t.Kind() == reflect.String:
-		return stringFromRules(t, rs, optional, nullable)
-	case rs.omitEmpty:
-		// Refused rather than ignored. "omitempty" has an unambiguous
-		// meaning only where the empty value is not itself a datum people
-		// bound: on a number it would make "omitempty,min=1" accept 0, and
-		// on a slice "omitempty,min=1" accept the empty list, which is the
-		// opposite of what the tag says. Accepting it silently is how an
-		// optional enum came to be rejected in the first place (A111).
-		return nil, fmt.Errorf(
-			"rule \"omitempty\" applies to a string, not %s "+
-				"(it skips the later rules when the value is empty; drop it, or use a pointer for an absent value)",
-			t,
-		)
-	case t.Kind() == reflect.Bool:
-		if err := noRules(rs.rules); err != nil {
-			return nil, err
-		}
-
-		s := Bool()
-		if optional {
-			s = s.Optional()
-		}
-
-		return s, nil
-	case isNumberKind(t.Kind()):
-		return numberFromRules(t, rs, optional)
-	case t.Kind() == reflect.Slice:
-		elem, err := schemaForType(t.Elem(), rs.dive, depth+1)
-		if err != nil {
-			return nil, err
-		}
-
-		s := Slice(elem)
-
-		for _, r := range rs.rules {
-			name, arg, _ := strings.Cut(r, "=")
-
-			switch name {
-			case "min", "max", "len":
-				n, err := strconv.Atoi(arg)
-				if err != nil {
-					return nil, fmt.Errorf("rule %q needs an integer", r)
-				}
-
-				switch name {
-				case "min":
-					s = s.Min(n)
-				case "max":
-					s = s.Max(n)
-				default:
-					s = s.Len(n)
-				}
-			case "unique":
-				s = s.Unique()
-			default:
-				return nil, unknownRuleError(r, scopeList)
-			}
-		}
-
-		// required means present and not null, as in OpenAPI; an empty list
-		// passes. Non-empty lists use min=1.
-		if optional {
-			s = s.Optional()
-		}
-
-		return s, nil
-	case t.Kind() == reflect.Struct:
-		if err := noRules(rs.rules); err != nil {
-			return nil, err
-		}
-
-		core := tagCore(t, depth+1)
-		core.o.optional = optional
-
-		return structAny{core: core}, nil
-	default:
-		return nil, fmt.Errorf("unsupported type %s", t)
-	}
-}
-
-func noRules(rules []string) error {
-	if len(rules) > 0 {
-		return fmt.Errorf("unsupported rules %v for this type", rules)
-	}
-
-	return nil
-}
-
-func isNumberKind(k reflect.Kind) bool {
-	switch k {
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
-		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
-		reflect.Float32, reflect.Float64:
-		return true
-	default:
-		return false
-	}
-}
-
-func stringFromRules(t reflect.Type, rs ruleSet, optional, nullable bool) (AnySchema, error) {
-	s := String()
-
-	var def *string
-
-	if rs.required {
-		s = s.required()
-	}
-
-	if rs.omitEmpty {
-		s = s.OmitEmpty()
-	}
-
-	for _, r := range rs.rules {
-		name, arg, _ := strings.Cut(r, "=")
-
-		switch name {
-		case "min", "max", "len":
-			n, err := strconv.Atoi(arg)
-			if err != nil {
-				return nil, fmt.Errorf("rule %q needs an integer", r)
-			}
-
-			switch name {
-			case "min":
-				s = s.Min(n)
-			case "max":
-				s = s.Max(n)
-			default:
-				s = s.Len(n)
-			}
-		case "email":
-			s = s.Email()
-		case "url":
-			s = s.URL()
-		case "uuid":
-			s = s.UUID()
-		case "ulid":
-			s = s.ULID()
-		case "alpha":
-			s = s.Alpha()
-		case "alphanum":
-			s = s.Alphanum()
-		case "numeric":
-			s = s.Numeric()
-		case "oneof":
-			s = s.OneOf(strings.Fields(arg)...)
-		case "default":
-			def = &arg
-		case "regex":
-			re, err := regexp.Compile(arg)
-			if err != nil {
-				return nil, fmt.Errorf("rule %q: %w", r, err)
-			}
-
-			s = s.Regex(re)
-		case "startswith":
-			s = s.StartsWith(arg)
-		case "endswith":
-			s = s.EndsWith(arg)
-		case "contains":
-			s = s.Includes(arg)
-		case "trim":
-			s = s.Trim()
-		case "lowercase":
-			s = s.ToLower()
-		default:
-			return nil, unknownRuleError(r, scopeString)
-		}
-	}
-
-	if optional {
-		s = s.Optional()
-	}
-
-	if nullable {
-		s = s.Nullable()
-	}
-
-	// A default is returned for every absent key without being parsed, so
-	// one the field's own rules refuse would pass silently forever. Checked
-	// here, where it is a boot error naming the rule it breaks.
-	if def != nil {
-		if err := s.Check(*def); err != nil {
-			return nil, fmt.Errorf("default %q does not satisfy this field's own rules: %w", *def, err)
-		}
-
-		s = s.Default(*def)
-	}
-
-	if t != reflect.TypeFor[string]() {
-		return convertedString{s: s, t: t}, nil
-	}
-
-	return s, nil
-}
-
-// convertedString adapts a string schema to a named string type.
-type convertedString struct {
-	s StringSchema
-	t reflect.Type
-}
-
-func (c convertedString) GoType() reflect.Type { return c.t }
-func (c convertedString) optional() bool       { return c.s.optional() }
-
-func (c convertedString) parseAny(p *pctx, path string, in any, present bool) (any, bool, bool) {
-	if rv := reflect.ValueOf(in); rv.IsValid() && rv.Kind() == reflect.String {
-		in = rv.String()
-	}
-
-	v, set, ok := c.s.parseAny(p, path, in, present)
-	if !ok || !set {
-		return v, set, ok
-	}
-
-	return reflect.ValueOf(v).Convert(c.t).Interface(), set, ok
-}
-
-func numberFromRules(t reflect.Type, rs ruleSet, optional bool) (AnySchema, error) {
-	var bounds []func(float64) error
-
-	positive := false
-	kw := map[string]any{}
-
-	var def *float64
-
-	for _, r := range rs.rules {
-		name, arg, _ := strings.Cut(r, "=")
-
-		switch name {
-		case "min", "max":
-			n, err := strconv.ParseFloat(arg, 64)
-			if err != nil {
-				return nil, fmt.Errorf("rule %q needs a number", r)
-			}
-
-			isMin := name == "min"
-			kw[map[bool]string{true: "minimum", false: "maximum"}[isMin]] = n
-			bounds = append(bounds, func(v float64) error {
-				if isMin && v < n || !isMin && v > n {
-					return boundError{min: isMin, n: n}
-				}
-
-				return nil
-			})
-		case "positive":
-			positive = true
-			kw["exclusiveMinimum"] = 0
-		case "default":
-			n, err := strconv.ParseFloat(arg, 64)
-			if err != nil {
-				return nil, fmt.Errorf("rule %q needs a number", r)
-			}
-
-			// Not re-validated: a default outside the field's own bounds
-			// would be returned for every absent key and fail nothing.
-			def = &n
-			kw["default"] = n
-		default:
-			return nil, unknownRuleError(r, scopeNumber)
-		}
-	}
-
-	if def != nil {
-		if positive && *def <= 0 {
-			return nil, fmt.Errorf("default %v does not satisfy \"positive\"", *def)
-		}
-
-		for _, b := range bounds {
-			if err := b(*def); err != nil {
-				return nil, fmt.Errorf("default %v does not satisfy this field's own bounds: %w", *def, err)
-			}
-		}
-	}
-
-	return numberAny{t: t, bounds: bounds, positive: positive, opt: optional, def: def, kw: kw}, nil
-}
-
-// numberOpts carries the tag's optionality and default into the typed
-// schema the parse runs on.
-func numberOpts[N int64 | uint64 | float64](optional bool, def *float64) opts[N] {
-	o := opts[N]{optional: optional}
-	if def != nil {
-		o.hasDef, o.def = true, N(*def)
-	}
-
-	return o
-}
-
-type boundError struct {
-	min bool
-	n   float64
-}
-
-func (e boundError) Error() string { return "out of bounds" }
-
-// numberAny parses any numeric kind chosen at run time (tag schemas).
-type numberAny struct {
-	t        reflect.Type
-	bounds   []func(float64) error
-	positive bool
-	opt      bool
-	// def is the "default=V" value, used when the key is absent.
-	def *float64
-	kw  map[string]any
-}
-
-func (n numberAny) GoType() reflect.Type { return n.t }
-func (n numberAny) optional() bool       { return n.opt }
-
-func (n numberAny) parseAny(c *pctx, path string, in any, present bool) (any, bool, bool) {
-	var s AnySchema
-
-	switch n.t.Kind() {
-	case reflect.Float32, reflect.Float64:
-		s = NumberSchema[float64]{o: numberOpts[float64](n.opt, n.def)}
-	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		s = NumberSchema[uint64]{o: numberOpts[uint64](n.opt, n.def)}
-	default:
-		s = NumberSchema[int64]{o: numberOpts[int64](n.opt, n.def)}
-	}
-
-	v, set, ok := s.parseAny(c, path, in, present)
-	if !ok || !set {
-		return v, set, ok
-	}
-
-	rv := reflect.ValueOf(v)
-	if !rv.CanConvert(n.t) || rv.Convert(n.t).Convert(rv.Type()).Interface() != v {
-		c.addKeyed(path, CodeInvalidType, CodeInvalidType, render(defaultMessages[CodeInvalidType], path,
-			map[string]any{"expected": "a number in range"}), nil)
-
-		return nil, false, false
-	}
-
-	f, _ := toNumber[float64](v, false)
-
-	if n.positive && f <= 0 {
-		params := map[string]any{"min": 0}
-		c.addKeyed(path, CodeTooSmall, "too_small.positive",
-			render(defaultMessages["too_small.positive"], path, params), params)
-
-		return nil, false, false
-	}
-
-	for _, b := range n.bounds {
-		err := b(f)
-		if err == nil {
-			continue
-		}
-
-		be, _ := err.(boundError) //nolint:errorlint // local sentinel type, never wrapped
-
-		code, key, param := CodeTooBig, "too_big.number", "max"
-		if be.min {
-			code, key, param = CodeTooSmall, "too_small.number", "min"
-		}
-
-		params := map[string]any{param: be.n}
-		c.addKeyed(path, code, key, render(defaultMessages[key], path, params), params)
-
-		return nil, false, false
-	}
-
-	return rv.Convert(n.t).Interface(), true, true
-}
-
-// structAny is a nested tag-derived struct.
-type structAny struct {
-	core structCore
-}
-
-func (s structAny) GoType() reflect.Type { return s.core.rt }
-func (s structAny) optional() bool       { return s.core.o.optional }
-
-func (s structAny) parseAny(c *pctx, path string, in any, present bool) (any, bool, bool) {
-	o := s.core.o
-
-	return parse(&o, c, path, in, present, false, func(c *pctx, path string, in any) (any, bool) {
-		rv, ok := s.core.parse(c, path, in)
-		if !ok {
-			return nil, false
-		}
-
-		return rv.Interface(), true
-	})
-}
-
-// errRawMessage refuses json.RawMessage with the alternative named. Parse
-// takes already-decoded input, so the original bytes are gone by the time
-// a schema could fill the field: re-encoding them changes key order and
-// number formatting, and a type whose contract is "the bytes the client
-// sent" must not be filled with different ones. map[string]any and any
-// carry the same payload without that promise.
-var errRawMessage = errors.New(
-	"json.RawMessage cannot be validated: Parse receives decoded JSON, so the original bytes are gone. " +
-		"Use map[string]any for an object or any for any JSON value (z.JSONObject, z.JSON), " +
-		"and decode into your own type in the handler",
-)
