@@ -1,0 +1,227 @@
+---
+title: CLI reference
+description: Every vukem command with its usage, arguments, flags, defaults, environment variables, files written, errors and real examples, in the style of a man page.
+---
+
+This is the manual for the `vukem` command. It lists every command, every flag, what each one writes to disk, the errors you may hit and how to fix them. Each command has a one-line purpose, a usage line, arguments, flags, and two examples: a realistic one and an advanced one. All output shown was captured from the real command.
+
+For a guided tour with explanations and analogies, read the [CLI overview](/docs/cli/overview). Use this page when you already know what you want and need the exact syntax.
+
+You will find:
+
+- A cheat sheet of all commands
+- The global flags, environment variables and exit codes
+- Common workflows, end to end
+- Links to one reference page per command group
+
+## Command cheat sheet
+
+Commands marked **global** run in the `vukem` binary and work on files. Commands marked **app** run inside your project's `cmd/app` binary: `vukem` builds it and passes the arguments through ([how delegation works](#how-commands-are-found)).
+
+| Command | Kind | One-liner |
+| --- | --- | --- |
+| [`vukem new`](/docs/cli/reference-new#vukem-new) | global | Create a project from the embedded starter |
+| [`vukem serve`](/docs/cli/reference-new#vukem-serve) | global | Run the app in development and restart it on changes |
+| [`vukem build`](/docs/cli/reference-new#vukem-build) | global | Build the assets and the production binary |
+| [`vukem version`](/docs/cli/reference-new#vukem-version) | global | Print the CLI version |
+| [`vukem list`](/docs/cli/reference-new#vukem-list-and-vukem-help) | global | List the commands |
+| [`vukem install:auth`](/docs/cli/reference-install#vukem-installauth) | global | Add login, registration, password reset, verification |
+| [`vukem install:api`](/docs/cli/reference-install#vukem-installapi) | global | Add API tokens, `/api/v1`, CORS, rate limiting |
+| [`vukem install:admin`](/docs/cli/reference-install#vukem-installadmin) | global | Add the admin panel at `/admin` |
+| [`vukem install:flags`](/docs/cli/reference-install#vukem-installflags) | global | Add feature flags |
+| [`vukem install:billing`](/docs/cli/reference-install#vukem-installbilling) | global | Add Stripe subscriptions |
+| [`vukem install:inertia`](/docs/cli/reference-install#vukem-installinertia) | global | Turn the HTMX starter into an Inertia app |
+| [`vukem boost:install`](/docs/cli/reference-install#vukem-boostinstall) | global | Add guidelines and an MCP server for AI agents |
+| [`vukem make:controller`](/docs/cli/reference-make#vukem-makecontroller) | global | Create a controller |
+| [`vukem make:model`](/docs/cli/reference-make#vukem-makemodel) | global | Create a model, optionally with migration, factory, controller |
+| [`vukem make:migration`](/docs/cli/reference-make#vukem-makemigration) | global | Create a timestamped migration and register it |
+| [`vukem make:middleware`](/docs/cli/reference-make#vukem-makemiddleware) | global | Create an HTTP middleware |
+| [`vukem make:request`](/docs/cli/reference-make#vukem-makerequest) | global | Create a validated request struct |
+| [`vukem make:command`](/docs/cli/reference-make#vukem-makecommand) | global | Create an app command and register it |
+| [`vukem make:provider`](/docs/cli/reference-make#vukem-makeprovider) | global | Create a provider and register it |
+| [`vukem make:resource`](/docs/cli/reference-make#vukem-makeresource) | global | Create an API resource (JSON transformer) |
+| [`vukem make:factory`](/docs/cli/reference-make#vukem-makefactory) | global | Create a model factory |
+| [`vukem make:seeder`](/docs/cli/reference-make#vukem-makeseeder) | global | Create a seeder and register it |
+| [`vukem make:event`](/docs/cli/reference-make#vukem-makeevent) | global | Create an event type |
+| [`vukem make:listener`](/docs/cli/reference-make#vukem-makelistener) | global | Create an event listener and register it |
+| [`vukem make:job`](/docs/cli/reference-make#vukem-makejob) | global | Create a queued job and register its handler |
+| [`vukem make:mail`](/docs/cli/reference-make#vukem-makemail) | global | Create a mailable and its view |
+| [`vukem make:policy`](/docs/cli/reference-make#vukem-makepolicy) | global | Create an authorization policy and register it |
+| [`vukem make:admin-resource`](/docs/cli/reference-make#vukem-makeadmin-resource) | global | Create an admin panel resource for a model |
+| [`vukem make:test`](/docs/cli/reference-make#vukem-maketest) | global | Create a test that uses the fluent client |
+| [`vukem make:proto`](/docs/cli/reference-make#vukem-makeproto) | global | Create a gRPC service `.proto` and buf files |
+| [`vukem codegen:rpc`](/docs/cli/reference-make#vukem-codegenrpc) | global | Generate Go and connect-go code from `proto/` |
+| [`vukem key:generate`](/docs/cli/reference-runtime#vukem-keygenerate) | global | Write a new `APP_KEY` to `.env` |
+| [`vukem key:rotate`](/docs/cli/reference-runtime#vukem-keyrotate) | global | Replace `APP_KEY` and keep the old one |
+| [`vukem down`](/docs/cli/reference-runtime#vukem-down-and-vukem-up) | global | Put the app in maintenance mode |
+| [`vukem up`](/docs/cli/reference-runtime#vukem-down-and-vukem-up) | global | Leave maintenance mode |
+| [`vukem migrate`](/docs/cli/reference-database#vukem-migrate) | app | Run pending migrations |
+| [`vukem migrate:rollback`](/docs/cli/reference-database#vukem-migraterollback) | app | Roll back the last batch or N migrations |
+| [`vukem migrate:reset`](/docs/cli/reference-database#vukem-migratereset) | app | Roll back every migration |
+| [`vukem migrate:fresh`](/docs/cli/reference-database#vukem-migratefresh) | app | Drop all tables and migrate again |
+| [`vukem migrate:status`](/docs/cli/reference-database#vukem-migratestatus) | app | Show which migrations ran |
+| [`vukem db:seed`](/docs/cli/reference-database#vukem-dbseed) | app | Run the seeders |
+| [`vukem db:wipe`](/docs/cli/reference-database#vukem-dbwipe) | app | Drop every table |
+| [`vukem route:list`](/docs/cli/reference-runtime#vukem-routelist) | app | List the registered routes |
+| [`vukem about`](/docs/cli/reference-runtime#vukem-about) | app | Show the application and environment summary |
+| [`vukem queue:work`](/docs/cli/reference-runtime#vukem-queuework) | app | Process queued jobs |
+| [`vukem queue:failed`](/docs/cli/reference-runtime#vukem-queuefailed) | app | List failed jobs |
+| [`vukem queue:retry`](/docs/cli/reference-runtime#vukem-queueretry-and-vukem-queueforget) | app | Re-queue failed jobs |
+| [`vukem queue:forget`](/docs/cli/reference-runtime#vukem-queueretry-and-vukem-queueforget) | app | Delete failed jobs |
+| [`vukem schedule:run`](/docs/cli/reference-runtime#vukem-schedulerun-schedulework-schedulelist) | app | Run the scheduled tasks that are due now |
+| [`vukem schedule:work`](/docs/cli/reference-runtime#vukem-schedulerun-schedulework-schedulelist) | app | Run the scheduler in the foreground |
+| [`vukem schedule:list`](/docs/cli/reference-runtime#vukem-schedulerun-schedulework-schedulelist) | app | List the tasks and their next run |
+| [`vukem cache:prune`](/docs/cli/reference-runtime#vukem-cacheprune-and-vukem-sessionprune) | app | Delete expired database cache entries |
+| [`vukem session:prune`](/docs/cli/reference-runtime#vukem-cacheprune-and-vukem-sessionprune) | app | Delete expired database sessions |
+| [`vukem openapi:export`](/docs/cli/reference-runtime#vukem-openapiexport) | app | Print the OpenAPI 3.1 document |
+| [`vukem openapi:serve`](/docs/cli/reference-runtime#vukem-openapiserve) | app | Preview the API reference locally (opt-in) |
+| [`vukem codegen:types`](/docs/cli/reference-runtime#vukem-codegentypes) | app | Generate TypeScript types and Zod schemas |
+| [`vukem codegen:routes`](/docs/cli/reference-runtime#vukem-codegenroutes) | app | Generate typed frontend routes |
+| [`vukem codegen:client`](/docs/cli/reference-runtime#vukem-codegenclient) | app | Generate a typed API client in TypeScript or Go |
+| [`vukem ssr:start`](/docs/cli/reference-runtime#vukem-ssrstart-and-vukem-ssrcheck) | app | Run the Inertia SSR server and restart it on crash |
+| [`vukem ssr:check`](/docs/cli/reference-runtime#vukem-ssrstart-and-vukem-ssrcheck) | app | Check that the SSR server answers `/health` |
+| [`vukem boost:mcp`](/docs/cli/reference-runtime#vukem-boostmcp) | app | MCP server for coding agents (started by agents) |
+| `vukem <your command>` | app | Commands you add with `vukem make:command` |
+
+## Global flags
+
+These work on the `vukem` binary itself, before any command.
+
+| Flag | What it does |
+| --- | --- |
+| `-h`, `--help`, `help`, `list` | Print the command list. Same as running `vukem` with no arguments. |
+| `help <command>` | Print the usage line, description and flags of one global command. It exits 2 for an unknown name. |
+| `<command> -h` | Same as `help <command>`. For an app command it prints the flags of that command only. |
+| `-v`, `--version`, `version` | Print `vukem <version>`. A build from a checkout prints `devel`. |
+
+Per-command rules:
+
+- Flags use Go's [`flag`](https://pkg.go.dev/flag) package: `-force` and `--force` are the same. `--event=X` and `--event X` are the same.
+- On **global** commands flags may come before or after the arguments: `vukem make:model Comment -m` equals `vukem make:model -m Comment`.
+- On **app** commands flags must come **before** positional arguments. `db:seed` is the exception: it reads seeder names first, then flags.
+- `--` ends flag parsing.
+- Boolean flags do not combine: write `-m -f -c`, not `-mfc`.
+- There is no `--env`, `--quiet` or `--no-color` flag. Output is plain text with no colour.
+
+## Environment variables
+
+The global CLI reads almost nothing from the environment:
+
+| Variable | Read by | Effect |
+| --- | --- | --- |
+| `PATH` | all | Finds `go`, `git`, `npm`, `bun`, `pnpm`, `yarn`, `buf`, `protoc`, `node` |
+| `CGO_ENABLED` | `build`, delegated builds | A value you set wins; otherwise builds run with `CGO_ENABLED=0` |
+
+Everything else is read by **your app**, from the process environment or the `.env` file in the project root. The ones the CLI commands rely on:
+
+| Variable | Default | Used by |
+| --- | --- | --- |
+| `APP_ENV` | `development` | Destructive commands need `-force` when it is `production` |
+| `APP_DEBUG` | `false` | Must be `false` when `APP_ENV=production`, or every app command fails to boot |
+| `APP_KEY` | none | Sessions and encryption. Written by `key:generate`, `new` |
+| `APP_PREVIOUS_KEYS` | none | Old keys kept by `key:rotate` |
+| `HOST`, `PORT` | `localhost`, `3000` | `serve`, `about` |
+| `DATABASE_URL` | `file:storage/database.sqlite` | `migrate*`, `db:*` |
+| `QUEUE_CONNECTION`, `QUEUE_NAMES`, `QUEUE_CONCURRENCY` | `sync`, `default`, `4` | `queue:*` |
+| `SCHEDULE_TIMEZONE` | `UTC` | `schedule:*` |
+| `OPENAPI_PREFIX` | none | Default for `-prefix` in `openapi:export` and `codegen:*` |
+| `SHUTDOWN_TIMEOUT` | `15s` | How long `queue:work` waits for running jobs after Ctrl+C |
+
+See [Configuration](/docs/configuration) for the full list.
+
+<Callout type="tip" title="Git Bash on Windows">
+Git Bash rewrites an argument that starts with `/` into a Windows path, so `-prefix /api` becomes `C:/Program Files/Git/api`. Write `-prefix //api`, or set `MSYS_NO_PATHCONV=1` for the command. PowerShell and cmd are not affected.
+</Callout>
+
+## Exit codes
+
+| Code | Meaning |
+| --- | --- |
+| `0` | Success |
+| `1` | Failure. The message starts with `error:` for global commands. |
+| `2` | Usage error: unknown command, missing or extra argument, bad flag value. Global commands also print `Run 'vukem list' for the available commands.` |
+
+A delegated app command returns its own exit code unchanged. A bare `vukem <unknown>` is delegated too, so inside a project it prints the app's command list and exits 2.
+
+## How commands are found
+
+1. If the name is a **global** command, `vukem` runs it.
+2. Otherwise `vukem` builds `cmd/app` into `.vukem/bin/app` and runs it with the same arguments, standard streams and environment. It rebuilds only when a `.go`, `.templ`, `go.mod`, `go.sum` or `.buildtags` file is newer than the binary.
+3. Outside a project you get `unknown command "migrate" (app commands need a Vukem project with cmd/app)`.
+
+You may skip step 2 and run the binary yourself: `go run ./cmd/app migrate`.
+
+## Common workflows
+
+### New API project
+
+```bash
+vukem new shop --api --module github.com/acme/shop
+cd shop
+vukem migrate
+vukem serve
+```
+
+```text
+Migrated: 20260101000000_create_posts_table
+Migrated: 20261024221606_create_users_table
+Migrated: 20261024221607_create_auth_tables
+```
+
+Then `curl localhost:3000/up` answers `{"status":"ok"}`. Check the routes with `vukem route:list`.
+
+### Add a resource end to end
+
+A `Comment` that belongs to the blog:
+
+```bash
+vukem make:model Comment -m -f -c
+vukem make:request StoreComment
+vukem make:policy Comment
+vukem make:test Comments
+vukem migrate
+```
+
+Fill the migration, the model fields and the controller, register the routes in `routes/`, then run `go test ./...`. For an API, use `make:resource Comment` for the JSON shape and `vukem codegen:client` for a client. See [reference: make](/docs/cli/reference-make).
+
+### Seed and migrate
+
+```bash
+vukem make:seeder Post
+vukem migrate:fresh
+vukem db:seed
+```
+
+`migrate:fresh` drops every table and migrates again, `db:seed` fills them. In production add `-force` on purpose and only after reading [the guard](/docs/cli/reference-database#the-production-guard).
+
+### Build for production
+
+```bash
+vukem codegen:types -prefix /api -o resources/js/types.ts
+vukem build -o bin/shop
+export APP_ENV=production APP_DEBUG=false MAIL_MAILER=log
+./bin/shop migrate
+./bin/shop
+```
+
+`vukem build` runs `templ generate` and `vite build` when the project has them, then `go build -trimpath -ldflags="-s -w"` with `CGO_ENABLED=0`. The binary contains every app command, so a server without the `vukem` CLI still runs `./bin/shop migrate`. In production the app refuses to boot without `MAIL_MAILER` (`smtp`, `resend`, `mailtrap` or `log`). See [Single binary](/docs/deployment/single-binary).
+
+## Reference pages
+
+<CardGroup cols="2">
+<Card title="new, serve, build" href="/docs/cli/reference-new" icon="rocket">
+Create a project, run it, build it.
+</Card>
+<Card title="make:* and code generation" href="/docs/cli/reference-make" icon="boxes">
+Every generator and gRPC code generation.
+</Card>
+<Card title="install:* and boost" href="/docs/cli/reference-install" icon="layers">
+Add authentication, API, admin, flags, billing, Inertia.
+</Card>
+<Card title="Database" href="/docs/cli/reference-database" icon="database">
+Migrations, seeders and wipe.
+</Card>
+<Card title="Runtime and tooling" href="/docs/cli/reference-runtime" icon="layers">
+Keys, maintenance, routes, queue, scheduler, OpenAPI and codegen.
+</Card>
+</CardGroup>

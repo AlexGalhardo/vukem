@@ -5,7 +5,7 @@ description: Every vukem command and flag — create projects, generate code, ru
 
 `vukem` is the command you type in the terminal to work on a Vukem project. It creates new projects, writes boilerplate files for you, runs the app while you code and builds the final binary. Instead of copying a controller from an old project and renaming everything by hand, you run `vukem make:controller Post` and get a correct, formatted file.
 
-This page is the reference: every command, every flag, its default and what it writes to disk. All examples build the same **blog** project.
+This page is the guided tour: every command, with explanations and the same **blog** project as running example. For a man-page style manual with every flag, error and environment variable, see the [CLI reference](/docs/cli/reference).
 
 You will learn:
 
@@ -141,7 +141,7 @@ vukem new blog --inertia react --pm bun
 | `--templ` | bool | `false` | HTMX starter with [templ](https://templ.guide) components instead of `html/template` views |
 | `--inertia` | string | none | Inertia starter with `react`, `vue` or `svelte` |
 | `--minimal` | bool | `false` | HTMX starter without a database: no posts, uploads, migrations or SQLite driver |
-| `--pm` | string | `npm` | JavaScript package manager: `npm`, `bun`, `pnpm` or `yarn` |
+| `--pm` | string | first of `bun`, `npm`, `pnpm`, `yarn` on `PATH` | JavaScript package manager: `npm`, `bun`, `pnpm` or `yarn` |
 | `--no-install` | bool | `false` | Skip installing the frontend dependencies |
 | `--framework` | string | none | Path to a local Vukem checkout to use instead of a release |
 | `--standards` | bool | `false` | markdownlint and a `lint:md` script, `CHANGELOG.md` with `.config/cliff.toml`, Conventional Commits git hooks, a SemVer version ([project standards](#project-standards)) |
@@ -278,6 +278,7 @@ The `install:*` commands copy **your own code** into the project: routes, contro
 | --- | --- | --- | --- |
 | `--social` | string | none | Also add [social login](/docs/security/social-login) for a comma-separated list: `github`, `gitlab`, `discord`, `google`, `microsoft`, `linkedin`, `apple` (`x` is refused: X sends no email) |
 | `--2fa` | bool | `false` | Also add [two-factor authentication](/docs/security/two-factor) (TOTP) |
+| `--locales` | string | the project's locales, else `en` | Message catalogs to write, comma separated (`en,pt-BR`); `en` is always written |
 | `--force` | bool | `false` | Overwrite existing files |
 
 - It writes the shared core (users, accounts, tokens, mails) once; `app/accounts/accounts.go` marks it as installed.
@@ -604,8 +605,8 @@ Unlike the global CLI, app commands use the plain `flag` package, so **flags go 
 | `schedule:list` | none | Lists the tasks and their next run |
 | `cache:prune` | none | Deletes expired database cache entries |
 | `session:prune` | none | Deletes expired database sessions |
-| `openapi:export` | none | Prints the OpenAPI 3.1 document ([OpenAPI](/docs/rest-apis/openapi)) |
-| `codegen:types` | `-zod`, `-o file` | TypeScript types, plus Zod schemas with `-zod` |
+| `openapi:export` | `-prefix` | Prints the OpenAPI 3.1 document ([OpenAPI](/docs/rest-apis/openapi)) |
+| `codegen:types` | `-zod`, `-o file`, `-prefix` | TypeScript types, plus Zod schemas with `-zod` |
 | `codegen:client` | `-lang ts\|go`, `-o file`, `-package apiclient` | A typed API client ([Client generation](/docs/rest-apis/client-generation)) |
 | `codegen:routes` | `-o resources/js/routes.ts` | Typed frontend routes ([Inertia](/docs/frontend/inertia)) |
 | `ssr:start` | `-bundle`, `-runtime node`, `-restart-delay 1s` | Runs the Inertia SSR server and restarts it on crash |

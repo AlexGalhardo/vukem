@@ -2,6 +2,8 @@
 
 The `vukem` command: scaffolding, generators, dev server, and delegation to the app binary. Decision `A7` in [brainstorming.md](brainstorming.md).
 
+The user-facing manual (every command, flag, environment variable, error and example) is the site's [CLI reference](../site/content/docs/cli/reference.mdx); a test in `internal/cli` fails when a command or flag of the real registry is missing from it.
+
 ## Two binaries
 
 | Binary | Installed by | Knows about the app? | Commands |

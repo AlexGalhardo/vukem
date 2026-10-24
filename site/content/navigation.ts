@@ -116,7 +116,15 @@ export const navigation: NavCategory[] = [
   {
     title: "CLI",
     dir: "cli",
-    pages: ["overview"],
+    pages: [
+      "overview",
+      "reference",
+      "reference-new",
+      "reference-make",
+      "reference-install",
+      "reference-database",
+      "reference-runtime",
+    ],
   },
   {
     title: "Deployment",
