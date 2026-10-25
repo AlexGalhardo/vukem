@@ -483,7 +483,7 @@ q.DispatchTx(ctx, tx, jobs.SendInvoice{OrderID: id})
 
 **Dispatching inside `jobs.All`.** Calling `app.Queue()` while `All(app)` builds the handlers deadlocks the first `app.Queue()` call. Dispatch from handlers, never from `All`.
 
-**Running `queue:work` on sync.** With `QUEUE_CONNECTION=sync` nothing is ever stored, so `queue:work` polls an empty queue forever. Set the same `QUEUE_CONNECTION` on the web service and the workers.
+**Running `queue:work` on sync.** With `QUEUE_CONNECTION=sync` nothing is ever stored, so `queue:work` exits at once with `vukem: QUEUE_CONNECTION=sync runs jobs during Dispatch, so queue:work has nothing to process (...)`. Set the same `QUEUE_CONNECTION` (`database` or Redis) on the web service and the workers.
 
 **Changing a kind.** Renaming `"send_invoice"` to `"invoice.send"` leaves the waiting jobs without a handler; they fail with `queue: no handler for job kind: "send_invoice"`. Keep old kinds registered until their jobs drain.
 
