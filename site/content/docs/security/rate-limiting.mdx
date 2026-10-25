@@ -132,9 +132,12 @@ The second argument of `ratelimit.Middleware` is a `ratelimit.KeyFunc`: `func(r 
 | --- | --- | --- | --- |
 | `ratelimit.ByIP` (also when you pass `nil`) | client IP; IPv6 by network | `ip:203.0.113.5`, `ip:2001:db8:1:2::/64` | public routes, logins, sign-ups |
 | `ratelimit.ByToken` | the bearer token, hashed; the IP when there is none | `token:3f1a...` | routes **behind** `auth.Required` |
+| `ratelimit.ByUser(guard)` | the user that `guard` authenticated; the IP for anonymous callers | `user:web:42` | per-account limits behind `auth.Required`, for session and token users alike |
 | your own `KeyFunc` | anything: user id, email and IP, tenant | `login:ana@example.com:ip:203.0.113.5` | per-user or per-account limits |
 
-`ByToken` hashes the token with [SHA-256](https://pkg.go.dev/crypto/sha256) and keeps 16 bytes, so the raw token never sits in the store.
+`ByToken` hashes the token with [SHA-256](https://pkg.go.dev/crypto/sha256) and keeps 16 bytes, so the raw token never sits in the store. It reads only `Authorization: Bearer <token>` spelled exactly that way; any other request counts by IP.
+
+`ByUser` keys by account rather than by address or token: "10 new API keys an hour" then survives an attacker who rotates addresses or tokens, and session requests (which carry no bearer token) still count per user. A caller that `guard` did not authenticate gets its IP key, never a shared one, so put an IP limit in front when the route is reachable without a login.
 
 ### Your own key
 
@@ -418,7 +421,7 @@ Implement `ratelimit.Limiter` (one method, `Allow(ctx, key) (ratelimit.Result, e
 | `app.RateLimiters() (ratelimit.Factory, error)` | limiter factory for the configured store |
 | `ratelimit.Factory` | `func(name string, limit int, window time.Duration) ratelimit.Limiter` |
 | `ratelimit.Middleware(l, key)` | applies a limiter to routes; `key` defaults to `ByIP` |
-| `ratelimit.ByIP`, `ratelimit.ByToken` | built-in `KeyFunc`s |
+| `ratelimit.ByIP`, `ratelimit.ByToken`, `ratelimit.ByUser(guard)` | built-in `KeyFunc`s |
 | `ratelimit.IPKey(ip, prefix)` | the per-client part of an IP key |
 | `ratelimit.DefaultIPv6Prefix` | `64` |
 | `ratelimit.NewMemory(limit, window)` | in-process GCRA limiter |
