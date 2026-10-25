@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.31.0] - 2026-10-25
+
+### Added
+
+- **engine:** Add contrib/engine, a seam for running an external binary ([76ae3c8](https://github.com/AlexGalhardo/vukem/commit/76ae3c86cc4d6e45ded42c5e0e2718d22dd18db1))
+- **cache:** Add Add and Pull generic helpers ([29e79e1](https://github.com/AlexGalhardo/vukem/commit/29e79e1464b9bedf99fbb73035b991fd43666c1a))
+- **factory:** Add PickWeighted ([ea4da92](https://github.com/AlexGalhardo/vukem/commit/ea4da92b1fd2d555844c74818d07ee57511e83ce))
+- **z:** Support map[string]V fields in FromTags ([efd1335](https://github.com/AlexGalhardo/vukem/commit/efd13350688d426b7866b2917aa7fc73ff762065))
+- **z:** Add StructSchema.Normalize ([e6053e8](https://github.com/AlexGalhardo/vukem/commit/e6053e81b488a7a9119f10fac876d09bce5f1033))
+- **z:** Add HasLower, HasUpper, HasDigit and HasSymbol string rules ([0e9791d](https://github.com/AlexGalhardo/vukem/commit/0e9791d438d5fe85b06e540f1fffdccdf47990f3))
+- **auth:** Add ThrottleKeys for the login throttle ([8e6fe4d](https://github.com/AlexGalhardo/vukem/commit/8e6fe4dae2fea1f888ba14bbe3ca9cb8fb3527bd))
+- **middleware:** Mark recovered panic records with panic=true ([f87d004](https://github.com/AlexGalhardo/vukem/commit/f87d00435c2c63ec5498d29eacb69737c299fa3a))
+- **cli:** Add make:seeder --app for AppSeeders ([e8eee49](https://github.com/AlexGalhardo/vukem/commit/e8eee4920f3b2ec2ad5bde2f3b75e529b78b7fa2))
+- **release:** Update PLAN status and bump nested module requires ([b698cc8](https://github.com/AlexGalhardo/vukem/commit/b698cc8a5a13f544c7c3495ecd7b039fb4e22238))
+- **tools:** Add snippetcheck for the site docs Go blocks ([8b8a074](https://github.com/AlexGalhardo/vukem/commit/8b8a07456987feb1dd23ee567252f8b6248bf1c9))
+
+### Changed
+
+- **z:** Split tags.go by field kind ([fb9e023](https://github.com/AlexGalhardo/vukem/commit/fb9e02391bf2734c2ab00bab0e1f13f3e3f4153c))
+- **auth:** Explain why redirect write errors are ignored ([9fa5205](https://github.com/AlexGalhardo/vukem/commit/9fa520588c989a0567f1403f4e323f24569f1a9f))
+- **middleware:** Replace orDefault with cmp.Or ([4a24a2e](https://github.com/AlexGalhardo/vukem/commit/4a24a2ea25c6604a90a99bce0181ae4a9dd218e5))
+- **repo:** Split root app.go by lifecycle and subsystem ([b5939e0](https://github.com/AlexGalhardo/vukem/commit/b5939e0ccb76ab66dc1c4fd54a20d0e5801fd70c))
+
+### Fixed
+
+- **z:** Reject omitempty on any, map[string]any and time tag fields ([08428a4](https://github.com/AlexGalhardo/vukem/commit/08428a4bc3e436f69788721fe257090f8d61f87e))
+- **auth:** Read the throttle email like Ctx.Input and fail closed ([cd89ae6](https://github.com/AlexGalhardo/vukem/commit/cd89ae6ab3f9f105d9edd1866d89cbf27512c73b))
+- **auth:** Key the login throttle on web.PeekJSON, like Ctx.Input ([fe69a79](https://github.com/AlexGalhardo/vukem/commit/fe69a7902135772d9ff3be4020ca684e66e5c769))
+- **cli:** Align help text with behavior ([41a136d](https://github.com/AlexGalhardo/vukem/commit/41a136db3e413149bfae77bef855fa9ba911430b))
+
 ## [0.30.0] - 2026-10-19
 
 ### Added
@@ -988,7 +1018,8 @@ Project foundation. No framework code yet; see [PLAN.md](PLAN.md) for the roadma
 - README, MIT license, CONTRIBUTING, SECURITY and CODE_OF_CONDUCT.
 - Agent configuration: `AGENTS.md`, `CLAUDE.md`, path-scoped `.claude/rules/`, Go skills and project settings.
 
-[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.30.0...HEAD
+[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.31.0...HEAD
+[0.31.0]: https://github.com/AlexGalhardo/vukem/compare/v0.30.0...v0.31.0
 [0.30.0]: https://github.com/AlexGalhardo/vukem/compare/v0.29.0...v0.30.0
 [0.29.0]: https://github.com/AlexGalhardo/vukem/compare/v0.28.0...v0.29.0
 [0.28.0]: https://github.com/AlexGalhardo/vukem/compare/v0.27.0...v0.28.0
