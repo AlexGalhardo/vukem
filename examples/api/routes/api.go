@@ -37,16 +37,19 @@ func API(r *router.Router, app *vukem.App) error {
 	r.UseServer(cors) // preflight OPTIONS requests have no route
 
 	h := apiv1.NewTokens(acc)
+	perIP := ratelimit.Middleware(ratelimit.NewMemory(120, time.Minute), ratelimit.ByIP)
 	perToken := ratelimit.Middleware(ratelimit.NewMemory(60, time.Minute), ratelimit.ByToken)
 	issue := ratelimit.Middleware(ratelimit.NewMemory(5, time.Minute), ratelimit.ByIP)
 
 	r.Group("/api/v1", func(g *router.Group) {
-		g.Use(middleware.JSONOnly(), perToken)
+		g.Use(middleware.JSONOnly(), perIP)
 		g.Post("/tokens", h.Issue).Name("tokens.store").Use(issue)
 
 		g.Group("", func(p *router.Group) {
-			p.Use(auth.Required(acc.API))
-			p.Get("/me", h.Me).Name("me")
+			// The per-token limiter runs after the guard: before it, a client
+			// rotating made-up tokens would get a fresh bucket per request.
+			p.Use(auth.Required(acc.API), perToken)
+			p.Get("/me", h.Me).Name("me").Use(auth.Ability(acc.API, apiv1.AbilityRead))
 			p.Delete("/tokens/current", h.Revoke).Name("tokens.destroy")
 		})
 	}).Name("api.v1.")

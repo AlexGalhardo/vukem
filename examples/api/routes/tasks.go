@@ -32,7 +32,7 @@ func Tasks(r *router.Router, app *vukem.App) error {
 	tags := []string{"tasks"}
 
 	r.Group("/api/v1", func(g *router.Group) {
-		g.Use(middleware.JSONOnly(), limit, auth.Required(acc.API))
+		g.Use(middleware.JSONOnly(), auth.Required(acc.API), limit) // limit per verified token
 
 		api.Register(g, "GET /tasks", api.Op{
 			Name: "tasks.index", Summary: "List your tasks", Tags: tags, Security: bearer,

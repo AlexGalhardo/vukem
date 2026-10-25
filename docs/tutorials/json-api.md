@@ -57,14 +57,14 @@ echo "correct horse battery" | vukem user:create -name Ada ada@example.com
 ```sh
 curl -s -X POST localhost:3000/api/v1/tokens \
   -H 'Content-Type: application/json' -H 'Accept: application/json' \
-  -d '{"email":"ada@example.com","password":"correct horse battery","device_name":"curl"}'
+  -d '{"email":"ada@example.com","password":"correct horse battery","device_name":"curl","abilities":["read","write"]}'
 ```
 
 ```json
-{"expires_at":"2026-11-16T09:29:28.3005936Z","token":"<id>.<secret>","type":"Bearer"}
+{"abilities":["read","write"],"expires_at":"2026-11-16T09:29:28.3005936Z","token":"<id>.<secret>","type":"Bearer"}
 ```
 
-Tokens are opaque, stored hashed, and expire after 30 days ([authentication.md](../authentication.md#token-guard-api)). Five token requests per minute per IP are allowed. Keep the token for the next steps:
+A token carries only the abilities the request asks for (`read`, `write`; none when omitted), and `GET /api/v1/me` needs `read`. Only a verified email gets a token; `user:create` marks the address verified. Tokens are opaque, stored hashed, and expire after 30 days ([authentication.md](../authentication.md#token-guard-api)). Five token requests per minute per IP are allowed. Keep the token for the next steps:
 
 ```sh
 TOKEN='<id>.<secret>'   # the token from the response

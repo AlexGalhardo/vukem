@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	vukem "github.com/AlexGalhardo/vukem"
 	"github.com/AlexGalhardo/vukem/examples/api/app/accounts"
@@ -16,7 +17,8 @@ import (
 	"github.com/AlexGalhardo/vukem/orm"
 )
 
-// CreateUser is "user:create": it adds an account that can request tokens.
+// CreateUser is "user:create": it adds an account, with a verified email,
+// that can request tokens.
 // The password is read from standard input so it stays out of shell history:
 //
 //	echo "correct horse battery" | vukem user:create -name Ada ada@example.com
@@ -53,7 +55,9 @@ func CreateUser() vukem.Command {
 				return err
 			}
 
+			// The operator vouches for the address: tokens need a verified one.
 			u := models.User{Name: *name, Email: strings.ToLower(args[0]), Password: hash}
+			u.EmailVerifiedAt.V, u.EmailVerifiedAt.Valid = time.Now().UTC(), true
 			if err := orm.Create(ctx, acc.DB, &u); err != nil {
 				return fmt.Errorf("user:create: %w", err)
 			}
