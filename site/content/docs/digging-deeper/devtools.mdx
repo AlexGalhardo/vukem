@@ -147,15 +147,19 @@ func (h *Posts) Index(c *web.Ctx) error {
 	if err != nil {
 		return err
 	}
-	for i := range posts {
+	comments := map[int64][]models.Comment{}
+	for _, p := range posts {
 		// One query per post: 1 + N queries in total.
-		posts[i].Comments, err = orm.QueryOf[models.Comment](h.db).
-			Where("post_id", posts[i].ID).Get(ctx)
+		comments[p.ID], err = orm.QueryOf[models.Comment](h.db).
+			Where("post_id", p.ID).Get(ctx)
 		if err != nil {
 			return err
 		}
 	}
-	return c.Render("posts/index", posts)
+	return c.Render("posts/index", web.Map{
+		"Posts":    posts,
+		"Comments": comments,
+	})
 }
 ```
 
