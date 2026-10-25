@@ -102,7 +102,7 @@ Generated files are source code: commit them, and run the command again after ch
 ## The command
 
 ```bash
-vukem codegen:client [-lang ts|go] [-o file] [-package name]
+vukem codegen:client [-lang ts|go] [-o file] [-package name] [-prefix path]
 ```
 
 | Flag | Default | Meaning |
@@ -110,6 +110,7 @@ vukem codegen:client [-lang ts|go] [-o file] [-package name]
 | `-lang` | `ts` | `ts` for TypeScript, `go` for Go; anything else fails with `codegen:client: unknown -lang "rust" (want ts or go)` |
 | `-o` | `resources/js/api.ts` (ts) or `internal/apiclient/client.go` (go) | the file to write; `-` prints to stdout. Missing directories are created |
 | `-package` | `apiclient` | the Go package name (`-lang go` only). An invalid name fails with `openapi: invalid Go package name "api-client"` |
+| `-prefix` | `OPENAPI_PREFIX` | keep only operations under this path prefix, e.g. `/api/v1` for a client of one API version |
 
 ```bash
 # Print the Go client instead of writing it.
@@ -119,7 +120,7 @@ vukem codegen:client -lang go -o -
 vukem codegen:client -lang go -package taskclient -o pkg/taskclient/client.go
 ```
 
-Like `openapi:export` and `codegen:types`, the command builds the app in **warmup** mode: providers do not `Boot`, so no database or other connection is opened and `APP_KEY` may be unset. CI can run it without secrets. The document is filtered by `OPENAPI_PREFIX` when it is set.
+Like `openapi:export` and `codegen:types`, the command builds the app in **warmup** mode: providers do not `Boot`, so no database or other connection is opened and `APP_KEY` may be unset. CI can run it without secrets. The document is filtered by `-prefix`, or by `OPENAPI_PREFIX` when the flag is empty; a prefix that matches no route fails instead of writing an empty client.
 
 Which operations get a method:
 
