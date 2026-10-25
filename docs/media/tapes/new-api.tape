@@ -1,20 +1,35 @@
 Output new-api.gif
 Source tapes/common.tape
 
-Type "vukem new shop --api 2>/dev/null"
+Type "export A=localhost:3000/api/v1 && clear"
 Enter
-Wait@180s /[$]$/
+Type "vukem new shop --api 2>/dev/null | grep Created"
+Show
 Sleep 1s
-Type "cd shop && clear && ls"
 Enter
+# Hide while commands run so the GIF has no dead time; output appears on Show.
+Hide
+Wait@180s /[$]$/
+Show
 Sleep 2s
+Ctrl+L
+Type "cd shop && ls"
+Enter
+Sleep 2500ms
+Ctrl+L
 Type "vukem migrate && vukem db:seed"
 Enter
+Hide
 Wait@120s /[$]$/
-Sleep 1s
-Type "clear && vukem serve > serve.log 2>&1 &"
+Show
+Sleep 2500ms
+Ctrl+L
+Type "vukem serve > serve.log 2>&1 &"
 Enter
-Sleep 5s
-Type "curl -s localhost:3000/api/v1/posts | head -c 420; echo"
-Enter
+Sleep 1500ms
+Hide
 Sleep 4s
+Show
+Type `curl -s $A/posts | grep -o '"title[^,]*' | head -3`
+Enter
+Sleep 3500ms

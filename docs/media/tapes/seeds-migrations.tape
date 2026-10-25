@@ -7,21 +7,26 @@ Sleep 1s
 Type "1"
 Sleep 700ms
 Enter
-Wait@180s /[$]$/
+Sleep 12s
 Type "cd site && clear"
 Enter
 Type "vukem make:model Tag -m -f"
-Enter
+Show
 Sleep 1s
+Enter
+Sleep 3s
+Ctrl+L
 Type "vukem make:seeder Tag"
 Enter
 Sleep 1s
-Type "vukem make:seeder Demo --app"
-Enter
-Sleep 2s
-Type "vukem migrate"
+Type "vukem make:seeder Demo --app | head -2"
 Enter
 Sleep 3s
-Type "vukem db:seed"
+Ctrl+L
+Type "vukem migrate && vukem db:seed"
 Enter
+# Hide while commands run so the GIF has no dead time; output appears on Show.
+Hide
+Wait@120s /[$]$/
+Show
 Sleep 4s
