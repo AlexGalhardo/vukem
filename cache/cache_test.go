@@ -124,15 +124,33 @@ func TestMemoryLockFloodStaysBounded(t *testing.T) {
 	c := cache.New(m, "app:")
 	ctx := t.Context()
 
-	// Lock names derived from input must not grow the store past max.
+	// Lock names derived from input must not grow the store past max: once
+	// held locks fill half of it, new locks fail instead of evicting one.
+	acquired := 0
+
 	for i := range 100 {
-		if _, err := c.NewLock("lock-"+strconv.Itoa(i), time.Minute).TryAcquire(ctx); err != nil {
+		ok, err := c.NewLock("lock-"+strconv.Itoa(i), time.Minute).TryAcquire(ctx)
+		if err != nil {
 			t.Fatal(err)
 		}
+
+		if ok {
+			acquired++
+		}
+	}
+
+	if acquired != 2 {
+		t.Errorf("locks acquired in a 4-entry store = %d, want 2", acquired)
 	}
 
 	if got := m.Len(); got > 4 {
 		t.Errorf("Len() after lock flood = %d, want <= 4", got)
+	}
+
+	for _, name := range []string{"lock-0", "lock-1"} {
+		if ok, _ := c.NewLock(name, time.Minute).TryAcquire(ctx); ok {
+			t.Errorf("TryAcquire(%q) by a second owner = true, want the held lock kept", name)
+		}
 	}
 
 	// A counter written after the flood survives its own insertion.
