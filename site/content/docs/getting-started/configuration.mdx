@@ -273,6 +273,7 @@ Vukem refuses to start with a configuration that is wrong or unsafe:
 | A value that does not convert (`PORT=abc`) | Boot error naming the variable and field; all conversion errors are listed together |
 | Missing `APP_KEY` in production or with `APP_ENV` unset; malformed `APP_KEY` anywhere | Boot error (`config: APP_KEY is not set …`) |
 | Missing `APP_KEY` with explicit `APP_ENV=development` or `test` | Boots; key-derived features fail closed when used |
+| A malformed `APP_PREVIOUS_KEYS` entry | Boot error (`vukem: APP_PREVIOUS_KEYS entry 2: …`) |
 | `APP_ENV` other than `development`, `test`, `production` | Boot error |
 | `APP_DEBUG=true` or `DEVTOOLS=true` with `APP_ENV=production` | Boot error |
 | `PORT` outside 0–65535 | Boot error |

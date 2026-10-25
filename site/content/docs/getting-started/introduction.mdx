@@ -31,7 +31,7 @@ Go already ships the basic kitchen in its standard library: the [`net/http`](htt
 
 ## Why Vukem
 
-- **Standard library first.** Handlers and middleware are plain `net/http`. Any `http.Handler` works inside a Vukem app, and a Vukem app is an `http.Handler`.
+- **Standard library first.** Handlers and middleware are plain `net/http`. Any `http.Handler` works inside a Vukem app, and `app.Handler()` turns a Vukem app into an `http.Handler`.
 - **No magic.** No global variables, no `init()` registration, no reflection-based dependency injection. Generators write ordinary Go files that you own and can read.
 - **Typed end to end.** Configuration is loaded into typed structs. Named routes are checked when the app starts. Every input is parsed into Go types by a `z` schema before your code sees it.
 - **Batteries included, opt-in.** SQLite works out of the box with a pure-Go driver (no C compiler). PostgreSQL, MySQL, Redis, MongoDB, S3 and WebSockets live in separate driver modules, so you only download what you use.
