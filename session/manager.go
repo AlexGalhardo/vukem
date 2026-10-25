@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/AlexGalhardo/vukem/errs"
 	"github.com/AlexGalhardo/vukem/web"
@@ -436,7 +437,8 @@ func userKeys(data map[string]any) []string {
 }
 
 // validationHook flashes field errors and old input, then redirects back
-// (Laravel-style form validation). Password fields are never flashed.
+// (Laravel-style form validation). Secret fields ([secretField]) are never
+// flashed.
 func validationHook(c *web.Ctx, verr *errs.ValidationError) bool {
 	s := c.Session()
 	if s == nil {
@@ -448,8 +450,7 @@ func validationHook(c *web.Ctx, verr *errs.ValidationError) bool {
 	if r := c.Request(); r.PostForm != nil {
 		old := web.FormToMap(r.PostForm)
 		for k := range old {
-			lk := strings.ToLower(k)
-			if strings.Contains(lk, "password") || k == "_token" || k == "_method" {
+			if secretField(k) {
 				delete(old, k)
 			}
 		}
@@ -460,6 +461,37 @@ func validationHook(c *web.Ctx, verr *errs.ValidationError) bool {
 	_ = c.Back("/")
 
 	return true
+}
+
+// secretField reports whether a form field must not be flashed back as old
+// input: _method, a field named "code", a name containing password, pwd,
+// secret or token, or one with a word (split on non-alphanumerics) that
+// starts with "pass" or is otp, totp, mfa, cvv, cvc, pin or recovery. Words,
+// not substrings, for the short ones keep shipping, footprint and zip_code.
+func secretField(k string) bool {
+	lk := strings.ToLower(k)
+	if lk == "_method" || lk == "code" {
+		return true
+	}
+
+	for _, s := range []string{"password", "pwd", "secret", "token"} {
+		if strings.Contains(lk, s) {
+			return true
+		}
+	}
+
+	for w := range strings.FieldsFuncSeq(lk, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) }) {
+		switch w {
+		case "otp", "totp", "mfa", "cvv", "cvc", "pin", "recovery":
+			return true
+		}
+
+		if strings.HasPrefix(w, "pass") {
+			return true
+		}
+	}
+
+	return false
 }
 
 // commitWriter saves the session right before the first byte or header of
