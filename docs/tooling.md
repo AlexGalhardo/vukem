@@ -126,14 +126,16 @@ The template lives in `.config/cliff.toml` (git-cliff is called with `--config .
 
 | Workflow | Trigger | Jobs |
 | --- | --- | --- |
-| `ci.yml` | push to `main`, PRs | lint (per module), unit matrix, integration (services), e2e, markdownlint, govulncheck, coverage gate, `apidiff` ([API compatibility](#api-compatibility)) |
-| `vuln.yml` | weekly, manual | govulncheck on the core and every module (`drivers/*`, `contrib/*`, `examples/*`) with `GOWORK=off` |
+| `ci.yml` | push to `main`, PRs | lint (per module, `snippetcheck`, `//nolint:gocognit` budget), unit matrix, integration (services), e2e, markdownlint, govulncheck, coverage gate, `apidiff` ([API compatibility](#api-compatibility)) |
+| `vuln.yml` | weekly, manual | govulncheck on the core and every module (`drivers/*`, `contrib/*`, `examples/*`, `internal/bench`) with `GOWORK=off` |
+| `fuzz.yml` | weekly, manual | every `Fuzz*` target for an hour; crashers uploaded as artifacts |
+| `ci-failure.yml` | `Fuzz`, `Vulnerabilities (weekly)` or `Scorecard` failed | opens or comments on a `ci-failure` issue ([maintenance](maintenance.md#security-review-routine)) |
 | `pr-title.yml` | PR opened/edited | semantic PR title |
 | `release.yml` | tag `v*`, manual (`version` input) | GoReleaser binaries, SBOMs, cosign keyless signature, build provenance |
 | `codeql.yml` | push, weekly | CodeQL Go |
 | `scorecard.yml` | push to `main`, weekly | OpenSSF Scorecard |
 | `site.yml` | push to `main` and PRs touching `site/**` or `CHANGELOG.md` | docs site `npm ci`, lint and `next build` (Vercel only builds after the push, so MDX errors are caught here first) |
-| Dependabot | weekly | `gomod` (all modules, prefix `build(deps)`), `npm` (`site/`), `github-actions` (prefix `ci`) |
+| Dependabot | weekly | `gomod` (all modules, prefix `build(deps)`), `npm` (`site/`), `docker` (`docs/media`), `github-actions` (prefix `ci`) |
 
 Workflows declare `permissions: contents: read` at the top; jobs widen it only for what they write. Every action is pinned by full commit SHA with a `# vX.Y.Z` comment (Dependabot bumps both), and tools fetched in workflows use exact versions (`govulncheck@v1.9.0`, `@redocly/cli@1.34.3`), never `@latest`.
 
@@ -253,7 +255,7 @@ The root keeps only what tools or Go require there; everything else has a fixed 
 | Path | What lives there |
 | --- | --- |
 | root | the `vukem` package (grouped by theme: `app.go`, `http.go`, `database.go`, `background.go`, `services.go`, `command.go`, `codegen.go`, `boost.go`, `doc.go` and their tests), one directory per public package, `go.mod`/`go.sum`/`go.work`, `README.md`, `LICENSE`, `CHANGELOG.md`, `AGENTS.md`, `Taskfile.yml`, `lefthook.yml` and the configs tools only discover at the root (`.editorconfig`, `.gitattributes`, `.gitignore`, `.golangci.yml`, `.markdownlint-cli2.jsonc`, `osv-scanner.toml`, which OpenSSF Scorecard reads) |
-| `.config/` | `cliff.toml` (passed with `--config`), `goreleaser.yaml` (GoReleaser finds it on its own), `compose.yaml` (passed with `-f`; `name: vukem` keeps the container names), `apicheck-exceptions.json` (read by `internal/tools/apicheck`, see [Security exceptions](#security-exceptions)) |
+| `.config/` | `cliff.toml` (passed with `--config`), `goreleaser.yaml` (GoReleaser finds it on its own), `compose.yaml` (passed with `-f`; `name: vukem` keeps the container names), `apicheck-exceptions.json` (read by `internal/tools/apicheck`, see [Security exceptions](#security-exceptions)), `ruleset-protect-main.json` (the `main` ruleset, applied with `gh api`, see [maintenance](maintenance.md#pull-request-flow)) |
 | `.github/` | workflows, Dependabot, issue/PR templates and the community files `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md` (GitHub detects them there) |
 | `.claude/` | `CLAUDE.md`, rules, skills and settings |
 | `docs/` | design docs and the roadmap `PLAN.md` |

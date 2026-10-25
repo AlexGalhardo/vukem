@@ -17,3 +17,5 @@ paths:
 - After pushing tags, poll the Go proxy until the new versions answer 200 (it caches 404s for a few minutes); only then ask the apps to bump.
 - Every breaking change has a `!` commit with a `BREAKING CHANGE:` footer and an entry in `docs/upgrade/` (the apicheck gate expects it).
 - Settings that only a new version understands are set on the platform after the bumped app is deployed (unknown values fail the boot).
+- An open `ci-failure` issue (failed Fuzz, Vulnerabilities or Scorecard run) blocks the release until it is triaged.
+- Once the `protect-main` ruleset requires pull requests, `-push` to `main` is rejected: release through a PR as in [docs/maintenance.md](../../docs/maintenance.md#releasing-through-a-pull-request), then record the Scorecard score in the "Scorecard tracking" issue.
