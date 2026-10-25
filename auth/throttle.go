@@ -1,6 +1,8 @@
 package auth
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"net/http"
 	"strings"
 
@@ -47,8 +49,9 @@ func RequestEmail(r *http.Request, field string) string {
 // email from any IP, so many addresses cannot share the guessing budget of
 // one account. Both skip (return "") anything but POST, so showing the form
 // costs no attempt. emailField names the form or JSON field holding the email.
-// An email longer than 254 bytes (RFC 5321) is counted in the per-IP bucket
-// of unreadable bodies, never embedded in a key.
+// An email longer than 254 bytes (RFC 5321) is keyed by its SHA-256, so a
+// large body cannot park megabytes in the limiter and still counts against
+// its account.
 func ThrottleKeys(emailField string) (perIP, perAccount ratelimit.KeyFunc) {
 	perIP = func(r *http.Request) string {
 		if r.Method != http.MethodPost {
@@ -56,11 +59,11 @@ func ThrottleKeys(emailField string) (perIP, perAccount ratelimit.KeyFunc) {
 		}
 
 		email := RequestEmail(r, emailField)
-		if email == "" || len(email) > maxEmailLen {
+		if email == "" {
 			return unparsedKey(r)
 		}
 
-		return "login:" + email + ":" + ratelimit.ByIP(r)
+		return "login" + emailKey(email) + ":" + ratelimit.ByIP(r)
 	}
 
 	perAccount = func(r *http.Request) string {
@@ -69,20 +72,31 @@ func ThrottleKeys(emailField string) (perIP, perAccount ratelimit.KeyFunc) {
 		}
 
 		email := RequestEmail(r, emailField)
-		if email == "" || len(email) > maxEmailLen {
+		if email == "" {
 			return unparsedKey(r)
 		}
 
-		return "login-account:" + email
+		return "login-account" + emailKey(email)
 	}
 
 	return perIP, perAccount
 }
 
-// maxEmailLen is the longest address RFC 5321 allows (254 octets). A
-// longer value is no account anyone owns; keying on it would let one
-// request park a multi-megabyte key in the limiter.
+// maxEmailLen is the longest address RFC 5321 allows (254 octets).
 const maxEmailLen = 254
+
+// emailKey is the email part of a login key: ":" and the email, or, past
+// maxEmailLen, "-sha256:" and its digest. The distinct separator keeps a
+// short email that spells "sha256:<hex>" out of a digested bucket.
+func emailKey(email string) string {
+	if len(email) <= maxEmailLen {
+		return ":" + email
+	}
+
+	sum := sha256.Sum256([]byte(email))
+
+	return "-sha256:" + hex.EncodeToString(sum[:])
+}
 
 // unparsedKey is the bucket of a login POST whose email could not be read.
 // It is per IP, never shared: one shared bucket would let anyone lock every
