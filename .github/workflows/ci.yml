@@ -41,6 +41,18 @@ jobs:
         run: go run ./internal/tools/modcheck
       - name: Site Go snippets type-check
         run: go run ./internal/tools/snippetcheck
+      # Decreasing budget (COD-01): the lint job fails when a new
+      # //nolint:gocognit appears. Lower the number when you remove one.
+      - name: gocognit suppression budget
+        env:
+          GOCOGNIT_BUDGET: "26"
+        run: |
+          n=$(grep -rn --include='*.go' --exclude='*_test.go' 'nolint:gocognit' . | wc -l)
+          echo "nolint:gocognit in non-test code: $n (budget $GOCOGNIT_BUDGET)"
+          if [ "$n" -gt "$GOCOGNIT_BUDGET" ]; then
+            echo "::error title=gocognit budget::$n suppressions, budget $GOCOGNIT_BUDGET; split the function instead of adding //nolint:gocognit"
+            exit 1
+          fi
 
   apidiff:
     name: API compatibility (apidiff)
