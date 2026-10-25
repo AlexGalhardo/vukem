@@ -84,6 +84,39 @@ func TestMemoryLRU(t *testing.T) {
 	}
 }
 
+func TestMemoryLRUKeepsHeldLock(t *testing.T) {
+	t.Parallel()
+
+	m := cache.NewMemory(4)
+	c := cache.New(m, "app:")
+	ctx := t.Context()
+
+	held := c.NewLock("job", time.Minute)
+	if ok, err := held.TryAcquire(ctx); err != nil || !ok {
+		t.Fatalf("TryAcquire() = %v, %v, want true, nil", ok, err)
+	}
+
+	for i := range 100 {
+		_ = c.Put(ctx, "flood:"+strconv.Itoa(i), i, time.Minute)
+	}
+
+	if got := m.Len(); got > 4 {
+		t.Errorf("Len() after flood = %d, want <= 4", got)
+	}
+
+	if ok, err := c.NewLock("job", time.Minute).TryAcquire(ctx); err != nil || ok {
+		t.Fatalf("second owner TryAcquire() = %v, %v, want false, nil: the held lock was evicted", ok, err)
+	}
+
+	if err := held.Release(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	if ok, err := c.NewLock("job", time.Minute).TryAcquire(ctx); err != nil || !ok {
+		t.Errorf("TryAcquire() after Release = %v, %v, want true, nil", ok, err)
+	}
+}
+
 func TestRememberCancelledWaiter(t *testing.T) {
 	t.Parallel()
 
