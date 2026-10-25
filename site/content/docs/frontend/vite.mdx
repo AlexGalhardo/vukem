@@ -38,7 +38,7 @@ vukem new blog
 cd blog
 ```
 
-`vukem new` installs the frontend dependencies for you, with npm unless you pass `--pm bun`, `pnpm` or `yarn`. Run the install by hand if you passed `--no-install`.
+`vukem new` installs the frontend dependencies for you. It uses the first of bun, npm, pnpm and yarn found on your `PATH`, unless you pass `--pm npm`, `bun`, `pnpm` or `yarn`, and records the choice in the `packageManager` field of `package.json`. Run the install by hand if you passed `--no-install`.
 
 </Step>
 <Step title="Enable Vite in the bootstrap">
@@ -69,7 +69,7 @@ base := []vukem.Option{
 vukem serve
 ```
 
-`vukem serve` starts the Go app with reload **and** `npm run dev`. The page source now shows:
+`vukem serve` starts the Go app with reload **and** the Vite dev server (`npm run dev`, or the same script through your package manager). The page source now shows:
 
 ```html
 <script type="module" src="http://localhost:5173/@vite/client"
@@ -174,8 +174,8 @@ vukem build
 Step by step:
 
 1. If the project has `.templ` files, it runs `go tool templ generate`.
-2. If it has a `vite.config.ts`, `.js` or `.mjs`, it checks for `node_modules` and stops with `frontend dependencies missing: run npm install first` when it is missing.
-3. It runs `vite build` through your package manager (`npm exec -- vite build`, `bun x vite build`, `pnpm exec` or `yarn exec`, chosen from the lockfile: `bun.lock`, `bun.lockb`, `pnpm-lock.yaml`, `yarn.lock`, `package-lock.json`, else npm).
+2. If it has a `vite.config.ts`, `.js` or `.mjs`, it checks for `node_modules` and stops with `frontend dependencies missing: run npm install first` (with your package manager's name) when it is missing.
+3. It runs `vite build` through your package manager (`npm exec -- vite build`, `bun x vite build`, `pnpm exec vite build` or `yarn exec vite build`). The manager is the one `package.json` declares in `packageManager`; without that field, the one whose lockfile is present (`bun.lock`, `bun.lockb`, `pnpm-lock.yaml`, `yarn.lock`, `package-lock.json`, checked in that order); otherwise the first of bun, npm, pnpm and yarn on your `PATH`, else npm.
 4. It runs `go build -trimpath -ldflags="-s -w"` into `bin/app` (`-o` changes the path).
 
 `resources/resources.go` embeds the output with `//go:embed views all:public`. The `all:` prefix matters: without it Go skips dot directories, and `build/.vite/manifest.json` would be missing from the binary. See [`embed`](https://pkg.go.dev/embed) for the rules.
@@ -261,7 +261,7 @@ The [templ starter](/docs/starters) ships this helper. `vite.NewContext(ctx, v)`
 | `Version()` | The manifest hash, or `""` |
 | `Middleware()` | Middleware that stores the instance in the request context |
 
-`vukem serve --no-vite` starts only the Go app, for when you run `npm run dev` in another terminal.
+`vukem serve --no-vite` starts only the Go app, for when you run the dev server (`npm run dev`) in another terminal.
 
 ## Testing
 
