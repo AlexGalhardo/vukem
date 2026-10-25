@@ -462,6 +462,7 @@ app.Client(t).HTMX().
 | `Status() int` | The status code |
 | `Body() string` | The whole body |
 | `Header(key) string` | The first value of a response header |
+| `JSON(v) *Response` | Decodes the body into `v` (a pointer, such as `&resources.TaskJSON{}`) and returns the response; a body that does not decode fails the test instead of leaving `v` at its zero value. Unknown fields are ignored |
 | `Recorder() *httptest.ResponseRecorder` | The raw recorder, for anything else |
 
 ## Sessions, flash messages and logins
