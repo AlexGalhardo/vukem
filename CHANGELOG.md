@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.32.0] - 2026-10-25
+
+### Added
+
+- **cli:** Suggest the closest command for an unknown one ([28bcc36](https://github.com/AlexGalhardo/vukem/commit/28bcc36e846691ce460f364904f47f7638d4bd5a))
+
+### Fixed
+
+- **upload:** Close the two fuzz failures and save fuzz crashers ([67321b7](https://github.com/AlexGalhardo/vukem/commit/67321b7f07e63a1c6e9535c5c195aacfb818f120))
+- **release:** Derive the PLAN.md next task when releasing ([70d3b6b](https://github.com/AlexGalhardo/vukem/commit/70d3b6b8e5707449c51c9acd67347271f8058f2d))
+- **auth:** Bound login throttle keys and hash long memory limiter keys ([ae7063a](https://github.com/AlexGalhardo/vukem/commit/ae7063a90f420f01d9e7bf3e7056c3c8f515fe1e))
+- **cache:** Keep held locks out of memory store LRU eviction ([5e44876](https://github.com/AlexGalhardo/vukem/commit/5e4487618ef506fa4373c0eafd8b53529eb4018f))
+- **auth:** Keep the account dimension for oversized login emails ([301e0a5](https://github.com/AlexGalhardo/vukem/commit/301e0a5cd481774022ef41662f3c18591ea73b62))
+- **session:** Keep more secret fields out of flashed old input ([b73964d](https://github.com/AlexGalhardo/vukem/commit/b73964d762c715b7948f7022e1ae9a61d8c9f462))
+- **cache:** Cap held locks skipped by memory eviction ([052ba23](https://github.com/AlexGalhardo/vukem/commit/052ba233f995fdc9f67b8133658434c71a925d38))
+- **session:** Match secret field names at camelCase boundaries ([338fd68](https://github.com/AlexGalhardo/vukem/commit/338fd68a39aae279226172fe2d9c26d1643ad83c))
+- **ratelimit:** Keep hashed memory keys apart from raw ones ([b6bc8bf](https://github.com/AlexGalhardo/vukem/commit/b6bc8bfc4b8494fac5d02b1b9c24bf64a39dc13d))
+- **cache:** Refuse new locks instead of evicting held ones ([9cb02b1](https://github.com/AlexGalhardo/vukem/commit/9cb02b1bdf503a9814037dff962c0cbc5b29949f))
+- **examples:** Align the api example with the token scaffold ([0a80924](https://github.com/AlexGalhardo/vukem/commit/0a80924e07f941dd5abdb33d41e2563095662e67))
+- **ratelimit:** Accept the bearer scheme in any case in ByToken ([2ca2b83](https://github.com/AlexGalhardo/vukem/commit/2ca2b831918e91e7624e8ee2ec40e5513301cb65))
+
+### Security
+
+- **security:** Support the latest v0 minor during the BETA ([75d7fac](https://github.com/AlexGalhardo/vukem/commit/75d7fac035a189e9be83d5383a633894f511fd65))
+- **repo:** Keep site and repo docs out of the changelog security group ([da44c68](https://github.com/AlexGalhardo/vukem/commit/da44c68e8cceee7723c6cee9b261f4cb88c612b8))
+
 ## [0.31.0] - 2026-10-25
 
 ### Added
@@ -1018,7 +1044,8 @@ Project foundation. No framework code yet; see [PLAN.md](PLAN.md) for the roadma
 - README, MIT license, CONTRIBUTING, SECURITY and CODE_OF_CONDUCT.
 - Agent configuration: `AGENTS.md`, `CLAUDE.md`, path-scoped `.claude/rules/`, Go skills and project settings.
 
-[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.31.0...HEAD
+[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.32.0...HEAD
+[0.32.0]: https://github.com/AlexGalhardo/vukem/compare/v0.31.0...v0.32.0
 [0.31.0]: https://github.com/AlexGalhardo/vukem/compare/v0.30.0...v0.31.0
 [0.30.0]: https://github.com/AlexGalhardo/vukem/compare/v0.29.0...v0.30.0
 [0.29.0]: https://github.com/AlexGalhardo/vukem/compare/v0.28.0...v0.29.0
