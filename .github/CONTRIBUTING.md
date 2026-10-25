@@ -21,7 +21,8 @@ Thanks for helping. This guide covers setup, workflow and the rules every change
 2. Branch from `main`: `feat/<short-name>`, `fix/<short-name>`, `docs/<short-name>`.
 3. Write the test first, then the code. Keep changes small and focused.
 4. Run `task ci` before pushing (the `pre-push` hook runs tests, vet and govulncheck).
-5. Open a pull request. The **PR title** must be a Conventional Commit; it becomes the squash-merge commit message.
+5. Open a pull request against `main`. The **PR title** must be a Conventional Commit; it becomes the squash-merge commit message. The `main` ruleset requires a pull request, the CI status checks and a linear history, so the maintainer's own changes go through the same flow.
+6. Fill in the checklist of the [PR template](pull_request_template.md). Vukem has a single maintainer: a PR from an outside contributor is reviewed by the maintainer, and the maintainer's own PRs are merged once CI is green (GitHub does not let authors approve their own PRs; see [docs/maintenance.md](../docs/maintenance.md#code-review)).
 
 ## Commit messages
 
