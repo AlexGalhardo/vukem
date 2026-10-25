@@ -217,7 +217,9 @@ type Lock struct {
 // lock out of its LRU eviction and, once held locks fill half of its
 // entries, refuses new locks (TryAcquire reports false) rather than evict
 // one; it is per process, so servers that must exclude each other need a
-// shared store (Database, Redis). A
+// shared store (Database, Redis). Do not derive lock names from untrusted
+// input: on Memory, a flood of names fills the lock budget and new locks
+// fail until held ones expire, so give every lock a TTL. A
 // wrapper around Memory hides it from the lock, which then uses Add and
 // can be evicted like any entry.
 func (c *Cache) NewLock(name string, ttl time.Duration) *Lock {
