@@ -495,7 +495,8 @@ if err != nil {
 | `Stateless` | No session middleware. CSRF stays on as `Origin`/`Sec-Fetch-Site` checks only, `csrfToken`/`csrfField` render empty, and session features (`c.Flash`, session login) return an error |
 | `SessionBypass` | ServeMux patterns served without sessions. `/webhooks/` covers its whole subtree; `POST /hooks/{id}` one method and path. Refused together with `Stateless` (`vukem: SessionBypass has no effect with Stateless (no sessions anywhere)`) |
 | `CSRFBypass` | ServeMux patterns exempt from CSRF checks, each logged at boot as `csrf bypass`. Protect them another way, such as [webhook signatures](/docs/digging-deeper/webhooks) |
-| `I18n` | `*i18n.MiddlewareConfig` for the locale resolver; needs `vukem.WithTranslations`. See [Localization](/docs/digging-deeper/localization#locale-resolution) |
+| `CSRFTokenFallback` | Also requires the session's CSRF token (`csrfField` or the `X-CSRF-Token` header) on unsafe requests that carry the session cookie but neither `Sec-Fetch-Site` nor `Origin`, i.e. browsers too old for the header checks. Refused together with `Stateless` (`vukem: CSRFTokenFallback needs sessions; it cannot be combined with Stateless`). See [CSRF](/docs/basics/csrf) |
+| `I18n` | `*i18n.MiddlewareConfig` for the locale resolver; needs `vukem.WithTranslations`. See [Localization](/docs/digging-deeper/localization#how-the-request-locale-is-chosen) |
 
 Maintenance mode, the body limit and CSRF for every other route stay on: the options only add sources or skip what you list.
 
@@ -514,7 +515,7 @@ JSON-only apps call `vukem.APIMiddleware(app, r)` instead. It has no sessions, C
 
 | Middleware | Page |
 | --- | --- |
-| `auth.Required`, `auth.Optional`, `auth.Guest`, `auth.Verified`, `auth.Ability` | [Authentication](/docs/security/authentication#middleware) |
+| `auth.Required`, `auth.Optional`, `auth.Guest`, `auth.Verified`, `auth.Ability` | [Authentication](/docs/security/authentication#protecting-routes-with-middleware) |
 | `ratelimit.Middleware(limiter, key)` | [Rate limiting](/docs/security/rate-limiting) |
 | `signed.Signer.Middleware()` | [Signed URLs](/docs/security/signed-urls) |
 | `webhook.Middleware` | [Webhooks](/docs/digging-deeper/webhooks) |
