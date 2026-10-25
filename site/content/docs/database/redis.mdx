@@ -387,7 +387,7 @@ err = rc.Publish(ctx, "posts", []byte(`{"id":42,"event":"updated"}`))
 | `RateLimiter(prefix, ...)` | code | `ratelimit:` | Prefix of limiter keys |
 | `CACHE_PREFIX` | env | `vukem:` | Added by `app.Cache()` inside the store prefix |
 | `CACHE_STORE`, `SESSION_DRIVER`, `QUEUE_CONNECTION` | env | `memory`, cookie, `sync` | What `ErrUseDefault` falls back to |
-| `RATE_LIMIT_STORE` | env | — | `cache` counts limits in `app.Cache()` |
+| `RATE_LIMIT_STORE` | env | `memory` | `cache` counts limits in `app.Cache()` |
 
 ## Security
 
