@@ -135,7 +135,7 @@ The second argument of `ratelimit.Middleware` is a `ratelimit.KeyFunc`: `func(r 
 | `ratelimit.ByUser(guard)` | the user that `guard` authenticated; the IP for anonymous callers | `user:web:42` | per-account limits behind `auth.Required`, for session and token users alike |
 | your own `KeyFunc` | anything: user id, email and IP, tenant | `login:ana@example.com:ip:203.0.113.5` | per-user or per-account limits |
 
-`ByToken` hashes the token with [SHA-256](https://pkg.go.dev/crypto/sha256) and keeps 16 bytes, so the raw token never sits in the store. It reads only `Authorization: Bearer <token>` spelled exactly that way; any other request counts by IP.
+`ByToken` hashes the token with [SHA-256](https://pkg.go.dev/crypto/sha256) and keeps 16 bytes, so the raw token never sits in the store. It reads `Authorization: Bearer <token>` with the scheme in any case (`bearer` works too), the same way the token guard does; any other request counts by IP.
 
 `ByUser` keys by account rather than by address or token: "10 new API keys an hour" then survives an attacker who rotates addresses or tokens, and session requests (which carry no bearer token) still count per user. A caller that `guard` did not authenticate gets its IP key, never a shared one, so put an IP limit in front when the route is reachable without a login.
 
