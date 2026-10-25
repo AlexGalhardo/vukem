@@ -480,7 +480,7 @@ func secretField(k string) bool {
 		}
 	}
 
-	for w := range strings.FieldsFuncSeq(lk, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) }) {
+	for _, w := range fieldWords(k) {
 		switch w {
 		case "otp", "totp", "mfa", "cvv", "cvc", "pin", "recovery":
 			return true
@@ -492,6 +492,46 @@ func secretField(k string) bool {
 	}
 
 	return false
+}
+
+// fieldWords splits a form key into lowercase words at non-alphanumerics and
+// camelCase boundaries, so "mfaCode" and "user[otp_code]" both yield the
+// words a secret name is matched against.
+func fieldWords(k string) []string {
+	var (
+		words     []string
+		b         strings.Builder
+		prevLower bool
+	)
+
+	flush := func() {
+		if b.Len() > 0 {
+			words = append(words, strings.ToLower(b.String()))
+			b.Reset()
+		}
+	}
+
+	for _, r := range k {
+		if !unicode.IsLetter(r) && !unicode.IsDigit(r) {
+			flush()
+
+			prevLower = false
+
+			continue
+		}
+
+		if unicode.IsUpper(r) && prevLower {
+			flush()
+		}
+
+		b.WriteRune(r)
+
+		prevLower = unicode.IsLower(r) || unicode.IsDigit(r)
+	}
+
+	flush()
+
+	return words
 }
 
 // commitWriter saves the session right before the first byte or header of
