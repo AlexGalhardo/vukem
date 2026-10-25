@@ -138,7 +138,8 @@ type App struct {
 	Key config.Key
 	// Crypt encrypts with a key derived from APP_KEY and still decrypts
 	// values sealed with APP_PREVIOUS_KEYS. DB() hands it to orm.Encrypted.
-	// It is nil when Key is zero; its methods then fail with crypt.ErrNoKey.
+	// It is nil when Key is zero: Open and Decrypt then return
+	// crypt.ErrNoKey, while Seal and Encrypt panic.
 	Crypt *crypt.Encrypter
 	// Log is the application logger.
 	Log *slog.Logger
