@@ -56,10 +56,10 @@ usage error: --minimal is an HTMX starter: drop --api, --templ and --inertia
 - **SQLite, migrations and an example CRUD** of posts, backed by the pure-Go driver, with a factory and a seeder (all but Minimal).
 - **Tests** that pass with `go test ./...` on a fresh project, without Node.js.
 - **A fresh `APP_KEY`** in `.env`, copied from `.env.example`.
-- **A production `Dockerfile`** and a `.dockerignore`. Web starters build the Vite assets with the chosen package manager in a first stage; every starter then builds a static Go binary with the tags in `.buildtags` and runs it as a non-root user on Alpine with `APP_ENV=production`, `HOST=0.0.0.0`, `PORT=3000` and `LOG_FORMAT=json`. The `.dockerignore` keeps `.env` files, `node_modules` and `storage/` out of the image. Railway and other platforms build it as is: see [Docker and Railway](/docs/deployment/docker-and-railway).
+- **A production `Dockerfile`** and a `.dockerignore`. Web starters build the Vite assets with the chosen package manager in a first stage; every starter then builds a static Go binary with the tags in `.buildtags` and runs it as a non-root user on Alpine with `APP_ENV=production`, `HOST=0.0.0.0`, `PORT=3000`, `LOG_FORMAT=json` and `MAIL_MAILER=log` (so the image boots before you configure a mailer). The `.dockerignore` keeps `.env` files, `.git/`, `.vukem/`, `node_modules`, `storage/` and local Vite output out of the image. Railway and other platforms build it as is: see [Docker and Railway](/docs/deployment/docker-and-railway).
 - **`govulncheck`** as a Go tool: `go tool govulncheck ./...` checks your dependencies.
 
-The package manager comes from `--pm` (`npm`, `bun`, `pnpm` or `yarn`; default `npm`). Later commands such as `vukem serve` and `vukem build` detect it from the lockfile (`bun.lock`, `pnpm-lock.yaml`, `yarn.lock`, `package-lock.json`), and fall back to npm.
+The package manager comes from `--pm` (`npm`, `bun`, `pnpm` or `yarn`). Without the flag, `vukem new` uses the first of `bun`, `npm`, `pnpm` and `yarn` found on your `PATH` (`npm` when none is). The choice is written to `package.json` as `packageManager`. Later commands such as `vukem serve` and `vukem build` read that field first, then the lockfile (`bun.lock`, `bun.lockb`, `pnpm-lock.yaml`, `yarn.lock`, `package-lock.json`), then fall back to the first manager installed.
 
 ## HTMX on Vite
 
@@ -84,11 +84,11 @@ Besides the posts CRUD, this starter has an uploads example (`/uploads`).
 - templ is pinned as a Go tool (a `tool` line in `go.mod`); run it with `go tool templ generate`.
 - The generated `*_templ.go` files are committed, so `go build` and `go test` work without running templ.
 - `vukem serve` runs `go tool templ generate` before every build when `.templ` files exist, and watches them; `vukem build` generates before the Vite build.
-- `resources/views/helpers.go` wraps the context helpers (`route`, `asset`, `viteTags`, `script`, `flash`, `old`, `fieldError`, `csrfField`). Scripts go through helpers that add the CSP nonce, so components contain no raw `<script>` tags.
+- `resources/views/helpers.go` wraps the context helpers (`route`, `asset`, `viteTags`, `script`, `cspNonce`, `csrfToken`, `flash`, `old`, `fieldError`). Scripts go through helpers that add the CSP nonce, so components contain no raw `<script>` tags.
 
 ```go title="app/controllers/post_controller.go"
 return c.View(
-	views.PostsIndex(posts),
+	views.PostsIndex(posts, c.Query("q")),
 	web.Partial(views.PostList(posts)),
 )
 ```

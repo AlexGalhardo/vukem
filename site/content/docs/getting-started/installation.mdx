@@ -13,7 +13,7 @@ You will learn:
 - every flag of `vukem new`
 - how to add Vukem to a project without the CLI
 
-Before you start, install Go 1.27.2 or newer (see [Prerequisites](/docs/prerequisites)).
+Before you start, install Go 1.27.3 or newer (see [Prerequisites](/docs/prerequisites)).
 
 ## The idea
 
@@ -58,14 +58,24 @@ Which stack?
 Pass `--templ`, `--inertia react` or `--api` to skip the question ([Starters](/docs/starters) compares them). When it finishes, it prints the next commands:
 
 ```text
+created .editorconfig
+created .gitattributes
 APP_KEY written to .env
 
 Created blog (htmx 4.0.0, Tailwind, SQLite). Next:
 
-  cd blog
-  vukem migrate
-  vukem serve
+  1. cd blog
+  2. read .env: APP_KEY is set; APP_URL, the database and mail live here
+     https://vukem.dev/docs/configuration
+  3. pick a database: SQLite is the default, and PostgreSQL, MySQL or MongoDB
+     need their driver in bootstrap/app.go
+     https://vukem.dev/docs/database/overview
+  4. apply the migrations: vukem migrate
+     https://vukem.dev/docs/database/migrations
+  ...
 ```
+
+The list goes on with the tests, mail, `vukem serve` and deployment, each step with the page that explains it.
 
 </Step>
 <Step title="Create the database">
@@ -116,16 +126,17 @@ The starter ships tests for the home page, the posts CRUD and uploads. They use 
 
 `vukem new <name>` runs these steps in order, and stops at the first one that fails:
 
-1. **Checks the name.** It must start with a letter and contain only letters, digits, `-`, `_` and `.`. The folder must not exist yet (`blog already exists` otherwise).
+1. **Checks the name and flags.** The name must start with a letter and contain only letters, digits, `-`, `_` and `.` (`invalid project name "1bad"` otherwise). The values of `--license` and `--deploy` are checked here too. The folder must not exist yet (`blog already exists` otherwise).
 2. **Picks the stack**: from a flag, from the prompt on a terminal, or HTMX when there is no terminal (scripts, CI).
 3. **Writes the starter** files, with your project name and module path filled in.
 4. **Writes a `Dockerfile` and `.dockerignore`** for the chosen stack ([Docker and Railway](/docs/deployment/docker-and-railway)).
-5. **Requires Vukem**: `go get github.com/AlexGalhardo/vukem@<version>`, where `<version>` is the release of your CLI (`latest` for a development build of the CLI). With `--framework <dir>`, it adds a `replace` directive to your local checkout instead.
-6. **Adds `govulncheck`** as a Go tool (`tool golang.org/x/vuln/cmd/govulncheck` in `go.mod`), so `go tool govulncheck ./...` checks your dependencies for known vulnerabilities. The templ starter also adds templ as a tool.
-7. **Runs `go mod tidy`** (and `go tool templ generate` for templ).
-8. **Writes `APP_KEY`**: copies `.env.example` to `.env` and puts a fresh random key in it.
-9. **Runs `git init`** when `git` is on your `PATH`. A failure only prints a warning.
-10. **Installs frontend dependencies** with the package manager from `--pm` (npm by default), for every starter except `--api`. If that program is not installed, it prints the command to run later and goes on: the Go app works without built assets in development.
+5. **Writes project standards**: always `.editorconfig` and `.gitattributes`, plus the files of `--standards`, `--license`, `--ci`, `--deploy` and `--docker` when you pass them.
+6. **Requires Vukem**: `go get github.com/AlexGalhardo/vukem@<version>`, where `<version>` is the release of your CLI (`latest` for a development build of the CLI). With `--framework <dir>`, it adds a `replace` directive to your local checkout instead.
+7. **Adds `govulncheck`** as a Go tool (`tool golang.org/x/vuln/cmd/govulncheck` in `go.mod`), so `go tool govulncheck ./...` checks your dependencies for known vulnerabilities. The templ starter also adds templ as a tool.
+8. **Runs `go mod tidy`** (and `go tool templ generate` for templ).
+9. **Writes `APP_KEY`**: copies `.env.example` to `.env` and puts a fresh random key in it.
+10. **Runs `git init`** when `git` is on your `PATH`. A failure only prints a warning. With `--standards` it also sets `core.hooksPath` to `.githooks`.
+11. **Installs frontend dependencies** with the package manager from `--pm` (see the table below), for every starter except `--api`. If that program is not installed, it prints the command to run later and goes on: the Go app works without built assets in development.
 
 ### `vukem new` flags
 
@@ -136,17 +147,22 @@ The starter ships tests for the home page, the posts CRUD and uploads. They use 
 | `--templ` | off | [HTMX starter with templ components](/docs/starters#templ) instead of `html/template` |
 | `--inertia <react\|vue\|svelte>` | none | [Inertia starter](/docs/starters#inertia-react-vue-svelte) with that frontend |
 | `--minimal` | off | [HTMX starter without a database](/docs/starters#minimal); cannot be combined with the three flags above |
-| `--pm <npm\|bun\|pnpm\|yarn>` | `npm` | JavaScript package manager for the install and the `Dockerfile` |
+| `--pm <npm\|bun\|pnpm\|yarn>` | the first of `bun`, `npm`, `pnpm`, `yarn` on your `PATH` (`npm` if none) | JavaScript package manager for the install and the `Dockerfile`; written to `package.json` as `packageManager` |
 | `--no-install` | off | Skip installing frontend dependencies |
 | `--framework <dir>` | none | Use a local checkout of Vukem through a `replace` directive instead of a release (for framework development) |
+| `--standards` | off | markdownlint config and a `lint:md` script, a Keep a Changelog `CHANGELOG.md` with `.config/cliff.toml`, Conventional Commits git hooks and version `0.1.0` |
+| `--license <mit>` | none | `LICENSE`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md` and `SECURITY.md` |
+| `--ci` | off | GitHub Actions workflow (format, vet, test, govulncheck, image) and Dependabot |
+| `--deploy <railway>` | none | Platform deploy configuration in `.railway/railway.ts` |
+| `--docker` | off | `compose.yaml` that runs the app, PostgreSQL and a mail catcher locally |
 
-Flags may come before or after the name: `vukem new blog --api` and `vukem new --api blog` do the same. Only one of `--api`, `--templ` and `--inertia` may be given (`choose one of --api, --templ or --inertia` otherwise).
+Flags may come before or after the name: `vukem new blog --api` and `vukem new --api blog` do the same. Only one of `--api`, `--templ` and `--inertia` may be given (`choose one of --api, --templ or --inertia` otherwise), and `--minimal` refuses all three (`--minimal is an HTMX starter: drop --api, --templ and --inertia`). The [`vukem new` reference](/docs/cli/reference-new#vukem-new) lists the files each flag writes and every error.
 
 ## Running the app without the CLI
 
 `vukem serve` is a convenience for development. Under the hood it does three things:
 
-- starts the Vite dev server (`npm run dev`, or your package manager) when the project has a `vite.config.ts`; `vukem serve --no-vite` skips it;
+- starts the Vite dev server (`npm run dev`, or your package manager) when the project has a `vite.config.ts`, `.js` or `.mjs`; `vukem serve --no-vite` skips it;
 - builds `cmd/app` into `.vukem/serve/` and runs it;
 - checks the Go files and `.env` every 500 ms (`--poll` changes it) and rebuilds and restarts the app when one changes. A failed build keeps the previous version running. Templates reload on refresh without a restart.
 
@@ -202,7 +218,7 @@ func main() { os.Exit(vukem.Main(build)) }
 
 - `build` is the app's recipe. `vukem.Main` calls it with its own options (where `.env` lives, which kind of run this is), and tests call it with theirs.
 - `vukem.Main` loads `.env` and the process environment, stops cleanly on `Ctrl+C` (`SIGINT`) and `SIGTERM`, and runs `serve` or the [app command](/docs/cli/overview#app-commands) given as the first argument. It exits with `0` on success, `1` on failure and `2` on a usage error.
-- `vukem.DefaultMiddleware` installs the recommended stack: recover, request id, logging, security headers, method override, body limit, sessions and CSRF protection.
+- `vukem.DefaultMiddleware` installs the recommended stack: recover, request id, security headers, maintenance mode, logging, method override, body limit, sessions and CSRF protection.
 
 Vukem refuses to start without an `APP_KEY` unless `APP_ENV` is explicitly `development` or `test`. Create `.env` with a key, then run the app:
 
