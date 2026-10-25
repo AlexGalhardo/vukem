@@ -57,7 +57,9 @@ vukem serve
 </Step>
 <Step title="Create a user">
 
-The API has no sign-up page. Add a small command for it (the [JSON API tutorial](https://github.com/AlexGalhardo/vukem/blob/main/docs/tutorials/json-api.md) shows the whole file), then pipe the password in so it stays out of your shell history:
+The API has no sign-up page. Add a small command for it (the [JSON API tutorial](https://github.com/AlexGalhardo/vukem/blob/main/docs/tutorials/json-api.md) shows the whole file), then pipe the password in so it stays out of your shell history.
+
+The token endpoint refuses an address that is not verified (`403`, `Your email address is not verified.`), so the command must mark the user verified before it saves it: `u.EmailVerifiedAt.V, u.EmailVerifiedAt.Valid = time.Now().UTC(), true`.
 
 ```bash
 echo "correct horse battery" | vukem user:create -name Ada ada@example.com
@@ -75,8 +77,11 @@ curl -s -X POST localhost:3000/api/v1/tokens \
   -H 'Content-Type: application/json' \
   -d '{"email":"ada@example.com",
        "password":"correct horse battery",
-       "device_name":"curl"}'
+       "device_name":"curl",
+       "abilities":["read","write"]}'
 ```
+
+A token carries only the <Term tip="A permission string stored on the token, such as read or write. Routes check it with auth.Ability.">abilities</Term> the request asks for, out of the list in `app/controllers/apiv1/abilities.go` (`read` and `write`). Without `abilities` the token has none, and every route that checks one answers `403`.
 
 ```json
 {
@@ -94,7 +99,7 @@ TOKEN='<id>.<secret>'
 curl -s localhost:3000/api/v1/me -H "Authorization: Bearer $TOKEN"
 ```
 
-The answer is the user as JSON. Without the header you get `401` with a problem+json body and `WWW-Authenticate: Bearer`.
+The answer is the user as JSON. Without the header you get `401` with a problem+json body and `WWW-Authenticate: Bearer`. A token without the `read` ability gets `403`.
 
 </Step>
 </Steps>
@@ -105,10 +110,10 @@ The answer is the user as JSON. Without the header you get `401` with a problem+
 
 | Area | What you get |
 | --- | --- |
-| Middleware | `vukem.APIMiddleware`: recover, request id, logging, security headers and a body limit. No sessions or CSRF. With `WithTranslations`, it also resolves the locale from `?lang=` and `Accept-Language`, so `422` messages follow it. `vukem.APIMiddlewareWith` takes `APIMiddlewareOptions` (`SecureHeaders` to adjust the security headers, `I18n` for the locale resolver) |
-| Auth | Users and opaque access tokens: `POST /api/v1/tokens` (email, password, `device_name` → `201` with `token`, `type`, `expires_at`; 5 requests per minute per IP), `GET /api/v1/me`, `DELETE /api/v1/tokens/current` |
-| Example resource | `/api/v1/posts`: public reads with filters, sorts and pagination; token-protected writes |
-| Cross-cutting | CORS from `CORS_ALLOWED_ORIGINS` (deny by default), 60 requests per minute per token, problem+json errors |
+| Middleware | `vukem.APIMiddleware`: recover, request id, logging, security headers, maintenance mode and a body limit. No sessions or CSRF. With `WithTranslations`, it also resolves the locale from `?lang=` and `Accept-Language`, so `422` messages follow it. `vukem.APIMiddlewareWith` takes `APIMiddlewareOptions` (`SecureHeaders` to adjust the security headers, `I18n` for the locale resolver) |
+| Auth | Users and opaque access tokens: `POST /api/v1/tokens` (email, password, `device_name`, optional `abilities` → `201` with `token`, `type`, `expires_at`; verified emails only; 5 requests per minute per IP), `GET /api/v1/me` (needs the `read` ability), `DELETE /api/v1/tokens/current` |
+| Example resource | `/api/v1/posts`: public reads with filters, sorts and pagination; writes need a token with the `write` ability |
+| Cross-cutting | CORS from `CORS_ALLOWED_ORIGINS` (comma-separated; deny by default), 120 requests per minute per IP on the token routes plus 60 per minute per token after authentication, problem+json errors |
 | Wire format | `app/resources` transformers (`vukem make:resource`) |
 | Tests | `tests/api_tokens_test.go`, `tests/posts_test.go` |
 
@@ -177,7 +182,7 @@ func API(r *router.Router, app *vukem.App) error {
 What each piece does:
 
 - `middleware.CORS` returns an error for an insecure configuration (`"*"` together with `AllowCredentials`), so a mistake stops the app at boot instead of in production. The zero value allows no cross-origin request at all.
-- `middleware.JSONOnly()` answers `415 Unsupported Media Type` when a write request (`POST`, `PUT`, `PATCH`) does not send JSON, and makes every error of the group render as problem+json.
+- `middleware.JSONOnly()` answers `415 Unsupported Media Type` when a request with a body (any method except `GET` and `HEAD`) does not send JSON. It also treats a request without an `Accept` header (or with `*/*`) as a JSON client, so the group's errors render as problem+json.
 - `g.APIResource("tasks", tasks)` registers the five JSON actions of a controller: `Index`, `Store`, `Show`, `Update` (for both `PUT` and `PATCH`) and `Destroy`. Unlike `Resource`, it has no `create`/`edit` form pages. Routes are named `api.v1.tasks.index`, `api.v1.tasks.store` and so on.
 - Nested resources use a dot: `g.APIResource("tasks.comments", comments)` serves `/tasks/{task}/comments`. `.Shallow()` moves `show`, `update` and `destroy` to `/comments/{comment}`, because a comment id is unique on its own; the route names stay the same.
 
