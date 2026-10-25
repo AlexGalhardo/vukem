@@ -13,6 +13,9 @@ import (
 // the query string) and parses it with schema. Validation issues become an
 // *errs.ValidationError, so returning the error from a handler yields a 422
 // problem+json, an HTMX fragment or a redirect back with flashed errors.
+// The request context only localizes and logs issues: z schemas take no
+// context, so Refine and Custom callbacks see no cancellation or trace and
+// should not do I/O (query the database in the handler, after Parse).
 //
 //	in, err := web.Parse(c, requests.StorePostSchema)
 //	if err != nil {
@@ -66,8 +69,9 @@ func ParseMap[T any](c *Ctx, schema z.Schema[T], input map[string]any) (T, error
 
 // ParseInput validates an already assembled input map (validation errors
 // become a 422 ValidationError). Messages stay in English and Refine
-// errors are not logged: it has no request to read them from. Prefer
-// ParseMap inside a handler.
+// errors are not logged: it has no request to read them from, and it uses
+// context.Background(), so no request context propagates. Prefer ParseMap
+// inside a handler.
 func ParseInput[T any](schema z.Schema[T], input map[string]any) (T, error) {
 	return parseWith(context.Background(), nil, schema, input)
 }

@@ -145,6 +145,8 @@ func (e *Engine) parseAll() (map[string]*template.Template, error) {
 		return nil, fmt.Errorf("view: walk: %w", err)
 	}
 
+	// Parse time only needs the function names; Render rebinds them to the
+	// request context on its clone.
 	base := template.New("").Funcs(e.funcs(context.Background()))
 
 	for _, p := range shared {
