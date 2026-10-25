@@ -9,7 +9,8 @@ This file covers reporting vulnerabilities in Vukem. The protections the framewo
 | Latest `v1` minor | ✅ |
 | Previous `v1` minor | Security fixes for 6 months |
 | `release/1.x` LTS | Security fixes for 12 months |
-| `v0.x` | ❌ |
+| Latest `v0` minor (during the BETA, until `v1.0.0`) | ✅ Security fixes ship as the next `v0` patch or minor |
+| Older `v0` minors | ❌ Upgrade to the latest `v0` minor |
 
 The full support window (latest minor, previous minor, `release/1.x` LTS branch) is defined in the [stability policy](../docs/stability.md#security-support-window).
 
@@ -33,6 +34,8 @@ Please include:
 | Acknowledgement | 3 business days |
 | Initial assessment | 7 days |
 | Fix released for confirmed issues | 30 days, faster for critical issues |
+
+Vukem has a single maintainer, so these targets are best effort; a confirmed critical issue takes priority over all other work.
 
 ## Disclosure policy
 

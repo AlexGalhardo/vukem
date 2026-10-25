@@ -38,6 +38,7 @@ Each Vukem release supports the **two latest Go releases** (for example Go 1.27 
 | Latest `v1` minor | All bug and security fixes |
 | Previous `v1` minor | Security fixes for 6 months after the next minor ships |
 | `release/1.x` LTS branch (see [CONTRIBUTING](../.github/CONTRIBUTING.md#release-cadence)) | Security fixes for 12 months |
-| `v0.x` | No fixes; upgrade with the [0.x → 1.0 guide](upgrade/1.0.md) |
+| Latest `v0` minor (BETA, until `v1.0.0`) | Security fixes, released as the next `v0` patch or minor |
+| Older `v0` minors | No fixes; upgrade to the latest `v0` minor, then with the [0.x → 1.0 guide](upgrade/1.0.md) |
 
 Reporting and disclosure are described in [SECURITY.md](../.github/SECURITY.md).
