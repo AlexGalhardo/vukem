@@ -136,6 +136,7 @@ It exits `0` on success, `2` on a usage error and `1` on any other failure, afte
 | `WithRoutes(fn)` | `func(r *router.Router, app *vukem.App) error`, called in `New` after providers registered; an error stops `New` |
 | `WithRoutesAfterBoot(fn)` | Same signature, called at the end of `Boot` after every provider booted; an error fails `Boot` |
 | `WithViews(fsys)` | Enable the [view engine](/docs/basics/views) over `fsys`; views reload on every render outside production |
+| `WithViewFuncs(funcs)` | Add template functions to the view engine; a duplicate, a nil function, a built-in's name or a missing `WithViews` is a boot error |
 | `WithVite(fsys)` | Enable [Vite](/docs/frontend/vite) asset tags over the public files |
 | `WithInertia(cfg)` | Enable [Inertia](/docs/frontend/inertia) |
 | `WithTranslations(fsys)` | Load [translations](/docs/digging-deeper/localization) |
@@ -144,17 +145,21 @@ It exits `0` on success, `2` on a usage error and `1` on any other failure, afte
 | `WithQueryObservers(obs...)` | Observers notified of every SQL statement |
 | `WithSeeders(s...)` / `WithAppSeeders(s...)` | Seeders run by `db:seed` and `app.Seed`; app seeders also receive the `*vukem.App` |
 | `WithListeners(r...)` | Event listeners registered on `app.Events` |
+| `WithEventsFake(f)` | Record dispatched events in an `*events.Fake` instead of running listeners (tests) |
 | `WithJobs(r...)` / `WithJobsFunc(fn)` | [Queue](/docs/digging-deeper/queue) job handlers; the func form receives the app |
 | `WithQueueDriver(d)` / `WithQueueDriverFunc(fn)` | Replace the queue driver chosen by `QUEUE_CONNECTION` |
 | `WithSchedule(fn)` | Declare [scheduled tasks](/docs/digging-deeper/scheduler) |
 | `WithCacheStore(s)` / `WithCacheStoreFunc(fn)` | Replace the cache store chosen by `CACHE_STORE` |
 | `WithSessionStore(s)` / `WithSessionStoreFunc(fn)` | Replace the session store chosen by `SESSION_DRIVER` |
 | `WithMailTransport(t)` | Replace the transport chosen by `MAIL_MAILER` |
+| `WithRateLimiters(f)` | Replace the rate limiter factory chosen by `RATE_LIMIT_STORE` (a shared limiter, or a fake in tests) |
+| `WithOpenAPI(info)` | Title, version, servers and path prefix of the [OpenAPI](/docs/rest-apis/openapi) document; empty fields keep `APP_NAME`, `API_VERSION`, `APP_URL` and `OPENAPI_PREFIX` |
 | `WithFlags(list...)` | Declare [feature flags](/docs/digging-deeper/feature-flags) |
 | `WithTelegram(fn)` | Configure [Telegram logging](/docs/digging-deeper/telegram-logging) |
 | `WithDevtools()` | Enable the [dev dashboard](/docs/digging-deeper/devtools) (like `DEVTOOLS=true`) |
 | `WithClock(now)` | Clock for sessions and other time-based features (`vukemtest.FakeClock`) |
 | `WithRunner(name, r)` | A long-running component started by `Run` |
+| `WithHealthCheck(name, check)` | A [readiness check](#health-checks), like `app.AddHealthCheck` |
 | `WithoutHTTP()` | Do not start the HTTP server runner (workers-only processes) |
 | `WithReady(ch)` | Receive the HTTP listen address once the server is listening (useful with `PORT=0`) |
 
@@ -415,8 +420,9 @@ Once the app runs, every request follows the same path:
 ```text
 net/http server (one goroutine per request)
   └─ server middleware     every request, even unmatched:
-     │                     recover, request id, logger,
-     │                     secure headers, method override, static
+     │                     recover, request id, secure headers,
+     │                     maintenance, logger, method override,
+     │                     static
       └─ ServeMux match
           ├─ no match → 404 / 405 through the error handler
           └─ router middleware   matched routes only:
