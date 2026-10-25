@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"maps"
 	"net/http"
@@ -50,6 +51,8 @@ func FuzzParseMetadata(f *testing.F) {
 	for _, s := range []string{
 		"filename ZG9nLnBuZw==", "filename ZG9nLnBuZw==,filetype aW1hZ2UvcG5n", "is_confidential",
 		"a b,,", " k  dg== ", "\x00 x", "filename !!!", strings.Repeat("k dg==,", 40),
+		// Valueless keys near the size limit: re-encoding must not grow past it.
+		metadataNearLimit(),
 	} {
 		f.Add(s)
 	}
@@ -78,15 +81,32 @@ func FuzzParseMetadata(f *testing.F) {
 	})
 }
 
+// metadataNearLimit returns maxMetadataPairs pairs, all but one valueless,
+// filling maxMetadataSize as far as valid base64 allows.
+func metadataNearLimit() string {
+	var b strings.Builder
+	for i := range maxMetadataPairs - 1 {
+		fmt.Fprintf(&b, "k%02d,", i)
+	}
+
+	b.WriteString("v ")
+	b.WriteString(strings.Repeat("A", (maxMetadataSize-b.Len())/4*4))
+
+	return b.String()
+}
+
 func FuzzParseClamReply(f *testing.F) {
-	for _, s := range []string{"stream: OK", "stream: Eicar-Signature FOUND", "stream: ERROR", "", "OK", "FOUND"} {
+	for _, s := range []string{
+		"stream: OK", "stream: Eicar-Signature FOUND", "stream: ERROR", "", "OK", "FOUND", ": OK\t", "stream: OK\t",
+	} {
 		f.Add(s)
 	}
 
 	f.Fuzz(func(t *testing.T, reply string) {
 		err := parseClamReply(reply)
 		// Anything that is not an explicit clean answer must reject the file.
-		if err == nil && !strings.HasSuffix(strings.TrimRight(reply, "\x00\r\n "), "OK") {
+		name, result, _ := strings.Cut(strings.TrimSpace(strings.TrimRight(reply, "\x00")), ": ")
+		if err == nil && (name == "" || result != "OK") {
 			t.Fatalf("parseClamReply(%q) = nil, want an error for a non-OK reply", reply)
 		}
 	})

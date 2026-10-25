@@ -174,9 +174,12 @@ func (s *ClamAVScanner) Scan(ctx context.Context, r io.Reader) error {
 // error reply.
 func parseClamReply(reply string) error {
 	reply = strings.TrimSpace(strings.TrimRight(reply, "\x00"))
-	_, result, _ := strings.Cut(reply, ": ")
+	name, result, _ := strings.Cut(reply, ": ")
 
 	switch {
+	case name == "":
+		// clamd always names the stream ("stream: OK"); a bare ": OK" is malformed.
+		return fmt.Errorf("upload: clamav: unexpected reply %q", reply)
 	case result == "OK":
 		return nil
 	case strings.HasSuffix(result, " FOUND"):

@@ -531,6 +531,14 @@ func parseMetadata(s string) (map[string]string, error) {
 func encodeMetadata(m map[string]string) string {
 	parts := make([]string, 0, len(m))
 	for _, k := range sortedKeys(m) {
+		// A valueless key stays bare, so the encoding never outgrows what
+		// parseMetadata accepted (maxMetadataSize).
+		if m[k] == "" {
+			parts = append(parts, k)
+
+			continue
+		}
+
 		parts = append(parts, k+" "+base64.StdEncoding.EncodeToString([]byte(m[k])))
 	}
 
