@@ -51,7 +51,10 @@ func RequestEmail(r *http.Request, field string) string {
 // costs no attempt. emailField names the form or JSON field holding the email.
 // An email longer than 254 bytes (RFC 5321) is keyed by its SHA-256, so a
 // large body cannot park megabytes in the limiter and still counts against
-// its account.
+// its account. Pair it with a handler that reads the email the same way
+// (web.Parse or web.Bind): BindJSON into a struct matches JSON keys without
+// regard to case, so {"EMAIL": ...} would reach the handler while the
+// throttle falls back to the per-IP bucket.
 func ThrottleKeys(emailField string) (perIP, perAccount ratelimit.KeyFunc) {
 	perIP = func(r *http.Request) string {
 		if r.Method != http.MethodPost {
