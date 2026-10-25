@@ -140,7 +140,7 @@ The `Dockerfile` is a [multi-stage build](https://docs.docker.com/build/building
 | Stage | Base image | What it does |
 | --- | --- | --- |
 | `assets` (not in `--api` projects) | `node:24.22.0-alpine3.24`, or `oven/bun:1.4.3-alpine` with `--pm bun` | copies `package.json` and the lockfile, refuses to continue without the lockfile, installs from it, copies the project and runs the `build` script (`vite build`) |
-| `build` | `golang:1.27.2-alpine3.24` | `go mod download`, `go tool templ generate` in `--templ` projects, copies `resources/public/build` from `assets`, then builds `./cmd/app` with `CGO_ENABLED=0 -trimpath -ldflags="-s -w"` and the tags in `.buildtags` |
+| `build` | `golang:1.27.3-alpine3.24` | `go mod download`, `go tool templ generate` in `--templ` projects, copies `resources/public/build` from `assets`, then builds `./cmd/app` with `CGO_ENABLED=0 -trimpath -ldflags="-s -w"` and the tags in `.buildtags` |
 | runtime | `alpine:3.24.2` | installs `ca-certificates` and `tzdata`, adds a non-root `app` user (uid `10001`), creates a writable `/app/storage`, copies the binary to `/app/app` |
 
 The base image and the install command come from the package manager the project uses, so the image installs from the lockfile the repository tracks:
