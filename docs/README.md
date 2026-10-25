@@ -2,6 +2,8 @@
 
 Design documents, one per area. The user guide lives at [vukem.dev](https://vukem.dev/docs/introduction).
 
+Two sources, one owner per kind of content: `docs/` is canonical for contracts and decisions (security defaults, stability, architecture, API tables, tooling), and `site/content/docs` is canonical for tutorials and how-to pages. When both describe the same API, `docs/` wins and the site links to it or is fixed. Every API table in `docs/` gets a test that compares it with the code (as `web/docs_test.go` and `z/tags_rules_test.go` do), and `snippetcheck` type-checks the site's Go snippets in CI.
+
 | Topic | Read |
 | --- | --- |
 | Roadmap and current task | [PLAN.md](PLAN.md) |
@@ -27,6 +29,7 @@ Design documents, one per area. The user guide lives at [vukem.dev](https://vuke
 | Testing | [testing.md](testing.md) |
 | Performance baseline (vs net/http, chi, echo) | [performance.md](performance.md) |
 | Tooling and releases | [tooling.md](tooling.md) |
+| Maintenance routines, PR flow, Scorecard metrics | [maintenance.md](maintenance.md) |
 | Documentation site | [site.md](site.md) |
 | Design decisions | [brainstorming.md](brainstorming.md) |
 | Research behind the design | [golang-web-search.md](golang-web-search.md) |
