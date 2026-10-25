@@ -13,7 +13,7 @@ You will learn:
 - how a resource controller and `r.Resource` turn seven actions into routes
 - how to test the whole flow with `vukemtest`
 
-The tutorial takes about 30 minutes. You need Go 1.27.2 or newer and the `vukem` CLI ([Installation](/docs/installation)). Node.js is **not** needed. If any Go syntax looks new, keep the [Go primer](/docs/prerequisites#go-in-15-minutes) open in another tab.
+The tutorial takes about 30 minutes. You need Go 1.27.3 or newer and the `vukem` CLI ([Installation](/docs/installation)). Node.js is **not** needed. If any Go syntax looks new, keep the [Go primer](/docs/prerequisites#go-in-15-minutes) open in another tab.
 
 ## The idea
 
@@ -70,8 +70,8 @@ vukem make:model Task -m -c
 ```text
 created app/models/task.go
 created database/migrations/20261018003311_create_tasks_table.go
-updated database/migrations/registry.go
 created app/controllers/task_controller.go
+updated database/migrations/registry.go
 ```
 
 - `-m` adds a migration, `-c` a resource controller (and `-f` would add a [factory](/docs/database/factories-seeders)).
@@ -549,7 +549,7 @@ ok  	example.com/todo/tests	0.918s
 Follow one request, the invalid `POST /tasks` with `title=x`, from start to end:
 
 1. Go's HTTP server accepts the connection and runs the request in its own goroutine.
-2. The **server middleware** runs: recover from panics, give the request an id, log it, add security headers, and turn `_method=PUT` into `PUT` when present.
+2. The **server middleware** runs, in this order: recover from panics, give the request an id, add security headers, answer `503` if the app is in maintenance mode, log the request, and turn `_method=PUT` into `PUT` when present.
 3. The **router** matches `POST /tasks` to `tasks.store`. Then the **router middleware** runs: the 10 MiB body limit, the session and the CSRF check.
 4. `TaskController.Store` calls `web.Parse`. The schema trims `x`, finds it shorter than 3 characters and returns an `*errs.ValidationError` with the message for `title`.
 5. `Store` returns that error. The central error handler sees a validation error on a browser `POST`, so it flashes the errors and the old input to the session and redirects back to the page the form came from, with `303 See Other`.
