@@ -218,7 +218,9 @@ r.Group("/api/v1", func(g *router.Group) {
 
 	g.Group("", func(p *router.Group) {
 		p.Use(auth.Required(acc.API), perToken)
-		p.Get("/me", h.Me).Name("me")
+		// Every route states the ability it needs.
+		p.Get("/me", h.Me).Name("me").
+			Use(auth.Ability(acc.API, apiv1.AbilityRead))
 		p.Delete("/tokens/current", h.Revoke).
 			Name("tokens.destroy")
 	})
@@ -256,13 +258,27 @@ func (h *Tokens) Revoke(c *web.Ctx) error {
 
 ### What the guard checks on each request
 
-1. Reads the `Authorization` header; it must start with `Bearer ` (that exact spelling).
+1. Reads the `Authorization` header: the scheme `Bearer`, matched case-insensitively ([RFC 7235](https://www.rfc-editor.org/rfc/rfc7235#section-2.1)), a space and the token. Headers named with `WithTokenHeaders` come next (see below).
 2. Splits id and secret at the dot and drops everything up to the last `_` of the id (the current prefix, an earlier one, or none), then loads the row. An unknown id is compared against a placeholder digest, so it takes the same time.
 3. Compares `SHA-256(secret)` in constant time. **Only then** checks expiry and revocation, so every token pays for the same comparison.
 4. Updates `last_used_at` if the last update is over a minute old.
 5. Loads the user with `ByID`.
 
 A missing, unknown, wrong, expired or revoked token gives `401` and the `token.rejected` security event. A failing store (database down, a missing `revoked_at` column, a user lookup error other than "not found") gives `503`, so an outage is never reported as bad credentials.
+
+### Accepting another header
+
+Some clients send keys in their own header, such as `X-API-Key`. `WithTokenHeaders` opts the guard in; without it only `Authorization: Bearer` is read:
+
+```go title="app/accounts/accounts.go"
+apiGuard := auth.NewTokenGuard("api", users, tokens).
+	WithTokenHeaders("X-API-Key")
+```
+
+- Such a header carries the bare token, without a scheme. It is trimmed; a blank value, or the header sent on more than one line, is skipped instead of guessed at.
+- A bearer token in `Authorization` always wins, then the named headers in the order given, so opting in never changes what a request that already worked resolves to.
+- Every named header is added to `Vary` on every response the guard sees, so a shared cache cannot serve one key's response to another key.
+- It panics at boot on a name that is not a valid header name, on `Authorization` (always read, and only as `Bearer`) and on `Cookie`, since a token the browser attaches by itself would authenticate every cross-site request.
 
 ## Abilities (scopes)
 
@@ -404,7 +420,7 @@ func TestMe(t *testing.T) {
 
 **Token guard first on mixed routes.** Wrong: `auth.Required(apiGuard, webGuard)`. `Required` stops at a guard that fails with `503`, so a browser with a valid session and a stray `Bearer` header gets `503` while the token store is down. Right: `auth.Required(webGuard, apiGuard)`.
 
-**`bearer` in lower case.** The guard reads `Authorization: Bearer ...` exactly; `bearer vk_...` answers `401`.
+**A bare token in `Authorization`.** `Authorization: vk_...` without the `Bearer` scheme answers `401`. Send `Authorization: Bearer vk_...` (any case of `Bearer` works), or opt in to a header such as `X-API-Key` with `WithTokenHeaders`.
 
 **Showing revoked tokens as active.** `List` returns them with `RevokedAt` set; filter them out or grey them out.
 
