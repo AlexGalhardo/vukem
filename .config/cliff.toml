@@ -49,6 +49,9 @@ tag_pattern = '^v[0-9]+\.[0-9]+\.[0-9]+'
 sort_commits = "oldest"
 commit_parsers = [
   { message = '^chore\(release\)', skip = true },
+  # Site and repository docs often mention security in the body; they are
+  # never a security change themselves.
+  { message = '^docs\((site|repo)\)', skip = true },
   { body = "(?i)security", group = "<!-- 5 -->Security" },
   { footer = "^Deprecated", group = "<!-- 2 -->Deprecated" },
   { message = "^feat", group = "<!-- 0 -->Added" },
