@@ -69,10 +69,21 @@ func NewMemory(limit int, window time.Duration) *Memory {
 	}
 }
 
-// Allow implements Limiter.
+// maxRawKey is the longest key [Memory] stores as is.
+const maxRawKey = 128
+
+// Allow implements Limiter. Keys longer than 128 bytes are stored as
+// their SHA-256 hash.
 func (m *Memory) Allow(_ context.Context, key string) (Result, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	if len(key) > maxRawKey {
+		// Keys come from requests: a long one is stored as its hash so a
+		// client cannot make the map retain arbitrary bytes per bucket.
+		sum := sha256.Sum256([]byte(key))
+		key = "sha256:" + hex.EncodeToString(sum[:])
+	}
 
 	now := m.now()
 

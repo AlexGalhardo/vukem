@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -50,6 +51,39 @@ func TestMemoryGCRA(t *testing.T) {
 			t.Fatalf("after a full window = %+v", res)
 		}
 	})
+}
+
+func TestMemoryHashesLongKeys(t *testing.T) {
+	t.Parallel()
+
+	m := NewMemory(1, time.Minute)
+	ctx := t.Context()
+	long := strings.Repeat("k", 4096)
+
+	if res, _ := m.Allow(ctx, long); !res.Allowed {
+		t.Fatal("Allow(long) first call denied")
+	}
+
+	if res, _ := m.Allow(ctx, long); res.Allowed {
+		t.Error("Allow(long) second call allowed, want the hashed key to keep its bucket")
+	}
+
+	if res, _ := m.Allow(ctx, long+"x"); !res.Allowed {
+		t.Error("Allow(long+x) denied, want a bucket of its own")
+	}
+
+	short := "login:ana@example.com:192.0.2.1"
+	_, _ = m.Allow(ctx, short)
+
+	for k := range m.tat {
+		if len(k) > 128 {
+			t.Errorf("stored key length = %d, want <= 128", len(k))
+		}
+	}
+
+	if _, ok := m.tat[short]; !ok {
+		t.Errorf("short key %q not stored as is", short)
+	}
 }
 
 func TestMemoryPrunesFullBuckets(t *testing.T) {

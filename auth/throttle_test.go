@@ -91,3 +91,44 @@ func TestSecurity_A07_LoginThrottle(t *testing.T) {
 		}
 	})
 }
+
+func TestSecurity_A07_LoginThrottleRejectsOversizedEmail(t *testing.T) {
+	t.Parallel()
+
+	perIP, perAccount := auth.ThrottleKeys("email")
+
+	req := func(email string) *http.Request {
+		r := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(`{"email":"`+email+`"}`))
+		r.Header.Set("Content-Type", "application/json")
+		r.RemoteAddr = "192.0.2.1:1234"
+
+		return r
+	}
+
+	tests := []struct {
+		name  string
+		email string
+		keyed bool // the key may embed the email
+	}{
+		{name: "254 bytes is keyed by email", email: strings.Repeat("a", 242) + "@example.com", keyed: true},
+		{name: "255 bytes falls back to the IP bucket", email: strings.Repeat("a", 243) + "@example.com"},
+		{name: "1 MiB falls back to the IP bucket", email: strings.Repeat("a", 1<<20)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			keys := map[string]string{"perIP": perIP(req(tt.email)), "perAccount": perAccount(req(tt.email))}
+			for name, key := range keys {
+				if got := strings.Contains(key, tt.email); got != tt.keyed {
+					t.Errorf("%s key contains email = %v, want %v (key length %d)", name, got, tt.keyed, len(key))
+				}
+
+				if !tt.keyed && len(key) > 128 {
+					t.Errorf("%s key length = %d, want <= 128", name, len(key))
+				}
+			}
+		})
+	}
+}
