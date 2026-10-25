@@ -103,7 +103,7 @@ Content-Type: application/json
 
 ### Static builds and cross-compiling
 
-SQLite uses the pure-Go `modernc.org/sqlite` driver, so the app needs no C compiler. Set `CGO_ENABLED=0` to get a fully static binary that runs on any Linux machine of the same architecture, even a minimal one such as Alpine. `vukem build` does not set it for you; the starter's `Dockerfile` does.
+SQLite uses the pure-Go `modernc.org/sqlite` driver, so the app needs no C compiler. With `CGO_ENABLED=0` you get a fully static binary that runs on any Linux machine of the same architecture, even a minimal one such as Alpine. `vukem build` sets it for you unless `CGO_ENABLED` is already in the environment; with plain `go build`, set it yourself, as the starter's `Dockerfile` does.
 
 To build for another system, set [`GOOS` and `GOARCH`](https://go.dev/doc/install/source#environment). This builds a Linux binary on a Mac or Windows laptop:
 
