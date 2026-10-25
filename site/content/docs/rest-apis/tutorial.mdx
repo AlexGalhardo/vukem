@@ -49,7 +49,7 @@ The API has no sign-up page, so add a command:
 vukem make:command CreateUser
 ```
 
-It registers `user:create`, hashes the password with the app's hasher and reads it from standard input, so the password stays out of your shell history:
+It registers `user:create`, hashes the password with the app's hasher and reads it from standard input, so the password stays out of your shell history. It also marks the address verified: the token endpoint refuses unverified users with `403` (`Your email address is not verified.`), because an address nobody confirmed may belong to someone else.
 
 ```go title="app/commands/create_user.go"
 return vukem.CommandFunc{
@@ -66,6 +66,10 @@ return vukem.CommandFunc{
 			Email:    strings.ToLower(args[0]),
 			Password: hash,
 		}
+		// Created by an operator, so the address counts as verified.
+		u.EmailVerifiedAt.V = time.Now().UTC()
+		u.EmailVerifiedAt.Valid = true
+
 		if err := orm.Create(ctx, acc.DB, &u); err != nil {
 			return fmt.Errorf("user:create: %w", err)
 		}
@@ -92,7 +96,7 @@ curl -s -X POST localhost:3000/api/v1/tokens \
 {"expires_at":"2026-11-16T09:29:28.3005936Z","token":"<id>.<secret>","type":"Bearer"}
 ```
 
-Tokens are opaque, stored hashed and expire after 30 days; five token requests per minute per IP are allowed ([API tokens](/docs/security/api-tokens)). Keep the token for the next steps:
+Tokens are opaque, stored hashed and expire after 30 days; five token requests per minute per IP are allowed ([API tokens](/docs/security/api-tokens)). A token carries only the abilities the request lists in `abilities` (`read` and `write` in the starter's `app/controllers/apiv1/abilities.go`), none by default. The task routes below check only the token itself, but the starter's `GET /api/v1/me` needs `read` and the `/api/v1/posts` writes need `write`. Keep the token for the next steps:
 
 ```bash
 TOKEN='<id>.<secret>'   # the token from the response
@@ -141,7 +145,7 @@ Each endpoint's input is a struct. The query string, the JSON body and the path 
 type ListTasks struct {
 	Status  string `json:"status"   validate:"oneof=todo doing done"`
 	Q       string `json:"q"        validate:"max=100" doc:"Search in titles"`
-	Sort    string `json:"sort"     validate:"oneof=title -title -id"`
+	Sort    string `json:"sort"     validate:"oneof=title -title created_at -created_at -id"`
 	Page    int    `json:"page"     validate:"min=1"`
 	PerPage int    `json:"per_page" validate:"min=1,max=100"`
 }
@@ -211,7 +215,7 @@ Values are always bound parameters, and column names come only from the allowlis
 </Step>
 <Step title="Register the routes">
 
-The typed routes sit behind the token guard, with 60 requests per minute per token. The OpenAPI document is served outside production:
+The typed routes sit behind the token guard, with 60 requests per minute per token. The limiter runs after `auth.Required`, so only verified tokens get a bucket. The OpenAPI document is served outside production:
 
 ```go title="routes/tasks.go"
 limit := ratelimit.Middleware(
@@ -221,7 +225,7 @@ bearer := []string{"bearer"}
 tags := []string{"tasks"}
 
 r.Group("/api/v1", func(g *router.Group) {
-	g.Use(middleware.JSONOnly(), limit, auth.Required(acc.API))
+	g.Use(middleware.JSONOnly(), auth.Required(acc.API), limit)
 
 	api.Register(g, "GET /tasks", api.Op{
 		Name: "tasks.index", Summary: "List your tasks",
