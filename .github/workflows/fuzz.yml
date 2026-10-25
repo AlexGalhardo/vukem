@@ -68,10 +68,19 @@ jobs:
           PKG: ${{ matrix.pkg }}
           TARGET: ${{ matrix.target }}
         run: go test "$PKG" -run '^$' -fuzz "^${TARGET}\$" -fuzztime "$FUZZTIME"
+      # upload-artifact rejects "." segments (module "." + pkg "./upload"
+      # gave "././upload/..."), so normalise the corpus path first.
+      - name: Locate crashers
+        id: corpus
+        if: failure()
+        env:
+          PKG: ${{ matrix.pkg }}
+          TARGET: ${{ matrix.target }}
+        run: echo "dir=$(realpath -m --relative-to="$GITHUB_WORKSPACE" "$PKG/testdata/fuzz/$TARGET")" >> "$GITHUB_OUTPUT"
       - name: Upload crashers
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: crashers-${{ matrix.target }}
-          path: ${{ matrix.module }}/${{ matrix.pkg }}/testdata/fuzz/${{ matrix.target }}/
+          path: ${{ steps.corpus.outputs.dir }}/
           if-no-files-found: ignore
