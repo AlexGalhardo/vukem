@@ -19,7 +19,7 @@ The `install:*` commands copy **your own code** into the project: routes, contro
   ```
 
 - Then it registers the new parts in the project's registries, appends new keys to `.env.example` (never to `.env`) and runs `go mod tidy`. Run `vukem migrate` afterwards when the installer adds a migration.
-- Environment: `PATH` (`go`, and the package manager for the Inertia and billing installers). A failed `go mod tidy` fails the command.
+- Environment: `PATH` (`go`, and the package manager for `install:inertia`). A failed `go mod tidy` fails the command.
 - A missing prerequisite is a usage error (exit 2) that names the command to run first.
 - Installers are not stubs: `stubs/` cannot override them.
 
