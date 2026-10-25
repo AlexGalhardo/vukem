@@ -30,6 +30,16 @@ updates:
     commit-message:
       prefix: ci
 
+  # The VHS recording image is pinned by digest; Dependabot bumps tag and
+  # digest together.
+  - package-ecosystem: docker
+    directory: /docs/media
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: build
+      include: scope
+
   - package-ecosystem: npm
     directory: /site
     schedule:
