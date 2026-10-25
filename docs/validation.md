@@ -199,6 +199,8 @@ var LoginSchema = z.FromTags[Login]() // panics at boot on unknown rules or type
 
 `web.Bind[T]` uses `z.For[T]()`: the tag-derived schema, built once per type and memoized (no mutable registry). For hand-written schemas call `web.Parse(c, schema)`.
 
+`web.Bind` and `web.Parse` ignore keys the schema does not name; to reject them, parse with a strict schema (`web.Parse(c, z.For[T]().Strict())`, or `.Strict()` on a `z.Struct`) or decode with `c.BindJSON`.
+
 Supported rules, by the field kind they apply to:
 
 | Rule | Applies to | Meaning |
