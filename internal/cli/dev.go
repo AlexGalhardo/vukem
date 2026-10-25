@@ -197,7 +197,10 @@ func (env *Env) dirOrDot() string {
 // the project's binary, rebuilding it only when sources changed.
 func delegate(ctx context.Context, env *Env, args []string) error {
 	if !exists(env, filepath.Join("cmd", "app")) {
-		return usagef("unknown command %q (app commands need a Vukem project with cmd/app)", args[0])
+		return usagef(
+			"unknown command %q%s (app commands need a Vukem project with cmd/app)",
+			args[0], didYouMean(args[0]),
+		)
 	}
 
 	bin, err := appBinary(ctx, env)
