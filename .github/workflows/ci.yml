@@ -39,6 +39,8 @@ jobs:
       # integration step has the tags but runs inside the workspace.
       - name: Nested modules resolve without the workspace
         run: go run ./internal/tools/modcheck
+      - name: Site Go snippets type-check
+        run: go run ./internal/tools/snippetcheck
 
   apidiff:
     name: API compatibility (apidiff)
@@ -55,6 +57,17 @@ jobs:
         run: go install golang.org/x/exp/cmd/apidiff@v0.0.0-20261014143641-f0251eb4aa3e
       - name: Compare with the latest v1 tags (core v1.*, drivers/x/v1.*)
         run: go run ./internal/tools/apicheck -major v1
+      # Until v1.0.0 the gate above skips every module, so report the diff
+      # against the latest v0 tags without failing: incompatible changes
+      # become a warning and the full report lands in the job summary.
+      - name: Report changes since the latest v0 tags (informative)
+        run: |
+          go run ./internal/tools/apicheck -major v0 -report "$RUNNER_TEMP/apidiff.md"
+          cat "$RUNNER_TEMP/apidiff.md" >> "$GITHUB_STEP_SUMMARY"
+          broken=$(awk -F'|' '$2 ~ /`/ && $4+0 > 0 {print $2}' "$RUNNER_TEMP/apidiff.md" | tr -d ' `' | paste -sd, -)
+          if [ -n "$broken" ]; then
+            echo "::warning title=apidiff::incompatible API changes since the last v0 tag in: $broken (rename? keep a deprecated //go:fix inline alias)"
+          fi
 
   openapi:
     name: Lint (OpenAPI golden)
