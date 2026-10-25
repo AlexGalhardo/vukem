@@ -1,0 +1,49 @@
+name: CI failure issue
+
+# Scheduled workflows fail with nobody watching (the Fuzz run was red for a
+# week, TST-01). When one of them fails, open an issue labelled ci-failure,
+# or comment on the open one for that workflow, so the failure is triaged
+# before the next release (docs/maintenance.md).
+#
+# workflow_run never checks out code here and only reads trusted metadata
+# of runs from this repository, so it carries no Dangerous-Workflow risk.
+on:
+  workflow_run:
+    workflows: [Fuzz, "Vulnerabilities (weekly)", Scorecard]
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  issue:
+    name: Open or update the ci-failure issue
+    if: github.event.workflow_run.conclusion == 'failure'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      WORKFLOW: ${{ github.event.workflow_run.name }}
+      RUN_URL: ${{ github.event.workflow_run.html_url }}
+      HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+      EVENT: ${{ github.event.workflow_run.event }}
+    steps:
+      - name: Open or comment
+        run: |
+          set -euo pipefail
+          title="CI failure: $WORKFLOW"
+          body="Workflow **$WORKFLOW** failed on \`$HEAD_SHA\` (trigger: $EVENT).
+
+          Run: $RUN_URL
+
+          Triage before the next release: fix, or record why it is a false positive (docs/maintenance.md)."
+          gh label create ci-failure --color B60205 --description "A scheduled or main-branch workflow failed" --force
+          num=$(gh issue list --label ci-failure --state open --json number,title \
+            --jq "map(select(.title == \"$title\")) | .[0].number // empty")
+          if [ -n "$num" ]; then
+            gh issue comment "$num" --body "$body"
+          else
+            gh issue create --title "$title" --label ci-failure --body "$body"
+          fi
