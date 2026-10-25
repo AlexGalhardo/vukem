@@ -94,8 +94,8 @@ vukem make:model Comment -m -f
 ```text
 created app/models/comment.go
 created database/migrations/20260101120000_create_comments_table.go
-updated database/migrations/registry.go
 created database/factories/comment_factory.go
+updated database/migrations/registry.go
 ```
 
 </Step>
@@ -236,16 +236,21 @@ It prints `built bin/blog`. See [Single binary](/docs/deployment/single-binary) 
 
 ### Package manager detection
 
-`serve`, `build`, `install:inertia` and `install:billing` pick the package manager from the lockfile in the project, checked in this order:
+`serve`, `build` and `install:inertia` pick the package manager in this order:
 
-| Lockfile | Package manager |
-| --- | --- |
-| `bun.lock`, `bun.lockb` | Bun |
-| `pnpm-lock.yaml` | pnpm |
-| `yarn.lock` | Yarn |
-| `package-lock.json` or none | npm |
+1. The `packageManager` field of `package.json` (`"bun@1.3.0"` means Bun). `vukem new` writes it, so a new project keeps the manager it was created with.
+2. The lockfile in the project:
 
-There is nothing to configure: run `bun install` once and the CLI follows. `vukem new` uses `--pm` instead, because a new project has no lockfile yet.
+   | Lockfile | Package manager |
+   | --- | --- |
+   | `bun.lock`, `bun.lockb` | Bun |
+   | `pnpm-lock.yaml` | pnpm |
+   | `yarn.lock` | Yarn |
+   | `package-lock.json` | npm |
+
+3. The first of `bun`, `npm`, `pnpm` and `yarn` found on your `PATH`, and `npm` when none is.
+
+There is nothing to configure. `vukem new` takes `--pm` instead (falling back to step 3), because a new project has no `package.json` or lockfile yet.
 
 ### Build tags
 
@@ -264,7 +269,7 @@ The `install:*` commands copy **your own code** into the project: routes, contro
 
 | Command | Flags | Adds | Read more |
 | --- | --- | --- | --- |
-| `install:auth` | `--social`, `--2fa`, `--force` | Login, registration, email verification, password reset | [Authentication](/docs/security/authentication) |
+| `install:auth` | `--social`, `--2fa`, `--locales`, `--force` | Login, registration, email verification, password reset | [Authentication](/docs/security/authentication) |
 | `install:api` | `--force` | API tokens, `/api/v1`, CORS, rate limiting | [REST APIs](/docs/rest-apis/overview) |
 | `install:admin` | `--force` | Admin panel at `/admin` | [Admin](/docs/digging-deeper/admin) |
 | `install:flags` | `--force` | Feature flags | [Feature flags](/docs/digging-deeper/feature-flags) |
@@ -468,6 +473,7 @@ vukem make:command SendReports
 
 ```text
 created app/commands/send_reports.go
+created app/commands/doc.go
 updated bootstrap/commands.go
 ```
 
@@ -525,6 +531,7 @@ The templates are [`text/template`](https://pkg.go.dev/text/template) files embe
 | --- | --- |
 | `controller.go.tmpl`, `model.go.tmpl`, `migration.go.tmpl`, `middleware.go.tmpl`, `request.go.tmpl` | The matching `make:*` |
 | `command.go.tmpl`, `provider.go.tmpl`, `resource.go.tmpl`, `factory.go.tmpl`, `seeder.go.tmpl` | The matching `make:*` |
+| `seeder_app.go.tmpl` | `make:seeder --app` |
 | `event.go.tmpl`, `listener.go.tmpl`, `job.go.tmpl`, `policy.go.tmpl`, `test.go.tmpl` | The matching `make:*` |
 | `mail.go.tmpl`, `mail.html.tmpl` | `make:mail` |
 | `admin_resource.go.tmpl`, `admin_resource_test.go.tmpl` | `make:admin-resource` |

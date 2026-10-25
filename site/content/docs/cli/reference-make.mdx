@@ -198,7 +198,7 @@ created app/resources/doc.go
 
 ## `vukem make:factory`
 
-Create a model factory for fake data in tests and seeders. Writes `database/factories/<name>_factory.go`. Registers nothing.
+Create a model factory for fake data in tests and seeders. Writes `database/factories/<name>_factory.go`. Registers nothing. The factory refers to `models.<Name>`, so create the model first (or use `make:model -f`); otherwise the next build fails with `undefined: models.Tag`.
 
 ```bash
 vukem make:factory Tag
@@ -234,9 +234,10 @@ updated database/seeders/registry.go
 created database/seeders/post_seeder.go
 updated database/seeders/registry.go
 add vukem.WithAppSeeders(seeders.AllApp()...) to bootstrap/app.go
+updated database/seeders/registry.go
 ```
 
-With `-app`, add the `WithAppSeeders` line to `bootstrap/app.go` yourself; the command prints it.
+The first `-app` seeder adds an empty `AllApp()` to the registry (the first `updated` line), then registers the seeder in it. Add the `WithAppSeeders` line to `bootstrap/app.go` yourself; the command prints it once, when it creates `AllApp()`.
 
 ## `vukem make:event`
 
@@ -248,6 +249,7 @@ vukem make:event OrderShipped
 
 ```text
 created app/events/order_shipped.go
+created app/events/doc.go
 ```
 
 ## `vukem make:listener`
@@ -265,7 +267,7 @@ vukem make:listener [flags] <Name>
 | `-queued` | bool | `false` | Run as a queue job: retried, survives restarts. |
 | `-force` | bool | `false` | Overwrite. |
 
-`-async` and `-queued` are exclusive (`usage error: --async and --queued are exclusive`, before any file is written). The line added to `All()`:
+`-async` and `-queued` are exclusive (`usage error: --async and --queued are exclusive`, before any file is written). The listener refers to `events.<Event>`, so create the event first with `make:event`; otherwise the next build fails with `undefined: events.PostPublished`. The line added to `All()`:
 
 | Flags | Registered as |
 | --- | --- |

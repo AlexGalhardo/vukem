@@ -243,4 +243,4 @@ After it, `vukem migrate` rebuilds the schema. Back up first in any shared envir
 | `unknown command "migrate" (app commands need a Vukem project with cmd/app)` | You are outside a project. `cd` into the root. |
 | `error obtaining VCS status: exit status 128` | `go build` could not read the Git state of the project. Repair the repository (or its `safe.directory`), or run `GOFLAGS=-buildvcs=false vukem migrate`. |
 | `vukem: APP_DEBUG must be false when APP_ENV=production` | Set `APP_DEBUG=false`. |
-| `vukem: set MAIL_MAILER in production (smtp, resend, mailtrap or log)` | Production apps need a mailer to boot. Set `MAIL_MAILER`. |
+| `vukem: set MAIL_MAILER in production (smtp, resend, mailtrap or log)` | In production the mailer has no default, and the app needs it at boot when its routes use it (the `--api` starter and `install:auth` do). Set `MAIL_MAILER`. |

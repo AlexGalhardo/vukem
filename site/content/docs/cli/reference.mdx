@@ -204,7 +204,7 @@ export APP_ENV=production APP_DEBUG=false MAIL_MAILER=log
 ./bin/shop
 ```
 
-`vukem build` runs `templ generate` and `vite build` when the project has them, then `go build -trimpath -ldflags="-s -w"` with `CGO_ENABLED=0`. The binary contains every app command, so a server without the `vukem` CLI still runs `./bin/shop migrate`. In production the app refuses to boot without `MAIL_MAILER` (`smtp`, `resend`, `mailtrap` or `log`). See [Single binary](/docs/deployment/single-binary).
+`vukem build` runs `templ generate` and `vite build` when the project has them, then `go build -trimpath -ldflags="-s -w"` with `CGO_ENABLED=0`. The binary contains every app command, so a server without the `vukem` CLI still runs `./bin/shop migrate`. In production `MAIL_MAILER` has no default: set it to `smtp`, `resend`, `mailtrap` or `log`, or the first use of the mailer fails, which is at boot for apps whose routes need it (the `--api` starter and the `install:auth` scaffold do). See [Single binary](/docs/deployment/single-binary).
 
 ## Reference pages
 
