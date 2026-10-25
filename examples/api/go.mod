@@ -2,7 +2,7 @@ module github.com/AlexGalhardo/vukem/examples/api
 
 go 1.27.3
 
-require github.com/AlexGalhardo/vukem v0.31.0
+require github.com/AlexGalhardo/vukem v0.32.0
 
 require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
