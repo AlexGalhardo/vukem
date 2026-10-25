@@ -82,7 +82,9 @@ func (m *Memory) Allow(_ context.Context, key string) (Result, error) {
 		// Keys come from requests: a long one is stored as its hash so a
 		// client cannot make the map retain arbitrary bytes per bucket.
 		sum := sha256.Sum256([]byte(key))
-		key = "sha256:" + hex.EncodeToString(sum[:])
+		// The NUL prefix keeps a raw key spelling "sha256:<hex>" out of
+		// this bucket; request-derived keys cannot carry NUL.
+		key = "\x00sha256:" + hex.EncodeToString(sum[:])
 	}
 
 	now := m.now()
