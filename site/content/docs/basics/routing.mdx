@@ -74,13 +74,13 @@ vukem route:list
 ```
 
 ```text
-METHOD  PATH    NAME    MIDDLEWARE
-GET     /up     health  middleware.BodyLimit, ...
-GET     /{$}    home    middleware.BodyLimit, ...
-GET     /about  about   middleware.BodyLimit, ...
+METHOD  PATH    NAME          MIDDLEWARE
+GET     /up     vukem.health  middleware.BodyLimit, ...
+GET     /{$}    home          middleware.BodyLimit, ...
+GET     /about  about         middleware.BodyLimit, ...
 ```
 
-`/up` is registered by Vukem itself: it is the health check that load balancers call. `/` shows up as `/{$}`; the next section explains why.
+`/up` is registered by Vukem itself: it is the health check that load balancers call. Its name starts with `vukem.`, a prefix Vukem keeps for its own routes. `/` shows up as `/{$}`; the next section explains why.
 
 </Step>
 </Steps>
@@ -481,7 +481,7 @@ The `vukem route:list` command prints the same table; `vukem route:list --json` 
 - **Patterns are exact.** A route answers only the method and path you wrote. `GET` routes also answer `HEAD`, which never has a body.
 - **Ids that are not numbers name nothing.** `c.ParamInt` turns `/posts/abc` into a 404, not a 500 or a database error.
 - **Generated URLs are escaped.** `r.URL` path-escapes every value, so a title with `/` or `?` cannot change the target route.
-- Routing is not authorization. Protect routes with middleware (see [Authentication](/docs/security/authentication#middleware)) and check ownership in the handler (see [Authorization](/docs/security/authorization)).
+- Routing is not authorization. Protect routes with middleware (see [Authentication](/docs/security/authentication#protecting-routes-with-middleware)) and check ownership in the handler (see [Authorization](/docs/security/authorization)).
 
 ## Testing
 

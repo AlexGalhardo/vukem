@@ -307,7 +307,7 @@ return c.View(views.PostShow(post, comments))
 
 ```go
 return c.View(
-	views.PostsIndex(posts),
+	views.PostsIndex(posts, c.Query("q")),
 	web.Partial(views.PostList(posts)),
 )
 ```
