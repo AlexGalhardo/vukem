@@ -244,6 +244,7 @@ Some things are the same for every request: the logger, the view engine, the err
 | `DebugOut` | `io.Writer` | `os.Stderr` in debug mode when serving: a colored report of each 5xx |
 | `TrustedProxies` | `[]*net.IPNet` | `TRUSTED_PROXIES` |
 | `ClientIPHeader` | `string` | `CLIENT_IP_HEADER` |
+| `TrustForwardedProto` | `bool` | `TRUST_FORWARDED_PROTO`: `c.IsHTTPS()` believes `X-Forwarded-Proto: https` from trusted proxies |
 | `IPv6Prefix` | `int` | `RATE_LIMIT_IPV6_PREFIX` (default 64; values outside 1–128 mean 64) |
 | `ProblemBaseURL` | `string` | `APP_PROBLEM_BASE_URL`: the `type` of validation problems becomes `<base>/validation` |
 | `CheckResponses` | `bool` | `true` outside production: `web.JSONWith` checks outgoing JSON |

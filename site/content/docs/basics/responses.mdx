@@ -120,7 +120,7 @@ return c.Created(url, comment)
 
 ### Checked JSON
 
-`web.JSONWith(c, status, schema, v)` checks `v` against a `z` schema before sending it, when `Services.CheckResponses` is on (outside production in every app). A mismatch is a bug in your code: it answers 500 and logs the problem instead of sending data that breaks your API contract. See [Validation](/docs/basics/validation#every-boundary).
+`web.JSONWith(c, status, schema, v)` checks `v` against a `z` schema before sending it, when `Services.CheckResponses` is on (outside production in every app). A mismatch is a bug in your code: it answers 500 and logs the problem instead of sending data that breaks your API contract. See [Validation](/docs/basics/validation#typed-boundaries).
 
 ### Problem details
 
@@ -233,7 +233,7 @@ id,author,body
 2,Bob,Hi
 ```
 
-Building the CSV in memory first means a database error still becomes a proper error page. For very large exports, `c.Stream` sends rows as they are read, at the price that an error halfway through can only be logged. The [`export` package](/docs/digging-deeper/exports) streams CSV and XLSX with safe file names for you.
+Building the CSV in memory first means a database error still becomes a proper error page. For very large exports, `c.Stream` sends rows as they are read, at the price that an error halfway through can only be logged. The [`export` package](/docs/digging-deeper/exports) streams CSV, JSON and NDJSON row by row with safe file names for you.
 
 ## Redirects
 
@@ -491,7 +491,7 @@ How returned errors become pages and problem details.
 Render HTML with templates.
 </Card>
 <Card title="Exports" href="/docs/digging-deeper/exports" icon="boxes">
-Stream CSV and XLSX files.
+Stream CSV, JSON and NDJSON downloads.
 </Card>
 <Card title="Package reference" href="https://pkg.go.dev/github.com/AlexGalhardo/vukem/web" icon="book">
 Every exported identifier of `web`.
