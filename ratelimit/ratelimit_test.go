@@ -228,8 +228,16 @@ func TestKeys(t *testing.T) {
 	}
 
 	r.Header.Set("Authorization", "Bearer secret-token")
-	if got := ByToken(r); got == "" || got == "token:secret-token" || len(got) != len("token:")+32 {
+	got := ByToken(r)
+	if got == "" || got == "token:secret-token" || len(got) != len("token:")+32 {
 		t.Fatalf("ByToken = %q (token must be hashed)", got)
+	}
+
+	// The scheme is case-insensitive, as for auth.BearerToken: a client that
+	// passes the guard with "bearer" is still counted per token.
+	r.Header.Set("Authorization", "bearer secret-token")
+	if lower := ByToken(r); lower != got {
+		t.Fatalf("ByToken(%q) = %q, want %q", "bearer secret-token", lower, got)
 	}
 }
 

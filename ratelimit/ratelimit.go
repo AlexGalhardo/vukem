@@ -188,7 +188,10 @@ func IPKey(ip string, prefix int) string {
 // (auth.Required), behind an IP limit: before the token is verified, a
 // client rotating made-up tokens gets a fresh bucket on every request.
 func ByToken(r *http.Request) string {
-	if tok, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer "); ok && tok != "" {
+	// Same parsing as auth.BearerToken (case-insensitive scheme), so a
+	// request the guard accepts is never counted by IP instead.
+	scheme, tok, _ := strings.Cut(r.Header.Get("Authorization"), " ")
+	if tok = strings.TrimSpace(tok); strings.EqualFold(scheme, "Bearer") && tok != "" {
 		sum := sha256.Sum256([]byte(tok))
 		return "token:" + hex.EncodeToString(sum[:16])
 	}

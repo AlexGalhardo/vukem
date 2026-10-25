@@ -65,8 +65,8 @@ type SecureHeadersConfig struct {
 	// ('unsafe-*' keywords, "*", nonces, scheme-only sources in script
 	// directives) are refused: write a full CSP to opt into them.
 	CSPSources map[string][]string
-	// ReportURI receives CSP violation reports: an absolute http(s) URL or
-	// a path. It adds report-uri and report-to directives and a
+	// ReportURI receives CSP violation reports: an absolute https URL or
+	// a path (plain http is refused at boot). It adds report-uri and report-to directives and a
 	// Reporting-Endpoints header naming the "csp-endpoint" group.
 	ReportURI string
 }
