@@ -21,7 +21,7 @@ How the framework itself is tested, and the testing toolkit it ships to apps. De
 | Golden | `testdata/*.golden` | `go test ./... -update` | Generators, codemods, error pages, CLI output |
 | Fuzz | `Fuzz*` | `go test -fuzz=FuzzX ./router` | Router patterns, `.env` parser, validator tags, multipart |
 | Integration | `//go:build integration` | `task test:integration` | Needs `DATABASE_URL`, `MYSQL_URL`, `MARIADB_URL`, `REDIS_URL`, `MONGO_URL` |
-| End-to-end | `e2e/` | `task test:e2e` | `vukem new` → build → boot → HTTP checks, on all OSes |
+| End-to-end | `internal/cli/cli_test.go` (plus the slow tests in `openapi`, `apidocs`, `contrib/engine`) | `task test:e2e` | `vukem new` → build → boot → HTTP checks; skipped by `-short`, so `task test` stays fast; CI runs them on all OSes |
 | Benchmarks | `Benchmark*` with `b.Loop()` | `task bench` | Router, `web.Ctx`, ORM; comparisons with net/http, chi and echo in `internal/bench` ([performance.md](performance.md)) |
 
 Time-dependent code (sessions, rate limits, queues, scheduler) is tested with `testing/synctest` instead of sleeps.

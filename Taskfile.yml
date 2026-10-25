@@ -20,6 +20,8 @@ tasks:
       - golangci-lint version
       - lefthook version
       - lefthook install
+      # Agent worktrees under .claude/worktrees/ outlive their branches.
+      - git worktree prune
 
   hooks:
     desc: Install git hooks
@@ -50,10 +52,16 @@ tasks:
       - npx --yes markdownlint-cli2 "**/*.md"
 
   test:
-    desc: Run unit tests
+    desc: Run unit tests (-short skips the slow end-to-end tests; see test:e2e)
     cmds:
       - for: { var: MODULES }
-        cmd: cd {{.ITEM}} && go test -count=1 ./...
+        cmd: cd {{.ITEM}} && go test -short -count=1 -timeout 20m ./...
+
+  test:e2e:
+    desc: "Run the tests -short skips: CLI scaffolds compiled and booted, generated clients, browser, engine helper"
+    cmds:
+      - go test -count=1 -timeout 30m ./internal/cli/ ./openapi/ ./apidocs/
+      - cd contrib/engine && go test -count=1 -timeout 10m ./...
 
   test:race:
     desc: Run unit tests with the race detector (needs cgo/gcc)
@@ -191,6 +199,7 @@ tasks:
       - task: mod:check
       - task: snippets:check
       - task: test
+      - task: test:e2e
       - task: test:linux
       - task: services:up
       - task: test:integration

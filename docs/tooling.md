@@ -234,7 +234,8 @@ There is no baseline file: the latest stable `v1` tag of each module is the base
 | `task setup` | install Go tools, `lefthook install` |
 | `task fmt` | `golangci-lint fmt` |
 | `task lint` | golangci-lint (all modules) + markdownlint |
-| `task test` | unit tests (all modules) |
+| `task test` | unit tests (all modules, `-short -timeout 20m`) |
+| `task test:e2e` | the slow tests `-short` skips (CLI scaffolds compiled and booted) |
 | `task test:race` | with `-race` |
 | `task test:integration` | integration tests |
 | `task cover` | coverage report + gate |
