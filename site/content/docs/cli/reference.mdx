@@ -139,7 +139,7 @@ Git Bash rewrites an argument that starts with `/` into a Windows path, so `-pre
 | --- | --- |
 | `0` | Success |
 | `1` | Failure. The message starts with `error:` for global commands. |
-| `2` | Usage error: unknown command, missing or extra argument, bad flag value. Global commands also print `Run 'vukem list' for the available commands.` |
+| `2` | Usage error: unknown command, missing or extra argument, bad flag value. Global commands also print `Run 'vukem list' for the available commands.` A name within two edits of a real command gets a suggestion: `unknown command "make:controler" (did you mean "make:controller"?)`. |
 
 A delegated app command returns its own exit code unchanged. A bare `vukem <unknown>` is delegated too, so inside a project it prints the app's command list and exits 2.
 
