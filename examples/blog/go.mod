@@ -3,7 +3,7 @@ module github.com/AlexGalhardo/vukem/examples/blog
 go 1.27.3
 
 require (
-	github.com/AlexGalhardo/vukem v0.31.0
+	github.com/AlexGalhardo/vukem v0.32.0
 	github.com/AlexGalhardo/vukem/drivers/postgres v0.0.0-00010101000000-000000000000
 )
 
