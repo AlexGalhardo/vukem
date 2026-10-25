@@ -222,6 +222,19 @@ Go 1.25 and later derive `GOMAXPROCS` from the cgroup CPU quota, so a Go worker 
 
 See [http.md](http.md#errors). Summary: handlers return `error`; sentinel errors for conditions, typed errors for data; `errors.Is`/`errors.AsType`; the central handler negotiates the response format.
 
+### When to panic
+
+A panic is a programming error found at boot, never a way to report a bad request.
+
+| Where | Panic? | Examples |
+| --- | --- | --- |
+| Construction and registration during boot (schemas, schedules, keys) | Yes, with a message naming the fix, so the mistake stops the process before it serves | `z` unknown tag rules, `signed.New` / `social.New` and their `WithPreviousKeys` with a short key, a bad `schedule` cron expression |
+| `Must*` helpers for constants | Yes, documented as "for constants" | `uuid.MustParse` |
+| A request path (handlers, middleware, anything fed by request data) | No: return an error (`errs.*`, a sentinel, a `*errs.ValidationError`) | `crypt.Open` returns `ErrNoKey` |
+| A method with no error to return on a missing boot dependency | Only when boot already refuses the misconfiguration in production; document it and check for nil where the dependency may be absent | `crypt.Seal` / `Encrypt` on a nil `Encrypter` (no `APP_KEY` outside production) |
+
+`middleware.Recover` turns an unexpected panic into a 500, but that is a safety net, not an error path.
+
 ## Platform support
 
 Windows is a first-class platform (maintainer requirement, 2026-10-16), with **Windows 11** as the primary Windows target.
