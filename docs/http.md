@@ -81,7 +81,7 @@ type HandlerFunc func(c *Ctx) error
 | Area | Methods |
 | --- | --- |
 | Request | `Request()`, `Context()`, `Param`, `Query`, `Header`, `Cookie`, `IP()`, `IsHTTPS()`, `IsJSON()`, `WantsJSON()` |
-| Binding | `web.Bind[T](c) (T, error)` (a package function, [web/parse.go](../web/parse.go)): JSON, form, multipart, query; runs validation; `BindJSON`, `FormFile(name)` |
+| Binding | `web.Bind[T](c) (T, error)` (a package function, [web/parse.go](../web/parse.go)): JSON, form, multipart, query; runs validation; ignores unknown keys (use a `.Strict()` schema with `web.Parse`, or `BindJSON`, to reject them); `BindJSON`, `FormFile(name)` |
 | Responses | `Status`, `String`, `HTML`, `JSON`, `Created`, `Accepted`, `NoContent`, `Blob`, `Problem`, `Redirect`, `RedirectRoute`, `Back`, `Stream`, `File`, `Download` |
 | Conditional | `NotModified(etag, lastModified)`, `CheckIfMatch(current)` |
 | Views | `Render(name, data)`, `Fragment(name, block, data)` (HTMX), `View(v view.View)` (templ) |
