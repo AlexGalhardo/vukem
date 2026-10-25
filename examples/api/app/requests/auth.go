@@ -27,7 +27,7 @@ type Register struct {
 // RegisterSchema validates Register (password rules live here).
 var RegisterSchema = z.Struct[Register](z.Shape{
 	"name":                  z.String().Trim().Min(2).Max(100),
-	"email":                 z.String().Trim().Email().Max(255),
+	"email":                 z.String().Trim().Email().Max(254),
 	"password":              z.String().Min(12).Max(256),
 	"password_confirmation": z.String(),
 }).Refine(func(r Register) error {

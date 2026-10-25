@@ -92,15 +92,15 @@ func TestSecurity_A07_LoginThrottle(t *testing.T) {
 	})
 }
 
-func TestSecurity_A07_LoginThrottleRejectsOversizedEmail(t *testing.T) {
+func TestSecurity_A07_LoginThrottleBoundsOversizedEmail(t *testing.T) {
 	t.Parallel()
 
 	perIP, perAccount := auth.ThrottleKeys("email")
 
-	req := func(email string) *http.Request {
+	req := func(email, ip string) *http.Request {
 		r := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(`{"email":"`+email+`"}`))
 		r.Header.Set("Content-Type", "application/json")
-		r.RemoteAddr = "192.0.2.1:1234"
+		r.RemoteAddr = ip + ":1234"
 
 		return r
 	}
@@ -108,27 +108,56 @@ func TestSecurity_A07_LoginThrottleRejectsOversizedEmail(t *testing.T) {
 	tests := []struct {
 		name  string
 		email string
-		keyed bool // the key may embed the email
+		raw   bool // the key embeds the email as is
 	}{
-		{name: "254 bytes is keyed by email", email: strings.Repeat("a", 242) + "@example.com", keyed: true},
-		{name: "255 bytes falls back to the IP bucket", email: strings.Repeat("a", 243) + "@example.com"},
-		{name: "1 MiB falls back to the IP bucket", email: strings.Repeat("a", 1<<20)},
+		{name: "254 bytes is embedded", email: strings.Repeat("a", 242) + "@example.com", raw: true},
+		{name: "255 bytes is digested", email: strings.Repeat("a", 243) + "@example.com"},
+		{name: "1 MiB is digested", email: strings.Repeat("a", 1<<20)},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			keys := map[string]string{"perIP": perIP(req(tt.email)), "perAccount": perAccount(req(tt.email))}
+			keys := map[string]string{
+				"perIP":      perIP(req(tt.email, "192.0.2.1")),
+				"perAccount": perAccount(req(tt.email, "192.0.2.1")),
+			}
 			for name, key := range keys {
-				if got := strings.Contains(key, tt.email); got != tt.keyed {
-					t.Errorf("%s key contains email = %v, want %v (key length %d)", name, got, tt.keyed, len(key))
+				if got := strings.Contains(key, tt.email); got != tt.raw {
+					t.Errorf("%s key embeds email = %v, want %v (key length %d)", name, got, tt.raw, len(key))
 				}
 
-				if !tt.keyed && len(key) > 128 {
+				if !tt.raw && len(key) > 128 {
 					t.Errorf("%s key length = %d, want <= 128", name, len(key))
 				}
 			}
+
+			// The account dimension survives the digest: one account from
+			// two networks shares perAccount, never perIP.
+			if a, b := perAccount(req(tt.email, "192.0.2.1")), perAccount(req(tt.email, "198.51.100.7")); a != b {
+				t.Errorf("perAccount splits one account across IPs: %.40q vs %.40q", a, b)
+			}
+
+			if a, b := perIP(req(tt.email, "192.0.2.1")), perIP(req(tt.email, "198.51.100.7")); a == b {
+				t.Errorf("perIP shares a bucket across IPs: %.40q", a)
+			}
+
+			if a, b := perAccount(req(tt.email, "192.0.2.1")), perAccount(req(tt.email+"b", "192.0.2.1")); a == b {
+				t.Errorf("two accounts share perAccount bucket %.40q", a)
+			}
 		})
 	}
+
+	t.Run("a short email cannot forge a digested key", func(t *testing.T) {
+		t.Parallel()
+
+		long := strings.Repeat("a", 300)
+		digested := perAccount(req(long, "192.0.2.1"))
+		forged := "sha256:" + digested[strings.LastIndexByte(digested, ':')+1:]
+
+		if got := perAccount(req(forged, "192.0.2.1")); got == digested {
+			t.Errorf("perAccount(%q) = %q, the bucket of a 300-byte email", forged, got)
+		}
+	})
 }
