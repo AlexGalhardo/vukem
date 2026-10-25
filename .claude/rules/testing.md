@@ -16,3 +16,5 @@ paths:
 - Failure messages follow `Func(args) = got, want want`.
 - `t.Context()` is cancelled before `t.Cleanup` functions run: cleanup that talks to a database (drop a table, delete rows) uses `context.Background()`, or the cleanup silently does nothing and leaks state into other tests sharing the service.
 - Integration tests on a shared database create and drop only their own tables.
+- Tests that compile or boot programs, open a browser or run a helper binary skip under `testing.Short()`: `task test` runs `-short`, `task test:e2e` runs them, CI runs everything.
+- A parser of untrusted input (headers, bodies, file formats, patterns) gets a native `Fuzz*` target whose oracle mirrors the parser's own normalisation, plus an entry in `.github/workflows/fuzz.yml`; a crasher becomes an `f.Add` seed or a `testdata/fuzz/<Target>/` file with the fix.

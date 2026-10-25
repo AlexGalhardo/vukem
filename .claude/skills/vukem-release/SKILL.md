@@ -24,9 +24,13 @@ For each fix branch (one worktree per branch under `../vukem-worktrees/<name>`, 
 
 ## 3. Release the core
 
+Before releasing: no open `ci-failure` issue (`gh issue list --label ci-failure`), last `Fuzz` and `Vulnerabilities (weekly)` runs green.
+
 ```sh
 go run ./internal/tools/release -push vX.Y.Z
 ```
+
+When the `protect-main` ruleset requires pull requests (check `gh api repos/AlexGalhardo/vukem/rulesets/25297704 --jq '.rules[].type'` for `pull_request`), `-push` is rejected: follow [Releasing through a pull request](../../../docs/maintenance.md#releasing-through-a-pull-request) instead, and land the nested-module bumps of step 4 through a PR too.
 
 The tool generates the section from `.config/cliff.toml` (every entry links its commit), commits `chore(release): vX.Y.Z`, tags, pushes `main` and the tag in **separate pushes**, and publishes the GitHub release. It refuses to publish when the section it extracted is empty, so a release never goes out with an empty body.
 

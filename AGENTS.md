@@ -27,9 +27,9 @@ Vukem: a Laravel/AdonisJS-inspired, stdlib-first Go web framework. Module `githu
 - Tests: stdlib + go-cmp, table-driven, no network in unit tests ([docs/testing.md](docs/testing.md)).
 - Formatting: gofumpt + gci + golines via `golangci-lint fmt`; tabs in Go ([docs/tooling.md](docs/tooling.md)).
 - Commits: Conventional Commits, English, scope = package ([docs/tooling.md](docs/tooling.md#conventional-commits)).
-- After each PLAN.md task group: push and `task release -- vX.Y.Z` (changelog + GitHub release) — see [release process](docs/tooling.md#release-process).
+- Changes land through a PR with green required checks; after each PLAN.md task group, release (`task release -- vX.Y.Z`, or the PR flow once the ruleset requires it) — see [maintenance](docs/maintenance.md) and [release process](docs/tooling.md#release-process).
 - Never edit released `CHANGELOG.md` sections by hand; never move a pushed tag; push version tags one at a time ([tag pushes](docs/tooling.md#tag-pushes)).
-- GitHub Actions is the CI gate (Linux/macOS/Windows, race, govulncheck, Postgres): push, then check `gh run list` and fix failures. Windows 11 stays first-class.
+- GitHub Actions is the CI gate (Linux/macOS/Windows, race, govulncheck, snippetcheck, Postgres): push, then check `gh run list` and fix failures; a `ci-failure` issue blocks the next release. Windows 11 stays first-class.
 - Everything (code, comments, docs) in English.
 
 ## Where things live
@@ -37,12 +37,12 @@ Vukem: a Laravel/AdonisJS-inspired, stdlib-first Go web framework. Module `githu
 | Path | What |
 | --- | --- |
 | `docs/` | design docs, one per area, and the roadmap `PLAN.md` |
-| `.config/` | git-cliff, GoReleaser and Compose configs ([layout](docs/tooling.md#repository-layout)) |
+| `.config/` | git-cliff, GoReleaser, Compose and the `protect-main` ruleset ([layout](docs/tooling.md#repository-layout)) |
 | `.github/` | workflows, templates, CONTRIBUTING, SECURITY, CODE_OF_CONDUCT |
-| `internal/tools/` | repo tooling (apicheck, commitlint, covergate, fixinline, modcheck, release) |
+| `internal/tools/` | repo tooling (apicheck, commitlint, covergate, fixinline, modcheck, release, snippetcheck) |
 | `drivers/*` | optional driver modules (postgres, redis, mongo) |
 | `contrib/*` | optional feature modules (graphql, grpc, stripe, imaging, engine) |
-| `.claude/rules/` | path-scoped rules for agents |
+| `.claude/rules/` | path-scoped rules for agents (Go, tests, security, workflows, release…) |
 | `.claude/skills/` | Go skills, workflow skills and `vukem-release` (release + app bumps) |
 
 ## When stuck
