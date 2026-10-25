@@ -2,6 +2,8 @@ package ratelimit
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -70,6 +72,12 @@ func TestMemoryHashesLongKeys(t *testing.T) {
 
 	if res, _ := m.Allow(ctx, long+"x"); !res.Allowed {
 		t.Error("Allow(long+x) denied, want a bucket of its own")
+	}
+
+	// A short key spelling the digest must not share the long key's bucket.
+	sum := sha256.Sum256([]byte(long))
+	if res, _ := m.Allow(ctx, "sha256:"+hex.EncodeToString(sum[:])); !res.Allowed {
+		t.Error("Allow(raw digest spelling) denied, want a bucket of its own")
 	}
 
 	short := "login:ana@example.com:192.0.2.1"
