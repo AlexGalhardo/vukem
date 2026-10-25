@@ -117,6 +117,34 @@ func TestMemoryLRUKeepsHeldLock(t *testing.T) {
 	}
 }
 
+func TestMemoryLockFloodStaysBounded(t *testing.T) {
+	t.Parallel()
+
+	m := cache.NewMemory(4)
+	c := cache.New(m, "app:")
+	ctx := t.Context()
+
+	// Lock names derived from input must not grow the store past max.
+	for i := range 100 {
+		if _, err := c.NewLock("lock-"+strconv.Itoa(i), time.Minute).TryAcquire(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if got := m.Len(); got > 4 {
+		t.Errorf("Len() after lock flood = %d, want <= 4", got)
+	}
+
+	// A counter written after the flood survives its own insertion.
+	if _, err := c.Increment(ctx, "hits", 1, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+
+	if n, err := c.Increment(ctx, "hits", 1, time.Minute); err != nil || n != 2 {
+		t.Errorf("Increment() after lock flood = %d, %v, want 2, nil", n, err)
+	}
+}
+
 func TestRememberCancelledWaiter(t *testing.T) {
 	t.Parallel()
 
