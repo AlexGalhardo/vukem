@@ -13,10 +13,11 @@ import (
 
 // Memory is an in-process LRU store with TTLs. MaxEntries bounds memory
 // (least recently used entries are evicted). A lock taken with
-// [Cache.NewLock] with a TTL directly on a Memory store is not evicted
-// before it expires or is released while held locks fill at most half of
-// MaxEntries, so flooding the cache with other keys cannot hand a held lock
-// to another owner; other entries, counters included, are evicted as usual.
+// [Cache.NewLock] directly on a Memory store is never evicted before it
+// expires or is released, so flooding the cache cannot hand a held lock to
+// another owner. Held locks may fill at most half of MaxEntries: past that,
+// acquiring a new lock fails (fails closed) instead of evicting a held one.
+// Other entries, counters included, are evicted as usual.
 type Memory struct {
 	max int
 	now func() time.Time
@@ -24,6 +25,7 @@ type Memory struct {
 	mu    sync.Mutex
 	ll    *list.List
 	items map[string]*list.Element
+	locks int // entries with lock set, live or not yet purged
 }
 
 type entry struct {
@@ -50,8 +52,7 @@ func (m *Memory) live(key string) (*entry, bool) {
 
 	e, _ := el.Value.(*entry)
 	if !e.expires.IsZero() && !m.now().Before(e.expires) {
-		m.ll.Remove(el)
-		delete(m.items, key)
+		m.remove(el)
 
 		return nil, false
 	}
@@ -69,6 +70,13 @@ func (m *Memory) set(key string, value []byte, ttl time.Duration, lock bool) {
 
 	if el, ok := m.items[key]; ok {
 		e, _ := el.Value.(*entry)
+		switch {
+		case lock && !e.lock:
+			m.locks++
+		case !lock && e.lock:
+			m.locks--
+		}
+
 		e.value, e.expires, e.lock = value, exp, lock
 		m.ll.MoveToFront(el)
 
@@ -76,26 +84,57 @@ func (m *Memory) set(key string, value []byte, ttl time.Duration, lock bool) {
 	}
 
 	m.items[key] = m.ll.PushFront(&entry{key: key, value: value, expires: exp, lock: lock})
+	if lock {
+		m.locks++
+	}
 
 	now := m.now()
 
-	// At most max/2 held locks are skipped per call, so the store never
-	// exceeds max and a flood of locks (names derived from input) cannot
-	// grow it: past that budget, locks are evicted like any entry. Locks
-	// without a TTL are never skipped, since they would never leave.
-	for skipped := 0; m.ll.Len() > m.max; {
+	// Held locks are skipped. addLock keeps them to at most half of max, so
+	// whenever the store is over max a non-lock entry is left to evict; the
+	// skipped bound only guards the loop.
+	for skipped := 0; m.ll.Len() > m.max && skipped < m.ll.Len(); {
 		last := m.ll.Back()
 		e, _ := last.Value.(*entry)
 
-		if e.lock && skipped < m.max/2 && !e.expires.IsZero() && now.Before(e.expires) {
+		if e.lock && (e.expires.IsZero() || now.Before(e.expires)) {
 			m.ll.MoveToFront(last)
 			skipped++
 
 			continue
 		}
 
-		m.ll.Remove(last)
-		delete(m.items, e.key)
+		m.remove(last)
+	}
+}
+
+// remove drops el from the list and the index, keeping the lock count.
+func (m *Memory) remove(el *list.Element) {
+	e, _ := el.Value.(*entry)
+	if e.lock {
+		m.locks--
+	}
+
+	m.ll.Remove(el)
+	delete(m.items, e.key)
+}
+
+// lockBudget is the number of held locks the store accepts.
+func (m *Memory) lockBudget() int { return max(1, m.max/2) }
+
+// purgeExpiredLocks drops expired lock entries so they stop counting
+// against the budget. It walks the whole list, so it runs only when the
+// budget looks full.
+func (m *Memory) purgeExpiredLocks() {
+	now := m.now()
+
+	for el := m.ll.Front(); el != nil; {
+		next := el.Next()
+		if e, _ := el.Value.(*entry); e.lock && !e.expires.IsZero() && !now.Before(e.expires) {
+			m.remove(el)
+		}
+
+		el = next
 	}
 }
 
@@ -128,6 +167,8 @@ func (m *Memory) Add(_ context.Context, key string, value []byte, ttl time.Durat
 }
 
 // addLock is Add for [Lock]: the entry survives eviction while it lives.
+// It reports false, as for a lock held by someone else, when held locks
+// already fill the budget.
 func (m *Memory) addLock(key string, value []byte, ttl time.Duration) bool {
 	return m.add(key, value, ttl, true)
 }
@@ -138,6 +179,14 @@ func (m *Memory) add(key string, value []byte, ttl time.Duration, lock bool) boo
 
 	if _, ok := m.live(key); ok {
 		return false
+	}
+
+	if lock && m.locks >= m.lockBudget() {
+		m.purgeExpiredLocks()
+
+		if m.locks >= m.lockBudget() {
+			return false
+		}
 	}
 
 	m.set(key, bytes.Clone(value), ttl, lock)
@@ -152,8 +201,7 @@ func (m *Memory) Delete(_ context.Context, keys ...string) error {
 
 	for _, k := range keys {
 		if el, ok := m.items[k]; ok {
-			m.ll.Remove(el)
-			delete(m.items, k)
+			m.remove(el)
 		}
 	}
 
@@ -170,8 +218,7 @@ func (m *Memory) DeleteIf(_ context.Context, key string, value []byte) (bool, er
 		return false, nil
 	}
 
-	m.ll.Remove(m.items[key])
-	delete(m.items, key)
+	m.remove(m.items[key])
 
 	return true, nil
 }
@@ -207,6 +254,7 @@ func (m *Memory) Flush(context.Context) error {
 
 	m.ll.Init()
 	m.items = map[string]*list.Element{}
+	m.locks = 0
 
 	return nil
 }
