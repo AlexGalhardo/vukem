@@ -13,9 +13,10 @@ import (
 
 // Memory is an in-process LRU store with TTLs. MaxEntries bounds memory
 // (least recently used entries are evicted). A lock taken with
-// [Cache.NewLock] directly on a Memory store is never evicted before it
-// expires or is released, so flooding the cache cannot hand a held lock to
-// another owner; other entries, counters included, are evicted as usual.
+// [Cache.NewLock] with a TTL directly on a Memory store is not evicted
+// before it expires or is released while held locks fill at most half of
+// MaxEntries, so flooding the cache with other keys cannot hand a held lock
+// to another owner; other entries, counters included, are evicted as usual.
 type Memory struct {
 	max int
 	now func() time.Time
@@ -78,13 +79,15 @@ func (m *Memory) set(key string, value []byte, ttl time.Duration, lock bool) {
 
 	now := m.now()
 
-	// Each held lock is moved to the front at most once per call, so the
-	// loop ends; if only held locks remain, the store briefly exceeds max.
-	for skipped := 0; m.ll.Len() > m.max && skipped < m.ll.Len(); {
+	// At most max/2 held locks are skipped per call, so the store never
+	// exceeds max and a flood of locks (names derived from input) cannot
+	// grow it: past that budget, locks are evicted like any entry. Locks
+	// without a TTL are never skipped, since they would never leave.
+	for skipped := 0; m.ll.Len() > m.max; {
 		last := m.ll.Back()
 		e, _ := last.Value.(*entry)
 
-		if e.lock && (e.expires.IsZero() || now.Before(e.expires)) {
+		if e.lock && skipped < m.max/2 && !e.expires.IsZero() && now.Before(e.expires) {
 			m.ll.MoveToFront(last)
 			skipped++
 
