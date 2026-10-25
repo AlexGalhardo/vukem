@@ -47,6 +47,8 @@ func RequestEmail(r *http.Request, field string) string {
 // email from any IP, so many addresses cannot share the guessing budget of
 // one account. Both skip (return "") anything but POST, so showing the form
 // costs no attempt. emailField names the form or JSON field holding the email.
+// An email longer than 254 bytes (RFC 5321) is counted in the per-IP bucket
+// of unreadable bodies, never embedded in a key.
 func ThrottleKeys(emailField string) (perIP, perAccount ratelimit.KeyFunc) {
 	perIP = func(r *http.Request) string {
 		if r.Method != http.MethodPost {
@@ -54,7 +56,7 @@ func ThrottleKeys(emailField string) (perIP, perAccount ratelimit.KeyFunc) {
 		}
 
 		email := RequestEmail(r, emailField)
-		if email == "" {
+		if email == "" || len(email) > maxEmailLen {
 			return unparsedKey(r)
 		}
 
@@ -67,7 +69,7 @@ func ThrottleKeys(emailField string) (perIP, perAccount ratelimit.KeyFunc) {
 		}
 
 		email := RequestEmail(r, emailField)
-		if email == "" {
+		if email == "" || len(email) > maxEmailLen {
 			return unparsedKey(r)
 		}
 
@@ -76,6 +78,11 @@ func ThrottleKeys(emailField string) (perIP, perAccount ratelimit.KeyFunc) {
 
 	return perIP, perAccount
 }
+
+// maxEmailLen is the longest address RFC 5321 allows (254 octets). A
+// longer value is no account anyone owns; keying on it would let one
+// request park a multi-megabyte key in the limiter.
+const maxEmailLen = 254
 
 // unparsedKey is the bucket of a login POST whose email could not be read.
 // It is per IP, never shared: one shared bucket would let anyone lock every
