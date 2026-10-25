@@ -44,6 +44,46 @@ A straightforward translation of a C++ or Java program into Go is unlikely to pr
 
 Vukem follows that advice: it borrows the productivity of [Laravel](https://laravel.com) and [AdonisJS](https://adonisjs.com), but the code you write is idiomatic Go.
 
+## Vukem in action
+
+Six things that make Vukem different, each shown with the real `vukem` CLI.
+
+### A typed JSON API in one command
+
+`vukem new shop --api` writes a working JSON-only API: API tokens, a posts resource, RFC 9457 problem+json errors, CORS, rate limits and tests. Typed handlers, OpenAPI 3.1 and a Scalar reference are opt-in. Migrate, seed and call it.
+
+![vukem new --api: migrate, seed, serve and curl the posts endpoint](https://raw.githubusercontent.com/AlexGalhardo/vukem/main/docs/media/new-api.gif)
+
+### A full-stack HTMX app
+
+Server-rendered `html/template` views, HTMX 4, Vite and Tailwind CSS v4, sessions, CSRF protection and a migration, from one command. Every route is named and listed by `vukem route:list`.
+
+![vukem new with the HTMX starter, then route:list](https://raw.githubusercontent.com/AlexGalhardo/vukem/main/docs/media/new-htmx.gif)
+
+### Inertia with React, Vue or Svelte
+
+`vukem new app --inertia react` gives you Inertia pages, shared props, SSR and a typed client without a separate API layer.
+
+![vukem new --inertia react and the generated resources/js tree](https://raw.githubusercontent.com/AlexGalhardo/vukem/main/docs/media/new-inertia-react.gif)
+
+### Tested by default, secure by default
+
+The framework ships with a large test suite, including one `TestSecurity_*` test for every secure default, and `vukemtest` gives your own app an in-process client with fluent assertions.
+
+![go test across router, web, orm, z, auth, cache and more, all passing](https://raw.githubusercontent.com/AlexGalhardo/vukem/main/docs/media/tests.gif)
+
+### Migrations, seeders and factories
+
+Generate a model with its migration and factory, add seeders (plain or app-aware with `--app`), then `vukem migrate` and `vukem db:seed`.
+
+![make:model, make:seeder, migrate and db:seed](https://raw.githubusercontent.com/AlexGalhardo/vukem/main/docs/media/seeds-migrations.gif)
+
+### Generators that write code you own
+
+Controllers, form requests, resources, jobs, mail and more. The generated files are ordinary Go that you read and edit; there is no hidden runtime.
+
+![make:controller, make:request and route:list](https://raw.githubusercontent.com/AlexGalhardo/vukem/main/docs/media/scaffold.gif)
+
 ## See it in production
 
 Four open-source apps built with Vukem run live: an HTMX quiz, a raffle platform with Inertia and Vue, a marketplace with Inertia and React, and a file conversion toolbox with Inertia and React. The [Showcase](/docs/showcase) links each one and lists the features it demonstrates.
