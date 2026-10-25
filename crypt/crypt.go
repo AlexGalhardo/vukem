@@ -16,6 +16,18 @@
 // app.Key.Derive("crypt", crypt.KeySize). Apps get a ready Encrypter in
 // app.Crypt, built from APP_KEY and APP_PREVIOUS_KEYS.
 //
+// Boot contract: an Encrypter is built at boot and a nil one means "no
+// key". Open, Decrypt and Rotate return [ErrNoKey] on it, but Seal and
+// Encrypt panic, since they have no error to return; production refuses to
+// boot without APP_KEY, so only an app run without a key outside
+// production reaches that panic. Code that may run without a key checks
+// for nil first.
+//
+// Pass a purpose-bound ad (for example "cookie:remember" or
+// "users.ssn:42") at every call site: tokens sealed with a nil ad, which
+// Encrypt and EncryptString use, open under any other nil-ad call, so a
+// value encrypted for one purpose can be replayed for another.
+//
 // See https://github.com/AlexGalhardo/vukem/blob/main/docs/subsystems.md#encryption.
 package crypt
 
@@ -96,7 +108,9 @@ func keyID(raw []byte) [keyIDSize]byte {
 
 // Seal encrypts plaintext with the current key, authenticating ad
 // (additional data, not stored in the token) alongside it. Open must be
-// given the same ad. It panics on a nil Encrypter (no APP_KEY).
+// given the same ad; bind ad to the purpose (see the package doc). It
+// panics on a nil Encrypter (no APP_KEY), unlike Open, which returns
+// ErrNoKey: check for nil where the key may be missing.
 func (e *Encrypter) Seal(plaintext, ad []byte) string {
 	if e == nil {
 		panic(ErrNoKey.Error())
@@ -150,13 +164,15 @@ func (e *Encrypter) Open(token string, ad []byte) ([]byte, error) {
 	return nil, ErrInvalid
 }
 
-// Encrypt is Seal without additional data.
+// Encrypt is Seal without additional data; prefer Seal with a purpose-bound
+// ad. It panics on a nil Encrypter.
 func (e *Encrypter) Encrypt(plaintext []byte) string { return e.Seal(plaintext, nil) }
 
 // Decrypt is Open without additional data.
 func (e *Encrypter) Decrypt(token string) ([]byte, error) { return e.Open(token, nil) }
 
-// EncryptString encrypts s without additional data.
+// EncryptString encrypts s without additional data; prefer Seal with a
+// purpose-bound ad. It panics on a nil Encrypter.
 func (e *Encrypter) EncryptString(s string) string { return e.Seal([]byte(s), nil) }
 
 // DecryptString decrypts a token produced by EncryptString.
