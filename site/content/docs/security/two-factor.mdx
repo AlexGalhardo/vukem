@@ -242,10 +242,6 @@ A code is accepted only once, so a test that signs in twice needs the code of a 
 
 **Raw HTML from user input.** The QR SVG may be inserted unescaped only because `totp.QR` wrote it. Never wrap user text in `template.HTML`.
 
-<Callout type="info">
-Regenerating recovery codes does not ask for the password in the scaffold. If you want that extra step, parse `requests.ConfirmPasswordSchema` in `RegenerateRecoveryCodes`, as `Disable` does.
-</Callout>
-
 ## Next steps
 
 <CardGroup cols="2">
