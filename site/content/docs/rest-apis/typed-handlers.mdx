@@ -189,6 +189,23 @@ Details that matter:
 Validation messages of typed handlers follow the request locale, like `web.Bind` and `web.Parse`: they validate through `web.ParseMap`, which uses the request's context (for the [i18n middleware](/docs/digging-deeper/localization#validation-messages)) and logger (the raw error of a failed `Refine` or `Custom` check is logged, never sent).
 </Callout>
 
+### Rules tags cannot express
+
+Some rules depend on a value only known at runtime (a list of allowed abilities) or compare two fields. A `validate` tag cannot say that. `api.RegisterWith` takes a [`z` schema](/docs/basics/validation) for the input instead of deriving one from the tags; binding, the `422` answer and the output work exactly as with `Register`:
+
+```go title="routes/tasks.go"
+schema := z.Struct[requests.StoreTask](z.Shape{
+	"title":  z.String().Min(3).Max(120),
+	"status": z.String().OneOf(statuses...).Optional(),
+})
+
+api.RegisterWith(g, "POST /tasks", api.Op{Name: "tasks.store"},
+	schema, tasks.Store)
+```
+
+- A `nil` schema panics at boot: `api: RegisterWith "POST /tasks" needs a schema; Register derives one from In's tags`.
+- The OpenAPI document is still generated from the `json`, `validate` and `doc` tags of `In` and `Out`; the schema never reaches it. Keep the static rules in the tags too, or the document describes less than the route enforces.
+
 ## The output
 
 Your function returns `(Out, error)`.
