@@ -120,14 +120,14 @@ r.Get("/posts/popular", posts.Popular).Name("posts.popular")
 <Step title="Call it twice">
 
 ```bash
-curl http://localhost:8080/posts/popular
-curl http://localhost:8080/posts/popular
+curl http://localhost:3000/posts/popular
+curl http://localhost:3000/posts/popular
 ```
 
-The first request runs the SQL query and stores the JSON under `vukem:posts:popular` for ten minutes. The second request reads it from the cache: no query runs. Both answers are the same:
+The first request runs the SQL query and stores the JSON under `vukem:posts:popular` for ten minutes. The second request reads it from the cache: no query runs. Both answers are the same (other post fields left out):
 
 ```json
-[{"ID":7,"Title":"Hello, Go","Views":1520}]
+[{"id":7,"title":"Hello, Go","views":1520}]
 ```
 
 </Step>
@@ -198,7 +198,7 @@ What each call does:
 Keys you pass are always prefixed: with `CACHE_PREFIX=vukem:`, `c.Put(ctx, "settings", …)` writes the key `vukem:settings` in the store.
 
 <Callout type="warning" title="Flush ignores the prefix">
-`Flush` deletes everything in the store, not only keys with your prefix. The memory store is cleared, the database store runs `DELETE FROM cache`, and the Redis store deletes its own key prefix. Rate-limit counters, scheduler locks and other apps sharing the table are wiped too.
+`Flush` deletes everything in the store, not only keys with your prefix. The memory store is cleared, the database store runs `DELETE FROM` on its whole table (`CACHE_TABLE`), and the Redis store deletes its own key prefix. Rate-limit counters, scheduler locks and other apps sharing the table are wiped too.
 </Callout>
 
 ## Remember: compute once, read many times
