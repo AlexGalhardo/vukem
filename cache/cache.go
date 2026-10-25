@@ -213,12 +213,21 @@ type Lock struct {
 }
 
 // NewLock prepares a lock on name that expires after ttl if never released.
+// The lock is only as strong as the store: a [Memory] store keeps a held
+// lock out of its LRU eviction, but it is per process, so servers that
+// must exclude each other need a shared store (Database, Redis). A
+// wrapper around Memory hides it from the lock, which then uses Add and
+// can be evicted like any entry.
 func (c *Cache) NewLock(name string, ttl time.Duration) *Lock {
 	return &Lock{c: c, key: c.key("lock:" + name), owner: []byte(rand.Text()), ttl: ttl}
 }
 
 // TryAcquire takes the lock if it is free.
 func (l *Lock) TryAcquire(ctx context.Context) (bool, error) {
+	if m, ok := l.c.store.(*Memory); ok {
+		return m.addLock(l.key, l.owner, l.ttl), nil
+	}
+
 	return l.c.store.Add(ctx, l.key, l.owner, l.ttl)
 }
 

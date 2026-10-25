@@ -12,7 +12,10 @@ import (
 )
 
 // Memory is an in-process LRU store with TTLs. MaxEntries bounds memory
-// (least recently used entries are evicted).
+// (least recently used entries are evicted). A lock taken with
+// [Cache.NewLock] directly on a Memory store is never evicted before it
+// expires or is released, so flooding the cache cannot hand a held lock to
+// another owner; other entries, counters included, are evicted as usual.
 type Memory struct {
 	max int
 	now func() time.Time
@@ -26,6 +29,7 @@ type entry struct {
 	key     string
 	value   []byte
 	expires time.Time // zero: never
+	lock    bool      // held lock: skipped by eviction until it expires
 }
 
 // NewMemory returns a memory store holding at most maxEntries (0 = 10000).
@@ -56,7 +60,7 @@ func (m *Memory) live(key string) (*entry, bool) {
 	return e, true
 }
 
-func (m *Memory) set(key string, value []byte, ttl time.Duration) {
+func (m *Memory) set(key string, value []byte, ttl time.Duration, lock bool) {
 	var exp time.Time
 	if ttl > 0 {
 		exp = m.now().Add(ttl)
@@ -64,17 +68,29 @@ func (m *Memory) set(key string, value []byte, ttl time.Duration) {
 
 	if el, ok := m.items[key]; ok {
 		e, _ := el.Value.(*entry)
-		e.value, e.expires = value, exp
+		e.value, e.expires, e.lock = value, exp, lock
 		m.ll.MoveToFront(el)
 
 		return
 	}
 
-	m.items[key] = m.ll.PushFront(&entry{key: key, value: value, expires: exp})
+	m.items[key] = m.ll.PushFront(&entry{key: key, value: value, expires: exp, lock: lock})
 
-	for m.ll.Len() > m.max {
+	now := m.now()
+
+	// Each held lock is moved to the front at most once per call, so the
+	// loop ends; if only held locks remain, the store briefly exceeds max.
+	for skipped := 0; m.ll.Len() > m.max && skipped < m.ll.Len(); {
 		last := m.ll.Back()
 		e, _ := last.Value.(*entry)
+
+		if e.lock && (e.expires.IsZero() || now.Before(e.expires)) {
+			m.ll.MoveToFront(last)
+			skipped++
+
+			continue
+		}
+
 		m.ll.Remove(last)
 		delete(m.items, e.key)
 	}
@@ -98,23 +114,32 @@ func (m *Memory) Set(_ context.Context, key string, value []byte, ttl time.Durat
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	m.set(key, bytes.Clone(value), ttl)
+	m.set(key, bytes.Clone(value), ttl, false)
 
 	return nil
 }
 
 // Add implements Store.
 func (m *Memory) Add(_ context.Context, key string, value []byte, ttl time.Duration) (bool, error) {
+	return m.add(key, value, ttl, false), nil
+}
+
+// addLock is Add for [Lock]: the entry survives eviction while it lives.
+func (m *Memory) addLock(key string, value []byte, ttl time.Duration) bool {
+	return m.add(key, value, ttl, true)
+}
+
+func (m *Memory) add(key string, value []byte, ttl time.Duration, lock bool) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	if _, ok := m.live(key); ok {
-		return false, nil
+		return false
 	}
 
-	m.set(key, bytes.Clone(value), ttl)
+	m.set(key, bytes.Clone(value), ttl, lock)
 
-	return true, nil
+	return true
 }
 
 // Delete implements Store.
@@ -167,7 +192,7 @@ func (m *Memory) Increment(_ context.Context, key string, delta int64, ttl time.
 		return n, nil
 	}
 
-	m.set(key, []byte(strconv.FormatInt(delta, 10)), ttl)
+	m.set(key, []byte(strconv.FormatInt(delta, 10)), ttl, false)
 
 	return delta, nil
 }

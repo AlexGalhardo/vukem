@@ -335,6 +335,8 @@ if errors.Is(err, cache.ErrNotAcquired) {
 
 Pick a TTL longer than the work normally takes. When the TTL is too short, the lock expires mid-job and a second server may start the same work.
 
+The memory store is per process, so it only excludes callers inside one server; servers that must exclude each other need the database or Redis store. Its LRU eviction skips a held lock until it expires or is released, so flooding the cache with other keys cannot hand your lock to a second owner. Other entries, `Add` claims and counters included, are evicted as usual when the store is full: size `CACHE_MAX_ENTRIES` (or use a shared store) when they matter.
+
 The scheduler's `WithoutOverlapping()` and `OnOneServer()` use these locks. See [Scheduler](/docs/digging-deeper/scheduler).
 
 ## Stores
