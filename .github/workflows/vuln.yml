@@ -26,6 +26,7 @@ jobs:
           - drivers/redis
           - drivers/s3
           - drivers/websocket
+          - contrib/engine
           - contrib/graphql
           - contrib/grpc
           - contrib/imaging
