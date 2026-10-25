@@ -375,7 +375,7 @@ func RequireEditor(next http.Handler) http.Handler {
 - **Panics.** `middleware.Recover()` (installed by `vukem.DefaultMiddleware`) turns a [panic](https://go.dev/blog/defer-panic-and-recover) into a 500 through the error handler. It logs `panic recovered` with the stack trace on the server only. `http.ErrAbortHandler` is re-panicked, as `net/http` expects.
 - **Not found rows.** `orm.ErrNotFound`, returned by `First` and `Find`, is an `*HTTPError` with status 404 and the message "Record not found.", so `errors.Is(err, errs.ErrNotFound)` is true and returning it answers 404.
 - **Unique violations.** Writes that break a unique constraint return an error wrapping `orm.ErrConflict`, which answers 409 with no detail. Check it with `errors.Is(err, orm.ErrConflict)` to show a friendlier message.
-- **Unknown routes and methods.** The router answers 404, or 405 with an `Allow` header, through the same handler ([Routing](/docs/basics/routing#404-and-405)).
+- **Unknown routes and methods.** The router answers 404, or 405 with an `Allow` header, through the same handler ([Routing](/docs/basics/routing#when-nothing-matches)).
 - **Bad bodies.** Malformed JSON and oversized bodies answer 400 and 413 with a message ([Validation](/docs/basics/validation#configuration)).
 
 ## The debug page
