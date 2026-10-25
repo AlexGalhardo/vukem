@@ -8,7 +8,7 @@ Every change reaches `main` through a pull request, including the maintainer's:
 
 1. Branch from `main` (`feat/…`, `fix/…`, `docs/…`, `release/vX.Y.Z`), commit with Conventional Commits, run `task ci`.
 2. `gh pr create --fill`; the PR title is validated by `pr-title.yml` and becomes the squash commit.
-3. Wait for the required checks (below), then squash-merge.
+3. Wait for the required checks (below), then merge: squash a single-change PR; rebase-merge a batch of Conventional Commits (`gh pr merge --rebase`), since git-cliff builds the changelog from each commit and a squash would leave only the PR title.
 
 The `protect-main` ruleset enforces this. Its intended state is versioned in [`.config/ruleset-protect-main.json`](../.config/ruleset-protect-main.json): a pull request with 0 required approvals, the required status checks `Lint (Go)`, `API compatibility (apidiff)`, `Lint (OpenAPI golden)`, `Lint (Markdown)` and `Test (<os>, Go stable)` on Linux, Windows and macOS, linear history, no force push, no deletion and no bypass actors. Apply or re-apply it with:
 
