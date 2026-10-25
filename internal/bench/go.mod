@@ -5,7 +5,7 @@ go 1.27.3
 require (
 	github.com/AlexGalhardo/vukem v0.0.0
 	github.com/go-chi/chi/v5 v5.5.0
-	github.com/labstack/echo/v4 v4.16.0
+	github.com/labstack/echo/v4 v4.16.2
 )
 
 require (

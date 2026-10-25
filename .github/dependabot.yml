@@ -8,6 +8,7 @@ updates:
       - "/examples/blog"
       - "/examples/api"
       - "/examples/saas"
+      - "/internal/bench"
     schedule:
       interval: weekly
     groups:
