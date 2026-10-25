@@ -18,7 +18,7 @@ Task IDs: `<phase>.<group>.<task>` (e.g. `P.3.2`). Reference them in commit bodi
 | Field | Value |
 | --- | --- |
 | Current phase | **BETA** (stabilisation: B.5) |
-| Next task | `B.5.1` (public API review); B.5.2, B.5.4 and B.5.6 have work in progress |
+| Next task | `S.3.1` |
 | Updated | 2026-10-24 |
 
 ## Design references

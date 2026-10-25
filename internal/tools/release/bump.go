@@ -13,18 +13,28 @@ import (
 const corePath = "github.com/AlexGalhardo/vukem"
 
 var (
-	updatedRe = regexp.MustCompile(`(?m)^(\| Updated \| )\d{4}-\d{2}-\d{2}`)
-	requireRe = regexp.MustCompile(
+	updatedRe  = regexp.MustCompile(`(?m)^(\| Updated \| )\d{4}-\d{2}-\d{2}`)
+	nextTaskRe = regexp.MustCompile(`(?m)^\| Next task \|.*\|$`)
+	openTaskRe = regexp.MustCompile(`(?m)^- \[ \] \*\*([A-Z]+(?:\.\d+)+)\*\*`)
+	requireRe  = regexp.MustCompile(
 		`(?m)^(\s*(?:require\s+)?` + regexp.QuoteMeta(corePath) + `\s+)(v\d+\.\d+\.\d+[0-9A-Za-z.-]*)`,
 	)
 )
 
-// updatePlanStatus rewrites the "Updated" row of the PLAN.md status table.
+// updatePlanStatus rewrites the "Updated" row of the PLAN.md status table and
+// derives its "Next task" row from the first unchecked task with an ID.
 // The table never names a release: docs do not cite the current version.
 func updatePlanStatus(plan, date string) (string, error) {
 	if !updatedRe.MatchString(plan) {
 		return "", errors.New("PLAN.md status table has no \"Updated\" row")
 	}
+
+	next := "none"
+	if m := openTaskRe.FindStringSubmatch(plan); m != nil {
+		next = "`" + m[1] + "`"
+	}
+
+	plan = nextTaskRe.ReplaceAllLiteralString(plan, "| Next task | "+next+" |")
 
 	return updatedRe.ReplaceAllString(plan, "${1}"+date), nil
 }

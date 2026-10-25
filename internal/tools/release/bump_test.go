@@ -8,16 +8,36 @@ import (
 )
 
 func TestUpdatePlanStatus(t *testing.T) {
-	plan := "| Next task | `B.5.1` |\n| Updated | 2026-10-17 |\n"
-
-	got, err := updatePlanStatus(plan, "2026-11-01")
-	if err != nil {
-		t.Fatal(err)
+	tasks := "\n- [x] **B.5.1** Review.\n- [ ] **S.3.1** Tag.\n- [ ] **S.3.2** Announce.\n- [ ] Exit criterion.\n"
+	tests := []struct{ name, plan, want string }{
+		{
+			name: "next task is the first unchecked task",
+			plan: "| Next task | `B.5.1` (review) |\n| Updated | 2026-10-17 |\n" + tasks,
+			want: "| Next task | `S.3.1` |\n| Updated | 2026-11-01 |\n" + tasks,
+		},
+		{
+			name: "no unchecked task",
+			plan: "| Next task | `S.3.2` |\n| Updated | 2026-10-17 |\n\n- [x] **S.3.2** Announce.\n",
+			want: "| Next task | none |\n| Updated | 2026-11-01 |\n\n- [x] **S.3.2** Announce.\n",
+		},
+		{
+			name: "no next task row",
+			plan: "| Updated | 2026-10-17 |\n",
+			want: "| Updated | 2026-11-01 |\n",
+		},
 	}
 
-	want := "| Next task | `B.5.1` |\n| Updated | 2026-11-01 |\n"
-	if got != want {
-		t.Errorf("got:\n%s\nwant:\n%s", got, want)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := updatePlanStatus(tt.plan, "2026-11-01")
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if got != tt.want {
+				t.Errorf("updatePlanStatus() got:\n%s\nwant:\n%s", got, tt.want)
+			}
+		})
 	}
 
 	if _, err := updatePlanStatus("no table", "2026-11-01"); err == nil {
