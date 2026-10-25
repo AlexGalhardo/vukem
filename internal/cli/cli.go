@@ -270,7 +270,7 @@ func help(env *Env, name string) error {
 		return nil
 	}
 
-	return usagef("unknown command %q", name)
+	return usagef("unknown command %q%s", name, didYouMean(name))
 }
 
 func printUsage(env *Env, c command, fs *flag.FlagSet) {
