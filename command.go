@@ -20,6 +20,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/AlexGalhardo/vukem/config"
+	"github.com/AlexGalhardo/vukem/database"
 	"github.com/AlexGalhardo/vukem/openapi"
 )
 
@@ -379,6 +380,52 @@ func telegramStatus(app *App) string {
 const keyGenerateName = "key:generate"
 
 var errKeyGenerateArgs = fmt.Errorf("%s takes no arguments: %w", keyGenerateName, errUsage)
+
+// ResealFunc re-encrypts the encrypted columns of one model after an
+// APP_KEY rotation and reports how many values it rewrote; orm.Reseal[T]
+// is one.
+type ResealFunc func(ctx context.Context, db database.Executor, batch int) (int, error)
+
+// ResealCommand returns the "crypt:reseal" command: after an APP_KEY
+// rotation it re-encrypts, under the new key, the orm.Encrypted columns of
+// each model whose ResealFunc it is given, so the old key can leave
+// APP_PREVIOUS_KEYS. Core cannot discover models, so the app lists them:
+//
+//	app.AddCommand(vukem.ResealCommand(orm.Reseal[models.User], orm.Reseal[models.OAuthToken]))
+//
+// Flag -batch sets the rows per query (default orm.DefaultResealBatch).
+// It is safe to run while the app serves traffic and to run again.
+func ResealCommand(models ...ResealFunc) Command {
+	var batch *int
+
+	return CommandFunc{
+		CommandName: "crypt:reseal",
+		Desc:        "Re-encrypt encrypted columns under the current APP_KEY",
+		DefineFlags: func(fs *flag.FlagSet) { batch = fs.Int("batch", 0, "rows per query (0: default)") },
+		Fn: func(ctx context.Context, app *App, _ []string) error {
+			db, err := app.DB()
+			if err != nil {
+				return err
+			}
+
+			total := 0
+
+			for _, reseal := range models {
+				n, err := reseal(ctx, db, *batch)
+				total += n
+
+				if err != nil {
+					_, _ = fmt.Fprintf(app.stdout, "re-sealed %d values before the error\n", total)
+					return err
+				}
+			}
+
+			_, err = fmt.Fprintf(app.stdout, "re-sealed %d values\n", total)
+
+			return err
+		},
+	}
+}
 
 // keyGenerateCommand lists key:generate and serves App.Call. RunMain runs
 // it through runKeyGenerate before building the app, which fails closed

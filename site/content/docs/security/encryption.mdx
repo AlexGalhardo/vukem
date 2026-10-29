@@ -297,7 +297,35 @@ Wait for the longest lifetime of what the old key sealed or signed:
 </Step>
 <Step title="3. Re-seal stored data">
 
-Re-save rows with `orm.Encrypted` columns (each save re-seals every encrypted column). Re-seal other stored tokens:
+Re-seal the `orm.Encrypted` columns. Register the `crypt:reseal` command once, listing every model with encrypted columns (core cannot discover models):
+
+```go title="app/providers/app.go"
+app.AddCommand(vukem.ResealCommand(
+	orm.Reseal[models.User],       // two_factor_secret
+	orm.Reseal[models.OAuthToken], // access_token, refresh_token
+))
+```
+
+Then run it on every environment, with both keys configured:
+
+```bash
+./app crypt:reseal
+```
+
+```text
+re-sealed 1284 values
+```
+
+What it does, for each model:
+
+- walks the table by primary key, 500 rows per query (`-batch n` changes it, `orm.DefaultResealBatch`), soft-deleted rows included;
+- rewrites only values sealed with a previous key; values already on the current key and NULLs are left alone, so a second run prints `re-sealed 0 values`;
+- writes each value only if it still holds the ciphertext it read (compare-and-set): a save running at the same time already used the new key and is never overwritten, so the app can keep serving traffic;
+- stops at a value no key opens (`crypt: invalid or tampered ciphertext`), for example after the old key was removed too early; what it rewrote before stays rewritten.
+
+Call `orm.Reseal[T](ctx, db, batch)` directly from your own job if you prefer; it returns how many values it rewrote. Saving a row also re-seals its columns.
+
+Re-seal other stored tokens:
 
 ```go title="app/authors/rotate.go"
 if app.Crypt.NeedsRotation(token) {
