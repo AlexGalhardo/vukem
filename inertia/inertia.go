@@ -159,6 +159,7 @@ type state struct {
 	shared  Props
 	encrypt *bool
 	noSSR   bool
+	needSSR bool
 }
 
 func stateFrom(ctx context.Context) *state {
@@ -263,7 +264,12 @@ func RenderStatus(c *web.Ctx, status int, component string, props Props) error {
 		return c.JSON(status, p)
 	}
 
-	if head, body, ok := st.in.serverRender(c, st, p); ok {
+	head, body, ok, err := st.in.serverRender(c, st, p)
+	if err != nil {
+		return err
+	}
+
+	if ok {
 		return c.Render(st.in.cfg.RootView,
 			RootData{Page: p, Inertia: trustedHTML(body), Head: trustedHTML(head)}, web.WithStatus(status))
 	}

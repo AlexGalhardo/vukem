@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/AlexGalhardo/vukem/errs"
 	"github.com/AlexGalhardo/vukem/web"
 )
 
@@ -21,7 +22,9 @@ import (
 const DefaultSSRURL = "http://127.0.0.1:13714"
 
 // SSRConfig enables server-side rendering through Inertia's Node SSR
-// server. Any failure falls back to client-side rendering.
+// server. A failure falls back to client-side rendering, unless the page is
+// strict (Strict or RequireSSR): it then answers 503 Service Unavailable
+// with Retry-After.
 type SSRConfig struct {
 	// URL of the production SSR server (default DefaultSSRURL).
 	URL string
@@ -38,9 +41,20 @@ type SSRConfig struct {
 	Except []string
 	// Client sends the requests (default: a client with Timeout).
 	Client *http.Client
-	// OnFailure observes failed renders (default: a warning log).
+	// OnFailure observes failed renders (default: a warning log), strict
+	// ones included.
 	OnFailure func(ctx context.Context, err SSRError)
+	// Strict makes every server-rendered page answer 503 with Retry-After
+	// instead of falling back to client-side rendering, a missing Bundle
+	// included; Except and DisableSSR still opt pages out. With Strict,
+	// vukem.WithInertia registers SSRHealthy as the "inertia-ssr" readiness
+	// check. RequireSSR makes a single request strict.
+	Strict bool
 }
+
+// ssrRetryAfter is the Retry-After (seconds) of a strict SSR failure: long
+// enough for `vukem ssr:start` to restart a crashed server.
+const ssrRetryAfter = "5"
 
 // SSRError describes a failed render, as reported by the SSR server
 // ("browser-api", "component-resolution", "render") or "connection" when it
@@ -57,9 +71,20 @@ type SSRError struct {
 }
 
 // DisableSSR renders the page for the request carrying ctx on the client.
+// It wins over Strict and RequireSSR.
 func DisableSSR(ctx context.Context) {
 	if s := stateFrom(ctx); s != nil {
 		s.noSSR = true
+	}
+}
+
+// RequireSSR makes the page for the request carrying ctx strict: when SSR is
+// configured and the render fails, the response is 503 with Retry-After
+// instead of a client-rendered page (for pages that must be indexable).
+// Without an SSRConfig it does nothing.
+func RequireSSR(ctx context.Context) {
+	if s := stateFrom(ctx); s != nil {
+		s.needSSR = true
 	}
 }
 
@@ -116,35 +141,54 @@ type ssrResult struct {
 }
 
 // serverRender returns the SSR head and body, or ok=false to render on the
-// client.
-func (in *Inertia) serverRender(c *web.Ctx, st *state, p *Page) (head, body string, ok bool) {
+// client. A failed strict render returns a 503 error instead.
+func (in *Inertia) serverRender(c *web.Ctx, st *state, p *Page) (head, body string, ok bool, err error) {
 	ctx, r := c.Context(), c.Request()
 	s := in.cfg.SSR
 	if s == nil || st.noSSR || slices.ContainsFunc(s.Except, func(prefix string) bool {
 		return strings.HasPrefix(r.URL.Path, prefix)
 	}) {
-		return "", "", false
+		return "", "", false, nil
 	}
 
+	strict := s.Strict || st.needSSR
 	url := s.URL + "/render"
+
+	var (
+		res  *ssrResult
+		ferr *SSRError
+	)
 
 	if hot := hotURL(s); hot != "" {
 		url = hot + "/__inertia_ssr"
 	} else if s.Bundle != "" {
-		if _, err := os.Stat(s.Bundle); err != nil {
-			return "", "", false
+		if _, serr := os.Stat(s.Bundle); serr != nil {
+			if !strict {
+				return "", "", false, nil
+			}
+
+			ferr = &SSRError{Error: "SSR bundle not found", Type: "bundle"}
 		}
 	}
 
-	res, ferr := in.postRender(ctx, url, p)
+	if ferr == nil {
+		res, ferr = in.postRender(ctx, url, p)
+	}
+
 	if ferr != nil {
 		ferr.Component, ferr.URL = p.Component, p.URL
 		in.reportSSR(ctx, c.Log(), *ferr)
 
-		return "", "", false
+		if strict {
+			return "", "", false, errs.Wrap(http.StatusServiceUnavailable,
+				fmt.Errorf("inertia: strict SSR failed (%s): %s", ferr.Type, ferr.Error)).
+				WithHeader("Retry-After", ssrRetryAfter)
+		}
+
+		return "", "", false, nil
 	}
 
-	return strings.Join(res.Head, "\n"), res.Body, true
+	return strings.Join(res.Head, "\n"), res.Body, true, nil
 }
 
 func hotURL(s *SSRConfig) string {
