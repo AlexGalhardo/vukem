@@ -54,6 +54,7 @@ export const navigation: NavCategory[] = [
       "idempotency",
       "graphql",
       "grpc",
+      "json-rpc",
     ],
   },
   {
@@ -87,6 +88,7 @@ export const navigation: NavCategory[] = [
     pages: [
       "mail",
       "cache",
+      "sitemaps",
       "storage",
       "uploads",
       "exports",
@@ -131,6 +133,6 @@ export const navigation: NavCategory[] = [
   {
     title: "Deployment",
     dir: "deployment",
-    pages: ["single-binary", "docker-and-railway", "http2-and-http3"],
+    pages: ["single-binary", "docker-and-railway", "cloudflare", "http2-and-http3"],
   },
 ];

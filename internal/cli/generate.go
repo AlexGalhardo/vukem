@@ -594,6 +594,7 @@ func hasUserModel(env *Env) bool {
 
 func makeMail(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 	force := set.Bool("force", false, "overwrite existing files")
+	react := set.Bool("react", false, "write a React Email component instead of an html/template view")
 
 	return func(_ context.Context, env *Env, args []string) error {
 		name, err := oneArg(args, "mail name")
@@ -606,12 +607,48 @@ func makeMail(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 			return err
 		}
 
+		if *react {
+			return makeReactMail(env, d, *force)
+		}
+
 		if err := generate(env, "mail.go.tmpl", "app/mail/"+d.Snake+".go", d, *force); err != nil {
 			return err
 		}
 
 		return generate(env, "mail.html.tmpl", "resources/views/mail/"+d.Snake+".html", d, *force)
 	}
+}
+
+// React Email packages make:mail --react asks for: exact stable versions,
+// checked against react 19.3.1 of the React starter.
+const (
+	reactEmailCLIVersion        = "6.11.6"
+	reactEmailComponentsVersion = "1.0.12"
+)
+
+func makeReactMail(env *Env, d stubData, force bool) error {
+	if err := generate(env, "mail_react.go.tmpl", "app/mail/"+d.Snake+".go", d, force); err != nil {
+		return err
+	}
+
+	if err := generate(env, "mail.tsx.tmpl", "resources/js/emails/"+d.Snake+".tsx", d, force); err != nil {
+		return err
+	}
+
+	if _, err := os.Stat(env.path(filepath.FromSlash("resources/js/emails/go.ts"))); err != nil {
+		if err := generate(env, "mail_go.ts.tmpl", "resources/js/emails/go.ts", d, false); err != nil {
+			return err
+		}
+	}
+
+	fmt.Fprintf(env.Stdout, `next steps:
+  npm install -E -D react-email@%s @react-email/components@%s
+  add the package.json script "build:emails":
+    email export --dir resources/js/emails --outDir resources/emails
+  run it, embed resources/emails and pass vukem.WithReactEmails(fsys) to vukem.New
+`, reactEmailCLIVersion, reactEmailComponentsVersion)
+
+	return nil
 }
 
 func makeEvent(set *flag.FlagSet) func(context.Context, *Env, []string) error {

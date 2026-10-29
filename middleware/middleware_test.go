@@ -1008,3 +1008,33 @@ func TestRecoverDebugPageShowsPanicSite(t *testing.T) {
 		t.Errorf("debug page for a panic = %d, want the panicking function in:\n%.2000s", rec.Code, rec.Body.String())
 	}
 }
+
+// LoggerOptions.TruncateIP logs /24 IPv4 and /48 IPv6 networks instead of
+// addresses (data minimisation, LGPD/GDPR), for both peer and ip.
+func TestSecurity_A09_LoggerTruncatesIPs(t *testing.T) {
+	t.Parallel()
+
+	for peer, want := range map[string]string{
+		"203.0.113.77:4000":            "203.0.113.0",
+		"[2001:db8:1234:5678::9]:4000": "2001:db8:1234::",
+		"[::ffff:198.51.100.9]:1":      "198.51.100.0",
+	} {
+		var buf bytes.Buffer
+
+		h := LoggerWith(slog.New(slog.NewJSONHandler(&buf, nil)), LoggerOptions{TruncateIP: true})(
+			http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+
+		req := get(t, "/")
+		req.RemoteAddr = peer
+		do(t, h, req)
+
+		var m map[string]any
+		if err := json.Unmarshal(buf.Bytes(), &m); err != nil {
+			t.Fatal(err)
+		}
+
+		if m["ip"] != want || m["peer"] != want {
+			t.Errorf("peer %s logged ip=%v peer=%v, want %s", peer, m["ip"], m["peer"], want)
+		}
+	}
+}
