@@ -1,0 +1,112 @@
+---
+title: Passkeys (WebAuthn)
+description: Register passkeys and sign users in with them using the stdlib-only auth/webauthn package - options for the browser, attestation "none", ES256, EdDSA and RS256 keys, origin and RP ID checks, user verification and sign-count clone detection.
+---
+
+A passkey is a key pair kept by the user's device or password manager. The private key never leaves it; your app stores only the public key. To sign in, the device signs a random challenge after the user unlocks it with a fingerprint, a face scan or the device PIN. There is no shared secret to phish, leak or reuse, and the browser only offers a passkey to the site it was created for.
+
+The `auth/webauthn` package verifies the two WebAuthn ceremonies, registration and authentication, with the standard library only. It does not touch your database or session: you store the challenge and the credentials, and it tells you whether a ceremony is valid.
+
+You will learn:
+
+- how to configure the relying party (your site);
+- how to register a passkey for a signed-in user;
+- how to sign a user in with a passkey, with or without a username;
+- what the package checks, and what stays your job.
+
+## Configure the relying party
+
+The relying party is your site. `ID` is the domain credentials are bound to (`example.com` covers `app.example.com` too), and `Origins` are the exact origins a ceremony may come from. Validate it at boot:
+
+```go title="app/providers/passkeys.go"
+rp := webauthn.RelyingParty{
+	ID:      "example.com",
+	Name:    "Example",
+	Origins: []string{"https://example.com"},
+}
+if err := rp.Validate(); err != nil {
+	return err
+}
+```
+
+`Validate` refuses an origin outside the RP ID and plain `http` except on `localhost`. User verification (fingerprint, face or PIN on the device) is required by default, so a passkey alone is enough to sign in. `InsecureSkipUserVerification` turns that off; use it only when the passkey is a second factor next to a password.
+
+## Register a passkey
+
+Registration needs a signed-in user. Give every user a random, stable user handle once (`webauthn.NewUserHandle()`), never their id or email: the handle is stored on the device.
+
+1. Create a challenge, keep it in the session and send the options:
+
+```go title="app/http/passkeys.go"
+challenge := webauthn.NewChallenge()
+c.Session().Put("passkey.register", challenge)
+
+user := webauthn.User{Handle: account.PasskeyHandle, Name: account.Email, DisplayName: account.Name}
+return c.JSON(http.StatusOK, rp.RegistrationOptions(user, challenge, existing))
+```
+
+`existing` holds the user's credentials, so the browser does not register the same device twice.
+
+2. In the browser, pass the options through `PublicKeyCredential.parseCreationOptionsFromJSON`, call `navigator.credentials.create({ publicKey })` and post `credential.toJSON()` back.
+
+3. Take the challenge out of the session (it must work once), verify and store:
+
+```go title="app/http/passkeys.go"
+challenge, _ := c.Session().Pull("passkey.register").(string)
+
+cred, err := rp.VerifyRegistration(challenge, user, body)
+if err != nil {
+	return errs.New(http.StatusUnprocessableEntity, "passkey not registered")
+}
+```
+
+Save every `webauthn.Credential` field. `ID` must be unique across users.
+
+## Sign in with a passkey
+
+1. Create a challenge, keep it in the session under `passkey.login` and send `rp.AssertionOptions(challenge, nil)`. With no allow list the browser offers every passkey of your site, so the user signs in without typing a username.
+2. In the browser, use `parseRequestOptionsFromJSON`, call `navigator.credentials.get({ publicKey })` and post `credential.toJSON()`.
+3. Parse the response, load the credential by its id, verify, then save the new sign count before you log the user in:
+
+```go title="app/http/passkeys.go"
+challenge, _ := c.Session().Pull("passkey.login").(string)
+
+a, err := webauthn.ParseAssertion(body)
+if err != nil {
+	return errs.New(http.StatusUnauthorized, "passkey not accepted")
+}
+
+stored, err := credentials.FindByID(ctx, a.CredentialID)
+if err != nil {
+	return errs.New(http.StatusUnauthorized, "passkey not accepted")
+}
+
+updated, err := rp.VerifyAssertion(challenge, stored, a)
+if err != nil {
+	return errs.New(http.StatusUnauthorized, "passkey not accepted")
+}
+```
+
+Answer every failure with the same message; the error tells your logs why.
+
+## What the package checks
+
+| Check | Error |
+| --- | --- |
+| The challenge is the one you issued; an empty one (lost session) never matches | `ErrChallenge` |
+| The origin is listed, and the ceremony is not inside a cross-origin iframe | `ErrOrigin` |
+| The authenticator signed for your RP ID | `ErrRPID` |
+| The user was present, and verified unless you opted out | `ErrUserPresence`, `ErrUserVerification` |
+| Attestation is `none`, the key is ES256 (P-256), Ed25519 or RS256 of at least 2048 bits | `ErrUnsupportedAttestation`, `ErrUnsupportedKey` |
+| The assertion uses this credential, and its user handle is the credential's user | `ErrCredential` |
+| The signature over the authenticator data and client data verifies | `ErrSignature` |
+| The sign count went up (a count that stays at 0 is a synced passkey and is fine) | `ErrSignCount` |
+
+Your app owns the rest:
+
+- **Single-use challenges.** Take the challenge out of the session before verifying, so a captured response cannot be replayed.
+- **A recovery path.** A user who loses every device needs another way in (password, recovery codes or a support flow). Never let a passkey become the only factor without one.
+- **Throttling.** Rate-limit the sign-in endpoint like the password login.
+- **Sign-count failures.** `ErrSignCount` can mean a cloned authenticator: refuse the sign-in and tell the user.
+
+The package does not verify attestation statements (which device model made the key). Consumer passkeys do not provide them, and the browser reports `none` when the options ask for it, as `RegistrationOptions` does.
