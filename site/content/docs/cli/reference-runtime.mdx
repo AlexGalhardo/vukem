@@ -444,6 +444,12 @@ vukem ssr:check [-url URL]
 | `ssr:start` | `-restart-delay` | duration | `1s` | Wait before restarting a crashed server. |
 | `ssr:check` | `-url` | string | `http://127.0.0.1:13714` | SSR server URL. |
 
+`ssr:start` restarts the server when it crashes and returns when it is stopped (Ctrl+C) or exits cleanly after serving (`POST /shutdown`). A bundle that exits cleanly within 2 seconds never started a server, so `ssr:start` fails instead of exiting 0 in silence:
+
+```text
+ssr:start: the SSR bundle did not start a server (call createInertiaApp at the top level of resources/js/ssr.ts(x), do not export it, and rebuild): bootstrap/ssr/ssr.js exited at once
+```
+
 `ssr:check` requests `/health` and exits 0 on success, 1 otherwise:
 
 ```bash

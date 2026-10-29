@@ -64,6 +64,12 @@ func TestNewInertiaProjectEndToEnd(t *testing.T) {
 				t.Errorf("Error page = %q, want one showing status and message", page)
 			}
 
+			ssrEntry := strings.Replace(st.entry, "app.", "ssr.", 1)
+			if ssr := read(t, project, ssrEntry); strings.Contains(ssr, "export ") ||
+				!strings.Contains(ssr, "\ncreateInertiaApp({") {
+				t.Errorf("%s must call createInertiaApp at the top level:\n%s", ssrEntry, ssr)
+			}
+
 			if !strings.Contains(read(t, project, "vite.config.ts"), st.entry) {
 				t.Errorf("vite.config.ts does not build %s", st.entry)
 			}
@@ -114,8 +120,13 @@ func TestNewInertiaProjectEndToEnd(t *testing.T) {
 			run(npm(), "install", "--no-audit", "--no-fund")
 			run(npm(), "run", "typecheck")
 
-			if code, out, errOut := vukem(t, project, "build"); code != 0 {
-				t.Fatalf("vukem build = %d\n%s%s", code, out, errOut)
+			if code, out, errOut := vukem(t, project, "build", "-ssr"); code != 0 {
+				t.Fatalf("vukem build -ssr = %d\n%s%s", code, out, errOut)
+			}
+
+			// The SSR build lands in bootstrap/ssr and leaves the client build alone.
+			if _, err := os.Stat(filepath.Join(project, "bootstrap", "ssr", "ssr.js")); err != nil {
+				t.Errorf("SSR bundle: %v", err)
 			}
 
 			if m := read(t, project, "resources/public/build/.vite/manifest.json"); !strings.Contains(m, st.entry) {

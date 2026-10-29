@@ -1973,6 +1973,10 @@ func TestMain(m *testing.M) {
 			_ = f.Close()
 		}
 
+		if d, err := time.ParseDuration(os.Getenv("VUKEM_SSR_SLEEP")); err == nil {
+			time.Sleep(d) //nolint:forbidigo // a fake server process that runs for a while
+		}
+
 		if os.Getenv("VUKEM_SSR_EXIT") == "0" {
 			os.Exit(0)
 		}
@@ -2026,6 +2030,15 @@ func TestSSRStartRestartsCrashedServer(t *testing.T) { //nolint:paralleltest // 
 
 	t.Setenv("VUKEM_SSR_EXIT", "0")
 
+	// VF-038 (HexaScore): a bundle that exits at once never served.
+	err := runCommand(t.Context(), app, "ssr:start", []string{"-bundle", bundle, "-runtime", os.Args[0]})
+	if !errors.Is(err, errSSRNoServer) {
+		t.Errorf("immediate clean exit = %v, want errSSRNoServer", err)
+	}
+
+	// A clean exit after serving (POST /shutdown) ends ssr:start without error.
+	t.Setenv("VUKEM_SSR_SLEEP", (ssrMinUptime + 200*time.Millisecond).String())
+
 	if err := runCommand(
 		t.Context(),
 		app,
@@ -2035,7 +2048,7 @@ func TestSSRStartRestartsCrashedServer(t *testing.T) { //nolint:paralleltest // 
 		t.Errorf("clean exit = %v", err)
 	}
 
-	err := runCommand(t.Context(), app, "ssr:start", []string{"-bundle", filepath.Join(dir, "missing.js")})
+	err = runCommand(t.Context(), app, "ssr:start", []string{"-bundle", filepath.Join(dir, "missing.js")})
 	if err == nil || !strings.Contains(err.Error(), "npm run build") {
 		t.Errorf("missing bundle = %v", err)
 	}
