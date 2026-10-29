@@ -1,0 +1,44 @@
+# Betterleaks (https://github.com/betterleaks/betterleaks) secret scanning:
+# the default rules plus the secret formats a vukem app holds. The pre-commit
+# hook, the secrets:scan script and the CI job pick this file up by name.
+# Validation against live provider APIs stays off: it needs --validation.
+title = "vukem app"
+
+[extend]
+useDefault = true
+# Replaced by stripe-secret-key below, which also matches low-entropy keys.
+disabledRules = ["stripe-access-token"]
+
+[[rules]]
+id = "vukem-app-key"
+description = "vukem APP_KEY or APP_PREVIOUS_KEYS entry (base64 of 32 random bytes)"
+regex = '''base64:[A-Za-z0-9+/]{43}='''
+keywords = ["base64:"]
+
+[[rules]]
+id = "vukem-api-token"
+description = "vukem API token (auth.Tokens, default prefix vk_)"
+regex = '''\bvk_[A-Z2-7]{26}\.[A-Z2-7]{26}\b'''
+keywords = ["vk_"]
+
+[[rules]]
+id = "stripe-secret-key"
+description = "Stripe secret or restricted API key"
+regex = '''\b(?:sk|rk)_(?:test|live)_[A-Za-z0-9]{20,247}\b'''
+keywords = ["sk_test_", "sk_live_", "rk_test_", "rk_live_"]
+
+[[rules]]
+id = "stripe-webhook-secret"
+description = "Stripe webhook signing secret"
+regex = '''\bwhsec_[A-Za-z0-9+/=]{20,}'''
+keywords = ["whsec_"]
+
+# .env.example and the docs carry placeholders, never real values: allow the
+# placeholder spellings only. A real key pasted into .env.example still fails.
+[[allowlists]]
+description = "placeholder values in .env.example, docs and tests"
+regexTarget = "secret"
+regexes = [
+	'''_FAKE_|(?i)placeholder|changeme|example''',
+	'''(?i)x{8,}|\.\.\.$''',
+]
