@@ -163,6 +163,8 @@ A line with an invalid key stops the boot with the file and line number, for exa
 | `LOG_DEDUP_WINDOW` | `1m` in production, off elsewhere | Repeated identical errors become one summary per window; `0` turns it off |
 | `API_VERSION` | `1.0.0` | `info.version` of the [OpenAPI](/docs/rest-apis/openapi) document |
 | `OPENAPI_PREFIX` | empty | Keep only routes under this prefix (such as `/api`) in the OpenAPI document |
+| `OPENAPI_SERVERS` | `APP_URL` | Comma-separated server URLs of the OpenAPI document |
+| `OPENAPI_STRIP_PREFIX` | empty | Remove this prefix (such as `/api/v1`) from the documented paths, for a server URL that already ends with it |
 | `OPENAPI_IN_PRODUCTION` | `false` | Serve `/openapi.json` in production too |
 | `DEVTOOLS` | `false` | Enable the [dev dashboard](/docs/digging-deeper/devtools) at `/_vukem`; refused in production |
 | `DEVTOOLS_INSECURE_ALLOW_REMOTE` | `false` | Serve the dashboard to non-loopback clients (containers, remote VMs). Anyone who reaches the app then sees its requests, queries, logs and mail |

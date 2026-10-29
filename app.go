@@ -91,6 +91,13 @@ type Config struct {
 	APIVersion string `env:"API_VERSION" default:"1.0.0"`
 	// OpenAPIPrefix keeps only routes under it in the document (e.g. /api).
 	OpenAPIPrefix string `env:"OPENAPI_PREFIX"`
+	// OpenAPIServers lists the document's server URLs, comma-separated
+	// (default APP_URL); WithOpenAPI's Servers win over it.
+	OpenAPIServers []string `env:"OPENAPI_SERVERS"`
+	// OpenAPIStripPrefix removes this path prefix from the documented paths
+	// (openapi.Info.StripPrefix), for a server URL that already ends with
+	// it; WithOpenAPI's StripPrefix wins over it.
+	OpenAPIStripPrefix string `env:"OPENAPI_STRIP_PREFIX"`
 	// OpenAPIInProduction serves /openapi.json in production too.
 	OpenAPIInProduction bool `env:"OPENAPI_IN_PRODUCTION"`
 	// Devtools enables the /_vukem dashboard (refused in production).
