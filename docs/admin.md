@@ -61,9 +61,9 @@ return panel.Mount(r)
 | `Slug(s)` / `Labels(singular, plural)` / `Label(col, text)` | URL segment (default: table in kebab-case) and UI names |
 | `List(cols...)` | List columns, in order (default: every visible column) |
 | `Column(label, func(T) string)` | Computed list and detail column (escaped) |
-| `Search(cols...)` | Search box over string columns (`LIKE`, `ILIKE` on Postgres, bound parameters; `%` and `_` in the text match literally) |
+| `Search(cols...)` | Search box over string columns, nullable ones included (`LIKE`, `ILIKE` on Postgres, bound parameters; `%` and `_` in the text match literally) |
 | `Sortable(cols...)` | Sortable columns (default: the listed ones) |
-| `Filter(col, options...)` | Exact-match filter; a select with options (yes/no for booleans), else a text box |
+| `Filter(col, options...)` | Exact-match filter on a string, integer or boolean column, or its `sql.Null*` / `sql.Null[T]` form (NULL rows never match); a select with options (yes/no for booleans), else a text box |
 | `PerPage(n)` | Page size (default 20, max 200) |
 | `Hidden(cols...)` | Not shown anywhere; hidden schema keys are never written |
 | `ReadOnly(cols...)` | Shown disabled on edit, never written |
