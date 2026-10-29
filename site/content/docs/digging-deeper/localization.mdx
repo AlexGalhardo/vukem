@@ -463,7 +463,7 @@ Some errors from Vukem itself carry a message key and keep their English text as
 | `validation.unique` | The `{field}` has already been taken. |
 | `validation.exists` | The selected `{field}` is invalid. |
 
-`WithTranslations` calls `Bundle.AddBuiltin`, which ships these keys in English and Brazilian Portuguese. Under the hood:
+`WithTranslations` calls `Bundle.AddBuiltin`, which ships these keys in English, Spanish and Brazilian Portuguese. Under the hood:
 
 - The built-in messages only fill catalogs you already have. The `pt-BR` messages fill your `pt-BR` and `pt` catalogs, never `pt-PT`. No new catalog is created, so `Locales` and `Match` stay the same.
 - A key in your own catalog always wins over the built-in one.

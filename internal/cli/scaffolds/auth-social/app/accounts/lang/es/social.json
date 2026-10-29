@@ -1,0 +1,8 @@
+{
+  "auth": {
+    "social": {
+      "no_email": "Tu cuenta de {provider} no compartió una dirección de correo.",
+      "email_taken": "Ya existe una cuenta con este correo. Inicia sesión primero con tu contraseña."
+    }
+  }
+}
