@@ -71,6 +71,7 @@ export const navigation: NavCategory[] = [
       "jwt",
       "api-tokens",
       "two-factor",
+      "passkeys",
       "authorization",
       "rate-limiting",
       "bot-challenge",
