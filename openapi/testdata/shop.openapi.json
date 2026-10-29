@@ -25,6 +25,9 @@
           }
         ],
         "responses": {
+          "4XX": {
+            "$ref": "#/components/responses/Problem"
+          },
           "default": {
             "description": "Response",
             "content": {
@@ -235,6 +238,9 @@
           }
         },
         "responses": {
+          "4XX": {
+            "$ref": "#/components/responses/Problem"
+          },
           "default": {
             "description": "Response",
             "content": {
