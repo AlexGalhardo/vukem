@@ -609,7 +609,7 @@ func (r *Resource[T]) check() error {
 	}
 
 	for _, c := range r.search {
-		if r.byName[c].typ.Kind() != reflect.String {
+		if nullBase(r.byName[c].typ).Kind() != reflect.String {
 			errs = append(errs, fmt.Errorf("column %q is not a string and cannot be searched", c))
 		}
 	}

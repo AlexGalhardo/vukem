@@ -235,7 +235,12 @@ func (s *Schema) createIndexes(t *Table) error {
 			cols[i] = s.q(c)
 		}
 
-		stmt := kw + s.q(ix.name) + " ON " + s.q(t.name) + " (" + strings.Join(cols, ", ") + ")"
+		stmt := kw + s.q(ix.name) + " ON " + s.q(t.name)
+		if ix.method != "" {
+			stmt += " USING " + ix.method
+		}
+
+		stmt += " (" + strings.Join(cols, ", ") + ")"
 		if ix.where != "" {
 			stmt += " WHERE " + ix.where
 		}
