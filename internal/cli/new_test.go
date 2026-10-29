@@ -14,6 +14,33 @@ import (
 	"testing"
 )
 
+// TestStartersCompressStaticAndHTML guards that every browser starter wraps
+// the static files and the rendered pages in middleware.Gzip: an app deployed
+// behind a proxy that does not compress otherwise ships its JS bundle raw.
+func TestStartersCompressStaticAndHTML(t *testing.T) {
+	t.Parallel()
+
+	files := map[string]fs.FS{
+		"starter/routes/web.go.tmpl":           starterFS,
+		"scaffolds/inertia/routes/web.go.tmpl": scaffoldFS,
+		"scaffolds/templ/routes/web.go.tmpl":   scaffoldFS,
+	}
+
+	for name, fsys := range files {
+		b, err := fs.ReadFile(fsys, name)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		src := string(b)
+		gz, static := strings.Index(src, "r.UseServer(middleware.Gzip())"), strings.Index(src, "middleware.StaticFS(")
+
+		if gz < 0 || static < 0 || gz > static {
+			t.Errorf("%s: want r.UseServer(middleware.Gzip()) registered before middleware.StaticFS", name)
+		}
+	}
+}
+
 func TestVendoredHTMX(t *testing.T) {
 	t.Parallel()
 

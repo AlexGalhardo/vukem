@@ -415,6 +415,15 @@ What happens on each request:
 
 It supports flushing and hijacking, so streaming responses and WebSocket upgrades keep working. Images and archives are already compressed; compressing them again wastes CPU.
 
+New browser apps (`vukem new`, with or without `-inertia` or `-templ`) register it as server middleware before the static files, so a deploy without a compressing proxy still ships compressed JS and HTML:
+
+```go title="routes/web.go"
+r.UseServer(middleware.Gzip())
+r.UseServer(middleware.StaticFS(resources.Public(), middleware.StaticConfig{Prefix: "/"}))
+```
+
+There is no Brotli encoder: the standard library has none, and gzip already brings a Vite bundle to about a fifth of its size.
+
 ### Timeout
 
 `Timeout(d)` gives the request context a deadline. It does **not** interrupt your handler: code must watch the context. Database queries, HTTP clients and `select` on `c.Context().Done()` stop when the deadline passes; a handler that returns `ctx.Err()` then answers `500` and logs `context deadline exceeded`. Go's [context package](https://pkg.go.dev/context#WithTimeout) describes deadlines.
