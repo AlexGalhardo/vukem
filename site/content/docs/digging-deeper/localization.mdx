@@ -346,8 +346,9 @@ Validating with `Match` first keeps a junk value out of the session; the middlew
 | `SessionKey` | `string` | `"locale"` | Session key; `"-"` turns the source off |
 | `Order` | `[]i18n.Source` | query, cookie, session, header | Sources to read, first match wins; a source left out is off |
 | `Locales` | `[]string` | every catalog | Locales a request may select; must include the default |
+| `PathPrefixes` | `map[string]string` | none | URL path segment to locale, for `/pt-br/...` URLs (see [Locale URL prefixes](#locale-url-prefixes)) |
 
-The sources are `i18n.SourceQuery`, `i18n.SourceCookie`, `i18n.SourceSession` and `i18n.SourceHeader` (`Accept-Language`).
+The sources are `i18n.SourcePath` (the URL prefix), `i18n.SourceQuery`, `i18n.SourceCookie`, `i18n.SourceSession` and `i18n.SourceHeader` (`Accept-Language`).
 
 Pass the config through `vukem.DefaultMiddlewareWith`:
 
@@ -370,6 +371,29 @@ if err != nil {
 
 For JSON APIs, `vukem.APIMiddlewareWith` takes the same config as `APIMiddlewareOptions.I18n`. When you pass nil there, it reads only the query and `Accept-Language`, because API clients usually send no cookies or sessions.
 
+### Locale URL prefixes
+
+Many sites put the language in the URL: `/games` in English, `/pt-br/games` in Portuguese. The URL then is the cache key and the link a visitor shares opens in the same language. `PathPrefixes` maps each first path segment to its locale:
+
+```go title="routes/web.go"
+cfg := &i18n.MiddlewareConfig{
+	PathPrefixes: map[string]string{"pt-br": "pt-BR", "es": "es"},
+	// Unprefixed URLs are English, whatever the browser says.
+	Order: []i18n.Source{i18n.SourcePath},
+}
+err := vukem.DefaultMiddlewareWith(app, r, vukem.MiddlewareOptions{
+	I18n: cfg,
+})
+```
+
+What happens on `GET /pt-br/games/zelda`:
+
+1. `i18n.StripPathPrefix`, which `DefaultMiddlewareWith` and `APIMiddlewareWith` add to the server stack before routing, sees `pt-br` as the first segment, removes it, and records it. The router matches `/games/zelda`, so you declare each route once. `/pt-br` alone becomes `/`.
+2. The locale middleware reads `pt-BR` from `SourcePath`. It adds no `Vary` header, because the URL already differs per locale.
+3. In the handler, `i18n.PathPrefix(ctx)` returns `"/pt-br"`, and `i18n.LocalizePath(ctx, "/games")` returns `"/pt-br/games"` (`"/"` becomes `"/pt-br"`). Wrap the paths you generate with it so links keep the visitor's locale.
+
+Only an exact, case-sensitive whole segment matches: `/pt-brx` and `/PT-BR` are left alone. With a nil `Order`, `SourcePath` is read first and the usual sources follow, so an unprefixed URL still falls back to the cookie or `Accept-Language`; list only `i18n.SourcePath` to make unprefixed URLs use the default locale. The request log shows the URL as requested, because stripping runs after logging. Outside the vukem stacks, add `r.UseServer(i18n.StripPathPrefix(cfg.PathPrefixes))` yourself; without it, `SourcePath` never matches.
+
 ### Configuration errors fail the boot
 
 `MiddlewareConfig.Validate(bundle)` checks the config. `i18n.Middleware` returns its error (since v0.26), and `DefaultMiddlewareWith` returns it from your route function, so the app does not start with a broken config:
@@ -382,6 +406,10 @@ For JSON APIs, `vukem.APIMiddlewareWith` takes the same config as `APIMiddleware
 | A bad tag in `Locales` | `i18n: invalid locale "x"` |
 | A locale with no catalog | `i18n: locale "fr" has no catalog` |
 | `Locales` without the default | `i18n: Locales must include the default locale "en"` |
+| `SourcePath` without `PathPrefixes` | `i18n: SourcePath needs PathPrefixes` |
+| `PathPrefixes` with an `Order` that leaves out `SourcePath` | `i18n: PathPrefixes needs SourcePath in Order` |
+| A prefix that is not one plain segment | `i18n: path prefix "pt/br" must be one plain path segment` |
+| A prefix locale with no catalog, or outside `Locales` | `i18n: locale "de" of path prefix "de" has no catalog` |
 | An `I18n` config without `WithTranslations` | `vukem: i18n middleware options have no effect without WithTranslations` |
 
 Through `DefaultMiddlewareWith`, the `i18n:` errors gain a `vukem: i18n: ` prefix.

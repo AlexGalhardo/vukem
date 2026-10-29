@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
+	"strings"
 
 	"github.com/AlexGalhardo/vukem/errs"
 	"github.com/AlexGalhardo/vukem/web"
@@ -79,6 +80,11 @@ type MiddlewareConfig struct {
 	// the Bundle (empty: every catalog). It must include the default locale,
 	// which stays the fallback.
 	Locales []string
+	// PathPrefixes maps a first URL path segment to its locale, e.g.
+	// {"pt-br": "pt-BR", "es": "es"} for /pt-br/... and /es/...; it needs
+	// SourcePath in Order (a nil Order puts it first) and StripPathPrefix
+	// before routing, which vukem.DefaultMiddlewareWith installs.
+	PathPrefixes map[string]string
 }
 
 // Source is a place Middleware reads the request locale from.
@@ -90,9 +96,15 @@ const (
 	SourceCookie  Source = "cookie"
 	SourceSession Source = "session"
 	SourceHeader  Source = "header" // Accept-Language
+	// SourcePath is the URL path prefix recorded by StripPathPrefix (see
+	// MiddlewareConfig.PathPrefixes).
+	SourcePath Source = "path"
 )
 
-var defaultOrder = []Source{SourceQuery, SourceCookie, SourceSession, SourceHeader}
+var (
+	defaultOrder = []Source{SourceQuery, SourceCookie, SourceSession, SourceHeader}
+	knownSources = append([]Source{SourcePath}, defaultOrder...)
+)
 
 // Validate reports an Order with no, unknown or repeated sources, and
 // Locales that are not available in b or leave out its default locale.
@@ -104,7 +116,7 @@ func (c MiddlewareConfig) Validate(b *Bundle) error {
 
 	seen := map[Source]bool{}
 	for _, s := range c.Order {
-		if !slices.Contains(defaultOrder, s) {
+		if !slices.Contains(knownSources, s) {
 			return fmt.Errorf("i18n: unknown locale source %q", s)
 		}
 
@@ -113,6 +125,10 @@ func (c MiddlewareConfig) Validate(b *Bundle) error {
 		}
 
 		seen[s] = true
+	}
+
+	if err := c.validatePathPrefixes(b, seen[SourcePath]); err != nil {
+		return err
 	}
 
 	if len(c.Locales) == 0 {
@@ -142,6 +158,39 @@ func (c MiddlewareConfig) Validate(b *Bundle) error {
 	return nil
 }
 
+func (c MiddlewareConfig) validatePathPrefixes(b *Bundle, listed bool) error {
+	switch {
+	case listed && len(c.PathPrefixes) == 0:
+		return errors.New("i18n: SourcePath needs PathPrefixes")
+	case c.Order != nil && !listed && len(c.PathPrefixes) > 0:
+		return errors.New("i18n: PathPrefixes needs SourcePath in Order")
+	}
+
+	for seg, l := range c.PathPrefixes {
+		if seg == "" || strings.ContainsAny(seg, "/?#%") {
+			return fmt.Errorf("i18n: path prefix %q must be one plain path segment", seg)
+		}
+
+		canon, ok := Canonical(l)
+		if !ok {
+			return fmt.Errorf("i18n: invalid locale %q for path prefix %q", l, seg)
+		}
+
+		if canon != b.Default() && !slices.Contains(b.Locales(), canon) {
+			return fmt.Errorf("i18n: locale %q of path prefix %q has no catalog", l, seg)
+		}
+
+		if len(c.Locales) > 0 && !slices.ContainsFunc(c.Locales, func(x string) bool {
+			xc, _ := Canonical(x)
+			return xc == canon
+		}) {
+			return fmt.Errorf("i18n: locale %q of path prefix %q is not in Locales", l, seg)
+		}
+	}
+
+	return nil
+}
+
 func (c MiddlewareConfig) withDefaults() MiddlewareConfig {
 	c.Query = cmp.Or(c.Query, "lang")
 	c.Cookie = cmp.Or(c.Cookie, "lang")
@@ -149,6 +198,9 @@ func (c MiddlewareConfig) withDefaults() MiddlewareConfig {
 
 	if c.Order == nil {
 		c.Order = defaultOrder
+		if len(c.PathPrefixes) > 0 {
+			c.Order = knownSources
+		}
 	}
 
 	return c
@@ -157,7 +209,8 @@ func (c MiddlewareConfig) withDefaults() MiddlewareConfig {
 // Middleware resolves the request locale from, in order, the query
 // parameter, the cookie, the session, the Accept-Language header (by
 // quality, matched with Bundle.Match) and the default locale
-// (MiddlewareConfig.Order changes the sources and their order). Values that
+// (MiddlewareConfig.Order changes the sources and their order; SourcePath
+// adds the URL path prefix of MiddlewareConfig.PathPrefixes). Values that
 // are not well-formed locales of an available catalog are ignored. It
 // stores the Bundle and locale in the request context (T, Locale, the view
 // "t" function), localizes validation messages of web.Parse/Bind and the
@@ -251,6 +304,9 @@ func resolve(
 			if v, isString := s.Get(cfg.SessionKey).(string); isString {
 				l, ok = match(v)
 			}
+		case SourcePath:
+			// The URL is the cache key: no Vary.
+			l, ok = match(pathLocale(r.Context()))
 		case SourceHeader:
 			varyOn("Accept-Language")
 
