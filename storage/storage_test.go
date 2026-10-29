@@ -523,3 +523,119 @@ func (d *brokenDisk) Delete(context.Context, string) error {
 func (*brokenDisk) List(context.Context, string) ([]string, error) { return nil, nil }
 
 func (*brokenDisk) URL(string) string { return "" }
+
+// taggedDisk opens non-seekable bodies that report an ETag and a
+// modification time, like an object store response.
+type taggedDisk struct {
+	*storage.Memory
+
+	etag     string
+	modified time.Time
+}
+
+type taggedBody struct {
+	io.Reader
+
+	etag     string
+	modified time.Time
+}
+
+func (b taggedBody) Close() error       { return nil }
+func (b taggedBody) ETag() string       { return b.etag }
+func (b taggedBody) ModTime() time.Time { return b.modified }
+
+func (d taggedDisk) Open(ctx context.Context, p string) (io.ReadCloser, error) {
+	data, err := storage.Get(ctx, d.Memory, p)
+	if err != nil {
+		return nil, err
+	}
+
+	return taggedBody{Reader: bytes.NewReader(data), etag: d.etag, modified: d.modified}, nil
+}
+
+func TestHandlerWithCacheHeaders(t *testing.T) {
+	t.Parallel()
+
+	ctx := t.Context()
+	modified := time.Date(2024, 5, 6, 7, 8, 9, 0, time.UTC)
+	d := taggedDisk{Memory: storage.NewMemory(""), etag: `"abc"`, modified: modified}
+	_ = storage.PutBytes(ctx, d.Memory, "covers/a.webp", []byte("img"))
+
+	h := storage.HandlerWith(d, nil, storage.Options{CacheControl: "public, max-age=31536000, immutable"})
+
+	serve := func(method, target string, headers ...string) *httptest.ResponseRecorder {
+		r := httptest.NewRequestWithContext(ctx, method, target, http.NoBody)
+		for i := 0; i+1 < len(headers); i += 2 {
+			r.Header.Set(headers[i], headers[i+1])
+		}
+
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, r)
+
+		return rec
+	}
+
+	rec := serve(http.MethodGet, "/covers/a.webp")
+	if rec.Code != http.StatusOK || rec.Body.String() != "img" {
+		t.Fatalf("GET = %d %q, want 200 img", rec.Code, rec.Body.String())
+	}
+
+	for k, want := range map[string]string{
+		"Cache-Control": "public, max-age=31536000, immutable",
+		"ETag":          `"abc"`,
+		"Last-Modified": modified.Format(http.TimeFormat),
+		"Content-Type":  "image/webp",
+	} {
+		if got := rec.Header().Get(k); got != want {
+			t.Errorf("%s = %q, want %q", k, got, want)
+		}
+	}
+
+	cases := []struct {
+		name    string
+		method  string
+		headers []string
+		want    int
+	}{
+		{"matching If-None-Match", http.MethodGet, []string{"If-None-Match", `"x", W/"abc"`}, http.StatusNotModified},
+		{"wildcard If-None-Match", http.MethodHead, []string{"If-None-Match", "*"}, http.StatusNotModified},
+		{"other If-None-Match wins over If-Modified-Since", http.MethodGet, []string{
+			"If-None-Match", `"x"`, "If-Modified-Since", modified.Format(http.TimeFormat),
+		}, http.StatusOK},
+		{
+			"fresh If-Modified-Since",
+			http.MethodGet,
+			[]string{"If-Modified-Since", modified.Format(http.TimeFormat)},
+			http.StatusNotModified,
+		},
+		{
+			"stale If-Modified-Since",
+			http.MethodGet,
+			[]string{"If-Modified-Since", modified.Add(-time.Hour).Format(http.TimeFormat)},
+			http.StatusOK,
+		},
+		{"POST ignores validators", http.MethodPost, []string{"If-None-Match", `"abc"`}, http.StatusOK},
+	}
+	for _, tc := range cases {
+		rec := serve(tc.method, "/covers/a.webp", tc.headers...)
+		if rec.Code != tc.want {
+			t.Errorf("%s: code = %d, want %d", tc.name, rec.Code, tc.want)
+		}
+
+		if rec.Code == http.StatusNotModified && rec.Body.Len() != 0 {
+			t.Errorf("%s: 304 has a body %q", tc.name, rec.Body.String())
+		}
+	}
+
+	if rec := serve(
+		http.MethodGet,
+		"/covers/missing.webp",
+	); rec.Code != http.StatusNotFound ||
+		rec.Header().Get("Cache-Control") != "" {
+		t.Errorf(
+			"missing file = %d Cache-Control %q, want 404 without Cache-Control",
+			rec.Code,
+			rec.Header().Get("Cache-Control"),
+		)
+	}
+}
