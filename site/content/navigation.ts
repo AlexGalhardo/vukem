@@ -54,6 +54,7 @@ export const navigation: NavCategory[] = [
       "idempotency",
       "graphql",
       "grpc",
+      "json-rpc",
     ],
   },
   {
