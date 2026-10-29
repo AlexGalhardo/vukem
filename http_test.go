@@ -1719,6 +1719,51 @@ func TestWithTranslations_BuiltinMessages(t *testing.T) {
 	}
 }
 
+// VF-024 (HexaScore): with PathPrefixes the stacks strip the locale
+// segment before routing, so /pt/games reaches the /games route.
+func TestMiddlewareI18nPathPrefixes(t *testing.T) {
+	t.Parallel()
+
+	lang := fstest.MapFS{
+		"en.json": {Data: []byte(`{"hello": "Hello"}`)},
+		"pt.json": {Data: []byte(`{"hello": "Olá"}`)},
+	}
+	cfg := &i18n.MiddlewareConfig{Order: []i18n.Source{i18n.SourcePath}, PathPrefixes: map[string]string{"pt": "pt"}}
+
+	stacks := map[string]func(app *App, r *router.Router) error{
+		"default": func(app *App, r *router.Router) error {
+			return DefaultMiddlewareWith(app, r, MiddlewareOptions{I18n: cfg})
+		},
+		"api": func(app *App, r *router.Router) error {
+			return APIMiddlewareWith(app, r, APIMiddlewareOptions{I18n: cfg})
+		},
+	}
+
+	for name, stack := range stacks {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			app := newTestApp(t, WithTranslations(lang), WithRoutes(func(r *router.Router, app *App) error {
+				r.Get("/games", func(c *web.Ctx) error {
+					return c.String(http.StatusOK,
+						i18n.T(c.Context(), "hello")+" "+i18n.LocalizePath(c.Context(), "/games"))
+				})
+
+				return stack(app, r)
+			}))
+
+			for target, want := range map[string]string{
+				"/games":    "Hello /games",
+				"/pt/games": "Olá /pt/games",
+			} {
+				if rec := doReq(t, app, target); rec.Code != http.StatusOK || rec.Body.String() != want {
+					t.Errorf("GET %s = %d %q, want %q", target, rec.Code, rec.Body.String(), want)
+				}
+			}
+		})
+	}
+}
+
 func TestDefaultMiddlewareWithI18n(t *testing.T) {
 	t.Parallel()
 

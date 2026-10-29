@@ -278,6 +278,7 @@ func APIMiddlewareWith(app *App, r *router.Router, opts APIMiddlewareOptions) er
 	}
 
 	r.UseServer(serverMiddleware(app, secure, maintenanceConfig(app))...)
+	useLocalePrefixes(app, r, opts.I18n)
 	r.Use(middleware.BodyLimit(web.DefaultMaxBody))
 
 	if localeMW != nil {
@@ -285,6 +286,14 @@ func APIMiddlewareWith(app *App, r *router.Router, opts APIMiddlewareOptions) er
 	}
 
 	return nil
+}
+
+// useLocalePrefixes strips locale path prefixes on the server stack, after
+// logging (which keeps the URL as requested) and before routing.
+func useLocalePrefixes(app *App, r *router.Router, cfg *i18n.MiddlewareConfig) {
+	if app.I18n != nil && cfg != nil && len(cfg.PathPrefixes) > 0 {
+		r.UseServer(i18n.StripPathPrefix(cfg.PathPrefixes))
+	}
 }
 
 // localeMiddleware builds the i18n resolver from cfg (def when nil); it is
@@ -539,6 +548,7 @@ func DefaultMiddlewareWith(app *App, r *router.Router, opts MiddlewareOptions) e
 	}
 
 	r.UseServer(append(serverMiddleware(app, secure, maintenanceConfig(app)), middleware.MethodOverride())...)
+	useLocalePrefixes(app, r, opts.I18n)
 
 	r.Use(append(routerMW, csrfMW)...)
 
