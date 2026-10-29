@@ -1,0 +1,22 @@
+{{define "content"}}
+<h1>{{.Title}}</h1>
+<div class="confirm">
+	<form method="post" action="{{.Action.Action}}">
+		{{csrfField}}
+		{{if .Action.IDs}}
+		<p>{{.Title}}: {{range $i, $id := .Action.IDs}}{{if $i}}, {{end}}<strong>{{$id}}</strong>{{end}}?</p>
+		{{range .Action.IDs}}<input type="hidden" name="ids" value="{{.}}">
+		{{end}}
+		{{else}}
+		<p>{{.Title}}?</p>
+		{{end}}
+		{{if .Action.AskReason}}
+		<label for="reason">Reason</label>
+		<textarea id="reason" name="reason" required maxlength="1000"{{with .Action.Error}} aria-invalid="true" aria-describedby="reason-error"{{end}}>{{.Action.Reason}}</textarea>
+		{{with .Action.Error}}<p class="error" id="reason-error">{{.}}</p>{{end}}
+		{{end}}
+		<button type="submit">{{.Action.Label}}</button>
+		<a href="{{.Action.Cancel}}">Cancel</a>
+	</form>
+</div>
+{{end}}

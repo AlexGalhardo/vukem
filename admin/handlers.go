@@ -34,6 +34,7 @@ type listView struct {
 	Total      int64
 	ColSpan    int
 	Pager      pager
+	Bulk       []actionLink
 }
 
 type header struct {
@@ -65,6 +66,7 @@ type recordView struct {
 	ID              string
 	Fields          []fieldView
 	EditURL, DelURL string
+	Actions         []actionLink
 	DeleteAction    string
 	Cancel          string
 }
@@ -104,6 +106,7 @@ func (r *Resource[T]) routes(p *Panel, g *router.Group) {
 		g.Post("/{id}", r.update(p)).Name("update")
 		g.Get("/{id}/delete", r.confirmDelete(p)).Name("delete")
 		g.Post("/{id}/delete", r.destroy(p)).Name("destroy")
+		r.actionRoutes(p, g)
 	})
 }
 
@@ -198,6 +201,10 @@ func (r *Resource[T]) index(p *Panel) web.HandlerFunc {
 		lv.Pager = newPager(base, qs, pg.Page, pg.LastPage)
 		lv.Columns = r.headers(base, qs, lv)
 		lv.ColSpan = len(lv.Columns) + 1
+
+		if lv.Bulk = r.bulkActions(p); lv.Bulk != nil {
+			lv.ColSpan++
+		}
 
 		for i := range pg.Items {
 			lv.Rows = append(lv.Rows, r.row(c, p, &pg.Items[i]))
@@ -395,6 +402,8 @@ func (r *Resource[T]) show(p *Panel) web.HandlerFunc {
 		if p.can(c, AbilityDelete, rec) {
 			recView.DelURL = p.url(r.slug, esc, "delete")
 		}
+
+		recView.Actions = r.rowActions(c, p, rec, esc)
 
 		data := p.base(c, r.singular+" "+id, r.slug)
 		data.Resource, data.Record = r.view(c, p), recView
