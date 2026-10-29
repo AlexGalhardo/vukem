@@ -72,6 +72,7 @@ export const navigation: NavCategory[] = [
       "api-tokens",
       "two-factor",
       "passkeys",
+      "secret-scanning",
       "authorization",
       "rate-limiting",
       "bot-challenge",

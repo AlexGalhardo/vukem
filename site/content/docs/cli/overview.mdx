@@ -22,7 +22,7 @@ Think of a car workshop. The **mechanic's toolbox** (`vukem`) can build, open an
 
 | Binary | Installed by | Knows your app? | Commands |
 | --- | --- | --- | --- |
-| `vukem` (global) | `go install` | No: it only reads and writes files | `new`, `serve`, `build`, `version`, `install:*`, `boost:install`, `key:*`, `down`, `up`, `make:*`, `codegen:rpc` |
+| `vukem` (global) | `go install` | No: it only reads and writes files | `new`, `serve`, `build`, `version`, `doctor`, `install:*`, `boost:install`, `key:*`, `down`, `up`, `make:*`, `codegen:rpc` |
 | App binary (`cmd/app`) | Built from your project | Yes: it boots your app | `serve` (default), `migrate*`, `db:*`, `route:list`, `queue:*`, `schedule:*`, `openapi:export`, `codegen:types`, `codegen:routes`, `codegen:client`, `about`, `key:generate`, your own commands |
 
 The global CLI never imports your code. When it needs Go, it runs the standard toolchain (`go build`, `go mod tidy`, `go get`). When you type a command it does not own, it **delegates** it: it builds `cmd/app` and runs it with the same arguments. That is why `vukem migrate` works from the project root, like `php artisan migrate` in Laravel.
@@ -66,6 +66,7 @@ Usage:
   serve                        Run the app (HTTP, scheduler) and restart ...
   build                        Build assets (Vite) and a production binary ...
   version                      Print the vukem version
+  doctor                       Report the optional tools the project uses ...
  install
   install:auth                 Add login, registration, password reset ...
   ...
