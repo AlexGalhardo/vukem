@@ -156,7 +156,7 @@ Inside `db.Tx`, use `tx` for every query (pass it as the `database.Executor`). S
 | Shape | `Select(cols...)`, `OrderBy`, `Latest()`, `Limit`, `Offset`, `WithTrashed()`, `OnlyTrashed()` |
 | Read | `Get`, `First`, `Find`, `Count`, `Exists`, `Pluck[V]`, `Each`, `Chunk(ctx, n, fn)` |
 | Lock | `LockForUpdate()`, `ForShare()`, then optional `SkipLocked()` / `NoWait()`; needs a `*database.Tx` (`orm.ErrLockOutsideTx` otherwise); all four are no-ops on SQLite, where `NoWait` never fails |
-| Paginate | `Paginate(ctx, page, perPage)` → `Page[T]{Items, Total, Page, PerPage, LastPage}`; `CursorPaginate(ctx, cursor, perPage, dir)` → `CursorPage[T]`; `MaxPerPage(n)` |
+| Paginate | `Paginate(ctx, page, perPage)` → `Page[T]{Items, Total, Page, PerPage, LastPage}`; `CursorPaginate(ctx, cursor, perPage, dir)` → `CursorPage[T]` (keyset = the query's `OrderBy` columns plus the primary key in `dir`, or the primary key alone; cursor values decoded into the columns' Go types; keys must be NOT NULL); `MaxPerPage(n)` |
 | Scopes | `Scope(fns ...func(Query[T]) Query[T])` |
 | Raw | `WhereRaw(sql, args...)` for conditions; `db.QueryContext` for anything else |
 

@@ -162,7 +162,7 @@ page, err := req.Paginate(c.Context()) // or req.CursorPaginate(c.Context(), orm
 ```
 
 - An allowlisted include that names a relation of the model (its Go field name, snake_case form or `json` tag: `reviews` matches `Reviews`) is eager-loaded on `req.Query` with `With`; other allowlisted names only appear in `req.Includes` for the handler. An include loads **every** related row of each item on the page (a has-many is not paginated) and related models are serialized with their own `json` tags when the response embeds them, so allowlist only bounded relations whose fields are safe to expose, or map them through a resource.
-- `req.CursorPaginate(ctx, dir)` pages by primary key from `?cursor` and drops the default sort of `api.Sorts`; a `?sort` sent by the client cannot be honoured with a cursor and answers 400. Calling `req.Query.CursorPaginate` directly fails when `api.Sorts` added an `OrderBy`.
+- `req.CursorPaginate(ctx, dir)` pages by primary key from `?cursor` and drops the default sort of `api.Sorts`; a `?sort` sent by the client cannot be honoured with a cursor and answers 400. Calling `req.Query.CursorPaginate` directly pages by the query's `OrderBy` (client sort included).
 
 Unknown filter/sort/field/include → `400` problem+json listing the allowed values (`TestSecurity_A05_QueryConventionsRejectUnknownColumns`). Filter values are always bound parameters; `true`/`false` become booleans. `?page` above `api.MaxPage(n)` (default 1000) and a filter with more values than `api.MaxFilterValues(n)` (default 100) are 400 too (`n <= 0` keeps the default), so a request cannot make the database skip millions of rows or bind thousands of parameters; use `?cursor` for deep lists (`TestSecurity_A04_QueryBoundsPageAndFilterLists`).
 
