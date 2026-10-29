@@ -1,0 +1,167 @@
+package tests
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/url"
+	"testing"
+
+	"github.com/AlexGalhardo/vukem/auth/webauthn/webauthntest"
+	"github.com/AlexGalhardo/vukem/vukemtest"
+
+	"{{.Module}}/bootstrap"
+)
+
+// newPasskey returns a software passkey store for the app's origin.
+func newPasskey(t *testing.T, app *vukemtest.App) *webauthntest.Authenticator {
+	t.Helper()
+
+	u, err := url.Parse(app.Config.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return webauthntest.New(u.Scheme + "://" + u.Host)
+}
+
+// addPasskey adds a passkey created by a to the account signed in on c
+// and returns the registration body the browser posted.
+func addPasskey(t *testing.T, c *vukemtest.Client, a *webauthntest.Authenticator) json.RawMessage {
+	t.Helper()
+
+	opts := c.PostJSON("/user/passkeys/options", map[string]string{"password": testPassword}).AssertOK().Body()
+
+	body, err := a.Create([]byte(opts))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	c.PostJSON("/user/passkeys", map[string]any{"name": "Laptop", "credential": json.RawMessage(body)}).AssertCreated()
+
+	return body
+}
+
+// signInBody runs the first half of a passkey sign-in on c and returns
+// the assertion a posts back.
+func signInBody(t *testing.T, c *vukemtest.Client, a *webauthntest.Authenticator) json.RawMessage {
+	t.Helper()
+
+	body, err := a.Get([]byte(c.PostJSON("/passkeys/login/options", nil).AssertOK().Body()))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return body
+}
+
+func passkeyID(t *testing.T, c *vukemtest.Client) string {
+	t.Helper()
+
+	id, ok := c.GetJSON("/user/passkeys").AssertOK().AssertJSONCount("data", 1).JSONPath("data.0.id")
+	if !ok {
+		t.Fatal("no passkey id")
+	}
+
+	return fmt.Sprint(id)
+}
+
+func TestPasskeySignIn(t *testing.T) {
+	t.Parallel()
+
+	app := vukemtest.New(t, bootstrap.New)
+	owner := app.Client(t)
+	register(t, app, owner, "pk@example.com")
+
+	a := newPasskey(t, app)
+	addPasskey(t, owner, a)
+	owner.GetJSON("/user/passkeys").AssertJSONPath("data.0.name", "Laptop")
+
+	c := app.Client(t)
+	c.PostJSON("/passkeys/login", signInBody(t, c, a)).AssertOK().AssertJSONPath("redirect", "/dashboard")
+	c.Get("/dashboard").AssertOK()
+
+	vukemtest.AssertDatabaseHas(t, app, "passkey_credentials", map[string]any{"sign_count": 1})
+}
+
+// A challenge works once: a replayed registration or sign-in, or one
+// answering an older challenge, is refused.
+func TestSecurity_A07_PasskeyChallengeIsSingleUse(t *testing.T) {
+	t.Parallel()
+
+	app := vukemtest.New(t, bootstrap.New)
+	owner := app.Client(t)
+	register(t, app, owner, "replay@example.com")
+
+	a := newPasskey(t, app)
+	reg := addPasskey(t, owner, a)
+	owner.PostJSON("/user/passkeys", map[string]any{"name": "Again", "credential": reg}).
+		AssertJSONValidationErrors("credential")
+
+	c := app.Client(t)
+	old := signInBody(t, c, a)
+	signInBody(t, c, a) // a newer challenge replaces the first
+	c.PostJSON("/passkeys/login", old).AssertJSONValidationErrors("credential")
+
+	body := signInBody(t, c, a)
+	c.PostJSON("/passkeys/login", body).AssertOK()
+
+	replay := app.Client(t)
+	replay.PostJSON("/passkeys/login", body).AssertJSONValidationErrors("credential")
+	replay.Get("/dashboard").AssertRedirect("/login")
+}
+
+// Only registered credentials sign in, and a user never sees nor removes
+// another user's passkey.
+func TestSecurity_A07_PasskeyIsScopedToItsUser(t *testing.T) {
+	t.Parallel()
+
+	app := vukemtest.New(t, bootstrap.New)
+	ana := app.Client(t)
+	register(t, app, ana, "ana-pk@example.com")
+	addPasskey(t, ana, newPasskey(t, app))
+	id := passkeyID(t, ana)
+
+	bob := app.Client(t)
+	register(t, app, bob, "bob-pk@example.com")
+	bob.GetJSON("/user/passkeys").AssertJSONCount("data", 0)
+	bob.PostJSON("/user/passkeys/"+id+"/delete", map[string]string{"password": testPassword}).AssertNotFound()
+	vukemtest.AssertDatabaseHas(t, app, "passkey_credentials", map[string]any{"id": id})
+
+	// A credential the server never stored.
+	stranger := newPasskey(t, app)
+	if _, err := stranger.Create([]byte(ana.PostJSON("/user/passkeys/options",
+		map[string]string{"password": testPassword}).AssertOK().Body())); err != nil {
+		t.Fatal(err)
+	}
+
+	c := app.Client(t)
+	c.PostJSON("/passkeys/login", signInBody(t, c, stranger)).AssertJSONValidationErrors("credential")
+	c.Get("/dashboard").AssertRedirect("/login")
+}
+
+// Adding or removing a passkey needs the current password: the password
+// stays the recovery path, and a hijacked session cannot add a way in.
+func TestSecurity_A07_PasskeyChangesNeedThePassword(t *testing.T) {
+	t.Parallel()
+
+	app := vukemtest.New(t, bootstrap.New)
+	c := app.Client(t)
+	register(t, app, c, "pw-pk@example.com")
+
+	c.PostJSON("/user/passkeys/options", map[string]string{"password": "wrong password"}).
+		AssertJSONValidationErrors("password")
+
+	a := newPasskey(t, app)
+	addPasskey(t, c, a)
+	id := passkeyID(t, c)
+
+	c.PostJSON("/user/passkeys/"+id+"/delete", map[string]string{"password": "wrong password"}).
+		AssertJSONValidationErrors("password")
+	c.PostJSON("/user/passkeys/"+id+"/delete", map[string]string{"password": testPassword}).AssertNoContent()
+	c.GetJSON("/user/passkeys").AssertJSONCount("data", 0)
+
+	// Password sign-in keeps working without passkeys.
+	c.PostForm("/logout", nil)
+	c.PostForm("/login", url.Values{"email": {"pw-pk@example.com"}, "password": {testPassword}}).
+		AssertRedirect("/dashboard")
+}

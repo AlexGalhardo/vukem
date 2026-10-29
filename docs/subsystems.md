@@ -98,6 +98,7 @@ err = mailer.Send(ctx, Welcome{User: u})
 ```
 
 - Content: `mail.View(name, data)` renders the app's `html/template` view; the text part comes from `<name>_text` when it exists, otherwise from the HTML (links become `text (url)`). `mail.HTML(html, text)` and `mail.Text(text)` for literal bodies. Mail views use `{{/* layout: none */}}` or a mail layout.
+- React Email: `vukem make:mail <Name> --react` writes a `.tsx` component whose default props are Go template actions (`go(".Name")`, `t("key")`); `email export --dir resources/js/emails --outDir resources/emails` (react-email 6.11.6, @react-email/components 1.0.12, pinned exactly) renders it at build time, `vukem.WithReactEmails(fsys)` serves the files without layouts and `mail.React(name, props)` sends them, so `html/template` escapes every prop (`TestSecurity_A03_ReactPropsEscaped`) and no Node process runs on send. HTML comments, including Outlook `<!--[if mso]>` hints, are dropped; the text part is derived without the preview text. Site: [Mail](https://vukem.dev/docs/digging-deeper/mail#react-email-templates).
 - Attachments: implement `Attachments() []mail.Attachment`; inline parts set `Inline` and `ContentID` and are referenced as `cid:...`.
 - Context: implement `EnvelopeContext(ctx) mail.Envelope` (`mail.ContextEnveloper`) to build the envelope from the send's context, e.g. a subject in the request locale with `i18n.T(ctx, key)`. The Mailer calls it instead of `Envelope`, which stays required as the context-free fallback. `SendLater` renders before queueing, so it uses the context of the call. Outside a request (a job, a command) set the recipient's locale first, `ctx = i18n.WithLocale(i18n.WithBundle(ctx, app.I18n), user.Locale)`: the envelope and the view's `t`/`locale` functions read it.
 - Addresses go through `net/mail` (no header injection); subjects, tags and content ids with line breaks are rejected (`TestSecurity_A05_MailHeaderInjection`); `Mailer.Render` checks tags for every transport (non-empty name, no line break or colon), and the Resend transport also enforces Resend's charset (ASCII letters, digits, `_`, `-`) before the request. `Bcc` is never written as a header.
@@ -341,6 +342,14 @@ Package `export` (stdlib only) streams downloads row by row from any `iter.Seq2[
 - Nothing is sent before the first row, so an early query error reaches the error handler. A failure after the first byte drops the connection: HTTP/1.x connections are hijacked and closed and the error wraps `export.ErrIncomplete`; where hijacking is impossible (HTTP/2) the function panics with `http.ErrAbortHandler`, which net/http recovers to reset the stream. A cancelled request context (client gone) returns an error with status 499, logged below error level.
 - `FlushEvery(n)` (500 rows), `WriteTimeout(d)` (1 minute, renewed before writes to the client at most every `d/4` or 1s, cleared at the end, so long exports outlive the server `WriteTimeout`), `WithBOM()` for Excel (CSV only).
 - The file-name sanitizer lives in `internal/disposition` and is shared with `web.Ctx.Download`.
+
+## Sitemaps
+
+Package `sitemap` (stdlib only) streams XML sitemaps for catalogues too large to build in memory (<https://www.sitemaps.org/protocol.html>):
+
+- `sitemap.NewWriter(w)` writes one `<urlset>`; `Add(sitemap.URL{Loc, LastMod, Alternates})` writes a URL with `<lastmod>` (RFC 3339, UTC) and `xhtml:link` hreflang alternates; `Close()` ends it. Wrap `w` in `gzip.NewWriter` for `.xml.gz` chunks.
+- `Add` returns `sitemap.ErrFull` (nothing written) at `MaxURLs` (50,000) or `MaxBytes` (50 MiB uncompressed): close the chunk and start the next one. `sitemap.WriteIndex(w, []sitemap.Sitemap{...})` writes the index of the chunks.
+- Only absolute `http`/`https` URLs of at most 2048 bytes and hreflang tags of letters, digits and `-` are accepted; values are XML-escaped (`TestWriterRejectsInvalidAndStopsWhenFull`). Site page: `site/content/docs/digging-deeper/sitemaps.mdx`.
 
 ## Events
 

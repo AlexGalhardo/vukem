@@ -14,6 +14,15 @@ func WithViews(fsys fs.FS) Option {
 	return func(o *options) error { o.views = fsys; return nil }
 }
 
+// WithReactEmails renders mail.React contents from fsys: the directory
+// that React Email's `email export` writes (os.DirFS("resources/emails")
+// or an embed.FS). Pages are html/template views without layouts and get
+// the "t" and "locale" functions and WithViewFuncs; they reload on every
+// send outside production.
+func WithReactEmails(fsys fs.FS) Option {
+	return func(o *options) error { o.reactEmails = fsys; return nil }
+}
+
 // WithViewFuncs adds template functions to the WithViews engine
 // (view.Config.Funcs), for helpers such as money or date formatting. Calls
 // accumulate. A name given twice, a nil function, a built-in's name

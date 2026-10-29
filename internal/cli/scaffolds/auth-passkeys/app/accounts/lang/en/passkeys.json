@@ -1,0 +1,9 @@
+{
+  "auth": {
+    "passkeys": {
+      "failed": "The passkey could not be verified. Please try again.",
+      "wrong_password": "The password is incorrect.",
+      "invalid_name": "The name must be between 1 and 64 characters."
+    }
+  }
+}

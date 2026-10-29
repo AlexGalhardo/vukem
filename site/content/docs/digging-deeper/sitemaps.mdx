@@ -1,0 +1,65 @@
+---
+title: Sitemaps
+description: Stream XML sitemaps with lastmod and hreflang alternates, split into gzip chunks of 50,000 URLs and listed in a sitemap index, without loading the catalogue into memory.
+---
+
+A sitemap lists the pages you want search engines to find. Each file may hold at most 50,000 URLs and 50 MB, so a large catalogue needs several files plus an index that lists them. The `sitemap` package writes both as a stream: it never holds more than one URL in memory.
+
+You will learn:
+
+- how to write a sitemap with `lastmod` and language alternates;
+- how to split a large catalogue into gzip chunks and an index;
+- what the package refuses, and why.
+
+## Write a sitemap
+
+```go title="app/console/sitemap.go"
+f, err := os.Create("public/sitemaps/games-1.xml.gz")
+if err != nil {
+	return err
+}
+defer f.Close()
+
+gz := gzip.NewWriter(f)
+w, err := sitemap.NewWriter(gz)
+if err != nil {
+	return err
+}
+
+err = w.Add(sitemap.URL{
+	Loc:     "https://example.com/games/zelda",
+	LastMod: game.UpdatedAt,
+	Alternates: []sitemap.Alternate{
+		{Lang: "pt-BR", Href: "https://example.com/pt-BR/games/zelda"},
+		{Lang: "x-default", Href: "https://example.com/games/zelda"},
+	},
+})
+if err != nil {
+	return err
+}
+
+if err := w.Close(); err != nil {
+	return err
+}
+
+return gz.Close()
+```
+
+`Alternates` become `xhtml:link` elements, the way [Google reads hreflang in sitemaps](https://developers.google.com/search/docs/specialty/international/localized-versions#sitemap): list every language version, the page itself included. `LastMod` is written in UTC; leave it zero to omit it.
+
+## Split a large catalogue
+
+When a file reaches 50,000 URLs (`sitemap.MaxURLs`) or 50 MB uncompressed (`sitemap.MaxBytes`), `Add` returns `sitemap.ErrFull` and writes nothing. Close that file, open the next one and add the URL again. Then list the files in an index:
+
+```go title="app/console/sitemap.go"
+err := sitemap.WriteIndex(indexFile, []sitemap.Sitemap{
+	{Loc: "https://example.com/sitemaps/games-1.xml.gz", LastMod: now},
+	{Loc: "https://example.com/sitemaps/games-2.xml.gz", LastMod: now},
+})
+```
+
+Point `robots.txt` at the index: `Sitemap: https://example.com/sitemap.xml`.
+
+## What is refused
+
+`Add` and `WriteIndex` accept only absolute `http` or `https` URLs of at most 2048 bytes, and hreflang values made of letters, digits and `-` (`x-default` included). A relative path or a `javascript:` URL is an error, never written: crawlers ignore such entries, and they should never reach a public file. Every value is XML-escaped.

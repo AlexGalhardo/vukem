@@ -54,6 +54,7 @@ export const navigation: NavCategory[] = [
       "idempotency",
       "graphql",
       "grpc",
+      "json-rpc",
     ],
   },
   {
@@ -72,6 +73,7 @@ export const navigation: NavCategory[] = [
       "api-tokens",
       "two-factor",
       "passkeys",
+      "secret-scanning",
       "authorization",
       "rate-limiting",
       "bot-challenge",
@@ -87,6 +89,7 @@ export const navigation: NavCategory[] = [
     pages: [
       "mail",
       "cache",
+      "sitemaps",
       "storage",
       "uploads",
       "exports",
