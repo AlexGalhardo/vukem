@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"iter"
 	"net/http"
 	"strings"
@@ -425,6 +426,67 @@ func CSV[T any](
 	}
 
 	return s.finish(each(s, rows, func(v T) error { return cw.write(record(v)) }), nil)
+}
+
+// EncodeCSV writes header and record(row) for each row to w, with the same
+// cell rules as CSV (SafeCell unless InsecureRawCells, WithBOM), for files
+// built outside a request: a ZIP entry, a storage upload, a queued job.
+// FlushEvery and WriteTimeout do not apply; w gets everything by the time
+// EncodeCSV returns. A failing row stops the encoding and returns its error,
+// with the rows before it already written to w. JSON needs no helper here:
+// use encoding/json.NewEncoder(w).
+func EncodeCSV[T any](
+	w io.Writer,
+	header []string,
+	rows iter.Seq2[T, error],
+	record func(T) []string,
+	opts ...Option,
+) error {
+	var o options
+	for _, opt := range opts {
+		opt(&o)
+	}
+
+	bw := bufio.NewWriter(w)
+	cw := &CSVWriter{s: &stream{bw: bw, o: o}, cw: csv.NewWriter(bw)}
+
+	err := func() error {
+		if o.bom {
+			if _, err := bw.WriteString(bom); err != nil {
+				return err
+			}
+		}
+
+		if len(header) > 0 {
+			if err := cw.write(header); err != nil {
+				return err
+			}
+		}
+
+		for v, err := range rows {
+			if err != nil {
+				return err
+			}
+
+			if err := cw.write(record(v)); err != nil {
+				return err
+			}
+		}
+
+		return nil
+	}()
+
+	cw.cw.Flush()
+
+	if err == nil {
+		err = cw.cw.Error()
+	}
+
+	if ferr := bw.Flush(); err == nil {
+		err = ferr
+	}
+
+	return err
 }
 
 // JSON streams rows as a JSON array attachment, one element per row.

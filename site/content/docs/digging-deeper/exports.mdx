@@ -288,6 +288,30 @@ if err != nil && !errors.Is(err, export.ErrIncomplete) {
 }
 ```
 
+### Without a request
+
+A background job that builds a ZIP or uploads a file to storage has no response to stream to. `export.EncodeCSV` takes any [`io.Writer`](https://pkg.go.dev/io#Writer) and writes exactly the bytes `export.CSV` would send, with the same formula guard and the same `WithBOM` and `InsecureRawCells` options (`FlushEvery` and `WriteTimeout` have no client to pace, so they do nothing):
+
+```go title="app/jobs/data_export.go"
+zw := zip.NewWriter(file)
+
+f, err := zw.Create("ratings.csv")
+if err != nil {
+	return err
+}
+
+err = export.EncodeCSV(f, []string{"title", "score"},
+	orm.QueryOf[Rating](db).Where("user_id", userID).Each(ctx),
+	func(r Rating) []string { return []string{r.Title, strconv.Itoa(r.Score)} })
+if err != nil {
+	return err
+}
+
+return zw.Close()
+```
+
+A row error stops the encoding and is returned; the rows before it are already in the writer, so discard the file. For JSON outside a request, use [`encoding/json`](https://pkg.go.dev/encoding/json#NewEncoder) directly: there is no cell to guard.
+
 ## Security
 
 - **Authorize the route.** An export is usually your largest pile of personal data in one response. Put it behind authentication and an [authorization](/docs/security/authorization) check, and consider [rate limiting](/docs/security/rate-limiting).

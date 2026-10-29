@@ -14,7 +14,7 @@ import (
 )
 
 // TestSecurity_A05_ExportCSVFormulaInjection checks that every CSV cell
-// (header and rows, CSV and WriteCSV) starting with a formula trigger is
+// (header and rows, CSV, WriteCSV and EncodeCSV) starting with a formula trigger is
 // written as text, while plain numbers stay numbers (OWASP CSV injection).
 func TestSecurity_A05_ExportCSVFormulaInjection(t *testing.T) {
 	t.Parallel()
@@ -43,6 +43,9 @@ func TestSecurity_A05_ExportCSVFormulaInjection(t *testing.T) {
 	serves := map[string]func(w http.ResponseWriter, r *http.Request) error{
 		"csv": func(w http.ResponseWriter, r *http.Request) error {
 			return export.CSV(w, r, "x.csv", payloads, seq(user{}), func(user) []string { return payloads })
+		},
+		"encode": func(w http.ResponseWriter, _ *http.Request) error {
+			return export.EncodeCSV(w, payloads, seq(user{}), func(user) []string { return payloads })
 		},
 		"csv writer": func(w http.ResponseWriter, r *http.Request) error {
 			return export.WriteCSV(w, r, "x.csv", func(cw *export.CSVWriter) error {
