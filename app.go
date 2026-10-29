@@ -608,6 +608,12 @@ func New(opts ...Option) (*App, error) {
 			return nil, err
 		}
 
+		// Strict SSR answers 503 when the SSR server is down, so the instance
+		// is not ready without it.
+		if icfg.SSR != nil && icfg.SSR.Strict {
+			app.AddHealthCheck("inertia-ssr", app.Inertia.SSRHealthy)
+		}
+
 		// Set only when nil, so a hook installed earlier is kept; routes run
 		// later and may replace it.
 		if app.Router.Services().ErrorPage == nil {
