@@ -95,7 +95,7 @@ func insertOne(ctx context.Context, ex database.Executor, m *meta, rv reflect.Va
 
 	for _, f := range m.fields {
 		fv := rv.FieldByIndex(f.index)
-		if f.column == m.pk && m.autoID && fv.IsZero() {
+		if f.readonly || f.column == m.pk && m.autoID && fv.IsZero() {
 			continue
 		}
 
@@ -161,8 +161,8 @@ func setID(pk reflect.Value, id int64) error {
 	return nil
 }
 
-// Update writes every column of model (except the primary key and
-// created_at) and refreshes updated_at.
+// Update writes every column of model (except the primary key,
+// created_at and orm:"readonly" columns) and refreshes updated_at.
 func Update[T any](ctx context.Context, ex database.Executor, model *T) error {
 	m := metaOf[T]()
 
@@ -179,7 +179,7 @@ func Update[T any](ctx context.Context, ex database.Executor, model *T) error {
 	)
 
 	for _, f := range m.fields {
-		if slices.Contains(m.keys, f.column) || f.column == "created_at" {
+		if f.readonly || slices.Contains(m.keys, f.column) || f.column == "created_at" {
 			continue
 		}
 
