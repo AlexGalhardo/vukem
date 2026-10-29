@@ -227,6 +227,21 @@ link, err := storage.TemporaryURL(
 
 The handler checks the signature of the original URL (before `StripPrefix` removed the prefix). See [Storage](/docs/digging-deeper/storage).
 
+## Signed tokens
+
+Sometimes the value to protect is not a link but a string the client sends back, such as a pagination cursor that holds the last sort key and id. `Token` signs any bytes with the same key, and `Open` returns them only when nobody changed them:
+
+```go title="app/catalog/cursor.go"
+cursor := signer.Token([]byte(`{"sort":"rating","after":42}`))
+// later, from ?cursor=...
+payload, err := signer.Open(c.Query("cursor"))
+if err != nil {
+	return err // signed.ErrInvalid: 403
+}
+```
+
+A token looks like `eyJzb3J0Ijoi....Xk3c9...`: the base64url payload, a dot, and an HMAC-SHA256. The payload is encoded, not encrypted, so the client can read it: never put a secret inside. A token does not expire on its own; put a time in the payload when it must. `Open` accepts tokens signed with a previous key (key rotation, above), refuses anything longer than 8 KiB, and a signed URL's signature never verifies as a token.
+
 ## Configuration
 
 There are no environment variables of its own; the key comes from `APP_KEY` and `APP_PREVIOUS_KEYS`.
