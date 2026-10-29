@@ -453,6 +453,20 @@ vukem.WithInertia(inertia.Config{
 }),
 ```
 
+The Inertia starters ship the server entry, `resources/js/ssr.tsx` (`ssr.ts` for Vue and Svelte):
+
+```tsx title="resources/js/ssr.tsx"
+import { createInertiaApp } from "@inertiajs/react";
+
+import AppLayout from "./layouts/AppLayout";
+
+createInertiaApp({
+  layout: () => AppLayout,
+});
+```
+
+Keep the `createInertiaApp(...)` call at the top level and do not `export` it: `@inertiajs/vite` finds `resources/js/ssr.ts(x)` and rewrites that call into the SSR server. Leave out browser globals (`document`, `localStorage`); the client entry keeps them. Build with `vukem build -ssr` (or `npm run build:ssr`, which runs `vite build --ssr`): the starter Vite plugin writes a self-contained bundle to `bootstrap/ssr/ssr.js`, outside the public build directory, and leaves the client build in place. Run it with `vukem ssr:start` or `serve -with-ssr`. Existing apps copy the `isSsrBuild` branch of `resources/vite/vukem.js` from a new starter.
+
 On a first visit, the adapter POSTs the page object to the Node SSR server and puts the returned `head` and `body` in `.Head` and `.Inertia`. By default **any** failure (server down, timeout, render error, empty body) falls back to client-side rendering, so SSR can never take a page down. Pages that must reach search engines can opt into strict mode instead, described below.
 
 | `SSRConfig` field | Default | Meaning |

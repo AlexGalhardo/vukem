@@ -1,6 +1,7 @@
 // Vite plugin for Vukem apps (owned by your project, edit freely).
 //
-// It builds into resources/public/build with a manifest the Go side reads,
+// It builds into resources/public/build with a manifest the Go side reads
+// (the SSR bundle into bootstrap/ssr),
 // and while `npm run dev` runs it writes resources/public/hot with the dev
 // server URL, so {{vite}} in your views loads assets from the dev server.
 import fs from "node:fs";
@@ -16,7 +17,16 @@ export default function vukem({ input, publicDir = "resources/public", buildDir 
 
   return {
     name: "vukem",
-    config(_, { command }) {
+    config(_, { command, isSsrBuild }) {
+      // `vite build --ssr` (vukem build -ssr): the server bundle goes to
+      // bootstrap/ssr, never into the public build dir, and leaves the client
+      // build alone. @inertiajs/vite picks resources/js/ssr.(ts|tsx) as the
+      // entry; noExternal makes the bundle self-contained, so production needs
+      // only node, not node_modules.
+      if (isSsrBuild) {
+        return { publicDir: false, ssr: { noExternal: true }, build: { outDir: "bootstrap/ssr", emptyOutDir: true } };
+      }
+
       return {
         base: command === "build" ? `/${buildDir}/` : "",
         publicDir: false,

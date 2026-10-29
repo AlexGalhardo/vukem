@@ -885,6 +885,14 @@ type ssrProcess struct {
 	always bool
 }
 
+// ssrMinUptime separates a bundle that never served (exits at once) from a
+// server stopped with POST /shutdown.
+const ssrMinUptime = 2 * time.Second
+
+// errSSRNoServer reports an SSR bundle that exited without serving.
+var errSSRNoServer = errors.New("ssr:start: the SSR bundle did not start a server " +
+	"(call createInertiaApp at the top level of resources/js/ssr.ts(x), do not export it, and rebuild)")
+
 func checkSSRBundle(cmd, bundle string) error {
 	if _, err := os.Stat(bundle); err != nil {
 		return fmt.Errorf("%s: SSR bundle %s not found (run npm run build): %w", cmd, bundle, err)
@@ -901,7 +909,15 @@ func (a *App) superviseSSR(ctx context.Context, p ssrProcess) error {
 		cmd.Stdout, cmd.Stderr = a.stdout, os.Stderr
 		cmd.WaitDelay = 5 * time.Second
 
+		start := time.Now()
 		err := cmd.Run()
+
+		// A bundle that exits cleanly at once never started a server (an
+		// entry that exports createInertiaApp instead of calling it): fail
+		// loudly rather than exit 0 with no output.
+		if ctx.Err() == nil && err == nil && !p.always && time.Since(start) < ssrMinUptime {
+			return fmt.Errorf("%w: %s exited at once", errSSRNoServer, p.bundle)
+		}
 
 		// Stopped (Ctrl+C), or a clean exit (POST /shutdown) under ssr:start.
 		if ctx.Err() != nil || err == nil && !p.always {

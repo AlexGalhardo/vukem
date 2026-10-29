@@ -16,3 +16,4 @@ node_modules/
 # Vite: dev server marker and build output
 /resources/public/hot
 /resources/public/build/
+/bootstrap/ssr/
