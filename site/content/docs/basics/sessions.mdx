@@ -245,6 +245,8 @@ Details that matter:
 | `SESSION_SECURE` | `auto` | `auto`: `Secure` in production or when `APP_URL` starts with `https://`. `true` or `1`: always. Anything else: never |
 | `SESSION_RECORD_CLIENT` | `false` | Record the user agent and network of logged-in sessions for the [sessions list](#listing-a-users-sessions) |
 
+`session.CreatedAt(c.Session())` returns when the current session was created (`ok` is false for a session made during this request). Login keeps it, so a stricter limit for one area can compare it with the clock; the [admin panel](/docs/digging-deeper/admin#hardening) does that with `MaxSessionAge`.
+
 `session.Config`, for a manager you build with `session.New`, adds `Path` (default `/`), `Domain` (default: host only), `SameSite` (default `Lax`), `Store`, `CookieKey` (32 bytes, required without a store), `PreviousCookieKeys`, `Production`, `Now` (a clock for tests) and `Log`.
 
 Boot errors protect you from unsafe settings: `session: cookies must be Secure in production (serve over HTTPS)`, `session: SameSite=None requires Secure`, and `session: cookie sessions need a 32-byte CookieKey (derive it from APP_KEY)`.
