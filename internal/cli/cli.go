@@ -5,6 +5,7 @@
 package cli
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"flag"
@@ -34,6 +35,8 @@ type Env struct {
 	Now func() time.Time
 	// Version overrides the build-info version (tests).
 	Version string
+	// toolWaitDelay overrides defaultToolWaitDelay (tests).
+	toolWaitDelay time.Duration
 }
 
 // ErrUsage marks invalid invocations; Run exits with code 2.
@@ -322,8 +325,12 @@ func tool(ctx context.Context, env *Env, name string, args ...string) error {
 
 // toolEnv is tool with extra environment variables ("KEY=value") added to
 // the CLI's own environment.
+// defaultToolWaitDelay bounds how long toolEnv waits for a tool's output
+// pipes once the tool has exited.
+const defaultToolWaitDelay = 10 * time.Second
+
 func toolEnv(ctx context.Context, env *Env, extra []string, name string, args ...string) error {
-	cmd := exec.CommandContext(ctx, name, args...)
+	cmd := exec.CommandContext(ctx, name, args...) //nolint:gosec // G702: the CLI's own tools
 	if len(extra) > 0 {
 		cmd.Env = append(os.Environ(), extra...)
 	}
@@ -332,8 +339,13 @@ func toolEnv(ctx context.Context, env *Env, extra []string, name string, args ..
 	cmd.Stdin = env.Stdin
 	cmd.Stdout = env.Stdout
 	cmd.Stderr = env.Stderr
+	// A grandchild (an esbuild service, a node worker) may inherit the
+	// output pipe and outlive the tool; when Stdout is not a file, Wait
+	// would block on that pipe forever. Stop waiting for it shortly after
+	// the tool itself exits.
+	cmd.WaitDelay = cmp.Or(env.toolWaitDelay, defaultToolWaitDelay)
 
-	if err := cmd.Run(); err != nil {
+	if err := cmd.Run(); err != nil && !errors.Is(err, exec.ErrWaitDelay) {
 		return fmt.Errorf("%s %s: %w", name, strings.Join(args, " "), err)
 	}
 
