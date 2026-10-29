@@ -2,6 +2,7 @@ package stripe
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/url"
 )
@@ -29,6 +30,9 @@ type CheckoutSession struct {
 	AmountTotal   int64             `json:"amount_total"`
 	Currency      string            `json:"currency"`
 	Metadata      map[string]string `json:"metadata"`
+	// Created and ExpiresAt are Unix times.
+	Created   int64 `json:"created"`
+	ExpiresAt int64 `json:"expires_at"`
 }
 
 // Subscription is a subscription.
@@ -39,6 +43,9 @@ type Subscription struct {
 	CancelAtPeriodEnd bool              `json:"cancel_at_period_end"`
 	Items             List[SubItem]     `json:"items"`
 	Metadata          map[string]string `json:"metadata"`
+	// Created is a Unix time; the newest of a customer's subscriptions has
+	// the largest one.
+	Created int64 `json:"created"`
 }
 
 // SubItem is a subscription item.
@@ -109,6 +116,40 @@ func (c *Client) CreateCheckoutSession(ctx context.Context, p Params) (CheckoutS
 // GetCheckoutSession retrieves a Checkout Session.
 func (c *Client) GetCheckoutSession(ctx context.Context, id string) (CheckoutSession, error) {
 	return send[CheckoutSession](ctx, c, http.MethodGet, "/v1/checkout/sessions/"+url.PathEscape(id), nil, "")
+}
+
+// ListCheckoutSessions lists Checkout Sessions, newest first, filtered by
+// p (customer, status "open"/"complete"/"expired", limit, starting_after).
+// Expire a customer's open sessions before creating a new one so a second
+// tab cannot start a second subscription.
+func (c *Client) ListCheckoutSessions(ctx context.Context, p Params) (List[CheckoutSession], error) {
+	return send[List[CheckoutSession]](ctx, c, http.MethodGet, "/v1/checkout/sessions", p, "")
+}
+
+// ExpireCheckoutSession expires an open Checkout Session (cs_ id) so the
+// customer can no longer complete it.
+func (c *Client) ExpireCheckoutSession(ctx context.Context, id string) (CheckoutSession, error) {
+	// Checkout Session ids carry the mode: cs_test_… or cs_live_….
+	if !validID(id, "cs_test_", "cs_live_", "cs_") {
+		return CheckoutSession{}, fmt.Errorf("%w: checkout session id must be a cs_ id", ErrInvalidRequestOption)
+	}
+
+	return send[CheckoutSession](
+		ctx,
+		c,
+		http.MethodPost,
+		"/v1/checkout/sessions/"+url.PathEscape(id)+"/expire",
+		nil,
+		"",
+	)
+}
+
+// ListSubscriptions lists subscriptions, newest first, filtered by p
+// (customer, price, status; Stripe omits canceled ones unless status is
+// "canceled" or "all"; limit, starting_after). Page with starting_after
+// set to the last ID while HasMore is true.
+func (c *Client) ListSubscriptions(ctx context.Context, p Params) (List[Subscription], error) {
+	return send[List[Subscription]](ctx, c, http.MethodGet, "/v1/subscriptions", p, "")
 }
 
 // GetSubscription retrieves a subscription.
