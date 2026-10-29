@@ -273,3 +273,54 @@ func TestCertReloaderPicksUpNewPair(t *testing.T) {
 		t.Errorf("broken reload = %v, %v; want the previous certificate", again, err)
 	}
 }
+
+// A caller-supplied Listener is served as given, even with a TLSConfig:
+// contrib/grpc wraps its own listener with tls.NewListener, and Run must
+// not add a second TLS layer on top.
+func TestRunServesCallerTLSListenerAsIs(t *testing.T) {
+	t.Parallel()
+
+	certFile, keyFile, pool := writeCert(t, t.TempDir(), "vukem-test")
+
+	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12}
+
+	var lc net.ListenConfig
+
+	ln, err := lc.Listen(t.Context(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	srv := NewHTTPServer("", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("ok"))
+	}))
+	srv.Server.TLSConfig = cfg
+	srv.Listener = tls.NewListener(ln, cfg)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+
+	go func() { done <- srv.Run(ctx) }()
+
+	t.Cleanup(func() { cancel(); <-done })
+
+	client := &http.Client{
+		Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}},
+	}
+
+	resp, err := client.Get("https://" + ln.Addr().String() + "/")
+	if err != nil {
+		t.Fatalf("GET over the caller's TLS listener: %v", err)
+	}
+
+	_ = resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("GET = %d, want 200", resp.StatusCode)
+	}
+}
