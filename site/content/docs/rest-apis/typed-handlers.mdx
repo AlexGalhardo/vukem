@@ -280,7 +280,7 @@ Under the hood:
 | `Summary` | `string` | a one-line title (defaults to `Name` in the document) |
 | `Description` | `string` | longer Markdown text in the document |
 | `Tags` | `[]string` | groups operations in the API reference |
-| `Status` | `int` | the success status (see the table above) |
+| `Status` | `int` | the success status (see the table above); with an output of `struct{}` the response has this status and no body, for example `202 Accepted` |
 | `Deprecated` | `bool` | marks the operation deprecated in the document and in generated clients |
 | `Security` | `[]string` | security schemes the document declares (`"bearer"` is predefined; others must be in `openapi.Info.SecuritySchemes`) |
 | `ValidateResponse` | `bool` | check the output before writing it |
