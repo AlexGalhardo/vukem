@@ -145,3 +145,20 @@ func TestStack(t *testing.T) {
 		t.Errorf("wrapped = %v", wrapped)
 	}
 }
+
+func TestHTTPErrorWithExtension(t *testing.T) {
+	t.Parallel()
+
+	e := ErrTooManyRequests.WithExtension("code", "quota-exceeded").WithExtension("limit", 100)
+	if diff := cmp.Diff(map[string]any{"code": "quota-exceeded", "limit": 100}, e.Extensions); diff != "" {
+		t.Errorf("Extensions diff (-want +got):\n%s", diff)
+	}
+
+	if ErrTooManyRequests.Extensions != nil {
+		t.Error("WithExtension mutated the sentinel")
+	}
+
+	if !errors.Is(e, ErrTooManyRequests) {
+		t.Error("an error with extensions no longer matches its sentinel")
+	}
+}

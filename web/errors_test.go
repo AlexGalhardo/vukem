@@ -587,3 +587,48 @@ func TestSecurity_A10_ErrorViewErrorOnlyInDebug(t *testing.T) {
 		}
 	}
 }
+
+func TestErrorHandlerProblemExtensions(t *testing.T) {
+	t.Parallel()
+
+	jsonReq := func(r *http.Request) { r.Header.Set("Accept", "application/json") }
+
+	t.Run("members are added next to the standard ones", func(t *testing.T) {
+		t.Parallel()
+
+		err := errs.New(http.StatusTooManyRequests, "Daily quota reached.").
+			WithExtension("code", "quota-exceeded").
+			WithExtension("limit", 1000).
+			WithExtension("status", 200). // never overrides a standard member
+			WithExtension("request_id", "forged")
+
+		rec, _ := runError(t, err, jsonReq, nil)
+
+		var got map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			t.Fatal(err)
+		}
+
+		want := map[string]any{
+			"type": "about:blank", "title": "Too Many Requests", "status": float64(429),
+			"detail": "Daily quota reached.", "instance": "/posts", "request_id": "req-1",
+			"code": "quota-exceeded", "limit": float64(1000),
+		}
+		if diff := cmp.Diff(want, got); diff != "" {
+			t.Errorf("problem diff (-want +got):\n%s", diff)
+		}
+	})
+}
+
+// TestSecurity_A10_ProblemExtensionsNotSentOn5xx checks that extension
+// members of a 5xx error stay out of the response, like its message.
+func TestSecurity_A10_ProblemExtensionsNotSentOn5xx(t *testing.T) {
+	t.Parallel()
+
+	err := errs.Wrap(http.StatusInternalServerError, errors.New("boom")).WithExtension("query", "SELECT secret")
+
+	rec, _ := runError(t, err, func(r *http.Request) { r.Header.Set("Accept", "application/json") }, nil)
+	if strings.Contains(rec.Body.String(), "secret") {
+		t.Errorf("5xx problem leaked an extension: %s", rec.Body.String())
+	}
+}
