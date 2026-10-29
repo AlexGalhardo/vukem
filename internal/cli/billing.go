@@ -10,6 +10,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -21,20 +23,78 @@ const (
 	stripeVersion = "v0.4.1"
 )
 
-// billingEnv is appended to .env.example; values stay empty (never real keys).
-const billingEnv = `
+// billingEnvFor is the block appended to .env.example; values stay empty
+// (never real keys).
+func billingEnvFor(plans []string) string {
+	var prices strings.Builder
+	for _, p := range plans {
+		prices.WriteString("STRIPE_PRICE_" + strings.ToUpper(p) + "=\n")
+	}
+
+	return `
 # Stripe (vukem install:billing). Develop in a sandbox: stripe sandbox create.
 # A restricted key (rk_...) with only the billing permissions.
 STRIPE_KEY=
 # stripe listen --forward-to localhost:3000/stripe/webhook prints whsec_...
 STRIPE_WEBHOOK_SECRET=
 # Recurring price ids (price_...) of the plans in config/billing.go.
-STRIPE_PRICE_BASIC=
-STRIPE_PRICE_PRO=
+` + prices.String() + `# Currencies a checkout may ask for (e.g. brl,usd,eur); empty uses each
+# price's default currency. Prices need currency_options for the others.
+STRIPE_CURRENCIES=
 `
+}
+
+var planNameRe = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
+
+// billingPlans parses the -plans flag: lower-case names that are valid in
+// a URL and in a STRIPE_PRICE_<NAME> variable.
+func billingPlans(list string) ([]string, error) {
+	var plans []string
+
+	for p := range strings.SplitSeq(list, ",") {
+		p = strings.ToLower(strings.TrimSpace(p))
+		if !planNameRe.MatchString(p) {
+			return nil, usagef(
+				"install:billing: plan name %q must be a lower-case letter followed by letters, digits or _",
+				p,
+			)
+		}
+
+		if slices.Contains(plans, p) {
+			return nil, usagef("install:billing: plan %q is listed twice", p)
+		}
+
+		plans = append(plans, p)
+	}
+
+	return plans, nil
+}
+
+// planData adds the template values for plans: the plans() entries, the
+// test price variables and the first plan, which the generated tests use.
+func planData(data map[string]string, plans []string) {
+	list := make([]string, len(plans))
+	env := make([]string, len(plans))
+
+	for i, p := range plans {
+		list[i] = fmt.Sprintf("\t\t{Name: %q, Label: %q},", p, planLabel(p))
+		env[i] = fmt.Sprintf("%q: %q,", "STRIPE_PRICE_"+strings.ToUpper(p), "price_"+p)
+	}
+
+	data["Plan"], data["PlanLabel"] = plans[0], planLabel(plans[0])
+	data["PlanList"] = strings.Join(list, "\n")
+	data["PriceEnv"] = strings.Join(env, " ")
+}
+
+// planLabel turns business_plus into "Business plus".
+func planLabel(name string) string {
+	label := strings.ReplaceAll(name, "_", " ")
+	return strings.ToUpper(label[:1]) + label[1:]
+}
 
 func installBilling(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 	force := set.Bool("force", false, "overwrite existing files")
+	planList := set.String("plans", "basic,pro", "comma-separated plan names to sell, e.g. pro,business")
 
 	return func(ctx context.Context, env *Env, _ []string) error {
 		if !exists(env, filepath.Join("app", "accounts", "accounts.go")) ||
@@ -42,10 +102,17 @@ func installBilling(set *flag.FlagSet) func(context.Context, *Env, []string) err
 			return usagef("install:billing bills the users of install:auth: run vukem install:auth first")
 		}
 
+		plans, err := billingPlans(*planList)
+		if err != nil {
+			return err
+		}
+
 		data, err := scaffoldData(env)
 		if err != nil {
 			return err
 		}
+
+		planData(data, plans)
 
 		names := []string{"billing", "billing-web"}
 		if fw := inertiaFramework(env); fw != "" {
@@ -58,7 +125,7 @@ func installBilling(set *flag.FlagSet) func(context.Context, *Env, []string) err
 			}
 		}
 
-		if err := appendEnvBlock(env, "STRIPE_KEY=", billingEnv); err != nil {
+		if err := appendEnvBlock(env, "STRIPE_KEY=", billingEnvFor(plans)); err != nil {
 			return err
 		}
 
@@ -79,7 +146,7 @@ func installBilling(set *flag.FlagSet) func(context.Context, *Env, []string) err
 			"  vukem migrate\n"+
 			"  stripe sandbox create, then set STRIPE_KEY (a restricted rk_ key) and STRIPE_PRICE_* in .env\n"+
 			"  stripe listen --forward-to localhost:3000/stripe/webhook, and set STRIPE_WEBHOOK_SECRET\n"+
-			"  protect routes with b.Subscribed() or b.OnPlan(\"pro\") (see routes/billing.go)\n"+
+			"  protect routes with b.Subscribed() or b.OnPlan(\""+plans[0]+"\") (see routes/billing.go)\n"+
 			"  go test ./tests/...\n\n")
 
 		return nil

@@ -62,7 +62,7 @@ func TestAppendEnvBlock(t *testing.T) {
 	env := &Env{Dir: dir}
 
 	for range 2 {
-		if err := appendEnvBlock(env, "STRIPE_KEY=", billingEnv); err != nil {
+		if err := appendEnvBlock(env, "STRIPE_KEY=", billingEnvFor([]string{"basic", "pro"})); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -161,5 +161,54 @@ func TestStripeVersionIsLatestTag(t *testing.T) {
 
 	if latest := strings.TrimPrefix(tags[0], "contrib/stripe/"); stripeVersion != latest {
 		t.Errorf("stripeVersion = %s, want the latest contrib/stripe tag %s", stripeVersion, latest)
+	}
+}
+
+func TestBillingPlans(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		in      string
+		want    []string
+		wantErr bool
+	}{
+		{"basic,pro", []string{"basic", "pro"}, false},
+		{" Pro , business_plus ", []string{"pro", "business_plus"}, false},
+		{"solo", []string{"solo"}, false},
+		{"", nil, true},
+		{"pro,pro", nil, true},
+		{"pro,gold-tier", nil, true},
+		{"9lives", nil, true},
+		{"pro,,team", nil, true},
+	}
+
+	for _, tt := range tests {
+		got, err := billingPlans(tt.in)
+		if (err != nil) != tt.wantErr || strings.Join(got, ",") != strings.Join(tt.want, ",") {
+			t.Errorf("billingPlans(%q) = %v, %v; want %v (error %v)", tt.in, got, err, tt.want, tt.wantErr)
+		}
+	}
+
+	data := map[string]string{}
+	planData(data, []string{"pro", "business_plus"})
+
+	for key, want := range map[string]string{
+		"Plan": "pro", "PlanLabel": "Pro",
+		"PlanList": "\t\t{Name: \"pro\", Label: \"Pro\"},\n\t\t{Name: \"business_plus\", Label: \"Business plus\"},",
+		"PriceEnv": `"STRIPE_PRICE_PRO": "price_pro", "STRIPE_PRICE_BUSINESS_PLUS": "price_business_plus",`,
+	} {
+		if data[key] != want {
+			t.Errorf("planData %s = %q, want %q", key, data[key], want)
+		}
+	}
+
+	if env := billingEnvFor(
+		[]string{"pro", "business_plus"},
+	); !strings.Contains(
+		env,
+		"STRIPE_PRICE_PRO=\nSTRIPE_PRICE_BUSINESS_PLUS=\n",
+	) ||
+		!strings.Contains(env, "STRIPE_CURRENCIES=\n") {
+		t.Errorf("billingEnvFor = %q", env)
 	}
 }

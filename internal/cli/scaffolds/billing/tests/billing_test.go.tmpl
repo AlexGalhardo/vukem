@@ -141,7 +141,7 @@ func (f *fakeStripe) setSubscription(status, price string) {
 	}
 }
 
-// billingApp boots the app against f, with /test/subscribed and /test/pro
+// billingApp boots the app against f, with /test/subscribed and /test/plan
 // protected by the billing middleware.
 func billingApp(t *testing.T, f *fakeStripe) *vukemtest.App {
 	t.Helper()
@@ -149,7 +149,7 @@ func billingApp(t *testing.T, f *fakeStripe) *vukemtest.App {
 	return vukemtest.New(t, bootstrap.New, vukemtest.Options{
 		Env: map[string]string{
 			"STRIPE_KEY": stripeKey, "STRIPE_WEBHOOK_SECRET": webhookSecret, "STRIPE_API_BASE": f.srv.URL,
-			"STRIPE_PRICE_BASIC": "price_basic", "STRIPE_PRICE_PRO": "price_pro",
+			{{.PriceEnv}} "STRIPE_CURRENCIES": "brl,usd",
 		},
 		AppOptions: []vukem.Option{vukem.WithRoutes(protectedRoutes)},
 	})
@@ -168,7 +168,7 @@ func protectedRoutes(r *router.Router, app *vukem.App) error {
 
 	ok := func(c *web.Ctx) error { return c.String(http.StatusOK, "members only") }
 	r.Get("/test/subscribed", ok).Use(auth.Required(acc.Web), b.Subscribed())
-	r.Get("/test/pro", ok).Use(auth.Required(acc.Web), b.OnPlan("pro"))
+	r.Get("/test/plan", ok).Use(auth.Required(acc.Web), b.OnPlan("{{.Plan}}"))
 
 	return nil
 }
@@ -235,18 +235,18 @@ func TestBillingCheckout(t *testing.T) {
 	f := newFakeStripe(t)
 	app := billingApp(t, f)
 
-	app.Client(t).PostForm("/billing/checkout/pro", nil).AssertRedirect("/login")
+	app.Client(t).PostForm("/billing/checkout/{{.Plan}}", nil).AssertRedirect("/login")
 
 	u := newUser(t, app, "checkout@example.com")
 	c := app.Client(t).ActingAs("web", u)
 
-	c.PostForm("/billing/checkout/pro", nil).
+	c.PostForm("/billing/checkout/{{.Plan}}", nil).
 		AssertStatus(http.StatusSeeOther).
 		AssertRedirect("https://checkout.stripe.com/c/pay/cs_test_1")
 	vukemtest.AssertDatabaseHas(t, app, "users", map[string]any{"id": u.ID, "stripe_customer_id": "cus_1"})
 
 	// The customer is created once.
-	c.PostForm("/billing/checkout/basic", nil).AssertStatus(http.StatusSeeOther)
+	c.PostForm("/billing/checkout/{{.Plan}}", url.Values{"currency": {"USD"} }).AssertStatus(http.StatusSeeOther)
 
 	customers, _, checkouts, _ := f.stats()
 	if customers != 1 || len(checkouts) != 2 {
@@ -256,11 +256,22 @@ func TestBillingCheckout(t *testing.T) {
 	form := checkouts[0]
 	for key, want := range map[string]string{
 		"mode": "subscription", "customer": "cus_1", "client_reference_id": u.AuthID(),
-		"line_items[0][price]": "price_pro", "line_items[0][quantity]": "1",
+		"line_items[0][price]": "price_{{.Plan}}", "line_items[0][quantity]": "1",
 	} {
 		if got := form.Get(key); got != want {
 			t.Errorf("checkout %s = %q, want %q", key, got, want)
 		}
+	}
+
+	if first, second := form.Get("currency"), checkouts[1].Get("currency"); first != "" || second != "usd" {
+		t.Errorf("checkout currencies = %q, %q; want none, then usd", first, second)
+	}
+
+	// A currency outside STRIPE_CURRENCIES never reaches Stripe.
+	c.PostForm("/billing/checkout/{{.Plan}}", url.Values{"currency": {"jpy"} }).AssertStatus(http.StatusUnprocessableEntity)
+
+	if _, _, checkouts, _ := f.stats(); len(checkouts) != 2 {
+		t.Fatalf("checkouts after an unsupported currency = %d, want 2", len(checkouts))
 	}
 
 	for key := range form {
@@ -283,7 +294,7 @@ func TestBillingWebhookSyncsSubscription(t *testing.T) {
 	app := billingApp(t, f)
 	u := newUser(t, app, "sync@example.com")
 	setCustomer(t, app, u)
-	f.setSubscription("active", "price_pro")
+	f.setSubscription("active", "price_{{.Plan}}")
 
 	// A delayed payment method completes unpaid: no access yet.
 	postWebhook(t, app, "evt_1", "checkout.session.completed", completedCheckout(u, "unpaid")).AssertOK()
@@ -291,13 +302,13 @@ func TestBillingWebhookSyncsSubscription(t *testing.T) {
 
 	postWebhook(t, app, "evt_2", "checkout.session.async_payment_succeeded", completedCheckout(u, "paid")).AssertOK()
 	vukemtest.AssertDatabaseHas(t, app, "subscriptions", map[string]any{
-		"user_id": u.ID, "stripe_subscription_id": "sub_1", "status": "active", "price_id": "price_pro",
+		"user_id": u.ID, "stripe_subscription_id": "sub_1", "status": "active", "price_id": "price_{{.Plan}}",
 	})
 
-	app.Client(t).ActingAs("web", u).Get("/test/pro").AssertOK().AssertSee("members only")
+	app.Client(t).ActingAs("web", u).Get("/test/plan").AssertOK().AssertSee("members only")
 
 	// A failed renewal makes it past_due; cancelling ends access.
-	f.setSubscription("past_due", "price_pro")
+	f.setSubscription("past_due", "price_{{.Plan}}")
 	postWebhook(t, app, "evt_3", "invoice.payment_failed", map[string]any{
 		"id": "in_1", "parent": map[string]any{"subscription_details": map[string]any{"subscription": "sub_1"}},
 	}).AssertOK()
@@ -305,7 +316,7 @@ func TestBillingWebhookSyncsSubscription(t *testing.T) {
 		"stripe_subscription_id": "sub_1", "status": "past_due",
 	})
 
-	f.setSubscription("canceled", "price_pro")
+	f.setSubscription("canceled", "price_{{.Plan}}")
 	postWebhook(t, app, "evt_4", "customer.subscription.deleted", map[string]any{
 		"id": "sub_1", "customer": "cus_1",
 	}).AssertOK()
@@ -323,7 +334,7 @@ func TestBillingWebhookLinksCheckoutCustomer(t *testing.T) {
 	f := newFakeStripe(t)
 	app := billingApp(t, f)
 	u := newUser(t, app, "link@example.com")
-	f.setSubscription("trialing", "price_basic")
+	f.setSubscription("trialing", "price_other")
 
 	postWebhook(t, app, "evt_1", "checkout.session.completed", completedCheckout(u, "no_payment_required")).AssertOK()
 	vukemtest.AssertDatabaseHas(t, app, "users", map[string]any{"id": u.ID, "stripe_customer_id": "cus_1"})
@@ -343,7 +354,7 @@ func TestBillingWebhookProcessedOnce(t *testing.T) {
 	app := billingApp(t, f)
 	u := newUser(t, app, "once@example.com")
 	setCustomer(t, app, u)
-	f.setSubscription("active", "price_basic")
+	f.setSubscription("active", "price_other")
 
 	event := map[string]any{"id": "sub_1", "customer": "cus_1"}
 	postWebhook(t, app, "evt_dup", "customer.subscription.created", event).AssertOK()
@@ -363,7 +374,7 @@ func TestBillingWebhookRejectsBadSignature(t *testing.T) {
 	app := billingApp(t, f)
 	u := newUser(t, app, "forged@example.com")
 	setCustomer(t, app, u)
-	f.setSubscription("active", "price_pro")
+	f.setSubscription("active", "price_{{.Plan}}")
 
 	payload := []byte(`{"id":"evt_forged","type":"customer.subscription.created","data":{"object":{"id":"sub_1"}}}`)
 
@@ -400,15 +411,15 @@ func TestBillingMiddleware(t *testing.T) {
 	c.AcceptJSON().Get("/test/subscribed").AssertStatus(http.StatusPaymentRequired)
 
 	setCustomer(t, app, u)
-	f.setSubscription("active", "price_basic")
+	f.setSubscription("active", "price_other")
 	postWebhook(t, app, "evt_1", "customer.subscription.created", map[string]any{"id": "sub_1"}).AssertOK()
 
 	member := app.Client(t).ActingAs("web", u)
 	member.Get("/test/subscribed").AssertOK().AssertSee("members only")
-	member.Get("/test/pro").AssertRedirect("/billing") // basic is not pro
+	member.Get("/test/plan").AssertRedirect("/billing") // another price is not {{.Plan}}
 
 	// Subscribers manage their plan in the portal, not with a new checkout.
-	member.PostForm("/billing/checkout/pro", nil).AssertRedirect("/billing")
+	member.PostForm("/billing/checkout/{{.Plan}}", nil).AssertRedirect("/billing")
 
 	if _, _, checkouts, _ := f.stats(); len(checkouts) != 0 {
 		t.Fatalf("a subscriber started a second checkout")
@@ -444,7 +455,7 @@ func TestBillingNotConfigured(t *testing.T) {
 	app := vukemtest.New(t, bootstrap.New)
 	u := newUser(t, app, "nokey@example.com")
 
-	app.Client(t).ActingAs("web", u).PostForm("/billing/checkout/pro", nil).AssertNotFound() // no price
+	app.Client(t).ActingAs("web", u).PostForm("/billing/checkout/{{.Plan}}", nil).AssertNotFound() // no price
 	app.Client(t).ActingAs("web", u).PostForm("/billing/portal", nil).AssertStatus(http.StatusServiceUnavailable)
 	app.Client(t).Do(http.MethodPost, billing.WebhookPath, bytes.NewReader([]byte(`{}`)), "application/json").
 		AssertStatus(http.StatusServiceUnavailable)
