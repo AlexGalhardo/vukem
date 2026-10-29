@@ -70,7 +70,7 @@ app/accounts/accounts.go      guards, tokens, session revocation
 app/accounts/users.go         sign-up and email verification
 app/accounts/passwords.go     password reset
 app/accounts/messages.go      accounts.T, translated messages
-app/accounts/lang/            en and pt-BR catalogs
+app/accounts/lang/            en, es and pt-BR catalogs
 app/controllers/account/      login, sign-up, logout, reset,
                               verification, dashboard handlers
 app/requests/auth.go          z validation schemas
@@ -220,7 +220,7 @@ If you add a "change password" form, call `Accounts.RevokeOtherSessions(ctx, use
 
 ### Messages and translations
 
-Flash messages, controller errors and mail subjects go through `accounts.T(ctx, key)`. The catalogs live in `app/accounts/lang/<locale>/*.json` (keys `auth.*`; `--2fa` and `--social` add `two_factor.json` and `social.json`), in English and Brazilian Portuguese.
+Flash messages, controller errors and mail subjects go through `accounts.T(ctx, key)`. The catalogs live in `app/accounts/lang/<locale>/*.json` (keys `auth.*`; `--2fa` and `--social` add `two_factor.json` and `social.json`), in English, Spanish and Brazilian Portuguese.
 
 - `T` uses the request locale that `i18n.Middleware` resolves when the app uses `vukem.WithTranslations`, and English otherwise.
 - A key in the app's own catalog wins (`resources/lang/pt-BR.json`, then `pt.json`), so you may reword a message or add a locale without editing the scaffold.

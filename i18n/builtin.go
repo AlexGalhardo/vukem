@@ -48,7 +48,7 @@ func builtinCatalogs() (map[string]map[string]message, error) {
 	return out, nil
 }
 
-// AddBuiltin adds the framework's own messages, in English and Brazilian
+// AddBuiltin adds the framework's own messages, in English, Spanish and Brazilian
 // Portuguese, to the catalogs b already has: "auth.failed",
 // "auth.unauthenticated", "auth.unverified", "auth.token_ability",
 // "social.*", "validation.unique" and "validation.exists". A built-in
