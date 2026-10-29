@@ -699,3 +699,46 @@ func TestSecurity_A01_S3PresignPutBindsTypeAndSize(t *testing.T) {
 		t.Errorf("matching PUT = %d, want 200", got)
 	}
 }
+
+func TestOpenReportsValidators(t *testing.T) {
+	t.Parallel()
+
+	d, _ := newTestDisk(t)
+	ctx := t.Context()
+
+	if err := storage.PutBytes(ctx, d, "covers/a.webp", []byte("img")); err != nil {
+		t.Fatal(err)
+	}
+
+	info, err := d.Stat(ctx, "covers/a.webp")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	f, err := d.Open(ctx, "covers/a.webp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	// storage.HandlerWith reads these to answer conditional requests.
+	tagged, ok := f.(interface {
+		ETag() string
+		ModTime() time.Time
+	})
+	if !ok {
+		t.Fatalf("Open returned %T without ETag/ModTime", f)
+	}
+
+	if got, want := tagged.ETag(), `"`+info.ETag+`"`; got != want {
+		t.Errorf("ETag() = %q, want %q", got, want)
+	}
+
+	if got := tagged.ModTime(); !got.Equal(info.LastModified) || got.IsZero() {
+		t.Errorf("ModTime() = %v, want %v", got, info.LastModified)
+	}
+
+	if b, _ := io.ReadAll(f); string(b) != "img" {
+		t.Errorf("body = %q", b)
+	}
+}
