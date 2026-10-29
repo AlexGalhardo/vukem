@@ -56,6 +56,7 @@ jobs:
           - { module: contrib/graphql, pkg: ., target: FuzzParseQuery }
           - { module: contrib/graphql, pkg: ., target: FuzzParseSchema }
           - { module: contrib/stripe, pkg: ., target: FuzzConstructEvent }
+          - { module: contrib/cloudflare, pkg: ., target: FuzzParseRanges }
     env:
       FUZZTIME: ${{ inputs.fuzztime || '1h' }}
     defaults:

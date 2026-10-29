@@ -39,6 +39,8 @@ func checkBootConfig(
 	if err != nil {
 		errs = append(errs, err)
 	} else {
+		proxies = append(proxies, o.proxies...)
+
 		// Checked only when TRUSTED_PROXIES parsed: an invalid entry is
 		// already reported above.
 		if cfg.TrustForwardedProto && len(proxies) == 0 {
