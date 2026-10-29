@@ -29,6 +29,8 @@ jobs:
       matrix:
         include:
           - { module: ., pkg: ./auth/jwt, target: FuzzVerify }
+          - { module: ., pkg: ./auth/webauthn, target: FuzzDecodeCBOR }
+          - { module: ., pkg: ./auth/webauthn, target: FuzzParseAuthData }
           - { module: ., pkg: ./config, target: FuzzParseEnv }
           - { module: ., pkg: ./crypt, target: FuzzDecrypt }
           - { module: ., pkg: ./i18n, target: FuzzCanonical }
@@ -47,6 +49,7 @@ jobs:
           - { module: ., pkg: ./upload, target: FuzzSanitizeName }
           - { module: ., pkg: ./upload, target: FuzzTusRequest }
           - { module: ., pkg: ./web, target: FuzzFormToMap }
+          - { module: ., pkg: ./signed, target: FuzzOpen }
           - { module: ., pkg: ./web, target: FuzzSafeRedirect }
           - { module: ., pkg: ./webhook, target: FuzzVerifyHMAC }
           - { module: ., pkg: ./z, target: FuzzParse }

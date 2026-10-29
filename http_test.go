@@ -769,6 +769,22 @@ func TestSecurity_A10_HungHealthCheckRunsOnce(t *testing.T) {
 	})
 }
 
+// A run that has returned its result must no longer count as running:
+// back-to-back probes against a healthy dependency used to report it busy
+// (a false 503) when the next probe won the race with the finished run.
+func TestCheckHealthBackToBackNeverBusy(t *testing.T) {
+	t.Parallel()
+
+	app := newTestApp(t)
+	app.AddHealthCheck("fast", func(context.Context) error { return nil })
+
+	for i := range 2000 {
+		if err := app.CheckHealth(t.Context())["fast"]; err != nil {
+			t.Fatalf("CheckHealth() #%d [fast] = %v, want nil", i, err)
+		}
+	}
+}
+
 func sessionRoutes(r *router.Router) {
 	hasSession := func(c *web.Ctx) error {
 		if c.Session() == nil {
