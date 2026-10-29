@@ -373,22 +373,23 @@ func (m *Migrator) locked(ctx context.Context, fn func() error) error {
 	}
 	defer conn.Close()
 
-	var got sql.NullInt64
+	// Release before anything can return, a failed Scan included: the lock
+	// may be held already, and the connection goes back to the pool.
+	// Releasing a lock this session does not hold is harmless.
+	defer func() {
+		_, _ = conn.ExecContext(context.WithoutCancel(ctx), unlock, key)
+	}()
+
+	// pg_advisory_lock answers void ("" once it holds the lock); GET_LOCK
+	// answers 1 when it holds it.
+	var got sql.NullString
 	if err := conn.QueryRowContext(ctx, lock, key).Scan(&got); err != nil {
 		return fmt.Errorf("schema: lock migrations: %w", err)
 	}
 
-	// GET_LOCK answers 1 when it holds the lock; pg_advisory_lock answers
-	// void (NULL) once it does.
-	if m.db.Dialect().Name() == "mysql" && got.Int64 != 1 {
+	if m.db.Dialect().Name() == "mysql" && got.String != "1" {
 		return errors.New("schema: lock migrations: GET_LOCK refused")
 	}
-
-	defer func() {
-		// Released even when ctx is done, or the lock would outlive the run
-		// on a pooled connection; closing the connection would release it too.
-		_, _ = conn.ExecContext(context.WithoutCancel(ctx), unlock, key)
-	}()
 
 	return fn()
 }
