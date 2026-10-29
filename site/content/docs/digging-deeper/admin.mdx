@@ -223,6 +223,8 @@ Options chain: each returns the resource.
 | `Sensitive(cols...)` | secret columns, on top of the ones detected by name (see Security) |
 | `Input(key, kind)` | override a form control |
 | `BeforeSave(fn)` | runs before every create and update |
+| `AfterSave(fn)` | runs after every create and update, with the transaction, the previous record and the virtual field values |
+| `Virtual(key, value)` | a schema key with no model column, handled by `AfterSave` |
 
 Search is a case-insensitive `LIKE` (`ILIKE` on PostgreSQL) with bound parameters; `%` and `_` in the search text match literally.
 
@@ -247,6 +249,42 @@ func Post() *vadmin.Resource[models.Post] {
 		})
 }
 ```
+
+### Side effects: `AfterSave` and virtual fields
+
+`BeforeSave` gets only the record. When a save must write other tables or fire an event, use `AfterSave(func(ctx context.Context, s admin.Saved[T]) error)`. It runs after the record is written, inside the panel transaction and before the audit entry, with:
+
+| Field | What it holds |
+| --- | --- |
+| `s.Tx` | The panel transaction (`*database.Tx`): write related rows through it; `s.Tx.AfterCommit(fn)` runs `fn` only once the save is committed |
+| `s.Action` | `admin.ActionCreate` or `admin.ActionUpdate` |
+| `s.Record` | The record as written |
+| `s.Before` | A copy of the record before the form was applied; `nil` on create |
+| `s.Virtual` | The parsed values of the submitted virtual fields, by schema key |
+
+Returning an error rolls the whole save back, audit entry included. Write through `s.Tx`, never through the app's `*database.DB`: on SQLite a second writer waits for the panel transaction and deadlocks, and on PostgreSQL the write would escape the rollback.
+
+A schema key normally has to match a model column. `Virtual(key, value)` declares one that does not: the form shows it, validation runs, its value reaches `s.Virtual`, and nothing writes it to the record. `value` renders the current state on the edit form, so a checkbox does not silently flip on the next save:
+
+```go title="app/admin/user.go"
+vadmin.NewResource[models.User](requests.AdminUserSchema). // has a Banned bool field
+	Virtual("banned", func(u *models.User) any { return u.BannedAt.Valid }).
+	AfterSave(func(ctx context.Context, s vadmin.Saved[models.User]) error {
+		banned, _ := s.Virtual["banned"].(bool)
+		if banned == s.Before.BannedAt.Valid {
+			return nil
+		}
+		// accounts.SetBanned updates users.banned_at through s.Tx, records an
+		// account event and revokes the user's tokens.
+		if err := accounts.SetBanned(ctx, s.Tx, s.Record, banned); err != nil {
+			return err
+		}
+		s.Tx.AfterCommit(func(ctx context.Context) { notifyBanned(ctx, s.Record.ID, banned) })
+		return nil
+	})
+```
+
+Changes the hook makes to `s.Record` and writes through `s.Tx` appear in the audit diff. A schema key without a column that `Virtual` does not declare is still a `Panel.Register` error, so a typo cannot hide.
 
 ### Mistakes caught at boot
 

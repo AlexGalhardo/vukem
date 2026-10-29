@@ -70,8 +70,10 @@ return panel.Mount(r)
 | `Sensitive(cols...)` | Secret columns (see below) |
 | `Input(key, kind)` | Override a form control (`admin.InputTextarea`, ...) |
 | `BeforeSave(fn)` | Runs before create/update inside the transaction (hash a password, set an owner); returning `z` issues re-renders the form |
+| `AfterSave(fn)` | `func(ctx, admin.Saved[T]) error` after the write, inside the panel transaction and before the audit entry: `Saved{Tx, Action, Record, Before, Virtual}`; `Tx.AfterCommit` for post-commit work; an error rolls the save back. Write through `Saved.Tx`, never the app's `*database.DB` (SQLite single-writer deadlock, PostgreSQL escapes the rollback) |
+| `Virtual(key, value)` | A schema key with no model column: shown and validated, never written to the record, its parsed value in `Saved.Virtual`; `value(rec)` renders the current state on the edit form |
 
-Configuration mistakes (unknown or sensitive columns in lists, a schema key without a column, a schema key for the primary key or timestamps, duplicate slugs) are returned by `Panel.Register`, at boot.
+Configuration mistakes (unknown or sensitive columns in lists, a schema key without a column that `Virtual` does not declare, a schema key for the primary key or timestamps, duplicate slugs) are returned by `Panel.Register`, at boot.
 
 ## Routes
 
