@@ -86,6 +86,7 @@ export const navigation: NavCategory[] = [
     pages: [
       "mail",
       "cache",
+      "sitemaps",
       "storage",
       "uploads",
       "exports",
