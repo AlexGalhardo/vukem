@@ -1,19 +1,19 @@
 go 1.27.3
 
-
 use (
 	.
-	./drivers/mongo
-	./drivers/mysql
-	./drivers/postgres
-	./drivers/redis
-	./drivers/otel
-	./drivers/s3
-	./drivers/websocket
-	./contrib/stripe
+	./contrib/engine
 	./contrib/graphql
 	./contrib/grpc
+	./contrib/http3
 	./contrib/imaging
-	./contrib/engine
+	./contrib/stripe
+	./drivers/mongo
+	./drivers/mysql
+	./drivers/otel
+	./drivers/postgres
+	./drivers/redis
+	./drivers/s3
+	./drivers/websocket
 	./internal/bench
 )
