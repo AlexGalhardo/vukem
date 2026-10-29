@@ -479,6 +479,9 @@ On a first visit, the adapter POSTs the page object to the Node SSR server and p
 | `Client` | an `http.Client` with `Timeout` | Sends the requests |
 | `OnFailure` | a warning log | Receives an `inertia.SSRError` for each failed render, strict ones included |
 | `Strict` | `false` | Every server-rendered page answers `503` instead of falling back; also registers the `inertia-ssr` readiness check |
+| `Cache` | `nil` (off) | Keeps successful renders; any `cache.Store`, see [Caching renders](#caching-renders) |
+| `CacheTTL` | `1m` | How long a render stays cached |
+| `CacheWhen` | cache every page | `func(c *web.Ctx, p *inertia.Page) bool`; return `false` to skip the cache for a page |
 
 `inertia.SSRError` has `Error`, `Type` (`"connection"`, `"render"`, `"browser-api"`, `"component-resolution"`, or `"bundle"` when a strict page finds no `Bundle` file), `Hint`, `BrowserAPI`, `Stack`, `SourceLocation`, `Component` and `URL`.
 
@@ -512,6 +515,30 @@ r.Group("/games", func(g *router.Group) {
 ```
 
 `RequireSSR` needs `app.Inertia.Middleware` to run first, because it marks the per-request state that middleware stores.
+
+### Caching renders
+
+A public page seen by thousands of anonymous visitors sends the same page object to Node on every first visit. `SSRConfig.Cache` keeps each successful render for `CacheTTL`:
+
+```go title="bootstrap/app.go" nocompile
+vukem.WithInertia(inertia.Config{
+	SSR: &inertia.SSRConfig{
+		Bundle:   "bootstrap/ssr/ssr.js",
+		Cache:    cache.NewMemory(2000), // bounded: at most 2000 renders
+		CacheTTL: 5 * time.Minute,
+		CacheWhen: func(c *web.Ctx, _ *inertia.Page) bool {
+			_, _, signedIn := auth.Principal(c.Context())
+			return !signedIn // only anonymous visits
+		},
+	},
+}),
+```
+
+- The key is a SHA-256 of the exact page object sent to the SSR server: component, every prop (shared ones included), URL and asset version. Only an identical page reuses a render, so one user never receives another user's markup, and a deploy with new assets starts with fresh keys.
+- The CSP nonce is not part of the render (the root view adds it to its own tags), so a cached render is safe under a nonce-based policy.
+- Failed renders are never cached, and the Vite dev server is never cached. A cache read or write error is logged and the page renders normally.
+- `CacheWhen` keeps personalised pages out (each user would only fill the store with entries nobody else hits). `cache.NewMemory(n)` evicts beyond `n` entries; a shared store (`app.Cache` on Redis or the database) shares renders across instances.
+- Renders must be deterministic for their page object: a component that prints the current time or a random value shows the cached value until it expires.
 
 ## Configuration
 

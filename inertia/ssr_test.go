@@ -10,9 +10,11 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/AlexGalhardo/vukem/cache"
 	"github.com/AlexGalhardo/vukem/inertia"
 	"github.com/AlexGalhardo/vukem/router"
 	"github.com/AlexGalhardo/vukem/web"
@@ -314,5 +316,117 @@ func TestSSRStrictAnswers503(t *testing.T) {
 				t.Errorf("failures = %+v, want type %q", *failures, tt.wantType)
 			}
 		})
+	}
+}
+
+func TestSSRCacheReusesIdenticalRenders(t *testing.T) {
+	t.Parallel()
+
+	srv := newSSRServer(t, rendered)
+	store := cache.NewMemory(100)
+	hs, failures := ssrHarness(t, &inertia.SSRConfig{URL: srv.URL, Cache: store, CacheTTL: time.Minute})
+
+	first := hs.do(t, http.MethodGet, "/events/80", nil).Body.String()
+	second := hs.do(t, http.MethodGet, "/events/80", nil).Body.String()
+
+	if first != second || !strings.Contains(second, "<h1>Event</h1>") || len(srv.paths) != 1 {
+		t.Fatalf("cached render differs or SSR called %d times (want 1):\n%s\n%s", len(srv.paths), first, second)
+	}
+
+	// Other props are another key.
+	hs.do(t, http.MethodGet, "/events/81", nil)
+
+	if len(srv.paths) != 2 || len(*failures) != 0 {
+		t.Errorf("SSR requests = %v failures = %v, want 2 renders", srv.paths, *failures)
+	}
+}
+
+func TestSSRCacheSkipsFailuresAndCacheWhen(t *testing.T) {
+	t.Parallel()
+
+	var fail atomic.Bool
+
+	fail.Store(true)
+
+	srv := newSSRServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if fail.Load() {
+			http.Error(w, "boom", http.StatusInternalServerError)
+			return
+		}
+
+		rendered(w, r)
+	})
+
+	hs, _ := ssrHarness(t, &inertia.SSRConfig{
+		URL: srv.URL, Cache: cache.NewMemory(100),
+		CacheWhen: func(_ *web.Ctx, p *inertia.Page) bool { return p.Component != "Admin" },
+	})
+
+	if body := hs.do(t, http.MethodGet, "/events/80", nil).Body.String(); !strings.Contains(body, csrMarker) {
+		t.Fatalf("failed render not on the client: %s", body)
+	}
+
+	fail.Store(false)
+
+	// The failure was not cached: the next visit renders on the server.
+	if body := hs.do(t, http.MethodGet, "/events/80", nil).Body.String(); !strings.Contains(body, "<h1>Event</h1>") {
+		t.Fatalf("render after a failure not server-side: %s", body)
+	}
+
+	hs.do(t, http.MethodGet, "/admin", nil)
+	hs.do(t, http.MethodGet, "/admin", nil)
+
+	if len(srv.paths) != 4 {
+		t.Errorf("SSR requests = %v, want 4 (failure, render, Admin twice)", srv.paths)
+	}
+}
+
+// TestSecurity_A01_SSRCacheNeverSharesPersonalisedRenders checks that the
+// SSR cache key covers every prop: two users on the same URL with different
+// shared props get their own render, never the other user's.
+func TestSecurity_A01_SSRCacheNeverSharesPersonalisedRenders(t *testing.T) {
+	t.Parallel()
+
+	var srv *ssrServer
+
+	srv = newSSRServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		srv.mu.Lock()
+		props, _ := srv.pages[len(srv.pages)-1]["props"].(map[string]any)
+		srv.mu.Unlock()
+
+		user, _ := props["user"].(string)
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"head": []string{}, "body": "<p>hi " + user + "</p>"})
+	})
+
+	cfg := baseConfig()
+	cfg.SSR = &inertia.SSRConfig{URL: srv.URL, Cache: cache.NewMemory(100)}
+
+	hs := newHarness(t, cfg, func(r *router.Router) {
+		r.Get("/me", func(c *web.Ctx) error {
+			inertia.Share(c.Context(), "user", c.Query("u"))
+			return inertia.Render(c, "Me", nil)
+		})
+	})
+
+	for range 2 {
+		for _, u := range []string{"ana", "bob"} {
+			if body := hs.do(
+				t,
+				http.MethodGet,
+				"/me?u="+u,
+				nil,
+			).Body.String(); !strings.Contains(
+				body,
+				"<p>hi "+u+"</p>",
+			) {
+				t.Fatalf("user %s got %s", u, body)
+			}
+		}
+	}
+
+	if len(srv.paths) != 2 {
+		t.Errorf("SSR renders = %d, want 2 (one per user, then cached)", len(srv.paths))
 	}
 }

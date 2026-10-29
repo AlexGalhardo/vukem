@@ -97,7 +97,13 @@ func TestUserSessionsListsAndRevokesByHandle(t *testing.T) {
 				t.Fatalf("RevokeSession(other user) = %v, want ErrSessionNotFound", err)
 			}
 
-			for _, bad := range []string{"", "zz", got[0].Handle[:8], strings.ToUpper(got[0].Handle), "%"} {
+			bad := []string{"", "zz", got[0].Handle[:8], "%"}
+			// An all-digit handle has no upper-case form (about 1 in 2000 runs).
+			if upper := strings.ToUpper(got[0].Handle); upper != got[0].Handle {
+				bad = append(bad, upper)
+			}
+
+			for _, bad := range bad {
 				if err := m.RevokeSession(t.Context(), "7", bad); !errors.Is(err, ErrSessionNotFound) {
 					t.Fatalf("RevokeSession(%q) = %v, want ErrSessionNotFound", bad, err)
 				}
