@@ -21,6 +21,43 @@ type Problem struct {
 	Instance  string              `json:"instance,omitempty"`
 	RequestID string              `json:"request_id,omitempty"`
 	Errors    map[string][]string `json:"errors,omitempty"`
+	// Extensions are extra members (RFC 9457 section 3.2) that the error
+	// handler writes next to the standard ones; a key naming a standard
+	// member is ignored. Plain json.Marshal leaves them out.
+	Extensions map[string]any `json:"-"`
+}
+
+// encodeProblem writes the standard members, then the extensions that do
+// not collide with them. Not a MarshalJSON method: the OpenAPI generator
+// documents Problem from its struct fields, which a Marshaler would hide.
+func encodeProblem(p *Problem) ([]byte, error) {
+	b, err := json.Marshal(p)
+	if err != nil || len(p.Extensions) == 0 {
+		return b, err
+	}
+
+	// RawMessage keeps the standard members byte-exact (no float64 trip).
+	members := map[string]any{}
+
+	var std map[string]json.RawMessage
+	if err := json.Unmarshal(b, &std); err != nil {
+		return nil, err
+	}
+
+	for k, v := range std {
+		members[k] = v
+	}
+
+	for k, v := range p.Extensions {
+		switch k {
+		// Reserved even when omitted from this response.
+		case "type", "title", "status", "detail", "instance", "request_id", "errors":
+		default:
+			members[k] = v
+		}
+	}
+
+	return json.Marshal(members)
 }
 
 // Problem writes an application/problem+json response.
@@ -45,7 +82,7 @@ func (c *Ctx) writeProblem(p *Problem) error {
 		p.RequestID = RequestID(c.Context())
 	}
 
-	b, err := json.Marshal(p)
+	b, err := encodeProblem(p)
 	if err != nil {
 		return fmt.Errorf("web: encode problem: %w", err)
 	}
@@ -129,6 +166,10 @@ func DefaultErrorHandler(c *Ctx, err error) {
 	switch {
 	case c.WantsJSON():
 		p := &Problem{Status: status, Title: title, Detail: detail}
+		if he != nil && status < 500 {
+			p.Extensions = he.Extensions
+		}
+
 		if verr != nil {
 			p.Errors = verr.Fields
 			if c.s.ProblemBaseURL != "" {

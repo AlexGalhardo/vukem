@@ -34,6 +34,11 @@ type HTTPError struct {
 	Key string
 	// Params fill the {name} placeholders of the translated Key.
 	Params map[string]any
+	// Extensions are RFC 9457 extension members added to the problem+json
+	// body of 4xx responses (never 5xx); they cannot replace a standard
+	// member (type, title, status, detail, instance, request_id, errors).
+	// Values must be safe to show to clients.
+	Extensions map[string]any
 
 	stack []uintptr
 }
@@ -87,6 +92,21 @@ func (e *HTTPError) WithHeader(key, value string) *HTTPError {
 	}
 
 	c.Headers.Add(key, value)
+
+	return &c
+}
+
+// WithExtension returns a copy of e with an extra problem+json member, such
+// as a machine-readable "code" or the "limit" of a quota.
+func (e *HTTPError) WithExtension(key string, value any) *HTTPError {
+	c := *e
+	c.Extensions = maps.Clone(e.Extensions)
+
+	if c.Extensions == nil {
+		c.Extensions = map[string]any{}
+	}
+
+	c.Extensions[key] = value
 
 	return &c
 }

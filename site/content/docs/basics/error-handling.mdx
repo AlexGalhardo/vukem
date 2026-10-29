@@ -114,6 +114,8 @@ type HTTPError struct {
 	Key string
 	// Params fill the {name} placeholders of Key.
 	Params map[string]any
+	// Extensions are extra problem+json members (4xx only).
+	Extensions map[string]any
 }
 ```
 
@@ -123,6 +125,7 @@ type HTTPError struct {
 | `errs.NewKey(status, key, message, params)` | The message must follow the visitor's language; `message` is the English fallback | `errs.NewKey(409, "posts.slug_taken", "That slug is taken.", nil)` |
 | `errs.Wrap(status, err)` | You want a status but the cause is internal | `errs.Wrap(502, err)` for a failed upstream call |
 | `e.WithHeader(key, value)` | The response needs a header; returns a **copy** | `errs.ErrTooManyRequests.WithHeader("Retry-After", "30")` |
+| `e.WithExtension(key, value)` | API clients need a machine-readable member in the problem+json body; returns a **copy** | `errs.ErrTooManyRequests.WithExtension("code", "quota-exceeded")` |
 
 Methods: `Text()` returns `Message` or, when it is empty, the status text ("Not Found"). `LocalizedText(ctx)` translates `Key` with the request's translator, falling back to `Text()`. `Error()` is for logs and includes the cause: `409 That slug is taken.` or `502 Bad Gateway: dial tcp: timeout`. `Unwrap()` returns `Err`, so `errors.Is(err, context.DeadlineExceeded)` still works through a wrapped error.
 
@@ -258,6 +261,32 @@ A `detail` equal to the `title` is dropped. HTML responses carry `Cache-Control:
   "request_id": "fJ3kq0aZ7mQ1"
 }
 ```
+
+### Extension members
+
+RFC 9457 lets a problem carry extra members, such as a stable `code` for clients or the `limit` of a quota. Add them to the error with `WithExtension`:
+
+```go title="app/api/quota.go"
+return errs.New(http.StatusTooManyRequests, "Daily quota reached.").
+	WithHeader("Retry-After", "3600").
+	WithExtension("code", "quota-exceeded").
+	WithExtension("limit", 1000)
+```
+
+```json title="429 problem+json"
+{
+  "code": "quota-exceeded",
+  "detail": "Daily quota reached.",
+  "instance": "/api/v1/items",
+  "limit": 1000,
+  "request_id": "fJ3kq0aZ7mQ1",
+  "status": 429,
+  "title": "Too Many Requests",
+  "type": "about:blank"
+}
+```
+
+Members are written in alphabetical order when there are extensions. An extension never replaces a standard member (`type`, `title`, `status`, `detail`, `instance`, `request_id`, `errors`): those keys are ignored. 5xx responses never carry extensions, as they never carry the message. Values must be safe to show to anyone who triggers the error. HTML pages and htmx fragments ignore them. The OpenAPI document does not describe extension members; document them in the operation's description.
 
 The format is [RFC 9457 problem details](https://www.rfc-editor.org/rfc/rfc9457). `type` is `about:blank`, except for validation errors when `APP_PROBLEM_BASE_URL` is set: then it is `<base>/validation`. `instance` is the request path and `request_id` the id from the [request id middleware](/docs/basics/middleware).
 
