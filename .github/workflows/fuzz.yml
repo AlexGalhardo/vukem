@@ -49,6 +49,7 @@ jobs:
           - { module: ., pkg: ./upload, target: FuzzSanitizeName }
           - { module: ., pkg: ./upload, target: FuzzTusRequest }
           - { module: ., pkg: ./web, target: FuzzFormToMap }
+          - { module: ., pkg: ./signed, target: FuzzOpen }
           - { module: ., pkg: ./web, target: FuzzSafeRedirect }
           - { module: ., pkg: ./webhook, target: FuzzVerifyHMAC }
           - { module: ., pkg: ./z, target: FuzzParse }
