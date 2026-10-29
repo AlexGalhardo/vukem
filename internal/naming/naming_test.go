@@ -12,6 +12,10 @@ func TestConversions(t *testing.T) {
 		{"send-reports", "send_reports", "send-reports", "SendReports", "sendReports"},
 		{"OAuth2Token", "o_auth2_token", "o-auth2-token", "OAuth2Token", "oAuth2Token"},
 		{"post", "post", "post", "Post", "post"},
+		// Documented (site database/orm, "Naming conventions"): a plural
+		// acronym splits before its last capital; changing it would rename
+		// existing columns, so models use a db tag instead.
+		{"ExternalIDs", "external_i_ds", "external-i-ds", "ExternalIDs", "externalIDs"},
 		{"", "", "", "", ""},
 	}
 

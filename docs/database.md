@@ -223,7 +223,7 @@ type User struct {
 func (User) Table() string { return "users" } // optional; default snake_case plural
 ```
 
-- Conventions: table = snake_case plural of type name; column = snake_case of field; primary key `id`.
+- Conventions: table = snake_case plural of type name; column = snake_case of field (`naming.Snake`: `UserID` → `user_id`, but a plural acronym splits, `ExternalIDs` → `external_i_ds`, so tag it `db:"external_ids"`); primary key `id`.
 - Optional interfaces: `Table() string` (`orm.Tabler`) and `PrimaryKey() string` (`orm.Keyer`). The `db:"name"` tag renames a column, `db:"-"` skips a field.
 - Composite keys: `PrimaryKeys() []string` (`orm.CompositeKeyer`, wins over `Keyer`). `Update`, `Delete`, `ForceDelete` and `Restore` filter on every key column and `Update` never writes them; the key is never generated. APIs that address a row by one value (`Query.Find`, `Query.Chunk`, relations, `Attach`, `Reseal`, `Unique.Ignore`) return an error, `CursorPaginate` adds every key column as tie-breaker, `admin.NewResource` panics. `orm.PrimaryKeysOf[T]()` lists the columns. When a single-model write matches more than one row (a model declaring part of a composite key), it returns an error wrapping `orm.ErrKeyNotUnique`; the rows are already written, so a transaction is what rolls them back.
 - Hooks: implement `BeforeCreate(ctx) error`, `AfterCreate`, `BeforeUpdate`, `AfterUpdate` or `BeforeDelete` on `*T` (`orm.BeforeCreator`, `orm.AfterCreator`, `orm.BeforeUpdater`, `orm.AfterUpdater`, `orm.BeforeDeleter`); an error aborts the write.
