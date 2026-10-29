@@ -28,7 +28,10 @@ import (
 	"fmt"
 	"io/fs"
 	"net/http"
+	"net/netip"
+	"slices"
 	"strings"
+	"time"
 
 	"github.com/AlexGalhardo/vukem/auth"
 	"github.com/AlexGalhardo/vukem/csrf"
@@ -38,6 +41,7 @@ import (
 	"github.com/AlexGalhardo/vukem/htmx"
 	"github.com/AlexGalhardo/vukem/orm"
 	"github.com/AlexGalhardo/vukem/router"
+	"github.com/AlexGalhardo/vukem/session"
 	"github.com/AlexGalhardo/vukem/view"
 	"github.com/AlexGalhardo/vukem/web"
 )
@@ -103,6 +107,29 @@ type Config struct {
 	// is a "flags.changed" audit event and an audit-log entry; a save that
 	// leaves the value as it was records nothing.
 	Flags *flags.Flags
+
+	// TwoFactor makes two-factor authentication mandatory for the panel:
+	// it reports whether the admin authenticated on ctx (auth.UserFrom)
+	// has 2FA enabled. The 2FA state lives in the app (the install:auth
+	// scaffold's users.two_factor_enabled), so the panel asks. false is 403
+	// with an "admin.2fa_required" security event; an error is 403 too
+	// (fail closed). Nil does not require 2FA.
+	TwoFactor func(ctx context.Context) (bool, error)
+	// MaxSessionAge, when positive, is the oldest a session may be to use
+	// the panel, counted from its creation (session.CreatedAt), a stricter
+	// limit than the app's SESSION_LIFETIME. An older session is
+	// invalidated (signed out of every guard, an "admin.session_expired"
+	// security event) and the browser is sent to log in again. A
+	// remember-me cookie logs the user back in with a new session: turn
+	// remember-me off for admins when the cap must force a password.
+	MaxSessionAge time.Duration
+	// AllowCIDRs, when not empty, limits the panel to client IPs
+	// (web.Ctx.IP, trusted-proxy aware) inside one of the prefixes. Others
+	// get 403 with an "admin.ip_denied" security event, before any login
+	// redirect. The embedded CSS and JS stay public.
+	AllowCIDRs []netip.Prefix
+	// Now is the clock for MaxSessionAge (tests); defaults to time.Now.
+	Now func() time.Time
 }
 
 // Templates returns the embedded templates, to copy one into Config.Views
@@ -146,6 +173,20 @@ func New(cfg Config) (*Panel, error) {
 
 	if cfg.Title == "" {
 		cfg.Title = "Admin"
+	}
+
+	if cfg.MaxSessionAge < 0 {
+		return nil, errors.New("admin: Config.MaxSessionAge cannot be negative")
+	}
+
+	for _, p := range cfg.AllowCIDRs {
+		if !p.IsValid() {
+			return nil, fmt.Errorf("admin: Config.AllowCIDRs has an invalid prefix %q", p)
+		}
+	}
+
+	if cfg.Now == nil {
+		cfg.Now = time.Now
 	}
 
 	sub := Templates()
@@ -210,7 +251,11 @@ func (p *Panel) Mount(r *router.Router) error {
 		}
 
 		g.Group("", func(g *router.Group) {
-			g.Use(auth.Required(p.cfg.Guard), csrfMW, p.headers, p.requireAbility)
+			// The IP and session-age checks run before the guard: an unlisted
+			// client never sees the login redirect, and an expired session is
+			// gone before the guard reads it.
+			g.Use(p.allowIP, p.maxSessionAge, auth.Required(p.cfg.Guard), csrfMW, p.headers, p.requireTwoFactor,
+				p.requireAbility)
 
 			g.Get("", p.dashboard).Name("dashboard")
 			g.Get("/_audit", p.audit).Name("audit")
@@ -258,6 +303,66 @@ func (p *Panel) requireAbility(next http.Handler) http.Handler {
 		}
 
 		next.ServeHTTP(w, c.Request())
+	})
+}
+
+func (p *Panel) allowIP(next http.Handler) http.Handler {
+	if len(p.cfg.AllowCIDRs) == 0 {
+		return next
+	}
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c := web.NewCtx(w, r, web.ServicesFrom(r.Context()))
+
+		ip, err := netip.ParseAddr(c.IP())
+		if err == nil && slices.ContainsFunc(p.cfg.AllowCIDRs, func(pr netip.Prefix) bool {
+			return pr.Contains(ip.Unmap())
+		}) {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		web.SecurityEvent(r, "admin.ip_denied", "area", "admin")
+		c.HandleError(errs.Wrap(http.StatusForbidden, errors.New("admin: client IP not allowed")))
+	})
+}
+
+func (p *Panel) maxSessionAge(next http.Handler) http.Handler {
+	if p.cfg.MaxSessionAge == 0 {
+		return next
+	}
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s := web.SessionFrom(r.Context())
+		if created, ok := session.CreatedAt(s); ok && p.cfg.Now().Sub(created) > p.cfg.MaxSessionAge {
+			web.SecurityEvent(r, "admin.session_expired", "area", "admin")
+			s.Invalidate()
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (p *Panel) requireTwoFactor(next http.Handler) http.Handler {
+	if p.cfg.TwoFactor == nil {
+		return next
+	}
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		on, err := p.cfg.TwoFactor(r.Context())
+		if err == nil && on {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		c := web.NewCtx(w, r, web.ServicesFrom(r.Context()))
+		web.SecurityEvent(r, "admin.2fa_required", "area", "admin")
+
+		if err != nil {
+			c.Log().ErrorContext(r.Context(), "admin: two-factor check failed", "err", err)
+		}
+
+		c.HandleError(errs.Wrap(http.StatusForbidden, errors.New("admin: two-factor authentication required")))
 	})
 }
 
