@@ -218,7 +218,7 @@ func routeListCommand() Command {
 			fmt.Fprintln(tw, "METHOD\tPATH\tNAME\tMIDDLEWARE")
 
 			for _, r := range routes {
-				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", r.Method, r.Path, r.Name, strings.Join(r.Middleware, ", "))
+				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", r.Method, r.Host+r.Path, r.Name, strings.Join(r.Middleware, ", "))
 			}
 
 			return tw.Flush()
