@@ -98,7 +98,7 @@ type Config struct {
 	Title string
 	// Views overrides embedded templates by path: layouts/admin.html,
 	// index.html, show.html, form.html, delete.html, dashboard.html,
-	// audit.html, flags.html, partials/pager.html.
+	// audit.html, flags.html, action.html, partials/pager.html.
 	Views fs.FS
 	// Flags adds a page at <Prefix>/_flags to change the global value of
 	// the registered feature flags (app.Flags()); it needs the
@@ -417,6 +417,7 @@ type page struct {
 	Form     *formView
 	Audit    *auditView
 	Flags    *flagsView
+	Action   *actionView
 	Cards    []card
 }
 
@@ -545,10 +546,7 @@ func (p *Panel) audit(c *web.Ctx) error {
 		}
 
 		for _, col := range sortedKeys(e.Changes.V) {
-			ch := e.Changes.V[col]
-			row.Changes = append(row.Changes, changeRow{
-				Column: col, Before: fmtAny(ch.Before), After: fmtAny(ch.After), Redacted: ch.Redacted,
-			})
+			row.Changes = append(row.Changes, changeRows(col, e.Changes.V[col])...)
 		}
 
 		av.Entries = append(av.Entries, row)
