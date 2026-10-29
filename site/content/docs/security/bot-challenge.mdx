@@ -20,6 +20,7 @@ Create a Turnstile widget in the Cloudflare dashboard, put the site key in the p
 ```go title="routes/web.go"
 verify := challenge.Turnstile(config.NewSecret(os.Getenv("TURNSTILE_SECRET")))
 verify.Hostname = "example.com" // refuse tokens solved on another site
+verify.Action = "register"      // the widget's data-action (Turnstile only)
 
 r.Group("", func(g *router.Group) {
 	g.Use(challenge.Middleware(verify, nil))
@@ -44,7 +45,7 @@ Only `POST`, `PUT`, `PATCH` and `DELETE` are checked, so the `GET` that renders 
 | Outcome | Response | Security event |
 | --- | --- | --- |
 | Valid token | the handler runs | none |
-| Missing, wrong, expired or reused token, or one solved on another `Hostname` | a validation error on the `challenge` field: **422** for JSON, a redirect back with errors for HTML forms, the `errors.challenge` prop for Inertia | `challenge.failed` |
+| Missing, wrong, expired or reused token, or one solved on another `Hostname` or for another `Action` | a validation error on the `challenge` field: **422** for JSON, a redirect back with errors for HTML forms, the `errors.challenge` prop for Inertia | `challenge.failed` |
 | Provider unreachable, non-200 answer, a secret it rejects, or no secret configured | **503** | `challenge.unavailable` |
 
 The second row fails closed on purpose: when the check cannot run, nobody passes it. If an outage of the provider must not block signups, decide that explicitly with `When` (below), never by skipping errors.
