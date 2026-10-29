@@ -47,6 +47,7 @@ func Web(r *router.Router, app *vukem.App) error {
 		return err
 	}
 
+	r.UseServer(middleware.Gzip())
 	r.UseServer(middleware.StaticFS(
 		resources.Public(),
 		middleware.StaticConfig{Prefix: "/"},
@@ -165,6 +166,8 @@ A <Term tip="A file name that contains a hash of the file's content, such as app
 | only digits | `report-20240101.pdf` | no |
 
 A hash that misses these rules (Vite's `index-DiwrgTda.js`, without a digit) only loses the long cache: the file is revalidated instead. The [Vite](/docs/frontend/vite) build writes its files to `resources/public/build/`, which is the default immutable prefix anyway.
+
+The starter registers `middleware.Gzip()` before `StaticFS`, so text assets (JS, CSS, SVG, JSON) and rendered pages are gzip-compressed for clients that accept it, also when no proxy in front of the app compresses. Keep that order: server middleware registered later runs inside the earlier one. If your proxy or CDN already compresses, you can drop the line. See [Gzip](/docs/basics/middleware#gzip).
 
 Revalidation is cheap. Files on disk carry `Last-Modified`. Files embedded in the binary have no modification time, so the middleware sends an `ETag` instead: a hash of the content, computed on the first request and kept in memory. The browser sends it back in `If-None-Match`, and an unchanged file answers `304 Not Modified` with no body.
 
