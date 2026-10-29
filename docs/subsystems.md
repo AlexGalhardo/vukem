@@ -21,8 +21,8 @@ Mail, cache, storage, events, queue, scheduler, encryption, rate limiting, i18n,
 
 ## Logging & observability
 
-- `app.Log` is a `*slog.Logger`; request logger adds `request_id`, method, route name, status, duration.
-- Context-aware: `vukem.Logger(ctx)` returns the request-scoped logger.
+- `app.Log` is a `*slog.Logger`; the request line (`middleware.Logger`, message `request`) has `method`, `path`, `status`, `duration`, `bytes`, `request_id`, `peer` and `ip`, at ERROR for 5xx, WARN for 4xx, INFO otherwise; no route name or user id. Site page: `/docs/deployment/logging` (also `WithLogger`, dedup, scheduler log lines); release and stability policy: `/docs/deployment/releases-and-stability`.
+- In a handler, `c.Log()` returns the app logger.
 - `Secret` values are redacted via `LogValuer`.
 - Error aggregation: `logging.NewDedup(next, opts)` is a stdlib `slog.Handler` that writes the first ERROR record of a kind (same level, message, handler attributes and `event` / `error` / `err` values) and counts the repeats inside a window; when the window ends (a timer per window, or `Close`), one `repeated` record carries `message`, `count` and `window`. Untracked kinds beyond 1024 per window pass through. The default logger uses it in production with a 1-minute window, in front of Telegram, and `app.Shutdown` flushes pending summaries; `LOG_DEDUP_WINDOW` changes the window (`0` disables, any duration enables it outside production). Loggers passed with `WithLogger` are used as given.
 - OpenTelemetry: `drivers/otel` (BETA) traces every request **in a separate module** to keep OTel out of core ([OpenTelemetry](#opentelemetry)).
