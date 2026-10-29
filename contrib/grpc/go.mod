@@ -6,7 +6,7 @@ require (
 	connectrpc.com/connect v1.21.1
 	connectrpc.com/grpchealth v1.5.0
 	connectrpc.com/grpcreflect v1.3.1
-	github.com/AlexGalhardo/vukem v0.32.0
+	github.com/AlexGalhardo/vukem v0.33.0
 	github.com/google/go-cmp v0.7.0
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20261012220534-4341edf3f941
 	google.golang.org/protobuf v1.36.12
