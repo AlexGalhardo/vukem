@@ -1,0 +1,18 @@
+{
+  "auth": {
+    "failed": "Estas credenciales no coinciden con nuestros registros.",
+    "unauthenticated": "No autenticado.",
+    "unverified": "Tu dirección de correo no ha sido verificada.",
+    "token_ability": "Este token no tiene permiso para {ability}."
+  },
+  "social": {
+    "unknown_provider": "Proveedor de inicio de sesión desconocido.",
+    "state": "El intento de inicio de sesión caducó o no es válido. Inténtalo de nuevo.",
+    "denied": "Se canceló el inicio de sesión.",
+    "failed": "No se pudo iniciar sesión. Inténtalo de nuevo."
+  },
+  "validation": {
+    "unique": "El campo {field} ya está en uso.",
+    "exists": "El campo {field} seleccionado no es válido."
+  }
+}

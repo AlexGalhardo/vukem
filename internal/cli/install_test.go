@@ -1,9 +1,13 @@
 package cli
 
 import (
+	"encoding/json"
+	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -13,8 +17,60 @@ import (
 func TestAvailableLocales(t *testing.T) {
 	t.Parallel()
 
-	if diff := cmp.Diff([]string{"en", "pt-BR"}, availableLocales()); diff != "" {
+	if diff := cmp.Diff([]string{"en", "es", "pt-BR"}, availableLocales()); diff != "" {
 		t.Errorf("availableLocales() diff (-want +got):\n%s", diff)
+	}
+}
+
+// TestAuthCatalogsHaveTheSameKeys guards that every shipped translation of an
+// auth catalog has exactly the keys of the English one: a missing key would
+// silently fall back to English, an extra one is never read.
+func TestAuthCatalogsHaveTheSameKeys(t *testing.T) {
+	t.Parallel()
+
+	keys := func(p string) []string {
+		b, err := fs.ReadFile(scaffoldFS, p)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		var m map[string]any
+		if err := json.Unmarshal(b, &m); err != nil {
+			t.Fatalf("%s: %v", p, err)
+		}
+
+		out := map[string]bool{}
+
+		var walk func(prefix string, m map[string]any)
+		walk = func(prefix string, m map[string]any) {
+			for k, v := range m {
+				if sub, ok := v.(map[string]any); ok {
+					walk(prefix+k+".", sub)
+				} else {
+					out[prefix+k] = true
+				}
+			}
+		}
+		walk("", m)
+
+		return slices.Sorted(maps.Keys(out))
+	}
+
+	err := fs.WalkDir(scaffoldFS, "scaffolds", func(p string, d fs.DirEntry, err error) error {
+		m := localePath.FindStringSubmatch(p)
+		if err != nil || d.IsDir() || len(m) != 2 || m[1] == defaultLocale {
+			return err
+		}
+
+		en := strings.Replace(p, "/lang/"+m[1]+"/", "/lang/"+defaultLocale+"/", 1)
+		if diff := cmp.Diff(keys(en), keys(p)); diff != "" {
+			t.Errorf("%s keys differ from %s (-en +%s):\n%s", p, en, m[1], diff)
+		}
+
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -31,6 +87,7 @@ func TestParseLocales(t *testing.T) {
 		"the fallback is always in":     {in: "pt-BR", want: []string{"en", "pt-BR"}},
 		"duplicates collapse":           {in: " en , en ", want: []string{"en"}},
 		"both":                          {in: "en,pt-BR", want: []string{"en", "pt-BR"}},
+		"three, in order":               {in: "en,pt-BR,es", want: []string{"en", "pt-BR", "es"}},
 		"a locale with no catalog":      {in: "fr", wantErr: true},
 	} {
 		t.Run(name, func(t *testing.T) {
