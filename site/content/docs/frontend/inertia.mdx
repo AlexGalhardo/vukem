@@ -453,7 +453,7 @@ vukem.WithInertia(inertia.Config{
 }),
 ```
 
-On a first visit, the adapter POSTs the page object to the Node SSR server and puts the returned `head` and `body` in `.Head` and `.Inertia`. **Any** failure (server down, timeout, render error, empty body) falls back to client-side rendering, so SSR can never take a page down.
+On a first visit, the adapter POSTs the page object to the Node SSR server and puts the returned `head` and `body` in `.Head` and `.Inertia`. By default **any** failure (server down, timeout, render error, empty body) falls back to client-side rendering, so SSR can never take a page down. Pages that must reach search engines can opt into strict mode instead, described below.
 
 | `SSRConfig` field | Default | Meaning |
 | --- | --- | --- |
@@ -463,14 +463,41 @@ On a first visit, the adapter POSTs the page object to the Node SSR server and p
 | `Timeout` | `3s` | Bounds each render and health check |
 | `Except` | none | Path prefixes always rendered on the client |
 | `Client` | an `http.Client` with `Timeout` | Sends the requests |
-| `OnFailure` | a warning log | Receives an `inertia.SSRError` for each failed render |
+| `OnFailure` | a warning log | Receives an `inertia.SSRError` for each failed render, strict ones included |
+| `Strict` | `false` | Every server-rendered page answers `503` instead of falling back; also registers the `inertia-ssr` readiness check |
 
-`inertia.SSRError` has `Error`, `Type` (`"connection"`, `"render"`, `"browser-api"` or `"component-resolution"`), `Hint`, `BrowserAPI`, `Stack`, `SourceLocation`, `Component` and `URL`.
+`inertia.SSRError` has `Error`, `Type` (`"connection"`, `"render"`, `"browser-api"`, `"component-resolution"`, or `"bundle"` when a strict page finds no `Bundle` file), `Hint`, `BrowserAPI`, `Stack`, `SourceLocation`, `Component` and `URL`.
 
 - `inertia.DisableSSR(ctx)` renders one request on the client.
+- `inertia.RequireSSR(ctx)` makes one request strict.
 - `app.Inertia.SSRHealthy(ctx)` checks the server's `/health` endpoint.
 - `vukem ssr:start` runs `node bootstrap/ssr/ssr.js` and restarts it after a crash (flags `-bundle`, `-runtime`, `-restart-delay`, default `1s`).
 - `vukem ssr:check` probes `/health` (flag `-url`) and exits with an error if it does not answer `200`.
+
+### Strict SSR
+
+A silent fallback hides an SEO incident: the page still answers `200`, but crawlers get an empty shell. Strict mode turns a failed render into `503 Service Unavailable` with `Retry-After: 5`, which crawlers treat as "come back later" instead of indexing the shell. `OnFailure` still runs, so your metrics and alerts see the failure. The `503` body is the normal error page; the SSR error stays in the logs (it is never sent to the client).
+
+- `SSRConfig.Strict: true` makes every server-rendered page strict. A missing `Bundle` file is a failure too (`Type: "bundle"`), so a deploy without the SSR build cannot pass silently. `vukem.WithInertia` also registers `app.Inertia.SSRHealthy` as the `inertia-ssr` readiness check, so `/up?checks=1` answers `503` while the SSR server is down.
+- `inertia.RequireSSR(ctx)` makes one request strict, for example from a middleware on public routes, while logged-in pages keep the fallback. It registers no readiness check: add one with `vukem.WithHealthCheck` or `app.AddHealthCheck("inertia-ssr", app.Inertia.SSRHealthy)` if you want it.
+- `Except` and `inertia.DisableSSR(ctx)` win over both: those pages render on the client and never answer `503`.
+- Inertia visits (`X-Inertia` requests) never use SSR, so strict mode does not affect them.
+
+```go title="routes/web.go" nocompile
+requireSSR := func(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		inertia.RequireSSR(r.Context())
+		next.ServeHTTP(w, r)
+	})
+}
+
+r.Group("/games", func(g *router.Group) {
+	g.Use(requireSSR)
+	g.Get("/{slug}", games.Show)
+})
+```
+
+`RequireSSR` needs `app.Inertia.Middleware` to run first, because it marks the per-request state that middleware stores.
 
 ## Configuration
 
