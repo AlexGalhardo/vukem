@@ -92,7 +92,7 @@ base := []vukem.Option{
 }
 ```
 
-Invalid JSON makes `vukem.New` fail, so you find it at boot, not in production. `WithTranslations` also adds the framework's own messages (`auth.failed`, `validation.unique`, ...) in English and Brazilian Portuguese, for keys your catalogs do not define.
+Invalid JSON makes `vukem.New` fail, so you find it at boot, not in production. `WithTranslations` also adds the framework's own messages (`auth.failed`, `validation.unique`, ...) in English, Spanish and Brazilian Portuguese, for keys your catalogs do not define.
 
 To ship the catalogs inside the binary, pass an embedded file system instead of [`os.DirFS`](https://pkg.go.dev/os#DirFS): an [`embed.FS`](https://pkg.go.dev/embed) narrowed with [`fs.Sub`](https://pkg.go.dev/io/fs#Sub).
 

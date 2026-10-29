@@ -283,7 +283,7 @@ The `install:*` commands copy **your own code** into the project: routes, contro
 | --- | --- | --- | --- |
 | `--social` | string | none | Also add [social login](/docs/security/social-login) for a comma-separated list: `github`, `gitlab`, `discord`, `google`, `microsoft`, `linkedin`, `apple` (`x` is refused: X sends no email) |
 | `--2fa` | bool | `false` | Also add [two-factor authentication](/docs/security/two-factor) (TOTP) |
-| `--locales` | string | the project's locales, else `en` | Message catalogs to write, comma separated (`en,pt-BR`); `en` is always written |
+| `--locales` | string | the project's locales, else `en` | Message catalogs to write, comma separated (`en,es,pt-BR` ship catalogs); `en` is always written |
 | `--force` | bool | `false` | Overwrite existing files |
 
 - It writes the shared core (users, accounts, tokens, mails) once; `app/accounts/accounts.go` marks it as installed.

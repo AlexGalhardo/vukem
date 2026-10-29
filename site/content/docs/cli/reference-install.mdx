@@ -47,7 +47,7 @@ vukem install:auth [flags]
 | --- | --- | --- | --- |
 | `-social` | string | none | Also add social login for a comma-separated list: `github`, `gitlab`, `discord`, `google`, `microsoft`, `linkedin`, `apple`. `x` is refused because X sends no email. |
 | `-2fa` | bool | `false` | Also add TOTP two-factor authentication. Users turn it on at `/user/two-factor`. |
-| `-locales` | string | the project's locales, else `en` | Message catalogs to write, comma separated, such as `en,pt-BR`. `en` is always written because it is the fallback. |
+| `-locales` | string | the project's locales, else `en` | Message catalogs to write, comma separated, such as `en,pt-BR`. Catalogs ship for `en`, `es` and `pt-BR`; another locale is a usage error (translate a generated catalog instead). `en` is always written because it is the fallback. |
 | `-force` | bool | `false` | Overwrite existing files. |
 
 **Writes**: the shared core (users and accounts, tokens, mails, migrations `create_users_table` and `create_auth_tables`), pages, controllers, routes and tests. Pages follow your frontend: `html/template` for HTMX, or React, Vue or Svelte pages when `package.json` lists an Inertia adapter. `app/accounts/accounts.go` marks the core as installed. Updates `routes/registry.go`.

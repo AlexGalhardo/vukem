@@ -1,0 +1,15 @@
+{
+  "auth": {
+    "two_factor": {
+      "enabled": "La autenticación en dos pasos está activada.",
+      "disabled": "La autenticación en dos pasos está desactivada.",
+      "already_enabled": "La autenticación en dos pasos ya está activada.",
+      "not_enabled": "La autenticación en dos pasos no está activada.",
+      "invalid_code": "El código no es válido.",
+      "code_required": "Introduce el código de tu aplicación de autenticación o un código de recuperación.",
+      "invalid_recovery_code": "El código de recuperación no es válido.",
+      "wrong_password": "La contraseña es incorrecta.",
+      "login_expired": "Tu inicio de sesión caducó. Vuelve a iniciar sesión."
+    }
+  }
+}
