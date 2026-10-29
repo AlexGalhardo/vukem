@@ -141,14 +141,20 @@ func runHealthCheck(ctx context.Context, check *healthCheck) error {
 	done := make(chan error, 1)
 
 	go func() {
-		defer check.running.Store(false)
+		var err error
+
+		// Clear running before publishing the result: a probe that starts
+		// right after this one returns must not see the finished run as busy.
 		defer func() {
 			if p := recover(); p != nil {
-				done <- fmt.Errorf("vukem: health check panicked: %v", p)
+				err = fmt.Errorf("vukem: health check panicked: %v", p)
 			}
+
+			check.running.Store(false)
+			done <- err
 		}()
 
-		done <- check.fn(ctx)
+		err = check.fn(ctx)
 	}()
 
 	select {
