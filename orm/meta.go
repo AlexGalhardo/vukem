@@ -93,6 +93,9 @@ type field struct {
 	column string
 	index  []int
 	typ    reflect.Type
+	// readonly columns are read but never written by Create, CreateMany
+	// or Update (orm:"readonly"): generated or trigger-maintained columns.
+	readonly bool
 }
 
 type meta struct {
@@ -171,7 +174,7 @@ func buildMeta(rt reflect.Type) *meta {
 			continue // embedded duplicates: the shallowest field wins (VisibleFields order)
 		}
 
-		fd := field{column: col, index: f.Index, typ: f.Type}
+		fd := field{column: col, index: f.Index, typ: f.Type, readonly: columnReadonly(rt, f)}
 		m.fields = append(m.fields, fd)
 		m.byColumn[col] = fd
 
@@ -213,6 +216,24 @@ func buildMeta(rt reflect.Type) *meta {
 	}
 
 	return m
+}
+
+// columnReadonly parses the orm tag of a column field; "readonly" is its
+// only option.
+func columnReadonly(rt reflect.Type, f reflect.StructField) bool {
+	readonly := false
+
+	for opt := range strings.SplitSeq(f.Tag.Get("orm"), ",") {
+		switch strings.TrimSpace(opt) {
+		case "readonly":
+			readonly = true
+		case "":
+		default:
+			panic(fmt.Sprintf("orm: %s.%s has unknown orm tag option %q", rt, f.Name, opt))
+		}
+	}
+
+	return readonly
 }
 
 // keysOf returns the primary key columns of rt: CompositeKeyer, then
