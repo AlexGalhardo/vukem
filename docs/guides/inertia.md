@@ -154,4 +154,4 @@ vukem build        # vite build into resources/public/build, then go build into 
 
 The asset version sent to the Inertia client is the hash of the Vite manifest, so a deploy with new assets makes open pages reload. Deploy `bin/app` as in the [HTMX guide](htmx.md#build-and-deploy).
 
-Server-side rendering is off by default. To enable it, set `inertia.Config{SSR: &inertia.SSRConfig{Bundle: "bootstrap/ssr/ssr.js"}}`, build the SSR bundle, and run `vukem ssr:start` beside the app (it restarts the Node server when it crashes; `vukem ssr:check` probes `/health`). Any SSR failure falls back to client-side rendering.
+Server-side rendering is off by default. To enable it, set `inertia.Config{SSR: &inertia.SSRConfig{Bundle: "bootstrap/ssr/ssr.js"}}`, build the SSR bundle, and run `vukem ssr:start` beside the app (it restarts the Node server when it crashes; `vukem ssr:check` probes `/health`). Any SSR failure falls back to client-side rendering, unless `SSRConfig.Strict` or `inertia.RequireSSR(ctx)` makes the page strict: it then answers `503` with `Retry-After` (see [Strict SSR](https://vukem.dev/docs/frontend/inertia#strict-ssr)).

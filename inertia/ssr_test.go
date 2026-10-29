@@ -85,6 +85,10 @@ func ssrHarness(t *testing.T, ssr *inertia.SSRConfig) (*harness, *[]inertia.SSRE
 			inertia.DisableSSR(c.Context())
 			return inertia.Render(c, "Plain", nil)
 		})
+		r.Get("/required", func(c *web.Ctx) error {
+			inertia.RequireSSR(c.Context())
+			return inertia.Render(c, "Required", nil)
+		})
 	}), &failures
 }
 
@@ -236,5 +240,79 @@ func TestSSRDevEndpointAndHealth(t *testing.T) {
 	down, _ := inertia.New(inertia.Config{SSR: &inertia.SSRConfig{URL: "http://127.0.0.1:1"}})
 	if err := down.SSRHealthy(t.Context()); err == nil {
 		t.Error("SSRHealthy() on a closed port = nil")
+	}
+}
+
+func TestSSRStrictAnswers503(t *testing.T) {
+	t.Parallel()
+
+	broken := func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = io.WriteString(w, `{"error":"window is not defined","type":"browser-api"}`)
+	}
+	missing := filepath.Join(t.TempDir(), "ssr.js")
+
+	tests := []struct {
+		name     string
+		ssr      func(url string) *inertia.SSRConfig
+		path     string
+		wantCode int
+		wantType string
+	}{
+		{"strict render error", func(u string) *inertia.SSRConfig {
+			return &inertia.SSRConfig{URL: u, Strict: true}
+		}, "/events/1", http.StatusServiceUnavailable, "browser-api"},
+		{"strict unreachable", func(string) *inertia.SSRConfig {
+			return &inertia.SSRConfig{URL: "http://127.0.0.1:1", Strict: true}
+		}, "/events/1", http.StatusServiceUnavailable, "connection"},
+		{"strict missing bundle", func(u string) *inertia.SSRConfig {
+			return &inertia.SSRConfig{URL: u, Bundle: missing, Strict: true}
+		}, "/events/1", http.StatusServiceUnavailable, "bundle"},
+		{"RequireSSR route", func(u string) *inertia.SSRConfig {
+			return &inertia.SSRConfig{URL: u}
+		}, "/required", http.StatusServiceUnavailable, "browser-api"},
+		{"other route falls back", func(u string) *inertia.SSRConfig {
+			return &inertia.SSRConfig{URL: u}
+		}, "/events/1", http.StatusOK, "browser-api"},
+		{"DisableSSR beats Strict", func(u string) *inertia.SSRConfig {
+			return &inertia.SSRConfig{URL: u, Strict: true}
+		}, "/plain", http.StatusOK, ""},
+		{"Except beats Strict", func(u string) *inertia.SSRConfig {
+			return &inertia.SSRConfig{URL: u, Strict: true, Except: []string{"/admin"}}
+		}, "/admin", http.StatusOK, ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			srv := newSSRServer(t, broken)
+			hs, failures := ssrHarness(t, tt.ssr(srv.URL))
+
+			rec := hs.do(t, http.MethodGet, tt.path, nil)
+			if rec.Code != tt.wantCode {
+				t.Fatalf("GET %s = %d, want %d: %s", tt.path, rec.Code, tt.wantCode, rec.Body.String())
+			}
+
+			if tt.wantCode == http.StatusServiceUnavailable {
+				if got := rec.Header().Get("Retry-After"); got == "" {
+					t.Error("Retry-After header missing on 503")
+				}
+
+				if body := rec.Body.String(); strings.Contains(body, csrMarker) ||
+					strings.Contains(body, "window is not defined") {
+					t.Errorf("503 body leaks a client shell or SSR detail: %s", body)
+				}
+			}
+
+			var gotType string
+			if len(*failures) > 0 {
+				gotType = (*failures)[0].Type
+			}
+
+			if len(*failures) > 1 || gotType != tt.wantType {
+				t.Errorf("failures = %+v, want type %q", *failures, tt.wantType)
+			}
+		})
 	}
 }

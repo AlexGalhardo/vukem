@@ -34,6 +34,7 @@ import (
 	"github.com/AlexGalhardo/vukem/database"
 	"github.com/AlexGalhardo/vukem/errs"
 	"github.com/AlexGalhardo/vukem/i18n"
+	"github.com/AlexGalhardo/vukem/inertia"
 	"github.com/AlexGalhardo/vukem/internal/testutil"
 	"github.com/AlexGalhardo/vukem/mail"
 	"github.com/AlexGalhardo/vukem/middleware"
@@ -3012,6 +3013,23 @@ func TestWithVersionOnHealthEndpoints(t *testing.T) {
 				t.Errorf("ReadyHandler = %s, want %s", body, tt.want)
 			}
 		})
+	}
+}
+
+// VF-002 (HexaScore): a strict SSR app must report the SSR server in its
+// readiness, a fall-back one must not fail readiness when SSR is down.
+func TestWithInertiaStrictSSRHealthCheck(t *testing.T) {
+	t.Parallel()
+
+	for _, strict := range []bool{true, false} {
+		app := newTestApp(t, WithInertia(inertia.Config{
+			SSR: &inertia.SSRConfig{URL: "http://127.0.0.1:1", Strict: strict},
+		}))
+
+		rec := doReq(t, app, "/up?checks=1")
+		if got := strings.Contains(rec.Body.String(), `"inertia-ssr"`); got != strict || (rec.Code == 503) != strict {
+			t.Errorf("Strict=%v: /up?checks=1 = %d %s", strict, rec.Code, rec.Body.String())
+		}
 	}
 }
 
