@@ -14,7 +14,7 @@ It works for the HTMX starter and for Inertia apps (React, Vue, Svelte): the sha
 
 | File | Contents |
 | --- | --- |
-| `config/billing.go` | `config.Billing{Key, WebhookSecret, Plans}` from `STRIPE_KEY`, `STRIPE_WEBHOOK_SECRET` and one `STRIPE_PRICE_<PLAN>` per plan; the plans (`basic`, `pro`) are listed in `plans()` |
+| `config/billing.go` | `config.Billing{Key, WebhookSecret, Plans, Currencies}` from `STRIPE_KEY`, `STRIPE_WEBHOOK_SECRET`, one `STRIPE_PRICE_<PLAN>` per plan and `STRIPE_CURRENCIES`; the plans (`basic`, `pro`, or the names given with `-plans pro,business`) are listed in `plans()` |
 | `database/migrations/<ts>_add_billing_tables.go` | `users.stripe_customer_id` (nullable, unique) and a `subscriptions` table: `user_id`, `stripe_subscription_id` (unique), `status`, `price_id`, `current_period_end`, `cancel_at_period_end`, timestamps |
 | `app/models/billing.go` | `models.Billable` (the Stripe columns of `users`, so `User` is untouched) and `models.Subscription` with `Valid()` (`active` or `trialing`) |
 | `app/billing/billing.go` | The `Billing` service: `Customer`, `Checkout`, `Portal`, `Current`, `SyncSubscription`, `HandleWebhook`, the `Webhook` mount and the `Subscribed`/`OnPlan` middleware |
@@ -65,6 +65,7 @@ r.Get("/exports", exports).Use(auth.Required(acc.Web), b.OnPlan("pro"))
 | `STRIPE_KEY` | A restricted key (`rk_…`) with write access to Customers, Checkout Sessions and Customer portal and read access to Subscriptions; a secret key (`sk_…`) works but logs a warning |
 | `STRIPE_WEBHOOK_SECRET` | The endpoint signing secret (`whsec_…`) |
 | `STRIPE_PRICE_<PLAN>` | A recurring price id (`price_…`) per plan in `config/billing.go` |
+| `STRIPE_CURRENCIES` | Optional lower-case ISO 4217 codes a checkout may ask for (`brl,usd,eur`): the form's `currency` field is passed to the Checkout Session, so one price per plan with `currency_options` serves every currency; any other value is a 422 before Stripe is called, and a malformed entry fails `Validate` |
 
 In production the app refuses to boot while any of them is missing. Elsewhere billing answers 503 until they are set, and the webhook refuses every request without a signing secret.
 

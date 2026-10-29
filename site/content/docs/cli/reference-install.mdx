@@ -207,12 +207,15 @@ vukem install:billing [flags]
 | Flag | Type | Default | What it does |
 | --- | --- | --- | --- |
 | `-force` | bool | `false` | Overwrite existing files. |
+| `-plans` | string | `basic,pro` | Comma-separated plan names to sell, in display order (lower-case letters, digits and `_`), e.g. `-plans pro,business`. |
 
-**Needs** `install:auth` first. **Writes** the plans config, the billing migration (`add_billing_tables`), `app/controllers/account/billing_page.go`, `resources/views/billing/show.html` (or Inertia pages), `routes/billing.go`, the webhook handler and tests with a fake Stripe API. **Routes**: `GET /billing`, `POST /billing/checkout/{plan}`, `POST /billing/portal`, `POST /stripe/webhook`. Appends `STRIPE_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_BASIC` and `STRIPE_PRICE_PRO` to `.env.example`. Requires `github.com/AlexGalhardo/vukem/contrib/stripe` at the latest release (a `replace` to your checkout when the framework itself is replaced).
+**Needs** `install:auth` first. **Writes** the plans config, the billing migration (`add_billing_tables`), `app/controllers/account/billing_page.go`, `resources/views/billing/show.html` (or Inertia pages), `routes/billing.go`, the webhook handler and tests with a fake Stripe API. **Routes**: `GET /billing`, `POST /billing/checkout/{plan}`, `POST /billing/portal`, `POST /stripe/webhook`. Appends `STRIPE_KEY`, `STRIPE_WEBHOOK_SECRET`, one `STRIPE_PRICE_<PLAN>` per plan (`STRIPE_PRICE_BASIC` and `STRIPE_PRICE_PRO` by default) and `STRIPE_CURRENCIES` to `.env.example`. Requires `github.com/AlexGalhardo/vukem/contrib/stripe` at the latest release (a `replace` to your checkout when the framework itself is replaced).
 
 | Message | Fix |
 | --- | --- |
 | `install:billing bills the users of install:auth: run vukem install:auth first` | Install auth first. |
+| `install:billing: plan name "gold-tier" must be a lower-case letter followed by letters, digits or _` | Use names valid in a URL and in `STRIPE_PRICE_<PLAN>`. |
+| `install:billing: plan "pro" is listed twice` | List each plan once. |
 
 ```bash
 vukem install:billing

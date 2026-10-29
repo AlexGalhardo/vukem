@@ -44,6 +44,8 @@ var (
 	// ErrSubscriptionRequired answers JSON clients without a subscription.
 	ErrSubscriptionRequired = errs.New(http.StatusPaymentRequired, "A subscription is required.")
 
+	errUnsupportedCurrency = errs.New(http.StatusUnprocessableEntity, "This currency is not available.")
+
 	errAlreadySubscribed = errs.New(
 		http.StatusConflict,
 		"You already have a subscription: manage it in the billing portal.",
@@ -199,12 +201,18 @@ func (b *Billing) Customer(ctx context.Context, user models.User) (string, error
 }
 
 // Checkout starts a Stripe Checkout Session in subscription mode for the
-// plan named plan and returns its URL. Access starts when the webhook
+// plan named plan and returns its URL. currency (lower case) charges one
+// of config.Billing.Currencies through the price's currency_options; ""
+// uses the price's default currency. Access starts when the webhook
 // arrives, not when the customer comes back.
-func (b *Billing) Checkout(ctx context.Context, user models.User, plan string) (string, error) {
+func (b *Billing) Checkout(ctx context.Context, user models.User, plan, currency string) (string, error) {
 	p, ok := b.Config.Plan(plan)
 	if !ok || p.Price == "" {
 		return "", errs.ErrNotFound
+	}
+
+	if currency != "" && !b.Config.Accepts(currency) {
+		return "", errUnsupportedCurrency
 	}
 
 	if b.Stripe == nil {
@@ -224,7 +232,7 @@ func (b *Billing) Checkout(ctx context.Context, user models.User, plan string) (
 
 	// No payment_method_types: Stripe picks the payment methods enabled
 	// in the Dashboard.
-	cs, err := b.Stripe.CreateCheckoutSession(ctx, stripe.Params{
+	params := stripe.Params{
 		"mode":                "subscription",
 		"customer":            customer,
 		"client_reference_id": user.AuthID(),
@@ -232,7 +240,12 @@ func (b *Billing) Checkout(ctx context.Context, user models.User, plan string) (
 		"subscription_data":   stripe.Params{"metadata": map[string]string{"user_id": user.AuthID()}},
 		"success_url":         b.URL + "/billing?checkout=success",
 		"cancel_url":          b.URL + "/billing",
-	})
+	}
+	if currency != "" {
+		params["currency"] = currency
+	}
+
+	cs, err := b.Stripe.CreateCheckoutSession(ctx, params)
 	if err != nil {
 		return "", err
 	}

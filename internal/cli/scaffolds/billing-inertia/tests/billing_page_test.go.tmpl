@@ -15,19 +15,19 @@ func TestBillingPage(t *testing.T) {
 
 	c.Get("/billing").AssertInertia("Billing").
 		HasProp("plans", 2).
-		PropEquals("plans.1.name", "pro").
+		PropEquals("plans.0.name", "{{.Plan}}").
 		PropEquals("subscribed", false).
 		PropEquals("subscription", nil)
 
 	setCustomer(t, app, u)
-	f.setSubscription("active", "price_pro")
+	f.setSubscription("active", "price_{{.Plan}}")
 	postWebhook(t, app, "evt_1", "customer.subscription.created", map[string]any{"id": "sub_1"}).AssertOK()
 
 	c.Get("/billing").AssertInertia("Billing").
 		PropEquals("subscribed", true).
-		PropEquals("subscription.plan", "Pro").
+		PropEquals("subscription.plan", "{{.PlanLabel}}").
 		PropEquals("subscription.status", "active").
-		PropEquals("plans.1.current", true)
+		PropEquals("plans.0.current", true)
 
 	// Inertia visits leave for Stripe with a full page load.
 	c.Inertia("").PostJSON("/billing/portal", nil).
