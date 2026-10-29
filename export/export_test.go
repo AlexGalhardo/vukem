@@ -525,3 +525,63 @@ func TestSafeCell(t *testing.T) {
 		}
 	}
 }
+
+// errWriter fails every write.
+type errWriter struct{ err error }
+
+func (w errWriter) Write([]byte) (int, error) { return 0, w.err }
+
+func TestEncodeCSV(t *testing.T) {
+	t.Parallel()
+
+	header := []string{"id", "name"}
+	us := []user{{1, "Ana"}, {2, "=cmd"}, {3, "Bia"}}
+
+	t.Run("matches the CSV download byte for byte", func(t *testing.T) {
+		t.Parallel()
+
+		for name, opts := range map[string][]export.Option{
+			"default": nil, "bom": {export.WithBOM()}, "raw": {export.InsecureRawCells()},
+		} {
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", nil)
+
+			if err := export.CSV(rec, req, "u.csv", header, seq(us...), record, opts...); err != nil {
+				t.Fatal(err)
+			}
+
+			var buf bytes.Buffer
+			if err := export.EncodeCSV(&buf, header, seq(us...), record, opts...); err != nil {
+				t.Fatalf("%s: EncodeCSV() = %v", name, err)
+			}
+
+			if diff := cmp.Diff(rec.Body.String(), buf.String()); diff != "" {
+				t.Errorf("%s: EncodeCSV differs from CSV (-CSV +EncodeCSV):\n%s", name, diff)
+			}
+		}
+	})
+
+	t.Run("a failing row returns its error after the rows before it", func(t *testing.T) {
+		t.Parallel()
+
+		boom := errors.New("boom")
+
+		var buf bytes.Buffer
+		if err := export.EncodeCSV(&buf, header, failing(boom, us[0]), record); !errors.Is(err, boom) {
+			t.Fatalf("EncodeCSV() = %v, want %v", err, boom)
+		}
+
+		if got, want := buf.String(), "id,name\n1,Ana\n"; got != want {
+			t.Errorf("written = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("a failing writer is reported", func(t *testing.T) {
+		t.Parallel()
+
+		disk := errors.New("disk full")
+		if err := export.EncodeCSV(errWriter{disk}, header, seq(us...), record); !errors.Is(err, disk) {
+			t.Fatalf("EncodeCSV() = %v, want %v", err, disk)
+		}
+	})
+}
