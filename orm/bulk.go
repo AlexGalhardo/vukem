@@ -79,7 +79,7 @@ func createMany[T any](ctx context.Context, ex database.Executor, models []T, li
 	var fields []field
 
 	for _, f := range m.fields {
-		if !genID || f.column != m.pk {
+		if !f.readonly && (!genID || f.column != m.pk) {
 			fields = append(fields, f)
 		}
 	}
