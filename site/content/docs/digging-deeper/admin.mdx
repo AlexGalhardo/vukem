@@ -277,12 +277,62 @@ Every route needs the guard, the panel ability (`admin` by default) and then the
 | POST | `/admin/{slug}/{id}` | `admin.{slug}.update` | `update` on the record |
 | GET | `/admin/{slug}/{id}/delete` | `admin.{slug}.delete` | `delete` on the record (confirmation page) |
 | POST | `/admin/{slug}/{id}/delete` | `admin.{slug}.destroy` | `delete` on the record |
+| GET | `/admin/{slug}/{id}/actions/{name}` | none | the action's `Name` on the record (confirmation page) |
+| POST | `/admin/{slug}/{id}/actions/{name}` | none | the action's `Name` on the record |
+| GET / POST | `/admin/{slug}/_bulk/{name}` (`Bulk` actions only) | none | the action's `Name` on every selected record |
 
 The ability names are constants: `admin.AbilityAdmin`, `AbilityAudit`, `AbilityFlags`, `AbilityViewAny`, `AbilityView`, `AbilityCreate`, `AbilityUpdate` and `AbilityDelete`. The flags routes exist only when `Config.Flags` is set. `/admin/_assets/admin.css` and `/admin/_assets/htmx.min.js` are public and cached for an hour.
 
 The navigation only shows the resources the user may `viewAny`, and the audit and flags links only to users with those abilities. The dashboard counts records of the resources the user may list.
 
 Lists answer htmx partial requests (search, sort, pagination) with only the list block, and send `Vary: HX-Request` so caches keep the two versions apart. After a save, the panel redirects to the record when the user may `view` it, otherwise to the list, and shows a flash message such as "Post saved." (session key `admin.FlashKey`, `admin.success`).
+
+## Custom actions
+
+Moderation needs more than create, edit and delete: approve a suggestion, reject it with a reason, approve twenty at once. `Resource.Actions` adds such operations:
+
+```go title="app/admin/admin.go"
+admin.NewResource[models.Suggestion](requests.SuggestionSchema).Actions(
+	admin.Action[models.Suggestion]{
+		Name: "approve",
+		Bulk: true, // also on the rows selected in the list
+		Run: func(ctx context.Context, tx *database.Tx,
+			s *models.Suggestion, _ string) error {
+			s.Status = "approved"
+			return nil
+		},
+	},
+	admin.Action[models.Suggestion]{
+		Name:   "reject",
+		Label:  "Reject with reason",
+		Reason: true,
+		Run: func(ctx context.Context, tx *database.Tx,
+			s *models.Suggestion, reason string) error {
+			s.Status, s.RejectReason = "rejected", reason
+			return nil
+		},
+	},
+)
+```
+
+| Field | Meaning |
+| --- | --- |
+| `Name` | the policy ability, the URL segment and the audit action: lower camel (`[a-z][a-zA-Z0-9]*`), at most 16 characters, not `viewAny`, `view`, `create`, `update`, `delete` or `edit` |
+| `Label` | the button text (default: `Name` humanized, "Approve") |
+| `Reason` | the confirmation page asks for a reason: required, at most `admin.MaxReason` (1000) characters, passed to `Run` and stored in the audit entry under `admin.ReasonKey` (`_reason`) |
+| `Bulk` | adds a checkbox per row and an "Approve selected" button to the list |
+| `Run` | changes the record (the panel saves changed fields with `orm.Update` afterwards) and may write anything else through `tx` |
+
+What happens on a run:
+
+1. The button opens a confirmation page (`GET`); the action itself is a CSRF-checked `POST`.
+2. The user needs the policy method named after the action on the record: `Approve(ctx, user, *Suggestion) bool` for `approve`. A policy without it denies with **403**, like every other admin ability.
+3. `Run`, the save and one audit entry per record share **one transaction**: an error from any of them rolls everything back.
+4. The panel redirects to the record (row action) or the list (bulk action) with a flash message.
+
+A bulk action takes 1 to `admin.MaxBulk` (100) selected ids. Each record is loaded and authorized first; a bad id, a missing record or one record the user may not act on fails the whole selection with nothing changed.
+
+The record page shows a button for each action the user may run on that record. To assign records to a moderator, add an `assignee_id` column to the form, or set it from an action such as `Name: "assignToMe"`.
 
 ## The audit log
 
@@ -293,13 +343,13 @@ Every create, every update that changed something and every delete writes an `ad
 | `ActorID` | `actor_id` | the `AuthID()` of the user who made the change |
 | `Resource` | `resource` | the resource slug (`posts`), or `_flags` |
 | `RecordID` | `record_id` | the primary key of the record |
-| `Action` | `action` | `admin.ActionCreate`, `ActionUpdate` or `ActionDelete` |
+| `Action` | `action` | `admin.ActionCreate`, `ActionUpdate`, `ActionDelete` or a custom action's `Name` |
 | `Changes` | `changes` | JSON: column → `admin.Change` with `before` and `after` |
 | `CreatedAt` | `created_at` | when it happened |
 
 For a sensitive column, the `Change` is only `{"redacted": true}`: the log records that it changed, never the value. The table is `admin.AuditTable` (`admin_audit_logs`), created by `admin.Migration("<timestamp>_create_admin_audit_logs_table")`, which `install:admin` registers for you.
 
-Browse the log at `/admin/_audit`, newest first, 50 entries per page. `?resource=posts` narrows it to one resource (only registered slugs and `_flags` are accepted).
+Browse the log at `/admin/_audit`, newest first, 50 entries per page. `?resource=posts` narrows it to one resource (only registered slugs and `_flags` are accepted). Custom actions appear with their `Name` as the action. When both sides of a change are JSON objects (a JSON column), the page lists only the keys that differ, as `column.key` and recursively, instead of two whole documents.
 
 ## The feature flags page
 
@@ -346,7 +396,7 @@ panel, err := vadmin.New(vadmin.Config{
 
 ## Customizing the look
 
-`Config.Views` takes any [`fs.FS`](https://pkg.go.dev/io/fs#FS). A file in it replaces the embedded template with the same path; every other template keeps the original. The paths are `layouts/admin.html`, `index.html`, `show.html`, `form.html`, `delete.html`, `dashboard.html`, `audit.html`, `flags.html` and `partials/pager.html`.
+`Config.Views` takes any [`fs.FS`](https://pkg.go.dev/io/fs#FS). A file in it replaces the embedded template with the same path; every other template keeps the original. The paths are `layouts/admin.html`, `index.html`, `show.html`, `form.html`, `delete.html`, `dashboard.html`, `audit.html`, `flags.html`, `action.html` and `partials/pager.html`.
 
 `admin.Templates()` returns the embedded originals, so you can copy one and edit it:
 

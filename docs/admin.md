@@ -50,7 +50,7 @@ return panel.Mount(r)
 | `Prefix` | `/admin` | URL prefix |
 | `Ability` | `admin` | Gate ability required on every page |
 | `Title` | `Admin` | Header text |
-| `Views` | embedded | `fs.FS` overriding templates by path (`layouts/admin.html`, `index.html`, `show.html`, `form.html`, `delete.html`, `dashboard.html`, `audit.html`, `flags.html`, `partials/pager.html`); `admin.Templates()` returns the originals to copy |
+| `Views` | embedded | `fs.FS` overriding templates by path (`layouts/admin.html`, `index.html`, `show.html`, `form.html`, `delete.html`, `dashboard.html`, `audit.html`, `flags.html`, `action.html`, `partials/pager.html`); `admin.Templates()` returns the originals to copy |
 
 ## Resources
 
@@ -85,8 +85,14 @@ Configuration mistakes (unknown or sensitive columns in lists, a schema key with
 | GET | `/admin/{slug}/{id}` | `view` on the record |
 | GET / POST | `/admin/{slug}/{id}/edit`, `/admin/{slug}/{id}` | `update` on the record |
 | GET / POST | `/admin/{slug}/{id}/delete` | `delete` on the record (GET is the confirmation page) |
+| GET / POST | `/admin/{slug}/{id}/actions/{name}` | the action's `Name` on the record (GET is the confirmation page) |
+| GET / POST | `/admin/{slug}/_bulk/{name}` (`Bulk` actions) | the action's `Name` on every selected record |
 
 Route names are `admin.dashboard`, `admin.audit`, `admin.flags`, `admin.flags.update` and `admin.<slug>.<action>`. Lists answer htmx partial requests (search, sort, pagination) with the `list` block only.
+
+## Custom actions
+
+`Resource.Actions(admin.Action[T]{Name, Label, Reason, Bulk, Run})` adds operations such as "approve" or "reject with reason". `Name` (lower camel, at most 16 characters, not a built-in ability or `edit`) is the policy ability (method `Approve` for `approve`), the URL segment and the audit action. Each run goes through a confirmation page and one transaction: `Run(ctx, tx, rec, reason)` changes the record or writes through `tx`, the panel saves changed fields with `orm.Update` and writes an audit entry per record (the reason under `admin.ReasonKey`, `_reason`). `Reason` requires a reason (at most `admin.MaxReason`, 1000 characters; 422 and the form again otherwise). `Bulk` adds checkboxes and a button to the list; the selection (1 to `admin.MaxBulk`, 100, ids) is authorized record by record and a bad id, a missing record or one denial fails the whole batch before anything runs (`TestSecurity_A01_AdminActionsRequirePolicy`, `TestAdminRowAction`, `TestAdminActionReason`, `TestAdminBulkAction`). Assigning a record to a moderator is a column (`assignee_id`) edited by a form or set by an action.
 
 ## Security
 
@@ -100,7 +106,7 @@ Route names are `admin.dashboard`, `admin.audit`, `admin.flags`, `admin.flags.up
 
 ## Audit log
 
-Every create, update (when something changed) and delete writes an `admin.AuditLog` row in the same transaction: actor (`AuthID` of the guard's user), resource slug, record id, action and a JSON map `column → {before, after}` of the changed columns (`{redacted: true}` for sensitive ones). Register the table with `admin.Migration("<timestamp>_create_admin_audit_logs_table")` (`install:admin` does). The log is browsable at `/admin/_audit` with the `viewAuditLogs` ability.
+Every create, update (when something changed) and delete writes an `admin.AuditLog` row in the same transaction: actor (`AuthID` of the guard's user), resource slug, record id, action and a JSON map `column → {before, after}` of the changed columns (`{redacted: true}` for sensitive ones). Register the table with `admin.Migration("<timestamp>_create_admin_audit_logs_table")` (`install:admin` does). The log is browsable at `/admin/_audit` with the `viewAuditLogs` ability. When both sides of a change are JSON objects (a JSON column, stored as a map or as JSON text), the page lists only the differing keys as `column.key` (recursively) instead of two whole documents.
 
 ## Feature flags
 

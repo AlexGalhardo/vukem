@@ -33,9 +33,15 @@
 {{block "list" .}}
 <div id="admin-list">
 	<p class="total">{{.List.Total}} {{if eq .List.Total 1}}record{{else}}records{{end}}</p>
+	{{if .List.Bulk}}<form method="get" action="{{.Resource.URL}}" class="bulk">
+	<div class="buttons">
+		{{range .List.Bulk}}<button type="submit" formaction="{{.URL}}">{{.Label}} selected</button>{{end}}
+	</div>
+	{{end}}
 	<table>
 		<thead>
 			<tr>
+				{{if .List.Bulk}}<th scope="col"><span class="visually-hidden">Select</span></th>{{end}}
 				{{range .List.Columns}}
 				<th scope="col"{{with .Sorted}} aria-sort="{{if eq . "asc"}}ascending{{else}}descending{{end}}"{{end}}>
 					{{if .SortURL}}<a href="{{.SortURL}}" hx-get="{{.SortURL}}" hx-target="#admin-list" hx-swap="outerHTML"
@@ -48,6 +54,7 @@
 		<tbody>
 			{{range .List.Rows}}
 			<tr>
+				{{if $.List.Bulk}}<td><input type="checkbox" name="ids" value="{{.ID}}" aria-label="Select {{.ID}}"></td>{{end}}
 				{{range .Cells}}<td>{{.}}</td>{{end}}
 				<td class="actions">
 					{{with .ShowURL}}<a href="{{.}}">View</a>{{end}}
@@ -60,6 +67,7 @@
 			{{end}}
 		</tbody>
 	</table>
+	{{if .List.Bulk}}</form>{{end}}
 	{{template "partials/pager" .List.Pager}}
 </div>
 {{end}}

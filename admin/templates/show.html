@@ -2,6 +2,7 @@
 <div class="toolbar">
 	<h1>{{.Title}}</h1>
 	<div class="buttons">
+		{{range .Record.Actions}}<a class="button" href="{{.URL}}">{{.Label}}</a>{{end}}
 		{{with .Record.EditURL}}<a class="button" href="{{.}}">Edit</a>{{end}}
 		{{with .Record.DelURL}}<a class="button danger" href="{{.}}">Delete</a>{{end}}
 	</div>
