@@ -52,6 +52,21 @@ type Content struct {
 	data any
 	html string
 	text string
+	// react renders view with the SetReact engine instead of the app views.
+	react bool
+}
+
+// React renders the React Email template name: a page that `email export`
+// wrote into the [vukem.WithReactEmails] directory, with props as its data.
+// The exported HTML holds Go template actions where the component had
+// props, so html/template escapes every prop for its context at send time
+// and no Node process runs on send. The plain-text part is derived from
+// the HTML, without the inbox preview text. A name with no exported page
+// is an error.
+//
+// [vukem.WithReactEmails]: https://pkg.go.dev/github.com/AlexGalhardo/vukem#WithReactEmails
+func React(name string, props any) Content {
+	return Content{view: name, data: props, react: true}
 }
 
 // View renders the html/template page name with data; the plain-text part
@@ -125,6 +140,7 @@ type Mailer struct {
 	from      string
 	transport Transport
 	views     web.Renderer
+	react     web.Renderer
 	// Pointers keep Mailer comparable, as it was before SendLater.
 	enqueue   *Enqueue
 	enqueueTx *EnqueueTx
@@ -136,6 +152,11 @@ type Mailer struct {
 func New(t Transport, from string, views web.Renderer) *Mailer {
 	return &Mailer{from: from, transport: t, views: views}
 }
+
+// SetReact sets the engine that renders [React] contents (the
+// WithReactEmails directory). Call it before the mailer is used;
+// app.Mailer sets it.
+func (m *Mailer) SetReact(r web.Renderer) { m.react = r }
 
 // Transport returns the mailer's transport (tests read the Array).
 func (m *Mailer) Transport() Transport { return m.transport }
@@ -220,6 +241,10 @@ func (m *Mailer) content(ctx context.Context, c Content, msg *Message) error {
 		return nil
 	}
 
+	if c.react {
+		return m.reactContent(ctx, c, msg)
+	}
+
 	if m.views == nil {
 		return errors.New("mail: view content needs a view engine")
 	}
@@ -242,6 +267,26 @@ func (m *Mailer) content(ctx context.Context, c Content, msg *Message) error {
 	} else {
 		msg.Text = textFromHTML(msg.HTML)
 	}
+
+	return nil
+}
+
+func (m *Mailer) reactContent(ctx context.Context, c Content, msg *Message) error {
+	if m.react == nil {
+		return errors.New("mail: React content needs React email templates (vukem.WithReactEmails)")
+	}
+
+	if !m.react.Has(c.view) {
+		return fmt.Errorf("mail: React email %q not found: run the emails build (email export)", c.view)
+	}
+
+	var b bytes.Buffer
+	if err := m.react.Render(ctx, &b, c.view, c.data); err != nil {
+		return fmt.Errorf("mail: render React email %s: %w", c.view, err)
+	}
+
+	msg.HTML = b.String()
+	msg.Text = textFromHTML(msg.HTML)
 
 	return nil
 }
@@ -276,6 +321,9 @@ func address(s string) (string, error) {
 
 var (
 	reBlock = regexp.MustCompile(`(?is)<(script|style|head)[^>]*>.*?</(script|style|head)>`)
+	// reSkip drops React Email's <Preview> inbox text: its text and filler
+	// div hold no tags because html/template escaped them.
+	reSkip  = regexp.MustCompile(`(?is)<div[^>]*data-skip-in-text="true"[^>]*>[^<]*<div>[^<]*</div>\s*</div>`)
 	reBreak = regexp.MustCompile(`(?i)<(br|/p|/div|/h[1-6]|/li|/tr)\s*/?>`)
 	reLink  = regexp.MustCompile(`(?is)<a\s[^>]*href="([^"]*)"[^>]*>(.*?)</a>`)
 	reTag   = regexp.MustCompile(`<[^>]+>`)
@@ -287,6 +335,7 @@ var (
 // "text (url)").
 func textFromHTML(h string) string {
 	s := reBlock.ReplaceAllString(h, "")
+	s = reSkip.ReplaceAllString(s, "")
 	s = reLink.ReplaceAllString(s, "$2 ($1)")
 	s = reBreak.ReplaceAllString(s, "\n")
 	s = reTag.ReplaceAllString(s, "")

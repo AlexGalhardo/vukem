@@ -163,6 +163,7 @@ A line with an invalid key stops the boot with the file and line number, for exa
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error` |
 | `LOG_FORMAT` | `text` (`json` in production) | `text` or `json` |
 | `LOG_DEDUP_WINDOW` | `1m` in production, off elsewhere | Repeated identical errors become one summary per window; `0` turns it off |
+| `LOG_TRUNCATE_IP` | `false` | The request log writes the client's /24 (IPv4) or /48 (IPv6) network instead of its address |
 | `API_VERSION` | `1.0.0` | `info.version` of the [OpenAPI](/docs/rest-apis/openapi) document |
 | `OPENAPI_PREFIX` | empty | Keep only routes under this prefix (such as `/api`) in the OpenAPI document |
 | `OPENAPI_IN_PRODUCTION` | `false` | Serve `/openapi.json` in production too |

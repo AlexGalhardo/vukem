@@ -8,6 +8,7 @@
 package openapi
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -36,7 +37,26 @@ type Info struct {
 	// SecuritySchemes adds or replaces schemes; "bearer" (HTTP bearer
 	// token) is predefined.
 	SecuritySchemes map[string]Schema
+	// License is the API's license (info.license); nil leaves it out.
+	License *License
+	// Security names the schemes every route registered without
+	// api.Register requires (each must be predefined or in
+	// SecuritySchemes). A plain route with .Doc(openapi.Public{}) requires
+	// none. Routes from api.Register keep their api.Op.Security.
+	Security []string
 }
+
+// License is the info.license object: Name plus either an SPDX
+// Identifier or a URL (OpenAPI 3.1 allows one of them, not both).
+type License struct {
+	Name       string `json:"name"`
+	Identifier string `json:"identifier,omitempty"`
+	URL        string `json:"url,omitempty"`
+}
+
+// Public marks a plain route as needing no security when Info.Security
+// sets a default: r.Post("/login", h).Doc(openapi.Public{}).
+type Public struct{}
 
 // Skip hides a route from the document: r.Get(...).Doc(openapi.Skip{}).
 type Skip struct{}
@@ -51,9 +71,10 @@ type Document struct {
 }
 
 type docInfo struct {
-	Title       string `json:"title"`
-	Version     string `json:"version"`
-	Description string `json:"description,omitempty"`
+	Title       string   `json:"title"`
+	Version     string   `json:"version"`
+	Description string   `json:"description,omitempty"`
+	License     *License `json:"license,omitempty"`
 }
 
 type server struct {
@@ -78,6 +99,21 @@ type Operation struct {
 	RequestBody *RequestBody          `json:"requestBody,omitempty"`
 	Responses   map[string]Response   `json:"responses"`
 	Security    []map[string][]string `json:"security,omitempty"`
+}
+
+// MarshalJSON writes a non-nil empty Security as "security": [], the
+// OpenAPI way to say an operation needs no authentication.
+func (o Operation) MarshalJSON() ([]byte, error) {
+	type plain Operation
+
+	if o.Security != nil && len(o.Security) == 0 {
+		return json.Marshal(struct {
+			plain
+			Security []map[string][]string `json:"security"`
+		}{plain(o), o.Security})
+	}
+
+	return json.Marshal(plain(o))
 }
 
 // Parameter is a path or query parameter.
@@ -174,12 +210,21 @@ func Build(routes []router.RouteInfo, info Info) (*Document, error) {
 	s := NewSchemas()
 	doc := &Document{
 		OpenAPI: "3.1.0",
-		Info:    docInfo{Title: info.Title, Version: info.Version, Description: info.Description},
-		Paths:   map[string]map[string]*Operation{},
+		Info: docInfo{
+			Title:       info.Title,
+			Version:     info.Version,
+			Description: info.Description,
+			License:     info.License,
+		},
+		Paths: map[string]map[string]*Operation{},
 	}
 
 	if doc.Info.Title == "" {
 		doc.Info.Title = "API"
+	}
+
+	if l := info.License; l != nil && (l.Name == "" || l.Identifier != "" && l.URL != "") {
+		return nil, errors.New("openapi: Info.License needs a Name and at most one of Identifier and URL")
 	}
 
 	if doc.Info.Version == "" {
@@ -216,6 +261,14 @@ func Build(routes []router.RouteInfo, info Info) (*Document, error) {
 			op.Summary = cmpOr(typed.Summary, op.OperationID)
 		} else {
 			op = plainOperation(s, rt)
+
+			if _, public := rt.Doc.(Public); public {
+				op.Security = []map[string][]string{}
+			} else {
+				for _, name := range info.Security {
+					op.Security = append(op.Security, map[string][]string{name: {}})
+				}
+			}
 		}
 
 		if id := op.OperationID; id != "" {
@@ -248,17 +301,37 @@ func Build(routes []router.RouteInfo, info Info) (*Document, error) {
 			"(check Info.PathPrefix / OPENAPI_PREFIX)", ErrEmptyDocument, info.PathPrefix, documentable)
 	}
 
-	problem := s.For(reflect.TypeFor[web.Problem]())
-	doc.Components.Responses = map[string]Response{
-		"Problem": {
-			Description: "Error (RFC 9457 problem details)",
-			Content:     map[string]MediaType{problemJ: {Schema: problem}},
-		},
-		"ValidationError": {
-			Description: "Validation failed; errors maps each field to its messages",
-			Content:     map[string]MediaType{problemJ: {Schema: problem}},
-		},
+	// Only the error responses an operation references: an unused
+	// component is a lint error.
+	refs := map[string]bool{}
+
+	for _, ops := range doc.Paths {
+		for _, op := range ops {
+			for _, r := range op.Responses {
+				refs[strings.TrimPrefix(r.Ref, "#/components/responses/")] = true
+			}
+		}
 	}
+
+	if refs["Problem"] || refs["ValidationError"] {
+		problem := s.For(reflect.TypeFor[web.Problem]())
+		doc.Components.Responses = map[string]Response{}
+
+		if refs["Problem"] {
+			doc.Components.Responses["Problem"] = Response{
+				Description: "Error (RFC 9457 problem details)",
+				Content:     map[string]MediaType{problemJ: {Schema: problem}},
+			}
+		}
+
+		if refs["ValidationError"] {
+			doc.Components.Responses["ValidationError"] = Response{
+				Description: "Validation failed; errors maps each field to its messages",
+				Content:     map[string]MediaType{problemJ: {Schema: problem}},
+			}
+		}
+	}
+
 	doc.Components.Schemas = s.Components()
 
 	for name := range usedSchemes {
@@ -285,10 +358,14 @@ func plainOperation(s *Schemas, rt router.RouteInfo) *Operation {
 		OperationID: rt.LocalName,
 		Summary:     rt.LocalName,
 		Parameters:  pathParams(s, rt.Path, nil),
-		Responses: map[string]Response{"default": {
-			Description: "Response",
-			Content:     map[string]MediaType{"*/*": {Schema: Schema{}}},
-		}},
+		Responses: map[string]Response{
+			"default": {
+				Description: "Response",
+				Content:     map[string]MediaType{"*/*": {Schema: Schema{}}},
+			},
+			// Every vukem error is problem+json, plain routes included.
+			"4XX": {Ref: "#/components/responses/Problem"},
+		},
 	}
 
 	switch rt.Method {

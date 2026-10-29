@@ -305,6 +305,14 @@ func TestNewProjectEndToEnd(t *testing.T) {
 		t.Fatalf("second install:auth --2fa = %d %s", code, errOut)
 	}
 
+	// --passkeys adds passkey sign-in next to the password (the generated
+	// TestSecurity_A07_Passkey* tests run below).
+	if code, out, errOut := vukem(t, project, "install:auth", "--passkeys"); code != 0 ||
+		!strings.Contains(out, "created routes/passkeys.go") || strings.Contains(out, "created routes/auth.go") ||
+		!strings.Contains(out, "updated database/migrations/registry.go") {
+		t.Fatalf("install:auth --passkeys = %d\n%s%s", code, out, errOut)
+	}
+
 	if env := read(t, project, ".env.example"); !strings.Contains(env, "SOCIAL_GOOGLE_CLIENT_SECRET=") {
 		t.Fatalf(".env.example = %q", env)
 	}
