@@ -245,7 +245,7 @@ api.RegisterWith(g, "POST /keys", api.Op{Name: "keys.store"}, schema,
 	func(c *web.Ctx, in requests.CreateKey) (resources.KeyJSON, error) { ... })
 ```
 
-- Output: JSON with `Op.Status`, or 201 for POST, 204 when the output type is `struct{}`, 200 otherwise. Errors returned by the handler go through the normal problem+json path.
+- Output: JSON with `Op.Status`, or 201 for POST, 204 when the output type is `struct{}`, 200 otherwise; an output of `struct{}` never writes a body, also with an explicit `Op.Status` such as 202 (`TestNoOutputWithStatusSendsNoBody`). Errors returned by the handler go through the normal problem+json path.
 - `Op.ValidateResponse: true` checks the output against its `validate` tags (`z.For[Out]`, Out must be a struct) before writing it, when `web.Services.CheckResponses` is on, like `web.JSONWith`. The app turns it on whenever `APP_ENV` is not `production` (`development` or `test`), so a staging deployment that runs with `APP_ENV=development` also checks, and answers 500 on a mismatch; only `APP_ENV=production` skips it. A mismatch is logged and answered with a generic 500, so contract drift fails loudly.
 - Each typed route carries an `api.Operation` (`router.RouteInfo.Doc`) with its method, full path, params and input/output types for the generators below.
 - Request schema from the input struct (`json` + `validate` tags), response schema from the output type, errors from the problem catalogue.
