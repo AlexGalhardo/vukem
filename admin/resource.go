@@ -80,6 +80,8 @@ type input struct {
 	attrs  map[string]any
 	req    bool
 	enum   []string
+	// virtual marks a schema key without a model column (see Virtual).
+	virtual bool
 }
 
 type filter struct {
@@ -115,7 +117,27 @@ type Resource[T any] struct {
 	parse      func(in map[string]any) (reflect.Value, error)
 	computed   []computed[T]
 	beforeSave []func(ctx context.Context, rec *T) error
+	afterSave  []func(ctx context.Context, s Saved[T]) error
+	virtuals   map[string]func(rec *T) any
 	actions    []Action[T]
+}
+
+// Saved describes a create or update to AfterSave hooks.
+type Saved[T any] struct {
+	// Tx is the panel transaction the record was written in: write related
+	// rows through it, and use Tx.AfterCommit for work that must only
+	// happen once the save is committed (events, mail, cache).
+	Tx *database.Tx
+	// Action is ActionCreate or ActionUpdate.
+	Action string
+	// Record is the record as written.
+	Record *T
+	// Before is a copy of the record before the form was applied; nil on
+	// create.
+	Before *T
+	// Virtual holds the parsed values of the submitted Virtual fields, by
+	// schema key.
+	Virtual map[string]any
 }
 
 type computed[T any] struct {
@@ -200,7 +222,11 @@ func (r *Resource[T]) newInput(key string, sf reflect.StructField, prop map[stri
 
 	c, ok := r.byName[col]
 	if !ok {
-		return input{}, fmt.Errorf("schema key %q matches no column of %s", key, r.plural)
+		// A virtual field unless Virtual never declares it (check reports it).
+		in := input{key: key, label: humanize(key), src: sf.Index, attrs: prop, req: req, virtual: true}
+		in.kind, in.enum = inputKind(prop, sf.Type)
+
+		return in, nil
 	}
 
 	if col == r.pk || slices.Contains(protected, col) {
@@ -503,9 +529,44 @@ func (r *Resource[T]) Input(key, kind string) *Resource[T] {
 	return r.fail("unknown schema key %q", key)
 }
 
+// Virtual declares a schema key that maps to no model column: the form shows
+// it, its parsed value reaches AfterSave hooks in Saved.Virtual, and nothing
+// writes it to the record. value renders the current state on the edit form
+// (nil: empty), e.g. a "banned" checkbox from a banned_at column. A schema
+// key without a column that Virtual does not declare is a Register error.
+func (r *Resource[T]) Virtual(key string, value func(rec *T) any) *Resource[T] {
+	i := slices.IndexFunc(r.inputs, func(in input) bool { return in.key == key })
+
+	switch {
+	case i < 0:
+		return r.fail("Virtual(%q): unknown schema key", key)
+	case !r.inputs[i].virtual:
+		return r.fail("Virtual(%q): the key writes column %q", key, r.inputs[i].column)
+	}
+
+	if r.virtuals == nil {
+		r.virtuals = map[string]func(*T) any{}
+	}
+
+	r.virtuals[key] = value
+
+	return r
+}
+
+// AfterSave runs fn after every create and update, inside the panel
+// transaction and before the audit entry is written, with the transaction,
+// the previous record and the Virtual field values (see Saved). Returning an
+// error rolls the whole save back. Changes fn makes to Saved.Record and
+// writes through Saved.Tx appear in the audit diff.
+func (r *Resource[T]) AfterSave(fn func(ctx context.Context, s Saved[T]) error) *Resource[T] {
+	r.afterSave = append(r.afterSave, fn)
+	return r
+}
+
 // BeforeSave runs fn on the record before every create and update (after
 // validation, inside the transaction), e.g. to hash a password or set an
-// owner. Returning an error aborts the write.
+// owner. Returning an error aborts the write. Use AfterSave for side
+// effects that need the transaction.
 func (r *Resource[T]) BeforeSave(fn func(ctx context.Context, rec *T) error) *Resource[T] {
 	r.beforeSave = append(r.beforeSave, fn)
 	return r
@@ -556,6 +617,11 @@ func (r *Resource[T]) check() error {
 	for i := range r.inputs {
 		if r.sensitive[r.inputs[i].column] {
 			r.inputs[i].kind = InputPassword
+		}
+
+		if _, ok := r.virtuals[r.inputs[i].key]; r.inputs[i].virtual && !ok {
+			errs = append(errs, fmt.Errorf("schema key %q matches no column of %s (declare it with Virtual)",
+				r.inputs[i].key, r.plural))
 		}
 	}
 
