@@ -3,6 +3,8 @@ package inertia
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -50,6 +52,26 @@ type SSRConfig struct {
 	// vukem.WithInertia registers SSRHealthy as the "inertia-ssr" readiness
 	// check. RequireSSR makes a single request strict.
 	Strict bool
+	// Cache, when set, keeps successful renders for CacheTTL, keyed by a
+	// SHA-256 of the exact page object sent to the SSR server (component,
+	// props, URL, asset version), so only an identical page reuses a
+	// render and personalised props never leak across users. A
+	// cache.Store (e.g. cache.NewMemory(n), bounded) satisfies it. The
+	// CSP nonce is never part of the render (the root view adds it), so a
+	// cached render is nonce-safe. Not used for the Vite dev server.
+	// Renders must be deterministic for their page object.
+	Cache SSRCache
+	// CacheTTL is how long a render stays cached (default 1m).
+	CacheTTL time.Duration
+	// CacheWhen, when set, limits caching to the pages it accepts (for
+	// example anonymous visits); nil caches every server-rendered page.
+	CacheWhen func(c *web.Ctx, p *Page) bool
+}
+
+// SSRCache stores rendered pages; cache.Store implements it.
+type SSRCache interface {
+	Get(ctx context.Context, key string) ([]byte, bool, error)
+	Set(ctx context.Context, key string, value []byte, ttl time.Duration) error
 }
 
 // ssrRetryAfter is the Retry-After (seconds) of a strict SSR failure: long
@@ -102,6 +124,10 @@ func (c *SSRConfig) withDefaults() *SSRConfig {
 
 	if out.Client == nil {
 		out.Client = &http.Client{Timeout: out.Timeout}
+	}
+
+	if out.CacheTTL <= 0 {
+		out.CacheTTL = time.Minute
 	}
 
 	return &out
@@ -172,7 +198,7 @@ func (in *Inertia) serverRender(c *web.Ctx, st *state, p *Page) (head, body stri
 	}
 
 	if ferr == nil {
-		res, ferr = in.postRender(ctx, url, p)
+		res, ferr = in.cachedRender(c, url, p)
 	}
 
 	if ferr != nil {
@@ -199,13 +225,48 @@ func hotURL(s *SSRConfig) string {
 	return strings.TrimSuffix(s.HotURL(), "/")
 }
 
-func (in *Inertia) postRender(ctx context.Context, url string, p *Page) (*ssrResult, *SSRError) {
-	s := in.cfg.SSR
-
+// cachedRender serves a render from SSRConfig.Cache or stores a fresh
+// successful one. Cache errors are logged and never fail the page.
+func (in *Inertia) cachedRender(c *web.Ctx, url string, p *Page) (*ssrResult, *SSRError) {
 	payload, err := json.Marshal(p)
 	if err != nil {
 		return nil, &SSRError{Error: err.Error(), Type: "render"}
 	}
+
+	s := in.cfg.SSR
+	if s.Cache == nil || hotURL(s) != "" || (s.CacheWhen != nil && !s.CacheWhen(c, p)) {
+		return in.postRender(c.Context(), url, payload)
+	}
+
+	ctx := c.Context()
+	sum := sha256.Sum256(payload)
+	key := "inertia:ssr:" + hex.EncodeToString(sum[:])
+
+	if b, ok, err := s.Cache.Get(ctx, key); err != nil {
+		c.Log().WarnContext(ctx, "inertia: SSR cache read failed", "err", err)
+	} else if ok {
+		var res ssrResult
+		if json.Unmarshal(b, &res) == nil && res.Body != "" {
+			return &res, nil
+		}
+	}
+
+	res, ferr := in.postRender(ctx, url, payload)
+	if ferr != nil {
+		return nil, ferr
+	}
+
+	if b, err := json.Marshal(res); err == nil {
+		if err := s.Cache.Set(ctx, key, b, s.CacheTTL); err != nil {
+			c.Log().WarnContext(ctx, "inertia: SSR cache write failed", "err", err)
+		}
+	}
+
+	return res, nil
+}
+
+func (in *Inertia) postRender(ctx context.Context, url string, payload []byte) (*ssrResult, *SSRError) {
+	s := in.cfg.SSR
 
 	ctx, cancel := context.WithTimeout(ctx, s.Timeout)
 	defer cancel()
