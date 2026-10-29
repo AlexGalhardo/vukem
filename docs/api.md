@@ -142,6 +142,8 @@ Default: **no envelope** for single resources; collections and pages use:
 page, err := orm.QueryOf[models.Product](db).CursorPaginate(ctx, c.Query("cursor"), 50, orm.Asc)
 ```
 
+Envelope and problem keys are snake_case by design (`per_page`, `last_page`, `next_cursor`, `request_id`); RFC 9457 fixes the problem members (`type`, `title`, `status`, `detail`, `instance`) anyway. There is no key-case switch: it would desynchronise the generated OpenAPI document. An app with a camelCase contract builds its own envelope with `api.CollectionOf(items, fn, build)`, `api.PageOf(c, page, fn, build)` or `api.CursorOf(c, page, fn, build)`: `build func(data []R, m *api.Meta, l *api.Links) E` receives what `Collection`/`Page`/`Cursor` would write (nil meta and links for a collection) and returns the app's `E`. They return `E` instead of writing it, so a typed handler returns it and the OpenAPI document describes `E` with the app's keys. A generic `E` gets a long component name (`MyPage_<pkg path>.ProductJSON`); declare a named type (`type ProductPage MyPage[ProductJSON]`) for a short one.
+
 ## Query conventions
 
 Opt-in, allowlisted per endpoint (never free-form columns):
