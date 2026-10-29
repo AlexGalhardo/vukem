@@ -31,9 +31,12 @@ func provider(t *testing.T, calls *atomic.Int32) *httptest.Server {
 
 		switch r.PostFormValue("response") {
 		case "good":
-			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "hostname": "example.com"})
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "hostname": "example.com", "action": "login"})
 		case "other-host":
 			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "hostname": "evil.example"})
+		case "replayed":
+			_ = json.NewEncoder(w).
+				Encode(map[string]any{"success": false, "error-codes": []string{"timeout-or-duplicate"}})
 		case "broken":
 			w.WriteHeader(http.StatusInternalServerError)
 		default:
@@ -85,6 +88,12 @@ func TestSecurity_A07_ChallengeFailsClosed(t *testing.T) {
 	v := challenge.Turnstile(config.NewSecret("s3cret"))
 	v.URL, v.Client, v.Hostname = srv.URL, srv.Client(), "example.com"
 
+	login := challenge.Turnstile(config.NewSecret("s3cret"))
+	login.URL, login.Client, login.Hostname, login.Action = srv.URL, srv.Client(), "example.com", "login"
+
+	signup := challenge.Turnstile(config.NewSecret("s3cret"))
+	signup.URL, signup.Client, signup.Action = srv.URL, srv.Client(), "signup"
+
 	wrongSecret := challenge.Turnstile(config.NewSecret("nope"))
 	wrongSecret.URL, wrongSecret.Client = srv.URL, srv.Client()
 
@@ -101,6 +110,10 @@ func TestSecurity_A07_ChallengeFailsClosed(t *testing.T) {
 		{"wrong", v, url.Values{"cf-turnstile-response": {"bad"}}, "", http.StatusUnprocessableEntity},
 		{"too long", v, nil, strings.Repeat("a", 5000), http.StatusUnprocessableEntity},
 		{"other site", v, nil, "other-host", http.StatusUnprocessableEntity},
+		{"replayed token", v, nil, "replayed", http.StatusUnprocessableEntity},
+		{"same action", login, nil, "good", http.StatusOK},
+		{"other action", signup, nil, "good", http.StatusUnprocessableEntity},
+		{"no action reported", signup, nil, "other-host", http.StatusUnprocessableEntity},
 		{"provider down", v, nil, "broken", http.StatusServiceUnavailable},
 		{"bad secret", wrongSecret, nil, "good", http.StatusServiceUnavailable},
 		{"no secret", challenge.Turnstile(config.Secret{}), nil, "good", http.StatusServiceUnavailable},
