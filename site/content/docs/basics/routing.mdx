@@ -296,6 +296,31 @@ r.Post("/posts/{post}/cover", posts.UploadCover).
 	Use(middleware.BodyLimit(20 << 20))
 ```
 
+### Host routes
+
+Some apps answer on two hostnames from one process: the site on `example.com` and a public API on `api.example.com/v1`. `r.Host` creates a group whose routes match only requests for that host:
+
+```go title="routes/api.go"
+r.Host("api.example.com", func(g *router.Group) {
+	g.Use(apiCORS)
+	g.Group("/v1", func(v1 *router.Group) {
+		v1.Name("api.")
+		v1.Get("/games", games.Index).Name("games")
+	})
+})
+```
+
+Under the hood the route is registered as the [`ServeMux`](https://pkg.go.dev/net/http#ServeMux) pattern `GET api.example.com/v1/games`, so the standard library does the matching:
+
+- The request's `Host` header decides, with any port ignored (`api.example.com:8443` matches). Other hosts never reach these routes; they get the main routes or a `404`.
+- A host route is more specific than the same path without a host, so `example.com/v1/games` and `api.example.com/v1/games` can both exist.
+- Middleware given to the group with `Use` runs for that host only, which is where per-host CORS or headers go.
+- `r.URL("api.games")` returns the scheme-relative `//api.example.com/v1/games`, so a link or redirect built on the main site still reaches the API host. Routes without a host keep returning a path.
+- `route:list` prints the host before the path, and `RouteInfo.Host` carries it for tools.
+- The host must be a lowercase name without port, path or wildcard. `r.Host("API.example.com", ...)` fails when the routes compile: `router: GET /x: invalid host "API.example.com" (lowercase name, no port, path or wildcard)`.
+
+Behind a proxy, the `Host` header must be the public name the client used. Most platforms forward it unchanged; check yours if host routes answer `404` in production only.
+
 ## Resource routes
 
 Most blog pages follow the same shape: list posts, show one, a form to create one, save it, and so on. `Resource` registers all of these routes from one controller:

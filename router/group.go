@@ -15,6 +15,10 @@ type Group struct {
 	prefix string
 	name   string
 	mw     []Middleware
+	// host restricts the group's routes (Router.Host); hostSet tells an
+	// empty host, an error, from no host.
+	host    string
+	hostSet bool
 }
 
 // Use appends middleware applied to every route of the group (including
@@ -46,6 +50,26 @@ func (g *Group) fullPrefix() string {
 	}
 
 	return b.String()
+}
+
+func (g *Group) hostRoute() bool {
+	for x := g; x != nil; x = x.parent {
+		if x.hostSet {
+			return true
+		}
+	}
+
+	return false
+}
+
+func (g *Group) routeHost() string {
+	for x := g; x != nil; x = x.parent {
+		if x.hostSet {
+			return x.host
+		}
+	}
+
+	return ""
 }
 
 func (g *Group) namePrefix() string {
@@ -91,7 +115,7 @@ func (g *Group) add(method, path string, h http.Handler, hf web.HandlerFunc) *Ro
 		full += "{$}"
 	}
 
-	rt := &Route{method: method, path: full, group: g}
+	rt := &Route{method: method, host: g.routeHost(), path: full, group: g}
 	if hf != nil {
 		rt.handler = g.router.adapt(hf, rt)
 	} else {

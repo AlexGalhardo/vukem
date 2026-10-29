@@ -81,6 +81,7 @@ func (r *Router) Use(mw ...Middleware) { r.router = append(r.router, mw...) }
 // Route is a registered route.
 type Route struct {
 	method  string
+	host    string // "" unless registered under Router.Host
 	path    string
 	name    string
 	handler http.Handler
@@ -108,6 +109,10 @@ func (rt *Route) FullName() string {
 // Path returns the full pattern path, group prefixes included.
 func (rt *Route) Path() string { return rt.path }
 
+// Host returns the host the route is restricted to (see Router.Host), or
+// "".
+func (rt *Route) Host() string { return rt.host }
+
 // Doc attaches documentation (e.g. an api.Operation) that generators such
 // as the OpenAPI exporter read back through RouteInfo.Doc.
 func (rt *Route) Doc(v any) *Route {
@@ -124,8 +129,10 @@ func (rt *Route) Use(mw ...Middleware) *Route {
 // RouteInfo describes a compiled route.
 type RouteInfo struct {
 	Method string `json:"method"`
-	Path   string `json:"path"`
-	Name   string `json:"name,omitempty"`
+	// Host is the host the route is restricted to (Router.Host), or "".
+	Host string `json:"host,omitempty"`
+	Path string `json:"path"`
+	Name string `json:"name,omitempty"`
 	// LocalName is the name given to the route itself, without the group
 	// name prefixes (Name is the full name).
 	LocalName  string   `json:"-"`
@@ -162,6 +169,21 @@ func (r *Router) Any(path string, h web.HandlerFunc) *Route { return r.root.Any(
 // Handle mounts a plain http.Handler. pattern uses ServeMux syntax and may
 // start with a method ("GET /metrics").
 func (r *Router) Handle(pattern string, h http.Handler) *Route { return r.root.Handle(pattern, h) }
+
+// Host creates a group whose routes match only requests for host (any
+// port), e.g. r.Host("api.example.com", func(g *router.Group) {...})
+// next to the same paths on the main host. Nested groups keep the host.
+// host is a lowercase name without port, path or wildcard; anything else
+// is a Handler error. URL returns the scheme-relative "//host/path" for
+// these routes, so links work from any host.
+func (r *Router) Host(host string, fn func(g *Group)) *Group {
+	g := &Group{router: r, parent: r.root, host: host, hostSet: true}
+	if fn != nil {
+		fn(g)
+	}
+
+	return g
+}
 
 // Group creates a route group under prefix. Inside it, g.Get("/", h)
 // serves prefix+"/" exactly (ServeMux redirects the bare prefix there)
@@ -219,9 +241,16 @@ func (r *Router) build() {
 			r.names[name] = rt
 		}
 
-		pattern := rt.path
+		if rt.group.hostRoute() && !validHost(rt.host) {
+			r.buildErr = fmt.Errorf("router: %s: invalid host %q (lowercase name, no port, path or wildcard)",
+				describe(rt), rt.host)
+
+			return
+		}
+
+		pattern := rt.host + rt.path
 		if rt.method != "" {
-			pattern = rt.method + " " + rt.path
+			pattern = rt.method + " " + pattern
 		}
 
 		h := rt.handler
@@ -356,7 +385,26 @@ func (r *Router) URL(name string, params ...any) (string, error) {
 		values[k] = fmt.Sprint(pair[1])
 	}
 
-	return buildPath(rt.path, values, name)
+	p, err := buildPath(rt.path, values, name)
+	if err != nil || rt.host == "" {
+		return p, err
+	}
+
+	return "//" + rt.host + p, nil
+}
+
+func validHost(h string) bool {
+	if h == "" || h[0] == '.' || h[0] == '-' {
+		return false
+	}
+
+	for _, c := range h {
+		if (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '.' && c != '-' {
+			return false
+		}
+	}
+
+	return true
 }
 
 func buildPath(pattern string, values map[string]string, name string) (string, error) {
@@ -417,7 +465,14 @@ func (r *Router) Routes() []RouteInfo {
 	infos := make([]RouteInfo, 0, len(r.routes))
 
 	for _, rt := range r.routes {
-		info := RouteInfo{Method: rt.method, Path: rt.path, Name: rt.FullName(), LocalName: rt.name, Doc: rt.doc}
+		info := RouteInfo{
+			Method:    rt.method,
+			Host:      rt.host,
+			Path:      rt.path,
+			Name:      rt.FullName(),
+			LocalName: rt.name,
+			Doc:       rt.doc,
+		}
 		if info.Method == "" {
 			info.Method = "ANY"
 		}
