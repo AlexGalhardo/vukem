@@ -161,7 +161,7 @@ type ValidationError struct { Fields map[string][]string }
   - `*HTTPError` / sentinels → status page (`resources/views/errors/<status>.html`, which receives `.Nonce` for a nonce'd `<style>`) or problem+json. The built-in status pages have no inline style attributes and nonce their `<style>`, so they render under the default CSP.
   - `orm.ErrNotFound` (an `*errs.HTTPError`, returned by `First`/`Find` for no row) → 404.
   - anything else → 500, logged with request id; debug page in development.
-- Content negotiation: `Accept: application/json` or `/api` routes → RFC 9457 problem details; HTMX → fragment/status; `Services.ErrorPage` (a `web.ErrorPageFunc` taking a client-safe `web.ErrorPage{Status, Title, Detail, Errors}`; Inertia requests with `vukem.WithInertia`: the `Error` page component); otherwise HTML.
+- Content negotiation: `Accept: application/json` or `/api` routes → RFC 9457 problem details (4xx `*HTTPError` extension members from `e.WithExtension(key, value)` / `HTTPError.Extensions` are added next to the standard members, never replacing one; 5xx never carry them); HTMX → fragment/status; `Services.ErrorPage` (a `web.ErrorPageFunc` taking a client-safe `web.ErrorPage{Status, Title, Detail, Errors}`; Inertia requests with `vukem.WithInertia`: the `Error` page component); otherwise HTML.
 - Custom handling per error type: set `Services.Errors` to a `web.ErrorHandler`, match your types with `errors.AsType[*MyErr](err)`, and call `web.DefaultErrorHandler(c, err)` for the rest.
 - Panics are recovered by `middleware.Recover` and converted to 500.
 
