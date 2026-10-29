@@ -63,6 +63,17 @@ func TestQueueFromConfig(t *testing.T) {
 	if names := (QueueConfig{Queues: "high, default,,"}).QueueNames(); len(names) != 2 || names[0] != "high" {
 		t.Errorf("QueueNames = %v", names)
 	}
+
+	limits, err := (QueueConfig{Limits: " ingest=2, mail = 4 ,"}).QueueLimits()
+	if err != nil || len(limits) != 2 || limits["ingest"] != 2 || limits["mail"] != 4 {
+		t.Errorf("QueueLimits = %v, %v", limits, err)
+	}
+
+	for _, bad := range []string{"ingest", "ingest=0", "ingest=x", "=2"} {
+		if _, err := (QueueConfig{Limits: bad}).QueueLimits(); err == nil {
+			t.Errorf("QUEUE_LIMITS=%q accepted", bad)
+		}
+	}
 }
 
 func TestMemoryQueueRunner(t *testing.T) {
