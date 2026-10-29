@@ -73,6 +73,7 @@ export const navigation: NavCategory[] = [
       "two-factor",
       "authorization",
       "rate-limiting",
+      "bot-challenge",
       "security-headers",
       "signed-urls",
       "encryption",
