@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.33.0] - 2026-10-29
+
+### Added
+
+- **inertia:** Add strict SSR that answers 503 instead of falling back (#7) ([674d6a7](https://github.com/AlexGalhardo/vukem/commit/674d6a722134f301b8f57b82fbfcf9799ec0c2de))
+- **vukem:** Add serve -with-ssr, build -ssr and -ldflags, and WithVersion (#9) ([7608240](https://github.com/AlexGalhardo/vukem/commit/7608240e4ee0e79acbfe7f8a675edac8a04b5352))
+- **i18n:** Add locale URL path prefixes with StripPathPrefix and LocalizePath (#10) ([620b51b](https://github.com/AlexGalhardo/vukem/commit/620b51b3964094714c928c7a9c40008e2961504e))
+- **orm:** Page CursorPaginate by the query OrderBy with a composite keyset (#11) ([afbce68](https://github.com/AlexGalhardo/vukem/commit/afbce683d4ffa716c49fec78a258b99caa3dd4ee))
+- **router:** Add Host groups for host-restricted routes (#12) ([71e9be2](https://github.com/AlexGalhardo/vukem/commit/71e9be20d52f0702d05460164eb375c9a3fbe8c1))
+- **schema:** Add NoTransaction migrations and a cross-process migration lock (#13) ([b5a2253](https://github.com/AlexGalhardo/vukem/commit/b5a22532656df216bfe325110e5a580b4634d685))
+- **queue:** Add per-queue running-job limits (WorkOptions.Limits, QUEUE_LIMITS) (#14) ([2b5ed18](https://github.com/AlexGalhardo/vukem/commit/2b5ed1880638163395903ae15ae7037ec9527750))
+- **inertia:** Cache successful SSR renders (SSRConfig.Cache, CacheTTL, CacheWhen) (#16) ([d9aec2d](https://github.com/AlexGalhardo/vukem/commit/d9aec2d40c3f5b01e0298a13599d18e3625366f5))
+- **cli:** Ship an Inertia SSR entry and keep vite build --ssr out of the public dir (#17) ([0a03f26](https://github.com/AlexGalhardo/vukem/commit/0a03f26227719ea5f78aff4eee370951f8d20334))
+- **admin:** Add custom row and bulk actions with reasons and a JSON diff view (#22) ([5893fd2](https://github.com/AlexGalhardo/vukem/commit/5893fd26c1b78ddc7ad2a2afe9a413d8b81dc03f))
+- **orm:** Re-seal encrypted columns after a key rotation (orm.Reseal, crypt:reseal) (#24) ([394d293](https://github.com/AlexGalhardo/vukem/commit/394d2934840bd1e9aae61f71068c0900c5671d7f))
+- **challenge:** Add a bot challenge middleware with Turnstile and hCaptcha (#21) ([74bf415](https://github.com/AlexGalhardo/vukem/commit/74bf41511d8a7708e3fe3f0a8b81cee3397c20e7))
+- **orm:** Add composite primary keys and schema Primary, SmallInteger and StoredAs (#25) ([fcb7631](https://github.com/AlexGalhardo/vukem/commit/fcb7631e55a4708cc7f4795c78dad6a603e0ee46))
+- **cli:** Let install:billing name the plans and accept checkout currencies (#26) ([c12321b](https://github.com/AlexGalhardo/vukem/commit/c12321b61d41504eb5bb6b983190c86e5870f933))
+- **admin:** Add AfterSave hooks with the transaction and virtual form fields (#27) ([3a174b7](https://github.com/AlexGalhardo/vukem/commit/3a174b7d4dbfeeec303d950934c1c9ac57e46737))
+- **inertia:** Add request-bound root view data and keep the locale prefix in page URLs (#28) ([425a277](https://github.com/AlexGalhardo/vukem/commit/425a2776529e200ff27d3be74afae3fcdcfbd1c0))
+- **storage:** Add HandlerWith cache-control and conditional requests for non-seekable files (#29) ([62f4c06](https://github.com/AlexGalhardo/vukem/commit/62f4c0662dfd6cfebe5bd1f9893b6bc1fdd1d51f))
+- **cli:** Compress static files and pages in the browser starters (#30) ([dc660dd](https://github.com/AlexGalhardo/vukem/commit/dc660ddfd373861e40983267991f018379523bbe))
+- **i18n:** Ship Spanish auth and framework message catalogs (#31) ([569ae7d](https://github.com/AlexGalhardo/vukem/commit/569ae7d772bb1a2242cf09260dbf2630ac4c145e))
+- **export:** Add EncodeCSV for CSV files built outside a request (#32) ([a70802c](https://github.com/AlexGalhardo/vukem/commit/a70802c24b02b74227d238fd821c2a790156f911))
+
+### Security
+
+- **admin:** Add opt-in hardening (TwoFactor, MaxSessionAge, AllowCIDRs) (#20) ([7dbd6f9](https://github.com/AlexGalhardo/vukem/commit/7dbd6f99041ad8991991517b511d8ca00af08965))
+- **errs:** Add problem+json extension members to HTTPError (#33) ([5def7be](https://github.com/AlexGalhardo/vukem/commit/5def7be0da93a5113aa3e8359051d62bd86b131c))
+
 ## [0.32.0] - 2026-10-25
 
 ### Added
@@ -1044,7 +1074,8 @@ Project foundation. No framework code yet; see [PLAN.md](PLAN.md) for the roadma
 - README, MIT license, CONTRIBUTING, SECURITY and CODE_OF_CONDUCT.
 - Agent configuration: `AGENTS.md`, `CLAUDE.md`, path-scoped `.claude/rules/`, Go skills and project settings.
 
-[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.32.0...HEAD
+[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.33.0...HEAD
+[0.33.0]: https://github.com/AlexGalhardo/vukem/compare/v0.32.0...v0.33.0
 [0.32.0]: https://github.com/AlexGalhardo/vukem/compare/v0.31.0...v0.32.0
 [0.31.0]: https://github.com/AlexGalhardo/vukem/compare/v0.30.0...v0.31.0
 [0.30.0]: https://github.com/AlexGalhardo/vukem/compare/v0.29.0...v0.30.0
