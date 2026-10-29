@@ -1,7 +1,9 @@
 package admin
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"reflect"
 	"time"
 
@@ -29,7 +31,8 @@ type AuditLog struct {
 	Resource string `db:"resource"`
 	// RecordID is the primary key of the changed record.
 	RecordID string `db:"record_id"`
-	// Action is ActionCreate, ActionUpdate or ActionDelete.
+	// Action is ActionCreate, ActionUpdate, ActionDelete or the Name of a
+	// custom Action.
 	Action string `db:"action"`
 	// Changes maps changed columns to their values before and after.
 	// Sensitive columns only record that they changed.
@@ -105,4 +108,65 @@ func (b *base) diff(before, after map[string]any, cols []string) map[string]Chan
 
 func writeAudit(ctx context.Context, ex database.Executor, entry *AuditLog) error {
 	return orm.Create(ctx, ex, entry)
+}
+
+// changeRows renders one audit change. When both sides are JSON objects
+// (a JSON column), it lists only the keys that differ, as column.key,
+// recursively, instead of two whole documents.
+func changeRows(col string, ch Change) []changeRow {
+	if ch.Redacted {
+		return []changeRow{{Column: col, Redacted: true}}
+	}
+
+	before, okB := jsonObject(ch.Before)
+	after, okA := jsonObject(ch.After)
+
+	if !okB || !okA {
+		return []changeRow{{Column: col, Before: fmtAny(ch.Before), After: fmtAny(ch.After)}}
+	}
+
+	var out []changeRow
+
+	keys := sortedKeys(before)
+	for _, k := range sortedKeys(after) {
+		if _, ok := before[k]; !ok {
+			keys = append(keys, k)
+		}
+	}
+
+	for _, k := range keys {
+		if !reflect.DeepEqual(before[k], after[k]) {
+			out = append(out, changeRows(col+"."+k, Change{Before: before[k], After: after[k]})...)
+		}
+	}
+
+	return out
+}
+
+// jsonObject returns v as a JSON object: a decoded map, or a string or
+// byte slice holding one.
+func jsonObject(v any) (map[string]any, bool) {
+	var raw []byte
+
+	switch x := v.(type) {
+	case map[string]any:
+		return x, true
+	case string:
+		raw = []byte(x)
+	case []byte:
+		raw = x
+	default:
+		return nil, false
+	}
+
+	if !bytes.HasPrefix(bytes.TrimSpace(raw), []byte("{")) {
+		return nil, false
+	}
+
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return nil, false
+	}
+
+	return m, true
 }
