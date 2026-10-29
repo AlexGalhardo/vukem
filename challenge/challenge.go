@@ -96,6 +96,10 @@ type SiteVerify struct {
 	// Hostname, when set, must equal the hostname the provider reports the
 	// widget was solved on, so a token solved on another site is refused.
 	Hostname string
+	// Action, when set, must equal the action the provider reports (the
+	// widget's data-action, a Turnstile feature), so a token solved on the
+	// newsletter form is refused on the login form.
+	Action string
 	// Client sends the request; nil uses httpclient.Safe with a 5s timeout.
 	Client *http.Client
 }
@@ -166,6 +170,7 @@ func (s *SiteVerify) check(ctx context.Context, token, ip string) error {
 	var out struct {
 		Success  bool     `json:"success"`
 		Hostname string   `json:"hostname"`
+		Action   string   `json:"action"`
 		Codes    []string `json:"error-codes"`
 	}
 
@@ -185,6 +190,10 @@ func (s *SiteVerify) check(ctx context.Context, token, ip string) error {
 
 	if s.Hostname != "" && !strings.EqualFold(out.Hostname, s.Hostname) {
 		return fmt.Errorf("%w: hostname %q", ErrRejected, out.Hostname)
+	}
+
+	if s.Action != "" && out.Action != s.Action {
+		return fmt.Errorf("%w: action %q", ErrRejected, out.Action)
 	}
 
 	return nil

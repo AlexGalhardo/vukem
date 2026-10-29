@@ -182,6 +182,18 @@ func (m OrderShipped) EnvelopeContext(
 
 `Envelope` stays required: it is the fallback for code that has no context. See [Localization](/docs/digging-deeper/localization) for `i18n.T`.
 
+### Mail in the user's language from a job
+
+A queued job or a CLI command has no request, so its context carries no locale and `i18n.T` falls back to the default locale. Put the recipient's locale (and the bundle) in the context before you send; the subject from `EnvelopeContext` and the `t` and `locale` functions in the mail view all read it:
+
+```go title="app/jobs/notify_decision.go"
+ctx = i18n.WithLocale(i18n.WithBundle(ctx, app.I18n), user.Locale)
+
+return app.Mailer().Send(ctx, SuggestionDecided{User: user})
+```
+
+Store the locale on the user (from the request locale at sign-up or in the account settings) so jobs never guess it. With `SendLater`, set the locale on the context you pass to `SendLater`: the mail is rendered then, not in the worker.
+
 ### The content
 
 `Content()` returns one of three kinds of body:

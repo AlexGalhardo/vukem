@@ -465,7 +465,15 @@ var IndexRatingsItemID = schema.Migration{
 }
 ```
 
-`Up` runs on the database directly, and the migration is recorded only after it succeeds. Without the transaction, a failure half-way leaves what already ran: keep one statement per `NoTransaction` migration and write it to be re-run (`IF NOT EXISTS`), so the next `vukem migrate` can finish the job. A failed `CREATE INDEX CONCURRENTLY` leaves an invalid index behind; drop it before retrying.
+`Up` runs on the database directly, and the migration is recorded only after it succeeds. Without the transaction, a failure half-way leaves what already ran: keep one statement per `NoTransaction` migration and write it to be re-run (`IF NOT EXISTS`), so the next `vukem migrate` can finish the job. A failed `CREATE INDEX CONCURRENTLY` (a unique violation, a timeout, a cancel) leaves an `INVALID` index behind, and the retry's `IF NOT EXISTS` would skip it, leaving an index PostgreSQL never uses. So after a `NoTransaction` migration on PostgreSQL, `migrate` checks the current schema and, if an `INVALID` index is left that no one is building, fails without recording the migration:
+
+```text
+schema: migrate 20261029120000_index_ratings_item_id:
+  INVALID index ratings_item_id_idx left by a failed CREATE INDEX CONCURRENTLY:
+  run DROP INDEX CONCURRENTLY on it, fix the cause and migrate again
+```
+
+Drop the index, fix what made the build fail (for a unique index, remove the duplicates) and run `vukem migrate` again.
 
 ### Checksums: catching edited migrations
 
