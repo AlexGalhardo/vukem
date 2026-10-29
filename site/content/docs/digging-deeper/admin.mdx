@@ -140,8 +140,12 @@ return panel.Mount(r)
 | `Title` | `Admin` | the header text |
 | `Views` | embedded templates | an `fs.FS` that overrides templates by path |
 | `Flags` | nil | a `*flags.Flags` that adds the flags page |
+| `TwoFactor` | nil | `func(ctx context.Context) (bool, error)`: when set, 2FA is mandatory; it reports whether the signed-in admin has 2FA enabled (see [Hardening](#hardening)) |
+| `MaxSessionAge` | 0 (off) | the oldest a session may be to use the panel, counted from its creation |
+| `AllowCIDRs` | empty (any IP) | `[]netip.Prefix`: only client IPs inside one of them reach the panel |
+| `Now` | `time.Now` | the clock for `MaxSessionAge` (tests) |
 
-`admin.New` fails with `admin: Config.DB is required`, `admin: Config.Guard is required (the panel never runs without authentication)` or `admin: Config.Prefix cannot be the site root`.
+`admin.New` fails with `admin: Config.DB is required`, `admin: Config.Guard is required (the panel never runs without authentication)` or `admin: Config.Prefix cannot be the site root`; a negative `MaxSessionAge` or an invalid prefix in `AllowCIDRs` fails it too.
 
 ## Resources
 
@@ -367,6 +371,32 @@ Keep the overrides free of inline `<script>` and `style` attributes, or the stri
 | **Injection** | Sort, filter and search columns are allowlists; anything else is ignored. Values are bound parameters. |
 | **Secrets** | Columns tagged `json:"-"`, columns whose name contains `password`, `passwd`, `secret`, `token`, `api_key`, `apikey`, `private_key`, `recovery`, `otp` or `totp` anywhere (except the counters `tokens_used`, `tokens_count`/`_total`/`_remaining`/`_limit`, `max_tokens*`, `*_token_count` and names containing `footprint`), and columns marked `Sensitive` are never displayed, listed, searched, sorted or filtered. On a form they are empty password inputs that keep the stored value when left blank. The audit log records only that they changed. |
 | **Headers** | Pages send `Cache-Control: no-store` and `X-Frame-Options: DENY`, plus a strict CSP when the app set none: `default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; form-action 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'`. |
+
+### Hardening
+
+Three opt-in controls for the panel, all fail closed:
+
+```go
+panel, err := admin.New(admin.Config{
+	DB: db, Guard: acc.Web, Authorizer: gate,
+	// 2FA is mandatory: the state lives in your users table.
+	TwoFactor: func(ctx context.Context) (bool, error) {
+		u, err := auth.UserFrom[models.User](ctx, "web")
+		if err != nil {
+			return false, err
+		}
+		return u.TwoFactorEnabled, nil
+	},
+	MaxSessionAge: 4 * time.Hour,
+	AllowCIDRs:    []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")},
+})
+```
+
+| Option | Behaviour |
+| --- | --- |
+| `TwoFactor` | `false` answers **403** and logs an `admin.2fa_required` security event. An error is a 403 too, and is logged; the client never sees it. Send admins to your 2FA settings page from a custom 403 view if you want a friendlier path. |
+| `MaxSessionAge` | A session older than the cap (from `session.CreatedAt`, which login keeps, so the age is never shorter than the time since login) is invalidated, signing the user out of every guard, and the browser is redirected to `login`; an `admin.session_expired` event is logged. The rest of the app keeps its own `SESSION_LIFETIME`. A remember-me cookie logs the user back in with a new session, so turn remember-me off for admins when the cap must force a password. |
+| `AllowCIDRs` | Requests from other IPs get **403** and an `admin.ip_denied` event, before any login redirect, so the panel never advertises its login. The IP is `web.Ctx.IP`: behind a proxy, set `TRUSTED_PROXIES` ([HTTP context](/docs/basics/http-context)) or every request looks like the proxy's address. The embedded CSS and JS stay public. |
 
 What stays your job: deciding who is an admin (`app/admin/admin.go`), narrowing each policy (an editor may update posts but not delete them), and keeping the admin accounts protected with [two-factor authentication](/docs/security/two-factor). See the [security overview](/docs/security/overview).
 

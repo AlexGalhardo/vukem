@@ -166,6 +166,10 @@ type options struct {
 	resource func() []admin.AnyResource
 	// flags registers these feature flags and passes app.Flags() to the panel.
 	flags []flags.AnyFlag
+	// harden edits the panel config (TwoFactor, MaxSessionAge, AllowCIDRs).
+	harden func(*admin.Config)
+	// clock drives the app (sessions) and the panel.
+	clock *vukemtest.FakeClock
 }
 
 func resources() []admin.AnyResource {
@@ -203,7 +207,27 @@ func newApp(t *testing.T, o options) *vukemtest.App {
 
 				r.Get("/login", func(c *web.Ctx) error { return c.String(200, "login") }).Name("login")
 
+				r.Get("/whoami", func(c *web.Ctx) error {
+					if !guard.Check(c) {
+						return c.String(200, "guest")
+					}
+
+					u, err := auth.UserFrom[User](c.Context(), "web")
+					if err != nil {
+						return err
+					}
+
+					return c.String(200, "user="+u.Email)
+				})
+
 				cfg := admin.Config{DB: db, Guard: guard, Views: o.views}
+				if o.clock != nil {
+					cfg.Now = o.clock.Now
+				}
+
+				if o.harden != nil {
+					o.harden(&cfg)
+				}
 
 				if o.flags != nil {
 					if cfg.Flags, err = app.Flags(); err != nil {
@@ -250,7 +274,12 @@ func newApp(t *testing.T, o options) *vukemtest.App {
 			}))...)
 	}
 
-	return vukemtest.New(t, build)
+	var vo vukemtest.Options
+	if o.clock != nil {
+		vo.Clock = o.clock.Now
+	}
+
+	return vukemtest.New(t, build, vo)
 }
 
 func createUser(t *testing.T, app *vukemtest.App, email, role string) User {

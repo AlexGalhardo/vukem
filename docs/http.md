@@ -135,7 +135,7 @@ Own `session/` package.
 | Database (`sessions` table, SQLite/Postgres) | core | Prototype |
 | Redis | `drivers/redis` | BETA |
 
-Features: `Get/Put/Forget/Pull`, `Flash` (next request), `Reflash`, old input, `Regenerate()` (new id, keep data — call on login), `Invalidate()`, idle and absolute timeouts, lazy loading (no store hit unless used), write only when dirty.
+Features: `Get/Put/Forget/Pull`, `Flash` (next request), `Reflash`, old input, `Regenerate()` (new id, keep data — call on login), `Invalidate()`, idle and absolute timeouts, `session.CreatedAt` (creation time, kept by login), lazy loading (no store hit unless used), write only when dirty.
 
 ## CSRF
 

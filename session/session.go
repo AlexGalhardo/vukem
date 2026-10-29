@@ -309,6 +309,18 @@ func decode(b []byte) (map[string]any, error) {
 	return data, nil
 }
 
+// CreatedAt returns when s was created (second precision). A session
+// made during this request has no creation time until it is saved: ok is
+// false. Login keeps the time (Regenerate keeps the data), so the age of a
+// logged-in session is never shorter than the time since login.
+func CreatedAt(s interface{ Get(key string) any }) (t time.Time, ok bool) {
+	if s == nil {
+		return time.Time{}, false
+	}
+
+	return unixOf(s.Get(keyCreated))
+}
+
 func unixOf(v any) (time.Time, bool) {
 	var n int64
 
