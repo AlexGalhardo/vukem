@@ -255,7 +255,7 @@ func codegenClientCommand() Command {
 				return fmt.Errorf("codegen:client: %w", err)
 			}
 
-			return os.WriteFile(path, src, 0o600)
+			return os.WriteFile(path, src, 0o600) //nolint:gosec // G703: path from the developer's own -o flag
 		},
 	}
 }

@@ -399,6 +399,13 @@ GET /ready
 
 It answers `503` with `"status":"fail"` when a check fails. Failures are logged; their details never reach the client. Each check is bounded by `vukem.DefaultHealthCheckTimeout` (3 seconds); `AddHealthCheckTimeout` sets another. `GET /up?checks=1` runs the checks too.
 
+`vukem.WithVersion(version)` sets `app.Version` and adds a `"version"` field to `GET /up`, `GET /up?checks=1` and `ReadyHandler`, so a deploy can confirm which build answers. It is off by default: a public probe that names the build helps an attacker match known vulnerabilities. Inject the value at build time with `vukem build -ldflags "-X main.version=..."` ([`vukem build`](/docs/cli/reference-new#vukem-build)).
+
+```text
+GET /up
+200 {"status":"ok","version":"v1.4.2"}
+```
+
 ## Shutdown
 
 ```go
