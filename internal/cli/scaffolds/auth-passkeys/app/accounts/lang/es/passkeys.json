@@ -1,0 +1,9 @@
+{
+  "auth": {
+    "passkeys": {
+      "failed": "No se pudo verificar la llave de acceso. Inténtalo de nuevo.",
+      "wrong_password": "La contraseña es incorrecta.",
+      "invalid_name": "El nombre debe tener entre 1 y 64 caracteres."
+    }
+  }
+}

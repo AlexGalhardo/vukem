@@ -34,6 +34,7 @@ func installAuth(set *flag.FlagSet) func(context.Context, *Env, []string) error 
 	force := set.Bool("force", false, "overwrite existing files")
 	socialList := set.String("social", "", "also add social login: "+strings.Join(socialProviders, ","))
 	twoFactor := set.Bool("2fa", false, "also add two-factor authentication (TOTP)")
+	passkeys := set.Bool("passkeys", false, "also add passkey (WebAuthn) sign-in")
 	localeList := set.String(
 		"locales",
 		"",
@@ -70,9 +71,9 @@ func installAuth(set *flag.FlagSet) func(context.Context, *Env, []string) error 
 			return err
 		}
 
-		// With --social or --2fa on a project that already has install:auth,
-		// add only that part.
-		addOn := len(providers) > 0 || *twoFactor
+		// With --social, --2fa or --passkeys on a project that already has
+		// install:auth, add only that part.
+		addOn := len(providers) > 0 || *twoFactor || *passkeys
 		if !addOn || *force || !exists(env, filepath.Join("routes", "auth.go")) {
 			for _, name := range authScaffolds(env) {
 				if err := installScaffold(env, name, data, *force); err != nil {
@@ -120,6 +121,22 @@ func installAuth(set *flag.FlagSet) func(context.Context, *Env, []string) error 
 			regs = append(regs, more...)
 		}
 
+		if *passkeys {
+			if err := installScaffold(env, "auth-passkeys", data, *force); err != nil {
+				return err
+			}
+
+			regs = append(
+				regs,
+				registration{
+					"database/migrations/registry.go",
+					"All",
+					"m" + data["TS6"] + "CreatePasskeyCredentialsTable()",
+				},
+				registration{"routes/registry.go", "All", "Passkeys"},
+			)
+		}
+
 		// Social sign-in also stops at the code step once 2FA is installed,
 		// whichever of the two came first.
 		if exists(env, filepath.Join("routes", "two_factor.go")) {
@@ -136,6 +153,11 @@ func installAuth(set *flag.FlagSet) func(context.Context, *Env, []string) error 
 
 		if *twoFactor {
 			fmt.Fprint(env.Stdout, "Two-factor authentication: users turn it on at /user/two-factor.\n\n")
+		}
+
+		if *passkeys {
+			fmt.Fprint(env.Stdout, "Passkeys: JSON endpoints under /user/passkeys and /passkeys/login; the browser\n"+
+				"code is in the vukem docs (authentication.md, Passkeys). APP_URL sets the RP ID and origin.\n\n")
 		}
 
 		return nil
@@ -392,6 +414,7 @@ func scaffoldData(env *Env) (map[string]string, error) {
 		"TS3":    now.Add(2 * time.Second).Format("20060102150405"),
 		"TS4":    now.Add(3 * time.Second).Format("20060102150405"),
 		"TS5":    now.Add(4 * time.Second).Format("20060102150405"),
+		"TS6":    now.Add(5 * time.Second).Format("20060102150405"),
 	}, nil
 }
 
@@ -508,6 +531,7 @@ func installScaffold(env *Env, name string, data map[string]string, force bool) 
 
 		rel = strings.NewReplacer(
 			"TS1", data["TS1"], "TS2", data["TS2"], "TS3", data["TS3"], "TS4", data["TS4"], "TS5", data["TS5"],
+			"TS6", data["TS6"],
 		).Replace(rel)
 
 		content, err := scaffoldFS.ReadFile(p)

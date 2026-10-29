@@ -331,6 +331,14 @@ Package `export` (stdlib only) streams downloads row by row from any `iter.Seq2[
 - `FlushEvery(n)` (500 rows), `WriteTimeout(d)` (1 minute, renewed before writes to the client at most every `d/4` or 1s, cleared at the end, so long exports outlive the server `WriteTimeout`), `WithBOM()` for Excel (CSV only).
 - The file-name sanitizer lives in `internal/disposition` and is shared with `web.Ctx.Download`.
 
+## Sitemaps
+
+Package `sitemap` (stdlib only) streams XML sitemaps for catalogues too large to build in memory (<https://www.sitemaps.org/protocol.html>):
+
+- `sitemap.NewWriter(w)` writes one `<urlset>`; `Add(sitemap.URL{Loc, LastMod, Alternates})` writes a URL with `<lastmod>` (RFC 3339, UTC) and `xhtml:link` hreflang alternates; `Close()` ends it. Wrap `w` in `gzip.NewWriter` for `.xml.gz` chunks.
+- `Add` returns `sitemap.ErrFull` (nothing written) at `MaxURLs` (50,000) or `MaxBytes` (50 MiB uncompressed): close the chunk and start the next one. `sitemap.WriteIndex(w, []sitemap.Sitemap{...})` writes the index of the chunks.
+- Only absolute `http`/`https` URLs of at most 2048 bytes and hreflang tags of letters, digits and `-` are accepted; values are XML-escaped (`TestWriterRejectsInvalidAndStopsWhenFull`). Site page: `site/content/docs/digging-deeper/sitemaps.mdx`.
+
 ## Events
 
 ```go

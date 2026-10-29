@@ -252,6 +252,24 @@ jobs:
         working-directory: contrib/stripe
         run: go test -count=1 ./...
 
+  cloudflare:
+    name: Cloudflare module
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: "**/go.sum"
+      - name: Unit tests (module alone)
+        working-directory: contrib/cloudflare
+        env:
+          GOWORK: "off"
+        run: go test -race -count=1 ./...
+      - name: Unit tests (workspace, current core)
+        working-directory: contrib/cloudflare
+        run: go test -count=1 ./...
+
   grpc:
     name: gRPC module
     runs-on: ubuntu-latest
