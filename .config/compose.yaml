@@ -46,7 +46,7 @@ services:
       interval: 2s
       retries: 30
   mongo:
-    image: mongo:8
+    image: mongo:9.0.4
     ports: ["57017:27017"]
     healthcheck:
       test: ["CMD", "mongosh", "--quiet", "--eval", "db.runCommand({ ping: 1 }).ok"]

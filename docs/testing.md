@@ -124,6 +124,6 @@ clock.Advance(24 * time.Hour)
 | Job | Matrix |
 | --- | --- |
 | unit | `ubuntu`, `windows`, `macos` × Go `stable` (`oldstable` joins once Go 1.28 ships, since 1.27 is the minimum) |
-| integration | `ubuntu` + services `postgres:17`, `mysql:8.4`, `mariadb:11.8`, `redis:7`, `mongo:8` |
+| integration | `ubuntu` + services `postgres:17`, `mysql:8.4`, `mariadb:11.8`, `redis:7`, `mongo:9.0.4` |
 | e2e | `ubuntu`, `windows`, `macos` × `stable` |
 | coverage | `ubuntu/stable` → Codecov, gate enforced by `internal/tools/covergate` |
