@@ -400,7 +400,7 @@ Each `make:*` command renders a template, formats Go output with [`go/format`](h
 | `make:event <Name>` | `app/events/<name>.go` | — |
 | `make:listener <Name>` | `app/listeners/<name>.go` | `All()` in `app/listeners/registry.go` |
 | `make:job <Name>` | `app/jobs/<name>.go` | `All()` in `app/jobs/registry.go` |
-| `make:mail <Name>` | `app/mail/<name>.go` and `resources/views/mail/<name>.html` | — |
+| `make:mail <Name> [--react]` | `app/mail/<name>.go` and `resources/views/mail/<name>.html` (`--react`: `resources/js/emails/<name>.tsx`) | — |
 | `make:policy <Name>` | `app/policies/<name>_policy.go` | `All()` in `app/policies/registry.go` |
 | `make:admin-resource <Model>` | `app/admin/<model>.go` and `tests/admin_<model>_test.go` | `Resources()` and `Policies()` in `app/admin/registry.go` |
 | `make:test <Name>` | `tests/<name>_test.go` | — |
@@ -533,7 +533,7 @@ The templates are [`text/template`](https://pkg.go.dev/text/template) files embe
 | `command.go.tmpl`, `provider.go.tmpl`, `resource.go.tmpl`, `factory.go.tmpl`, `seeder.go.tmpl` | The matching `make:*` |
 | `seeder_app.go.tmpl` | `make:seeder --app` |
 | `event.go.tmpl`, `listener.go.tmpl`, `job.go.tmpl`, `policy.go.tmpl`, `test.go.tmpl` | The matching `make:*` |
-| `mail.go.tmpl`, `mail.html.tmpl` | `make:mail` |
+| `mail.go.tmpl`, `mail.html.tmpl`, `mail_react.go.tmpl`, `mail.tsx.tmpl`, `mail_go.ts.tmpl` | `make:mail` |
 | `admin_resource.go.tmpl`, `admin_resource_test.go.tmpl` | `make:admin-resource` |
 | `service.proto.tmpl`, `buf.yaml.tmpl`, `buf.gen.yaml.tmpl` | `make:proto` |
 
