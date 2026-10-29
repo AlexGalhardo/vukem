@@ -306,6 +306,7 @@ r.Post("/locale", func(c *web.Ctx) error {
 
 ## What else follows the locale
 
+- **The page URL.** With a path-prefix locale (`i18n.MiddlewareConfig{PathPrefixes: ...}`), routing sees `/games` but the page object's `url` and the asset-version reload keep `/pt-br/games`, so client history and refreshes stay in the visitor's locale.
 - **`<html lang>`.** The starters' root view writes `<html lang="{{or locale "en"}}">`, so screen readers and the browser's translate prompt see the right language.
 - **Validation errors.** `web.Parse` messages are translated from the `validation.*` keys of your catalogs, so the `errors` your forms show (`useForm().errors`) are already in the user's language. Messages without a translation keep their English text.
 - **Framework errors.** Keyed errors such as `auth.failed` follow the locale too.

@@ -50,7 +50,9 @@ func newHarness(t *testing.T, cfg inertia.Config, routes func(r *router.Router))
 
 	views, err := view.New(view.Config{FS: fstest.MapFS{
 		"app.html": {
-			Data: []byte(`{{/* layout: none */}}<html><head>{{.Head}}</head><body>{{.Inertia}}</body></html>`),
+			Data: []byte(
+				`{{/* layout: none */}}<html><head>{{with .Data.theme}}<meta name="theme" content="{{.}}">{{end}}{{.Head}}</head><body>{{.Inertia}}</body></html>`,
+			),
 		},
 	}})
 	if err != nil {
