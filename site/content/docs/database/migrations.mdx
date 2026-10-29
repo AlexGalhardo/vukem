@@ -335,7 +335,7 @@ s.Create("ratings", func(t *schema.Table) {
 
 - It emits `GENERATED ALWAYS AS (expr) STORED` on SQLite, PostgreSQL and MySQL. The expression is raw SQL that you write, never user input.
 - A generated column cannot have a `Default`, and SQLite cannot add a stored generated column to an existing table, so both fail the migration.
-- The database rejects writes to the column, so the ORM must not write it: map the field with `db:"-"` or read it through a separate read-only model.
+- The database rejects writes to the column, so tag the model field `orm:"readonly"`: the ORM reads it but never writes it. See [Naming conventions](/docs/database/orm#naming-conventions).
 
 ## Changing tables
 

@@ -368,8 +368,8 @@ When the type is missing or unknown (some v2 errors), it is derived from the sta
 | Area | Methods |
 | --- | --- |
 | Customers | `CreateCustomer`, `GetCustomer`, `UpdateCustomer` |
-| Checkout | `CreateCheckoutSession`, `GetCheckoutSession` |
-| Subscriptions | `GetSubscription`, `UpdateSubscription` (for example `cancel_at_period_end`), `CancelSubscription` (immediately) |
+| Checkout | `CreateCheckoutSession`, `GetCheckoutSession`, `ListCheckoutSessions`, `ExpireCheckoutSession` (`cs_…`) |
+| Subscriptions | `ListSubscriptions`, `GetSubscription`, `UpdateSubscription` (for example `cancel_at_period_end`), `CancelSubscription` (immediately) |
 | Billing Portal | `CreatePortalSession(ctx, customer, returnURL)` |
 | Payments | `CreatePaymentIntent(ctx, params, idemKey)`, `GetPaymentIntent` |
 | Refunds | `CreateRefund`, `GetRefund` (`re_…` or `pyr_…`) |
@@ -384,6 +384,26 @@ err := sc.Call(ctx, http.MethodGet, "/v1/balance", nil, &balance)
 ```
 
 When you pass `expand[]`, fields such as `customer`, `subscription` and `payment_intent` still decode as the id string. Decode into your own struct to read the expanded object. `List[T]` holds a page of a list endpoint (`Data`, `HasMore`).
+
+List calls return a page, newest first; `Subscription.Created` and `CheckoutSession.Created` are Unix times. Stripe leaves canceled subscriptions out unless you ask for `status: "all"`. Before you start a new Checkout, expire the customer's open sessions so a second browser tab cannot create a second subscription, and when you delete an account cancel every subscription Stripe could still bill:
+
+```go
+open, err := sc.ListCheckoutSessions(ctx, stripe.Params{"customer": customerID, "status": "open"})
+if err != nil {
+	return err
+}
+for _, cs := range open.Data {
+	if _, err := sc.ExpireCheckoutSession(ctx, cs.ID); err != nil {
+		return err
+	}
+}
+
+subs, err := sc.ListSubscriptions(ctx, stripe.Params{
+	"customer": customerID, "status": "all", "limit": 100,
+})
+```
+
+Page with `starting_after` set to the last `ID` while `HasMore` is true.
 
 The client never prints the key: `fmt.Println(sc)` shows `stripe.Client{key: rk_test_…1234}`.
 
