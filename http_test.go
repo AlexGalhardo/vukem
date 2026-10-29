@@ -2915,6 +2915,46 @@ func TestHealthEndpointIsNotCacheable(t *testing.T) {
 	}
 }
 
+// VF-027 (HexaScore): the build version is reported by /up only when the
+// app opts in, so the probe does not fingerprint the build by default.
+func TestWithVersionOnHealthEndpoints(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		opts []Option
+		want string
+	}{
+		{"opted in", []Option{WithVersion("v1.4.2+3f9c2ab")}, `"version":"v1.4.2+3f9c2ab"`},
+		{"default", nil, ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			app := newTestApp(t, tt.opts...)
+			if app.Version != strings.TrimSuffix(strings.TrimPrefix(tt.want, `"version":"`), `"`) {
+				t.Errorf("App.Version = %q", app.Version)
+			}
+
+			for _, target := range []string{"/up", "/up?checks=1"} {
+				body := doReq(t, app, target).Body.String()
+				if tt.want != "" && !strings.Contains(body, tt.want) || tt.want == "" && strings.Contains(body, "version") {
+					t.Errorf("GET %s = %s, want version %q", target, body, tt.want)
+				}
+			}
+
+			rec := httptest.NewRecorder()
+			app.ReadyHandler().ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/ready", http.NoBody))
+
+			if body := rec.Body.String(); tt.want != "" && !strings.Contains(body, tt.want) {
+				t.Errorf("ReadyHandler = %s, want %s", body, tt.want)
+			}
+		})
+	}
+}
+
 // A101: the readiness seam existed as a method; WithHealthCheck is the
 // build-time form, so an app declares its dependencies next to its
 // migrations and providers instead of needing a provider for it.

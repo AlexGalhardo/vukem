@@ -82,6 +82,15 @@ func WithRunner(name string, r Runner) Option {
 	return func(o *options) error { o.runners = append(o.runners, namedRunner{name, r}); return nil }
 }
 
+// WithVersion sets App.Version, the build version (a tag or commit,
+// typically injected with `vukem build -ldflags "-X main.version=..."`),
+// and reports it as "version" in GET /up, GET /up?checks=1 and
+// ReadyHandler. Without it (the default) the probes report no version, so
+// they do not fingerprint the build.
+func WithVersion(version string) Option {
+	return func(o *options) error { o.version = version; return nil }
+}
+
 // WithHealthCheck registers a readiness check at build time, the
 // declarative form of [App.AddHealthCheck]: a dependency the instance
 // needs in order to serve, reported by [App.ReadyHandler] and

@@ -172,8 +172,9 @@ func (a *App) ReadyHandler() http.Handler {
 }
 
 type readiness struct {
-	Status string            `json:"status"`
-	Checks map[string]string `json:"checks"`
+	Status  string            `json:"status"`
+	Version string            `json:"version,omitempty"`
+	Checks  map[string]string `json:"checks"`
 }
 
 func (a *App) writeReadiness(w http.ResponseWriter, r *http.Request) {
@@ -197,7 +198,7 @@ func (a *App) writeReadiness(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(code)
-	if err := json.NewEncoder(w).Encode(readiness{Status: status, Checks: checks}); err != nil {
+	if err := json.NewEncoder(w).Encode(readiness{Status: status, Version: a.Version, Checks: checks}); err != nil {
 		a.Log.DebugContext(ctx, "write readiness response", "err", err) // client gone
 	}
 }
@@ -210,6 +211,10 @@ func (a *App) healthHandler(c *web.Ctx) error {
 		// gone, so no intermediary may keep it (writeReadiness does the
 		// same for the readiness branch).
 		c.Writer().Header().Set("Cache-Control", "no-store")
+
+		if a.Version != "" {
+			return c.JSON(http.StatusOK, web.Map{"status": "ok", "version": a.Version})
+		}
 
 		return c.JSON(http.StatusOK, web.Map{"status": "ok"})
 	}

@@ -154,6 +154,8 @@ type App struct {
 	// Inertia is the Inertia adapter when WithInertia was given (nil
 	// otherwise).
 	Inertia *inertia.Inertia
+	// Version is the build version given by WithVersion (empty otherwise).
+	Version string
 	// I18n holds the translations when WithTranslations was given (nil
 	// otherwise); DefaultMiddleware then resolves the request locale.
 	I18n *i18n.Bundle
@@ -307,6 +309,7 @@ type options struct {
 	providers     []Provider
 	runners       []namedRunner
 	healthChecks  []namedHealthCheck
+	version       string
 	routes        []func(r *router.Router, app *App) error
 	bootRoutes    []func(r *router.Router, app *App) error
 	views         fs.FS
@@ -472,6 +475,7 @@ func New(opts ...Option) (*App, error) {
 		previous:  previous,
 		Log:       logger,
 		Kind:      o.kind,
+		Version:   o.version,
 		providers: o.providers,
 		runners:   o.runners,
 		stdout:    stdout,
