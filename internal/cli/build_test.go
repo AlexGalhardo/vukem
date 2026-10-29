@@ -60,7 +60,10 @@ func TestBuildLdflagsAndSSR(t *testing.T) {
 	t.Parallel()
 	requireGo(t)
 
-	dir := stdlibApp(t, "package main\n\nimport \"fmt\"\n\nvar version = \"dev\"\n\nfunc main() { fmt.Print(version) }\n")
+	dir := stdlibApp(
+		t,
+		"package main\n\nimport \"fmt\"\n\nvar version = \"dev\"\n\nfunc main() { fmt.Print(version) }\n",
+	)
 
 	if code, out, errOut := vukem(t, dir, "build", "-ldflags", "-X main.version=v1.2.3"); code != 0 ||
 		!strings.Contains(out, "built") {

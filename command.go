@@ -282,7 +282,7 @@ func codegenTypesCommand() Command {
 				return fmt.Errorf("codegen:types: %w", err)
 			}
 
-			return os.WriteFile(*out, []byte(ts), 0o600)
+			return os.WriteFile(*out, []byte(ts), 0o600) //nolint:gosec // G703: path from the developer's own -o flag
 		},
 	}
 }

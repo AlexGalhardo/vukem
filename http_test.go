@@ -2010,11 +2010,9 @@ func TestServeWithSSR(t *testing.T) { //nolint:paralleltest // sets process envi
 	t.Setenv("VUKEM_SSR_HELPER", runs)
 	t.Setenv("VUKEM_SSR_EXIT", "0")
 
-	build := func(opts ...Option) (*App, error) {
-		return New(append(opts, WithLogger(discardLogger()), WithoutHTTP())...)
-	}
 	serve := func(ctx context.Context, args ...string) error {
-		return RunMain(ctx, append([]string{"app", "serve"}, args...), testSource(nil).Lookup, build)
+		return RunMain(ctx, append([]string{"app", "serve"}, args...), testSource(nil).Lookup, New,
+			WithLogger(discardLogger()), WithoutHTTP())
 	}
 
 	ctx, cancel := context.WithCancel(t.Context())
@@ -3000,13 +2998,15 @@ func TestWithVersionOnHealthEndpoints(t *testing.T) {
 
 			for _, target := range []string{"/up", "/up?checks=1"} {
 				body := doReq(t, app, target).Body.String()
-				if tt.want != "" && !strings.Contains(body, tt.want) || tt.want == "" && strings.Contains(body, "version") {
+				if tt.want != "" && !strings.Contains(body, tt.want) ||
+					tt.want == "" && strings.Contains(body, "version") {
 					t.Errorf("GET %s = %s, want version %q", target, body, tt.want)
 				}
 			}
 
 			rec := httptest.NewRecorder()
-			app.ReadyHandler().ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/ready", http.NoBody))
+			app.ReadyHandler().
+				ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/ready", http.NoBody))
 
 			if body := rec.Body.String(); tt.want != "" && !strings.Contains(body, tt.want) {
 				t.Errorf("ReadyHandler = %s, want %s", body, tt.want)

@@ -252,7 +252,11 @@ func buildCmd(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 			}
 
 			if *ssr {
-				if err := tool(ctx, env, pm.binary(), append(slices.Clone(pm.exec), "vite", "build", "--ssr")...); err != nil {
+				if err := tool(
+					ctx,
+					env,
+					pm.binary(),
+					append(slices.Clone(pm.exec), "vite", "build", "--ssr")...); err != nil {
 					return err
 				}
 			}
