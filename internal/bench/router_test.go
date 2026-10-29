@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/AlexGalhardo/vukem/web"
 )
@@ -58,10 +58,10 @@ func BenchmarkMiddleware5(b *testing.B) {
 
 	e := echo.New()
 	for range n {
-		e.Use(func(next echo.HandlerFunc) echo.HandlerFunc { return func(c echo.Context) error { return next(c) } })
+		e.Use(func(next echo.HandlerFunc) echo.HandlerFunc { return func(c *echo.Context) error { return next(c) } })
 	}
 
-	e.GET("/hello", func(c echo.Context) error { return c.String(http.StatusOK, "ok") })
+	e.GET("/hello", func(c *echo.Context) error { return c.String(http.StatusOK, "ok") })
 
 	run(b, []impl{
 		{"nethttp", std},
@@ -99,7 +99,7 @@ func routerImpls(b *testing.B, routes func(add adder)) []impl {
 
 	e := echo.New()
 	routes(func(path, param string) {
-		e.GET(echoPath(path), func(c echo.Context) error { return c.String(http.StatusOK, body(param, c.Param)) })
+		e.GET(echoPath(path), func(c *echo.Context) error { return c.String(http.StatusOK, body(param, c.Param)) })
 	})
 
 	return []impl{

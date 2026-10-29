@@ -83,6 +83,9 @@ type Config struct {
 	MaxHeaderBytes int    `env:"HTTP_MAX_HEADER_BYTES" default:"65536"`
 	LogLevel       string `env:"LOG_LEVEL"             default:"info"`
 	LogFormat      string `env:"LOG_FORMAT"`
+	// LogTruncateIP makes the request log write the /24 (IPv4) or /48
+	// (IPv6) network instead of the client address (data minimisation).
+	LogTruncateIP bool `env:"LOG_TRUNCATE_IP"`
 	// LogDedupWindow collapses repeated identical ERROR records of the
 	// default logger into one summary per window (a Go duration; "0"
 	// disables it). Empty means 1m in production and off elsewhere.
@@ -310,6 +313,7 @@ type options struct {
 	runners       []namedRunner
 	healthChecks  []namedHealthCheck
 	version       string
+	proxies       []*net.IPNet
 	routes        []func(r *router.Router, app *App) error
 	bootRoutes    []func(r *router.Router, app *App) error
 	views         fs.FS

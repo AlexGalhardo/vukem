@@ -330,6 +330,14 @@ Package `export` (stdlib only) streams downloads row by row from any `iter.Seq2[
 - `FlushEvery(n)` (500 rows), `WriteTimeout(d)` (1 minute, renewed before writes to the client at most every `d/4` or 1s, cleared at the end, so long exports outlive the server `WriteTimeout`), `WithBOM()` for Excel (CSV only).
 - The file-name sanitizer lives in `internal/disposition` and is shared with `web.Ctx.Download`.
 
+## Sitemaps
+
+Package `sitemap` (stdlib only) streams XML sitemaps for catalogues too large to build in memory (<https://www.sitemaps.org/protocol.html>):
+
+- `sitemap.NewWriter(w)` writes one `<urlset>`; `Add(sitemap.URL{Loc, LastMod, Alternates})` writes a URL with `<lastmod>` (RFC 3339, UTC) and `xhtml:link` hreflang alternates; `Close()` ends it. Wrap `w` in `gzip.NewWriter` for `.xml.gz` chunks.
+- `Add` returns `sitemap.ErrFull` (nothing written) at `MaxURLs` (50,000) or `MaxBytes` (50 MiB uncompressed): close the chunk and start the next one. `sitemap.WriteIndex(w, []sitemap.Sitemap{...})` writes the index of the chunks.
+- Only absolute `http`/`https` URLs of at most 2048 bytes and hreflang tags of letters, digits and `-` are accepted; values are XML-escaped (`TestWriterRejectsInvalidAndStopsWhenFull`). Site page: `site/content/docs/digging-deeper/sitemaps.mdx`.
+
 ## Events
 
 ```go
@@ -380,7 +388,7 @@ GCRA needs compare-and-set, which `cache.Store` lacks, so the store-agnostic lim
 
 ## Bot challenge
 
-`challenge.Middleware(verifier, when)` verifies a browser challenge on unsafe requests (signup, login, contact). `challenge.Turnstile(secret)` and `challenge.HCaptcha(secret)` return a `*SiteVerify` (siteverify protocol over `httpclient.Safe`, optional `Hostname` check); the token comes from the widget's form field or the `X-Challenge-Token` header (Inertia, JSON). A rejected token is a validation error on `challenge` (422 / redirect back), a provider failure a 503 (fail closed). `when` (nil: always) limits the check to suspicious clients, e.g. after a soft `ratelimit` budget runs out. Any type with `Verify(*web.Ctx) error` is a `Verifier` (errors wrapping `challenge.ErrRejected` are rejections). Site page: `/docs/security/bot-challenge`.
+`challenge.Middleware(verifier, when)` verifies a browser challenge on unsafe requests (signup, login, contact). `challenge.Turnstile(secret)` and `challenge.HCaptcha(secret)` return a `*SiteVerify` (siteverify protocol over `httpclient.Safe`, optional `Hostname` and `Action` checks; `Action` is the Turnstile widget's `data-action`, see <https://developers.cloudflare.com/turnstile/get-started/server-side-validation/>, read 2026-10-29); the token comes from the widget's form field or the `X-Challenge-Token` header (Inertia, JSON). A rejected token is a validation error on `challenge` (422 / redirect back), a provider failure a 503 (fail closed). `when` (nil: always) limits the check to suspicious clients, e.g. after a soft `ratelimit` budget runs out. Any type with `Verify(*web.Ctx) error` is a `Verifier` (errors wrapping `challenge.ErrRejected` are rejections). Site page: `/docs/security/bot-challenge`.
 
 ## Queue
 

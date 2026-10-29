@@ -74,7 +74,7 @@ To bump: change `BETTERLEAKS_VERSION` and `BETTERLEAKS_SHA256` in `secrets.yml` 
 
 ## Metrics
 
-Tracked in the pinned "Scorecard tracking" issue, updated at each release:
+Checked at each release (the "Scorecard tracking" issue #5 was closed on 2026-10-29; the history and the open levers live here):
 
 | Metric | Source | Target |
 | --- | --- | --- |
@@ -86,6 +86,26 @@ Tracked in the pinned "Scorecard tracking" issue, updated at each release:
 | Dependabot PRs open for more than 7 days | `gh pr list --author app/dependabot` | 0 |
 | Time from a `ci-failure` issue to its fix | `ci-failure` issues | < 7 days |
 | Doc and code drift | `web/docs_test.go`, `z/tags_rules_test.go`, `internal/cli/reference_docs_test.go`, `snippetcheck` | 0 failures; each new API table in `docs/` gets a test |
+
+### Scorecard history
+
+Add a row at each release from `https://api.scorecard.dev/projects/github.com/AlexGalhardo/vukem` (the score of the release commit's main push).
+
+| Release | Date | Commit | Score | Notes |
+| --- | --- | --- | --- | --- |
+| v0.31.0 | 2026-10-25 | `d3c19ee` | 7.1 | Baseline from the specialist audit |
+| v0.32.0 | 2026-10-25 | `deb7aab` | 7.5 | Vulnerabilities 5→9, Pinned-Dependencies 9→10, CI-Tests -1→10 |
+| v0.33.0 | 2026-10-29 | `ca2565f` | 7.3 | Branch-Protection 3→4; Vulnerabilities 9→5: `golang.org/x/net` GO-2026-6860 and GO-2026-6866 (`drivers/otel`, `internal/bench`) and echo v4 GHSA-246p-cpwv-v3jq and GHSA-99jh-6h7p-pp36 (`internal/bench`), fixed after the release by x/net v0.62.0 and echo v5.4.2; GO-2026-5932 has no fix |
+
+### Scorecard levers that need the maintainer
+
+The automatable checks are at 10 (Binary-Artifacts, CI-Tests, Dangerous-Workflow, Dependency-Update-Tool, Fuzzing, License, Packaging, Pinned-Dependencies, SAST, Security-Policy, Signed-Releases, Token-Permissions). What is left needs a person or time:
+
+- [ ] CII-Best-Practices 0 → 5: apply for the OpenSSF Best Practices *passing* badge at <https://www.bestpractices.dev> and add the badge to the README.
+- [ ] Code-Review 0 and Branch-Protection 4 → 8+: require one approving review (and code-owner review, last-push approval) in the `protect-main` ruleset, which needs a second human maintainer; a sole maintainer cannot approve their own PRs.
+- [ ] Contributors 0: rises when people from other organizations contribute.
+- [ ] Maintained 0: rises on its own 90 days after the repository was created (after 2027-01-14) with weekly activity.
+- [x] Branch protection ruleset applied (`.config/ruleset-protect-main.json`, 2026-10-25).
 
 ## Maintainer-only settings
 

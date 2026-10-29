@@ -319,6 +319,8 @@ A <Term tip="A run-time error that stops the current function, like dividing by 
 
 5xx responses log at `ERROR`, 4xx at `WARN`, the rest at `INFO`.
 
+Privacy laws such as the GDPR and Brazil's LGPD ask you to keep no more personal data than you need. A full client IP in every log line is personal data. With `LoggerWith(log, middleware.LoggerOptions{TruncateIP: true})`, or `LOG_TRUNCATE_IP=true` for the default stacks, `peer` and `ip` hold the network instead: `203.0.113.0` for `203.0.113.77` (a /24) and `2001:db8:1234::` for an IPv6 address (a /48). Only the log changes: `c.IP()` and rate limits still see the full address.
+
 ### Maintenance
 
 `Maintenance(cfg)` answers every request with `503 Service Unavailable` ("We are doing some maintenance. Please come back soon.") while the state file written by [`vukem down`](/docs/cli/overview#vukem-down-and-vukem-up) exists. It reads the file on each request, so `vukem down` and `vukem up` take effect without a restart. The 503 uses your `errors/503` view or problem+json, and carries `Retry-After` when `vukem down --retry` set one.

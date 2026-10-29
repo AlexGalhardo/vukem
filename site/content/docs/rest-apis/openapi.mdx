@@ -255,6 +255,22 @@ doc := openapi.Generate(r.Routes(), openapi.Info{
 })
 ```
 
+`License` fills `info.license`: a `Name` plus either an SPDX `Identifier` or a `URL` (OpenAPI 3.1 allows one of them). `Security` names the schemes every plain route requires, the routes registered with `r.Get` and friends instead of `api.Register` (session-cookie pages, for example). Mark a plain route that needs no login with `.Doc(openapi.Public{})`:
+
+```go title="routes/web.go"
+vukem.WithOpenAPI(openapi.Info{
+	License:  &openapi.License{Name: "MIT", Identifier: "MIT"},
+	Security: []string{"session"},
+	SecuritySchemes: map[string]openapi.Schema{
+		"session": {"type": "apiKey", "in": "cookie", "name": "session"},
+	},
+})
+
+r.Post("/login", h.Login).Doc(openapi.Public{}) // "security": []
+```
+
+Plain routes also list a `4XX` response that references `Problem`, because every vukem error is problem+json. The `Problem` and `ValidationError` components appear only when an operation references them, so linters such as Redocly's recommended ruleset find no unused component.
+
 `Title` defaults to `API` and `Version` to `1.0.0`. `SecuritySchemes` adds or replaces schemes; `bearer` (an HTTP bearer token) is predefined. A name in `Op.Security` without a scheme is a programming error: `openapi.Build(routes, info)` returns `openapi.ErrUnknownSecurityScheme`, `openapi.Generate` panics with it, and `App.OpenAPI` (so `/openapi.json`, `openapi:export` and the code generators) returns it. `openapi.NewSchemas()`, `Schemas.For`, `Schemas.Object` and `openapi.Fields` expose the type-to-schema mapping for your own generators.
 
 ## Checking responses in tests

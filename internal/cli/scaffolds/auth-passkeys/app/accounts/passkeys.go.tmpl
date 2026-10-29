@@ -1,0 +1,227 @@
+package accounts
+
+import (
+	"context"
+	"encoding/base64"
+	"errors"
+	"fmt"
+	"net/url"
+	"strings"
+
+	"github.com/AlexGalhardo/vukem"
+	"github.com/AlexGalhardo/vukem/auth/webauthn"
+	"github.com/AlexGalhardo/vukem/errs"
+	"github.com/AlexGalhardo/vukem/orm"
+	"github.com/AlexGalhardo/vukem/web"
+
+	"{{.Module}}/app/models"
+)
+
+// Passkey sign-in (vukem install:auth --passkeys). A passkey is added
+// only after the current password is confirmed, and password sign-in and
+// reset stay available: the password is the recovery path when a device
+// is lost, so a passkey is never the account's only way in.
+const (
+	passkeyRegisterKey = "passkeys.register"
+	passkeyLoginKey    = "passkeys.login"
+)
+
+// ErrPasskeyFailed is every refused passkey ceremony; the reason goes to
+// the security log, never to the client.
+var ErrPasskeyFailed = errors.New("accounts: passkey ceremony failed")
+
+// Passkeys registers passkeys and signs users in with them.
+type Passkeys struct {
+	*Accounts
+
+	// RP is derived from APP_URL: its host is the RP ID and its origin the
+	// only origin ceremonies may come from.
+	RP webauthn.RelyingParty
+}
+
+// NewPasskeys builds Passkeys; an APP_URL that cannot scope passkeys
+// (plain http on a public host) is a boot error.
+func NewPasskeys(acc *Accounts, app *vukem.App) (*Passkeys, error) {
+	u, err := url.Parse(app.Config.URL)
+	if err != nil {
+		return nil, fmt.Errorf("passkeys: APP_URL: %w", err)
+	}
+
+	rp := webauthn.RelyingParty{ID: u.Hostname(), Name: app.Config.Name, Origins: []string{u.Scheme + "://" + u.Host}}
+	if err := rp.Validate(); err != nil {
+		return nil, fmt.Errorf("passkeys: APP_URL %q: %w", app.Config.URL, err)
+	}
+
+	return &Passkeys{Accounts: acc, RP: rp}, nil
+}
+
+// FailedPasskey is the validation error for any refused ceremony.
+func (p *Passkeys) FailedPasskey(ctx context.Context) error {
+	return errs.NewValidation().Add("credential", p.T(ctx, "auth.passkeys.failed"))
+}
+
+// ListPasskeys returns the passkeys of userID, oldest first.
+func (p *Passkeys) ListPasskeys(ctx context.Context, userID int64) ([]models.Passkey, error) {
+	return orm.QueryOf[models.Passkey](p.DB).Where("user_id", userID).OrderBy("id", orm.Asc).Get(ctx)
+}
+
+// RegistrationOptions starts adding a passkey for userID: it stores a new
+// challenge in the session and returns the options for the browser.
+func (p *Passkeys) RegistrationOptions(c *web.Ctx, userID int64) (webauthn.CreationOptions, error) {
+	user, existing, err := p.passkeyUser(c.Context(), userID)
+	if err != nil {
+		return webauthn.CreationOptions{}, err
+	}
+
+	ch := webauthn.NewChallenge()
+	c.Session().Put(passkeyRegisterKey, ch)
+
+	return p.RP.RegistrationOptions(user, ch, existing), nil
+}
+
+// Register verifies the browser's registration response against the
+// session challenge, which works once, and stores the passkey.
+func (p *Passkeys) Register(c *web.Ctx, userID int64, name string, body []byte) error {
+	ch, _ := c.Session().Pull(passkeyRegisterKey).(string)
+	if ch == "" {
+		return ErrPasskeyFailed
+	}
+
+	user, _, err := p.passkeyUser(c.Context(), userID)
+	if err != nil {
+		return err
+	}
+
+	cred, err := p.RP.VerifyRegistration(ch, user, body)
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrPasskeyFailed, err)
+	}
+
+	return orm.Create(c.Context(), p.DB, &models.Passkey{
+		UserID:         userID,
+		CredentialID:   base64.RawURLEncoding.EncodeToString(cred.ID),
+		PublicKey:      cred.PublicKey,
+		Algorithm:      cred.Algorithm,
+		SignCount:      int64(cred.SignCount),
+		UserHandle:     cred.UserHandle,
+		BackupEligible: cred.BackupEligible,
+		BackupState:    cred.BackupState,
+		Transports:     strings.Join(cred.Transports, ","),
+		Name:           name,
+	})
+}
+
+// LoginOptions starts a usernameless passkey sign-in.
+func (p *Passkeys) LoginOptions(c *web.Ctx) webauthn.RequestOptions {
+	ch := webauthn.NewChallenge()
+	c.Session().Put(passkeyLoginKey, ch)
+
+	return p.RP.AssertionOptions(ch, nil)
+}
+
+// Authenticate verifies the browser's assertion against the session
+// challenge, which works once, saves the new sign count and returns the
+// user to sign in. A passkey verified with user verification is itself
+// two factors, so two-factor users skip the code step.
+func (p *Passkeys) Authenticate(c *web.Ctx, body []byte) (models.User, error) {
+	ctx := c.Context()
+
+	ch, _ := c.Session().Pull(passkeyLoginKey).(string)
+	if ch == "" {
+		return models.User{}, ErrPasskeyFailed
+	}
+
+	a, err := webauthn.ParseAssertion(body)
+	if err != nil {
+		return models.User{}, fmt.Errorf("%w: %w", ErrPasskeyFailed, err)
+	}
+
+	pk, err := orm.QueryOf[models.Passkey](p.DB).
+		Where("credential_id", base64.RawURLEncoding.EncodeToString(a.CredentialID)).
+		First(ctx)
+	if errors.Is(err, orm.ErrNotFound) {
+		return models.User{}, fmt.Errorf("%w: unknown credential", ErrPasskeyFailed)
+	}
+
+	if err != nil {
+		return models.User{}, err
+	}
+
+	stored, err := pk.Credential()
+	if err != nil {
+		return models.User{}, err
+	}
+
+	updated, err := p.RP.VerifyAssertion(ch, stored, a)
+	if err != nil {
+		return models.User{}, fmt.Errorf("%w: %w", ErrPasskeyFailed, err)
+	}
+
+	// Only the request that read this sign count may move it: a concurrent
+	// assertion with the same counter loses.
+	n, err := orm.QueryOf[models.Passkey](p.DB).Where("id", pk.ID).Where("sign_count", pk.SignCount).
+		Update(ctx, orm.Set{
+			"sign_count":   int64(updated.SignCount),
+			"backup_state": updated.BackupState,
+			"last_used_at": p.now().UTC(),
+		})
+	if err != nil {
+		return models.User{}, err
+	}
+
+	if n == 0 {
+		return models.User{}, fmt.Errorf("%w: concurrent use", ErrPasskeyFailed)
+	}
+
+	return orm.QueryOf[models.User](p.DB).Find(ctx, pk.UserID)
+}
+
+// DeletePasskey removes a passkey of userID; another user's passkey is
+// not found.
+func (p *Passkeys) DeletePasskey(ctx context.Context, userID, id int64) error {
+	n, err := orm.QueryOf[models.Passkey](p.DB).Where("id", id).Where("user_id", userID).Delete(ctx)
+	if err != nil {
+		return err
+	}
+
+	if n == 0 {
+		return orm.ErrNotFound
+	}
+
+	return nil
+}
+
+// passkeyUser returns the WebAuthn user of userID, giving the account a
+// handle on first use, and its passkeys to exclude from registration.
+func (p *Passkeys) passkeyUser(ctx context.Context, userID int64) (webauthn.User, []webauthn.Credential, error) {
+	q := orm.QueryOf[models.PasskeyHandle](p.DB).Where("id", userID)
+
+	// Two first registrations at once keep the handle that was written first.
+	set := orm.Set{"passkey_handle": webauthn.NewUserHandle()}
+	if _, err := q.WhereNull("passkey_handle").Update(ctx, set); err != nil {
+		return webauthn.User{}, nil, err
+	}
+
+	u, err := orm.QueryOf[models.PasskeyHandle](p.DB).Find(ctx, userID)
+	if err != nil {
+		return webauthn.User{}, nil, err
+	}
+
+	pks, err := p.ListPasskeys(ctx, userID)
+	if err != nil {
+		return webauthn.User{}, nil, err
+	}
+
+	creds := make([]webauthn.Credential, 0, len(pks))
+
+	for i := range pks {
+		cred, err := pks[i].Credential()
+		if err != nil {
+			return webauthn.User{}, nil, err
+		}
+
+		creds = append(creds, cred)
+	}
+
+	return webauthn.User{Handle: u.PasskeyHandle, Name: u.Email, DisplayName: u.Name}, creds, nil
+}
