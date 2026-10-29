@@ -184,6 +184,18 @@ It also patches the user-owned `Login` handler (`Validate`, then the challenge, 
 
 The raw SVG is inserted with `template.HTML` (HTMX) or the framework's raw-HTML binding (`dangerouslySetInnerHTML`, `v-html`, `{@html}`): safe only because `totp.QR` writes it itself from server data; never do that with user input. Generated tests compute codes with `totp.Code(secret, time.Now(), totp.Options{})`.
 
+## Passkeys (`auth/webauthn`)
+
+`auth/webauthn` verifies WebAuthn Level 3 registration and authentication ceremonies, standard library only: a minimal CBOR decoder (definite lengths, depth and length bounds), COSE keys for ES256 (P-256), EdDSA (Ed25519) and RS256 (at least 2048 bits), and attestation `none` (provenance is not verified; `RegistrationOptions` asks for `none`). The package is stateless; the app stores challenges and credentials.
+
+- `RelyingParty{ID, Name, Origins, InsecureSkipUserVerification}`; `Validate` refuses origins outside the RP ID and `http` except on `localhost`. User verification is required unless `InsecureSkipUserVerification` is set.
+- `NewChallenge() string` (32 random bytes, base64url, so any session store keeps it as is) and `NewUserHandle() []byte` (random; never a database id or an email).
+- `rp.RegistrationOptions(user, challenge, exclude)` and `rp.AssertionOptions(challenge, allow)` return the JSON for `PublicKeyCredential.parseCreationOptionsFromJSON` / `parseRequestOptionsFromJSON` (discoverable credentials, `residentKey: "required"`).
+- `rp.VerifyRegistration(challenge, user, body)` checks the browser's `credential.toJSON()` and returns the `Credential` to store (id, COSE public key, algorithm, sign count, user handle, backup flags, transports).
+- `ParseAssertion(body)` exposes the credential id and user handle for the lookup; `rp.VerifyAssertion(challenge, cred, a)` returns the credential with the new sign count to save.
+
+Checks and errors: challenge (`ErrChallenge`, an empty stored challenge never matches), origin and cross-origin iframes (`ErrOrigin`), RP ID hash (`ErrRPID`), user presence and verification (`ErrUserPresence`, `ErrUserVerification`), attestation format (`ErrUnsupportedAttestation`), key type and algorithm agreement (`ErrUnsupportedKey`), credential id and user handle (`ErrCredential`), signature (`ErrSignature`), sign count regression (`ErrSignCount`, both counters at 0 is a synced passkey). The app pulls the challenge out of the session before verifying (single use), throttles the endpoints and keeps a recovery path. The `install:auth --passkeys` scaffold is planned (VF-001). Site page: `site/content/docs/security/passkeys.mdx`.
+
 ## Social login (`social`)
 
 Ally-style OAuth2/OIDC sign-in, standard library only (no `x/oauth2`).

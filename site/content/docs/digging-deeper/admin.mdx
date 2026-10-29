@@ -214,9 +214,9 @@ Options chain: each returns the resource.
 | `Label(col, text)` | the label of one column |
 | `List(cols...)` | list columns, in order (default: every column that is not hidden or sensitive) |
 | `Column(label, fn)` | a computed column, `func(T) string`; its result is HTML-escaped |
-| `Search(cols...)` | a search box over string columns |
+| `Search(cols...)` | a search box over string columns, nullable ones (`sql.NullString`, `sql.Null[string]`) included |
 | `Sortable(cols...)` | columns the list may be sorted by (default: the listed ones) |
-| `Filter(col, options...)` | an exact-match filter: a select with the options, a text box without; boolean columns get yes/no |
+| `Filter(col, options...)` | an exact-match filter on a string, integer or boolean column (or its `sql.Null*` / `sql.Null[T]` form): a select with the options, a text box without; boolean columns get yes/no. Rows where the column is NULL never match a filter value |
 | `PerPage(n)` | page size, 1 to 200 (default 20) |
 | `Hidden(cols...)` | never shown; hidden schema keys are never written |
 | `ReadOnly(cols...)` | shown disabled on the edit form, never written |
