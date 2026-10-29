@@ -1,0 +1,170 @@
+package account
+
+import (
+	"encoding/json"
+	"errors"
+	"net/http"
+	"strings"
+	"unicode/utf8"
+
+	"github.com/AlexGalhardo/vukem/auth"
+	"github.com/AlexGalhardo/vukem/errs"
+	"github.com/AlexGalhardo/vukem/ratelimit"
+	"github.com/AlexGalhardo/vukem/web"
+
+	"{{.Module}}/app/accounts"
+	"{{.Module}}/app/models"
+	"{{.Module}}/app/requests"
+)
+
+// PasskeyHandlers are the JSON endpoints the browser calls around
+// navigator.credentials.create and .get (vukem install:auth --passkeys).
+type PasskeyHandlers struct {
+	a *accounts.Passkeys
+}
+
+// NewPasskeys returns the passkey handlers.
+func NewPasskeys(a *accounts.Passkeys) *PasskeyHandlers { return &PasskeyHandlers{a: a} }
+
+// PasskeyThrottleKey limits password checks per signed-in user and IP.
+func PasskeyThrottleKey(r *http.Request) string {
+	id := ""
+	if u, err := auth.UserFrom[models.User](r.Context(), "web"); err == nil {
+		id = u.AuthID()
+	}
+
+	return "passkeys:" + id + ":" + ratelimit.ByIP(r)
+}
+
+// List returns the user's passkeys.
+func (h *PasskeyHandlers) List(c *web.Ctx) error {
+	u, err := auth.User[models.User](c, "web")
+	if err != nil {
+		return err
+	}
+
+	pks, err := h.a.ListPasskeys(c.Context(), u.ID)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, map[string]any{"data": pks})
+}
+
+// RegistrationOptions checks the current password, then returns the
+// options for navigator.credentials.create: a hijacked session alone
+// cannot add a way in.
+func (h *PasskeyHandlers) RegistrationOptions(c *web.Ctx) error {
+	u, err := h.confirmPassword(c, "register")
+	if err != nil {
+		return err
+	}
+
+	opts, err := h.a.RegistrationOptions(c, u.ID)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, opts)
+}
+
+// Register stores the passkey the browser created.
+func (h *PasskeyHandlers) Register(c *web.Ctx) error {
+	u, err := auth.User[models.User](c, "web")
+	if err != nil {
+		return err
+	}
+
+	var in requests.PasskeyRegistration
+	if err := c.BindJSON(&in); err != nil {
+		return err
+	}
+
+	name := strings.TrimSpace(in.Name)
+	if name == "" || utf8.RuneCountInString(name) > 64 {
+		return errs.NewValidation().Add("name", h.a.T(c.Context(), "auth.passkeys.invalid_name"))
+	}
+
+	if err := h.a.Register(c, u.ID, name, in.Credential); err != nil {
+		return h.failed(c, err, "register", u.AuthID())
+	}
+
+	return c.JSON(http.StatusCreated, map[string]string{"status": "created"})
+}
+
+// Delete removes a passkey after checking the current password.
+func (h *PasskeyHandlers) Delete(c *web.Ctx) error {
+	id, err := c.ParamInt("id")
+	if err != nil {
+		return err
+	}
+
+	u, err := h.confirmPassword(c, "delete")
+	if err != nil {
+		return err
+	}
+
+	if err := h.a.DeletePasskey(c.Context(), u.ID, id); err != nil {
+		return err
+	}
+
+	return c.NoContent()
+}
+
+// LoginOptions returns the options for navigator.credentials.get.
+func (h *PasskeyHandlers) LoginOptions(c *web.Ctx) error {
+	return c.JSON(http.StatusOK, h.a.LoginOptions(c))
+}
+
+// Login signs the user in with the passkey assertion and answers with
+// the page to go to.
+func (h *PasskeyHandlers) Login(c *web.Ctx) error {
+	var body json.RawMessage
+	if err := c.BindJSON(&body); err != nil {
+		return err
+	}
+
+	u, err := h.a.Authenticate(c, body)
+	if err != nil {
+		return h.failed(c, err, "login", "")
+	}
+
+	if err := h.a.Web.Login(c, u); err != nil {
+		return err
+	}
+
+	target, _ := c.Session().Pull(auth.IntendedKey).(string)
+
+	return c.JSON(http.StatusOK, map[string]string{"redirect": web.SafeRedirect(c.Request(), target, "/dashboard")})
+}
+
+func (h *PasskeyHandlers) confirmPassword(c *web.Ctx, stage string) (models.User, error) {
+	u, err := auth.User[models.User](c, "web")
+	if err != nil {
+		return u, err
+	}
+
+	in, err := web.Parse(c, requests.PasskeyPasswordSchema)
+	if err != nil {
+		return u, err
+	}
+
+	if ok, err := h.a.Hasher.Verify(u.Password, in.Password); err != nil || !ok {
+		web.SecurityEvent(c.Request(), "auth.passkey_failed", "user_id", u.AuthID(), "stage", stage)
+		return u, errs.NewValidation().Add("password", h.a.T(c.Context(), "auth.passkeys.wrong_password"))
+	}
+
+	return u, nil
+}
+
+// failed logs why a ceremony was refused and answers alike for every
+// reason.
+func (h *PasskeyHandlers) failed(c *web.Ctx, err error, stage, userID string) error {
+	if !errors.Is(err, accounts.ErrPasskeyFailed) {
+		return err
+	}
+
+	web.SecurityEvent(c.Request(), "auth.passkey_failed", "user_id", userID, "stage", stage, "reason", err.Error())
+
+	return h.a.FailedPasskey(c.Context())
+}

@@ -83,6 +83,9 @@ type Config struct {
 	MaxHeaderBytes int    `env:"HTTP_MAX_HEADER_BYTES" default:"65536"`
 	LogLevel       string `env:"LOG_LEVEL"             default:"info"`
 	LogFormat      string `env:"LOG_FORMAT"`
+	// LogTruncateIP makes the request log write the /24 (IPv4) or /48
+	// (IPv6) network instead of the client address (data minimisation).
+	LogTruncateIP bool `env:"LOG_TRUNCATE_IP"`
 	// LogDedupWindow collapses repeated identical ERROR records of the
 	// default logger into one summary per window (a Go duration; "0"
 	// disables it). Empty means 1m in production and off elsewhere.
@@ -315,6 +318,7 @@ type options struct {
 	bootRoutes    []func(r *router.Router, app *App) error
 	views         fs.FS
 	viewFuncs     template.FuncMap
+	reactEmails   fs.FS
 	vite          fs.FS
 	inertia       *inertia.Config
 	lang          fs.FS
@@ -639,7 +643,7 @@ func New(opts ...Option) (*App, error) {
 		}
 	}
 
-	if o.views == nil && len(o.viewFuncs) > 0 {
+	if o.views == nil && o.reactEmails == nil && len(o.viewFuncs) > 0 {
 		return nil, errors.New("vukem: WithViewFuncs needs WithViews")
 	}
 
@@ -654,6 +658,18 @@ func New(opts ...Option) (*App, error) {
 
 		app.Views = engine
 		app.Router.Services().Views = engine
+	}
+
+	if o.reactEmails != nil {
+		// No layouts: an exported React Email page is a whole document.
+		engine, err := view.New(view.Config{
+			FS: o.reactEmails, Reload: !cfg.IsProduction(), URLs: app.Router, I18n: app.I18n, Funcs: o.viewFuncs,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("vukem: WithReactEmails: %w", err)
+		}
+
+		app.mail.react = engine
 	}
 
 	for _, p := range app.providers {
