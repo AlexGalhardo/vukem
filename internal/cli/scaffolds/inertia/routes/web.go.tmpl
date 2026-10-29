@@ -18,6 +18,7 @@ func Web(r *router.Router, app *vukem.App) error {
 		return err
 	}
 
+	r.UseServer(middleware.Gzip()) // proxies in front of the app may not compress
 	r.UseServer(middleware.StaticFS(resources.Public(), middleware.StaticConfig{Prefix: "/"}))
 	r.Use(app.Inertia.Middleware, shareProps(app))
 
