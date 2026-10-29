@@ -11,8 +11,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
-	"github.com/labstack/echo/v4"
-	echomw "github.com/labstack/echo/v4/middleware"
+	"github.com/labstack/echo/v5"
+	echomw "github.com/labstack/echo/v5/middleware"
 
 	"github.com/AlexGalhardo/vukem"
 	"github.com/AlexGalhardo/vukem/config"
@@ -213,7 +213,7 @@ func echoStack() http.Handler {
 			LogLatency:      true,
 			LogResponseSize: true,
 			LogRequestID:    true,
-			LogValuesFunc: func(c echo.Context, v echomw.RequestLoggerValues) error {
+			LogValuesFunc: func(c *echo.Context, v echomw.RequestLoggerValues) error {
 				log.LogAttrs(c.Request().Context(), slog.LevelInfo, "request",
 					slog.String("method", v.Method),
 					slog.String("path", v.URIPath),
@@ -233,7 +233,7 @@ func echoStack() http.Handler {
 			ContentSecurityPolicy: staticCSP,
 		}),
 	)
-	e.GET("/users/:id", func(c echo.Context) error {
+	e.GET("/users/:id", func(c *echo.Context) error {
 		u, ok := lookupUser(c.Param("id"))
 		if !ok {
 			return echo.ErrNotFound

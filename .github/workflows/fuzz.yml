@@ -29,6 +29,8 @@ jobs:
       matrix:
         include:
           - { module: ., pkg: ./auth/jwt, target: FuzzVerify }
+          - { module: ., pkg: ./auth/webauthn, target: FuzzDecodeCBOR }
+          - { module: ., pkg: ./auth/webauthn, target: FuzzParseAuthData }
           - { module: ., pkg: ./config, target: FuzzParseEnv }
           - { module: ., pkg: ./crypt, target: FuzzDecrypt }
           - { module: ., pkg: ./i18n, target: FuzzCanonical }
