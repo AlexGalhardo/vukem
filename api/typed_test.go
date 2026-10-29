@@ -453,3 +453,28 @@ func TestRegister_MapInput(t *testing.T) {
 		t.Errorf("document lacks a typed additionalProperties with minimum 1: %s", out)
 	}
 }
+
+// VF-042 (HexaScore): an output of struct{} with an explicit 2xx status
+// sends that status and no body, as the OpenAPI document says.
+func TestNoOutputWithStatusSendsNoBody(t *testing.T) {
+	t.Parallel()
+
+	r := router.New(nil)
+	api.Register(r, "POST /jobs", api.Op{Name: "jobs.store", Status: http.StatusAccepted},
+		func(*web.Ctx, struct{}) (struct{}, error) { return struct{}{}, nil })
+
+	h, err := r.Handler()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/jobs", strings.NewReader(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted || rec.Body.Len() != 0 || rec.Header().Get("Content-Type") != "" {
+		t.Fatalf("POST /jobs = %d %q (Content-Type %q), want 202 with no body",
+			rec.Code, rec.Body.String(), rec.Header().Get("Content-Type"))
+	}
+}
