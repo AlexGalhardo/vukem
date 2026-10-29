@@ -388,9 +388,30 @@ Rolled back: 20261018100000_add_reading_minutes_to_posts_table
 
 - The first command creates the tracking table: `migrations (id VARCHAR(255) PRIMARY KEY, batch INTEGER, checksum VARCHAR(64), ran_at TIMESTAMP)`.
 - **Batches.** Every `vukem migrate` gets the next batch number. `rollback` without `--step` reverts exactly the migrations of the highest batch, so "undo my last migrate" works even when it was several migrations.
-- **One transaction per migration.** Each `Up` (and its row in `migrations`) runs in its own transaction. If migration 3 of 5 fails, migrations 1 and 2 stay applied, migration 3 is rolled back, and `migrate` stops with `schema: migrate <id>: <error>`. MySQL commits DDL implicitly, so there a failed migration may stay half applied: keep MySQL migrations small.
+- **One transaction per migration.** Each `Up` (and its row in `migrations`) runs in its own transaction. If migration 3 of 5 fails, migrations 1 and 2 stay applied, migration 3 is rolled back, and `migrate` stops with `schema: migrate <id>: <error>`. MySQL commits DDL implicitly, so there a failed migration may stay half applied: keep MySQL migrations small. `NoTransaction` migrations skip the transaction (see [Migrations outside a transaction](#migrations-outside-a-transaction)).
+- **One runner at a time.** `migrate`, `rollback`, `reset` and `fresh` take a lock before reading the `migrations` table and hold it until they finish: a PostgreSQL advisory lock (`pg_advisory_lock`) or a MySQL/MariaDB named lock (`GET_LOCK('vukem:migrations')`), on a dedicated connection. A second process waits, then finds nothing pending. If the lock cannot be taken, nothing runs and the error starts with `schema: lock migrations:`. SQLite takes no lock: migrate from one process.
 - **Rollback** needs `Down`: `schema: migration <id> has no Down`. A migration recorded in the database but missing from code cannot be reverted: `schema: migration <id> is recorded but missing from code`.
 - **`fresh`** drops every table (with `CASCADE` on PostgreSQL, foreign keys switched off on SQLite and MySQL) and then runs `Up` for everything.
+
+### Migrations outside a transaction
+
+Some statements refuse to run inside a transaction: PostgreSQL's `CREATE INDEX CONCURRENTLY`, which builds an index without blocking writes on a busy table, or SQLite's `VACUUM`. Set `NoTransaction` on such a migration:
+
+```go title="database/migrations/20261029120000_index_ratings_item_id.go" nocompile
+var IndexRatingsItemID = schema.Migration{
+	ID:            "20261029120000_index_ratings_item_id",
+	NoTransaction: true,
+	Up: func(s *schema.Schema) error {
+		return s.Raw("CREATE INDEX CONCURRENTLY IF NOT EXISTS " +
+			"ratings_item_id_idx ON ratings (item_id)")
+	},
+	Down: func(s *schema.Schema) error {
+		return s.Raw("DROP INDEX CONCURRENTLY IF EXISTS ratings_item_id_idx")
+	},
+}
+```
+
+`Up` runs on the database directly, and the migration is recorded only after it succeeds. Without the transaction, a failure half-way leaves what already ran: keep one statement per `NoTransaction` migration and write it to be re-run (`IF NOT EXISTS`), so the next `vukem migrate` can finish the job. A failed `CREATE INDEX CONCURRENTLY` leaves an invalid index behind; drop it before retrying.
 
 ### Checksums: catching edited migrations
 
@@ -436,7 +457,7 @@ With `--json`, each entry also carries `"changed": true` or `"missing": true` wh
 
 ## Deploying migrations
 
-Run `vukem migrate` once per deploy, before the new code serves traffic: as a release command on [Railway](/docs/deployment/docker-and-railway), or a step in your pipeline. Only one process should migrate at a time.
+Run `vukem migrate` once per deploy, before the new code serves traffic: as a release command on [Railway](/docs/deployment/docker-and-railway), or a step in your pipeline. On PostgreSQL and MySQL, two runners that start together (a rolling deploy that migrates at boot) are serialized by the migration lock; on SQLite, only one process should migrate at a time.
 
 Because the old code keeps running while the new schema arrives, change tables in steps that both versions understand: add a nullable column first, deploy code that writes it, then make it required in a later migration.
 

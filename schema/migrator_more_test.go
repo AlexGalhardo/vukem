@@ -419,3 +419,66 @@ func TestColumnDDLDetails(t *testing.T) {
 		})
 	}
 }
+
+// VF-017 (HexaScore): statements a transaction refuses run in a
+// NoTransaction migration and are recorded like the others.
+func TestNoTransactionMigration(t *testing.T) {
+	t.Parallel()
+
+	vacuum := func(noTx bool) Migration {
+		return Migration{
+			ID:            "20261029000000_vacuum",
+			Up:            func(s *Schema) error { return s.Raw("VACUUM") },
+			Down:          func(s *Schema) error { return s.Raw("VACUUM") },
+			NoTransaction: noTx,
+		}
+	}
+
+	inTx, _ := NewMigrator(openDB(t), []Migration{vacuum(false)})
+	if _, err := inTx.Up(t.Context()); err == nil || !strings.Contains(err.Error(), "transaction") {
+		t.Fatalf("VACUUM in a transaction = %v, want SQLite's refusal", err)
+	}
+
+	m, _ := NewMigrator(openDB(t), []Migration{vacuum(true)})
+
+	ran, err := m.Up(t.Context())
+	if err != nil || len(ran) != 1 {
+		t.Fatalf("Up() = %v, %v, want the NoTransaction migration to run", ran, err)
+	}
+
+	if st, err := m.Status(t.Context()); err != nil || len(st) != 1 || !st[0].Ran {
+		t.Fatalf("Status() = %+v, %v, want it recorded", st, err)
+	}
+
+	if back, err := m.Rollback(t.Context(), 0); err != nil || len(back) != 1 {
+		t.Fatalf("Rollback() = %v, %v", back, err)
+	}
+}
+
+// VF-026 (HexaScore): on PostgreSQL and MySQL every run takes a lock
+// first; when it cannot (here: SQLite has no such function) nothing runs.
+func TestMigrationLockFailsClosed(t *testing.T) {
+	t.Parallel()
+
+	for _, dl := range []database.Dialect{database.Postgres, database.MySQL} {
+		db, _ := serverDialectDB(t, dl)
+		m, _ := NewMigrator(db, migrations())
+
+		runs := map[string]func() error{
+			"Up":       func() error { _, err := m.Up(t.Context()); return err },
+			"Rollback": func() error { _, err := m.Rollback(t.Context(), 0); return err },
+			"Reset":    func() error { _, err := m.Reset(t.Context()); return err },
+			"Fresh":    func() error { _, err := m.Fresh(t.Context()); return err },
+		}
+
+		for name, run := range runs {
+			if err := run(); err == nil || !strings.Contains(err.Error(), "schema: lock migrations") {
+				t.Errorf("%s %s() = %v, want the lock error", dl.Name(), name, err)
+			}
+		}
+
+		if tables := tableNames(t, db); len(tables) != 0 {
+			t.Errorf("%s: tables created without the lock: %v", dl.Name(), tables)
+		}
+	}
+}

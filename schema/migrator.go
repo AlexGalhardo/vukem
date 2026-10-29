@@ -4,9 +4,11 @@ import (
 	"cmp"
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"slices"
 	"strings"
 	"time"
@@ -20,6 +22,12 @@ type Migration struct {
 	ID   string
 	Up   func(s *Schema) error
 	Down func(s *Schema) error
+	// NoTransaction runs Up and Down outside a transaction, for statements
+	// a transaction refuses (PostgreSQL CREATE INDEX CONCURRENTLY, SQLite
+	// VACUUM). The migration is recorded after Up succeeds; a failure
+	// half-way leaves the statements that ran, so keep such migrations to
+	// one statement, written to be re-run (IF NOT EXISTS).
+	NoTransaction bool
 }
 
 // Status describes a migration's state.
@@ -123,8 +131,26 @@ func (m *Migrator) Checksum(mig Migration) (string, error) {
 func (m *Migrator) ph(n int) string { return m.db.Dialect().Placeholder(n) }
 
 // Up runs every pending migration in one new batch, each in its own
-// transaction. It returns the IDs that ran.
+// transaction (unless NoTransaction). It returns the IDs that ran.
+//
+// Up, Rollback, Reset and Fresh hold a lock for the whole run, so two
+// processes migrating at once (a rolling deploy) run one after the other
+// and the second finds nothing pending: a PostgreSQL advisory lock or a
+// MySQL GET_LOCK, keyed by the migrations table. They wait for it until
+// ctx is done, and fail without migrating when it cannot be taken. SQLite
+// takes no lock: run its migrations from one process.
 func (m *Migrator) Up(ctx context.Context) ([]string, error) {
+	var ran []string
+
+	err := m.locked(ctx, func() (err error) {
+		ran, err = m.up(ctx)
+		return err
+	})
+
+	return ran, err
+}
+
+func (m *Migrator) up(ctx context.Context) ([]string, error) {
 	done, err := m.applied(ctx)
 	if err != nil {
 		return nil, err
@@ -147,12 +173,12 @@ func (m *Migrator) Up(ctx context.Context) ([]string, error) {
 			return ran, err
 		}
 
-		err = m.db.Tx(ctx, func(tx *database.Tx) error {
-			if err := mig.Up(New(ctx, tx)); err != nil {
+		err = m.inTx(ctx, mig, func(ex database.Executor) error {
+			if err := mig.Up(New(ctx, ex)); err != nil {
 				return err
 			}
 
-			_, err := tx.ExecContext(ctx, "INSERT INTO "+m.table+" (id, batch, checksum, ran_at) VALUES ("+
+			_, err := ex.ExecContext(ctx, "INSERT INTO "+m.table+" (id, batch, checksum, ran_at) VALUES ("+
 				m.ph(1)+", "+m.ph(2)+", "+m.ph(3)+", "+m.ph(4)+")", mig.ID, batch, sum, time.Now().UTC())
 
 			return err
@@ -167,9 +193,30 @@ func (m *Migrator) Up(ctx context.Context) ([]string, error) {
 	return ran, nil
 }
 
+// inTx runs fn in a transaction, or on the database itself for a
+// NoTransaction migration.
+func (m *Migrator) inTx(ctx context.Context, mig Migration, fn func(ex database.Executor) error) error {
+	if mig.NoTransaction {
+		return fn(m.db)
+	}
+
+	return m.db.Tx(ctx, func(tx *database.Tx) error { return fn(tx) })
+}
+
 // Rollback reverts the last batch, or the last steps migrations when
 // steps > 0. It returns the IDs that were reverted, newest first.
 func (m *Migrator) Rollback(ctx context.Context, steps int) ([]string, error) {
+	var out []string
+
+	err := m.locked(ctx, func() (err error) {
+		out, err = m.rollback(ctx, steps)
+		return err
+	})
+
+	return out, err
+}
+
+func (m *Migrator) rollback(ctx context.Context, steps int) ([]string, error) {
 	done, err := m.applied(ctx)
 	if err != nil {
 		return nil, err
@@ -210,6 +257,17 @@ func (m *Migrator) Rollback(ctx context.Context, steps int) ([]string, error) {
 
 // Reset reverts every applied migration.
 func (m *Migrator) Reset(ctx context.Context) ([]string, error) {
+	var out []string
+
+	err := m.locked(ctx, func() (err error) {
+		out, err = m.reset(ctx)
+		return err
+	})
+
+	return out, err
+}
+
+func (m *Migrator) reset(ctx context.Context) ([]string, error) {
 	done, err := m.applied(ctx)
 	if err != nil {
 		return nil, err
@@ -249,12 +307,12 @@ func (m *Migrator) revert(ctx context.Context, ids []string) ([]string, error) {
 			return reverted, fmt.Errorf("schema: migration %s has no Down", id)
 		}
 
-		err := m.db.Tx(ctx, func(tx *database.Tx) error {
-			if err := mig.Down(New(ctx, tx)); err != nil {
+		err := m.inTx(ctx, mig, func(ex database.Executor) error {
+			if err := mig.Down(New(ctx, ex)); err != nil {
 				return err
 			}
 
-			_, err := tx.ExecContext(ctx, "DELETE FROM "+m.table+" WHERE id = "+m.ph(1), id)
+			_, err := ex.ExecContext(ctx, "DELETE FROM "+m.table+" WHERE id = "+m.ph(1), id)
 
 			return err
 		})
@@ -271,11 +329,68 @@ func (m *Migrator) revert(ctx context.Context, ids []string) ([]string, error) {
 // Fresh drops every table and runs all migrations. It is destructive: the
 // CLI requires --force in production.
 func (m *Migrator) Fresh(ctx context.Context) ([]string, error) {
-	if err := dropAll(ctx, m.db); err != nil {
-		return nil, err
+	var ran []string
+
+	err := m.locked(ctx, func() (err error) {
+		if err := dropAll(ctx, m.db); err != nil {
+			return err
+		}
+
+		ran, err = m.up(ctx)
+
+		return err
+	})
+
+	return ran, err
+}
+
+// locked runs fn while holding the migration lock (see Up).
+func (m *Migrator) locked(ctx context.Context, fn func() error) error {
+	var lock, unlock string
+
+	var key any
+
+	switch m.db.Dialect().Name() {
+	case "postgres":
+		lock, unlock = "SELECT pg_advisory_lock($1)", "SELECT pg_advisory_unlock($1)"
+		h := fnv.New64a()
+		_, _ = h.Write([]byte("vukem:" + m.table))
+		key = int64(h.Sum64()) //nolint:gosec // G115: any 64-bit value is a valid key
+	case "mysql":
+		// A year: in effect no timeout (MariaDB has no "wait forever"); ctx
+		// still cancels the wait.
+		lock, unlock = "SELECT GET_LOCK(?, 31536000)", "SELECT RELEASE_LOCK(?)"
+		key = "vukem:" + m.table
+	default:
+		return fn()
 	}
 
-	return m.Up(ctx)
+	// Session locks belong to one connection: take and release it on a
+	// pinned one while the migrations use the pool.
+	conn, err := m.db.SQL().Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("schema: lock migrations: %w", err)
+	}
+	defer conn.Close()
+
+	var got sql.NullInt64
+	if err := conn.QueryRowContext(ctx, lock, key).Scan(&got); err != nil {
+		return fmt.Errorf("schema: lock migrations: %w", err)
+	}
+
+	// GET_LOCK answers 1 when it holds the lock; pg_advisory_lock answers
+	// void (NULL) once it does.
+	if m.db.Dialect().Name() == "mysql" && got.Int64 != 1 {
+		return errors.New("schema: lock migrations: GET_LOCK refused")
+	}
+
+	defer func() {
+		// Released even when ctx is done, or the lock would outlive the run
+		// on a pooled connection; closing the connection would release it too.
+		_, _ = conn.ExecContext(context.WithoutCancel(ctx), unlock, key)
+	}()
+
+	return fn()
 }
 
 // DropAll drops every table of the database (db:wipe, migrate:fresh).
