@@ -12,6 +12,7 @@ You will learn:
 - how to get the real visitor IP from Cloudflare safely;
 - how to refuse requests that skip Cloudflare and hit your server directly;
 - how to read the visitor's country and bot signals safely;
+- how to cache public pages at the edge and purge them;
 - how to keep the list of Cloudflare addresses current.
 
 ## Install the module
@@ -75,6 +76,48 @@ r.Get("/pricing", func(c *web.Ctx) error {
 | `VerifiedBot` | `cf-verified-bot` | `true` for a [verified bot](https://developers.cloudflare.com/bots/concepts/bot/verified-bots/) |
 
 `BotScore` and `VerifiedBot` need the "Add bot protection headers" [Managed Transform](https://developers.cloudflare.com/rules/transform/managed-transforms/reference/). The headers are read only when the connection comes from Cloudflare; anyone else could send them, so `VisitorFrom` then reports `false`.
+
+## Cache pages at the edge
+
+Cloudflare caches images, scripts and styles by default, but not HTML. To let it cache a public page, tell it how long with a `CachePolicy`:
+
+```go title="routes/web.go"
+cache, err := cloudflare.CachePolicy{
+	Edge:                 time.Hour,      // Cloudflare keeps it an hour
+	Browser:              time.Minute,    // browsers a minute
+	StaleWhileRevalidate: 5 * time.Minute,
+	Tags:                 []string{"games"},
+}.Middleware()
+if err != nil {
+	return err
+}
+
+r.Get("/games", listGames).Use(cache)
+```
+
+| Field | Header | Meaning |
+| --- | --- | --- |
+| `Edge` | `Cloudflare-CDN-Cache-Control` | how long Cloudflare keeps the page; only Cloudflare reads it |
+| `Browser` | `Cache-Control` | how long browsers keep it |
+| `StaleWhileRevalidate` | `Cloudflare-CDN-Cache-Control` | serve the old copy while fetching a new one |
+| `Tags` | `Cache-Tag` | names to purge the page by later; visitors never see them |
+
+A page that belongs to one user must never be cached for everyone. The middleware leaves the response alone when the request has a `Cookie` or `Authorization` header, when the response sets a cookie or its own `Cache-Control`, and when the status is not `200`. See Cloudflare's [CDN-Cache-Control](https://developers.cloudflare.com/cache/concepts/cdn-cache-control/) page.
+
+## Purge the cache
+
+When a game changes, remove the cached pages that show it. Create an API token with only the **Zone > Cache Purge** permission for your zone, then call the purge client from a queued job:
+
+```go title="app/jobs/purge_games.go"
+purger, err := cloudflare.NewPurger(cfg.CloudflareZoneID, cfg.CloudflareToken)
+if err != nil {
+	return err
+}
+
+return purger.Tags(ctx, "games")
+```
+
+`URLs`, `Prefixes`, `Hosts` and `Everything` purge by URL, URL prefix, hostname or the whole zone. Long lists are sent in batches of 30. Errors carry Cloudflare's code and message (for example `1134 rate limit reached`), never the token. See the [purge API](https://developers.cloudflare.com/api/resources/cache/methods/purge/).
 
 ## Behind another proxy
 
