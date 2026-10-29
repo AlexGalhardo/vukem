@@ -22,8 +22,8 @@ func TestBuiltin_CatalogsComplete(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got := slices.Sorted(maps.Keys(cats)); !slices.Equal(got, []string{"en", "pt-BR"}) {
-		t.Fatalf("built-in locales = %v, want [en pt-BR]", got)
+	if got := slices.Sorted(maps.Keys(cats)); !slices.Equal(got, []string{"en", "es", "pt-BR"}) {
+		t.Fatalf("built-in locales = %v, want [en es pt-BR]", got)
 	}
 
 	for locale, msgs := range cats {
