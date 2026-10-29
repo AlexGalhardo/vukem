@@ -518,6 +518,12 @@ func (r *Resource[T]) formField(
 		f.Required = in.req && !rec.IsValid()
 	case old != nil && !f.ReadOnly:
 		f.Value = old[in.key]
+	case in.virtual:
+		if fn := r.virtuals[in.key]; fn != nil && rec.IsValid() {
+			if ptr, ok := reflect.TypeAssert[*T](rec.Addr()); ok {
+				f.Value = formValue(reflect.ValueOf(fn(ptr)))
+			}
+		}
 	case rec.IsValid():
 		f.Value = formValue(rec.FieldByIndex(r.byName[in.column].index))
 	}
@@ -594,7 +600,7 @@ func (r *Resource[T]) collect(c *web.Ctx, rec *T) (in map[string]any, old map[st
 func (r *Resource[T]) apply(dst, parsed reflect.Value, submitted map[string]any) {
 	for i := range r.inputs {
 		inp := &r.inputs[i]
-		if _, ok := submitted[inp.key]; !ok || r.readonly[inp.column] || r.hidden[inp.column] {
+		if _, ok := submitted[inp.key]; !ok || inp.virtual || r.readonly[inp.column] || r.hidden[inp.column] {
 			continue
 		}
 
@@ -616,7 +622,17 @@ func formErrors(err error) (map[string][]string, []string, bool) {
 	return nil, nil, false
 }
 
-func (r *Resource[T]) save(ctx context.Context, p *Panel, rec *T, action string, before map[string]any) error {
+// write is one form submission for save: the record, the previous record
+// (nil on create), the audit snapshot taken before the form was applied and
+// the Virtual field values.
+type write[T any] struct {
+	rec, prev *T
+	before    map[string]any
+	virtual   map[string]any
+}
+
+func (r *Resource[T]) save(ctx context.Context, p *Panel, action string, w write[T]) error {
+	rec, before := w.rec, w.before
 	rv := reflect.ValueOf(rec).Elem()
 	cols := r.auditColumns()
 
@@ -636,6 +652,13 @@ func (r *Resource[T]) save(ctx context.Context, p *Panel, rec *T, action string,
 
 		if err != nil {
 			return err
+		}
+
+		for _, fn := range r.afterSave {
+			s := Saved[T]{Tx: tx, Action: action, Record: rec, Before: w.prev, Virtual: w.virtual}
+			if err := fn(ctx, s); err != nil {
+				return err
+			}
 		}
 
 		changes := r.diff(before, r.snapshot(rv, cols), cols)
@@ -663,9 +686,9 @@ func (r *Resource[T]) store(p *Panel) web.HandlerFunc {
 
 		rec := new(T)
 
-		err = r.parseInto(rec, in)
+		virtual, err := r.parseInto(rec, in)
 		if err == nil {
-			err = r.save(c.Context(), p, rec, ActionCreate, map[string]any{})
+			err = r.save(c.Context(), p, ActionCreate, write[T]{rec: rec, before: map[string]any{}, virtual: virtual})
 		}
 
 		if err != nil {
@@ -682,15 +705,25 @@ func (r *Resource[T]) store(p *Panel) web.HandlerFunc {
 	}
 }
 
-func (r *Resource[T]) parseInto(rec *T, in map[string]any) error {
+// parseInto validates in, applies it to rec and returns the submitted
+// Virtual field values.
+func (r *Resource[T]) parseInto(rec *T, in map[string]any) (map[string]any, error) {
 	parsed, err := r.parse(in)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	r.apply(reflect.ValueOf(rec).Elem(), parsed, in)
 
-	return nil
+	virtual := map[string]any{}
+
+	for i := range r.inputs {
+		if _, ok := in[r.inputs[i].key]; ok && r.inputs[i].virtual {
+			virtual[r.inputs[i].key] = parsed.FieldByIndex(r.inputs[i].src).Interface()
+		}
+	}
+
+	return virtual, nil
 }
 
 // after is where a successful write redirects: the record when the admin
@@ -720,10 +753,11 @@ func (r *Resource[T]) update(p *Panel) web.HandlerFunc {
 		}
 
 		before := r.snapshot(reflect.ValueOf(rec).Elem(), r.auditColumns())
+		prev := new(*rec)
 
-		err = r.parseInto(rec, in)
+		virtual, err := r.parseInto(rec, in)
 		if err == nil {
-			err = r.save(c.Context(), p, rec, ActionUpdate, before)
+			err = r.save(c.Context(), p, ActionUpdate, write[T]{rec: rec, prev: prev, before: before, virtual: virtual})
 		}
 
 		if err != nil {
