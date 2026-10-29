@@ -64,10 +64,11 @@ type index struct {
 	cols   []string
 	unique bool
 	where  string
+	method string
 }
 
 // Index is an index added by Table.Index or Table.UniqueIndex; chain Where
-// to make it partial.
+// to make it partial and Using to pick a PostgreSQL index method.
 type Index struct {
 	t  *Table
 	ix *index
@@ -220,6 +221,27 @@ func (t *Table) addIndex(cols []string, unique bool) *Index {
 	t.indexes = append(t.indexes, ix)
 
 	return &Index{t: t, ix: ix}
+}
+
+// Using picks the PostgreSQL index method: "gin" for a JSONB column queried
+// with @> or ?, "gist", "brin", "hash", "spgist" or "btree" (the default).
+// Other dialects have no equivalent, so the migration fails there instead
+// of creating an index that cannot serve the queries it was meant for.
+func (i *Index) Using(method string) *Index {
+	methods := []string{"btree", "hash", "gin", "gist", "brin", "spgist"}
+	m := strings.ToLower(method)
+
+	switch {
+	case i.t.s.d.Name() != "postgres":
+		i.t.fail(fmt.Errorf("schema: only postgres supports index methods (index on %s using %q)", i.t.name, method))
+	case !slices.Contains(methods, m):
+		i.t.fail(fmt.Errorf("schema: unknown index method %q on %s; use one of %s",
+			method, i.t.name, strings.Join(methods, ", ")))
+	default:
+		i.ix.method = m
+	}
+
+	return i
 }
 
 // Where makes the index partial: only rows matching expr are indexed (and,
