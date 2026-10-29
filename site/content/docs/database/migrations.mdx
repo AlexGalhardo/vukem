@@ -269,6 +269,18 @@ t.UniqueIndex("slug").Where("deleted_at IS NULL")
 
 `.Where(expr)` works in `Create` and `s.Table` on PostgreSQL and SQLite. MySQL and MariaDB have no partial indexes, so there the migration fails instead of creating a full index that would reject valid rows. An empty expression fails too. The expression is raw SQL that you write, never user input.
 
+#### Index methods (PostgreSQL)
+
+PostgreSQL indexes are B-trees unless you pick another method. A `JSON` column is `JSONB` on PostgreSQL, and a GIN index makes containment queries such as `tags @> '["rpg"]'` fast:
+
+```go
+t.JSON("tags")
+t.Index("tags").Using("gin")
+// CREATE INDEX items_tags_index ON items USING gin (tags)
+```
+
+`Using` accepts `btree`, `hash`, `gin`, `gist`, `brin` and `spgist`, and combines with `Where`. Any other name fails the migration, and so does `Using` on SQLite, MySQL or MariaDB, which have no such methods. For an operator class (`USING gin (tags jsonb_path_ops)`) or an index on an expression, write the statement with `s.Raw`.
+
 ### CHECK constraints
 
 A named CHECK constraint keeps a rule in the database itself, whatever code writes the row:
