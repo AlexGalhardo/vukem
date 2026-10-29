@@ -95,6 +95,7 @@ export const navigation: NavCategory[] = [
       "scheduler",
       "sse",
       "broadcasting",
+      "notifications",
       "webhooks",
       "localization",
       "billing",

@@ -186,6 +186,18 @@ _, err = flags.Put(ctx, ff, "tenant:7", features.UploadLimitMB, 50)
 - **Tests**: set `FLAG_<NAME>` in `vukemtest.Options.Env`, or `flags.Put(ctx, ff, flags.Global, features.X, true)` against the test database.
 - Out of scope: percentage rollouts, A/B variants and rule engines; build them in app code over `WithScope` and a flag's value.
 
+## Notifications
+
+Package `notify`: in-app notifications per user (the bell icon), with optional mail and real-time fan-out. Stdlib only; site page `digging-deeper/notifications`.
+
+- `notify.Migration(id)` creates `notifications` (`id` ULID primary key, `user_id` string, `kind`, `data` JSON, `read_at` nullable, `created_at`; index `(user_id, id)`).
+- A notification is any value with `Kind() string` (at most `notify.MaxKind` = 100 bytes); its JSON encoding is stored as `data`.
+- `nf := notify.New(db, now)`; `nf.Send(ctx, userID, n, channels...)` and `nf.SendTx(ctx, tx, userID, n, channels...)` run each channel in order and return the `notify.Stored` row; no channel is `notify.ErrNoChannels`, an empty user id or kind is an error.
+- Channels: `notify.Database` (insert, inside the transaction with `SendTx`), `notify.Mail(mailer, build)` (`Mailer.SendLaterTx`: queued only on commit; `build` returning a nil mailable skips; needs a queue, `mail.ErrNoQueue` otherwise), `notify.Broadcast(publisher, channelFor)` (`*broadcast.Server` fits: publishes event `Kind` with the `Stored` row; inside `SendTx` after the commit, and a publish error then is dropped because the row is the source of truth). A `notify.Channel` is a plain func, so apps add their own.
+- Reads and writes always take the user id (`TestSecurity_A01_NotifyScopedToUser`): `Unread(ctx, userID)`, `List(ctx, userID, cursor, limit)` (newest first, keyset on the ULID id, limit 1..100 with 0 = 20, next cursor `""` on the last page), `MarkRead(ctx, userID, ids...)` (other users' ids are ignored), `MarkAllRead(ctx, userID)`.
+- `Prune(ctx, cutoff)` deletes rows created before `cutoff`, read or not; schedule it: `s.Func("notify:prune", func(ctx context.Context) error { _, err := nf.Prune(ctx, time.Now().AddDate(0, 0, -90)); return err }).Daily()`.
+- Non-goals: per-user channel preferences (decide in `build` or before `Send`), SMS and push.
+
 ## Storage
 
 ```go
