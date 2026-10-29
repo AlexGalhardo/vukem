@@ -33,7 +33,9 @@ jobs:
           - { module: ., pkg: ./crypt, target: FuzzDecrypt }
           - { module: ., pkg: ./i18n, target: FuzzCanonical }
           - { module: ., pkg: ./i18n, target: FuzzParseAcceptLanguage }
+          - { module: ., pkg: ./i18n, target: FuzzStripPathPrefix }
           - { module: ., pkg: ./orm, target: FuzzWhereColumn }
+          - { module: ., pkg: ./orm, target: FuzzDecodeCursor }
           - { module: ., pkg: ./router, target: FuzzRoutePattern }
           - { module: ., pkg: ./router, target: FuzzServePath }
           - { module: ., pkg: ./schedule, target: FuzzParseCron }
