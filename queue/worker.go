@@ -2,6 +2,7 @@ package queue
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -14,6 +15,12 @@ type WorkOptions struct {
 	Queues []string
 	// Concurrency is the number of parallel workers (default 1).
 	Concurrency int
+	// Limits caps the jobs of a queue running at once (queue name to
+	// maximum; a queue not listed shares all Concurrency workers). A
+	// high-priority queue with a limit cannot take every worker, so a
+	// slow family (imports, ingestion) runs at 1-2 while the other queues
+	// keep the rest. The cap holds per Work call (per process).
+	Limits map[string]int
 	// Sleep is the wait when no job is available (default 1s).
 	Sleep time.Duration
 	// MaxJobs stops after processing this many jobs (0 = no limit), e.g.
@@ -52,6 +59,14 @@ func (q *Queue) Work(ctx context.Context, o WorkOptions) error {
 		o.Sleep = time.Second
 	}
 
+	for name, n := range o.Limits {
+		if n < 1 {
+			return fmt.Errorf("%w: %q = %d", ErrInvalidLimit, name, n)
+		}
+	}
+
+	slots := newQueueSlots(o.Queues, o.Limits)
+
 	var (
 		wg       sync.WaitGroup
 		mu       sync.Mutex
@@ -86,7 +101,25 @@ func (q *Queue) Work(ctx context.Context, o WorkOptions) error {
 	for range o.Concurrency {
 		wg.Go(func() {
 			for ctx.Err() == nil {
-				m, err := q.driver.Pop(ctx, o.Queues)
+				queues, held := slots.claim()
+
+				var (
+					m   *Message
+					err error
+				)
+
+				if len(queues) > 0 {
+					m, err = q.driver.Pop(ctx, queues)
+				}
+
+				// Keep only the slot of the queue the job came from.
+				used := ""
+				if m != nil {
+					used = m.Queue
+				}
+
+				slots.release(held, used)
+
 				if err != nil {
 					if ctx.Err() != nil {
 						return
@@ -123,10 +156,15 @@ func (q *Queue) Work(ctx context.Context, o WorkOptions) error {
 					_ = q.driver.Release(rctx, m)
 
 					cancel()
+					slots.release([]string{m.Queue}, "")
+
 					return
 				}
 
-				if err := q.process(jobCtx, settleCtx, m, interrupted, settleTimeout); err != nil {
+				err = q.process(jobCtx, settleCtx, m, interrupted, settleTimeout)
+				slots.release([]string{m.Queue}, "")
+
+				if err != nil {
 					mu.Lock()
 					if firstErr == nil {
 						firstErr = err
@@ -150,6 +188,73 @@ func (q *Queue) Work(ctx context.Context, o WorkOptions) error {
 	q.drain(ctx, &wg, o.StopTimeout, func() { stopping.Store(true); cancelJobs() })
 
 	return firstErr
+}
+
+// ErrInvalidLimit is returned by Work for a WorkOptions.Limits entry
+// below 1.
+var ErrInvalidLimit = errors.New("queue: queue limit must be at least 1")
+
+// queueSlots counts the running jobs of limited queues. A worker claims a
+// slot of every limited queue with room before it reserves, so two
+// workers polling at once can never exceed a limit, then keeps only the
+// slot of the queue its job came from.
+type queueSlots struct {
+	mu      sync.Mutex
+	queues  []string
+	limits  map[string]int
+	running map[string]int
+}
+
+func newQueueSlots(queues []string, limits map[string]int) *queueSlots {
+	return &queueSlots{queues: queues, limits: limits, running: map[string]int{}}
+}
+
+// claim returns the queues to poll, in priority order, and the limited
+// ones whose slot it took.
+func (s *queueSlots) claim() (poll, held []string) {
+	if len(s.limits) == 0 {
+		return s.queues, nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for _, name := range s.queues {
+		limit, ok := s.limits[name]
+		if !ok {
+			poll = append(poll, name)
+			continue
+		}
+
+		if s.running[name] < limit {
+			s.running[name]++
+			poll, held = append(poll, name), append(held, name)
+		}
+	}
+
+	return poll, held
+}
+
+// release gives back the slots in held except the one of keep (the queue
+// of the job about to run; "" keeps none).
+func (s *queueSlots) release(held []string, keep string) {
+	if len(s.limits) == 0 {
+		return
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for _, name := range held {
+		if name == keep {
+			keep = ""
+			continue
+		}
+
+		if _, ok := s.limits[name]; ok {
+			s.running[name]--
+		}
+	}
 }
 
 // drain waits for the workers; once ctx is cancelled it gives running jobs

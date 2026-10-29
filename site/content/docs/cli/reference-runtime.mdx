@@ -183,7 +183,7 @@ vukem queue:work [flags]
 | `-once` | bool | `false` | Process one job and exit. Implies concurrency 1 and `-stop-when-empty`. |
 | `-stop-when-empty` | bool | `false` | Exit when no job is available. |
 
-Environment: `QUEUE_CONNECTION` (`sync`, `memory` or `database`; default `sync`), `QUEUE_NAMES`, `QUEUE_CONCURRENCY`, `QUEUE_TABLE` (`jobs`), `QUEUE_FAILED_TABLE` (`failed_jobs`), `QUEUE_IN_SERVE` (`true`: `serve` also runs a worker), `SHUTDOWN_TIMEOUT` (`15s`), `MAIL_MAILER` (required in production, since queued mail is sent by the worker).
+Environment: `QUEUE_CONNECTION` (`sync`, `memory` or `database`; default `sync`), `QUEUE_NAMES`, `QUEUE_CONCURRENCY`, `QUEUE_LIMITS` (per-queue caps, `ingest=2`), `QUEUE_TABLE` (`jobs`), `QUEUE_FAILED_TABLE` (`failed_jobs`), `QUEUE_IN_SERVE` (`true`: `serve` also runs a worker), `SHUTDOWN_TIMEOUT` (`15s`), `MAIL_MAILER` (required in production, since queued mail is sent by the worker).
 
 Ctrl+C stops it and waits up to `SHUTDOWN_TIMEOUT` for running jobs.
 

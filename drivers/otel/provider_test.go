@@ -19,6 +19,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	otelglobal "go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 	metricnoop "go.opentelemetry.io/otel/metric/noop"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
@@ -794,5 +795,83 @@ func TestProvider_GlobalInstallsOnlyRealProviders(t *testing.T) {
 
 	if otelglobal.GetMeterProvider() != p.MeterProvider() {
 		t.Error("Global did not install the MeterProvider")
+	}
+}
+
+// TestProvider_AppMetrics checks the documented pattern for application
+// metrics: a Meter taken from MeterProvider inside WithRoutes (after the
+// provider registered) exports through the same reader as the built-in
+// metrics, with the app resource.
+func TestProvider_AppMetrics(t *testing.T) {
+	t.Parallel()
+
+	reader := sdkmetric.NewManualReader()
+	p := otel.New(otel.Config{MetricReader: reader})
+
+	before, err := p.MeterProvider().Meter("shop").Int64Counter("shop.early")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	app, err := vukem.New(
+		vukem.WithSource(config.MapSource(map[string]string{
+			"APP_KEY": config.GenerateKey(), "APP_ENV": "development", "APP_NAME": "Shop",
+		})),
+		vukem.WithLogger(slog.New(slog.DiscardHandler)),
+		vukem.WithStdout(io.Discard),
+		vukem.WithProviders(p),
+		vukem.WithRoutes(func(r *router.Router, _ *vukem.App) error {
+			imports, err := p.MeterProvider().Meter("shop/ingest").Int64Counter("shop.ingest.items")
+			if err != nil {
+				return err
+			}
+
+			r.Post("/ingest", func(c *web.Ctx) error {
+				imports.Add(c.Context(), 3, metric.WithAttributes(attribute.String("source", "igdb")))
+				before.Add(c.Context(), 1)
+
+				return c.NoContent()
+			})
+
+			return nil
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	app.Router.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/ingest", http.NoBody))
+
+	var rm metricdata.ResourceMetrics
+	if err := reader.Collect(t.Context(), &rm); err != nil {
+		t.Fatal(err)
+	}
+
+	var got []string
+
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			got = append(got, m.Name)
+
+			if m.Name == "shop.ingest.items" {
+				sum := m.Data.(metricdata.Sum[int64]).DataPoints[0]
+				if source, _ := sum.Attributes.Value("source"); sum.Value != 3 || source.AsString() != "igdb" {
+					t.Errorf("shop.ingest.items = %d %v, want 3 source=igdb", sum.Value, sum.Attributes)
+				}
+			}
+		}
+	}
+
+	// A Meter taken before Register is a no-op one and records nothing.
+	if !slices.Contains(got, "shop.ingest.items") || slices.Contains(got, "shop.early") {
+		t.Errorf("metrics = %v, want shop.ingest.items and no shop.early", got)
+	}
+
+	if name, _ := rm.Resource.Set().Value("service.name"); name.AsString() != "Shop" {
+		t.Errorf("service.name = %q, want Shop", name.AsString())
+	}
+
+	if err := app.Shutdown(t.Context()); err != nil {
+		t.Fatal(err)
 	}
 }
