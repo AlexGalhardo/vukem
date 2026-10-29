@@ -318,6 +318,7 @@ type options struct {
 	bootRoutes    []func(r *router.Router, app *App) error
 	views         fs.FS
 	viewFuncs     template.FuncMap
+	reactEmails   fs.FS
 	vite          fs.FS
 	inertia       *inertia.Config
 	lang          fs.FS
@@ -642,7 +643,7 @@ func New(opts ...Option) (*App, error) {
 		}
 	}
 
-	if o.views == nil && len(o.viewFuncs) > 0 {
+	if o.views == nil && o.reactEmails == nil && len(o.viewFuncs) > 0 {
 		return nil, errors.New("vukem: WithViewFuncs needs WithViews")
 	}
 
@@ -657,6 +658,18 @@ func New(opts ...Option) (*App, error) {
 
 		app.Views = engine
 		app.Router.Services().Views = engine
+	}
+
+	if o.reactEmails != nil {
+		// No layouts: an exported React Email page is a whole document.
+		engine, err := view.New(view.Config{
+			FS: o.reactEmails, Reload: !cfg.IsProduction(), URLs: app.Router, I18n: app.I18n, Funcs: o.viewFuncs,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("vukem: WithReactEmails: %w", err)
+		}
+
+		app.mail.react = engine
 	}
 
 	for _, p := range app.providers {
