@@ -78,6 +78,8 @@ func (s Secret) MarshalJSON() ([]byte, error) // "\"[redacted]\""
 | `HSTS_FORCE` | `false` | Send HSTS on every response in production, for a TLS proxy whose range cannot be put in `TRUSTED_PROXIES` (`SecureHeadersConfig.HSTSForce`); validated in every environment (a boot error unless `APP_URL` is `https://`), applied only in production (a boot warning otherwise) |
 | `HTTP_MAX_HEADER_BYTES` | `65536` | Cap on the request line plus headers the app server reads (64 KiB; Go's own default is 1 MiB); larger requests get 431; outside 4096–1048576 is a boot error |
 | `HTTP_H2C` | `false` | The app server speaks HTTP/2 without TLS (prior knowledge, for gRPC clients) outside production; `true` enables it in production behind a proxy that speaks h2c ([api.md](api.md#grpc)); a separate `grpc.Serve` port has its own opt-in, `GRPC_INSECURE_CLEARTEXT` |
+| `TLS_CERT_FILE`, `TLS_KEY_FILE` | — | PEM key pair: the app server serves HTTPS on `PORT` with HTTP/2 (ALPN `h2`) and HTTP/1.1, TLS 1.2 minimum, reloaded when a file changes; set both or neither; exclusive with `HTTP_H2C` ([http.md](http.md#https-and-http2)) |
+| `TLS_REDIRECT_ADDR` | — | With TLS on, also listen for plain HTTP on this address (e.g. `:80`) and redirect (308) to `APP_URL`, which must be `https` |
 
 ## App options
 

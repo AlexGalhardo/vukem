@@ -236,7 +236,14 @@ func (s *HTTPServer) Run(ctx context.Context) error {
 
 	errc := make(chan error, 1)
 
-	go func() { errc <- s.Server.Serve(ln) }()
+	go func() {
+		if s.Server.TLSConfig != nil {
+			// Certificates come from TLSConfig; ServeTLS adds ALPN h2 per Protocols.
+			errc <- s.Server.ServeTLS(ln, "", "")
+		} else {
+			errc <- s.Server.Serve(ln)
+		}
+	}()
 
 	select {
 	case err := <-errc:

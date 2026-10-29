@@ -152,6 +152,8 @@ A line with an invalid key stops the boot with the file and line number, for exa
 | `PORT` | `3000` | Listen port, 0–65535. `0` picks a free port |
 | `SHUTDOWN_TIMEOUT` | `15s` | How long a graceful shutdown may take ([lifecycle](/docs/architecture/lifecycle#shutdown)) |
 | `HTTP_H2C` | `false` | Serve HTTP/2 without TLS in production, behind a proxy that speaks h2c (for gRPC clients). Always on outside production |
+| `TLS_CERT_FILE`, `TLS_KEY_FILE` | — | Serve HTTPS with HTTP/2 from a PEM key pair (reloaded on change); see [HTTP/2 and HTTP/3](/docs/deployment/http2-and-http3) |
+| `TLS_REDIRECT_ADDR` | — | Plain HTTP listener (e.g. `:80`) that redirects to the `https` `APP_URL` |
 | `HTTP_MAX_HEADER_BYTES` | `65536` | Cap on the request line plus headers (64 KiB; 4096–1048576). Larger requests get `431` |
 | `TRUSTED_PROXIES` | empty | Comma-separated CIDRs or IPs whose `X-Forwarded-For` sets `c.IP()`. Empty trusts nobody ([Deploy](/docs/deployment/docker-and-railway#trusted-proxies)) |
 | `CLIENT_IP_HEADER` | empty | Read the client IP from this single-IP header (such as `X-Real-IP`) instead of `X-Forwarded-For`, only from `TRUSTED_PROXIES` peers |
