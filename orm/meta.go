@@ -82,6 +82,13 @@ type Tabler interface{ Table() string }
 // Keyer overrides the primary key column (default "id").
 type Keyer interface{ PrimaryKey() string }
 
+// CompositeKeyer declares a primary key of several columns, e.g. a ratings
+// table keyed by (user_id, item_id). Update, Delete, ForceDelete and
+// Restore then filter on every key column; APIs that address a row by one
+// value (Query.Find, Query.Chunk, relations, Attach, Reseal, Unique.Ignore)
+// return an error. It takes precedence over Keyer.
+type CompositeKeyer interface{ PrimaryKeys() []string }
+
 type field struct {
 	column string
 	index  []int
@@ -92,6 +99,7 @@ type meta struct {
 	typ        reflect.Type
 	table      string
 	pk         string
+	keys       []string // every primary key column; keys[0] == pk
 	fields     []field
 	byColumn   map[string]field
 	autoID     bool // integer primary key assigned by the database
@@ -126,11 +134,14 @@ func buildMeta(rt reflect.Type) *meta {
 		panic(fmt.Sprintf("orm: model must be a struct, got %s", rt))
 	}
 
-	m := &meta{typ: rt, table: tableName(rt), pk: "id", byColumn: map[string]field{}, relations: map[string]relation{}}
-
-	zero := reflect.New(rt).Interface()
-	if k, ok := zero.(Keyer); ok {
-		m.pk = k.PrimaryKey()
+	keys := keysOf(rt)
+	m := &meta{
+		typ:       rt,
+		table:     tableName(rt),
+		pk:        keys[0],
+		keys:      keys,
+		byColumn:  map[string]field{},
+		relations: map[string]relation{},
 	}
 
 	for _, f := range reflect.VisibleFields(rt) {
@@ -185,9 +196,15 @@ func buildMeta(rt reflect.Type) *meta {
 		panic(fmt.Sprintf("orm: %s has no primary key column %q", rt, m.pk))
 	}
 
+	for _, k := range m.keys[1:] {
+		if _, ok := m.byColumn[k]; !ok {
+			panic(fmt.Sprintf("orm: %s has no primary key column %q", rt, k))
+		}
+	}
+
 	switch pkField.typ.Kind() {
 	case reflect.Int, reflect.Int32, reflect.Int64, reflect.Uint, reflect.Uint32, reflect.Uint64:
-		m.autoID = true
+		m.autoID = len(m.keys) == 1 // the database never generates a composite key
 	default:
 	}
 
@@ -196,6 +213,27 @@ func buildMeta(rt reflect.Type) *meta {
 	}
 
 	return m
+}
+
+// keysOf returns the primary key columns of rt: CompositeKeyer, then
+// Keyer, then "id".
+func keysOf(rt reflect.Type) []string {
+	zero := reflect.New(rt).Interface()
+
+	if k, ok := zero.(CompositeKeyer); ok {
+		keys := slices.Clone(k.PrimaryKeys())
+		if len(keys) == 0 {
+			panic(fmt.Sprintf("orm: %s.PrimaryKeys returned no columns", rt))
+		}
+
+		return keys
+	}
+
+	if k, ok := zero.(Keyer); ok {
+		return []string{k.PrimaryKey()}
+	}
+
+	return []string{"id"}
 }
 
 func tableName(rt reflect.Type) string {
@@ -264,8 +302,26 @@ func RelationsOf[T any]() []string {
 	return slices.Sorted(maps.Keys(metaOf[T]().relations))
 }
 
-// PrimaryKeyOf returns the primary key column of model T.
+// PrimaryKeyOf returns the primary key column of model T (the first one
+// of a composite key, see PrimaryKeysOf).
 func PrimaryKeyOf[T any]() string { return metaOf[T]().pk }
+
+// PrimaryKeysOf returns every primary key column of model T: one for a
+// Keyer or the default "id", several for a CompositeKeyer.
+func PrimaryKeysOf[T any]() []string { return slices.Clone(metaOf[T]().keys) }
+
+// composite reports a composite primary key.
+func (m *meta) composite() bool { return len(m.keys) > 1 }
+
+// singleKey fails op on a model with a composite primary key.
+func (m *meta) singleKey(op string) error {
+	if !m.composite() {
+		return nil
+	}
+
+	return fmt.Errorf("orm: %s has a composite primary key (%s); %s needs a single-column key",
+		m.table, strings.Join(m.keys, ", "), op)
+}
 
 // Columns returns the column names of model T in field order.
 func Columns[T any]() []string {

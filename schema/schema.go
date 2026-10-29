@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -107,6 +108,10 @@ func (s *Schema) Create(table string, fn func(t *Table)) error {
 		return t.err
 	}
 
+	if err := t.checkPrimary(); err != nil {
+		return err
+	}
+
 	defs := make([]string, 0, len(t.cols)+len(t.fks))
 	for _, c := range t.cols {
 		defs = append(defs, s.columnDef(c))
@@ -118,6 +123,16 @@ func (s *Schema) Create(table string, fn func(t *Table)) error {
 
 	for _, c := range t.checks {
 		defs = append(defs, s.checkDef(c))
+	}
+
+	if len(t.primary) > 0 {
+		cols := make([]string, len(t.primary))
+		for i, c := range t.primary {
+			cols[i] = s.q(c)
+		}
+
+		// Ahead of foreign keys and checks, where readers look for it.
+		defs = slices.Insert(defs, len(t.cols), "PRIMARY KEY ("+strings.Join(cols, ", ")+")")
 	}
 
 	if err := s.exec("CREATE TABLE " + s.q(table) + " (\n  " + strings.Join(defs, ",\n  ") + "\n)"); err != nil {
@@ -368,6 +383,10 @@ func (s *Schema) columnDef(c *Column) string {
 		return b.String()
 	}
 
+	if c.generated != "" {
+		b.WriteString(" GENERATED ALWAYS AS (" + c.generated + ") STORED")
+	}
+
 	if !c.nullable {
 		b.WriteString(" NOT NULL")
 	}
@@ -451,6 +470,8 @@ func (s *Schema) sqlType(c *Column) string {
 		return "TEXT"
 	case kindInteger:
 		return "INTEGER"
+	case kindSmallInteger:
+		return "SMALLINT"
 	case kindBigInteger:
 		if pg {
 			return "BIGINT"
@@ -515,6 +536,8 @@ func mysqlType(c *Column) string {
 		return "VARCHAR(255)"
 	case kindInteger:
 		return "INT"
+	case kindSmallInteger:
+		return "SMALLINT"
 	case kindBigInteger:
 		return "BIGINT"
 	case kindBoolean:

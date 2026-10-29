@@ -54,9 +54,11 @@ func (q Query[T]) CursorPaginate(
 	perPage = q.perPage(perPage)
 
 	keys := q.keys
-	if !keysHave(keys, q.m.pk) {
-		keys = append(keys, orderKey{q.m.pk, dir})
-		q = q.OrderBy(q.m.pk, dir)
+	for _, k := range q.m.keys {
+		if !keysHave(keys, k) {
+			keys = append(keys, orderKey{k, dir})
+			q = q.OrderBy(k, dir)
+		}
 	}
 
 	if cursor != "" {

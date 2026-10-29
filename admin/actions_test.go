@@ -10,6 +10,7 @@ import (
 	"github.com/AlexGalhardo/vukem/admin"
 	"github.com/AlexGalhardo/vukem/database"
 	"github.com/AlexGalhardo/vukem/vukemtest"
+	"github.com/AlexGalhardo/vukem/z"
 )
 
 func withActions() []admin.AnyResource {
@@ -176,4 +177,24 @@ func TestActionsConfigErrors(t *testing.T) {
 	if err := newPanel(t).Register(dup); err == nil {
 		t.Error("Register(duplicate action) = nil error, want an error")
 	}
+}
+
+type pairKeyed struct {
+	A    int64
+	B    int64
+	Text string
+}
+
+func (pairKeyed) PrimaryKeys() []string { return []string{"a", "b"} }
+
+func TestNewResourceRejectsCompositeKey(t *testing.T) {
+	t.Parallel()
+
+	defer func() {
+		if recover() == nil {
+			t.Fatal("NewResource accepted a composite primary key")
+		}
+	}()
+
+	admin.NewResource[pairKeyed](z.Struct[NoteInput](z.Shape{"text": z.String()}))
 }

@@ -42,6 +42,10 @@ func Unique[T any](column string, value any) Rule {
 		check: func(ctx context.Context, ex database.Executor, r Rule) (bool, error) {
 			q := QueryOf[T](ex).WithTrashed().Where(column, value)
 			if r.ignore != nil {
+				if err := q.m.singleKey("Unique.Ignore"); err != nil {
+					return false, err
+				}
+
 				q = q.Where(q.m.pk, "!=", r.ignore)
 			}
 

@@ -179,7 +179,7 @@ func Update[T any](ctx context.Context, ex database.Executor, model *T) error {
 	)
 
 	for _, f := range m.fields {
-		if f.column == m.pk || f.column == "created_at" {
+		if slices.Contains(m.keys, f.column) || f.column == "created_at" {
 			continue
 		}
 
@@ -192,18 +192,23 @@ func Update[T any](ctx context.Context, ex database.Executor, model *T) error {
 		args = append(args, v)
 	}
 
-	args = append(args, rv.FieldByIndex(m.byColumn[m.pk].index).Interface())
+	where := make([]string, len(m.keys))
+	for i, k := range m.keys {
+		where[i] = ex.Dialect().Quote(k) + " = ?"
+		args = append(args, rv.FieldByIndex(m.byColumn[k].index).Interface())
+	}
 
 	q := "UPDATE " + ex.Dialect().Quote(m.table) + " SET " + strings.Join(sets, ", ") +
-		" WHERE " + ex.Dialect().Quote(m.pk) + " = ?"
+		" WHERE " + strings.Join(where, " AND ")
 
 	res, err := ex.ExecContext(ctx, rebind(q, ex.Dialect()), args...)
 	if err != nil {
 		return fmt.Errorf("orm: update %s: %w", m.table, mapError(err))
 	}
 
-	if n, _ := res.RowsAffected(); n == 0 {
-		return ErrNotFound
+	n, _ := res.RowsAffected()
+	if err := oneRow(m, "update", n); err != nil {
+		return err
 	}
 
 	return hook(ctx, model, AfterUpdater.AfterUpdate)
@@ -219,18 +224,17 @@ func Delete[T any](ctx context.Context, ex database.Executor, model *T) error {
 	}
 
 	rv := reflect.ValueOf(model).Elem()
-	id := rv.FieldByIndex(m.byColumn[m.pk].index).Interface()
 
 	if m.soft {
 		now := clockFrom(ctx)
 
-		n, err := QueryOf[T](ex).Where(m.pk, id).Update(ctx, Set{"deleted_at": now})
+		n, err := byKey(QueryOf[T](ex), rv).Update(ctx, Set{"deleted_at": now})
 		if err != nil {
 			return err
 		}
 
-		if n == 0 {
-			return ErrNotFound
+		if err := oneRow(m, "delete", n); err != nil {
+			return err
 		}
 
 		rv.FieldByIndex(m.byColumn["deleted_at"].index).
@@ -244,19 +248,12 @@ func Delete[T any](ctx context.Context, ex database.Executor, model *T) error {
 
 // ForceDelete removes model even when it uses soft deletes.
 func ForceDelete[T any](ctx context.Context, ex database.Executor, model *T) error {
-	m := metaOf[T]()
-	id := reflect.ValueOf(model).Elem().FieldByIndex(m.byColumn[m.pk].index).Interface()
-
-	n, err := QueryOf[T](ex).WithTrashed().Where(m.pk, id).Delete(ctx)
+	n, err := byKey(QueryOf[T](ex).WithTrashed(), reflect.ValueOf(model).Elem()).Delete(ctx)
 	if err != nil {
 		return err
 	}
 
-	if n == 0 {
-		return ErrNotFound
-	}
-
-	return nil
+	return oneRow(metaOf[T](), "delete", n)
 }
 
 // Restore clears deleted_at on a soft-deleted model.
@@ -267,10 +264,14 @@ func Restore[T any](ctx context.Context, ex database.Executor, model *T) error {
 	}
 
 	rv := reflect.ValueOf(model).Elem()
-	id := rv.FieldByIndex(m.byColumn[m.pk].index).Interface()
 
-	if _, err := QueryOf[T](ex).OnlyTrashed().Where(m.pk, id).Update(ctx, Set{"deleted_at": nil}); err != nil {
+	n, err := byKey(QueryOf[T](ex).OnlyTrashed(), rv).Update(ctx, Set{"deleted_at": nil})
+	if err != nil {
 		return err
+	}
+
+	if n > 1 {
+		return oneRow(m, "restore", n)
 	}
 
 	rv.FieldByIndex(m.byColumn["deleted_at"].index).Set(reflect.Zero(reflect.TypeFor[NullTime]()))
@@ -454,3 +455,38 @@ func (j JSON[T]) MarshalJSON() ([]byte, error) { return json.Marshal(j.V) }
 
 // UnmarshalJSON decodes into the inner value.
 func (j *JSON[T]) UnmarshalJSON(b []byte) error { return json.Unmarshal(b, &j.V) }
+
+// ErrKeyNotUnique reports that Update, Delete, ForceDelete or Restore
+// matched more than one row by the model's primary key: the model declares
+// fewer key columns than the table's key (declare CompositeKeyer). The rows
+// were already written; inside a transaction, returning the error rolls
+// them back.
+var ErrKeyNotUnique = errors.New("orm: the primary key matched more than one row")
+
+// byKey filters q on every primary key column of the model in rv.
+func byKey[T any](q Query[T], rv reflect.Value) Query[T] {
+	for _, k := range q.m.keys {
+		q = q.Where(k, rv.FieldByIndex(q.m.byColumn[k].index).Interface())
+	}
+
+	return q
+}
+
+// oneRow maps the rows a single-model write affected to its error.
+func oneRow(m *meta, op string, n int64) error {
+	switch {
+	case n == 0:
+		return ErrNotFound
+	case n > 1:
+		return fmt.Errorf(
+			"orm: %s %s matched %d rows by %s: %w",
+			op,
+			m.table,
+			n,
+			strings.Join(m.keys, ", "),
+			ErrKeyNotUnique,
+		)
+	default:
+		return nil
+	}
+}

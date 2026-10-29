@@ -31,6 +31,9 @@ const DefaultResealBatch = 500
 // gets every value re-sealed.
 func Reseal[T any](ctx context.Context, db database.Executor, batch int) (int, error) {
 	m := metaOf[T]()
+	if err := m.singleKey("Reseal"); err != nil {
+		return 0, err
+	}
 
 	var cols []string
 
