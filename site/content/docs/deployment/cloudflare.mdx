@@ -5,7 +5,7 @@ description: Serve a vukem app behind Cloudflare - trust CF-Connecting-IP only f
 
 When Cloudflare proxies your domain, every request reaches your app from a Cloudflare edge server. Without extra setup, `c.IP()` is that edge address: every visitor shares one rate-limit bucket and your logs show Cloudflare instead of your users. Cloudflare sends the visitor's address in the `CF-Connecting-IP` header, but any client can send that header too, so you may only believe it when the request really comes from Cloudflare.
 
-The optional `contrib/cloudflare` module does both checks with the standard library only.
+The optional `contrib/cloudflare` module does these checks, and more, with the standard library and vukem core only.
 
 You will learn:
 
@@ -13,6 +13,7 @@ You will learn:
 - how to refuse requests that skip Cloudflare and hit your server directly;
 - how to read the visitor's country and bot signals safely;
 - how to cache public pages at the edge and purge them;
+- how to check Cloudflare Access tokens on admin pages;
 - how to keep the list of Cloudflare addresses current.
 
 ## Install the module
@@ -118,6 +119,27 @@ return purger.Tags(ctx, "games")
 ```
 
 `URLs`, `Prefixes`, `Hosts` and `Everything` purge by URL, URL prefix, hostname or the whole zone. Long lists are sent in batches of 30. Errors carry Cloudflare's code and message (for example `1134 rate limit reached`), never the token. See the [purge API](https://developers.cloudflare.com/api/resources/cache/methods/purge/).
+
+## Protect admin pages with Cloudflare Access
+
+[Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/) can put a login in front of `/admin` before a request reaches your app. Access then sends a signed token in the `Cf-Access-Jwt-Assertion` header. Check it in the app too, so a request that reaches the origin some other way is refused:
+
+```go title="routes/admin.go"
+access, err := cloudflare.NewAccess(cloudflare.AccessOptions{
+	TeamDomain: "https://example.cloudflareaccess.com",
+	Audience:   cfg.AccessAUD, // the application's AUD tag
+})
+if err != nil {
+	return err
+}
+
+r.Group("/admin", func(g *router.Group) {
+	g.Use(access.Middleware())
+	g.Get("", adminHome)
+})
+```
+
+The middleware answers `403` unless the token is signed with your team's keys (fetched from `/cdn-cgi/access/certs`), names your team domain as issuer and your application's AUD tag as audience, and has not expired. If the keys cannot be fetched, every request is refused. In a handler, `cloudflare.AccessClaimsFrom(c.Context())` returns the claims; the user's email is in `Extra["email"]`. See [Validate JWTs](https://developers.cloudflare.com/cloudflare-one/identity/authorization-cookie/validating-json/).
 
 ## Behind another proxy
 
