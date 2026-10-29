@@ -115,6 +115,7 @@ type Resource[T any] struct {
 	parse      func(in map[string]any) (reflect.Value, error)
 	computed   []computed[T]
 	beforeSave []func(ctx context.Context, rec *T) error
+	actions    []Action[T]
 }
 
 type computed[T any] struct {

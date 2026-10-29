@@ -105,6 +105,16 @@ func (adminPolicy[T]) Delete(_ context.Context, u *User, _ T) bool {
 	return u.Role == "admin"
 }
 
+// postPolicy adds the custom actions of the post resource; a post titled
+// "Locked" cannot be approved.
+type postPolicy struct{ adminPolicy[*Post] }
+
+func (postPolicy) Approve(_ context.Context, u *User, p *Post) bool {
+	return u.Role == "admin" && p.Title != "Locked"
+}
+
+func (postPolicy) Reject(_ context.Context, u *User, _ *Post) bool { return u.Role == "admin" }
+
 var migrations = []schema.Migration{
 	{
 		ID: "1_tables",
@@ -247,7 +257,7 @@ func newApp(t *testing.T, o options) *vukemtest.App {
 					gate.Define(admin.AbilityFlags, func(_ context.Context, u *User) bool { return u.Role == "admin" })
 
 					if err := gate.Register(
-						authz.For[*Post](adminPolicy[*Post]{}),
+						authz.For[*Post](postPolicy{}),
 						authz.For[*Account](adminPolicy[*Account]{}),
 					); err != nil {
 						return err
