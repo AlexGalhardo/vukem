@@ -1,0 +1,23 @@
+package requests
+
+import (
+	"encoding/json"
+
+	"github.com/AlexGalhardo/vukem/z"
+)
+
+// PasskeyPassword confirms the current password before adding or
+// removing a passkey.
+type PasskeyPassword struct {
+	Password string `json:"password" form:"password"`
+}
+
+// PasskeyPasswordSchema validates PasskeyPassword.
+var PasskeyPasswordSchema = z.Struct[PasskeyPassword](z.Shape{"password": z.String().Min(1).Max(256)})
+
+// PasskeyRegistration names a new passkey and carries the browser's
+// credential.toJSON() after navigator.credentials.create.
+type PasskeyRegistration struct {
+	Name       string          `json:"name"`
+	Credential json.RawMessage `json:"credential"`
+}
