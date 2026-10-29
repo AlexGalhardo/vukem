@@ -264,3 +264,65 @@ func TestExponentialAndConstant(t *testing.T) {
 		t.Error(diff)
 	}
 }
+
+type ingestJob struct {
+	N int `json:"n"`
+}
+
+func (ingestJob) Kind() string { return "ingest" }
+
+func TestWorkQueueLimitsCapPerQueueConcurrency(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		var heavy, heavyPeak, light, lightPeak atomic.Int32
+
+		track := func(n *atomic.Int32, peak *atomic.Int32) {
+			v := n.Add(1)
+			for p := peak.Load(); v > p && !peak.CompareAndSwap(p, v); p = peak.Load() {
+			}
+
+			time.Sleep(10 * time.Second)
+			n.Add(-1)
+		}
+
+		d := queue.NewMemory()
+		q := newQueue(t, d,
+			queue.Handle(func(context.Context, ingestJob) error { track(&heavy, &heavyPeak); return nil },
+				queue.OnQueue("ingest")),
+			queue.Handle(func(context.Context, sendInvoice) error { track(&light, &lightPeak); return nil }),
+		)
+
+		for i := range 6 {
+			_ = q.Dispatch(t.Context(), ingestJob{N: i})
+			_ = q.Dispatch(t.Context(), sendInvoice{OrderID: int64(i)})
+		}
+
+		err := q.Work(t.Context(), queue.WorkOptions{
+			// ingest first: without the limit it would take every worker.
+			Queues:        []string{"ingest", "default"},
+			Concurrency:   6,
+			Limits:        map[string]int{"ingest": 2},
+			StopWhenEmpty: true,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if heavyPeak.Load() != 2 || lightPeak.Load() < 3 || d.Pending() != 0 {
+			t.Fatalf("ingest peak=%d default peak=%d pending=%d, want 2/>=3/0",
+				heavyPeak.Load(), lightPeak.Load(), d.Pending())
+		}
+	})
+}
+
+func TestWorkQueueLimitsRejectNegative(t *testing.T) {
+	t.Parallel()
+
+	q := newQueue(t, queue.NewMemory())
+
+	err := q.Work(t.Context(), queue.WorkOptions{Limits: map[string]int{"default": -1}})
+	if !errors.Is(err, queue.ErrInvalidLimit) {
+		t.Fatalf("err = %v, want ErrInvalidLimit", err)
+	}
+}

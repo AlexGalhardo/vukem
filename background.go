@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -68,6 +69,11 @@ type QueueConfig struct {
 	Queues string `env:"QUEUE_NAMES" default:"default"`
 	// Concurrency is the number of parallel workers.
 	Concurrency int `env:"QUEUE_CONCURRENCY" default:"4"`
+	// Limits caps the running jobs of some queues, as "name=n" pairs
+	// separated by commas ("ingest=2"), so a slow queue cannot take every
+	// worker. It applies to the worker inside serve and to queue:work, per
+	// process.
+	Limits string `env:"QUEUE_LIMITS"`
 	// Table and FailedTable are the database driver's tables.
 	Table       string `env:"QUEUE_TABLE"        default:"jobs"`
 	FailedTable string `env:"QUEUE_FAILED_TABLE" default:"failed_jobs"`
@@ -95,6 +101,33 @@ func (c QueueConfig) QueueNames() []string {
 	}
 
 	return out
+}
+
+// QueueLimits parses Limits ("name=n,..."; n >= 1).
+func (c QueueConfig) QueueLimits() (map[string]int, error) {
+	var out map[string]int
+
+	for pair := range strings.SplitSeq(c.Limits, ",") {
+		if pair = strings.TrimSpace(pair); pair == "" {
+			continue
+		}
+
+		name, n, ok := strings.Cut(pair, "=")
+		name = strings.TrimSpace(name)
+
+		limit, err := strconv.Atoi(strings.TrimSpace(n))
+		if !ok || name == "" || err != nil || limit < 1 {
+			return nil, fmt.Errorf("vukem: QUEUE_LIMITS entry %q: want name=n with n >= 1", pair)
+		}
+
+		if out == nil {
+			out = map[string]int{}
+		}
+
+		out[name] = limit
+	}
+
+	return out, nil
 }
 
 // Queue returns the application queue, built from QUEUE_* on first use.
@@ -417,15 +450,21 @@ func (a *App) queueRunner(cfg QueueConfig) Runner {
 			return nil
 		}
 
+		limits, err := cfg.QueueLimits()
+		if err != nil {
+			return err
+		}
+
 		if cfg.Connection != "memory" {
 			a.Log.InfoContext(ctx,
 				"queue worker running inside serve; set QUEUE_IN_SERVE=false if only queue:work should run jobs",
-				"queues", cfg.QueueNames(), "concurrency", cfg.Concurrency)
+				"queues", cfg.QueueNames(), "concurrency", cfg.Concurrency, "limits", limits)
 		}
 
 		return q.Work(ctx, queue.WorkOptions{
 			Queues:      cfg.QueueNames(),
 			Concurrency: cfg.Concurrency,
+			Limits:      limits,
 			StopTimeout: a.Config.ShutdownTimeout,
 		})
 	})
@@ -479,6 +518,11 @@ func queueWorkCommand() Command {
 				cfg.Concurrency = *concurrency
 			}
 
+			limits, err := cfg.QueueLimits()
+			if err != nil {
+				return err
+			}
+
 			q, err := app.Queue()
 			if err != nil {
 				return err
@@ -491,6 +535,7 @@ func queueWorkCommand() Command {
 			o := queue.WorkOptions{
 				Queues:        cfg.QueueNames(),
 				Concurrency:   cfg.Concurrency,
+				Limits:        limits,
 				Sleep:         *sleep,
 				StopWhenEmpty: *empty,
 				StopTimeout:   app.Config.ShutdownTimeout,
@@ -499,7 +544,8 @@ func queueWorkCommand() Command {
 				o.MaxJobs, o.Concurrency, o.StopWhenEmpty = 1, 1, true
 			}
 
-			app.Log.InfoContext(ctx, "queue worker started", "queues", o.Queues, "concurrency", o.Concurrency)
+			app.Log.InfoContext(ctx, "queue worker started", "queues", o.Queues, "concurrency", o.Concurrency,
+				"limits", o.Limits)
 
 			return q.Work(ctx, o)
 		},

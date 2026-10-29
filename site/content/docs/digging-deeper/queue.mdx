@@ -329,6 +329,22 @@ vukem queue:work -sleep 5s
 
 Queues are **strict priority**: each time a worker looks for a job it tries the first queue, then the second, and so on. While `high` always has jobs, `default` waits.
 
+Priority, `QUEUE_NAMES` and `QUEUE_CONCURRENCY` apply the same way to every driver (`memory`, `database`, Redis) and to the worker inside `serve` as to `queue:work`.
+
+### Per-queue limits
+
+Strict priority lets a busy queue take every worker. `QUEUE_LIMITS` caps how many jobs of a queue run at once in one process, so a slow family (imports, ingestion) cannot starve the rest:
+
+```bash
+QUEUE_NAMES=mail,default,ingest
+QUEUE_CONCURRENCY=8
+QUEUE_LIMITS=ingest=2
+```
+
+Here at most 2 workers run `ingest` jobs; the other 6 always stay free for `mail` and `default`. A queue not listed shares all workers. Each value must be at least 1: `ingest=0` or a malformed entry stops `serve` and `queue:work` with `vukem: QUEUE_LIMITS entry ...`. The cap is per process: two `queue:work` processes with `ingest=2` can run 4 `ingest` jobs. In code, pass `queue.WorkOptions{Limits: map[string]int{"ingest": 2}}` to `q.Work`.
+
+To pause a queue, drop it from `QUEUE_NAMES` (or `-queue`) and restart the workers: its jobs stay stored and run once it is listed again.
+
 `queue:work` needs a driver another process can see (`database`, Redis). On `sync` it exits at once with `vukem: QUEUE_CONNECTION=sync runs jobs during Dispatch, so queue:work has nothing to process (use QUEUE_CONNECTION=database for a separate worker)` instead of polling an empty queue forever. On `memory` it starts but only sees jobs dispatched inside its own process.
 
 With `-once` or `-stop-when-empty`, a store error ends the command with that error, so a CI step or cron job cannot mistake a broken database for an empty queue. A long-running worker logs the error (`queue: reserve job`) and keeps polling.
@@ -396,6 +412,7 @@ Mail jobs queued before v0.24.0 are clear text and now fail with `vukem: clear-t
 | `QUEUE_CONNECTION` | `sync` | `sync`, `memory` or `database` (Redis via `WithQueueDriver`) |
 | `QUEUE_NAMES` | `default` | Queues workers poll, in priority order |
 | `QUEUE_CONCURRENCY` | `4` | Parallel workers in `serve` and `queue:work` |
+| `QUEUE_LIMITS` | none | Running-job cap per queue, `name=n` pairs (`ingest=2,import=1`) |
 | `QUEUE_IN_SERVE` | `true` | Run a worker in `serve` for `database` and custom drivers |
 | `QUEUE_TABLE` | `jobs` | Jobs table of the database driver |
 | `QUEUE_FAILED_TABLE` | `failed_jobs` | Failed jobs table of the database driver |
