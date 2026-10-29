@@ -402,7 +402,10 @@ func contentType(key string, head []byte) string {
 	return http.DetectContentType(head)
 }
 
-// Open implements storage.Disk; the body streams from S3.
+// Open implements storage.Disk; the body streams from S3. The returned
+// reader also has ETag() string (the quoted entity tag) and
+// ModTime() time.Time methods, so storage.HandlerWith sends ETag and
+// Last-Modified and answers conditional requests with 304.
 func (d *Disk) Open(ctx context.Context, p string) (io.ReadCloser, error) {
 	key, err := storage.Clean(p)
 	if err != nil {
@@ -418,8 +421,27 @@ func (d *Disk) Open(ctx context.Context, p string) (io.ReadCloser, error) {
 		return nil, readError("get", key, resp)
 	}
 
-	return resp.Body, nil
+	o := &object{ReadCloser: resp.Body, etag: resp.Header.Get("ETag")}
+	if lm, err := http.ParseTime(resp.Header.Get("Last-Modified")); err == nil {
+		o.mod = lm
+	}
+
+	return o, nil
 }
+
+// object is an S3 GET body with its validators.
+type object struct {
+	io.ReadCloser
+
+	etag string
+	mod  time.Time
+}
+
+// ETag returns the object's entity tag as S3 sent it (quoted).
+func (o *object) ETag() string { return o.etag }
+
+// ModTime returns the object's Last-Modified time, or the zero time.
+func (o *object) ModTime() time.Time { return o.mod }
 
 // ObjectInfo is the metadata returned by Stat.
 type ObjectInfo struct {
