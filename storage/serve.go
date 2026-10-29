@@ -26,6 +26,25 @@ import (
 // directories are never served; responses carry a sandbox CSP.
 // Pass a Signer to require signed URLs (private files, TemporaryURL).
 func Handler(d Disk, signer *signed.Signer) http.Handler {
+	return HandlerWith(d, signer, Options{})
+}
+
+// Options tune HandlerWith.
+type Options struct {
+	// CacheControl is sent on every response that serves a file (200, 206
+	// and 304), never on errors; for content-addressed paths use
+	// "public, max-age=31536000, immutable". Empty sends none.
+	CacheControl string
+}
+
+// HandlerWith is Handler with Options.
+//
+// Conditional requests: seekable files (Local) are served by
+// http.ServeContent. A non-seekable body (an object store stream) still
+// answers 304 when it reports its validators: an ETag() string method
+// sets ETag and is matched against If-None-Match, a ModTime() time.Time
+// method sets Last-Modified and is matched against If-Modified-Since.
+func HandlerWith(d Disk, signer *signed.Signer, opts Options) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if signer != nil {
 			if err := signer.Verify(original(r)); err != nil {
@@ -61,8 +80,27 @@ func Handler(d Disk, signer *signed.Signer) http.Handler {
 		w.Header().
 			Set("Content-Security-Policy", "sandbox; default-src 'none'; img-src 'self'; style-src 'unsafe-inline'")
 
+		if opts.CacheControl != "" {
+			w.Header().Set("Cache-Control", opts.CacheControl)
+		}
+
+		if t, ok := f.(interface{ ETag() string }); ok && t.ETag() != "" {
+			w.Header().Set("ETag", quoteETag(t.ETag()))
+		}
+
 		if rs, ok := f.(io.ReadSeeker); ok {
+			// ServeContent also honours the ETag header set above.
 			http.ServeContent(w, r, path.Base(p), modTime(f), rs)
+			return
+		}
+
+		mod := modTime(f)
+		if !mod.IsZero() {
+			w.Header().Set("Last-Modified", mod.UTC().Format(http.TimeFormat))
+		}
+
+		if notModified(r, w.Header().Get("ETag"), mod) {
+			w.WriteHeader(http.StatusNotModified)
 			return
 		}
 
@@ -88,6 +126,47 @@ func modTime(f io.Reader) time.Time {
 	}
 
 	return time.Time{}
+}
+
+// quoteETag makes a bare tag (S3 SDKs often strip the quotes) a valid
+// entity tag.
+func quoteETag(tag string) string {
+	if strings.HasPrefix(tag, `"`) || strings.HasPrefix(tag, `W/"`) {
+		return tag
+	}
+
+	return `"` + tag + `"`
+}
+
+// notModified applies RFC 9110 section 13.2.2 for GET and HEAD: If-None-Match
+// (weak comparison) takes precedence over If-Modified-Since.
+func notModified(r *http.Request, etag string, mod time.Time) bool {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		return false
+	}
+
+	if inm := r.Header.Get("If-None-Match"); inm != "" {
+		if etag == "" {
+			return false
+		}
+
+		for c := range strings.SplitSeq(inm, ",") {
+			c = strings.TrimSpace(c)
+			if c == "*" || strings.TrimPrefix(c, "W/") == strings.TrimPrefix(etag, "W/") {
+				return true
+			}
+		}
+
+		return false
+	}
+
+	if mod.IsZero() {
+		return false
+	}
+
+	ims, err := http.ParseTime(r.Header.Get("If-Modified-Since"))
+
+	return err == nil && !mod.Truncate(time.Second).After(ims)
 }
 
 // original undoes http.StripPrefix for signature checks: links are signed

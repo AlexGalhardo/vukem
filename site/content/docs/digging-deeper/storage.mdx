@@ -222,6 +222,20 @@ For each request it:
 2. Answers 404 for directories, dotfiles (`.env`) and anything under a dot folder (`.git/config`, the upload quarantine). Invalid and missing paths are also 404.
 3. Sets `X-Content-Type-Options: nosniff` and `Content-Security-Policy: sandbox; default-src 'none'; img-src 'self'; style-src 'unsafe-inline'`. An uploaded HTML or SVG file therefore cannot run scripts on your site; images and downloads still work.
 4. Sends the file. Files that can seek (local disk) go through [`http.ServeContent`](https://pkg.go.dev/net/http#ServeContent), which handles `Range` requests and the `Content-Type`. The `Last-Modified` header is the file's real modification time, so `If-Modified-Since` answers 304 for an unchanged file; a disk that cannot report the time sends no `Last-Modified`. Other files get a `Content-Type` from their extension.
+5. Answers conditional requests for files that cannot seek too (the S3 driver streams objects). When the opened file has an `ETag() string` method its value is sent as `ETag` and matched against `If-None-Match`; when it has a `ModTime() time.Time` method its value is sent as `Last-Modified` and matched against `If-Modified-Since`. A match answers 304 with no body. Objects from the S3 driver have both methods.
+
+### Cache headers
+
+`storage.HandlerWith(disk, signer, storage.Options{...})` is `Handler` with options. `CacheControl` is sent on every response that serves a file (200, 206 and 304), never on a 403 or 404. Content-addressed paths, whose bytes never change for a given name, can be cached for a year:
+
+```go
+covers := storage.HandlerWith(disk, nil, storage.Options{
+	CacheControl: "public, max-age=31536000, immutable",
+})
+r.Handle("/covers/", http.StripPrefix("/covers", covers))
+```
+
+Do not use `immutable` for paths whose content can be replaced (an avatar stored as `avatars/42.png`): browsers would keep the old file for a year. Use a short `max-age` there, or `no-cache` to revalidate with the `ETag` and `Last-Modified` on every visit.
 
 ## Private files and temporary links
 
