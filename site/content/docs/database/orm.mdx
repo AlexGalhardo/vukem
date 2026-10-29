@@ -480,9 +480,28 @@ page, err := orm.QueryOf[models.Post](db).
 // {"data":[...],"per_page":20,"next_cursor":"Mg"}
 ```
 
-- It orders by the primary key in `dir`; a query with its own `OrderBy` fails with `orm: CursorPaginate orders by the primary key; remove OrderBy`.
+- Without `OrderBy` it orders by the primary key in `dir`.
+- With `OrderBy` (or `Latest`), the keyset is those columns in their own directions, followed by the primary key in `dir` as the tie-breaker. See [Sorted cursor pages](#sorted-cursor-pages).
 - `NextCursor` is empty on the last page.
-- A cursor is the last key, JSON-encoded in URL-safe base64. It is opaque to clients but not secret, and a malformed one returns `orm.ErrInvalidCursor` (**400** "Invalid pagination cursor.").
+- A cursor is the last row's key values, JSON-encoded in URL-safe base64. It is opaque to clients but not secret, and a malformed one returns `orm.ErrInvalidCursor` (**400** "Invalid pagination cursor.").
+
+### Sorted cursor pages
+
+Lists ranked by something other than the id, such as the best-rated games first, page by the query's own order:
+
+```go
+page, err := orm.QueryOf[models.Game](db).
+	Where("published", true).
+	OrderBy("score", orm.Desc).
+	CursorPaginate(ctx, c.Query("cursor"), 20, orm.Desc)
+```
+
+Under the hood the keyset is `(score DESC, id DESC)`: many games share a score, so the primary key is appended to give every row a unique position. The next page adds `WHERE (score < ?) OR (score = ? AND id < ?)` with the last row's values, which works on SQLite, PostgreSQL and MySQL even when directions are mixed. Index the same columns in the same order (`CREATE INDEX ON games (score DESC, id DESC)`) so each page is an index range scan.
+
+- The cursor stores the last row's values, `[4.5,812]` here, and decodes each into its column's Go type before binding it, so `time.Time` columns (as in `Latest`) compare correctly. A cursor with the wrong number of values or a wrong type is a **400**.
+- The ordered columns must be `NOT NULL`. A `NULL` never compares as smaller or larger, so rows with a `NULL` key are skipped.
+- Keep the query the same between pages. A cursor made under another order still decodes when the types match, but it starts from the wrong place.
+- A forged cursor cannot inject SQL: the values are bound parameters and the columns come from your `OrderBy` calls, which are validated against the model.
 
 [Pagination](/docs/rest-apis/pagination) shows both in an API with links.
 

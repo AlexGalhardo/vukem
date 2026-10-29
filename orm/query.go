@@ -48,6 +48,7 @@ type Query[T any] struct {
 	selects []string
 	conds   []cond
 	orders  []string
+	keys    []orderKey // the OrderBy columns, for CursorPaginate
 	limit   int
 	offset  int
 	trashed int // 0 exclude, 1 include, 2 only
@@ -69,6 +70,7 @@ func (q Query[T]) clone() Query[T] {
 	q.selects = slices.Clip(q.selects)
 	q.conds = slices.Clip(q.conds)
 	q.orders = slices.Clip(q.orders)
+	q.keys = slices.Clip(q.keys)
 
 	return q
 }
@@ -306,6 +308,7 @@ func (q Query[T]) OrderBy(colName string, dir Direction) Query[T] {
 
 	q = q.clone()
 	q.orders = append(q.orders, q.quote(col)+" "+string(dir))
+	q.keys = append(q.keys, orderKey{col, dir})
 
 	return q
 }

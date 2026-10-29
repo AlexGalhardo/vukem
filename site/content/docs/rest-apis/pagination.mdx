@@ -260,7 +260,7 @@ func (f *Feed) Index(c *web.Ctx) error {
 - `orm.Asc` walks from the oldest id up, `orm.Desc` from the newest down.
 - `links.self` is the request URI as received; `links.prev` is always `null`, because a keyset cursor only moves forward.
 
-The keyset order is the primary key, so a cursor page cannot follow another sort. `req.CursorPaginate` drops the default sort of `api.Sorts` (the endpoint can still offer `?sort` for offset pages), and answers `400` with `Query parameter sort cannot be combined with cursor pagination.` when the client sends `?sort` itself. Calling `req.Query.CursorPaginate(ctx, req.Cursor, req.PerPage, dir)` directly still fails with `orm: CursorPaginate orders by the primary key; remove OrderBy` (a `500`) as soon as `api.Sorts` added an `OrderBy`.
+The keyset order is the primary key, so a cursor page cannot follow another sort. `req.CursorPaginate` drops the default sort of `api.Sorts` (the endpoint can still offer `?sort` for offset pages), and answers `400` with `Query parameter sort cannot be combined with cursor pagination.` when the client sends `?sort` itself. Calling `req.Query.CursorPaginate(ctx, req.Cursor, req.PerPage, dir)` directly pages by whatever `OrderBy` the query carries, client `?sort` included (see [Sorted cursor pages](/docs/database/orm#sorted-cursor-pages)).
 
 ## Plain collections
 
@@ -408,7 +408,7 @@ func TestListTasks(t *testing.T) {
 
 ## Common mistakes
 
-**Calling `req.Query.CursorPaginate` on an endpoint with `api.Sorts`.** The client gets a `500` and the log says `orm: CursorPaginate orders by the primary key; remove OrderBy`. Use `req.CursorPaginate(ctx, dir)`, which leaves the default sort out.
+**Calling `req.Query.CursorPaginate` on an endpoint with `api.Sorts`.** The page then follows the sort the client chose, and a cursor reused with another `?sort` starts from the wrong row. Use `req.CursorPaginate(ctx, dir)`, which leaves the default sort out and refuses a client `?sort`.
 
 **Expecting an unknown include name to load something.** `api.Includes("owner")` on a model whose relation is `User` loads nothing: `owner` matches no relation, so it only lands in `req.Includes`. Name the include after the relation (`user`), or load it yourself from `req.Includes`.
 
