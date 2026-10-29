@@ -154,6 +154,25 @@ The root view is a normal `html/template` view. It receives `inertia.RootData`:
 | `.Inertia` | `<script data-page="app" type="application/json">` with the page object, then `<div id="app"></div>` (or the SSR body); both use `RootID` |
 | `.Head` | Server-rendered `<head>` tags with SSR, empty otherwise |
 | `.Page` | The `*inertia.Page` itself, for custom root views |
+| `.Data` | What `Config.ViewData` returned for the request, `nil` without it |
+
+View functions (`{{locale}}`, `{{cspNonce}}`) see the request, but your own `WithViewFuncs` functions take no context. For root-view data that depends on the request, such as a theme cookie, set `Config.ViewData`. It runs on full page visits only and is not part of the page object:
+
+```go title="bootstrap/app.go"
+vukem.WithInertia(inertia.Config{
+	ViewData: func(r *http.Request) map[string]any {
+		theme := "light"
+		if c, err := r.Cookie("theme"); err == nil && c.Value == "dark" {
+			theme = "dark" // only known values reach the page
+		}
+		return map[string]any{"theme": theme}
+	},
+})
+```
+
+```html title="resources/views/app.html"
+<html lang="{{or locale "en"}}" class="{{.Data.theme}}">
+```
 
 Inside the script every `/` is escaped as `\/`, so a prop holding `</script>` can never close the element early.
 
@@ -551,6 +570,7 @@ vukem.WithInertia(inertia.Config{
 | `EncryptHistory` | `bool` | `false` | Encrypt history state on every page |
 | `SSR` | `*inertia.SSRConfig` | `nil` (off) | Server-side rendering |
 | `ErrorComponent` | `string` | `"Error"` | Page rendered for errors on Inertia visits |
+| `ViewData` | `func(*http.Request) map[string]any` | none | Extra root-view data per request, as `RootData.Data` (full page visits only) |
 
 Other helpers: `inertia.IsInertia(r)` and `inertia.IsPrefetch(r)` read the request, `app.Inertia.Version()` returns the current version, and the protocol header names are exported as constants (`inertia.HeaderInertia`, `inertia.HeaderVersion`, `inertia.HeaderLocation`, ...).
 

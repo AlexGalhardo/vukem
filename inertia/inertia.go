@@ -31,6 +31,7 @@ import (
 	"strings"
 
 	"github.com/AlexGalhardo/vukem/errs"
+	"github.com/AlexGalhardo/vukem/i18n"
 	"github.com/AlexGalhardo/vukem/web"
 )
 
@@ -77,6 +78,10 @@ type Config struct {
 	// ErrorComponent is the page ErrorPage renders for errors on Inertia
 	// requests (default "Error"); it receives the props status and message.
 	ErrorComponent string
+	// ViewData returns extra data for the root view on full page visits,
+	// read from the request (a theme cookie, the locale's text direction),
+	// as RootData.Data. It is not part of the page object. nil: no data.
+	ViewData func(r *http.Request) map[string]any
 }
 
 // Inertia is the adapter; build it with New.
@@ -113,6 +118,9 @@ type RootData struct {
 	Inertia template.HTML
 	// Head holds server-rendered head elements (empty without SSR).
 	Head template.HTML
+	// Data is what Config.ViewData returned for the request (nil without
+	// it), e.g. {{.Data.theme}} in the root view.
+	Data map[string]any
 }
 
 // New returns an adapter.
@@ -269,9 +277,14 @@ func RenderStatus(c *web.Ctx, status int, component string, props Props) error {
 		return err
 	}
 
+	var data map[string]any
+	if st.in.cfg.ViewData != nil {
+		data = st.in.cfg.ViewData(c.Request())
+	}
+
 	if ok {
 		return c.Render(st.in.cfg.RootView,
-			RootData{Page: p, Inertia: trustedHTML(body), Head: trustedHTML(head)}, web.WithStatus(status))
+			RootData{Page: p, Inertia: trustedHTML(body), Head: trustedHTML(head), Data: data}, web.WithStatus(status))
 	}
 
 	script, err := pageScript(p, st.in.cfg.RootID)
@@ -281,7 +294,11 @@ func RenderStatus(c *web.Ctx, status int, component string, props Props) error {
 
 	html := script + `<div id="` + st.in.cfg.RootID + `"></div>`
 
-	return c.Render(st.in.cfg.RootView, RootData{Page: p, Inertia: trustedHTML(html)}, web.WithStatus(status))
+	return c.Render(
+		st.in.cfg.RootView,
+		RootData{Page: p, Inertia: trustedHTML(html), Data: data},
+		web.WithStatus(status),
+	)
 }
 
 func pageStatus(code int) bool {
@@ -335,7 +352,7 @@ func (st *state) page(c *web.Ctx, component string, props Props) (*Page, error) 
 	p := &Page{
 		Component:      component,
 		Props:          resolved,
-		URL:            req.URL.RequestURI(),
+		URL:            pageURL(req),
 		Version:        st.in.Version(),
 		SharedProps:    slices.Sorted(maps.Keys(sharedKeys)),
 		MergeProps:     rs.merge,
@@ -393,7 +410,23 @@ func absoluteURL(r *http.Request) string {
 		scheme = "https"
 	}
 
-	return scheme + "://" + r.Host + r.URL.RequestURI()
+	return scheme + "://" + r.Host + pageURL(r)
+}
+
+// pageURL is the URL the browser shows: the request URI with the locale
+// prefix i18n.StripPathPrefix removed before routing put back, so client
+// history and reloads keep "/pt-br/games" instead of "/games".
+func pageURL(r *http.Request) string {
+	if i18n.PathPrefix(r.Context()) == "" {
+		return r.URL.RequestURI()
+	}
+
+	u := i18n.LocalizePath(r.Context(), r.URL.EscapedPath())
+	if r.URL.RawQuery != "" {
+		u += "?" + r.URL.RawQuery
+	}
+
+	return u
 }
 
 // redirectWriter rewrites redirects for Inertia requests: 302 → 303 after
