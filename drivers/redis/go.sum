@@ -1,5 +1,5 @@
-github.com/AlexGalhardo/vukem v0.32.0 h1:b/zv1pqumX+/zAVduqeW2y3Yek95Aoz9fQ4/vXVcTsM=
-github.com/AlexGalhardo/vukem v0.32.0/go.mod h1:v9Ael5aO/4a5s32Ji/Q7sdZDl/HaA1UpohD5EGsTmk8=
+github.com/AlexGalhardo/vukem v0.33.0 h1:0hqpjUf0uhCuPEI5FPH6bu6jBeijT1P3pEyhSnrrIgw=
+github.com/AlexGalhardo/vukem v0.33.0/go.mod h1:v9Ael5aO/4a5s32Ji/Q7sdZDl/HaA1UpohD5EGsTmk8=
 github.com/bsm/ginkgo/v2 v2.12.0 h1:Ny8MWAHyOepLGlLKYmXG4IEkioBysk6GpaRTLC8zwWs=
 github.com/bsm/ginkgo/v2 v2.12.0/go.mod h1:SwYbGRRDovPVboqFv0tPTcG1sN61LM1Z4ARdbAV9g4c=
 github.com/bsm/gomega v1.27.10 h1:yeMWxP2pV2fG3FgAODIY8EiRE3dy0aeFYt4l7wh6yKA=
