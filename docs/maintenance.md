@@ -60,6 +60,18 @@ A module added to the repository must be added to the `gomod` directories in `.g
 3. Quarterly: re-run [security-review.md](security-review.md) against the OWASP Top 10 and ASVS and record the date on that page.
 4. A security release gets a **Security** changelog entry (a `fix!:` commit with a `BREAKING CHANGE:` footer when it breaks an API), an `Insecure…` opt-out when reasonable, and an [apicheck exception](tooling.md#security-exceptions) when it breaks an API after `v1`.
 
+## Secret scanning
+
+[Betterleaks](https://github.com/betterleaks/betterleaks) `v1.9.0` (latest stable release on 2026-10-29; the `v2.0.0-rc.*` tags are pre-releases and stay out until a stable v2) scans for leaked secrets on top of GitHub's server-side scanning:
+
+- CI: `.github/workflows/secrets.yml` installs the Linux x64 release archive checked against its sha256 from the release's `checksums.txt`, scans the commits a pull request or push adds, and the whole history every Monday (failures reach `ci-failure.yml`).
+- Locally: `task secrets:scan` (full history; `task secrets:scan -- --log-opts=main..HEAD` for a branch). Install with `go install github.com/betterleaks/betterleaks@v1.9.0` or the release archive.
+- `.betterleaks.toml` extends the default rules with vukem's `APP_KEY` (`base64:` + 43 chars + `=`) and API token (`vk_<26>.<26>` base32) formats, and allowlists only literal placeholder values (`hunter2`, `correct horse...`, `_FAKE_`, `placeholder`, `example`), never paths.
+- `.betterleaksignore` lists reviewed historical findings (fixtures, documentation samples, translated "password" labels) by fingerprint. A new finding is either a placeholder that should say so (`_FAKE_`, `example`) or a real secret: rotate it, do not ignore it.
+- Validation (`--validation`, which sends findings to credential providers) stays off.
+
+To bump: change `BETTERLEAKS_VERSION` and `BETTERLEAKS_SHA256` in `secrets.yml` (sha256 of `betterleaks_<v>_linux_x64.tar.gz` from `checksums.txt`) and the version in `Taskfile.yml`, then run `task secrets:scan`.
+
 ## Metrics
 
 Tracked in the pinned "Scorecard tracking" issue, updated at each release:
