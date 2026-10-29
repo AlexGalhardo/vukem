@@ -185,12 +185,16 @@ vukem build [flags]
 | Flag | Type | Default | What it does |
 | --- | --- | --- | --- |
 | `-o` | string | `bin/app` (`bin\app.exe` on Windows) | Output path of the binary. |
+| `-ldflags` | string | none | Extra linker flags, appended to `-s -w`, for example `-X main.version=v1.2.3`. |
+| `-ssr` | bool | `false` | Also build the Inertia SSR bundle with `vite build --ssr`. Fails with `-ssr needs a Vite project (vite.config.ts, .js or .mjs)` without a Vite config. |
 
 **Steps**
 
 1. `go tool templ generate` when `.templ` files exist.
-2. When a `vite.config.*` exists: checks `node_modules`, then runs `vite build` through the package manager (`npm exec -- vite build`, `bun x vite build`, `pnpm exec vite build`, `yarn exec vite build`).
-3. `go build -trimpath -ldflags="-s -w"` of `./cmd/app` with `CGO_ENABLED=0` and the tags from `.buildtags`.
+2. When a `vite.config.*` exists: checks `node_modules`, then runs `vite build` through the package manager (`npm exec -- vite build`, `bun x vite build`, `pnpm exec vite build`, `yarn exec vite build`); with `-ssr`, then `vite build --ssr`.
+3. `go build -trimpath -ldflags="-s -w"` of `./cmd/app` (plus your `-ldflags`) with `CGO_ENABLED=0` and the tags from `.buildtags`.
+
+To stamp the release into the binary, declare `var version = "dev"` in `cmd/app/main.go`, pass it to `vukem.WithVersion(version)`, and build with `vukem build -ldflags "-X main.version=$(git describe --tags)"`. `GET /up` then reports it (see [Health checks](/docs/architecture/lifecycle#health-checks)).
 
 **Environment**: `CGO_ENABLED` (your value wins). `PATH`.
 

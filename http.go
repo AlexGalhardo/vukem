@@ -769,6 +769,10 @@ func RunMain(ctx context.Context, args []string, getenv func(string) (string, bo
 
 	switch cmd {
 	case "serve":
+		if err := serveFlags(app, rest); err != nil {
+			return err
+		}
+
 		return app.Run(ctx)
 	default:
 		return runCommand(ctx, app, cmd, rest)
@@ -853,32 +857,84 @@ func ssrStartCommand() Command {
 			delay = fs.Duration("restart-delay", time.Second, "wait before restarting a crashed server")
 		},
 		Fn: func(ctx context.Context, app *App, _ []string) error {
-			if _, err := os.Stat(*bundle); err != nil {
-				return fmt.Errorf("ssr:start: bundle %s not found (run npm run build): %w", *bundle, err)
+			if err := checkSSRBundle("ssr:start", *bundle); err != nil {
+				return err
 			}
 
-			for {
-				cmd := exec.CommandContext(ctx, *runtime, *bundle) //nolint:gosec // G204: developer-supplied flags
-				cmd.Stdout, cmd.Stderr = app.stdout, os.Stderr
-				cmd.WaitDelay = 5 * time.Second
-
-				err := cmd.Run()
-
-				// Stopped (Ctrl+C) or a clean exit (POST /shutdown): done.
-				if err == nil || ctx.Err() != nil {
-					return nil //nolint:nilerr // the process was killed on purpose
-				}
-
-				app.Log.WarnContext(ctx, "ssr: server exited, restarting", "err", err, "delay", *delay)
-
-				select {
-				case <-ctx.Done():
-					return nil
-				case <-time.After(*delay):
-				}
-			}
+			return app.superviseSSR(ctx, ssrProcess{*bundle, *runtime, *delay, false})
 		},
 	}
+}
+
+// ssrProcess is how ssr:start and `serve -with-ssr` run the SSR server.
+type ssrProcess struct {
+	bundle, runtime string
+	delay           time.Duration
+	// always restarts after a clean exit too: under serve the app keeps
+	// rendering pages, so the server must come back.
+	always bool
+}
+
+func checkSSRBundle(cmd, bundle string) error {
+	if _, err := os.Stat(bundle); err != nil {
+		return fmt.Errorf("%s: SSR bundle %s not found (run npm run build): %w", cmd, bundle, err)
+	}
+
+	return nil
+}
+
+// superviseSSR runs the SSR bundle and restarts it when it exits, until ctx
+// is done.
+func (a *App) superviseSSR(ctx context.Context, p ssrProcess) error {
+	for {
+		cmd := exec.CommandContext(ctx, p.runtime, p.bundle) //nolint:gosec // G204: developer-supplied flags
+		cmd.Stdout, cmd.Stderr = a.stdout, os.Stderr
+		cmd.WaitDelay = 5 * time.Second
+
+		err := cmd.Run()
+
+		// Stopped (Ctrl+C), or a clean exit (POST /shutdown) under ssr:start.
+		if ctx.Err() != nil || err == nil && !p.always {
+			return nil //nolint:nilerr // the process was killed on purpose
+		}
+
+		a.Log.WarnContext(ctx, "ssr: server exited, restarting", "err", err, "delay", p.delay)
+
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-time.After(p.delay):
+		}
+	}
+}
+
+// serveFlags parses the flags of the serve command: -with-ssr adds the
+// "ssr" runner, which supervises the SSR server like ssr:start.
+func serveFlags(app *App, args []string) error {
+	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
+	fs.SetOutput(app.stderr)
+
+	withSSR := fs.Bool("with-ssr", false, "also run and supervise the Inertia SSR server (like ssr:start)")
+	bundle := fs.String("ssr-bundle", "bootstrap/ssr/ssr.js", "SSR bundle built by vite build --ssr")
+	runtime := fs.String("ssr-runtime", "node", "JavaScript runtime that runs the SSR bundle")
+	delay := fs.Duration("ssr-restart-delay", time.Second, "wait before restarting the SSR server")
+
+	if err := fs.Parse(args); err != nil {
+		return errUsage
+	}
+
+	if !*withSSR {
+		return nil
+	}
+
+	if err := checkSSRBundle("serve -with-ssr", *bundle); err != nil {
+		return err
+	}
+
+	p := ssrProcess{*bundle, *runtime, *delay, true}
+	app.AddRunner("ssr", RunnerFunc(func(ctx context.Context) error { return app.superviseSSR(ctx, p) }))
+
+	return nil
 }
 
 func ssrCheckCommand() Command {

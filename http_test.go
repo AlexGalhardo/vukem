@@ -1995,6 +1995,66 @@ func TestSSRStartRestartsCrashedServer(t *testing.T) { //nolint:paralleltest // 
 	}
 }
 
+// VF-027 (HexaScore): `serve -with-ssr` supervises the SSR server next to
+// the app, restarting it even after a clean exit, because the instance
+// keeps serving pages that need it.
+func TestServeWithSSR(t *testing.T) { //nolint:paralleltest // sets process environment
+	dir := t.TempDir()
+	bundle := filepath.Join(dir, "ssr.js")
+	runs := filepath.Join(dir, "runs.log")
+
+	if err := os.WriteFile(bundle, []byte("//"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("VUKEM_SSR_HELPER", runs)
+	t.Setenv("VUKEM_SSR_EXIT", "0")
+
+	build := func(opts ...Option) (*App, error) {
+		return New(append(opts, WithLogger(discardLogger()), WithoutHTTP())...)
+	}
+	serve := func(ctx context.Context, args ...string) error {
+		return RunMain(ctx, append([]string{"app", "serve"}, args...), testSource(nil).Lookup, build)
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+
+	done := make(chan error, 1)
+	go func() {
+		done <- serve(ctx, "-with-ssr", "-ssr-bundle", bundle, "-ssr-runtime", os.Args[0],
+			"-ssr-restart-delay", "10ms")
+	}()
+
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		b, _ := os.ReadFile(runs)
+		if strings.Count(string(b), bundle) >= 3 {
+			break
+		}
+
+		if time.Now().After(deadline) {
+			t.Fatalf("SSR server not supervised by serve, runs:\n%s", b)
+		}
+
+		time.Sleep(10 * time.Millisecond) //nolint:forbidigo // waits on real child processes
+	}
+
+	cancel()
+
+	if err := <-done; err != nil {
+		t.Errorf("serve -with-ssr after cancel = %v", err)
+	}
+
+	if err := serve(t.Context(), "-with-ssr", "-ssr-bundle", filepath.Join(dir, "missing.js")); err == nil ||
+		!strings.Contains(err.Error(), "not found") {
+		t.Errorf("serve -with-ssr with a missing bundle = %v, want a boot error", err)
+	}
+
+	if err := serve(t.Context(), "-nope"); !errors.Is(err, errUsage) {
+		t.Errorf("serve -nope = %v, want errUsage", err)
+	}
+}
+
 func TestSSRCheck(t *testing.T) {
 	t.Parallel()
 

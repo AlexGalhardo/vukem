@@ -219,10 +219,16 @@ func delegate(ctx context.Context, env *Env, args []string) error {
 
 func buildCmd(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 	out := set.String("o", filepath.Join("bin", exe("app")), "output binary")
+	ldflags := set.String("ldflags", "", "extra go build -ldflags, appended to -s -w (e.g. -X main.version=v1.2.3)")
+	ssr := set.Bool("ssr", false, "also build the Inertia SSR bundle (vite build --ssr)")
 
 	return func(ctx context.Context, env *Env, _ []string) error {
 		if !exists(env, filepath.Join("cmd", "app")) {
 			return errors.New("no cmd/app in this directory: run vukem inside a Vukem project")
+		}
+
+		if *ssr && !hasVite(env) {
+			return errors.New("-ssr needs a Vite project (vite.config.ts, .js or .mjs)")
 		}
 
 		if hasTempl(env) {
@@ -244,9 +250,16 @@ func buildCmd(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 			if err := tool(ctx, env, pm.binary(), append(slices.Clone(pm.exec), "vite", "build")...); err != nil {
 				return err
 			}
+
+			if *ssr {
+				if err := tool(ctx, env, pm.binary(), append(slices.Clone(pm.exec), "vite", "build", "--ssr")...); err != nil {
+					return err
+				}
+			}
 		}
 
-		if err := goBuildEnv(ctx, env, *out, releaseBuildEnv(env), "-trimpath", "-ldflags=-s -w"); err != nil {
+		flags := strings.TrimSpace("-s -w " + *ldflags)
+		if err := goBuildEnv(ctx, env, *out, releaseBuildEnv(env), "-trimpath", "-ldflags="+flags); err != nil {
 			return err
 		}
 
