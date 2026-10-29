@@ -203,6 +203,7 @@ Store the locale on the user (from the request locale at sign-up or in the accou
 | `mail.View(name, data)` | the view `name` rendered with `data` | the view `name_text` if it exists, otherwise derived from the HTML |
 | `mail.HTML(html, text)` | `html` as given | `text`, or derived from `html` when `text` is empty |
 | `mail.Text(text)` | none | `text` |
+| `mail.React(name, props)` | the exported React Email page `name` rendered with `props` | derived from the HTML |
 
 Views are [`html/template`](https://pkg.go.dev/html/template) files, the same engine as your pages, so values are escaped and `{{.TrackingURL}}` cannot inject HTML. A `mail.View` content needs the app's view engine (`vukem.WithViews`); without one, sending fails with `mail: view content needs a view engine`.
 
@@ -223,6 +224,67 @@ Hello {{.Order.CustomerName}},
 Order #{{.Order.Number}} is on its way:
 {{.TrackingURL}}
 ```
+
+### React Email templates
+
+If your app already uses React (an Inertia React starter), you can write emails as [React Email](https://react.email/docs/introduction) components and still send them from Go with no Node process at send time. `email export` renders each component to an HTML file once, at build time; Go fills it in when the mail is sent.
+
+```shell
+vukem make:mail Welcome --react
+npm install -E -D react-email@6.11.6 @react-email/components@1.0.12
+```
+
+`make:mail --react` writes `app/mail/welcome.go`, the component `resources/js/emails/welcome.tsx` and a helper `resources/js/emails/go.ts`. The trick is in the component's default props: they are Go template actions, which `email export` copies into the HTML unchanged.
+
+```tsx title="resources/js/emails/welcome.tsx"
+import { Body, Button, Container, Html, Text } from "@react-email/components";
+import { go, t } from "./go";
+
+type Props = { name: string; url: string };
+
+export default function Welcome({ name = go(".Name"), url = go(".URL") }: Partial<Props>) {
+	return (
+		<Html lang={go("locale")}>
+			<Body>
+				<Container>
+					<Text>{t("mail.welcome.title")}</Text>
+					<Text>Hello {name},</Text>
+					<Button href={url}>{t("mail.welcome.action")}</Button>
+				</Container>
+			</Body>
+		</Html>
+	);
+}
+```
+
+Add a script and run it whenever a component changes; commit the output like any other view:
+
+```json title="package.json"
+"build:emails": "email export --dir resources/js/emails --outDir resources/emails"
+```
+
+Then point the app at the exported files and send with `mail.React`:
+
+```go
+//go:embed emails
+var Emails embed.FS // in resources/resources.go
+
+emails, _ := fs.Sub(resources.Emails, "emails")
+app, err := vukem.New(vukem.WithReactEmails(emails) /* , ... */)
+
+func (m Welcome) Content() mail.Content { return mail.React("welcome", m) }
+```
+
+How it behaves:
+
+- **Escaping.** The exported files are `html/template` pages, so every prop is escaped for where it lands: `<b>` becomes `&lt;b&gt;` in text and a `javascript:` URL becomes `#ZgotmplZ` in an `href` (`TestSecurity_A03_ReactPropsEscaped`). Pass Go field names and functions to `go(...)`, never user data.
+- **Translations.** `t("key")` becomes ``{{t `key`}}`` and `go("locale")` becomes `{{locale}}`, the same functions as your views, in the send's locale (see [Mail in the user's language from a job](#mail-in-the-users-language-from-a-job)). `WithViewFuncs` functions work too.
+- **No layout.** An exported page is a whole document, so the app's view layout is never wrapped around it.
+- **Text part.** Derived from the HTML, without the `<Preview>` inbox text.
+- **Errors.** `mail.React` without `WithReactEmails` fails with `mail: React content needs React email templates`; a name with no exported page fails with `mail: React email "welcome" not found`, so a forgotten build shows up at the first send in development and in tests.
+- **Outlook conditional comments.** `html/template` drops HTML comments, including the `<!--[if mso]>` spacing hints some React Email components add; the layout still renders in Outlook, with slightly different button padding.
+
+Why build time instead of rendering through the SSR server on each send: sends stay fast and work in queue workers that run no Node process, and a broken template fails your build, not a password reset at 3 a.m. The cost is that components cannot branch on prop values at send time (a `{name && ...}` sees the placeholder string): put conditionals in Go template actions (`go("if .Premium")` ... `go("end")`) or send a different template. The React Email preview server (`npx email dev --dir resources/js/emails`) shows the placeholders; preview real data with [`mail.Preview`](#previewing-emails), which renders React emails like any other.
 
 ### Attachments and inline images
 

@@ -318,6 +318,24 @@ created app/mail/doc.go
 created resources/views/mail/welcome.html
 ```
 
+`--react` writes a [React Email](/docs/digging-deeper/mail#react-email-templates) component instead of the HTML view, plus the shared `go.ts` helper on first use, and prints the packages and build script to add:
+
+```bash
+vukem make:mail Welcome --react
+```
+
+```text
+created app/mail/welcome.go
+created app/mail/doc.go
+created resources/js/emails/welcome.tsx
+created resources/js/emails/go.ts
+next steps:
+  npm install -E -D react-email@6.11.6 @react-email/components@1.0.12
+  add the package.json script "build:emails":
+    email export --dir resources/js/emails --outDir resources/emails
+  run it, embed resources/emails and pass vukem.WithReactEmails(fsys) to vukem.New
+```
+
 ## `vukem make:policy`
 
 Create an authorization policy and register it in `All()` of `app/policies/registry.go`, which the first call creates with an empty `All()`. The policy takes `*models.User`.
