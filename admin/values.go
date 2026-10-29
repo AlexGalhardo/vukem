@@ -117,8 +117,21 @@ func auditValue(v reflect.Value) any {
 	}
 }
 
+// nullBase returns the value type of a nullable column type shaped like
+// database/sql's: sql.Null[T], sql.NullString, sql.NullInt64, sql.NullBool
+// and the rest are a value field followed by Valid bool. Other types are
+// returned unchanged.
+func nullBase(t reflect.Type) reflect.Type {
+	if t.Kind() == reflect.Struct && t.NumField() == 2 && t.Field(1).Name == "Valid" &&
+		t.Field(1).Type.Kind() == reflect.Bool && t.Field(0).IsExported() {
+		return t.Field(0).Type
+	}
+
+	return t
+}
+
 func filterable(t reflect.Type) bool {
-	switch t.Kind() {
+	switch nullBase(t).Kind() {
 	case reflect.String, reflect.Bool, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
 		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
 		return true
@@ -130,7 +143,7 @@ func filterable(t reflect.Type) bool {
 // filterValue converts a query-string value to the column's Go kind, so it
 // binds as the right SQL type; ok is false for values that cannot match.
 func filterValue(t reflect.Type, s string) (any, bool) {
-	switch t.Kind() {
+	switch t = nullBase(t); t.Kind() {
 	case reflect.String:
 		return s, true
 	case reflect.Bool:

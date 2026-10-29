@@ -246,7 +246,7 @@ func (r *Resource[T]) filterView(f filter, qs url.Values) (filterView, any, bool
 	opts := f.options
 	labels := map[string]string{}
 
-	if len(opts) == 0 && col.typ.Kind() == reflect.Bool {
+	if len(opts) == 0 && nullBase(col.typ).Kind() == reflect.Bool {
 		opts = []string{"true", "false"}
 		labels = map[string]string{"true": "Yes", "false": "No"}
 	}
