@@ -212,7 +212,8 @@ func TestObserverPanicIsContained(t *testing.T) {
 		t.Errorf("log = %q, want the observer type", out)
 	}
 
-	if strings.Contains(out, "4242") {
+	// The key, not the value: random job ids are hex and may contain "4242".
+	if strings.Contains(out, "order_id") {
 		t.Errorf("log = %q, leaks the payload", out)
 	}
 
