@@ -1,0 +1,71 @@
+---
+title: Cloudflare
+description: Serve a vukem app behind Cloudflare - trust CF-Connecting-IP only from Cloudflare's published ranges so rate limits and logs see the real visitor IP, and lock the origin so nobody bypasses the proxy.
+---
+
+When Cloudflare proxies your domain, every request reaches your app from a Cloudflare edge server. Without extra setup, `c.IP()` is that edge address: every visitor shares one rate-limit bucket and your logs show Cloudflare instead of your users. Cloudflare sends the visitor's address in the `CF-Connecting-IP` header, but any client can send that header too, so you may only believe it when the request really comes from Cloudflare.
+
+The optional `contrib/cloudflare` module does both checks with the standard library only.
+
+You will learn:
+
+- how to get the real visitor IP from Cloudflare safely;
+- how to refuse requests that skip Cloudflare and hit your server directly;
+- how to keep the list of Cloudflare addresses current.
+
+## Install the module
+
+```bash
+go get github.com/AlexGalhardo/vukem/contrib/cloudflare
+```
+
+## Get the real visitor IP
+
+Pass Cloudflare's address ranges to the app as trusted proxies, and name the header they set:
+
+```go title="cmd/app/main.go"
+app, err := vukem.New(
+	vukem.WithTrustedProxies(cloudflare.Ranges()...),
+	// your other options
+)
+```
+
+```bash title=".env"
+CLIENT_IP_HEADER=CF-Connecting-IP
+```
+
+Now `c.IP()`, `ratelimit.ByIP`, the request log and sessions see the visitor's address. A request that carries `CF-Connecting-IP` from any other address keeps its own peer address, so the header cannot be spoofed.
+
+`cloudflare.Ranges()` returns the lists Cloudflare publishes at [ips-v4](https://www.cloudflare.com/ips-v4) and [ips-v6](https://www.cloudflare.com/ips-v6) (read 2026-10-29), embedded in the module. See Cloudflare's [IP addresses](https://developers.cloudflare.com/fundamentals/concepts/cloudflare-ip-addresses/) and [HTTP headers](https://developers.cloudflare.com/fundamentals/reference/http-headers/) pages.
+
+## Lock the origin
+
+Your server still has a public address. Someone who finds it can skip Cloudflare's firewall and rate limits. `cloudflare.OriginLock` answers `403` to any request whose connection does not come from Cloudflare:
+
+```go title="routes/web.go"
+// Railway, Fly and similar platforms run health checks from their own network: allow it.
+r.Use(cloudflare.OriginLock(netip.MustParsePrefix("10.0.0.0/8")))
+```
+
+It looks only at the connection's address, never at a header.
+
+## Behind another proxy
+
+Both features need Cloudflare to connect to your app directly. Some platforms put their own load balancer between Cloudflare and your app; then the connection comes from that load balancer. In that case trust the platform's network with `TRUSTED_PROXIES` instead, and lock the origin at the platform or with Cloudflare's [Authenticated Origin Pulls](https://developers.cloudflare.com/ssl/origin-configuration/authenticated-origin-pull/).
+
+## Keep the ranges current
+
+Cloudflare rarely changes its ranges, and a module upgrade brings the new list. To find out early, run a scheduled job that compares:
+
+```go title="app/console/cloudflare_ranges.go"
+current, err := cloudflare.FetchRanges(ctx, http.DefaultClient)
+if err != nil {
+	return err
+}
+
+if !slices.Equal(current, cloudflare.Ranges()) {
+	app.Log.Warn("Cloudflare ranges changed: upgrade contrib/cloudflare")
+}
+```
+
+A list that does not parse, is empty or covers every address is an error, never an update.

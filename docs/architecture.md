@@ -63,6 +63,7 @@ vukem/                            module github.com/AlexGalhardo/vukem
 │   ├── s3/                       module …/drivers/s3 (stdlib SigV4 client, no AWS SDK)
 │   └── websocket/                module …/drivers/websocket (coder/websocket, broadcast protocol)
 ├── contrib/
+│   ├── cloudflare/               module …/contrib/cloudflare (client IP ranges, origin lock, stdlib)
 │   ├── graphql/                  module …/contrib/graphql (stdlib GraphQL server)
 │   ├── grpc/                     module …/contrib/grpc (gRPC, gRPC-Web, Connect on connect-go)
 │   └── stripe/                   module …/contrib/stripe (Stripe API + webhooks, stdlib)
@@ -96,6 +97,7 @@ Package names are short, lowercase, singular and never `util`/`common`/`helpers`
 | `go.mongodb.org/mongo-driver/v2` | `drivers/mongo` | MongoDB |
 | `go.opentelemetry.io/otel` (+ `sdk`, `exporters/otlp/otlptrace/otlptracehttp`) | `drivers/otel` | Tracing |
 | `github.com/coder/websocket` | `drivers/websocket` | WebSockets |
+| none (stdlib only) | `contrib/cloudflare` | Cloudflare client IP ranges and origin lock |
 | none (stdlib only) | `contrib/graphql` | GraphQL server; gqlgen/graphql-go are not used |
 | `connectrpc.com/connect` (+ `grpchealth`, `grpcreflect`), `google.golang.org/protobuf`, `google.golang.org/genproto/googleapis/rpc` | `contrib/grpc` | gRPC, gRPC-Web and Connect on `net/http`; health, reflection, `google.rpc.BadRequest` details |
 | `golang.org/x/image` | `contrib/imaging` | WebP decoding and high-quality scaling (`draw.CatmullRom`) for thumbnails; the stdlib has neither |

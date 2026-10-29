@@ -14,6 +14,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -3127,5 +3128,51 @@ func TestWithHealthCheck(t *testing.T) {
 
 	if rec := doReq(t, app, "/up?checks=1"); rec.Code != 200 {
 		t.Errorf("after replacing the check: /up?checks=1 = %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// WithTrustedProxies adds proxies in code (such as a CDN's published
+// ranges) to TRUSTED_PROXIES: their client IP header is honoured, a
+// spoofed one from any other peer is not, and an invalid prefix refuses
+// to boot.
+func TestSecurity_A01_TrustedProxiesFromOption(t *testing.T) {
+	t.Parallel()
+
+	newApp := func(env map[string]string, prefixes ...netip.Prefix) (*App, error) {
+		return New(WithSource(testSource(env)), WithLogger(discardLogger()), WithTrustedProxies(prefixes...),
+			WithRoutes(func(r *router.Router, app *App) error {
+				r.Get("/ip", func(c *web.Ctx) error { return c.String(http.StatusOK, c.IP()) })
+				return DefaultMiddleware(app, r)
+			}))
+	}
+
+	app, err := newApp(map[string]string{"TRUSTED_PROXIES": "10.0.0.0/8", "CLIENT_IP_HEADER": "CF-Connecting-IP"},
+		netip.MustParsePrefix("173.245.48.0/20"), netip.MustParsePrefix("2400:cb00::/32"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	header := map[string]string{"CF-Connecting-IP": "203.0.113.9"}
+
+	for peer, want := range map[string]string{
+		"173.245.48.7:443":   "203.0.113.9",
+		"[2400:cb00::1]:443": "203.0.113.9",
+		"10.1.2.3:443":       "203.0.113.9", // env entries still count
+		"198.51.100.7:443":   "198.51.100.7",
+		"[2001:db8::1]:443":  "2001:db8::1",
+	} {
+		if got := proxyReq(t, app, peer, header).Body.String(); got != want {
+			t.Errorf("IP() from %s = %q, want %q", peer, got, want)
+		}
+	}
+
+	// The option alone satisfies CLIENT_IP_HEADER's need for proxies.
+	if _, err := newApp(map[string]string{"CLIENT_IP_HEADER": "CF-Connecting-IP"},
+		netip.MustParsePrefix("173.245.48.0/20")); err != nil {
+		t.Errorf("New(option only) = %v, want nil", err)
+	}
+
+	if _, err := newApp(nil, netip.Prefix{}); err == nil || !strings.Contains(err.Error(), "WithTrustedProxies") {
+		t.Errorf("New(invalid prefix) = %v, want a WithTrustedProxies error", err)
 	}
 }
