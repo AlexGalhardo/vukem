@@ -15,6 +15,8 @@
 //
 // [Signer.Verify] checks a request in constant time and returns [ErrInvalid]
 // or [ErrExpired]; [Signer.Middleware] answers 403 for both.
+// [Signer.Token] and [Signer.Open] sign and verify opaque payloads, such
+// as pagination cursors, with the same keys.
 //
 // See https://github.com/AlexGalhardo/vukem/blob/main/docs/security.md.
 package signed
@@ -28,6 +30,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/AlexGalhardo/vukem/errs"
@@ -195,6 +198,54 @@ func (s *Signer) sign(path, query string) string { return mac(s.key, path, query
 func mac(key []byte, path, query string) string {
 	m := hmac.New(sha256.New, key)
 	m.Write([]byte(path + "?" + query))
+
+	return base64.RawURLEncoding.EncodeToString(m.Sum(nil))
+}
+
+// maxToken bounds the tokens Open reads.
+const maxToken = 8 << 10
+
+// Token signs payload into an opaque, URL-safe string
+// "<base64url payload>.<base64url HMAC-SHA256>", for values a client
+// hands back unchanged, such as pagination cursors. The payload is only
+// encoded, not encrypted: never put a secret in it. A token does not
+// expire; put a time in the payload when it must.
+func (s *Signer) Token(payload []byte) string {
+	body := base64.RawURLEncoding.EncodeToString(payload)
+
+	return body + "." + tokenMAC(s.key, body)
+}
+
+// Open verifies a Token with the current or a previous key, in constant
+// time, and returns its payload; any other string is ErrInvalid.
+func (s *Signer) Open(token string) ([]byte, error) {
+	body, sig, ok := strings.Cut(token, ".")
+	if !ok || len(token) > maxToken {
+		return nil, ErrInvalid
+	}
+
+	valid := hmac.Equal([]byte(sig), []byte(tokenMAC(s.key, body)))
+	for _, k := range s.previous {
+		valid = valid || hmac.Equal([]byte(sig), []byte(tokenMAC(k, body)))
+	}
+
+	if !valid {
+		return nil, ErrInvalid
+	}
+
+	payload, err := base64.RawURLEncoding.DecodeString(body)
+	if err != nil {
+		return nil, ErrInvalid
+	}
+
+	return payload, nil
+}
+
+// tokenMAC is separated from the URL MAC by a prefix no URL path starts
+// with, so a signed URL never verifies as a token or the reverse.
+func tokenMAC(key []byte, body string) string {
+	m := hmac.New(sha256.New, key)
+	m.Write([]byte("\x00token\x00" + body))
 
 	return base64.RawURLEncoding.EncodeToString(m.Sum(nil))
 }
