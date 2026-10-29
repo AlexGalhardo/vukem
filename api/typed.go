@@ -192,6 +192,12 @@ func register[In, Out any](
 			return c.NoContent()
 		}
 
+		// No output type means no body, whatever the status (202 Accepted).
+		if noOutput {
+			c.Writer().WriteHeader(status)
+			return nil
+		}
+
 		if outSchema != nil {
 			return web.JSONWith(c, status, outSchema, out)
 		}

@@ -24,6 +24,7 @@ Two sources, one owner per kind of content: `docs/` is canonical for contracts a
 | CLI | [cli.md](cli.md) |
 | Mail, cache, feature flags, queue, scheduler and more | [subsystems.md](subsystems.md) |
 | Stripe subscriptions (`install:billing`) | [billing.md](billing.md) |
+| Cloudflare (client IP, origin lock) | [cloudflare.md](cloudflare.md) |
 | Development dashboard (`/_vukem`) | [devtools.md](devtools.md) |
 | Stability policy and upgrade guides | [stability.md](stability.md), [upgrade/](upgrade/README.md), [pre-1.0 API review](api/review.md), [v1.0 API review](v1-api-review.md) |
 | Testing | [testing.md](testing.md) |

@@ -1,9 +1,12 @@
 package vukem
 
 import (
+	"fmt"
 	"io"
 	"io/fs"
 	"log/slog"
+	"net"
+	"net/netip"
 	"time"
 
 	"github.com/AlexGalhardo/vukem/config"
@@ -89,6 +92,31 @@ func WithRunner(name string, r Runner) Option {
 // they do not fingerprint the build.
 func WithVersion(version string) Option {
 	return func(o *options) error { o.version = version; return nil }
+}
+
+// WithTrustedProxies trusts these networks as proxies in addition to
+// TRUSTED_PROXIES, for ranges that come from code rather than the
+// environment, such as a CDN's published list
+// (contrib/cloudflare.Ranges). c.IP() then honours their
+// X-Forwarded-For or CLIENT_IP_HEADER, and CLIENT_IP_HEADER and
+// TRUST_FORWARDED_PROTO count them as configured proxies. An invalid
+// prefix is a boot error.
+func WithTrustedProxies(prefixes ...netip.Prefix) Option {
+	return func(o *options) error {
+		for _, p := range prefixes {
+			if !p.IsValid() {
+				return fmt.Errorf("vukem: WithTrustedProxies: invalid prefix %q", p)
+			}
+
+			p = p.Masked()
+			o.proxies = append(o.proxies, &net.IPNet{
+				IP:   p.Addr().AsSlice(),
+				Mask: net.CIDRMask(p.Bits(), p.Addr().BitLen()),
+			})
+		}
+
+		return nil
+	}
 }
 
 // WithHealthCheck registers a readiness check at build time, the

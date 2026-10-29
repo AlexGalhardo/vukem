@@ -1,6 +1,8 @@
 package signed
 
 import (
+	"bytes"
+	"encoding/base64"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -144,5 +146,45 @@ func TestWithClock(t *testing.T) {
 	sys := New([]byte(strings.Repeat("k", MinKeyLen))).WithClock(nil)
 	if err := sys.Verify(req(t, link)); !errors.Is(err, ErrExpired) {
 		t.Errorf("WithClock(nil).Verify(link expired in 2000) = %v, want ErrExpired (system clock)", err)
+	}
+}
+
+// VF-039 (HexaScore): Token signs an opaque payload (a pagination cursor)
+// with the URL key and its rotation; any change is refused.
+func TestSecurity_A08_TokenRejectsTampering(t *testing.T) {
+	t.Parallel()
+
+	oldKey := bytes.Repeat([]byte{1}, 32)
+	newKey := bytes.Repeat([]byte{2}, 32)
+
+	s := New(newKey).WithPreviousKeys(oldKey)
+	payload := []byte(`{"sort":"rating","id":42}`)
+
+	tok := s.Token(payload)
+
+	got, err := s.Open(tok)
+	if err != nil || !bytes.Equal(got, payload) {
+		t.Fatalf("Open(Token()) = %q, %v", got, err)
+	}
+
+	if got, err := s.Open(New(oldKey).Token(payload)); err != nil || !bytes.Equal(got, payload) {
+		t.Errorf("Open(previous key token) = %q, %v; want the payload", got, err)
+	}
+
+	body, sig, _ := strings.Cut(tok, ".")
+	forged := base64.RawURLEncoding.EncodeToString([]byte(`{"sort":"rating","id":43}`)) + "." + sig
+
+	for name, bad := range map[string]string{
+		"other key":    New(bytes.Repeat([]byte{3}, 32)).Token(payload),
+		"forged body":  forged,
+		"no signature": body,
+		"empty":        "",
+		"bad base64":   "!!!." + sig,
+		"too long":     strings.Repeat("a", 8193) + "." + sig,
+		"url mac":      body + "." + New(newKey).sign("", ""),
+	} {
+		if _, err := s.Open(bad); !errors.Is(err, ErrInvalid) {
+			t.Errorf("Open(%s) = %v, want ErrInvalid", name, err)
+		}
 	}
 }

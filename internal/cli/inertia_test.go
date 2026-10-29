@@ -94,6 +94,11 @@ func TestNewInertiaProjectEndToEnd(t *testing.T) {
 				t.Fatalf("install:auth --2fa = %d\n%s%s", code, out, errOut)
 			}
 
+			if code, out, errOut := vukem(t, project, "install:auth", "--passkeys"); code != 0 ||
+				!strings.Contains(out, "created routes/passkeys.go") {
+				t.Fatalf("install:auth --passkeys = %d\n%s%s", code, out, errOut)
+			}
+
 			if _, err := os.Stat(filepath.Join(project, "resources", "views", "auth")); err == nil {
 				t.Error("install:auth on an Inertia app wrote HTMX auth views")
 			}
