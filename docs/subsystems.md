@@ -378,6 +378,10 @@ Choosing the key is the whole decision:
 
 GCRA needs compare-and-set, which `cache.Store` lacks, so the store-agnostic limiter uses fixed windows: correct with an atomic `Increment` alone (`cache.Database.Increment` is one upsert, so concurrent servers never read the same count). Window keys are hashed, limiter names are 1–64 of `A-Z a-z 0-9 . _ -`, and `RATE_LIMIT_STORE=cache` over the memory cache is a boot error.
 
+## Bot challenge
+
+`challenge.Middleware(verifier, when)` verifies a browser challenge on unsafe requests (signup, login, contact). `challenge.Turnstile(secret)` and `challenge.HCaptcha(secret)` return a `*SiteVerify` (siteverify protocol over `httpclient.Safe`, optional `Hostname` check); the token comes from the widget's form field or the `X-Challenge-Token` header (Inertia, JSON). A rejected token is a validation error on `challenge` (422 / redirect back), a provider failure a 503 (fail closed). `when` (nil: always) limits the check to suspicious clients, e.g. after a soft `ratelimit` budget runs out. Any type with `Verify(*web.Ctx) error` is a `Verifier` (errors wrapping `challenge.ErrRejected` are rejections). Site page: `/docs/security/bot-challenge`.
+
 ## Queue
 
 ```go

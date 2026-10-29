@@ -1,0 +1,87 @@
+---
+title: Bot challenge
+description: Stop bots on signup, login and contact forms with challenge.Middleware, verify Cloudflare Turnstile or hCaptcha tokens server-side, ask only suspicious clients, and plug in your own verifier.
+---
+
+A rate limit slows a bot down; a challenge asks the browser to prove it is not one. The page shows a widget (Cloudflare Turnstile or hCaptcha), the browser solves it and posts a token with the form, and the server asks the provider whether that token is valid before the handler runs. Vukem's `challenge` package does the server half.
+
+You will learn:
+
+- how to protect a form route with `challenge.Middleware`;
+- how the token reaches the server from an HTML form and from Inertia or JSON;
+- how failures are answered, and why a provider outage denies;
+- how to challenge only suspicious clients;
+- how to write your own `Verifier`.
+
+## Quick start
+
+Create a Turnstile widget in the Cloudflare dashboard, put the site key in the page and the secret key in `.env` (`TURNSTILE_SECRET`). Then wrap the routes that receive the form:
+
+```go title="routes/web.go"
+verify := challenge.Turnstile(config.NewSecret(os.Getenv("TURNSTILE_SECRET")))
+verify.Hostname = "example.com" // refuse tokens solved on another site
+
+r.Group("", func(g *router.Group) {
+	g.Use(challenge.Middleware(verify, nil))
+	g.Get("/register", showRegister)
+	g.Post("/register", register)
+})
+```
+
+The widget script and markup go in the page as the provider documents them (`<div class="cf-turnstile" data-sitekey="...">`); allow the provider's origin in your [Content Security Policy](/docs/security/security-headers). For hCaptcha use `challenge.HCaptcha(secret)`.
+
+## How the token arrives
+
+| Request | Where the middleware reads the token |
+| --- | --- |
+| HTML form | the field the widget adds: `cf-turnstile-response` (Turnstile) or `h-captcha-response` (hCaptcha), `SiteVerify.FormField` |
+| Inertia, `fetch`, JSON | the `X-Challenge-Token` header (`challenge.Header`); read the token from the widget's callback and send it with the request |
+
+Only `POST`, `PUT`, `PATCH` and `DELETE` are checked, so the `GET` that renders the form passes. A token longer than 4096 bytes is refused without calling the provider.
+
+## Answers
+
+| Outcome | Response | Security event |
+| --- | --- | --- |
+| Valid token | the handler runs | none |
+| Missing, wrong, expired or reused token, or one solved on another `Hostname` | a validation error on the `challenge` field: **422** for JSON, a redirect back with errors for HTML forms, the `errors.challenge` prop for Inertia | `challenge.failed` |
+| Provider unreachable, non-200 answer, a secret it rejects, or no secret configured | **503** | `challenge.unavailable` |
+
+The second row fails closed on purpose: when the check cannot run, nobody passes it. If an outage of the provider must not block signups, decide that explicitly with `When` (below), never by skipping errors.
+
+## Challenge only suspicious clients
+
+`Middleware(v, when)` runs the check only when `when` returns true. Pair it with a soft [rate limit](/docs/security/rate-limiting) so regular users never see a widget and a burst from one address does:
+
+```go title="routes/web.go"
+soft := ratelimit.NewMemory(5, 10*time.Minute) // 5 attempts per IP before the widget appears
+suspicious := func(c *web.Ctx) bool {
+	res, err := soft.Allow(c.Context(), ratelimit.ByIP(c.Request()))
+	return err != nil || !res.Allowed // a failing limiter asks for the challenge
+}
+
+g.Use(challenge.Middleware(verify, suspicious))
+```
+
+The page must then render the widget when the server says so (for example after a `challenge` validation error).
+
+## Your own verifier
+
+`challenge.Verifier` has one method, `Verify(c *web.Ctx) error`. Return `nil` for a valid answer, an error wrapping `challenge.ErrRejected` for a missing or wrong one, and any other error when you cannot tell (that one becomes a 503). A proof-of-work check, an internal risk service or a test double all fit:
+
+```go title="app/challenge_test.go"
+type allowAll struct{}
+
+func (allowAll) Verify(*web.Ctx) error { return nil }
+```
+
+`SiteVerify` also speaks to any provider with the same siteverify protocol: set `URL`, `Secret` and `FormField`. Its default client is `httpclient.Safe` with a 5 second timeout; set `Client` to change it.
+
+## Testing
+
+Point `SiteVerify.URL` at an `httptest.Server` that answers `{"success": true, "hostname": "example.com"}` and pass `srv.Client()` as `Client`, or use a fake `Verifier` in app tests. Cloudflare also publishes test site keys and secrets that always pass or always fail.
+
+## Next steps
+
+- [Rate limiting](/docs/security/rate-limiting) for the budgets that decide when to challenge.
+- [Security overview](/docs/security/overview) for the defaults.
