@@ -110,7 +110,7 @@ Like every `install:*` command, the code is copied into your project. It is your
 
 | File | Contents |
 | --- | --- |
-| `config/billing.go` | `config.Billing{Key, WebhookSecret, Plans}` read from the environment; the plans are listed in `plans()` |
+| `config/billing.go` | `config.Billing{Key, WebhookSecret, Plans, Currencies}` read from the environment; the plans are listed in `plans()` |
 | `database/migrations/<ts>_add_billing_tables.go` | `users.stripe_customer_id` (nullable, unique) and the `subscriptions` table |
 | `app/models/billing.go` | `models.Billable` (the Stripe column of `users`, so your `User` model is untouched) and `models.Subscription` |
 | `app/billing/billing.go` | The `Billing` service: `New`, `Customer`, `Checkout`, `Portal`, `Current`, `SyncSubscription`, `HandleWebhook`, `Webhook`, `Subscribed`, `OnPlan` |
@@ -120,7 +120,7 @@ Like every `install:*` command, the code is copied into your project. It is your
 | `routes/billing.go` | The routes, added to `routes/registry.go` |
 | `tests/billing_test.go`, `tests/billing_page_test.go` | Tests against a fake Stripe API |
 
-It also appends empty `STRIPE_*` lines to `.env.example`, registers the migration, and adds `github.com/AlexGalhardo/vukem/contrib/stripe` to `go.mod` with `go get`, pinned to the latest `contrib/stripe` release when your `vukem` CLI was built. Projects made with `vukem new --framework` get a `replace` to the checkout's `contrib/stripe` instead. Later releases install with `go get github.com/AlexGalhardo/vukem/contrib/stripe@vX.Y.Z` (the tags are listed on [pkg.go.dev](https://pkg.go.dev/github.com/AlexGalhardo/vukem/contrib/stripe?tab=versions)). Pass `--force` to overwrite files that already exist.
+It also appends empty `STRIPE_*` lines to `.env.example`, registers the migration, and adds `github.com/AlexGalhardo/vukem/contrib/stripe` to `go.mod` with `go get`, pinned to the latest `contrib/stripe` release when your `vukem` CLI was built. Projects made with `vukem new --framework` get a `replace` to the checkout's `contrib/stripe` instead. Later releases install with `go get github.com/AlexGalhardo/vukem/contrib/stripe@vX.Y.Z` (the tags are listed on [pkg.go.dev](https://pkg.go.dev/github.com/AlexGalhardo/vukem/contrib/stripe?tab=versions)). Pass `--force` to overwrite files that already exist, and `--plans pro,business` to sell other plans than `basic` and `pro`: the flag writes `plans()`, the `STRIPE_PRICE_<PLAN>` lines and the generated tests for those names.
 
 ### The subscriptions table
 
@@ -153,6 +153,19 @@ func plans() []Plan {
 ```
 
 `Name` appears in URLs (`/billing/checkout/team`) and in `OnPlan`. `Label` is shown on the page.
+
+### Prices in several currencies
+
+Sell one plan in several currencies with **one** Stripe price per plan that lists the extra currencies in `currency_options` (Dashboard: the price's "Add currency"; API: `currency_options[eur][unit_amount]=900` when creating it). `STRIPE_PRICE_<PLAN>` stays a single id. Then allow the currencies a checkout may ask for:
+
+```dotenv title=".env"
+STRIPE_CURRENCIES=brl,usd,eur
+```
+
+- The checkout form posts an optional `currency` field (`<select name="currency">`, any case); the billing page gets the list as `currencies`. Without the field, Stripe charges the price's default currency.
+- `Checkout(ctx, user, plan, currency)` passes `currency` to the Checkout Session, and Stripe picks the matching `currency_options` amount. A currency outside `STRIPE_CURRENCIES` answers 422 (`This currency is not available.`) before any Stripe call.
+- An entry that is not a three-letter code makes `Validate` fail, so production refuses to boot with it.
+- Map a locale to a currency in your own handler (for example `pt-BR` to `brl`) and post it as the field; the scaffold does not guess one.
 
 ## The subscription flow, step by step
 
@@ -546,6 +559,7 @@ The [Marketplace showcase app](/docs/showcase#marketplace-inertia-and-react) use
 | `STRIPE_KEY` | env, secret | empty | A restricted key (`rk_…`) with write access to Customers, Checkout Sessions and Customer portal, and read access to Subscriptions |
 | `STRIPE_WEBHOOK_SECRET` | env, secret | empty | The endpoint signing secret (`whsec_…`) |
 | `STRIPE_PRICE_<PLAN>` | env | empty | A recurring price id (`price_…`) per plan in `config/billing.go` |
+| `STRIPE_CURRENCIES` | env | empty | Lower-case ISO 4217 codes a checkout may ask for, e.g. `brl,usd,eur`; see [Prices in several currencies](#prices-in-several-currencies) |
 | `APP_URL` | env | — | Base of the Checkout success and cancel URLs and the portal return URL |
 | `CACHE_STORE` | env | memory | Where processed event ids live; use `database` or Redis with several instances |
 | `STRIPE_API_BASE` | env | empty | Points the client at a fake API; read only when the app runs as a test |

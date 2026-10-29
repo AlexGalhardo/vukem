@@ -3,6 +3,7 @@ package account
 import (
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/AlexGalhardo/vukem/auth"
 	"github.com/AlexGalhardo/vukem/errs"
@@ -40,6 +41,7 @@ type billingPage struct {
 	Plans        []planView        `json:"plans"`
 	Subscription *subscriptionView `json:"subscription"`
 	Subscribed   bool              `json:"subscribed"`
+	Currencies   []string          `json:"currencies"`
 }
 
 func (h *BillingHandlers) page(c *web.Ctx, u models.User) (billingPage, error) {
@@ -48,7 +50,7 @@ func (h *BillingHandlers) page(c *web.Ctx, u models.User) (billingPage, error) {
 		return billingPage{}, err
 	}
 
-	var page billingPage
+	page := billingPage{Currencies: h.b.Config.Currencies}
 
 	if ok {
 		view := &subscriptionView{
@@ -75,14 +77,15 @@ func (h *BillingHandlers) page(c *web.Ctx, u models.User) (billingPage, error) {
 	return page, nil
 }
 
-// Checkout sends the user to Stripe Checkout for the plan in the URL.
+// Checkout sends the user to Stripe Checkout for the plan in the URL, in
+// the optional "currency" form field (one of page.Currencies).
 func (h *BillingHandlers) Checkout(c *web.Ctx) error {
 	u, err := auth.User[models.User](c, "web")
 	if err != nil {
 		return err
 	}
 
-	target, err := h.b.Checkout(c.Context(), u, c.Param("plan"))
+	target, err := h.b.Checkout(c.Context(), u, c.Param("plan"), strings.ToLower(c.FormValue("currency")))
 	if err != nil {
 		return backWithError(c, err)
 	}

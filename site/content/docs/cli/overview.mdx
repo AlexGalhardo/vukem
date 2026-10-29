@@ -273,7 +273,7 @@ The `install:*` commands copy **your own code** into the project: routes, contro
 | `install:api` | `--force` | API tokens, `/api/v1`, CORS, rate limiting | [REST APIs](/docs/rest-apis/overview) |
 | `install:admin` | `--force` | Admin panel at `/admin` | [Admin](/docs/digging-deeper/admin) |
 | `install:flags` | `--force` | Feature flags | [Feature flags](/docs/digging-deeper/feature-flags) |
-| `install:billing` | `--force` | Stripe subscriptions | [Billing](/docs/digging-deeper/billing) |
+| `install:billing` | `--force`, `--plans` | Stripe subscriptions | [Billing](/docs/digging-deeper/billing) |
 | `install:inertia` | `--react`, `--vue`, `--svelte`, `--force`, `--no-install` | Inertia pages instead of HTMX | [Inertia](/docs/frontend/inertia) |
 | `boost:install` | none | Guidelines and an MCP server for AI coding agents | [below](#vukem-boostinstall) |
 
@@ -294,7 +294,7 @@ The `install:*` commands copy **your own code** into the project: routes, contro
 
 ### `vukem install:api`
 
-Adds `POST /api/v1/tokens`, `GET /api/v1/me` and `DELETE /api/v1/tokens/current`, the auth core when missing, and `CORS_ALLOWED_ORIGINS` in `.env.example`. With two-factor authentication installed, issuing a token also asks for the code. Flag: `--force`.
+Adds `POST /api/v1/tokens`, `GET /api/v1/me` and `DELETE /api/v1/tokens/current`, the auth core when missing, and `CORS_ALLOWED_ORIGINS` in `.env.example`. With two-factor authentication installed, issuing a token also asks for the code. Flags: `--force`, `--plans pro,business` (the plans on sale, `basic,pro` by default).
 
 ### `vukem install:admin`
 
@@ -312,7 +312,7 @@ It is safe to re-run: `app/features/features.go` holds your flags and is **never
 
 ### `vukem install:billing`
 
-Needs `install:auth` first (`install:billing bills the users of install:auth: run vukem install:auth first`). It writes the plans config, billing migration, Checkout and Billing Portal routes, the `POST /stripe/webhook` handler and tests, for HTMX or Inertia. It appends `STRIPE_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_BASIC` and `STRIPE_PRICE_PRO` to `.env.example`, and requires `github.com/AlexGalhardo/vukem/contrib/stripe` at the latest release when your `vukem` CLI was built (a `replace` to your checkout when the framework itself is replaced). Flag: `--force`.
+Needs `install:auth` first (`install:billing bills the users of install:auth: run vukem install:auth first`). It writes the plans config, billing migration, Checkout and Billing Portal routes, the `POST /stripe/webhook` handler and tests, for HTMX or Inertia. It appends `STRIPE_KEY`, `STRIPE_WEBHOOK_SECRET`, one `STRIPE_PRICE_<PLAN>` per plan and `STRIPE_CURRENCIES` to `.env.example`, and requires `github.com/AlexGalhardo/vukem/contrib/stripe` at the latest release when your `vukem` CLI was built (a `replace` to your checkout when the framework itself is replaced). Flag: `--force`.
 
 ### `vukem install:inertia`
 

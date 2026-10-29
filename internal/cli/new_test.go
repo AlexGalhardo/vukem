@@ -310,7 +310,7 @@ func TestNewProjectEndToEnd(t *testing.T) {
 
 	// install:billing adds Stripe subscriptions against the local
 	// contrib/stripe; its generated tests run against a fake Stripe API.
-	if code, out, errOut := vukem(t, project, "install:billing"); code != 0 ||
+	if code, out, errOut := vukem(t, project, "install:billing", "-plans", "pro,business"); code != 0 ||
 		!strings.Contains(out, "created routes/billing.go") ||
 		!strings.Contains(out, "created resources/views/billing/show.html") ||
 		!strings.Contains(out, "updated routes/registry.go") {
@@ -322,7 +322,7 @@ func TestNewProjectEndToEnd(t *testing.T) {
 	}
 
 	if env := read(t, project, ".env.example"); !strings.Contains(env, "STRIPE_KEY=\n") ||
-		!strings.Contains(env, "STRIPE_WEBHOOK_SECRET=\n") || !strings.Contains(env, "STRIPE_PRICE_PRO=\n") {
+		!strings.Contains(env, "STRIPE_WEBHOOK_SECRET=\n") || !strings.Contains(env, "STRIPE_PRICE_BUSINESS=\n") {
 		t.Errorf(".env.example = %q", env)
 	}
 

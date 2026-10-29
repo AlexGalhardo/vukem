@@ -4,6 +4,8 @@ package config
 
 import (
 	"errors"
+	"regexp"
+	"slices"
 	"strings"
 
 	vconfig "github.com/AlexGalhardo/vukem/config"
@@ -19,14 +21,16 @@ type Plan struct {
 	Price string `json:"-"`
 }
 
-// plans lists the plans on sale, in display order. Add yours here and set
-// STRIPE_PRICE_<NAME> to a recurring price id from the Stripe Dashboard.
+// plans lists the plans on sale, in display order (vukem install:billing
+// -plans). Add yours here and set STRIPE_PRICE_<NAME> to a recurring price
+// id from the Stripe Dashboard.
 func plans() []Plan {
 	return []Plan{
-		{Name: "basic", Label: "Basic"},
-		{Name: "pro", Label: "Pro"},
+{{.PlanList}}
 	}
 }
+
+var currencyRe = regexp.MustCompile(`^[a-z]{3}$`)
 
 // Billing configures Stripe (vukem install:billing).
 type Billing struct {
@@ -40,6 +44,11 @@ type Billing struct {
 	WebhookSecret vconfig.Secret
 	// Plans are the plans on sale.
 	Plans []Plan
+	// Currencies are the ISO 4217 currencies a checkout may ask for
+	// (STRIPE_CURRENCIES, e.g. "brl,usd,eur"). Empty: every checkout uses
+	// the price's default currency. One Stripe price per plan serves them
+	// all when it lists the other currencies in currency_options.
+	Currencies []string
 }
 
 // LoadBilling reads the billing settings from src (app.Source).
@@ -57,6 +66,12 @@ func LoadBilling(src vconfig.Lookuper) Billing {
 	for _, p := range plans() {
 		p.Price = get("STRIPE_PRICE_" + strings.ToUpper(p.Name))
 		b.Plans = append(b.Plans, p)
+	}
+
+	for c := range strings.SplitSeq(get("STRIPE_CURRENCIES"), ",") {
+		if c = strings.ToLower(strings.TrimSpace(c)); c != "" {
+			b.Currencies = append(b.Currencies, c)
+		}
 	}
 
 	return b
@@ -81,6 +96,12 @@ func (b Billing) Validate() error {
 		}
 	}
 
+	for _, c := range b.Currencies {
+		if !currencyRe.MatchString(c) {
+			errs = append(errs, errors.New("STRIPE_CURRENCIES: "+c+" is not a three-letter currency code"))
+		}
+	}
+
 	return errors.Join(errs...)
 }
 
@@ -94,6 +115,9 @@ func (b Billing) Plan(name string) (Plan, bool) {
 
 	return Plan{}, false
 }
+
+// Accepts reports whether a checkout may ask for currency (lower case).
+func (b Billing) Accepts(currency string) bool { return slices.Contains(b.Currencies, currency) }
 
 // PlanForPrice returns the plan that sells price.
 func (b Billing) PlanForPrice(price string) (Plan, bool) {
