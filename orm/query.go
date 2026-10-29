@@ -629,7 +629,9 @@ func (q Query[T]) Each(ctx context.Context) iter.Seq2[T, error] {
 // First returns the first matching row or ErrNotFound.
 func (q Query[T]) First(ctx context.Context) (T, error) {
 	if len(q.orders) == 0 {
-		q = q.OrderBy(q.m.pk, Asc)
+		for _, k := range q.m.keys {
+			q = q.OrderBy(k, Asc)
+		}
 	}
 
 	items, err := q.Limit(1).Get(ctx)
@@ -648,6 +650,11 @@ func (q Query[T]) First(ctx context.Context) (T, error) {
 
 // Find returns the row with the given primary key or ErrNotFound.
 func (q Query[T]) Find(ctx context.Context, id any) (T, error) {
+	if err := q.m.singleKey("Find"); err != nil {
+		var zero T
+		return zero, err
+	}
+
 	return q.Where(q.m.pk, id).First(ctx)
 }
 
@@ -742,6 +749,10 @@ func (q Query[T]) Pluck[V any](ctx context.Context, colName string) ([]V, error)
 func (q Query[T]) Chunk(ctx context.Context, size int, fn func([]T) error) error {
 	if size <= 0 {
 		return errors.New("orm: chunk size must be positive")
+	}
+
+	if err := q.m.singleKey("Chunk"); err != nil {
+		return err
 	}
 
 	if len(q.orders) > 0 || q.limit >= 0 || q.offset > 0 {

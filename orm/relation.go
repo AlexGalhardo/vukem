@@ -263,7 +263,14 @@ func loadRelations(ctx context.Context, ex database.Executor, m *meta, items ref
 		rel := m.relations[name]
 		rm := metaOfType(rel.related)
 
-		var err error
+		err := m.singleKey("a relation")
+		if rel.kind == relBelongsTo {
+			err = rm.singleKey("a belongs-to relation")
+		}
+
+		if err != nil {
+			return fmt.Errorf("orm: load %s.%s: %w", m.typ.Name(), name, err)
+		}
 
 		switch rel.kind {
 		case relBelongsTo:

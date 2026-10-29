@@ -2,6 +2,7 @@ package schema
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/AlexGalhardo/vukem/internal/naming"
@@ -14,6 +15,7 @@ const (
 	kindString
 	kindText
 	kindInteger
+	kindSmallInteger
 	kindBigInteger
 	kindBoolean
 	kindDecimal
@@ -42,6 +44,7 @@ type Column struct {
 	enum       []string
 	ref        *reference
 	refInline  bool
+	generated  string
 }
 
 type reference struct {
@@ -82,6 +85,7 @@ type Table struct {
 	drops   []string
 	dropIdx []string
 	checks  []check
+	primary []string
 	dropChk []string
 	err     error
 }
@@ -123,6 +127,10 @@ func (t *Table) Text(name string) *Column { return t.add(name, kindText) }
 
 // Integer adds an integer column.
 func (t *Table) Integer(name string) *Column { return t.add(name, kindInteger) }
+
+// SmallInteger adds a SMALLINT column (2 bytes, -32768..32767), e.g. a
+// 1..10 score.
+func (t *Table) SmallInteger(name string) *Column { return t.add(name, kindSmallInteger) }
 
 // BigInteger adds a 64-bit integer column.
 func (t *Table) BigInteger(name string) *Column { return t.add(name, kindBigInteger) }
@@ -311,11 +319,91 @@ func (t *Table) DropCheck(name string) {
 	}
 }
 
+// Primary declares the table's primary key on cols, e.g.
+// t.Primary("user_id", "item_id") for a composite key or a UUID key with
+// t.UUID("id").Primary(). It is Create only and cannot be combined with
+// ID(). The ORM side of a composite key is orm.CompositeKeyer.
+func (t *Table) Primary(cols ...string) {
+	switch {
+	case t.alter:
+		t.fail(fmt.Errorf("schema: Primary is Create only (table %s)", t.name))
+		return
+	case len(cols) == 0:
+		t.fail(fmt.Errorf("schema: Primary on %s needs columns", t.name))
+		return
+	case len(t.primary) > 0:
+		t.fail(fmt.Errorf("schema: %s already has a primary key", t.name))
+		return
+	}
+
+	for _, c := range cols {
+		if err := checkIdent("column", c); err != nil {
+			t.fail(err)
+			return
+		}
+	}
+
+	t.primary = cols
+}
+
+// checkPrimary validates Primary against the declared columns.
+func (t *Table) checkPrimary() error {
+	if len(t.primary) == 0 {
+		return nil
+	}
+
+	for _, c := range t.cols {
+		if c.kind == kindID {
+			return fmt.Errorf("schema: %s already has a primary key (ID)", t.name)
+		}
+	}
+
+	for _, name := range t.primary {
+		if !slices.ContainsFunc(t.cols, func(c *Column) bool { return c.name == name }) {
+			return fmt.Errorf("schema: primary key of %s names unknown column %q", t.name, name)
+		}
+	}
+
+	return nil
+}
+
+// Primary makes this column the table's primary key (see Table.Primary).
+func (c *Column) Primary() *Column { c.t.Primary(c.name); return c }
+
+// StoredAs makes the column a stored generated column computed from expr
+// (GENERATED ALWAYS AS (expr) STORED), e.g. an average of score columns.
+// expr is raw SQL written by the developer (never user input). The
+// database rejects writes to it, so map it in the ORM with db:"-" or a
+// read-only model. SQLite cannot add a stored generated column to an
+// existing table, so that migration fails.
+func (c *Column) StoredAs(expr string) *Column {
+	switch {
+	case strings.TrimSpace(expr) == "":
+		c.t.fail(fmt.Errorf("schema: generated column %s needs an expression", c.name))
+	case c.hasDefault:
+		c.t.fail(fmt.Errorf("schema: generated column %s cannot have a default", c.name))
+	case c.t.alter && c.t.s.d.Name() == "sqlite":
+		c.t.fail(fmt.Errorf("schema: sqlite cannot add a stored generated column to existing table %s", c.t.name))
+	default:
+		c.generated = expr
+	}
+
+	return c
+}
+
 // Nullable allows NULL.
 func (c *Column) Nullable() *Column { c.nullable = true; return c }
 
 // Default sets the default (Go value or schema.Expr).
-func (c *Column) Default(v any) *Column { c.hasDefault, c.def = true, v; return c }
+func (c *Column) Default(v any) *Column {
+	if c.generated != "" {
+		c.t.fail(fmt.Errorf("schema: generated column %s cannot have a default", c.name))
+	}
+
+	c.hasDefault, c.def = true, v
+
+	return c
+}
 
 // Unique adds a UNIQUE constraint.
 func (c *Column) Unique() *Column { c.unique = true; return c }

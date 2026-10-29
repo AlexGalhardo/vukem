@@ -127,11 +127,23 @@ type computed[T any] struct {
 // from schema: each schema key is a form field written to the model column
 // with the same name (or the snake_case of the input field name). Only
 // schema keys are ever written (mass-assignment protection); the primary
-// key and timestamps cannot be schema keys. T is given explicitly and I is
+// key and timestamps cannot be schema keys. It panics on a model with a
+// composite primary key (orm.CompositeKeyer). T is given explicitly and I is
 // inferred:
 //
 //	admin.NewResource[models.Post](requests.PostSchema)
 func NewResource[T, I any](schema z.StructSchema[I]) *Resource[T] {
+	if keys := orm.PrimaryKeysOf[T](); len(keys) > 1 {
+		// Rows are addressed by one id in URLs and forms.
+		panic(
+			fmt.Sprintf(
+				"admin: %s has a composite primary key %v; resources need a single-column key",
+				orm.TableOf[T](),
+				keys,
+			),
+		)
+	}
+
 	r := &Resource[T]{}
 	r.pk = orm.PrimaryKeyOf[T]()
 	r.byName = map[string]*column{}

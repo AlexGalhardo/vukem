@@ -18,6 +18,10 @@ func pivotOf[T any](model *T, name string) (relation, any, error) {
 		return relation{}, nil, fmt.Errorf("orm: %s has no many-to-many relation %q", m.typ.Name(), name)
 	}
 
+	if err := m.singleKey("a many-to-many relation"); err != nil {
+		return relation{}, nil, err
+	}
+
 	key, ok := keyOf(reflect.ValueOf(model).Elem().FieldByIndex(m.byColumn[m.pk].index))
 	if !ok {
 		return relation{}, nil, fmt.Errorf("orm: %s is not saved (empty primary key)", m.typ.Name())
