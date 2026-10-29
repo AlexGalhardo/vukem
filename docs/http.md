@@ -43,7 +43,7 @@ Every route the framework registers itself is named under the `vukem.` prefix (`
 
 | Probe | Where | What it touches |
 | --- | --- | --- |
-| Liveness | `GET /up` (`vukem.health`) | the process only; answers `{"status":"ok"}` with `Cache-Control: no-store` |
+| Liveness | `GET /up` (`vukem.health`) | the process only; answers `{"status":"ok"}` with `Cache-Control: no-store`, plus `"version"` when the app sets `vukem.WithVersion` (also in the readiness body; off by default so the probe does not fingerprint the build) |
 | Readiness | `GET /up?checks=1`, or `app.ReadyHandler()` mounted on a path of your own | every registered health check, in parallel, each bounded by its timeout |
 
 Register checks with `vukem.WithHealthCheck(name, check)` at build time, or `app.AddHealthCheck(name, check)` / `app.AddHealthCheckTimeout(name, timeout, check)` from a provider. `app.CheckHealth(ctx)` runs them and returns each error by name.

@@ -456,6 +456,23 @@ ssr:check: Get "http://127.0.0.1:13714/health": dial tcp 127.0.0.1:13714: connec
 
 The message comes from the operating system and varies. Start `ssr:start` first, then check. See [Inertia](/docs/frontend/inertia).
 
+### One container: `serve -with-ssr`
+
+When the Node SSR server runs in the same container as the app, `serve -with-ssr` starts it as part of the app process instead of a second command. It runs the same supervisor as `ssr:start`, as the `ssr` runner, so it stops with the app on shutdown.
+
+```bash
+./bin/app serve -with-ssr
+```
+
+| Flag | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `-with-ssr` | bool | `false` | Run and supervise the SSR server next to the app. |
+| `-ssr-bundle` | string | `bootstrap/ssr/ssr.js` | SSR bundle built by `vukem build -ssr` (or `vite build --ssr`). |
+| `-ssr-runtime` | string | `node` | JavaScript runtime that runs the bundle. |
+| `-ssr-restart-delay` | duration | `1s` | Wait before restarting the server. |
+
+Two differences from `ssr:start`: the server is restarted after **any** exit, a clean one included, because the app keeps rendering pages; and a missing bundle stops `serve` at boot with `serve -with-ssr: SSR bundle bootstrap/ssr/ssr.js not found (run npm run build)`. Pair it with `SSRConfig.Strict` to report the server in readiness (see [Strict SSR](/docs/frontend/inertia#strict-ssr)).
+
 ## `vukem boost:mcp`
 
 A Model Context Protocol server over standard input and output, for coding agents. **App.** No flags. `vukem boost:install` registers it for you; you do not run it by hand. Tools: `application_info`, `list_routes`, `list_commands`, `database_schema`, `database_query` (one read-only statement, at most 100 rows), `get_absolute_url`, `search_docs`.
