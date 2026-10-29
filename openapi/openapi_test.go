@@ -685,3 +685,64 @@ func TestDynamicPayloadReachesTheGeneratedClients(t *testing.T) {
 		}
 	}
 }
+
+// VF-053 (HexaScore): a license, a default security requirement and a
+// 4XX problem response for plain routes, and error components only when
+// an operation references them, so linters (Redocly recommended) pass.
+func TestBuildLicenseSecurityAndErrorsForPlainRoutes(t *testing.T) {
+	t.Parallel()
+
+	r := router.New(nil)
+	r.Get("/me", func(*web.Ctx) error { return nil }).Name("me")
+	r.Post("/login", func(*web.Ctx) error { return nil }).Name("login").Doc(openapi.Public{})
+
+	if _, err := r.Handler(); err != nil {
+		t.Fatal(err)
+	}
+
+	info := openapi.Info{
+		License:         &openapi.License{Name: "MIT", Identifier: "MIT"},
+		Security:        []string{"session"},
+		SecuritySchemes: map[string]openapi.Schema{"session": {"type": "apiKey", "in": "cookie", "name": "session"}},
+	}
+
+	doc, err := openapi.Build(r.Routes(), info)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if l := doc.Info.License; l == nil || l.Name != "MIT" || l.Identifier != "MIT" {
+		t.Errorf("license = %+v", l)
+	}
+
+	me := doc.Paths["/me"]["get"]
+	if diff := cmp.Diff([]map[string][]string{{"session": {}}}, me.Security); diff != "" {
+		t.Errorf("/me security (-want +got):\n%s", diff)
+	}
+
+	if me.Responses["4XX"].Ref != "#/components/responses/Problem" {
+		t.Errorf("/me responses = %v, want a 4XX Problem", me.Responses)
+	}
+
+	if login := doc.Paths["/login"]["post"]; login.Security == nil || len(login.Security) != 0 {
+		t.Errorf("/login security = %#v, want an explicit empty list", login.Security)
+	}
+
+	if _, ok := doc.Components.Responses["ValidationError"]; ok {
+		t.Error("ValidationError emitted while no operation references it")
+	}
+
+	if _, ok := doc.Components.Responses["Problem"]; !ok {
+		t.Error("Problem missing while referenced")
+	}
+
+	for _, bad := range []openapi.Info{
+		{License: &openapi.License{}},
+		{License: &openapi.License{Name: "MIT", Identifier: "MIT", URL: "https://opensource.org/license/mit"}},
+		{Security: []string{"nope"}},
+	} {
+		if _, err := openapi.Build(r.Routes(), bad); err == nil {
+			t.Errorf("Build(%+v) = nil error", bad)
+		}
+	}
+}

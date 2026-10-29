@@ -178,6 +178,12 @@ func (m *Migrator) up(ctx context.Context) ([]string, error) {
 				return err
 			}
 
+			if mig.NoTransaction {
+				if err := m.checkInvalidIndexes(ctx); err != nil {
+					return err
+				}
+			}
+
 			_, err := ex.ExecContext(ctx, "INSERT INTO "+m.table+" (id, batch, checksum, ran_at) VALUES ("+
 				m.ph(1)+", "+m.ph(2)+", "+m.ph(3)+", "+m.ph(4)+")", mig.ID, batch, sum, time.Now().UTC())
 
@@ -191,6 +197,49 @@ func (m *Migrator) up(ctx context.Context) ([]string, error) {
 	}
 
 	return ran, nil
+}
+
+// checkInvalidIndexes fails when the current PostgreSQL schema holds an
+// INVALID index that no backend is building. A failed CREATE INDEX
+// CONCURRENTLY leaves one behind, and the retry's IF NOT EXISTS skips it:
+// recording the migration then would leave an index that is never used.
+func (m *Migrator) checkInvalidIndexes(ctx context.Context) error {
+	if m.db.Dialect().Name() != "postgres" {
+		return nil
+	}
+
+	rows, err := m.db.QueryContext(ctx, `SELECT c.relname FROM pg_index i
+		JOIN pg_class c ON c.oid = i.indexrelid
+		JOIN pg_namespace n ON n.oid = c.relnamespace
+		WHERE NOT i.indisvalid AND n.nspname = current_schema()
+		AND i.indexrelid NOT IN (SELECT index_relid FROM pg_stat_progress_create_index)
+		ORDER BY c.relname`)
+	if err != nil {
+		return fmt.Errorf("check invalid indexes: %w", err)
+	}
+	defer rows.Close()
+
+	var names []string
+
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return err
+		}
+
+		names = append(names, name)
+	}
+
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	if len(names) > 0 {
+		return fmt.Errorf("INVALID index %s left by a failed CREATE INDEX CONCURRENTLY: "+
+			"run DROP INDEX CONCURRENTLY on it, fix the cause and migrate again", strings.Join(names, ", "))
+	}
+
+	return nil
 }
 
 // inTx runs fn in a transaction, or on the database itself for a
