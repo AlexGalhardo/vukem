@@ -1,6 +1,6 @@
 # Cloudflare (`contrib/cloudflare`)
 
-`github.com/AlexGalhardo/vukem/contrib/cloudflare` is an optional, stdlib-only module for apps served behind Cloudflare. Every piece is opt-in and fails closed. Site page: `site/content/docs/deployment/cloudflare.mdx`.
+`github.com/AlexGalhardo/vukem/contrib/cloudflare` is an optional module for apps served behind Cloudflare: standard library plus vukem core (`auth/jwt` for Access), no third-party dependency. Every piece is opt-in and fails closed. Site page: `site/content/docs/deployment/cloudflare.mdx`.
 
 Shipped:
 
@@ -14,8 +14,10 @@ Shipped:
 - CDN cache: `cloudflare.CachePolicy{Edge, Browser, StaleWhileRevalidate, Tags}.Middleware()` sets `Cloudflare-CDN-Cache-Control` (read by Cloudflare only, never forwarded), `Cache-Control` and `Cache-Tag` on successful `GET`/`HEAD` responses (<https://developers.cloudflare.com/cache/concepts/cdn-cache-control/>, read 2026-10-29). It never marks a response cacheable when the request carries `Authorization` or `Cookie`, the response sets a cookie or its own `Cache-Control`, or the status is not 200: such a response may belong to one user. Invalid tags (empty, over 1024 bytes, commas, spaces, non-printable) and negative durations are errors.
 - Purge: `cloudflare.NewPurger(zoneID, token)` with `URLs`, `Tags`, `Prefixes`, `Hosts` and `Everything` calls `POST /zones/{zone_id}/purge_cache` (<https://developers.cloudflare.com/api/resources/cache/methods/purge/>, read 2026-10-29) in batches of 30, with a 10 s timeout by default. Use a token limited to "Zone > Cache Purge" on that zone; errors carry Cloudflare's codes and messages, never the token. Call it from a queued job.
 
+- Cloudflare Access: `cloudflare.NewAccess(cloudflare.AccessOptions{TeamDomain, Audience})` validates the `Cf-Access-Jwt-Assertion` application token (<https://developers.cloudflare.com/cloudflare-one/identity/authorization-cookie/validating-json/>, read 2026-10-29) with core `auth/jwt`: RS256 only, keys from `<team domain>/cdn-cgi/access/certs` (`jwt.RemoteJWKS`, refetched on rotation), issuer = team domain, audience = the application's AUD tag, expiry checked. `Middleware()` answers 403 to a missing or invalid token and to a key fetch that fails, and puts the claims in the context (`cloudflare.AccessClaimsFrom(ctx)`, email in `Extra["email"]`). The `CF_Authorization` cookie is not read. An empty audience or a team domain that is not an https origin refuses construction.
+
 Limits: the checks need Cloudflare to be the TCP peer of the app. Behind another proxy (a platform load balancer between Cloudflare and the app) the peer is that proxy: trust it with `TRUSTED_PROXIES` instead, and lock the origin at that proxy or with Authenticated Origin Pulls.
 
-Turnstile: use core `challenge.Turnstile` with `Hostname` and `Action` set. Planned in VF-052 (separate pull request): Cloudflare Access JWT validation.
+Turnstile: use core `challenge.Turnstile` with `Hostname` and `Action` set. Not shipped: Authenticated Origin Pulls (configure `tls.Config.ClientAuth` with Cloudflare's origin-pull CA), a Page Shield report endpoint and a runtime refresh of the trusted ranges.
 
-Tests: `TestSecurity_A05_OriginLockRefusesDirectRequests`, `TestSecurity_A01_VisitorHeadersOnlyFromCloudflare`, `TestVisitorFromCloudflare`, `TestSecurity_A01_CachePolicySkipsPersonalResponses`, `TestCachePolicy`, `TestPurger`, `TestSecurity_A01_TrustedProxiesFromOption` (core), `TestFetchRanges`, `FuzzParseRanges`.
+Tests: `TestSecurity_A05_OriginLockRefusesDirectRequests`, `TestSecurity_A01_VisitorHeadersOnlyFromCloudflare`, `TestVisitorFromCloudflare`, `TestSecurity_A01_CachePolicySkipsPersonalResponses`, `TestCachePolicy`, `TestPurger`, `TestSecurity_A07_AccessJWTRejected`, `TestSecurity_A07_AccessFailsClosedWithoutKeys`, `TestNewAccessRefusesUnsafeConfig`, `TestSecurity_A01_TrustedProxiesFromOption` (core), `TestFetchRanges`, `FuzzParseRanges`.
