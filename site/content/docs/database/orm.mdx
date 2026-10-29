@@ -672,7 +672,7 @@ got, err := orm.QueryOf[models.User](db).Find(ctx, u.ID)
 - **Fails closed:** without an encrypter, reads and writes return `orm.ErrNoEncrypter` and nothing is stored. Passing an `Encrypted` value straight to `database/sql` (`Value`/`Scan`) is an error, so plaintext never reaches the database by accident.
 - Sealed on `Create`, `Update` and `Query.Update`; opened by queries, eager loads and `Pluck`.
 - The table and column (`orm:<table>.<column>`) are authenticated with the value, so a ciphertext copied to another column or table is rejected. Renaming the table or column needs a re-encryption.
-- **Key rotation:** values sealed with a key listed in `APP_PREVIOUS_KEYS` still decrypt, and saving the model re-encrypts them with the current key.
+- **Key rotation:** values sealed with a key listed in `APP_PREVIOUS_KEYS` still decrypt, and saving the model re-encrypts them with the current key; `orm.Reseal[T](ctx, db, batch)` (or the `crypt:reseal` command) re-encrypts a whole table, as described in [key rotation](/docs/security/encryption#key-rotation).
 - **Not searchable:** every encryption is randomised, so `Where("webhook_secret", ...)` never matches. NULL reads as the zero value.
 - JSON encoding uses the plain value; tag the field `json:"-"` to keep it out of responses.
 

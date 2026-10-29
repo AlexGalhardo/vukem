@@ -249,7 +249,7 @@ got, err := orm.QueryOf[Patient](db).Find(ctx, p.ID) // got.Diagnosis.V == "flu"
 
 - Sealed on `Create`, `Update` and `Query.Update`; opened by queries, eager loads and `Pluck`. `"orm:<table>.<column>"` is the additional data, so a ciphertext copied to another column (or table) is rejected; renaming the table or column needs a re-encryption.
 - Fails closed: without an encrypter, writes and reads return `orm.ErrNoEncrypter` and nothing is stored. Passing an `Encrypted` value to `database/sql` directly (`Value`/`Scan`) is an error, so plaintext never reaches the database by accident.
-- Key rotation: values sealed with a key from `APP_PREVIOUS_KEYS` still decrypt; saving the model re-encrypts every encrypted column with the current key.
+- Key rotation: values sealed with a key from `APP_PREVIOUS_KEYS` still decrypt; saving the model re-encrypts every encrypted column with the current key. `orm.Reseal[T](ctx, db, batch)` walks the table by primary key (`orm.DefaultResealBatch` rows per query, soft-deleted rows included) and re-seals only stale values, compare-and-set; `vukem.ResealCommand(orm.Reseal[A], orm.Reseal[B])` registers it as `./app crypt:reseal [-batch n]`.
 - Not queryable: every encryption is randomized, so `Where("diagnosis", ...)` cannot match. NULL reads as the zero value.
 - JSON encoding uses the plain value (for API output); tag the field `json:"-"` to keep it out of responses.
 
