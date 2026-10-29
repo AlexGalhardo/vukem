@@ -313,6 +313,7 @@ type options struct {
 	runners       []namedRunner
 	healthChecks  []namedHealthCheck
 	version       string
+	proxies       []*net.IPNet
 	routes        []func(r *router.Router, app *App) error
 	bootRoutes    []func(r *router.Router, app *App) error
 	views         fs.FS

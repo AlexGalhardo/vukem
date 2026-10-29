@@ -15,5 +15,6 @@ use (
 	./contrib/grpc
 	./contrib/imaging
 	./contrib/engine
+	./contrib/cloudflare
 	./internal/bench
 )

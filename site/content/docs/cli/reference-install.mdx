@@ -47,6 +47,7 @@ vukem install:auth [flags]
 | --- | --- | --- | --- |
 | `-social` | string | none | Also add social login for a comma-separated list: `github`, `gitlab`, `discord`, `google`, `microsoft`, `linkedin`, `apple`. `x` is refused because X sends no email. |
 | `-2fa` | bool | `false` | Also add TOTP two-factor authentication. Users turn it on at `/user/two-factor`. |
+| `-passkeys` | bool | `false` | Also add passkey (WebAuthn) sign-in: JSON endpoints under `/user/passkeys` and `/passkeys/login`. See [Passkeys](/docs/security/passkeys). |
 | `-locales` | string | the project's locales, else `en` | Message catalogs to write, comma separated, such as `en,pt-BR`. Catalogs ship for `en`, `es` and `pt-BR`; another locale is a usage error (translate a generated catalog instead). `en` is always written because it is the fallback. |
 | `-force` | bool | `false` | Overwrite existing files. |
 
@@ -54,7 +55,7 @@ vukem install:auth [flags]
 
 **Interactions**
 
-- Run it again with only `-social` or `-2fa` on a project that already has auth: it adds that part and leaves the rest alone. This is how you add 2FA later.
+- Run it again with only `-social`, `-2fa` or `-passkeys` on a project that already has auth: it adds that part and leaves the rest alone. This is how you add 2FA later.
 - `-social` appends `SOCIAL_<NAME>_CLIENT_ID` and `SOCIAL_<NAME>_CLIENT_SECRET` to `.env.example`. Apple gets `SOCIAL_APPLE_CLIENT_ID`, `SOCIAL_APPLE_TEAM_ID`, `SOCIAL_APPLE_KEY_ID`, `SOCIAL_APPLE_PRIVATE_KEY_PATH`.
 - Later runs write catalogs only for locales the project already has, so a catalog you delete is never put back. Ask for the locales on the first run.
 
