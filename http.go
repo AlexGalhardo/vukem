@@ -420,7 +420,7 @@ func serverMiddleware(
 		middleware.RequestID(),
 		middleware.SecureHeaders(secure),
 		middleware.Maintenance(maint),
-		middleware.Logger(app.Log),
+		middleware.LoggerWith(app.Log, middleware.LoggerOptions{TruncateIP: app.Config.LogTruncateIP}),
 	}
 }
 

@@ -18,6 +18,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"runtime/debug"
 	"slices"
 	"strings"
@@ -108,7 +109,19 @@ func validRequestID(id string) bool {
 // direct connection (RemoteAddr host); ip is the client resolved through
 // web.Services.TrustedProxies, as c.IP() returns it. 5xx log at ERROR, 4xx
 // at WARN.
-func Logger(log *slog.Logger) Middleware {
+func Logger(log *slog.Logger) Middleware { return LoggerWith(log, LoggerOptions{}) }
+
+// LoggerOptions configures LoggerWith.
+type LoggerOptions struct {
+	// TruncateIP logs the /24 network of IPv4 addresses and the /48 of
+	// IPv6 ones in peer and ip (203.0.113.0, 2001:db8:1234::) instead of
+	// the address, for data-minimising logs (LOG_TRUNCATE_IP). Rate limits
+	// and c.IP() keep the full address.
+	TruncateIP bool
+}
+
+// LoggerWith is Logger with options.
+func LoggerWith(log *slog.Logger, o LoggerOptions) Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
@@ -139,6 +152,11 @@ func Logger(log *slog.Logger) Middleware {
 				peer = r.RemoteAddr
 			}
 
+			ip := web.NewCtx(nil, r, web.ServicesFrom(r.Context())).IP()
+			if o.TruncateIP {
+				peer, ip = truncateIP(peer), truncateIP(ip)
+			}
+
 			log.LogAttrs(r.Context(), level, "request",
 				slog.String("method", r.Method),
 				slog.String("path", r.URL.Path),
@@ -147,10 +165,30 @@ func Logger(log *slog.Logger) Middleware {
 				slog.Int64("bytes", rw.Size()),
 				slog.String("request_id", web.RequestID(r.Context())),
 				slog.String("peer", peer),
-				slog.String("ip", web.NewCtx(nil, r, web.ServicesFrom(r.Context())).IP()),
+				slog.String("ip", ip),
 			)
 		})
 	}
+}
+
+// truncateIP returns the /24 (IPv4) or /48 (IPv6) network address of s;
+// a value that is not an IP is returned as is.
+func truncateIP(s string) string {
+	a, err := netip.ParseAddr(s)
+	if err != nil {
+		return s
+	}
+
+	a = a.Unmap().WithZone("")
+
+	bits := 48
+	if a.Is4() {
+		bits = 24
+	}
+
+	p, _ := a.Prefix(bits)
+
+	return p.Addr().String()
 }
 
 // Timeout sets a deadline on the request context. Handlers and queries that
