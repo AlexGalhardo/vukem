@@ -526,7 +526,7 @@ Metrics are on when `Config.MetricReader` is set, or else when `OTEL_EXPORTER_OT
 | `messaging.process.duration` (s) | histogram | `messaging.destination.name`, `vukem.job.kind`, `error.type` |
 | `vukem.queue.job.failures` | counter | as above |
 
-Histogram counts are the request, query and job counts. The module ships the OTLP/HTTP metric exporter (`otlpmetrichttp`) used by the endpoint variables above; for another backend, pass `Config.MetricReader` (`sdkmetric.NewPeriodicReader(exporter)` with that backend's exporter), which wins over the variables. `otel.Middleware(tp, otel.WithMeterProvider(mp))` records the server metric without the provider. Without a reader (and without an endpoint) the provider does nothing.
+Histogram counts are the request, query and job counts. The module ships the OTLP/HTTP metric exporter (`otlpmetrichttp`) used by the endpoint variables above; for another backend, pass `Config.MetricReader` (`sdkmetric.NewPeriodicReader(exporter)` with that backend's exporter), which wins over the variables. `otel.Middleware(tp, otel.WithMeterProvider(mp))` records the server metric without the provider. Without a reader (and without an endpoint) the provider does nothing. Application metrics use the same provider: `p.MeterProvider().Meter("app/area")` taken inside `WithRoutes` or `WithJobsFunc` (after `Register`; before it the provider is a no-op and instruments made from it never record) exports through the same reader and resource.
 
 ## Encryption
 

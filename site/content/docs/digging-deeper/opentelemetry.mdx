@@ -266,6 +266,40 @@ func (h *Checkout) Pay(c *web.Ctx) error {
 
 `TracerProvider()` and `MeterProvider()` return no-op providers while a signal is off, so this code needs no `if`. `defer span.End()` uses Go's [`defer`](https://go.dev/tour/flowcontrol/12) to end the span however the function returns.
 
+## Your own metrics
+
+Application metrics (items imported, cache misses, queue age) use the same `MeterProvider` as the built-in ones, so they leave through the same reader or OTLP endpoint, with the same resource (`service.name`, `deployment.environment.name`). Create the instruments once, inside `WithRoutes` or `WithJobsFunc`, and record in handlers and jobs:
+
+```go title="bootstrap/app.go"
+telemetry := otel.New(otel.Config{})
+
+app, err := vukem.New(
+	vukem.WithProviders(telemetry),
+	vukem.WithRoutes(func(r *router.Router, app *vukem.App) error {
+		meter := telemetry.MeterProvider().Meter("shop/ingest")
+
+		items, err := meter.Int64Counter("shop.ingest.items",
+			metric.WithDescription("Items imported from a source"))
+		if err != nil {
+			return err
+		}
+
+		r.Post("/ingest", func(c *web.Ctx) error {
+			items.Add(c.Context(), 3, metric.WithAttributes(attribute.String("source", "igdb")))
+			return c.NoContent()
+		})
+
+		return nil
+	}),
+)
+```
+
+`metric` is `go.opentelemetry.io/otel/metric` and `attribute` is `go.opentelemetry.io/otel/attribute`; `Float64Histogram`, `Int64UpDownCounter` and the observable gauges work the same way. Keep attribute values to a small, fixed set (a source name, not a user id): every distinct combination is a separate series.
+
+Take the `Meter` **after** the provider registered, as above. `MeterProvider()` called before `vukem.New` returns a no-op provider, and instruments made from it record nothing for the life of the process. While metrics are off (no endpoint, `OTEL_METRICS_EXPORTER=none`) the provider is a no-op too, so the same code runs without a collector.
+
+To expose a Prometheus `/metrics` endpoint instead of pushing OTLP, build a reader with the OpenTelemetry Prometheus exporter (`go.opentelemetry.io/otel/exporters/prometheus`, a dependency of your app, not of Vukem) and pass it as `Config.MetricReader`; serve its handler on a route protected like any internal endpoint.
+
 ## Sampling
 
 Recording every request is fine for a small app, but a busy one sends a lot of data. A <Term tip="The rule that decides which traces are recorded and exported. Unsampled requests still run normally; only their spans are dropped.">sampler</Term> keeps a share of them. The default is `ParentBased(AlwaysSample)`: follow the caller's decision when a `traceparent` says it, and sample everything else.
