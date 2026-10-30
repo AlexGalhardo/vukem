@@ -3,8 +3,6 @@ module github.com/AlexGalhardo/vukem/drivers/s3
 go 1.27.3
 
 require (
-	github.com/AlexGalhardo/vukem v0.33.0
+	github.com/AlexGalhardo/vukem v0.34.0
 	github.com/google/go-cmp v0.7.0
 )
-
-require modernc.org/sqlite v1.61.0 // indirect
