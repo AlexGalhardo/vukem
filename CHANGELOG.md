@@ -7,9 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.34.0] - 2026-10-30
+
+### Added
+
+- **stripe:** Add subscription and checkout session list calls (#36) ([be4299a](https://github.com/AlexGalhardo/vukem/commit/be4299a26090782e825820bbe3824ba493d05e0d))
+- **orm:** Add orm:"readonly" for columns the database computes (#37) ([7840707](https://github.com/AlexGalhardo/vukem/commit/7840707ff824ab8fa2f74e937b4c55b503002dce))
+- **schema:** Add Index.Using for PostgreSQL index methods (#38) ([8d16456](https://github.com/AlexGalhardo/vukem/commit/8d1645651a7d9cb93a8f9e225f8f1ab446388ec1))
+- **admin:** Filter and search nullable sql.Null columns (#40) ([e428559](https://github.com/AlexGalhardo/vukem/commit/e4285591d9449c796fc7b85a607b5115254ec92b))
+- **webauthn:** Verify passkey registration and authentication ceremonies (#43) ([4f09030](https://github.com/AlexGalhardo/vukem/commit/4f0903065f17b6c1c83d82666b84ead54886190b))
+- **challenge:** Check the Turnstile action in SiteVerify (#47) ([1d889df](https://github.com/AlexGalhardo/vukem/commit/1d889df0be5003e25f1b0f0ced82dc1504a9c67a))
+- **signed:** Sign and verify opaque tokens such as pagination cursors (#54) ([db1533c](https://github.com/AlexGalhardo/vukem/commit/db1533cd12954e0ee034f75efa1400638bb04d6b))
+- **cloudflare:** Trust CF-Connecting-IP from Cloudflare ranges and lock the origin (#46) ([aba6483](https://github.com/AlexGalhardo/vukem/commit/aba6483d3d124804ef8e1a1284946dc88f0dbf11))
+- **sitemap:** Stream XML sitemaps with hreflang alternates and an index (#56) ([9128044](https://github.com/AlexGalhardo/vukem/commit/91280441a0567a94bc89127b56aa131b43dc4cf2))
+- **cli:** Add install:auth --passkeys passkey sign-in scaffold (#57) ([89505dc](https://github.com/AlexGalhardo/vukem/commit/89505dcc58b9d4a36088244e07c8eb9e918adbaa))
+- **jsonrpc:** Serve JSON-RPC 2.0 methods as an http.Handler (#59) ([47f3e75](https://github.com/AlexGalhardo/vukem/commit/47f3e755a0d97d16e739174324f905d21915c2cd))
+- **middleware:** Truncate client IPs in the request log on request (#53) ([f7a5d47](https://github.com/AlexGalhardo/vukem/commit/f7a5d479cb5f1ee2f9e0bb90eab13373606fd859))
+- **mail:** Send React Email templates exported at build time (#58) ([b59cc09](https://github.com/AlexGalhardo/vukem/commit/b59cc09492e598f9b1c03ff4ca18d44003b0b7cf))
+- **api:** Build list envelopes with the app's own type (#69) ([3724c6c](https://github.com/AlexGalhardo/vukem/commit/3724c6c97e34f0710782786a14e8a2b11825c38a))
+- **totp:** Export HashRecoveryCode to import recovery codes (#70) ([4b0b67c](https://github.com/AlexGalhardo/vukem/commit/4b0b67c55e384319a07dd937e0b34ef45c8deddc))
+- **vukem:** Serve HTTPS with HTTP/2 on the main server (#61) ([181915c](https://github.com/AlexGalhardo/vukem/commit/181915c908582f4e903927bb7baed66d3839a1d6))
+- **jsonrpc:** Generate OpenRPC documents and add a typed Go client (#74) ([74a408d](https://github.com/AlexGalhardo/vukem/commit/74a408de6c150f7e862d18b78a45f8e6bd1ceb11))
+- **openapi:** Rebase documented paths under a server prefix (#72) ([8e245a7](https://github.com/AlexGalhardo/vukem/commit/8e245a771ab753bd901aee9bbcb762488d0fcdd3))
+- **httpclient:** Add per-host throttle, retry and circuit breaker transports (#76) ([6643afa](https://github.com/AlexGalhardo/vukem/commit/6643afa786697818bbd8719a5fd822307cd5bda4))
+- **router:** Set an error handler per route group (#78) ([f43c5bf](https://github.com/AlexGalhardo/vukem/commit/f43c5bf083350c7e7144bcc18b001351258a14da))
+- **cloudflare:** Expose visitor country, ray and bot headers from Cloudflare peers (#65) ([918c47c](https://github.com/AlexGalhardo/vukem/commit/918c47c8b1d38426da0a7b5afdf731286b383a3c))
+- **http3:** Serve the app over HTTP/3 in an opt-in module (#87) ([d8b02c8](https://github.com/AlexGalhardo/vukem/commit/d8b02c8db2534e6c3ad71e862f678d6e049afb24))
+- **openapi:** Opt-in required response fields and a typed-only document check (#82) ([71eead2](https://github.com/AlexGalhardo/vukem/commit/71eead28bb263bd8527a1fdfa34bc5b229c7cc26))
+- **admin:** Address composite-key rows as a-b ids (#94) ([5fa5d1a](https://github.com/AlexGalhardo/vukem/commit/5fa5d1a50fd0e97739023669f0fa5e2c897e5ab0))
+- **cloudflare:** Add cache helpers, a purge client and Access JWT checks (#97) ([cdff113](https://github.com/AlexGalhardo/vukem/commit/cdff11331aaea851eea131d5814519a05707c1a0))
+- **admin:** Add idle timeout and a reusable panel guard (#95) ([2399deb](https://github.com/AlexGalhardo/vukem/commit/2399debb61f419fc44e1221a3aa41d92292a635f))
+
 ### Fixed
 
-- **site:** Show "Last updated" on every docs page. CI checks the whole docs set on every pull request and every push to main, not only files changed in that PR.
+- **vukem:** Stop reporting a finished health check as busy (#42) ([5b7d969](https://github.com/AlexGalhardo/vukem/commit/5b7d969fb6d58ed297eb2abeb0ebbc292d8e8074))
+- **schema:** Refuse to record a NoTransaction migration that left an INVALID index (#51) ([3912065](https://github.com/AlexGalhardo/vukem/commit/3912065acab95cc465c37ecc71b0853f1542e557))
+- **api:** Send no body for a struct{} output with an explicit status (#55) ([60521d8](https://github.com/AlexGalhardo/vukem/commit/60521d8588a7287f106bed3eb9961880d5107f76))
+- **cli:** Stop waiting for output pipes held by a tool's grandchildren (#79) ([68046fb](https://github.com/AlexGalhardo/vukem/commit/68046fbb2ca9e77ee5d805c2eec1e7e696ec5fa6))
+- **api:** Let typed handlers finish the response themselves (#71) ([6ff017d](https://github.com/AlexGalhardo/vukem/commit/6ff017d73522557e8e76a9e6a39911667d97e4c8))
+- **middleware:** Remember a body-limit error from MethodOverride (#93) ([5940cb1](https://github.com/AlexGalhardo/vukem/commit/5940cb1477522019ca6791e7dd05459992f2b6a2))
+- **site:** Show Last updated on every docs page (#98) ([4d5e61f](https://github.com/AlexGalhardo/vukem/commit/4d5e61fb9cd0c3d906c8007ba793c9f0cb514ff5))
+
+### Security
+
+- **openapi:** Add Info.License, plain-route security and 4XX responses (#52) ([518f09b](https://github.com/AlexGalhardo/vukem/commit/518f09bf42ac773cd09f7760f20205ee3471d60d))
+- **cli:** Scan generated projects for secrets with betterleaks (#64) ([ab4244f](https://github.com/AlexGalhardo/vukem/commit/ab4244f98a6f333e830f1b5dfa31b092322129f4))
+- **notify:** Store in-app notifications and fan them out to mail and broadcast (#68) ([fd8a2d5](https://github.com/AlexGalhardo/vukem/commit/fd8a2d5923d149ebe3cd6874288071d2cb48f691))
+- **auth:** Let an authorized user impersonate another for a bounded time (#75) ([36a7948](https://github.com/AlexGalhardo/vukem/commit/36a7948b689d37cbe8bd832a140364d854643184))
 
 ## [0.33.0] - 2026-10-29
 
@@ -1078,7 +1122,8 @@ Project foundation. No framework code yet; see [PLAN.md](PLAN.md) for the roadma
 - README, MIT license, CONTRIBUTING, SECURITY and CODE_OF_CONDUCT.
 - Agent configuration: `AGENTS.md`, `CLAUDE.md`, path-scoped `.claude/rules/`, Go skills and project settings.
 
-[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.33.0...HEAD
+[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.34.0...HEAD
+[0.34.0]: https://github.com/AlexGalhardo/vukem/compare/v0.33.0...v0.34.0
 [0.33.0]: https://github.com/AlexGalhardo/vukem/compare/v0.32.0...v0.33.0
 [0.32.0]: https://github.com/AlexGalhardo/vukem/compare/v0.31.0...v0.32.0
 [0.31.0]: https://github.com/AlexGalhardo/vukem/compare/v0.30.0...v0.31.0
