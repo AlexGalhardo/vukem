@@ -256,7 +256,7 @@ func (f *Feed) Index(c *web.Ctx) error {
 ```
 
 - Pass `""` for the first page and `meta.next_cursor` for the next one. On the last page `next_cursor` is absent and `links.next` is `null`.
-- The cursor is an opaque string (an encoded primary key). A client must send it back unchanged; anything that does not decode answers `400` with `"detail": "Invalid pagination cursor."`.
+- The cursor is an opaque string (an encoded primary key). A client must send it back unchanged; anything that does not decode answers `400` with `"detail": "Invalid pagination cursor."`. If you build your own cursor that carries a sort key, sign it with `Signer.Token` and check it with `Signer.Open` ([signed tokens](/docs/security/signed-urls#signed-tokens)) so clients cannot forge one.
 - `orm.Asc` walks from the oldest id up, `orm.Desc` from the newest down.
 - `links.self` is the request URI as received; `links.prev` is always `null`, because a keyset cursor only moves forward.
 

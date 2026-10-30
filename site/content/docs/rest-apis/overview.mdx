@@ -13,7 +13,7 @@ You will learn:
 - How to start a JSON-only project with `vukem new --api` and what it contains.
 - How to register resource routes, shape responses with transformers and answer errors as problem+json.
 - How tokens, CORS, rate limiting and versioning fit together.
-- Which page to read next for pagination, typed handlers, OpenAPI, clients, idempotency, GraphQL and gRPC.
+- Which page to read next for pagination, typed handlers, OpenAPI, clients, idempotency, GraphQL, gRPC and JSON-RPC.
 
 ## The idea
 
@@ -462,6 +462,6 @@ Make retried POST and PATCH requests safe.
 </Card>
 </CardGroup>
 
-Beyond REST: [GraphQL](/docs/rest-apis/graphql) with `contrib/graphql`, [gRPC](/docs/rest-apis/grpc) with `contrib/grpc`, and server push with [SSE](/docs/digging-deeper/sse) and [broadcasting](/docs/digging-deeper/broadcasting). Any other `http.Handler` mounts with `r.Handle` and shares the middleware stacks.
+Beyond REST: [GraphQL](/docs/rest-apis/graphql) with `contrib/graphql`, [gRPC](/docs/rest-apis/grpc) with `contrib/grpc`, [JSON-RPC 2.0](/docs/rest-apis/json-rpc) with the `jsonrpc` package (plus an OpenRPC document and a typed Go client), and server push with [SSE](/docs/digging-deeper/sse) and [broadcasting](/docs/digging-deeper/broadcasting). Any other `http.Handler` mounts with `r.Handle` and shares the middleware stacks.
 
 Package reference: [pkg.go.dev/github.com/AlexGalhardo/vukem/api](https://pkg.go.dev/github.com/AlexGalhardo/vukem/api).
