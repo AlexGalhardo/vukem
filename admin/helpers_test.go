@@ -156,6 +156,22 @@ var migrations = []schema.Migration{
 						t.Timestamps()
 					})
 				},
+				func() error {
+					return s.Create("pairs", func(t *schema.Table) {
+						t.BigInteger("user_id")
+						t.BigInteger("item_id")
+						t.String("note")
+						t.Primary("user_id", "item_id")
+					})
+				},
+				func() error {
+					return s.Create("tag_pairs", func(t *schema.Table) {
+						t.String("scope")
+						t.String("name")
+						t.String("label")
+						t.Primary("scope", "name")
+					})
+				},
 			} {
 				if err := step(); err != nil {
 					return err
@@ -178,6 +194,8 @@ type options struct {
 	flags []flags.AnyFlag
 	// harden edits the panel config (TwoFactor, MaxSessionAge, AllowCIDRs).
 	harden func(*admin.Config)
+	// extra registers policies for resources the default gate does not know.
+	extra func(*authz.Gate[*User]) error
 	// clock drives the app (sessions) and the panel.
 	clock *vukemtest.FakeClock
 }
@@ -261,6 +279,12 @@ func newApp(t *testing.T, o options) *vukemtest.App {
 						authz.For[*Account](adminPolicy[*Account]{}),
 					); err != nil {
 						return err
+					}
+
+					if o.extra != nil {
+						if err := o.extra(gate); err != nil {
+							return err
+						}
 					}
 
 					cfg.Authorizer = gate
