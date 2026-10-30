@@ -356,6 +356,26 @@ func TestAssertMatchesOpenAPI(t *testing.T) {
 	expectFailure(t, "no operation", func(tb *fakeTB) { app.Client(tb).GetJSON("/nowhere").AssertMatchesOpenAPI() })
 }
 
+func TestAssertMatchesOpenAPIHintsPrefixOnDuplicateIDs(t *testing.T) {
+	t.Parallel()
+
+	app := vukemtest.New(t, func(opts ...vukem.Option) (*vukem.App, error) {
+		return vukem.New(append(opts, vukem.WithRoutes(func(r *router.Router, _ *vukem.App) error {
+			// A web route and an API route that reuse a local name.
+			r.Get("/dashboard", func(c *web.Ctx) error { return c.NoContent() }).Name("dashboard")
+			r.Group("/admin", func(g *router.Group) {
+				g.Get("/dashboard", func(c *web.Ctx) error { return c.NoContent() }).Name("dashboard")
+			}).Name("admin.")
+
+			return nil
+		}))...)
+	})
+
+	expectFailure(t, "OPENAPI_PREFIX", func(tb *fakeTB) {
+		app.Client(tb).GetJSON("/admin/dashboard").AssertMatchesOpenAPI()
+	})
+}
+
 func TestGetJSONDoesNotStick(t *testing.T) {
 	t.Parallel()
 

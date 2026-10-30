@@ -602,7 +602,7 @@ func TestGeneratedProjectBuilds(t *testing.T) {
 		cmd.Dir = dir
 		cmd.Env = append(os.Environ(), "GOWORK=off", "GOFLAGS=-mod=mod")
 
-		if out, err := cmd.CombinedOutput(); err != nil {
+		if out, err := combinedOutput(cmd); err != nil {
 			t.Fatalf("go %v: %v\n%s", args, err, out)
 		}
 	}

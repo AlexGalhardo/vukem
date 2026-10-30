@@ -118,6 +118,11 @@ jobs:
         with:
           go-version: ${{ matrix.go }}
           cache-dependency-path: "**/go.sum"
+      # golang/go#81238 corrupts the heap on Intel AMX hosts: the CPU tells a
+      # runtime crash of that bug from a real one (docs/maintenance.md#known-ci-issues).
+      - name: Runner CPU
+        if: runner.os == 'Windows'
+        run: (Get-CimInstance Win32_Processor).Name
       - name: go test
         shell: bash # PowerShell would split -coverprofile=coverage.out at the dot
         run: go test -race -count=1 -coverprofile=coverage.out ./...
@@ -286,6 +291,24 @@ jobs:
         run: go test -race -count=1 ./...
       - name: Unit tests (workspace, current core)
         working-directory: contrib/grpc
+        run: go test -count=1 ./...
+
+  http3:
+    name: HTTP/3 module
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: "**/go.sum"
+      - name: Unit tests (module alone)
+        working-directory: contrib/http3
+        env:
+          GOWORK: "off"
+        run: go test -race -count=1 ./...
+      - name: Unit tests (workspace, current core)
+        working-directory: contrib/http3
         run: go test -count=1 ./...
 
   imaging:

@@ -32,6 +32,10 @@ A job renamed in `ci.yml` must be renamed in that file in the same PR, or every 
 
 Vukem has one maintainer. GitHub does not let authors approve their own pull requests and Scorecard ignores bot reviews, so the `Code-Review` check stays at 0 until a second person reviews changes. Creating a second account to approve is metric fraud and breaks GitHub's terms; it is never done. What compensates, and is checked on every PR: the `TestSecurity_*` contract in [security.md](security.md), fuzzing, CodeQL, govulncheck, the coverage gate and the recorded reviews in [security-review.md](security-review.md) and [api/review.md](api/review.md). The way up is a co-maintainer or invited reviewer for release and security PRs.
 
+### Known CI issues
+
+- Windows runtime crashes in the `go test -race` job ([golang/go#81238](https://github.com/golang/go/issues/81238), Go 1.27.3): on `windows-latest` (Windows Server 2025) hosts with Intel AMX, Windows writes an exception frame larger than the stack reserve Go keeps, below the goroutine stack, and the heap is corrupted. Seen as `fatal error: unknown caller pc` (a GC worker stack with a `sigtrampgo` frame), `fatal error: found pointer to free object` (`reportZombies`) or a nil dereference inside a stdlib function (`log/slog`), in CI runs 40972862220, 40813653835 and 40801161416. They never reproduce on Linux, macOS or AMD hosts (a 40-run local loop on a Ryzen stayed clean). The Test step prints the runner CPU first: re-run the failed job once when the CPU is an AMX Xeon (8573C, 6973P-C) and the failure has one of these signatures; any other failure, or the same crash on a non-AMX CPU, is a real bug. Remove this entry once a Go release ships the fix ([CL 828724](https://go.dev/cl/828724)).
+
 ## Release routine
 
 After each [PLAN.md](PLAN.md) task group:
@@ -60,6 +64,18 @@ A module added to the repository must be added to the `gomod` directories in `.g
 2. A failure of `Fuzz`, `Vulnerabilities (weekly)` or `Scorecard` opens or updates an issue labelled `ci-failure` (`ci-failure.yml`). It blocks the next release until it is triaged: fixed, with the crasher committed under `testdata/fuzz/<Target>/`, or documented as a false positive.
 3. Quarterly: re-run [security-review.md](security-review.md) against the OWASP Top 10 and ASVS and record the date on that page.
 4. A security release gets a **Security** changelog entry (a `fix!:` commit with a `BREAKING CHANGE:` footer when it breaks an API), an `Insecure…` opt-out when reasonable, and an [apicheck exception](tooling.md#security-exceptions) when it breaks an API after `v1`.
+
+## Secret scanning
+
+[Betterleaks](https://github.com/betterleaks/betterleaks) `v1.9.0` (latest stable release on 2026-10-29; the `v2.0.0-rc.*` tags are pre-releases and stay out until a stable v2) scans for leaked secrets on top of GitHub's server-side scanning:
+
+- CI: `.github/workflows/secrets.yml` installs the Linux x64 release archive checked against its sha256 from the release's `checksums.txt`, scans the commits a pull request or push adds, and the whole history every Monday (failures reach `ci-failure.yml`).
+- Locally: `task secrets:scan` (full history; `task secrets:scan -- --log-opts=main..HEAD` for a branch). Install with `go install github.com/betterleaks/betterleaks@v1.9.0` or the release archive.
+- `.betterleaks.toml` extends the default rules with vukem's `APP_KEY` (`base64:` + 43 chars + `=`) and API token (`vk_<26>.<26>` base32) formats, and allowlists only literal placeholder values (`hunter2`, `correct horse...`, `_FAKE_`, `placeholder`, `example`), never paths.
+- `.betterleaksignore` lists reviewed historical findings (fixtures, documentation samples, translated "password" labels) by fingerprint. A new finding is either a placeholder that should say so (`_FAKE_`, `example`) or a real secret: rotate it, do not ignore it.
+- Validation (`--validation`, which sends findings to credential providers) stays off.
+
+To bump: change `BETTERLEAKS_VERSION` and `BETTERLEAKS_SHA256` in `secrets.yml` (sha256 of `betterleaks_<v>_linux_x64.tar.gz` from `checksums.txt`) and the version in `Taskfile.yml`, then run `task secrets:scan`.
 
 ## Metrics
 
