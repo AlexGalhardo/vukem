@@ -462,6 +462,18 @@ func TestOpenAPICommands_PrefixFlag(t *testing.T) {
 			want:    []string{`"/api/ping"`},
 			notWant: []string{`"/dashboard"`},
 		},
+		{
+			name: "export rebased with OPENAPI_SERVERS and OPENAPI_STRIP_PREFIX",
+			env: map[string]string{
+				"OPENAPI_SERVERS":      "https://api.example.com/v1, https://example.com/api",
+				"OPENAPI_STRIP_PREFIX": "/api",
+			},
+			args: []string{"openapi:export"},
+			want: []string{
+				`"/ping"`, `"url": "https://api.example.com/v1"`, `"url": "https://example.com/api"`,
+			},
+			notWant: []string{`"/api/ping"`, `"/dashboard"`},
+		},
 	}
 
 	for _, tt := range tests {

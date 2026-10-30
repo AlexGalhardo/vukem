@@ -33,6 +33,7 @@ import (
 	"strings"
 
 	"github.com/AlexGalhardo/vukem/errs"
+	"github.com/AlexGalhardo/vukem/openapi"
 	"github.com/AlexGalhardo/vukem/z"
 )
 
@@ -81,8 +82,9 @@ type Server struct {
 }
 
 type method struct {
-	call   func(ctx context.Context, params json.RawMessage) (any, error)
-	guards []Guard
+	call           func(ctx context.Context, params json.RawMessage) (any, error)
+	guards         []Guard
+	params, result reflect.Type
 }
 
 // NewServer returns a Server with cfg's limits.
@@ -122,49 +124,40 @@ func Method[P, R any](s *Server, name string, fn func(context.Context, P) (R, er
 	schema := z.For[P]().Strict()
 	fields := fieldNames(pt)
 
-	s.methods[name] = &method{guards: guards, call: func(ctx context.Context, raw json.RawMessage) (any, error) {
-		input, err := paramsInput(raw, fields)
-		if err != nil {
-			return nil, err
-		}
-
-		p, err := schema.Parse(input)
-		if err != nil {
-			if is, ok := z.AsIssues(err); ok {
-				return nil, &Error{
-					Code:    CodeInvalidParams,
-					Message: "Invalid params",
-					Data:    map[string]any{"fields": is.Fields()},
-				}
+	s.methods[name] = &method{
+		guards: guards,
+		params: pt,
+		result: reflect.TypeFor[R](),
+		call: func(ctx context.Context, raw json.RawMessage) (any, error) {
+			input, err := paramsInput(raw, fields)
+			if err != nil {
+				return nil, err
 			}
 
-			return nil, err
-		}
+			p, err := schema.Parse(input)
+			if err != nil {
+				if is, ok := z.AsIssues(err); ok {
+					return nil, &Error{
+						Code:    CodeInvalidParams,
+						Message: "Invalid params",
+						Data:    map[string]any{"fields": is.Fields()},
+					}
+				}
 
-		return fn(ctx, p)
-	}}
+				return nil, err
+			}
+
+			return fn(ctx, p)
+		},
+	}
 }
 
-// fieldNames lists P's JSON member names in declaration order, the names
-// positional (array) params are matched to.
+// fieldNames lists P's JSON member names in declaration order (embedded
+// structs flattened), the names positional (array) params are matched to.
 func fieldNames(t reflect.Type) []string {
 	var names []string
-
-	for f := range t.Fields() {
-		if !f.IsExported() {
-			continue
-		}
-
-		name, _, _ := strings.Cut(f.Tag.Get("json"), ",")
-		if name == "-" {
-			continue
-		}
-
-		if name == "" {
-			name = f.Name
-		}
-
-		names = append(names, name)
+	for _, f := range openapi.Fields(t) {
+		names = append(names, f.Key)
 	}
 
 	return names
