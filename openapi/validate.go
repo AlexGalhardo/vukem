@@ -36,7 +36,13 @@ func (d *Document) ValidateResponse(method, path string, status int, body []byte
 		method = "GET"
 	}
 
-	op, tmpl := findOperation(doc, strings.ToLower(method), path)
+	var op map[string]any
+
+	tmpl := path
+	if underPrefix(path, d.strip) {
+		op, tmpl = findOperation(doc, strings.ToLower(method), cmpOr(strings.TrimPrefix(path, d.strip), "/"))
+	}
+
 	if op == nil {
 		return fmt.Errorf("%w: %s %s", ErrNoOperation, method, path)
 	}
