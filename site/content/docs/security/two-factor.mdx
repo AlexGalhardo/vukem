@@ -199,6 +199,7 @@ tf.TwoFactorLastStep = step
 | `Validate(secret, code, now, lastStep, opts)` | accepts the previous, current and next step (clock skew), refuses steps at or before `lastStep`, and returns the matched step |
 | `RecoveryCodes(n)` | `n` codes like `PHKFK-N45WI` to show once, and their SHA-256 hashes to store |
 | `UseRecoveryCode(code, hashes)` | reports a match and returns the hashes left (store them); matching ignores letter case |
+| `HashRecoveryCode(code)` | the stored form of one code: hex SHA-256 of `totp-recovery:` plus the code trimmed and upper-cased. Use it to import codes from another system |
 
 `totp.Options` has `Algorithm` (`totp.SHA1`, `totp.SHA256`, `totp.SHA512`), `Digits` and `Period`. Zero values mean SHA-1, 6 digits and 30 seconds. Change them only if your users' apps support it; many apps ignore anything else.
 
