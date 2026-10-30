@@ -50,3 +50,6 @@ f4edd8b3b7d6ca0ef4ae8244a4c5afdb7ca65d12:.claude/skills/golang-security/referenc
 f4edd8b3b7d6ca0ef4ae8244a4c5afdb7ca65d12:.claude/skills/golang-security/references/secrets.md:generic-password:32
 fc3b71bd2af8a8e68120dd4aadd7680c36fa7519:contrib/stripe/stripe_test.go:stripe-access-token:23
 98931ba4809e4caf4ad9c940b01b576567186a95:docs/security.md:generic-password:46
+# 2026-10-30: generic-password on the admin row of docs/security.md is the
+# test name TestSecurity_A01_AdminRequiresAbility next to the word "login".
+2399debb61f419fc44e1221a3aa41d92292a635f:docs/security.md:generic-password:46

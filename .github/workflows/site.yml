@@ -35,11 +35,11 @@ jobs:
       - run: npm run check:mdx
       - run: npm run build
 
-  # A page changed in a PR must ship its refreshed "Last updated" date
+  # Every docs page must ship a "Last updated" date
   # (site/README.md#last-updated); dates come from git, so full history.
+  # Pull requests that do not touch site/ are covered by docs-last-updated.yml.
   last-updated:
     name: Last updated
-    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -52,6 +52,4 @@ jobs:
         with:
           node-version: 24
       - run: npm run test:scripts
-      - run: npm run check:last-updated -- "origin/${BASE_REF}"
-        env:
-          BASE_REF: ${{ github.base_ref }}
+      - run: npm run check:last-updated

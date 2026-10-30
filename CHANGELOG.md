@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **site:** Show "Last updated" on every docs page. CI checks the whole docs set on every pull request and every push to main, not only files changed in that PR.
+
 ## [0.33.0] - 2026-10-29
 
 ### Added
