@@ -1056,7 +1056,7 @@ func ssrStartCommand() Command {
 				return err
 			}
 
-			return app.superviseSSR(ctx, ssrProcess{*bundle, *runtime, *delay, false})
+			return app.superviseSSR(ctx, ssrProcess{*bundle, *runtime, *delay, false, ssrMinUptime})
 		},
 	}
 }
@@ -1068,6 +1068,8 @@ type ssrProcess struct {
 	// always restarts after a clean exit too: under serve the app keeps
 	// rendering pages, so the server must come back.
 	always bool
+	// minUptime is ssrMinUptime outside tests.
+	minUptime time.Duration
 }
 
 // ssrMinUptime separates a bundle that never served (exits at once) from a
@@ -1100,7 +1102,7 @@ func (a *App) superviseSSR(ctx context.Context, p ssrProcess) error {
 		// A bundle that exits cleanly at once never started a server (an
 		// entry that exports createInertiaApp instead of calling it): fail
 		// loudly rather than exit 0 with no output.
-		if ctx.Err() == nil && err == nil && !p.always && time.Since(start) < ssrMinUptime {
+		if ctx.Err() == nil && err == nil && !p.always && time.Since(start) < p.minUptime {
 			return fmt.Errorf("%w: %s exited at once", errSSRNoServer, p.bundle)
 		}
 
@@ -1142,7 +1144,7 @@ func serveFlags(app *App, args []string) error {
 		return err
 	}
 
-	p := ssrProcess{*bundle, *runtime, *delay, true}
+	p := ssrProcess{*bundle, *runtime, *delay, true, ssrMinUptime}
 	app.AddRunner("ssr", RunnerFunc(func(ctx context.Context) error { return app.superviseSSR(ctx, p) }))
 
 	return nil
@@ -1203,7 +1205,8 @@ func ssrCheckCommand() Command {
 //	})
 //
 // An empty Title, Version or Servers keeps the configured value (APP_NAME,
-// API_VERSION, APP_URL); an empty PathPrefix keeps OPENAPI_PREFIX, and the
+// API_VERSION, OPENAPI_SERVERS or APP_URL); an empty StripPrefix keeps
+// OPENAPI_STRIP_PREFIX; an empty PathPrefix keeps OPENAPI_PREFIX, and the
 // prefix of ServeOpenAPIWith wins over both.
 func WithOpenAPI(info openapi.Info) Option {
 	return func(o *options) error { o.openAPI = &info; return nil }
@@ -1235,7 +1238,15 @@ func (a *App) openAPI(prefix string) (*openapi.Document, error) {
 	}
 
 	if len(info.Servers) == 0 {
+		info.Servers = a.Config.OpenAPIServers
+	}
+
+	if len(info.Servers) == 0 {
 		info.Servers = []string{a.Config.URL}
+	}
+
+	if info.StripPrefix == "" {
+		info.StripPrefix = a.Config.OpenAPIStripPrefix
 	}
 
 	if prefix != "" {

@@ -133,6 +133,33 @@ Errors:
 | `httpclient.ErrNilTransport` | `WrapTransport` returned `nil`; every request fails instead of falling back to `http.DefaultTransport`, which has no address check |
 | `httpclient: scheme "file" refused` | a scheme other than `http` or `https` |
 
+### Rate limits, retries and a circuit breaker
+
+Third-party APIs limit how fast you may call them, answer `429` or `503` when you go too fast, and sometimes fail for minutes. Three transport wrappers handle that. Each is a `func(http.RoundTripper) http.RoundTripper`, so they fit `WrapTransport` and any other `http.Client`:
+
+```go title="app/ingest/client.go"
+func igdbClient() *http.Client {
+	limit := httpclient.Throttle(httpclient.Limit{PerSecond: 4, InFlight: 8})
+	breaker := httpclient.Breaker(httpclient.BreakerOptions{Failures: 5, Cooldown: time.Minute})
+	retry := httpclient.Retry(httpclient.RetryPolicy{Attempts: 4})
+
+	return httpclient.Safe(httpclient.Options{
+		Timeout: time.Minute, // covers every attempt together
+		WrapTransport: func(rt http.RoundTripper) http.RoundTripper {
+			return retry(breaker(limit(rt)))
+		},
+	})
+}
+```
+
+| Wrapper | What it does |
+| --- | --- |
+| `Throttle(Limit{PerSecond, Burst, InFlight})` | per host: spaces requests to `PerSecond` (bursts of `Burst`, default 1) and allows at most `InFlight` requests whose response body is still open. A waiting request fails with its context's error when the context ends first. |
+| `Retry(RetryPolicy{Attempts, Base, Max})` | retries transport errors and `429`, `502`, `503`, `504` up to `Attempts` tries (default 3). It waits for the server's `Retry-After` (seconds or a date), or an exponential backoff from `Base` (default 200ms) with jitter, capped by `Max` (default 30s). A `Retry-After` longer than `Max` returns the response as is. |
+| `Breaker(BreakerOptions{Failures, Cooldown})` | per host: after `Failures` consecutive transport errors or `5xx` (default 5), requests fail at once with `httpclient.ErrCircuitOpen` for `Cooldown` (default 30s); then one trial request decides whether the circuit closes or stays open. |
+
+`Retry` only repeats requests that are safe to send twice: `GET`, `HEAD`, `OPTIONS`, `TRACE`, `PUT`, `DELETE`, or any method with an `Idempotency-Key` header, and only when the body can be sent again (`http.NewRequest` makes that possible for in-memory bodies). It never retries `ErrBlockedAddress`, `ErrCircuitOpen` or a cancelled request. Put `Retry` outermost, as above, so each retry passes through the breaker and the rate limit.
+
 `httpclient.Get(ctx, url)` is `Safe(Options{})` plus a GET in one call. `httpclient.Allowed(ip, allow)` is the address check itself, if you need it elsewhere. The framework itself fetches no user-supplied URLs; `webhook.Sender` and your own features use this client.
 
 ## Signed URLs
@@ -343,6 +370,9 @@ Every security-relevant decision in Vukem calls `web.SecurityEvent`. Each event 
 | `idempotency.key_reused`, `idempotency.unscoped` | an idempotency key was misused |
 | `flags.locked_write` | a write to a locked feature flag was refused |
 | `auth.2fa_failed` | a two-factor code was wrong (`install:auth --2fa` scaffold) |
+| `auth.impersonation_started`, `auth.impersonation_ended` | an actor started or stopped [impersonating](/docs/security/authentication#signing-in-as-another-user-impersonation) a user, or the impersonation expired |
+| `challenge.failed`, `challenge.unavailable` | a [bot challenge](/docs/security/bot-challenge) token was rejected, or the provider could not be reached |
+| `admin.ip_denied`, `admin.session_expired` | the [admin panel](/docs/digging-deeper/admin) refused a client IP outside `AllowCIDRs`, or a session older than `MaxSessionAge` |
 
 ```go title="app/listeners/alerts.go"
 events.Listen(app.Events,
