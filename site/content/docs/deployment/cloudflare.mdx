@@ -11,6 +11,7 @@ You will learn:
 
 - how to get the real visitor IP from Cloudflare safely;
 - how to refuse requests that skip Cloudflare and hit your server directly;
+- how to read the visitor's country and bot signals safely;
 - how to keep the list of Cloudflare addresses current.
 
 ## Install the module
@@ -48,6 +49,32 @@ r.Use(cloudflare.OriginLock(netip.MustParsePrefix("10.0.0.0/8")))
 ```
 
 It looks only at the connection's address, never at a header.
+
+## Read the visitor's country and bot signals
+
+Cloudflare can tell your app the visitor's country and, on plans with Bot Management, how likely the request is a bot. `cloudflare.Headers` collects these headers into the request context:
+
+```go title="routes/web.go"
+r.Use(cloudflare.Headers())
+
+r.Get("/pricing", func(c *web.Ctx) error {
+	v, ok := cloudflare.VisitorFrom(c.Context())
+	if ok && v.Country == "BR" {
+		return c.Render("pricing", pricesIn("BRL"))
+	}
+
+	return c.Render("pricing", pricesIn("USD"))
+})
+```
+
+| Field | Header | Values |
+| --- | --- | --- |
+| `Country` | `CF-IPCountry` | ISO country code, `XX` unknown, `T1` Tor |
+| `Ray` | `CF-Ray` | Ray ID, to find the request in Cloudflare's logs |
+| `BotScore` | `cf-bot-score` | 1 (bot) to 99 (human), 0 when not sent |
+| `VerifiedBot` | `cf-verified-bot` | `true` for a [verified bot](https://developers.cloudflare.com/bots/concepts/bot/verified-bots/) |
+
+`BotScore` and `VerifiedBot` need the "Add bot protection headers" [Managed Transform](https://developers.cloudflare.com/rules/transform/managed-transforms/reference/). The headers are read only when the connection comes from Cloudflare; anyone else could send them, so `VisitorFrom` then reports `false`.
 
 ## Behind another proxy
 

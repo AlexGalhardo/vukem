@@ -3,6 +3,7 @@ package apidocs_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"net/http/httptest"
 	"os"
 	"os/exec"
@@ -97,8 +98,10 @@ func TestBrowser_APIDocsNoCSPViolations(t *testing.T) {
 	// exits; do not let them hang the test.
 	cmd.WaitDelay = 5 * time.Second
 
+	// ErrWaitDelay means Chromium exited cleanly but a helper still held a
+	// pipe: the DOM on stdout is complete.
 	dom, err := cmd.Output()
-	if err != nil {
+	if err != nil && !errors.Is(err, exec.ErrWaitDelay) {
 		t.Fatalf("%s: %v\n%s", chrome, err, stderr.String())
 	}
 
