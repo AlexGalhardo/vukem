@@ -541,3 +541,69 @@ func TestNoOutputWithStatusSendsNoBody(t *testing.T) {
 			rec.Code, rec.Body.String(), rec.Header().Get("Content-Type"))
 	}
 }
+
+// VF-062: a POST with a body defaults to 201 in the handler and in the
+// OpenAPI document. A command sets Op.Status; both copies of that default
+// have to move together, or openapi:export keeps the forgotten 201.
+func TestCommandPostDocumentsExplicitStatus(t *testing.T) {
+	t.Parallel()
+
+	type in struct {
+		ID string `json:"id"`
+	}
+
+	type out struct {
+		Delivered bool `json:"delivered"`
+		Status    int  `json:"status"`
+	}
+
+	r := router.New(nil)
+	api.Register(r, "POST /webhooks", api.Op{Name: "webhooks.store"},
+		func(*web.Ctx, struct{}) (out, error) { return out{Delivered: true}, nil })
+	api.Register(r, "POST /webhooks/{id}/test", api.Op{Name: "webhooks.test", Status: http.StatusOK},
+		func(*web.Ctx, in) (out, error) { return out{Delivered: true, Status: http.StatusOK}, nil })
+
+	h, err := r.Handler()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	call := func(target string, want int) {
+		t.Helper()
+
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, target, strings.NewReader(`{}`))
+		req.Header.Set("Content-Type", "application/json")
+		h.ServeHTTP(rec, req)
+
+		if rec.Code != want || !strings.Contains(rec.Body.String(), `"delivered":true`) {
+			t.Fatalf("POST %s = %d %s, want %d with the result", target, rec.Code, rec.Body, want)
+		}
+	}
+	call("/webhooks", http.StatusCreated)
+	call("/webhooks/1/test", http.StatusOK)
+
+	doc, err := openapi.Build(r.Routes(), openapi.Info{Title: "Hooks", Version: "1.0.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	status := func(path, want string) {
+		t.Helper()
+
+		op := doc.Paths[path]["post"]
+		if op == nil {
+			t.Fatalf("POST %s is missing from the document", path)
+		}
+
+		if _, ok := op.Responses[want]; !ok {
+			t.Fatalf("POST %s responses = %#v, want %s", path, op.Responses, want)
+		}
+	}
+	status("/webhooks", "201")
+	status("/webhooks/{id}/test", "200")
+
+	if _, ok := doc.Paths["/webhooks/{id}/test"]["post"].Responses["201"]; ok {
+		t.Fatal("POST /webhooks/{id}/test is documented as 201; Op.Status was set to 200")
+	}
+}
