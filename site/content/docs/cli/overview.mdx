@@ -22,7 +22,7 @@ Think of a car workshop. The **mechanic's toolbox** (`vukem`) can build, open an
 
 | Binary | Installed by | Knows your app? | Commands |
 | --- | --- | --- | --- |
-| `vukem` (global) | `go install` | No: it only reads and writes files | `new`, `serve`, `build`, `version`, `install:*`, `boost:install`, `key:*`, `down`, `up`, `make:*`, `codegen:rpc` |
+| `vukem` (global) | `go install` | No: it only reads and writes files | `new`, `serve`, `build`, `version`, `doctor`, `install:*`, `boost:install`, `key:*`, `down`, `up`, `make:*`, `codegen:rpc` |
 | App binary (`cmd/app`) | Built from your project | Yes: it boots your app | `serve` (default), `migrate*`, `db:*`, `route:list`, `queue:*`, `schedule:*`, `openapi:export`, `codegen:types`, `codegen:routes`, `codegen:client`, `about`, `key:generate`, your own commands |
 
 The global CLI never imports your code. When it needs Go, it runs the standard toolchain (`go build`, `go mod tidy`, `go get`). When you type a command it does not own, it **delegates** it: it builds `cmd/app` and runs it with the same arguments. That is why `vukem migrate` works from the project root, like `php artisan migrate` in Laravel.
@@ -66,6 +66,7 @@ Usage:
   serve                        Run the app (HTTP, scheduler) and restart ...
   build                        Build assets (Vite) and a production binary ...
   version                      Print the vukem version
+  doctor                       Report the optional tools the project uses ...
  install
   install:auth                 Add login, registration, password reset ...
   ...
@@ -269,7 +270,7 @@ The `install:*` commands copy **your own code** into the project: routes, contro
 
 | Command | Flags | Adds | Read more |
 | --- | --- | --- | --- |
-| `install:auth` | `--social`, `--2fa`, `--locales`, `--force` | Login, registration, email verification, password reset | [Authentication](/docs/security/authentication) |
+| `install:auth` | `--social`, `--2fa`, `--passkeys`, `--locales`, `--force` | Login, registration, email verification, password reset | [Authentication](/docs/security/authentication) |
 | `install:api` | `--force` | API tokens, `/api/v1`, CORS, rate limiting | [REST APIs](/docs/rest-apis/overview) |
 | `install:admin` | `--force` | Admin panel at `/admin` | [Admin](/docs/digging-deeper/admin) |
 | `install:flags` | `--force` | Feature flags | [Feature flags](/docs/digging-deeper/feature-flags) |
@@ -283,12 +284,13 @@ The `install:*` commands copy **your own code** into the project: routes, contro
 | --- | --- | --- | --- |
 | `--social` | string | none | Also add [social login](/docs/security/social-login) for a comma-separated list: `github`, `gitlab`, `discord`, `google`, `microsoft`, `linkedin`, `apple` (`x` is refused: X sends no email) |
 | `--2fa` | bool | `false` | Also add [two-factor authentication](/docs/security/two-factor) (TOTP) |
+| `--passkeys` | bool | `false` | Also add [passkey sign-in](/docs/security/passkeys) (WebAuthn) |
 | `--locales` | string | the project's locales, else `en` | Message catalogs to write, comma separated (`en,es,pt-BR` ship catalogs); `en` is always written |
 | `--force` | bool | `false` | Overwrite existing files |
 
 - It writes the shared core (users, accounts, tokens, mails) once; `app/accounts/accounts.go` marks it as installed.
 - Pages follow your frontend: `html/template` pages for HTMX, or React, Vue or Svelte pages when `package.json` lists an Inertia adapter.
-- Run it again with only `--social` or `--2fa` on a project that has auth: it adds that part and leaves the rest alone.
+- Run it again with only `--social`, `--2fa` or `--passkeys` on a project that has auth: it adds that part and leaves the rest alone.
 - `--social` appends `SOCIAL_<NAME>_CLIENT_ID` and `SOCIAL_<NAME>_CLIENT_SECRET` to `.env.example`; Apple gets `SOCIAL_APPLE_CLIENT_ID`, `SOCIAL_APPLE_TEAM_ID`, `SOCIAL_APPLE_KEY_ID` and `SOCIAL_APPLE_PRIVATE_KEY_PATH`.
 - A templ project is refused: `install:auth writes html/template pages; templ projects are not supported yet`.
 
@@ -400,7 +402,7 @@ Each `make:*` command renders a template, formats Go output with [`go/format`](h
 | `make:event <Name>` | `app/events/<name>.go` | — |
 | `make:listener <Name>` | `app/listeners/<name>.go` | `All()` in `app/listeners/registry.go` |
 | `make:job <Name>` | `app/jobs/<name>.go` | `All()` in `app/jobs/registry.go` |
-| `make:mail <Name>` | `app/mail/<name>.go` and `resources/views/mail/<name>.html` | — |
+| `make:mail <Name> [--react]` | `app/mail/<name>.go` and `resources/views/mail/<name>.html` (`--react`: `resources/js/emails/<name>.tsx`) | — |
 | `make:policy <Name>` | `app/policies/<name>_policy.go` | `All()` in `app/policies/registry.go` |
 | `make:admin-resource <Model>` | `app/admin/<model>.go` and `tests/admin_<model>_test.go` | `Resources()` and `Policies()` in `app/admin/registry.go` |
 | `make:test <Name>` | `tests/<name>_test.go` | — |
@@ -533,7 +535,7 @@ The templates are [`text/template`](https://pkg.go.dev/text/template) files embe
 | `command.go.tmpl`, `provider.go.tmpl`, `resource.go.tmpl`, `factory.go.tmpl`, `seeder.go.tmpl` | The matching `make:*` |
 | `seeder_app.go.tmpl` | `make:seeder --app` |
 | `event.go.tmpl`, `listener.go.tmpl`, `job.go.tmpl`, `policy.go.tmpl`, `test.go.tmpl` | The matching `make:*` |
-| `mail.go.tmpl`, `mail.html.tmpl` | `make:mail` |
+| `mail.go.tmpl`, `mail.html.tmpl`, `mail_react.go.tmpl`, `mail.tsx.tmpl`, `mail_go.ts.tmpl` | `make:mail` |
 | `admin_resource.go.tmpl`, `admin_resource_test.go.tmpl` | `make:admin-resource` |
 | `service.proto.tmpl`, `buf.yaml.tmpl`, `buf.gen.yaml.tmpl` | `make:proto` |
 

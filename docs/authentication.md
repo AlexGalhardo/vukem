@@ -196,7 +196,41 @@ The raw SVG is inserted with `template.HTML` (HTMX) or the framework's raw-HTML 
 - `rp.VerifyRegistration(challenge, user, body)` checks the browser's `credential.toJSON()` and returns the `Credential` to store (id, COSE public key, algorithm, sign count, user handle, backup flags, transports).
 - `ParseAssertion(body)` exposes the credential id and user handle for the lookup; `rp.VerifyAssertion(challenge, cred, a)` returns the credential with the new sign count to save.
 
-Checks and errors: challenge (`ErrChallenge`, an empty stored challenge never matches), origin and cross-origin iframes (`ErrOrigin`), RP ID hash (`ErrRPID`), user presence and verification (`ErrUserPresence`, `ErrUserVerification`), attestation format (`ErrUnsupportedAttestation`), key type and algorithm agreement (`ErrUnsupportedKey`), credential id and user handle (`ErrCredential`), signature (`ErrSignature`), sign count regression (`ErrSignCount`, both counters at 0 is a synced passkey). The app pulls the challenge out of the session before verifying (single use), throttles the endpoints and keeps a recovery path. The `install:auth --passkeys` scaffold is planned (VF-001). Site page: `site/content/docs/security/passkeys.mdx`.
+Checks and errors: challenge (`ErrChallenge`, an empty stored challenge never matches), origin and cross-origin iframes (`ErrOrigin`), RP ID hash (`ErrRPID`), user presence and verification (`ErrUserPresence`, `ErrUserVerification`), attestation format (`ErrUnsupportedAttestation`), key type and algorithm agreement (`ErrUnsupportedKey`), credential id and user handle (`ErrCredential`), signature (`ErrSignature`), sign count regression (`ErrSignCount`, both counters at 0 is a synced passkey). The app pulls the challenge out of the session before verifying (single use), throttles the endpoints and keeps a recovery path. Site page: `site/content/docs/security/passkeys.mdx`.
+
+`auth/webauthn/webauthntest` is a software passkey for tests: `webauthntest.New(origin)`, then `Create(optionsJSON)` and `Get(optionsJSON)` return the JSON the browser would post (ES256, attestation `none`, user verified, sign count +1 per `Get`).
+
+### `install:auth --passkeys`
+
+`vukem install:auth --passkeys` (also on a project that already ran `install:auth`) adds passkey sign-in next to the password, for every starter (the endpoints answer JSON, so the page that calls them is yours):
+
+- Migration: `users.passkey_handle` (random user handle, set on first use) and `passkey_credentials` (`user_id`, unique base64url `credential_id`, COSE `public_key`, `algorithm`, `sign_count`, `user_handle`, backup flags, `transports`, `name`, `last_used_at`).
+- `accounts.NewPasskeys(acc, app)`: the relying party comes from `APP_URL` (host = RP ID, origin = the only allowed origin) and `Validate` runs at boot, so plain `http` on a public host is a boot error.
+- Routes (`routes/passkeys.go`): `GET /user/passkeys` (list), `POST /user/passkeys/options` (needs `password`), `POST /user/passkeys` (`name` + `credential`), `POST /user/passkeys/{id}/delete` (needs `password`), `POST /passkeys/login/options` and `POST /passkeys/login` (answers `{"redirect": ...}`). Settings routes need a verified user; password checks are limited to 5 per minute per user + IP, sign-in to 10 per minute per IP.
+- Each challenge is pulled out of the session before verifying (single use); the sign count is saved with a compare-and-set, so two requests with one assertion cannot both pass; every refused ceremony answers the same 422 on `credential` and logs `auth.passkey_failed` with the reason.
+- Recovery path: a passkey is added and removed only after the current password is confirmed, and password sign-in and reset stay on, so losing a device never locks the account. Social-only users set a password (forgot password) first. A passkey sign-in with user verification counts as two factors: users with `--2fa` skip the code step.
+- Generated tests (`tests/passkeys_test.go`) drive real ceremonies with `auth/webauthn/webauthntest`, a software ES256 passkey: `TestPasskeySignIn`, `TestSecurity_A07_PasskeyChallengeIsSingleUse` (replayed registration and sign-in, older challenge), `TestSecurity_A07_PasskeyIsScopedToItsUser` (another user's passkey is not listed nor deletable, an unregistered credential does not sign in) and `TestSecurity_A07_PasskeyChangesNeedThePassword`.
+
+Browser side:
+
+```ts
+// Add a passkey (signed in; the password is confirmed first).
+const opts = await post("/user/passkeys/options", { password });
+const created = await navigator.credentials.create({
+  publicKey: PublicKeyCredential.parseCreationOptionsFromJSON(opts),
+});
+await post("/user/passkeys", { name: "Laptop", credential: created.toJSON() });
+
+// Sign in (usernameless).
+const req = await post("/passkeys/login/options", {});
+const got = await navigator.credentials.get({
+  publicKey: PublicKeyCredential.parseRequestOptionsFromJSON(req),
+});
+const { redirect } = await post("/passkeys/login", got.toJSON());
+location.assign(redirect);
+```
+
+`post` is your `fetch` wrapper that sends JSON with the CSRF token header and returns the parsed body.
 
 ## Social login (`social`)
 
