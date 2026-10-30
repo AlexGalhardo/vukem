@@ -111,6 +111,12 @@ type Config struct {
 	// (openapi.Info.StripPrefix), for a server URL that already ends with
 	// it; WithOpenAPI's StripPrefix wins over it.
 	OpenAPIStripPrefix string `env:"OPENAPI_STRIP_PREFIX"`
+	// OpenAPIRequiredOutputs sets openapi.Info.RequiredOutputs: response
+	// schemas list the fields the server always sends as required.
+	OpenAPIRequiredOutputs bool `env:"OPENAPI_REQUIRED_OUTPUTS"`
+	// OpenAPITypedOnly sets openapi.Info.TypedOnly: a plain route under
+	// the prefix fails the document build.
+	OpenAPITypedOnly bool `env:"OPENAPI_TYPED_ONLY"`
 	// OpenAPIInProduction serves /openapi.json in production too.
 	OpenAPIInProduction bool `env:"OPENAPI_IN_PRODUCTION"`
 	// Devtools enables the /_vukem dashboard (refused in production).

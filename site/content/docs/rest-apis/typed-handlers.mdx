@@ -220,7 +220,7 @@ Your function returns `(Out, error)`.
 | the method is `POST` | `201 Created` |
 | anything else | `200 OK` |
 
-When the status is `204`, the output value is not written even if `Out` has fields. A `201` from a typed handler has no `Location` header; if clients need one, write a plain handler with `c.Created`.
+When the status is `204`, the output value is not written even if `Out` has fields. An `Out` of `struct{}` never has a body: with `Op.Status` set (for example `202 Accepted`), the response carries that status and no body. A `201` from a typed handler has no `Location` header; if clients need one, write a plain handler with `c.Created`.
 
 ### Finishing the response yourself
 

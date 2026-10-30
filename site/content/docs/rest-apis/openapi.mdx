@@ -153,6 +153,18 @@ type StoreTask struct {
 - Embedded structs are flattened into their parent, as `encoding/json` does. Unexported fields and fields tagged `json:"-"` are skipped. A field without a `json` tag uses its Go name.
 - Named structs are collected once in `components/schemas`, so recursive types work. Two types with the same name from different packages become `<Name>` and `<pkg>.<Name>` (then `<pkg>.<Name>2`, …).
 
+### Required response fields
+
+By default only `validate:"required"` marks a property required, so a generated client sees every response field as optional (`id?: number`). Set `RequiredOutputs` (or `OPENAPI_REQUIRED_OUTPUTS=true`) to list in `required` every response field the server always sends:
+
+```go
+vukem.WithOpenAPI(openapi.Info{RequiredOutputs: true})
+```
+
+- A response field is required unless it is a pointer, tagged `omitempty` or `omitzero`, or promoted through an embedded pointer.
+- Request schemas keep the `validate` rules. A named struct used by both a request and a response becomes two components: `<Name>` for the response and `<Name>Input` for the request. Generated client type names change for those types, so regenerate clients when you turn it on.
+- It is off by default so existing documents and clients keep their shape.
+
 ### Validation rules
 
 | `validate` rule | JSON Schema |
@@ -195,6 +207,8 @@ Plain `web.HandlerFunc` routes appear too, with a generic entry: `operationId` a
 // Internal health route: not part of the public API.
 g.Get("/internal/stats", stats.Show).Doc(openapi.Skip{})
 ```
+
+Some client generators drop untyped responses (`openapi-python-client` skips them). To keep plain routes out of a public API, set `TypedOnly` (or `OPENAPI_TYPED_ONLY=true`): building the document then fails with `openapi.ErrUntypedRoute`, naming each plain route under the prefix that is not marked `.Doc(openapi.Skip{})`.
 
 Paths are converted from `ServeMux` syntax: `{$}` is dropped, and a multi-segment wildcard `{path...}` is documented as a single `{path}` segment, because OpenAPI cannot express "the rest of the path".
 
@@ -428,6 +442,8 @@ The reference is at `http://localhost:8081/` and the document at `/openapi.json`
 | `OPENAPI_STRIP_PREFIX` | empty | keep only routes under it and remove it from the documented paths |
 | `OPENAPI_PREFIX` | empty | keep only routes under it (e.g. `/api`); default `PathPrefix` of `ServeOpenAPIWith` and default `-prefix` of `openapi:export`, `codegen:types` and `codegen:client` |
 | `OPENAPI_IN_PRODUCTION` | `false` | serve every document and reference page in production |
+| `OPENAPI_REQUIRED_OUTPUTS` | `false` | response schemas list the fields the server always sends as `required` ([Required response fields](#required-response-fields)) |
+| `OPENAPI_TYPED_ONLY` | `false` | building the document fails with `openapi.ErrUntypedRoute` when a route under the prefix was registered without `api.Register` and is not marked `.Doc(openapi.Skip{})` |
 
 ## Security
 

@@ -18,12 +18,24 @@ type Schema = map[string]any
 // z package enforces, so the document matches what the server accepts.
 type Schemas struct {
 	defs  map[string]Schema
-	names map[reflect.Type]string
+	names map[schemaKey]string
+	// outputs, set by Info.RequiredOutputs, holds the named types some
+	// response reaches. Components then depend on the direction: an
+	// output schema requires every field the server always sends, and a
+	// type in outputs reached from a request is <Name>Input.
+	outputs map[reflect.Type]bool
+	// input is true while a request (parameters, body) is described.
+	input bool
+}
+
+type schemaKey struct {
+	t     reflect.Type
+	input bool
 }
 
 // NewSchemas returns an empty component registry.
 func NewSchemas() *Schemas {
-	return &Schemas{defs: map[string]Schema{}, names: map[reflect.Type]string{}}
+	return &Schemas{defs: map[string]Schema{}, names: map[schemaKey]string{}}
 }
 
 // Components returns the named schemas collected so far.
@@ -152,10 +164,17 @@ func (s *Schemas) wrapped(t reflect.Type) Schema {
 }
 
 func (s *Schemas) ref(t reflect.Type) Schema {
-	name, ok := s.names[t]
+	key := schemaKey{t, s.input && s.outputs != nil}
+
+	name, ok := s.names[key]
 	if !ok {
-		name = s.uniqueName(t)
-		s.names[t] = name
+		suffix := ""
+		if key.input && s.outputs[t] {
+			suffix = "Input"
+		}
+
+		name = s.uniqueName(t, suffix)
+		s.names[key] = name
 		s.defs[name] = Schema{} // placeholder: recursive types refer to it
 		s.defs[name] = s.Object(t, nil)
 	}
@@ -163,9 +182,9 @@ func (s *Schemas) ref(t reflect.Type) Schema {
 	return Schema{"$ref": "#/components/schemas/" + name}
 }
 
-func (s *Schemas) uniqueName(t reflect.Type) string {
+func (s *Schemas) uniqueName(t reflect.Type, suffix string) string {
 	base := nameRe.ReplaceAllString(t.Name(), "_")
-	base = strings.Trim(base, "_")
+	base = strings.Trim(base, "_") + suffix
 
 	if _, taken := s.defs[base]; !taken {
 		return base
@@ -209,7 +228,7 @@ func (s *Schemas) Object(t reflect.Type, skip map[string]bool) Schema {
 
 		props[f.Key] = sc
 
-		if f.Required {
+		if f.Required || s.outputs != nil && !s.input && !f.optional {
 			required = append(required, f.Key)
 		}
 	}
@@ -253,6 +272,9 @@ type Field struct {
 	Doc      string
 	// Example is the raw `example` struct tag; ExampleValue decodes it.
 	Example string
+	// optional: a response may leave the key out or send null (a pointer,
+	// omitempty, omitzero, or promoted through an embedded pointer).
+	optional bool
 }
 
 // ExampleValue decodes the field's `example` tag into a value of the
@@ -316,9 +338,10 @@ func Fields(t reflect.Type) []Field {
 		}
 
 		key := f.Name
+		optional := f.Type.Kind() == reflect.Pointer
 
 		if tag, ok := f.Tag.Lookup("json"); ok {
-			name, _, _ := strings.Cut(tag, ",")
+			name, opts, _ := strings.Cut(tag, ",")
 			if name == "-" {
 				continue
 			}
@@ -326,6 +349,14 @@ func Fields(t reflect.Type) []Field {
 			if name != "" {
 				key = name
 			}
+
+			for o := range strings.SplitSeq(opts, ",") {
+				optional = optional || o == "omitempty" || o == "omitzero"
+			}
+		}
+
+		for i := 1; i < len(f.Index); i++ {
+			optional = optional || t.FieldByIndex(f.Index[:i]).Type.Kind() == reflect.Pointer
 		}
 
 		rules := splitRules(f.Tag.Get("validate"))
@@ -333,7 +364,7 @@ func Fields(t reflect.Type) []Field {
 
 		out = append(out, Field{
 			Key: key, Type: f.Type, Rules: rules, Required: has(value, "required"),
-			Doc: f.Tag.Get("doc"), Example: f.Tag.Get("example"),
+			Doc: f.Tag.Get("doc"), Example: f.Tag.Get("example"), optional: optional,
 		})
 	}
 
