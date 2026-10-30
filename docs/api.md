@@ -142,6 +142,8 @@ Default: **no envelope** for single resources; collections and pages use:
 page, err := orm.QueryOf[models.Product](db).CursorPaginate(ctx, c.Query("cursor"), 50, orm.Asc)
 ```
 
+Envelope and problem keys are snake_case by design (`per_page`, `last_page`, `next_cursor`, `request_id`); RFC 9457 fixes the problem members (`type`, `title`, `status`, `detail`, `instance`) anyway. There is no key-case switch: it would desynchronise the generated OpenAPI document. An app with a camelCase contract builds its own envelope with `api.CollectionOf(items, fn, build)`, `api.PageOf(c, page, fn, build)` or `api.CursorOf(c, page, fn, build)`: `build func(data []R, m *api.Meta, l *api.Links) E` receives what `Collection`/`Page`/`Cursor` would write (nil meta and links for a collection) and returns the app's `E`. They return `E` instead of writing it, so a typed handler returns it and the OpenAPI document describes `E` with the app's keys. A generic `E` gets a long component name (`MyPage_<pkg path>.ProductJSON`); declare a named type (`type ProductPage MyPage[ProductJSON]`) for a short one.
+
 ## Query conventions
 
 Opt-in, allowlisted per endpoint (never free-form columns):
@@ -398,7 +400,7 @@ func (g *greeter) Greet(ctx context.Context, req *connect.Request[greetv1.GreetR
 - `grpc.Validate(z.Struct[pkg.Msg](shape))` checks every `*pkg.Msg` request, unary or streamed; keys are the message's proto field names (its Go JSON tags).
 - **Health**: `grpc.Health(r, checker)` mounts `grpc.health.v1.Health` ([grpchealth](https://pkg.go.dev/connectrpc.com/grpchealth)) for load balancers and probes.
 - **Reflection**: `grpc.Reflection(app, r, services...)` mounts `grpc.reflection.v1` and `v1alpha` ([grpcreflect](https://pkg.go.dev/connectrpc.com/grpcreflect)) for `grpcurl` and `buf curl`. It publishes the whole API, so in production it registers nothing and returns false unless `GRPC_INSECURE_REFLECTION_IN_PRODUCTION=true`.
-- **HTTP/2**: native gRPC needs HTTP/2. Outside production the app server also speaks HTTP/2 cleartext (h2c, stdlib `http.Protocols`), so `grpcurl -plaintext localhost:3000 list` works with `vukem serve`. Production expects TLS: terminate it at a proxy that speaks HTTP/2 to the app (h2c with `HTTP_H2C=true`), or serve TLS yourself. gRPC-Web and Connect also work over HTTP/1.1, from browsers too (same-origin, or CORS on the route).
+- **HTTP/2**: native gRPC needs HTTP/2. Outside production the app server also speaks HTTP/2 cleartext (h2c, stdlib `http.Protocols`), so `grpcurl -plaintext localhost:3000 list` works with `vukem serve`. Production expects TLS: terminate it at a proxy that speaks HTTP/2 to the app (h2c with `HTTP_H2C=true`), or serve TLS on the main port with `TLS_CERT_FILE`/`TLS_KEY_FILE` ([HTTPS and HTTP/2](http.md#https-and-http2)). gRPC-Web and Connect also work over HTTP/1.1, from browsers too (same-origin, or CORS on the route).
 - **Own port**: `grpc.Serve(app, addr, h, grpc.ServerOptions{TLS: cfg})` adds a `grpc` runner that serves `h` on its own address next to the HTTP server and stops with the app (graceful drain within `SHUTDOWN_TIMEOUT`). Give it a router that holds only the RPC services, so RPC paths stay off the HTTP port; `grpc.Server(&app.Config, addr, h, opts)` returns the bare `vukem.Runner` and applies the same production rule (a nil config counts as production). With `TLS` set it speaks HTTP/2 and HTTP/1.1 over TLS (`NextProtos` defaults to `h2`, `http/1.1`), otherwise h2c and HTTP/1.1. In production a cleartext server is refused (`grpc.ErrCleartextInProduction`) unless `GRPC_INSECURE_CLEARTEXT=true` (or `ServerOptions.InsecureCleartext`), for a private network or a proxy that terminates TLS and speaks h2c to the port; any other value than `true`/`false` fails boot (`grpc.ErrInvalidInsecureCleartext`). `HTTP_H2C` concerns only the main HTTP server and does not open the gRPC port. It uses the secure timeouts of `vukem.NewHTTPServer` (60s write timeout): long-lived streams need a server of their own.
 - **Header cap**: the port caps request headers (gRPC metadata included) at `vukem.DefaultMaxHeaderBytes` (64 KiB); `HTTP_MAX_HEADER_BYTES` (read by `grpc.Serve`) or `ServerOptions.MaxHeaderBytes` sets 4096–1048576, anything else fails with `grpc.ErrInvalidMaxHeaderBytes`.
 - **Railway**: the public HTTP domain terminates TLS and talks HTTP/1.1 to the app, so only Connect and gRPC-Web reach the HTTP port that way. For native gRPC, put the port behind a TCP proxy and serve TLS yourself (`ServerOptions.TLS`): the TCP proxy forwards raw bytes and terminates no TLS, so a cleartext port there is open to the internet. Between services of one project, private networking (`<service>.railway.internal:<port>`) carries cleartext gRPC with `GRPC_INSECURE_CLEARTEXT=true` and no public exposure.
@@ -459,4 +461,24 @@ for _, p := range grpctest.Protocols() { // grpc, grpc-web, connect, connect+jso
 - **SSE**, WebSockets and broadcasting for server push — [frontend.md](frontend.md#sse).
 - **GraphQL**: `contrib/graphql`, a stdlib schema-first server with typed resolvers, a batching loader over the ORM, limits and persisted queries — [graphql.md](graphql.md).
 - **gRPC**, gRPC-Web and Connect on connect-go: [gRPC](#grpc).
+- **JSON-RPC 2.0**: `jsonrpc`, stdlib only — [JSON-RPC](#json-rpc).
 - **API reference UI**: `apidocs.Serve(app, r, "/docs", apidocs.Config{Theme: "purple"})` renders the document with [Scalar](https://scalar.com) ([details](#api-reference-ui)).
+
+## JSON-RPC
+
+`jsonrpc` serves [JSON-RPC 2.0](https://www.jsonrpc.org/specification) as a plain `http.Handler`, so router middleware (auth, rate limits, request ids, logging, tracing) applies to every call. Site: [JSON-RPC](https://vukem.dev/docs/rest-apis/json-rpc).
+
+```go
+rpc := jsonrpc.NewServer(jsonrpc.Config{Logger: app.Logger}) // MaxBatch 50, MaxBodyBytes 1 MiB by default
+jsonrpc.Method(rpc, "items.get", func(ctx context.Context, p GetItem) (Item, error) { return items.Find(ctx, p.ID) })
+jsonrpc.Method(rpc, "items.delete", deleteItem, canDelete) // jsonrpc.Guard: func(ctx) error, runs first
+r.Handle("POST /rpc", rpc)
+```
+
+- Spec: requests, notifications (no response; a request of only notifications is a 204), batches up to `MaxBatch` (a larger one is refused whole, nothing runs), ids echoed (string, number, null), unknown envelope members are `-32600`, `rpc.` names are reserved.
+- Params: an object, or an array matched to the fields of `P` in order; decoded with `z.For[P]().Strict()` (unknown members and `validate` tag failures are `-32602` with `data.fields`).
+- Errors: `*jsonrpc.Error` as is; `*errs.ValidationError` `-32602`; a 4xx `*errs.HTTPError` `-32000-(status-400)` (404 is `-32004`) with its client-safe message and `data.status`; anything else and panics `-32603` "Internal error", logged with `Config.Logger`, never sent.
+- HTTP: POST with `application/json` only (405, 415), body over `MaxBodyBytes` 413; every JSON-RPC answer, errors included, is a 200.
+- OpenRPC: `rpc.OpenRPC(title, version)` returns the [OpenRPC 1.3.2](https://spec.open-rpc.org) document (one content descriptor per params field, `paramStructure: either`, result schema, named structs in `components.schemas`, the same schemas as the OpenAPI export); golden `jsonrpc/testdata/openrpc.golden.json`.
+- Go client: `c := jsonrpc.NewClient(url, httpClient)`, `jsonrpc.Call[R](ctx, c, method, params)` (an error answer is an `*jsonrpc.Error`; the response id is checked; bodies capped at 10 MiB), `c.Notify(ctx, method, params)`, `c.Header` for credentials. TypeScript clients: generate from the OpenRPC document with OpenRPC tooling; vukem's own client generator covers OpenAPI only.
+- Security: `TestSecurity_A04_JSONRPCBatchLimit`, `TestSecurity_A04_JSONRPCDeepNesting`, `TestSecurity_A05_JSONRPCInternalErrorsHidden`, `TestSecurity_A01_JSONRPCGuards` (a guarded notification never runs), `TestSecurity_A01_JSONRPCNoEnumerationBehindAuth` (put auth on the route so unknown and known methods look alike); `FuzzServer`.

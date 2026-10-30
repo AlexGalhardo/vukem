@@ -1,0 +1,149 @@
+---
+title: Notifications
+description: Store in-app notifications per user with the notify package, show an unread count and a paged list, mark them read, and fan them out to mail and real-time broadcast inside your transaction.
+---
+
+An in-app <Term tip="A short message stored for one user, such as 'Ana replied to your comment', shown behind a bell icon until the user reads it.">notification</Term> tells a user that something happened while they were away. The `notify` package stores them in one table, counts the unread ones for the bell icon, lists them page by page and marks them read. The same call can also email the user and push the notification to an open browser tab.
+
+You will learn:
+
+- how to create the table and send a notification;
+- how the database, mail and broadcast channels behave inside a transaction;
+- how to build the bell icon and the notification page;
+- how notifications stay private to their user;
+- how to prune old rows and test your code.
+
+## The idea
+
+A notification is a Go value with a `Kind` method. `Kind` names it (`comment.replied`) so the front end can pick an icon and a text. The value's [JSON encoding](https://pkg.go.dev/encoding/json) is stored next to it, so the front end gets the details too.
+
+Sending goes through <Term tip="A function that delivers a notification one way: a database row, a mail, a broadcast event.">channels</Term>. You pass the ones you want on each call, so a reply can be stored and broadcast while a payment failure is also emailed.
+
+## Quick start
+
+<Steps>
+
+### Register the migration
+
+```go title="database/migrations/registry.go" nocompile
+notify.Migration("20261029120000_create_notifications_table"),
+```
+
+It creates `notifications`: `id` (a [ULID](/docs/database/migrations), sorted by creation time), `user_id`, `kind`, `data` (JSON), `read_at` (empty while unread) and `created_at`. Run `vukem migrate`.
+
+### Declare a notification
+
+```go title="app/notifications/comment_replied.go"
+package notifications
+
+// CommentReplied tells a post's author about a reply.
+type CommentReplied struct {
+	PostID int64  `json:"post_id"`
+	By     string `json:"by"`
+}
+
+// Kind implements notify.Notification.
+func (CommentReplied) Kind() string { return "comment.replied" }
+```
+
+### Send it
+
+```go title="app/controllers/comments.go"
+nf := notify.New(db, nil)
+
+_, err := nf.Send(ctx, post.AuthorID, notifications.CommentReplied{
+	PostID: post.ID,
+	By:     user.Name,
+}, notify.Database)
+```
+
+</Steps>
+
+## Channels
+
+| Channel | What it does |
+| --- | --- |
+| `notify.Database` | Inserts the row. With `SendTx` it is part of your transaction. |
+| `notify.Mail(mailer, build)` | Calls `build` for a mailable and queues it with [`Mailer.SendLaterTx`](/docs/digging-deeper/mail). `build` returning `nil` skips the mail. |
+| `notify.Broadcast(publisher, channelFor)` | Publishes the stored row as event `Kind` on the channel `channelFor` names. A [`*broadcast.Server`](/docs/digging-deeper/broadcasting) is a publisher. |
+
+Channels run in the order you pass them, and `Send` stops at the first error. Calling `Send` without a channel returns `notify.ErrNoChannels`. A `notify.Channel` is a plain function, so you can write your own.
+
+`notify.Mail` needs a queue. Without one, the mail channel returns `mail.ErrNoQueue`. Decide per user inside `build`: return `nil` for a user without an address or who turned these mails off.
+
+## Inside a transaction
+
+Use `SendTx` when the notification belongs to other writes, such as the reply itself:
+
+```go title="app/controllers/comments.go"
+err := db.Tx(ctx, func(tx *database.Tx) error {
+	if err := comments.Insert(ctx, tx, reply); err != nil {
+		return err
+	}
+
+	_, err := nf.SendTx(ctx, tx, post.AuthorID, notifications.CommentReplied{
+		PostID: post.ID,
+		By:     user.Name,
+	},
+		notify.Database,
+		notify.Mail(mailer, replyMail),
+		notify.Broadcast(hub, func(id string) string { return "private-user." + id }),
+	)
+
+	return err
+})
+```
+
+If the transaction rolls back, nothing is left: no row, no queued mail, no broadcast. The broadcast is published after the commit. A publish error at that point cannot undo the commit, so it is dropped. The row is the source of truth, and the client reloads it.
+
+## The bell icon and the notification page
+
+| Method | Returns |
+| --- | --- |
+| `Unread(ctx, userID)` | how many unread notifications the user has |
+| `List(ctx, userID, cursor, limit)` | one page, newest first, and the cursor of the next page (`""` on the last one). `limit` is clamped to 1 to 100; 0 means 20. Pass `""` as the cursor for the first page. |
+| `MarkRead(ctx, userID, ids...)` | how many of these ids changed from unread to read |
+| `MarkAllRead(ctx, userID)` | how many changed |
+
+```go title="app/controllers/notifications.go"
+page, next, err := nf.List(ctx, user.ID, r.URL.Query().Get("cursor"), 20)
+```
+
+Each `notify.Stored` has `ID`, `UserID`, `Kind`, `Data` (the raw JSON), `ReadAt` (`nil` while unread) and `CreatedAt`, with snake_case JSON tags. You can send it to the browser as it is.
+
+## Security
+
+Every read and write takes the user id and filters by it. Pass the signed-in user's id, never one from the request. A user who sends another user's notification id to `MarkRead` changes nothing, and a forged cursor never reaches another user's rows. The test `TestSecurity_A01_NotifyScopedToUser` holds the package to that.
+
+Broadcast on a private channel (`private-user.7`) with an authorization rule, so only that user receives the event.
+
+## Pruning
+
+`Prune(ctx, cutoff)` deletes notifications created before `cutoff`, read or not, and returns how many. Schedule it:
+
+```go title="routes/schedule.go"
+s.Func("notify:prune", func(ctx context.Context) error {
+	_, err := nf.Prune(ctx, time.Now().AddDate(0, 0, -90))
+	return err
+}).Daily()
+```
+
+## Testing
+
+Run the migration on an in-memory SQLite database, pass a fixed clock to `notify.New`, and assert with `Unread` and `List`:
+
+```go title="app/notifications/notifications_test.go"
+nf := notify.New(db, func() time.Time { return fixed })
+
+if _, err := nf.Send(ctx, "7", CommentReplied{PostID: 1}, notify.Database); err != nil {
+	t.Fatal(err)
+}
+
+if n, _ := nf.Unread(ctx, "7"); n != 1 {
+	t.Errorf("Unread = %d, want 1", n)
+}
+```
+
+## Not included
+
+Per-user channel preferences, SMS and mobile push are not part of the package. Keep preferences in your own table and read them in `build` or before calling `Send`.
