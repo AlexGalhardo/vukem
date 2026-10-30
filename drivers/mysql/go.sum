@@ -1,7 +1,7 @@
 filippo.io/edwards25519 v1.2.0 h1:crnVqOiS4jqYleHd9vaKZ+HKtHfllngJIiOpNpoJsjo=
 filippo.io/edwards25519 v1.2.0/go.mod h1:xzAOLCNug/yB62zG1bQ8uziwrIqIuxhctzJT18Q77mc=
-github.com/AlexGalhardo/vukem v0.33.0 h1:0hqpjUf0uhCuPEI5FPH6bu6jBeijT1P3pEyhSnrrIgw=
-github.com/AlexGalhardo/vukem v0.33.0/go.mod h1:v9Ael5aO/4a5s32Ji/Q7sdZDl/HaA1UpohD5EGsTmk8=
+github.com/AlexGalhardo/vukem v0.34.0 h1:tbN+krAnQrcQAikdbuVJY115fPIx3kFiiBWKujjR1B4=
+github.com/AlexGalhardo/vukem v0.34.0/go.mod h1:o/gWXZ/j4pgc/zpjQ50cQSj52Mh+xSZKEronjUBtOhg=
 github.com/dustin/go-humanize v1.1.0 h1:dbKTrvD0klcbBV/h4AWJdMuZogJACoMlvWIWZ5b2xWg=
 github.com/dustin/go-humanize v1.1.0/go.mod h1:hc1CvRkJMsgxqjmjMQF3QNRAZBwY8AXBAzKYoSX9sFI=
 github.com/go-sql-driver/mysql v1.10.1 h1:arlSnNLq6a5yxGxV7qg9lF4j0C+KwD6NbQyKr9QL6ME=
