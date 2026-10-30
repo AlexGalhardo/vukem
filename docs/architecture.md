@@ -66,6 +66,7 @@ vukem/                            module github.com/AlexGalhardo/vukem
 │   ├── cloudflare/               module …/contrib/cloudflare (client IP ranges, origin lock, stdlib)
 │   ├── graphql/                  module …/contrib/graphql (stdlib GraphQL server)
 │   ├── grpc/                     module …/contrib/grpc (gRPC, gRPC-Web, Connect on connect-go)
+│   ├── http3/                    module …/contrib/http3 (HTTP/3 over QUIC on quic-go)
 │   └── stripe/                   module …/contrib/stripe (Stripe API + webhooks, stdlib)
 ├── starters/                     app skeletons embedded by `vukem new`
 ├── docs/
@@ -100,6 +101,7 @@ Package names are short, lowercase, singular and never `util`/`common`/`helpers`
 | none (stdlib only) | `contrib/cloudflare` | Cloudflare client IP ranges and origin lock |
 | none (stdlib only) | `contrib/graphql` | GraphQL server; gqlgen/graphql-go are not used |
 | `connectrpc.com/connect` (+ `grpchealth`, `grpcreflect`), `google.golang.org/protobuf`, `google.golang.org/genproto/googleapis/rpc` | `contrib/grpc` | gRPC, gRPC-Web and Connect on `net/http`; health, reflection, `google.rpc.BadRequest` details |
+| `github.com/quic-go/quic-go` `v0.64.1` | `contrib/http3` | HTTP/3 and QUIC: the stdlib has no HTTP/3 server and `golang.org/x/net/quic` is not yet covered by the Go security policy (checked 2026-10-29); owner approval in VF-057 |
 | `golang.org/x/image` | `contrib/imaging` | WebP decoding and high-quality scaling (`draw.CatmullRom`) for thumbnails; the stdlib has neither. Neither has a WebP encoder, so thumbnails are JPEG or PNG (byte-identical for one Go toolchain, `TestThumbnailIsDeterministic`) |
 | `github.com/go-chi/chi/v5`, `github.com/labstack/echo/v5` | `internal/bench` (bench only) | Comparative benchmarks ([performance.md](performance.md)); never imported by core or drivers |
 

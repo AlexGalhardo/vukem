@@ -36,7 +36,9 @@ Every page shows "Last updated" with the date and time of the last commit that t
 
 - At build time `lib/last-updated.ts` runs `git log` over `content/` once (`lib/git-dates.ts`).
 - Vercel clones shallowly (and may not ship `.git` at all). Commits at the shallow boundary are ignored, because git reports them as touching every file, and any page git cannot date falls back to the committed `content/last-updated.json`. If neither has the file, the line is hidden.
-- Refresh the fallback map with `npm run last-updated` (from a clone with full history) and commit it, e.g. before a release. Pages changed after the last refresh still get the right date from git whenever the deploy's clone contains that commit.
+- Refresh the fallback map with `npm run last-updated` (from a clone with full history: `git fetch --unshallow` first if needed) and commit it.
+
+Rule: Any PR that adds, changes or removes a page under `site/content/docs/` must refresh `site/content/last-updated.json` (`npm run last-updated` in `site/`, from a clone with full history) in the same PR. The "Last updated" date is part of the page contract; never edit it by hand. CI enforces it (`Site / Last updated`). Locally, `npm run check:last-updated -- origin/main` runs the same check (`npm run test:scripts` tests it). Release checklist: refresh `last-updated.json` before tagging ([maintenance](../docs/maintenance.md#release-routine)).
 
 ## Language
 

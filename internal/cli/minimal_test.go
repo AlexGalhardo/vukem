@@ -69,7 +69,7 @@ func TestNewMinimalProjectEndToEnd(t *testing.T) {
 		cmd.Dir = project
 		cmd.Env = append(os.Environ(), "GOWORK=off")
 
-		out, err := cmd.CombinedOutput()
+		out, err := combinedOutput(cmd)
 		if err != nil {
 			t.Fatalf("go %s: %v\n%s", strings.Join(args, " "), err, out)
 		}

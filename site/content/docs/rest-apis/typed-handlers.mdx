@@ -222,6 +222,31 @@ Your function returns `(Out, error)`.
 
 When the status is `204`, the output value is not written even if `Out` has fields. An `Out` of `struct{}` never has a body: with `Op.Status` set (for example `202 Accepted`), the response carries that status and no body. A `201` from a typed handler has no `Location` header; if clients need one, write a plain handler with `c.Created`.
 
+### Finishing the response yourself
+
+A handler may write the response itself, for example a `304 Not Modified` for a conditional GET or a `301` to a new URL. Return the zero `Out` and a nil error: once the response is written, nothing else is validated or written.
+
+```go title="app/controllers/apiv1/items.go"
+func (i *Items) Show(c *web.Ctx, in requests.ItemID) (resources.ItemJSON, error) {
+	item, err := i.find(c, in.Item)
+	if err != nil {
+		return resources.ItemJSON{}, err
+	}
+
+	if item.MergedInto != "" {
+		target := "/api/v1/items/" + item.MergedInto
+
+		return resources.ItemJSON{}, c.RedirectStatus(http.StatusMovedPermanently, target)
+	}
+
+	if c.NotModified(item.ETag(), item.UpdatedAt) {
+		return resources.ItemJSON{}, nil // 304 already sent
+	}
+
+	return resources.Item(item), nil
+}
+```
+
 ```go title="app/controllers/apiv1/tasks.go"
 // Destroy deletes a task: struct{} output means 204.
 func (t *Tasks) Destroy(
@@ -331,7 +356,7 @@ func TestStoreTask(t *testing.T) {
 }
 ```
 
-Tests run with `APP_ENV=test`, so `ValidateResponse` checks are on, and `AssertMatchesOpenAPI()` checks the body against the [generated document](/docs/rest-apis/openapi). See [Testing](/docs/testing/overview).
+Tests run with `APP_ENV=test`, so `ValidateResponse` checks are on, and `AssertMatchesOpenAPI()` checks the body against the [generated document](/docs/rest-apis/openapi). When the app also has web routes whose names repeat inside groups (`dashboard` and `admin.dashboard`), their operationIds collide and the document cannot be built: set `OPENAPI_PREFIX=/api/v1` in the test environment so the document only covers the API. See [Testing](/docs/testing/overview).
 
 ## Common mistakes
 
