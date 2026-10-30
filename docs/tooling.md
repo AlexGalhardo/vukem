@@ -134,7 +134,8 @@ The template lives in `.config/cliff.toml` (git-cliff is called with `--config .
 | `release.yml` | tag `v*`, manual (`version` input) | GoReleaser binaries, SBOMs, cosign keyless signature, build provenance |
 | `codeql.yml` | push, weekly | CodeQL Go |
 | `scorecard.yml` | push to `main`, weekly | OpenSSF Scorecard |
-| `site.yml` | push to `main` and PRs touching `site/**` or `CHANGELOG.md` | docs site `npm ci`, lint and `next build` (Vercel only builds after the push, so MDX errors are caught here first) |
+| `site.yml` | push to `main` and PRs touching `site/**` or `CHANGELOG.md` | docs site `npm ci`, lint, `next build`, and `Last updated` (every docs page, full git history) |
+| `docs-last-updated.yml` | every push to `main`, every PR, manual | `Last updated` for every docs page, so a missing date fails even when the PR does not touch `site/` |
 | Dependabot | weekly | `gomod` (all modules, prefix `build(deps)`), `npm` (`site/`), `docker` (`docs/media`), `github-actions` (prefix `ci`) |
 
 Workflows declare `permissions: contents: read` at the top; jobs widen it only for what they write. Every action is pinned by full commit SHA with a `# vX.Y.Z` comment (Dependabot bumps both), and tools fetched in workflows use exact versions (`govulncheck@v1.9.0`, `@redocly/cli@1.34.3`), never `@latest`.
