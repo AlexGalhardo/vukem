@@ -193,13 +193,17 @@ func RecoveryCodes(n int) (plain, hashes []string, err error) {
 		c := s[:5] + "-" + s[5:]
 
 		plain = append(plain, c)
-		hashes = append(hashes, hashCode(c))
+		hashes = append(hashes, HashRecoveryCode(c))
 	}
 
 	return plain, hashes, nil
 }
 
-func hashCode(c string) string {
+// HashRecoveryCode returns the stored form of a recovery code, as
+// RecoveryCodes returns it: hex SHA-256 of "totp-recovery:" followed by the
+// code trimmed and upper-cased. Use it to import codes generated elsewhere
+// (another auth system) so UseRecoveryCode accepts them.
+func HashRecoveryCode(c string) string {
 	sum := sha256.Sum256([]byte("totp-recovery:" + strings.ToUpper(strings.TrimSpace(c))))
 	return hex.EncodeToString(sum[:])
 }
@@ -207,7 +211,7 @@ func hashCode(c string) string {
 // UseRecoveryCode reports whether code matches one of hashes and returns
 // the hashes left after consuming it (store them).
 func UseRecoveryCode(code string, hashes []string) ([]string, bool) {
-	h := hashCode(code)
+	h := HashRecoveryCode(code)
 	idx := -1
 
 	for i, stored := range hashes {

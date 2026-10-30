@@ -9,8 +9,10 @@ Shipped:
 - `cloudflare.FetchRanges(ctx, client, urls...)` downloads the current lists (64 KiB cap; a list that does not parse, is empty or contains a `/0` is an error) so a scheduled job can warn when the embedded copy is stale. The ranges in a running app change with module upgrades, not at runtime.
 - Origin lock: `cloudflare.OriginLock(allow ...netip.Prefix)` answers 403 to every request whose TCP peer is outside Cloudflare's ranges and `allow` (for example the network a platform health check comes from), so nobody bypasses Cloudflare's WAF and rate limits by calling the origin. It reads the peer address only, never a header. `cloudflare.FromCloudflare(r)` reports the same check.
 
-Limits: both checks need Cloudflare to be the TCP peer of the app. Behind another proxy (a platform load balancer between Cloudflare and the app) the peer is that proxy: trust it with `TRUSTED_PROXIES` instead, and lock the origin at that proxy or with Authenticated Origin Pulls.
+- Visitor headers: `cloudflare.Headers()` middleware puts a `cloudflare.Visitor` in the request context (`cloudflare.VisitorFrom(ctx)`): `Country` (`CF-IPCountry`, ISO 3166-1 alpha-2, `XX` unknown, `T1` Tor), `Ray` (`CF-Ray`), `BotScore` (`cf-bot-score`, 1-99) and `VerifiedBot` (`cf-verified-bot`), the last two only with Bot Management's "Add bot protection headers" Managed Transform (<https://developers.cloudflare.com/rules/transform/managed-transforms/reference/>, read 2026-10-29). The headers are read only from a Cloudflare peer; from any other peer `VisitorFrom` reports false. Malformed values are dropped.
 
-Planned in VF-052 (separate pull requests): Turnstile verification, bot and geo headers as context values, CDN cache-control helpers and a purge client, Cloudflare Access JWT validation.
+Limits: the checks need Cloudflare to be the TCP peer of the app. Behind another proxy (a platform load balancer between Cloudflare and the app) the peer is that proxy: trust it with `TRUSTED_PROXIES` instead, and lock the origin at that proxy or with Authenticated Origin Pulls.
 
-Tests: `TestSecurity_A05_OriginLockRefusesDirectRequests`, `TestSecurity_A01_TrustedProxiesFromOption` (core), `TestFetchRanges`, `FuzzParseRanges`.
+Turnstile: use core `challenge.Turnstile` with `Hostname` and `Action` set. Planned in VF-052 (separate pull requests): CDN cache-control helpers and a purge client, Cloudflare Access JWT validation.
+
+Tests: `TestSecurity_A05_OriginLockRefusesDirectRequests`, `TestSecurity_A01_VisitorHeadersOnlyFromCloudflare`, `TestVisitorFromCloudflare`, `TestSecurity_A01_TrustedProxiesFromOption` (core), `TestFetchRanges`, `FuzzParseRanges`.

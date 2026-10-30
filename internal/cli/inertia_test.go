@@ -81,7 +81,7 @@ func TestNewInertiaProjectEndToEnd(t *testing.T) {
 				cmd.Dir = project
 				cmd.Env = append(os.Environ(), "GOWORK=off")
 
-				if out, err := cmd.CombinedOutput(); err != nil {
+				if out, err := combinedOutput(cmd); err != nil {
 					t.Fatalf("%s %v: %v\n%s", name, args, err, out)
 				}
 			}

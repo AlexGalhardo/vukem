@@ -1,6 +1,8 @@
 package vukem
 
 import (
+	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -58,6 +60,23 @@ func WithSource(src *config.Source) Option {
 // WithEnv loads configuration from fsys (.env files) and getenv.
 func WithEnv(fsys fs.FS, getenv func(string) (string, bool)) Option {
 	return func(o *options) error { o.fsys, o.getenv = fsys, getenv; return nil }
+}
+
+// WithTLSConfig serves HTTPS on PORT with cfg (a clone): HTTP/2 over ALPN
+// h2 plus HTTP/1.1. cfg must carry a certificate (Certificates,
+// GetCertificate or GetConfigForClient, e.g. from autocert); MinVersion
+// defaults to TLS 1.2 and lower is a boot error. TLS_CERT_FILE and
+// TLS_KEY_FILE do the same from PEM files and exclude a certificate here.
+func WithTLSConfig(cfg *tls.Config) Option {
+	return func(o *options) error {
+		if cfg == nil {
+			return errors.New("vukem: WithTLSConfig: nil config")
+		}
+
+		o.tlsConfig = cfg
+
+		return nil
+	}
 }
 
 // WithLogger sets the logger instead of building one from configuration.

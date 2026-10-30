@@ -399,6 +399,24 @@ func RequireEditor(next http.Handler) http.Handler {
 }
 ```
 
+### One error handler per group
+
+An API group and the web pages often need different errors: the API adds a `code` member or a `Cache-Control` header, the pages keep the HTML error pages. `ErrorHandler` on a [group](/docs/basics/routing) replaces the handler for that group's routes and its nested groups. It receives the handler that would run otherwise (an outer group's, `Services.Errors`, or `web.DefaultErrorHandler`), so you may decorate the response and hand the error on:
+
+```go title="routes/api.go"
+r.Group("/api/v1", func(api *router.Group) {
+	api.Use(auth.Required(apiGuard))
+	api.Get("/items/{item}", items.Show)
+}).ErrorHandler(func(next web.ErrorHandler) web.ErrorHandler {
+	return func(c *web.Ctx, err error) {
+		c.Writer().Header().Set("Cache-Control", "no-store")
+		next(c, err)
+	}
+})
+```
+
+It covers errors that handlers return and failures that the group's middleware renders with `web.Fail` (here, the `401` of `auth.Required`). Requests that match no route (`404`, `405`) keep the router's handler, because they belong to no group. The function you pass runs on every request of the group, so keep it cheap.
+
 ## Panics, database errors and unknown routes
 
 - **Panics.** `middleware.Recover()` (installed by `vukem.DefaultMiddleware`) turns a [panic](https://go.dev/blog/defer-panic-and-recover) into a 500 through the error handler. It logs `panic recovered` with the stack trace on the server only. `http.ErrAbortHandler` is re-panicked, as `net/http` expects.

@@ -3,6 +3,7 @@ package vukemtest
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -15,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/AlexGalhardo/vukem/auth"
+	"github.com/AlexGalhardo/vukem/openapi"
 )
 
 // Client sends in-process requests to the app and keeps cookies between
@@ -461,11 +463,18 @@ func (r *Response) JSONPath(path string) (any, bool) {
 
 // AssertMatchesOpenAPI checks the response against the app's OpenAPI
 // document (App.OpenAPI): the operation for the request, the schema of the
-// response status (or the default problem response).
+// response status (or the default problem response). The document honours
+// OPENAPI_PREFIX: an app whose web and API routes share local names (the
+// operationIds) sets it to the API group, or the document cannot be built.
 func (r *Response) AssertMatchesOpenAPI() *Response {
 	r.t.Helper()
 
 	doc, err := r.client.app.OpenAPI()
+	if errors.Is(err, openapi.ErrDuplicateOperationID) {
+		r.fail("OpenAPI document: %v\n(a router mixing web and API routes needs OPENAPI_PREFIX "+
+			"(Config.OpenAPIPrefix) set to the API group, e.g. /api/v1, in the test app)", err)
+	}
+
 	if err != nil {
 		r.fail("OpenAPI document: %v", err)
 	}

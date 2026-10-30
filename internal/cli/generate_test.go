@@ -164,7 +164,7 @@ func TestGeneratedStubsPassRepositoryLint(t *testing.T) {
 			tidy.Dir = dir
 			tidy.Env = append(os.Environ(), "GOWORK=off", "GOFLAGS=-mod=mod")
 
-			if out, err := tidy.CombinedOutput(); err != nil {
+			if out, err := combinedOutput(tidy); err != nil {
 				t.Fatalf("go mod tidy: %v\n%s", err, out)
 			}
 
