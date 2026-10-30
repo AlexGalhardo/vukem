@@ -262,6 +262,9 @@ var generated = []string{
 	"app/policies/registry.go",
 	"app/mail/welcome.go",
 	"resources/views/mail/welcome.html",
+	"app/mail/react_welcome.go",
+	"resources/js/emails/react_welcome.tsx",
+	"resources/js/emails/go.ts",
 	"app/events/order_shipped.go",
 	"app/listeners/notify_customer.go",
 	"app/listeners/registry.go",
@@ -293,6 +296,7 @@ func runGenerators(t *testing.T, dir string) {
 		{"make:model", "User"},
 		{"make:policy", "PostPolicy"},
 		{"make:mail", "WelcomeMail"},
+		{"make:mail", "ReactWelcome", "--react"},
 		{"make:event", "OrderShipped"},
 		{"make:listener", "NotifyCustomer", "--event", "OrderShipped", "--async"},
 		{"make:listener", "UpdateStock", "--event", "OrderShipped", "--queued"},
@@ -598,7 +602,7 @@ func TestGeneratedProjectBuilds(t *testing.T) {
 		cmd.Dir = dir
 		cmd.Env = append(os.Environ(), "GOWORK=off", "GOFLAGS=-mod=mod")
 
-		if out, err := cmd.CombinedOutput(); err != nil {
+		if out, err := combinedOutput(cmd); err != nil {
 			t.Fatalf("go %v: %v\n%s", args, err, out)
 		}
 	}

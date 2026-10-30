@@ -81,7 +81,7 @@ func TestNewInertiaProjectEndToEnd(t *testing.T) {
 				cmd.Dir = project
 				cmd.Env = append(os.Environ(), "GOWORK=off")
 
-				if out, err := cmd.CombinedOutput(); err != nil {
+				if out, err := combinedOutput(cmd); err != nil {
 					t.Fatalf("%s %v: %v\n%s", name, args, err, out)
 				}
 			}
@@ -92,6 +92,11 @@ func TestNewInertiaProjectEndToEnd(t *testing.T) {
 				!strings.Contains(out, "created resources/js/pages/Auth/TwoFactorChallenge.") ||
 				!strings.Contains(out, "updated app/controllers/account/account.go") {
 				t.Fatalf("install:auth --2fa = %d\n%s%s", code, out, errOut)
+			}
+
+			if code, out, errOut := vukem(t, project, "install:auth", "--passkeys"); code != 0 ||
+				!strings.Contains(out, "created routes/passkeys.go") {
+				t.Fatalf("install:auth --passkeys = %d\n%s%s", code, out, errOut)
 			}
 
 			if _, err := os.Stat(filepath.Join(project, "resources", "views", "auth")); err == nil {

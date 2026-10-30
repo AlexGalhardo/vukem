@@ -7,6 +7,7 @@ Usage:
   serve                        Run the app (HTTP, scheduler) and restart it when Go files change
   build                        Build assets (Vite) and a production binary in bin/
   version                      Print the vukem version
+  doctor                       Report the optional tools the project uses (Betterleaks) and their versions
  install
   install:auth                 Add login, registration, password reset and email verification
   install:api                  Add API tokens, /api/v1 routes, CORS and rate limiting

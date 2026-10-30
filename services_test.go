@@ -309,6 +309,37 @@ func TestMailerUsesAppViews(t *testing.T) {
 	}
 }
 
+type reactHello struct{ Name string }
+
+func (reactHello) Envelope() mail.Envelope { return mail.Envelope{To: []string{"a@example.com"}} }
+func (m reactHello) Content() mail.Content { return mail.React("hello", m) }
+
+func TestMailerUsesReactEmails(t *testing.T) {
+	t.Parallel()
+
+	arr := mail.NewArray()
+	app, err := New(WithSource(testSource(nil)), WithLogger(discardLogger()), WithMailTransport(arr),
+		WithViews(fstest.MapFS{"layouts/app.html": {Data: []byte(`<main>{{block "content" .}}{{end}}</main>`)}}),
+		WithReactEmails(fstest.MapFS{"hello.html": {Data: []byte(`<!DOCTYPE html><html><p>Hi {{.Name}}</p></html>`)}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	m, err := app.Mailer()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := m.Send(t.Context(), reactHello{Name: "<b>"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// No app layout around the exported document; the prop is escaped.
+	if sent := arr.Sent(); len(sent) != 1 || sent[0].HTML != "<!DOCTYPE html><html><p>Hi &lt;b&gt;</p></html>" {
+		t.Fatalf("sent = %+v", sent)
+	}
+}
+
 func typeName(v any) string {
 	return strings.ReplaceAll(fmtType(v), "github.com/AlexGalhardo/vukem/", "")
 }

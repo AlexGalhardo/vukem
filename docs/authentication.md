@@ -69,6 +69,7 @@ Every guard that authenticates a request also records `auth.Principal(ctx)` (`gu
 - A user type implementing `SessionVersioner` (`AuthSessionVersion() int64`) has its version recorded on login; a session whose version no longer matches the user's is signed out on its next request, whatever the session driver. Bump the version to end every session; `RefreshSession(c)` re-records it in the current session when that one must stay, and re-issues its remember-me token. Remember-me tokens are bound to the version they were issued under: a bump also ends remember-me logins. `SessionValues(guard, user)` returns what `Login` stores. A stale session is invalidated whole. Declare `AuthSessionVersion` on the value receiver: `NewSessionGuard` panics when only `*U` implements it. Existing apps add a `users.session_version` column (`BIGINT DEFAULT 0`) with a migration before adopting it (see the Sessions page, "Adopting session versions in an existing app").
 - A session whose user no longer exists is forgotten: custom `UserProvider`s must report a missing user from `ByID` as `auth.ErrUserNotFound` (a wrapped `orm.ErrNotFound` or `sql.ErrNoRows` is accepted too). Any other lookup error (database down) is returned as a 503 and `auth.Required` answers with it, keeping the session, so an outage neither logs users out nor sends them to the login page (`TestSecurity_A04_SessionKeptWhenUserLookupFails`).
 - Remember-me: cookie `remember_<guard>` = `<id>.<secret>` (HttpOnly, SameSite=Lax, Secure unless `InsecureCookies`), only `SHA-256(secret)` stored in `remember_tokens`, single use and rotated on every use, 30 days by default (`RememberFor`).
+- Impersonation: `Impersonate(c, target, ttl)` signs the current user (the actor) in as `target` for at most `ttl` (regenerated session id, no remember-me token, security event `auth.impersonation_started`); the caller authorizes the actor (admins only). Nested impersonation and impersonating oneself are refused with `ErrImpersonation` (409). `Impersonator(c)` returns the actor id for a banner. `StopImpersonating(c)` signs the actor back in, unless the actor was deleted or its session version changed meanwhile: then the whole session ends (`ErrUnauthenticated`). Past `ttl` (or with an unreadable deadline) the whole session ends on the next request, never falling back to either user (`TestSecurity_A01_ImpersonationIsBoundedAndReversible`, `TestSecurity_A01_ImpersonationExpiresClosed`, `TestSecurity_A07_StopImpersonatingChecksActorSessionVersion`).
 - Rehash on login when `hasher.NeedsRehash` (e.g. bcrypt → argon2id) and the provider implements `PasswordUpdater`.
 
 ### Token guard (`api`)
@@ -154,6 +155,8 @@ Existing projects created before `routes.All()` get the exact lines to add print
 
 `vukem install:auth --2fa` (also on a project that already ran `install:auth`, like `--social`) adds Fortify-style TOTP two-factor authentication built on `auth/totp` (RFC 6238: SHA-1, 6 digits, 30 s, the authenticator-app defaults), for the HTMX starter and for the Inertia React, Vue and Svelte starters:
 
+Recovery codes are stored as hex SHA-256 of `totp-recovery:` plus the code trimmed and upper-cased; `totp.HashRecoveryCode(code)` returns that form, so codes imported from another auth system work with `totp.UseRecoveryCode`.
+
 ```text
 app/models/two_factor.go                   TwoFactor: the 2FA columns of users (Table() = "users")
 app/accounts/two_factor.go                 enable, confirm, verify, recovery codes, disable, pending login
@@ -194,7 +197,41 @@ The raw SVG is inserted with `template.HTML` (HTMX) or the framework's raw-HTML 
 - `rp.VerifyRegistration(challenge, user, body)` checks the browser's `credential.toJSON()` and returns the `Credential` to store (id, COSE public key, algorithm, sign count, user handle, backup flags, transports).
 - `ParseAssertion(body)` exposes the credential id and user handle for the lookup; `rp.VerifyAssertion(challenge, cred, a)` returns the credential with the new sign count to save.
 
-Checks and errors: challenge (`ErrChallenge`, an empty stored challenge never matches), origin and cross-origin iframes (`ErrOrigin`), RP ID hash (`ErrRPID`), user presence and verification (`ErrUserPresence`, `ErrUserVerification`), attestation format (`ErrUnsupportedAttestation`), key type and algorithm agreement (`ErrUnsupportedKey`), credential id and user handle (`ErrCredential`), signature (`ErrSignature`), sign count regression (`ErrSignCount`, both counters at 0 is a synced passkey). The app pulls the challenge out of the session before verifying (single use), throttles the endpoints and keeps a recovery path. The `install:auth --passkeys` scaffold is planned (VF-001). Site page: `site/content/docs/security/passkeys.mdx`.
+Checks and errors: challenge (`ErrChallenge`, an empty stored challenge never matches), origin and cross-origin iframes (`ErrOrigin`), RP ID hash (`ErrRPID`), user presence and verification (`ErrUserPresence`, `ErrUserVerification`), attestation format (`ErrUnsupportedAttestation`), key type and algorithm agreement (`ErrUnsupportedKey`), credential id and user handle (`ErrCredential`), signature (`ErrSignature`), sign count regression (`ErrSignCount`, both counters at 0 is a synced passkey). The app pulls the challenge out of the session before verifying (single use), throttles the endpoints and keeps a recovery path. Site page: `site/content/docs/security/passkeys.mdx`.
+
+`auth/webauthn/webauthntest` is a software passkey for tests: `webauthntest.New(origin)`, then `Create(optionsJSON)` and `Get(optionsJSON)` return the JSON the browser would post (ES256, attestation `none`, user verified, sign count +1 per `Get`).
+
+### `install:auth --passkeys`
+
+`vukem install:auth --passkeys` (also on a project that already ran `install:auth`) adds passkey sign-in next to the password, for every starter (the endpoints answer JSON, so the page that calls them is yours):
+
+- Migration: `users.passkey_handle` (random user handle, set on first use) and `passkey_credentials` (`user_id`, unique base64url `credential_id`, COSE `public_key`, `algorithm`, `sign_count`, `user_handle`, backup flags, `transports`, `name`, `last_used_at`).
+- `accounts.NewPasskeys(acc, app)`: the relying party comes from `APP_URL` (host = RP ID, origin = the only allowed origin) and `Validate` runs at boot, so plain `http` on a public host is a boot error.
+- Routes (`routes/passkeys.go`): `GET /user/passkeys` (list), `POST /user/passkeys/options` (needs `password`), `POST /user/passkeys` (`name` + `credential`), `POST /user/passkeys/{id}/delete` (needs `password`), `POST /passkeys/login/options` and `POST /passkeys/login` (answers `{"redirect": ...}`). Settings routes need a verified user; password checks are limited to 5 per minute per user + IP, sign-in to 10 per minute per IP.
+- Each challenge is pulled out of the session before verifying (single use); the sign count is saved with a compare-and-set, so two requests with one assertion cannot both pass; every refused ceremony answers the same 422 on `credential` and logs `auth.passkey_failed` with the reason.
+- Recovery path: a passkey is added and removed only after the current password is confirmed, and password sign-in and reset stay on, so losing a device never locks the account. Social-only users set a password (forgot password) first. A passkey sign-in with user verification counts as two factors: users with `--2fa` skip the code step.
+- Generated tests (`tests/passkeys_test.go`) drive real ceremonies with `auth/webauthn/webauthntest`, a software ES256 passkey: `TestPasskeySignIn`, `TestSecurity_A07_PasskeyChallengeIsSingleUse` (replayed registration and sign-in, older challenge), `TestSecurity_A07_PasskeyIsScopedToItsUser` (another user's passkey is not listed nor deletable, an unregistered credential does not sign in) and `TestSecurity_A07_PasskeyChangesNeedThePassword`.
+
+Browser side:
+
+```ts
+// Add a passkey (signed in; the password is confirmed first).
+const opts = await post("/user/passkeys/options", { password });
+const created = await navigator.credentials.create({
+  publicKey: PublicKeyCredential.parseCreationOptionsFromJSON(opts),
+});
+await post("/user/passkeys", { name: "Laptop", credential: created.toJSON() });
+
+// Sign in (usernameless).
+const req = await post("/passkeys/login/options", {});
+const got = await navigator.credentials.get({
+  publicKey: PublicKeyCredential.parseRequestOptionsFromJSON(req),
+});
+const { redirect } = await post("/passkeys/login", got.toJSON());
+location.assign(redirect);
+```
+
+`post` is your `fetch` wrapper that sends JSON with the CSRF token header and returns the parsed body.
 
 ## Social login (`social`)
 

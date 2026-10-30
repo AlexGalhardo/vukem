@@ -239,7 +239,7 @@ func TestNewProjectEndToEnd(t *testing.T) {
 	cmd.Dir = project
 	cmd.Env = append(os.Environ(), "GOWORK=off")
 
-	if out, err := cmd.CombinedOutput(); err != nil {
+	if out, err := combinedOutput(cmd); err != nil {
 		t.Fatalf("starter tests: %v\n%s", err, out)
 	}
 
@@ -305,6 +305,14 @@ func TestNewProjectEndToEnd(t *testing.T) {
 		t.Fatalf("second install:auth --2fa = %d %s", code, errOut)
 	}
 
+	// --passkeys adds passkey sign-in next to the password (the generated
+	// TestSecurity_A07_Passkey* tests run below).
+	if code, out, errOut := vukem(t, project, "install:auth", "--passkeys"); code != 0 ||
+		!strings.Contains(out, "created routes/passkeys.go") || strings.Contains(out, "created routes/auth.go") ||
+		!strings.Contains(out, "updated database/migrations/registry.go") {
+		t.Fatalf("install:auth --passkeys = %d\n%s%s", code, out, errOut)
+	}
+
 	if env := read(t, project, ".env.example"); !strings.Contains(env, "SOCIAL_GOOGLE_CLIENT_SECRET=") {
 		t.Fatalf(".env.example = %q", env)
 	}
@@ -357,7 +365,7 @@ func TestNewProjectEndToEnd(t *testing.T) {
 	cmd.Dir = project
 	cmd.Env = append(os.Environ(), "GOWORK=off")
 
-	if out, err := cmd.CombinedOutput(); err != nil {
+	if out, err := combinedOutput(cmd); err != nil {
 		t.Fatalf("tests after install:auth: %v\n%s", err, out)
 	}
 
@@ -374,7 +382,7 @@ func TestNewProjectEndToEnd(t *testing.T) {
 		install := exec.CommandContext(t.Context(), npm(), "install", "--no-audit", "--no-fund")
 		install.Dir = project
 
-		if out, err := install.CombinedOutput(); err != nil {
+		if out, err := combinedOutput(install); err != nil {
 			t.Fatalf("npm install: %v\n%s", err, out)
 		}
 
@@ -452,7 +460,7 @@ func requireGeneratedLint(t *testing.T, project, module string) {
 	cmd.Dir = project
 	cmd.Env = append(os.Environ(), "GOWORK=off")
 
-	if out, err := cmd.CombinedOutput(); err != nil {
+	if out, err := combinedOutput(cmd); err != nil {
 		t.Errorf("golangci-lint on the generated project: %v\n%s", err, out)
 	}
 
@@ -527,7 +535,7 @@ func TestNewAPIProjectEndToEnd(t *testing.T) {
 	cmd.Dir = project
 	cmd.Env = append(os.Environ(), "GOWORK=off")
 
-	if out, err := cmd.CombinedOutput(); err != nil {
+	if out, err := combinedOutput(cmd); err != nil {
 		t.Fatalf("API starter tests: %v\n%s", err, out)
 	}
 

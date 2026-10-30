@@ -1,0 +1,67 @@
+package models
+
+import (
+	"encoding/base64"
+	"strings"
+
+	"github.com/AlexGalhardo/vukem/auth/webauthn"
+	"github.com/AlexGalhardo/vukem/orm"
+)
+
+// Passkey is a WebAuthn credential of a user (vukem install:auth
+// --passkeys). Only the name and dates reach JSON.
+type Passkey struct {
+	orm.Model
+
+	UserID         int64        `json:"-"`
+	CredentialID   string       `json:"-"`
+	PublicKey      []byte       `json:"-"`
+	Algorithm      int64        `json:"-"`
+	SignCount      int64        `json:"-"`
+	UserHandle     []byte       `json:"-"`
+	BackupEligible bool         `json:"-"`
+	BackupState    bool         `json:"backed_up"`
+	Transports     string       `json:"-"`
+	Name           string       `json:"name"`
+	LastUsedAt     orm.NullTime `json:"last_used_at"`
+}
+
+// Table maps Passkey to the passkey_credentials table.
+func (Passkey) Table() string { return "passkey_credentials" }
+
+// Credential returns the stored credential for webauthn.
+func (p Passkey) Credential() (webauthn.Credential, error) {
+	id, err := base64.RawURLEncoding.DecodeString(p.CredentialID)
+	if err != nil {
+		return webauthn.Credential{}, err
+	}
+
+	var transports []string
+	if p.Transports != "" {
+		transports = strings.Split(p.Transports, ",")
+	}
+
+	return webauthn.Credential{
+		ID:             id,
+		PublicKey:      p.PublicKey,
+		Algorithm:      p.Algorithm,
+		SignCount:      uint32(p.SignCount), //nolint:gosec // G115: stored from a uint32
+		UserHandle:     p.UserHandle,
+		BackupEligible: p.BackupEligible,
+		BackupState:    p.BackupState,
+		Transports:     transports,
+	}, nil
+}
+
+// PasskeyHandle is the WebAuthn user handle of a user, kept in the users
+// table.
+type PasskeyHandle struct {
+	orm.Model
+
+	Email         string `json:"-"`
+	Name          string `json:"-"`
+	PasskeyHandle []byte `json:"-"`
+}
+
+// Table maps PasskeyHandle to the users table.
+func (PasskeyHandle) Table() string { return "users" }

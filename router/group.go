@@ -19,12 +19,37 @@ type Group struct {
 	// empty host, an error, from no host.
 	host    string
 	hostSet bool
+	// errWrap replaces the error handler of the group's routes
+	// (ErrorHandler).
+	errWrap func(next web.ErrorHandler) web.ErrorHandler
 }
 
 // Use appends middleware applied to every route of the group (including
 // routes registered before the call and in nested groups).
 func (g *Group) Use(mw ...Middleware) *Group {
 	g.mw = append(g.mw, mw...)
+	return g
+}
+
+// ErrorHandler sets how errors are rendered for the group's routes,
+// nested groups included, whether a handler returned them or a middleware
+// failed through web.Fail or web.ServicesFrom. wrap receives the handler
+// that would run otherwise (an outer group's, the router's
+// Services.Errors, or web.DefaultErrorHandler) and returns its
+// replacement, so it may decorate the response and delegate:
+//
+//	api.ErrorHandler(func(next web.ErrorHandler) web.ErrorHandler {
+//		return func(c *web.Ctx, err error) {
+//			c.Writer().Header().Set("Cache-Control", "no-store")
+//			next(c, err)
+//		}
+//	})
+//
+// wrap runs on every request of the group, so keep it cheap. A later call
+// replaces an earlier one; 404 and 405 answers for unmatched paths keep
+// the router's handler.
+func (g *Group) ErrorHandler(wrap func(next web.ErrorHandler) web.ErrorHandler) *Group {
+	g.errWrap = wrap
 	return g
 }
 

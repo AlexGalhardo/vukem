@@ -98,6 +98,7 @@ err = mailer.Send(ctx, Welcome{User: u})
 ```
 
 - Content: `mail.View(name, data)` renders the app's `html/template` view; the text part comes from `<name>_text` when it exists, otherwise from the HTML (links become `text (url)`). `mail.HTML(html, text)` and `mail.Text(text)` for literal bodies. Mail views use `{{/* layout: none */}}` or a mail layout.
+- React Email: `vukem make:mail <Name> --react` writes a `.tsx` component whose default props are Go template actions (`go(".Name")`, `t("key")`); `email export --dir resources/js/emails --outDir resources/emails` (react-email 6.11.6, @react-email/components 1.0.12, pinned exactly) renders it at build time, `vukem.WithReactEmails(fsys)` serves the files without layouts and `mail.React(name, props)` sends them, so `html/template` escapes every prop (`TestSecurity_A03_ReactPropsEscaped`) and no Node process runs on send. HTML comments, including Outlook `<!--[if mso]>` hints, are dropped; the text part is derived without the preview text. Site: [Mail](https://vukem.dev/docs/digging-deeper/mail#react-email-templates).
 - Attachments: implement `Attachments() []mail.Attachment`; inline parts set `Inline` and `ContentID` and are referenced as `cid:...`.
 - Context: implement `EnvelopeContext(ctx) mail.Envelope` (`mail.ContextEnveloper`) to build the envelope from the send's context, e.g. a subject in the request locale with `i18n.T(ctx, key)`. The Mailer calls it instead of `Envelope`, which stays required as the context-free fallback. `SendLater` renders before queueing, so it uses the context of the call. Outside a request (a job, a command) set the recipient's locale first, `ctx = i18n.WithLocale(i18n.WithBundle(ctx, app.I18n), user.Locale)`: the envelope and the view's `t`/`locale` functions read it.
 - Addresses go through `net/mail` (no header injection); subjects, tags and content ids with line breaks are rejected (`TestSecurity_A05_MailHeaderInjection`); `Mailer.Render` checks tags for every transport (non-empty name, no line break or colon), and the Resend transport also enforces Resend's charset (ASCII letters, digits, `_`, `-`) before the request. `Bcc` is never written as a header.
@@ -185,6 +186,18 @@ _, err = flags.Put(ctx, ff, "tenant:7", features.UploadLimitMB, 50)
 - **Admin panel**: `admin.Config{Flags: ff}` adds `/admin/_flags` behind the `manageFlags` gate ability ([admin.md](admin.md#feature-flags)).
 - **Tests**: set `FLAG_<NAME>` in `vukemtest.Options.Env`, or `flags.Put(ctx, ff, flags.Global, features.X, true)` against the test database.
 - Out of scope: percentage rollouts, A/B variants and rule engines; build them in app code over `WithScope` and a flag's value.
+
+## Notifications
+
+Package `notify`: in-app notifications per user (the bell icon), with optional mail and real-time fan-out. Stdlib only; site page `digging-deeper/notifications`.
+
+- `notify.Migration(id)` creates `notifications` (`id` ULID primary key, `user_id` string, `kind`, `data` JSON, `read_at` nullable, `created_at`; index `(user_id, id)`).
+- A notification is any value with `Kind() string` (at most `notify.MaxKind` = 100 bytes); its JSON encoding is stored as `data`.
+- `nf := notify.New(db, now)`; `nf.Send(ctx, userID, n, channels...)` and `nf.SendTx(ctx, tx, userID, n, channels...)` run each channel in order and return the `notify.Stored` row; no channel is `notify.ErrNoChannels`, an empty user id or kind is an error.
+- Channels: `notify.Database` (insert, inside the transaction with `SendTx`), `notify.Mail(mailer, build)` (`Mailer.SendLaterTx`: queued only on commit; `build` returning a nil mailable skips; needs a queue, `mail.ErrNoQueue` otherwise), `notify.Broadcast(publisher, channelFor)` (`*broadcast.Server` fits: publishes event `Kind` with the `Stored` row; inside `SendTx` after the commit, and a publish error then is dropped because the row is the source of truth). A `notify.Channel` is a plain func, so apps add their own.
+- Reads and writes always take the user id (`TestSecurity_A01_NotifyScopedToUser`): `Unread(ctx, userID)`, `List(ctx, userID, cursor, limit)` (newest first, keyset on the ULID id, limit 1..100 with 0 = 20, next cursor `""` on the last page), `MarkRead(ctx, userID, ids...)` (other users' ids are ignored), `MarkAllRead(ctx, userID)`.
+- `Prune(ctx, cutoff)` deletes rows created before `cutoff`, read or not; schedule it: `s.Func("notify:prune", func(ctx context.Context) error { _, err := nf.Prune(ctx, time.Now().AddDate(0, 0, -90)); return err }).Daily()`.
+- Non-goals: per-user channel preferences (decide in `build` or before `Send`), SMS and push.
 
 ## Storage
 
@@ -329,6 +342,14 @@ Package `export` (stdlib only) streams downloads row by row from any `iter.Seq2[
 - Nothing is sent before the first row, so an early query error reaches the error handler. A failure after the first byte drops the connection: HTTP/1.x connections are hijacked and closed and the error wraps `export.ErrIncomplete`; where hijacking is impossible (HTTP/2) the function panics with `http.ErrAbortHandler`, which net/http recovers to reset the stream. A cancelled request context (client gone) returns an error with status 499, logged below error level.
 - `FlushEvery(n)` (500 rows), `WriteTimeout(d)` (1 minute, renewed before writes to the client at most every `d/4` or 1s, cleared at the end, so long exports outlive the server `WriteTimeout`), `WithBOM()` for Excel (CSV only).
 - The file-name sanitizer lives in `internal/disposition` and is shared with `web.Ctx.Download`.
+
+## Sitemaps
+
+Package `sitemap` (stdlib only) streams XML sitemaps for catalogues too large to build in memory (<https://www.sitemaps.org/protocol.html>):
+
+- `sitemap.NewWriter(w)` writes one `<urlset>`; `Add(sitemap.URL{Loc, LastMod, Alternates})` writes a URL with `<lastmod>` (RFC 3339, UTC) and `xhtml:link` hreflang alternates; `Close()` ends it. Wrap `w` in `gzip.NewWriter` for `.xml.gz` chunks.
+- `Add` returns `sitemap.ErrFull` (nothing written) at `MaxURLs` (50,000) or `MaxBytes` (50 MiB uncompressed): close the chunk and start the next one. `sitemap.WriteIndex(w, []sitemap.Sitemap{...})` writes the index of the chunks.
+- Only absolute `http`/`https` URLs of at most 2048 bytes and hreflang tags of letters, digits and `-` are accepted; values are XML-escaped (`TestWriterRejectsInvalidAndStopsWhenFull`). Site page: `site/content/docs/digging-deeper/sitemaps.mdx`.
 
 ## Events
 
@@ -499,7 +520,7 @@ r.UseServer(otel.Middleware(tp)) // or bring your own trace.TracerProvider
 
 ### Database, queue, mail and outbound HTTP
 
-Core exposes neutral hook points and never imports OpenTelemetry: `app.Instrument(vukem.Instrumentation{Queries, Jobs, Mail})` adds a `database.QueryObserver`, a `queue.Observer` and a mail transport wrapper next to devtools, and `httpclient.Options.WrapTransport` wraps a `Safe` client's transport. The wrapper must delegate to the transport it is given, where the SSRF check runs; one returning nil fails every request with `httpclient.ErrNilTransport` instead of falling back to `http.DefaultTransport`. `Instrument` must run before `DB()`, `Queue()` or `Mailer()` is first used, so call it from a provider's `Register`; a late hook fails with `vukem.ErrInstrumentTooLate`. The otel provider treats that as a boot error, not a warning (list `otel.New` first in `WithProviders`): a silently partial trace is harder to notice than a failed boot, and the providers it built are shut down.
+Core exposes neutral hook points and never imports OpenTelemetry: `app.Instrument(vukem.Instrumentation{Queries, Jobs, Mail})` adds a `database.QueryObserver`, a `queue.Observer` and a mail transport wrapper next to devtools, and `httpclient.Options.WrapTransport` wraps a `Safe` client's transport; `httpclient.Throttle` (per-host rate and in-flight bound), `httpclient.Retry` (idempotent requests, `Retry-After`, jittered backoff) and `httpclient.Breaker` (per-host circuit, `ErrCircuitOpen`) are such wrappers, composed outermost-first as `Retry(Breaker(Throttle(rt)))`. The wrapper must delegate to the transport it is given, where the SSRF check runs; one returning nil fails every request with `httpclient.ErrNilTransport` instead of falling back to `http.DefaultTransport`. `Instrument` must run before `DB()`, `Queue()` or `Mailer()` is first used, so call it from a provider's `Register`; a late hook fails with `vukem.ErrInstrumentTooLate`. The otel provider treats that as a boot error, not a warning (list `otel.New` first in `WithProviders`): a silently partial trace is harder to notice than a failed boot, and the providers it built are shut down.
 
 The provider attaches an `otel.Observer` (build one with `otel.NewObserver(tp, opts...)` for a custom setup):
 
