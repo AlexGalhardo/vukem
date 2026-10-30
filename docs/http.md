@@ -163,6 +163,7 @@ type ValidationError struct { Fields map[string][]string }
   - anything else → 500, logged with request id; debug page in development.
 - Content negotiation: `Accept: application/json` or `/api` routes → RFC 9457 problem details (4xx `*HTTPError` extension members from `e.WithExtension(key, value)` / `HTTPError.Extensions` are added next to the standard members, never replacing one; 5xx never carry them); HTMX → fragment/status; `Services.ErrorPage` (a `web.ErrorPageFunc` taking a client-safe `web.ErrorPage{Status, Title, Detail, Errors}`; Inertia requests with `vukem.WithInertia`: the `Error` page component); otherwise HTML.
 - Custom handling per error type: set `Services.Errors` to a `web.ErrorHandler`, match your types with `errors.AsType[*MyErr](err)`, and call `web.DefaultErrorHandler(c, err)` for the rest.
+- Per group: `g.ErrorHandler(func(next web.ErrorHandler) web.ErrorHandler)` replaces the handler for the group's routes and nested groups, for errors returned by handlers and for middleware failures (`web.Fail`); `next` is the outer group's, the router's or the default handler. Unmatched paths (404/405) keep the router's handler. Route handlers read it from a private context key, not from the services in the context, so `auth.ProblemJSON` still only affects middleware errors (`TestGroupErrorHandler`).
 - Panics are recovered by `middleware.Recover` and converted to 500.
 
 ### Debug error page
