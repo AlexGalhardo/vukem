@@ -107,6 +107,7 @@ What Vukem does **by default** to protect applications, mapped to the [OWASP Top
 | htmx is vendored with a pinned version and checksum verified by a test; no CDN by default (`TestVendoredHTMX`) | [x] |
 | `depguard` blocks driver and contrib modules and denied packages in core; other new dependencies go through the [dependency policy](architecture.md#dependency-policy) review (enforced by `.golangci.yml` depguard `core`) | [x] |
 | Starters pin dependency versions in `go.mod` / `go.sum` and pin `govulncheck` v1.9.0 with a `tool` directive (`go tool govulncheck ./...`; the templ starter pins templ the same way) (`TestNewProjectEndToEnd`, `TestNewAPIProjectEndToEnd`, `TestNewTemplProjectEndToEnd`) | [x] |
+| Generated projects scan for leaked secrets with Betterleaks v1.9.0: `.betterleaks.toml` (default rules plus `APP_KEY`, `vk_` API tokens, Stripe `sk_`/`rk_` keys and `whsec_` secrets; placeholder values allowlisted, never paths), a `pre-commit` hook on staged changes (skipped with a message when the binary is missing), a CI job that downloads the release by exact version and sha256, and `vukem doctor`. Live validation against providers stays off (`TestStarterBetterleaksRules`, `TestStarterBetterleaksScan`, `TestNewStandardsFlags`) | [x] |
 
 **App responsibility:** keep running `govulncheck`, review dependency updates, protect CI secrets.
 

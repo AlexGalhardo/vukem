@@ -154,6 +154,8 @@ Existing projects created before `routes.All()` get the exact lines to add print
 
 `vukem install:auth --2fa` (also on a project that already ran `install:auth`, like `--social`) adds Fortify-style TOTP two-factor authentication built on `auth/totp` (RFC 6238: SHA-1, 6 digits, 30 s, the authenticator-app defaults), for the HTMX starter and for the Inertia React, Vue and Svelte starters:
 
+Recovery codes are stored as hex SHA-256 of `totp-recovery:` plus the code trimmed and upper-cased; `totp.HashRecoveryCode(code)` returns that form, so codes imported from another auth system work with `totp.UseRecoveryCode`.
+
 ```text
 app/models/two_factor.go                   TwoFactor: the 2FA columns of users (Table() = "users")
 app/accounts/two_factor.go                 enable, confirm, verify, recovery codes, disable, pending login
