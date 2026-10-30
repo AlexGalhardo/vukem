@@ -1,0 +1,88 @@
+---
+title: Releases and stability
+description: How vukem is versioned and released, what an upgrade may and may not change, how deprecations work, which Go versions are supported, how long a release line gets security fixes, and where the performance baselines live.
+---
+
+Upgrading a framework should be boring. This page tells you what vukem promises across versions, so you can decide how often to upgrade and what to check when you do.
+
+You will learn:
+
+- how versions are numbered and how a release is made;
+- what is covered by the compatibility promise, and what is not;
+- how deprecations and Go version support work;
+- where to find performance baselines.
+
+## Versions
+
+Vukem uses [Semantic Versioning](https://semver.org/): `vMAJOR.MINOR.PATCH`. Until `v1.0.0`, a minor release (`v0.34.0`) may still change APIs; each such change is listed in the changelog with an upgrade guide. From `v1.0.0` on, the promise below applies.
+
+Every release:
+
+- has a section in the [changelog](/changelog), generated from [Conventional Commits](https://www.conventionalcommits.org/), and a GitHub release with the same notes;
+- passes the full CI gate first: lint, tests on Linux, macOS and Windows, the race detector, `govulncheck`, the documentation snippet check and the Postgres integration tests;
+- is an annotated tag pushed on its own; tags never move.
+
+Optional modules (`drivers/*`, `contrib/*`) are released with their own tags (`contrib/stripe/v0.4.1`) and require the core version they were tested with. Upgrade the core first, then the modules.
+
+To upgrade an app:
+
+```bash title="terminal"
+go get github.com/AlexGalhardo/vukem@v0.34.0
+go mod tidy
+go test ./...
+```
+
+## The compatibility promise
+
+Vukem `1.x` follows the [Go 1 compatibility promise](https://go.dev/doc/go1compat): code that builds and passes its tests against `v1.N.M` keeps doing so against every later `v1` release.
+
+Covered:
+
+- every exported identifier of the core module and of each published driver and contrib module: names, signatures, struct fields, interface methods and documented behaviour;
+- CLI commands, flags and the layout `vukem new` generates;
+- configuration keys and their defaults, except security defaults;
+- on-disk formats the framework owns: migration, session, cache, queue and audit tables, encrypted cookies and columns.
+
+A CI gate (`apidiff`) compares every change with the latest release and fails on an incompatible API change.
+
+Not covered:
+
+- packages under `internal/` and identifiers documented as experimental;
+- exact error message text, log output and the HTML of built-in pages;
+- performance characteristics;
+- **security fixes**: when a default is unsafe, it changes in a minor or patch release even if an app relied on it. The changelog lists it under **Security**, with an `Insecure…` opt-out when one is reasonable;
+- bugs: behaviour that contradicts the documentation is fixed.
+
+Any other breaking change waits for a new major version with a new module path (`/v2`).
+
+## Deprecations
+
+- A deprecated identifier has a `// Deprecated:` comment naming its replacement. When the change is mechanical it also has `//go:fix inline`, so `go fix ./...` rewrites your call sites.
+- It stays for at least **two minor releases** and is removed only in the next major version.
+- The changelog lists it under **Deprecated**, and the upgrade guide of that release explains the move.
+
+## Supported Go versions
+
+Each release supports the **two latest Go releases**, like the Go project itself. The minimum Go version in `go.mod` only moves forward in a minor release, and its upgrade guide says so.
+
+## Security fixes
+
+| Release line | Fixes |
+| --- | --- |
+| Latest `v1` minor | all bug and security fixes |
+| Previous `v1` minor | security fixes for 6 months after the next minor ships |
+| `release/1.x` LTS branch | security fixes for 12 months |
+| Latest `v0` minor (until `v1.0.0`) | security fixes, as the next `v0` patch or minor |
+| Older `v0` minors | none: upgrade to the latest `v0` minor |
+
+Report a vulnerability privately as described in the repository's `SECURITY.md`, never in a public issue.
+
+## Performance baselines
+
+The repository keeps benchmark baselines in [`docs/performance.md`](https://github.com/AlexGalhardo/vukem/blob/main/docs/performance.md): routing, middleware, a full request, rendering and the ORM, compared with plain `net/http`, chi and echo, with the commands to reproduce them (`task bench`). Read the ratios and allocation counts there rather than absolute times, which depend on the machine. Performance is not part of the compatibility promise.
+
+## Next steps
+
+- [Changelog](/changelog): what each release changed.
+- [Logging](/docs/deployment/logging): what the app logs in production.
+- [Single binary](/docs/deployment/single-binary): build, health checks and graceful shutdown.

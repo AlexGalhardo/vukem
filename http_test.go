@@ -2025,7 +2025,8 @@ func TestSSRStartRestartsCrashedServer(t *testing.T) { //nolint:paralleltest // 
 			[]string{"-bundle", bundle, "-runtime", os.Args[0], "-restart-delay", "10ms"})
 	}()
 
-	deadline := time.Now().Add(10 * time.Second)
+	// Generous: each run starts the race-built test binary, slow on loaded CI runners.
+	deadline := time.Now().Add(time.Minute)
 	for {
 		b, _ := os.ReadFile(runs)
 		if strings.Count(string(b), bundle) >= 3 {
@@ -2047,8 +2048,10 @@ func TestSSRStartRestartsCrashedServer(t *testing.T) { //nolint:paralleltest // 
 
 	t.Setenv("VUKEM_SSR_EXIT", "0")
 
-	// VF-038 (HexaScore): a bundle that exits at once never served.
-	err := runCommand(t.Context(), app, "ssr:start", []string{"-bundle", bundle, "-runtime", os.Args[0]})
+	// VF-038 (HexaScore): a bundle that exits at once never served. A
+	// minute, not ssrMinUptime: starting the race-built test binary on a
+	// loaded CI runner can take longer than 2s.
+	err := app.superviseSSR(t.Context(), ssrProcess{bundle, os.Args[0], 0, false, time.Minute})
 	if !errors.Is(err, errSSRNoServer) {
 		t.Errorf("immediate clean exit = %v, want errSSRNoServer", err)
 	}
@@ -2099,7 +2102,8 @@ func TestServeWithSSR(t *testing.T) { //nolint:paralleltest // sets process envi
 			"-ssr-restart-delay", "10ms")
 	}()
 
-	deadline := time.Now().Add(10 * time.Second)
+	// Generous: each run starts the race-built test binary, slow on loaded CI runners.
+	deadline := time.Now().Add(time.Minute)
 	for {
 		b, _ := os.ReadFile(runs)
 		if strings.Count(string(b), bundle) >= 3 {
