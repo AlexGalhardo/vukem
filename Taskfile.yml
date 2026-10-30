@@ -4,7 +4,7 @@ version: "3"
 
 vars:
   # Every Go module in the repository (drivers and contrib modules are added as they land).
-  MODULES: ". drivers/postgres drivers/mysql drivers/redis drivers/mongo drivers/otel drivers/s3 drivers/websocket contrib/stripe contrib/cloudflare contrib/graphql contrib/grpc contrib/imaging contrib/engine"
+  MODULES: ". drivers/postgres drivers/mysql drivers/redis drivers/mongo drivers/otel drivers/s3 drivers/websocket contrib/stripe contrib/cloudflare contrib/graphql contrib/grpc contrib/http3 contrib/imaging contrib/engine"
   # Same pin as the apidiff job in .github/workflows/ci.yml (x/exp has no tags).
   APIDIFF_VERSION: v0.0.0-20261014143641-f0251eb4aa3e
 
