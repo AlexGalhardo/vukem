@@ -555,6 +555,17 @@ The result (`imaging.Result`) has `Path`, `Type`, `Width` and `Height`.
 | `imaging.ErrUnsupported` | Not a readable JPEG, PNG, GIF or WebP |
 | `imaging.ErrInvalidOptions` | `MaxWidth`/`MaxHeight` missing or above 16384 (`imaging.MaxSide`), `Quality` outside 0–100, a negative limit, or a `Thumbnails` size name that is not 1–32 letters, digits, `-` or `_` |
 
+### Formats and repeatable output
+
+| | Formats |
+| --- | --- |
+| Read | JPEG, PNG, GIF (first frame), WebP (lossy and lossless) |
+| Written | JPEG, or PNG when the source has transparency |
+
+WebP is read but not written: Go's standard library and `golang.org/x/image` have no WebP encoder, and the framework adds no cgo or extra dependency for one. If you need WebP files, convert the JPEG output with an external tool (for example `cwebp` in a queue job), or serve JPEG.
+
+The same source bytes and the same `Options` give byte-identical output on one Go version, so you may store a hash of a thumbnail and compare it later. A new Go release may change the JPEG or PNG encoder or the scaler and so change the bytes: compare thumbnails by size and appearance across upgrades, not by hash.
+
 On failure the output is removed. `Thumbnails` applies the strictest `MaxPixels` and `MaxBytes` of all sizes to its single decode. One call holds the file plus its decoded pixels, up to about 8 bytes per pixel, so a 25-megapixel image can take around 200 MB and noticeable CPU. For big uploads, make thumbnails in a [queue job](/docs/digging-deeper/queue) with limited concurrency.
 
 ## Configuration

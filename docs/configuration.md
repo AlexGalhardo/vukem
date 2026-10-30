@@ -71,6 +71,7 @@ func (s Secret) MarshalJSON() ([]byte, error) // "\"[redacted]\""
 | `DEVTOOLS` | `false` | `/_vukem` dashboard; a boot error in production ([devtools.md](devtools.md)) |
 | `DEVTOOLS_INSECURE_ALLOW_REMOTE` | `false` | Serve the dashboard to non-loopback clients |
 | `LOG_DEDUP_WINDOW` | `1m` in production, off elsewhere | Repeated identical ERROR records of the default logger become one `repeated` summary per window; `0` disables it ([subsystems.md](subsystems.md#logging--observability)) |
+| `LOG_TRUNCATE_IP` | `false` | The request log writes the /24 (IPv4) or /48 (IPv6) network instead of the client address in `peer` and `ip` (data minimisation); `c.IP()` and rate limits keep the full address |
 | `TRUSTED_PROXIES` | empty (trust nobody) | Comma-separated CIDRs or IPs whose `X-Forwarded-For` sets `c.IP()` (rate limits, login throttles, logs); applied by `vukem.New` to the router's `web.Services`. An invalid entry is a boot error; when it is empty in production, the first request from a private/CGNAT/loopback peer carrying `X-Forwarded-For` or `X-Real-IP` logs one WARN. Railway: `100.64.0.0/24` (the observed edge peer, confirm in your logs) with `CLIENT_IP_HEADER=X-Real-IP` |
 | `CLIENT_IP_HEADER` | empty | A single-IP header set by the trusted proxy (e.g. `X-Real-IP`) that `c.IP()` reads instead of `X-Forwarded-For`, only from `TRUSTED_PROXIES` peers; requires `TRUSTED_PROXIES`, an invalid or list header name is a boot error |
 | `RATE_LIMIT_IPV6_PREFIX` | `64` | Prefix length `ratelimit.ByIP` groups IPv6 clients by (1–128; `128` keys each address); IPv4 stays per address; outside 1–128 is a boot error |
@@ -78,6 +79,8 @@ func (s Secret) MarshalJSON() ([]byte, error) // "\"[redacted]\""
 | `HSTS_FORCE` | `false` | Send HSTS on every response in production, for a TLS proxy whose range cannot be put in `TRUSTED_PROXIES` (`SecureHeadersConfig.HSTSForce`); validated in every environment (a boot error unless `APP_URL` is `https://`), applied only in production (a boot warning otherwise) |
 | `HTTP_MAX_HEADER_BYTES` | `65536` | Cap on the request line plus headers the app server reads (64 KiB; Go's own default is 1 MiB); larger requests get 431; outside 4096–1048576 is a boot error |
 | `HTTP_H2C` | `false` | The app server speaks HTTP/2 without TLS (prior knowledge, for gRPC clients) outside production; `true` enables it in production behind a proxy that speaks h2c ([api.md](api.md#grpc)); a separate `grpc.Serve` port has its own opt-in, `GRPC_INSECURE_CLEARTEXT` |
+| `TLS_CERT_FILE`, `TLS_KEY_FILE` | — | PEM key pair: the app server serves HTTPS on `PORT` with HTTP/2 (ALPN `h2`) and HTTP/1.1, TLS 1.2 minimum, reloaded when a file changes; set both or neither; exclusive with `HTTP_H2C` ([http.md](http.md#https-and-http2)) |
+| `TLS_REDIRECT_ADDR` | — | With TLS on, also listen for plain HTTP on this address (e.g. `:80`) and redirect (308) to `APP_URL`, which must be `https` |
 
 ## App options
 

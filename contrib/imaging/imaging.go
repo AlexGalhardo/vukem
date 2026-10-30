@@ -3,7 +3,10 @@
 // before decoding (decompression bombs), scales the image down to fit a
 // box without upscaling, and stores it as JPEG, or PNG when the source has
 // transparency. Re-encoding drops all metadata (EXIF, GPS). Animated GIFs
-// become a still of their first frame. Peak memory per call is roughly the
+// become a still of their first frame. WebP is decoded only: there is no
+// encoder in the standard library or golang.org/x/image. Output is
+// deterministic for one Go toolchain (same bytes and Options give the same
+// file), not across Go releases. Peak memory per call is roughly the
 // source file plus its decoded pixels (up to ~8 bytes per pixel for 16-bit
 // PNG): bound concurrency, for example by making thumbnails in a queue job.
 //
