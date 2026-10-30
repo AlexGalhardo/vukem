@@ -191,6 +191,31 @@ func newApp(t *testing.T, hasher hash.Hasher, extra ...vukem.Option) *testApp {
 
 					return c.String(200, "hello "+u.Email)
 				}).Use(auth.Required(ta.web))
+				// The app authorizes impersonation (admins only); the
+				// fixture lets any signed-in user do it.
+				r.Post("/impersonate/{id}", func(c *web.Ctx) error {
+					target, err := users.ByID(c.Context(), c.Param("id"))
+					if err != nil {
+						return err
+					}
+
+					if err := ta.web.Impersonate(c, target, 30*time.Minute); err != nil {
+						return err
+					}
+
+					return c.Redirect("/whoami")
+				}).Use(auth.Required(ta.web))
+				r.Post("/impersonate-stop", func(c *web.Ctx) error {
+					if _, err := ta.web.StopImpersonating(c); err != nil {
+						return err
+					}
+
+					return c.Redirect("/whoami")
+				}).Use(auth.Required(ta.web))
+				r.Get("/impersonator", func(c *web.Ctx) error {
+					id, ok := ta.web.Impersonator(c)
+					return c.String(200, fmt.Sprintf("%s %v", id, ok))
+				})
 				r.Get("/whoami", func(c *web.Ctx) error {
 					if u, err := auth.User[User](c, "web"); err == nil {
 						return c.String(200, u.Email)
