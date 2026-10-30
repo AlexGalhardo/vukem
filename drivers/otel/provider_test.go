@@ -401,6 +401,90 @@ func TestProvider_MetricsEndpoint(t *testing.T) {
 	}
 }
 
+func TestProvider_RailwaySignals(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		env         map[string]string
+		wantMetrics bool
+	}{
+		{
+			// Railway injects the shared endpoint for traces. With no
+			// metrics endpoint and an empty exporter, metrics stay off.
+			name: "railway shared endpoint keeps metrics off",
+			env: map[string]string{
+				"RAILWAY_ENVIRONMENT":         "production",
+				"OTEL_EXPORTER_OTLP_ENDPOINT": "http://127.0.0.1:4318",
+			},
+		},
+		{
+			// An explicit otlp exporter still must not export metrics to
+			// the shared endpoint.
+			name: "railway otlp exporter keeps metrics off",
+			env: map[string]string{
+				"RAILWAY_SERVICE_ID":          "svc-1",
+				"OTEL_EXPORTER_OTLP_ENDPOINT": "http://127.0.0.1:4318",
+				"OTEL_METRICS_EXPORTER":       "otlp",
+			},
+		},
+		{
+			name: "railway metrics endpoint still exports",
+			env: map[string]string{
+				"RAILWAY_ENVIRONMENT":                 "production",
+				"OTEL_EXPORTER_OTLP_ENDPOINT":         "http://127.0.0.1:4318",
+				"OTEL_EXPORTER_OTLP_METRICS_ENDPOINT": "http://127.0.0.1:4318/v1/metrics",
+			},
+			wantMetrics: true,
+		},
+		{
+			// Off Railway the spec default still applies: an empty
+			// exporter and the shared endpoint turn metrics on.
+			name: "shared endpoint off railway turns metrics on",
+			env: map[string]string{
+				"OTEL_EXPORTER_OTLP_ENDPOINT": "http://127.0.0.1:4318",
+			},
+			wantMetrics: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			p := otel.New(otel.Config{})
+
+			collector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			}))
+			t.Cleanup(collector.Close)
+
+			env := map[string]string{}
+			for k, v := range tt.env {
+				env[k] = strings.ReplaceAll(v, "http://127.0.0.1:4318", collector.URL)
+			}
+
+			app, err := newApp(t, env, p)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if _, ok := p.TracerProvider().(*sdktrace.TracerProvider); !ok {
+				t.Error("TracerProvider() is a no-op, want the SDK provider")
+			}
+
+			_, got := p.MeterProvider().(*sdkmetric.MeterProvider)
+			if got != tt.wantMetrics {
+				t.Errorf("MeterProvider() is the SDK provider = %v, want %v", got, tt.wantMetrics)
+			}
+
+			if err := app.Shutdown(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
 type pingJob struct{}
 
 func (pingJob) Kind() string { return "ping" }
