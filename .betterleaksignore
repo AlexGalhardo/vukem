@@ -1,0 +1,51 @@
+# Reviewed findings in vukem's history: test fixtures, documentation samples
+# and translated UI labels, none of them a real secret (reviewed 2026-10-29,
+# Betterleaks v1.9.0). Format: commit:file:rule:line. Add a line only after
+# checking the finding is not a secret; rotate a real one instead.
+08fc839391b75404f865c33512afab0da7b23ae1:docs/security.md:generic-password:44
+23b87323099f4710ff929e6ab57ea178dcc2bb3f:internal/cli/scaffolds/auth-2fa/app/accounts/lang/es/two_factor.json:generic-password:11
+28a8c8c13612de56b8bf8ba1df334c0ac4949df5:admin/security_test.go:generic-password:208
+28a8c8c13612de56b8bf8ba1df334c0ac4949df5:docs/security.md:generic-password:37
+2b93f92a09c5e581d8a0a0ab759db1ffaa93c395:site/content/docs/cli/reference-runtime.mdx:vukem-app-key:41
+4f8294a3cc43a2de7f04fc947e82e33e1f37382f:compose.yaml:generic-password:35
+569ae7d772bb1a2242cf09260dbf2630ac4c145e:internal/cli/scaffolds/auth-2fa/app/accounts/lang/es/two_factor.json:generic-password:11
+5893fd26c1b78ddc7ad2a2afe9a413d8b81dc03f:docs/security.md:generic-password:44
+6020a006752c6e90a1bc4575c49dfea372764fd5:Taskfile.yml:generic-api-key:9
+607c11555872d4e81fc1c5608dc4aa2016ef2474:docs/security.md:generic-password:44
+670646646d621cfd9266d698b1ece735e2fd8735:webhook/outgoing_test.go:generic-api-key:29
+6fd67f0de9d42c2a46faf562d579998cba21f2c7:drivers/mysql/mysql_test.go:generic-credential-uri:69
+6fd67f0de9d42c2a46faf562d579998cba21f2c7:drivers/mysql/mysql_test.go:generic-credential-uri:93
+77ffd25eec967a3590231a731bedeba142959b55:site/content/versions/0.20/docs/getting-started/configuration.mdx:generic-password:29
+7dbd6f99041ad8991991517b511d8ca00af08965:docs/security.md:generic-password:44
+91629efc149209280eba1d38152f09e66909a4c4:site/content/docs/getting-started/configuration.mdx:generic-password:125
+91629efc149209280eba1d38152f09e66909a4c4:site/content/pt-br/docs/getting-started/configuration.mdx:generic-password:125
+a0e30beeaf10760d7a7696bae1f6ea52c9ebef53:site/content/docs/security/api-tokens.mdx:vukem-api-token:31
+a0e30beeaf10760d7a7696bae1f6ea52c9ebef53:site/content/docs/security/api-tokens.mdx:vukem-api-token:85
+a28df000aad3e6c405a9cbbebb5d52470c66c82a:internal/cli/scaffolds/auth-passkeys/app/accounts/lang/en/passkeys.json:generic-password:5
+a28df000aad3e6c405a9cbbebb5d52470c66c82a:internal/cli/scaffolds/auth-passkeys/app/accounts/lang/es/passkeys.json:generic-password:5
+a28df000aad3e6c405a9cbbebb5d52470c66c82a:internal/cli/scaffolds/auth-passkeys/app/accounts/lang/pt-BR/passkeys.json:generic-password:5
+a4b1c8354d91cccc91faca2cc2b4e95d45e3e975:web/debug_body_test.go:generic-password:24
+a76a55da63e122ee49bc88ac64e5bb63966c9c9e:drivers/otel/provider_test.go:generic-api-key:455
+a8d6a999e8b75843e4f3f145eb8912a457c4964c:docs/security.md:generic-password:37
+aaa45f6a80ebb483efa917a588f071e4bb2f9349:site/content/docs/getting-started/configuration.mdx:generic-password:29
+b1b39264ca2ed289f3a3ee71561c44e79c27cc3c:internal/cli/scaffolds/auth-2fa/app/accounts/lang/en/two_factor.json:generic-password:11
+b1b39264ca2ed289f3a3ee71561c44e79c27cc3c:internal/cli/scaffolds/auth-2fa/app/accounts/lang/pt-BR/two_factor.json:generic-password:11
+ba460a5ee41fe0fdd3b6048f92d6fd3cf14ec2c6:internal/cli/scaffolds/admin/tests/admin_test.go.tmpl:generic-password:32
+c5a5966c3ab9055eb15cbe4724f5d0b9a5b63129:site/content/docs/security/api-tokens.mdx:generic-password:142
+d76e7b7be278ff36eb5df8dffdf68c107ec40cf0:internal/cli/scaffolds/auth-inertia/tests/auth_test.go.tmpl:generic-password:485
+d76e7b7be278ff36eb5df8dffdf68c107ec40cf0:internal/cli/scaffolds/auth-inertia/tests/auth_test.go.tmpl:generic-password:501
+d76e7b7be278ff36eb5df8dffdf68c107ec40cf0:internal/cli/scaffolds/auth-web/tests/auth_test.go.tmpl:generic-password:492
+e5b876c71c279da6e78e899d562daf528db5ad69:internal/cli/scaffolds/auth-inertia-react/resources/js/components/PasswordField.tsx:generic-password:77
+e86c4c9b14950099bc3af8e2944ddea9820c457f:internal/cli/scaffolds/auth-passkeys/app/accounts/lang/en/passkeys.json:generic-password:5
+e86c4c9b14950099bc3af8e2944ddea9820c457f:internal/cli/scaffolds/auth-passkeys/app/accounts/lang/es/passkeys.json:generic-password:5
+e86c4c9b14950099bc3af8e2944ddea9820c457f:internal/cli/scaffolds/auth-passkeys/app/accounts/lang/pt-BR/passkeys.json:generic-password:5
+e94f6fabd24d4a1285814b7c4549feccf6dbbc5c:apidocs/scalar/standalone.js:generic-password:2454
+e94f6fabd24d4a1285814b7c4549feccf6dbbc5c:apidocs/scalar/standalone.js:generic-password:50
+e94f6fabd24d4a1285814b7c4549feccf6dbbc5c:apidocs/scalar/standalone.js:generic-password:61
+eec4c2d737d86e9561476717f32d0a8894e37345:site/content/docs/digging-deeper/mail.mdx:generic-password:290
+eec4c2d737d86e9561476717f32d0a8894e37345:site/content/docs/digging-deeper/webhooks.mdx:generic-api-key:549
+eec4c2d737d86e9561476717f32d0a8894e37345:site/content/docs/digging-deeper/webhooks.mdx:generic-api-key:58
+f4edd8b3b7d6ca0ef4ae8244a4c5afdb7ca65d12:.claude/skills/golang-security/evals/evals.json:generic-password:210
+f4edd8b3b7d6ca0ef4ae8244a4c5afdb7ca65d12:.claude/skills/golang-security/references/secrets.md:generic-api-key:31
+f4edd8b3b7d6ca0ef4ae8244a4c5afdb7ca65d12:.claude/skills/golang-security/references/secrets.md:generic-password:32
+fc3b71bd2af8a8e68120dd4aadd7680c36fa7519:contrib/stripe/stripe_test.go:stripe-access-token:23

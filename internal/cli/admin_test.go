@@ -180,7 +180,7 @@ func TestFlagsPageListsBeta(t *testing.T) {
 	cmd.Dir = project
 	cmd.Env = append(os.Environ(), "GOWORK=off")
 
-	if out, err := cmd.CombinedOutput(); err != nil {
+	if out, err := combinedOutput(cmd); err != nil {
 		t.Fatalf("tests after install:admin: %v\n%s", err, out)
 	}
 
