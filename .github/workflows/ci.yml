@@ -118,6 +118,11 @@ jobs:
         with:
           go-version: ${{ matrix.go }}
           cache-dependency-path: "**/go.sum"
+      # golang/go#81238 corrupts the heap on Intel AMX hosts: the CPU tells a
+      # runtime crash of that bug from a real one (docs/maintenance.md#known-ci-issues).
+      - name: Runner CPU
+        if: runner.os == 'Windows'
+        run: (Get-CimInstance Win32_Processor).Name
       - name: go test
         shell: bash # PowerShell would split -coverprofile=coverage.out at the dot
         run: go test -race -count=1 -coverprofile=coverage.out ./...
