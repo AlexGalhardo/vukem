@@ -17,10 +17,10 @@ var defaultStandards = []string{".editorconfig", ".gitattributes"}
 var flaggedStandards = map[string][]string{
 	"--standards": {
 		".markdownlint-cli2.jsonc", "CHANGELOG.md", ".config/cliff.toml",
-		".githooks/commit-msg", ".githooks/pre-commit",
+		".githooks/commit-msg", ".githooks/pre-commit", ".betterleaks.toml",
 	},
 	"--license": {"LICENSE", "CONTRIBUTING.md", "CODE_OF_CONDUCT.md", "SECURITY.md"},
-	"--ci":      {".github/workflows/ci.yml", ".github/dependabot.yml"},
+	"--ci":      {".github/workflows/ci.yml", ".github/dependabot.yml", ".betterleaks.toml"},
 	"--deploy":  {".railway/railway.ts"},
 	"--docker":  {"compose.yaml"},
 }
@@ -41,7 +41,7 @@ func TestNewStandardsFlags(t *testing.T) {
 			want: defaultStandards,
 			not: []string{
 				".markdownlint-cli2.jsonc", "CHANGELOG.md", ".config/cliff.toml", ".githooks/commit-msg",
-				"LICENSE", ".github/workflows/ci.yml", ".railway/railway.ts", "compose.yaml",
+				"LICENSE", ".github/workflows/ci.yml", ".railway/railway.ts", "compose.yaml", ".betterleaks.toml",
 			},
 		},
 		{
@@ -54,7 +54,7 @@ func TestNewStandardsFlags(t *testing.T) {
 			name: "license",
 			opts: standardsOpts{license: "mit"},
 			want: flaggedStandards["--license"],
-			not:  []string{"CHANGELOG.md", ".githooks/commit-msg"},
+			not:  []string{"CHANGELOG.md", ".githooks/commit-msg", ".betterleaks.toml"},
 		},
 		{name: "ci", opts: standardsOpts{ci: true}, want: flaggedStandards["--ci"], not: []string{"compose.yaml"}},
 		{
