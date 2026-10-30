@@ -169,6 +169,8 @@ A line with an invalid key stops the boot with the file and line number, for exa
 | `OPENAPI_SERVERS` | `APP_URL` | Comma-separated server URLs of the OpenAPI document |
 | `OPENAPI_STRIP_PREFIX` | empty | Remove this prefix (such as `/api/v1`) from the documented paths, for a server URL that already ends with it |
 | `OPENAPI_IN_PRODUCTION` | `false` | Serve `/openapi.json` in production too |
+| `OPENAPI_REQUIRED_OUTPUTS` | `false` | Response schemas mark the fields the server always sends as required |
+| `OPENAPI_TYPED_ONLY` | `false` | A plain route under the OpenAPI prefix fails the document build |
 | `DEVTOOLS` | `false` | Enable the [dev dashboard](/docs/digging-deeper/devtools) at `/_vukem`; refused in production |
 | `DEVTOOLS_INSECURE_ALLOW_REMOTE` | `false` | Serve the dashboard to non-loopback clients (containers, remote VMs). Anyone who reaches the app then sees its requests, queries, logs and mail |
 
