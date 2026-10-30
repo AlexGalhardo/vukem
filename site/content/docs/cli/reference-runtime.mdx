@@ -479,6 +479,30 @@ When the Node SSR server runs in the same container as the app, `serve -with-ssr
 
 Two differences from `ssr:start`: the server is restarted after **any** exit, a clean one included, because the app keeps rendering pages; and a missing bundle stops `serve` at boot with `serve -with-ssr: SSR bundle bootstrap/ssr/ssr.js not found (run npm run build)`. Pair it with `SSRConfig.Strict` to report the server in readiness (see [Strict SSR](/docs/frontend/inertia#strict-ssr)).
 
+## `vukem ssg:generate`
+
+Write static HTML by calling the app's HTTP handler in process. **App.** This does not run the Inertia SSR server, and it does not crawl registered routes. Only each `-path` is rendered. See [Static site generation](/docs/digging-deeper/static-site-generation).
+
+```text
+vukem ssg:generate [-out dir] -path /page [-path /other]
+```
+
+| Flag | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `-out` | string | `dist` | Directory to write into. Created when it is missing. |
+| `-path` | string |  | Absolute URL path to prerender. Repeat the flag. At least one is required. |
+
+`/` becomes `index.html`. `/about` becomes `about/index.html`. A missing `-path` or an extra argument is a usage error and exits 2. A path such as `../` or `https://example.com/x`, or a response that is not 200, exits 1 and writes nothing for that page.
+
+```bash
+vukem ssg:generate -out dist -path / -path /about
+```
+
+```text
+wrote index.html (4 bytes)
+wrote about/index.html (5 bytes)
+```
+
 ## `vukem boost:mcp`
 
 A Model Context Protocol server over standard input and output, for coding agents. **App.** No flags. `vukem boost:install` registers it for you; you do not run it by hand. Tools: `application_info`, `list_routes`, `list_commands`, `database_schema`, `database_query` (one read-only statement, at most 100 rows), `get_absolute_url`, `search_docs`.

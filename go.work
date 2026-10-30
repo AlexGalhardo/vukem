@@ -8,6 +8,7 @@ use (
 	./contrib/grpc
 	./contrib/http3
 	./contrib/imaging
+	./contrib/qrcode
 	./contrib/stripe
 	./drivers/mongo
 	./drivers/mysql

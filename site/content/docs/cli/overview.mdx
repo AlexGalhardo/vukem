@@ -620,6 +620,7 @@ Unlike the global CLI, app commands use the plain `flag` package, so **flags go 
 | `codegen:routes` | `-o resources/js/routes.ts` | Typed frontend routes ([Inertia](/docs/frontend/inertia)) |
 | `ssr:start` | `-bundle`, `-runtime node`, `-restart-delay 1s` | Runs the Inertia SSR server and restarts it on crash |
 | `ssr:check` | `-url http://127.0.0.1:13714` | Exits 1 unless the SSR server answers `/health` |
+| `ssg:generate` | `-out dist`, `-path` (repeatable) | Writes static HTML for the named paths. Does not run Inertia SSR and does not crawl routes ([Static site generation](/docs/digging-deeper/static-site-generation)) |
 | `boost:mcp` | none | The MCP server for coding agents, over stdio |
 | `key:generate` | none | Prints a new `APP_KEY`; never writes `.env` |
 | `openapi:serve` | `-addr` | Previews the API reference; only when you register `apidocs.Command()` |

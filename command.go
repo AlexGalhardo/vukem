@@ -186,6 +186,7 @@ func builtinCommands() []Command {
 			codegenRoutesCommand(),
 			codegenClientCommand(),
 			boostMCPCommand(),
+			ssgGenerateCommand(),
 		},
 		migrateCommands(),
 		seedCommands(),

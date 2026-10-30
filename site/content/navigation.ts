@@ -92,6 +92,8 @@ export const navigation: NavCategory[] = [
       "sitemaps",
       "storage",
       "uploads",
+      "qr-codes",
+      "static-site-generation",
       "exports",
       "events",
       "queue",

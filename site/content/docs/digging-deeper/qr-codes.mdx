@@ -1,0 +1,96 @@
+---
+title: QR codes
+description: Encode a short string as a PNG or SVG QR code with contrib/qrcode, or serve the PNG from a query parameter.
+---
+
+`contrib/qrcode` turns a short string into a QR code. It is a separate module, so the core framework does not download it until you ask. It does not import Vukem: `net/http`, `image/png` and `rsc.io/qr` are enough.
+
+The standard library has no QR encoder. This module uses `rsc.io/qr` v0.2.0 and draws the picture itself. It does not implement Reed-Solomon, and it does not pull in a second QR library.
+
+You will learn:
+
+- how to write a PNG and an SVG;
+- which options are accepted;
+- how to serve the PNG over HTTP.
+
+## Add the module
+
+```bash
+go get github.com/AlexGalhardo/vukem/contrib/qrcode
+```
+
+## Encode a code
+
+```go title="qr.go"
+package main
+
+import (
+	"log"
+	"os"
+
+	"github.com/AlexGalhardo/vukem/contrib/qrcode"
+)
+
+func main() {
+	opt := qrcode.Options{Level: qrcode.Medium, Scale: 8}
+
+	png, err := qrcode.PNG("https://example.com", opt)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	if err := os.WriteFile("qr.png", png, 0o644); err != nil {
+		log.Fatal(err)
+	}
+
+	svg, err := qrcode.SVG("https://example.com", opt)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	if err := os.WriteFile("qr.svg", svg, 0o644); err != nil {
+		log.Fatal(err)
+	}
+}
+```
+
+`Scale` is the size of one module in pixels. `0` means 8, and the accepted range is 1 to 32. `Level` is `Low`, `Medium`, `Quartile` or `High`. The zero value is `Low`.
+
+The quiet zone defaults to 4 modules. Pass a pointer when you want another width, including zero:
+
+```go title="quiet.go"
+package main
+
+import "github.com/AlexGalhardo/vukem/contrib/qrcode"
+
+func quiet(content string) ([]byte, error) {
+	zone := 2
+
+	return qrcode.PNG(content, qrcode.Options{Quiet: &zone})
+}
+```
+
+Empty content is rejected. Content longer than 2048 bytes is rejected before it is encoded. The same input produces the same bytes. The SVG is one white rectangle and one black path of module squares. It does not contain the payload as text.
+
+## Serve a PNG
+
+`Handler` answers GET and HEAD. The payload is the `data` query parameter. The body is `image/png`.
+
+```go title="server.go"
+package main
+
+import (
+	"log"
+	"net/http"
+
+	"github.com/AlexGalhardo/vukem/contrib/qrcode"
+)
+
+func main() {
+	mux := http.NewServeMux()
+	mux.Handle("/qr", qrcode.Handler(qrcode.Options{}))
+	log.Fatal(http.ListenAndServe(":8080", mux))
+}
+```
+
+`GET /qr?data=https%3A%2F%2Fexample.com` returns the image. A missing `data` value is 400. Any method other than GET or HEAD is 405. A payload that cannot be encoded is 400, and the response does not echo it. This example is a plain `ServeMux`. It is not wired into an application.

@@ -213,7 +213,7 @@ The module `github.com/AlexGalhardo/vukem` is split into small, single-purpose p
 | `logging`, `logging/telegram` | Repeated-error deduplication, Telegram logging |
 | `factory`, `database/dbtest` | Model factories, the dialect conformance suite |
 | `httpclient`, `webhook`, `security` | SSRF-safe HTTP client, webhook signatures, security events |
-| `vite`, `inertia` | Vite asset tags; the Inertia v3 adapter |
+| `vite`, `inertia`, `ssg` | Vite asset tags; the Inertia v3 adapter; prerender a handler to static HTML |
 | `crypt`, `i18n`, `sse`, `broadcast` | Encryption, translations, server-sent events, realtime channels |
 | `upload`, `export`, `uuid`, `ulid`, `flags` | Streaming and resumable uploads, CSV/JSON/NDJSON downloads, UUID v4/v7, ULIDs, feature flags |
 | `archive`, `mediatype`, `cpu` | Safe reading of user-supplied archives, names and extensions of generated downloads, the container's CPU quota |
@@ -228,6 +228,7 @@ Some integrations are **separate modules**, so their dependencies are downloaded
 | `drivers/s3`, `drivers/websocket`, `drivers/otel` | S3 storage, WebSockets, OpenTelemetry |
 | `contrib/graphql`, `contrib/grpc` | GraphQL server, gRPC on connect-go |
 | `contrib/stripe`, `contrib/imaging` | Stripe client, image thumbnails |
+| `contrib/qrcode` | PNG and SVG QR codes |
 | `contrib/engine` | Runs an external binary with a clean environment, a confined working directory, bounded output and resource limits |
 
 Each package has its reference on [pkg.go.dev](https://pkg.go.dev/github.com/AlexGalhardo/vukem).
