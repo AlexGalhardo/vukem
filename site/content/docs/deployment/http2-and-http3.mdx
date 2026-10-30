@@ -71,7 +71,31 @@ Outside production the server also speaks HTTP/2 cleartext with prior knowledge,
 
 ## HTTP/3
 
-HTTP/3 runs over QUIC (UDP) and is mostly a win on lossy mobile networks. CDNs such as Cloudflare offer it at the edge with no change to the app, which is the simplest way to get it. Serving HTTP/3 from the app itself will come as an opt-in module, `contrib/http3`, so the core stays on the standard library.
+HTTP/3 runs over QUIC (UDP) and is mostly a win on lossy mobile networks. CDNs such as Cloudflare offer it at the edge with no change to the app, which is the simplest way to get it. To serve it from the app itself, add the opt-in module `contrib/http3`, so the core stays on the standard library:
+
+```shell
+go get github.com/AlexGalhardo/vukem/contrib/http3
+```
+
+```go title="bootstrap/app.go"
+// After the routes are registered:
+if err := http3.Serve(app, http3.Options{}); err != nil {
+	return nil, err
+}
+```
+
+It listens on UDP at the same `HOST:PORT` as the HTTPS server and serves the same handler with the same certificate (`TLS_CERT_FILE` and `TLS_KEY_FILE`, reloaded when they change, or `Options.TLS`). Browsers find it through the `Alt-Svc: h3=":443"` header that HTTP/1.1 and HTTP/2 responses carry while HTTP/3 runs; the next connection then upgrades. Open the UDP port in your firewall, or browsers keep using HTTP/2.
+
+| Option | Default | What it does |
+| --- | --- | --- |
+| `Addr` | the app's `HOST:PORT` | UDP address |
+| `TLS` | the `TLS_CERT_FILE` pair | certificate source; QUIC uses TLS 1.3 only |
+| `MaxStreams` | `100` | concurrent requests per connection |
+| `IdleTimeout` | `vukem.DefaultIdleTimeout` | closes idle connections |
+| `MaxHeaderBytes` | `HTTP_MAX_HEADER_BYTES` | caps request headers |
+| `ShutdownTimeout` | `SHUTDOWN_TIMEOUT` | graceful drain when the app stops |
+
+The QUIC stack is [quic-go](https://github.com/quic-go/quic-go) `v0.64.1`, pinned exactly: the Go standard library has no HTTP/3 server, and `golang.org/x/net/quic` is not yet covered by the Go security policy. Without a certificate, `http3.Serve` returns `http3.ErrNoTLS`.
 
 ## Configuration
 
@@ -86,6 +110,7 @@ HTTP/3 runs over QUIC (UDP) and is mostly a win on lossy mobile networks. CDNs s
 
 - **TLS 1.2 or later.** Older clients fail the handshake; a `tls.Config` asking for less is a boot error (`TestSecurity_A02_HTTPSServesH2AndRefusesWeakTLS`).
 - **No silent plaintext.** With TLS on, plain HTTP is served only by the redirect listener you asked for.
+- **HTTP/3 is TLS 1.3 only**, as QUIC requires (`TestSecurity_A02_HTTP3OnlyTLS13`).
 - **No open redirect.** The redirect target is `APP_URL`, not the request's host (`TestSecurity_A01_TLSRedirectUsesAppURL`).
 - **Keep the key private.** The key file should be readable only by the app's user (`chmod 600`).
 

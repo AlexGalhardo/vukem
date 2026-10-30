@@ -30,6 +30,7 @@ jobs:
           - contrib/engine
           - contrib/graphql
           - contrib/grpc
+          - contrib/http3
           - contrib/imaging
           - contrib/stripe
           - examples/api
