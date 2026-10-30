@@ -32,6 +32,7 @@ jobs:
           - contrib/grpc
           - contrib/http3
           - contrib/imaging
+          - contrib/qrcode
           - contrib/stripe
           - examples/api
           - examples/blog
