@@ -2,6 +2,7 @@ package vukem
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -10,6 +11,7 @@ import (
 	"maps"
 	"net/http"
 	"net/netip"
+	neturl "net/url"
 	"os"
 	"os/exec"
 	"slices"
@@ -740,17 +742,194 @@ func (a *App) httpRunner() (Runner, error) {
 
 	srv := a.httpServer(h)
 
-	if !a.Config.IsProduction() || a.Config.H2C {
-		var p http.Protocols
-		p.SetHTTP1(true)
+	tlsCfg, err := a.serverTLS()
+	if err != nil {
+		return nil, err
+	}
+
+	var p http.Protocols
+
+	p.SetHTTP1(true)
+
+	switch {
+	case tlsCfg != nil:
+		p.SetHTTP2(true)
+		srv.Server.TLSConfig = tlsCfg
+	case !a.Config.IsProduction() || a.Config.H2C:
 		p.SetUnencryptedHTTP2(true)
-		srv.Server.Protocols = &p
+	}
+
+	srv.Server.Protocols = &p
+
+	redirect, err := a.tlsRedirectServer(tlsCfg != nil)
+	if err != nil {
+		return nil, err
 	}
 
 	return RunnerFunc(func(ctx context.Context) error {
-		a.Log.InfoContext(ctx, "http server starting", "addr", a.Addr(), "env", string(a.Config.Env))
-		return srv.Run(ctx)
+		a.Log.InfoContext(
+			ctx,
+			"http server starting",
+			"addr",
+			a.Addr(),
+			"env",
+			string(a.Config.Env),
+			"tls",
+			tlsCfg != nil,
+		)
+
+		if redirect == nil {
+			return srv.Run(ctx)
+		}
+
+		ctx, cancel := context.WithCancel(ctx)
+		defer cancel()
+
+		errc := make(chan error, 1)
+
+		go func() { errc <- redirect.Run(ctx); cancel() }()
+
+		err := srv.Run(ctx)
+		cancel()
+
+		return errors.Join(err, <-errc)
 	}), nil
+}
+
+// serverTLS is the TLS config of the main server, or nil for plain HTTP:
+// TLS_CERT_FILE/TLS_KEY_FILE (reloaded on change) or WithTLSConfig, never
+// below TLS 1.2.
+func (a *App) serverTLS() (*tls.Config, error) {
+	certFile, keyFile := a.Config.TLSCertFile, a.Config.TLSKeyFile
+	if a.tlsConfig == nil && certFile == "" && keyFile == "" {
+		return nil, nil
+	}
+
+	if (certFile == "") != (keyFile == "") {
+		return nil, errors.New("vukem: set both TLS_CERT_FILE and TLS_KEY_FILE")
+	}
+
+	if a.Config.H2C {
+		return nil, errors.New("vukem: HTTP_H2C is plaintext HTTP/2 and cannot be combined with TLS")
+	}
+
+	cfg := &tls.Config{}
+	if a.tlsConfig != nil {
+		cfg = a.tlsConfig.Clone()
+	}
+
+	switch {
+	case cfg.MinVersion == 0:
+		cfg.MinVersion = tls.VersionTLS12
+	case cfg.MinVersion < tls.VersionTLS12:
+		return nil, errors.New("vukem: WithTLSConfig: MinVersion below TLS 1.2")
+	}
+
+	hasCert := len(cfg.Certificates) > 0 || cfg.GetCertificate != nil || cfg.GetConfigForClient != nil
+
+	switch {
+	case certFile != "" && hasCert:
+		return nil, errors.New("vukem: TLS_CERT_FILE and a WithTLSConfig certificate are exclusive")
+	case certFile != "":
+		r := &certReloader{certFile: certFile, keyFile: keyFile, log: a.Log}
+		if _, err := r.load(); err != nil {
+			return nil, err
+		}
+
+		cfg.GetCertificate = r.get
+	case !hasCert:
+		return nil, errors.New(
+			"vukem: WithTLSConfig: no certificate (Certificates, GetCertificate or GetConfigForClient)",
+		)
+	}
+
+	return cfg, nil
+}
+
+// tlsRedirectServer is the plain HTTP server of TLS_REDIRECT_ADDR, or nil.
+// It redirects to APP_URL, never to the request's Host header.
+func (a *App) tlsRedirectServer(tlsOn bool) (*HTTPServer, error) {
+	if a.Config.TLSRedirectAddr == "" {
+		return nil, nil
+	}
+
+	base, err := neturl.Parse(a.Config.URL)
+	if !tlsOn || err != nil || base.Scheme != "https" || base.Host == "" {
+		return nil, errors.New(
+			"vukem: TLS_REDIRECT_ADDR needs TLS_CERT_FILE/TLS_KEY_FILE (or WithTLSConfig) and an https APP_URL",
+		)
+	}
+
+	origin := base.Scheme + "://" + base.Host
+	srv := NewHTTPServer(a.Config.TLSRedirectAddr, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		//nolint:gosec // G710: the origin is APP_URL, only the path and query come from the request
+		http.Redirect(w, r, origin+r.URL.RequestURI(), http.StatusPermanentRedirect)
+	}))
+	srv.ShutdownTimeout = a.Config.ShutdownTimeout
+
+	return srv, nil
+}
+
+// certReloader serves a PEM key pair and reloads it when either file's
+// modification time moves, checking at most once a second; a pair that
+// fails to load keeps the previous certificate.
+type certReloader struct {
+	certFile, keyFile string
+	log               *slog.Logger
+
+	mu      sync.Mutex
+	cert    *tls.Certificate
+	mod     time.Time
+	checked time.Time
+}
+
+func (r *certReloader) get(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if time.Since(r.checked) < time.Second {
+		return r.cert, nil
+	}
+
+	r.checked = time.Now()
+
+	if cert, err := r.load(); err != nil {
+		r.log.Error("tls: certificate reload failed, keeping the previous one", "err", err)
+	} else if cert != nil {
+		r.cert = cert
+	}
+
+	return r.cert, nil
+}
+
+// load reads the pair when it changed since the last load (nil, nil when
+// unchanged).
+func (r *certReloader) load() (*tls.Certificate, error) {
+	var mod time.Time
+
+	for _, f := range []string{r.certFile, r.keyFile} {
+		fi, err := os.Stat(f)
+		if err != nil {
+			return nil, fmt.Errorf("vukem: tls: %w", err)
+		}
+
+		if fi.ModTime().After(mod) {
+			mod = fi.ModTime()
+		}
+	}
+
+	if r.cert != nil && mod.Equal(r.mod) {
+		return nil, nil
+	}
+
+	cert, err := tls.LoadX509KeyPair(r.certFile, r.keyFile)
+	if err != nil {
+		return nil, fmt.Errorf("vukem: tls: %w", err)
+	}
+
+	r.cert, r.mod = &cert, mod
+
+	return &cert, nil
 }
 
 // BuildFunc builds the application; bootstrap.New implements it.
