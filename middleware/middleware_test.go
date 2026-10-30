@@ -23,6 +23,7 @@ import (
 
 	"github.com/AlexGalhardo/vukem/errs"
 	"github.com/AlexGalhardo/vukem/web"
+	"github.com/AlexGalhardo/vukem/z"
 )
 
 func ok(w http.ResponseWriter, _ *http.Request) { fmt.Fprint(w, "ok") }
@@ -399,6 +400,70 @@ func TestSecurity_A06_MethodOverrideKeepsTighterLimit(t *testing.T) {
 
 	if method != http.MethodPost || limit != 64 {
 		t.Fatalf("MethodOverride under BodyLimit(64): method %s, limit %d; want POST and 64", method, limit)
+	}
+}
+
+type overrideForm struct {
+	Email string `json:"email"`
+}
+
+var overrideFormSchema = z.Struct[overrideForm](z.Shape{"email": z.String().Email()})
+
+// TestSecurity_A06_MethodOverrideRemembersMaxBytes is VF-061: ParseForm
+// drops *http.MaxBytesError and keeps the form, so an oversized urlencoded
+// body used to answer 422 (email missing) instead of 413.
+func TestSecurity_A06_MethodOverrideRemembersMaxBytes(t *testing.T) {
+	t.Parallel()
+
+	var method string
+
+	parse := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method = r.Method
+		c := web.NewCtx(w, r, web.ServicesFrom(r.Context()))
+
+		in, err := web.Parse(c, overrideFormSchema)
+		if err != nil {
+			c.HandleError(err)
+			return
+		}
+
+		_ = c.JSON(http.StatusOK, in)
+	})
+	h := withServices(BodyLimit(64)(MethodOverride()(parse)), slog.New(slog.DiscardHandler))
+
+	post := func(t *testing.T, body string, length int64) *httptest.ResponseRecorder {
+		t.Helper()
+
+		r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/", strings.NewReader(body))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		r.Header.Set("Accept", "application/json")
+		r.ContentLength = length
+
+		return do(t, h, r)
+	}
+
+	oversized := "email=ada@example.com&pad=" + strings.Repeat("x", 200)
+
+	if rec := post(t, oversized, int64(len(oversized))); rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("declared over limit: status = %d, want 413 (%s)", rec.Code, rec.Body.String())
+	}
+
+	if rec := post(t, oversized, -1); rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("chunked over limit: status = %d, want 413 (%s)", rec.Code, rec.Body.String())
+	}
+
+	if method != http.MethodPost {
+		t.Fatalf("over-limit override method = %s, want POST", method)
+	}
+
+	small := "email=ada@example.com&_method=DELETE"
+	if rec := post(t, small, int64(len(small))); rec.Code != http.StatusOK || method != http.MethodDelete {
+		t.Fatalf("small form: status = %d, method = %s (%s)", rec.Code, method, rec.Body.String())
+	}
+
+	missing := "name=ada"
+	if rec := post(t, missing, int64(len(missing))); rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("missing email: status = %d, want 422 (%s)", rec.Code, rec.Body.String())
 	}
 }
 
