@@ -101,6 +101,36 @@ canPurge := func(ctx context.Context) error {
 jsonrpc.Method(rpc, "cache.purge", purge, canPurge)
 ```
 
+## The OpenRPC document
+
+[OpenRPC](https://spec.open-rpc.org) is to JSON-RPC what OpenAPI is to REST: a JSON document that lists every method with its params and result schema. `rpc.OpenRPC(title, version)` builds it from the registered methods, with the same schemas the [OpenAPI export](/docs/rest-apis/openapi) produces from your structs and `validate` tags:
+
+```go title="routes/api.go"
+r.Get("/rpc/openrpc.json", func(c *web.Ctx) error {
+	return c.JSON(http.StatusOK, rpc.OpenRPC("Items API", "1.0.0"))
+})
+```
+
+Each params field becomes a content descriptor, in field order, marked `required` when its tag says so. Feed the document to OpenRPC tools (a playground, or a generator for a TypeScript client); Vukem's own [client generation](/docs/rest-apis/client-generation) covers OpenAPI only.
+
+## Calling from Go
+
+`jsonrpc.Client` calls any JSON-RPC 2.0 endpoint, typed with generics:
+
+```go
+c := jsonrpc.NewClient("https://api.example.com/rpc", nil)
+c.Header.Set("Authorization", "Bearer "+token)
+
+item, err := jsonrpc.Call[Item](ctx, c, "items.get", GetItem{ID: 7})
+if e, ok := errors.AsType[*jsonrpc.Error](err); ok && e.Code == -32004 {
+	// the server answered errs.ErrNotFound
+}
+
+err = c.Notify(ctx, "audit.log", map[string]string{"event": "opened"})
+```
+
+A JSON-RPC error answer comes back as an `*jsonrpc.Error`. The client checks that the answer carries the id it sent and reads at most 10 MiB. A `nil` HTTP client means `http.DefaultClient`; pass your own for timeouts.
+
 ## Security
 
 What Vukem does for you:
