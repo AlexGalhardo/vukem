@@ -369,6 +369,7 @@ HTML forms can only send `GET` and `POST`. `MethodOverride()` turns a `POST` wit
 
 - It acts only on `POST` with a urlencoded or multipart body. Other values of `_method` are ignored.
 - For urlencoded bodies it reads the field from the body, under the body limit already set on the request (a `BodyLimit` placed before it), or the 10 MiB default when there is none.
+- A per-route `BodyLimit` does not apply to urlencoded forms. `MethodOverride` runs as server middleware, before the route is chosen, so it never sees a limit installed on the route. Set that cap in the server stack, ahead of `MethodOverride`. When the read hits the limit, the `*http.MaxBytesError` is kept on the request and `web.Parse` / `c.Input()` answer 413 instead of validating the empty form as 422.
 - For multipart forms it reads `_method` from the **query string** (`action="/posts/42?_method=PUT"`), so large uploads are not read into memory before your handler streams them.
 - Register it as **server** middleware: routing has to see the new method. In the router stack it would run after the route was chosen.
 

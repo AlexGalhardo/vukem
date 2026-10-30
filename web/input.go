@@ -124,6 +124,28 @@ func (c *Ctx) FormValue(name string) string {
 
 type bodyLimitKey struct{}
 
+// bodyErrorKey remembers a body-read error that net/http drops. ParseForm
+// fills PostForm and returns the error; PostFormValue ignores it, and a
+// later read sees the form as already parsed.
+type bodyErrorKey struct{}
+
+// NoteBodyError remembers err on r so Input, Parse and FormFile still see
+// it after ParseForm has kept a partial (or empty) form. MethodOverride
+// uses it for a *http.MaxBytesError: without it an oversized urlencoded
+// body answers 422 for a missing field instead of 413.
+func NoteBodyError(r *http.Request, err error) *http.Request {
+	if r == nil || err == nil {
+		return r
+	}
+
+	return r.WithContext(context.WithValue(r.Context(), bodyErrorKey{}, err))
+}
+
+func notedBodyError(r *http.Request) error {
+	err, _ := r.Context().Value(bodyErrorKey{}).(error)
+	return err
+}
+
 // bodyLimit remembers the unlimited body so a later, more specific limit
 // (a route's BodyLimit, upload rules) replaces the router default instead
 // of nesting under it.
@@ -210,6 +232,12 @@ func (c *Ctx) decodeJSON(v any, strict bool) error {
 }
 
 func (c *Ctx) parseForm() error {
+	// Before the PostForm short-circuit: ParseForm keeps the form and drops
+	// the error, so an oversized body would otherwise look empty.
+	if err := notedBodyError(c.r); err != nil {
+		return bodyError(err)
+	}
+
 	if c.r.PostForm != nil {
 		return nil
 	}
