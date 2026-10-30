@@ -11,7 +11,9 @@ import (
 	"github.com/AlexGalhardo/vukem/auth"
 	"github.com/AlexGalhardo/vukem/auth/hash"
 	"github.com/AlexGalhardo/vukem/database"
+	"github.com/AlexGalhardo/vukem/router"
 	"github.com/AlexGalhardo/vukem/vukemtest"
+	"github.com/AlexGalhardo/vukem/web"
 )
 
 func TestSecurity_A07_AdminRequiresTwoFactor(t *testing.T) {
@@ -92,6 +94,77 @@ func TestSecurity_A01_AdminAllowCIDRs(t *testing.T) {
 	as(t, allowed, "admin").Get("/admin").AssertOK()
 }
 
+func TestSecurity_A07_AdminIdleTimeout(t *testing.T) {
+	t.Parallel()
+
+	// A request outside the panel does not refresh the idle clock.
+	clock := vukemtest.NewFakeClock(time.Date(2026, 10, 29, 9, 0, 0, 0, time.UTC))
+	app := newApp(t, options{clock: clock, harden: func(c *admin.Config) { c.IdleTimeout = 30 * time.Minute }})
+
+	c := as(t, app, "admin")
+	c.Get("/admin").AssertOK()
+	clock.Advance(20 * time.Minute)
+	c.Get("/whoami").AssertSee("user=admin@example.com")
+	clock.Advance(11 * time.Minute)
+	c.Get("/whoami").AssertSee("user=admin@example.com")
+	c.Get("/admin").AssertRedirect("/login")
+	c.Get("/whoami").AssertSee("guest")
+
+	// A panel request resets the clock. The app session itself outlives it.
+	clock2 := vukemtest.NewFakeClock(time.Date(2026, 10, 29, 9, 0, 0, 0, time.UTC))
+	app2 := newApp(t, options{clock: clock2, harden: func(c *admin.Config) { c.IdleTimeout = 30 * time.Minute }})
+	c2 := as(t, app2, "admin")
+	c2.Get("/admin").AssertOK()
+	clock2.Advance(20 * time.Minute)
+	c2.Get("/admin").AssertOK()
+	clock2.Advance(20 * time.Minute)
+	c2.Get("/admin").AssertOK()
+	clock2.Advance(31 * time.Minute)
+	c2.Get("/admin").AssertRedirect("/login")
+}
+
+func TestSecurity_A01_AdminGuardCoversCustomRoutes(t *testing.T) {
+	t.Parallel()
+
+	// vukemtest requests come from 192.0.2.1. A route beside the panel
+	// ignores AllowCIDRs until it uses panel.Guard.
+	hit := func(c *web.Ctx) error { return c.String(200, "moderation") }
+	beside := func(guard bool) func(*router.Router, *admin.Panel) {
+		return func(r *router.Router, p *admin.Panel) {
+			rt := r.Get("/admin/reports/{id}/resolve", hit)
+			if guard {
+				rt.Use(p.Guard())
+			}
+		}
+	}
+
+	denied := newApp(t, options{
+		harden: func(c *admin.Config) {
+			c.AllowCIDRs = []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}
+		},
+		beside: beside(false),
+	})
+	as(t, denied, "admin").Get("/admin/reports/1/resolve").AssertOK()
+	denied.Client(t).Get("/admin").AssertForbidden()
+
+	guarded := newApp(t, options{
+		harden: func(c *admin.Config) {
+			c.AllowCIDRs = []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}
+		},
+		beside: beside(true),
+	})
+	as(t, guarded, "admin").Get("/admin/reports/1/resolve").AssertForbidden()
+	guarded.Client(t).Get("/admin/reports/1/resolve").AssertForbidden()
+
+	allowed := newApp(t, options{
+		harden: func(c *admin.Config) {
+			c.AllowCIDRs = []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}
+		},
+		beside: beside(true),
+	})
+	as(t, allowed, "admin").Get("/admin/reports/1/resolve").AssertOK().AssertSee("moderation")
+}
+
 func TestNewRejectsBadHardening(t *testing.T) {
 	t.Parallel()
 
@@ -105,8 +178,9 @@ func TestNewRejectsBadHardening(t *testing.T) {
 	guard := auth.NewSessionGuard("web", auth.NewORMProvider[User](db), hash.Fake(), nil)
 
 	for name, cfg := range map[string]admin.Config{
-		"negative age": {DB: db, Guard: guard, MaxSessionAge: -time.Minute},
-		"zero prefix":  {DB: db, Guard: guard, AllowCIDRs: []netip.Prefix{{}}},
+		"negative age":  {DB: db, Guard: guard, MaxSessionAge: -time.Minute},
+		"negative idle": {DB: db, Guard: guard, IdleTimeout: -time.Minute},
+		"zero prefix":   {DB: db, Guard: guard, AllowCIDRs: []netip.Prefix{{}}},
 	} {
 		if _, err := admin.New(cfg); err == nil {
 			t.Errorf("New(%s) = nil error, want an error", name)
