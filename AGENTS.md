@@ -30,7 +30,7 @@ Vukem: a Laravel/AdonisJS-inspired, stdlib-first Go web framework. Module `githu
 - Changes land through a PR with green required checks; after each PLAN.md task group, release (`task release -- vX.Y.Z`, or the PR flow once the ruleset requires it) — see [maintenance](docs/maintenance.md) and [release process](docs/tooling.md#release-process).
 - Never edit released `CHANGELOG.md` sections by hand; never move a pushed tag; push version tags one at a time ([tag pushes](docs/tooling.md#tag-pushes)).
 - GitHub Actions is the CI gate (Linux/macOS/Windows, race, govulncheck, snippetcheck, Postgres): push, then check `gh run list` and fix failures; a `ci-failure` issue blocks the next release. Windows 11 stays first-class.
-- Everything (code, comments, docs) in English.
+- Everything (code, comments, docs) in English. Docs site: Any PR that adds, changes or removes a page under `site/content/docs/` must refresh `site/content/last-updated.json` (`npm run last-updated` in `site/`, from a clone with full history) in the same PR. The "Last updated" date is part of the page contract; never edit it by hand. CI enforces it (`Site / Last updated`).
 
 ## Where things live
 

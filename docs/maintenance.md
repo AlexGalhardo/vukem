@@ -40,8 +40,9 @@ Vukem has one maintainer. GitHub does not let authors approve their own pull req
 
 After each [PLAN.md](PLAN.md) task group:
 
-1. Release through a PR as above; required checks green before the merge.
-2. Post-release, 15 minutes:
+1. Refresh `site/content/last-updated.json` (`npm run last-updated` in `site/`, full history) and commit it before tagging, so every page shows its real "Last updated" date.
+2. Release through a PR as above; required checks green before the merge.
+3. Post-release, 15 minutes:
    - `gh run list --workflow release.yml` is green;
    - `cosign verify-blob` on the published `checksums.txt` ([SECURITY.md](../.github/SECURITY.md#verifying-release-artifacts));
    - read the score at <https://api.scorecard.dev/projects/github.com/AlexGalhardo/vukem> and record it in the pinned "Scorecard tracking" issue;
