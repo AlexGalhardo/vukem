@@ -15,6 +15,8 @@ Two sources, one owner per kind of content: `docs/` is canonical for contracts a
 | Typed schemas (Zod-style validation) | [validation.md](validation.md) |
 | REST APIs, OpenAPI, API reference | [api.md](api.md) |
 | GraphQL (`contrib/graphql`) | [graphql.md](graphql.md) |
+| QR codes (`contrib/qrcode`) | [qrcode.md](qrcode.md) |
+| Static site generation | [ssg.md](ssg.md) |
 | Security defaults (OWASP Top 10:2025) | [security.md](security.md) |
 | Security review (B.5.2, ASVS 5.0 L2) | [security-review.md](security-review.md) |
 | Databases, ORM, migrations | [database.md](database.md) |

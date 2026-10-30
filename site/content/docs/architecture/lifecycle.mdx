@@ -294,7 +294,7 @@ A panic in an after-boot function during warmup is returned from `New` as an err
 
 ## Commands
 
-App commands run inside the app binary (`vukem <command>` builds it and delegates). Built in: `migrate`, `migrate:rollback`, `migrate:reset`, `migrate:fresh`, `migrate:status`, `db:seed`, `db:wipe`, `route:list`, `about`, `queue:work`, `queue:failed`, `schedule:run`, `schedule:work`, `schedule:list`, `session:prune`, `cache:prune`, the `codegen:*` commands and more; run `vukem` inside a project, or see [CLI](/docs/cli/overview#app-commands). Add your own:
+App commands run inside the app binary (`vukem <command>` builds it and delegates). Built in: `migrate`, `migrate:rollback`, `migrate:reset`, `migrate:fresh`, `migrate:status`, `db:seed`, `db:wipe`, `route:list`, `about`, `queue:work`, `queue:failed`, `schedule:run`, `schedule:work`, `schedule:list`, `session:prune`, `cache:prune`, `ssg:generate`, the `codegen:*` commands and more; run `vukem` inside a project, or see [CLI](/docs/cli/overview#app-commands). Add your own:
 
 ```go title="app/commands/send_reports.go"
 package commands

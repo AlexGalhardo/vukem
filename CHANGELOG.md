@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **qrcode:** Encode a short payload as PNG or SVG (`contrib/qrcode`, `rsc.io/qr` v0.2.0).
+- **ssg:** Prerender named handler paths to static files (`ssg.Generate`, `vukem ssg:generate`). This does not run the Inertia SSR server and does not crawl registered routes.
+
 ## [0.34.0] - 2026-10-30
 
 ### Added

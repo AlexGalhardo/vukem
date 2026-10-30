@@ -1,0 +1,84 @@
+---
+title: Static site generation
+description: Write static HTML by calling your HTTP handler in process. This does not run the Inertia SSR server and does not crawl routes.
+---
+
+Package `ssg` writes static files from an `http.Handler`. You name each path. Vukem performs one in-process GET, and a 200 response becomes an `index.html` file.
+
+This is prerender. It is not a Hugo-style site generator, and it does not run the Node server that [Inertia SSR](/docs/frontend/inertia) uses. `inertia/ssr.go` is unchanged. Registered routes are not crawled: a route you did not pass is not rendered.
+
+You will learn:
+
+- how a path becomes a file;
+- what the generator refuses to write;
+- how to run it with `vukem ssg:generate`.
+
+## Generate files
+
+```go title="app/console/pages.go"
+package console
+
+import (
+	"context"
+	"net/http"
+
+	"github.com/AlexGalhardo/vukem/ssg"
+)
+
+func Pages(ctx context.Context, h http.Handler) error {
+	_, err := ssg.Generate(ctx, h, []ssg.Page{
+		{Path: "/"},
+		{Path: "/about"},
+		{Path: "/docs/cli"},
+	}, ssg.Options{OutDir: "dist"})
+
+	return err
+}
+```
+
+| Path | File |
+| --- | --- |
+| `/` | `dist/index.html` |
+| `/about` | `dist/about/index.html` |
+| `/docs/cli` | `dist/docs/cli/index.html` |
+
+The request host is `ssg.invalid` unless you set `Options.Host`. The request carries no cookies. There is no socket.
+
+A handler can tell a prerender apart from a live request. Do not put a signed-in user's data in that branch: the file is the same for every visitor.
+
+```go title="routes/web.go"
+package routes
+
+import (
+	"net/http"
+
+	"github.com/AlexGalhardo/vukem/ssg"
+	"github.com/AlexGalhardo/vukem/web"
+)
+
+func Home(c *web.Ctx) error {
+	if ssg.FromContext(c.Request().Context()) {
+		return c.String(http.StatusOK, "static")
+	}
+
+	return c.String(http.StatusOK, "live")
+}
+```
+
+## What is written
+
+Only status 200 is stored. A redirect, a 404 or a 500 is an error, and that page is not written. A body larger than 8 MiB is not written either. `Generate` stops at the first failure. Files from earlier pages stay on disk.
+
+A path must be an absolute URL path such as `/` or `/about`. A scheme, a host, a query, a fragment, a backslash or a `..` segment is rejected, including `%2e%2e`. Nothing is written outside `OutDir`.
+
+## The command
+
+`ssg:generate` calls the handler the app already built. It does not boot a second copy of the framework.
+
+```bash
+vukem ssg:generate -out dist -path / -path /about
+```
+
+`-out` defaults to `dist`. Repeat `-path` once per page. At least one `-path` is required. A missing `-path` or an extra argument exits 2. Each file is printed as `wrote about/index.html (123 bytes)`.
+
+See the [CLI reference](/docs/cli/reference-runtime#vukem-ssggenerate).
