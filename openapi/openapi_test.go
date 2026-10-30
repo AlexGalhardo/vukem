@@ -746,3 +746,170 @@ func TestBuildLicenseSecurityAndErrorsForPlainRoutes(t *testing.T) {
 		}
 	}
 }
+
+type label struct {
+	Text string `json:"text"`
+}
+
+type item struct {
+	ID     int64     `json:"id"`
+	Name   string    `json:"name"             validate:"required"`
+	Note   *string   `json:"note"`
+	Labels []label   `json:"labels,omitempty"`
+	Seen   time.Time `json:"seen,omitzero"`
+	*itemExtra
+}
+
+type archiving struct {
+	Reason string `json:"reason"`
+}
+
+type archiveRequest struct {
+	Why archiving `json:"why"`
+}
+
+type itemExtra struct {
+	Color string `json:"color"`
+}
+
+type updateItem struct {
+	ID   int64 `json:"id"`
+	Item item  `json:"item"`
+}
+
+type itemList struct {
+	Data []item `json:"data"`
+}
+
+func requiredRoutes(t *testing.T) []router.RouteInfo {
+	t.Helper()
+
+	r := router.New(nil)
+	api.Register(r, "GET /items", api.Op{Name: "items.index"},
+		func(*web.Ctx, struct{}) (itemList, error) { return itemList{}, nil })
+	api.Register(r, "PUT /items/{id}", api.Op{Name: "items.update"},
+		func(*web.Ctx, updateItem) (item, error) { return item{}, nil })
+	api.Register(r, "POST /archive", api.Op{Name: "archive"},
+		func(*web.Ctx, archiveRequest) (struct{}, error) { return struct{}{}, nil })
+
+	if _, err := r.Handler(); err != nil {
+		t.Fatal(err)
+	}
+
+	return r.Routes()
+}
+
+// VF-044 (HexaScore): with RequiredOutputs, response schemas list every
+// field the server always sends, and a type used in both directions gets
+// a separate <Name>Input component that keeps the validate-only required.
+func TestBuildRequiredOutputsGolden(t *testing.T) {
+	t.Parallel()
+
+	doc, err := openapi.Build(requiredRoutes(t), openapi.Info{Title: "Items", RequiredOutputs: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got = append(got, '\n')
+	golden := filepath.Join("testdata", "required.openapi.json")
+
+	if *update {
+		if err := os.WriteFile(golden, got, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	want, err := os.ReadFile(golden)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if diff := cmp.Diff(string(bytes.ReplaceAll(want, []byte("\r\n"), []byte("\n"))), string(got)); diff != "" {
+		t.Errorf("document (-want +got):\n%s", diff)
+	}
+
+	required := func(name string) []string {
+		r, _ := doc.Components.Schemas[name]["required"].([]string)
+		return r
+	}
+
+	tests := map[string][]string{
+		// Pointers, omitempty, omitzero and fields promoted through an
+		// embedded pointer can be absent or null; the rest is always sent.
+		"item":       {"id", "name"},
+		"itemInput":  {"name"},
+		"label":      {"text"},
+		"labelInput": nil,
+		// Used only as input: keeps its name and no output required.
+		"archiving": nil,
+	}
+
+	for name, want := range tests {
+		if _, ok := doc.Components.Schemas[name]; !ok {
+			t.Errorf("component %q missing; have %v", name, slices.Sorted(maps.Keys(doc.Components.Schemas)))
+			continue
+		}
+
+		if diff := cmp.Diff(want, required(name)); diff != "" {
+			t.Errorf("%s required (-want +got):\n%s", name, diff)
+		}
+	}
+
+	// Off (the default), one shared component per type, as before.
+	off, err := openapi.Build(requiredRoutes(t), openapi.Info{Title: "Items"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, ok := off.Components.Schemas["itemInput"]; ok {
+		t.Error("itemInput emitted without RequiredOutputs")
+	}
+
+	if r, _ := off.Components.Schemas["item"]["required"].([]string); !slices.Equal(r, []string{"name"}) {
+		t.Errorf("item required without RequiredOutputs = %v, want [name]", r)
+	}
+}
+
+func TestBuildTypedOnly(t *testing.T) {
+	t.Parallel()
+
+	r := router.New(nil)
+	r.Group("/api", func(g *router.Group) {
+		api.Register(g, "GET /ping", api.Op{Name: "ping"},
+			func(*web.Ctx, struct{}) (struct{}, error) { return struct{}{}, nil })
+		g.Get("/legacy", func(*web.Ctx) error { return nil }).Name("legacy")
+		g.Post("/login", func(*web.Ctx) error { return nil }).Name("login").Doc(openapi.Public{})
+		g.Get("/internal", func(*web.Ctx) error { return nil }).Name("internal").Doc(openapi.Skip{})
+	})
+	r.Get("/", func(*web.Ctx) error { return nil }).Name("home")
+
+	if _, err := r.Handler(); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := openapi.Build(r.Routes(), openapi.Info{PathPrefix: "/api"}); err != nil {
+		t.Fatalf("Build() without TypedOnly = %v", err)
+	}
+
+	_, err := openapi.Build(r.Routes(), openapi.Info{PathPrefix: "/api", TypedOnly: true})
+	if !errors.Is(err, openapi.ErrUntypedRoute) {
+		t.Fatalf("Build(TypedOnly) = %v, want ErrUntypedRoute", err)
+	}
+
+	for _, name := range []string{"legacy", "login"} {
+		if !strings.Contains(err.Error(), name) {
+			t.Errorf("error %q does not name %s", err, name)
+		}
+	}
+
+	for _, name := range []string{"internal", "home"} {
+		if strings.Contains(err.Error(), name) {
+			t.Errorf("error %q names %s (skipped or outside the prefix)", err, name)
+		}
+	}
+}

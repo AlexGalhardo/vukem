@@ -44,6 +44,18 @@ type Info struct {
 	// SecuritySchemes). A plain route with .Doc(openapi.Public{}) requires
 	// none. Routes from api.Register keep their api.Op.Security.
 	Security []string
+	// RequiredOutputs lists in `required` every field of a response
+	// schema the server always sends: not a pointer, not omitempty or
+	// omitzero. A named type used by both a request and a response is
+	// then split into <Name> (response) and <Name>Input (request, required
+	// from `validate:"required"` only). Off, one component per type
+	// serves both directions and only validate rules mark fields required.
+	RequiredOutputs bool
+	// TypedOnly makes Build fail with ErrUntypedRoute when a route under
+	// PathPrefix was registered without api.Register and is not marked
+	// .Doc(Skip{}): such routes are documented with an untyped body and
+	// response, which some client generators drop.
+	TypedOnly bool
 }
 
 // License is the info.license object: Name plus either an SPDX
@@ -185,6 +197,11 @@ var ErrEmptyDocument = errors.New("openapi: path prefix matches no route")
 // generated clients would get clashing methods.
 var ErrDuplicateOperationID = errors.New("openapi: duplicate operationId")
 
+// ErrUntypedRoute is returned by Build with Info.TypedOnly when routes
+// under the prefix were registered without api.Register; the error names
+// them.
+var ErrUntypedRoute = errors.New("openapi: untyped routes")
+
 // Generate builds the document for routes (router.Routes()). It panics on
 // the errors Build returns (duplicate operationIds, an undeclared security
 // scheme, a path prefix matching no route): they are
@@ -238,6 +255,12 @@ func Build(routes []router.RouteInfo, info Info) (*Document, error) {
 	schemes := map[string]Schema{"bearer": {"type": "http", "scheme": "bearer"}}
 	maps.Copy(schemes, info.SecuritySchemes)
 
+	if info.RequiredOutputs {
+		s.outputs = outputTypes(routes, info.PathPrefix)
+	}
+
+	var untyped []string
+
 	usedSchemes := map[string]bool{}
 	idOwner := map[string]string{} // operationId → route that took it
 	documentable := 0              // routes the prefix could have kept
@@ -260,6 +283,10 @@ func Build(routes []router.RouteInfo, info Info) (*Document, error) {
 			op.OperationID = cmpOr(rt.LocalName, typed.Name)
 			op.Summary = cmpOr(typed.Summary, op.OperationID)
 		} else {
+			if info.TypedOnly {
+				untyped = append(untyped, cmpOr(rt.Name, rt.Method+" "+rt.Path))
+			}
+
 			op = plainOperation(s, rt)
 
 			if _, public := rt.Doc.(Public); public {
@@ -294,6 +321,11 @@ func Build(routes []router.RouteInfo, info Info) (*Document, error) {
 		}
 
 		doc.Paths[path][method] = op
+	}
+
+	if len(untyped) > 0 {
+		return nil, fmt.Errorf("%w under %q: %s (register them with api.Register or mark them .Doc(openapi.Skip{}))",
+			ErrUntypedRoute, info.PathPrefix, strings.Join(untyped, ", "))
 	}
 
 	if len(doc.Paths) == 0 && documentable > 0 && info.PathPrefix != "" {
@@ -348,6 +380,26 @@ func Build(routes []router.RouteInfo, info Info) (*Document, error) {
 	}
 
 	return doc, nil
+}
+
+// outputTypes returns the named types the responses of the typed routes
+// under prefix reach, nested ones included.
+func outputTypes(routes []router.RouteInfo, prefix string) map[reflect.Type]bool {
+	pre := NewSchemas()
+	pre.outputs = map[reflect.Type]bool{}
+
+	for _, rt := range routes {
+		if typed, ok := rt.Doc.(*api.Operation); ok && underPrefix(oaPath(rt.Path), prefix) {
+			pre.For(typed.Out)
+		}
+	}
+
+	out := map[reflect.Type]bool{}
+	for k := range pre.names {
+		out[k.t] = true
+	}
+
+	return out
 }
 
 // plainOperation is the generic entry of a route registered without
@@ -429,6 +481,7 @@ func typedOperation(s *Schemas, t *api.Operation) *Operation {
 
 	hasInput := t.In.Kind() == reflect.Struct && t.In.NumField() > 0
 	fields := map[string]Field{}
+	s.input = true
 
 	if hasInput {
 		for _, f := range Fields(t.In) {
@@ -466,6 +519,7 @@ func typedOperation(s *Schemas, t *api.Operation) *Operation {
 		op.Responses["422"] = Response{Ref: "#/components/responses/ValidationError"}
 	}
 
+	s.input = false
 	status := t.Status
 	noOutput := t.Out.Kind() == reflect.Struct && t.Out.NumField() == 0
 

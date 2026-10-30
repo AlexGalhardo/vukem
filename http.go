@@ -1063,6 +1063,9 @@ func (a *App) openAPI(prefix string) (*openapi.Document, error) {
 		info.PathPrefix = prefix
 	}
 
+	info.RequiredOutputs = info.RequiredOutputs || a.Config.OpenAPIRequiredOutputs
+	info.TypedOnly = info.TypedOnly || a.Config.OpenAPITypedOnly
+
 	return openapi.Build(a.Router.Routes(), info)
 }
 

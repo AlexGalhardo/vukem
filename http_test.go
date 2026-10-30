@@ -2994,6 +2994,40 @@ func TestWithOpenAPI(t *testing.T) {
 		len(doc.Servers) != 1 || doc.Servers[0].URL != "https://api.example" {
 		t.Errorf("info = %+v, servers = %+v, want the supplied values", doc.Info, doc.Servers)
 	}
+
+	// VF-044: OPENAPI_REQUIRED_OUTPUTS and OPENAPI_TYPED_ONLY reach the document.
+	opted := func(typedOnly string) *App {
+		return newTestApp(t, WithSource(testSource(map[string]string{
+			"OPENAPI_PREFIX": "/api", "OPENAPI_REQUIRED_OUTPUTS": "true", "OPENAPI_TYPED_ONLY": typedOnly,
+		})), WithRoutes(func(r *router.Router, _ *App) error {
+			api.Register(r, "GET /api/thing", api.Op{Name: "thing"},
+				func(*web.Ctx, struct{}) (struct {
+					ID int `json:"id"`
+				}, error,
+				) {
+					return struct {
+						ID int `json:"id"`
+					}{}, nil
+				})
+			r.Get("/api/plain", func(*web.Ctx) error { return nil }).Name("plain")
+
+			return nil
+		}))
+	}
+
+	if _, err := opted("true").OpenAPI(); !errors.Is(err, openapi.ErrUntypedRoute) {
+		t.Errorf("OpenAPI() with OPENAPI_TYPED_ONLY = %v, want ErrUntypedRoute", err)
+	}
+
+	doc, err = opted("false").OpenAPI()
+	if err != nil {
+		t.Fatalf("OpenAPI() = %v", err)
+	}
+
+	sc := doc.Paths["/api/thing"]["get"].Responses["200"].Content["application/json"].Schema
+	if got, _ := sc["required"].([]string); !slices.Equal(got, []string{"id"}) {
+		t.Errorf("response schema %v, want id required (OPENAPI_REQUIRED_OUTPUTS)", sc)
+	}
 }
 
 // A100: the framework's own route names are namespaced, so an app naming a
