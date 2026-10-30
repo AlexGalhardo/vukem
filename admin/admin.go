@@ -24,6 +24,7 @@ import (
 	"bytes"
 	"context"
 	"embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -123,12 +124,20 @@ type Config struct {
 	// remember-me cookie logs the user back in with a new session: turn
 	// remember-me off for admins when the cap must force a password.
 	MaxSessionAge time.Duration
+	// IdleTimeout, when positive, ends a session that has not touched a
+	// guarded admin route for that long. The clock is the session value
+	// "admin.idle_at", updated only by Guard (and the routes Mount
+	// registers), not by the rest of the app. An idle session is
+	// invalidated (an "admin.session_idle" security event) and the browser
+	// is sent to log in again. Activity elsewhere does not refresh it.
+	IdleTimeout time.Duration
 	// AllowCIDRs, when not empty, limits the panel to client IPs
 	// (web.Ctx.IP, trusted-proxy aware) inside one of the prefixes. Others
 	// get 403 with an "admin.ip_denied" security event, before any login
 	// redirect. The embedded CSS and JS stay public.
 	AllowCIDRs []netip.Prefix
-	// Now is the clock for MaxSessionAge (tests); defaults to time.Now.
+	// Now is the clock for MaxSessionAge and IdleTimeout (tests); defaults
+	// to time.Now.
 	Now func() time.Time
 }
 
@@ -146,6 +155,7 @@ type Panel struct {
 	resources []AnyResource
 	slugs     map[string]bool
 	views     *view.Engine
+	csrf      func(http.Handler) http.Handler
 }
 
 // New validates cfg and returns an empty panel.
@@ -179,6 +189,10 @@ func New(cfg Config) (*Panel, error) {
 		return nil, errors.New("admin: Config.MaxSessionAge cannot be negative")
 	}
 
+	if cfg.IdleTimeout < 0 {
+		return nil, errors.New("admin: Config.IdleTimeout cannot be negative")
+	}
+
 	for _, p := range cfg.AllowCIDRs {
 		if !p.IsValid() {
 			return nil, fmt.Errorf("admin: Config.AllowCIDRs has an invalid prefix %q", p)
@@ -200,7 +214,12 @@ func New(cfg Config) (*Panel, error) {
 		return nil, fmt.Errorf("admin: templates: %w", err)
 	}
 
-	return &Panel{cfg: cfg, slugs: map[string]bool{}, views: views}, nil
+	csrfMW, err := csrf.Middleware(csrf.Config{TokenFallback: true})
+	if err != nil {
+		return nil, fmt.Errorf("admin: csrf: %w", err)
+	}
+
+	return &Panel{cfg: cfg, slugs: map[string]bool{}, views: views, csrf: csrfMW}, nil
 }
 
 // Register validates and adds resources; configuration mistakes are
@@ -230,11 +249,6 @@ func (p *Panel) Register(resources ...AnyResource) error {
 // Mount registers the panel's routes on r. Every route requires the guard,
 // the panel ability and same-origin (CSRF-checked) unsafe requests.
 func (p *Panel) Mount(r *router.Router) error {
-	csrfMW, err := csrf.Middleware(csrf.Config{TokenFallback: true})
-	if err != nil {
-		return err
-	}
-
 	assets, err := fs.Sub(assetsFS, "assets")
 	if err != nil {
 		return err
@@ -254,8 +268,7 @@ func (p *Panel) Mount(r *router.Router) error {
 			// The IP and session-age checks run before the guard: an unlisted
 			// client never sees the login redirect, and an expired session is
 			// gone before the guard reads it.
-			g.Use(p.allowIP, p.maxSessionAge, auth.Required(p.cfg.Guard), csrfMW, p.headers, p.requireTwoFactor,
-				p.requireAbility)
+			g.Use(p.Guard())
 
 			g.Get("", p.dashboard).Name("dashboard")
 			g.Get("/_audit", p.audit).Name("audit")
@@ -272,6 +285,30 @@ func (p *Panel) Mount(r *router.Router) error {
 	})
 
 	return nil
+}
+
+// Guard is the middleware Mount installs on every panel route: the IP
+// allow-list, MaxSessionAge, IdleTimeout, the auth guard, CSRF, the
+// no-store headers, two-factor and the panel ability, in that order.
+// Put it on routes registered beside the panel (a ban or resolve action
+// under the same prefix) so they fail closed the same way. Sessions must
+// already be on the router. It does not check a resource policy; the
+// handler does that itself.
+func (p *Panel) Guard() func(http.Handler) http.Handler {
+	return chain(
+		p.allowIP, p.maxSessionAge, p.idleTimeout, auth.Required(p.cfg.Guard), p.csrf, p.headers,
+		p.requireTwoFactor, p.requireAbility,
+	)
+}
+
+func chain(mw ...func(http.Handler) http.Handler) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		for _, m := range slices.Backward(mw) {
+			next = m(next)
+		}
+
+		return next
+	}
 }
 
 func (p *Panel) url(parts ...string) string {
@@ -325,6 +362,59 @@ func (p *Panel) allowIP(next http.Handler) http.Handler {
 		web.SecurityEvent(r, "admin.ip_denied", "area", "admin")
 		c.HandleError(errs.Wrap(http.StatusForbidden, errors.New("admin: client IP not allowed")))
 	})
+}
+
+// idleSessionKey is the unix-second timestamp of the last guarded request.
+const idleSessionKey = "admin.idle_at"
+
+func (p *Panel) idleTimeout(next http.Handler) http.Handler {
+	if p.cfg.IdleTimeout == 0 {
+		return next
+	}
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s := web.SessionFrom(r.Context())
+		now := p.cfg.Now()
+
+		if s != nil {
+			if last, ok := sessionUnix(s.Get(idleSessionKey)); ok && now.Sub(last) > p.cfg.IdleTimeout {
+				web.SecurityEvent(r, "admin.session_idle", "area", "admin")
+				s.Invalidate()
+			} else {
+				s.Put(idleSessionKey, now.Unix())
+			}
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+func sessionUnix(v any) (time.Time, bool) {
+	var n int64
+
+	switch x := v.(type) {
+	case int64:
+		n = x
+	case int:
+		n = int64(x)
+	case json.Number:
+		var err error
+
+		n, err = x.Int64()
+		if err != nil {
+			return time.Time{}, false
+		}
+	case float64:
+		if x != float64(int64(x)) {
+			return time.Time{}, false
+		}
+
+		n = int64(x)
+	default:
+		return time.Time{}, false
+	}
+
+	return time.Unix(n, 0), true
 }
 
 func (p *Panel) maxSessionAge(next http.Handler) http.Handler {

@@ -142,10 +142,11 @@ return panel.Mount(r)
 | `Flags` | nil | a `*flags.Flags` that adds the flags page |
 | `TwoFactor` | nil | `func(ctx context.Context) (bool, error)`: when set, 2FA is mandatory; it reports whether the signed-in admin has 2FA enabled (see [Hardening](#hardening)) |
 | `MaxSessionAge` | 0 (off) | the oldest a session may be to use the panel, counted from its creation |
+| `IdleTimeout` | 0 (off) | how long a session may go without a guarded admin request |
 | `AllowCIDRs` | empty (any IP) | `[]netip.Prefix`: only client IPs inside one of them reach the panel |
-| `Now` | `time.Now` | the clock for `MaxSessionAge` (tests) |
+| `Now` | `time.Now` | the clock for `MaxSessionAge` and `IdleTimeout` (tests) |
 
-`admin.New` fails with `admin: Config.DB is required`, `admin: Config.Guard is required (the panel never runs without authentication)` or `admin: Config.Prefix cannot be the site root`; a negative `MaxSessionAge` or an invalid prefix in `AllowCIDRs` fails it too.
+`admin.New` fails with `admin: Config.DB is required`, `admin: Config.Guard is required (the panel never runs without authentication)` or `admin: Config.Prefix cannot be the site root`; a negative `MaxSessionAge` or `IdleTimeout`, or an invalid prefix in `AllowCIDRs`, fails it too.
 
 ## Resources
 
@@ -462,7 +463,7 @@ Keep the overrides free of inline `<script>` and `style` attributes, or the stri
 
 ### Hardening
 
-Three opt-in controls for the panel, all fail closed:
+Four opt-in controls for the panel, all fail closed:
 
 ```go
 panel, err := admin.New(admin.Config{
@@ -475,7 +476,8 @@ panel, err := admin.New(admin.Config{
 		}
 		return u.TwoFactorEnabled, nil
 	},
-	MaxSessionAge: 4 * time.Hour,
+	MaxSessionAge: 12 * time.Hour,
+	IdleTimeout:   30 * time.Minute,
 	AllowCIDRs:    []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")},
 })
 ```
@@ -484,7 +486,22 @@ panel, err := admin.New(admin.Config{
 | --- | --- |
 | `TwoFactor` | `false` answers **403** and logs an `admin.2fa_required` security event. An error is a 403 too, and is logged; the client never sees it. Send admins to your 2FA settings page from a custom 403 view if you want a friendlier path. |
 | `MaxSessionAge` | A session older than the cap (from `session.CreatedAt`, which login keeps, so the age is never shorter than the time since login) is invalidated, signing the user out of every guard, and the browser is redirected to `login`; an `admin.session_expired` event is logged. The rest of the app keeps its own `SESSION_LIFETIME`. A remember-me cookie logs the user back in with a new session, so turn remember-me off for admins when the cap must force a password. |
+| `IdleTimeout` | A session that has not hit a guarded admin route for this long is invalidated the same way, with an `admin.session_idle` event. The stamp is `admin.idle_at` in the session, updated only by those routes, so using the rest of the app does not keep the panel open. |
 | `AllowCIDRs` | Requests from other IPs get **403** and an `admin.ip_denied` event, before any login redirect, so the panel never advertises its login. The IP is `web.Ctx.IP`: behind a proxy, set `TRUSTED_PROXIES` ([HTTP context](/docs/basics/http-context)) or every request looks like the proxy's address. The embedded CSS and JS stay public. |
+
+`panel.Mount` is the only place that installs this stack. A route you register beside it, such as `POST /admin/users/{id}/ban`, does not get `AllowCIDRs`, the session caps, two-factor or the panel ability unless you add `panel.Guard()`:
+
+```go
+panel, err := admin.New(cfg)
+// ...
+if err := panel.Mount(r); err != nil {
+    return err
+}
+
+r.Post("/admin/users/{id}/ban", users.Ban).Use(panel.Guard())
+```
+
+`Guard` is that middleware: IP allow-list, `MaxSessionAge`, `IdleTimeout`, the auth guard, CSRF, the no-store headers, two-factor and the panel ability. It does not check a resource policy; `users.Ban` still calls `c.Authorize`. Sessions have to be on the router already (`vukem.DefaultMiddleware`). The embedded CSS and JS stay outside the guard.
 
 What stays your job: deciding who is an admin (`app/admin/admin.go`), narrowing each policy (an editor may update posts but not delete them), and keeping the admin accounts protected with [two-factor authentication](/docs/security/two-factor). See the [security overview](/docs/security/overview).
 
