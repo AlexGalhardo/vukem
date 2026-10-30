@@ -73,6 +73,7 @@ A module added to the repository must be added to the `gomod` directories in `.g
 - Locally: `task secrets:scan` (full history; `task secrets:scan -- --log-opts=main..HEAD` for a branch). Install with `go install github.com/betterleaks/betterleaks@v1.9.0` or the release archive.
 - `.betterleaks.toml` extends the default rules with vukem's `APP_KEY` (`base64:` + 43 chars + `=`) and API token (`vk_<26>.<26>` base32) formats, and allowlists only literal placeholder values (`hunter2`, `correct horse...`, `_FAKE_`, `placeholder`, `example`), never paths.
 - `.betterleaksignore` lists reviewed historical findings (fixtures, documentation samples, translated "password" labels) by fingerprint. A new finding is either a placeholder that should say so (`_FAKE_`, `example`) or a real secret: rotate it, do not ignore it.
+- False positive: `docs/security.md` (`generic-password`, admin row). A test name, not a credential. Fingerprint in `.betterleaksignore`.
 - Validation (`--validation`, which sends findings to credential providers) stays off.
 
 To bump: change `BETTERLEAKS_VERSION` and `BETTERLEAKS_SHA256` in `secrets.yml` (sha256 of `betterleaks_<v>_linux_x64.tar.gz` from `checksums.txt`) and the version in `Taskfile.yml`, then run `task secrets:scan`.

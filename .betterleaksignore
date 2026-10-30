@@ -4,6 +4,7 @@
 # checking the finding is not a secret; rotate a real one instead.
 08fc839391b75404f865c33512afab0da7b23ae1:docs/security.md:generic-password:44
 23b87323099f4710ff929e6ab57ea178dcc2bb3f:internal/cli/scaffolds/auth-2fa/app/accounts/lang/es/two_factor.json:generic-password:11
+2399debb61f419fc44e1221a3aa41d92292a635f:docs/security.md:generic-password:46
 28a8c8c13612de56b8bf8ba1df334c0ac4949df5:admin/security_test.go:generic-password:208
 28a8c8c13612de56b8bf8ba1df334c0ac4949df5:docs/security.md:generic-password:37
 2b93f92a09c5e581d8a0a0ab759db1ffaa93c395:site/content/docs/cli/reference-runtime.mdx:vukem-app-key:41
