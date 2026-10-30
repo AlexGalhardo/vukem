@@ -1,0 +1,33 @@
+# Betterleaks (https://github.com/betterleaks/betterleaks) secret scanning
+# config for the vukem repository: the default rules plus vukem's own
+# secret formats. `task secrets:scan` and CI use it; see docs/maintenance.md.
+title = "vukem"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "vukem-app-key"
+description = "vukem APP_KEY (base64 of 32 random bytes)"
+regex = '''base64:[A-Za-z0-9+/]{43}='''
+keywords = ["base64:"]
+
+[[rules]]
+id = "vukem-api-token"
+description = "vukem API token (auth.Tokens, default prefix vk_)"
+regex = '''\bvk_[A-Z2-7]{26}\.[A-Z2-7]{26}\b'''
+keywords = ["vk_"]
+
+# Test and documentation fixtures that are passwords by design. Keep this
+# list to literal placeholder values: never allowlist a path.
+[[allowlists]]
+description = "well-known placeholder passwords in tests and docs"
+regexTarget = "secret"
+regexes = [
+	'''^correct horse''',
+	'''^(hunter2|s3cret|secret|password|pass|pw|test|guess|wrong|short|app|vukem|lumek|not used)$''',
+	'''(?i)^(a brand new|another long|wrong|not my) password$''',
+	'''testPassword''',
+	'''\.\.\.$''',
+	'''_FAKE_|(?i)placeholder|example''',
+]
