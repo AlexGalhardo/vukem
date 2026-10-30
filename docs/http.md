@@ -175,7 +175,7 @@ Stacks come from `errs.New`, `errs.Wrap`, `errs.WithStack(err)` (for errors from
 ## Static files and uploads
 
 - `public/` served by `middleware.Static` with `http.FileServerFS` over an `os.Root`; `/build/` and fingerprinted names (a hex or Vite-style hash segment, not any long word) get `Cache-Control: public, max-age=31536000, immutable`; other files revalidate through `Last-Modified`, or a content-hash `ETag` for embedded files.
-- Request bodies limited by `http.MaxBytesReader` (configurable per route: a route's `middleware.BodyLimit` or `upload.Rules.MaxSize` replaces the router-wide 10 MiB default, raising or lowering it; the limit is checked when the body is read, against the innermost limit).
+- Request bodies limited by `http.MaxBytesReader` (configurable per route: a route's `middleware.BodyLimit` or `upload.Rules.MaxSize` replaces the router-wide 10 MiB default, raising or lowering it; the limit is checked when the body is read, against the innermost limit). Urlencoded forms are parsed by `MethodOverride` before routing, so their cap has to be a server-level `BodyLimit` placed ahead of it; a route-level limit never applies to them, and a hit limit is remembered so `web.Parse` answers 413 (`TestSecurity_A06_MethodOverrideRemembersMaxBytes`).
 - Uploads stored through `storage/` (ALPHA) using `os.Root` to prevent path traversal; filenames randomised by default. Streaming, resumable and direct uploads: [subsystems.md#uploads](subsystems.md#uploads).
 
 ## HTTPS and HTTP/2
