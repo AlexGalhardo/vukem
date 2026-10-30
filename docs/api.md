@@ -142,6 +142,8 @@ Default: **no envelope** for single resources; collections and pages use:
 page, err := orm.QueryOf[models.Product](db).CursorPaginate(ctx, c.Query("cursor"), 50, orm.Asc)
 ```
 
+Envelope and problem keys are snake_case by design (`per_page`, `last_page`, `next_cursor`, `request_id`); RFC 9457 fixes the problem members (`type`, `title`, `status`, `detail`, `instance`) anyway. There is no key-case switch: it would desynchronise the generated OpenAPI document. An app with a camelCase contract builds its own envelope with `api.CollectionOf(items, fn, build)`, `api.PageOf(c, page, fn, build)` or `api.CursorOf(c, page, fn, build)`: `build func(data []R, m *api.Meta, l *api.Links) E` receives what `Collection`/`Page`/`Cursor` would write (nil meta and links for a collection) and returns the app's `E`. They return `E` instead of writing it, so a typed handler returns it and the OpenAPI document describes `E` with the app's keys. A generic `E` gets a long component name (`MyPage_<pkg path>.ProductJSON`); declare a named type (`type ProductPage MyPage[ProductJSON]`) for a short one.
+
 ## Query conventions
 
 Opt-in, allowlisted per endpoint (never free-form columns):
@@ -458,4 +460,22 @@ for _, p := range grpctest.Protocols() { // grpc, grpc-web, connect, connect+jso
 - **SSE**, WebSockets and broadcasting for server push — [frontend.md](frontend.md#sse).
 - **GraphQL**: `contrib/graphql`, a stdlib schema-first server with typed resolvers, a batching loader over the ORM, limits and persisted queries — [graphql.md](graphql.md).
 - **gRPC**, gRPC-Web and Connect on connect-go: [gRPC](#grpc).
+- **JSON-RPC 2.0**: `jsonrpc`, stdlib only — [JSON-RPC](#json-rpc).
 - **API reference UI**: `apidocs.Serve(app, r, "/docs", apidocs.Config{Theme: "purple"})` renders the document with [Scalar](https://scalar.com) ([details](#api-reference-ui)).
+
+## JSON-RPC
+
+`jsonrpc` serves [JSON-RPC 2.0](https://www.jsonrpc.org/specification) as a plain `http.Handler`, so router middleware (auth, rate limits, request ids, logging, tracing) applies to every call. Site: [JSON-RPC](https://vukem.dev/docs/rest-apis/json-rpc).
+
+```go
+rpc := jsonrpc.NewServer(jsonrpc.Config{Logger: app.Logger}) // MaxBatch 50, MaxBodyBytes 1 MiB by default
+jsonrpc.Method(rpc, "items.get", func(ctx context.Context, p GetItem) (Item, error) { return items.Find(ctx, p.ID) })
+jsonrpc.Method(rpc, "items.delete", deleteItem, canDelete) // jsonrpc.Guard: func(ctx) error, runs first
+r.Handle("POST /rpc", rpc)
+```
+
+- Spec: requests, notifications (no response; a request of only notifications is a 204), batches up to `MaxBatch` (a larger one is refused whole, nothing runs), ids echoed (string, number, null), unknown envelope members are `-32600`, `rpc.` names are reserved.
+- Params: an object, or an array matched to the fields of `P` in order; decoded with `z.For[P]().Strict()` (unknown members and `validate` tag failures are `-32602` with `data.fields`).
+- Errors: `*jsonrpc.Error` as is; `*errs.ValidationError` `-32602`; a 4xx `*errs.HTTPError` `-32000-(status-400)` (404 is `-32004`) with its client-safe message and `data.status`; anything else and panics `-32603` "Internal error", logged with `Config.Logger`, never sent.
+- HTTP: POST with `application/json` only (405, 415), body over `MaxBodyBytes` 413; every JSON-RPC answer, errors included, is a 200.
+- Security: `TestSecurity_A04_JSONRPCBatchLimit`, `TestSecurity_A04_JSONRPCDeepNesting`, `TestSecurity_A05_JSONRPCInternalErrorsHidden`, `TestSecurity_A01_JSONRPCGuards` (a guarded notification never runs), `TestSecurity_A01_JSONRPCNoEnumerationBehindAuth` (put auth on the route so unknown and known methods look alike); `FuzzServer`.

@@ -12,6 +12,7 @@ You will learn:
 - how to configure the relying party (your site);
 - how to register a passkey for a signed-in user;
 - how to sign a user in with a passkey, with or without a username;
+- how `install:auth --passkeys` wires it all into your app;
 - what the package checks, and what stays your job.
 
 ## Configure the relying party
@@ -88,6 +89,49 @@ if err != nil {
 ```
 
 Answer every failure with the same message; the error tells your logs why.
+
+## Use the scaffold
+
+`vukem install:auth --passkeys` writes all of the above into your app as code you own: the table and migration, the JSON endpoints, the throttles and the tests. Run it on a project with `install:auth` (or together with it), then `vukem migrate`.
+
+| Route | What it does |
+| --- | --- |
+| `GET /user/passkeys` | Lists the signed-in user's passkeys (name, backed up, dates) |
+| `POST /user/passkeys/options` | Checks `password`, then returns the creation options |
+| `POST /user/passkeys` | Stores the passkey: `{"name": "...", "credential": credential.toJSON()}` |
+| `POST /user/passkeys/{id}/delete` | Checks `password`, then removes one of the user's passkeys |
+| `POST /passkeys/login/options` | Returns the request options for a usernameless sign-in |
+| `POST /passkeys/login` | Verifies the assertion, signs in, returns `{"redirect": "/dashboard"}` |
+
+The relying party comes from `APP_URL`: its host is the RP ID and its origin the only allowed origin. The password stays on as the recovery path, and adding or removing a passkey asks for it, so a stolen session cannot add a way in.
+
+Call the endpoints from your page:
+
+```ts
+// Add a passkey (signed in; the password is confirmed first).
+const opts = await post("/user/passkeys/options", { password });
+const created = await navigator.credentials.create({
+  publicKey: PublicKeyCredential.parseCreationOptionsFromJSON(opts),
+});
+await post("/user/passkeys", { name: "Laptop", credential: created.toJSON() });
+
+// Sign in (usernameless).
+const req = await post("/passkeys/login/options", {});
+const got = await navigator.credentials.get({
+  publicKey: PublicKeyCredential.parseRequestOptionsFromJSON(req),
+});
+const { redirect } = await post("/passkeys/login", got.toJSON());
+location.assign(redirect);
+```
+
+`post` is your `fetch` wrapper that sends JSON with the CSRF token header and returns the parsed body.
+
+The generated tests run real ceremonies with `auth/webauthn/webauthntest`, a software passkey:
+
+```go title="tests/passkeys_test.go"
+a := webauthntest.New("http://localhost:3000")
+body, err := a.Create([]byte(optionsJSON)) // what credential.toJSON() would post
+```
 
 ## What the package checks
 
