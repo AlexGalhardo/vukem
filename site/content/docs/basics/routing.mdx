@@ -283,7 +283,7 @@ What happens under the hood:
 - **Group middleware covers every route of the group**, including routes registered before the `g.Use` call and routes of nested groups. Outer groups run first. The full order is on the [Middleware](/docs/basics/middleware#the-order-of-execution) page.
 - `fn` may be `nil`: `r.Group("/admin", nil)` returns an empty group you fill later with `g.Get(...)`.
 
-A group has the same route methods as the router: `Get`, `Post`, `Put`, `Patch`, `Delete`, `Options`, `Match`, `Any`, `Handle`, `Group`, `Resource` and `APIResource`.
+A group has the same route methods as the router: `Get`, `Post`, `Put`, `Patch`, `Delete`, `Options`, `Match`, `Any`, `Handle`, `Group`, `Resource` and `APIResource`. A group can also wrap the error handler for its routes with `.ErrorHandler(...)`, for example to give an API group its own error shape ([one error handler per group](/docs/basics/error-handling#one-error-handler-per-group)).
 
 ### Middleware on one route
 

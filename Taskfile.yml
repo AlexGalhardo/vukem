@@ -4,7 +4,7 @@ version: "3"
 
 vars:
   # Every Go module in the repository (drivers and contrib modules are added as they land).
-  MODULES: ". drivers/postgres drivers/mysql drivers/redis drivers/mongo drivers/otel drivers/s3 drivers/websocket contrib/stripe contrib/cloudflare contrib/graphql contrib/grpc contrib/imaging contrib/engine"
+  MODULES: ". drivers/postgres drivers/mysql drivers/redis drivers/mongo drivers/otel drivers/s3 drivers/websocket contrib/stripe contrib/cloudflare contrib/graphql contrib/grpc contrib/http3 contrib/imaging contrib/engine"
   # Same pin as the apidiff job in .github/workflows/ci.yml (x/exp has no tags).
   APIDIFF_VERSION: v0.0.0-20261014143641-f0251eb4aa3e
 
@@ -108,6 +108,12 @@ tasks:
     desc: Scan for known vulnerabilities
     cmds:
       - go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+
+  secrets:scan:
+    desc: Scan the git history for secrets with Betterleaks v1.9.0 (pass -- --log-opts=main..HEAD for a range)
+    cmds:
+      - betterleaks version || (echo "install Betterleaks v1.9.0, e.g. go install github.com/betterleaks/betterleaks@v1.9.0" && exit 1)
+      - betterleaks git . --config .betterleaks.toml --no-banner --redact {{.CLI_ARGS}}
 
   api:check:
     desc: Fail on incompatible API changes since the latest v1 tags (apidiff); pass -- -major v0 -report file.md for a report

@@ -9,7 +9,9 @@
     "start": "next start",
     "lint": "eslint .",
     "last-updated": "node scripts/last-updated.ts",
-    "check:mdx": "node scripts/check-mdx.ts"
+    "check:mdx": "node scripts/check-mdx.ts",
+    "check:last-updated": "node scripts/check-last-updated.ts",
+    "test:scripts": "node --test scripts/check-last-updated.test.ts"
   },
   "dependencies": {
     "@base-ui/react": "1.9.0",

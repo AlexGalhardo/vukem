@@ -185,7 +185,9 @@ type HTTPServer struct {
 	Server *http.Server
 	// ShutdownTimeout bounds the graceful drain of in-flight requests.
 	ShutdownTimeout time.Duration
-	// Listener, when set, is used instead of listening on Server.Addr.
+	// Listener, when set, is used instead of listening on Server.Addr and
+	// served as given: Server.TLSConfig turns on TLS only for a listener Run
+	// opens itself, so wrap a TLS Listener with tls.NewListener.
 	Listener net.Listener
 	// Ready, when set, receives the bound address once listening.
 	Ready chan<- string
@@ -236,7 +238,14 @@ func (s *HTTPServer) Run(ctx context.Context) error {
 
 	errc := make(chan error, 1)
 
-	go func() { errc <- s.Server.Serve(ln) }()
+	go func() {
+		if s.Listener == nil && s.Server.TLSConfig != nil {
+			// Certificates come from TLSConfig; ServeTLS adds ALPN h2 per Protocols.
+			errc <- s.Server.ServeTLS(ln, "", "")
+		} else {
+			errc <- s.Server.Serve(ln)
+		}
+	}()
 
 	select {
 	case err := <-errc:

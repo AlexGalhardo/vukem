@@ -135,6 +135,6 @@ export const navigation: NavCategory[] = [
   {
     title: "Deployment",
     dir: "deployment",
-    pages: ["single-binary", "docker-and-railway", "cloudflare"],
+    pages: ["single-binary", "docker-and-railway", "cloudflare", "http2-and-http3", "logging", "releases-and-stability"],
   },
 ];

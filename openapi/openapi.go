@@ -34,6 +34,12 @@ type Info struct {
 	// ("/api/v1" keeps /api/v1 and /api/v1/..., not /api/v10); empty keeps
 	// all.
 	PathPrefix string
+	// StripPrefix keeps only routes under it, like PathPrefix, and removes
+	// it from their paths, for a server URL that already ends with it:
+	// Servers "https://api.example.com/v1" with StripPrefix "/api/v1"
+	// documents the route /api/v1/items as /items. Document.ValidateResponse
+	// strips it from the request path too.
+	StripPrefix string
 	// SecuritySchemes adds or replaces schemes; "bearer" (HTTP bearer
 	// token) is predefined.
 	SecuritySchemes map[string]Schema
@@ -80,6 +86,8 @@ type Document struct {
 	Servers    []server                         `json:"servers,omitempty"`
 	Paths      map[string]map[string]*Operation `json:"paths"`
 	Components Components                       `json:"components"`
+
+	strip string // Info.StripPrefix, applied to request paths in ValidateResponse
 }
 
 type docInfo struct {
@@ -234,6 +242,7 @@ func Build(routes []router.RouteInfo, info Info) (*Document, error) {
 			License:     info.License,
 		},
 		Paths: map[string]map[string]*Operation{},
+		strip: strings.TrimSuffix(info.StripPrefix, "/"),
 	}
 
 	if doc.Info.Title == "" {
@@ -273,9 +282,11 @@ func Build(routes []router.RouteInfo, info Info) (*Document, error) {
 		documentable++
 
 		path := oaPath(rt.Path)
-		if !underPrefix(path, info.PathPrefix) {
+		if !underPrefix(path, info.PathPrefix) || !underPrefix(path, doc.strip) {
 			continue
 		}
+
+		path = cmpOr(strings.TrimPrefix(path, doc.strip), "/")
 
 		var op *Operation
 		if typed, ok := rt.Doc.(*api.Operation); ok {
@@ -328,9 +339,10 @@ func Build(routes []router.RouteInfo, info Info) (*Document, error) {
 			ErrUntypedRoute, info.PathPrefix, strings.Join(untyped, ", "))
 	}
 
-	if len(doc.Paths) == 0 && documentable > 0 && info.PathPrefix != "" {
+	if prefix := cmpOr(info.PathPrefix, info.StripPrefix); len(doc.Paths) == 0 && documentable > 0 && prefix != "" {
 		return nil, fmt.Errorf("%w %q: none of the %d documentable routes is under it "+
-			"(check Info.PathPrefix / OPENAPI_PREFIX)", ErrEmptyDocument, info.PathPrefix, documentable)
+			"(check Info.PathPrefix / OPENAPI_PREFIX and Info.StripPrefix / OPENAPI_STRIP_PREFIX)",
+			ErrEmptyDocument, prefix, documentable)
 	}
 
 	// Only the error responses an operation references: an unused

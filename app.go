@@ -3,6 +3,7 @@ package vukem
 import (
 	"cmp"
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"html/template"
@@ -77,6 +78,15 @@ type Config struct {
 	// production too, behind a proxy that speaks h2c. It is always on
 	// outside production.
 	H2C bool `env:"HTTP_H2C"`
+	// TLSCertFile and TLSKeyFile (PEM) serve HTTPS on PORT with HTTP/2
+	// (ALPN h2) and HTTP/1.1, TLS 1.2 or later; the pair is reloaded when
+	// either file changes. Set both or neither. See WithTLSConfig.
+	TLSCertFile string `env:"TLS_CERT_FILE"`
+	TLSKeyFile  string `env:"TLS_KEY_FILE"`
+	// TLSRedirectAddr (e.g. ":80") also listens for plain HTTP there and
+	// redirects every request (308) to APP_URL, which must be https. Without
+	// it a TLS server has no plaintext listener.
+	TLSRedirectAddr string `env:"TLS_REDIRECT_ADDR"`
 	// MaxHeaderBytes caps the request line plus headers the HTTP server
 	// reads (4096 to 1048576 bytes, Go's own default; outside is a boot
 	// error). Larger requests get 431.
@@ -94,6 +104,13 @@ type Config struct {
 	APIVersion string `env:"API_VERSION" default:"1.0.0"`
 	// OpenAPIPrefix keeps only routes under it in the document (e.g. /api).
 	OpenAPIPrefix string `env:"OPENAPI_PREFIX"`
+	// OpenAPIServers lists the document's server URLs, comma-separated
+	// (default APP_URL); WithOpenAPI's Servers win over it.
+	OpenAPIServers []string `env:"OPENAPI_SERVERS"`
+	// OpenAPIStripPrefix removes this path prefix from the documented paths
+	// (openapi.Info.StripPrefix), for a server URL that already ends with
+	// it; WithOpenAPI's StripPrefix wins over it.
+	OpenAPIStripPrefix string `env:"OPENAPI_STRIP_PREFIX"`
 	// OpenAPIRequiredOutputs sets openapi.Info.RequiredOutputs: response
 	// schemas list the fields the server always sends as required.
 	OpenAPIRequiredOutputs bool `env:"OPENAPI_REQUIRED_OUTPUTS"`
@@ -178,6 +195,7 @@ type App struct {
 	stderr    io.Writer
 	stdin     io.Reader
 	ready     chan<- string
+	tlsConfig *tls.Config
 	noHTTP    bool
 
 	// bootRoutes run at the end of Boot (WithRoutesAfterBoot).
@@ -324,6 +342,7 @@ type options struct {
 	bootRoutes    []func(r *router.Router, app *App) error
 	views         fs.FS
 	viewFuncs     template.FuncMap
+	tlsConfig     *tls.Config
 	reactEmails   fs.FS
 	vite          fs.FS
 	inertia       *inertia.Config
@@ -493,6 +512,7 @@ func New(opts ...Option) (*App, error) {
 		stderr:    errOut,
 		stdin:     stdin,
 		ready:     o.ready,
+		tlsConfig: o.tlsConfig,
 		noHTTP:    o.noHTTP,
 		drivers:   o.drivers,
 		queryObs:  o.queryObs,

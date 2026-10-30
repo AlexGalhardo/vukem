@@ -229,8 +229,20 @@ The document comes from the app config:
 | --- | --- |
 | `info.title` | `APP_NAME` (default `Vukem`) |
 | `info.version` | `API_VERSION` (default `1.0.0`) |
-| `servers[0].url` | `APP_URL` (default `http://localhost:3000`) |
+| `servers[].url` | `OPENAPI_SERVERS` (comma-separated), else `APP_URL` (default `http://localhost:3000`) |
 | path filter | `OPENAPI_PREFIX` (empty: every route) |
+| path base | `OPENAPI_STRIP_PREFIX` (empty: paths as routed) |
+
+### Serving the API under another path
+
+When a proxy or a host alias serves the `/api/v1` group as `https://api.example.com/v1`, the document should list that server and paths without `/api/v1`, so that server URL plus path is the real URL. Set both:
+
+```bash title=".env"
+OPENAPI_SERVERS=https://api.example.com/v1
+OPENAPI_STRIP_PREFIX=/api/v1
+```
+
+The route `/api/v1/items/{item}` is then documented as `/items/{item}`. `StripPrefix` also keeps only routes under it, like `PathPrefix`. `AssertMatchesOpenAPI()` and `doc.ValidateResponse` still take the router path (`/api/v1/items/7`) and strip the prefix before looking up the operation. In code, the same fields are `openapi.Info.Servers` and `openapi.Info.StripPrefix` in `vukem.WithOpenAPI`, which win over the variables.
 
 ### One document per API version
 
@@ -425,7 +437,9 @@ The reference is at `http://localhost:8081/` and the document at `/openapi.json`
 | --- | --- | --- |
 | `APP_NAME` | `Vukem` | `info.title`, and the reference page title (`<name> API`) |
 | `API_VERSION` | `1.0.0` | `info.version` |
-| `APP_URL` | `http://localhost:3000` | `servers[0].url` |
+| `APP_URL` | `http://localhost:3000` | `servers[0].url` when `OPENAPI_SERVERS` is empty |
+| `OPENAPI_SERVERS` | empty | comma-separated `servers[].url` list |
+| `OPENAPI_STRIP_PREFIX` | empty | keep only routes under it and remove it from the documented paths |
 | `OPENAPI_PREFIX` | empty | keep only routes under it (e.g. `/api`); default `PathPrefix` of `ServeOpenAPIWith` and default `-prefix` of `openapi:export`, `codegen:types` and `codegen:client` |
 | `OPENAPI_IN_PRODUCTION` | `false` | serve every document and reference page in production |
 | `OPENAPI_REQUIRED_OUTPUTS` | `false` | response schemas list the fields the server always sends as `required` ([Required response fields](#required-response-fields)) |

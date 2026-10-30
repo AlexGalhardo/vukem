@@ -8,7 +8,9 @@
 //
 // [Options] bound the timeout, redirects and body size and may allow extra
 // prefixes; blocked destinations fail with [ErrBlockedAddress]. [Get] is
-// the one-call form and [Allowed] the address check itself.
+// the one-call form and [Allowed] the address check itself. [Throttle],
+// [Retry] and [Breaker] are transport wrappers for Options.WrapTransport
+// that respect a third-party API's rate limits and failures.
 //
 // See https://github.com/AlexGalhardo/vukem/blob/main/docs/security.md.
 package httpclient
