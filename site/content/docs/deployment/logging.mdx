@@ -1,0 +1,111 @@
+---
+title: Logging
+description: What vukem logs for every request and scheduled task, how the default logger is built from LOG_LEVEL, LOG_FORMAT and LOG_DEDUP_WINDOW, how repeated errors collapse into one summary, and what changes when you pass your own logger.
+---
+
+In production your logs are how you find out what went wrong. Vukem logs with the standard library's [`log/slog`](https://pkg.go.dev/log/slog): one structured line per request, one per failed scheduled task, and the security events of the framework. This page lists those fields and the settings that shape them.
+
+You will learn:
+
+- which fields every request line has, and at which level it is logged;
+- how the default logger is built, and how repeated errors become one summary;
+- what changes when you pass your own logger with `WithLogger`;
+- what scheduled tasks log, and how to count their runs.
+
+## The idea
+
+A log line is a set of key/value pairs, not a sentence. `slog` writes them as `key=value` text in development and as one JSON object per line in production, where a log platform (Railway, Grafana Loki, Datadog) can filter by any field. Health checks for load balancers are covered in [Single binary](/docs/deployment/single-binary).
+
+## The request line
+
+`DefaultMiddleware` logs every request after the response with the message `request`:
+
+| Field | Value |
+| --- | --- |
+| `method` | the HTTP method |
+| `path` | the URL path, without the query string (query strings often carry tokens) |
+| `status` | the response status (`200` when the handler wrote nothing) |
+| `duration` | time spent in the handler chain |
+| `bytes` | response body size |
+| `request_id` | the `X-Request-ID` the framework set or accepted; the same id is in error responses |
+| `peer` | the TCP peer address (your proxy, when there is one) |
+| `ip` | the client IP after [trusted proxies](/docs/basics/http-context) |
+
+The level follows the status: `ERROR` for `5xx`, `WARN` for `4xx`, `INFO` otherwise. The line has no user id and no route name: add them yourself when you need them, from a middleware that runs after authentication, with `c.Log()` or `slog.Default()`.
+
+With [OpenTelemetry](/docs/digging-deeper/opentelemetry) installed, the request line also carries `trace_id` and `span_id`, so you can jump from a log line to its trace.
+
+In a handler, `c.Log()` returns the app's logger. Values of type `config.Secret` print as `[redacted]`, so a configuration struct may be logged whole.
+
+## The default logger
+
+Unless you pass your own, the app builds its logger from configuration:
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error` |
+| `LOG_FORMAT` | `text` (`json` in production) | `text` or `json` |
+| `LOG_DEDUP_WINDOW` | `1m` in production, off elsewhere | collapse repeated identical errors; `0` turns it off |
+
+It writes to standard error (`WithLogOutput(w)` changes that). When [Telegram logging](/docs/digging-deeper/telegram-logging) is configured, the same records also go to the chat.
+
+### Repeated errors become one summary
+
+When a database goes down, every request fails with the same error. Thousands of identical lines hide everything else and, with Telegram on, flood the chat. The dedup handler (`logging.NewDedup`) writes the **first** `ERROR` record of a kind and counts the repeats inside the window. Two records are the same kind when they share level, message, the logger's attributes and the values of `event`, `error` and `err`. When the window ends, one record with the message `repeated` carries:
+
+| Field | Value |
+| --- | --- |
+| `message` | the repeated record's message |
+| `count` | how many copies were dropped |
+| `window` | the window length |
+
+Only `ERROR` records are collapsed. More than 1024 different kinds in one window pass through unchanged, so a burst of distinct errors is never hidden. `app.Shutdown` flushes pending summaries, so a deploy does not lose them. The dedup handler sits in front of Telegram too: an error burst is one chat message plus a summary.
+
+`logging.NewDedup(next, logging.DedupOptions{Window: time.Minute})` is a normal `slog.Handler`; you may use it in front of any handler of your own.
+
+## Passing your own logger
+
+`vukem.WithLogger(l)` uses `l` as given:
+
+- `LOG_LEVEL`, `LOG_FORMAT` and `WithLogOutput` are ignored: your handler decides level, format and output.
+- `LOG_DEDUP_WINDOW` is ignored: wrap your handler with `logging.NewDedup` yourself if you want summaries.
+- Telegram logging, when configured, is still added next to your handler.
+
+## Scheduled tasks
+
+The [scheduler](/docs/digging-deeper/scheduler) logs to `schedule.Options.Log` (the app logger under `app.Schedule`), with a `task` field naming the task:
+
+| Message | Level | When |
+| --- | --- | --- |
+| `scheduled task failed` | `ERROR` | the task returned an error (`err` field) |
+| `scheduled task skipped: still running` | `INFO` | `WithoutOverlapping` and the previous run has not finished |
+| `scheduled task skipped: another server runs it` | `INFO` | `OnOneServer` and another server holds the lock |
+| `scheduled tasks still running at shutdown: cancelling them` | `WARN` | `StopTimeout` passed during shutdown |
+
+There is no metrics hook on the scheduler. To count runs or time them, wrap the task function:
+
+```go title="app/schedule.go" nocompile
+func timed(name string, fn func(context.Context) error) func(context.Context) error {
+	return func(ctx context.Context) error {
+		start := time.Now()
+		err := fn(ctx)
+		taskRuns.Record(ctx, time.Since(start), name, err) // your metric
+
+		return err
+	}
+}
+
+s.Func("prune-sessions", timed("prune-sessions", pruneSessions)).Hourly()
+```
+
+## Security
+
+- Request lines never contain query strings, headers, cookies or bodies.
+- `config.Secret` values are redacted wherever they are logged.
+- Security events (failed logins, rejected tokens, blocked addresses) are `WARN` records with an `event` field; see [Building blocks](/docs/security/building-blocks).
+
+## Next steps
+
+- [OpenTelemetry](/docs/digging-deeper/opentelemetry): traces and log correlation.
+- [Telegram logging](/docs/digging-deeper/telegram-logging): errors in a chat.
+- [Releases and stability](/docs/deployment/releases-and-stability): what an upgrade may change.

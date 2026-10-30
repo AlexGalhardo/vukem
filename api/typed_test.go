@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 
@@ -186,6 +187,68 @@ func TestRegisterValidateResponse(t *testing.T) {
 
 			if tt.status == 500 && strings.Contains(rec.Body.String(), "secret-value") {
 				t.Errorf("500 body leaks the response: %s", rec.Body)
+			}
+		})
+	}
+}
+
+func TestRegisterHandlerFinishesResponse(t *testing.T) {
+	t.Parallel()
+
+	handler := func(c *web.Ctx, _ struct{}) (checkedJSON, error) {
+		if c.Param("id") == "old" {
+			return checkedJSON{}, c.RedirectStatus(http.StatusMovedPermanently, "/items/new")
+		}
+
+		if c.NotModified(`"v1"`, time.Time{}) {
+			return checkedJSON{}, nil // zero value: neither written nor validated
+		}
+
+		return checkedJSON{Status: "open", Data: []int{}}, nil
+	}
+
+	r := router.New(&web.Services{CheckResponses: true})
+	api.Register(r, "GET /items/{id}", api.Op{}, handler)
+	api.Register(r, "GET /checked/{id}", api.Op{ValidateResponse: true}, handler)
+
+	tests := []struct {
+		name, target, inm string
+		status            int
+		location          string
+		body              bool
+	}{
+		{"not modified", "/items/a", `"v1"`, http.StatusNotModified, "", false},
+		{"stale cache", "/items/a", `"v0"`, http.StatusOK, "", true},
+		{"moved", "/items/old", "", http.StatusMovedPermanently, "/items/new", true},
+		{"validated not modified", "/checked/a", `"v1"`, http.StatusNotModified, "", false},
+		{"validated moved", "/checked/old", "", http.StatusMovedPermanently, "/items/new", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequestWithContext(t.Context(), "GET", tt.target, nil)
+			req.Header.Set("Accept", "application/json")
+
+			if tt.inm != "" {
+				req.Header.Set("If-None-Match", tt.inm)
+			}
+
+			r.ServeHTTP(rec, req)
+
+			if rec.Code != tt.status || rec.Header().Get("Location") != tt.location {
+				t.Fatalf("GET %s = %d Location %q, want %d %q", tt.target, rec.Code,
+					rec.Header().Get("Location"), tt.status, tt.location)
+			}
+
+			if !tt.body && rec.Body.Len() > 0 {
+				t.Errorf("body after the handler finished the response: %q", rec.Body)
+			}
+
+			if strings.Contains(rec.Body.String(), `"status"`) && tt.status != http.StatusOK {
+				t.Errorf("JSON output written after the handler finished: %q", rec.Body)
 			}
 		})
 	}
