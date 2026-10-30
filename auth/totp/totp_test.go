@@ -149,3 +149,24 @@ func TestRecoveryCodes(t *testing.T) {
 		t.Error("unknown recovery code accepted")
 	}
 }
+
+func TestHashRecoveryCode(t *testing.T) {
+	t.Parallel()
+
+	plain, hashes, err := totp.RecoveryCodes(2)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for i, c := range plain {
+		if got := totp.HashRecoveryCode(c); got != hashes[i] {
+			t.Errorf("HashRecoveryCode(%q) = %q, want the RecoveryCodes hash %q", c, got, hashes[i])
+		}
+	}
+
+	// A code imported from another system works with UseRecoveryCode.
+	imported := []string{totp.HashRecoveryCode("legacy-code-1")}
+	if _, ok := totp.UseRecoveryCode(" LEGACY-CODE-1 ", imported); !ok {
+		t.Error("UseRecoveryCode rejected an imported code")
+	}
+}

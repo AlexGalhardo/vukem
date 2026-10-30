@@ -1,0 +1,3 @@
+mail.welcome.title
+Hello Ana,
+mail.welcome.cta (https://example.com/start)

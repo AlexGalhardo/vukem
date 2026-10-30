@@ -130,6 +130,11 @@ func standardsSet(o standardsOpts) []standardsFile {
 		files = append(files, standardsFile{src: "compose.yaml.tmpl", dst: "compose.yaml"})
 	}
 
+	// The pre-commit hook, the secrets:scan script and the CI job scan with it.
+	if o.standards || o.ci {
+		files = append(files, standardsFile{src: "betterleaks.toml", dst: ".betterleaks.toml"})
+	}
+
 	return files
 }
 
@@ -267,7 +272,8 @@ const minimalPackageJSON = `{
   "private": true,
   "version": "0.1.0",
   "scripts": {
-    "lint:md": "markdownlint-cli2 \"**/*.md\""
+    "lint:md": "markdownlint-cli2 \"**/*.md\"",
+    "secrets:scan": "betterleaks git --no-banner --redact"
   },
   "devDependencies": {
     "markdownlint-cli2": "` + markdownlintVersion + `"
@@ -275,7 +281,7 @@ const minimalPackageJSON = `{
 }
 `
 
-// patchPackageJSON adds the SemVer version and the lint:md script to the
+// patchPackageJSON adds the SemVer version and the lint:md and secrets:scan scripts to the
 // project's package.json, or writes a minimal one when the stack has no
 // front end. Insertions are textual so the rest of the file, including the
 // key order a package manager expects, is untouched.
@@ -302,6 +308,7 @@ func patchPackageJSON(env *Env, assets bool) error {
 	for _, ins := range []struct{ anchor, line, skipIf string }{
 		{"{\n", `  "version": "0.1.0",`, `"version"`},
 		{"  \"scripts\": {\n", `    "lint:md": "markdownlint-cli2 \"**/*.md\"",`, `"lint:md"`},
+		{"  \"scripts\": {\n", `    "secrets:scan": "betterleaks git --no-banner --redact",`, `"secrets:scan"`},
 		{"  \"devDependencies\": {\n", `    "markdownlint-cli2": "` + markdownlintVersion + `",`, `"markdownlint-cli2"`},
 	} {
 		if bytes.Contains(src, []byte(ins.skipIf)) {

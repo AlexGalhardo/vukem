@@ -355,6 +355,72 @@ func (t *Tasks) Index(
 
 `requests.ListTasks` declares `status`, `sort`, `page` and `per_page` with `validate` tags, so they are validated and documented; `api.Query` still reads the URL itself and enforces the allowlist.
 
+### Your own envelope keys
+
+The envelope keys are snake_case by design: `per_page`, `last_page`, `next_cursor`, and `request_id` in errors. The error members `type`, `title`, `status`, `detail` and `instance` are fixed by [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457) anyway. There is no switch to rename them, because the [OpenAPI document](/docs/rest-apis/openapi) describes the struct tags and a runtime rename would make it lie.
+
+If your API contract uses camelCase or other names, build your own envelope with `api.CollectionOf`, `api.PageOf` or `api.CursorOf`. Each takes the same arguments as `api.Collection`, `api.Page` or `api.Cursor`, plus a `build` function. `build` receives the transformed items and the `*api.Meta` and `*api.Links` the plain helper would write (both `nil` for a collection) and returns your type. The helpers return that value instead of writing it, so a typed handler returns it and the OpenAPI document describes your keys.
+
+```go title="app/resources/page.go"
+package resources
+
+import "github.com/AlexGalhardo/vukem/api"
+
+// Page is the camelCase envelope of every list endpoint.
+type Page[R any] struct {
+	Items      []R     `json:"items"`
+	PerPage    int     `json:"perPage"`
+	Total      *int64  `json:"total,omitempty"`
+	NextCursor string  `json:"nextCursor,omitempty"`
+	Next       *string `json:"next"`
+}
+
+// NewPage builds a Page from the meta and links of api.PageOf.
+func NewPage[R any](data []R, m *api.Meta, l *api.Links) Page[R] {
+	p := Page[R]{Items: data}
+	if m != nil {
+		p.PerPage, p.Total, p.NextCursor = m.PerPage, m.Total, m.NextCursor
+	}
+
+	if l != nil {
+		p.Next = l.Next
+	}
+
+	return p
+}
+
+// ProductPage names the instantiation, so the OpenAPI component is
+// "ProductPage" instead of a long generic name.
+type ProductPage Page[ProductJSON]
+```
+
+```go title="app/controllers/apiv1/products.go"
+func (p *Products) Index(
+	c *web.Ctx, _ struct{},
+) (resources.ProductPage, error) {
+	req, err := api.Query(c, orm.QueryOf[models.Product](p.db), api.PerPage(20, 100))
+	if err != nil {
+		return resources.ProductPage{}, err
+	}
+
+	page, err := req.Paginate(c.Context())
+	if err != nil {
+		return resources.ProductPage{}, err
+	}
+
+	return resources.ProductPage(api.PageOf(c, page, resources.Product, resources.NewPage)), nil
+}
+```
+
+```json
+{
+  "items": [{ "id": 1, "name": "Keyboard" }],
+  "perPage": 20,
+  "total": 134,
+  "next": "/api/v1/products?page=2"
+}
+```
+
 ## Errors
 
 Every rejection is a `400` problem+json whose `detail` names what is allowed:

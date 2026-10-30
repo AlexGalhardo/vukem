@@ -1,0 +1,156 @@
+---
+title: JSON-RPC
+description: Serve typed JSON-RPC 2.0 methods from one endpoint, with batches, notifications, validated params and errors mapped from your app errors.
+---
+
+A REST API gives every resource its own URL and verb. [JSON-RPC 2.0](https://www.jsonrpc.org/specification) is the opposite: **one** endpoint, and each request names a method and passes params, like a function call over HTTP. Mobile apps, internal tools and agent integrations often prefer it, because every call has the same shape and several calls fit in one request.
+
+Vukem ships it in the `jsonrpc` package, written on the Go standard library. A server is a normal `http.Handler`, so the middleware you already have on the router (auth, rate limits, request ids, logging, tracing) runs for every call.
+
+## Quick start
+
+```go
+type GetItem struct {
+	ID int64 `json:"id" validate:"required,min=1"`
+}
+
+rpc := jsonrpc.NewServer(jsonrpc.Config{Logger: app.Logger})
+
+jsonrpc.Method(rpc, "items.get", func(ctx context.Context, p GetItem) (Item, error) {
+	return items.Find(ctx, p.ID)
+})
+
+r.Handle("POST /rpc", rpc)
+```
+
+A client calls it like this:
+
+```shell
+curl -s localhost:8080/rpc -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","method":"items.get","params":{"id":7},"id":1}'
+```
+
+```json
+{"jsonrpc":"2.0","result":{"id":7,"name":"Lamp"},"id":1}
+```
+
+## Methods and params
+
+`jsonrpc.Method(server, name, fn, guards...)` registers a typed function. The params type `P` must be a struct (use `struct{}` for a method without params); the result `R` is anything `encoding/json` can write.
+
+- **Named params** (`"params": {"id": 7}`) are matched by JSON field name.
+- **Positional params** (`"params": [7]`) are matched to the fields of `P` in declaration order.
+- Params are validated with the struct's `validate` tags, the same rules as [typed handlers](/docs/rest-apis/typed-handlers). Unknown members are refused.
+
+Names starting with `rpc.` are reserved by the specification. An empty, reserved or duplicate name, or a params type that is not a struct, panics at registration, like `http.ServeMux` does with a duplicate pattern, so the mistake shows up at boot.
+
+## Batches and notifications
+
+A request without an `id` is a **notification**: the method runs, and nothing is sent back. An array of requests is a **batch**: each call runs in order, and the answer is an array with one response per call that has an `id`.
+
+```json
+[
+  {"jsonrpc":"2.0","method":"items.get","params":{"id":7},"id":1},
+  {"jsonrpc":"2.0","method":"audit.log","params":{"event":"opened"}}
+]
+```
+
+When every call in a request is a notification, the HTTP answer is `204 No Content`. A batch larger than `Config.MaxBatch` (50 by default) is refused whole with `-32600`, and none of its calls run.
+
+## Errors
+
+Return errors the way you do in any handler. The server turns them into JSON-RPC error objects:
+
+| Your method returns | Error code | Message |
+| --- | --- | --- |
+| `*jsonrpc.Error{Code, Message, Data}` | your code | your message, plus `data` |
+| `*errs.ValidationError`, or params that fail validation | `-32602` | `Invalid params`, with `data.fields` |
+| a 4xx `*errs.HTTPError`, such as `errs.ErrNotFound` | `-32000 - (status - 400)`, so 404 is `-32004` | the error's client-safe message, with `data.status` |
+| any other error, or a panic | `-32603` | `Internal error`, nothing else |
+
+Internal errors and panics go to `Config.Logger` and never reach the client, so a database error cannot leak a query or a password. Calls that do not follow the specification get the standard codes: `-32700` for JSON that does not parse, `-32600` for an invalid request (wrong `jsonrpc` version, a non-string method, an object as `id`, an unknown member), `-32601` for an unknown method.
+
+## HTTP rules
+
+- Only `POST` with `Content-Type: application/json` is served: anything else is a `405` or `415`.
+- Bodies larger than `Config.MaxBodyBytes` (1 MiB by default) are a `413`.
+- Every JSON-RPC answer, errors included, is a `200`, because the error is in the body. A request of notifications only is a `204`.
+
+## Authorization
+
+Put authentication on the route, like any other endpoint. It answers before the server looks at the method, so a caller without credentials cannot tell which methods exist:
+
+```go title="routes/api.go"
+r.Group("/api", func(g *router.Group) {
+	g.Use(auth.Required(acc.API))
+	g.Handle("POST /rpc", rpc)
+})
+```
+
+For per-method checks, pass guards. A guard runs before the method and its error becomes the call's error. A guarded notification that fails its guard does not run either, even though no answer is sent:
+
+```go
+canPurge := func(ctx context.Context) error {
+	u, err := auth.UserFrom[models.User](ctx, "api")
+	if err != nil || u.Role != "admin" {
+		return errs.ErrForbidden
+	}
+	return nil
+}
+
+jsonrpc.Method(rpc, "cache.purge", purge, canPurge)
+```
+
+## The OpenRPC document
+
+[OpenRPC](https://spec.open-rpc.org) is to JSON-RPC what OpenAPI is to REST: a JSON document that lists every method with its params and result schema. `rpc.OpenRPC(title, version)` builds it from the registered methods, with the same schemas the [OpenAPI export](/docs/rest-apis/openapi) produces from your structs and `validate` tags:
+
+```go title="routes/api.go"
+r.Get("/rpc/openrpc.json", func(c *web.Ctx) error {
+	return c.JSON(http.StatusOK, rpc.OpenRPC("Items API", "1.0.0"))
+})
+```
+
+Each params field becomes a content descriptor, in field order, marked `required` when its tag says so. Feed the document to OpenRPC tools (a playground, or a generator for a TypeScript client); Vukem's own [client generation](/docs/rest-apis/client-generation) covers OpenAPI only.
+
+## Calling from Go
+
+`jsonrpc.Client` calls any JSON-RPC 2.0 endpoint, typed with generics:
+
+```go
+c := jsonrpc.NewClient("https://api.example.com/rpc", nil)
+c.Header.Set("Authorization", "Bearer "+token)
+
+item, err := jsonrpc.Call[Item](ctx, c, "items.get", GetItem{ID: 7})
+if e, ok := errors.AsType[*jsonrpc.Error](err); ok && e.Code == -32004 {
+	// the server answered errs.ErrNotFound
+}
+
+err = c.Notify(ctx, "audit.log", map[string]string{"event": "opened"})
+```
+
+A JSON-RPC error answer comes back as an `*jsonrpc.Error`. The client checks that the answer carries the id it sent and reads at most 10 MiB. A `nil` HTTP client means `http.DefaultClient`; pass your own for timeouts.
+
+## Security
+
+What Vukem does for you:
+
+- **Bounded input.** Body size and batch size are capped, and deeply nested JSON is a parse error, not a stack overflow.
+- **No leaks.** Internal errors and panics become `-32603` with no detail; the real error is logged.
+- **Strict params.** Unknown members are refused and params are validated before your code runs.
+- **Guards stop notifications too.** A call nobody waits for still cannot bypass authorization.
+
+The tests behind these are `TestSecurity_A04_JSONRPCBatchLimit`, `TestSecurity_A04_JSONRPCDeepNesting`, `TestSecurity_A05_JSONRPCInternalErrorsHidden` and `TestSecurity_A01_JSONRPCGuards`, and the decoder is fuzzed (`FuzzServer`).
+
+## Testing
+
+A server is an `http.Handler`, so `httptest` is enough:
+
+```go
+req := httptest.NewRequest(http.MethodPost, "/rpc",
+	strings.NewReader(`{"jsonrpc":"2.0","method":"items.get","params":{"id":7},"id":1}`))
+req.Header.Set("Content-Type", "application/json")
+
+rec := httptest.NewRecorder()
+rpc.ServeHTTP(rec, req)
+```
