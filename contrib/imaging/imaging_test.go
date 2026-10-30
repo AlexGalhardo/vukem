@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"image"
 	"image/color"
 	"image/gif"
@@ -335,5 +336,36 @@ func TestThumbnailAnimatedGIFUsesFirstFrame(t *testing.T) {
 	res, err := Thumbnail(t.Context(), disk, "a.gif", "g", Options{MaxWidth: 20, MaxHeight: 20})
 	if err != nil || res.Width != 20 || res.Height != 10 {
 		t.Fatalf("animated GIF = %+v, %v", res, err)
+	}
+}
+
+// The same source and options give byte-identical output, so stored
+// thumbnails can be compared by hash (VF-004); this holds for one Go
+// toolchain, not across releases of image/jpeg or x/image/draw.
+func TestThumbnailIsDeterministic(t *testing.T) {
+	t.Parallel()
+
+	disk := storage.NewMemory("")
+	_ = storage.PutBytes(t.Context(), disk, "p.png", encodePNG(t, opaque(600, 900)))
+
+	var first []byte
+
+	for i := range 3 {
+		dst := fmt.Sprintf("out/%d", i)
+		res, err := Thumbnail(t.Context(), disk, "p.png", dst, Options{MaxWidth: 96, MaxHeight: 144})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		got, err := storage.Get(t.Context(), disk, res.Path)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if first == nil {
+			first = got
+		} else if !bytes.Equal(first, got) {
+			t.Fatalf("Thumbnail run %d differs from run 0", i)
+		}
 	}
 }

@@ -322,6 +322,42 @@ Declare it on the value receiver `(u User)`, not `(u *User)`: `NewSessionGuard` 
 
 A rejected remember cookie logs `auth.remember_rejected`; a session ended by a version change logs `auth.session_revoked`.
 
+### Signing in as another user (impersonation)
+
+Support staff sometimes need to see exactly what a user sees. `Impersonate` signs the current user, the **actor**, in as another user for a limited time. It does not check who the actor is: put the route behind an admin-only [gate](/docs/security/authorization).
+
+```go title="app/controllers/admin/impersonation.go"
+func (a *Admin) Start(c *web.Ctx) error {
+	target, err := a.users.ByID(c.Context(), c.Param("user"))
+	if err != nil {
+		return err
+	}
+
+	err = a.guard.Impersonate(c, target, 30*time.Minute)
+	if err != nil {
+		return err
+	}
+
+	return c.Redirect("/dashboard")
+}
+
+func (a *Admin) Stop(c *web.Ctx) error {
+	if _, err := a.guard.StopImpersonating(c); err != nil {
+		return err
+	}
+
+	return c.Redirect("/admin/users")
+}
+```
+
+What happens:
+
+- The session id is regenerated, no remember-me cookie is issued, and the security event `auth.impersonation_started` logs the actor and the target.
+- Impersonating yourself, or starting a second impersonation inside one, returns `auth.ErrImpersonation` as a `409`.
+- `Impersonator(c)` returns the actor's id and `true` while it lasts. Use it to show a banner such as "You are signed in as Bob. Stop".
+- After `ttl` the whole session ends on the next request. The guard never falls back to the actor, because the browser may be shared with the user being helped.
+- `StopImpersonating` signs the actor back in. If the actor was deleted or its sessions were ended meanwhile (a password reset), the whole session ends instead and the error is `auth.ErrUnauthenticated`.
+
 ### When the database is down
 
 `ByID` must report a missing user as `auth.ErrUserNotFound` (or wrap `orm.ErrNotFound` or `sql.ErrNoRows`). The guard then forgets the session. Any **other** error (the database is down) makes `auth.Required` answer `503` and keeps the session, so an outage neither logs everyone out nor treats them as guests. A custom provider that returns a generic error for "not found" leaves a deleted user's session failing with 503 instead of logging out.
