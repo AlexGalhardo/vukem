@@ -14,6 +14,7 @@ package middleware
 import (
 	"context"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -245,6 +246,16 @@ func MethodOverride() Middleware {
 					if _, limited := web.BodyLimitOf(r); !limited {
 						r = web.LimitBody(w, r, web.DefaultMaxBody)
 					}
+
+					// PostFormValue drops the ParseForm error, and net/http
+					// then treats the form as parsed. Remember a body-limit
+					// error so web.Parse answers 413 instead of 422.
+					if err := r.ParseForm(); err != nil {
+						if _, tooBig := errors.AsType[*http.MaxBytesError](err); tooBig {
+							r = web.NoteBodyError(r, err)
+						}
+					}
+
 					m = r.PostFormValue("_method")
 				}
 
