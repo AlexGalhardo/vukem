@@ -125,6 +125,8 @@ Someone reaches data or actions that are not theirs: changing `/posts/7/edit` to
 | Static files and uploads through `os.Root`; dotfiles never served | P |
 | [Signed URLs](/docs/security/signed-urls) with HMAC and expiry | A |
 | `httpclient.Safe()` rejects loopback, private, link-local and cloud-metadata addresses after DNS resolution (SSRF) | A |
+| Behind [Cloudflare](/docs/deployment/cloudflare), `CF-Connecting-IP` is trusted only from Cloudflare's published ranges, and the origin can refuse every other peer | A |
+| [Impersonation](/docs/security/authentication#signing-in-as-another-user-impersonation) is time-bounded, rotates the session and logs `auth.impersonation_started` with the actor | A |
 
 ### A02 Security Misconfiguration
 
@@ -138,6 +140,7 @@ The code is fine but a setting is wrong: debug pages on in production, a default
 | Debug details only in development | P |
 | `vukem about` prints the effective security settings, secrets redacted | P |
 | Destructive commands need `--force` in production | P |
+| New projects scan commits for leaked keys with [Betterleaks](/docs/security/secret-scanning) (pre-commit hook, `secrets:scan`, CI job); `vukem doctor` checks that Betterleaks is installed | P |
 
 ### A03 Software Supply Chain Failures
 
@@ -179,6 +182,7 @@ Attackers sign in as someone else: they guess passwords, reuse passwords leaked 
 | Login throttled per email + IP and per account | A |
 | Tokens expire, carry abilities and can be revoked | A |
 | [Two-factor authentication](/docs/security/two-factor), [social login](/docs/security/social-login) with PKCE | A |
+| [Passkeys](/docs/security/passkeys) (WebAuthn) with origin and RP ID checks and sign-count clone detection; `install:auth --passkeys` scaffolds them | A |
 
 ### A08 Software or Data Integrity Failures
 
@@ -190,7 +194,7 @@ Cookies are signed and encrypted (P). [CSRF](/docs/basics/csrf) protection uses 
 
 An attack happens and nobody notices. [Read more](https://owasp.org/Top10/2025/A09_2025-Security_Logging_and_Alerting_Failures/).
 
-Request logs are structured and carry a request id (P). Security events have stable names such as `auth.login_failed`, `csrf.rejected` and `ratelimit.exceeded` (P / A), and you can listen to them for alerts ([security events](/docs/security/building-blocks)). Secrets and the `Authorization` and `Cookie` headers are never logged, and `slog` attribute encoding prevents log injection (P).
+Request logs are structured and carry a request id (P). Security events have stable names such as `auth.login_failed`, `csrf.rejected` and `ratelimit.exceeded` (P / A), and you can listen to them for alerts ([security events](/docs/security/building-blocks)). Secrets and the `Authorization` and `Cookie` headers are never logged, and `slog` attribute encoding prevents log injection (P). `LOG_TRUNCATE_IP=true` keeps only the network part of client IPs in the request log, for privacy laws such as the GDPR (A).
 
 ### A10 Mishandling of Exceptional Conditions
 

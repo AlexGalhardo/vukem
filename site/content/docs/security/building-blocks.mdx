@@ -370,6 +370,9 @@ Every security-relevant decision in Vukem calls `web.SecurityEvent`. Each event 
 | `idempotency.key_reused`, `idempotency.unscoped` | an idempotency key was misused |
 | `flags.locked_write` | a write to a locked feature flag was refused |
 | `auth.2fa_failed` | a two-factor code was wrong (`install:auth --2fa` scaffold) |
+| `auth.impersonation_started`, `auth.impersonation_ended` | an actor started or stopped [impersonating](/docs/security/authentication#signing-in-as-another-user-impersonation) a user, or the impersonation expired |
+| `challenge.failed`, `challenge.unavailable` | a [bot challenge](/docs/security/bot-challenge) token was rejected, or the provider could not be reached |
+| `admin.ip_denied`, `admin.session_expired` | the [admin panel](/docs/digging-deeper/admin) refused a client IP outside `AllowCIDRs`, or a session older than `MaxSessionAge` |
 
 ```go title="app/listeners/alerts.go"
 events.Listen(app.Events,
