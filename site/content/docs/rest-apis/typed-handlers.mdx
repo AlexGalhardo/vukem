@@ -222,6 +222,27 @@ Your function returns `(Out, error)`.
 
 When the status is `204`, the output value is not written even if `Out` has fields. An `Out` of `struct{}` never has a body: with `Op.Status` set (for example `202 Accepted`), the response carries that status and no body. A `201` from a typed handler has no `Location` header; if clients need one, write a plain handler with `c.Created`.
 
+A `POST` that returns a body is `201 Created` unless you set `Op.Status`. Keep that default for a route that creates a resource. A command that does not create one sets the status. `POST /webhooks/{id}/test` sends a sample delivery and returns a result; it answers `200 OK`:
+
+```go title="app/resources/webhook.go"
+// TestResult is the body of POST /webhooks/{id}/test.
+type TestResult struct {
+	Delivered bool `json:"delivered"`
+	Status    int  `json:"status"`
+}
+```
+
+```go title="routes/webhooks.go"
+api.Register(g, "POST /webhooks/{id}/test", api.Op{
+	Name:   "webhooks.test",
+	Status: http.StatusOK,
+}, func(c *web.Ctx, in requests.WebhookID) (resources.TestResult, error) {
+	return resources.TestResult{Delivered: true, Status: http.StatusOK}, nil
+})
+```
+
+The OpenAPI builder uses the same default. Leave `Op.Status` unset and `vukem openapi:export` writes `"201"` into the document, not only into the one response the handler sends.
+
 ### Finishing the response yourself
 
 A handler may write the response itself, for example a `304 Not Modified` for a conditional GET or a `301` to a new URL. Return the zero `Out` and a nil error: once the response is written, nothing else is validated or written.
