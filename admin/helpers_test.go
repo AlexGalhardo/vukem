@@ -196,6 +196,8 @@ type options struct {
 	harden func(*admin.Config)
 	// extra registers policies for resources the default gate does not know.
 	extra func(*authz.Gate[*User]) error
+	// beside registers routes next to the panel, after Mount.
+	beside func(*router.Router, *admin.Panel)
 	// clock drives the app (sessions) and the panel.
 	clock *vukemtest.FakeClock
 }
@@ -304,7 +306,15 @@ func newApp(t *testing.T, o options) *vukemtest.App {
 					return err
 				}
 
-				return panel.Mount(r)
+				if err := panel.Mount(r); err != nil {
+					return err
+				}
+
+				if o.beside != nil {
+					o.beside(r, panel)
+				}
+
+				return nil
 			}))...)
 	}
 
