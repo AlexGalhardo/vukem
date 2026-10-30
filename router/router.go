@@ -19,6 +19,7 @@
 package router
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -314,6 +315,10 @@ func (rt *Route) allMiddleware() []Middleware {
 
 	chain = append(chain, rt.group.router.router...)
 	for _, g := range rt.group.lineage() {
+		if g.errWrap != nil {
+			chain = append(chain, rt.group.router.groupErrors(g.errWrap))
+		}
+
 		chain = append(chain, g.mw...)
 	}
 
@@ -539,9 +544,50 @@ func closureSuffix(seg string) bool {
 	return true
 }
 
+// groupErrorsKey holds the error handler of a Group.ErrorHandler for
+// route handlers. It is kept apart from the services in the context, which
+// middleware such as auth.ProblemJSON swap for middleware errors only.
+type groupErrorsKey struct{}
+
+// groupErrors installs wrap for the middleware below it (through the
+// services in the context) and for the route handler (groupErrorsKey).
+func (r *Router) groupErrors(wrap func(web.ErrorHandler) web.ErrorHandler) Middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			ctx := req.Context()
+
+			s := *web.ServicesFrom(ctx)
+			s.Errors = wrap(cmpErrors(s.Errors))
+
+			outer, ok := ctx.Value(groupErrorsKey{}).(web.ErrorHandler)
+			if !ok {
+				outer = cmpErrors(r.services.Errors)
+			}
+
+			ctx = context.WithValue(web.WithServices(ctx, &s), groupErrorsKey{}, wrap(outer))
+			next.ServeHTTP(w, req.WithContext(ctx))
+		})
+	}
+}
+
+func cmpErrors(h web.ErrorHandler) web.ErrorHandler {
+	if h == nil {
+		return web.DefaultErrorHandler
+	}
+
+	return h
+}
+
 func (r *Router) adapt(h web.HandlerFunc, rt *Route) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		c := web.NewCtx(w, req, r.services)
+		services := r.services
+		if eh, ok := req.Context().Value(groupErrorsKey{}).(web.ErrorHandler); ok {
+			s := *services
+			s.Errors = eh
+			services = &s
+		}
+
+		c := web.NewCtx(w, req, services)
 		c.SetRouteName(rt.FullName())
 		c.Serve(h)
 	})

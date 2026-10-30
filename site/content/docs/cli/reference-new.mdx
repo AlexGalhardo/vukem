@@ -33,9 +33,9 @@ vukem new [flags] <name>
 | `-pm` | string | see below | JavaScript package manager: `npm`, `bun`, `pnpm` or `yarn`. |
 | `-no-install` | bool | `false` | Do not install frontend dependencies. |
 | `-framework` | string | none | Path to a local Vukem checkout. Adds a `replace` directive instead of requiring a release. |
-| `-standards` | bool | `false` | `.markdownlint-cli2.jsonc`, `lint:md` script, `CHANGELOG.md`, `.config/cliff.toml`, `.githooks/commit-msg` and `pre-commit`, version `0.1.0`. Sets `core.hooksPath` to `.githooks`. |
+| `-standards` | bool | `false` | `.markdownlint-cli2.jsonc`, `lint:md` and `secrets:scan` scripts, `CHANGELOG.md`, `.config/cliff.toml`, `.githooks/commit-msg` and `pre-commit` (secret scan, `gofmt`, `go vet`), `.betterleaks.toml`, version `0.1.0`. Sets `core.hooksPath` to `.githooks`. See [Secret scanning](/docs/security/secret-scanning). |
 | `-license` | string | none | `mit`: `LICENSE`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`. |
-| `-ci` | bool | `false` | `.github/workflows/ci.yml` and `.github/dependabot.yml`. |
+| `-ci` | bool | `false` | `.github/workflows/ci.yml` (with a pinned Betterleaks secret-scanning job), `.github/dependabot.yml` and `.betterleaks.toml`. |
 | `-deploy` | string | none | `railway`: `.railway/railway.ts`. |
 | `-docker` | bool | `false` | `compose.yaml` with the app, PostgreSQL and a mail catcher, plus its `.env` block. |
 
@@ -249,6 +249,22 @@ vukem version
 
 ```text
 vukem vX.Y.Z
+```
+
+## `vukem doctor`
+
+Report the optional tools the project relies on and their versions. Today that is [Betterleaks](/docs/security/secret-scanning), which the pre-commit hook and `secrets:scan` script run.
+
+**Usage**
+
+```text
+vukem doctor
+```
+
+No flags, no arguments. It always exits 0: a missing tool is reported, not an error, because CI runs the scan anyway.
+
+```text
+betterleaks: 1.9.0 (/usr/local/bin/betterleaks)
 ```
 
 ## `vukem list` and `vukem help`

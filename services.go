@@ -277,6 +277,7 @@ type mailState struct {
 	mailer    *mail.Mailer
 	err       error
 	transport mail.Transport
+	react     web.Renderer
 	// unconfigured records that MAIL_MAILER is unset in production and
 	// this process is not serving, so the refusal was deferred to Send.
 	// RequireMailer turns it back into a boot error for a long-running
@@ -321,6 +322,7 @@ func (a *App) Mailer() (*mail.Mailer, error) {
 		}
 
 		a.mail.mailer = mail.New(t, cfg.From, views)
+		a.mail.mailer.SetReact(a.mail.react)
 		a.mail.mailer.SetEnqueue(a.enqueueMail)
 		a.mail.mailer.SetEnqueueTx(a.enqueueMailTx)
 	})

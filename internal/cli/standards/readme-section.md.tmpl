@@ -8,7 +8,10 @@
 {{- if .Standards}}
 | `.markdownlint-cli2.jsonc` | Markdown rules; run them with `npm run lint:md` |
 | `CHANGELOG.md` | [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), generated from the commits by `git cliff --config .config/cliff.toml` |
-| `.githooks/` | a `commit-msg` hook that enforces [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) and a `pre-commit` hook that runs `gofmt` and `go vet` |
+| `.githooks/` | a `commit-msg` hook that enforces [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) and a `pre-commit` hook that scans the staged changes for secrets (when [Betterleaks](https://github.com/betterleaks/betterleaks) is installed), then runs `gofmt` and `go vet` |
+{{- end}}
+{{- if or .Standards .CI}}
+| `.betterleaks.toml` | secret scanning rules (`APP_KEY`, `vk_` API tokens, Stripe keys) on top of Betterleaks' defaults{{if .Standards}}; scan the history with `npm run secrets:scan`{{end}} |
 {{- end}}
 {{- if .License}}
 | `LICENSE` | the {{.License}} license |
@@ -17,7 +20,7 @@
 | `SECURITY.md` | how to report a vulnerability |
 {{- end}}
 {{- if .CI}}
-| `.github/workflows/ci.yml` | format, vet, test, `govulncheck` and the image build on every push |
+| `.github/workflows/ci.yml` | format, vet, test, `govulncheck`, secret scanning and the image build on every push |
 | `.github/dependabot.yml` | weekly dependency and action updates, with Conventional Commits titles |
 {{- end}}
 {{- if .Docker}}

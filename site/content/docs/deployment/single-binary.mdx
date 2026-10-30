@@ -179,6 +179,8 @@ The `@file:` prefix reads the value from a file and trims the trailing newline. 
 | `SHUTDOWN_TIMEOUT` | `15s` | the drain time on stop, a Go [duration](https://pkg.go.dev/time#ParseDuration) |
 | `HTTP_MAX_HEADER_BYTES` | `65536` | request line plus headers limit, `4096` to `1048576`; larger requests get `431` |
 | `HTTP_H2C` | `false` | HTTP/2 without TLS in production, for a proxy that speaks h2c |
+| `TLS_CERT_FILE`, `TLS_KEY_FILE` | — | Serve HTTPS with HTTP/2 from a PEM key pair (reloaded on change); see [HTTP/2 and HTTP/3](/docs/deployment/http2-and-http3) |
+| `TLS_REDIRECT_ADDR` | — | Plain HTTP listener (e.g. `:80`) that redirects to the `https` `APP_URL` |
 | `LOG_FORMAT` | `json` in production | `json` or `text` |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 

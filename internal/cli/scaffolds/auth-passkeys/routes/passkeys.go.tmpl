@@ -1,0 +1,52 @@
+package routes
+
+import (
+	"time"
+
+	"github.com/AlexGalhardo/vukem"
+	"github.com/AlexGalhardo/vukem/auth"
+	"github.com/AlexGalhardo/vukem/ratelimit"
+	"github.com/AlexGalhardo/vukem/router"
+
+	"{{.Module}}/app/accounts"
+	"{{.Module}}/app/controllers/account"
+)
+
+// Passkeys registers the passkey endpoints (vukem install:auth
+// --passkeys). They answer JSON for the browser code around
+// navigator.credentials.create and .get.
+func Passkeys(r *router.Router, app *vukem.App) error {
+	acc, err := accounts.New(app)
+	if err != nil {
+		return err
+	}
+
+	pk, err := accounts.NewPasskeys(acc, app)
+	if err != nil {
+		return err
+	}
+
+	// RATE_LIMIT_STORE=cache shares the limits between servers (CACHE_STORE=database or Redis).
+	limiters, err := app.RateLimiters()
+	if err != nil {
+		return err
+	}
+
+	h := account.NewPasskeys(pk)
+	required := auth.Required(acc.Web)
+	verified := auth.Verified(acc.Web)
+	guest := auth.Guest(acc.Web)
+	// Password checks per user and IP; sign-in ceremonies per IP, like the login form.
+	confirm := ratelimit.Middleware(limiters("passkeys.confirm", 5, time.Minute), account.PasskeyThrottleKey)
+	login := ratelimit.Middleware(limiters("passkeys.login", 10, time.Minute), ratelimit.ByIP)
+
+	r.Get("/user/passkeys", h.List).Name("passkeys.index").Use(required, verified)
+	r.Post("/user/passkeys/options", h.RegistrationOptions).Name("passkeys.options").Use(required, verified, confirm)
+	r.Post("/user/passkeys", h.Register).Name("passkeys.store").Use(required, verified)
+	r.Post("/user/passkeys/{id}/delete", h.Delete).Name("passkeys.destroy").Use(required, verified, confirm)
+
+	r.Post("/passkeys/login/options", h.LoginOptions).Name("passkeys.login.options").Use(guest, login)
+	r.Post("/passkeys/login", h.Login).Name("passkeys.login").Use(guest, login)
+
+	return nil
+}
