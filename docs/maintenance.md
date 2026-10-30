@@ -32,6 +32,10 @@ A job renamed in `ci.yml` must be renamed in that file in the same PR, or every 
 
 Vukem has one maintainer. GitHub does not let authors approve their own pull requests and Scorecard ignores bot reviews, so the `Code-Review` check stays at 0 until a second person reviews changes. Creating a second account to approve is metric fraud and breaks GitHub's terms; it is never done. What compensates, and is checked on every PR: the `TestSecurity_*` contract in [security.md](security.md), fuzzing, CodeQL, govulncheck, the coverage gate and the recorded reviews in [security-review.md](security-review.md) and [api/review.md](api/review.md). The way up is a co-maintainer or invited reviewer for release and security PRs.
 
+### Known CI issues
+
+- Windows runtime crashes in the `go test -race` job ([golang/go#81238](https://github.com/golang/go/issues/81238), Go 1.27.3): on `windows-latest` (Windows Server 2025) hosts with Intel AMX, Windows writes an exception frame larger than the stack reserve Go keeps, below the goroutine stack, and the heap is corrupted. Seen as `fatal error: unknown caller pc` (a GC worker stack with a `sigtrampgo` frame), `fatal error: found pointer to free object` (`reportZombies`) or a nil dereference inside a stdlib function (`log/slog`), in CI runs 40972862220, 40813653835 and 40801161416. They never reproduce on Linux, macOS or AMD hosts (a 40-run local loop on a Ryzen stayed clean). The Test step prints the runner CPU first: re-run the failed job once when the CPU is an AMX Xeon (8573C, 6973P-C) and the failure has one of these signatures; any other failure, or the same crash on a non-AMX CPU, is a real bug. Remove this entry once a Go release ships the fix ([CL 828724](https://go.dev/cl/828724)).
+
 ## Release routine
 
 After each [PLAN.md](PLAN.md) task group:
