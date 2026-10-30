@@ -1,0 +1,96 @@
+---
+title: HTTP/2 and HTTP/3
+description: When the app server should speak HTTPS and HTTP/2 itself, how to give it a certificate, and when a proxy or CDN in front is the better place for TLS.
+---
+
+Browsers speak HTTP/2 only over TLS. Most deployments never notice, because a proxy or CDN in front of the app (Railway's edge, Cloudflare, nginx, Caddy) terminates TLS and talks to the app over plain HTTP. When nothing sits in front, the app server can serve HTTPS and HTTP/2 itself.
+
+You will learn:
+
+- when to terminate TLS in the app and when at a proxy;
+- how to serve HTTPS with HTTP/2 from a certificate file or a `tls.Config`;
+- how certificate renewal, the HTTP to HTTPS redirect and HTTP/2 cleartext (h2c) behave.
+
+## Proxy or direct?
+
+| Setup | Who speaks TLS and HTTP/2 | What you configure |
+| --- | --- | --- |
+| Railway, Fly, Render, Heroku | the platform's edge | nothing; keep `PORT` |
+| Cloudflare in front | Cloudflare (HTTP/3 too) | nothing on the app; Cloudflare's SSL mode "Full (strict)" needs a certificate on the origin, see below |
+| your own nginx, Caddy or load balancer | the proxy | `HTTP_H2C=true` when the proxy speaks HTTP/2 to the app (gRPC) |
+| a VM or container reached directly | the app | `TLS_CERT_FILE` and `TLS_KEY_FILE`, or `WithTLSConfig` |
+
+Behind a proxy, the browser's HTTP/2 or HTTP/3 connection ends at the proxy, so the app gains nothing from TLS of its own unless the proxy requires it (an encrypted origin).
+
+## Serving HTTPS from certificate files
+
+Point two variables at a PEM certificate (with its chain) and its private key:
+
+```shell title=".env"
+PORT=443
+APP_URL=https://example.com
+TLS_CERT_FILE=/etc/ssl/example.com/fullchain.pem
+TLS_KEY_FILE=/etc/ssl/example.com/privkey.pem
+```
+
+The server then accepts only TLS on `PORT` and negotiates HTTP/2 (ALPN `h2`) with clients that support it, HTTP/1.1 with the rest. It uses the Go standard library's [`http.Protocols`](https://pkg.go.dev/net/http#Protocols) and default cipher suites, with TLS 1.2 as the minimum version.
+
+**Renewals need no restart.** On new connections, at most once a second, the server checks whether either file changed and loads the new pair. If the new files do not load (a half-written key, a mismatched pair), it keeps serving the previous certificate and logs `tls: certificate reload failed`.
+
+Set both variables or neither: one without the other stops the server at start with `vukem: set both TLS_CERT_FILE and TLS_KEY_FILE`.
+
+## Serving HTTPS from a `tls.Config`
+
+For certificates that do not live in files, such as Let's Encrypt through [`autocert`](https://pkg.go.dev/golang.org/x/crypto/acme/autocert), pass a `tls.Config` with a certificate source:
+
+```go title="bootstrap/app.go"
+m := &autocert.Manager{
+	Prompt:     autocert.AcceptTOS,
+	HostPolicy: autocert.HostWhitelist("example.com"),
+	Cache:      autocert.DirCache("/var/lib/app/certs"),
+}
+
+app, err := vukem.New(vukem.WithTLSConfig(m.TLSConfig()))
+```
+
+The config must carry `Certificates`, `GetCertificate` or `GetConfigForClient`. `MinVersion` defaults to TLS 1.2; a lower one is a boot error. `WithTLSConfig` with a certificate and `TLS_CERT_FILE` at the same time is refused.
+
+## Redirecting HTTP to HTTPS
+
+With TLS on, the server has no plain HTTP listener, so `http://` requests get no answer. To redirect them, set `TLS_REDIRECT_ADDR`:
+
+```shell title=".env"
+TLS_REDIRECT_ADDR=:80
+```
+
+Every request to that address gets a `308 Permanent Redirect` to the same path and query on `APP_URL`, which must be an `https` URL. The target never comes from the request's `Host` header, so the redirect cannot send users to another site. Add HSTS with the [security headers](/docs/security/overview) middleware so browsers stop trying `http://` at all.
+
+## HTTP/2 without TLS (h2c)
+
+Outside production the server also speaks HTTP/2 cleartext with prior knowledge, which gRPC tools use (`grpcurl -plaintext`). In production it does so only with `HTTP_H2C=true`, for a proxy that speaks h2c to the app. h2c is plaintext, so `HTTP_H2C=true` together with TLS is a boot error.
+
+## HTTP/3
+
+HTTP/3 runs over QUIC (UDP) and is mostly a win on lossy mobile networks. CDNs such as Cloudflare offer it at the edge with no change to the app, which is the simplest way to get it. Serving HTTP/3 from the app itself will come as an opt-in module, `contrib/http3`, so the core stays on the standard library.
+
+## Configuration
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `TLS_CERT_FILE` | — | PEM certificate chain; serve HTTPS with HTTP/2 on `PORT` |
+| `TLS_KEY_FILE` | — | PEM private key of that certificate |
+| `TLS_REDIRECT_ADDR` | — | plain HTTP address that redirects to `APP_URL` |
+| `HTTP_H2C` | `false` | HTTP/2 cleartext in production; exclusive with TLS |
+
+## Security
+
+- **TLS 1.2 or later.** Older clients fail the handshake; a `tls.Config` asking for less is a boot error (`TestSecurity_A02_HTTPSServesH2AndRefusesWeakTLS`).
+- **No silent plaintext.** With TLS on, plain HTTP is served only by the redirect listener you asked for.
+- **No open redirect.** The redirect target is `APP_URL`, not the request's host (`TestSecurity_A01_TLSRedirectUsesAppURL`).
+- **Keep the key private.** The key file should be readable only by the app's user (`chmod 600`).
+
+## Common mistakes
+
+**`APP_URL` still says `http://`.** With `TLS_REDIRECT_ADDR` set, the server refuses to start: `vukem: TLS_REDIRECT_ADDR needs TLS_CERT_FILE/TLS_KEY_FILE (or WithTLSConfig) and an https APP_URL`. Set `APP_URL=https://...`.
+
+**TLS on the app behind a proxy that expects plain HTTP.** The proxy's requests fail with `400 Bad Request` ("client sent an HTTP request to an HTTPS server"). Either let the proxy connect over HTTPS, or remove `TLS_CERT_FILE`.

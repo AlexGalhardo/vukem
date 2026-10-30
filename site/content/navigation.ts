@@ -73,6 +73,7 @@ export const navigation: NavCategory[] = [
       "api-tokens",
       "two-factor",
       "passkeys",
+      "secret-scanning",
       "authorization",
       "rate-limiting",
       "bot-challenge",
@@ -97,6 +98,7 @@ export const navigation: NavCategory[] = [
       "scheduler",
       "sse",
       "broadcasting",
+      "notifications",
       "webhooks",
       "localization",
       "billing",
@@ -133,6 +135,6 @@ export const navigation: NavCategory[] = [
   {
     title: "Deployment",
     dir: "deployment",
-    pages: ["single-binary", "docker-and-railway", "cloudflare"],
+    pages: ["single-binary", "docker-and-railway", "cloudflare", "http2-and-http3"],
   },
 ];

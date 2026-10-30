@@ -338,7 +338,12 @@ func (g *SessionGuard[U]) User(c *web.Ctx) (U, error) {
 		return zero, ErrUnauthenticated
 	}
 
-	if id, ok := s.Get(g.key()).(string); ok && id != "" {
+	if g.impersonationExpired(s) {
+		// End the whole session: falling back to the actor would keep an
+		// admin signed in on a session handed around for support.
+		s.Invalidate()
+		web.SecurityEvent(c.Request(), "auth.impersonation_ended", "guard", g.name, "reason", "expired")
+	} else if id, ok := s.Get(g.key()).(string); ok && id != "" {
 		u, err := g.provider.ByID(c.Context(), id)
 
 		switch {

@@ -63,6 +63,30 @@ func Collection[T, R any](c *web.Ctx, items []T, fn func(T) R) error {
 // Page answers 200 with an offset page: data, meta (page, per_page, total,
 // last_page) and links (self, next, prev).
 func Page[T, R any](c *web.Ctx, p orm.Page[T], fn func(T) R) error {
+	return c.JSON(http.StatusOK, PageOf(c, p, fn, envelope[R]))
+}
+
+// Cursor answers 200 with a keyset page: meta.next_cursor and links.next
+// (null on the last page).
+func Cursor[T, R any](c *web.Ctx, p orm.CursorPage[T], fn func(T) R) error {
+	return c.JSON(http.StatusOK, CursorOf(c, p, fn, envelope[R]))
+}
+
+// CollectionOf is Collection with the app's own envelope type E: build
+// receives the transformed items and nil meta and links. Return E from a
+// typed handler ([Register]) and the OpenAPI document describes E, so an
+// app can use its own key names (camelCase, "items") without hand-writing
+// the pagination:
+//
+//	func listEnvelope[R any](data []R, m *api.Meta, l *api.Links) MyPage[R] { ... }
+//	return api.CollectionOf(products, resources.Product, listEnvelope), nil
+func CollectionOf[E, T, R any](items []T, fn func(T) R, build func(data []R, m *Meta, l *Links) E) E {
+	return build(Map(items, fn), nil, nil)
+}
+
+// PageOf is Page with the app's own envelope type E: build receives the
+// transformed items and the meta and links Page would write.
+func PageOf[E, T, R any](c *web.Ctx, p orm.Page[T], fn func(T) R, build func(data []R, m *Meta, l *Links) E) E {
 	total := p.Total
 	links := &Links{Self: withQuery(c, "page", strconv.Itoa(p.Page))}
 
@@ -74,26 +98,26 @@ func Page[T, R any](c *web.Ctx, p orm.Page[T], fn func(T) R) error {
 		links.Prev = new(withQuery(c, "page", strconv.Itoa(min(p.Page-1, p.LastPage))))
 	}
 
-	return c.JSON(http.StatusOK, Envelope[R]{
-		Data:  Map(p.Items, fn),
-		Meta:  &Meta{Page: p.Page, PerPage: p.PerPage, Total: &total, LastPage: p.LastPage},
-		Links: links,
-	})
+	return build(
+		Map(p.Items, fn),
+		&Meta{Page: p.Page, PerPage: p.PerPage, Total: &total, LastPage: p.LastPage},
+		links,
+	)
 }
 
-// Cursor answers 200 with a keyset page: meta.next_cursor and links.next
-// (null on the last page).
-func Cursor[T, R any](c *web.Ctx, p orm.CursorPage[T], fn func(T) R) error {
+// CursorOf is Cursor with the app's own envelope type E: build receives
+// the transformed items and the meta and links Cursor would write.
+func CursorOf[E, T, R any](c *web.Ctx, p orm.CursorPage[T], fn func(T) R, build func(data []R, m *Meta, l *Links) E) E {
 	links := &Links{Self: c.Request().URL.RequestURI()}
 	if p.NextCursor != "" {
 		links.Next = new(withQuery(c, "cursor", p.NextCursor))
 	}
 
-	return c.JSON(http.StatusOK, Envelope[R]{
-		Data:  Map(p.Items, fn),
-		Meta:  &Meta{PerPage: p.PerPage, NextCursor: p.NextCursor},
-		Links: links,
-	})
+	return build(Map(p.Items, fn), &Meta{PerPage: p.PerPage, NextCursor: p.NextCursor}, links)
+}
+
+func envelope[R any](data []R, m *Meta, l *Links) Envelope[R] {
+	return Envelope[R]{Data: data, Meta: m, Links: l}
 }
 
 // withQuery returns the request path and query with key set to value.

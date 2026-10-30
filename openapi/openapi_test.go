@@ -746,3 +746,43 @@ func TestBuildLicenseSecurityAndErrorsForPlainRoutes(t *testing.T) {
 		}
 	}
 }
+
+func TestStripPrefix(t *testing.T) {
+	t.Parallel()
+
+	doc, err := openapi.Build(routes(), openapi.Info{
+		Servers: []string{"https://api.shop.example/v1"}, StripPrefix: "/api/v1/",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, ok := doc.Paths["/legacy/{path}"]; !ok {
+		t.Errorf("paths = %v, want /api/v1 stripped", slices.Sorted(maps.Keys(doc.Paths)))
+	}
+
+	for p := range doc.Paths {
+		if strings.HasPrefix(p, "/api/") || p == "/" {
+			t.Errorf("path %q kept, want only routes under /api/v1, stripped", p)
+		}
+	}
+
+	// Requests still carry the router path; validation strips it too.
+	if err := doc.ValidateResponse("POST", "/api/v1/webhooks/stripe", 200, []byte(`{}`)); err != nil {
+		t.Errorf("ValidateResponse(router path) = %v, want nil", err)
+	}
+
+	if err := doc.ValidateResponse("GET", "/", 200, nil); !errors.Is(err, openapi.ErrNoOperation) {
+		t.Errorf("ValidateResponse(/) = %v, want ErrNoOperation", err)
+	}
+
+	if _, err := openapi.Build(
+		routes(),
+		openapi.Info{StripPrefix: "/nowhere"},
+	); !errors.Is(
+		err,
+		openapi.ErrEmptyDocument,
+	) {
+		t.Errorf("Build(StripPrefix /nowhere) = %v, want ErrEmptyDocument", err)
+	}
+}
