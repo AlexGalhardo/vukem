@@ -67,6 +67,14 @@ var paramRe = regexp.MustCompile(`\{([A-Za-z_][A-Za-z0-9_]*)(?:\.{3})?\}`) //nol
 //	api.Register(g, "POST /products", api.Op{Name: "products.store"},
 //		func(c *web.Ctx, in StoreProduct) (ProductJSON, error) { ... })
 //
+// A handler that writes the response itself (a 304 from c.NotModified, a
+// redirect) returns the zero Out and a nil error; Register then writes
+// nothing more:
+//
+//	if c.NotModified(etag, item.UpdatedAt) {
+//		return ItemJSON{}, nil
+//	}
+//
 // Use [RegisterWith] when the input needs a rule `validate` tags cannot
 // express.
 func Register[In, Out any](g Registrar, pattern string, op Op, fn func(*web.Ctx, In) (Out, error)) *router.Route {
@@ -186,6 +194,12 @@ func register[In, Out any](
 		out, err := fn(c, in)
 		if err != nil {
 			return err
+		}
+
+		// The handler finished the response itself (c.NotModified, a redirect):
+		// Out is ignored, neither validated nor written.
+		if c.Writer().Written() {
+			return nil
 		}
 
 		if status == http.StatusNoContent {
