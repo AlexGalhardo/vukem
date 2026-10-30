@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"reflect"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/AlexGalhardo/vukem/orm"
@@ -158,6 +159,36 @@ func filterValue(t reflect.Type, s string) (any, bool) {
 	default:
 		return nil, false
 	}
+}
+
+// encodeKeyPart escapes "-" and "~" so composite ids can be split on "-".
+// "-" becomes "~" and "~" becomes "~~". Neither is rewritten by URL decoding.
+func encodeKeyPart(s string) string {
+	s = strings.ReplaceAll(s, "~", "~~")
+	return strings.ReplaceAll(s, "-", "~")
+}
+
+// decodeKeyPart reverses encodeKeyPart.
+func decodeKeyPart(s string) string {
+	var b strings.Builder
+
+	for i := 0; i < len(s); i++ {
+		if s[i] != '~' {
+			b.WriteByte(s[i])
+			continue
+		}
+
+		if i+1 < len(s) && s[i+1] == '~' {
+			b.WriteByte('~')
+			i++
+
+			continue
+		}
+
+		b.WriteByte('-')
+	}
+
+	return b.String()
 }
 
 // keyValue converts a URL id to the primary key's Go kind.

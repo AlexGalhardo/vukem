@@ -325,6 +325,10 @@ The navigation only shows the resources the user may `viewAny`, and the audit an
 
 Lists answer htmx partial requests (search, sort, pagination) with only the list block, and send `Vary: HX-Request` so caches keep the two versions apart. After a save, the panel redirects to the record when the user may `view` it, otherwise to the list, and shows a flash message such as "Post saved." (session key `admin.FlashKey`, `admin.success`).
 
+### Composite primary keys
+
+A model with `PrimaryKeys() []string` (`orm.CompositeKeyer`) is a resource too. The `{id}` segment is those values in order, joined with `-`: user 1 and item 10 is `/admin/ratings/1-10`. Detail, edit, delete and bulk actions filter on every key column, so the URL does not resolve by the first column alone. A `-` or `~` inside a value is escaped (`-` becomes `~`, a `~` becomes `~~`). The wrong number of segments, or a segment that does not match the column type, is 404. A schema key still cannot write a key column.
+
 ## Custom actions
 
 Moderation needs more than create, edit and delete: approve a suggestion, reject it with a reason, approve twenty at once. `Resource.Actions` adds such operations:
@@ -455,7 +459,7 @@ Keep the overrides free of inline `<script>` and `style` attributes, or the stri
 | --- | --- |
 | **Fail closed** | Every route needs the guard, the panel ability and the policy ability. A missing ability, policy or authorizer answers **403** and logs an `authz.denied` security event (with `area=admin`). Guests are redirected to the route named `login`; JSON requests get **401**. |
 | **CSRF** | The panel adds `csrf.Middleware` (with the session-token fallback) to its routes, and its forms carry the token. |
-| **Mass assignment** | Only schema keys are read from the form and written. The primary key, timestamps, hidden and read-only columns never are. |
+| **Mass assignment** | Only schema keys are read from the form and written. Every primary-key column (one or several), timestamps, hidden and read-only columns never are. |
 | **Injection** | Sort, filter and search columns are allowlists; anything else is ignored. Values are bound parameters. |
 | **Secrets** | Columns tagged `json:"-"`, columns whose name contains `password`, `passwd`, `secret`, `token`, `api_key`, `apikey`, `private_key`, `recovery`, `otp` or `totp` anywhere (except the counters `tokens_used`, `tokens_count`/`_total`/`_remaining`/`_limit`, `max_tokens*`, `*_token_count` and names containing `footprint`), and columns marked `Sensitive` are never displayed, listed, searched, sorted or filtered. On a form they are empty password inputs that keep the stored value when left blank. The audit log records only that they changed. |
 | **Headers** | Pages send `Cache-Control: no-store` and `X-Frame-Options: DENY`, plus a strict CSP when the app set none: `default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; form-action 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'`. |

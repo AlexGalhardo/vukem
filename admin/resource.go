@@ -93,6 +93,7 @@ type filter struct {
 type base struct {
 	slug, singular, plural string
 	pk                     string
+	keys                   []string // every primary key column; keys[0] == pk
 	columns                []column
 	byName                 map[string]*column
 	inputs                 []input
@@ -149,25 +150,17 @@ type computed[T any] struct {
 // from schema: each schema key is a form field written to the model column
 // with the same name (or the snake_case of the input field name). Only
 // schema keys are ever written (mass-assignment protection); the primary
-// key and timestamps cannot be schema keys. It panics on a model with a
-// composite primary key (orm.CompositeKeyer). T is given explicitly and I is
-// inferred:
+// key and timestamps cannot be schema keys. A composite primary key
+// (orm.CompositeKeyer) is addressed as a-b: each column's value, in
+// PrimaryKeys order, joined with "-". A "-" or "~" inside a value is
+// escaped so the URL matches every key column, not the first one alone.
+// T is given explicitly and I is inferred:
 //
 //	admin.NewResource[models.Post](requests.PostSchema)
 func NewResource[T, I any](schema z.StructSchema[I]) *Resource[T] {
-	if keys := orm.PrimaryKeysOf[T](); len(keys) > 1 {
-		// Rows are addressed by one id in URLs and forms.
-		panic(
-			fmt.Sprintf(
-				"admin: %s has a composite primary key %v; resources need a single-column key",
-				orm.TableOf[T](),
-				keys,
-			),
-		)
-	}
-
 	r := &Resource[T]{}
-	r.pk = orm.PrimaryKeyOf[T]()
+	r.keys = orm.PrimaryKeysOf[T]()
+	r.pk = r.keys[0]
 	r.byName = map[string]*column{}
 	r.hidden, r.readonly, r.sensitive = map[string]bool{}, map[string]bool{}, map[string]bool{}
 	r.perPage = 20
@@ -229,7 +222,7 @@ func (r *Resource[T]) newInput(key string, sf reflect.StructField, prop map[stri
 		return in, nil
 	}
 
-	if col == r.pk || slices.Contains(protected, col) {
+	if slices.Contains(r.keys, col) || slices.Contains(protected, col) {
 		return input{}, fmt.Errorf("schema key %q writes the protected column %q", key, col)
 	}
 

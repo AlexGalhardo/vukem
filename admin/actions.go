@@ -239,21 +239,16 @@ func (r *Resource[T]) bulkRecords(c *web.Ctx, p *Panel, a Action[T], raw []strin
 	recs := make([]*T, 0, len(ids))
 
 	for _, id := range ids {
-		key, ok := keyValue(r.byName[r.pk].typ, id)
-		if !ok {
-			return nil, orm.ErrNotFound
-		}
-
-		rec, err := orm.QueryOf[T](p.cfg.DB).Find(c.Context(), key)
+		rec, err := r.record(c.Context(), p.cfg.DB, id)
 		if err != nil {
 			return nil, err
 		}
 
-		if err := p.authorize(c, a.Name, &rec); err != nil {
+		if err := p.authorize(c, a.Name, rec); err != nil {
 			return nil, err
 		}
 
-		recs = append(recs, &rec)
+		recs = append(recs, rec)
 	}
 
 	return recs, nil
