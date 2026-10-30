@@ -120,7 +120,16 @@ func (r *Resource[T]) view(c *web.Ctx, p *Panel) *resourceView {
 }
 
 func (r *Resource[T]) id(rv reflect.Value) string {
-	return formValue(rv.FieldByIndex(r.byName[r.pk].index))
+	if len(r.keys) == 1 {
+		return formValue(rv.FieldByIndex(r.byName[r.pk].index))
+	}
+
+	parts := make([]string, len(r.keys))
+	for i, k := range r.keys {
+		parts[i] = encodeKeyPart(formValue(rv.FieldByIndex(r.byName[k].index)))
+	}
+
+	return strings.Join(parts, "-")
 }
 
 // auditColumns are the columns compared for the audit log.
@@ -128,7 +137,7 @@ func (r *Resource[T]) auditColumns() []string {
 	var cols []string
 
 	for _, c := range r.columns {
-		if c.name != r.pk && !slices.Contains(protected, c.name) {
+		if !slices.Contains(r.keys, c.name) && !slices.Contains(protected, c.name) {
 			cols = append(cols, c.name)
 		}
 	}
@@ -137,12 +146,42 @@ func (r *Resource[T]) auditColumns() []string {
 }
 
 func (r *Resource[T]) find(c *web.Ctx, p *Panel) (*T, error) {
-	id, ok := keyValue(r.byName[r.pk].typ, c.Param("id"))
-	if !ok {
+	return r.record(c.Context(), p.cfg.DB, c.Param("id"))
+}
+
+// record loads the row named by a URL id. A composite id is every key
+// column (a-b); matching the first column alone would show another row.
+func (r *Resource[T]) record(ctx context.Context, ex database.Executor, raw string) (*T, error) {
+	q := orm.QueryOf[T](ex)
+	if len(r.keys) == 1 {
+		id, ok := keyValue(r.byName[r.pk].typ, raw)
+		if !ok {
+			return nil, orm.ErrNotFound
+		}
+
+		rec, err := q.Find(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+
+		return &rec, nil
+	}
+
+	parts := strings.Split(raw, "-")
+	if raw == "" || len(parts) != len(r.keys) {
 		return nil, orm.ErrNotFound
 	}
 
-	rec, err := orm.QueryOf[T](p.cfg.DB).Find(c.Context(), id)
+	for i, col := range r.keys {
+		v, ok := keyValue(r.byName[col].typ, decodeKeyPart(parts[i]))
+		if !ok {
+			return nil, orm.ErrNotFound
+		}
+
+		q = q.Where(col, v)
+	}
+
+	rec, err := q.First(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -188,8 +227,10 @@ func (r *Resource[T]) index(p *Panel) web.HandlerFunc {
 			lv.Sort = ""
 		}
 
-		if lv.Sort != r.pk {
-			q = q.OrderBy(r.pk, orm.Desc)
+		for _, k := range r.keys {
+			if lv.Sort != k {
+				q = q.OrderBy(k, orm.Desc)
+			}
 		}
 
 		pg, err := q.MaxPerPage(r.perPage).Paginate(c.Context(), max(c.QueryInt("page", 1), 1), r.perPage)
