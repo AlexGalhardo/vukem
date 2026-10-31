@@ -52,6 +52,8 @@ type Config struct {
 	// OTEL_EXPORTER_OTLP_ENDPOINT, selects an OTLP/HTTP collector, exported
 	// every OTEL_METRIC_EXPORT_INTERVAL milliseconds (60s by default);
 	// OTEL_METRICS_EXPORTER=none, or neither endpoint, records no metric.
+	// On Railway the shared OTEL_EXPORTER_OTLP_ENDPOINT is traces only, so
+	// metrics stay off unless OTEL_EXPORTER_OTLP_METRICS_ENDPOINT is set.
 	MetricReader sdkmetric.Reader
 	// QueryText records the SQL text on database spans (see WithQueryText).
 	QueryText bool
@@ -384,7 +386,8 @@ func signalEndpoint(getenv func(string) string, signal string) (string, error) {
 // As in the OpenTelemetry spec, OTEL_METRICS_EXPORTER defaults to otlp:
 // OTEL_EXPORTER_OTLP_METRICS_ENDPOINT, else OTEL_EXPORTER_OTLP_ENDPOINT
 // with /v1/metrics, turns metrics on, and OTEL_METRICS_EXPORTER=none turns
-// them off.
+// them off. On Railway the shared endpoint does not: that receiver accepts
+// traces only.
 func metricReader(getenv func(string) string) (sdkmetric.Reader, error) {
 	switch getenv("OTEL_METRICS_EXPORTER") {
 	case "", "otlp":
@@ -392,6 +395,15 @@ func metricReader(getenv func(string) string) (sdkmetric.Reader, error) {
 		return nil, nil //nolint:nilnil // nil means "metrics off"
 	default:
 		return nil, errors.New("otel: OTEL_METRICS_EXPORTER must be otlp or none")
+	}
+
+	// Railway's receiver accepts traces only. It injects the shared
+	// endpoint for that signal, so metric export stays off unless a
+	// distinct metrics endpoint is set. OTEL_METRICS_EXPORTER=otlp does
+	// not override this.
+	if getenv("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT") == "" &&
+		(getenv("RAILWAY_ENVIRONMENT") != "" || getenv("RAILWAY_SERVICE_ID") != "") {
+		return nil, nil //nolint:nilnil // nil means "metrics off"
 	}
 
 	endpoint, err := signalEndpoint(getenv, "METRICS")

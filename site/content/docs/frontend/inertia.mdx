@@ -414,6 +414,7 @@ What keeps its old behaviour:
 You may change it:
 
 - `inertia.Config{ErrorComponent: "Errors/Show"}` points at another page.
+- `inertia.Config{ErrorFullPages: true}` renders the same page inside the root view for full page loads too (a link opened in a new tab, a refresh), so an error raised outside a page controller keeps the app shell instead of the bare framework page. JSON clients and htmx requests keep their own formats.
 - `app.Router.Services().ErrorPage = nil` in your routes keeps the HTML page.
 
 <Callout type="warning" title="Missing Error page">
@@ -570,6 +571,7 @@ vukem.WithInertia(inertia.Config{
 | `EncryptHistory` | `bool` | `false` | Encrypt history state on every page |
 | `SSR` | `*inertia.SSRConfig` | `nil` (off) | Server-side rendering |
 | `ErrorComponent` | `string` | `"Error"` | Page rendered for errors on Inertia visits |
+| `ErrorFullPages` | `bool` | `false` | Also render `ErrorComponent` in the root view for full page loads |
 | `ViewData` | `func(*http.Request) map[string]any` | none | Extra root-view data per request, as `RootData.Data` (full page visits only) |
 
 Other helpers: `inertia.IsInertia(r)` and `inertia.IsPrefetch(r)` read the request, `app.Inertia.Version()` returns the current version, and the protocol header names are exported as constants (`inertia.HeaderInertia`, `inertia.HeaderVersion`, `inertia.HeaderLocation`, ...).

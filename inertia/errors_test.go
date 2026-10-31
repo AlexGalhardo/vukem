@@ -247,3 +247,60 @@ func TestSecurity_A10_InertiaErrorPageHidesInternals(t *testing.T) {
 		}
 	}
 }
+
+func TestErrorFullPages(t *testing.T) {
+	t.Parallel()
+
+	cfg := baseConfig()
+	cfg.ErrorFullPages = true
+	h := errorHarness(t, cfg, false)
+
+	// A full page load renders the Error component in the root view.
+	rec := serve(t, h, "/missing", map[string]string{"Accept": "text/html"})
+	body := rec.Body.String()
+
+	if rec.Code != 404 || rec.Header().Get("X-Inertia") != "" || rec.Header().Get("Cache-Control") != "no-store" ||
+		!strings.Contains(body, "data-page") || !strings.Contains(body, "Error") || !strings.Contains(body, "Shop") {
+		t.Errorf("full load = %d %v %s, want the Error page in the root view", rec.Code, rec.Header(), body)
+	}
+
+	// Unmatched routes never run middleware: the page still renders.
+	if rec := serve(
+		t,
+		h,
+		"/nope",
+		map[string]string{"Accept": "text/html"},
+	); rec.Code != 404 ||
+		!strings.Contains(rec.Body.String(), "data-page") {
+		t.Errorf("unmatched = %d %s, want the Error page", rec.Code, rec.Body)
+	}
+
+	// API clients keep problem+json.
+	rec = serve(t, h, "/missing", map[string]string{"Accept": "application/json"})
+	if rec.Code != 404 || rec.Header().Get("Content-Type") != "application/problem+json" {
+		t.Errorf("JSON client = %d %v %s, want problem+json", rec.Code, rec.Header(), rec.Body)
+	}
+}
+
+func TestSecurity_A10_InertiaFullErrorPageHidesInternals(t *testing.T) {
+	t.Parallel()
+
+	cfg := baseConfig()
+	cfg.ErrorFullPages = true
+	h := errorHarness(t, cfg, false)
+
+	for _, target := range []string{"/boom", "/wrapped", "/unavailable"} {
+		rec := serve(t, h, target, map[string]string{"Accept": "text/html"})
+
+		body := rec.Body.String()
+		for _, leak := range []string{"pq:", "relation", "user.go", "replica"} {
+			if strings.Contains(body, leak) {
+				t.Errorf("GET %s leaks %q: %s", target, leak, body)
+			}
+		}
+
+		if !strings.Contains(body, "data-page") {
+			t.Errorf("GET %s = %s, want the Error page", target, body)
+		}
+	}
+}

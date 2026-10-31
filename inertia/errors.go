@@ -9,7 +9,8 @@ import (
 )
 
 // ErrorPage renders Config.ErrorComponent for an Inertia request, so the
-// client shows an error page instead of the raw HTML response in a modal.
+// client shows an error page instead of the raw HTML response in a modal;
+// with Config.ErrorFullPages it does the same for full page loads.
 // The props are status, title and message (e.Detail, or e.Title when it is
 // empty), plus the shared props; e.Errors (a 4xx validation error) becomes
 // the errors prop, first message per field, over any flashed errors. It is
@@ -18,7 +19,8 @@ import (
 // loads keep the HTML status page), for statuses outside 4xx/5xx, or when
 // the page props fail to resolve or encode.
 func (in *Inertia) ErrorPage(c *web.Ctx, e web.ErrorPage) bool {
-	if !IsInertia(c.Request()) || e.Status < 400 || e.Status > 599 {
+	full := !IsInertia(c.Request())
+	if e.Status < 400 || e.Status > 599 || full && !in.cfg.ErrorFullPages {
 		return false
 	}
 
@@ -49,6 +51,17 @@ func (in *Inertia) ErrorPage(c *web.Ctx, e web.ErrorPage) bool {
 		}
 
 		p.Props["errors"] = fields
+	}
+
+	if full {
+		c.SetHeader("Cache-Control", "no-store")
+
+		if err := in.renderRoot(c, st, p, e.Status); err != nil {
+			c.Log().ErrorContext(c.Context(), "inertia: render error page", "status", e.Status, "err", err)
+			return false
+		}
+
+		return true
 	}
 
 	// Encoded before any header is set, so a failure falls back cleanly.
