@@ -958,7 +958,7 @@ func TestStripPrefix(t *testing.T) {
 
 type enumTagged struct {
 	Type  string `json:"type"  enum:"games,movies" doc:"Catalogue type"`
-	Sort  string `json:"sort"  validate:"oneof=asc desc" enum:"ignored"`
+	Sort  string `json:"sort"  enum:"ignored"                           validate:"oneof=asc desc"`
 	Plain string `json:"plain"`
 }
 
