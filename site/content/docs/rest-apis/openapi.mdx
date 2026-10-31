@@ -269,6 +269,17 @@ vukem.ServeOpenAPIWith(app, r, "/api/v2/openapi.json",
 
 The routes are unnamed so several documents can coexist; name them with `.Name(…)` if you need to.
 
+`Servers` and `StripPrefix` are app-wide by default. When the documents are served differently (a public API behind `https://api.example.com/v1` and a first-party API with full paths), give each prefix its own in `openapi.Info.Docs`. The entry for the prefix used by `ServeOpenAPIWith`, `vukem openapi:export -prefix` and `vukem codegen:* -prefix` replaces `Servers` and `StripPrefix`; an empty `StripPrefix` keeps full paths, and empty `Servers` fall back to the app-wide ones. A prefix with no entry uses the app-wide values, so a single `Info` behaves as before.
+
+```go title="bootstrap/app.go"
+vukem.WithOpenAPI(openapi.Info{
+	Docs: map[string]openapi.DocInfo{
+		"/api/v1": {Servers: []string{"https://api.example.com/v1"}, StripPrefix: "/api/v1"},
+		"/app/v1": {Servers: []string{"https://api.example.com"}},
+	},
+})
+```
+
 ### Exporting without secrets
 
 `vukem openapi:export > openapi.json` builds the app in **warmup** mode, like `codegen:types` and `codegen:client`: providers do not `Boot`, so no database or other connection is opened, and `APP_KEY` may be unset. CI can run it without secrets. Two consequences:

@@ -62,6 +62,19 @@ type Info struct {
 	// .Doc(Skip{}): such routes are documented with an untyped body and
 	// response, which some client generators drop.
 	TypedOnly bool
+	// Docs overrides Servers and StripPrefix for the document built with a
+	// given path prefix (the -prefix flag of openapi:export and codegen:*,
+	// OpenAPIOptions.PathPrefix), keyed by that prefix. An entry replaces
+	// StripPrefix outright, so an empty one keeps full paths; empty Servers
+	// fall back to the app-wide ones. Build ignores it: vukem resolves it
+	// before building.
+	Docs map[string]DocInfo
+}
+
+// DocInfo is the per-document override of Info.Docs.
+type DocInfo struct {
+	Servers     []string
+	StripPrefix string
 }
 
 // License is the info.license object: Name plus either an SPDX

@@ -3260,3 +3260,53 @@ func TestWithNameIsTheDefaultOfAppName(t *testing.T) {
 		})
 	}
 }
+
+func TestOpenAPIInfoDocs(t *testing.T) {
+	t.Parallel()
+
+	routes := func(r *router.Router, app *App) error {
+		api.Register(r, "GET /api/v1/ping", api.Op{Name: "ping"},
+			func(*web.Ctx, struct{}) (pingOut, error) { return pingOut{}, nil })
+		api.Register(r, "GET /app/v1/ping", api.Op{Name: "appPing"},
+			func(*web.Ctx, struct{}) (pingOut, error) { return pingOut{}, nil })
+
+		return nil
+	}
+
+	build := func(info openapi.Info, prefix string) *openapi.Document {
+		t.Helper()
+
+		app := newTestApp(t, WithSource(testSource(nil)), WithRoutes(routes), WithOpenAPI(info))
+
+		doc, err := app.openAPI(prefix)
+		if err != nil {
+			t.Fatalf("openAPI(%q) = %v", prefix, err)
+		}
+
+		return doc
+	}
+
+	info := openapi.Info{
+		Servers: []string{"https://default.test"},
+		Docs: map[string]openapi.DocInfo{
+			"/api/v1": {Servers: []string{"https://api.test/v1"}, StripPrefix: "/api/v1"},
+			"/app/v1": {Servers: []string{"https://api.test"}},
+		},
+	}
+
+	pub := build(info, "/api/v1")
+	if _, ok := pub.Paths["/ping"]; !ok || len(pub.Servers) != 1 || pub.Servers[0].URL != "https://api.test/v1" {
+		t.Errorf("public doc paths %v servers %v, want /ping under https://api.test/v1", slices.Sorted(maps.Keys(pub.Paths)), pub.Servers)
+	}
+
+	first := build(info, "/app/v1")
+	if _, ok := first.Paths["/app/v1/ping"]; !ok || first.Servers[0].URL != "https://api.test" {
+		t.Errorf("app doc paths %v servers %v, want full paths under https://api.test", slices.Sorted(maps.Keys(first.Paths)), first.Servers)
+	}
+
+	// No entry for the prefix: the app-wide Info applies, as before.
+	single := build(openapi.Info{Servers: []string{"https://one.test"}, StripPrefix: "/api/v1"}, "/api/v1")
+	if _, ok := single.Paths["/ping"]; !ok || single.Servers[0].URL != "https://one.test" {
+		t.Errorf("single Info paths %v servers %v, want unchanged behaviour", slices.Sorted(maps.Keys(single.Paths)), single.Servers)
+	}
+}

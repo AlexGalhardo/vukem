@@ -1207,7 +1207,8 @@ func ssrCheckCommand() Command {
 // An empty Title, Version or Servers keeps the configured value (APP_NAME,
 // API_VERSION, OPENAPI_SERVERS or APP_URL); an empty StripPrefix keeps
 // OPENAPI_STRIP_PREFIX; an empty PathPrefix keeps OPENAPI_PREFIX, and the
-// prefix of ServeOpenAPIWith wins over both.
+// prefix of ServeOpenAPIWith wins over both. Info.Docs gives one document
+// per path prefix its own Servers and StripPrefix.
 func WithOpenAPI(info openapi.Info) Option {
 	return func(o *options) error { o.openAPI = &info; return nil }
 }
@@ -1237,6 +1238,12 @@ func (a *App) openAPI(prefix string) (*openapi.Document, error) {
 		info.Version = a.Config.APIVersion
 	}
 
+	doc, perDoc := info.Docs[strings.TrimSuffix(prefix, "/")]
+	if perDoc {
+		info.Servers = doc.Servers
+		info.StripPrefix = doc.StripPrefix
+	}
+
 	if len(info.Servers) == 0 {
 		info.Servers = a.Config.OpenAPIServers
 	}
@@ -1245,7 +1252,7 @@ func (a *App) openAPI(prefix string) (*openapi.Document, error) {
 		info.Servers = []string{a.Config.URL}
 	}
 
-	if info.StripPrefix == "" {
+	if info.StripPrefix == "" && !perDoc {
 		info.StripPrefix = a.Config.OpenAPIStripPrefix
 	}
 
