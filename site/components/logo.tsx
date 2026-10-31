@@ -21,7 +21,7 @@ export function Logo() {
       aria-label={t.logoLabel}
     >
       <LogoMark />
-      <span className="text-[15px]">Vukem</span>
+      <span className="text-[0.9375rem]">Vukem</span>
     </Link>
   );
 }
