@@ -251,6 +251,12 @@ func Post() *vadmin.Resource[models.Post] {
 }
 ```
 
+### Concurrent edits
+
+An update locks the stored row (`SELECT ... FOR UPDATE`) inside the save transaction and writes only the columns the form changed, compared with the row as the panel loaded it. A column the form left alone keeps whatever another session wrote in the meantime, so saving a title never reverts a body, a counter or a provenance column that changed after the form was opened.
+
+If a column the form changed was also changed by another writer after the panel loaded the row, the save is refused with the same "This record conflicts with an existing one." form error that a unique violation shows, and nothing is written. Reload the record and submit again. `BeforeSave` runs before the lock, so a column it sets counts as changed; `AfterSave` and the audit entry see the merged record, and the audit diff lists only what this save changed.
+
 ### Side effects: `AfterSave` and virtual fields
 
 `BeforeSave` gets only the record. When a save must write other tables or fire an event, use `AfterSave(func(ctx context.Context, s admin.Saved[T]) error)`. It runs after the record is written, inside the panel transaction and before the audit entry, with:

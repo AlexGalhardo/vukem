@@ -107,7 +107,21 @@ func (adminPolicy[T]) Delete(_ context.Context, u *User, _ T) bool {
 
 // postPolicy adds the custom actions of the post resource; a post titled
 // "Locked" cannot be approved.
-type postPolicy struct{ adminPolicy[*Post] }
+type postPolicy struct {
+	adminPolicy[*Post]
+
+	// onUpdate runs between the panel loading the row and its transaction:
+	// the window where another writer can change the row.
+	onUpdate func(context.Context)
+}
+
+func (p postPolicy) Update(ctx context.Context, u *User, post *Post) bool {
+	if p.onUpdate != nil {
+		p.onUpdate(ctx)
+	}
+
+	return p.adminPolicy.Update(ctx, u, post)
+}
 
 func (postPolicy) Approve(_ context.Context, u *User, p *Post) bool {
 	return u.Role == "admin" && p.Title != "Locked"
@@ -196,6 +210,8 @@ type options struct {
 	harden func(*admin.Config)
 	// extra registers policies for resources the default gate does not know.
 	extra func(*authz.Gate[*User]) error
+	// racing runs when the panel authorizes a post update, with the panel's DB.
+	racing func(context.Context, *database.DB)
 	// pages registers custom pages before Mount.
 	pages func(*admin.Panel) error
 	// beside registers routes next to the panel, after Mount.
@@ -279,7 +295,11 @@ func newApp(t *testing.T, o options) *vukemtest.App {
 					gate.Define(admin.AbilityFlags, func(_ context.Context, u *User) bool { return u.Role == "admin" })
 
 					if err := gate.Register(
-						authz.For[*Post](postPolicy{}),
+						authz.For[*Post](postPolicy{onUpdate: func(ctx context.Context) {
+							if o.racing != nil {
+								o.racing(ctx, db)
+							}
+						}}),
 						authz.For[*Account](adminPolicy[*Account]{}),
 					); err != nil {
 						return err
