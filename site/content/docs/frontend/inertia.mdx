@@ -176,6 +176,20 @@ vukem.WithInertia(inertia.Config{
 
 Inside the script every `/` is escaped as `\/`, so a prop holding `</script>` can never close the element early.
 
+### Styling the gap before the app mounts
+
+Between the first paint and the moment the client mounts the app, a click does nothing. The generated `resources/views/app.html` writes `data-hydrating` on `<html>`, and `resources/js/app.(ts|tsx)` removes it when `createInertiaApp` settles (mounted or failed). Style the gap with CSS alone, with no inline script, so the CSP stays strict:
+
+```css title="resources/css/app.css"
+html[data-hydrating] button,
+html[data-hydrating] [type="submit"] {
+	cursor: progress;
+	opacity: 0.6;
+}
+```
+
+If you also make the page `inert` until it mounts, set and clear `inert` next to `data-hydrating`, and use the attribute to tell the user that the page is still loading. A custom root view must write the attribute itself; pages with `DisableSSR` keep it set until the client renders them.
+
 `npm run typecheck` checks the pages: `tsc` for React (TypeScript 7), `vue-tsc` for Vue and `svelte-check` for Svelte (both on TypeScript 6.0 until their checkers support 7).
 
 ## What the middleware does
