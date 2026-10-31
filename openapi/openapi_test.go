@@ -6,6 +6,8 @@ import (
 	"errors"
 	"flag"
 	"maps"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -951,5 +953,57 @@ func TestStripPrefix(t *testing.T) {
 		openapi.ErrEmptyDocument,
 	) {
 		t.Errorf("Build(StripPrefix /nowhere) = %v, want ErrEmptyDocument", err)
+	}
+}
+
+type enumTagged struct {
+	Type  string `json:"type"  enum:"games,movies" doc:"Catalogue type"`
+	Sort  string `json:"sort"  enum:"ignored"                           validate:"oneof=asc desc"`
+	Plain string `json:"plain"`
+}
+
+func TestEnumTagDocumentsWithoutValidating(t *testing.T) {
+	t.Parallel()
+
+	r := router.New(nil)
+	api.Register(r, "GET /items/{type}", api.Op{Name: "items.show"},
+		func(*web.Ctx, enumTagged) (page, error) { return page{}, nil })
+
+	if _, err := r.Handler(); err != nil {
+		t.Fatal(err)
+	}
+
+	doc, err := openapi.Build(r.Routes(), openapi.Info{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	params := map[string]openapi.Parameter{}
+	for _, p := range doc.Paths["/items/{type}"]["get"].Parameters {
+		params[p.Name] = p
+	}
+
+	if got := params["type"].Schema["enum"]; !reflect.DeepEqual(got, []any{"games", "movies"}) {
+		t.Errorf("path enum = %#v, want the enum tag", got)
+	}
+
+	if got := params["sort"].Schema["enum"]; !reflect.DeepEqual(got, []any{"asc", "desc"}) {
+		t.Errorf("validate oneof must win over enum, got %#v", got)
+	}
+
+	if _, ok := params["plain"].Schema["enum"]; ok {
+		t.Error("untagged field got an enum")
+	}
+
+	h, err := r.Handler()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/items/books?sort=asc", http.NoBody))
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("a value outside the enum tag answered %d, want 200 (documentation only)", rec.Code)
 	}
 }

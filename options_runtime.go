@@ -113,6 +113,14 @@ func WithVersion(version string) Option {
 	return func(o *options) error { o.version = version; return nil }
 }
 
+// WithName sets the application name used when APP_NAME is unset, instead
+// of "Vukem". APP_NAME still wins. `vukem new` writes the project name here,
+// so a deployment without a .env (CI, containers) does not show "Vukem" in
+// page titles, the OpenAPI title or the scheduler lock keys.
+func WithName(name string) Option {
+	return func(o *options) error { o.name = name; return nil }
+}
+
 // WithTrustedProxies trusts these networks as proxies in addition to
 // TRUSTED_PROXIES, for ranges that come from code rather than the
 // environment, such as a CDN's published list

@@ -161,7 +161,7 @@ export function SearchDialog() {
       >
         <Search aria-hidden className="size-4 shrink-0" />
         <span className="hidden flex-1 text-left sm:inline">Search…</span>
-        <kbd className="hidden rounded border border-border bg-bg px-1.5 py-0.5 font-sans text-[11px] font-medium text-faint sm:inline">
+        <kbd className="hidden rounded border border-border bg-bg px-1.5 py-0.5 font-sans text-[0.6875rem] font-medium text-faint sm:inline">
           {isMac ? "⌘K" : "Ctrl K"}
         </kbd>
       </Dialog.Trigger>
@@ -189,9 +189,9 @@ export function SearchDialog() {
               aria-expanded
               aria-controls="docs-search-results"
               aria-activedescendant={flat[current] ? `search-result-${current}` : undefined}
-              className="h-12 flex-1 bg-transparent text-[15px] text-fg outline-none placeholder:text-faint focus-visible:outline-none"
+              className="h-12 flex-1 bg-transparent text-[0.9375rem] text-fg outline-none placeholder:text-faint focus-visible:outline-none"
             />
-            <kbd className="rounded border border-border px-1.5 py-0.5 text-[11px] text-faint">Esc</kbd>
+            <kbd className="rounded border border-border px-1.5 py-0.5 text-[0.6875rem] text-faint">Esc</kbd>
           </div>
 
           <div ref={listRef} id="docs-search-results" role="listbox" aria-label="Results" className="flex-1 overflow-y-auto p-2">
@@ -247,7 +247,7 @@ export function SearchDialog() {
             )}
           </div>
 
-          <div className="flex items-center gap-4 border-t border-border px-4 py-2 text-[11px] text-faint">
+          <div className="flex items-center gap-4 border-t border-border px-4 py-2 text-[0.6875rem] text-faint">
             <span>
               <kbd className="font-sans">↑</kbd> <kbd className="font-sans">↓</kbd> to navigate
             </span>

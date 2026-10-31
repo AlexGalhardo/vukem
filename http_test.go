@@ -3230,3 +3230,33 @@ func TestSecurity_A01_TrustedProxiesFromOption(t *testing.T) {
 		t.Errorf("New(invalid prefix) = %v, want a WithTrustedProxies error", err)
 	}
 }
+
+func TestWithNameIsTheDefaultOfAppName(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct {
+		name string
+		src  map[string]string
+		opts []Option
+		want string
+	}{
+		{"framework default", nil, nil, "Vukem"},
+		{"option fills the unset variable", nil, []Option{WithName("blog")}, "blog"},
+		{"APP_NAME wins", map[string]string{"APP_NAME": "Shop"}, []Option{WithName("blog")}, "Shop"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			opts := append([]Option{WithSource(testSource(tt.src)), WithLogger(discardLogger())}, tt.opts...)
+
+			app, err := New(opts...)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if app.Config.Name != tt.want {
+				t.Errorf("Config.Name = %q, want %q", app.Config.Name, tt.want)
+			}
+		})
+	}
+}

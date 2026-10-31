@@ -291,6 +291,28 @@ The cache does not keep expired entries: nothing to prune.
 
 Those lines are what the default `cookie` sessions and `memory` cache print. With `SESSION_DRIVER=database` or `CACHE_STORE=database` you get `Pruned N expired sessions.` and `Pruned N expired cache entries.`.
 
+## `vukem api:fuzz`
+
+Run Schemathesis in Docker against the running app, from the OpenAPI document. **App**, full boot (the credential hook may use the database).
+
+```text
+vukem api:fuzz [-prefix /api/v1] [-url http://127.0.0.1:3000] [-dry-run] [flags]
+```
+
+| Flag | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `-prefix` | string | `OPENAPI_PREFIX` | Scan only routes under this path prefix. |
+| `-url` | string | `http://127.0.0.1:$PORT` | Base URL of the running app. |
+| `-image` | string | `schemathesis/schemathesis:4.29.0@sha256:5586e94460479271714d47613175b3620c44b38b3e1babc936636108f1672a9e` | Schemathesis image, pinned by digest. |
+| `-report-dir` | string | `reports/schemathesis` | Directory for the JUnit and cassette reports. |
+| `-docker` | string | `docker` | Docker executable. |
+| `-max-examples` | int | `50` | Generated cases per operation. |
+| `-workers` | int | `1` | Parallel Schemathesis workers. |
+| `-rate-limit-bypass` | bool | `true` | Send a distinct `X-Forwarded-For` per call. |
+| `-dry-run` | bool | `false` | Print the docker command and config; run nothing. |
+
+The credential hook and the generated config are on [Fuzz testing](/docs/rest-apis/fuzz-testing).
+
 ## `vukem openapi:export`
 
 Print the OpenAPI 3.1 document of the routes as JSON. **App**, warmup mode.

@@ -189,6 +189,7 @@ type App struct {
 	providers []Provider
 	runners   []namedRunner
 	hooks     []func(context.Context) error
+	fuzzAuth  func(context.Context, *App) (FuzzAuth, error)
 	commands  map[string]Command
 	health    health
 	stdout    io.Writer
@@ -337,6 +338,8 @@ type options struct {
 	runners       []namedRunner
 	healthChecks  []namedHealthCheck
 	version       string
+	name          string
+	fuzzAuth      func(context.Context, *App) (FuzzAuth, error)
 	proxies       []*net.IPNet
 	routes        []func(r *router.Router, app *App) error
 	bootRoutes    []func(r *router.Router, app *App) error
@@ -414,6 +417,10 @@ func New(opts ...Option) (*App, error) {
 	cfg, err := config.Load[Config](src)
 	if err != nil {
 		return nil, err
+	}
+
+	if o.name != "" && src.Get("APP_NAME") == "" {
+		cfg.Name = o.name
 	}
 
 	cfg.Devtools = cfg.Devtools || o.devtools
@@ -506,6 +513,7 @@ func New(opts ...Option) (*App, error) {
 		Log:       logger,
 		Kind:      o.kind,
 		Version:   o.version,
+		fuzzAuth:  o.fuzzAuth,
 		providers: o.providers,
 		runners:   o.runners,
 		stdout:    stdout,
