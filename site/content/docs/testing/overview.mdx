@@ -723,9 +723,11 @@ $env:TEST_DATABASE_URL = `
 </Step>
 <Step title="Pass the database to vukemtest.New">
 
-`pgtest.Database(t, "")` creates `pgtest_<random>`, returns its URL and drops it in `t.Cleanup` after closing any connection left open. Pass a URL instead of `""` to skip the environment variables.
+`pgtest.Database(t, "")` creates `pgtest_<unix time>_<random>`, returns its URL and drops it in `t.Cleanup` after closing any connection left open. Pass a URL instead of `""` to skip the environment variables.
 
 The drop waits up to 30 seconds. `DROP DATABASE` forces a checkpoint, so many parallel tests on a slow disk (Docker Desktop on Windows, for example) can pass that and fail a test whose assertions all passed with `context deadline exceeded`. Set `PGTEST_DROP_TIMEOUT` to a Go duration such as `2m` to wait longer; a value that is not a positive duration fails the test.
+
+A killed test run (timeout, Ctrl+C, a stopped benchmark) never reaches `t.Cleanup` and leaves its database on the server. The first `pgtest.Database` call in each process therefore sweeps: it drops databases whose name has the generated `pgtest_<unix time>_<random>` shape, whose embedded creation time is older than 6 hours and that have no connections. Other databases are never touched, including `pgtest_*` databases created by earlier versions (their names carry no time). Set `PGTEST_SWEEP_AFTER` to a Go duration such as `1h` to change the threshold, or to `0` to turn the sweep off; an invalid value fails the test. A failed sweep is logged and never fails a test.
 
 ```go title="tests/posts_postgres_test.go"
 package tests
