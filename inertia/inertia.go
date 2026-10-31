@@ -78,10 +78,31 @@ type Config struct {
 	// ErrorComponent is the page ErrorPage renders for errors on Inertia
 	// requests (default "Error"); it receives the props status and message.
 	ErrorComponent string
+	// ErrorFullPages also renders ErrorComponent inside RootView for full
+	// page loads (not only Inertia visits) that fail with a 4xx/5xx the
+	// client may read as HTML, so an error raised outside a page controller
+	// keeps the app shell instead of the bare framework page. JSON clients
+	// and htmx requests keep their own formats. Default false.
+	ErrorFullPages bool
 	// ViewData returns extra data for the root view on full page visits,
 	// read from the request (a theme cookie, the locale's text direction),
 	// as RootData.Data. It is not part of the page object. nil: no data.
 	ViewData func(r *http.Request) map[string]any
+	// ClientShell returns what a page rendered on the client carries before
+	// the app mounts (DisableSSR, SSRConfig.Except, no SSR, or an SSR
+	// fallback), so it is never blank: Head (for example the <title> from
+	// the page props) goes to RootData.Head and Body inside the mount
+	// element, which the client replaces on mount. Server-rendered pages
+	// ignore it. The client must render such pages with createApp, not
+	// hydrate them. nil: an empty mount element.
+	ClientShell func(p *Page) Shell
+}
+
+// Shell is the markup of a client-rendered page before the app mounts. The
+// HTML is trusted: escape page data yourself (template.HTMLEscapeString).
+type Shell struct {
+	Head template.HTML
+	Body template.HTML
 }
 
 // Inertia is the adapter; build it with New.
@@ -272,31 +293,42 @@ func RenderStatus(c *web.Ctx, status int, component string, props Props) error {
 		return c.JSON(status, p)
 	}
 
-	head, body, ok, err := st.in.serverRender(c, st, p)
+	return st.in.renderRoot(c, st, p, status)
+}
+
+// renderRoot answers a full page load: the root view with the page object,
+// server-rendered when SSR is enabled.
+func (in *Inertia) renderRoot(c *web.Ctx, st *state, p *Page, status int) error {
+	head, body, ok, err := in.serverRender(c, st, p)
 	if err != nil {
 		return err
 	}
 
 	var data map[string]any
-	if st.in.cfg.ViewData != nil {
-		data = st.in.cfg.ViewData(c.Request())
+	if in.cfg.ViewData != nil {
+		data = in.cfg.ViewData(c.Request())
 	}
 
 	if ok {
-		return c.Render(st.in.cfg.RootView,
+		return c.Render(in.cfg.RootView,
 			RootData{Page: p, Inertia: trustedHTML(body), Head: trustedHTML(head), Data: data}, web.WithStatus(status))
 	}
 
-	script, err := pageScript(p, st.in.cfg.RootID)
+	script, err := pageScript(p, in.cfg.RootID)
 	if err != nil {
 		return err
 	}
 
-	html := script + `<div id="` + st.in.cfg.RootID + `"></div>`
+	var shell Shell
+	if in.cfg.ClientShell != nil {
+		shell = in.cfg.ClientShell(p)
+	}
+
+	html := script + `<div id="` + in.cfg.RootID + `">` + string(shell.Body) + `</div>`
 
 	return c.Render(
-		st.in.cfg.RootView,
-		RootData{Page: p, Inertia: trustedHTML(html), Data: data},
+		in.cfg.RootView,
+		RootData{Page: p, Inertia: trustedHTML(html), Head: shell.Head, Data: data},
 		web.WithStatus(status),
 	)
 }

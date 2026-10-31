@@ -43,13 +43,14 @@ type Limiter interface {
 	Allow(ctx context.Context, key string) (Result, error)
 }
 
-// Memory is an in-process GCRA limiter: limit requests per window, with
-// bursts up to limit.
+// Memory is an in-process GCRA limiter: a steady rate with bursts up to
+// a ceiling ([NewMemory]: the whole window's limit; [NewMemoryBurst]: a
+// separate burst).
 type Memory struct {
-	limit    int
-	interval time.Duration // window / limit
-	window   time.Duration
-	now      func() time.Time
+	limit     int           // bucket capacity, reported as RateLimit-Limit
+	interval  time.Duration // time per request at the steady rate
+	tolerance time.Duration // how far ahead of the clock a key may run: limit * interval
+	now       func() time.Time
 
 	mu    sync.Mutex
 	tat   map[string]time.Time // theoretical arrival time per key
@@ -61,12 +62,28 @@ func NewMemory(limit int, window time.Duration) *Memory {
 	limit = max(limit, 1)
 
 	return &Memory{
-		limit:    limit,
-		window:   window,
-		interval: window / time.Duration(limit),
-		now:      time.Now,
-		tat:      map[string]time.Time{},
+		limit:     limit,
+		tolerance: window,
+		interval:  window / time.Duration(limit),
+		now:       time.Now,
+		tat:       map[string]time.Time{},
 	}
+}
+
+// NewMemoryBurst allows rate requests per window at a steady pace and up
+// to burst requests at once: NewMemoryBurst(1, time.Second, 5) lets a
+// client send 5 requests back to back, then one per second. Values below
+// 1 are raised to 1. RateLimit-Limit reports burst.
+func NewMemoryBurst(rate int, window time.Duration, burst int) *Memory {
+	rate, burst = max(rate, 1), max(burst, 1)
+	interval := window / time.Duration(rate)
+
+	m := NewMemory(rate, window)
+	m.limit = burst
+	m.interval = interval
+	m.tolerance = interval * time.Duration(burst)
+
+	return m
 }
 
 // maxRawKey is the longest key [Memory] stores as is.
@@ -100,7 +117,7 @@ func (m *Memory) Allow(_ context.Context, key string) (Result, error) {
 	}
 
 	next := tat.Add(m.interval)
-	allowAt := next.Add(-m.window)
+	allowAt := next.Add(-m.tolerance)
 
 	if now.Before(allowAt) {
 		return Result{
