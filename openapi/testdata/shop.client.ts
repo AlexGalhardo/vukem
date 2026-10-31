@@ -74,7 +74,7 @@ export type WebhooksReceiveParams = {
   provider: string;
 };
 
-/** ApiProblem is an RFC 9457 problem details document; errors maps each invalid field to its messages. */
+/** ApiProblem is an RFC 9457 problem details document; errors maps each invalid field to its messages, code is the machine-readable code set with errs.HTTPError.WithExtension, and other extension members are typed unknown. */
 export type ApiProblem = {
   type?: string;
   title?: string;
@@ -82,7 +82,9 @@ export type ApiProblem = {
   detail?: string;
   instance?: string;
   request_id?: string;
+  code?: string;
   errors?: Record<string, string[]>;
+  [extension: string]: unknown;
 };
 
 /** ApiError is thrown for every non-2xx response. */
