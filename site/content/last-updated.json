@@ -16,7 +16,11 @@
   "docs/cli/reference-database.mdx": "2026-10-25T12:30:02-03:00",
   "docs/cli/reference-install.mdx": "2026-10-29T20:00:41-03:00",
   "docs/cli/reference-make.mdx": "2026-10-29T20:31:38-03:00",
+<<<<<<< HEAD
   "docs/cli/reference-new.mdx": "2026-10-29T20:48:35-03:00",
+=======
+  "docs/cli/reference-new.mdx": "2026-10-31T12:44:27-03:00",
+>>>>>>> origin/main
   "docs/cli/reference-runtime.mdx": "2026-10-31T14:31:16-03:00",
   "docs/cli/reference.mdx": "2026-10-31T14:31:16-03:00",
   "docs/database/factories-seeders.mdx": "2026-10-24T18:14:16-03:00",
@@ -58,7 +62,7 @@
   "docs/frontend/inertia-i18n.mdx": "2026-10-29T06:19:57-03:00",
   "docs/frontend/inertia.mdx": "2026-10-31T14:05:05-03:00",
   "docs/frontend/vite.mdx": "2026-10-25T12:30:02-03:00",
-  "docs/getting-started/configuration.mdx": "2026-10-30T06:43:58-03:00",
+  "docs/getting-started/configuration.mdx": "2026-10-31T12:44:27-03:00",
   "docs/getting-started/directory-structure.mdx": "2026-10-30T15:02:05-03:00",
   "docs/getting-started/first-app.mdx": "2026-10-25T12:30:02-03:00",
   "docs/getting-started/installation.mdx": "2026-10-25T12:30:02-03:00",
