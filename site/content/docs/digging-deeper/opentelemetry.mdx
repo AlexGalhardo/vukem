@@ -174,8 +174,8 @@ Metrics are on when one of these is set, checked in this order:
 
 As the OpenTelemetry specification says, the generic endpoint is for **every** signal, so setting it turns on traces *and* metrics. Metrics are exported every 60 seconds (`OTEL_METRIC_EXPORT_INTERVAL`, in milliseconds).
 
-<Callout type="warning" title="Traces-only collectors need OTEL_METRICS_EXPORTER=none">
-Some receivers accept traces only: Railway's tracing receiver and Jaeger, for example. With the generic endpoint, the metrics uploads fail and show up as export errors every minute. Set `OTEL_METRICS_EXPORTER=none` to keep traces and drop metrics. Before v0.3.0 of the module, metrics also needed `OTEL_METRICS_EXPORTER=otlp`; now that is the default.
+<Callout type="warning" title="Traces-only collectors need care">
+Some receivers accept traces only. Jaeger is one: with the generic endpoint, the metrics uploads fail and show up as export errors every minute, so set `OTEL_METRICS_EXPORTER=none`. Railway's receiver accepts traces only too, and it does not accept logs or metrics over OTLP. On Railway (`RAILWAY_ENVIRONMENT` or `RAILWAY_SERVICE_ID`) the provider leaves metric export off unless `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` is set, even when `OTEL_METRICS_EXPORTER` is empty or `otlp`, because the platform injects the shared endpoint for traces. Logs on Railway are the JSON lines on stdout and stderr. Resource and HTTP metrics are Railway's own. Before v0.3.0 of the module, metrics also needed `OTEL_METRICS_EXPORTER=otlp`; off Railway, that is now the default.
 </Callout>
 
 | Metric | Kind | Attributes |
@@ -363,7 +363,7 @@ Every setting is read through `app.Source`, so a value in `.env` works like one 
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | unset | base URL for every signal; `/v1/traces` and `/v1/metrics` are appended |
 | `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | unset | full traces URL, used as is; wins over the generic one |
 | `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | unset | full metrics URL, used as is; wins over the generic one |
-| `OTEL_METRICS_EXPORTER` | `otlp` | `none` turns metrics off; anything else fails the boot |
+| `OTEL_METRICS_EXPORTER` | `otlp` | `none` turns metrics off; anything else fails the boot. On Railway, metrics stay off without `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` even when this is empty or `otlp` |
 | `OTEL_METRIC_EXPORT_INTERVAL` | `60000` | metrics export period, in milliseconds |
 | `OTEL_EXPORTER_OTLP_HEADERS` | unset | `key=value,key2=value2`, percent-decoded: API keys for hosted backends |
 | `OTEL_EXPORTER_OTLP_TIMEOUT` | SDK default | per-export timeout, in milliseconds |
@@ -465,7 +465,7 @@ To test through the provider, pass `otel.Config{Exporter: tracetest.NewInMemoryE
 
 **Pointing at port 4317.** That is OTLP over gRPC; the built-in exporter speaks HTTP. Use 4318.
 
-**Metrics errors on a traces-only backend.** With Railway or Jaeger, the log shows failed metric exports every minute. Add `OTEL_METRICS_EXPORTER=none`.
+**Metrics errors on a traces-only backend.** With Jaeger, the log shows failed metric exports every minute. Add `OTEL_METRICS_EXPORTER=none`. On Railway the provider already skips that export; do not point metrics at the shared endpoint.
 
 **Registering the provider late.** A provider listed before `otel.New` that opens the database in its `Register` makes the boot fail with `vukem: register *otel.Provider: otel: vukem: Instrument must run before DB(), Queue() or Mailer() is first used (call it from a provider's Register)`.
 

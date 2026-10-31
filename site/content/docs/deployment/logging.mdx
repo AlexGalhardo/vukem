@@ -14,7 +14,7 @@ You will learn:
 
 ## The idea
 
-A log line is a set of key/value pairs, not a sentence. `slog` writes them as `key=value` text in development and as one JSON object per line in production, where a log platform (Railway, Grafana Loki, Datadog) can filter by any field. Health checks for load balancers are covered in [Single binary](/docs/deployment/single-binary).
+A log line is a set of key/value pairs, not a sentence. `slog` writes them as `key=value` text in development and as one JSON object per line to standard error in production. On Railway that JSON is the log path: the platform collects stdout and stderr, and Log Explorer indexes the objects. Nothing in the framework ships those lines to another log vendor. Health checks for load balancers are covered in [Single binary](/docs/deployment/single-binary).
 
 ## The request line
 
