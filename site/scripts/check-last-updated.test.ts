@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { docPageProblems } from "./check-last-updated.ts";
+import { squashExplainsDate } from "../lib/git-dates.ts";
 
 test("docPageProblems checks every page, including ones the PR did not touch", () => {
   const files = ["docs/fresh.mdx", "docs/deployment/releases-and-stability.mdx"];
@@ -41,4 +42,23 @@ test("docPageProblems accepts a refreshed tree", () => {
     "versions/0.20/docs/a.mdx": "2026-10-17T06:26:29-03:00",
   };
   assert.deepEqual(docPageProblems(files, entries, dates), []);
+});
+
+test("docPageProblems tolerates a stale date when the caller says a squash commit explains it", () => {
+  const files = ["docs/a.mdx", "docs/b.mdx"];
+  const entries = { "docs/a.mdx": "2026-10-30T10:00:00-03:00", "docs/b.mdx": "2026-10-30T10:00:00-03:00" };
+  const dates = { "docs/a.mdx": "2026-10-31T10:00:00-03:00", "docs/b.mdx": "2026-10-31T10:00:00-03:00" };
+  assert.deepEqual(docPageProblems(files, entries, dates, (file) => file === "docs/a.mdx"), [
+    "docs/b.mdx: last-updated.json says 2026-10-30T10:00:00-03:00, last commit is 2026-10-31T10:00:00-03:00",
+  ]);
+});
+
+test("squashExplainsDate needs a squash subject and an entry newer than the previous change", () => {
+  const log = (...rows: string[]) => rows.join("\n");
+  const squash = "2026-10-31T10:00:00-03:00\tdocs: x (#12)";
+  const prev = "2026-10-29T10:00:00-03:00\tdocs: y (#11)";
+  assert.equal(squashExplainsDate(log(squash, prev), "2026-10-30T10:00:00-03:00"), true);
+  assert.equal(squashExplainsDate(log(squash), "2026-10-30T10:00:00-03:00"), true);
+  assert.equal(squashExplainsDate(log(squash, prev), "2026-10-28T10:00:00-03:00"), false);
+  assert.equal(squashExplainsDate(log("2026-10-31T10:00:00-03:00\tdocs: x", prev), "2026-10-30T10:00:00-03:00"), false);
 });

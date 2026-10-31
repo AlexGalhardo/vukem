@@ -50,3 +50,24 @@ export function gitLastUpdated(dir: string): Record<string, string> {
   }
   return dates;
 }
+
+/**
+ * True when the newest of two `git log --format=%cI%x09%s` rows is a squash
+ * merge ("... (#123)") and the recorded date is not older than the change
+ * before it. A squash commit lands after the date the PR branch recorded;
+ * the page itself is unchanged since that PR.
+ */
+export function squashExplainsDate(log: string, entry: string): boolean {
+  const [last, prev] = log.split("\n").filter(Boolean).map((l) => l.split("\t"));
+  if (!last || !/\(#\d+\)\s*$/.test(last[1] ?? "")) return false;
+  return !prev || Date.parse(entry) >= Date.parse(prev[0] ?? "");
+}
+
+/** Reads the two newest commits of a page and applies squashExplainsDate. */
+export function pageDateExplainedBySquash(dir: string, file: string, entry: string): boolean {
+  try {
+    return squashExplainsDate(git(dir, ["log", "-2", "--format=%cI%x09%s", "--", file]), entry);
+  } catch {
+    return false;
+  }
+}
