@@ -51,6 +51,7 @@ export const navigation: NavCategory[] = [
       "typed-handlers",
       "openapi",
       "client-generation",
+      "fuzz-testing",
       "idempotency",
       "graphql",
       "grpc",

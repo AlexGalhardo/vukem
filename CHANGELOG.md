@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **cli:** `vukem api:fuzz` runs a pinned Schemathesis image against the running API from the exported OpenAPI document, with `WithFuzzAuth` for a test credential, a config derived from the API (read-only APIs, rate-limit bypass) and `-dry-run`. No new Go dependency.
 - **qrcode:** Encode a short payload as PNG or SVG (`contrib/qrcode`, `rsc.io/qr` v0.2.0).
 - **ssg:** Prerender named handler paths to static files (`ssg.Generate`, `vukem ssg:generate`). This does not run the Inertia SSR server and does not crawl registered routes.
 
