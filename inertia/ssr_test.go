@@ -3,6 +3,7 @@ package inertia_test
 import (
 	"context"
 	"encoding/json"
+	"html/template"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -428,5 +429,57 @@ func TestSecurity_A01_SSRCacheNeverSharesPersonalisedRenders(t *testing.T) {
 
 	if len(srv.paths) != 2 {
 		t.Errorf("SSR renders = %d, want 2 (one per user, then cached)", len(srv.paths))
+	}
+}
+
+func TestClientShell(t *testing.T) {
+	t.Parallel()
+
+	cfg := baseConfig()
+	cfg.ClientShell = func(p *inertia.Page) inertia.Shell {
+		return inertia.Shell{
+			Head: template.HTML("<title>" + template.HTMLEscapeString(p.Component) + "</title>"),
+			Body: `<p class="skeleton">Loading</p>`,
+		}
+	}
+
+	hs := newHarness(t, cfg, func(r *router.Router) {
+		r.Get("/plain", func(c *web.Ctx) error {
+			inertia.DisableSSR(c.Context())
+			return inertia.Render(c, "Plain", nil)
+		})
+	})
+
+	body := hs.do(t, http.MethodGet, "/plain", nil).Body.String()
+	for _, want := range []string{
+		`<title>Plain</title>`,
+		`<div id="app"><p class="skeleton">Loading</p></div>`,
+		`<script data-page="app"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("client-rendered page lacks %q:\n%s", want, body)
+		}
+	}
+
+	hdr := map[string]string{"X-Inertia": "true"}
+	if raw := hs.do(t, http.MethodGet, "/plain", hdr).Body.String(); strings.Contains(raw, "skeleton") {
+		t.Errorf("Inertia JSON response carries the shell: %s", raw)
+	}
+}
+
+func TestClientShellSkippedWhenServerRendered(t *testing.T) {
+	t.Parallel()
+
+	srv := newSSRServer(t, rendered)
+	cfg := baseConfig()
+	cfg.SSR = &inertia.SSRConfig{URL: srv.URL}
+	cfg.ClientShell = func(*inertia.Page) inertia.Shell { return inertia.Shell{Body: "SHELL"} }
+
+	hs := newHarness(t, cfg, func(r *router.Router) {
+		r.Get("/events/{id}", func(c *web.Ctx) error { return inertia.Render(c, "Event", nil) })
+	})
+
+	if body := hs.do(t, http.MethodGet, "/events/1", nil).Body.String(); strings.Contains(body, "SHELL") {
+		t.Errorf("server-rendered page carries the client shell: %s", body)
 	}
 }
