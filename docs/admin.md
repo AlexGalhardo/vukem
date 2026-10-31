@@ -50,7 +50,7 @@ return panel.Mount(r)
 | `Prefix` | `/admin` | URL prefix |
 | `Ability` | `admin` | Gate ability required on every page |
 | `Title` | `Admin` | Header text |
-| `Views` | embedded | `fs.FS` overriding templates by path (`layouts/admin.html`, `index.html`, `show.html`, `form.html`, `delete.html`, `dashboard.html`, `audit.html`, `flags.html`, `action.html`, `partials/pager.html`); `admin.Templates()` returns the originals to copy |
+| `Views` | embedded | `fs.FS` overriding templates by path (`layouts/admin.html`, `index.html`, `show.html`, `form.html`, `delete.html`, `dashboard.html`, `audit.html`, `flags.html`, `action.html`, `page.html`, `partials/pager.html`); `admin.Templates()` returns the originals to copy |
 
 ## Resources
 
@@ -122,3 +122,5 @@ With `admin.Config{Flags: ff}` (`ff, err := app.Flags()`) the panel lists every 
 - The flag write and the audit row are **not atomic** (the store is pluggable): when the row fails after the flag changed, the change is logged at ERROR (redacted the same way) and the page redirects with a warning flash.
 - When the store is down the page answers 503 instead of showing defaults that would invite wrong toggles.
 - Flag values are not secrets: never store credentials in a string flag.
+
+`Panel.AddPage(slug, label, func(*web.Ctx) (template.HTML, error))` adds a custom GET page at `<Prefix>/<slug>` inside the panel layout, with the same navigation, title and guard as the resources (template `page.html`). Slugs share the resources' namespace; call it before `Mount`.
