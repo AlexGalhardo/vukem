@@ -20,7 +20,7 @@ import (
 
 // defaultFuzzImage is the pinned Schemathesis image api:fuzz runs. Pass
 // -image to pin a digest (name@sha256:...) or a newer tag.
-const defaultFuzzImage = "schemathesis/schemathesis:4.29.0"
+const defaultFuzzImage = "schemathesis/schemathesis:4.29.0@sha256:5586e94460479271714d47613175b3620c44b38b3e1babc936636108f1672a9e"
 
 const (
 	fuzzAuthEnv   = "VUKEM_FUZZ_AUTH"
@@ -201,8 +201,15 @@ func execFuzz(
 		files["hook.py"] = fuzzHookPy
 	}
 
+	// The image runs as a non-root user with another uid: on Linux it reads
+	// the bind mount only if the files are world-readable. They hold no
+	// secret (the credential stays in the environment).
+	if err := os.Chmod(work, 0o755); err != nil { //nolint:gosec // see above
+		return err
+	}
+
 	for name, data := range files {
-		if err := os.WriteFile(filepath.Join(work, name), data, 0o600); err != nil {
+		if err := os.WriteFile(filepath.Join(work, name), data, 0o644); err != nil { //nolint:gosec // see above
 			return err
 		}
 	}

@@ -303,7 +303,7 @@ vukem api:fuzz [-prefix /api/v1] [-url http://127.0.0.1:3000] [-dry-run] [flags]
 | --- | --- | --- | --- |
 | `-prefix` | string | `OPENAPI_PREFIX` | Scan only routes under this path prefix. |
 | `-url` | string | `http://127.0.0.1:$PORT` | Base URL of the running app. |
-| `-image` | string | `schemathesis/schemathesis:4.29.0` | Schemathesis image; pin a digest in CI. |
+| `-image` | string | `schemathesis/schemathesis:4.29.0@sha256:5586e94460479271714d47613175b3620c44b38b3e1babc936636108f1672a9e` | Schemathesis image, pinned by digest. |
 | `-report-dir` | string | `reports/schemathesis` | Directory for the JUnit and cassette reports. |
 | `-docker` | string | `docker` | Docker executable. |
 | `-max-examples` | int | `50` | Generated cases per operation. |

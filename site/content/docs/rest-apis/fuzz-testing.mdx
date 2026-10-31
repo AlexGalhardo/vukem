@@ -36,7 +36,7 @@ vukem api:fuzz -prefix /api/v1 -dry-run
 | --- | --- | --- |
 | `-prefix` | `OPENAPI_PREFIX` | Scan only routes under this path prefix. |
 | `-url` | `http://127.0.0.1:$PORT` | Base URL of the running app. Loopback hosts become `host.docker.internal` for the container. |
-| `-image` | `schemathesis/schemathesis:4.29.0` | Image to run. Pin a digest (`name@sha256:...`) in CI. |
+| `-image` | `schemathesis/schemathesis:4.29.0@sha256:5586e94460479271714d47613175b3620c44b38b3e1babc936636108f1672a9e` | Image to run, pinned by digest; override it to upgrade. |
 | `-report-dir` | `reports/schemathesis` | Where the reports go. |
 | `-max-examples` | `50` | Generated cases per operation. |
 | `-workers` | `1` | Parallel workers. |
@@ -78,7 +78,7 @@ Everything else stays on at the Schemathesis defaults.
 
 ```yaml
 - run: docker run -d --name app --network host $IMAGE   # your app, with TRUSTED_PROXIES set
-- run: vukem api:fuzz -prefix /api/v1 -image schemathesis/schemathesis:4.29.0@sha256:<digest>
+- run: vukem api:fuzz -prefix /api/v1   # the default image is pinned by digest
 ```
 
 Upload `reports/schemathesis` as an artifact so a failure can be replayed.
