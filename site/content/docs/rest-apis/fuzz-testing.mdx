@@ -1,0 +1,97 @@
+---
+title: Fuzz testing
+description: Run Schemathesis against your running API from the OpenAPI document of your typed handlers, with a test-credential hook, a read-only default config and a pinned Docker image.
+---
+
+Unit tests check the cases you thought of. A **fuzz test** sends thousands of cases you did not: missing fields, huge numbers, strange strings, no credentials. [Schemathesis](https://schemathesis.io/) reads your OpenAPI document and checks every response against it: a 500, a status code the document does not list, a body that does not match its schema.
+
+`vukem api:fuzz` wires that up for you. It exports the [OpenAPI document](/docs/rest-apis/openapi) in-process, writes a Schemathesis config derived from the API, and runs a **pinned Schemathesis Docker image** against your running app. Vukem adds no Go dependency: Schemathesis stays an external image.
+
+You will learn:
+
+- How to run a scan, and what a dry run shows.
+- How to give the scan a test credential without writing SQL.
+- What the generated config turns off, and why.
+- How to run it in CI.
+
+## Quick start
+
+Start the app, then in another terminal:
+
+```bash
+VUKEM_FUZZ_TOKEN=<an API token> vukem api:fuzz -prefix /api/v1 -url http://127.0.0.1:3000
+```
+
+Docker must be running. Reports (JUnit and a replayable cassette) land in `reports/schemathesis`. The command exits non-zero when Schemathesis finds a failure.
+
+Print what would run, without Docker:
+
+```bash
+vukem api:fuzz -prefix /api/v1 -dry-run
+```
+
+## Flags
+
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `-prefix` | `OPENAPI_PREFIX` | Scan only routes under this path prefix. |
+| `-url` | `http://127.0.0.1:$PORT` | Base URL of the running app. Loopback hosts become `host.docker.internal` for the container. |
+| `-image` | `schemathesis/schemathesis:4.29.0` | Image to run. Pin a digest (`name@sha256:...`) in CI. |
+| `-report-dir` | `reports/schemathesis` | Where the reports go. |
+| `-max-examples` | `50` | Generated cases per operation. |
+| `-workers` | `1` | Parallel workers. |
+| `-rate-limit-bypass` | `true` | Send a distinct `X-Forwarded-For` per call (see below). |
+| `-dry-run` | `false` | Print the `docker run` command and the config; run nothing. |
+| `-docker` | `docker` | Docker executable. |
+
+## The test credential
+
+The scan needs a valid credential, or every request stops at `401`. Pick one:
+
+- **A token in the environment.** `VUKEM_FUZZ_TOKEN` is sent as `Authorization: Bearer <token>`.
+- **A hook in Go.** `vukem.WithFuzzAuth` runs inside the command, with the app booted and the database connected, so you mint the key with your own code:
+
+```go
+vukem.WithFuzzAuth(func(ctx context.Context, app *vukem.App) (vukem.FuzzAuth, error) {
+	key, err := keys.IssueForCI(ctx, app) // your code, not SQL
+	if err != nil {
+		return vukem.FuzzAuth{}, err
+	}
+
+	return vukem.FuzzAuth{Header: "X-Api-Key", Value: key}, nil
+}),
+```
+
+The credential reaches the container through an environment variable (`VUKEM_FUZZ_AUTH`). It never appears in the command line, the printed dry run or the generated config.
+
+## What the config derives from your API
+
+Vukem writes `schemathesis.toml` from the document:
+
+- **Read-only APIs.** When every operation is `GET`, `HEAD` or `OPTIONS`, the checks `use_after_free` and `ensure_resource_availability` are off. They need a create/delete link between operations that a read-only API does not have.
+- **Method checks.** `unsupported_method` and `allow_header_conformance` are off. A server that answers an undeclared method in front of the router, or serves an HTML 404 for any `GET`, cannot satisfy them.
+- **Rate limits.** A scan sends more requests than a per-IP limit allows from one address, so the missing-credentials check sees `429` instead of `401`. With `-rate-limit-bypass`, an embedded Schemathesis hook sends a different `X-Forwarded-For` on each call. The app must then trust the Docker bridge, for example `TRUSTED_PROXIES=172.16.0.0/12`. Do this only in the scan environment, never in production.
+
+Everything else stays on at the Schemathesis defaults.
+
+## In CI
+
+```yaml
+- run: docker run -d --name app --network host $IMAGE   # your app, with TRUSTED_PROXIES set
+- run: vukem api:fuzz -prefix /api/v1 -image schemathesis/schemathesis:4.29.0@sha256:<digest>
+```
+
+Upload `reports/schemathesis` as an artifact so a failure can be replayed.
+
+## Testing the command itself
+
+The Docker call goes through a small runner interface inside Vukem, so the framework's own tests use a fake and never need Docker. A real end-to-end test lives behind a build tag: `go test -tags fuzzintegration -run TestFuzzRealSchemathesis .`.
+
+## Common problems
+
+| Symptom | Cause and fix |
+| --- | --- |
+| `the OpenAPI document has no operations` | `-prefix` matches no typed route. Check `vukem openapi:export -prefix ...`. |
+| Every call is `401` | No credential. Set `VUKEM_FUZZ_TOKEN` or `WithFuzzAuth`. |
+| `429` instead of `401` | The app does not trust the Docker bridge. Set `TRUSTED_PROXIES` or lower `-max-examples`. |
+| The container cannot reach the app | Linux needs Docker 20.10+ for `host-gateway`, and the app must listen on a reachable interface, not only a private socket. |
