@@ -47,7 +47,7 @@ func TestAdminCustomPage(t *testing.T) {
 	c.Get("/admin/broken").AssertStatus(http.StatusInternalServerError)
 }
 
-func TestAdminCustomPageIsGuarded(t *testing.T) {
+func TestSecurity_A01_AdminCustomPageIsGuarded(t *testing.T) {
 	t.Parallel()
 
 	app := pagesApp(t)
