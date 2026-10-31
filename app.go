@@ -338,6 +338,7 @@ type options struct {
 	runners       []namedRunner
 	healthChecks  []namedHealthCheck
 	version       string
+	name          string
 	fuzzAuth      func(context.Context, *App) (FuzzAuth, error)
 	proxies       []*net.IPNet
 	routes        []func(r *router.Router, app *App) error
@@ -416,6 +417,10 @@ func New(opts ...Option) (*App, error) {
 	cfg, err := config.Load[Config](src)
 	if err != nil {
 		return nil, err
+	}
+
+	if o.name != "" && src.Get("APP_NAME") == "" {
+		cfg.Name = o.name
 	}
 
 	cfg.Devtools = cfg.Devtools || o.devtools

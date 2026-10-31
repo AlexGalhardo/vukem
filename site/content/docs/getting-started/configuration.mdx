@@ -27,6 +27,8 @@ type Config struct {
 }
 ```
 
+`APP_NAME` falls back to `Vukem` when nothing sets it. `vukem new` passes the project name to `vukem.WithName("<name>")` in `bootstrap/app.go`, so a run without a `.env` (CI, a container) shows your name instead; `APP_NAME` still wins.
+
 If `PORT=abc`, the app does not start, and the error names the variable and the field: `config: PORT (Port): invalid integer "abc"`.
 
 ## Quick start
