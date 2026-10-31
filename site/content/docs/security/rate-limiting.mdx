@@ -299,6 +299,8 @@ A limiter is only as good as the place where it counts. With the default memory 
 
 The memory limiter refills smoothly. With `limit` 5 per minute, one new request is allowed every 12 seconds, and up to 5 may come at once after a quiet minute. That is why, in the quick start, the `429` says `Retry-After: 12` (the next slot) while `RateLimit-Reset` is 60 (the time until all five slots are back). It keeps one timestamp per key and drops keys whose bucket is full again every 1024 calls, so memory stays bounded.
 
+To set the steady rate and the burst apart, use `NewMemoryBurst(rate, window, burst)`. `ratelimit.NewMemoryBurst(1, time.Second, 5)` lets a client send 5 requests back to back and then one per second, so a script that calls an API in a loop is not refused on its second call. `RateLimit-Limit` reports the burst. Only the memory limiter has it; the window and Redis limiters keep `limit` per `window`.
+
 ### Shared through the database
 
 To share limits between servers on one database (SQLite, PostgreSQL or MySQL), set two variables; no code changes:
@@ -425,6 +427,7 @@ Implement `ratelimit.Limiter` (one method, `Allow(ctx, key) (ratelimit.Result, e
 | `ratelimit.IPKey(ip, prefix)` | the per-client part of an IP key |
 | `ratelimit.DefaultIPv6Prefix` | `64` |
 | `ratelimit.NewMemory(limit, window)` | in-process GCRA limiter |
+| `ratelimit.NewMemoryBurst(rate, window, burst)` | in-process GCRA limiter with a burst apart from the rate |
 | `ratelimit.NewWindow(counter, name, limit, window)` | fixed-window limiter over a shared counter |
 | `web.Services.TrustedProxies`, `ClientIPHeader`, `IPv6Prefix` | the same settings for routers built without `vukem.New` |
 
