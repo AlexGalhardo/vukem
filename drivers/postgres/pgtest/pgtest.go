@@ -32,10 +32,29 @@ import (
 )
 
 const (
-	// dropTimeout bounds the cleanup; t.Context is already canceled by then.
-	dropTimeout  = 30 * time.Second
-	closeTimeout = 5 * time.Second
+	// defaultDropTimeout bounds the cleanup; t.Context is already canceled by then.
+	defaultDropTimeout = 30 * time.Second
+	closeTimeout       = 5 * time.Second
+
+	// dropTimeoutEnv overrides defaultDropTimeout with a Go duration ("2m").
+	dropTimeoutEnv = "PGTEST_DROP_TIMEOUT"
 )
+
+// dropTimeoutFrom reads PGTEST_DROP_TIMEOUT. DROP DATABASE forces a
+// checkpoint, which can pass 30 s on a slow disk under many parallel tests.
+func dropTimeoutFrom(getenv func(string) string) (time.Duration, error) {
+	v := getenv(dropTimeoutEnv)
+	if v == "" {
+		return defaultDropTimeout, nil
+	}
+
+	d, err := time.ParseDuration(v)
+	if err != nil || d <= 0 {
+		return 0, fmt.Errorf("%s=%q: want a positive duration such as 2m", dropTimeoutEnv, v)
+	}
+
+	return d, nil
+}
 
 // Database creates an empty database on the server at adminURL, returns
 // its URL and drops it in tb.Cleanup after terminating its connections.
@@ -57,6 +76,11 @@ func Database(tb testing.TB, adminURL string) string {
 	if adminURL == "" {
 		tb.Fatal("pgtest: no PostgreSQL server: set TEST_DATABASE_URL or POSTGRES_URL " +
 			"(e.g. postgres://user:pass@localhost:5432/postgres?sslmode=disable)")
+	}
+
+	dropTimeout, err := dropTimeoutFrom(os.Getenv)
+	if err != nil {
+		tb.Fatalf("pgtest: %v", err)
 	}
 
 	name := newName()

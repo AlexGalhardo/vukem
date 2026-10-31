@@ -3,7 +3,33 @@ package pgtest
 import (
 	"regexp"
 	"testing"
+	"time"
 )
+
+func TestDropTimeoutFrom(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		in      string
+		want    time.Duration
+		wantErr bool
+	}{
+		{"", defaultDropTimeout, false},
+		{"2m", 2 * time.Minute, false},
+		{"90s", 90 * time.Second, false},
+		{"abc", 0, true},
+		{"0s", 0, true},
+		{"-5s", 0, true},
+		{"30", 0, true},
+	}
+
+	for _, tt := range tests {
+		got, err := dropTimeoutFrom(func(string) string { return tt.in })
+		if (err != nil) != tt.wantErr || got != tt.want {
+			t.Errorf("dropTimeoutFrom(%q) = %v, %v; want %v, err=%v", tt.in, got, err, tt.want, tt.wantErr)
+		}
+	}
+}
 
 func TestAdminURL(t *testing.T) {
 	t.Parallel()
