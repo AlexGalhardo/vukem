@@ -135,6 +135,11 @@ func TestWriteStarter(t *testing.T) {
 		}
 	}
 
+	if b, err := os.ReadFile(filepath.Join(dir, "bootstrap", "app.go")); err != nil ||
+		!strings.Contains(string(b), `vukem.WithName("blog")`) {
+		t.Errorf("bootstrap/app.go does not default the app name to the project name: %v", err)
+	}
+
 	_ = filepath.WalkDir(dir, func(p string, _ fs.DirEntry, _ error) error {
 		if strings.HasSuffix(p, ".tmpl") {
 			t.Errorf("unrendered stub %s", p)

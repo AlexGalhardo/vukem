@@ -16,6 +16,7 @@ import (
 // New builds the application; cmd/app and the tests call it.
 func New(opts ...vukem.Option) (*vukem.App, error) {
 	base := []vukem.Option{
+		vukem.WithName("{{.Name}}"),
 		vukem.WithProviders(Providers()...),
 		vukem.WithMigrations(migrations.All()),
 		vukem.WithSeeders(seeders.All()...),
