@@ -725,6 +725,8 @@ $env:TEST_DATABASE_URL = `
 
 `pgtest.Database(t, "")` creates `pgtest_<random>`, returns its URL and drops it in `t.Cleanup` after closing any connection left open. Pass a URL instead of `""` to skip the environment variables.
 
+The drop waits up to 30 seconds. `DROP DATABASE` forces a checkpoint, so many parallel tests on a slow disk (Docker Desktop on Windows, for example) can pass that and fail a test whose assertions all passed with `context deadline exceeded`. Set `PGTEST_DROP_TIMEOUT` to a Go duration such as `2m` to wait longer; a value that is not a positive duration fails the test.
+
 ```go title="tests/posts_postgres_test.go"
 package tests
 

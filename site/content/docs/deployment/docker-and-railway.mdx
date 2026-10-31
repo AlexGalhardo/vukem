@@ -431,15 +431,13 @@ A missing token fails the first send with `vukem: MAIL_MAILER=mailtrap needs MAI
 
 ### OpenTelemetry on Railway
 
-When you turn on tracing for a service, Railway injects the standard `OTEL_*` variables on the next deploy: the exporter endpoint, protocol and headers for its receiver, and `OTEL_SERVICE_NAME` ([tracing](https://docs.railway.com/observability/tracing)). The [OpenTelemetry provider](/docs/digging-deeper/opentelemetry) (`drivers/otel`) reads them, so you configure nothing for traces.
+Railway is the telemetry backend. Logs, metrics and traces stay on the platform ([observability](https://docs.railway.com/observability)). `drivers/otel` does not ship logs or metrics to the OTLP receiver, and it adds no other vendor.
 
-Railway's receiver accepts traces only. As the OpenTelemetry spec says, the generic `OTEL_EXPORTER_OTLP_ENDPOINT` also turns on metrics (sent to `/v1/metrics`), and those uploads would fail. Turn metrics off on the app service:
+**Logs.** Railway collects stdout and stderr. Log Explorer indexes structured JSON. In production the default logger writes one JSON object per line to standard error (`LOG_FORMAT=json`; see [Logging](/docs/deployment/logging)). That stream is the log path. The OTLP receiver does not accept logs, so the module never exports them. [Telegram logging](/docs/digging-deeper/telegram-logging), when you configure it, copies selected records to a chat. It is an alert handler, not the log store.
 
-```dotenv
-OTEL_METRICS_EXPORTER=none
-```
+**Metrics.** Railway collects resource and HTTP metrics for every service with no SDK (`railway metrics` on the CLI). The OTLP receiver does not accept metrics, and a metrics export to the traces endpoint is rejected. When the process is on Railway (`RAILWAY_ENVIRONMENT` or `RAILWAY_SERVICE_ID` is set) and `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` is empty, `drivers/otel` leaves metric export off. That still holds when `OTEL_METRICS_EXPORTER` is empty or `otlp`, because Railway injects the shared `OTEL_EXPORTER_OTLP_ENDPOINT` for traces only. `OTEL_METRICS_EXPORTER=none` also leaves metrics off. Set `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` only to export to a different collector. Any other value of `OTEL_METRICS_EXPORTER` stops the boot with `otel: OTEL_METRICS_EXPORTER must be otlp or none`.
 
-Traces keep flowing. Any value other than `otlp` or `none` stops the boot with `otel: OTEL_METRICS_EXPORTER must be otlp or none`.
+**Traces.** Turn on tracing for the service. The next deploy injects `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_PROTOCOL` (`http/protobuf`), `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_SERVICE_NAME` and `OTEL_SERVICE_VERSION` ([tracing](https://docs.railway.com/observability/tracing)). Do not hardcode the endpoint, the protocol or the headers. The [OpenTelemetry provider](/docs/digging-deeper/opentelemetry) reads them and keeps W3C TraceContext and Baggage, so a `traceparent` from the edge continues. The module does not turn on eBPF auto-instrumentation. You configure nothing else for traces.
 
 ### Start commands replace the entrypoint
 
@@ -537,7 +535,7 @@ What Vukem does for you in this setup:
 - Proxy headers are ignored unless the direct peer is trusted, and the app warns when it looks misconfigured behind a proxy.
 - The HTTP server always has timeouts and a 64 KiB header cap.
 
-What stays your job: keeping `APP_KEY` and API tokens in the platform's secret variables, trusting only proxy ranges you observed, shipping JSON logs to durable storage with alerts, and running `govulncheck ./...` in CI. The [security overview](/docs/security/overview) lists every default.
+What stays your job: keeping `APP_KEY` and API tokens in the platform's secret variables, trusting only proxy ranges you observed, reading the JSON logs Railway collects from stdout and stderr (and alerting on them; Telegram is optional), and running `govulncheck ./...` in CI. The [security overview](/docs/security/overview) lists every default.
 
 ## Common mistakes
 
@@ -565,7 +563,7 @@ queue:work
 
 **Mail times out on Railway.** `MAIL_MAILER=smtp` on a plan without SMTP fails with a dial timeout. Switch to `MAIL_MAILER=mailtrap` or `resend`.
 
-**Tracing logs export errors.** Railway's receiver rejects metrics; set `OTEL_METRICS_EXPORTER=none`.
+**Do not export metrics to Railway's OTLP endpoint.** The receiver accepts traces only. On Railway the provider already leaves metric export off unless `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` is set. Resource and HTTP metrics are Railway's built-in metrics.
 
 **SQLite is empty after every deploy.** Without a volume, `/app/storage` lives inside the replaced container. Attach a volume at `/app/storage` or move to PostgreSQL.
 
