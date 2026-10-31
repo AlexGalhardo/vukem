@@ -414,6 +414,7 @@ What keeps its old behaviour:
 You may change it:
 
 - `inertia.Config{ErrorComponent: "Errors/Show"}` points at another page.
+- `inertia.Config{ErrorFullPages: true}` renders the same page inside the root view for full page loads too (a link opened in a new tab, a refresh), so an error raised outside a page controller keeps the app shell instead of the bare framework page. JSON clients and htmx requests keep their own formats.
 - `app.Router.Services().ErrorPage = nil` in your routes keeps the HTML page.
 
 <Callout type="warning" title="Missing Error page">
@@ -506,6 +507,9 @@ On a first visit, the adapter POSTs the page object to the Node SSR server and p
 
 - `inertia.DisableSSR(ctx)` renders one request on the client.
 - `inertia.RequireSSR(ctx)` makes one request strict.
+- `app.Inertia.SSRHealthy(ctx)` checks the server's `/health` endpoint.
+- `vukem ssr:start` runs `node bootstrap/ssr/ssr.js` and restarts it after a crash (flags `-bundle`, `-runtime`, `-restart-delay`, default `1s`).
+- `vukem ssr:check` probes `/health` (flag `-url`) and exits with an error if it does not answer `200`.
 
 ### A shell for client-rendered pages
 
@@ -522,9 +526,6 @@ ClientShell: func(p *inertia.Page) inertia.Shell {
 ```
 
 `Head` goes to `.Head` and `Body` inside the mount element, which the client replaces on mount (use `createApp`, not hydration; the placeholder is not server-rendered output). Server-rendered pages and Inertia JSON responses ignore it. Both strings are trusted HTML: escape page data yourself.
-- `app.Inertia.SSRHealthy(ctx)` checks the server's `/health` endpoint.
-- `vukem ssr:start` runs `node bootstrap/ssr/ssr.js` and restarts it after a crash (flags `-bundle`, `-runtime`, `-restart-delay`, default `1s`).
-- `vukem ssr:check` probes `/health` (flag `-url`) and exits with an error if it does not answer `200`.
 
 ### Strict SSR
 
@@ -586,6 +587,7 @@ vukem.WithInertia(inertia.Config{
 | `EncryptHistory` | `bool` | `false` | Encrypt history state on every page |
 | `SSR` | `*inertia.SSRConfig` | `nil` (off) | Server-side rendering |
 | `ErrorComponent` | `string` | `"Error"` | Page rendered for errors on Inertia visits |
+| `ErrorFullPages` | `bool` | `false` | Also render `ErrorComponent` in the root view for full page loads |
 | `ViewData` | `func(*http.Request) map[string]any` | none | Extra root-view data per request, as `RootData.Data` (full page visits only) |
 | `ClientShell` | `func(*inertia.Page) inertia.Shell` | none | Head and placeholder markup for client-rendered pages |
 
