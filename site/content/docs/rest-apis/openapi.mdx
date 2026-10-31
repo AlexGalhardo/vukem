@@ -128,6 +128,18 @@ type StoreTask struct {
 }
 ```
 
+### Documenting values without enforcing them
+
+`validate:"oneof=a b"` puts `enum` in the schema and also answers `422` for any other value before the handler runs. When the route must document the values but answer an unknown one itself (a `400` of your own, a refunded quota), use the `enum` tag instead. It takes comma-separated values, appears in the schema of body, query and path fields, and validates nothing:
+
+```go
+type GetItemInput struct {
+	Type string `json:"type" enum:"games,movies,series,books" doc:"Catalogue type"`
+}
+```
+
+A field that also has `validate:"oneof=..."` keeps that rule's values.
+
 ### Go types
 
 | Go type | JSON Schema |
