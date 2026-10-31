@@ -401,7 +401,11 @@ func (m *Migrator) locked(ctx context.Context, fn func() error) error {
 
 	switch m.db.Dialect().Name() {
 	case "postgres":
-		lock, unlock = "SELECT pg_advisory_lock($1)", "SELECT pg_advisory_unlock($1)"
+		// try-lock polled below, never the blocking pg_advisory_lock: a
+		// statement waiting for the lock holds a snapshot, and the holder's
+		// own CREATE INDEX CONCURRENTLY waits for that snapshot, a stall
+		// PostgreSQL does not report as a deadlock.
+		lock, unlock = "SELECT pg_try_advisory_lock($1)", "SELECT pg_advisory_unlock($1)"
 		h := fnv.New64a()
 		_, _ = h.Write([]byte("vukem:" + m.table))
 		key = int64(h.Sum64()) //nolint:gosec // G115: any 64-bit value is a valid key
@@ -429,18 +433,53 @@ func (m *Migrator) locked(ctx context.Context, fn func() error) error {
 		_, _ = conn.ExecContext(context.WithoutCancel(ctx), unlock, key)
 	}()
 
-	// pg_advisory_lock answers void ("" once it holds the lock); GET_LOCK
-	// answers 1 when it holds it.
+	if m.db.Dialect().Name() == "postgres" {
+		if err := pollLock(ctx, conn, lock, key); err != nil {
+			return fmt.Errorf("schema: lock migrations: %w", err)
+		}
+
+		return fn()
+	}
+
+	// GET_LOCK answers 1 when it holds the lock.
 	var got sql.NullString
 	if err := conn.QueryRowContext(ctx, lock, key).Scan(&got); err != nil {
 		return fmt.Errorf("schema: lock migrations: %w", err)
 	}
 
-	if m.db.Dialect().Name() == "mysql" && got.String != "1" {
+	if got.String != "1" {
 		return errors.New("schema: lock migrations: GET_LOCK refused")
 	}
 
 	return fn()
+}
+
+// pollLock retries a PostgreSQL try-lock with a growing pause (50 ms up to
+// 1 s) until it holds the lock or ctx ends. Each attempt is its own short
+// statement, so nothing is held open while waiting.
+func pollLock(ctx context.Context, conn *sql.Conn, query string, key any) error {
+	const maxPause = time.Second
+
+	pause := 50 * time.Millisecond
+
+	for {
+		var held bool
+		if err := conn.QueryRowContext(ctx, query, key).Scan(&held); err != nil {
+			return err
+		}
+
+		if held {
+			return nil
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(pause):
+		}
+
+		pause = min(pause*2, maxPause)
+	}
 }
 
 // DropAll drops every table of the database (db:wipe, migrate:fresh).

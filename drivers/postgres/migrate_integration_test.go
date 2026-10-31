@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/AlexGalhardo/vukem/database"
 	"github.com/AlexGalhardo/vukem/schema"
@@ -135,5 +136,76 @@ func TestMigrateRefusesInvalidIndexAfterNoTransaction(t *testing.T) {
 
 	if ran, err := m.Up(t.Context()); err != nil || len(ran) != 1 {
 		t.Fatalf("Up() after the drop = %v, %v; want it recorded", ran, err)
+	}
+}
+
+// VF-NEW-migrator-lock-snapshot (HexaScore): a runner waiting for the lock
+// must not hold a snapshot, or the holder's CREATE INDEX CONCURRENTLY waits
+// for it and both hang with no deadlock reported.
+func TestConcurrentMigrateWithConcurrentIndex(t *testing.T) {
+	db := open(t)
+
+	const id, table, index = "29991231000002_cic_probe", "cic_probe", "cic_probe_k_idx"
+
+	cleanup := func() {
+		ctx := context.Background()
+		_, _ = db.ExecContext(ctx, "DROP TABLE IF EXISTS "+table)
+		_, _ = db.ExecContext(ctx, "DELETE FROM migrations WHERE id = '"+id+"'")
+	}
+	cleanup()
+	t.Cleanup(cleanup)
+
+	if _, err := db.ExecContext(t.Context(), "CREATE TABLE "+table+" (k INTEGER)"); err != nil {
+		t.Fatal(err)
+	}
+
+	mig := schema.Migration{
+		ID:            id,
+		NoTransaction: true,
+		Up: func(s *schema.Schema) error {
+			// Lets the other runner reach the lock before the index build starts.
+			if err := s.Raw("SELECT pg_sleep(0.5)"); err != nil {
+				return err
+			}
+
+			return s.Raw("CREATE INDEX CONCURRENTLY IF NOT EXISTS " + index + " ON " + table + " (k)")
+		},
+		Down: func(s *schema.Schema) error { return s.Raw("DROP INDEX CONCURRENTLY IF EXISTS " + index) },
+	}
+
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+
+	var (
+		wg   sync.WaitGroup
+		mu   sync.Mutex
+		runs int
+		errs []error
+	)
+
+	for range 2 {
+		wg.Go(func() {
+			m, err := schema.NewMigrator(db, []schema.Migration{mig})
+			if err == nil {
+				var ran []string
+				ran, err = m.Up(ctx)
+
+				mu.Lock()
+				runs += len(ran)
+				mu.Unlock()
+			}
+
+			if err != nil {
+				mu.Lock()
+				errs = append(errs, err)
+				mu.Unlock()
+			}
+		})
+	}
+
+	wg.Wait()
+
+	if len(errs) != 0 || runs != 1 {
+		t.Fatalf("concurrent Up: runs = %d, errors = %v; want one run and no error", runs, errs)
 	}
 }
