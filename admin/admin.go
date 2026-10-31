@@ -27,6 +27,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html/template"
 	"io/fs"
 	"net/http"
 	"net/netip"
@@ -99,7 +100,7 @@ type Config struct {
 	Title string
 	// Views overrides embedded templates by path: layouts/admin.html,
 	// index.html, show.html, form.html, delete.html, dashboard.html,
-	// audit.html, flags.html, action.html, partials/pager.html.
+	// audit.html, flags.html, action.html, page.html, partials/pager.html.
 	Views fs.FS
 	// Flags adds a page at <Prefix>/_flags to change the global value of
 	// the registered feature flags (app.Flags()); it needs the
@@ -153,6 +154,7 @@ func Templates() fs.FS {
 type Panel struct {
 	cfg       Config
 	resources []AnyResource
+	pages     []customPage
 	slugs     map[string]bool
 	views     *view.Engine
 	csrf      func(http.Handler) http.Handler
@@ -246,6 +248,50 @@ func (p *Panel) Register(resources ...AnyResource) error {
 	return errors.Join(errsOut...)
 }
 
+type customPage struct {
+	slug, label string
+	handler     func(*web.Ctx) (template.HTML, error)
+}
+
+// AddPage adds a custom page at <Prefix>/<slug>, rendered inside the panel
+// layout with the same navigation, title and guard as the resources. The
+// handler returns the page body, which is trusted HTML: escape request and
+// user data yourself (a template.Must(...).Execute into a buffer does).
+// label is the navigation entry and the page heading. The page answers GET
+// only; register other methods on the router with Panel.Guard. Call it
+// before Mount. Slugs share the namespace of the resources.
+func (p *Panel) AddPage(slug, label string, h func(c *web.Ctx) (template.HTML, error)) error {
+	switch {
+	case !slugRe.MatchString(slug):
+		return fmt.Errorf("admin: page slug %q must match %s and not start with _", slug, slugRe)
+	case label == "":
+		return fmt.Errorf("admin: page %q needs a label", slug)
+	case h == nil:
+		return fmt.Errorf("admin: page %q needs a handler", slug)
+	case p.slugs[slug]:
+		return fmt.Errorf("admin: duplicate resource or page %q", slug)
+	}
+
+	p.slugs[slug] = true
+	p.pages = append(p.pages, customPage{slug: slug, label: label, handler: h})
+
+	return nil
+}
+
+func (p *Panel) customPage(pg customPage) func(*web.Ctx) error {
+	return func(c *web.Ctx) error {
+		body, err := pg.handler(c)
+		if err != nil {
+			return err
+		}
+
+		data := p.base(c, pg.label, pg.slug)
+		data.Custom = body
+
+		return p.render(c, http.StatusOK, "page", "", data)
+	}
+}
+
 // Mount registers the panel's routes on r. Every route requires the guard,
 // the panel ability and same-origin (CSRF-checked) unsafe requests.
 func (p *Panel) Mount(r *router.Router) error {
@@ -280,6 +326,10 @@ func (p *Panel) Mount(r *router.Router) error {
 
 			for _, res := range p.resources {
 				res.routes(p, g)
+			}
+
+			for _, pg := range p.pages {
+				g.Get("/"+pg.slug, p.customPage(pg)).Name("page." + pg.slug)
 			}
 		})
 	})
@@ -509,6 +559,7 @@ type page struct {
 	Flags    *flagsView
 	Action   *actionView
 	Cards    []card
+	Custom   template.HTML
 }
 
 type panelView struct {
@@ -539,6 +590,10 @@ func (p *Panel) base(c *web.Ctx, title, active string) page {
 		if p.can(c, AbilityViewAny, r.subject()) {
 			pv.Nav = append(pv.Nav, navItem{Label: b.plural, URL: p.url(b.slug), Active: b.slug == active})
 		}
+	}
+
+	for _, pg := range p.pages {
+		pv.Nav = append(pv.Nav, navItem{Label: pg.label, URL: p.url(pg.slug), Active: pg.slug == active})
 	}
 
 	if p.can(c, AbilityAudit, nil) {

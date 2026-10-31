@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"reflect"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -360,6 +361,13 @@ func Fields(t reflect.Type) []Field {
 		}
 
 		rules := splitRules(f.Tag.Get("validate"))
+		// `enum:"a,b"` documents the values without validating them; a
+		// validate oneof rule already documents (and enforces) its own set.
+		if enum := f.Tag.Get("enum"); enum != "" && !slices.ContainsFunc(rules, func(r string) bool {
+			return strings.HasPrefix(strings.TrimSpace(r), "oneof=")
+		}) {
+			rules = append(rules, "oneof="+strings.Join(strings.Split(enum, ","), " "))
+		}
 		value, _ := splitDive(rules)
 
 		out = append(out, Field{

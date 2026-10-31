@@ -196,6 +196,8 @@ type options struct {
 	harden func(*admin.Config)
 	// extra registers policies for resources the default gate does not know.
 	extra func(*authz.Gate[*User]) error
+	// pages registers custom pages before Mount.
+	pages func(*admin.Panel) error
 	// beside registers routes next to the panel, after Mount.
 	beside func(*router.Router, *admin.Panel)
 	// clock drives the app (sessions) and the panel.
@@ -304,6 +306,12 @@ func newApp(t *testing.T, o options) *vukemtest.App {
 
 				if err := panel.Register(rs()...); err != nil {
 					return err
+				}
+
+				if o.pages != nil {
+					if err := o.pages(panel); err != nil {
+						return err
+					}
 				}
 
 				if err := panel.Mount(r); err != nil {

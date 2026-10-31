@@ -187,6 +187,7 @@ func builtinCommands() []Command {
 			codegenClientCommand(),
 			boostMCPCommand(),
 			ssgGenerateCommand(),
+			fuzzAPICommand(),
 		},
 		migrateCommands(),
 		seedCommands(),

@@ -19,3 +19,14 @@ GOWORK=off go test ./...
 vukem openapi:export > openapi.json
 vukem codegen:client -lang go     # refresh internal/apiclient after changing routes
 ```
+
+## Fuzz the API
+
+With the app running and a token from `POST /api/v1/tokens`:
+
+```sh
+VUKEM_FUZZ_TOKEN=<token> vukem api:fuzz -prefix /api/v1 -dry-run   # print the docker command and config
+VUKEM_FUZZ_TOKEN=<token> vukem api:fuzz -prefix /api/v1            # needs Docker
+```
+
+See the Fuzz testing page of the docs site (rest-apis/fuzz-testing).
