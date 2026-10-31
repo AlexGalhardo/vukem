@@ -235,6 +235,8 @@ covers := storage.HandlerWith(disk, nil, storage.Options{
 r.Handle("/covers/", http.StripPrefix("/covers", covers))
 ```
 
+Conditional requests work on every disk. `Local` files go through `http.ServeContent`; the S3 disk (v0.33.0 and later) sends the object's `ETag` and `Last-Modified`, so `If-None-Match` and `If-Modified-Since` get an empty `304` (tested against the fake S3 server and RustFS). A disk of your own gets the same behaviour when the reader returned by `Open` has `ETag() string` and `ModTime() time.Time` methods. A missing `ETag` on an S3 disk means the app runs an older driver or the store omits the header on `GET`.
+
 Do not use `immutable` for paths whose content can be replaced (an avatar stored as `avatars/42.png`): browsers would keep the old file for a year. Use a short `max-age` there, or `no-cache` to revalidate with the `ETag` and `Last-Modified` on every visit.
 
 ## Private files and temporary links

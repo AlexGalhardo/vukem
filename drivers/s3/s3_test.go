@@ -742,3 +742,42 @@ func TestOpenReportsValidators(t *testing.T) {
 		t.Errorf("body = %q", b)
 	}
 }
+
+// TestHandlerWithAnswers304ForAnS3Object runs the whole path the covers
+// route uses: S3 object, storage.HandlerWith, If-None-Match.
+func TestHandlerWithAnswers304ForAnS3Object(t *testing.T) {
+	t.Parallel()
+
+	d, _ := newTestDisk(t)
+	if err := storage.PutBytes(t.Context(), d, "covers/a.webp", []byte("img")); err != nil {
+		t.Fatal(err)
+	}
+
+	h := storage.HandlerWith(d, nil, storage.Options{CacheControl: "public, max-age=31536000, immutable"})
+
+	get := func(inm string) *httptest.ResponseRecorder {
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/covers/a.webp", http.NoBody)
+		if inm != "" {
+			req.Header.Set("If-None-Match", inm)
+		}
+
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+
+		return rec
+	}
+
+	first := get("")
+
+	etag := first.Header().Get("ETag")
+	if first.Code != http.StatusOK || etag == "" {
+		t.Fatalf("first GET = %d with ETag %q, want 200 and an ETag", first.Code, etag)
+	}
+
+	second := get(etag)
+	if second.Code != http.StatusNotModified || second.Body.Len() != 0 ||
+		second.Header().Get("Cache-Control") == "" {
+		t.Errorf("GET with If-None-Match %s = %d %q cache-control %q, want an empty 304 with Cache-Control",
+			etag, second.Code, second.Body.String(), second.Header().Get("Cache-Control"))
+	}
+}
