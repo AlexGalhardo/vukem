@@ -393,7 +393,7 @@ Choosing the key is the whole decision:
 
 | Store | Algorithm | Shared by servers |
 | --- | --- | --- |
-| `ratelimit.NewMemory(limit, window)` (`RATE_LIMIT_STORE=memory`) | GCRA, bursts up to `limit` | no |
+| `ratelimit.NewMemory(limit, window)` (`RATE_LIMIT_STORE=memory`) | GCRA, bursts up to `limit` (`ratelimit.NewMemoryBurst(rate, window, burst)` sets the burst apart) | no |
 | `ratelimit.NewWindow(counter, name, limit, window)` (`RATE_LIMIT_STORE=cache`) | fixed window on `Increment`; up to 2×`limit` around a window boundary | yes, with `CACHE_STORE=database` (SQLite, PostgreSQL, MySQL) or a Redis cache store |
 | `rc.RateLimiter(prefix, limit, window)` ([Redis](#redis)) | GCRA in a Lua script | yes |
 
