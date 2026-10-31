@@ -152,7 +152,10 @@ func (r *Resource[T]) find(c *web.Ctx, p *Panel) (*T, error) {
 // record loads the row named by a URL id. A composite id is every key
 // column (a-b); matching the first column alone would show another row.
 func (r *Resource[T]) record(ctx context.Context, ex database.Executor, raw string) (*T, error) {
-	q := orm.QueryOf[T](ex)
+	return r.lookup(ctx, orm.QueryOf[T](ex), raw)
+}
+
+func (r *Resource[T]) lookup(ctx context.Context, q orm.Query[T], raw string) (*T, error) {
 	if len(r.keys) == 1 {
 		id, ok := keyValue(r.byName[r.pk].typ, raw)
 		if !ok {
@@ -688,7 +691,10 @@ func (r *Resource[T]) save(ctx context.Context, p *Panel, action string, w write
 		if action == ActionCreate {
 			err = orm.Create(ctx, tx, rec)
 		} else {
-			err = orm.Update(ctx, tx, rec)
+			before, err = r.rebase(ctx, tx, rec, w.prev, cols)
+			if err == nil {
+				err = orm.Update(ctx, tx, rec)
+			}
 		}
 
 		if err != nil {
@@ -712,6 +718,49 @@ func (r *Resource[T]) save(ctx context.Context, p *Panel, action string, w write
 			Changes: orm.JSON[map[string]Change]{V: changes},
 		})
 	})
+}
+
+// rebase locks the stored row and merges the form into it: rec keeps only
+// the columns the form changed (against prev, the row as loaded for the
+// form) and takes every other column from the locked row, so a concurrent
+// writer's changes survive the full-row orm.Update. A changed column that
+// the other writer also changed is a conflict (409). It returns the audit
+// snapshot of the locked row.
+func (r *Resource[T]) rebase(
+	ctx context.Context,
+	tx *database.Tx,
+	rec, prev *T,
+	cols []string,
+) (map[string]any, error) {
+	rv := reflect.ValueOf(rec).Elem()
+
+	cur, err := r.lookup(ctx, orm.QueryOf[T](tx).LockForUpdate(), r.id(rv))
+	if err != nil {
+		return nil, err
+	}
+
+	cv, pv := reflect.ValueOf(cur).Elem(), reflect.ValueOf(prev).Elem()
+	loaded, stored, form := r.snapshot(pv, cols), r.snapshot(cv, cols), r.snapshot(rv, cols)
+
+	for _, c := range cols {
+		i := r.byName[c].index
+		if reflect.DeepEqual(form[c], loaded[c]) {
+			rv.FieldByIndex(i).Set(cv.FieldByIndex(i))
+			continue
+		}
+
+		if !reflect.DeepEqual(stored[c], loaded[c]) {
+			return nil, errs.New(http.StatusConflict, "record changed concurrently")
+		}
+	}
+
+	for _, c := range protected {
+		if col, ok := r.byName[c]; ok {
+			rv.FieldByIndex(col.index).Set(cv.FieldByIndex(col.index))
+		}
+	}
+
+	return stored, nil
 }
 
 func (r *Resource[T]) store(p *Panel) web.HandlerFunc {
