@@ -235,7 +235,7 @@ r.Use(in.Middleware) // Vary, version check, 302→303, fragment redirects
 // Root view (resources/views/app.html): {{.Head}} in <head>, {{.Inertia}} in <body>.
 ```
 
-`Config.ViewData func(*http.Request) map[string]any` adds request-bound root-view data as `RootData.Data` (full page visits only, not in the page object), for values a context-free `WithViewFuncs` function cannot read, such as a theme cookie. The page object's `url` and the version-conflict `X-Inertia-Location` put back the locale prefix `i18n.StripPathPrefix` removed (`i18n.LocalizePath`), so `/pt-br/games` stays in client history.
+`Config.ClientShell func(*Page) Shell` gives client-rendered pages (DisableSSR, Except, SSR fallback) a `<title>`/head (`Shell.Head`, into `RootData.Head`) and a placeholder inside the mount element (`Shell.Body`); server-rendered pages ignore it. `Config.ViewData func(*http.Request) map[string]any` adds request-bound root-view data as `RootData.Data` (full page visits only, not in the page object), for values a context-free `WithViewFuncs` function cannot read, such as a theme cookie. The page object's `url` and the version-conflict `X-Inertia-Location` put back the locale prefix `i18n.StripPathPrefix` removed (`i18n.LocalizePath`), so `/pt-br/games` stays in client history.
 
 `inertia.Share(c.Context(), key, value)` adds per-request shared props (`Config.Shared` holds global ones); `inertia.Location(c, url)` forces a full visit; `inertia.PreserveFragment(c)` before a redirect keeps the URL fragment; `inertia.RenderStatus(c, status, component, props)` renders a page with a 2xx/4xx/5xx status (error pages; 204, 205, 304, 1xx, 3xx and 409 are refused). Prop values of type `func(context.Context) (any, error)` resolve lazily.
 

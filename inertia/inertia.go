@@ -82,6 +82,21 @@ type Config struct {
 	// read from the request (a theme cookie, the locale's text direction),
 	// as RootData.Data. It is not part of the page object. nil: no data.
 	ViewData func(r *http.Request) map[string]any
+	// ClientShell returns what a page rendered on the client carries before
+	// the app mounts (DisableSSR, SSRConfig.Except, no SSR, or an SSR
+	// fallback), so it is never blank: Head (for example the <title> from
+	// the page props) goes to RootData.Head and Body inside the mount
+	// element, which the client replaces on mount. Server-rendered pages
+	// ignore it. The client must render such pages with createApp, not
+	// hydrate them. nil: an empty mount element.
+	ClientShell func(p *Page) Shell
+}
+
+// Shell is the markup of a client-rendered page before the app mounts. The
+// HTML is trusted: escape page data yourself (template.HTMLEscapeString).
+type Shell struct {
+	Head template.HTML
+	Body template.HTML
 }
 
 // Inertia is the adapter; build it with New.
@@ -292,11 +307,16 @@ func RenderStatus(c *web.Ctx, status int, component string, props Props) error {
 		return err
 	}
 
-	html := script + `<div id="` + st.in.cfg.RootID + `"></div>`
+	var shell Shell
+	if st.in.cfg.ClientShell != nil {
+		shell = st.in.cfg.ClientShell(p)
+	}
+
+	html := script + `<div id="` + st.in.cfg.RootID + `">` + string(shell.Body) + `</div>`
 
 	return c.Render(
 		st.in.cfg.RootView,
-		RootData{Page: p, Inertia: trustedHTML(html), Data: data},
+		RootData{Page: p, Inertia: trustedHTML(html), Head: shell.Head, Data: data},
 		web.WithStatus(status),
 	)
 }

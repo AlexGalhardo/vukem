@@ -506,6 +506,22 @@ On a first visit, the adapter POSTs the page object to the Node SSR server and p
 
 - `inertia.DisableSSR(ctx)` renders one request on the client.
 - `inertia.RequireSSR(ctx)` makes one request strict.
+
+### A shell for client-rendered pages
+
+A page rendered on the client (`DisableSSR`, `Except`, no `SSR`, or a non-strict SSR fallback) otherwise ships an empty mount element and no `<title>`, so the first paint is blank. Set `Config.ClientShell` to give those pages a head and a placeholder:
+
+```go
+ClientShell: func(p *inertia.Page) inertia.Shell {
+	title, _ := p.Props["title"].(string)
+	return inertia.Shell{
+		Head: template.HTML("<title>" + template.HTMLEscapeString(title) + "</title>"),
+		Body: `<div class="skeleton" aria-busy="true"></div>`,
+	}
+},
+```
+
+`Head` goes to `.Head` and `Body` inside the mount element, which the client replaces on mount (use `createApp`, not hydration; the placeholder is not server-rendered output). Server-rendered pages and Inertia JSON responses ignore it. Both strings are trusted HTML: escape page data yourself.
 - `app.Inertia.SSRHealthy(ctx)` checks the server's `/health` endpoint.
 - `vukem ssr:start` runs `node bootstrap/ssr/ssr.js` and restarts it after a crash (flags `-bundle`, `-runtime`, `-restart-delay`, default `1s`).
 - `vukem ssr:check` probes `/health` (flag `-url`) and exits with an error if it does not answer `200`.
@@ -571,6 +587,7 @@ vukem.WithInertia(inertia.Config{
 | `SSR` | `*inertia.SSRConfig` | `nil` (off) | Server-side rendering |
 | `ErrorComponent` | `string` | `"Error"` | Page rendered for errors on Inertia visits |
 | `ViewData` | `func(*http.Request) map[string]any` | none | Extra root-view data per request, as `RootData.Data` (full page visits only) |
+| `ClientShell` | `func(*inertia.Page) inertia.Shell` | none | Head and placeholder markup for client-rendered pages |
 
 Other helpers: `inertia.IsInertia(r)` and `inertia.IsPrefetch(r)` read the request, `app.Inertia.Version()` returns the current version, and the protocol header names are exported as constants (`inertia.HeaderInertia`, `inertia.HeaderVersion`, `inertia.HeaderLocation`, ...).
 
