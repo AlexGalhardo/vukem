@@ -1,7 +1,6 @@
 package pgtest
 
 import (
-	"regexp"
 	"testing"
 	"time"
 )
@@ -104,14 +103,64 @@ func TestWithDatabase(t *testing.T) {
 func TestNewName(t *testing.T) {
 	t.Parallel()
 
-	valid := regexp.MustCompile(`^pgtest_[a-z0-9]{16}$`)
-	a, b := newName(), newName()
+	now := time.Date(2026, 10, 31, 12, 0, 0, 0, time.UTC)
+	a, b := newName(now), newName(now)
 
-	if !valid.MatchString(a) {
-		t.Errorf("newName() = %q, want match %s", a, valid)
+	if !nameRe.MatchString(a) || len(a) > 63 {
+		t.Errorf("newName() = %q, want match %s within 63 bytes", a, nameRe)
 	}
 
 	if a == b {
 		t.Errorf("newName() returned %q twice", a)
+	}
+}
+
+func TestOrphan(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now()
+	old := newName(now.Add(-7 * time.Hour))
+
+	tests := []struct {
+		name string
+		db   string
+		want bool
+	}{
+		{"old generated", old, true},
+		{"fresh generated", newName(now.Add(-time.Hour)), false},
+		{"legacy name without time", "pgtest_abcdefghijklmnop", false},
+		{"other database", "postgres", false},
+		{"generated shape with suffix", old + "_x", false},
+		{"similar prefix", "pgtestx" + old[len("pgtest"):], false},
+	}
+
+	for _, tt := range tests {
+		if got := orphan(tt.db, now, defaultSweepAfter); got != tt.want {
+			t.Errorf("%s: orphan(%q) = %v, want %v", tt.name, tt.db, got, tt.want)
+		}
+	}
+}
+
+func TestSweepAfterFrom(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		in      string
+		want    time.Duration
+		wantErr bool
+	}{
+		{"", defaultSweepAfter, false},
+		{"0", 0, false},
+		{"90m", 90 * time.Minute, false},
+		{"abc", 0, true},
+		{"-1h", 0, true},
+		{"6", 0, true},
+	}
+
+	for _, tt := range tests {
+		got, err := sweepAfterFrom(func(string) string { return tt.in })
+		if (err != nil) != tt.wantErr || got != tt.want {
+			t.Errorf("sweepAfterFrom(%q) = %v, %v; want %v, err=%v", tt.in, got, err, tt.want, tt.wantErr)
+		}
 	}
 }
