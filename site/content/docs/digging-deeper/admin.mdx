@@ -437,9 +437,25 @@ panel, err := vadmin.New(vadmin.Config{
 })
 ```
 
+## Custom pages
+
+A page that is not a model resource (an ingestion queue, a status board) can live inside the panel with `Panel.AddPage`. It gets the same layout, navigation, title and guard as the resources, so it never drifts from them:
+
+```go
+err := panel.AddPage("ingestion", "Ingestion", func(c *web.Ctx) (template.HTML, error) {
+	var buf bytes.Buffer
+	if err := ingestionTmpl.Execute(&buf, loadQueue(c.Context())); err != nil {
+		return "", err
+	}
+	return template.HTML(buf.String()), nil
+})
+```
+
+The page is served at `<Prefix>/ingestion` for GET, listed in the sidebar after the resources, and runs behind `Panel.Guard()` (login, panel ability, 2FA, IP and session limits). The returned HTML is trusted, so escape user data (`html/template` does). Slugs share the namespace of the resources and must match `[a-z0-9][a-z0-9-]*`. Call `AddPage` before `Mount`. For POST routes, register them on the router behind `Panel.Guard()`.
+
 ## Customizing the look
 
-`Config.Views` takes any [`fs.FS`](https://pkg.go.dev/io/fs#FS). A file in it replaces the embedded template with the same path; every other template keeps the original. The paths are `layouts/admin.html`, `index.html`, `show.html`, `form.html`, `delete.html`, `dashboard.html`, `audit.html`, `flags.html`, `action.html` and `partials/pager.html`.
+`Config.Views` takes any [`fs.FS`](https://pkg.go.dev/io/fs#FS). A file in it replaces the embedded template with the same path; every other template keeps the original. The paths are `layouts/admin.html`, `index.html`, `show.html`, `form.html`, `delete.html`, `dashboard.html`, `audit.html`, `flags.html`, `action.html`, `page.html` and `partials/pager.html`.
 
 `admin.Templates()` returns the embedded originals, so you can copy one and edit it:
 

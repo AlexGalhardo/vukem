@@ -63,6 +63,7 @@ Exit codes: `0` success, `1` failure, `2` usage error.
 | app: `route:list [--json]` | Route table |
 | app: `queue:work`, `queue:failed`, `queue:retry`, `queue:forget` | Queue workers and failed jobs ([subsystems.md](subsystems.md#queue)) |
 | app: `schedule:run`, `schedule:work`, `schedule:list` | Scheduler ([subsystems.md](subsystems.md#scheduler)) |
+| app: `api:fuzz [-prefix] [-url] [-image] [-dry-run]` | Run a pinned Schemathesis Docker image against the running app from the exported OpenAPI document; credential from `VUKEM_FUZZ_TOKEN` or `vukem.WithFuzzAuth`; `-dry-run` prints the command and config (site page rest-apis/fuzz-testing) |
 | app: `openapi:export [-prefix /api]` | Print the OpenAPI 3.1 document of the routes ([api.md](api.md#openapi)); `-prefix` keeps only routes under that path prefix, overriding `OPENAPI_PREFIX`; runs in warmup mode (no provider `Boot`, no database, `APP_KEY` optional) |
 | app: `openapi:serve [-addr]` | Preview the Scalar API reference locally (register `apidocs.Command()`) |
 | app: `codegen:types [-zod] [-o file] [-prefix /api]` | TypeScript types for every schema and operation (`<Op>Body`, `<Op>Query`, `<Op>Response`), plus Zod 4 schemas (`<Name>Schema`, `<Op>BodySchema`) with `-zod`; `-prefix` keeps only routes under that path prefix, overriding `OPENAPI_PREFIX`; runs in warmup mode (no provider `Boot`, no database, `APP_KEY` optional) |

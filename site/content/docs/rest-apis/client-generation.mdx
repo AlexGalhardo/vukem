@@ -225,7 +225,7 @@ try {
 | `ApiError` member | Value |
 | --- | --- |
 | `status` | the HTTP status |
-| `problem` | the parsed `ApiProblem` (`type`, `title`, `status`, `detail`, `instance`, `request_id`, `errors`), or `undefined` when the body was not a JSON object |
+| `problem` | the parsed `ApiProblem` (`type`, `title`, `status`, `detail`, `instance`, `request_id`, `code`, `errors`, plus any extension member as `unknown`), or `undefined` when the body was not a JSON object |
 | `errors` | `problem.errors` (field → messages on a `422`), or `{}` |
 | `message` | `problem.detail`, else `problem.title`, else `HTTP <status>` |
 | `name` | `"ApiError"` |
