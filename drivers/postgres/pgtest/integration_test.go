@@ -4,8 +4,10 @@ package pgtest_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -109,5 +111,41 @@ func TestDatabase_Vukemtest(t *testing.T) {
 
 	if _, err := db.ExecContext(t.Context(), "CREATE TABLE posts (id serial PRIMARY KEY)"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestDatabase_SweepsOrphans(t *testing.T) {
+	ctx := t.Context()
+
+	conn, err := pgx.Connect(ctx, admin())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close(context.Background()) })
+
+	// Generated-shape names created 24 h and 1 h ago, plus a lookalike that
+	// the sweep must never touch.
+	stale := fmt.Sprintf("pgtest_%010d_aaaaaaaaaaaa", time.Now().Add(-24*time.Hour).Unix())
+	fresh := fmt.Sprintf("pgtest_%010d_bbbbbbbbbbbb", time.Now().Add(-time.Hour).Unix())
+	other := "pgtest_sweep_keep_me"
+
+	for _, name := range []string{stale, fresh, other} {
+		if _, err := conn.Exec(ctx, "CREATE DATABASE "+pgx.Identifier{name}.Sanitize()); err != nil {
+			t.Fatal(err)
+		}
+
+		t.Cleanup(func() {
+			_, _ = conn.Exec(context.Background(), "DROP DATABASE IF EXISTS "+pgx.Identifier{name}.Sanitize())
+		})
+	}
+
+	// A distinct URL string gets its own once-per-process sweep, which earlier
+	// tests of this binary may already have used up for admin().
+	pgtest.Database(t, admin()+"&application_name=sweep_test")
+
+	for name, want := range map[string]bool{stale: false, fresh: true, other: true} {
+		if got := exists(t, name); got != want {
+			t.Errorf("database %q exists = %v, want %v", name, got, want)
+		}
 	}
 }
