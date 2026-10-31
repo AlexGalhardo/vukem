@@ -376,3 +376,29 @@ func requireGateTravelsWithTheLink(t *testing.T, root string) {
 		t.Error("nothing imports demoLink; this check would pass on anything")
 	}
 }
+
+// TestInertiaScaffoldsExposeHydratingHook guards the data-hydrating hook:
+// the root view sets it and the entry removes it once the app has mounted.
+func TestInertiaScaffoldsExposeHydratingHook(t *testing.T) {
+	t.Parallel()
+
+	for _, st := range inertiaStarters {
+		view, err := fs.ReadFile(scaffoldFS, "scaffolds/inertia-"+st.name+"/resources/views/app.html")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		entry, err := fs.ReadFile(scaffoldFS, "scaffolds/inertia-"+st.name+"/"+st.entry)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if !strings.Contains(string(view), "<html ") || !strings.Contains(string(view), " data-hydrating>") {
+			t.Errorf("%s app.html does not set data-hydrating on <html>", st.name)
+		}
+
+		if !strings.Contains(string(entry), `removeAttribute("data-hydrating")`) {
+			t.Errorf("%s entry does not remove data-hydrating", st.name)
+		}
+	}
+}
