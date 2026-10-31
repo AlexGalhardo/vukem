@@ -50,6 +50,8 @@
 }
 
 html {
+  /* +25% type scale: every rem-based size (Tailwind text-*, prose, layout) follows. */
+  font-size: 125%;
   scroll-padding-top: calc(var(--header-h) + 1.5rem);
 }
 
@@ -169,6 +171,7 @@ body {
   text-decoration-color: color-mix(in oklab, var(--accent) 55%, transparent);
   text-underline-offset: 3px;
   text-decoration-thickness: 1px;
+  overflow-wrap: anywhere;
 }
 
 .prose a:hover {
