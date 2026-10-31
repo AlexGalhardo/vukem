@@ -67,6 +67,7 @@
   "docs/getting-started/showcase.mdx": "2026-10-24T20:39:34-03:00",
   "docs/getting-started/starters.mdx": "2026-10-25T12:30:02-03:00",
   "docs/rest-apis/client-generation.mdx": "2026-10-25T12:30:02-03:00",
+  "docs/rest-apis/fuzz-testing.mdx": "2026-10-31T12:38:56-03:00",
   "docs/rest-apis/graphql.mdx": "2026-10-24T18:02:20-03:00",
   "docs/rest-apis/grpc.mdx": "2026-10-17T22:02:58-03:00",
   "docs/rest-apis/idempotency.mdx": "2026-10-17T23:16:32-03:00",
