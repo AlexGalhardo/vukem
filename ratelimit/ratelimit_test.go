@@ -328,3 +328,50 @@ func TestIPKeyIPv4DoesNotAllocate(t *testing.T) {
 		t.Fatalf("IPKey(ipv4) allocates %v times", n)
 	}
 }
+
+func TestMemoryBurst(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		m := NewMemoryBurst(1, time.Second, 5) // 5 at once, then 1/s
+		ctx := t.Context()
+
+		for i, wantRemaining := range []int{4, 3, 2, 1, 0} {
+			res, _ := m.Allow(ctx, "a")
+			if !res.Allowed || res.Remaining != wantRemaining || res.Limit != 5 {
+				t.Fatalf("request %d = %+v", i, res)
+			}
+		}
+
+		res, _ := m.Allow(ctx, "a")
+		if res.Allowed || res.RetryAfter != time.Second {
+			t.Fatalf("6th = %+v", res)
+		}
+
+		time.Sleep(time.Second)
+
+		if res, _ := m.Allow(ctx, "a"); !res.Allowed || res.Remaining != 0 {
+			t.Fatalf("after one interval = %+v", res)
+		}
+
+		time.Sleep(10 * time.Second)
+
+		if res, _ := m.Allow(ctx, "a"); !res.Allowed || res.Remaining != 4 {
+			t.Fatalf("after refill = %+v", res)
+		}
+	})
+}
+
+func TestMemoryBurstClampsInputs(t *testing.T) {
+	t.Parallel()
+
+	m := NewMemoryBurst(0, time.Second, 0)
+
+	if res, _ := m.Allow(t.Context(), "a"); !res.Allowed || res.Limit != 1 {
+		t.Fatalf("first = %+v", res)
+	}
+
+	if res, _ := m.Allow(t.Context(), "a"); res.Allowed {
+		t.Fatal("second allowed")
+	}
+}
