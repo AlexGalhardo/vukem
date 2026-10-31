@@ -320,7 +320,7 @@ Every route needs the guard, the panel ability (`admin` by default) and then the
 | POST | `/admin/{slug}/{id}/actions/{name}` | none | the action's `Name` on the record |
 | GET / POST | `/admin/{slug}/_bulk/{name}` (`Bulk` actions only) | none | the action's `Name` on every selected record |
 
-The ability names are constants: `admin.AbilityAdmin`, `AbilityAudit`, `AbilityFlags`, `AbilityViewAny`, `AbilityView`, `AbilityCreate`, `AbilityUpdate` and `AbilityDelete`. The flags routes exist only when `Config.Flags` is set. `/admin/_assets/admin.css` and `/admin/_assets/htmx.min.js` are public and cached for an hour.
+The ability names are constants: `admin.AbilityAdmin`, `AbilityAudit`, `AbilityFlags`, `AbilityViewAny`, `AbilityView`, `AbilityCreate`, `AbilityUpdate` and `AbilityDelete`. The flags routes exist only when `Config.Flags` is set and at least one flag is registered, so registering your first flag in an app scaffolded with `install:admin` adds `/admin/_flags` (and an entry to a route-inventory test, if you have one). `/admin/_assets/admin.css` and `/admin/_assets/htmx.min.js` are public and cached for an hour.
 
 The navigation only shows the resources the user may `viewAny`, and the audit and flags links only to users with those abilities. The dashboard counts records of the resources the user may list.
 

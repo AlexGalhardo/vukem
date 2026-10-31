@@ -121,6 +121,9 @@ func TestNewRejectsMisconfiguration(t *testing.T) {
 	}{
 		{"invalid name", []flags.AnyFlag{flags.Bool("New-Checkout", false)}, nil, "invalid name"},
 		{"empty name", []flags.AnyFlag{flags.Bool("", false)}, nil, "invalid name"},
+		{"dotted name", []flags.AnyFlag{flags.Bool("community.submissions", false)}, nil, "invalid name"},
+		{"leading digit", []flags.AnyFlag{flags.Bool("2fa", false)}, nil, "invalid name"},
+		{"101 characters", []flags.AnyFlag{flags.Bool("a"+strings.Repeat("b", 100), false)}, nil, "invalid name"},
 		{"duplicate", []flags.AnyFlag{checkout, flags.Bool("new_checkout", true)}, nil, "duplicate"},
 		{"string default too long", []flags.AnyFlag{flags.String("long", strings.Repeat("x", 2000))}, nil, "default"},
 		{"bad bool env", all(), map[string]string{"FLAG_NEW_CHECKOUT": "maybe"}, "FLAG_NEW_CHECKOUT"},
