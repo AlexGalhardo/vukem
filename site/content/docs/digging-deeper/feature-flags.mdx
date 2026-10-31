@@ -104,6 +104,8 @@ FLAG_NEW_CHECKOUT=true
 
 Restart the app and the new checkout is served. With the [admin panel](/docs/digging-deeper/admin) installed you may instead flip the switch at `/admin/_flags`, with no restart.
 
+The panel appears because `install:admin` passes `app.Flags()` to `admin.Config.Flags`: the first registered flag adds `/admin/_flags` and `POST /admin/_flags/{name}`, behind the `AbilityFlags` gate. To keep them out of the panel, leave `Flags` unset.
+
 </Step>
 </Steps>
 
@@ -114,6 +116,8 @@ Restart the app and the new checkout is served. With the [admin panel](/docs/dig
 | `flags.Bool(name, def)` | `Flag[bool]` | on or off; read it with `ff.Enabled` |
 | `flags.Int(name, def)` | `Flag[int]` | limits, percentages |
 | `flags.String(name, def)` | `Flag[string]` | a short value, at most 1024 bytes |
+
+A name starts with a lowercase letter and then holds lowercase letters, digits and `_`, up to 100 characters (`^[a-z][a-z0-9_]{0,99}$`). `community.submissions`, `New-Checkout` and `2fa` stop the boot; write `community_submissions`. The environment variable is `FLAG_` plus the upper-cased name: `FLAG_COMMUNITY_SUBMISSIONS`.
 
 Each flag has these methods:
 
