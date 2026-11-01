@@ -8,8 +8,13 @@
 // with 503 (fail closed). Both log a security event. Pass When to ask only
 // suspicious clients, for example after a soft rate limit trips.
 //
-//	verify := challenge.Turnstile(cfg.TurnstileSecret)
-//	g.Use(challenge.Middleware(verify, nil)) // on the group holding POST /register
+// [TurnstileConfig] reads TURNSTILE_SITE_KEY and TURNSTILE_SECRET_KEY (off
+// while unset) and renders the widget, its nonce'd script and CSP sources.
+// [StepUp] challenges a client mid-browse with an interstitial page and a
+// signed clearance cookie.
+//
+//	ts, _ := config.Load[challenge.TurnstileConfig](src)
+//	g.Use(ts.Protect("register", nil)) // on the group holding POST /register
 //
 // See https://github.com/AlexGalhardo/vukem/blob/main/docs/subsystems.md#bot-challenge.
 package challenge
@@ -28,6 +33,7 @@ import (
 	"github.com/AlexGalhardo/vukem/config"
 	"github.com/AlexGalhardo/vukem/errs"
 	"github.com/AlexGalhardo/vukem/httpclient"
+	"github.com/AlexGalhardo/vukem/uuid"
 	"github.com/AlexGalhardo/vukem/web"
 )
 
@@ -41,6 +47,11 @@ const Header = "X-Challenge-Token"
 // ErrRejected is returned by a Verifier when the answer is missing or
 // wrong. Any other error means the check could not run.
 var ErrRejected = errors.New("challenge: rejected")
+
+// ErrUnavailable wraps the errors of a provider that could not answer
+// (network, timeout, non-200, unreadable answer, its own internal-error),
+// as opposed to our misconfiguration (a missing or rejected secret).
+var ErrUnavailable = errors.New("challenge: provider unavailable")
 
 // Verifier checks the challenge answer carried by the request.
 type Verifier interface {
@@ -102,6 +113,12 @@ type SiteVerify struct {
 	Action string
 	// Client sends the request; nil uses httpclient.Safe with a 5s timeout.
 	Client *http.Client
+	// InsecureFailOpen lets requests through while the provider is unavailable
+	// (ErrUnavailable), logging a "challenge.fail_open" security event.
+	// The default (false) denies with 503: no bot gets in during an
+	// outage, and neither does anyone else. A misconfigured secret never
+	// fails open.
+	InsecureFailOpen bool
 }
 
 // Turnstile returns a Cloudflare Turnstile verifier.
@@ -136,35 +153,44 @@ func (s *SiteVerify) Verify(c *web.Ctx) error {
 		return ErrRejected
 	}
 
-	return s.check(c.Context(), token, c.IP())
+	err := s.check(c.Context(), token, c.IP())
+	if err != nil && s.InsecureFailOpen && errors.Is(err, ErrUnavailable) {
+		web.SecurityEvent(c.Request(), "challenge.fail_open", "err", err.Error())
+		return nil
+	}
+
+	return err
 }
 
 func (s *SiteVerify) check(ctx context.Context, token, ip string) error {
-	form := url.Values{"secret": {s.Secret.Reveal()}, "response": {token}, "remoteip": {ip}}
-
-	// G704: s.URL is app configuration, never request input.
-	req, err := http.NewRequestWithContext( //nolint:gosec // G704: see above
-		ctx, http.MethodPost, s.URL, strings.NewReader(form.Encode()),
-	)
-	if err != nil {
-		return fmt.Errorf("challenge: %w", err)
+	// One idempotency key for both attempts, so a retry of a token the
+	// provider already redeemed is not answered as a duplicate.
+	form := url.Values{
+		"secret": {s.Secret.Reveal()}, "response": {token}, "remoteip": {ip},
+		"idempotency_key": {uuid.NewV4().String()},
 	}
-
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	client := s.Client
 	if client == nil {
 		client = httpclient.Safe(httpclient.Options{Timeout: 5 * time.Second})
 	}
 
-	res, err := client.Do(req) //nolint:gosec // G704: see above
+	res, err := s.post(ctx, client, form)
+	if err != nil || res.StatusCode >= http.StatusInternalServerError {
+		if res != nil {
+			_ = res.Body.Close()
+		}
+
+		res, err = s.post(ctx, client, form)
+	}
+
 	if err != nil {
-		return fmt.Errorf("challenge: siteverify: %w", err)
+		return fmt.Errorf("%w: %w", ErrUnavailable, err)
 	}
 	defer res.Body.Close()
 
 	if res.StatusCode != http.StatusOK {
-		return fmt.Errorf("challenge: siteverify answered %d", res.StatusCode)
+		return fmt.Errorf("%w: siteverify answered %d", ErrUnavailable, res.StatusCode)
 	}
 
 	var out struct {
@@ -175,13 +201,17 @@ func (s *SiteVerify) check(ctx context.Context, token, ip string) error {
 	}
 
 	if err := json.NewDecoder(io.LimitReader(res.Body, 64<<10)).Decode(&out); err != nil {
-		return fmt.Errorf("challenge: siteverify answer: %w", err)
+		return fmt.Errorf("%w: siteverify answer: %w", ErrUnavailable, err)
 	}
 
 	if !out.Success {
 		codes := strings.Join(out.Codes, ",")
 		// Our own misconfiguration or a provider fault: not the user's answer.
-		if strings.Contains(codes, "secret") || strings.Contains(codes, "internal-error") {
+		if strings.Contains(codes, "internal-error") {
+			return fmt.Errorf("%w: siteverify: %s", ErrUnavailable, codes)
+		}
+
+		if strings.Contains(codes, "secret") {
 			return fmt.Errorf("challenge: siteverify: %s", codes)
 		}
 
@@ -197,4 +227,18 @@ func (s *SiteVerify) check(ctx context.Context, token, ip string) error {
 	}
 
 	return nil
+}
+
+func (s *SiteVerify) post(ctx context.Context, client *http.Client, form url.Values) (*http.Response, error) {
+	// G704: s.URL is app configuration, never request input.
+	req, err := http.NewRequestWithContext( //nolint:gosec // G704: see above
+		ctx, http.MethodPost, s.URL, strings.NewReader(form.Encode()),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("challenge: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	return client.Do(req) //nolint:gosec // G704: see above
 }

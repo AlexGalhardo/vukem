@@ -1,35 +1,155 @@
 ---
 title: Bot challenge
-description: Stop bots on signup, login and contact forms with challenge.Middleware, verify Cloudflare Turnstile or hCaptcha tokens server-side, ask only suspicious clients, and plug in your own verifier.
+description: Stop bots with Cloudflare Turnstile in vukem. Configure TURNSTILE_SITE_KEY and TURNSTILE_SECRET_KEY, render the widget with a CSP nonce, protect signup, login and contact forms, step up suspicious clients with an interstitial and a clearance cookie, and choose the outage behaviour.
 ---
 
 A rate limit slows a bot down; a challenge asks the browser to prove it is not one. The page shows a widget (Cloudflare Turnstile or hCaptcha), the browser solves it and posts a token with the form, and the server asks the provider whether that token is valid before the handler runs. Vukem's `challenge` package does the server half.
 
 You will learn:
 
-- how to protect a form route with `challenge.Middleware`;
+- how to set up Cloudflare Turnstile from the environment (`challenge.TurnstileConfig`);
+- how to render the widget in server templates and Inertia pages, with the CSP it needs;
+- how to protect a form route with `TurnstileConfig.Protect` or `challenge.Middleware`;
+- how to step up a suspicious client while it browses (`challenge.StepUp`);
 - how the token reaches the server from an HTML form and from Inertia or JSON;
-- how failures are answered, and why a provider outage denies;
+- how failures are answered, why a provider outage denies, and how to change that;
 - how to challenge only suspicious clients;
 - how to write your own `Verifier`.
 
-## Quick start
+## Get the keys
 
-Create a Turnstile widget in the Cloudflare dashboard, put the site key in the page and the secret key in `.env` (`TURNSTILE_SECRET`). Then wrap the routes that receive the form:
+1. In the Cloudflare dashboard, open **Turnstile** and choose **Add widget**.
+2. Name the widget and add the hostnames that render it (`example.com`; add `localhost` for development, or use the test keys below).
+3. Pick the widget mode: **Managed** (Cloudflare decides whether to show a checkbox; recommended), **Non-interactive** (a loading bar, never a checkbox) or **Invisible**.
+4. Copy the **site key** (public, goes in the page) and the **secret key** (server only) into `.env`.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `TURNSTILE_SITE_KEY` | empty | Public widget key. |
+| `TURNSTILE_SECRET_KEY` | empty | Secret key, a `config.Secret`: it prints as `[redacted]` in logs, errors and JSON. |
+| `TURNSTILE_HOSTNAME` | empty | When set, a token solved on another hostname is refused. |
+| `TURNSTILE_TIMEOUT` | `5s` | Timeout of each siteverify call (one retry on a network error or a 5xx). |
+| `TURNSTILE_INSECURE_FAIL_OPEN` | `false` | Let requests through while Cloudflare cannot answer (see [Outages](#outages)). |
+
+Turnstile is **off until both keys are set**: the helpers render nothing, add no CSP source and let every request through, so development and tests need no keys. Setting only one key is a mistake that `TurnstileConfig.Validate` reports; call it at boot.
+
+```go title="bootstrap/app.go"
+ts, err := config.Load[challenge.TurnstileConfig](src)
+if err != nil {
+	return err
+}
+if err := ts.Validate(); err != nil {
+	return err
+}
+```
+
+For local work and CI, Cloudflare publishes [test keys](https://developers.cloudflare.com/turnstile/troubleshooting/testing/): the site key `1x00000000000000000000AA` always passes and `2x00000000000000000000AB` always blocks; the secret `1x0000000000000000000000000000000AA` always passes and `2x0000000000000000000000000000000AA` always fails. Never ship them.
+
+## Render the widget
+
+### Content Security Policy
+
+The widget loads a script and an iframe from `https://challenges.cloudflare.com`. `ts.CSPSources()` returns `script-src` and `frame-src` for that origin, or nil when Turnstile is off, so the policy stays strict where Turnstile is not used:
+
+```go title="bootstrap/app.go"
+middleware.SecureHeaders(middleware.SecureHeadersConfig{CSPSources: ts.CSPSources()})
+```
+
+Merge it with your other sources if you already set `CSPSources`. See [Security headers](/docs/security/security-headers).
+
+### Server templates
+
+`ts.Script(nonce)` is the `api.js` script tag carrying the request's CSP nonce; `ts.Widget(action)` is the widget `<div>` with its `data-action`. Both are empty while Turnstile is off. Register them as template functions:
+
+```go title="bootstrap/app.go"
+vukem.WithViewFuncs(template.FuncMap{
+	"turnstileScript": ts.Script,
+	"turnstileWidget": ts.Widget,
+})
+```
+
+```html title="resources/views/register.html"
+<head>{{ turnstileScript cspNonce }}</head>
+<form method="post" action="/register">
+	<!-- fields -->
+	{{ turnstileWidget "register" }}
+	<button>Create account</button>
+</form>
+```
+
+The widget adds a hidden `cf-turnstile-response` field to the form, which the middleware reads.
+
+### Inertia and React
+
+Put `{{ turnstileScript cspNonce }}` in the Inertia root view and share the site key as a prop (empty while Turnstile is off):
+
+```go title="bootstrap/app.go"
+inertia.Config{Shared: inertia.Props{"turnstileSiteKey": ts.SiteKey}}
+```
+
+Inertia posts JSON, not a form, so the token travels in the `X-Challenge-Token` header (`challenge.Header`). Render the widget explicitly, keep the token in state and send it with the visit:
+
+```tsx title="resources/js/components/Turnstile.tsx"
+import { useEffect, useRef } from "react";
+
+declare global {
+	interface Window {
+		turnstile?: {
+			render(el: HTMLElement, opts: Record<string, unknown>): string;
+			reset(id: string): void;
+			remove(id: string): void;
+		};
+	}
+}
+
+export function Turnstile(props: { siteKey: string; action: string; onToken: (token: string) => void }) {
+	const ref = useRef<HTMLDivElement>(null);
+
+	useEffect(() => {
+		if (!props.siteKey || !ref.current || !window.turnstile) return;
+		const id = window.turnstile.render(ref.current, {
+			sitekey: props.siteKey,
+			action: props.action,
+			callback: props.onToken,
+			"expired-callback": () => props.onToken(""),
+		});
+		return () => window.turnstile?.remove(id);
+	}, [props.siteKey, props.action]);
+
+	return <div ref={ref} />;
+}
+```
+
+```tsx title="resources/js/pages/Register.tsx"
+const { turnstileSiteKey } = usePage<{ turnstileSiteKey: string }>().props;
+const [token, setToken] = useState("");
+const form = useForm({ email: "", password: "" });
+
+const submit = (e: React.FormEvent) => {
+	e.preventDefault();
+	form.post("/register", { headers: { "X-Challenge-Token": token } });
+};
+
+// inside <form onSubmit={submit}>:
+<Turnstile siteKey={turnstileSiteKey} action="register" onToken={setToken} />
+{form.errors.challenge && <p role="alert">{form.errors.challenge}</p>}
+```
+
+A token is single use: after a failed submit, reset the widget (`window.turnstile.reset(id)`) so the user gets a new one. The script loads asynchronously; if the component can mount before it, load `api.js?render=explicit&onload=...` and render from the onload callback instead.
+
+## Protect a form
+
+`ts.Protect(action, when)` checks the token on `POST`, `PUT`, `PATCH` and `DELETE` and is a pass-through while Turnstile is off. It sends the client IP (`Ctx.IP`, which honours `TRUSTED_PROXIES`) as `remoteip`, checks the widget's `action` and, with `TURNSTILE_HOSTNAME`, the hostname, and sends an `idempotency_key` so its single retry never burns the token:
 
 ```go title="routes/web.go"
-verify := challenge.Turnstile(config.NewSecret(os.Getenv("TURNSTILE_SECRET")))
-verify.Hostname = "example.com" // refuse tokens solved on another site
-verify.Action = "register"      // the widget's data-action (Turnstile only)
-
 r.Group("", func(g *router.Group) {
-	g.Use(challenge.Middleware(verify, nil))
+	g.Use(ts.Protect("register", nil))
 	g.Get("/register", showRegister)
 	g.Post("/register", register)
 })
 ```
 
-The widget script and markup go in the page as the provider documents them (`<div class="cf-turnstile" data-sitekey="...">`); allow the provider's origin in your [Content Security Policy](/docs/security/security-headers). For hCaptcha use `challenge.HCaptcha(secret)`.
+Use one action per form (`login`, `register`, `contact`) so a token solved on one form is refused on another. `ts.Verifier(action)` returns the underlying `*SiteVerify` (nil while off) when you need `challenge.Middleware` directly. For hCaptcha use `challenge.HCaptcha(secret)` with `challenge.Middleware`.
 
 ## How the token arrives
 
@@ -46,9 +166,21 @@ Only `POST`, `PUT`, `PATCH` and `DELETE` are checked, so the `GET` that renders 
 | --- | --- | --- |
 | Valid token | the handler runs | none |
 | Missing, wrong, expired or reused token, or one solved on another `Hostname` or for another `Action` | a validation error on the `challenge` field: **422** for JSON, a redirect back with errors for HTML forms, the `errors.challenge` prop for Inertia | `challenge.failed` |
-| Provider unreachable, non-200 answer, a secret it rejects, or no secret configured | **503** | `challenge.unavailable` |
+| Provider unreachable, timed out, a non-200 or `internal-error` answer, a secret it rejects, or no secret configured | **503** | `challenge.unavailable` |
 
-The second row fails closed on purpose: when the check cannot run, nobody passes it. If an outage of the provider must not block signups, decide that explicitly with `When` (below), never by skipping errors.
+A failed token is a validation error rather than a bare 403, so HTML forms and Inertia pages show it next to the form like any other field error; JSON clients get a 422 problem.
+
+## Outages
+
+When Cloudflare cannot answer, the check cannot run. The default **fails closed**: nobody passes, so signups, logins and contact messages wait for Cloudflare (503). That is the right default for forms bots target: an outage must not become an open door.
+
+`TURNSTILE_INSECURE_FAIL_OPEN=true` (`SiteVerify.InsecureFailOpen`) lets requests through **only** while the provider is unavailable (network error, timeout, 5xx, `internal-error`) and logs a `challenge.fail_open` security event for each one. A wrong or expired token is still refused, and a misconfigured secret never fails open. Choose it when losing signups during an outage costs more than a burst of bots, and keep a rate limit on the route either way.
+
+| | Fail closed (default) | `TURNSTILE_INSECURE_FAIL_OPEN=true` |
+| --- | --- | --- |
+| Cloudflare down | 503 for everyone | requests pass, `challenge.fail_open` logged |
+| Bots during the outage | blocked | only your rate limits stop them |
+| Real users during the outage | blocked | served |
 
 ## Challenge only suspicious clients
 
@@ -61,10 +193,52 @@ suspicious := func(c *web.Ctx) bool {
 	return err != nil || !res.Allowed // a failing limiter asks for the challenge
 }
 
-g.Use(challenge.Middleware(verify, suspicious))
+g.Use(ts.Protect("register", suspicious))
 ```
 
 The page must then render the widget when the server says so (for example after a `challenge` validation error).
+
+## Step up a suspicious client
+
+Forms are not the only target: a scraper reads pages. `challenge.StepUp` challenges a client while it browses. A middleware that finds a client suspicious (over a soft rate limit) calls `Require`; the client gets a small interstitial page with the widget, solves it, and returns to the page it asked for with a clearance cookie that skips the challenge until it expires.
+
+```go title="bootstrap/app.go"
+key, err := app.DeriveKey("challenge.clearance", 32)
+if err != nil {
+	return err
+}
+step := challenge.NewStepUp(ts, key)
+step.TTL = 30 * time.Minute // the default
+step.Skip = verifiedCrawler  // func(*web.Ctx) bool: your decision
+```
+
+```go title="routes/web.go"
+r.Post(step.Path, step.Handle) // "/challenge" by default
+
+soft := ratelimit.NewMemory(60, time.Minute)
+r.Use(func(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		res, err := soft.Allow(req.Context(), ratelimit.ByIP(req))
+		if err != nil || !res.Allowed {
+			c := web.NewCtx(w, req, web.ServicesFrom(req.Context()))
+			if !step.Require(c) {
+				return // the interstitial was written
+			}
+		}
+		next.ServeHTTP(w, req)
+	})
+})
+```
+
+What `Require` and `Handle` do:
+
+- **Off, skipped or cleared**: `Require` returns true and the request goes on. It is always true while Turnstile is off.
+- **Interstitial**: a 403 HTML page with `noindex, nofollow` (meta tag and `X-Robots-Tag`) and `Cache-Control: no-store`, the nonce'd script, the widget (`data-action="step-up"`) and a form posting to `Path` with the original URL in the `return` field. The widget submits the form once solved. It logs `challenge.step_up`.
+- **Verification**: `Handle` checks the token like `Protect` (IP, action, hostname). A rejected token shows the page again (403, `challenge.failed`); an outage is a 503 unless `InsecureFailOpen`.
+- **Clearance**: a cookie (`vukem_clearance`) that is `HttpOnly`, `Secure`, `SameSite=Lax`, lives `TTL` and is signed with your key. It is bound to the client's network (IPv4 /24, IPv6 /48) and a hash of its User-Agent: copied to another network or another tool, it is refused.
+- **Redirect**: 303 to the `return` value only when it is a local path (`challenge.LocalPath`); `//evil.example`, `https://…` and backslash tricks go to `/`.
+
+Only `GET` and `HEAD` remember the URL; any other method returns to `/` after the challenge. Verified search crawlers are the app's call: check them in `Skip` by reverse DNS or published IP ranges, never by User-Agent alone.
 
 ## Your own verifier
 
@@ -80,9 +254,11 @@ func (allowAll) Verify(*web.Ctx) error { return nil }
 
 ## Testing
 
-Point `SiteVerify.URL` at an `httptest.Server` that answers `{"success": true, "hostname": "example.com"}` and pass `srv.Client()` as `Client`, or use a fake `Verifier` in app tests. Cloudflare also publishes test site keys and secrets that always pass or always fail.
+Point `SiteVerify.URL` at an `httptest.Server` that answers `{"success": true, "hostname": "example.com", "action": "register"}` and pass `srv.Client()` as `Client` (`ts.Verifier(action)` returns a configured one to adjust, and `StepUp.Verifier` accepts it), or use a fake `Verifier` in app tests. Use Cloudflare's test keys (above) so no real secret reaches a test.
 
 ## Next steps
 
 - [Rate limiting](/docs/security/rate-limiting) for the budgets that decide when to challenge.
+- [Security headers](/docs/security/security-headers) for the CSP the widget needs.
+- [Cloudflare Turnstile docs](https://developers.cloudflare.com/turnstile/) for widget modes and options.
 - [Security overview](/docs/security/overview) for the defaults.
