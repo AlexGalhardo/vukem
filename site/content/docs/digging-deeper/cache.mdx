@@ -261,6 +261,41 @@ The rules:
 
 Rate limiting with `RATE_LIMIT_STORE=cache` is built on `Increment`. See [Rate limiting](/docs/security/rate-limiting).
 
+### Buffered counters
+
+`Increment` writes to the store on every call. For counts that only need to reach a table every so often, such as item page views, `cache.Buffer[K]` adds them in memory and a [scheduled task](/docs/digging-deeper/scheduler) writes them in one batch. The zero value is ready and safe for concurrent use.
+
+| Method | What it does |
+| --- | --- |
+| `b.Add(key, delta)` | Adds `delta` to `key` in memory; no I/O |
+| `b.Flush(ctx, write)` | Takes the pending counts and calls `write(ctx, counts)`; when `write` fails the counts are put back for the next flush; with nothing pending, `write` is not called |
+| `b.Swap()` | Takes the pending counts (`nil` when there are none) and starts a new set |
+| `b.Restore(counts)` | Adds counts back, after a failed write of your own |
+
+```go title="routes/schedule.go"
+// Views is shared by the item handler (Views.Add(itemID, 1)) and the task.
+var views cache.Buffer[int64]
+
+func Schedule(s *schedule.Schedule, app *vukem.App) {
+	db, err := app.DB()
+	if err != nil {
+		app.Log.Error("schedule: database", "err", err)
+		return
+	}
+
+	flush := func(ctx context.Context) error {
+		return views.Flush(ctx, func(ctx context.Context, counts map[int64]int64) error {
+			return items.AddViews(ctx, db, counts) // one upsert per item, in a transaction
+		})
+	}
+
+	s.Func("views:flush", flush).EveryMinute().WithoutOverlapping()
+	app.OnShutdown(flush)
+}
+```
+
+Counts live in the process until a flush, so a crash loses at most one interval and each server flushes its own; `app.OnShutdown` writes the rest on a clean stop. Keep the write idempotent per batch (one transaction) so a failed flush that is retried does not count twice. In a real app keep the buffer in a struct you pass to the handler and the task rather than a package variable.
+
 ## Claims and one-time codes
 
 `cache.Add` stores a value only when the key is absent (or expired) and tells you whether it did. It is atomic: of many concurrent callers, on any number of servers sharing the store, exactly one gets `true`. That makes it the right tool for "first request wins" guards, such as an idempotency key or a webhook you must handle once.

@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **cache:** `cache.Buffer[K]` adds counts in memory (`Add`) and writes them in one batch (`Flush`, `Swap`, `Restore`), restoring them when the write fails.
 - **web:** `web.AddLogAttrs(ctx, attrs...)` adds attributes to the request line; `middleware.Logger` collects them per request (`web.WithLogAttrs`), and the router adds the matched `route` pattern.
 - **errs:** `HTTPError.WithType(uri)` and `WithTitle(title)` set the `type` and `title` of a 4xx problem.
 - **web:** `Services.ProblemDecorator` edits every problem+json response (handler errors, `Ctx.Problem`, router 404/405, typed-route 400s) before it is written.
