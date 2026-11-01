@@ -20,7 +20,7 @@ const (
 	// stripeVersion is the contrib/stripe release install:billing pins: the
 	// latest contrib/stripe tag (TestStripeVersionIsLatestTag). Bump it
 	// after tagging the module.
-	stripeVersion = "v0.5.0"
+	stripeVersion = "v0.5.1"
 )
 
 // billingEnvFor is the block appended to .env.example; values stay empty
