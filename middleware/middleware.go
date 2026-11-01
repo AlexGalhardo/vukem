@@ -154,7 +154,7 @@ func LoggerWith(log *slog.Logger, o LoggerOptions) Middleware {
 				peer = r.RemoteAddr
 			}
 
-			ip := web.NewCtx(nil, r, web.ServicesFrom(r.Context())).IP()
+			ip := web.ClientIP(r)
 			if o.TruncateIP {
 				peer, ip = truncateIP(peer), truncateIP(ip)
 			}

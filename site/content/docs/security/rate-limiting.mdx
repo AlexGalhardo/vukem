@@ -272,6 +272,41 @@ CLIENT_IP_HEADER=X-Real-IP
 | `CLIENT_IP_HEADER=X-Forwarded-For` or `Forwarded` | boot error: these are lists whose left entries come from the client |
 | `CLIENT_IP_HEADER` with an invalid name | boot error: `vukem: CLIENT_IP_HEADER "X Real" is not a valid header name` |
 
+### The client IP outside a handler
+
+Server middleware (`r.UseServer`) and any plain `func(http.Handler) http.Handler` has no `*web.Ctx`. `web.ClientIP(r)` returns the same address as `c.IP()`, with the same `TRUSTED_PROXIES` and `CLIENT_IP_HEADER` rules, from the router's services on the request context. It is the raw address (IPv6 included), not a rate-limit key: use `ratelimit.ByIP` for keys.
+
+```go title="app/http/middleware/scrape_guard.go"
+func ScrapeGuard(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ip := web.ClientIP(r)
+		// ...
+		next.ServeHTTP(w, r)
+	})
+}
+```
+
+### Verifying search engine crawlers
+
+A `User-Agent: Googlebot` header proves nothing: anyone can send it. The engines document one check that does: a reverse DNS lookup of the client IP gives a host under their domain, and a forward lookup of that host gives the IP back. `security/crawlers` runs that check with a timeout (2 s) and caches each answer per IP (1 h, DNS errors 1 min, at most 10,000 IPs), so a flood from one address costs one pair of lookups.
+
+```go title="app/http/middleware/scrape_guard.go"
+verifier := crawlers.New(crawlers.Config{})
+
+if name, ok := verifier.Verify(r.Context(), web.ClientIP(r)); ok {
+	// a real crawler: "google", "bing", "apple" or "yandex"
+}
+```
+
+| Crawler | Reverse DNS domains (`crawlers.Known()`) |
+| --- | --- |
+| `google` | `googlebot.com`, `google.com`, `googleusercontent.com` |
+| `bing` | `search.msn.com` |
+| `apple` | `applebot.apple.com` |
+| `yandex` | `yandex.ru`, `yandex.net`, `yandex.com` |
+
+A host must be a subdomain of one of them (`crawl-1.googlebot.com`, never `googlebot.com.evil.test`), and every failure (no PTR record, a timeout, a forward lookup without the IP) is "not verified". `crawlers.Config` takes your own `Crawlers`, a `Resolver` (tests), `Timeout`, `TTL`, `ErrorTTL` and `MaxEntries`. Verify only clients that claim to be a crawler, since each new IP costs DNS queries.
+
 ### The warning you may see in production
 
 With `APP_ENV=production` and `TRUSTED_PROXIES` empty, Vukem watches for the typical sign of a forgotten proxy setting: a request from a private, CGNAT (`100.64.0.0/10`) or loopback peer that carries `X-Forwarded-For` or `X-Real-IP`. The first time it sees one, it logs once per process (added in v0.27.0):

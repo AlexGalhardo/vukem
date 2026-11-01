@@ -264,6 +264,12 @@ func (c *Ctx) WantsJSON() bool {
 // IsHTMX reports whether the request was made by htmx.
 func (c *Ctx) IsHTMX() bool { return c.r.Header.Get("HX-Request") == "true" }
 
+// ClientIP returns the client IP of r with the rules of Ctx.IP and the
+// Services on r's context (TRUSTED_PROXIES, CLIENT_IP_HEADER), for plain
+// func(http.Handler) http.Handler middleware that has no *Ctx. Without
+// Services on the context no proxy is trusted: it is the peer address.
+func ClientIP(r *http.Request) string { return NewCtx(nil, r, ServicesFrom(r.Context())).IP() }
+
 // IP returns the client IP. X-Forwarded-For (or ClientIPHeader when set)
 // is honoured only when the direct peer is a trusted proxy
 // (docs/security.md, A01/A02).
