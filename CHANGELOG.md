@@ -14,6 +14,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **qrcode:** Encode a short payload as PNG or SVG (`contrib/qrcode`, `rsc.io/qr` v0.2.0).
 - **ssg:** Prerender named handler paths to static files (`ssg.Generate`, `vukem ssg:generate`). This does not run the Inertia SSR server and does not crawl registered routes.
 
+## [0.35.0] - 2026-11-01
+
+### Added
+
+- Add QR codes and static site generation (#102) ([6bc5576](https://github.com/AlexGalhardo/vukem/commit/6bc5576d6ebc0cf24408e41546e02e7bc5b6a967))
+- **ratelimit:** Add NewMemoryBurst with a burst apart from the rate (#105) ([6b69a32](https://github.com/AlexGalhardo/vukem/commit/6b69a32346b6486580c060b3863a8e1ae050a27b))
+- **pgtest:** Make the drop timeout configurable with PGTEST_DROP_TIMEOUT (#106) ([cb6a6f4](https://github.com/AlexGalhardo/vukem/commit/cb6a6f4aa97759df8790661a0626bae843158100))
+- **inertia:** Render the error page for full page loads with ErrorFullPages (#107) ([8fbe0f2](https://github.com/AlexGalhardo/vukem/commit/8fbe0f2ac8cd1868a032bdef5c955cbdd2df76f1))
+- **inertia:** Add ClientShell head and placeholder for client-rendered pages (#109) ([11761d2](https://github.com/AlexGalhardo/vukem/commit/11761d20fd8128d38450df178ffe76e6c27d8c40))
+- **admin:** Add Panel.AddPage for custom pages inside the admin layout (#110) ([7fb2cec](https://github.com/AlexGalhardo/vukem/commit/7fb2cec48f1dcb1e8550910e3d858ee59d6b7803))
+- **cli:** Add api:fuzz to run Schemathesis against the OpenAPI document (#113) ([7ddace8](https://github.com/AlexGalhardo/vukem/commit/7ddace87daae20c13f4008cbb82418149a6ae1b4))
+- **cli:** Default APP_NAME to the project name with WithName (#115) ([01ca804](https://github.com/AlexGalhardo/vukem/commit/01ca804ae9785c2ce5575329e5f94989c09052a1))
+- **inertia:** Add a data-hydrating hook to the scaffold root view (#116) ([c7b5efe](https://github.com/AlexGalhardo/vukem/commit/c7b5efe4668f4d1a70723f1cb5531559eb8f28ca))
+- **openapi:** Add an enum tag that documents values without validating (#117) ([7f9b959](https://github.com/AlexGalhardo/vukem/commit/7f9b9593611d9956122bd477f1e3880d34d46212))
+- **openapi:** Type code and extension members on the generated ApiProblem (#118) ([01023ab](https://github.com/AlexGalhardo/vukem/commit/01023abd190337202e2140526cb35a855df7ad72))
+- **pgtest:** Sweep orphan databases left by killed runs (#122) ([e697a8a](https://github.com/AlexGalhardo/vukem/commit/e697a8a8a4a3e9a0304274e6b69903113637fbdb))
+- **openapi:** Per-document Servers and StripPrefix via Info.Docs (#124) ([9ee09c0](https://github.com/AlexGalhardo/vukem/commit/9ee09c07aee9a0494999330c03dcdb3536066270))
+
+### Fixed
+
+- **otel:** Keep Railway OTLP export to traces only (#104) ([daf6d30](https://github.com/AlexGalhardo/vukem/commit/daf6d3028ef217daac721034e135d8a4bcd946a1))
+- **site:** Tolerate squash merges in the last-updated check (#114) ([66234fb](https://github.com/AlexGalhardo/vukem/commit/66234fb4b862df88710be843da8994a65ba70324))
+- **admin:** Lock the row and write only changed columns on update (#121) ([10c1c2a](https://github.com/AlexGalhardo/vukem/commit/10c1c2ad76754e6ea77fbb3d8ce9aa453849c26c))
+- **schema:** Poll pg_try_advisory_lock instead of blocking on the migration lock (#123) ([53e76c1](https://github.com/AlexGalhardo/vukem/commit/53e76c1fac71c4e98964c89046129c32d19d28f0))
+
 ## [0.34.0] - 2026-10-30
 
 ### Added
@@ -1129,7 +1154,8 @@ Project foundation. No framework code yet; see [PLAN.md](PLAN.md) for the roadma
 - README, MIT license, CONTRIBUTING, SECURITY and CODE_OF_CONDUCT.
 - Agent configuration: `AGENTS.md`, `CLAUDE.md`, path-scoped `.claude/rules/`, Go skills and project settings.
 
-[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.34.0...HEAD
+[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.35.0...HEAD
+[0.35.0]: https://github.com/AlexGalhardo/vukem/compare/v0.34.0...v0.35.0
 [0.34.0]: https://github.com/AlexGalhardo/vukem/compare/v0.33.0...v0.34.0
 [0.33.0]: https://github.com/AlexGalhardo/vukem/compare/v0.32.0...v0.33.0
 [0.32.0]: https://github.com/AlexGalhardo/vukem/compare/v0.31.0...v0.32.0
