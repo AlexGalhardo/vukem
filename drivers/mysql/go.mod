@@ -3,7 +3,7 @@ module github.com/AlexGalhardo/vukem/drivers/mysql
 go 1.27.3
 
 require (
-	github.com/AlexGalhardo/vukem v0.35.0
+	github.com/AlexGalhardo/vukem v0.36.0
 	github.com/go-sql-driver/mysql v1.10.1
 	github.com/google/go-cmp v0.7.0
 )
