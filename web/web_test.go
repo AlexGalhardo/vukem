@@ -475,6 +475,8 @@ func TestSecurity_A01_SafeRedirectBlocksOpenRedirects(t *testing.T) {
 		`/../\evil.com`:   "/fallback",
 		`/x/../\evil`:     "/fallback",
 		"/a/..//evil.com": "/a/..//evil.com",
+		// http.Redirect cleans the fragment too; the parsed path does not.
+		`/./\/..#`: "/fallback",
 	}
 
 	for target, want := range tests {
