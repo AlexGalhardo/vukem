@@ -18,6 +18,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/AlexGalhardo/vukem/analytics"
+	"github.com/AlexGalhardo/vukem/bingwmt"
 	"github.com/AlexGalhardo/vukem/cache"
 	"github.com/AlexGalhardo/vukem/config"
 	"github.com/AlexGalhardo/vukem/crypt"
@@ -26,6 +28,7 @@ import (
 	"github.com/AlexGalhardo/vukem/events"
 	"github.com/AlexGalhardo/vukem/flags"
 	"github.com/AlexGalhardo/vukem/i18n"
+	"github.com/AlexGalhardo/vukem/indexnow"
 	"github.com/AlexGalhardo/vukem/inertia"
 	"github.com/AlexGalhardo/vukem/logging"
 	"github.com/AlexGalhardo/vukem/logging/telegram"
@@ -145,6 +148,16 @@ type Config struct {
 	// clients by (1-128): one client usually owns a whole /64 and can
 	// rotate addresses inside it. IPv4 keys stay per address.
 	RateLimitIPv6Prefix int `env:"RATE_LIMIT_IPV6_PREFIX" default:"64"`
+	// Analytics configures Umami, Google Analytics 4 and Search Console
+	// verification (UMAMI_*, GA_*, GOOGLE_SITE_VERIFICATION*); all off
+	// when unset.
+	Analytics analytics.Config
+	// BingWebmaster holds BING_WEBMASTER_API_KEY for bingwmt.New (off
+	// when unset).
+	BingWebmaster bingwmt.Config
+	// IndexNow configures INDEXNOW_KEY (served at /{key}.txt) for
+	// indexnow.New; off when unset.
+	IndexNow indexnow.Config
 }
 
 // IsProduction reports whether APP_ENV is production.
@@ -684,7 +697,7 @@ func New(opts ...Option) (*App, error) {
 	if o.views != nil {
 		engine, err := view.New(view.Config{
 			FS: o.views, Reload: !cfg.IsProduction(), URLs: app.Router, Vite: app.Vite, I18n: app.I18n,
-			Funcs: o.viewFuncs,
+			Funcs: o.viewFuncs, Analytics: cfg.Analytics,
 		})
 		if err != nil {
 			return nil, err

@@ -92,6 +92,8 @@ export const navigation: NavCategory[] = [
       "cache",
       "sitemaps",
       "llms-txt",
+      "analytics",
+      "seo-integrations",
       "storage",
       "uploads",
       "qr-codes",

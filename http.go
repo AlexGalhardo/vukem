@@ -449,6 +449,8 @@ func secureHeadersConfig(app *App) middleware.SecureHeadersConfig {
 		cfg.DevServer = app.Vite.HotURL
 	}
 
+	cfg.CSPSources = app.Config.Analytics.CSPSources()
+
 	return cfg
 }
 
@@ -642,6 +644,18 @@ func (a *App) newRouter() *router.Router {
 		r.UseServer(untrustedProxyWarning(a.Log))
 	}
 	r.Get("/up", a.healthHandler).Name(reservedRouteName("health"))
+
+	for _, f := range a.Config.Analytics.GoogleSiteVerificationFiles {
+		r.Handle("GET /"+f, a.Config.Analytics.VerificationFileHandler())
+	}
+
+	if len(a.Config.Analytics.BingSiteVerification) > 0 {
+		r.Handle("GET /BingSiteAuth.xml", a.Config.Analytics.BingSiteAuthHandler())
+	}
+
+	if a.Config.IndexNow.Enabled() {
+		r.Handle("GET "+a.Config.IndexNow.KeyPath(), a.Config.IndexNow.KeyFileHandler())
+	}
 
 	return r
 }

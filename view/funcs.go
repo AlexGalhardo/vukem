@@ -58,6 +58,7 @@ func (e *Engine) builtinFuncs(ctx context.Context) template.FuncMap {
 
 			return e.cfg.Vite.ReactRefresh(middleware.CSPNonce(ctx))
 		},
+		"analytics": func() template.HTML { return e.cfg.Analytics.Tags(middleware.CSPNonce(ctx)) },
 		"csrfToken": func() string { return csrf.Token(ctx) },
 		"csrfField": func() template.HTML {
 			t := template.HTMLEscapeString(csrf.Token(ctx))

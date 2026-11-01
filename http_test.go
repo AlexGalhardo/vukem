@@ -3313,3 +3313,97 @@ func TestOpenAPIInfoDocs(t *testing.T) {
 			slices.Sorted(maps.Keys(single.Paths)), single.Servers)
 	}
 }
+
+func TestAnalytics(t *testing.T) {
+	t.Parallel()
+
+	views := fstest.MapFS{"app.html": {Data: []byte(`{{/* layout: none */}}<head>{{analytics}}</head>`)}}
+	routes := WithRoutes(func(r *router.Router, app *App) error {
+		if err := DefaultMiddleware(app, r); err != nil {
+			return err
+		}
+
+		r.Get("/page", func(c *web.Ctx) error { return c.Render("app", nil) })
+
+		return nil
+	})
+
+	t.Run("off when unset", func(t *testing.T) {
+		t.Parallel()
+
+		app := newTestApp(t, WithViews(views), routes)
+		rec := serve(t, app, http.MethodGet, "/page", false)
+
+		if body := rec.Body.String(); body != "<head></head>" {
+			t.Errorf("body = %q, want no tags", body)
+		}
+
+		if csp := rec.Header().Get("Content-Security-Policy"); strings.Contains(csp, "https://") {
+			t.Errorf("CSP = %q, want no analytics origin", csp)
+		}
+
+		for _, p := range []string{"/google1234abcd.html", "/BingSiteAuth.xml"} {
+			if rec := serve(t, app, http.MethodGet, p, false); rec.Code != http.StatusNotFound {
+				t.Errorf("GET %s = %d, want 404", p, rec.Code)
+			}
+		}
+	})
+
+	t.Run("on", func(t *testing.T) {
+		t.Parallel()
+
+		app := newTestApp(t, WithViews(views), routes, WithSource(testSource(map[string]string{
+			"UMAMI_WEBSITE_ID":               "94db1cb1-74f4-4a40-ad6c-962362670409",
+			"GA_MEASUREMENT_ID":              "G-ABC123XYZ",
+			"GOOGLE_SITE_VERIFICATION":       "tok1",
+			"GOOGLE_SITE_VERIFICATION_FILES": "google1234abcd.html",
+			"BING_SITE_VERIFICATION":         "ABC123",
+			"INDEXNOW_KEY":                   "example-key-1234",
+		})))
+		rec := serve(t, app, http.MethodGet, "/page", false)
+
+		csp := rec.Header().Get("Content-Security-Policy")
+		for _, s := range []string{"https://cloud.umami.is", "https://www.googletagmanager.com", "https://*.google-analytics.com"} {
+			if !strings.Contains(csp, s) {
+				t.Errorf("CSP = %q, want %s", csp, s)
+			}
+		}
+
+		nonce := regexp.MustCompile(`'nonce-([^']+)'`).FindStringSubmatch(csp)
+		if len(nonce) < 2 || strings.Count(rec.Body.String(), `nonce="`+nonce[1]+`"`) != 2 {
+			t.Errorf("body = %q, want both scripts with the CSP nonce", rec.Body.String())
+		}
+
+		if !strings.Contains(rec.Body.String(), `<meta name="google-site-verification" content="tok1">`) {
+			t.Errorf("body = %q, want the verification meta", rec.Body.String())
+		}
+
+		rec = serve(t, app, http.MethodGet, "/google1234abcd.html", false)
+		if rec.Code != http.StatusOK || rec.Body.String() != "google-site-verification: google1234abcd.html" {
+			t.Errorf("verification file = %d %q", rec.Code, rec.Body.String())
+		}
+
+		rec = serve(t, app, http.MethodGet, "/BingSiteAuth.xml", false)
+		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "<user>ABC123</user>") {
+			t.Errorf("BingSiteAuth.xml = %d %q", rec.Code, rec.Body.String())
+		}
+
+		rec = serve(t, app, http.MethodGet, "/example-key-1234.txt", false)
+		if rec.Code != http.StatusOK || rec.Body.String() != "example-key-1234" {
+			t.Errorf("IndexNow key file = %d %q", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("invalid config fails boot", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := New(
+			WithSource(testSource(map[string]string{"GA_MEASUREMENT_ID": "UA-1-1", "INDEXNOW_KEY": "short"})),
+			WithLogger(discardLogger()),
+		)
+		if err == nil || !strings.Contains(err.Error(), "GA_MEASUREMENT_ID") ||
+			!strings.Contains(err.Error(), "INDEXNOW_KEY") {
+			t.Errorf("New() error = %v, want GA_MEASUREMENT_ID", err)
+		}
+	})
+}
