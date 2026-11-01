@@ -156,7 +156,7 @@ level=INFO msg="mail (log transport)"
 | `To` | `[]string` | Main recipients |
 | `Cc` | `[]string` | Copied recipients, visible to everyone |
 | `Bcc` | `[]string` | Hidden recipients; never written as a header |
-| `ReplyTo` | `[]string` | Where replies go |
+| `ReplyTo` | `[]string` | Where replies go. Empty means `MAIL_REPLY_TO`, when set |
 | `Subject` | `string` | The subject line; a line break in it is an error |
 | `Tags` | `map[string]string` | Provider metadata (see each transport below). For every transport a name must not be empty and neither name nor value may contain a line break or a colon: rendering fails with `mail: tag with an empty name` or `mail: tag contains a line break or colon` |
 
@@ -569,6 +569,7 @@ An unknown name answers 404; a render error answers 500 with the error text. Res
 | --- | --- | --- | --- |
 | `MAIL_MAILER` | string | empty: `log` outside production, required in production | `smtp`, `resend`, `mailtrap`, `log` or `array` |
 | `MAIL_FROM` | string | `Vukem <hello@example.com>` | Default sender when the envelope has no `From` |
+| `MAIL_REPLY_TO` | string | empty | Default Reply-To when the envelope has no `ReplyTo`, for example a `noreply@` sender whose replies reach `support@`. A mailer built by hand sets it with `m.SetReplyTo(addr)` |
 | `SMTP_HOST` | string | `localhost` | SMTP server host |
 | `SMTP_PORT` | int | `587` | `587` (STARTTLS) or `465` (implicit TLS) |
 | `SMTP_USERNAME` | string | empty | Login; empty skips authentication |

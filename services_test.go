@@ -902,3 +902,22 @@ func TestRequireMailerRefusesAWorkerAndNotAReadOnlyCommand(t *testing.T) {
 		t.Errorf("RequireMailer() with MAIL_MAILER=log = %v", err)
 	}
 }
+
+func TestMailReplyToEnv(t *testing.T) {
+	t.Parallel()
+
+	app := newTestApp(t, WithSource(testSource(map[string]string{
+		"MAIL_MAILER":   "array",
+		"MAIL_REPLY_TO": "support@example.com",
+	})))
+
+	m, err := app.Mailer()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	msg, err := m.Render(t.Context(), plainMail{})
+	if err != nil || len(msg.ReplyTo) != 1 || msg.ReplyTo[0] != "<support@example.com>" {
+		t.Fatalf("reply-to = %v %v", msg.ReplyTo, err)
+	}
+}

@@ -138,6 +138,7 @@ type Transport interface {
 // Mailer renders mailables and sends them.
 type Mailer struct {
 	from      string
+	replyTo   string
 	transport Transport
 	views     web.Renderer
 	react     web.Renderer
@@ -157,6 +158,10 @@ func New(t Transport, from string, views web.Renderer) *Mailer {
 // WithReactEmails directory). Call it before the mailer is used;
 // app.Mailer sets it.
 func (m *Mailer) SetReact(r web.Renderer) { m.react = r }
+
+// SetReplyTo sets the Reply-To used when an envelope has none (MAIL_REPLY_TO);
+// empty clears it. Call it before the mailer is used; app.Mailer sets it.
+func (m *Mailer) SetReplyTo(addr string) { m.replyTo = addr }
 
 // Transport returns the mailer's transport (tests read the Array).
 func (m *Mailer) Transport() Transport { return m.transport }
@@ -188,6 +193,11 @@ func (m *Mailer) Render(ctx context.Context, mailable Mailable) (*Message, error
 		msg.From = m.from
 	}
 
+	replyTo := env.ReplyTo
+	if len(replyTo) == 0 && m.replyTo != "" {
+		replyTo = []string{m.replyTo}
+	}
+
 	var err error
 
 	if msg.From, err = address(msg.From); err != nil {
@@ -197,7 +207,7 @@ func (m *Mailer) Render(ctx context.Context, mailable Mailable) (*Message, error
 	for _, list := range []struct {
 		in  []string
 		out *[]string
-	}{{env.To, &msg.To}, {env.Cc, &msg.Cc}, {env.Bcc, &msg.Bcc}, {env.ReplyTo, &msg.ReplyTo}} {
+	}{{env.To, &msg.To}, {env.Cc, &msg.Cc}, {env.Bcc, &msg.Bcc}, {replyTo, &msg.ReplyTo}} {
 		for _, a := range list.in {
 			addr, err := address(a)
 			if err != nil {

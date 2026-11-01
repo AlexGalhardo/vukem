@@ -114,7 +114,7 @@ err = mailer.Send(ctx, Welcome{User: u})
 | `log` | logs recipients and subject (bodies at debug) | default outside production |
 | `array` | in-memory (tests) | default in `vukemtest` |
 
-`MAIL_FROM` sets the default sender. Production must set `MAIL_MAILER` explicitly; a missing or unknown value is an error, never silent loss of mail. An explicit `MAIL_MAILER` that cannot work (`resend` without `RESEND_API_KEY`, `mailtrap` without `MAILTRAP_API_TOKEN` or with a negative `MAILTRAP_INBOX_ID`, an unknown name) fails `app.Boot`, so `serve`, workers and commands stop at startup instead of at the first email. `WithMailTransport` skips the check.
+`MAIL_FROM` sets the default sender and `MAIL_REPLY_TO` the default Reply-To (used when the envelope sets none). Production must set `MAIL_MAILER` explicitly; a missing or unknown value is an error, never silent loss of mail. An explicit `MAIL_MAILER` that cannot work (`resend` without `RESEND_API_KEY`, `mailtrap` without `MAILTRAP_API_TOKEN` or with a negative `MAILTRAP_INBOX_ID`, an unknown name) fails `app.Boot`, so `serve`, workers and commands stop at startup instead of at the first email. `WithMailTransport` skips the check.
 
 An **unset** `MAIL_MAILER` in production is refused where mail is actually sent:
 
