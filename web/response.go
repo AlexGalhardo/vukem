@@ -254,13 +254,13 @@ func SafeRedirect(r *http.Request, target, fallback string) string {
 
 	switch {
 	case u.Scheme == "" && u.Host == "":
-		if isLocalPath(target) && isLocalPath(path.Clean(u.Path)) {
+		if isLocalPath(target) && isLocalPath(path.Clean(u.Path)) && isLocalPath(redirectClean(target)) {
 			return target
 		}
 	case (u.Scheme == "http" || u.Scheme == "https") && u.Host == r.Host:
 		// "https://host//evil.com" has the path "//evil.com", which a
 		// browser reads as scheme-relative: check the result, not the input.
-		if p := u.RequestURI(); isLocalPath(p) && isLocalPath(path.Clean(u.Path)) {
+		if p := u.RequestURI(); isLocalPath(p) && isLocalPath(path.Clean(u.Path)) && isLocalPath(redirectClean(p)) {
 			return p
 		}
 	}
@@ -274,6 +274,17 @@ func SafeRedirect(r *http.Request, target, fallback string) string {
 // ("/./\evil.com" becomes "/\evil.com").
 func isLocalPath(p string) bool {
 	return strings.HasPrefix(p, "/") && !strings.HasPrefix(p, "//") && !strings.HasPrefix(p, `/\`)
+}
+
+// redirectClean returns target as http.Redirect cleans it: everything before
+// the first "?" goes through path.Clean, fragment included, so "/./\/..#"
+// becomes "/\/..#" even though its parsed path cleans to "/".
+func redirectClean(target string) string {
+	if i := strings.IndexByte(target, '?'); i != -1 {
+		target = target[:i]
+	}
+
+	return path.Clean(target)
 }
 
 // File serves name from fsys (with Range and If-Modified-Since support).
