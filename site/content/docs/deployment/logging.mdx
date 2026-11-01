@@ -30,8 +30,26 @@ A log line is a set of key/value pairs, not a sentence. `slog` writes them as `k
 | `request_id` | the `X-Request-ID` the framework set or accepted; the same id is in error responses |
 | `peer` | the TCP peer address (your proxy, when there is one) |
 | `ip` | the client IP after [trusted proxies](/docs/basics/http-context) |
+| `route` | the matched route pattern, such as `GET /items/{id}`; absent when no route matched |
 
-The level follows the status: `ERROR` for `5xx`, `WARN` for `4xx`, `INFO` otherwise. The line has no user id and no route name: add them yourself when you need them, from a middleware that runs after authentication, with `c.Log()` or `slog.Default()`.
+The level follows the status: `ERROR` for `5xx`, `WARN` for `4xx`, `INFO` otherwise.
+
+### Adding fields to the request line
+
+`web.AddLogAttrs(ctx, attrs...)` adds attributes to the request line of the current request, so it stays one line per request with everything your dashboards need. Call it from any middleware or handler under the logger, before or after the handler runs: the line is written once the response is done. A middleware that runs after authentication can add a hashed user id:
+
+```go title="app/http/middleware/log_user.go"
+func LogUser(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if u, err := auth.UserFrom[*User](r.Context(), "web"); err == nil {
+			web.AddLogAttrs(r.Context(), slog.String("user", hashID(u.ID)))
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+```
+
+Without the request logger in the chain, `AddLogAttrs` does nothing. Never add secrets, tokens or raw personal data: the request line goes wherever your logs go.
 
 With [OpenTelemetry](/docs/digging-deeper/opentelemetry) installed, the request line also carries `trace_id` and `span_id`, so you can jump from a log line to its trace.
 

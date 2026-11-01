@@ -21,6 +21,7 @@ package router
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"reflect"
@@ -585,6 +586,10 @@ func (r *Router) adapt(h web.HandlerFunc, rt *Route) http.Handler {
 			s := *services
 			s.Errors = eh
 			services = &s
+		}
+
+		if req.Pattern != "" {
+			web.AddLogAttrs(req.Context(), slog.String("route", req.Pattern))
 		}
 
 		c := web.NewCtx(w, req, services)

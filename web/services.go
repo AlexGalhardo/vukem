@@ -4,6 +4,8 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"slices"
+	"sync"
 	"time"
 
 	"github.com/AlexGalhardo/vukem/security"
@@ -104,4 +106,41 @@ func emit(r *http.Request, level slog.Level, msg, event string, attrs []any, as 
 // EventDispatcher delivers security events to listeners (an events.Bus).
 type EventDispatcher interface {
 	Dispatch(ctx context.Context, event any) error
+}
+
+type logAttrsKey struct{}
+
+// LogAttrs collects the attributes that AddLogAttrs adds during a request,
+// for the request line. It is safe for concurrent use.
+type LogAttrs struct {
+	mu    sync.Mutex
+	attrs []slog.Attr
+}
+
+// WithLogAttrs returns a context whose AddLogAttrs calls land in the
+// returned holder. middleware.Logger installs one per request and appends
+// its attributes to the request line once the response is written.
+func WithLogAttrs(ctx context.Context) (context.Context, *LogAttrs) {
+	l := &LogAttrs{}
+
+	return context.WithValue(ctx, logAttrsKey{}, l), l
+}
+
+// AddLogAttrs adds attrs to the request line of the request carrying ctx
+// (a route pattern, a hashed user id). Without a holder (no
+// middleware.Logger) it does nothing. Never add secrets or tokens.
+func AddLogAttrs(ctx context.Context, attrs ...slog.Attr) {
+	if l, ok := ctx.Value(logAttrsKey{}).(*LogAttrs); ok {
+		l.mu.Lock()
+		l.attrs = append(l.attrs, attrs...)
+		l.mu.Unlock()
+	}
+}
+
+// Attrs returns a copy of the attributes added so far.
+func (l *LogAttrs) Attrs() []slog.Attr {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	return slices.Clone(l.attrs)
 }
