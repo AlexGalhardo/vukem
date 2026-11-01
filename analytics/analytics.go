@@ -39,6 +39,13 @@ type Config struct {
 	// UmamiIgnoreDoNotTrack tracks visitors whose browser sends Do Not
 	// Track; by default they are not tracked (data-do-not-track).
 	UmamiIgnoreDoNotTrack bool `env:"UMAMI_IGNORE_DO_NOT_TRACK"`
+
+	// GAMeasurementID enables Google Analytics 4 (G-XXXXXXX).
+	GAMeasurementID string `env:"GA_MEASUREMENT_ID"`
+	// GAConsentDefaultGranted starts with every Consent Mode signal
+	// granted and loads gtag.js on the first page. Leave it off where
+	// LGPD/GDPR apply: the app must ask first (window.vukemAnalytics.consent).
+	GAConsentDefaultGranted bool `env:"GA_CONSENT_DEFAULT_GRANTED"`
 }
 
 // DefaultUmamiScriptURL is the Umami Cloud tracker.
@@ -46,14 +53,14 @@ const DefaultUmamiScriptURL = "https://cloud.umami.is/script.js"
 
 // Enabled reports whether any provider or verification is configured.
 func (c Config) Enabled() bool {
-	return c.UmamiWebsiteID != ""
+	return c.UmamiWebsiteID != "" || c.GAMeasurementID != ""
 }
 
 // Validate refuses values that are not what the providers issue. Call it at
 // boot (vukem.New does): a typo fails the deploy instead of silently
 // dropping the stats.
 func (c Config) Validate() error {
-	return errors.Join(c.validateUmami())
+	return errors.Join(c.validateUmami(), c.validateGA())
 }
 
 // Tags returns the head elements of the enabled providers, with nonce on
@@ -62,6 +69,10 @@ func (c Config) Tags(nonce string) template.HTML {
 	var tags []string
 
 	if t := c.umamiTag(nonce); t != "" {
+		tags = append(tags, t)
+	}
+
+	if t := c.gaTag(nonce); t != "" {
 		tags = append(tags, t)
 	}
 
@@ -74,7 +85,7 @@ func (c Config) Tags(nonce string) template.HTML {
 func (c Config) CSPSources() map[string][]string {
 	out := map[string][]string{}
 
-	for _, m := range []map[string][]string{c.umamiCSP()} {
+	for _, m := range []map[string][]string{c.umamiCSP(), c.gaCSP()} {
 		for k, v := range m {
 			out[k] = append(out[k], v...)
 		}
