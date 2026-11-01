@@ -76,6 +76,9 @@ const (
 // FlashKey is the session flash key of the panel's success messages.
 const FlashKey = "admin.success"
 
+// TwoFactorFlashKey is the session flash key of Config.TwoFactorFlash.
+const TwoFactorFlashKey = "admin.2fa_required"
+
 // strictCSP is set on admin responses when the app sent no policy: the UI
 // needs nothing inline.
 const strictCSP = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; " +
@@ -146,6 +149,10 @@ type Config struct {
 	// an admin without 2FA is redirected to (303) instead of the 403. A
 	// failing TwoFactor lookup stays 403 (fail closed).
 	TwoFactorRedirect string
+	// TwoFactorFlash, when set, is flashed under TwoFactorFlashKey with
+	// the TwoFactorRedirect, so the setup page can say why the admin
+	// landed there. It needs TwoFactorRedirect.
+	TwoFactorFlash string
 	// Now is the clock for MaxSessionAge and IdleTimeout (tests); defaults
 	// to time.Now.
 	Now func() time.Time
@@ -206,6 +213,10 @@ func New(cfg Config) (*Panel, error) {
 
 	if cfg.DenyStatus != 0 && cfg.DenyStatus != http.StatusForbidden && cfg.DenyStatus != http.StatusNotFound {
 		return nil, fmt.Errorf("admin: Config.DenyStatus must be 403 or 404, got %d", cfg.DenyStatus)
+	}
+
+	if cfg.TwoFactorFlash != "" && cfg.TwoFactorRedirect == "" {
+		return nil, errors.New("admin: Config.TwoFactorFlash needs TwoFactorRedirect")
 	}
 
 	if r := cfg.TwoFactorRedirect; r != "" && (!strings.HasPrefix(r, "/") || strings.HasPrefix(r, "//") ||
@@ -470,6 +481,72 @@ func (p *Panel) idle(next http.Handler, trackedOnly bool) http.Handler {
 	})
 }
 
+// clockStartKey is the unix-second timestamp of the first request Clock
+// saw from an admin in this session.
+const clockStartKey = "admin.clock_at"
+
+// Clock is middleware that applies IdleTimeout and MaxSessionAge to every
+// request it wraps (usually the whole router) of a user the Guard
+// authenticates and who holds the panel Ability, whether or not the
+// session ever reached the panel. Each such request refreshes the idle
+// clock the panel shares; MaxSessionAge counts from the first admin
+// request Clock saw in the session, not from its creation. A session past
+// either limit is invalidated ("admin.session_idle" or
+// "admin.session_expired" security event) and the request goes on as a
+// guest. Other visitors are untouched (no session write). Sessions must
+// already be on the router. With neither limit set it does nothing.
+func (p *Panel) Clock() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		if p.cfg.IdleTimeout == 0 && p.cfg.MaxSessionAge == 0 {
+			return next
+		}
+
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			s := web.SessionFrom(r.Context())
+			if s == nil {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			c := web.NewCtx(w, r, web.ServicesFrom(r.Context()))
+			if !p.cfg.Guard.Check(c) || p.allowed(c.Context(), p.authorizer(c), p.cfg.Ability, nil) != nil {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			now := p.cfg.Now()
+			event := ""
+
+			if last, ok := sessionUnix(s.Get(idleSessionKey)); ok && p.cfg.IdleTimeout > 0 &&
+				now.Sub(last) > p.cfg.IdleTimeout {
+				event = "admin.session_idle"
+			}
+
+			if start, ok := sessionUnix(s.Get(clockStartKey)); ok && p.cfg.MaxSessionAge > 0 &&
+				now.Sub(start) > p.cfg.MaxSessionAge {
+				event = "admin.session_expired"
+			}
+
+			if event != "" {
+				web.SecurityEvent(r, event, "area", "admin")
+				s.Invalidate()
+				// r, not c.Request(): the latter caches the signed-out user.
+				next.ServeHTTP(w, r)
+
+				return
+			}
+
+			s.Put(idleSessionKey, now.Unix())
+
+			if s.Get(clockStartKey) == nil {
+				s.Put(clockStartKey, now.Unix())
+			}
+
+			next.ServeHTTP(w, c.Request())
+		})
+	}
+}
+
 func sessionUnix(v any) (time.Time, bool) {
 	var n int64
 
@@ -532,6 +609,10 @@ func (p *Panel) requireTwoFactor(next http.Handler) http.Handler {
 		if err != nil {
 			c.Log().ErrorContext(r.Context(), "admin: two-factor check failed", "err", err)
 		} else if p.cfg.TwoFactorRedirect != "" {
+			if p.cfg.TwoFactorFlash != "" {
+				_ = c.Flash(TwoFactorFlashKey, p.cfg.TwoFactorFlash) // without a session the redirect still happens
+			}
+
 			http.Redirect(w, r, p.cfg.TwoFactorRedirect, http.StatusSeeOther)
 
 			return

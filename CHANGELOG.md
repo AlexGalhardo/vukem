@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **admin:** `Panel.Clock()` applies `IdleTimeout` and `MaxSessionAge` to every request of a user with the panel ability, panel visited or not (the absolute cap counts from the first admin request), and `Config.TwoFactorFlash` flashes a message under `TwoFactorFlashKey` with the `TwoFactorRedirect` (VF-063).
+
 ### Fixed
 
 - **cli:** Pin contrib/stripe v0.5.1 in install:billing (#136) ([0d1d3a1](https://github.com/AlexGalhardo/vukem/commit/0d1d3a1a5f168a676076038a9f87622747216a81))
