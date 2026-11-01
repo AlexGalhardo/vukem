@@ -169,7 +169,11 @@ func binding(c *web.Ctx) string {
 // else "/": never another host ("//evil.example", "/\evil.example",
 // "https://evil.example"), so a return parameter cannot redirect away.
 func LocalPath(raw string) string {
-	if len(raw) > 2048 || !strings.HasPrefix(raw, "/") || strings.HasPrefix(raw, "//") ||
+	if raw == "/" {
+		return raw
+	}
+
+	if len(raw) < 2 || len(raw) > 2048 || raw[0] != '/' || raw[1] == '/' || raw[1] == '\\' ||
 		strings.ContainsAny(raw, "\\\x00\r\n\t") {
 		return "/"
 	}
