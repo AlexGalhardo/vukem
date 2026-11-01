@@ -36,6 +36,7 @@ type Source struct {
 	env      Env
 	getenv   func(string) (string, bool)
 	readFile func(string) ([]byte, error)
+	defaults map[string]string
 
 	mu sync.Mutex
 	// refs caches process variables resolved through "@file:", keyed by
@@ -48,8 +49,13 @@ type fileRef struct {
 	err        error
 }
 
+// SetDefaults sets values used when a key is unset or empty in both the
+// process environment and the .env files, so the precedence is process
+// environment > .env files > defaults. Call it before the Source is read.
+func (s *Source) SetDefaults(defaults map[string]string) { s.defaults = maps.Clone(defaults) }
+
 // Lookup returns the value for key and whether it is set. The process
-// environment wins over .env files. A process variable set to
+// environment wins over .env files, which win over SetDefaults. A process variable set to
 // "@file:<path>" is read from that file (Docker/Kubernetes secrets), like
 // a .env value; when the file cannot be read, Lookup reports the key set
 // with an empty value, and Load and Fill return the error.
@@ -61,6 +67,15 @@ func (s *Source) Lookup(key string) (string, bool) {
 // lookupErr is Lookup with the error of an unreadable "@file:" process
 // variable; Fill uses it so a missing secret fails closed.
 func (s *Source) lookupErr(key string) (string, bool, error) {
+	v, ok, err := s.lookupSet(key)
+	if d, has := s.defaults[key]; has && err == nil && v == "" {
+		return d, true, nil
+	}
+
+	return v, ok, err
+}
+
+func (s *Source) lookupSet(key string) (string, bool, error) {
 	if s.getenv != nil {
 		if v, ok := s.getenv(key); ok {
 			if lit, ok := escapedFileRef(v); ok {

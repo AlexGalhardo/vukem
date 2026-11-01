@@ -77,6 +77,7 @@ On Windows PowerShell: `$env:PORT=5000; go run ./cmd/app`.
 3. `.env.local` (skipped when `APP_ENV=test`, so tests are reproducible)
 4. `.env.<APP_ENV>`
 5. `.env`
+6. defaults your app sets in code with `vukem.WithEnvDefaults`
 
 `APP_ENV` itself is read first, from the environment or from `.env`, to know which `.env.<APP_ENV>` files to load. Missing files are skipped. An unset or empty `APP_ENV` means `development`, and the value is lower-cased.
 
@@ -100,6 +101,18 @@ MAIL_PASSWORD=sk_test_...
 ```
 
 </CodeGroup>
+
+### Defaults set in code
+
+An app may need a default for a framework variable, such as a queue cap that must hold even when a deployment forgets the variable. `vukem.WithEnvDefaults` sets it below every file, so the order stays process environment > `.env` files > default. A key that is unset or empty everywhere gets the default:
+
+```go title="bootstrap/app.go"
+app, err := vukem.New(
+	vukem.WithEnvDefaults(map[string]string{"QUEUE_LIMITS": "ingest=2"}),
+)
+```
+
+Do not wrap the `getenv` you pass to `vukem.WithEnv` to inject a default: `getenv` is the process environment, the top of the list, so its default would win over a value set only in `.env`. `APP_ENV` cannot have a default, because it selects the files; `WithEnvDefaults` with `APP_ENV` fails the boot with `vukem: WithEnvDefaults cannot set APP_ENV (it selects the .env files)`.
 
 <Callout type="tip">
 Commit `.env.example` and keep `.env`, `.env.local` and `.env.*.local` out of Git (the starter's `.gitignore` already ignores `.env` and `.env.*.local`). Never commit real secrets.

@@ -343,6 +343,7 @@ type options struct {
 	source        *config.Source
 	fsys          fs.FS
 	getenv        func(string) (string, bool)
+	envDefaults   map[string]string
 	readFile      func(string) ([]byte, error)
 	logger        *slog.Logger
 	logOut        io.Writer
@@ -425,6 +426,10 @@ func New(opts ...Option) (*App, error) {
 		if src, err = config.LoadSource(fsys, getenv, readFile); err != nil {
 			return nil, err
 		}
+	}
+
+	if o.envDefaults != nil {
+		src.SetDefaults(o.envDefaults)
 	}
 
 	cfg, err := config.Load[Config](src)

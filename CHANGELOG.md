@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **router:** `Route.SecretParams(names...)` logs `{name}` instead of a secret path parameter in the request line, error and security-event logs; `web.RedactLogPath` and `web.LogPath` expose the same redaction, and the request-line fields are documented (VF-071).
 - **inertia:** the docs explain that a redirect to a same-origin URL with a `#fragment` stays an Inertia visit (`409` with `X-Inertia-Redirect`), unlike `inertia.Location`, which forces a full page load (VF-072).
 - **middleware:** `SecureHeadersConfig.AddCSPSources(directive, sources...)` adds CSP sources without dropping the integrations' ones, `MissingCSPSources(want)` reports the sources the final policy blocks, and the default stacks warn at boot when an enabled analytics provider's origins are missing (VF-073).
+- **config:** `vukem.WithEnvDefaults(map)` and `config.Source.SetDefaults` set defaults below the `.env` files, with the documented precedence process environment > `.env` files > default (VF-074).
 
 ### Fixed
 

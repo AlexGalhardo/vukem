@@ -272,3 +272,33 @@ func TestLoadSourceFileRefEscape(t *testing.T) {
 		}
 	}
 }
+
+func TestSourceDefaultsRankBelowEnvFiles(t *testing.T) {
+	t.Parallel()
+
+	fsys := fstest.MapFS{".env": {Data: []byte("QUEUE_LIMITS=ingest=4\nEMPTY=\n")}}
+	getenv := func(k string) (string, bool) {
+		v, ok := map[string]string{"FROM_PROCESS": "process"}[k]
+		return v, ok
+	}
+
+	src, err := LoadSource(fsys, getenv, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	src.SetDefaults(map[string]string{
+		"QUEUE_LIMITS": "ingest=2", "FROM_PROCESS": "default", "ONLY_DEFAULT": "d", "EMPTY": "e",
+	})
+
+	for key, want := range map[string]string{
+		"QUEUE_LIMITS": "ingest=4", // .env wins over the default
+		"FROM_PROCESS": "process",  // the process wins over both
+		"ONLY_DEFAULT": "d",
+		"EMPTY":        "e", // empty counts as unset, like a default tag
+	} {
+		if got := src.Get(key); got != want {
+			t.Errorf("Get(%s) = %q, want %q", key, got, want)
+		}
+	}
+}
