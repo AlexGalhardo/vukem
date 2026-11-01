@@ -3,7 +3,7 @@ module github.com/AlexGalhardo/vukem/drivers/redis
 go 1.27.3
 
 require (
-	github.com/AlexGalhardo/vukem v0.35.0
+	github.com/AlexGalhardo/vukem v0.36.0
 	github.com/redis/go-redis/v9 v9.23.0
 )
 
