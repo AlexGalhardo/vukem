@@ -296,6 +296,26 @@ func Schedule(s *schedule.Schedule, app *vukem.App) {
 
 Counts live in the process until a flush, so a crash loses at most one interval and each server flushes its own; `app.OnShutdown` writes the rest on a clean stop. Keep the write idempotent per batch (one transaction) so a failed flush that is retried does not count twice. In a real app keep the buffer in a struct you pass to the handler and the task rather than a package variable.
 
+#### Capping the keys
+
+A buffer keyed by something a client chooses (a slug in the URL) can grow without bound: a bot that requests a million unknown slugs adds a million keys. Set `MaxKeys` to cap it. Adding a new key to a full buffer drops the oldest pending key first (the one added earliest since the last flush) and calls `OnDrop` with it and its count, so you can raise a metric or an alert. Adding to a key that is already pending never drops anything. Set both fields before the first `Add`.
+
+```go title="app/trending/counter.go"
+type Key struct {
+	Slug string
+	Kind string // "view" or "click"
+}
+
+views := &cache.Buffer[Key]{
+	MaxKeys: 50_000,
+	OnDrop: func(k Key, n int64) {
+		log.Warn("trending: buffer full, count dropped", "slug", k.Slug, "count", n)
+	},
+}
+```
+
+A struct key such as `Key` keeps several counts per item in one buffer. `Restore` follows the cap too, so a failed flush cannot push the buffer past it.
+
 ## Claims and one-time codes
 
 `cache.Add` stores a value only when the key is absent (or expired) and tells you whether it did. It is atomic: of many concurrent callers, on any number of servers sharing the store, exactly one gets `true`. That makes it the right tool for "first request wins" guards, such as an idempotency key or a webhook you must handle once.

@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **admin:** `Panel.Clock()` applies `IdleTimeout` and `MaxSessionAge` to every request of a user with the panel ability, panel visited or not (the absolute cap counts from the first admin request), and `Config.TwoFactorFlash` flashes a message under `TwoFactorFlashKey` with the `TwoFactorRedirect` (VF-063).
+- **cache:** `cache.Buffer` takes an optional `MaxKeys` cap: a new key on a full buffer drops the oldest pending key and reports it to `OnDrop` (VF-064).
 
 ### Fixed
 
