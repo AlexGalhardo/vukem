@@ -431,13 +431,20 @@ func maintenanceConfig(app *App) middleware.MaintenanceConfig {
 func serverMiddleware(
 	app *App, secure middleware.SecureHeadersConfig, maint middleware.MaintenanceConfig,
 ) []router.Middleware {
-	return []router.Middleware{
+	mw := []router.Middleware{
 		middleware.Recover(),
 		middleware.RequestID(),
 		middleware.SecureHeaders(secure),
+	}
+
+	if app.Config.NoIndex {
+		mw = append(mw, middleware.NoIndex())
+	}
+
+	return append(mw,
 		middleware.Maintenance(maint),
 		middleware.LoggerWith(app.Log, middleware.LoggerOptions{TruncateIP: app.Config.LogTruncateIP}),
-	}
+	)
 }
 
 // warnMissingCSP logs at boot when the final policy no longer allows the

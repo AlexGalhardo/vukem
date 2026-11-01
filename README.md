@@ -73,7 +73,7 @@ Every command, flag and example is in the [CLI reference](https://vukem.dev/docs
 | **Admin and devtools** | An HTMX admin panel generated from your models, with an audit log and opt-in hardening (`DenyStatus`, `TwoFactorRedirect`, `TrackIdle`), and a `/_vukem` dashboard for requests, queries (with N+1 detection), jobs, mail and logs. |
 | **Billing and uploads** | Stripe subscriptions (`install:billing`), streaming, resumable (tus) and direct-to-S3 uploads with virus scanning. |
 | **Bot protection** | Cloudflare Turnstile on form routes and a step-up challenge with a signed clearance cookie (`challenge`); Cloudflare helpers (`contrib/cloudflare`: real client IP, origin lock, Access, cache purge). |
-| **SEO and analytics** | Sitemaps, `llms.txt` and `llms-full.txt` (`llmstxt`), static site generation (`ssg`), Umami and GA4 with Consent Mode v2, Search Console and Bing verification (`analytics`), the Bing Webmaster API (`bingwmt`) and IndexNow (`indexnow`). |
+| **SEO and analytics** | Sitemaps, `robots.txt` (`robots`, plus a `NOINDEX` switch), `llms.txt` and `llms-full.txt` (`llmstxt`), static site generation (`ssg`), Umami and GA4 with Consent Mode v2, Search Console and Bing verification (`analytics`), the Bing Webmaster API (`bingwmt`) and IndexNow (`indexnow`). |
 | **More** | Mail (SMTP, Resend, `MAIL_REPLY_TO`), cache with batched counters (`cache.Buffer`), feature flags, storage (local, S3), events, encryption, i18n, OpenTelemetry, Telegram logging, CSV and NDJSON export (`export.EncodeNDJSON`), image thumbnails and QR codes, SSRF-safe HTTP client with throttle, retry and circuit-breaker transports, signed URLs and tokens, and webhooks. |
 
 ## Why Vukem

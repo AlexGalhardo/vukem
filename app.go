@@ -99,6 +99,10 @@ type Config struct {
 	// LogTruncateIP makes the request log write the /24 (IPv4) or /48
 	// (IPv6) network instead of the client address (data minimisation).
 	LogTruncateIP bool `env:"LOG_TRUNCATE_IP"`
+	// NoIndex sends X-Robots-Tag: noindex, nofollow on every response, so
+	// search engines never index the site (staging, previews). Pass it to
+	// robots.File.NoIndex for a disallow-all robots.txt too.
+	NoIndex bool `env:"NOINDEX"`
 	// LogDedupWindow collapses repeated identical ERROR records of the
 	// default logger into one summary per window (a Go duration; "0"
 	// disables it). Empty means 1m in production and off elsewhere.

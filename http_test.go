@@ -3472,3 +3472,28 @@ func TestCSPWarnsWhenIntegrationSourcesAreDropped(t *testing.T) {
 		}
 	}
 }
+
+// VF-075 (HexaScore): NOINDEX keeps a staging site out of search engines.
+func TestNoIndexHeader(t *testing.T) {
+	t.Parallel()
+
+	routes := WithRoutes(func(r *router.Router, app *App) error {
+		if err := DefaultMiddleware(app, r); err != nil {
+			return err
+		}
+
+		r.Get("/page", func(c *web.Ctx) error { return c.String(200, "ok") })
+
+		return nil
+	})
+
+	for env, want := range map[string]string{"": "", "true": "noindex, nofollow"} {
+		app := newTestApp(t, routes, WithSource(testSource(map[string]string{"NOINDEX": env})))
+
+		for _, p := range []string{"/page", "/missing"} {
+			if got := serve(t, app, http.MethodGet, p, false).Header().Get("X-Robots-Tag"); got != want {
+				t.Errorf("NOINDEX=%q GET %s X-Robots-Tag = %q, want %q", env, p, got, want)
+			}
+		}
+	}
+}
