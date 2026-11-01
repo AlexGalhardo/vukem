@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **cli:** `TestStripeVersionIsLatestTag` fails instead of skipping on GitHub Actions without tags, and the CI `test` job fetches the full history, so a stale `install:billing` pin fails the gate (VF-076).
 - **cli:** Pin contrib/stripe v0.5.1 in install:billing (#136) ([0d1d3a1](https://github.com/AlexGalhardo/vukem/commit/0d1d3a1a5f168a676076038a9f87622747216a81))
 
 ## [0.36.0] - 2026-11-01

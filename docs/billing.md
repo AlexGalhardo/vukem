@@ -22,7 +22,7 @@ It works for the HTMX starter and for Inertia apps (React, Vue, Svelte): the sha
 | `routes/billing.go` | The routes below, registered in `routes/registry.go` |
 | `tests/billing_test.go`, `tests/billing_page_test.go` | Tests against a fake Stripe API |
 
-`.env.example` gets `STRIPE_KEY`, `STRIPE_WEBHOOK_SECRET` and `STRIPE_PRICE_*` with empty values, and `go.mod` requires `github.com/AlexGalhardo/vukem/contrib/stripe` pinned to the latest `contrib/stripe` release when that CLI was built (`stripeVersion` in `internal/cli/billing.go`, checked against the tags by a test; a `replace` to the checkout's `contrib/stripe` for projects created with `vukem new --framework`).
+`.env.example` gets `STRIPE_KEY`, `STRIPE_WEBHOOK_SECRET` and `STRIPE_PRICE_*` with empty values, and `go.mod` requires `github.com/AlexGalhardo/vukem/contrib/stripe` pinned to the latest `contrib/stripe` release when that CLI was built (`stripeVersion` in `internal/cli/billing.go`, checked against the tags by `TestStripeVersionIsLatestTag`, which skips locally without tags but fails on GitHub Actions, where the `test` job checks out the full history; a `replace` to the checkout's `contrib/stripe` for projects created with `vukem new --framework`).
 
 ## Routes
 
