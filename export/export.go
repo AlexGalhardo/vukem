@@ -553,6 +553,39 @@ func NDJSON[T any](
 	return s.finish(err, nil)
 }
 
+// EncodeNDJSON writes rows to w as newline-delimited JSON, the bytes NDJSON
+// would send, for files built outside a request (a storage upload, a
+// queued job). A failing row stops the encoding and returns its error, with
+// the rows before it already written to w.
+func EncodeNDJSON[T any](w io.Writer, rows iter.Seq2[T, error]) error {
+	bw := bufio.NewWriter(w)
+
+	err := func() error {
+		for v, err := range rows {
+			if err != nil {
+				return err
+			}
+
+			b, err := json.Marshal(v)
+			if err != nil {
+				return fmt.Errorf("export: encode row: %w", err)
+			}
+
+			if _, err := bw.Write(append(b, '\n')); err != nil {
+				return err
+			}
+		}
+
+		return nil
+	}()
+
+	if ferr := bw.Flush(); err == nil {
+		err = ferr
+	}
+
+	return err
+}
+
 // SafeCell guards a CSV cell against formula injection (OWASP CSV
 // injection): a cell starting with =, +, -, @, tab or carriage return gets
 // a leading apostrophe so spreadsheets show it as text. Some spreadsheets

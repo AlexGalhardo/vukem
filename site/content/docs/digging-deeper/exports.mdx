@@ -26,6 +26,8 @@ The rows come from an <Term tip="A function that hands values to a loop one at a
 | `export.JSON(w, r, name, rows, opts...)` | `application/json; charset=utf-8` | one JSON array, one element per row | `export.json` |
 | `export.NDJSON(w, r, name, rows, opts...)` | `application/x-ndjson` | one JSON value per line | `export.ndjson` |
 
+To write the same bytes to a file, a ZIP entry or a storage upload from a queued job, where there is no request, use `export.EncodeCSV(w, header, rows, record, opts...)` and `export.EncodeNDJSON(w, rows)` (see [Without a request](#without-a-request)).
+
 An empty `name` uses the default file name. The functions are [generic](https://go.dev/doc/tutorial/generics): `T` is your model type, and Go infers it from `rows`.
 
 This page builds one running example: a shop that exports its orders.
@@ -310,7 +312,21 @@ if err != nil {
 return zw.Close()
 ```
 
-A row error stops the encoding and is returned; the rows before it are already in the writer, so discard the file. For JSON outside a request, use [`encoding/json`](https://pkg.go.dev/encoding/json#NewEncoder) directly: there is no cell to guard.
+A row error stops the encoding and is returned; the rows before it are already in the writer, so discard the file.
+
+`export.EncodeNDJSON(w, rows)` does the same for newline-delimited JSON: the bytes `export.NDJSON` would send, one value per line. A daily bulk file written to a bucket and served later through a presigned URL looks like this:
+
+```go title="app/jobs/export_ids.go"
+pr, pw := io.Pipe()
+
+go func() {
+	pw.CloseWithError(export.EncodeNDJSON(pw, orm.QueryOf[Item](db).Each(ctx)))
+}()
+
+return disk.Put(ctx, "exports/ids.ndjson", pr)
+```
+
+For a single JSON array outside a request, use [`encoding/json`](https://pkg.go.dev/encoding/json#NewEncoder) directly: there is no cell to guard.
 
 ## Security
 

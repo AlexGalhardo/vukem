@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **export:** `export.EncodeNDJSON(w io.Writer, rows)` writes the bytes of `export.NDJSON` to any writer outside a request, next to `export.EncodeCSV`.
 - **mail:** `MAIL_REPLY_TO` (and `Mailer.SetReplyTo`) sets a default Reply-To for envelopes that have none.
 - **openapi:** `openapi.Info.Docs` sets `Servers` and `StripPrefix` per document path prefix, used by `ServeOpenAPIWith`, `openapi:export -prefix` and `codegen:*`.
 - **cli:** `vukem api:fuzz` runs a pinned Schemathesis image against the running API from the exported OpenAPI document, with `WithFuzzAuth` for a test credential, a config derived from the API (read-only APIs, rate-limit bypass) and `-dry-run`. No new Go dependency.
