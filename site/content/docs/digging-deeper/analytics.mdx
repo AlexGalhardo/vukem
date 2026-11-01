@@ -1,0 +1,335 @@
+---
+title: Analytics and Search Console
+description: Add Umami, Google Analytics 4 with Consent Mode v2, and Google Search Console and Bing Webmaster Tools verification from environment variables, with CSP nonces, exact CSP origins and Inertia page views.
+---
+
+You want to know how many people visit your site, and you want Google and Bing to know the site is yours. Vukem ships both as configuration: set an environment variable and the right tags appear in the `<head>`, carrying the request's CSP nonce, while the Content-Security-Policy gains only the origins that provider needs. Leave the variable unset and nothing changes: no script, no CSP source, no route.
+
+You will learn:
+
+- how to turn on Umami, Google Analytics 4, Google Search Console and Bing Webmaster Tools verification;
+- where each credential comes from, and how to check that it works;
+- how GA4 stays off until the visitor consents (LGPD/GDPR), and how to wire a consent banner;
+- how page views follow Inertia navigations;
+- what the CSP allows, and what the boot check refuses.
+
+Server-side SEO tools (the Bing Webmaster API and IndexNow) are on [SEO integrations](/docs/digging-deeper/seo-integrations).
+
+## The idea
+
+| Provider | Turned on by | Cookies | What lands in `<head>` | CSP sources added |
+| --- | --- | --- | --- | --- |
+| Umami | `UMAMI_WEBSITE_ID` | none | `<script defer src=… data-website-id=… nonce=…>` | `script-src` the script's origin, `connect-src` where events go |
+| Google Analytics 4 | `GA_MEASUREMENT_ID` | only after consent | a nonce'd inline bootstrap; `gtag.js` is injected after consent | `script-src https://www.googletagmanager.com`, `connect-src` and `img-src` Google Analytics origins |
+| Google Search Console | `GOOGLE_SITE_VERIFICATION` | none | `<meta name="google-site-verification">` | none |
+| Bing Webmaster Tools | `BING_SITE_VERIFICATION` | none | `<meta name="msvalidate.01">` | none |
+
+Everything lives in the `analytics` package and is loaded into `App.Config.Analytics`. One view function renders it.
+
+## Set up
+
+<Steps>
+<Step title="Render the tags in the root view">
+
+Add `{{analytics}}` to the `<head>` of the view every page uses. Inertia apps created by `vukem new` already have it in `resources/views/app.html`:
+
+```html title="resources/views/app.html"
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<meta property="csp-nonce" nonce="{{cspNonce}}">
+	{{analytics}}
+	{{viteReactRefresh}}
+	{{vite "resources/css/app.css" "resources/js/app.tsx"}}
+	{{.Head}}
+</head>
+```
+
+Put it before your own scripts, so the consent function exists when your code runs. With every variable unset it renders nothing.
+
+</Step>
+<Step title="Set the variables">
+
+```bash title=".env"
+UMAMI_WEBSITE_ID=94db1cb1-74f4-4a40-ad6c-962362670409
+UMAMI_DOMAINS=example.com,www.example.com
+GA_MEASUREMENT_ID=G-ABC123XYZ
+GOOGLE_SITE_VERIFICATION=Ab12Cd34Ef56
+BING_SITE_VERIFICATION=0123456789ABCDEF0123456789ABCDEF
+```
+
+Use any subset. The next sections say where each value comes from.
+
+</Step>
+<Step title="Keep vukem's middleware">
+
+`vukem.DefaultMiddleware` and `vukem.APIMiddleware` add the providers' CSP sources for you. If you adjust the policy with `MiddlewareOptions.SecureHeaders`, **add** to `cfg.CSPSources` instead of replacing the map, or the analytics origins are lost:
+
+```go title="bootstrap/http.go"
+err := vukem.DefaultMiddlewareWith(app, r, vukem.MiddlewareOptions{
+	SecureHeaders: func(cfg *middleware.SecureHeadersConfig) {
+		if cfg.CSPSources == nil {
+			cfg.CSPSources = map[string][]string{}
+		}
+
+		cfg.CSPSources["img-src"] = append(cfg.CSPSources["img-src"], "https://images.example.com")
+	},
+})
+```
+
+</Step>
+</Steps>
+
+## Environment variables
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `UMAMI_WEBSITE_ID` | | Turns Umami on. The website ID from the Umami dashboard |
+| `UMAMI_SCRIPT_URL` | `https://cloud.umami.is/script.js` | The tracker. Point it at a self-hosted instance's `/script.js` |
+| `UMAMI_HOST_URL` | | Send events to another origin than the script's (`data-host-url`) |
+| `UMAMI_DOMAINS` | | Comma-separated hostnames to track (`data-domains`); others are ignored, so staging stays out of the stats |
+| `UMAMI_TAG` | | Group events under a tag (`data-tag`), e.g. an A/B variant |
+| `UMAMI_IGNORE_DO_NOT_TRACK` | `false` | Track browsers that send Do Not Track. By default they are not tracked (`data-do-not-track="true"`) |
+| `GA_MEASUREMENT_ID` | | Turns GA4 on. A `G-` measurement ID |
+| `GA_CONSENT_DEFAULT_GRANTED` | `false` | Start with consent granted and load `gtag.js` on the first page. Leave it off where LGPD/GDPR apply |
+| `GOOGLE_SITE_VERIFICATION` | | Comma-separated Search Console tokens; one meta tag each |
+| `GOOGLE_SITE_VERIFICATION_FILES` | | Comma-separated `google<token>.html` file names, served at the site root |
+| `BING_SITE_VERIFICATION` | | Comma-separated Bing `msvalidate.01` tokens; one meta tag each, and `/BingSiteAuth.xml` |
+
+## Umami
+
+[Umami](https://umami.is) counts visits without cookies and without personal data, so it needs no consent banner in most jurisdictions.
+
+### Getting the credentials
+
+<Steps>
+<Step title="Add the website">
+
+In [Umami Cloud](https://cloud.umami.is) or your self-hosted instance, click **Websites** in the sidebar, then **Add website**. Enter a name and the domain (`example.com`) and save. See [Add a website](https://docs.umami.is/docs/add-a-website).
+
+</Step>
+<Step title="Copy the website ID">
+
+Open the website's **Edit** page and its **Tracking code** tab. The snippet shows `data-website-id="…"`: that UUID goes into `UMAMI_WEBSITE_ID`. Self-hosted? Its `src` (for example `https://stats.example.com/script.js`) goes into `UMAMI_SCRIPT_URL`.
+
+</Step>
+</Steps>
+
+### What vukem renders
+
+```html
+<script defer src="https://cloud.umami.is/script.js" data-website-id="94db1cb1-…" data-do-not-track="true" data-domains="example.com,www.example.com" nonce="…"></script>
+```
+
+The attributes are the ones in Umami's [tracker configuration](https://docs.umami.is/docs/tracker-configuration). Umami's automatic tracking follows `history.pushState`, so every Inertia visit is already a page view: there is nothing to wire.
+
+The CSP gains the script's origin in `script-src` and the collector in `connect-src`. Umami Cloud's tracker sends events to `https://gateway.umami.is`; a self-hosted tracker sends them next to its script, or to `UMAMI_HOST_URL`.
+
+### Custom events from Inertia React
+
+The tracker exposes [`umami.track`](https://docs.umami.is/docs/tracker-functions):
+
+```tsx title="resources/js/pages/pricing.tsx"
+declare global {
+	interface Window {
+		umami?: { track: (event: string, data?: Record<string, unknown>) => void };
+	}
+}
+
+export default function Pricing() {
+	return (
+		<button type="button" onClick={() => window.umami?.track("upgrade-click", { plan: "pro" })}>
+			Upgrade
+		</button>
+	);
+}
+```
+
+The `?.` keeps the page working when Umami is off, blocked or filtered by `UMAMI_DOMAINS`.
+
+### Events from the server
+
+For events the browser never sees (a payment webhook, a job), `Config.SendUmamiEvent` posts to Umami's [`/api/send`](https://docs.umami.is/docs/api/sending-stats). Umami drops requests whose `User-Agent` looks like a bot, so pass the visitor's when you have it. It is a no-op while Umami is off.
+
+```go title="app/controllers/billing.go"
+err := app.Config.Analytics.SendUmamiEvent(ctx, nil, r.UserAgent(), analytics.UmamiEvent{
+	Name:     "subscription-paid",
+	URL:      "/billing",
+	Hostname: "example.com",
+	Data:     map[string]any{"plan": "pro"},
+})
+```
+
+### How to verify it works
+
+Open the site in a browser without Do Not Track, then the website's **Realtime** page in Umami: your visit appears within seconds. In the browser's network tab, a `POST …/api/send` answers `200`. A CSP error in the console means a custom `SecureHeaders` replaced `CSPSources` (see Set up).
+
+## Google Analytics 4
+
+GA4 sets cookies and sends data to Google, so in the EU, the UK and Brazil it needs the visitor's consent first. Vukem's default follows that: **nothing is sent to Google until your app grants consent.**
+
+### Getting the credentials
+
+<Steps>
+<Step title="Open the data stream">
+
+In [Google Analytics](https://analytics.google.com), click **Admin** (the gear), then under **Data collection and modification** open **Data streams**. Pick your web stream, or click **Add stream › Web** and enter the site URL. See [Find your Google tag ID](https://support.google.com/analytics/answer/9539598).
+
+</Step>
+<Step title="Copy the measurement ID">
+
+The stream details show the **Measurement ID**, `G-XXXXXXXXXX`. It goes into `GA_MEASUREMENT_ID`. Vukem refuses Universal Analytics IDs (`UA-…`), which stopped collecting in 2023.
+
+</Step>
+<Step title="Turn off enhanced measurement page views on history changes">
+
+In the same stream, open **Enhanced measurement › Page views › Show advanced settings** and turn off **Page changes based on browser history events**. Vukem sends one `page_view` per Inertia navigation itself; leaving both on counts each visit twice.
+
+</Step>
+</Steps>
+
+### Consent Mode v2, denied by default
+
+The inline bootstrap follows Google's [consent mode guide](https://developers.google.com/tag-platform/security/guides/consent). It:
+
+1. sets `analytics_storage`, `ad_storage`, `ad_user_data` and `ad_personalization` to `denied`;
+2. configures the measurement ID with `send_page_view: false`;
+3. defines `window.vukemAnalytics.consent(choice)`;
+4. injects `https://www.googletagmanager.com/gtag/js` (with the same nonce) only when a consent call grants something, then sends the current page view.
+
+Before that, Google receives no request at all. `GA_CONSENT_DEFAULT_GRANTED=true` starts granted and loads `gtag.js` on the first page; use it only where no consent is required.
+
+`consent` takes `true` (grant all four), `false` (deny all four) or an object with the signals you want:
+
+```ts
+window.vukemAnalytics?.consent({ analytics_storage: "granted", ad_storage: "denied", ad_user_data: "denied", ad_personalization: "denied" });
+```
+
+### A consent banner in Inertia React
+
+The choice must survive reloads, so the banner stores it and replays it on boot:
+
+```tsx title="resources/js/components/consent-banner.tsx"
+import { useEffect, useState } from "react";
+
+declare global {
+	interface Window {
+		vukemAnalytics?: { consent: (choice: boolean | Record<string, "granted" | "denied">) => void };
+	}
+}
+
+const KEY = "analytics-consent";
+
+export function ConsentBanner() {
+	const [choice, setChoice] = useState<string | null>(() => localStorage.getItem(KEY));
+
+	useEffect(() => {
+		if (choice !== null) window.vukemAnalytics?.consent(choice === "granted");
+	}, [choice]);
+
+	if (choice !== null) return null;
+
+	const decide = (granted: boolean) => {
+		const value = granted ? "granted" : "denied";
+		localStorage.setItem(KEY, value);
+		setChoice(value);
+	};
+
+	return (
+		<div role="dialog" aria-label="Cookie consent" className="fixed inset-x-4 bottom-4 rounded-lg border bg-white p-4 shadow dark:bg-zinc-900">
+			<p>We use Google Analytics to understand how the site is used, only if you agree.</p>
+			<div className="mt-3 flex gap-2">
+				<button type="button" onClick={() => decide(true)}>Accept</button>
+				<button type="button" onClick={() => decide(false)}>Decline</button>
+			</div>
+		</div>
+	);
+}
+```
+
+Render it once in your layout. Let visitors change their mind from a settings page by clearing the key and calling `consent(false)`.
+
+### Page views on Inertia navigations
+
+`send_page_view` is off, and the bootstrap listens to Inertia's `inertia:navigate` event: each visit sends `page_view` with `page_location` and `page_title`. The same URL twice in a row counts once, which also absorbs the `navigate` event Inertia fires on the first load. Full page loads without Inertia send their page view once `gtag.js` loads.
+
+### How to verify it works
+
+Open the site, grant consent, then open **Reports › Realtime** in GA4: your visit appears within a minute. For details per event, use [Tag Assistant](https://tagassistant.google.com) and GA4's **Admin › DebugView**. Before consent, the network tab must show no request to `googletagmanager.com` or `google-analytics.com`.
+
+## Google Search Console
+
+### Getting the credentials
+
+<Steps>
+<Step title="Add a URL-prefix property">
+
+In [Search Console](https://search.google.com/search-console), open the property menu, click **Add property** and choose **URL prefix** with your site URL (`https://example.com/`). A **Domain** property needs a DNS TXT record at your DNS provider instead; vukem has nothing to serve for it.
+
+</Step>
+<Step title="Pick the HTML tag method">
+
+Under **Other verification methods**, open **HTML tag**. Google shows `<meta name="google-site-verification" content="Ab12Cd34Ef56" />`. Copy only the `content` value into `GOOGLE_SITE_VERIFICATION`. Several owners? Separate their tokens with commas. See [Verify your site ownership](https://support.google.com/webmasters/answer/9008080).
+
+</Step>
+<Step title="Or the HTML file method">
+
+Under **HTML file**, Google offers a file named like `google1234abcd5678ef90.html`. Put the **file name** in `GOOGLE_SITE_VERIFICATION_FILES`; vukem serves it at the site root with the content Google expects. You do not need to download or commit the file.
+
+</Step>
+<Step title="Deploy, then click Verify">
+
+The token must be live on the production URL before you click **Verify**. Keep it set afterwards: Google checks again from time to time and drops the ownership if the tag disappears.
+
+</Step>
+</Steps>
+
+### Submit the sitemap
+
+Build the sitemap with the [`sitemap` package](/docs/digging-deeper/sitemaps), point `robots.txt` at it, and submit it once in **Indexing › Sitemaps** (enter `sitemap.xml` and click **Submit**):
+
+```text title="resources/public/robots.txt"
+User-agent: *
+Allow: /
+
+Sitemap: https://example.com/sitemap.xml
+```
+
+The Search Console API (submitting sitemaps or reading reports from code) needs Google OAuth service accounts and is out of scope: vukem does not ship a client for it.
+
+### How to verify it works
+
+`curl -s https://example.com/ | grep google-site-verification` shows the tag, and `curl https://example.com/google1234abcd5678ef90.html` answers `google-site-verification: google1234abcd5678ef90.html`. Search Console then shows **Ownership verified**.
+
+## Bing Webmaster Tools verification
+
+### Getting the credentials
+
+<Steps>
+<Step title="Add your site">
+
+Sign in to [Bing Webmaster Tools](https://www.bing.com/webmasters) and click **Add site**. You can import a site already verified in Google Search Console, which needs no token at all; otherwise enter the URL manually. See [Add and verify site](https://www.bing.com/webmasters/help/add-and-verify-site-12184f8b).
+
+</Step>
+<Step title="Copy the meta tag token">
+
+Choose **HTML Meta Tag**. Bing shows `<meta name="msvalidate.01" content="0123456789ABCDEF0123456789ABCDEF" />`. Copy the `content` value into `BING_SITE_VERIFICATION` (comma-separated for several users).
+
+</Step>
+<Step title="Deploy, then click Verify">
+
+The same tokens are served at `/BingSiteAuth.xml`, so the **XML file** method works too, with nothing to upload.
+
+</Step>
+</Steps>
+
+### How to verify it works
+
+`curl https://example.com/BingSiteAuth.xml` lists your token in `<user>` elements, and the home page carries the `msvalidate.01` meta tag. Bing Webmaster Tools then opens the site's dashboard.
+
+## Security and privacy
+
+- **Off until configured.** No variable, no tag, no route, no CSP change.
+- **Exact CSP origins, never `unsafe-inline`.** Every script carries the per-request nonce; `gtag.js` is injected with it. The sources added are the provider's own: Umami's script and collector origins, and for GA4 the list from Google's [CSP guide](https://developers.google.com/tag-platform/security/guides/csp) without the advertising endpoints (`script-src https://www.googletagmanager.com`; `connect-src https://www.googletagmanager.com https://*.google-analytics.com https://*.analytics.google.com`; `img-src https://www.googletagmanager.com https://*.google-analytics.com`). Using Google Ads features needs the extra origins from that guide, added through `SecureHeaders`.
+- **Validated at boot.** `vukem.New` refuses a website ID, measurement ID, token or file name that is not what the provider issues, a non-https script or host URL (plain http only on `localhost`), and Umami options without `UMAMI_WEBSITE_ID`. Every value is also HTML- or JS-escaped when rendered (`TestSecurity_A05_AnalyticsEscapesConfig`).
+- **Consent denied by default** for GA4 (`TestSecurity_A02_AnalyticsConsentDeniedByDefault`); Do Not Track respected by default for Umami.
