@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/AlexGalhardo/vukem/analytics"
+	"github.com/AlexGalhardo/vukem/bingwmt"
 	"github.com/AlexGalhardo/vukem/cache"
 	"github.com/AlexGalhardo/vukem/config"
 	"github.com/AlexGalhardo/vukem/crypt"
@@ -150,6 +151,9 @@ type Config struct {
 	// verification (UMAMI_*, GA_*, GOOGLE_SITE_VERIFICATION*); all off
 	// when unset.
 	Analytics analytics.Config
+	// BingWebmaster holds BING_WEBMASTER_API_KEY for bingwmt.New (off
+	// when unset).
+	BingWebmaster bingwmt.Config
 }
 
 // IsProduction reports whether APP_ENV is production.
