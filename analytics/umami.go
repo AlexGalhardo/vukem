@@ -22,13 +22,22 @@ var (
 
 func (c Config) umamiScript() string { return cmp.Or(c.UmamiScriptURL, DefaultUmamiScriptURL) }
 
-// umamiEndpoint is where the tracker posts events: data-host-url, or the
-// script's directory, plus /api/send (as Umami's tracker computes it).
+// umamiCloudGateway receives the events of Umami Cloud's tracker
+// (https://docs.umami.is/docs/api/sending-stats).
+const umamiCloudGateway = "https://gateway.umami.is"
+
+// umamiEndpoint is where the tracker posts events: data-host-url, Umami
+// Cloud's gateway, or a self-hosted script's directory, plus /api/send (as
+// Umami's tracker computes it).
 func (c Config) umamiEndpoint() string {
 	base := strings.TrimSuffix(c.UmamiHostURL, "/")
 	if base == "" {
 		s := c.umamiScript()
 		base = s[:max(strings.LastIndex(s, "/"), 0)]
+
+		if origin(s) == origin(DefaultUmamiScriptURL) {
+			base = umamiCloudGateway
+		}
 	}
 
 	return base + "/api/send"

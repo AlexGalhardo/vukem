@@ -57,7 +57,7 @@ func TestUmamiCSPSources(t *testing.T) {
 			cfg:  analytics.Config{UmamiWebsiteID: websiteID},
 			want: map[string][]string{
 				"script-src":  {"https://cloud.umami.is"},
-				"connect-src": {"https://cloud.umami.is"},
+				"connect-src": {"https://gateway.umami.is"},
 			},
 		},
 		{
