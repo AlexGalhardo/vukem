@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **llmstxt:** New package that renders and serves `/llms.txt` and a streamed, size-capped `/llms-full.txt` (https://llmstxt.org) from a `llmstxt.Doc` (`Register`, `Handler`, `FullHandler`, `Write`, `WriteFull`), with escaped titles and validated URLs. Off unless the app registers it.
+- **llmstxt:** New package that renders and serves `/llms.txt` and a streamed, size-capped `/llms-full.txt` (<https://llmstxt.org>) from a `llmstxt.Doc` (`Register`, `Handler`, `FullHandler`, `Write`, `WriteFull`), with escaped titles and validated URLs. Off unless the app registers it.
 - **router:** `Group.Only()` makes a `Router.Host` group the only thing its host serves: unmatched paths on that host get a 404/405 from the error handler (the group's `ErrorHandler` included) without the router middleware, never a main route.
 - **admin:** `Config.DenyStatus` (404 hides the panel from IPs outside `AllowCIDRs`), `Config.TwoFactorRedirect` (redirect admins without 2FA to a setup page) and `Panel.TrackIdle()` (one idle clock across the app for sessions that used the panel).
 - **cache:** `cache.Buffer[K]` adds counts in memory (`Add`) and writes them in one batch (`Flush`, `Swap`, `Restore`), restoring them when the write fails.
