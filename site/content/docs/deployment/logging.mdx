@@ -23,7 +23,7 @@ A log line is a set of key/value pairs, not a sentence. `slog` writes them as `k
 | Field | Value |
 | --- | --- |
 | `method` | the HTTP method |
-| `path` | the URL path, without the query string (query strings often carry tokens) |
+| `path` | the URL path, without the query string (query strings often carry tokens); path parameters marked with `SecretParams` show as `{name}` |
 | `status` | the response status (`200` when the handler wrote nothing) |
 | `duration` | time spent in the handler chain |
 | `bytes` | response body size |
@@ -33,6 +33,23 @@ A log line is a set of key/value pairs, not a sentence. `slog` writes them as `k
 | `route` | the matched route pattern, such as `GET /items/{id}`; absent when no route matched |
 
 The level follows the status: `ERROR` for `5xx`, `WARN` for `4xx`, `INFO` otherwise.
+
+Every field above is always present except `route`. Fields added with `web.AddLogAttrs` follow them.
+
+### Secrets in the path
+
+A path can carry a secret: the token of `/reset-password/{token}`, the key of a signed download. The query string is never logged, but the path is. Mark those parameters on the route, and every log line of the request writes `{name}` instead of the value: the request line, the error log of a failed handler and security-event logs (and the `Path` of `security.Event`).
+
+```go title="routes/web.go"
+r.Get("/reset-password/{token}", passwords.ShowReset).SecretParams("token")
+```
+
+```json
+{"msg":"request","method":"GET","path":"/reset-password/{token}","status":200,
+ "route":"GET /reset-password/{token}"}
+```
+
+A whole path segment equal to the value is replaced; a `{name...}` wildcard value is replaced wherever it appears. Your own logs can do the same with `web.LogPath(r)` instead of `r.URL.Path`.
 
 ### Adding fields to the request line
 

@@ -161,7 +161,7 @@ func LoggerWith(log *slog.Logger, o LoggerOptions) Middleware {
 
 			attrs := append([]slog.Attr{
 				slog.String("method", r.Method),
-				slog.String("path", r.URL.Path),
+				slog.String("path", extra.Path(r.URL.Path)),
 				slog.Int("status", status),
 				slog.Duration("duration", time.Since(start)),
 				slog.Int64("bytes", rw.Size()),

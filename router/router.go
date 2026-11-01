@@ -94,6 +94,16 @@ type Route struct {
 	mw      []Middleware
 	group   *Group
 	doc     any
+	secret  []string
+}
+
+// SecretParams marks path parameters that carry secrets (a password-reset
+// token, a signed key): every log line of the request (the request line,
+// error and security-event logs) writes "{name}" instead of their value
+// in the path. The route pattern is logged as "route" either way.
+func (rt *Route) SecretParams(names ...string) *Route {
+	rt.secret = append(rt.secret, names...)
+	return rt
 }
 
 // Name sets the route name used by URL generation. The names of enclosing
@@ -262,6 +272,10 @@ func (r *Router) build() {
 		h := rt.handler
 		for _, mw := range slices.Backward(rt.allMiddleware()) {
 			h = mw(h)
+		}
+
+		if len(rt.secret) > 0 {
+			h = redactParams(h, rt.secret)
 		}
 
 		if err := register(r.mux, pattern, h); err != nil {
@@ -623,6 +637,21 @@ func cmpErrors(h web.ErrorHandler) web.ErrorHandler {
 	}
 
 	return h
+}
+
+// redactParams hides the route's secret path values from the request's
+// logs before its middleware runs.
+func redactParams(next http.Handler, names []string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		// The first call attaches a holder when there is none; the others
+		// add to it.
+		ctx := web.RedactLogPath(req.Context(), names[0], req.PathValue(names[0]))
+		for _, n := range names[1:] {
+			web.RedactLogPath(ctx, n, req.PathValue(n))
+		}
+
+		next.ServeHTTP(w, req.WithContext(ctx))
+	})
 }
 
 func (r *Router) adapt(h web.HandlerFunc, rt *Route) http.Handler {

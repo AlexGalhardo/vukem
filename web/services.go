@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -75,7 +76,7 @@ func emit(r *http.Request, level slog.Level, msg, event string, attrs []any, as 
 		log = slog.Default()
 	}
 
-	base := []any{"event", event, "method", r.Method, "path", r.URL.Path}
+	base := []any{"event", event, "method", r.Method, "path", LogPath(r)}
 	if id := RequestID(r.Context()); id != "" {
 		base = append(base, "request_id", id)
 	}
@@ -87,7 +88,7 @@ func emit(r *http.Request, level slog.Level, msg, event string, attrs []any, as 
 	}
 
 	e := security.Event{
-		Name: event, At: time.Now().UTC(), Method: r.Method, Path: r.URL.Path,
+		Name: event, At: time.Now().UTC(), Method: r.Method, Path: LogPath(r),
 		IP: NewCtx(nil, r, s).IP(), RequestID: RequestID(r.Context()),
 		Attrs: map[string]any{},
 	}
@@ -113,9 +114,12 @@ type logAttrsKey struct{}
 // LogAttrs collects the attributes that AddLogAttrs adds during a request,
 // for the request line. It is safe for concurrent use.
 type LogAttrs struct {
-	mu    sync.Mutex
-	attrs []slog.Attr
+	mu      sync.Mutex
+	attrs   []slog.Attr
+	secrets []secretParam
 }
+
+type secretParam struct{ name, value string }
 
 // WithLogAttrs returns a context whose AddLogAttrs calls land in the
 // returned holder. middleware.Logger installs one per request and appends
@@ -135,6 +139,66 @@ func AddLogAttrs(ctx context.Context, attrs ...slog.Attr) {
 		l.attrs = append(l.attrs, attrs...)
 		l.mu.Unlock()
 	}
+}
+
+// RedactLogPath hides value, the value of path parameter name, from the
+// path every log line of this request writes (the request line, error
+// and security-event logs): LogPath shows it as "{name}". The router calls
+// it for Route.SecretParams. It returns ctx, or a context carrying a new
+// holder when ctx has none (no middleware.Logger), so pass the result on;
+// later calls on the result return it unchanged.
+func RedactLogPath(ctx context.Context, name, value string) context.Context {
+	l, ok := ctx.Value(logAttrsKey{}).(*LogAttrs)
+	if !ok {
+		ctx, l = WithLogAttrs(ctx)
+	}
+
+	if value == "" {
+		return ctx
+	}
+
+	l.mu.Lock()
+	l.secrets = append(l.secrets, secretParam{name, value})
+	l.mu.Unlock()
+
+	return ctx
+}
+
+// LogPath returns r.URL.Path with the values RedactLogPath hid replaced by
+// "{name}"; logs write it instead of the raw path.
+func LogPath(r *http.Request) string {
+	if l, ok := r.Context().Value(logAttrsKey{}).(*LogAttrs); ok {
+		return l.Path(r.URL.Path)
+	}
+
+	return r.URL.Path
+}
+
+// Path returns p with the values RedactLogPath hid replaced by "{name}":
+// a whole segment equal to the value, or every occurrence of a value that
+// spans segments (a {name...} wildcard).
+func (l *LogAttrs) Path(p string) string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	for _, s := range l.secrets {
+		mask := "{" + s.name + "}"
+		if strings.Contains(s.value, "/") {
+			p = strings.ReplaceAll(p, s.value, mask)
+			continue
+		}
+
+		segs := strings.Split(p, "/")
+		for i, seg := range segs {
+			if seg == s.value {
+				segs[i] = mask
+			}
+		}
+
+		p = strings.Join(segs, "/")
+	}
+
+	return p
 }
 
 // Attrs returns a copy of the attributes added so far.

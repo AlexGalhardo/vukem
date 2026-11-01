@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **cache:** `cache.Buffer` takes an optional `MaxKeys` cap: a new key on a full buffer drops the oldest pending key and reports it to `OnDrop` (VF-064).
 - **web:** `web.ClientIP(r)` returns the client IP with the trusted-proxy rules of `c.IP()` for plain middleware; new package `security/crawlers` verifies Google, Bing, Apple and Yandex crawlers by forward-confirmed reverse DNS, with a timeout and a per-IP cache (VF-065).
 - **vukem:** `App.HealthHandler()` exports the `/up` handler, so a `Router.Host(...).Only()` group can keep serving the health check (VF-068).
+- **router:** `Route.SecretParams(names...)` logs `{name}` instead of a secret path parameter in the request line, error and security-event logs; `web.RedactLogPath` and `web.LogPath` expose the same redaction, and the request-line fields are documented (VF-071).
 
 ### Fixed
 
