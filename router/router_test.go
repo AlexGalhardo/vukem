@@ -544,3 +544,19 @@ func TestCompiledDuringBuild(t *testing.T) {
 		t.Fatal("Compiled() = false while building, want true")
 	}
 }
+
+func TestRouteLogAttr(t *testing.T) {
+	t.Parallel()
+
+	r := newRouter()
+	r.Get("/items/{id}", text("ok"))
+
+	ctx, attrs := web.WithLogAttrs(t.Context())
+	req := httptest.NewRequestWithContext(ctx, http.MethodGet, "/items/7", http.NoBody)
+	r.ServeHTTP(httptest.NewRecorder(), req)
+
+	got := attrs.Attrs()
+	if len(got) != 1 || got[0].Key != "route" || got[0].Value.String() != "GET /items/{id}" {
+		t.Errorf("attrs = %v", got)
+	}
+}

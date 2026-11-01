@@ -257,6 +257,8 @@ type MailConfig struct {
 	// must choose explicitly; elsewhere it defaults to "log".
 	Mailer string `env:"MAIL_MAILER"`
 	From   string `env:"MAIL_FROM"   default:"Vukem <hello@example.com>"`
+	// ReplyTo is the Reply-To for envelopes that set none; empty sends none.
+	ReplyTo string `env:"MAIL_REPLY_TO"`
 
 	SMTPHost     string        `env:"SMTP_HOST"     default:"localhost"`
 	SMTPPort     int           `env:"SMTP_PORT"     default:"587"`
@@ -322,6 +324,7 @@ func (a *App) Mailer() (*mail.Mailer, error) {
 		}
 
 		a.mail.mailer = mail.New(t, cfg.From, views)
+		a.mail.mailer.SetReplyTo(cfg.ReplyTo)
 		a.mail.mailer.SetReact(a.mail.react)
 		a.mail.mailer.SetEnqueue(a.enqueueMail)
 		a.mail.mailer.SetEnqueueTx(a.enqueueMailTx)

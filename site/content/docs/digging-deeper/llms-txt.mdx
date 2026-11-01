@@ -1,0 +1,147 @@
+---
+title: llms.txt
+description: Serve /llms.txt and /llms-full.txt, a Markdown index of your site and the full Markdown of its pages for language models, from one Go value.
+---
+
+[`llms.txt`](https://llmstxt.org) is a Markdown file at the root of a site that tells language models what the site is and where its useful pages are. `llms-full.txt` is its expanded companion: the Markdown of those pages in one file, so a tool can read the whole documentation in one request. The `llmstxt` package renders both from a Go value and serves them with caching headers. Nothing is served unless your app registers it.
+
+You will learn:
+
+- how to describe your site and register both routes;
+- what the files look like;
+- how `llms-full.txt` streams pages, and how its size is capped;
+- what the package escapes and refuses.
+
+## Register the routes
+
+```go title="routes/llms.go"
+package routes
+
+import (
+	"context"
+
+	"github.com/AlexGalhardo/vukem/llmstxt"
+	"github.com/AlexGalhardo/vukem/router"
+)
+
+// LLMs serves /llms.txt and /llms-full.txt.
+func LLMs(r *router.Router, guide func(ctx context.Context) (string, error)) error {
+	return llmstxt.Register(r, llmstxt.Doc{
+		Title:   "Shop",
+		Summary: "An online shop for board games, with a public REST API.",
+		Details: "Prices are in BRL. The API needs a token from the account page.",
+		Sections: []llmstxt.Section{{
+			Title: "Docs",
+			Links: []llmstxt.Link{
+				{
+					Title:   "API guide",
+					URL:     "https://shop.example/docs/api",
+					Notes:   "authentication and endpoints",
+					Content: guide,
+				},
+				{Title: "Shipping", URL: "/help/shipping"},
+			},
+		}},
+		Optional: []llmstxt.Link{
+			{Title: "Changelog", URL: "https://shop.example/changelog"},
+		},
+	})
+}
+```
+
+`Register` adds `GET /llms.txt` and `GET /llms-full.txt`. It fails when the value is invalid (see [What is refused](#what-is-refused)), so call it while the routes are built and the app stops at boot instead of serving a broken file.
+
+| Field | What it does |
+| --- | --- |
+| `Title` | The H1, usually the site or project name. Required |
+| `Summary` | The blockquote under the title: one sentence on what the site is |
+| `Details` | Optional Markdown after the summary (paragraphs or lists, no headings) |
+| `Sections` | H2 sections, each a list of `Link` |
+| `Optional` | Links under `## Optional`: pages a model may skip when its context is short |
+| `LastModified` | Sent as `Last-Modified` by both routes; zero leaves it out |
+| `MaxFullBytes` | Size cap of `llms-full.txt`; `0` means `llmstxt.DefaultMaxFullBytes` (16 MiB) |
+
+A `Link` has a `Title`, a `URL` (absolute `http`/`https`, or root-relative such as `/help/shipping`), optional `Notes`, and an optional `Content` function that returns the page as Markdown for `llms-full.txt`.
+
+## The files
+
+The `llms.txt` of the example above:
+
+```md title="GET /llms.txt"
+# Shop
+
+> An online shop for board games, with a public REST API.
+
+Prices are in BRL. The API needs a token from the account page.
+
+## Docs
+
+- [API guide](https://shop.example/docs/api): authentication and endpoints
+- [Shipping](/help/shipping)
+
+## Optional
+
+- [Changelog](https://shop.example/changelog)
+```
+
+`llms-full.txt` starts with the same title, summary and details, then writes the `Content` of every link that has one, sections first and `Optional` last, each after a `---` rule:
+
+```md title="GET /llms-full.txt"
+# Shop
+
+> An online shop for board games, with a public REST API.
+
+Prices are in BRL. The API needs a token from the account page.
+
+---
+
+# API guide
+
+Source: https://shop.example/docs/api
+
+(the Markdown your guide function returned)
+```
+
+Links without `Content` stay out of it.
+
+## Headers and caching
+
+Both routes answer `text/plain; charset=utf-8`, which every browser and HTTP client shows as text, with `Cache-Control: public, max-age=3600`.
+
+- `llms.txt` is rendered once, when you register it. It carries a strong `ETag` (a hash of the body), and conditional requests (`If-None-Match`, `If-Modified-Since`) get `304 Not Modified`.
+- `llms-full.txt` is built on every request and streamed: each `Content` function runs in turn and its page is written before the next one runs, so the file is never held in memory. Cache it at your CDN, or make `Content` read from your [cache](/docs/digging-deeper/cache), when the pages are expensive to produce.
+
+## Size cap and failures
+
+`llms-full.txt` stops at `MaxFullBytes`. The remaining pages are not fetched, and the file ends with `llmstxt.TruncatedNote` (`[llms-full.txt truncated: size limit reached]`), so a reader knows it is incomplete.
+
+When a `Content` function returns an error before anything was sent, the client gets a plain `500` without the error text. After the first bytes, the status cannot change any more, so the connection is aborted and the client sees a failed download rather than a file that looks complete.
+
+## Without the router
+
+`llmstxt.Handler(doc)` and `llmstxt.FullHandler(doc)` return the two `http.Handler` values, for another mux or for tests. `llmstxt.Write(w, doc)` and `llmstxt.WriteFull(ctx, w, doc)` write the files to any `io.Writer`, for example to publish them as static files during a build. `doc.Validate()` reports what is wrong with a `Doc`.
+
+## What is refused
+
+`Register`, the handlers and the writers return an error for:
+
+- an empty `Title`;
+- a section with an empty title, or one named `Optional` (that section is built from `Doc.Optional`);
+- a link without a title;
+- a URL that is not absolute `http`/`https` or root-relative (`javascript:`, `docs/api`, `//host/x` are refused).
+
+## Security
+
+The titles, notes and summary often come from your database, so they are treated as text, not Markdown:
+
+- Line breaks and other whitespace runs become one space, and control and format characters (bidi overrides, zero-width) are dropped, so a title cannot start a new heading or list item.
+- `[`, `]` and `\` in link titles are escaped, so a title cannot close the link and add one of its own.
+- Spaces, parentheses and angle brackets in URLs are percent-encoded, so a URL cannot end the link early.
+
+`Details` and the Markdown returned by `Content` are yours and are written as given. Never put unreviewed user input there. Nothing in a `Doc` reaches a response header.
+
+## Next steps
+
+- [Sitemaps](/docs/digging-deeper/sitemaps): the XML index for search engines.
+- [Static site generation](/docs/digging-deeper/static-site-generation): prerender pages to files.
+- [Cache](/docs/digging-deeper/cache): keep expensive page content warm.

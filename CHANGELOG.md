@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **llmstxt:** New package that renders and serves `/llms.txt` and a streamed, size-capped `/llms-full.txt` (<https://llmstxt.org>) from a `llmstxt.Doc` (`Register`, `Handler`, `FullHandler`, `Write`, `WriteFull`), with escaped titles and validated URLs. Off unless the app registers it.
+- **router:** `Group.Only()` makes a `Router.Host` group the only thing its host serves: unmatched paths on that host get a 404/405 from the error handler (the group's `ErrorHandler` included) without the router middleware, never a main route.
+- **admin:** `Config.DenyStatus` (404 hides the panel from IPs outside `AllowCIDRs`), `Config.TwoFactorRedirect` (redirect admins without 2FA to a setup page) and `Panel.TrackIdle()` (one idle clock across the app for sessions that used the panel).
+- **cache:** `cache.Buffer[K]` adds counts in memory (`Add`) and writes them in one batch (`Flush`, `Swap`, `Restore`), restoring them when the write fails.
+- **web:** `web.AddLogAttrs(ctx, attrs...)` adds attributes to the request line; `middleware.Logger` collects them per request (`web.WithLogAttrs`), and the router adds the matched `route` pattern.
+- **errs:** `HTTPError.WithType(uri)` and `WithTitle(title)` set the `type` and `title` of a 4xx problem.
+- **web:** `Services.ProblemDecorator` edits every problem+json response (handler errors, `Ctx.Problem`, router 404/405, typed-route 400s) before it is written.
+- **export:** `export.EncodeNDJSON(w io.Writer, rows)` writes the bytes of `export.NDJSON` to any writer outside a request, next to `export.EncodeCSV`.
+- **mail:** `MAIL_REPLY_TO` (and `Mailer.SetReplyTo`) sets a default Reply-To for envelopes that have none.
 - **openapi:** `openapi.Info.Docs` sets `Servers` and `StripPrefix` per document path prefix, used by `ServeOpenAPIWith`, `openapi:export -prefix` and `codegen:*`.
 - **cli:** `vukem api:fuzz` runs a pinned Schemathesis image against the running API from the exported OpenAPI document, with `WithFuzzAuth` for a test credential, a config derived from the API (read-only APIs, rate-limit bypass) and `-dry-run`. No new Go dependency.
 - **qrcode:** Encode a short payload as PNG or SVG (`contrib/qrcode`, `rsc.io/qr` v0.2.0).

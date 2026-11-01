@@ -585,3 +585,53 @@ func TestEncodeCSV(t *testing.T) {
 		}
 	})
 }
+
+func TestEncodeNDJSON(t *testing.T) {
+	t.Parallel()
+
+	us := []user{{1, "Ana"}, {2, "<b>"}}
+
+	t.Run("matches the NDJSON download byte for byte", func(t *testing.T) {
+		t.Parallel()
+
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", nil)
+
+		if err := export.NDJSON(rec, req, "u.ndjson", seq(us...)); err != nil {
+			t.Fatal(err)
+		}
+
+		var buf bytes.Buffer
+		if err := export.EncodeNDJSON(&buf, seq(us...)); err != nil {
+			t.Fatal(err)
+		}
+
+		if diff := cmp.Diff(rec.Body.String(), buf.String()); diff != "" {
+			t.Errorf("EncodeNDJSON differs from NDJSON (-NDJSON +EncodeNDJSON):\n%s", diff)
+		}
+	})
+
+	t.Run("a failing row returns its error after the rows before it", func(t *testing.T) {
+		t.Parallel()
+
+		boom := errors.New("boom")
+
+		var buf bytes.Buffer
+		if err := export.EncodeNDJSON(&buf, failing(boom, us[0])); !errors.Is(err, boom) {
+			t.Fatalf("EncodeNDJSON() = %v, want %v", err, boom)
+		}
+
+		if got, want := buf.String(), "{\"id\":1,\"name\":\"Ana\"}\n"; got != want {
+			t.Errorf("written = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("a failing writer is reported", func(t *testing.T) {
+		t.Parallel()
+
+		disk := errors.New("disk full")
+		if err := export.EncodeNDJSON(errWriter{disk}, seq(us...)); !errors.Is(err, disk) {
+			t.Fatalf("EncodeNDJSON() = %v, want %v", err, disk)
+		}
+	})
+}

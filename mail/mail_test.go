@@ -635,3 +635,26 @@ func TestLogTransportAndPreview(t *testing.T) {
 		t.Fatal("preview errors")
 	}
 }
+
+func TestSetReplyToDefault(t *testing.T) {
+	t.Parallel()
+
+	m := New(NewArray(), "app@example.com", nil)
+	m.SetReplyTo("Support <support@example.com>")
+
+	msg, err := m.Render(t.Context(), raw{Envelope{To: []string{"a@b.co"}}, Text("hi")})
+	if err != nil || len(msg.ReplyTo) != 1 || msg.ReplyTo[0] != `"Support" <support@example.com>` {
+		t.Fatalf("default reply-to = %v %v", msg.ReplyTo, err)
+	}
+
+	msg, err = m.Render(t.Context(), raw{Envelope{To: []string{"a@b.co"}, ReplyTo: []string{"x@b.co"}}, Text("hi")})
+	if err != nil || len(msg.ReplyTo) != 1 || msg.ReplyTo[0] != "<x@b.co>" {
+		t.Fatalf("envelope reply-to = %v %v", msg.ReplyTo, err)
+	}
+
+	m.SetReplyTo("bad\r\nBcc: evil@x.co")
+
+	if _, err := m.Render(t.Context(), raw{Envelope{To: []string{"a@b.co"}}, Text("hi")}); err == nil {
+		t.Fatal("injected default reply-to accepted")
+	}
+}

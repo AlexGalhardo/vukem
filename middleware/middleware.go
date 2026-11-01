@@ -132,7 +132,8 @@ func LoggerWith(log *slog.Logger, o LoggerOptions) Middleware {
 				rw = &web.ResponseWriter{ResponseWriter: w}
 			}
 
-			next.ServeHTTP(rw, r)
+			ctx, extra := web.WithLogAttrs(r.Context())
+			next.ServeHTTP(rw, r.WithContext(ctx))
 
 			status := rw.Status()
 			if status == 0 {
@@ -158,7 +159,7 @@ func LoggerWith(log *slog.Logger, o LoggerOptions) Middleware {
 				peer, ip = truncateIP(peer), truncateIP(ip)
 			}
 
-			log.LogAttrs(r.Context(), level, "request",
+			attrs := append([]slog.Attr{
 				slog.String("method", r.Method),
 				slog.String("path", r.URL.Path),
 				slog.Int("status", status),
@@ -167,7 +168,9 @@ func LoggerWith(log *slog.Logger, o LoggerOptions) Middleware {
 				slog.String("request_id", web.RequestID(r.Context())),
 				slog.String("peer", peer),
 				slog.String("ip", ip),
-			)
+			}, extra.Attrs()...)
+
+			log.LogAttrs(r.Context(), level, "request", attrs...)
 		})
 	}
 }

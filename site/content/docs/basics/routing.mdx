@@ -319,6 +319,41 @@ Under the hood the route is registered as the [`ServeMux`](https://pkg.go.dev/ne
 - `route:list` prints the host before the path, and `RouteInfo.Host` carries it for tools.
 - The host must be a lowercase name without port, path or wildcard. `r.Host("API.example.com", ...)` fails when the routes compile: `router: GET /x: invalid host "API.example.com" (lowercase name, no port, path or wildcard)`.
 
+#### A host that serves only its own routes
+
+By default a host group only adds routes: a request for `api.example.com/login` that matches none of them falls through to the main routes. Call `Only()` on the host group to make it the only thing the host serves:
+
+```go title="routes/api.go"
+r.Host("api.example.com", func(g *router.Group) {
+	g.Get("/", home.APIIndex)
+	g.Group("/v1", apiV1)
+}).Name("host.").Only()
+```
+
+- Any other path on that host gets a `404` (or a `405` with `Allow` when another method matches) from the error handler, never a main route.
+- Those answers skip the router middleware added with `r.Use` (the web stack: sessions, CSRF), so they set no session cookie.
+- The host group's `ErrorHandler` still runs for them, which is how an API host answers every miss as problem+json.
+- `Only` on a group without a host fails when the routes compile.
+
+#### One set of routes under two prefixes
+
+To serve the same handlers at `/api/v1` on the main host and at `/v1` on the API host, register them from one function twice. Give each copy its own name prefix, as route names must be unique:
+
+```go title="routes/api.go"
+func apiV1(g *router.Group) {
+	g.Get("/games", games.Index).Name("games")
+}
+
+func API(r *router.Router) {
+	r.Group("/api/v1", apiV1).Name("api.")
+	r.Host("api.example.com", func(g *router.Group) {
+		g.Group("/v1", apiV1).Name("public.")
+	}).Only()
+}
+```
+
+`r.URL("api.games")` returns `/api/v1/games` and `r.URL("public.games")` returns `//api.example.com/v1/games`.
+
 Behind a proxy, the `Host` header must be the public name the client used. Most platforms forward it unchanged; check yours if host routes answer `404` in production only.
 
 ## Resource routes

@@ -116,6 +116,10 @@ type HTTPError struct {
 	Params map[string]any
 	// Extensions are extra problem+json members (4xx only).
 	Extensions map[string]any
+	// Type is the problem+json "type" URI (4xx only; empty: about:blank).
+	Type string
+	// Title replaces the status text as the title (4xx only).
+	Title string
 }
 ```
 
@@ -126,6 +130,8 @@ type HTTPError struct {
 | `errs.Wrap(status, err)` | You want a status but the cause is internal | `errs.Wrap(502, err)` for a failed upstream call |
 | `e.WithHeader(key, value)` | The response needs a header; returns a **copy** | `errs.ErrTooManyRequests.WithHeader("Retry-After", "30")` |
 | `e.WithExtension(key, value)` | API clients need a machine-readable member in the problem+json body; returns a **copy** | `errs.ErrTooManyRequests.WithExtension("code", "quota-exceeded")` |
+| `e.WithType(uri)` | The problem has its own `type` URI (a problem catalogue); returns a **copy** | `errs.ErrTooManyRequests.WithType("https://example.com/problems/cooldown")` |
+| `e.WithTitle(title)` | The problem needs its own `title` instead of the status text; returns a **copy** | `errs.ErrTooManyRequests.WithTitle("Export cooldown")` |
 
 Methods: `Text()` returns `Message` or, when it is empty, the status text ("Not Found"). `LocalizedText(ctx)` translates `Key` with the request's translator, falling back to `Text()`. `Error()` is for logs and includes the cause: `409 That slug is taken.` or `502 Bad Gateway: dial tcp: timeout`. `Unwrap()` returns `Err`, so `errors.Is(err, context.DeadlineExceeded)` still works through a wrapped error.
 
@@ -287,6 +293,35 @@ return errs.New(http.StatusTooManyRequests, "Daily quota reached.").
 ```
 
 Members are written in alphabetical order when there are extensions. An extension never replaces a standard member (`type`, `title`, `status`, `detail`, `instance`, `request_id`, `errors`): those keys are ignored. 5xx responses never carry extensions, as they never carry the message. Values must be safe to show to anyone who triggers the error. HTML pages and htmx fragments ignore them. The OpenAPI document does not describe extension members; document them in the operation's description.
+
+To set `type` or `title` themselves, use `WithType` and `WithTitle`. Like extensions, they apply to 4xx errors only; a 5xx keeps `about:blank` and the status text. `WithTitle` also titles the HTML error page and htmx fragment.
+
+```go title="app/controllers/exports_controller.go"
+return errs.New(http.StatusTooManyRequests, "You can request one export per day.").
+	WithType("https://example.com/problems/export-cooldown").
+	WithTitle("Export cooldown").
+	WithExtension("code", "export-cooldown")
+```
+
+### Decorating every problem
+
+`Services.ProblemDecorator` runs on every problem+json response right before it is written, after the defaults are filled: errors your handlers return, `c.Problem`, and the ones vukem raises itself (the router's `404` and `405`, `400` from typed routes, validation `422`). Use it to give every problem a catalogue `code` and a matching `type` in one place:
+
+```go title="bootstrap/app.go"
+app.Router.Services().ProblemDecorator = func(c *web.Ctx, p *web.Problem) {
+	code, ok := p.Extensions["code"].(string)
+	if !ok {
+		code = strings.ToLower(strings.ReplaceAll(http.StatusText(p.Status), " ", "-"))
+		if p.Extensions == nil {
+			p.Extensions = map[string]any{}
+		}
+		p.Extensions["code"] = code
+	}
+	p.Type = "https://example.com/problems/" + code
+}
+```
+
+The decorator may change any member, and `p.Extensions` is its own copy, so editing it never changes the error value. It runs for 5xx problems too: never add the cause or other internal details there (CWE-209).
 
 The format is [RFC 9457 problem details](https://www.rfc-editor.org/rfc/rfc9457). `type` is `about:blank`, except for validation errors when `APP_PROBLEM_BASE_URL` is set: then it is `<base>/validation`. `instance` is the request path and `request_id` the id from the [request id middleware](/docs/basics/middleware).
 
@@ -451,6 +486,7 @@ JSON clients keep getting problem JSON, now with the error text as `detail`, and
 | `APP_PROBLEM_BASE_URL` | URL | empty | Validation problem `type` becomes `<base>/validation` |
 | `Services.Errors` | `web.ErrorHandler` | `nil` | Replaces `web.DefaultErrorHandler` |
 | `Services.ErrorPage` | `web.ErrorPageFunc` | `nil` (Inertia's with `WithInertia`) | Renders the error page in another format |
+| `Services.ProblemDecorator` | `func(*web.Ctx, *web.Problem)` | `nil` | Edits every problem+json response before it is written |
 | `Services.Views` | `web.Renderer` | the view engine | Source of `errors/<status>` views |
 | `inertia.Config.ErrorComponent` | string | `"Error"` | Page component for Inertia errors |
 | `inertia.Config.ErrorFullPages` | bool | `false` | Render that page for full page loads too |

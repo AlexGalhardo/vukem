@@ -1103,3 +1103,40 @@ func TestSecurity_A09_LoggerTruncatesIPs(t *testing.T) {
 		}
 	}
 }
+
+func TestLoggerIncludesAddedLogAttrs(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	log := slog.New(slog.NewJSONHandler(&buf, nil))
+
+	type innerKey struct{}
+
+	// The outer middleware adds after the handler ran (through a derived
+	// context), the handler before.
+	addUser := func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), innerKey{}, 1)))
+			web.AddLogAttrs(r.Context(), slog.String("user", "u-hash"))
+		})
+	}
+
+	h := Logger(log)(addUser(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		web.AddLogAttrs(r.Context(), slog.String("route", "GET /items/{id}"))
+		fmt.Fprint(w, "ok")
+	})))
+
+	do(t, h, get(t, "/items/1"))
+
+	var m map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &m); err != nil {
+		t.Fatal(err)
+	}
+
+	if m["msg"] != "request" || m["route"] != "GET /items/{id}" || m["user"] != "u-hash" {
+		t.Errorf("request line = %v", m)
+	}
+
+	// Outside Logger, AddLogAttrs is a no-op.
+	web.AddLogAttrs(t.Context(), slog.String("x", "y"))
+}

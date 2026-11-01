@@ -22,6 +22,7 @@ package admin
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"embed"
 	"encoding/json"
@@ -130,13 +131,21 @@ type Config struct {
 	// "admin.idle_at", updated only by Guard (and the routes Mount
 	// registers), not by the rest of the app. An idle session is
 	// invalidated (an "admin.session_idle" security event) and the browser
-	// is sent to log in again. Activity elsewhere does not refresh it.
+	// is sent to log in again. Activity elsewhere does not refresh it,
+	// unless those routes use TrackIdle.
 	IdleTimeout time.Duration
 	// AllowCIDRs, when not empty, limits the panel to client IPs
 	// (web.Ctx.IP, trusted-proxy aware) inside one of the prefixes. Others
 	// get 403 with an "admin.ip_denied" security event, before any login
 	// redirect. The embedded CSS and JS stay public.
 	AllowCIDRs []netip.Prefix
+	// DenyStatus is the status AllowCIDRs answers outside the list: 0 or
+	// 403 (Forbidden), or 404 to hide that the panel exists.
+	DenyStatus int
+	// TwoFactorRedirect, when set, is a local path ("/settings/2fa") that
+	// an admin without 2FA is redirected to (303) instead of the 403. A
+	// failing TwoFactor lookup stays 403 (fail closed).
+	TwoFactorRedirect string
 	// Now is the clock for MaxSessionAge and IdleTimeout (tests); defaults
 	// to time.Now.
 	Now func() time.Time
@@ -193,6 +202,15 @@ func New(cfg Config) (*Panel, error) {
 
 	if cfg.IdleTimeout < 0 {
 		return nil, errors.New("admin: Config.IdleTimeout cannot be negative")
+	}
+
+	if cfg.DenyStatus != 0 && cfg.DenyStatus != http.StatusForbidden && cfg.DenyStatus != http.StatusNotFound {
+		return nil, fmt.Errorf("admin: Config.DenyStatus must be 403 or 404, got %d", cfg.DenyStatus)
+	}
+
+	if r := cfg.TwoFactorRedirect; r != "" && (!strings.HasPrefix(r, "/") || strings.HasPrefix(r, "//") ||
+		strings.HasPrefix(r, "/\\")) {
+		return nil, fmt.Errorf("admin: Config.TwoFactorRedirect must be a local path, got %q", r)
 	}
 
 	for _, p := range cfg.AllowCIDRs {
@@ -410,14 +428,27 @@ func (p *Panel) allowIP(next http.Handler) http.Handler {
 		}
 
 		web.SecurityEvent(r, "admin.ip_denied", "area", "admin")
-		c.HandleError(errs.Wrap(http.StatusForbidden, errors.New("admin: client IP not allowed")))
+		status := cmp.Or(p.cfg.DenyStatus, http.StatusForbidden)
+		c.HandleError(errs.Wrap(status, errors.New("admin: client IP not allowed")))
 	})
 }
 
 // idleSessionKey is the unix-second timestamp of the last guarded request.
 const idleSessionKey = "admin.idle_at"
 
-func (p *Panel) idleTimeout(next http.Handler) http.Handler {
+func (p *Panel) idleTimeout(next http.Handler) http.Handler { return p.idle(next, false) }
+
+// TrackIdle is middleware that applies IdleTimeout to the routes it wraps
+// (or to the whole router) for sessions that have used the panel: their
+// activity there refreshes the idle clock, and an idle session is ended
+// there too, so an admin keeps one clock across the app. Sessions that
+// never reached the panel are left untouched. Without IdleTimeout it does
+// nothing.
+func (p *Panel) TrackIdle() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler { return p.idle(next, true) }
+}
+
+func (p *Panel) idle(next http.Handler, trackedOnly bool) http.Handler {
 	if p.cfg.IdleTimeout == 0 {
 		return next
 	}
@@ -426,7 +457,7 @@ func (p *Panel) idleTimeout(next http.Handler) http.Handler {
 		s := web.SessionFrom(r.Context())
 		now := p.cfg.Now()
 
-		if s != nil {
+		if s != nil && (!trackedOnly || s.Get(idleSessionKey) != nil) {
 			if last, ok := sessionUnix(s.Get(idleSessionKey)); ok && now.Sub(last) > p.cfg.IdleTimeout {
 				web.SecurityEvent(r, "admin.session_idle", "area", "admin")
 				s.Invalidate()
@@ -500,6 +531,10 @@ func (p *Panel) requireTwoFactor(next http.Handler) http.Handler {
 
 		if err != nil {
 			c.Log().ErrorContext(r.Context(), "admin: two-factor check failed", "err", err)
+		} else if p.cfg.TwoFactorRedirect != "" {
+			http.Redirect(w, r, p.cfg.TwoFactorRedirect, http.StatusSeeOther)
+
+			return
 		}
 
 		c.HandleError(errs.Wrap(http.StatusForbidden, errors.New("admin: two-factor authentication required")))
