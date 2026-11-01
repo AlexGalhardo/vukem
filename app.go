@@ -28,6 +28,7 @@ import (
 	"github.com/AlexGalhardo/vukem/events"
 	"github.com/AlexGalhardo/vukem/flags"
 	"github.com/AlexGalhardo/vukem/i18n"
+	"github.com/AlexGalhardo/vukem/indexnow"
 	"github.com/AlexGalhardo/vukem/inertia"
 	"github.com/AlexGalhardo/vukem/logging"
 	"github.com/AlexGalhardo/vukem/logging/telegram"
@@ -154,6 +155,9 @@ type Config struct {
 	// BingWebmaster holds BING_WEBMASTER_API_KEY for bingwmt.New (off
 	// when unset).
 	BingWebmaster bingwmt.Config
+	// IndexNow configures INDEXNOW_KEY (served at /{key}.txt) for
+	// indexnow.New; off when unset.
+	IndexNow indexnow.Config
 }
 
 // IsProduction reports whether APP_ENV is production.

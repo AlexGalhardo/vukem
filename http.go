@@ -653,6 +653,10 @@ func (a *App) newRouter() *router.Router {
 		r.Handle("GET /BingSiteAuth.xml", a.Config.Analytics.BingSiteAuthHandler())
 	}
 
+	if a.Config.IndexNow.Enabled() {
+		r.Handle("GET "+a.Config.IndexNow.KeyPath(), a.Config.IndexNow.KeyFileHandler())
+	}
+
 	return r
 }
 

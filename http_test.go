@@ -3358,6 +3358,7 @@ func TestAnalytics(t *testing.T) {
 			"GOOGLE_SITE_VERIFICATION":       "tok1",
 			"GOOGLE_SITE_VERIFICATION_FILES": "google1234abcd.html",
 			"BING_SITE_VERIFICATION":         "ABC123",
+			"INDEXNOW_KEY":                   "example-key-1234",
 		})))
 		rec := serve(t, app, http.MethodGet, "/page", false)
 
@@ -3386,16 +3387,22 @@ func TestAnalytics(t *testing.T) {
 		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "<user>ABC123</user>") {
 			t.Errorf("BingSiteAuth.xml = %d %q", rec.Code, rec.Body.String())
 		}
+
+		rec = serve(t, app, http.MethodGet, "/example-key-1234.txt", false)
+		if rec.Code != http.StatusOK || rec.Body.String() != "example-key-1234" {
+			t.Errorf("IndexNow key file = %d %q", rec.Code, rec.Body.String())
+		}
 	})
 
 	t.Run("invalid config fails boot", func(t *testing.T) {
 		t.Parallel()
 
 		_, err := New(
-			WithSource(testSource(map[string]string{"GA_MEASUREMENT_ID": "UA-1-1"})),
+			WithSource(testSource(map[string]string{"GA_MEASUREMENT_ID": "UA-1-1", "INDEXNOW_KEY": "short"})),
 			WithLogger(discardLogger()),
 		)
-		if err == nil || !strings.Contains(err.Error(), "GA_MEASUREMENT_ID") {
+		if err == nil || !strings.Contains(err.Error(), "GA_MEASUREMENT_ID") ||
+			!strings.Contains(err.Error(), "INDEXNOW_KEY") {
 			t.Errorf("New() error = %v, want GA_MEASUREMENT_ID", err)
 		}
 	})
