@@ -345,6 +345,8 @@ Package `export` (stdlib only) streams downloads row by row from any `iter.Seq2[
 
 ## Sitemaps
 
+Package `llmstxt` (stdlib only) renders `/llms.txt` (<https://llmstxt.org>: H1 title, `>` summary, details, H2 link lists, `## Optional`) and `/llms-full.txt` (header, then each `Link.Content` Markdown after a `---` rule with a `Source:` line) from a `llmstxt.Doc`. `llmstxt.Register(r, doc)` adds both GET routes (`text/plain; charset=utf-8`, `Cache-Control: public, max-age=3600`, `Last-Modified` from `Doc.LastModified`); `llms.txt` is rendered once with a strong ETag and 304s, `llms-full.txt` streams per request and ends with `TruncatedNote` past `Doc.MaxFullBytes` (16 MiB default); a `Content` error is a bare 500 before the first byte and an aborted connection after. Titles, notes and summary are flattened to one line with link brackets escaped, URLs must be absolute http(s) or root-relative and are percent-escaped (`TestSecurity_A03_LLMsTxtMarkdownInjection`). Site page: `site/content/docs/digging-deeper/llms-txt.mdx`.
+
 Package `sitemap` (stdlib only) streams XML sitemaps for catalogues too large to build in memory (<https://www.sitemaps.org/protocol.html>):
 
 - `sitemap.NewWriter(w)` writes one `<urlset>`; `Add(sitemap.URL{Loc, LastMod, Alternates})` writes a URL with `<lastmod>` (RFC 3339, UTC) and `xhtml:link` hreflang alternates; `Close()` ends it. Wrap `w` in `gzip.NewWriter` for `.xml.gz` chunks.
