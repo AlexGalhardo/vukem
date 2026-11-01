@@ -365,6 +365,14 @@ What happens on invalid input:
 | `inertia.Location(c, url)` | A **full page load**: `409` with `X-Inertia-Location` for Inertia requests, a plain redirect otherwise. Use it for external URLs and non-Inertia pages |
 | `inertia.PreserveFragment(c)` | Keep the current URL's `#fragment` across the redirect that follows |
 
+**Returning to a page anchor.** To send the user back to a section of a page after a form post, redirect to the URL with its fragment. Use `c.Redirect`, not `inertia.Location`:
+
+```go title="app/controllers/account/two_factor.go"
+return c.Redirect("/profile#two-factor")
+```
+
+The browser would drop the fragment of a plain `303` that `fetch` follows, so for Inertia requests the middleware answers `409` with `X-Inertia-Redirect: /profile#two-factor`. That is not a full reload: the Inertia client (v2 and later) makes a normal Inertia visit to that URL, with the visit options of the form (`preserveScroll` and the rest), and scrolls to the anchor. Only `X-Inertia-Location`, which `inertia.Location` sends, triggers a full page load. Requests outside Inertia and prefetch requests get the plain `303`.
+
 ## Error pages
 
 Before v0.27, an error on an Inertia visit sent an HTML page, and the client showed it inside a modal. Now Vukem renders a page component instead.
