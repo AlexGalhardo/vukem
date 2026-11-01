@@ -52,7 +52,8 @@ func TestBufferFlush(t *testing.T) {
 	b.Add("a", 3)
 
 	boom := errors.New("db down")
-	if err := b.Flush(t.Context(), func(context.Context, map[string]int64) error { return boom }); !errors.Is(err, boom) {
+	fail := func(context.Context, map[string]int64) error { return boom }
+	if err := b.Flush(t.Context(), fail); !errors.Is(err, boom) {
 		t.Fatalf("Flush() = %v, want %v", err, boom)
 	}
 
@@ -71,7 +72,8 @@ func TestBufferFlush(t *testing.T) {
 	}
 
 	called := false
-	if err := b.Flush(t.Context(), func(context.Context, map[string]int64) error { called = true; return nil }); err != nil || called {
+	spy := func(context.Context, map[string]int64) error { called = true; return nil }
+	if err := b.Flush(t.Context(), spy); err != nil || called {
 		t.Errorf("empty Flush() = %v, called = %v", err, called)
 	}
 }

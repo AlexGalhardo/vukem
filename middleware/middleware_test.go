@@ -1110,10 +1110,13 @@ func TestLoggerIncludesAddedLogAttrs(t *testing.T) {
 	var buf bytes.Buffer
 	log := slog.New(slog.NewJSONHandler(&buf, nil))
 
-	// The outer middleware adds after the handler ran, the inner one before.
+	type innerKey struct{}
+
+	// The outer middleware adds after the handler ran (through a derived
+	// context), the handler before.
 	addUser := func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), struct{}{}, 1)))
+			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), innerKey{}, 1)))
 			web.AddLogAttrs(r.Context(), slog.String("user", "u-hash"))
 		})
 	}

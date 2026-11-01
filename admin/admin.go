@@ -428,7 +428,8 @@ func (p *Panel) allowIP(next http.Handler) http.Handler {
 		}
 
 		web.SecurityEvent(r, "admin.ip_denied", "area", "admin")
-		c.HandleError(errs.Wrap(cmp.Or(p.cfg.DenyStatus, http.StatusForbidden), errors.New("admin: client IP not allowed")))
+		status := cmp.Or(p.cfg.DenyStatus, http.StatusForbidden)
+		c.HandleError(errs.Wrap(status, errors.New("admin: client IP not allowed")))
 	})
 }
 

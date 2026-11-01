@@ -230,7 +230,8 @@ func TestSecurity_A07_AdminTrackIdle(t *testing.T) {
 
 	// Activity on a tracked route keeps the panel session alive.
 	clock := vukemtest.NewFakeClock(time.Date(2026, 10, 29, 9, 0, 0, 0, time.UTC))
-	app := newApp(t, options{clock: clock, beside: tracked, harden: func(c *admin.Config) { c.IdleTimeout = 30 * time.Minute }})
+	idle := func(c *admin.Config) { c.IdleTimeout = 30 * time.Minute }
+	app := newApp(t, options{clock: clock, beside: tracked, harden: idle})
 
 	c := as(t, app, "admin")
 	c.Get("/admin").AssertOK()

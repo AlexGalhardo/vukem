@@ -655,7 +655,8 @@ func TestProblemTypeTitleAndDecorator(t *testing.T) {
 			WithType("https://example.test/p/cooldown").WithTitle("Export cooldown")
 
 		rec, _ := runError(t, err, jsonReq, nil)
-		if got := decode(t, rec); got["type"] != "https://example.test/p/cooldown" || got["title"] != "Export cooldown" {
+		got := decode(t, rec)
+		if got["type"] != "https://example.test/p/cooldown" || got["title"] != "Export cooldown" {
 			t.Errorf("problem = %s", rec.Body)
 		}
 	})
