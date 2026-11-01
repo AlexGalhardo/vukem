@@ -645,6 +645,10 @@ func (a *App) newRouter() *router.Router {
 	}
 	r.Get("/up", a.healthHandler).Name(reservedRouteName("health"))
 
+	for _, f := range a.Config.Analytics.GoogleSiteVerificationFiles {
+		r.Handle("GET /"+f, a.Config.Analytics.VerificationFileHandler())
+	}
+
 	return r
 }
 

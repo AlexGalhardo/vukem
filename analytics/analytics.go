@@ -46,6 +46,13 @@ type Config struct {
 	// granted and loads gtag.js on the first page. Leave it off where
 	// LGPD/GDPR apply: the app must ask first (window.vukemAnalytics.consent).
 	GAConsentDefaultGranted bool `env:"GA_CONSENT_DEFAULT_GRANTED"`
+
+	// GoogleSiteVerification renders one google-site-verification meta tag
+	// per token (Search Console, "HTML tag" method).
+	GoogleSiteVerification []string `env:"GOOGLE_SITE_VERIFICATION"`
+	// GoogleSiteVerificationFiles serves each file name (google<token>.html,
+	// Search Console "HTML file" method) at the site root.
+	GoogleSiteVerificationFiles []string `env:"GOOGLE_SITE_VERIFICATION_FILES"`
 }
 
 // DefaultUmamiScriptURL is the Umami Cloud tracker.
@@ -53,20 +60,23 @@ const DefaultUmamiScriptURL = "https://cloud.umami.is/script.js"
 
 // Enabled reports whether any provider or verification is configured.
 func (c Config) Enabled() bool {
-	return c.UmamiWebsiteID != "" || c.GAMeasurementID != ""
+	return c.UmamiWebsiteID != "" || c.GAMeasurementID != "" ||
+		len(c.GoogleSiteVerification) > 0 || len(c.GoogleSiteVerificationFiles) > 0
 }
 
 // Validate refuses values that are not what the providers issue. Call it at
 // boot (vukem.New does): a typo fails the deploy instead of silently
 // dropping the stats.
 func (c Config) Validate() error {
-	return errors.Join(c.validateUmami(), c.validateGA())
+	return errors.Join(c.validateUmami(), c.validateGA(), c.validateSearchConsole())
 }
 
 // Tags returns the head elements of the enabled providers, with nonce on
 // every script ("" omits it). Every value is escaped, validated or not.
 func (c Config) Tags(nonce string) template.HTML {
 	var tags []string
+
+	tags = append(tags, c.searchConsoleTags()...)
 
 	if t := c.umamiTag(nonce); t != "" {
 		tags = append(tags, t)
