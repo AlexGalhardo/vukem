@@ -3407,3 +3407,38 @@ func TestAnalytics(t *testing.T) {
 		}
 	})
 }
+
+// VF-068 (HexaScore): an Only() host group serves the health check itself.
+func TestHealthHandlerOnOnlyHost(t *testing.T) {
+	t.Parallel()
+
+	app := newTestApp(t, WithRoutes(func(r *router.Router, app *App) error {
+		r.Host("api.example.test", func(g *router.Group) {
+			g.Get("/up", app.HealthHandler())
+		}).Only()
+
+		return nil
+	}))
+
+	h, err := app.Handler()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for target, want := range map[string]int{"/up": 200, "/login": 404} {
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, target, http.NoBody)
+		req.Host = "api.example.test"
+
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+
+		if rec.Code != want {
+			t.Errorf("GET api.example.test%s = %d, want %d", target, rec.Code, want)
+		}
+
+		if want == 200 && (!strings.Contains(rec.Body.String(), `"status":"ok"`) ||
+			rec.Header().Get("Cache-Control") != "no-store") {
+			t.Errorf("health answer = %q (Cache-Control %q)", rec.Body.String(), rec.Header().Get("Cache-Control"))
+		}
+	}
+}

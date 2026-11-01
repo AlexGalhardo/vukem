@@ -211,6 +211,12 @@ func (a *App) writeReadiness(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// HealthHandler is the handler of GET /up, for routes the framework's own
+// /up does not reach, such as a Router.Host group marked Only:
+// g.Get("/up", app.HealthHandler()). It answers 200 {"status":"ok"} with
+// Cache-Control: no-store, and with ?checks=1 like ReadyHandler.
+func (a *App) HealthHandler() web.HandlerFunc { return a.healthHandler }
+
 // healthHandler is the liveness probe: 200 once the app booted. With
 // ?checks=1 it answers like ReadyHandler.
 func (a *App) healthHandler(c *web.Ctx) error {
