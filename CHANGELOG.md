@@ -28,6 +28,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **qrcode:** Encode a short payload as PNG or SVG (`contrib/qrcode`, `rsc.io/qr` v0.2.0).
 - **ssg:** Prerender named handler paths to static files (`ssg.Generate`, `vukem ssg:generate`). This does not run the Inertia SSR server and does not crawl registered routes.
 
+## [0.36.0] - 2026-11-01
+
+### Added
+
+- Fix the 2026-11-01 HexaScore feedback batch and add llms.txt support (#128) ([9cafa13](https://github.com/AlexGalhardo/vukem/commit/9cafa13387b75915995ac4e67b61f2db03a48c97))
+- **analytics:** Add umami, ga4, search console, bing webmaster and indexnow (#130) ([343667b](https://github.com/AlexGalhardo/vukem/commit/343667b196243b1e590c32ad1fddf22d0109b324))
+- **challenge:** Add native Cloudflare Turnstile support and step-up hook (#131) ([330866d](https://github.com/AlexGalhardo/vukem/commit/330866d306cd54047c6c944a27a6e8b2e36992ac))
+
+### Fixed
+
+- **web:** Reject SafeRedirect targets that http.Redirect cleans off-origin (#132) ([ea01c38](https://github.com/AlexGalhardo/vukem/commit/ea01c38114f55c262c209408d1cb1a4577330b04))
+- **cli:** Pin contrib/stripe v0.5.0 in install:billing (#133) ([ef1f768](https://github.com/AlexGalhardo/vukem/commit/ef1f7683a23b87bad8a557366622e86485a6129f))
+
 ## [0.35.0] - 2026-11-01
 
 ### Added
@@ -1168,7 +1181,8 @@ Project foundation. No framework code yet; see [PLAN.md](PLAN.md) for the roadma
 - README, MIT license, CONTRIBUTING, SECURITY and CODE_OF_CONDUCT.
 - Agent configuration: `AGENTS.md`, `CLAUDE.md`, path-scoped `.claude/rules/`, Go skills and project settings.
 
-[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.35.0...HEAD
+[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.36.0...HEAD
+[0.36.0]: https://github.com/AlexGalhardo/vukem/compare/v0.35.0...v0.36.0
 [0.35.0]: https://github.com/AlexGalhardo/vukem/compare/v0.34.0...v0.35.0
 [0.34.0]: https://github.com/AlexGalhardo/vukem/compare/v0.33.0...v0.34.0
 [0.33.0]: https://github.com/AlexGalhardo/vukem/compare/v0.32.0...v0.33.0
