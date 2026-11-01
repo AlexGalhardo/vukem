@@ -55,7 +55,7 @@ The widget loads a script and an iframe from `https://challenges.cloudflare.com`
 middleware.SecureHeaders(middleware.SecureHeadersConfig{CSPSources: ts.CSPSources()})
 ```
 
-Merge it with your other sources if you already set `CSPSources`. See [Security headers](/docs/security/security-headers).
+With the default stacks, add them in `MiddlewareOptions.SecureHeaders` with `cfg.AddCSPSources` (one call per directive of `ts.CSPSources()`), which keeps the other integrations' sources. See [Security headers](/docs/security/security-headers).
 
 ### Server templates
 

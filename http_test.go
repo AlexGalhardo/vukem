@@ -3442,3 +3442,33 @@ func TestHealthHandlerOnOnlyHost(t *testing.T) {
 		}
 	}
 }
+
+// VF-073 (HexaScore): replacing CSPSources drops the analytics origins;
+// the boot warns, and AddCSPSources keeps them.
+func TestCSPWarnsWhenIntegrationSourcesAreDropped(t *testing.T) {
+	t.Parallel()
+
+	src := map[string]string{"UMAMI_WEBSITE_ID": "94db1cb1-74f4-4a40-ad6c-962362670409"}
+
+	for name, edit := range map[string]func(*middleware.SecureHeadersConfig){
+		"replaced": func(cfg *middleware.SecureHeadersConfig) {
+			cfg.CSPSources = map[string][]string{"img-src": {"https://img.example"}}
+		},
+		"added": func(cfg *middleware.SecureHeadersConfig) { cfg.AddCSPSources("img-src", "https://img.example") },
+	} {
+		var buf bytes.Buffer
+
+		app := newTestApp(t, WithSource(testSource(src)), WithLogger(slog.New(slog.NewTextHandler(&buf, nil))),
+			WithRoutes(func(r *router.Router, app *App) error {
+				return DefaultMiddlewareWith(app, r, MiddlewareOptions{SecureHeaders: edit})
+			}))
+		if _, err := app.Handler(); err != nil {
+			t.Fatal(err)
+		}
+
+		warned := strings.Contains(buf.String(), "cloud.umami.is")
+		if warned != (name == "replaced") {
+			t.Errorf("%s: warned = %v, log:\n%s", name, warned, buf.String())
+		}
+	}
+}

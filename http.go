@@ -296,6 +296,8 @@ func APIMiddlewareWith(app *App, r *router.Router, opts APIMiddlewareOptions) er
 		return fmt.Errorf("vukem: secure headers: %w", err)
 	}
 
+	warnMissingCSP(app, secure)
+
 	r.UseServer(serverMiddleware(app, secure, maintenanceConfig(app))...)
 	useLocalePrefixes(app, r, opts.I18n)
 	r.Use(middleware.BodyLimit(web.DefaultMaxBody))
@@ -438,6 +440,17 @@ func serverMiddleware(
 	}
 }
 
+// warnMissingCSP logs at boot when the final policy no longer allows the
+// origins an enabled integration needs, typically after an app assigned
+// CSPSources instead of calling AddCSPSources: the browser would block
+// those scripts with no server-side trace.
+func warnMissingCSP(app *App, cfg middleware.SecureHeadersConfig) {
+	if missing := cfg.MissingCSPSources(app.Config.Analytics.CSPSources()); missing != nil {
+		app.Log.Warn("vukem: the Content-Security-Policy blocks sources an enabled integration needs; "+
+			"add them with cfg.AddCSPSources instead of replacing CSPSources", "missing", missing)
+	}
+}
+
 // secureHeadersConfig honours X-Forwarded-Proto from TRUSTED_PROXIES when
 // TRUST_FORWARDED_PROTO is set, forces HSTS in production with HSTS_FORCE,
 // and allows the Vite dev server in the CSP while it runs (app.Vite only
@@ -532,6 +545,8 @@ func DefaultMiddlewareWith(app *App, r *router.Router, opts MiddlewareOptions) e
 	if err := secure.Validate(); err != nil {
 		return fmt.Errorf("vukem: secure headers: %w", err)
 	}
+
+	warnMissingCSP(app, secure)
 
 	var origins []string
 	for o := range strings.SplitSeq(app.Source.Get("CSRF_TRUSTED_ORIGINS"), ",") {

@@ -175,6 +175,63 @@ func SecureHeaders(cfg SecureHeadersConfig) Middleware {
 	}
 }
 
+// AddCSPSources adds sources to directive in CSPSources, keeping the
+// sources already there (the ones Vukem's integrations put in) and
+// skipping duplicates. Prefer it to assigning CSPSources, which drops them.
+func (cfg *SecureHeadersConfig) AddCSPSources(directive string, sources ...string) {
+	if cfg.CSPSources == nil {
+		cfg.CSPSources = map[string][]string{}
+	}
+
+	for _, src := range sources {
+		if !slices.Contains(cfg.CSPSources[directive], src) {
+			cfg.CSPSources[directive] = append(cfg.CSPSources[directive], src)
+		}
+	}
+}
+
+// MissingCSPSources returns the sources of want, by directive, that the
+// policy SecureHeaders would send does not allow (a "-src" directive the
+// policy lacks is checked against its fallback, such as default-src), or
+// nil when every one is allowed or the CSP is disabled. Pass an
+// integration's CSPSources() to check it was not dropped.
+func (cfg SecureHeadersConfig) MissingCSPSources(want map[string][]string) map[string][]string {
+	csp, err := cfg.policy()
+	if err != nil {
+		cfg.CSPSources, cfg.ReportURI = nil, "" // what SecureHeaders serves then
+		csp, _ = cfg.policy()
+	}
+
+	if csp == "-" {
+		return nil
+	}
+
+	dirs := parseCSP(csp)
+
+	var missing map[string][]string
+
+	for _, name := range slices.Sorted(maps.Keys(want)) {
+		var have []string
+		if i := slices.IndexFunc(dirs, func(d cspDirective) bool { return d.name == name }); i >= 0 {
+			have = dirs[i].sources
+		} else if chain, ok := cspFallback[name]; ok {
+			have = fallbackSources(dirs, chain)
+		}
+
+		for _, src := range want[name] {
+			if !slices.Contains(have, src) {
+				if missing == nil {
+					missing = map[string][]string{}
+				}
+
+				missing[name] = append(missing[name], src)
+			}
+		}
+	}
+
+	return missing
+}
+
 // reportGroup is the Reporting-Endpoints group named by report-to.
 const reportGroup = "csp-endpoint"
 

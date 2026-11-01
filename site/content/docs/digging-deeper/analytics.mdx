@@ -63,16 +63,12 @@ Use any subset. The next sections say where each value comes from.
 </Step>
 <Step title="Keep vukem's middleware">
 
-`vukem.DefaultMiddleware` and `vukem.APIMiddleware` add the providers' CSP sources for you. If you adjust the policy with `MiddlewareOptions.SecureHeaders`, **add** to `cfg.CSPSources` instead of replacing the map, or the analytics origins are lost:
+`vukem.DefaultMiddleware` and `vukem.APIMiddleware` add the providers' CSP sources for you. If you adjust the policy with `MiddlewareOptions.SecureHeaders`, **add** with `cfg.AddCSPSources` instead of replacing `cfg.CSPSources`, or the analytics origins are lost (the boot then logs a warning naming them):
 
 ```go title="bootstrap/http.go"
 err := vukem.DefaultMiddlewareWith(app, r, vukem.MiddlewareOptions{
 	SecureHeaders: func(cfg *middleware.SecureHeadersConfig) {
-		if cfg.CSPSources == nil {
-			cfg.CSPSources = map[string][]string{}
-		}
-
-		cfg.CSPSources["img-src"] = append(cfg.CSPSources["img-src"], "https://images.example.com")
+		cfg.AddCSPSources("img-src", "https://images.example.com")
 	},
 })
 ```

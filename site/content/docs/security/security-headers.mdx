@@ -158,11 +158,9 @@ The blog wants Plausible analytics and a YouTube embed. Do not rewrite the whole
 ```go title="routes/web.go"
 err := vukem.DefaultMiddlewareWith(app, r, vukem.MiddlewareOptions{
 	SecureHeaders: func(cfg *middleware.SecureHeadersConfig) {
-		cfg.CSPSources = map[string][]string{
-			"script-src":  {"https://plausible.io"},
-			"connect-src": {"https://plausible.io"},
-			"frame-src":   {"https://www.youtube-nocookie.com"},
-		}
+		cfg.AddCSPSources("script-src", "https://plausible.io")
+		cfg.AddCSPSources("connect-src", "https://plausible.io")
+		cfg.AddCSPSources("frame-src", "https://www.youtube-nocookie.com")
 	},
 })
 if err != nil {
@@ -170,6 +168,16 @@ if err != nil {
 	return err
 }
 ```
+
+`cfg.AddCSPSources(directive, sources...)` adds to `cfg.CSPSources` and keeps what is already there, skipping duplicates. That matters: the default stacks put the origins of enabled integrations ([analytics](/docs/digging-deeper/analytics)) in `CSPSources` before your function runs, and assigning a new map drops them. When the final policy no longer allows an enabled integration's origins, the boot logs a warning that names them:
+
+```text
+level=WARN msg="vukem: the Content-Security-Policy blocks sources an
+  enabled integration needs; add them with cfg.AddCSPSources instead of
+  replacing CSPSources" missing=map[connect-src:[https://cloud.umami.is] ...]
+```
+
+For an integration your app wires itself, such as [Turnstile](/docs/security/bot-challenge), check it with `cfg.MissingCSPSources(ts.CSPSources())`: it returns the sources the final policy would block, by directive (a missing `-src` directive is checked against its fallback), or nil.
 
 The resulting policy ends with `... script-src 'self' 'nonce-…' https://plausible.io; ... frame-src 'self' https://www.youtube-nocookie.com`.
 
