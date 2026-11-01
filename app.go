@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/AlexGalhardo/vukem/analytics"
 	"github.com/AlexGalhardo/vukem/cache"
 	"github.com/AlexGalhardo/vukem/config"
 	"github.com/AlexGalhardo/vukem/crypt"
@@ -145,6 +146,10 @@ type Config struct {
 	// clients by (1-128): one client usually owns a whole /64 and can
 	// rotate addresses inside it. IPv4 keys stay per address.
 	RateLimitIPv6Prefix int `env:"RATE_LIMIT_IPV6_PREFIX" default:"64"`
+	// Analytics configures Umami, Google Analytics 4 and Search Console
+	// verification (UMAMI_*, GA_*, GOOGLE_SITE_VERIFICATION*); all off
+	// when unset.
+	Analytics analytics.Config
 }
 
 // IsProduction reports whether APP_ENV is production.
@@ -684,7 +689,7 @@ func New(opts ...Option) (*App, error) {
 	if o.views != nil {
 		engine, err := view.New(view.Config{
 			FS: o.views, Reload: !cfg.IsProduction(), URLs: app.Router, Vite: app.Vite, I18n: app.I18n,
-			Funcs: o.viewFuncs,
+			Funcs: o.viewFuncs, Analytics: cfg.Analytics,
 		})
 		if err != nil {
 			return nil, err

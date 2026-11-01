@@ -52,6 +52,10 @@ func checkBootConfig(
 		}
 	}
 
+	if err := cfg.Analytics.Validate(); err != nil {
+		errs = append(errs, err)
+	}
+
 	if cfg.HSTSForce && !strings.HasPrefix(cfg.URL, "https://") {
 		errs = append(errs, errors.New("vukem: HSTS_FORCE requires an https APP_URL"))
 	}

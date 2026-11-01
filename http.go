@@ -449,6 +449,8 @@ func secureHeadersConfig(app *App) middleware.SecureHeadersConfig {
 		cfg.DevServer = app.Vite.HotURL
 	}
 
+	cfg.CSPSources = app.Config.Analytics.CSPSources()
+
 	return cfg
 }
 

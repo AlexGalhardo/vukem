@@ -33,6 +33,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/AlexGalhardo/vukem/analytics"
 	"github.com/AlexGalhardo/vukem/i18n"
 	"github.com/AlexGalhardo/vukem/vite"
 	"github.com/AlexGalhardo/vukem/web"
@@ -52,6 +53,9 @@ type Config struct {
 	// Funcs adds custom template functions. A name already used by a
 	// built-in ("route", "csrfField", "cspNonce"...) is an error.
 	Funcs template.FuncMap
+	// Analytics backs the "analytics" function, which renders the enabled
+	// providers' head tags with the request's CSP nonce (nothing when off).
+	Analytics analytics.Config
 	// URLs resolves named routes for the "route" function.
 	URLs web.URLGenerator
 	// AssetPrefix is prepended by "asset" (default "/").
