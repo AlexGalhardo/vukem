@@ -19,6 +19,8 @@ type Group struct {
 	// empty host, an error, from no host.
 	host    string
 	hostSet bool
+	// only makes a host group answer every unmatched path itself (Only).
+	only bool
 	// errWrap replaces the error handler of the group's routes
 	// (ErrorHandler).
 	errWrap func(next web.ErrorHandler) web.ErrorHandler
@@ -50,6 +52,20 @@ func (g *Group) Use(mw ...Middleware) *Group {
 // the router's handler.
 func (g *Group) ErrorHandler(wrap func(next web.ErrorHandler) web.ErrorHandler) *Group {
 	g.errWrap = wrap
+	return g
+}
+
+// Only makes a Router.Host group the only thing its host serves: a
+// request for that host that matches none of the group's routes gets a 404
+// (or 405 with Allow when another method matches) from the error handler,
+// never a main route. Those answers skip the router middleware (Use: the
+// web stack, sessions, CSRF) but keep the group's ErrorHandler, so an API
+// host can answer problem+json. On a group without a host it is a Handler
+// error.
+func (g *Group) Only() *Group {
+	g.only = true
+	g.router.exclusive = append(g.router.exclusive, g)
+
 	return g
 }
 

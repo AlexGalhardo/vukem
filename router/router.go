@@ -46,6 +46,10 @@ type Router struct {
 	server   []Middleware
 	router   []Middleware
 	root     *Group
+	// exclusive are the host groups marked Only; catchAll holds the
+	// patterns build registers for them.
+	exclusive []*Group
+	catchAll  map[string]bool
 
 	once     sync.Once
 	compiled atomic.Bool
@@ -268,6 +272,10 @@ func (r *Router) build() {
 		owners[pattern] = rt
 	}
 
+	if r.buildErr = r.registerExclusive(); r.buildErr != nil {
+		return
+	}
+
 	var h http.Handler = http.HandlerFunc(r.dispatch)
 	for _, mw := range slices.Backward(r.server) {
 		h = mw(h)
@@ -278,6 +286,42 @@ func (r *Router) build() {
 	r.handler = http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		inner.ServeHTTP(w, req.WithContext(web.WithServices(req.Context(), r.services)))
 	})
+}
+
+// registerExclusive registers a "host/" catch-all for every Only group. A
+// host pattern beats a conflicting pattern without one, and the group's
+// own routes are more specific, so it gets exactly the rest of the host.
+func (r *Router) registerExclusive() error {
+	r.catchAll = map[string]bool{}
+
+	for _, g := range r.exclusive {
+		if !g.hostSet || !validHost(g.host) {
+			return fmt.Errorf("router: Only needs a Router.Host group with a valid host (got %q)", g.host)
+		}
+
+		pattern := g.host + "/"
+		if r.catchAll[pattern] {
+			continue
+		}
+
+		var h http.Handler = http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			web.NewCtx(w, req, r.servicesFor(req)).HandleError(r.unmatched(req))
+		})
+
+		for _, x := range slices.Backward(g.lineage()) {
+			if x.errWrap != nil {
+				h = r.groupErrors(x.errWrap)(h)
+			}
+		}
+
+		if err := register(r.mux, pattern, h); err != nil {
+			return fmt.Errorf("router: Only(%s): %w", g.host, err)
+		}
+
+		r.catchAll[pattern] = true
+	}
+
+	return nil
 }
 
 func register(mux *http.ServeMux, pattern string, h http.Handler) (err error) {
@@ -334,15 +378,17 @@ func (r *Router) dispatch(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	c := web.NewCtx(w, req, r.services)
+	web.NewCtx(w, req, r.services).HandleError(r.unmatched(req))
+}
 
+// unmatched is the 404, or the 405 listing the methods that do match.
+func (r *Router) unmatched(req *http.Request) error {
 	allowed := r.allowed(req)
 	if len(allowed) == 0 {
-		c.HandleError(errs.ErrNotFound)
-		return
+		return errs.ErrNotFound
 	}
 
-	c.HandleError(errs.ErrMethodNotAllowed.WithHeader("Allow", strings.Join(allowed, ", ")))
+	return errs.ErrMethodNotAllowed.WithHeader("Allow", strings.Join(allowed, ", "))
 }
 
 var probeMethods = []string{
@@ -357,7 +403,7 @@ func (r *Router) allowed(req *http.Request) []string {
 		probe := req.Clone(req.Context())
 		probe.Method = m
 
-		if _, pattern := r.mux.Handler(probe); pattern != "" {
+		if _, pattern := r.mux.Handler(probe); pattern != "" && !r.catchAll[pattern] {
 			methods = append(methods, m)
 		}
 	}
@@ -581,12 +627,7 @@ func cmpErrors(h web.ErrorHandler) web.ErrorHandler {
 
 func (r *Router) adapt(h web.HandlerFunc, rt *Route) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		services := r.services
-		if eh, ok := req.Context().Value(groupErrorsKey{}).(web.ErrorHandler); ok {
-			s := *services
-			s.Errors = eh
-			services = &s
-		}
+		services := r.servicesFor(req)
 
 		if req.Pattern != "" {
 			web.AddLogAttrs(req.Context(), slog.String("route", req.Pattern))
@@ -596,6 +637,20 @@ func (r *Router) adapt(h web.HandlerFunc, rt *Route) http.Handler {
 		c.SetRouteName(rt.FullName())
 		c.Serve(h)
 	})
+}
+
+// servicesFor is the router's services with the error handler of the
+// request's group (ErrorHandler), if any.
+func (r *Router) servicesFor(req *http.Request) *web.Services {
+	eh, ok := req.Context().Value(groupErrorsKey{}).(web.ErrorHandler)
+	if !ok {
+		return r.services
+	}
+
+	s := *r.services
+	s.Errors = eh
+
+	return &s
 }
 
 // Adapt converts a HandlerFunc into an http.Handler using services.

@@ -29,7 +29,7 @@ func Web(r *router.Router, app *vukem.App) {
 | Params | `{id}`, `{path...}`, `{$}` (ServeMux syntax); `c.Param("id")`, `c.ParamInt("id")` |
 | Names | `.Name("posts.show")`; resources auto-named `<name>.<action>` |
 | URL generation | `r.URLFor("posts.show", "id", 42)` → `/posts/42`; missing/extra params return an error; templates: `{{ route "posts.show" "id" .ID }}` |
-| Groups | `Group(prefix, fn)` with `.Use(mw...)`, `.Name(prefix)`, nesting; `Host(host, fn)` restricts a group to one host (ServeMux host pattern, port ignored; `URL` returns `//host/path`; `RouteInfo.Host`; invalid host = compile error) |
+| Groups | `Group(prefix, fn)` with `.Use(mw...)`, `.Name(prefix)`, nesting; `Host(host, fn)` restricts a group to one host (ServeMux host pattern, port ignored; `URL` returns `//host/path`; `RouteInfo.Host`; invalid host = compile error); `.Only()` on a host group makes it the only thing the host serves (a `host/` catch-all answers 404/405 through the group's error handler, without router `Use` middleware) |
 | Resources | `Resource(name, ctrl)`, `APIResource(name, ctrl)` (no `create`/`edit`), `.Only(...)`, `.Except(...)` |
 | Listing | `vukem route:list` prints method, pattern, name, handler, middleware |
 
