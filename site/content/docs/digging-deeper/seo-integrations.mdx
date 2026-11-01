@@ -1,0 +1,222 @@
+---
+title: SEO integrations
+description: Read Bing Webmaster Tools search traffic, backlinks and crawl data, submit URLs, and push changed URLs to search engines with IndexNow, from env vars, with the keys kept out of logs and errors.
+---
+
+Search engines find your new and changed pages by crawling, which can take days. Two server-side tools speed that up and tell you how the site performs in search: the **Bing Webmaster Tools API** (search traffic, backlinks, crawl state, URL submission) and **IndexNow**, an open protocol that tells Bing, Yandex, Seznam, Naver and others the moment a URL changes. Vukem ships a small `net/http` client for each, configured by environment variables and off when they are unset.
+
+You will learn:
+
+- how to get a Bing Webmaster API key and an IndexNow key, and where each goes;
+- how to read Bing's query, page, backlink and crawl reports, and submit URLs within the quota;
+- how to notify IndexNow on create, update and delete without slowing requests down;
+- which errors to expect, and how the keys stay secret.
+
+Site ownership tags (Google's `google-site-verification` and Bing's `msvalidate.01`) are on [Analytics and Search Console](/docs/digging-deeper/analytics).
+
+## Environment variables
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `BING_WEBMASTER_API_KEY` | | Bing Webmaster API key (`App.Config.BingWebmaster.APIKey`, a `config.Secret`) |
+| `INDEXNOW_KEY` | | Turns IndexNow on: 8 to 128 characters of `a-z`, `A-Z`, `0-9` and `-`. Vukem serves it at `/{key}.txt` |
+| `INDEXNOW_KEY_LOCATION` | `{APP_URL}/{key}.txt` | Absolute URL of the key file, on the site's host; vukem serves the key at that path |
+| `INDEXNOW_ENDPOINT` | `https://api.indexnow.org/indexnow` | Where notifications go; any engine's IndexNow URL works, and they share submissions |
+
+`vukem.New` validates `INDEXNOW_*` at boot against `APP_URL`, so a short key or a key location on another host fails the deploy, not the first notification.
+
+## Bing Webmaster Tools API
+
+### Getting the credentials
+
+<Steps>
+<Step title="Verify the site">
+
+Add and verify the site in [Bing Webmaster Tools](https://www.bing.com/webmasters) first; see [Bing Webmaster Tools verification](/docs/digging-deeper/analytics#bing-webmaster-tools-verification).
+
+</Step>
+<Step title="Generate the key">
+
+Click **Settings** (top right), then **API access**. Accept the terms the first time, click **API Key**, then **Generate API Key**. See [Getting access](https://learn.microsoft.com/en-us/bingwebmaster/getting-access).
+
+</Step>
+<Step title="Store it as a secret">
+
+Put the key in `BING_WEBMASTER_API_KEY`, in your host's secret store rather than a committed `.env`. One key covers every site your Bing account verified. If it leaks, delete it on the same page and generate a new one.
+
+</Step>
+</Steps>
+
+### Read the reports
+
+```go title="app/console/seo_report.go"
+c, err := bingwmt.New(app.Config.BingWebmaster.APIKey, bingwmt.Options{})
+if errors.Is(err, bingwmt.ErrNoAPIKey) {
+	return nil // integration off
+}
+if err != nil {
+	return err
+}
+
+const site = "https://example.com/"
+
+queries, err := c.QueryStats(ctx, site) // top queries: clicks, impressions, positions
+pages, err := c.PageStats(ctx, site)    // top pages (QueryStats.Query holds the URL)
+links, err := c.LinkCounts(ctx, site, 0) // pages with backlinks, page 0
+from, err := c.URLLinks(ctx, site, "https://example.com/games/zelda", 0)
+crawl, err := c.CrawlStats(ctx, site)   // per day: crawled, in index, 4xx, 5xx…
+info, err := c.URLInfo(ctx, site, "https://example.com/games/zelda")
+issues, err := c.CrawlIssues(ctx, site)
+```
+
+| Method | API method | Returns |
+| --- | --- | --- |
+| `QueryStats` | `GetQueryStats` | `[]QueryStats`: query, date, clicks, impressions, average click and impression position |
+| `PageStats` | `GetPageStats` | the same, per page |
+| `LinkCounts` | `GetLinkCounts` | pages with inbound links and their counts; `TotalPages` for paging |
+| `URLLinks` | `GetUrlLinks` | the links pointing at one URL, with anchor text |
+| `CrawlStats` | `GetCrawlStats` | `[]CrawlStats`: crawled pages, errors, in index, status code counts, robots.txt blocks |
+| `URLInfo` | `GetUrlInfo` | HTTP status, size, discovery and last crawl dates of one URL |
+| `CrawlIssues` | `GetCrawlIssues` | URLs with crawl issues (`Issues` is the API's bit set) |
+| `SubmissionQuota` | `GetUrlSubmissionQuota` | remaining daily and monthly URL submissions |
+| `SubmitURL`, `SubmitURLBatch` | `SubmitUrl`, `SubmitUrlBatch` | nothing; each URL counts against the quota |
+
+Dates arrive in the API's WCF form (`/Date(1700000000000-0800)/`) and decode to `bingwmt.Date`, a `time.Time` in UTC.
+
+### Submit URLs within the quota
+
+```go title="app/console/seo_submit.go"
+quota, err := c.SubmissionQuota(ctx, site)
+if err != nil {
+	return err
+}
+
+if quota.DailyQuota >= len(urls) {
+	err = c.SubmitURLBatch(ctx, site, urls)
+}
+```
+
+For routine change notifications prefer IndexNow below: it reaches Bing too, and has no per-site daily quota to watch.
+
+### Errors and rate limits
+
+A non-2xx answer is a `*bingwmt.Error` with the HTTP status and the API's `ErrorCode` and `Message` (`{"ErrorCode":3,"Message":"InvalidApiKey"}`). A `429` also matches `bingwmt.ErrRateLimited`. The default client is `httpclient.Safe` with a 30-second timeout, at most 4 requests in flight and 5 per second, and retries of `GET` requests on `429` and `5xx` that honour `Retry-After`. Submissions are `POST`s and are never retried, so a retry cannot spend the quota twice. Pass `Options.HTTPClient` to change any of it.
+
+### How to verify it works
+
+Call `c.SubmissionQuota(ctx, site)` from a console command: a quota means the key and site are right. `InvalidApiKey` means the key is wrong; `NotAuthorized` usually means the site URL differs from the verified one (check the trailing slash and `www`).
+
+## IndexNow
+
+### How it works
+
+You prove you own the host by serving a key file, then POST the changed URLs with that key. Engines fetch `keyLocation`, check it holds the key, and share the submission with each other ([IndexNow documentation](https://www.indexnow.org/documentation)). A deleted page is notified the same way: its URL now answers `404` or `410`, and the engine drops it.
+
+### Getting the key
+
+<Steps>
+<Step title="Generate a key">
+
+Any random string of 8 to 128 characters from `a-z`, `A-Z`, `0-9` and `-` works. Generate one locally:
+
+```bash
+openssl rand -hex 16
+```
+
+
+</Step>
+<Step title="Set it">
+
+Put it in `INDEXNOW_KEY`. Vukem then serves `GET /{key}.txt` with the key as UTF-8 text. To keep the file elsewhere on the host, set `INDEXNOW_KEY_LOCATION=https://example.com/keys/indexnow.txt`; vukem serves the key at that path instead.
+
+</Step>
+</Steps>
+
+### Notify
+
+```go title="app/controllers/games.go"
+n, err := indexnow.New(app.Config.IndexNow, app.Config.URL, nil)
+if err != nil {
+	return err // indexnow.ErrDisabled when INDEXNOW_KEY is unset
+}
+
+err = n.Notify(ctx, "https://example.com/games/zelda", "https://example.com/games")
+```
+
+`Notify` removes duplicates, splits lists longer than 10,000 URLs (`indexnow.MaxURLs`) into several requests, and sends `host`, `key`, `keyLocation` and `urlList` as JSON. `200` and `202` (key validation pending) are success.
+
+### Without blocking requests
+
+Add the job handler to the list your app registers with `vukem.WithJobsFunc` (see [Queue](/docs/digging-deeper/queue#handlers-built-from-the-app)):
+
+```go title="app/jobs/jobs.go"
+func All(app *vukem.App) []queue.Registration {
+	regs := []queue.Registration{
+		queue.Handle(sendInvoice(app)),
+	}
+
+	// ErrDisabled while INDEXNOW_KEY is unset: no handler, no notifications.
+	if n, err := indexnow.New(app.Config.IndexNow, app.Config.URL, nil); err == nil {
+		regs = append(regs, n.Handler())
+	}
+
+	return regs
+}
+```
+
+Then dispatch from create, update and delete:
+
+```go title="app/controllers/games.go"
+q, err := app.Queue()
+if err != nil {
+	return err
+}
+
+err = q.Dispatch(ctx, indexnow.Job{URLs: []string{gameURL}})
+```
+
+The handler retries up to 5 times with exponential backoff from one minute. `400`, `403`, `422` and foreign URLs fail at once with `queue.ErrPermanent`, since retrying cannot fix them.
+
+### Errors
+
+| Answer | Error (`errors.Is`) | Meaning |
+| --- | --- | --- |
+| `400` | `indexnow.ErrBadRequest` | Invalid format |
+| `403` | `indexnow.ErrForbidden` | The key file is missing or does not hold the key |
+| `422` | `indexnow.ErrUnprocessable` | URLs off the host, or a key that does not match the protocol |
+| `429` | `indexnow.ErrTooManyRequests` | Too many requests; slow down |
+| none sent | `indexnow.ErrForeignURL` | A URL is not `http(s)` on `APP_URL`'s host |
+
+Every status error is an `*indexnow.Error` with the code.
+
+### How to verify it works
+
+`curl https://example.com/{key}.txt` must print the key. Then notify one URL: `Notify` returns `nil`. A `403` right after the first deploy means the engine could not read the key file yet (check the URL above from outside your network). In Bing Webmaster Tools, **IndexNow** lists the URLs received.
+
+## Security
+
+- **Keys stay secret.** `BING_WEBMASTER_API_KEY` and `INDEXNOW_KEY` are `config.Secret`: `fmt`, `slog` and JSON print `[redacted]`. The Bing key travels only in the request's query string, as the API requires; transport errors drop the URL and API messages have the key replaced, so no error carries it (`TestSecurity_A09_BingKeyNeverLogged`, `TestSecurity_A09_IndexNowKeyNotInErrors`).
+- **No host injection.** `Notify` sends nothing unless every URL is `http` or `https` on `APP_URL`'s exact host and port, without user info, so a URL built from user input cannot make your key vouch for another site (`TestSecurity_A01_IndexNowRefusesForeignHosts`).
+- **Outbound requests** go through `httpclient.Safe`, which refuses private and loopback addresses.
+
+## Testing
+
+Point the clients at a fake server; neither needs the network:
+
+```go title="app/seo_test.go"
+srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusAccepted)
+}))
+defer srv.Close()
+
+cfg := indexnow.Config{Key: config.NewSecret("example-key-1234"), Endpoint: srv.URL + "/indexnow"}
+n, err := indexnow.New(cfg, "https://example.com", srv.Client())
+```
+
+`bingwmt.Options{Endpoint: srv.URL + "/json", HTTPClient: srv.Client()}` does the same for Bing.
+
+## Next steps
+
+- [Sitemaps](/docs/digging-deeper/sitemaps): the list of pages crawlers start from.
+- [Queue](/docs/digging-deeper/queue): run notifications in the background.
+- [Analytics and Search Console](/docs/digging-deeper/analytics): measure the visits that search brings.
