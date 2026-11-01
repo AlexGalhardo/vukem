@@ -86,6 +86,12 @@ type Services struct {
 	// inertia.Inertia.ErrorPage, an Inertia page for Inertia requests).
 	// Nil keeps the HTML page.
 	ErrorPage ErrorPageFunc
+	// ProblemDecorator, when set, runs on every problem+json response right
+	// before it is written (handler errors, Ctx.Problem, the router's 404
+	// and 405, typed-route 400s), after the defaults are filled, so an app
+	// can add a catalogue "code" and "type" in one place. It may change any
+	// member; it must not add 5xx details (CWE-209).
+	ProblemDecorator func(c *Ctx, p *Problem)
 }
 
 // ErrorPageFunc renders an error page described by e. It reports whether

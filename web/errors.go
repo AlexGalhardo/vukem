@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"html/template"
 	"log/slog"
+	"maps"
 	"net/http"
 
 	"github.com/AlexGalhardo/vukem/errs"
@@ -80,6 +81,10 @@ func (c *Ctx) writeProblem(p *Problem) error {
 
 	if p.RequestID == "" {
 		p.RequestID = RequestID(c.Context())
+	}
+
+	if c.s.ProblemDecorator != nil {
+		c.s.ProblemDecorator(c, p)
 	}
 
 	b, err := encodeProblem(p)
@@ -159,6 +164,10 @@ func DefaultErrorHandler(c *Ctx, err error) {
 		detail = err.Error()
 	}
 
+	if he != nil && status < 500 && he.Title != "" && verr == nil {
+		title = he.Title
+	}
+
 	if detail == title {
 		detail = ""
 	}
@@ -167,7 +176,9 @@ func DefaultErrorHandler(c *Ctx, err error) {
 	case c.WantsJSON():
 		p := &Problem{Status: status, Title: title, Detail: detail}
 		if he != nil && status < 500 {
-			p.Extensions = he.Extensions
+			// A clone: the decorator may edit it and he can be a shared sentinel.
+			p.Extensions = maps.Clone(he.Extensions)
+			p.Type = he.Type
 		}
 
 		if verr != nil {

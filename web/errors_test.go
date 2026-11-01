@@ -632,3 +632,92 @@ func TestSecurity_A10_ProblemExtensionsNotSentOn5xx(t *testing.T) {
 		t.Errorf("5xx problem leaked an extension: %s", rec.Body.String())
 	}
 }
+
+func TestProblemTypeTitleAndDecorator(t *testing.T) {
+	t.Parallel()
+
+	jsonReq := func(r *http.Request) { r.Header.Set("Accept", "application/json") }
+	decode := func(t *testing.T, rec *httptest.ResponseRecorder) map[string]any {
+		t.Helper()
+
+		var got map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			t.Fatal(err)
+		}
+
+		return got
+	}
+
+	t.Run("WithType and WithTitle set the standard members of a 4xx", func(t *testing.T) {
+		t.Parallel()
+
+		err := errs.New(http.StatusTooManyRequests, "Try again tomorrow.").
+			WithType("https://example.test/p/cooldown").WithTitle("Export cooldown")
+
+		rec, _ := runError(t, err, jsonReq, nil)
+		if got := decode(t, rec); got["type"] != "https://example.test/p/cooldown" || got["title"] != "Export cooldown" {
+			t.Errorf("problem = %s", rec.Body)
+		}
+	})
+
+	t.Run("a 5xx keeps about:blank and the status text", func(t *testing.T) {
+		t.Parallel()
+
+		err := errs.Wrap(http.StatusInternalServerError, errors.New("boom")).
+			WithType("https://example.test/p/secret").WithTitle("secret title")
+
+		rec, _ := runError(t, err, jsonReq, nil)
+		if got := decode(t, rec); got["type"] != "about:blank" || got["title"] != "Internal Server Error" {
+			t.Errorf("problem = %v", got)
+		}
+	})
+
+	t.Run("the decorator runs for every problem and cannot touch the error", func(t *testing.T) {
+		t.Parallel()
+
+		base := errs.New(http.StatusConflict, "x").WithExtension("code", "orig")
+		s := &Services{ProblemDecorator: func(_ *Ctx, p *Problem) {
+			code := strings.ToLower(strings.ReplaceAll(http.StatusText(p.Status), " ", "-"))
+			if p.Extensions == nil {
+				p.Extensions = map[string]any{}
+			}
+
+			if _, ok := p.Extensions["code"]; !ok {
+				p.Extensions["code"] = code
+			}
+
+			p.Extensions["seen"] = true
+			p.Type = "https://example.test/p/" + p.Extensions["code"].(string)
+		}}
+
+		for _, tt := range []struct {
+			err  error
+			code string
+		}{{errs.ErrNotFound, "not-found"}, {base, "orig"}, {errors.New("boom"), "internal-server-error"}} {
+			rec, _ := runError(t, tt.err, jsonReq, s)
+			got := decode(t, rec)
+
+			if got["code"] != tt.code || got["type"] != "https://example.test/p/"+tt.code || got["seen"] != true {
+				t.Errorf("%v: problem = %v", tt.err, got)
+			}
+		}
+
+		if _, ok := base.Extensions["seen"]; ok {
+			t.Error("decorator mutated the error's extensions")
+		}
+	})
+
+	t.Run("Ctx.Problem is decorated too", func(t *testing.T) {
+		t.Parallel()
+
+		s := &Services{ProblemDecorator: func(_ *Ctx, p *Problem) { p.Type = "https://example.test/p/x" }}
+		r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", http.NoBody)
+		rec := httptest.NewRecorder()
+
+		NewCtx(rec, r, s).Serve(func(c *Ctx) error { return c.Problem(http.StatusGone, "", "") })
+
+		if got := decode(t, rec); got["type"] != "https://example.test/p/x" {
+			t.Errorf("problem = %v", got)
+		}
+	})
+}

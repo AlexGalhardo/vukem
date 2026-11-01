@@ -39,6 +39,12 @@ type HTTPError struct {
 	// member (type, title, status, detail, instance, request_id, errors).
 	// Values must be safe to show to clients.
 	Extensions map[string]any
+	// Type is the RFC 9457 "type" URI of a 4xx problem; empty means
+	// "about:blank" (see WithType). 5xx responses never use it.
+	Type string
+	// Title replaces the status text as the "title" of a 4xx problem or
+	// error page (see WithTitle). 5xx responses never use it.
+	Title string
 
 	stack []uintptr
 }
@@ -107,6 +113,25 @@ func (e *HTTPError) WithExtension(key string, value any) *HTTPError {
 	}
 
 	c.Extensions[key] = value
+
+	return &c
+}
+
+// WithType returns a copy of e whose 4xx problem+json "type" is uri, such as
+// a catalogue URL ending in the problem code.
+func (e *HTTPError) WithType(uri string) *HTTPError {
+	c := *e
+	c.Type = uri
+
+	return &c
+}
+
+// WithTitle returns a copy of e whose 4xx problem+json "title" (and error
+// page title) is title instead of the status text. Like Message, it must
+// be safe to show to clients.
+func (e *HTTPError) WithTitle(title string) *HTTPError {
+	c := *e
+	c.Title = title
 
 	return &c
 }
