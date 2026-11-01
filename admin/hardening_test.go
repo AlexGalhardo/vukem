@@ -181,9 +181,77 @@ func TestNewRejectsBadHardening(t *testing.T) {
 		"negative age":  {DB: db, Guard: guard, MaxSessionAge: -time.Minute},
 		"negative idle": {DB: db, Guard: guard, IdleTimeout: -time.Minute},
 		"zero prefix":   {DB: db, Guard: guard, AllowCIDRs: []netip.Prefix{{}}},
+		"deny 500":      {DB: db, Guard: guard, DenyStatus: 500},
+		"remote 2fa":    {DB: db, Guard: guard, TwoFactorRedirect: "//evil.test/2fa"},
+		"relative 2fa":  {DB: db, Guard: guard, TwoFactorRedirect: "settings/2fa"},
 	} {
 		if _, err := admin.New(cfg); err == nil {
 			t.Errorf("New(%s) = nil error, want an error", name)
 		}
+	}
+}
+
+func TestSecurity_A01_AdminDenyStatusHidesPanel(t *testing.T) {
+	t.Parallel()
+
+	// vukemtest requests come from 192.0.2.1.
+	app := newApp(t, options{harden: func(c *admin.Config) {
+		c.AllowCIDRs = []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}
+		c.DenyStatus = 404
+	}})
+
+	as(t, app, "admin").Get("/admin").AssertNotFound()
+	app.Client(t).Get("/admin").AssertNotFound()
+}
+
+func TestSecurity_A07_AdminTwoFactorRedirect(t *testing.T) {
+	t.Parallel()
+
+	app := newApp(t, options{harden: func(c *admin.Config) {
+		c.TwoFactor = func(context.Context) (bool, error) { return false, nil }
+		c.TwoFactorRedirect = "/settings/2fa"
+	}})
+	as(t, app, "admin").Get("/admin").AssertRedirect("/settings/2fa")
+
+	// A failing lookup still denies (fail closed), never redirects.
+	broken := newApp(t, options{harden: func(c *admin.Config) {
+		c.TwoFactor = func(context.Context) (bool, error) { return true, errors.New("db down") }
+		c.TwoFactorRedirect = "/settings/2fa"
+	}})
+	as(t, broken, "admin").Get("/admin").AssertForbidden()
+}
+
+func TestSecurity_A07_AdminTrackIdle(t *testing.T) {
+	t.Parallel()
+
+	tracked := func(r *router.Router, p *admin.Panel) {
+		r.Get("/browse", func(c *web.Ctx) error { return c.String(200, "browse") }).Use(p.TrackIdle())
+	}
+
+	// Activity on a tracked route keeps the panel session alive.
+	clock := vukemtest.NewFakeClock(time.Date(2026, 10, 29, 9, 0, 0, 0, time.UTC))
+	app := newApp(t, options{clock: clock, beside: tracked, harden: func(c *admin.Config) { c.IdleTimeout = 30 * time.Minute }})
+
+	c := as(t, app, "admin")
+	c.Get("/admin").AssertOK()
+
+	for range 3 {
+		clock.Advance(20 * time.Minute)
+		c.Get("/browse").AssertOK()
+	}
+
+	c.Get("/admin").AssertOK()
+
+	// Idle past the timeout, a tracked route ends the session too.
+	clock.Advance(31 * time.Minute)
+	c.Get("/browse").AssertOK()
+	c.Get("/whoami").AssertSee("guest")
+
+	// A visitor who never used the panel gets no clock (and no cookie write).
+	guest := app.Client(t)
+	guest.Get("/browse").AssertOK()
+
+	if got := guest.Get("/browse").Header("Set-Cookie"); got != "" {
+		t.Errorf("guest Set-Cookie = %q, want none", got)
 	}
 }

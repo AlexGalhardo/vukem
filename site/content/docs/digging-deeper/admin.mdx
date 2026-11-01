@@ -144,9 +144,11 @@ return panel.Mount(r)
 | `MaxSessionAge` | 0 (off) | the oldest a session may be to use the panel, counted from its creation |
 | `IdleTimeout` | 0 (off) | how long a session may go without a guarded admin request |
 | `AllowCIDRs` | empty (any IP) | `[]netip.Prefix`: only client IPs inside one of them reach the panel |
+| `DenyStatus` | 0 (403) | status for IPs outside `AllowCIDRs`: `403` or `404` |
+| `TwoFactorRedirect` | empty (403) | local path an admin without 2FA is redirected to |
 | `Now` | `time.Now` | the clock for `MaxSessionAge` and `IdleTimeout` (tests) |
 
-`admin.New` fails with `admin: Config.DB is required`, `admin: Config.Guard is required (the panel never runs without authentication)` or `admin: Config.Prefix cannot be the site root`; a negative `MaxSessionAge` or `IdleTimeout`, or an invalid prefix in `AllowCIDRs`, fails it too.
+`admin.New` fails with `admin: Config.DB is required`, `admin: Config.Guard is required (the panel never runs without authentication)` or `admin: Config.Prefix cannot be the site root`; a negative `MaxSessionAge` or `IdleTimeout`, an invalid prefix in `AllowCIDRs`, a `DenyStatus` other than 403 or 404, or a `TwoFactorRedirect` that is not a local path, fails it too.
 
 ## Resources
 
@@ -510,10 +512,12 @@ panel, err := admin.New(admin.Config{
 
 | Option | Behaviour |
 | --- | --- |
-| `TwoFactor` | `false` answers **403** and logs an `admin.2fa_required` security event. An error is a 403 too, and is logged; the client never sees it. Send admins to your 2FA settings page from a custom 403 view if you want a friendlier path. |
+| `TwoFactor` | `false` answers **403** and logs an `admin.2fa_required` security event. An error is a 403 too, and is logged; the client never sees it. Set `TwoFactorRedirect` to send admins without 2FA to your setup page instead. |
+| `TwoFactorRedirect` | A local path such as `/settings/2fa`: an admin whose `TwoFactor` is `false` gets a **303** there instead of the 403 (the security event is still logged). A failing lookup stays 403. `admin.New` rejects anything that is not a local path. |
 | `MaxSessionAge` | A session older than the cap (from `session.CreatedAt`, which login keeps, so the age is never shorter than the time since login) is invalidated, signing the user out of every guard, and the browser is redirected to `login`; an `admin.session_expired` event is logged. The rest of the app keeps its own `SESSION_LIFETIME`. A remember-me cookie logs the user back in with a new session, so turn remember-me off for admins when the cap must force a password. |
-| `IdleTimeout` | A session that has not hit a guarded admin route for this long is invalidated the same way, with an `admin.session_idle` event. The stamp is `admin.idle_at` in the session, updated only by those routes, so using the rest of the app does not keep the panel open. |
+| `IdleTimeout` | A session that has not hit a guarded admin route for this long is invalidated the same way, with an `admin.session_idle` event. The stamp is `admin.idle_at` in the session, updated only by those routes, so using the rest of the app does not keep the panel open, unless you add `panel.TrackIdle()` (below). |
 | `AllowCIDRs` | Requests from other IPs get **403** and an `admin.ip_denied` event, before any login redirect, so the panel never advertises its login. The IP is `web.Ctx.IP`: behind a proxy, set `TRUSTED_PROXIES` ([HTTP context](/docs/basics/http-context)) or every request looks like the proxy's address. The embedded CSS and JS stay public. |
+| `DenyStatus` | The status `AllowCIDRs` answers: `403` (the default) or `404`, which hides that the panel exists at all. Anything else fails `admin.New`. |
 
 `panel.Mount` is the only place that installs this stack. A route you register beside it, such as `POST /admin/users/{id}/ban`, does not get `AllowCIDRs`, the session caps, two-factor or the panel ability unless you add `panel.Guard()`:
 
@@ -528,6 +532,12 @@ r.Post("/admin/users/{id}/ban", users.Ban).Use(panel.Guard())
 ```
 
 `Guard` is that middleware: IP allow-list, `MaxSessionAge`, `IdleTimeout`, the auth guard, CSRF, the no-store headers, two-factor and the panel ability. It does not check a resource policy; `users.Ban` still calls `c.Authorize`. Sessions have to be on the router already (`vukem.DefaultMiddleware`). The embedded CSS and JS stay outside the guard.
+
+To give an admin one idle clock across the whole app, add `panel.TrackIdle()` router-wide. For a session that has used the panel, every request refreshes `admin.idle_at` and an idle session is ended wherever it shows up, so a moderator who browses public pages stays signed in and one who walks away is signed out. Sessions that never reached the panel are not touched (no session write, no cookie). Without `IdleTimeout` it does nothing.
+
+```go
+r.Use(panel.TrackIdle())
+```
 
 What stays your job: deciding who is an admin (`app/admin/admin.go`), narrowing each policy (an editor may update posts but not delete them), and keeping the admin accounts protected with [two-factor authentication](/docs/security/two-factor). See the [security overview](/docs/security/overview).
 
