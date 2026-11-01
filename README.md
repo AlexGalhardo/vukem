@@ -61,18 +61,20 @@ Every command, flag and example is in the [CLI reference](https://vukem.dev/docs
 
 | Area | What you get |
 | --- | --- |
-| **HTTP** | `net/http`-native router with named routes, resources and groups; middleware is `func(http.Handler) http.Handler`. |
+| **HTTP** | `net/http`-native router with named routes, resources, groups and host-only groups (`Group.Only`); middleware is `func(http.Handler) http.Handler`; request-log attributes (`web.AddLogAttrs`, matched route); HTTP/3 (`contrib/http3`). |
 | **Validation** | Zod-style typed schemas (`z`) for every input, including files, exportable as JSON Schema, TypeScript and Zod. |
 | **Database** | SQLite built in, PostgreSQL and MySQL/MariaDB driver modules, MongoDB, generic query builder, relations, encrypted columns, migrations, factories and seeders. |
-| **Auth** | Sessions, API tokens, JWT with JWKS and refresh tokens, TOTP two-factor (`install:auth --2fa`), social login (Google, GitHub, Apple, LinkedIn, X and any OIDC), email verification, password reset, gates and policies. |
-| **APIs** | JSON resources, pagination, RFC 9457 errors, rate limiting, idempotency keys, typed handlers, OpenAPI 3.1, a Scalar API reference and generated TypeScript and Go clients. |
+| **Auth** | Sessions, API tokens, JWT with JWKS and refresh tokens, TOTP two-factor (`install:auth --2fa`), WebAuthn passkeys, social login (Google, GitHub, Apple, LinkedIn, X and any OIDC), email verification, password reset, gates and policies. |
+| **APIs** | JSON resources, pagination, RFC 9457 errors (`ProblemDecorator`, `WithType`, `WithTitle`), JSON-RPC 2.0 with OpenRPC, rate limiting, idempotency keys, typed handlers, OpenAPI 3.1, a Scalar API reference and generated TypeScript and Go clients. |
 | **GraphQL and gRPC** | A stdlib GraphQL server with subscriptions (`contrib/graphql`) and gRPC, gRPC-Web and Connect on connect-go (`contrib/grpc`). |
 | **Real time** | Server-Sent Events, WebSockets and channel broadcasting with private and presence channels. |
 | **Background work** | Typed queue jobs (sync, memory, database, Redis), queued mail and listeners, cron scheduler. |
 | **Frontend** | HTMX, templ or Inertia (React, Vue, Svelte) starters with Vite and Tailwind CSS v4, SSR and a youch-style error page. |
-| **Admin and devtools** | An HTMX admin panel generated from your models, with an audit log, and a `/_vukem` dashboard for requests, queries (with N+1 detection), jobs, mail and logs. |
+| **Admin and devtools** | An HTMX admin panel generated from your models, with an audit log and opt-in hardening (`DenyStatus`, `TwoFactorRedirect`, `TrackIdle`), and a `/_vukem` dashboard for requests, queries (with N+1 detection), jobs, mail and logs. |
 | **Billing and uploads** | Stripe subscriptions (`install:billing`), streaming, resumable (tus) and direct-to-S3 uploads with virus scanning. |
-| **More** | Mail (SMTP, Resend), cache, feature flags, storage (local, S3), events, encryption, i18n, OpenTelemetry, Telegram logging, SSRF-safe HTTP client, signed URLs and webhooks. |
+| **Bot protection** | Cloudflare Turnstile on form routes and a step-up challenge with a signed clearance cookie (`challenge`); Cloudflare helpers (`contrib/cloudflare`: real client IP, origin lock, Access, cache purge). |
+| **SEO and analytics** | Sitemaps, `llms.txt` and `llms-full.txt` (`llmstxt`), static site generation (`ssg`), Umami and GA4 with Consent Mode v2, Search Console and Bing verification (`analytics`), the Bing Webmaster API (`bingwmt`) and IndexNow (`indexnow`). |
+| **More** | Mail (SMTP, Resend, `MAIL_REPLY_TO`), cache with batched counters (`cache.Buffer`), feature flags, storage (local, S3), events, encryption, i18n, OpenTelemetry, Telegram logging, CSV and NDJSON export (`export.EncodeNDJSON`), image thumbnails and QR codes, SSRF-safe HTTP client with throttle, retry and circuit-breaker transports, signed URLs and tokens, and webhooks. |
 
 ## Why Vukem
 
