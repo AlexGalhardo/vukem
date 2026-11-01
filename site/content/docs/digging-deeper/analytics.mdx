@@ -118,7 +118,9 @@ Open the website's **Edit** page and its **Tracking code** tab. The snippet show
 ### What vukem renders
 
 ```html
-<script defer src="https://cloud.umami.is/script.js" data-website-id="94db1cb1-…" data-do-not-track="true" data-domains="example.com,www.example.com" nonce="…"></script>
+<script defer src="https://cloud.umami.is/script.js"
+	data-website-id="94db1cb1-…" data-do-not-track="true"
+	data-domains="example.com,www.example.com" nonce="…"></script>
 ```
 
 The attributes are the ones in Umami's [tracker configuration](https://docs.umami.is/docs/tracker-configuration). Umami's automatic tracking follows `history.pushState`, so every Inertia visit is already a page view: there is nothing to wire.
@@ -202,7 +204,12 @@ Before that, Google receives no request at all. `GA_CONSENT_DEFAULT_GRANTED=true
 `consent` takes `true` (grant all four), `false` (deny all four) or an object with the signals you want:
 
 ```ts
-window.vukemAnalytics?.consent({ analytics_storage: "granted", ad_storage: "denied", ad_user_data: "denied", ad_personalization: "denied" });
+window.vukemAnalytics?.consent({
+	analytics_storage: "granted",
+	ad_storage: "denied",
+	ad_user_data: "denied",
+	ad_personalization: "denied",
+});
 ```
 
 ### A consent banner in Inertia React
@@ -214,7 +221,9 @@ import { useEffect, useState } from "react";
 
 declare global {
 	interface Window {
-		vukemAnalytics?: { consent: (choice: boolean | Record<string, "granted" | "denied">) => void };
+		vukemAnalytics?: {
+			consent: (choice: boolean | Record<string, "granted" | "denied">) => void;
+		};
 	}
 }
 
@@ -236,7 +245,11 @@ export function ConsentBanner() {
 	};
 
 	return (
-		<div role="dialog" aria-label="Cookie consent" className="fixed inset-x-4 bottom-4 rounded-lg border bg-white p-4 shadow dark:bg-zinc-900">
+		<div
+			role="dialog"
+			aria-label="Cookie consent"
+			className="fixed inset-x-4 bottom-4 rounded-lg border bg-white p-4 shadow"
+		>
 			<p>We use Google Analytics to understand how the site is used, only if you agree.</p>
 			<div className="mt-3 flex gap-2">
 				<button type="button" onClick={() => decide(true)}>Accept</button>
