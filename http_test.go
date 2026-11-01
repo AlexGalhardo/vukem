@@ -3342,8 +3342,10 @@ func TestAnalytics(t *testing.T) {
 			t.Errorf("CSP = %q, want no analytics origin", csp)
 		}
 
-		if rec := serve(t, app, http.MethodGet, "/google1234abcd.html", false); rec.Code != http.StatusNotFound {
-			t.Errorf("verification file = %d, want 404", rec.Code)
+		for _, p := range []string{"/google1234abcd.html", "/BingSiteAuth.xml"} {
+			if rec := serve(t, app, http.MethodGet, p, false); rec.Code != http.StatusNotFound {
+				t.Errorf("GET %s = %d, want 404", p, rec.Code)
+			}
 		}
 	})
 
@@ -3355,6 +3357,7 @@ func TestAnalytics(t *testing.T) {
 			"GA_MEASUREMENT_ID":              "G-ABC123XYZ",
 			"GOOGLE_SITE_VERIFICATION":       "tok1",
 			"GOOGLE_SITE_VERIFICATION_FILES": "google1234abcd.html",
+			"BING_SITE_VERIFICATION":         "ABC123",
 		})))
 		rec := serve(t, app, http.MethodGet, "/page", false)
 
@@ -3377,6 +3380,11 @@ func TestAnalytics(t *testing.T) {
 		rec = serve(t, app, http.MethodGet, "/google1234abcd.html", false)
 		if rec.Code != http.StatusOK || rec.Body.String() != "google-site-verification: google1234abcd.html" {
 			t.Errorf("verification file = %d %q", rec.Code, rec.Body.String())
+		}
+
+		rec = serve(t, app, http.MethodGet, "/BingSiteAuth.xml", false)
+		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "<user>ABC123</user>") {
+			t.Errorf("BingSiteAuth.xml = %d %q", rec.Code, rec.Body.String())
 		}
 	})
 

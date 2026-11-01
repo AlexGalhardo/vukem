@@ -649,6 +649,10 @@ func (a *App) newRouter() *router.Router {
 		r.Handle("GET /"+f, a.Config.Analytics.VerificationFileHandler())
 	}
 
+	if len(a.Config.Analytics.BingSiteVerification) > 0 {
+		r.Handle("GET /BingSiteAuth.xml", a.Config.Analytics.BingSiteAuthHandler())
+	}
+
 	return r
 }
 

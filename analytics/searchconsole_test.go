@@ -109,6 +109,7 @@ func TestSecurity_A05_AnalyticsEscapesConfig(t *testing.T) {
 		UmamiTag:               evil,
 		GAMeasurementID:        evil,
 		GoogleSiteVerification: []string{evil},
+		BingSiteVerification:   []string{evil},
 	}
 
 	got := string(cfg.Tags(evil))
