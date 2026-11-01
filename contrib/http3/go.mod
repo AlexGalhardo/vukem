@@ -3,7 +3,7 @@ module github.com/AlexGalhardo/vukem/contrib/http3
 go 1.27.3
 
 require (
-	github.com/AlexGalhardo/vukem v0.34.0
+	github.com/AlexGalhardo/vukem v0.35.0
 	github.com/quic-go/quic-go v0.64.1
 )
 
