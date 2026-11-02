@@ -27,6 +27,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **cli:** `TestStripeVersionIsLatestTag` fails instead of skipping on GitHub Actions without tags, and the CI `test` job fetches the full history, so a stale `install:billing` pin fails the gate (VF-076).
 - **cli:** Pin contrib/stripe v0.5.1 in install:billing (#136) ([0d1d3a1](https://github.com/AlexGalhardo/vukem/commit/0d1d3a1a5f168a676076038a9f87622747216a81))
 
+## [0.37.0] - 2026-11-02
+
+### Added
+
+- **apidocs:** Add Config.Options for extra Scalar options; fix(s3): keep idle connections per host (VF-077, VF-078) ([b8dc3ac](https://github.com/AlexGalhardo/vukem/commit/b8dc3ac0043a3e70d082c9ad126980b552f7d1d3))
+
+### Fixed
+
+- **cli:** Pin contrib/stripe v0.5.1 in install:billing (#136) ([0d1d3a1](https://github.com/AlexGalhardo/vukem/commit/0d1d3a1a5f168a676076038a9f87622747216a81))
+
+### Security
+
+- Close the second 2026-11-01 HexaScore feedback batch (#138) ([45c803e](https://github.com/AlexGalhardo/vukem/commit/45c803ead14e36e1f2f1185da76e816f2a373f88))
+
 ## [0.36.0] - 2026-11-01
 
 ### Added
@@ -1194,7 +1208,8 @@ Project foundation. No framework code yet; see [PLAN.md](PLAN.md) for the roadma
 - README, MIT license, CONTRIBUTING, SECURITY and CODE_OF_CONDUCT.
 - Agent configuration: `AGENTS.md`, `CLAUDE.md`, path-scoped `.claude/rules/`, Go skills and project settings.
 
-[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.36.0...HEAD
+[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.37.0...HEAD
+[0.37.0]: https://github.com/AlexGalhardo/vukem/compare/v0.36.0...v0.37.0
 [0.36.0]: https://github.com/AlexGalhardo/vukem/compare/v0.35.0...v0.36.0
 [0.35.0]: https://github.com/AlexGalhardo/vukem/compare/v0.34.0...v0.35.0
 [0.34.0]: https://github.com/AlexGalhardo/vukem/compare/v0.33.0...v0.34.0
