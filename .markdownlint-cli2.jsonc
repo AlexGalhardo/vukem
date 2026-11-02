@@ -12,7 +12,7 @@
     "MD013": false,
     // Keep a Changelog repeats "### Added" under each release
     "MD024": { "siblings_only": true },
-    "MD033": { "allowed_elements": ["details", "summary", "br", "img", "picture", "source", "a", "p", "kbd", "sup"] },
+    "MD033": { "allowed_elements": ["details", "summary", "br", "img", "picture", "source", "a", "p", "kbd", "sup", "div", "h3", "span", "strong"] },
     // GitHub templates start with "##"
     "MD041": false,
     "MD046": { "style": "fenced" },
