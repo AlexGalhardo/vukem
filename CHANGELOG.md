@@ -37,8 +37,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Fix the 2026-11-01 HexaScore feedback batch and add llms.txt support (#128) ([9cafa13](https://github.com/AlexGalhardo/vukem/commit/9cafa13387b75915995ac4e67b61f2db03a48c97))
+- **llmstxt:** Serve `/llms.txt` and a size-capped `/llms-full.txt` from a `llmstxt.Doc` (#128) ([9cafa13](https://github.com/AlexGalhardo/vukem/commit/9cafa13387b75915995ac4e67b61f2db03a48c97))
+- **router:** `Group.Only()` makes a host group the only thing its host serves (#128) ([9cafa13](https://github.com/AlexGalhardo/vukem/commit/9cafa13387b75915995ac4e67b61f2db03a48c97))
+- **admin:** `Config.DenyStatus`, `Config.TwoFactorRedirect` and `Panel.TrackIdle()` (#128) ([9cafa13](https://github.com/AlexGalhardo/vukem/commit/9cafa13387b75915995ac4e67b61f2db03a48c97))
+- **cache:** `cache.Buffer` batches hot-path counts into one periodic write (#128) ([9cafa13](https://github.com/AlexGalhardo/vukem/commit/9cafa13387b75915995ac4e67b61f2db03a48c97))
+- **web:** `web.AddLogAttrs` adds attributes and the matched route to the request line (#128) ([9cafa13](https://github.com/AlexGalhardo/vukem/commit/9cafa13387b75915995ac4e67b61f2db03a48c97))
+- **errs:** `HTTPError.WithType` and `WithTitle` set a 4xx problem's type and title (#128) ([9cafa13](https://github.com/AlexGalhardo/vukem/commit/9cafa13387b75915995ac4e67b61f2db03a48c97))
+- **web:** `Services.ProblemDecorator` edits every problem+json response (#128) ([9cafa13](https://github.com/AlexGalhardo/vukem/commit/9cafa13387b75915995ac4e67b61f2db03a48c97))
+- **export:** `export.EncodeNDJSON` writes NDJSON to any writer (#128) ([9cafa13](https://github.com/AlexGalhardo/vukem/commit/9cafa13387b75915995ac4e67b61f2db03a48c97))
+- **mail:** `MAIL_REPLY_TO` sets a default Reply-To (#128) ([9cafa13](https://github.com/AlexGalhardo/vukem/commit/9cafa13387b75915995ac4e67b61f2db03a48c97))
 - **analytics:** Add umami, ga4, search console, bing webmaster and indexnow (#130) ([343667b](https://github.com/AlexGalhardo/vukem/commit/343667b196243b1e590c32ad1fddf22d0109b324))
+- **analytics:** Umami, GA4 with Consent Mode v2, and Search Console and Bing verification from env, off when unset (#130) ([343667b](https://github.com/AlexGalhardo/vukem/commit/343667b196243b1e590c32ad1fddf22d0109b324))
+- **bingwmt:** Bing Webmaster Tools API client keyed by `BING_WEBMASTER_API_KEY` (#130) ([343667b](https://github.com/AlexGalhardo/vukem/commit/343667b196243b1e590c32ad1fddf22d0109b324))
+- **indexnow:** Serve the `INDEXNOW_KEY` file and push changed URLs with `Client.Notify` and `indexnow.Job` (#130) ([343667b](https://github.com/AlexGalhardo/vukem/commit/343667b196243b1e590c32ad1fddf22d0109b324))
 - **challenge:** Add native Cloudflare Turnstile support and step-up hook (#131) ([330866d](https://github.com/AlexGalhardo/vukem/commit/330866d306cd54047c6c944a27a6e8b2e36992ac))
+- **challenge:** `TurnstileConfig` protects form routes and `StepUp` challenges suspicious clients with a signed clearance cookie (#131) ([330866d](https://github.com/AlexGalhardo/vukem/commit/330866d306cd54047c6c944a27a6e8b2e36992ac))
+- **challenge:** `SiteVerify.InsecureFailOpen` opt-in, idempotent siteverify calls with one retry (#131) ([330866d](https://github.com/AlexGalhardo/vukem/commit/330866d306cd54047c6c944a27a6e8b2e36992ac))
 
 ### Fixed
 
