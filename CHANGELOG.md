@@ -7,47 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.37.0] - 2026-11-02
+
 ### Added
 
-- **admin:** `Panel.Clock()` applies `IdleTimeout` and `MaxSessionAge` to every request of a user with the panel ability, panel visited or not (the absolute cap counts from the first admin request), and `Config.TwoFactorFlash` flashes a message under `TwoFactorFlashKey` with the `TwoFactorRedirect` (VF-063).
-- **cache:** `cache.Buffer` takes an optional `MaxKeys` cap: a new key on a full buffer drops the oldest pending key and reports it to `OnDrop` (VF-064).
-- **web:** `web.ClientIP(r)` returns the client IP with the trusted-proxy rules of `c.IP()` for plain middleware; new package `security/crawlers` verifies Google, Bing, Apple and Yandex crawlers by forward-confirmed reverse DNS, with a timeout and a per-IP cache (VF-065).
-- **vukem:** `App.HealthHandler()` exports the `/up` handler, so a `Router.Host(...).Only()` group can keep serving the health check (VF-068).
-- **router:** `Route.SecretParams(names...)` logs `{name}` instead of a secret path parameter in the request line, error and security-event logs; `web.RedactLogPath` and `web.LogPath` expose the same redaction, and the request-line fields are documented (VF-071).
-- **inertia:** the docs explain that a redirect to a same-origin URL with a `#fragment` stays an Inertia visit (`409` with `X-Inertia-Redirect`), unlike `inertia.Location`, which forces a full page load (VF-072).
-- **middleware:** `SecureHeadersConfig.AddCSPSources(directive, sources...)` adds CSP sources without dropping the integrations' ones, `MissingCSPSources(want)` reports the sources the final policy blocks, and the default stacks warn at boot when an enabled analytics provider's origins are missing (VF-073).
-- **config:** `vukem.WithEnvDefaults(map)` and `config.Source.SetDefaults` set defaults below the `.env` files, with the documented precedence process environment > `.env` files > default (VF-074).
-- **robots:** new package that renders and serves `/robots.txt` (groups, allow/disallow rules, sitemaps) with single-line validation; `NOINDEX=true` adds `X-Robots-Tag: noindex, nofollow` to every response (`middleware.NoIndex`) and `robots.File.NoIndex` serves a disallow-all file (VF-075).
-
-- **apidocs:** `apidocs.Config.Options` (`map[string]any`) merges extra Scalar options (`defaultOpenAllTags`, `hideModels`, `customCss`, `operationTitleSource`, ...) into the page's JSON config; explicit `Config` fields win, and `url`, `agent`, `mcp`, `telemetry`, `withDefaultFonts` and `showDeveloperTools` are never overridden.
+- **admin:** `Panel.Clock()` applies the idle timeout and the session age cap to every admin request (VF-063)
+- **cache:** `cache.Buffer` takes an optional `MaxKeys` cap (VF-064)
+- **web:** `web.ClientIP` for plain middleware and the `security/crawlers` verified-crawler check (VF-065)
+- **vukem:** `App.HealthHandler` keeps `/up` on a `Router.Host(...).Only()` group (VF-068)
+- **router:** `Route.SecretParams` keeps secret path parameters out of the logs (VF-071)
+- **inertia:** Document that a same-origin redirect with a `#fragment` stays an Inertia visit (VF-072)
+- **middleware:** `SecureHeadersConfig.AddCSPSources` adds CSP sources without dropping the integrations' ones (VF-073)
+- **config:** `vukem.WithEnvDefaults` sets defaults below the `.env` files (VF-074)
+- **robots:** New `robots` package and the `NOINDEX` switch (VF-075)
+- **apidocs:** Add `Config.Options` for extra Scalar options (VF-078) ([b8dc3ac](https://github.com/AlexGalhardo/vukem/commit/b8dc3ac0043a3e70d082c9ad126980b552f7d1d3))
 
 ### Fixed
 
-- **s3:** the default transport keeps up to 100 idle connections per host instead of 2, so a parallel batch (16 concurrent `Stat` calls) reuses connections instead of exhausting ephemeral ports (VF-077).
-- **cli:** `TestStripeVersionIsLatestTag` fails instead of skipping on GitHub Actions without tags, and the CI `test` job fetches the full history, so a stale `install:billing` pin fails the gate (VF-076).
+- **s3:** Keep up to 100 idle connections per host (VF-077) ([b8dc3ac](https://github.com/AlexGalhardo/vukem/commit/b8dc3ac0043a3e70d082c9ad126980b552f7d1d3))
+- **cli:** `TestStripeVersionIsLatestTag` fails instead of skipping without tags (VF-076)
 - **cli:** Pin contrib/stripe v0.5.1 in install:billing (#136) ([0d1d3a1](https://github.com/AlexGalhardo/vukem/commit/0d1d3a1a5f168a676076038a9f87622747216a81))
+
+### Security
+
+- Close the second 2026-11-01 HexaScore feedback batch (#138) ([45c803e](https://github.com/AlexGalhardo/vukem/commit/45c803ead14e36e1f2f1185da76e816f2a373f88))
 
 ## [0.36.0] - 2026-11-01
 
 ### Added
 
 - Fix the 2026-11-01 HexaScore feedback batch and add llms.txt support (#128) ([9cafa13](https://github.com/AlexGalhardo/vukem/commit/9cafa13387b75915995ac4e67b61f2db03a48c97))
+- **llmstxt:** Serve `/llms.txt` and a size-capped `/llms-full.txt` from a `llmstxt.Doc` (#128) ([9cafa13](https://github.com/AlexGalhardo/vukem/commit/9cafa13387b75915995ac4e67b61f2db03a48c97))
+- **router:** `Group.Only()` makes a host group the only thing its host serves (#128) ([9cafa13](https://github.com/AlexGalhardo/vukem/commit/9cafa13387b75915995ac4e67b61f2db03a48c97))
+- **admin:** `Config.DenyStatus`, `Config.TwoFactorRedirect` and `Panel.TrackIdle()` (#128) ([9cafa13](https://github.com/AlexGalhardo/vukem/commit/9cafa13387b75915995ac4e67b61f2db03a48c97))
+- **cache:** `cache.Buffer` batches hot-path counts into one periodic write (#128) ([9cafa13](https://github.com/AlexGalhardo/vukem/commit/9cafa13387b75915995ac4e67b61f2db03a48c97))
+- **web:** `web.AddLogAttrs` adds attributes and the matched route to the request line (#128) ([9cafa13](https://github.com/AlexGalhardo/vukem/commit/9cafa13387b75915995ac4e67b61f2db03a48c97))
+- **errs:** `HTTPError.WithType` and `WithTitle` set a 4xx problem's type and title (#128) ([9cafa13](https://github.com/AlexGalhardo/vukem/commit/9cafa13387b75915995ac4e67b61f2db03a48c97))
+- **web:** `Services.ProblemDecorator` edits every problem+json response (#128) ([9cafa13](https://github.com/AlexGalhardo/vukem/commit/9cafa13387b75915995ac4e67b61f2db03a48c97))
+- **export:** `export.EncodeNDJSON` writes NDJSON to any writer (#128) ([9cafa13](https://github.com/AlexGalhardo/vukem/commit/9cafa13387b75915995ac4e67b61f2db03a48c97))
+- **mail:** `MAIL_REPLY_TO` sets a default Reply-To (#128) ([9cafa13](https://github.com/AlexGalhardo/vukem/commit/9cafa13387b75915995ac4e67b61f2db03a48c97))
 - **analytics:** Add umami, ga4, search console, bing webmaster and indexnow (#130) ([343667b](https://github.com/AlexGalhardo/vukem/commit/343667b196243b1e590c32ad1fddf22d0109b324))
+- **analytics:** Umami, GA4 with Consent Mode v2, and Search Console and Bing verification from env, off when unset (#130) ([343667b](https://github.com/AlexGalhardo/vukem/commit/343667b196243b1e590c32ad1fddf22d0109b324))
+- **bingwmt:** Bing Webmaster Tools API client keyed by `BING_WEBMASTER_API_KEY` (#130) ([343667b](https://github.com/AlexGalhardo/vukem/commit/343667b196243b1e590c32ad1fddf22d0109b324))
+- **indexnow:** Serve the `INDEXNOW_KEY` file and push changed URLs with `Client.Notify` and `indexnow.Job` (#130) ([343667b](https://github.com/AlexGalhardo/vukem/commit/343667b196243b1e590c32ad1fddf22d0109b324))
 - **challenge:** Add native Cloudflare Turnstile support and step-up hook (#131) ([330866d](https://github.com/AlexGalhardo/vukem/commit/330866d306cd54047c6c944a27a6e8b2e36992ac))
-- **challenge:** Native Cloudflare Turnstile support. `challenge.TurnstileConfig` reads `TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY` (redacted), `TURNSTILE_HOSTNAME`, `TURNSTILE_TIMEOUT` and `TURNSTILE_INSECURE_FAIL_OPEN` and is off until both keys are set; it renders the nonce'd script and widget (`Script`, `Widget`), adds `script-src`/`frame-src https://challenges.cloudflare.com` only when enabled (`CSPSources`) and protects form routes per action (`Protect`, `Verifier`). `challenge.StepUp` (`Require`, `Handle`) challenges a suspicious client mid-browse with a `noindex`, `no-store` interstitial and a signed, short-lived clearance cookie bound to the client's IP prefix and User-Agent, redirecting back to local paths only (`challenge.LocalPath`). Site page: Bot challenge. (#131) ([330866d](https://github.com/AlexGalhardo/vukem/commit/330866d306cd54047c6c944a27a6e8b2e36992ac))
-- **challenge:** `SiteVerify.InsecureFailOpen` and `challenge.ErrUnavailable`: an explicit opt-in to let requests through while the provider is down (logged as `challenge.fail_open`); the default still fails closed. Siteverify calls now send an `idempotency_key` and retry once on a network error or a 5xx answer, and a provider `internal-error` counts as an outage. (#131) ([330866d](https://github.com/AlexGalhardo/vukem/commit/330866d306cd54047c6c944a27a6e8b2e36992ac))
-- **llmstxt:** New package that renders and serves `/llms.txt` and a streamed, size-capped `/llms-full.txt` (<https://llmstxt.org>) from a `llmstxt.Doc` (`Register`, `Handler`, `FullHandler`, `Write`, `WriteFull`), with escaped titles and validated URLs. Off unless the app registers it. (#128) ([9cafa13](https://github.com/AlexGalhardo/vukem/commit/9cafa13387b75915995ac4e67b61f2db03a48c97))
-- **router:** `Group.Only()` makes a `Router.Host` group the only thing its host serves: unmatched paths on that host get a 404/405 from the error handler (the group's `ErrorHandler` included) without the router middleware, never a main route. (#128) ([9cafa13](https://github.com/AlexGalhardo/vukem/commit/9cafa13387b75915995ac4e67b61f2db03a48c97))
-- **admin:** `Config.DenyStatus` (404 hides the panel from IPs outside `AllowCIDRs`), `Config.TwoFactorRedirect` (redirect admins without 2FA to a setup page) and `Panel.TrackIdle()` (one idle clock across the app for sessions that used the panel). (#128) ([9cafa13](https://github.com/AlexGalhardo/vukem/commit/9cafa13387b75915995ac4e67b61f2db03a48c97))
-- **cache:** `cache.Buffer[K]` adds counts in memory (`Add`) and writes them in one batch (`Flush`, `Swap`, `Restore`), restoring them when the write fails. (#128) ([9cafa13](https://github.com/AlexGalhardo/vukem/commit/9cafa13387b75915995ac4e67b61f2db03a48c97))
-- **web:** `web.AddLogAttrs(ctx, attrs...)` adds attributes to the request line; `middleware.Logger` collects them per request (`web.WithLogAttrs`), and the router adds the matched `route` pattern. (#128) ([9cafa13](https://github.com/AlexGalhardo/vukem/commit/9cafa13387b75915995ac4e67b61f2db03a48c97))
-- **errs:** `HTTPError.WithType(uri)` and `WithTitle(title)` set the `type` and `title` of a 4xx problem. (#128) ([9cafa13](https://github.com/AlexGalhardo/vukem/commit/9cafa13387b75915995ac4e67b61f2db03a48c97))
-- **web:** `Services.ProblemDecorator` edits every problem+json response (handler errors, `Ctx.Problem`, router 404/405, typed-route 400s) before it is written. (#128) ([9cafa13](https://github.com/AlexGalhardo/vukem/commit/9cafa13387b75915995ac4e67b61f2db03a48c97))
-- **export:** `export.EncodeNDJSON(w io.Writer, rows)` writes the bytes of `export.NDJSON` to any writer outside a request, next to `export.EncodeCSV`. (#128) ([9cafa13](https://github.com/AlexGalhardo/vukem/commit/9cafa13387b75915995ac4e67b61f2db03a48c97))
-- **mail:** `MAIL_REPLY_TO` (and `Mailer.SetReplyTo`) sets a default Reply-To for envelopes that have none. (#128) ([9cafa13](https://github.com/AlexGalhardo/vukem/commit/9cafa13387b75915995ac4e67b61f2db03a48c97))
-- **analytics:** Umami, Google Analytics 4 and Google Search Console and Bing Webmaster Tools verification from `UMAMI_*`, `GA_MEASUREMENT_ID`, `GOOGLE_SITE_VERIFICATION*` and `BING_SITE_VERIFICATION`, off when unset. The `analytics` view function renders nonce'd tags, the middleware stacks add only the enabled providers' CSP origins, values are validated at boot, GA4 starts with Consent Mode v2 denied and loads `gtag.js` only after `window.vukemAnalytics.consent`, page views follow Inertia navigations, and `/google<token>.html` and `/BingSiteAuth.xml` are served. The Inertia scaffold root view renders `{{analytics}}`. (#130) ([343667b](https://github.com/AlexGalhardo/vukem/commit/343667b196243b1e590c32ad1fddf22d0109b324))
-- **bingwmt:** Bing Webmaster Tools API client (query, page, backlink and crawl reports, URL info, submission quota, `SubmitURL`/`SubmitURLBatch`) keyed by `BING_WEBMASTER_API_KEY`, which never appears in errors or logs. (#130) ([343667b](https://github.com/AlexGalhardo/vukem/commit/343667b196243b1e590c32ad1fddf22d0109b324))
-- **indexnow:** `INDEXNOW_KEY` serves the key file and `Client.Notify` pushes changed URLs (de-duplicated, batches of 10,000, site host only, typed 400/403/422/429 errors); `indexnow.Job` runs it from the queue. (#130) ([343667b](https://github.com/AlexGalhardo/vukem/commit/343667b196243b1e590c32ad1fddf22d0109b324))
+- **challenge:** `TurnstileConfig` protects form routes and `StepUp` challenges suspicious clients with a signed clearance cookie (#131) ([330866d](https://github.com/AlexGalhardo/vukem/commit/330866d306cd54047c6c944a27a6e8b2e36992ac))
+- **challenge:** `SiteVerify.InsecureFailOpen` opt-in, idempotent siteverify calls with one retry (#131) ([330866d](https://github.com/AlexGalhardo/vukem/commit/330866d306cd54047c6c944a27a6e8b2e36992ac))
 
 ### Fixed
 
@@ -1194,7 +1199,8 @@ Project foundation. No framework code yet; see [PLAN.md](PLAN.md) for the roadma
 - README, MIT license, CONTRIBUTING, SECURITY and CODE_OF_CONDUCT.
 - Agent configuration: `AGENTS.md`, `CLAUDE.md`, path-scoped `.claude/rules/`, Go skills and project settings.
 
-[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.36.0...HEAD
+[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.37.0...HEAD
+[0.37.0]: https://github.com/AlexGalhardo/vukem/compare/v0.36.0...v0.37.0
 [0.36.0]: https://github.com/AlexGalhardo/vukem/compare/v0.35.0...v0.36.0
 [0.35.0]: https://github.com/AlexGalhardo/vukem/compare/v0.34.0...v0.35.0
 [0.34.0]: https://github.com/AlexGalhardo/vukem/compare/v0.33.0...v0.34.0
