@@ -781,3 +781,11 @@ func TestHandlerWithAnswers304ForAnS3Object(t *testing.T) {
 			etag, second.Code, second.Body.String(), second.Header().Get("Cache-Control"))
 	}
 }
+
+func TestDefaultTransportKeepsIdleConnectionsPerHost(t *testing.T) {
+	t.Parallel()
+
+	if got := defaultTransport().MaxIdleConnsPerHost; got < 32 {
+		t.Errorf("MaxIdleConnsPerHost = %d, want >= 32", got)
+	}
+}

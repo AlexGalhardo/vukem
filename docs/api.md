@@ -322,6 +322,7 @@ apidocs.Serve(app, r, "/api/docs", apidocs.Config{SpecURL: "/api/v1/openapi.json
 
 - The `apidocs` package (about 4 MB) is linked only when imported.
 - `Config.Name` (default `apidocs`) names the page route; the bundle and shim are `<Name>.script` and `<Name>.page`. Give each reference its own name to serve several on one router.
+- `Config.Options` (`map[string]any`) passes extra [Scalar options](https://scalar.com/products/api-references/configuration) through the page's JSON config, e.g. `apidocs.Config{Options: map[string]any{"defaultOpenAllTags": true, "hideModels": true, "customCss": ".introduction-section{display:none}"}}`. Values are JSON-escaped (a `</script>` in a string stays inert) and `customCss` is applied by Scalar under the page's nonce, never as a raw `<style>`. Explicit `Config` fields (`Theme`, `Layout`, `Authentication`, `HideClientButton`) win over the same key in `Options`; `url`, `telemetry`, `withDefaultFonts`, `agent`, `mcp` and `showDeveloperTools` are fixed by the page and ignored in `Options`.
 - `apidocs.Command()` adds `vukem openapi:serve [-addr localhost:8081]` to preview the reference locally.
 
 ### Types for clients

@@ -412,8 +412,23 @@ apidocs.Serve(app, r, "/docs", apidocs.Config{
 | `Layout` | `modern` | or `classic` |
 | `Authentication` | none | Scalar's `authentication` option, e.g. the preferred scheme. Never put a real secret here: the page is public wherever it is served |
 | `HideClientButton` | `false` | hide the "Test request" client |
+| `Options` | none | extra [Scalar options](https://scalar.com/products/api-references/configuration) merged into the page's JSON config; see below |
 | `Name` | `apidocs` | the page's route name; the scripts are `<Name>.script` and `<Name>.page` |
 | `InProduction` | `false` | register the page in production too |
+
+`Options` takes any other Scalar option, for example:
+
+```go title="routes/docs.go"
+apidocs.Serve(app, r, "/docs", apidocs.Config{
+	Options: map[string]any{
+		"defaultOpenAllTags": true,
+		"hideModels":         true,
+		"customCss":          ".introduction-section { display: none }",
+	},
+})
+```
+
+Values are JSON-encoded into the page and escaped like the built-in options (a `</script>` inside a string stays inert), and `customCss` goes through that config, never a raw `<style>`. An explicit `Config` field (`Theme`, `Layout`, `Authentication`, `HideClientButton`) wins over the same key in `Options`; `url`, `telemetry`, `withDefaultFonts`, `agent`, `mcp` and `showDeveloperTools` are fixed by the page and ignored there.
 
 `Serve` registers three `GET` routes: the page at `path` (named `apidocs`), `path/scalar.js` (`apidocs.script`) and `path/page.js` (`apidocs.page`); all three are skipped in the document. Route names are unique per router, so a second reference page needs its own `Name` (`apidocs.Config{Name: "apidocs.admin", SpecURL: "/admin/openapi.json"}`). It returns `false` and registers nothing in production unless `OPENAPI_IN_PRODUCTION=true` or `Config.InProduction`. `apidocs.Register(r, path, cfg)` adds the routes without that check, for apps that gate them another way (its default title is `API Reference`).
 

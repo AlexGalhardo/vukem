@@ -19,8 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **config:** `vukem.WithEnvDefaults(map)` and `config.Source.SetDefaults` set defaults below the `.env` files, with the documented precedence process environment > `.env` files > default (VF-074).
 - **robots:** new package that renders and serves `/robots.txt` (groups, allow/disallow rules, sitemaps) with single-line validation; `NOINDEX=true` adds `X-Robots-Tag: noindex, nofollow` to every response (`middleware.NoIndex`) and `robots.File.NoIndex` serves a disallow-all file (VF-075).
 
+- **apidocs:** `apidocs.Config.Options` (`map[string]any`) merges extra Scalar options (`defaultOpenAllTags`, `hideModels`, `customCss`, `operationTitleSource`, ...) into the page's JSON config; explicit `Config` fields win, and `url`, `agent`, `mcp`, `telemetry`, `withDefaultFonts` and `showDeveloperTools` are never overridden.
+
 ### Fixed
 
+- **s3:** the default transport keeps up to 100 idle connections per host instead of 2, so a parallel batch (16 concurrent `Stat` calls) reuses connections instead of exhausting ephemeral ports (VF-077).
 - **cli:** `TestStripeVersionIsLatestTag` fails instead of skipping on GitHub Actions without tags, and the CI `test` job fetches the full history, so a stale `install:billing` pin fails the gate (VF-076).
 - **cli:** Pin contrib/stripe v0.5.1 in install:billing (#136) ([0d1d3a1](https://github.com/AlexGalhardo/vukem/commit/0d1d3a1a5f168a676076038a9f87622747216a81))
 
