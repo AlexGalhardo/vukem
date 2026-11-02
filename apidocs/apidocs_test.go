@@ -379,3 +379,38 @@ func TestRegisterTwiceWithNames(t *testing.T) {
 		t.Errorf("route names (-want +got):\n%s", diff)
 	}
 }
+
+func TestOptionsMergedAndProtected(t *testing.T) {
+	t.Parallel()
+
+	r := router.New(nil)
+	apidocs.Register(r, "/docs", apidocs.Config{
+		SpecURL: "/api/openapi.json", Theme: "purple",
+		Options: map[string]any{
+			"defaultOpenAllTags": true,
+			"hideModels":         true,
+			"customCss":          ".x{color:red}</script><script>alert(1)</script>",
+			"url":                "https://evil.example/spec.json",
+			"agent":              map[string]any{"disabled": false},
+			"mcp":                map[string]any{"disabled": false},
+			"theme":              "moon",
+		},
+	})
+
+	body := get(t, r, "/docs").Body.String()
+
+	for _, want := range []string{
+		`"defaultOpenAllTags":true`, `"hideModels":true`, `"customCss":`,
+		`"url":"/api/openapi.json"`, `"agent":{"disabled":true}`, `"mcp":{"disabled":true}`, `"theme":"purple"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("page missing %s:\n%s", want, body)
+		}
+	}
+
+	for _, bad := range []string{"evil.example", `"disabled":false`, `"theme":"moon"`, "</script><script>alert(1)", "<script>alert(1)"} {
+		if strings.Contains(body, bad) {
+			t.Errorf("page contains %q", bad)
+		}
+	}
+}

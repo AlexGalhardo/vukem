@@ -195,6 +195,10 @@ func defaultTransport() *http.Transport {
 	t = t.Clone()
 	// No total timeout: downloads stream for as long as the context allows.
 	t.ResponseHeaderTimeout = time.Minute
+	// One host: the DefaultTransport cap of 2 idle connections per host
+	// closes most connections of a parallel batch and exhausts ephemeral ports.
+	t.MaxIdleConns = 100
+	t.MaxIdleConnsPerHost = 100
 
 	return t
 }

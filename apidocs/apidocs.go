@@ -18,6 +18,7 @@ import (
 	"errors"
 	"flag"
 	"html/template"
+	"maps"
 	"net"
 	"net/http"
 	"strings"
@@ -75,6 +76,12 @@ type Config struct {
 	Authentication map[string]any
 	// HideClientButton hides the "Test request" client.
 	HideClientButton bool
+	// Options are extra Scalar configuration options (defaultOpenAllTags,
+	// hideModels, customCss, ...), JSON-encoded into the page. Explicit
+	// Config fields win over the same key here; url, telemetry,
+	// withDefaultFonts, agent, mcp and showDeveloperTools are fixed by the
+	// page (CSP, no scalar.com services) and are never overridden.
+	Options map[string]any
 	// Name is the route name of the page (default "apidocs"); the bundle
 	// and the shim are Name+".script" and Name+".page". Give each reference
 	// its own name to serve several on one router.
@@ -144,7 +151,16 @@ func Register(r *router.Router, path string, cfg Config) {
 		cfg.Name = "apidocs"
 	}
 
-	options := map[string]any{
+	options := maps.Clone(cfg.Options)
+	if options == nil {
+		options = map[string]any{}
+	}
+
+	if cfg.HideClientButton {
+		options["hideClientButton"] = true
+	}
+
+	maps.Copy(options, map[string]any{
 		"url":              cfg.SpecURL,
 		"telemetry":        false,
 		"withDefaultFonts": false,
@@ -153,8 +169,7 @@ func Register(r *router.Router, path string, cfg Config) {
 		// scalar.com services.
 		"mcp":                map[string]any{"disabled": true},
 		"showDeveloperTools": "never",
-		"hideClientButton":   cfg.HideClientButton,
-	}
+	})
 
 	if cfg.Theme != "" {
 		options["theme"] = cfg.Theme
@@ -171,7 +186,7 @@ func Register(r *router.Router, path string, cfg Config) {
 	// Scalar's default theme fails AA contrast; other themes are the app's
 	// choice and keep their colors.
 	var css template.CSS
-	if cfg.Theme == "" || cfg.Theme == "default" {
+	if theme, _ := options["theme"].(string); theme == "" || theme == "default" {
 		css = template.CSS(pageCSS) //nolint:gosec // embedded constant, not user input
 	}
 
