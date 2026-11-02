@@ -7,8 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **admin:** `Panel.Clock()` applies `IdleTimeout` and `MaxSessionAge` to every request of a user with the panel ability, panel visited or not (the absolute cap counts from the first admin request), and `Config.TwoFactorFlash` flashes a message under `TwoFactorFlashKey` with the `TwoFactorRedirect` (VF-063).
+- **cache:** `cache.Buffer` takes an optional `MaxKeys` cap: a new key on a full buffer drops the oldest pending key and reports it to `OnDrop` (VF-064).
+- **web:** `web.ClientIP(r)` returns the client IP with the trusted-proxy rules of `c.IP()` for plain middleware; new package `security/crawlers` verifies Google, Bing, Apple and Yandex crawlers by forward-confirmed reverse DNS, with a timeout and a per-IP cache (VF-065).
+- **vukem:** `App.HealthHandler()` exports the `/up` handler, so a `Router.Host(...).Only()` group can keep serving the health check (VF-068).
+- **router:** `Route.SecretParams(names...)` logs `{name}` instead of a secret path parameter in the request line, error and security-event logs; `web.RedactLogPath` and `web.LogPath` expose the same redaction, and the request-line fields are documented (VF-071).
+- **inertia:** the docs explain that a redirect to a same-origin URL with a `#fragment` stays an Inertia visit (`409` with `X-Inertia-Redirect`), unlike `inertia.Location`, which forces a full page load (VF-072).
+- **middleware:** `SecureHeadersConfig.AddCSPSources(directive, sources...)` adds CSP sources without dropping the integrations' ones, `MissingCSPSources(want)` reports the sources the final policy blocks, and the default stacks warn at boot when an enabled analytics provider's origins are missing (VF-073).
+- **config:** `vukem.WithEnvDefaults(map)` and `config.Source.SetDefaults` set defaults below the `.env` files, with the documented precedence process environment > `.env` files > default (VF-074).
+- **robots:** new package that renders and serves `/robots.txt` (groups, allow/disallow rules, sitemaps) with single-line validation; `NOINDEX=true` adds `X-Robots-Tag: noindex, nofollow` to every response (`middleware.NoIndex`) and `robots.File.NoIndex` serves a disallow-all file (VF-075).
+
 ### Fixed
 
+- **cli:** `TestStripeVersionIsLatestTag` fails instead of skipping on GitHub Actions without tags, and the CI `test` job fetches the full history, so a stale `install:billing` pin fails the gate (VF-076).
 - **cli:** Pin contrib/stripe v0.5.1 in install:billing (#136) ([0d1d3a1](https://github.com/AlexGalhardo/vukem/commit/0d1d3a1a5f168a676076038a9f87622747216a81))
 
 ## [0.36.0] - 2026-11-01

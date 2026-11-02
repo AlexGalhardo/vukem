@@ -211,6 +211,12 @@ func (a *App) writeReadiness(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// HealthHandler is the handler of GET /up, for routes the framework's own
+// /up does not reach, such as a Router.Host group marked Only:
+// g.Get("/up", app.HealthHandler()). It answers 200 {"status":"ok"} with
+// Cache-Control: no-store, and with ?checks=1 like ReadyHandler.
+func (a *App) HealthHandler() web.HandlerFunc { return a.healthHandler }
+
 // healthHandler is the liveness probe: 200 once the app booted. With
 // ?checks=1 it answers like ReadyHandler.
 func (a *App) healthHandler(c *web.Ctx) error {
@@ -289,6 +295,8 @@ func APIMiddlewareWith(app *App, r *router.Router, opts APIMiddlewareOptions) er
 	if err := secure.Validate(); err != nil {
 		return fmt.Errorf("vukem: secure headers: %w", err)
 	}
+
+	warnMissingCSP(app, secure)
 
 	r.UseServer(serverMiddleware(app, secure, maintenanceConfig(app))...)
 	useLocalePrefixes(app, r, opts.I18n)
@@ -423,12 +431,30 @@ func maintenanceConfig(app *App) middleware.MaintenanceConfig {
 func serverMiddleware(
 	app *App, secure middleware.SecureHeadersConfig, maint middleware.MaintenanceConfig,
 ) []router.Middleware {
-	return []router.Middleware{
+	mw := []router.Middleware{
 		middleware.Recover(),
 		middleware.RequestID(),
 		middleware.SecureHeaders(secure),
+	}
+
+	if app.Config.NoIndex {
+		mw = append(mw, middleware.NoIndex())
+	}
+
+	return append(mw,
 		middleware.Maintenance(maint),
 		middleware.LoggerWith(app.Log, middleware.LoggerOptions{TruncateIP: app.Config.LogTruncateIP}),
+	)
+}
+
+// warnMissingCSP logs at boot when the final policy no longer allows the
+// origins an enabled integration needs, typically after an app assigned
+// CSPSources instead of calling AddCSPSources: the browser would block
+// those scripts with no server-side trace.
+func warnMissingCSP(app *App, cfg middleware.SecureHeadersConfig) {
+	if missing := cfg.MissingCSPSources(app.Config.Analytics.CSPSources()); missing != nil {
+		app.Log.Warn("vukem: the Content-Security-Policy blocks sources an enabled integration needs; "+
+			"add them with cfg.AddCSPSources instead of replacing CSPSources", "missing", missing)
 	}
 }
 
@@ -526,6 +552,8 @@ func DefaultMiddlewareWith(app *App, r *router.Router, opts MiddlewareOptions) e
 	if err := secure.Validate(); err != nil {
 		return fmt.Errorf("vukem: secure headers: %w", err)
 	}
+
+	warnMissingCSP(app, secure)
 
 	var origins []string
 	for o := range strings.SplitSeq(app.Source.Get("CSRF_TRUSTED_ORIGINS"), ",") {

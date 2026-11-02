@@ -112,6 +112,17 @@ func validRequestID(id string) bool {
 // at WARN.
 func Logger(log *slog.Logger) Middleware { return LoggerWith(log, LoggerOptions{}) }
 
+// NoIndex sets X-Robots-Tag: noindex, nofollow on every response, so
+// search engines index nothing the handlers serve (a staging site).
+func NoIndex() Middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("X-Robots-Tag", "noindex, nofollow")
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 // LoggerOptions configures LoggerWith.
 type LoggerOptions struct {
 	// TruncateIP logs the /24 network of IPv4 addresses and the /48 of
@@ -154,14 +165,14 @@ func LoggerWith(log *slog.Logger, o LoggerOptions) Middleware {
 				peer = r.RemoteAddr
 			}
 
-			ip := web.NewCtx(nil, r, web.ServicesFrom(r.Context())).IP()
+			ip := web.ClientIP(r)
 			if o.TruncateIP {
 				peer, ip = truncateIP(peer), truncateIP(ip)
 			}
 
 			attrs := append([]slog.Attr{
 				slog.String("method", r.Method),
-				slog.String("path", r.URL.Path),
+				slog.String("path", extra.Path(r.URL.Path)),
 				slog.Int("status", status),
 				slog.Duration("duration", time.Since(start)),
 				slog.Int64("bytes", rw.Size()),

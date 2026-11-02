@@ -1205,3 +1205,29 @@ func TestNewReportsAllConfigErrors(t *testing.T) {
 		t.Errorf("New() error = %q, want no follow-up error from the unparsed TRUSTED_PROXIES", err)
 	}
 }
+
+// VF-074 (HexaScore): a default set in code must not win over .env.
+func TestWithEnvDefaultsRankBelowEnvFile(t *testing.T) {
+	t.Parallel()
+
+	files := fstest.MapFS{".env": {Data: []byte("APP_KEY=" + testKey + "\nAPP_NAME=FromFile\n")}}
+	getenv := func(string) (string, bool) { return "", false }
+
+	app, err := New(WithEnv(files, getenv), WithLogger(discardLogger()), WithoutHTTP(),
+		WithEnvDefaults(map[string]string{"APP_NAME": "FromDefault", "QUEUE_LIMITS": "ingest=2"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if app.Config.Name != "FromFile" || app.Source.Get("QUEUE_LIMITS") != "ingest=2" {
+		t.Errorf(
+			"Name = %q, QUEUE_LIMITS = %q; want FromFile, ingest=2",
+			app.Config.Name,
+			app.Source.Get("QUEUE_LIMITS"),
+		)
+	}
+
+	if _, err := New(WithEnvDefaults(map[string]string{"APP_ENV": "production"})); err == nil {
+		t.Error("WithEnvDefaults(APP_ENV) = nil error, want an error")
+	}
+}

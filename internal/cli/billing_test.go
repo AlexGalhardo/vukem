@@ -136,7 +136,8 @@ func TestSecurity_A08_BillingWebhookOutsideCSRFButSigned(t *testing.T) {
 
 // TestStripeVersionIsLatestTag keeps install:billing on the newest
 // contrib/stripe release: bump stripeVersion after tagging the module. It
-// skips without git or tags (shallow CI checkouts).
+// skips without git or tags locally, but fails on GitHub Actions, whose
+// test job fetches the tags: a skip there would hide a stale pin.
 func TestStripeVersionIsLatestTag(t *testing.T) {
 	t.Parallel()
 
@@ -156,6 +157,10 @@ func TestStripeVersionIsLatestTag(t *testing.T) {
 
 	tags := strings.Fields(string(out))
 	if len(tags) == 0 {
+		if os.Getenv("GITHUB_ACTIONS") == "true" {
+			t.Fatal("no contrib/stripe tags in this CI checkout: fetch them (actions/checkout fetch-depth: 0)")
+		}
+
 		t.Skip("no contrib/stripe tags in this checkout")
 	}
 

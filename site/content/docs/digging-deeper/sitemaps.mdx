@@ -60,6 +60,38 @@ err := sitemap.WriteIndex(indexFile, []sitemap.Sitemap{
 
 Point `robots.txt` at the index: `Sitemap: https://example.com/sitemap.xml`.
 
+## Serve robots.txt
+
+The `robots` package renders [`robots.txt`](https://www.rfc-editor.org/rfc/rfc9309) from Go values: groups of user agents with their `Allow` and `Disallow` rules, and the `Sitemap` lines. `robots.Register` serves it at `GET /robots.txt` (`text/plain`, `Cache-Control: public, max-age=3600`, an ETag and `304` answers). Nothing is served unless you register it.
+
+```go title="routes/web.go"
+err := robots.Register(r, robots.File{
+	Groups: []robots.Group{
+		{UserAgents: []string{"*"}, Disallow: []string{"/admin/", "/trap/"}},
+		{UserAgents: []string{"GPTBot"}, Disallow: []string{"/"}},
+	},
+	Sitemaps: []string{app.Config.URL + "/sitemap.xml"},
+	NoIndex:  app.Config.NoIndex,
+})
+```
+
+```text title="GET /robots.txt"
+User-agent: *
+Disallow: /admin/
+Disallow: /trap/
+
+User-agent: GPTBot
+Disallow: /
+
+Sitemap: https://example.com/sitemap.xml
+```
+
+Every value must fit on one line: a group without a user agent, a rule that does not start with `/` or `*` (or contains `#`), and a sitemap that is not an absolute `http(s)` URL fail `Register` with an error such as `robots: rule "admin" must be a path starting with / or *`. An empty `Disallow` entry writes `Disallow:`, which allows everything.
+
+### Keep a staging site out of search engines
+
+Set `NOINDEX=true` on the staging deployment. The default middleware stacks then send `X-Robots-Tag: noindex, nofollow` on every response, error pages included (`middleware.NoIndex()` does the same in a stack of your own). Pass `app.Config.NoIndex` to `robots.File.NoIndex`, as above, and `robots.txt` becomes `User-agent: *` / `Disallow: /` whatever the groups say. Leave it unset in production.
+
 ## What is refused
 
 `Add` and `WriteIndex` accept only absolute `http` or `https` URLs of at most 2048 bytes, and hreflang values made of letters, digits and `-` (`x-default` included). A relative path or a `javascript:` URL is an error, never written: crawlers ignore such entries, and they should never reach a public file. Every value is XML-escaped.

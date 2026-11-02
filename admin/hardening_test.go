@@ -184,6 +184,7 @@ func TestNewRejectsBadHardening(t *testing.T) {
 		"deny 500":      {DB: db, Guard: guard, DenyStatus: 500},
 		"remote 2fa":    {DB: db, Guard: guard, TwoFactorRedirect: "//evil.test/2fa"},
 		"relative 2fa":  {DB: db, Guard: guard, TwoFactorRedirect: "settings/2fa"},
+		"flash only":    {DB: db, Guard: guard, TwoFactorFlash: "Turn on 2FA."},
 	} {
 		if _, err := admin.New(cfg); err == nil {
 			t.Errorf("New(%s) = nil error, want an error", name)
@@ -255,4 +256,62 @@ func TestSecurity_A07_AdminTrackIdle(t *testing.T) {
 	if got := guest.Get("/browse").Header("Set-Cookie"); got != "" {
 		t.Errorf("guest Set-Cookie = %q, want none", got)
 	}
+}
+
+func TestSecurity_A07_AdminClockCoversEveryAdminRequest(t *testing.T) {
+	t.Parallel()
+
+	clocked := func(r *router.Router, p *admin.Panel) {
+		r.Get("/browse", func(c *web.Ctx) error { return c.String(200, "browse") }).Use(p.Clock())
+	}
+
+	// A moderator who never opens the panel is still capped: idle.
+	clock := vukemtest.NewFakeClock(time.Date(2026, 10, 29, 9, 0, 0, 0, time.UTC))
+	idle := func(c *admin.Config) { c.IdleTimeout = 30 * time.Minute }
+	app := newApp(t, options{clock: clock, beside: clocked, harden: idle})
+
+	editor := as(t, app, "editor")
+	editor.Get("/browse").AssertOK()
+
+	for range 3 {
+		clock.Advance(20 * time.Minute)
+		editor.Get("/browse").AssertOK()
+	}
+
+	editor.Get("/whoami").AssertSee("user=editor@example.com")
+	clock.Advance(31 * time.Minute)
+	editor.Get("/browse").AssertOK()
+	editor.Get("/whoami").AssertSee("guest")
+
+	// Absolute cap from the first admin request, however active the user.
+	clock2 := vukemtest.NewFakeClock(time.Date(2026, 10, 29, 9, 0, 0, 0, time.UTC))
+	capped := func(c *admin.Config) { c.MaxSessionAge = time.Hour; c.IdleTimeout = 30 * time.Minute }
+	app2 := newApp(t, options{clock: clock2, beside: clocked, harden: capped})
+
+	a := as(t, app2, "admin")
+	for range 3 {
+		a.Get("/browse").AssertOK()
+		clock2.Advance(25 * time.Minute)
+	}
+
+	a.Get("/browse").AssertOK()
+	a.Get("/whoami").AssertSee("guest")
+
+	// A user without the panel ability is left alone (no session write).
+	reader := as(t, app, "reader")
+	reader.Get("/browse").AssertOK()
+	clock.Advance(2 * time.Hour)
+	reader.Get("/browse").AssertOK()
+	reader.Get("/whoami").AssertSee("user=reader@example.com")
+}
+
+func TestSecurity_A07_AdminTwoFactorRedirectFlash(t *testing.T) {
+	t.Parallel()
+
+	app := newApp(t, options{harden: func(c *admin.Config) {
+		c.TwoFactor = func(context.Context) (bool, error) { return false, nil }
+		c.TwoFactorRedirect = "/settings/2fa"
+		c.TwoFactorFlash = "Turn on two-factor authentication to use the admin panel."
+	}})
+	as(t, app, "admin").Get("/admin").AssertRedirect("/settings/2fa").AssertSessionHas(admin.TwoFactorFlashKey)
 }

@@ -3407,3 +3407,93 @@ func TestAnalytics(t *testing.T) {
 		}
 	})
 }
+
+// VF-068 (HexaScore): an Only() host group serves the health check itself.
+func TestHealthHandlerOnOnlyHost(t *testing.T) {
+	t.Parallel()
+
+	app := newTestApp(t, WithRoutes(func(r *router.Router, app *App) error {
+		r.Host("api.example.test", func(g *router.Group) {
+			g.Get("/up", app.HealthHandler())
+		}).Only()
+
+		return nil
+	}))
+
+	h, err := app.Handler()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for target, want := range map[string]int{"/up": 200, "/login": 404} {
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, target, http.NoBody)
+		req.Host = "api.example.test"
+
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+
+		if rec.Code != want {
+			t.Errorf("GET api.example.test%s = %d, want %d", target, rec.Code, want)
+		}
+
+		if want == 200 && (!strings.Contains(rec.Body.String(), `"status":"ok"`) ||
+			rec.Header().Get("Cache-Control") != "no-store") {
+			t.Errorf("health answer = %q (Cache-Control %q)", rec.Body.String(), rec.Header().Get("Cache-Control"))
+		}
+	}
+}
+
+// VF-073 (HexaScore): replacing CSPSources drops the analytics origins;
+// the boot warns, and AddCSPSources keeps them.
+func TestCSPWarnsWhenIntegrationSourcesAreDropped(t *testing.T) {
+	t.Parallel()
+
+	src := map[string]string{"UMAMI_WEBSITE_ID": "94db1cb1-74f4-4a40-ad6c-962362670409"}
+
+	for name, edit := range map[string]func(*middleware.SecureHeadersConfig){
+		"replaced": func(cfg *middleware.SecureHeadersConfig) {
+			cfg.CSPSources = map[string][]string{"img-src": {"https://img.example"}}
+		},
+		"added": func(cfg *middleware.SecureHeadersConfig) { cfg.AddCSPSources("img-src", "https://img.example") },
+	} {
+		var buf bytes.Buffer
+
+		app := newTestApp(t, WithSource(testSource(src)), WithLogger(slog.New(slog.NewTextHandler(&buf, nil))),
+			WithRoutes(func(r *router.Router, app *App) error {
+				return DefaultMiddlewareWith(app, r, MiddlewareOptions{SecureHeaders: edit})
+			}))
+		if _, err := app.Handler(); err != nil {
+			t.Fatal(err)
+		}
+
+		warned := strings.Contains(buf.String(), "cloud.umami.is")
+		if warned != (name == "replaced") {
+			t.Errorf("%s: warned = %v, log:\n%s", name, warned, buf.String())
+		}
+	}
+}
+
+// VF-075 (HexaScore): NOINDEX keeps a staging site out of search engines.
+func TestNoIndexHeader(t *testing.T) {
+	t.Parallel()
+
+	routes := WithRoutes(func(r *router.Router, app *App) error {
+		if err := DefaultMiddleware(app, r); err != nil {
+			return err
+		}
+
+		r.Get("/page", func(c *web.Ctx) error { return c.String(200, "ok") })
+
+		return nil
+	})
+
+	for env, want := range map[string]string{"": "", "true": "noindex, nofollow"} {
+		app := newTestApp(t, routes, WithSource(testSource(map[string]string{"NOINDEX": env})))
+
+		for _, p := range []string{"/page", "/missing"} {
+			if got := serve(t, app, http.MethodGet, p, false).Header().Get("X-Robots-Tag"); got != want {
+				t.Errorf("NOINDEX=%q GET %s X-Robots-Tag = %q, want %q", env, p, got, want)
+			}
+		}
+	}
+}

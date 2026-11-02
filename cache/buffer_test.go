@@ -77,3 +77,46 @@ func TestBufferFlush(t *testing.T) {
 		t.Errorf("empty Flush() = %v, called = %v", err, called)
 	}
 }
+
+func TestBufferMaxKeys(t *testing.T) {
+	t.Parallel()
+
+	var dropped []string
+
+	b := cache.Buffer[string]{MaxKeys: 2, OnDrop: func(k string, n int64) {
+		dropped = append(dropped, k)
+
+		if k == "a" && n != 3 {
+			t.Errorf("OnDrop(a) count = %d, want 3", n)
+		}
+	}}
+
+	b.Add("a", 1)
+	b.Add("b", 1)
+	b.Add("a", 2) // an existing key never drops
+	b.Add("c", 1) // drops the oldest, a
+	b.Add("d", 1) // then b
+
+	if diff := cmp.Diff([]string{"a", "b"}, dropped); diff != "" {
+		t.Errorf("dropped (-want +got):\n%s", diff)
+	}
+
+	if diff := cmp.Diff(map[string]int64{"c": 1, "d": 1}, b.Swap()); diff != "" {
+		t.Errorf("Swap (-want +got):\n%s", diff)
+	}
+
+	// A new set starts empty: the cap counts from zero again.
+	b.Add("e", 1)
+	b.Add("f", 1)
+
+	if len(dropped) != 2 {
+		t.Errorf("dropped after Swap = %v, want no new drops", dropped)
+	}
+
+	// Restore respects the cap too.
+	b.Restore(map[string]int64{"g": 1})
+
+	if got := len(b.Swap()); got != 2 {
+		t.Errorf("len after Restore = %d, want 2", got)
+	}
+}

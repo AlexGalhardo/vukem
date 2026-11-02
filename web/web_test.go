@@ -1136,3 +1136,34 @@ func TestResponseWriterHijack(t *testing.T) {
 		t.Fatal("Written() = false after Hijack; Serve would write on a hijacked connection")
 	}
 }
+
+func TestSecurity_A01_ClientIPFollowsTrustedProxies(t *testing.T) {
+	t.Parallel()
+
+	_, proxies, _ := net.ParseCIDR("10.0.0.0/8")
+	services := &Services{TrustedProxies: []*net.IPNet{proxies}}
+
+	for _, tc := range []struct{ remote, xff, want string }{
+		{remote: "1.2.3.4:5000", xff: "9.9.9.9", want: "1.2.3.4"},
+		{remote: "10.0.0.1:5000", xff: "6.6.6.6, 9.9.9.9", want: "9.9.9.9"},
+		{remote: "10.0.0.1:5000", xff: "2001:DB8::7", want: "2001:db8::7"},
+	} {
+		r := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
+		r.RemoteAddr = tc.remote
+		r.Header.Set("X-Forwarded-For", tc.xff)
+		r = r.WithContext(WithServices(r.Context(), services))
+
+		if got := ClientIP(r); got != tc.want {
+			t.Errorf("ClientIP(%s, %s) = %q, want %q", tc.remote, tc.xff, got, tc.want)
+		}
+	}
+
+	// Without services on the context nobody is trusted.
+	r := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
+	r.RemoteAddr = "10.0.0.1:5000"
+	r.Header.Set("X-Forwarded-For", "9.9.9.9")
+
+	if got := ClientIP(r); got != "10.0.0.1" {
+		t.Errorf("ClientIP without services = %q, want the peer", got)
+	}
+}

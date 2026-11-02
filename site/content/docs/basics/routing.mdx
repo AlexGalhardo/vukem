@@ -335,6 +335,15 @@ r.Host("api.example.com", func(g *router.Group) {
 - The host group's `ErrorHandler` still runs for them, which is how an API host answers every miss as problem+json.
 - `Only` on a group without a host fails when the routes compile.
 
+The framework's own routes, such as the `/up` health check, are main routes, so an `Only()` host no longer reaches them. Register the ones the host must keep inside the group. `app.HealthHandler()` is the handler of `/up` (`200 {"status":"ok"}`, `Cache-Control: no-store`, `?checks=1` runs the health checks):
+
+```go title="routes/api.go"
+r.Host("api.example.com", func(g *router.Group) {
+	g.Get("/up", app.HealthHandler())
+	g.Group("/v1", apiV1)
+}).Name("host.").Only()
+```
+
 #### One set of routes under two prefixes
 
 To serve the same handlers at `/api/v1` on the main host and at `/v1` on the API host, register them from one function twice. Give each copy its own name prefix, as route names must be unique:

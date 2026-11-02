@@ -3,6 +3,7 @@ package middleware
 import (
 	"bytes"
 	"log/slog"
+	"maps"
 	"net/http"
 	"strings"
 	"testing"
@@ -274,5 +275,46 @@ func TestSecureHeadersLogsDroppedExtras(t *testing.T) {
 
 	if n := strings.Count(buf.String(), "secure headers: invalid CSP extras dropped"); n != 1 {
 		t.Errorf("warnings = %d, want 1:\n%s", n, buf.String())
+	}
+}
+
+func TestAddAndMissingCSPSources(t *testing.T) {
+	t.Parallel()
+
+	analytics := map[string][]string{
+		"script-src":  {"https://cloud.umami.is"},
+		"connect-src": {"https://cloud.umami.is"},
+	}
+
+	cfg := SecureHeadersConfig{CSPSources: maps.Clone(analytics)}
+	cfg.AddCSPSources("script-src", "https://cloud.umami.is", "https://cdn.example")
+	cfg.AddCSPSources("frame-src", "https://challenges.cloudflare.com")
+
+	want := map[string][]string{
+		"script-src":  {"https://cloud.umami.is", "https://cdn.example"},
+		"connect-src": {"https://cloud.umami.is"},
+		"frame-src":   {"https://challenges.cloudflare.com"},
+	}
+	if diff := cmp.Diff(want, cfg.CSPSources); diff != "" {
+		t.Errorf("CSPSources (-want +got):\n%s", diff)
+	}
+
+	if m := cfg.MissingCSPSources(analytics); m != nil {
+		t.Errorf("MissingCSPSources = %v, want nil", m)
+	}
+
+	replaced := SecureHeadersConfig{CSPSources: map[string][]string{"img-src": {"https://img.example"}}}
+	if diff := cmp.Diff(analytics, replaced.MissingCSPSources(analytics)); diff != "" {
+		t.Errorf("MissingCSPSources after replace (-want +got):\n%s", diff)
+	}
+
+	// A custom CSP that already allows them, or none at all, misses nothing.
+	custom := SecureHeadersConfig{CSP: "default-src 'self' https://cloud.umami.is"}
+	if m := custom.MissingCSPSources(analytics); m != nil {
+		t.Errorf("custom CSP MissingCSPSources = %v, want nil (default-src fallback)", m)
+	}
+
+	if m := (SecureHeadersConfig{CSP: "-"}).MissingCSPSources(analytics); m != nil {
+		t.Errorf("disabled CSP MissingCSPSources = %v, want nil", m)
 	}
 }

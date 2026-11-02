@@ -221,7 +221,7 @@ func (c *Ctx) validationHook(verr *errs.ValidationError) bool {
 }
 
 func logError(c *Ctx, status int, err error, level slog.Level) {
-	attrs := []any{"status", status, "method", c.r.Method, "path", c.r.URL.Path, "err", err}
+	attrs := []any{"status", status, "method", c.r.Method, "path", LogPath(c.r), "err", err}
 	if id := RequestID(c.Context()); id != "" {
 		attrs = append(attrs, "request_id", id)
 	}

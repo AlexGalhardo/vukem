@@ -62,6 +62,23 @@ func WithEnv(fsys fs.FS, getenv func(string) (string, bool)) Option {
 	return func(o *options) error { o.fsys, o.getenv = fsys, getenv; return nil }
 }
 
+// WithEnvDefaults sets configuration values used when a key is unset or
+// empty in both the process environment and the .env files: the
+// precedence is process environment > .env files > these defaults. Use it
+// instead of wrapping WithEnv's getenv, which ranks above .env. APP_ENV
+// cannot have a default (it picks the .env files).
+func WithEnvDefaults(defaults map[string]string) Option {
+	return func(o *options) error {
+		if _, ok := defaults["APP_ENV"]; ok {
+			return errors.New("vukem: WithEnvDefaults cannot set APP_ENV (it selects the .env files)")
+		}
+
+		o.envDefaults = defaults
+
+		return nil
+	}
+}
+
 // WithTLSConfig serves HTTPS on PORT with cfg (a clone): HTTP/2 over ALPN
 // h2 plus HTTP/1.1. cfg must carry a certificate (Certificates,
 // GetCertificate or GetConfigForClient, e.g. from autocert); MinVersion
