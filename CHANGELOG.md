@@ -7,35 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
-
-- **admin:** `Panel.Clock()` applies `IdleTimeout` and `MaxSessionAge` to every request of a user with the panel ability, panel visited or not (the absolute cap counts from the first admin request), and `Config.TwoFactorFlash` flashes a message under `TwoFactorFlashKey` with the `TwoFactorRedirect` (VF-063).
-- **cache:** `cache.Buffer` takes an optional `MaxKeys` cap: a new key on a full buffer drops the oldest pending key and reports it to `OnDrop` (VF-064).
-- **web:** `web.ClientIP(r)` returns the client IP with the trusted-proxy rules of `c.IP()` for plain middleware; new package `security/crawlers` verifies Google, Bing, Apple and Yandex crawlers by forward-confirmed reverse DNS, with a timeout and a per-IP cache (VF-065).
-- **vukem:** `App.HealthHandler()` exports the `/up` handler, so a `Router.Host(...).Only()` group can keep serving the health check (VF-068).
-- **router:** `Route.SecretParams(names...)` logs `{name}` instead of a secret path parameter in the request line, error and security-event logs; `web.RedactLogPath` and `web.LogPath` expose the same redaction, and the request-line fields are documented (VF-071).
-- **inertia:** the docs explain that a redirect to a same-origin URL with a `#fragment` stays an Inertia visit (`409` with `X-Inertia-Redirect`), unlike `inertia.Location`, which forces a full page load (VF-072).
-- **middleware:** `SecureHeadersConfig.AddCSPSources(directive, sources...)` adds CSP sources without dropping the integrations' ones, `MissingCSPSources(want)` reports the sources the final policy blocks, and the default stacks warn at boot when an enabled analytics provider's origins are missing (VF-073).
-- **config:** `vukem.WithEnvDefaults(map)` and `config.Source.SetDefaults` set defaults below the `.env` files, with the documented precedence process environment > `.env` files > default (VF-074).
-- **robots:** new package that renders and serves `/robots.txt` (groups, allow/disallow rules, sitemaps) with single-line validation; `NOINDEX=true` adds `X-Robots-Tag: noindex, nofollow` to every response (`middleware.NoIndex`) and `robots.File.NoIndex` serves a disallow-all file (VF-075).
-
-- **apidocs:** `apidocs.Config.Options` (`map[string]any`) merges extra Scalar options (`defaultOpenAllTags`, `hideModels`, `customCss`, `operationTitleSource`, ...) into the page's JSON config; explicit `Config` fields win, and `url`, `agent`, `mcp`, `telemetry`, `withDefaultFonts` and `showDeveloperTools` are never overridden.
-
-### Fixed
-
-- **s3:** the default transport keeps up to 100 idle connections per host instead of 2, so a parallel batch (16 concurrent `Stat` calls) reuses connections instead of exhausting ephemeral ports (VF-077).
-- **cli:** `TestStripeVersionIsLatestTag` fails instead of skipping on GitHub Actions without tags, and the CI `test` job fetches the full history, so a stale `install:billing` pin fails the gate (VF-076).
-- **cli:** Pin contrib/stripe v0.5.1 in install:billing (#136) ([0d1d3a1](https://github.com/AlexGalhardo/vukem/commit/0d1d3a1a5f168a676076038a9f87622747216a81))
-
 ## [0.37.0] - 2026-11-02
 
 ### Added
 
-- **apidocs:** Add Config.Options for extra Scalar options (VF-078) ([b8dc3ac](https://github.com/AlexGalhardo/vukem/commit/b8dc3ac0043a3e70d082c9ad126980b552f7d1d3))
+- **admin:** `Panel.Clock()` applies the idle timeout and the session age cap to every admin request (VF-063)
+- **cache:** `cache.Buffer` takes an optional `MaxKeys` cap (VF-064)
+- **web:** `web.ClientIP` for plain middleware and the `security/crawlers` verified-crawler check (VF-065)
+- **vukem:** `App.HealthHandler` keeps `/up` on a `Router.Host(...).Only()` group (VF-068)
+- **router:** `Route.SecretParams` keeps secret path parameters out of the logs (VF-071)
+- **inertia:** Document that a same-origin redirect with a `#fragment` stays an Inertia visit (VF-072)
+- **middleware:** `SecureHeadersConfig.AddCSPSources` adds CSP sources without dropping the integrations' ones (VF-073)
+- **config:** `vukem.WithEnvDefaults` sets defaults below the `.env` files (VF-074)
+- **robots:** New `robots` package and the `NOINDEX` switch (VF-075)
+- **apidocs:** Add `Config.Options` for extra Scalar options (VF-078) ([b8dc3ac](https://github.com/AlexGalhardo/vukem/commit/b8dc3ac0043a3e70d082c9ad126980b552f7d1d3))
 
 ### Fixed
 
 - **s3:** Keep up to 100 idle connections per host (VF-077) ([b8dc3ac](https://github.com/AlexGalhardo/vukem/commit/b8dc3ac0043a3e70d082c9ad126980b552f7d1d3))
+- **cli:** `TestStripeVersionIsLatestTag` fails instead of skipping without tags (VF-076)
 - **cli:** Pin contrib/stripe v0.5.1 in install:billing (#136) ([0d1d3a1](https://github.com/AlexGalhardo/vukem/commit/0d1d3a1a5f168a676076038a9f87622747216a81))
 
 ### Security
