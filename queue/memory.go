@@ -36,6 +36,9 @@ func (d *Memory) SetClock(now func() time.Time) {
 	d.mu.Unlock()
 }
 
+// SupportsUnique implements Uniquer.
+func (*Memory) SupportsUnique() bool { return true }
+
 // Push implements Driver.
 func (d *Memory) Push(_ context.Context, m *Message) error {
 	d.mu.Lock()

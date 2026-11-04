@@ -138,6 +138,16 @@ func Delay(d time.Duration) Option { return func(o *options) { o.delay = d } }
 // has failed, the key is free again. The key is scoped to the job kind. Drivers that run jobs inline (Sync) ignore it.
 func Unique(key string) Option { return func(o *options) { o.unique = key } }
 
+// Uniquer is implemented by drivers whose Push refuses a second message with the same id by returning ErrDuplicate
+// (Memory, Database and Fake do). Dispatching a job with Unique to any other driver, such as one that stores jobs in
+// Redis, fails with ErrUniqueUnsupported instead of silently storing a duplicate or overwriting the running job.
+type Uniquer interface {
+	SupportsUnique() bool
+}
+
+// ErrUniqueUnsupported is returned when a job is dispatched with Unique to a driver that is not a Uniquer.
+var ErrUniqueUnsupported = errors.New("queue: this driver does not support Unique jobs")
+
 // ErrDuplicate is returned by a Driver's Push when a message with the same id is already stored. Dispatch treats it
 // as success for jobs sent with Unique and returns it for any other id clash.
 var ErrDuplicate = errors.New("queue: a message with this id is already stored")
@@ -340,6 +350,13 @@ func (q *Queue) check(m *Message) error {
 		return fmt.Errorf("%w: %s", ErrInlineDelay, m.Kind)
 	}
 
+	// An inline driver runs the job and has no stored copy to deduplicate: Unique is moot there.
+	if strings.HasPrefix(m.ID, "u:") && !q.inline() {
+		if u, ok := q.driver.(Uniquer); !ok || !u.SupportsUnique() {
+			return fmt.Errorf("%w: %s", ErrUniqueUnsupported, m.Kind)
+		}
+	}
+
 	return nil
 }
 
@@ -409,6 +426,10 @@ func (q *Queue) DispatchKindTx(ctx context.Context, ex database.Executor, kind s
 	}
 
 	if tp, ok := q.driver.(TxPusher); ok {
+		if err := q.check(m); err != nil {
+			return err
+		}
+
 		err = tp.PushTx(ctx, ex, m)
 		if err == nil {
 			q.observe(ctx, m, JobDispatched, 0, nil, false)

@@ -193,7 +193,7 @@ err = q.Dispatch(ctx, jobs.SendInvoice{OrderID: id},
 | `queue.Timeout(d)` | `1m` | Upper bound of one attempt |
 | `queue.Unique(key)` | none | Idempotent dispatch: while a job of the same kind and key is queued, running or waiting for a retry, dispatching another is a no-op that returns `nil` |
 
-**Unique jobs.** `queue.Unique("order-42")` gives the job a stable id derived from its kind and the key, so the driver's primary key refuses a second copy (`queue.ErrDuplicate` inside the driver, success for the caller). The key is free again once the job has been acked or has failed; there is no time window, so a scheduler can dispatch every few minutes and at most one copy exists. `sync` ignores it (the job runs inline), `memory`, `database` and `queue.Fake` honour it.
+**Unique jobs.** `queue.Unique("order-42")` gives the job a stable id derived from its kind and the key, so the driver's primary key refuses a second copy (`queue.ErrDuplicate` inside the driver, success for the caller). The key is free again once the job has been acked or has failed; there is no time window, so a scheduler can dispatch every few minutes and at most one copy exists. `sync` ignores it (the job runs inline), `memory`, `database` and `queue.Fake` honour it. A driver that is not a `queue.Uniquer` (the Redis driver today, or one you write) makes the dispatch fail with `queue.ErrUniqueUnsupported` instead of storing a duplicate; a driver opts in by returning `ErrDuplicate` from `Push` for an id it already holds and implementing `SupportsUnique() bool`.
 
 ## Retries, backoff and timeouts
 
