@@ -679,18 +679,25 @@ type page struct {
 }
 
 type panelView struct {
-	Title, Home, CSS, JS, AuditURL, FlagsURL string
-	Nav                                      []navItem
+	Title    string    `json:"title"`
+	Home     string    `json:"home"`
+	CSS      string    `json:"-"`
+	JS       string    `json:"-"`
+	AuditURL string    `json:"auditUrl,omitempty"`
+	FlagsURL string    `json:"flagsUrl,omitempty"`
+	Nav      []navItem `json:"nav"`
 }
 
 type navItem struct {
-	Label, URL string
-	Active     bool
+	Label  string `json:"label"`
+	URL    string `json:"url"`
+	Active bool   `json:"active"`
 }
 
 type card struct {
-	Label, URL string
-	Count      int64
+	Label string `json:"label"`
+	URL   string `json:"url"`
+	Count int64  `json:"count"`
 }
 
 func (p *Panel) base(c *web.Ctx, title, active string) page {
@@ -763,6 +770,13 @@ func (p *Panel) dashboard(c *web.Ctx) error {
 
 		b := r.info()
 		data.Cards = append(data.Cards, card{Label: b.plural, URL: p.url(b.slug), Count: n})
+	}
+
+	if c.WantsJSON() {
+		return respondJSON(c, struct {
+			Panel panelView `json:"panel"`
+			Cards []card    `json:"cards"`
+		}{data.Panel, data.Cards})
 	}
 
 	return p.render(c, http.StatusOK, "dashboard", "", data)

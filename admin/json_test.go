@@ -31,3 +31,19 @@ func TestAdminListAndDetailAsJSON(t *testing.T) {
 	as(t, app, "editor").GetJSON("/admin/accounts").AssertForbidden()
 	app.Client(t).GetJSON("/admin/accounts").AssertStatus(401)
 }
+
+func TestAdminDashboardAsJSON(t *testing.T) {
+	t.Parallel()
+
+	app := newApp(t, options{})
+	boss := as(t, app, "admin")
+
+	boss.PostForm("/admin/accounts", url.Values{"email": {"a@example.com"}, "password": {"hunter2-hash-xyz"}, "api_token": {"tok_secret_123"}}).
+		AssertRedirect("/admin/accounts/1")
+
+	d := boss.GetJSON("/admin").AssertOK().AssertHeader("Vary", "Accept")
+	d.AssertJSONPath("panel.home", "/admin").AssertJSONPath("panel.nav.1.url", "/admin/accounts").
+		AssertJSONPath("cards.1.count", 1).AssertDontSee("htmx.min.js")
+
+	app.Client(t).GetJSON("/admin").AssertStatus(401)
+}
