@@ -3,6 +3,7 @@ package queue_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
@@ -446,5 +447,52 @@ func TestUniqueDoesNotHideARunningJob(t *testing.T) {
 
 	if m, _ := d.Pop(t.Context(), []string{"default"}); m != nil {
 		t.Fatalf("a second copy was stored while the first was running: %+v", m)
+	}
+}
+
+// A unique job keeps its id, so failing twice and retrying must not clash with the failed table or a live copy.
+func TestUniqueFailedJobsDoNotClashOnRetry(t *testing.T) {
+	t.Parallel()
+
+	d := newDatabaseDriver(t, openSQLite(t), queue.DatabaseOptions{})
+	q := newQueue(t, d, queue.Handle(func(context.Context, sendInvoice) error {
+		return fmt.Errorf("boom: %w", queue.ErrPermanent)
+	}))
+
+	failOnce := func() {
+		t.Helper()
+
+		if err := q.Dispatch(t.Context(), sendInvoice{OrderID: 1}, queue.Unique("k")); err != nil {
+			t.Fatal(err)
+		}
+
+		m, err := d.Pop(t.Context(), []string{"default"})
+		if err != nil || m == nil {
+			t.Fatalf("pop: %v, %v", m, err)
+		}
+
+		_ = q.Process(t.Context(), m)
+	}
+
+	failOnce()
+	failOnce() // the key is free after a failure; the second failure replaces the first row
+
+	failed, err := d.Failed(t.Context())
+	if err != nil || len(failed) != 1 {
+		t.Fatalf("failed = %d, %v, want one row", len(failed), err)
+	}
+
+	// A live copy exists while the failed one is retried: the batch succeeds and the live copy wins.
+	if err := q.Dispatch(t.Context(), sendInvoice{OrderID: 1}, queue.Unique("k")); err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := d.Retry(t.Context())
+	if err != nil || n != 0 {
+		t.Fatalf("Retry = %d, %v, want 0 (superseded by the live copy) and no error", n, err)
+	}
+
+	if rest, _ := d.Failed(t.Context()); len(rest) != 0 {
+		t.Fatalf("failed rows left: %d", len(rest))
 	}
 }
