@@ -39,7 +39,7 @@ func chooseStack(env *Env, api, templ bool, inertia string) (stack, error) {
 		return stack{kind: "htmx"}, nil
 	}
 
-	in := bufio.NewReader(env.Stdin)
+	in := env.reader()
 
 	kind := ask(env.Stdout, in, "Which stack?", []option{
 		{"htmx", "HTMX + Tailwind (server-rendered views)"},

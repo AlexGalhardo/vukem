@@ -99,6 +99,9 @@ func newProject(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 			return err
 		}
 
+		askStandards(env, &std)
+		std = std.withStack(st.kind)
+
 		pm, err := packageManager(dir, *pmFlag)
 		if err != nil {
 			return err

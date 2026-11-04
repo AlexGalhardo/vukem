@@ -1,6 +1,9 @@
 package cli
 
 import (
+	"bytes"
+	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -154,7 +157,7 @@ func TestStandardsRender(t *testing.T) {
 	uses := regexp.MustCompile(`uses: ([^/\s]+)/(\S+)@(\S+)`)
 
 	for _, f := range standardsSet(
-		standardsOpts{standards: true, license: "mit", ci: true, deploy: "railway", docker: true},
+		standardsOpts{standards: true, license: "mit", ci: true, deploy: "railway", docker: true}.withStack("htmx"),
 	) {
 		out, err := renderStandardsFile(f.src, data)
 		if err != nil {
@@ -185,6 +188,127 @@ func TestStandardsRender(t *testing.T) {
 			if len(m[3]) == 40 && !strings.Contains(line, "# v") {
 				t.Errorf("%s: %s has no version comment", f.dst, strings.TrimSpace(line))
 			}
+		}
+	}
+}
+
+func TestAskStandardsAnswers(t *testing.T) {
+	t.Parallel()
+
+	for name, tt := range map[string]struct {
+		in          string
+		interactive bool
+		start       standardsOpts
+		want        standardsOpts
+	}{
+		"yes and open source":   {in: "1\n2\n", interactive: true, want: standardsOpts{standards: true, ci: true, license: "mit"}},
+		"no and private":        {in: "2\n1\n", interactive: true, want: standardsOpts{}},
+		"enter takes defaults":  {in: "\n\n", interactive: true, want: standardsOpts{standards: true, ci: true}},
+		"end of input defaults": {in: "", interactive: true, want: standardsOpts{standards: true, ci: true}},
+		"not a terminal":        {in: "1\n2\n", interactive: false, want: standardsOpts{}},
+		// A flag settles its own question: only the open source one is asked.
+		"standards given":  {in: "2\n", interactive: true, start: standardsOpts{standards: true}, want: standardsOpts{standards: true, license: "mit"}},
+		"license given":    {in: "2\n", interactive: true, start: standardsOpts{license: "mit"}, want: standardsOpts{license: "mit"}},
+		"everything given": {in: "", interactive: true, start: standardsOpts{ci: true, license: "mit"}, want: standardsOpts{ci: true, license: "mit"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			var out bytes.Buffer
+
+			env := &Env{Stdin: strings.NewReader(tt.in), Stdout: &out, Interactive: tt.interactive}
+			got := tt.start
+			askStandards(env, &got)
+
+			if got != tt.want {
+				t.Errorf("askStandards(%q) = %+v, want %+v", tt.in, got, tt.want)
+			}
+
+			if !tt.interactive && out.Len() != 0 {
+				t.Errorf("a non-interactive run printed %q", out.String())
+			}
+		})
+	}
+}
+
+func TestStandardsDerivedFiles(t *testing.T) {
+	t.Parallel()
+
+	dsts := func(o standardsOpts) map[string]bool {
+		out := map[string]bool{}
+		for _, f := range standardsSet(o) {
+			out[f.dst] = true
+		}
+
+		return out
+	}
+
+	// CI or a license brings the GitHub templates; --standards on a front-end stack brings Biome, not on an API.
+	if got := dsts(standardsOpts{ci: true}.withStack("htmx")); !got[".github/pull_request_template.md"] ||
+		!got[".github/ISSUE_TEMPLATE/bug_report.yml"] || got["biome.json"] {
+		t.Errorf("--ci: %v", got)
+	}
+
+	if got := dsts(
+		standardsOpts{license: "mit"}.withStack("htmx"),
+	); !got[".github/CODEOWNERS"] ||
+		!got["CODE_OF_CONDUCT.md"] {
+		t.Errorf("--license: %v", got)
+	}
+
+	if got := dsts(
+		standardsOpts{standards: true}.withStack("htmx"),
+	); !got["biome.json"] ||
+		got[".github/pull_request_template.md"] {
+		t.Errorf("--standards on htmx: %v", got)
+	}
+
+	if got := dsts(standardsOpts{standards: true}.withStack("api")); got["biome.json"] {
+		t.Errorf("--standards on api wrote biome.json: %v", got)
+	}
+
+	if got := dsts(standardsOpts{}.withStack("htmx")); got["biome.json"] || got[".github/CODEOWNERS"] {
+		t.Errorf("no options: %v", got)
+	}
+}
+
+func TestPatchPackageJSONAddsBiomeOnlyWhenAsked(t *testing.T) {
+	t.Parallel()
+
+	const pkg = "{\n  \"name\": \"app\",\n  \"scripts\": {\n    \"build\": \"x\"\n  },\n  \"devDependencies\": {\n    \"tailwindcss\": \"4.0.0\"\n  }\n}\n"
+
+	for _, biome := range []bool{false, true} {
+		dir := t.TempDir()
+		writeTestFile(t, dir, "package.json", pkg)
+
+		env := &Env{Dir: dir, Stdout: io.Discard}
+		if err := patchPackageJSON(env, true, biome); err != nil {
+			t.Fatal(err)
+		}
+
+		raw, err := os.ReadFile(filepath.Join(dir, "package.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		var parsed struct {
+			Scripts         map[string]string `json:"scripts"`
+			DevDependencies map[string]string `json:"devDependencies"`
+		}
+		if err := json.Unmarshal(raw, &parsed); err != nil {
+			t.Fatalf("biome=%v: package.json is not valid JSON: %v\n%s", biome, err, raw)
+		}
+
+		if _, has := parsed.DevDependencies["@biomejs/biome"]; has != biome {
+			t.Errorf("biome=%v: devDependency present = %v", biome, has)
+		}
+
+		if biome && (parsed.DevDependencies["@biomejs/biome"] != biomeVersion || parsed.Scripts["lint:js"] == "") {
+			t.Errorf("biome=%v: %+v", biome, parsed)
+		}
+
+		if parsed.DevDependencies["markdownlint-cli2"] != markdownlintVersion {
+			t.Errorf("markdownlint-cli2 = %q", parsed.DevDependencies["markdownlint-cli2"])
 		}
 	}
 }
