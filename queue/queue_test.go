@@ -500,3 +500,26 @@ func TestUniqueFailedJobsDoNotClashOnRetry(t *testing.T) {
 		t.Fatalf("failed rows left: %d", len(rest))
 	}
 }
+
+// plainDriver hides every optional interface of its Driver, as a driver written outside this module would.
+type plainDriver struct{ queue.Driver }
+
+func TestUniqueIsRefusedByADriverThatCannotHonourIt(t *testing.T) {
+	t.Parallel()
+
+	q := newQueue(
+		t,
+		plainDriver{queue.NewMemory()},
+		queue.Handle(func(context.Context, sendInvoice) error { return nil }),
+	)
+
+	err := q.Dispatch(t.Context(), sendInvoice{}, queue.Unique("k"))
+	if !errors.Is(err, queue.ErrUniqueUnsupported) {
+		t.Fatalf("Dispatch(Unique) on a plain driver = %v, want ErrUniqueUnsupported", err)
+	}
+
+	// Without Unique the same driver works as before.
+	if err := q.Dispatch(t.Context(), sendInvoice{}); err != nil {
+		t.Fatalf("plain dispatch: %v", err)
+	}
+}

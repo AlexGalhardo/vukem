@@ -290,6 +290,9 @@ func ms(t time.Time) int64 { return t.UnixMilli() }
 
 func fromMS(v int64) time.Time { return time.UnixMilli(v).UTC() }
 
+// SupportsUnique implements Uniquer.
+func (*Database) SupportsUnique() bool { return true }
+
 // Push implements Driver.
 func (d *Database) Push(ctx context.Context, m *Message) error { return d.PushTx(ctx, d.db, m) }
 
