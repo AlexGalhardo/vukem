@@ -462,10 +462,12 @@ Every starter calls `vukem.DefaultMiddleware(app, r)` at the top of `routes/web.
 
 | Stack | Middleware, in order |
 | --- | --- |
-| Server | `Recover`, `RequestID`, `SecureHeaders`, `Maintenance`, `Logger`, `MethodOverride` |
+| Server | `Recover`, `RequestID`, `SecureHeaders`, `Maintenance`, `Logger`, `MethodOverride`, `StripPathPrefix` (only with `MiddlewareOptions.I18n.PathPrefixes`) |
 | Router | `BodyLimit(web.DefaultMaxBody)`, sessions, CSRF, then the locale resolver when the app uses `vukem.WithTranslations` |
 
 It returns configuration errors, such as invalid `CSRF_TRUSTED_ORIGINS` or an insecure session setup, so they stop the boot. Two more pieces come from the app itself: in production with an empty `TRUSTED_PROXIES`, a server middleware logs one warning when requests look like they come through a proxy; and the [devtools dashboard](/docs/digging-deeper/devtools), when enabled, adds its recorder as the outermost server middleware.
+
+**Locale path prefixes.** With `PathPrefixes` set, `i18n.StripPathPrefix` is the last server middleware of the default stack, right before routing. The server middleware before it (including the logger, which therefore logs `/pt-br/games`) sees the URL as requested; the router, group and route middleware and the handler see the stripped path `/games`, and `i18n.PathPrefix(ctx)` returns the removed `/pt-br`. A server middleware you add afterwards also runs after the strip, so a cache keyed on `r.URL.Path` there must add `i18n.PathPrefix(ctx)` to its key, or `/pt-br/games` and `/games` share one entry.
 
 Middleware you add afterwards runs **after** the defaults in the same stack. The starter adds static files that way:
 

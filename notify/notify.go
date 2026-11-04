@@ -142,6 +142,36 @@ func Broadcast(p Publisher, channelFor func(userID string) string) Channel {
 	}
 }
 
+// TextSender sends one HTML-subset text message; *telegram.Handler from vukem/logging/telegram implements it with its
+// SendSync method.
+type TextSender interface {
+	SendSync(ctx context.Context, htmlText string) error
+}
+
+// Telegram returns a channel that sends the text build returns to the chat the sender is configured for (an
+// operator or ops chat: the sender fixes the chat, so this is not a per-user channel). build returning an empty text
+// skips the message. Inside SendTx it sends after the commit and a send error is dropped, as for Broadcast: the
+// Database row stays the source of truth. Outside a transaction a send error is returned.
+func Telegram(
+	sender TextSender,
+	build func(ctx context.Context, s Stored, n Notification) (string, error),
+) Channel {
+	return func(ctx context.Context, ex database.Executor, s Stored, n Notification) error {
+		text, err := build(ctx, s, n)
+		if err != nil || text == "" {
+			return err
+		}
+
+		if tx, ok := ex.(*database.Tx); ok {
+			tx.AfterCommit(func(ctx context.Context) { _ = sender.SendSync(ctx, text) })
+
+			return nil
+		}
+
+		return sender.SendSync(ctx, text)
+	}
+}
+
 // Notifier sends and reads notifications in Table.
 type Notifier struct {
 	db  *database.DB

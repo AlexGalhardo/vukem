@@ -250,3 +250,70 @@ func (replyMailable) Content() mail.Content { return mail.HTML("<p>New reply</p>
 func replyMail(context.Context, string, notify.Notification) (mail.Mailable, error) {
 	return replyMailable{}, nil
 }
+
+type textSender struct {
+	texts []string
+	err   error
+}
+
+func (s *textSender) SendSync(_ context.Context, text string) error {
+	s.texts = append(s.texts, text)
+
+	return s.err
+}
+
+func TestTelegramChannel(t *testing.T) {
+	t.Parallel()
+
+	ctx := t.Context()
+	nf, db, _ := newNotifier(t)
+	snd := &textSender{}
+	ch := notify.Telegram(snd, func(_ context.Context, s notify.Stored, _ notify.Notification) (string, error) {
+		if s.UserID == "quiet" {
+			return "", nil
+		}
+
+		return "<b>" + s.Kind + "</b> for " + s.UserID, nil
+	})
+
+	// Outside a transaction the send happens now and its error is returned.
+	if _, err := nf.Send(ctx, "u1", commentReplied{PostID: 1}, notify.Database, ch); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := nf.Send(ctx, "quiet", commentReplied{PostID: 1}, notify.Database, ch); err != nil {
+		t.Fatal(err)
+	}
+
+	if want := []string{"<b>comment.replied</b> for u1"}; !cmp.Equal(snd.texts, want) {
+		t.Fatalf("texts = %v, want %v (an empty text skips the message)", snd.texts, want)
+	}
+
+	snd.err = errors.New("telegram down")
+	if _, err := nf.Send(ctx, "u1", commentReplied{PostID: 1}, ch); !errors.Is(err, snd.err) {
+		t.Fatalf("send error = %v, want the sender's error", err)
+	}
+
+	// Inside a transaction: nothing goes out on rollback, one message after commit, and a send error cannot fail the commit.
+	snd.texts, snd.err = nil, errors.New("telegram down")
+	boom := errors.New("boom")
+
+	if err := db.Tx(ctx, func(tx *database.Tx) error {
+		_, err := nf.SendTx(ctx, tx, "u2", commentReplied{PostID: 2}, notify.Database, ch)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		return boom
+	}); !errors.Is(err, boom) || len(snd.texts) != 0 {
+		t.Fatalf("rollback: err %v, texts %v", err, snd.texts)
+	}
+
+	if err := db.Tx(ctx, func(tx *database.Tx) error {
+		_, err := nf.SendTx(ctx, tx, "u2", commentReplied{PostID: 2}, notify.Database, ch)
+
+		return err
+	}); err != nil || len(snd.texts) != 1 {
+		t.Fatalf("commit: err %v, texts %v, want nil and one message", err, snd.texts)
+	}
+}
