@@ -623,9 +623,22 @@ Unlike the global CLI, app commands use the plain `flag` package, so **flags go 
 | `ssg:generate` | `-out dist`, `-path` (repeatable) | Writes static HTML for the named paths. Does not run Inertia SSR and does not crawl routes ([Static site generation](/docs/digging-deeper/static-site-generation)) |
 | `boost:mcp` | none | The MCP server for coding agents, over stdio |
 | `key:generate` | none | Prints a new `APP_KEY`; never writes `.env` |
+| `hash:make` | `-env PASSWORD`, `-stdin` | Prints the argon2id hash of a password read from an environment variable or from stdin (never from arguments); for scripts that set or reset a password with SQL |
 | `openapi:serve` | `-addr` | Previews the API reference; only when you register `apidocs.Command()` |
 
 `-o -` prints a codegen result to stdout. `openapi:export` and the three `codegen:*` commands run in **warmup** mode: they register routes but open no database and boot no provider, so `APP_KEY` is optional. Destructive commands (`migrate:reset`, `migrate:fresh`, `db:seed`, `db:wipe`) need `-force` when `APP_ENV=production`. Add your own with `vukem make:command`.
+
+### Hashing a password for a script
+
+`hash:make` prints the hash in the format the session guard verifies, so a maintenance script can set a password without the plain text reaching a file, the shell history or the process list:
+
+```bash
+PASSWORD='the new password' ./app hash:make
+printf '%s
+' "$NEW_PASSWORD" | ./app hash:make -stdin
+```
+
+It takes no positional argument (an extra argument is a usage error) and prints only the hash. It boots the app like any other command, so `APP_KEY` must be set.
 
 ### `APP_KEY` without the global CLI
 
