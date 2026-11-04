@@ -783,18 +783,24 @@ func (p *Panel) dashboard(c *web.Ctx) error {
 }
 
 type auditView struct {
-	Entries []auditRow
-	Pager   pager
+	Entries []auditRow `json:"entries"`
+	Pager   pager      `json:"pager"`
 }
 
 type auditRow struct {
-	When, Actor, Action, Resource, RecordID string
-	Changes                                 []changeRow
+	When     string      `json:"when"`
+	Actor    string      `json:"actor"`
+	Action   string      `json:"action"`
+	Resource string      `json:"resource"`
+	RecordID string      `json:"recordId"`
+	Changes  []changeRow `json:"changes"`
 }
 
 type changeRow struct {
-	Column, Before, After string
-	Redacted              bool
+	Column   string `json:"column"`
+	Before   string `json:"before,omitempty"`
+	After    string `json:"after,omitempty"`
+	Redacted bool   `json:"redacted,omitempty"`
 }
 
 func (p *Panel) audit(c *web.Ctx) error {
@@ -825,6 +831,10 @@ func (p *Panel) audit(c *web.Ctx) error {
 		}
 
 		av.Entries = append(av.Entries, row)
+	}
+
+	if c.WantsJSON() {
+		return respondJSON(c, av)
 	}
 
 	data := p.base(c, "Audit log", "")
