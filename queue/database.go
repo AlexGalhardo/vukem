@@ -495,6 +495,12 @@ func (d *Database) Fail(ctx context.Context, m *Message) error {
 			return err
 		}
 
+		// A unique job keeps its id across dispatches, so an older failed copy of it may exist: the newest failure
+		// replaces it instead of clashing on the primary key.
+		if _, err := tx.ExecContext(ctx, d.q(tx.Dialect(), `DELETE FROM {f} WHERE id = ?`), m.ID); err != nil {
+			return err
+		}
+
 		_, err := tx.ExecContext(ctx, d.q(tx.Dialect(), `INSERT INTO {f} (`+jobColumns+`, failed_at)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
 			m.ID, m.Queue, m.Kind, string(m.Payload), m.Attempts, m.MaxRetries, m.Timeout.Milliseconds(),
@@ -539,8 +545,16 @@ func (d *Database) Retry(ctx context.Context, ids ...string) (int, error) {
 		where, args := idFilter(ids)
 		now := ms(d.clock())
 
+		// A failed unique job whose key was dispatched again already has a live copy: that copy replaces the failed
+		// one (it is dropped below, not counted), so the batch never fails on the primary key.
+		cond := " WHERE"
+		if where != "" {
+			cond = where + " AND"
+		}
+
 		res, err := tx.ExecContext(ctx, d.q(tx.Dialect(), `INSERT INTO {j} (`+jobColumns+`, seq)
-			SELECT id, queue, kind, payload, 0, max_retries, timeout_ms, ?, created_at, last_error, ? FROM {f}`+where),
+			SELECT id, queue, kind, payload, 0, max_retries, timeout_ms, ?, created_at, last_error, ? FROM {f}`+cond+
+			` id NOT IN (SELECT id FROM {j})`),
 			append([]any{now, d.nextSeq()}, args...)...)
 		if err != nil {
 			return err
