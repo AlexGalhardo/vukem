@@ -90,7 +90,8 @@ func (r *Resource[T]) Actions(actions ...Action[T]) *Resource[T] {
 }
 
 type actionLink struct {
-	Label, URL string
+	Label string `json:"label"`
+	URL   string `json:"url"`
 }
 
 type actionView struct {
