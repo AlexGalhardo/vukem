@@ -71,3 +71,18 @@ func TestAdminFlagsAndAuditAsJSON(t *testing.T) {
 	editor.GetJSON("/admin/_flags").AssertForbidden()
 	editor.GetJSON("/admin/_audit").AssertForbidden()
 }
+
+func TestAdminDashboardJSONNavKindAndCountsSwitch(t *testing.T) {
+	t.Parallel()
+
+	app := newApp(t, options{})
+	boss := as(t, app, "admin")
+
+	boss.PostForm("/admin/accounts", url.Values{"email": {"a@example.com"}, "password": {"hunter2-hash-xyz"}, "api_token": {"tok_secret_123"}}).
+		AssertRedirect("/admin/accounts/1")
+
+	// ?counts=0 returns the navigation without the COUNT of every resource.
+	d := boss.GetJSON("/admin?counts=0").AssertOK()
+	d.AssertJSONPath("panel.nav.0.kind", "resource").AssertJSONPath("panel.nav.1.url", "/admin/accounts")
+	d.AssertJSONPath("cards", nil)
+}
