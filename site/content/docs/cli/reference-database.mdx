@@ -252,7 +252,7 @@ vukem db:run -file <path|-> [-commit]
 **Interactions**
 
 - The whole file runs in one transaction. A failing statement rolls everything back, committed or not, and the command exits with an error.
-- It has no `-force`: the default changes nothing, and `-commit` is the explicit step.
+- It has no `-force`: the default is a dry run, and `-commit` is the explicit step. The script may not hold `BEGIN`, `COMMIT`, `ROLLBACK` or `START TRANSACTION`. On MySQL it refuses DDL (`ALTER`, `CREATE`, `DROP`, `TRUNCATE`, `RENAME`), which commits implicitly, and it needs `multiStatements=true` in `DATABASE_URL` for more than one statement.
 - It reports only the outcome (`dry run, rolled back` or `committed`), not per-statement counts. Use `psql` when you need the output of each statement.
 
 ```bash
