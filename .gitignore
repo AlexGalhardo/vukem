@@ -34,3 +34,6 @@ site/out/
 
 # Agent worktrees
 /.claude/worktrees/
+
+# Local SQLite databases (the default DATABASE_URL of an app run from the repo root)
+/storage/*.sqlite*
