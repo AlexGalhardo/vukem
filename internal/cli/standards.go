@@ -26,6 +26,9 @@ var standardsFS embed.FS
 // script and the devDependency pin.
 const markdownlintVersion = "0.23.3"
 
+// biomeVersion is the exact stable Biome v2 release the lint:js and format scripts pin.
+const biomeVersion = "2.6.4"
+
 // licenses maps the SPDX identifiers --license accepts to their template.
 var licenses = map[string]string{"mit": "MIT"}
 
@@ -39,6 +42,18 @@ type standardsOpts struct {
 	ci        bool   // --ci: the CI workflow and Dependabot
 	deploy    string // --deploy: the platform configuration ("railway")
 	docker    bool   // --docker: compose.yaml and its .env block
+
+	// Derived by withStack from the choices above and the stack, never set from a flag.
+	github bool // issue and pull request templates (and CODEOWNERS for a github.com module): CI or a license
+	biome  bool // biome.json and the lint:js script: --standards on a stack with front-end assets
+}
+
+// withStack fills the derived fields once the stack is known.
+func (o standardsOpts) withStack(kind string) standardsOpts {
+	o.github = o.ci || o.license != ""
+	o.biome = o.standards && kind != "api"
+
+	return o
 }
 
 // standardsData is the template data for the standards files.
@@ -122,6 +137,27 @@ func standardsSet(o standardsOpts) []standardsFile {
 		)
 	}
 
+	if o.github {
+		files = append(
+			files,
+			standardsFile{src: "github/pull_request_template.md.tmpl", dst: ".github/pull_request_template.md"},
+			standardsFile{
+				src: "github/ISSUE_TEMPLATE/bug_report.yml.tmpl",
+				dst: ".github/ISSUE_TEMPLATE/bug_report.yml",
+			},
+			standardsFile{
+				src: "github/ISSUE_TEMPLATE/feature_request.yml.tmpl",
+				dst: ".github/ISSUE_TEMPLATE/feature_request.yml",
+			},
+			standardsFile{src: "github/ISSUE_TEMPLATE/config.yml.tmpl", dst: ".github/ISSUE_TEMPLATE/config.yml"},
+			standardsFile{src: "github/CODEOWNERS.tmpl", dst: ".github/CODEOWNERS"},
+		)
+	}
+
+	if o.biome {
+		files = append(files, standardsFile{src: "biome.json", dst: "biome.json"})
+	}
+
 	if o.deploy == "railway" {
 		files = append(files, standardsFile{src: "railway.ts.tmpl", dst: ".railway/railway.ts"})
 	}
@@ -170,13 +206,18 @@ func licenseIDs() []string {
 // that lists what was written.
 func writeStandards(env *Env, data standardsData, o standardsOpts) error {
 	for _, f := range standardsSet(o) {
+		// CODEOWNERS names a GitHub owner: without a github.com module path there is none to name.
+		if f.dst == ".github/CODEOWNERS" && data.Owner == "" {
+			continue
+		}
+
 		if err := renderStandards(env, f, data); err != nil {
 			return err
 		}
 	}
 
 	if o.standards {
-		if err := patchPackageJSON(env, data.Assets); err != nil {
+		if err := patchPackageJSON(env, data.Assets, o.biome); err != nil {
 			return err
 		}
 	}
@@ -285,7 +326,7 @@ const minimalPackageJSON = `{
 // project's package.json, or writes a minimal one when the stack has no
 // front end. Insertions are textual so the rest of the file, including the
 // key order a package manager expects, is untouched.
-func patchPackageJSON(env *Env, assets bool) error {
+func patchPackageJSON(env *Env, assets, biome bool) error {
 	const rel = "package.json"
 
 	p := env.path(rel)
@@ -305,13 +346,19 @@ func patchPackageJSON(env *Env, assets bool) error {
 		return err
 	}
 
-	for _, ins := range []struct{ anchor, line, skipIf string }{
-		{"{\n", `  "version": "0.1.0",`, `"version"`},
-		{"  \"scripts\": {\n", `    "lint:md": "markdownlint-cli2 \"**/*.md\"",`, `"lint:md"`},
-		{"  \"scripts\": {\n", `    "secrets:scan": "betterleaks git --no-banner --redact",`, `"secrets:scan"`},
-		{"  \"devDependencies\": {\n", `    "markdownlint-cli2": "` + markdownlintVersion + `",`, `"markdownlint-cli2"`},
+	for _, ins := range []struct {
+		anchor, line, skipIf string
+		biomeOnly            bool
+	}{
+		{"{\n", `  "version": "0.1.0",`, `"version"`, false},
+		{"  \"scripts\": {\n", `    "lint:md": "markdownlint-cli2 \"**/*.md\"",`, `"lint:md"`, false},
+		{"  \"scripts\": {\n", `    "secrets:scan": "betterleaks git --no-banner --redact",`, `"secrets:scan"`, false},
+		{"  \"devDependencies\": {\n", `    "markdownlint-cli2": "` + markdownlintVersion + `",`, `"markdownlint-cli2"`, false},
+		{"  \"scripts\": {\n", `    "lint:js": "biome lint --no-errors-on-unmatched .",`, `"lint:js"`, true},
+		{"  \"scripts\": {\n", `    "format": "biome format --write --no-errors-on-unmatched .",`, `"format"`, true},
+		{"  \"devDependencies\": {\n", `    "@biomejs/biome": "` + biomeVersion + `",`, `"@biomejs/biome"`, true},
 	} {
-		if bytes.Contains(src, []byte(ins.skipIf)) {
+		if (ins.biomeOnly && !biome) || bytes.Contains(src, []byte(ins.skipIf)) {
 			continue
 		}
 
@@ -359,4 +406,38 @@ func installHooksPath(ctx context.Context, env *Env) {
 	}
 
 	fmt.Fprintln(env.Stdout, "git hooks enabled (core.hooksPath=.githooks)")
+}
+
+// askStandards asks the first-run questions when the developer is at a terminal and has not already answered them
+// with a flag: the best-practice configs (editorconfig, markdownlint, Conventional Commits hooks, changelog, CI,
+// Dependabot, issue and pull request templates, Biome) and whether the project is open source (a LICENSE and the
+// community files). A flag settles its own question, so scripts and CI never block. The default of the first is
+// yes, of the second no.
+func askStandards(env *Env, o *standardsOpts) {
+	if !env.Interactive || env.Stdin == nil {
+		return
+	}
+
+	in := env.reader()
+
+	if !o.standards && !o.ci {
+		if ask(env.Stdout, in, "Add best-practice project configs?", []option{
+			{
+				"yes",
+				"markdownlint, Conventional Commits git hooks, changelog, Biome, GitHub Actions CI, Dependabot, issue and PR templates",
+			},
+			{"no", "only .editorconfig and .gitattributes"},
+		}) == "yes" {
+			o.standards, o.ci = true, true
+		}
+	}
+
+	if o.license == "" {
+		if ask(env.Stdout, in, "Is this an open source project?", []option{
+			{"no", "private project: no license files"},
+			{"yes", "LICENSE (MIT), CODE_OF_CONDUCT.md, SECURITY.md and CONTRIBUTING.md"},
+		}) == "yes" {
+			o.license = "mit"
+		}
+	}
 }

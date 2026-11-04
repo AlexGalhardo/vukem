@@ -5,6 +5,7 @@
 package cli
 
 import (
+	"bufio"
 	"cmp"
 	"context"
 	"errors"
@@ -37,6 +38,18 @@ type Env struct {
 	Version string
 	// toolWaitDelay overrides defaultToolWaitDelay (tests).
 	toolWaitDelay time.Duration
+	// in is the one buffered reader over Stdin that every prompt shares: two readers on the same stream would lose
+	// what the first one buffered.
+	in *bufio.Reader
+}
+
+// reader returns the shared buffered reader over Stdin.
+func (env *Env) reader() *bufio.Reader {
+	if env.in == nil {
+		env.in = bufio.NewReader(env.Stdin)
+	}
+
+	return env.in
 }
 
 // ErrUsage marks invalid invocations; Run exits with code 2.

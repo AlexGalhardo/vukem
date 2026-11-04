@@ -33,9 +33,9 @@ vukem new [flags] <name>
 | `-pm` | string | see below | JavaScript package manager: `npm`, `bun`, `pnpm` or `yarn`. |
 | `-no-install` | bool | `false` | Do not install frontend dependencies. |
 | `-framework` | string | none | Path to a local Vukem checkout. Adds a `replace` directive instead of requiring a release. |
-| `-standards` | bool | `false` | `.markdownlint-cli2.jsonc`, `lint:md` and `secrets:scan` scripts, `CHANGELOG.md`, `.config/cliff.toml`, `.githooks/commit-msg` and `pre-commit` (secret scan, `gofmt`, `go vet`), `.betterleaks.toml`, version `0.1.0`. Sets `core.hooksPath` to `.githooks`. See [Secret scanning](/docs/security/secret-scanning). |
-| `-license` | string | none | `mit`: `LICENSE`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`. |
-| `-ci` | bool | `false` | `.github/workflows/ci.yml` (with a pinned Betterleaks secret-scanning job), `.github/dependabot.yml` and `.betterleaks.toml`. |
+| `-standards` | bool | `false` | `.markdownlint-cli2.jsonc`, `lint:md` and `secrets:scan` scripts, `CHANGELOG.md`, `.config/cliff.toml`, `.githooks/commit-msg` and `pre-commit` (secret scan, `gofmt`, `go vet`), `.betterleaks.toml`, version `0.1.0`, and on a stack with front-end assets `biome.json` (Biome v2, 2-space, double quotes) with `lint:js` and `format` scripts and an exact-version `@biomejs/biome` devDependency. Sets `core.hooksPath` to `.githooks`. See [Secret scanning](/docs/security/secret-scanning). |
+| `-license` | string | none | `mit`: `LICENSE`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`, and the GitHub issue and pull request templates. |
+| `-ci` | bool | `false` | `.github/workflows/ci.yml` (with a pinned Betterleaks secret-scanning job), `.github/dependabot.yml` and `.betterleaks.toml`. Also writes `.github/pull_request_template.md`, the `.github/ISSUE_TEMPLATE/` forms and, for a `github.com/<owner>/<repo>` module path, `.github/CODEOWNERS`. |
 | `-deploy` | string | none | `railway`: `.railway/railway.ts`. |
 | `-docker` | bool | `false` | `compose.yaml` with the app, PostgreSQL and a mail catcher, plus its `.env` block. |
 
@@ -46,7 +46,7 @@ vukem new [flags] <name>
 - `-pm` default: when you omit it, `new` uses the first of `bun`, `npm`, `pnpm`, `yarn` found on `PATH`. The choice is written to `package.json` as `packageManager`, and later commands (`serve`, `build`) follow it.
 - `-api` has no frontend, so `-pm` and `-no-install` change nothing for it.
 - `-inertia`, `-license` and `-deploy` values are validated before anything is written.
-- `-standards`, `-license`, `-ci`, `-deploy` and `-docker` are opt-in. Nothing in this group is written by default.
+- `-standards`, `-license`, `-ci`, `-deploy` and `-docker` are opt-in. Nothing in this group is written by default, but on a terminal `new` asks two questions it has no flag for yet: *Add best-practice project configs?* (yes, the default, is `-standards` and `-ci`) and *Is this an open source project?* (no is the default; yes is `-license mit`). A flag answers its own question, so `-standards` or `-ci` skips the first and `-license` skips the second, and without a terminal nothing is asked.
 
 **Environment**: `PATH` (finds `go`, `git`, the package manager). It writes `APP_KEY` into the new `.env`.
 
