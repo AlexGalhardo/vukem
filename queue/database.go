@@ -546,7 +546,8 @@ func (d *Database) Retry(ctx context.Context, ids ...string) (int, error) {
 		now := ms(d.clock())
 
 		// A failed unique job whose key was dispatched again already has a live copy: that copy replaces the failed
-		// one (it is dropped below, not counted), so the batch never fails on the primary key.
+		// one (it is dropped below, not counted), so the batch never fails on the primary key. Any other id clash
+		// is still an error that rolls the batch back.
 		cond := " WHERE"
 		if where != "" {
 			cond = where + " AND"
@@ -554,7 +555,7 @@ func (d *Database) Retry(ctx context.Context, ids ...string) (int, error) {
 
 		res, err := tx.ExecContext(ctx, d.q(tx.Dialect(), `INSERT INTO {j} (`+jobColumns+`, seq)
 			SELECT id, queue, kind, payload, 0, max_retries, timeout_ms, ?, created_at, last_error, ? FROM {f}`+cond+
-			` id NOT IN (SELECT id FROM {j})`),
+			` id NOT IN (SELECT id FROM {j} WHERE id LIKE 'u:%')`),
 			append([]any{now, d.nextSeq()}, args...)...)
 		if err != nil {
 			return err
