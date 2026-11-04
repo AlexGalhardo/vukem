@@ -631,7 +631,7 @@ Unlike the global CLI, app commands use the plain `flag` package, so **flags go 
 
 ### Running a maintenance script
 
-`db:run` is the safe way to run a one-off SQL script against production: the whole file runs in one transaction on the app's own `DATABASE_URL` and is **rolled back unless you pass `-commit`**. Any failing statement rolls the whole script back, committed or not. It has no `-force`, because the default changes nothing.
+`db:run` is the safe way to run a one-off SQL script against production: the whole file runs in one transaction on the app's own `DATABASE_URL` and is **rolled back unless you pass `-commit`**. Any failing statement rolls the whole script back, committed or not. It has no `-force`, because the default is a dry run. The dry run is exact where DDL is transactional (PostgreSQL, SQLite). Limits: the script may not hold `BEGIN`, `COMMIT`, `ROLLBACK` or `START TRANSACTION` (db:run owns the transaction, so it refuses them), and on MySQL, which commits implicitly on `ALTER`, `CREATE`, `DROP`, `TRUNCATE` and `RENAME`, it refuses a script that holds them (use migrations), and runs several statements only when `DATABASE_URL` has `multiStatements=true`. Side effects outside the transaction (a sequence value, a call to another system from a trigger) are not rolled back.
 
 ```bash
 ./app db:run -file fix-users.sql            # dry run: runs, prints, rolls back
@@ -647,8 +647,7 @@ Make the script print what it would change (`SELECT count(*) ...` before and aft
 
 ```bash
 PASSWORD='the new password' ./app hash:make
-printf '%s
-' "$NEW_PASSWORD" | ./app hash:make -stdin
+printf '%s\n' "$NEW_PASSWORD" | ./app hash:make -stdin
 ```
 
 It takes no positional argument (an extra argument is a usage error) and prints only the hash. It boots the app like any other command, so `APP_KEY` must be set.

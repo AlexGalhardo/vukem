@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"reflect"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -679,6 +680,14 @@ func (ignoredFlag) Set(string) error { return nil }
 // maxRunSQLBytes bounds a script read by db:run.
 const maxRunSQLBytes = 8 << 20
 
+// txControl matches a statement that starts, ends or splits a transaction: inside db:run's own transaction it would
+// make the dry run commit (COMMIT) or end the transaction early (ROLLBACK, END), and a nested BEGIN is an error.
+var txControl = regexp.MustCompile(`(?im)^\s*(begin|commit|rollback|end|start\s+transaction|set\s+transaction)\b`)
+
+// implicitCommit matches DDL: MySQL (and MariaDB) commit the open transaction before and after it, so a dry run of a
+// script holding it would apply it.
+var implicitCommit = regexp.MustCompile(`(?im)^\s*(alter|create|drop|truncate|rename)\b`)
+
 var errRunNoFile = fmt.Errorf("db:run needs -file <path> (or -file - for stdin): %w", errUsage)
 
 // errDryRun rolls the transaction of a db:run dry run back; it never leaves the command.
@@ -710,13 +719,31 @@ func dbRunCommand() Command {
 				return err
 			}
 
+			if txControl.MatchString(script) {
+				return errors.New("db:run: the script holds BEGIN, COMMIT, ROLLBACK or START TRANSACTION; " +
+					"db:run owns the transaction, so remove them")
+			}
+
 			db, err := app.DB()
 			if err != nil {
 				return err
 			}
 
+			mysql := db.Dialect().Name() == "mysql"
+			if mysql && implicitCommit.MatchString(script) {
+				return errors.New("db:run: MySQL commits implicitly on ALTER, CREATE, DROP, TRUNCATE and RENAME, " +
+					"so a dry run of this script would apply it; run schema changes as migrations")
+			}
+
 			err = db.Tx(ctx, func(tx *database.Tx) error {
 				if _, err := tx.ExecContext(ctx, script); err != nil {
+					if mysql {
+						err = fmt.Errorf(
+							"%w (MySQL runs several statements only with multiStatements=true in DATABASE_URL)",
+							err,
+						)
+					}
+
 					return err
 				}
 

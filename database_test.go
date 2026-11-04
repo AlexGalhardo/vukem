@@ -1317,3 +1317,45 @@ func TestDBRunValidatesItsInput(t *testing.T) {
 		}
 	}
 }
+
+func TestDBRunRefusesTransactionControl(t *testing.T) {
+	t.Parallel()
+
+	app := newTestApp(
+		t,
+		WithSource(testSource(map[string]string{"DATABASE_URL": "file:" + filepath.Join(t.TempDir(), "tx.db")})),
+	)
+	t.Cleanup(func() { _ = app.Shutdown(context.Background()) })
+
+	for _, script := range []string{
+		"SELECT 1;\nCOMMIT;",
+		"begin;\nSELECT 1;",
+		"  Rollback;",
+		"SELECT 1;\nSTART  TRANSACTION;",
+	} {
+		err := runDBRun(t, app, script, "-file", "-", "-commit")
+		if err == nil || !strings.Contains(err.Error(), "owns the transaction") {
+			t.Errorf("db:run %q = %v, want the transaction-control refusal", script, err)
+		}
+	}
+
+	// Words that only start with a keyword are not transaction control.
+	if txControl.MatchString("SELECT beginning FROM t;\nSELECT endpoint FROM t;") {
+		t.Error("a column named like a keyword was taken for transaction control")
+	}
+}
+
+func TestDBRunDDLPatternForMySQL(t *testing.T) {
+	t.Parallel()
+
+	for script, want := range map[string]bool{
+		"ALTER TABLE t ADD c int;":           true,
+		"UPDATE t SET a = 1;\ndrop table x;": true,
+		"UPDATE t SET created_at = now();":   false,
+		"INSERT INTO altered VALUES (1);":    false,
+	} {
+		if got := implicitCommit.MatchString(script); got != want {
+			t.Errorf("implicitCommit(%q) = %v, want %v", script, got, want)
+		}
+	}
+}
