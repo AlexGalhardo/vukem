@@ -299,17 +299,18 @@ func (d *Database) Push(ctx context.Context, m *Message) error { return d.PushTx
 // PushTx inserts m with ex, so it is enqueued only if ex's transaction
 // commits (Queue.DispatchTx).
 func (d *Database) PushTx(ctx context.Context, ex database.Executor, m *Message) error {
-	insert := `INSERT INTO {j} (`
 	unique := strings.HasPrefix(m.ID, "u:")
+	stmt := `INSERT INTO {j} (` + jobColumns + `, seq) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
-	// A unique job has a stable id: the primary key refuses a second copy and the clash is not an error to the caller.
-	if unique && ex.Dialect().Name() == "mysql" {
-		insert = `INSERT IGNORE INTO {j} (`
-	}
-
-	stmt := insert + jobColumns + `, seq) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-	if unique && ex.Dialect().Name() != "mysql" {
-		stmt += ` ON CONFLICT (id) DO NOTHING`
+	// A unique job has a stable id: the primary key refuses a second copy and the clash is not an error to the
+	// caller. Only the id clash is ignored: MySQL's INSERT IGNORE would also turn a truncated queue name or a NOT NULL
+	// violation into a warning and lose the job, so it uses a no-op ON DUPLICATE KEY UPDATE (0 rows affected).
+	if unique {
+		if ex.Dialect().Name() == "mysql" {
+			stmt += ` ON DUPLICATE KEY UPDATE id = id`
+		} else {
+			stmt += ` ON CONFLICT (id) DO NOTHING`
+		}
 	}
 
 	res, err := ex.ExecContext(
@@ -551,6 +552,8 @@ func (d *Database) Retry(ctx context.Context, ids ...string) (int, error) {
 		// A failed unique job whose key was dispatched again already has a live copy: that copy replaces the failed
 		// one (it is dropped below, not counted), so the batch never fails on the primary key. Any other id clash
 		// is still an error that rolls the batch back.
+		// shortcut: a Dispatch(Unique) committing between this check and the insert (READ COMMITTED) still clashes
+		// and rolls the batch back; the operator reruns Retry. Upgrade if that shows up in practice.
 		cond := " WHERE"
 		if where != "" {
 			cond = where + " AND"
