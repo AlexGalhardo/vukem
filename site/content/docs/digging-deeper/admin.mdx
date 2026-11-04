@@ -474,7 +474,7 @@ curl -H 'Accept: application/json' https://app.example/admin/posts?q=hello&sort=
 | --- | --- |
 | `GET <Prefix>/<slug>` | `resource` (`singular`, `plural`, `url`, `createUrl`), `columns` (`label`, `sortUrl`, `sorted`), `rows` (`id`, `cells` in column order, `showUrl`, `editUrl`, `deleteUrl`: a link appears only when the policy allows it), `search`, `searchable`, `filters` (`label`, `param`, `value`, `options`), `sort`, `dir`, `total`, `pager` (`page`, `last`, `prevUrl`, `nextUrl`) and `bulkActions` |
 | `GET <Prefix>/<slug>/{id}` | `resource`, `id`, `fields` (`label`, `value`, display strings) and `actions` (`label`, `url`) |
-| `GET <Prefix>` | `panel` (`title`, `home`, `nav`, `auditUrl`, `flagsUrl`) and `cards` (`label`, `url`, `count`) |
+| `GET <Prefix>` | `panel` (`title`, `home`, `nav`: `label`, `url`, `kind` (`resource` or `page`), `active`; `auditUrl`, `flagsUrl`) and `cards` (`label`, `url`, `count`). Add `?counts=0` to get the navigation without the `COUNT` of every resource |
 | `GET <Prefix>/_audit` | `entries` (`when`, `actor`, `action`, `resource`, `recordId`, `changes`: `column`, `before`, `after`, `redacted`) and `pager`; the `resource` query filter works as on the page |
 | `GET <Prefix>/_flags` | `flags` (`name`, `description`, `kind`, `default`, `value`, `locked`, `stored`); needs the `manageFlags` ability |
 
@@ -482,7 +482,7 @@ Writes keep going to the existing form routes (`POST <Prefix>/<slug>`, `/{id}`, 
 
 ## A React admin from the CLI
 
-`vukem install:admin -stack inertia` (in an Inertia + React project) installs the panel with a sidebar dashboard in React instead of the server templates: a dashboard of counts, a list page with search, sorting and pagination, a detail page, and a light/dark toggle, in `resources/js/pages/Admin/` and `resources/js/layouts/AdminLayout.tsx`. The pages are Tailwind-styled and need no extra npm package. They read the JSON routes above, so the panel is mounted at `/admin-api` (`admin.DataPrefix`) and the React pages at `/admin`, `/admin/{slug}` and `/admin/{slug}/{id}`, all behind `Panel.Guard()`. The default is `-stack htmx` (the server-rendered panel). Creating, editing and deleting still go through the panel's forms at `/admin-api/<slug>`; Vue and Svelte pages are not generated yet.
+`vukem install:admin -stack inertia` (in an Inertia + React project) installs the panel with a sidebar dashboard in React instead of the server templates: a dashboard of counts, a list page with search, sorting and pagination, a detail page, and a light/dark toggle, in `resources/js/pages/Admin/` and `resources/js/layouts/AdminLayout.tsx`. The pages are Tailwind-styled and need no extra npm package. They read the JSON routes above, so the panel is mounted at `/admin-api` (`admin.DataPrefix`) and the React pages at `/admin`, `/admin/{slug}` and `/admin/{slug}/{id}`, all behind `Panel.Guard()`. The default is `-stack htmx` (the server-rendered panel). The sidebar lists the resources as React screens and links custom pages, the audit log and the feature flags to the panel's own HTML pages under `/admin-api`. Creating, editing and deleting still go through the panel's forms at `/admin-api/<slug>`; Vue and Svelte pages are not generated yet.
 
 ## Your own screens with the panel's gate
 

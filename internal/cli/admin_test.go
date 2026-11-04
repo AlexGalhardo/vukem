@@ -263,3 +263,29 @@ func TestAdminRoutesScaffoldPerStack(t *testing.T) {
 		t.Fatalf("pages.go: %v", err)
 	}
 }
+
+// The generated test of the scaffold names the panel's real URLs for each stack: the audit log and flags pages live
+// at /admin-api in the Inertia stack, where /admin/{slug} is a React resource route.
+func TestAdminTestScaffoldPerStack(t *testing.T) {
+	t.Parallel()
+
+	src, err := scaffoldFS.ReadFile("scaffolds/admin/tests/admin_test.go.tmpl")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for stack, want := range map[string]string{"htmx": `"/admin/_audit"`, "inertia": `"/admin-api/_audit"`} {
+		out, err := renderScaffold(
+			"tests/admin_test.go",
+			src,
+			map[string]string{"Module": "example.com/app", "AdminStack": stack},
+		)
+		if err != nil {
+			t.Fatalf("%s: %v", stack, err)
+		}
+
+		if !strings.Contains(string(out), want) {
+			t.Errorf("%s admin_test.go misses %s:\n%s", stack, want, out)
+		}
+	}
+}

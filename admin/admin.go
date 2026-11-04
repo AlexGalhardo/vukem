@@ -689,8 +689,10 @@ type panelView struct {
 }
 
 type navItem struct {
-	Label  string `json:"label"`
-	URL    string `json:"url"`
+	Label string `json:"label"`
+	URL   string `json:"url"`
+	// Kind is "resource" (list and detail answer JSON) or "page" (a custom page: HTML only).
+	Kind   string `json:"kind"`
 	Active bool   `json:"active"`
 }
 
@@ -711,12 +713,15 @@ func (p *Panel) base(c *web.Ctx, title, active string) page {
 	for _, r := range p.resources {
 		b := r.info()
 		if p.can(c, AbilityViewAny, r.subject()) {
-			pv.Nav = append(pv.Nav, navItem{Label: b.plural, URL: p.url(b.slug), Active: b.slug == active})
+			pv.Nav = append(
+				pv.Nav,
+				navItem{Label: b.plural, URL: p.url(b.slug), Kind: "resource", Active: b.slug == active},
+			)
 		}
 	}
 
 	for _, pg := range p.pages {
-		pv.Nav = append(pv.Nav, navItem{Label: pg.label, URL: p.url(pg.slug), Active: pg.slug == active})
+		pv.Nav = append(pv.Nav, navItem{Label: pg.label, URL: p.url(pg.slug), Kind: "page", Active: pg.slug == active})
 	}
 
 	if p.can(c, AbilityAudit, nil) {
@@ -760,6 +765,11 @@ func (p *Panel) dashboard(c *web.Ctx) error {
 
 	for _, r := range p.resources {
 		if !p.can(c, AbilityViewAny, r.subject()) {
+			continue
+		}
+
+		// A JSON client that only wants the navigation (?counts=0) skips the COUNT query of every resource.
+		if c.WantsJSON() && c.Query("counts") == "0" {
 			continue
 		}
 

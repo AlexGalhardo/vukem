@@ -2,6 +2,8 @@
 export interface NavItem {
   label: string;
   url: string;
+  /** "resource" has JSON list and detail routes; "page" is a custom page served as HTML by the panel. */
+  kind: "resource" | "page";
   active: boolean;
 }
 

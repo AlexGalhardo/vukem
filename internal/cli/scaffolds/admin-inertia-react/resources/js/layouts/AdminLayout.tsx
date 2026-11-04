@@ -25,13 +25,19 @@ export default function AdminLayout({ children, title }: { children: ReactNode; 
   const { dataUrl } = usePage<{ dataUrl: string }>().props;
   const [nav, setNav] = useState<NavItem[]>([]);
   const [name, setName] = useState("Admin");
+  const [extra, setExtra] = useState<NavItem[]>([]);
   const [theme, toggleTheme] = useTheme();
 
   useEffect(() => {
     const ctl = new AbortController();
-    getJSON<DashboardData>(dataUrl, ctl.signal)
+    getJSON<DashboardData>(`${dataUrl}?counts=0`, ctl.signal)
       .then((d) => {
-        setNav(d.panel.nav ?? []);
+        setNav((d.panel.nav ?? []).filter((item) => item.kind === "resource"));
+        // Custom pages, the audit log and the flags page are HTML pages of the panel: plain links, no React screen.
+        const html: NavItem[] = (d.panel.nav ?? []).filter((item) => item.kind === "page");
+        if (d.panel.auditUrl) html.push({ label: "Audit log", url: d.panel.auditUrl, kind: "page", active: false });
+        if (d.panel.flagsUrl) html.push({ label: "Feature flags", url: d.panel.flagsUrl, kind: "page", active: false });
+        setExtra(html);
         setName(d.panel.title);
       })
       .catch(() => {});
@@ -54,6 +60,15 @@ export default function AdminLayout({ children, title }: { children: ReactNode; 
             >
               {item.label}
             </Link>
+          ))}
+          {extra.map((item) => (
+            <a
+              key={item.url}
+              href={item.url}
+              className="block rounded-md px-3 py-2 text-sm text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-900"
+            >
+              {item.label}
+            </a>
           ))}
         </nav>
       </aside>
