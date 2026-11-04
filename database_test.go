@@ -11,10 +11,12 @@ import (
 	"log/slog"
 	"net/http"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 
@@ -1253,22 +1255,25 @@ func TestDBRunIsADryRunUnlessCommitted(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// The test database may be shared with other tests of the package: a table of its own.
+	table := "run_probe_" + strconv.FormatInt(time.Now().UnixNano(), 36)
+
 	count := func() int {
 		t.Helper()
 
 		var n int
-		if err := db.QueryRowContext(t.Context(), `SELECT count(*) FROM run_probe`).Scan(&n); err != nil {
+		if err := db.QueryRowContext(t.Context(), `SELECT count(*) FROM `+table).Scan(&n); err != nil {
 			t.Fatal(err)
 		}
 
 		return n
 	}
 
-	if _, err := db.ExecContext(t.Context(), `CREATE TABLE run_probe (n INTEGER)`); err != nil {
+	if _, err := db.ExecContext(t.Context(), `CREATE TABLE `+table+` (n INTEGER)`); err != nil {
 		t.Fatal(err)
 	}
 
-	script := "INSERT INTO run_probe VALUES (1);\nINSERT INTO run_probe VALUES (2);\n"
+	script := "INSERT INTO " + table + " VALUES (1);\nINSERT INTO " + table + " VALUES (2);\n"
 
 	if err := runDBRun(t, app, script, "-file", "-"); err != nil || count() != 0 {
 		t.Fatalf("dry run: err %v, rows %d, want nil and 0 (rolled back)", err, count())
@@ -1283,7 +1288,7 @@ func TestDBRunIsADryRunUnlessCommitted(t *testing.T) {
 	}
 
 	// A failing statement rolls the whole script back, committed or not.
-	bad := "INSERT INTO run_probe VALUES (3);\nINSERT INTO nope VALUES (1);\n"
+	bad := "INSERT INTO " + table + " VALUES (3);\nINSERT INTO nope VALUES (1);\n"
 	if err := runDBRun(t, app, bad, "-file", "-", "-commit"); err == nil || count() != 2 {
 		t.Fatalf("failing script: err %v, rows %d, want an error and 2 (nothing from the script kept)", err, count())
 	}

@@ -230,7 +230,11 @@ func TestAdminRoutesScaffoldPerStack(t *testing.T) {
 		"htmx":    {"panel.Mount(r)"},
 		"inertia": {"admin.DataPrefix", "pages.Dashboard", "pages.List", "pages.Show", "panel.Guard()"},
 	} {
-		out, err := renderScaffold("routes/admin.go", src, map[string]string{"Module": "example.com/app", "AdminStack": stack})
+		out, err := renderScaffold(
+			"routes/admin.go",
+			src,
+			map[string]string{"Module": "example.com/app", "AdminStack": stack},
+		)
 		if err != nil {
 			t.Fatalf("%s: %v", stack, err)
 		}
@@ -251,7 +255,11 @@ func TestAdminRoutesScaffoldPerStack(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := renderScaffold("app/admin/pages.go", pages, map[string]string{"Module": "example.com/app"}); err != nil {
+	if _, err := renderScaffold(
+		"app/admin/pages.go",
+		pages,
+		map[string]string{"Module": "example.com/app"},
+	); err != nil {
 		t.Fatalf("pages.go: %v", err)
 	}
 }

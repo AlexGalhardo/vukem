@@ -11,7 +11,7 @@ export default function ResourceList({ slug, dataUrl }: { slug: string; dataUrl:
 
   useEffect(() => {
     const ctl = new AbortController();
-    getJSON<ListData>(`${dataUrl}/${slug}${query}`, ctl.signal)
+    getJSON<ListData>(`${dataUrl}/${encodeURIComponent(slug)}${query}`, ctl.signal)
       .then((d) => {
         setData(d);
         setError("");
@@ -22,7 +22,7 @@ export default function ResourceList({ slug, dataUrl }: { slug: string; dataUrl:
 
   const go = (qs: URLSearchParams) => {
     const next = qs.toString() ? `?${qs.toString()}` : "";
-    window.history.replaceState(null, "", `/admin/${slug}${next}`);
+    window.history.replaceState(null, "", `/admin/${encodeURIComponent(slug)}${next}`);
     setQuery(next);
   };
   const params = () => new URLSearchParams(query);
@@ -98,7 +98,7 @@ export default function ResourceList({ slug, dataUrl }: { slug: string; dataUrl:
                     <td key={`${row.id}:${columns[i]?.label ?? i}`} className="px-4 py-3">
                       {i === 0 ? (
                         <Link
-                          href={`/admin/${slug}/${encodeURIComponent(row.id)}`}
+                          href={`/admin/${encodeURIComponent(slug)}/${encodeURIComponent(row.id)}`}
                           className="font-medium hover:underline"
                         >
                           {cell}
