@@ -66,6 +66,7 @@ _, err := nf.Send(ctx, post.AuthorID, notifications.CommentReplied{
 | `notify.Database` | Inserts the row. With `SendTx` it is part of your transaction. |
 | `notify.Mail(mailer, build)` | Calls `build` for a mailable and queues it with [`Mailer.SendLaterTx`](/docs/digging-deeper/mail). `build` returning `nil` skips the mail. |
 | `notify.Broadcast(publisher, channelFor)` | Publishes the stored row as event `Kind` on the channel `channelFor` names. A [`*broadcast.Server`](/docs/digging-deeper/broadcasting) is a publisher. |
+| `notify.Telegram(sender, build)` | Sends the text `build` returns to the chat the sender is configured for (an ops or operator chat, not a per-user channel); an empty text skips it. A [`*telegram.Handler`](/docs/digging-deeper/telegram-logging) is a sender. Inside `SendTx` it sends after the commit and a send error is dropped. |
 
 Channels run in the order you pass them, and `Send` stops at the first error. Calling `Send` without a channel returns `notify.ErrNoChannels`. A `notify.Channel` is a plain function, so you can write your own.
 
