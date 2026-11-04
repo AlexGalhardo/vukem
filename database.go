@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"reflect"
 	"slices"
 	"strconv"
@@ -675,11 +676,109 @@ type ignoredFlag struct{}
 func (ignoredFlag) String() string   { return "" }
 func (ignoredFlag) Set(string) error { return nil }
 
+// maxRunSQLBytes bounds a script read by db:run.
+const maxRunSQLBytes = 8 << 20
+
+var errRunNoFile = fmt.Errorf("db:run needs -file <path> (or -file - for stdin): %w", errUsage)
+
+// errDryRun rolls the transaction of a db:run dry run back; it never leaves the command.
+var errDryRun = errors.New("dry run")
+
+// dbRunCommand is db:run: it runs a SQL script in one transaction against the app's own database and rolls it back
+// unless -commit is given, so a maintenance script gets a dry run on the real data first. The script may hold several
+// statements; any error rolls the whole script back. The script is read from -file (a path, or - for stdin).
+func dbRunCommand() Command {
+	var (
+		file   *string
+		commit *bool
+	)
+
+	return CommandFunc{
+		CommandName: "db:run",
+		Desc:        "Run a SQL file in one transaction; rolls back unless -commit",
+		DefineFlags: func(fs *flag.FlagSet) {
+			file = fs.String("file", "", "SQL script path, or - for stdin")
+			commit = fs.Bool("commit", false, "commit the transaction (default: roll back, a dry run)")
+		},
+		Fn: func(ctx context.Context, app *App, args []string) error {
+			if len(args) > 0 || *file == "" {
+				return errRunNoFile
+			}
+
+			script, err := readRunScript(*file, app.stdin)
+			if err != nil {
+				return err
+			}
+
+			db, err := app.DB()
+			if err != nil {
+				return err
+			}
+
+			err = db.Tx(ctx, func(tx *database.Tx) error {
+				if _, err := tx.ExecContext(ctx, script); err != nil {
+					return err
+				}
+
+				if !*commit {
+					return errDryRun
+				}
+
+				return nil
+			})
+
+			switch {
+			case errors.Is(err, errDryRun):
+				fmt.Fprintln(app.stdout, "db:run: dry run, rolled back. Pass -commit to apply.")
+
+				return nil
+			case err != nil:
+				return fmt.Errorf("db:run: rolled back: %w", err)
+			}
+
+			fmt.Fprintln(app.stdout, "db:run: committed.")
+
+			return nil
+		},
+	}
+}
+
+func readRunScript(file string, stdin io.Reader) (string, error) {
+	var r io.Reader = stdin
+
+	if file != "-" {
+		f, err := os.Open(file)
+		if err != nil {
+			return "", fmt.Errorf("db:run: %w", err)
+		}
+
+		defer f.Close()
+
+		r = f
+	}
+
+	raw, err := io.ReadAll(io.LimitReader(r, maxRunSQLBytes+1))
+	if err != nil {
+		return "", fmt.Errorf("db:run: read script: %w", err)
+	}
+
+	if len(raw) > maxRunSQLBytes {
+		return "", fmt.Errorf("db:run: script is larger than %d bytes", maxRunSQLBytes)
+	}
+
+	if strings.TrimSpace(string(raw)) == "" {
+		return "", errors.New("db:run: the script is empty")
+	}
+
+	return string(raw), nil
+}
+
 func seedCommands() []Command {
 	var wipeForce *bool
 
 	return []Command{
 		seedCommand{},
+		dbRunCommand(),
 		CommandFunc{
 			CommandName: "db:wipe",
 			Desc:        "Drop every table",

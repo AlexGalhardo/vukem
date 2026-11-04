@@ -604,6 +604,7 @@ Unlike the global CLI, app commands use the plain `flag` package, so **flags go 
 | `migrate:status` | `-json` | Shows which migrations ran |
 | `db:seed` | `-class Name` (repeatable), `-force` | Runs every seeder, or the named ones in order ([Seeders](/docs/database/factories-seeders)) |
 | `db:wipe` | `-force` | Drops every table |
+| `db:run` | `-file path` (or `-` for stdin), `-commit` | Runs a SQL script in one transaction on the app's own database; rolls back unless `-commit` (a dry run on the real data) |
 | `route:list` | `-json` | Lists the registered routes |
 | `queue:work` | `-queue`, `-concurrency`, `-sleep 1s`, `-once`, `-stop-when-empty` | Processes jobs until stopped ([Queues](/docs/digging-deeper/queue)) |
 | `queue:failed` | `-json` | Lists failed jobs |
@@ -627,6 +628,18 @@ Unlike the global CLI, app commands use the plain `flag` package, so **flags go 
 | `openapi:serve` | `-addr` | Previews the API reference; only when you register `apidocs.Command()` |
 
 `-o -` prints a codegen result to stdout. `openapi:export` and the three `codegen:*` commands run in **warmup** mode: they register routes but open no database and boot no provider, so `APP_KEY` is optional. Destructive commands (`migrate:reset`, `migrate:fresh`, `db:seed`, `db:wipe`) need `-force` when `APP_ENV=production`. Add your own with `vukem make:command`.
+
+### Running a maintenance script
+
+`db:run` is the safe way to run a one-off SQL script against production: the whole file runs in one transaction on the app's own `DATABASE_URL` and is **rolled back unless you pass `-commit`**. Any failing statement rolls the whole script back, committed or not. It has no `-force`, because the default changes nothing.
+
+```bash
+./app db:run -file fix-users.sql            # dry run: runs, prints, rolls back
+./app db:run -file fix-users.sql -commit    # applies it
+cat fix-users.sql | ./app db:run -file -    # script from stdin
+```
+
+Make the script print what it would change (`SELECT count(*) ...` before and after is not shown by `db:run`, which reports only the outcome), or use `psql` when you need the output of each statement. On a host you reach with a short command line, `-file -` with a pipe avoids uploading the file.
 
 ### Hashing a password for a script
 

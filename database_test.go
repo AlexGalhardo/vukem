@@ -1225,3 +1225,87 @@ func TestSeedCommandSeederKinds(t *testing.T) {
 		}
 	})
 }
+
+func runDBRun(t *testing.T, app *App, stdin string, args ...string) error {
+	t.Helper()
+
+	cmd := dbRunCommand()
+	fset := flag.NewFlagSet("db:run", flag.ContinueOnError)
+	cmd.Flags(fset)
+
+	if err := fset.Parse(args); err != nil {
+		t.Fatal(err)
+	}
+
+	app.stdin = strings.NewReader(stdin)
+
+	return cmd.Run(t.Context(), app, fset.Args())
+}
+
+func TestDBRunIsADryRunUnlessCommitted(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+
+	app := newTestApp(t, WithStdout(&out))
+	db, err := app.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	count := func() int {
+		t.Helper()
+
+		var n int
+		if err := db.QueryRowContext(t.Context(), `SELECT count(*) FROM run_probe`).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+
+		return n
+	}
+
+	if _, err := db.ExecContext(t.Context(), `CREATE TABLE run_probe (n INTEGER)`); err != nil {
+		t.Fatal(err)
+	}
+
+	script := "INSERT INTO run_probe VALUES (1);\nINSERT INTO run_probe VALUES (2);\n"
+
+	if err := runDBRun(t, app, script, "-file", "-"); err != nil || count() != 0 {
+		t.Fatalf("dry run: err %v, rows %d, want nil and 0 (rolled back)", err, count())
+	}
+
+	if !strings.Contains(out.String(), "dry run, rolled back") {
+		t.Fatalf("output = %q, want the dry run notice", out.String())
+	}
+
+	if err := runDBRun(t, app, script, "-file", "-", "-commit"); err != nil || count() != 2 {
+		t.Fatalf("commit: err %v, rows %d, want nil and 2", err, count())
+	}
+
+	// A failing statement rolls the whole script back, committed or not.
+	bad := "INSERT INTO run_probe VALUES (3);\nINSERT INTO nope VALUES (1);\n"
+	if err := runDBRun(t, app, bad, "-file", "-", "-commit"); err == nil || count() != 2 {
+		t.Fatalf("failing script: err %v, rows %d, want an error and 2 (nothing from the script kept)", err, count())
+	}
+}
+
+func TestDBRunValidatesItsInput(t *testing.T) {
+	t.Parallel()
+
+	app := newTestApp(t)
+
+	for name, tc := range map[string]struct {
+		stdin string
+		args  []string
+	}{
+		"no file":   {args: nil},
+		"extra arg": {stdin: "SELECT 1", args: []string{"-file", "-", "SELECT 2"}},
+		"empty":     {stdin: " \n", args: []string{"-file", "-"}},
+		"missing":   {args: []string{"-file", filepath.Join(t.TempDir(), "nope.sql")}},
+		"too large": {stdin: strings.Repeat("-", maxRunSQLBytes+1), args: []string{"-file", "-"}},
+	} {
+		if err := runDBRun(t, app, tc.stdin, tc.args...); err == nil {
+			t.Errorf("%s: db:run accepted the input", name)
+		}
+	}
+}
