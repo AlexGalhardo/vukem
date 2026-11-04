@@ -685,7 +685,7 @@ func TestPostsSeederAndFactory(t *testing.T) {
 
 ### Testing against PostgreSQL
 
-In-memory SQLite is fast and needs nothing installed. An app that relies on PostgreSQL features (`jsonb`, `ILIKE`, arrays) should also run its tests on PostgreSQL. The `pgtest` package, in the PostgreSQL driver module, gives **each test its own empty database**:
+In-memory SQLite is fast and needs nothing installed. An app that relies on PostgreSQL features (`jsonb`, `ILIKE`, arrays) should also run its tests on PostgreSQL. A handler that uses them on the default SQLite database answers 500; the failed assertion prints the `level=ERROR` lines the app logged (the last ten), so the SQL error is in the report and not only the generic body. The `pgtest` package, in the PostgreSQL driver module, gives **each test its own empty database**:
 
 ```bash
 go get github.com/AlexGalhardo/vukem/drivers/postgres

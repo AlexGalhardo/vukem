@@ -250,8 +250,17 @@ func (r *Response) fail(format string, args ...any) {
 		body = body[:2000] + "…"
 	}
 
-	r.t.Fatalf("%s\n\n%s %s → %d\n%s\n%s", fmt.Sprintf(format, args...), r.req.Method, r.req.URL, r.rec.Code,
+	msg := fmt.Sprintf("%s\n\n%s %s → %d\n%s\n%s", fmt.Sprintf(format, args...), r.req.Method, r.req.URL, r.rec.Code,
 		headerDump(r.rec.Header()), body)
+
+	// A 5xx body is a generic message; the cause (a SQL error, a panic) is in the server log.
+	if r.rec.Code >= http.StatusInternalServerError && r.client != nil && r.client.app != nil {
+		if lines := r.client.app.logs.errors(); lines != "" {
+			msg += "\n\nserver log (errors):\n" + lines
+		}
+	}
+
+	r.t.Fatalf("%s", msg)
 }
 
 func headerDump(h http.Header) string {

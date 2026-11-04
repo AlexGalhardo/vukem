@@ -605,3 +605,18 @@ func TestResponseJSON(t *testing.T) {
 		app.Client(tb).PostJSON("/notes", map[string]any{"body": "x"}).JSON(&into)
 	})
 }
+
+// A 5xx answers with a generic body, so the failure report must carry the logged cause.
+func TestServerErrorFailureShowsTheLoggedCause(t *testing.T) {
+	t.Parallel()
+
+	app := vukemtest.New(t, func(opts ...vukem.Option) (*vukem.App, error) {
+		return vukem.New(append(opts, vukem.WithRoutes(func(r *router.Router, _ *vukem.App) error {
+			r.Get("/boom", func(*web.Ctx) error { return errors.New("pq: operator does not exist: ILIKE") })
+
+			return nil
+		}))...)
+	})
+
+	expectFailure(t, "operator does not exist: ILIKE", func(tb *fakeTB) { app.Client(tb).Get("/boom").AssertOK() })
+}
