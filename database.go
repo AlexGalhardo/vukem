@@ -744,7 +744,7 @@ func dbRunCommand() Command {
 }
 
 func readRunScript(file string, stdin io.Reader) (string, error) {
-	var r io.Reader = stdin
+	r := stdin
 
 	if file != "-" {
 		f, err := os.Open(file)

@@ -367,8 +367,12 @@ func TestUniqueDispatchIsIdempotentWhileTheJobExists(t *testing.T) {
 	t.Parallel()
 
 	drivers := map[string]func(t *testing.T) queue.Driver{
-		"memory":   func(*testing.T) queue.Driver { return queue.NewMemory() },
-		"database": func(t *testing.T) queue.Driver { return newDatabaseDriver(t, openSQLite(t), queue.DatabaseOptions{}) },
+		"memory": func(*testing.T) queue.Driver { return queue.NewMemory() },
+		"database": func(t *testing.T) queue.Driver {
+			t.Helper()
+
+			return newDatabaseDriver(t, openSQLite(t), queue.DatabaseOptions{})
+		},
 	}
 
 	for name, mk := range drivers {

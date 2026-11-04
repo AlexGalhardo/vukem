@@ -1,9 +1,16 @@
 package admin
 
 import (
+	"regexp"
+
+	"github.com/AlexGalhardo/vukem/errs"
 	"github.com/AlexGalhardo/vukem/inertia"
 	"github.com/AlexGalhardo/vukem/web"
 )
+
+// slugPattern is the shape of a resource slug (the panel's own rule). A slug is placed in the URL the React page
+// fetches, so anything else is a 404 instead of a path the browser could normalise elsewhere.
+var slugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 
 // DataPrefix is where the framework panel is mounted in the Inertia stack: its dashboard, list and detail routes
 // answer JSON there (Accept: application/json) for the React pages below, behind the panel's own gate.
@@ -20,11 +27,19 @@ func (Pages) Dashboard(c *web.Ctx) error {
 
 // List renders /admin/{slug}.
 func (Pages) List(c *web.Ctx) error {
+	if !slugPattern.MatchString(c.Param("slug")) {
+		return errs.ErrNotFound
+	}
+
 	return inertia.Render(c, "Admin/ResourceList", inertia.Props{"slug": c.Param("slug"), "dataUrl": DataPrefix})
 }
 
 // Show renders /admin/{slug}/{id}.
 func (Pages) Show(c *web.Ctx) error {
+	if !slugPattern.MatchString(c.Param("slug")) {
+		return errs.ErrNotFound
+	}
+
 	return inertia.Render(c, "Admin/ResourceShow",
 		inertia.Props{"slug": c.Param("slug"), "id": c.Param("id"), "dataUrl": DataPrefix})
 }

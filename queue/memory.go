@@ -42,7 +42,8 @@ func (d *Memory) Push(_ context.Context, m *Message) error {
 	defer d.mu.Unlock()
 
 	if strings.HasPrefix(m.ID, "u:") {
-		if _, running := d.reserved[m.ID]; running || slices.ContainsFunc(d.ready, func(r *Message) bool { return r.ID == m.ID }) {
+		if _, running := d.reserved[m.ID]; running ||
+			slices.ContainsFunc(d.ready, func(r *Message) bool { return r.ID == m.ID }) {
 			return ErrDuplicate
 		}
 	}

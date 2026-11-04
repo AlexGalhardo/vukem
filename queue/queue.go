@@ -172,8 +172,9 @@ func Jitter(fn func(int) time.Duration, fraction float64) func(int) time.Duratio
 
 	return func(attempt int) time.Duration {
 		d := fn(attempt)
+		spread := 2*mrand.Float64() - 1 //nolint:gosec // retry spread, not security
 
-		return max(time.Duration(float64(d)*(1+fraction*(2*mrand.Float64()-1))), 0) //nolint:gosec // retry spread, not security
+		return max(time.Duration(float64(d)*(1+fraction*spread)), 0)
 	}
 }
 
