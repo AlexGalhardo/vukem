@@ -14,8 +14,10 @@ import (
 	"github.com/AlexGalhardo/vukem/admin"
 	"github.com/AlexGalhardo/vukem/events"
 	"github.com/AlexGalhardo/vukem/flags"
+	"github.com/AlexGalhardo/vukem/router"
 	"github.com/AlexGalhardo/vukem/security"
 	"github.com/AlexGalhardo/vukem/vukemtest"
+	"github.com/AlexGalhardo/vukem/web"
 )
 
 var (
@@ -244,5 +246,69 @@ func TestAdminFlagsUnchangedValueIsNotAudited(t *testing.T) {
 
 	if n := len(got.list()); n != 0 {
 		t.Errorf("%d audit events for no-op saves, want 0", n)
+	}
+}
+
+// An app that serves its own screens uses Guard, ChangeFlag and Audit instead of the panel's pages.
+func TestChangeFlagAndAuditFromAnAppHandler(t *testing.T) {
+	t.Parallel()
+
+	app := newApp(t, options{
+		flags: []flags.AnyFlag{betaFlag, lockedFlag, secretish},
+		beside: func(r *router.Router, p *admin.Panel) {
+			r.Post("/mine/flags/{name}", func(c *web.Ctx) error {
+				_, err := p.ChangeFlag(c, c.Param("name"), c.FormValue("value"), c.FormValue("reset") != "")
+				if err != nil {
+					return err
+				}
+
+				return c.String(http.StatusOK, "ok")
+			}).Use(p.Guard())
+			r.Post("/mine/note", func(c *web.Ctx) error {
+				err := p.Audit(c.Context(), "reports", "42", admin.ActionUpdate,
+					map[string]admin.Change{"status": {Before: "open", After: "resolved"}, "note": {Redacted: true}})
+				if err != nil {
+					return err
+				}
+
+				return c.String(http.StatusOK, "ok")
+			}).Use(p.Guard())
+		},
+	})
+	ff, err := app.Flags()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	editor := as(t, app, "editor")
+	editor.PostForm("/mine/flags/beta", url.Values{"value": {"true"}}).AssertForbidden()
+
+	boss := as(t, app, "admin")
+	boss.PostForm("/mine/flags/beta", url.Values{"value": {"true"}}).AssertOK()
+	boss.PostForm("/mine/flags/beta", url.Values{"value": {"true"}}).AssertOK() // unchanged: no second row
+	boss.PostForm("/mine/flags/admin_two_factor", url.Values{"value": {"false"}}).AssertForbidden()
+	boss.PostForm("/mine/flags/nope", url.Values{"value": {"x"}}).AssertNotFound()
+	boss.PostForm("/mine/flags/home_variant", url.Values{"value": {"swordfish"}}).AssertOK()
+	boss.PostForm("/mine/note", url.Values{}).AssertOK()
+
+	if !ff.Enabled(t.Context(), betaFlag) {
+		t.Error("beta was not enabled")
+	}
+
+	logs := auditLogs(t, app)
+	if len(logs) != 3 {
+		t.Fatalf("audit rows = %d, want 3 (beta once, home_variant, note): %+v", len(logs), logs)
+	}
+
+	if logs[0].Resource != admin.FlagsResource || logs[0].RecordID != "beta" || logs[0].ActorID == "" {
+		t.Errorf("flag row = %+v", logs[0])
+	}
+
+	if raw := fmt.Sprint(logs[1].Changes.V); strings.Contains(raw, "swordfish") {
+		t.Errorf("string flag value stored in the audit log: %s", raw)
+	}
+
+	if logs[2].Resource != "reports" || !logs[2].Changes.V["note"].Redacted {
+		t.Errorf("note row = %+v", logs[2])
 	}
 }

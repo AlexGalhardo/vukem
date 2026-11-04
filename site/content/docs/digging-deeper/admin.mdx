@@ -462,6 +462,29 @@ err := panel.AddPage("ingestion", "Ingestion", func(c *web.Ctx) (template.HTML, 
 
 The page is served at `<Prefix>/ingestion` for GET, listed in the sidebar after the resources, and runs behind `Panel.Guard()` (login, panel ability, 2FA, IP and session limits). The returned HTML is trusted, so escape user data (`html/template` does). Slugs share the namespace of the resources and must match `[a-z0-9][a-z0-9-]*`. Call `AddPage` before `Mount`. For POST routes, register them on the router behind `Panel.Guard()`.
 
+## Your own screens with the panel's gate
+
+An app that renders its own admin screens (for example with Inertia and React) can skip `panel.Mount` and keep what the panel is for: `vadmin.New` plus `Panel.Guard()` on your routes gives the IP allow-list, session limits, two-factor, CSRF and the panel ability, exactly as for the mounted panel. Without `Mount` there are no panel pages, but `Guard`, `Audit` and `ChangeFlag` work.
+
+```go
+panel, err := vadmin.New(vadmin.Config{DB: db, Guard: guard, Authorizer: gate, Flags: ff})
+if err != nil {
+	return err
+}
+
+r.Post("/admin/r/flags/{name}", func(c *web.Ctx) error {
+	_, err := panel.ChangeFlag(c, c.Param("name"), c.FormValue("value"), c.FormValue("reset") != "")
+	if err != nil && !errors.Is(err, vadmin.ErrAuditWrite) {
+		return err
+	}
+
+	return c.Redirect("/admin/r/flags")
+}).Use(panel.Guard())
+```
+
+- `Panel.ChangeFlag(c, name, value, reset)` sets or resets a global flag and writes the audit row the flags page writes (string values are stored as a length and a hash prefix). It checks the `manageFlags` ability itself and fails closed without an `Authorizer`. Unknown, locked and invalid flags return 404, 403 and 422 errors; an unchanged value writes nothing; a failed audit row returns the change together with an error wrapping `ErrAuditWrite` (the flag did change, so log it instead of failing the request).
+- `Panel.Audit(ctx, resource, recordID, action, changes)` appends one entry as the signed-in user, in the same table as the panel's own entries, so the audit log keeps one format. Mark sensitive columns with `Change{Redacted: true}`.
+
 ## Customizing the look
 
 `Config.Views` takes any [`fs.FS`](https://pkg.go.dev/io/fs#FS). A file in it replaces the embedded template with the same path; every other template keeps the original. The paths are `layouts/admin.html`, `index.html`, `show.html`, `form.html`, `delete.html`, `dashboard.html`, `audit.html`, `flags.html`, `action.html`, `page.html` and `partials/pager.html`.
