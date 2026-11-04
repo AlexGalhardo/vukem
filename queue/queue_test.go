@@ -326,3 +326,125 @@ func TestWorkQueueLimitsRejectNegative(t *testing.T) {
 		t.Fatalf("err = %v, want ErrInvalidLimit", err)
 	}
 }
+
+func TestJitterStaysWithinTheFraction(t *testing.T) {
+	t.Parallel()
+
+	fn := queue.Jitter(queue.Constant(time.Minute), 0.25)
+	lo, hi := 45*time.Second, 75*time.Second
+	distinct := map[time.Duration]bool{}
+
+	for range 200 {
+		d := fn(1)
+		if d < lo || d > hi {
+			t.Fatalf("delay %v outside [%v, %v]", d, lo, hi)
+		}
+
+		distinct[d] = true
+	}
+
+	if len(distinct) < 20 {
+		t.Fatalf("only %d distinct delays in 200 draws: no spread", len(distinct))
+	}
+}
+
+func TestJitterClampsTheFraction(t *testing.T) {
+	t.Parallel()
+
+	if d := queue.Jitter(queue.Constant(time.Second), 0)(1); d != time.Second {
+		t.Fatalf("zero fraction changed the delay: %v", d)
+	}
+
+	for range 100 {
+		if d := queue.Jitter(queue.Constant(time.Second), 7)(1); d < 0 || d > 2*time.Second {
+			t.Fatalf("fraction 7 not clamped to 1: %v", d)
+		}
+	}
+}
+
+func TestUniqueDispatchIsIdempotentWhileTheJobExists(t *testing.T) {
+	t.Parallel()
+
+	drivers := map[string]func(t *testing.T) queue.Driver{
+		"memory":   func(*testing.T) queue.Driver { return queue.NewMemory() },
+		"database": func(t *testing.T) queue.Driver { return newDatabaseDriver(t, openSQLite(t), queue.DatabaseOptions{}) },
+	}
+
+	for name, mk := range drivers {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			d := mk(t)
+			ran := 0
+			q := newQueue(t, d, queue.Handle(func(context.Context, sendInvoice) error { ran++; return nil }))
+
+			for range 3 {
+				if err := q.Dispatch(t.Context(), sendInvoice{OrderID: 1}, queue.Unique("order-1")); err != nil {
+					t.Fatalf("dispatch: %v", err)
+				}
+			}
+
+			// A different key and a non-unique dispatch are not deduplicated.
+			if err := q.Dispatch(t.Context(), sendInvoice{OrderID: 2}, queue.Unique("order-2")); err != nil {
+				t.Fatal(err)
+			}
+
+			if err := q.Dispatch(t.Context(), sendInvoice{OrderID: 3}); err != nil {
+				t.Fatal(err)
+			}
+
+			for {
+				m, err := d.Pop(t.Context(), []string{"default"})
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				if m == nil {
+					break
+				}
+
+				if err := q.Process(t.Context(), m); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			if ran != 3 {
+				t.Fatalf("handler ran %d times, want 3 (unique x1, other key, plain)", ran)
+			}
+
+			// Once the job has finished, the key is free again.
+			if err := q.Dispatch(t.Context(), sendInvoice{OrderID: 1}, queue.Unique("order-1")); err != nil {
+				t.Fatal(err)
+			}
+
+			m, err := d.Pop(t.Context(), []string{"default"})
+			if err != nil || m == nil {
+				t.Fatalf("key not free after completion: %v, %v", m, err)
+			}
+		})
+	}
+}
+
+func TestUniqueDoesNotHideARunningJob(t *testing.T) {
+	t.Parallel()
+
+	d := queue.NewMemory()
+	q := newQueue(t, d, queue.Handle(func(context.Context, sendInvoice) error { return nil }))
+
+	if err := q.Dispatch(t.Context(), sendInvoice{}, queue.Unique("k")); err != nil {
+		t.Fatal(err)
+	}
+
+	if m, err := d.Pop(t.Context(), []string{"default"}); err != nil || m == nil {
+		t.Fatalf("pop: %v, %v", m, err)
+	}
+
+	// Reserved (running) and not yet acked: still counted as existing.
+	if err := q.Dispatch(t.Context(), sendInvoice{}, queue.Unique("k")); err != nil {
+		t.Fatal(err)
+	}
+
+	if m, _ := d.Pop(t.Context(), []string{"default"}); m != nil {
+		t.Fatalf("a second copy was stored while the first was running: %+v", m)
+	}
+}

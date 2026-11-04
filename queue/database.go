@@ -296,9 +296,22 @@ func (d *Database) Push(ctx context.Context, m *Message) error { return d.PushTx
 // PushTx inserts m with ex, so it is enqueued only if ex's transaction
 // commits (Queue.DispatchTx).
 func (d *Database) PushTx(ctx context.Context, ex database.Executor, m *Message) error {
-	_, err := ex.ExecContext(
+	insert := `INSERT INTO {j} (`
+	unique := strings.HasPrefix(m.ID, "u:")
+
+	// A unique job has a stable id: the primary key refuses a second copy and the clash is not an error to the caller.
+	if unique && ex.Dialect().Name() == "mysql" {
+		insert = `INSERT IGNORE INTO {j} (`
+	}
+
+	stmt := insert + jobColumns + `, seq) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	if unique && ex.Dialect().Name() != "mysql" {
+		stmt += ` ON CONFLICT (id) DO NOTHING`
+	}
+
+	res, err := ex.ExecContext(
 		ctx,
-		d.q(ex.Dialect(), `INSERT INTO {j} (`+jobColumns+`, seq) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+		d.q(ex.Dialect(), stmt),
 		m.ID,
 		m.Queue,
 		m.Kind,
@@ -311,8 +324,15 @@ func (d *Database) PushTx(ctx context.Context, ex database.Executor, m *Message)
 		m.LastError,
 		d.nextSeq(),
 	)
+	if err != nil || !unique {
+		return err
+	}
 
-	return err
+	if n, rerr := res.RowsAffected(); rerr == nil && n == 0 {
+		return ErrDuplicate
+	}
+
+	return nil
 }
 
 // Pop implements Driver.

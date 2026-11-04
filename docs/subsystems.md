@@ -424,9 +424,11 @@ func All(app *vukem.App) []queue.Registration {
 q, err := app.Queue()
 err = q.Dispatch(ctx, SendInvoice{OrderID: 1}, queue.OnQueue("billing"), queue.Delay(5*time.Minute))
 err = q.DispatchTx(ctx, tx, SendInvoice{OrderID: 1}) // exists only if tx commits (every driver)
+err = q.Dispatch(ctx, SendInvoice{OrderID: 1}, queue.Unique("order-1")) // no-op while one is queued, running or retrying
 ```
 
 - Payloads are JSON; `Kind()` maps to the registered handler (no reflection-based class names). Registering a kind twice is a boot error.
+- `queue.Unique(key)` makes a dispatch idempotent (stable id from kind and key; the driver's primary key refuses the second copy; free again after ack or failure, no window). `queue.Jitter(fn, fraction)` spreads a backoff by ±fraction.
 - Defaults: queue `default`, 3 retries with exponential backoff from 1s (capped at 1h), 1-minute timeout per attempt; options on `Handle` set the defaults, options on `Dispatch` override them.
 - `QUEUE_CONNECTION`: `sync` (default; the job runs inside `Dispatch` and its error is returned; a delayed job is refused with `queue.ErrInlineDelay` instead of running early, so use `memory`, `database` or `queue.Fake` where jobs are delayed), `memory` (in process; `serve` runs workers, `QUEUE_CONCURRENCY` default 4, `QUEUE_NAMES` in priority order, `QUEUE_LIMITS=ingest=2` caps the running jobs of a queue per process so a slow queue cannot take every worker; same for every driver and for `queue:work`), `database` (SQLite, Postgres or MySQL; see below). Any other value is an `app.Queue()` error. Redis is not a `QUEUE_CONNECTION` value: wire it with `vukem.WithQueueDriver` / `WithQueueDriverFunc` ([Redis](#redis)).
 - `serve` runs a queue worker: always for `memory`, and for `database` and custom drivers (`WithQueueDriver`, e.g. Redis) unless `QUEUE_IN_SERVE=false` (default `true`, mirroring `SCHEDULE_IN_SERVE`). A worker in `serve` next to `queue:work` processes is safe (atomic reservations with an owner token), it only adds workers. The runner exits at once for an inline driver.

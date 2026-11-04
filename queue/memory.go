@@ -3,6 +3,7 @@ package queue
 import (
 	"context"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 )
@@ -39,6 +40,12 @@ func (d *Memory) SetClock(now func() time.Time) {
 func (d *Memory) Push(_ context.Context, m *Message) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+
+	if strings.HasPrefix(m.ID, "u:") {
+		if _, running := d.reserved[m.ID]; running || slices.ContainsFunc(d.ready, func(r *Message) bool { return r.ID == m.ID }) {
+			return ErrDuplicate
+		}
+	}
 
 	cp := *m
 	d.ready = append(d.ready, &cp)
