@@ -7,6 +7,29 @@ This page covers the commands you use while an app runs and while you ship it: k
 
 For app commands, flags go **before** positional arguments, and the app boots first (a boot error such as `vukem: APP_DEBUG must be false when APP_ENV=production` exits with 1). `openapi:export`, `codegen:types`, `codegen:routes` and `codegen:client` run in **warmup** mode instead: they register the routes but open no database, boot no provider and do not need `APP_KEY`.
 
+## `vukem hash:make`
+
+Print the argon2id hash of a password, in the format the session guard verifies.
+
+```text
+vukem hash:make [-env NAME] [-stdin]
+```
+
+| Flag | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `-env` | string | `PASSWORD` | The environment variable that holds the password. |
+| `-stdin` | bool | `false` | Read the password from the first line of stdin instead. |
+
+**Interactions**
+
+- The password is never read from arguments: a positional argument is a usage error, so it stays out of the shell history and the process list.
+- Only the hash is printed. An empty password is an error.
+- It boots the app like any app command, so `APP_KEY` must be set.
+
+```bash
+PASSWORD='the new password' ./app hash:make
+```
+
 ## `vukem key:generate`
 
 Write a new random `APP_KEY` to `.env`. **Global.**

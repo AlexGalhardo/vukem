@@ -13,8 +13,18 @@ import (
 
 func installAdmin(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 	force := set.Bool("force", false, "overwrite existing files")
+	stack := set.String("stack", "htmx", "admin front end: htmx (server templates) or inertia (React pages over the panel's JSON)")
 
 	return func(ctx context.Context, env *Env, _ []string) error {
+		if *stack != "htmx" && *stack != "inertia" {
+			return usagef("install:admin: -stack must be htmx or inertia, not %q", *stack)
+		}
+
+		if *stack == "inertia" && inertiaFramework(env) != "react" {
+			return usagef("install:admin -stack inertia needs an Inertia + React project (run vukem install:inertia --react first); " +
+				"Vue and Svelte admin pages are not provided yet")
+		}
+
 		if !exists(env, filepath.Join("app", "accounts", "accounts.go")) {
 			return usagef("install:admin needs authentication: run vukem install:auth first")
 		}
@@ -28,8 +38,16 @@ func installAdmin(set *flag.FlagSet) func(context.Context, *Env, []string) error
 			return err
 		}
 
+		data["AdminStack"] = *stack
+
 		if err := installScaffold(env, "admin", data, *force); err != nil {
 			return err
+		}
+
+		if *stack == "inertia" {
+			if err := installScaffold(env, "admin-inertia-react", data, *force); err != nil {
+				return err
+			}
 		}
 
 		regs := []registration{
@@ -43,6 +61,11 @@ func installAdmin(set *flag.FlagSet) func(context.Context, *Env, []string) error
 
 		if err := finishInstall(ctx, env, regs); err != nil {
 			return err
+		}
+
+		if *stack == "inertia" {
+			fmt.Fprint(env.Stdout, "\nThe React admin is at /admin; the framework panel's JSON and its own pages are at "+
+				"/admin-api.\n")
 		}
 
 		fmt.Fprint(env.Stdout, "\nAdmin panel installed at /admin. Next:\n\n"+
