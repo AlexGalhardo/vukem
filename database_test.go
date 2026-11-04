@@ -11,12 +11,10 @@ import (
 	"log/slog"
 	"net/http"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/google/go-cmp/cmp"
 
@@ -1249,14 +1247,19 @@ func TestDBRunIsADryRunUnlessCommitted(t *testing.T) {
 
 	var out bytes.Buffer
 
-	app := newTestApp(t, WithStdout(&out))
+	// Its own database file: the default one is ./storage/database.sqlite, shared by every test of the package.
+	dbFile := "file:" + filepath.Join(t.TempDir(), "run.db")
+	app := newTestApp(t, WithStdout(&out), WithSource(testSource(map[string]string{"DATABASE_URL": dbFile})))
+
+	// Registered after TempDir, so it runs first: Windows cannot delete a database file that is still open.
+	t.Cleanup(func() { _ = app.Shutdown(context.Background()) })
+
 	db, err := app.DB()
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// The test database may be shared with other tests of the package: a table of its own.
-	table := "run_probe_" + strconv.FormatInt(time.Now().UnixNano(), 36)
+	table := "run_probe"
 
 	count := func() int {
 		t.Helper()
