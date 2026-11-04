@@ -462,6 +462,21 @@ err := panel.AddPage("ingestion", "Ingestion", func(c *web.Ctx) (template.HTML, 
 
 The page is served at `<Prefix>/ingestion` for GET, listed in the sidebar after the resources, and runs behind `Panel.Guard()` (login, panel ability, 2FA, IP and session limits). The returned HTML is trusted, so escape user data (`html/template` does). Slugs share the namespace of the resources and must match `[a-z0-9][a-z0-9-]*`. Call `AddPage` before `Mount`. For POST routes, register them on the router behind `Panel.Guard()`.
 
+## Resources as JSON
+
+The list and detail routes of a resource answer JSON when the client asks for it (`Accept: application/json` without `text/html`), so a React or Vue front end can render the screens itself. It is the data the HTML templates get: same panel gate (a guest gets a 401 problem+json), same policies, same hidden and sensitive columns, which never reach the page model. The response carries `Vary: Accept`.
+
+```bash
+curl -H 'Accept: application/json' https://app.example/admin/posts?q=hello&sort=title&dir=desc&page=2
+```
+
+| Route | Body |
+| --- | --- |
+| `GET <Prefix>/<slug>` | `resource` (`singular`, `plural`, `url`, `createUrl`), `columns` (`label`, `sortUrl`, `sorted`), `rows` (`id`, `cells` in column order, `showUrl`, `editUrl`, `deleteUrl`: a link appears only when the policy allows it), `search`, `searchable`, `filters` (`label`, `param`, `value`, `options`), `sort`, `dir`, `total`, `pager` (`page`, `last`, `prevUrl`, `nextUrl`) and `bulkActions` |
+| `GET <Prefix>/<slug>/{id}` | `resource`, `id`, `fields` (`label`, `value`, display strings) and `actions` (`label`, `url`) |
+
+Writes keep going to the existing form routes (`POST <Prefix>/<slug>`, `/{id}`, `/{id}/delete`, actions), which already enforce CSRF, validation and the audit log. The dashboard, the audit log and the flags page have no JSON form yet.
+
 ## Your own screens with the panel's gate
 
 An app that renders its own admin screens (for example with Inertia and React) can skip `panel.Mount` and keep what the panel is for: `vadmin.New` plus `Panel.Guard()` on your routes gives the IP allow-list, session limits, two-factor, CSRF and the panel ability, exactly as for the mounted panel. Without `Mount` there are no panel pages, but `Guard`, `Audit` and `ChangeFlag` work.

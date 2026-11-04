@@ -20,59 +20,84 @@ import (
 	"github.com/AlexGalhardo/vukem/z"
 )
 
+// The view types double as the JSON presenter (Accept: application/json on the list and detail routes), so their tags
+// are the wire format. Sensitive and hidden columns never reach a view, so they never reach the JSON either.
 type resourceView struct {
-	Singular, Plural, URL, CreateURL string
+	Singular  string `json:"singular"`
+	Plural    string `json:"plural"`
+	URL       string `json:"url"`
+	CreateURL string `json:"createUrl,omitempty"`
 }
 
 type listView struct {
-	Columns    []header
-	Rows       []row
-	Search     string
-	Searchable bool
-	Filters    []filterView
-	Sort, Dir  string
-	Total      int64
-	ColSpan    int
-	Pager      pager
-	Bulk       []actionLink
+	Columns    []header     `json:"columns"`
+	Rows       []row        `json:"rows"`
+	Search     string       `json:"search"`
+	Searchable bool         `json:"searchable"`
+	Filters    []filterView `json:"filters"`
+	Sort       string       `json:"sort"`
+	Dir        string       `json:"dir"`
+	Total      int64        `json:"total"`
+	ColSpan    int          `json:"-"`
+	Pager      pager        `json:"pager"`
+	Bulk       []actionLink `json:"bulkActions,omitempty"`
 }
 
 type header struct {
-	Label, SortURL, Sorted string
+	Label   string `json:"label"`
+	SortURL string `json:"sortUrl,omitempty"`
+	Sorted  string `json:"sorted,omitempty"`
 }
 
 type row struct {
-	ID                       string
-	Cells                    []string
-	ShowURL, EditURL, DelURL string
+	ID      string   `json:"id"`
+	Cells   []string `json:"cells"`
+	ShowURL string   `json:"showUrl,omitempty"`
+	EditURL string   `json:"editUrl,omitempty"`
+	DelURL  string   `json:"deleteUrl,omitempty"`
 }
 
 type filterView struct {
-	Label, Param, Value string
-	Options             []option
+	Label   string   `json:"label"`
+	Param   string   `json:"param"`
+	Value   string   `json:"value"`
+	Options []option `json:"options"`
 }
 
 type option struct {
-	Value, Label string
-	Selected     bool
+	Value    string `json:"value"`
+	Label    string `json:"label"`
+	Selected bool   `json:"selected"`
 }
 
 type pager struct {
-	Page, Last       int
-	PrevURL, NextURL string
+	Page    int    `json:"page"`
+	Last    int    `json:"last"`
+	PrevURL string `json:"prevUrl,omitempty"`
+	NextURL string `json:"nextUrl,omitempty"`
 }
 
 type recordView struct {
-	ID              string
-	Fields          []fieldView
-	EditURL, DelURL string
-	Actions         []actionLink
-	DeleteAction    string
-	Cancel          string
+	ID           string       `json:"id"`
+	Fields       []fieldView  `json:"fields"`
+	EditURL      string       `json:"editUrl,omitempty"`
+	DelURL       string       `json:"deleteUrl,omitempty"`
+	Actions      []actionLink `json:"actions,omitempty"`
+	DeleteAction string       `json:"-"`
+	Cancel       string       `json:"-"`
 }
 
 type fieldView struct {
-	Label, Value string
+	Label string `json:"label"`
+	Value string `json:"value"`
+}
+
+// respondJSON answers a list or detail request that wants JSON. The page data is the same the HTML templates get,
+// after the same authorization, policies and masking.
+func respondJSON(c *web.Ctx, body any) error {
+	c.SetHeader("Vary", "Accept")
+
+	return c.JSON(http.StatusOK, body)
 }
 
 type formView struct {
@@ -252,6 +277,13 @@ func (r *Resource[T]) index(p *Panel) web.HandlerFunc {
 
 		for i := range pg.Items {
 			lv.Rows = append(lv.Rows, r.row(c, p, &pg.Items[i]))
+		}
+
+		if c.WantsJSON() {
+			return respondJSON(c, struct {
+				Resource *resourceView `json:"resource"`
+				*listView
+			}{r.view(c, p), lv})
 		}
 
 		data := p.base(c, r.plural, r.slug)
@@ -448,6 +480,13 @@ func (r *Resource[T]) show(p *Panel) web.HandlerFunc {
 		}
 
 		recView.Actions = r.rowActions(c, p, rec, esc)
+
+		if c.WantsJSON() {
+			return respondJSON(c, struct {
+				Resource *resourceView `json:"resource"`
+				*recordView
+			}{r.view(c, p), recView})
+		}
 
 		data := p.base(c, r.singular+" "+id, r.slug)
 		data.Resource, data.Record = r.view(c, p), recView
