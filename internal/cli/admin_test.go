@@ -188,3 +188,70 @@ func TestFlagsPageListsBeta(t *testing.T) {
 		t.Fatalf("route:list = %d\n%s%s", code, out, errOut)
 	}
 }
+
+func TestInstallAdminStackValidation(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	writeTestFile(t, dir, "go.mod", "module example.com/app\n")
+	writeTestFile(t, dir, "routes/web.go", "package routes\n")
+	writeTestFile(t, dir, "app/accounts/accounts.go", "package accounts\n")
+
+	if code, _, errOut := vukem(t, dir, "install:admin", "-stack", "angular"); code != 2 ||
+		!strings.Contains(errOut, "htmx or inertia") {
+		t.Errorf("install:admin -stack angular = %d %q", code, errOut)
+	}
+
+	// The default stack does not ask for Inertia, the Inertia stack does.
+	if code, _, errOut := vukem(t, dir, "install:admin", "-stack", "inertia"); code != 2 ||
+		!strings.Contains(errOut, "Inertia + React") {
+		t.Errorf("install:admin -stack inertia without Inertia = %d %q", code, errOut)
+	}
+
+	writeTestFile(t, dir, "package.json", `{"dependencies":{"@inertiajs/vue3":"1"}}`)
+
+	if code, _, errOut := vukem(t, dir, "install:admin", "-stack", "inertia"); code != 2 ||
+		!strings.Contains(errOut, "Vue and Svelte") {
+		t.Errorf("install:admin -stack inertia on Vue = %d %q", code, errOut)
+	}
+}
+
+// Both stacks render a routes/admin.go that is valid Go; the Inertia one moves the panel to /admin-api and serves
+// the React pages at /admin behind the panel's guard.
+func TestAdminRoutesScaffoldPerStack(t *testing.T) {
+	t.Parallel()
+
+	src, err := scaffoldFS.ReadFile("scaffolds/admin/routes/admin.go.tmpl")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for stack, want := range map[string][]string{
+		"htmx":    {"panel.Mount(r)"},
+		"inertia": {"admin.DataPrefix", "pages.Dashboard", "pages.List", "pages.Show", "panel.Guard()"},
+	} {
+		out, err := renderScaffold("routes/admin.go", src, map[string]string{"Module": "example.com/app", "AdminStack": stack})
+		if err != nil {
+			t.Fatalf("%s: %v", stack, err)
+		}
+
+		for _, w := range want {
+			if !strings.Contains(string(out), w) {
+				t.Errorf("%s routes/admin.go misses %q:\n%s", stack, w, out)
+			}
+		}
+
+		if stack == "htmx" && strings.Contains(string(out), "DataPrefix") {
+			t.Errorf("htmx routes/admin.go mentions the Inertia prefix:\n%s", out)
+		}
+	}
+
+	pages, err := scaffoldFS.ReadFile("scaffolds/admin-inertia-react/app/admin/pages.go.tmpl")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := renderScaffold("app/admin/pages.go", pages, map[string]string{"Module": "example.com/app"}); err != nil {
+		t.Fatalf("pages.go: %v", err)
+	}
+}

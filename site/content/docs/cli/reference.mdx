@@ -63,6 +63,8 @@ Commands marked **global** run in the `vukem` binary and work on files. Commands
 | [`vukem migrate:status`](/docs/cli/reference-database#vukem-migratestatus) | app | Show which migrations ran |
 | [`vukem db:seed`](/docs/cli/reference-database#vukem-dbseed) | app | Run the seeders |
 | [`vukem db:wipe`](/docs/cli/reference-database#vukem-dbwipe) | app | Drop every table |
+| [`vukem db:run`](/docs/cli/reference-database#vukem-dbrun) | app | Run a SQL file in one transaction; rolls back unless `-commit` |
+| [`vukem hash:make`](/docs/cli/reference-runtime#vukem-hashmake) | app | Print the argon2id hash of a password read from the environment or stdin |
 | [`vukem route:list`](/docs/cli/reference-runtime#vukem-routelist) | app | List the registered routes |
 | [`vukem about`](/docs/cli/reference-runtime#vukem-about) | app | Show the application and environment summary |
 | [`vukem queue:work`](/docs/cli/reference-runtime#vukem-queuework) | app | Process queued jobs |

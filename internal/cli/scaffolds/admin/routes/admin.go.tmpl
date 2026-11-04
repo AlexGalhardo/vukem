@@ -51,6 +51,9 @@ func Admin(r *router.Router, app *vukem.App) error {
 		Authorizer: gate,
 		Title:      app.Config.Name + " admin",
 		Flags:      ff,
+{{- if eq .AdminStack "inertia"}}
+		Prefix:     admin.DataPrefix,
+{{- end}}
 	})
 	if err != nil {
 		return err
@@ -60,5 +63,20 @@ func Admin(r *router.Router, app *vukem.App) error {
 		return err
 	}
 
+{{if eq .AdminStack "inertia"}}
+	if err := panel.Mount(r); err != nil {
+		return err
+	}
+
+	// The React screens: each page is a shell behind the panel's gate (login, ability, 2FA, CSRF, IP and session
+	// limits) that reads the panel's JSON routes under admin.DataPrefix.
+	pages := admin.Pages{}
+	r.Get("/admin", pages.Dashboard).Name("admin.home").Use(panel.Guard())
+	r.Get("/admin/{slug}", pages.List).Name("admin.list").Use(panel.Guard())
+	r.Get("/admin/{slug}/{id}", pages.Show).Name("admin.show").Use(panel.Guard())
+
+	return nil
+{{- else}}
 	return panel.Mount(r)
+{{- end}}
 }

@@ -236,6 +236,30 @@ Dropped all tables.
 
 After it, `vukem migrate` rebuilds the schema. Back up first in any shared environment.
 
+## `vukem db:run`
+
+Run a SQL script in one transaction on the app's own database. It is a dry run unless you commit.
+
+```text
+vukem db:run -file <path|-> [-commit]
+```
+
+| Flag | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `-file` | string | none | The script: a path, or `-` for stdin. Required. At most 8 MiB. |
+| `-commit` | bool | `false` | Commit the transaction. Without it the script runs and is rolled back. |
+
+**Interactions**
+
+- The whole file runs in one transaction. A failing statement rolls everything back, committed or not, and the command exits with an error.
+- It has no `-force`: the default changes nothing, and `-commit` is the explicit step.
+- It reports only the outcome (`dry run, rolled back` or `committed`), not per-statement counts. Use `psql` when you need the output of each statement.
+
+```bash
+vukem db:run -file fix-users.sql
+vukem db:run -file fix-users.sql -commit
+```
+
 ## Troubleshooting
 
 | Symptom | Cause and fix |
