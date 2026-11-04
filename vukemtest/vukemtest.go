@@ -47,6 +47,7 @@ type App struct {
 
 	t       testing.TB
 	handler http.Handler
+	logs    *logBuffer
 }
 
 // Options tune New.
@@ -90,6 +91,8 @@ func Build(tb testing.TB, build vukem.BuildFunc, opts ...Options) (*App, error) 
 		o = opts[0]
 	}
 
+	logs := &logBuffer{}
+
 	env := map[string]string{
 		"APP_ENV": "test",
 		"APP_KEY": config.GenerateKey(),
@@ -106,7 +109,7 @@ func Build(tb testing.TB, build vukem.BuildFunc, opts ...Options) (*App, error) 
 		vukem.WithSource(config.MapSource(env)),
 		vukem.WithKind(vukem.KindTest),
 		vukem.WithoutHTTP(),
-		vukem.WithLogOutput(io.Discard),
+		vukem.WithLogOutput(logs),
 		vukem.WithStdout(io.Discard),
 	}
 
@@ -141,7 +144,7 @@ func Build(tb testing.TB, build vukem.BuildFunc, opts ...Options) (*App, error) 
 		return nil, fmt.Errorf("vukemtest: routes: %w", err)
 	}
 
-	return &App{App: app, t: tb, handler: h}, nil
+	return &App{App: app, t: tb, handler: h, logs: logs}, nil
 }
 
 // Mails returns the in-memory mail transport (MAIL_MAILER=array, the
