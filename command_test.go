@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/AlexGalhardo/vukem/auth/hash"
 	"github.com/AlexGalhardo/vukem/database"
 )
 
@@ -119,5 +120,66 @@ func TestResealCommand(t *testing.T) {
 	); err == nil ||
 		!strings.Contains(out.String(), "3 values before") {
 		t.Errorf("crypt:reseal with a failing model = %v, output %q", err, out.String())
+	}
+}
+
+func runHashMake(t *testing.T, stdin string, args ...string) (string, error) {
+	t.Helper()
+
+	var out bytes.Buffer
+
+	app := newTestApp(t, WithStdout(&out), WithStdin(strings.NewReader(stdin)))
+	cmd := hashMakeCommand()
+	fset := flag.NewFlagSet("hash:make", flag.ContinueOnError)
+	cmd.Flags(fset)
+
+	if err := fset.Parse(args); err != nil {
+		t.Fatal(err)
+	}
+
+	err := cmd.Run(t.Context(), app, fset.Args())
+
+	return strings.TrimSpace(out.String()), err
+}
+
+func TestHashMakeReadsStdinAndNeverArgv(t *testing.T) {
+	t.Parallel()
+
+	out, err := runHashMake(t, "s3cret-pw\r\nignored\n", "-stdin")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if ok, err := hash.Default().Verify(out, "s3cret-pw"); err != nil || !ok {
+		t.Fatalf("Verify(%q, password) = %v, %v, want true (the line ending is trimmed)", out, ok, err)
+	}
+
+	if strings.Contains(out, "s3cret-pw") {
+		t.Fatal("the plain password was printed")
+	}
+
+	if _, err := runHashMake(t, "", "-stdin", "positional-password"); !errors.Is(err, errUsage) {
+		t.Fatalf("a positional argument = %v, want errUsage", err)
+	}
+
+	if _, err := runHashMake(t, "", "-stdin"); err == nil {
+		t.Fatal("an empty stdin was accepted")
+	}
+}
+
+func TestHashMakeReadsTheEnvironment(t *testing.T) {
+	t.Setenv("VUKEM_TEST_HASH_PW", "from-env")
+
+	out, err := runHashMake(t, "", "-env", "VUKEM_TEST_HASH_PW")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if ok, err := hash.Default().Verify(out, "from-env"); err != nil || !ok {
+		t.Fatalf("Verify(%q, password) = %v, %v, want true", out, ok, err)
+	}
+
+	if _, err := runHashMake(t, "", "-env", "VUKEM_TEST_HASH_UNSET"); err == nil {
+		t.Fatal("an unset variable was accepted")
 	}
 }

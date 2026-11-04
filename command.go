@@ -1,6 +1,7 @@
 package vukem
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -19,6 +20,7 @@ import (
 	"syscall"
 	"text/tabwriter"
 
+	"github.com/AlexGalhardo/vukem/auth/hash"
 	"github.com/AlexGalhardo/vukem/config"
 	"github.com/AlexGalhardo/vukem/database"
 	"github.com/AlexGalhardo/vukem/openapi"
@@ -181,6 +183,7 @@ func builtinCommands() []Command {
 			routeListCommand(),
 			aboutCommand(),
 			keyGenerateCommand(),
+			hashMakeCommand(),
 			openAPIExportCommand(),
 			codegenTypesCommand(),
 			codegenRoutesCommand(),
@@ -439,6 +442,63 @@ func keyGenerateCommand() Command {
 		Desc:        "Print a new random APP_KEY (never writes .env)",
 		Fn: func(_ context.Context, app *App, args []string) error {
 			return writeNewKey(app.stdout, args)
+		},
+	}
+}
+
+var errHashMakeArgs = fmt.Errorf(
+	"hash:make takes no arguments: the password is read from the environment or stdin, never from argv: %w", errUsage)
+
+// hashMakeCommand is hash:make: it prints the hash.Default (argon2id) hash of a password, in the format the session
+// guard checks, for scripts that set or reset a password with SQL. The password comes from the environment variable
+// named by -env (default PASSWORD) or, with -stdin, from the first line of stdin, so it stays out of argv, the shell
+// history and the process list. Only the hash is printed.
+func hashMakeCommand() Command {
+	var (
+		envName   *string
+		fromStdin *bool
+	)
+
+	return CommandFunc{
+		CommandName: "hash:make",
+		Desc:        "Print the argon2id hash of $PASSWORD (or of stdin with -stdin)",
+		DefineFlags: func(fs *flag.FlagSet) {
+			envName = fs.String("env", "PASSWORD", "environment variable that holds the password")
+			fromStdin = fs.Bool("stdin", false, "read the password from the first line of stdin instead")
+		},
+		Fn: func(_ context.Context, app *App, args []string) error {
+			if len(args) > 0 {
+				return errHashMakeArgs
+			}
+
+			password := os.Getenv(*envName)
+
+			if *fromStdin {
+				line, err := bufio.NewReader(app.stdin).ReadString('\n')
+				if err != nil && !errors.Is(err, io.EOF) {
+					return fmt.Errorf("hash:make: read stdin: %w", err)
+				}
+
+				password = strings.TrimRight(line, "\r\n")
+			}
+
+			if password == "" {
+				source := "$" + *envName
+				if *fromStdin {
+					source = "stdin"
+				}
+
+				return fmt.Errorf("hash:make: no password in %s", source)
+			}
+
+			out, err := hash.Default().Make(password)
+			if err != nil {
+				return fmt.Errorf("hash:make: %w", err)
+			}
+
+			_, err = fmt.Fprintln(app.stdout, out)
+
+			return err
 		},
 	}
 }
