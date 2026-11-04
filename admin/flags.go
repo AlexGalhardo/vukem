@@ -32,6 +32,30 @@ type flagRow struct {
 	On bool
 }
 
+// flagJSON is one flag as the JSON presenter returns it; the same values the HTML page shows. A locked flag cannot be
+// changed, so a client should offer no control for it.
+type flagJSON struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Kind        string `json:"kind"`
+	Default     string `json:"default"`
+	Value       string `json:"value"`
+	Locked      bool   `json:"locked"`
+	Stored      bool   `json:"stored"`
+}
+
+func flagsJSON(rows []flagRow) []flagJSON {
+	out := make([]flagJSON, len(rows))
+	for i, r := range rows {
+		out[i] = flagJSON{
+			Name: r.Name, Description: r.Description, Kind: string(r.Kind), Default: r.Default, Value: r.Value,
+			Locked: r.Locked, Stored: r.Stored && !r.Locked,
+		}
+	}
+
+	return out
+}
+
 func (p *Panel) hasFlags() bool { return p.cfg.Flags != nil && len(p.cfg.Flags.All()) > 0 }
 
 // flagsPage lists the global value of every registered flag.
@@ -51,6 +75,12 @@ func (p *Panel) flagsPage(c *web.Ctx) error {
 		fv.Rows = append(fv.Rows, flagRow{
 			State: s, Action: p.url(FlagsResource, url.PathEscape(s.Name)), On: s.Value == "true",
 		})
+	}
+
+	if c.WantsJSON() {
+		return respondJSON(c, struct {
+			Flags []flagJSON `json:"flags"`
+		}{flagsJSON(fv.Rows)})
 	}
 
 	data := p.base(c, "Feature flags", FlagsResource)

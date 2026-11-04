@@ -474,8 +474,11 @@ curl -H 'Accept: application/json' https://app.example/admin/posts?q=hello&sort=
 | --- | --- |
 | `GET <Prefix>/<slug>` | `resource` (`singular`, `plural`, `url`, `createUrl`), `columns` (`label`, `sortUrl`, `sorted`), `rows` (`id`, `cells` in column order, `showUrl`, `editUrl`, `deleteUrl`: a link appears only when the policy allows it), `search`, `searchable`, `filters` (`label`, `param`, `value`, `options`), `sort`, `dir`, `total`, `pager` (`page`, `last`, `prevUrl`, `nextUrl`) and `bulkActions` |
 | `GET <Prefix>/<slug>/{id}` | `resource`, `id`, `fields` (`label`, `value`, display strings) and `actions` (`label`, `url`) |
+| `GET <Prefix>` | `panel` (`title`, `home`, `nav`, `auditUrl`, `flagsUrl`) and `cards` (`label`, `url`, `count`) |
+| `GET <Prefix>/_audit` | `entries` (`when`, `actor`, `action`, `resource`, `recordId`, `changes`: `column`, `before`, `after`, `redacted`) and `pager`; the `resource` query filter works as on the page |
+| `GET <Prefix>/_flags` | `flags` (`name`, `description`, `kind`, `default`, `value`, `locked`, `stored`); needs the `manageFlags` ability |
 
-Writes keep going to the existing form routes (`POST <Prefix>/<slug>`, `/{id}`, `/{id}/delete`, actions), which already enforce CSRF, validation and the audit log. The dashboard, the audit log and the flags page have no JSON form yet.
+Writes keep going to the existing form routes (`POST <Prefix>/<slug>`, `/{id}`, `/{id}/delete`, actions), which already enforce CSRF, validation and the audit log.
 
 ## A React admin from the CLI
 
