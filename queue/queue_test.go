@@ -523,3 +523,20 @@ func TestUniqueIsRefusedByADriverThatCannotHonourIt(t *testing.T) {
 		t.Fatalf("plain dispatch: %v", err)
 	}
 }
+
+func TestFakeRecordsAUniqueJobOnce(t *testing.T) {
+	t.Parallel()
+
+	f := queue.NewFake()
+	q := newQueue(t, f, queue.Handle(func(context.Context, sendInvoice) error { return nil }))
+
+	for range 3 {
+		if err := q.Dispatch(t.Context(), sendInvoice{OrderID: 1}, queue.Unique("k")); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if n := len(f.Messages()); n != 1 {
+		t.Fatalf("Fake recorded %d messages for 3 dispatches of one unique job, want 1", n)
+	}
+}

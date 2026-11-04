@@ -23,13 +23,18 @@ type Fake struct {
 // NewFake returns an empty fake driver.
 func NewFake() *Fake { return &Fake{Memory: NewMemory()} }
 
-// Push implements Driver and records m.
+// Push implements Driver and records m unless the memory driver refuses it.
 func (f *Fake) Push(ctx context.Context, m *Message) error {
+	// A refused duplicate (Unique) was never dispatched, so it is not recorded.
+	if err := f.Memory.Push(ctx, m); err != nil {
+		return err
+	}
+
 	f.mu.Lock()
 	f.sent = append(f.sent, *m)
 	f.mu.Unlock()
 
-	return f.Memory.Push(ctx, m)
+	return nil
 }
 
 // Messages returns every dispatched message in order.

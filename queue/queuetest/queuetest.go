@@ -242,4 +242,50 @@ func Run(t *testing.T, d queue.Driver, o Options) {
 			t.Fatalf("pending = %d", n)
 		}
 	})
+
+	// A driver is a queue.Uniquer or it refuses Unique; either way it never stores a duplicate silently.
+	t.Run("UniqueJobs", func(t *testing.T) {
+		before := pending(t)
+		first := q.Dispatch(ctx, confJob{N: 400}, queue.Unique("conformance"))
+
+		if u, ok := d.(queue.Uniquer); !ok || !u.SupportsUnique() {
+			if !errors.Is(first, queue.ErrUniqueUnsupported) {
+				t.Fatalf("Unique on a driver that is not a Uniquer = %v, want ErrUniqueUnsupported", first)
+			}
+
+			return
+		}
+
+		if first != nil {
+			t.Fatal(first)
+		}
+
+		if err := q.Dispatch(ctx, confJob{N: 400}, queue.Unique("conformance")); err != nil {
+			t.Fatalf("duplicate dispatch = %v, want nil (a no-op)", err)
+		}
+
+		if n := pending(t); n != before+1 {
+			t.Fatalf("pending = %d after two unique dispatches, want %d", n, before+1)
+		}
+
+		m, err := d.Pop(ctx, []string{"default"})
+		if err != nil || m == nil {
+			t.Fatalf("pop = %v %v", m, err)
+		}
+
+		// Reserved (running) still counts: a dispatch now must not add a second copy.
+		if err := q.Dispatch(ctx, confJob{N: 400}, queue.Unique("conformance")); err != nil {
+			t.Fatal(err)
+		}
+
+		if n := pending(t); n != before+1 {
+			t.Fatalf("pending = %d while the unique job runs, want %d", n, before+1)
+		}
+
+		_ = d.Ack(ctx, m)
+
+		if n := pending(t); n != before {
+			t.Fatalf("pending = %d after ack, want %d", n, before)
+		}
+	})
 }
