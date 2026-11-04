@@ -191,6 +191,9 @@ err = q.Dispatch(ctx, jobs.SendInvoice{OrderID: id},
 | `queue.Retries(n)` | `3` | Retries after the first attempt (negative means `0`) |
 | `queue.Backoff(fn)` | `queue.Exponential(time.Second)` | Wait before retry `n` (1-based) |
 | `queue.Timeout(d)` | `1m` | Upper bound of one attempt |
+| `queue.Unique(key)` | none | Idempotent dispatch: while a job of the same kind and key is queued, running or waiting for a retry, dispatching another is a no-op that returns `nil` |
+
+**Unique jobs.** `queue.Unique("order-42")` gives the job a stable id derived from its kind and the key, so the driver's primary key refuses a second copy (`queue.ErrDuplicate` inside the driver, success for the caller). The key is free again once the job has been acked or has failed; there is no time window, so a scheduler can dispatch every few minutes and at most one copy exists. `sync` ignores it (the job runs inline), `memory`, `database` and `queue.Fake` honour it.
 
 ## Retries, backoff and timeouts
 
@@ -209,6 +212,7 @@ Backoff functions:
 
 - `queue.Exponential(base)` waits `base`, `2·base`, `4·base`... capped at one hour.
 - `queue.Constant(d)` always waits `d`.
+- `queue.Jitter(fn, fraction)` spreads any of the above by up to ±`fraction` (`0.2` is ±20%), so many jobs that failed together do not retry at the same instant: `queue.Backoff(queue.Jitter(queue.Exponential(time.Second), 0.2))`.
 - Any `func(attempt int) time.Duration` you write.
 
 **Timeouts.** Each attempt runs with a [`context.WithTimeout`](https://pkg.go.dev/context#WithTimeout) of the job's timeout. When it expires, `ctx.Done()` closes and `ctx.Err()` returns `context.DeadlineExceeded`. Go cannot stop a goroutine from the outside, so a handler that ignores `ctx` keeps running past its timeout: pass `ctx` to every query and HTTP call.

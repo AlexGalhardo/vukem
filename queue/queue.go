@@ -25,12 +25,14 @@ package queue
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"math"
+	mrand "math/rand/v2"
 	"runtime/debug"
 	"strconv"
 	"strings"
@@ -110,6 +112,7 @@ type options struct {
 	backoff func(attempt int) time.Duration
 	timeout time.Duration
 	delay   time.Duration
+	unique  string
 }
 
 // Option configures a handler (defaults) or a single dispatch.
@@ -130,6 +133,22 @@ func OnQueue(name string) Option { return func(o *options) { o.queue = name } }
 // Delay makes the job available after d.
 func Delay(d time.Duration) Option { return func(o *options) { o.delay = d } }
 
+// Unique makes the dispatch idempotent: while a job of the same kind with the same key is queued, running or
+// waiting for a retry, dispatching another is a no-op (it returns nil and stores nothing). Once the job is done or
+// has failed, the key is free again. The key is scoped to the job kind. Drivers that run jobs inline (Sync) ignore it.
+func Unique(key string) Option { return func(o *options) { o.unique = key } }
+
+// ErrDuplicate is returned by a Driver's Push when a message with the same id is already stored. Dispatch treats it
+// as success for jobs sent with Unique and returns it for any other id clash.
+var ErrDuplicate = errors.New("queue: a message with this id is already stored")
+
+// uniqueID is the stable message id of a unique job; the driver's primary key then enforces the uniqueness.
+func uniqueID(kind, key string) string {
+	sum := sha256.Sum256([]byte(kind + "\x00" + key))
+
+	return "u:" + hex.EncodeToString(sum[:16])
+}
+
 // Exponential backs off base, 2·base, 4·base... capped at one hour.
 func Exponential(base time.Duration) func(int) time.Duration {
 	return func(attempt int) time.Duration {
@@ -144,6 +163,19 @@ func Exponential(base time.Duration) func(int) time.Duration {
 
 // Constant always waits d.
 func Constant(d time.Duration) func(int) time.Duration { return func(int) time.Duration { return d } }
+
+// Jitter spreads fn by up to ±fraction of each delay (0.2 is ±20%), so many
+// jobs that failed together do not retry at the same instant. fraction is
+// clamped to [0, 1]; the result is never negative.
+func Jitter(fn func(int) time.Duration, fraction float64) func(int) time.Duration {
+	fraction = min(max(fraction, 0), 1)
+
+	return func(attempt int) time.Duration {
+		d := fn(attempt)
+
+		return max(time.Duration(float64(d)*(1+fraction*(2*mrand.Float64()-1))), 0) //nolint:gosec // retry spread, not security
+	}
+}
 
 // Registration binds a handler to its job kind; create it with Handle.
 type Registration struct {
@@ -334,6 +366,15 @@ func (q *Queue) send(ctx context.Context, m *Message, h handler) error {
 		q.observe(ctx, m, JobDispatched, 0, nil, false)
 	}
 
+	return ignoreDuplicate(m, err)
+}
+
+// ignoreDuplicate turns the clash of a Unique job into success: the job already exists, which is what was asked.
+func ignoreDuplicate(m *Message, err error) error {
+	if errors.Is(err, ErrDuplicate) && strings.HasPrefix(m.ID, "u:") {
+		return nil
+	}
+
 	return err
 }
 
@@ -372,7 +413,7 @@ func (q *Queue) DispatchKindTx(ctx context.Context, ex database.Executor, kind s
 			q.observe(ctx, m, JobDispatched, 0, nil, false)
 		}
 
-		return err
+		return ignoreDuplicate(m, err)
 	}
 
 	switch e := ex.(type) {
@@ -424,8 +465,13 @@ func (q *Queue) message(kind string, j any, opts []Option) (*Message, handler, e
 
 	now := q.clock().UTC()
 
+	id := newID()
+	if o.unique != "" {
+		id = uniqueID(kind, o.unique)
+	}
+
 	return &Message{
-		ID: newID(), Kind: kind, Queue: o.queue, Payload: payload, MaxRetries: o.retries,
+		ID: id, Kind: kind, Queue: o.queue, Payload: payload, MaxRetries: o.retries,
 		Timeout: o.timeout, AvailableAt: now.Add(o.delay), CreatedAt: now,
 	}, h, nil
 }
