@@ -28,6 +28,42 @@ var flaggedStandards = map[string][]string{
 	"--docker":  {"compose.yaml"},
 }
 
+// TestCIAuditsTheLockfile checks the generated workflow audits the committed
+// lockfile itself. A package.json script edit cannot turn that step off, and
+// the starter does not ship an overrides block.
+func TestCIAuditsTheLockfile(t *testing.T) {
+	t.Parallel()
+
+	out, err := renderStandardsFile("workflows/ci.yml.tmpl", standardsData{
+		Name: "blog", Standards: true, CI: true, Assets: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	text := string(out)
+	for _, want := range []string{
+		"go tool govulncheck ./...",
+		"npm audit --package-lock-only --audit-level=high",
+		"bun install --frozen-lockfile",
+		"bun audit --audit-level=high",
+		`bash -s "bun-v1.4.3"`,
+		"commit package-lock.json or bun.lock",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("ci.yml misses %q", want)
+		}
+	}
+
+	if strings.Contains(text, "audit false") || strings.Contains(text, "|| true") {
+		t.Errorf("ci.yml can skip the audit:\n%s", text)
+	}
+
+	if strings.Contains(minimalPackageJSON, `"overrides"`) {
+		t.Error("generated package.json ships an override")
+	}
+}
+
 func TestNewStandardsFlags(t *testing.T) {
 	t.Parallel()
 

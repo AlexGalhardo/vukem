@@ -178,7 +178,7 @@ Everything else is a decision, so it is a flag. A scaffold that writes a licence
 | --- | --- | --- |
 | `--standards` | `.markdownlint-cli2.jsonc` and a `lint:md` script (with `markdownlint-cli2` pinned in `package.json`, which an `--api` project gets for this), `CHANGELOG.md` ([Keep a Changelog](https://keepachangelog.com/en/1.1.0/) with `[Unreleased]`), `.config/cliff.toml`, `.githooks/commit-msg` and `.githooks/pre-commit`, and `"version": "0.1.0"` | the repository is maintained: reviewed commits, a changelog and tagged [SemVer](https://semver.org/spec/v2.0.0.html) releases |
 | `--license mit` | `LICENSE`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md` | you are publishing it. The copyright holder comes from `--module` when it is a `github.com/owner/repo` path |
-| `--ci` | `.github/workflows/ci.yml` (gofmt, `go vet`, `go test -race`, `go tool govulncheck`, `docker build`, and markdownlint with `--standards`) and `.github/dependabot.yml` | GitHub is the gate. Third-party actions are pinned to a commit SHA, `checkout` runs with `persist-credentials: false`, and each job declares the narrowest `permissions` |
+| `--ci` | `.github/workflows/ci.yml` (gofmt, `go vet`, `go test -race`, `go tool govulncheck`, a lockfile audit, `docker build`, and markdownlint with `--standards`) and `.github/dependabot.yml` | GitHub is the gate. Third-party actions are pinned to a commit SHA, `checkout` runs with `persist-credentials: false`, and each job declares the narrowest `permissions` |
 | `--deploy railway` | `.railway/railway.ts` | Railway is the target |
 | `--docker` | `compose.yaml` and its `.env` block | you want PostgreSQL and a mail catcher locally without installing either |
 
@@ -187,6 +187,39 @@ The git hooks need no Node and no hook manager: `commit-msg` checks the [Convent
 ```bash
 git config core.hooksPath .githooks
 ```
+
+#### What each check covers
+
+| Check | Where it runs | What a failure means |
+| --- | --- | --- |
+| `gofmt`, `go vet`, `go test -race` | the Format, vet and test job | the Go program is unformatted, does not vet, or a test failed |
+| `go tool govulncheck` | the Vulnerabilities job | a Go module has a known vulnerability. The tool is the one pinned in the starter `go.mod` |
+| `npm audit` or `bun audit` | the same job, on the committed lockfile | a JavaScript package has an advisory at high severity or above. `npm` reads `package-lock.json` with `--package-lock-only`. `bun` installs from `bun.lock` with `--frozen-lockfile`, then audits. The Bun version in that step is `1.4.3`, the same tag as the assets image |
+| markdownlint | the Lint (Markdown) job, only with `--standards` | a versioned Markdown file breaks the rules |
+| Betterleaks | the Secret scanning job | the git history contains a secret. See [Secret scanning](/docs/security/secret-scanning) |
+| `docker build` | the production image job | the image does not build |
+
+The audit commands are written in `.github/workflows/ci.yml`. Changing a `package.json` script, or running `npm config set audit false`, does not turn that job off. A project with `package.json` and no lockfile fails the job: install the dependencies and commit `package-lock.json` or `bun.lock`.
+
+#### Updating a pinned tool
+
+`vukem new --standards` writes exact versions of `markdownlint-cli2` and `@biomejs/biome` into `package.json`. The workflow pins Betterleaks by version and archive checksum, and pins the Bun audit install to `1.4.3`. Dependabot (from `--ci`) opens pull requests for the npm and Go modules. Merge the pull request, then run the same commands the workflow runs. Do not replace a pin with `latest`, `edge` or `nightly`.
+
+An override in an application is not an upstream fix. It does not belong in the framework starter, and it must not disable the audit step.
+
+#### A temporary override
+
+When one advisory is acceptable for a short time, pin the safe version in `package.json` and say why it will be removed:
+
+```json
+{
+  "overrides": {
+    "katex": "0.16.21"
+  }
+}
+```
+
+In the pull request, name the advisory (for example `GHSA-xxxx`), say why this tree is safe, and name the removal criterion: delete the override when `npm audit --package-lock-only --audit-level=high` is clean without it. Do not add `|| true`, `--ignore` or `audit false` to the workflow to hide the advisory.
 
 ### `vukem serve`
 
