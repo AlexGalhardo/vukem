@@ -187,6 +187,45 @@ func TestTypeScriptGolden(t *testing.T) {
 	}
 }
 
+func TestTypeScriptCoversContractShapes(t *testing.T) {
+	t.Parallel()
+
+	type item struct {
+		Name *string  `json:"name,omitempty"`
+		Tags []string `json:"tags"`
+		Kind string   `json:"kind"           enum:"draft,live"`
+	}
+
+	type failed struct {
+		Errors map[string][]string `json:"errors"`
+	}
+
+	r := router.New(nil)
+	api.Register(r, "POST /items", api.Op{Name: "items.store"}, func(*web.Ctx, item) (failed, error) {
+		return failed{}, nil
+	})
+
+	if _, err := r.Handler(); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := openapi.TypeScript(openapi.Generate(r.Routes(), openapi.Info{}), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, want := range []string{
+		"name?: string | null",
+		"tags?: string[]",
+		`kind?: "draft" | "live"`,
+		"errors?: Record<string, string[]>",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("codegen:types missing %q\n%s", want, got)
+		}
+	}
+}
+
 func TestTypeScriptZod4(t *testing.T) {
 	t.Parallel()
 
