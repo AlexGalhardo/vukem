@@ -180,6 +180,8 @@ Step by step:
 
 `resources/resources.go` embeds the output with `//go:embed views all:public`. The `all:` prefix matters: without it Go skips dot directories, and `build/.vite/manifest.json` would be missing from the binary. See [`embed`](https://pkg.go.dev/embed) for the rules.
 
+Vite does not emit every file you might want in `public`. A committed font or SVG under `resources/public/` is embedded with the views. A file created only in the image's assets stage, outside `resources/public/build`, is not copied into the Go build unless you add that copy yourself. Private output (a cache, `.env`, the database) does not belong in `public`. The contract is on the [Docker](/docs/deployment/docker-and-railway#files-vite-does-not-emit) page.
+
 With `APP_ENV=production` in the process environment, `resources.Public()` always uses the embedded files, even when a `resources/` directory sits next to the binary.
 
 What changes in production:
