@@ -63,6 +63,11 @@ func newProject(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 	ciFlag := set.Bool("ci", false, "GitHub Actions CI workflow (format, vet, test, govulncheck, image) and Dependabot")
 	deploy := set.String("deploy", "", "platform deploy configuration: railway (.railway/railway.ts)")
 	compose := set.Bool("docker", false, "compose.yaml running the app, PostgreSQL and a mail catcher locally")
+	assetsImage := set.String(
+		"assets-image",
+		"",
+		"assets-stage base image, exact tag or sha256 digest (runtime stays Alpine)",
+	)
 
 	return func(ctx context.Context, env *Env, args []string) error {
 		name, err := oneArg(args, "project name")
@@ -138,7 +143,7 @@ func newProject(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 			}
 		}
 
-		if err := writeDocker(dir, st.kind, pm); err != nil {
+		if err := writeDocker(dir, st.kind, pm, *assetsImage); err != nil {
 			return err
 		}
 
