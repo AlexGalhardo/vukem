@@ -304,6 +304,35 @@ r.Post("/locale", func(c *web.Ctx) error {
 </Step>
 </Steps>
 
+## Keep the page state when the language changes
+
+A plain navigation, including `<Link href="?lang=pt-BR">`, loads a new page. Inertia replaces the component, so a selection that lives only in React state (an open chord, a filter the URL does not hold) is gone. The locale itself did not fail. The visit dropped the state.
+
+`router.visit` can ask for a new document and keep the component:
+
+```tsx title="resources/js/components/LocaleLinks.tsx"
+import { router } from "@inertiajs/react";
+
+export function switchLocale(locale: string) {
+  const url = new URL(window.location.href);
+  url.searchParams.set("lang", locale);
+
+  router.visit(url.pathname + url.search, {
+    preserveState: true,
+    preserveScroll: true,
+  });
+}
+```
+
+What that call does:
+
+- **Locale.** `lang` is the query the middleware already reads. The server answers with translated props and the matching catalog.
+- **Query string.** `URLSearchParams` copies the current filters, then sets `lang`. A filter that is only in component state is not on that URL, so put it in the query if a reload must keep it.
+- **History.** The default visit pushes a history entry, so Back returns to the previous language. Pass `replace: true` when the switch should not be its own entry.
+- **Fallback.** The server still resolves the tag with `I18n.Match` (`pt-BR`, then `pt`, then another catalog of the same language). An unknown tag does not match.
+- **Catalog parity.** Give every locale the same keys. `translate` returns the key when the catalog has no entry, on purpose, so a missing line is visible. A typed catalog is optional: a `Record` of those keys, not a second runtime.
+- **When to reset.** Leave `preserveState` off when the page is a different record. Preserving state across `/posts/1` and `/posts/2` shows the previous post's selection on the new one. Preserve it for a language switch on the same URL, not for every visit.
+
 ## What else follows the locale
 
 - **The page URL.** With a path-prefix locale (`i18n.MiddlewareConfig{PathPrefixes: ...}`), routing sees `/games` but the page object's `url` and the asset-version reload keep `/pt-br/games`, so client history and refreshes stay in the visitor's locale.
