@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -54,6 +55,46 @@ func partial(only string, extra ...string) []string {
 	}
 
 	return append(h, extra...)
+}
+
+func TestOptionalPropSkipsTheQueryUntilAsked(t *testing.T) {
+	t.Parallel()
+
+	var calls atomic.Int32
+
+	props := func() inertia.Props {
+		return inertia.Props{
+			"user": "ana",
+			"report": inertia.Optional(func(context.Context) (any, error) {
+				calls.Add(1)
+
+				return map[string]any{"rows": 1}, nil
+			}),
+		}
+	}
+
+	got, code := visit(t, props)
+	if code != http.StatusOK {
+		t.Fatalf("full visit = %d", code)
+	}
+
+	if calls.Load() != 0 {
+		t.Fatalf("full visit ran the optional query %d times", calls.Load())
+	}
+
+	pageProps, _ := got["props"].(map[string]any)
+	if pageProps["user"] != "ana" {
+		t.Fatalf("full visit props = %#v, want the shared user", got["props"])
+	}
+
+	if _, ok := pageProps["report"]; ok {
+		t.Fatal("full visit included the optional report")
+	}
+
+	got, code = visit(t, props, partial("report")...)
+	if code != http.StatusOK || calls.Load() != 1 {
+		t.Fatalf("partial = %d, calls %d, want 200 and 1\n%#v", code, calls.Load(), got)
+	}
 }
 
 func TestPropTypes(t *testing.T) {

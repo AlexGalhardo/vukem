@@ -290,7 +290,7 @@ return inertia.Render(c, "Posts/Index", inertia.Props{
 })
 ```
 
-On the first visit the client receives `posts` and `categories`, sees `"deferredProps": {"sidebar": ["stats"]}`, and fetches `stats` in a second request.
+On the first visit the client receives `posts` and `categories`, sees `"deferredProps": {"sidebar": ["stats"]}`, and fetches `stats` in a second request. `tags` is absent until a partial reload asks for it. Wrap the query in the closure: a full visit does not call it, so the expensive read does not run. A plain value next to it, such as the signed-in user, is still sent. A small page should pass that value directly. `Defer` costs a second request; use it when the first paint is better without the data, not by default.
 
 ### Infinite scroll
 
