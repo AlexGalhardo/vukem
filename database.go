@@ -3,12 +3,14 @@ package vukem
 import (
 	"cmp"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"reflect"
 	"regexp"
 	"slices"
@@ -800,12 +802,276 @@ func readRunScript(file string, stdin io.Reader) (string, error) {
 	return string(raw), nil
 }
 
+// dbBackupCommand is db:backup: a SQLite snapshot via VACUUM INTO, or a
+// restore of that snapshot into a different directory. It is not a traffic
+// cutover. PostgreSQL and MySQL are refused.
+func dbBackupCommand() Command {
+	var (
+		to      *string
+		from    *string
+		restore *bool
+	)
+
+	return CommandFunc{
+		CommandName: "db:backup",
+		Desc:        "Snapshot SQLite with VACUUM INTO, or restore that file elsewhere",
+		DefineFlags: func(fs *flag.FlagSet) {
+			to = fs.String("to", "", "new snapshot or restore path (must not exist)")
+			from = fs.String("from", "", "snapshot to restore (only with -restore)")
+			restore = fs.Bool("restore", false, "copy -from to -to in another directory")
+		},
+		Fn: func(ctx context.Context, app *App, args []string) error {
+			if len(args) > 0 || strings.TrimSpace(*to) == "" {
+				return errors.New("db:backup needs -to <path>")
+			}
+
+			if *restore {
+				return restoreSQLiteBackup(ctx, app, *from, *to)
+			}
+
+			if strings.TrimSpace(*from) != "" {
+				return errors.New("db:backup: -from is only valid with -restore")
+			}
+
+			return snapshotSQLite(ctx, app, *to)
+		},
+	}
+}
+
+func snapshotSQLite(ctx context.Context, app *App, dest string) error {
+	db, live, err := openSQLiteBackup(app)
+	if err != nil {
+		return err
+	}
+
+	if err := sameSQLiteFile(live, dest); err != nil {
+		return err
+	}
+
+	if err := refuseNewFile(dest); err != nil {
+		return err
+	}
+
+	abs, err := filepath.Abs(dest)
+	if err != nil {
+		return fmt.Errorf("db:backup: %w", err)
+	}
+
+	if _, err := db.SQL().ExecContext(ctx, "VACUUM INTO "+sqliteStringLiteral(abs)); err != nil {
+		_ = os.Remove(abs)
+
+		return fmt.Errorf("db:backup: snapshot: %w", err)
+	}
+
+	if err := finishSQLiteFile(ctx, abs); err != nil {
+		_ = os.Remove(abs)
+
+		return err
+	}
+
+	fmt.Fprintf(app.stdout, "db:backup: wrote %s\n", abs)
+
+	return nil
+}
+
+func restoreSQLiteBackup(ctx context.Context, app *App, from, dest string) error {
+	if strings.TrimSpace(from) == "" {
+		return errors.New("db:backup -restore needs -from <snapshot>")
+	}
+
+	_, live, err := openSQLiteBackup(app)
+	if err != nil {
+		return err
+	}
+
+	src, err := filepath.Abs(from)
+	if err != nil {
+		return fmt.Errorf("db:backup: %w", err)
+	}
+
+	abs, err := filepath.Abs(dest)
+	if err != nil {
+		return fmt.Errorf("db:backup: %w", err)
+	}
+
+	if filepath.Dir(src) == filepath.Dir(abs) {
+		return errors.New("db:backup: restore into a different directory than the snapshot")
+	}
+
+	if filepath.Clean(abs) == filepath.Clean(live) {
+		return errors.New("db:backup: -to is the live database")
+	}
+
+	info, err := os.Lstat(src)
+	if err != nil {
+		return fmt.Errorf("db:backup: %w", err)
+	}
+
+	if info.Mode()&os.ModeSymlink != 0 || info.IsDir() {
+		return errors.New("db:backup: -from must be a regular snapshot file")
+	}
+
+	if err := refuseNewFile(abs); err != nil {
+		return err
+	}
+
+	in, err := os.Open(src)
+	if err != nil {
+		return fmt.Errorf("db:backup: %w", err)
+	}
+	defer in.Close()
+
+	out, err := os.OpenFile(abs, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return fmt.Errorf("db:backup: %w", err)
+	}
+
+	_, copyErr := io.Copy(out, in)
+	closeErr := out.Close()
+
+	if copyErr != nil || closeErr != nil {
+		_ = os.Remove(abs)
+
+		return fmt.Errorf("db:backup: restore: %w", cmp.Or(copyErr, closeErr))
+	}
+
+	if err := finishSQLiteFile(ctx, abs); err != nil {
+		_ = os.Remove(abs)
+
+		return err
+	}
+
+	fmt.Fprintf(app.stdout, "db:backup: restored %s\n", abs)
+
+	return nil
+}
+
+// openSQLiteBackup opens the app database and returns its SQLite file path.
+// Anything else, including an in-memory database, is an error.
+func openSQLiteBackup(app *App) (*database.DB, string, error) {
+	cfg, err := configLoad[DatabaseConfig](app)
+	if err != nil {
+		return nil, "", err
+	}
+
+	live, err := sqliteFilePath(cfg.URL)
+	if err != nil {
+		return nil, "", err
+	}
+
+	db, err := app.DB()
+	if err != nil {
+		return nil, "", err
+	}
+
+	if db.Dialect().Name() != "sqlite" {
+		return nil, "", errors.New("db:backup: only SQLite has a file snapshot")
+	}
+
+	return db, live, nil
+}
+
+func sqliteFilePath(raw string) (string, error) {
+	if raw == ":memory:" || strings.Contains(raw, "mode=memory") {
+		return "", errors.New("db:backup: an in-memory database has no file to snapshot")
+	}
+
+	if !strings.HasPrefix(raw, "file:") && !strings.HasPrefix(raw, "sqlite:") {
+		return "", errors.New("db:backup: only SQLite has a file snapshot")
+	}
+
+	path := strings.TrimPrefix(strings.TrimPrefix(raw, "sqlite:"), "file:")
+	path, _, _ = strings.Cut(path, "?")
+
+	if path == "" || path == ":memory:" {
+		return "", errors.New("db:backup: an in-memory database has no file to snapshot")
+	}
+
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("db:backup: %w", err)
+	}
+
+	return abs, nil
+}
+
+func sameSQLiteFile(live, dest string) error {
+	abs, err := filepath.Abs(dest)
+	if err != nil {
+		return fmt.Errorf("db:backup: %w", err)
+	}
+
+	if filepath.Clean(abs) == filepath.Clean(live) {
+		return errors.New("db:backup: -to is the live database")
+	}
+
+	return nil
+}
+
+// refuseNewFile rejects a path that exists, including a symlink whose
+// target is missing. VACUUM INTO and the restore copy both create the file.
+func refuseNewFile(path string) error {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+
+	if err != nil {
+		return fmt.Errorf("db:backup: %w", err)
+	}
+
+	if info.Mode()&os.ModeSymlink != 0 {
+		return errors.New("db:backup: -to is a symlink")
+	}
+
+	return errors.New("db:backup: -to already exists")
+}
+
+func finishSQLiteFile(ctx context.Context, path string) error {
+	if err := sqliteIntegrity(ctx, path); err != nil {
+		return err
+	}
+
+	if err := os.Chmod(path, 0o600); err != nil {
+		return fmt.Errorf("db:backup: mode: %w", err)
+	}
+
+	return nil
+}
+
+func sqliteIntegrity(ctx context.Context, path string) error {
+	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path)+"?mode=ro")
+	if err != nil {
+		return fmt.Errorf("db:backup: integrity_check: %w", err)
+	}
+
+	defer db.Close()
+
+	var status string
+	if err := db.QueryRowContext(ctx, "PRAGMA integrity_check").Scan(&status); err != nil {
+		return fmt.Errorf("db:backup: integrity_check: %w", err)
+	}
+
+	if status != "ok" {
+		return errors.New("db:backup: integrity_check failed")
+	}
+
+	return nil
+}
+
+// sqliteStringLiteral quotes path for VACUUM INTO, which takes a filename
+// literal rather than a bound parameter.
+func sqliteStringLiteral(path string) string {
+	return "'" + strings.ReplaceAll(path, "'", "''") + "'"
+}
+
 func seedCommands() []Command {
 	var wipeForce *bool
 
 	return []Command{
 		seedCommand{},
 		dbRunCommand(),
+		dbBackupCommand(),
 		CommandFunc{
 			CommandName: "db:wipe",
 			Desc:        "Drop every table",

@@ -605,6 +605,7 @@ Unlike the global CLI, app commands use the plain `flag` package, so **flags go 
 | `db:seed` | `-class Name` (repeatable), `-force` | Runs every seeder, or the named ones in order ([Seeders](/docs/database/factories-seeders)) |
 | `db:wipe` | `-force` | Drops every table |
 | `db:run` | `-file path` (or `-` for stdin), `-commit` | Runs a SQL script in one transaction on the app's own database; rolls back unless `-commit` (a dry run on the real data) |
+| `db:backup` | `-to path`, `-restore -from snapshot` | SQLite snapshot via `VACUUM INTO`, or a restore into another directory. Not a traffic cutover |
 | `route:list` | `-json` | Lists the registered routes |
 | `queue:work` | `-queue`, `-concurrency`, `-sleep 1s`, `-once`, `-stop-when-empty` | Processes jobs until stopped ([Queues](/docs/digging-deeper/queue)) |
 | `queue:failed` | `-json` | Lists failed jobs |

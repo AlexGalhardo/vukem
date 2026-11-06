@@ -560,7 +560,7 @@ DATABASE_URL=file:/app/storage/database.sqlite
 ```
 
 7. Redeploy replaces the container and keeps the volume. Rows written before the deploy are still there afterwards. If they are gone, the file was not on the volume (a relative `DATABASE_URL`, or a migrate that ran without the mount).
-8. Keep backups off that volume. Copying `database.sqlite` while the app is writing can miss the write-ahead log. Take the copy when nothing is writing, or take a consistent snapshot, and store it somewhere the next deploy does not delete. Restoring a file is not the same as cutting traffic over to a new volume.
+8. Keep backups off that volume. Copying `database.sqlite` while the app is writing can miss the write-ahead log. `vukem db:backup -to <file>` runs `VACUUM INTO`, checks integrity, and writes one file you then copy off the volume. Restoring that file into a different directory does not cut traffic over.
 
 ### Config as Code
 

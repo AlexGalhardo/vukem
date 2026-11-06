@@ -3,6 +3,7 @@ package vukem
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -10,7 +11,9 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1295,6 +1298,164 @@ func TestDBRunIsADryRunUnlessCommitted(t *testing.T) {
 	if err := runDBRun(t, app, bad, "-file", "-", "-commit"); err == nil || count() != 2 {
 		t.Fatalf("failing script: err %v, rows %d, want an error and 2 (nothing from the script kept)", err, count())
 	}
+}
+
+func runDBBackup(t *testing.T, app *App, args ...string) (string, error) {
+	t.Helper()
+
+	var out bytes.Buffer
+
+	app.stdout = &out
+	cmd := dbBackupCommand()
+	fset := flag.NewFlagSet("db:backup", flag.ContinueOnError)
+	cmd.Flags(fset)
+
+	if err := fset.Parse(args); err != nil {
+		t.Fatal(err)
+	}
+
+	err := cmd.Run(t.Context(), app, fset.Args())
+
+	return out.String(), err
+}
+
+func TestDBBackupSnapshotsAndRestores(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	live := filepath.Join(dir, "live.sqlite")
+	app := newTestApp(t, WithSource(testSource(map[string]string{
+		"DATABASE_URL": "file:" + filepath.ToSlash(live),
+	})))
+	t.Cleanup(func() { _ = app.Shutdown(context.Background()) })
+
+	db, err := app.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := db.ExecContext(t.Context(), `CREATE TABLE notes (body TEXT)`); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := db.ExecContext(t.Context(), `INSERT INTO notes VALUES ('committed')`); err != nil {
+		t.Fatal(err)
+	}
+
+	snap := filepath.Join(dir, "snap.sqlite")
+	out, err := runDBBackup(t, app, "-to", snap)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(out, "wrote") || strings.Contains(out, "committed") {
+		t.Fatalf("stdout = %q, want the path and not the row", out)
+	}
+
+	assertSQLiteMode(t, snap)
+
+	if got := sqliteNote(t, snap); got != "committed" {
+		t.Fatalf("snapshot note = %q, want committed", got)
+	}
+
+	kept := []byte("keep")
+	if err := os.WriteFile(snap+".exists", kept, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := runDBBackup(t, app, "-to", snap+".exists"); err == nil {
+		t.Fatal("backup overwrote an existing file")
+	}
+
+	if got, err := os.ReadFile(snap + ".exists"); err != nil || string(got) != "keep" {
+		t.Fatalf("existing file = %q, %v", got, err)
+	}
+
+	link := filepath.Join(dir, "snap.link")
+	if err := os.Symlink(snap, link); err != nil {
+		t.Logf("symlink: %v", err)
+	} else if _, err := runDBBackup(t, app, "-to", link); err == nil {
+		t.Fatal("backup followed a symlink")
+	}
+
+	if _, err := runDBBackup(t, app, "-to", live); err == nil {
+		t.Fatal("backup accepted the live database as -to")
+	}
+
+	sameDir := filepath.Join(dir, "restored.sqlite")
+	if _, err := runDBBackup(t, app, "-restore", "-from", snap, "-to", sameDir); err == nil {
+		t.Fatal("restore accepted the snapshot's directory")
+	}
+
+	other := t.TempDir()
+	restored := filepath.Join(other, "restored.sqlite")
+	out, err = runDBBackup(t, app, "-restore", "-from", snap, "-to", restored)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(out, "restored") {
+		t.Fatalf("stdout = %q, want restored", out)
+	}
+
+	assertSQLiteMode(t, restored)
+
+	if got := sqliteNote(t, restored); got != "committed" {
+		t.Fatalf("restored note = %q, want committed", got)
+	}
+}
+
+func TestDBBackupRefusesNonSQLite(t *testing.T) {
+	t.Parallel()
+
+	app := newTestApp(t, WithSource(testSource(map[string]string{
+		"DATABASE_URL": "postgres://app@localhost/app",
+	})))
+
+	_, err := runDBBackup(t, app, "-to", filepath.Join(t.TempDir(), "x.sqlite"))
+	if err == nil || !strings.Contains(err.Error(), "only SQLite") {
+		t.Fatalf("postgres backup = %v, want only SQLite", err)
+	}
+}
+
+func assertSQLiteMode(t *testing.T, path string) {
+	t.Helper()
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	perm := info.Mode().Perm()
+	if runtime.GOOS == "windows" {
+		if perm&0o200 == 0 {
+			t.Fatalf("%s mode %#o, want the file writable", path, perm)
+		}
+
+		return
+	}
+
+	if perm != 0o600 {
+		t.Fatalf("%s mode %#o, want 0600", path, perm)
+	}
+}
+
+func sqliteNote(t *testing.T, path string) string {
+	t.Helper()
+
+	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path)+"?mode=ro")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() { _ = db.Close() })
+
+	var body string
+	if err := db.QueryRowContext(t.Context(), `SELECT body FROM notes`).Scan(&body); err != nil {
+		t.Fatal(err)
+	}
+
+	return body
 }
 
 func TestDBRunValidatesItsInput(t *testing.T) {
