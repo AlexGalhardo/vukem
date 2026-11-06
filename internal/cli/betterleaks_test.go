@@ -166,3 +166,128 @@ func TestStarterBetterleaksScan(t *testing.T) {
 		}
 	}
 }
+
+// TestBetterleaksLabelPassesCredentialStays is the false-positive rule: a
+// password label is not a secret, and a credential in another field still is.
+// The config must not ignore tests, docs, catalogs or every password.
+func TestBetterleaksLabelPassesCredentialStays(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := renderStandardsFile("betterleaks.toml", standardsData{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	text := string(cfg)
+	for _, banned := range []string{"generic-password", "paths", "tests/", "docs/", "catalog"} {
+		if strings.Contains(text, banned) {
+			t.Errorf("config opens a wide exception %q", banned)
+		}
+	}
+
+	rules := map[string]*regexp.Regexp{}
+	id := ""
+
+	for line := range strings.SplitSeq(text, "\n") {
+		if v, ok := strings.CutPrefix(line, "id = "); ok {
+			id = strings.Trim(v, `"`)
+		}
+
+		if v, ok := strings.CutPrefix(line, "regex = '''"); ok {
+			rules[id] = regexp.MustCompile(strings.TrimSuffix(v, "'''"))
+		}
+	}
+
+	labels := "<label>Password</label>\n<label>Senha</label>\n"
+	for rule, re := range rules {
+		if re.MatchString(labels) {
+			t.Errorf("rule %s matches a password label", rule)
+		}
+	}
+
+	key := "note := \"base64:" + base64.StdEncoding.EncodeToString(randBytes(t, 32)) + "\""
+	re, ok := rules["vukem-app-key"]
+	if !ok || !re.MatchString(key) {
+		t.Fatal("vukem-app-key missed the credential in another field")
+	}
+
+	hook, err := standardsFS.ReadFile("standards/githooks/pre-commit")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(string(hook), "betterleaks not installed, secret scan skipped (CI still runs it)") {
+		t.Error("hook does not warn when the binary is missing")
+	}
+
+	ci, err := renderStandardsFile("workflows/ci.yml.tmpl", standardsData{Name: "blog", CI: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(string(ci), "run: betterleaks git . --no-banner --redact") {
+		t.Error("CI does not scan the history")
+	}
+
+	if testing.Short() {
+		return
+	}
+
+	bin, err := exec.LookPath("betterleaks")
+	if err != nil {
+		t.Skip("betterleaks not installed")
+	}
+
+	dir := t.TempDir()
+	body := labels + "password := \"the password field\"\n" + key + "\n"
+	for name, file := range map[string]string{".betterleaks.toml": text, "labels.txt": body} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(file), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	report := filepath.Join(t.TempDir(), "report.json")
+	cmd := exec.CommandContext(t.Context(), bin, "dir", dir, "--no-banner", "--redact",
+		"--exit-code", "0", "--report-format", "json", "--report-path", report)
+
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("betterleaks: %v\n%s", err, out)
+	}
+
+	raw, err := os.ReadFile(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var findings []struct {
+		RuleID    string `json:"RuleID"`
+		StartLine int    `json:"StartLine"`
+	}
+	if err := json.Unmarshal(raw, &findings); err != nil {
+		t.Fatal(err)
+	}
+
+	var sawKey, sawPassword bool
+
+	for _, f := range findings {
+		if f.StartLine == 1 || f.StartLine == 2 {
+			t.Errorf("label line %d reported as %s", f.StartLine, f.RuleID)
+		}
+
+		if f.RuleID == "vukem-app-key" && f.StartLine == 4 {
+			sawKey = true
+		}
+
+		if f.RuleID == "generic-password" && f.StartLine == 3 {
+			sawPassword = true
+		}
+	}
+
+	if !sawKey {
+		t.Error("credential in another field was not detected")
+	}
+
+	if !sawPassword {
+		t.Error("generic-password did not fire; the password rule looks disabled")
+	}
+}
