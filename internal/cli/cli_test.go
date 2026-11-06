@@ -513,6 +513,50 @@ func TestKeyGenerate(t *testing.T) {
 	}
 }
 
+func TestKeyGenerateIfMissing(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	if err := os.WriteFile(
+		filepath.Join(dir, ".env"),
+		[]byte("APP_NAME=Blog\nAPP_URL=http://localhost\n"),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	code, out, errOut := vukem(t, dir, "key:generate", "--if-missing")
+	if code != 0 || strings.Contains(out, "base64:") || !strings.Contains(out, "APP_KEY written") {
+		t.Fatalf("if-missing = %d out=%q err=%q", code, out, errOut)
+	}
+
+	env := read(t, dir, ".env")
+	if !strings.Contains(env, "APP_NAME=Blog\n") || !strings.Contains(env, "APP_KEY=base64:") {
+		t.Fatalf(".env = %q", env)
+	}
+
+	if strings.Contains(env, "APP_PREVIOUS_KEYS") {
+		t.Fatalf("--if-missing rotated the key: %q", env)
+	}
+
+	code, out, errOut = vukem(t, dir, "key:generate", "--if-missing")
+	if code != 0 || read(t, dir, ".env") != env || strings.Contains(out, "base64:") ||
+		!strings.Contains(errOut, "already set") {
+		t.Fatalf("repeat = %d out=%q err=%q env=%q", code, out, errOut, read(t, dir, ".env"))
+	}
+
+	if code, _, errOut = vukem(
+		t,
+		dir,
+		"key:generate",
+		"--if-missing",
+		"--force",
+	); code == 0 ||
+		!strings.Contains(errOut, "key:rotate") {
+		t.Fatalf("--force with --if-missing = %d %q", code, errOut)
+	}
+}
+
 func TestSnapshot(t *testing.T) {
 	t.Parallel()
 

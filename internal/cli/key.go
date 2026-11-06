@@ -18,8 +18,23 @@ var appKeyLine = regexp.MustCompile(`(?m)^APP_KEY=(.*?)\r?$`)
 func keyGenerate(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 	show := set.Bool("show", false, "print the key instead of writing .env")
 	force := set.Bool("force", false, "replace an existing APP_KEY (invalidates sessions and encrypted data)")
+	ifMissing := set.Bool(
+		"if-missing",
+		false,
+		"write a key only when APP_KEY is empty; never print it and never replace one",
+	)
 
 	return func(_ context.Context, env *Env, _ []string) error {
+		if *ifMissing {
+			if *show || *force {
+				return errors.New(
+					"key:generate --if-missing cannot be combined with --show or --force (it never prints or replaces a key; use key:rotate to change one)",
+				)
+			}
+
+			return writeAppKeyIfMissing(env)
+		}
+
 		key := config.GenerateKey()
 
 		if *show {
@@ -29,6 +44,24 @@ func keyGenerate(set *flag.FlagSet) func(context.Context, *Env, []string) error 
 
 		return writeAppKey(env, key, *force)
 	}
+}
+
+// writeAppKeyIfMissing is the idempotent setup. A set key is kept and is
+// not printed. It does not rotate: APP_PREVIOUS_KEYS is left alone.
+func writeAppKeyIfMissing(env *Env) error {
+	p := env.path(".env")
+
+	src, err := os.ReadFile(p)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+
+	if m := appKeyLine.FindStringSubmatch(string(src)); m != nil && strings.TrimSpace(m[1]) != "" {
+		fmt.Fprintln(env.Stderr, "APP_KEY already set")
+		return nil
+	}
+
+	return writeAppKey(env, config.GenerateKey(), false)
 }
 
 // writeAppKey sets APP_KEY in .env, creating it from .env.example when

@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"strconv"
@@ -438,14 +439,21 @@ func ResealCommand(models ...ResealFunc) Command {
 // without a valid APP_KEY, so it takes precedence over an app command with
 // the same name.
 func keyGenerateCommand() Command {
+	var ifMissing *bool
+
 	return CommandFunc{
 		CommandName: keyGenerateName,
-		Desc:        "Print a new random APP_KEY (never writes .env)",
+		Desc:        "Print a new random APP_KEY, or write .env with --if-missing",
+		DefineFlags: func(fs *flag.FlagSet) {
+			ifMissing = fs.Bool("if-missing", false, "write APP_KEY into .env when it is empty; never print the key")
+		},
 		Fn: func(_ context.Context, app *App, args []string) error {
-			return writeNewKey(app.stdout, args)
+			return dispatchKeyGenerate(app.Stdout(), app.Stderr(), args, boolOf(ifMissing))
 		},
 	}
 }
+
+func boolOf(v *bool) bool { return v != nil && *v }
 
 var errHashMakeArgs = fmt.Errorf(
 	"hash:make takes no arguments: the password is read from the environment or stdin, never from argv: %w", errUsage)
@@ -504,13 +512,115 @@ func hashMakeCommand() Command {
 	}
 }
 
-// writeNewKey prints only the key, so APP_KEY=$(./app key:generate) is safe.
-func writeNewKey(w io.Writer, args []string) error {
+// dispatchKeyGenerate prints a new key, or with ifMissing writes .env and
+// prints nothing. --if-missing is not rotation: a key that is already set
+// stays the key that sealed current sessions.
+func dispatchKeyGenerate(stdout, stderr io.Writer, args []string, ifMissing bool) error {
 	if len(args) > 0 {
 		return errKeyGenerateArgs
 	}
 
-	_, err := fmt.Fprintln(w, config.GenerateKey())
+	if ifMissing {
+		dir, err := os.Getwd()
+		if err != nil {
+			return err
+		}
+
+		return ensureAppKeyFile(dir, stderr)
+	}
+
+	_, err := fmt.Fprintln(stdout, config.GenerateKey())
+
+	return err
+}
+
+// ensureAppKeyFile writes a new APP_KEY into dir/.env when the key is
+// missing or empty. An existing key and every other variable stay as they
+// are. The key is never written to errw; that writer only gets a status
+// line, so a CI log and a captured stdout stay free of the secret.
+func ensureAppKeyFile(dir string, errw io.Writer) error {
+	if errw == nil {
+		errw = io.Discard
+	}
+
+	p := filepath.Join(dir, ".env")
+
+	src, err := os.ReadFile(p)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+
+	text := string(src)
+	if value, ok := dotEnvValue(text, "APP_KEY"); ok && strings.TrimSpace(value) != "" {
+		fmt.Fprintln(errw, "APP_KEY already set")
+		return nil
+	}
+
+	text = putDotEnv(text, "APP_KEY", config.GenerateKey())
+	if err := writeDotEnv(p, []byte(text)); err != nil {
+		return err
+	}
+
+	fmt.Fprintln(errw, "APP_KEY written to .env")
+
+	return nil
+}
+
+func dotEnvValue(text, key string) (string, bool) {
+	re := regexp.MustCompile(`(?m)^` + regexp.QuoteMeta(key) + `=(.*?)\r?$`)
+
+	m := re.FindStringSubmatch(text)
+	if m == nil {
+		return "", false
+	}
+
+	return m[1], true
+}
+
+func putDotEnv(text, key, value string) string {
+	re := regexp.MustCompile(`(?m)^` + regexp.QuoteMeta(key) + `=(.*?)\r?$`)
+	if m := re.FindStringSubmatchIndex(text); m != nil {
+		return text[:m[2]] + value + text[m[3]:]
+	}
+
+	if text != "" && !strings.HasSuffix(text, "\n") {
+		text += "\n"
+	}
+
+	return text + key + "=" + value + "\n"
+}
+
+// writeDotEnv replaces path through a temp file in the same directory.
+// On POSIX the file mode is 0600. Windows has no equivalent ACL here:
+// os.Chmod only toggles the read-only bit, so the mode is not a secret
+// guarantee on that system.
+func writeDotEnv(path string, data []byte) error {
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		path = resolved
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+
+	f, err := os.CreateTemp(filepath.Dir(path), ".env.tmp-*")
+	if err != nil {
+		return err
+	}
+
+	tmp := f.Name()
+
+	_, werr := f.Write(data)
+	cerr := f.Chmod(0o600)
+	serr := f.Sync()
+	clerr := f.Close()
+
+	err = errors.Join(werr, cerr, serr, clerr)
+	if err == nil {
+		err = os.Rename(tmp, path)
+	}
+
+	if err != nil {
+		_ = os.Remove(tmp)
+	}
 
 	return err
 }
@@ -528,7 +638,9 @@ func runKeyGenerate(args []string, opts []Option) error {
 
 	fset := flag.NewFlagSet(keyGenerateName, flag.ContinueOnError)
 	fset.SetOutput(o.stderr)
-	keyGenerateCommand().Flags(fset)
+
+	cmd := keyGenerateCommand()
+	cmd.Flags(fset)
 
 	if err := fset.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -538,7 +650,7 @@ func runKeyGenerate(args []string, opts []Option) error {
 		return errUsage
 	}
 
-	err := writeNewKey(o.stdout, fset.Args())
+	err := cmd.Run(context.Background(), &App{stdout: o.stdout, stderr: o.stderr}, fset.Args())
 	if errors.Is(err, errUsage) {
 		fmt.Fprintln(o.stderr, err)
 	}

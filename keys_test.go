@@ -10,6 +10,7 @@ import (
 	"maps"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -703,6 +704,66 @@ func TestRunMain_KeyGenerate(t *testing.T) {
 				t.Errorf("key:generate %v stderr = %q, want %q", tt.args, stderr, tt.stderr)
 			}
 		})
+	}
+}
+
+func TestRunMain_KeyGenerateIfMissing(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(
+		filepath.Join(dir, ".env"),
+		[]byte("APP_NAME=Blog\nAPP_URL=http://localhost\n"),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Chdir(dir)
+
+	noEnv := func(string) (string, bool) { return "", false }
+	noBuild := func(...Option) (*App, error) { return nil, errors.New("build called") }
+
+	run := func(args ...string) (stdout, stderr string, err error) {
+		var out, errOut bytes.Buffer
+		err = RunMain(t.Context(), append([]string{"app", "key:generate"}, args...), noEnv, noBuild,
+			WithStdout(&out), WithStderr(&errOut))
+
+		return out.String(), errOut.String(), err
+	}
+
+	stdout, stderr, err := run("--if-missing")
+	if err != nil || stdout != "" || !strings.Contains(stderr, "APP_KEY written to .env") {
+		t.Fatalf("if-missing = %v stdout=%q stderr=%q", err, stdout, stderr)
+	}
+
+	env, err := os.ReadFile(filepath.Join(dir, ".env"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	text := string(env)
+	if !strings.Contains(text, "APP_NAME=Blog\n") || strings.Contains(text, "APP_PREVIOUS_KEYS") {
+		t.Fatalf(".env = %q", text)
+	}
+
+	_, value, found := strings.Cut(text, "APP_KEY=")
+	value, _, _ = strings.Cut(value, "\n")
+
+	if !found {
+		t.Fatalf(".env = %q, want APP_KEY", text)
+	}
+
+	if _, err := config.ParseKey(config.NewSecret(strings.TrimSpace(value))); err != nil {
+		t.Fatalf("ParseKey(written key) = %v", err)
+	}
+
+	stdout, stderr, err = run("--if-missing")
+	if err != nil || stdout != "" || !strings.Contains(stderr, "APP_KEY already set") {
+		t.Fatalf("repeat = %v stdout=%q stderr=%q", err, stdout, stderr)
+	}
+
+	again, err := os.ReadFile(filepath.Join(dir, ".env"))
+	if err != nil || string(again) != text {
+		t.Fatalf("repeat changed .env to %q, want %q (%v)", again, text, err)
 	}
 }
 

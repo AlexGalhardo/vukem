@@ -232,7 +232,26 @@ APP_KEY written to .env
 level=INFO msg="http server starting" addr=localhost:3000 env=development
 ```
 
-Without the CLI, `go run ./cmd/app key:generate` prints a new key you can paste into `.env` yourself.
+Without the CLI, `go run ./cmd/app key:generate` prints a new key you can paste into `.env` yourself. A clone that has no global `vukem` and no `.env` yet should not print that key into a CI log. `--if-missing` writes `.env` and prints nothing on stdout:
+
+```bash
+go run ./cmd/app key:generate --if-missing
+go run ./cmd/app key:generate --if-missing
+```
+
+```text
+APP_KEY written to .env
+APP_KEY already set
+```
+
+The second run keeps the key and every other variable. It is not rotation: `APP_PREVIOUS_KEYS` stays empty, and current sessions keep working. `--force` and `key:rotate` are the commands that replace a key.
+
+| | Global CLI `vukem key:generate` | App binary `./app key:generate` |
+| --- | --- | --- |
+| Writes `.env` | Yes. Creates it from `.env.example` when needed. | Only with `--if-missing`. |
+| Prints the key | Only with `--show`. | Yes, on stdout, unless `--if-missing`. |
+| Key already set | Exits with an error unless `--force`. | Prints a new key and does not touch `.env`. `--if-missing` leaves the file unchanged. |
+| Changes the old key | No. Use `vukem key:rotate`. | No. `--if-missing` refuses `--force`. |
 
 ## Common mistakes
 
