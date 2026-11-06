@@ -384,6 +384,23 @@ What `auth.Required` does when nobody is signed in:
 
 Every guard that authenticates a request also records `auth.Principal(ctx)` (guard name, user id, ok), for code that keys data by caller without knowing the guard, such as `api.Idempotency`. Combine the two values length-prefixed or hashed, since either may contain any character.
 
+## A handle, and an account that is optional
+
+`vukem new` does not install login, registration, password reset or social sign-in. `install:auth` is the opt-in that writes the email flow, and `install:auth --social` adds providers on top of that flow. An app whose visitors stay anonymous, and whose accounts are a handle with no mailbox, should not run `install:auth`. Wire a session guard in the app instead. Social login, verification mail and recovery stay out until you ask for them.
+
+`SessionGuard.IdentifierField` is only the field name on the 422. The lookup is `ByCredentials`, which your provider owns. For a handle, set the field and match that column:
+
+```go title="app/accounts/accounts.go"
+guard := auth.NewSessionGuard("web", users, hash.Default(), nil)
+guard.IdentifierField = "handle"
+```
+
+`ByCredentials` then finds the row by `creds["handle"]` and ignores the password key. The guard checks the hash. A failed attempt is a validation error on `handle`, the same message for an unknown handle and a wrong password. `auth.Optional` leaves a route open to guests; `auth.Required` is the later step. Two sessions do not share a user: each cookie stores one id, and `ByID` loads that id.
+
+What you do with data the visitor created before they had an account is your domain. The guard does not merge it.
+
+The login route still sits behind the session middleware, the CSRF check and the rate limiter that `DefaultMiddleware` installs. Reuse those. Do not add a second password hasher.
+
 ## Password hashing
 
 A password must never be stored as written. Vukem stores a slow, salted, one-way hash, so a stolen database does not reveal passwords and each guess costs the attacker real computing time ([OWASP password storage cheat sheet](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html)).
