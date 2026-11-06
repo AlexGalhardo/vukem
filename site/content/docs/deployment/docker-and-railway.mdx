@@ -202,6 +202,24 @@ Under the hood:
 | `storage/` | local SQLite files and uploads |
 | `/resources/public/hot`, `/resources/public/build/` | the Vite dev-server marker and local builds; the image builds its own assets |
 
+### Files Vite does not emit
+
+Vite writes `resources/public/build` and nothing else. The `build` stage copies that one directory out of the `assets` stage:
+
+```dockerfile title="Dockerfile"
+COPY --from=assets /src/resources/public/build resources/public/build
+```
+
+`COPY . .` already brought the repository into the `build` stage, so a font or an SVG you committed under `resources/public/` is there for `go build`. A file that exists only inside the `assets` stage is not. A score renderer, a sprite sheet or any other tool output has to be copied on its own line, before `go build`, or the binary never sees it:
+
+```dockerfile title="Dockerfile"
+COPY --from=assets /src/resources/public/generated-scores resources/public/generated-scores
+```
+
+The starter embeds with `//go:embed views all:public`. The `all:` prefix keeps names that start with `.` or `_`, which is why `build/.vite/manifest.json` is in the binary. See [`embed`](https://pkg.go.dev/embed). The static handler still refuses a URL whose path has a dot segment, so that manifest is not a public URL.
+
+Publish a file only when the browser should request it. A tool cache, the database and a private render stay in `storage/` or another directory you neither embed nor copy into `public`. `.dockerignore` already drops `.env`, `.env.*` and `storage/` from the build context, and the Dockerfile has no cache mount and no secret mount. With `APP_ENV=production` the process serves the embedded tree even when a `resources/` directory sits on disk, so a file you add only on the host after the build is not the file the request returns.
+
 <Callout type="warning" title="Two things break the build">
 Commit the lockfile the `assets` stage names, and keep it the one that stage installs from: it fails on a missing lockfile (`package-lock.json not found: run 'npm install', commit it, then build again`), which is what happens after `vukem new --no-install` and when the project moves to another package manager without the stage moving with it. A project made with `vukem new --framework <path>` points `go.mod` at a local checkout through a `replace` directive; remove it with `go get github.com/AlexGalhardo/vukem@<version>` before you build an image.
 </Callout>
