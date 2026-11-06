@@ -381,7 +381,7 @@ Do not set `PORT`: Railway injects it and the app listens on it. Generate a publ
 Under **Settings → Deploy**:
 
 - **Healthcheck Path**: `/up`. Railway calls it with the host `healthcheck.railway.app` and switches traffic to the new deployment only after a `2xx`. It does not monitor the endpoint once the deployment is live ([healthchecks](https://docs.railway.com/reference/healthchecks)).
-- **Pre-deploy Command**: `/app/app migrate`, with the path, because it replaces the image's entrypoint (see [start commands replace the entrypoint](#start-commands-replace-the-entrypoint)). It runs in a separate container with the service's variables and private network, but without volumes ([pre-deploy command](https://docs.railway.com/deployments/pre-deploy-command)). Use it with PostgreSQL, not with SQLite on a volume.
+- **Pre-deploy Command**: `/app/app migrate`, with the path, because it replaces the image's entrypoint (see [start commands replace the entrypoint](#start-commands-replace-the-entrypoint)). It runs in a separate container with the service's variables and private network, but without volumes ([pre-deploy command](https://docs.railway.com/deployments/pre-deploy-command)). Use it with PostgreSQL. Do not use it for SQLite on a volume: that command never sees the volume, so it migrates an empty disk and leaves the real database behind. See [SQLite on Railway](#sqlite-on-railway).
 - **Restart Policy**: `On Failure` with a few retries. A crash restarts the container, while a boot error (bad configuration) does not loop forever.
 
 </Step>
@@ -485,6 +485,29 @@ Pre-deploy commands get no volume, so migrations have to run in the app containe
 ```
 
 `exec` replaces the shell with the app, so the app receives Railway's stop signal and shuts down gracefully.
+
+### SQLite on Railway
+
+Use this path when the database is a file on a volume. It is a single-replica recipe. A volume is one disk. A second replica does not share that disk, so this setup is not high availability and it is not safe for concurrent writes from more than one process.
+
+1. Keep the service at one replica.
+2. Attach a volume at `/app/storage`. The mount must be there before the process starts. Railway mounts it for the running container, not for a pre-deploy command.
+3. Set an absolute database path. The working directory is not a promise:
+
+```dotenv
+DATABASE_URL=file:/app/storage/database.sqlite
+```
+
+4. Do not set `PORT`. Railway injects the port the edge proxies to, and the app listens on that value.
+5. Migrate in the start command above, after the volume is mounted. Do not put `migrate` in the pre-deploy command.
+6. Set the healthcheck path to `/up`. After the deploy is live, open `/up?checks=1`. A ready database answers:
+
+```json
+{"status":"ok","checks":{"db":"ok"}}
+```
+
+7. Redeploy replaces the container and keeps the volume. Rows written before the deploy are still there afterwards. If they are gone, the file was not on the volume (a relative `DATABASE_URL`, or a migrate that ran without the mount).
+8. Keep backups off that volume. Copying `database.sqlite` while the app is writing can miss the write-ahead log. Take the copy when nothing is writing, or take a consistent snapshot, and store it somewhere the next deploy does not delete. Restoring a file is not the same as cutting traffic over to a new volume.
 
 ### Config as Code
 
