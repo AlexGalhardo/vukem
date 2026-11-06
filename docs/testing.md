@@ -129,6 +129,16 @@ generated `TestHome` Inertia request, migrates SQLite in that directory, and
 for the React app installs from the lockfile with `npm ci`. Playwright is not
 part of this test and is not required for `go test`.
 
+## Platform assertions
+
+A permission that is a Unix contract stays a Unix assertion.
+`TestDBBackupSnapshotsAndRestores` expects mode `0600` when `GOOS` is not
+`windows`. On Windows, `os.Chmod` only changes the read-only bit, so that
+test expects the file to be writable and does not claim an owner-only ACL.
+Do not widen the POSIX check so Windows can share it. Use `filepath` for
+paths. A shell example is not a Go test. A Linux production image does not
+mean an optional native tool (LilyPond, FFmpeg) runs on Windows.
+
 ## CI matrix
 
 | Job | Matrix |
