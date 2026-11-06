@@ -476,7 +476,21 @@ A dedicated worker service uses `/app/app queue:work` the same way. `QUEUE_IN_SE
 
 ### Volumes
 
-For SQLite or local uploads, attach a volume at `/app/storage`. Railway documents that images running as a non-root UID have permission problems on volumes, fixed by `RAILWAY_RUN_UID=0` ([volumes](https://docs.railway.com/volumes/reference)). The starter runs as uid `10001`, so set that variable; the app then runs as root inside the container.
+For SQLite or local uploads, attach a volume at `/app/storage`. The image user is uid `10001` (`USER app` in the Dockerfile). That line is the image default. It is not proof of what the running deploy uses. Railway can replace the user with `RAILWAY_RUN_UID` ([volumes](https://docs.railway.com/volumes/reference)).
+
+Check the effective user inside the container, then check that the volume accepts a write, a migrate, and a backup file:
+
+```bash
+id -u
+touch /app/storage/.write-test && rm /app/storage/.write-test
+/app/app migrate
+# A backup file has to be writable here too, then copied off this volume.
+touch /app/storage/backup-probe && rm /app/storage/backup-probe
+```
+
+`id -u` prints `10001` when the image user is in effect. The recommended setup is that user plus a volume it can write. A named Docker volume copies the ownership of `/app/storage` and already matches. A Railway volume is often owned by root, so the write fails for uid `10001`.
+
+`RAILWAY_RUN_UID=0` is a platform workaround for that ownership, not the recommendation. It runs the whole container as root. `id -u` then prints `0`, and a `USER` line in the Dockerfile does not make that deploy non-root. Prefer a volume owned by `10001` when you can change the owner. Use `RAILWAY_RUN_UID=0` only when the platform gives you no other way to write the volume, and treat that service as root.
 
 Pre-deploy commands get no volume, so migrations have to run in the app container. Railway runs start commands without a shell ([start command](https://docs.railway.com/deployments/start-command)), so call one explicitly:
 
@@ -553,7 +567,7 @@ The generated file also carries commented lines for a [bucket](https://docs.rail
 
 What Vukem does for you in this setup:
 
-- The image runs as a non-root user and holds no secrets; `.dockerignore` keeps `.env` files out of it.
+- The image's `USER` is uid `10001` and the image holds no secrets. `.dockerignore` keeps `.env` files out of it. A deploy that sets `RAILWAY_RUN_UID=0` runs as root anyway; check `id -u` on the running container.
 - The boot refuses a missing or short `APP_KEY`, debug mode, an unknown `APP_ENV` and invalid proxy or HSTS settings.
 - Proxy headers are ignored unless the direct peer is trusted, and the app warns when it looks misconfigured behind a proxy.
 - The HTTP server always has timeouts and a 64 KiB header cap.
