@@ -253,19 +253,47 @@ vukem vX.Y.Z
 
 ## `vukem doctor`
 
-Report the optional tools the project relies on and their versions. Today that is [Betterleaks](/docs/security/secret-scanning), which the pre-commit hook and `secrets:scan` script run.
+Report optional tools and the facts you need before a deploy: the CLI version next to the Go runtime, whether Go or Bun is installed, which lockfile is present, whether `APP_KEY` is set, whether the SQLite directory is writable, `PORT` and proxy settings, and the Vite manifest.
+
+The report says `app_key: set` or `app_key: missing`. It never prints the key, other env values, or database credentials.
 
 **Usage**
 
 ```text
 vukem doctor
+vukem doctor --json
+vukem doctor --strict
 ```
 
-No flags, no arguments. It always exits 0: a missing tool is reported, not an error, because CI runs the scan anyway.
+| Flag | Default | Result |
+| --- | --- | --- |
+| (none) | informative | Print the report and exit 0, even when a project check failed |
+| `--json` | off | One JSON object on stdout (`cli`, `runtime`, `tools`, `checks`) |
+| `--strict` | off | Exit 1 when a project check has status `fail` |
+
+A missing optional tool does not fail `--strict`. CI that does not use Betterleaks, LilyPond, or FFmpeg stays green. Core lists only Betterleaks. An application registers its own tools in `.vukem/doctor.json`; those names are not built into Vukem.
+
+```json
+{
+  "tools": [
+    {
+      "name": "lilypond",
+      "why": "engraving scores",
+      "install": "https://lilypond.org/download.html"
+    }
+  ]
+}
+```
 
 ```text
 betterleaks: 1.9.0 (/usr/local/bin/betterleaks)
+cli: v0.38.0
+runtime: go1.27.2
+app_key: set
+database: sqlite directory is writable
 ```
+
+In production a missing `resources/public/build/.vite/manifest.json` is a failed check. In any other `APP_ENV` it is a warning, and warnings do not fail `--strict`.
 
 ## `vukem list` and `vukem help`
 
