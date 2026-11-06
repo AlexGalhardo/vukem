@@ -61,6 +61,25 @@ jobs:
       # after your code ships, so this also runs on a schedule-free rerun.
       - name: govulncheck
         run: go tool govulncheck ./...
+      # The lockfile audit is this step, not a package.json script, so editing
+      # a script does not turn it off. A temporary override belongs in
+      # package.json "overrides", with the advisory id and the day you will
+      # delete it, not in this step.
+      - name: audit the JavaScript lockfile
+        run: |
+          if [ -f package-lock.json ]; then
+            npm audit --package-lock-only --audit-level=high
+          elif [ -f bun.lock ] || [ -f bun.lockb ]; then
+            curl -fsSL https://bun.sh/install | bash -s "bun-v1.4.3"
+            export PATH="$HOME/.bun/bin:$PATH"
+            bun install --frozen-lockfile
+            bun audit --audit-level=high
+          elif [ -f package.json ]; then
+            echo "::error::commit package-lock.json or bun.lock; the audit has no lockfile to read"
+            exit 1
+          else
+            echo "no package.json; govulncheck covers the Go modules"
+          fi
 
   secrets:
     name: Secret scanning
