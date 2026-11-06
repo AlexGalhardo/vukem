@@ -787,6 +787,10 @@ With `//go:build integration` on the first line of the file, run those tests wit
 
 The framework's own `TestNewInertiaProjectEndToEnd` generates an Inertia app in an empty directory. Nothing is reused from a previous run: no `.env`, no database file, no `node_modules`. The test writes `APP_KEY` with `key:generate --if-missing`, runs the generated `TestHome` (an Inertia request for the Home page), migrates that app's SQLite file, and installs the React app with `npm ci`. It is skipped under `go test -short` because it compiles programs. It does not open a browser. A Playwright preset in an application is optional and must not turn the rest of `go test` into browser tests.
 
+## Platform checks
+
+CI runs the same tests on Linux, Windows and macOS. An assertion about a Unix file mode stays on Unix. `db:backup` is the example: on Linux and macOS the snapshot must be mode `0600`; on Windows the test only requires the file to be writable, because `os.Chmod` cannot set an owner-only ACL there. Loosening the Linux check to the Windows one would hide a world-readable backup. Paths in Go go through `path/filepath`. A command that needs `sh` is not a portable test. A tool you add only to a Linux image, such as LilyPond or FFmpeg, is not promised on Windows.
+
 ## Fakes and time
 
 A <Term tip="A stand-in for a real service that records what your code asked it to do, so the test can check it.">fake</Term> replaces a service such as mail or the queue. Vukem has no global state to patch: you pass fakes to the app instance through the same `vukem.With…` options production code uses, in `Options.AppOptions`.
