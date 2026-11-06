@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -555,6 +556,169 @@ func TestKeyGenerateIfMissing(t *testing.T) {
 		!strings.Contains(errOut, "key:rotate") {
 		t.Fatalf("--force with --if-missing = %d %q", code, errOut)
 	}
+}
+
+// envWriteMode is the permission key:generate and key:rotate leave behind.
+// On POSIX that is 0600. On Windows os.Chmod only toggles the read-only
+// attribute, so the assertion is "still writable", not an owner-only ACL.
+func envWriteMode(t *testing.T, path string) {
+	t.Helper()
+
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	perm := fi.Mode().Perm()
+	if runtime.GOOS == "windows" {
+		if perm&0o200 == 0 {
+			t.Errorf("%s mode %o is read-only", path, perm)
+		}
+
+		return
+	}
+
+	if perm != 0o600 {
+		t.Errorf("%s mode = %o, want 0600", path, perm)
+	}
+}
+
+func TestKeyGenerateAtomic(t *testing.T) {
+	t.Parallel()
+
+	t.Run("new file", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		code, out, errOut := vukem(t, dir, "key:generate")
+		if code != 0 || strings.Contains(out, "base64:") {
+			t.Fatalf("key:generate = %d out=%q err=%q", code, out, errOut)
+		}
+
+		envWriteMode(t, filepath.Join(dir, ".env"))
+	})
+
+	t.Run("existing 0644 becomes the write mode", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		path := filepath.Join(dir, ".env")
+		if err := os.WriteFile(path, []byte("APP_NAME=Blog\nAPP_KEY=\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		code, out, errOut := vukem(t, dir, "key:generate")
+		if code != 0 || strings.Contains(out, "base64:") {
+			t.Fatalf("key:generate = %d out=%q err=%q", code, out, errOut)
+		}
+
+		got := read(t, dir, ".env")
+		if !strings.Contains(got, "APP_NAME=Blog\n") || !strings.Contains(got, "APP_KEY=base64:") {
+			t.Fatalf(".env = %q", got)
+		}
+
+		envWriteMode(t, path)
+	})
+
+	t.Run("set key is preserved", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		path := filepath.Join(dir, ".env")
+		body := []byte("APP_NAME=Blog\nAPP_KEY=base64:keep-this-key\n")
+		if err := os.WriteFile(path, body, 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		code, out, errOut := vukem(t, dir, "key:generate")
+		if code == 0 || !strings.Contains(errOut, "--force") || strings.Contains(out, "base64:") {
+			t.Fatalf("overwrite = %d out=%q err=%q", code, out, errOut)
+		}
+
+		if got := read(t, dir, ".env"); got != string(body) {
+			t.Fatalf(".env = %q, want the original key", got)
+		}
+	})
+
+	t.Run("failed write keeps the file and prints no key", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		path := filepath.Join(dir, ".env")
+		body := []byte("APP_NAME=Blog\nAPP_KEY=\n")
+		if err := os.WriteFile(path, body, 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		// 0555 lets the read of .env succeed and makes the temp file fail,
+		// which is the crash window writeFileAtomic has to survive.
+		t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+		if err := os.Chmod(dir, 0o555); err != nil {
+			t.Fatal(err)
+		}
+
+		code, out, errOut := vukem(t, dir, "key:generate")
+		if code == 0 {
+			if runtime.GOOS == "windows" {
+				t.Skip("directory mode does not block a new file")
+			}
+
+			t.Fatal("key:generate error = nil, want a write failure")
+		}
+
+		if strings.Contains(out+errOut, "base64:") || strings.Contains(out, "APP_KEY written") {
+			t.Fatalf("failed write leaked a key: out=%q err=%q", out, errOut)
+		}
+
+		if err := os.Chmod(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+
+		if got := read(t, dir, ".env"); got != string(body) {
+			t.Fatalf(".env = %q, want the original bytes", got)
+		}
+
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		for _, e := range entries {
+			if strings.HasPrefix(e.Name(), ".env.tmp-") {
+				t.Errorf("temp file %s left behind", e.Name())
+			}
+		}
+	})
+
+	t.Run("rotate keeps the mode and prints no key", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("APP_NAME=Blog\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		if code, _, errOut := vukem(t, dir, "key:generate"); code != 0 {
+			t.Fatal(errOut)
+		}
+
+		before := read(t, dir, ".env")
+		code, out, errOut := vukem(t, dir, "key:rotate")
+		if code != 0 {
+			t.Fatalf("key:rotate = %d %q", code, errOut)
+		}
+
+		if strings.Contains(out+errOut, "base64:") {
+			t.Fatalf("key:rotate printed a key: out=%q err=%q", out, errOut)
+		}
+
+		got := read(t, dir, ".env")
+		if got == before || !strings.Contains(got, "APP_NAME=Blog\n") || !strings.Contains(got, "APP_PREVIOUS_KEYS=") {
+			t.Fatalf(".env = %q", got)
+		}
+
+		envWriteMode(t, filepath.Join(dir, ".env"))
+	})
 }
 
 func TestSnapshot(t *testing.T) {

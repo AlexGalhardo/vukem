@@ -98,7 +98,7 @@ func writeAppKey(env *Env, key string, force bool) error {
 		text = text[:m[2]] + key + text[m[3]:]
 	}
 
-	if err := os.WriteFile(p, []byte(text), 0o600); err != nil { //nolint:gosec // G703: the project .env
+	if err := writeFileAtomic(p, []byte(text)); err != nil {
 		return err
 	}
 
