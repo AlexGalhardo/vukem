@@ -161,7 +161,27 @@ The `json:"author"` parts are [struct tags](https://go.dev/ref/spec#Struct_types
 
 Numbers decode as `json.Number` when the target is `any`. The internal cause of each 400 is logged, never sent to the client.
 
-`BindJSON` does not validate: an empty `author` passes. Prefer [typed input](#typed-input) for anything you save.
+`BindJSON` does not validate: an empty `author` passes. Check domain rules after it returns nil, with the same schema you would pass to `web.Parse`. Do not write a second decoder. A route that should be smaller than the 10 MiB default uses `middleware.BodyLimit` on that route; see [Body size limits](#body-size-limits).
+
+Returned from the handler, each status is one problem document (`application/problem+json`). A React client branches on `status` and, only for 422, on `errors`:
+
+| Status | Meaning | `errors` |
+| --- | --- | --- |
+| 415 | the `Content-Type` is not JSON | absent |
+| 413 | the body is over the route's limit | absent |
+| 400 | malformed JSON, the wrong JSON type, or a second value after the first | absent |
+| 422 | a key the struct does not declare | `{ "extra": ["The field is not allowed."] }` |
+
+```tsx title="resources/js/api.ts"
+const res = await fetch("/comments", { method: "POST", body, headers });
+if (res.status === 422) {
+  const problem = await res.json();
+  // problem.errors.extra is the list of messages. Domain rules use the same map.
+  return problem.errors;
+}
+```
+
+`detail` is a single sentence. It never includes the body, a stack or a file path.
 
 ## Form values and files
 
