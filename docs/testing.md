@@ -119,6 +119,16 @@ clock.Advance(24 * time.Hour)
 | Password hashing | `hash.Fake()` | fast parameters |
 | Clock | `vukemtest.NewFakeClock(t0)` | `Now`, `Advance`, `Set`; pass `clock.Now` as `vukemtest.Options.Clock`; sessions (cookie, `memory`, `database`) expire by it |
 
+## Starter journey
+
+`TestNewInertiaProjectEndToEnd` (package `internal/cli`, skipped under
+`go test -short`) is the clean-clone check. It generates an Inertia app in a
+temp directory, so there is no previous `.env`, database, global install, or
+`node_modules`. It writes `APP_KEY` with `key:generate --if-missing`, runs the
+generated `TestHome` Inertia request, migrates SQLite in that directory, and
+for the React app installs from the lockfile with `npm ci`. Playwright is not
+part of this test and is not required for `go test`.
+
 ## CI matrix
 
 | Job | Matrix |

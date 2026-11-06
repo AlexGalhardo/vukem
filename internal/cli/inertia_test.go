@@ -86,6 +86,24 @@ func TestNewInertiaProjectEndToEnd(t *testing.T) {
 				}
 			}
 
+			// vukem new writes a local .env. A clone does not: .env is
+			// gitignored. Drop it, then create the key the way CI does.
+			// TestHome in the generated module is the Inertia request.
+			// This is not a browser test.
+			if ignore := read(t, project, ".gitignore"); !strings.Contains(ignore, ".env") {
+				t.Fatal(".gitignore does not ignore .env")
+			}
+
+			if err := os.Remove(filepath.Join(project, ".env")); err != nil && !os.IsNotExist(err) {
+				t.Fatal(err)
+			}
+
+			if code, out, errOut := vukem(t, project, "key:generate", "--if-missing"); code != 0 ||
+				strings.Contains(out, "base64:") ||
+				!strings.Contains(read(t, project, ".env"), "APP_KEY=base64:") {
+				t.Fatalf("key:generate --if-missing = %d\n%s%s", code, out, errOut)
+			}
+
 			run("go", "test", "./...")
 
 			if code, out, errOut := vukem(t, project, "install:auth", "--2fa"); code != 0 ||
@@ -114,6 +132,14 @@ func TestNewInertiaProjectEndToEnd(t *testing.T) {
 			// The Go the three frontends generate is the same; linting one
 			// of them covers the inertia and auth-inertia scaffolds.
 			if st.name == "react" {
+				if err := os.MkdirAll(filepath.Join(project, "storage"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+
+				if code, out, errOut := vukem(t, project, "migrate"); code != 0 {
+					t.Fatalf("migrate = %d\n%s%s", code, out, errOut)
+				}
+
 				requireGeneratedLint(t, project, "example.com/app")
 			}
 
@@ -123,6 +149,17 @@ func TestNewInertiaProjectEndToEnd(t *testing.T) {
 			}
 
 			run(npm(), "install", "--no-audit", "--no-fund")
+
+			// The lockfile from that install must be enough for a clean CI
+			// checkout. One framework is enough; the others share the recipe.
+			if st.name == "react" {
+				if err := os.RemoveAll(filepath.Join(project, "node_modules")); err != nil {
+					t.Fatal(err)
+				}
+
+				run(npm(), "ci", "--no-audit", "--no-fund")
+			}
+
 			run(npm(), "run", "typecheck")
 
 			if code, out, errOut := vukem(t, project, "build", "-ssr"); code != 0 {
