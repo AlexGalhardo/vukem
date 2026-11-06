@@ -18,7 +18,7 @@ export function GET() {
     lines.push(`## ${group.title}`, "");
     for (const item of group.items) {
       const doc = docs.get(item.href);
-      lines.push(`- [${item.title}](${site.url}${item.href}): ${doc?.description ?? ""}`);
+      lines.push(`- [${item.title}](${site.url}${item.href}/): ${doc?.description ?? ""}`);
     }
     lines.push("");
   }

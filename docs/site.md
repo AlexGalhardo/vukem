@@ -7,7 +7,7 @@ The public "how to use Vukem" website lives in [`site/`](../site) and is deploye
 | Option | Outcome |
 | --- | --- |
 | Mintlify Starter (free) | Rejected: Mintlify cannot be built and served by Vercel on the free plan (static export is Enterprise-only; the `mint` CLI is Elastic-2.0). Vercel could only reverse-proxy Mintlify's hosting, and preview deployments, assistant and analytics are Pro. |
-| **Own Next.js site** | **Chosen (2026-10-16):** full control of the Resend-like layout, native Vercel builds and preview deploys, MDX content in the repo, MIT dependencies. |
+| **Own Next.js site** | **Chosen (2026-10-16):** full control of the Resend-like layout, MDX content in the repo, MIT dependencies. Production hosting moved to GitHub Pages on 2026-11-05 (static export, free on the public repository). |
 
 ## Stack
 
@@ -23,7 +23,7 @@ The public "how to use Vukem" website lives in [`site/`](../site) and is deploye
 | Navigation | Left sidebar grouped by category, right "On this page" table of contents, previous/next links, "Edit on GitHub" link |
 | Changelog | `/changelog` renders the repository `CHANGELOG.md` at build time as plain Markdown (braces stay literal), linked from the header; every item links to its commit (`.config/cliff.toml` template) |
 | Agents | `llms.txt` and `llms-full.txt` generated from the MDX content |
-| Hosting | Vercel project `vukem` (Root Directory `site`), production at `vukem.dev`, connected to GitHub: every push to `main` deploys production, other branches get previews |
+| Hosting | GitHub Pages from a static export (`output: "export"`). Production is `vukem.dev`. The Site workflow builds every pull request and publishes every push to `main` |
 
 ## Layout (Resend-inspired)
 
@@ -65,7 +65,7 @@ The site is versioned per minor (PLAN S.2.1). The current docs live in `site/con
 
 ## Language
 
-The site is English only (since v0.28). `/pt-br/...` URLs from the earlier Portuguese pages redirect permanently to the same English path (`next.config.ts`). The root layout lives in the `app/(en)` route group and renders `components/site-shell.tsx` with `<html lang="en">`; unmatched URLs use `app/global-not-found.tsx` (`experimental.globalNotFound`). Interface strings live in `site/lib/ui-text.ts`. There is no sitemap.
+The site is English only (since v0.28). `/pt-br/...` URLs from the earlier Portuguese pages have no file in the export; the 404 page sends them to the same English path. The root layout lives in the `app/(en)` route group and renders `components/site-shell.tsx` with `<html lang="en">`; unmatched URLs use `app/global-not-found.tsx` (`experimental.globalNotFound`). Interface strings live in `site/lib/ui-text.ts`. There is no sitemap.
 
 ## Workflow
 
@@ -82,4 +82,4 @@ Repo tasks: `task site:dev`, `task site:build` (part of `task ci:full`).
 
 - Editing content: change or add `site/content/docs/<category>/<page>.mdx`, then register the page in `site/content/navigation.ts`. Edit only the current docs; snapshots under `site/content/versions/` are frozen.
 - **Update cadence:** the site is updated at the end of each phase (Prototype, ALPHA, BETA) — a release cannot be tagged until `task site:build` passes and the pages for the phase's features exist.
-- Deploy: automatic on every push to `main` (Vercel GitHub integration, project `vukem`, team `galhardos-projects`, framework pinned in `site/vercel.json`). Manual deploy: `vercel link --project vukem --scope galhardos-projects` once in `site/`, then `vercel deploy --prod`. Live at <https://vukem.dev>.
+- Deploy: a push to `main` that changes `site/**`, `CHANGELOG.md` or `.github/workflows/site.yml` publishes `site/out` to GitHub Pages (`.github/workflows/site.yml`). `site/public/CNAME` sets the custom domain. DNS for the apex is four `A` records (`185.199.108.153`, `185.199.109.153`, `185.199.110.153`, `185.199.111.153`) and four `AAAA` records (`2606:50c0:8000::153`, `2606:50c0:8001::153`, `2606:50c0:8002::153`, `2606:50c0:8003::153`); `www` is a `CNAME` to `alexgalhardo.github.io`. Pull requests build and do not deploy. Live at <https://vukem.dev>.

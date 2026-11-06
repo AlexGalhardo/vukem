@@ -120,7 +120,7 @@ Keep callouts rare: at most three per page, one sentence or two each.
 2. Update every site page that mentions the feature (search `site/content` for its names) — options, defaults, examples, upgrade notes.
 3. Validate: `npm run check:mdx -- <files>` (seconds; compiles the MDX with the site's plugins, rejects unregistered components, `/docs/...` links without a page and bare `{placeholders}`, warns on code lines over 100 characters), then `npm run lint` and `npm run build` in `site/`.
 4. Look at the changed pages in a browser in light and dark mode, desktop and mobile.
-5. The `Site` workflow builds the site on every PR and push; Vercel deploys `main`.
+5. The `Site` workflow builds the site on every PR and push; a push to `main` deploys GitHub Pages.
 
 ## Workflow: reviewing a page
 

@@ -35,7 +35,7 @@ Mark features that are not implemented yet with `<Callout type="warning">Planned
 Every page shows "Last updated" with the date and time of the last commit that touched its MDX file, formatted with `Intl.DateTimeFormat` in English, in UTC.
 
 - At build time `lib/last-updated.ts` runs `git log` over `content/` once (`lib/git-dates.ts`).
-- Vercel clones shallowly (and may not ship `.git` at all). Commits at the shallow boundary are ignored, because git reports them as touching every file, and any page git cannot date falls back to the committed `content/last-updated.json`. If neither has the file, the line is hidden.
+- The production checkout is shallow (and may not ship `.git` at all). Commits at the shallow boundary are ignored, because git reports them as touching every file, and any page git cannot date falls back to the committed `content/last-updated.json`. If neither has the file, the line is hidden.
 - Refresh the fallback map with `npm run last-updated` (from a clone with full history: `git fetch --unshallow` first if needed) and commit it.
 
 On `main` the check also accepts a stale date when the newest commit of the page is a squash merge (`(#123)` subject) and the recorded date is not older than the change before it, so a squash-merged PR needs no refresh after merging `origin/main`.
@@ -44,7 +44,7 @@ Rule: Any PR that adds, changes or removes a page under `site/content/docs/` (in
 
 ## Language
 
-The site is English only. Old `/pt-br/...` links redirect to the English page. UI strings live in `lib/ui-text.ts`. Details in [docs/site.md](../docs/site.md#language).
+The site is English only. Old `/pt-br/...` links hit the 404 page, which sends them to the English page. UI strings live in `lib/ui-text.ts`. Details in [docs/site.md](../docs/site.md#language).
 
 ## MDX components
 
