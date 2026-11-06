@@ -5,6 +5,7 @@ import (
 	"embed"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"text/template"
 )
 
@@ -34,8 +35,10 @@ type dockerData struct {
 }
 
 // writeDocker writes the production Dockerfile and .dockerignore for a
-// starter of kind built with pm.
-func writeDocker(dir, kind string, pm jsPM) error {
+// starter of kind built with pm. assetsImage, when set, replaces only the
+// assets-stage base image; the lockfile install, the Vite build copy and
+// the Alpine runtime stay as they are.
+func writeDocker(dir, kind string, pm jsPM, assetsImage string) error {
 	d := dockerData{
 		Assets:   kind != "api",
 		Templ:    kind == "templ",
@@ -55,6 +58,19 @@ func writeDocker(dir, kind string, pm jsPM) error {
 		d.Corepack, d.Install = true, "yarn install --frozen-lockfile"
 	default:
 		d.Install = "npm ci --no-audit --no-fund"
+	}
+
+	pinned, err := pinnedAssetsImage(assetsImage)
+	if err != nil {
+		return err
+	}
+
+	if pinned != "" {
+		if !d.Assets {
+			return fmt.Errorf("assets image: this starter has no assets stage")
+		}
+
+		d.JSImage = pinned
 	}
 
 	src, err := dockerFS.ReadFile("docker/Dockerfile.tmpl")
@@ -83,4 +99,38 @@ func writeDocker(dir, kind string, pm jsPM) error {
 	}
 
 	return writeFile(filepath.Join(dir, ".dockerignore"), ignore)
+}
+
+// pinnedAssetsImage rejects a floating tag. An empty ref means the package
+// manager's default image. A digest (name@sha256:64 hex) is pinned.
+func pinnedAssetsImage(ref string) (string, error) {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return "", nil
+	}
+
+	if strings.ContainsAny(ref, " \t\r\n'\"") {
+		return "", fmt.Errorf("assets image %q: must be one reference", ref)
+	}
+
+	if name, digest, ok := strings.Cut(ref, "@"); ok {
+		hex, isSHA := strings.CutPrefix(digest, "sha256:")
+		if !isSHA || name == "" || len(hex) != 64 || strings.Trim(hex, "0123456789abcdef") != "" {
+			return "", fmt.Errorf("assets image %q: pin an exact tag or a sha256 digest", ref)
+		}
+
+		return ref, nil
+	}
+
+	name, tag, ok := strings.Cut(ref, ":")
+	if !ok || name == "" || tag == "" {
+		return "", fmt.Errorf("assets image %q: pin an exact tag or a sha256 digest", ref)
+	}
+
+	switch strings.ToLower(tag) {
+	case "latest", "edge", "nightly", "lts", "stable", "alpine":
+		return "", fmt.Errorf("assets image %q: floating tag", ref)
+	}
+
+	return ref, nil
 }

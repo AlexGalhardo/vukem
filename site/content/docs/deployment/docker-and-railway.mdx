@@ -184,6 +184,14 @@ This is why `vukem new --no-install` and `--docker` together give you a project 
 
 The choice is written into the `Dockerfile` once, when the project is generated. If you switch package manager later — delete `package-lock.json` and run `bun install`, say — edit the `assets` stage to match.
 
+### A different assets image
+
+The assets stage is the only place that runs Node, Bun or a native tool such as LilyPond or FFmpeg. The last stage stays `alpine:3.24.2` and contains the static Go binary (`CGO_ENABLED=0`). It does not contain those tools.
+
+`vukem new blog --assets-image debian:bookworm-20261001-slim` changes the `FROM ... AS assets` line and nothing else. The lockfile check, the install from that lockfile and `COPY --from=assets` of `resources/public/build` stay. `-api` has no assets stage, so the flag is an error there. The value is one image reference with an exact tag, or a `name@sha256:` digest of 64 hex characters. `latest`, `edge`, `nightly`, `lts`, `stable` and a bare `alpine` tag are refused.
+
+A pre-build is a `RUN` in that same stage, after `COPY . .` and before the `build` script. Installing a native tool there does not put it in the image you run. Leave the last `FROM` alone, and leave TLS verification on.
+
 Under the hood:
 
 - **Static binary.** `CGO_ENABLED=0` builds a binary with no C dependencies, so it runs on the small Alpine base. SQLite uses the pure-Go `modernc.org/sqlite` driver, so it still works.

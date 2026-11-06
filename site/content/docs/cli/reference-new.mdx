@@ -31,6 +31,7 @@ vukem new [flags] <name>
 | `-inertia` | string | none | Inertia starter. Value: `react`, `vue` or `svelte`. |
 | `-minimal` | bool | `false` | HTMX starter without a database: no posts, uploads, migrations or SQLite driver. Writes `.buildtags` with `vukem_nosqlite`. |
 | `-pm` | string | see below | JavaScript package manager: `npm`, `bun`, `pnpm` or `yarn`. |
+| `-assets-image` | string | the package manager's image | Assets-stage base image only: an exact tag or a `sha256` digest. The runtime stays Alpine. An error on `-api`, which has no assets stage. |
 | `-no-install` | bool | `false` | Do not install frontend dependencies. |
 | `-framework` | string | none | Path to a local Vukem checkout. Adds a `replace` directive instead of requiring a release. |
 | `-standards` | bool | `false` | `.markdownlint-cli2.jsonc`, `lint:md` and `secrets:scan` scripts, `CHANGELOG.md`, `.config/cliff.toml`, `.githooks/commit-msg` and `pre-commit` (secret scan, `gofmt`, `go vet`), `.betterleaks.toml`, version `0.1.0`, and on a stack with front-end assets `biome.json` (Biome v2, 2-space, double quotes) with `lint:js` and `format` scripts and an exact-version `@biomejs/biome` devDependency. Sets `core.hooksPath` to `.githooks`. See [Secret scanning](/docs/security/secret-scanning). |
@@ -53,7 +54,7 @@ vukem new [flags] <name>
 **What it writes, in order**
 
 1. The starter files for the stack (`gitignore` becomes `.gitignore`).
-2. `Dockerfile` and `.dockerignore` for the stack and package manager.
+2. `Dockerfile` and `.dockerignore` for the stack and package manager. `-assets-image` replaces only the assets-stage `FROM`.
 3. `.editorconfig` and `.gitattributes`, then the optional files above.
 4. `go.mod` requiring the framework release that matches the CLI (the latest for a `devel` build), or a `replace` with `-framework`. It pins `govulncheck` as a Go tool.
 5. `go mod tidy`, then `.env` copied from `.env.example` with a new `APP_KEY`.

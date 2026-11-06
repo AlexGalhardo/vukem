@@ -121,7 +121,7 @@ func TestWriteDocker(t *testing.T) {
 			t.Parallel()
 
 			dir := t.TempDir()
-			if err := writeDocker(dir, tt.kind, pmByName[tt.pm]); err != nil {
+			if err := writeDocker(dir, tt.kind, pmByName[tt.pm], ""); err != nil {
 				t.Fatal(err)
 			}
 
@@ -156,7 +156,7 @@ func TestSecurity_A02_DockerIgnoresSecrets(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	if err := writeDocker(dir, "htmx", pmByName["npm"]); err != nil {
+	if err := writeDocker(dir, "htmx", pmByName["npm"], ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -194,7 +194,7 @@ func TestDockerAssetsStageRequiresTheLockfile(t *testing.T) {
 			pm := pmByName[name]
 
 			dir := t.TempDir()
-			if err := writeDocker(dir, "htmx", pm); err != nil {
+			if err := writeDocker(dir, "htmx", pm, ""); err != nil {
 				t.Fatal(err)
 			}
 
@@ -219,11 +219,59 @@ func TestDockerAssetsStageRequiresTheLockfile(t *testing.T) {
 	// An API project builds no assets, so it needs no lockfile and must not
 	// grow a check for one.
 	dir := t.TempDir()
-	if err := writeDocker(dir, "api", pmByName["npm"]); err != nil {
+	if err := writeDocker(dir, "api", pmByName["npm"], ""); err != nil {
 		t.Fatal(err)
 	}
 
 	if got := read(t, dir, "Dockerfile"); strings.Contains(got, "not found: run") {
 		t.Errorf("the API Dockerfile checks for a lockfile:\n%s", got)
+	}
+}
+
+func TestAssetsImageStaysOffTheRuntime(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+
+	const img = "debian:bookworm-20261001-slim"
+
+	if err := writeDocker(dir, "htmx", pmByName["bun"], img); err != nil {
+		t.Fatal(err)
+	}
+
+	got := read(t, dir, "Dockerfile")
+	for _, want := range []string{
+		"FROM " + img + " AS assets",
+		"bun install --frozen-lockfile",
+		"COPY --from=assets /src/resources/public/build resources/public/build",
+		"ENV CGO_ENABLED=0",
+		"FROM alpine:3.24.2",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("Dockerfile lacks %q:\n%s", want, got)
+		}
+	}
+
+	runtime := got[strings.LastIndex(got, "FROM alpine:3.24.2"):]
+	for _, banned := range []string{"bun", "lilypond", "ffmpeg", "debian", "bookworm"} {
+		if strings.Contains(strings.ToLower(runtime), banned) {
+			t.Errorf("runtime stage contains %q:\n%s", banned, runtime)
+		}
+	}
+
+	if err := writeDocker(dir, "htmx", pmByName["npm"], ""); err != nil {
+		t.Fatal(err)
+	}
+
+	if def := read(t, dir, "Dockerfile"); !strings.Contains(def, "FROM "+nodeImage+" AS assets") {
+		t.Errorf("default assets image changed:\n%s", def)
+	}
+
+	if err := writeDocker(dir, "htmx", pmByName["npm"], "node:latest"); err == nil {
+		t.Fatal("writeDocker accepted a floating assets image")
+	}
+
+	if err := writeDocker(dir, "api", pmByName["npm"], img); err == nil {
+		t.Fatal("writeDocker accepted an assets image for an API starter")
 	}
 }
