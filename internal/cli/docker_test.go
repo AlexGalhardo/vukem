@@ -16,6 +16,7 @@ func TestWriteDocker(t *testing.T) {
 		`.buildtags`,
 		`go build -trimpath -ldflags="-s -w" -tags "$tags" -o /out/app ./cmd/app`,
 		"USER app",
+		"-u 10001",
 		"ENV APP_ENV=production HOST=0.0.0.0 PORT=3000",
 		// Without it, APP_ENV=production stops every command at boot (A81).
 		"MAIL_MAILER=log",
