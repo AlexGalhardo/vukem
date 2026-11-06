@@ -1,10 +1,36 @@
 package cli
 
 import (
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
 )
+
+func TestDockerfileStaysPortable(t *testing.T) {
+	t.Parallel()
+
+	b, err := os.ReadFile(filepath.Join("docker", "Dockerfile.tmpl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The starter baseline has to build on Railway's builder. Cache mounts,
+	// secret mounts and a disabled TLS check are optional profiles, documented
+	// beside the Dockerfile, and they are not in this file.
+	body := string(b)
+	for _, bad := range []string{
+		"--mount=type=cache",
+		"--mount=type=secret",
+		"NODE_TLS_REJECT_UNAUTHORIZED",
+		"SSL_CERT_FILE=/dev/null",
+	} {
+		if strings.Contains(body, bad) {
+			t.Errorf("Dockerfile.tmpl contains %q", bad)
+		}
+	}
+}
 
 func TestWriteDocker(t *testing.T) {
 	t.Parallel()
