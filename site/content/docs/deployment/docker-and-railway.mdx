@@ -215,6 +215,19 @@ The app runs as uid `10001`, so the mount must be writable by that user:
 - A new named volume (`-v blog-storage:/app/storage`) copies the ownership of the image's `/app/storage`, so it works as is.
 - A bind mount, or a volume created elsewhere, keeps its own owner, often root. Run `chown -R 10001:10001` on the host directory, or start the container with `--user 0` (root inside the container, less isolation).
 
+### Optional build profiles
+
+The Dockerfile above is the baseline. It has no BuildKit cache mount, no secret mount and no extra CA file. `docker build` and the Railway builder that ships the starter both run that file. A cache mount that your laptop accepts can be rejected by that builder, so the starter does not include one.
+
+Two profiles are opt-in. Copy them into a Dockerfile you maintain. They are not generated.
+
+| Profile | Use it when | What you add |
+| --- | --- | --- |
+| Cache mount | The builder is BuildKit and you have measured a slow `go mod download` or package install | `RUN --mount=type=cache` on that download. Railway's builder may reject the mount; if it does, delete the mount instead of changing the baseline |
+| Corporate CA | A proxy intercepts TLS and you have the proxy's certificate | Mount that certificate and append it to the image trust store. Leave verification on |
+
+A certificate error is a trust-store problem. Do not set `NODE_TLS_REJECT_UNAUTHORIZED=0` or point `SSL_CERT_FILE` at `/dev/null`. That makes the build succeed by accepting any certificate.
+
 ## Configure production
 
 Vukem reads its settings from the process environment first, then from `.env` files. The image ignores `.env` files, so in a container every setting comes from the environment. [Configuration](/docs/configuration) explains the loading order.
