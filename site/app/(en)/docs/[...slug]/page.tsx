@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
-import { notFound, redirect } from "next/navigation";
+import { notFound } from "next/navigation";
+import { StaticRedirect } from "@/components/static-redirect";
 import { DocArticle, docMetadata } from "@/components/doc-article";
 import { getDoc, getEveryDoc, versionHome } from "@/lib/content";
 import { versions, type DocVersion } from "@/lib/versions";
@@ -26,7 +27,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 export default async function DocPage({ params }: Props) {
   const { slug } = await params;
   const root = snapshotRoot(slug);
-  if (root) redirect(versionHome(root));
+  if (root) return <StaticRedirect href={`${versionHome(root)}/`} />;
 
   const doc = getDoc(slug);
   if (!doc) notFound();

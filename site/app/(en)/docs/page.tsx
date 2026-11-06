@@ -1,5 +1,5 @@
-import { redirect } from "next/navigation";
+import { StaticRedirect } from "@/components/static-redirect";
 
 export default function DocsIndex() {
-  redirect("/docs/introduction");
+  return <StaticRedirect href="/docs/introduction/" />;
 }

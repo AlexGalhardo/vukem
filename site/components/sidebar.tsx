@@ -40,7 +40,9 @@ export function Sidebar({
   onNavigate?: () => void;
 }) {
   const pathname = usePathname();
-  const groups = groupsByVersion[versionOfPath(pathname).id] ?? [];
+  // trailingSlash adds a slash in the browser; nav hrefs have none.
+  const path = pathname.length > 1 ? pathname.replace(/\/$/, "") : pathname;
+  const groups = groupsByVersion[versionOfPath(path).id] ?? [];
 
   return (
     <nav aria-label={t.documentation} className={`text-sm ${collapsible ? "space-y-1" : "space-y-6"}`}>
@@ -48,7 +50,7 @@ export function Sidebar({
         const list = (
           <ul className="space-y-0.5">
             {group.items.map((item) => (
-              <Item key={item.href} {...item} active={item.href === pathname} onNavigate={onNavigate} />
+              <Item key={item.href} {...item} active={item.href === path} onNavigate={onNavigate} />
             ))}
           </ul>
         );
@@ -62,7 +64,7 @@ export function Sidebar({
           );
         }
 
-        const open = group.items.some((i) => i.href === pathname);
+        const open = group.items.some((i) => i.href === path);
         return (
           <Collapsible.Root key={group.title} defaultOpen={open}>
             <Collapsible.Trigger className="group flex w-full items-center justify-between rounded-lg px-3 py-1.5 text-xs font-semibold tracking-wide text-fg hover:bg-hover">

@@ -11,7 +11,7 @@ const HOME = "/docs/introduction";
 
 export default function sitemap(): MetadataRoute.Sitemap {
   const docs = getEveryDoc().map((doc) => ({
-    url: `${site.url}${doc.href}`,
+    url: `${site.url}${doc.href}/`,
     lastModified: doc.updated,
     changeFrequency: "weekly" as const,
     priority: doc.href === HOME ? 1 : doc.version.id === currentVersion.id ? 0.8 : 0.3,
@@ -20,7 +20,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
   return [
     ...docs,
     {
-      url: `${site.url}/changelog`,
+      url: `${site.url}/changelog/`,
       changeFrequency: "weekly" as const,
       priority: 0.5,
     },
