@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -286,6 +287,51 @@ func TestAdminTestScaffoldPerStack(t *testing.T) {
 
 		if !strings.Contains(string(out), want) {
 			t.Errorf("%s admin_test.go misses %s:\n%s", stack, want, out)
+		}
+	}
+}
+
+// TestAdminScaffoldsStayPlainTailwind locks the decision against a shadcn/ui
+// registry and against Vue or Svelte admin pages. The panel is html/template
+// or plain Tailwind React; an external component kit stays in the app.
+func TestAdminScaffoldsStayPlainTailwind(t *testing.T) {
+	t.Parallel()
+
+	banned := []string{"shadcn", "@radix-ui", "ui.shadcn.com"}
+	roots := []string{"scaffolds/admin", "scaffolds/admin-inertia-react"}
+
+	for _, root := range roots {
+		err := fs.WalkDir(scaffoldFS, root, func(p string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return err
+			}
+
+			body, err := scaffoldFS.ReadFile(p)
+			if err != nil {
+				return err
+			}
+
+			low := strings.ToLower(string(body))
+			for _, word := range banned {
+				if strings.Contains(low, word) {
+					t.Errorf("%s contains %q", p, word)
+				}
+			}
+
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	vue := []string{
+		"scaffolds/admin-inertia-vue",
+		"scaffolds/admin-inertia-svelte",
+	}
+	for _, root := range vue {
+		if _, err := fs.Stat(scaffoldFS, root); err == nil {
+			t.Errorf("%s exists; Vue and Svelte admin are not offered", root)
 		}
 	}
 }
