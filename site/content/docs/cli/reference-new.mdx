@@ -269,7 +269,7 @@ vukem doctor --strict
 | Flag | Default | Result |
 | --- | --- | --- |
 | (none) | informative | Print the report and exit 0, even when a project check failed |
-| `--json` | off | One JSON object on stdout (`cli`, `runtime`, `tools`, `checks`) |
+| `--json` | off | One JSON object on stdout (`cli`, `runtime`, `upgrade`, `tools`, `checks`) |
 | `--strict` | off | Exit 1 when a project check has status `fail` |
 
 A missing optional tool does not fail `--strict`. CI that does not use Betterleaks, LilyPond, or FFmpeg stays green. Core lists only Betterleaks. An application registers its own tools in `.vukem/doctor.json`; those names are not built into Vukem.
@@ -290,11 +290,18 @@ A missing optional tool does not fail `--strict`. CI that does not use Betterlea
 betterleaks: 1.9.0 (/usr/local/bin/betterleaks)
 cli: v0.38.0
 runtime: go1.27.2
+upgrade: https://vukem.dev/docs/cli/reference-new#upgrading-a-starter
 app_key: set
 database: sqlite directory is writable
 ```
 
 In production a missing `resources/public/build/.vite/manifest.json` is a failed check. In any other `APP_ENV` it is a warning, and warnings do not fail `--strict`.
+
+## Upgrading a starter
+
+`vukem doctor` prints the CLI revision and the Go runtime on consecutive lines, then the `upgrade` URL. That pair is the set you tested. A newer CLI is not a promise that an older revision still matches today's images or examples. The assets image pins `oven/bun:1.4.3-alpine` and the Node image pins an exact tag; the workflow audit installs Bun `1.4.3`. When those pins change, the changelog for the CLI revision names the new tags. Do not read a future tag back onto an old revision.
+
+There is no command that rewrites a project in place. `vukem new` refuses a folder that already exists. `install:*` and `make:*` refuse a file that already exists unless you pass `--force`. A file you edited stays as you left it. To take a scaffold change, read the changelog for the `cli` revision, apply that diff yourself, and run the checks that revision's workflow runs (`go test`, `govulncheck`, and the lockfile audit when the project has one). `--force` replaces the file. It is the explicit overwrite, not the upgrade path.
 
 ## `vukem list` and `vukem help`
 
