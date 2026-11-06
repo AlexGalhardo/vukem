@@ -18,6 +18,10 @@ type doctorTool struct {
 	name, versionArg, why, install string
 }
 
+// starterUpgradeDocs is the page that explains how to move a customized
+// starter without letting the CLI rewrite files the app owns.
+const starterUpgradeDocs = "https://vukem.dev/docs/cli/reference-new#upgrading-a-starter"
+
 func doctorTools() []doctorTool {
 	return []doctorTool{
 		{
@@ -156,16 +160,17 @@ func writeDoctor(env *Env, asJSON bool, tools []toolLine, checks []doctorCheck) 
 		return enc.Encode(struct {
 			CLI     string        `json:"cli"`
 			Runtime string        `json:"runtime"`
+			Upgrade string        `json:"upgrade"`
 			Tools   []toolLine    `json:"tools"`
 			Checks  []doctorCheck `json:"checks"`
-		}{CLI: version(env), Runtime: goRuntime(), Tools: tools, Checks: checks})
+		}{CLI: version(env), Runtime: goRuntime(), Upgrade: starterUpgradeDocs, Tools: tools, Checks: checks})
 	}
 
 	for _, t := range tools {
 		fmt.Fprint(env.Stdout, t.String())
 	}
 
-	fmt.Fprintf(env.Stdout, "cli: %s\nruntime: %s\n", version(env), goRuntime())
+	fmt.Fprintf(env.Stdout, "cli: %s\nruntime: %s\nupgrade: %s\n", version(env), goRuntime(), starterUpgradeDocs)
 
 	for _, c := range checks {
 		fmt.Fprint(env.Stdout, formatCheck(c))

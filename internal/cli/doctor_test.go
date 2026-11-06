@@ -69,7 +69,8 @@ func TestDoctorCommandNeverFails(t *testing.T) {
 	t.Parallel()
 
 	code, out, errOut := vukem(t, t.TempDir(), "doctor")
-	if code != 0 || !strings.HasPrefix(out, "betterleaks: ") {
+	want := "cli: v0.0.0-test\nruntime: " + runtime.Version() + "\nupgrade: " + starterUpgradeDocs + "\n"
+	if code != 0 || !strings.HasPrefix(out, "betterleaks: ") || !strings.Contains(out, want) {
 		t.Errorf("vukem doctor = %d %q %q", code, out, errOut)
 	}
 }
@@ -122,6 +123,7 @@ func TestDoctorProject(t *testing.T) {
 	var report struct {
 		CLI     string `json:"cli"`
 		Runtime string `json:"runtime"`
+		Upgrade string `json:"upgrade"`
 		Tools   []struct {
 			Name, Status string
 		} `json:"tools"`
@@ -131,8 +133,8 @@ func TestDoctorProject(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if report.CLI != "v0.0.0-test" || report.Runtime != runtime.Version() {
-		t.Fatalf("versions = %s %s", report.CLI, report.Runtime)
+	if report.CLI != "v0.0.0-test" || report.Runtime != runtime.Version() || report.Upgrade != starterUpgradeDocs {
+		t.Fatalf("versions = %s %s %s", report.CLI, report.Runtime, report.Upgrade)
 	}
 
 	byName := map[string]doctorCheck{}
