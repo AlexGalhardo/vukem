@@ -260,6 +260,32 @@ vukem db:run -file fix-users.sql
 vukem db:run -file fix-users.sql -commit
 ```
 
+## `vukem db:backup`
+
+Snapshot a SQLite database, or restore that snapshot into another directory. PostgreSQL and MySQL are refused: this is a file snapshot, not a dump.
+
+```text
+vukem db:backup -to <new-file>
+vukem db:backup -restore -from <snapshot> -to <other-dir/new-file>
+```
+
+| Flag | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `-to` | string | none | Path of the new file. Required. Must not exist, and must not be a symlink. |
+| `-restore` | bool | `false` | Copy `-from` to `-to` instead of snapshotting the live database. |
+| `-from` | string | none | The snapshot. Only with `-restore`. |
+
+The snapshot is `VACUUM INTO`. That writes committed rows into one new file, including data that still sat in the write-ahead log, and it does not copy the `-wal` or `-shm` files. Rows that are not committed are not in the snapshot. After the write, the command runs `PRAGMA integrity_check` and keeps the file only when the result is `ok`. On Linux and macOS the file mode is `0600`. On Windows the mode is the writable bit Go can set; it is not an owner-only ACL.
+
+`-to` may not be the live database. `-restore` also refuses a destination in the same directory as the snapshot, so a restore cannot overwrite the file it is reading. Restoring does not change `DATABASE_URL` and does not restart the process. Point the app at the new file and start it again when you mean to serve that data. That is not a traffic cutover.
+
+Keep the snapshot off the volume that holds the live database. The command does not delete older snapshots and does not upload them.
+
+```bash
+vukem db:backup -to /var/backups/app.sqlite
+vukem db:backup -restore -from /var/backups/app.sqlite -to /tmp/restore/app.sqlite
+```
+
 ## Troubleshooting
 
 | Symptom | Cause and fix |
