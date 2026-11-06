@@ -128,7 +128,7 @@ vukem install:admin [flags]
 | Flag | Type | Default | What it does |
 | --- | --- | --- | --- |
 | `-force` | bool | `false` | Overwrite existing files. |
-| `-stack` | string | `htmx` | `htmx` keeps the server-rendered panel at `/admin`. `inertia` adds React pages (dashboard, list, detail with a sidebar, search, sorting, pagination and a light/dark toggle) that read the panel's JSON routes; the panel itself then lives at `/admin-api`. Needs an Inertia + React project; Vue and Svelte are not provided yet. |
+| `-stack` | string | `htmx` | `htmx` keeps the server-rendered panel at `/admin`. `inertia` adds plain Tailwind React pages (dashboard, list, detail with a sidebar, search, sorting, pagination and a light/dark toggle) that read the panel's JSON routes; the panel itself then lives at `/admin-api`. Needs an Inertia + React project. There is no shadcn/ui registry. Vue and Svelte admin pages are not offered. |
 
 **Needs** `install:auth` (it looks for `app/accounts/accounts.go`) and a web project (`routes/web.go`). **Writes** `app/admin/admin.go`, `app/admin/registry.go`, a `create_admin_audit_logs_table` migration, `routes/admin.go` and `tests/admin_test.go`. Appends `ADMIN_EMAILS` to `.env.example`: set it to the comma-separated emails allowed in.
 
