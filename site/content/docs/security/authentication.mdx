@@ -382,6 +382,24 @@ What `auth.Required` does when nobody is signed in:
 
 `auth.ProblemJSON` is for API groups that are not only API guards (a session fallback, a custom check). Mount it **first**: `g.Use(auth.ProblemJSON, auth.Required(apiGuard, webGuard))`. Below it, `Required`, `Ability` and `Verified` never redirect, and every 401 and 403 that middleware renders (theirs, or yours through `web.Fail`) is problem+json, a CSRF or rate-limit 403 included. Middleware mounted before it is not affected, and handlers keep negotiating with the client's `Accept` header.
 
+#### A private JSON prefix behind the session guard
+
+A route under `/api` that uses the session guard and only `auth.Required(webGuard)` is still negotiated: an anonymous `GET` without `Accept: application/json` is redirected to `/login`, and `fetch`, curl with `-L` and Playwright's `request` follow the redirect and report `200` with the login page. Put `auth.ProblemJSON` first on the group and the answer is always `401`:
+
+```go title="routes/api.go"
+r.Group("/api", func(g *router.Group) {
+	g.Use(auth.ProblemJSON, auth.Required(webGuard))
+	g.Get("/snapshot", controllers.Snapshot)
+})
+```
+
+Test both clients, not only the one that asks for JSON. `vukemtest`'s `GetJSON(...)` sends `Accept: application/json`, so it gets the `401` even without `ProblemJSON`; a plain `Get(...)` shows what a script gets:
+
+```go
+app.Client(t).Get("/api/snapshot").AssertUnauthorized()
+```
+
+
 Every guard that authenticates a request also records `auth.Principal(ctx)` (guard name, user id, ok), for code that keys data by caller without knowing the guard, such as `api.Idempotency`. Combine the two values length-prefixed or hashed, since either may contain any character.
 
 ## A handle, and an account that is optional
