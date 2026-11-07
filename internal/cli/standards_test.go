@@ -24,9 +24,12 @@ var flaggedStandards = map[string][]string{
 		".githooks/commit-msg", ".githooks/pre-commit", ".betterleaks.toml",
 	},
 	"--license": {"LICENSE", "CONTRIBUTING.md", "CODE_OF_CONDUCT.md", "SECURITY.md"},
-	"--ci":      {".github/workflows/ci.yml", ".github/dependabot.yml", ".betterleaks.toml"},
-	"--deploy":  {".railway/railway.ts"},
-	"--docker":  {"compose.yaml"},
+	"--ci": {
+		".github/workflows/ci.yml", ".github/workflows/release.yml", "scripts/release-notes.go",
+		".github/dependabot.yml", ".betterleaks.toml",
+	},
+	"--deploy": {".railway/railway.ts"},
+	"--docker": {"compose.yaml"},
 }
 
 // TestCIAuditsTheLockfile checks the generated workflow audits the committed

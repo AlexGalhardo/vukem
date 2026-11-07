@@ -133,6 +133,8 @@ func standardsSet(o standardsOpts) []standardsFile {
 	if o.ci {
 		files = append(files,
 			standardsFile{src: "workflows/ci.yml.tmpl", dst: ".github/workflows/ci.yml"},
+			standardsFile{src: "workflows/release.yml.tmpl", dst: ".github/workflows/release.yml"},
+			standardsFile{src: "release-notes.go", dst: "scripts/release-notes.go"},
 			standardsFile{src: "dependabot.yml.tmpl", dst: ".github/dependabot.yml"},
 		)
 	}

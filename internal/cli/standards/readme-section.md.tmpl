@@ -21,6 +21,8 @@
 {{- end}}
 {{- if .CI}}
 | `.github/workflows/ci.yml` | format, vet, test, `govulncheck`, secret scanning and the image build on every push |
+| `.github/workflows/release.yml` | GitHub release notes from the matching `CHANGELOG.md` section. A tag with no section fails. GoReleaser runs only when `.config/goreleaser.yaml` or `.goreleaser.yaml` exists |
+| `scripts/release-notes.go` | writes that section to `release-notes.md` and exits 1 when it is missing or empty |
 | `.github/dependabot.yml` | weekly dependency and action updates, with Conventional Commits titles |
 {{- end}}
 {{- if .Docker}}
