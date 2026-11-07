@@ -39,7 +39,7 @@ type jsPM struct {
 // matches bunImage so the image and the developer's machine agree.
 const (
 	npmVersion  = "12.2.0"
-	bunVersion  = "1.4.3"
+	bunVersion  = "1.4.4"
 	pnpmVersion = "12.14.0"
 	yarnVersion = "1.22.22"
 )
@@ -138,6 +138,12 @@ func setPackageManager(env *Env, pm jsPM) error {
 	var m manifest
 	if err := json.Unmarshal(src, &m); err == nil && m.PackageManager != "" {
 		return nil
+	}
+
+	if pm.name == "bun" {
+		// bun check is the typecheck that ships in the pinned Bun image.
+		// vue-tsc and svelte-check stay; only the plain tsc script moves.
+		src = bytes.ReplaceAll(src, []byte(`"typecheck": "tsc --noEmit"`), []byte(`"typecheck": "bun check"`))
 	}
 
 	const anchor = "{\n"

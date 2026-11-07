@@ -144,6 +144,47 @@ func TestPackageManagerSpecsArePinned(t *testing.T) {
 	}
 }
 
+func TestBunTypecheckUsesBunCheck(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct {
+		pm       string
+		script   string
+		wantKeep bool
+	}{
+		{pm: "bun", script: `"typecheck": "tsc --noEmit"`, wantKeep: false},
+		{pm: "bun", script: `"typecheck": "vue-tsc --noEmit"`, wantKeep: true},
+		{pm: "npm", script: `"typecheck": "tsc --noEmit"`, wantKeep: true},
+	} {
+		t.Run(tt.pm+" "+tt.script, func(t *testing.T) {
+			t.Parallel()
+
+			dir := t.TempDir()
+			body := "{\n  \"scripts\": {\n    " + tt.script + "\n  }\n}\n"
+			if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			if err := setPackageManager(&Env{Dir: dir}, pmByName[tt.pm]); err != nil {
+				t.Fatal(err)
+			}
+
+			got := read(t, dir, "package.json")
+			if strings.Contains(got, `"typecheck": "bun check"`) != !tt.wantKeep {
+				t.Fatalf("package.json = %s", got)
+			}
+
+			if tt.wantKeep && !strings.Contains(got, tt.script) {
+				t.Fatalf("package.json = %s", got)
+			}
+
+			if !strings.Contains(got, `"packageManager": "`+pmByName[tt.pm].spec()+`"`) {
+				t.Fatalf("package.json = %s", got)
+			}
+		})
+	}
+}
+
 // A generated project records its package manager, so every later command
 // reads the project's choice instead of guessing from a lockfile that
 // --no-install has not written yet.

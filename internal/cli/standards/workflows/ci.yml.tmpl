@@ -70,7 +70,7 @@ jobs:
           if [ -f package-lock.json ]; then
             npm audit --package-lock-only --audit-level=high
           elif [ -f bun.lock ] || [ -f bun.lockb ]; then
-            curl -fsSL https://bun.sh/install | bash -s "bun-v1.4.3"
+            curl -fsSL https://bun.sh/install | bash -s "bun-v1.4.4"
             export PATH="$HOME/.bun/bin:$PATH"
             bun install --frozen-lockfile
             bun audit --audit-level=high

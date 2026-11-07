@@ -75,7 +75,7 @@ func TestWriteDocker(t *testing.T) {
 			pm:   "bun",
 			want: []string{
 				// bun.lock* also matches the older binary bun.lockb.
-				"FROM oven/bun:1.4.3-alpine AS assets", "COPY package.json bun.lock* ./",
+				"FROM oven/bun:1.4.4-alpine AS assets", "COPY package.json bun.lock* ./",
 				"&& bun install --frozen-lockfile", "RUN bun run build",
 			},
 		},
@@ -180,7 +180,7 @@ func TestSecurity_A02_DockerIgnoresSecrets(t *testing.T) {
 // The assets stage installs the tracked lockfile, so the lockfile is a
 // required build input. Verified against Docker 29.8.1: without one,
 // "npm ci" fails with EUSAGE and "pnpm install --frozen-lockfile" with
-// ERR_PNPM_NO_LOCKFILE, while bun 1.4.3 and yarn 1.22.22 install anyway and
+// ERR_PNPM_NO_LOCKFILE, while bun 1.4.4 and yarn 1.22.22 install anyway and
 // resolve fresh versions without a word. The silent half is the dangerous
 // one, so the Dockerfile states the requirement itself and every package
 // manager fails the same way, naming the command that fixes it.
