@@ -11,6 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **site:** Date doc pages by the author date, so a rebase merge no longer turns the `Last updated` check red on `main`; a lefthook pre-push job refreshes `site/content/last-updated.json` before the push reaches GitHub.
 
+## [0.39.1] - 2026-11-07
+
+### Fixed
+
+- **site:** Date doc pages by author date so rebase merges keep them valid ([25891fd](https://github.com/AlexGalhardo/vukem/commit/25891fd5b90a8940143267216424a24f5a6a0b55))
+- **mail:** Send Resend addresses as email or Name <email>, never <email> ([8281961](https://github.com/AlexGalhardo/vukem/commit/828196190edebde682870dc1fbbe603a6d6823fe))
+
 ## [0.39.0] - 2026-11-07
 
 ### Added
@@ -1286,7 +1293,8 @@ Project foundation. No framework code yet; see [PLAN.md](PLAN.md) for the roadma
 - README, MIT license, CONTRIBUTING, SECURITY and CODE_OF_CONDUCT.
 - Agent configuration: `AGENTS.md`, `CLAUDE.md`, path-scoped `.claude/rules/`, Go skills and project settings.
 
-[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.39.0...HEAD
+[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.39.1...HEAD
+[0.39.1]: https://github.com/AlexGalhardo/vukem/compare/v0.39.0...v0.39.1
 [0.39.0]: https://github.com/AlexGalhardo/vukem/compare/v0.38.0...v0.39.0
 [0.38.0]: https://github.com/AlexGalhardo/vukem/compare/v0.37.0...v0.38.0
 [0.37.0]: https://github.com/AlexGalhardo/vukem/compare/v0.36.0...v0.37.0
