@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **social:** Add `Config.Validate(production)` and `vukem.Config.Origin` / `CallbackURL`, which fail at boot when a production callback is not an https URL on a public host.
 - **middleware:** Add `middleware.CacheControl` and `MiddlewareOptions.CacheControl` to give dynamic responses a default `Cache-Control` (handlers that set their own keep it).
 - **orm:** Add `orm.Incr` as a `Set` value for atomic column arithmetic in `Query.Update`, and document the conditional-update claim pattern.
 - **mail:** Add `ParseResendEvent` (typed Resend webhook events) and `Mailer.SetSuppression` (drop suppressed recipients, fail closed) for bounce and complaint handling.

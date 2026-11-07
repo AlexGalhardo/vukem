@@ -1231,3 +1231,51 @@ func TestWithEnvDefaultsRankBelowEnvFile(t *testing.T) {
 		t.Error("WithEnvDefaults(APP_ENV) = nil error, want an error")
 	}
 }
+
+func TestConfigCallbackURL(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		url, env, path string
+		want           string
+		ok             bool
+	}{
+		{
+			"https://app.example.com",
+			"production",
+			"/auth/google/callback",
+			"https://app.example.com/auth/google/callback",
+			true,
+		},
+		{"https://app.example.com/", "production", "/cb", "https://app.example.com/cb", true},
+		{"http://localhost:3000", "development", "/cb", "http://localhost:3000/cb", true},
+		{"http://localhost:3000", "production", "/cb", "", false},
+		{"http://app.example.com", "production", "/cb", "", false},
+		{"https://app.example.com/base", "production", "/cb", "", false},
+		{"https://127.0.0.1", "production", "/cb", "", false},
+		{"https://app.example.com", "production", "//evil.com", "", false},
+		{"https://app.example.com", "production", "cb", "", false},
+	}
+
+	for _, tt := range tests {
+		c := &Config{URL: tt.url, Env: config.Env(tt.env)}
+
+		got, err := c.CallbackURL(tt.path)
+		if (err == nil) != tt.ok || got != tt.want {
+			t.Errorf(
+				"CallbackURL(%q) with %s %s = %q, %v, want %q ok=%v",
+				tt.path,
+				tt.env,
+				tt.url,
+				got,
+				err,
+				tt.want,
+				tt.ok,
+			)
+		}
+	}
+
+	if got := (&Config{URL: "https://app.example.com/base/"}).Origin(); got != "https://app.example.com" {
+		t.Errorf("Origin() = %q", got)
+	}
+}

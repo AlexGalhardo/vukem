@@ -173,3 +173,32 @@ func TestAppleNeedsHTTPSAndAKey(t *testing.T) {
 		t.Error("client secret cache behaves unexpectedly")
 	}
 }
+
+func TestConfigValidate(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		url  string
+		prod bool
+		ok   bool
+	}{
+		{"https://app.example.com/auth/google/callback", true, true},
+		{"http://localhost:3000/auth/google/callback", false, true},
+		{"http://localhost:3000/auth/google/callback", true, false},
+		{"http://app.example.com/auth/google/callback", true, false},
+		{"https://127.0.0.1/cb", true, false},
+		{"https://[::1]/cb", true, false},
+		{"https://dev.localhost/cb", true, false},
+		{"/auth/google/callback", false, false},
+		{"", false, false},
+		{"https://user:pw@app.example.com/cb", true, false},
+		{"https://app.example.com/cb#frag", true, false},
+	}
+
+	for _, tt := range tests {
+		err := Config{RedirectURL: tt.url}.Validate(tt.prod)
+		if (err == nil) != tt.ok {
+			t.Errorf("Validate(%q, production=%v) = %v, want ok=%v", tt.url, tt.prod, err, tt.ok)
+		}
+	}
+}

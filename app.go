@@ -11,6 +11,8 @@ import (
 	"io/fs"
 	"log/slog"
 	"net"
+	"net/netip"
+	"net/url"
 	"os"
 	"slices"
 	"strconv"
@@ -162,6 +164,43 @@ type Config struct {
 	// IndexNow configures INDEXNOW_KEY (served at /{key}.txt) for
 	// indexnow.New; off when unset.
 	IndexNow indexnow.Config
+}
+
+// Origin returns APP_URL without a trailing slash or any path, such as
+// "https://app.example.com", for building absolute URLs. It returns APP_URL
+// trimmed of "/" when it does not parse as a URL.
+func (c *Config) Origin() string {
+	u, err := url.Parse(c.URL)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return strings.TrimSuffix(c.URL, "/")
+	}
+
+	return u.Scheme + "://" + u.Host
+}
+
+// CallbackURL returns Origin() plus path ("/auth/google/callback"), for
+// provider redirect URLs. In production it fails unless APP_URL is an https
+// origin without a path on a public host, so a deploy left on
+// http://localhost:3000 stops at boot instead of at the provider.
+func (c *Config) CallbackURL(path string) (string, error) {
+	if !strings.HasPrefix(path, "/") || strings.HasPrefix(path, "//") {
+		return "", fmt.Errorf("vukem: callback path %q must start with a single /", path)
+	}
+
+	if c.IsProduction() {
+		u, err := url.Parse(c.URL)
+		if err != nil || u.Scheme != "https" || u.Host == "" || strings.Trim(u.Path, "/") != "" ||
+			u.RawQuery != "" || u.User != nil {
+			return "", fmt.Errorf("vukem: APP_URL %q must be a plain https origin in production", c.URL)
+		}
+
+		if ip, _ := netip.ParseAddr(u.Hostname()); u.Hostname() == "localhost" ||
+			strings.HasSuffix(u.Hostname(), ".localhost") || ip.IsLoopback() || ip.IsUnspecified() {
+			return "", fmt.Errorf("vukem: APP_URL %q points at localhost in production", c.URL)
+		}
+	}
+
+	return c.Origin() + path, nil
 }
 
 // IsProduction reports whether APP_ENV is production.

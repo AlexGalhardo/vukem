@@ -159,11 +159,21 @@ if err != nil {
 	return err
 }
 
-gh := social.GitHub(social.Config{
+callback, err := app.Config.CallbackURL("/auth/github/callback")
+if err != nil {
+	return err // production APP_URL is not a public https origin
+}
+
+ghCfg := social.Config{
 	ClientID:     app.Source.Get("SOCIAL_GITHUB_CLIENT_ID"),
 	ClientSecret: app.Source.Get("SOCIAL_GITHUB_CLIENT_SECRET"),
-	RedirectURL:  "https://blog.example.com/auth/github/callback",
-})
+	RedirectURL:  callback,
+}
+if err := ghCfg.Validate(app.Config.IsProduction()); err != nil {
+	return err
+}
+
+gh := social.GitHub(ghCfg)
 
 okta := social.OIDC(
 	"okta",
@@ -295,6 +305,7 @@ Apple sends the user's name only on the first sign-in. The scaffold reads `SOCIA
 | Account takeover through an unverified provider email | link by email only when the provider verified it; otherwise `409` |
 | Text injected through the callback's `error` parameter | logged sanitized, answered with a fixed message |
 | A callback URL pointing to an attacker's site | `RedirectURL` comes from configuration, never from the request |
+| A deploy whose `APP_URL` is still `http://localhost:3000` | `app.Config.CallbackURL` and `social.Config.Validate(production)` fail at boot in production, not at the provider with `redirect_uri_mismatch` |
 
 <Callout type="warning" title="Use a shared state store in production">
 The memory cache store evicts entries past `CACHE_MAX_ENTRIES`, and an evicted state could be replayed until its cookie expires. Use `CACHE_STORE=database` or Redis whenever the app runs in production or on more than one replica.

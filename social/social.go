@@ -36,6 +36,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strconv"
 	"strings"
@@ -55,6 +56,40 @@ type Config struct {
 	RedirectURL  string
 	// Scopes replace the provider defaults when set.
 	Scopes []string
+}
+
+// Validate checks RedirectURL the way the providers need it: an absolute
+// URL without credentials or a fragment, and in production https on a
+// public host, because a callback on http or localhost fails only at the
+// provider with redirect_uri_mismatch. Call it at boot for each provider
+// config, with app.Config.IsProduction().
+func (c Config) Validate(production bool) error {
+	u, err := url.Parse(c.RedirectURL)
+	if err != nil || u.Scheme == "" || u.Host == "" || u.User != nil || u.Fragment != "" {
+		return fmt.Errorf(
+			"social: RedirectURL %q must be an absolute URL without credentials or fragment",
+			c.RedirectURL,
+		)
+	}
+
+	if !production {
+		return nil
+	}
+
+	if u.Scheme != "https" {
+		return fmt.Errorf("social: RedirectURL %q must use https in production", c.RedirectURL)
+	}
+
+	if h := u.Hostname(); h == "localhost" || strings.HasSuffix(h, ".localhost") || isLoopback(h) {
+		return fmt.Errorf("social: RedirectURL %q points at localhost in production (check APP_URL)", c.RedirectURL)
+	}
+
+	return nil
+}
+
+func isLoopback(host string) bool {
+	ip, err := netip.ParseAddr(host)
+	return err == nil && (ip.IsLoopback() || ip.IsUnspecified())
 }
 
 // Token is the provider's token response.
