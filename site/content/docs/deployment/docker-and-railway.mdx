@@ -515,6 +515,15 @@ Railway's own cron schedules run at most every 5 minutes ([cron jobs](https://do
 
 A dedicated worker service uses `/app/app queue:work` the same way. `QUEUE_IN_SERVE=false` on the web service is optional then: extra workers are safe, because each job is reserved by one worker.
 
+### Long jobs and release steps on a Dockerfile-only host
+
+Two settings decide whether a slow job blocks a request and whether a deploy migrates before it takes traffic. Neither is on by default.
+
+- **`QUEUE_CONNECTION=database`.** The default is `sync`: `Dispatch` runs the job inside the request that dispatched it, so a render or mail job that takes minutes holds the request until it ends or times out. With `database` the request only inserts a row, and the worker in the same process (`QUEUE_IN_SERVE=true`) or in a worker service runs it. The `jobs` and `failed_jobs` tables must exist first ([migrations](/docs/database/migrations)). Set the variable on the web service **and** on any worker service, because both read the same queue.
+- **A pre-deploy migrate.** Run `/app/app migrate` before the new version serves traffic, as the platform's release step: Railway's **Pre-deploy Command** or `preDeploy` in `.railway/railway.ts` (see [Config as Code](#config-as-code)), `docker compose run --rm app migrate` or your CI before `docker compose up`. The path is the binary, because a start or pre-deploy command replaces the entrypoint ([why](#start-commands-replace-the-entrypoint)). A failed migration then stops the deploy, and the old version keeps running. Do not rely on `serve` to migrate: it never does.
+
+For a long job, also set the web service's request timeout above the longest job you still run with `sync`, or move that job to the queue.
+
 ### Volumes
 
 For SQLite or local uploads, attach a volume at `/app/storage`. The image user is uid `10001` (`USER app` in the Dockerfile). That line is the image default. It is not proof of what the running deploy uses. Railway can replace the user with `RAILWAY_RUN_UID` ([volumes](https://docs.railway.com/volumes/reference)).
