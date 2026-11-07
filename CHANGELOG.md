@@ -7,6 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.38.0] - 2026-11-07
+
+### Added
+
+- **queue:** Add Unique dispatch and Jitter backoff ([00a28ae](https://github.com/AlexGalhardo/vukem/commit/00a28ae03383194d521212ee3877aeef8e036285))
+- **notify:** Add a Telegram channel and document StripPathPrefix order ([90ec3d4](https://github.com/AlexGalhardo/vukem/commit/90ec3d4780ea2a04ecad6d677558324b677eb603))
+- **admin:** Export Audit and ChangeFlag for apps that bring their own screens ([627b7ad](https://github.com/AlexGalhardo/vukem/commit/627b7ade90227752dcc47b62aed755e85cff78c5))
+- **vukemtest:** Show the logged errors when a 5xx assertion fails ([c63ad41](https://github.com/AlexGalhardo/vukem/commit/c63ad415cac4891f35ecb1bc0f4488553136c944))
+- **cli:** Add hash:make to print a password hash from env or stdin ([64e1c5e](https://github.com/AlexGalhardo/vukem/commit/64e1c5ed44f12df06a012ac8d25abdd4fbb100ba))
+- **cli:** Add db:run, a transactional SQL script runner with a dry run ([d4c6094](https://github.com/AlexGalhardo/vukem/commit/d4c60940e2e2d6a7b043a2ac516f0fe37a84c373))
+- **admin:** Answer JSON on resource list and detail routes ([b183f12](https://github.com/AlexGalhardo/vukem/commit/b183f12b985bf91dc5e974f2224c59aba7398146))
+- **admin:** Answer JSON on the dashboard route ([9983cf3](https://github.com/AlexGalhardo/vukem/commit/9983cf34a9b012c8ac611cdcfc52cb901308f386))
+- **cli:** Add install:admin -stack inertia with React admin pages ([f4dbf83](https://github.com/AlexGalhardo/vukem/commit/f4dbf83bf6d44d021449243158aaf5e2e80f277e))
+- **queue:** Refuse Unique on drivers that cannot honour it ([fe996c2](https://github.com/AlexGalhardo/vukem/commit/fe996c24227f94ca803052427ee3215a233b516d))
+- **admin:** Answer JSON on the audit log and flags pages ([6ceaf81](https://github.com/AlexGalhardo/vukem/commit/6ceaf810d30328501a16479effdb462719aafc55))
+- **site:** Replace the Next.js docs site with Astro 7.4 ([638c635](https://github.com/AlexGalhardo/vukem/commit/638c635ce55db400b3e93ff89c9ff4bdcbba9d64))
+- **cli:** Add key:generate --if-missing ([eefd086](https://github.com/AlexGalhardo/vukem/commit/eefd08672b14c29451c3e04d3b332821cf20a654))
+- **cli:** Report project checks from vukem doctor ([939da18](https://github.com/AlexGalhardo/vukem/commit/939da185d7d0ecf4df5e65cef08ba2b28be254ff))
+- **cli:** Let new replace only the assets image ([7f9be45](https://github.com/AlexGalhardo/vukem/commit/7f9be454dff3c4693035ad48f17a17395e44be1c))
+- **database:** Add db:backup for a SQLite snapshot ([fe19ed9](https://github.com/AlexGalhardo/vukem/commit/fe19ed960412c01dc24d17bc074f159446a89896))
+- **cli:** Audit the starter lockfile in CI ([c47d231](https://github.com/AlexGalhardo/vukem/commit/c47d2311ac5f7d3d12201d6035e1df9c76cb176f))
+- **cli:** Point doctor at the starter upgrade page ([30cfa78](https://github.com/AlexGalhardo/vukem/commit/30cfa78c00be401c2aba426f274817add5b650b6))
+- **cli:** Pin the bun starter to 1.4.4 ([5a156b3](https://github.com/AlexGalhardo/vukem/commit/5a156b3626328c3588d7049fff983045711f398f))
+- **cli:** Add install:auth --social-only ([80906de](https://github.com/AlexGalhardo/vukem/commit/80906de4f1898ebf66aed7a1dfcafad565cba25d))
+- **cli:** Publish starter release notes from the changelog ([c5b8c5a](https://github.com/AlexGalhardo/vukem/commit/c5b8c5a9a78987e68df3566bfa5f75d9e0122c89))
+- **cli:** Publish the starter image to GHCR ([27dea70](https://github.com/AlexGalhardo/vukem/commit/27dea70e92a35d99e51947e53001b8f695c4f34e))
+
+### Changed
+
+- **vukem:** Merge root option, command and provider sources ([9b0b2b5](https://github.com/AlexGalhardo/vukem/commit/9b0b2b5ed89237a585c5dab8aea252760df3ae99))
+
+### Fixed
+
+- **queue:** Unique jobs no longer clash with failed rows or Retry ([44acf4e](https://github.com/AlexGalhardo/vukem/commit/44acf4e1e527c2fd39d775d934c016d1b22629b0))
+- **queue:** Keep the Retry id-clash rollback for non-unique ids ([36fd37a](https://github.com/AlexGalhardo/vukem/commit/36fd37a57f723aba7ba9048b84ebea029bfbee8c))
+- **cli:** Validate and encode the slug in the React admin scaffold ([c80bf2f](https://github.com/AlexGalhardo/vukem/commit/c80bf2fc51a0adbff102cb84b830391f9638bc7d))
+- **cli:** Db:run refuses transaction control and MySQL DDL, docs state the limits ([3455adf](https://github.com/AlexGalhardo/vukem/commit/3455adf88c67d6436e1b75dcf7e8fdbe6ef6b547))
+- **queue:** MySQL unique insert keeps real errors, Fake records a unique job once ([baf58eb](https://github.com/AlexGalhardo/vukem/commit/baf58ebac2ad6191f43d814b96efec2045fc46a0))
+- **cli:** React admin scaffold links, generated test per stack, lighter nav ([fce8461](https://github.com/AlexGalhardo/vukem/commit/fce8461100287cfdf721f66aa1d769404d9b9912))
+- **cli:** Write APP_KEY files atomically with mode 0600 ([a9aaa4d](https://github.com/AlexGalhardo/vukem/commit/a9aaa4d5ffadea442384bdbfd9d6d8240eb8b89c))
+- **cli:** Keep markdownlint off local artifacts ([df7953a](https://github.com/AlexGalhardo/vukem/commit/df7953a19f5362be093a07a834d5a4ca18e6f64c))
+- **cli:** Print secret findings without the value ([8eb7468](https://github.com/AlexGalhardo/vukem/commit/8eb7468345a2c58fb14dbe42f2f5b602c37e9e6e))
+- **site:** Read last-updated.json from disk ([046729c](https://github.com/AlexGalhardo/vukem/commit/046729c4fcaa9acd5b365f88225fd5cf82648187))
+- **cli:** Fail social boot when a provider has no secret ([019a3fb](https://github.com/AlexGalhardo/vukem/commit/019a3fbbbbff6621183a5a92b164a8461d1b3f8a))
+- **cli:** Satisfy golangci-lint on the new commands ([aa2764c](https://github.com/AlexGalhardo/vukem/commit/aa2764c2a10ccbbb03457e5795f4485e60e834ca))
+- **cli:** Boot route:list after social credentials exist ([1606aa3](https://github.com/AlexGalhardo/vukem/commit/1606aa35baa3702528b6a46656f7f5ae7791baf6))
+
+### Security
+
+- **cli:** Ask for best-practice configs and open source files in vukem new ([b3c21c2](https://github.com/AlexGalhardo/vukem/commit/b3c21c2c6b34290ebe7ec07974430ca7af5ec16d))
+
 ## [0.37.0] - 2026-11-02
 
 ### Added
@@ -1199,7 +1250,8 @@ Project foundation. No framework code yet; see [PLAN.md](PLAN.md) for the roadma
 - README, MIT license, CONTRIBUTING, SECURITY and CODE_OF_CONDUCT.
 - Agent configuration: `AGENTS.md`, `CLAUDE.md`, path-scoped `.claude/rules/`, Go skills and project settings.
 
-[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.37.0...HEAD
+[Unreleased]: https://github.com/AlexGalhardo/vukem/compare/v0.38.0...HEAD
+[0.38.0]: https://github.com/AlexGalhardo/vukem/compare/v0.37.0...v0.38.0
 [0.37.0]: https://github.com/AlexGalhardo/vukem/compare/v0.36.0...v0.37.0
 [0.36.0]: https://github.com/AlexGalhardo/vukem/compare/v0.35.0...v0.36.0
 [0.35.0]: https://github.com/AlexGalhardo/vukem/compare/v0.34.0...v0.35.0
