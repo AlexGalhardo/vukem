@@ -399,3 +399,25 @@ func TestTxAfterCommitOutsideDBTxPanics(t *testing.T) {
 
 	new(Tx).AfterCommit(func(context.Context) {})
 }
+
+func TestTxLockKey(t *testing.T) {
+	t.Parallel()
+
+	db := openTemp(t)
+
+	err := db.Tx(t.Context(), func(tx *Tx) error { return tx.LockKey(t.Context(), "quota:user:42") })
+	if err != nil {
+		t.Errorf("LockKey on SQLite = %v, want nil", err)
+	}
+
+	for _, key := range []string{"", strings.Repeat("k", 256)} {
+		err := db.Tx(t.Context(), func(tx *Tx) error { return tx.LockKey(t.Context(), key) })
+		if err == nil {
+			t.Errorf("LockKey(%d bytes) = nil, want an error", len(key))
+		}
+	}
+
+	if err := (&Tx{dialect: MySQL}).LockKey(t.Context(), "k"); !errors.Is(err, ErrLockKeyUnsupported) {
+		t.Errorf("LockKey on MySQL = %v, want ErrLockKeyUnsupported", err)
+	}
+}

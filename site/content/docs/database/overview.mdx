@@ -454,6 +454,40 @@ func Publish(ctx context.Context, ex database.Executor, p *models.Post) error {
 }
 ```
 
+### Limits that must lock first: `LockKey`
+
+A transaction does not make "count, then insert" safe by itself. Two requests can both count `0` against a limit of `1` and both insert, because `Count` on an empty set locks nothing. On SQLite this cannot happen (`BEGIN IMMEDIATE` makes the whole transaction the only writer), but on PostgreSQL READ COMMITTED lets both through. Take a lock on the thing you limit before you count:
+
+```go title="quota/quota.go"
+err := db.Tx(ctx, func(tx *database.Tx) error {
+	if err := tx.LockKey(ctx, "quota:user:"+userID); err != nil {
+		return err
+	}
+
+	n, err := orm.QueryOf[models.Video](tx).
+		Where("user_id", userID).
+		Where("created_at", ">=", time.Now().Add(-24*time.Hour)).
+		Count(ctx)
+	if err != nil {
+		return err
+	}
+
+	if n >= 3 {
+		return errs.New(http.StatusTooManyRequests, "Daily limit reached.")
+	}
+
+	return orm.Create(ctx, tx, &models.Video{UserID: userID})
+})
+```
+
+| Database | What `LockKey` does |
+| --- | --- |
+| PostgreSQL | `pg_advisory_xact_lock` on a hash of the key: the second transaction with the same key waits until the first commits or rolls back |
+| SQLite | nothing; write transactions are already exclusive |
+| MySQL | returns `database.ErrLockKeyUnsupported`: lock a row instead, with `SELECT ... FOR UPDATE` on a per-user row ([row locks](/docs/database/orm#row-locks)) |
+
+The key is any text of 1 to 255 bytes. Always take the same keys in the same order, as with any lock, to avoid deadlocks. Time windows compare in UTC ([Times and time zones](/docs/database/orm#times-and-time-zones)).
+
 ### Work after the commit: `AfterCommit`
 
 Some work must only happen when the data is really saved: e-mailing the post's author about a new comment, or dispatching a job. `tx.AfterCommit(fn)` registers it:
