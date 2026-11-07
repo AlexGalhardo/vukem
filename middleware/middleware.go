@@ -123,6 +123,63 @@ func NoIndex() Middleware {
 	}
 }
 
+// CacheControl sets the Cache-Control header on responses that do not set
+// it themselves, so a handler (or ETag, or a file server) that picks its own
+// policy keeps it. Use it for dynamic routes of an app whose pages depend on
+// the user: CacheControl("private, no-store") stops a shared proxy or the
+// browser from storing them. It returns an error for an empty value or one
+// with a control character (a header injection).
+func CacheControl(value string) (Middleware, error) {
+	if strings.TrimSpace(value) == "" ||
+		strings.ContainsFunc(value, func(r rune) bool { return r < ' ' || r == 0x7f }) {
+		return nil, errors.New("middleware: CacheControl needs a non-empty value without control characters")
+	}
+
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			next.ServeHTTP(&cacheControlWriter{ResponseWriter: w, value: value}, r)
+		})
+	}, nil
+}
+
+// cacheControlWriter adds the default when the response starts without one.
+type cacheControlWriter struct {
+	http.ResponseWriter
+
+	value string
+	sent  bool
+}
+
+func (c *cacheControlWriter) apply() {
+	if c.sent {
+		return
+	}
+
+	c.sent = true
+	if c.Header().Get("Cache-Control") == "" {
+		c.Header().Set("Cache-Control", c.value)
+	}
+}
+
+func (c *cacheControlWriter) WriteHeader(code int) {
+	c.apply()
+	c.ResponseWriter.WriteHeader(code)
+}
+
+func (c *cacheControlWriter) Write(b []byte) (int, error) {
+	c.apply()
+	return c.ResponseWriter.Write(b)
+}
+
+// Flush keeps streaming responses (SSE) working through the wrapper.
+func (c *cacheControlWriter) Flush() {
+	c.apply()
+	_ = http.NewResponseController(c.ResponseWriter).Flush()
+}
+
+// Unwrap lets http.ResponseController reach the underlying writer.
+func (c *cacheControlWriter) Unwrap() http.ResponseWriter { return c.ResponseWriter }
+
 // LoggerOptions configures LoggerWith.
 type LoggerOptions struct {
 	// TruncateIP logs the /24 network of IPv4 addresses and the /48 of

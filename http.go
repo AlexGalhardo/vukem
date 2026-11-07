@@ -521,6 +521,12 @@ type MiddlewareOptions struct {
 	// exempt from sessions and the global CSRF check, which its origin
 	// allowlist replaces, and is logged at boot like a CSRF bypass.
 	CrossOrigin []CrossOriginRoute
+	// CacheControl is the default Cache-Control of dynamic route responses
+	// that set none themselves, e.g. "private, no-store" for an app whose
+	// pages depend on the signed-in user. Static files and the routes the
+	// handlers answer with their own header are not affected. Empty adds
+	// no header.
+	CacheControl string
 	// CSRFTokenFallback also requires the session's CSRF token (the
 	// csrfField template function, or the X-CSRF-Token header) on unsafe
 	// requests that carry the session cookie but neither Sec-Fetch-Site nor
@@ -547,6 +553,15 @@ func DefaultMiddlewareWith(app *App, r *router.Router, opts MiddlewareOptions) e
 
 	if err := validCrossOrigin(opts.CrossOrigin); err != nil {
 		return err
+	}
+
+	var cacheMW middleware.Middleware
+
+	if opts.CacheControl != "" {
+		var err error
+		if cacheMW, err = middleware.CacheControl(opts.CacheControl); err != nil {
+			return err
+		}
 	}
 
 	crossMW, err := crossOriginMiddleware(opts.CrossOrigin)
@@ -585,6 +600,9 @@ func DefaultMiddlewareWith(app *App, r *router.Router, opts MiddlewareOptions) e
 
 	csrfCfg := csrf.Config{TrustedOrigins: origins, BypassPatterns: csrfBypass}
 	routerMW := []router.Middleware{middleware.BodyLimit(web.DefaultMaxBody)}
+	if cacheMW != nil {
+		routerMW = append(routerMW, cacheMW)
+	}
 
 	if !opts.Stateless {
 		sessions, err := app.Sessions()
