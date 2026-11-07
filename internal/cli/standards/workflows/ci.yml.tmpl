@@ -104,8 +104,14 @@ jobs:
           sudo install betterleaks /usr/local/bin/betterleaks
       # The whole history, with the rules in .betterleaks.toml. Validation
       # against provider APIs stays off (it would need --validation).
+      # The report step prints the rule, file, line and commit. It does not
+      # print the matched value. A reviewed false positive goes in
+      # .betterleaksignore as commit:file:rule:line.
       - name: betterleaks
-        run: betterleaks git . --no-banner --redact
+        run: betterleaks git . --no-banner --redact --report-format json --report-path betterleaks.json
+      - name: print findings
+        if: failure()
+        run: jq -r '.[] | "\(.RuleID) \(.File):\(.StartLine) \(.Commit)"' betterleaks.json
 
   image:
     name: Build the production image
