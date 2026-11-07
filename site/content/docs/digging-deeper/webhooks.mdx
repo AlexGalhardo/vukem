@@ -174,6 +174,17 @@ A correct delivery gets `204 No Content`. The same delivery again gets `200` wit
 | `webhook-timestamp` | `1792284303` | when it was sent, in Unix seconds |
 | `webhook-signature` | `v1,jlZjAWp5sHA/Eq4V…` | `v1,` + the base64 HMAC-SHA256 of `<id>.<timestamp>.<body>` |
 
+Svix, and Resend with it, send the same three values as `svix-id`, `svix-timestamp` and `svix-signature`. `webhook.Standard` and `webhook.StandardID` read the `webhook-*` header and fall back to the `svix-*` one, so the same code verifies both. For Resend, use the signing secret of the endpoint (`whsec_...`) and nothing else:
+
+```go title="routes/web.go"
+verify, err := webhook.Standard(app.Source.Get("RESEND_WEBHOOK_SECRET"), webhook.StandardOptions{})
+if err != nil {
+	return err
+}
+
+r.Post("/webhooks/resend", controllers.ResendWebhook).Use(verify)
+```
+
 `webhook.Standard(secret, opts)` returns the middleware, or an error at boot. It then, for each request:
 
 1. Reads at most `MaxBody` bytes (1 MiB). A bigger body answers 413.
@@ -227,7 +238,7 @@ Two building blocks help with custom schemes:
 
 ### Handle each event once
 
-`webhook.Dedupe(store, id, opts)` remembers which event ids it has seen in a [cache store](/docs/digging-deeper/cache). `id` reads the event id from the request: `webhook.StandardID` reads `webhook-id`; for other providers write your own, for example `func(r *http.Request) string { return r.Header.Get("X-GitHub-Delivery") }`.
+`webhook.Dedupe(store, id, opts)` remembers which event ids it has seen in a [cache store](/docs/digging-deeper/cache). `id` reads the event id from the request: `webhook.StandardID` reads `webhook-id` (or `svix-id`); for other providers write your own, for example `func(r *http.Request) string { return r.Header.Get("X-GitHub-Delivery") }`.
 
 | Situation | Answer | Handler runs? |
 | --- | --- | --- |

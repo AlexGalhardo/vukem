@@ -33,7 +33,9 @@ type StandardOptions struct {
 // Standard verifies the Standard Webhooks scheme (https://www.standardwebhooks.com,
 // used by Svix, Resend, Clerk and others): webhook-signature carries one or
 // more "v1,<base64 HMAC-SHA256>" over "<webhook-id>.<webhook-timestamp>.<body>",
-// and webhook-timestamp must be within Tolerance. secret is the
+// and webhook-timestamp must be within Tolerance. The svix-id,
+// svix-timestamp and svix-signature names that Svix and Resend send are
+// accepted in place of the webhook-* ones. secret is the
 // provider's "whsec_<base64>" value (the prefix is optional). A malformed
 // secret is an error at boot rather than a webhook that never verifies.
 func Standard(secret string, o StandardOptions) (func(http.Handler) http.Handler, error) {
@@ -76,7 +78,7 @@ func Standard(secret string, o StandardOptions) (func(http.Handler) http.Handler
 }
 
 func verifyStandard(key []byte, h http.Header, body []byte, now time.Time, tolerance time.Duration) bool {
-	id, rawTS := h.Get("webhook-id"), h.Get("webhook-timestamp")
+	id, rawTS := stdHeader(h, "id"), stdHeader(h, "timestamp")
 	if id == "" {
 		return false
 	}
@@ -96,7 +98,7 @@ func verifyStandard(key []byte, h http.Header, body []byte, now time.Time, toler
 	want := m.Sum(nil)
 
 	// Providers send several signatures during secret rotation.
-	for sig := range strings.FieldsSeq(h.Get("webhook-signature")) {
+	for sig := range strings.FieldsSeq(stdHeader(h, "signature")) {
 		v, b64, ok := strings.Cut(sig, ",")
 		if !ok || v != "v1" {
 			continue
@@ -112,7 +114,18 @@ func verifyStandard(key []byte, h http.Header, body []byte, now time.Time, toler
 
 // StandardID returns the webhook-id header, the event id for Dedupe with
 // Standard Webhooks providers.
-func StandardID(r *http.Request) string { return r.Header.Get("webhook-id") }
+func StandardID(r *http.Request) string { return stdHeader(r.Header, "id") }
+
+// stdHeader reads webhook-<name>, falling back to svix-<name>: Svix and the
+// providers built on it (Resend) send the svix-* names, which carry the same
+// values and are signed the same way.
+func stdHeader(h http.Header, name string) string {
+	if v := h.Get("webhook-" + name); v != "" {
+		return v
+	}
+
+	return h.Get("svix-" + name)
+}
 
 // DedupeOptions tune Dedupe.
 type DedupeOptions struct {

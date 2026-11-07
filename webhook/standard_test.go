@@ -103,6 +103,53 @@ func TestSecurity_A08_StandardWebhooks(t *testing.T) {
 	}
 }
 
+func TestStandardAcceptsSvixHeaders(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1_800_000_000, 0)
+
+	mw, err := Standard(
+		base64.StdEncoding.EncodeToString(stdKey),
+		StandardOptions{Now: func() time.Time { return now }},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var id string
+
+	h := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id = StandardID(r)
+
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	ts := strconv.FormatInt(now.Unix(), 10)
+	svix := map[string]string{
+		"svix-id":        "msg_1",
+		"svix-timestamp": ts,
+		"svix-signature": stdSign("msg_1", now.Unix(), "{}"),
+	}
+
+	if rec := serve(t, h, "{}", svix); rec.Code != http.StatusNoContent || id != "msg_1" {
+		t.Errorf("svix headers = %d, id %q, want 204 msg_1", rec.Code, id)
+	}
+
+	bad := map[string]string{
+		"svix-id":        "msg_2",
+		"svix-timestamp": ts,
+		"svix-signature": stdSign("msg_1", now.Unix(), "{}"),
+	}
+	if rec := serve(t, h, "{}", bad); rec.Code != http.StatusUnauthorized {
+		t.Errorf("svix headers signed for another id = %d, want 401", rec.Code)
+	}
+
+	svix["svix-signature"] = stdSign("msg_1", now.Unix(), "{}x")
+	if rec := serve(t, h, "{}", svix); rec.Code != http.StatusUnauthorized {
+		t.Errorf("svix headers with a tampered body = %d, want 401", rec.Code)
+	}
+}
+
 func TestStandardRejectsBadSecret(t *testing.T) {
 	t.Parallel()
 
