@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/mail"
 	"net/url"
 	"strconv"
 	"strings"
@@ -187,7 +188,8 @@ func roundTripFailed(ctx context.Context, err error) (failed, notSent bool) {
 
 func (r *Resend) payload(msg *Message) resendEmail {
 	p := resendEmail{
-		From: msg.From, To: msg.To, Cc: msg.Cc, Bcc: msg.Bcc, ReplyTo: msg.ReplyTo,
+		From: resendAddr(msg.From), To: resendAddrs(msg.To), Cc: resendAddrs(msg.Cc), Bcc: resendAddrs(msg.Bcc),
+		ReplyTo: resendAddrs(msg.ReplyTo),
 		Subject: msg.Subject, HTML: msg.HTML, Text: msg.Text, Headers: msg.Headers,
 	}
 
@@ -241,4 +243,37 @@ func (r *Resend) post(ctx context.Context, id string, body []byte) (time.Duratio
 	}
 
 	return wait, &ResendError{Status: resp.StatusCode, Name: apiErr.Name, Message: apiErr.Message}
+}
+
+// resendAddr writes an address the way the Resend API accepts it: "email@example.com" or
+// "Name <email@example.com>". A Message carries addresses in the canonical net/mail form, which is
+// "<email@example.com>" without a display name, and Resend answers 422 to that.
+func resendAddr(s string) string {
+	a, err := mail.ParseAddress(s)
+	if err != nil {
+		return s // Message addresses are already validated; leave anything else to the API.
+	}
+
+	if a.Name == "" {
+		return a.Address
+	}
+
+	if strings.ContainsAny(a.Name, `"\,;:<>()[]@`) {
+		return a.String()
+	}
+
+	return a.Name + " <" + a.Address + ">"
+}
+
+func resendAddrs(list []string) []string {
+	if list == nil {
+		return nil
+	}
+
+	out := make([]string, len(list))
+	for i, s := range list {
+		out[i] = resendAddr(s)
+	}
+
+	return out
 }
