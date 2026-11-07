@@ -2,8 +2,14 @@ package cli
 
 import (
 	"bytes"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/hex"
+	"encoding/pem"
+	"fmt"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -402,12 +408,67 @@ func TestNewProjectEndToEnd(t *testing.T) {
 		}
 	}
 
+	// install:auth --social refuses to boot a listed provider that has no
+	// credentials. route:list builds the real app, so fill them first.
+	// Apple has no client secret: it reads a .p8 instead.
+	if err := writeSocialCredentials(t, project); err != nil {
+		t.Fatal(err)
+	}
+
 	code, out, errOut = vukem(t, project, "route:list")
 	if code != 0 || !strings.Contains(out, "posts.index") {
 		t.Fatalf("vukem route:list = %d\n%s%s", code, out, errOut)
 	}
 
 	requireGeneratedLint(t, project, "example.com/blog")
+}
+
+// writeSocialCredentials fills the providers TestNewProjectEndToEnd installs
+// so a real boot (route:list) can pass the fail-closed social check.
+func writeSocialCredentials(t *testing.T, project string) error {
+	t.Helper()
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return err
+	}
+
+	der, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		return err
+	}
+
+	keyPath := filepath.Join(project, "apple.p8")
+	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})
+
+	if err := os.WriteFile(keyPath, pemBytes, 0o600); err != nil {
+		return err
+	}
+
+	var b strings.Builder
+
+	for _, name := range []string{"GITHUB", "GOOGLE", "LINKEDIN"} {
+		fmt.Fprintf(&b, "SOCIAL_%s_CLIENT_ID=test-id\nSOCIAL_%s_CLIENT_SECRET=test-secret\n", name, name)
+	}
+
+	fmt.Fprintf(
+		&b,
+		"SOCIAL_APPLE_CLIENT_ID=test-id\nSOCIAL_APPLE_TEAM_ID=TEAM1\nSOCIAL_APPLE_KEY_ID=KEY1\nSOCIAL_APPLE_PRIVATE_KEY_PATH=%s\n",
+		filepath.ToSlash(keyPath),
+	)
+
+	f, err := os.OpenFile(filepath.Join(project, ".env"), os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		return err
+	}
+
+	defer f.Close()
+
+	if _, err := f.WriteString(b.String()); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // lintMu keeps the generated-project lint runs off each other's back: they
