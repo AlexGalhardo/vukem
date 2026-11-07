@@ -146,6 +146,7 @@ type mailtrapEmail struct {
 	Attachments     []mailtrapAttachment `json:"attachments,omitempty"`
 	Category        string               `json:"category,omitempty"`
 	CustomVariables map[string]string    `json:"custom_variables,omitempty"`
+	Headers         map[string]string    `json:"headers,omitempty"`
 }
 
 // Send implements Transport, retrying 429, 5xx and failed connections
@@ -235,7 +236,11 @@ func mailtrapAddrs(list []string) ([]mailtrapAddress, error) {
 }
 
 func mailtrapPayload(msg *Message) (mailtrapEmail, error) {
-	p := mailtrapEmail{Subject: msg.Subject, Text: msg.Text, HTML: msg.HTML}
+	p := mailtrapEmail{Subject: msg.Subject, Text: msg.Text, HTML: msg.HTML, Headers: msg.Headers}
+
+	if err := checkHeaders(msg.Headers); err != nil {
+		return p, err
+	}
 
 	var err error
 

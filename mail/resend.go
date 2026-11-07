@@ -99,12 +99,17 @@ type resendEmail struct {
 	Text        string             `json:"text,omitempty"`
 	Attachments []resendAttachment `json:"attachments,omitempty"`
 	Tags        []resendTag        `json:"tags,omitempty"`
+	Headers     map[string]string  `json:"headers,omitempty"`
 }
 
 // Send implements Transport, retrying 429, 5xx and network errors with
 // backoff.
 func (r *Resend) Send(ctx context.Context, msg *Message) error {
 	if err := resendTags(msg.Tags); err != nil {
+		return err
+	}
+
+	if err := checkHeaders(msg.Headers); err != nil {
 		return err
 	}
 
@@ -183,7 +188,7 @@ func roundTripFailed(ctx context.Context, err error) (failed, notSent bool) {
 func (r *Resend) payload(msg *Message) resendEmail {
 	p := resendEmail{
 		From: msg.From, To: msg.To, Cc: msg.Cc, Bcc: msg.Bcc, ReplyTo: msg.ReplyTo,
-		Subject: msg.Subject, HTML: msg.HTML, Text: msg.Text,
+		Subject: msg.Subject, HTML: msg.HTML, Text: msg.Text, Headers: msg.Headers,
 	}
 
 	for _, a := range msg.Attachments {

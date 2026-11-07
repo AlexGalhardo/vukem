@@ -159,10 +159,39 @@ level=INFO msg="mail (log transport)"
 | `ReplyTo` | `[]string` | Where replies go. Empty means `MAIL_REPLY_TO`, when set |
 | `Subject` | `string` | The subject line; a line break in it is an error |
 | `Tags` | `map[string]string` | Provider metadata (see each transport below). For every transport a name must not be empty and neither name nor value may contain a line break or a colon: rendering fails with `mail: tag with an empty name` or `mail: tag contains a line break or colon` |
+| `Headers` | `map[string]string` | Extra message headers such as `Auto-Submitted` or `Precedence` (see [Custom headers and unsubscribe links](#custom-headers-and-unsubscribe-links)) |
 
 Addresses may be plain (`ana@example.com`) or carry a name (`Ana Souza <ana@example.com>`). Each one goes through [`net/mail.ParseAddress`](https://pkg.go.dev/net/mail#ParseAddress) and is written back in its normalised form, so `Ana <ana@example.com>` becomes `"Ana" <ana@example.com>`. An address that does not parse is an error such as `mail: recipient: "ana@": mail: no angle-addr`.
 
 A mailable with no recipient at all fails with `mail.ErrNoRecipients` (`mail: no recipients`).
+
+### Custom headers and unsubscribe links
+
+`Envelope.Headers` adds headers to the message. Resend and Mailtrap send them in the `headers` field of their API request, SMTP writes them into the message, and the array transport keeps them on `Message.Headers` so a test can assert them.
+
+A header name takes only ASCII letters, digits and `-`, and a value must not hold a control character such as a line break. The mailer writes these headers itself and refuses to let you set them: `From`, `To`, `Cc`, `Bcc`, `Reply-To`, `Subject`, `Date`, `Message-ID`, `MIME-Version`, `Sender`, `Return-Path`, `Received`, `DKIM-Signature`, the `Authentication-Results` and `ARC-*` headers, every `Content-*` header and every `X-Tag-*` header. Two names that differ only in case, such as `X-A` and `x-a`, are an error too. Rendering fails with an error that starts with `mail: header`.
+
+Gmail and Yahoo require bulk senders to offer one-click unsubscribe ([RFC 8058](https://www.rfc-editor.org/rfc/rfc8058)). `Envelope.ListUnsubscribe` sets `List-Unsubscribe` ([RFC 2369](https://www.rfc-editor.org/rfc/rfc2369)) and, when you give it an https URL, `List-Unsubscribe-Post: List-Unsubscribe=One-Click`:
+
+```go title="mails/newsletter.go"
+func (n Newsletter) Envelope() mail.Envelope {
+	env := mail.Envelope{
+		To:      []string{n.Email},
+		Subject: n.Subject,
+		Headers: map[string]string{
+			"Precedence":     "bulk",
+			"Auto-Submitted": "auto-generated",
+		},
+	}
+
+	return env.ListUnsubscribe(
+		"https://example.com/unsubscribe/"+n.Token,
+		"unsubscribe@example.com",
+	)
+}
+```
+
+The method returns a copy and leaves the map you passed untouched. The URL must be absolute, use `https` and hold no space, comma or angle bracket; the address must be a plain address (`mailto:` in front is optional). Either argument may be empty, not both. A bad value makes the send fail with `mail: list-unsubscribe ...`, so a user-controlled token cannot add another URI or header. Your endpoint must accept the `POST` that mail clients send, and must not need a login.
 
 ### The envelope from the context
 
@@ -600,6 +629,7 @@ Code-level settings, for transports you build yourself with `mail.NewSMTP`, `mai
 What Vukem does for you:
 
 - **No header injection.** Addresses go through `net/mail`, and subjects, tags and content ids with line breaks are refused, so user input cannot add a `Bcc:` header ([OWASP: injection](https://owasp.org/Top10/A03_2021-Injection/)).
+- **Headers are checked.** Custom header names and values with line breaks or control characters are refused, and the headers the mailer owns cannot be overridden. `ListUnsubscribe` accepts only an https URL and a plain address.
 - **Bcc stays hidden.** It is passed to the SMTP server or the API, never written as a header.
 - **Secrets stay secret.** `SMTP_PASSWORD`, `RESEND_API_KEY` and `MAILTRAP_API_TOKEN` are `config.Secret` values: they print as `[redacted]` and never appear in errors or logs.
 - **TLS by default.** SMTP requires STARTTLS or implicit TLS with TLS 1.2 or later.
