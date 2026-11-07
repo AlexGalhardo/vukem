@@ -4,9 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
     "lint": "eslint .",
     "last-updated": "node scripts/last-updated.ts",
     "check:mdx": "node scripts/check-mdx.ts",
@@ -14,14 +14,18 @@
     "test:scripts": "node --test scripts/check-last-updated.test.ts"
   },
   "dependencies": {
+    "@astrojs/react": "7.1.4",
     "@base-ui/react": "1.9.0",
+    "@fontsource/inter": "5.3.0",
+    "@fontsource/jetbrains-mono": "5.3.0",
     "@mdx-js/mdx": "3.1.1",
+    "@tailwindcss/vite": "4.3.3",
+    "astro": "7.4.7",
     "clipboard": "2.0.11",
     "github-slugger": "2.0.0",
     "gray-matter": "4.0.3",
     "lucide-react": "1.61.0",
-    "next": "16.4.3",
-    "next-themes": "0.4.6",
+    "oxc-transform-react": "0.145.0",
     "react": "19.3.1",
     "react-dom": "19.3.1",
     "rehype-slug": "6.0.0",
@@ -29,14 +33,13 @@
     "shiki": "4.5.0"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "4.3.3",
     "@types/mdx": "2.0.14",
     "@types/node": "26.6.5",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "eslint": "10.13.0",
-    "eslint-config-next": "16.4.3",
     "tailwindcss": "4.3.3",
-    "typescript": "6.0.3"
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.72.1"
   }
 }

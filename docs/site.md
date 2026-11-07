@@ -7,13 +7,13 @@ The public "how to use Vukem" website lives in [`site/`](../site) and is deploye
 | Option | Outcome |
 | --- | --- |
 | Mintlify Starter (free) | Rejected: Mintlify cannot be built and served by Vercel on the free plan (static export is Enterprise-only; the `mint` CLI is Elastic-2.0). Vercel could only reverse-proxy Mintlify's hosting, and preview deployments, assistant and analytics are Pro. |
-| **Own Next.js site** | **Chosen (2026-10-16):** full control of the Resend-like layout, MDX content in the repo, MIT dependencies. Production hosting moved to GitHub Pages on 2026-11-05 (static export, free on the public repository). |
+| **Own static site** | **Chosen (2026-10-16):** full control of the Resend-like layout, MDX content in the repo, MIT dependencies. Production hosting moved to GitHub Pages on 2026-11-05 (static export, free on the public repository). The renderer moved from Next.js to Astro 7.4 on 2026-11-06; the URLs and the pages stayed. |
 
 ## Stack
 
 | Concern | Choice |
 | --- | --- |
-| Framework | Next.js 16 (App Router, React Server Components, static generation of every page) |
+| Framework | Astro 7.4 (static output) with React for the header, search and theme |
 | Styling | Tailwind CSS v4 (CSS-first config, `@theme` tokens, `dark` variant via class) |
 | UI primitives | Base UI (`@base-ui/react`): Dialog (search), Toast (copy feedback), Tooltip, Popover, Collapsible |
 | Content | MDX files in `site/content/docs/**` with front matter (`title`, `description`); custom components (`<Callout>`, `<Steps>`, `<Tabs>`, `<CodeGroup>`, `<Card>`) |
@@ -23,7 +23,7 @@ The public "how to use Vukem" website lives in [`site/`](../site) and is deploye
 | Navigation | Left sidebar grouped by category, right "On this page" table of contents, previous/next links, "Edit on GitHub" link |
 | Changelog | `/changelog` renders the repository `CHANGELOG.md` at build time as plain Markdown (braces stay literal), linked from the header; every item links to its commit (`.config/cliff.toml` template) |
 | Agents | `llms.txt` and `llms-full.txt` generated from the MDX content |
-| Hosting | GitHub Pages from a static export (`output: "export"`). Production is `vukem.dev`. The Site workflow builds every pull request and publishes every push to `main` |
+| Hosting | GitHub Pages from the Astro static build (`site/out`). Production is `vukem.dev`. The Site workflow builds every pull request and publishes every push to `main` |
 
 ## Layout (Resend-inspired)
 

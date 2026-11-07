@@ -1,0 +1,16 @@
+---
+import Base from "../layouts/Base.astro";
+import { NotFoundView } from "@/components/not-found-view";
+---
+
+<Base title="Page not found" description="The page you are looking for does not exist or has moved.">
+  <NotFoundView />
+  <script is:inline>
+    (function () {
+      var path = location.pathname;
+      if (path !== "/pt-br" && path.indexOf("/pt-br/") !== 0) return;
+      var next = path.slice("/pt-br".length) || "/";
+      location.replace(next + location.search + location.hash);
+    })();
+  </script>
+</Base>

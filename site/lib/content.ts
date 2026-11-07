@@ -1,6 +1,5 @@
 import fs from "node:fs";
 import path from "node:path";
-import { cache } from "react";
 import matter from "gray-matter";
 import { navigation, type NavCategory } from "@/content/navigation";
 import { navigation as navigationV0_20 } from "@/content/versions/0.20/navigation";
@@ -70,16 +69,22 @@ function versionById(id: string): DocVersion {
  * Every page of a version (default: current) in navigation order. Throws
  * on missing files or front matter.
  */
-export const getAllDocs = cache((versionId: string = currentVersion.id): Doc[] => {
+const docsCache = new Map<string, Doc[]>();
+
+export function getAllDocs(versionId: string = currentVersion.id): Doc[] {
+  const hit = docsCache.get(versionId);
+  if (hit) return hit;
   const v = versionById(versionId);
-  return NAVIGATION[versionId].flatMap((cat) =>
+  const docs = NAVIGATION[versionId].flatMap((cat) =>
     cat.pages.map((page) => {
       const prefix = cat.prefix ?? cat.dir;
       const slug = [v.prefix, prefix, page].filter((s) => s !== "");
       return makeDoc(v, `${v.contentDir}/${cat.dir}/${page}.mdx`, slug, cat.title);
     }),
   );
-});
+  docsCache.set(versionId, docs);
+  return docs;
+}
 
 /** Every page of every version. */
 export function getEveryDoc(): Doc[] {

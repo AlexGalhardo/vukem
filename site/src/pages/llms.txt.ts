@@ -1,9 +1,10 @@
-import { getNavGroups, getAllDocs } from "@/lib/content";
+import type { APIRoute } from "astro";
+import { getAllDocs, getNavGroups } from "@/lib/content";
 import { site } from "@/lib/site";
 
-export const dynamic = "force-static";
+export const prerender = true;
 
-export function GET() {
+export const GET: APIRoute = () => {
   const docs = new Map(getAllDocs().map((d) => [d.href, d]));
   const lines = [
     `# ${site.name}`,
@@ -24,4 +25,4 @@ export function GET() {
   }
 
   return new Response(lines.join("\n"), { headers: { "Content-Type": "text/plain; charset=utf-8" } });
-}
+};

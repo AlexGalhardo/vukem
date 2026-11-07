@@ -1,0 +1,11 @@
+---
+import Base from "../layouts/Base.astro";
+import { changelogMetadata } from "@/components/changelog-page";
+import { renderChangelog } from "../prerender";
+
+const html = await renderChangelog();
+---
+
+<Base title={changelogMetadata.title} description={changelogMetadata.description} canonical="/changelog">
+  <Fragment set:html={html} />
+</Base>

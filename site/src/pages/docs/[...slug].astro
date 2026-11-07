@@ -1,0 +1,24 @@
+---
+import Base from "../../layouts/Base.astro";
+import { getDoc, getEveryDoc } from "@/lib/content";
+import { docMetadata } from "@/components/doc-article";
+import { renderDoc } from "../../prerender";
+export function getStaticPaths() {
+  return getEveryDoc().map((doc) => ({
+    params: { slug: doc.slug.join("/") },
+    props: { slug: doc.slug },
+  }));
+}
+
+const { slug } = Astro.props as { slug: string[] };
+const doc = getDoc(slug);
+if (!doc) {
+  throw new Error(`missing doc ${slug.join("/")}`);
+}
+const meta = docMetadata(doc);
+const html = await renderDoc(doc);
+---
+
+<Base title={meta.title} description={meta.description} canonical={doc.href}>
+  <Fragment set:html={html} />
+</Base>

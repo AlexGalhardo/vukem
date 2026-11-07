@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { Link } from "@/components/link";
 import type { MDXComponents } from "mdx/types";
 import { Callout } from "@/components/mdx/callout";
 import { Card, CardGroup } from "@/components/mdx/card";
@@ -52,7 +52,6 @@ function A({ href = "", children, ...rest }: React.ComponentPropsWithoutRef<"a">
 // Plain <img>: the demo GIFs are remote and animated, which next/image would
 // not optimize anyway.
 function Img({ alt = "", ...rest }: React.ComponentPropsWithoutRef<"img">) {
-  // eslint-disable-next-line @next/next/no-img-element
   return <img alt={alt} loading="lazy" decoding="async" {...rest} />;
 }
 
