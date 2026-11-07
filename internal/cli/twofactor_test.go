@@ -766,3 +766,36 @@ func TestSecurity_A07_SocialRefusesProvidersWithoutEmail(t *testing.T) {
 		t.Error("the social scaffold still wires social.X")
 	}
 }
+
+func TestSocialScaffoldFailsBootWithoutCredentials(t *testing.T) {
+	t.Parallel()
+
+	b, err := scaffoldFS.ReadFile("scaffolds/auth-social/app/accounts/social.go.tmpl")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, want := range []string{
+		`fmt.Errorf("social: %s: set %sCLIENT_ID and %sCLIENT_SECRET", name, env, env)`,
+		`fmt.Errorf("social: apple: read %sPRIVATE_KEY_PATH: %w", env, err)`,
+		"app.Kind == vukem.KindTest",
+	} {
+		if !bytes.Contains(b, []byte(want)) {
+			t.Errorf("scaffold misses %s", want)
+		}
+	}
+
+	for _, banned := range []string{"Sign in with Apple disabled", "apple key not readable"} {
+		if bytes.Contains(b, []byte(banned)) {
+			t.Errorf("scaffold still skips a missing secret: %s", banned)
+		}
+	}
+
+	if _, err := renderScaffold(
+		"app/accounts/social.go",
+		b,
+		map[string]string{"Module": "example.com/app"},
+	); err != nil {
+		t.Fatal(err)
+	}
+}

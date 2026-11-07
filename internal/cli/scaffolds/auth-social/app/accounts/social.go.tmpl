@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 
@@ -18,7 +19,8 @@ import (
 
 // NewSocial configures the providers listed in names from
 // SOCIAL_<NAME>_CLIENT_ID and SOCIAL_<NAME>_CLIENT_SECRET; the callback is
-// APP_URL/auth/<name>/callback. Providers without credentials are skipped.
+// APP_URL/auth/<name>/callback. A listed provider with no id or secret
+// fails the boot, except in tests, where a fake provider may stand in.
 func NewSocial(app *vukem.App, names ...string) (*social.Social, error) {
 	key, err := app.DeriveKey("social.state", 32)
 	if err != nil {
@@ -39,8 +41,12 @@ func NewSocial(app *vukem.App, names ...string) (*social.Social, error) {
 			RedirectURL:  base + "/auth/" + name + "/callback",
 		}
 
-		if cfg.ClientID == "" {
-			continue
+		if cfg.ClientID == "" || cfg.ClientSecret == "" {
+			if app.Kind == vukem.KindTest {
+				continue
+			}
+
+			return nil, fmt.Errorf("social: %s: set %sCLIENT_ID and %sCLIENT_SECRET", name, env, env)
 		}
 
 		switch name {
@@ -61,8 +67,11 @@ func NewSocial(app *vukem.App, names ...string) (*social.Social, error) {
 			// https://appleid.apple.com to CSRF_TRUSTED_ORIGINS.
 			key, err := os.ReadFile(app.Source.Get(env + "PRIVATE_KEY_PATH"))
 			if err != nil {
-				app.Log.Warn("social: apple key not readable; Sign in with Apple disabled", "err", err)
-				continue
+				if app.Kind == vukem.KindTest {
+					continue
+				}
+
+				return nil, fmt.Errorf("social: apple: read %sPRIVATE_KEY_PATH: %w", env, err)
 			}
 
 			p, err := social.Apple(social.AppleConfig{
@@ -72,8 +81,11 @@ func NewSocial(app *vukem.App, names ...string) (*social.Social, error) {
 				PrivateKey: key,
 			})
 			if err != nil {
-				app.Log.Warn("social: Sign in with Apple disabled", "err", err)
-				continue
+				if app.Kind == vukem.KindTest {
+					continue
+				}
+
+				return nil, fmt.Errorf("social: apple: %w", err)
 			}
 
 			s.Use(p)

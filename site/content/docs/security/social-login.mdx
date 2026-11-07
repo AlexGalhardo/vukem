@@ -86,7 +86,7 @@ SOCIAL_GOOGLE_CLIENT_SECRET=...
 CACHE_STORE=database
 ```
 
-The variable names are also appended to `.env.example`. A provider without a client id is skipped, so `/auth/google/redirect` answers `404` until you set it.
+The variable names are also appended to `.env.example`. A listed provider with an empty client id or client secret fails the boot, naming the variables to set. The redirect is never a 404 from a provider the command wrote and then skipped. In `vukemtest` apps the missing pair is skipped so `FakeSocial` can stand in.
 
 </Step>
 <Step title="4. Add a button">
@@ -268,13 +268,13 @@ Apple has no static client secret: Vukem signs one (an ES256 JWT, cached for an 
 - serve the app over HTTPS: the state cookie becomes `SameSite=None; Secure`, and `Redirect` answers `500` ("needs HTTPS") when `InsecureCookies` is on;
 - add `https://appleid.apple.com` to `CSRF_TRUSTED_ORIGINS`.
 
-Apple sends the user's name only on the first sign-in. The scaffold reads `SOCIAL_APPLE_CLIENT_ID`, `SOCIAL_APPLE_TEAM_ID`, `SOCIAL_APPLE_KEY_ID` and `SOCIAL_APPLE_PRIVATE_KEY_PATH`; an unreadable key disables Apple with a warning in the log. See [Apple's documentation](https://developer.apple.com/sign-in-with-apple/).
+Apple sends the user's name only on the first sign-in. The scaffold reads `SOCIAL_APPLE_CLIENT_ID`, `SOCIAL_APPLE_CLIENT_SECRET`, `SOCIAL_APPLE_TEAM_ID`, `SOCIAL_APPLE_KEY_ID` and `SOCIAL_APPLE_PRIVATE_KEY_PATH`. An unreadable key fails the boot outside tests. See [Apple's documentation](https://developer.apple.com/sign-in-with-apple/).
 
 ## Configuration
 
 | Variable | What it does |
 | --- | --- |
-| `SOCIAL_<NAME>_CLIENT_ID` | the provider's client id; without it the provider is skipped |
+| `SOCIAL_<NAME>_CLIENT_ID` | the provider's client id; an empty value fails the boot outside tests |
 | `SOCIAL_<NAME>_CLIENT_SECRET` | the provider's client secret |
 | `SOCIAL_APPLE_TEAM_ID`, `SOCIAL_APPLE_KEY_ID`, `SOCIAL_APPLE_PRIVATE_KEY_PATH` | Sign in with Apple |
 | `APP_URL` | base of every callback URL: `APP_URL/auth/<name>/callback` |
