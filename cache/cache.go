@@ -40,6 +40,17 @@ type Store interface {
 	Flush(ctx context.Context) error
 }
 
+// PrefixDeleter is implemented by a Store that can delete every key
+// starting with a prefix ([Memory], [Database] and the Redis store do).
+// Keys arrive already prefixed, as for the other Store methods.
+type PrefixDeleter interface {
+	DeletePrefix(ctx context.Context, prefix string) error
+}
+
+// ErrPrefixUnsupported is returned by [Cache.ForgetPrefix] when the store
+// cannot delete by prefix.
+var ErrPrefixUnsupported = errors.New("cache: the store cannot delete by prefix")
+
 // Cache is a Store with a key prefix, JSON encoding and stampede
 // protection.
 type Cache struct {
@@ -123,6 +134,24 @@ func (c *Cache) Forget(ctx context.Context, keys ...string) error {
 	}
 
 	return c.store.Delete(ctx, full...)
+}
+
+// ForgetPrefix deletes every key that starts with prefix, such as
+// "home:highlights:" for one entry per locale and variant, so a new variant
+// never stays stale. An empty prefix is an error (use Flush to clear the
+// store). It returns [ErrPrefixUnsupported] when the store has no prefix
+// delete. The prefix is literal text: no wildcards.
+func (c *Cache) ForgetPrefix(ctx context.Context, prefix string) error {
+	if prefix == "" {
+		return errors.New("cache: ForgetPrefix needs a non-empty prefix; use Flush to clear everything")
+	}
+
+	pd, ok := c.store.(PrefixDeleter)
+	if !ok {
+		return ErrPrefixUnsupported
+	}
+
+	return pd.DeletePrefix(ctx, c.key(prefix))
 }
 
 // Flush deletes everything in the store.

@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/AlexGalhardo/vukem/database"
 )
@@ -283,6 +284,16 @@ func (d *Database) Delete(ctx context.Context, keys ...string) error {
 	}
 
 	return nil
+}
+
+// DeletePrefix implements PrefixDeleter. It compares the leading
+// characters instead of using LIKE, which SQLite and MySQL match without
+// regard to case and which would need escaping for % and _.
+func (d *Database) DeletePrefix(ctx context.Context, prefix string) error {
+	_, err := d.db.ExecContext(ctx, d.q(`DELETE FROM {t} WHERE substr({k}, 1, ?) = ?`),
+		utf8.RuneCountInString(prefix), prefix)
+
+	return err
 }
 
 // DeleteIf implements Store.

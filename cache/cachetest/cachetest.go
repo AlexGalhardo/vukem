@@ -69,6 +69,46 @@ func Run(t *testing.T, store cache.Store) {
 		}
 	})
 
+	t.Run("ForgetPrefix", func(t *testing.T) {
+		if _, ok := store.(cache.PrefixDeleter); !ok {
+			t.Skip("store has no prefix delete")
+		}
+
+		keys := []string{"pf:a:1", "pf:a:2", "pf:ab", "PF:a:3", "pf:b:1", "w_1", "wx1", "s*a", "sxa", "pf:%"}
+		for _, k := range keys {
+			if err := c.Put(ctx, k, 1, time.Minute); err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		for prefix, gone := range map[string][]string{
+			"pf:a:": {"pf:a:1", "pf:a:2"},
+			"w_":    {"w_1"},
+			"s*":    {"s*a"},
+			"pf:%":  {"pf:%"},
+		} {
+			if err := c.ForgetPrefix(ctx, prefix); err != nil {
+				t.Fatalf("ForgetPrefix(%q) = %v", prefix, err)
+			}
+
+			for _, k := range gone {
+				if _, ok, _ := cache.Get[int](ctx, c, k); ok {
+					t.Errorf("%q survived ForgetPrefix(%q)", k, prefix)
+				}
+			}
+		}
+
+		for _, k := range []string{"pf:ab", "PF:a:3", "pf:b:1", "wx1", "sxa"} {
+			if _, ok, _ := cache.Get[int](ctx, c, k); !ok {
+				t.Errorf("%q was deleted by a prefix it does not start with", k)
+			}
+		}
+
+		if err := c.ForgetPrefix(ctx, ""); err == nil {
+			t.Error("ForgetPrefix(\"\") = nil, want an error")
+		}
+	})
+
 	t.Run("BinaryValues", func(t *testing.T) {
 		// NUL and invalid UTF-8 bytes: gob/msgpack payloads, hashes, images.
 		raw := []byte{0x00, 0xff, 0xfe, 'a', 0x00, 0x80}

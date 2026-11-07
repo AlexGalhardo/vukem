@@ -192,8 +192,23 @@ What each call does:
 | `c.Put(ctx, key, v, ttl)` | `error` | Encodes `v` with `json.Marshal`. A value that cannot be encoded (a channel, a function) fails with `cache: encode <key>: …`. `ttl` `0` (or negative) means the entry never expires |
 | `cache.Get[T](ctx, c, key)` | `(T, bool, error)` | `ok` is `false` when the key is missing **or** expired. If the stored JSON does not fit `T`, you get `ok == false` and `cache: decode <key>: …` |
 | `c.Forget(ctx, keys...)` | `error` | Missing keys are not an error |
+| `c.ForgetPrefix(ctx, prefix)` | `error` | Deletes every key that starts with `prefix`, see below |
 | `c.Flush(ctx)` | `error` | Empties the **whole store**, see below |
 | `c.Store()` | `cache.Store` | The backend, for advanced checks (`cache.Shared`). It is unprefixed and unencoded: keys are not prefixed and values are raw bytes, not JSON |
+
+### Forgetting a family of keys
+
+A page cached per locale and per variant has one key per combination. Name the family with a common prefix and forget it in one call, so a variant you add later is covered without touching the invalidation code:
+
+```go title="cache/home.go"
+key := "home:highlights:" + locale + ":" + variant
+highlights, err := cache.Remember(ctx, c, key, time.Hour, load)
+
+// After the content changes: every locale and every variant.
+err = c.ForgetPrefix(ctx, "home:highlights:")
+```
+
+The prefix is literal text (`%`, `_` and `*` are not wildcards) and it is case-sensitive on the memory and Redis stores. Keep the colon at the end of the prefix: `"home:"` would also delete `"homepage"`. An empty prefix is an error; use `Flush` to clear the whole store. The memory and database stores and the Redis driver can do it; a custom store must implement `cache.PrefixDeleter` (`DeletePrefix(ctx, prefix string) error`, with the key prefix already applied), or `ForgetPrefix` returns `cache.ErrPrefixUnsupported`. The Redis store scans for the keys, which is slower than deleting one key on a big keyspace.
 
 Keys you pass are always prefixed: with `CACHE_PREFIX=vukem:`, `c.Put(ctx, "settings", …)` writes the key `vukem:settings` in the store.
 
