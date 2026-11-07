@@ -422,10 +422,11 @@ var (
 		`(?i)\b(insert|update|delete|merge|upsert|replace|drop|alter|create|truncate|attach|detach|grant|revoke|vacuum|pragma|copy|call|do|lock|set|into)\b`,
 	)
 	// sideEffectFunc matches functions that a read-only transaction still
-	// lets run: server file access, backend control, sleeps, extensions.
+	// lets run: server file access, backend control, sleeps, extensions. It
+	// matches the name alone: a comment may sit between it and "(".
 	sideEffectFunc = regexp.MustCompile(
 		`(?i)\b(load_file|load_extension|sleep|benchmark|get_lock|dblink\w*|set_config|lo_\w+|` +
-			`pg_(read_\w+|ls_\w+|stat_file|terminate_backend|cancel_backend|sleep\w*|reload_conf|advisory_\w+))\s*\(`,
+			`pg_(read_\w+|ls_\w+|stat_file|terminate_backend|cancel_backend|sleep\w*|reload_conf|advisory_\w+))\b`,
 	)
 	errNotReadOnly = errors.New("only a single read-only statement (SELECT, WITH, EXPLAIN) is allowed")
 )

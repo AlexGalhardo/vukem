@@ -266,6 +266,8 @@ func TestSecurity_A05_BoostQueryRefusesSideEffectingSelects(t *testing.T) {
 		"SELECT SLEEP(600)",
 		"SELECT load_extension('x')",
 		"SELECT lo_import('/etc/passwd')",
+		"SELECT pg_sleep/**/(600)",
+		"SELECT SLEEP /* x */ (600)",
 	}
 
 	calls := make([]string, 0, len(queries))
