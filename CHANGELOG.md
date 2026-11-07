@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **docs:** Document `QUEUE_CONNECTION=database` and the pre-deploy migrate for Dockerfile-only hosts on the Docker and Railway page.
 - **vukemtest:** Document which client helper triggers which `WantsJSON` branch (`PostJSON`, `GetJSON`, `Inertia`).
 - **auth:** Document the recipe for a private JSON prefix behind the session guard (`auth.ProblemJSON` first) and how to test its plain-`GET` answer.
 - **orm:** Convert every bound `time.Time` to UTC (queries, `Set`, model fields) so SQLite text comparisons agree with the instant; document the stored time format per database.
