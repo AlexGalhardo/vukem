@@ -25,7 +25,7 @@ func TestToolEnvDoesNotWaitForGrandchildren(t *testing.T) {
 
 		os.Exit(0)
 	case "grandchild":
-		time.Sleep(3 * time.Second)
+		time.Sleep(grandchildLife)
 		os.Exit(0)
 	}
 
@@ -44,14 +44,20 @@ func TestToolEnvDoesNotWaitForGrandchildren(t *testing.T) {
 		t.Fatalf("toolEnv = %v, want nil once the tool exited 0", err)
 	}
 
-	if d := time.Since(start); d > 2*time.Second {
+	// The bound also covers starting two copies of the race-instrumented
+	// test binary, which takes seconds on a loaded Windows runner; it only
+	// has to stay clearly below the grandchild's life.
+	d := time.Since(start)
+	if d > grandchildLife-3*time.Second {
 		t.Errorf("toolEnv returned after %v, want it not to wait for the grandchild", d)
 	}
 
 	// Let the grandchild exit before the test binary is removed (Windows
 	// cannot delete a running executable).
-	time.Sleep(3 * time.Second)
+	time.Sleep(grandchildLife - d + 500*time.Millisecond)
 }
+
+const grandchildLife = 8 * time.Second
 
 // combinedOutput is cmd.CombinedOutput that, like toolEnv, stops waiting
 // for the output pipe shortly after cmd exits (npm and vite leave helper
