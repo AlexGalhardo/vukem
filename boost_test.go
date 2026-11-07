@@ -252,3 +252,32 @@ func TestSecurity_A05_BoostQueryIsReadOnly(t *testing.T) {
 		t.Errorf("posts were modified: %s", text)
 	}
 }
+
+func TestSecurity_A05_BoostQueryRefusesSideEffectingSelects(t *testing.T) {
+	t.Parallel()
+
+	queries := []string{
+		"SELECT * FROM posts INTO OUTFILE '/tmp/posts.txt'",
+		"SELECT 'x' INTO DUMPFILE '/tmp/x'",
+		"SELECT LOAD_FILE('/etc/passwd')",
+		"SELECT pg_read_file('/etc/passwd')",
+		"SELECT pg_terminate_backend(pid) FROM pg_stat_activity",
+		"SELECT pg_sleep(600)",
+		"SELECT SLEEP(600)",
+		"SELECT load_extension('x')",
+		"SELECT lo_import('/etc/passwd')",
+	}
+
+	calls := make([]string, 0, len(queries))
+	for i, q := range queries {
+		calls = append(calls, call(i+1, "database_query", map[string]any{"query": q}))
+	}
+
+	replies := mcpSession(t, "", calls...)
+
+	for i, q := range queries {
+		if text, isErr := toolText(t, replies[i+1]); !isErr || !strings.Contains(text, "read-only") {
+			t.Errorf("%q accepted by the read-only guard: %s", q, text)
+		}
+	}
+}
