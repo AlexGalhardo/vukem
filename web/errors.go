@@ -32,7 +32,7 @@ type Problem struct {
 // not collide with them. Not a MarshalJSON method: the OpenAPI generator
 // documents Problem from its struct fields, which a Marshaler would hide.
 func encodeProblem(p *Problem) ([]byte, error) {
-	b, err := json.Marshal(p)
+	b, err := marshalJSON(p)
 	if err != nil || len(p.Extensions) == 0 {
 		return b, err
 	}
@@ -41,7 +41,7 @@ func encodeProblem(p *Problem) ([]byte, error) {
 	members := map[string]any{}
 
 	var std map[string]json.RawMessage
-	if err := json.Unmarshal(b, &std); err != nil {
+	if err := unmarshalJSONBytes(b, &std); err != nil {
 		return nil, err
 	}
 
@@ -58,7 +58,7 @@ func encodeProblem(p *Problem) ([]byte, error) {
 		}
 	}
 
-	return json.Marshal(members)
+	return marshalJSON(members)
 }
 
 // Problem writes an application/problem+json response.

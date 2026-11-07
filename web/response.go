@@ -2,7 +2,6 @@ package web
 
 import (
 	"bufio"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -149,7 +148,7 @@ func (c *Ctx) HTML(status int, html string) error {
 
 // JSON writes v as JSON with status.
 func (c *Ctx) JSON(status int, v any) error {
-	b, err := json.Marshal(v)
+	b, err := marshalJSON(v)
 	if err != nil {
 		return fmt.Errorf("web: encode json: %w", err)
 	}

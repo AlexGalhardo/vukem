@@ -2,7 +2,6 @@ package web
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -37,21 +36,17 @@ func PeekJSON(r *http.Request) (map[string]any, error) {
 		return nil, errors.New("request body over the limit")
 	}
 
-	dec := json.NewDecoder(bytes.NewReader(body))
-	dec.UseNumber()
-
 	var out map[string]any
-
-	if err := dec.Decode(&out); err != nil {
+	if err := decodeJSONReader(bytes.NewReader(body), &out, false); err != nil {
 		if errors.Is(err, io.EOF) {
 			return nil, nil
 		}
 
-		return nil, err
-	}
+		if errors.Is(err, errTrailingJSON) {
+			return nil, errors.New("request body must contain a single JSON value")
+		}
 
-	if dec.More() {
-		return nil, errors.New("request body must contain a single JSON value")
+		return nil, err
 	}
 
 	return out, nil

@@ -91,6 +91,8 @@ type HandlerFunc func(c *Ctx) error
 
 `*web.Ctx` wraps `http.ResponseWriter` and `*http.Request`; `c.Writer()` and `c.Request()` give raw access. A `*web.Ctx` must not escape its handler goroutine.
 
+JSON bodies go through `encoding/json/v2`. A number inside a generic map stays a `json.Number`. A duplicate object name or invalid UTF-8 in a string is rejected.
+
 Adapters: `router.Adapt(HandlerFunc) http.Handler` and `router.Wrap(http.Handler) HandlerFunc`.
 
 ## Middleware

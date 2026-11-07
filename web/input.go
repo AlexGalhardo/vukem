@@ -209,26 +209,20 @@ func (c *Ctx) limitBody() {
 func (c *Ctx) decodeJSON(v any, strict bool) error {
 	c.limitBody()
 
-	dec := json.NewDecoder(c.r.Body)
-	dec.UseNumber()
-
-	if strict {
-		dec.DisallowUnknownFields()
+	err := decodeJSONReader(c.r.Body, v, strict)
+	if err == nil {
+		return nil
 	}
 
-	if err := dec.Decode(v); err != nil {
-		if field, ok := unknownField(err); ok {
-			return errs.NewValidation().Add(field, "The field is not allowed.")
-		}
-
-		return bodyError(err)
-	}
-
-	if dec.More() {
+	if errors.Is(err, errTrailingJSON) {
 		return errs.New(http.StatusBadRequest, "Request body must contain a single JSON value.")
 	}
 
-	return nil
+	if field, ok := unknownField(err); ok {
+		return errs.NewValidation().Add(field, "The field is not allowed.")
+	}
+
+	return bodyError(err)
 }
 
 func (c *Ctx) parseForm() error {
@@ -258,19 +252,6 @@ func (c *Ctx) parseForm() error {
 	}
 
 	return nil
-}
-
-// unknownField reads the key out of the error DisallowUnknownFields
-// returns: encoding/json has no typed error for it.
-func unknownField(err error) (string, bool) {
-	rest, ok := strings.CutPrefix(err.Error(), "json: unknown field ")
-	if !ok {
-		return "", false
-	}
-
-	field, uerr := strconv.Unquote(rest)
-
-	return field, uerr == nil && field != ""
 }
 
 func isForm(r *http.Request) bool {
