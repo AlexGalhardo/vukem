@@ -30,6 +30,8 @@ npm run last-updated   # refresh content/last-updated.json (needs full git histo
 2. Add `<slug>` to the category's `pages` in `content/navigation.ts` (order = sidebar order). A new category also needs an entry there.
 3. The page is served at `/docs/<category>/<slug>` (Getting started pages at `/docs/<slug>`), and is picked up by search, `llms.txt` and `llms-full.txt` automatically.
 
+A page here is MDX. A `docs/*.md` file written for GitHub does not compile: an autolink written as `<https://...>`, a bare `{`, a raw `<` in prose, and a relative `.md` link fail or break. Write the page as `.mdx`, or render that Markdown with `format: "md"` so braces stay literal. `renderMarkdown` in `lib/changelog.tsx` is the second path. This site does not ship a script that converts `docs/` into `content/docs`.
+
 Mark features that are not implemented yet with `<Callout type="warning">Planned for ALPHA</Callout>` (or BETA). Go samples use tabs and must match the real APIs.
 
 ## Last updated
