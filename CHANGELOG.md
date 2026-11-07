@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **vukemtest:** Document which client helper triggers which `WantsJSON` branch (`PostJSON`, `GetJSON`, `Inertia`).
 - **auth:** Document the recipe for a private JSON prefix behind the session guard (`auth.ProblemJSON` first) and how to test its plain-`GET` answer.
 - **orm:** Convert every bound `time.Time` to UTC (queries, `Set`, model fields) so SQLite text comparisons agree with the instant; document the stored time format per database.
 - **site:** Shrink the docs site type scale by 25% below 768px (root font size 20px to 15px) and keep code blocks at 13px on phones.
