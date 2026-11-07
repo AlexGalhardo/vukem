@@ -208,6 +208,7 @@ type Mailer struct {
 	transport Transport
 	views     web.Renderer
 	react     web.Renderer
+	suppress  SuppressionCheck
 	// Pointers keep Mailer comparable, as it was before SendLater.
 	enqueue   *Enqueue
 	enqueueTx *EnqueueTx
@@ -228,6 +229,22 @@ func (m *Mailer) SetReact(r web.Renderer) { m.react = r }
 // SetReplyTo sets the Reply-To used when an envelope has none (MAIL_REPLY_TO);
 // empty clears it. Call it before the mailer is used; app.Mailer sets it.
 func (m *Mailer) SetReplyTo(addr string) { m.replyTo = addr }
+
+// SuppressionCheck reports whether addr (a plain address, lower-cased) must
+// not receive mail, typically because it bounced or complained.
+type SuppressionCheck func(ctx context.Context, addr string) (bool, error)
+
+// ErrAllSuppressed is returned when every recipient of a message is
+// suppressed, so nothing is sent.
+var ErrAllSuppressed = errors.New("mail: every recipient is suppressed")
+
+// SetSuppression sets the check Render applies to To, Cc and Bcc: a
+// suppressed address is dropped, and a message left with no recipient fails
+// with [ErrAllSuppressed] (test it with errors.Is to skip quietly). A check
+// that returns an error stops the send, so a broken suppression store never
+// mails someone who opted out. Keep the list in your own table and fill it
+// from [Event.Suppress]. Call it before the mailer is used.
+func (m *Mailer) SetSuppression(check SuppressionCheck) { m.suppress = check }
 
 // Transport returns the mailer's transport (tests read the Array).
 func (m *Mailer) Transport() Transport { return m.transport }
@@ -288,6 +305,12 @@ func (m *Mailer) Render(ctx context.Context, mailable Mailable) (*Message, error
 		return nil, ErrNoRecipients
 	}
 
+	if m.suppress != nil {
+		if err := m.dropSuppressed(ctx, msg); err != nil {
+			return nil, err
+		}
+	}
+
 	if strings.ContainsAny(msg.Subject, "\r\n") {
 		return nil, errors.New("mail: subject contains a line break")
 	}
@@ -313,6 +336,36 @@ func (m *Mailer) Render(ctx context.Context, mailable Mailable) (*Message, error
 	}
 
 	return msg, nil
+}
+
+func (m *Mailer) dropSuppressed(ctx context.Context, msg *Message) error {
+	for _, list := range []*[]string{&msg.To, &msg.Cc, &msg.Bcc} {
+		var kept []string
+
+		for _, a := range *list {
+			plain, err := mail.ParseAddress(a)
+			if err != nil {
+				return fmt.Errorf("mail: recipient: %w", err)
+			}
+
+			gone, err := m.suppress(ctx, strings.ToLower(plain.Address))
+			if err != nil {
+				return fmt.Errorf("mail: suppression check: %w", err)
+			}
+
+			if !gone {
+				kept = append(kept, a)
+			}
+		}
+
+		*list = kept
+	}
+
+	if len(msg.To)+len(msg.Cc)+len(msg.Bcc) == 0 {
+		return ErrAllSuppressed
+	}
+
+	return nil
 }
 
 func (m *Mailer) content(ctx context.Context, c Content, msg *Message) error {

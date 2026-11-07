@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **mail:** Add `ParseResendEvent` (typed Resend webhook events) and `Mailer.SetSuppression` (drop suppressed recipients, fail closed) for bounce and complaint handling.
 - **cache:** Add `Cache.ForgetPrefix` and the optional `PrefixDeleter` store interface (memory, database and Redis) to forget every key under a prefix.
 - **orm:** Add `Query.GroupCount` (rows per column value) and point `Where` with `IN` or `NOT IN` to `WhereIn` and `WhereNotIn` in its error.
 - **schema:** Add `Table.DropIndexOn` and `Table.DropUniqueIndexOn` to drop an index by its columns instead of its generated name.

@@ -448,6 +448,48 @@ Each send is one `POST https://api.resend.com/emails` with a JSON body.
 - An error answer becomes a `*mail.ResendError` with `Status`, `Name` and `Message`, for example `mail: resend 422 validation_error: Invalid from field.`. Its `Retryable()` method is true for 429 and 5xx.
 - Each request has a 10-second timeout.
 
+### Bounces, complaints and a suppression list
+
+Mailbox providers expect you to stop writing to an address that bounced or complained. Vukem gives you the two ends and leaves the list itself to your app, because it is your data: one table per app, with rules (per list, expiry) only you know.
+
+1. Receive Resend's events. Verify the request with [`webhook.Standard`](/docs/digging-deeper/webhooks#standard-webhooks), which also accepts the `svix-*` headers Resend sends, then decode the body with `mail.ParseResendEvent`:
+
+```go title="controllers/resend_webhook.go"
+func ResendWebhook(c *web.Ctx) error {
+	body, err := io.ReadAll(c.Request().Body)
+	if err != nil {
+		return err
+	}
+
+	ev, err := mail.ParseResendEvent(body)
+	if err != nil {
+		return errs.New(http.StatusBadRequest, "Unknown event.")
+	}
+
+	if ev.Suppress() {
+		for _, addr := range ev.To {
+			if err := suppressions.Add(c.Context(), addr, ev.Type); err != nil {
+				return err
+			}
+		}
+	}
+
+	return c.NoContent()
+}
+```
+
+2. Check the list before every send. `Mailer.SetSuppression` takes a function that receives each lower-cased address:
+
+```go title="routes/mail.go"
+mailer.SetSuppression(func(ctx context.Context, addr string) (bool, error) {
+	return suppressions.Has(ctx, addr)
+})
+```
+
+`Render` drops suppressed addresses from `To`, `Cc` and `Bcc`. When none is left, `Send` returns `mail.ErrAllSuppressed`; test it with `errors.Is` to skip quietly. If the check itself fails, the send fails too, so a broken database never mails someone who opted out. Queued mail (`SendLater`) is checked when it is queued.
+
+`Event` carries `Type` (`mail.EventBounced`, `EventComplained`, `EventDelivered`...), `EmailID`, `To`, the `Tags` you set on the envelope (put your campaign or message id there to find the row), and `BounceType` (`Permanent`, `Transient`, `Undetermined`). `Suppress()` is true for a complaint, a permanent bounce and Resend's own suppression; a transient bounce is not a reason to stop.
+
 ### Mailtrap
 
 ```bash title=".env"
