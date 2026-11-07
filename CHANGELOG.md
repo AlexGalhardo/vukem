@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **site:** Shrink the docs site type scale by 25% below 768px (root font size 20px to 15px) and keep code blocks at 13px on phones.
 - **web:** Encode and decode HTTP JSON, including problem+json, with `encoding/json/v2`.
 
 ### Security

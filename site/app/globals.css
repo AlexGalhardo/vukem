@@ -55,6 +55,13 @@ html {
   scroll-padding-top: calc(var(--header-h) + 1.5rem);
 }
 
+/* Phones: 75% of the desktop scale (20px -> 15px root) for all rem-based sizes. */
+@media (max-width: 767px) {
+  html {
+    font-size: 93.75%;
+  }
+}
+
 body {
   background: var(--bg);
   color: var(--fg);
@@ -388,7 +395,7 @@ body {
   .shiki,
   .prose pre {
     tab-size: 2;
-    font-size: 0.75rem;
+    font-size: 0.875rem;
     padding: 0.75rem 0.875rem;
   }
 
