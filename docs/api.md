@@ -98,7 +98,7 @@ func (p *ProductController) Store(c *web.Ctx) error {
 
 | Helper | Status | Notes |
 | --- | --- | --- |
-| `c.JSON(status, v)` | any | `encoding/json` (json/v2 under Go 1.27) |
+| `c.JSON(status, v)` | any | `encoding/json/v2` directly, with v1-compatible marshal options. Decode rejects duplicate names and invalid UTF-8 |
 | `c.Created(location, v)` | 201 | sets `Location` |
 | `c.Accepted(v)` | 202 | async work |
 | `c.NoContent()` | 204 | |
