@@ -166,6 +166,7 @@ Every failure wraps `jwt.ErrInvalid`; check it with [`errors.Is`](https://pkg.go
 | `Audience` | none | required value in `aud`; mandatory with a `RemoteJWKS` |
 | `Leeway` | 30s | tolerated clock skew |
 | `AllowMissingExpiry` | `false` | accept tokens without `exp` |
+| `Nonce` | `""` | when set, the `nonce` claim must equal it (constant-time); build the verifier per sign-in |
 | `InsecureSkipAudience` | `false` | with a `RemoteJWKS`, accept any `aud`. Dangerous: tokens the provider issued to other apps pass |
 | `InsecureSkipIssuer` | `false` | with a `RemoteJWKS`, accept any `iss`. Dangerous: tokens of other tenants pass |
 | `Now` | `time.Now` | the clock, for tests |
