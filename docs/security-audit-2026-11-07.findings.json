@@ -34,6 +34,11 @@
 				"file": "boost_test.go",
 				"line": 256,
 				"description": "TestSecurity_A05_BoostQueryRefusesSideEffectingSelects: before the fix every listed query reached the database (the SQLite test database rejected them only because the functions do not exist there)."
+			},
+			{
+				"file": "boost.go",
+				"line": 427,
+				"description": "Phase 5 re-check: the first pattern required a parenthesis right after the name, so pg_sleep/**/(600) passed; the name alone is matched now (case added to the same test)."
 			}
 		],
 		"conditions": [
