@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"embed"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -67,7 +68,7 @@ func writeDocker(dir, kind string, pm jsPM, assetsImage string) error {
 
 	if pinned != "" {
 		if !d.Assets {
-			return fmt.Errorf("assets image: this starter has no assets stage")
+			return errors.New("assets image: this starter has no assets stage")
 		}
 
 		d.JSImage = pinned

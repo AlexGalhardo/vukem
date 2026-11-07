@@ -125,7 +125,8 @@ func TestDoctorProject(t *testing.T) {
 		Runtime string `json:"runtime"`
 		Upgrade string `json:"upgrade"`
 		Tools   []struct {
-			Name, Status string
+			Name   string `json:"name"`
+			Status string `json:"status"`
 		} `json:"tools"`
 		Checks []doctorCheck `json:"checks"`
 	}
