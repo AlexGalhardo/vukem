@@ -3261,6 +3261,43 @@ func TestWithNameIsTheDefaultOfAppName(t *testing.T) {
 	}
 }
 
+func TestWithNameLeavesTheSessionCookie(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct {
+		name string
+		src  map[string]string
+		want string
+	}{
+		{name: "option only", want: "blog"},
+		{name: "APP_NAME wins", src: map[string]string{"APP_NAME": "Shop"}, want: "Shop"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			opts := []Option{WithSource(testSource(tt.src)), WithLogger(discardLogger()), WithName("blog")}
+
+			app, err := New(opts...)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if app.Config.Name != tt.want {
+				t.Fatalf("Config.Name = %q, want %q", app.Config.Name, tt.want)
+			}
+
+			sessions, err := app.Sessions()
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if sessions.CookieName() != "vukem_session" {
+				t.Fatalf("CookieName() = %q, want vukem_session", sessions.CookieName())
+			}
+		})
+	}
+}
+
 func TestOpenAPIInfoDocs(t *testing.T) {
 	t.Parallel()
 
