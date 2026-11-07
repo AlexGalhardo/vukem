@@ -509,8 +509,21 @@ if err != nil {
 | `Stateless` | No session middleware. CSRF stays on as `Origin`/`Sec-Fetch-Site` checks only, `csrfToken`/`csrfField` render empty, and session features (`c.Flash`, session login) return an error |
 | `SessionBypass` | ServeMux patterns served without sessions. `/webhooks/` covers its whole subtree; `POST /hooks/{id}` one method and path. Refused together with `Stateless` (`vukem: SessionBypass has no effect with Stateless (no sessions anywhere)`) |
 | `CSRFBypass` | ServeMux patterns exempt from CSRF checks, each logged at boot as `csrf bypass`. Protect them another way, such as [webhook signatures](/docs/digging-deeper/webhooks) |
+| `CacheControl` | Default `Cache-Control` for responses that set none, such as `"private, no-store"` for pages and JSON that depend on the signed-in user. A handler that sets its own header keeps it; static files (served before the router) keep theirs. A value with a control character stops the boot. See [Caching dynamic responses](#caching-dynamic-responses) |
 | `CSRFTokenFallback` | Also requires the session's CSRF token (`csrfField` or the `X-CSRF-Token` header) on unsafe requests that carry the session cookie but neither `Sec-Fetch-Site` nor `Origin`, i.e. browsers too old for the header checks. Refused together with `Stateless` (`vukem: CSRFTokenFallback needs sessions; it cannot be combined with Stateless`). See [CSRF](/docs/basics/csrf) |
 | `I18n` | `*i18n.MiddlewareConfig` for the locale resolver; needs `vukem.WithTranslations`. See [Localization](/docs/digging-deeper/localization#how-the-request-locale-is-chosen) |
+
+### Caching dynamic responses
+
+`middleware.StaticFS` gives hashed assets a long immutable cache, but pages and JSON get no `Cache-Control`, so a shared proxy may keep a response that belongs to one user. For an app where every dynamic response is private, say so once:
+
+```go title="routes/web.go"
+err := vukem.DefaultMiddlewareWith(app, r, vukem.MiddlewareOptions{
+	CacheControl: "private, no-store",
+})
+```
+
+The header is only added when the handler has not set `Cache-Control` itself, so a public page can still choose `public, max-age=300`. For a single group, mount `middleware.CacheControl(value)` yourself: it returns the middleware and an error for an empty value or one with a line break.
 
 Maintenance mode, the body limit and CSRF for every other route stay on: the options only add sources or skip what you list.
 

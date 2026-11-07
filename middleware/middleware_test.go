@@ -1140,3 +1140,48 @@ func TestLoggerIncludesAddedLogAttrs(t *testing.T) {
 	// Outside Logger, AddLogAttrs is a no-op.
 	web.AddLogAttrs(t.Context(), slog.String("x", "y"))
 }
+
+func TestCacheControl(t *testing.T) {
+	t.Parallel()
+
+	mw, err := CacheControl("private, no-store")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name    string
+		handler http.HandlerFunc
+		want    string
+	}{
+		{
+			"default on write",
+			func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("x")) },
+			"private, no-store",
+		},
+		{
+			"default on status only",
+			func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) },
+			"private, no-store",
+		},
+		{"handler keeps its own", func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Cache-Control", "public, max-age=60")
+			_, _ = w.Write([]byte("x"))
+		}, "public, max-age=60"},
+	}
+
+	for _, tt := range tests {
+		rec := httptest.NewRecorder()
+		mw(tt.handler).ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", http.NoBody))
+
+		if got := rec.Header().Get("Cache-Control"); got != tt.want {
+			t.Errorf("%s: Cache-Control = %q, want %q", tt.name, got, tt.want)
+		}
+	}
+
+	for _, bad := range []string{"", "  ", "no-store\r\nSet-Cookie: a=b"} {
+		if _, err := CacheControl(bad); err == nil {
+			t.Errorf("CacheControl(%q) = nil error", bad)
+		}
+	}
+}

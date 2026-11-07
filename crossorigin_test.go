@@ -154,3 +154,28 @@ func TestSecurity_A01_CrossOriginRouteDoesNotTrustOriginGlobally(t *testing.T) {
 		t.Errorf("credentialed cross-site POST to a non-cross-origin route = %d, want 403", rec.Code)
 	}
 }
+
+func TestDefaultMiddlewareCacheControl(t *testing.T) {
+	t.Parallel()
+
+	app := newTestApp(t, WithRoutes(func(r *router.Router, app *App) error {
+		r.Get("/page", func(c *web.Ctx) error { return c.String(http.StatusOK, "x") })
+		r.Get("/own", func(c *web.Ctx) error {
+			c.SetHeader("Cache-Control", "public, max-age=60")
+			return c.String(http.StatusOK, "x")
+		})
+
+		return DefaultMiddlewareWith(app, r, MiddlewareOptions{CacheControl: "private, no-store"})
+	}))
+
+	for target, want := range map[string]string{"/page": "private, no-store", "/own": "public, max-age=60"} {
+		if got := serve(t, app, http.MethodGet, target, false).Header().Get("Cache-Control"); got != want {
+			t.Errorf("GET %s Cache-Control = %q, want %q", target, got, want)
+		}
+	}
+
+	r := router.New(&web.Services{})
+	if err := DefaultMiddlewareWith(newTestApp(t), r, MiddlewareOptions{CacheControl: "no-store\r\nX: y"}); err == nil {
+		t.Error("DefaultMiddlewareWith(bad CacheControl) = nil, want an error")
+	}
+}
