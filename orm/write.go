@@ -282,8 +282,19 @@ func Restore[T any](ctx context.Context, ex database.Executor, model *T) error {
 // Set is a column → value map for bulk updates.
 type Set map[string]any
 
+// Delta is a Set value that adds to the column in the database instead of
+// storing a value: Set{"attempts": orm.Incr(1)} runs
+// "attempts = attempts + ?". The addition happens in one statement, so
+// concurrent updates never lose a count. A NULL column stays NULL.
+type Delta struct{ n int64 }
+
+// Incr returns a [Delta] adding n to the column (n may be negative).
+func Incr(n int64) Delta { return Delta{n} }
+
 // Update sets columns on every matching row and returns the count.
-// updated_at is refreshed unless set explicitly.
+// updated_at is refreshed unless set explicitly. A [Delta] value adds to
+// the column. The count makes a conditional update an atomic claim: see
+// the docs for "UPDATE ... WHERE status = 'queued'".
 func (q Query[T]) Update(ctx context.Context, set Set) (int64, error) {
 	if q.err != nil {
 		return 0, q.err
@@ -315,6 +326,13 @@ func (q Query[T]) Update(ctx context.Context, set Set) (int64, error) {
 	args := make([]any, 0, len(keys))
 
 	for i, k := range keys {
+		if d, ok := set[k].(Delta); ok {
+			sets[i] = q.quote(k) + " = " + q.quote(k) + " + ?"
+			args = append(args, d.n)
+
+			continue
+		}
+
 		v, err := bindValue(q.ex, q.m.table, bareColumn(k), set[k])
 		if err != nil {
 			return 0, err

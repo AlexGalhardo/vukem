@@ -6,6 +6,8 @@ import (
 	"errors"
 	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -834,5 +836,72 @@ func TestWhereInOperatorPointsToWhereIn(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "WhereIn") {
 			t.Errorf("Where(%q) error = %v, want a hint to WhereIn", op, err)
 		}
+	}
+}
+
+func TestUpdateIncr(t *testing.T) {
+	t.Parallel()
+
+	db, ctx := setup(t)
+	seedUsers(ctx, t, db)
+
+	before, err := QueryOf[User](db).Where("name", "Bob").First(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := QueryOf[User](db).Where("name", "Bob").Update(ctx, Set{"age": Incr(5)})
+	if err != nil || n != 1 {
+		t.Fatalf("Update(Incr) = %d, %v", n, err)
+	}
+
+	if _, err := QueryOf[User](db).Where("name", "Bob").Update(ctx, Set{"age": Incr(-2)}); err != nil {
+		t.Fatal(err)
+	}
+
+	after, _ := QueryOf[User](db).Where("name", "Bob").First(ctx)
+	if after.Age != before.Age+3 {
+		t.Errorf("age = %d, want %d", after.Age, before.Age+3)
+	}
+
+	if _, err := QueryOf[User](db).Update(ctx, Set{"evil;--": Incr(1)}); err == nil {
+		t.Error("Incr on a bad column = nil error")
+	}
+}
+
+// A conditional update is an atomic claim: of many concurrent workers only
+// one sees a row count of 1.
+func TestConditionalUpdateClaimsOnce(t *testing.T) {
+	t.Parallel()
+
+	db, ctx := setup(t)
+	seedUsers(ctx, t, db)
+
+	u, err := QueryOf[User](db).Where("active", false).First(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var claimed atomic.Int32
+
+	var wg sync.WaitGroup
+
+	for range 8 {
+		wg.Go(func() {
+			n, err := QueryOf[User](
+				db,
+			).Where("id", u.ID).
+				Where("active", false).
+				Update(ctx, Set{"active": true, "age": Incr(1)})
+			if err == nil && n == 1 {
+				claimed.Add(1)
+			}
+		})
+	}
+
+	wg.Wait()
+
+	if claimed.Load() != 1 {
+		t.Errorf("claimed by %d workers, want 1", claimed.Load())
 	}
 }

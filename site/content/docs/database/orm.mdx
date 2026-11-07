@@ -564,6 +564,32 @@ n, err = orm.QueryOf[models.Post](db).
 - On a soft-delete model, `Delete` sets `deleted_at`; after `WithTrashed()` or `OnlyTrashed()` it deletes for real.
 - Hooks do not run for bulk writes, and encrypted columns in a `Set` are sealed.
 
+### Counters and claiming work
+
+Reading a number, adding to it in Go and saving it loses updates when two requests run at once. `orm.Incr(n)` as a `Set` value adds in the database, in one statement: `attempts = attempts + ?`. A negative `n` subtracts, and a `NULL` column stays `NULL`.
+
+To claim a job so only one worker gets it, put the state you expect in the `WHERE` and check the count `Update` returns: the database applies the change to a row at most once, so a worker that lost the race sees `0`.
+
+```go title="jobs/claim.go"
+n, err := orm.QueryOf[models.Video](db).
+	Where("id", id).
+	Where("status", "queued").
+	Update(ctx, orm.Set{
+		"status":   "rendering",
+		"attempts": orm.Incr(1),
+	})
+if err != nil {
+	return err
+}
+
+if n == 0 {
+	return nil // another worker claimed it
+}
+```
+
+`Incr` takes a number, never SQL text, so there is nothing to inject. For other expressions, use `db.ExecContext` with `database.Rebind`.
+
+
 ## Soft deletes
 
 Embed `orm.SoftDeletes` and add `t.SoftDeletes()` to the migration. The model gains a `DeletedAt orm.NullTime` column, and:

@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **orm:** Add `orm.Incr` as a `Set` value for atomic column arithmetic in `Query.Update`, and document the conditional-update claim pattern.
 - **mail:** Add `ParseResendEvent` (typed Resend webhook events) and `Mailer.SetSuppression` (drop suppressed recipients, fail closed) for bounce and complaint handling.
 - **cache:** Add `Cache.ForgetPrefix` and the optional `PrefixDeleter` store interface (memory, database and Redis) to forget every key under a prefix.
 - **orm:** Add `Query.GroupCount` (rows per column value) and point `Where` with `IN` or `NOT IN` to `WhereIn` and `WhereNotIn` in its error.
