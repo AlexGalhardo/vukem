@@ -280,6 +280,21 @@ func TestUnknownSessionDriverFails(t *testing.T) {
 
 `target` is a path with an optional query string (`"/posts?q=go"`). The request host is `example.com`, and the request context is `t.Context()`, so it is cancelled when the test ends. If `v` cannot be encoded as JSON, the test fails with `vukemtest: encode body: …`.
 
+### Which helper triggers which branch
+
+A controller (or `auth.Required`) often answers differently to a browser, an API client and an Inertia visit, using `c.WantsJSON()`. The helper you pick decides which branch the test exercises:
+
+| Client | `Accept` the request sends | `c.WantsJSON()` | A guarded route without a login | A controller that branches on `WantsJSON()` |
+| --- | --- | --- | --- | --- |
+| `Get` | none | `false` | redirect to `/login` | the HTML or redirect branch |
+| `GetJSON` | `application/json` (this request only) | `true` | `401` | the JSON branch |
+| `PostJSON`, `PutJSON`, `PatchJSON` | `application/json`, unless the client already has an `Accept` | `true` | `401` | the JSON branch (a create answers `201` with a body) |
+| `PostForm` | none | `false` | redirect to `/login` | the HTML or redirect branch |
+| `AcceptJSON().Get(...)` | `application/json` for every request | `true` | `401` | the JSON branch |
+| `Inertia("").PostJSON(...)` | `text/html, application/xhtml+xml` (kept) | `false` | redirect to `/login` | the Inertia branch: a redirect after the write |
+
+So `app.Client(t).PostJSON("/videos", body).AssertRedirect(...)` fails with `status = 201`: `PostJSON` took the JSON branch. Test the redirect an Inertia form submission gets with `app.Client(t).Inertia("").PostJSON("/videos", body).AssertRedirect("/videos/1")`, and the API answer with a plain `PostJSON`. A route that serves both needs one test of each.
+
 HTML forms can only send `GET` and `POST`. To test an update or a delete from a form, send the `_method` field, as the browser form does:
 
 ```go title="tests/posts_test.go"
