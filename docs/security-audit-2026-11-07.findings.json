@@ -1,0 +1,82 @@
+[
+	{
+		"verdict": "confirmed",
+		"fingerprint": "boost.go:databaseQuery:readonly-guard-side-effects",
+		"title": "boost database_query read-only guard lets side-effecting SELECTs through",
+		"description": "The MCP tool database_query accepts any single statement that starts with SELECT, WITH, EXPLAIN or VALUES and contains no write keyword. Statements such as SELECT ... INTO OUTFILE, SELECT LOAD_FILE(...), SELECT pg_read_file(...), SELECT pg_terminate_backend(...), SELECT pg_sleep(600) and SELECT SLEEP(600) pass the filter, and a read-only transaction does not stop file access, backend control or sleeps.",
+		"root_cause": "The guard is a denylist of write keywords only; it does not cover INTO or functions with server-side effects.",
+		"intended_behavior": "database_query runs one read-only statement and refuses anything that writes data, reads or writes server files, or controls other sessions.",
+		"trace": [
+			{
+				"kind": "entrypoint",
+				"file": "boost.go",
+				"line": 429,
+				"scope": "boostServer.databaseQuery",
+				"description": "An MCP client (an AI agent) supplies the query string."
+			},
+			{
+				"kind": "propagation",
+				"file": "boost.go",
+				"line": 438,
+				"scope": "boostServer.databaseQuery",
+				"description": "The filter checks only readOnlyStart and writeKeyword, neither of which matches INTO or the listed functions."
+			},
+			{
+				"kind": "sink",
+				"file": "boost.go",
+				"line": 482,
+				"scope": "boostServer.databaseQuery",
+				"description": "The statement is executed on the application database connection."
+			}
+		],
+		"evidence": [
+			{
+				"file": "boost_test.go",
+				"line": 256,
+				"description": "TestSecurity_A05_BoostQueryRefusesSideEffectingSelects: before the fix every listed query reached the database (the SQLite test database rejected them only because the functions do not exist there)."
+			}
+		],
+		"conditions": [
+			{
+				"kind": "system_configuration",
+				"description": "The developer runs the boost MCP server against a database whose account has the privilege (FILE, pg_read_server_files, pg_signal_backend) for the function."
+			},
+			{
+				"kind": "user_interaction",
+				"description": "An AI agent connected to the MCP server is steered (prompt injection) to issue the query."
+			}
+		],
+		"execution": {
+			"attacker_perspective": "An agent or prompt-injected content calling the database_query tool.",
+			"payloads": [
+				"SELECT * FROM posts INTO OUTFILE '/tmp/posts.txt'",
+				"SELECT pg_terminate_backend(pid) FROM pg_stat_activity"
+			],
+			"instructions": [
+				"Run the boost MCP server against a local test database.",
+				"Call database_query with each payload.",
+				"Observe that the guard does not return the read-only error; the statement reaches the database."
+			],
+			"observed_result": "The guard accepted the statements and the database was asked to run them (the SQLite fixture failed with a SQL error instead of the read-only refusal)."
+		},
+		"remediation": {
+			"strategy": "Add INTO to the write keywords and refuse calls to file, backend-control, sleep and extension functions.",
+			"code_changes": []
+		},
+		"severity": {
+			"likelihood": {
+				"score": "low",
+				"reason": "Development-only local tool, needs a privileged database account and an agent steered to the call."
+			},
+			"impact": {
+				"score": "low",
+				"reason": "Server file read or write and session termination on a developer database, bounded by database privileges."
+			},
+			"overall_severity": "low"
+		},
+		"confidence": {
+			"score": "medium",
+			"reason": "The guard bypass is reproduced locally; the effect depends on database privileges that were not exercised against MySQL or PostgreSQL."
+		}
+	}
+]

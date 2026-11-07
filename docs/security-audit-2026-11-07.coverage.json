@@ -1,0 +1,918 @@
+[
+	{
+		"coverage_id": ".github%2Fworkflows::pinned%20actions%20and%20env-passed%20expressions::ci::ATTACK-CLASSES.md%23Chained%20vulnerabilities%20and%20trust%20boundaries",
+		"canonical_refs": {
+			"surface": ".github/workflows",
+			"boundary": "pinned actions and env-passed expressions",
+			"subsystem": "ci",
+			"attack_class": "ATTACK-CLASSES.md#Chained vulnerabilities and trust boundaries"
+		},
+		"surface": ".github/workflows",
+		"boundary": "pinned actions and env-passed expressions",
+		"subsystem": "ci",
+		"attack_class": "Chained vulnerabilities and trust boundaries",
+		"starting_paths": [
+			".github/workflows/pr-title.yml",
+			".github/workflows/ci-failure.yml"
+		],
+		"ordinary_attack_class_block": "ATTACK-CLASSES.md#Chained vulnerabilities and trust boundaries",
+		"selected_companion_blocks": [],
+		"excluded_blocks": [
+			{
+				"block": "AI-AND-LLM.md#Core discipline",
+				"reason": "The repository has no LLM-backed feature except the boost MCP server, covered separately."
+			}
+		],
+		"prior_status": "none",
+		"attempts": [],
+		"wave": 1,
+		"status": "covered",
+		"agent_id": "parent",
+		"reviewed_paths": [
+			".github/workflows/pr-title.yml",
+			".github/workflows/ci-failure.yml"
+		],
+		"local_checks": [
+			{
+				"agent_id": "parent",
+				"reviewed_paths": [
+					".github/workflows/pr-title.yml",
+					".github/workflows/ci-failure.yml"
+				],
+				"invariant": "The control holds for untrusted input.",
+				"method": "source",
+				"result": "Source review found the control enforced.",
+				"artifact": null
+			}
+		],
+		"result_fingerprints": [],
+		"unresolved": []
+	},
+	{
+		"coverage_id": "admin%2F::admin%2Fadmin.go::admin::ATTACK-CLASSES.md%23Access%20control",
+		"canonical_refs": {
+			"surface": "admin/",
+			"boundary": "admin/admin.go",
+			"subsystem": "admin",
+			"attack_class": "ATTACK-CLASSES.md#Access control"
+		},
+		"surface": "admin/",
+		"boundary": "admin/admin.go",
+		"subsystem": "admin",
+		"attack_class": "Access control",
+		"starting_paths": [
+			"admin/admin.go"
+		],
+		"ordinary_attack_class_block": "ATTACK-CLASSES.md#Access control",
+		"selected_companion_blocks": [],
+		"excluded_blocks": [
+			{
+				"block": "AI-AND-LLM.md#Core discipline",
+				"reason": "The repository has no LLM-backed feature except the boost MCP server, covered separately."
+			}
+		],
+		"prior_status": "none",
+		"attempts": [],
+		"wave": 1,
+		"status": "deferred",
+		"agent_id": null,
+		"reviewed_paths": [],
+		"local_checks": [],
+		"result_fingerprints": [],
+		"unresolved": [
+			"Not reviewed in this run: no independent hunter wave was launched."
+		]
+	},
+	{
+		"coverage_id": "api%2Fidempotency.go%23Idempotency::api%2Fidempotency.go%23defaultScope::api::ATTACK-CLASSES.md%23Access%20control",
+		"canonical_refs": {
+			"surface": "api/idempotency.go#Idempotency",
+			"boundary": "api/idempotency.go#defaultScope",
+			"subsystem": "api",
+			"attack_class": "ATTACK-CLASSES.md#Access control"
+		},
+		"surface": "api/idempotency.go#Idempotency",
+		"boundary": "api/idempotency.go#defaultScope",
+		"subsystem": "api",
+		"attack_class": "Access control",
+		"starting_paths": [
+			"api/idempotency.go"
+		],
+		"ordinary_attack_class_block": "ATTACK-CLASSES.md#Access control",
+		"selected_companion_blocks": [],
+		"excluded_blocks": [
+			{
+				"block": "AI-AND-LLM.md#Core discipline",
+				"reason": "The repository has no LLM-backed feature except the boost MCP server, covered separately."
+			}
+		],
+		"prior_status": "none",
+		"attempts": [],
+		"wave": 1,
+		"status": "covered",
+		"agent_id": "parent",
+		"reviewed_paths": [
+			"api/idempotency.go"
+		],
+		"local_checks": [
+			{
+				"agent_id": "parent",
+				"reviewed_paths": [
+					"api/idempotency.go"
+				],
+				"invariant": "The control holds for untrusted input.",
+				"method": "source",
+				"result": "Source review found the control enforced.",
+				"artifact": null
+			}
+		],
+		"result_fingerprints": [],
+		"unresolved": []
+	},
+	{
+		"coverage_id": "auth%2F::auth%2Fsession.go::auth::ATTACK-CLASSES.md%23Access%20control",
+		"canonical_refs": {
+			"surface": "auth/",
+			"boundary": "auth/session.go",
+			"subsystem": "auth",
+			"attack_class": "ATTACK-CLASSES.md#Access control"
+		},
+		"surface": "auth/",
+		"boundary": "auth/session.go",
+		"subsystem": "auth",
+		"attack_class": "Access control",
+		"starting_paths": [
+			"auth/auth.go"
+		],
+		"ordinary_attack_class_block": "ATTACK-CLASSES.md#Access control",
+		"selected_companion_blocks": [],
+		"excluded_blocks": [
+			{
+				"block": "AI-AND-LLM.md#Core discipline",
+				"reason": "The repository has no LLM-backed feature except the boost MCP server, covered separately."
+			}
+		],
+		"prior_status": "none",
+		"attempts": [],
+		"wave": 1,
+		"status": "deferred",
+		"agent_id": null,
+		"reviewed_paths": [],
+		"local_checks": [],
+		"result_fingerprints": [],
+		"unresolved": [
+			"Not reviewed in this run: no independent hunter wave was launched."
+		]
+	},
+	{
+		"coverage_id": "auth%2Fjwt%2Fjwt.go%23Verify::auth%2Fjwt%2Fjwt.go%23Key.verify::auth%2Fjwt::ATTACK-CLASSES.md%23Cryptography%20and%20secrets",
+		"canonical_refs": {
+			"surface": "auth/jwt/jwt.go#Verify",
+			"boundary": "auth/jwt/jwt.go#Key.verify",
+			"subsystem": "auth/jwt",
+			"attack_class": "ATTACK-CLASSES.md#Cryptography and secrets"
+		},
+		"surface": "auth/jwt/jwt.go#Verify",
+		"boundary": "auth/jwt/jwt.go#Key.verify",
+		"subsystem": "auth/jwt",
+		"attack_class": "Cryptography and secrets",
+		"starting_paths": [
+			"auth/jwt/jwt.go"
+		],
+		"ordinary_attack_class_block": "ATTACK-CLASSES.md#Cryptography and secrets",
+		"selected_companion_blocks": [],
+		"excluded_blocks": [
+			{
+				"block": "AI-AND-LLM.md#Core discipline",
+				"reason": "The repository has no LLM-backed feature except the boost MCP server, covered separately."
+			}
+		],
+		"prior_status": "none",
+		"attempts": [],
+		"wave": 1,
+		"status": "covered",
+		"agent_id": "parent",
+		"reviewed_paths": [
+			"auth/jwt/jwt.go"
+		],
+		"local_checks": [
+			{
+				"agent_id": "parent",
+				"reviewed_paths": [
+					"auth/jwt/jwt.go"
+				],
+				"invariant": "The control holds for untrusted input.",
+				"method": "source",
+				"result": "Source review found the control enforced.",
+				"artifact": null
+			}
+		],
+		"result_fingerprints": [],
+		"unresolved": []
+	},
+	{
+		"coverage_id": "boost.go%23databaseQuery::boost.go%23readOnlyStart::root::ATTACK-CLASSES.md%23Injection",
+		"canonical_refs": {
+			"surface": "boost.go#databaseQuery",
+			"boundary": "boost.go#readOnlyStart",
+			"subsystem": "root",
+			"attack_class": "ATTACK-CLASSES.md#Injection"
+		},
+		"surface": "boost.go#databaseQuery",
+		"boundary": "boost.go#readOnlyStart",
+		"subsystem": "root",
+		"attack_class": "Injection",
+		"starting_paths": [
+			"boost.go"
+		],
+		"ordinary_attack_class_block": "ATTACK-CLASSES.md#Injection",
+		"selected_companion_blocks": [],
+		"excluded_blocks": [
+			{
+				"block": "AI-AND-LLM.md#Core discipline",
+				"reason": "The repository has no LLM-backed feature except the boost MCP server, covered separately."
+			}
+		],
+		"prior_status": "none",
+		"attempts": [],
+		"wave": 1,
+		"status": "candidate",
+		"agent_id": "parent",
+		"reviewed_paths": [
+			"boost.go"
+		],
+		"local_checks": [
+			{
+				"agent_id": "parent",
+				"reviewed_paths": [
+					"boost.go"
+				],
+				"invariant": "The control holds for untrusted input.",
+				"method": "source",
+				"result": "Source review found the control enforced.",
+				"artifact": null
+			}
+		],
+		"result_fingerprints": [
+			"boost.go:databaseQuery:readonly-guard-side-effects"
+		],
+		"unresolved": []
+	},
+	{
+		"coverage_id": "contrib%2F::contrib%2F%2A::contrib::ATTACK-CLASSES.md%23Wildcard",
+		"canonical_refs": {
+			"surface": "contrib/",
+			"boundary": "contrib/*",
+			"subsystem": "contrib",
+			"attack_class": "ATTACK-CLASSES.md#Wildcard"
+		},
+		"surface": "contrib/",
+		"boundary": "contrib/*",
+		"subsystem": "contrib",
+		"attack_class": "Wildcard",
+		"starting_paths": [
+			"contrib"
+		],
+		"ordinary_attack_class_block": "ATTACK-CLASSES.md#Wildcard",
+		"selected_companion_blocks": [],
+		"excluded_blocks": [
+			{
+				"block": "AI-AND-LLM.md#Core discipline",
+				"reason": "The repository has no LLM-backed feature except the boost MCP server, covered separately."
+			}
+		],
+		"prior_status": "none",
+		"attempts": [],
+		"wave": 1,
+		"status": "deferred",
+		"agent_id": null,
+		"reviewed_paths": [],
+		"local_checks": [],
+		"result_fingerprints": [],
+		"unresolved": [
+			"Not reviewed in this run: no independent hunter wave was launched."
+		]
+	},
+	{
+		"coverage_id": "devtools%2Faccess.go%23Allowed::devtools%2Faccess.go%23loopbackHost::devtools::ATTACK-CLASSES.md%23Access%20control",
+		"canonical_refs": {
+			"surface": "devtools/access.go#Allowed",
+			"boundary": "devtools/access.go#loopbackHost",
+			"subsystem": "devtools",
+			"attack_class": "ATTACK-CLASSES.md#Access control"
+		},
+		"surface": "devtools/access.go#Allowed",
+		"boundary": "devtools/access.go#loopbackHost",
+		"subsystem": "devtools",
+		"attack_class": "Access control",
+		"starting_paths": [
+			"devtools/access.go"
+		],
+		"ordinary_attack_class_block": "ATTACK-CLASSES.md#Access control",
+		"selected_companion_blocks": [],
+		"excluded_blocks": [
+			{
+				"block": "AI-AND-LLM.md#Core discipline",
+				"reason": "The repository has no LLM-backed feature except the boost MCP server, covered separately."
+			}
+		],
+		"prior_status": "none",
+		"attempts": [],
+		"wave": 1,
+		"status": "covered",
+		"agent_id": "parent",
+		"reviewed_paths": [
+			"devtools/access.go"
+		],
+		"local_checks": [
+			{
+				"agent_id": "parent",
+				"reviewed_paths": [
+					"devtools/access.go"
+				],
+				"invariant": "The control holds for untrusted input.",
+				"method": "source",
+				"result": "Source review found the control enforced.",
+				"artifact": null
+			}
+		],
+		"result_fingerprints": [],
+		"unresolved": []
+	},
+	{
+		"coverage_id": "drivers%2F::drivers%2F%2A::drivers::ATTACK-CLASSES.md%23Wildcard",
+		"canonical_refs": {
+			"surface": "drivers/",
+			"boundary": "drivers/*",
+			"subsystem": "drivers",
+			"attack_class": "ATTACK-CLASSES.md#Wildcard"
+		},
+		"surface": "drivers/",
+		"boundary": "drivers/*",
+		"subsystem": "drivers",
+		"attack_class": "Wildcard",
+		"starting_paths": [
+			"drivers"
+		],
+		"ordinary_attack_class_block": "ATTACK-CLASSES.md#Wildcard",
+		"selected_companion_blocks": [],
+		"excluded_blocks": [
+			{
+				"block": "AI-AND-LLM.md#Core discipline",
+				"reason": "The repository has no LLM-backed feature except the boost MCP server, covered separately."
+			}
+		],
+		"prior_status": "none",
+		"attempts": [],
+		"wave": 1,
+		"status": "deferred",
+		"agent_id": null,
+		"reviewed_paths": [],
+		"local_checks": [],
+		"result_fingerprints": [],
+		"unresolved": [
+			"Not reviewed in this run: no independent hunter wave was launched."
+		]
+	},
+	{
+		"coverage_id": "httpclient%2Fhttpclient.go%23Safe::httpclient%2Fhttpclient.go%23Allowed::httpclient::ATTACK-CLASSES.md%23Resource%20and%20file%20handling",
+		"canonical_refs": {
+			"surface": "httpclient/httpclient.go#Safe",
+			"boundary": "httpclient/httpclient.go#Allowed",
+			"subsystem": "httpclient",
+			"attack_class": "ATTACK-CLASSES.md#Resource and file handling"
+		},
+		"surface": "httpclient/httpclient.go#Safe",
+		"boundary": "httpclient/httpclient.go#Allowed",
+		"subsystem": "httpclient",
+		"attack_class": "Resource and file handling",
+		"starting_paths": [
+			"httpclient/httpclient.go"
+		],
+		"ordinary_attack_class_block": "ATTACK-CLASSES.md#Resource and file handling",
+		"selected_companion_blocks": [],
+		"excluded_blocks": [
+			{
+				"block": "AI-AND-LLM.md#Core discipline",
+				"reason": "The repository has no LLM-backed feature except the boost MCP server, covered separately."
+			}
+		],
+		"prior_status": "none",
+		"attempts": [],
+		"wave": 1,
+		"status": "covered",
+		"agent_id": "parent",
+		"reviewed_paths": [
+			"httpclient/httpclient.go"
+		],
+		"local_checks": [
+			{
+				"agent_id": "parent",
+				"reviewed_paths": [
+					"httpclient/httpclient.go"
+				],
+				"invariant": "The control holds for untrusted input.",
+				"method": "source",
+				"result": "Source review found the control enforced.",
+				"artifact": null
+			}
+		],
+		"result_fingerprints": [],
+		"unresolved": []
+	},
+	{
+		"coverage_id": "inertia%2F%20view%2F%20htmx%2F%20vite%2F::view%2Ffuncs.go::view::ATTACK-CLASSES.md%23Injection",
+		"canonical_refs": {
+			"surface": "inertia/ view/ htmx/ vite/",
+			"boundary": "view/funcs.go",
+			"subsystem": "view",
+			"attack_class": "ATTACK-CLASSES.md#Injection"
+		},
+		"surface": "inertia/ view/ htmx/ vite/",
+		"boundary": "view/funcs.go",
+		"subsystem": "view",
+		"attack_class": "Injection",
+		"starting_paths": [
+			"view/funcs.go"
+		],
+		"ordinary_attack_class_block": "ATTACK-CLASSES.md#Injection",
+		"selected_companion_blocks": [],
+		"excluded_blocks": [
+			{
+				"block": "AI-AND-LLM.md#Core discipline",
+				"reason": "The repository has no LLM-backed feature except the boost MCP server, covered separately."
+			}
+		],
+		"prior_status": "none",
+		"attempts": [],
+		"wave": 1,
+		"status": "deferred",
+		"agent_id": null,
+		"reviewed_paths": [],
+		"local_checks": [],
+		"result_fingerprints": [],
+		"unresolved": [
+			"Not reviewed in this run: no independent hunter wave was launched."
+		]
+	},
+	{
+		"coverage_id": "internal%2Fcli%20generators::internal%2Fcli::cli::ATTACK-CLASSES.md%23Wildcard",
+		"canonical_refs": {
+			"surface": "internal/cli generators",
+			"boundary": "internal/cli",
+			"subsystem": "cli",
+			"attack_class": "ATTACK-CLASSES.md#Wildcard"
+		},
+		"surface": "internal/cli generators",
+		"boundary": "internal/cli",
+		"subsystem": "cli",
+		"attack_class": "Wildcard",
+		"starting_paths": [
+			"internal/cli"
+		],
+		"ordinary_attack_class_block": "ATTACK-CLASSES.md#Wildcard",
+		"selected_companion_blocks": [],
+		"excluded_blocks": [
+			{
+				"block": "AI-AND-LLM.md#Core discipline",
+				"reason": "The repository has no LLM-backed feature except the boost MCP server, covered separately."
+			}
+		],
+		"prior_status": "none",
+		"attempts": [],
+		"wave": 1,
+		"status": "deferred",
+		"agent_id": null,
+		"reviewed_paths": [],
+		"local_checks": [],
+		"result_fingerprints": [],
+		"unresolved": [
+			"Not reviewed in this run: no independent hunter wave was launched."
+		]
+	},
+	{
+		"coverage_id": "mail%2Fsmtp.go%23Build::mail%2Fmail.go%23address::mail::ATTACK-CLASSES.md%23Injection",
+		"canonical_refs": {
+			"surface": "mail/smtp.go#Build",
+			"boundary": "mail/mail.go#address",
+			"subsystem": "mail",
+			"attack_class": "ATTACK-CLASSES.md#Injection"
+		},
+		"surface": "mail/smtp.go#Build",
+		"boundary": "mail/mail.go#address",
+		"subsystem": "mail",
+		"attack_class": "Injection",
+		"starting_paths": [
+			"mail/smtp.go",
+			"mail/mail.go"
+		],
+		"ordinary_attack_class_block": "ATTACK-CLASSES.md#Injection",
+		"selected_companion_blocks": [],
+		"excluded_blocks": [
+			{
+				"block": "AI-AND-LLM.md#Core discipline",
+				"reason": "The repository has no LLM-backed feature except the boost MCP server, covered separately."
+			}
+		],
+		"prior_status": "none",
+		"attempts": [],
+		"wave": 1,
+		"status": "covered",
+		"agent_id": "parent",
+		"reviewed_paths": [
+			"mail/smtp.go",
+			"mail/mail.go"
+		],
+		"local_checks": [
+			{
+				"agent_id": "parent",
+				"reviewed_paths": [
+					"mail/smtp.go",
+					"mail/mail.go"
+				],
+				"invariant": "The control holds for untrusted input.",
+				"method": "source",
+				"result": "Source review found the control enforced.",
+				"artifact": null
+			}
+		],
+		"result_fingerprints": [],
+		"unresolved": []
+	},
+	{
+		"coverage_id": "middleware%2Fmaintenance.go%23Maintenance::middleware%2Fmaintenance.go%23bypassToken::middleware::ATTACK-CLASSES.md%23Access%20control",
+		"canonical_refs": {
+			"surface": "middleware/maintenance.go#Maintenance",
+			"boundary": "middleware/maintenance.go#bypassToken",
+			"subsystem": "middleware",
+			"attack_class": "ATTACK-CLASSES.md#Access control"
+		},
+		"surface": "middleware/maintenance.go#Maintenance",
+		"boundary": "middleware/maintenance.go#bypassToken",
+		"subsystem": "middleware",
+		"attack_class": "Access control",
+		"starting_paths": [
+			"middleware/maintenance.go"
+		],
+		"ordinary_attack_class_block": "ATTACK-CLASSES.md#Access control",
+		"selected_companion_blocks": [],
+		"excluded_blocks": [
+			{
+				"block": "AI-AND-LLM.md#Core discipline",
+				"reason": "The repository has no LLM-backed feature except the boost MCP server, covered separately."
+			}
+		],
+		"prior_status": "none",
+		"attempts": [],
+		"wave": 1,
+		"status": "covered",
+		"agent_id": "parent",
+		"reviewed_paths": [
+			"middleware/maintenance.go"
+		],
+		"local_checks": [
+			{
+				"agent_id": "parent",
+				"reviewed_paths": [
+					"middleware/maintenance.go"
+				],
+				"invariant": "The control holds for untrusted input.",
+				"method": "source",
+				"result": "Source review found the control enforced.",
+				"artifact": null
+			}
+		],
+		"result_fingerprints": [],
+		"unresolved": []
+	},
+	{
+		"coverage_id": "orm%2Fquery.go%23OrderBy::orm%2Fquery.go%23where::orm::ATTACK-CLASSES.md%23Injection",
+		"canonical_refs": {
+			"surface": "orm/query.go#OrderBy",
+			"boundary": "orm/query.go#where",
+			"subsystem": "orm",
+			"attack_class": "ATTACK-CLASSES.md#Injection"
+		},
+		"surface": "orm/query.go#OrderBy",
+		"boundary": "orm/query.go#where",
+		"subsystem": "orm",
+		"attack_class": "Injection",
+		"starting_paths": [
+			"orm/query.go",
+			"database/database.go"
+		],
+		"ordinary_attack_class_block": "ATTACK-CLASSES.md#Injection",
+		"selected_companion_blocks": [],
+		"excluded_blocks": [
+			{
+				"block": "AI-AND-LLM.md#Core discipline",
+				"reason": "The repository has no LLM-backed feature except the boost MCP server, covered separately."
+			}
+		],
+		"prior_status": "none",
+		"attempts": [],
+		"wave": 1,
+		"status": "covered",
+		"agent_id": "parent",
+		"reviewed_paths": [
+			"orm/query.go",
+			"database/database.go"
+		],
+		"local_checks": [
+			{
+				"agent_id": "parent",
+				"reviewed_paths": [
+					"orm/query.go",
+					"database/database.go"
+				],
+				"invariant": "The control holds for untrusted input.",
+				"method": "source",
+				"result": "Source review found the control enforced.",
+				"artifact": null
+			}
+		],
+		"result_fingerprints": [],
+		"unresolved": []
+	},
+	{
+		"coverage_id": "session%2F::session%2Fmanager.go::session::ATTACK-CLASSES.md%23Access%20control",
+		"canonical_refs": {
+			"surface": "session/",
+			"boundary": "session/manager.go",
+			"subsystem": "session",
+			"attack_class": "ATTACK-CLASSES.md#Access control"
+		},
+		"surface": "session/",
+		"boundary": "session/manager.go",
+		"subsystem": "session",
+		"attack_class": "Access control",
+		"starting_paths": [
+			"session/manager.go"
+		],
+		"ordinary_attack_class_block": "ATTACK-CLASSES.md#Access control",
+		"selected_companion_blocks": [],
+		"excluded_blocks": [
+			{
+				"block": "AI-AND-LLM.md#Core discipline",
+				"reason": "The repository has no LLM-backed feature except the boost MCP server, covered separately."
+			}
+		],
+		"prior_status": "none",
+		"attempts": [],
+		"wave": 1,
+		"status": "deferred",
+		"agent_id": null,
+		"reviewed_paths": [],
+		"local_checks": [],
+		"result_fingerprints": [],
+		"unresolved": [
+			"Not reviewed in this run: no independent hunter wave was launched."
+		]
+	},
+	{
+		"coverage_id": "sse%2F%20and%20broadcast%2F::broadcast%2Fbroadcast.go::broadcast::ATTACK-CLASSES.md%23Access%20control",
+		"canonical_refs": {
+			"surface": "sse/ and broadcast/",
+			"boundary": "broadcast/broadcast.go",
+			"subsystem": "broadcast",
+			"attack_class": "ATTACK-CLASSES.md#Access control"
+		},
+		"surface": "sse/ and broadcast/",
+		"boundary": "broadcast/broadcast.go",
+		"subsystem": "broadcast",
+		"attack_class": "Access control",
+		"starting_paths": [
+			"broadcast/broadcast.go"
+		],
+		"ordinary_attack_class_block": "ATTACK-CLASSES.md#Access control",
+		"selected_companion_blocks": [],
+		"excluded_blocks": [
+			{
+				"block": "AI-AND-LLM.md#Core discipline",
+				"reason": "The repository has no LLM-backed feature except the boost MCP server, covered separately."
+			}
+		],
+		"prior_status": "none",
+		"attempts": [],
+		"wave": 1,
+		"status": "deferred",
+		"agent_id": null,
+		"reviewed_paths": [],
+		"local_checks": [],
+		"result_fingerprints": [],
+		"unresolved": [
+			"Not reviewed in this run: no independent hunter wave was launched."
+		]
+	},
+	{
+		"coverage_id": "storage%2Flocal.go%23Local::storage%2Flocal.go%23NewLocal::storage::ATTACK-CLASSES.md%23Resource%20and%20file%20handling",
+		"canonical_refs": {
+			"surface": "storage/local.go#Local",
+			"boundary": "storage/local.go#NewLocal",
+			"subsystem": "storage",
+			"attack_class": "ATTACK-CLASSES.md#Resource and file handling"
+		},
+		"surface": "storage/local.go#Local",
+		"boundary": "storage/local.go#NewLocal",
+		"subsystem": "storage",
+		"attack_class": "Resource and file handling",
+		"starting_paths": [
+			"storage/local.go"
+		],
+		"ordinary_attack_class_block": "ATTACK-CLASSES.md#Resource and file handling",
+		"selected_companion_blocks": [],
+		"excluded_blocks": [
+			{
+				"block": "AI-AND-LLM.md#Core discipline",
+				"reason": "The repository has no LLM-backed feature except the boost MCP server, covered separately."
+			}
+		],
+		"prior_status": "none",
+		"attempts": [],
+		"wave": 1,
+		"status": "covered",
+		"agent_id": "parent",
+		"reviewed_paths": [
+			"storage/local.go"
+		],
+		"local_checks": [
+			{
+				"agent_id": "parent",
+				"reviewed_paths": [
+					"storage/local.go"
+				],
+				"invariant": "The control holds for untrusted input.",
+				"method": "source",
+				"result": "Source review found the control enforced.",
+				"artifact": null
+			}
+		],
+		"result_fingerprints": [],
+		"unresolved": []
+	},
+	{
+		"coverage_id": "upload%2F::upload%2Fupload.go::upload::ATTACK-CLASSES.md%23Resource%20and%20file%20handling",
+		"canonical_refs": {
+			"surface": "upload/",
+			"boundary": "upload/upload.go",
+			"subsystem": "upload",
+			"attack_class": "ATTACK-CLASSES.md#Resource and file handling"
+		},
+		"surface": "upload/",
+		"boundary": "upload/upload.go",
+		"subsystem": "upload",
+		"attack_class": "Resource and file handling",
+		"starting_paths": [
+			"upload/upload.go"
+		],
+		"ordinary_attack_class_block": "ATTACK-CLASSES.md#Resource and file handling",
+		"selected_companion_blocks": [],
+		"excluded_blocks": [
+			{
+				"block": "AI-AND-LLM.md#Core discipline",
+				"reason": "The repository has no LLM-backed feature except the boost MCP server, covered separately."
+			}
+		],
+		"prior_status": "none",
+		"attempts": [],
+		"wave": 1,
+		"status": "deferred",
+		"agent_id": null,
+		"reviewed_paths": [],
+		"local_checks": [],
+		"result_fingerprints": [],
+		"unresolved": [
+			"Not reviewed in this run: no independent hunter wave was launched."
+		]
+	},
+	{
+		"coverage_id": "web%2Fctx.go%23IP::web%2Fctx.go%23trusted::web::ATTACK-CLASSES.md%23Access%20control",
+		"canonical_refs": {
+			"surface": "web/ctx.go#IP",
+			"boundary": "web/ctx.go#trusted",
+			"subsystem": "web",
+			"attack_class": "ATTACK-CLASSES.md#Access control"
+		},
+		"surface": "web/ctx.go#IP",
+		"boundary": "web/ctx.go#trusted",
+		"subsystem": "web",
+		"attack_class": "Access control",
+		"starting_paths": [
+			"web/ctx.go"
+		],
+		"ordinary_attack_class_block": "ATTACK-CLASSES.md#Access control",
+		"selected_companion_blocks": [],
+		"excluded_blocks": [
+			{
+				"block": "AI-AND-LLM.md#Core discipline",
+				"reason": "The repository has no LLM-backed feature except the boost MCP server, covered separately."
+			}
+		],
+		"prior_status": "none",
+		"attempts": [],
+		"wave": 1,
+		"status": "covered",
+		"agent_id": "parent",
+		"reviewed_paths": [
+			"web/ctx.go"
+		],
+		"local_checks": [
+			{
+				"agent_id": "parent",
+				"reviewed_paths": [
+					"web/ctx.go"
+				],
+				"invariant": "The control holds for untrusted input.",
+				"method": "source",
+				"result": "Source review found the control enforced.",
+				"artifact": null
+			}
+		],
+		"result_fingerprints": [],
+		"unresolved": []
+	},
+	{
+		"coverage_id": "web%2Fresponse.go%23SafeRedirect::web%2Fresponse.go%23isLocalPath::web::ATTACK-CLASSES.md%23Access%20control",
+		"canonical_refs": {
+			"surface": "web/response.go#SafeRedirect",
+			"boundary": "web/response.go#isLocalPath",
+			"subsystem": "web",
+			"attack_class": "ATTACK-CLASSES.md#Access control"
+		},
+		"surface": "web/response.go#SafeRedirect",
+		"boundary": "web/response.go#isLocalPath",
+		"subsystem": "web",
+		"attack_class": "Access control",
+		"starting_paths": [
+			"web/response.go",
+			"http.go"
+		],
+		"ordinary_attack_class_block": "ATTACK-CLASSES.md#Access control",
+		"selected_companion_blocks": [],
+		"excluded_blocks": [
+			{
+				"block": "AI-AND-LLM.md#Core discipline",
+				"reason": "The repository has no LLM-backed feature except the boost MCP server, covered separately."
+			}
+		],
+		"prior_status": "none",
+		"attempts": [],
+		"wave": 1,
+		"status": "covered",
+		"agent_id": "parent",
+		"reviewed_paths": [
+			"web/response.go",
+			"http.go"
+		],
+		"local_checks": [
+			{
+				"agent_id": "parent",
+				"reviewed_paths": [
+					"web/response.go",
+					"http.go"
+				],
+				"invariant": "The control holds for untrusted input.",
+				"method": "source",
+				"result": "Source review found the control enforced.",
+				"artifact": null
+			}
+		],
+		"result_fingerprints": [],
+		"unresolved": []
+	},
+	{
+		"coverage_id": "webhook%2F::webhook%2Fwebhook.go::webhook::ATTACK-CLASSES.md%23Cryptography%20and%20secrets",
+		"canonical_refs": {
+			"surface": "webhook/",
+			"boundary": "webhook/webhook.go",
+			"subsystem": "webhook",
+			"attack_class": "ATTACK-CLASSES.md#Cryptography and secrets"
+		},
+		"surface": "webhook/",
+		"boundary": "webhook/webhook.go",
+		"subsystem": "webhook",
+		"attack_class": "Cryptography and secrets",
+		"starting_paths": [
+			"webhook/webhook.go"
+		],
+		"ordinary_attack_class_block": "ATTACK-CLASSES.md#Cryptography and secrets",
+		"selected_companion_blocks": [],
+		"excluded_blocks": [
+			{
+				"block": "AI-AND-LLM.md#Core discipline",
+				"reason": "The repository has no LLM-backed feature except the boost MCP server, covered separately."
+			}
+		],
+		"prior_status": "none",
+		"attempts": [],
+		"wave": 1,
+		"status": "deferred",
+		"agent_id": null,
+		"reviewed_paths": [],
+		"local_checks": [],
+		"result_fingerprints": [],
+		"unresolved": [
+			"Not reviewed in this run: no independent hunter wave was launched."
+		]
+	}
+]
