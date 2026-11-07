@@ -1,5 +1,4 @@
-import type { Metadata } from "next";
-import Link from "next/link";
+import { Link } from "@/components/link";
 import { ArrowLeft, ArrowRight, SquarePen } from "lucide-react";
 import { Toc } from "@/components/toc";
 import { getAllDocs, getNeighbours, versionHome, type Doc } from "@/lib/content";
@@ -15,14 +14,9 @@ function latestHref(href: string, v: DocVersion): string {
   return getAllDocs(currentVersion.id).some((d) => d.href === target) ? target : versionHome(currentVersion);
 }
 
-export function docMetadata(doc: Doc): Metadata {
+export function docMetadata(doc: Doc): { title: string; description: string } {
   const title = doc.version.id === currentVersion.id ? doc.title : `${doc.title} (${doc.version.label})`;
-  return {
-    title,
-    description: doc.description,
-    alternates: { canonical: doc.href },
-    openGraph: { title: doc.title, description: doc.description, url: doc.href, locale: "en" },
-  };
+  return { title, description: doc.description };
 }
 
 export async function DocArticle({ doc }: { doc: Doc }): Promise<React.ReactElement> {

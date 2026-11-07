@@ -1,10 +1,11 @@
+import type { APIRoute } from "astro";
 import { getAllDocs } from "@/lib/content";
 import { mdxToMarkdown } from "@/lib/text";
 import { site } from "@/lib/site";
 
-export const dynamic = "force-static";
+export const prerender = true;
 
-export function GET() {
+export const GET: APIRoute = () => {
   const parts = [`# ${site.name} documentation`, "", `> ${site.tagline}`, ""];
 
   for (const doc of getAllDocs()) {
@@ -12,4 +13,4 @@ export function GET() {
   }
 
   return new Response(parts.join("\n"), { headers: { "Content-Type": "text/plain; charset=utf-8" } });
-}
+};

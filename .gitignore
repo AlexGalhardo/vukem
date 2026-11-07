@@ -30,6 +30,7 @@ go.work.sum
 # Documentation site
 site/.next/
 site/.vercel/
+site/.astro/
 site/out/
 
 # Agent worktrees

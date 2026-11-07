@@ -1,0 +1,143 @@
+---
+import "@fontsource/inter/latin-400.css";
+import "@fontsource/inter/latin-500.css";
+import "@fontsource/inter/latin-600.css";
+import "@fontsource/jetbrains-mono/latin-400.css";
+import "../../app/globals.css";
+import { Header } from "@/components/header";
+import { getNavGroupsByVersion } from "@/lib/content";
+import { site } from "@/lib/site";
+
+interface Props {
+  title: string;
+  description?: string;
+  canonical?: string;
+}
+
+const { title, description = site.tagline, canonical } = Astro.props;
+const fullTitle = title.includes(site.name) ? title : `${title} — ${site.name}`;
+const groupsByVersion = getNavGroupsByVersion();
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{fullTitle}</title>
+    <meta name="description" content={description} />
+    <meta name="application-name" content={site.name} />
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <link rel="canonical" href={new URL(canonical ?? Astro.url.pathname, site.url).href} />
+    <meta property="og:site_name" content={site.name} />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta name="twitter:card" content="summary" />
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#ffffff" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#050505" />
+    <script is:inline>
+      (function () {
+        try {
+          var theme = localStorage.getItem("theme") || "system";
+          var dark =
+            theme === "dark" ||
+            (theme !== "light" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+          if (dark) document.documentElement.classList.add("dark");
+        } catch (e) {}
+      })();
+    </script>
+    <style is:global>
+      :root {
+        --font-inter: "Inter", ui-sans-serif, system-ui, sans-serif;
+        --font-mono-face: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      }
+    </style>
+  </head>
+  <body class="min-h-dvh font-sans">
+    <a
+      href="#content"
+      class="sr-only z-50 rounded-md bg-bg px-3 py-2 text-sm focus:not-sr-only focus:fixed focus:top-2 focus:left-2"
+    >
+      Skip to content
+    </a>
+    <Header client:load groupsByVersion={groupsByVersion} />
+    <slot />
+    <div id="toast" class="pointer-events-none fixed right-4 bottom-4 z-[100] hidden w-[min(20rem,calc(100vw-2rem))] items-center gap-2.5 rounded-xl border border-border bg-bg px-4 py-3 text-sm font-medium text-fg shadow-lg" role="status"></div>
+    <script>
+      import ClipboardJS from "clipboard";
+
+      const toast = document.getElementById("toast");
+      let toastTimer: ReturnType<typeof setTimeout> | undefined;
+      const notify = (message: string) => {
+        if (!toast) return;
+        toast.textContent = message;
+        toast.classList.remove("hidden");
+        toast.classList.add("flex");
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => {
+          toast.classList.add("hidden");
+          toast.classList.remove("flex");
+        }, 1600);
+      };
+
+      const clipboard = new ClipboardJS("[data-copy]", {
+        text: (el) => el.getAttribute("data-copy") ?? "",
+      });
+      clipboard.on("success", (event) => {
+        event.clearSelection();
+        notify("Copied to clipboard");
+      });
+      clipboard.on("error", () => notify("Press Ctrl+C to copy"));
+
+      document.addEventListener("click", (event) => {
+        const target = event.target;
+        if (!(target instanceof Element)) return;
+        const tab = target.closest("[data-tabs] [role='tab']");
+        if (!tab) return;
+        const root = tab.closest("[data-tabs]");
+        if (!root) return;
+        const id = tab.getAttribute("data-tab");
+        for (const button of root.querySelectorAll("[role='tab']")) {
+          button.setAttribute("aria-selected", button === tab ? "true" : "false");
+        }
+        for (const panel of root.querySelectorAll("[role='tabpanel']")) {
+          panel.toggleAttribute("hidden", panel.getAttribute("data-panel") !== id);
+        }
+      });
+
+      const tocLinks = [...document.querySelectorAll("nav[aria-label='On this page'] a")];
+      const headings = tocLinks
+        .map((link) => document.getElementById((link.getAttribute("href") ?? "").slice(1)))
+        .filter((el): el is HTMLElement => el !== null);
+      if (headings.length > 0) {
+        const visible = new Map<string, boolean>();
+        const mark = (id: string) => {
+          for (const link of tocLinks) {
+            const on = link.getAttribute("href") === `#${id}`;
+            link.classList.toggle("border-accent", on);
+            link.classList.toggle("text-fg", on);
+            link.classList.toggle("border-transparent", !on);
+            link.classList.toggle("text-muted", !on);
+            if (on) link.setAttribute("aria-current", "location");
+            else link.removeAttribute("aria-current");
+          }
+        };
+        const observer = new IntersectionObserver(
+          (entries) => {
+            for (const entry of entries) visible.set(entry.target.id, entry.isIntersecting);
+            const first = headings.find((el) => visible.get(el.id));
+            if (first) {
+              mark(first.id);
+              return;
+            }
+            const above = headings.filter((el) => el.getBoundingClientRect().top < 120);
+            mark((above.at(-1) ?? headings[0]).id);
+          },
+          { rootMargin: "-64px 0px -65% 0px", threshold: [0, 1] },
+        );
+        for (const el of headings) observer.observe(el);
+      }
+    </script>
+  </body>
+</html>

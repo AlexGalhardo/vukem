@@ -41,6 +41,7 @@ export function CopyButton({ text, className = "" }: { text: string; className?:
     <button
       ref={ref}
       type="button"
+      data-copy={text}
       aria-label={copied ? "Copied" : "Copy code"}
       className={`inline-flex size-7 items-center justify-center rounded-md text-faint transition-colors hover:bg-hover hover:text-fg ${className}`}
     >

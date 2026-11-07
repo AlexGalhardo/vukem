@@ -1,10 +1,11 @@
-import Link from "next/link";
+import { Link } from "@/components/link";
 import { Logo } from "@/components/logo";
 import { MobileNav } from "@/components/mobile-nav";
 import { SearchDialog } from "@/components/search-dialog";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { IconTooltip } from "@/components/icon-tooltip";
-import { getNavGroupsByVersion } from "@/lib/content";
+import { Providers } from "@/components/providers";
+import type { NavGroup } from "@/lib/content";
 import { t } from "@/lib/ui-text";
 import { site } from "@/lib/site";
 
@@ -16,9 +17,9 @@ function GitHubIcon({ className }: { className?: string }) {
   );
 }
 
-export function Header() {
-  const groupsByVersion = getNavGroupsByVersion();
+export function Header({ groupsByVersion }: { groupsByVersion: Record<string, NavGroup[]> }) {
   return (
+    <Providers>
     <header className="sticky top-0 z-40 h-(--header-h) border-b border-border bg-bg/80 backdrop-blur-md supports-[backdrop-filter]:bg-bg/70">
       {/* Same container as app/docs/layout.tsx; the left column matches the sidebar width. */}
       <div className="mx-auto flex h-full max-w-[90rem] items-center gap-2 px-4 sm:gap-3 sm:px-6 lg:grid lg:grid-cols-[16rem_1fr_16rem] lg:gap-0">
@@ -51,5 +52,6 @@ export function Header() {
         </div>
       </div>
     </header>
+    </Providers>
   );
 }

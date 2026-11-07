@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import Link from "next/link";
+import { Link } from "@/components/link";
 import { Dialog } from "@base-ui/react/dialog";
 import { Menu, X } from "lucide-react";
 import { Sidebar } from "@/components/sidebar";

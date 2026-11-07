@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
 import { Dialog } from "@base-ui/react/dialog";
 import { CornerDownLeft, FileText, Hash, Search } from "lucide-react";
 import type { SearchEntry } from "@/lib/search";
@@ -65,7 +64,6 @@ function Highlight({ text, tokens }: { text: string; tokens: string[] }) {
 }
 
 export function SearchDialog() {
-  const router = useRouter();
   const isMac = useIsMac();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -136,7 +134,7 @@ export function SearchDialog() {
   const go = (r: Result | undefined) => {
     if (!r) return;
     onOpenChange(false);
-    router.push(r.href);
+    window.location.assign(r.href);
   };
 
   const onInputKey = (e: React.KeyboardEvent<HTMLInputElement>) => {

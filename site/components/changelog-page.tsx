@@ -1,12 +1,10 @@
-import type { Metadata } from "next";
 import { readChangelog, renderMarkdown } from "@/lib/changelog";
 import { t } from "@/lib/ui-text";
 import { site } from "@/lib/site";
 
-export const changelogMetadata: Metadata = {
+export const changelogMetadata = {
   title: t.changelogTitle,
   description: t.changelogDescription,
-  alternates: { canonical: "/changelog" },
 };
 
 export async function ChangelogPage(): Promise<React.ReactElement> {

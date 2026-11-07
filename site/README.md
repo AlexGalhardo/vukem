@@ -1,6 +1,6 @@
 # Vukem documentation site
 
-The public docs at <https://vukem.dev>: Next.js 16 (App Router, static generation), Tailwind CSS v4, Base UI and MDX. See [docs/site.md](../docs/site.md) for the decisions behind it.
+The public docs at <https://vukem.dev>: Astro 7.4 (static HTML), Tailwind CSS v4, Base UI and MDX. See [docs/site.md](../docs/site.md) for the decisions behind it.
 
 ## Run
 
@@ -62,7 +62,7 @@ Fenced code blocks accept a file name: ` ```go title="main.go" `.
 
 | Path | Contents |
 | --- | --- |
-| `app/` | Routes: `(en)/docs/[...slug]` (the root layout), global 404, `/search-index.json`, `/llms.txt`, `/llms-full.txt` |
+| `src/pages/` | Routes: `docs/[...slug]`, `/changelog`, the 404, `/search-index.json`, `/llms.txt`, `/llms-full.txt`, `/robots.txt`, `/sitemap.xml` |
 | `components/` | Site shell, header, language switcher, sidebar, doc page, search, TOC, theme toggle, MDX components |
 | `lib/` | Content loading, UI strings, last-updated dates, MDX rendering, Shiki highlighting, search index, TOC |
 | `content/` | MDX pages, `navigation.ts`, `last-updated.json` |

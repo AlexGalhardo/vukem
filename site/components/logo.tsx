@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { Link } from "@/components/link";
 import { t } from "@/lib/ui-text";
 
 // Vukem mark: two slanted strokes forming a V on Go-gopher blue.
