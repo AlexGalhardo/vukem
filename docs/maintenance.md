@@ -40,7 +40,7 @@ Vukem has one maintainer. GitHub does not let authors approve their own pull req
 
 After each [PLAN.md](PLAN.md) task group:
 
-1. Refresh `site/content/last-updated.json` (`npm run last-updated` in `site/`, full history) and commit it before tagging, so every page shows its real "Last updated" date.
+1. Refresh `site/content/last-updated.json` (`npm run last-updated` in `site/`, full history) and commit it before tagging, so every page shows its real "Last updated" date. The lefthook pre-push job `doc dates` does this on every push that touches `site/content/`: it commits the refresh and stops the push, and the next `git push` carries it. Dates are author dates, so a rebase merge keeps them valid.
 2. Release through a PR as above; required checks green before the merge.
 3. Post-release, 15 minutes:
    - `gh run list --workflow release.yml` is green;

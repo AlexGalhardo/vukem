@@ -37,3 +37,6 @@ pre-push:
       run: go vet ./...
     - name: govulncheck
       run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+    - name: doc dates
+      glob: "site/content/**"
+      run: scripts/refresh-last-updated.sh
