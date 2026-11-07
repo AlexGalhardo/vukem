@@ -3,7 +3,7 @@ module github.com/AlexGalhardo/vukem/drivers/websocket
 go 1.27.3
 
 require (
-	github.com/AlexGalhardo/vukem v0.37.0
+	github.com/AlexGalhardo/vukem v0.39.0
 	github.com/coder/websocket v1.8.15
 	github.com/google/go-cmp v0.7.0
 )
