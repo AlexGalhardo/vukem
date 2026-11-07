@@ -21,7 +21,7 @@ Think of a restaurant menu. While the kitchen is open (development), the waiter 
 
 | Situation | What `{{vite ...}}` renders |
 | --- | --- |
-| Not production, and `resources/public/hot` exists | Tags that load `@vite/client` and each entry from the dev server |
+| Not production or test, and `resources/public/hot` exists | Tags that load `@vite/client` and each entry from the dev server |
 | Otherwise, a build exists | Tags read from `resources/public/build/.vite/manifest.json` |
 | No dev server, no build, not production | An HTML comment, so `go test` works without Node |
 | No dev server, no build, production | An error: the page fails to render |
@@ -188,7 +188,7 @@ What changes in production:
 
 - The hot file is **ignored**, so a stray `hot` file cannot point users at a dev server.
 - The manifest is read once and cached. Outside production it is re-read on every call, so a rebuild shows up without a restart.
-- `vukem.WithVite` sets `Dev` to "not production" (`APP_ENV`).
+- `vukem.WithVite` sets `Dev` to "not production and not test" (`APP_ENV`), so a stale hot file never reaches `go test` or a deployed app.
 
 ### Caching
 
@@ -306,6 +306,8 @@ frontend dependencies missing: run npm install first
 ```
 
 Run the install command it names, then build again.
+
+**Pages load scripts from `http://localhost:5173`, or SSR fails, with no dev server running.** A killed dev server (always on Windows) leaves `resources/public/hot` behind. Delete the file. Vukem logs `vite: the public hot file points assets and SSR at the dev server` at boot while it is in use, and ignores the file when `APP_ENV` is `production` or `test`.
 
 **Deploying without a build.** In production, a missing manifest makes every page that calls `{{vite}}` fail with `vite: read manifest (run vite build): open build/.vite/manifest.json: file does not exist`. Build with `vukem build` (or run `vite build` in your Dockerfile) before `go build`.
 

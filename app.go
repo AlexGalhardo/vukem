@@ -681,8 +681,16 @@ func New(opts ...Option) (*App, error) {
 	}
 
 	if o.vite != nil {
-		if app.Vite, err = vite.New(vite.Config{FS: o.vite, Dev: !cfg.IsProduction()}); err != nil {
+		// A hot file left by a killed dev server must not point tests or
+		// production at a dead Vite port (VE-7).
+		dev := !cfg.IsProduction() && cfg.Env != config.Test
+		if app.Vite, err = vite.New(vite.Config{FS: o.vite, Dev: dev}); err != nil {
 			return nil, err
+		}
+
+		if hot := app.Vite.HotURL(); hot != "" {
+			app.Log.Warn("vite: the public hot file points assets and SSR at the dev server; "+
+				"delete it if the dev server is not running", "file", "hot", "url", hot)
 		}
 	}
 

@@ -3534,3 +3534,38 @@ func TestNoIndexHeader(t *testing.T) {
 		}
 	}
 }
+
+func TestViteStaleHotFile(t *testing.T) {
+	t.Parallel()
+
+	public := fstest.MapFS{
+		"hot":                       {Data: []byte("http://localhost:5173")},
+		"build/.vite/manifest.json": {Data: []byte(`{"app.ts": {"file": "assets/app-1.js"}}`)},
+	}
+
+	for env, wantDev := range map[string]bool{"development": true, "test": false} {
+		var logs bytes.Buffer
+
+		app, err := New(
+			WithSource(testSource(map[string]string{"APP_ENV": env})),
+			WithLogger(slog.New(slog.NewTextHandler(&logs, nil))),
+			WithVite(public),
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		tags, err := app.Vite.Tags("", "app.ts")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if got := strings.Contains(string(tags), "localhost:5173"); got != wantDev {
+			t.Errorf("APP_ENV=%s: tags use the dev server = %v, want %v: %s", env, got, wantDev, tags)
+		}
+
+		if warned := strings.Contains(logs.String(), "hot file"); warned != wantDev {
+			t.Errorf("APP_ENV=%s: hot file warning = %v, want %v: %s", env, warned, wantDev, logs.String())
+		}
+	}
+}
