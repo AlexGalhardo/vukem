@@ -66,12 +66,12 @@ A multi-seller marketplace inspired by the big Latin American e-commerce sites. 
 
 [![Marketplace: searching products](https://raw.githubusercontent.com/AlexGalhardo/vukem-marketplace-reactjs/main/docs/media/search.gif)](https://github.com/AlexGalhardo/vukem-marketplace-reactjs)
 
-### [HexaScore](https://github.com/AlexGalhardo/hexascore-app)
+### [HexaScore](https://github.com/AlexGalhardo/vukem-hexascore)
 
 An open source almanac and community score platform for games, movies, TV shows and books. Each item is rated by the community in six categories per type, and the ratings combine into a published score.
 
 - **Stack**: Inertia + React with SSR, PostgreSQL, a public REST API with OpenAPI, a React Native app, Tailwind CSS v4.
-- **Links**: [hexascore.app](https://hexascore.app) · [source](https://github.com/AlexGalhardo/hexascore-app)
+- **Links**: [hexascore.app](https://hexascore.app) · [source](https://github.com/AlexGalhardo/vukem-hexascore)
 
 ### [Vukem Email](https://github.com/AlexGalhardo/vukem-email)
 
