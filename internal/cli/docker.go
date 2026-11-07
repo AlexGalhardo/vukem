@@ -18,7 +18,7 @@ var dockerFS embed.FS
 // unreviewed image; bump them with the toolchain.
 const (
 	nodeImage = "node:24.22.0-alpine3.24"
-	bunImage  = "oven/bun:1.4.3-alpine"
+	bunImage  = "oven/bun:1.4.4-alpine"
 )
 
 type dockerData struct {

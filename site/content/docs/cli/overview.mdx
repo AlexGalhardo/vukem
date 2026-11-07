@@ -194,7 +194,7 @@ git config core.hooksPath .githooks
 | --- | --- | --- |
 | `gofmt`, `go vet`, `go test -race` | the Format, vet and test job | the Go program is unformatted, does not vet, or a test failed |
 | `go tool govulncheck` | the Vulnerabilities job | a Go module has a known vulnerability. The tool is the one pinned in the starter `go.mod` |
-| `npm audit` or `bun audit` | the same job, on the committed lockfile | a JavaScript package has an advisory at high severity or above. `npm` reads `package-lock.json` with `--package-lock-only`. `bun` installs from `bun.lock` with `--frozen-lockfile`, then audits. The Bun version in that step is `1.4.3`, the same tag as the assets image |
+| `npm audit` or `bun audit` | the same job, on the committed lockfile | a JavaScript package has an advisory at high severity or above. `npm` reads `package-lock.json` with `--package-lock-only`. `bun` installs from `bun.lock` with `--frozen-lockfile`, then audits. The Bun version in that step is `1.4.4`, the same tag as the assets image |
 | markdownlint | the Lint (Markdown) job, only with `--standards`, and `npm run lint:md` | a versioned Markdown file breaks the rules. The config ignores `storage/`, `.cache/`, `coverage/`, `dist/`, `out/` and `.next/`. A new `docs/*.md` you have not committed yet is still linted |
 | Betterleaks | the Secret scanning job | the git history contains a secret. See [Secret scanning](/docs/security/secret-scanning) |
 | `docker build` | the production image job | the image does not build |
@@ -203,7 +203,7 @@ The audit commands are written in `.github/workflows/ci.yml`. Changing a `packag
 
 #### Updating a pinned tool
 
-`vukem new --standards` writes exact versions of `markdownlint-cli2` and `@biomejs/biome` into `package.json`. The workflow pins Betterleaks by version and archive checksum, and pins the Bun audit install to `1.4.3`. Dependabot (from `--ci`) opens pull requests for the npm and Go modules. Merge the pull request, then run the same commands the workflow runs. Do not replace a pin with `latest`, `edge` or `nightly`.
+`vukem new --standards` writes exact versions of `markdownlint-cli2` and `@biomejs/biome` into `package.json`. The workflow pins Betterleaks by version and archive checksum, and pins the Bun audit install to `1.4.4`. Dependabot (from `--ci`) opens pull requests for the npm and Go modules. Merge the pull request, then run the same commands the workflow runs. Do not replace a pin with `latest`, `edge` or `nightly`.
 
 An override in an application is not an upstream fix. It does not belong in the framework starter, and it must not disable the audit step.
 

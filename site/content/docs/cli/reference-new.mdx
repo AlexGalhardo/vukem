@@ -299,7 +299,7 @@ In production a missing `resources/public/build/.vite/manifest.json` is a failed
 
 ## Upgrading a starter
 
-`vukem doctor` prints the CLI revision and the Go runtime on consecutive lines, then the `upgrade` URL. That pair is the set you tested. A newer CLI is not a promise that an older revision still matches today's images or examples. The assets image pins `oven/bun:1.4.3-alpine` and the Node image pins an exact tag; the workflow audit installs Bun `1.4.3`. When those pins change, the changelog for the CLI revision names the new tags. Do not read a future tag back onto an old revision.
+`vukem doctor` prints the CLI revision and the Go runtime on consecutive lines, then the `upgrade` URL. That pair is the set you tested. A newer CLI is not a promise that an older revision still matches today's images or examples. The assets image pins `oven/bun:1.4.4-alpine` and the Node image pins an exact tag; the workflow audit installs Bun `1.4.4`. When those pins change, the changelog for the CLI revision names the new tags. Do not read a future tag back onto an old revision.
 
 There is no command that rewrites a project in place. `vukem new` refuses a folder that already exists. `install:*` and `make:*` refuse a file that already exists unless you pass `--force`. A file you edited stays as you left it. To take a scaffold change, read the changelog for the `cli` revision, apply that diff yourself, and run the checks that revision's workflow runs (`go test`, `govulncheck`, and the lockfile audit when the project has one). `--force` replaces the file. It is the explicit overwrite, not the upgrade path.
 
