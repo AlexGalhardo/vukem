@@ -11,91 +11,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **auth/jwt:** Add `VerifyOptions.Nonce`, an opt-in constant-time check of the `nonce` claim for ID-token exchanges (HS-3).
-- **cli:** Ship `resources/js/hooks/useHydrated.ts` in the Inertia React starter and document that SSR forms that only work with JavaScript lose text typed before hydration.
-- **database:** Add `Tx.LockKey` (PostgreSQL advisory transaction lock, no-op on SQLite) and document the lock-first pattern for per-user limits.
-- **social:** Add `Config.Validate(production)` and `vukem.Config.Origin` / `CallbackURL`, which fail at boot when a production callback is not an https URL on a public host.
-- **middleware:** Add `middleware.CacheControl` and `MiddlewareOptions.CacheControl` to give dynamic responses a default `Cache-Control` (handlers that set their own keep it).
-- **orm:** Add `orm.Incr` as a `Set` value for atomic column arithmetic in `Query.Update`, and document the conditional-update claim pattern.
-- **mail:** Add `ParseResendEvent` (typed Resend webhook events) and `Mailer.SetSuppression` (drop suppressed recipients, fail closed) for bounce and complaint handling.
-- **cache:** Add `Cache.ForgetPrefix` and the optional `PrefixDeleter` store interface (memory, database and Redis) to forget every key under a prefix.
-- **orm:** Add `Query.GroupCount` (rows per column value) and point `Where` with `IN` or `NOT IN` to `WhereIn` and `WhereNotIn` in its error.
-- **schema:** Add `Table.DropIndexOn` and `Table.DropUniqueIndexOn` to drop an index by its columns instead of its generated name.
-- **webhook:** Accept the `svix-id`, `svix-timestamp` and `svix-signature` headers (Svix, Resend) in `Standard` and `StandardID`.
-- **vukem:** Add `MiddlewareOptions.CrossOrigin` to open a single route to listed origins (CORS preflight, origin allowlist, no sessions) without trusting them for the rest of the app.
-- **mail:** Add `Envelope.Headers` and `Message.Headers` (validated; sent by Resend, Mailtrap, SMTP and kept by the Array transport) and `Envelope.ListUnsubscribe` for RFC 2369 and RFC 8058 unsubscribe headers.
-
-### Changed
-
-- **queue:** `migrate` now names `QUEUE_TABLE` or `QUEUE_FAILED_TABLE` when an app migration creates a table that the database queue already created, and the queue and deployment docs describe both variables.
-- **docs:** Document `QUEUE_CONNECTION=database` and the pre-deploy migrate for Dockerfile-only hosts on the Docker and Railway page.
-- **vukemtest:** Document which client helper triggers which `WantsJSON` branch (`PostJSON`, `GetJSON`, `Inertia`).
-- **auth:** Document the recipe for a private JSON prefix behind the session guard (`auth.ProblemJSON` first) and how to test its plain-`GET` answer.
-- **orm:** Convert every bound `time.Time` to UTC (queries, `Set`, model fields) so SQLite text comparisons agree with the instant; document the stored time format per database.
-- **site:** Shrink the docs site type scale by 25% below 768px (root font size 20px to 15px) and keep code blocks at 13px on phones.
-- **web:** Encode and decode HTTP JSON, including problem+json, with `encoding/json/v2`.
+- **web:** Decode and encode HTTP JSON with encoding/json/v2 ([6739710](https://github.com/AlexGalhardo/vukem/commit/6739710618d4a3055b16eac3bd266d3e329f98d6))
+- **mail:** Add custom headers and a List-Unsubscribe helper ([184f083](https://github.com/AlexGalhardo/vukem/commit/184f083e529fe5079e119cee73f2d93191a22535))
+- **vukem:** Add per-route cross-origin support to DefaultMiddlewareWith ([5f54723](https://github.com/AlexGalhardo/vukem/commit/5f547235deee3ef407b6b05be9afe47773890015))
+- **webhook:** Accept svix-* headers in Standard and StandardID ([5be98eb](https://github.com/AlexGalhardo/vukem/commit/5be98eb7e156ef1e00384653d6bcaacf427f9a7c))
+- **schema:** Drop an index by its columns with DropIndexOn ([587b2a0](https://github.com/AlexGalhardo/vukem/commit/587b2a07d89e10ab22abde0d3dedef8c076c8fc8))
+- **orm:** Add GroupCount and a WhereIn hint for the IN operator ([369a679](https://github.com/AlexGalhardo/vukem/commit/369a67946abb43dd77360dc18fe9289399d2d45b))
+- **cache:** Add ForgetPrefix to forget a family of keys ([e62712c](https://github.com/AlexGalhardo/vukem/commit/e62712c073e7c4123582387b6434c78829b1fae4))
+- **mail:** Add typed Resend events and a recipient suppression hook ([58ebe35](https://github.com/AlexGalhardo/vukem/commit/58ebe350f3ebd0278fde76d40add352cfe81dc19))
+- **orm:** Add Incr for atomic column arithmetic in Query.Update ([960be62](https://github.com/AlexGalhardo/vukem/commit/960be624db93031c4d2b42f611e41e9e381b6f7a))
+- **middleware:** Add a default Cache-Control for dynamic responses ([6120179](https://github.com/AlexGalhardo/vukem/commit/6120179e65f1332eec2d80e01d28b883828b0c5b))
+- **social:** Validate the production callback URL at boot ([fae0435](https://github.com/AlexGalhardo/vukem/commit/fae043542c839a9c11f4404ed4779ed35f8fee5c))
+- **database:** Add Tx.LockKey for lock-first per-user limits ([62d78f0](https://github.com/AlexGalhardo/vukem/commit/62d78f0da78cd40592f1806c65d421aa7fbca364))
+- **jwt:** Add opt-in nonce check to VerifyOptions ([57a7d39](https://github.com/AlexGalhardo/vukem/commit/57a7d39e5a857819088ecb9514840bf87b912291))
 
 ### Fixed
 
-- **vukem:** `WithVite` hides the public `hot` file when `APP_ENV` is `test` (production already ignored it) and logs a boot warning naming it while it is honoured, so a stale file left by a killed dev server no longer silently points assets and SSR at a dead port (VE-7).
-- **boost:** Refuse `INTO` and calls to file, backend-control, sleep and extension functions (`LOAD_FILE`, `pg_read_file`, `pg_terminate_backend`, `pg_sleep`, `SLEEP`) in the `database_query` MCP tool, which a read-only transaction did not stop (audit A05-1).
+- **site:** Stop the legacy path redirect from leaving the origin ([0d33342](https://github.com/AlexGalhardo/vukem/commit/0d3334299e18ba332831a55905713efa2985298e))
+- **orm:** Bind every time.Time in UTC so SQLite window queries agree ([db9fff0](https://github.com/AlexGalhardo/vukem/commit/db9fff0c20f1cdd5374fd13e6e9d7cd97f47407c))
+- **queue:** Name QUEUE_TABLE when a migration clashes with a queue table ([cf692d6](https://github.com/AlexGalhardo/vukem/commit/cf692d6fed4561e10436e8cbbc6b9e48a4868a8c))
+- **boost:** Refuse side-effecting selects in database_query ([6dc55e8](https://github.com/AlexGalhardo/vukem/commit/6dc55e800f790a166ecc75cb1280d572e5bea0d2))
+- **boost:** Match side-effect function names despite comments ([4c222a8](https://github.com/AlexGalhardo/vukem/commit/4c222a88132b4560fb18513987d7783cd52ab466))
+- **vukem:** Ignore stale vite hot file in tests and warn when used ([a671a74](https://github.com/AlexGalhardo/vukem/commit/a671a74dd47d8cbac46151401c87ee50d6883631))
+- **vukem:** Keep vite dev mode in tests while hiding the hot file ([03fbb91](https://github.com/AlexGalhardo/vukem/commit/03fbb91bf66f9fbcc91f267c138d795d59852129))
 
 ### Security
 
-- **site:** Fix an open redirect in the legacy `/pt-br` path redirect: `/pt-br//evil.com` became the protocol-relative `//evil.com`; the target is now rebuilt as a same-origin URL.
-- **web:** Reject duplicate JSON object names and invalid UTF-8 when decoding an HTTP JSON body.
-
-### Commits
-
-- chore(skills): vendor cloudflare security-audit skill ([232a8119](https://github.com/AlexGalhardo/vukem/commit/232a8119f5e3572512c937664ffc4612c2ea1232))
-- feat(web): decode and encode HTTP JSON with encoding/json/v2 ([67397106](https://github.com/AlexGalhardo/vukem/commit/6739710618d4a3055b16eac3bd266d3e329f98d6))
-- feat(mail): add custom headers and a List-Unsubscribe helper ([184f083e](https://github.com/AlexGalhardo/vukem/commit/184f083e529fe5079e119cee73f2d93191a22535))
-- feat(vukem): add per-route cross-origin support to DefaultMiddlewareWith ([5f547235](https://github.com/AlexGalhardo/vukem/commit/5f547235deee3ef407b6b05be9afe47773890015))
-- chore(site): refresh last-updated for the mail and csrf pages ([4cbc443a](https://github.com/AlexGalhardo/vukem/commit/4cbc443a272eaa395a36c2625d32fc486f54eccb))
-- style(site): reduce the type scale by 25% on phones ([2594a7c1](https://github.com/AlexGalhardo/vukem/commit/2594a7c1a0bd6f96ab46abd5c7e40cbc40b8f5ed))
-- feat(webhook): accept svix-* headers in Standard and StandardID ([5be98eb7](https://github.com/AlexGalhardo/vukem/commit/5be98eb7e156ef1e00384653d6bcaacf427f9a7c))
-- chore(site): refresh last-updated ([4425cb30](https://github.com/AlexGalhardo/vukem/commit/4425cb3024a51bc178e31747c958275f87175c3d))
-- feat(schema): drop an index by its columns with DropIndexOn ([587b2a07](https://github.com/AlexGalhardo/vukem/commit/587b2a07d89e10ab22abde0d3dedef8c076c8fc8))
-- chore(site): refresh last-updated ([c3b7ae25](https://github.com/AlexGalhardo/vukem/commit/c3b7ae251196cb2095b2b849f121c28ecf908684))
-- feat(orm): add GroupCount and a WhereIn hint for the IN operator ([369a6794](https://github.com/AlexGalhardo/vukem/commit/369a67946abb43dd77360dc18fe9289399d2d45b))
-- chore(site): refresh last-updated ([9b98828c](https://github.com/AlexGalhardo/vukem/commit/9b98828c3f783067227660b4744072316db3484c))
-- feat(cache): add ForgetPrefix to forget a family of keys ([e62712c0](https://github.com/AlexGalhardo/vukem/commit/e62712c073e7c4123582387b6434c78829b1fae4))
-- chore(site): refresh last-updated ([92372d20](https://github.com/AlexGalhardo/vukem/commit/92372d206c30aa12397b10696f31f709ca211319))
-- feat(mail): add typed Resend events and a recipient suppression hook ([58ebe350](https://github.com/AlexGalhardo/vukem/commit/58ebe350f3ebd0278fde76d40add352cfe81dc19))
-- chore(site): refresh last-updated ([966653aa](https://github.com/AlexGalhardo/vukem/commit/966653aa4fe6c1200bfbd9b82f45f0988b33b215))
-- feat(orm): add Incr for atomic column arithmetic in Query.Update ([960be624](https://github.com/AlexGalhardo/vukem/commit/960be624db93031c4d2b42f611e41e9e381b6f7a))
-- chore(site): refresh last-updated ([733b2642](https://github.com/AlexGalhardo/vukem/commit/733b2642c9e5fb402a7f9254020bb364ed0aca2f))
-- fix(site): stop the legacy path redirect from leaving the origin ([0d333429](https://github.com/AlexGalhardo/vukem/commit/0d3334299e18ba332831a55905713efa2985298e))
-- fix(orm): bind every time.Time in UTC so SQLite window queries agree ([db9fff0c](https://github.com/AlexGalhardo/vukem/commit/db9fff0c20f1cdd5374fd13e6e9d7cd97f47407c))
-- chore(site): refresh last-updated ([5768556a](https://github.com/AlexGalhardo/vukem/commit/5768556a25e8d644c95c22a916fdf9ba2bb2ae3d))
-- docs(auth): add the private JSON prefix recipe with ProblemJSON ([bab25e67](https://github.com/AlexGalhardo/vukem/commit/bab25e6794e6720e7ad826a4097693524392754f))
-- chore(site): refresh last-updated ([0e1e3f2d](https://github.com/AlexGalhardo/vukem/commit/0e1e3f2d943c9049a55dd7f9ce2c5dce0b102e97))
-- feat(middleware): add a default Cache-Control for dynamic responses ([6120179e](https://github.com/AlexGalhardo/vukem/commit/6120179e65f1332eec2d80e01d28b883828b0c5b))
-- chore(site): refresh last-updated ([a0907134](https://github.com/AlexGalhardo/vukem/commit/a0907134758492c3caccd7a80c3f60c20876c13e))
-- feat(social): validate the production callback URL at boot ([fae04354](https://github.com/AlexGalhardo/vukem/commit/fae043542c839a9c11f4404ed4779ed35f8fee5c))
-- chore(site): refresh last-updated ([87e678c8](https://github.com/AlexGalhardo/vukem/commit/87e678c849d1e4ed1d7ff747479e569d4689a31c))
-- docs(vukemtest): add which helper triggers which negotiation branch ([21bbf3e7](https://github.com/AlexGalhardo/vukem/commit/21bbf3e706866904a1d35e476de150724b24d5dd))
-- chore(site): refresh last-updated ([978b48f0](https://github.com/AlexGalhardo/vukem/commit/978b48f094c738548db80e3501e4129f87347a36))
-- docs(deploy): document the queue connection and pre-deploy migrate ([60918851](https://github.com/AlexGalhardo/vukem/commit/60918851f4c6e4479025dd9d138546e6cb6de145))
-- chore(site): refresh last-updated ([54bf1554](https://github.com/AlexGalhardo/vukem/commit/54bf1554fc39a7538bc2ca0db578f50e7a960684))
-- feat(database): add Tx.LockKey for lock-first per-user limits ([62d78f0d](https://github.com/AlexGalhardo/vukem/commit/62d78f0da78cd40592f1806c65d421aa7fbca364))
-- chore(site): refresh last-updated ([11f927b8](https://github.com/AlexGalhardo/vukem/commit/11f927b80de9bab7161c19b292bc0edf0090caf3))
-- docs(inertia): add the SSR form hydration caveat and a useHydrated hook ([c0350404](https://github.com/AlexGalhardo/vukem/commit/c03504045a3531093efacaa2dd9d4b4da92776b6))
-- chore(site): refresh last-updated ([2de91105](https://github.com/AlexGalhardo/vukem/commit/2de911052e4dc57f7b856017a0db9b7406655221))
-- fix(queue): name QUEUE_TABLE when a migration clashes with a queue table ([cf692d6f](https://github.com/AlexGalhardo/vukem/commit/cf692d6fed4561e10436e8cbbc6b9e48a4868a8c))
-- chore(site): refresh last-updated ([cdb13b5c](https://github.com/AlexGalhardo/vukem/commit/cdb13b5c4ca0e31d77f295aa47ce82142c7f1038))
-- docs: add downstream feedback intake and site mirror notes to agent guidance ([9f069eb0](https://github.com/AlexGalhardo/vukem/commit/9f069eb07363b628df388f03fef9cf8cd7a63ac6))
-- docs(security): add 2026-11-07 audit report, findings and coverage ledger ([60b66b1d](https://github.com/AlexGalhardo/vukem/commit/60b66b1d132739d15924e466ef3ab40a04fe0705))
-- fix(boost): refuse side-effecting selects in database_query ([6dc55e80](https://github.com/AlexGalhardo/vukem/commit/6dc55e800f790a166ecc75cb1280d572e5bea0d2))
-- docs(security): record fix commit for audit A05-1 ([e5e187a9](https://github.com/AlexGalhardo/vukem/commit/e5e187a9f4e3ec703fde9f11add708c15518ef7d))
-- feat(jwt): add opt-in nonce check to VerifyOptions ([57a7d39e](https://github.com/AlexGalhardo/vukem/commit/57a7d39e5a857819088ecb9514840bf87b912291))
-- fix(boost): match side-effect function names despite comments ([4c222a88](https://github.com/AlexGalhardo/vukem/commit/4c222a88132b4560fb18513987d7783cd52ab466))
-- docs(security): widen audit coverage and record phase 5 re-check ([4ce34698](https://github.com/AlexGalhardo/vukem/commit/4ce3469878f38d3599e02468bd0f68d6c8d0b54f))
-- chore(site): refresh last-updated ([f0378f7c](https://github.com/AlexGalhardo/vukem/commit/f0378f7cb7ce676cdfc9edaf63d2e943272fa2ed))
-- fix(vukem): ignore stale vite hot file in tests and warn when used ([a671a74d](https://github.com/AlexGalhardo/vukem/commit/a671a74dd47d8cbac46151401c87ee50d6883631))
-- chore(site): refresh last-updated ([a5a347af](https://github.com/AlexGalhardo/vukem/commit/a5a347affe686e6292227c2727e12f631aa5cda0))
-- fix(vukem): keep vite dev mode in tests while hiding the hot file ([03fbb91b](https://github.com/AlexGalhardo/vukem/commit/03fbb91bf66f9fbcc91f267c138d795d59852129))
-- chore(site): refresh last-updated ([5080dfdb](https://github.com/AlexGalhardo/vukem/commit/5080dfdbd1c2270562e04a7aaf5662da7c9a1a3b))
+- **skills:** Vendor cloudflare security-audit skill ([232a811](https://github.com/AlexGalhardo/vukem/commit/232a8119f5e3572512c937664ffc4612c2ea1232))
 
 ## [0.38.0] - 2026-11-07
 
