@@ -42,6 +42,7 @@ vukem key:generate [flags]
 | --- | --- | --- | --- |
 | `-show` | bool | `false` | Print the key and write nothing. |
 | `-force` | bool | `false` | Replace an existing non-empty `APP_KEY`. |
+| `-if-missing` | bool | `false` | Write `.env` when `APP_KEY` is empty. Never print the key. |
 
 If `.env` is missing, it starts from `.env.example`. The key signs sessions and encrypts data ([Encryption](/docs/security/encryption)).
 

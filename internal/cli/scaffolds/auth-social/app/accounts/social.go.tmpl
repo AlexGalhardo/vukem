@@ -41,7 +41,9 @@ func NewSocial(app *vukem.App, names ...string) (*social.Social, error) {
 			RedirectURL:  base + "/auth/" + name + "/callback",
 		}
 
-		if cfg.ClientID == "" || cfg.ClientSecret == "" {
+		// Apple signs a client secret from a .p8 key. It has no
+		// SOCIAL_APPLE_CLIENT_SECRET; useApple checks that key.
+		if name != "apple" && (cfg.ClientID == "" || cfg.ClientSecret == "") {
 			if app.Kind == vukem.KindTest {
 				continue
 			}
@@ -49,46 +51,8 @@ func NewSocial(app *vukem.App, names ...string) (*social.Social, error) {
 			return nil, fmt.Errorf("social: %s: set %sCLIENT_ID and %sCLIENT_SECRET", name, env, env)
 		}
 
-		switch name {
-		case "github":
-			s.Use(social.GitHub(cfg))
-		case "gitlab":
-			s.Use(social.GitLab(cfg))
-		case "discord":
-			s.Use(social.Discord(cfg))
-		case "google":
-			s.Use(social.Google(cfg))
-		case "microsoft":
-			s.Use(social.Microsoft("common", cfg))
-		case "linkedin":
-			s.Use(social.LinkedIn(cfg))
-		case "apple":
-			// The callback is a cross-site POST: serve HTTPS and add
-			// https://appleid.apple.com to CSRF_TRUSTED_ORIGINS.
-			key, err := os.ReadFile(app.Source.Get(env + "PRIVATE_KEY_PATH"))
-			if err != nil {
-				if app.Kind == vukem.KindTest {
-					continue
-				}
-
-				return nil, fmt.Errorf("social: apple: read %sPRIVATE_KEY_PATH: %w", env, err)
-			}
-
-			p, err := social.Apple(social.AppleConfig{
-				Config:     cfg,
-				TeamID:     app.Source.Get(env + "TEAM_ID"),
-				KeyID:      app.Source.Get(env + "KEY_ID"),
-				PrivateKey: key,
-			})
-			if err != nil {
-				if app.Kind == vukem.KindTest {
-					continue
-				}
-
-				return nil, fmt.Errorf("social: apple: %w", err)
-			}
-
-			s.Use(p)
+		if err := useSocialProvider(app, s, name, cfg, env); err != nil {
+			return nil, err
 		}
 	}
 
@@ -105,6 +69,58 @@ func NewSocial(app *vukem.App, names ...string) (*social.Social, error) {
 	}
 
 	return s, nil
+}
+
+func useSocialProvider(app *vukem.App, s *social.Social, name string, cfg social.Config, env string) error {
+	switch name {
+	case "github":
+		s.Use(social.GitHub(cfg))
+	case "gitlab":
+		s.Use(social.GitLab(cfg))
+	case "discord":
+		s.Use(social.Discord(cfg))
+	case "google":
+		s.Use(social.Google(cfg))
+	case "microsoft":
+		s.Use(social.Microsoft("common", cfg))
+	case "linkedin":
+		s.Use(social.LinkedIn(cfg))
+	case "apple":
+		return useApple(app, s, cfg, env)
+	}
+
+	return nil
+}
+
+func useApple(app *vukem.App, s *social.Social, cfg social.Config, env string) error {
+	// The callback is a cross-site POST: serve HTTPS and add
+	// https://appleid.apple.com to CSRF_TRUSTED_ORIGINS.
+	key, err := os.ReadFile(app.Source.Get(env + "PRIVATE_KEY_PATH"))
+	if err != nil {
+		if app.Kind == vukem.KindTest {
+			return nil
+		}
+
+		return fmt.Errorf("social: apple: read %sPRIVATE_KEY_PATH: %w", env, err)
+	}
+
+	p, err := social.Apple(social.AppleConfig{
+		Config:     cfg,
+		TeamID:     app.Source.Get(env + "TEAM_ID"),
+		KeyID:      app.Source.Get(env + "KEY_ID"),
+		PrivateKey: key,
+	})
+	if err != nil {
+		if app.Kind == vukem.KindTest {
+			return nil
+		}
+
+		return fmt.Errorf("social: apple: %w", err)
+	}
+
+	s.Use(p)
+
+	return nil
 }
 
 // FindOrCreateFromSocial returns the user linked to su, linking by email
