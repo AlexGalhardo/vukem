@@ -6,3 +6,5 @@ require (
 	github.com/AlexGalhardo/vukem v0.37.0
 	golang.org/x/image v0.47.0
 )
+
+require modernc.org/sqlite v1.61.1 // indirect
