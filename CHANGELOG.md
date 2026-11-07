@@ -72,7 +72,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **vukem:** `WithVite` ignores the public `hot` file when `APP_ENV` is `test` (as in production) and logs a boot warning naming it while it is honoured, so a stale file left by a killed dev server no longer silently points assets and SSR at a dead port (VE-7).
+- **vukem:** `WithVite` hides the public `hot` file when `APP_ENV` is `test` (production already ignored it) and logs a boot warning naming it while it is honoured, so a stale file left by a killed dev server no longer silently points assets and SSR at a dead port (VE-7).
 
 - **boost:** Refuse `INTO` and calls to file, backend-control, sleep and extension functions (`LOAD_FILE`, `pg_read_file`, `pg_terminate_backend`, `pg_sleep`, `SLEEP`) in the `database_query` MCP tool, which a read-only transaction did not stop (audit A05-1).
 

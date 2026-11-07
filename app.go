@@ -683,8 +683,13 @@ func New(opts ...Option) (*App, error) {
 	if o.vite != nil {
 		// A hot file left by a killed dev server must not point tests or
 		// production at a dead Vite port (VE-7).
-		dev := !cfg.IsProduction() && cfg.Env != config.Test
-		if app.Vite, err = vite.New(vite.Config{FS: o.vite, Dev: dev}); err != nil {
+		public := o.vite
+		if cfg.Env == config.Test {
+			// Dev stays on so a missing build renders a comment, not an error.
+			public = withoutHotFile{o.vite}
+		}
+
+		if app.Vite, err = vite.New(vite.Config{FS: public, Dev: !cfg.IsProduction()}); err != nil {
 			return nil, err
 		}
 
@@ -859,4 +864,15 @@ func (a *App) OnShutdown(fn func(context.Context) error) {
 	defer a.mu.Unlock()
 
 	a.hooks = append(a.hooks, fn)
+}
+
+// withoutHotFile hides the Vite "hot" file from the vite package.
+type withoutHotFile struct{ fs.FS }
+
+func (w withoutHotFile) Open(name string) (fs.File, error) {
+	if name == "hot" {
+		return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrNotExist}
+	}
+
+	return w.FS.Open(name)
 }
