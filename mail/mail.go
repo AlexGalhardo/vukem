@@ -24,7 +24,9 @@ import (
 	"errors"
 	"fmt"
 	"html"
+	"maps"
 	"net/mail"
+	"net/url"
 	"regexp"
 	"strings"
 
@@ -44,6 +46,68 @@ type Envelope struct {
 	// neither may contain a line break or colon; Resend also limits them
 	// to ASCII letters, digits, "_" and "-".
 	Tags map[string]string
+	// Headers are extra message headers, such as Auto-Submitted or
+	// Precedence; [Envelope.ListUnsubscribe] sets the bulk-mail pair.
+	// Names are ASCII letters, digits and "-"; values must not contain
+	// control characters. Headers the transport or the message already
+	// owns (From, To, Subject, Date, Message-ID, Content-*, DKIM-Signature,
+	// X-Tag-*...) are refused, and so are two names that differ only in case.
+	Headers map[string]string
+
+	// err holds a problem found by a helper, reported by Render.
+	err error
+}
+
+// ListUnsubscribe returns a copy of e with the RFC 2369 List-Unsubscribe
+// header and, when httpsURL is set, the RFC 8058 List-Unsubscribe-Post
+// header that Gmail and Yahoo require from bulk senders. httpsURL must be
+// an absolute https URL and mailto an address (the "mailto:" prefix is
+// optional); either may be empty, not both. A bad value makes Render fail.
+func (e Envelope) ListUnsubscribe(httpsURL, mailto string) Envelope {
+	e.Headers = maps.Clone(e.Headers)
+	if e.Headers == nil {
+		e.Headers = map[string]string{}
+	}
+
+	var uris []string
+
+	if httpsURL != "" {
+		if u, err := url.Parse(httpsURL); err != nil || u.Scheme != "https" || u.Host == "" || badURI(httpsURL) {
+			e.err = errors.New(
+				"mail: list-unsubscribe URL must be an absolute https URL without spaces, commas or angle brackets",
+			)
+			return e
+		}
+
+		uris = append(uris, "<"+httpsURL+">")
+		e.Headers["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click"
+	}
+
+	if mailto != "" {
+		mailto = strings.TrimPrefix(mailto, "mailto:")
+		if _, err := mail.ParseAddress(mailto); err != nil || badURI(mailto) {
+			e.err = errors.New("mail: list-unsubscribe mailto is not a plain address")
+			return e
+		}
+
+		uris = append(uris, "<mailto:"+mailto+">")
+	}
+
+	if len(uris) == 0 {
+		e.err = errors.New("mail: list-unsubscribe needs a URL or a mailto")
+		return e
+	}
+
+	e.Headers["List-Unsubscribe"] = strings.Join(uris, ", ")
+
+	return e
+}
+
+func badURI(s string) bool {
+	return strings.ContainsFunc(
+		s,
+		func(r rune) bool { return r <= ' ' || r == 0x7f || r == '<' || r == '>' || r == ',' },
+	)
 }
 
 // Content is the body: a view (rendered by the Mailer) or literal parts.
@@ -128,6 +192,8 @@ type Message struct {
 	Text        string
 	Attachments []Attachment
 	Tags        map[string]string
+	// Headers are validated extra headers (see [Envelope.Headers]).
+	Headers map[string]string
 }
 
 // Transport delivers messages.
@@ -188,7 +254,7 @@ func (m *Mailer) Render(ctx context.Context, mailable Mailable) (*Message, error
 		env = mailable.Envelope()
 	}
 
-	msg := &Message{ID: rand.Text(), From: env.From, Subject: env.Subject, Tags: env.Tags}
+	msg := &Message{ID: rand.Text(), From: env.From, Subject: env.Subject, Tags: env.Tags, Headers: env.Headers}
 	if msg.From == "" {
 		msg.From = m.from
 	}
@@ -227,6 +293,14 @@ func (m *Mailer) Render(ctx context.Context, mailable Mailable) (*Message, error
 	}
 
 	if err := checkTags(msg.Tags); err != nil {
+		return nil, err
+	}
+
+	if env.err != nil {
+		return nil, env.err
+	}
+
+	if err := checkHeaders(msg.Headers); err != nil {
 		return nil, err
 	}
 
@@ -316,6 +390,47 @@ func checkTags(tags map[string]string) error {
 	}
 
 	return nil
+}
+
+// checkHeaders applies the rule every transport needs: names are tokens
+// of ASCII letters, digits and "-", values hold no control characters
+// (line breaks would inject headers), names the transport writes itself
+// are refused, and so is a duplicate that differs only in case.
+func checkHeaders(h map[string]string) error {
+	seen := make(map[string]bool, len(h))
+
+	for k, v := range h {
+		if k == "" || strings.ContainsFunc(k, func(r rune) bool {
+			return (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != '-'
+		}) {
+			return fmt.Errorf("mail: header name %q takes only ASCII letters, digits and -", k)
+		}
+
+		if strings.ContainsFunc(v, func(r rune) bool { return r < ' ' && r != '	' || r == 0x7f }) {
+			return fmt.Errorf("mail: header %q has a control character in its value", k)
+		}
+
+		l := strings.ToLower(k)
+		if seen[l] {
+			return fmt.Errorf("mail: header %q is set twice", k)
+		}
+
+		seen[l] = true
+
+		if reserved[l] || strings.HasPrefix(l, "content-") || strings.HasPrefix(l, "x-tag-") {
+			return fmt.Errorf("mail: header %q is set by the mailer and cannot be overridden", k)
+		}
+	}
+
+	return nil
+}
+
+var reserved = map[string]bool{
+	"from": true, "to": true, "cc": true, "bcc": true, "reply-to": true, "subject": true,
+	"date": true, "message-id": true, "mime-version": true, "sender": true,
+	"return-path": true, "received": true, "dkim-signature": true,
+	"authentication-results": true, "arc-seal": true, "arc-message-signature": true,
+	"arc-authentication-results": true,
 }
 
 // address parses and normalizes an address; parsing rejects line breaks,

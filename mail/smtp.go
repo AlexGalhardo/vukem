@@ -180,6 +180,14 @@ func Build(msg *Message) ([]byte, error) {
 		header("X-Tag-"+k, v)
 	}
 
+	if err := checkHeaders(msg.Headers); err != nil {
+		return nil, err
+	}
+
+	for k, v := range msg.Headers {
+		header(k, v)
+	}
+
 	var inline, files []Attachment
 
 	for _, a := range msg.Attachments {

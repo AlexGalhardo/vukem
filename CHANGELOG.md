@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **mail:** Add `Envelope.Headers` and `Message.Headers` (validated; sent by Resend, Mailtrap, SMTP and kept by the Array transport) and `Envelope.ListUnsubscribe` for RFC 2369 and RFC 8058 unsubscribe headers.
+
 ### Changed
 
 - **web:** Encode and decode HTTP JSON, including problem+json, with `encoding/json/v2`.
