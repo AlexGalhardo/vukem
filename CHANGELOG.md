@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **vukem:** Add `MiddlewareOptions.CrossOrigin` to open a single route to listed origins (CORS preflight, origin allowlist, no sessions) without trusting them for the rest of the app.
 - **mail:** Add `Envelope.Headers` and `Message.Headers` (validated; sent by Resend, Mailtrap, SMTP and kept by the Array transport) and `Envelope.ListUnsubscribe` for RFC 2369 and RFC 8058 unsubscribe headers.
 
 ### Changed

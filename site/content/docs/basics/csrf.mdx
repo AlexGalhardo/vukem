@@ -128,6 +128,35 @@ Each origin must be `scheme://host` with an optional port, and nothing else. A b
 csrf: trusted origin "admin.example.com": invalid origin "admin.example.com": scheme is required
 ```
 
+### Opening one route to another site
+
+`CSRF_TRUSTED_ORIGINS` trusts an origin for every route, including the ones that carry the user's session. A public form endpoint, such as a newsletter signup called from a marketing site, needs less: only that one route should accept the other origin. `MiddlewareOptions.CrossOrigin` does that:
+
+```go title="routes/web.go"
+err := vukem.DefaultMiddlewareWith(app, r, vukem.MiddlewareOptions{
+	CrossOrigin: []vukem.CrossOriginRoute{{
+		Pattern: "POST /subscribe/{list}",
+		CORS: middleware.CORSConfig{
+			AllowedOrigins: []string{"https://site.example"},
+		},
+	}},
+})
+if err != nil {
+	return err
+}
+```
+
+For the requests its pattern matches (same syntax as `CSRFBypass`), the route:
+
+- answers the CORS preflight (`OPTIONS` with `Access-Control-Request-Method`) and adds the CORS headers for the listed origins;
+- rejects an unsafe request from any other origin with `403` and a `csrf.rejected` security event, before the handler runs;
+- runs without sessions: no cookie is read or set, so there is nothing for an attacker to ride on;
+- skips the global CSRF check, which the origin list replaces. Requests from the same origin and from clients that send neither `Origin` nor `Sec-Fetch-Site` (curl, servers) still pass.
+
+Every other route keeps the global check: `POST /api/...` from `https://site.example` with a session cookie is still a `403`. Each route is logged at boot as `cross-origin route`.
+
+The boot fails when `AllowedOrigins` is empty or holds something other than `scheme://host[:port]` or `*`, when `AllowCredentials` is set (the route has no session to share), or when the pattern is invalid. Because the route is open to its origins, validate the body like any public input and add a [rate limit](/docs/security/rate-limiting).
+
 ### Exempting webhooks
 
 Payment providers and other services post to your webhooks from their servers. They usually send no `Origin` (and pass anyway), but some send one. Exempt those routes explicitly, and verify their signature instead ([Webhooks](/docs/digging-deeper/webhooks)):
@@ -184,6 +213,7 @@ htmx sends the header on every request when you set it once on the body:
 | --- | --- | --- | --- |
 | `CSRF_TRUSTED_ORIGINS` | comma-separated origins | empty | Other origins allowed to send unsafe requests |
 | `MiddlewareOptions.CSRFBypass` | `[]string` | `nil` | ServeMux patterns exempt from checks |
+| `MiddlewareOptions.CrossOrigin` | `[]vukem.CrossOriginRoute` | `nil` | Routes open to listed origins only, without sessions and the global check |
 | `csrf.Config.TrustedOrigins` | `[]string` | `nil` | Same as the variable, for your own stack |
 | `csrf.Config.BypassPatterns` | `[]string` | `nil` | Same as `CSRFBypass` |
 | `MiddlewareOptions.CSRFTokenFallback` | `bool` | `false` | Turn on the token fallback in the default stack |
