@@ -17,3 +17,4 @@ paths:
 - Client-facing errors never include stack traces, SQL, paths or config (CWE-209).
 - File access through `os.Root`; outbound requests to user-supplied URLs through `httpclient.Safe()`.
 - Load the `golang-security` skill for any change in auth, session, crypt, storage, router or orm.
+- Apply the installed `security-audit` skill (`.claude/skills/security-audit`) during development so security issues are audited as part of the work. Use guidance mode unless the task is an explicit full audit.
