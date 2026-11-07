@@ -439,3 +439,20 @@ func TestInertiaScaffoldsExposeHydratingHook(t *testing.T) {
 		}
 	}
 }
+
+// TestInertiaReactScaffoldShipsUseHydrated guards the hook the SSR docs name
+// for forms that only work with JavaScript.
+func TestInertiaReactScaffoldShipsUseHydrated(t *testing.T) {
+	t.Parallel()
+
+	src, err := fs.ReadFile(scaffoldFS, "scaffolds/inertia-react/resources/js/hooks/useHydrated.ts")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, want := range []string{"export function useHydrated(): boolean", "useState(false)", "useEffect(() => setHydrated(true), [])"} {
+		if !strings.Contains(string(src), want) {
+			t.Errorf("useHydrated.ts lacks %q", want)
+		}
+	}
+}

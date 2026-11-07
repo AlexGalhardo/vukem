@@ -533,6 +533,39 @@ On a first visit, the adapter POSTs the page object to the Node SSR server and p
 - `vukem ssr:start` runs `node bootstrap/ssr/ssr.js` and restarts it after a crash (flags `-bundle`, `-runtime`, `-restart-delay`, default `1s`).
 - `vukem ssr:check` probes `/health` (flag `-url`) and exits with an error if it does not answer `200`.
 
+### Forms that only work with JavaScript
+
+With SSR the form is in the first response, so the user can focus an input and type before the bundle has loaded and React has hydrated. Hydration then resets an **uncontrolled** input (one with no `value` prop) to the value it rendered, and what was typed is lost without a message. A form whose `onSubmit` posts with `fetch` and calls `preventDefault()` makes it worse: the request goes out with an empty field.
+
+```tsx title="resources/js/components/Newsletter.tsx"
+<form onSubmit={(e) => { e.preventDefault(); void post(e.currentTarget); }}>
+  <input name="email" type="email" />
+  <button>Subscribe</button>
+</form>
+```
+
+Reproduce it in a browser test by filling the field right after `domcontentloaded` and reading the value back after `networkidle`: it is `""`. Two fixes work, and either one is enough:
+
+1. **Give the form a real `action` and `method`.** Without JavaScript the browser posts the form itself, and the route answers a redirect or a page. With JavaScript, `onSubmit` takes over. This is the only option that also works when the bundle never loads.
+2. **Disable the JS-only controls until the app has hydrated.** The React starter ships `resources/js/hooks/useHydrated.ts`: it returns `false` on the server and during hydration, and `true` after the first effect, so the field is not usable in the window where its text would be lost:
+
+```tsx title="resources/js/components/Newsletter.tsx"
+import { useHydrated } from "../hooks/useHydrated";
+
+export default function Newsletter() {
+  const hydrated = useHydrated();
+
+  return (
+    <form onSubmit={subscribe}>
+      <input name="email" type="email" disabled={!hydrated} />
+      <button disabled={!hydrated}>Subscribe</button>
+    </form>
+  );
+}
+```
+
+For Vue and Svelte, use the `data-hydrating` attribute on `<html>` ([styling the gap](#styling-the-gap-before-the-app-mounts)) to disable the controls with CSS, or set a flag in `onMount`.
+
 ### A shell for client-rendered pages
 
 A page rendered on the client (`DisableSSR`, `Except`, no `SSR`, or a non-strict SSR fallback) otherwise ships an empty mount element and no `<title>`, so the first paint is blank. Set `Config.ClientShell` to give those pages a head and a placeholder:
