@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	netmail "net/mail"
+	"slices"
 	"strings"
 	"testing"
 
@@ -172,3 +173,60 @@ func TestBuildWritesHeaders(t *testing.T) {
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// Resend accepts "email@example.com" or "Name <email@example.com>" and answers
+// 422 to the canonical "<email@example.com>" form a Message carries for an
+// address without a display name.
+func TestResendSendsAddressesInItsFormat(t *testing.T) {
+	t.Parallel()
+
+	var body []byte
+
+	tr := NewResend(ResendConfig{
+		APIKey: config.NewSecret("k"), BaseURL: "http://resend.test",
+		HTTP: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			body, _ = io.ReadAll(r.Body)
+
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(`{}`)),
+				Request:    r,
+			}, nil
+		})},
+	})
+
+	msg := &Message{
+		ID: "m1", From: `"Hexa Score" <noreply@example.com>`, To: []string{"<ana@example.com>"},
+		Cc: []string{"<bia@example.com>"}, Bcc: []string{`"Audit" <audit@example.com>`},
+		ReplyTo: []string{"<help@example.com>"}, Subject: "s", Text: "t",
+	}
+	if err := tr.Send(t.Context(), msg); err != nil {
+		t.Fatal(err)
+	}
+
+	var got struct {
+		From    string   `json:"from"`
+		To      []string `json:"to"`
+		Cc      []string `json:"cc"`
+		Bcc     []string `json:"bcc"`
+		ReplyTo []string `json:"reply_to"`
+	}
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatal(err)
+	}
+
+	want := struct {
+		From             string
+		To, Cc, Bcc, Rep []string
+	}{
+		"Hexa Score <noreply@example.com>",
+		[]string{"ana@example.com"},
+		[]string{"bia@example.com"},
+		[]string{"Audit <audit@example.com>"},
+		[]string{"help@example.com"},
+	}
+	if got.From != want.From || !slices.Equal(got.To, want.To) || !slices.Equal(got.Cc, want.Cc) ||
+		!slices.Equal(got.Bcc, want.Bcc) || !slices.Equal(got.ReplyTo, want.Rep) {
+		t.Errorf("payload addresses = %+v, want %+v", got, want)
+	}
+}

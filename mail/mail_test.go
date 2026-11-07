@@ -535,7 +535,7 @@ func TestResendTransport(t *testing.T) {
 		t.Fatalf("calls = %d keys = %v (retries must reuse the idempotency key)", calls.Load(), keys)
 	}
 
-	if got.From != "<app@example.com>" || got.Subject != "Bem-vindo, Ana!" || len(got.Attachments) != 2 ||
+	if got.From != "app@example.com" || got.Subject != "Bem-vindo, Ana!" || len(got.Attachments) != 2 ||
 		got.Attachments[1].ContentID != "logo" || len(got.Tags) != 1 || got.Tags[0].Name != "kind" {
 		t.Fatalf("payload = %+v", got)
 	}
