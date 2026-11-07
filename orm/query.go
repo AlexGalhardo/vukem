@@ -120,6 +120,10 @@ func (q Query[T]) where(or bool, colName string, args []any) Query[T] {
 	case 2:
 		s, ok := args[0].(string)
 		if !ok || !operators[strings.ToUpper(s)] {
+			if ok && strings.EqualFold(s, "IN") || ok && strings.EqualFold(s, "NOT IN") {
+				return q.fail(fmt.Errorf("orm: invalid operator %q in Where: use WhereIn or WhereNotIn for lists", s))
+			}
+
 			return q.fail(fmt.Errorf("orm: invalid operator %v", args[0]))
 		}
 
@@ -736,6 +740,58 @@ func (q Query[T]) Pluck[V any](ctx context.Context, colName string) ([]V, error)
 		}
 
 		out = append(out, v)
+	}
+
+	return out, rows.Err()
+}
+
+// GroupCount returns how many matching rows hold each value of the column:
+// SELECT col, COUNT(*) ... GROUP BY col. K is the column's Go type (string,
+// int64, bool...). It ignores OrderBy, Limit, Offset and locks, honours
+// Where and soft deletes, and returns an empty map for no rows. NULL
+// values are not supported: filter them out with WhereNotNull.
+func (q Query[T]) GroupCount[K comparable](ctx context.Context, colName string) (map[K]int64, error) {
+	col, err := q.m.column(colName)
+	if err != nil {
+		return nil, err
+	}
+
+	if q.err != nil {
+		return nil, q.err
+	}
+
+	var k K
+	if _, ok := any(&k).(opener); ok {
+		return nil, fmt.Errorf("orm: cannot group by encrypted column %s.%s", q.m.table, col)
+	}
+
+	q.orders, q.limit, q.offset, q.lock, q.wait = nil, -1, 0, "", ""
+
+	query, args, err := q.selectSQL(q.quote(col) + ", COUNT(*)")
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := q.ex.QueryContext(ctx, query+" GROUP BY "+q.quote(col), args...)
+	if err != nil {
+		return nil, fmt.Errorf("orm: group count %s.%s: %w", q.m.table, col, err)
+	}
+	defer rows.Close()
+
+	out := map[K]int64{}
+	lite := isSQLite(q.ex)
+
+	for rows.Next() {
+		var (
+			key K
+			n   int64
+		)
+
+		if err := rows.Scan(pluckDest(&key, lite), &n); err != nil {
+			return nil, fmt.Errorf("orm: group count %s.%s: %w", q.m.table, col, err)
+		}
+
+		out[key] = n
 	}
 
 	return out, rows.Err()

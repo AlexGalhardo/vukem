@@ -340,7 +340,7 @@ posts, err := orm.QueryOf[models.Post](db).
 | Method | SQL | Notes |
 | --- | --- | --- |
 | `Where(col, v)` | `col = ?` | `Where(col, nil)` is `col IS NULL` |
-| `Where(col, op, v)` | `col op ?` | `op` is one of `=`, `!=`, `<>`, `<`, `<=`, `>`, `>=`, `LIKE`, `NOT LIKE`, `ILIKE` (any case); `!=`/`<>` with `nil` is `IS NOT NULL` |
+| `Where(col, op, v)` | `col op ?` | `op` is one of `=`, `!=`, `<>`, `<`, `<=`, `>`, `>=`, `LIKE`, `NOT LIKE`, `ILIKE` (any case); `!=`/`<>` with `nil` is `IS NOT NULL`; `IN` is not an operator, use `WhereIn` (the error says `use WhereIn or WhereNotIn for lists`) |
 | `OrWhere(...)` | `OR ...` | Same arguments as `Where` |
 | `WhereIn(col, vs...)` | `col IN (...)` | Accepts values or one slice; an empty list matches **nothing** |
 | `WhereNotIn(col, vs...)` | `col NOT IN (...)` | An empty list matches **everything** |
@@ -415,6 +415,7 @@ posts, err := orm.QueryOf[models.Post](db).
 | `Find(ctx, id)` | `T` | The row with that primary key, or `orm.ErrNotFound` |
 | `Count(ctx)` | `int64` | `COUNT(*)` |
 | `Exists(ctx)` | `bool` | |
+| `GroupCount[K](ctx, col)` | `map[K]int64` | Rows per value of `col`: `SELECT col, COUNT(*) ... GROUP BY col`. Honours `Where` and soft deletes, ignores `OrderBy`, `Limit` and locks; a `NULL` group is an error, so add `WhereNotNull(col)` for nullable columns; encrypted columns are refused |
 | `Pluck[V](ctx, col)` | `[]V` | One column of every row |
 | `Each(ctx)` | an iterator | Streams rows without loading them all |
 | `Chunk(ctx, size, fn)` | `error` | Calls `fn` with batches of `size` rows, in primary key order |

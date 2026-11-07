@@ -797,3 +797,42 @@ func TestChunkWithOrWhere(t *testing.T) {
 		t.Fatalf("soft-delete Chunk visited (-want +got):\n%s", diff)
 	}
 }
+
+func TestGroupCount(t *testing.T) {
+	t.Parallel()
+
+	db, ctx := setup(t)
+	seedUsers(ctx, t, db)
+
+	byActive, err := QueryOf[User](db).OrderBy("id", Desc).Limit(1).GroupCount[bool](ctx, "active")
+	if err != nil || byActive[true] != 2 || byActive[false] != 2 || len(byActive) != 2 {
+		t.Errorf("GroupCount(active) = %v, %v, want 2 and 2", byActive, err)
+	}
+
+	byAge, err := QueryOf[User](db).Where("active", true).GroupCount[int](ctx, "age")
+	if err != nil || len(byAge) != 2 {
+		t.Errorf("GroupCount(age) with Where = %v, %v, want 2 groups", byAge, err)
+	}
+
+	none, err := QueryOf[User](db).Where("name", "Zed").GroupCount[string](ctx, "name")
+	if err != nil || none == nil || len(none) != 0 {
+		t.Errorf("GroupCount(no rows) = %#v, %v, want an empty map", none, err)
+	}
+
+	if _, err := QueryOf[User](db).GroupCount[string](ctx, "nope"); err == nil {
+		t.Error("GroupCount(unknown column) = nil error")
+	}
+}
+
+func TestWhereInOperatorPointsToWhereIn(t *testing.T) {
+	t.Parallel()
+
+	db, ctx := setup(t)
+
+	for _, op := range []string{"IN", "not in"} {
+		_, err := QueryOf[User](db).Where("id", op, []int{1}).Count(ctx)
+		if err == nil || !strings.Contains(err.Error(), "WhereIn") {
+			t.Errorf("Where(%q) error = %v, want a hint to WhereIn", op, err)
+		}
+	}
+}
