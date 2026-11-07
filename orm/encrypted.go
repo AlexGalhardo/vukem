@@ -102,7 +102,7 @@ func columnAD(table, col string) []byte { return []byte("orm:" + table + "." + c
 func bindValue(ex database.Executor, table, col string, v any) (any, error) {
 	s, ok := v.(sealer)
 	if !ok {
-		return v, nil
+		return utc(v), nil
 	}
 
 	enc := encrypterOf(ex)
