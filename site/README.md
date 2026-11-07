@@ -1,6 +1,8 @@
 # Vukem documentation site
 
-The public docs at <https://vukem.dev>: Astro 7.4 (static HTML), Tailwind CSS v4, Base UI and MDX. See [docs/site.md](../docs/site.md) for the decisions behind it.
+The public docs at <https://vukem.dev>: Astro 7.4 (static HTML), Tailwind CSS v4, Base UI and MDX. See [docs/site.md](../docs/site.md) for the decisions behind it. A parent repository lockfile does not change the site root: Astro builds `site/` on its own, so there is no Turbopack workspace-root setting to copy.
+
+Next.js used to treat a parent `bun.lock` as the workspace root and then fail on `@vercel/turbopack-next` while loading a Google font. This site does not use Next.js. Do not copy `turbopack.root` into the Astro config.
 
 ## Run
 
