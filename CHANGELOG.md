@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **cache:** Add `Cache.ForgetPrefix` and the optional `PrefixDeleter` store interface (memory, database and Redis) to forget every key under a prefix.
 - **orm:** Add `Query.GroupCount` (rows per column value) and point `Where` with `IN` or `NOT IN` to `WhereIn` and `WhereNotIn` in its error.
 - **schema:** Add `Table.DropIndexOn` and `Table.DropUniqueIndexOn` to drop an index by its columns instead of its generated name.
 - **webhook:** Accept the `svix-id`, `svix-timestamp` and `svix-signature` headers (Svix, Resend) in `Standard` and `StandardID`.

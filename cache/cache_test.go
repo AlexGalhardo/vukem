@@ -2,6 +2,7 @@ package cache_test
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"testing"
 	"time"
@@ -266,5 +267,17 @@ func TestDatabasePrunesInBatches(t *testing.T) {
 
 	if _, ok, _ := store.Get(ctx, "live"); !ok {
 		t.Fatal("Prune deleted a live entry")
+	}
+}
+
+// hidden wraps a store without its optional methods.
+type hidden struct{ cache.Store }
+
+func TestForgetPrefixUnsupportedStore(t *testing.T) {
+	t.Parallel()
+
+	c := cache.New(hidden{cache.NewMemory(0)}, "")
+	if err := c.ForgetPrefix(t.Context(), "a:"); !errors.Is(err, cache.ErrPrefixUnsupported) {
+		t.Errorf("ForgetPrefix on a store without DeletePrefix = %v, want ErrPrefixUnsupported", err)
 	}
 }

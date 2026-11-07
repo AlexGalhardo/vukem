@@ -154,13 +154,23 @@ func (s *Store) Increment(ctx context.Context, key string, delta int64, ttl time
 // the store.
 func (*Store) Shared() bool { return true }
 
+// DeletePrefix implements cache.PrefixDeleter: it deletes the keys that
+// start with prefix (after the store's own prefix) with SCAN, in batches.
+func (s *Store) DeletePrefix(ctx context.Context, prefix string) error {
+	return s.deleteMatching(ctx, escapeGlob(s.k(prefix))+"*")
+}
+
 // Flush implements cache.Store: it deletes the keys under the prefix.
 func (s *Store) Flush(ctx context.Context) error {
 	if s.prefix == "" {
 		return errors.New("redis: refusing to flush a cache store without a prefix")
 	}
 
-	iter := s.rdb.Scan(ctx, 0, escapeGlob(s.prefix)+"*", 500).Iterator()
+	return s.deleteMatching(ctx, escapeGlob(s.prefix)+"*")
+}
+
+func (s *Store) deleteMatching(ctx context.Context, pattern string) error {
+	iter := s.rdb.Scan(ctx, 0, pattern, 500).Iterator()
 
 	var batch []string
 

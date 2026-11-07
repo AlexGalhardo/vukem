@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -201,6 +202,20 @@ func (m *Memory) Delete(_ context.Context, keys ...string) error {
 
 	for _, k := range keys {
 		if el, ok := m.items[k]; ok {
+			m.remove(el)
+		}
+	}
+
+	return nil
+}
+
+// DeletePrefix implements PrefixDeleter.
+func (m *Memory) DeletePrefix(_ context.Context, prefix string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for k, el := range m.items {
+		if strings.HasPrefix(k, prefix) {
 			m.remove(el)
 		}
 	}
