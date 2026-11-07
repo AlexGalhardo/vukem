@@ -212,15 +212,19 @@ func (t *Table) addIndex(cols []string, unique bool) *Index {
 		}
 	}
 
+	ix.name = indexName(t.name, cols, unique)
+	t.indexes = append(t.indexes, ix)
+
+	return &Index{t: t, ix: ix}
+}
+
+func indexName(table string, cols []string, unique bool) string {
 	suffix := "_index"
 	if unique {
 		suffix = "_unique"
 	}
 
-	ix.name = t.name + "_" + strings.Join(cols, "_") + suffix
-	t.indexes = append(t.indexes, ix)
-
-	return &Index{t: t, ix: ix}
+	return table + "_" + strings.Join(cols, "_") + suffix
 }
 
 // Using picks the PostgreSQL index method: "gin" for a JSONB column queried
@@ -296,6 +300,14 @@ func (t *Table) DropIndex(name string) {
 
 	t.dropIdx = append(t.dropIdx, name)
 }
+
+// DropIndexOn drops the index that Index(cols...) created, deriving its
+// name (table_col1_col2_index) so a Down needs not repeat it (alter only).
+func (t *Table) DropIndexOn(cols ...string) { t.DropIndex(indexName(t.name, cols, false)) }
+
+// DropUniqueIndexOn drops the index that UniqueIndex(cols...) created
+// (table_col1_col2_unique; alter only).
+func (t *Table) DropUniqueIndexOn(cols ...string) { t.DropIndex(indexName(t.name, cols, true)) }
 
 // Check adds a named CHECK constraint. expr is raw SQL written by the
 // developer (never user input); it should only use syntax every target

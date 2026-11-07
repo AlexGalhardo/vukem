@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -478,5 +479,40 @@ func TestMigratorErrors(t *testing.T) {
 	_ = db.Close()
 	if _, err := failing.Status(context.Background()); err == nil {
 		t.Fatal("Status on closed db")
+	}
+}
+
+func TestDropIndexOnMatchesCreatedName(t *testing.T) {
+	t.Parallel()
+
+	got := record(t, database.SQLite, func(s *Schema) error {
+		if err := s.Create("deliveries", func(t *Table) {
+			t.ID()
+			t.Integer("campaign_id")
+			t.String("status")
+			t.String("token")
+			t.Index("campaign_id", "status")
+			t.UniqueIndex("token")
+		}); err != nil {
+			return err
+		}
+
+		return s.Table("deliveries", func(t *Table) {
+			t.DropIndexOn("campaign_id", "status")
+			t.DropUniqueIndexOn("token")
+		})
+	})
+
+	for _, name := range []string{"deliveries_campaign_id_status_index", "deliveries_token_unique"} {
+		create, drop := "INDEX \""+name+"\" ON", "DROP INDEX \""+name+"\""
+		if !slices.ContainsFunc(got, func(q string) bool { return strings.Contains(q, create) }) ||
+			!slices.ContainsFunc(got, func(q string) bool { return strings.Contains(q, drop) }) {
+			t.Errorf("statements %q: want %s created and dropped by the same name", got, name)
+		}
+	}
+
+	s, _ := recorder(database.SQLite)
+	if err := s.Table("deliveries", func(t *Table) { t.DropIndexOn("bad name") }); err == nil {
+		t.Error("DropIndexOn(bad name) = nil, want an error")
 	}
 }

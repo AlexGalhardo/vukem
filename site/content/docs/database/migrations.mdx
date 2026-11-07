@@ -254,7 +254,7 @@ t.Index("user_id", "published_at")  // posts_user_id_published_at_index
 t.UniqueIndex("post_id", "tag_id")  // post_tag_post_id_tag_id_unique
 ```
 
-Names are derived as `<table>_<col1>_<col2>_index` or `_unique`; `t.DropIndex(name)` takes that name.
+Names are derived as `<table>_<col1>_<col2>_index` for `Index` and `<table>_<col1>_<col2>_unique` for `UniqueIndex`. To undo them in an alter, repeat the columns instead of the name: `t.DropIndexOn("user_id", "published_at")` and `t.DropUniqueIndexOn("post_id", "tag_id")`. `t.DropIndex(name)` takes the full name, for indexes you named yourself or created with raw SQL.
 
 #### Partial indexes
 
