@@ -6,6 +6,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -41,7 +42,7 @@ func main() {
 func changelogSection(text, tag string) (string, error) {
 	version := strings.TrimPrefix(tag, "v")
 	if version == "" {
-		return "", fmt.Errorf("missing version")
+		return "", errors.New("missing version")
 	}
 
 	heading := "## [" + version + "]"

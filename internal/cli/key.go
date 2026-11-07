@@ -56,7 +56,7 @@ func writeAppKeyIfMissing(env *Env) error {
 		return err
 	}
 
-	if m := appKeyLine.FindStringSubmatch(string(src)); m != nil && strings.TrimSpace(m[1]) != "" {
+	if m := appKeyLine.FindStringSubmatch(string(src)); len(m) > 1 && strings.TrimSpace(m[1]) != "" {
 		fmt.Fprintln(env.Stderr, "APP_KEY already set")
 		return nil
 	}
