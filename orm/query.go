@@ -152,6 +152,12 @@ func (q Query[T]) where(or bool, colName string, args []any) Query[T] {
 
 func (q Query[T]) addCond(or bool, sqlFrag string, args ...any) Query[T] {
 	q = q.clone()
+
+	args = slices.Clone(args)
+	for i, a := range args {
+		args[i] = utc(a)
+	}
+
 	q.conds = append(q.conds, cond{or: or, sql: sqlFrag, args: args})
 
 	return q

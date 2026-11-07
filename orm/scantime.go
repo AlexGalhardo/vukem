@@ -50,3 +50,32 @@ func pluckDest(p any, lite bool) any {
 
 	return p
 }
+
+// utc returns v with a time converted to UTC, so every time bound by the
+// ORM is written and compared in one zone. SQLite keeps a time as text that
+// includes its zone, and compares text, so a time in another zone would
+// sort by its clock reading instead of its instant. Other values pass
+// through.
+func utc(v any) any {
+	switch t := v.(type) {
+	case time.Time:
+		return t.UTC()
+	case *time.Time:
+		if t == nil {
+			return v
+		}
+
+		return t.UTC()
+	case sql.NullTime:
+		t.Time = t.Time.UTC()
+		return t
+	case sql.Null[time.Time]:
+		t.V = t.V.UTC()
+		return t
+	case NullTime:
+		t.V = t.V.UTC()
+		return t
+	default:
+		return v
+	}
+}

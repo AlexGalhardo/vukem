@@ -542,6 +542,18 @@ page, err := orm.QueryOf[models.Post](db).
 
 `MaxPerPage(0)` or below is a query error. `api.Query` raises the bound to its own `api.PerPage` maximum for you.
 
+### Times and time zones
+
+Every `time.Time` the ORM binds, in a `Where`, `WhereIn`, `WhereBetween`, `Set` or a model field, is converted to UTC first. Model timestamps (`created_at`, `updated_at`, `deleted_at`) are written in UTC too. The result is one rule on every database: you may pass a time in any zone and the comparison is by instant.
+
+| Database | Column | What is stored |
+| --- | --- | --- |
+| PostgreSQL | `TIMESTAMPTZ` / `TIMESTAMP` | a real timestamp; compared as an instant |
+| MySQL | `DATETIME` | the UTC reading, sent through the driver |
+| SQLite | `DATETIME` (text) | text such as `2026-11-07 13:00:00.5 +0000 UTC`, compared as text |
+
+SQLite has no time type, so it compares that text. Text written in UTC sorts the same as the instants, which is why the ORM always binds UTC: a time left in `-03:00` would be stored as `10:00:00.5 -0300` and sort by its clock reading, not its instant. Rows written outside the ORM, with a different layout or zone, are not covered: write them in UTC or fix them once. For raw SQL (`WhereRaw`, `db.ExecContext`) the ORM still converts the time arguments you pass to `WhereRaw`, but not those you pass to `db.ExecContext`; call `t.UTC()` yourself there.
+
 ## Bulk updates and deletes
 
 To change many rows at once, call `Update` or `Delete` on a query. Both return how many rows they touched:

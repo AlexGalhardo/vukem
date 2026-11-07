@@ -905,3 +905,51 @@ func TestConditionalUpdateClaimsOnce(t *testing.T) {
 		t.Errorf("claimed by %d workers, want 1", claimed.Load())
 	}
 }
+
+// Times are bound in UTC, so a window query agrees with the instant
+// whatever zone the caller's time carries (SQLite compares stored text).
+func TestTimesAreStoredAndComparedInUTC(t *testing.T) {
+	t.Parallel()
+
+	db, ctx := setup(t)
+	seedUsers(ctx, t, db)
+
+	west := time.FixedZone("W", -3*3600)
+	east := time.FixedZone("E", 9*3600)
+	at := time.Date(2026, 11, 7, 10, 0, 0, 500_000_000, west)
+
+	if _, err := QueryOf[User](db).Where("name", "Ana").Update(ctx, Set{"created_at": at}); err != nil {
+		t.Fatal(err)
+	}
+
+	var raw string
+	if err := db.QueryRowContext(ctx, `SELECT CAST(created_at AS TEXT) FROM users WHERE name = 'Ana'`).
+		Scan(&raw); err != nil ||
+		!strings.Contains(raw, "13:00:00.5 +0000") {
+		t.Errorf("stored %q (%v), want the UTC reading 13:00:00.5 +0000", raw, err)
+	}
+
+	for _, tt := range []struct {
+		name string
+		op   string
+		when time.Time
+		want int64
+	}{
+		{"same instant, east zone", ">=", at.In(east), 1},
+		{"same instant, west zone", "<=", at, 1},
+		{"1ms later, east zone", ">=", at.Add(time.Millisecond).In(east), 0},
+		{"1ms earlier, east zone", ">=", at.Add(-time.Millisecond).In(east), 1},
+		{"500ms earlier, east zone", ">", at.Add(-500 * time.Millisecond).In(east), 1},
+	} {
+		n, err := QueryOf[User](db).Where("name", "Ana").Where("created_at", tt.op, tt.when).Count(ctx)
+		if err != nil || n != tt.want {
+			t.Errorf("%s: created_at %s %s = %d, %v, want %d", tt.name, tt.op, tt.when, n, err, tt.want)
+		}
+	}
+
+	n, err := QueryOf[User](db).Where("name", "Ana").
+		WhereBetween("created_at", at.Add(-time.Hour).In(east), at.Add(time.Hour).In(east)).Count(ctx)
+	if err != nil || n != 1 {
+		t.Errorf("WhereBetween across zones = %d, %v, want 1", n, err)
+	}
+}
