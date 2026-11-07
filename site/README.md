@@ -35,7 +35,7 @@ Mark features that are not implemented yet with `<Callout type="warning">Planned
 Every page shows "Last updated" with the date and time of the last commit that touched its MDX file, formatted with `Intl.DateTimeFormat` in English, in UTC.
 
 - At build time `lib/last-updated.ts` runs `git log` over `content/` once (`lib/git-dates.ts`).
-- The production checkout is shallow (and may not ship `.git` at all). Commits at the shallow boundary are ignored, because git reports them as touching every file, and any page git cannot date falls back to the committed `content/last-updated.json`. If neither has the file, the line is hidden.
+- The production checkout is shallow (and may not ship `.git` at all). Commits at the shallow boundary are ignored, because git reports them as touching every file, and any page git cannot date falls back to `content/last-updated.json`. `lib/last-updated.ts` reads that file from disk. A copied site that does not have it yet still builds, and the line stays hidden until git or the file has a date. This repository's CI check still requires the file.
 - Refresh the fallback map with `npm run last-updated` (from a clone with full history: `git fetch --unshallow` first if needed) and commit it.
 
 On `main` the check also accepts a stale date when the newest commit of the page is a squash merge (`(#123)` subject) and the recorded date is not older than the change before it, so a squash-merged PR needs no refresh after merging `origin/main`.
