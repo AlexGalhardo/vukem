@@ -419,7 +419,13 @@ func (s *boostServer) databaseSchema(ctx context.Context, raw json.RawMessage) (
 var (
 	readOnlyStart = regexp.MustCompile(`(?i)^\s*(select|with|explain|values)\b`)
 	writeKeyword  = regexp.MustCompile(
-		`(?i)\b(insert|update|delete|merge|upsert|replace|drop|alter|create|truncate|attach|detach|grant|revoke|vacuum|pragma|copy|call|do|lock|set)\b`,
+		`(?i)\b(insert|update|delete|merge|upsert|replace|drop|alter|create|truncate|attach|detach|grant|revoke|vacuum|pragma|copy|call|do|lock|set|into)\b`,
+	)
+	// sideEffectFunc matches functions that a read-only transaction still
+	// lets run: server file access, backend control, sleeps, extensions.
+	sideEffectFunc = regexp.MustCompile(
+		`(?i)\b(load_file|load_extension|sleep|benchmark|get_lock|dblink\w*|set_config|lo_\w+|` +
+			`pg_(read_\w+|ls_\w+|stat_file|terminate_backend|cancel_backend|sleep\w*|reload_conf|advisory_\w+))\s*\(`,
 	)
 	errNotReadOnly = errors.New("only a single read-only statement (SELECT, WITH, EXPLAIN) is allowed")
 )
@@ -435,7 +441,8 @@ func (s *boostServer) databaseQuery(ctx context.Context, raw json.RawMessage) (a
 	}
 
 	q := strings.TrimSuffix(strings.TrimSpace(a.Query), ";")
-	if !readOnlyStart.MatchString(q) || strings.Contains(q, ";") || writeKeyword.MatchString(q) {
+	if !readOnlyStart.MatchString(q) || strings.Contains(q, ";") || writeKeyword.MatchString(q) ||
+		sideEffectFunc.MatchString(q) {
 		return nil, errNotReadOnly
 	}
 

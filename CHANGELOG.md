@@ -70,6 +70,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **boost:** Refuse `INTO` and calls to file, backend-control, sleep and extension functions (`LOAD_FILE`, `pg_read_file`, `pg_terminate_backend`, `pg_sleep`, `SLEEP`) in the `database_query` MCP tool, which a read-only transaction did not stop (audit A05-1).
+
 - **queue:** Unique jobs no longer clash with failed rows or Retry ([44acf4e](https://github.com/AlexGalhardo/vukem/commit/44acf4e1e527c2fd39d775d934c016d1b22629b0))
 - **queue:** Keep the Retry id-clash rollback for non-unique ids ([36fd37a](https://github.com/AlexGalhardo/vukem/commit/36fd37a57f723aba7ba9048b84ebea029bfbee8c))
 - **cli:** Validate and encode the slug in the React admin scaffold ([c80bf2f](https://github.com/AlexGalhardo/vukem/commit/c80bf2fc51a0adbff102cb84b830391f9638bc7d))
