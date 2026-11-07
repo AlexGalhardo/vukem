@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -61,6 +62,98 @@ func TestCIAuditsTheLockfile(t *testing.T) {
 
 	if strings.Contains(minimalPackageJSON, `"overrides"`) {
 		t.Error("generated package.json ships an override")
+	}
+}
+
+// artifactIgnore reports whether a markdownlint-cli2 ignore of the form
+// "**/name/**" covers path. A new docs page does not match that form.
+func artifactIgnore(pattern, path string) bool {
+	path = strings.TrimPrefix(path, "/")
+	pattern = strings.TrimPrefix(pattern, "/")
+
+	dir, ok := strings.CutPrefix(pattern, "**/")
+	if !ok {
+		return false
+	}
+
+	dir, ok = strings.CutSuffix(dir, "/**")
+	if !ok || dir == "" {
+		return false
+	}
+
+	return path == dir || strings.HasPrefix(path, dir+"/") || strings.Contains(path, "/"+dir+"/")
+}
+
+func TestMarkdownlintIgnoresArtifactsNotNewDocs(t *testing.T) {
+	t.Parallel()
+
+	raw, err := standardsFS.ReadFile("standards/markdownlint-cli2.jsonc")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var lines []string
+
+	for line := range strings.SplitSeq(string(raw), "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "//") {
+			continue
+		}
+
+		lines = append(lines, line)
+	}
+
+	var cfg struct {
+		Ignores []string `json:"ignores"`
+	}
+	if err := json.Unmarshal([]byte(strings.Join(lines, "\n")), &cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, want := range []string{
+		"**/storage/**", "**/.cache/**", "**/coverage/**", "**/dist/**", "**/out/**", "**/.next/**",
+	} {
+		if !slices.Contains(cfg.Ignores, want) {
+			t.Errorf("ignores miss %s", want)
+		}
+	}
+
+	for _, banned := range []string{"**/*.md", "docs/**", "**/docs/**"} {
+		if slices.Contains(cfg.Ignores, banned) {
+			t.Errorf("ignores drop versioned docs via %s", banned)
+		}
+	}
+
+	hidden := []string{
+		"storage/private/README.md",
+		"app/storage/note.md",
+		".cache/vite/x.md",
+		"coverage/index.md",
+		"dist/README.md",
+		"out/page.md",
+		".next/cache.md",
+	}
+	kept := []string{"README.md", "docs/new-guide.md", "docs/storage-notes.md"}
+
+	for _, path := range hidden {
+		matched := false
+
+		for _, pattern := range cfg.Ignores {
+			if artifactIgnore(pattern, path) {
+				matched = true
+			}
+		}
+
+		if !matched {
+			t.Errorf("%s is linted; it is a local artifact", path)
+		}
+	}
+
+	for _, path := range kept {
+		for _, pattern := range cfg.Ignores {
+			if artifactIgnore(pattern, path) {
+				t.Errorf("%s matches %s; a new doc must stay in the lint", path, pattern)
+			}
+		}
 	}
 }
 

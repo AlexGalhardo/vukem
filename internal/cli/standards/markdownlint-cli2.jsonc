@@ -17,5 +17,14 @@
     "MD060": false
   },
   "globs": ["**/*.md"],
-  "ignores": ["**/node_modules/**", "**/testdata/**"]
+  "ignores": [
+    "**/node_modules/**",
+    "**/testdata/**",
+    "**/storage/**",
+    "**/.cache/**",
+    "**/coverage/**",
+    "**/dist/**",
+    "**/out/**",
+    "**/.next/**"
+  ]
 }
