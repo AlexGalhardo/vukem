@@ -66,7 +66,7 @@ A multi-seller marketplace inspired by the big Latin American e-commerce sites. 
 
 [![Marketplace: searching products](https://raw.githubusercontent.com/AlexGalhardo/vukem-marketplace-reactjs/main/docs/media/search.gif)](https://github.com/AlexGalhardo/vukem-marketplace-reactjs)
 
-### [HexaScore](https://github.com/AlexGalhardo/vukem-hexascore)
+### [Vukem HexaScore](https://github.com/AlexGalhardo/vukem-hexascore)
 
 An open source almanac and community score platform for games, movies, TV shows and books. Each item is rated by the community in six categories per type, and the ratings combine into a published score.
 
