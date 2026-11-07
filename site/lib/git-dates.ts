@@ -34,7 +34,8 @@ export function gitLastUpdated(dir: string): Record<string, string> {
   let log: string;
   let boundaries: Set<string>;
   try {
-    log = git(dir, ["log", "--format=%x00%H %cI", "--name-only", "--relative", "--", "."]);
+    // Author date: a rebase merge rewrites the committer date of every commit, the author date survives it.
+    log = git(dir, ["log", "--format=%x00%H %aI", "--name-only", "--relative", "--", "."]);
     boundaries = shallowBoundaries(dir);
   } catch {
     return {};
@@ -52,7 +53,7 @@ export function gitLastUpdated(dir: string): Record<string, string> {
 }
 
 /**
- * True when the newest of two `git log --format=%cI%x09%s` rows is a squash
+ * True when the newest of two `git log --format=%aI%x09%s` rows is a squash
  * merge ("... (#123)") and the recorded date is not older than the change
  * before it. A squash commit lands after the date the PR branch recorded;
  * the page itself is unchanged since that PR.
@@ -66,7 +67,7 @@ export function squashExplainsDate(log: string, entry: string): boolean {
 /** Reads the two newest commits of a page and applies squashExplainsDate. */
 export function pageDateExplainedBySquash(dir: string, file: string, entry: string): boolean {
   try {
-    return squashExplainsDate(git(dir, ["log", "-2", "--format=%cI%x09%s", "--", file]), entry);
+    return squashExplainsDate(git(dir, ["log", "-2", "--format=%aI%x09%s", "--", file]), entry);
   } catch {
     return false;
   }
