@@ -50,6 +50,8 @@ Rule: Any PR that adds, changes or removes a page under `site/content/docs/` (in
 
 `content/versions/0.20` is this framework's frozen snapshot. It is registered in `lib/versions.ts`, `lib/content.ts` and `scripts/check-mdx.ts`. A product that copies the shell deletes that directory and those `0.20` entries before the first build. This repository keeps them: `/docs/0.20/` is a published snapshot.
 
+`lib/changelog.tsx` reads `../CHANGELOG.md`, one directory above `site/`. A standalone copy keeps the changelog at that path. The build reads that file; a missing file fails the build.
+
 ## Language
 
 The site is English only. Old `/pt-br/...` links hit the 404 page, which sends them to the English page. UI strings live in `lib/ui-text.ts`. Details in [docs/site.md](../docs/site.md#language).
