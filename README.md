@@ -55,7 +55,7 @@ Real applications built with Vukem, from a marketplace with Stripe Connect to a 
 <details>
 <summary><strong>Show the 9 projects built with Vukem</strong></summary>
 
-### [Vukem Marketplace ReactJS](https://github.com/AlexGalhardo/vukem-marketplace-reactjs)
+### [Vukem Marketplace ReactJS](https://github.com/AlexGalhardo/vukem-marketplace)
 
 A multi-seller marketplace inspired by the big Latin American e-commerce sites. Sellers open shops and list products with images; buyers search, fill a cart, calculate freight by CEP and pay by card or PIX, and sellers receive their share through Stripe Connect.
 
@@ -64,7 +64,7 @@ A multi-seller marketplace inspired by the big Latin American e-commerce sites. 
 
 <br/>
 
-[![Marketplace: searching products](https://raw.githubusercontent.com/AlexGalhardo/vukem-marketplace-reactjs/main/docs/media/search.gif)](https://github.com/AlexGalhardo/vukem-marketplace-reactjs)
+[![Marketplace: searching products](https://raw.githubusercontent.com/AlexGalhardo/vukem-marketplace/main/docs/media/search.gif)](https://github.com/AlexGalhardo/vukem-marketplace)
 
 ### [Vukem HexaScore](https://github.com/AlexGalhardo/vukem-hexascore)
 
