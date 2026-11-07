@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **site:** Fix an open redirect in the legacy `/pt-br` path redirect: `/pt-br//evil.com` became the protocol-relative `//evil.com`; the target is now rebuilt as a same-origin URL.
 - **web:** Reject duplicate JSON object names and invalid UTF-8 when decoding an HTTP JSON body.
 
 ## [0.38.0] - 2026-11-07
