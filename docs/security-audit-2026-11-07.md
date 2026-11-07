@@ -25,7 +25,7 @@ is free of defects.
 
 | ID | Severity | CWE | Location | Title | Fix |
 | --- | --- | --- | --- | --- | --- |
-| A05-1 | Low | CWE-668 | `boost.go:438` | boost `database_query` read-only guard lets side-effecting SELECTs through | see below |
+| A05-1 | Low | CWE-668 | `boost.go:438` | boost `database_query` read-only guard lets side-effecting SELECTs through | fixed |
 
 ## Findings
 
@@ -44,7 +44,7 @@ is free of defects.
   read-only refusal; on the SQLite test database they reached the engine and failed there only because
   the functions do not exist.
 - Fix: add `into` to the write keywords and refuse calls to file, backend-control, sleep and extension
-  functions (`sideEffectFunc`). Fix commit: recorded below.
+  functions (`sideEffectFunc`). Fix commit: `fbee536d`.
 
 ## Dropped candidates
 
