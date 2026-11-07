@@ -46,6 +46,10 @@ On `main` the check also accepts a stale date when the newest commit of the page
 
 Rule: Any PR that adds, changes or removes a page under `site/content/docs/` (including a frozen copy under `site/content/versions/`) must refresh `site/content/last-updated.json` (`npm run last-updated` in `site/`, from a clone with full history) in the same PR. The "Last updated" date is part of the page contract; never edit it by hand. CI checks every docs page, not only the files the PR touched (`Site / Last updated` on site changes, and `Docs last updated / Last updated` on every pull request and every push to `main`). Locally, `npm run check:last-updated` runs the same check (`npm run test:scripts` tests it). Release checklist: refresh `last-updated.json` before tagging ([maintenance](../docs/maintenance.md#release-routine)).
 
+## A copied shell
+
+`content/versions/0.20` is this framework's frozen snapshot. It is registered in `lib/versions.ts`, `lib/content.ts` and `scripts/check-mdx.ts`. A product that copies the shell deletes that directory and those `0.20` entries before the first build. This repository keeps them: `/docs/0.20/` is a published snapshot.
+
 ## Language
 
 The site is English only. Old `/pt-br/...` links hit the 404 page, which sends them to the English page. UI strings live in `lib/ui-text.ts`. Details in [docs/site.md](../docs/site.md#language).
