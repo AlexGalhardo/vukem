@@ -21,6 +21,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -406,6 +407,11 @@ type VerifyOptions struct {
 	// InsecureSkipIssuer accepts any "iss" with a *RemoteJWKS.
 	// Dangerous: tokens from other tenants of a multi-tenant provider pass.
 	InsecureSkipIssuer bool
+	// Nonce, when set, must equal the "nonce" claim (constant-time compare);
+	// a token without one is refused. For an ID-token exchange the nonce is
+	// per sign-in, so build the Verifier per request with the nonce the client
+	// started with.
+	Nonce string
 	// Leeway tolerates clock skew (default 30s).
 	Leeway time.Duration
 	// AllowMissingExpiry accepts tokens without "exp" (off by default).
@@ -541,9 +547,16 @@ func (v *Verifier) checkClaims(c Claims) error {
 		return invalid("issuer %q", c.Issuer)
 	case v.opts.Audience != "" && !slices.Contains(c.Audience, v.opts.Audience):
 		return invalid("audience %v", c.Audience)
+	case v.opts.Nonce != "" && !nonceMatches(c, v.opts.Nonce):
+		return invalid("nonce")
 	}
 
 	return nil
+}
+
+func nonceMatches(c Claims, want string) bool {
+	got, ok := c.Extra["nonce"].(string)
+	return ok && subtle.ConstantTimeCompare([]byte(got), []byte(want)) == 1
 }
 
 // decodeStrict decodes a JSON object, rejecting duplicate top-level

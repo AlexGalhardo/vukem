@@ -246,3 +246,51 @@ func mustJSON(t *testing.T, v any) []byte {
 
 	return b
 }
+
+func TestSecurity_A07_JWTNonceBinding(t *testing.T) {
+	t.Parallel()
+
+	k := keys(t)[0]
+	sign := func(extra map[string]any) string {
+		c := claims()
+		c.Extra = extra
+
+		tok, err := jwt.Sign(k, c)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		return tok
+	}
+
+	v := jwt.NewVerifier(jwt.StaticKeys(k), jwt.VerifyOptions{Nonce: "n-1", Now: clock})
+	open := jwt.NewVerifier(jwt.StaticKeys(k), jwt.VerifyOptions{Now: clock})
+
+	cases := map[string]struct {
+		token string
+		ok    bool
+	}{
+		"matching":  {sign(map[string]any{"nonce": "n-1"}), true},
+		"other":     {sign(map[string]any{"nonce": "n-2"}), false},
+		"missing":   {sign(map[string]any{"role": "x"}), false},
+		"not text":  {sign(map[string]any{"nonce": 1}), false},
+		"prefix":    {sign(map[string]any{"nonce": "n-"}), false},
+		"unchecked": {sign(map[string]any{"nonce": "anything"}), true},
+	}
+
+	for name, tc := range cases {
+		verifier := v
+		if name == "unchecked" {
+			verifier = open
+		}
+
+		_, err := verifier.Verify(t.Context(), tc.token)
+		if (err == nil) != tc.ok {
+			t.Errorf("%s: err = %v, want ok = %v", name, err, tc.ok)
+		}
+
+		if err != nil && !errors.Is(err, jwt.ErrInvalid) {
+			t.Errorf("%s: error %v does not wrap ErrInvalid", name, err)
+		}
+	}
+}
