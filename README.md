@@ -50,6 +50,11 @@
 
 ## Showcase
 
+Real applications built with Vukem, from a marketplace with Stripe Connect to a trading terminal and a video studio. Each one is open source and runs in production.
+
+<details>
+<summary><strong>Show the 9 projects built with Vukem</strong></summary>
+
 ### [Vukem Marketplace ReactJS](https://github.com/AlexGalhardo/vukem-marketplace-reactjs)
 
 A multi-seller marketplace inspired by the big Latin American e-commerce sites. Sellers open shops and list products with images; buyers search, fill a cart, calculate freight by CEP and pay by card or PIX, and sellers receive their share through Stripe Connect.
@@ -61,7 +66,70 @@ A multi-seller marketplace inspired by the big Latin American e-commerce sites. 
 
 [![Marketplace: searching products](https://raw.githubusercontent.com/AlexGalhardo/vukem-marketplace-reactjs/main/docs/media/search.gif)](https://github.com/AlexGalhardo/vukem-marketplace-reactjs)
 
+### [HexaScore](https://github.com/AlexGalhardo/hexascore-app)
+
+An open source almanac and community score platform for games, movies, TV shows and books. Each item is rated by the community in six categories per type, and the ratings combine into a published score.
+
+- **Stack**: Inertia + React with SSR, PostgreSQL, a public REST API with OpenAPI, a React Native app, Tailwind CSS v4.
+- **Links**: [hexascore.app](https://hexascore.app) · [source](https://github.com/AlexGalhardo/hexascore-app)
+
+### [Vukem Email](https://github.com/AlexGalhardo/vukem-email)
+
+A newsletter dashboard for several projects: double opt-in, a public CORS subscribe endpoint, RFC 8058 one-click unsubscribe, Resend webhooks that suppress bounces, and Markdown, MDX or React Email campaigns rendered in a QuickJS sandbox.
+
+- **Stack**: Inertia + React, PostgreSQL, Resend, React Email.
+- **Links**: [docs](https://email.vukem.dev) · [source](https://github.com/AlexGalhardo/vukem-email)
+
+### [Vukem Trading](https://github.com/AlexGalhardo/vukem-trading)
+
+A personal trading terminal for systematic strategies: backtests and paper trading for B3, US equities, crypto and forex, with a risk engine that enforces stops, exposure caps and a daily-loss kill switch. It never sends real orders.
+
+- **Stack**: Inertia + React, PostgreSQL, an independent engine worker, an MCP endpoint, Tailwind CSS v4.
+- **Links**: [app](https://app.trading.vukem.dev) · [docs](https://trading.vukem.dev) · [source](https://github.com/AlexGalhardo/vukem-trading)
+
+### [Vukem Studio](https://github.com/AlexGalhardo/vukem-studio)
+
+Turns a video brief into a rendered MP4 for Shorts, Reels and other short social cuts: the dashboard collects the goal, audience and style, a planner writes the scene plan and a worker renders the file with FFmpeg.
+
+- **Stack**: Inertia + React, SQLite, a database queue, FFmpeg, Google sign-in.
+- **Links**: [app](https://app.studio.vukem.dev) · [docs](https://studio.vukem.dev) · [source](https://github.com/AlexGalhardo/vukem-studio)
+
+### [Vukem Rifa](https://github.com/AlexGalhardo/vukem-rifa-vuejs)
+
+An online raffle (rifa) platform with PIX payments for a Brazilian audience, with number reservations, draws and a payment ledger.
+
+- **Stack**: Inertia v3 + Vue 3, PostgreSQL, Tailwind CSS v4.
+- **Links**: [rifa.vukem.dev](https://rifa.vukem.dev) · [source](https://github.com/AlexGalhardo/vukem-rifa-vuejs)
+
+### [Vukem Interview Quiz](https://github.com/AlexGalhardo/vukem-golang-quiz-htmx)
+
+An interactive quiz of Go interview questions from very easy to very hard. Every question has five alternatives, an explanation of each option and links to its sources, in English and Brazilian Portuguese.
+
+- **Stack**: `html/template` + htmx 4, Tailwind CSS v4.
+- **Links**: [quiz.vukem.dev](https://quiz.vukem.dev) · [source](https://github.com/AlexGalhardo/vukem-golang-quiz-htmx)
+
+### [Vukem Music](https://github.com/AlexGalhardo/vukem-music)
+
+A music theory learning studio: bilingual lessons, SVG scores, an interactive 88-key piano with Web Audio playback, a chord explorer and a searchable classical score library.
+
+- **Stack**: Inertia + React, shadcn/ui, SQLite.
+- **Links**: [music.vukem.dev](https://music.vukem.dev) · [source](https://github.com/AlexGalhardo/vukem-music)
+
+### [Vukem Tools](https://github.com/AlexGalhardo/vukem-tools)
+
+A self-hosted toolbox in a single Go binary for images, videos, files, conversions, documents and compression, an alternative to the hosted file converters.
+
+- **Stack**: Inertia v3 + React, Base UI, Tailwind CSS v4.
+- **Links**: [tools.vukem.dev](https://tools.vukem.dev) · [source](https://github.com/AlexGalhardo/vukem-tools)
+
+</details>
+
 ## CLI
+
+One binary creates the project, generates code, runs migrations and seeders, and serves the app with live reload.
+
+<details>
+<summary><strong>Show the CLI in action (6 GIFs)</strong></summary>
 
 ### 1. A typed JSON API in one command
 
@@ -98,6 +166,8 @@ Generate a model with its migration and factory, add seeders (plain or app-aware
 Controllers, form requests, resources, jobs, mail and more. The generated files are ordinary Go that you read and edit; there is no hidden runtime.
 
 ![make:controller, make:request and route:list](docs/media/scaffold.gif)
+
+</details>
 
 Every command, flag and example is in the [CLI reference](https://vukem.dev/docs/cli/reference).
 
