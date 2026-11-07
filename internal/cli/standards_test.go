@@ -65,6 +65,32 @@ func TestCIAuditsTheLockfile(t *testing.T) {
 	}
 }
 
+// TestCIPrintsSecretFindingsWithoutTheValue checks a failed scan names the
+// rule, file, line and commit, and the log line has no matched secret.
+func TestCIPrintsSecretFindingsWithoutTheValue(t *testing.T) {
+	t.Parallel()
+
+	out, err := renderStandardsFile("workflows/ci.yml.tmpl", standardsData{Name: "blog", CI: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	text := string(out)
+	for _, want := range []string{
+		"--report-format json --report-path betterleaks.json",
+		"if: failure()",
+		`jq -r '.[] | "\(.RuleID) \(.File):\(.StartLine) \(.Commit)"' betterleaks.json`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("ci.yml misses %q", want)
+		}
+	}
+
+	if strings.Contains(text, ".Secret") || strings.Contains(text, ".Match") {
+		t.Error("ci.yml prints the matched secret")
+	}
+}
+
 // artifactIgnore reports whether a markdownlint-cli2 ignore of the form
 // "**/name/**" covers path. A new docs page does not match that form.
 func artifactIgnore(pattern, path string) bool {
