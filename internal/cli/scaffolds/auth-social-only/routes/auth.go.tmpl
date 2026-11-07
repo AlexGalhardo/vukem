@@ -1,0 +1,30 @@
+package routes
+
+import (
+	"net/http"
+
+	"github.com/AlexGalhardo/vukem"
+	"github.com/AlexGalhardo/vukem/auth"
+	"github.com/AlexGalhardo/vukem/router"
+	"github.com/AlexGalhardo/vukem/web"
+
+	"{{.Module}}/app/accounts"
+)
+
+// Auth registers the social-only login page (vukem install:auth --social-only).
+// There is no email form, registration or password reset.
+func Auth(r *router.Router, app *vukem.App) error {
+	acc, err := accounts.New(app)
+	if err != nil {
+		return err
+	}
+
+	r.Get("/login", func(c *web.Ctx) error {
+		return c.HTML(http.StatusOK, `<!DOCTYPE html>
+<html><body>
+<h1>Log in</h1>
+{{.ProviderLinks}}</body></html>`)
+	}).Name("login").Use(auth.Guest(acc.Web))
+
+	return nil
+}
