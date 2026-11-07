@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **queue:** `migrate` now names `QUEUE_TABLE` or `QUEUE_FAILED_TABLE` when an app migration creates a table that the database queue already created, and the queue and deployment docs describe both variables.
 - **docs:** Document `QUEUE_CONNECTION=database` and the pre-deploy migrate for Dockerfile-only hosts on the Docker and Railway page.
 - **vukemtest:** Document which client helper triggers which `WantsJSON` branch (`PostJSON`, `GetJSON`, `Inertia`).
 - **auth:** Document the recipe for a private JSON prefix behind the session guard (`auth.ProblemJSON` first) and how to test its plain-`GET` answer.
