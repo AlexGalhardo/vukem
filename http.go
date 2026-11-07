@@ -515,6 +515,12 @@ type MiddlewareOptions struct {
 	// exempt from CSRF checks, e.g. signed webhooks. Each bypass is logged
 	// at boot.
 	CSRFBypass []string
+	// CrossOrigin opens single routes to other origins (public JSON
+	// endpoints called from another site) without trusting those origins
+	// for the rest of the app; see CrossOriginRoute. Each route is also
+	// exempt from sessions and the global CSRF check, which its origin
+	// allowlist replaces, and is logged at boot like a CSRF bypass.
+	CrossOrigin []CrossOriginRoute
 	// CSRFTokenFallback also requires the session's CSRF token (the
 	// csrfField template function, or the X-CSRF-Token header) on unsafe
 	// requests that carry the session cookie but neither Sec-Fetch-Site nor
@@ -537,6 +543,15 @@ func DefaultMiddlewareWith(app *App, r *router.Router, opts MiddlewareOptions) e
 
 	if opts.Stateless && opts.CSRFTokenFallback {
 		return errors.New("vukem: CSRFTokenFallback needs sessions; it cannot be combined with Stateless")
+	}
+
+	if err := validCrossOrigin(opts.CrossOrigin); err != nil {
+		return err
+	}
+
+	crossMW, err := crossOriginMiddleware(opts.CrossOrigin)
+	if err != nil {
+		return err
 	}
 
 	localeMW, err := localeMiddleware(app, opts.I18n, i18n.MiddlewareConfig{})
@@ -562,7 +577,13 @@ func DefaultMiddlewareWith(app *App, r *router.Router, opts MiddlewareOptions) e
 		}
 	}
 
-	csrfCfg := csrf.Config{TrustedOrigins: origins, BypassPatterns: opts.CSRFBypass}
+	sessionBypass, csrfBypass := slices.Clone(opts.SessionBypass), slices.Clone(opts.CSRFBypass)
+	for i := range opts.CrossOrigin {
+		p := opts.CrossOrigin[i].Pattern
+		sessionBypass, csrfBypass = append(sessionBypass, p), append(csrfBypass, p)
+	}
+
+	csrfCfg := csrf.Config{TrustedOrigins: origins, BypassPatterns: csrfBypass}
 	routerMW := []router.Middleware{middleware.BodyLimit(web.DefaultMaxBody)}
 
 	if !opts.Stateless {
@@ -571,7 +592,7 @@ func DefaultMiddlewareWith(app *App, r *router.Router, opts MiddlewareOptions) e
 			return err
 		}
 
-		sessMW, err := bypass(opts.SessionBypass, sessions.Middleware())
+		sessMW, err := bypass(sessionBypass, sessions.Middleware())
 		if err != nil {
 			return fmt.Errorf("vukem: session bypass: %w", err)
 		}
@@ -590,7 +611,17 @@ func DefaultMiddlewareWith(app *App, r *router.Router, opts MiddlewareOptions) e
 		app.Log.Warn("csrf bypass", "pattern", p)
 	}
 
-	r.UseServer(append(serverMiddleware(app, secure, maintenanceConfig(app)), middleware.MethodOverride())...)
+	for i := range opts.CrossOrigin {
+		c := &opts.CrossOrigin[i]
+		app.Log.Warn("cross-origin route", "pattern", c.Pattern, "origins", c.CORS.AllowedOrigins)
+	}
+
+	serverMW := serverMiddleware(app, secure, maintenanceConfig(app))
+	if len(opts.CrossOrigin) > 0 {
+		serverMW = append(serverMW, crossMW)
+	}
+
+	r.UseServer(append(serverMW, middleware.MethodOverride())...)
 	useLocalePrefixes(app, r, opts.I18n)
 
 	r.Use(append(routerMW, csrfMW)...)
