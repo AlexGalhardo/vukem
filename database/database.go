@@ -496,6 +496,45 @@ func (db *DB) Tx(ctx context.Context, fn func(tx *Tx) error) (err error) {
 	return nil
 }
 
+// ErrLockKeyUnsupported is returned by [Tx.LockKey] on MySQL.
+var ErrLockKeyUnsupported = errors.New(
+	"database: LockKey is not available on MySQL; lock a row with SELECT ... FOR UPDATE",
+)
+
+// LockKey serializes transactions that use the same key until this one
+// ends, so a count-then-insert (a rolling per-user quota) cannot be passed
+// by two requests at once. Call it first, before the count:
+//
+//	err := db.Tx(ctx, func(tx *database.Tx) error {
+//		if err := tx.LockKey(ctx, "quota:user:42"); err != nil {
+//			return err
+//		}
+//		// count, check the limit, insert
+//	})
+//
+// PostgreSQL takes a transaction-level advisory lock (released at commit or
+// rollback). SQLite does nothing: its write transactions are already
+// exclusive (BEGIN IMMEDIATE). MySQL returns [ErrLockKeyUnsupported]: its
+// advisory locks belong to the connection, not the transaction, so lock a
+// row with SELECT ... FOR UPDATE instead. The key is hashed, so any text of
+// up to 255 bytes works; unrelated keys may rarely share a lock, which only
+// makes them wait for each other.
+func (tx *Tx) LockKey(ctx context.Context, key string) error {
+	if key == "" || len(key) > 255 {
+		return errors.New("database: LockKey needs a key of 1 to 255 bytes")
+	}
+
+	switch tx.dialect.Name() {
+	case "postgres":
+		_, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, key)
+		return err
+	case "mysql":
+		return ErrLockKeyUnsupported
+	default:
+		return nil
+	}
+}
+
 func (tx *Tx) runHook(ctx context.Context, fn func(context.Context)) {
 	defer func() {
 		if p := recover(); p != nil {
