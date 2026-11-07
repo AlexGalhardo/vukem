@@ -1520,3 +1520,47 @@ func TestDBRunDDLPatternForMySQL(t *testing.T) {
 		}
 	}
 }
+
+func TestMigrateExplainsQueueTableClash(t *testing.T) {
+	t.Parallel()
+
+	jobs := []schema.Migration{{
+		ID: "20260101000000_create_jobs",
+		Up: func(s *schema.Schema) error {
+			return s.Create("jobs", func(t *schema.Table) { t.ID(); t.String("title") })
+		},
+		Down: func(s *schema.Schema) error { return s.Drop("jobs") },
+	}}
+
+	migrate := func(env map[string]string) (string, error) {
+		var out bytes.Buffer
+
+		env["APP_KEY"], env["APP_ENV"] = testKey, "test"
+		env["DATABASE_URL"] = "file:" + filepath.Join(testutil.TempDir(t), "app.db")
+
+		getenv := func(k string) (string, bool) { v, ok := env[k]; return v, ok }
+		build := func(opts ...Option) (*App, error) {
+			return New(append(opts, WithLogger(discardLogger()), WithStdout(&out), WithMigrations(jobs))...)
+		}
+
+		err := RunMain(t.Context(), []string{"app", "migrate"}, getenv, build)
+
+		return out.String(), err
+	}
+
+	_, err := migrate(map[string]string{"QUEUE_CONNECTION": "database"})
+	if err == nil || !strings.Contains(err.Error(), "QUEUE_TABLE") || !strings.Contains(err.Error(), "already exists") {
+		t.Errorf("migrate with a jobs table and the database queue = %v, want an error naming QUEUE_TABLE", err)
+	}
+
+	if out, err := migrate(
+		map[string]string{"QUEUE_CONNECTION": "database", "QUEUE_TABLE": "queue_jobs"},
+	); err != nil ||
+		!strings.Contains(out, "Migrated: 20260101000000_create_jobs") {
+		t.Errorf("migrate with QUEUE_TABLE=queue_jobs = %q, %v, want it to succeed", out, err)
+	}
+
+	if _, err := migrate(map[string]string{}); err != nil {
+		t.Errorf("migrate with the sync queue = %v, want nil", err)
+	}
+}

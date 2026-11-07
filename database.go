@@ -101,6 +101,35 @@ func (a *App) Migrator() (*schema.Migrator, error) {
 	return schema.NewMigrator(db, a.migrations)
 }
 
+// explainQueueTableClash adds the fix to a migration error that says an
+// app table named like a database-queue table already exists. Boot creates
+// those tables (QUEUE_TABLE, QUEUE_FAILED_TABLE, default "jobs" and
+// "failed_jobs"), so an app migration that creates a table of the same name
+// fails with a bare "already exists" that does not point at the cause.
+func explainQueueTableClash(err error, q QueueConfig) error {
+	if err == nil || q.Connection != "database" || !strings.Contains(strings.ToLower(err.Error()), "already exists") {
+		return err
+	}
+
+	for _, t := range []struct{ name, env string }{{q.Table, "QUEUE_TABLE"}, {q.FailedTable, "QUEUE_FAILED_TABLE"}} {
+		for _, quote := range []string{`"`, "'", "`"} {
+			if strings.Contains(err.Error(), quote+t.name+quote) {
+				return fmt.Errorf(
+					"%w; vukem: %q is also the table of the database queue (QUEUE_CONNECTION=database), which "+
+						"boot creates before your migrations. Rename your table, or set %s to another name such as "+
+						"queue_%s",
+					err,
+					t.name,
+					t.env,
+					t.name,
+				)
+			}
+		}
+	}
+
+	return err
+}
+
 var errForceRequired = errors.New("refusing to run a destructive command in production without --force")
 
 func migrateCommands() []Command {
@@ -115,6 +144,12 @@ func migrateCommands() []Command {
 				}
 
 				ran, err := m.Up(ctx)
+				if err != nil {
+					if q, qerr := configLoad[QueueConfig](app); qerr == nil {
+						err = explainQueueTableClash(err, q)
+					}
+				}
+
 				for _, id := range ran {
 					fmt.Fprintln(app.stdout, "Migrated:", id)
 				}
