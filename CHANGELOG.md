@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **site:** Date doc pages by the author date, so a rebase merge no longer turns the `Last updated` check red on `main`; a lefthook pre-push job refreshes `site/content/last-updated.json` before the push reaches GitHub.
+
 ## [0.39.0] - 2026-11-07
 
 ### Added
