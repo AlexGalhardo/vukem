@@ -94,19 +94,19 @@ Turns a video brief into a rendered MP4 for Shorts, Reels and other short social
 - **Stack**: Inertia + React, SQLite, a database queue, FFmpeg, Google sign-in.
 - **Links**: [app](https://app.studio.vukem.dev) · [docs](https://studio.vukem.dev) · [source](https://github.com/AlexGalhardo/vukem-studio)
 
-### [Vukem Rifa](https://github.com/AlexGalhardo/vukem-rifa-vuejs)
+### [Vukem Rifa](https://github.com/AlexGalhardo/vukem-rifa)
 
 An online raffle (rifa) platform with PIX payments for a Brazilian audience, with number reservations, draws and a payment ledger.
 
 - **Stack**: Inertia v3 + Vue 3, PostgreSQL, Tailwind CSS v4.
-- **Links**: [rifa.vukem.dev](https://rifa.vukem.dev) · [source](https://github.com/AlexGalhardo/vukem-rifa-vuejs)
+- **Links**: [rifa.vukem.dev](https://rifa.vukem.dev) · [source](https://github.com/AlexGalhardo/vukem-rifa)
 
-### [Vukem Interview Quiz](https://github.com/AlexGalhardo/vukem-golang-quiz-htmx)
+### [Vukem Interview Quiz](https://github.com/AlexGalhardo/vukem-quiz)
 
 An interactive quiz of Go interview questions from very easy to very hard. Every question has five alternatives, an explanation of each option and links to its sources, in English and Brazilian Portuguese.
 
 - **Stack**: `html/template` + htmx 4, Tailwind CSS v4.
-- **Links**: [quiz.vukem.dev](https://quiz.vukem.dev) · [source](https://github.com/AlexGalhardo/vukem-golang-quiz-htmx)
+- **Links**: [quiz.vukem.dev](https://quiz.vukem.dev) · [source](https://github.com/AlexGalhardo/vukem-quiz)
 
 ### [Vukem Music](https://github.com/AlexGalhardo/vukem-music)
 
