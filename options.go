@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"html/template"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -12,7 +13,42 @@ import (
 	"time"
 
 	"github.com/AlexGalhardo/vukem/config"
+	"github.com/AlexGalhardo/vukem/inertia"
+	"github.com/AlexGalhardo/vukem/router"
 )
+
+// WithRoutes registers routes (and router middleware) after providers
+// registered, so handlers can use the services they added. An error stops
+// New.
+func WithRoutes(fn func(r *router.Router, app *App) error) Option {
+	return func(o *options) error { o.routes = append(o.routes, fn); return nil }
+}
+
+// WithRoutesAfterBoot registers routes at the end of Boot, after every
+// provider's Boot, so handlers can use clients a provider opens in Boot (a
+// database or object-store client). The routes exist only once the app
+// booted: Run, commands and vukemtest boot first; Handler fails with
+// [ErrNotBooted] before that, and Boot fails with [ErrRoutesCompiled] when
+// the router was compiled earlier. Global router middleware applies to
+// them; groups made in WithRoutes do not. In [KindWarmup], which never
+// boots, they run at the end of New so the route table is complete; booted
+// services are then still unset (check app.Kind) and a panic is returned
+// as an error.
+func WithRoutesAfterBoot(fn func(r *router.Router, app *App) error) Option {
+	return func(o *options) error { o.bootRoutes = append(o.bootRoutes, fn); return nil }
+}
+
+// ErrRoutesCompiled is returned by Boot when routes from
+// WithRoutesAfterBoot are pending but the router was already compiled
+// (Handler, Router.URL or a request before Boot), so they would never be
+// served.
+var ErrRoutesCompiled = errors.New("vukem: router compiled before Boot, so routes after boot would be lost; " +
+	"call Boot before Handler/Router.URL; avoid URL() inside WithRoutes")
+
+// ErrNotBooted is returned by Handler when routes from WithRoutesAfterBoot
+// are pending because Boot has not run: serving then would answer 404 for
+// them.
+var ErrNotBooted = errors.New("vukem: routes after boot are pending; call Boot before Handler")
 
 // WithClock sets the clock used by sessions and other time-based features
 // (tests use vukemtest.FakeClock).
@@ -180,4 +216,96 @@ func WithHealthCheck(name string, check HealthCheck) Option {
 
 		return nil
 	}
+}
+
+// WithViews renders html/template views from fsys (os.DirFS("resources/views")
+// or an embed.FS). Views reload on every request outside production.
+func WithViews(fsys fs.FS) Option {
+	return func(o *options) error { o.views = fsys; return nil }
+}
+
+// WithReactEmails renders mail.React contents from fsys: the directory
+// that React Email's `email export` writes (os.DirFS("resources/emails")
+// or an embed.FS). Pages are html/template views without layouts and get
+// the "t" and "locale" functions and WithViewFuncs; they reload on every
+// send outside production.
+func WithReactEmails(fsys fs.FS) Option {
+	return func(o *options) error { o.reactEmails = fsys; return nil }
+}
+
+// WithViewFuncs adds template functions to the WithViews engine
+// (view.Config.Funcs), for helpers such as money or date formatting. Calls
+// accumulate. A name given twice, a nil function, a built-in's name
+// ("route", "csrfField", "cspNonce"...) or a missing WithViews is a boot
+// error.
+func WithViewFuncs(funcs template.FuncMap) Option {
+	return func(o *options) error {
+		if o.viewFuncs == nil {
+			o.viewFuncs = template.FuncMap{}
+		}
+
+		for name, fn := range funcs {
+			if fn == nil {
+				return fmt.Errorf("vukem: WithViewFuncs: %q is nil", name)
+			}
+
+			if _, dup := o.viewFuncs[name]; dup {
+				return fmt.Errorf("vukem: WithViewFuncs: %q given twice", name)
+			}
+
+			o.viewFuncs[name] = fn
+		}
+
+		return nil
+	}
+}
+
+// WithInertia enables the Inertia adapter (app.Inertia); add
+// app.Inertia.Middleware to the routes that render pages. Errors on Inertia
+// requests render inertia.Config.ErrorComponent (default "Error", see
+// inertia.Inertia.ErrorPage): New installs it as
+// app.Router.Services().ErrorPage when no hook is set yet, before the
+// routes run, so routes may replace it or set it to nil to keep the HTML
+// error page. Outside production a web app warns once at boot when the
+// project (the WithEnv file system, else the working directory) has
+// resources/js/pages but no page for that component. Version
+// and the SSR dev endpoint default to app.Vite when WithVite is given.
+func WithInertia(cfg inertia.Config) Option {
+	return func(o *options) error { o.inertia = &cfg; return nil }
+}
+
+// WithVite enables the "vite" and "viteReactRefresh" view functions over the
+// public directory fsys (os.DirFS("public") or an embed.FS). The dev server
+// "hot" file is honoured only outside production.
+func WithVite(fsys fs.FS) Option {
+	return func(o *options) error { o.vite = fsys; return nil }
+}
+
+// WithTranslations loads the JSON catalogs at the root of fsys
+// (os.DirFS("resources/lang") or an embed.FS) into App.I18n, with
+// APP_LOCALE (default "en") as the fallback locale, plus the framework's
+// built-in messages for keys the catalogs do not define
+// (i18n.Bundle.AddBuiltin). Views get the "t" and "locale" functions, and
+// DefaultMiddleware installs i18n.Middleware.
+func WithTranslations(fsys fs.FS) Option {
+	return func(o *options) error { o.lang = fsys; return nil }
+}
+
+// inertiaPagesDir is where the starters keep Inertia pages.
+const inertiaPagesDir = "resources/js/pages"
+
+// inertiaPageMissing reports whether fsys uses the starters' pages
+// directory but has no page for component. Other layouts are not checked.
+func inertiaPageMissing(fsys fs.FS, component string) bool {
+	if _, err := fs.Stat(fsys, inertiaPagesDir); err != nil {
+		return false
+	}
+
+	for _, ext := range []string{".tsx", ".jsx", ".vue", ".svelte", ".ts", ".js"} {
+		if _, err := fs.Stat(fsys, inertiaPagesDir+"/"+component+ext); err == nil {
+			return false
+		}
+	}
+
+	return true
 }
