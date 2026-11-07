@@ -29,6 +29,8 @@ type Config struct {
 
 `APP_NAME` falls back to `Vukem` when nothing sets it. `vukem new` passes the project name to `vukem.WithName("<name>")` in `bootstrap/app.go`, so a run without a `.env` (CI, a container) shows your name instead; `APP_NAME` still wins.
 
+`WithName` does not rename the session cookie and does not sign it. The cookie name is [`SESSION_COOKIE`](/docs/basics/sessions#configuration), which defaults to `vukem_session`. A rename leaves existing sessions valid. The name is what page titles, the OpenAPI title and scheduler lock keys use when `APP_NAME` is unset.
+
 If `PORT=abc`, the app does not start, and the error names the variable and the field: `config: PORT (Port): invalid integer "abc"`.
 
 ## Quick start
