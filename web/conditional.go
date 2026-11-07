@@ -3,7 +3,6 @@ package web
 import (
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -24,7 +23,7 @@ func ETagOf(v any) (string, error) {
 		b = []byte(x)
 	default:
 		var err error
-		if b, err = json.Marshal(v); err != nil {
+		if b, err = marshalJSON(v); err != nil {
 			return "", fmt.Errorf("web: etag: %w", err)
 		}
 	}
