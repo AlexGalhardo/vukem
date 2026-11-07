@@ -103,6 +103,11 @@ func TestReleaseWorkflowSkipsGoReleaserWithoutConfig(t *testing.T) {
 		".config/goreleaser.yaml",
 		".goreleaser.yaml",
 		"version: v2.18.2",
+		"registry: ghcr.io",
+		"provenance: mode=max",
+		"actions/attest-build-provenance@",
+		"packages: write",
+		"id-token: write",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("release.yml misses %q", want)
