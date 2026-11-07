@@ -75,6 +75,8 @@ tests/social_test.go
 
 The `social_accounts` table has a unique index on provider + provider id.
 
+`--social-only google` writes those same social routes, and a login page whose only control is a link to `/auth/google/redirect` (`Continue with google`). It does not write the email form, registration or password reset. Do not combine it with `--social`, `--2fa` or `--passkeys`.
+
 </Step>
 <Step title="3. Add the credentials">
 

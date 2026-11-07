@@ -33,6 +33,11 @@ var socialProviders = []string{"github", "gitlab", "discord", "google", "microso
 func installAuth(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 	force := set.Bool("force", false, "overwrite existing files")
 	socialList := set.String("social", "", "also add social login: "+strings.Join(socialProviders, ","))
+	socialOnly := set.String(
+		"social-only",
+		"",
+		"add social login without email, registration or password reset pages: "+strings.Join(socialProviders, ","),
+	)
 	twoFactor := set.Bool("2fa", false, "also add two-factor authentication (TOTP)")
 	passkeys := set.Bool("passkeys", false, "also add passkey (WebAuthn) sign-in")
 	localeList := set.String(
@@ -47,9 +52,27 @@ func installAuth(set *flag.FlagSet) func(context.Context, *Env, []string) error 
 			return usagef("install:auth writes html/template pages; templ projects are not supported yet")
 		}
 
-		providers, err := parseProviders(*socialList)
+		only := socialOnlyPassed(set)
+		if only && *socialList != "" {
+			return usagef("pass --social or --social-only, not both")
+		}
+
+		if only && (*twoFactor || *passkeys) {
+			return usagef("--social-only does not add two-factor or passkeys")
+		}
+
+		list := *socialList
+		if only {
+			list = *socialOnly
+		}
+
+		providers, err := parseProviders(list)
 		if err != nil {
 			return err
+		}
+
+		if only && len(providers) == 0 {
+			return usagef("--social-only needs a provider, for example google")
 		}
 
 		requested, err := parseLocales(*localeList)
@@ -74,7 +97,14 @@ func installAuth(set *flag.FlagSet) func(context.Context, *Env, []string) error 
 		// With --social, --2fa or --passkeys on a project that already has
 		// install:auth, add only that part.
 		addOn := len(providers) > 0 || *twoFactor || *passkeys
-		if !addOn || *force || !exists(env, filepath.Join("routes", "auth.go")) {
+		switch {
+		case only:
+			if err := installSocialOnlyPages(env, data, providers, *force); err != nil {
+				return err
+			}
+
+			regs = append(regs, registration{"routes/registry.go", "All", "Auth"})
+		case !addOn || *force || !exists(env, filepath.Join("routes", "auth.go")):
 			for _, name := range authScaffolds(env) {
 				if err := installScaffold(env, name, data, *force); err != nil {
 					return err
@@ -445,6 +475,38 @@ func finishInstall(ctx context.Context, env *Env, regs []registration) error {
 
 	// Scaffolds import packages (auth/hash → x/crypto) the starter did not.
 	return tool(ctx, env, "go", "mod", "tidy")
+}
+
+// socialOnlyPassed reports whether the user set --social-only. An empty
+// value is still set: flag.String cannot tell that apart from the default.
+func socialOnlyPassed(set *flag.FlagSet) bool {
+	passed := false
+
+	set.Visit(func(f *flag.Flag) {
+		if f.Name == "social-only" {
+			passed = true
+		}
+	})
+
+	return passed
+}
+
+// installSocialOnlyPages writes a login route whose only controls are the
+// provider links. It does not write the email form, registration or reset.
+func installSocialOnlyPages(env *Env, data map[string]string, providers []string, force bool) error {
+	data["ProviderLinks"] = providerLinks(providers)
+
+	return installScaffold(env, "auth-social-only", data, force)
+}
+
+func providerLinks(providers []string) string {
+	var b strings.Builder
+
+	for _, p := range providers {
+		fmt.Fprintf(&b, "<p><a href=\"/auth/%s/redirect\">Continue with %s</a></p>\n", p, p)
+	}
+
+	return b.String()
 }
 
 func socialEnv(providers []string) []string {

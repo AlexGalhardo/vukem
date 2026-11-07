@@ -45,7 +45,8 @@ vukem install:auth [flags]
 
 | Flag | Type | Default | What it does |
 | --- | --- | --- | --- |
-| `-social` | string | none | Also add social login for a comma-separated list: `github`, `gitlab`, `discord`, `google`, `microsoft`, `linkedin`, `apple`. `x` is refused because X sends no email. |
+| `-social` | string | none | Also add social login for a comma-separated list: `github`, `gitlab`, `discord`, `google`, `microsoft`, `linkedin`, `apple`. `x` is refused because X sends no email. The email form, registration and password reset stay. |
+| `-social-only` | string | none | Social login without the email form, registration or password reset. Same provider list as `-social`. The login page is one link per provider. Refuses `-social`, `-2fa` and `-passkeys`. |
 | `-2fa` | bool | `false` | Also add TOTP two-factor authentication. Users turn it on at `/user/two-factor`. |
 | `-passkeys` | bool | `false` | Also add passkey (WebAuthn) sign-in: JSON endpoints under `/user/passkeys` and `/passkeys/login`. See [Passkeys](/docs/security/passkeys). |
 | `-locales` | string | the project's locales, else `en` | Message catalogs to write, comma separated, such as `en,pt-BR`. Catalogs ship for `en`, `es` and `pt-BR`; another locale is a usage error (translate a generated catalog instead). `en` is always written because it is the fallback. |
@@ -67,6 +68,9 @@ vukem install:auth [flags]
 | `error: these files already exist (use --force to overwrite)` | Review the files, then use `-force`. |
 | `usage error: no auth message catalog for locale "xx" (one of ...)` | `-locales` accepts only locales the scaffold ships. Translate the generated `en` catalog for others. |
 | `usage error: unknown social provider "foo" (one of github, gitlab, ...)` | Use one of the listed names. |
+| `usage error: pass --social or --social-only, not both` | Pass one of the two flags. |
+| `usage error: --social-only does not add two-factor or passkeys` | Drop `-2fa` and `-passkeys`. |
+| `usage error: --social-only needs a provider, for example google` | Name at least one provider. |
 
 ```bash
 vukem install:auth
