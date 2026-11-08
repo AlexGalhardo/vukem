@@ -203,6 +203,41 @@ body {
   margin-top: 0.375rem;
 }
 
+/* Accordions: native <details>/<summary> in MDX. */
+.prose details {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0 1rem;
+}
+
+.prose details + details {
+  margin-top: 0.75rem;
+}
+
+.prose summary {
+  cursor: pointer;
+  padding: 0.75rem 0;
+  color: var(--fg);
+  font-weight: 600;
+}
+
+.prose summary:hover {
+  color: var(--accent);
+}
+
+.prose details[open] {
+  padding-bottom: 1rem;
+}
+
+.prose details[open] > summary {
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 1rem;
+}
+
+.prose details > * + * {
+  margin-top: 1rem;
+}
+
 .prose li::marker {
   color: var(--faint);
 }
