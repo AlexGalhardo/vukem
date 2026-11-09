@@ -321,8 +321,13 @@ The middleware only reads the cookie and the session; it never writes them. To r
 
 ```go title="app/controllers/locale.go"
 func SwitchLocale(c *web.Ctx) error {
+	in, err := c.Input() // JSON (Inertia, fetch) and form bodies
+	if err != nil {
+		return err
+	}
 	b := i18n.BundleFrom(c.Context())
-	locale, ok := b.Match(c.FormValue("locale"))
+	loc, _ := in["locale"].(string)
+	locale, ok := b.Match(loc)
 	if !ok {
 		locale = b.Default()
 	}
