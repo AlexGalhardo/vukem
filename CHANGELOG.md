@@ -7,8 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **social:** Add `Social.Allow` to refuse a provider user before the account lookup, returning `social.ErrNotAllowed`, and `auth.Allow` to end the sessions of users it refuses ([b037f47](https://github.com/AlexGalhardo/vukem/commit/b037f476)).
+
+### Changed
+
+- **repo:** Ignore the local `vukem-feedback.md` queue ([6c9c043](https://github.com/AlexGalhardo/vukem/commit/6c9c0431)).
+
 ### Fixed
 
+- **cli:** Bind every published port of the `vukem new` compose template and of `.config/compose.yaml` to `127.0.0.1`, so the dev Postgres and Mailpit are not reachable from the network ([a3e48ae](https://github.com/AlexGalhardo/vukem/commit/a3e48aee)).
+- **auth:** Answer 401 only for guests in `auth.Allow`; a failing user lookup now returns its own error instead of signing the user out ([1071f5c](https://github.com/AlexGalhardo/vukem/commit/1071f5cf)).
+- **site:** Read the locale switcher of the Inertia and localization docs with `c.Input()`, so JSON posts from React, Vue or Svelte pages no longer 404 ([de4f2ae](https://github.com/AlexGalhardo/vukem/commit/de4f2ae5)).
 - **site:** Date doc pages by the author date, so a rebase merge no longer turns the `Last updated` check red on `main`; a lefthook pre-push job refreshes `site/content/last-updated.json` before the push reaches GitHub.
 
 ## [0.39.1] - 2026-11-07
