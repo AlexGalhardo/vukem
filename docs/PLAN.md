@@ -629,6 +629,6 @@ Applies to **every** task:
 
 - [ ] All previous exit criteria still hold.
 - [ ] Stability policy published; API frozen (apidiff gate in CI against `v1.0.0`).
-- [ ] vukem-golang-quiz-htmx/ running on 1.0 in production.
-- [ ] vukem-rifa-vuejs/ running on 1.0 in production.
-- [ ] vukem-marketplace-reactjs/ running on 1.0 in production.
+- [ ] vukem-quiz/ running on 1.0 in production.
+- [ ] vukem-rifa/ running on 1.0 in production.
+- [ ] vukem-marketplace/ running on 1.0 in production.
