@@ -149,7 +149,7 @@ func TestRun(t *testing.T) {
 		{
 			name:       "all pass",
 			content:    strictProfile(m + "/cache/c.go:1.1,2.2 1 1"),
-			wantStdout: []string{"covergate: 8 core packages meet their gate"},
+			wantStdout: []string{"covergate: 17 core packages meet their gate"},
 		},
 		{
 			name:       "verbose lists every package",
@@ -169,7 +169,7 @@ func TestRun(t *testing.T) {
 			content:    profile(m + "/cache/c.go:1.1,2.2 1 1"),
 			wantCode:   1,
 			wantStdout: []string{"FAIL router", "missing from the profile"},
-			wantStderr: "7 package(s) below",
+			wantStderr: "16 package(s) below",
 		},
 		{name: "no args", wantCode: 2, wantStderr: "usage"},
 		{name: "bad flag", flags: []string{"-x", "f"}, wantCode: 2},
