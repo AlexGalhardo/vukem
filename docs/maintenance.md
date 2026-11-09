@@ -120,3 +120,36 @@ These live in GitHub settings or external services, not in the repository:
 - Private vulnerability reporting, Dependabot alerts and security updates, secret scanning and push protection (Settings → Code security).
 - The OpenSSF Best Practices badge (<https://www.bestpractices.dev>), whose answers point at this page, [CONTRIBUTING](../.github/CONTRIBUTING.md), [SECURITY.md](../.github/SECURITY.md), [testing.md](testing.md) and [tooling.md](tooling.md#release-process).
 - Two-factor authentication on the maintainer account.
+
+## Downstream feedback queue
+
+Apps built on Vukem log what the framework gets wrong or leaves undocumented in one place: a single `vukem-feedback.md` at the workspace root, next to the `vukem/` checkout. No app keeps a copy, and this repository ignores the file in git.
+
+Each app has its own id prefix:
+
+| App | Prefix |
+| --- | --- |
+| `vukem-email` | `VE-` |
+| `hexascore` | `HS-` |
+| `vukem-trading` | `TR-` |
+| `vukem-studio` | `ST-` |
+| `vukem-music` | `MU-` (proposed) |
+| `vukem-tools` | `TL-` (proposed) |
+
+Each entry has this shape:
+
+```md
+## <ID>: <title>
+
+- Severity: critical | high | medium | low
+- Status: open
+- Date: YYYY-MM-DD
+- Docs: https://vukem.dev/docs/<page> (heading)
+- Finding: what was observed
+- Minimal repro: the smallest code or command that shows it
+- Suggested fix: what the app would expect
+```
+
+To close entries, fix them all on one pull request with one commit per entry (the PR is merged by rebase), each with its tests and docs. Then update `Status` with the PR and the commit. Pull request #165 (`fix: close vukem-feedback ST-7, ST-8 and VE-8`) is the model.
+
+Problems in an app's own environment, infrastructure or third-party libraries do not belong in the queue.
