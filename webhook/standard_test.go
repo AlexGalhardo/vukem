@@ -381,3 +381,33 @@ func TestSecurity_A08_WebhookDedupeSettlesAfterSenderDisconnect(t *testing.T) {
 		})
 	}
 }
+
+func TestDedupeReleasesTheEventWhenTheHandlerPanics(t *testing.T) {
+	t.Parallel()
+
+	var calls atomic.Int32
+
+	h := Dedupe(cache.NewMemory(100), StandardID, DedupeOptions{})(
+		http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+			calls.Add(1)
+			panic(http.ErrAbortHandler)
+		}))
+
+	for range 2 {
+		func() {
+			defer func() {
+				if p := recover(); p != http.ErrAbortHandler { //nolint:errorlint // net/http compares the sentinel by identity
+					t.Errorf("recovered = %v, want http.ErrAbortHandler re-raised unchanged", p)
+				}
+			}()
+
+			r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/hook", strings.NewReader("{}"))
+			r.Header.Set("webhook-id", "evt_panic")
+			h.ServeHTTP(httptest.NewRecorder(), r)
+		}()
+	}
+
+	if calls.Load() != 2 {
+		t.Errorf("handler calls = %d, want 2 (the event must be released after a panic)", calls.Load())
+	}
+}
