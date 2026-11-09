@@ -9,7 +9,7 @@ services:
       POSTGRES_USER: vukem
       POSTGRES_PASSWORD: vukem
       POSTGRES_DB: vukem_test
-    ports: ["55432:5432"]
+    ports: ["127.0.0.1:55432:5432"]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U vukem"]
       interval: 2s
@@ -21,7 +21,7 @@ services:
       MYSQL_USER: vukem
       MYSQL_PASSWORD: vukem
       MYSQL_DATABASE: vukem_test
-    ports: ["53306:3306"]
+    ports: ["127.0.0.1:53306:3306"]
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uvukem", "-pvukem"]
       interval: 2s
@@ -33,21 +33,21 @@ services:
       MARIADB_USER: vukem
       MARIADB_PASSWORD: vukem
       MARIADB_DATABASE: vukem_test
-    ports: ["53307:3306"]
+    ports: ["127.0.0.1:53307:3306"]
     healthcheck:
       test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
       interval: 2s
       retries: 60
   redis:
     image: redis:7
-    ports: ["56379:6379"]
+    ports: ["127.0.0.1:56379:6379"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 2s
       retries: 30
   mongo:
     image: mongo:9.0.4
-    ports: ["57017:27017"]
+    ports: ["127.0.0.1:57017:27017"]
     healthcheck:
       test: ["CMD", "mongosh", "--quiet", "--eval", "db.runCommand({ ping: 1 }).ok"]
       interval: 3s
@@ -59,7 +59,7 @@ services:
     environment:
       RUSTFS_ACCESS_KEY: vukem
       RUSTFS_SECRET_KEY: vukem-secret
-    ports: ["59000:9000"]
+    ports: ["127.0.0.1:59000:9000"]
     healthcheck:
       test: ["CMD", "curl", "-fs", "http://localhost:9000/health"]
       interval: 2s
