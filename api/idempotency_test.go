@@ -459,3 +459,34 @@ func TestIdempotencySettlesAfterClientDisconnect(t *testing.T) {
 		})
 	}
 }
+
+func TestIdempotencyReleasesTheKeyWhenTheHandlerPanics(t *testing.T) {
+	t.Parallel()
+
+	var calls atomic.Int32
+
+	h := api.Idempotency(cache.NewMemory(100), api.IdempotencyOptions{})(
+		http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+			calls.Add(1)
+			panic("boom")
+		}))
+
+	for range 2 {
+		func() {
+			defer func() {
+				if p := recover(); p != "boom" {
+					t.Errorf("recovered = %v, want the handler's panic re-raised unchanged", p)
+				}
+			}()
+
+			r := httptest.NewRequestWithContext(t.Context(), "POST", "/orders", strings.NewReader(`{}`))
+			r.Header.Set(api.IdempotencyHeader, "k1")
+			r.Header.Set("Authorization", "Bearer a")
+			h.ServeHTTP(httptest.NewRecorder(), r)
+		}()
+	}
+
+	if calls.Load() != 2 {
+		t.Errorf("handler calls = %d, want 2 (the key must be released after a panic)", calls.Load())
+	}
+}
