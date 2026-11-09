@@ -295,7 +295,12 @@ func Allow[U Authenticatable](guard *SessionGuard[U], allowed func(U) bool) func
 
 			u, err := guard.User(c)
 			if err != nil {
-				fail(c, false, ErrUnauthenticated)
+				// A failing user lookup is not a sign-out, so only a guest gets 401.
+				if errors.Is(err, ErrUnauthenticated) {
+					fail(c, false, ErrUnauthenticated)
+				} else {
+					c.HandleError(err)
+				}
 				return
 			}
 
