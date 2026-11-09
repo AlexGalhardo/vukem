@@ -314,3 +314,70 @@ func TestSecurity_A08_WebhookDedupeIgnoresRawPath(t *testing.T) {
 		t.Fatalf("handler ran %d times for one event id replayed to 4 paths, want 1", n)
 	}
 }
+
+// cancelAwareStore fails writes made with a cancelled context, like the
+// database and Redis stores do.
+type cancelAwareStore struct{ cache.Store }
+
+func (s cancelAwareStore) Set(ctx context.Context, key string, value []byte, ttl time.Duration) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	return s.Store.Set(ctx, key, value, ttl)
+}
+
+func (s cancelAwareStore) Delete(ctx context.Context, keys ...string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	return s.Store.Delete(ctx, keys...)
+}
+
+func TestSecurity_A08_WebhookDedupeSettlesAfterSenderDisconnect(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name      string
+		status    int
+		wantCalls int32
+	}{
+		{"success is remembered", http.StatusNoContent, 1},
+		{"failure releases the event", http.StatusInternalServerError, 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			var calls atomic.Int32
+
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+
+			h := Dedupe(cancelAwareStore{cache.NewMemory(100)}, StandardID, DedupeOptions{})(
+				http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					calls.Add(1)
+					cancel() // the sender gave up while the handler ran
+					w.WriteHeader(tc.status)
+				}))
+
+			var last *httptest.ResponseRecorder
+
+			for _, c := range []context.Context{ctx, t.Context()} {
+				r := httptest.NewRequestWithContext(c, http.MethodPost, "/hook", strings.NewReader("{}"))
+				r.Header.Set("webhook-id", "evt_ctx")
+
+				last = httptest.NewRecorder()
+				h.ServeHTTP(last, r)
+			}
+
+			if calls.Load() != tc.wantCalls {
+				t.Errorf("handler calls = %d, want %d", calls.Load(), tc.wantCalls)
+			}
+
+			if tc.status < 300 && (last.Code != http.StatusOK || last.Header().Get("Webhook-Duplicate") != "true") {
+				t.Errorf("redelivery = %d %v, want 200 duplicate", last.Code, last.Header())
+			}
+		})
+	}
+}
