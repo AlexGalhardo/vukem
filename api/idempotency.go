@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -171,8 +172,12 @@ func Idempotency(store cache.Store, o IdempotencyOptions) func(http.Handler) htt
 			rec := &recordingWriter{ResponseWriter: w, status: http.StatusOK}
 			next.ServeHTTP(rec, r)
 
+			// The client may be gone by now: the outcome is stored anyway, or
+			// its retry would run the handler a second time.
+			settle := context.WithoutCancel(ctx)
+
 			if rec.status >= http.StatusInternalServerError {
-				_ = store.Delete(ctx, storeKey) // let the client retry
+				_ = store.Delete(settle, storeKey) // let the client retry
 				return
 			}
 
@@ -182,7 +187,7 @@ func Idempotency(store cache.Store, o IdempotencyOptions) func(http.Handler) htt
 				Fingerprint: fingerprint, Done: true, Status: rec.status, Header: header, Body: rec.body.Bytes(),
 			})
 			if err == nil {
-				err = store.Set(ctx, storeKey, done, o.TTL)
+				err = store.Set(settle, storeKey, done, o.TTL)
 			}
 
 			if log := web.ServicesFrom(ctx).Log; err != nil && log != nil {
