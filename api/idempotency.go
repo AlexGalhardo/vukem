@@ -170,6 +170,17 @@ func Idempotency(store cache.Store, o IdempotencyOptions) func(http.Handler) htt
 			}
 
 			rec := &recordingWriter{ResponseWriter: w, status: http.StatusOK}
+
+			// A panic would leave the claim "in progress" until LockTTL: release
+			// it, as for a 5xx, and re-raise the panic untouched.
+			defer func() {
+				if p := recover(); p != nil {
+					_ = store.Delete(context.WithoutCancel(ctx), storeKey)
+
+					panic(p)
+				}
+			}()
+
 			next.ServeHTTP(rec, r)
 
 			// The client may be gone by now: the outcome is stored anyway, or
