@@ -225,6 +225,8 @@ func newApp(t *testing.T, hasher hash.Hasher, extra ...vukem.Option) *testApp {
 				}).Use(auth.Optional(ta.web))
 				r.Get("/verified", func(c *web.Ctx) error { return c.String(200, "ok") }).
 					Use(auth.Required(ta.web), auth.Verified(ta.web))
+				r.Get("/owner", func(c *web.Ctx) error { return c.String(200, "ok") }).
+					Use(auth.Required(ta.web), auth.Allow(ta.web, func(u User) bool { return u.Email == "owner@example.com" }))
 				r.Get("/email/verify", func(c *web.Ctx) error { return c.String(200, "check your inbox") }).
 					Name("verification.notice")
 
@@ -1070,4 +1072,19 @@ func TestAuthErrorsTranslated(t *testing.T) {
 	// Without a matching locale the English messages stay.
 	ta.Client(t).AcceptJSON().WithToken(plain).Delete("/api/posts").AssertForbidden().
 		AssertJSONPath("detail", "This token cannot posts:delete.")
+}
+
+func TestAllowEndsRefusedSessions(t *testing.T) {
+	t.Parallel()
+
+	ta := newApp(t, hash.Fake())
+	owner := ta.user(t, "owner@example.com", "pw", true)
+	other := ta.user(t, "other@example.com", "pw", true)
+
+	ta.Client(t).ActingAs("web", owner).Get("/owner").AssertOK()
+
+	c := ta.Client(t).ActingAs("web", other)
+	c.Get("/owner").AssertForbidden().AssertSessionMissing(web.SessionUserKey)
+	c.Get("/dashboard").AssertRedirect("/login")
+	ta.Client(t).ActingAs("web", other).GetJSON("/owner").AssertForbidden()
 }

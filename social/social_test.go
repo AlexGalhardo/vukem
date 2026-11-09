@@ -723,3 +723,71 @@ func TestFakeProvider(t *testing.T) {
 		t.Fatal("unexpected code accepted")
 	}
 }
+
+func TestAllowHook(t *testing.T) {
+	t.Parallel()
+
+	errBoom := errors.New("boom")
+	owner := User{ID: "7", Email: "owner@x.io", EmailVerified: true}
+
+	tests := []struct {
+		name    string
+		allow   func(context.Context, User) error
+		wantErr error
+	}{
+		{"nil allows everyone", nil, nil},
+		{"allowed", func(context.Context, User) error { return nil }, nil},
+		{"refused", func(_ context.Context, u User) error {
+			if u.Email != "me@x.io" {
+				return errBoom
+			}
+
+			return nil
+		}, ErrNotAllowed},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			s := New(testKey)
+			s.Allow = tt.allow
+			s.Use(Fake("github", "/auth/github/callback", owner))
+
+			rec := httptest.NewRecorder()
+			if err := s.Redirect(
+				web.NewCtx(rec, httptest.NewRequestWithContext(t.Context(), "GET", "/", http.NoBody), nil),
+				"github",
+			); err != nil {
+				t.Fatal(err)
+			}
+
+			cb := httptest.NewRequestWithContext(t.Context(), http.MethodGet, rec.Header().Get("Location"), http.NoBody)
+			cb.AddCookie(rec.Result().Cookies()[0])
+
+			u, err := s.User(web.NewCtx(httptest.NewRecorder(), cb, nil), "github")
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("User() error = %v, want %v", err, tt.wantErr)
+			}
+
+			if tt.wantErr != nil && u.ID != "" {
+				t.Errorf("User() = %+v on refusal, want the zero User", u)
+			}
+
+			if tt.wantErr == nil && u.ID != "7" {
+				t.Errorf("User().ID = %q, want 7", u.ID)
+			}
+		})
+	}
+}
+
+func TestAllowHookUserFromToken(t *testing.T) {
+	t.Parallel()
+
+	s := New(testKey)
+	s.Allow = func(context.Context, User) error { return errors.New("no") }
+	s.Use(Fake("github", "/cb", User{ID: "7"}))
+
+	if _, err := s.UserFromToken(t.Context(), "github", "tok"); !errors.Is(err, ErrNotAllowed) {
+		t.Fatalf("UserFromToken() error = %v, want ErrNotAllowed", err)
+	}
+}

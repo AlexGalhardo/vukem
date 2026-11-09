@@ -36,6 +36,7 @@ func TestErrorsTranslated(t *testing.T) {
 		{"state", ErrState, "A tentativa de login expirou ou é inválida. Tente novamente."},
 		{"denied", ErrAccessDenied, "O login foi cancelado."},
 		{"provider", ErrProvider, "Não foi possível entrar. Tente novamente."},
+		{"not allowed", ErrNotAllowed, "Esta conta não pode entrar aqui."},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

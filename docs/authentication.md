@@ -284,9 +284,33 @@ r.Get("/auth/{provider}/callback", func(c *web.Ctx) error {
 | OIDC | discovery document, JWKS cache refreshed once for unknown `kid`, only RS256/ES256 (never `none`/HS*), RSA keys ≥ 2048 bits, checks `iss` (Microsoft `{tenantid}` templates), `aud`/`azp`, `exp`/`iat` with 1 minute leeway, `nonce` (`TestSecurity_A07_IDTokenChecks`) |
 | User | `social.User{Provider, ID, Email, EmailVerified, Name, Nickname, AvatarURL, Token{Access, Refresh, Expiry, Scopes}, Raw}` |
 | Email trust | `EmailVerified` only when the provider vouches: GitHub primary verified address, GitLab `confirmed_at`, Discord `verified`, OIDC `email_verified` (Microsoft: `xms_edov`). Link accounts by `(Provider, ID)`, by email only when verified |
+| Allowlist | `s.Allow func(ctx, social.User) error` refuses a provider user before any account lookup (`social.ErrNotAllowed`, 403); nil admits everyone (`TestAllowHook`) |
 | Stateless | `s.UserFromToken(ctx, "google", accessToken)` for API/SPA flows (profile/userinfo endpoint) |
 | Options | `social.WithEndpoints(...)` (GitHub Enterprise, self-hosted GitLab, tests), `social.WithAuthParams(...)`, `Config.Scopes`, `OIDC(...).AuthParams(...)`, `social.OAuth2(name, cfg, endpoints, scopes, mapUser)` |
 | Security | a provider `error` other than `access_denied` answers `social.ErrProvider` (400, fixed message) and logs the sanitized code, so a crafted callback link cannot put text on the page (`TestSecurity_A03_SocialProviderErrorNotReflected`); redirect URL fixed in config, provider calls through a client with a 10 s timeout and 1 MiB response limit, tokens never logged |
+
+A private, single-owner app admits only some provider users. Set `s.Allow` before the first sign-in: it runs after the provider returns the user and before `User` or `UserFromToken` hands it back, so `FindOrCreateFromSocial` never sees a refused user and no account row or session is created. A non-nil error answers `social.ErrNotAllowed` (403, key `social.not_allowed`, reason never shown); redirect to the login page with a flash message in the callback instead of rendering the error. Nil admits everyone.
+
+```go
+s.Allow = func(ctx context.Context, u social.User) error {
+	if u.EmailVerified && u.Email == ownerEmail {
+		return nil
+	}
+
+	return errors.New("not the owner")
+}
+
+r.Get("/auth/{provider}/callback", func(c *web.Ctx) error {
+	u, err := s.User(c, c.Param("provider"))
+	if errors.Is(err, social.ErrNotAllowed) {
+		_ = c.Flash("error", social.ErrNotAllowed.LocalizedText(c.Context()))
+		return c.Redirect("/login")
+	}
+	...
+})
+```
+
+Accounts created before the rule keep their sessions. Add `auth.Allow(webGuard, func(u User) bool { return u.Email == ownerEmail })` after `auth.Required(webGuard)` on the protected routes: it logs out a refused user and answers 403 (`auth.not_allowed`).
 
 Apple (`social.Apple`, form-post callback), LinkedIn (`social.LinkedIn`) and X (`social.X`) are built in. X sends no email address, so `install:auth --social x` is refused (exit 2): the scaffold creates and links accounts by a provider-verified email, and an X sign-in could never create one (`TestSecurity_A07_SocialRefusesProvidersWithoutEmail`). Wire `social.X` yourself, for example to link X to an account that is already signed in, keyed by `(Provider, ID)`. `social.Fake(name, callbackURL, user)` is a provider for tests.
 

@@ -3,13 +3,15 @@
     "failed": "These credentials do not match our records.",
     "unauthenticated": "Unauthenticated.",
     "unverified": "Your email address is not verified.",
-    "token_ability": "This token cannot {ability}."
+    "token_ability": "This token cannot {ability}.",
+    "not_allowed": "This account is not allowed to use this application."
   },
   "social": {
     "unknown_provider": "Unknown sign-in provider.",
     "state": "The sign-in attempt expired or is invalid. Please try again.",
     "denied": "Sign-in was cancelled.",
-    "failed": "Sign-in failed. Please try again."
+    "failed": "Sign-in failed. Please try again.",
+    "not_allowed": "This account is not allowed to sign in here."
   },
   "validation": {
     "unique": "The {field} has already been taken.",
