@@ -29,7 +29,7 @@ Breaking changes outside these exceptions only ship in a new major version with 
 
 ## Supported Go versions
 
-Each Vukem release supports the **two latest Go releases** (for example Go 1.27 and Go 1.28 once 1.28 ships), matching the Go project's own support window. The minimum version in `go.mod` only moves forward in a minor release and is listed in its upgrade guide.
+The minimum Go version is the one in `go.mod` (Go 1.27 today, because `encoding/json/v2` and generic methods are not available earlier). From `v1.0.0`, each Vukem release supports the **two latest Go releases**, matching the Go project's own support window; the window starts to apply when Go 1.28 ships. The minimum version in `go.mod` only moves forward in a minor release and is listed in its upgrade guide.
 
 ## Security support window
 
