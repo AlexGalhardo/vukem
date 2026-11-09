@@ -152,7 +152,9 @@ var (
 	// ErrNotAllowed is returned when [Social.Allow] refuses the user; the
 	// refusal reason is never shown.
 	ErrNotAllowed = &errs.HTTPError{
-		Status: http.StatusForbidden, Message: "This account is not allowed to sign in here.", Key: "social.not_allowed",
+		Status:  http.StatusForbidden,
+		Message: "This account is not allowed to sign in here.",
+		Key:     "social.not_allowed",
 	}
 )
 
@@ -182,7 +184,7 @@ type Social struct {
 	// [ErrNotAllowed]. Nil admits everyone (private apps: check
 	// u.EmailVerified and an allowlist of emails or provider ids).
 	Allow func(ctx context.Context, u User) error
-	now    func() time.Time
+	now   func() time.Time
 
 	mu   sync.Mutex
 	used map[string]int64 // consumed states when States is nil
