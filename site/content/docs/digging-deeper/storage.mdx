@@ -316,7 +316,7 @@ Step by step:
 | `storage.Images(maxSize)` | JPEG, PNG, GIF and WebP up to `maxSize` bytes |
 | `storage.UploadRules{MaxSize: 10 << 20, Types: []string{"application/pdf"}}` | PDF up to 10 MiB |
 
-`c.FormFile` parses the whole form first (8 MiB in memory, the rest in temporary files), within the router's default 10 MiB body limit. That is fine for avatars. For large files, many files, virus scanning, resumable or direct-to-bucket uploads, use the [`upload` package](/docs/digging-deeper/uploads): it streams without buffering.
+`c.FormFile` parses the whole form first (8 MiB in memory, the rest in temporary files), within the router's default 10 MiB body limit. Vukem removes those temporary files when the handler returns, and the CSRF and rate limit middleware remove them when they answer (`403`, `429`) before a handler runs, so spilled uploads do not pile up in the system temp directory. That is fine for avatars. For large files, many files, virus scanning, resumable or direct-to-bucket uploads, use the [`upload` package](/docs/digging-deeper/uploads): it streams without buffering.
 
 ## Amazon S3 and compatible services
 

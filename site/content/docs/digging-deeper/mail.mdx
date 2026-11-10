@@ -377,6 +377,7 @@ The app builds the mailer once, on the first `app.Mailer()` call. That call retu
 | `resend` without a key | `vukem: MAIL_MAILER=resend needs RESEND_API_KEY` |
 | `mailtrap` without a token | `vukem: MAIL_MAILER=mailtrap needs MAILTRAP_API_TOKEN` |
 | `MAILTRAP_INBOX_ID` below zero | `vukem: MAILTRAP_INBOX_ID must be a positive sandbox inbox id` |
+| `APP_ENV=production`, `MAIL_MAILER=smtp`, `SMTP_INSECURE=true` and an `SMTP_HOST` that is not `localhost` or a loopback IP | `vukem: SMTP_INSECURE=true is refused when APP_ENV=production (local catchers only)` |
 
 Mail is never lost silently. When `MAIL_MAILER` is set, the last four errors also stop `app.Boot`: `serve`, `queue:work` and every command fail at startup, before any request, instead of at the first email. An unset `MAIL_MAILER` in production is reported by `app.Mailer()` only, so an app that sends no mail does not need it; the starters call `app.Mailer()` while they register routes, so for them that error also appears at startup. `vukem.WithMailTransport` replaces the transport and skips these checks.
 
@@ -404,7 +405,7 @@ What happens on each send:
 
 Tags become `X-Tag-<name>: <value>` headers.
 
-`SMTP_INSECURE=true` allows a server without `STARTTLS`. Use it only for a local catcher such as [Mailpit](https://mailpit.axllent.org) on `localhost:1025`. Go's `net/smtp` still refuses to send a password over an unencrypted connection to any host other than `localhost`, so leave `SMTP_USERNAME` empty for the catcher.
+`SMTP_INSECURE=true` allows a server without `STARTTLS`. Use it only for a local catcher such as [Mailpit](https://mailpit.axllent.org) on `localhost:1025`: with `APP_ENV=production` it is a mailer error unless `SMTP_HOST` is `localhost` or a loopback IP, so a production SMTP server must offer `STARTTLS` or implicit TLS. Go's `net/smtp` still refuses to send a password over an unencrypted connection to any host other than `localhost`, so leave `SMTP_USERNAME` empty for the catcher.
 
 ### When your host blocks SMTP (Railway and other PaaS)
 
@@ -645,7 +646,7 @@ An unknown name answers 404; a render error answers 500 with the error text. Res
 | `SMTP_PORT` | int | `587` | `587` (STARTTLS) or `465` (implicit TLS) |
 | `SMTP_USERNAME` | string | empty | Login; empty skips authentication |
 | `SMTP_PASSWORD` | secret | empty | Password |
-| `SMTP_INSECURE` | bool | `false` | Allow servers without STARTTLS (local catchers only) |
+| `SMTP_INSECURE` | bool | `false` | Allow servers without STARTTLS (local catchers only; refused in production unless the host is loopback) |
 | `RESEND_API_KEY` | secret | empty | Required with `resend` |
 | `MAILTRAP_API_TOKEN` | secret | empty | Required with `mailtrap` |
 | `MAILTRAP_INBOX_ID` | int | `0` | A positive id sends to that sandbox inbox |
