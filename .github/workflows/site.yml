@@ -37,6 +37,9 @@ jobs:
           cache: npm
           cache-dependency-path: site/package-lock.json
       - run: npm ci
+      # Tests that import the site's own modules need its dependencies;
+      # test:scripts stays dependency-free for the Last updated jobs.
+      - run: npm run test:site
       - run: npm run lint
       - run: npm run check:mdx
       - run: npm run build
