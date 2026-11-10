@@ -74,9 +74,18 @@ type idemRecord struct {
 // first is running gets 409, and reusing a key for a different request
 // gets 422. If the store fails the request is refused with 503 (fail
 // closed) rather than risking a duplicate side effect.
-//
-//nolint:gocognit // single request-state machine; splitting hides the replay/conflict ordering
 func Idempotency(store cache.Store, o IdempotencyOptions) func(http.Handler) http.Handler {
+	o = idempotencyDefaults(o)
+	m := &idempotency{store: store, o: o, replayed: replayHeaders(o.ReplayHeaders)}
+
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			m.serve(next, w, r)
+		})
+	}
+}
+
+func idempotencyDefaults(o IdempotencyOptions) IdempotencyOptions {
 	if len(o.Methods) == 0 {
 		o.Methods = []string{http.MethodPost, http.MethodPatch}
 	}
@@ -97,114 +106,148 @@ func Idempotency(store cache.Store, o IdempotencyOptions) func(http.Handler) htt
 		o.Scope = defaultScope
 	}
 
-	replayed := []string{"Content-Type"}
 	if o.ReplayHeaders == nil {
 		o.ReplayHeaders = []string{
 			"Content-Language", "Content-Disposition", "Content-Location", "Location", "ETag", "Last-Modified", "Link",
 		}
 	}
 
-	for _, h := range o.ReplayHeaders {
+	return o
+}
+
+// replayHeaders lists the response headers stored for replay: always
+// Content-Type, then the configured ones minus the never-replayed set.
+func replayHeaders(configured []string) []string {
+	replayed := []string{"Content-Type"}
+
+	for _, h := range configured {
 		if h = http.CanonicalHeaderKey(h); !neverReplayed(h) && !slices.Contains(replayed, h) {
 			replayed = append(replayed, h)
 		}
 	}
 
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			key := r.Header.Get(IdempotencyHeader)
+	return replayed
+}
 
-			if !slices.Contains(o.Methods, r.Method) || (key == "" && !o.Required) {
-				next.ServeHTTP(w, r)
-				return
-			}
+type idempotency struct {
+	store    cache.Store
+	o        IdempotencyOptions
+	replayed []string
+}
 
-			if !validKey(key) {
-				web.Fail(
-					w,
-					r,
-					errs.New(
-						http.StatusBadRequest,
-						"A valid Idempotency-Key header (1-255 printable characters) is required.",
-					),
-				)
-				return
-			}
+func (m *idempotency) serve(next http.Handler, w http.ResponseWriter, r *http.Request) {
+	key := r.Header.Get(IdempotencyHeader)
 
-			body, err := io.ReadAll(io.LimitReader(r.Body, o.MaxBody+1))
-			if err != nil || int64(len(body)) > o.MaxBody {
-				web.Fail(w, r, errs.ErrRequestTooLarge)
-				return
-			}
+	if !slices.Contains(m.o.Methods, r.Method) || (key == "" && !m.o.Required) {
+		next.ServeHTTP(w, r)
+		return
+	}
 
-			// An empty scope would let every anonymous or cookie-session caller
-			// replay each other's responses, so refuse instead of sharing it.
-			scope := o.Scope(r)
-			if scope == "" {
-				web.SecurityEvent(r, "idempotency.unscoped")
-				web.Fail(
-					w,
-					r,
-					errs.New(http.StatusBadRequest, "Idempotency-Key requires an identified caller."),
-				)
-				return
-			}
+	scope, body, ok := m.admit(w, r, key)
+	if !ok {
+		return
+	}
 
-			r.Body = io.NopCloser(bytes.NewReader(body))
+	r.Body = io.NopCloser(bytes.NewReader(body))
 
-			ctx := r.Context()
-			storeKey := "idempotency:" + digest(scope, "\x00", key)
-			fingerprint := digest(r.Method, "\x00", r.URL.RequestURI(), "\x00", string(body))
+	ctx := r.Context()
+	storeKey := "idempotency:" + digest(scope, "\x00", key)
+	fingerprint := digest(r.Method, "\x00", r.URL.RequestURI(), "\x00", string(body))
 
-			pending, _ := json.Marshal(idemRecord{Fingerprint: fingerprint})
+	added := false
 
-			added, err := store.Add(ctx, storeKey, pending, o.LockTTL)
-			if err != nil {
-				web.Fail(w, r, errs.New(http.StatusServiceUnavailable, "Idempotency store unavailable."))
-				return
-			}
+	pending, err := json.Marshal(idemRecord{Fingerprint: fingerprint})
+	if err == nil {
+		added, err = m.store.Add(ctx, storeKey, pending, m.o.LockTTL)
+	}
 
-			if !added {
-				replay(w, r, store, storeKey, fingerprint, replayed)
-				return
-			}
+	if err != nil {
+		web.Fail(w, r, errs.New(http.StatusServiceUnavailable, "Idempotency store unavailable."))
+		return
+	}
 
-			rec := &recordingWriter{ResponseWriter: w, status: http.StatusOK}
+	if !added {
+		replay(w, r, m.store, storeKey, fingerprint, m.replayed)
+		return
+	}
 
-			// A panic would leave the claim "in progress" until LockTTL: release
-			// it, as for a 5xx, and re-raise the panic untouched.
-			defer func() {
-				if p := recover(); p != nil {
-					_ = store.Delete(context.WithoutCancel(ctx), storeKey)
+	m.run(next, w, r, storeKey, fingerprint)
+}
 
-					panic(p)
-				}
-			}()
+// admit validates the key, reads the bounded body and resolves the caller
+// scope, writing the refusal itself when any of them fails.
+func (m *idempotency) admit(w http.ResponseWriter, r *http.Request, key string) (string, []byte, bool) {
+	if !validKey(key) {
+		web.Fail(
+			w,
+			r,
+			errs.New(
+				http.StatusBadRequest,
+				"A valid Idempotency-Key header (1-255 printable characters) is required.",
+			),
+		)
+		return "", nil, false
+	}
 
-			next.ServeHTTP(rec, r)
+	body, err := io.ReadAll(io.LimitReader(r.Body, m.o.MaxBody+1))
+	if err != nil || int64(len(body)) > m.o.MaxBody {
+		web.Fail(w, r, errs.ErrRequestTooLarge)
+		return "", nil, false
+	}
 
-			// The client may be gone by now: the outcome is stored anyway, or
-			// its retry would run the handler a second time.
-			settle := context.WithoutCancel(ctx)
+	// An empty scope would let every anonymous or cookie-session caller
+	// replay each other's responses, so refuse instead of sharing it.
+	scope := m.o.Scope(r)
+	if scope == "" {
+		web.SecurityEvent(r, "idempotency.unscoped")
+		web.Fail(
+			w,
+			r,
+			errs.New(http.StatusBadRequest, "Idempotency-Key requires an identified caller."),
+		)
+		return "", nil, false
+	}
 
-			if rec.status >= http.StatusInternalServerError {
-				_ = store.Delete(settle, storeKey) // let the client retry
-				return
-			}
+	return scope, body, true
+}
 
-			header := pick(rec.Header(), replayed)
+// run executes the handler under the claim and stores its outcome.
+func (m *idempotency) run(next http.Handler, w http.ResponseWriter, r *http.Request, storeKey, fingerprint string) {
+	ctx := r.Context()
+	rec := &recordingWriter{ResponseWriter: w, status: http.StatusOK}
 
-			done, err := json.Marshal(idemRecord{
-				Fingerprint: fingerprint, Done: true, Status: rec.status, Header: header, Body: rec.body.Bytes(),
-			})
-			if err == nil {
-				err = store.Set(settle, storeKey, done, o.TTL)
-			}
+	// A panic would leave the claim "in progress" until LockTTL: release
+	// it, as for a 5xx, and re-raise the panic untouched.
+	defer func() {
+		if p := recover(); p != nil {
+			_ = m.store.Delete(context.WithoutCancel(ctx), storeKey)
 
-			if log := web.ServicesFrom(ctx).Log; err != nil && log != nil {
-				log.ErrorContext(ctx, "idempotency: store response", "err", err)
-			}
-		})
+			panic(p)
+		}
+	}()
+
+	next.ServeHTTP(rec, r)
+
+	// The client may be gone by now: the outcome is stored anyway, or
+	// its retry would run the handler a second time.
+	settle := context.WithoutCancel(ctx)
+
+	if rec.status >= http.StatusInternalServerError {
+		_ = m.store.Delete(settle, storeKey) // let the client retry
+		return
+	}
+
+	header := pick(rec.Header(), m.replayed)
+
+	done, err := json.Marshal(idemRecord{
+		Fingerprint: fingerprint, Done: true, Status: rec.status, Header: header, Body: rec.body.Bytes(),
+	})
+	if err == nil {
+		err = m.store.Set(settle, storeKey, done, m.o.TTL)
+	}
+
+	if log := web.ServicesFrom(ctx).Log; err != nil && log != nil {
+		log.ErrorContext(ctx, "idempotency: store response", "err", err)
 	}
 }
 
