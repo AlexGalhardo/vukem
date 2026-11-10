@@ -373,7 +373,7 @@ Add PostgreSQL, Redis or MongoDB from **+ New → Database**. Each runs as its o
 
 | Database | Variables Railway exposes | In the app service |
 | --- | --- | --- |
-| PostgreSQL | `DATABASE_URL`, `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE` | `DATABASE_URL=${{Postgres.DATABASE_URL}}?sslmode=disable` |
+| PostgreSQL | `DATABASE_URL`, `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE` | `DATABASE_URL=${{Postgres.DATABASE_URL}}?sslmode=require` |
 | Redis | `REDIS_URL`, `REDISHOST`, `REDISPORT`, `REDISUSER`, `REDISPASSWORD` | `REDIS_URL=${{Redis.REDIS_URL}}?insecure_plaintext=true` |
 | MongoDB | `MONGO_URL`, `MONGOHOST`, `MONGOPORT`, `MONGOUSER`, `MONGOPASSWORD` | `MONGO_URL=${{MongoDB.MONGO_URL}}` |
 
@@ -394,7 +394,7 @@ base := []vukem.Option{
 
 `DATABASE_URL` then selects the driver by its `postgres://` scheme.
 
-The driver adds `sslmode=verify-full` to a `postgres://` URL whose host is not loopback and that has no `sslmode`. Railway's `DATABASE_URL` points at `postgres.railway.internal`, a private network, whose server certificate does not verify for that name, so the app would fail at boot with a TLS error. Say that the private network is trusted in the variable (next step): `DATABASE_URL=${{Postgres.DATABASE_URL}}?sslmode=disable`. Redis has the same rule: a plain `redis://` URL to a host that is not loopback is refused, so set `REDIS_URL=${{Redis.REDIS_URL}}?insecure_plaintext=true` for the private URL, or use a `rediss://` URL. Both options exist for private networks only; across the public internet keep TLS on.
+The driver adds `sslmode=verify-full` to a `postgres://` URL whose host is not loopback and that has no `sslmode`. Railway's `DATABASE_URL` points at `postgres.railway.internal`, a private network, whose server certificate does not verify for that name, so the app would fail at boot with a TLS error. Say that the private network is trusted in the variable (next step): `DATABASE_URL=${{Postgres.DATABASE_URL}}?sslmode=require`. Redis has the same rule: a plain `redis://` URL to a host that is not loopback is refused, so set `REDIS_URL=${{Redis.REDIS_URL}}?insecure_plaintext=true` for the private URL, or use a `rediss://` URL. Both options exist for private networks only; across the public internet keep TLS on.
 
 </Step>
 <Step title="Set the app variables">
@@ -407,7 +407,7 @@ APP_KEY=base64:...
 # The domain from Settings → Networking.
 APP_URL=https://blog.up.railway.app
 # The private network: opt out of the verify-full default.
-DATABASE_URL=${{Postgres.DATABASE_URL}}?sslmode=disable
+DATABASE_URL=${{Postgres.DATABASE_URL}}?sslmode=require
 # Only when you use Redis; it refuses plaintext to remote hosts otherwise.
 REDIS_URL=${{Redis.REDIS_URL}}?insecure_plaintext=true
 # Railway's edge, see "Trusted proxies on Railway".
@@ -610,7 +610,7 @@ export default defineRailway(() => {
 });
 ```
 
-The generated `DATABASE_URL` is the private URL as Railway gives it, with no `sslmode`, so a Postgres app boots with the `verify-full` default and fails if the certificate does not verify. Until the scaffold appends it, change the line to the private-network form before you apply: ``DATABASE_URL: `${db.env.DATABASE_URL}?sslmode=disable` ``.
+The generated `DATABASE_URL` is the private URL as Railway gives it, with no `sslmode`, so a Postgres app boots with the `verify-full` default and fails if the certificate does not verify. If the boot fails with a TLS error, set `DATABASE_URL` in Railway's variables to `${{Postgres.DATABASE_URL}}?sslmode=require` (TLS without certificate checks, since Railway's Postgres uses its own certificate) and write `DATABASE_URL: preserve()` in this file so the apply keeps it.
 
 Plan and apply it with the Railway CLI:
 
