@@ -344,7 +344,7 @@ For an `interface` or `union` field, the server must learn which object type eac
 - Query fields that have a resolver run **concurrently** with their siblings, each in its own [goroutine](https://go.dev/tour/concurrency/1). Items of a list run concurrently too. The response keeps document order.
 - Mutation root fields run **one after another**, in document order, so `mutation { a b }` never runs `b` before `a` finishes.
 - `graphql.WithoutConcurrency()` resolves every field serially. Use it when resolvers share something that is not safe for concurrent use, such as one `*sql.Tx`.
-- A panic in a resolver is recovered and reported as an internal error.
+- A panic in a resolver, a custom scalar or type callback (`ParseValue`, `Serialize`, `ResolveType`...) or a subscription operation is recovered and reported as an internal error; it is logged with its cause when `WithLogger` is set.
 - `schema.Execute(ctx, graphql.Request{Query, OperationName, Variables})` runs an operation without HTTP (tests, jobs). It allows introspection and rejects subscriptions with `BAD_REQUEST`; use `schema.Subscribe` for those.
 
 ## Errors and batching
@@ -430,6 +430,8 @@ func newLoaders(db database.Executor) *graphql.Loader[int64, []*Review] {
 | any other method, or `GET` with `DisableGET` | 405 with an `Allow` header |
 | an `Accept` header with neither JSON type | 406 |
 
+A `subscription` sent to the plain HTTP endpoint is a request error, not a result: it answers `400` when the client accepts `application/graphql-response+json`, and `200` with `errors` for `application/json`. Use [WebSocket or SSE](#subscriptions) for those.
+
 Mutations never run over `GET`, so a link or an `<img>` tag cannot change state. Every response has `Cache-Control: no-store`.
 
 The response media type depends on `Accept`. With `application/graphql-response+json`, request errors (parse, validation, variables) answer **400**. With `application/json`, a missing `Accept` or `*/*`, they answer **200**, as older clients expect. Execution errors (a resolver failed) always answer 200 with `errors` beside `data`.
@@ -443,7 +445,7 @@ A persisted query is a document the server already knows by its hash: the client
 <Tabs>
 <Tab title="Automatic (APQ)">
 
-[Automatic persisted queries](https://www.apollographql.com/docs/apollo-server/performance/apq) save bandwidth. The client sends only `{"extensions":{"persistedQuery":{"version":1,"sha256Hash":"..."}}}`. If the server does not know the hash, it answers `PERSISTED_QUERY_NOT_FOUND`; the client resends the full query with the hash, the server checks that the SHA-256 matches (else `provided sha does not match query`) and stores it.
+[Automatic persisted queries](https://www.apollographql.com/docs/apollo-server/performance/apq) save bandwidth. The client sends only `{"extensions":{"persistedQuery":{"version":1,"sha256Hash":"..."}}}`. If the server does not know the hash, it answers `PERSISTED_QUERY_NOT_FOUND`; the client resends the full query with the hash, the server checks that the SHA-256 matches (else `provided sha does not match query`) and stores it only when the document parses and validates, arrived by `POST` and is at most `PersistedQueries.MaxDocumentBytes` long (64 KiB by default, `graphql.DefaultMaxPersistedBytes`). Any other document still runs but is not stored, so anonymous clients cannot fill the store with garbage or evict real entries. A client that registered queries over `GET` must register them with `POST`.
 
 ```go title="routes/api.go"
 store, err := app.Cache()
@@ -461,7 +463,7 @@ graphql.Serve(app, r, "/graphql", schema, graphql.Config{
 })
 ```
 
-Without `Store`, a `graphql.NewMemoryStore(0)` keeps the last `graphql.DefaultPersistedEntries` (1000) documents of this process, evicting the oldest first.
+Without `Store`, a `graphql.NewMemoryStore(0)` keeps the last `graphql.DefaultPersistedEntries` (1000) documents of this process, evicting the oldest first; the same store also stops at `graphql.MaxMemoryStoreBytes` (16 MiB) of document text in total.
 
 </Tab>
 <Tab title="Allowlist">
@@ -599,6 +601,8 @@ The driver checks the `Origin` before the upgrade and caps message sizes. `Serve
 | client `complete` | the operation's context is cancelled; the id can be reused |
 | `ping` | answered with `pong` |
 
+Variables of a `subscribe` message are decoded with exact numbers, as over HTTP: a number above 2^53 is not rounded to a float, and a whole number that does not fit in a 64-bit signed integer (2^63 and above) is refused as a bad value.
+
 `OnConnect` receives the upgrade request's context and the `connection_init` payload, and returns the context every operation of that connection runs in: put the authenticated user there. Without `OnConnect`, the upgrade request's context is used (cookie sessions). Queries and mutations sent over the socket get one `next` and a `complete`. Introspection is rejected over the socket unless `WSConfig.Introspection` is true. `ServeWS` answers protocol violations on the socket and returns nil.
 
 ### Server-sent events (graphql-sse)
@@ -649,7 +653,7 @@ graphql.New(sdl,
 
 - The multiplier reads a literal or a variable. An argument left out, or a variable the request does not set, multiplies by the SDL default (`products(first: Int = 20)` counts 20), which is what the resolver receives.
 - `@skip` and `@include` are not evaluated when measuring: the cost is an upper bound.
-- Introspection has its own depth bound (16) and a cap of 200000 resolved fields, so the standard `graphql.IntrospectionQuery` always fits; its aliases and complexity still count.
+- Introspection has its own depth bound (16) and a cap of 200000 resolved fields, so the standard `graphql.IntrospectionQuery` always fits; its aliases and complexity still count. The depth bound stays on even when `MaxDepth`, `MaxComplexity` and `MaxAliases` are all 0.
 
 ### Every option
 

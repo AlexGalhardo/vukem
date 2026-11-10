@@ -233,7 +233,7 @@ Paths are converted from `ServeMux` syntax: `{$}` is dropped, and a multi-segmen
 | `app.OpenAPI()` | — | returns the `*openapi.Document` |
 | `vukem openapi:export` | — | prints the document as indented JSON; `-prefix /api/v1` keeps only that version (default `OPENAPI_PREFIX`) |
 
-In production the serve functions register nothing and return `nil`: the document maps your whole API surface, so publishing it is a decision you make explicitly. The document is built on each request from the router's routes; both routes skip themselves with `openapi.Skip`.
+In production the serve functions register nothing and return `nil`: the document maps your whole API surface, so publishing it is a decision you make explicitly. The document is built once, on the first request (the routes are frozen by then), and every later request gets the same document, or the same error; both routes skip themselves with `openapi.Skip`.
 
 The document comes from the app config:
 

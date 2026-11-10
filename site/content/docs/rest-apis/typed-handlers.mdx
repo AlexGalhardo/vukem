@@ -356,7 +356,7 @@ That is what [`openapi.Generate`](/docs/rest-apis/openapi) reads. Plain `web.Han
 
 - Input is validated before your code runs, and path parameters cannot be overridden by the body.
 - Unknown body keys are dropped, so a client cannot set a field you did not declare (no mass assignment through extra keys).
-- Handler errors are answered as problem+json; unexpected errors never show their text in production.
+- Handler errors are answered as problem+json; unexpected errors never show their text in production. A validation error that a handler wraps as a 5xx (`errs.Wrap(500, err)`) is a plain server error: its field errors are never sent.
 - What stays your job: authentication and authorization (`Op.Security` does not do it), scoping queries to the caller, and keeping secrets out of output types. See the [Security overview](/docs/security/overview).
 
 ## Testing

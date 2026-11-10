@@ -221,6 +221,7 @@ The delay doubles each time (500 ms, 1 s, 2 s), a common backoff pattern. [`cryp
 
 - **Handlers slower than `LockTTL`.** After one minute the claim expires; a retry is no longer answered `409` and may run at the same time as the first. Raise `LockTTL` for slow endpoints, or move the work to a [queue](/docs/digging-deeper/queue) and answer `202`.
 - **A handler that panics.** The claim is released and the panic continues to the recovery middleware, so a retry runs the handler again right away, as after a 5xx.
+- **The client disconnects while the handler runs.** The response is still stored (and the claim settled) after the handler returns, so the retry gets the stored answer instead of running the handler again.
 - **5xx responses** are not stored, so the client may retry them. Make sure a handler that failed half-way can run again safely (use a transaction).
 - **The store fails after the handler ran.** The response is sent, the error is logged (`idempotency: store response`), and the claim expires after `LockTTL`: a later retry runs again.
 - **`TTL` shorter than your clients' retry window.** After `TTL` the key is forgotten and a late retry runs again.
