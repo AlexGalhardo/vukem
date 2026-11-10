@@ -19,16 +19,27 @@ const module = "github.com/AlexGalhardo/vukem"
 // (docs/testing.md).
 const defaultGate = 80.0
 
-// strictGates are the packages held to a higher bar (docs/testing.md);
-// "validate" in the docs is package z. They must appear in the profile.
+// strictGates are the packages held to a higher bar (docs/testing.md): the
+// router, validation, persistence and the security boundaries (CSRF,
+// signing, crypto, authorization, rate limiting, idempotency); "validate" in
+// the docs is package z. They must appear in the profile.
 var strictGates = map[string]float64{
-	"router":  90,
-	"z":       90,
-	"session": 90,
-	"orm":     90,
-	"schema":  90,
-	"auth":    90,
-	"config":  90,
+	"api":        90,
+	"auth":       90,
+	"authz":      90,
+	"challenge":  90,
+	"config":     90,
+	"crypt":      90,
+	"csrf":       90,
+	"middleware": 90,
+	"orm":        90,
+	"ratelimit":  90,
+	"router":     90,
+	"schema":     90,
+	"session":    90,
+	"signed":     90,
+	"social":     90,
+	"z":          90,
 }
 
 // excluded reports whether pkg (relative to the module, "" for the root)

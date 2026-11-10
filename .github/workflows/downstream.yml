@@ -1,0 +1,53 @@
+name: Downstream canary
+
+# Manual only: builds and tests the Vukem apps against this checkout so an API
+# break shows up before a release, not after an app bump. It blocks nothing.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  canary:
+    name: ${{ matrix.app }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        app:
+          - vukem-email
+          - vukem-music
+          - vukem-studio
+          - vukem-tools
+          - vukem-trading
+          - hexascore-app
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: vukem
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: AlexGalhardo/${{ matrix.app }}
+          path: app
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: vukem/go.mod
+          cache: false
+      - name: Point the app at this checkout
+        working-directory: app
+        run: |
+          go mod edit -replace "github.com/AlexGalhardo/vukem=$GITHUB_WORKSPACE/vukem"
+          # Nested modules the app requires resolve to the same checkout.
+          for mod in $(go list -m -f '{{.Path}}' all | grep '^github.com/AlexGalhardo/vukem/'); do
+            go mod edit -replace "$mod=$GITHUB_WORKSPACE/vukem/${mod#github.com/AlexGalhardo/vukem/}"
+          done
+          go mod tidy
+      - name: Build
+        working-directory: app
+        run: go build ./... && go vet ./...
+      - name: Test
+        working-directory: app
+        run: go test -short -count=1 ./...

@@ -1,13 +1,13 @@
 ---
 title: Showcase
-description: Four open-source reference apps built with Vukem, live in production, and which framework features each one demonstrates.
+description: Nine open-source apps built with Vukem, live in production, and which framework features each one demonstrates.
 ---
 
-The best way to learn a framework after the tutorial is to read a real app that uses it. These four apps are built and maintained alongside Vukem. Each one is open source and deployed, so you can read the code that runs behind a live URL. They are also how Vukem is tested in the real world: their feedback drives most releases.
+The best way to learn a framework after the tutorial is to read a real app that uses it. These nine apps are built and maintained alongside Vukem. Each one is open source and deployed, so you can read the code that runs behind a live URL. They are also how Vukem is tested in the real world: their feedback drives most releases.
 
 You will learn:
 
-- which reference app to read for the kind of project you are building
+- which app to read for the kind of project you are building
 - which Vukem features each app demonstrates, with links to their pages
 - how to run one of them on your computer
 
@@ -17,21 +17,31 @@ Pick the app closest to what you are building and read it next to these docs. St
 
 | App | Frontend | Data | Best for learning |
 | --- | --- | --- | --- |
-| [Quiz](#quiz-htmx) | HTMX 4, `html/template` | Embedded JSON | Server-rendered apps, i18n, a strict CSP |
-| [Rifa](#rifa-inertia-and-vue) | Inertia v3 + Vue | PostgreSQL | Payments, a ledger, a public REST API, background work |
-| [Marketplace](#marketplace-inertia-and-react) | Inertia v3 + React + Base UI | PostgreSQL, Redis, MongoDB | Multi-database apps, REST + GraphQL + gRPC, marketplace payments, tracing |
-| [Tools](#tools-inertia-and-react) | Inertia v3 + React + Base UI | PostgreSQL | File conversion jobs, external engines as subprocesses, progress over SSE, a Telegram bot |
+| [Quiz](#quiz) | HTMX 4, `html/template` | Embedded JSON | Server-rendered apps, i18n, a strict CSP |
+| [Rifa](#rifa) | Inertia v3 + Vue | PostgreSQL | Payments, a ledger, a public REST API, background work |
+| [Marketplace](#marketplace) | Inertia v3 + React + Base UI | PostgreSQL, Redis, MongoDB | Multi-database apps, REST + GraphQL + gRPC, marketplace payments, tracing |
+| [Tools](#tools) | Inertia v3 + React + Base UI | PostgreSQL | File conversion jobs, external engines as subprocesses, progress over SSE, a Telegram bot |
+| [HexaScore](#hexascore) | Inertia + React with SSR | PostgreSQL | A public REST API with OpenAPI and a mobile client |
+| [Email](#email) | Inertia + React | PostgreSQL | Mail providers, webhooks, queued campaigns |
+| [Trading](#trading) | Inertia + React | PostgreSQL | A separate worker process and an MCP endpoint |
+| [Studio](#studio) | Inertia + React | SQLite | Long renders as queued jobs, Google sign-in |
+| [Music](#music) | Inertia + React + shadcn/ui | SQLite | Interactive UI, i18n, SQLite |
 
-All four follow the layout described in [Directory structure](/docs/directory-structure): start reading at `bootstrap/app.go` to see everything the app wires, then `routes/` to see every URL, then the controllers they point to.
+All nine follow the layout described in [Directory structure](/docs/directory-structure): start reading at `bootstrap/app.go` to see everything the app wires, then `routes/` to see every URL, then the controllers they point to.
 
-## Quiz (HTMX)
+## The apps
+
+Open an app to see its links, what it demonstrates and, for the first four, GIFs of it running.
+
+<details id="quiz">
+<summary>Quiz (HTMX)</summary>
 
 <CardGroup cols="2">
 <Card title="Live app" href="https://quiz.vukem.dev" icon="rocket">
 quiz.vukem.dev
 </Card>
-<Card title="Source code" href="https://github.com/AlexGalhardo/vukem-golang-quiz-htmx" icon="code">
-AlexGalhardo/vukem-golang-quiz-htmx
+<Card title="Source code" href="https://github.com/AlexGalhardo/vukem-quiz" icon="code">
+AlexGalhardo/vukem-quiz
 </Card>
 </CardGroup>
 
@@ -49,36 +59,39 @@ See it working:
 
 Answer a question and read why each alternative is right or wrong:
 
-![Quiz: answering a question and reading the explanation](https://raw.githubusercontent.com/AlexGalhardo/vukem-golang-quiz-htmx/main/docs/media/answer-with-explanation.gif)
+![Quiz: answering a question and reading the explanation](https://raw.githubusercontent.com/AlexGalhardo/vukem-quiz/main/docs/media/answer-with-explanation.gif)
 
 Progress and accuracy per difficulty:
 
-![Quiz: progress and statistics](https://raw.githubusercontent.com/AlexGalhardo/vukem-golang-quiz-htmx/main/docs/media/progress-and-stats.gif)
+![Quiz: progress and statistics](https://raw.githubusercontent.com/AlexGalhardo/vukem-quiz/main/docs/media/progress-and-stats.gif)
 
 Filter the queue by difficulty:
 
-![Quiz: filtering by difficulty](https://raw.githubusercontent.com/AlexGalhardo/vukem-golang-quiz-htmx/main/docs/media/difficulty-filter.gif)
+![Quiz: filtering by difficulty](https://raw.githubusercontent.com/AlexGalhardo/vukem-quiz/main/docs/media/difficulty-filter.gif)
 
 Switch between English and Brazilian Portuguese:
 
-![Quiz: switching the language](https://raw.githubusercontent.com/AlexGalhardo/vukem-golang-quiz-htmx/main/docs/media/language-switch.gif)
+![Quiz: switching the language](https://raw.githubusercontent.com/AlexGalhardo/vukem-quiz/main/docs/media/language-switch.gif)
 
 Dark mode:
 
-![Quiz: dark mode](https://raw.githubusercontent.com/AlexGalhardo/vukem-golang-quiz-htmx/main/docs/media/dark-mode.gif)
+![Quiz: dark mode](https://raw.githubusercontent.com/AlexGalhardo/vukem-quiz/main/docs/media/dark-mode.gif)
 
 Mobile layout:
 
-![Quiz: mobile view](https://raw.githubusercontent.com/AlexGalhardo/vukem-golang-quiz-htmx/main/docs/media/mobile-view.gif)
+![Quiz: mobile view](https://raw.githubusercontent.com/AlexGalhardo/vukem-quiz/main/docs/media/mobile-view.gif)
 
-## Rifa (Inertia and Vue)
+</details>
+
+<details id="rifa">
+<summary>Rifa (Inertia and Vue)</summary>
 
 <CardGroup cols="2">
 <Card title="Live app" href="https://rifa.vukem.dev" icon="rocket">
 rifa.vukem.dev
 </Card>
-<Card title="Source code" href="https://github.com/AlexGalhardo/vukem-rifa-vuejs" icon="code">
-AlexGalhardo/vukem-rifa-vuejs
+<Card title="Source code" href="https://github.com/AlexGalhardo/vukem-rifa" icon="code">
+AlexGalhardo/vukem-rifa
 </Card>
 </CardGroup>
 
@@ -97,36 +110,39 @@ See it working:
 
 The owner creates a raffle:
 
-![Rifa: creating a raffle](https://raw.githubusercontent.com/AlexGalhardo/vukem-rifa-vuejs/main/docs/media/create-raffle.gif)
+![Rifa: creating a raffle](https://raw.githubusercontent.com/AlexGalhardo/vukem-rifa/main/docs/media/create-raffle.gif)
 
 A 10-minute payment link for one number:
 
-![Rifa: generating a payment link](https://raw.githubusercontent.com/AlexGalhardo/vukem-rifa-vuejs/main/docs/media/payment-link.gif)
+![Rifa: generating a payment link](https://raw.githubusercontent.com/AlexGalhardo/vukem-rifa/main/docs/media/payment-link.gif)
 
 A visitor picks a number and checks out:
 
-![Rifa: public checkout](https://raw.githubusercontent.com/AlexGalhardo/vukem-rifa-vuejs/main/docs/media/public-checkout.gif)
+![Rifa: public checkout](https://raw.githubusercontent.com/AlexGalhardo/vukem-rifa/main/docs/media/public-checkout.gif)
 
 PIX QR code and the confirmed payment:
 
-![Rifa: PIX payment](https://raw.githubusercontent.com/AlexGalhardo/vukem-rifa-vuejs/main/docs/media/pix-payment.gif)
+![Rifa: PIX payment](https://raw.githubusercontent.com/AlexGalhardo/vukem-rifa/main/docs/media/pix-payment.gif)
 
 A public draw with a seed and a hash anyone can verify:
 
-![Rifa: auditable draw](https://raw.githubusercontent.com/AlexGalhardo/vukem-rifa-vuejs/main/docs/media/auditable-draw.gif)
+![Rifa: auditable draw](https://raw.githubusercontent.com/AlexGalhardo/vukem-rifa/main/docs/media/auditable-draw.gif)
 
 Dark theme:
 
-![Rifa: dark theme](https://raw.githubusercontent.com/AlexGalhardo/vukem-rifa-vuejs/main/docs/media/dark-theme.gif)
+![Rifa: dark theme](https://raw.githubusercontent.com/AlexGalhardo/vukem-rifa/main/docs/media/dark-theme.gif)
 
-## Marketplace (Inertia and React)
+</details>
+
+<details id="marketplace">
+<summary>Marketplace (Inertia and React)</summary>
 
 <CardGroup cols="2">
 <Card title="Live app" href="https://marketplace.vukem.dev" icon="rocket">
 marketplace.vukem.dev
 </Card>
-<Card title="Source code" href="https://github.com/AlexGalhardo/vukem-marketplace-reactjs" icon="code">
-AlexGalhardo/vukem-marketplace-reactjs
+<Card title="Source code" href="https://github.com/AlexGalhardo/vukem-marketplace" icon="code">
+AlexGalhardo/vukem-marketplace
 </Card>
 </CardGroup>
 
@@ -144,29 +160,32 @@ See it working:
 
 Search products:
 
-![Marketplace: product search](https://raw.githubusercontent.com/AlexGalhardo/vukem-marketplace-reactjs/main/docs/media/search.gif)
+![Marketplace: product search](https://raw.githubusercontent.com/AlexGalhardo/vukem-marketplace/main/docs/media/search.gif)
 
 Register an account:
 
-![Marketplace: registration](https://raw.githubusercontent.com/AlexGalhardo/vukem-marketplace-reactjs/main/docs/media/register.gif)
+![Marketplace: registration](https://raw.githubusercontent.com/AlexGalhardo/vukem-marketplace/main/docs/media/register.gif)
 
 Cart and checkout:
 
-![Marketplace: checkout](https://raw.githubusercontent.com/AlexGalhardo/vukem-marketplace-reactjs/main/docs/media/checkout.gif)
+![Marketplace: checkout](https://raw.githubusercontent.com/AlexGalhardo/vukem-marketplace/main/docs/media/checkout.gif)
 
 Buyer and seller chat:
 
-![Marketplace: chat](https://raw.githubusercontent.com/AlexGalhardo/vukem-marketplace-reactjs/main/docs/media/chat.gif)
+![Marketplace: chat](https://raw.githubusercontent.com/AlexGalhardo/vukem-marketplace/main/docs/media/chat.gif)
 
 Light and dark theme:
 
-![Marketplace: theme](https://raw.githubusercontent.com/AlexGalhardo/vukem-marketplace-reactjs/main/docs/media/theme.gif)
+![Marketplace: theme](https://raw.githubusercontent.com/AlexGalhardo/vukem-marketplace/main/docs/media/theme.gif)
 
 The test suite passing:
 
-![Marketplace: tests](https://raw.githubusercontent.com/AlexGalhardo/vukem-marketplace-reactjs/main/docs/media/tests.gif)
+![Marketplace: tests](https://raw.githubusercontent.com/AlexGalhardo/vukem-marketplace/main/docs/media/tests.gif)
 
-## Tools (Inertia and React)
+</details>
+
+<details id="tools">
+<summary>Tools (Inertia and React)</summary>
 
 <CardGroup cols="2">
 <Card title="Live app" href="https://tools.vukem.dev" icon="rocket">
@@ -217,6 +236,119 @@ Command palette search and dark theme:
 
 ![Tools: search and theme](https://raw.githubusercontent.com/AlexGalhardo/vukem-tools/main/docs/media/search-and-theme.gif)
 
+</details>
+
+<details id="hexascore">
+<summary>HexaScore (Inertia and React)</summary>
+
+<CardGroup cols="2">
+<Card title="Live app" href="https://hexascore.app" icon="rocket">
+hexascore.app
+</Card>
+<Card title="Source code" href="https://github.com/AlexGalhardo/vukem-hexascore" icon="code">
+AlexGalhardo/vukem-hexascore
+</Card>
+</CardGroup>
+
+An open source almanac and community score platform for games, movies, TV shows and books. The community rates each item in six categories per type, and the ratings combine into a published score.
+
+What it demonstrates:
+
+- **Inertia with React and SSR** ([Inertia](/docs/frontend/inertia)).
+- **PostgreSQL** with the ORM and migrations ([Database](/docs/database/overview)).
+- **A public REST API** with OpenAPI ([OpenAPI](/docs/rest-apis/openapi)) and [API tokens](/docs/security/api-tokens).
+- **A React Native app** that talks to the same API.
+
+</details>
+
+<details id="email">
+<summary>Email (Inertia and React)</summary>
+
+<CardGroup cols="2">
+<Card title="Live app" href="https://email.vukem.dev" icon="rocket">
+email.vukem.dev (docs)
+</Card>
+<Card title="Source code" href="https://github.com/AlexGalhardo/vukem-email" icon="code">
+AlexGalhardo/vukem-email
+</Card>
+</CardGroup>
+
+A newsletter dashboard for several projects: double opt-in, a public CORS subscribe endpoint, RFC 8058 one-click unsubscribe, Resend webhooks that suppress bounces, and Markdown, MDX or React Email campaigns rendered in a QuickJS sandbox.
+
+What it demonstrates:
+
+- **Inertia with React** ([Inertia](/docs/frontend/inertia)) and **PostgreSQL**.
+- **Mail through Resend** ([Mail](/docs/digging-deeper/mail)) with verified provider [webhooks](/docs/digging-deeper/webhooks).
+- **Campaigns as queued jobs** ([Queues](/docs/digging-deeper/queue)).
+
+</details>
+
+<details id="trading">
+<summary>Trading (Inertia and React)</summary>
+
+<CardGroup cols="2">
+<Card title="Live app" href="https://app.trading.vukem.dev" icon="rocket">
+app.trading.vukem.dev
+</Card>
+<Card title="Source code" href="https://github.com/AlexGalhardo/vukem-trading" icon="code">
+AlexGalhardo/vukem-trading
+</Card>
+</CardGroup>
+
+A personal trading terminal for systematic strategies: backtests and paper trading for B3, US equities, crypto and forex, with a risk engine that enforces stops, exposure caps and a daily-loss kill switch. It never sends real orders.
+
+What it demonstrates:
+
+- **Inertia with React** and **PostgreSQL**.
+- **An independent engine worker** next to the web process.
+- **An MCP endpoint** for AI agents. Docs: [trading.vukem.dev](https://trading.vukem.dev).
+
+</details>
+
+<details id="studio">
+<summary>Studio (Inertia and React)</summary>
+
+<CardGroup cols="2">
+<Card title="Live app" href="https://app.studio.vukem.dev" icon="rocket">
+app.studio.vukem.dev
+</Card>
+<Card title="Source code" href="https://github.com/AlexGalhardo/vukem-studio" icon="code">
+AlexGalhardo/vukem-studio
+</Card>
+</CardGroup>
+
+Turns a video brief into a rendered MP4 for Shorts, Reels and other short social cuts: the dashboard collects the goal, audience and style, a planner writes the scene plan and a worker renders the file with FFmpeg.
+
+What it demonstrates:
+
+- **Inertia with React** and **SQLite**.
+- **A database queue** that runs FFmpeg renders ([Queues](/docs/digging-deeper/queue)).
+- **Google sign-in**. Docs: [studio.vukem.dev](https://studio.vukem.dev).
+
+</details>
+
+<details id="music">
+<summary>Music (Inertia and React)</summary>
+
+<CardGroup cols="2">
+<Card title="Live app" href="https://music.vukem.dev" icon="rocket">
+music.vukem.dev
+</Card>
+<Card title="Source code" href="https://github.com/AlexGalhardo/vukem-music" icon="code">
+AlexGalhardo/vukem-music
+</Card>
+</CardGroup>
+
+A music theory learning studio: bilingual lessons, SVG scores, an interactive 88-key piano with Web Audio playback, a chord explorer and a searchable classical score library.
+
+What it demonstrates:
+
+- **Inertia with React** and **shadcn/ui** ([Inertia](/docs/frontend/inertia)).
+- **SQLite** with the ORM and migrations ([Database](/docs/database/overview)).
+- **Localization** in English and Brazilian Portuguese ([Localization](/docs/digging-deeper/localization)).
+
+</details>
+
 ## Running one locally
 
 Each repository's README lists its exact requirements. The usual flow:
@@ -225,8 +357,8 @@ Each repository's README lists its exact requirements. The usual flow:
 <Step title="Clone it">
 
 ```bash
-git clone https://github.com/AlexGalhardo/vukem-golang-quiz-htmx
-cd vukem-golang-quiz-htmx
+git clone https://github.com/AlexGalhardo/vukem-quiz
+cd vukem-quiz
 ```
 
 </Step>

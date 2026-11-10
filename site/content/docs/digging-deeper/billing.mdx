@@ -570,7 +570,7 @@ More Connect details:
 - `sc.ForAccount("acct_…")` returns a copy of the client, and `stripe.OnAccount("acct_…")` scopes one request, to act **as** the seller (direct charges and their refunds). The platform-only methods (accounts, account and login links, transfers and reversals) refuse that scope with `stripe.ErrInvalidRequestOption`, so they never run on the wrong account.
 - Connect events are signed with a different secret than platform events, even on the same URL. Add it to `WebhookConfig.Secrets` and read the seller from `Event.Account` (empty for platform events).
 
-The [Marketplace showcase app](/docs/showcase#marketplace-inertia-and-react) uses Connect in production.
+The [Marketplace showcase app](/docs/showcase#marketplace) uses Connect in production.
 
 ## Configuration
 
