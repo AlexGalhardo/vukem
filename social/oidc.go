@@ -196,12 +196,18 @@ func (p *OIDCProvider) verify(
 	}
 
 	var header struct {
-		Alg string `json:"alg"`
-		Kid string `json:"kid"`
+		Alg  string          `json:"alg"`
+		Kid  string          `json:"kid"`
+		Crit json.RawMessage `json:"crit"`
 	}
 
 	if err := decodePart(parts[0], &header); err != nil {
 		return nil, idTokenErr("header: %v", err)
+	}
+
+	// RFC 7515 4.1.11: no extension is understood, so any crit refuses.
+	if len(header.Crit) > 0 {
+		return nil, idTokenErr("crit extensions are not supported")
 	}
 
 	if header.Alg != "RS256" && header.Alg != "ES256" {

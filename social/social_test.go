@@ -45,6 +45,7 @@ type fakeServer struct {
 	claims     map[string]any // overrides for the next ID token
 	tamper     bool           // flip a signature bit
 	kid        string         // override the key id
+	crit       string         // raw JSON for a crit header member; empty omits it
 	profile    map[string]any
 	emails     []map[string]any
 	// checkSecret validates the client secret (default: "secret").
@@ -195,7 +196,12 @@ func (f *fakeServer) idToken(nonce string) string {
 	if f.kid != "" {
 		kid = f.kid
 	}
-	header := b64(mustJSON(map[string]any{"alg": f.alg, "kid": kid}))
+	h := map[string]any{"alg": f.alg, "kid": kid}
+	if f.crit != "" {
+		h["crit"] = json.RawMessage(f.crit)
+	}
+
+	header := b64(mustJSON(h))
 	payload := b64(mustJSON(claims))
 	digest := sha256.Sum256([]byte(header + "." + payload))
 
@@ -431,6 +437,16 @@ func TestSecurity_A07_IDTokenChecks(t *testing.T) {
 				t.Fatalf("err = %v", err)
 			}
 		})
+	}
+
+	// A validly signed token with a crit header is refused: no extension is understood.
+	for _, crit := range []string{`["b64"]`, `[]`, `null`} {
+		f := newFakeServer(t)
+		f.crit = crit
+
+		if _, err := flow(t, New(testKey, OIDC("acme", f.URL, cfg())), f, "acme", nil); !errors.Is(err, ErrIDToken) {
+			t.Fatalf("crit %s = %v", crit, err)
+		}
 	}
 
 	// A token whose signature was altered fails, for both algorithms.
