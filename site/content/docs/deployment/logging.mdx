@@ -29,7 +29,7 @@ A log line is a set of key/value pairs, not a sentence. `slog` writes them as `k
 | `bytes` | response body size |
 | `request_id` | the `X-Request-ID` the framework set or accepted; the same id is in error responses |
 | `peer` | the TCP peer address (your proxy, when there is one) |
-| `ip` | the client IP after [trusted proxies](/docs/basics/http-context) |
+| `ip` | the client IP after [trusted proxies](/docs/basics/http-context); with `LOG_TRUNCATE_IP=true`, `peer` and `ip` are the /24 (IPv4) or /48 (IPv6) network, and rate limits and `c.IP()` keep the full address |
 | `route` | the matched route pattern, such as `GET /items/{id}`; absent when no route matched |
 
 The level follows the status: `ERROR` for `5xx`, `WARN` for `4xx`, `INFO` otherwise.
@@ -81,6 +81,7 @@ Unless you pass your own, the app builds its logger from configuration:
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error` |
 | `LOG_FORMAT` | `text` (`json` in production) | `text` or `json` |
 | `LOG_DEDUP_WINDOW` | `1m` in production, off elsewhere | collapse repeated identical errors; `0` turns it off |
+| `LOG_TRUNCATE_IP` | `false` | log the network of `peer` and `ip` instead of the address (data minimisation) |
 
 It writes to standard error (`WithLogOutput(w)` changes that). When [Telegram logging](/docs/digging-deeper/telegram-logging) is configured, the same records also go to the chat.
 
@@ -112,6 +113,7 @@ The [scheduler](/docs/digging-deeper/scheduler) logs to `schedule.Options.Log` (
 
 | Message | Level | When |
 | --- | --- | --- |
+| `scheduled task done` | `INFO` | the task finished without error (`took` field) |
 | `scheduled task failed` | `ERROR` | the task returned an error (`err` field) |
 | `scheduled task skipped: still running` | `INFO` | `WithoutOverlapping` and the previous run has not finished |
 | `scheduled task skipped: another server runs it` | `INFO` | `OnOneServer` and another server holds the lock |
