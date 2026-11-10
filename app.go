@@ -438,8 +438,6 @@ type options struct {
 
 // New builds an App: it loads and validates configuration and registers
 // providers. It refuses insecure configuration (see docs/security.md, A02).
-//
-//nolint:gocognit // composition root; options apply in a fixed order
 func New(opts ...Option) (*App, error) {
 	o := options{kind: KindWeb}
 
@@ -449,26 +447,9 @@ func New(opts ...Option) (*App, error) {
 		}
 	}
 
-	src := o.source
-	if src == nil {
-		fsys, getenv := o.fsys, o.getenv
-		if fsys == nil {
-			fsys = os.DirFS(".")
-		}
-
-		if getenv == nil {
-			getenv = os.LookupEnv
-		}
-
-		readFile := o.readFile
-		if readFile == nil {
-			readFile = readConfigFile
-		}
-
-		var err error
-		if src, err = config.LoadSource(fsys, getenv, readFile); err != nil {
-			return nil, err
-		}
+	src, err := appSource(&o)
+	if err != nil {
+		return nil, err
 	}
 
 	if o.envDefaults != nil {
@@ -501,49 +482,12 @@ func New(opts ...Option) (*App, error) {
 		return nil, err
 	}
 
-	logger := o.logger
-	ownLogger := logger == nil
-
-	if ownLogger {
-		out := o.logOut
-		if out == nil {
-			out = os.Stderr
-		}
-
-		logger = newLogger(&cfg, out)
-	}
-
-	tg, tgLogs, err := telegramHandler(src, &cfg, o.telegram)
+	logs, err := newAppLogging(&o, &cfg, src, dedupWindow)
 	if err != nil {
 		return nil, err
 	}
 
-	if tgLogs {
-		logger = slog.New(slog.NewMultiHandler(logger.Handler(), tg))
-	}
-
-	// Dedup sits in front of Telegram too, so an error burst is one chat
-	// message plus a summary. A WithLogger logger is used as given.
-	var dedup *logging.Dedup
-	if ownLogger && dedupWindow > 0 {
-		dedup = logging.NewDedup(logger.Handler(), logging.DedupOptions{Window: dedupWindow})
-		logger = slog.New(dedup)
-	}
-
-	stdout := o.stdout
-	if stdout == nil {
-		stdout = os.Stdout
-	}
-
-	errOut := o.stderr
-	if errOut == nil {
-		errOut = os.Stderr
-	}
-
-	stdin := o.stdin
-	if stdin == nil {
-		stdin = os.Stdin
-	}
+	logger := logs.log
 
 	now := o.now
 	if now == nil {
@@ -577,9 +521,9 @@ func New(opts ...Option) (*App, error) {
 		fuzzAuth:  o.fuzzAuth,
 		providers: o.providers,
 		runners:   o.runners,
-		stdout:    stdout,
-		stderr:    errOut,
-		stdin:     stdin,
+		stdout:    cmp.Or(o.stdout, io.Writer(os.Stdout)),
+		stderr:    cmp.Or(o.stderr, io.Writer(os.Stderr)),
+		stdin:     cmp.Or(o.stdin, io.Reader(os.Stdin)),
 		ready:     o.ready,
 		tlsConfig: o.tlsConfig,
 		noHTTP:    o.noHTTP,
@@ -612,17 +556,7 @@ func New(opts ...Option) (*App, error) {
 
 	app.Router = app.newRouter()
 
-	if catchAll := slices.ContainsFunc(proxies, func(n *net.IPNet) bool {
-		ones, _ := n.Mask.Size()
-		return ones == 0
-	}); catchAll {
-		app.Log.Warn("TRUSTED_PROXIES trusts every address: any client can set its own c.IP(); " +
-			"trust only the proxy's network")
-	}
-
-	if cfg.HSTSForce && !cfg.IsProduction() {
-		app.Log.Warn("HSTS_FORCE is ignored outside production: HSTS is not forced", "env", string(cfg.Env))
-	}
+	app.warnProxiesAndHSTS()
 	routes = app.Router
 
 	// Before the providers run, so a provider's AddHealthCheck with the
@@ -635,165 +569,23 @@ func New(opts ...Option) (*App, error) {
 		app.enableDevtools(dt)
 	}
 
-	app.Telegram = tg
-	app.telegramLogs = tgLogs
+	app.attachLogging(logs)
+	app.initEvents(&o, dt)
 
-	if tg.Configured() {
-		app.OnShutdown(tg.Close)
-	}
-
-	if dedup != nil {
-		// Registered after Telegram so it runs first: the pending summaries
-		// still reach the chat.
-		app.OnShutdown(dedup.Close)
-	}
-
-	app.Events = events.New(app.Log, 0)
-	app.Events.Register(o.listeners...)
-
-	if o.eventsFake != nil {
-		app.Events.RecordTo(o.eventsFake)
-	}
-
-	if dt != nil {
-		app.Events.SetObserver(dt)
-	}
-	app.Router.Services().Events = app.Events
-	app.Events.SetQueue(func() (events.Enqueuer, error) { return app.Queue() })
-	app.OnShutdown(app.Events.Shutdown)
-
-	qcfg, err := configLoad[QueueConfig](app)
-	if err != nil {
+	if err := app.addServeRunners(&o); err != nil {
 		return nil, err
 	}
 
-	if app.Kind == KindWeb && qcfg.inServe(o.queueDriver != nil || o.queueFunc != nil) {
-		app.AddRunner("queue", app.queueRunner(qcfg))
-	}
-
-	scfg, err := configLoad[ScheduleConfig](app)
-	if err != nil {
+	if err := app.initFrontend(&o); err != nil {
 		return nil, err
 	}
 
-	if scfg.InServe && app.Kind == KindWeb {
-		app.AddRunner("schedule", app.scheduleRunner())
+	if err := app.initViews(&o); err != nil {
+		return nil, err
 	}
 
-	if o.vite != nil {
-		// A hot file left by a killed dev server must not point tests or
-		// production at a dead Vite port (VE-7).
-		public := o.vite
-		if cfg.Env == config.Test {
-			// Dev stays on so a missing build renders a comment, not an error.
-			public = withoutHotFile{o.vite}
-		}
-
-		if app.Vite, err = vite.New(vite.Config{FS: public, Dev: !cfg.IsProduction()}); err != nil {
-			return nil, err
-		}
-
-		if hot := app.Vite.HotURL(); hot != "" {
-			app.Log.Warn("vite: the public hot file points assets and SSR at the dev server; "+
-				"delete it if the dev server is not running", "file", "hot", "url", hot)
-		}
-	}
-
-	if o.lang != nil {
-		if app.I18n, err = i18n.Load(o.lang, i18n.Options{Default: app.Source.Get("APP_LOCALE")}); err != nil {
-			return nil, err
-		}
-
-		if err := app.I18n.AddBuiltin(); err != nil {
-			return nil, err
-		}
-	}
-
-	if o.inertia != nil {
-		icfg := *o.inertia
-		if icfg.Version == nil && app.Vite != nil {
-			icfg.Version = app.Vite.Version
-		}
-
-		if icfg.SSR != nil && icfg.SSR.HotURL == nil && app.Vite != nil {
-			ssr := *icfg.SSR
-			ssr.HotURL = app.Vite.HotURL
-			icfg.SSR = &ssr
-		}
-
-		if app.Inertia, err = inertia.New(icfg); err != nil {
-			return nil, err
-		}
-
-		// Strict SSR answers 503 when the SSR server is down, so the instance
-		// is not ready without it.
-		if icfg.SSR != nil && icfg.SSR.Strict {
-			app.AddHealthCheck("inertia-ssr", app.Inertia.SSRHealthy)
-		}
-
-		// Set only when nil, so a hook installed earlier is kept; routes run
-		// later and may replace it.
-		if app.Router.Services().ErrorPage == nil {
-			app.Router.Services().ErrorPage = app.Inertia.ErrorPage
-		}
-
-		// Without WithEnv the project is the working directory, as for config.
-		project := o.fsys
-		if project == nil {
-			project = os.DirFS(".")
-		}
-
-		if comp := cmp.Or(icfg.ErrorComponent, "Error"); !cfg.IsProduction() && app.Kind == KindWeb &&
-			inertiaPageMissing(project, comp) {
-			app.Log.Warn("inertia error page not found: errors on Inertia visits will not render",
-				"component", comp, "want", inertiaPagesDir+"/"+comp+".{tsx,vue,svelte}",
-				"fix", "add the page, set inertia.Config.ErrorComponent, or set app.Router.Services().ErrorPage = nil")
-		}
-	}
-
-	if o.views == nil && o.reactEmails == nil && len(o.viewFuncs) > 0 {
-		return nil, errors.New("vukem: WithViewFuncs needs WithViews")
-	}
-
-	if o.views != nil {
-		engine, err := view.New(view.Config{
-			FS: o.views, Reload: !cfg.IsProduction(), URLs: app.Router, Vite: app.Vite, I18n: app.I18n,
-			Funcs: o.viewFuncs, Analytics: cfg.Analytics,
-		})
-		if err != nil {
-			return nil, err
-		}
-
-		app.Views = engine
-		app.Router.Services().Views = engine
-	}
-
-	if o.reactEmails != nil {
-		// No layouts: an exported React Email page is a whole document.
-		engine, err := view.New(view.Config{
-			FS: o.reactEmails, Reload: !cfg.IsProduction(), URLs: app.Router, I18n: app.I18n, Funcs: o.viewFuncs,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("vukem: WithReactEmails: %w", err)
-		}
-
-		app.mail.react = engine
-	}
-
-	for _, p := range app.providers {
-		if !runsIn(p, app.Kind) {
-			continue
-		}
-
-		if err := p.Register(app); err != nil {
-			return nil, fmt.Errorf("vukem: register %T: %w", p, err)
-		}
-	}
-
-	for _, fn := range o.routes {
-		if err := fn(app.Router, app); err != nil {
-			return nil, fmt.Errorf("vukem: routes: %w", err)
-		}
+	if err := app.registerProvidersAndRoutes(&o); err != nil {
+		return nil, err
 	}
 
 	app.bootRoutes = o.bootRoutes
@@ -804,6 +596,285 @@ func New(opts ...Option) (*App, error) {
 	}
 
 	return app, nil
+}
+
+// appSource is the WithSource source, or the one loaded from the WithEnv
+// file system (the working directory by default) and environment.
+func appSource(o *options) (*config.Source, error) {
+	if o.source != nil {
+		return o.source, nil
+	}
+
+	fsys, getenv := o.fsys, o.getenv
+	if fsys == nil {
+		fsys = os.DirFS(".")
+	}
+
+	if getenv == nil {
+		getenv = os.LookupEnv
+	}
+
+	readFile := o.readFile
+	if readFile == nil {
+		readFile = readConfigFile
+	}
+
+	return config.LoadSource(fsys, getenv, readFile)
+}
+
+// appLogging is the logger New builds, with the Telegram and dedup
+// handlers whose shutdown hooks attachLogging registers.
+type appLogging struct {
+	log    *slog.Logger
+	tg     *telegram.Handler
+	tgLogs bool
+	dedup  *logging.Dedup
+}
+
+func newAppLogging(o *options, cfg *Config, src *config.Source, dedupWindow time.Duration) (appLogging, error) {
+	logger := o.logger
+	ownLogger := logger == nil
+
+	if ownLogger {
+		out := o.logOut
+		if out == nil {
+			out = os.Stderr
+		}
+
+		logger = newLogger(cfg, out)
+	}
+
+	tg, tgLogs, err := telegramHandler(src, cfg, o.telegram)
+	if err != nil {
+		return appLogging{}, err
+	}
+
+	if tgLogs {
+		logger = slog.New(slog.NewMultiHandler(logger.Handler(), tg))
+	}
+
+	// Dedup sits in front of Telegram too, so an error burst is one chat
+	// message plus a summary. A WithLogger logger is used as given.
+	var dedup *logging.Dedup
+	if ownLogger && dedupWindow > 0 {
+		dedup = logging.NewDedup(logger.Handler(), logging.DedupOptions{Window: dedupWindow})
+		logger = slog.New(dedup)
+	}
+
+	return appLogging{log: logger, tg: tg, tgLogs: tgLogs, dedup: dedup}, nil
+}
+
+func (a *App) warnProxiesAndHSTS() {
+	if catchAll := slices.ContainsFunc(a.proxies, func(n *net.IPNet) bool {
+		ones, _ := n.Mask.Size()
+		return ones == 0
+	}); catchAll {
+		a.Log.Warn("TRUSTED_PROXIES trusts every address: any client can set its own c.IP(); " +
+			"trust only the proxy's network")
+	}
+
+	if a.Config.HSTSForce && !a.Config.IsProduction() {
+		a.Log.Warn("HSTS_FORCE is ignored outside production: HSTS is not forced", "env", string(a.Config.Env))
+	}
+}
+
+func (a *App) attachLogging(logs appLogging) {
+	a.Telegram = logs.tg
+	a.telegramLogs = logs.tgLogs
+
+	if logs.tg.Configured() {
+		a.OnShutdown(logs.tg.Close)
+	}
+
+	if logs.dedup != nil {
+		// Registered after Telegram so it runs first: the pending summaries
+		// still reach the chat.
+		a.OnShutdown(logs.dedup.Close)
+	}
+}
+
+func (a *App) initEvents(o *options, dt *devtools.Devtools) {
+	a.Events = events.New(a.Log, 0)
+	a.Events.Register(o.listeners...)
+
+	if o.eventsFake != nil {
+		a.Events.RecordTo(o.eventsFake)
+	}
+
+	if dt != nil {
+		a.Events.SetObserver(dt)
+	}
+	a.Router.Services().Events = a.Events
+	a.Events.SetQueue(func() (events.Enqueuer, error) { return a.Queue() })
+	a.OnShutdown(a.Events.Shutdown)
+}
+
+// addServeRunners runs the queue worker and the scheduler inside serve
+// when their config asks for it.
+func (a *App) addServeRunners(o *options) error {
+	qcfg, err := configLoad[QueueConfig](a)
+	if err != nil {
+		return err
+	}
+
+	if a.Kind == KindWeb && qcfg.inServe(o.queueDriver != nil || o.queueFunc != nil) {
+		a.AddRunner("queue", a.queueRunner(qcfg))
+	}
+
+	scfg, err := configLoad[ScheduleConfig](a)
+	if err != nil {
+		return err
+	}
+
+	if scfg.InServe && a.Kind == KindWeb {
+		a.AddRunner("schedule", a.scheduleRunner())
+	}
+
+	return nil
+}
+
+// initFrontend sets up Vite, then i18n, then Inertia, which reads Vite.
+func (a *App) initFrontend(o *options) error {
+	if o.vite != nil {
+		if err := a.initVite(o.vite); err != nil {
+			return err
+		}
+	}
+
+	if o.lang != nil {
+		var err error
+		if a.I18n, err = i18n.Load(o.lang, i18n.Options{Default: a.Source.Get("APP_LOCALE")}); err != nil {
+			return err
+		}
+
+		if err := a.I18n.AddBuiltin(); err != nil {
+			return err
+		}
+	}
+
+	if o.inertia != nil {
+		return a.initInertia(*o.inertia, o.fsys)
+	}
+
+	return nil
+}
+
+func (a *App) initVite(fsys fs.FS) error {
+	// A hot file left by a killed dev server must not point tests or
+	// production at a dead Vite port (VE-7).
+	public := fsys
+	if a.Config.Env == config.Test {
+		// Dev stays on so a missing build renders a comment, not an error.
+		public = withoutHotFile{fsys}
+	}
+
+	var err error
+	if a.Vite, err = vite.New(vite.Config{FS: public, Dev: !a.Config.IsProduction()}); err != nil {
+		return err
+	}
+
+	if hot := a.Vite.HotURL(); hot != "" {
+		a.Log.Warn("vite: the public hot file points assets and SSR at the dev server; "+
+			"delete it if the dev server is not running", "file", "hot", "url", hot)
+	}
+
+	return nil
+}
+
+func (a *App) initInertia(icfg inertia.Config, project fs.FS) error {
+	if icfg.Version == nil && a.Vite != nil {
+		icfg.Version = a.Vite.Version
+	}
+
+	if icfg.SSR != nil && icfg.SSR.HotURL == nil && a.Vite != nil {
+		ssr := *icfg.SSR
+		ssr.HotURL = a.Vite.HotURL
+		icfg.SSR = &ssr
+	}
+
+	var err error
+	if a.Inertia, err = inertia.New(icfg); err != nil {
+		return err
+	}
+
+	// Strict SSR answers 503 when the SSR server is down, so the instance
+	// is not ready without it.
+	if icfg.SSR != nil && icfg.SSR.Strict {
+		a.AddHealthCheck("inertia-ssr", a.Inertia.SSRHealthy)
+	}
+
+	// Set only when nil, so a hook installed earlier is kept; routes run
+	// later and may replace it.
+	if a.Router.Services().ErrorPage == nil {
+		a.Router.Services().ErrorPage = a.Inertia.ErrorPage
+	}
+
+	// Without WithEnv the project is the working directory, as for config.
+	if project == nil {
+		project = os.DirFS(".")
+	}
+
+	if comp := cmp.Or(icfg.ErrorComponent, "Error"); !a.Config.IsProduction() && a.Kind == KindWeb &&
+		inertiaPageMissing(project, comp) {
+		a.Log.Warn("inertia error page not found: errors on Inertia visits will not render",
+			"component", comp, "want", inertiaPagesDir+"/"+comp+".{tsx,vue,svelte}",
+			"fix", "add the page, set inertia.Config.ErrorComponent, or set app.Router.Services().ErrorPage = nil")
+	}
+
+	return nil
+}
+
+func (a *App) initViews(o *options) error {
+	if o.views == nil && o.reactEmails == nil && len(o.viewFuncs) > 0 {
+		return errors.New("vukem: WithViewFuncs needs WithViews")
+	}
+
+	if o.views != nil {
+		engine, err := view.New(view.Config{
+			FS: o.views, Reload: !a.Config.IsProduction(), URLs: a.Router, Vite: a.Vite, I18n: a.I18n,
+			Funcs: o.viewFuncs, Analytics: a.Config.Analytics,
+		})
+		if err != nil {
+			return err
+		}
+
+		a.Views = engine
+		a.Router.Services().Views = engine
+	}
+
+	if o.reactEmails != nil {
+		// No layouts: an exported React Email page is a whole document.
+		engine, err := view.New(view.Config{
+			FS: o.reactEmails, Reload: !a.Config.IsProduction(), URLs: a.Router, I18n: a.I18n, Funcs: o.viewFuncs,
+		})
+		if err != nil {
+			return fmt.Errorf("vukem: WithReactEmails: %w", err)
+		}
+
+		a.mail.react = engine
+	}
+
+	return nil
+}
+
+func (a *App) registerProvidersAndRoutes(o *options) error {
+	for _, p := range a.providers {
+		if !runsIn(p, a.Kind) {
+			continue
+		}
+
+		if err := p.Register(a); err != nil {
+			return fmt.Errorf("vukem: register %T: %w", p, err)
+		}
+	}
+
+	for _, fn := range o.routes {
+		if err := fn(a.Router, a); err != nil {
+			return fmt.Errorf("vukem: routes: %w", err)
+		}
+	}
+
+	return nil
 }
 
 // Stdout is where commands print results (WithStdout, os.Stdout by
