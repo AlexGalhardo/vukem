@@ -696,8 +696,30 @@ func (q Query[T]) countSQL() (string, []any, error) {
 
 // Exists reports whether any row matches (without row locks, see Count).
 func (q Query[T]) Exists(ctx context.Context) (bool, error) {
-	n, err := q.Limit(1).Count(ctx)
-	return n > 0, err
+	if q.err != nil {
+		return false, q.err
+	}
+
+	q.orders, q.offset, q.lock, q.wait = nil, 0, "", ""
+	q.limit = 1
+
+	query, args, err := q.selectSQL("1")
+	if err != nil {
+		return false, err
+	}
+
+	var one int
+
+	err = q.ex.QueryRowContext(ctx, query, args...).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+
+	if err != nil {
+		return false, fmt.Errorf("orm: exists %s: %w", q.m.table, err)
+	}
+
+	return true, nil
 }
 
 // Pluck returns one column of every matching row as []V.
