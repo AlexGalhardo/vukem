@@ -75,3 +75,15 @@ func TestQRSVG(t *testing.T) {
 		t.Errorf("QR(2332 bytes) error = %v, want ErrTooLong", err)
 	}
 }
+
+func TestQRRefusesEmptyText(t *testing.T) {
+	t.Parallel()
+
+	if _, err := totp.QR("", 200); !errors.Is(err, totp.ErrEmpty) {
+		t.Errorf("QR(\"\") error = %v, want ErrEmpty", err)
+	}
+
+	if _, err := totp.QRMatrix(""); !errors.Is(err, totp.ErrEmpty) {
+		t.Errorf("QRMatrix(\"\") error = %v, want ErrEmpty", err)
+	}
+}

@@ -13,6 +13,9 @@ import (
 // ErrTooLong is returned when the text does not fit a version 40 code.
 var ErrTooLong = errors.New("totp: text too long for a QR code")
 
+// ErrEmpty is returned for empty text: a QR of nothing scans as a blank code.
+var ErrEmpty = errors.New("totp: no text for a QR code")
+
 type qrVersion struct {
 	ec     int      // EC codewords per block
 	blocks [][2]int // {count, data codewords per block}
@@ -100,6 +103,10 @@ func (v qrVersion) dataCodewords() int {
 // QRMatrix encodes text and returns the module matrix (true = dark),
 // without the quiet zone.
 func QRMatrix(text string) ([][]bool, error) {
+	if text == "" {
+		return nil, ErrEmpty
+	}
+
 	data := []byte(text)
 
 	ver := 0
