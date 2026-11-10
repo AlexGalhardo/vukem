@@ -9,8 +9,11 @@ import { NotFoundView } from "@/components/not-found-view";
     (function () {
       var path = location.pathname;
       if (path !== "/pt-br" && path.indexOf("/pt-br/") !== 0) return;
-      var next = path.slice("/pt-br".length) || "/";
-      location.replace(next + location.search + location.hash);
+      // Rebuilt as a same-origin URL: "/pt-br//host" must not become "//host".
+      var rest = path.slice("/pt-br".length).replace(/^[\/\\]+/, "");
+      var url = new URL("/" + rest, location.origin);
+      if (url.origin !== location.origin) return;
+      location.replace(url.pathname + location.search + location.hash);
     })();
   </script>
 </Base>
