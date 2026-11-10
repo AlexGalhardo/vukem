@@ -29,64 +29,18 @@ func (s SliceSchema) GoType() reflect.Type { return reflect.SliceOf(s.elem.GoTyp
 
 func (s SliceSchema) optional() bool { return s.o.optional || s.o.hasDef }
 
-//nolint:gocognit // slice parse with min/max/unique and per-element issues in one pass
 func (s SliceSchema) parseAny(c *pctx, path string, in any, present bool) (any, bool, bool) {
 	return parse(&s.o, c, path, in, present, false, func(c *pctx, path string, in any) (any, bool) {
-		items, isList := in.([]any)
-		if !isList {
-			if rv := reflect.ValueOf(
-				in,
-			); rv.IsValid() && rv.Kind() == reflect.Slice &&
-				rv.Type() != reflect.TypeFor[[]byte]() {
-				items = make([]any, rv.Len())
-				for i := range items {
-					items[i] = rv.Index(i).Interface()
-				}
-			} else if _, isStr := in.(string); isStr &&
-				c.coerce {
-				items = []any{in}
-			} else {
-				s.o.issue(
-					c,
-					path,
-					CodeInvalidType,
-					CodeInvalidType,
-					map[string]any{"expected": "a list", "received": typeName(in)},
-				)
-				return nil, false
-			}
+		items, ok := s.listItems(c, path, in)
+		if !ok {
+			return nil, false
 		}
 
 		before := len(c.issues)
 
-		switch n := len(items); {
-		case s.length >= 0 && n != s.length:
-			code := CodeTooSmall
-			if n > s.length {
-				code = CodeTooBig
-			}
+		s.checkLen(c, path, len(items))
 
-			s.o.issue(c, path, code, "exact.array", map[string]any{"len": s.length})
-		case s.min >= 0 && n < s.min:
-			s.o.issue(c, path, CodeTooSmall, "too_small.array", map[string]any{"min": s.min})
-		case s.max >= 0 && n > s.max:
-			s.o.issue(c, path, CodeTooBig, "too_big.array", map[string]any{"max": s.max})
-		}
-
-		out := reflect.MakeSlice(s.GoType(), 0, len(items))
-
-		for i, item := range items {
-			v, set, ok := s.elem.parseAny(c, joinPath(path, strconv.Itoa(i)), item, true)
-			if !ok {
-				continue
-			}
-
-			if set {
-				out = reflect.Append(out, reflect.ValueOf(v))
-			} else {
-				out = reflect.Append(out, reflect.Zero(s.elem.GoType()))
-			}
-		}
+		out := s.parseItems(c, path, items)
 
 		if s.unique && len(c.issues) == before && hasDuplicates(out) {
 			s.o.issue(c, path, CodeNotUnique, CodeNotUnique, nil)
@@ -94,6 +48,67 @@ func (s SliceSchema) parseAny(c *pctx, path string, in any, present bool) (any, 
 
 		return out.Interface(), len(c.issues) == before
 	})
+}
+
+// listItems accepts a decoded list, any Go slice but []byte, or (when
+// coercing, as from forms) a single string as a one-element list.
+func (s SliceSchema) listItems(c *pctx, path string, in any) ([]any, bool) {
+	if items, isList := in.([]any); isList {
+		return items, true
+	}
+
+	if rv := reflect.ValueOf(in); rv.IsValid() && rv.Kind() == reflect.Slice && rv.Type() != reflect.TypeFor[[]byte]() {
+		items := make([]any, rv.Len())
+		for i := range items {
+			items[i] = rv.Index(i).Interface()
+		}
+
+		return items, true
+	}
+
+	if _, isStr := in.(string); isStr && c.coerce {
+		return []any{in}, true
+	}
+
+	s.o.issue(c, path, CodeInvalidType, CodeInvalidType,
+		map[string]any{"expected": "a list", "received": typeName(in)})
+
+	return nil, false
+}
+
+func (s SliceSchema) checkLen(c *pctx, path string, n int) {
+	switch {
+	case s.length >= 0 && n != s.length:
+		code := CodeTooSmall
+		if n > s.length {
+			code = CodeTooBig
+		}
+
+		s.o.issue(c, path, code, "exact.array", map[string]any{"len": s.length})
+	case s.min >= 0 && n < s.min:
+		s.o.issue(c, path, CodeTooSmall, "too_small.array", map[string]any{"min": s.min})
+	case s.max >= 0 && n > s.max:
+		s.o.issue(c, path, CodeTooBig, "too_big.array", map[string]any{"max": s.max})
+	}
+}
+
+func (s SliceSchema) parseItems(c *pctx, path string, items []any) reflect.Value {
+	out := reflect.MakeSlice(s.GoType(), 0, len(items))
+
+	for i, item := range items {
+		v, set, ok := s.elem.parseAny(c, joinPath(path, strconv.Itoa(i)), item, true)
+		if !ok {
+			continue
+		}
+
+		if set {
+			out = reflect.Append(out, reflect.ValueOf(v))
+		} else {
+			out = reflect.Append(out, reflect.Zero(s.elem.GoType()))
+		}
+	}
+
+	return out
 }
 
 func hasDuplicates(v reflect.Value) bool {
