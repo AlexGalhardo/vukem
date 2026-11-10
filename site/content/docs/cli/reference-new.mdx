@@ -38,7 +38,7 @@ vukem new [flags] <name>
 | `-license` | string | none | `mit`: `LICENSE`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`, and the GitHub issue and pull request templates. |
 | `-ci` | bool | `false` | `.github/workflows/ci.yml` (with a pinned Betterleaks secret-scanning job), `.github/workflows/release.yml`, `scripts/release-notes.go`, `.github/dependabot.yml` and `.betterleaks.toml`. `release.yml` publishes the matching `CHANGELOG.md` section, then pushes the image to GHCR and attests the build. It fails when that section is missing or empty, before either publish. GoReleaser runs only when `.config/goreleaser.yaml` or `.goreleaser.yaml` exists. Also writes `.github/pull_request_template.md`, the `.github/ISSUE_TEMPLATE/` forms and, for a `github.com/<owner>/<repo>` module path, `.github/CODEOWNERS`. |
 | `-deploy` | string | none | `railway`: `.railway/railway.ts`. |
-| `-docker` | bool | `false` | `compose.yaml` with the app, PostgreSQL and a mail catcher, plus its `.env` block. |
+| `-docker` | bool | `false` | `compose.yaml` with the app, PostgreSQL and a mail catcher, plus its `.env` block. Every published port (3000, 5432, 8025) is bound to `127.0.0.1`, so the stack is not reachable from the network. |
 
 **Interactions and conflicts**
 
