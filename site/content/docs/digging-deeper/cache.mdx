@@ -240,7 +240,8 @@ Why step 2 matters: when a popular key expires, a hundred requests can miss it a
 A few details:
 
 - A waiting request stops waiting when its own context is cancelled (the client went away) and returns `ctx.Err()`.
-- Waiters share the leader's error too. If the query fails, every waiter of that round gets the same error.
+- Waiters share the leader's error too. If the query fails, every waiter of that round gets the same error. The exception is a leader whose own context ended (`context.Canceled` or `context.DeadlineExceeded`) while the waiter's context is still live: the waiter does not inherit that error and calls `Remember` again, so it computes the value itself.
+- If the leader's function panics, the panic continues in the leader and each waiter gets the error `cache: Remember callback panicked`.
 - Singleflight works inside one process. Two servers that miss at the same time each run the function once.
 - Waiters receive a value decoded from the same JSON that was stored, so they see exactly what later `Get` calls will see.
 
