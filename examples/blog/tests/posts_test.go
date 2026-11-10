@@ -24,7 +24,7 @@ func TestAuthorsWritePosts(t *testing.T) {
 	post, _ := orm.QueryOf[models.Post](db).Where("title", "Hello Vukem").First(t.Context())
 	path := "/posts/" + strconv.FormatInt(post.ID, 10)
 
-	c.Get(path).AssertOK().AssertSee("by ana@example.com").AssertSee("Edit")
+	c.Get(path).AssertOK().AssertSee("by ana").AssertSee("Edit")
 	app.Client(t).Get(path).AssertOK().AssertDontSee(">Edit<")
 	app.Client(t).Get("/posts").AssertOK().AssertSee("Hello Vukem")
 
@@ -80,9 +80,16 @@ func TestCommentsAndEagerLoading(t *testing.T) {
 
 	app.Client(t).Get(path).AssertOK().AssertSee("Nice post!").AssertDontSee("Anonymous")
 
+	// The JSON wire format names the author but never exposes the address.
 	app.Client(t).GetJSON(path).AssertOK().
-		AssertJSONPath("author.email", "ana@example.com").
-		AssertJSONCount("comments", 1)
+		AssertJSONPath("author.name", ana.Name).
+		AssertJSONCount("comments", 1).
+		AssertDontSee("ana@example.com").
+		AssertDontSee("bob@example.com")
+
+	app.Client(t).GetJSON("/posts").AssertOK().
+		AssertJSONPath("data.0.author.name", ana.Name).
+		AssertDontSee("ana@example.com")
 }
 
 func TestSeeder(t *testing.T) {

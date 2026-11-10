@@ -8,6 +8,7 @@ import (
 	"github.com/AlexGalhardo/vukem/database"
 	"github.com/AlexGalhardo/vukem/examples/blog/app/models"
 	"github.com/AlexGalhardo/vukem/examples/blog/app/requests"
+	"github.com/AlexGalhardo/vukem/examples/blog/app/resources"
 	"github.com/AlexGalhardo/vukem/orm"
 	"github.com/AlexGalhardo/vukem/web"
 )
@@ -34,7 +35,7 @@ func (pc *PostController) Index(c *web.Ctx) error {
 	}
 
 	if c.WantsJSON() {
-		return c.JSON(http.StatusOK, map[string]any{"data": posts})
+		return c.JSON(http.StatusOK, map[string]any{"data": resources.Posts(posts)})
 	}
 
 	return c.Render("posts/index", map[string]any{"Posts": posts, "Search": c.Query("q")}, web.Block("post-list"))
@@ -83,7 +84,7 @@ func (pc *PostController) Show(c *web.Ctx) error {
 	}
 
 	if c.WantsJSON() {
-		return c.JSON(http.StatusOK, post)
+		return c.JSON(http.StatusOK, resources.Post(post))
 	}
 
 	return c.Render("posts/show", &post)
