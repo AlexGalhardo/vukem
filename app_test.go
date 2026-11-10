@@ -545,6 +545,49 @@ func TestHTTPServerShutdownEndsSSEStreams(t *testing.T) {
 	}
 }
 
+func TestHTTPServerClosesConnectionsWhenDrainTimesOut(t *testing.T) {
+	t.Parallel()
+
+	started := make(chan struct{})
+	exited := make(chan struct{})
+	h := http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		defer close(exited)
+		close(started)
+		<-r.Context().Done()
+	})
+
+	srv := NewHTTPServer("127.0.0.1:0", h)
+	srv.ShutdownTimeout = 50 * time.Millisecond
+	ready := make(chan string, 1)
+	srv.Ready = ready
+
+	ctx, cancel := context.WithCancel(t.Context())
+	errc := make(chan error, 1)
+	go func() { errc <- srv.Run(ctx) }()
+
+	addr := <-ready
+
+	go func() {
+		req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+addr+"/", http.NoBody)
+		if res, err := http.DefaultClient.Do(req); err == nil {
+			_ = res.Body.Close()
+		}
+	}()
+
+	<-started
+	cancel()
+
+	if err := <-errc; !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Run() = %v, want DeadlineExceeded", err)
+	}
+
+	select {
+	case <-exited:
+	case <-time.After(5 * time.Second):
+		t.Fatal("handler still running after the drain timed out")
+	}
+}
+
 func TestHTTPServerListenError(t *testing.T) {
 	t.Parallel()
 

@@ -261,7 +261,11 @@ func (s *HTTPServer) Run(ctx context.Context) error {
 	defer cancel()
 
 	if err := s.Server.Shutdown(shutCtx); err != nil {
-		return err
+		// Handlers still running would outlive the providers Run shuts down
+		// next (the database pool): closing the connections cancels them.
+		_ = s.Server.Close()
+
+		return fmt.Errorf("vukem: http drain timed out after %s, open connections closed: %w", s.ShutdownTimeout, err)
 	}
 
 	if err := <-errc; err != nil && !errors.Is(err, http.ErrServerClosed) {
