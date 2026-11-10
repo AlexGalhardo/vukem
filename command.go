@@ -551,12 +551,24 @@ func ensureAppKeyFile(dir string, errw io.Writer) error {
 	}
 
 	text := string(src)
-	if value, ok := dotEnvValue(text, "APP_KEY"); ok && strings.TrimSpace(value) != "" {
-		fmt.Fprintln(errw, "APP_KEY already set")
-		return nil
+
+	entries, err := config.ParseEnv(strings.NewReader(text))
+	if err != nil {
+		return err
 	}
 
-	text = putDotEnv(text, "APP_KEY", config.GenerateKey())
+	for _, e := range slices.Backward(entries) {
+		if e.Key == "APP_KEY" {
+			if strings.TrimSpace(e.Value) != "" {
+				fmt.Fprintln(errw, "APP_KEY already set")
+				return nil
+			}
+
+			break
+		}
+	}
+
+	text = putAppKey(text, config.GenerateKey())
 	if err := writeDotEnv(p, []byte(text)); err != nil {
 		return err
 	}
@@ -566,28 +578,21 @@ func ensureAppKeyFile(dir string, errw io.Writer) error {
 	return nil
 }
 
-func dotEnvValue(text, key string) (string, bool) {
-	re := regexp.MustCompile(`(?m)^` + regexp.QuoteMeta(key) + `=(.*?)\r?$`)
+// appKeyLine mirrors the lines config.ParseEnv accepts (indent, optional
+// export, spaces around "="). Groups: lead, name and "=", value.
+var appKeyLine = regexp.MustCompile(`(?m)^([ \t]*(?:export[ \t]+)?)(APP_KEY[ \t]*=[ \t]*)([^\r\n]*)`)
 
-	m := re.FindStringSubmatch(text)
-	if m == nil {
-		return "", false
-	}
-
-	return m[1], true
-}
-
-func putDotEnv(text, key, value string) string {
-	re := regexp.MustCompile(`(?m)^` + regexp.QuoteMeta(key) + `=(.*?)\r?$`)
-	if m := re.FindStringSubmatchIndex(text); m != nil {
-		return text[:m[2]] + value + text[m[3]:]
+// putAppKey replaces the value of every APP_KEY line, or appends one.
+func putAppKey(text, value string) string {
+	if appKeyLine.MatchString(text) {
+		return appKeyLine.ReplaceAllString(text, "${1}${2}"+value)
 	}
 
 	if text != "" && !strings.HasSuffix(text, "\n") {
 		text += "\n"
 	}
 
-	return text + key + "=" + value + "\n"
+	return text + "APP_KEY=" + value + "\n"
 }
 
 // writeDotEnv replaces path through a temp file in the same directory.

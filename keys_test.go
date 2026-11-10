@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"net/http"
 	"net/http/httptest"
@@ -880,5 +881,74 @@ func TestBootRefusesBadPreviousKeys(t *testing.T) {
 	)
 	if err == nil || !strings.Contains(err.Error(), "APP_PREVIOUS_KEYS") {
 		t.Fatalf("New(short previous key) error = %v, want an APP_PREVIOUS_KEYS error", err)
+	}
+}
+
+func TestRunMain_KeyGenerateIfMissingForms(t *testing.T) {
+	valid := config.GenerateKey()
+
+	tests := []struct {
+		name    string
+		env     string
+		changed bool
+	}{
+		{"export", "export APP_KEY=" + valid + "\n", false},
+		{"spaces", "APP_KEY = " + valid + "\n", false},
+		{"crlf", "APP_KEY=" + valid + "\r\nX=1\r\n", false},
+		{"empty double quotes", "APP_KEY=\"\"\nX=1\n", true},
+		{"empty single quotes", "APP_KEY=''\nX=1\n", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, ".env")
+
+			if err := os.WriteFile(path, []byte(tt.env), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			t.Chdir(dir)
+
+			var errOut bytes.Buffer
+
+			err := RunMain(t.Context(), []string{"app", "key:generate", "--if-missing"},
+				func(string) (string, bool) { return "", false },
+				func(...Option) (*App, error) { return nil, errors.New("build called") },
+				WithStdout(io.Discard), WithStderr(&errOut))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			got, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if !tt.changed {
+				if string(got) != tt.env || !strings.Contains(errOut.String(), "APP_KEY already set") {
+					t.Fatalf(".env = %q stderr = %q, want unchanged", got, errOut.String())
+				}
+
+				return
+			}
+
+			if strings.Count(string(got), "APP_KEY") != 1 || !strings.HasSuffix(string(got), "\nX=1\n") {
+				t.Fatalf(".env = %q, want the existing line rewritten in place", got)
+			}
+
+			entries, err := config.ParseEnv(strings.NewReader(string(got)))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			for _, e := range entries {
+				if e.Key == "APP_KEY" {
+					if _, err := config.ParseKey(config.NewSecret(e.Value)); err != nil {
+						t.Fatalf("ParseKey(written key) = %v", err)
+					}
+				}
+			}
+		})
 	}
 }
