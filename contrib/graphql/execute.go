@@ -479,7 +479,19 @@ func (e *executor) field(
 	g *fieldGroup,
 	fd *fieldType,
 	p *path,
-) (any, bool) {
+) (v any, ok bool) {
+	// Schema callbacks (Serialize, ResolveType, Stringer) run in complete,
+	// outside the resolver's own recover.
+	defer func() {
+		if r := recover(); r != nil {
+			e.s.log.ErrorContext(ctx, "graphql: panic", "path", fmt.Sprint(p.slice()), "panic", r,
+				"stack", string(debug.Stack()))
+			e.addError(ctx, fmt.Errorf("panic: %v", r), g.fields, p)
+
+			v, ok = nil, fd.typ.kind != kindNonNull
+		}
+	}()
+
 	f := g.fields[0]
 
 	if fd == e.s.metaTypename {
@@ -510,7 +522,7 @@ func (e *executor) field(
 		return nullResult()
 	}
 
-	v, err := e.resolve(ctx, fd, parent, args)
+	v, err = e.resolve(ctx, fd, parent, args)
 	if err != nil {
 		e.addError(ctx, err, g.fields, p)
 		return nullResult()
