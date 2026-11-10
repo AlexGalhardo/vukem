@@ -7,13 +7,10 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"regexp"
 	"strings"
 
 	"github.com/AlexGalhardo/vukem/config"
 )
-
-var appKeyLine = regexp.MustCompile(`(?m)^APP_KEY=(.*?)\r?$`)
 
 func keyGenerate(set *flag.FlagSet) func(context.Context, *Env, []string) error {
 	show := set.Bool("show", false, "print the key instead of writing .env")
@@ -56,12 +53,36 @@ func writeAppKeyIfMissing(env *Env) error {
 		return err
 	}
 
-	if m := appKeyLine.FindStringSubmatch(string(src)); len(m) > 1 && strings.TrimSpace(m[1]) != "" {
+	set, err := appKeySet(string(src))
+	if err != nil {
+		return err
+	}
+
+	if set {
 		fmt.Fprintln(env.Stderr, "APP_KEY already set")
 		return nil
 	}
 
 	return writeAppKey(env, config.GenerateKey(), false)
+}
+
+// appKeySet reports whether text defines a non-empty APP_KEY the way
+// config.ParseEnv reads it (export, spaces and quotes; the last line wins).
+func appKeySet(text string) (bool, error) {
+	entries, err := config.ParseEnv(strings.NewReader(text))
+	if err != nil {
+		return false, err
+	}
+
+	set := false
+
+	for _, e := range entries {
+		if e.Key == "APP_KEY" {
+			set = strings.TrimSpace(e.Value) != ""
+		}
+	}
+
+	return set, nil
 }
 
 // writeAppKey sets APP_KEY in .env, creating it from .env.example when
@@ -83,19 +104,25 @@ func writeAppKey(env *Env, key string, force bool) error {
 
 	text := string(src)
 
-	switch m := appKeyLine.FindStringSubmatchIndex(text); {
-	case m == nil:
+	set, err := appKeySet(text)
+	if err != nil {
+		return err
+	}
+
+	if set && !force {
+		return errors.New(
+			"APP_KEY is already set in .env (use --force to replace it; existing sessions and encrypted data become unreadable)",
+		)
+	}
+
+	if re := envLine("APP_KEY"); re.MatchString(text) {
+		text = setEnvValue(re, text, key)
+	} else {
 		if text != "" && !strings.HasSuffix(text, "\n") {
 			text += "\n"
 		}
 
 		text += "APP_KEY=" + key + "\n"
-	case strings.TrimSpace(text[m[2]:m[3]]) != "" && !force:
-		return errors.New(
-			"APP_KEY is already set in .env (use --force to replace it; existing sessions and encrypted data become unreadable)",
-		)
-	default:
-		text = text[:m[2]] + key + text[m[3]:]
 	}
 
 	if err := writeFileAtomic(p, []byte(text)); err != nil {
