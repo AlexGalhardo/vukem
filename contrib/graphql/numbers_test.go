@@ -2,6 +2,7 @@ package graphql_test
 
 import (
 	"context"
+	"net/http"
 	"strings"
 	"testing"
 	"testing/synctest"
@@ -71,4 +72,33 @@ func TestSecurity_A03_GraphQLRefusesIDOutOfInt64Range(t *testing.T) {
 			}
 		})
 	})
+}
+
+func TestHandlerSubscriptionOverHTTPIsRequestError(t *testing.T) {
+	t.Parallel()
+
+	s, _ := subApp(t)
+	h := s.Handler(graphql.HandlerConfig{})
+	body := `{"query":"subscription { countdown(from: 1) }"}`
+
+	tests := []struct {
+		accept string
+		want   int
+	}{
+		{"application/graphql-response+json", http.StatusBadRequest},
+		{"application/json", http.StatusOK},
+	}
+
+	for _, tt := range tests {
+		r := do(t, h, http.MethodPost, "/graphql", "application/json", tt.accept, body)
+		if r.status != tt.want || !strings.Contains(r.body, "errors") {
+			t.Errorf(
+				"subscription over HTTP with Accept %s = %d %s, want %d with errors",
+				tt.accept,
+				r.status,
+				r.body,
+				tt.want,
+			)
+		}
+	}
 }
