@@ -1432,8 +1432,11 @@ func ServeOpenAPIWith(app *App, r *router.Router, path string, opts OpenAPIOptio
 		prefix = app.Config.OpenAPIPrefix
 	}
 
+	// Routes are frozen once the router compiles: build the document once.
+	build := sync.OnceValues(func() (*openapi.Document, error) { return app.openAPI(prefix) })
+
 	return r.Get(path, func(c *web.Ctx) error {
-		doc, err := app.openAPI(prefix)
+		doc, err := build()
 		if err != nil {
 			return err
 		}
