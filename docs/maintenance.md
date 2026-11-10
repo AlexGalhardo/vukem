@@ -8,9 +8,9 @@ Every change reaches `main` through a pull request, including the maintainer's:
 
 1. Branch from `main` (`feat/…`, `fix/…`, `docs/…`, `release/vX.Y.Z`), commit with Conventional Commits, run `task ci`.
 2. `gh pr create --fill`; the PR title is validated by `pr-title.yml` and becomes the squash commit.
-3. Wait for the required checks (below), then merge: squash a single-change PR; rebase-merge a batch of Conventional Commits (`gh pr merge --rebase`), since git-cliff builds the changelog from each commit and a squash would leave only the PR title.
+3. Wait for the required checks (below), then merge: squash a single-change PR; rebase-merge a batch of Conventional Commits (`gh pr merge --rebase`), since git-cliff builds the changelog from each commit and a squash would leave only the PR title. GitHub refuses a rebase merge of a PR with more than 100 commits: split such a batch into several PRs.
 
-The `protect-main` ruleset enforces this. Its intended state is versioned in [`.config/ruleset-protect-main.json`](../.config/ruleset-protect-main.json): a pull request with 0 required approvals, the required status checks `Lint (Go)`, `API compatibility (apidiff)`, `Lint (OpenAPI golden)`, `Lint (Markdown)` and `Test (<os>, Go stable)` on Linux, Windows and macOS, linear history, no force push, no deletion and no bypass actors. Apply or re-apply it with:
+The `protect-main` ruleset enforces this. Its intended state is versioned in [`.config/ruleset-protect-main.json`](../.config/ruleset-protect-main.json): a pull request with 0 required approvals (stale reviews dismissed on push, review threads resolved), the required status checks `Lint (Go)`, `API compatibility (apidiff)`, `Lint (OpenAPI golden)`, `Lint (Markdown)` and `Test (<os>, Go stable)` on Linux, Windows and macOS (branch must be up to date with `main`), linear history, no force push, no deletion and no bypass actors. Apply or re-apply it with:
 
 ```sh
 gh api -X PUT repos/AlexGalhardo/vukem/rulesets/25297704 --input .config/ruleset-protect-main.json
@@ -61,7 +61,7 @@ A module added to the repository must be added to the `gomod` directories in `.g
 ## Security review routine
 
 1. A change in `auth`, `session`, `csrf`, `crypt`, `signed`, `storage`, `upload`, `router`, `orm` or `middleware` updates its row in [security.md](security.md) and its `TestSecurity_*` test in the same PR.
-2. A failure of `Fuzz`, `Vulnerabilities (weekly)` or `Scorecard` opens or updates an issue labelled `ci-failure` (`ci-failure.yml`). It blocks the next release until it is triaged: fixed, with the crasher committed under `testdata/fuzz/<Target>/`, or documented as a false positive.
+2. A failure of `Fuzz`, `Vulnerabilities (weekly)`, `Scorecard`, `Secrets` or `CodeQL` opens or updates an issue labelled `ci-failure` (`ci-failure.yml`). It blocks the next release until it is triaged: fixed, with the crasher committed under `testdata/fuzz/<Target>/`, or documented as a false positive.
 3. Quarterly: re-run [security-review.md](security-review.md) against the OWASP Top 10 and ASVS and record the date on that page.
 4. A security release gets a **Security** changelog entry (a `fix!:` commit with a `BREAKING CHANGE:` footer when it breaks an API), an `Insecure…` opt-out when reasonable, and an [apicheck exception](tooling.md#security-exceptions) when it breaks an API after `v1`.
 

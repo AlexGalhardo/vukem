@@ -11,7 +11,7 @@ Formatting, linting, hooks, commit conventions, changelog, releases and CI. Deci
 | Task | v3 | `winget install Task.Task` or `go install github.com/go-task/task/v3/cmd/task@latest` | `brew install go-task` |
 | lefthook | v2 | `winget install evilmartians.lefthook` | `brew install lefthook` |
 | git-cliff | latest | `winget install orhun.git-cliff` | `brew install git-cliff` |
-| Node.js | ≥ 22 | `winget install OpenJS.NodeJS` | — (markdownlint only) |
+| Node.js | ≥ 22 (CI uses 24) | `winget install OpenJS.NodeJS` | — (markdownlint and the docs site) |
 
 `task setup` installs remaining Go-based tools and the git hooks.
 
@@ -44,9 +44,9 @@ gopls: enable `"formatting.gofumpt": true` so editor and CI agree.
 
 | Hook | Jobs |
 | --- | --- |
-| `pre-commit` | `golangci-lint fmt` on staged `.go` (re-staged), `golangci-lint run --new-from-rev=HEAD`, `go mod tidy -diff`, `markdownlint-cli2` on staged `.md` |
+| `pre-commit` | `golangci-lint fmt` on staged `.go` (re-staged), `golangci-lint run --new-from-rev=HEAD`, `go mod tidy -diff`, `markdownlint-cli2` on staged `.md` (not `.claude/skills/`) |
 | `commit-msg` | `go run ./internal/tools/commitlint {1}` |
-| `pre-push` | `go vet ./...`, `govulncheck ./...` (tests, race and the OS matrix run in GitHub Actions) |
+| `pre-push` | `go vet ./...`, `govulncheck ./...`, `doc dates` (refreshes `site/content/last-updated.json` when `site/content/` changed; [maintenance](maintenance.md#release-routine)); tests, race and the OS matrix run in GitHub Actions |
 
 Install with `task hooks` (`lefthook install`). Personal overrides go in `lefthook-local.yml` (git-ignored).
 
@@ -104,13 +104,14 @@ The template lives in `.config/cliff.toml` (git-cliff is called with `--config .
 | ALPHA | `v0.N.0` (minor bump per group) | last ALPHA minor |
 | BETA | `v0.N.0` per group (B.0 = `v0.15.0`, B.1 = `v0.16.0`, …) | `v1.0.0` when BETA and the 1.0 exit criteria close (Q14) |
 
-1. Push the group's commits to `main`.
+1. Land the group's commits on `main` through a pull request (rebase-merge; split a PR above 100 commits, GitHub's limit for rebase merges).
 2. `go run ./internal/tools/release -push vX.Y.Z` (or `task release -- vX.Y.Z`, which runs `task ci:full` first) once GitHub Actions is green for the pushed commits:
    - requires a clean tree on `main`;
    - generates the version's section with git-cliff and inserts it below `[Unreleased]` in `CHANGELOG.md` (Keep a Changelog 1.1.0; released sections are never edited);
    - rewrites the "Updated" row of the [PLAN.md](PLAN.md#status) status table in the same commit;
    - commits `chore(release): vX.Y.Z`, creates an annotated tag, pushes `main` and the tag as two separate pushes (see [Tag pushes](#tag-pushes));
    - publishes a GitHub release whose notes are that changelog section (`v0.x` and pre-releases are marked pre-release), and **refuses to publish an empty body**: a release with an empty body is indistinguishable from a successful one, so an extraction that silently returns nothing fails the command instead.
+   - while `protect-main` requires pull requests, `-push` is rejected: use [Releasing through a pull request](maintenance.md#releasing-through-a-pull-request) instead;
    - with `-push`, once the tag is pushed, raises the `github.com/AlexGalhardo/vukem` requirement of every `contrib/*`, `drivers/*` and `examples/*` module to the released version (a `v0.0.0` placeholder is left alone), runs `GOWORK=off go mod tidy` in each changed module and pushes a follow-up `chore(deps): require vukem vX.Y.Z in nested modules` commit. It runs after the push because `go.sum` needs the version to resolve from the module proxy; `task mod:check` verifies the result.
 3. Missed a group? Cut it retroactively: `go run ./internal/tools/release -no-commit -ref <commit> vX.Y.Z`, tag `<commit>`, commit the changelog, push, and create the GitHub release from the section.
 4. Nested modules (`drivers/*`, `contrib/*`) are tagged separately as `<dir>/vX.Y.Z` (e.g. `drivers/redis/v0.4.0`) after the core release:
@@ -126,15 +127,17 @@ The template lives in `.config/cliff.toml` (git-cliff is called with `--config .
 
 | Workflow | Trigger | Jobs |
 | --- | --- | --- |
-| `ci.yml` | push to `main`, PRs | lint (per module, `snippetcheck`, `//nolint:gocognit` budget), unit matrix, integration (services), e2e, markdownlint, govulncheck, coverage gate, `apidiff` ([API compatibility](#api-compatibility)) |
+| `ci.yml` | push to `main`, PRs | lint (`go vet`, `go fix`, `fixinline`, `modcheck`, `snippetcheck`, `//nolint:gocognit` budget of 6), OpenAPI golden lint, markdownlint, test matrix (`-race`, e2e, coverage gate), govulncheck, one integration job per driver and contrib module, `apidiff` ([API compatibility](#api-compatibility)) |
 | `vuln.yml` | weekly, manual | govulncheck on the core and every module (`drivers/*`, `contrib/*`, `examples/*`, `internal/bench`) with `GOWORK=off` |
 | `fuzz.yml` | weekly, manual | every `Fuzz*` target for an hour; crashers uploaded as artifacts |
-| `ci-failure.yml` | `Fuzz`, `Vulnerabilities (weekly)` or `Scorecard` failed | opens or comments on a `ci-failure` issue ([maintenance](maintenance.md#security-review-routine)) |
+| `ci-failure.yml` | `Fuzz`, `Vulnerabilities (weekly)`, `Scorecard`, `Secrets` or `CodeQL` failed | opens or comments on a `ci-failure` issue ([maintenance](maintenance.md#security-review-routine)) |
 | `pr-title.yml` | PR opened/edited | semantic PR title |
 | `release.yml` | tag `v*`, manual (`version` input) | GoReleaser binaries, SBOMs, cosign keyless signature, build provenance |
 | `codeql.yml` | push, weekly | CodeQL Go |
+| `secrets.yml` | push to `main`, PRs, weekly, manual | Betterleaks secret scan ([maintenance](maintenance.md#secret-scanning)) |
+| `downstream.yml`, `bench.yml` | manual | app canary build against this checkout; benchmarks for comparison with [performance.md](performance.md) |
 | `scorecard.yml` | push to `main`, weekly | OpenSSF Scorecard |
-| `site.yml` | push to `main` and PRs touching `site/**` or `CHANGELOG.md` | docs site `npm ci`, lint, `astro build`, and `Last updated` (every docs page, full git history) |
+| `site.yml` | push to `main` and PRs touching `site/**` or `CHANGELOG.md` | docs site `npm ci`, `test:site`, lint, `check:mdx`, `astro build`, and `Last updated` (`test:scripts` + `check:last-updated`) (every docs page, full git history) |
 | `docs-last-updated.yml` | every push to `main`, every PR, manual | `Last updated` for every docs page, so a missing date fails even when the PR does not touch `site/` |
 | Dependabot | weekly | `gomod` (all modules, prefix `build(deps)`), `npm` (`site/`), `docker` (`docs/media`), `github-actions` (prefix `ci`) |
 
@@ -239,6 +242,9 @@ There is no baseline file: the latest stable `v1` tag of each module is the base
 | `task lint` | golangci-lint (all modules) + markdownlint |
 | `task test` | unit tests (all modules, `-short -timeout 20m`) |
 | `task test:e2e` | the slow tests `-short` skips (CLI scaffolds compiled and booted) |
+| `task mod:check` / `task snippets:check` | nested modules resolve with `GOWORK=off` / site Go snippets type-check (both in `task ci`) |
+| `task secrets:scan` | Betterleaks over the git history |
+| `task site:build` | site `npm ci`, `test:site`, lint, `check:mdx`, build |
 | `task test:race` | with `-race` |
 | `task test:integration` | integration tests |
 | `task cover` | coverage report + gate |
@@ -274,6 +280,6 @@ Add a new file to the root only when a tool cannot be pointed elsewhere; new roo
 
 - `AGENTS.md` — canonical agent instructions (≤ 50 lines, links to docs); the roadmap is [`docs/PLAN.md`](PLAN.md).
 - `.claude/CLAUDE.md` — imports `@../AGENTS.md`, Claude-specific notes.
-- `.claude/rules/` — path-scoped rules (`go.md`, `testing.md`, `commits.md`, `changelog.md`, `markdown.md`, `drivers.md`, `secure-coding.md`, `site.md`, `release.md`).
+- `.claude/rules/` — path-scoped rules (`go.md`, `testing.md`, `commits.md`, `changelog.md`, `markdown.md`, `drivers.md`, `secure-coding.md`, `site.md`, `release.md`, `docs-content.md`, `workflows.md`).
 - `.claude/skills/` — samber/cc-skills-golang + workflow skills, and `vukem-release` (the end-to-end release and app-bump cycle).
 - `.claude/settings.json` — permission allowlist (`go`, `golangci-lint`, `task`, `git` read commands) and a PostToolUse hook that runs `golangci-lint fmt` on edited `.go` files.
