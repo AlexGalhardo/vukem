@@ -722,3 +722,42 @@ func TestProblemTypeTitleAndDecorator(t *testing.T) {
 		}
 	})
 }
+
+func TestSecurity_A10_ServerErrorHidesWrappedValidation(t *testing.T) {
+	t.Parallel()
+
+	err := errs.Wrap(http.StatusInternalServerError, errs.NewValidation().Add("email", "taken"))
+
+	t.Run("json", func(t *testing.T) {
+		t.Parallel()
+
+		rec, _ := runError(t, err, func(r *http.Request) { r.Header.Set("Accept", "application/json") }, nil)
+
+		var p Problem
+		if jerr := json.Unmarshal(rec.Body.Bytes(), &p); jerr != nil {
+			t.Fatal(jerr)
+		}
+
+		if rec.Code != http.StatusInternalServerError || p.Title != "Internal Server Error" || p.Errors != nil ||
+			strings.Contains(rec.Body.String(), "email") {
+			t.Errorf("response = %d %q, want a plain 500 without field errors", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("form post does not redirect", func(t *testing.T) {
+		t.Parallel()
+
+		hook := ValidationHook(func(c *Ctx, _ *errs.ValidationError) bool {
+			_ = c.Redirect("/form")
+			return true
+		})
+
+		rec, _ := runError(t, err, func(r *http.Request) {
+			*r = *r.WithContext(WithValidationHook(r.Context(), hook))
+		}, nil)
+
+		if rec.Code != http.StatusInternalServerError || rec.Header().Get("Location") != "" {
+			t.Errorf("response = %d Location %q, want 500 without redirect", rec.Code, rec.Header().Get("Location"))
+		}
+	})
+}

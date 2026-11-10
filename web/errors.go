@@ -133,6 +133,12 @@ func DefaultErrorHandler(c *Ctx, err error) {
 		}
 	}
 
+	// A 5xx that wraps field errors is a server fault: its fields are
+	// internal detail (docs/security.md, A10).
+	if status >= http.StatusInternalServerError {
+		verr = nil
+	}
+
 	logError(c, status, err, level)
 
 	if c.s.Debug && status >= 500 {
