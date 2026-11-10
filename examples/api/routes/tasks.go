@@ -28,6 +28,9 @@ func Tasks(r *router.Router, app *vukem.App) error {
 
 	tasks := apiv1.NewTasks(db)
 	limit := ratelimit.Middleware(ratelimit.NewMemory(60, time.Minute), ratelimit.ByToken)
+	// Reads need only a token; changes need the write ability
+	// (app/controllers/apiv1/abilities.go).
+	write := auth.Ability(acc.API, apiv1.AbilityWrite)
 	bearer := []string{"bearer"}
 	tags := []string{"tasks"}
 
@@ -39,16 +42,16 @@ func Tasks(r *router.Router, app *vukem.App) error {
 		}, tasks.Index)
 		api.Register(g, "POST /tasks", api.Op{
 			Name: "tasks.store", Summary: "Create a task", Tags: tags, Security: bearer,
-		}, tasks.Store)
+		}, tasks.Store).Use(write)
 		api.Register(g, "GET /tasks/{task}", api.Op{
 			Name: "tasks.show", Summary: "Show a task", Tags: tags, Security: bearer,
 		}, tasks.Show)
 		api.Register(g, "PUT /tasks/{task}", api.Op{
 			Name: "tasks.update", Summary: "Replace a task", Tags: tags, Security: bearer,
-		}, tasks.Update)
+		}, tasks.Update).Use(write)
 		api.Register(g, "DELETE /tasks/{task}", api.Op{
 			Name: "tasks.destroy", Summary: "Delete a task", Tags: tags, Security: bearer,
-		}, tasks.Destroy)
+		}, tasks.Destroy).Use(write)
 	}).Name("api.v1.")
 
 	// Not registered in production unless OPENAPI_IN_PRODUCTION=true.
