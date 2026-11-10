@@ -281,3 +281,49 @@ func TestSecurity_A02_AdminStrictHeaders(t *testing.T) {
 		t.Errorf("Content-Security-Policy = %q, want a strict policy", csp)
 	}
 }
+
+func TestSecurity_A09_AdminAuditRedactsHiddenColumns(t *testing.T) {
+	t.Parallel()
+
+	app := newApp(t, options{resource: func() []admin.AnyResource {
+		return []admin.AnyResource{admin.NewResource[Post](postSchema).Hidden("body")}
+	}})
+	c := as(t, app, "admin")
+
+	createPost(t, app, Post{Title: "Alpha", Body: "private-body-one"})
+
+	c.PostForm("/admin/posts/1", url.Values{"title": {"Alpha"}, "status": {"live"}, "body": {"private-body-two"}}).
+		AssertRedirect("/admin/posts/1")
+	c.PostForm("/admin/posts/1/delete", url.Values{}).AssertRedirect("/admin/posts")
+
+	logs := auditLogs(t, app)
+	if len(logs) != 2 {
+		t.Fatalf("audit entries = %d, want 2", len(logs))
+	}
+
+	for _, l := range logs {
+		raw, err := l.Changes.Value()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		text, _ := raw.(string)
+		if b, ok := raw.([]byte); ok {
+			text = string(b)
+		}
+
+		if strings.Contains(text, "private-body") {
+			t.Errorf("audit %s entry leaks a hidden column: %s", l.Action, text)
+		}
+
+		if ch, ok := l.Changes.V["body"]; ok && !ch.Redacted {
+			t.Errorf("audit %s body change = %+v, want redacted", l.Action, ch)
+		}
+	}
+
+	if ch := logs[1].Changes.V["body"]; !ch.Redacted {
+		t.Errorf("delete body change = %+v, want redacted", ch)
+	}
+
+	c.Get("/admin/_audit").AssertOK().AssertDontSee("private-body")
+}
