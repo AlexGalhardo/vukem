@@ -240,6 +240,7 @@ Vukem adds these functions to every view. Request-scoped ones read the session, 
 | `viteReactRefresh` | `{{viteReactRefresh}}` | The React refresh preamble in development; empty otherwise |
 | `htmxScript` | `{{htmxScript (asset "js/htmx.min.js")}}` | `<script src="…" defer nonce="…"></script>` |
 | `cspNonce` | `<script nonce="{{cspNonce}}">` | The request's CSP nonce ([security headers](/docs/security/security-headers)) |
+| `analytics` | `{{analytics}}` | The head tags of the enabled [analytics](/docs/digging-deeper/analytics) providers, with the nonce; empty when none is on |
 | `csrfField` | `{{csrfField}}` | `<input type="hidden" name="_token" value="…">` ([CSRF](/docs/basics/csrf)) |
 | `csrfToken` | `{{csrfToken}}` | The CSRF token text |
 | `old` | `{{old "title"}}` | The value typed before a failed validation; dotted paths for nested fields; the first item of a list |
@@ -288,6 +289,7 @@ You may also build an engine yourself with `view.New` and install it as `app.Rou
 | `DefaultLayout` | `app` | Layout for pages without a comment; ignored when the file does not exist |
 | `Reload` | `false` | Re-parse on every render |
 | `Funcs` | none | Extra template functions; a built-in's name is an error |
+| `Analytics` | none | Providers behind `analytics` (`vukem.WithViews` passes `Config.Analytics`) |
 | `URLs` | none | Resolves `route` (the router); without it `route` fails |
 | `AssetPrefix` | `/` | Prefix of `asset` |
 | `Vite` | none | Backs `vite`, `viteReactRefresh` and Vite-aware `asset` |

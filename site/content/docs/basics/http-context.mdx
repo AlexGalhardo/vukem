@@ -113,6 +113,8 @@ The router runs your handler through `c.Serve(h)`. When the handler returns:
 
 The status comes from the error: `errs.ErrNotFound` is 404, a `*errs.ValidationError` is 422, any unknown error is 500. Details of 5xx errors never reach the client unless debug mode is on. [Error handling](/docs/basics/error-handling) covers the error types and pages.
 
+`c.Serve` also removes the temporary files of a multipart upload when the handler returns. Copy or store an upload before returning; never read it from a goroutine afterwards.
+
 That last row is why you should finish all the work that can fail **before** writing anything: load, validate, save, then answer.
 
 `c.HandleError(err)` calls the error handler directly, for the rare case where you must render an error and keep going.
@@ -251,6 +253,7 @@ Some things are the same for every request: the logger, the view engine, the err
 | `Events` | `web.EventDispatcher` | `app.Events`: receives security and audit events |
 | `Authorizer` | `web.Authorizer` | Nothing by default. You set it: `r.Services().Authorizer = gate`. Without one, `c.Authorize` denies everything |
 | `ErrorPage` | `web.ErrorPageFunc` | The Inertia adapter, with `vukem.WithInertia` |
+| `ProblemDecorator` | `func(*web.Ctx, *web.Problem)` | Nothing by default. You set it to edit every problem+json response, see [Error handling](/docs/basics/error-handling) |
 
 With a router you build yourself, you fill the fields:
 
