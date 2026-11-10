@@ -243,6 +243,57 @@ func Run(t *testing.T, d queue.Driver, o Options) {
 		}
 	})
 
+	// A worker that outlived its reservation must not settle the job the
+	// next worker now holds.
+	t.Run("StaleSettleKeepsTheNewReservation", func(t *testing.T) {
+		if o.Advance == nil {
+			t.Skip("no clock control")
+		}
+
+		settles := []struct {
+			name   string
+			settle func(*queue.Message) error
+		}{
+			{"Ack", func(m *queue.Message) error { return d.Ack(ctx, m) }},
+			{"Release", func(m *queue.Message) error { return d.Release(ctx, m) }},
+			{"Fail", func(m *queue.Message) error { return d.Fail(ctx, m) }},
+		}
+
+		for _, tt := range settles {
+			t.Run(tt.name, func(t *testing.T) {
+				_ = q.Dispatch(ctx, confJob{N: 301}, queue.Timeout(time.Second))
+
+				m, err := d.Pop(ctx, []string{"default"})
+				if err != nil || m == nil {
+					t.Fatalf("pop = %v %v", m, err)
+				}
+
+				o.Advance(time.Hour) // past timeout + grace: m's worker is presumed dead
+
+				again, _ := d.Pop(ctx, []string{"default"})
+				if again == nil || again.ID != m.ID {
+					t.Fatalf("abandoned job not taken over: %v", again)
+				}
+
+				if err := tt.settle(m); !errors.Is(err, queue.ErrReservationLost) {
+					t.Fatalf("stale %s = %v, want ErrReservationLost", tt.name, err)
+				}
+
+				if third, _ := d.Pop(ctx, []string{"default"}); third != nil {
+					t.Fatalf("stale %s let the job be handed out again: %v", tt.name, third)
+				}
+
+				if err := d.Ack(ctx, again); err != nil {
+					t.Fatalf("Ack(new holder) = %v", err)
+				}
+
+				if n := pending(t); n != 0 {
+					t.Fatalf("pending = %d", n)
+				}
+			})
+		}
+	})
+
 	// A driver is a queue.Uniquer or it refuses Unique; either way it never stores a duplicate silently.
 	t.Run("UniqueJobs", func(t *testing.T) {
 		before := pending(t)
