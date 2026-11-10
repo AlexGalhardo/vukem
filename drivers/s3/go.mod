@@ -3,6 +3,6 @@ module github.com/AlexGalhardo/vukem/drivers/s3
 go 1.27.3
 
 require (
-	github.com/AlexGalhardo/vukem v0.39.0
+	github.com/AlexGalhardo/vukem v0.40.0
 	github.com/google/go-cmp v0.7.0
 )
