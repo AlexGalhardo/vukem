@@ -42,11 +42,13 @@ func Web(r *router.Router, app *vukem.App) error {
 
 	posts := controllers.NewPostController(acc.DB)
 	optional, required := auth.Optional(acc.Web), auth.Required(acc.Web)
+	// Unverified accounts read but do not publish or comment.
+	verified := auth.Verified(acc.Web)
 
 	r.Get("/", controllers.Home).Name("home")
 	r.Resource("posts", posts).Only("index", "show").Use(optional)
-	r.Resource("posts", posts).Except("index", "show").Use(required)
-	r.Post("/posts/{post}/comments", posts.Comment).Name("posts.comments.store").Use(required)
+	r.Resource("posts", posts).Except("index", "show").Use(required, verified)
+	r.Post("/posts/{post}/comments", posts.Comment).Name("posts.comments.store").Use(required, verified)
 
 	return nil
 }

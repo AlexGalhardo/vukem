@@ -2,6 +2,7 @@ package accounts
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -13,26 +14,36 @@ import (
 	"github.com/AlexGalhardo/vukem/orm"
 )
 
-// Register creates a user (unique email, hashed password) and sends the
-// verification email.
-func (a *Accounts) Register(ctx context.Context, in requests.Register) (models.User, error) {
-	email := strings.ToLower(in.Email)
-
-	if err := orm.Validate(ctx, a.DB, orm.Unique[models.User]("email", email)); err != nil {
-		return models.User{}, err
-	}
+// Register signs in.Email up without revealing whether it already has an
+// account: the caller always answers "check your email" and never logs in.
+// A new address gets the account and a verification mail; an existing one
+// gets nothing and is left unchanged. Both paths hash the password first,
+// so they take about the same time.
+func (a *Accounts) Register(ctx context.Context, in requests.Register) error {
+	email := strings.ToLower(strings.TrimSpace(in.Email))
 
 	h, err := a.Hasher.Make(in.Password)
 	if err != nil {
-		return models.User{}, err
+		return err
+	}
+
+	if _, err := orm.QueryOf[models.User](a.DB).Where("email", email).First(ctx); err == nil {
+		return nil
+	} else if !errors.Is(err, orm.ErrNotFound) {
+		return err
 	}
 
 	u := models.User{Name: in.Name, Email: email, Password: h}
 	if err := orm.Create(ctx, a.DB, &u); err != nil {
-		return models.User{}, err
+		// A concurrent sign-up with the same email won the unique index.
+		if _, findErr := orm.QueryOf[models.User](a.DB).Where("email", email).First(ctx); findErr == nil {
+			return nil
+		}
+
+		return err
 	}
 
-	return u, a.SendVerification(ctx, u)
+	return a.SendVerification(ctx, u)
 }
 
 // SendVerification emails a signed link that verifies u's address.

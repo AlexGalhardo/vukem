@@ -3,6 +3,7 @@ package tests
 import (
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -39,7 +40,7 @@ func register(t *testing.T, app *vukemtest.App, c *vukemtest.Client, email strin
 	c.PostForm("/register", url.Values{
 		"name": {"Ana Silva"}, "email": {email},
 		"password": {"correct horse battery"}, "password_confirmation": {"correct horse battery"},
-	}).AssertRedirect("/email/verify")
+	}).AssertRedirect("/register/check-email")
 }
 
 func TestRegisterAndVerifyEmail(t *testing.T) {
@@ -51,19 +52,75 @@ func TestRegisterAndVerifyEmail(t *testing.T) {
 	register(t, app, c, "ana@example.com")
 	vukemtest.AssertDatabaseHas(t, app, "users", map[string]any{"email": "ana@example.com", "email_verified_at": nil})
 
+	// Sign-up does not log in: the user proves the address first.
+	c.Get("/dashboard").AssertRedirect("/login")
+	c.Get("/register/check-email").AssertOK().AssertSee("Check your email")
+
+	c.PostForm("/login", url.Values{"email": {"ana@example.com"}, "password": {"correct horse battery"}}).
+		AssertRedirect("/dashboard")
 	c.Get("/email/verify").AssertOK().AssertSee("verify")
+
+	// Unverified accounts can sign in but not write.
+	c.Get("/dashboard").AssertRedirect("/email/verify")
+	c.Get("/posts/create").AssertRedirect("/email/verify")
+	c.PostForm("/posts", url.Values{"title": {"Too early"}, "body": {"x"}}).AssertRedirect("/email/verify")
+	c.PostForm("/posts/1/comments", url.Values{"body": {"Too early"}}).AssertRedirect("/email/verify")
 
 	verify := link(t, app, "ana@example.com")
 	app.Client(t).Get(verify).AssertRedirect("/login") // the link needs the account's session
 	c.Get(verify + "x").AssertForbidden()              // tampered signature
 	c.Get(verify).AssertRedirect("/dashboard")
 	c.Get("/dashboard").AssertOK().AssertSee("Ana Silva").AssertSee("verified")
+	c.Get("/posts/create").AssertOK()
+}
 
-	// Duplicate emails are rejected.
-	app.Client(t).WithHeader("Referer", "/register").PostForm("/register", url.Values{
+// An address that already has an account gets the same answer as a new
+// one, and nothing about the existing account changes.
+func TestRegisterDoesNotRevealExistingEmails(t *testing.T) {
+	app := newApp(t)
+	register(t, app, app.Client(t), "ana@example.com")
+
+	c := app.Client(t)
+	c.WithHeader("Referer", "/register").PostForm("/register", url.Values{
 		"name": {"Other"}, "email": {"ANA@example.com"},
 		"password": {"another long password"}, "password_confirmation": {"another long password"},
-	}).AssertSessionHasErrors("email")
+	}).AssertRedirect("/register/check-email").AssertSessionMissing("errors")
+
+	vukemtest.AssertDatabaseCount(t, app, "users", 1)
+	vukemtest.AssertDatabaseHas(t, app, "users", map[string]any{"email": "ana@example.com", "name": "Ana Silva"})
+}
+
+func TestRegisterIsThrottled(t *testing.T) {
+	app := newApp(t)
+	c := app.Client(t)
+
+	for i := range 10 {
+		register(t, app, c, "user"+strconv.Itoa(i)+"@example.com")
+	}
+
+	c.PostForm("/register", url.Values{
+		"name": {"Ana Silva"}, "email": {"user10@example.com"},
+		"password": {"correct horse battery"}, "password_confirmation": {"correct horse battery"},
+	}).AssertStatus(429)
+
+}
+
+// One address is limited on its own, however few requests the IP sent.
+func TestRegisterIsThrottledPerEmail(t *testing.T) {
+	app := newApp(t)
+	other := app.Client(t)
+
+	for range 5 {
+		other.PostForm("/register", url.Values{
+			"name": {"Ana Silva"}, "email": {"same@example.com"},
+			"password": {"correct horse battery"}, "password_confirmation": {"correct horse battery"},
+		})
+	}
+
+	other.PostForm("/register", url.Values{
+		"name": {"Ana Silva"}, "email": {"same@example.com"},
+		"password": {"correct horse battery"}, "password_confirmation": {"correct horse battery"},
+	}).AssertStatus(429)
 }
 
 func TestLoginLogoutAndThrottle(t *testing.T) {
