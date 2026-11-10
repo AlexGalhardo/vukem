@@ -222,10 +222,27 @@ func (s NumberSchema[N]) NonNegative() NumberSchema[N] { return s.Min(0) }
 // MultipleOf requires v to be a multiple of m.
 func (s NumberSchema[N]) MultipleOf(m N) NumberSchema[N] {
 	return s.kw("multipleOf", m).with(func(o *opts[N], c *pctx, path string, v N) {
-		if m != 0 && math.Remainder(float64(v), float64(m)) != 0 {
+		if m != 0 && !isMultiple(v, m) {
 			o.issue(c, path, CodeNotMultiple, CodeNotMultiple, map[string]any{"multiple": m})
 		}
 	})
+}
+
+// isMultiple is exact for integers (float64 loses bits above 2^53) and
+// tolerant for floats, where 0.07/0.01 is not an integer in binary.
+func isMultiple[N Number](v, m N) bool {
+	rv, rm := reflect.ValueOf(v), reflect.ValueOf(m)
+	if rv.CanInt() {
+		return rv.Int()%rm.Int() == 0
+	}
+
+	if rv.CanUint() {
+		return rv.Uint()%rm.Uint() == 0
+	}
+
+	q := float64(v) / float64(m)
+
+	return math.Abs(q-math.Round(q)) <= 1e-9*math.Max(1, math.Abs(q))
 }
 
 // Optional allows the key to be absent (the zero value is used). An empty
