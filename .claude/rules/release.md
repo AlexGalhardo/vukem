@@ -18,4 +18,4 @@ paths:
 - Every breaking change has a `!` commit with a `BREAKING CHANGE:` footer and an entry in `docs/upgrade/` (the apicheck gate expects it).
 - Settings that only a new version understands are set on the platform after the bumped app is deployed (unknown values fail the boot).
 - An open `ci-failure` issue (failed Fuzz, Vulnerabilities, Scorecard, Secrets or CodeQL run) blocks the release until it is triaged.
-- Once the `protect-main` ruleset requires pull requests, `-push` to `main` is rejected: release through a PR as in [docs/maintenance.md](../../docs/maintenance.md#releasing-through-a-pull-request), then record the Scorecard score in the "Scorecard tracking" issue.
+- Once the `protect-main` ruleset requires pull requests, `-push` to `main` is rejected: release through a PR as in [docs/maintenance.md](../../docs/maintenance.md#releasing-through-a-pull-request), then add the Scorecard score to [Scorecard history](../../docs/maintenance.md#scorecard-history).
