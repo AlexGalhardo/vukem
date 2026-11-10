@@ -203,8 +203,9 @@ func cleanPath(raw string) (string, error) {
 		return "", fmt.Errorf("%w: %q", ErrInvalidPath, raw)
 	}
 
-	decoded, err := url.PathUnescape(u.Path)
-	if err != nil || decoded == "" || decoded[0] != '/' {
+	// url.Parse already decoded the path once; a remaining "%" would be decoded again by the handler's request.
+	decoded := u.Path
+	if decoded == "" || decoded[0] != '/' || strings.Contains(decoded, "%") {
 		return "", fmt.Errorf("%w: %q", ErrInvalidPath, raw)
 	}
 
@@ -279,7 +280,9 @@ func prepareOut(dir string) (*os.Root, error) {
 }
 
 func render(ctx context.Context, h http.Handler, host, pagePath string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(NewContext(ctx), http.MethodGet, "http://"+host+pagePath, http.NoBody)
+	target := url.URL{Scheme: "http", Host: host, Path: pagePath}
+
+	req, err := http.NewRequestWithContext(NewContext(ctx), http.MethodGet, target.String(), http.NoBody)
 	if err != nil {
 		return nil, err
 	}
