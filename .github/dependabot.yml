@@ -40,6 +40,14 @@ updates:
       prefix: build
       include: scope
 
+  - package-ecosystem: docker
+    directory: /.config
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: build
+      include: scope
+
   - package-ecosystem: npm
     directory: /site
     schedule:
