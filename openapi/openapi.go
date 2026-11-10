@@ -242,36 +242,11 @@ func Generate(routes []router.RouteInfo, info Info) *Document {
 // or PATCH route documents an optional JSON body of any shape, and plain
 // routes document a default response of any content, so generated clients
 // can send a body and ValidateResponse accepts what they return.
-//
-//nolint:gocognit // document assembly over routes; steps share state
 func Build(routes []router.RouteInfo, info Info) (*Document, error) {
 	s := NewSchemas()
-	doc := &Document{
-		OpenAPI: "3.1.0",
-		Info: docInfo{
-			Title:       info.Title,
-			Version:     info.Version,
-			Description: info.Description,
-			License:     info.License,
-		},
-		Paths: map[string]map[string]*Operation{},
-		strip: strings.TrimSuffix(info.StripPrefix, "/"),
-	}
-
-	if doc.Info.Title == "" {
-		doc.Info.Title = "API"
-	}
-
-	if l := info.License; l != nil && (l.Name == "" || l.Identifier != "" && l.URL != "") {
-		return nil, errors.New("openapi: Info.License needs a Name and at most one of Identifier and URL")
-	}
-
-	if doc.Info.Version == "" {
-		doc.Info.Version = "1.0.0"
-	}
-
-	for _, u := range info.Servers {
-		doc.Servers = append(doc.Servers, server{URL: u})
+	doc, err := newDocument(info)
+	if err != nil {
+		return nil, err
 	}
 
 	schemes := map[string]Schema{"bearer": {"type": "http", "scheme": "bearer"}}
@@ -301,26 +276,7 @@ func Build(routes []router.RouteInfo, info Info) (*Document, error) {
 
 		path = cmpOr(strings.TrimPrefix(path, doc.strip), "/")
 
-		var op *Operation
-		if typed, ok := rt.Doc.(*api.Operation); ok {
-			op = typedOperation(s, typed)
-			op.OperationID = cmpOr(rt.LocalName, typed.Name)
-			op.Summary = cmpOr(typed.Summary, op.OperationID)
-		} else {
-			if info.TypedOnly {
-				untyped = append(untyped, cmpOr(rt.Name, rt.Method+" "+rt.Path))
-			}
-
-			op = plainOperation(s, rt)
-
-			if _, public := rt.Doc.(Public); public {
-				op.Security = []map[string][]string{}
-			} else {
-				for _, name := range info.Security {
-					op.Security = append(op.Security, map[string][]string{name: {}})
-				}
-			}
-		}
+		op := routeOperation(s, rt, info, &untyped)
 
 		if id := op.OperationID; id != "" {
 			who := cmpOr(rt.Name, rt.Method+" "+rt.Path)
@@ -358,8 +314,80 @@ func Build(routes []router.RouteInfo, info Info) (*Document, error) {
 			ErrEmptyDocument, prefix, documentable)
 	}
 
-	// Only the error responses an operation references: an unused
-	// component is a lint error.
+	addErrorResponses(doc, s)
+
+	doc.Components.Schemas = s.Components()
+
+	if err := addSecuritySchemes(doc, schemes, usedSchemes); err != nil {
+		return nil, err
+	}
+
+	return doc, nil
+}
+
+// newDocument returns the empty document for info, defaults applied.
+func newDocument(info Info) (*Document, error) {
+	doc := &Document{
+		OpenAPI: "3.1.0",
+		Info: docInfo{
+			Title:       info.Title,
+			Version:     info.Version,
+			Description: info.Description,
+			License:     info.License,
+		},
+		Paths: map[string]map[string]*Operation{},
+		strip: strings.TrimSuffix(info.StripPrefix, "/"),
+	}
+
+	if doc.Info.Title == "" {
+		doc.Info.Title = "API"
+	}
+
+	if l := info.License; l != nil && (l.Name == "" || l.Identifier != "" && l.URL != "") {
+		return nil, errors.New("openapi: Info.License needs a Name and at most one of Identifier and URL")
+	}
+
+	if doc.Info.Version == "" {
+		doc.Info.Version = "1.0.0"
+	}
+
+	for _, u := range info.Servers {
+		doc.Servers = append(doc.Servers, server{URL: u})
+	}
+
+	return doc, nil
+}
+
+// routeOperation documents one route. A plain route gets the security
+// requirements of info, and is recorded in untyped when TypedOnly forbids it.
+func routeOperation(s *Schemas, rt router.RouteInfo, info Info, untyped *[]string) *Operation {
+	var op *Operation
+	if typed, ok := rt.Doc.(*api.Operation); ok {
+		op = typedOperation(s, typed)
+		op.OperationID = cmpOr(rt.LocalName, typed.Name)
+		op.Summary = cmpOr(typed.Summary, op.OperationID)
+	} else {
+		if info.TypedOnly {
+			*untyped = append(*untyped, cmpOr(rt.Name, rt.Method+" "+rt.Path))
+		}
+
+		op = plainOperation(s, rt)
+
+		if _, public := rt.Doc.(Public); public {
+			op.Security = []map[string][]string{}
+		} else {
+			for _, name := range info.Security {
+				op.Security = append(op.Security, map[string][]string{name: {}})
+			}
+		}
+	}
+
+	return op
+}
+
+// addErrorResponses adds only the error responses an operation references:
+// an unused component is a lint error.
+func addErrorResponses(doc *Document, s *Schemas) {
 	refs := map[string]bool{}
 
 	for _, ops := range doc.Paths {
@@ -388,23 +416,23 @@ func Build(routes []router.RouteInfo, info Info) (*Document, error) {
 			}
 		}
 	}
+}
 
-	doc.Components.Schemas = s.Components()
-
-	for name := range usedSchemes {
+func addSecuritySchemes(doc *Document, schemes map[string]Schema, used map[string]bool) error {
+	for name := range used {
 		if doc.Components.SecuritySchemes == nil {
 			doc.Components.SecuritySchemes = map[string]Schema{}
 		}
 
 		sc, ok := schemes[name]
 		if !ok {
-			return nil, fmt.Errorf("%w %q: declare it in openapi.Info.SecuritySchemes", ErrUnknownSecurityScheme, name)
+			return fmt.Errorf("%w %q: declare it in openapi.Info.SecuritySchemes", ErrUnknownSecurityScheme, name)
 		}
 
 		doc.Components.SecuritySchemes[name] = sc
 	}
 
-	return doc, nil
+	return nil
 }
 
 // outputTypes returns the named types the responses of the typed routes
