@@ -123,8 +123,14 @@ type secretParam struct{ name, value string }
 
 // WithLogAttrs returns a context whose AddLogAttrs calls land in the
 // returned holder. middleware.Logger installs one per request and appends
-// its attributes to the request line once the response is written.
+// its attributes to the request line once the response is written. A holder
+// already in ctx is reused, so an outer middleware sees what an inner one
+// (or the router, for secret path parameters) records.
 func WithLogAttrs(ctx context.Context) (context.Context, *LogAttrs) {
+	if l, ok := ctx.Value(logAttrsKey{}).(*LogAttrs); ok {
+		return ctx, l
+	}
+
 	l := &LogAttrs{}
 
 	return context.WithValue(ctx, logAttrsKey{}, l), l
