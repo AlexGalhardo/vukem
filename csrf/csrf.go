@@ -118,6 +118,10 @@ func tokenFallback(next http.Handler, cookieName string) http.Handler {
 
 		got := r.Header.Get(HeaderName)
 		if got == "" {
+			// net/http only removes the multipart files of the connection's
+			// own request, and a reject never reaches web.Ctx.Serve.
+			defer removeMultipartFiles(r)
+
 			got = r.PostFormValue(FieldName)
 		}
 
@@ -164,4 +168,10 @@ func Token(ctx context.Context) string {
 	sess.Put(web.TokenKey, t)
 
 	return t
+}
+
+func removeMultipartFiles(r *http.Request) {
+	if f := r.MultipartForm; f != nil {
+		_ = f.RemoveAll()
+	}
 }
