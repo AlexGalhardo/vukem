@@ -28,6 +28,15 @@ func (c *Client) RateLimiter(prefix string, limit int, window time.Duration) *Li
 	}
 
 	limit = max(limit, 1)
+	if window <= 0 {
+		window = time.Second
+	}
+
+	// The script counts in milliseconds, so a finer rate is enforced as one
+	// per millisecond; report that limit instead of the configured one.
+	if window/time.Duration(limit) < time.Millisecond {
+		limit = max(int(window/time.Millisecond), 1)
+	}
 
 	return &Limiter{
 		rdb: c.rdb, prefix: prefix, limit: limit, window: window,
