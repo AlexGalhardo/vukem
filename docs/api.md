@@ -224,7 +224,7 @@ Database unique-constraint violations are mapped to `409` by the dialect.
 
 ## OpenAPI
 
-Typed handlers produce an OpenAPI 3.1 document without annotations (Huma/Fuego approach):
+Typed handlers produce an OpenAPI 3.1 document without annotations (Huma/Fuego approach); the app builds the served document once, because routes are frozen when the router compiles:
 
 ```go
 api.Register(g, "POST /products", api.Op{

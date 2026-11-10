@@ -69,8 +69,8 @@ if errors.As(err, &issues) {
 | Constructor | Go type | Checks / transforms |
 | --- | --- | --- |
 | `z.String()` | `string` | `Min`, `Max`, `Len`, `Email`, `URL`, `UUID`, `ULID`, `Regex`, `Alpha`, `Alphanum`, `Numeric`, `StartsWith`, `EndsWith`, `Includes`, `HasLower`, `HasUpper`, `HasDigit`, `HasSymbol`, `OneOf`; `Trim`, `ToLower`, `ToUpper`, `Preprocess(fn)` |
-| `z.Int()`, `z.Int64()`, `z.Uint()`… | integer types | `Min`, `Max`, `Positive`, `NonNegative`, `MultipleOf` |
-| `z.Float()` | `float64` | `Min`, `Max`, `Positive`, `Finite` |
+| `z.Int()`, `z.Int64()`, `z.Uint()`… | integer types | `Min`, `Max`, `Positive`, `NonNegative`, `MultipleOf` (integer arithmetic, exact above 2^53; floats compare by quotient with a relative tolerance of 1e-9, so `MultipleOf(0.01)` accepts `0.07`) |
+| `z.Float()` | `float64` | `Min`, `Max`, `Positive`, `Finite`, `MultipleOf` |
 | `z.Bool()` | `bool` | — |
 | `z.Time()` | `time.Time` | `After`, `Before`, `Layout(...)` (default RFC 3339) |
 | `z.Enum(vals...)` | `string` (or any `~string` via `z.EnumOf[T]`) | membership |
