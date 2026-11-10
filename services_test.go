@@ -921,3 +921,46 @@ func TestMailReplyToEnv(t *testing.T) {
 		t.Fatalf("reply-to = %v %v", msg.ReplyTo, err)
 	}
 }
+
+func TestSecurity_A04_SMTPInsecureRefusedInProduction(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		env     string
+		host    string
+		wantErr bool
+	}{
+		{"production, remote host", "production", "smtp.example.com", true},
+		{"production, localhost", "production", "localhost", false},
+		{"production, loopback IP", "production", "127.0.0.1", false},
+		{"production, IPv6 loopback", "production", "::1", false},
+		{"development, remote host", "development", "smtp.example.com", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			app, err := New(WithSource(testSource(map[string]string{
+				"APP_ENV":       tt.env,
+				"MAIL_MAILER":   "smtp",
+				"SMTP_INSECURE": "true",
+				"SMTP_HOST":     tt.host,
+				"SMTP_PORT":     "1025",
+			})), WithLogger(discardLogger()))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			_, err = app.Mailer()
+			if tt.wantErr != (err != nil) {
+				t.Fatalf("Mailer() = %v, want error %v", err, tt.wantErr)
+			}
+
+			if err != nil && !strings.Contains(err.Error(), "SMTP_INSECURE") {
+				t.Errorf("Mailer() error = %v, want it to name SMTP_INSECURE", err)
+			}
+		})
+	}
+}

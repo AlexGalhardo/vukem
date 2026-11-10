@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/url"
 	"strings"
 	"sync"
@@ -433,6 +434,10 @@ func (a *App) mailTransport(cfg MailConfig) (mail.Transport, error) {
 	case "array":
 		return mail.NewArray(), nil
 	case "smtp":
+		if cfg.SMTPInsecure && a.Config.IsProduction() && !isLoopbackHost(cfg.SMTPHost) {
+			return nil, errors.New("vukem: SMTP_INSECURE=true is refused when APP_ENV=production (local catchers only)")
+		}
+
 		return mail.NewSMTP(mail.SMTPConfig{
 			Host: cfg.SMTPHost, Port: cfg.SMTPPort, Username: cfg.SMTPUsername, Password: cfg.SMTPPassword,
 			InsecureSkipTLS: cfg.SMTPInsecure,
@@ -540,4 +545,16 @@ func telegramHandler(
 	}
 
 	return telegram.NewHandler(tg), tc.Log, nil
+}
+
+// isLoopbackHost reports localhost or a loopback IP, the only hosts where a
+// plaintext connection never leaves the machine.
+func isLoopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+
+	ip := net.ParseIP(strings.Trim(host, "[]"))
+
+	return ip != nil && ip.IsLoopback()
 }
