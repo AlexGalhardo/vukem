@@ -25,9 +25,10 @@ export async function DocArticle({ doc }: { doc: Doc }): Promise<React.ReactElem
   const { prev, next } = getNeighbours(doc);
 
   return (
+    // The article takes every column the TOC leaves free, so wide tables and code blocks are not squeezed;
     // justify-between pins the TOC to the container's right edge, aligned with the header actions.
     <div className="flex justify-between gap-12">
-      <main id="content" className="min-w-0 flex-1 py-10 lg:pl-8 xl:max-w-3xl">
+      <main id="content" className="min-w-0 flex-1 py-10 lg:pl-8">
         {outdated ? (
           <div role="note" className="mb-8 rounded-xl border border-border bg-subtle px-4 py-3 text-sm text-muted">
             You are reading the {doc.version.label} documentation.{" "}
