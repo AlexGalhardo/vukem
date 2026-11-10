@@ -14,6 +14,8 @@
   --color-accent: var(--accent);
   --color-accent-soft: var(--accent-soft);
   --color-code-bg: var(--code-bg);
+  /* The logo's blue; the same in light and dark themes. */
+  --color-brand: #00add8;
   --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-mono-face), ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
