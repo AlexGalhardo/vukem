@@ -298,6 +298,27 @@ func TestPropTypes(t *testing.T) {
 			},
 		},
 		{
+			name: "closure returning an optional prop is skipped on a full visit",
+			props: func() inertia.Props {
+				return inertia.Props{
+					"stats": func(context.Context) (any, error) { return inertia.Optional(lazy(1)), nil },
+				}
+			},
+			want: map[string]any{"props": map[string]any{"errors": errorsProp}},
+		},
+		{
+			name: "closure returning a rescued prop that fails is omitted and listed",
+			props: func() inertia.Props {
+				return inertia.Props{
+					"perms": func(context.Context) (any, error) { return inertia.Merge(failing).Rescue(), nil },
+				}
+			},
+			want: map[string]any{
+				"props":        map[string]any{"errors": errorsProp},
+				"rescuedProps": []any{"perms"},
+			},
+		},
+		{
 			name: "scroll prop from an orm page",
 			props: func() inertia.Props {
 				return inertia.Props{"posts": inertia.ScrollPage(orm.Page[post]{
@@ -370,5 +391,23 @@ func TestPropErrors(t *testing.T) {
 		func() inertia.Props { return inertia.Props{"x": inertia.Optional(failing)} },
 	); code != http.StatusOK {
 		t.Errorf("unrequested failing optional = %d, want 200 (never resolved)", code)
+	}
+
+	if _, code := visit(
+		t,
+		func() inertia.Props {
+			return inertia.Props{"x": func(context.Context) (any, error) { return inertia.Merge(failing), nil }}
+		},
+	); code != http.StatusInternalServerError {
+		t.Errorf("failing prop returned by a closure = %d, want 500", code)
+	}
+
+	if _, code := visit(
+		t,
+		func() inertia.Props {
+			return inertia.Props{"x": func(context.Context) (any, error) { return inertia.Props{"y": failing}, nil }}
+		},
+	); code != http.StatusInternalServerError {
+		t.Errorf("failing prop inside a closure-returned map = %d, want 500", code)
 	}
 }
