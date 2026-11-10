@@ -82,7 +82,7 @@ Rule for new API: constructors and middleware that can be misconfigured by runti
 | `stripe.Client.Do` | core `v0.25.0` changelog; no `contrib/stripe` tag contains it yet (latest `contrib/stripe/v0.2.0`) | 0 | **B1, applied**: removed before `contrib/stripe/v1.0.0` |
 | `i18n.NewMiddleware` | this branch (B2) | 0 | keep through `v1` (`//go:fix inline` alias of `i18n.Middleware`) |
 
-No other `Deprecated:` comment exists outside generated code. The [1.0 upgrade guide](upgrade/1.0.md) now tells apps to run `go fix ./...` on `v0.21`–`v0.25` before bumping, since the aliases are gone in `v1.0.0`.
+No other `Deprecated:` comment exists outside generated code. The [1.0 upgrade guide](upgrade/1.0.md) now tells apps to run `go fix ./...` on `v0.25` or earlier before bumping, since `v0.26.0` removed the aliases.
 
 Any alias still present when `v1.0.0` is tagged stays for all of `v1` ([stability policy](stability.md#deprecation)): removing it later needs `/v2`.
 
@@ -90,7 +90,7 @@ Any alias still present when `v1.0.0` is tagged stays for all of `v1` ([stabilit
 
 `internal/tools/apicheck` already implements the gate; nothing in it needs to change for `v1.0.0`. How it works once the tags exist:
 
-1. **Before tagging:** run `task api:check -- -major v0 -head v1.0.0 -report docs/api/apidiff-v0.25.0-to-v1.0.0.md` on the release commit and check that every incompatible entry is listed in the [1.0 upgrade guide](upgrade/1.0.md). Commit the report with the release.
+1. **Before tagging:** run `task api:check -- -major v0 -head v1.0.0 -report docs/api/apidiff-<last v0 tag>-to-v1.0.0.md` on the release commit and check that every incompatible entry is listed in the [1.0 upgrade guide](upgrade/1.0.md). `<last v0 tag>` is the output of `git tag -l 'v0.*' --sort=-v:refname | head -1` on the release day. Commit the report with the release.
 2. **Tag every published module together:** `v1.0.0` for the core and `drivers/<name>/v1.0.0`, `contrib/<name>/v1.0.0` for each nested module, after their `go.mod` files require core `v1.0.0` (release order in [tooling.md](tooling.md#versioning)). A module without a `v1` tag is skipped with a `::notice`, so it is not protected until its first `v1` tag. Decision B5: every module, including `contrib/imaging`, `drivers/mysql` and `drivers/websocket`, gets `v1.0.0` at release time.
 3. **After tagging:** the `apidiff` job (`go run ./internal/tools/apicheck -major v1`) compares each module's working tree with its highest stable `v1.x.y` tag (pre-releases and build metadata ignored), both type-checked with `GOWORK=off`, and fails with one `::error` per incompatible identifier. The baseline moves forward automatically: each new `v1` tag becomes the comparison base, so there is no baseline file to update.
 4. **Renames** in `v1` keep the old name as a deprecated alias or wrapper with `//go:fix inline`; apidiff sees no change. Additions are always allowed.
