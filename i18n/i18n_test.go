@@ -312,3 +312,34 @@ func TestBundle_Messages(t *testing.T) {
 		t.Error("Messages() result aliases the catalog")
 	}
 }
+
+func TestT_PluralUsesRulesOfMessageLocale(t *testing.T) {
+	t.Parallel()
+
+	b, err := New(Options{Default: "en"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := b.Add(
+		"en",
+		map[string]any{"items": map[string]string{"one": "{count} item", "other": "{count} items"}},
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tt := range []struct {
+		locale string
+		count  int
+		want   string
+	}{
+		{"ru", 21, "21 items"},
+		{"pt", 0, "0 items"},
+		{"fr", 0, "0 items"},
+		{"en", 1, "1 item"},
+	} {
+		if got := b.T(tt.locale, "items", "count", tt.count); got != tt.want {
+			t.Errorf("T(%q, count=%d) = %q, want %q", tt.locale, tt.count, got, tt.want)
+		}
+	}
+}

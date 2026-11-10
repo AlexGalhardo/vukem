@@ -109,11 +109,11 @@ func (b *Bundle) addMissing(locale string, msgs map[string]message) {
 // installs one for the resolved locale.
 func (b *Bundle) Translator(locale string) errs.Translator {
 	return func(key string, params map[string]any) (string, bool) {
-		m, ok := b.find(locale, key)
+		m, from, ok := b.find(locale, key)
 		if !ok {
 			return "", false
 		}
 
-		return interpolate(m.pick(locale, params["count"]), params), true
+		return interpolate(m.pick(from, params["count"]), params), true
 	}
 }
