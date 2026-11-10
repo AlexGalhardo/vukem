@@ -163,6 +163,8 @@ What happens under the hood:
 2. If `count` is 0 and the message has a `zero` form, you get it. This works in every language, even where CLDR has no `zero` category.
 3. Otherwise `i18n.PluralCategory(locale, count)` picks the category. If the message lacks that form, you get `other`.
 
+The `locale` in step 3 is the locale the message **came from**, not the one requested. When a key falls back to another catalog, the plural form follows that catalog's rules: `ru` falling back to `en` with `count` 21 gives the English `other` form, not the Russian `one`.
+
 `count` may be any Go integer or float type, a [`json.Number`](https://pkg.go.dev/encoding/json#Number) or a numeric string.
 
 | Categories used | Languages |

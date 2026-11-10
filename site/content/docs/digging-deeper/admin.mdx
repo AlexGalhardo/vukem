@@ -379,7 +379,7 @@ What happens on a run:
 
 1. The button opens a confirmation page (`GET`); the action itself is a CSRF-checked `POST`.
 2. The user needs the policy method named after the action on the record: `Approve(ctx, user, *Suggestion) bool` for `approve`. A policy without it denies with **403**, like every other admin ability.
-3. `Run`, the save and one audit entry per record share **one transaction**: an error from any of them rolls everything back.
+3. `Run`, the save and one audit entry per record share **one transaction**: an error from any of them rolls everything back. Inside it every record is read again with a row lock and the policy is checked on that locked row before `Run`, so a record another admin changed since the confirmation page is judged as it is now, two concurrent runs cannot both pass an "only while pending" rule, and columns `Run` does not touch keep their current values. A `Run` with external effects (an HTTP call, an email) can still fail after the effect and roll back only the database, so make such effects idempotent.
 4. The panel redirects to the record (row action) or the list (bulk action) with a flash message.
 
 A bulk action takes 1 to `admin.MaxBulk` (100) selected ids. Each record is loaded and authorized first; a bad id, a missing record or one record the user may not act on fails the whole selection with nothing changed.
@@ -399,9 +399,9 @@ Every create, every update that changed something and every delete writes an `ad
 | `Changes` | `changes` | JSON: column → `admin.Change` with `before` and `after` |
 | `CreatedAt` | `created_at` | when it happened |
 
-For a sensitive column, the `Change` is only `{"redacted": true}`: the log records that it changed, never the value. The table is `admin.AuditTable` (`admin_audit_logs`), created by `admin.Migration("<timestamp>_create_admin_audit_logs_table")`, which `install:admin` registers for you.
+For a sensitive or hidden column, the `Change` is only `{"redacted": true}`: the log records that it changed, never the value. Reading the log applies the same rule to entries stored earlier, so a column that became hidden or sensitive after an entry was written no longer shows its old values on the page or in the JSON. The table is `admin.AuditTable` (`admin_audit_logs`), created by `admin.Migration("<timestamp>_create_admin_audit_logs_table")`, which `install:admin` registers for you.
 
-Browse the log at `/admin/_audit`, newest first, 50 entries per page. `?resource=posts` narrows it to one resource (only registered slugs and `_flags` are accepted). Custom actions appear with their `Name` as the action. When both sides of a change are JSON objects (a JSON column), the page lists only the keys that differ, as `column.key` and recursively, instead of two whole documents.
+Browse the log at `/admin/_audit`, newest first, 50 entries per page. The page lists only entries of resources the reader may `viewAny` (and `_flags` when the reader may manage flags), because entries carry record values: a reader who holds the audit ability but is denied a resource sees none of its entries, and a reader allowed nothing sees an empty page. `?resource=posts` narrows it to one resource (only registered slugs and `_flags` are accepted). Custom actions appear with their `Name` as the action. When both sides of a change are JSON objects (a JSON column), the page lists only the keys that differ, as `column.key` and recursively, instead of two whole documents.
 
 ## The feature flags page
 
@@ -534,7 +534,7 @@ Keep the overrides free of inline `<script>` and `style` attributes, or the stri
 | **CSRF** | The panel adds `csrf.Middleware` (with the session-token fallback) to its routes, and its forms carry the token. |
 | **Mass assignment** | Only schema keys are read from the form and written. Every primary-key column (one or several), timestamps, hidden and read-only columns never are. |
 | **Injection** | Sort, filter and search columns are allowlists; anything else is ignored. Values are bound parameters. |
-| **Secrets** | Columns tagged `json:"-"`, columns whose name contains `password`, `passwd`, `secret`, `token`, `api_key`, `apikey`, `private_key`, `recovery`, `otp` or `totp` anywhere (except the counters `tokens_used`, `tokens_count`/`_total`/`_remaining`/`_limit`, `max_tokens*`, `*_token_count` and names containing `footprint`), and columns marked `Sensitive` are never displayed, listed, searched, sorted or filtered. On a form they are empty password inputs that keep the stored value when left blank. The audit log records only that they changed. |
+| **Secrets** | Columns tagged `json:"-"`, columns whose name contains `password`, `passwd`, `secret`, `token`, `api_key`, `apikey`, `private_key`, `recovery`, `otp`, `totp`, `hash`, `digest`, `salt`, `passphrase`, `pwd` or `credential` anywhere, or ending in `_key` (or named `key`) (except the counters `tokens_used`, `tokens_count`/`_total`/`_remaining`/`_limit`, `max_tokens*`, `*_token_count`, and names containing `footprint` with no other secret word, so `secret_footprint` stays sensitive), and columns marked `Sensitive` are never displayed, listed, searched, sorted or filtered. On a form they are empty password inputs that keep the stored value when left blank. The audit log records only that they changed, and reading the log redacts entries written before a column became hidden or sensitive. |
 | **Headers** | Pages send `Cache-Control: no-store` and `X-Frame-Options: DENY`, plus a strict CSP when the app set none: `default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; form-action 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'`. |
 
 ### Hardening
