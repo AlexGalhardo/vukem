@@ -287,6 +287,22 @@ func TestSecurity_A05_JSONRPCInternalErrorsHidden(t *testing.T) {
 	}
 }
 
+func TestSecurity_A10_JSONRPCServerErrorHidesWrappedValidation(t *testing.T) {
+	t.Parallel()
+
+	s := NewServer(Config{Logger: slogTo(&bytes.Buffer{})})
+	Method(s, "fail", func(context.Context, struct{}) (any, error) {
+		return nil, errs.Wrap(http.StatusInternalServerError, errs.NewValidation().Add("email", "taken"))
+	})
+
+	_, body := post(t, s, `{"jsonrpc":"2.0","method":"fail","id":1}`)
+
+	want := `{"jsonrpc":"2.0","error":{"code":-32603,"message":"Internal error"},"id":1}`
+	if body != want {
+		t.Errorf("body = %s, want %s", body, want)
+	}
+}
+
 func TestSecurity_A01_JSONRPCGuards(t *testing.T) {
 	t.Parallel()
 

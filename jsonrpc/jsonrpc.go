@@ -363,7 +363,7 @@ func (s *Server) toError(ctx context.Context, name string, err error) *Error {
 		return e
 	}
 
-	if v, ok := errors.AsType[*errs.ValidationError](err); ok {
+	if v, ok := errors.AsType[*errs.ValidationError](err); ok && errs.Status(err) < http.StatusInternalServerError {
 		return &Error{Code: CodeInvalidParams, Message: "Invalid params", Data: map[string]any{"fields": v.Fields}}
 	}
 
