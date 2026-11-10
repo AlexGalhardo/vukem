@@ -28,7 +28,7 @@ func TwoFactor(r *router.Router, app *vukem.App) error {
 	r.Get("/user/two-factor", h.Show).Name("two-factor.show").Use(required)
 	r.Post("/user/two-factor", h.Enable).Name("two-factor.enable").Use(required)
 	r.Post("/user/two-factor/confirm", h.Confirm).Name("two-factor.confirm").Use(required, confirm)
-	r.Post("/user/two-factor/recovery-codes", h.RegenerateRecoveryCodes).Name("two-factor.recovery-codes").Use(required)
+	r.Post("/user/two-factor/recovery-codes", h.RegenerateRecoveryCodes).Name("two-factor.recovery-codes").Use(required, confirm)
 	r.Post("/user/two-factor/disable", h.Disable).Name("two-factor.disable").Use(required, confirm)
 
 	r.Get("/two-factor-challenge", h.ShowChallenge).Name("two-factor.login").Use(auth.Guest(acc.Web))

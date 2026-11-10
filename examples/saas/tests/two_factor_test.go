@@ -174,7 +174,7 @@ func TestTwoFactorRecoveryCodes(t *testing.T) {
 	owner.Get("/user/two-factor").AssertInertia("Auth/TwoFactor").PropEquals("recoveryCodesLeft", 6)
 
 	// Regenerating replaces every code.
-	owner.PostJSON("/user/two-factor/recovery-codes", nil).AssertRedirect("/user/two-factor")
+	owner.PostJSON("/user/two-factor/recovery-codes", map[string]any{"password": "correct horse battery"}).AssertRedirect("/user/two-factor")
 
 	if fresh := recoveryCodes(t, owner); len(fresh) != 8 || fresh[0] == codes[2] {
 		t.Fatalf("regenerated codes = %v", fresh)
@@ -240,4 +240,24 @@ func TestTwoFactorChallengeNeedsPasswordStep(t *testing.T) {
 
 	c.Get("/two-factor-challenge").AssertRedirect("/login")
 	c.PostJSON("/two-factor-challenge", map[string]any{"code": "123456"}).AssertRedirect("/login")
+}
+
+func TestTwoFactorRecoveryCodesNeedPassword(t *testing.T) {
+	t.Parallel()
+
+	app := vukemtest.New(t, bootstrap.New)
+	c := app.Client(t).Inertia("")
+	_, codes := enableTwoFactor(t, app, c, "fay2fa@example.com")
+
+	for _, body := range []map[string]any{{}, {"password": "not my password"}} {
+		rejected(t, c, "/user/two-factor", "/user/two-factor/recovery-codes", "Auth/TwoFactor", "password", body)
+		c.Get("/user/two-factor").AssertInertia("Auth/TwoFactor").PropEquals("recoveryCodesLeft", len(codes))
+	}
+
+	c.PostJSON("/user/two-factor/recovery-codes", map[string]any{"password": "correct horse battery"}).
+		AssertRedirect("/user/two-factor")
+
+	if fresh := recoveryCodes(t, c); len(fresh) != 8 || fresh[0] == codes[0] {
+		t.Fatalf("regenerated codes = %v", fresh)
+	}
 }
